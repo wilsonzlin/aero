@@ -78,6 +78,7 @@ fn boot_int10_vbe_scanline_bytes_and_display_start_affect_scanout_base() {
         ram_size_bytes: 64 * 1024 * 1024,
         enable_pc_platform: true,
         enable_vga: true,
+        enable_aerogpu: false,
         enable_serial: false,
         enable_i8042: false,
         enable_a20_gate: false,

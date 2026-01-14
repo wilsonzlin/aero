@@ -40,6 +40,7 @@ fn boot_outw_vga_index_data() {
         ram_size_bytes: 2 * 1024 * 1024,
         enable_pc_platform: true,
         enable_vga: true,
+        enable_aerogpu: false,
         // Keep the test output deterministic.
         enable_serial: false,
         enable_i8042: false,

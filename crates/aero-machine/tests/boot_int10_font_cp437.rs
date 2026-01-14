@@ -154,6 +154,7 @@ fn boot_int10_font_cp437_glyph_is_non_blank_and_rom_is_mapped() {
         ram_size_bytes: 2 * 1024 * 1024,
         enable_pc_platform: true,
         enable_vga: true,
+        enable_aerogpu: false,
         // Keep the test deterministic.
         enable_serial: false,
         enable_i8042: false,

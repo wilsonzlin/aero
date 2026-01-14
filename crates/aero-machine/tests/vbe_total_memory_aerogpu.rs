@@ -49,6 +49,7 @@ fn vbe_total_memory_matches_aerogpu_vram_aperture_when_enabled() {
     let base_cfg = MachineConfig {
         enable_pc_platform: true,
         enable_vga: true,
+        enable_aerogpu: false,
         // Keep the test output deterministic.
         enable_serial: false,
         enable_i8042: false,

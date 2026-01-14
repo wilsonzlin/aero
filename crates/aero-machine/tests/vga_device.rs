@@ -42,6 +42,7 @@ fn vga_vbe_linear_framebuffer_scanout_matches_expected_pixels() {
     let mut m = Machine::new(MachineConfig {
         ram_size_bytes: 2 * 1024 * 1024,
         enable_vga: true,
+        enable_aerogpu: false,
         enable_serial: false,
         enable_i8042: false,
         ..Default::default()
@@ -70,6 +71,7 @@ fn vga_snapshot_roundtrip_preserves_scanout() {
     let cfg = MachineConfig {
         ram_size_bytes: 2 * 1024 * 1024,
         enable_vga: true,
+        enable_aerogpu: false,
         enable_serial: false,
         enable_i8042: false,
         ..Default::default()

@@ -48,6 +48,7 @@ fn boot_int10_vbe_4f00_mode_list_contains_required_modes() {
     let mut m = Machine::new(MachineConfig {
         enable_pc_platform: true,
         enable_vga: true,
+        enable_aerogpu: false,
         // Keep the test output deterministic.
         enable_serial: false,
         enable_i8042: false,

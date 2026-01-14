@@ -18,6 +18,7 @@ fn boots_fixture_and_captures_vga_text_and_serial_bytes() {
         ram_size_bytes: 2 * 1024 * 1024,
         enable_pc_platform: false,
         enable_vga: true,
+        enable_aerogpu: false,
         enable_serial: true,
         enable_i8042: false,
         enable_a20_gate: false,

@@ -28,6 +28,7 @@ fn boots_bootsector_fixture_and_validates_vga_mode13_and_serial_output() {
         ram_size_bytes: 2 * 1024 * 1024,
         enable_pc_platform: false,
         enable_vga: true,
+        enable_aerogpu: false,
         enable_serial: true,
         enable_i8042: false,
         enable_a20_gate: false,

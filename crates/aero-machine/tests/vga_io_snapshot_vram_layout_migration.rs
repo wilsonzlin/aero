@@ -120,6 +120,7 @@ fn machine_restore_migrates_vgad_v1_0_vram_layout() {
         ram_size_bytes: 2 * 1024 * 1024,
         enable_pc_platform: false,
         enable_vga: true,
+        enable_aerogpu: false,
         enable_serial: false,
         enable_i8042: false,
         enable_a20_gate: false,

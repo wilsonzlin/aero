@@ -104,6 +104,7 @@ fn run_banked_window_pixel_test(enable_pc_platform: bool) {
     let mut m = Machine::new(MachineConfig {
         enable_pc_platform,
         enable_vga: true,
+        enable_aerogpu: false,
         // Keep the test output deterministic.
         enable_serial: false,
         enable_i8042: false,

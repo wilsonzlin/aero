@@ -207,6 +207,7 @@ fn boot_sector_int10_vbe_sets_scanout_state_to_legacy_vbe_lfb() {
     let mut m = Machine::new(MachineConfig {
         enable_pc_platform: true,
         enable_vga: true,
+        enable_aerogpu: false,
         // Keep the test output deterministic.
         enable_serial: false,
         enable_i8042: false,
@@ -242,6 +243,7 @@ fn boot_sector_int10_vbe_8bpp_mode_falls_back_to_legacy_text_scanout() {
     let mut m = Machine::new(MachineConfig {
         enable_pc_platform: true,
         enable_vga: true,
+        enable_aerogpu: false,
         // Keep the test output deterministic.
         enable_serial: false,
         enable_i8042: false,
@@ -277,6 +279,7 @@ fn boot_sector_int10_vbe_then_text_mode_sets_scanout_state_to_legacy_text() {
     let mut m = Machine::new(MachineConfig {
         enable_pc_platform: true,
         enable_vga: true,
+        enable_aerogpu: false,
         // Keep the test output deterministic.
         enable_serial: false,
         enable_i8042: false,
@@ -309,6 +312,7 @@ fn boot_sector_int10_vbe_does_not_override_wddm_scanout_state() {
     let mut m = Machine::new(MachineConfig {
         enable_pc_platform: true,
         enable_vga: true,
+        enable_aerogpu: false,
         // Keep the test output deterministic.
         enable_serial: false,
         enable_i8042: false,
@@ -349,6 +353,7 @@ fn boot_sector_int10_vbe_display_start_updates_scanout_state_base() {
     let mut m = Machine::new(MachineConfig {
         enable_pc_platform: true,
         enable_vga: true,
+        enable_aerogpu: false,
         // Keep the test output deterministic.
         enable_serial: false,
         enable_i8042: false,
@@ -388,6 +393,7 @@ fn boot_sector_int10_vbe_scanline_bytes_and_display_start_update_scanout_state()
     let mut m = Machine::new(MachineConfig {
         enable_pc_platform: true,
         enable_vga: true,
+        enable_aerogpu: false,
         enable_serial: false,
         enable_i8042: false,
         ..Default::default()

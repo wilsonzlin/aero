@@ -118,6 +118,7 @@ fn vbe_framebuffer_does_not_clobber_legacy_text_memory() {
     let cfg = MachineConfig {
         enable_pc_platform: false,
         enable_vga: true,
+        enable_aerogpu: false,
         // Keep the test environment deterministic.
         enable_serial: false,
         enable_i8042: false,

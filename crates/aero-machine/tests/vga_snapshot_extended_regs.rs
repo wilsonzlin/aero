@@ -7,6 +7,7 @@ fn vga_snapshot_roundtrip_preserves_extended_vga_regs() {
         ram_size_bytes: 64 * 1024 * 1024,
         enable_pc_platform: true,
         enable_vga: true,
+        enable_aerogpu: false,
         enable_serial: false,
         enable_i8042: false,
         enable_a20_gate: false,

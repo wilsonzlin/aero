@@ -26,6 +26,7 @@ fn framebuffer_hash(dev: &aero_gpu_vga::VgaDevice) -> u64 {
 fn vga_text_mmio_writes_show_up_in_rendered_output() {
     let cfg = MachineConfig {
         enable_vga: true,
+        enable_aerogpu: false,
         ..Default::default()
     };
     let mut m = Machine::new(cfg).unwrap();

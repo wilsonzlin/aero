@@ -83,6 +83,7 @@ fn boot_int10_mode13h_write_pixel_service_is_visible() {
     let mut m = Machine::new(MachineConfig {
         enable_pc_platform: true,
         enable_vga: true,
+        enable_aerogpu: false,
         // Keep the test output deterministic.
         enable_serial: false,
         enable_i8042: false,

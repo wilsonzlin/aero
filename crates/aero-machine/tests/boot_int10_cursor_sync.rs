@@ -394,6 +394,7 @@ fn int10_cursor_updates_sync_to_vga_crtc() {
         ram_size_bytes: 2 * 1024 * 1024,
         enable_pc_platform: true,
         enable_vga: true,
+        enable_aerogpu: false,
         ..Default::default()
     })
     .unwrap();
@@ -426,6 +427,7 @@ fn int10_set_cursor_pos_non_active_page_does_not_move_vga_cursor() {
         ram_size_bytes: 2 * 1024 * 1024,
         enable_pc_platform: true,
         enable_vga: true,
+        enable_aerogpu: false,
         ..Default::default()
     })
     .unwrap();
@@ -456,6 +458,7 @@ fn int10_cursor_shape_updates_sync_to_vga_crtc() {
         ram_size_bytes: 2 * 1024 * 1024,
         enable_pc_platform: true,
         enable_vga: true,
+        enable_aerogpu: false,
         ..Default::default()
     })
     .unwrap();
@@ -477,6 +480,7 @@ fn int10_cursor_sync_includes_crtc_start_address_offset() {
         ram_size_bytes: 2 * 1024 * 1024,
         enable_pc_platform: true,
         enable_vga: true,
+        enable_aerogpu: false,
         ..Default::default()
     })
     .unwrap();
@@ -510,6 +514,7 @@ fn int10_set_mode_resets_crtc_start_address() {
         ram_size_bytes: 2 * 1024 * 1024,
         enable_pc_platform: true,
         enable_vga: true,
+        enable_aerogpu: false,
         ..Default::default()
     })
     .unwrap();
@@ -531,6 +536,7 @@ fn int10_teletype_output_advances_cursor_and_syncs_to_vga_crtc() {
         ram_size_bytes: 2 * 1024 * 1024,
         enable_pc_platform: true,
         enable_vga: true,
+        enable_aerogpu: false,
         ..Default::default()
     })
     .unwrap();
@@ -560,6 +566,7 @@ fn int10_set_active_page_updates_crtc_start_address() {
         ram_size_bytes: 2 * 1024 * 1024,
         enable_pc_platform: true,
         enable_vga: true,
+        enable_aerogpu: false,
         ..Default::default()
     })
     .unwrap();
@@ -590,6 +597,7 @@ fn int10_set_active_page_uses_that_pages_cursor_pos_for_vga_cursor() {
         ram_size_bytes: 2 * 1024 * 1024,
         enable_pc_platform: true,
         enable_vga: true,
+        enable_aerogpu: false,
         ..Default::default()
     })
     .unwrap();
@@ -630,6 +638,7 @@ fn int10_write_string_updates_cursor_and_syncs_to_vga_crtc() {
         ram_size_bytes: 2 * 1024 * 1024,
         enable_pc_platform: true,
         enable_vga: true,
+        enable_aerogpu: false,
         ..Default::default()
     })
     .unwrap();

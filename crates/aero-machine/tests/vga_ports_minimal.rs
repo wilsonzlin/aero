@@ -8,6 +8,7 @@ fn vga_ports_minimal_semantics() {
             ram_size_bytes: 2 * 1024 * 1024,
             enable_pc_platform,
             enable_vga: true,
+            enable_aerogpu: false,
             enable_serial: false,
             enable_i8042: false,
             enable_a20_gate: false,

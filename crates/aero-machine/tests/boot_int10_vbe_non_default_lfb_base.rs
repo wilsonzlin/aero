@@ -47,6 +47,7 @@ fn boot_sector_int10_vbe_sets_mode_and_lfb_is_visible_at_non_default_base() {
     let mut m = Machine::new(MachineConfig {
         enable_pc_platform: true,
         enable_vga: true,
+        enable_aerogpu: false,
         vga_lfb_base: lfb_base,
         // Keep the test output deterministic.
         enable_serial: false,

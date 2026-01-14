@@ -8,6 +8,7 @@ fn bios_boot_failure_renders_message_to_vga_text_memory() {
         ram_size_bytes: 2 * 1024 * 1024,
         enable_pc_platform: false,
         enable_vga: true,
+        enable_aerogpu: false,
         enable_serial: false,
         enable_i8042: false,
         enable_a20_gate: false,

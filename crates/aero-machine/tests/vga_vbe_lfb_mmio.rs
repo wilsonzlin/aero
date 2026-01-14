@@ -10,6 +10,7 @@ fn vga_vbe_lfb_is_reachable_via_direct_mmio_without_pc_platform() {
     let cfg = MachineConfig {
         enable_pc_platform: false,
         enable_vga: true,
+        enable_aerogpu: false,
         enable_serial: false,
         enable_i8042: false,
         ..Default::default()
