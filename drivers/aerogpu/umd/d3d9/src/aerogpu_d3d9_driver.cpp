@@ -6578,6 +6578,7 @@ bool parse_process_vertices_dest_decl(const VertexDecl* decl, ProcessVerticesDec
   }
 
   // Second pass: locate output elements we care about.
+  bool pos_is_positiont = false;
   for (size_t i = 0; i < count; ++i) {
     const auto& e = elems[i];
     if (e.Stream == 0xFF && e.Type == kD3dDeclTypeUnused) {
@@ -6592,10 +6593,27 @@ bool parse_process_vertices_dest_decl(const VertexDecl* decl, ProcessVerticesDec
       continue;
     }
 
-    // Some runtimes use Usage=0 for position in synthesized decls.
-    if ((e.Usage == kD3dDeclUsagePositionT || e.Usage == 0) && e.Type == kD3dDeclTypeFloat4 && e.UsageIndex == 0) {
-      out->has_pos = true;
-      out->pos_offset = e.Offset;
+    // Position is expected to be a float4 (XYZRHW).
+    //
+    // Some runtimes use Usage=POSITION (0) for position in synthesized decls.
+    // However, other runtimes also appear to leave TEXCOORD0 Usage as POSITION.
+    // Avoid confusing TEX0 with the actual position element by preferring
+    // POSITIONT when present, otherwise selecting the POSITION float4 with the
+    // smallest offset.
+    if (e.Type == kD3dDeclTypeFloat4 && e.UsageIndex == 0 &&
+        (e.Usage == kD3dDeclUsagePositionT || e.Usage == kD3dDeclUsagePosition)) {
+      if (e.Usage == kD3dDeclUsagePositionT) {
+        if (!out->has_pos || !pos_is_positiont || e.Offset < out->pos_offset) {
+          out->has_pos = true;
+          out->pos_offset = e.Offset;
+          pos_is_positiont = true;
+        }
+      } else if (!pos_is_positiont) {
+        if (!out->has_pos || e.Offset < out->pos_offset) {
+          out->has_pos = true;
+          out->pos_offset = e.Offset;
+        }
+      }
       continue;
     }
     if (e.Usage == kD3dDeclUsageColor && e.Type == kD3dDeclTypeD3dColor && e.UsageIndex == 0) {
