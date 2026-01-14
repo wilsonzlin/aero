@@ -1163,8 +1163,22 @@ mod tests {
     use std::sync::Arc;
 
     fn make_ipv4_tcp_frame(payload: &[u8], flags_fragment: u16) -> Vec<u8> {
+        make_ipv4_tcp_frame_with_options(payload, flags_fragment, 0, 0)
+    }
+
+    fn make_ipv4_tcp_frame_with_options(
+        payload: &[u8],
+        flags_fragment: u16,
+        ip_options_len: usize,
+        tcp_options_len: usize,
+    ) -> Vec<u8> {
+        debug_assert!(ip_options_len % 4 == 0);
+        debug_assert!(tcp_options_len % 4 == 0);
+
         let ip_header_len = 20usize;
         let tcp_header_len = 20usize;
+        let ip_header_len = ip_header_len + ip_options_len;
+        let tcp_header_len = tcp_header_len + tcp_options_len;
         let total_len = ip_header_len + tcp_header_len + payload.len();
 
         let mut buf = Vec::with_capacity(14 + total_len);
@@ -1173,7 +1187,8 @@ mod tests {
         buf.extend_from_slice(&[0x02, 0x00, 0x00, 0x00, 0x00, 0x02]); // src mac
         buf.extend_from_slice(&0x0800u16.to_be_bytes()); // ethertype: IPv4
 
-        buf.push(0x45); // version + IHL
+        let ihl_words = (ip_header_len / 4) as u8;
+        buf.push((4u8 << 4) | (ihl_words & 0x0f)); // version + IHL
         buf.push(0); // dscp/ecn
         buf.extend_from_slice(&(total_len as u16).to_be_bytes());
         buf.extend_from_slice(&0u16.to_be_bytes()); // identification
@@ -1184,6 +1199,8 @@ mod tests {
         buf.extend_from_slice(&[10, 0, 2, 15]); // src ip
         buf.extend_from_slice(&[93, 184, 216, 34]); // dst ip
 
+        buf.resize(buf.len() + ip_options_len, 0);
+
         buf.extend_from_slice(&12345u16.to_be_bytes()); // src port
         buf.extend_from_slice(&80u16.to_be_bytes()); // dst port
         buf.extend_from_slice(&0u32.to_be_bytes()); // seq
@@ -1193,6 +1210,8 @@ mod tests {
         buf.extend_from_slice(&0u16.to_be_bytes()); // window
         buf.extend_from_slice(&0u16.to_be_bytes()); // checksum (ignored)
         buf.extend_from_slice(&0u16.to_be_bytes()); // urgent
+
+        buf.resize(buf.len() + tcp_options_len, 0);
 
         buf.extend_from_slice(payload);
         buf
@@ -1451,6 +1470,21 @@ mod tests {
             .expect("expected parseable IPv4/TCP frame");
 
         assert_eq!(out.len(), 14 + 20 + 20);
+        assert_eq!(out.as_slice(), &frame[..out.len()]);
+    }
+
+    #[test]
+    fn headers_only_redactor_keeps_l2_l3_l4_headers_for_tcp_ipv4_with_options() {
+        let frame = make_ipv4_tcp_frame_with_options(b"hello opts", 0, 12, 12);
+        let redactor = HeadersOnlyRedactor {
+            max_ethernet_bytes: 2048,
+        };
+
+        let out = redactor
+            .redact_ethernet(FrameDirection::GuestTx, &frame)
+            .expect("expected parseable IPv4/TCP frame with options");
+
+        assert_eq!(out.len(), 14 + (20 + 12) + (20 + 12));
         assert_eq!(out.as_slice(), &frame[..out.len()]);
     }
 
