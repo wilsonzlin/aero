@@ -1649,21 +1649,13 @@ fn collect_used_pixel_inputs_op(op: &IrOp, out: &mut BTreeSet<(RegFile, u32)>) {
             modifiers,
             ..
         }
-        | IrOp::Dp2Add {
-            src0,
-            src1,
-            src2,
-            modifiers,
-            ..
-        }
         | IrOp::Lrp {
             src0,
             src1,
             src2,
             modifiers,
             ..
-        }
-        => {
+        } => {
             collect_used_pixel_inputs_src(src0, out);
             collect_used_pixel_inputs_src(src1, out);
             collect_used_pixel_inputs_src(src2, out);

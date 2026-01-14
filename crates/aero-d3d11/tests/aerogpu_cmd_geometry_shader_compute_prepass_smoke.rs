@@ -92,8 +92,9 @@ fn aerogpu_cmd_geometry_shader_compute_prepass_smoke() {
         writer.clear(AEROGPU_CLEAR_COLOR, [0.0, 0.0, 0.0, 1.0], 1.0, 0);
         writer.create_shader_dxbc(VS, AerogpuShaderStage::Vertex, VS_PASSTHROUGH);
         writer.create_shader_dxbc(PS, AerogpuShaderStage::Pixel, PS_PASSTHROUGH);
-        // Bind a dummy GS handle to force the compute-prepass path.
-        writer.bind_shaders_ex(VS, PS, 0, 0xCAFE_BABE, 0, 0);
+        // Do not bind GS/HS/DS; the patched PatchList topology below is sufficient to force the
+        // compute-prepass path (`CmdPrimitiveTopology::PatchList` requires emulation).
+        writer.bind_shaders_ex(VS, PS, 0, 0, 0, 0);
         // Emit a supported topology in the protocol stream, then patch it to a D3D11-only value
         // (patchlist) to ensure the compute-prepass path does not depend on WebGPU's topology
         // support.
