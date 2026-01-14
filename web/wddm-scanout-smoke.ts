@@ -34,6 +34,8 @@ declare global {
       cursorOk?: boolean;
       sharedDirtyCleared?: boolean;
       metrics?: any;
+      stats?: any;
+      events?: any[];
       samplePixels?: () => Promise<{
         backend: string;
         cursor?: {
@@ -63,6 +65,28 @@ declare global {
           y: number;
           before: number[];
           after: number[];
+        };
+      }>;
+      runContextLossRecovery?: () => Promise<{
+        ok: boolean;
+        error?: string;
+        loseOk?: boolean;
+        restoreOk?: boolean;
+        before?: {
+          readyCount: number;
+          counters?: any;
+        };
+        after?: {
+          readyCount: number;
+          counters?: any;
+          hash?: string;
+          expectedHash?: string;
+          samples?: {
+            topLeft: number[];
+            topRight: number[];
+            bottomLeft: number[];
+            bottomRight: number[];
+          };
         };
       }>;
     };
@@ -280,6 +304,9 @@ async function main(): Promise<void> {
     let fatalError: string | null = null;
     let backendKind: string | null = null;
     let lastMetrics: any | null = null;
+    let lastStats: any | null = null;
+    const gpuEvents: any[] = [];
+    let readyCount = 0;
     let readyResolve!: () => void;
     let readyReject!: (err: unknown) => void;
     const ready = new Promise<void>((resolve, reject) => {
@@ -298,6 +325,7 @@ async function main(): Promise<void> {
       switch (msg.type) {
         case "ready":
           backendKind = String(msg.backendKind ?? "unknown");
+          readyCount += 1;
           readyResolve();
           break;
         case "screenshot": {
@@ -316,6 +344,12 @@ async function main(): Promise<void> {
         }
         case "metrics":
           lastMetrics = msg;
+          break;
+        case "stats":
+          lastStats = msg;
+          break;
+        case "events":
+          if (Array.isArray(msg.events)) gpuEvents.push(...msg.events);
           break;
         case "error":
           fatalError = String(msg.message ?? "unknown worker error");
@@ -586,6 +620,167 @@ async function main(): Promise<void> {
     log(`sourceHash=${sourceHash} expectedSource=${expectedSourceHash}`);
     log(`shared.frame_dirty.cleared=${sharedDirtyCleared}`);
 
+    const waitFor = async (predicate: () => boolean, timeoutMs: number, label: string): Promise<void> => {
+      const deadline = performance.now() + timeoutMs;
+      while (performance.now() < deadline) {
+        if (predicate()) return;
+        await sleep(25);
+      }
+      throw new Error(`Timed out waiting for ${label}`);
+    };
+
+    const waitForNewEvent = async (
+      predicate: (ev: any) => boolean,
+      startIndex: number,
+      timeoutMs: number,
+      label: string,
+    ): Promise<any> => {
+      await waitFor(() => gpuEvents.slice(startIndex).some(predicate), timeoutMs, label);
+      for (let i = gpuEvents.length - 1; i >= startIndex; i -= 1) {
+        const ev = gpuEvents[i];
+        if (predicate(ev)) return ev;
+      }
+      return null;
+    };
+
+    const postContextLoss = (action: "lose" | "restore") => {
+      worker.postMessage({ ...GPU_MESSAGE_BASE, type: "debug_context_loss", action });
+    };
+
+    const runContextLossRecovery = async () => {
+      try {
+        // Ensure we have at least one stats snapshot so countersBefore is meaningful.
+        await waitFor(() => lastStats != null && lastStats.type === "stats", 15_000, "gpu-worker stats");
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      }
+
+      const countersBefore = lastStats?.counters ?? null;
+      const readyCountBefore = readyCount;
+
+      const debugBeforeIndex = gpuEvents.length;
+      postContextLoss("lose");
+      let loseOk: boolean | undefined = undefined;
+      try {
+        const ev = await waitForNewEvent(
+          (e) => e && e.category === "Debug" && typeof e.message === "string" && e.message.includes("action=lose"),
+          debugBeforeIndex,
+          5000,
+          "debug_context_loss lose",
+        );
+        loseOk = typeof ev?.message === "string" ? ev.message.includes("ok=true") : undefined;
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      }
+      if (loseOk !== true) {
+        return { ok: false, error: "debug_context_loss lose did not succeed", loseOk };
+      }
+
+      // Ensure the worker observed context loss and entered the device-lost state before requesting restore.
+      try {
+        await waitForNewEvent(
+          (e) => e && e.category === "DeviceLost",
+          debugBeforeIndex,
+          15_000,
+          "WebGL context lost (DeviceLost event)",
+        );
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err), loseOk };
+      }
+
+      const debugRestoreIndex = gpuEvents.length;
+      postContextLoss("restore");
+      let restoreOk: boolean | undefined = undefined;
+      try {
+        const ev = await waitForNewEvent(
+          (e) => e && e.category === "Debug" && typeof e.message === "string" && e.message.includes("action=restore"),
+          debugRestoreIndex,
+          5000,
+          "debug_context_loss restore",
+        );
+        restoreOk = typeof ev?.message === "string" ? ev.message.includes("ok=true") : undefined;
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      }
+      if (restoreOk !== true) {
+        return { ok: false, error: "debug_context_loss restore did not succeed", loseOk, restoreOk };
+      }
+
+      // Wait for the worker to re-emit READY after recovery.
+      try {
+        await waitFor(() => readyCount >= readyCountBefore + 1, 15_000, "gpu-worker recovery ready");
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err), loseOk, restoreOk };
+      }
+
+      // Send a few ticks while the legacy shared framebuffer remains PRESENTED. This mimics the
+      // runtime scheduler behavior (WDDM scanout must still drive presentation even when the
+      // shared-framebuffer pacing state is idle).
+      for (let i = 0; i < 3; i += 1) {
+        worker.postMessage({ ...GPU_MESSAGE_BASE, type: "tick", frameTimeMs: performance.now() });
+        await sleep(25);
+      }
+
+      // Wait for a new stats snapshot that reflects the recovery.
+      if (countersBefore && typeof countersBefore.recoveries_succeeded === "number") {
+        try {
+          await waitFor(
+            () =>
+              lastStats != null &&
+              lastStats.type === "stats" &&
+              typeof lastStats.counters?.recoveries_succeeded === "number" &&
+              lastStats.counters.recoveries_succeeded >= countersBefore.recoveries_succeeded + 1,
+            15_000,
+            "recovery counters",
+          );
+        } catch (err) {
+          return { ok: false, error: err instanceof Error ? err.message : String(err), loseOk, restoreOk };
+        }
+      }
+
+      // Capture presented output post-recovery.
+      const presentedAfter = await requestPresentedScreenshot(false);
+      const presentedAfterWidth = Number(presentedAfter.width) | 0;
+      const presentedAfterHeight = Number(presentedAfter.height) | 0;
+      const presentedAfterRgba8 = new Uint8Array(presentedAfter.rgba8);
+      const afterHash = fnv1a32Hex(presentedAfterRgba8);
+
+      const samplesAfter =
+        presentedAfterWidth === presentedWidth && presentedAfterHeight === presentedHeight
+          ? {
+              topLeft: sample(presentedAfterRgba8, presentedAfterWidth, 8, 8),
+              topRight: sample(presentedAfterRgba8, presentedAfterWidth, presentedAfterWidth - 9, 8),
+              bottomLeft: sample(presentedAfterRgba8, presentedAfterWidth, 8, presentedAfterHeight - 9),
+              bottomRight: sample(presentedAfterRgba8, presentedAfterWidth, presentedAfterWidth - 9, presentedAfterHeight - 9),
+            }
+          : {
+              topLeft: sample(presentedAfterRgba8, presentedAfterWidth, 0, 0),
+              topRight: sample(presentedAfterRgba8, presentedAfterWidth, Math.max(0, presentedAfterWidth - 1), 0),
+              bottomLeft: sample(presentedAfterRgba8, presentedAfterWidth, 0, Math.max(0, presentedAfterHeight - 1)),
+              bottomRight: sample(
+                presentedAfterRgba8,
+                presentedAfterWidth,
+                Math.max(0, presentedAfterWidth - 1),
+                Math.max(0, presentedAfterHeight - 1),
+              ),
+            };
+
+      return {
+        ok: afterHash === expectedHash,
+        ...(afterHash === expectedHash ? {} : { error: `presented hash mismatch after recovery (got=${afterHash} expected=${expectedHash})` }),
+        loseOk,
+        restoreOk,
+        before: { readyCount: readyCountBefore, counters: countersBefore },
+        after: {
+          readyCount,
+          counters: lastStats?.counters ?? null,
+          hash: afterHash,
+          expectedHash,
+          samples: samplesAfter,
+        },
+      };
+    };
+
     window.__aeroTest = {
       ready: true,
       backend,
@@ -599,6 +794,8 @@ async function main(): Promise<void> {
       pass,
       sharedDirtyCleared,
       metrics: lastMetrics,
+      stats: lastStats,
+      events: gpuEvents,
       samplePixels: async () => ({
         backend,
         cursor: { x: cursorX, y: cursorY, pixel: cursorPixel, nearby: cursorNearby },
@@ -626,6 +823,7 @@ async function main(): Promise<void> {
         },
       }),
       cursorOk,
+      runContextLossRecovery,
     };
   } catch (err) {
     renderError(err instanceof Error ? err.message : String(err));

@@ -1692,18 +1692,20 @@ export class AerogpuCmdWriter {
    * - The legacy `stage` field is forced to `COMPUTE`.
    * - The `reserved0` field carries the non-zero `stageEx` discriminator.
    *
-   * Note: `stageEx == 0` (DXBC Pixel program-type) is not representable here because `reserved0 == 0`
-   * is reserved for the legacy/default encoding (old guests always write 0 into reserved fields).
-   * Pixel shaders should be created via {@link createShaderDxbc} with `stage=Pixel` (and no stageEx).
+   * Note: DXBC program type `0` (Pixel) is intentionally not representable here because `reserved0 == 0`
+   * must remain the legacy/default encoding (old guests always write 0 into reserved fields). Pixel
+   * shaders should be created via {@link createShaderDxbc} with `stage = AerogpuShaderStage.Pixel`
+   * (and no stageEx).
    */
   createShaderDxbcEx(shaderHandle: AerogpuHandle, stageEx: AerogpuShaderStageEx, dxbcBytes: Uint8Array): void {
     // CREATE_SHADER_DXBC uses `reserved0` for the stage_ex ABI extension.
     //
     // `stageEx == 0` (DXBC Pixel program type) is not representable because `reserved0 == 0` is
     // reserved for the legacy/default encoding (old guests always wrote 0 into reserved fields).
-    // Pixel shaders should be created via {@link createShaderDxbc} with `stage=Pixel`.
     if ((stageEx >>> 0) === 0) {
-      throw new Error("CREATE_SHADER_DXBC stage_ex must be non-zero (0 is reserved for legacy/default)");
+      throw new Error(
+        "CREATE_SHADER_DXBC stage_ex cannot encode DXBC Pixel program type (0); use createShaderDxbc(stage=Pixel) instead",
+      );
     }
 
     const [stage, reserved0] = encodeStageEx(stageEx);
