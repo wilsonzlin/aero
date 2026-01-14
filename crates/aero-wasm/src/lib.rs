@@ -1153,6 +1153,12 @@ impl WebHidPassthroughBridge {
 
         let has_interrupt_out = collections_have_output_reports(&collections);
 
+        let (interface_subclass, interface_protocol) =
+            match webhid::infer_boot_interface_subclass_protocol(&collections) {
+                Some((subclass, protocol)) => (Some(subclass), Some(protocol)),
+                None => (None, None),
+            };
+
         let device = UsbHidPassthroughHandle::new(
             vendor_id,
             product_id,
@@ -1162,8 +1168,8 @@ impl WebHidPassthroughBridge {
             report_descriptor,
             has_interrupt_out,
             None,
-            None,
-            None,
+            interface_subclass,
+            interface_protocol,
         );
 
         Ok(Self { device })
@@ -1293,6 +1299,112 @@ fn collections_have_output_reports(collections: &[webhid::HidCollectionInfo]) ->
     }
 
     collections.iter().any(walk)
+}
+
+#[cfg(all(test, target_arch = "wasm32"))]
+mod webhid_passthrough_bridge_tests {
+    use super::*;
+
+    use aero_usb::{ControlResponse, SetupPacket, UsbDeviceModel};
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    fn make_minimal_item(usage_page: u32, usage: u32) -> webhid::HidReportItem {
+        webhid::HidReportItem {
+            usage_page,
+            usages: vec![usage],
+            usage_minimum: 0,
+            usage_maximum: 0,
+            report_size: 8,
+            report_count: 1,
+            unit_exponent: 0,
+            unit: 0,
+            logical_minimum: 0,
+            logical_maximum: 255,
+            physical_minimum: 0,
+            physical_maximum: 0,
+            strings: vec![],
+            string_minimum: 0,
+            string_maximum: 0,
+            designators: vec![],
+            designator_minimum: 0,
+            designator_maximum: 0,
+            is_absolute: true,
+            is_array: false,
+            is_buffered_bytes: false,
+            is_constant: false,
+            is_linear: true,
+            is_range: false,
+            is_relative: false,
+            is_volatile: false,
+            has_null: false,
+            has_preferred_state: true,
+            is_wrapped: false,
+        }
+    }
+
+    fn keyboard_collections() -> Vec<webhid::HidCollectionInfo> {
+        vec![webhid::HidCollectionInfo {
+            usage_page: 0x01, // Generic Desktop
+            usage: 0x06,      // Keyboard
+            collection_type: webhid::HidCollectionType::Application,
+            children: vec![],
+            input_reports: vec![webhid::HidReportInfo {
+                report_id: 0,
+                items: vec![make_minimal_item(0x07, 0x04)], // Keyboard/Keypad: 'a'
+            }],
+            output_reports: vec![],
+            feature_reports: vec![],
+        }]
+    }
+
+    fn parse_interface_descriptor_fields(bytes: &[u8]) -> Option<(u8, u8)> {
+        const INTERFACE_DESC_OFFSET: usize = 9;
+        if bytes.len() < INTERFACE_DESC_OFFSET + 9 {
+            return None;
+        }
+        // Config descriptor is always followed immediately by a single interface descriptor.
+        if bytes[INTERFACE_DESC_OFFSET] != 0x09 || bytes[INTERFACE_DESC_OFFSET + 1] != 0x04 {
+            return None;
+        }
+        let subclass = bytes[INTERFACE_DESC_OFFSET + 6];
+        let protocol = bytes[INTERFACE_DESC_OFFSET + 7];
+        Some((subclass, protocol))
+    }
+
+    #[wasm_bindgen_test]
+    fn webhid_passthrough_bridge_infers_boot_keyboard_interface_descriptor() {
+        let collections_json =
+            serde_wasm_bindgen::to_value(&keyboard_collections()).expect("collections to JsValue");
+        let bridge = WebHidPassthroughBridge::new(
+            0x1234,
+            0x5678,
+            Some("WebHID".to_string()),
+            Some("Test Keyboard".to_string()),
+            None,
+            collections_json,
+        )
+        .expect("WebHidPassthroughBridge::new ok");
+
+        let mut dev = bridge.as_usb_device();
+        let resp = dev.handle_control_request(
+            SetupPacket {
+                bm_request_type: 0x80,
+                b_request: 0x06,
+                w_value: 0x0200,
+                w_index: 0,
+                w_length: 256,
+            },
+            None,
+        );
+        let ControlResponse::Data(bytes) = resp else {
+            panic!("expected config descriptor bytes, got {resp:?}");
+        };
+
+        assert_eq!(
+            parse_interface_descriptor_fields(&bytes),
+            Some((0x01, 0x01))
+        );
+    }
 }
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
@@ -2847,7 +2959,10 @@ fn opfs_disk_error_to_js(operation: &str, path: &str, err: aero_opfs::DiskError)
             ))
             .into()
         }
-        _ => Error::new(&format!("{operation} failed for OPFS path \"{path}\": {err_str}")).into(),
+        _ => Error::new(&format!(
+            "{operation} failed for OPFS path \"{path}\": {err_str}"
+        ))
+        .into(),
     }
 }
 
@@ -4823,7 +4938,10 @@ mod machine_opfs_disk_tests {
 
     fn js_error_to_string(err: &JsValue) -> String {
         err.as_string()
-            .or_else(|| err.dyn_ref::<js_sys::Error>().and_then(|e| e.message().as_string()))
+            .or_else(|| {
+                err.dyn_ref::<js_sys::Error>()
+                    .and_then(|e| e.message().as_string())
+            })
             .unwrap_or_else(|| format!("{err:?}"))
     }
 

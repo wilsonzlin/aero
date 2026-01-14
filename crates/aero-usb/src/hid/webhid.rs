@@ -221,6 +221,48 @@ pub fn synthesize_report_descriptor(collections: &[HidCollectionInfo]) -> Result
     Ok(report_descriptor::synthesize_report_descriptor(&converted)?)
 }
 
+/// Infer a HID boot interface subclass/protocol from normalized WebHID collection metadata.
+///
+/// Some legacy OS/BIOS-era USB stacks rely on `bInterfaceSubClass`/`bInterfaceProtocol` to identify
+/// keyboards/mice (USB HID boot protocol). WebHID devices often omit this hint, but the WebHID
+/// collection tree usually contains enough information to make a conservative inference.
+///
+/// Inference rules:
+/// - Scan only the *top-level* collections.
+/// - Consider only `Application` collections on the Generic Desktop page (`usagePage == 0x01`).
+/// - If exactly one of:
+///   - `usage == 0x06` (Keyboard), or
+///   - `usage == 0x02` (Mouse)
+///   is present, return:
+///   - subclass = 0x01 (Boot), and
+///   - protocol = 0x01 (Keyboard) or 0x02 (Mouse).
+/// - If both are present or neither is present, return `None` (do not guess).
+pub fn infer_boot_interface_subclass_protocol(
+    collections: &[HidCollectionInfo],
+) -> Option<(u8, u8)> {
+    let mut has_keyboard = false;
+    let mut has_mouse = false;
+    for col in collections {
+        if col.collection_type != HidCollectionType::Application {
+            continue;
+        }
+        if col.usage_page != 0x01 {
+            continue;
+        }
+        match col.usage {
+            0x06 => has_keyboard = true,
+            0x02 => has_mouse = true,
+            _ => {}
+        }
+    }
+
+    match (has_keyboard, has_mouse) {
+        (true, false) => Some((0x01, 0x01)),
+        (false, true) => Some((0x01, 0x02)),
+        _ => None,
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 enum HidReportKindPath {
     Input,
@@ -282,8 +324,7 @@ fn convert_item(
         item.usages.clone()
     };
 
-    let (string_minimum, string_maximum) = if item.string_minimum == 0 && item.string_maximum == 0
-    {
+    let (string_minimum, string_maximum) = if item.string_minimum == 0 && item.string_maximum == 0 {
         (None, None)
     } else {
         (Some(item.string_minimum), Some(item.string_maximum))
@@ -292,10 +333,7 @@ fn convert_item(
         if item.designator_minimum == 0 && item.designator_maximum == 0 {
             (None, None)
         } else {
-            (
-                Some(item.designator_minimum),
-                Some(item.designator_maximum),
-            )
+            (Some(item.designator_minimum), Some(item.designator_maximum))
         };
 
     Ok(report_descriptor::HidReportItem {

@@ -95,7 +95,7 @@ fn parse_webhid_collections(
     serde_path_to_error::deserialize(serde_wasm_bindgen::Deserializer::from(
         collections_json.clone(),
     ))
-        .map_err(|err| js_error(&format!("Invalid WebHID collection schema: {err}")))
+    .map_err(|err| js_error(&format!("Invalid WebHID collection schema: {err}")))
 }
 struct WebHidDeviceState {
     location: WebHidDeviceLocation,
@@ -282,6 +282,12 @@ impl UhciRuntime {
             product_name.unwrap_or_else(|| "WebHID HID Device".to_string()),
         );
 
+        let (interface_subclass, interface_protocol) =
+            match webhid::infer_boot_interface_subclass_protocol(&collections) {
+                Some((subclass, protocol)) => (Some(subclass), Some(protocol)),
+                None => (None, None),
+            };
+
         let dev = UsbHidPassthroughHandle::new(
             vendor_id,
             product_id,
@@ -291,8 +297,8 @@ impl UhciRuntime {
             report_descriptor.clone(),
             has_interrupt_out,
             None,
-            None,
-            None,
+            interface_subclass,
+            interface_protocol,
         );
 
         self.ctrl.hub_mut().attach(port, Box::new(dev.clone()));
@@ -356,6 +362,12 @@ impl UhciRuntime {
             product_name.unwrap_or_else(|| "WebHID HID Device".to_string()),
         );
 
+        let (interface_subclass, interface_protocol) =
+            match webhid::infer_boot_interface_subclass_protocol(&collections) {
+                Some((subclass, protocol)) => (Some(subclass), Some(protocol)),
+                None => (None, None),
+            };
+
         let dev = UsbHidPassthroughHandle::new(
             vendor_id,
             product_id,
@@ -365,8 +377,8 @@ impl UhciRuntime {
             report_descriptor.clone(),
             has_interrupt_out,
             None,
-            None,
-            None,
+            interface_subclass,
+            interface_protocol,
         );
 
         let path = [EXTERNAL_HUB_ROOT_PORT as u8, hub_port];
@@ -1339,6 +1351,22 @@ impl UhciRuntime {
 
         // Recreate WebHID devices (using stored static config), then apply their dynamic snapshots.
         for entry in webhid_entries {
+            // Preserve the boot-interface subclass/protocol recorded in the nested HIDP snapshot so
+            // snapshot restore roundtrips the device descriptor accurately.
+            //
+            // These tags are defined in `aero-usb`'s HID passthrough snapshot format.
+            const HIDP_SNAP_TAG_INTERFACE_SUBCLASS: u16 = 23;
+            const HIDP_SNAP_TAG_INTERFACE_PROTOCOL: u16 = 24;
+
+            let (interface_subclass, interface_protocol) =
+                match SnapshotReader::parse(&entry.state, *b"HIDP") {
+                    Ok(r) => (
+                        r.u8(HIDP_SNAP_TAG_INTERFACE_SUBCLASS).unwrap_or(None),
+                        r.u8(HIDP_SNAP_TAG_INTERFACE_PROTOCOL).unwrap_or(None),
+                    ),
+                    Err(_) => (None, None),
+                };
+
             let mut dev = UsbHidPassthroughHandle::new(
                 entry.vendor_id,
                 entry.product_id,
@@ -1348,8 +1376,8 @@ impl UhciRuntime {
                 entry.report_descriptor.clone(),
                 entry.has_interrupt_out,
                 None,
-                None,
-                None,
+                interface_subclass,
+                interface_protocol,
             );
 
             match entry.location {
@@ -2089,4 +2117,116 @@ fn parse_external_hub_guest_path(path: JsValue) -> Result<(usize, u8), JsValue> 
         return Err(js_error("guestPath hub port is invalid (expected 1..=255)"));
     }
     Ok((root, hub_port_u8))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use aero_usb::{ControlResponse, SetupPacket, UsbDeviceModel};
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    fn make_minimal_item(usage_page: u32, usage: u32) -> webhid::HidReportItem {
+        webhid::HidReportItem {
+            usage_page,
+            usages: vec![usage],
+            usage_minimum: 0,
+            usage_maximum: 0,
+            report_size: 8,
+            report_count: 1,
+            unit_exponent: 0,
+            unit: 0,
+            logical_minimum: 0,
+            logical_maximum: 255,
+            physical_minimum: 0,
+            physical_maximum: 0,
+            strings: vec![],
+            string_minimum: 0,
+            string_maximum: 0,
+            designators: vec![],
+            designator_minimum: 0,
+            designator_maximum: 0,
+            is_absolute: true,
+            is_array: false,
+            is_buffered_bytes: false,
+            is_constant: false,
+            is_linear: true,
+            is_range: false,
+            is_relative: false,
+            is_volatile: false,
+            has_null: false,
+            has_preferred_state: true,
+            is_wrapped: false,
+        }
+    }
+
+    fn keyboard_collections() -> Vec<webhid::HidCollectionInfo> {
+        vec![webhid::HidCollectionInfo {
+            usage_page: 0x01, // Generic Desktop
+            usage: 0x06,      // Keyboard
+            collection_type: webhid::HidCollectionType::Application,
+            children: vec![],
+            input_reports: vec![webhid::HidReportInfo {
+                report_id: 0,
+                items: vec![make_minimal_item(0x07, 0x04)], // Keyboard/Keypad: 'a'
+            }],
+            output_reports: vec![],
+            feature_reports: vec![],
+        }]
+    }
+
+    fn parse_interface_descriptor_fields(bytes: &[u8]) -> Option<(u8, u8)> {
+        const INTERFACE_DESC_OFFSET: usize = 9;
+        if bytes.len() < INTERFACE_DESC_OFFSET + 9 {
+            return None;
+        }
+        // Config descriptor is always followed immediately by a single interface descriptor.
+        if bytes[INTERFACE_DESC_OFFSET] != 0x09 || bytes[INTERFACE_DESC_OFFSET + 1] != 0x04 {
+            return None;
+        }
+        let subclass = bytes[INTERFACE_DESC_OFFSET + 6];
+        let protocol = bytes[INTERFACE_DESC_OFFSET + 7];
+        Some((subclass, protocol))
+    }
+
+    #[wasm_bindgen_test]
+    fn webhid_attach_infers_boot_keyboard_interface_descriptor() {
+        let mut rt = UhciRuntime::new(0, 0).expect("UhciRuntime::new");
+
+        let collections = keyboard_collections();
+        let collections_json =
+            serde_wasm_bindgen::to_value(&collections).expect("collections to JsValue");
+
+        rt.webhid_attach(
+            1,
+            0x1234,
+            0x5678,
+            Some("Test Keyboard".to_string()),
+            collections_json,
+            None,
+        )
+        .expect("webhid_attach ok");
+
+        let state = rt.webhid_devices.get(&1).expect("device state present");
+        let mut dev = state.dev.clone();
+
+        let resp = dev.handle_control_request(
+            SetupPacket {
+                bm_request_type: 0x80,
+                b_request: 0x06,
+                w_value: 0x0200,
+                w_index: 0,
+                w_length: 256,
+            },
+            None,
+        );
+        let ControlResponse::Data(bytes) = resp else {
+            panic!("expected config descriptor bytes, got {resp:?}");
+        };
+
+        assert_eq!(
+            parse_interface_descriptor_fields(&bytes),
+            Some((0x01, 0x01))
+        );
+    }
 }
