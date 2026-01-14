@@ -27,6 +27,198 @@ const MAX_REMOTE_INFLIGHT_BYTES = 512 * 1024 * 1024; // 512 MiB
 const MAX_REMOTE_SHA256_MANIFEST_ENTRIES = 1_000_000;
 const SHA256_HEX_RE = /^[0-9a-f]{64}$/;
 
+// Container format sniffing (defense-in-depth).
+// Remote range delivery expects a raw sector disk. If the remote bytes are actually a container
+// format (qcow2/vhd/aerosparse), treating it as raw would expose container headers/allocation
+// tables to the guest and can result in size mismatches.
+const AEROSPARSE_MAGIC = [0x41, 0x45, 0x52, 0x4f, 0x53, 0x50, 0x41, 0x52] as const; // "AEROSPAR"
+const QCOW2_MAGIC = [0x51, 0x46, 0x49, 0xfb] as const; // "QFI\xfb"
+const VHD_COOKIE = [0x63, 0x6f, 0x6e, 0x65, 0x63, 0x74, 0x69, 0x78] as const; // "conectix"
+
+function bytesEqualPrefix(bytes: Uint8Array, expected: readonly number[]): boolean {
+  if (bytes.byteLength < expected.length) return false;
+  for (let i = 0; i < expected.length; i += 1) {
+    if (bytes[i] !== expected[i]) return false;
+  }
+  return true;
+}
+
+function looksLikeQcow2PrefixBytes(prefix: Uint8Array, fileSize: number): boolean {
+  if (fileSize < 4) return false;
+  if (!bytesEqualPrefix(prefix, QCOW2_MAGIC)) return false;
+  // Treat truncated qcow2 headers as qcow2 so callers surface corruption errors.
+  if (fileSize < 72) return true;
+  if (prefix.byteLength < 8) return true;
+  const dv = new DataView(prefix.buffer, prefix.byteOffset, prefix.byteLength);
+  const version = dv.getUint32(4, false);
+  return version === 2 || version === 3;
+}
+
+function looksLikeAerosparPrefixBytes(prefix: Uint8Array): boolean {
+  if (!bytesEqualPrefix(prefix, AEROSPARSE_MAGIC)) return false;
+  // Treat truncated headers as aerosparse so callers surface corruption errors.
+  if (prefix.byteLength < 12) return true;
+  const dv = new DataView(prefix.buffer, prefix.byteOffset, prefix.byteLength);
+  const version = dv.getUint32(8, true);
+  return version === 1;
+}
+
+function looksLikeVhdFooterBytes(footerBytes: Uint8Array, fileSize: number): boolean {
+  if (footerBytes.byteLength !== 512) return false;
+  if (!bytesEqualPrefix(footerBytes, VHD_COOKIE)) return false;
+  const dv = new DataView(footerBytes.buffer, footerBytes.byteOffset, footerBytes.byteLength);
+
+  // Fixed file format version for VHD footers (big-endian).
+  if (dv.getUint32(12, false) !== 0x0001_0000) return false;
+
+  const currentSizeBig = dv.getBigUint64(48, false);
+  const currentSize = Number(currentSizeBig);
+  if (!Number.isSafeInteger(currentSize) || currentSize <= 0) return false;
+  if (currentSize % 512 !== 0) return false;
+
+  const diskType = dv.getUint32(60, false);
+  if (diskType !== 2 && diskType !== 3 && diskType !== 4) return false;
+
+  const dataOffsetBig = dv.getBigUint64(16, false);
+  if (diskType === 2) {
+    if (dataOffsetBig !== 0xffff_ffff_ffff_ffffn) return false;
+    const requiredLen = currentSize + 512;
+    if (!Number.isSafeInteger(requiredLen) || fileSize < requiredLen) return false;
+  } else {
+    if (dataOffsetBig === 0xffff_ffff_ffff_ffffn) return false;
+    const dataOffset = Number(dataOffsetBig);
+    if (!Number.isSafeInteger(dataOffset) || dataOffset < 512) return false;
+    if (dataOffset % 512 !== 0) return false;
+    const end = dataOffset + 1024;
+    if (!Number.isSafeInteger(end) || end > fileSize) return false;
+  }
+
+  return true;
+}
+
+async function fetchLeaseRangeBytes(
+  lease: DiskAccessLease,
+  fetchFn: typeof fetch,
+  range: { start: number; endInclusive: number },
+  opts: { signal?: AbortSignal; label: string },
+): Promise<Uint8Array<ArrayBuffer>> {
+  if (!Number.isSafeInteger(range.start) || !Number.isSafeInteger(range.endInclusive) || range.start < 0 || range.endInclusive < range.start) {
+    throw new Error(`invalid byte range ${range.start}-${range.endInclusive}`);
+  }
+  const expectedLen = range.endInclusive - range.start + 1;
+  if (expectedLen <= 0) return new Uint8Array() as Uint8Array<ArrayBuffer>;
+  const resp = await fetchWithDiskAccessLease(
+    lease,
+    { method: "GET", headers: { Range: `bytes=${range.start}-${range.endInclusive}` }, signal: opts.signal },
+    { fetch: fetchFn, retryAuthOnce: true },
+  );
+  try {
+    if (resp.status === 200) {
+      throw new Error("remote server ignored Range request (expected 206 Partial Content, got 200 OK)");
+    }
+    if (resp.status !== 206) {
+      throw new HttpStatusError(`unexpected Range response status ${resp.status}`, resp.status);
+    }
+    assertIdentityContentEncoding(resp.headers, opts.label);
+    assertNoTransformCacheControl(resp.headers, opts.label);
+    const body = await readResponseBytesWithLimit(resp, { maxBytes: expectedLen, label: opts.label });
+    if (body.byteLength !== expectedLen) {
+      throw new Error(`${opts.label} length mismatch (expected=${expectedLen} actual=${body.byteLength})`);
+    }
+    return body;
+  } finally {
+    await cancelBody(resp);
+  }
+}
+
+async function fetchLeaseSuffixRangeBytes(
+  lease: DiskAccessLease,
+  fetchFn: typeof fetch,
+  suffixLen: number,
+  opts: { signal?: AbortSignal; label: string },
+): Promise<{ bytes: Uint8Array<ArrayBuffer>; totalSize: number | null }> {
+  if (!Number.isSafeInteger(suffixLen) || suffixLen <= 0) {
+    throw new Error(`invalid suffix range length ${suffixLen}`);
+  }
+  const resp = await fetchWithDiskAccessLease(
+    lease,
+    { method: "GET", headers: { Range: `bytes=-${suffixLen}` }, signal: opts.signal },
+    { fetch: fetchFn, retryAuthOnce: true },
+  );
+  try {
+    if (resp.status === 200) {
+      throw new Error("remote server ignored Range request (expected 206 Partial Content, got 200 OK)");
+    }
+    if (resp.status !== 206) {
+      throw new HttpStatusError(`unexpected Range response status ${resp.status}`, resp.status);
+    }
+    assertIdentityContentEncoding(resp.headers, opts.label);
+    assertNoTransformCacheControl(resp.headers, opts.label);
+
+    const bytes = await readResponseBytesWithLimit(resp, { maxBytes: suffixLen, label: opts.label });
+
+    let totalSize: number | null = null;
+    const contentRange = resp.headers.get("content-range");
+    if (contentRange) {
+      try {
+        totalSize = parseContentRangeHeader(contentRange).total;
+      } catch {
+        totalSize = null;
+      }
+    }
+
+    return { bytes, totalSize };
+  } finally {
+    await cancelBody(resp);
+  }
+}
+
+async function sniffRemoteContainerFormat(
+  lease: DiskAccessLease,
+  fetchFn: typeof fetch,
+  sizeBytes: number,
+  opts?: { signal?: AbortSignal },
+): Promise<"aerospar" | "qcow2" | "vhd" | null> {
+  if (!Number.isSafeInteger(sizeBytes) || sizeBytes <= 0) return null;
+
+  const headLen = Math.min(sizeBytes, 64);
+  const head =
+    headLen > 0
+      ? await fetchLeaseRangeBytes(lease, fetchFn, { start: 0, endInclusive: headLen - 1 }, { signal: opts?.signal, label: "remote header probe" })
+      : (new Uint8Array() as Uint8Array<ArrayBuffer>);
+
+  let tail: Uint8Array<ArrayBuffer> | null = null;
+  let tailTotalSize: number | null = null;
+  if (sizeBytes >= 512) {
+    try {
+      const res = await fetchLeaseSuffixRangeBytes(lease, fetchFn, 512, { signal: opts?.signal, label: "remote footer probe" });
+      tail = res.bytes;
+      tailTotalSize = res.totalSize;
+    } catch {
+      try {
+        tail = await fetchLeaseRangeBytes(
+          lease,
+          fetchFn,
+          { start: sizeBytes - 512, endInclusive: sizeBytes - 1 },
+          { signal: opts?.signal, label: "remote footer probe" },
+        );
+      } catch {
+        tail = null;
+      }
+    }
+  }
+
+  if (looksLikeAerosparPrefixBytes(head)) return "aerospar";
+  if (looksLikeQcow2PrefixBytes(head, sizeBytes)) return "qcow2";
+
+  if (sizeBytes < 512) {
+    if (bytesEqualPrefix(head, VHD_COOKIE)) return "vhd";
+    return null;
+  }
+  if (tail && tail.byteLength === 512 && looksLikeVhdFooterBytes(tail, tailTotalSize ?? sizeBytes)) return "vhd";
+  return null;
+}
+
 function hasOwn(obj: object, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(obj, key);
 }
@@ -1029,6 +1221,14 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
     this.capacityBytesValue = remote.sizeBytes;
     this.remoteEtag = remote.etag;
     this.remoteLastModified = remote.lastModified;
+
+    // Defense-in-depth: refuse to open container formats as raw sector disks. Without this, the
+    // guest could observe container headers/allocation tables (qcow2/vhd/aerosparse) as real
+    // sectors and/or see a mismatched capacity.
+    const container = await sniffRemoteContainerFormat(this.lease, this.opts.fetchFn, remote.sizeBytes, { signal: this.fetchSignal });
+    if (container) {
+      throw new Error(`remote disk appears to be ${container} (expected raw sector disk; convert to raw/iso first)`);
+    }
 
     if (this.sha256Manifest) {
       if (this.sha256Manifest.length > MAX_REMOTE_SHA256_MANIFEST_ENTRIES) {

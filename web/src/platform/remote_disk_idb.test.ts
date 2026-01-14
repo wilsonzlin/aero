@@ -75,15 +75,26 @@ function installMockRangeFetch(
 
     const ifRange = headerValue(init, "If-Range");
     const match = /^bytes=(\d+)-(\d+)$/.exec(range);
-    if (!match) {
+    const suffix = /^bytes=-(\d+)$/.exec(range);
+    if (!match && !suffix) {
       return new Response(null, { status: 416, headers: { "Content-Range": `bytes */${data.byteLength}` } });
     }
-    const start = Number(match[1]);
-    const endInclusive = Number(match[2]);
+    const start = match ? Number(match[1]) : Math.max(0, data.byteLength - Number(suffix![1]));
+    const endInclusive = match ? Number(match[2]) : data.byteLength - 1;
     const body = data.slice(start, endInclusive + 1);
     const len = endInclusive - start + 1;
-    if (len === 1) stats.probeRangeCalls += 1;
-    else {
+    // `RemoteStreamingDisk` performs a 0-0 probe, plus small header/footer sniffing reads to
+    // detect container formats. For these tests, we count only full block fetches as
+    // `chunkRangeCalls` so assertions remain meaningful.
+    const isSniff =
+      // Head sniff (0-63) or truncated head when size < 64.
+      (start === 0 && endInclusive === Math.min(63, data.byteLength - 1) && len <= 64) ||
+      // Tail sniff is requested using a suffix range (bytes=-512), which does not collide with
+      // normal block reads (bytes=start-end).
+      suffix !== null;
+    if (len === 1 || isSniff) {
+      stats.probeRangeCalls += 1;
+    } else {
       stats.chunkRangeCalls += 1;
       stats.seenChunkIfRanges.push(ifRange);
     }
@@ -206,6 +217,66 @@ describe("RemoteStreamingDisk (IndexedDB cache)", () => {
         prefetchSequentialBlocks: 9,
       }),
     ).rejects.toThrow(/prefetch bytes too large/i);
+  });
+
+  it("rejects remote qcow2 images by content sniffing", async () => {
+    const image = new Uint8Array(1024);
+    image.set([0x51, 0x46, 0x49, 0xfb], 0); // "QFI\xfb"
+    new DataView(image.buffer).setUint32(4, 3, false);
+    const mock = installMockRangeFetch(image, { etag: '"e1"' });
+
+    await expect(
+      RemoteStreamingDisk.open("https://example.test/disk.img", {
+        blockSize: 1024,
+        cacheBackend: "idb",
+        cacheLimitBytes: 0,
+        prefetchSequentialBlocks: 0,
+      }),
+    ).rejects.toThrow(/qcow2/i);
+
+    mock.restore();
+  });
+
+  it("rejects remote aerospar images by content sniffing", async () => {
+    const image = new Uint8Array(1024);
+    image.set([0x41, 0x45, 0x52, 0x4f, 0x53, 0x50, 0x41, 0x52], 0); // "AEROSPAR"
+    new DataView(image.buffer).setUint32(8, 1, true);
+    const mock = installMockRangeFetch(image, { etag: '"e1"' });
+
+    await expect(
+      RemoteStreamingDisk.open("https://example.test/disk.img", {
+        blockSize: 1024,
+        cacheBackend: "idb",
+        cacheLimitBytes: 0,
+        prefetchSequentialBlocks: 0,
+      }),
+    ).rejects.toThrow(/aerospar/i);
+
+    mock.restore();
+  });
+
+  it("rejects remote VHD images by content sniffing", async () => {
+    const image = new Uint8Array(1024);
+    const footer = new Uint8Array(512);
+    footer.set([0x63, 0x6f, 0x6e, 0x65, 0x63, 0x74, 0x69, 0x78], 0); // "conectix"
+    const dv = new DataView(footer.buffer);
+    dv.setUint32(12, 0x0001_0000, false);
+    dv.setBigUint64(16, 0xffff_ffff_ffff_ffffn, false); // fixed disk
+    dv.setBigUint64(48, 512n, false); // current size (bytes)
+    dv.setUint32(60, 2, false); // disk type: fixed
+    image.set(footer, 512);
+    const mock = installMockRangeFetch(image, { etag: '"e1"' });
+
+    await expect(
+      RemoteStreamingDisk.open("https://example.test/disk.img", {
+        blockSize: 1024,
+        cacheBackend: "idb",
+        cacheLimitBytes: 0,
+        prefetchSequentialBlocks: 0,
+      }),
+    ).rejects.toThrow(/vhd/i);
+
+    mock.restore();
   });
 
   it("caches fetched blocks in IndexedDB and reuses them on subsequent reads", async () => {
@@ -744,17 +815,19 @@ describe("RemoteStreamingDisk (IndexedDB cache)", () => {
       }
 
       const match = /^bytes=(\d+)-(\d+)$/.exec(range);
-      if (!match) {
+      const suffix = /^bytes=-(\d+)$/.exec(range);
+      if (!match && !suffix) {
         return new Response(null, { status: 416, headers: { "Content-Range": `bytes */${image.byteLength}` } });
       }
-      const start = Number(match[1]);
-      const endInclusive = Number(match[2]);
+      const start = match ? Number(match[1]) : Math.max(0, image.byteLength - Number(suffix![1]));
+      const endInclusive = match ? Number(match[2]) : image.byteLength - 1;
       const body = image.slice(start, endInclusive + 1);
       const len = endInclusive - start + 1;
 
-      // Only record the block-aligned chunk fetches (ignore the 0-0 probe).
+      // Only record the block-aligned chunk fetches (ignore the 0-0 probe and header/footer sniffing).
       const ifRange = headerValue(init, "If-Range");
-      if (len !== 1) {
+      const isSniff = (range === "bytes=-512") || (start === 0 && endInclusive <= 63 && len <= 64);
+      if (len !== 1 && !isSniff) {
         chunkCalls += 1;
         seenChunkIfRanges.push(ifRange);
       }
@@ -854,15 +927,17 @@ describe("RemoteStreamingDisk (IndexedDB cache)", () => {
       }
 
       const match = /^bytes=(\d+)-(\d+)$/.exec(range);
-      if (!match) {
+      const suffix = /^bytes=-(\d+)$/.exec(range);
+      if (!match && !suffix) {
         return new Response(null, { status: 416, headers: { "Content-Range": `bytes */${image.byteLength}` } });
       }
-      const start = Number(match[1]);
-      const endInclusive = Number(match[2]);
+      const start = match ? Number(match[1]) : Math.max(0, image.byteLength - Number(suffix![1]));
+      const endInclusive = match ? Number(match[2]) : image.byteLength - 1;
       const body = image.slice(start, endInclusive + 1);
 
       const ifRange = headerValue(init, "If-Range");
-      if (body.byteLength !== 1) {
+      const isSniff = (range === "bytes=-512") || (start === 0 && endInclusive <= 63 && body.byteLength <= 64);
+      if (body.byteLength !== 1 && !isSniff) {
         seenChunkIfRanges.push(ifRange);
       }
 

@@ -58,12 +58,13 @@ function installMockRangeFetch(data: Uint8Array, opts: { etag: string }): { rest
     }
 
     const match = /^bytes=(\d+)-(\d+)$/.exec(range);
-    if (!match) {
+    const suffix = /^bytes=-(\d+)$/.exec(range);
+    if (!match && !suffix) {
       return new Response(null, { status: 416, headers: { "Content-Range": `bytes */${data.byteLength}` } });
     }
 
-    const start = Number(match[1]);
-    const endInclusive = Number(match[2]);
+    const start = match ? Number(match[1]) : Math.max(0, data.byteLength - Number(suffix![1]));
+    const endInclusive = match ? Number(match[2]) : data.byteLength - 1;
     const body = data.slice(start, endInclusive + 1);
 
     return new Response(body.buffer, {

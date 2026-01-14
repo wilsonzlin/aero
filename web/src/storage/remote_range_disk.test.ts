@@ -192,7 +192,21 @@ async function startRangeServer(state: RangeServerState): Promise<{
     const range = req.headers["range"];
     const ifRange = req.headers["if-range"];
 
-    if (typeof range === "string" && method === "GET") {
+    const isSniffRange = (() => {
+      if (typeof range !== "string" || method !== "GET") return false;
+      // Container sniffing may issue small header probes and a suffix tail probe.
+      if (range === "bytes=-512") return true;
+      const m = /^bytes=(\d+)-(\d+)$/.exec(range);
+      if (!m) return false;
+      const start = Number(m[1]);
+      const endInclusive = Number(m[2]);
+      if (!Number.isSafeInteger(start) || !Number.isSafeInteger(endInclusive) || endInclusive < start) return false;
+      // Header probe: bytes=0-63 (or smaller if the file is shorter).
+      if (start === 0 && endInclusive <= 63) return true;
+      return false;
+    })();
+
+    if (!isSniffRange && typeof range === "string" && method === "GET") {
       stats.rangeGets += 1;
       stats.lastRange = range;
       if (typeof ifRange === "string") {
@@ -231,13 +245,14 @@ async function startRangeServer(state: RangeServerState): Promise<{
     }
 
     const m = /^bytes=(\d+)-(\d+)$/.exec(range);
-    if (!m) {
+    const suffix = /^bytes=-(\d+)$/.exec(range);
+    if (!m && !suffix) {
       res.statusCode = 416;
       res.end();
       return;
     }
-    const start = Number(m[1]);
-    const endInclusive = Number(m[2]);
+    const start = m ? Number(m[1]) : Math.max(0, realSizeBytes - Number(suffix![1]));
+    const endInclusive = m ? Number(m[2]) : realSizeBytes - 1;
 
     if (!Number.isSafeInteger(start) || !Number.isSafeInteger(endInclusive) || endInclusive < start) {
       res.statusCode = 416;
@@ -295,7 +310,7 @@ async function startRangeServer(state: RangeServerState): Promise<{
       res.setHeader("content-range", `bytes ${start}-${end}/${realSizeBytes}`);
     }
     res.setHeader("content-length", String(body.byteLength));
-    if (state.rangeContentEncoding) res.setHeader("content-encoding", state.rangeContentEncoding);
+    if (!isSniffRange && state.rangeContentEncoding) res.setHeader("content-encoding", state.rangeContentEncoding);
     res.end(body);
   });
 
@@ -347,6 +362,43 @@ function headerValue(headers: HeadersInit | undefined, name: string): string | u
   return record[name] ?? record[lower] ?? undefined;
 }
 
+function parseRangeHeader(
+  rangeHeader: string,
+  totalSizeBytes: number,
+): { start: number; endInclusive: number; isSniff: boolean } {
+  const trimmed = rangeHeader.trim();
+  const m = /^bytes=(\d+)-(\d+)$/.exec(trimmed);
+  if (m) {
+    const start = Number(m[1]);
+    const endInclusive = Number(m[2]);
+    if (!Number.isSafeInteger(start) || !Number.isSafeInteger(endInclusive) || start < 0 || endInclusive < start) {
+      throw new Error(`invalid Range header: ${rangeHeader}`);
+    }
+    // Container sniffing uses a small 0-63 prefix range. Do not classify the last 512 bytes as
+    // "sniff" here because a normal chunk read can legitimately target the tail of the image when
+    // `chunkSize === 512`.
+    const isSniff = start === 0 && endInclusive <= 63;
+    return { start, endInclusive, isSniff };
+  }
+
+  const suffix = /^bytes=-(\d+)$/.exec(trimmed);
+  if (suffix) {
+    const suffixLen = Number(suffix[1]);
+    if (!Number.isSafeInteger(suffixLen) || suffixLen <= 0) {
+      throw new Error(`invalid Range header: ${rangeHeader}`);
+    }
+    if (!Number.isSafeInteger(totalSizeBytes) || totalSizeBytes <= 0) {
+      throw new Error(`invalid totalSizeBytes ${totalSizeBytes}`);
+    }
+    const start = Math.max(0, totalSizeBytes - suffixLen);
+    const endInclusive = totalSizeBytes - 1;
+    // Suffix ranges are only used by RemoteRangeDisk's container sniffing today.
+    return { start, endInclusive, isSniff: true };
+  }
+
+  throw new Error(`invalid Range header: ${rangeHeader}`);
+}
+
 describe("RemoteRangeDisk", () => {
   it("falls back to an in-memory cache when navigator.storage (OPFS) is unavailable", async () => {
     const chunkSize = 512;
@@ -364,10 +416,7 @@ describe("RemoteRangeDisk", () => {
       }
 
       if (method === "GET" && typeof rangeHeader === "string") {
-        const m = /^bytes=(\d+)-(\d+)$/.exec(rangeHeader);
-        if (!m) throw new Error(`invalid Range header: ${rangeHeader}`);
-        const start = Number(m[1]);
-        const endInclusive = Number(m[2]);
+        const { start, endInclusive } = parseRangeHeader(rangeHeader, data.byteLength);
         const endExclusive = endInclusive + 1;
         const body = data.slice(start, endExclusive);
         return new Response(body, {
@@ -419,10 +468,7 @@ describe("RemoteRangeDisk", () => {
       }
 
       if (method === "GET" && typeof rangeHeader === "string") {
-        const m = /^bytes=(\d+)-(\d+)$/.exec(rangeHeader);
-        if (!m) throw new Error(`invalid Range header: ${rangeHeader}`);
-        const start = Number(m[1]);
-        const endInclusive = Number(m[2]);
+        const { start, endInclusive } = parseRangeHeader(rangeHeader, data.byteLength);
         const endExclusive = endInclusive + 1;
         const body = data.slice(start, endExclusive);
         return new Response(body, {
@@ -494,18 +540,16 @@ describe("RemoteRangeDisk", () => {
             status: 200,
             headers: { "Content-Length": String(data.byteLength), ETag: "\"v1\"" },
           });
-        }
+      }
 
-        if (method === "GET" && typeof rangeHeader === "string") {
-          rangeGets += 1;
-          const m = /^bytes=(\d+)-(\d+)$/.exec(rangeHeader);
-          if (!m) throw new Error(`invalid Range header: ${rangeHeader}`);
-          const start = Number(m[1]);
-          const endInclusive = Number(m[2]);
-          const endExclusive = endInclusive + 1;
-          const body = data.slice(start, endExclusive);
-          return new Response(body, {
-            status: 206,
+      if (method === "GET" && typeof rangeHeader === "string") {
+        const parsed = parseRangeHeader(rangeHeader, data.byteLength);
+        if (!parsed.isSniff) rangeGets += 1;
+        const { start, endInclusive } = parsed;
+        const endExclusive = endInclusive + 1;
+        const body = data.slice(start, endExclusive);
+        return new Response(body, {
+          status: 206,
             headers: {
               "Cache-Control": "no-transform",
               "Content-Range": `bytes ${start}-${endInclusive}/${data.byteLength}`,
@@ -601,10 +645,7 @@ describe("RemoteRangeDisk", () => {
       }
 
       if (method === "GET" && typeof rangeHeader === "string") {
-        const m = /^bytes=(\d+)-(\d+)$/.exec(rangeHeader);
-        if (!m) throw new Error(`invalid Range header: ${rangeHeader}`);
-        const start = Number(m[1]);
-        const endInclusive = Number(m[2]);
+        const { start, endInclusive } = parseRangeHeader(rangeHeader, data.byteLength);
         const endExclusive = endInclusive + 1;
         const body = data.slice(start, endExclusive);
 
@@ -658,17 +699,18 @@ describe("RemoteRangeDisk", () => {
         });
       }
       if (method === "GET" && typeof rangeHeader === "string") {
-        rangeGets += 1;
-        const m = /^bytes=(\d+)-(\d+)$/.exec(rangeHeader);
-        if (!m) throw new Error(`invalid Range header: ${rangeHeader}`);
-        const start = Number(m[1]);
-        const endInclusive = Number(m[2]);
+        const parsed = parseRangeHeader(rangeHeader, data.byteLength);
+        if (!parsed.isSniff) rangeGets += 1;
+        const { start, endInclusive } = parsed;
         const endExclusive = endInclusive + 1;
         const body = data.slice(start, endExclusive);
-        // Intentionally omit Cache-Control to ensure the client fails fast (anti-transform defence).
+        // Intentionally omit Cache-Control for non-sniff fetches to ensure the client fails fast
+        // (anti-transform defence). Allow sniffing probes to succeed so the failure is attributed
+        // to the main fetch path.
         return new Response(body, {
           status: 206,
           headers: {
+            ...(parsed.isSniff ? { "Cache-Control": "no-transform" } : {}),
             "Content-Range": `bytes ${start}-${endInclusive}/${data.byteLength}`,
             ETag: "\"v1\"",
           },
@@ -706,11 +748,9 @@ describe("RemoteRangeDisk", () => {
       }
 
       if (method === "GET" && typeof rangeHeader === "string") {
-        rangeGets += 1;
-        const m = /^bytes=(\d+)-(\d+)$/.exec(rangeHeader);
-        if (!m) throw new Error(`invalid Range header: ${rangeHeader}`);
-        const start = Number(m[1]);
-        const endInclusive = Number(m[2]);
+        const parsed = parseRangeHeader(rangeHeader, data.byteLength);
+        if (!parsed.isSniff) rangeGets += 1;
+        const { start, endInclusive } = parsed;
         const endExclusive = endInclusive + 1;
         const body = data.slice(start, endExclusive);
         const expectedLen = endExclusive - start;
@@ -720,9 +760,9 @@ describe("RemoteRangeDisk", () => {
           headers: {
             "Cache-Control": "no-transform",
             "Content-Range": `bytes ${start}-${endInclusive}/${data.byteLength}`,
-            // Deliberately lie: indicate a larger body than requested. The client must not
-            // attempt to download an arbitrarily large response.
-            "Content-Length": String(expectedLen + 1),
+            // Deliberately lie for non-sniff fetches: indicate a larger body than requested. The
+            // client must not attempt to download an arbitrarily large response.
+            ...(parsed.isSniff ? {} : { "Content-Length": String(expectedLen + 1) }),
             ETag: "\"v1\"",
           },
         });
@@ -770,14 +810,25 @@ describe("RemoteRangeDisk", () => {
       }
 
       if (method === "GET" && typeof rangeHeader === "string") {
-        rangeGets += 1;
-        const m = /^bytes=(\d+)-(\d+)$/.exec(rangeHeader);
-        if (!m) throw new Error(`invalid Range header: ${rangeHeader}`);
-        const start = Number(m[1]);
-        const endInclusive = Number(m[2]);
+        const parsed = parseRangeHeader(rangeHeader, data.byteLength);
+        const { start, endInclusive } = parsed;
         const endExclusive = endInclusive + 1;
         const body = data.slice(start, endExclusive);
 
+        // Container sniffing requests should not participate in the inflight/concurrency accounting
+        // for this test.
+        if (parsed.isSniff) {
+          return new Response(body, {
+            status: 206,
+            headers: {
+              "Cache-Control": "no-transform",
+              "Content-Range": `bytes ${start}-${endInclusive}/${data.byteLength}`,
+              ETag: "\"v1\"",
+            },
+          });
+        }
+
+        rangeGets += 1;
         inflightGets += 1;
         if (inflightGets > maxInflightGets) maxInflightGets = inflightGets;
 
@@ -1456,15 +1507,15 @@ describe("RemoteRangeDisk", () => {
     });
     activeServers.push(server.close);
 
-    const disk = await RemoteRangeDisk.open(server.url, {
-      cacheKeyParts: { imageId: "no-range", version: "v1", deliveryType: remoteRangeDeliveryType(chunkSize) },
-      chunkSize,
-      metadataStore: new MemoryMetadataStore(),
-      sparseCacheFactory: new MemorySparseCacheFactory(),
-      readAheadChunks: 0,
-    });
-
-    await expect(disk.readSectors(0, new Uint8Array(4096))).rejects.toThrow(/ignored Range/i);
+    await expect(
+      RemoteRangeDisk.open(server.url, {
+        cacheKeyParts: { imageId: "no-range", version: "v1", deliveryType: remoteRangeDeliveryType(chunkSize) },
+        chunkSize,
+        metadataStore: new MemoryMetadataStore(),
+        sparseCacheFactory: new MemorySparseCacheFactory(),
+        readAheadChunks: 0,
+      }),
+    ).rejects.toThrow(/ignored Range/i);
   });
 
   it("rejects 206 responses with mismatched Content-Range", async () => {
@@ -1487,6 +1538,30 @@ describe("RemoteRangeDisk", () => {
     });
 
     await expect(disk.readSectors(0, new Uint8Array(4096))).rejects.toThrow(/Content-Range mismatch/i);
+  });
+
+  it("rejects qcow2 images by content sniffing", async () => {
+    const chunkSize = 1024;
+    const data = new Uint8Array(1024);
+    data.set([0x51, 0x46, 0x49, 0xfb], 0); // "QFI\xfb"
+    new DataView(data.buffer).setUint32(4, 3, false);
+
+    const server = await startRangeServer({
+      sizeBytes: data.byteLength,
+      etag: "\"v1\"",
+      getBytes: (s, e) => data.slice(s, e),
+    });
+    activeServers.push(server.close);
+
+    await expect(
+      RemoteRangeDisk.open(server.url, {
+        cacheKeyParts: { imageId: "qcow2-sniff", version: "v1", deliveryType: remoteRangeDeliveryType(chunkSize) },
+        chunkSize,
+        metadataStore: new MemoryMetadataStore(),
+        sparseCacheFactory: new MemorySparseCacheFactory(),
+        readAheadChunks: 0,
+      }),
+    ).rejects.toThrow(/qcow2/i);
   });
 
   it("clearCache drops cached blocks and forces refetch", async () => {
@@ -1775,10 +1850,7 @@ describe("RemoteRangeDisk", () => {
         return new Response(toArrayBuffer(data), { status: 200, headers: { "Content-Length": String(data.byteLength) } });
       }
 
-      const m = /^bytes=(\d+)-(\d+)$/.exec(rangeHeader);
-      if (!m) throw new Error(`invalid Range header: ${rangeHeader}`);
-      const start = Number(m[1]);
-      const endInclusive = Number(m[2]);
+      const { start, endInclusive } = parseRangeHeader(rangeHeader, data.byteLength);
       const slice = data.subarray(start, Math.min(endInclusive + 1, data.byteLength));
       const body = toArrayBuffer(slice);
       const resp = new Response(body, {
@@ -1889,11 +1961,9 @@ describe("RemoteRangeDisk", () => {
       }
 
       if (method === "GET" && typeof rangeHeader === "string") {
-        rangeGets += 1;
-        const m = /^bytes=(\d+)-(\d+)$/.exec(rangeHeader);
-        if (!m) throw new Error(`invalid Range header: ${rangeHeader}`);
-        const start = Number(m[1]);
-        const endInclusive = Number(m[2]);
+        const parsed = parseRangeHeader(rangeHeader, data.byteLength);
+        if (!parsed.isSniff) rangeGets += 1;
+        const { start, endInclusive } = parsed;
         const endExclusive = endInclusive + 1;
         const body = data.slice(start, endExclusive);
 
@@ -1978,11 +2048,9 @@ describe("RemoteRangeDisk", () => {
       }
 
       if (method === "GET" && typeof rangeHeader === "string") {
-        rangeGets += 1;
-        const m = /^bytes=(\d+)-(\d+)$/.exec(rangeHeader);
-        if (!m) throw new Error(`invalid Range header: ${rangeHeader}`);
-        const start = Number(m[1]);
-        const endInclusive = Number(m[2]);
+        const parsed = parseRangeHeader(rangeHeader, data.byteLength);
+        if (!parsed.isSniff) rangeGets += 1;
+        const { start, endInclusive } = parsed;
         const endExclusive = endInclusive + 1;
         const body = data.slice(start, endExclusive);
 
@@ -2063,11 +2131,9 @@ describe("RemoteRangeDisk", () => {
       }
 
       if (method === "GET" && typeof rangeHeader === "string") {
-        rangeGets += 1;
-        const m = /^bytes=(\d+)-(\d+)$/.exec(rangeHeader);
-        if (!m) throw new Error(`invalid Range header: ${rangeHeader}`);
-        const start = Number(m[1]);
-        const endInclusive = Number(m[2]);
+        const parsed = parseRangeHeader(rangeHeader, data.byteLength);
+        if (!parsed.isSniff) rangeGets += 1;
+        const { start, endInclusive } = parsed;
         const endExclusive = endInclusive + 1;
         const body = data.slice(start, endExclusive);
 
@@ -2172,11 +2238,9 @@ describe("RemoteRangeDisk", () => {
       }
 
       if (method === "GET" && typeof rangeHeader === "string") {
-        rangeGets += 1;
-        const m = /^bytes=(\d+)-(\d+)$/.exec(rangeHeader);
-        if (!m) throw new Error(`invalid Range header: ${rangeHeader}`);
-        const start = Number(m[1]);
-        const endInclusive = Number(m[2]);
+        const parsed = parseRangeHeader(rangeHeader, data.byteLength);
+        if (!parsed.isSniff) rangeGets += 1;
+        const { start, endInclusive } = parsed;
         const endExclusive = endInclusive + 1;
         const body = data.slice(start, endExclusive);
 
@@ -2257,11 +2321,9 @@ describe("RemoteRangeDisk", () => {
       }
 
       if (method === "GET" && typeof rangeHeader === "string") {
-        rangeGets += 1;
-        const m = /^bytes=(\d+)-(\d+)$/.exec(rangeHeader);
-        if (!m) throw new Error(`invalid Range header: ${rangeHeader}`);
-        const start = Number(m[1]);
-        const endInclusive = Number(m[2]);
+        const parsed = parseRangeHeader(rangeHeader, data.byteLength);
+        if (!parsed.isSniff) rangeGets += 1;
+        const { start, endInclusive } = parsed;
         const endExclusive = endInclusive + 1;
         const body = data.slice(start, endExclusive);
 
@@ -2360,11 +2422,9 @@ describe("RemoteRangeDisk", () => {
       }
 
       if (method === "GET" && typeof rangeHeader === "string") {
-        rangeGets += 1;
-        const m = /^bytes=(\d+)-(\d+)$/.exec(rangeHeader);
-        if (!m) throw new Error(`invalid Range header: ${rangeHeader}`);
-        const start = Number(m[1]);
-        const endInclusive = Number(m[2]);
+        const parsed = parseRangeHeader(rangeHeader, data.byteLength);
+        if (!parsed.isSniff) rangeGets += 1;
+        const { start, endInclusive } = parsed;
         const endExclusive = endInclusive + 1;
         const body = data.slice(start, endExclusive);
 
@@ -2456,11 +2516,9 @@ describe("RemoteRangeDisk", () => {
       }
 
       if (method === "GET" && typeof rangeHeader === "string") {
-        rangeGets += 1;
-        const m = /^bytes=(\d+)-(\d+)$/.exec(rangeHeader);
-        if (!m) throw new Error(`invalid Range header: ${rangeHeader}`);
-        const start = Number(m[1]);
-        const endInclusive = Number(m[2]);
+        const parsed = parseRangeHeader(rangeHeader, data.byteLength);
+        if (!parsed.isSniff) rangeGets += 1;
+        const { start, endInclusive } = parsed;
         const endExclusive = endInclusive + 1;
         const body = data.slice(start, endExclusive);
 

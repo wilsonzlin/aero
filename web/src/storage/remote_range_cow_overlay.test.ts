@@ -31,9 +31,10 @@ function createRangeFetch(data: Uint8Array<ArrayBuffer>): { fetch: typeof fetch;
 
     if (rangeHeader) {
       const m = /^bytes=(\d+)-(\d+)$/.exec(rangeHeader);
-      if (!m) throw new Error(`invalid Range header: ${rangeHeader}`);
-      const start = Number(m[1]);
-      const end = Number(m[2]);
+      const suffix = /^bytes=-(\d+)$/.exec(rangeHeader);
+      if (!m && !suffix) throw new Error(`invalid Range header: ${rangeHeader}`);
+      const start = m ? Number(m[1]) : Math.max(0, data.byteLength - Number(suffix![1]));
+      const end = m ? Number(m[2]) : data.byteLength - 1;
       const slice = data.subarray(start, Math.min(end + 1, data.byteLength));
       const body = toArrayBuffer(slice);
       return new Response(body, {

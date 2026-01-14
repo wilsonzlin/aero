@@ -65,14 +65,24 @@ function installMockRangeFetch(data: Uint8Array, opts: { etag: string }): { stat
     }
 
     const match = /^bytes=(\d+)-(\d+)$/.exec(range);
-    if (!match) {
+    const suffix = /^bytes=-(\d+)$/.exec(range);
+    if (!match && !suffix) {
       return new Response(null, { status: 416, headers: { "Content-Range": `bytes */${data.byteLength}` } });
     }
-    const start = Number(match[1]);
-    const endInclusive = Number(match[2]);
+    const start = match ? Number(match[1]) : Math.max(0, data.byteLength - Number(suffix![1]));
+    const endInclusive = match ? Number(match[2]) : data.byteLength - 1;
     const body = data.slice(start, endInclusive + 1);
     const len = endInclusive - start + 1;
-    if (len === 1) stats.probeRangeCalls += 1;
+    // `RemoteStreamingDisk` performs a 0-0 probe, plus small header/footer sniffing reads to
+    // detect container formats. For these tests, we count only full block fetches as
+    // `chunkRangeCalls` so assertions remain meaningful.
+    const isSniff =
+      // Head sniff (0-63) or truncated head when size < 64.
+      (start === 0 && endInclusive === Math.min(63, data.byteLength - 1) && len <= 64) ||
+      // Tail sniff is requested using a suffix range (bytes=-512), which does not collide with
+      // normal block reads (bytes=start-end).
+      suffix !== null;
+    if (len === 1 || isSniff) stats.probeRangeCalls += 1;
     else stats.chunkRangeCalls += 1;
 
     return new Response(body.buffer, {
@@ -185,12 +195,13 @@ function installMockRangeFetchWithConcurrency(
     }
 
     const match = /^bytes=(\d+)-(\d+)$/.exec(range);
-    if (!match) {
+    const suffix = /^bytes=-(\d+)$/.exec(range);
+    if (!match && !suffix) {
       return new Response(null, { status: 416, headers: { "Content-Range": `bytes */${data.byteLength}` } });
     }
 
-    const start = Number(match[1]);
-    const endInclusive = Number(match[2]);
+    const start = match ? Number(match[1]) : Math.max(0, data.byteLength - Number(suffix![1]));
+    const endInclusive = match ? Number(match[2]) : data.byteLength - 1;
     const body = data.slice(start, endInclusive + 1);
     const len = endInclusive - start + 1;
 
@@ -206,8 +217,14 @@ function installMockRangeFetchWithConcurrency(
         },
       });
 
-    // Don't delay the 0-0 probe.
-    if (len === 1) {
+    // Don't delay the 0-0 probe or small header/footer sniffing reads.
+    const isSniff =
+      // Head sniff (0-63) or truncated head when size < 64.
+      (start === 0 && endInclusive === Math.min(63, data.byteLength - 1) && len <= 64) ||
+      // Tail sniff is requested using a suffix range (bytes=-512), which does not collide with
+      // normal block reads (bytes=start-end).
+      suffix !== null;
+    if (len === 1 || isSniff) {
       return makeRangeResp();
     }
 
