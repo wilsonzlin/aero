@@ -267,6 +267,37 @@ class HarnessVectorsFlagValidationTests(unittest.TestCase):
                 finally:
                     sys.argv = old_argv
 
+    def test_rejects_non_positive_memory_smp_timeout(self) -> None:
+        h = self.harness
+
+        cases = [
+            (["--memory-mb", "0"], "--memory-mb must be a positive integer"),
+            (["--memory-mb", "-1"], "--memory-mb must be a positive integer"),
+            (["--smp", "0"], "--smp must be a positive integer"),
+            (["--smp", "-1"], "--smp must be a positive integer"),
+            (["--timeout-seconds", "0"], "--timeout-seconds must be a positive integer"),
+            (["--timeout-seconds", "-1"], "--timeout-seconds must be a positive integer"),
+        ]
+
+        for extra_argv, expected in cases:
+            with self.subTest(argv=extra_argv):
+                old_argv = sys.argv
+                try:
+                    sys.argv = [
+                        "invoke_aero_virtio_win7_tests.py",
+                        "--qemu-system",
+                        "qemu-system-x86_64",
+                        "--disk-image",
+                        "disk.img",
+                    ] + extra_argv
+                    stderr = io.StringIO()
+                    with contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as cm:
+                        h.main()
+                    self.assertEqual(cm.exception.code, 2)
+                    self.assertIn(expected, stderr.getvalue())
+                finally:
+                    sys.argv = old_argv
+
 
 if __name__ == "__main__":
     unittest.main()

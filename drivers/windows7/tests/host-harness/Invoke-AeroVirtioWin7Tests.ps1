@@ -403,6 +403,16 @@ if ($HttpPort -le 0 -or $HttpPort -gt 65535) {
   throw "-HttpPort must be in the range 1..65535."
 }
 
+if ($MemoryMB -le 0) {
+  throw "-MemoryMB must be a positive integer."
+}
+if ($Smp -le 0) {
+  throw "-Smp must be a positive integer."
+}
+if ($TimeoutSeconds -le 0) {
+  throw "-TimeoutSeconds must be a positive integer."
+}
+
 if (-not $DisableUdp) {
   if ($UdpPort -le 0 -or $UdpPort -gt 65535) {
     throw "-UdpPort must be in the range 1..65535."

@@ -2786,6 +2786,12 @@ def main() -> int:
         parser.error("--udp-port must be in the range 1..65535")
     if args.http_port <= 0 or args.http_port > 65535:
         parser.error("--http-port must be in the range 1..65535")
+    if args.memory_mb <= 0:
+        parser.error("--memory-mb must be a positive integer")
+    if args.smp <= 0:
+        parser.error("--smp must be a positive integer")
+    if args.timeout_seconds <= 0:
+        parser.error("--timeout-seconds must be a positive integer")
 
     if not args.enable_virtio_snd:
         if args.with_snd_buffer_limits:
