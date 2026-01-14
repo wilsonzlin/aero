@@ -1284,6 +1284,7 @@ workflow does not require the disk image path to exist (it prints a warning inst
 installed (it prints a warning and reports `qemu: (not found)`), which is useful when you just want to inspect the
 generated QEMU args. You can also leave `disk_image_path` empty in `dry_run` mode; the workflow will create a temporary
 placeholder file under the logs directory and use that path for argument generation.
+The workflow job summary also embeds the dry-run QEMU argv JSON and copy/paste command for convenience.
 
 To force INTx-only mode (disable MSI-X by passing `vectors=0` on the virtio devices), set the workflow input
 `force_intx=true`. This passes `--force-intx` (alias: `--virtio-disable-msix`) to the Python harness. Note: some QEMU
