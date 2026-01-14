@@ -191,7 +191,6 @@ struct CleanupDevice {
   D3DDDI_HDEVICE hDevice{};
   std::vector<D3DDDI_HRESOURCE> resources;
   std::vector<D3D9DDI_HSHADER> shaders;
-  std::vector<D3DDDI_HRESOURCE> resources;
   bool has_adapter = false;
   bool has_device = false;
 
@@ -283,39 +282,6 @@ bool CreateDevice(CleanupDevice* cleanup) {
   if (!Check(cleanup->device_funcs.pfnDestroyResource != nullptr, "pfnDestroyResource")) {
     return false;
   }
-  return true;
-}
-
-bool CreateDummyTexture(CleanupDevice* cleanup, D3DDDI_HRESOURCE* out_tex) {
-  if (!cleanup || !out_tex) {
-    return false;
-  }
-  // D3DFMT_X8R8G8B8 = 22.
-  D3D9DDIARG_CREATERESOURCE create_res{};
-  create_res.type = 3u; // D3DRTYPE_TEXTURE (conventional value; AeroGPU currently treats this as metadata)
-  create_res.format = 22u;
-  create_res.width = 2;
-  create_res.height = 2;
-  create_res.depth = 1;
-  create_res.mip_levels = 1;
-  create_res.usage = 0;
-  create_res.pool = 0;
-  create_res.size = 0;
-  create_res.hResource.pDrvPrivate = nullptr;
-  create_res.pSharedHandle = nullptr;
-  create_res.pPrivateDriverData = nullptr;
-  create_res.PrivateDriverDataSize = 0;
-  create_res.wddm_hAllocation = 0;
-
-  HRESULT hr = cleanup->device_funcs.pfnCreateResource(cleanup->hDevice, &create_res);
-  if (!Check(hr == S_OK, "CreateResource(texture2d)")) {
-    return false;
-  }
-  if (!Check(create_res.hResource.pDrvPrivate != nullptr, "CreateResource returned hResource")) {
-    return false;
-  }
-  cleanup->resources.push_back(create_res.hResource);
-  *out_tex = create_res.hResource;
   return true;
 }
 
