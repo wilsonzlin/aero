@@ -2,7 +2,7 @@
 
 use aero_storage::{
     ChunkedStreamingDisk, ChunkedStreamingDiskConfig, ChunkedStreamingDiskError,
-    StreamingCacheBackend,
+    StreamingCacheBackend, SECTOR_SIZE,
 };
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Method, Request, Response, Server, StatusCode};
@@ -258,8 +258,8 @@ async fn rejects_manifests_with_too_small_chunk_index_width() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn rejects_manifests_with_chunk_size_too_large() {
-    let chunk_size = 64 * 1024 * 1024 + 512;
-    let image: Vec<u8> = vec![0u8; 512];
+    let chunk_size = 64 * 1024 * 1024 + (SECTOR_SIZE as u64);
+    let image: Vec<u8> = vec![0u8; SECTOR_SIZE];
     let manifest = serde_json::json!({
         "schema": "aero.chunked-disk-image.v1",
         "version": "big-chunk-size",
@@ -297,9 +297,9 @@ async fn rejects_manifests_with_chunk_size_too_large() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn rejects_manifests_with_chunk_count_too_large() {
-    let total_size = 512u64;
+    let total_size = SECTOR_SIZE as u64;
     let image: Vec<u8> = vec![0u8; total_size as usize];
-    let chunk_size = 512u64;
+    let chunk_size = SECTOR_SIZE as u64;
     let manifest = serde_json::json!({
         "schema": "aero.chunked-disk-image.v1",
         "version": "big-chunk-count",
@@ -338,7 +338,7 @@ async fn rejects_manifests_with_chunk_count_too_large() {
 #[tokio::test(flavor = "current_thread")]
 async fn reads_span_boundaries_and_cache_reuses_across_runs() {
     // totalSize must be a multiple of 512.
-    let total_size = 4608usize; // 9 * 512
+    let total_size = 9 * SECTOR_SIZE;
     let image: Vec<u8> = (0..total_size).map(|i| (i % 251) as u8).collect();
     let chunk_size = 1024u64;
     let total_size_u64 = image.len() as u64;
@@ -416,7 +416,7 @@ async fn reads_span_boundaries_and_cache_reuses_across_runs() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn sha256_mismatch_is_deterministic_error() {
-    let total_size = 1536usize; // 3 * 512, so final chunk is smaller
+    let total_size = 3 * SECTOR_SIZE; // final chunk is smaller
     let image: Vec<u8> = (0..total_size).map(|i| (i % 251) as u8).collect();
     let chunk_size = 1024u64;
     let total_size_u64 = image.len() as u64;
@@ -438,13 +438,13 @@ async fn sha256_mismatch_is_deterministic_error() {
         "chunkIndexWidth": 8,
         "chunks": [
             { "size": 1024, "sha256": expected0 },
-            { "size": 512, "sha256": expected1 },
+            { "size": SECTOR_SIZE, "sha256": expected1 },
         ]
     });
     let manifest_body = serde_json::to_string(&manifest).unwrap();
 
     // Serve the final chunk with the correct length but wrong contents.
-    let wrong_chunk_bytes = vec![0u8; 512];
+    let wrong_chunk_bytes = vec![0u8; SECTOR_SIZE];
     let actual1 = sha256_hex(&wrong_chunk_bytes);
 
     let (url, state, shutdown) = start_chunked_server(
@@ -461,7 +461,7 @@ async fn sha256_mismatch_is_deterministic_error() {
     config.options.max_retries = 1;
 
     let disk = ChunkedStreamingDisk::open(config).await.unwrap();
-    let mut buf = vec![0u8; 512];
+    let mut buf = vec![0u8; SECTOR_SIZE];
     let err = disk.read_at(1024, &mut buf).await.err().unwrap();
     match err {
         ChunkedStreamingDiskError::Integrity {
@@ -478,7 +478,7 @@ async fn sha256_mismatch_is_deterministic_error() {
 
     // Integrity failures should not populate the cache; a second attempt should hit the server
     // again rather than reading a poisoned cached chunk.
-    let mut buf2 = vec![0u8; 512];
+    let mut buf2 = vec![0u8; SECTOR_SIZE];
     let _ = disk.read_at(1024, &mut buf2).await.err().unwrap();
     assert_eq!(
         state.counters.chunk_get.load(Ordering::SeqCst),
