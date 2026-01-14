@@ -1978,8 +1978,11 @@ mod tests {
             .find("fn collect_used_pixel_inputs_op")
             .expect("collect_used_pixel_inputs_op should exist in source");
 
-        // Look back a small window for the `deny(unreachable_patterns)` attribute.
-        let window_start = fn_start.saturating_sub(256);
+        // Look back a window for the `deny(unreachable_patterns)` attribute.
+        //
+        // This is intentionally a bit generous so adding comments/attributes above the function
+        // doesn't spuriously break the test.
+        let window_start = fn_start.saturating_sub(2048);
         let header = &SRC[window_start..fn_start];
         assert!(
             header.contains("#[deny(unreachable_patterns)]"),
@@ -1995,7 +1998,7 @@ mod tests {
 
         let fn_src = &SRC[fn_start..fn_end];
         assert_eq!(
-            fn_src.matches("IrOp::Dp2Add").count(),
+            fn_src.matches("IrOp::Dp2Add {").count(),
             1,
             "collect_used_pixel_inputs_op should list IrOp::Dp2Add exactly once"
         );
