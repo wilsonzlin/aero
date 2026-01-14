@@ -13742,6 +13742,21 @@ HRESULT AEROGPU_D3D9_CALL device_set_render_state(
     }
   }
 
+  // D3DRS_TEXTUREFACTOR is consumed by the fixed-function stage0 fallback when
+  // the texture combiners reference TFACTOR. Upload it into the reserved PS
+  // constant register (c0) on render-state updates so legacy apps that animate
+  // TEXTUREFACTOR without touching stage-state still render correctly.
+  constexpr uint32_t kD3dRsTextureFactor = 60u; // D3DRS_TEXTUREFACTOR
+  if (state == kD3dRsTextureFactor && !dev->user_ps) {
+    const FixedfuncStage0Key stage0_key = fixedfunc_stage0_key_locked(dev);
+    if (stage0_key.supported && stage0_key.uses_tfactor) {
+      const HRESULT hr = ensure_fixedfunc_texture_factor_constant_locked(dev);
+      if (FAILED(hr)) {
+        return trace.ret(hr);
+      }
+    }
+  }
+
   auto* cmd = append_fixed_locked<aerogpu_cmd_set_render_state>(dev, AEROGPU_CMD_SET_RENDER_STATE);
   if (!cmd) {
     return trace.ret(E_OUTOFMEMORY);
@@ -15511,6 +15526,22 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
   //
   // State-block apply bypasses SetTextureStageState, so keep the cached stage0
   // PS selection in sync and re-bind if the currently bound PS changes.
+  //
+  // Also handle D3DRS_TEXTUREFACTOR updates: state blocks often include
+  // TEXTUREFACTOR without changing stage state, so the fixed-function PS constant
+  // (c0) must be refreshed when needed.
+  constexpr uint32_t kD3dRsTextureFactor = 60u; // D3DRS_TEXTUREFACTOR
+  const bool tfactor_dirty = sb->render_state_mask.test(kD3dRsTextureFactor);
+  FixedfuncStage0Key stage0_key{};
+  if (!dev->user_ps && (stage0_tss_dirty || tfactor_dirty)) {
+    stage0_key = fixedfunc_stage0_key_locked(dev);
+    if (tfactor_dirty && stage0_key.supported && stage0_key.uses_tfactor) {
+      const HRESULT hr = ensure_fixedfunc_texture_factor_constant_locked(dev);
+      if (FAILED(hr)) {
+        return hr;
+      }
+    }
+  }
   if (stage0_tss_dirty && !dev->user_ps) {
     Shader** ps_slot = nullptr;
     if (dev->user_vs) {
@@ -15540,7 +15571,10 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
       ps_slot = &dev->fixedfunc_ps_interop;
     }
 
-    if (ps_slot) {
+    // Stage0 stage-state selection is guarded: if the app applied an unsupported
+    // stage-state combination via a state block, tolerate the apply and fail
+    // draws (not ApplyStateBlock) with INVALIDCALL.
+    if (ps_slot && stage0_key.supported) {
       const HRESULT hr = ensure_fixedfunc_pixel_shader_locked(dev, ps_slot);
       if (FAILED(hr)) {
         return hr;
