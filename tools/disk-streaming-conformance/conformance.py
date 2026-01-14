@@ -1029,10 +1029,33 @@ def _strip_weak_etag_prefix(etag: str) -> str:
     return etag
 
 
+def _has_comma_outside_quotes(value: str) -> bool:
+    in_quotes = False
+    escaped = False
+    for ch in value:
+        if escaped:
+            escaped = False
+            continue
+        # Quoted-string can escape characters. Track escapes only while inside quotes so
+        # backslashes in unquoted portions don't affect parsing.
+        if in_quotes and ch == "\\":
+            escaped = True
+            continue
+        if ch == '"':
+            in_quotes = not in_quotes
+            continue
+        if ch == "," and not in_quotes:
+            return True
+    # Be conservative: if quotes are unbalanced, treat it as potentially a list.
+    return in_quotes
+
+
 def _is_single_etag(etag: str) -> bool:
     # If-Range only accepts a single validator. We conservatively skip if it looks like a list.
-    # (ETag values can technically contain commas inside quotes, but it's extremely uncommon.)
-    return "," not in etag
+    #
+    # ETag values can contain commas inside quotes, so only treat commas that occur outside quotes
+    # as list separators.
+    return not _has_comma_outside_quotes(etag)
 
 
 def _test_if_range_matches_etag(
