@@ -5,7 +5,7 @@ export type AtomicsWaitResult = "ok" | "not-equal" | "timed-out";
 function canAtomicsWait(): boolean {
   // Browser main thread disallows Atomics.wait; workers and Node allow it.
   // There's no perfect feature test; this is conservative.
-  return typeof Atomics.wait === "function" && (globalThis as any).document === undefined;
+  return typeof Atomics.wait === "function" && typeof document === "undefined";
 }
 
 function nowMs(): number {

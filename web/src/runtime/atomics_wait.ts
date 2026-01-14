@@ -33,14 +33,17 @@ type AtomicsWaitAsync = (
 
 function isWindowContext(): boolean {
   // `document` is a strong signal that we're in the UI thread.
-  return typeof window !== 'undefined' && typeof (window as any).document !== 'undefined';
+  return typeof document !== 'undefined';
 }
 
 function isDevBuild(): boolean {
   // Vite/Rollup style.
-  if (typeof import.meta !== 'undefined' && typeof (import.meta as any).env !== 'undefined') {
-    const env = (import.meta as any).env as Record<string, unknown>;
-    if (typeof env.DEV === 'boolean') return env.DEV;
+  if (typeof import.meta !== 'undefined') {
+    const metaEnv = (import.meta as unknown as { env?: unknown }).env;
+    if (metaEnv && typeof metaEnv === 'object') {
+      const env = metaEnv as Record<string, unknown>;
+      if (typeof env.DEV === 'boolean') return env.DEV;
+    }
   }
 
   // Node style.
@@ -116,10 +119,11 @@ export async function waitUntilNotEqual(
     return 'ok';
   }
 
-  const waitAsync: AtomicsWaitAsync | undefined =
-    options._useWaitAsync === false ? undefined : ((Atomics as any).waitAsync as AtomicsWaitAsync | undefined);
+  const waitAsyncValue =
+    options._useWaitAsync === false ? undefined : (Atomics as unknown as { waitAsync?: unknown }).waitAsync;
+  const waitAsync = typeof waitAsyncValue === 'function' ? (waitAsyncValue as AtomicsWaitAsync) : undefined;
 
-  if (typeof waitAsync === 'function') {
+  if (waitAsync) {
     // Main thread safe path: Atomics.waitAsync() (woken by Atomics.notify()).
     while (Atomics.load(i32, index) === value) {
       const remaining = remainingTimeoutMs(start, options.timeoutMs, now);

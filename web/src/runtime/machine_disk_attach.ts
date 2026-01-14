@@ -95,7 +95,8 @@ export function planMachineBootDiskAttachment(meta: DiskImageMetadata, role: Mac
   }
 
   if (meta.source !== "local") {
-    throw new Error(`machine runtime received unexpected disk source=${String((meta as any).source)}`);
+    const source = (meta as unknown as { source?: unknown }).source;
+    throw new Error(`machine runtime received unexpected disk source=${String(source)}`);
   }
 
   // Local metadata can still represent a remote-streaming disk via `meta.remote`. Reject those for

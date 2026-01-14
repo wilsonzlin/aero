@@ -2402,11 +2402,12 @@ function detectThreadSupport(): ThreadSupport {
     }
 
     const hasCrossOriginIsolated = "crossOriginIsolated" in globalThis;
+    const crossOriginIsolated = (globalThis as unknown as { crossOriginIsolated?: unknown }).crossOriginIsolated;
 
     // `crossOriginIsolated` is required for SharedArrayBuffer on the web. In non-web
     // contexts (e.g. Node/Vitest), this flag does not exist, but SharedArrayBuffer +
     // shared WebAssembly.Memory may still be available.
-    if (hasCrossOriginIsolated && !(globalThis as any).crossOriginIsolated) {
+    if (hasCrossOriginIsolated && crossOriginIsolated !== true) {
         return {
             supported: false,
             reason: "crossOriginIsolated is false (missing COOP/COEP headers); SharedArrayBuffer is unavailable",
