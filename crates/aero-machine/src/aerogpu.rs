@@ -382,6 +382,10 @@ pub(crate) fn composite_cursor_rgba8888_over_scanout(
     }
 }
 pub struct AeroGpuMmioDevice {
+    /// Internal PCI config image used by the device model for COMMAND/BAR gating.
+    ///
+    /// The canonical PCI config space is owned by the machine (via `SharedPciConfigPorts`), so this
+    /// config must be explicitly synchronized from the platform before ticking / IRQ polling.
     config: PciConfigSpace,
     abi_version: u32,
     supported_features: u64,
@@ -571,6 +575,18 @@ impl AeroGpuMmioDevice {
         self.error_fence = fence;
         self.error_count = self.error_count.saturating_add(1);
         self.irq_status |= pci::AEROGPU_IRQ_ERROR;
+    }
+
+    fn command(&self) -> u16 {
+        self.config.command()
+    }
+
+    fn bus_master_enabled(&self) -> bool {
+        (self.command() & (1 << 2)) != 0
+    }
+
+    fn intx_disabled(&self) -> bool {
+        (self.command() & (1 << 10)) != 0
     }
 
     #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
@@ -768,7 +784,7 @@ impl AeroGpuMmioDevice {
 
     pub fn irq_level(&self) -> bool {
         // Respect PCI COMMAND.INTX_DISABLE (bit 10).
-        if (self.config.command() & (1 << 10)) != 0 {
+        if self.intx_disabled() {
             return false;
         }
         (self.irq_status & self.irq_enable) != 0
@@ -949,13 +965,15 @@ impl AeroGpuMmioDevice {
         }
     }
 
-    pub fn process(&mut self, mem: &mut dyn MemoryBus, dma_enabled: bool) {
+    pub fn process(&mut self, mem: &mut dyn MemoryBus) {
         // Preserve the emulator device model ordering: keep the vblank clock caught up to "now"
         // before processing newly-submitted work, so vsync pacing can't complete on an already-
         // elapsed vblank edge.
         if let Some(clock) = &self.clock {
             self.tick_vblank(clock.now_ns());
         }
+
+        let dma_enabled = self.bus_master_enabled();
 
         // Ring control RESET is an MMIO write-side effect, but touching the ring header requires
         // DMA; perform the actual memory update from the machine's device tick path when bus
@@ -1219,6 +1237,9 @@ impl AeroGpuMmioDevice {
                 if self.scanout0_enable && !new_enable {
                     self.next_vblank_ns = None;
                     self.irq_status &= !pci::AEROGPU_IRQ_SCANOUT_VBLANK;
+                    // `SCANOUT0_ENABLE=0` explicitly releases the WDDM scanout claim so the machine
+                    // can fall back to legacy VGA/VBE presentation.
+                    self.wddm_scanout_active = false;
                     // Reset torn-update tracking so a stale LO write can't block future publishes.
                     self.scanout0_fb_gpa_lo_pending = false;
                 }

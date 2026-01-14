@@ -4371,9 +4371,10 @@ impl Machine {
     /// Policy summary:
     /// - Before the guest ever enables the AeroGPU WDDM scanout, legacy VGA/VBE output is
     ///   presented.
-    /// - Once AeroGPU scanout has ever been enabled, WDDM owns scanout until device reset and
-    ///   legacy VGA/VBE is ignored by presentation (even if legacy MMIO/PIO continues to accept
-    ///   writes for compatibility).
+    /// - Once the guest claims AeroGPU scanout (writes a valid `SCANOUT0_*` config and enables it),
+    ///   WDDM owns scanout until the guest disables scanout (`SCANOUT0_ENABLE=0`) or the VM resets.
+    ///   While WDDM owns scanout, legacy VGA/VBE is ignored by presentation even if legacy MMIO/PIO
+    ///   continues to accept writes for compatibility.
     pub fn active_scanout_source(&self) -> ScanoutSource {
         if let Some(aerogpu_mmio) = &self.aerogpu_mmio {
             let state = aerogpu_mmio.borrow().scanout0_state();
@@ -6029,17 +6030,31 @@ impl Machine {
                 let bdf: PciBdf = aero_devices::pci::profile::AEROGPU.bdf;
                 let pin = PciInterruptPin::IntA;
 
-                let command = self
+                // Keep the AeroGPU model's internal PCI command/BAR state coherent so `irq_level()`
+                // can apply COMMAND.INTX_DISABLE gating even though the machine owns the canonical
+                // PCI config space.
+                let (command, bar0_base, bar1_base) = self
                     .pci_cfg
                     .as_ref()
-                    .and_then(|pci_cfg| {
+                    .map(|pci_cfg| {
                         let mut pci_cfg = pci_cfg.borrow_mut();
-                        pci_cfg
-                            .bus_mut()
-                            .device_config(bdf)
-                            .map(|cfg| cfg.command())
+                        let cfg = pci_cfg.bus_mut().device_config(bdf);
+                        let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
+                        let bar0_base = cfg
+                            .and_then(|cfg| {
+                                cfg.bar_range(aero_devices::pci::profile::AEROGPU_BAR0_INDEX)
+                            })
+                            .map(|range| range.base)
+                            .unwrap_or(0);
+                        let bar1_base = cfg
+                            .and_then(|cfg| {
+                                cfg.bar_range(aero_devices::pci::profile::AEROGPU_BAR1_VRAM_INDEX)
+                            })
+                            .map(|range| range.base)
+                            .unwrap_or(0);
+                        (command, bar0_base, bar1_base)
                     })
-                    .unwrap_or(0);
+                    .unwrap_or((0, 0, 0));
 
                 // Tick vblank scheduling based on the deterministic platform clock so tests do not
                 // depend on wall clock time.
@@ -6049,12 +6064,20 @@ impl Machine {
                     .map(|clock| aero_interrupts::clock::Clock::now_ns(clock))
                     .unwrap_or(0);
 
-                let mut dev = aerogpu.borrow_mut();
-                // Keep the device model's internal PCI command register in sync so `irq_level` can
-                // respect COMMAND.INTX_DISABLE (bit 10).
-                dev.config_mut().set_command(command);
-                dev.tick_vblank(clock_ns);
-                let mut level = dev.irq_level();
+                let mut level = {
+                    let mut dev = aerogpu.borrow_mut();
+                    // Keep the AeroGPU model's internal PCI config image coherent with the
+                    // canonical PCI config space owned by the machine.
+                    dev.config_mut().set_command(command);
+                    dev.config_mut()
+                        .set_bar_base(aero_devices::pci::profile::AEROGPU_BAR0_INDEX, bar0_base);
+                    dev.config_mut().set_bar_base(
+                        aero_devices::pci::profile::AEROGPU_BAR1_VRAM_INDEX,
+                        bar1_base,
+                    );
+                    dev.tick_vblank(clock_ns);
+                    dev.irq_level()
+                };
 
                 // Redundantly gate on the canonical PCI command register as well (defensive).
                 if (command & (1 << 10)) != 0 {
@@ -8233,25 +8256,33 @@ impl Machine {
             return;
         };
 
-        let command = {
+        let bdf = aero_devices::pci::profile::AEROGPU.bdf;
+        let (command, bar0_base, bar1_base) = {
             let mut pci_cfg = pci_cfg.borrow_mut();
-            pci_cfg
-                .bus_mut()
-                .device_config(aero_devices::pci::profile::AEROGPU.bdf)
-                .map(|cfg| cfg.command())
-                .unwrap_or(0)
+            let cfg = pci_cfg.bus_mut().device_config(bdf);
+            let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
+            let bar0_base = cfg
+                .and_then(|cfg| cfg.bar_range(aero_devices::pci::profile::AEROGPU_BAR0_INDEX))
+                .map(|range| range.base)
+                .unwrap_or(0);
+            let bar1_base = cfg
+                .and_then(|cfg| cfg.bar_range(aero_devices::pci::profile::AEROGPU_BAR1_VRAM_INDEX))
+                .map(|range| range.base)
+                .unwrap_or(0);
+            (command, bar0_base, bar1_base)
         };
 
-        // Ring DMA (reading guest memory, updating ring head, updating fence page) is gated by PCI
-        // COMMAND.BME (bit 2).
         let now_ns = clock.now_ns();
-        let bus_master_enabled = (command & (1 << 2)) != 0;
         let mut dev = aerogpu.borrow_mut();
-        // Keep the device model's internal PCI command register coherent with the canonical PCI
-        // config space owned by the machine.
+        // Keep the AeroGPU model's internal PCI config image coherent with the canonical PCI config
+        // space owned by the machine.
         dev.config_mut().set_command(command);
+        dev.config_mut()
+            .set_bar_base(aero_devices::pci::profile::AEROGPU_BAR0_INDEX, bar0_base);
+        dev.config_mut()
+            .set_bar_base(aero_devices::pci::profile::AEROGPU_BAR1_VRAM_INDEX, bar1_base);
         dev.tick_vblank(now_ns);
-        dev.process(&mut self.mem, bus_master_enabled);
+        dev.process(&mut self.mem);
 
         // Publish WDDM scanout state updates based on BAR0 scanout registers.
         //
