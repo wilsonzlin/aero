@@ -186,7 +186,13 @@ describe("io/devices/I8042Controller (PS/2 mouse)", () => {
     i8042.injectMouseButtons(0x08 | 0x10);
     const packet = drainOutput(i8042);
 
-    // Expect 4-byte packet: status + dx + dy + (wheel nibble + button bits).
-    expect(packet).toEqual([0x08, 0x00, 0x00, 0x30]);
+    // The host-side `injectMouseButtons(mask)` helper updates each changed button bit in a
+    // deterministic sequence (to match the canonical Rust model). When multiple bits flip at
+    // once, this produces multiple packets.
+    //
+    // Expect two 4-byte packets:
+    // - first: back button (bit4 of byte3)
+    // - second: back + forward (bits4+5)
+    expect(packet).toEqual([0x08, 0x00, 0x00, 0x10, 0x08, 0x00, 0x00, 0x30]);
   });
 });

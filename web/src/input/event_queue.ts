@@ -19,10 +19,21 @@ export const InputEventType = {
     */
   KeyHidUsage: 6,
   /**
-    * Relative mouse movement in PS/2 coordinate space (dx right, dy up).
-    *
-    * Payload:
-    *   a = dx (signed 32-bit)
+   * A USB HID usage event with an explicit 16-bit usage page and 16-bit usage ID.
+   *
+   * This is used for HID usage pages that do not fit in the keyboard usage-page fast path
+   * (`KeyHidUsage`), such as Consumer Control (0x0C).
+   *
+   * Payload:
+   *   a = (usagePage & 0xFFFF) | ((pressed ? 1 : 0) << 16)
+   *   b = usageId & 0xFFFF
+   */
+  HidUsage16: 7,
+  /**
+     * Relative mouse movement in PS/2 coordinate space (dx right, dy up).
+     *
+     * Payload:
+     *   a = dx (signed 32-bit)
     *   b = dy (signed 32-bit)
     */
   MouseMove: 2,
@@ -135,6 +146,12 @@ export class InputEventQueue {
   pushKeyHidUsage(timestampUs: number, usage: number, pressed: boolean): void {
     const packed = ((usage & 0xff) | ((pressed ? 1 : 0) << 8)) | 0;
     this.push(InputEventType.KeyHidUsage, timestampUs, packed, 0);
+  }
+
+  pushHidUsage16(timestampUs: number, usagePage: number, usageId: number, pressed: boolean): void {
+    const a = ((usagePage & 0xffff) | ((pressed ? 1 : 0) << 16)) | 0;
+    const b = (usageId & 0xffff) | 0;
+    this.push(InputEventType.HidUsage16, timestampUs, a, b);
   }
 
   pushMouseMove(timestampUs: number, dx: number, dy: number): void {

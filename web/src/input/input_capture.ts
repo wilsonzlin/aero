@@ -1,7 +1,7 @@
 import { InputEventQueue, type InputBatchFlushHook, type InputBatchRecycleMessage, type InputBatchTarget } from "./event_queue";
 import { GamepadCapture } from "./gamepad";
 import { PointerLock } from "./pointer_lock";
-import { keyboardCodeToHidUsage } from "./hid_usage";
+import { keyboardCodeToConsumerUsage, keyboardCodeToHidUsage } from "./hid_usage";
 import {
   ps2Set2ScancodeForCode,
   shouldPreventDefaultForKeyboardEvent,
@@ -359,7 +359,8 @@ export class InputCapture {
 
     const sc = ps2Set2ScancodeForCode(event.code);
     const usage = keyboardCodeToHidUsage(event.code);
-    if (!sc && usage === null) {
+    const consumerUsage = keyboardCodeToConsumerUsage(event.code);
+    if (!sc && usage === null && consumerUsage === null) {
       if (shouldPreventDefault) {
         event.preventDefault();
         event.stopPropagation();
@@ -379,6 +380,9 @@ export class InputCapture {
     const tsUs = toTimestampUs(event.timeStamp);
     if (!event.repeat && usage !== null) {
       this.queue.pushKeyHidUsage(tsUs, usage, true);
+    }
+    if (!event.repeat && consumerUsage !== null) {
+      this.queue.pushHidUsage16(tsUs, 0x0c, consumerUsage, true);
     }
     if (sc) {
       pushSet2ScancodeSequence(this.queue, tsUs, sc, true);
@@ -401,7 +405,8 @@ export class InputCapture {
 
     const sc = ps2Set2ScancodeForCode(event.code);
     const usage = keyboardCodeToHidUsage(event.code);
-    if (!sc && usage === null) {
+    const consumerUsage = keyboardCodeToConsumerUsage(event.code);
+    if (!sc && usage === null && consumerUsage === null) {
       if (shouldPreventDefault) {
         event.preventDefault();
         event.stopPropagation();
@@ -419,6 +424,9 @@ export class InputCapture {
     const tsUs = toTimestampUs(event.timeStamp);
     if (usage !== null) {
       this.queue.pushKeyHidUsage(tsUs, usage, false);
+    }
+    if (consumerUsage !== null) {
+      this.queue.pushHidUsage16(tsUs, 0x0c, consumerUsage, false);
     }
     if (sc) {
       pushSet2ScancodeSequence(this.queue, tsUs, sc, false);
@@ -1079,6 +1087,10 @@ export class InputCapture {
       const usage = keyboardCodeToHidUsage(code);
       if (usage !== null) {
         this.queue.pushKeyHidUsage(nowUs, usage, false);
+      }
+      const consumerUsage = keyboardCodeToConsumerUsage(code);
+      if (consumerUsage !== null) {
+        this.queue.pushHidUsage16(nowUs, 0x0c, consumerUsage, false);
       }
     }
     this.pressedCodes.clear();

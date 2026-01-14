@@ -124,6 +124,30 @@ pub fn keyboard_code_to_usage(code: &str) -> Option<u8> {
     }
 }
 
+/// Maps a `KeyboardEvent.code` string to a USB HID usage ID from the Consumer usage page (0x0C).
+///
+/// Consumer-page usages are used for media keys such as volume/mute/playback controls.
+///
+/// Keep in sync with:
+/// - TypeScript host mapping: `web/src/input/hid_usage.ts::keyboardCodeToConsumerUsage`
+/// - Shared fixture (parity tests): `docs/fixtures/hid_usage_consumer.json`
+pub fn keyboard_code_to_consumer_usage(code: &str) -> Option<u16> {
+    match code {
+        // Volume keys.
+        "AudioVolumeUp" => Some(0x00E9),
+        "AudioVolumeDown" => Some(0x00EA),
+        "AudioVolumeMute" => Some(0x00E2),
+
+        // Media transport controls.
+        "MediaPlayPause" => Some(0x00CD),
+        "MediaStop" => Some(0x00B7),
+        "MediaTrackNext" => Some(0x00B5),
+        "MediaTrackPrevious" => Some(0x00B6),
+
+        _ => None,
+    }
+}
+
 /// Converts DOM `MouseEvent.button` indices to the HID button bit used by `UsbHidMouse::button_event`.
 ///
 /// The mapping follows the DOM `MouseEvent.buttons` bitfield:

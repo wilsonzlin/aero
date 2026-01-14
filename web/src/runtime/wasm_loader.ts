@@ -980,11 +980,13 @@ export interface WasmApi {
 
     UsbHidBridge: new () => {
         keyboard_event(usage: number, pressed: boolean): void;
+        consumer_event(usage: number, pressed: boolean): void;
         mouse_move(dx: number, dy: number): void;
         mouse_buttons(buttons: number): void;
         mouse_wheel(delta: number): void;
         gamepad_report(packedLo: number, packedHi: number): void;
         drain_next_keyboard_report(): Uint8Array | null;
+        drain_next_consumer_report(): Uint8Array | null;
         drain_next_mouse_report(): Uint8Array | null;
         drain_next_gamepad_report(): Uint8Array | null;
         free(): void;
@@ -1861,23 +1863,82 @@ declare global {
         | undefined;
 }
 
+type ResolvedWasmImporter = {
+    importer: () => Promise<RawWasmModule>;
+    wasmUrl: URL;
+    jsUrl: URL;
+    source: "override" | "release" | "dev";
+};
+
+let wasmJsImportNonce = 0;
+const wasmJsModulesByMemory: Record<WasmVariant, WeakMap<WebAssembly.Memory, RawWasmModule>> = {
+    single: new WeakMap(),
+    threaded: new WeakMap(),
+};
+
+async function importWasmJsModule(
+    variant: WasmVariant,
+    resolved: ResolvedWasmImporter,
+    options: { memory?: WebAssembly.Memory },
+): Promise<RawWasmModule> {
+    const memory = options.memory;
+
+    // Default path: use the Vite-provided importer (bundler-safe, cached).
+    if (!memory || resolved.source === "override") {
+        return (await resolved.importer()) as RawWasmModule;
+    }
+
+    // When a caller injects a WebAssembly.Memory, they usually expect a *fresh* wasm instance that
+    // uses that specific memory. However, wasm-bindgen's generated JS glue caches a singleton wasm
+    // instance in a module-scoped `let wasm;` and silently ignores subsequent init calls with a
+    // different memory.
+    //
+    // This is especially problematic in Node/Vitest where unit tests create distinct
+    // WebAssembly.Memory instances per test. To keep tests deterministic, bypass the ESM module
+    // cache by importing the JS glue via a cache-busted `file://...aero_wasm.js?nonce=...` URL.
+    //
+    // IMPORTANT: Only do this for `file:` URLs. In browser builds Vite bundles the wasm-pack output
+    // and `import()` with a runtime-generated URL would not be included in the bundle.
+    if (resolved.jsUrl.protocol !== "file:") {
+        return (await resolved.importer()) as RawWasmModule;
+    }
+
+    const cached = wasmJsModulesByMemory[variant].get(memory);
+    if (cached) return cached;
+
+    const bustUrl = new URL(resolved.jsUrl.href);
+    bustUrl.searchParams.set("aero_wasm_nonce", String((wasmJsImportNonce += 1)));
+
+    // Keep the specifier opaque to Vite so browser builds don't try to bundle it.
+    const mod = (await import(/* @vite-ignore */ bustUrl.href)) as RawWasmModule;
+    wasmJsModulesByMemory[variant].set(memory, mod);
+    return mod;
+}
+
 function resolveWasmImporter(
     variant: WasmVariant,
-): { importer: () => Promise<RawWasmModule>; wasmUrl: URL } | undefined {
+): ResolvedWasmImporter | undefined {
     const override = globalThis.__aeroWasmJsImporterOverride?.[variant];
     if (override) {
         // The override is primarily for tests; avoid hard-coding a file:// URL which would
         // trigger Node-specific file reads in `resolveWasmInputForInit`.
-        return { importer: override, wasmUrl: new URL("about:blank") };
+        return {
+            importer: override,
+            wasmUrl: new URL("about:blank"),
+            jsUrl: new URL("about:blank"),
+            source: "override",
+        };
     }
 
-    const releasePath = variant === "single" ? "../wasm/pkg-single/aero_wasm.js" : "../wasm/pkg-threaded/aero_wasm.js";
-    const devPath = variant === "single" ? "../wasm/pkg-single-dev/aero_wasm.js" : "../wasm/pkg-threaded-dev/aero_wasm.js";
-    const importer = wasmImporters[releasePath] ?? wasmImporters[devPath];
+    const releaseJsPath = variant === "single" ? "../wasm/pkg-single/aero_wasm.js" : "../wasm/pkg-threaded/aero_wasm.js";
+    const devJsPath = variant === "single" ? "../wasm/pkg-single-dev/aero_wasm.js" : "../wasm/pkg-threaded-dev/aero_wasm.js";
+    const importer = wasmImporters[releaseJsPath] ?? wasmImporters[devJsPath];
     if (!importer) return undefined;
 
+    const isRelease = importer === wasmImporters[releaseJsPath];
+    const jsPath = isRelease ? releaseJsPath : devJsPath;
     const wasmPath =
-        importer === wasmImporters[releasePath]
+        isRelease
             ? variant === "single"
                 ? "../wasm/pkg-single/aero_wasm_bg.wasm"
                 : "../wasm/pkg-threaded/aero_wasm_bg.wasm"
@@ -1889,8 +1950,14 @@ function resolveWasmImporter(
     // Suppress Vite's build-time warning about `new URL(..., import.meta.url)` paths that cannot
     // be resolved statically.
     const wasmUrl = new URL(/* @vite-ignore */ wasmPath, import.meta.url);
+    const jsUrl = new URL(/* @vite-ignore */ jsPath, import.meta.url);
 
-    return { importer: importer as () => Promise<RawWasmModule>, wasmUrl };
+    return {
+        importer: importer as () => Promise<RawWasmModule>,
+        wasmUrl,
+        jsUrl,
+        source: isRelease ? "release" : "dev",
+    };
 }
 
 type WasmLoadResult = { api: WasmApi; memory?: WebAssembly.Memory };
@@ -2063,7 +2130,7 @@ async function loadSingle(options: WasmInitOptions): Promise<WasmLoadResult> {
             ].join("\n"),
         );
     }
-    const mod = (await resolved.importer()) as RawWasmModule;
+    const mod = await importWasmJsModule("single", resolved, { memory: options.memory });
     await initWasmBindgenModule(mod, resolved.wasmUrl, {
         variant: "single",
         module: options.module,
@@ -2089,7 +2156,7 @@ async function loadThreaded(options: WasmInitOptions): Promise<WasmLoadResult> {
             ].join("\n"),
         );
     }
-    const mod = (await resolved.importer()) as RawWasmModule;
+    const mod = await importWasmJsModule("threaded", resolved, { memory: options.memory });
     await initWasmBindgenModule(mod, resolved.wasmUrl, {
         variant: "threaded",
         module: options.module,

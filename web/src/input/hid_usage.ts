@@ -181,3 +181,35 @@ export function keyboardCodeToHidUsage(code: string): number | null {
 
   return null;
 }
+
+/**
+ * Map DOM `KeyboardEvent.code` strings to USB HID Consumer usages on the Consumer page (0x0C).
+ *
+ * These are typically media/consumer control keys such as volume and playback controls.
+ *
+ * Keep in sync with:
+ * - Rust mapping: `crates/aero-usb/src/hid/usage.rs::keyboard_code_to_consumer_usage`
+ * - Shared fixture (parity tests): `docs/fixtures/hid_usage_consumer.json`
+ */
+export function keyboardCodeToConsumerUsage(code: string): number | null {
+  switch (code) {
+    // Volume keys.
+    case "AudioVolumeUp":
+      return 0x00e9;
+    case "AudioVolumeDown":
+      return 0x00ea;
+    case "AudioVolumeMute":
+      return 0x00e2;
+
+    // Media transport controls.
+    case "MediaPlayPause":
+      return 0x00cd;
+    case "MediaStop":
+      return 0x00b7;
+    case "MediaTrackNext":
+      return 0x00b5;
+    case "MediaTrackPrevious":
+      return 0x00b6;
+  }
+  return null;
+}

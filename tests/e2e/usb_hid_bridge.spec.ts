@@ -30,6 +30,35 @@ test("InputCapture → HID usage → UsbHidBridge produces keyboard + mouse repo
   });
   expect(brk).toEqual([0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
 
+  // Consumer control: AudioVolumeUp press should yield a 2-byte report with usage 0x00E9 (LE).
+  await page.evaluate(() => {
+    const ev = new KeyboardEvent("keydown", { bubbles: true, cancelable: true });
+    Object.defineProperty(ev, "code", { value: "AudioVolumeUp" });
+    window.dispatchEvent(ev);
+    (globalThis as any).__capture.flushNow();
+  });
+
+  const volUpMake = await page.evaluate(() => {
+    const bridge = (globalThis as any).__usbHidBridge;
+    const report = bridge.drain_next_consumer_report();
+    return report ? Array.from(report) : null;
+  });
+  expect(volUpMake).toEqual([0xe9, 0x00]);
+
+  await page.evaluate(() => {
+    const ev = new KeyboardEvent("keyup", { bubbles: true, cancelable: true });
+    Object.defineProperty(ev, "code", { value: "AudioVolumeUp" });
+    window.dispatchEvent(ev);
+    (globalThis as any).__capture.flushNow();
+  });
+
+  const volUpBrk = await page.evaluate(() => {
+    const bridge = (globalThis as any).__usbHidBridge;
+    const report = bridge.drain_next_consumer_report();
+    return report ? Array.from(report) : null;
+  });
+  expect(volUpBrk).toEqual([0x00, 0x00]);
+
   // Mouse move: movementY=3 should become dy=+3 in HID (positive down).
   await page.evaluate(() => {
     const ev = new MouseEvent("mousemove", { bubbles: true, cancelable: true });

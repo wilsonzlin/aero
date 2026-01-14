@@ -14,9 +14,10 @@ export class UhciRuntimeExternalHubConfigManager {
 
   setPending(guestPath: GuestUsbPath, portCount: number | undefined): void {
     let clampedPortCount = portCount;
-    // Root port 0 hosts the external hub used by both WebHID passthrough and the synthetic
-    // keyboard/mouse/gamepad devices. Never configure the hub with fewer downstream ports than
-    // that reserved synthetic range (ports 1..3), otherwise those devices may fail to attach.
+    // Root port 0 hosts the external hub used by both WebHID passthrough and the synthetic HID
+    // devices (keyboard/mouse/gamepad/consumer-control). Never configure the hub with fewer
+    // downstream ports than that reserved synthetic range (ports 1..UHCI_SYNTHETIC_HID_HUB_PORT_COUNT),
+    // otherwise those devices may fail to attach.
     if (guestPath.length === 1 && guestPath[0] === EXTERNAL_HUB_ROOT_PORT && clampedPortCount !== undefined) {
       if (!Number.isFinite(clampedPortCount)) {
         clampedPortCount = UHCI_SYNTHETIC_HID_HUB_PORT_COUNT;

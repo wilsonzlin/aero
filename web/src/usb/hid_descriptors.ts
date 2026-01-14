@@ -5,6 +5,7 @@
  * - `hid/keyboard.rs`
  * - `hid/mouse.rs`
  * - `hid/gamepad.rs`
+ * - `hid/consumer_control.rs`
  *
  * Keep these in sync with `UsbHidBridge.drain_next_*_report()` report formats.
  */
@@ -112,6 +113,20 @@ export const USB_HID_GAMEPAD_REPORT_DESCRIPTOR = new Uint8Array([
   0x75, 0x08, // Report Size (8)
   0x95, 0x01, // Report Count (1)
   0x81, 0x01, // Input (Const,Array,Abs) Padding
+  0xc0, // End Collection
+]);
+
+export const USB_HID_CONSUMER_CONTROL_REPORT_DESCRIPTOR = new Uint8Array([
+  0x05, 0x0c, // Usage Page (Consumer)
+  0x09, 0x01, // Usage (Consumer Control)
+  0xa1, 0x01, // Collection (Application)
+  0x15, 0x00, // Logical Minimum (0)
+  0x26, 0xff, 0x03, // Logical Maximum (0x03FF)
+  0x19, 0x00, // Usage Minimum (0)
+  0x2a, 0xff, 0x03, // Usage Maximum (0x03FF)
+  0x75, 0x10, // Report Size (16)
+  0x95, 0x01, // Report Count (1)
+  0x81, 0x00, // Input (Data,Array,Abs)
   0xc0, // End Collection
 ]);
 

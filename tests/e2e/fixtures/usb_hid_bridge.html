@@ -68,6 +68,16 @@
                 bridge.keyboard_event(usage, pressed);
                 break;
               }
+              case InputEventType.HidUsage16: {
+                const a = words[off + 2] >>> 0;
+                const usagePage = a & 0xffff;
+                const pressed = ((a >>> 16) & 1) !== 0;
+                const usage = words[off + 3] & 0xffff;
+                if (usagePage === 0x0c) {
+                  bridge.consumer_event(usage, pressed);
+                }
+                break;
+              }
               case InputEventType.MouseMove: {
                 const dx = words[off + 2] | 0;
                 const dyPs2 = words[off + 3] | 0;

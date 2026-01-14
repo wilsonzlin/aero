@@ -29,8 +29,9 @@ export const DEFAULT_EXTERNAL_HUB_PORT_COUNT = 16;
 export const UHCI_SYNTHETIC_HID_KEYBOARD_HUB_PORT = 1;
 export const UHCI_SYNTHETIC_HID_MOUSE_HUB_PORT = 2;
 export const UHCI_SYNTHETIC_HID_GAMEPAD_HUB_PORT = 3;
+export const UHCI_SYNTHETIC_HID_CONSUMER_CONTROL_HUB_PORT = 4;
 
-export const UHCI_SYNTHETIC_HID_HUB_PORT_COUNT = 3;
+export const UHCI_SYNTHETIC_HID_HUB_PORT_COUNT = 4;
 
 /**
  * First hub port number that may be allocated for dynamic passthrough devices
@@ -46,8 +47,8 @@ export const UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT = UHCI_SYNTHETIC_HID_HUB_PORT_
  * - root port 0 hosts the external hub
  * - root port 1 is reserved for WebUSB
  *
- * Remap `[0]` -> `[0, 4]` and `[1]` -> `[0, 5]` so legacy callers don't clobber
- * the synthetic keyboard/mouse/gamepad devices on hub ports 1..=UHCI_SYNTHETIC_HID_HUB_PORT_COUNT.
+ * Remap `[0]` -> `[0, 5]` and `[1]` -> `[0, 6]` so legacy callers don't clobber
+ * the synthetic HID devices on hub ports 1..=UHCI_SYNTHETIC_HID_HUB_PORT_COUNT.
  */
 export function remapLegacyRootPortToExternalHubPort(rootPort: number): number {
   return UHCI_SYNTHETIC_HID_HUB_PORT_COUNT + (rootPort >>> 0) + 1;

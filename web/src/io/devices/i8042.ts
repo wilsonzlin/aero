@@ -1129,10 +1129,42 @@ export class I8042Controller implements PortIoHandler {
   injectMouseButtons(buttonMask: number): void {
     const enabled = (this.#commandByte & 0x20) === 0;
     const mask = buttonMask & 0x1f;
-    // If the mouse port is disabled, drop the button-change packet but keep the internal button
-    // image up to date so the next motion packet (after re-enable) carries the correct button bits.
-    this.#mouse.setButtons(mask, enabled);
-    if (!enabled) return;
+    // If the mouse port is disabled, drop button-change packets but keep the internal button image
+    // up to date so the next motion packet (after re-enable) carries the correct button bits.
+    if (!enabled) {
+      this.#mouse.setButtons(mask, false);
+      return;
+    }
+
+    const prev = this.#mouse.buttons & 0x1f;
+    const next = mask;
+    const delta = prev ^ next;
+
+    // For parity with the canonical Rust model (`aero_devices_input::I8042Controller`), represent
+    // multi-button transitions as a sequence of per-button changes rather than a single packet
+    // that jumps directly from `prev` -> `next`.
+    //
+    // This only matters when multiple bits flip at once (e.g. an "all buttons released" reset).
+    if (delta === 0) {
+      // Keep the internal image in sync, but avoid emitting redundant packets.
+      this.#mouse.setButtons(next, false);
+      return;
+    }
+
+    let cur = prev;
+    const applyBit = (bit: number): void => {
+      if ((delta & bit) === 0) return;
+      if ((next & bit) !== 0) cur |= bit;
+      else cur &= ~bit;
+      this.#mouse.setButtons(cur, true);
+    };
+    // Deterministic ordering matching the Rust bridge: left, right, middle, side, extra.
+    applyBit(0x01);
+    applyBit(0x02);
+    applyBit(0x04);
+    applyBit(0x08);
+    applyBit(0x10);
+
     this.#pumpDeviceQueues();
     this.#syncStatusAndIrq();
   }

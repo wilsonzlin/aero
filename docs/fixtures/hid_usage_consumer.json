@@ -1,0 +1,9 @@
+[
+  { "code": "AudioVolumeUp", "usage": "0x00E9" },
+  { "code": "AudioVolumeDown", "usage": "0x00EA" },
+  { "code": "AudioVolumeMute", "usage": "0x00E2" },
+  { "code": "MediaPlayPause", "usage": "0x00CD" },
+  { "code": "MediaStop", "usage": "0x00B7" },
+  { "code": "MediaTrackNext", "usage": "0x00B5" },
+  { "code": "MediaTrackPrevious", "usage": "0x00B6" }
+]

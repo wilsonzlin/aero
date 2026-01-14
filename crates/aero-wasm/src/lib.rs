@@ -165,7 +165,7 @@ use aero_usb::{
     SetupPacket, UsbDeviceModel, UsbInResult,
     hid::passthrough::UsbHidPassthroughHandle,
     hid::webhid,
-    hid::{GamepadReport, UsbHidGamepad, UsbHidKeyboard, UsbHidMouse},
+    hid::{GamepadReport, UsbHidConsumerControl, UsbHidGamepad, UsbHidKeyboard, UsbHidMouse},
 };
 
 #[cfg(any(target_arch = "wasm32", test))]
@@ -811,6 +811,7 @@ pub struct UsbHidBridge {
     keyboard: UsbHidKeyboard,
     mouse: UsbHidMouse,
     gamepad: UsbHidGamepad,
+    consumer: UsbHidConsumerControl,
     mouse_buttons: u8,
 }
 
@@ -847,10 +848,14 @@ impl UsbHidBridge {
         let mut gamepad = UsbHidGamepad::new();
         configure(&mut gamepad);
 
+        let mut consumer = UsbHidConsumerControl::new();
+        configure(&mut consumer);
+
         Self {
             keyboard,
             mouse,
             gamepad,
+            consumer,
             mouse_buttons: 0,
         }
     }
@@ -920,6 +925,11 @@ impl UsbHidBridge {
         });
     }
 
+    /// Inject a single HID Consumer Control usage event (Usage Page 0x0C).
+    pub fn consumer_event(&mut self, usage: u16, pressed: bool) {
+        self.consumer.consumer_event(usage, pressed);
+    }
+
     /// Drain the next 8-byte boot keyboard report (or return `null` if none).
     pub fn drain_next_keyboard_report(&mut self) -> JsValue {
         match self.keyboard.handle_in_transfer(0x81, 8) {
@@ -941,6 +951,16 @@ impl UsbHidBridge {
     /// Drain the next 8-byte gamepad report (or return `null` if none).
     pub fn drain_next_gamepad_report(&mut self) -> JsValue {
         match self.gamepad.handle_in_transfer(0x81, 8) {
+            UsbInResult::Data(data) if !data.is_empty() => Uint8Array::from(data.as_slice()).into(),
+            _ => JsValue::NULL,
+        }
+    }
+
+    /// Drain the next consumer control report (or return `null` if none).
+    ///
+    /// The report format is 2 bytes: little-endian 16-bit Consumer usage ID (0 = none pressed).
+    pub fn drain_next_consumer_report(&mut self) -> JsValue {
+        match self.consumer.handle_in_transfer(0x81, 2) {
             UsbInResult::Data(data) if !data.is_empty() => Uint8Array::from(data.as_slice()).into(),
             _ => JsValue::NULL,
         }

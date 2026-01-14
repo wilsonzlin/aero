@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-import { keyboardCodeToHidUsage } from "./hid_usage";
+import { keyboardCodeToConsumerUsage, keyboardCodeToHidUsage } from "./hid_usage";
 
 type FixtureEntry = {
   code: string;
@@ -13,6 +13,15 @@ function parseHexU8(s: string): number {
   const n = Number.parseInt(trimmed, 16);
   if (!Number.isFinite(n) || Number.isNaN(n) || n < 0 || n > 0xff) {
     throw new Error(`invalid u8 hex literal ${JSON.stringify(s)}`);
+  }
+  return n;
+}
+
+function parseHexU16(s: string): number {
+  const trimmed = s.startsWith("0x") || s.startsWith("0X") ? s.slice(2) : s;
+  const n = Number.parseInt(trimmed, 16);
+  if (!Number.isFinite(n) || Number.isNaN(n) || n < 0 || n > 0xffff) {
+    throw new Error(`invalid u16 hex literal ${JSON.stringify(s)}`);
   }
   return n;
 }
@@ -56,5 +65,28 @@ describe("keyboardCodeToHidUsage", () => {
     expect(missingScancodes).toEqual([]);
 
     expect(keyboardCodeToHidUsage("NoSuchKey")).toBeNull();
+  });
+});
+
+describe("keyboardCodeToConsumerUsage", () => {
+  it("matches the shared fixture (docs/fixtures/hid_usage_consumer.json)", () => {
+    const fixtureUrl = new URL("../../../docs/fixtures/hid_usage_consumer.json", import.meta.url);
+    const entries = JSON.parse(readFileSync(fixtureUrl, "utf8")) as FixtureEntry[];
+    expect(Array.isArray(entries)).toBe(true);
+    expect(entries.length).toBeGreaterThan(0);
+
+    const expectedByCode = new Map<string, number>();
+    for (const entry of entries) {
+      if (expectedByCode.has(entry.code)) {
+        throw new Error(`duplicate fixture entry for KeyboardEvent.code=${JSON.stringify(entry.code)}`);
+      }
+      const expected = parseHexU16(entry.usage);
+      expectedByCode.set(entry.code, expected);
+      expect(keyboardCodeToConsumerUsage(entry.code)).toBe(expected);
+    }
+
+    expect(keyboardCodeToConsumerUsage("NoSuchKey")).toBeNull();
+    // Sanity-check that regular keyboard keys are not mapped via the consumer table.
+    expect(keyboardCodeToConsumerUsage("KeyA")).toBeNull();
   });
 });

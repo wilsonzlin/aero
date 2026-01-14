@@ -1,8 +1,9 @@
-//! USB HID device models (keyboard/mouse/gamepad) and browser input mapping helpers.
+//! USB HID device models (keyboard/mouse/gamepad/consumer-control) and browser input mapping helpers.
 
 use alloc::vec::Vec;
 
 pub mod composite;
+pub mod consumer_control;
 pub mod gamepad;
 pub mod keyboard;
 pub mod mouse;
@@ -12,6 +13,7 @@ pub mod usage;
 pub mod webhid;
 
 pub use composite::UsbCompositeHidInputHandle;
+pub use consumer_control::{UsbHidConsumerControl, UsbHidConsumerControlHandle};
 pub use gamepad::{GamepadReport, UsbHidGamepad, UsbHidGamepadHandle};
 pub use keyboard::{UsbHidKeyboard, UsbHidKeyboardHandle};
 pub use keyboard::{

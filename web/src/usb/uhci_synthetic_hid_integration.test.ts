@@ -6,6 +6,7 @@ import { computeGuestRamLayout } from "../runtime/shared_layout";
 import {
   USB_HID_BOOT_KEYBOARD_REPORT_DESCRIPTOR,
   USB_HID_BOOT_MOUSE_REPORT_DESCRIPTOR,
+  USB_HID_CONSUMER_CONTROL_REPORT_DESCRIPTOR,
   USB_HID_GAMEPAD_REPORT_DESCRIPTOR,
   USB_HID_INTERFACE_PROTOCOL_KEYBOARD,
   USB_HID_INTERFACE_PROTOCOL_MOUSE,
@@ -14,7 +15,9 @@ import {
 import {
   DEFAULT_EXTERNAL_HUB_PORT_COUNT,
   EXTERNAL_HUB_ROOT_PORT,
+  UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT,
   UHCI_SYNTHETIC_HID_GAMEPAD_HUB_PORT,
+  UHCI_SYNTHETIC_HID_CONSUMER_CONTROL_HUB_PORT,
   UHCI_SYNTHETIC_HID_HUB_PORT_COUNT,
   UHCI_SYNTHETIC_HID_KEYBOARD_HUB_PORT,
   UHCI_SYNTHETIC_HID_MOUSE_HUB_PORT,
@@ -267,6 +270,17 @@ describe("usb/UHCI synthetic HID passthrough integration (WASM)", () => {
       uhci = UhciCtor.length >= 2 ? new UhciCtor(guestBase) : new UhciCtor(guestBase, guestSize);
     }
 
+    // `UhciControllerBridge.step_frame/step_frames` gates DMA behind PCI command bit2 (Bus Master
+    // Enable). These unit tests drive the bridge directly (without the PCI bus wrapper), so mirror
+    // what a real guest would do by enabling bus mastering here.
+    if (typeof uhci.set_pci_command === "function") {
+      try {
+        uhci.set_pci_command(0x0004);
+      } catch {
+        // ignore
+      }
+    }
+
     if (typeof uhci.attach_hub !== "function" || typeof uhci.attach_usb_hid_passthrough_device !== "function") return;
 
     // Root port 0: external hub with enough ports for synthetic devices.
@@ -296,10 +310,23 @@ describe("usb/UHCI synthetic HID passthrough integration (WASM)", () => {
       USB_HID_INTERFACE_PROTOCOL_MOUSE,
     );
     const gamepadDev = new HidBridge(0x1234, 0x0003, "Aero", "Gamepad", undefined, USB_HID_GAMEPAD_REPORT_DESCRIPTOR, false);
+    const consumerDev = new HidBridge(
+      0x1234,
+      0x0004,
+      "Aero",
+      "Consumer Control",
+      undefined,
+      USB_HID_CONSUMER_CONTROL_REPORT_DESCRIPTOR,
+      false,
+    );
 
     uhci.attach_usb_hid_passthrough_device([EXTERNAL_HUB_ROOT_PORT, UHCI_SYNTHETIC_HID_KEYBOARD_HUB_PORT], keyboardDev);
     uhci.attach_usb_hid_passthrough_device([EXTERNAL_HUB_ROOT_PORT, UHCI_SYNTHETIC_HID_MOUSE_HUB_PORT], mouseDev);
     uhci.attach_usb_hid_passthrough_device([EXTERNAL_HUB_ROOT_PORT, UHCI_SYNTHETIC_HID_GAMEPAD_HUB_PORT], gamepadDev);
+    uhci.attach_usb_hid_passthrough_device(
+      [EXTERNAL_HUB_ROOT_PORT, UHCI_SYNTHETIC_HID_CONSUMER_CONTROL_HUB_PORT],
+      consumerDev,
+    );
 
     // Minimal guest memory map for UHCI TD/QH traversal.
     const view = new DataView(memory.buffer);
@@ -353,8 +380,13 @@ describe("usb/UHCI synthetic HID passthrough integration (WASM)", () => {
     });
 
     // Power+reset synthetic device ports and enumerate each device.
-    const ports = [UHCI_SYNTHETIC_HID_KEYBOARD_HUB_PORT, UHCI_SYNTHETIC_HID_MOUSE_HUB_PORT, UHCI_SYNTHETIC_HID_GAMEPAD_HUB_PORT];
-    const addrs = [5, 6, 7];
+    const ports = [
+      UHCI_SYNTHETIC_HID_KEYBOARD_HUB_PORT,
+      UHCI_SYNTHETIC_HID_MOUSE_HUB_PORT,
+      UHCI_SYNTHETIC_HID_GAMEPAD_HUB_PORT,
+      UHCI_SYNTHETIC_HID_CONSUMER_CONTROL_HUB_PORT,
+    ];
+    const addrs = [5, 6, 7, 8];
     expect(ports).toHaveLength(UHCI_SYNTHETIC_HID_HUB_PORT_COUNT);
     for (let i = 0; i < ports.length; i += 1) {
       const port = ports[i]!;
@@ -375,6 +407,7 @@ describe("usb/UHCI synthetic HID passthrough integration (WASM)", () => {
     expect(keyboardDev.configured()).toBe(true);
     expect(mouseDev.configured()).toBe(true);
     expect(gamepadDev.configured()).toBe(true);
+    expect(consumerDev.configured()).toBe(true);
 
     const usbHid = new api.UsbHidBridge();
 
@@ -393,9 +426,15 @@ describe("usb/UHCI synthetic HID passthrough integration (WASM)", () => {
     expect(padReport).toBeInstanceOf(Uint8Array);
     gamepadDev.push_input_report(0, padReport!);
 
+    usbHid.consumer_event(0x00e9, true); // Volume Up
+    const consumerReport = usbHid.drain_next_consumer_report();
+    expect(consumerReport).toBeInstanceOf(Uint8Array);
+    consumerDev.push_input_report(0, consumerReport!);
+
     expect(interruptIn({ uhci, view, guestBase, alloc, flBase, devAddr: addrs[0]!, ep: 1, len: 8 })).toEqual(kbReport);
     expect(interruptIn({ uhci, view, guestBase, alloc, flBase, devAddr: addrs[1]!, ep: 1, len: 4 })).toEqual(mouseReport);
     expect(interruptIn({ uhci, view, guestBase, alloc, flBase, devAddr: addrs[2]!, ep: 1, len: 8 })).toEqual(padReport);
+    expect(interruptIn({ uhci, view, guestBase, alloc, flBase, devAddr: addrs[3]!, ep: 1, len: 2 })).toEqual(consumerReport);
   });
 
   it("preserves externally attached UsbHidPassthroughBridge devices across UhciRuntime.load_state", async () => {
@@ -454,10 +493,23 @@ describe("usb/UHCI synthetic HID passthrough integration (WASM)", () => {
       USB_HID_INTERFACE_PROTOCOL_MOUSE,
     );
     const gamepadDev = new HidBridge(0x1234, 0x0003, "Aero", "Gamepad", undefined, USB_HID_GAMEPAD_REPORT_DESCRIPTOR, false);
+    const consumerDev = new HidBridge(
+      0x1234,
+      0x0004,
+      "Aero",
+      "Consumer Control",
+      undefined,
+      USB_HID_CONSUMER_CONTROL_REPORT_DESCRIPTOR,
+      false,
+    );
 
     runtime.attach_usb_hid_passthrough_device([EXTERNAL_HUB_ROOT_PORT, UHCI_SYNTHETIC_HID_KEYBOARD_HUB_PORT], keyboardDev);
     runtime.attach_usb_hid_passthrough_device([EXTERNAL_HUB_ROOT_PORT, UHCI_SYNTHETIC_HID_MOUSE_HUB_PORT], mouseDev);
     runtime.attach_usb_hid_passthrough_device([EXTERNAL_HUB_ROOT_PORT, UHCI_SYNTHETIC_HID_GAMEPAD_HUB_PORT], gamepadDev);
+    runtime.attach_usb_hid_passthrough_device(
+      [EXTERNAL_HUB_ROOT_PORT, UHCI_SYNTHETIC_HID_CONSUMER_CONTROL_HUB_PORT],
+      consumerDev,
+    );
 
     // Wrap UhciRuntime into the same shape the helper functions expect.
     const uhci: { io_write(offset: number, size: number, value: number): void; step_frame(): void; tick_1ms(): void } = {
@@ -515,8 +567,8 @@ describe("usb/UHCI synthetic HID passthrough integration (WASM)", () => {
       wLength: 0,
     });
 
-    const addrs = [5, 6, 7];
-    for (let port = 1; port <= 3; port += 1) {
+    const addrs = [5, 6, 7, 8];
+    for (let port = 1; port <= UHCI_SYNTHETIC_HID_HUB_PORT_COUNT; port += 1) {
       controlNoData({ uhci, view, guestBase, alloc, flBase, devAddr: 1, setup: setupHubSetPortFeature(port, 8) }); // PORT_POWER
       controlNoData({ uhci, view, guestBase, alloc, flBase, devAddr: 1, setup: setupHubSetPortFeature(port, 4) }); // PORT_RESET
       for (let i = 0; i < 50; i += 1) tick1ms(uhci);
@@ -533,6 +585,7 @@ describe("usb/UHCI synthetic HID passthrough integration (WASM)", () => {
     expect(keyboardDev.configured()).toBe(true);
     expect(mouseDev.configured()).toBe(true);
     expect(gamepadDev.configured()).toBe(true);
+    expect(consumerDev.configured()).toBe(true);
 
     const snapshotBytes = save.call(runtime) as unknown;
     expect(snapshotBytes).toBeInstanceOf(Uint8Array);
@@ -545,6 +598,7 @@ describe("usb/UHCI synthetic HID passthrough integration (WASM)", () => {
     expect(keyboardDev.configured()).toBe(false);
     expect(mouseDev.configured()).toBe(false);
     expect(gamepadDev.configured()).toBe(false);
+    expect(consumerDev.configured()).toBe(false);
 
     load.call(runtime, snapshotBytes);
 
@@ -553,6 +607,7 @@ describe("usb/UHCI synthetic HID passthrough integration (WASM)", () => {
     expect(keyboardDev.configured()).toBe(true);
     expect(mouseDev.configured()).toBe(true);
     expect(gamepadDev.configured()).toBe(true);
+    expect(consumerDev.configured()).toBe(true);
 
     const usbHid = new api.UsbHidBridge();
     usbHid.keyboard_event(0x04, true); // KeyA
@@ -570,9 +625,15 @@ describe("usb/UHCI synthetic HID passthrough integration (WASM)", () => {
     expect(padReport).toBeInstanceOf(Uint8Array);
     gamepadDev.push_input_report(0, padReport!);
 
+    usbHid.consumer_event(0x00e9, true);
+    const consumerReport = usbHid.drain_next_consumer_report();
+    expect(consumerReport).toBeInstanceOf(Uint8Array);
+    consumerDev.push_input_report(0, consumerReport!);
+
     expect(interruptIn({ uhci, view, guestBase, alloc, flBase, devAddr: addrs[0]!, ep: 1, len: 8 })).toEqual(kbReport);
     expect(interruptIn({ uhci, view, guestBase, alloc, flBase, devAddr: addrs[1]!, ep: 1, len: 4 })).toEqual(mouseReport);
     expect(interruptIn({ uhci, view, guestBase, alloc, flBase, devAddr: addrs[2]!, ep: 1, len: 8 })).toEqual(padReport);
+    expect(interruptIn({ uhci, view, guestBase, alloc, flBase, devAddr: addrs[3]!, ep: 1, len: 2 })).toEqual(consumerReport);
   });
 
   it("preserves externally attached UsbHidPassthroughBridge devices across external hub growth", async () => {
@@ -628,10 +689,20 @@ describe("usb/UHCI synthetic HID passthrough integration (WASM)", () => {
       USB_HID_INTERFACE_PROTOCOL_MOUSE,
     );
     const gamepadDev = new HidBridge(0x1234, 0x0003, "Aero", "Gamepad", undefined, USB_HID_GAMEPAD_REPORT_DESCRIPTOR, false);
+    const consumerDev = new HidBridge(
+      0x1234,
+      0x0004,
+      "Aero",
+      "Consumer Control",
+      undefined,
+      USB_HID_CONSUMER_CONTROL_REPORT_DESCRIPTOR,
+      false,
+    );
 
     attach.call(runtime, [EXTERNAL_HUB_ROOT_PORT, UHCI_SYNTHETIC_HID_KEYBOARD_HUB_PORT], keyboardDev);
     attach.call(runtime, [EXTERNAL_HUB_ROOT_PORT, UHCI_SYNTHETIC_HID_MOUSE_HUB_PORT], mouseDev);
     attach.call(runtime, [EXTERNAL_HUB_ROOT_PORT, UHCI_SYNTHETIC_HID_GAMEPAD_HUB_PORT], gamepadDev);
+    attach.call(runtime, [EXTERNAL_HUB_ROOT_PORT, UHCI_SYNTHETIC_HID_CONSUMER_CONTROL_HUB_PORT], consumerDev);
 
     // Force an external hub resize after devices are attached. Without runtime-side bookkeeping,
     // this would disconnect host-managed devices (synthetic keyboard/mouse/gamepad).
@@ -691,8 +762,13 @@ describe("usb/UHCI synthetic HID passthrough integration (WASM)", () => {
       wLength: 0,
     });
 
-    const ports = [UHCI_SYNTHETIC_HID_KEYBOARD_HUB_PORT, UHCI_SYNTHETIC_HID_MOUSE_HUB_PORT, UHCI_SYNTHETIC_HID_GAMEPAD_HUB_PORT];
-    const addrs = [5, 6, 7];
+    const ports = [
+      UHCI_SYNTHETIC_HID_KEYBOARD_HUB_PORT,
+      UHCI_SYNTHETIC_HID_MOUSE_HUB_PORT,
+      UHCI_SYNTHETIC_HID_GAMEPAD_HUB_PORT,
+      UHCI_SYNTHETIC_HID_CONSUMER_CONTROL_HUB_PORT,
+    ];
+    const addrs = [5, 6, 7, 8];
     for (let i = 0; i < ports.length; i += 1) {
       const port = ports[i]!;
       controlNoData({ uhci, view, guestBase, alloc, flBase, devAddr: 1, setup: setupHubSetPortFeature(port, 8) }); // PORT_POWER
@@ -711,6 +787,7 @@ describe("usb/UHCI synthetic HID passthrough integration (WASM)", () => {
     expect(keyboardDev.configured()).toBe(true);
     expect(mouseDev.configured()).toBe(true);
     expect(gamepadDev.configured()).toBe(true);
+    expect(consumerDev.configured()).toBe(true);
 
     const usbHid = new api.UsbHidBridge();
 
@@ -729,9 +806,15 @@ describe("usb/UHCI synthetic HID passthrough integration (WASM)", () => {
     expect(padReport).toBeInstanceOf(Uint8Array);
     gamepadDev.push_input_report(0, padReport!);
 
+    usbHid.consumer_event(0x00e9, true);
+    const consumerReport = usbHid.drain_next_consumer_report();
+    expect(consumerReport).toBeInstanceOf(Uint8Array);
+    consumerDev.push_input_report(0, consumerReport!);
+
     expect(interruptIn({ uhci, view, guestBase, alloc, flBase, devAddr: addrs[0]!, ep: 1, len: 8 })).toEqual(kbReport);
     expect(interruptIn({ uhci, view, guestBase, alloc, flBase, devAddr: addrs[1]!, ep: 1, len: 4 })).toEqual(mouseReport);
     expect(interruptIn({ uhci, view, guestBase, alloc, flBase, devAddr: addrs[2]!, ep: 1, len: 8 })).toEqual(padReport);
+    expect(interruptIn({ uhci, view, guestBase, alloc, flBase, devAddr: addrs[3]!, ep: 1, len: 2 })).toEqual(consumerReport);
   });
 
   it("does not resurrect extra UsbHidPassthroughBridge devices not present in the snapshot after restore + hub reset", async () => {
@@ -791,18 +874,28 @@ describe("usb/UHCI synthetic HID passthrough integration (WASM)", () => {
       USB_HID_INTERFACE_PROTOCOL_MOUSE,
     );
     const gamepadDev = new HidBridge(0x1234, 0x0003, "Aero", "Gamepad", undefined, USB_HID_GAMEPAD_REPORT_DESCRIPTOR, false);
+    const consumerDev = new HidBridge(
+      0x1234,
+      0x0004,
+      "Aero",
+      "Consumer Control",
+      undefined,
+      USB_HID_CONSUMER_CONTROL_REPORT_DESCRIPTOR,
+      false,
+    );
 
     runtime.attach_usb_hid_passthrough_device([0, 1], keyboardDev);
     runtime.attach_usb_hid_passthrough_device([0, 2], mouseDev);
     runtime.attach_usb_hid_passthrough_device([0, 3], gamepadDev);
+    runtime.attach_usb_hid_passthrough_device([0, 4], consumerDev);
 
     const snapshotBytes = save.call(runtime) as unknown;
     expect(snapshotBytes).toBeInstanceOf(Uint8Array);
 
     // Attach an extra passthrough device after the snapshot is taken. The runtime will retain the
     // handle across restores, but it should not reattach it unless the snapshot includes it.
-    const extraDev = new HidBridge(0x1234, 0x0004, "Aero", "Extra", undefined, USB_HID_GAMEPAD_REPORT_DESCRIPTOR, false);
-    runtime.attach_usb_hid_passthrough_device([0, 4], extraDev);
+    const extraDev = new HidBridge(0x1234, 0x0005, "Aero", "Extra", undefined, USB_HID_GAMEPAD_REPORT_DESCRIPTOR, false);
+    runtime.attach_usb_hid_passthrough_device([0, UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT], extraDev);
 
     load.call(runtime, snapshotBytes);
 
@@ -858,7 +951,7 @@ describe("usb/UHCI synthetic HID passthrough integration (WASM)", () => {
       alloc,
       flBase,
       devAddr: 1,
-      setup: { bmRequestType: 0xa3, bRequest: 0x00, wValue: 0, wIndex: 4, wLength: 4 },
+      setup: { bmRequestType: 0xa3, bRequest: 0x00, wValue: 0, wIndex: UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT, wLength: 4 },
     });
     expect(portStatus.length).toBe(4);
     const st = portStatus[0]! | (portStatus[1]! << 8);
@@ -975,18 +1068,18 @@ describe("usb/UHCI synthetic HID passthrough integration (WASM)", () => {
       },
     ];
 
-    // Attach a WebHID-backed device at port 4.
+    // Attach a WebHID-backed device at the first dynamic hub port (avoid the synthetic HID range).
     (runtime as unknown as { webhid_attach_at_path: (...args: unknown[]) => void }).webhid_attach_at_path(
       1,
       0x1234,
       0x0001,
       "WebHID",
       collections as unknown,
-      [0, 4],
+      [0, UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT],
     );
 
     const HidBridge = api.UsbHidPassthroughBridge;
     const dev = new HidBridge(0x1234, 0x0002, "Aero", "Collision", undefined, USB_HID_GAMEPAD_REPORT_DESCRIPTOR, false);
-    expect(() => attach.call(runtime, [0, 4], dev)).toThrow();
+    expect(() => attach.call(runtime, [0, UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT], dev)).toThrow();
   });
 });

@@ -176,6 +176,7 @@ import { HidReportRing, HidReportType as HidRingReportType } from "../usb/hid_re
 import {
   USB_HID_BOOT_KEYBOARD_REPORT_DESCRIPTOR,
   USB_HID_BOOT_MOUSE_REPORT_DESCRIPTOR,
+  USB_HID_CONSUMER_CONTROL_REPORT_DESCRIPTOR,
   USB_HID_GAMEPAD_REPORT_DESCRIPTOR,
   USB_HID_INTERFACE_PROTOCOL_KEYBOARD,
   USB_HID_INTERFACE_PROTOCOL_MOUSE,
@@ -185,6 +186,7 @@ import {
   EXTERNAL_HUB_ROOT_PORT,
   WEBUSB_GUEST_ROOT_PORT,
   UHCI_SYNTHETIC_HID_GAMEPAD_HUB_PORT,
+  UHCI_SYNTHETIC_HID_CONSUMER_CONTROL_HUB_PORT,
   UHCI_SYNTHETIC_HID_KEYBOARD_HUB_PORT,
   UHCI_SYNTHETIC_HID_MOUSE_HUB_PORT,
 } from "../usb/uhci_external_hub";
@@ -474,11 +476,13 @@ type UsbHidPassthroughBridge = InstanceType<NonNullable<WasmApi["UsbHidPassthrou
 let syntheticUsbKeyboard: UsbHidPassthroughBridge | null = null;
 let syntheticUsbMouse: UsbHidPassthroughBridge | null = null;
 let syntheticUsbGamepad: UsbHidPassthroughBridge | null = null;
+let syntheticUsbConsumerControl: UsbHidPassthroughBridge | null = null;
 let syntheticUsbHidAttached = false;
 let keyboardUsbOk = false;
 let mouseUsbOk = false;
 let syntheticUsbKeyboardPendingReport: Uint8Array | null = null;
 let syntheticUsbGamepadPendingReport: Uint8Array | null = null;
+let syntheticUsbConsumerControlPendingReport: Uint8Array | null = null;
 let keyboardInputBackend: InputBackend = "ps2";
 const warnedForcedKeyboardBackendUnavailable = new Set<string>();
 const pressedKeyboardHidUsages = new Uint8Array(256);
@@ -554,9 +558,14 @@ let wasmReadySent = false;
 const SYNTHETIC_USB_HID_KEYBOARD_DEVICE_ID = 0x1000_0001;
 const SYNTHETIC_USB_HID_MOUSE_DEVICE_ID = 0x1000_0002;
 const SYNTHETIC_USB_HID_GAMEPAD_DEVICE_ID = 0x1000_0003;
+const SYNTHETIC_USB_HID_CONSUMER_CONTROL_DEVICE_ID = 0x1000_0004;
 const SYNTHETIC_USB_HID_KEYBOARD_PATH: GuestUsbPath = [EXTERNAL_HUB_ROOT_PORT, UHCI_SYNTHETIC_HID_KEYBOARD_HUB_PORT];
 const SYNTHETIC_USB_HID_MOUSE_PATH: GuestUsbPath = [EXTERNAL_HUB_ROOT_PORT, UHCI_SYNTHETIC_HID_MOUSE_HUB_PORT];
 const SYNTHETIC_USB_HID_GAMEPAD_PATH: GuestUsbPath = [EXTERNAL_HUB_ROOT_PORT, UHCI_SYNTHETIC_HID_GAMEPAD_HUB_PORT];
+const SYNTHETIC_USB_HID_CONSUMER_CONTROL_PATH: GuestUsbPath = [
+  EXTERNAL_HUB_ROOT_PORT,
+  UHCI_SYNTHETIC_HID_CONSUMER_CONTROL_HUB_PORT,
+];
 const MAX_SYNTHETIC_USB_HID_REPORTS_PER_INPUT_BATCH = 64;
 const MAX_SYNTHETIC_USB_HID_OUTPUT_REPORTS_PER_TICK = 64;
 
@@ -1675,7 +1684,7 @@ function maybeInitUhciDevice(): void {
     }
   }
 
-  // Synthetic USB HID devices (keyboard/mouse/gamepad) are attached behind the external hub once
+  // Synthetic USB HID devices (keyboard/mouse/gamepad/consumer-control) are attached behind the external hub once
   // a guest-visible UHCI controller exists.
   maybeInitSyntheticUsbHidDevices();
 
@@ -2183,6 +2192,19 @@ function maybeInitSyntheticUsbHidDevices(): void {
         undefined,
       );
     }
+    if (!syntheticUsbConsumerControl) {
+      syntheticUsbConsumerControl = new Bridge(
+        0x1234,
+        0x0004,
+        "Aero",
+        "Aero USB Consumer Control",
+        undefined,
+        USB_HID_CONSUMER_CONTROL_REPORT_DESCRIPTOR,
+        false,
+        undefined,
+        undefined,
+      );
+    }
   } catch (err) {
     console.warn("[io.worker] Failed to construct synthetic USB HID devices", err);
     return;
@@ -2195,6 +2217,11 @@ function maybeInitSyntheticUsbHidDevices(): void {
       runtime.attach_usb_hid_passthrough_device.call(runtime, SYNTHETIC_USB_HID_KEYBOARD_PATH, syntheticUsbKeyboard);
       runtime.attach_usb_hid_passthrough_device.call(runtime, SYNTHETIC_USB_HID_MOUSE_PATH, syntheticUsbMouse);
       runtime.attach_usb_hid_passthrough_device.call(runtime, SYNTHETIC_USB_HID_GAMEPAD_PATH, syntheticUsbGamepad);
+      runtime.attach_usb_hid_passthrough_device.call(
+        runtime,
+        SYNTHETIC_USB_HID_CONSUMER_CONTROL_PATH,
+        syntheticUsbConsumerControl,
+      );
       syntheticUsbHidAttached = true;
     } catch (err) {
       console.warn("[io.worker] Failed to attach synthetic USB HID devices to UHCI runtime", err);
@@ -2221,6 +2248,12 @@ function maybeInitSyntheticUsbHidDevices(): void {
       SYNTHETIC_USB_HID_GAMEPAD_PATH,
       "usb-hid-passthrough",
       syntheticUsbGamepad,
+    );
+    uhciHidTopology.attachDevice(
+      SYNTHETIC_USB_HID_CONSUMER_CONTROL_DEVICE_ID,
+      SYNTHETIC_USB_HID_CONSUMER_CONTROL_PATH,
+      "usb-hid-passthrough",
+      syntheticUsbConsumerControl,
     );
     syntheticUsbHidAttached = true;
     return;
@@ -5316,6 +5349,7 @@ function drainSyntheticUsbHidReports(): void {
   const keyboard = syntheticUsbKeyboard;
   const mouse = syntheticUsbMouse;
   const gamepad = syntheticUsbGamepad;
+  const consumer = syntheticUsbConsumerControl;
 
   const keyboardConfigured = safeSyntheticUsbHidConfigured(keyboard);
   if (keyboardConfigured && keyboard && syntheticUsbKeyboardPendingReport) {
@@ -5392,6 +5426,34 @@ function drainSyntheticUsbHidReports(): void {
       syntheticUsbGamepadPendingReport = report;
     }
   }
+
+  const consumerConfigured = safeSyntheticUsbHidConfigured(consumer);
+  if (consumerConfigured && consumer && syntheticUsbConsumerControlPendingReport) {
+    try {
+      consumer.push_input_report(0, syntheticUsbConsumerControlPendingReport);
+    } catch {
+      // ignore
+    }
+    syntheticUsbConsumerControlPendingReport = null;
+  }
+  for (let i = 0; i < MAX_SYNTHETIC_USB_HID_REPORTS_PER_INPUT_BATCH; i += 1) {
+    let report: Uint8Array | null = null;
+    try {
+      report = source.drain_next_consumer_report();
+    } catch {
+      break;
+    }
+    if (!(report instanceof Uint8Array)) break;
+    if (consumerConfigured && consumer) {
+      try {
+        consumer.push_input_report(0, report);
+      } catch {
+        // ignore
+      }
+    } else {
+      syntheticUsbConsumerControlPendingReport = report;
+    }
+  }
 }
 
 function flushSyntheticUsbHidPendingInputReports(): void {
@@ -5417,6 +5479,16 @@ function flushSyntheticUsbHidPendingInputReports(): void {
     }
     syntheticUsbGamepadPendingReport = null;
   }
+
+  const consumer = syntheticUsbConsumerControl;
+  if (consumer && syntheticUsbConsumerControlPendingReport && safeSyntheticUsbHidConfigured(consumer)) {
+    try {
+      consumer.push_input_report(0, syntheticUsbConsumerControlPendingReport);
+    } catch {
+      // ignore
+    }
+    syntheticUsbConsumerControlPendingReport = null;
+  }
 }
 
 function drainSyntheticUsbHidOutputReports(): void {
@@ -5426,10 +5498,12 @@ function drainSyntheticUsbHidOutputReports(): void {
   const keyboard = syntheticUsbKeyboard;
   const mouse = syntheticUsbMouse;
   const gamepad = syntheticUsbGamepad;
+  const consumer = syntheticUsbConsumerControl;
 
   if (keyboard) drainSyntheticUsbHidOutputReportsForDevice(keyboard);
   if (mouse) drainSyntheticUsbHidOutputReportsForDevice(mouse);
   if (gamepad) drainSyntheticUsbHidOutputReportsForDevice(gamepad);
+  if (consumer) drainSyntheticUsbHidOutputReportsForDevice(consumer);
 }
 
 function drainSyntheticUsbHidOutputReportsForDevice(dev: UsbHidPassthroughBridge): void {
@@ -5529,6 +5603,28 @@ function handleInputBatch(buffer: ArrayBuffer): void {
           }
         } else if (keyboardInputBackend === "usb") {
           usbHid?.keyboard_event(usage, pressed);
+        }
+        break;
+      }
+      case InputEventType.HidUsage16: {
+        const a = words[off + 2] >>> 0;
+        const usagePage = a & 0xffff;
+        const pressed = ((a >>> 16) & 1) !== 0;
+        const usageId = words[off + 3] & 0xffff;
+        // Consumer Control (0x0C) uses a dedicated synthetic USB HID device; PS/2 and virtio-input
+        // paths do not currently model consumer-page usages.
+        if (usagePage === 0x0c) {
+          const hid = usbHid;
+          // Keep this tolerant so newer JS can run against older WASM builds that don't yet expose
+          // Consumer Control exports.
+          const fn = (hid as unknown as { consumer_event?: unknown } | null)?.consumer_event;
+          if (typeof fn === "function") {
+            try {
+              (fn as (usage: number, pressed: boolean) => void).call(hid, usageId, pressed);
+            } catch {
+              // ignore
+            }
+          }
         }
         break;
       }
@@ -5696,9 +5792,12 @@ function shutdown(): void {
       syntheticUsbMouse = null;
       syntheticUsbGamepad?.free();
       syntheticUsbGamepad = null;
+      syntheticUsbConsumerControl?.free();
+      syntheticUsbConsumerControl = null;
       syntheticUsbHidAttached = false;
       syntheticUsbKeyboardPendingReport = null;
       syntheticUsbGamepadPendingReport = null;
+      syntheticUsbConsumerControlPendingReport = null;
       keyboardInputBackend = "ps2";
       pressedKeyboardHidUsages.fill(0);
       pressedKeyboardHidUsageCount = 0;
