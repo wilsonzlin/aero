@@ -238,6 +238,69 @@ fn sm4_gs_packed_varying_missing_output_register_defaults_to_zero() {
 }
 
 #[test]
+fn gs_translate_exports_written_outputs_without_dcl_output_decls() {
+    // Some real-world SM4 geometry shaders omit `dcl_output o#` declarations even though the
+    // instruction stream writes to output registers. The GS prepass translator should still export
+    // those written outputs as varyings so downstream pixel shaders can read them.
+    let module = Sm4Module {
+        stage: ShaderStage::Geometry,
+        model: ShaderModel { major: 4, minor: 0 },
+        decls: vec![
+            Sm4Decl::GsInputPrimitive {
+                primitive: GsInputPrimitive::Triangle(3),
+            },
+            Sm4Decl::GsOutputTopology {
+                topology: GsOutputTopology::TriangleStrip(3),
+            },
+            Sm4Decl::GsMaxOutputVertexCount { max: 1 },
+        ],
+        instructions: vec![
+            // Position (o0) must be initialized before emit.
+            Sm4Inst::Mov {
+                dst: DstOperand {
+                    reg: RegisterRef {
+                        file: RegFile::Output,
+                        index: 0,
+                    },
+                    mask: WriteMask::XYZW,
+                    saturate: false,
+                },
+                src: SrcOperand {
+                    kind: SrcKind::ImmediateF32([0, 0, 0, 0x3f800000]), // (0,0,0,1)
+                    swizzle: Swizzle::XYZW,
+                    modifier: OperandModifier::None,
+                },
+            },
+            // Color (o1).
+            Sm4Inst::Mov {
+                dst: DstOperand {
+                    reg: RegisterRef {
+                        file: RegFile::Output,
+                        index: 1,
+                    },
+                    mask: WriteMask::XYZW,
+                    saturate: false,
+                },
+                src: SrcOperand {
+                    kind: SrcKind::ImmediateF32([0x3f800000, 0, 0, 0x3f800000]), // (1,0,0,1)
+                    swizzle: Swizzle::XYZW,
+                    modifier: OperandModifier::None,
+                },
+            },
+            Sm4Inst::Emit { stream: 0 },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let wgsl = translate_gs_module_to_wgsl_compute_prepass(&module).expect("translate");
+    assert!(
+        wgsl.contains("out_vertices.data[vtx_idx].v0 = o1;"),
+        "expected default varyings to include o1 even without `dcl_output`:\n{wgsl}"
+    );
+    assert_wgsl_validates(&wgsl);
+}
+
+#[test]
 fn gs_translate_packed_rejects_location_0() {
     let module = Sm4Module {
         stage: ShaderStage::Geometry,
