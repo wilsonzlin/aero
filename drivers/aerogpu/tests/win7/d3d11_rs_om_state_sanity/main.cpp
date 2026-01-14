@@ -432,6 +432,24 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
     cull_verts[i].color[3] = 0.5f;
   }
 
+  // Quad (triangle strip order). Used for validating primitive topology reset
+  // across ClearState.
+  Vertex quad_verts[4];
+  quad_verts[0].pos[0] = -1.0f;
+  quad_verts[0].pos[1] = -1.0f;
+  quad_verts[1].pos[0] = -1.0f;
+  quad_verts[1].pos[1] = 1.0f;
+  quad_verts[2].pos[0] = 1.0f;
+  quad_verts[2].pos[1] = -1.0f;
+  quad_verts[3].pos[0] = 1.0f;
+  quad_verts[3].pos[1] = 1.0f;
+  for (int i = 0; i < 4; ++i) {
+    quad_verts[i].color[0] = 0.0f;
+    quad_verts[i].color[1] = 1.0f;
+    quad_verts[i].color[2] = 0.0f;
+    quad_verts[i].color[3] = 1.0f;
+  }
+
   D3D11_BUFFER_DESC vb_desc;
   ZeroMemory(&vb_desc, sizeof(vb_desc));
   vb_desc.Usage = D3D11_USAGE_DEFAULT;
@@ -453,6 +471,14 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
   hr = device->CreateBuffer(&vb_desc, &vb_init, vb_cull.put());
   if (FAILED(hr)) {
     return reporter.FailHresult("CreateBuffer(vb_cull)", hr);
+  }
+
+  ComPtr<ID3D11Buffer> vb_quad;
+  vb_desc.ByteWidth = sizeof(quad_verts);
+  vb_init.pSysMem = quad_verts;
+  hr = device->CreateBuffer(&vb_desc, &vb_init, vb_quad.put());
+  if (FAILED(hr)) {
+    return reporter.FailHresult("CreateBuffer(vb_quad)", hr);
   }
 
   // Rasterizer state: scissor enabled, no culling.
@@ -1651,7 +1677,9 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
     context->OMSetRenderTargets(1, rtvs, NULL);
     context->RSSetViewports(1, &vp);
     context->IASetInputLayout(input_layout.get());
-    context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    // Also set a non-default primitive topology so we can validate ClearState
+    // restores D3D11's default (TRIANGLELIST).
+    context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
     context->VSSetShader(vs.get(), NULL, 0);
     context->PSSetShader(ps.get(), NULL, 0);
     context->OMSetBlendState(alpha_blend.get(), blend_factor, 0xFFFFFFFFu);
@@ -1679,7 +1707,6 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
     context->OMSetRenderTargets(1, rtvs, NULL);
     context->RSSetViewports(1, &vp);
     context->IASetInputLayout(input_layout.get());
-    context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     context->VSSetShader(vs.get(), NULL, 0);
     context->PSSetShader(ps.get(), NULL, 0);
     ID3D11Buffer* vbs1[] = {vb_fs.get()};
@@ -1743,6 +1770,70 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
                            (unsigned)center_a,
                            (unsigned)corner_a,
                            (unsigned)kExpectedAlphaHalf);
+    }
+
+    // Verify default primitive topology. ClearState should reset the IA topology
+    // to TRIANGLELIST; if it does not, the old TRIANGLESTRIP topology can stick
+    // and change primitive assembly.
+    //
+    // With 4 vertices:
+    //  - TRIANGLELIST draws only the first triangle (v0,v1,v2), leaving the top-right corner red.
+    //  - TRIANGLESTRIP draws two triangles, covering the full quad (top-right becomes green).
+    context->ClearRenderTargetView(rtv.get(), clear_red);
+    ID3D11Buffer* vbq[] = {vb_quad.get()};
+    context->IASetVertexBuffers(0, 1, vbq, &stride, &offset);
+    context->Draw(4, 0);
+
+    context->OMSetRenderTargets(0, NULL, NULL);
+    context->CopyResource(staging.get(), rt_tex.get());
+    context->OMSetRenderTargets(1, rtvs, NULL);
+    context->Flush();
+
+    ZeroMemory(&map, sizeof(map));
+    hr = context->Map(staging.get(), 0, D3D11_MAP_READ, 0, &map);
+    if (FAILED(hr)) {
+      return FailD3D11WithRemovedReason(&reporter,
+                                        kTestName,
+                                        "Map(staging) [ClearState topology]",
+                                        hr,
+                                        device.get());
+    }
+    map_rc = ValidateStagingMap("Map(staging) [ClearState topology]", map);
+    if (map_rc != 0) {
+      return map_rc;
+    }
+
+    const uint32_t bottom_left = aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, 5, kHeight - 5);
+    const uint32_t top_right = aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, kWidth - 5, 5);
+    if (dump) {
+      const std::wstring bmp_path = aerogpu_test::JoinPath(dir, L"d3d11_rs_om_state_sanity_clear_state_topology.bmp");
+      std::string err;
+      if (!aerogpu_test::WriteBmp32BGRA(bmp_path, kWidth, kHeight, map.pData, (int)map.RowPitch, &err)) {
+        aerogpu_test::PrintfStdout("INFO: %s: ClearState-topology BMP dump failed: %s", kTestName, err.c_str());
+      } else {
+        reporter.AddArtifactPathW(bmp_path);
+      }
+      DumpTightBgra32(kTestName,
+                      &reporter,
+                      L"d3d11_rs_om_state_sanity_clear_state_topology.bin",
+                      map.pData,
+                      map.RowPitch,
+                      kWidth,
+                      kHeight);
+    }
+    context->Unmap(staging.get(), 0);
+
+    const uint32_t expected_red_opaque = 0xFFFF0000u;
+    const uint32_t expected_green_opaque = 0xFF00FF00u;
+    if ((bottom_left & 0x00FFFFFFu) != (expected_green_opaque & 0x00FFFFFFu) ||
+        (top_right & 0x00FFFFFFu) != (expected_red_opaque & 0x00FFFFFFu) ||
+        ((bottom_left >> 24) & 0xFFu) != 0xFFu || ((top_right >> 24) & 0xFFu) != 0xFFu) {
+      PrintDeviceRemovedReasonIfAny(kTestName, device.get());
+      return reporter.Fail("ClearState topology reset failed: bottom_left=0x%08lX expected ~0x%08lX; top_right=0x%08lX expected ~0x%08lX",
+                           (unsigned long)bottom_left,
+                           (unsigned long)expected_green_opaque,
+                           (unsigned long)top_right,
+                           (unsigned long)expected_red_opaque);
     }
 
     // Verify default culling: the CCW triangle should be culled, leaving clear red intact.
