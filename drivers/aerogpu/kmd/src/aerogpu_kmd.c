@@ -12494,7 +12494,9 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
             ((adapter->DeviceFeatures & AEROGPU_FEATURE_ERROR_INFO) != 0) &&
             (abiMinor >= 3) &&
             (adapter->Bar0Length >= (AEROGPU_MMIO_REG_ERROR_COUNT + sizeof(ULONG)));
-        if (poweredOn && haveErrorRegs) {
+        const BOOLEAN accepting =
+            (InterlockedCompareExchange(&adapter->AcceptingSubmissions, 0, 0) != 0) ? TRUE : FALSE;
+        if (poweredOn && accepting && haveErrorRegs) {
             /*
              * Prefer device-reported error payload when the adapter is in D0, but avoid wiping out
              * cached KMD telemetry with empty/invalid MMIO values (e.g. after a device reset).
