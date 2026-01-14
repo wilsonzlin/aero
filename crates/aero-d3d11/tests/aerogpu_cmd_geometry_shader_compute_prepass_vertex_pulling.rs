@@ -54,10 +54,7 @@ fn aerogpu_cmd_geometry_shader_compute_prepass_vertex_pulling_smoke() {
         let report = match exec.execute_cmd_stream(&stream, None, &mut guest_mem) {
             Ok(report) => report,
             Err(err) => {
-                // This test forces the GS/HS/DS compute-prepass path. Skip cleanly on downlevel
-                // backends without compute pipeline support.
-                if err.to_string().contains("Unsupported(\"compute\")") {
-                    common::skip_or_panic(module_path!(), "compute unsupported");
+                if common::skip_if_compute_or_indirect_unsupported(module_path!(), &err) {
                     return;
                 }
                 panic!("execute_cmd_stream failed: {err:#}");

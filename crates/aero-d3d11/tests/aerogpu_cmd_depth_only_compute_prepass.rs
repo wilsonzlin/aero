@@ -136,11 +136,7 @@ fn aerogpu_cmd_depth_only_compute_prepass_writes_depth() {
         let stream = writer.finish();
         let mut guest_mem = VecGuestMemory::new(0);
         if let Err(err) = exec.execute_cmd_stream(&stream, None, &mut guest_mem) {
-            // The depth-only pass is executed via the GS/HS/DS compute-prepass path, so it
-            // requires compute pipeline support. Skip on backends/adapters without compute
-            // (notably wgpu WebGL2).
-            if err.to_string().contains("Unsupported(\"compute\")") {
-                common::skip_or_panic(module_path!(), "compute unsupported");
+            if common::skip_if_compute_or_indirect_unsupported(module_path!(), &err) {
                 return;
             }
             panic!("execute_cmd_stream failed: {err:#}");

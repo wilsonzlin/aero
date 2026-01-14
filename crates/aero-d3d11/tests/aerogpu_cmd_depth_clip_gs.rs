@@ -127,10 +127,7 @@ fn aerogpu_cmd_depth_clip_toggle_clamps_z_when_disabled_with_gs_emulation() {
         // Depth clip enabled (default): triangle should be clipped away.
         let stream_enabled = draw_once(false);
         if let Err(err) = exec.execute_cmd_stream(&stream_enabled, None, &mut guest_mem) {
-            // This test forces the GS/HS/DS emulation path, which currently requires compute.
-            // Skip on downlevel backends without compute pipeline support.
-            if err.to_string().contains("Unsupported(\"compute\")") {
-                common::skip_or_panic(module_path!(), "compute unsupported");
+            if common::skip_if_compute_or_indirect_unsupported(module_path!(), &err) {
                 return;
             }
             panic!("execute_cmd_stream failed: {err:#}");

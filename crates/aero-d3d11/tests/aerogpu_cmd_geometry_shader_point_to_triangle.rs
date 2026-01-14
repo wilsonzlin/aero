@@ -339,10 +339,7 @@ fn aerogpu_cmd_geometry_shader_point_list_expands_to_triangle() {
         let report = match exec.execute_cmd_stream(&stream, None, &mut guest_mem) {
             Ok(report) => report,
             Err(err) => {
-                // Geometry-shader emulation is currently implemented via compute. Skip cleanly on
-                // backends that lack `DownlevelFlags::COMPUTE_SHADERS` (e.g. wgpu WebGL2).
-                if err.to_string().contains("Unsupported(\"compute\")") {
-                    common::skip_or_panic(module_path!(), "compute unsupported");
+                if common::skip_if_compute_or_indirect_unsupported(module_path!(), &err) {
                     return;
                 }
                 panic!("execute_cmd_stream failed: {err:#}");
