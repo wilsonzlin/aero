@@ -42,8 +42,8 @@ class MockWorker {
 }
 
 describe("runtime/coordinator", () => {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const originalWorker = (globalThis as any).Worker as unknown;
+  const originalWorkerDescriptor = Object.getOwnPropertyDescriptor(globalThis, "Worker");
+  const globalWithWorker = globalThis as unknown as { Worker?: unknown };
   const TEST_VRAM_MIB = 1;
   const TEST_GUEST_MIB = 1;
   const allocateTestSegments = () =>
@@ -76,16 +76,40 @@ describe("runtime/coordinator", () => {
     return undefined;
   };
 
+  const lastPostedRingBuffer = (worker: MockWorker): unknown => {
+    const msg = worker.posted.at(-1)?.message as unknown;
+    if (!msg || typeof msg !== "object") return undefined;
+    return (msg as { ringBuffer?: unknown }).ringBuffer;
+  };
+
+  type CoordinatorTestHarness = {
+    shared: unknown;
+    platformFeatures?: unknown;
+    activeConfig?: Record<string, unknown>;
+    vmState?: string;
+    workers: Record<string, { instanceId: number; worker: unknown }>;
+    spawnWorker: (role: string, segments: unknown) => void;
+    terminateWorker: (role: string) => void;
+    onWorkerMessage: (role: string, instanceId: number, message: unknown) => void;
+    scheduleFullRestart: (reason: string) => void;
+    eventLoop: unknown;
+    postWorkerInitMessages: unknown;
+    pendingAerogpuSubmissions?: unknown[];
+    aerogpuInFlightFencesByRequestId?: Map<number, bigint>;
+  };
+
   beforeEach(() => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (globalThis as any).Worker = MockWorker;
+    globalWithWorker.Worker = MockWorker;
     MockWorker.globalPosted.length = 0;
     vi.spyOn(perf, "registerWorker").mockImplementation(() => 0);
   });
 
   afterEach(() => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (globalThis as any).Worker = originalWorker as any;
+    if (originalWorkerDescriptor) {
+      Object.defineProperty(globalThis, "Worker", originalWorkerDescriptor);
+    } else {
+      Reflect.deleteProperty(globalThis, "Worker");
+    }
     vi.restoreAllMocks();
   });
 
@@ -96,18 +120,18 @@ describe("runtime/coordinator", () => {
 
     // Wire the shared memory view manually so we can call the private spawnWorker
     // helper without running the full coordinator lifecycle.
-    (coordinator as any).shared = shared;
+    (coordinator as unknown as CoordinatorTestHarness).shared = shared;
 
-    expect(() => (coordinator as any).spawnWorker("net", segments)).not.toThrow();
-    expect((coordinator as any).workers.net).toBeTruthy();
+    expect(() => (coordinator as unknown as CoordinatorTestHarness).spawnWorker("net", segments)).not.toThrow();
+    expect((coordinator as unknown as CoordinatorTestHarness).workers.net).toBeTruthy();
   });
 
   it("spawns the machine CPU worker entrypoint when vmRuntime=machine", () => {
     const coordinator = new WorkerCoordinator();
     const segments = allocateTestSegments();
     const shared = createSharedMemoryViews(segments);
-    (coordinator as any).shared = shared;
-    (coordinator as any).activeConfig = {
+    (coordinator as unknown as CoordinatorTestHarness).shared = shared;
+    (coordinator as unknown as CoordinatorTestHarness).activeConfig = {
       vmRuntime: "machine",
       guestMemoryMiB: 1,
       vramMiB: 1,
@@ -118,8 +142,8 @@ describe("runtime/coordinator", () => {
       logLevel: "info",
     };
 
-    (coordinator as any).spawnWorker("cpu", segments);
-    const cpuWorker = (coordinator as any).workers.cpu.worker as MockWorker;
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("cpu", segments);
+    const cpuWorker = (coordinator as unknown as CoordinatorTestHarness).workers.cpu.worker as MockWorker;
     expect(String(cpuWorker.specifier)).toMatch(/machine_cpu\.worker\.ts/);
   });
 
@@ -127,8 +151,8 @@ describe("runtime/coordinator", () => {
     const coordinator = new WorkerCoordinator();
     const segments = allocateTestSegments();
     const shared = createSharedMemoryViews(segments);
-    (coordinator as any).shared = shared;
-    (coordinator as any).activeConfig = {
+    (coordinator as unknown as CoordinatorTestHarness).shared = shared;
+    (coordinator as unknown as CoordinatorTestHarness).activeConfig = {
       vmRuntime: "legacy",
       guestMemoryMiB: 1,
       vramMiB: 1,
@@ -139,8 +163,8 @@ describe("runtime/coordinator", () => {
       logLevel: "info",
     };
 
-    (coordinator as any).spawnWorker("cpu", segments);
-    const cpuWorker = (coordinator as any).workers.cpu.worker as MockWorker;
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("cpu", segments);
+    const cpuWorker = (coordinator as unknown as CoordinatorTestHarness).workers.cpu.worker as MockWorker;
     expect(String(cpuWorker.specifier)).toMatch(/\/cpu\.worker\.ts(\?|$)/);
     expect(String(cpuWorker.specifier)).not.toMatch(/machine_cpu\.worker\.ts/);
   });
@@ -150,8 +174,8 @@ describe("runtime/coordinator", () => {
 
     // Avoid kicking off the full worker event loops / wasm precompile in this unit test;
     // we only care about the worker entrypoint selection.
-    (coordinator as any).eventLoop = vi.fn(async () => {});
-    (coordinator as any).postWorkerInitMessages = vi.fn(async () => {});
+    (coordinator as unknown as CoordinatorTestHarness).eventLoop = vi.fn(async () => {});
+    (coordinator as unknown as CoordinatorTestHarness).postWorkerInitMessages = vi.fn(async () => {});
 
     coordinator.start(
       {
@@ -183,7 +207,7 @@ describe("runtime/coordinator", () => {
       },
     );
 
-    const cpuWorker = (coordinator as any).workers.cpu.worker as MockWorker;
+    const cpuWorker = (coordinator as unknown as CoordinatorTestHarness).workers.cpu.worker as MockWorker;
     expect(String(cpuWorker.specifier)).toMatch(/machine_cpu\.worker\.ts/);
 
     coordinator.stop();
@@ -194,8 +218,8 @@ describe("runtime/coordinator", () => {
 
     // Avoid kicking off the full worker event loops / wasm precompile in this unit test;
     // we only care about the worker entrypoint selection.
-    (coordinator as any).eventLoop = vi.fn(async () => {});
-    (coordinator as any).postWorkerInitMessages = vi.fn(async () => {});
+    (coordinator as unknown as CoordinatorTestHarness).eventLoop = vi.fn(async () => {});
+    (coordinator as unknown as CoordinatorTestHarness).postWorkerInitMessages = vi.fn(async () => {});
 
     coordinator.start(
       {
@@ -226,7 +250,7 @@ describe("runtime/coordinator", () => {
       },
     );
 
-    const cpuWorker = (coordinator as any).workers.cpu.worker as MockWorker;
+    const cpuWorker = (coordinator as unknown as CoordinatorTestHarness).workers.cpu.worker as MockWorker;
     const specifier = String(cpuWorker.specifier);
     expect(specifier).toMatch(/cpu\.worker\.ts/);
     expect(specifier).not.toMatch(/machine_cpu\.worker\.ts/);
@@ -239,8 +263,8 @@ describe("runtime/coordinator", () => {
     const coordinator = new WorkerCoordinator();
 
     // Stub out heavyweight background tasks; we only care about which worker URL is chosen.
-    (coordinator as any).eventLoop = vi.fn(async () => {});
-    (coordinator as any).postWorkerInitMessages = vi.fn(async () => {});
+    (coordinator as unknown as CoordinatorTestHarness).eventLoop = vi.fn(async () => {});
+    (coordinator as unknown as CoordinatorTestHarness).postWorkerInitMessages = vi.fn(async () => {});
 
     coordinator.start(
       {
@@ -272,14 +296,14 @@ describe("runtime/coordinator", () => {
       },
     );
 
-    const cpuWorkerBefore = (coordinator as any).workers.cpu.worker as MockWorker;
+    const cpuWorkerBefore = (coordinator as unknown as CoordinatorTestHarness).workers.cpu.worker as MockWorker;
     expect(String(cpuWorkerBefore.specifier)).toMatch(/machine_cpu\.worker\.ts/);
 
     // Trigger a full restart (the path used for non-restartable worker failures like CPU/IO).
-    (coordinator as any).scheduleFullRestart("test_full_restart");
+    (coordinator as unknown as CoordinatorTestHarness).scheduleFullRestart("test_full_restart");
     vi.runAllTimers();
 
-    const cpuWorkerAfter = (coordinator as any).workers.cpu.worker as MockWorker;
+    const cpuWorkerAfter = (coordinator as unknown as CoordinatorTestHarness).workers.cpu.worker as MockWorker;
     expect(cpuWorkerAfter).not.toBe(cpuWorkerBefore);
     expect(String(cpuWorkerAfter.specifier)).toMatch(/machine_cpu\.worker\.ts/);
 
@@ -291,8 +315,8 @@ describe("runtime/coordinator", () => {
     const coordinator = new WorkerCoordinator();
     const segments = allocateTestSegments();
     const shared = createSharedMemoryViews(segments);
-    (coordinator as any).shared = shared;
-    (coordinator as any).activeConfig = {
+    (coordinator as unknown as CoordinatorTestHarness).shared = shared;
+    (coordinator as unknown as CoordinatorTestHarness).activeConfig = {
       vmRuntime: "machine",
       guestMemoryMiB: TEST_GUEST_MIB,
       vramMiB: TEST_VRAM_MIB,
@@ -303,18 +327,18 @@ describe("runtime/coordinator", () => {
       logLevel: "info",
     };
 
-    (coordinator as any).spawnWorker("cpu", segments);
-    (coordinator as any).spawnWorker("gpu", segments);
-    const cpuWorker = (coordinator as any).workers.cpu.worker as MockWorker;
-    const cpuInstanceId = (coordinator as any).workers.cpu.instanceId as number;
-    const gpuWorker = (coordinator as any).workers.gpu.worker as MockWorker;
-    const gpuInstanceId = (coordinator as any).workers.gpu.instanceId as number;
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("cpu", segments);
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("gpu", segments);
+    const cpuWorker = (coordinator as unknown as CoordinatorTestHarness).workers.cpu.worker as MockWorker;
+    const cpuInstanceId = (coordinator as unknown as CoordinatorTestHarness).workers.cpu.instanceId as number;
+    const gpuWorker = (coordinator as unknown as CoordinatorTestHarness).workers.gpu.worker as MockWorker;
+    const gpuInstanceId = (coordinator as unknown as CoordinatorTestHarness).workers.gpu.instanceId as number;
 
     // Mark GPU worker READY so submissions are forwarded and requestIds are tracked.
-    (coordinator as any).onWorkerMessage("gpu", gpuInstanceId, { type: MessageType.READY, role: "gpu" });
+    (coordinator as unknown as CoordinatorTestHarness).onWorkerMessage("gpu", gpuInstanceId, { type: MessageType.READY, role: "gpu" });
 
     const cmdStream = new ArrayBuffer(16);
-    (coordinator as any).onWorkerMessage("cpu", cpuInstanceId, {
+    (coordinator as unknown as CoordinatorTestHarness).onWorkerMessage("cpu", cpuInstanceId, {
       kind: "aerogpu.submit",
       contextId: 7,
       signalFence: 42n,
@@ -326,7 +350,7 @@ describe("runtime/coordinator", () => {
     const requestId = submit && typeof submit.requestId === "number" ? submit.requestId : -1;
     expect(requestId).toBeGreaterThan(0);
 
-    (coordinator as any).onWorkerMessage("gpu", gpuInstanceId, {
+    (coordinator as unknown as CoordinatorTestHarness).onWorkerMessage("gpu", gpuInstanceId, {
       protocol: GPU_PROTOCOL_NAME,
       protocolVersion: GPU_PROTOCOL_VERSION,
       type: "submit_complete",
@@ -336,7 +360,12 @@ describe("runtime/coordinator", () => {
 
     expect(
       cpuWorker.posted.some(
-        (entry) => (entry.message as { kind?: unknown }).kind === "aerogpu.complete_fence" && (entry.message as any).fence === 42n,
+        (entry) => {
+          const msg = entry.message as unknown;
+          if (!msg || typeof msg !== "object") return false;
+          const rec = msg as { kind?: unknown; fence?: unknown };
+          return rec.kind === "aerogpu.complete_fence" && rec.fence === 42n;
+        },
       ),
     ).toBe(true);
   });
@@ -345,8 +374,8 @@ describe("runtime/coordinator", () => {
     const coordinator = new WorkerCoordinator();
     const segments = allocateTestSegments();
     const shared = createSharedMemoryViews(segments);
-    (coordinator as any).shared = shared;
-    (coordinator as any).activeConfig = {
+    (coordinator as unknown as CoordinatorTestHarness).shared = shared;
+    (coordinator as unknown as CoordinatorTestHarness).activeConfig = {
       vmRuntime: "machine",
       guestMemoryMiB: TEST_GUEST_MIB,
       vramMiB: TEST_VRAM_MIB,
@@ -357,14 +386,14 @@ describe("runtime/coordinator", () => {
       logLevel: "info",
     };
 
-    (coordinator as any).spawnWorker("cpu", segments);
-    (coordinator as any).spawnWorker("gpu", segments);
-    const cpuInstanceId = (coordinator as any).workers.cpu.instanceId as number;
-    const gpuWorker = (coordinator as any).workers.gpu.worker as MockWorker;
-    const gpuInstanceId = (coordinator as any).workers.gpu.instanceId as number;
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("cpu", segments);
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("gpu", segments);
+    const cpuInstanceId = (coordinator as unknown as CoordinatorTestHarness).workers.cpu.instanceId as number;
+    const gpuWorker = (coordinator as unknown as CoordinatorTestHarness).workers.gpu.worker as MockWorker;
+    const gpuInstanceId = (coordinator as unknown as CoordinatorTestHarness).workers.gpu.instanceId as number;
 
     const cmdStream = new ArrayBuffer(16);
-    (coordinator as any).onWorkerMessage("cpu", cpuInstanceId, {
+    (coordinator as unknown as CoordinatorTestHarness).onWorkerMessage("cpu", cpuInstanceId, {
       kind: "aerogpu.submit",
       contextId: 7,
       signalFence: 123n,
@@ -374,7 +403,7 @@ describe("runtime/coordinator", () => {
     expect(gpuWorker.posted.some((msg) => (msg.message as { type?: unknown }).type === "submit_aerogpu")).toBe(false);
 
     // Mark the GPU worker as ready; this should flush buffered submissions.
-    (coordinator as any).onWorkerMessage("gpu", gpuInstanceId, { type: MessageType.READY, role: "gpu" });
+    (coordinator as unknown as CoordinatorTestHarness).onWorkerMessage("gpu", gpuInstanceId, { type: MessageType.READY, role: "gpu" });
 
     const submit = lastMessageOfType(gpuWorker, "submit_aerogpu") as { signalFence?: unknown; contextId?: unknown } | undefined;
     expect(submit).toBeTruthy();
@@ -384,8 +413,8 @@ describe("runtime/coordinator", () => {
 
   it("preserves the machine CPU worker entrypoint across restart()", () => {
     const coordinator = new WorkerCoordinator();
-    (coordinator as any).eventLoop = vi.fn(async () => {});
-    (coordinator as any).postWorkerInitMessages = vi.fn(async () => {});
+    (coordinator as unknown as CoordinatorTestHarness).eventLoop = vi.fn(async () => {});
+    (coordinator as unknown as CoordinatorTestHarness).postWorkerInitMessages = vi.fn(async () => {});
 
     coordinator.start(
       {
@@ -417,12 +446,12 @@ describe("runtime/coordinator", () => {
       },
     );
 
-    const cpuWorkerBefore = (coordinator as any).workers.cpu.worker as MockWorker;
+    const cpuWorkerBefore = (coordinator as unknown as CoordinatorTestHarness).workers.cpu.worker as MockWorker;
     expect(String(cpuWorkerBefore.specifier)).toMatch(/machine_cpu\.worker\.ts/);
 
     coordinator.restart();
 
-    const cpuWorkerAfter = (coordinator as any).workers.cpu.worker as MockWorker;
+    const cpuWorkerAfter = (coordinator as unknown as CoordinatorTestHarness).workers.cpu.worker as MockWorker;
     expect(cpuWorkerAfter).not.toBe(cpuWorkerBefore);
     expect(String(cpuWorkerAfter.specifier)).toMatch(/machine_cpu\.worker\.ts/);
 
@@ -431,8 +460,8 @@ describe("runtime/coordinator", () => {
 
   it("switches the CPU worker entrypoint when vmRuntime changes via updateConfig()", () => {
     const coordinator = new WorkerCoordinator();
-    (coordinator as any).eventLoop = vi.fn(async () => {});
-    (coordinator as any).postWorkerInitMessages = vi.fn(async () => {});
+    (coordinator as unknown as CoordinatorTestHarness).eventLoop = vi.fn(async () => {});
+    (coordinator as unknown as CoordinatorTestHarness).postWorkerInitMessages = vi.fn(async () => {});
 
     const platformFeatures = {
       crossOriginIsolated: true,
@@ -464,7 +493,7 @@ describe("runtime/coordinator", () => {
       { platformFeatures },
     );
 
-    const cpuWorkerLegacy = (coordinator as any).workers.cpu.worker as MockWorker;
+    const cpuWorkerLegacy = (coordinator as unknown as CoordinatorTestHarness).workers.cpu.worker as MockWorker;
     expect(String(cpuWorkerLegacy.specifier)).toMatch(/cpu\.worker\.ts/);
     expect(String(cpuWorkerLegacy.specifier)).not.toMatch(/machine_cpu\.worker\.ts/);
 
@@ -479,7 +508,7 @@ describe("runtime/coordinator", () => {
       logLevel: "info",
     });
 
-    const cpuWorkerMachine = (coordinator as any).workers.cpu.worker as MockWorker;
+    const cpuWorkerMachine = (coordinator as unknown as CoordinatorTestHarness).workers.cpu.worker as MockWorker;
     expect(cpuWorkerMachine).not.toBe(cpuWorkerLegacy);
     expect(String(cpuWorkerMachine.specifier)).toMatch(/machine_cpu\.worker\.ts/);
 
@@ -494,7 +523,7 @@ describe("runtime/coordinator", () => {
       logLevel: "info",
     });
 
-    const cpuWorkerLegacyAgain = (coordinator as any).workers.cpu.worker as MockWorker;
+    const cpuWorkerLegacyAgain = (coordinator as unknown as CoordinatorTestHarness).workers.cpu.worker as MockWorker;
     expect(cpuWorkerLegacyAgain).not.toBe(cpuWorkerMachine);
     expect(String(cpuWorkerLegacyAgain.specifier)).toMatch(/cpu\.worker\.ts/);
     expect(String(cpuWorkerLegacyAgain.specifier)).not.toMatch(/machine_cpu\.worker\.ts/);
@@ -507,8 +536,8 @@ describe("runtime/coordinator", () => {
 
     // Avoid kicking off the full worker event loops / wasm precompile in this unit test;
     // we only care about the worker entrypoint selection.
-    (coordinator as any).eventLoop = vi.fn(async () => {});
-    (coordinator as any).postWorkerInitMessages = vi.fn(async () => {});
+    (coordinator as unknown as CoordinatorTestHarness).eventLoop = vi.fn(async () => {});
+    (coordinator as unknown as CoordinatorTestHarness).postWorkerInitMessages = vi.fn(async () => {});
 
     coordinator.start(
       {
@@ -540,12 +569,12 @@ describe("runtime/coordinator", () => {
       },
     );
 
-    const cpuWorkerBefore = (coordinator as any).workers.cpu.worker as MockWorker;
+    const cpuWorkerBefore = (coordinator as unknown as CoordinatorTestHarness).workers.cpu.worker as MockWorker;
     expect(String(cpuWorkerBefore.specifier)).toMatch(/machine_cpu\.worker\.ts/);
 
     coordinator.reset("test_reset");
 
-    const cpuWorkerAfter = (coordinator as any).workers.cpu.worker as MockWorker;
+    const cpuWorkerAfter = (coordinator as unknown as CoordinatorTestHarness).workers.cpu.worker as MockWorker;
     expect(cpuWorkerAfter).not.toBe(cpuWorkerBefore);
     expect(String(cpuWorkerAfter.specifier)).toMatch(/machine_cpu\.worker\.ts/);
 
@@ -557,8 +586,8 @@ describe("runtime/coordinator", () => {
 
     // Avoid kicking off the full worker event loops / wasm precompile in this unit test;
     // we only care about the worker entrypoint selection.
-    (coordinator as any).eventLoop = vi.fn(async () => {});
-    (coordinator as any).postWorkerInitMessages = vi.fn(async () => {});
+    (coordinator as unknown as CoordinatorTestHarness).eventLoop = vi.fn(async () => {});
+    (coordinator as unknown as CoordinatorTestHarness).postWorkerInitMessages = vi.fn(async () => {});
 
     coordinator.start(
       {
@@ -590,12 +619,12 @@ describe("runtime/coordinator", () => {
       },
     );
 
-    const cpuWorkerBefore = (coordinator as any).workers.cpu.worker as MockWorker;
+    const cpuWorkerBefore = (coordinator as unknown as CoordinatorTestHarness).workers.cpu.worker as MockWorker;
     expect(String(cpuWorkerBefore.specifier)).toMatch(/machine_cpu\.worker\.ts/);
 
     coordinator.restartWorker("cpu");
 
-    const cpuWorkerAfter = (coordinator as any).workers.cpu.worker as MockWorker;
+    const cpuWorkerAfter = (coordinator as unknown as CoordinatorTestHarness).workers.cpu.worker as MockWorker;
     expect(cpuWorkerAfter).not.toBe(cpuWorkerBefore);
     expect(String(cpuWorkerAfter.specifier)).toMatch(/machine_cpu\.worker\.ts/);
 
@@ -614,8 +643,8 @@ describe("runtime/coordinator", () => {
     const coordinator = new WorkerCoordinator();
     const segments = allocateTestSegments();
     const shared = createSharedMemoryViews(segments);
-    (coordinator as any).shared = shared;
-    (coordinator as any).activeConfig = {
+    (coordinator as unknown as CoordinatorTestHarness).shared = shared;
+    (coordinator as unknown as CoordinatorTestHarness).activeConfig = {
       guestMemoryMiB: 1,
       vramMiB: 1,
       enableWorkers: true,
@@ -625,8 +654,8 @@ describe("runtime/coordinator", () => {
       logLevel: "info",
       virtioNetMode: "modern",
     };
-    (coordinator as any).spawnWorker("cpu", segments);
-    (coordinator as any).spawnWorker("io", segments);
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("cpu", segments);
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("io", segments);
 
     const restartSpy = vi.spyOn(coordinator, "restart").mockImplementation(() => {});
 
@@ -648,8 +677,8 @@ describe("runtime/coordinator", () => {
     const coordinator = new WorkerCoordinator();
     const segments = allocateTestSegments();
     const shared = createSharedMemoryViews(segments);
-    (coordinator as any).shared = shared;
-    (coordinator as any).activeConfig = {
+    (coordinator as unknown as CoordinatorTestHarness).shared = shared;
+    (coordinator as unknown as CoordinatorTestHarness).activeConfig = {
       guestMemoryMiB: 1,
       vramMiB: 1,
       enableWorkers: true,
@@ -660,8 +689,8 @@ describe("runtime/coordinator", () => {
       virtioNetMode: "modern",
       virtioInputMode: "modern",
     };
-    (coordinator as any).spawnWorker("cpu", segments);
-    (coordinator as any).spawnWorker("io", segments);
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("cpu", segments);
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("io", segments);
 
     const restartSpy = vi.spyOn(coordinator, "restart").mockImplementation(() => {});
 
@@ -684,8 +713,8 @@ describe("runtime/coordinator", () => {
     const coordinator = new WorkerCoordinator();
     const segments = allocateTestSegments();
     const shared = createSharedMemoryViews(segments);
-    (coordinator as any).shared = shared;
-    (coordinator as any).activeConfig = {
+    (coordinator as unknown as CoordinatorTestHarness).shared = shared;
+    (coordinator as unknown as CoordinatorTestHarness).activeConfig = {
       guestMemoryMiB: 1,
       vramMiB: 1,
       enableWorkers: true,
@@ -696,8 +725,8 @@ describe("runtime/coordinator", () => {
       virtioNetMode: "modern",
       virtioSndMode: "modern",
     };
-    (coordinator as any).spawnWorker("cpu", segments);
-    (coordinator as any).spawnWorker("io", segments);
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("cpu", segments);
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("io", segments);
 
     const restartSpy = vi.spyOn(coordinator, "restart").mockImplementation(() => {});
 
@@ -720,8 +749,8 @@ describe("runtime/coordinator", () => {
     const coordinator = new WorkerCoordinator();
     const segments = allocateTestSegments();
     const shared = createSharedMemoryViews(segments);
-    (coordinator as any).shared = shared;
-    (coordinator as any).activeConfig = {
+    (coordinator as unknown as CoordinatorTestHarness).shared = shared;
+    (coordinator as unknown as CoordinatorTestHarness).activeConfig = {
       guestMemoryMiB: 1,
       vramMiB: 1,
       enableWorkers: true,
@@ -730,8 +759,8 @@ describe("runtime/coordinator", () => {
       activeDiskImage: null,
       logLevel: "info",
     };
-    (coordinator as any).spawnWorker("cpu", segments);
-    (coordinator as any).spawnWorker("io", segments);
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("cpu", segments);
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("io", segments);
 
     const restartSpy = vi.spyOn(coordinator, "restart").mockImplementation(() => {});
 
@@ -752,8 +781,8 @@ describe("runtime/coordinator", () => {
     const coordinator = new WorkerCoordinator();
     const segments = allocateTestSegments();
     const shared = createSharedMemoryViews(segments);
-    (coordinator as any).shared = shared;
-    (coordinator as any).activeConfig = {
+    (coordinator as unknown as CoordinatorTestHarness).shared = shared;
+    (coordinator as unknown as CoordinatorTestHarness).activeConfig = {
       vmRuntime: "legacy",
       guestMemoryMiB: 1,
       vramMiB: 1,
@@ -763,8 +792,8 @@ describe("runtime/coordinator", () => {
       activeDiskImage: null,
       logLevel: "info",
     };
-    (coordinator as any).spawnWorker("cpu", segments);
-    (coordinator as any).spawnWorker("io", segments);
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("cpu", segments);
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("io", segments);
 
     const restartSpy = vi.spyOn(coordinator, "restart").mockImplementation(() => {});
 
@@ -786,8 +815,8 @@ describe("runtime/coordinator", () => {
     const coordinator = new WorkerCoordinator();
     const segments = allocateTestSegments();
     const shared = createSharedMemoryViews(segments);
-    (coordinator as any).shared = shared;
-    (coordinator as any).activeConfig = {
+    (coordinator as unknown as CoordinatorTestHarness).shared = shared;
+    (coordinator as unknown as CoordinatorTestHarness).activeConfig = {
       vmRuntime: "machine",
       guestMemoryMiB: 1,
       vramMiB: 1,
@@ -797,8 +826,8 @@ describe("runtime/coordinator", () => {
       activeDiskImage: null,
       logLevel: "info",
     };
-    (coordinator as any).spawnWorker("cpu", segments);
-    (coordinator as any).spawnWorker("io", segments);
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("cpu", segments);
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("io", segments);
 
     const restartSpy = vi.spyOn(coordinator, "restart").mockImplementation(() => {});
 
@@ -820,12 +849,12 @@ describe("runtime/coordinator", () => {
     const coordinator = new WorkerCoordinator();
     const segments = allocateTestSegments();
     const shared = createSharedMemoryViews(segments);
-    (coordinator as any).shared = shared;
+    (coordinator as unknown as CoordinatorTestHarness).shared = shared;
     // Keep the config consistent with `allocateTestSegments` so we don't trigger a full restart
     // due to a guest memory layout change.
     const guestMemoryMiB = TEST_GUEST_MIB;
     // Older/compat configs may omit vmRuntime; treat that as legacy.
-    (coordinator as any).activeConfig = {
+    (coordinator as unknown as CoordinatorTestHarness).activeConfig = {
       guestMemoryMiB,
       vramMiB: 1,
       enableWorkers: true,
@@ -834,8 +863,8 @@ describe("runtime/coordinator", () => {
       activeDiskImage: null,
       logLevel: "info",
     };
-    (coordinator as any).spawnWorker("cpu", segments);
-    (coordinator as any).spawnWorker("io", segments);
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("cpu", segments);
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("io", segments);
 
     const restartSpy = vi.spyOn(coordinator, "restart").mockImplementation(() => {});
 
@@ -921,12 +950,12 @@ describe("runtime/coordinator", () => {
     const shared = createSharedMemoryViews(segments);
     // Manually wire up a running coordinator without invoking `start()` so this
     // unit test stays lightweight (no WASM precompile attempts).
-    (coordinator as any).shared = shared;
-    (coordinator as any).platformFeatures = platformFeatures;
-    (coordinator as any).activeConfig = baseConfig;
-    (coordinator as any).vmState = "running";
-    (coordinator as any).spawnWorker("cpu", segments);
-    (coordinator as any).spawnWorker("io", segments);
+    (coordinator as unknown as CoordinatorTestHarness).shared = shared;
+    (coordinator as unknown as CoordinatorTestHarness).platformFeatures = platformFeatures;
+    (coordinator as unknown as CoordinatorTestHarness).activeConfig = baseConfig;
+    (coordinator as unknown as CoordinatorTestHarness).vmState = "running";
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("cpu", segments);
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("io", segments);
 
     coordinator.setBootDisks({}, dummyHdd(), null);
 
@@ -942,8 +971,8 @@ describe("runtime/coordinator", () => {
     const coordinator = new WorkerCoordinator();
     const segments = allocateTestSegments();
     const shared = createSharedMemoryViews(segments);
-    (coordinator as any).shared = shared;
-    (coordinator as any).activeConfig = {
+    (coordinator as unknown as CoordinatorTestHarness).shared = shared;
+    (coordinator as unknown as CoordinatorTestHarness).activeConfig = {
       guestMemoryMiB: 1,
       enableWorkers: true,
       enableWebGPU: false,
@@ -953,13 +982,13 @@ describe("runtime/coordinator", () => {
       vmRuntime: "legacy",
       logLevel: "info",
     };
-    (coordinator as any).spawnWorker("cpu", segments);
-    (coordinator as any).spawnWorker("io", segments);
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("cpu", segments);
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("io", segments);
 
     coordinator.setBootDisks({}, null, null);
 
-    const cpuWorker = (coordinator as any).workers.cpu.worker as MockWorker;
-    const ioWorker = (coordinator as any).workers.io.worker as MockWorker;
+    const cpuWorker = (coordinator as unknown as CoordinatorTestHarness).workers.cpu.worker as MockWorker;
+    const ioWorker = (coordinator as unknown as CoordinatorTestHarness).workers.io.worker as MockWorker;
 
     const audioSab = new SharedArrayBuffer(1024);
     coordinator.setAudioRingBuffer(audioSab, 128, 2, 48_000);
@@ -997,8 +1026,8 @@ describe("runtime/coordinator", () => {
     const coordinator = new WorkerCoordinator();
     const segments = allocateTestSegments();
     const shared = createSharedMemoryViews(segments);
-    (coordinator as any).shared = shared;
-    (coordinator as any).activeConfig = {
+    (coordinator as unknown as CoordinatorTestHarness).shared = shared;
+    (coordinator as unknown as CoordinatorTestHarness).activeConfig = {
       guestMemoryMiB: 1,
       enableWorkers: true,
       enableWebGPU: false,
@@ -1008,13 +1037,13 @@ describe("runtime/coordinator", () => {
       vmRuntime: "legacy",
       logLevel: "info",
     };
-    (coordinator as any).spawnWorker("cpu", segments);
-    (coordinator as any).spawnWorker("io", segments);
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("cpu", segments);
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("io", segments);
 
     coordinator.setBootDisks({ hddId: "disk1" }, null, null);
 
-    const cpuWorker = (coordinator as any).workers.cpu.worker as MockWorker;
-    const ioWorker = (coordinator as any).workers.io.worker as MockWorker;
+    const cpuWorker = (coordinator as unknown as CoordinatorTestHarness).workers.cpu.worker as MockWorker;
+    const ioWorker = (coordinator as unknown as CoordinatorTestHarness).workers.io.worker as MockWorker;
 
     const audioSab = new SharedArrayBuffer(1024);
     coordinator.setAudioRingBuffer(audioSab, 128, 2, 48_000);
@@ -1051,8 +1080,8 @@ describe("runtime/coordinator", () => {
     const coordinator = new WorkerCoordinator();
     const segments = allocateTestSegments();
     const shared = createSharedMemoryViews(segments);
-    (coordinator as any).shared = shared;
-    (coordinator as any).activeConfig = {
+    (coordinator as unknown as CoordinatorTestHarness).shared = shared;
+    (coordinator as unknown as CoordinatorTestHarness).activeConfig = {
       guestMemoryMiB: 1,
       enableWorkers: true,
       enableWebGPU: false,
@@ -1061,13 +1090,13 @@ describe("runtime/coordinator", () => {
       vmRuntime: "legacy",
       logLevel: "info",
     };
-    (coordinator as any).spawnWorker("cpu", segments);
-    (coordinator as any).spawnWorker("io", segments);
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("cpu", segments);
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("io", segments);
 
     coordinator.setBootDisks({}, dummyHdd(), null);
 
-    const cpuWorker = (coordinator as any).workers.cpu.worker as MockWorker;
-    const ioWorker = (coordinator as any).workers.io.worker as MockWorker;
+    const cpuWorker = (coordinator as unknown as CoordinatorTestHarness).workers.cpu.worker as MockWorker;
+    const ioWorker = (coordinator as unknown as CoordinatorTestHarness).workers.io.worker as MockWorker;
 
     const audioSab = new SharedArrayBuffer(1024);
     coordinator.setAudioRingBuffer(audioSab, 128, 2, 48_000);
@@ -1107,8 +1136,8 @@ describe("runtime/coordinator", () => {
       const coordinator = new WorkerCoordinator();
       const segments = allocateTestSegments();
       const shared = createSharedMemoryViews(segments);
-      (coordinator as any).shared = shared;
-      (coordinator as any).activeConfig = {
+      (coordinator as unknown as CoordinatorTestHarness).shared = shared;
+      (coordinator as unknown as CoordinatorTestHarness).activeConfig = {
         guestMemoryMiB: 1,
         enableWorkers: true,
         enableWebGPU: false,
@@ -1117,11 +1146,11 @@ describe("runtime/coordinator", () => {
         vmRuntime: "machine",
         logLevel: "info",
       };
-      (coordinator as any).spawnWorker("cpu", segments);
-      (coordinator as any).spawnWorker("io", segments);
+      (coordinator as unknown as CoordinatorTestHarness).spawnWorker("cpu", segments);
+      (coordinator as unknown as CoordinatorTestHarness).spawnWorker("io", segments);
 
-      const cpuWorker = (coordinator as any).workers.cpu.worker as MockWorker;
-      const ioWorker = (coordinator as any).workers.io.worker as MockWorker;
+      const cpuWorker = (coordinator as unknown as CoordinatorTestHarness).workers.cpu.worker as MockWorker;
+      const ioWorker = (coordinator as unknown as CoordinatorTestHarness).workers.io.worker as MockWorker;
 
       const audioSab = new SharedArrayBuffer(1024);
       coordinator.setAudioRingBuffer(audioSab, 128, 2, 48_000);
@@ -1160,8 +1189,8 @@ describe("runtime/coordinator", () => {
     const coordinator = new WorkerCoordinator();
     const segments = allocateTestSegments();
     const shared = createSharedMemoryViews(segments);
-    (coordinator as any).shared = shared;
-    (coordinator as any).activeConfig = {
+    (coordinator as unknown as CoordinatorTestHarness).shared = shared;
+    (coordinator as unknown as CoordinatorTestHarness).activeConfig = {
       guestMemoryMiB: 1,
       enableWorkers: true,
       enableWebGPU: false,
@@ -1169,37 +1198,37 @@ describe("runtime/coordinator", () => {
       activeDiskImage: null,
       logLevel: "info",
     };
-    (coordinator as any).spawnWorker("cpu", segments);
-    (coordinator as any).spawnWorker("io", segments);
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("cpu", segments);
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("io", segments);
 
-    const cpuWorker = (coordinator as any).workers.cpu.worker as MockWorker;
-    const ioWorker = (coordinator as any).workers.io.worker as MockWorker;
+    const cpuWorker = (coordinator as unknown as CoordinatorTestHarness).workers.cpu.worker as MockWorker;
+    const ioWorker = (coordinator as unknown as CoordinatorTestHarness).workers.io.worker as MockWorker;
 
     const audioSab = new SharedArrayBuffer(1024);
     coordinator.setAudioRingBuffer(audioSab, 128, 2, 48_000);
 
     // Default demo-mode owner is CPU.
-    expect((cpuWorker.posted.at(-1)?.message as any)?.ringBuffer).toBe(audioSab);
-    expect((ioWorker.posted.at(-1)?.message as any)?.ringBuffer).toBe(null);
+    expect(lastPostedRingBuffer(cpuWorker)).toBe(audioSab);
+    expect(lastPostedRingBuffer(ioWorker)).toBe(null);
 
     coordinator.setAudioRingBufferOwner("io");
 
     // Now the CPU must be detached and the IO worker must receive the SAB.
-    expect((cpuWorker.posted.at(-1)?.message as any)?.ringBuffer).toBe(null);
-    expect((ioWorker.posted.at(-1)?.message as any)?.ringBuffer).toBe(audioSab);
+    expect(lastPostedRingBuffer(cpuWorker)).toBe(null);
+    expect(lastPostedRingBuffer(ioWorker)).toBe(audioSab);
 
     // Clearing the override should restore the default routing policy (CPU in demo mode).
     coordinator.setAudioRingBufferOwner(null);
-    expect((cpuWorker.posted.at(-1)?.message as any)?.ringBuffer).toBe(audioSab);
-    expect((ioWorker.posted.at(-1)?.message as any)?.ringBuffer).toBe(null);
+    expect(lastPostedRingBuffer(cpuWorker)).toBe(audioSab);
+    expect(lastPostedRingBuffer(ioWorker)).toBe(null);
   });
 
   it("can re-route microphone ring ownership via setMicrophoneRingBufferOwner", () => {
     const coordinator = new WorkerCoordinator();
     const segments = allocateTestSegments();
     const shared = createSharedMemoryViews(segments);
-    (coordinator as any).shared = shared;
-    (coordinator as any).activeConfig = {
+    (coordinator as unknown as CoordinatorTestHarness).shared = shared;
+    (coordinator as unknown as CoordinatorTestHarness).activeConfig = {
       guestMemoryMiB: 1,
       enableWorkers: true,
       enableWebGPU: false,
@@ -1207,39 +1236,39 @@ describe("runtime/coordinator", () => {
       activeDiskImage: null,
       logLevel: "info",
     };
-    (coordinator as any).spawnWorker("cpu", segments);
-    (coordinator as any).spawnWorker("io", segments);
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("cpu", segments);
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("io", segments);
 
-    const cpuWorker = (coordinator as any).workers.cpu.worker as MockWorker;
-    const ioWorker = (coordinator as any).workers.io.worker as MockWorker;
+    const cpuWorker = (coordinator as unknown as CoordinatorTestHarness).workers.cpu.worker as MockWorker;
+    const ioWorker = (coordinator as unknown as CoordinatorTestHarness).workers.io.worker as MockWorker;
 
     const micSab = new SharedArrayBuffer(256);
     coordinator.setMicrophoneRingBuffer(micSab, 48_000);
 
     // Default demo-mode owner is CPU.
-    expect((cpuWorker.posted.at(-1)?.message as any)?.ringBuffer).toBe(micSab);
-    expect((ioWorker.posted.at(-1)?.message as any)?.ringBuffer).toBe(null);
+    expect(lastPostedRingBuffer(cpuWorker)).toBe(micSab);
+    expect(lastPostedRingBuffer(ioWorker)).toBe(null);
 
     coordinator.setMicrophoneRingBufferOwner("io");
 
     // Now the CPU must be detached and the IO worker must receive the SAB.
-    expect((cpuWorker.posted.at(-1)?.message as any)?.ringBuffer).toBe(null);
-    expect((ioWorker.posted.at(-1)?.message as any)?.ringBuffer).toBe(micSab);
+    expect(lastPostedRingBuffer(cpuWorker)).toBe(null);
+    expect(lastPostedRingBuffer(ioWorker)).toBe(micSab);
 
     // Clearing the override should restore the default routing policy (CPU in demo mode).
     coordinator.setMicrophoneRingBufferOwner(null);
-    expect((cpuWorker.posted.at(-1)?.message as any)?.ringBuffer).toBe(micSab);
-    expect((ioWorker.posted.at(-1)?.message as any)?.ringBuffer).toBe(null);
+    expect(lastPostedRingBuffer(cpuWorker)).toBe(micSab);
+    expect(lastPostedRingBuffer(ioWorker)).toBe(null);
   });
 
   it("sends net.trace.enable to the net worker when enabling net tracing", () => {
     const coordinator = new WorkerCoordinator();
     const segments = allocateTestSegments();
     const shared = createSharedMemoryViews(segments);
-    (coordinator as any).shared = shared;
-    (coordinator as any).spawnWorker("net", segments);
+    (coordinator as unknown as CoordinatorTestHarness).shared = shared;
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("net", segments);
 
-    const netWorker = (coordinator as any).workers.net.worker as MockWorker;
+    const netWorker = (coordinator as unknown as CoordinatorTestHarness).workers.net.worker as MockWorker;
     coordinator.setNetTraceEnabled(true);
     expect(coordinator.isNetTraceEnabled()).toBe(true);
 
@@ -1256,10 +1285,10 @@ describe("runtime/coordinator", () => {
     const coordinator = new WorkerCoordinator();
     const segments = allocateTestSegments();
     const shared = createSharedMemoryViews(segments);
-    (coordinator as any).shared = shared;
-    (coordinator as any).spawnWorker("net", segments);
+    (coordinator as unknown as CoordinatorTestHarness).shared = shared;
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("net", segments);
 
-    const netInfo = (coordinator as any).workers.net as { instanceId: number; worker: MockWorker };
+    const netInfo = (coordinator as unknown as CoordinatorTestHarness).workers.net as { instanceId: number; worker: MockWorker };
     const netWorker = netInfo.worker;
 
     const promise = coordinator.takeNetTracePcapng();
@@ -1270,7 +1299,7 @@ describe("runtime/coordinator", () => {
     const requestId = lastPosted!.requestId as number;
 
     const expectedBytes = new Uint8Array([0x61, 0x65, 0x72, 0x6f]); // "aero"
-    (coordinator as any).onWorkerMessage("net", netInfo.instanceId, {
+    (coordinator as unknown as CoordinatorTestHarness).onWorkerMessage("net", netInfo.instanceId, {
       kind: "net.trace.pcapng",
       requestId,
       bytes: expectedBytes.buffer,
@@ -1285,10 +1314,10 @@ describe("runtime/coordinator", () => {
     const coordinator = new WorkerCoordinator();
     const segments = allocateTestSegments();
     const shared = createSharedMemoryViews(segments);
-    (coordinator as any).shared = shared;
-    (coordinator as any).spawnWorker("net", segments);
+    (coordinator as unknown as CoordinatorTestHarness).shared = shared;
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("net", segments);
 
-    const netInfo = (coordinator as any).workers.net as { instanceId: number; worker: MockWorker };
+    const netInfo = (coordinator as unknown as CoordinatorTestHarness).workers.net as { instanceId: number; worker: MockWorker };
     const netWorker = netInfo.worker;
 
     const promise = coordinator.exportNetTracePcapng();
@@ -1299,7 +1328,7 @@ describe("runtime/coordinator", () => {
     const requestId = lastPosted!.requestId as number;
 
     const expectedBytes = new Uint8Array([0x61, 0x65, 0x72, 0x6f]); // "aero"
-    (coordinator as any).onWorkerMessage("net", netInfo.instanceId, {
+    (coordinator as unknown as CoordinatorTestHarness).onWorkerMessage("net", netInfo.instanceId, {
       kind: "net.trace.pcapng",
       requestId,
       bytes: expectedBytes.buffer,
@@ -1314,10 +1343,10 @@ describe("runtime/coordinator", () => {
     const coordinator = new WorkerCoordinator();
     const segments = allocateTestSegments();
     const shared = createSharedMemoryViews(segments);
-    (coordinator as any).shared = shared;
-    (coordinator as any).spawnWorker("net", segments);
+    (coordinator as unknown as CoordinatorTestHarness).shared = shared;
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("net", segments);
 
-    const netInfo = (coordinator as any).workers.net as { instanceId: number; worker: MockWorker };
+    const netInfo = (coordinator as unknown as CoordinatorTestHarness).workers.net as { instanceId: number; worker: MockWorker };
     const netWorker = netInfo.worker;
 
     const promise = coordinator.getNetTraceStats();
@@ -1327,7 +1356,7 @@ describe("runtime/coordinator", () => {
     expect(typeof lastPosted?.requestId).toBe("number");
     const requestId = lastPosted!.requestId as number;
 
-    (coordinator as any).onWorkerMessage("net", netInfo.instanceId, {
+    (coordinator as unknown as CoordinatorTestHarness).onWorkerMessage("net", netInfo.instanceId, {
       kind: "net.trace.status",
       requestId,
       enabled: true,
@@ -1351,19 +1380,19 @@ describe("runtime/coordinator", () => {
     const coordinator = new WorkerCoordinator();
     const segments = allocateTestSegments();
     const shared = createSharedMemoryViews(segments);
-    (coordinator as any).shared = shared;
-    (coordinator as any).spawnWorker("cpu", segments);
-    (coordinator as any).spawnWorker("gpu", segments);
+    (coordinator as unknown as CoordinatorTestHarness).shared = shared;
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("cpu", segments);
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("gpu", segments);
 
-    const cpuInfo = (coordinator as any).workers.cpu as { instanceId: number; worker: MockWorker };
-    const gpuInfo = (coordinator as any).workers.gpu as { instanceId: number; worker: MockWorker };
+    const cpuInfo = (coordinator as unknown as CoordinatorTestHarness).workers.cpu as { instanceId: number; worker: MockWorker };
+    const gpuInfo = (coordinator as unknown as CoordinatorTestHarness).workers.gpu as { instanceId: number; worker: MockWorker };
     const cpuWorker = cpuInfo.worker;
     const gpuWorker = gpuInfo.worker;
     cpuWorker.posted.length = 0;
     gpuWorker.posted.length = 0;
 
     // Submit before the GPU worker is READY; coordinator should buffer it.
-    (coordinator as any).onWorkerMessage("cpu", cpuInfo.instanceId, {
+    (coordinator as unknown as CoordinatorTestHarness).onWorkerMessage("cpu", cpuInfo.instanceId, {
       kind: "aerogpu.submit",
       contextId: 1,
       engineId: 9,
@@ -1396,7 +1425,7 @@ describe("runtime/coordinator", () => {
 
     // GPU worker reports submit_complete; coordinator should forward the fence completion.
     const requestId = submitMsg!.requestId as number;
-    (coordinator as any).onWorkerMessage("gpu", gpuInfo.instanceId, {
+    (coordinator as unknown as CoordinatorTestHarness).onWorkerMessage("gpu", gpuInfo.instanceId, {
       protocol: GPU_PROTOCOL_NAME,
       protocolVersion: GPU_PROTOCOL_VERSION,
       type: "submit_complete",
@@ -1411,7 +1440,7 @@ describe("runtime/coordinator", () => {
 
     // Untracked submit_complete messages must be ignored.
     cpuWorker.posted.length = 0;
-    (coordinator as any).onWorkerMessage("gpu", gpuInfo.instanceId, {
+    (coordinator as unknown as CoordinatorTestHarness).onWorkerMessage("gpu", gpuInfo.instanceId, {
       protocol: GPU_PROTOCOL_NAME,
       protocolVersion: GPU_PROTOCOL_VERSION,
       type: "submit_complete",
@@ -1425,20 +1454,20 @@ describe("runtime/coordinator", () => {
     const coordinator = new WorkerCoordinator();
     const segments = allocateTestSegments();
     const shared = createSharedMemoryViews(segments);
-    (coordinator as any).shared = shared;
-    (coordinator as any).spawnWorker("cpu", segments);
-    (coordinator as any).spawnWorker("gpu", segments);
-    (coordinator as any).spawnWorker("io", segments);
+    (coordinator as unknown as CoordinatorTestHarness).shared = shared;
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("cpu", segments);
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("gpu", segments);
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("io", segments);
 
-    const gpuInfo = (coordinator as any).workers.gpu as { instanceId: number; worker: MockWorker };
-    const ioInfo = (coordinator as any).workers.io as { instanceId: number; worker: MockWorker };
+    const gpuInfo = (coordinator as unknown as CoordinatorTestHarness).workers.gpu as { instanceId: number; worker: MockWorker };
+    const ioInfo = (coordinator as unknown as CoordinatorTestHarness).workers.io as { instanceId: number; worker: MockWorker };
     const gpuWorker = gpuInfo.worker;
 
     // Bring GPU worker to READY so a non-CPU submit would immediately forward if not gated.
     gpuWorker.onmessage?.({ data: { type: MessageType.READY, role: "gpu" } } as MessageEvent);
     gpuWorker.posted.length = 0;
 
-    (coordinator as any).onWorkerMessage("io", ioInfo.instanceId, {
+    (coordinator as unknown as CoordinatorTestHarness).onWorkerMessage("io", ioInfo.instanceId, {
       kind: "aerogpu.submit",
       contextId: 1,
       signalFence: 5n,
@@ -1446,8 +1475,8 @@ describe("runtime/coordinator", () => {
     });
 
     expect(lastMessageOfType(gpuWorker, "submit_aerogpu")).toBeUndefined();
-    expect(((coordinator as any).pendingAerogpuSubmissions as unknown[]).length).toBe(0);
-    expect(((coordinator as any).aerogpuInFlightFencesByRequestId as Map<number, bigint>).size).toBe(0);
+    expect(((coordinator as unknown as CoordinatorTestHarness).pendingAerogpuSubmissions as unknown[]).length).toBe(0);
+    expect(((coordinator as unknown as CoordinatorTestHarness).aerogpuInFlightFencesByRequestId as Map<number, bigint>).size).toBe(0);
   });
 
   it("bounds pending aerogpu.submit queue while GPU is not ready and force-completes dropped fences", () => {
@@ -1496,12 +1525,12 @@ describe("runtime/coordinator", () => {
     const coordinator = new WorkerCoordinator();
     const segments = allocateTestSegments();
     const shared = createSharedMemoryViews(segments);
-    (coordinator as any).shared = shared;
-    (coordinator as any).spawnWorker("cpu", segments);
-    (coordinator as any).spawnWorker("gpu", segments);
+    (coordinator as unknown as CoordinatorTestHarness).shared = shared;
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("cpu", segments);
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("gpu", segments);
 
-    const cpuInfo = (coordinator as any).workers.cpu as { instanceId: number; worker: MockWorker };
-    const gpuInfo = (coordinator as any).workers.gpu as { instanceId: number; worker: MockWorker };
+    const cpuInfo = (coordinator as unknown as CoordinatorTestHarness).workers.cpu as { instanceId: number; worker: MockWorker };
+    const gpuInfo = (coordinator as unknown as CoordinatorTestHarness).workers.gpu as { instanceId: number; worker: MockWorker };
     const cpuWorker = cpuInfo.worker;
     const gpuWorker = gpuInfo.worker;
 
@@ -1510,7 +1539,7 @@ describe("runtime/coordinator", () => {
     cpuWorker.posted.length = 0;
     gpuWorker.posted.length = 0;
 
-    (coordinator as any).onWorkerMessage("cpu", cpuInfo.instanceId, {
+    (coordinator as unknown as CoordinatorTestHarness).onWorkerMessage("cpu", cpuInfo.instanceId, {
       kind: "aerogpu.submit",
       contextId: 2,
       signalFence: 7n,
@@ -1521,7 +1550,7 @@ describe("runtime/coordinator", () => {
 
     // If the GPU worker is killed before it can send submit_complete, force-complete the fence so
     // the guest won't deadlock.
-    (coordinator as any).terminateWorker("gpu");
+    (coordinator as unknown as CoordinatorTestHarness).terminateWorker("gpu");
     expect(cpuWorker.posted).toContainEqual({
       message: { kind: "aerogpu.complete_fence", fence: 7n },
       transfer: undefined,
@@ -1532,12 +1561,12 @@ describe("runtime/coordinator", () => {
     const coordinator = new WorkerCoordinator();
     const segments = allocateTestSegments();
     const shared = createSharedMemoryViews(segments);
-    (coordinator as any).shared = shared;
-    (coordinator as any).spawnWorker("cpu", segments);
-    (coordinator as any).spawnWorker("gpu", segments);
+    (coordinator as unknown as CoordinatorTestHarness).shared = shared;
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("cpu", segments);
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("gpu", segments);
 
-    const cpuInfo = (coordinator as any).workers.cpu as { instanceId: number; worker: MockWorker };
-    const gpuInfo = (coordinator as any).workers.gpu as { instanceId: number; worker: MockWorker };
+    const cpuInfo = (coordinator as unknown as CoordinatorTestHarness).workers.cpu as { instanceId: number; worker: MockWorker };
+    const gpuInfo = (coordinator as unknown as CoordinatorTestHarness).workers.gpu as { instanceId: number; worker: MockWorker };
     const cpuWorker = cpuInfo.worker;
     const gpuWorker = gpuInfo.worker;
 
@@ -1552,7 +1581,7 @@ describe("runtime/coordinator", () => {
       throw new Error("postMessage failed");
     };
 
-    (coordinator as any).onWorkerMessage("cpu", cpuInfo.instanceId, {
+    (coordinator as unknown as CoordinatorTestHarness).onWorkerMessage("cpu", cpuInfo.instanceId, {
       kind: "aerogpu.submit",
       contextId: 0,
       signalFence: 42n,
@@ -1566,19 +1595,19 @@ describe("runtime/coordinator", () => {
     });
 
     // Ensure we didn't leak an in-flight tracking entry.
-    expect(((coordinator as any).aerogpuInFlightFencesByRequestId as Map<number, bigint>).size).toBe(0);
-    expect(((coordinator as any).pendingAerogpuSubmissions as unknown[]).length).toBe(0);
+    expect(((coordinator as unknown as CoordinatorTestHarness).aerogpuInFlightFencesByRequestId as Map<number, bigint>).size).toBe(0);
+    expect(((coordinator as unknown as CoordinatorTestHarness).pendingAerogpuSubmissions as unknown[]).length).toBe(0);
   });
 
   it("rejects pending net trace requests when the net worker is terminated", async () => {
     const coordinator = new WorkerCoordinator();
     const segments = allocateTestSegments();
     const shared = createSharedMemoryViews(segments);
-    (coordinator as any).shared = shared;
-    (coordinator as any).spawnWorker("net", segments);
+    (coordinator as unknown as CoordinatorTestHarness).shared = shared;
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("net", segments);
 
     const promise = coordinator.takeNetTracePcapng(60_000);
-    (coordinator as any).terminateWorker("net");
+    (coordinator as unknown as CoordinatorTestHarness).terminateWorker("net");
 
     await expect(promise).rejects.toThrow(/net worker restarted/i);
   });
@@ -1587,11 +1616,11 @@ describe("runtime/coordinator", () => {
     const coordinator = new WorkerCoordinator();
     const segments = allocateTestSegments();
     const shared = createSharedMemoryViews(segments);
-    (coordinator as any).shared = shared;
-    (coordinator as any).spawnWorker("net", segments);
+    (coordinator as unknown as CoordinatorTestHarness).shared = shared;
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("net", segments);
 
     const promise = coordinator.getNetTraceStats(60_000);
-    (coordinator as any).terminateWorker("net");
+    (coordinator as unknown as CoordinatorTestHarness).terminateWorker("net");
 
     await expect(promise).rejects.toThrow(/net worker restarted/i);
   });
@@ -1600,9 +1629,9 @@ describe("runtime/coordinator", () => {
     const coordinator = new WorkerCoordinator();
     const segments = allocateTestSegments();
     const shared = createSharedMemoryViews(segments);
-    (coordinator as any).shared = shared;
-    (coordinator as any).spawnWorker("cpu", segments);
-    (coordinator as any).spawnWorker("io", segments);
+    (coordinator as unknown as CoordinatorTestHarness).shared = shared;
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("cpu", segments);
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("io", segments);
 
     expect(() => coordinator.setAudioRingBufferOwner("both")).toThrow(/violates SPSC constraints/i);
     expect(() => coordinator.setMicrophoneRingBufferOwner("both")).toThrow(/violates SPSC constraints/i);
@@ -1674,8 +1703,8 @@ describe("runtime/coordinator", () => {
     const coordinator = new WorkerCoordinator();
     const segments = allocateTestSegments();
     const shared = createSharedMemoryViews(segments);
-    (coordinator as any).shared = shared;
-    (coordinator as any).activeConfig = {
+    (coordinator as unknown as CoordinatorTestHarness).shared = shared;
+    (coordinator as unknown as CoordinatorTestHarness).activeConfig = {
       guestMemoryMiB: 1,
       enableWorkers: true,
       enableWebGPU: false,
@@ -1683,13 +1712,13 @@ describe("runtime/coordinator", () => {
       activeDiskImage: null,
       logLevel: "info",
     };
-    (coordinator as any).spawnWorker("cpu", segments);
-    (coordinator as any).spawnWorker("io", segments);
-    (coordinator as any).spawnWorker("net", segments);
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("cpu", segments);
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("io", segments);
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("net", segments);
 
-    const cpuWorker = (coordinator as any).workers.cpu.worker as MockWorker;
-    const ioWorker = (coordinator as any).workers.io.worker as MockWorker;
-    const netWorker = (coordinator as any).workers.net.worker as MockWorker;
+    const cpuWorker = (coordinator as unknown as CoordinatorTestHarness).workers.cpu.worker as MockWorker;
+    const ioWorker = (coordinator as unknown as CoordinatorTestHarness).workers.io.worker as MockWorker;
+    const netWorker = (coordinator as unknown as CoordinatorTestHarness).workers.net.worker as MockWorker;
 
     const audioSab = new SharedArrayBuffer(16);
     coordinator.setAudioRingBuffer(audioSab, 128, 2, 48_000);
@@ -1713,8 +1742,8 @@ describe("runtime/coordinator", () => {
     const coordinator = new WorkerCoordinator();
     const segments = allocateTestSegments();
     const shared = createSharedMemoryViews(segments);
-    (coordinator as any).shared = shared;
-    (coordinator as any).activeConfig = {
+    (coordinator as unknown as CoordinatorTestHarness).shared = shared;
+    (coordinator as unknown as CoordinatorTestHarness).activeConfig = {
       guestMemoryMiB: 1,
       enableWorkers: true,
       enableWebGPU: false,
@@ -1722,11 +1751,11 @@ describe("runtime/coordinator", () => {
       activeDiskImage: null,
       logLevel: "info",
     };
-    (coordinator as any).spawnWorker("cpu", segments);
-    (coordinator as any).spawnWorker("io", segments);
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("cpu", segments);
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("io", segments);
 
-    const cpuWorker = (coordinator as any).workers.cpu.worker as MockWorker;
-    const ioWorker = (coordinator as any).workers.io.worker as MockWorker;
+    const cpuWorker = (coordinator as unknown as CoordinatorTestHarness).workers.cpu.worker as MockWorker;
+    const ioWorker = (coordinator as unknown as CoordinatorTestHarness).workers.io.worker as MockWorker;
 
     const audioSab = new SharedArrayBuffer(16);
     coordinator.setAudioRingBuffer(audioSab, 128, 2, 48_000);
@@ -1736,10 +1765,10 @@ describe("runtime/coordinator", () => {
 
     // Simulate the CPU worker being restarted. The replacement instance should inherit the
     // stored SAB attachments when it reports READY, but other workers should not.
-    (coordinator as any).terminateWorker("cpu");
-    (coordinator as any).spawnWorker("cpu", segments);
+    (coordinator as unknown as CoordinatorTestHarness).terminateWorker("cpu");
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("cpu", segments);
 
-    const restartedCpuWorker = (coordinator as any).workers.cpu.worker as MockWorker;
+    const restartedCpuWorker = (coordinator as unknown as CoordinatorTestHarness).workers.cpu.worker as MockWorker;
 
     // Clear any prior messages so we only observe READY-triggered behaviour.
     restartedCpuWorker.posted.length = 0;
@@ -1763,7 +1792,7 @@ describe("runtime/coordinator", () => {
     const coordinator = new WorkerCoordinator();
     const segments = allocateTestSegments();
     const shared = createSharedMemoryViews(segments);
-    (coordinator as any).shared = shared;
+    (coordinator as unknown as CoordinatorTestHarness).shared = shared;
     const baseConfig = {
       guestMemoryMiB: 1,
       vramMiB: 1,
@@ -1773,12 +1802,12 @@ describe("runtime/coordinator", () => {
       activeDiskImage: null,
       logLevel: "info" as const,
     };
-    (coordinator as any).activeConfig = baseConfig;
-    (coordinator as any).spawnWorker("cpu", segments);
-    (coordinator as any).spawnWorker("io", segments);
+    (coordinator as unknown as CoordinatorTestHarness).activeConfig = baseConfig;
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("cpu", segments);
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("io", segments);
 
-    const cpuWorker = (coordinator as any).workers.cpu.worker as MockWorker;
-    const ioWorker = (coordinator as any).workers.io.worker as MockWorker;
+    const cpuWorker = (coordinator as unknown as CoordinatorTestHarness).workers.cpu.worker as MockWorker;
+    const ioWorker = (coordinator as unknown as CoordinatorTestHarness).workers.io.worker as MockWorker;
 
     const audioSab = new SharedArrayBuffer(16);
     coordinator.setAudioRingBuffer(audioSab, 128, 2, 48_000);
@@ -1803,8 +1832,8 @@ describe("runtime/coordinator", () => {
     const coordinator = new WorkerCoordinator();
     const segments = allocateTestSegments();
     const shared = createSharedMemoryViews(segments);
-    (coordinator as any).shared = shared;
-    (coordinator as any).activeConfig = {
+    (coordinator as unknown as CoordinatorTestHarness).shared = shared;
+    (coordinator as unknown as CoordinatorTestHarness).activeConfig = {
       guestMemoryMiB: 1,
       enableWorkers: true,
       enableWebGPU: false,
@@ -1812,7 +1841,7 @@ describe("runtime/coordinator", () => {
       activeDiskImage: null,
       logLevel: "info",
     };
-    (coordinator as any).vmState = "running";
+    (coordinator as unknown as CoordinatorTestHarness).vmState = "running";
 
     const scanout = shared.scanoutStateI32;
     expect(scanout).toBeTruthy();
