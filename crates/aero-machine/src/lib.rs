@@ -979,14 +979,20 @@ impl<'a> PerCpuSystemMemoryBus<'a> {
     }
 
     fn inject_fixed_to_all(&mut self, vector: u8) {
-        let cpu_count = self.ap_cpus.len().saturating_add(1);
+        let Some(interrupts) = &self.interrupts else {
+            return;
+        };
+        let cpu_count = interrupts.borrow().cpu_count();
         for apic_id in 0..cpu_count {
             self.inject_fixed_to_apic_id(apic_id as u8, vector);
         }
     }
 
     fn inject_fixed_all_excluding_sender(&mut self, vector: u8) {
-        let cpu_count = self.ap_cpus.len().saturating_add(1);
+        let Some(interrupts) = &self.interrupts else {
+            return;
+        };
+        let cpu_count = interrupts.borrow().cpu_count();
         for apic_id in 0..cpu_count {
             let apic_id = apic_id as u8;
             if apic_id == self.apic_id {
