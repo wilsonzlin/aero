@@ -893,7 +893,8 @@ pub const NIC_RTL8139: PciDeviceProfile = PciDeviceProfile {
 /// - BAR1: a host-backed VRAM aperture:
 ///   - the legacy VGA window aliases into `VRAM[0..0x20000)` (128KiB)
 ///   - the first 256KiB is reserved for legacy VGA planar storage (4 × 64KiB planes)
-///   - the VBE linear framebuffer begins at `VRAM[0x40000..]` (`PhysBasePtr = BAR1_BASE + 0x40000`)
+///   - the VBE linear framebuffer begins at `VRAM[0x40000..]` (`PhysBasePtr = BAR1_BASE + 0x40000`,
+///     `AEROGPU_PCI_BAR1_VBE_LFB_OFFSET_BYTES`)
 ///
 /// Boot display in the canonical machine can still be provided by the standalone `aero_gpu_vga`
 /// VGA/VBE device model when `MachineConfig::enable_vga=true` (and `enable_aerogpu=false`). In that

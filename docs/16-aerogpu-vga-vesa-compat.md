@@ -168,7 +168,7 @@ Note: legacy VGA hardware exposes a 128KiB CPU-visible window (`0xA0000..0xBFFFF
 
 When AeroGPU is enabled, VBE mode info must report:
 
-`PhysBasePtr = BAR1_BASE + 0x40000` (aligned to 64KB; `VBE_LFB_OFFSET` in `aero_machine`).
+`PhysBasePtr = BAR1_BASE + 0x40000` (`AEROGPU_PCI_BAR1_VBE_LFB_OFFSET_BYTES`; aligned to 64KB; `VBE_LFB_OFFSET` in `aero_machine`).
 
 Windows 7 boot graphics and installer UI will draw directly into this linear framebuffer.
 
@@ -177,7 +177,7 @@ Windows 7 boot graphics and installer UI will draw directly into this linear fra
 The recommended rule is:
 
 - **Legacy VGA uses a fixed reserved subregion of VRAM** (`0x00000..0x3FFFF`).
-- **The VBE packed-pixel linear framebuffer starts at `0x40000`** and consumes
+- **The VBE packed-pixel linear framebuffer starts at `0x40000`** (`AEROGPU_PCI_BAR1_VBE_LFB_OFFSET_BYTES`) and consumes
   `width * height * bytes_per_pixel` bytes (depending on the active VBE mode).
 - **WDDM allocations (today)** in the in-tree Win7 AeroGPU driver are system-memory-backed (guest
   RAM), i.e. the driver reports no dedicated VRAM segment (see
@@ -353,7 +353,7 @@ Scanout 0 registers (BAR0):
 ### When legacy VGA/VBE owns scanout
 
 - At reset/power-on: `source = LegacyText`, base points at the legacy text buffer (or can be implicit)
-- When BIOS/bootloader sets a VBE LFB mode: `source = LegacyVbeLfb`, base = `BAR1_BASE + 0x40000`, width/height/pitch filled
+- When BIOS/bootloader sets a VBE LFB mode: `source = LegacyVbeLfb`, base = `BAR1_BASE + 0x40000` (`AEROGPU_PCI_BAR1_VBE_LFB_OFFSET_BYTES`), width/height/pitch filled
 
 ### When WDDM owns scanout
 
