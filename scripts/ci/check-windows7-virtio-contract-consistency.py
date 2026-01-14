@@ -1554,9 +1554,9 @@ def validate_virtio_input_model_lines(
 
     - The INF must include the SUBSYS-qualified Aero contract v1 keyboard/mouse HWIDs
       (distinct naming).
-    - If `require_fallback=True` (legacy alias INF), it must include the strict
-      REV-qualified generic fallback HWID (no SUBSYS). If `require_fallback=False`
-      (canonical INF), it must not include that fallback HWID.
+    - If `require_fallback=True`, it must include the strict REV-qualified generic
+      fallback HWID (no SUBSYS). If `require_fallback=False`, it must not include that
+      fallback HWID.
     - It must not include the tablet subsystem ID (`SUBSYS_00121AF4`); tablet devices
       bind via `aero_virtio_tablet.inf` (which is more specific and wins over the
       generic fallback when both are installed).
@@ -3821,12 +3821,9 @@ def main() -> None:
         base_hwid = f"PCI\\VEN_{contract_any.vendor_id:04X}&DEV_{contract_any.device_id:04X}"
         strict_hwid = f"{base_hwid}&REV_{contract_rev:02X}"
         hwids_upper = {h.upper() for h in hwids}
-        # Most Win7 virtio INFs include a strict (no SUBSYS) Vendor/Device+REV match so
-        # binding remains revision-gated even if subsystem IDs are absent/ignored.
-        #
-        # The canonical virtio-input INF is intentionally SUBSYS-only (keyboard + mouse) so it does
-        # not overlap with the tablet INF; the opt-in legacy alias INF provides the strict fallback.
-        if device_name != "virtio-input" and strict_hwid.upper() not in hwids_upper:
+        # Win7 virtio INFs include a strict (no SUBSYS) Vendor/Device+REV match so binding
+        # remains revision-gated even if subsystem IDs are absent/ignored.
+        if strict_hwid.upper() not in hwids_upper:
             errors.append(
                 format_error(
                     f"{inf_path.as_posix()}: missing strict REV-qualified hardware ID (required for contract major safety):",
@@ -3875,7 +3872,7 @@ def main() -> None:
                 inf_path=inf_path,
                 strict_hwid=strict_hwid,
                 contract_rev=contract_rev,
-                require_fallback=False,
+                require_fallback=True,
                 errors=errors,
             )
 
