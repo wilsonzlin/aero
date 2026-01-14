@@ -2252,8 +2252,16 @@ function handleDeviceLost(message: string, details?: unknown, startRecovery?: bo
     details: enrichedDetails,
   });
 
-  presenter?.destroy?.();
-  presenter = null;
+  // For WebGL context-loss events (`PresenterError.code === "webgl_context_lost"`), we defer
+  // destroying the presenter until a restore/recovery attempt begins. This:
+  // - avoids issuing WebGL resource deletion calls while the context is lost, and
+  // - allows DEV harnesses that use `WEBGL_lose_context` to call `restoreContext()` (the raw
+  //   WebGL2 presenter needs a live context reference for that).
+  const preservePresenterForRestore = startRecovery === false;
+  if (!preservePresenterForRestore) {
+    presenter?.destroy?.();
+    presenter = null;
+  }
   cursorPresenterLastImageOwner = null;
   presenterFallback = undefined;
   presenterSrcWidth = 0;
