@@ -1195,6 +1195,36 @@ inline TObject* FromHandle(THandle h) {
   return reinterpret_cast<TObject*>(h.pDrvPrivate);
 }
 
+// Converts D3D10/11 fill-mode numeric values to `aerogpu_fill_mode` values used
+// by the AeroGPU protocol.
+//
+// D3D10/D3D11 values are 2=WIREFRAME, 3=SOLID.
+inline uint32_t D3DFillModeToAerogpu(uint32_t fill_mode) {
+  switch (fill_mode) {
+    case 2: // D3D10_FILL_WIREFRAME / D3D11_FILL_WIREFRAME
+      return AEROGPU_FILL_WIREFRAME;
+    case 3: // D3D10_FILL_SOLID / D3D11_FILL_SOLID
+    default:
+      return AEROGPU_FILL_SOLID;
+  }
+}
+
+// Converts D3D10/11 cull-mode numeric values to `aerogpu_cull_mode` values used
+// by the AeroGPU protocol.
+//
+// D3D10/D3D11 values are 1=NONE, 2=FRONT, 3=BACK.
+inline uint32_t D3DCullModeToAerogpu(uint32_t cull_mode) {
+  switch (cull_mode) {
+    case 1: // D3D10_CULL_NONE / D3D11_CULL_NONE
+      return AEROGPU_CULL_NONE;
+    case 2: // D3D10_CULL_FRONT / D3D11_CULL_FRONT
+      return AEROGPU_CULL_FRONT;
+    case 3: // D3D10_CULL_BACK / D3D11_CULL_BACK
+    default:
+      return AEROGPU_CULL_BACK;
+  }
+}
+
 // Converts D3D11_COMPARISON_FUNC numeric values (as stored in the D3D11 DDI) to
 // `aerogpu_compare_func` values used by the AeroGPU protocol.
 //
@@ -1221,6 +1251,12 @@ inline uint32_t D3D11CompareFuncToAerogpu(uint32_t func) {
       break;
   }
   return AEROGPU_COMPARE_ALWAYS;
+}
+
+// D3D10 and D3D11 share the same numeric encoding for comparison functions, so
+// D3D10 paths can reuse the D3D11 mapping.
+inline uint32_t D3DCompareFuncToAerogpu(uint32_t func) {
+  return D3D11CompareFuncToAerogpu(func);
 }
 
 // Emits `AEROGPU_CMD_SET_DEPTH_STENCIL_STATE` using state tracked in `dss`.

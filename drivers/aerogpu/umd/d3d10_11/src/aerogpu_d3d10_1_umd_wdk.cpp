@@ -6332,50 +6332,6 @@ void AEROGPU_APIENTRY SetBlendState(D3D10DDI_HDEVICE hDevice,
   cmd->state.sample_mask = sample_mask;
 }
 
-static uint32_t D3D10FillModeToAerogpu(uint32_t fill_mode) {
-  switch (static_cast<D3D10_FILL_MODE>(fill_mode)) {
-    case D3D10_FILL_WIREFRAME:
-      return AEROGPU_FILL_WIREFRAME;
-    case D3D10_FILL_SOLID:
-    default:
-      return AEROGPU_FILL_SOLID;
-  }
-}
-
-static uint32_t D3D10CullModeToAerogpu(uint32_t cull_mode) {
-  switch (static_cast<D3D10_CULL_MODE>(cull_mode)) {
-    case D3D10_CULL_NONE:
-      return AEROGPU_CULL_NONE;
-    case D3D10_CULL_FRONT:
-      return AEROGPU_CULL_FRONT;
-    case D3D10_CULL_BACK:
-    default:
-      return AEROGPU_CULL_BACK;
-  }
-}
-
-static uint32_t D3D10CompareFuncToAerogpu(uint32_t func) {
-  switch (static_cast<D3D10_COMPARISON_FUNC>(func)) {
-    case D3D10_COMPARISON_NEVER:
-      return AEROGPU_COMPARE_NEVER;
-    case D3D10_COMPARISON_LESS:
-      return AEROGPU_COMPARE_LESS;
-    case D3D10_COMPARISON_EQUAL:
-      return AEROGPU_COMPARE_EQUAL;
-    case D3D10_COMPARISON_LESS_EQUAL:
-      return AEROGPU_COMPARE_LESS_EQUAL;
-    case D3D10_COMPARISON_GREATER:
-      return AEROGPU_COMPARE_GREATER;
-    case D3D10_COMPARISON_NOT_EQUAL:
-      return AEROGPU_COMPARE_NOT_EQUAL;
-    case D3D10_COMPARISON_GREATER_EQUAL:
-      return AEROGPU_COMPARE_GREATER_EQUAL;
-    case D3D10_COMPARISON_ALWAYS:
-    default:
-      return AEROGPU_COMPARE_ALWAYS;
-  }
-}
-
 void AEROGPU_APIENTRY SetRasterizerState(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRASTERIZERSTATE hState) {
   if (!hDevice.pDrvPrivate) {
     return;
@@ -6413,8 +6369,8 @@ void AEROGPU_APIENTRY SetRasterizerState(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRAS
     return;
   }
 
-  cmd->state.fill_mode = D3D10FillModeToAerogpu(fill_mode);
-  cmd->state.cull_mode = D3D10CullModeToAerogpu(cull_mode);
+  cmd->state.fill_mode = aerogpu::d3d10_11::D3DFillModeToAerogpu(fill_mode);
+  cmd->state.cull_mode = aerogpu::d3d10_11::D3DCullModeToAerogpu(cull_mode);
   cmd->state.front_ccw = front_ccw ? 1u : 0u;
   cmd->state.scissor_enable = scissor_enable ? 1u : 0u;
   cmd->state.depth_bias = depth_bias;
@@ -6466,7 +6422,7 @@ void AEROGPU_APIENTRY SetDepthStencilState(D3D10DDI_HDEVICE hDevice,
   cmd->state.depth_enable = depth_enable ? 1u : 0u;
   // D3D10/11 semantics: DepthWriteMask is ignored when depth testing is disabled.
   cmd->state.depth_write_enable = (depth_enable && depth_write_mask) ? 1u : 0u;
-  cmd->state.depth_func = D3D10CompareFuncToAerogpu(depth_func);
+  cmd->state.depth_func = aerogpu::d3d10_11::D3DCompareFuncToAerogpu(depth_func);
   cmd->state.stencil_enable = stencil_enable ? 1u : 0u;
   cmd->state.stencil_read_mask = stencil_read_mask;
   cmd->state.stencil_write_mask = stencil_write_mask;
