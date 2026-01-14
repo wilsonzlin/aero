@@ -349,10 +349,8 @@ fn d3d9_bool_constants_affect_pixel_shader_control_flow() {
             push_u32(out, 0); // start_register
             push_u32(out, 1); // bool_count
             push_u32(out, 0); // reserved0
-                              // Payload: vec4<u32> per bool register (replicated across lanes).
-            for _ in 0..4 {
-                push_u32(out, 0);
-            }
+                              // Payload: u32 per bool register (0 or 1).
+            push_u32(out, 0);
         });
 
         // Left triangle.
@@ -369,10 +367,8 @@ fn d3d9_bool_constants_affect_pixel_shader_control_flow() {
             push_u32(out, 0); // start_register
             push_u32(out, 1); // bool_count
             push_u32(out, 0); // reserved0
-                              // Payload: vec4<u32> per bool register (replicated across lanes).
-            for _ in 0..4 {
-                push_u32(out, 1);
-            }
+                              // Payload: u32 per bool register (0 or 1).
+            push_u32(out, 1);
         });
 
         // Right triangle.
