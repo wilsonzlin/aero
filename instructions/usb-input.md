@@ -26,7 +26,13 @@ Aero supports input through two different integration styles:
 - **Canonical full-system VM (`aero_machine::Machine`, exported to JS as `crates/aero-wasm::Machine`)**
   - One object owns CPU + devices.
   - Used by native tests and by the JS/WASM “single machine” API.
-  - Input is injected directly via `Machine.inject_*`.
+  - Input is injected directly via `Machine.inject_*`:
+    - PS/2 (i8042): `inject_browser_key`, `inject_mouse_motion`, etc.
+    - virtio-input (optional): `inject_virtio_key/rel/button/wheel` once enabled.
+  - Virtio-input is opt-in:
+    - Native: `MachineConfig.enable_virtio_input = true` (requires `enable_pc_platform = true`).
+    - JS/WASM: `api.Machine.new_with_options(..., { enable_virtio_input: true })`.
+    - Canonical BDFs: `00:0A.0` (keyboard) and `00:0A.1` (mouse).
 - **Browser worker runtime (production)**
   - Main thread captures browser events and batches them in `web/src/input/*`.
   - The **I/O worker** (`web/src/workers/io.worker.ts`) receives batches (`in:input-batch`) and routes them to:
@@ -120,6 +126,16 @@ The browser runtime can expose input as guest-visible USB HID devices in two way
 
 - **Synthetic HID devices** (keyboard/mouse/gamepad) attached behind the UHCI external hub (see `web/src/usb/uhci_external_hub.ts` and the attachment logic in `web/src/workers/io.worker.ts`).
 - **Physical device passthrough** via WebHID/WebUSB, bridged into UHCI (see `docs/webhid-webusb-passthrough.md`).
+
+Guest-visible topology (UHCI external hub):
+
+- UHCI root port 0: external hub (synthetic HID devices + WebHID passthrough)
+- UHCI root port 1: reserved for WebUSB passthrough
+- External hub ports:
+  - ports 1..3 reserved for synthetic keyboard/mouse/gamepad
+  - dynamic passthrough ports start at 4
+
+Note: the canonical `aero_machine::Machine` does not auto-attach an external hub or synthetic HID devices; it only exposes UHCI when enabled (hosts can attach devices explicitly via `Machine.usb_attach_*`).
 
 ---
 
