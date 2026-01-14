@@ -40,11 +40,72 @@ function Assert-ValidJson {
   }
 }
 
+function Assert-ValidJsonFile {
+  param(
+    [string]$ExpectedCommand,
+    [string[]]$Args,
+    [string]$JsonPath,
+    [switch]$SeparateArg
+  )
+
+  if ([string]::IsNullOrWhiteSpace($JsonPath)) {
+    throw "Assert-ValidJsonFile requires -JsonPath"
+  }
+
+  Remove-Item -ErrorAction SilentlyContinue $JsonPath
+
+  if ($SeparateArg) {
+    $stdout = & $DbgctlPath @Args --json $JsonPath 2>$null
+  } else {
+    $stdout = & $DbgctlPath @Args "--json=$JsonPath" 2>$null
+  }
+
+  $stdoutText = @($stdout) -join "`n"
+  if (-not [string]::IsNullOrWhiteSpace($stdoutText)) {
+    throw "Expected no stdout when writing JSON to file for: $DbgctlPath $($Args -join ' ')`n$stdoutText"
+  }
+
+  if (-not (Test-Path $JsonPath)) {
+    throw "JSON output file not created: $JsonPath"
+  }
+
+  $jsonText = [System.IO.File]::ReadAllText($JsonPath, [System.Text.Encoding]::UTF8)
+  if ([string]::IsNullOrWhiteSpace($jsonText)) {
+    throw "JSON output file is empty: $JsonPath"
+  }
+
+  try {
+    $obj = $jsonText | ConvertFrom-Json
+  } catch {
+    throw "Invalid JSON in file: $JsonPath`n$jsonText"
+  }
+
+  if (-not $obj.schema_version) {
+    throw "Missing schema_version in JSON file: $JsonPath`n$jsonText"
+  }
+
+  if ($ExpectedCommand -and $obj.command -ne $ExpectedCommand) {
+    throw "Unexpected command in JSON file: $JsonPath`nExpected: $ExpectedCommand`nActual: $($obj.command)`n$jsonText"
+  }
+
+  if ($ExpectedCommand -eq "status" -and -not $obj.perf) {
+    throw "Missing perf section in status JSON file: $JsonPath`n$jsonText"
+  }
+
+  Remove-Item -ErrorAction SilentlyContinue $JsonPath
+}
+
 Assert-ValidJson -ExpectedCommand "status" -Args @("--status")
 Assert-ValidJson -ExpectedCommand "status" -Args @("--status", "--pretty")
 Assert-ValidJson -ExpectedCommand "help" -Args @("--help")
 Assert-ValidJson -ExpectedCommand "help" -Args @("-h")
 Assert-ValidJson -ExpectedCommand "help" -Args @("/?")
+
+# File output mode: `--json=PATH` (and `--json PATH`) should create a JSON file and not print to stdout.
+Assert-ValidJsonFile -ExpectedCommand "status" -Args @("--status") -JsonPath "status_file_test.json"
+Assert-ValidJsonFile -ExpectedCommand "status" -Args @("--status", "--pretty") -JsonPath "status_pretty_file_test.json" -SeparateArg
+# Parse errors should still write machine-readable JSON to file if `--json=PATH` is present anywhere.
+Assert-ValidJsonFile -ExpectedCommand "parse-args" -Args @("--status", "--query-fence") -JsonPath "parse_args_file_test.json"
 Assert-ValidJson -ExpectedCommand "list-displays" -Args @("--list-displays")
 Assert-ValidJson -ExpectedCommand "query-fence" -Args @("--query-fence")
 Assert-ValidJson -ExpectedCommand "query-error" -Args @("--query-error")
@@ -121,6 +182,9 @@ $artifacts = @(
   "last_cmd_out_test.bin.alloc_table.bin",
   "read_gpa_test.bin",
   "read_gpa_chunked_test.bin",
+  "status_file_test.json",
+  "status_pretty_file_test.json",
+  "parse_args_file_test.json",
   "scanout_test.bmp",
   "scanout_test.png",
   "cursor_test.bmp",
