@@ -245,11 +245,12 @@ Examples (illustrative) INF model entries:
       ; aero_virtio_input.inf (virtio-input is a multi-function device: keyboard + mouse)
         %AeroVirtioKeyboard.DeviceDesc% = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01
         %AeroVirtioMouse.DeviceDesc%    = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01
-       %AeroVirtioInput.DeviceDesc%    = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&REV_01
-   
-     ; Optional legacy alias virtio-input.inf (checked in disabled-by-default as `virtio-input.inf.disabled`)
-     ; exists only to provide the legacy INF filename. From `[Version]` onward it is byte-for-byte identical to
-     ; `aero_virtio_input.inf` (see `drivers/windows7/virtio-input/scripts/check-inf-alias.py`).
+
+      ; Optional legacy alias virtio-input.inf (checked in disabled-by-default as `virtio-input.inf.disabled`)
+      ; Includes the same subsystem-qualified keyboard/mouse HWIDs as `aero_virtio_input.inf` and adds an opt-in
+      ; revision-gated generic fallback HWID (`PCI\VEN_1AF4&DEV_1052&REV_01`) for environments that do not expose
+      ; the Aero subsystem IDs. It is allowed to differ in the models sections, but should otherwise stay in sync
+      ; (see `drivers/windows7/virtio-input/scripts/check-inf-alias.py`).
 ```
 
 ### Boot-critical storage (`CriticalDeviceDatabase`)
