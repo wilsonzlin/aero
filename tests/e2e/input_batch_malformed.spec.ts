@@ -142,6 +142,7 @@ test("IO worker survives malformed in:input-batch messages", async ({ page }) =>
       let lastError: Error | null = null;
       for (let attempt = 0; attempt < 3; attempt += 1) {
         const before = Atomics.load(status, StatusIndex.IoInputBatchCounter) >>> 0;
+        const beforeEvents = Atomics.load(status, StatusIndex.IoInputEventCounter) >>> 0;
         const q = new InputEventQueue(8);
         const nowUs = Math.round(performance.now() * 1000) >>> 0;
         // Send a press+release pair so the IO worker doesn't retain "held key" state across cases.
@@ -161,6 +162,9 @@ test("IO worker survives malformed in:input-batch messages", async ({ page }) =>
 
         try {
           await waitForCounterGreaterThan(StatusIndex.IoInputBatchCounter, before, 750);
+          // Ensure the batch was actually processed (not just recycled) by observing the event counter.
+          // Two HID usage events were sent above, so we expect the counter to advance by >=2.
+          await waitForCounterGreaterThan(StatusIndex.IoInputEventCounter, beforeEvents + 1, 750);
           return;
         } catch (err) {
           lastError = err instanceof Error ? err : new Error(String(err));
