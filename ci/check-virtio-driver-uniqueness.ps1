@@ -48,7 +48,7 @@ function Get-RepoRoot {
 # reliably detect BOM-less UTF-16, causing this guardrail to silently miss HWIDs. Read the file
 # as bytes and apply our own decoding:
 #   - BOM detection for UTF-8 / UTF-16LE / UTF-16BE
-#   - heuristic for BOM-less UTF-16 (even length + high NUL-byte ratio) with endianness guess
+#   - heuristic for BOM-less UTF-16 (look for NUL bytes biased to even/odd offsets)
 #   - fallback to UTF-8 (ASCII-safe for the IDs we care about)
 function Read-InfText {
   [CmdletBinding()]
@@ -76,15 +76,14 @@ function Read-InfText {
   }
 
   # Heuristic for BOM-less UTF-16:
-  # INF text encoded in UTF-16 will contain a high concentration of NUL bytes, typically biased to
-  # either even (UTF-16BE) or odd (UTF-16LE) byte offsets (especially when the file is mostly ASCII).
-  # Use this to detect UTF-16 without a BOM so this guardrail doesn't silently miss HWIDs.
+  # UTF-16 INFs that are mostly ASCII tend to contain many NUL bytes, biased to either
+  # even (UTF-16BE) or odd (UTF-16LE) byte offsets. This catches common BOM-less UTF-16 encodings
+  # without accidentally treating regular UTF-8/ANSI INFs as UTF-16.
   if (($bytes.Length % 2) -eq 0) {
     $nulCount = 0
     $nulEven = 0
     $nulOdd = 0
-    $sampleLen = [Math]::Min($bytes.Length, 4096)
-    if (($sampleLen % 2) -ne 0) { $sampleLen-- }
+    $sampleLen = $bytes.Length
     for ($i = 0; $i -lt $sampleLen; $i++) {
       if ($bytes[$i] -eq 0) {
         $nulCount++
@@ -92,14 +91,18 @@ function Read-InfText {
       }
     }
     if ($nulCount -gt 0 -and $sampleLen -gt 0) {
-      $nulRatio = $nulCount / [double]$sampleLen
+      $half = [Math]::Max(1, [Math]::Floor($sampleLen / 2))
+      $oddRatio = $nulOdd / [double]$half
+      $evenRatio = $nulEven / [double]$half
 
-      # Heuristic thresholds:
-      # - Typical UTF-16 ASCII-ish text is ~0.5 NUL ratio.
-      # - We accept a lower ratio (>= 0.10) if NULs are strongly biased to one byte parity.
+      # Thresholds:
+      # - In UTF-16(LE/BE), a noticeable fraction of bytes in the *high* (or low) byte position
+      #   of UTF-16 code units will be NUL (particularly for ASCII syntax like section headers).
+      # - Require a strong parity bias to avoid mis-detecting random NUL bytes.
       $biasedLe = ($nulOdd -gt 0 -and $nulOdd -ge ($nulEven * 2))
       $biasedBe = ($nulEven -gt 0 -and $nulEven -ge ($nulOdd * 2))
-      if ($nulRatio -ge 0.10 -and ($biasedLe -or $biasedBe)) {
+
+      if (($oddRatio -ge 0.05 -and $biasedLe) -or ($evenRatio -ge 0.05 -and $biasedBe)) {
         if ($biasedLe) {
           return [System.Text.Encoding]::Unicode.GetString($bytes)
         } else {
