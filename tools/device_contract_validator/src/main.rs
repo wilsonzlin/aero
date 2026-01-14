@@ -1208,13 +1208,10 @@ fn validate_virtio_input_device_desc_split(
     // INFs should bind both functions to the same install sections, but use distinct
     // DeviceDesc strings so they appear with different names in Device Manager.
     //
-    // The canonical virtio-input INF is intentionally strict: it matches only the SUBSYS +
-    // REV_01 keyboard/mouse functions. It does not include a generic (no SUBSYS) fallback
-    // HWID, to avoid accidental overlap with other virtio-input functions (e.g. tablets).
-    //
-    // The legacy filename alias INF (`virtio-input.inf.disabled`) is allowed to opt into a
-    // strict (REV-qualified) generic fallback HWID for environments that do not expose Aero
-    // subsystem IDs.
+    // The virtio-input keyboard/mouse INF includes a strict (REV-qualified) generic fallback
+    // HWID so binding remains stable even when subsystem IDs are not exposed/recognized.
+    // Tablet devices bind via `aero_virtio_tablet.inf` (more specific) and will win over the
+    // generic fallback when that INF is installed.
     let strings = parse_inf_strings(inf_text);
     let rev = format!("{expected_rev:02X}");
     let kb_hwid = format!("{base_hwid}&SUBSYS_00101AF4&REV_{rev}");
@@ -1823,14 +1820,14 @@ fn validate_in_tree_infs(repo_root: &Path, devices: &BTreeMap<String, DeviceEntr
                         &inf_text,
                         &base,
                         expected_rev,
-                        /* require_fallback */ false,
+                        /* require_fallback */ true,
                     )
                     .with_context(|| {
                         format!("{name}: validate virtio-input canonical DeviceDesc split")
                     })?;
 
-                    // Optional: validate the legacy alias INF (if present), which may include a strict
-                    // generic fallback HWID for opt-in driver binding when subsystem IDs are absent.
+                    // Optional: validate the legacy alias INF (if present) which should remain in sync
+                    // with the canonical INF from [Version] onward.
                     let alias_candidates = [
                         inf_path.with_file_name("virtio-input.inf"),
                         inf_path.with_file_name("virtio-input.inf.disabled"),
