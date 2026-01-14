@@ -4187,7 +4187,7 @@ impl Machine {
         if format.eq_ignore_ascii_case("aerospar") || format.eq_ignore_ascii_case("aerosparse") {
             let backend = aero_opfs::OpfsByteStorage::open(&path, create)
                 .await
-                .map_err(|e| JsValue::from_str(&e.to_string()))?;
+                .map_err(|e| opfs_disk_error_to_js("Machine.set_disk_opfs", &path, e))?;
 
             let disk = if create {
                 // Use a conservative default allocation unit size (1 MiB) suitable for general use
@@ -4197,13 +4197,13 @@ impl Machine {
                     block_size_bytes: 1024 * 1024,
                 };
                 aero_storage::AeroSparseDisk::create(backend, cfg)
-                    .map_err(|e| JsValue::from_str(&e.to_string()))?
+                    .map_err(|e| opfs_context_error_to_js("Machine.set_disk_opfs", &path, e))?
             } else {
                 let disk = aero_storage::AeroSparseDisk::open(backend)
-                    .map_err(|e| JsValue::from_str(&e.to_string()))?;
+                    .map_err(|e| opfs_context_error_to_js("Machine.set_disk_opfs", &path, e))?;
                 if size_bytes != 0 && disk.header().disk_size_bytes != size_bytes {
-                    return Err(JsValue::from_str(&format!(
-                        "aerosparse disk size mismatch: header={} expected={size_bytes}",
+                    return Err(js_error(format!(
+                        "Machine.set_disk_opfs failed for OPFS path \"{path}\": aerosparse disk size mismatch (header={} expected={size_bytes})",
                         disk.header().disk_size_bytes
                     )));
                 }
@@ -4213,7 +4213,7 @@ impl Machine {
             return self
                 .inner
                 .set_disk_backend(Box::new(disk))
-                .map_err(|e| JsValue::from_str(&e.to_string()));
+                .map_err(|e| opfs_context_error_to_js("Machine.set_disk_opfs", &path, e));
         }
 
         // Default: raw disk image (flat sector file).
@@ -4317,7 +4317,12 @@ impl Machine {
         expected_size_bytes: Option<u64>,
     ) -> Result<(), JsValue> {
         let format = base_format.as_deref().unwrap_or("raw");
-        let disk = crate::opfs_virtual_disk::open_opfs_virtual_disk(&path, format).await?;
+        let disk = crate::opfs_virtual_disk::open_opfs_virtual_disk(
+            "Machine.set_disk_opfs_existing",
+            &path,
+            format,
+        )
+        .await?;
 
         if let Some(expected) = expected_size_bytes {
             let actual = disk.capacity_bytes();

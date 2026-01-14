@@ -49,21 +49,22 @@ pub(crate) fn open_virtual_disk_from_backend<B: StorageBackend + VirtualDiskSend
 
 #[cfg(target_arch = "wasm32")]
 pub(crate) async fn open_opfs_virtual_disk(
+    operation: &str,
     path: &str,
     format: &str,
 ) -> Result<Box<dyn VirtualDisk>, wasm_bindgen::JsValue> {
     if format.eq_ignore_ascii_case("aerospar") || format.eq_ignore_ascii_case("aerosparse") {
         let backend = aero_opfs::OpfsByteStorage::open(path, false)
             .await
-            .map_err(|e| wasm_bindgen::JsValue::from_str(&e.to_string()))?;
+            .map_err(|e| crate::opfs_disk_error_to_js(operation, path, e))?;
         return open_virtual_disk_from_backend(backend, format, None)
-            .map_err(|e| wasm_bindgen::JsValue::from_str(&e.to_string()));
+            .map_err(|e| crate::opfs_context_error_to_js(operation, path, e));
     }
 
     // Default to the raw-sector OPFS disk backend.
     let backend = aero_opfs::OpfsBackend::open_existing(path)
         .await
-        .map_err(|e| wasm_bindgen::JsValue::from_str(&e.to_string()))?;
+        .map_err(|e| crate::opfs_disk_error_to_js(operation, path, e))?;
     Ok(Box::new(backend))
 }
 
