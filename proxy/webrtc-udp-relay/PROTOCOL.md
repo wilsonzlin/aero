@@ -429,6 +429,30 @@ On the Go relay, the max payload is configured via:
 
 - `MAX_DATAGRAM_PAYLOAD_BYTES` / `--max-datagram-payload-bytes` (default `1200`)
 
+### WebRTC DataChannel / SCTP message size caps (DoS hardening)
+
+The relay uses WebRTC DataChannels (SCTP user messages) as the transport. In
+addition to `MAX_DATAGRAM_PAYLOAD_BYTES` and `L2_MAX_MESSAGE_BYTES`, the relay
+configures **pion/webrtc SettingEngine** caps to prevent malicious peers from
+sending extremely large SCTP messages that could otherwise be buffered/allocated
+before `DataChannel.OnMessage` runs.
+
+The relay advertises an SDP `a=max-message-size` via:
+
+- `WEBRTC_DATACHANNEL_MAX_MESSAGE_BYTES` / `--webrtc-datachannel-max-message-bytes` (0 = auto)
+
+This should be at least:
+
+- `MAX_DATAGRAM_PAYLOAD_BYTES + 24` (worst case UDP relay frame overhead: v2 header with an IPv6 address), and
+- `L2_MAX_MESSAGE_BYTES` (for `l2` tunnel messages).
+
+The relay also enforces a hard receive-side SCTP buffer cap via:
+
+- `WEBRTC_SCTP_MAX_RECEIVE_BUFFER_BYTES` / `--webrtc-sctp-max-receive-buffer-bytes` (0 = auto)
+
+If a peer sends messages larger than these limits, the relay may close the
+DataChannel or the entire session.
+
 ---
 
 ## Error handling
