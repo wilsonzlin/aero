@@ -7503,6 +7503,7 @@ void AEROGPU_APIENTRY SetRenderTargets(D3D10DDI_HDEVICE hDevice,
   std::lock_guard<std::mutex> lock(dev->mutex);
 
   if (num_rtvs != 0 && !pRTVs) {
+    set_error(dev, E_INVALIDARG);
     return;
   }
 
