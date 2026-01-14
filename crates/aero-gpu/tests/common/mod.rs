@@ -30,17 +30,6 @@ pub fn skip_or_panic(test_name: &str, reason: &str) {
 /// tests often instantiate a new headless executor per test, so we centralize executor creation
 /// here and reuse it across tests.
 #[allow(dead_code)]
-#[cfg(target_arch = "wasm32")]
-pub fn d3d9_executor(
-    test_name: &str,
-) -> Option<std::sync::MutexGuard<'static, aero_gpu::AerogpuD3d9Executor>> {
-    // The headless executor uses non-Send/Sync WebGPU handles on wasm32; keep the host-style
-    // integration tests buildable by treating them as skipped.
-    skip_or_panic(test_name, "D3D9 headless executor is host-only");
-    None
-}
-
-#[allow(dead_code)]
 #[cfg(not(target_arch = "wasm32"))]
 pub fn d3d9_executor(
     test_name: &str,
@@ -68,6 +57,17 @@ pub fn d3d9_executor(
     Some(exec)
 }
 
+#[allow(dead_code)]
+#[cfg(target_arch = "wasm32")]
+pub fn d3d9_executor(
+    test_name: &str,
+) -> Option<std::sync::MutexGuard<'static, aero_gpu::AerogpuD3d9Executor>> {
+    // The headless D3D9 executor uses non-Send/Sync WebGPU handles on wasm32, so we cannot share a
+    // `static` executor cache like we do on native targets.
+    skip_or_panic(test_name, "shared D3D9 executor cache is not available on wasm32");
+    None
+}
+
 /// Return a shared, leaked stable-protocol (`AeroGpuExecutor`) for this integration-test binary.
 ///
 /// Like [`d3d9_executor`], this avoids wgpu backend/driver instability (including crashes or LLVM
@@ -79,9 +79,9 @@ pub async fn aerogpu_executor(
     test_name: &str,
 ) -> Option<futures_intrusive::sync::MutexGuard<'static, aero_gpu::aerogpu_executor::AeroGpuExecutor>>
 {
-    // `AeroGpuExecutor` uses JS-backed WebGPU handles on wasm32 which are not Send/Sync. Keep the
-    // host-style integration tests buildable by treating them as skipped.
-    skip_or_panic(test_name, "AeroGpuExecutor is host-only");
+    // `AeroGpuExecutor` uses JS-backed WebGPU handles on wasm32 which are not Send/Sync, so we
+    // cannot share a `static` executor cache like we do on native targets.
+    skip_or_panic(test_name, "shared AeroGpuExecutor cache is not available on wasm32");
     None
 }
 

@@ -10281,9 +10281,8 @@ impl AerogpuD3d11Executor {
 
         // Geometry/tessellation shaders are carried through the `stage_ex` ABI extension (or the
         // legacy `stage=Geometry` encoding) on the WebGPU-backed executor. Keep the persistent cache
-        // focused on VS/PS/CS translation; GS/HS/DS are accepted-but-not-translated and compile as
-        // placeholder compute shaders, but they must still be retained in `resources.shaders` for
-        // state tracking.
+        // focused on VS/PS/CS translation; GS/HS/DS are not stored in the persistent cache, but
+        // they must still be retained in `resources.shaders` for state tracking.
         let stage =
             ShaderStage::from_aerogpu_u32_with_stage_ex(stage_raw, stage_ex).ok_or_else(|| {
                 anyhow!(

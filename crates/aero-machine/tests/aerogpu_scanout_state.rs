@@ -1,5 +1,7 @@
 #![cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
 
+#![cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+
 use std::sync::Arc;
 
 use aero_devices::pci::PciBdf;
