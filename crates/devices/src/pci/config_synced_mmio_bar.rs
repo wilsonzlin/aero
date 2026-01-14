@@ -144,6 +144,28 @@ impl<T: PciDevice> PciConfigSyncedMmioBar<T> {
             }
         }
     }
+
+    fn mirror_msi_pending_bits_to_platform_config(&mut self) {
+        // MSI pending bits are device-managed: the device latches them when an interrupt is raised
+        // while delivery is blocked (masked or unprogrammed address). If the platform maintains a
+        // separate canonical PCI config space for guest reads, mirror the pending bits back so
+        // config-space reads observe the device-managed state immediately.
+        let pending_bits = self
+            .dev
+            .borrow()
+            .config()
+            .capability::<MsiCapability>()
+            .map(|msi| msi.pending_bits())
+            .unwrap_or(0);
+
+        let mut pci_cfg = self.pci_cfg.borrow_mut();
+        let Some(cfg) = pci_cfg.bus_mut().device_config_mut(self.bdf) else {
+            return;
+        };
+        if let Some(msi) = cfg.capability_mut::<MsiCapability>() {
+            msi.set_pending_bits(pending_bits);
+        }
+    }
 }
 
 impl<T: MmioHandler + PciDevice> MmioHandler for PciConfigSyncedMmioBar<T> {
@@ -153,7 +175,9 @@ impl<T: MmioHandler + PciDevice> MmioHandler for PciConfigSyncedMmioBar<T> {
         }
         self.sync_pci_state();
         // Mask to avoid leaking junk in upper bits for sub-8-byte reads.
-        MmioHandler::read(&mut *self.dev.borrow_mut(), offset, size) & all_ones(size)
+        let value = MmioHandler::read(&mut *self.dev.borrow_mut(), offset, size) & all_ones(size);
+        self.mirror_msi_pending_bits_to_platform_config();
+        value
     }
 
     fn write(&mut self, offset: u64, size: usize, value: u64) {
@@ -169,6 +193,7 @@ impl<T: MmioHandler + PciDevice> MmioHandler for PciConfigSyncedMmioBar<T> {
             size,
             value & all_ones(size),
         );
+        self.mirror_msi_pending_bits_to_platform_config();
     }
 }
 
@@ -644,6 +669,156 @@ mod tests {
             1,
             "device-managed pending bit must not be overwritten by config synchronization"
         );
+    }
+
+    #[test]
+    fn pci_config_synced_mmio_bar_mirrors_device_managed_msi_pending_bits_to_canonical_config() {
+        let bdf = PciBdf::new(0, 8, 0);
+        let bar = 0;
+
+        struct CanonicalCfgDev {
+            config: PciConfigSpace,
+        }
+
+        impl CanonicalCfgDev {
+            fn new(bar: u8) -> Self {
+                let mut config = PciConfigSpace::new(0x1234, 0x5678);
+                config.set_bar_definition(
+                    bar,
+                    PciBarDefinition::Mmio32 {
+                        size: 0x1000,
+                        prefetchable: false,
+                    },
+                );
+                config.add_capability(Box::new(MsiCapability::new()));
+                Self { config }
+            }
+        }
+
+        impl PciDevice for CanonicalCfgDev {
+            fn config(&self) -> &PciConfigSpace {
+                &self.config
+            }
+
+            fn config_mut(&mut self) -> &mut PciConfigSpace {
+                &mut self.config
+            }
+        }
+
+        struct MmioDev {
+            config: PciConfigSpace,
+        }
+
+        impl MmioDev {
+            fn new(bar: u8) -> Self {
+                let mut config = PciConfigSpace::new(0xabcd, 0xef01);
+                config.set_bar_definition(
+                    bar,
+                    PciBarDefinition::Mmio32 {
+                        size: 0x1000,
+                        prefetchable: false,
+                    },
+                );
+                config.add_capability(Box::new(MsiCapability::new()));
+                Self { config }
+            }
+        }
+
+        impl PciDevice for MmioDev {
+            fn config(&self) -> &PciConfigSpace {
+                &self.config
+            }
+
+            fn config_mut(&mut self) -> &mut PciConfigSpace {
+                &mut self.config
+            }
+        }
+
+        impl MmioHandler for MmioDev {
+            fn read(&mut self, _offset: u64, _size: usize) -> u64 {
+                0
+            }
+
+            fn write(&mut self, _offset: u64, _size: usize, _value: u64) {
+                struct Sink;
+                impl MsiTrigger for Sink {
+                    fn trigger_msi(&mut self, _message: MsiMessage) {}
+                }
+
+                let Some(msi) = self.config.capability_mut::<MsiCapability>() else {
+                    panic!("missing MSI capability");
+                };
+                let _ = msi.trigger(&mut Sink);
+            }
+        }
+
+        let pci_cfg = Rc::new(RefCell::new(PciConfigPorts::new()));
+        pci_cfg
+            .borrow_mut()
+            .bus_mut()
+            .add_device(bdf, Box::new(CanonicalCfgDev::new(bar)));
+
+        // Enable MSI in canonical config with an invalid message address (addr=0) so triggering
+        // latches the pending bit.
+        {
+            let mut pci_cfg = pci_cfg.borrow_mut();
+            let cfg = pci_cfg
+                .bus_mut()
+                .device_config_mut(bdf)
+                .expect("missing canonical config device");
+            cfg.set_command(0x2);
+            cfg.set_bar_base(bar, 0x1234_0000);
+
+            let cap_off = cfg.find_capability(PCI_CAP_ID_MSI).unwrap() as u16;
+            cfg.write(cap_off + 0x04, 4, 0);
+            cfg.write(cap_off + 0x08, 4, 0);
+            cfg.write(cap_off + 0x0c, 2, 0x0045);
+            cfg.write(cap_off + 0x10, 4, 0); // unmasked
+            let ctrl = cfg.read(cap_off + 0x02, 2) as u16;
+            cfg.write(cap_off + 0x02, 2, u32::from(ctrl | 0x0001));
+        }
+
+        let dev = Rc::new(RefCell::new(MmioDev::new(bar)));
+        let mut mmio = PciConfigSyncedMmioBar::new(pci_cfg.clone(), dev, bdf, bar);
+
+        // Trigger a device interrupt attempt via MMIO. It should latch the pending bit and the
+        // wrapper should mirror it back into canonical config space.
+        mmio.write(0, 4, 0);
+
+        let pending_bits = {
+            let mut pci_cfg = pci_cfg.borrow_mut();
+            pci_cfg
+                .bus_mut()
+                .device_config(bdf)
+                .unwrap()
+                .capability::<MsiCapability>()
+                .unwrap()
+                .pending_bits()
+        };
+        assert_eq!(pending_bits & 1, 1);
+
+        // Now program a valid MSI address in canonical config and trigger again; delivery should
+        // clear the pending bit, and the wrapper should mirror that clear back.
+        {
+            let mut pci_cfg = pci_cfg.borrow_mut();
+            let cfg = pci_cfg.bus_mut().device_config_mut(bdf).unwrap();
+            let cap_off = cfg.find_capability(PCI_CAP_ID_MSI).unwrap() as u16;
+            cfg.write(cap_off + 0x04, 4, 0xfee0_0000);
+            cfg.write(cap_off + 0x08, 4, 0);
+        }
+        mmio.write(0, 4, 0);
+
+        let pending_bits = {
+            let mut pci_cfg = pci_cfg.borrow_mut();
+            pci_cfg
+                .bus_mut()
+                .device_config(bdf)
+                .unwrap()
+                .capability::<MsiCapability>()
+                .unwrap()
+                .pending_bits()
+        };
+        assert_eq!(pending_bits & 1, 0);
     }
 
     #[test]
