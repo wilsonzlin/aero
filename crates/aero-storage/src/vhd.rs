@@ -499,14 +499,14 @@ impl<B: StorageBackend> VhdDisk<B> {
         let footer = VhdFooter::parse(raw_footer)?;
 
         if footer.disk_type != VHD_DISK_TYPE_DIFFERENCING {
-            return Err(DiskError::Unsupported(
-                "vhd differencing open requires disk_type=4",
+            return Err(DiskError::InvalidConfig(
+                "vhd open_with_parent/open_differencing requires disk_type=4",
             ));
         }
 
         if parent.capacity_bytes() != footer.current_size {
-            return Err(DiskError::Unsupported(
-                "vhd differencing parent capacity mismatch",
+            return Err(DiskError::InvalidConfig(
+                "vhd parent capacity does not match differencing disk size",
             ));
         }
 
