@@ -23,7 +23,8 @@ fn aerogpu_scanout_readback_is_capped_to_avoid_unbounded_allocations() {
 
     let mut m = Machine::new(cfg).expect("Machine::new should succeed");
 
-    // Establish a known legacy baseline so we can verify the WDDM claim is released after disable.
+    // Establish a known legacy baseline so we can verify WDDM ownership stays authoritative once
+    // claimed (even if scanout cannot be presented due to host-side readback limits).
     m.write_physical_u16(0xB8000, 0x1F41); // 'A'
     m.display_present();
     let legacy_res = m.display_resolution();

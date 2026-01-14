@@ -4573,12 +4573,11 @@ impl Machine {
     ///
     /// Policy summary:
     /// - Before the guest claims the AeroGPU WDDM scanout, legacy VGA/VBE output is presented.
-    /// - Once the guest claims WDDM scanout (writes a valid `SCANOUT0_*` config and enables it),
-    ///   WDDM owns scanout and legacy VGA/VBE is ignored by presentation even if legacy MMIO/PIO
-    ///   continues to accept writes for compatibility.
-    /// - Clearing `SCANOUT0_ENABLE` blanks WDDM presentation (0x0 resolution) but keeps WDDM
-    ///   ownership sticky until the VM resets.
-    /// - Device reset clears the claim and allows legacy VGA/VBE presentation again.
+    /// - Once the guest claims AeroGPU WDDM scanout (writes a valid `SCANOUT0_*` config and
+    ///   enables it), WDDM owns scanout and legacy VGA/VBE is ignored by presentation even if
+    ///   legacy MMIO/PIO continues to accept writes for compatibility.
+    /// - Clearing `SCANOUT0_ENABLE` releases WDDM ownership and allows legacy VGA/VBE
+    ///   presentation to become visible again. Device reset also clears the claim.
     pub fn active_scanout_source(&self) -> ScanoutSource {
         if let Some(aerogpu_mmio) = &self.aerogpu_mmio {
             let state = aerogpu_mmio.borrow().scanout0_state();
@@ -9910,8 +9909,9 @@ impl Machine {
         // Publish legacy scanout transitions (text <-> VBE LFB) so external presentation layers
         // can follow BIOS-driven mode sets and panning/stride updates.
         //
-        // If the scanout has already been claimed by the WDDM path, do not allow legacy INT 10h
-        // calls to steal it back (sticky handoff semantics; see docs/16-aerogpu-vga-vesa-compat.md).
+        // If the scanout is currently owned by the WDDM path, do not allow legacy INT 10h calls
+        // to steal it back (until the guest disables scanout via `SCANOUT0_ENABLE=0` or the VM
+        // resets; see docs/16-aerogpu-vga-vesa-compat.md).
         #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
         if vector == 0x10 {
             let vbe_scanout_sig_after = self.bios.video.vbe.current_mode.map(|mode| {

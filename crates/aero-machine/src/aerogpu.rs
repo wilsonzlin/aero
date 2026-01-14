@@ -817,8 +817,9 @@ impl AeroGpuMmioDevice {
             return;
         }
 
-        // Sticky handoff: once a valid WDDM scanout config has been programmed, claim scanout even
-        // if `SCANOUT0_ENABLE` was already 1 (Win7 KMD init sequence).
+        // Claim the WDDM scanout once a valid configuration has been programmed, even if
+        // `SCANOUT0_ENABLE` was already 1 (Win7 KMD init sequence). Ownership is held until the
+        // guest disables scanout (`SCANOUT0_ENABLE=0`) or the VM resets.
         self.wddm_scanout_active = true;
 
         // Mark dirty so scanout consumers see the transition immediately.
@@ -832,7 +833,8 @@ impl AeroGpuMmioDevice {
     ///
     /// Returns `None` when:
     /// - the scanout registers have not changed since the last call, or
-    /// - the scanout has never been enabled (so legacy scanout should remain authoritative).
+    /// - the scanout has never been claimed by a valid WDDM configuration (so legacy scanout
+    ///   should remain authoritative).
     ///
     /// Returns a disabled descriptor (base/width/height/pitch = 0) when the scanout is enabled but
     /// invalid/unsupported (including unsupported formats).

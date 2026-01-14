@@ -40,6 +40,9 @@ fn aerogpu_scanout_requires_pci_bus_master_enable_for_host_reads() {
             .bus_mut()
             .device_config_mut(profile::AEROGPU.bdf)
             .expect("AeroGPU PCI function missing");
+        // BAR MMIO access is gated by PCI COMMAND.MEM. Keep it enabled even while testing that
+        // COMMAND.BME gates device-initiated scanout reads.
+        cfg.set_command(cfg.command() | 0x2); // COMMAND.MEM
         cfg.bar_range(0).expect("AeroGPU BAR0 missing").base
     };
     assert_ne!(bar0_base, 0);
