@@ -1233,7 +1233,7 @@ static void InitUnlockForWrite(D3DDDICB_UNLOCK* unlock) {
 
 // Declared later alongside Map/Unmap helpers, but also needed for LockCb-backed
 // texture upload paths.
-static bool ValidateWddmTexturePitch(const AeroGpuResource* res, uint32_t wddm_pitch);
+static bool ValidateWddmTexturePitch(const AeroGpuDevice* dev, const AeroGpuResource* res, uint32_t wddm_pitch);
 
 void emit_upload_resource_locked(AeroGpuDevice* dev,
                                  const AeroGpuResource* res,
@@ -1306,27 +1306,20 @@ void emit_upload_resource_locked(AeroGpuDevice* dev,
     return;
   }
 
+  uint32_t wddm_slice_pitch = 0;
   uint32_t wddm_pitch = 0;
   __if_exists(D3DDDICB_LOCK::Pitch) {
     wddm_pitch = lock_args.Pitch;
   }
-  if (res->kind == ResourceKind::Texture2D && !ValidateWddmTexturePitch(res, wddm_pitch)) {
-    // Our subresource packing (and the host's interpretation of guest memory) assumes the
-    // allocation pitch matches `res->row_pitch_bytes`. If the runtime reports a different
-    // pitch, we cannot safely treat the allocation as a packed linear buffer.
-    D3DDDICB_UNLOCK unlock_args = {};
-    unlock_args.hAllocation = lock_args.hAllocation;
-    InitUnlockForWrite(&unlock_args);
-    const HRESULT unlock_hr = CallCbMaybeHandle(cb->pfnUnlockCb, dev->hrt_device, &unlock_args);
-    if (FAILED(unlock_hr)) {
-      set_error(dev, unlock_hr);
-    } else {
-      set_error(dev, E_FAIL);
-    }
-    return;
+  __if_exists(D3DDDICB_LOCK::SlicePitch) {
+    wddm_slice_pitch = lock_args.SlicePitch;
   }
 
   HRESULT copy_hr = S_OK;
+  if (res->kind == ResourceKind::Texture2D && !ValidateWddmTexturePitch(dev, res, wddm_pitch)) {
+    copy_hr = E_INVALIDARG;
+    goto Unlock;
+  }
   if (res->kind == ResourceKind::Texture2D && upload_offset == 0 && upload_size == res->storage.size() &&
       res->mip_levels == 1 && res->array_size == 1) {
     const uint32_t aer_fmt = aerogpu::d3d10_11::dxgi_format_to_aerogpu_compat(dev, res->dxgi_format);
@@ -1388,7 +1381,25 @@ Unlock:
     return;
   }
 
-  emit_dirty_range_locked(dev, res, upload_offset, upload_size);
+  uint64_t dirty_size = upload_size;
+  if (res->kind == ResourceKind::Texture2D && upload_offset == 0 && upload_size == res->storage.size() &&
+      res->mip_levels == 1 && res->array_size == 1) {
+    if (wddm_slice_pitch != 0) {
+      dirty_size = static_cast<uint64_t>(wddm_slice_pitch);
+    } else if (wddm_pitch != 0) {
+      const uint32_t aer_fmt = aerogpu::d3d10_11::dxgi_format_to_aerogpu_compat(dev, res->dxgi_format);
+      const uint32_t rows = aerogpu_texture_num_rows(aer_fmt, res->height);
+      if (rows != 0) {
+        if (wddm_pitch <= (std::numeric_limits<uint64_t>::max() / static_cast<uint64_t>(rows))) {
+          const uint64_t slice_pitch_u64 = static_cast<uint64_t>(wddm_pitch) * static_cast<uint64_t>(rows);
+          if (slice_pitch_u64 != 0) {
+            dirty_size = slice_pitch_u64;
+          }
+        }
+      }
+    }
+  }
+  emit_dirty_range_locked(dev, res, upload_offset, dirty_size);
 }
 
 void emit_dirty_range_locked(AeroGpuDevice* dev,
@@ -4049,7 +4060,7 @@ static void InitUnlockArgsForMap(D3DDDICB_UNLOCK* unlock, uint32_t subresource) 
   }
 }
 
-static bool ValidateWddmTexturePitch(const AeroGpuResource* res, uint32_t wddm_pitch) {
+static bool ValidateWddmTexturePitch(const AeroGpuDevice* dev, const AeroGpuResource* res, uint32_t wddm_pitch) {
   if (!res || res->kind != ResourceKind::Texture2D) {
     return true;
   }
@@ -4058,10 +4069,19 @@ static bool ValidateWddmTexturePitch(const AeroGpuResource* res, uint32_t wddm_p
   if (wddm_pitch == 0) {
     return true;
   }
-  if (res->row_pitch_bytes == 0) {
+  if (!dev || res->width == 0) {
     return false;
   }
-  return wddm_pitch == res->row_pitch_bytes;
+
+  const uint32_t aer_fmt = aerogpu::d3d10_11::dxgi_format_to_aerogpu_compat(dev, res->dxgi_format);
+  if (aer_fmt == AEROGPU_FORMAT_INVALID) {
+    return false;
+  }
+  const uint32_t min_row_bytes = aerogpu_texture_min_row_pitch_bytes(aer_fmt, res->width);
+  if (min_row_bytes == 0) {
+    return false;
+  }
+  return wddm_pitch >= min_row_bytes;
 }
 
 HRESULT sync_read_map_locked(AeroGpuDevice* dev, const AeroGpuResource* res, uint32_t map_type, uint32_t map_flags) {
@@ -4183,6 +4203,7 @@ HRESULT map_resource_locked(AeroGpuDevice* dev,
   uint64_t map_offset = 0;
   uint64_t map_size = total;
   uint32_t map_row_pitch = 0;
+  Texture2DSubresourceLayout tex_layout{};
   if (res->kind == ResourceKind::Buffer) {
     if (subresource != 0) {
       return E_INVALIDARG;
@@ -4196,10 +4217,10 @@ HRESULT map_resource_locked(AeroGpuDevice* dev,
     if (subresource >= res->tex2d_subresources.size()) {
       return E_FAIL;
     }
-    const Texture2DSubresourceLayout& sub_layout = res->tex2d_subresources[subresource];
-    map_offset = sub_layout.offset_bytes;
-    map_size = sub_layout.size_bytes;
-    map_row_pitch = sub_layout.row_pitch_bytes;
+    tex_layout = res->tex2d_subresources[subresource];
+    map_offset = tex_layout.offset_bytes;
+    map_size = tex_layout.size_bytes;
+    map_row_pitch = tex_layout.row_pitch_bytes;
     const uint64_t end = map_offset + map_size;
     if (end < map_offset || end > total) {
       return E_INVALIDARG;
@@ -4313,40 +4334,120 @@ HRESULT map_resource_locked(AeroGpuDevice* dev,
     return E_FAIL;
   }
 
-  uint32_t wddm_pitch = 0;
-  __if_exists(D3DDDICB_LOCK::Pitch) {
-    wddm_pitch = lock_cb.Pitch;
-  }
-  if (res->kind == ResourceKind::Texture2D && !ValidateWddmTexturePitch(res, wddm_pitch)) {
-    // Our subresource packing (and the host's interpretation of guest memory) assumes the
-    // allocation pitch matches `res->row_pitch_bytes`. If the runtime reports a different
-    // pitch, we cannot safely treat the locked pointer as a packed linear buffer.
+  const bool is_guest_backed = (res->backing_alloc_id != 0);
+  const auto unlock_locked_allocation = [&]() {
     D3DDDICB_UNLOCK unlock_cb = {};
     unlock_cb.hAllocation = static_cast<D3DKMT_HANDLE>(alloc_handle);
     InitUnlockArgsForMap(&unlock_cb, lock_subresource);
     (void)CallCbMaybeHandle(cb->pfnUnlockCb, dev->hrt_device, &unlock_cb);
-    if (allow_storage_map && !want_read) {
-      return map_storage();
+  };
+
+  // For Texture2D allocations, LockCb may return a pitch that differs from our
+  // `Texture2DSubresourceLayout::row_pitch_bytes`. On Win7, we lock
+  // SubresourceIndex=0 and use `offset_bytes` to reach other subresources, so the
+  // LockCb pitch is only meaningful for mip0.
+  uint32_t mapped_row_pitch = 0;
+  uint32_t mapped_slice_pitch = 0;
+  uint32_t tex_row_bytes = 0;
+  uint32_t tex_rows = 0;
+  if (res->kind == ResourceKind::Texture2D) {
+    const uint32_t expected_pitch = map_row_pitch;
+    const bool use_lock_pitch = (tex_layout.mip_level == 0);
+    if (use_lock_pitch) {
+      __if_exists(D3DDDICB_LOCK::Pitch) {
+        mapped_row_pitch = lock_cb.Pitch;
+      }
+      __if_exists(D3DDDICB_LOCK::SlicePitch) {
+        mapped_slice_pitch = lock_cb.SlicePitch;
+      }
     }
-    return E_FAIL;
+    const uint32_t effective_row_pitch = mapped_row_pitch ? mapped_row_pitch : expected_pitch;
+
+    const uint32_t aer_fmt = aerogpu::d3d10_11::dxgi_format_to_aerogpu_compat(dev, res->dxgi_format);
+    tex_row_bytes = aerogpu_texture_min_row_pitch_bytes(aer_fmt, tex_layout.width);
+    tex_rows = tex_layout.rows_in_layout;
+    if (tex_row_bytes == 0 || tex_rows == 0 || expected_pitch < tex_row_bytes) {
+      unlock_locked_allocation();
+      if (allow_storage_map && !want_read) {
+        return map_storage();
+      }
+      return E_INVALIDARG;
+    }
+    // Fail cleanly if the runtime reports a pitch that cannot fit the texel row.
+    if (mapped_row_pitch != 0 && mapped_row_pitch < tex_row_bytes) {
+      unlock_locked_allocation();
+      if (allow_storage_map && !want_read) {
+        return map_storage();
+      }
+      return E_INVALIDARG;
+    }
+    if (mapped_slice_pitch == 0) {
+      const uint64_t slice_pitch_u64 =
+          static_cast<uint64_t>(effective_row_pitch) * static_cast<uint64_t>(tex_rows);
+      if (slice_pitch_u64 == 0 || slice_pitch_u64 > UINT32_MAX) {
+        unlock_locked_allocation();
+        if (allow_storage_map && !want_read) {
+          return map_storage();
+        }
+        return E_INVALIDARG;
+      }
+      mapped_slice_pitch = static_cast<uint32_t>(slice_pitch_u64);
+    }
   }
 
-  res->mapped_wddm_ptr = lock_cb.pData;
-  res->mapped_wddm_allocation = static_cast<uint64_t>(alloc_handle);
-  __if_exists(D3DDDICB_LOCK::Pitch) {
-    res->mapped_wddm_pitch = lock_cb.Pitch;
-  }
-  __if_exists(D3DDDICB_LOCK::SlicePitch) {
-    res->mapped_wddm_slice_pitch = lock_cb.SlicePitch;
+  uint8_t* mapped_ptr = static_cast<uint8_t*>(lock_cb.pData);
+  if (res->kind == ResourceKind::Texture2D) {
+    if (map_offset > static_cast<uint64_t>(SIZE_MAX)) {
+      unlock_locked_allocation();
+      if (allow_storage_map && !want_read) {
+        return map_storage();
+      }
+      return E_FAIL;
+    }
+    if (map_offset != 0) {
+      mapped_ptr = mapped_ptr + static_cast<size_t>(map_offset);
+    }
   }
 
-  const bool is_guest_backed = (res->backing_alloc_id != 0);
   if (!res->storage.empty()) {
     if (map_type == kD3DMapWriteDiscard) {
-      if (map_size <= static_cast<uint64_t>(SIZE_MAX)) {
+      if (res->kind == ResourceKind::Texture2D) {
+        const uint32_t dst_pitch = mapped_row_pitch ? mapped_row_pitch : map_row_pitch;
+        if (tex_row_bytes != 0 && tex_rows != 0 && dst_pitch >= tex_row_bytes) {
+          for (uint32_t y = 0; y < tex_rows; ++y) {
+            const size_t dst_off_row = static_cast<size_t>(y) * dst_pitch;
+            std::memset(mapped_ptr + dst_off_row, 0, dst_pitch);
+          }
+        } else if (map_size <= static_cast<uint64_t>(SIZE_MAX)) {
+          std::memset(mapped_ptr, 0, static_cast<size_t>(map_size));
+        }
+      } else if (map_size <= static_cast<uint64_t>(SIZE_MAX)) {
         std::memset(static_cast<uint8_t*>(lock_cb.pData) + static_cast<size_t>(map_offset),
                     0,
                     static_cast<size_t>(map_size));
+      }
+    } else if (!is_guest_backed && res->kind == ResourceKind::Texture2D) {
+      const uint32_t src_pitch = map_row_pitch;
+      const uint32_t dst_pitch = mapped_row_pitch ? mapped_row_pitch : map_row_pitch;
+      const uint8_t* src_bytes = res->storage.data();
+      uint8_t* dst_bytes = static_cast<uint8_t*>(lock_cb.pData);
+      if (tex_row_bytes != 0 && tex_rows != 0 &&
+          src_pitch >= tex_row_bytes && dst_pitch >= tex_row_bytes &&
+          map_offset <= res->storage.size()) {
+        for (uint32_t y = 0; y < tex_rows; ++y) {
+          const uint64_t src_off_u64 =
+              map_offset + static_cast<uint64_t>(y) * static_cast<uint64_t>(src_pitch);
+          if (src_off_u64 > res->storage.size() ||
+              tex_row_bytes > res->storage.size() - static_cast<size_t>(src_off_u64)) {
+            break;
+          }
+          const size_t src_off = static_cast<size_t>(src_off_u64);
+          const size_t dst_off = static_cast<size_t>(map_offset) + static_cast<size_t>(y) * dst_pitch;
+          std::memcpy(dst_bytes + dst_off, src_bytes + src_off, tex_row_bytes);
+          if (dst_pitch > tex_row_bytes) {
+            std::memset(dst_bytes + dst_off + tex_row_bytes, 0, dst_pitch - tex_row_bytes);
+          }
+        }
       }
     } else if (!is_guest_backed) {
       if (map_size <= static_cast<uint64_t>(SIZE_MAX)) {
@@ -4355,7 +4456,30 @@ HRESULT map_resource_locked(AeroGpuDevice* dev,
                     static_cast<size_t>(map_size));
       }
     } else if (want_read) {
-      if (map_size <= static_cast<uint64_t>(SIZE_MAX)) {
+      if (res->kind == ResourceKind::Texture2D) {
+        const uint32_t src_pitch = mapped_row_pitch ? mapped_row_pitch : map_row_pitch;
+        const uint32_t dst_pitch = map_row_pitch;
+        const uint8_t* src_bytes = static_cast<const uint8_t*>(lock_cb.pData);
+        uint8_t* dst_bytes = res->storage.data();
+        if (tex_row_bytes != 0 && tex_rows != 0 &&
+            src_pitch >= tex_row_bytes && dst_pitch >= tex_row_bytes &&
+            map_offset <= res->storage.size()) {
+          for (uint32_t y = 0; y < tex_rows; ++y) {
+            const uint64_t dst_off_u64 =
+                map_offset + static_cast<uint64_t>(y) * static_cast<uint64_t>(dst_pitch);
+            if (dst_off_u64 > res->storage.size() ||
+                tex_row_bytes > res->storage.size() - static_cast<size_t>(dst_off_u64)) {
+              break;
+            }
+            const size_t dst_off = static_cast<size_t>(dst_off_u64);
+            const size_t src_off = static_cast<size_t>(map_offset) + static_cast<size_t>(y) * src_pitch;
+            std::memcpy(dst_bytes + dst_off, src_bytes + src_off, tex_row_bytes);
+            if (dst_pitch > tex_row_bytes) {
+              std::memset(dst_bytes + dst_off + tex_row_bytes, 0, dst_pitch - tex_row_bytes);
+            }
+          }
+        }
+      } else if (map_size <= static_cast<uint64_t>(SIZE_MAX)) {
         std::memcpy(res->storage.data() + static_cast<size_t>(map_offset),
                     static_cast<const uint8_t*>(lock_cb.pData) + static_cast<size_t>(map_offset),
                     static_cast<size_t>(map_size));
@@ -4364,14 +4488,22 @@ HRESULT map_resource_locked(AeroGpuDevice* dev,
   }
 
   if (res->kind == ResourceKind::Texture2D) {
-    pMapped->pData = static_cast<uint8_t*>(lock_cb.pData) + static_cast<size_t>(map_offset);
-    pMapped->RowPitch = map_row_pitch;
-    pMapped->DepthPitch = static_cast<UINT>(map_size);
+    pMapped->pData = mapped_ptr;
+    const uint32_t row_pitch = mapped_row_pitch ? mapped_row_pitch : map_row_pitch;
+    pMapped->RowPitch = row_pitch;
+    pMapped->DepthPitch =
+        mapped_slice_pitch ? mapped_slice_pitch
+                           : static_cast<UINT>(row_pitch) * static_cast<UINT>(tex_rows);
   } else {
     pMapped->pData = lock_cb.pData;
     pMapped->RowPitch = 0;
     pMapped->DepthPitch = 0;
   }
+
+  res->mapped_wddm_ptr = lock_cb.pData;
+  res->mapped_wddm_allocation = static_cast<uint64_t>(alloc_handle);
+  res->mapped_wddm_pitch = mapped_row_pitch;
+  res->mapped_wddm_slice_pitch = mapped_slice_pitch;
 
   res->mapped = true;
   res->mapped_write = want_write;
@@ -4392,23 +4524,63 @@ void unmap_resource_locked(AeroGpuDevice* dev, AeroGpuResource* res, uint32_t su
     return;
   }
 
-  const bool pitch_mismatch =
-      (res->kind == ResourceKind::Texture2D &&
-       res->mapped_wddm_pitch != 0 &&
-       !ValidateWddmTexturePitch(res, res->mapped_wddm_pitch));
-
   if (res->mapped_wddm_ptr && res->mapped_wddm_allocation) {
-    if (!pitch_mismatch && res->mapped_write && !res->storage.empty() && res->mapped_size) {
-      const uint8_t* src = static_cast<const uint8_t*>(res->mapped_wddm_ptr);
+    if (res->mapped_write && !res->storage.empty() && res->mapped_size) {
+      const uint8_t* src_base = static_cast<const uint8_t*>(res->mapped_wddm_ptr);
       const uint64_t off = res->mapped_offset;
       const uint64_t size = res->mapped_size;
       if (off <= res->storage.size()) {
         const size_t remaining = res->storage.size() - static_cast<size_t>(off);
         const size_t copy_bytes = static_cast<size_t>(std::min<uint64_t>(size, remaining));
         if (copy_bytes) {
-          std::memcpy(res->storage.data() + static_cast<size_t>(off),
-                      src + static_cast<size_t>(off),
-                      copy_bytes);
+          if (res->kind == ResourceKind::Texture2D) {
+            if (res->mapped_subresource >= res->tex2d_subresources.size()) {
+              // Fallback: best-effort linear copy.
+              std::memcpy(res->storage.data() + static_cast<size_t>(off),
+                          src_base + static_cast<size_t>(off),
+                          copy_bytes);
+            } else {
+              const Texture2DSubresourceLayout& sub_layout = res->tex2d_subresources[res->mapped_subresource];
+              const uint32_t aer_fmt = aerogpu::d3d10_11::dxgi_format_to_aerogpu_compat(dev, res->dxgi_format);
+              const uint32_t row_bytes = aerogpu_texture_min_row_pitch_bytes(aer_fmt, sub_layout.width);
+              const uint32_t rows = sub_layout.rows_in_layout;
+              // Only mip0 may report a pitch via LockCb; for other subresources we
+              // rely on our packed layout pitches.
+              const uint32_t src_pitch =
+                  (sub_layout.mip_level == 0 && res->mapped_wddm_pitch) ? res->mapped_wddm_pitch : sub_layout.row_pitch_bytes;
+              const uint32_t dst_pitch = sub_layout.row_pitch_bytes;
+
+              const uint64_t src_needed =
+                  (rows == 0) ? 0 : (static_cast<uint64_t>(rows - 1) * static_cast<uint64_t>(src_pitch) + row_bytes);
+              const uint64_t dst_needed =
+                  (rows == 0) ? 0 : (static_cast<uint64_t>(rows - 1) * static_cast<uint64_t>(dst_pitch) + row_bytes);
+
+              if (row_bytes != 0 && rows != 0 && src_pitch != 0 && dst_pitch != 0 &&
+                  src_pitch >= row_bytes && dst_pitch >= row_bytes &&
+                  dst_needed <= static_cast<uint64_t>(remaining) &&
+                  (res->mapped_wddm_slice_pitch == 0 || src_needed <= res->mapped_wddm_slice_pitch)) {
+                const uint8_t* src = src_base + static_cast<size_t>(off);
+                uint8_t* dst = res->storage.data() + static_cast<size_t>(off);
+                for (uint32_t y = 0; y < rows; ++y) {
+                  uint8_t* dst_row = dst + static_cast<size_t>(y) * dst_pitch;
+                  const uint8_t* src_row = src + static_cast<size_t>(y) * src_pitch;
+                  std::memcpy(dst_row, src_row, row_bytes);
+                  if (dst_pitch > row_bytes) {
+                    std::memset(dst_row + row_bytes, 0, dst_pitch - row_bytes);
+                  }
+                }
+              } else {
+                // Fallback: best-effort linear copy.
+                std::memcpy(res->storage.data() + static_cast<size_t>(off),
+                            src_base + static_cast<size_t>(off),
+                            copy_bytes);
+              }
+            }
+          } else {
+            std::memcpy(res->storage.data() + static_cast<size_t>(off),
+                        src_base + static_cast<size_t>(off),
+                        copy_bytes);
+          }
         }
       }
     }
@@ -4425,22 +4597,6 @@ void unmap_resource_locked(AeroGpuDevice* dev, AeroGpuResource* res, uint32_t su
         set_error(dev, unlock_hr);
       }
     }
-  }
-
-  if (pitch_mismatch) {
-    // Fail cleanly: do not attempt to interpret offsets within the allocation when the
-    // runtime-reported pitch differs from our expected layout.
-    set_error(dev, E_FAIL);
-    res->mapped = false;
-    res->mapped_write = false;
-    res->mapped_subresource = 0;
-    res->mapped_offset = 0;
-    res->mapped_size = 0;
-    res->mapped_wddm_ptr = nullptr;
-    res->mapped_wddm_allocation = 0;
-    res->mapped_wddm_pitch = 0;
-    res->mapped_wddm_slice_pitch = 0;
-    return;
   }
 
   if (res->mapped_write && res->mapped_size != 0) {
@@ -8584,8 +8740,8 @@ void AEROGPU_APIENTRY UpdateSubresourceUP(D3D10DDI_HDEVICE hDevice,
       dst_pitch = wddm_pitch;
     }
     HRESULT copy_hr = S_OK;
-    if (!ValidateWddmTexturePitch(res, wddm_pitch)) {
-      copy_hr = E_FAIL;
+    if (!ValidateWddmTexturePitch(dev, res, wddm_pitch)) {
+      copy_hr = E_INVALIDARG;
     } else if (dst_pitch < row_bytes) {
       copy_hr = E_INVALIDARG;
     } else {
