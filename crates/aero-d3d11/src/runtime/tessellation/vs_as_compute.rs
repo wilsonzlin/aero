@@ -175,8 +175,8 @@ impl VsAsComputePipeline {
         device: &wgpu::Device,
         vertex_pulling: &VertexPullingLayout,
         vertex_buffers: &[&wgpu::Buffer],
-        ia_uniform: &wgpu::Buffer,
-        index_params: Option<&wgpu::Buffer>,
+        ia_uniform: wgpu::BufferBinding<'_>,
+        index_params: Option<wgpu::BufferBinding<'_>>,
         index_buffer_words: Option<&wgpu::Buffer>,
         vs_out_regs: &ExpansionScratchAlloc,
     ) -> Result<wgpu::BindGroup> {
@@ -202,13 +202,13 @@ impl VsAsComputePipeline {
         }
         entries.push(wgpu::BindGroupEntry {
             binding: VERTEX_PULLING_UNIFORM_BINDING,
-            resource: ia_uniform.as_entire_binding(),
+            resource: wgpu::BindingResource::Buffer(ia_uniform),
         });
 
         if self.cfg.indexed {
             entries.push(wgpu::BindGroupEntry {
                 binding: VS_AS_COMPUTE_INDEX_PARAMS_BINDING,
-                resource: index_params.unwrap().as_entire_binding(),
+                resource: wgpu::BindingResource::Buffer(index_params.unwrap()),
             });
             entries.push(wgpu::BindGroupEntry {
                 binding: VS_AS_COMPUTE_INDEX_BUFFER_BINDING,

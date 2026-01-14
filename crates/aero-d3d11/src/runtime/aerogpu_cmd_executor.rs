@@ -749,7 +749,7 @@ struct GsPrepassMetadata {
     max_output_vertices: u32,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct GsShaderMetadata {
     /// Geometry-shader instance count (`dcl_gsinstancecount` / `[instance(n)]`).
     ///
@@ -759,6 +759,11 @@ struct GsShaderMetadata {
     instance_count: u32,
     /// Parsed geometry prepass parameters when the GS token stream is translateable.
     prepass: Option<GsPrepassMetadata>,
+    /// If translation failed, capture a diagnostic to report at draw time.
+    ///
+    /// This lets us accept-and-store GS objects (for state/plumbing) while still failing draws with
+    /// a clear error instead of silently falling back to the placeholder prepass.
+    prepass_error: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -3686,6 +3691,7 @@ impl AerogpuD3d11Executor {
             bail!("aerogpu_cmd: draw without bound render target or depth-stencil");
         }
         let depth_only_pass = !has_color_targets && self.state.depth_stencil.is_some();
+        self.validate_gs_hs_ds_emulation_capabilities()?;
 
         self.validate_gs_hs_ds_emulation_capabilities()?;
 
@@ -3828,6 +3834,13 @@ impl AerogpuD3d11Executor {
                         "GS emulation: geometry shader {gs_handle} declares gsinstancecount {} (GS instancing is not supported yet)",
                         meta.instance_count
                     );
+                }
+                if meta.prepass.is_none() {
+                    let err = meta
+                        .prepass_error
+                        .as_deref()
+                        .unwrap_or("GS translation failed");
+                    bail!("geometry shader not supported: {err}");
                 }
             }
         }
@@ -10118,6 +10131,7 @@ impl AerogpuD3d11Executor {
         let gs_instance_count = (stage == ShaderStage::Geometry)
             .then(|| sm5_gs_instance_count(&program).unwrap_or(1).max(1));
         let mut gs_prepass: Option<GsPrepassMetadata> = None;
+        let mut gs_prepass_error: Option<String> = None;
 
         let dxbc_hash_fnv1a64 = fnv1a64(dxbc_bytes);
 
@@ -10165,15 +10179,24 @@ impl AerogpuD3d11Executor {
                 // Attempt to translate a minimal subset of SM4 geometry shaders into a compute-based
                 // geometry prepass. If translation fails (unsupported opcodes/declarations), fall
                 // back to an empty compute shader so the handle can still be created/bound.
-                let translation = crate::sm4::decode_program(&program)
-                    .ok()
-                    .and_then(|module| {
-                        super::gs_translate::translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
+                let translation =
+                    match crate::sm4::decode_program(&program).context("decode SM4/5 token stream")
+                    {
+                        Ok(module) => match super::gs_translate::translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
                             &module,
                             entry_point,
-                        )
-                        .ok()
-                    });
+                        ) {
+                            Ok(t) => Some(t),
+                            Err(e) => {
+                                gs_prepass_error = Some(e.to_string());
+                                None
+                            }
+                        },
+                        Err(e) => {
+                            gs_prepass_error = Some(e.to_string());
+                            None
+                        }
+                    };
                 if let Some(t) = translation {
                     gs_prepass = Some(GsPrepassMetadata {
                         verts_per_primitive: t.info.input_verts_per_primitive,
@@ -10262,6 +10285,7 @@ impl AerogpuD3d11Executor {
                 GsShaderMetadata {
                     instance_count,
                     prepass: gs_prepass,
+                    prepass_error: gs_prepass_error,
                 },
             );
         }
