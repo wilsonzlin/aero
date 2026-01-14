@@ -858,6 +858,15 @@ fn assemble_ps3_breakc_outside_loop() -> Vec<u32> {
     out
 }
 
+fn assemble_ps3_texkill() -> Vec<u32> {
+    // ps_3_0
+    let mut out = vec![0xFFFF0300];
+    // texkill r0
+    out.extend(enc_inst(0x0041, &[enc_src(0, 0, 0xE4)]));
+    out.push(0x0000FFFF);
+    out
+}
+
 fn assemble_vs3_texkill() -> Vec<u32> {
     // vs_3_0
     let mut out = vec![0xFFFE0300];
@@ -2902,6 +2911,91 @@ fn sm3_verify_rejects_texkill_in_vertex_shader() {
     let ir = crate::sm3::build_ir(&decoded).expect("build_ir");
     let err = crate::sm3::verify_ir(&ir).unwrap_err();
     assert_eq!(err.message, "discard/texkill is only valid in pixel shaders");
+}
+
+#[test]
+fn sm3_verify_allows_texkill_in_pixel_shader() {
+    let words = assemble_ps3_texkill();
+    let decoded = crate::sm3::decode_u32_tokens(&words).expect("decode");
+    let ir = crate::sm3::build_ir(&decoded).expect("build_ir");
+    crate::sm3::verify_ir(&ir).expect("verify_ir");
+}
+
+#[test]
+fn sm3_verify_rejects_loop_init_with_non_loop_register() {
+    let ir = sm3::ShaderIr {
+        version: sm3::ShaderVersion {
+            stage: sm3::ShaderStage::Pixel,
+            major: 3,
+            minor: 0,
+        },
+        inputs: Vec::new(),
+        outputs: Vec::new(),
+        samplers: Vec::new(),
+        const_defs_f32: Vec::new(),
+        const_defs_i32: Vec::new(),
+        const_defs_bool: Vec::new(),
+        body: sm3::ir::Block {
+            stmts: vec![sm3::ir::Stmt::Loop {
+                init: sm3::ir::LoopInit {
+                    loop_reg: sm3::ir::RegRef {
+                        file: sm3::ir::RegFile::Temp,
+                        index: 0,
+                        relative: None,
+                    },
+                    ctrl_reg: sm3::ir::RegRef {
+                        file: sm3::ir::RegFile::ConstInt,
+                        index: 0,
+                        relative: None,
+                    },
+                },
+                body: sm3::ir::Block::new(),
+            }],
+        },
+        uses_semantic_locations: false,
+    };
+    let err = crate::sm3::verify_ir(&ir).unwrap_err();
+    assert_eq!(err.message, "loop init refers to a non-loop register");
+}
+
+#[test]
+fn sm3_verify_rejects_loop_init_with_non_integer_ctrl_reg() {
+    let ir = sm3::ShaderIr {
+        version: sm3::ShaderVersion {
+            stage: sm3::ShaderStage::Pixel,
+            major: 3,
+            minor: 0,
+        },
+        inputs: Vec::new(),
+        outputs: Vec::new(),
+        samplers: Vec::new(),
+        const_defs_f32: Vec::new(),
+        const_defs_i32: Vec::new(),
+        const_defs_bool: Vec::new(),
+        body: sm3::ir::Block {
+            stmts: vec![sm3::ir::Stmt::Loop {
+                init: sm3::ir::LoopInit {
+                    loop_reg: sm3::ir::RegRef {
+                        file: sm3::ir::RegFile::Loop,
+                        index: 0,
+                        relative: None,
+                    },
+                    ctrl_reg: sm3::ir::RegRef {
+                        file: sm3::ir::RegFile::Const,
+                        index: 0,
+                        relative: None,
+                    },
+                },
+                body: sm3::ir::Block::new(),
+            }],
+        },
+        uses_semantic_locations: false,
+    };
+    let err = crate::sm3::verify_ir(&ir).unwrap_err();
+    assert_eq!(
+        err.message,
+        "loop init refers to a non-integer-constant register"
+    );
 }
 
 #[test]

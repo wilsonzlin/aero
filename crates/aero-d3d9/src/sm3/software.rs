@@ -646,11 +646,11 @@ fn exec_op(
             let v = exec_src(src0, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
 
             let mut dots = [0.0_f32; 4];
-            for col in 0..usize::from(*n) {
+            for (col, dot) in dots.iter_mut().enumerate().take(usize::from(*n)) {
                 let mut column = src1.clone();
                 column.reg.index = column.reg.index.saturating_add(col as u32);
                 let mvec = exec_src(&column, temps, addrs, loops, preds, inputs_v, inputs_t, constants);
-                dots[col] = match *m {
+                *dot = match *m {
                     4 => v.dot4(mvec),
                     3 => v.dot3(mvec),
                     2 => v.x * mvec.x + v.y * mvec.y,
