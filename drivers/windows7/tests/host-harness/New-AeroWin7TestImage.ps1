@@ -307,6 +307,10 @@ if (-not (Test-Path -LiteralPath $DriversDir -PathType Container)) {
   throw "-DriversDir must be a directory path (got a file): $DriversDir"
 }
 
+if (Test-Path -LiteralPath $OutputDir -PathType Leaf) {
+  throw "-OutputDir must be a directory path (got a file): $OutputDir"
+}
+
 New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
 
 $markerPath = Join-Path $OutputDir "AERO_PROVISIONING_MEDIA.TXT"
@@ -857,6 +861,9 @@ if (-not [string]::IsNullOrEmpty($OutputIsoPath)) {
     New-Item -ItemType Directory -Path $isoParent -Force | Out-Null
   }
   $OutputIsoPath = Join-Path (Resolve-Path -LiteralPath $isoParent).Path (Split-Path -Leaf $OutputIsoPath)
+  if (Test-Path -LiteralPath $OutputIsoPath -PathType Container) {
+    throw "-OutputIsoPath must be a file path (got a directory): $OutputIsoPath"
+  }
 
   $oscdimg = Get-Command oscdimg -ErrorAction SilentlyContinue
   $mkisofs = Get-Command mkisofs -ErrorAction SilentlyContinue

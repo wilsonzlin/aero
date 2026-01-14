@@ -21,5 +21,13 @@ class NewAeroWin7TestImagePathValidationTests(unittest.TestCase):
         self.assertIn("Test-Path -LiteralPath $DriversDir -PathType Container", self.text)
         self.assertIn("-not (Test-Path -LiteralPath $DriversDir -PathType Container)", self.text)
 
+    def test_rejects_file_output_dir_path(self) -> None:
+        self.assertIn("-OutputDir must be a directory path (got a file):", self.text)
+        self.assertIn("Test-Path -LiteralPath $OutputDir -PathType Leaf", self.text)
+
+    def test_rejects_directory_output_iso_path(self) -> None:
+        self.assertIn("-OutputIsoPath must be a file path (got a directory):", self.text)
+        self.assertIn("Test-Path -LiteralPath $OutputIsoPath -PathType Container", self.text)
+
 if __name__ == "__main__":
     unittest.main()
