@@ -581,10 +581,30 @@ C_ASSERT((FIELD_OFFSET(AEROGPU_ADAPTER, LastErrorTime100ns) & 7u) == 0);
 
 static __forceinline ULONG AeroGpuReadRegU32(_In_ const AEROGPU_ADAPTER* Adapter, _In_ ULONG Offset)
 {
+    /*
+     * MMIO access must be robust against partial BAR0 mappings.
+     *
+     * While the ABI expects BAR0 to be large enough to contain all defined registers,
+     * some bring-up / test device models may expose a smaller region. Defensive
+     * bounds checks avoid out-of-bounds MMIO reads/writes (which would otherwise
+     * crash the kernel by touching unmapped I/O space).
+     */
+    if (!Adapter || !Adapter->Bar0) {
+        return 0;
+    }
+    if (Adapter->Bar0Length < sizeof(ULONG) || Offset > (Adapter->Bar0Length - sizeof(ULONG))) {
+        return 0;
+    }
     return READ_REGISTER_ULONG((volatile ULONG*)(Adapter->Bar0 + Offset));
 }
 
 static __forceinline VOID AeroGpuWriteRegU32(_In_ const AEROGPU_ADAPTER* Adapter, _In_ ULONG Offset, _In_ ULONG Value)
 {
+    if (!Adapter || !Adapter->Bar0) {
+        return;
+    }
+    if (Adapter->Bar0Length < sizeof(ULONG) || Offset > (Adapter->Bar0Length - sizeof(ULONG))) {
+        return;
+    }
     WRITE_REGISTER_ULONG((volatile ULONG*)(Adapter->Bar0 + Offset), Value);
 }
