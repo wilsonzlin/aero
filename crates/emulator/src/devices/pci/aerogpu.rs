@@ -297,7 +297,8 @@ impl AeroGpuPciDevice {
     #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
     fn update_scanout_state_from_vga(&self) {
         // Once WDDM has claimed scanout ownership, legacy VGA/VBE must not steal it back until
-        // reset, even if WDDM temporarily disables scanout.
+        // device reset, even if WDDM temporarily disables scanout (Windows uses `SCANOUT0_ENABLE`
+        // as a visibility toggle).
         if self.wddm_scanout_active {
             return;
         }
@@ -607,11 +608,6 @@ impl AeroGpuPciDevice {
 
     pub fn set_scanout_state(&mut self, scanout_state: Option<Arc<ScanoutState>>) {
         self.scanout_state = scanout_state;
-        // If the consumer swaps out the `ScanoutState` instance, always republish the next time we
-        // have enough information to describe scanout0. (The last-published cache is per-device,
-        // not per-consumer.)
-        self.last_published_scanout0 = None;
-
         // Publish a best-effort current state immediately so consumers don't have to wait for the
         // next register write / tick.
         self.maybe_claim_wddm_scanout();

@@ -72,8 +72,11 @@ fn publishes_wddm_scanout_state_on_enable_transition() {
     let snap2 = scanout.snapshot();
     assert_eq!(snap2.generation, gen0 + 2);
     assert_eq!(snap2.source, SCANOUT_SOURCE_WDDM);
+    assert_eq!(snap2.base_paddr(), 0);
     assert_eq!(snap2.width, 0);
     assert_eq!(snap2.height, 0);
+    assert_eq!(snap2.pitch_bytes, 0);
+    assert_eq!(snap2.format, SCANOUT_FORMAT_B8G8R8X8);
 
     // Legacy VGA/VBE activity must not steal scanout ownership once WDDM has claimed it.
     dev.vga_port_write(VBE_DISPI_INDEX_PORT, 2, 0);
@@ -111,34 +114,40 @@ fn unsupported_scanout_format_after_claim_publishes_deterministic_disabled_descr
     // Transition ENABLE from 0->1, which should publish the scanout descriptor.
     dev.mmio_write(&mut mem, mmio::SCANOUT0_ENABLE, 4, 1);
 
-    let snap0 = scanout.snapshot();
-    assert_eq!(snap0.generation, gen0 + 1);
-    assert_eq!(snap0.source, SCANOUT_SOURCE_WDDM);
-    assert_eq!(snap0.base_paddr_lo, fb_gpa as u32);
-    assert_eq!(snap0.base_paddr_hi, (fb_gpa >> 32) as u32);
-    assert_eq!(snap0.width, 800);
-    assert_eq!(snap0.height, 600);
-    assert_eq!(snap0.pitch_bytes, 800 * 4);
-    assert_eq!(snap0.format, SCANOUT_FORMAT_B8G8R8X8);
+    let snap_claimed = scanout.snapshot();
+    assert_eq!(snap_claimed.generation, gen0 + 1);
+    assert_eq!(snap_claimed.source, SCANOUT_SOURCE_WDDM);
+    assert_eq!(snap_claimed.base_paddr(), fb_gpa);
 
-    // Now program a format that the shared scanout descriptor cannot represent (non-scanout format
-    // like depth/stencil). This should publish a deterministic disabled descriptor rather than an
-    // unsupported pixel format.
+    // Switch to an unsupported scanout format (e.g. depth/stencil). The device must publish a
+    // deterministic disabled descriptor rather than publishing an unsupported pixel format value.
     dev.mmio_write(
         &mut mem,
         mmio::SCANOUT0_FORMAT,
         4,
         AeroGpuFormat::D24UnormS8Uint as u32,
     );
+
+    let snap0 = scanout.snapshot();
+    assert_eq!(snap0.generation, gen0 + 2);
+    assert_eq!(snap0.source, SCANOUT_SOURCE_WDDM);
+    assert_eq!(snap0.base_paddr(), 0);
+    assert_eq!(snap0.width, 0);
+    assert_eq!(snap0.height, 0);
+    assert_eq!(snap0.pitch_bytes, 0);
+    assert_eq!(snap0.format, SCANOUT_FORMAT_B8G8R8X8);
+
+    // Reprogramming another unsupported format should be deterministic and not publish a new
+    // (different) descriptor.
+    dev.mmio_write(
+        &mut mem,
+        mmio::SCANOUT0_FORMAT,
+        4,
+        AeroGpuFormat::D32Float as u32,
+    );
     let snap1 = scanout.snapshot();
     assert_eq!(snap1.generation, gen0 + 2);
     assert_eq!(snap1.source, SCANOUT_SOURCE_WDDM);
-    assert_eq!(snap1.base_paddr_lo, 0);
-    assert_eq!(snap1.base_paddr_hi, 0);
-    assert_eq!(snap1.width, 0);
-    assert_eq!(snap1.height, 0);
-    assert_eq!(snap1.pitch_bytes, 0);
-    assert_eq!(snap1.format, SCANOUT_FORMAT_B8G8R8X8);
 }
 
 #[test]

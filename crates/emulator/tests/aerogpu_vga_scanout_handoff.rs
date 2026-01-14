@@ -143,4 +143,39 @@ fn scanout_state_hands_off_from_legacy_vbe_to_wddm_and_locks_out_legacy() {
     assert_eq!(snap3.source, SCANOUT_SOURCE_WDDM);
     assert_eq!(snap3.base_paddr(), wddm_fb_gpa);
     assert_eq!(snap3.generation, snap2.generation);
+
+    // Disabling scanout must blank output but keep WDDM ownership sticky.
+    {
+        let mut d = dev.borrow_mut();
+        d.mmio_write(&mut mem, mmio::SCANOUT0_ENABLE, 4, 0);
+    }
+    let snap4 = scanout.snapshot();
+    assert_eq!(snap4.source, SCANOUT_SOURCE_WDDM);
+    assert_eq!(snap4.base_paddr(), 0);
+    assert_eq!(snap4.width, 0);
+    assert_eq!(snap4.height, 0);
+
+    // Legacy writes still must not steal scanout ownership while WDDM is blanked.
+    {
+        let mut d = dev.borrow_mut();
+        // Attempt to switch to a different legacy VBE mode.
+        d.vga_port_write(0x01CE, 2, 0x0001);
+        d.vga_port_write(0x01CF, 2, 800);
+        d.vga_port_write(0x01CE, 2, 0x0002);
+        d.vga_port_write(0x01CF, 2, 600);
+        d.vga_port_write(0x01CE, 2, 0x0003);
+        d.vga_port_write(0x01CF, 2, 32);
+        d.vga_port_write(0x01CE, 2, 0x0004);
+        d.vga_port_write(0x01CF, 2, 0x0041);
+    }
+    // Attempt to scribble the legacy LFB.
+    mem.write(
+        lfb_base,
+        4,
+        u64::from(u32::from_le_bytes([0x00, 0xFF, 0x00, 0x00])),
+    );
+
+    let snap5 = scanout.snapshot();
+    assert_eq!(snap5.source, SCANOUT_SOURCE_WDDM);
+    assert_eq!(snap5.generation, snap4.generation);
 }

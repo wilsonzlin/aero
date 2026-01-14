@@ -68,11 +68,15 @@ fn scanout_state_updates_on_fb_gpa_flips_while_enabled() {
 
     dev.mmio_write(&mut mem, mmio::SCANOUT0_FB_GPA_HI, 4, (fb1 >> 32) as u32);
     let snap1 = scanout_state.snapshot();
+    assert_eq!(snap1.source, SCANOUT_SOURCE_WDDM);
     assert_eq!(snap1.base_paddr(), fb1);
 
     // Flip again.
     let fb2 = 0x0fed_cba9_8765_4321u64;
     dev.mmio_write(&mut mem, mmio::SCANOUT0_FB_GPA_LO, 4, fb2 as u32);
+    // Must not publish a torn 64-bit update after only the LO write.
+    let snap_after_lo2 = scanout_state.snapshot();
+    assert_eq!(snap_after_lo2.base_paddr(), fb1);
     dev.mmio_write(&mut mem, mmio::SCANOUT0_FB_GPA_HI, 4, (fb2 >> 32) as u32);
     let snap2 = scanout_state.snapshot();
     assert_eq!(snap2.base_paddr(), fb2);
