@@ -124,6 +124,17 @@ fn int10_vbe_controller_and_mode_info() {
         assert_eq!(info[37], 8); // ReservedMaskSize
         assert_eq!(info[38], 24); // ReservedFieldPosition
         assert_eq!(read_u32(&info, 40), VbeDevice::LFB_BASE_DEFAULT); // PhysBasePtr
+
+        // VBE 2.0+ linear framebuffer fields.
+        assert_eq!(read_u16(&info, 50), width * 4); // LinBytesPerScanLine
+        assert_eq!(info[54], 8); // LinRedMaskSize
+        assert_eq!(info[55], 16); // LinRedFieldPosition
+        assert_eq!(info[56], 8); // LinGreenMaskSize
+        assert_eq!(info[57], 8); // LinGreenFieldPosition
+        assert_eq!(info[58], 8); // LinBlueMaskSize
+        assert_eq!(info[59], 0); // LinBlueFieldPosition
+        assert_eq!(info[60], 8); // LinReservedMaskSize
+        assert_eq!(info[61], 24); // LinReservedFieldPosition
     };
 
     // 4F01: mode info for required 32bpp LFB modes.
@@ -156,6 +167,12 @@ fn int10_vbe_controller_and_mode_info() {
     let expected_banks = fb_bytes.div_ceil(64 * 1024) as u8;
     assert_eq!(info[26], expected_banks); // NumberOfBanks
     assert_eq!(info[28], 64); // BankSize (KB)
+
+    // VBE 2.0+ linear fields should also be populated for 8bpp modes.
+    assert_eq!(read_u16(&info, 50), 640); // LinBytesPerScanLine
+    for off in 54..=61 {
+        assert_eq!(info[off], 0, "8bpp mode should have 0 Lin*Mask fields");
+    }
 }
 
 #[test]

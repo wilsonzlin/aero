@@ -362,6 +362,26 @@ impl VbeDevice {
         buf[44..48].copy_from_slice(&0u32.to_le_bytes()); // OffScreenMemOffset
         buf[48..50].copy_from_slice(&0u16.to_le_bytes()); // OffScreenMemSize
 
+        // VBE 2.0+ linear framebuffer fields.
+        //
+        // Many real-mode boot paths (and Windows boot code) use these linear-only fields when the
+        // LFB bit is set, even though `BytesPerScanLine` is also populated above.
+        //
+        // We mirror the primary mode fields here so callers that prefer the `Lin*` variants observe
+        // consistent values.
+        buf[50..52].copy_from_slice(&mode.bytes_per_scan_line().to_le_bytes()); // LinBytesPerScanLine
+        buf[52] = 0; // BnkNumberOfImagePages
+        buf[53] = 0; // LinNumberOfImagePages
+        buf[54] = mode.red_mask_size; // LinRedMaskSize
+        buf[55] = mode.red_field_position; // LinRedFieldPosition
+        buf[56] = mode.green_mask_size; // LinGreenMaskSize
+        buf[57] = mode.green_field_position; // LinGreenFieldPosition
+        buf[58] = mode.blue_mask_size; // LinBlueMaskSize
+        buf[59] = mode.blue_field_position; // LinBlueFieldPosition
+        buf[60] = mode.rsvd_mask_size; // LinReservedMaskSize
+        buf[61] = mode.rsvd_field_position; // LinReservedFieldPosition
+        buf[62..66].copy_from_slice(&0u32.to_le_bytes()); // MaxPixelClock
+
         mem.write_bytes(dest, &buf);
         true
     }
