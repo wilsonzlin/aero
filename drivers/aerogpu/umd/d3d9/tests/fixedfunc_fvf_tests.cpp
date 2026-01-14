@@ -3977,6 +3977,358 @@ bool TestApplyStateBlockUpdatesFixedfuncPsWhenTextureBindingChangesInVsOnlyInter
   return true;
 }
 
+bool TestApplyStateBlockFogRenderStateAffectsNextDraw() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetFVF != nullptr, "pfnSetFVF is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetRenderState != nullptr, "pfnSetRenderState is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDrawPrimitiveUP != nullptr, "pfnDrawPrimitiveUP is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnBeginStateBlock != nullptr, "pfnBeginStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnEndStateBlock != nullptr, "pfnEndStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnApplyStateBlock != nullptr, "pfnApplyStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDeleteStateBlock != nullptr, "pfnDeleteStateBlock is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // Portable D3DRS_* numeric values (from d3d9types.h).
+  constexpr uint32_t kD3dRsFogEnable = 28u;    // D3DRS_FOGENABLE
+  constexpr uint32_t kD3dRsFogColor = 34u;     // D3DRS_FOGCOLOR
+  constexpr uint32_t kD3dRsFogTableMode = 35u; // D3DRS_FOGTABLEMODE
+  constexpr uint32_t kD3dRsFogStart = 36u;     // D3DRS_FOGSTART (float bits)
+  constexpr uint32_t kD3dRsFogEnd = 37u;       // D3DRS_FOGEND   (float bits)
+  constexpr uint32_t kD3dFogLinear = 3u;       // D3DFOG_LINEAR
+
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzrhwDiffuseTex1);
+  if (!Check(hr == S_OK, "SetFVF(XYZRHW|DIFFUSE|TEX1)")) {
+    return false;
+  }
+
+  const VertexXyzrhwDiffuseTex1 tri[3] = {
+      {0.0f, 0.0f, 0.25f, 1.0f, 0xFFFFFFFFu, 0.0f, 0.0f},
+      {1.0f, 0.0f, 0.25f, 1.0f, 0xFFFFFFFFu, 1.0f, 0.0f},
+      {0.0f, 1.0f, 0.25f, 1.0f, 0xFFFFFFFFu, 0.0f, 1.0f},
+  };
+
+  auto DrawAndCaptureShaders = [&](const char* msg, Shader** out_vs, Shader** out_ps) -> bool {
+    dev->cmd.reset();
+    const HRESULT hr2 = cleanup.device_funcs.pfnDrawPrimitiveUP(
+        cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzrhwDiffuseTex1));
+    if (!Check(hr2 == S_OK, msg)) {
+      return false;
+    }
+    if (out_vs || out_ps) {
+      std::lock_guard<std::mutex> lock(dev->mutex);
+      if (out_vs) {
+        *out_vs = dev->vs;
+      }
+      if (out_ps) {
+        *out_ps = dev->ps;
+      }
+    }
+    return true;
+  };
+
+  // First, pre-create both fog-off and fog-on fixed-function shader variants so
+  // the ApplyStateBlock path can be validated without shader creation noise.
+  Shader* vs_off = nullptr;
+  Shader* ps_off = nullptr;
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogEnable, 0u);
+  if (!Check(hr == S_OK, "SetRenderState(FOGENABLE=0)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogTableMode, 0u);
+  if (!Check(hr == S_OK, "SetRenderState(FOGTABLEMODE=0)")) {
+    return false;
+  }
+  if (!DrawAndCaptureShaders("DrawPrimitiveUP(fog off; seed variant)", &vs_off, &ps_off)) {
+    return false;
+  }
+  if (!Check(vs_off != nullptr && ps_off != nullptr, "fog off: fixed-function shaders bound")) {
+    return false;
+  }
+
+  constexpr float fog_start_a = 0.25f;
+  constexpr float fog_end_a = 0.75f;
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogEnable, 1u);
+  if (!Check(hr == S_OK, "SetRenderState(FOGENABLE=1)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogTableMode, kD3dFogLinear);
+  if (!Check(hr == S_OK, "SetRenderState(FOGTABLEMODE=LINEAR)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogColor, 0xFFFF0000u);
+  if (!Check(hr == S_OK, "SetRenderState(FOGCOLOR=red)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogStart, F32Bits(fog_start_a));
+  if (!Check(hr == S_OK, "SetRenderState(FOGSTART=A)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogEnd, F32Bits(fog_end_a));
+  if (!Check(hr == S_OK, "SetRenderState(FOGEND=A)")) {
+    return false;
+  }
+
+  Shader* vs_on = nullptr;
+  Shader* ps_on = nullptr;
+  if (!DrawAndCaptureShaders("DrawPrimitiveUP(fog on; seed variant)", &vs_on, &ps_on)) {
+    return false;
+  }
+  if (!Check(vs_on != nullptr && ps_on != nullptr, "fog on: fixed-function shaders bound")) {
+    return false;
+  }
+  if (!Check(vs_on != vs_off, "fog toggle selects distinct VS variant")) {
+    return false;
+  }
+  if (!Check(ps_on != ps_off, "fog toggle selects distinct PS variant")) {
+    return false;
+  }
+
+  // Switch back to fog off and draw once so the current bindings are the non-fog
+  // variant.
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogEnable, 0u);
+  if (!Check(hr == S_OK, "SetRenderState(FOGENABLE=0; return to baseline)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogTableMode, 0u);
+  if (!Check(hr == S_OK, "SetRenderState(FOGTABLEMODE=0; return to baseline)")) {
+    return false;
+  }
+  Shader* vs_off2 = nullptr;
+  Shader* ps_off2 = nullptr;
+  if (!DrawAndCaptureShaders("DrawPrimitiveUP(fog off; baseline)", &vs_off2, &ps_off2)) {
+    return false;
+  }
+  if (!Check(vs_off2 == vs_off, "fog disable reuses the fog-off VS variant")) {
+    return false;
+  }
+  if (!Check(ps_off2 == ps_off, "fog disable reuses the fog-off PS variant")) {
+    return false;
+  }
+
+  // Record a state block enabling fog with a new set of fog constants (B). Note
+  // that state-block recording still updates the current device state, so we
+  // restore A (fog off) afterwards before applying the block.
+  constexpr float fog_start_b = 0.125f;
+  constexpr float fog_end_b = 0.625f;
+  constexpr float inv_range_b = 2.0f;
+
+  D3D9DDI_HSTATEBLOCK hSb{};
+  auto DeleteSb = [&]() {
+    if (hSb.pDrvPrivate) {
+      cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+      hSb.pDrvPrivate = nullptr;
+    }
+  };
+
+  hr = cleanup.device_funcs.pfnBeginStateBlock(cleanup.hDevice);
+  if (!Check(hr == S_OK, "BeginStateBlock(fog enable)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogEnable, 1u);
+  if (!Check(hr == S_OK, "SetRenderState(FOGENABLE=1) recorded")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogTableMode, kD3dFogLinear);
+  if (!Check(hr == S_OK, "SetRenderState(FOGTABLEMODE=LINEAR) recorded")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogColor, 0xFF00FF00u);
+  if (!Check(hr == S_OK, "SetRenderState(FOGCOLOR=green) recorded")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogStart, F32Bits(fog_start_b));
+  if (!Check(hr == S_OK, "SetRenderState(FOGSTART=B) recorded")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogEnd, F32Bits(fog_end_b));
+  if (!Check(hr == S_OK, "SetRenderState(FOGEND=B) recorded")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnEndStateBlock(cleanup.hDevice, &hSb);
+  if (!Check(hr == S_OK, "EndStateBlock(fog enable)")) {
+    return false;
+  }
+  if (!Check(hSb.pDrvPrivate != nullptr, "EndStateBlock returned handle")) {
+    return false;
+  }
+
+  // Restore baseline fog-off state with the original constants (A).
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogEnable, 0u);
+  if (!Check(hr == S_OK, "SetRenderState(FOGENABLE=0) restore")) {
+    DeleteSb();
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogTableMode, 0u);
+  if (!Check(hr == S_OK, "SetRenderState(FOGTABLEMODE=0) restore")) {
+    DeleteSb();
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogColor, 0xFFFF0000u);
+  if (!Check(hr == S_OK, "SetRenderState(FOGCOLOR=red) restore")) {
+    DeleteSb();
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogStart, F32Bits(fog_start_a));
+  if (!Check(hr == S_OK, "SetRenderState(FOGSTART=A) restore")) {
+    DeleteSb();
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogEnd, F32Bits(fog_end_a));
+  if (!Check(hr == S_OK, "SetRenderState(FOGEND=A) restore")) {
+    DeleteSb();
+    return false;
+  }
+
+  const float expected[8] = {
+      // c1: fog color (RGBA from ARGB green).
+      0.0f, 1.0f, 0.0f, 1.0f,
+      // c2: fog params (x=fog_start, y=inv_fog_range, z/w unused).
+      fog_start_b, inv_range_b, 0.0f, 0.0f,
+  };
+
+  auto StreamHasExpectedFogConstants = [&](const uint8_t* buf, size_t len) -> bool {
+    for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_F)) {
+      const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(hdr);
+      if (sc->stage != AEROGPU_SHADER_STAGE_PIXEL || sc->start_register != 1u || sc->vec4_count != 2u) {
+        continue;
+      }
+      const size_t need = sizeof(*sc) + sizeof(expected);
+      if (hdr->size_bytes < need) {
+        continue;
+      }
+      const auto* payload = reinterpret_cast<const float*>(reinterpret_cast<const uint8_t*>(sc) + sizeof(*sc));
+      if (std::memcmp(payload, expected, sizeof(expected)) == 0) {
+        return true;
+      }
+    }
+    return false;
+  };
+
+  // Apply the fog state block (B). Some implementations may choose to upload fog
+  // constants during ApplyStateBlock; others may defer uploads until the next
+  // draw. Accept either behavior as long as the subsequent draw sees the correct
+  // shader variant and constant values.
+  dev->cmd.reset();
+  hr = cleanup.device_funcs.pfnApplyStateBlock(cleanup.hDevice, hSb);
+  if (!Check(hr == S_OK, "ApplyStateBlock(fog enable; B)")) {
+    DeleteSb();
+    return false;
+  }
+  dev->cmd.finalize();
+  const uint8_t* apply_buf = dev->cmd.data();
+  const size_t apply_len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(apply_buf, apply_len), "ValidateStream(ApplyStateBlock fog)")) {
+    DeleteSb();
+    return false;
+  }
+  if (!Check(CountOpcode(apply_buf, apply_len, AEROGPU_CMD_CREATE_SHADER_DXBC) == 0,
+             "ApplyStateBlock emits no CREATE_SHADER_DXBC (fog)")) {
+    DeleteSb();
+    return false;
+  }
+  const bool apply_has_fog_upload = StreamHasExpectedFogConstants(apply_buf, apply_len);
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->render_states[kD3dRsFogEnable] == 1u, "ApplyStateBlock updates FOGENABLE")) {
+      DeleteSb();
+      return false;
+    }
+    if (!Check(dev->render_states[kD3dRsFogTableMode] == kD3dFogLinear, "ApplyStateBlock updates FOGTABLEMODE")) {
+      DeleteSb();
+      return false;
+    }
+    if (!Check(dev->render_states[kD3dRsFogColor] == 0xFF00FF00u, "ApplyStateBlock updates FOGCOLOR")) {
+      DeleteSb();
+      return false;
+    }
+    if (!Check(dev->render_states[kD3dRsFogStart] == F32Bits(fog_start_b), "ApplyStateBlock updates FOGSTART")) {
+      DeleteSb();
+      return false;
+    }
+    if (!Check(dev->render_states[kD3dRsFogEnd] == F32Bits(fog_end_b), "ApplyStateBlock updates FOGEND")) {
+      DeleteSb();
+      return false;
+    }
+  }
+
+  // Next draw must select the fog shader variant and ensure fog constants match B.
+  dev->cmd.reset();
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzrhwDiffuseTex1));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(after ApplyStateBlock fog)")) {
+    DeleteSb();
+    return false;
+  }
+  dev->cmd.finalize();
+  const uint8_t* draw_buf = dev->cmd.data();
+  const size_t draw_len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(draw_buf, draw_len), "ValidateStream(draw after ApplyStateBlock fog)")) {
+    DeleteSb();
+    return false;
+  }
+  if (!Check(CountOpcode(draw_buf, draw_len, AEROGPU_CMD_CREATE_SHADER_DXBC) == 0,
+             "draw after ApplyStateBlock emits no CREATE_SHADER_DXBC (fog)")) {
+    DeleteSb();
+    return false;
+  }
+  const bool draw_has_fog_upload = StreamHasExpectedFogConstants(draw_buf, draw_len);
+  if (!Check(apply_has_fog_upload || draw_has_fog_upload,
+             "fog constants uploaded via ApplyStateBlock or next draw")) {
+    DeleteSb();
+    return false;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->vs == vs_on, "draw after ApplyStateBlock binds fog VS variant")) {
+      DeleteSb();
+      return false;
+    }
+    if (!Check(dev->ps == ps_on, "draw after ApplyStateBlock binds fog PS variant")) {
+      DeleteSb();
+      return false;
+    }
+
+    // Fog constants are uploaded into PS registers c1..c2.
+    const float* cached_color = dev->ps_consts_f + 1u * 4u;
+    const float* cached_params = dev->ps_consts_f + 2u * 4u;
+    if (!Check(std::memcmp(cached_color, &expected[0], sizeof(float) * 4u) == 0,
+               "ps_consts_f contains fog color from state block (B)")) {
+      DeleteSb();
+      return false;
+    }
+    if (!Check(std::memcmp(cached_params, &expected[4], sizeof(float) * 4u) == 0,
+               "ps_consts_f contains fog params from state block (B)")) {
+      DeleteSb();
+      return false;
+    }
+  }
+
+  DeleteSb();
+  return true;
+}
+
 bool TestFvfXyzDiffuseDrawPrimitiveVbUploadsWvpAndBindsVb() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -17173,6 +17525,9 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestApplyStateBlockUpdatesFixedfuncPsWhenTextureBindingChangesInVsOnlyInterop()) {
+    return 1;
+  }
+  if (!aerogpu::TestApplyStateBlockFogRenderStateAffectsNextDraw()) {
     return 1;
   }
   if (!aerogpu::TestFvfXyzDiffuseDrawPrimitiveVbUploadsWvpAndBindsVb()) {
