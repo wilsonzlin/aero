@@ -1153,7 +1153,10 @@ $specDriverNames = Get-SpecDriverNames -SpecPath $GuestToolsSpecPath
 # `make-driver-pack.ps1` must omit any such *partial* optional drivers from *both* arches
 # (best-effort), so `aero_packager` never sees a one-arch-only optional driver directory
 # (require_optional_drivers_on_all_arches=true).
-if ($resolvedGuestToolsProfile -eq "full") {
+# The partial-optional regression is most relevant when we're already exercising the
+# "optional drivers missing" path (OmitOptionalDrivers). This keeps the full-profile
+# (optional drivers present) run focused and avoids redundant extra packaging work.
+if ($resolvedGuestToolsProfile -eq "full" -and $OmitOptionalDrivers) {
   Write-Host "Running partial optional-driver normalization smoke test (optional drivers x86-only)..."
 
   $syntheticPartialRoot = Join-Path $OutRoot "virtio-win-partial-optional"
