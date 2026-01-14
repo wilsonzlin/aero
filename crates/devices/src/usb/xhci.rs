@@ -590,6 +590,10 @@ impl IoSnapshot for XhciPciDevice {
             // Older snapshots may omit the controller field; fall back to a deterministic baseline.
             self.controller = XhciController::new();
         }
+        // Some USB device models maintain host-side asynchronous state (e.g. WebUSB passthrough
+        // actions backed by JS Promises). That host state cannot be resumed after a VM snapshot
+        // restore; clear it so guest TD retries can re-emit fresh host actions.
+        self.controller.reset_host_state_for_restore();
 
         if let Some(buf) = r.bytes(TAG_LAST_IRQ) {
             let mut d = Decoder::new(buf);

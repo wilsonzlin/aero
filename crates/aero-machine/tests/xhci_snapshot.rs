@@ -7,7 +7,7 @@ use aero_io_snapshot::io::state::IoSnapshot;
 use aero_machine::{Machine, MachineConfig};
 use aero_usb::hid::UsbHidKeyboardHandle;
 use aero_usb::hub::UsbHubDevice;
-use aero_usb::{ControlResponse, SetupPacket, UsbInResult};
+use aero_usb::{ControlResponse, SetupPacket, UsbDeviceModel, UsbInResult, UsbWebUsbPassthroughDevice};
 use pretty_assertions::{assert_eq, assert_ne};
 
 #[test]
@@ -162,4 +162,60 @@ fn snapshot_restore_preserves_host_attached_xhci_device_handles() {
         }
         other => panic!("expected interrupt report after key injection, got {other:?}"),
     }
+}
+
+#[test]
+fn snapshot_restore_clears_xhci_webusb_host_state() {
+    let mut vm = Machine::new(MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_xhci: true,
+        // Keep this test focused on xHCI snapshot restore behavior.
+        enable_ahci: false,
+        enable_ide: false,
+        enable_vga: false,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        enable_e1000: false,
+        ..Default::default()
+    })
+    .unwrap();
+
+    let webusb = UsbWebUsbPassthroughDevice::new();
+    vm.usb_xhci_attach_root(0, Box::new(webusb.clone()))
+        .expect("attach webusb device at root port 0");
+
+    // Queue a host action so there is host-side asynchronous state to clear.
+    let setup = SetupPacket {
+        bm_request_type: 0x80,
+        b_request: 0x06, // GET_DESCRIPTOR
+        w_value: 0x0100,
+        w_index: 0,
+        w_length: 4,
+    };
+    let mut model = webusb.clone();
+    assert_eq!(
+        model.handle_control_request(setup, None),
+        ControlResponse::Nak
+    );
+    assert_eq!(
+        webusb.pending_summary().queued_actions,
+        1,
+        "expected queued host action before snapshot"
+    );
+
+    let snapshot = vm.take_snapshot_full().unwrap();
+    vm.restore_snapshot_bytes(&snapshot).unwrap();
+
+    let summary = webusb.pending_summary();
+    assert_eq!(
+        summary.queued_actions, 0,
+        "expected host action queue to be cleared after snapshot restore"
+    );
+    assert_eq!(
+        summary.inflight_control, None,
+        "expected inflight control transfer to be cleared after snapshot restore"
+    );
 }
