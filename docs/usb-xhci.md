@@ -97,8 +97,10 @@ Notes:
 
 ### PCI identity (canonical)
 
-The repo defines a stable PCI identity for xHCI in `crates/devices`, and both native + web runtimes
-mirror it so guests enumerate the same PCI function shape across environments.
+The repo defines a stable PCI identity for xHCI in `crates/devices`. The web runtime mirrors the key
+identity fields (BDF, VID/DID, class code, BAR sizing) so guests enumerate a consistent xHCI PCI
+function across environments. (Some platform-specific details like MSI capability exposure may
+differ.)
 
 | Field | Value |
 |---|---|
