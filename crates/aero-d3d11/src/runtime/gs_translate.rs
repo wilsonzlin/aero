@@ -828,13 +828,6 @@ fn emit_src_vec4(
                 }
                 format!("vec4<f32>({}, {}, {}, {})", lanes[0], lanes[1], lanes[2], lanes[3])
             }
-            RegFile::OutputDepth => {
-                return Err(GsTranslateError::UnsupportedOperand {
-                    inst_index,
-                    opcode,
-                    msg: "RegFile::OutputDepth is not supported in GS prepass".to_owned(),
-                })
-            }
         },
         SrcKind::GsInput { reg, vertex } => format!("gs_load_input(prim_id, {reg}u, {vertex}u)"),
         SrcKind::ImmediateF32(vals) => {
