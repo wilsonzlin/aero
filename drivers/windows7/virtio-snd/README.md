@@ -105,6 +105,14 @@ Driver behavior:
 - The driver still initializes `eventq` and posts a small bounded pool of writable buffers.
 - If the device completes `eventq` buffers, the driver drains/reposts them and (best-effort) parses/logs known event
   types (jack connect/disconnect, period elapsed, XRUN, control notify).
+- When the PortCls **WaveRT** miniport is running with the virtio backend, it also registers a best-effort eventq
+  callback to integrate virtio-snd PCM notifications into the WaveRT pipeline:
+  - `PCM_PERIOD_ELAPSED`: queues the WaveRT period DPC as an additional wakeup source (the periodic WaveRT timer remains
+    active as a fallback for contract-v1 devices that emit no events). Playback ticks are coalesced so timer-driven and
+    event-driven wakeups do not double-advance `PacketCount`.
+  - `PCM_XRUN`: schedules a coalesced PASSIVE_LEVEL recovery work item that re-issues `STOP/START` for the affected
+    stream(s). For playback, the submission cursor is realigned to the current play position so the next tick can
+    re-prime a small lead of audio cleanly.
 - The driver maintains per-boot `eventq` counters (completions/parsed/period/xrun/etc) and exposes them via:
   - a structured teardown log marker: `AERO_VIRTIO_SND_EVENTQ|...`
   - the guest selftest marker: `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-eventq|INFO|...`
