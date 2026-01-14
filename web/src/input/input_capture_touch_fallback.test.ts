@@ -119,7 +119,7 @@ describe("InputCapture touch fallback", () => {
         preventDefault: vi.fn(),
         stopPropagation: vi.fn(),
       } as unknown as TouchEvent);
-      expect((capture as any).queue.size).toBe(1);
+      expect((capture as any).queue.size).toBe(0);
 
       (capture as any).handleTouchEnd({
         timeStamp: 1,
@@ -147,7 +147,7 @@ describe("InputCapture touch fallback", () => {
     });
   });
 
-  it("releases emulated buttons on blur so a later touchend cannot click", () => {
+  it("cancels pending tap-to-click on blur so a later touchend cannot click", () => {
     withStubbedDocument(() => {
       const canvas = {
         tabIndex: 0,
@@ -176,12 +176,11 @@ describe("InputCapture touch fallback", () => {
         stopPropagation: vi.fn(),
       } as unknown as TouchEvent);
 
-      // Blur should release the emulated button and flush immediately.
+      // Blur should cancel the touch session and flush immediately (no-op since queue is empty).
       (capture as any).handleBlur();
-      expect(posted).toHaveLength(1);
 
       // A subsequent touchend (common when the browser delivers the end event after blur) must not
-      // produce an extra click/release.
+      // produce a click.
       (capture as any).handleTouchEnd({
         timeStamp: 1,
         touches: [],
@@ -193,15 +192,7 @@ describe("InputCapture touch fallback", () => {
       capture.flushNow();
 
       expect((capture as any).mouseButtons).toBe(0);
-      expect(posted).toHaveLength(1);
-
-      const msg = posted[0] as { buffer: ArrayBuffer };
-      const words = new Int32Array(msg.buffer);
-      expect(words[0]).toBe(2); // down + up
-      expect(words[2]).toBe(InputEventType.MouseButtons);
-      expect(words[4]).toBe(1); // left down
-      expect(words[6]).toBe(InputEventType.MouseButtons);
-      expect(words[8]).toBe(0); // left up (from blur)
+      expect(posted).toHaveLength(0);
     });
   });
 });

@@ -100,9 +100,10 @@ export interface InputCaptureOptions {
    */
   enableTouchFallback?: boolean;
   /**
-   * If enabled, emulate a primary-button click via touch:
-   * - Touch start => left button down
-   * - Touch end/cancel => left button up
+   * If enabled, treat a quick, stationary tap as a left click (MouseButtons down+up).
+   *
+   * The tap gesture is recognized when the primary touch ends within a short
+   * time window and without moving beyond a small threshold.
    */
   touchTapToClick?: boolean;
 }
@@ -195,7 +196,6 @@ export class InputCapture {
   private touchActiveId: number | null = null;
   private touchLastX = 0;
   private touchLastY = 0;
-  private touchPressedLeft = false;
 
   private touchPrimaryPointerId: number | null = null;
   private touchStartX = 0;
@@ -567,12 +567,8 @@ export class InputCapture {
     // Only track a single primary touch; ignore additional touches but still
     // preventDefault to avoid host-side gestures (scroll/zoom/back-swipe).
     if (this.touchActiveId !== null) {
-      // Multi-touch gesture: stop any click emulation for this session.
+      // Multi-touch gesture: disable tap-to-click for this session.
       this.touchHadMultiTouch = true;
-      if (this.touchPressedLeft) {
-        this.touchPressedLeft = false;
-        this.setMouseButtons(this.mouseButtons & ~1, event.timeStamp);
-      }
       return;
     }
 
@@ -593,11 +589,6 @@ export class InputCapture {
     this.touchStartTimeStamp = event.timeStamp;
     this.touchMaxDistSq = 0;
     this.touchHadMultiTouch = event.touches.length > 1;
-
-    if (this.touchTapToClick && !this.touchHadMultiTouch && (this.mouseButtons & 1) === 0) {
-      this.touchPressedLeft = true;
-      this.setMouseButtons(this.mouseButtons | 1, event.timeStamp);
-    }
   };
 
   private readonly handleTouchMove = (event: TouchEvent): void => {
@@ -626,14 +617,17 @@ export class InputCapture {
 
     if (event.touches.length > 1) {
       this.touchHadMultiTouch = true;
-      if (this.touchPressedLeft) {
-        this.touchPressedLeft = false;
-        this.setMouseButtons(this.mouseButtons & ~1, event.timeStamp);
-      }
     }
 
     const x = touch.clientX;
     const y = touch.clientY;
+
+    const dx0 = x - this.touchStartX;
+    const dy0 = y - this.touchStartY;
+    const distSq = dx0 * dx0 + dy0 * dy0;
+    if (distSq > this.touchMaxDistSq) {
+      this.touchMaxDistSq = distSq;
+    }
 
     const dxRaw = x - this.touchLastX;
     const dyRaw = y - this.touchLastY;
@@ -684,10 +678,21 @@ export class InputCapture {
       return;
     }
 
-    void allowTap;
-    if (this.touchPressedLeft) {
-      this.touchPressedLeft = false;
-      this.setMouseButtons(this.mouseButtons & ~1, event.timeStamp);
+    if (this.touchTapToClick && allowTap && !this.touchHadMultiTouch) {
+      // 6px movement, 250ms duration. (Small enough to allow a little finger jitter.)
+      const moved = this.touchMaxDistSq > 6 * 6;
+      const durationMs = event.timeStamp - this.touchStartTimeStamp;
+      const longPress = durationMs > 250;
+      if (!moved && !longPress) {
+        // Emit click as down at touch-start timestamp + up at touch-end timestamp.
+        //
+        // Avoid interfering with other sources (e.g. a physical mouse) that may already be holding
+        // the left button.
+        if ((this.mouseButtons & 1) === 0) {
+          this.setMouseButtons(this.mouseButtons | 1, this.touchStartTimeStamp);
+          this.setMouseButtons(this.mouseButtons & ~1, event.timeStamp);
+        }
+      }
     }
 
     this.clearTouchState();
@@ -739,18 +744,8 @@ export class InputCapture {
       // Pointer/touch sessions are a natural "capture boundary". Drop any fractional remainder so
       // it cannot leak into a later session and cause a spurious pixel or wheel tick.
       this.resetAccumulatedMotion();
-      if (this.touchTapToClick && (this.mouseButtons & 1) === 0) {
-        this.touchPressedLeft = true;
-        this.setMouseButtons(this.mouseButtons | 1, event.timeStamp);
-      }
     } else {
       this.touchHadMultiTouch = true;
-      // If we started a left-drag with a single pointer but the gesture became multi-touch, release
-      // the emulated button so the guest doesn't observe an unintended drag while scrolling/zooming.
-      if (this.touchPressedLeft) {
-        this.touchPressedLeft = false;
-        this.setMouseButtons(this.mouseButtons & ~1, event.timeStamp);
-      }
     }
 
     this.touchPointers.set(id, { x, y });
@@ -783,6 +778,16 @@ export class InputCapture {
 
     const x = event.clientX;
     const y = event.clientY;
+
+    // Track max distance for tap detection (primary pointer only).
+    if (event.pointerId === this.touchPrimaryPointerId) {
+      const dx0 = x - this.touchStartX;
+      const dy0 = y - this.touchStartY;
+      const distSq = dx0 * dx0 + dy0 * dy0;
+      if (distSq > this.touchMaxDistSq) {
+        this.touchMaxDistSq = distSq;
+      }
+    }
 
     if (this.touchPointers.size === 1) {
       const dxRaw = x - prev.x;
@@ -1142,7 +1147,6 @@ export class InputCapture {
     this.touchActiveId = null;
     this.touchLastX = 0;
     this.touchLastY = 0;
-    this.touchPressedLeft = false;
     this.touchStartX = 0;
     this.touchStartY = 0;
     this.touchStartTimeStamp = 0;
@@ -1180,13 +1184,35 @@ export class InputCapture {
 
     this.touchPointers.delete(event.pointerId);
 
-    void allowTap;
+    // Only treat the interaction as a tap if:
+    // - tap-to-click is enabled,
+    // - it was a single-touch session (no multi-touch),
+    // - it did not move beyond a small threshold, and
+    // - it ended on the primary pointer.
+    if (
+      this.touchTapToClick &&
+      allowTap &&
+      this.touchPointers.size === 0 &&
+      !this.touchHadMultiTouch &&
+      event.pointerId === this.touchPrimaryPointerId
+    ) {
+      // 6px movement, 250ms duration. (Small enough to allow a little finger jitter.)
+      const moved = this.touchMaxDistSq > 6 * 6;
+      const durationMs = event.timeStamp - this.touchStartTimeStamp;
+      const longPress = durationMs > 250;
+      if (!moved && !longPress) {
+        // Emit click as down at touch-start timestamp + up at touch-end timestamp.
+        //
+        // Avoid interfering with other sources (e.g. a physical mouse) that may already be holding
+        // the left button.
+        if ((this.mouseButtons & 1) === 0) {
+          this.setMouseButtons(this.mouseButtons | 1, this.touchStartTimeStamp);
+          this.setMouseButtons(this.mouseButtons & ~1, event.timeStamp);
+        }
+      }
+    }
 
     if (this.touchPointers.size === 0) {
-      if (this.touchPressedLeft) {
-        this.touchPressedLeft = false;
-        this.setMouseButtons(this.mouseButtons & ~1, event.timeStamp);
-      }
       this.touchPrimaryPointerId = null;
       this.touchHadMultiTouch = false;
       this.touchMaxDistSq = 0;
