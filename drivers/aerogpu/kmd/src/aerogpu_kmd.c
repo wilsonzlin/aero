@@ -5713,6 +5713,14 @@ static NTSTATUS APIENTRY AeroGpuDdiQueryAdapterInfo(_In_ const HANDLE hAdapter,
         const BOOLEAN poweredOn =
             (adapter->Bar0 != NULL) &&
             ((DXGK_DEVICE_POWER_STATE)InterlockedCompareExchange(&adapter->DevicePowerState, 0, 0) == DxgkDevicePowerStateD0);
+        const BOOLEAN acceptingSubmissions =
+            (InterlockedCompareExchange(&adapter->AcceptingSubmissions, 0, 0) != 0) ? TRUE : FALSE;
+        /*
+         * Be defensive during resume/teardown windows: dxgkrnl can report the adapter
+         * as D0 before we've fully restored ring/MMIO programming state. Gate MMIO
+         * reads on the same "ready" signal used by submission paths.
+         */
+        const BOOLEAN mmioSafe = poweredOn && acceptingSubmissions;
 
         /*
          * v0 legacy query: return only the device ABI version.
@@ -5725,7 +5733,7 @@ static NTSTATUS APIENTRY AeroGpuDdiQueryAdapterInfo(_In_ const HANDLE hAdapter,
              * version discovered during StartDevice.
              */
             const ULONG abiVersion =
-                poweredOn ? AeroGpuReadRegU32(adapter, AEROGPU_UMDPRIV_MMIO_REG_ABI_VERSION) : adapter->DeviceAbiVersion;
+                mmioSafe ? AeroGpuReadRegU32(adapter, AEROGPU_UMDPRIV_MMIO_REG_ABI_VERSION) : adapter->DeviceAbiVersion;
             *(ULONG*)pQueryAdapterInfo->pOutputData = (ULONG)abiVersion;
             return STATUS_SUCCESS;
         }
@@ -5752,7 +5760,7 @@ static NTSTATUS APIENTRY AeroGpuDdiQueryAdapterInfo(_In_ const HANDLE hAdapter,
         ULONGLONG features = 0;
         ULONGLONG fencePageGpa = 0;
 
-        if (poweredOn) {
+        if (mmioSafe) {
             magic = AeroGpuReadRegU32(adapter, AEROGPU_UMDPRIV_MMIO_REG_MAGIC);
             abiVersion = AeroGpuReadRegU32(adapter, AEROGPU_UMDPRIV_MMIO_REG_ABI_VERSION);
             if (magic == AEROGPU_UMDPRIV_MMIO_MAGIC_NEW_AGPU) {
