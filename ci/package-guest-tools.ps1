@@ -1261,7 +1261,11 @@ function Assert-GuestToolsZipContainsAeroGpuDbgctl {
     #   out/drivers/aerogpu/<arch>/tools/win7_dbgctl/bin/aerogpu_dbgctl.exe
     # `ci/make-catalogs.ps1` then copies build outputs into out/packages/... preserving the `tools/` folder.
     "drivers/amd64/aerogpu/tools/win7_dbgctl/bin/aerogpu_dbgctl.exe",
-    "drivers/x86/aerogpu/tools/win7_dbgctl/bin/aerogpu_dbgctl.exe"
+    "drivers/x86/aerogpu/tools/win7_dbgctl/bin/aerogpu_dbgctl.exe",
+
+    # Tool documentation is shipped alongside the binary.
+    "drivers/amd64/aerogpu/tools/win7_dbgctl/README.md",
+    "drivers/x86/aerogpu/tools/win7_dbgctl/README.md"
   )
 
   foreach ($entry in $expectedEntries) {
@@ -1269,17 +1273,19 @@ function Assert-GuestToolsZipContainsAeroGpuDbgctl {
       Assert-ZipContainsFile -ZipPath $ZipPath -EntryPath $entry
     } catch {
       throw @"
-AeroGPU dbgctl tool is missing from the packaged Guest Tools ZIP.
+AeroGPU dbgctl tool (or its documentation) is missing from the packaged Guest Tools ZIP.
 
 Expected:
   - $entry
 
-This usually means dbgctl was built but not staged into the driver package, or the dbgctl build step was skipped.
+This usually means dbgctl (and/or its docs) was not staged into the AeroGPU driver package, or the dbgctl build step was skipped.
 
 To fix:
   - Ensure the dbgctl build step runs and stages the binary (see: ci/build-aerogpu-dbgctl.ps1).
   - Ensure drivers/aerogpu/ci-package.json lists the expected output under 'requiredBuildOutputFiles'
     (and/or 'toolFiles' if you are staging a repo-local binary instead of a CI build output).
+  - Ensure drivers/aerogpu/ci-package.json includes tools/win7_dbgctl/README.md under 'additionalFiles'
+    so the packaged driver folder includes tool documentation.
 
 Guest Tools ZIP:
   $ZipPath
