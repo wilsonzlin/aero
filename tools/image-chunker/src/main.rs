@@ -3345,6 +3345,65 @@ mod tests {
         assert!(matches!(args.format, InputFormat::Auto));
     }
 
+    #[tokio::test]
+    async fn publish_rejects_non_sector_aligned_chunk_size() {
+        let cli = Cli::parse_from([
+            "aero-image-chunker",
+            "publish",
+            "--file",
+            "disk.img",
+            "--bucket",
+            "bucket",
+            "--prefix",
+            "images/win7/sha256-abc/",
+        ]);
+        let Commands::Publish(mut args) = cli.command else {
+            panic!("expected publish subcommand");
+        };
+        // Force a non-sector-aligned chunk size.
+        args.chunk_size = 1;
+        let err = publish(args).await.expect_err("expected publish failure");
+        assert!(
+            err.to_string().contains("--chunk-size must be a multiple"),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn publish_rejects_non_sector_aligned_virtual_disk_size() -> Result<()> {
+        use std::io::Write;
+
+        let mut tmp = tempfile::NamedTempFile::new().context("create tempfile")?;
+        tmp.as_file_mut()
+            .write_all(&vec![0u8; 1000])
+            .context("write raw image")?;
+        tmp.as_file_mut().flush().context("flush raw image")?;
+
+        let cli = Cli::parse_from([
+            "aero-image-chunker",
+            "publish",
+            "--file",
+            "disk.img",
+            "--bucket",
+            "bucket",
+            "--prefix",
+            "images/win7/sha256-abc/",
+        ]);
+        let Commands::Publish(mut args) = cli.command else {
+            panic!("expected publish subcommand");
+        };
+        args.file = tmp.path().to_path_buf();
+        args.format = InputFormat::Raw;
+
+        let err = publish(args).await.expect_err("expected publish failure");
+        assert!(
+            err.to_string().contains("virtual disk size")
+                && err.to_string().contains("not a multiple"),
+            "unexpected error: {err:?}"
+        );
+        Ok(())
+    }
+
     #[test]
     fn publish_help_mentions_default_chunk_size() {
         use clap::CommandFactory;
