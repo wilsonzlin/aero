@@ -11950,48 +11950,75 @@ HRESULT AEROGPU_APIENTRY Present11(D3D11DDI_HDEVICECONTEXT hCtx, const D3D10DDIA
 
   std::lock_guard<std::mutex> lock(dev->mutex);
 
-  D3D10DDI_HRESOURCE hsrc = {};
-  __if_exists(D3D10DDIARG_PRESENT::hSrcResource) {
-    hsrc = pPresent->hSrcResource;
-  }
-  __if_exists(D3D10DDIARG_PRESENT::hRenderTarget) {
-    hsrc = pPresent->hRenderTarget;
-  }
-  __if_exists(D3D10DDIARG_PRESENT::hResource) {
-    hsrc = pPresent->hResource;
-  }
-  __if_exists(D3D10DDIARG_PRESENT::hSurface) {
-    hsrc = pPresent->hSurface;
-  }
+  auto present_once = [&]() -> HRESULT {
+    const auto cmd_checkpoint = dev->cmd.checkpoint();
+    const WddmAllocListCheckpoint alloc_checkpoint(dev);
+    auto rollback = [&]() {
+      dev->cmd.rollback(cmd_checkpoint);
+      alloc_checkpoint.rollback();
+    };
 
-  Resource* src_res = hsrc.pDrvPrivate ? FromHandle<D3D10DDI_HRESOURCE, Resource>(hsrc) : nullptr;
-  TrackWddmAllocForSubmitLocked(dev, src_res, /*write=*/false);
+    D3D10DDI_HRESOURCE hsrc = {};
+    __if_exists(D3D10DDIARG_PRESENT::hSrcResource) {
+      hsrc = pPresent->hSrcResource;
+    }
+    __if_exists(D3D10DDIARG_PRESENT::hRenderTarget) {
+      hsrc = pPresent->hRenderTarget;
+    }
+    __if_exists(D3D10DDIARG_PRESENT::hResource) {
+      hsrc = pPresent->hResource;
+    }
+    __if_exists(D3D10DDIARG_PRESENT::hSurface) {
+      hsrc = pPresent->hSurface;
+    }
+
+    Resource* src_res = hsrc.pDrvPrivate ? FromHandle<D3D10DDI_HRESOURCE, Resource>(hsrc) : nullptr;
+    TrackWddmAllocForSubmitLocked(dev, src_res, /*write=*/false);
+    if (dev->wddm_submit_allocation_list_oom) {
+      rollback();
+      return E_OUTOFMEMORY;
+    }
 
 #if defined(AEROGPU_UMD_TRACE_RESOURCES)
-  aerogpu_handle_t src_handle = 0;
-  src_handle = src_res ? src_res->handle : 0;
-  AEROGPU_D3D10_11_LOG("trace_resources: D3D11 Present sync=%u src_handle=%u",
-                       static_cast<unsigned>(pPresent->SyncInterval),
-                       static_cast<unsigned>(src_handle));
+    aerogpu_handle_t src_handle = 0;
+    src_handle = src_res ? src_res->handle : 0;
+    AEROGPU_D3D10_11_LOG("trace_resources: D3D11 Present sync=%u src_handle=%u",
+                         static_cast<unsigned>(pPresent->SyncInterval),
+                         static_cast<unsigned>(src_handle));
 #endif
 
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_present>(AEROGPU_CMD_PRESENT);
-  if (!cmd) {
-    dev->cmd.reset();
-    dev->wddm_submit_allocation_handles.clear();
-    dev->wddm_submit_allocation_list_oom = false;
-    dev->pending_staging_writes.clear();
-    return E_OUTOFMEMORY;
+    auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_present>(AEROGPU_CMD_PRESENT);
+    if (!cmd) {
+      rollback();
+      return E_OUTOFMEMORY;
+    }
+    cmd->scanout_id = 0;
+    bool vsync = (pPresent->SyncInterval != 0);
+    if (vsync && dev->adapter && dev->adapter->umd_private_valid) {
+      vsync = (dev->adapter->umd_private.flags & AEROGPU_UMDPRIV_FLAG_HAS_VBLANK) != 0;
+    }
+    cmd->flags = vsync ? AEROGPU_PRESENT_FLAG_VSYNC : AEROGPU_PRESENT_FLAG_NONE;
+
+    HRESULT hr = S_OK;
+    submit_locked(dev, /*want_present=*/true, &hr);
+    return FAILED(hr) ? hr : S_OK;
+  };
+
+  HRESULT hr = present_once();
+  if (hr != E_OUTOFMEMORY) {
+    return hr;
   }
-  cmd->scanout_id = 0;
-  bool vsync = (pPresent->SyncInterval != 0);
-  if (vsync && dev->adapter && dev->adapter->umd_private_valid) {
-    vsync = (dev->adapter->umd_private.flags & AEROGPU_UMDPRIV_FLAG_HAS_VBLANK) != 0;
+
+  // If Present failed due to OOM while tracking allocations or appending the
+  // packet, try to submit the already-recorded command buffer without present
+  // (so the host stays in sync with the software shadow), then retry a minimal
+  // Present submission.
+  HRESULT flush_hr = S_OK;
+  submit_locked(dev, /*want_present=*/false, &flush_hr);
+  if (FAILED(flush_hr)) {
+    return flush_hr;
   }
-  cmd->flags = vsync ? AEROGPU_PRESENT_FLAG_VSYNC : AEROGPU_PRESENT_FLAG_NONE;
-  HRESULT hr = S_OK;
-  submit_locked(dev, /*want_present=*/true, &hr);
-  return FAILED(hr) ? hr : S_OK;
+  return present_once();
 }
 
 void AEROGPU_APIENTRY RotateResourceIdentities11(D3D11DDI_HDEVICECONTEXT hCtx, D3D11DDI_HRESOURCE* pResources, UINT numResources) {
