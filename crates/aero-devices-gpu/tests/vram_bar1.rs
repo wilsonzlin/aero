@@ -1,5 +1,7 @@
 use aero_devices::pci::profile::AEROGPU_VRAM_SIZE;
-use aero_devices_gpu::{AeroGpuPciDevice, LEGACY_VGA_PADDR_BASE, VBE_LFB_OFFSET};
+use aero_devices_gpu::{
+    AeroGpuPciDevice, LEGACY_VGA_PADDR_BASE, LEGACY_VGA_VRAM_BYTES, VBE_LFB_OFFSET,
+};
 use memory::MmioHandler as _;
 
 #[test]
@@ -44,4 +46,14 @@ fn vbe_lfb_alias_rejects_paddrs_past_bar1_end() {
     let bar1_base = 0x4000_0000u64;
     let paddr = bar1_base + AEROGPU_VRAM_SIZE;
     assert!(AeroGpuPciDevice::vbe_lfb_paddr_to_vram_offset(bar1_base, paddr).is_none());
+}
+
+#[test]
+fn bar1_layout_constants_match_canonical_vga_vbe_layout() {
+    // Canonical layout (see `docs/16-aerogpu-vga-vesa-compat.md`):
+    // - guest-visible legacy VGA alias aperture is 128KiB (0xA0000..0xBFFFF).
+    // - the VRAM backing reserve at the start of BAR1 is 256KiB (4×64KiB planes), so the VBE LFB
+    //   begins at 0x40000.
+    assert_eq!(LEGACY_VGA_VRAM_BYTES, 0x20_000);
+    assert_eq!(VBE_LFB_OFFSET, 0x40_000);
 }
