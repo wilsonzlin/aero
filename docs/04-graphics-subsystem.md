@@ -163,7 +163,9 @@ Key properties:
   - producer writes into the “back” slot, then publishes it by flipping `active_index` and incrementing `frame_seq`.
 - Producer also sets a `frame_dirty` flag (`SharedFramebufferHeaderIndex.FRAME_DIRTY`) on publish. This is a producer→consumer “new frame” / liveness flag that some implementations may `Atomics.wait` on.
   - Published by: `SharedFramebufferWriter::write_frame()` in `crates/aero-shared/src/shared_framebuffer.rs`
-  - Cleared by the GPU worker: `presentOnce()` in `web/src/workers/gpu-worker.ts` (clears after consuming a legacy frame, and also when scanout owns output to avoid stale legacy-dirty state).
+  - Cleared by consumers after consuming a frame (examples):
+    - Rust: `FrameSource::poll_frame()` in `crates/aero-gpu/src/frame_source.rs`
+    - Browser GPU worker: `presentOnce()` in `web/src/workers/gpu-worker.ts` (clears after consuming a legacy frame, and also when scanout owns output to avoid stale legacy-dirty state).
 - Optional **dirty-tile tracking**:
   - each slot may have a dirty bitset (`dirty_words_per_buffer`)
   - dirty tiles are converted to pixel rects by:
