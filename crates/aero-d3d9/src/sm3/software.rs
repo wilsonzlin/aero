@@ -143,7 +143,13 @@ fn resolve_reg_index(
         let offset = component(rel_val, rel.component) as i32;
         idx = idx.saturating_add(offset);
     }
-    if idx < 0 {
+    if reg.file == RegFile::Const {
+        // The WGSL lowering clamps relative constant indexing to the D3D9 constant register range
+        // to avoid OOB array access. Match that behaviour here so software interpreter tests are
+        // consistent with WGSL output.
+        idx = idx.clamp(0, 255);
+        Some(idx as u32)
+    } else if idx < 0 {
         None
     } else {
         Some(idx as u32)
