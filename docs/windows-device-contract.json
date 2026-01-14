@@ -1,4 +1,5 @@
 {
+  "$schema": "./windows-device-contract.schema.json",
   "schema_version": 1,
   "contract_name": "aero-windows-pci-device-contract",
   "contract_version": "1.0.5",

@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Aero Windows PCI device contract",
+  "description": "Schema for docs/windows-device-contract.json and docs/windows-device-contract-virtio-win.json.\n\nThis schema exists purely for editor/CI feedback. In-repo tooling still validates the contract at load time.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "contract_name", "contract_version", "devices"],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Optional JSON Schema reference for editor tooling (example: \"./windows-device-contract.schema.json\"). In-repo tooling ignores this field.",
+      "minLength": 1
+    },
+    "schema_version": {
+      "type": "integer",
+      "description": "Contract schema version. The current schema is v1.",
+      "const": 1
+    },
+    "contract_name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "contract_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "devices": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/device"
+      }
+    }
+  },
+  "$defs": {
+    "hexU16": {
+      "type": "string",
+      "description": "0x-prefixed 16-bit hex value (exactly 4 hex digits).",
+      "pattern": "^0x[0-9A-Fa-f]{4}$"
+    },
+    "hardwareIdPattern": {
+      "type": "string",
+      "minLength": 1,
+      "description": "PCI hardware ID literal/pattern. Must at least contain a PCI\\\\VEN_....&DEV_.... prefix.",
+      "pattern": "^PCI\\\\VEN_[0-9A-Fa-f]{4}&DEV_[0-9A-Fa-f]{4}"
+    },
+    "infName": {
+      "type": "string",
+      "description": "INF filename (no paths).",
+      "minLength": 1,
+      "pattern": "^[^\\\\/]+\\.[iI][nN][fF]$"
+    },
+    "device": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "device",
+        "pci_vendor_id",
+        "pci_device_id",
+        "hardware_id_patterns",
+        "driver_service_name",
+        "inf_name"
+      ],
+      "properties": {
+        "device": {
+          "type": "string",
+          "minLength": 1
+        },
+        "pci_vendor_id": {
+          "$ref": "#/$defs/hexU16"
+        },
+        "pci_device_id": {
+          "$ref": "#/$defs/hexU16"
+        },
+        "pci_device_id_transitional": {
+          "$ref": "#/$defs/hexU16"
+        },
+        "hardware_id_patterns": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/hardwareIdPattern"
+          }
+        },
+        "driver_service_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "inf_name": {
+          "$ref": "#/$defs/infName"
+        },
+        "virtio_device_type": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    }
+  }
+}
