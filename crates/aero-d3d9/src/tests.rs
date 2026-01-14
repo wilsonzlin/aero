@@ -3741,6 +3741,78 @@ fn normalize_sm2_sm3_instruction_lengths_patches_rep() {
 }
 
 #[test]
+fn normalize_sm2_sm3_instruction_lengths_patches_rep_after_comment_block() {
+    // Comments are length-prefixed data blocks in the instruction stream. Ensure they are skipped
+    // correctly when normalizing operand-count-encoded shaders.
+    //
+    // ps_3_0:
+    //   <comment>
+    //   rep i0        (operand-count encoding)
+    //   endrep
+    //   end
+    let mut words = vec![0xFFFF_0300];
+    // comment token: opcode=0xFFFE, length=2 DWORDs
+    words.push(0x0002_FFFE);
+    words.push(0x1111_1111);
+    words.push(0x2222_2222);
+    // rep i0
+    words.extend(enc_inst_operand_count_len(0x0026, &[enc_src(7, 0, 0xE4)]));
+    // endrep
+    words.extend(enc_inst_operand_count_len(0x0027, &[]));
+    // end
+    words.push(0x0000_FFFF);
+
+    let ps_bytes = to_bytes(&words);
+    let normalized = crate::token_stream::normalize_sm2_sm3_instruction_lengths(&ps_bytes).unwrap();
+
+    // After version(1) + comment(3) tokens, rep opcode token starts at idx 4.
+    let rep_offset = 4usize * 4;
+    let bytes = &normalized.as_ref()[rep_offset..rep_offset + 4];
+    let token = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+    let len_field = (token >> 24) & 0x0F;
+    assert_eq!(
+        len_field, 2,
+        "expected rep to be patched to total length 2 (comments must be skipped)"
+    );
+}
+
+#[test]
+fn normalize_sm2_sm3_instruction_lengths_requires_explicit_end() {
+    // Regression test for the length-encoding detector: ensure we do not classify a stream as
+    // operand-count encoded if the decoding would "consume" the END token as an operand.
+    //
+    // This token stream intentionally encodes a `mov` with an operand count that includes the END
+    // token as a third operand (malformed). The operand-count walk will never see an explicit END
+    // opcode, so length-encoding scoring must reject it.
+    let mut words = vec![0xFFFF_0300];
+    // def c0, 1.0, 0.0, 0.0, 1.0 (operand-count encoding)
+    words.extend(enc_inst_operand_count_len(
+        0x0051,
+        &[
+            enc_dst(2, 0, 0xF),
+            1.0f32.to_bits(),
+            0.0f32.to_bits(),
+            0.0f32.to_bits(),
+            1.0f32.to_bits(),
+        ],
+    ));
+    // mov r0, c0 but with a bogus operand count of 3, causing the END token to be treated as an
+    // operand.
+    words.extend(enc_inst_operand_count_len(
+        0x0001,
+        &[enc_dst(0, 0, 0xF), enc_src(2, 0, 0xE4), 0x0000_FFFF],
+    ));
+
+    let ps_bytes = to_bytes(&words);
+    let normalized = crate::token_stream::normalize_sm2_sm3_instruction_lengths(&ps_bytes).unwrap();
+    assert!(
+        matches!(normalized, std::borrow::Cow::Borrowed(_)),
+        "malformed streams that don't contain an explicit END must not be normalized"
+    );
+    assert_eq!(normalized.as_ref(), ps_bytes.as_slice());
+}
+
+#[test]
 fn translate_entrypoint_sm3_supports_texcoord8_vertex_inputs() {
     // TEXCOORD8 is outside the fixed StandardLocationMap TEXCOORD0..7 range. Ensure the SM3
     // translator uses the adaptive semantic mapping and does not fall back to the legacy
