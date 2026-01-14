@@ -12,6 +12,12 @@ For the consolidated virtio-input end-to-end validation plan (device model + dri
 - **virtio-blk**
   - Detect a virtio disk device (SetupAPI hardware IDs).
   - Query the `aero_virtio_blk` miniport (via `IOCTL_SCSI_MINIPORT`) and validate basic configuration/feature bits.
+  - Optional interrupt-mode expectation:
+    - Enable with `--expect-blk-msi` (or env var `AERO_VIRTIO_SELFTEST_EXPECT_BLK_MSI=1`).
+    - When enabled, the virtio-blk test **FAIL**s if the miniport reports it is still operating in **INTx**
+      mode (expected **MSI/MSI-X**).
+    - Useful when running the host harness with explicit MSI-X vectors (`--virtio-msix-vectors`) or when
+      validating MSI/MSI-X support end-to-end.
   - Issue a SCSI pass-through `REPORT_LUNS` (0xA0) command (via `IOCTL_SCSI_PASS_THROUGH_DIRECT`) and validate a sane
     single-LUN response.
   - Create a temporary file on a **virtio-backed volume** and perform:
@@ -182,10 +188,17 @@ AERO_VIRTIO_SELFTEST|RESULT|FAIL
 ```
 
 Notes:
-- The selftest may also emit standalone IRQ diagnostic lines (informational) such as:
-  - `virtio-blk-irq|INFO|mode=...|message_count=...|msix_config_vector=...|msix_queue0_vector=...`
-  - `virtio-<dev>-irq|INFO/WARN|...`
-  The host harness mirrors these as `AERO_VIRTIO_WIN7_HOST|VIRTIO_*_IRQ_DIAG|...` markers for log scraping.
+- IRQ diagnostics are emitted as standalone lines (in addition to the stable `AERO_VIRTIO_SELFTEST|TEST|...` markers):
+  - `virtio-blk`:
+    - also emits a standalone miniport IOCTL-derived line (best-effort):
+      - `virtio-blk-irq|INFO|mode=<intx|msi|unknown>|message_count=<n>|msix_config_vector=0x....|msix_queue0_vector=0x....`
+      - (and WARN variants like `virtio-blk-irq|WARN|...` when the miniport contract is missing/truncated)
+  - `virtio-net`, `virtio-snd`, `virtio-input`:
+    - `virtio-<dev>-irq|INFO|mode=intx`
+    - `virtio-<dev>-irq|INFO|mode=msi|messages=<n>`
+    - (and WARN variants like `virtio-<dev>-irq|WARN|reason=...`).
+  The host harness mirrors these into `AERO_VIRTIO_WIN7_HOST|VIRTIO_*_IRQ_DIAG|...` markers for log scraping/CI
+  (for example `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_IRQ_DIAG|INFO|mode=msi|messages=4`).
 - If no supported virtio-snd PCI function is detected (and no capture flags are set), the tool emits
   `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP` and `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|flag_not_set`.
 - The optional virtio-input end-to-end event delivery markers are always emitted:
