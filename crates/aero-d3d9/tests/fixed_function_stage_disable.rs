@@ -175,6 +175,57 @@ fn colorop_disable_disables_stage_even_if_alphaop_enabled() {
 }
 
 #[test]
+fn state_hash_ignores_texcoord_state_when_stage_does_not_sample_texture() {
+    // If a stage doesn't sample from `D3DTA_TEXTURE` (and its op doesn't implicitly sample),
+    // TEXCOORDINDEX and TEXTURETRANSFORMFLAGS should not affect shader generation nor cache keys.
+    let base_stage = TextureStageState {
+        color_op: TextureOp::SelectArg1,
+        color_arg0: TextureArg::Current,
+        color_arg1: TextureArg::Diffuse,
+        color_arg2: TextureArg::Current,
+        alpha_op: TextureOp::SelectArg1,
+        alpha_arg0: TextureArg::Current,
+        alpha_arg1: TextureArg::Diffuse,
+        alpha_arg2: TextureArg::Current,
+        ..Default::default()
+    };
+
+    let mut stages_a = [TextureStageState::default(); 8];
+    stages_a[0] = TextureStageState {
+        texcoord_index: None,
+        texture_transform: TextureTransform::Disable,
+        ..base_stage
+    };
+    let mut stages_b = stages_a;
+    stages_b[0].texcoord_index = Some(3);
+    stages_b[0].texture_transform = TextureTransform::Count2Projected;
+
+    let desc_a = FixedFunctionShaderDesc {
+        fvf: Fvf(Fvf::XYZ | Fvf::DIFFUSE | ((4u32) << Fvf::TEXCOUNT_SHIFT)),
+        stages: stages_a,
+        alpha_test: AlphaTestState::default(),
+        fog: FogState::default(),
+        lighting: LightingState::default(),
+    };
+    let desc_b = FixedFunctionShaderDesc {
+        stages: stages_b,
+        ..desc_a.clone()
+    };
+
+    assert_eq!(
+        desc_a.state_hash(),
+        desc_b.state_hash(),
+        "texcoord state should not affect the state hash when the stage does not sample textures"
+    );
+
+    let wgsl = generate_fixed_function_shaders(&desc_a).fragment_wgsl;
+    assert!(
+        !wgsl.contains("textureSample("),
+        "unexpected texture sampling in WGSL:\n{wgsl}"
+    );
+}
+
+#[test]
 fn state_hash_includes_texcoord_index_texture_transform_and_result_target() {
     let base_stage = TextureStageState {
         color_op: TextureOp::SelectArg1,
