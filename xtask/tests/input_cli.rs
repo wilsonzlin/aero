@@ -20,6 +20,7 @@ fn input_help_mentions_flags_and_steps() {
         .success()
         .stdout(predicate::str::contains("aero-devices-input"))
         .stdout(predicate::str::contains("aero-usb"))
+        .stdout(predicate::str::contains("ehci_snapshot_roundtrip"))
         .stdout(predicate::str::contains("aero-machine"))
         .stdout(predicate::str::contains("aero-wasm"))
         .stdout(predicate::str::contains("machine_uhci"))
