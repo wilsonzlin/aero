@@ -9262,10 +9262,17 @@ static int DoSelftestJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_
   const NTSTATUS st = SendAerogpuEscape(f, hAdapter, &q, sizeof(q));
   if (!NT_SUCCESS(st)) {
     JsonWriteTopLevelError(out, "selftest", f, "D3DKMTEscape(selftest) failed", st);
-    return 2;
+    // Preserve stable selftest exit codes: use an out-of-band nonzero value for
+    // transport failures so it won't be confused with a KMD-reported selftest
+    // error_code.
+    return 254;
   }
 
-  const int rc = q.passed ? 0 : 3;
+  // Exit code semantics:
+  // - PASS: 0
+  // - FAIL: KMD-provided stable error_code (fallback to 1 if a buggy/older KMD
+  //   reports failure with error_code==0)
+  const int rc = q.passed ? 0 : ((q.error_code != 0) ? (int)q.error_code : 1);
 
   enum SelftestStage {
     STAGE_RING = 0,
