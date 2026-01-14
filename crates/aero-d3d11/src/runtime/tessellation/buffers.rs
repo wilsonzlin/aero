@@ -42,6 +42,11 @@ const _: [(); 4] = [(); core::mem::align_of::<TessellationPatchMetadata>()];
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TessellationSizingError {
     InvalidParam(&'static str),
+    CountTooLarge {
+        what: &'static str,
+        count: u64,
+        max: u64,
+    },
     Overflow(&'static str),
 }
 
@@ -49,6 +54,10 @@ impl core::fmt::Display for TessellationSizingError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             TessellationSizingError::InvalidParam(msg) => write!(f, "invalid param: {msg}"),
+            TessellationSizingError::CountTooLarge { what, count, max } => write!(
+                f,
+                "{what} too large (count={count} max_supported={max})"
+            ),
             TessellationSizingError::Overflow(msg) => write!(f, "size overflow: {msg}"),
         }
     }
@@ -96,6 +105,17 @@ impl TessellationSizingParams {
 fn checked_mul_u64(a: u64, b: u64, what: &'static str) -> Result<u64, TessellationSizingError> {
     a.checked_mul(b)
         .ok_or(TessellationSizingError::Overflow(what))
+}
+
+fn require_u32_count(count: u64, what: &'static str) -> Result<(), TessellationSizingError> {
+    if count > u32::MAX as u64 {
+        return Err(TessellationSizingError::CountTooLarge {
+            what,
+            count,
+            max: u32::MAX as u64,
+        });
+    }
+    Ok(())
 }
 
 /// Returns the byte stride for a shader output payload with `register_count` 4-float registers.
@@ -179,6 +199,7 @@ impl TessellationDrawScratchSizes {
         let control_points = params.control_points as u64;
         let control_point_count_total =
             checked_mul_u64(patch_count_total, control_points, "patch_count_total * control_points")?;
+        require_u32_count(control_point_count_total, "control_point_count_total")?;
 
         // Intermediate stage IO: per-control-point payloads.
         let vs_out_bytes = checked_mul_u64(
@@ -208,6 +229,7 @@ impl TessellationDrawScratchSizes {
             max_vertices_per_patch,
             "expanded vertex count total",
         )?;
+        require_u32_count(expanded_vertex_count_total, "expanded_vertex_count_total")?;
         let expanded_vertex_bytes = checked_mul_u64(
             expanded_vertex_count_total,
             ds_output_stride_bytes,
@@ -220,6 +242,7 @@ impl TessellationDrawScratchSizes {
             max_indices_per_patch,
             "expanded index count total",
         )?;
+        require_u32_count(expanded_index_count_total, "expanded_index_count_total")?;
         let expanded_index_bytes =
             checked_mul_u64(expanded_index_count_total, 4, "expanded index bytes")?;
 
@@ -306,11 +329,39 @@ mod tests {
 
     #[test]
     fn detects_overflow() {
-        let params = TessellationSizingParams::new(u32::MAX, 32, 64, u32::MAX);
+        // Keep element counts within u32 so we validate u64 byte-size overflow paths.
+        // (D3D-style indexing/indirect args are u32-based.)
+        let params = TessellationSizingParams::new(174_000, 1, 64, u32::MAX);
         assert!(matches!(
             TessellationDrawScratchSizes::new(params),
             Err(TessellationSizingError::Overflow(_))
         ));
     }
-}
 
+    #[test]
+    fn rejects_counts_that_exceed_u32() {
+        // Chosen so the expanded index count exceeds u32::MAX without overflowing u64.
+        let params = TessellationSizingParams::new(1_000_000, 1, 64, 1);
+        let err = TessellationDrawScratchSizes::new(params).unwrap_err();
+        assert!(matches!(
+            err,
+            TessellationSizingError::CountTooLarge {
+                what: "expanded_index_count_total",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn rejects_control_point_count_that_exceeds_u32() {
+        let params = TessellationSizingParams::new(200_000_000, 32, 1, 1);
+        let err = TessellationDrawScratchSizes::new(params).unwrap_err();
+        assert!(matches!(
+            err,
+            TessellationSizingError::CountTooLarge {
+                what: "control_point_count_total",
+                ..
+            }
+        ));
+    }
+}

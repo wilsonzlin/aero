@@ -17,7 +17,7 @@ use super::expansion_scratch::{ExpansionScratchAllocator, ExpansionScratchError}
 /// Maximum tessellation factor supported by D3D11.
 ///
 /// The runtime uses this value when computing conservative scratch buffer sizes.
-pub const MAX_TESS_FACTOR: u32 = 64;
+pub const MAX_TESS_FACTOR: u32 = super::tessellator::MAX_TESS_FACTOR;
 
 #[derive(Debug, Default)]
 pub struct TessellationRuntime {
@@ -98,4 +98,3 @@ impl TessellationRuntime {
         })
     }
 }
-
