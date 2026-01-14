@@ -7,8 +7,6 @@ use aero_usb::xhci::interrupter::IMAN_IE;
 use aero_usb::xhci::trb::{CompletionCode, Trb, TrbType, TRB_LEN};
 use memory::MemoryBus as _;
 use memory::MmioHandler;
-use std::cell::RefCell;
-use std::rc::Rc;
 
 fn write_erst_entry(mem: &mut PlatformMemoryBus, erstba: u64, seg_base: u64, seg_size_trbs: u32) {
     mem.write_u64(erstba, seg_base);
@@ -33,11 +31,9 @@ fn xhci_tick_processes_command_ring_without_additional_mmio() {
     // perform additional MMIO.
     let chipset = ChipsetState::new(true);
     let filter = AddressFilter::new(chipset.a20());
-    let mem: Rc<RefCell<PlatformMemoryBus>> =
-        Rc::new(RefCell::new(PlatformMemoryBus::new(filter, 0x100_000)));
+    let mut mem = PlatformMemoryBus::new(filter, 0x100_000);
 
     let mut dev = XhciPciDevice::default();
-    dev.set_dma_memory_bus(Some(mem.clone()));
 
     // Enable MMIO + DMA (Bus Master Enable).
     dev.config_mut().set_command((1 << 1) | (1 << 2));
@@ -52,7 +48,6 @@ fn xhci_tick_processes_command_ring_without_additional_mmio() {
     const COMMAND_COUNT: usize = 64;
 
     {
-        let mut mem = mem.borrow_mut();
         write_erst_entry(&mut mem, ERST_BASE, EVENT_RING_BASE, EVENT_RING_TRBS);
 
         for i in 0..COMMAND_COUNT {
@@ -94,16 +89,12 @@ fn xhci_tick_processes_command_ring_without_additional_mmio() {
     MmioHandler::write(&mut dev, u64::from(regs::DBOFF_VALUE), 4, 0);
 
     // Tick enough times to ensure the remainder of the command ring is processed.
-    {
-        let mut mem = mem.borrow_mut();
-        for _ in 0..32 {
-            dev.tick_1ms(&mut mem);
-        }
+    for _ in 0..32 {
+        dev.tick_1ms(&mut mem);
     }
 
     // Assert all command completion events were written to the guest event ring.
     {
-        let mut mem = mem.borrow_mut();
         for i in 0..COMMAND_COUNT {
             let evt = read_trb(&mut mem, EVENT_RING_BASE + (i as u64) * (TRB_LEN as u64));
             assert_eq!(
