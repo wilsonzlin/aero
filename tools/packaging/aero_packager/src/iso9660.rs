@@ -539,6 +539,43 @@ struct Identifiers {
 
 impl Identifiers {
     fn assign_joliet_names(tree: &Tree) -> Result<Self> {
+        // ISO9660 stores identifier lengths and directory record lengths as u8, so we must
+        // guarantee the generated Joliet identifiers fit in those limits.
+        //
+        // - Path tables store `id_len` as u8, so the encoded identifier must be <= 255 bytes.
+        // - Directory records store `record_len` as u8. `record_len = 33 + id_len + padding`,
+        //   where padding is 1 when `id_len` is even (the fixed part is 33 bytes, i.e. odd).
+        //   Joliet identifiers are UCS-2BE (even-length), so padding is always 1. Therefore:
+        //     33 + id_len + 1 <= 255  =>  id_len <= 220
+        const JOLIET_MAX_ID_LEN_PATH_TABLE: usize = 255;
+        const JOLIET_MAX_ID_LEN_DIR_RECORD: usize = 220;
+
+        fn validate_joliet_id_len(
+            original_name: &str,
+            is_dir: bool,
+            full_path: &str,
+            id_bytes: &[u8],
+        ) -> Result<()> {
+            let kind = if is_dir { "directory" } else { "file" };
+            let id_len = id_bytes.len();
+
+            if id_len > JOLIET_MAX_ID_LEN_PATH_TABLE {
+                bail!(
+                    "Joliet {kind} identifier is too long for ISO9660 path tables: \
+                     name={original_name:?}, path={full_path}, encoded_len={id_len} bytes, max={JOLIET_MAX_ID_LEN_PATH_TABLE} bytes"
+                );
+            }
+
+            if id_len > JOLIET_MAX_ID_LEN_DIR_RECORD {
+                bail!(
+                    "Joliet {kind} identifier is too long for ISO9660 directory records: \
+                     name={original_name:?}, path={full_path}, encoded_len={id_len} bytes, max={JOLIET_MAX_ID_LEN_DIR_RECORD} bytes"
+                );
+            }
+
+            Ok(())
+        }
+
         let mut ids = Identifiers {
             joliet_dir_id: vec![Vec::new(); tree.dirs.len()],
             joliet_file_id: vec![Vec::new(); tree.files.len()],
@@ -547,11 +584,15 @@ impl Identifiers {
 
         ids.joliet_dir_id[0] = vec![0u8];
         for (idx, dir) in tree.dirs.iter().enumerate().skip(1) {
-            ids.joliet_dir_id[idx] = encode_ucs2be(&dir.name);
+            let encoded = encode_ucs2be(&dir.name);
+            validate_joliet_id_len(&dir.name, true, &dir.path, &encoded)?;
+            ids.joliet_dir_id[idx] = encoded;
         }
 
         for (idx, file) in tree.files.iter().enumerate() {
-            ids.joliet_file_id[idx] = encode_ucs2be(&file.name);
+            let encoded = encode_ucs2be(&file.name);
+            validate_joliet_id_len(&file.name, false, &file.rel_path, &encoded)?;
+            ids.joliet_file_id[idx] = encoded;
         }
 
         Ok(ids)
