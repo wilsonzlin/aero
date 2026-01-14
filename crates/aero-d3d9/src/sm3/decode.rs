@@ -222,6 +222,7 @@ impl Opcode {
             Self::Exp => 14,
             Self::Log => 15,
             Self::Lit => 16,
+            Self::Dst => 17,
             Self::Min => 10,
             Self::Max => 11,
             Self::Abs => 35,
