@@ -3178,6 +3178,15 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
           // consumed. The shared framebuffer producer can advance `frameSeq` before the presenter
           // runs, so relying on the header sequence alone can lead to mismatched (seq, pixels)
           // pairs in smoke tests and automation.
+          const scanoutIsWddm = (() => {
+            const words = scanoutState;
+            if (!words) return false;
+            try {
+              return (Atomics.load(words, ScanoutStateIndex.SOURCE) >>> 0) === SCANOUT_SOURCE_WDDM;
+            } catch {
+              return false;
+            }
+          })();
           if (frameState) {
             if (!(await waitForNotPresenting(1000))) {
               const seqNow = frameState ? lastPresentedSeq : getCurrentFrameInfo()?.frameSeq;
@@ -3185,8 +3194,15 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
               return;
             }
 
-            if (!isDeviceLost && aerogpuLastOutputSource === "framebuffer" && shouldPresentWithSharedState()) {
-              await handleTick();
+            if (!isDeviceLost) {
+              // Ensure a present pass runs before readback so the screenshot reflects the pixels that are
+              // actually visible (last uploaded to the presenter), especially when scanout is WDDM-owned
+              // and the legacy shared framebuffer is idle.
+              const shouldForceTick =
+                scanoutIsWddm || (aerogpuLastOutputSource === "framebuffer" && shouldPresentWithSharedState());
+              if (shouldForceTick) {
+                await handleTick();
+              }
             }
 
             if (!(await waitForNotPresenting(1000))) {
@@ -3254,8 +3270,23 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
                 postStub(typeof seq === "number" ? seq : undefined);
                 return true;
               }
-              const format = snap.format >>> 0;
-              const out = readScanoutRgba8FromGuestRam(guest, { basePaddr, width, height, pitchBytes, format }).rgba8;
+              // Prefer the cached last-presented scanout buffer when available so the screenshot bytes
+              // match what the presenter most recently consumed (important for deterministic hashing).
+              //
+              // Fall back to re-reading guest memory if the cache is unavailable or mismatched.
+              let out: Uint8Array;
+              const cached = wddmScanoutRgba;
+              if (
+                cached &&
+                wddmScanoutWidth === width &&
+                wddmScanoutHeight === height &&
+                cached.byteLength === outBytes
+              ) {
+                out = cached.slice();
+              } else {
+                const format = snap.format >>> 0;
+                out = readScanoutRgba8FromGuestRam(guest, { basePaddr, width, height, pitchBytes, format }).rgba8;
+              }
 
               if (includeCursor) {
                 try {
