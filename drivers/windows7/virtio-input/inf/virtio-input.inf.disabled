@@ -18,9 +18,9 @@
 ; generic fallback HWID (`PCI\VEN_1AF4&DEV_1052&REV_01`) for environments that do
 ; not expose Aero's subsystem IDs (e.g. stock QEMU).
 ;
-; CI enforces this via:
-;   - drivers/windows7/virtio-input/scripts/check-inf-alias.py
-;   - scripts/ci/check-windows7-virtio-contract-consistency.py
+; Enforcement:
+;   - CI: scripts/ci/check-windows7-virtio-contract-consistency.py
+;   - Local helper: drivers/windows7/virtio-input/scripts/check-inf-alias.py
 ;
 ; Aero virtio-input PCI device -> HIDClass KMDF minidriver (Windows 7 SP1)
 ;
