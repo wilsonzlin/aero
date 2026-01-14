@@ -156,6 +156,23 @@ mod tests {
         token
     }
 
+    fn assert_detects_nonzero_stream(opcode: u32, expected_op_name: &'static str) {
+        let program = make_program(vec![
+            0,
+            0,
+            opcode_token(opcode, 3),
+            operand_token_immediate32(1),
+            1,
+        ]);
+        assert_eq!(
+            scan_sm5_nonzero_gs_stream(&program),
+            Some(Sm5GsStreamViolation {
+                op_name: expected_op_name,
+                stream: 1
+            })
+        );
+    }
+
     #[test]
     fn stream0_implicit_operand_is_ok() {
         let program = make_program(vec![
@@ -180,20 +197,17 @@ mod tests {
 
     #[test]
     fn detects_nonzero_stream_scalar_immediate() {
-        let program = make_program(vec![
-            0,
-            0,
-            opcode_token(sm4_opcode::OPCODE_EMIT_STREAM, 3),
-            operand_token_immediate32(1),
-            1,
-        ]);
-        assert_eq!(
-            scan_sm5_nonzero_gs_stream(&program),
-            Some(Sm5GsStreamViolation {
-                op_name: "emit_stream",
-                stream: 1
-            })
-        );
+        assert_detects_nonzero_stream(sm4_opcode::OPCODE_EMIT_STREAM, "emit_stream");
+    }
+
+    #[test]
+    fn detects_nonzero_cut_stream_scalar_immediate() {
+        assert_detects_nonzero_stream(sm4_opcode::OPCODE_CUT_STREAM, "cut_stream");
+    }
+
+    #[test]
+    fn detects_nonzero_emitthen_cut_stream_scalar_immediate() {
+        assert_detects_nonzero_stream(sm4_opcode::OPCODE_EMITTHENCUT_STREAM, "emitthen_cut_stream");
     }
 
     #[test]
