@@ -146,6 +146,44 @@ impl UsbDeviceModel for TimeoutInDevice {
     }
 }
 
+#[derive(Clone, Debug)]
+struct TimeoutOnceInDevice {
+    call_count: Rc<Cell<u32>>,
+}
+
+impl TimeoutOnceInDevice {
+    fn new() -> Self {
+        Self {
+            call_count: Rc::new(Cell::new(0)),
+        }
+    }
+}
+
+impl UsbDeviceModel for TimeoutOnceInDevice {
+    fn handle_control_request(
+        &mut self,
+        _setup: SetupPacket,
+        _data_stage: Option<&[u8]>,
+    ) -> ControlResponse {
+        ControlResponse::Stall
+    }
+
+    fn handle_in_transfer(&mut self, ep_addr: u8, max_len: usize) -> UsbInResult {
+        assert_eq!(ep_addr, 0x81);
+        let n = self.call_count.get();
+        self.call_count.set(n + 1);
+        if n == 0 {
+            UsbInResult::Timeout
+        } else {
+            let mut data = vec![1u8, 2, 3, 4];
+            if data.len() > max_len {
+                data.truncate(max_len);
+            }
+            UsbInResult::Data(data)
+        }
+    }
+}
+
 fn assert_single_success_event(events: &[TransferEvent], ep_addr: u8, trb_ptr: u64, residual: u32) {
     assert_eq!(
         events,
@@ -648,4 +686,59 @@ fn xhci_bulk_in_timeout_completes_with_usb_transaction_error() {
         xhci.endpoint_state(0x81).unwrap().ring.dequeue_ptr,
         ring_base + TRB_LEN
     );
+}
+
+#[test]
+fn xhci_bulk_in_timeout_does_not_halt_and_allows_subsequent_trbs() {
+    let mut mem = TestMemory::new(0x10000);
+    let mut alloc = Alloc::new(0x2000);
+
+    let ring_base = alloc.alloc((TRB_LEN * 2) as u32, 0x10) as u64;
+    let trb0_addr = ring_base;
+    let trb1_addr = ring_base + TRB_LEN;
+
+    let buf0 = alloc.alloc(4, 0x10) as u64;
+    let buf1 = alloc.alloc(4, 0x10) as u64;
+    let sentinel = [0xa5u8; 4];
+    mem.write(buf0 as u32, &sentinel);
+    mem.write(buf1 as u32, &sentinel);
+
+    // First TD will timeout; second TD should succeed.
+    write_trb(&mut mem, trb0_addr, make_normal_trb(buf0, 4, true, false, false));
+    write_trb(&mut mem, trb1_addr, make_normal_trb(buf1, 4, true, false, true));
+
+    let dev = TimeoutOnceInDevice::new();
+    let call_count = dev.call_count.clone();
+    let mut xhci = XhciTransferExecutor::new(Box::new(dev));
+    xhci.add_endpoint(0x81, ring_base);
+
+    // Tick #1: timeout should complete the first TD, emit an error event, and advance.
+    xhci.tick_1ms(&mut mem);
+    assert_eq!(call_count.get(), 1);
+    let events = xhci.take_events();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].ep_addr, 0x81);
+    assert_eq!(events[0].trb_ptr, trb0_addr);
+    assert_eq!(events[0].residual, 4);
+    assert_eq!(events[0].completion_code, CompletionCode::UsbTransactionError);
+    assert!(!xhci.endpoint_state(0x81).unwrap().halted);
+    assert_eq!(xhci.endpoint_state(0x81).unwrap().ring.dequeue_ptr, trb1_addr);
+
+    // Guest buffers should be unchanged after the timeout.
+    let mut got0 = [0u8; 4];
+    mem.read(buf0 as u32, &mut got0);
+    assert_eq!(got0, sentinel);
+    let mut got1 = [0u8; 4];
+    mem.read(buf1 as u32, &mut got1);
+    assert_eq!(got1, sentinel);
+
+    // Tick #2: should complete the second TD successfully.
+    xhci.tick_1ms(&mut mem);
+    assert_eq!(call_count.get(), 2);
+    let events = xhci.take_events();
+    assert_single_success_event(&events, 0x81, trb1_addr, 0);
+    assert_eq!(xhci.endpoint_state(0x81).unwrap().ring.dequeue_ptr, ring_base + 2 * TRB_LEN);
+
+    mem.read(buf1 as u32, &mut got1);
+    assert_eq!(got1, [1, 2, 3, 4]);
 }
