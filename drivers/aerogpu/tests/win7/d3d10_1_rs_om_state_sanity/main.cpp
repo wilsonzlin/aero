@@ -1144,7 +1144,9 @@ static int RunD3D101RSOMStateSanity(int argc, char** argv) {
     device->RSSetState(rs_scissor.get());
     const D3D10_RECT small_scissor = {16, 16, 48, 48};
     device->RSSetScissorRects(1, &small_scissor);
-    device->OMSetBlendState(alpha_blend.get(), blend_factor, 0xFFFFFFFFu);
+    // Also dirty the sample mask by setting it to 0 (discard all samples) so we can validate
+    // ClearState restores it to the default (0xFFFFFFFF).
+    device->OMSetBlendState(alpha_blend.get(), blend_factor, 0u);
     SetVb(vb_fs.get());
 
     device->ClearRenderTargetView(rtv.get(), clear_red);

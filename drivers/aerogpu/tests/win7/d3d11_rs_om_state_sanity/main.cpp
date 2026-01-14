@@ -1654,7 +1654,9 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
     context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     context->VSSetShader(vs.get(), NULL, 0);
     context->PSSetShader(ps.get(), NULL, 0);
-    context->OMSetBlendState(alpha_blend.get(), blend_factor, 0xFFFFFFFFu);
+    // Also dirty the sample mask by setting it to 0 (discard all samples) so we can validate
+    // ClearState restores it to the default (0xFFFFFFFF).
+    context->OMSetBlendState(alpha_blend.get(), blend_factor, 0u);
     context->RSSetState(rs_scissor_no_depth_clip.get());
     context->RSSetScissorRects(1, &small_scissor);
 
