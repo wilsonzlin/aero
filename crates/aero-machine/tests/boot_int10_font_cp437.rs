@@ -1,5 +1,5 @@
 use aero_machine::{Machine, MachineConfig, RunExit};
-use firmware::bios::{BIOS_SEGMENT, VGA_FONT_8X16_OFFSET};
+use firmware::bios::{build_bios_rom, BIOS_SEGMENT, VGA_FONT_8X16_OFFSET};
 
 const RESULT_BASE: u64 = 0x0500;
 const RESULT_OR: u64 = RESULT_BASE;
@@ -7,6 +7,8 @@ const RESULT_AND: u64 = RESULT_BASE + 1;
 const RESULT_ES: u64 = RESULT_BASE + 2;
 const RESULT_CX: u64 = RESULT_BASE + 4;
 const RESULT_BP: u64 = RESULT_BASE + 6;
+
+const GLYPH_CP437: u8 = 0xC4; // box drawing '─'
 
 fn build_int10_font_cp437_boot_sector() -> [u8; 512] {
     let mut sector = [0u8; 512];
@@ -64,9 +66,9 @@ fn build_int10_font_cp437_boot_sector() -> [u8; 512] {
     sector[i..i + 2].copy_from_slice(&[0x8E, 0xD8]);
     i += 2;
 
-    // Compute DS:SI = ES:(BP + (0xC4 * CX)).
-    // mov ax, 0x00C4 ; CP437 box drawing '─' codepoint
-    sector[i..i + 3].copy_from_slice(&[0xB8, 0xC4, 0x00]);
+    // Compute DS:SI = ES:(BP + (GLYPH_CP437 * CX)).
+    // mov ax, GLYPH_CP437
+    sector[i..i + 3].copy_from_slice(&[0xB8, GLYPH_CP437, 0x00]);
     i += 3;
     // mul cx ; DX:AX = AX * CX
     sector[i..i + 2].copy_from_slice(&[0xF7, 0xE1]);
@@ -185,4 +187,17 @@ fn boot_int10_font_cp437_glyph_is_non_blank_and_rom_is_mapped() {
     assert_eq!(es, BIOS_SEGMENT);
     assert_eq!(cx, 16);
     assert_eq!(bp, VGA_FONT_8X16_OFFSET);
+
+    // Compare the glyph bytes against the firmware ROM image to ensure the ROM is mapped and
+    // readable, and that the INT 10h handler returned a pointer into the correct table.
+    let glyph_paddr =
+        ((es as u64) << 4) + (bp as u64) + u64::from(GLYPH_CP437) * u64::from(cx);
+    let mut glyph = [0u8; 16];
+    for (i, slot) in glyph.iter_mut().enumerate() {
+        *slot = m.read_physical_u8(glyph_paddr + i as u64);
+    }
+
+    let rom = build_bios_rom();
+    let rom_off = (bp as usize) + (usize::from(GLYPH_CP437) * (cx as usize));
+    assert_eq!(&glyph, &rom[rom_off..rom_off + 16]);
 }
