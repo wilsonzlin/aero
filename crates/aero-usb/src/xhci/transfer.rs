@@ -822,7 +822,10 @@ impl EventRing {
         // Overwrite the cycle bit according to the producer cycle state.
         trb.set_cycle(self.cycle);
 
-        let addr = self.base.wrapping_add(self.enqueue_index as u64 * TRB_SIZE);
+        let off = u64::from(self.enqueue_index) * TRB_SIZE;
+        let Some(addr) = self.base.checked_add(off) else {
+            return;
+        };
         write_xhci_trb(mem, addr, &trb);
 
         self.enqueue_index = self.enqueue_index.wrapping_add(1);

@@ -121,8 +121,9 @@ impl EventRing {
         }
     }
 
-    fn entry_addr(&self) -> u64 {
-        self.base + u64::from(self.enqueue_index) * (TRB_LEN as u64)
+    fn entry_addr(&self) -> Option<u64> {
+        let off = u64::from(self.enqueue_index).checked_mul(TRB_LEN as u64)?;
+        self.base.checked_add(off)
     }
 
     fn advance(&mut self) {
@@ -1543,7 +1544,9 @@ impl CommandRingProcessor {
         if self.event_ring.size_trbs == 0 {
             return Err(());
         }
-        let addr = self.event_ring.entry_addr();
+        let Some(addr) = self.event_ring.entry_addr() else {
+            return Err(());
+        };
         if !self.check_range(addr, TRB_LEN as u64) {
             return Err(());
         }

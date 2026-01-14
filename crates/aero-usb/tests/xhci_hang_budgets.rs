@@ -156,6 +156,50 @@ fn command_ring_processor_rejects_link_trb_reserved_bits() {
 }
 
 #[test]
+fn command_ring_processor_event_ring_addr_overflow_does_not_wrap() {
+    let mut mem = CountingMem::new(0x10_000, 64, 64);
+    let mem_size = mem.data.len() as u64;
+    let ring_base = 0x1000u64;
+
+    let mut noop = Trb::default();
+    noop.set_cycle(true);
+    noop.set_trb_type(TrbType::NoOpCommand);
+    noop.write_to(&mut mem, ring_base);
+
+    // Configure an event ring base such that `base + (enqueue_index * 16)` overflows to address 0
+    // when `enqueue_index == 1`.
+    let event_ring_base = !0x0fu64; // 0xffff...fff0
+    let event_ring = EventRing {
+        base: event_ring_base,
+        size_trbs: 8,
+        enqueue_index: 1,
+        cycle_state: true,
+    };
+
+    let mut proc = CommandRingProcessor::new(
+        mem_size,
+        8,
+        0x3000, // dcbaa (unused by this test)
+        CommandRing {
+            dequeue_ptr: ring_base,
+            cycle_state: true,
+        },
+        event_ring,
+    );
+
+    proc.process(&mut mem, 1);
+    assert!(
+        proc.host_controller_error,
+        "expected command ring HCE on event ring address overflow"
+    );
+    assert_eq!(
+        mem.data[0..TRB_LEN],
+        [0u8; TRB_LEN],
+        "processor must not wrap event ring writes into low memory"
+    );
+}
+
+#[test]
 fn xhci_controller_command_ring_self_link_sets_hce() {
     // `RingCursor::poll` uses a step budget of 256 in `XhciController::process_command_ring`, so
     // allow a little headroom.
@@ -254,6 +298,81 @@ fn ep0_transfer_engine_rejects_link_trb_reserved_bits() {
     assert_eq!(ev.trb_type(), TrbType::TransferEvent);
     assert_eq!(ev.completion_code_raw(), CompletionCode::TrbError.as_u8());
     assert_eq!(ev.parameter, tr_ring);
+}
+
+#[test]
+fn ep0_transfer_engine_event_ring_addr_overflow_does_not_wrap() {
+    struct LargeInDevice;
+
+    impl UsbDeviceModel for LargeInDevice {
+        fn handle_control_request(
+            &mut self,
+            setup: SetupPacket,
+            _data_stage: Option<&[u8]>,
+        ) -> ControlResponse {
+            ControlResponse::Data(vec![0xAB; setup.w_length as usize])
+        }
+    }
+
+    let mut mem = CountingMem::new(0x20_000, 64, 64);
+
+    let tr_ring = 0x1000u64;
+    let buf_ptr = 0x3000u64;
+    // Configure an event ring base such that writing the second event TRB (index=1) would overflow
+    // to low memory if the engine used `wrapping_add`.
+    let event_ring_base = !0x0fu64; // 0xffff...fff0
+
+    let setup = SetupPacket {
+        bm_request_type: 0xc0, // DeviceToHost | Vendor | Device
+        b_request: 0x01,
+        w_value: 0,
+        w_index: 0,
+        w_length: 16,
+    };
+    let setup_bytes = [
+        setup.bm_request_type,
+        setup.b_request,
+        setup.w_value as u8,
+        (setup.w_value >> 8) as u8,
+        setup.w_index as u8,
+        (setup.w_index >> 8) as u8,
+        setup.w_length as u8,
+        (setup.w_length >> 8) as u8,
+    ];
+
+    let mut setup_trb = Trb::new(u64::from_le_bytes(setup_bytes), 0, 0);
+    setup_trb.set_cycle(true);
+    setup_trb.set_trb_type(TrbType::SetupStage);
+    setup_trb.control |= Trb::CONTROL_IOC_BIT;
+    setup_trb.write_to(&mut mem, tr_ring);
+
+    let mut data_trb = Trb::new(buf_ptr, setup.w_length as u32, 0);
+    data_trb.set_cycle(true);
+    data_trb.set_trb_type(TrbType::DataStage);
+    data_trb.set_dir_in(true);
+    data_trb.control |= Trb::CONTROL_IOC_BIT;
+    data_trb.write_to(&mut mem, tr_ring + TRB_LEN as u64);
+
+    let mut status_trb = Trb::new(0, 0, 0);
+    status_trb.set_cycle(true);
+    status_trb.set_trb_type(TrbType::StatusStage);
+    status_trb.set_dir_in(false);
+    status_trb.write_to(&mut mem, tr_ring + 2 * TRB_LEN as u64);
+
+    let mut xhci = Ep0TransferEngine::new_with_ports(1);
+    xhci.set_event_ring(event_ring_base, 8);
+    xhci.hub_mut().attach(0, Box::new(LargeInDevice));
+
+    let slot_id = xhci.enable_slot(0).expect("slot allocation");
+    assert!(xhci.configure_ep0(slot_id, tr_ring, true, 8));
+
+    xhci.ring_doorbell(&mut mem, slot_id, 1);
+
+    assert_eq!(
+        mem.data[0..TRB_LEN],
+        [0u8; TRB_LEN],
+        "engine must not wrap event ring writes into low memory"
+    );
 }
 
 #[test]
