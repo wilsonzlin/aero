@@ -609,6 +609,8 @@ into Aero’s `DiskBackend` abstraction and `MemoryBus` DMA interface.
     - PBA at `BAR0 + 0x3010` (8-byte aligned)
     - When MSI-X is enabled, NVMe completions trigger MSI-X deliveries (vector 0) instead of
       MSI/INTx.
+  - Tests: `crates/aero-devices-nvme/tests/interrupts.rs` (MSI vs MSI-X preference + INTx
+    suppression).
 
 ### Windows 7 Compatibility (Driver Requirements)
 
