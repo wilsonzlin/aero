@@ -345,6 +345,7 @@ mod wasm {
         at_key: JsValue,
         rw_opts: Object,
         closed: bool,
+        _not_send_sync: std::marker::PhantomData<std::rc::Rc<()>>,
     }
 
     // `OpfsBackend` contains `wasm-bindgen` JS handles (e.g. `JsValue` / OPFS file handles), which
@@ -435,6 +436,7 @@ mod wasm {
                 at_key,
                 rw_opts,
                 closed: false,
+                _not_send_sync: std::marker::PhantomData,
             };
 
             let current_size = js_number_to_u64_checked(
@@ -559,6 +561,7 @@ mod wasm {
                 at_key,
                 rw_opts,
                 closed: false,
+                _not_send_sync: std::marker::PhantomData,
             };
 
             let current_size = js_number_to_u64_checked(
