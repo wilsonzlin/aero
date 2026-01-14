@@ -47,6 +47,8 @@ Guardrail (policy):
   transitional conformance harnesses).
 - `crates/emulator` may depend on canonical crates, but should only host *compatibility shims* and
   *remaining unique implementations* (tracked below).
+- CI enforces the “no emulator dependency edges” rule for workspace crates via:
+  - `scripts/ci/check-no-emulator-deps.py` (invoked by `scripts/ci/check-repo-layout.sh`)
 
 ---
 

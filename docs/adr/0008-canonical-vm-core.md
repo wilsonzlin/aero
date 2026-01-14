@@ -78,7 +78,11 @@ The following crates are **not** canonical VM wiring. They are kept under `crate
   intended for experiments/tests; it allocates its own guest RAM and does not use the worker
   runtime `guest_ram_layout` shared-memory contract.
 
-See also: [`docs/vm-crate-map.md`](../vm-crate-map.md) and [ADR 0014](./0014-canonical-machine-stack.md).
+See also:
+
+- [`docs/vm-crate-map.md`](../vm-crate-map.md) (canonical vs legacy crate map)
+- [`docs/21-emulator-crate-migration.md`](../21-emulator-crate-migration.md) (`crates/emulator` → canonical stack plan + deletion targets)
+- [ADR 0014](./0014-canonical-machine-stack.md) (canonical machine stack)
 
 ## Alternatives considered
 
@@ -98,4 +102,4 @@ See also: [`docs/vm-crate-map.md`](../vm-crate-map.md) and [ADR 0014](./0014-can
 - Legacy crates remain available for reference under `crates/legacy/`, but are excluded from `cargo test --workspace`.
 - Future VM integration work (CPU/JIT, device models, web runtime ABI, snapshots) should plug into `aero-machine` rather than creating new ad-hoc VM wrappers.
 
-See also: [`docs/vm-crate-map.md`](../vm-crate-map.md).
+See also: [`docs/vm-crate-map.md`](../vm-crate-map.md) and [`docs/21-emulator-crate-migration.md`](../21-emulator-crate-migration.md).
