@@ -45,6 +45,9 @@ static VOID AerovblkCaptureInterruptMode(_Inout_ PAEROVBLK_DEVICE_EXTENSION devE
 
   devExt->UseMsi = TRUE;
   devExt->MsiMessageCount = (USHORT)msgCount;
+#if DBG
+  AEROVBLK_LOG("message interrupts assigned: messages=%hu", (USHORT)msgCount);
+#endif
 }
 
 static BOOLEAN AerovblkProgramMsixVectors(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt) {
