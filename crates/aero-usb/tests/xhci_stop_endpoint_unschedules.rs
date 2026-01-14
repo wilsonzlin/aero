@@ -2,7 +2,7 @@ mod util;
 
 use aero_usb::xhci::context::{SlotContext, CONTEXT_SIZE};
 use aero_usb::xhci::trb::{CompletionCode, Trb, TrbType, TRB_LEN};
-use aero_usb::xhci::{CommandCompletionCode, XhciController};
+use aero_usb::xhci::{regs, CommandCompletionCode, XhciController};
 use aero_usb::{ControlResponse, MemoryBus, SetupPacket, UsbDeviceModel, UsbInResult};
 
 use util::{Alloc, TestMemory};
@@ -87,6 +87,9 @@ fn stop_endpoint_command_unschedules_active_endpoint() {
     stop_marker.set_trb_type(TrbType::NoOp);
     stop_marker.set_cycle(false);
     stop_marker.write_to(&mut mem, transfer_ring + 2 * TRB_LEN as u64);
+
+    // Start the controller so transfer ring processing is enabled.
+    xhci.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
 
     // Doorbell the endpoint and execute one transfer. Since another TRB is ready, the controller
     // keeps the endpoint active without requiring another doorbell.
