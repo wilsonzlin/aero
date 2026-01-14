@@ -1506,6 +1506,108 @@ fn snapshot_restore_rejects_pending_submissions_with_too_many_entries() {
 }
 
 #[test]
+fn snapshot_restore_rejects_pending_submissions_with_cmd_stream_len_too_large() {
+    // Tags from `AeroGpuPciDevice::save_state` / `load_state`.
+    const TAG_REGS: u16 = 1;
+    const TAG_PENDING_SUBMISSIONS: u16 = 9;
+
+    let cfg = AeroGpuDeviceConfig {
+        vblank_hz: None,
+        executor: AeroGpuExecutorConfig {
+            fence_completion: AeroGpuFenceCompletionMode::Deferred,
+            ..Default::default()
+        },
+    };
+
+    let dev = new_test_device(cfg.clone());
+    let snap = dev.save_state();
+
+    let reader = SnapshotReader::parse(&snap, <AeroGpuPciDevice as IoSnapshot>::DEVICE_ID).unwrap();
+    let regs = reader
+        .bytes(TAG_REGS)
+        .expect("saved snapshot missing TAG_REGS")
+        .to_vec();
+
+    // Declare a command stream length that exceeds the executor's defensive cap, without needing to
+    // include any bytes.
+    let pending_bytes = Encoder::new()
+        .u32(1) // count
+        .u32(0) // flags
+        .u32(0) // context_id
+        .u32(0) // engine_id
+        .u64(0) // signal_fence
+        .u32(u32::MAX) // cmd_stream len
+        .finish();
+
+    let mut writer = SnapshotWriter::new(
+        <AeroGpuPciDevice as IoSnapshot>::DEVICE_ID,
+        <AeroGpuPciDevice as IoSnapshot>::DEVICE_VERSION,
+    );
+    writer.field_bytes(TAG_REGS, regs);
+    writer.field_bytes(TAG_PENDING_SUBMISSIONS, pending_bytes);
+    let corrupted = writer.finish();
+
+    let mut restored = new_test_device(cfg);
+    let err = restored.load_state(&corrupted).unwrap_err();
+    assert_eq!(
+        err,
+        SnapshotError::InvalidFieldEncoding("pending_submissions.cmd_stream")
+    );
+}
+
+#[test]
+fn snapshot_restore_rejects_pending_submissions_with_alloc_table_len_too_large() {
+    // Tags from `AeroGpuPciDevice::save_state` / `load_state`.
+    const TAG_REGS: u16 = 1;
+    const TAG_PENDING_SUBMISSIONS: u16 = 9;
+
+    let cfg = AeroGpuDeviceConfig {
+        vblank_hz: None,
+        executor: AeroGpuExecutorConfig {
+            fence_completion: AeroGpuFenceCompletionMode::Deferred,
+            ..Default::default()
+        },
+    };
+
+    let dev = new_test_device(cfg.clone());
+    let snap = dev.save_state();
+
+    let reader = SnapshotReader::parse(&snap, <AeroGpuPciDevice as IoSnapshot>::DEVICE_ID).unwrap();
+    let regs = reader
+        .bytes(TAG_REGS)
+        .expect("saved snapshot missing TAG_REGS")
+        .to_vec();
+
+    // A valid (empty) command stream followed by an alloc table length that exceeds the executor's
+    // defensive cap. The oversized length should be rejected before any allocation.
+    let pending_bytes = Encoder::new()
+        .u32(1) // count
+        .u32(0) // flags
+        .u32(0) // context_id
+        .u32(0) // engine_id
+        .u64(0) // signal_fence
+        .u32(0) // cmd_stream len
+        // cmd_stream bytes (empty)
+        .u32(u32::MAX) // alloc_table len
+        .finish();
+
+    let mut writer = SnapshotWriter::new(
+        <AeroGpuPciDevice as IoSnapshot>::DEVICE_ID,
+        <AeroGpuPciDevice as IoSnapshot>::DEVICE_VERSION,
+    );
+    writer.field_bytes(TAG_REGS, regs);
+    writer.field_bytes(TAG_PENDING_SUBMISSIONS, pending_bytes);
+    let corrupted = writer.finish();
+
+    let mut restored = new_test_device(cfg);
+    let err = restored.load_state(&corrupted).unwrap_err();
+    assert_eq!(
+        err,
+        SnapshotError::InvalidFieldEncoding("pending_submissions.alloc_table")
+    );
+}
+
+#[test]
 fn snapshot_restore_rejects_pending_fence_completions_with_too_many_entries() {
     // Tags from `AeroGpuPciDevice::save_state` / `load_state`.
     const TAG_REGS: u16 = 1;
