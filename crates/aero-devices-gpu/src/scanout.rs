@@ -222,8 +222,13 @@ fn read_rgba_from_guest(
     if out_len > max_out_len {
         return None;
     }
-    let mut out = vec![0u8; out_len];
-    let mut row_buf = vec![0u8; row_bytes];
+    let mut out = Vec::new();
+    out.try_reserve_exact(out_len).ok()?;
+    out.resize(out_len, 0u8);
+
+    let mut row_buf = Vec::new();
+    row_buf.try_reserve_exact(row_bytes).ok()?;
+    row_buf.resize(row_bytes, 0u8);
 
     for y in 0..height {
         let row_gpa = fb_gpa + (y as u64) * pitch_u64;
