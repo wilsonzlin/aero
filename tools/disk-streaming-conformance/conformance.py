@@ -1539,8 +1539,9 @@ def _test_get_content_headers(
     origin: str | None,
     authorization: str | None,
     timeout_s: float,
-) -> TestResult:
+) -> tuple[TestResult, HttpResponse | None]:
     name = "GET: Content-Type is application/octet-stream and X-Content-Type-Options=nosniff"
+    resp: HttpResponse | None = None
     try:
         headers: dict[str, str] = {
             "Accept-Encoding": _BROWSER_ACCEPT_ENCODING,
@@ -1560,9 +1561,9 @@ def _test_get_content_headers(
         )
         _require(resp.status == 206, f"expected 206, got {resp.status}")
         _require_cors(resp, origin)
-        return _test_content_headers(name=name, resp=resp)
+        return _test_content_headers(name=name, resp=resp), resp
     except TestFailure as e:
-        return TestResult(name=name, status="FAIL", details=str(e))
+        return TestResult(name=name, status="FAIL", details=str(e)), resp
 
 
 def _test_cors_vary_origin(
@@ -2640,6 +2641,13 @@ def main(argv: Sequence[str]) -> int:
         )
     )
     results.append(
+        _test_cors_expose_etag_if_present(
+            name="HEAD: CORS exposes ETag when present",
+            resp=head_info.resp if head_info is not None else None,
+            origin=origin,
+        )
+    )
+    results.append(
         _test_content_headers(
             name="HEAD: Content-Type is application/octet-stream and X-Content-Type-Options=nosniff",
             resp=head_info.resp if head_info is not None else None,
@@ -2702,12 +2710,18 @@ def main(argv: Sequence[str]) -> int:
             max_body_bytes=max_body_bytes,
         )
     )
+    get_content_headers_result, get_content_headers_resp = _test_get_content_headers(
+        base_url=base_url,
+        origin=origin,
+        authorization=authorization,
+        timeout_s=timeout_s,
+    )
+    results.append(get_content_headers_result)
     results.append(
-        _test_get_content_headers(
-            base_url=base_url,
+        _test_cors_expose_content_encoding_if_present(
+            name="GET: CORS exposes Content-Encoding when present",
+            resp=get_content_headers_resp,
             origin=origin,
-            authorization=authorization,
-            timeout_s=timeout_s,
         )
     )
 

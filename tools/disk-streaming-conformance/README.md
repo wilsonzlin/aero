@@ -42,7 +42,9 @@ Validates that a disk image streaming endpoint is compatible with Aero’s brows
 - CORS preflight caching sanity:
   - Warn if `Access-Control-Max-Age` is missing or very low (preflights can be expensive for many small range reads)
   - Warn if `Vary` is missing (recommended for safe caching of preflight responses)
-- CORS responses expose required headers (`Access-Control-Expose-Headers` for `Accept-Ranges`, `Content-Length`, `Content-Range`, `ETag`, `Last-Modified`)
+- CORS responses expose required headers (`Access-Control-Expose-Headers` for `Accept-Ranges`, `Content-Length`, `Content-Range`)
+- (Recommended) if a response includes `ETag`, expose it via `Access-Control-Expose-Headers` so browser-side code can use validators (`If-Range`, `If-None-Match`)
+- Note: `Last-Modified` is a CORS-safelisted response header and is exposed to JS by default (no `Expose-Headers` needed)
 - (Recommended) if a response includes `Content-Encoding` (even `identity`), expose it via `Access-Control-Expose-Headers` so browser-side code can detect non-identity encodings.
 - CORS sanity checks:
   - Warn if `Access-Control-Allow-Credentials: true` is used with `Access-Control-Allow-Origin: *`
