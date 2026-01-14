@@ -3,6 +3,29 @@ use std::io::{self, Read, Seek, SeekFrom, Write};
 #[cfg(target_arch = "wasm32")]
 const JS_MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991; // 2^53 - 1
 
+#[cfg(any(target_arch = "wasm32", test))]
+fn disk_error_to_io(err: crate::DiskError) -> io::Error {
+    use crate::DiskError;
+
+    match err {
+        DiskError::NotSupported(_) | DiskError::Unsupported(_) => {
+            io::Error::new(io::ErrorKind::Unsupported, err)
+        }
+        DiskError::BackendUnavailable => io::Error::new(io::ErrorKind::NotConnected, err),
+        DiskError::InUse => io::Error::new(io::ErrorKind::ResourceBusy, err),
+        DiskError::QuotaExceeded => io::Error::new(io::ErrorKind::StorageFull, err),
+        DiskError::InvalidState(_) => io::Error::new(io::ErrorKind::BrokenPipe, err),
+        DiskError::UnalignedLength { .. }
+        | DiskError::OutOfBounds { .. }
+        | DiskError::OffsetOverflow => io::Error::new(io::ErrorKind::InvalidInput, err),
+        DiskError::CorruptImage(_)
+        | DiskError::InvalidSparseHeader(_)
+        | DiskError::CorruptSparseImage(_) => io::Error::new(io::ErrorKind::InvalidData, err),
+        DiskError::InvalidConfig(_) => io::Error::new(io::ErrorKind::InvalidInput, err),
+        DiskError::Io(_) => io::Error::other(err),
+    }
+}
+
 /// Minimal interface needed to turn an OPFS `FileSystemSyncAccessHandle` into a `std::io`
 /// `Read`/`Write`/`Seek` stream.
 ///
@@ -73,30 +96,8 @@ mod platform_handle {
         Ok(as_u64)
     }
 
-    pub(super) fn disk_error_to_io(err: crate::DiskError) -> io::Error {
-        use crate::DiskError;
-
-        match err {
-            DiskError::NotSupported(_) | DiskError::Unsupported(_) => {
-                io::Error::new(io::ErrorKind::Unsupported, err)
-            }
-            DiskError::BackendUnavailable => io::Error::new(io::ErrorKind::NotConnected, err),
-            DiskError::InUse => io::Error::new(io::ErrorKind::ResourceBusy, err),
-            DiskError::QuotaExceeded => io::Error::new(io::ErrorKind::StorageFull, err),
-            DiskError::InvalidState(_) => io::Error::new(io::ErrorKind::BrokenPipe, err),
-            DiskError::UnalignedLength { .. }
-            | DiskError::OutOfBounds { .. }
-            | DiskError::OffsetOverflow => io::Error::new(io::ErrorKind::InvalidInput, err),
-            DiskError::CorruptImage(_)
-            | DiskError::InvalidSparseHeader(_)
-            | DiskError::CorruptSparseImage(_) => io::Error::new(io::ErrorKind::InvalidData, err),
-            DiskError::InvalidConfig(_) => io::Error::new(io::ErrorKind::InvalidInput, err),
-            DiskError::Io(_) => io::Error::other(err),
-        }
-    }
-
     fn js_error_to_io(err: JsValue) -> io::Error {
-        disk_error_to_io(opfs_platform::disk_error_from_js(err))
+        super::disk_error_to_io(opfs_platform::disk_error_from_js(err))
     }
 
     fn set_at(opts: &Object, at_key: &JsValue, at: u64) -> io::Result<()> {
@@ -280,7 +281,7 @@ where
 
         let file = opfs_platform::open_file(path, create)
             .await
-            .map_err(platform_handle::disk_error_to_io)?;
+            .map_err(disk_error_to_io)?;
 
         if !opfs_platform::file_handle_supports_sync_access_handle(&file) {
             return Err(io::Error::new(
@@ -291,7 +292,7 @@ where
 
         let handle = opfs_platform::create_sync_handle(&file)
             .await
-            .map_err(platform_handle::disk_error_to_io)?;
+            .map_err(disk_error_to_io)?;
 
         let handle = platform_handle::WasmSyncHandle::new(handle)?;
         Ok(Self::from_handle(handle))
@@ -522,6 +523,45 @@ mod tests {
         CpuState, DiskOverlayRefs, MmuState, RestoreOptions, SaveOptions, SnapshotMeta,
         SnapshotSource, SnapshotTarget,
     };
+
+    #[test]
+    fn disk_error_to_io_maps_error_kinds() {
+        use crate::DiskError;
+        use std::io::ErrorKind;
+
+        fn assert_kind(err: DiskError, expected: ErrorKind) {
+            let io = super::disk_error_to_io(err);
+            assert_eq!(io.kind(), expected, "unexpected kind: {io:?}");
+        }
+
+        assert_kind(DiskError::NotSupported("nope".to_string()), ErrorKind::Unsupported);
+        assert_kind(DiskError::Unsupported("feature"), ErrorKind::Unsupported);
+        assert_kind(DiskError::BackendUnavailable, ErrorKind::NotConnected);
+        assert_kind(DiskError::InUse, ErrorKind::ResourceBusy);
+        assert_kind(DiskError::QuotaExceeded, ErrorKind::StorageFull);
+        assert_kind(DiskError::InvalidState("bad".to_string()), ErrorKind::BrokenPipe);
+        assert_kind(
+            DiskError::UnalignedLength {
+                len: 3,
+                alignment: 2,
+            },
+            ErrorKind::InvalidInput,
+        );
+        assert_kind(
+            DiskError::OutOfBounds {
+                offset: 1,
+                len: 2,
+                capacity: 0,
+            },
+            ErrorKind::InvalidInput,
+        );
+        assert_kind(DiskError::OffsetOverflow, ErrorKind::InvalidInput);
+        assert_kind(DiskError::InvalidConfig("bad"), ErrorKind::InvalidInput);
+        assert_kind(DiskError::CorruptImage("bad"), ErrorKind::InvalidData);
+        assert_kind(DiskError::InvalidSparseHeader("bad"), ErrorKind::InvalidData);
+        assert_kind(DiskError::CorruptSparseImage("bad"), ErrorKind::InvalidData);
+        assert_kind(DiskError::Io("boom".to_string()), ErrorKind::Other);
+    }
 
     #[derive(Default, Debug)]
     struct MockHandle {
