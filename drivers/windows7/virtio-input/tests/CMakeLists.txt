@@ -80,3 +80,17 @@ set_target_properties(report_ring_test PROPERTIES
 
 target_compile_options(report_ring_test PRIVATE ${VIOINPUT_TEST_CFLAGS})
 add_test(NAME report_ring_test COMMAND report_ring_test)
+
+add_executable(virtio_statusq_test
+    virtio_statusq_test.c
+    ${CMAKE_CURRENT_LIST_DIR}/../src/virtio_statusq.c
+)
+
+set_target_properties(virtio_statusq_test PROPERTIES
+    C_STANDARD 11
+    C_STANDARD_REQUIRED YES
+    C_EXTENSIONS NO
+)
+
+target_compile_options(virtio_statusq_test PRIVATE ${VIOINPUT_TEST_CFLAGS})
+add_test(NAME virtio_statusq_test COMMAND virtio_statusq_test)
