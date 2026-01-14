@@ -65,37 +65,20 @@ fn operand_src_token(operand_type: u32) -> u32 {
 }
 
 fn build_isgn_chunk(params: &[(&str, u32, u32)]) -> Vec<u8> {
-    // Mirrors the format parsed by `aero_d3d11::signature::parse_signature_chunk`.
-    let param_count = u32::try_from(params.len()).expect("too many signature params");
-    let header_len = 8usize;
-    let entry_size = 24usize;
-    let table_len = params.len() * entry_size;
-
-    let mut strings = Vec::<u8>::new();
-    let mut name_offsets = Vec::<u32>::with_capacity(params.len());
-    for (name, _index, _reg) in params {
-        name_offsets.push((header_len + table_len + strings.len()) as u32);
-        strings.extend_from_slice(name.as_bytes());
-        strings.push(0);
-    }
-
-    let mut bytes = Vec::with_capacity(header_len + table_len + strings.len());
-    bytes.extend_from_slice(&param_count.to_le_bytes());
-    bytes.extend_from_slice(&(header_len as u32).to_le_bytes());
-
-    for ((_, index, reg), &name_off) in params.iter().zip(name_offsets.iter()) {
-        bytes.extend_from_slice(&name_off.to_le_bytes());
-        bytes.extend_from_slice(&index.to_le_bytes());
-        bytes.extend_from_slice(&0u32.to_le_bytes()); // system_value_type
-        bytes.extend_from_slice(&0u32.to_le_bytes()); // component_type
-        bytes.extend_from_slice(&reg.to_le_bytes());
-        bytes.push(0b1111); // mask
-        bytes.push(0b1111); // read_write_mask
-        bytes.push(0); // stream
-        bytes.push(0); // min_precision
-    }
-    bytes.extend_from_slice(&strings);
-    bytes
+    let entries: Vec<dxbc_test_utils::SignatureEntryDesc<'_>> = params
+        .iter()
+        .map(|&(name, index, reg)| dxbc_test_utils::SignatureEntryDesc {
+            semantic_name: name,
+            semantic_index: index,
+            system_value_type: 0,
+            component_type: 0,
+            register: reg,
+            mask: 0b1111,
+            read_write_mask: 0b1111,
+            stream: 0,
+        })
+        .collect();
+    dxbc_test_utils::build_signature_chunk_v0(&entries)
 }
 
 fn build_osgn_chunk(params: &[(&str, u32, u32)]) -> Vec<u8> {

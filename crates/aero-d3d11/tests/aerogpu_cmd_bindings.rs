@@ -144,37 +144,20 @@ struct SigParam {
 }
 
 fn build_sig_chunk(params: &[SigParam]) -> Vec<u8> {
-    // Mirrors the format parsed by `aero_dxbc::parse_signature_chunk_with_fourcc`.
-    let param_count = u32::try_from(params.len()).expect("too many signature params");
-    let header_len = 8usize;
-    let entry_size = 24usize;
-    let table_len = params.len() * entry_size;
-
-    let mut strings = Vec::<u8>::new();
-    let mut name_offsets = Vec::<u32>::with_capacity(params.len());
-    for p in params {
-        name_offsets.push((header_len + table_len + strings.len()) as u32);
-        strings.extend_from_slice(p.name.as_bytes());
-        strings.push(0);
-    }
-
-    let mut bytes = Vec::with_capacity(header_len + table_len + strings.len());
-    bytes.extend_from_slice(&param_count.to_le_bytes());
-    bytes.extend_from_slice(&(header_len as u32).to_le_bytes());
-
-    for (p, &name_off) in params.iter().zip(name_offsets.iter()) {
-        bytes.extend_from_slice(&name_off.to_le_bytes());
-        bytes.extend_from_slice(&p.index.to_le_bytes());
-        bytes.extend_from_slice(&0u32.to_le_bytes()); // system_value_type
-        bytes.extend_from_slice(&0u32.to_le_bytes()); // component_type
-        bytes.extend_from_slice(&p.reg.to_le_bytes());
-        bytes.push(p.mask); // mask
-        bytes.push(0b1111); // read_write_mask
-        bytes.push(0); // stream
-        bytes.push(0); // min_precision
-    }
-    bytes.extend_from_slice(&strings);
-    bytes
+    let entries: Vec<dxbc_test_utils::SignatureEntryDesc<'_>> = params
+        .iter()
+        .map(|p| dxbc_test_utils::SignatureEntryDesc {
+            semantic_name: p.name,
+            semantic_index: p.index,
+            system_value_type: 0,
+            component_type: 0,
+            register: p.reg,
+            mask: p.mask,
+            read_write_mask: 0b1111,
+            stream: 0,
+        })
+        .collect();
+    dxbc_test_utils::build_signature_chunk_v0(&entries)
 }
 
 fn build_ps_solid_red_dxbc() -> Vec<u8> {

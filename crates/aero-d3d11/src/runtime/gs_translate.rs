@@ -730,6 +730,13 @@ fn emit_src_vec4(
                     msg,
                 });
             }
+            RegFile::OutputDepth => {
+                return Err(GsTranslateError::UnsupportedOperand {
+                    inst_index,
+                    opcode,
+                    msg: "RegFile::OutputDepth is not supported in GS prepass".to_owned(),
+                })
+            }
         },
         SrcKind::GsInput { reg, vertex } => format!("gs_load_input(prim_id, {reg}u, {vertex}u)"),
         SrcKind::ImmediateF32(vals) => {

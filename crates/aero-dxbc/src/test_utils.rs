@@ -4,6 +4,112 @@ fn align4(n: usize) -> usize {
     (n + 3) & !3
 }
 
+/// Description of a signature entry when building synthetic DXBC signature chunks in tests.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SignatureEntryDesc<'a> {
+    /// Semantic name (e.g. `"POSITION"` or `"SV_Target"`).
+    pub semantic_name: &'a str,
+    /// Semantic index (e.g. `0` for `TEXCOORD0`).
+    pub semantic_index: u32,
+    /// System-value type (`D3D_NAME_*`).
+    pub system_value_type: u32,
+    /// Component type (`D3D_REGISTER_COMPONENT_*`).
+    pub component_type: u32,
+    /// Register index assigned by the compiler.
+    pub register: u32,
+    /// Component mask (`D3D_COMPONENT_MASK`).
+    pub mask: u8,
+    /// Read/write mask.
+    pub read_write_mask: u8,
+    /// Stream index (typically 0; used by geometry shader stream-output).
+    pub stream: u32,
+}
+
+const SIGNATURE_HEADER_LEN: usize = 8;
+const SIGNATURE_ENTRY_LEN_V0: usize = 24;
+const SIGNATURE_ENTRY_LEN_V1: usize = 32;
+
+/// Builds a `*SGN`-style (v0) DXBC signature chunk payload (24-byte entries).
+///
+/// This is the classic entry layout used by `ISGN`/`OSGN`/`PSGN`.
+pub fn build_signature_chunk_v0(entries: &[SignatureEntryDesc<'_>]) -> Vec<u8> {
+    build_signature_chunk_with_entry_size(entries, SIGNATURE_ENTRY_LEN_V0)
+}
+
+/// Builds a `*SG1`-style (v1) DXBC signature chunk payload (32-byte entries).
+///
+/// This is the extended entry layout used by `ISG1`/`OSG1`/`PSG1`.
+pub fn build_signature_chunk_v1(entries: &[SignatureEntryDesc<'_>]) -> Vec<u8> {
+    build_signature_chunk_with_entry_size(entries, SIGNATURE_ENTRY_LEN_V1)
+}
+
+/// Builds a signature chunk payload matching the entry layout normally used by the given `fourcc`.
+///
+/// - `*SGN` → v0 (24-byte entries)
+/// - `*SG1` → v1 (32-byte entries)
+pub fn build_signature_chunk_for_fourcc(
+    fourcc: FourCC,
+    entries: &[SignatureEntryDesc<'_>],
+) -> Vec<u8> {
+    if fourcc.0[3] == b'1' {
+        build_signature_chunk_v1(entries)
+    } else {
+        build_signature_chunk_v0(entries)
+    }
+}
+
+fn build_signature_chunk_with_entry_size(
+    entries: &[SignatureEntryDesc<'_>],
+    entry_size: usize,
+) -> Vec<u8> {
+    assert!(
+        entry_size == SIGNATURE_ENTRY_LEN_V0 || entry_size == SIGNATURE_ENTRY_LEN_V1,
+        "unsupported signature entry size {entry_size}"
+    );
+
+    let mut out = Vec::new();
+    out.extend_from_slice(&(entries.len() as u32).to_le_bytes()); // param_count
+    out.extend_from_slice(&(SIGNATURE_HEADER_LEN as u32).to_le_bytes()); // param_offset
+
+    let table_start = out.len();
+    out.resize(table_start + entries.len() * entry_size, 0);
+
+    for (i, e) in entries.iter().enumerate() {
+        let semantic_name_offset = out.len() as u32;
+        out.extend_from_slice(e.semantic_name.as_bytes());
+        out.push(0);
+        // Pad strings to 4-byte alignment to match common toolchain output and existing tests.
+        out.resize(align4(out.len()), 0);
+
+        let base = table_start + i * entry_size;
+        out[base..base + 4].copy_from_slice(&semantic_name_offset.to_le_bytes());
+        out[base + 4..base + 8].copy_from_slice(&e.semantic_index.to_le_bytes());
+        out[base + 8..base + 12].copy_from_slice(&e.system_value_type.to_le_bytes());
+        out[base + 12..base + 16].copy_from_slice(&e.component_type.to_le_bytes());
+        out[base + 16..base + 20].copy_from_slice(&e.register.to_le_bytes());
+
+        match entry_size {
+            SIGNATURE_ENTRY_LEN_V0 => {
+                out[base + 20] = e.mask;
+                out[base + 21] = e.read_write_mask;
+                out[base + 22] = u8::try_from(e.stream)
+                    .unwrap_or_else(|_| panic!("signature stream {} does not fit in u8", e.stream));
+                out[base + 23] = 0; // min_precision (unused)
+            }
+            SIGNATURE_ENTRY_LEN_V1 => {
+                out[base + 20] = e.mask;
+                out[base + 21] = e.read_write_mask;
+                // bytes 22..23 are reserved/unused (keep as 0)
+                out[base + 24..base + 28].copy_from_slice(&e.stream.to_le_bytes());
+                out[base + 28..base + 32].copy_from_slice(&0u32.to_le_bytes()); // min_precision
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    out
+}
+
 /// Builds a minimal `DXBC` container containing the provided chunks.
 ///
 /// The resulting blob has:

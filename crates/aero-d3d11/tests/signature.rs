@@ -2,61 +2,29 @@ use aero_d3d11::{parse_signature_chunk, parse_signatures, DxbcFile, FourCC};
 use aero_dxbc::test_utils as dxbc_test_utils;
 
 fn build_signature_chunk_v0_one_entry(semantic_name: &str, register: u32) -> Vec<u8> {
-    let mut bytes = Vec::new();
-
-    let param_count = 1u32;
-    let param_offset = 8u32;
-
-    bytes.extend_from_slice(&param_count.to_le_bytes());
-    bytes.extend_from_slice(&param_offset.to_le_bytes());
-
-    let table_start = bytes.len();
-    assert_eq!(table_start, 8);
-
-    let entry_size = 24usize;
-    let string_table_offset = (table_start + entry_size) as u32;
-
-    bytes.extend_from_slice(&string_table_offset.to_le_bytes()); // semantic_name_offset
-    bytes.extend_from_slice(&0u32.to_le_bytes()); // semantic_index
-    bytes.extend_from_slice(&0u32.to_le_bytes()); // system_value_type
-    bytes.extend_from_slice(&3u32.to_le_bytes()); // component_type (float32)
-    bytes.extend_from_slice(&register.to_le_bytes());
-    bytes.extend_from_slice(&u32::from_le_bytes([0xF, 0xF, 0, 0]).to_le_bytes()); // mask/rw/stream/min_prec
-
-    bytes.extend_from_slice(semantic_name.as_bytes());
-    bytes.push(0);
-
-    bytes
+    dxbc_test_utils::build_signature_chunk_v0(&[dxbc_test_utils::SignatureEntryDesc {
+        semantic_name,
+        semantic_index: 0,
+        system_value_type: 0,
+        component_type: 3, // float32
+        register,
+        mask: 0xF,
+        read_write_mask: 0xF,
+        stream: 0,
+    }])
 }
 
 fn build_signature_chunk_v1_one_entry(semantic_name: &str, register: u32, stream: u32) -> Vec<u8> {
-    let mut bytes = Vec::new();
-
-    let param_count = 1u32;
-    let param_offset = 8u32;
-
-    bytes.extend_from_slice(&param_count.to_le_bytes());
-    bytes.extend_from_slice(&param_offset.to_le_bytes());
-
-    let table_start = bytes.len();
-    assert_eq!(table_start, 8);
-
-    let entry_size = 32usize;
-    let string_table_offset = (table_start + entry_size) as u32;
-
-    bytes.extend_from_slice(&string_table_offset.to_le_bytes()); // semantic_name_offset
-    bytes.extend_from_slice(&0u32.to_le_bytes()); // semantic_index
-    bytes.extend_from_slice(&0u32.to_le_bytes()); // system_value_type
-    bytes.extend_from_slice(&3u32.to_le_bytes()); // component_type (float32)
-    bytes.extend_from_slice(&register.to_le_bytes());
-    bytes.extend_from_slice(&u32::from_le_bytes([0xF, 0xF, 0, 0]).to_le_bytes()); // mask/rw/pad
-    bytes.extend_from_slice(&stream.to_le_bytes());
-    bytes.extend_from_slice(&0u32.to_le_bytes()); // min_precision
-
-    bytes.extend_from_slice(semantic_name.as_bytes());
-    bytes.push(0);
-
-    bytes
+    dxbc_test_utils::build_signature_chunk_v1(&[dxbc_test_utils::SignatureEntryDesc {
+        semantic_name,
+        semantic_index: 0,
+        system_value_type: 0,
+        component_type: 3, // float32
+        register,
+        mask: 0xF,
+        read_write_mask: 0xF,
+        stream,
+    }])
 }
 
 fn build_dxbc(chunks: &[(FourCC, &[u8])]) -> Vec<u8> {
