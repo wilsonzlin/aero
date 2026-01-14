@@ -777,16 +777,16 @@ static BOOLEAN AerovblkQueueRequest(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, _
 
   StorPortAcquireSpinLock(devExt, InterruptLock, &lock);
 
-  if (devExt->ResetInProgress != 0) {
-    StorPortReleaseSpinLock(devExt, &lock);
-    return FALSE;
-  }
-
   if (devExt->Removed) {
     StorPortReleaseSpinLock(devExt, &lock);
     AerovblkSetSense(devExt, srb, SCSI_SENSE_NOT_READY, 0x04, 0x00);
     AerovblkCompleteSrb(devExt, srb, SRB_STATUS_ERROR | SRB_STATUS_AUTOSENSE_VALID);
     return TRUE;
+  }
+
+  if (devExt->ResetInProgress != 0) {
+    StorPortReleaseSpinLock(devExt, &lock);
+    return FALSE;
   }
 
   if (devExt->Vq.queue_size == 0) {
@@ -1911,7 +1911,13 @@ BOOLEAN AerovblkHwStartIo(_In_ PVOID deviceExtension, _Inout_ PSCSI_REQUEST_BLOC
       if (pnp->PnPAction == StorStopDevice || pnp->PnPAction == StorRemoveDevice) {
         STOR_LOCK_HANDLE lock;
 
+        /*
+         * Mark removed under the interrupt lock so we don't race with the I/O
+         * submission path (AerovblkQueueRequest).
+         */
+        StorPortAcquireSpinLock(devExt, InterruptLock, &lock);
         devExt->Removed = TRUE;
+        StorPortReleaseSpinLock(devExt, &lock);
 
         if (devExt->Vdev.CommonCfg != NULL) {
           (void)VirtioPciDisableMsixVectors(&devExt->Vdev, /*QueueCount=*/1);
@@ -1925,7 +1931,14 @@ BOOLEAN AerovblkHwStartIo(_In_ PVOID deviceExtension, _Inout_ PSCSI_REQUEST_BLOC
         }
         StorPortReleaseSpinLock(devExt, &lock);
       } else if (pnp->PnPAction == StorStartDevice) {
+        BOOLEAN allocateResources;
+
         devExt->Removed = FALSE;
+        allocateResources = (devExt->Vq.queue_size == 0 || devExt->RequestContexts == NULL) ? TRUE : FALSE;
+        if (!AerovblkDeviceBringUp(devExt, allocateResources)) {
+          AerovblkCompleteSrb(devExt, srb, SRB_STATUS_ERROR);
+          return TRUE;
+        }
       }
     }
 
