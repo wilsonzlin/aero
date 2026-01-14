@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import type { WasmApi } from "./wasm_loader";
 
-describe("runtime/wasm_loader (Machine scanout-state typings)", () => {
-  it("requires feature detection for optional scanout state exports", () => {
+describe("runtime/wasm_loader (Machine scanout/cursor-state typings)", () => {
+  it("requires feature detection for optional scanout/cursor state exports", () => {
     type Machine = InstanceType<WasmApi["Machine"]>;
 
     // Note: Vitest runs these tests at runtime without TypeScript typechecking, so we must provide
@@ -12,6 +12,8 @@ describe("runtime/wasm_loader (Machine scanout-state typings)", () => {
     const machine = {
       scanout_state_ptr: () => 0,
       scanout_state_len_bytes: () => 32,
+      cursor_state_ptr: () => 0,
+      cursor_state_len_bytes: () => 48,
     } as unknown as Machine;
 
     // Optional methods should require feature detection under `strictNullChecks`.
@@ -20,6 +22,10 @@ describe("runtime/wasm_loader (Machine scanout-state typings)", () => {
       machine.scanout_state_ptr();
       // @ts-expect-error scanout_state_len_bytes may be undefined
       machine.scanout_state_len_bytes();
+      // @ts-expect-error cursor_state_ptr may be undefined
+      machine.cursor_state_ptr();
+      // @ts-expect-error cursor_state_len_bytes may be undefined
+      machine.cursor_state_len_bytes();
     }
     void assertStrictNullChecksEnforced;
 
@@ -29,6 +35,12 @@ describe("runtime/wasm_loader (Machine scanout-state typings)", () => {
       expect(ptr).toBeGreaterThanOrEqual(0);
       expect(len).toBeGreaterThan(0);
     }
+
+    if (machine.cursor_state_ptr && machine.cursor_state_len_bytes) {
+      const ptr = machine.cursor_state_ptr();
+      const len = machine.cursor_state_len_bytes();
+      expect(ptr).toBeGreaterThanOrEqual(0);
+      expect(len).toBeGreaterThan(0);
+    }
   });
 });
-

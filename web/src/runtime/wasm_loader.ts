@@ -416,6 +416,19 @@ export type MachineHandle = {
      */
     scanout_state_ptr?(): number;
     scanout_state_len_bytes?(): number;
+
+    /**
+     * Shared hardware cursor state descriptor (AeroGPU cursor registers + cursor surface pointer).
+     *
+     * When present, these return a pointer/length pair describing an `Int32Array`-backed cursor
+     * state structure stored inside the module's linear memory (typically a `SharedArrayBuffer`
+     * in the threaded build). See `web/src/ipc/cursor_state.ts` for the layout contract.
+     *
+     * Optional for older WASM builds and for builds that do not expose cursor state via linear
+     * memory (callers should feature-detect).
+     */
+    cursor_state_ptr?(): number;
+    cursor_state_len_bytes?(): number;
     inject_browser_key(code: string, pressed: boolean): void;
     /**
      * Inject up to 4 raw PS/2 Set-2 scancode bytes.
