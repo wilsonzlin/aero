@@ -516,9 +516,6 @@ static UINT AeroGpuBuildModeList(_Out_writes_(Capacity) AEROGPU_DISPLAY_MODE* Mo
         AeroGpuModeListAddUnique(Modes, &count, Capacity, prefW, prefH);
     }
 
-    /* Additional modes derived from EDID standard timings (best-effort). */
-    AeroGpuAppendEdidStandardTimings(g_AeroGpuEdid, Modes, &count, Capacity);
-
     /*
      * Curated fallback list (all modes treated as 60 Hz, progressive).
      *
@@ -538,6 +535,9 @@ static UINT AeroGpuBuildModeList(_Out_writes_(Capacity) AEROGPU_DISPLAY_MODE* Mo
     for (UINT i = 0; i < (UINT)(sizeof(kFallback) / sizeof(kFallback[0])); ++i) {
         AeroGpuModeListAddUnique(Modes, &count, Capacity, kFallback[i].Width, kFallback[i].Height);
     }
+
+    /* Additional modes derived from EDID standard timings (best-effort). */
+    AeroGpuAppendEdidStandardTimings(g_AeroGpuEdid, Modes, &count, Capacity);
 
     /*
      * Always keep a known-good conservative mode available unless explicitly

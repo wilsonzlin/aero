@@ -12,7 +12,6 @@ The Win7 AeroGPU KMD exposes a small, deterministic set of common **60 Hz progre
 - 1280×720
 - 1280×800
 - 1366×768
-- 1368×768 *(EDID standard timing quantization)*
 - 1600×900
 - 1920×1080 *(EDID preferred mode)*
 
@@ -224,8 +223,7 @@ existing `CommitVidPn` + `SetVidPnSourceAddress` behavior (4 bytes per pixel; pi
 progressive ~60Hz modes (the MVP scanout cadence is fixed to ~60 Hz; other refresh rates are rejected) derived from:
 
 1. a preferred mode (`PreferredWidth`/`PreferredHeight` registry override → EDID preferred timing → fallback), plus
-2. EDID standard timing identifiers (best-effort; quantized to 8-pixel horizontal granularity, so some common modes appear as
-   near-neighbors like 1368×768), plus
+2. EDID standard timing identifiers (best-effort; quantized to 8-pixel horizontal granularity), plus
 3. a built-in curated fallback list (currently 640×480, 800×600, 1024×768, 1280×720, 1280×800, 1366×768, 1600×900, 1920×1080).
 
 An optional `MaxWidth`/`MaxHeight` registry cap filters out larger modes to keep primary allocation sizes under
