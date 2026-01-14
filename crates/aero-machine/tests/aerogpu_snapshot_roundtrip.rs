@@ -65,10 +65,11 @@ fn aerogpu_snapshot_roundtrip_restores_bar0_regs_and_vram() {
     // 2) Program scanout registers (BAR0) and populate a tiny framebuffer in VRAM.
     // ---------------------------------------------------------------------
     let fb_base = bar1_base + 0x20_000; // VBE LFB offset within VRAM.
-    vm.write_physical_u32(fb_base, 0xFF00_00FF); // (0,0) red   [R,G,B,A] = [FF,00,00,FF]
-    vm.write_physical_u32(fb_base + 4, 0xFF00_FF00); // (1,0) green
-    vm.write_physical_u32(fb_base + 8, 0xFFFF_0000); // (2,0) blue
-    vm.write_physical_u32(fb_base + 12, 0xFFFF_FFFF); // (3,0) white
+    // Populate pixels in B8G8R8X8 (little-endian u32 = 0x00RRGGBB).
+    vm.write_physical_u32(fb_base, 0x00FF_0000); // (0,0) red
+    vm.write_physical_u32(fb_base + 4, 0x0000_FF00); // (1,0) green
+    vm.write_physical_u32(fb_base + 8, 0x0000_00FF); // (2,0) blue
+    vm.write_physical_u32(fb_base + 12, 0x00FF_FFFF); // (3,0) white
 
     let width = 64u32;
     let height = 64u32;
@@ -87,7 +88,7 @@ fn aerogpu_snapshot_roundtrip_restores_bar0_regs_and_vram() {
     );
     vm.write_physical_u32(
         bar0_base + u64::from(aerogpu_pci::AEROGPU_MMIO_REG_SCANOUT0_FORMAT),
-        aerogpu_pci::AerogpuFormat::R8G8B8A8Unorm as u32,
+        aerogpu_pci::AerogpuFormat::B8G8R8X8Unorm as u32,
     );
     vm.write_physical_u32(
         bar0_base + u64::from(aerogpu_pci::AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_LO),
