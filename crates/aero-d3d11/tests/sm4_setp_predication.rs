@@ -181,12 +181,12 @@ fn decodes_and_translates_setp_and_predicated_mov() {
 
     // (+p1.x) mov o0, l(1, 1, 1, 1)
     let imm1 = imm32_vec4([1.0f32.to_bits(); 4]);
-    let pred = pred_operand(1, 0);
+    let pred_p1x = pred_operand(1, 0);
     body.push(opcode_token(
         OPCODE_MOV,
-        1 + pred.len() as u32 + 2 + imm1.len() as u32,
+        1 + pred_p1x.len() as u32 + 2 + imm1.len() as u32,
     ));
-    body.extend_from_slice(&pred);
+    body.extend_from_slice(&pred_p1x);
     body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
     body.extend_from_slice(&imm1);
 
@@ -212,8 +212,20 @@ fn decodes_and_translates_setp_and_predicated_mov() {
     let module = aero_d3d11::sm4::decode_program(&program).expect("SM4 decode");
 
     assert!(matches!(module.instructions[0], Sm4Inst::Setp { .. }));
-    assert!(matches!(module.instructions[2], Sm4Inst::Predicated { .. }));
-    assert!(matches!(module.instructions[3], Sm4Inst::Predicated { .. }));
+    assert!(matches!(
+        &module.instructions[2],
+        Sm4Inst::Predicated {
+            inner,
+            ..
+        } if matches!(inner.as_ref(), Sm4Inst::Setp { .. })
+    ));
+    assert!(matches!(
+        &module.instructions[3],
+        Sm4Inst::Predicated {
+            inner,
+            ..
+        } if matches!(inner.as_ref(), Sm4Inst::Mov { .. })
+    ));
 
     let signatures = parse_signatures(&dxbc).expect("parse signatures");
     let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
