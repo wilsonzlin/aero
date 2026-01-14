@@ -27,7 +27,8 @@
 //! canonical “disk-backed virtio-blk device” type alias (`VirtioBlk<Box<dyn VirtualDisk>>` on wasm32,
 //! and `VirtioBlk<Box<dyn VirtualDisk + Send>>` on native).
 //!
-//! Similarly, the `aero-devices` stack provides `aero_devices::storage::VirtualDrive::new_from_aero_virtual_disk`
+//! Similarly, the `aero-devices` stack provides
+//! `aero_devices::storage::VirtualDrive::{new_from_aero_virtual_disk, try_new_from_aero_virtual_disk}`
 //! for wiring a boxed `VirtualDisk` into its device-model backend trait.
 //!
 //! `aero-virtio` provides a blanket impl so a boxed `VirtualDisk` can be used directly as a virtio
