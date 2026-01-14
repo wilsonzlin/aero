@@ -1265,6 +1265,81 @@ fn decodes_and_translates_depth_output_via_output_depth_operand() {
 }
 
 #[test]
+fn decodes_and_translates_depth_output_via_output_depth_operand_with_overlapping_signature_registers()
+{
+    // Minimal ps_5_0:
+    //   mov o0, l(1,0,0,1)
+    //   mov oDepth.x, l(0.25)
+    //   ret
+    //
+    // DXBC signatures can assign `SV_Target0` and `SV_Depth` the same register number since they
+    // live in different register files. Ensure we still translate the `OUTPUT_DEPTH` operand into
+    // `@builtin(frag_depth)` without colliding with `o0`.
+    let mut body = Vec::<u32>::new();
+
+    // mov o0, l(1,0,0,1)
+    let red = imm32_vec4([
+        1.0f32.to_bits(),
+        0.0f32.to_bits(),
+        0.0f32.to_bits(),
+        1.0f32.to_bits(),
+    ]);
+    body.push(opcode_token(OPCODE_MOV, (1 + 2 + red.len()) as u32));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+    body.extend_from_slice(&red);
+
+    // mov oDepth.x, l(0.25)
+    let imm = imm32_vec4([0.25f32.to_bits(); 4]);
+    body.push(opcode_token(OPCODE_MOV, (1 + 1 + imm.len()) as u32));
+    body.push(operand_token(
+        OPERAND_TYPE_OUTPUT_DEPTH,
+        2,
+        OPERAND_SEL_MASK,
+        WriteMask::X.0 as u32,
+        0,
+        false,
+    ));
+    body.extend_from_slice(&imm);
+
+    body.push(opcode_token(OPCODE_RET, 1));
+    let tokens = make_sm5_program_tokens(0, &body);
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, tokens_to_bytes(&tokens)),
+        (FOURCC_ISGN, build_signature_chunk(&[])),
+        (
+            FOURCC_OSGN,
+            build_signature_chunk(&[
+                sig_param("SV_Target", 0, 0, 0b1111),
+                sig_param("SV_Depth", 0, 0, 0b0001),
+            ]),
+        ),
+    ]);
+
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
+    let module = decode_program(&program).expect("SM4 decode");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+
+    assert!(
+        translated.wgsl.contains("@builtin(frag_depth)"),
+        "expected pixel depth output in WGSL:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated.wgsl.contains("var oDepth: vec4<f32>"),
+        "expected dedicated depth register when signature registers overlap:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated.wgsl.contains("out.depth = (oDepth).x"),
+        "expected depth return sourced from oDepth:\n{}",
+        translated.wgsl
+    );
+    assert_wgsl_validates(&translated.wgsl);
+}
+
+#[test]
 fn decodes_and_translates_ult_shader_from_dxbc() {
     // No declarations needed for this minimal shader; the signature drives IO.
     let mut body = Vec::<u32>::new();
