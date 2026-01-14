@@ -1606,6 +1606,102 @@ static void test_pci_legacy_integration(void)
     virtqueue_split_free_ring(&os_ops, &os_ctx, &ring);
 }
 
+static void test_pci_legacy_no_interrupt_flag(void)
+{
+    test_os_ctx_t os_ctx;
+    virtio_os_ops_t os_ops;
+    fake_pci_device_t fake;
+    test_io_region_t io_region;
+    virtio_pci_legacy_device_t dev;
+    virtio_dma_buffer_t ring;
+    virtqueue_split_t vq;
+    uint32_t align;
+    uint16_t qsz;
+    uint64_t host_features;
+    uint64_t driver_features;
+
+    test_os_ctx_init(&os_ctx);
+    test_os_get_ops(&os_ops);
+
+    /* Legacy split ring (no EVENT_IDX). */
+    fake_pci_device_init(&fake, &os_ctx, 8, 4096, VIRTIO_FALSE, 1);
+
+    io_region.kind = TEST_IO_REGION_LEGACY_PIO;
+    io_region.dev = &fake;
+    virtio_pci_legacy_init(&dev, &os_ops, &os_ctx, (uintptr_t)&io_region, VIRTIO_FALSE);
+    virtio_pci_legacy_reset(&dev);
+    virtio_pci_legacy_add_status(&dev, VIRTIO_STATUS_ACKNOWLEDGE);
+    virtio_pci_legacy_add_status(&dev, VIRTIO_STATUS_DRIVER);
+
+    host_features = virtio_pci_legacy_read_device_features(&dev);
+    driver_features = host_features & VIRTIO_RING_F_INDIRECT_DESC;
+    virtio_pci_legacy_write_driver_features(&dev, driver_features);
+    virtio_pci_legacy_add_status(&dev, VIRTIO_STATUS_FEATURES_OK);
+
+    align = virtio_pci_legacy_get_vring_align();
+    qsz = virtio_pci_legacy_get_queue_size(&dev, 0);
+    assert(align == 4096);
+    assert(qsz == 8);
+
+    assert(virtqueue_split_alloc_ring(&os_ops, &os_ctx, qsz, align, VIRTIO_FALSE, &ring) == VIRTIO_OK);
+    assert(virtqueue_split_init(&vq,
+                                &os_ops,
+                                &os_ctx,
+                                0,
+                                qsz,
+                                align,
+                                &ring,
+                                VIRTIO_FALSE,
+                                VIRTIO_TRUE,
+                                32) == VIRTIO_OK);
+
+    assert(virtio_pci_legacy_set_queue_pfn(&dev, 0, ring.paddr) == VIRTIO_OK);
+
+    /* Submit a few requests and validate VRING_AVAIL_F_NO_INTERRUPT suppression. */
+    for (uint32_t iter = 0; iter < 3; iter++) {
+        virtio_sg_entry_t sg[2];
+        uint16_t head;
+        void *cookie_in;
+        void *cookie_out;
+        uint32_t used_len;
+        uint8_t isr;
+
+        sg[0].addr = 0x510000u;
+        sg[0].len = 16;
+        sg[0].device_writes = VIRTIO_FALSE;
+        sg[1].addr = 0x610000u;
+        sg[1].len = 1;
+        sg[1].device_writes = VIRTIO_TRUE;
+
+        cookie_in = (void *)(uintptr_t)(0x2222u + iter);
+        assert(virtqueue_split_add_sg(&vq, sg, 2, cookie_in, VIRTIO_FALSE, &head) == VIRTIO_OK);
+
+        assert(virtqueue_split_kick_prepare(&vq) == VIRTIO_TRUE);
+        virtio_pci_legacy_notify_queue(&dev, 0);
+
+        isr = virtio_pci_legacy_read_isr_status(&dev);
+        if (iter == 1) {
+            /* Interrupts were disabled after the first completion. */
+            assert((isr & 0x1u) == 0);
+        } else {
+            assert((isr & 0x1u) != 0);
+        }
+
+        assert(virtqueue_split_pop_used(&vq, &cookie_out, &used_len) == VIRTIO_TRUE);
+        assert(cookie_out == cookie_in);
+        assert(used_len == (sg[0].len + sg[1].len));
+
+        if (iter == 0) {
+            virtqueue_split_disable_interrupts(&vq);
+        } else if (iter == 1) {
+            assert(virtqueue_split_enable_interrupts(&vq) == VIRTIO_FALSE);
+        }
+    }
+
+    virtqueue_split_destroy(&vq);
+    virtqueue_split_free_ring(&os_ops, &os_ctx, &ring);
+}
+
 int main(void)
 {
     test_ring_size_event_idx();
@@ -1627,6 +1723,7 @@ int main(void)
     test_event_idx_notify_suppression();
     test_fuzz();
     test_pci_legacy_integration();
+    test_pci_legacy_no_interrupt_flag();
     printf("virtio_common_tests: PASS\n");
     return 0;
 }
