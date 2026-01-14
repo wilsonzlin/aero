@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
@@ -1029,10 +1030,10 @@ impl D3D11Runtime {
                 .collect();
         }
 
-        let mut linked_fs_wgsl = std::borrow::Cow::Borrowed(fs.wgsl.as_str());
+        let mut linked_fs_wgsl = Cow::Borrowed(fs.wgsl.as_str());
         if ps_can_trim_inputs && ps_link_locations != ps_declared_inputs {
             linked_fs_wgsl =
-                std::borrow::Cow::Owned(super::wgsl_link::trim_ps_inputs_to_locations(
+                Cow::Owned(super::wgsl_link::trim_ps_inputs_to_locations(
                     linked_fs_wgsl.as_ref(),
                     &ps_link_locations,
                 ));
