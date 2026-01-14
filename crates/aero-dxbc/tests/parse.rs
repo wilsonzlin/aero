@@ -259,6 +259,31 @@ fn malformed_second_chunk_offset_out_of_bounds_mentions_index() {
 }
 
 #[test]
+fn malformed_second_chunk_size_out_of_bounds_mentions_index() {
+    let mut bytes = build_dxbc(&[
+        (FourCC(*b"SHDR"), &[1, 2, 3, 4]),
+        (FourCC(*b"JUNK"), &[0xaa, 0xbb]),
+    ]);
+
+    // Locate the second chunk header and write an absurd size.
+    let offset_table_pos = 4 + 16 + 4 + 4 + 4; // start of chunk offsets
+    let second_chunk_offset = u32::from_le_bytes(
+        bytes[offset_table_pos + 4..offset_table_pos + 8]
+            .try_into()
+            .unwrap(),
+    ) as usize;
+    bytes[second_chunk_offset + 4..second_chunk_offset + 8].copy_from_slice(&u32::MAX.to_le_bytes());
+
+    let err = DxbcFile::parse(&bytes).unwrap_err();
+    // Depending on pointer width, this may be detected as integer overflow or bounds.
+    assert!(matches!(
+        err,
+        DxbcError::MalformedOffsets { .. } | DxbcError::OutOfBounds { .. }
+    ));
+    assert!(err.context().contains("chunk 1"));
+}
+
+#[test]
 fn malformed_chunk_offset_out_of_bounds_is_error() {
     let mut bytes = build_dxbc(&[(FourCC(*b"SHDR"), &[1, 2, 3])]);
     // Overwrite the first chunk offset to point outside the container.
