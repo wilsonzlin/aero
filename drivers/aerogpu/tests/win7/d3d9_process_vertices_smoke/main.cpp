@@ -129,6 +129,13 @@ static int RunD3D9ProcessVerticesSmoke(int argc, char** argv) {
     return reporter.FailHresult("IDirect3D9Ex::CreateDeviceEx", hr);
   }
 
+  // This test is specifically meant to validate the ProcessVertices DDI path. If we ended up with
+  // software vertex processing, the runtime may execute parts of the vertex processing on the CPU,
+  // which can mask driver-side ProcessVertices regressions (silent no-ops / memory corruption).
+  if (dev->GetSoftwareVertexProcessing()) {
+    return reporter.Fail("device is using software vertex processing; expected hardware vertex processing for ProcessVertices validation");
+  }
+
   // Basic adapter sanity check to avoid false PASS when AeroGPU isn't active.
   {
     D3DADAPTER_IDENTIFIER9 ident;
