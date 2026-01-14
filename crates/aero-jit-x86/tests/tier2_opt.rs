@@ -570,6 +570,117 @@ fn boolean_simplify_collapses_triple_negation_on_non_boolean_values() {
 }
 
 #[test]
+fn boolean_simplify_prefers_xor_when_eq_zero_value_is_reused() {
+    // When the intermediate `(x == 0)` value is used more than once (as in Tier-2 Select
+    // lowering), it is cheaper to negate that boolean via XOR than to materialize `x != 0` via a
+    // second comparison.
+    let trace = TraceIr {
+        prologue: vec![],
+        body: vec![
+            Instr::LoadReg {
+                dst: v(0),
+                reg: Gpr::Rax,
+            },
+            // is_zero = (rax == 0)
+            Instr::BinOp {
+                dst: v(1),
+                op: BinOp::Eq,
+                lhs: Operand::Value(v(0)),
+                rhs: Operand::Const(0),
+                flags: FlagSet::EMPTY,
+            },
+            // is_nonzero = (is_zero == 0)
+            Instr::BinOp {
+                dst: v(2),
+                op: BinOp::Eq,
+                lhs: Operand::Value(v(1)),
+                rhs: Operand::Const(0),
+                flags: FlagSet::EMPTY,
+            },
+            // Use `is_zero` again so it can't be eliminated.
+            Instr::BinOp {
+                dst: v(3),
+                op: BinOp::Mul,
+                lhs: Operand::Const(20),
+                rhs: Operand::Value(v(1)),
+                flags: FlagSet::EMPTY,
+            },
+            Instr::BinOp {
+                dst: v(4),
+                op: BinOp::Mul,
+                lhs: Operand::Const(10),
+                rhs: Operand::Value(v(2)),
+                flags: FlagSet::EMPTY,
+            },
+            Instr::BinOp {
+                dst: v(5),
+                op: BinOp::Add,
+                lhs: Operand::Value(v(3)),
+                rhs: Operand::Value(v(4)),
+                flags: FlagSet::EMPTY,
+            },
+            Instr::StoreReg {
+                reg: Gpr::Rbx,
+                src: Operand::Value(v(5)),
+            },
+        ],
+        kind: TraceKind::Linear,
+    };
+
+    let mut optimized = trace.clone();
+    optimize_trace(&mut optimized, &OptConfig::default());
+
+    // Prefer `Xor(is_zero, 1)` instead of `LtU(0, rax)` for `is_nonzero`.
+    assert!(optimized.iter_instrs().any(|i| match i {
+        Instr::BinOp {
+            op: BinOp::Xor,
+            lhs,
+            rhs,
+            flags,
+            ..
+        } if flags.is_empty() => matches!((lhs, rhs), (Operand::Const(1), _) | (_, Operand::Const(1))),
+        _ => false,
+    }));
+    assert_eq!(
+        optimized
+            .iter_instrs()
+            .filter(|i| matches!(i, Instr::BinOp { op: BinOp::LtU, .. }))
+            .count(),
+        0
+    );
+
+    let env = RuntimeEnv::default();
+    for rax in [0u64, 5u64, u64::MAX] {
+        let mut base_state = T2State::default();
+        base_state.cpu.rflags = aero_jit_x86::abi::RFLAGS_RESERVED1;
+        base_state.cpu.gpr[Gpr::Rax.as_u8() as usize] = rax;
+        let mut opt_state = base_state.clone();
+
+        let baseline = run_trace(
+            &trace,
+            &env,
+            &mut SimpleBus::new(256),
+            &mut base_state,
+            1,
+        );
+        let optimized_run = run_trace(
+            &optimized,
+            &env,
+            &mut SimpleBus::new(256),
+            &mut opt_state,
+            1,
+        );
+
+        assert_eq!(baseline.exit, optimized_run.exit);
+        assert_eq!(base_state, opt_state);
+        assert_eq!(
+            opt_state.cpu.gpr[Gpr::Rbx.as_u8() as usize],
+            if rax != 0 { 10 } else { 20 }
+        );
+    }
+}
+
+#[test]
 fn strength_reduction_mul_pow2_to_shl() {
     let trace = TraceIr {
         prologue: vec![],

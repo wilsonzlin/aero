@@ -4,6 +4,18 @@ use aero_types::FlagSet;
 
 use crate::tier2::ir::{BinOp, Instr, Operand, TraceIr, ValueId};
 
+fn use_counts(trace: &TraceIr) -> HashMap<ValueId, u32> {
+    let mut uses: HashMap<ValueId, u32> = HashMap::new();
+    for inst in trace.iter_instrs() {
+        inst.for_each_operand(|op| {
+            if let Operand::Value(v) = op {
+                *uses.entry(v).or_insert(0) += 1;
+            }
+        });
+    }
+    uses
+}
+
 fn is_bool_operand(op: Operand, bool_values: &HashSet<ValueId>) -> bool {
     match op {
         Operand::Const(c) => c == 0 || c == 1,
@@ -28,6 +40,7 @@ fn eq_zero_other(lhs: Operand, rhs: Operand) -> Option<Operand> {
 
 pub fn run(trace: &mut TraceIr) -> bool {
     let mut changed = false;
+    let uses = use_counts(trace);
 
     // Track simple facts while scanning top-to-bottom.
     let mut consts: HashMap<ValueId, u64> = HashMap::new();
@@ -142,13 +155,30 @@ pub fn run(trace: &mut TraceIr) -> bool {
                                             flags: FlagSet::EMPTY,
                                         };
                                     } else {
-                                        new = Instr::BinOp {
-                                            dst,
-                                            op: BinOp::LtU,
-                                            lhs: Operand::Const(0),
-                                            rhs: x,
-                                            flags: FlagSet::EMPTY,
-                                        };
+                                        // Prefer `!(x == 0)` expressed as `xor(inner, 1)` when the
+                                        // `inner = (x == 0)` value is used elsewhere (e.g. select
+                                        // lowering uses both `inner` and its negation).
+                                        //
+                                        // Otherwise, canonicalize to `x != 0` (`lt_u(0, x)`) so DCE
+                                        // can remove the `inner` comparison entirely.
+                                        let inner_uses = uses.get(&inner).copied().unwrap_or(0);
+                                        if inner_uses > 1 {
+                                            new = Instr::BinOp {
+                                                dst,
+                                                op: BinOp::Xor,
+                                                lhs: Operand::Value(inner),
+                                                rhs: Operand::Const(1),
+                                                flags: FlagSet::EMPTY,
+                                            };
+                                        } else {
+                                            new = Instr::BinOp {
+                                                dst,
+                                                op: BinOp::LtU,
+                                                lhs: Operand::Const(0),
+                                                rhs: x,
+                                                flags: FlagSet::EMPTY,
+                                            };
+                                        }
                                     }
                                 } else if let Some(x) = not_bool.get(&inner).copied() {
                                     // `Eq(!b, 0)` == `b` (double negation) for boolean `b`.
