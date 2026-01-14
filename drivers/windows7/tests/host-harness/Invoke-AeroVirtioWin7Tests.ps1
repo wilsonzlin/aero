@@ -2003,7 +2003,7 @@ function Wait-AeroSelftestResult {
       $targetName = [string]$res.Name
       Write-Host "AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_LINK_FLAP|REQUEST|phase=down|name=$(Sanitize-AeroMarkerValue $targetName)"
 
-      Start-Sleep -Seconds 2
+      Start-Sleep -Seconds 3
 
       $namesUp = @()
       if (-not [string]::IsNullOrEmpty($targetName)) { $namesUp += $targetName }
@@ -2015,7 +2015,7 @@ function Wait-AeroSelftestResult {
       }
       if (-not [string]::IsNullOrEmpty([string]$res2.Name)) { $targetName = [string]$res2.Name }
       Write-Host "AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_LINK_FLAP|REQUEST|phase=up|name=$(Sanitize-AeroMarkerValue $targetName)"
-      Write-Host "AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_LINK_FLAP|PASS|name=$(Sanitize-AeroMarkerValue $targetName)|down_delay_sec=2"
+      Write-Host "AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_LINK_FLAP|PASS|name=$(Sanitize-AeroMarkerValue $targetName)|down_delay_sec=3"
     }
 
     if ($QemuProcess.HasExited) {

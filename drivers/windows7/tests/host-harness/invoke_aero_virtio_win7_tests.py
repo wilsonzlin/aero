@@ -1979,7 +1979,7 @@ def _try_qmp_virtio_blk_resize(endpoint: _QmpEndpoint, *, drive_id: str, new_byt
 
 
 def _try_qmp_net_link_flap(
-    endpoint: _QmpEndpoint, *, names: list[str], down_delay_seconds: float = 2.0
+    endpoint: _QmpEndpoint, *, names: list[str], down_delay_seconds: float = 3.0
 ) -> str:
     """
     Flap a virtio-net link down/up via QMP `set_link`.
@@ -6527,7 +6527,7 @@ def main() -> int:
                         break
 
                 # When requested, flap the virtio-net link after the guest has emitted the READY marker.
-                # This is a one-shot deterministic sequence (down for 2s, then up).
+                # This is a one-shot deterministic sequence (down for 3s, then up).
                 if (
                     need_net_link_flap
                     and saw_virtio_net_link_flap_ready
@@ -6553,11 +6553,11 @@ def main() -> int:
                         name_used = _try_qmp_net_link_flap(
                             qmp_endpoint,
                             names=[_VIRTIO_NET_QMP_ID, "net0"],
-                            down_delay_seconds=2.0,
+                            down_delay_seconds=3.0,
                         )
                         print(
                             "AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_LINK_FLAP|PASS|"
-                            f"name={_sanitize_marker_value(name_used)}|down_delay_sec=2"
+                            f"name={_sanitize_marker_value(name_used)}|down_delay_sec=3"
                         )
                     except Exception as e:
                         name_used = getattr(e, "name_used", None)
