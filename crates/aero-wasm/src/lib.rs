@@ -5129,10 +5129,15 @@ impl Machine {
             } else {
                 width
             };
-            let bytes_per_pixel = 4u32;
-            let pitch_bytes = stride_pixels.saturating_mul(bytes_per_pixel);
+            let bytes_per_pixel = 4u64;
+            let pitch_bytes = stride_pixels.saturating_mul(bytes_per_pixel as u32);
 
-            let base = u64::from(vga.borrow().lfb_base());
+            // Encode panning offsets by adjusting the scanout base (ScanoutState has no explicit
+            // `x_offset`/`y_offset` fields).
+            let base = u64::from(vga.borrow().lfb_base())
+                .saturating_add(u64::from(regs.y_offset).saturating_mul(u64::from(pitch_bytes)))
+                .saturating_add(u64::from(regs.x_offset).saturating_mul(bytes_per_pixel));
+
             self.publish_scanout(ScanoutStateUpdate {
                 source: SCANOUT_SOURCE_LEGACY_VBE_LFB,
                 base_paddr_lo: base as u32,
