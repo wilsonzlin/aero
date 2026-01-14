@@ -2,15 +2,16 @@ mod tier1_common;
 
 use aero_jit_x86::tier2::ir::Terminator;
 use aero_jit_x86::tier2::{build_function_from_x86, CfgBuildConfig};
-use tier1_common::SimpleBus;
+use tier1_common::{pick_invalid_opcode, SimpleBus};
 
 #[test]
 fn cfg_builder_linear_blocks() {
     // jmp +0
-    // ud2
+    // <invalid>
+    let invalid = pick_invalid_opcode(64);
     let code = [
         0xeb, 0x00, // jmp 0x1002
-        0x0f, 0x0b, // ud2
+        invalid, invalid, // <invalid>
     ];
     let entry = 0x1000u64;
 
@@ -45,15 +46,16 @@ fn cfg_builder_conditional_branch() {
     // mov eax, 0
     // cmp eax, 0
     // jne target
-    // fallthrough: ud2
-    // target: ud2
+    // fallthrough: <invalid>
+    // target: <invalid>
+    let invalid = pick_invalid_opcode(64);
     let code = [
         0xb8, 0x00, 0x00, 0x00, 0x00, // mov eax, 0
         0x83, 0xf8, 0x00, // cmp eax, 0
         0x75, 0x05, // jne +5 (target = 0x200f)
-        0x0f, 0x0b, // ud2 (fallthrough @ 0x200a)
+        invalid, invalid, // <invalid> (fallthrough @ 0x200a)
         0x90, 0x90, 0x90, // padding
-        0x0f, 0x0b, // ud2 (target @ 0x200f)
+        invalid, invalid, // <invalid> (target @ 0x200f)
     ];
     let entry = 0x2000u64;
 
@@ -83,12 +85,13 @@ fn cfg_builder_loop_backedge() {
     // add eax, 1
     // cmp eax, 3
     // jne loop
-    // exit: ud2
+    // exit: <invalid>
+    let invalid = pick_invalid_opcode(64);
     let code = [
         0x83, 0xc0, 0x01, // add eax, 1
         0x83, 0xf8, 0x03, // cmp eax, 3
         0x75, 0xf8, // jne -8 (target = 0x3000)
-        0x0f, 0x0b, // ud2 (exit @ 0x3008)
+        invalid, invalid, // <invalid> (exit @ 0x3008)
     ];
     let entry = 0x3000u64;
 
