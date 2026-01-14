@@ -19,12 +19,14 @@ const PID_OUT: u32 = 0xe1;
 
 struct TestMem {
     data: Vec<u8>,
+    reads: usize,
 }
 
 impl TestMem {
     fn new(size: usize) -> Self {
         Self {
             data: vec![0; size],
+            reads: 0,
         }
     }
 
@@ -32,10 +34,15 @@ impl TestMem {
         let addr = addr as usize;
         self.data[addr..addr + 4].copy_from_slice(&value.to_le_bytes());
     }
+
+    fn read_ops(&self) -> usize {
+        self.reads
+    }
 }
 
 impl MemoryBus for TestMem {
     fn read_physical(&mut self, paddr: u64, buf: &mut [u8]) {
+        self.reads = self.reads.saturating_add(1);
         let addr = paddr as usize;
         buf.copy_from_slice(&self.data[addr..addr + buf.len()]);
     }
@@ -328,4 +335,42 @@ fn uhci_schedule_link_budget_exceeded_sets_hse_and_errint() {
     assert_ne!(sts & regs::USBSTS_USBERRINT, 0);
     assert_ne!(sts & regs::USBSTS_HSE, 0);
     assert!(ctrl.irq_level());
+}
+
+#[test]
+fn uhci_stop_td_skip_cycle_is_detected_without_spinning_budget() {
+    let mut ctrl = UhciController::new();
+    let mut mem = TestMem::new(0x4000);
+
+    ctrl.io_write(regs::REG_FLBASEADD, 4, FRAME_LIST_BASE);
+    mem.write_u32(FRAME_LIST_BASE, TD_ADDR);
+
+    let td2 = TD_ADDR + 0x10;
+
+    // TD1 advances to TD2, but will stop further TD processing because the device address does not
+    // exist. The skip loop should detect the TD2 self-loop quickly rather than spinning for the
+    // full budget.
+    mem.write_u32(TD_ADDR, td2);
+    mem.write_u32(td2, td2);
+
+    mem.write_u32(TD_ADDR + 4, TD_STATUS_ACTIVE);
+    mem.write_u32(
+        TD_ADDR + 8,
+        PID_OUT | (5u32 << 8) | (1u32 << 15) | (0u32 << 21),
+    );
+    mem.write_u32(TD_ADDR + 12, 0x3800);
+
+    ctrl.io_write(regs::REG_USBINTR, 2, regs::USBINTR_TIMEOUT_CRC as u32);
+    ctrl.io_write(regs::REG_USBCMD, 2, regs::USBCMD_RS as u32);
+
+    ctrl.tick_1ms(&mut mem);
+
+    let sts = ctrl.io_read(regs::REG_USBSTS, 2) as u16;
+    assert_ne!(sts & regs::USBSTS_HSE, 0);
+    assert!(ctrl.irq_level());
+    assert!(
+        mem.read_ops() < 200,
+        "expected early cycle detection in TD skip loop, got {} reads",
+        mem.read_ops()
+    );
 }

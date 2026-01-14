@@ -264,6 +264,7 @@ fn process_td_chain<M: MemoryBus + ?Sized>(
                     // continue walking the schedule at the first non-TD link (QH/terminate).
                     let mut skip = link;
                     let mut skip_steps = 0usize;
+                    let mut skip_visited: Vec<u32> = Vec::with_capacity(16);
                     while !skip.terminated() && !skip.is_qh() {
                         if skip_steps >= MAX_TD_CHAIN_STEPS {
                             *ctx.usbsts |= USBSTS_USBERRINT | USBSTS_HSE;
@@ -275,6 +276,13 @@ fn process_td_chain<M: MemoryBus + ?Sized>(
                         if addr == 0 {
                             return LinkPointer(LINK_PTR_TERMINATE);
                         }
+                        if visited.iter().any(|&a| a == addr)
+                            || skip_visited.iter().any(|&a| a == addr)
+                        {
+                            *ctx.usbsts |= USBSTS_USBERRINT | USBSTS_HSE;
+                            return LinkPointer(LINK_PTR_TERMINATE);
+                        }
+                        skip_visited.push(addr);
                         skip = LinkPointer(ctx.mem.read_u32(addr as u64));
                     }
                     return skip;
