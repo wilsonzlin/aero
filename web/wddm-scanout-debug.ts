@@ -359,8 +359,8 @@ async function main() {
   const BUF0_PADDR = 0x0010_0000;
   const BUF1_PADDR = BUF0_PADDR + alignUp(requiredMaxBytes, 0x1000) + 0x1000;
 
-  // Equivalent buffers in the BAR1/VRAM aperture (start at the canonical VBE LFB offset, 0x20000).
-  const VRAM_BUF0_OFFSET = 0x20_000;
+  // Equivalent buffers in the BAR1/VRAM aperture (start at the canonical VBE LFB offset, 0x40000).
+  const VRAM_BUF0_OFFSET = 0x40_000;
   const VRAM_BUF1_OFFSET = VRAM_BUF0_OFFSET + alignUp(requiredMaxBytes, 0x1000) + 0x1000;
   const VRAM_BUF0_PADDR = (VRAM_BASE_PADDR + VRAM_BUF0_OFFSET) >>> 0;
   const VRAM_BUF1_PADDR = (VRAM_BASE_PADDR + VRAM_BUF1_OFFSET) >>> 0;
