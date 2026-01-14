@@ -18111,7 +18111,10 @@ mod tests {
                 &mut pipeline_bindings,
             )
             .expect("pipeline bindings extension should succeed");
-            let layout_key = std::mem::replace(&mut pipeline_bindings.layout_key, PipelineLayoutKey::empty());
+            let layout_key = std::mem::replace(
+                &mut pipeline_bindings.layout_key,
+                PipelineLayoutKey::empty(),
+            );
             let layout_refs: Vec<&wgpu::BindGroupLayout> = pipeline_bindings
                 .group_layouts
                 .iter()
