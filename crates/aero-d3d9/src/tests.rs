@@ -983,6 +983,90 @@ fn assemble_ps3_relative_const_clamp_high() -> Vec<u32> {
     out
 }
 
+fn assemble_ps3_loop_relative_const() -> Vec<u32> {
+    // ps_3_0
+    let mut out = vec![0xFFFF0300];
+    // def c0, 1.0, 0.0, 0.0, 1.0 (red)
+    out.extend(enc_inst(
+        0x0051,
+        &[
+            enc_dst(2, 0, 0xF),
+            0x3F80_0000,
+            0x0000_0000,
+            0x0000_0000,
+            0x3F80_0000,
+        ],
+    ));
+    // def c1, 0.0, 0.0, 1.0, 1.0 (blue)
+    out.extend(enc_inst(
+        0x0051,
+        &[
+            enc_dst(2, 1, 0xF),
+            0x0000_0000,
+            0x0000_0000,
+            0x3F80_0000,
+            0x3F80_0000,
+        ],
+    ));
+    // def c2, 0.0, 0.0, 0.0, 0.0 (zero)
+    out.extend(enc_inst(
+        0x0051,
+        &[
+            enc_dst(2, 2, 0xF),
+            0x0000_0000,
+            0x0000_0000,
+            0x0000_0000,
+            0x0000_0000,
+        ],
+    ));
+
+    // defi i0, start=0, end=1, step=1, unused=0
+    out.extend(enc_inst(
+        0x0052,
+        &[enc_dst(7, 0, 0xF), 0, 1, 1, 0],
+    ));
+
+    // mov r0, c2
+    out.extend(enc_inst(
+        0x0001,
+        &[enc_dst(0, 0, 0xF), enc_src(2, 2, 0xE4)],
+    ));
+
+    // loop aL, i0
+    out.extend(enc_inst(
+        0x001B,
+        &[
+            enc_src(15, 0, 0xE4), // aL
+            enc_src(7, 0, 0xE4),  // i0
+        ],
+    ));
+
+    // add r0, r0, c0[aL.x]  (adds c0 then c1 over two loop iterations)
+    let mut c0_rel = enc_src(2, 0, 0xE4);
+    c0_rel |= 0x0000_2000; // RELATIVE flag
+    out.extend(enc_inst(
+        0x0002,
+        &[
+            enc_dst(0, 0, 0xF),
+            enc_src(0, 0, 0xE4),
+            c0_rel,
+            enc_src(15, 0, 0x00), // aL.x
+        ],
+    ));
+
+    // endloop
+    out.extend(enc_inst(0x001D, &[]));
+
+    // mov oC0, r0
+    out.extend(enc_inst(
+        0x0001,
+        &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)],
+    ));
+
+    out.push(0x0000FFFF);
+    out
+}
+
 fn assemble_ps3_dp2_constant() -> Vec<u32> {
     // ps_3_0
     let mut out = vec![0xFFFF0300];
@@ -2826,6 +2910,47 @@ fn sm3_relative_const_clamps_index_high_pixel_compare() {
     assert_eq!(
         hash.to_hex().as_str(),
         "32d50bc1260d5807d2440d1d2e09b5a297e3d1a90dd55d4b93dedc3236081f7b"
+    );
+}
+
+#[test]
+fn sm3_loop_relative_const_pixel_compare() {
+    let vs = build_sm3_ir(&assemble_vs_passthrough());
+    let ps = build_sm3_ir(&assemble_ps3_loop_relative_const());
+
+    let decl = build_vertex_decl_pos_tex_color();
+
+    let mut vb = Vec::new();
+    let white = software::Vec4::new(1.0, 1.0, 1.0, 1.0);
+    for (pos_x, pos_y) in [(-0.5, -0.5), (0.5, -0.5), (0.0, 0.5)] {
+        push_vec4(&mut vb, software::Vec4::new(pos_x, pos_y, 0.0, 1.0));
+        push_vec2(&mut vb, 0.0, 0.0);
+        push_vec4(&mut vb, white);
+    }
+
+    let mut rt = software::RenderTarget::new(16, 16, software::Vec4::ZERO);
+    let constants = zero_constants();
+    sm3::software::draw(
+        &mut rt,
+        sm3::software::DrawParams {
+            vs: &vs,
+            ps: &ps,
+            vertex_decl: &decl,
+            vertex_buffer: &vb,
+            indices: None,
+            constants: &constants,
+            textures: &HashMap::new(),
+            sampler_states: &HashMap::new(),
+            blend_state: state::BlendState::default(),
+        },
+    );
+
+    // Two loop iterations add c0 (red) + c1 (blue) => magenta (alpha clamps to 1).
+    assert_eq!(rt.get(8, 8).to_rgba8(), [255, 0, 255, 255]);
+    let hash = blake3::hash(&rt.to_rgba8());
+    assert_eq!(
+        hash.to_hex().as_str(),
+        "f0ea24543939c1b353690b0561b904ea57c604ffb63e4d0bf145020d213a3796"
     );
 }
 
