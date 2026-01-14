@@ -5,6 +5,7 @@ use std::collections::{HashSet, VecDeque};
 
 use aero_devices::clock::{Clock, ManualClock};
 use aero_devices::pci::{PciBarMmioHandler, PciConfigSpace, PciDevice};
+use aero_devices_gpu::ring::write_fence_page;
 use aero_protocol::aerogpu::aerogpu_cmd::{
     cmd_stream_has_vsync_present_reader, decode_cmd_stream_header_le,
     AerogpuCmdStreamHeader as ProtocolCmdStreamHeader,
@@ -26,39 +27,7 @@ const RING_HEAD_OFFSET: u64 = offset_of!(ring::AerogpuRingHeader, head) as u64;
 const RING_TAIL_OFFSET: u64 = offset_of!(ring::AerogpuRingHeader, tail) as u64;
 const RING_HEADER_SIZE_BYTES: u64 = ring::AerogpuRingHeader::SIZE_BYTES as u64;
 
-const FENCE_PAGE_MAGIC_OFFSET: u64 = offset_of!(ring::AerogpuFencePage, magic) as u64;
-const FENCE_PAGE_ABI_VERSION_OFFSET: u64 = offset_of!(ring::AerogpuFencePage, abi_version) as u64;
-const FENCE_PAGE_COMPLETED_FENCE_OFFSET: u64 =
-    offset_of!(ring::AerogpuFencePage, completed_fence) as u64;
-const FENCE_PAGE_SIZE_BYTES: u64 = ring::AerogpuFencePage::SIZE_BYTES as u64;
-
-const _: () = {
-    assert!(FENCE_PAGE_MAGIC_OFFSET + 4 <= FENCE_PAGE_SIZE_BYTES);
-    assert!(FENCE_PAGE_ABI_VERSION_OFFSET + 4 <= FENCE_PAGE_SIZE_BYTES);
-    assert!(FENCE_PAGE_COMPLETED_FENCE_OFFSET + 8 <= FENCE_PAGE_SIZE_BYTES);
-};
-
 const MAX_CMD_STREAM_SIZE_BYTES: u32 = 64 * 1024 * 1024;
-
-fn write_fence_page(mem: &mut dyn MemoryBus, gpa: u64, abi_version: u32, completed_fence: u64) {
-    let Some(magic_addr) = gpa.checked_add(FENCE_PAGE_MAGIC_OFFSET) else {
-        return;
-    };
-    let Some(abi_addr) = gpa.checked_add(FENCE_PAGE_ABI_VERSION_OFFSET) else {
-        return;
-    };
-    let Some(fence_addr) = gpa.checked_add(FENCE_PAGE_COMPLETED_FENCE_OFFSET) else {
-        return;
-    };
-
-    mem.write_u32(magic_addr, ring::AEROGPU_FENCE_PAGE_MAGIC);
-    mem.write_u32(abi_addr, abi_version);
-    mem.write_u64(fence_addr, completed_fence);
-
-    // Keep writes within the defined struct size; do not touch the rest of the page.
-    let _ = FENCE_PAGE_SIZE_BYTES;
-}
-
 // -----------------------------------------------------------------------------
 // Defensive caps (host readback paths)
 // -----------------------------------------------------------------------------
