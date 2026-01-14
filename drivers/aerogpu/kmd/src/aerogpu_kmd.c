@@ -9466,9 +9466,19 @@ static BOOLEAN APIENTRY AeroGpuDdiInterruptRoutine(_In_ const PVOID MiniportDevi
      * In both cases, skip normal ISR processing and best-effort ACK any pending bits to deassert a
      * level-triggered line.
      */
-    if ((DXGK_DEVICE_POWER_STATE)InterlockedCompareExchange(&adapter->DevicePowerState, 0, 0) !=
-            DxgkDevicePowerStateD0 ||
-        InterlockedCompareExchange(&adapter->AcceptingSubmissions, 0, 0) == 0) {
+    const DXGK_DEVICE_POWER_STATE powerState =
+        (DXGK_DEVICE_POWER_STATE)InterlockedCompareExchange(&adapter->DevicePowerState, 0, 0);
+    const BOOLEAN acceptingSubmissions =
+        (InterlockedCompareExchange(&adapter->AcceptingSubmissions, 0, 0) != 0) ? TRUE : FALSE;
+    if (powerState != DxgkDevicePowerStateD0) {
+        /*
+         * The adapter is in a non-D0 state (or transitioning away from D0).
+         *
+         * Avoid normal ISR processing; best-effort ACK any pending bits to deassert a level-triggered line.
+         *
+         * NOTE: We return TRUE to claim the interrupt here because we cannot safely query full device state
+         * in a powered-down transition window and want to avoid unhandled interrupt storms.
+         */
         if (adapter->Bar0Length >= (AEROGPU_MMIO_REG_IRQ_ACK + sizeof(ULONG))) {
             AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ACK, 0xFFFFFFFFu);
         }
@@ -9477,6 +9487,44 @@ static BOOLEAN APIENTRY AeroGpuDdiInterruptRoutine(_In_ const PVOID MiniportDevi
             AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_INT_ACK, 0xFFFFFFFFu);
         }
         return TRUE;
+    }
+
+    if (!acceptingSubmissions) {
+        /*
+         * The adapter is in D0 but the submission path is not ready (resume/teardown window).
+         *
+         * Best-effort clear any device-pending bits, but avoid claiming unrelated shared interrupts:
+         * only return TRUE when we observe an enabled pending bit from this device.
+         */
+        BOOLEAN shouldClaim = FALSE;
+
+        if (adapter->Bar0Length >= (AEROGPU_MMIO_REG_IRQ_ACK + sizeof(ULONG))) {
+            const ULONG status = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_IRQ_STATUS);
+            ULONG enableMask = 0;
+            if (adapter->Bar0Length >= (AEROGPU_MMIO_REG_IRQ_ENABLE + sizeof(ULONG))) {
+                enableMask = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE);
+            } else {
+                enableMask = AeroGpuAtomicReadU32((volatile ULONG*)&adapter->IrqEnableMask);
+            }
+            if ((status & enableMask) != 0) {
+                shouldClaim = TRUE;
+            }
+            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ACK, 0xFFFFFFFFu);
+        }
+
+        if (adapter->AbiKind != AEROGPU_ABI_KIND_V1 &&
+            adapter->Bar0Length >= (AEROGPU_LEGACY_REG_INT_STATUS + sizeof(ULONG))) {
+            const ULONG legacyStatus = AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_INT_STATUS);
+            if (legacyStatus != 0) {
+                shouldClaim = TRUE;
+            }
+        }
+        if (adapter->AbiKind != AEROGPU_ABI_KIND_V1 &&
+            adapter->Bar0Length >= (AEROGPU_LEGACY_REG_INT_ACK + sizeof(ULONG))) {
+            AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_INT_ACK, 0xFFFFFFFFu);
+        }
+
+        return shouldClaim;
     }
     BOOLEAN any = FALSE;
     BOOLEAN queueDpc = FALSE;
