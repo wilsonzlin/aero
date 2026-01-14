@@ -714,9 +714,33 @@ fn translate_hs(
 
     // Validate declared tessellation metadata when present in the IR. Older decoders may not
     // populate these declarations yet, so absence is treated as "unknown" rather than an error.
+    //
+    // Note: Real D3D11 hull shaders can have different input/output control point counts. The
+    // current compute-emulation path assumes they match (each invocation corresponds to the same
+    // control point index in the input patch and output patch), so reject mismatches when both
+    // declarations are present.
+    let mut input_control_points: Option<u32> = None;
     let mut output_control_points: Option<u32> = None;
     for decl in &module.decls {
         match decl {
+            Sm4Decl::InputControlPointCount { count } => {
+                if *count == 0 || *count > 32 {
+                    return Err(ShaderTranslateError::UnsupportedInstruction {
+                        inst_index: 0,
+                        opcode: format!("hs_input_control_points_{count}"),
+                    });
+                }
+                if let Some(prev) = input_control_points {
+                    if prev != *count {
+                        return Err(ShaderTranslateError::UnsupportedInstruction {
+                            inst_index: 0,
+                            opcode: format!("hs_input_control_points_{prev}_vs_{count}"),
+                        });
+                    }
+                } else {
+                    input_control_points = Some(*count);
+                }
+            }
             Sm4Decl::HsDomain { domain } => {
                 if *domain != crate::sm4_ir::HsDomain::Tri {
                     return Err(ShaderTranslateError::UnsupportedInstruction {
@@ -764,6 +788,14 @@ fn translate_hs(
                 }
             }
             _ => {}
+        }
+    }
+    if let (Some(input), Some(output)) = (input_control_points, output_control_points) {
+        if input != output {
+            return Err(ShaderTranslateError::UnsupportedInstruction {
+                inst_index: 0,
+                opcode: format!("hs_input_control_points_{input}_output_control_points_{output}"),
+            });
         }
     }
 
@@ -880,7 +912,7 @@ fn translate_hs(
     // Layout:
     // - Control point inputs/outputs are indexed as:
     //     ((primitive_id * HS_CONTROL_POINTS_PER_PATCH + control_point_id) * STRIDE + reg_index)
-    //   where `HS_CONTROL_POINTS_PER_PATCH` is the hull shader output control-point count (<= 32).
+    //   where `HS_CONTROL_POINTS_PER_PATCH` is the expected control-point count per patch (<= 32).
     // - Patch constant outputs are indexed as:
     //     (primitive_id * STRIDE + reg_index)
     w.line("struct HsRegBuffer { data: array<vec4<f32>> };");
@@ -950,9 +982,16 @@ fn translate_hs(
         hs_pc_layout.tess_factor_stride
     ));
     w.line("const HS_MAX_CONTROL_POINTS: u32 = 32u;");
+    if let Some(count) = input_control_points {
+        w.line(&format!("const HS_INPUT_CONTROL_POINTS: u32 = {count}u;"));
+    }
     if let Some(count) = output_control_points {
         w.line(&format!("const HS_OUTPUT_CONTROL_POINTS: u32 = {count}u;"));
+    }
+    if output_control_points.is_some() {
         w.line("const HS_CONTROL_POINTS_PER_PATCH: u32 = HS_OUTPUT_CONTROL_POINTS;");
+    } else if input_control_points.is_some() {
+        w.line("const HS_CONTROL_POINTS_PER_PATCH: u32 = HS_INPUT_CONTROL_POINTS;");
     } else {
         w.line("const HS_CONTROL_POINTS_PER_PATCH: u32 = HS_MAX_CONTROL_POINTS;");
     }
@@ -8732,5 +8771,107 @@ mod tests {
             err,
             ShaderTranslateError::TextureSlotUsedAsBufferAndTexture { slot: 0 }
         ));
+    }
+
+    #[test]
+    fn hs_control_point_count_emits_control_points_per_patch_constant() {
+        let module = Sm4Module {
+            stage: ShaderStage::Hull,
+            model: crate::sm4::ShaderModel { major: 5, minor: 0 },
+            decls: vec![
+                Sm4Decl::InputControlPointCount { count: 3 },
+                Sm4Decl::HsOutputControlPointCount { count: 3 },
+            ],
+            instructions: vec![Sm4Inst::Ret],
+        };
+        let isgn = DxbcSignature { parameters: vec![] };
+        let osgn = DxbcSignature { parameters: vec![] };
+        let pcsg = DxbcSignature { parameters: vec![] };
+
+        let translated = translate_hs(&module, &isgn, &osgn, &pcsg, None).expect("translate");
+        assert_wgsl_validates(&translated.wgsl);
+        assert!(
+            translated
+                .wgsl
+                .contains("const HS_INPUT_CONTROL_POINTS: u32 = 3u;"),
+            "{}",
+            translated.wgsl
+        );
+        assert!(
+            translated
+                .wgsl
+                .contains("const HS_OUTPUT_CONTROL_POINTS: u32 = 3u;"),
+            "{}",
+            translated.wgsl
+        );
+        assert!(
+            translated
+                .wgsl
+                .contains("const HS_CONTROL_POINTS_PER_PATCH: u32 = HS_OUTPUT_CONTROL_POINTS;"),
+            "{}",
+            translated.wgsl
+        );
+        assert!(
+            translated
+                .wgsl
+                .contains("hs_primitive_id * HS_CONTROL_POINTS_PER_PATCH + hs_output_control_point_id"),
+            "{}",
+            translated.wgsl
+        );
+    }
+
+    #[test]
+    fn hs_control_point_count_falls_back_to_input_count_when_output_count_missing() {
+        let module = Sm4Module {
+            stage: ShaderStage::Hull,
+            model: crate::sm4::ShaderModel { major: 5, minor: 0 },
+            decls: vec![Sm4Decl::InputControlPointCount { count: 7 }],
+            instructions: vec![Sm4Inst::Ret],
+        };
+        let isgn = DxbcSignature { parameters: vec![] };
+        let osgn = DxbcSignature { parameters: vec![] };
+        let pcsg = DxbcSignature { parameters: vec![] };
+
+        let translated = translate_hs(&module, &isgn, &osgn, &pcsg, None).expect("translate");
+        assert_wgsl_validates(&translated.wgsl);
+        assert!(
+            translated
+                .wgsl
+                .contains("const HS_INPUT_CONTROL_POINTS: u32 = 7u;"),
+            "{}",
+            translated.wgsl
+        );
+        assert!(
+            translated
+                .wgsl
+                .contains("const HS_CONTROL_POINTS_PER_PATCH: u32 = HS_INPUT_CONTROL_POINTS;"),
+            "{}",
+            translated.wgsl
+        );
+    }
+
+    #[test]
+    fn hs_control_point_count_mismatch_is_rejected() {
+        let module = Sm4Module {
+            stage: ShaderStage::Hull,
+            model: crate::sm4::ShaderModel { major: 5, minor: 0 },
+            decls: vec![
+                Sm4Decl::InputControlPointCount { count: 4 },
+                Sm4Decl::HsOutputControlPointCount { count: 3 },
+            ],
+            instructions: vec![Sm4Inst::Ret],
+        };
+        let isgn = DxbcSignature { parameters: vec![] };
+        let osgn = DxbcSignature { parameters: vec![] };
+        let pcsg = DxbcSignature { parameters: vec![] };
+
+        let err = translate_hs(&module, &isgn, &osgn, &pcsg, None).unwrap_err();
+        match err {
+            ShaderTranslateError::UnsupportedInstruction { inst_index, opcode } => {
+                assert_eq!(inst_index, 0);
+                assert!(opcode.contains("hs_input_control_points_4_output_control_points_3"));
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
     }
 }
