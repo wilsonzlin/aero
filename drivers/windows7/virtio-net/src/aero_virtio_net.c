@@ -1620,6 +1620,34 @@ static NDIS_STATUS AerovNetCtrlVlanUpdate(_Inout_ AEROVNET_ADAPTER* Adapter, _In
                                  sizeof(LeVid), NULL);
 }
 
+static VOID AerovNetCtrlUpdateRxMode(_Inout_ AEROVNET_ADAPTER* Adapter) {
+  ULONG Filter;
+  UCHAR On;
+
+  if (!Adapter) {
+    return;
+  }
+
+  if ((Adapter->GuestFeatures & VIRTIO_NET_F_CTRL_RX) == 0) {
+    return;
+  }
+
+  Filter = Adapter->PacketFilter;
+
+  // Best-effort: if called at DISPATCH_LEVEL, AerovNetCtrlSendCommand will
+  // fail fast and we will keep relying on software filtering.
+  On = (Filter & NDIS_PACKET_TYPE_PROMISCUOUS) ? 1u : 0u;
+  (VOID)AerovNetCtrlSendCommand(Adapter, VIRTIO_NET_CTRL_RX, VIRTIO_NET_CTRL_RX_PROMISC, &On, sizeof(On), NULL);
+
+  // virtio-net does not provide a "multicast list set" command unless using the
+  // MAC_TABLE_SET control. To avoid missing multicast traffic when Windows
+  // enables multicast filtering, enable ALLMULTI whenever MULTICAST (or
+  // ALL_MULTICAST) is requested, and rely on AerovNetAcceptFrame() to drop
+  // unwanted multicast frames locally.
+  On = (Filter & (NDIS_PACKET_TYPE_MULTICAST | NDIS_PACKET_TYPE_ALL_MULTICAST)) ? 1u : 0u;
+  (VOID)AerovNetCtrlSendCommand(Adapter, VIRTIO_NET_CTRL_RX, VIRTIO_NET_CTRL_RX_ALLMULTI, &On, sizeof(On), NULL);
+}
+
 static NDIS_STATUS AerovNetVirtioStart(_Inout_ AEROVNET_ADAPTER* Adapter) {
   NDIS_STATUS Status;
   UCHAR Mac[ETH_LENGTH_OF_ADDRESS];
@@ -1658,9 +1686,9 @@ static NDIS_STATUS AerovNetVirtioStart(_Inout_ AEROVNET_ADAPTER* Adapter) {
   // - allow the device to report receive checksum status via virtio-net header
   //   flags (e.g. VIRTIO_NET_HDR_F_DATA_VALID).
   // - request the optional control virtqueue so we can issue runtime MAC/VLAN
-  //   commands when supported.
+  //   commands when supported (including RX mode toggles via CTRL_RX).
   WantedFeatures = AEROVNET_FEATURE_RING_EVENT_IDX | VIRTIO_NET_F_CSUM | VIRTIO_NET_F_GUEST_CSUM | VIRTIO_NET_F_HOST_TSO4 | VIRTIO_NET_F_HOST_TSO6 |
-                  VIRTIO_NET_F_CTRL_VQ | VIRTIO_NET_F_CTRL_MAC_ADDR | VIRTIO_NET_F_CTRL_VLAN;
+                  VIRTIO_NET_F_CTRL_VQ | VIRTIO_NET_F_CTRL_MAC_ADDR | VIRTIO_NET_F_CTRL_VLAN | VIRTIO_NET_F_CTRL_RX;
   NegotiatedFeatures = 0;
 
   NtStatus = VirtioPciNegotiateFeatures(&Adapter->Vdev, RequiredFeatures, WantedFeatures, &NegotiatedFeatures);
@@ -2939,6 +2967,7 @@ static NDIS_STATUS AerovNetOidSet(_Inout_ AEROVNET_ADAPTER* Adapter, _Inout_ PND
       }
 
       Adapter->PacketFilter = Filter;
+      AerovNetCtrlUpdateRxMode(Adapter);
       BytesRead = sizeof(Filter);
       break;
     }
