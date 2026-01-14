@@ -9442,7 +9442,12 @@ void AEROGPU_APIENTRY RotateResourceIdentities(D3D10DDI_HDEVICE hDevice,
 #endif
 
   std::vector<AeroGpuResource*> resources;
-  resources.reserve(numResources);
+  try {
+    resources.reserve(numResources);
+  } catch (...) {
+    set_error(dev, E_OUTOFMEMORY);
+    return;
+  }
   for (UINT i = 0; i < numResources; ++i) {
     auto* res = pResources[i].pDrvPrivate ? FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(pResources[i]) : nullptr;
     if (!res || res->mapped) {
@@ -9538,7 +9543,12 @@ void AEROGPU_APIENTRY RotateResourceIdentities(D3D10DDI_HDEVICE hDevice,
   // Capture the pre-rotation AeroGPU handles so we can remap bound handle slots
   // (which store raw protocol handles, not resource pointers).
   std::vector<aerogpu_handle_t> old_handles;
-  old_handles.reserve(resources.size());
+  try {
+    old_handles.reserve(resources.size());
+  } catch (...) {
+    set_error(dev, E_OUTOFMEMORY);
+    return;
+  }
   for (auto* res : resources) {
     old_handles.push_back(res ? res->handle : 0);
   }

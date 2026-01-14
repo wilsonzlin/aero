@@ -7323,10 +7323,11 @@ static void SetConstantBuffersLocked(AeroGpuDevice* dev,
     bound_resources = dev->current_gs_cb_resources;
   }
 
-  std::vector<aerogpu_constant_buffer_binding> bindings;
-  bindings.resize(buffer_count);
-  std::vector<AeroGpuResource*> new_resources;
-  new_resources.resize(buffer_count);
+  // D3D10 constant buffer bindings are limited to 14 slots; avoid heap
+  // allocations in this hot path so OOM cannot surface as an unexpected C++
+  // exception.
+  std::array<aerogpu_constant_buffer_binding, kMaxConstantBufferSlots> bindings{};
+  std::array<AeroGpuResource*, kMaxConstantBufferSlots> new_resources{};
   for (UINT i = 0; i < buffer_count; i++) {
     aerogpu_constant_buffer_binding b{};
     b.buffer = 0;
@@ -7347,7 +7348,7 @@ static void SetConstantBuffersLocked(AeroGpuDevice* dev,
   }
 
   auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_constant_buffers>(
-      AEROGPU_CMD_SET_CONSTANT_BUFFERS, bindings.data(), bindings.size() * sizeof(bindings[0]));
+      AEROGPU_CMD_SET_CONSTANT_BUFFERS, bindings.data(), static_cast<size_t>(buffer_count) * sizeof(bindings[0]));
   if (!cmd) {
     SetError(hDevice, E_OUTOFMEMORY);
     return;
@@ -7775,8 +7776,9 @@ static void SetSamplersLocked(AeroGpuDevice* dev,
     return;
   }
 
-  std::vector<aerogpu_handle_t> handles;
-  handles.resize(sampler_count);
+  // Sampler binding ranges are small (D3D10 max is 16). Avoid heap allocations
+  // so OOM cannot surface as an unexpected C++ exception.
+  std::array<aerogpu_handle_t, kMaxSamplerSlots> handles{};
   for (UINT i = 0; i < sampler_count; i++) {
     aerogpu_handle_t handle = 0;
     if (phSamplers[i].pDrvPrivate) {
@@ -7786,7 +7788,7 @@ static void SetSamplersLocked(AeroGpuDevice* dev,
   }
 
   auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_samplers>(
-      AEROGPU_CMD_SET_SAMPLERS, handles.data(), handles.size() * sizeof(handles[0]));
+      AEROGPU_CMD_SET_SAMPLERS, handles.data(), static_cast<size_t>(sampler_count) * sizeof(handles[0]));
   if (!cmd) {
     SetError(hDevice, E_OUTOFMEMORY);
     return;
@@ -8924,7 +8926,12 @@ void APIENTRY RotateResourceIdentities(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOU
 #endif
 
   std::vector<AeroGpuResource*> resources;
-  resources.reserve(numResources);
+  try {
+    resources.reserve(numResources);
+  } catch (...) {
+    SetError(hDevice, E_OUTOFMEMORY);
+    return;
+  }
   for (UINT i = 0; i < numResources; ++i) {
     auto* res = phResources[i].pDrvPrivate ? FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(phResources[i]) : nullptr;
     if (!res || res->mapped) {
@@ -9001,7 +9008,12 @@ void APIENTRY RotateResourceIdentities(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOU
   };
 
   std::vector<aerogpu_handle_t> old_handles;
-  old_handles.reserve(resources.size());
+  try {
+    old_handles.reserve(resources.size());
+  } catch (...) {
+    SetError(hDevice, E_OUTOFMEMORY);
+    return;
+  }
   for (auto* res : resources) {
     old_handles.push_back(res ? res->handle : 0);
   }
