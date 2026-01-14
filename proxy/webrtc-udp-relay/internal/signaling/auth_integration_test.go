@@ -257,6 +257,39 @@ func TestAuth_JWT_WebRTCOffer(t *testing.T) {
 	})
 }
 
+func TestAuth_APIKey_WebSocketSignal_AuthTimeoutClosesUnauthenticatedConnection(t *testing.T) {
+	cfg := config.Config{
+		AuthMode:                      config.AuthModeAPIKey,
+		APIKey:                        "secret",
+		SignalingAuthTimeout:          200 * time.Millisecond,
+		MaxSignalingMessageBytes:      64 * 1024,
+		MaxSignalingMessagesPerSecond: 50,
+	}
+	ts, m := startSignalingServer(t, cfg)
+
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/webrtc/signal"
+	c, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+
+	// Send no auth message and verify the server closes the connection once
+	// SignalingAuthTimeout elapses.
+	_ = c.SetReadDeadline(time.Now().Add(5 * time.Second))
+	_, _, err = c.ReadMessage()
+	if err == nil {
+		t.Fatalf("expected auth timeout close error, got nil")
+	}
+	if !websocket.IsCloseError(err, websocket.ClosePolicyViolation) {
+		t.Fatalf("expected close policy violation, got %v", err)
+	}
+
+	if got := m.Get(metrics.AuthFailure); got == 0 {
+		t.Fatalf("expected auth failure metric increment")
+	}
+}
+
 func TestAuth_JWT_RejectsConcurrentSessionsWithSameSID_WebSocketSignal(t *testing.T) {
 	cfg := config.Config{
 		AuthMode:  config.AuthModeJWT,
