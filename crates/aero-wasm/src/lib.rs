@@ -6029,6 +6029,9 @@ impl Machine {
 
     /// Inject a USB HID keyboard usage into the synthetic USB HID keyboard device (if enabled).
     pub fn inject_usb_hid_keyboard_usage(&mut self, usage: u32, pressed: bool) {
+        let Ok(usage) = u8::try_from(usage) else {
+            return;
+        };
         self.inner.inject_usb_hid_keyboard_usage(usage, pressed);
     }
 
@@ -6041,7 +6044,7 @@ impl Machine {
     /// Set the synthetic USB HID mouse button state (bitmask matching `MouseEvent.buttons`, low 5
     /// bits).
     pub fn inject_usb_hid_mouse_buttons(&mut self, mask: u32) {
-        self.inner.inject_usb_hid_mouse_buttons(mask);
+        self.inner.inject_usb_hid_mouse_buttons(mask as u8);
     }
 
     /// Inject a mouse wheel delta into the synthetic USB HID mouse device (if enabled).

@@ -117,6 +117,11 @@ use aero_shared::scanout_state::{
 use aero_snapshot as snapshot;
 use aero_storage::{MemBackend, RawDisk};
 use aero_usb::usb2_port::Usb2PortMux;
+use aero_usb::hid::{
+    GamepadReport, UsbHidConsumerControlHandle, UsbHidGamepadHandle, UsbHidKeyboardHandle,
+    UsbHidMouseHandle,
+};
+use aero_usb::hub::UsbHubDevice;
 use aero_virtio::devices::blk::VirtioBlk;
 use aero_virtio::devices::input::{VirtioInput, VirtioInputDeviceKind};
 use aero_virtio::devices::net::VirtioNet;
@@ -550,8 +555,11 @@ pub struct MachineConfig {
     ///
     /// Requires [`MachineConfig::enable_pc_platform`].
     pub enable_xhci: bool,
-    /// Whether to attach an external USB hub behind the UHCI root hub and populate it with a fixed
-    /// set of synthetic USB HID devices (keyboard + mouse + gamepad + consumer-control).
+    /// Whether to attach an external USB hub behind the UHCI root hub (root port 0) and populate
+    /// it with a fixed set of synthetic USB HID devices (keyboard + mouse + gamepad +
+    /// consumer-control).
+    ///
+    /// The hub has 16 downstream ports to match the browser runtime topology.
     ///
     /// This matches the browser runtime topology described in `docs/08-input-devices.md`:
     /// - UHCI root port 0: external hub
@@ -881,11 +889,11 @@ pub enum MachineError {
     VirtioBlkRequiresPcPlatform,
     VirtioInputRequiresPcPlatform,
     UhciRequiresPcPlatform,
+    SyntheticUsbHidRequiresUhci,
     EhciRequiresPcPlatform,
     XhciRequiresPcPlatform,
     AeroGpuRequiresPcPlatform,
     AeroGpuConflictsWithVga,
-    SyntheticUsbHidRequiresUhci,
     E1000RequiresPcPlatform,
     VirtioNetRequiresPcPlatform,
     MultipleNicsEnabled,
@@ -937,14 +945,14 @@ impl fmt::Display for MachineError {
             MachineError::UhciRequiresPcPlatform => {
                 write!(f, "enable_uhci requires enable_pc_platform=true")
             }
+            MachineError::SyntheticUsbHidRequiresUhci => {
+                write!(f, "enable_synthetic_usb_hid requires enable_uhci=true")
+            }
             MachineError::EhciRequiresPcPlatform => {
                 write!(f, "enable_ehci requires enable_pc_platform=true")
             }
             MachineError::XhciRequiresPcPlatform => {
                 write!(f, "enable_xhci requires enable_pc_platform=true")
-            }
-            MachineError::SyntheticUsbHidRequiresUhci => {
-                write!(f, "enable_synthetic_usb_hid requires enable_uhci=true")
             }
             MachineError::AeroGpuConflictsWithVga => {
                 write!(
@@ -3891,10 +3899,10 @@ pub struct Machine {
     ehci: Option<Rc<RefCell<EhciPciDevice>>>,
     xhci: Option<Rc<RefCell<XhciPciDevice>>>,
     /// Optional synthetic USB HID devices behind an external hub on UHCI root port 0.
-    usb_hid_keyboard: Option<aero_usb::hid::UsbHidKeyboardHandle>,
-    usb_hid_mouse: Option<aero_usb::hid::UsbHidMouseHandle>,
-    usb_hid_gamepad: Option<aero_usb::hid::UsbHidGamepadHandle>,
-    usb_hid_consumer_control: Option<aero_usb::hid::UsbHidConsumerControlHandle>,
+    usb_hid_keyboard: Option<UsbHidKeyboardHandle>,
+    usb_hid_mouse: Option<UsbHidMouseHandle>,
+    usb_hid_gamepad: Option<UsbHidGamepadHandle>,
+    usb_hid_consumer_control: Option<UsbHidConsumerControlHandle>,
     /// ISA IRQ line handles used to deliver legacy IDE interrupts (IRQ14/15) without over/under-
     /// counting assertions when the machine polls device state.
     ide_irq14_line: Option<PlatformIrqLine>,
@@ -4302,6 +4310,90 @@ impl Machine {
             .map_mmio_once(firmware::bios::PCIE_ECAM_BASE, ecam_len, || {
                 Box::new(PciEcamMmio::new(pci_cfg, ecam_cfg))
             });
+    }
+
+    fn ensure_uhci_synthetic_usb_hid_topology(&mut self) {
+        if !(self.cfg.enable_pc_platform && self.cfg.enable_uhci && self.cfg.enable_synthetic_usb_hid)
+        {
+            return;
+        }
+        let Some(uhci) = &self.uhci else {
+            return;
+        };
+
+        // Keep these constants in sync with:
+        // - `docs/08-input-devices.md`
+        // - `web/src/usb/uhci_external_hub.ts`
+        const EXTERNAL_HUB_ROOT_PORT: usize = 0;
+        const EXTERNAL_HUB_PORT_COUNT: u8 = 16;
+        const KEYBOARD_HUB_PORT: u8 = 1;
+        const MOUSE_HUB_PORT: u8 = 2;
+        const GAMEPAD_HUB_PORT: u8 = 3;
+        const CONSUMER_CONTROL_HUB_PORT: u8 = 4;
+
+        let mut uhci = uhci.borrow_mut();
+        let root_hub = uhci.controller_mut().hub_mut();
+
+        // Best-effort: ensure the canonical "external hub + synthetic HID" USB topology is present
+        // without overwriting any host-attached devices.
+        //
+        // This is intentionally conservative: if root port 0 is occupied by a non-hub device (or a
+        // hub with insufficient ports), we do not detach/overwrite it. This matters for tests and
+        // for host runtimes that temporarily attach other device models to root port 0.
+        //
+        // On snapshot restore we still want the synthetic devices to exist ahead of
+        // `RootHub::load_snapshot_ports` so the loader can reuse the existing instances (handle
+        // stability). In the canonical case, machines that enable this feature also boot with this
+        // topology, so this helper is sufficient.
+        if root_hub.port_device(EXTERNAL_HUB_ROOT_PORT).is_none() {
+            root_hub.attach(
+                EXTERNAL_HUB_ROOT_PORT,
+                Box::new(UsbHubDevice::with_port_count(EXTERNAL_HUB_PORT_COUNT)),
+            );
+        }
+
+        let Some(mut root_port0) = root_hub.port_device_mut(EXTERNAL_HUB_ROOT_PORT) else {
+            return;
+        };
+        let Some(port_count) = root_port0.model().hub_port_count() else {
+            // Root port 0 is occupied by a non-hub device; leave it alone.
+            return;
+        };
+
+        let hub = root_port0.model_mut();
+
+        if port_count >= KEYBOARD_HUB_PORT && hub.hub_port_device_mut(KEYBOARD_HUB_PORT).is_err() {
+            let keyboard = self
+                .usb_hid_keyboard
+                .get_or_insert_with(UsbHidKeyboardHandle::new)
+                .clone();
+            let _ = hub.hub_attach_device(KEYBOARD_HUB_PORT, Box::new(keyboard));
+        }
+        if port_count >= MOUSE_HUB_PORT && hub.hub_port_device_mut(MOUSE_HUB_PORT).is_err() {
+            let mouse = self
+                .usb_hid_mouse
+                .get_or_insert_with(UsbHidMouseHandle::new)
+                .clone();
+            let _ = hub.hub_attach_device(MOUSE_HUB_PORT, Box::new(mouse));
+        }
+        if port_count >= GAMEPAD_HUB_PORT && hub.hub_port_device_mut(GAMEPAD_HUB_PORT).is_err() {
+            let gamepad = self
+                .usb_hid_gamepad
+                .get_or_insert_with(UsbHidGamepadHandle::new)
+                .clone();
+            let _ = hub.hub_attach_device(GAMEPAD_HUB_PORT, Box::new(gamepad));
+        }
+        if port_count >= CONSUMER_CONTROL_HUB_PORT
+            && hub
+                .hub_port_device_mut(CONSUMER_CONTROL_HUB_PORT)
+                .is_err()
+        {
+            let consumer = self
+                .usb_hid_consumer_control
+                .get_or_insert_with(UsbHidConsumerControlHandle::new)
+                .clone();
+            let _ = hub.hub_attach_device(CONSUMER_CONTROL_HUB_PORT, Box::new(consumer));
+        }
     }
 
     /// Returns the current CPU state.
@@ -7554,136 +7646,6 @@ impl Machine {
     pub fn inject_virtio_mouse_wheel(&mut self, delta: i32) {
         self.inject_virtio_wheel(delta);
     }
-
-    // -------------------------------------------------------------------------
-    // Synthetic USB HID injection (UHCI external hub)
-    // -------------------------------------------------------------------------
-
-    /// Inject a USB HID keyboard usage into the synthetic USB HID keyboard device (if present).
-    ///
-    /// `usage` is a USB HID usage ID from the keyboard usage page (e.g. `0x04` for `Keyboard A`).
-    pub fn inject_usb_hid_keyboard_usage(&mut self, usage: u32, pressed: bool) {
-        let Some(kbd) = &self.usb_hid_keyboard else {
-            return;
-        };
-        let Ok(usage) = u8::try_from(usage) else {
-            return;
-        };
-        if usage == 0 {
-            return;
-        }
-        kbd.key_event(usage, pressed);
-    }
-
-    /// Inject a relative mouse movement event into the synthetic USB HID mouse device (if present).
-    ///
-    /// Coordinate conventions:
-    /// - `dx > 0` is right.
-    /// - `dy > 0` is down (matches browser coordinates).
-    pub fn inject_usb_hid_mouse_move(&mut self, dx: i32, dy: i32) {
-        let Some(mouse) = &self.usb_hid_mouse else {
-            return;
-        };
-        mouse.movement(dx, dy);
-    }
-
-    /// Set the synthetic USB HID mouse button state using a bitmask matching DOM
-    /// `MouseEvent.buttons` (low 5 bits).
-    pub fn inject_usb_hid_mouse_buttons(&mut self, mask: u32) {
-        let Some(mouse) = &self.usb_hid_mouse else {
-            return;
-        };
-        let next = (mask as u8) & 0x1f;
-
-        // Note: `UsbHidMouseHandle` only exposes per-bit transitions, so we synthesize transitions
-        // by re-applying the full mask each call. The underlying device model avoids emitting a
-        // report when the bit is unchanged.
-        mouse.button_event(0x01, (next & 0x01) != 0);
-        mouse.button_event(0x02, (next & 0x02) != 0);
-        mouse.button_event(0x04, (next & 0x04) != 0);
-        mouse.button_event(0x08, (next & 0x08) != 0);
-        mouse.button_event(0x10, (next & 0x10) != 0);
-    }
-
-    /// Inject a mouse wheel delta into the synthetic USB HID mouse device (if present).
-    ///
-    /// `delta > 0` means wheel up.
-    pub fn inject_usb_hid_mouse_wheel(&mut self, delta: i32) {
-        let Some(mouse) = &self.usb_hid_mouse else {
-            return;
-        };
-        mouse.wheel(delta);
-    }
-
-    /// Inject a horizontal mouse wheel delta into the synthetic USB HID mouse device (if present).
-    ///
-    /// `delta > 0` means wheel right / AC Pan.
-    pub fn inject_usb_hid_mouse_hwheel(&mut self, delta: i32) {
-        let Some(mouse) = &self.usb_hid_mouse else {
-            return;
-        };
-        mouse.hwheel(delta);
-    }
-
-    /// Inject both vertical and horizontal mouse wheel deltas into the synthetic USB HID mouse
-    /// device (if present).
-    ///
-    /// This emits a single report containing both axes, matching how physical devices may report
-    /// diagonal scrolling.
-    ///
-    /// Conventions:
-    /// - `wheel > 0` means wheel up.
-    /// - `hwheel > 0` means wheel right / AC Pan.
-    pub fn inject_usb_hid_mouse_wheel2(&mut self, wheel: i32, hwheel: i32) {
-        let Some(mouse) = &self.usb_hid_mouse else {
-            return;
-        };
-        mouse.wheel2(wheel, hwheel);
-    }
-
-    /// Inject an entire 8-byte gamepad report into the synthetic USB HID gamepad device (if
-    /// present).
-    ///
-    /// This is packed as two little-endian u32 words (`a` = bytes 0..3, `b` = bytes 4..7) to match
-    /// JS/WASM call overhead constraints.
-    pub fn inject_usb_hid_gamepad_report(&mut self, a: u32, b: u32) {
-        let Some(gamepad) = &self.usb_hid_gamepad else {
-            return;
-        };
-        let mut bytes = [0u8; 8];
-        bytes[0..4].copy_from_slice(&a.to_le_bytes());
-        bytes[4..8].copy_from_slice(&b.to_le_bytes());
-
-        let report = aero_usb::hid::GamepadReport {
-            buttons: u16::from_le_bytes([bytes[0], bytes[1]]),
-            hat: bytes[2] & 0x0f,
-            x: bytes[3] as i8,
-            y: bytes[4] as i8,
-            rx: bytes[5] as i8,
-            ry: bytes[6] as i8,
-        };
-        gamepad.set_report(report);
-    }
-
-    /// Inject a USB HID Consumer Control usage event into the synthetic consumer-control device (if
-    /// present).
-    ///
-    /// `usage` is a HID usage ID from Usage Page 0x0C ("Consumer"). The synthetic consumer-control
-    /// device currently supports usages in the range `1..=0x03FF` (see
-    /// `crates/aero-usb/src/hid/consumer_control.rs`).
-    pub fn inject_usb_hid_consumer_usage(&mut self, usage: u32, pressed: bool) {
-        let Some(consumer) = &self.usb_hid_consumer_control else {
-            return;
-        };
-        let Ok(usage) = u16::try_from(usage) else {
-            return;
-        };
-        if !(1..=0x03ff).contains(&usage) {
-            return;
-        }
-        consumer.consumer_event(usage, pressed);
-    }
-
     /// Inject a Linux mouse horizontal wheel event (`EV_REL` + `REL_HWHEEL`) into the virtio-input
     /// mouse device.
     ///
@@ -7720,6 +7682,136 @@ impl Machine {
             input.inject_wheel2(wheel, hwheel);
         }
         self.process_virtio_input();
+    }
+
+    // ---------------------------------------------------------------------
+    // Synthetic USB HID devices (UHCI external hub)
+    // ---------------------------------------------------------------------
+
+    /// Inject a USB HID keyboard usage into the machine's synthetic USB keyboard (if enabled).
+    ///
+    /// `usage` is the USB HID usage ID (Keyboard page).
+    pub fn inject_usb_hid_keyboard_usage(&mut self, usage: u8, pressed: bool) {
+        if let Some(kbd) = &self.usb_hid_keyboard {
+            kbd.key_event(usage, pressed);
+        }
+    }
+
+    /// Inject relative mouse motion into the machine's synthetic USB HID mouse (if enabled).
+    ///
+    /// Coordinate conventions match USB HID (and browser events): `dx > 0` is right and `dy > 0` is
+    /// down.
+    pub fn inject_usb_hid_mouse_move(&mut self, dx: i32, dy: i32) {
+        if let Some(mouse) = &self.usb_hid_mouse {
+            mouse.movement(dx, dy);
+        }
+    }
+
+    /// Inject a USB HID mouse button mask into the machine's synthetic USB HID mouse (if enabled).
+    ///
+    /// `mask` matches the DOM `MouseEvent.buttons` bitmask:
+    /// - bit 0: left
+    /// - bit 1: right
+    /// - bit 2: middle
+    /// - bit 3: back
+    /// - bit 4: forward
+    pub fn inject_usb_hid_mouse_buttons(&mut self, mask: u8) {
+        let buttons = mask & 0x1f;
+        if let Some(mouse) = &self.usb_hid_mouse {
+            // `UsbHidMouseHandle` operates on per-bit transitions; drive it with a two-step
+            // "release then press" update so the final state matches the requested absolute mask.
+            let clear = (!buttons) & 0x1f;
+            if clear != 0 {
+                mouse.button_event(clear, false);
+            }
+            if buttons != 0 {
+                mouse.button_event(buttons, true);
+            }
+        }
+    }
+
+    /// Inject a USB HID mouse wheel delta into the machine's synthetic USB HID mouse (if enabled).
+    ///
+    /// Positive values represent wheel-up (matching PS/2 wheel conventions used by the browser
+    /// runtime input batching).
+    pub fn inject_usb_hid_mouse_wheel(&mut self, delta: i32) {
+        if let Some(mouse) = &self.usb_hid_mouse {
+            mouse.wheel(delta);
+        }
+    }
+
+    /// Inject a USB HID mouse horizontal wheel (AC Pan) delta into the machine's synthetic USB HID
+    /// mouse (if enabled).
+    ///
+    /// Positive values represent wheel-right.
+    pub fn inject_usb_hid_mouse_hwheel(&mut self, delta: i32) {
+        if let Some(mouse) = &self.usb_hid_mouse {
+            mouse.hwheel(delta);
+        }
+    }
+
+    /// Inject both vertical and horizontal mouse wheel deltas into the machine's synthetic USB HID
+    /// mouse (if enabled).
+    ///
+    /// This emits a single report containing both axes, matching how physical devices may report
+    /// diagonal scrolling.
+    ///
+    /// Conventions:
+    /// - `wheel > 0` means wheel up.
+    /// - `hwheel > 0` means wheel right / AC Pan.
+    pub fn inject_usb_hid_mouse_wheel2(&mut self, wheel: i32, hwheel: i32) {
+        if let Some(mouse) = &self.usb_hid_mouse {
+            mouse.wheel2(wheel, hwheel);
+        }
+    }
+
+    /// Inject an 8-byte USB HID gamepad report into the machine's synthetic USB HID gamepad (if
+    /// enabled).
+    ///
+    /// The report bytes are packed into two little-endian `u32` words:
+    /// - `packed0_3_le`: bytes 0..=3
+    /// - `packed4_7_le`: bytes 4..=7
+    pub fn inject_usb_hid_gamepad_report(&mut self, packed0_3_le: u32, packed4_7_le: u32) {
+        let Some(gamepad) = &self.usb_hid_gamepad else {
+            return;
+        };
+
+        let a = packed0_3_le.to_le_bytes();
+        let b = packed4_7_le.to_le_bytes();
+        let buttons = u16::from_le_bytes([a[0], a[1]]);
+        let hat = a[2];
+        let x = a[3] as i8;
+        let y = b[0] as i8;
+        let rx = b[1] as i8;
+        let ry = b[2] as i8;
+
+        gamepad.set_report(GamepadReport {
+            buttons,
+            hat,
+            x,
+            y,
+            rx,
+            ry,
+        });
+    }
+
+    /// Inject a USB HID Consumer Control usage event into the machine's synthetic consumer-control
+    /// device (if enabled).
+    ///
+    /// `usage` is a HID usage ID from Usage Page 0x0C ("Consumer"). The synthetic consumer-control
+    /// device currently supports usages in the range `1..=0x03FF` (see
+    /// `crates/aero-usb/src/hid/consumer_control.rs`).
+    pub fn inject_usb_hid_consumer_usage(&mut self, usage: u32, pressed: bool) {
+        let Some(consumer) = &self.usb_hid_consumer_control else {
+            return;
+        };
+        let Ok(usage) = u16::try_from(usage) else {
+            return;
+        };
+        if !(1..=0x03ff).contains(&usage) {
+            return;
+        }
+        consumer.consumer_event(usage, pressed);
     }
 
     pub fn take_snapshot_full(&mut self) -> snapshot::Result<Vec<u8>> {
@@ -8315,95 +8407,6 @@ impl Machine {
                         let hub = ehci_dev.controller_mut().hub_mut();
                         hub.attach_usb2_port_mux(0, mux.clone(), 0);
                         hub.attach_usb2_port_mux(1, mux.clone(), 1);
-                    }
-                }
-            }
-
-            // If enabled, attach an external USB hub with a fixed set of synthetic HID devices.
-            //
-            // This mirrors the browser runtime topology described in `docs/08-input-devices.md`.
-            //
-            // Note: this is intentionally best-effort and does not overwrite any host-attached
-            // devices. If the relevant ports are already occupied, synthetic devices are not
-            // attached.
-            if self.cfg.enable_synthetic_usb_hid {
-                if let Some(uhci) = uhci.as_ref() {
-                    let mut uhci_dev = uhci.borrow_mut();
-                    let root = uhci_dev.controller_mut().hub_mut();
-
-                    // Ensure an external hub exists at root port 0. If a host device already
-                    // occupies the port, do not overwrite it.
-                    if root.port_device(0).is_none() {
-                        let _ = root.attach_at_path(
-                            &[0],
-                            Box::new(aero_usb::hub::UsbHubDevice::with_port_count(16)),
-                        );
-                    }
-
-                    // Determine whether root port 0 is a hub, and which downstream ports are
-                    // already occupied. (Borrow the hub briefly so we can later call
-                    // `attach_at_path` on the root hub without borrow conflicts.)
-                    let hub_state = if let Some(mut dev0) = root.port_device_mut(0) {
-                        if let Some(hub) = dev0.as_hub_mut() {
-                            let port_count = hub.num_ports();
-                            let port1_occupied = hub.downstream_device_mut(0).is_some();
-                            let port2_occupied =
-                                port_count >= 2 && hub.downstream_device_mut(1).is_some();
-                            let port3_occupied =
-                                port_count >= 3 && hub.downstream_device_mut(2).is_some();
-                            let port4_occupied =
-                                port_count >= 4 && hub.downstream_device_mut(3).is_some();
-                            Some((
-                                port_count,
-                                port1_occupied,
-                                port2_occupied,
-                                port3_occupied,
-                                port4_occupied,
-                            ))
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    };
-
-                    if let Some((
-                        port_count,
-                        port1_occupied,
-                        port2_occupied,
-                        port3_occupied,
-                        port4_occupied,
-                    )) = hub_state
-                    {
-                        // Attach built-in HID devices behind the external hub.
-                        if port_count >= 1 && !port1_occupied {
-                            let keyboard = self
-                                .usb_hid_keyboard
-                                .get_or_insert_with(aero_usb::hid::UsbHidKeyboardHandle::new)
-                                .clone();
-                            let _ = root.attach_at_path(&[0, 1], Box::new(keyboard));
-                        }
-                        if port_count >= 2 && !port2_occupied {
-                            let mouse = self
-                                .usb_hid_mouse
-                                .get_or_insert_with(aero_usb::hid::UsbHidMouseHandle::new)
-                                .clone();
-                            let _ = root.attach_at_path(&[0, 2], Box::new(mouse));
-                        }
-                        if port_count >= 3 && !port3_occupied {
-                            let gamepad = self
-                                .usb_hid_gamepad
-                                .get_or_insert_with(aero_usb::hid::UsbHidGamepadHandle::new)
-                                .clone();
-                            let _ = root.attach_at_path(&[0, 3], Box::new(gamepad));
-                        }
-                        if port_count >= 4 && !port4_occupied {
-                            let consumer = self
-                                .usb_hid_consumer_control
-                                .get_or_insert_with(aero_usb::hid::UsbHidConsumerControlHandle::new)
-                                .clone();
-                            let _ = root.attach_at_path(&[0, 4], Box::new(consumer));
-                        }
                     }
                 }
             }
@@ -9047,6 +9050,10 @@ impl Machine {
             self.uhci = uhci;
             self.ehci = ehci;
             self.xhci = xhci;
+
+            // If enabled, ensure the canonical "external hub + synthetic HID" USB topology is
+            // present immediately after reset.
+            self.ensure_uhci_synthetic_usb_hid_topology();
 
             // MMIO mappings persist in the physical bus; ensure the canonical PC regions exist.
             self.map_pc_platform_mmio_regions();
@@ -12315,6 +12322,11 @@ impl snapshot::SnapshotTarget for Machine {
         // Restore USB controller state after the interrupt controller + PCI core so its IRQ level
         // can be re-driven deterministically.
         if let Some(state) = by_id.remove(&snapshot::DeviceId::USB) {
+            // If synthetic USB HID devices are enabled, pre-attach the canonical external hub +
+            // synthetic devices *before* loading the UHCI snapshot so `RootHub::load_snapshot_ports`
+            // will reuse the existing device instances (handle stability).
+            self.ensure_uhci_synthetic_usb_hid_topology();
+
             const NS_PER_MS: u64 = 1_000_000;
 
             // Canonical encoding: `DeviceId::USB` stores a `USBC` wrapper that nests guest-visible
