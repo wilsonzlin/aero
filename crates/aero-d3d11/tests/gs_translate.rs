@@ -193,3 +193,82 @@ fn sm5_gs_emit_stream_cut_stream_fixture_rejects_nonzero_stream() {
         }
     );
 }
+
+#[test]
+fn sm4_gs_emitthen_cut_translates_to_wgsl_compute_prepass() {
+    // Minimal gs_4_0 token stream with `emitthen_cut` on stream 0.
+    //
+    // - dcl_inputprimitive triangle
+    // - dcl_outputtopology triangle_strip
+    // - dcl_maxvertexcount 1
+    // - mov o0, v0[0]
+    // - emitthen_cut
+    // - ret
+    let version_token = 0x0003_0040u32; // nominal gs_4_0 (decoder uses program.stage/model)
+    let mut tokens = vec![version_token, 0];
+
+    tokens.push(opcode_token(OPCODE_DCL_GS_INPUT_PRIMITIVE, 2));
+    tokens.push(3); // D3D10_SB_PRIMITIVE_TRIANGLE
+    tokens.push(opcode_token(OPCODE_DCL_GS_OUTPUT_TOPOLOGY, 2));
+    tokens.push(5); // D3D10_SB_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP
+    tokens.push(opcode_token(OPCODE_DCL_GS_MAX_OUTPUT_VERTEX_COUNT, 2));
+    tokens.push(1);
+
+    // dcl_input v0.xyzw
+    tokens.push(opcode_token(0x100, 3));
+    tokens.push(0x10F012); // v0.xyzw (1D indexing)
+    tokens.push(0); // v0
+
+    // dcl_output o0.xyzw
+    tokens.push(opcode_token(0x100, 3));
+    tokens.push(0x10F022); // o0.xyzw
+    tokens.push(0);
+
+    // mov o0.xyzw, v0[0].xyzw
+    tokens.push(opcode_token(OPCODE_MOV, 6));
+    tokens.push(0x10F022); // o0.xyzw
+    tokens.push(0);
+    tokens.push(0x20F012); // v0[0].xyzw (2D indexing)
+    tokens.push(0); // reg
+    tokens.push(0); // vertex
+
+    // emitthen_cut (stream 0)
+    tokens.push(opcode_token(OPCODE_EMITTHENCUT, 1));
+
+    // ret
+    tokens.push(opcode_token(OPCODE_RET, 1));
+
+    tokens[1] = tokens.len() as u32;
+
+    let program = Sm4Program {
+        stage: ShaderStage::Geometry,
+        model: ShaderModel { major: 4, minor: 0 },
+        tokens,
+    };
+
+    let module = decode_program(&program).expect("decode");
+    let wgsl = translate_gs_module_to_wgsl_compute_prepass(&module).expect("translate");
+
+    assert!(
+        wgsl.contains("fn gs_emit"),
+        "expected generated WGSL to contain gs_emit helper function"
+    );
+    assert!(
+        wgsl.contains("fn gs_cut"),
+        "expected generated WGSL to contain gs_cut helper function"
+    );
+    assert!(
+        wgsl.contains("gs_emit(o0, o1"),
+        "expected generated WGSL to call gs_emit"
+    );
+    assert!(
+        wgsl.contains("gs_cut(&strip_len)"),
+        "expected generated WGSL to call gs_cut"
+    );
+    assert!(
+        wgsl.contains("// emitthen_cut"),
+        "expected generated WGSL to tag emitthen_cut lowering"
+    );
+
+    assert_wgsl_validates(&wgsl);
+}

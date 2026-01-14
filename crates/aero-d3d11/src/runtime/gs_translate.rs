@@ -169,6 +169,7 @@ fn opcode_name(inst: &Sm4Inst) -> &'static str {
         Sm4Inst::StoreStructured { .. } => "store_structured",
         Sm4Inst::Emit { .. } => "emit",
         Sm4Inst::Cut { .. } => "cut",
+        Sm4Inst::EmitThenCut { .. } => "emitthen_cut",
         Sm4Inst::Ret => "ret",
         Sm4Inst::Unknown { .. } => "unknown",
         _ => "unsupported",
@@ -289,6 +290,15 @@ pub fn translate_gs_module_to_wgsl_compute_prepass(
                     return Err(GsTranslateError::UnsupportedStream {
                         inst_index,
                         opcode: "cut",
+                        stream: *stream,
+                    });
+                }
+            }
+            Sm4Inst::EmitThenCut { stream } => {
+                if *stream != 0 {
+                    return Err(GsTranslateError::UnsupportedStream {
+                        inst_index,
+                        opcode: "emitthen_cut",
                         stream: *stream,
                     });
                 }
@@ -522,6 +532,12 @@ pub fn translate_gs_module_to_wgsl_compute_prepass(
             }
             Sm4Inst::Cut { stream: _ } => {
                 w.line("gs_cut(&strip_len); // cut");
+            }
+            Sm4Inst::EmitThenCut { stream: _ } => {
+                w.line(
+                    "gs_emit(o0, o1, out_vertex_count, out_index_count, &emitted_count, &strip_len, &strip_prev0, &strip_prev1, overflow); // emitthen_cut",
+                );
+                w.line("gs_cut(&strip_len); // emitthen_cut");
             }
             Sm4Inst::Ret => {
                 w.line("return;");
