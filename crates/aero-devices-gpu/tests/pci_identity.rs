@@ -33,4 +33,21 @@ fn aerogpu_pci_config_space_matches_protocol_identity() {
         .bar_range(proto::AEROGPU_PCI_BAR0_INDEX as u8)
         .expect("AeroGPU BAR0 must exist");
     assert_eq!(bar0.size, u64::from(proto::AEROGPU_PCI_BAR0_SIZE_BYTES));
+
+    let bar1 = cfg
+        .bar_range(proto::AEROGPU_PCI_BAR1_INDEX as u8)
+        .expect("AeroGPU BAR1 must exist");
+    assert_eq!(bar1.size, u64::from(proto::AEROGPU_PCI_BAR1_SIZE_BYTES));
+
+    // BAR1 is expected to be a prefetchable VRAM aperture.
+    let bar1_def = cfg
+        .bar_definition(proto::AEROGPU_PCI_BAR1_INDEX as u8)
+        .expect("AeroGPU BAR1 definition must exist");
+    match bar1_def {
+        aero_devices::pci::PciBarDefinition::Mmio32 { size, prefetchable } => {
+            assert_eq!(size, proto::AEROGPU_PCI_BAR1_SIZE_BYTES);
+            assert!(prefetchable);
+        }
+        other => panic!("unexpected BAR1 definition: {other:?}"),
+    }
 }
