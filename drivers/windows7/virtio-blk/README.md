@@ -185,12 +185,16 @@ The driver supports a minimal `IOCTL_SCSI_MINIPORT` query:
 - `SRB_IO_CONTROL.Signature = "AEROVBLK"`
 - `SRB_IO_CONTROL.ControlCode = 0x8000A001`
 
-Returns `AEROVBLK_QUERY_INFO` (negotiated features + queue stats + interrupt mode/MSI-X vectors + abort/reset counters).
+Returns `AEROVBLK_QUERY_INFO` (negotiated features + queue stats + interrupt mode/MSI-X vectors + abort/reset counters +
+reset recovery counters).
 
 Notes:
 
 - `AEROVBLK_QUERY_INFO.Reserved0` is used as a flags field (`AEROVBLK_QUERY_FLAG_*`) and may report whether the adapter is
   currently stopped/removed or in a reset/recovery state.
+- The query payload may also include reset/recovery counters (appended for backwards compatibility):
+  - `ResetDetectedCount` (times the miniport requested recovery via `ResetDetected`)
+  - `HwResetBusCount` (times StorPort invoked `HwResetBus`)
 
 The output struct is **variable-length** for backwards compatibility: callers that only
 understand the original v1 layout can request/consume just the first 16 bytes (through
