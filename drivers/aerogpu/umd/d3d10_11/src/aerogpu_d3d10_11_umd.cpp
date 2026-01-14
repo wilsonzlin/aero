@@ -1536,24 +1536,24 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
                        pDesc ? pDesc->Height : 0,
                        pDesc ? pDesc->MipLevels : 0,
                        pDesc ? pDesc->ArraySize : 0,
-                        pDesc ? pDesc->Format : 0,
-                        pDesc ? pDesc->InitialDataCount : 0);
+                       pDesc ? pDesc->Format : 0,
+                       pDesc ? pDesc->InitialDataCount : 0);
   if (!hDevice.pDrvPrivate || !hResource.pDrvPrivate) {
     AEROGPU_D3D10_RET_HR(E_INVALIDARG);
   }
 
-  // Always construct the private object so DestroyResource is safe even if we
-  // reject the descriptor (some runtimes may still call Destroy on failure).
-  auto* res = new (hResource.pDrvPrivate) AeroGpuResource();
-  res->handle = kInvalidHandle;
-
   if (!pDesc) {
-    AEROGPU_D3D10_RET_HR(E_INVALIDARG);
+    // Some runtimes may still call DestroyResource on failure; ensure the
+    // private memory always ends in a safe, default-constructed state
+    // (with handle == 0).
+    auto* res = new (hResource.pDrvPrivate) AeroGpuResource();
+    AEROGPU_D3D10_RET_HR(FailCreateResource(res, E_INVALIDARG));
   }
 
   auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
   if (!dev || !dev->adapter) {
-    AEROGPU_D3D10_RET_HR(E_FAIL);
+    auto* res = new (hResource.pDrvPrivate) AeroGpuResource();
+    AEROGPU_D3D10_RET_HR(FailCreateResource(res, E_FAIL));
   }
 
   std::lock_guard<std::mutex> lock(dev->mutex);
@@ -1563,6 +1563,7 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
 #endif
 
   if (pDesc->Dimension == AEROGPU_DDI_RESOURCE_DIMENSION_BUFFER) {
+    auto* res = new (hResource.pDrvPrivate) AeroGpuResource();
     res->handle = allocate_global_handle(dev->adapter);
     res->kind = ResourceKind::Buffer;
     res->usage = pDesc->Usage;
@@ -1661,6 +1662,7 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
           // Guest-backed resources must be initialized via the WDDM allocation +
           // RESOURCE_DIRTY_RANGE path; inline UPLOAD_RESOURCE is only valid for
           // host-owned resources.
+          RemoveLiveResourceLocked(dev, res);
           return FailCreateResource(res, E_FAIL);
         }
 
@@ -1700,7 +1702,8 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     const uint32_t array_size = pDesc->ArraySize ? pDesc->ArraySize : 1u;
     if (is_shared && (mip_levels != 1 || array_size != 1)) {
       // MVP: shared surfaces are single-allocation only.
-      return E_NOTIMPL;
+      auto* res = new (hResource.pDrvPrivate) AeroGpuResource();
+      return FailCreateResource(res, E_NOTIMPL);
     }
 
     // Keep CreateResource format handling in sync with the WDK UMDs:
@@ -1710,14 +1713,17 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
             dev,
             pDesc->Format,
             aerogpu::d3d10_11::AerogpuFormatUsage::Texture2D)) {
-      AEROGPU_D3D10_RET_HR(E_NOTIMPL);
+      auto* res = new (hResource.pDrvPrivate) AeroGpuResource();
+      AEROGPU_D3D10_RET_HR(FailCreateResource(res, E_NOTIMPL));
     }
 
     const uint32_t aer_fmt = aerogpu::d3d10_11::dxgi_format_to_aerogpu_compat(dev, pDesc->Format);
     if (aer_fmt == AEROGPU_FORMAT_INVALID) {
-      AEROGPU_D3D10_RET_HR(E_NOTIMPL);
+      auto* res = new (hResource.pDrvPrivate) AeroGpuResource();
+      AEROGPU_D3D10_RET_HR(FailCreateResource(res, E_NOTIMPL));
     }
 
+    auto* res = new (hResource.pDrvPrivate) AeroGpuResource();
     res->handle = allocate_global_handle(dev->adapter);
     res->kind = ResourceKind::Texture2D;
     res->usage = pDesc->Usage;
@@ -1912,6 +1918,7 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
       const uint64_t dirty_size = total_bytes;
       if (is_guest_backed) {
         if (!wddm_initial_upload) {
+          RemoveLiveResourceLocked(dev, res);
           return FailCreateResource(res, E_FAIL);
         }
 
@@ -1943,7 +1950,8 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     AEROGPU_D3D10_RET_HR(S_OK);
   }
 
-  AEROGPU_D3D10_RET_HR(E_NOTIMPL);
+  auto* res = new (hResource.pDrvPrivate) AeroGpuResource();
+  AEROGPU_D3D10_RET_HR(FailCreateResource(res, E_NOTIMPL));
 }
 
 void AEROGPU_APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hResource) {

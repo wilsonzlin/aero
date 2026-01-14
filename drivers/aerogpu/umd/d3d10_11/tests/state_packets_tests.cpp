@@ -806,6 +806,126 @@ bool TestCreateSamplerNullDescIsSafeToDestroy() {
   return true;
 }
 
+bool TestCreateResourceNullDescIsSafeToDestroy() {
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev), "InitTestDevice(resource null desc)")) {
+    return false;
+  }
+
+  D3D10DDI_HRESOURCE hRes = {};
+  const SIZE_T size = dev.device_funcs.pfnCalcPrivateResourceSize(dev.hDevice, /*desc=*/nullptr);
+  if (!Check(size >= sizeof(void*), "CalcPrivateResourceSize returned non-trivial size (null desc)")) {
+    return false;
+  }
+
+  // Fill the private memory with a sentinel so DestroyResource would crash if the
+  // object wasn't constructed and the handle field remained non-zero.
+  std::vector<uint8_t> storage(static_cast<size_t>(size), 0xCC);
+  hRes.pDrvPrivate = storage.data();
+
+  const HRESULT hr = dev.device_funcs.pfnCreateResource(dev.hDevice, /*pDesc=*/nullptr, hRes);
+  if (!Check(hr == E_INVALIDARG, "CreateResource should return E_INVALIDARG for null desc")) {
+    return false;
+  }
+
+  aerogpu_handle_t handle = 0xFFFFFFFFu;
+  std::memcpy(&handle, storage.data(), sizeof(handle));
+  if (!Check(handle == 0, "CreateResource(null) initializes handle to 0 on failure")) {
+    return false;
+  }
+
+  // Destroy should be safe even after a failed create.
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, hRes);
+
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
+bool TestCreateResourceUnsupportedDimensionIsSafeToDestroy() {
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev), "InitTestDevice(resource invalid dimension)")) {
+    return false;
+  }
+
+  // Unsupported resource dimension.
+  AEROGPU_DDIARG_CREATERESOURCE desc = {};
+  desc.Dimension = static_cast<AEROGPU_DDI_RESOURCE_DIMENSION>(0);
+
+  D3D10DDI_HRESOURCE hRes = {};
+  const SIZE_T size = dev.device_funcs.pfnCalcPrivateResourceSize(dev.hDevice, &desc);
+  if (!Check(size >= sizeof(void*), "CalcPrivateResourceSize returned non-trivial size (invalid dimension)")) {
+    return false;
+  }
+
+  std::vector<uint8_t> storage(static_cast<size_t>(size), 0xCC);
+  hRes.pDrvPrivate = storage.data();
+
+  const HRESULT hr = dev.device_funcs.pfnCreateResource(dev.hDevice, &desc, hRes);
+  if (!Check(hr == E_NOTIMPL, "CreateResource should return E_NOTIMPL for unsupported dimension")) {
+    return false;
+  }
+
+  aerogpu_handle_t handle = 0xFFFFFFFFu;
+  std::memcpy(&handle, storage.data(), sizeof(handle));
+  if (!Check(handle == 0, "CreateResource(invalid dimension) initializes handle to 0 on failure")) {
+    return false;
+  }
+
+  // Destroy should be safe even after a failed create.
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, hRes);
+
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
+bool TestCreateResourceSharedTextureWithMipsIsSafeToDestroy() {
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev), "InitTestDevice(resource shared mips)")) {
+    return false;
+  }
+
+  // D3D11_RESOURCE_MISC_SHARED == 0x2 (numeric value from d3d11.h).
+  constexpr uint32_t kD3D11ResourceMiscShared = 0x2;
+
+  AEROGPU_DDIARG_CREATERESOURCE desc = {};
+  desc.Dimension = AEROGPU_DDI_RESOURCE_DIMENSION_TEX2D;
+  desc.MiscFlags = kD3D11ResourceMiscShared;
+  desc.Width = 4;
+  desc.Height = 4;
+  // MipLevels=0 requests full mips, which is unsupported for shared surfaces.
+  desc.MipLevels = 0;
+  desc.ArraySize = 1;
+
+  D3D10DDI_HRESOURCE hRes = {};
+  const SIZE_T size = dev.device_funcs.pfnCalcPrivateResourceSize(dev.hDevice, &desc);
+  if (!Check(size >= sizeof(void*), "CalcPrivateResourceSize returned non-trivial size (shared mips)")) {
+    return false;
+  }
+
+  std::vector<uint8_t> storage(static_cast<size_t>(size), 0xCC);
+  hRes.pDrvPrivate = storage.data();
+
+  const HRESULT hr = dev.device_funcs.pfnCreateResource(dev.hDevice, &desc, hRes);
+  if (!Check(hr == E_NOTIMPL, "CreateResource should return E_NOTIMPL for shared surface with mips")) {
+    return false;
+  }
+
+  aerogpu_handle_t handle = 0xFFFFFFFFu;
+  std::memcpy(&handle, storage.data(), sizeof(handle));
+  if (!Check(handle == 0, "CreateResource(shared mips) initializes handle to 0 on failure")) {
+    return false;
+  }
+
+  // Destroy should be safe even after a failed create.
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, hRes);
+
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
 bool TestCreateDepthStencilStateRejectsInvalidDepthFunc() {
   TestDevice dev{};
   if (!Check(InitTestDevice(&dev), "InitTestDevice(dss invalid depth_func)")) {
@@ -1045,6 +1165,9 @@ int main() {
   ok &= TestDestroyAfterFailedCreateVertexShaderIsSafe();
   ok &= TestDestroyAfterFailedCreateInputLayoutIsSafe();
   ok &= TestCreateSamplerNullDescIsSafeToDestroy();
+  ok &= TestCreateResourceNullDescIsSafeToDestroy();
+  ok &= TestCreateResourceUnsupportedDimensionIsSafeToDestroy();
+  ok &= TestCreateResourceSharedTextureWithMipsIsSafeToDestroy();
   ok &= TestCreateDepthStencilStateRejectsInvalidDepthFunc();
   ok &= TestDepthDisableDisablesDepthWrites();
   ok &= TestSetDepthStencilStateEmitsPacket();
