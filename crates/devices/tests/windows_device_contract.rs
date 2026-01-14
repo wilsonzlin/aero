@@ -473,7 +473,8 @@ fn windows_device_contract_virtio_input_inf_uses_distinct_keyboard_mouse_device_
 #[test]
 fn windows_device_contract_virtio_input_alias_inf_includes_generic_fallback_model_line() {
     // `virtio-input.inf.disabled` is a legacy filename alias for the canonical
-    // `aero_virtio_input.inf`, kept for compatibility with older tooling/workflows.
+    // `aero_virtio_input.inf`, kept for compatibility with older tooling/workflows that still
+    // reference `virtio-input.inf`.
 
     let inf_dir = repo_root().join("drivers/windows7/virtio-input/inf");
     let alias_enabled = inf_dir.join("virtio-input.inf");
@@ -491,6 +492,39 @@ fn windows_device_contract_virtio_input_alias_inf_includes_generic_fallback_mode
 
     let inf_contents =
         std::fs::read_to_string(&alias_path).expect("read virtio-input alias INF from repository");
+
+    // From the first section header (`[Version]`) onward, the alias is expected to stay
+    // byte-for-byte identical to the canonical INF. (Only the leading banner/comments may differ.)
+    let canonical_contents = std::fs::read_to_string(inf_dir.join("aero_virtio_input.inf"))
+        .expect("read virtio-input canonical INF from repository");
+
+    fn inf_body_from_first_section(s: &str) -> String {
+        // Keep this logic simple and close to `drivers/windows7/virtio-input/scripts/check-inf-alias.py`.
+        let mut start_idx = None;
+        for (i, line) in s.lines().enumerate() {
+            let trimmed = line.trim_start_matches(|c| c == ' ' || c == '\t');
+            if trimmed.starts_with('[') {
+                start_idx = Some(i);
+                break;
+            }
+            if trimmed.starts_with(';') || trimmed.trim().is_empty() {
+                continue;
+            }
+            // Unexpected functional content before the first section header: treat it as start.
+            start_idx = Some(i);
+            break;
+        }
+        let start_idx = start_idx.expect("expected INF to contain at least one section header");
+        // `str::lines()` drops newlines; compare normalized content with `\n` separators.
+        s.lines().skip(start_idx).collect::<Vec<_>>().join("\n")
+    }
+
+    // Compare using normalized `\n` line separators to avoid platform EOL differences in this test.
+    assert_eq!(
+        inf_body_from_first_section(&inf_contents),
+        inf_body_from_first_section(&canonical_contents),
+        "virtio-input alias INF must match canonical INF from [Version] onward"
+    );
 
     let hwid_kbd = "PCI\\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01";
     let hwid_mouse = "PCI\\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01";
