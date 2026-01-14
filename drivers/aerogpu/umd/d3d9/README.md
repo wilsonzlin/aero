@@ -487,6 +487,8 @@ Implementation notes (bring-up):
     - Even so, when switching back to fixed-function WVP (and lit `NORMAL` variants) the UMD forces a re-upload
       (`fixedfunc_matrix_dirty` / `fixedfunc_lighting_dirty`) since user shaders may have written overlapping VS constant
       registers.
+      - Some runtimes expect the WVP refresh to happen immediately when the user VS is unbound (`SetShader(VS, NULL)`), so the
+        UMD may upload WVP constants at shader-unbind time (not just lazily at the next draw).
   - See also: `docs/graphics/win7-d3d9-fixedfunc-wvp.md` (WVP draw-time paths + `ProcessVertices` notes).
 - Shader-stage interop is supported: when exactly one stage is bound (VS-only or PS-only), the draw paths bind a
   fixed-function fallback shader for the missing stage at draw time (see `bind_draw_shaders_locked()`).
