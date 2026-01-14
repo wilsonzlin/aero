@@ -522,6 +522,17 @@ mod tests {
     use super::*;
 
     #[test]
+    fn integer_compare_opcodes_do_not_overlap_integer_bitwise_opcodes() {
+        // These opcodes intentionally live in different numeric ranges so the decoder can
+        // distinguish `cmp` instructions from integer arithmetic/bitwise ops.
+        for &cmp in &[OPCODE_IEQ, OPCODE_INE, OPCODE_ILT, OPCODE_IGE, OPCODE_ULT, OPCODE_UGE] {
+            for &bitop in &[OPCODE_IMUL, OPCODE_AND, OPCODE_OR, OPCODE_USHR] {
+                assert_ne!(cmp, bitop);
+            }
+        }
+    }
+
+    #[test]
     fn opcode_name_includes_switch_ops() {
         assert_eq!(opcode_name(OPCODE_BREAK), Some("break"));
         assert_eq!(opcode_name(OPCODE_SWITCH), Some("switch"));
