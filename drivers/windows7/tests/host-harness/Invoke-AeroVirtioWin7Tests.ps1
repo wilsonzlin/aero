@@ -1652,7 +1652,7 @@ function Wait-AeroSelftestResult {
           if ($null -ne $blkResetCheck) { return $blkResetCheck }
 
           if ($RequireNetCsumOffload) {
-            $csum = Get-AeroVirtioNetOffloadCsumStatsFromTail -Tail $tail
+            $csum = Get-AeroVirtioNetOffloadCsumStatsFromTail -Tail $tail -SerialLogPath $SerialLogPath
             if ($null -eq $csum) { return @{ Result = "MISSING_VIRTIO_NET_CSUM_OFFLOAD"; Tail = $tail } }
             if ($csum.Status -ne "PASS") { return @{ Result = "VIRTIO_NET_CSUM_OFFLOAD_FAILED"; Tail = $tail } }
             if ($null -eq $csum.TxCsum) { return @{ Result = "VIRTIO_NET_CSUM_OFFLOAD_MISSING_FIELDS"; Tail = $tail } }
@@ -1749,7 +1749,7 @@ function Wait-AeroSelftestResult {
                 if ($null -ne $blkResetCheck) { return $blkResetCheck }
 
                 if ($RequireNetCsumOffload) {
-                  $csum = Get-AeroVirtioNetOffloadCsumStatsFromTail -Tail $tail
+                  $csum = Get-AeroVirtioNetOffloadCsumStatsFromTail -Tail $tail -SerialLogPath $SerialLogPath
                   if ($null -eq $csum) { return @{ Result = "MISSING_VIRTIO_NET_CSUM_OFFLOAD"; Tail = $tail } }
                   if ($csum.Status -ne "PASS") { return @{ Result = "VIRTIO_NET_CSUM_OFFLOAD_FAILED"; Tail = $tail } }
                   if ($null -eq $csum.TxCsum) { return @{ Result = "VIRTIO_NET_CSUM_OFFLOAD_MISSING_FIELDS"; Tail = $tail } }
@@ -1863,7 +1863,7 @@ function Wait-AeroSelftestResult {
         if ($null -ne $blkResetCheck) { return $blkResetCheck }
 
         if ($RequireNetCsumOffload) {
-          $csum = Get-AeroVirtioNetOffloadCsumStatsFromTail -Tail $tail
+          $csum = Get-AeroVirtioNetOffloadCsumStatsFromTail -Tail $tail -SerialLogPath $SerialLogPath
           if ($null -eq $csum) { return @{ Result = "MISSING_VIRTIO_NET_CSUM_OFFLOAD"; Tail = $tail } }
           if ($csum.Status -ne "PASS") { return @{ Result = "VIRTIO_NET_CSUM_OFFLOAD_FAILED"; Tail = $tail } }
           if ($null -eq $csum.TxCsum) { return @{ Result = "VIRTIO_NET_CSUM_OFFLOAD_MISSING_FIELDS"; Tail = $tail } }
@@ -4291,14 +4291,15 @@ function Test-AeroVirtioIrqModeEnforcement {
 
 function Get-AeroVirtioNetOffloadCsumStatsFromTail {
   param(
-    [Parameter(Mandatory = $true)] [string]$Tail
+    [Parameter(Mandatory = $true)] [string]$Tail,
+    # Optional: if provided, fall back to parsing the full serial log when the rolling tail buffer does not
+    # contain the marker (e.g. because the tail was truncated).
+    [Parameter(Mandatory = $false)] [string]$SerialLogPath = ""
   )
 
   $prefix = "AERO_VIRTIO_SELFTEST|TEST|virtio-net-offload-csum|"
-  $matches = [regex]::Matches($Tail, [regex]::Escape($prefix) + "[^`r`n]*")
-  if ($matches.Count -eq 0) { return $null }
-
-  $line = $matches[$matches.Count - 1].Value
+  $line = Try-ExtractLastAeroMarkerLine -Tail $Tail -Prefix $prefix -SerialLogPath $SerialLogPath
+  if ($null -eq $line) { return $null }
   $fields = @{}
   foreach ($tok in $line.Split("|")) {
     $idx = $tok.IndexOf("=")
