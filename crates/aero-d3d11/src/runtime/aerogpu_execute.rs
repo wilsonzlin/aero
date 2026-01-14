@@ -2177,15 +2177,17 @@ fn build_color_attachments<'a>(
     Ok((attachments, keys, size))
 }
 
-fn build_depth_attachment<'a>(
-    resources: &'a AerogpuResources,
-    state: &D3D11ShadowState,
-) -> Result<(
+type DepthAttachmentBuild<'a> = (
     Option<wgpu::RenderPassDepthStencilAttachment<'a>>,
     Option<aero_gpu::pipeline_key::DepthStencilKey>,
     Option<wgpu::DepthStencilState>,
     Option<(u32, u32)>,
-)> {
+);
+
+fn build_depth_attachment<'a>(
+    resources: &'a AerogpuResources,
+    state: &D3D11ShadowState,
+) -> Result<DepthAttachmentBuild<'a>> {
     let Some(depth_handle) = state.render_targets.depth_stencil else {
         return Ok((None, None, None, None));
     };

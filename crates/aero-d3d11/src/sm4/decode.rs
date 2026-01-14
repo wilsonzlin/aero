@@ -1120,7 +1120,7 @@ pub fn decode_instruction(
             let value = op
                 .imm32
                 .expect("checked imm32 is present for immediate32")
-                .get(0)
+                .first()
                 .copied()
                 .unwrap_or(0);
             r.expect_eof()?;

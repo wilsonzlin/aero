@@ -21,7 +21,7 @@
 pub const MAX_TESS_FACTOR: u32 = 64;
 
 fn clamp_level(level: u32) -> u32 {
-    level.min(MAX_TESS_FACTOR).max(1)
+    level.clamp(1, MAX_TESS_FACTOR)
 }
 
 /// Number of vertices emitted by integer-partitioned triangle tessellation at `level`.

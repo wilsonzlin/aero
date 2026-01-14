@@ -367,7 +367,7 @@ fn lcm_u64(a: u64, b: u64) -> Option<u64> {
         return None;
     }
     let g = gcd_u64(a, b);
-    Some((a / g).checked_mul(b)?)
+    (a / g).checked_mul(b)
 }
 
 #[cfg(test)]

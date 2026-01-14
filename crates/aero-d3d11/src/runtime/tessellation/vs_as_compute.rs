@@ -160,6 +160,7 @@ impl VsAsComputePipeline {
     /// - `vertex_buffers` are provided in pulling-slot order, matching
     ///   [`VertexPullingLayout::pulling_slot_to_d3d_slot`].
     /// - `vs_out_regs` is typically an [`ExpansionScratchAlloc`] from [`ExpansionScratchAllocator`].
+    #[allow(clippy::too_many_arguments)]
     pub fn create_bind_group_group3(
         &self,
         device: &wgpu::Device,
@@ -170,12 +171,8 @@ impl VsAsComputePipeline {
         index_buffer_words: Option<&wgpu::Buffer>,
         vs_out_regs: &ExpansionScratchAlloc,
     ) -> Result<wgpu::BindGroup> {
-        if self.cfg.indexed {
-            if index_params.is_none() || index_buffer_words.is_none() {
-                bail!(
-                    "VS-as-compute: indexed pipeline requires index_params and index_buffer_words"
-                );
-            }
+        if self.cfg.indexed && (index_params.is_none() || index_buffer_words.is_none()) {
+            bail!("VS-as-compute: indexed pipeline requires index_params and index_buffer_words");
         }
 
         if vertex_buffers.len() != vertex_pulling.slot_count() as usize {
@@ -245,7 +242,7 @@ impl VsAsComputePipeline {
                 "VS-as-compute: invalid dispatch size (invocations_per_instance={invocations_per_instance} instance_count={instance_count})"
             );
         }
-        if invocations_per_instance % self.cfg.control_point_count != 0 {
+        if !invocations_per_instance.is_multiple_of(self.cfg.control_point_count) {
             bail!(
                 "VS-as-compute: invocations_per_instance must be a multiple of control_point_count (invocations_per_instance={invocations_per_instance} control_point_count={})",
                 self.cfg.control_point_count

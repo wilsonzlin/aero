@@ -99,9 +99,8 @@ pub fn patch_count_total_from_element_count(
             "control_points must be <= 32",
         ));
     }
-    let cp = control_points as u32;
     // D3D11-style primitive count computation: floor division (excess elements are ignored).
-    Ok(element_count / cp)
+    Ok(element_count / control_points)
 }
 
 fn checked_mul_u64(a: u64, b: u64, what: &'static str) -> Result<u64, TessellationSizingError> {

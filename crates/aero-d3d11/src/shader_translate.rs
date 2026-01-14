@@ -390,7 +390,7 @@ fn translate_cs(
                 }
                 _ => None,
             })
-            .unwrap_or_else(|| match siv {
+            .unwrap_or(match siv {
                 ComputeSysValue::GroupIndex => 0b0001,
                 _ => 0b0111,
             });
@@ -2703,7 +2703,7 @@ fn scan_resources(
         }
     }
 
-    for (_inst_index, inst) in module.instructions.iter().enumerate() {
+    for inst in &module.instructions {
         let mut scan_src = |src: &crate::sm4_ir::SrcOperand| -> Result<(), ShaderTranslateError> {
             if let SrcKind::ConstantBuffer { slot, reg } = src.kind {
                 validate_slot("cbuffer", slot, D3D11_MAX_CONSTANT_BUFFER_SLOTS)?;
@@ -2982,7 +2982,7 @@ fn scan_resources(
             let Some(slot) = cb.bind_point else {
                 continue;
             };
-            let reg_count_u64 = (u64::from(cb.size) + 15) / 16;
+            let reg_count_u64 = u64::from(cb.size).div_ceil(16);
             let reg_count = u32::try_from(reg_count_u64).unwrap_or(u32::MAX).max(1);
             let bind_count = cb.bind_count.unwrap_or(1);
             if bind_count <= 1 {
@@ -3135,14 +3135,9 @@ fn emit_temp_and_output_decls(
         };
 
         let mut inst = inst;
-        loop {
-            match inst {
-                Sm4Inst::Predicated { pred, inner } => {
-                    predicates.insert(pred.reg.index);
-                    inst = inner;
-                }
-                _ => break,
-            }
+        while let Sm4Inst::Predicated { pred, inner } = inst {
+            predicates.insert(pred.reg.index);
+            inst = inner;
         }
 
         match inst {
@@ -5069,6 +5064,7 @@ fn emit_src_vec4_i32(
     Ok(expr)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn emit_add_with_carry(
     w: &mut WgslWriter,
     opcode: &'static str,
@@ -5121,6 +5117,7 @@ fn emit_add_with_carry(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn emit_sub_with_borrow(
     w: &mut WgslWriter,
     opcode: &'static str,
@@ -5171,6 +5168,7 @@ fn emit_sub_with_borrow(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn emit_sub_with_carry(
     w: &mut WgslWriter,
     opcode: &'static str,

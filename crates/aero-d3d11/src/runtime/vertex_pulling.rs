@@ -59,7 +59,7 @@ pub struct VertexPullingSlot {
 }
 
 /// Draw parameters consumed by vertex pulling compute shaders.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct VertexPullingDrawParams {
     pub first_vertex: u32,
     pub first_instance: u32,
@@ -71,17 +71,6 @@ pub struct VertexPullingDrawParams {
     ///
     /// For non-indexed draws it should be zero.
     pub first_index: u32,
-}
-
-impl Default for VertexPullingDrawParams {
-    fn default() -> Self {
-        Self {
-            first_vertex: 0,
-            first_instance: 0,
-            base_vertex: 0,
-            first_index: 0,
-        }
-    }
 }
 
 /// A single IA attribute load description derived from an [`InputLayoutDesc`].
@@ -353,9 +342,9 @@ impl VertexPullingLayout {
         let mut s = String::new();
 
         s.push_str("// ---- Aero vertex pulling (generated) ----\n");
-        s.push_str(&format!(
-            "struct AeroVpIaSlot {{\n  base_offset_bytes: u32,\n  stride_bytes: u32,\n  _pad0: u32,\n  _pad1: u32,\n}};\n\n"
-        ));
+        s.push_str(
+            "struct AeroVpIaSlot {\n  base_offset_bytes: u32,\n  stride_bytes: u32,\n  _pad0: u32,\n  _pad1: u32,\n};\n\n",
+        );
         s.push_str(&format!(
             "struct AeroVpIaUniform {{\n  slots: array<AeroVpIaSlot, {slot_count}>,\n  first_vertex: u32,\n  first_instance: u32,\n  base_vertex: i32,\n  first_index: u32,\n}};\n\n"
         ));

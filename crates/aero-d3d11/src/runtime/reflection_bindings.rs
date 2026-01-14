@@ -160,7 +160,7 @@ where
                 }
                 existing.visibility |= binding.visibility;
             } else {
-                group_map.insert(binding.binding, binding.clone());
+                group_map.insert(binding.binding, *binding);
             }
         }
     }

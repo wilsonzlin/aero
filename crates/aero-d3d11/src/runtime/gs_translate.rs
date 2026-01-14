@@ -566,9 +566,7 @@ pub fn translate_gs_module_to_wgsl_compute_prepass(
                 emit_write_masked(&mut w, inst_index, "add", dst.reg, dst.mask, rhs)?;
             }
             Sm4Inst::Emit { stream: _ } => {
-                w.line(&format!(
-                    "gs_emit(o0, o1, out_vertex_count, out_index_count, &emitted_count, &strip_len, &strip_prev0, &strip_prev1, overflow); // emit"
-                ));
+                w.line("gs_emit(o0, o1, out_vertex_count, out_index_count, &emitted_count, &strip_len, &strip_prev0, &strip_prev1, overflow); // emit");
             }
             Sm4Inst::Cut { stream: _ } => {
                 w.line("gs_cut(&strip_len); // cut");
@@ -651,6 +649,7 @@ fn bump_reg_max(reg: RegisterRef, max_temp_reg: &mut i32, max_output_reg: &mut i
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn scan_src_operand(
     src: &crate::sm4_ir::SrcOperand,
     max_temp_reg: &mut i32,

@@ -4243,8 +4243,8 @@ impl AerogpuD3d11Executor {
                             if let Some(tex) = stage_bindings.uav_texture(slot) {
                                 self.encoder_used_textures.insert(tex.texture);
                             }
-                        } else if binding_num >= BINDING_BASE_TEXTURE
-                            && binding_num < BINDING_BASE_SAMPLER
+                        } else if (BINDING_BASE_TEXTURE..BINDING_BASE_SAMPLER)
+                            .contains(&binding_num)
                         {
                             let slot = binding_num.saturating_sub(BINDING_BASE_TEXTURE);
                             if let Some(tex) = stage_bindings.texture(slot) {
@@ -4812,8 +4812,8 @@ impl AerogpuD3d11Executor {
                             if let Some(entry) = used {
                                 *entry = true;
                             }
-                        } else if binding_num >= BINDING_BASE_TEXTURE
-                            && binding_num < BINDING_BASE_SAMPLER
+                        } else if (BINDING_BASE_TEXTURE..BINDING_BASE_SAMPLER)
+                            .contains(&binding_num)
                         {
                             let slot_usize =
                                 binding_num.saturating_sub(BINDING_BASE_TEXTURE) as usize;
@@ -6172,8 +6172,8 @@ impl AerogpuD3d11Executor {
                                             if let Some(tex) = stage_bindings.uav_texture(slot) {
                                                 self.encoder_used_textures.insert(tex.texture);
                                             }
-                                        } else if binding_num >= BINDING_BASE_TEXTURE
-                                            && binding_num < BINDING_BASE_SAMPLER
+                                        } else if (BINDING_BASE_TEXTURE..BINDING_BASE_SAMPLER)
+                                            .contains(&binding_num)
                                         {
                                             let slot =
                                                 binding_num.saturating_sub(BINDING_BASE_TEXTURE);
@@ -6416,8 +6416,8 @@ impl AerogpuD3d11Executor {
                                             if let Some(tex) = stage_bindings.uav_texture(slot) {
                                                 self.encoder_used_textures.insert(tex.texture);
                                             }
-                                        } else if binding_num >= BINDING_BASE_TEXTURE
-                                            && binding_num < BINDING_BASE_SAMPLER
+                                        } else if (BINDING_BASE_TEXTURE..BINDING_BASE_SAMPLER)
+                                            .contains(&binding_num)
                                         {
                                             let slot =
                                                 binding_num.saturating_sub(BINDING_BASE_TEXTURE);
@@ -10899,8 +10899,8 @@ impl AerogpuD3d11Executor {
                             if let Some(tex) = stage_bindings.uav_texture(slot) {
                                 self.encoder_used_textures.insert(tex.texture);
                             }
-                        } else if binding_num >= BINDING_BASE_TEXTURE
-                            && binding_num < BINDING_BASE_SAMPLER
+                        } else if (BINDING_BASE_TEXTURE..BINDING_BASE_SAMPLER)
+                            .contains(&binding_num)
                         {
                             let slot = binding_num.saturating_sub(BINDING_BASE_TEXTURE);
                             if let Some(tex) = stage_bindings.texture(slot) {
@@ -11063,8 +11063,8 @@ impl AerogpuD3d11Executor {
                                     guest_mem,
                                 )?;
                             }
-                        } else if binding_num >= BINDING_BASE_TEXTURE
-                            && binding_num < BINDING_BASE_SAMPLER
+                        } else if (BINDING_BASE_TEXTURE..BINDING_BASE_SAMPLER)
+                            .contains(&binding_num)
                         {
                             let slot = binding_num.saturating_sub(BINDING_BASE_TEXTURE);
                             if let Some(tex) = self.bindings.stage(stage).texture(slot) {
@@ -12129,35 +12129,33 @@ impl AerogpuD3d11Executor {
                             false,
                         )?;
                     }
+                } else if let Some(b5_format) = b5_format {
+                    upload_b5_subresource(
+                        queue,
+                        &tex.texture,
+                        level,
+                        layer,
+                        level_width,
+                        level_height,
+                        level_row_pitch_u32,
+                        b5_format,
+                        gpa,
+                        guest_mem,
+                    )?;
                 } else {
-                    if let Some(b5_format) = b5_format {
-                        upload_b5_subresource(
-                            queue,
-                            &tex.texture,
-                            level,
-                            layer,
-                            level_width,
-                            level_height,
-                            level_row_pitch_u32,
-                            b5_format,
-                            gpa,
-                            guest_mem,
-                        )?;
-                    } else {
-                        upload_subresource(
-                            queue,
-                            &tex.texture,
-                            desc.format,
-                            level,
-                            layer,
-                            level_width,
-                            level_height,
-                            level_row_pitch_u32,
-                            force_opaque_alpha,
-                            gpa,
-                            guest_mem,
-                        )?;
-                    }
+                    upload_subresource(
+                        queue,
+                        &tex.texture,
+                        desc.format,
+                        level,
+                        layer,
+                        level_width,
+                        level_height,
+                        level_row_pitch_u32,
+                        force_opaque_alpha,
+                        gpa,
+                        guest_mem,
+                    )?;
                 }
             }
         }
@@ -13489,7 +13487,7 @@ fn d3d_topology_requires_gs_hs_ds_emulation(topology: u32) -> bool {
     // D3D11 topology values:
     // - 10..13: *_ADJ adjacency topologies (geometry shader input)
     // - 33..64: N_CONTROL_POINT_PATCHLIST (tessellation)
-    matches!(topology, 10 | 11 | 12 | 13) || (33..=64).contains(&topology)
+    (10..=13).contains(&topology) || (33..=64).contains(&topology)
 }
 
 fn map_pipeline_cache_stage(stage: ShaderStage) -> aero_gpu::pipeline_key::ShaderStage {
