@@ -35,7 +35,76 @@ const INPUT_E2E_SPECS: &[&str] = &[
     "tests/e2e/workers_panel_input_capture.spec.ts",
 ];
 
+const AERO_USB_FOCUSED_TESTS: &[&str] = &[
+    "uhci",
+    "uhci_external_hub",
+    "ehci",
+    "ehci_snapshot_roundtrip",
+    "usb2_companion_routing",
+    "webusb_passthrough_uhci",
+    "hid_builtin_snapshot",
+    "hid_composite_mouse_snapshot_compat",
+    "hid_configuration_snapshot_clamping",
+    "hid_consumer_control_snapshot_clamping",
+    "hid_gamepad_snapshot_clamping",
+    "hid_keyboard_snapshot_sanitization",
+    "hid_mouse_snapshot_clamping",
+    "usb_hub_snapshot_configuration_clamping",
+    "attached_device_snapshot_address_clamping",
+    "hid_usage_keyboard_fixture",
+    "hid_usage_consumer_fixture",
+    "xhci_enum_smoke",
+    "xhci_controller_webusb_ep0",
+    "xhci_doorbell0",
+    "xhci_usbcmd_run_gates_transfers",
+    "xhci_webusb_passthrough",
+];
+
+const AERO_MACHINE_FOCUSED_TESTS: &[&str] = &[
+    "machine_i8042_snapshot_pending_bytes",
+    "machine_virtio_input",
+    "machine_uhci",
+    "uhci_snapshot",
+    "machine_uhci_snapshot_roundtrip",
+    "uhci_usb_topology_api",
+    "machine_usb_attach_at_path",
+    "machine_ehci",
+    "machine_usb2_companion_routing",
+    "machine_uhci_synthetic_usb_hid",
+    "machine_uhci_synthetic_hid",
+    "machine_uhci_synthetic_usb_hid_mouse_buttons",
+    "machine_uhci_synthetic_usb_hid_gamepad",
+    "machine_uhci_synthetic_usb_hid_reports",
+    "machine_xhci",
+    "machine_xhci_snapshot",
+    "xhci_snapshot",
+    "machine_xhci_usb_attach_at_path",
+    "usb_snapshot_host_state",
+];
+
+const WASM_PACK_TESTS: &[&str] = &["webusb_uhci_bridge", "xhci_webusb_bridge"];
+
+const AERO_WASM_INPUT_TESTS: &[&str] =
+    &["machine_input_injection", "machine_input_backends", "machine_virtio_input"];
+
+const WEB_UNIT_TEST_PATHS: &[&str] = &[
+    "src/input",
+    "src/usb/usb_guest_controller.test.ts",
+    "src/usb/webusb_passthrough_runtime.test.ts",
+    "src/usb/xhci_webusb_bridge.test.ts",
+    "src/usb/xhci_webusb_passthrough_runtime.test.ts",
+    "src/usb/uhci_webusb_root_port_rust_drift.test.ts",
+    "src/usb/ehci_webusb_root_port_rust_drift.test.ts",
+    "src/usb/xhci_webusb_root_port_rust_drift.test.ts",
+];
+
 pub fn print_help() {
+    let aero_usb_focused_flags = format_test_flags(AERO_USB_FOCUSED_TESTS);
+    let aero_machine_focused_flags = format_test_flags(AERO_MACHINE_FOCUSED_TESTS);
+    let wasm_pack_focused_flags = format_test_flags(WASM_PACK_TESTS);
+    let aero_wasm_focused_flags = format_test_flags(AERO_WASM_INPUT_TESTS);
+    let web_unit_test_paths = WEB_UNIT_TEST_PATHS.join(" ");
+
     println!(
         "\
 Run the USB/input-focused test suite (Rust + web) with one command.
@@ -45,24 +114,12 @@ Usage:
 
 Steps:
   1. cargo test -p aero-devices-input --locked
-  2. cargo test -p aero-usb --locked --test uhci --test uhci_external_hub --test ehci --test ehci_snapshot_roundtrip
-     --test usb2_companion_routing --test webusb_passthrough_uhci --test hid_builtin_snapshot
-     --test hid_composite_mouse_snapshot_compat --test hid_configuration_snapshot_clamping
-     --test hid_consumer_control_snapshot_clamping --test hid_gamepad_snapshot_clamping
-     --test hid_keyboard_snapshot_sanitization --test hid_mouse_snapshot_clamping
-     --test usb_hub_snapshot_configuration_clamping --test attached_device_snapshot_address_clamping
-     --test hid_usage_keyboard_fixture --test hid_usage_consumer_fixture --test xhci_enum_smoke
-     --test xhci_controller_webusb_ep0 --test xhci_doorbell0 --test xhci_usbcmd_run_gates_transfers --test xhci_webusb_passthrough
-     (or: --usb-all to run the full aero-usb test suite)
-  3. (optional: --machine) cargo test -p aero-machine --lib --locked --test machine_i8042_snapshot_pending_bytes --test machine_virtio_input
-      --test machine_uhci --test uhci_snapshot --test machine_uhci_snapshot_roundtrip --test uhci_usb_topology_api --test machine_usb_attach_at_path
-      --test machine_ehci --test machine_usb2_companion_routing --test machine_uhci_synthetic_usb_hid
-      --test machine_uhci_synthetic_hid --test machine_uhci_synthetic_usb_hid_mouse_buttons --test machine_uhci_synthetic_usb_hid_gamepad
-      --test machine_uhci_synthetic_usb_hid_reports --test machine_xhci --test machine_xhci_snapshot --test xhci_snapshot --test machine_xhci_usb_attach_at_path --test usb_snapshot_host_state
-  4. (optional: --wasm) wasm-pack test --node crates/aero-wasm --test webusb_uhci_bridge --test xhci_webusb_bridge --locked
-  5. (optional: --with-wasm) cargo test -p aero-wasm --locked --test machine_input_injection --test machine_input_backends
-     --test machine_virtio_input
-  6. (unless --rust-only) npm -w web run test:unit -- src/input src/usb/usb_guest_controller.test.ts src/usb/webusb_passthrough_runtime.test.ts src/usb/xhci_webusb_bridge.test.ts src/usb/xhci_webusb_passthrough_runtime.test.ts src/usb/uhci_webusb_root_port_rust_drift.test.ts src/usb/ehci_webusb_root_port_rust_drift.test.ts src/usb/xhci_webusb_root_port_rust_drift.test.ts
+  2. cargo test -p aero-usb --locked {aero_usb_focused_flags}
+      (or: --usb-all to run the full aero-usb test suite)
+  3. (optional: --machine) cargo test -p aero-machine --lib --locked {aero_machine_focused_flags}
+  4. (optional: --wasm) wasm-pack test --node crates/aero-wasm {wasm_pack_focused_flags} --locked
+  5. (optional: --with-wasm) cargo test -p aero-wasm --locked {aero_wasm_focused_flags}
+  6. (unless --rust-only) npm -w web run test:unit -- {web_unit_test_paths}
   7. (optional: --e2e, unless --rust-only) npm run test:e2e -- <input-related specs...>
       (defaults to --project=chromium --workers=1; sets AERO_WASM_PACKAGES=core unless already set)
 
@@ -111,52 +168,9 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
     if opts.usb_all {
         runner.run_step("Rust: cargo test -p aero-usb --locked (full)", &mut cmd)?;
     } else {
-        cmd.args([
-            "--test",
-            "uhci",
-            "--test",
-            "uhci_external_hub",
-            "--test",
-            "ehci",
-            "--test",
-            "ehci_snapshot_roundtrip",
-            "--test",
-            "usb2_companion_routing",
-            "--test",
-            "webusb_passthrough_uhci",
-            "--test",
-            "hid_builtin_snapshot",
-            "--test",
-            "hid_composite_mouse_snapshot_compat",
-            "--test",
-            "hid_configuration_snapshot_clamping",
-            "--test",
-            "hid_consumer_control_snapshot_clamping",
-            "--test",
-            "hid_gamepad_snapshot_clamping",
-            "--test",
-            "hid_keyboard_snapshot_sanitization",
-            "--test",
-            "hid_mouse_snapshot_clamping",
-            "--test",
-            "usb_hub_snapshot_configuration_clamping",
-            "--test",
-            "attached_device_snapshot_address_clamping",
-            "--test",
-            "hid_usage_keyboard_fixture",
-            "--test",
-            "hid_usage_consumer_fixture",
-            "--test",
-            "xhci_enum_smoke",
-            "--test",
-            "xhci_controller_webusb_ep0",
-            "--test",
-            "xhci_doorbell0",
-            "--test",
-            "xhci_usbcmd_run_gates_transfers",
-            "--test",
-            "xhci_webusb_passthrough",
-        ]);
+        for &test in AERO_USB_FOCUSED_TESTS {
+            cmd.args(["--test", test]);
+        }
         runner.run_step("Rust: cargo test -p aero-usb --locked (focused)", &mut cmd)?;
     }
 
@@ -165,51 +179,11 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
         // For input/USB changes we only need the unit tests plus the UHCI/EHCI/xHCI integration
         // tests that validate device wiring and snapshot/restore behaviour.
         let mut cmd = Command::new("cargo");
-        cmd.current_dir(&repo_root).args([
-            "test",
-            "-p",
-            "aero-machine",
-            "--lib",
-            "--locked",
-            "--test",
-            "machine_i8042_snapshot_pending_bytes",
-            "--test",
-            "machine_virtio_input",
-            "--test",
-            "machine_uhci",
-            "--test",
-            "uhci_snapshot",
-            "--test",
-            "machine_uhci_snapshot_roundtrip",
-            "--test",
-            "uhci_usb_topology_api",
-            "--test",
-            "machine_usb_attach_at_path",
-            "--test",
-            "machine_ehci",
-            "--test",
-            "machine_usb2_companion_routing",
-            "--test",
-            "machine_uhci_synthetic_usb_hid",
-            "--test",
-            "machine_uhci_synthetic_hid",
-            "--test",
-            "machine_uhci_synthetic_usb_hid_mouse_buttons",
-            "--test",
-            "machine_uhci_synthetic_usb_hid_gamepad",
-            "--test",
-            "machine_uhci_synthetic_usb_hid_reports",
-            "--test",
-            "machine_xhci",
-            "--test",
-            "machine_xhci_snapshot",
-            "--test",
-            "xhci_snapshot",
-            "--test",
-            "machine_xhci_usb_attach_at_path",
-            "--test",
-            "usb_snapshot_host_state",
-        ]);
+        cmd.current_dir(&repo_root)
+            .args(["test", "-p", "aero-machine", "--lib", "--locked"]);
+        for &test in AERO_MACHINE_FOCUSED_TESTS {
+            cmd.args(["--test", test]);
+        }
         runner.run_step(
             "Rust: cargo test -p aero-machine --lib --locked (focused USB wiring)",
             &mut cmd,
@@ -218,18 +192,11 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
 
     if opts.with_wasm {
         let mut cmd = Command::new("cargo");
-        cmd.current_dir(&repo_root).args([
-            "test",
-            "-p",
-            "aero-wasm",
-            "--locked",
-            "--test",
-            "machine_input_injection",
-            "--test",
-            "machine_input_backends",
-            "--test",
-            "machine_virtio_input",
-        ]);
+        cmd.current_dir(&repo_root)
+            .args(["test", "-p", "aero-wasm", "--locked"]);
+        for &test in AERO_WASM_INPUT_TESTS {
+            cmd.args(["--test", test]);
+        }
         runner.run_step(
             "Rust: cargo test -p aero-wasm --locked (focused input integration)",
             &mut cmd,
@@ -260,16 +227,12 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
 
     if opts.wasm {
         let mut cmd = Command::new("wasm-pack");
-        cmd.current_dir(&repo_root).args([
-            "test",
-            "--node",
-            "crates/aero-wasm",
-            "--test",
-            "webusb_uhci_bridge",
-            "--test",
-            "xhci_webusb_bridge",
-            "--locked",
-        ]);
+        cmd.current_dir(&repo_root)
+            .args(["test", "--node", "crates/aero-wasm"]);
+        for &test in WASM_PACK_TESTS {
+            cmd.args(["--test", test]);
+        }
+        cmd.arg("--locked");
         runner.run_step(
             "WASM: wasm-pack test --node crates/aero-wasm --test webusb_uhci_bridge --test xhci_webusb_bridge --locked",
             &mut cmd,
@@ -311,15 +274,8 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
         "run",
         "test:unit",
         "--",
-        "src/input",
-        "src/usb/usb_guest_controller.test.ts",
-        "src/usb/webusb_passthrough_runtime.test.ts",
-        "src/usb/xhci_webusb_bridge.test.ts",
-        "src/usb/xhci_webusb_passthrough_runtime.test.ts",
-        "src/usb/uhci_webusb_root_port_rust_drift.test.ts",
-        "src/usb/ehci_webusb_root_port_rust_drift.test.ts",
-        "src/usb/xhci_webusb_root_port_rust_drift.test.ts",
     ]);
+    cmd.args(WEB_UNIT_TEST_PATHS.iter().copied());
     match runner.run_step(
         "Web: npm -w web run test:unit -- src/input (plus WebUSB topology guards)",
         &mut cmd,
@@ -461,6 +417,14 @@ fn env_var_nonempty(key: &str) -> bool {
         Ok(value) => !value.trim().is_empty(),
         Err(_) => false,
     }
+}
+
+fn format_test_flags(tests: &[&str]) -> String {
+    tests
+        .iter()
+        .map(|test| format!("--test {test}"))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 #[cfg(test)]
