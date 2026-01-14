@@ -1330,6 +1330,48 @@ mod tests {
     }
 
     #[test]
+    fn pipeline_bindings_info_rejects_group_over_device_limit() {
+        pollster::block_on(async {
+            let rt = match crate::runtime::aerogpu_execute::AerogpuCmdRuntime::new_for_tests().await
+            {
+                Ok(rt) => rt,
+                Err(err) => {
+                    skip_or_panic(module_path!(), &format!("wgpu unavailable ({err:#})"));
+                    return;
+                }
+            };
+            let device = rt.device();
+            let mut layout_cache = BindGroupLayoutCache::new();
+
+            // `max_bind_groups` is a count; the largest valid group index is `max_bind_groups - 1`.
+            // Use `max_bind_groups` itself as a deterministic out-of-range group index.
+            let invalid_group = device.limits().max_bind_groups;
+            let internal = vec![crate::Binding {
+                group: invalid_group,
+                binding: BINDING_BASE_TEXTURE,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                kind: crate::BindingKind::Texture2D { slot: 0 },
+            }];
+
+            let err = build_pipeline_bindings_info(
+                device,
+                &mut layout_cache,
+                [ShaderBindingSet::Internal(internal.as_slice())],
+                BindGroupIndexValidation::GuestAndInternal {
+                    max_internal_bind_group_index: invalid_group,
+                },
+            )
+            .unwrap_err()
+            .to_string();
+
+            assert!(
+                err.contains("max_bind_groups"),
+                "expected error to mention max_bind_groups, got: {err}"
+            );
+        });
+    }
+
+    #[test]
     fn pipeline_bindings_info_guest_bindings_remain_stage_scoped_with_internal_groups_enabled() {
         pollster::block_on(async {
             let rt = match crate::runtime::aerogpu_execute::AerogpuCmdRuntime::new_for_tests().await
@@ -1344,13 +1386,6 @@ mod tests {
             let mut layout_cache = BindGroupLayoutCache::new();
 
             let internal_only_group = MAX_GUEST_BIND_GROUP_INDEX + 1;
-            if device.limits().max_bind_groups <= internal_only_group {
-                skip_or_panic(
-                    module_path!(),
-                    "adapter does not support 5 bind groups (required for @group(4))",
-                );
-                return;
-            }
             let guest = vec![crate::Binding {
                 group: internal_only_group,
                 binding: BINDING_BASE_TEXTURE,
@@ -1457,10 +1492,13 @@ mod tests {
                 );
                 return;
             }
-            if device.limits().max_bind_groups < 5 {
+            let required_bind_groups = BIND_GROUP_INTERNAL_EMULATION + 1;
+            if device.limits().max_bind_groups < required_bind_groups {
                 skip_or_panic(
                     module_path!(),
-                    "adapter does not support 5 bind groups (required by this test)",
+                    &format!(
+                        "adapter does not support {required_bind_groups} bind groups (required by this test)"
+                    ),
                 );
                 return;
             }
