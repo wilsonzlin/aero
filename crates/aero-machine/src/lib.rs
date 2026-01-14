@@ -10418,7 +10418,7 @@ impl Machine {
                                 let clear_len = (width as usize)
                                     .saturating_mul(height as usize)
                                     .saturating_mul(bytes_per_pixel.max(1));
-                                let fb_base = aero_gpu_vga::VBE_FRAMEBUFFER_OFFSET;
+                                let fb_base = VBE_LFB_OFFSET;
                                 let vram_len = vga.vram().len();
                                 if fb_base < vram_len {
                                     let vbe_len = vram_len - fb_base;
