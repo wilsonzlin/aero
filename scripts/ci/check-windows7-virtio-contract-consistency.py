@@ -1466,10 +1466,12 @@ def validate_virtio_input_model_lines(
     Validate the virtio-input model line policy for the given INF.
 
     - `aero_virtio_input.inf` (and its legacy filename alias `virtio-input.inf.disabled`)
-      must include:
-        - the SUBSYS-qualified Aero contract v1 keyboard/mouse HWIDs (distinct naming), and
-        - the strict REV-qualified generic fallback HWID (no SUBSYS), for environments
-          that don't expose Aero subsystem IDs.
+      must include the SUBSYS-qualified Aero contract v1 keyboard/mouse HWIDs (distinct
+      naming).
+    - If `require_fallback=True`, it must include the strict REV-qualified generic
+      fallback HWID (no SUBSYS) to keep binding stable when subsystem IDs are not
+      exposed/recognized. If `require_fallback=False`, it must not include that
+      fallback HWID.
     - It must not include the tablet subsystem ID (`SUBSYS_00121AF4`); tablet devices
       bind via `aero_virtio_tablet.inf` (which is more specific and wins over the
       generic fallback when both are installed).
@@ -3734,8 +3736,8 @@ def main() -> None:
         base_hwid = f"PCI\\VEN_{contract_any.vendor_id:04X}&DEV_{contract_any.device_id:04X}"
         strict_hwid = f"{base_hwid}&REV_{contract_rev:02X}"
         hwids_upper = {h.upper() for h in hwids}
-        # Most Win7 virtio INFs include a strict (no SUBSYS) Vendor/Device+REV match so
-        # binding remains revision-gated even if subsystem IDs are absent/ignored.
+        # Win7 virtio INFs include a strict (no SUBSYS) Vendor/Device+REV match so binding
+        # remains revision-gated even if subsystem IDs are absent/ignored.
         if strict_hwid.upper() not in hwids_upper:
             errors.append(
                 format_error(
