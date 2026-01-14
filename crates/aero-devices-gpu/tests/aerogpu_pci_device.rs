@@ -68,12 +68,71 @@ fn pci_wrapper_gates_aerogpu_mmio_on_pci_command_mem_bit() {
 
     // With COMMAND.MEM clear, reads float high and writes are ignored.
     assert_eq!(dev.read(mmio::MAGIC, 4) as u32, u32::MAX);
+    assert_eq!(dev.read(mmio::MAGIC, 1), 0xFF);
+    assert_eq!(dev.read(mmio::MAGIC, 2), 0xFFFF);
+    assert_eq!(dev.read(mmio::MAGIC, 8), u64::MAX);
     dev.write(mmio::RING_GPA_LO, 4, 0xdead_beef);
     assert_eq!(dev.regs.ring_gpa, 0);
 
     // Enable MMIO decoding and verify the device responds.
     dev.config_mut().set_command(1 << 1);
     assert_eq!(dev.read(mmio::MAGIC, 4) as u32, AEROGPU_MMIO_MAGIC);
+}
+
+#[test]
+fn pci_wrapper_ignores_doorbell_writes_while_mmio_decode_is_disabled() {
+    let mut mem = VecMemory::new(0x20_000);
+    let mut dev = new_test_device(AeroGpuDeviceConfig::default());
+
+    // Minimal ring: one empty submission signaling fence 42.
+    let ring_gpa = 0x1000u64;
+    let ring_size = 0x1000u32;
+    let entry_count = 8u32;
+    let entry_stride = AeroGpuSubmitDesc::SIZE_BYTES;
+    mem.write_u32(ring_gpa + RING_MAGIC_OFFSET, AEROGPU_RING_MAGIC);
+    mem.write_u32(ring_gpa + RING_ABI_VERSION_OFFSET, dev.regs.abi_version);
+    mem.write_u32(ring_gpa + RING_SIZE_BYTES_OFFSET, ring_size);
+    mem.write_u32(ring_gpa + RING_ENTRY_COUNT_OFFSET, entry_count);
+    mem.write_u32(ring_gpa + RING_ENTRY_STRIDE_BYTES_OFFSET, entry_stride);
+    mem.write_u32(ring_gpa + RING_FLAGS_OFFSET, 0);
+    mem.write_u32(ring_gpa + RING_HEAD_OFFSET, 0);
+    mem.write_u32(ring_gpa + RING_TAIL_OFFSET, 1);
+
+    let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
+    mem.write_u32(
+        desc_gpa + SUBMIT_DESC_SIZE_BYTES_OFFSET,
+        AeroGpuSubmitDesc::SIZE_BYTES,
+    );
+    mem.write_u64(desc_gpa + SUBMIT_DESC_SIGNAL_FENCE_OFFSET, 42);
+
+    dev.write(mmio::RING_GPA_LO, 4, ring_gpa as u64);
+    dev.write(mmio::RING_GPA_HI, 4, (ring_gpa >> 32) as u64);
+    dev.write(mmio::RING_SIZE_BYTES, 4, ring_size as u64);
+    dev.write(mmio::RING_CONTROL, 4, ring_control::ENABLE as u64);
+
+    // Disable MMIO decode but keep bus mastering enabled.
+    dev.config_mut().set_command(1 << 2);
+
+    // Doorbell write must be ignored while COMMAND.MEM is clear.
+    dev.write(mmio::DOORBELL, 4, 1);
+    dev.tick(&mut mem, 0);
+    assert_eq!(dev.regs.completed_fence, 0);
+    assert_eq!(mem.read_u32(ring_gpa + RING_HEAD_OFFSET), 0);
+    assert_eq!(dev.regs.stats.doorbells, 0);
+
+    // Re-enable MMIO decode: the ignored doorbell must not be "replayed" on tick.
+    dev.config_mut().set_command((1 << 1) | (1 << 2));
+    dev.tick(&mut mem, 0);
+    assert_eq!(dev.regs.completed_fence, 0);
+    assert_eq!(mem.read_u32(ring_gpa + RING_HEAD_OFFSET), 0);
+    assert_eq!(dev.regs.stats.doorbells, 0);
+
+    // Writing a doorbell with MMIO decode enabled should now process and advance the fence.
+    dev.write(mmio::DOORBELL, 4, 1);
+    dev.tick(&mut mem, 0);
+    assert_eq!(dev.regs.completed_fence, 42);
+    assert_eq!(mem.read_u32(ring_gpa + RING_HEAD_OFFSET), 1);
+    assert_eq!(dev.regs.stats.doorbells, 1);
 }
 
 #[test]
@@ -693,7 +752,7 @@ fn drain_pending_submissions_and_complete_fence_with_external_backend() {
 }
 
 #[test]
-fn drain_pending_submissions_includes_submissions_completed_before_drain() {
+fn drain_pending_submissions_returns_completed_fences_as_well() {
     let cfg = AeroGpuDeviceConfig {
         vblank_hz: None,
         executor: AeroGpuExecutorConfig {
@@ -748,9 +807,9 @@ fn drain_pending_submissions_includes_submissions_completed_before_drain() {
     dev.tick(&mut mem, 0);
     assert_eq!(dev.regs.completed_fence, 0);
 
-    // In Deferred + external-backend mode, submissions should be drained even if their fence has
-    // already completed. Some guest drivers reuse the most recent fence for internal (NO_IRQ)
-    // work, and those submissions can still carry important side effects.
+    // Even if fence 1 is completed before the external backend drains submissions, the submission
+    // is still surfaced: some guest drivers may reuse fence values or rely on backend side effects
+    // even if the completed fence does not advance.
     dev.complete_fence(&mut mem, 1);
     assert_eq!(dev.regs.completed_fence, 1);
 
