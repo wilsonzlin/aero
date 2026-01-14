@@ -21809,7 +21809,7 @@ mod tests {
             cmd_bytes.extend_from_slice(&0u32.to_le_bytes()); // stage = vertex
             cmd_bytes.extend_from_slice(&0u32.to_le_bytes()); // start_register
             cmd_bytes.extend_from_slice(&vec4_count.to_le_bytes());
-            cmd_bytes.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+            cmd_bytes.extend_from_slice(&0u32.to_le_bytes()); // stage_ex (0 = real stage)
             cmd_bytes.extend_from_slice(&[0xABu8; 16]); // vec4 data
             assert_eq!(cmd_bytes.len(), size_bytes as usize);
 
@@ -21817,6 +21817,116 @@ mod tests {
                 .expect("SET_SHADER_CONSTANTS_F should succeed");
 
             assert!(exec.encoder_has_commands);
+        });
+    }
+
+    #[test]
+    fn set_shader_constants_f_stage_ex_targets_extended_legacy_constants_buffers() {
+        pollster::block_on(async {
+            let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+                Ok(exec) => exec,
+                Err(e) => {
+                    skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                    return;
+                }
+            };
+
+            // Tests that exercise stage_ex decoding should run with an ABI that honors stage_ex.
+            exec.cmd_stream_abi_minor = AEROGPU_STAGE_EX_MIN_ABI_MINOR;
+
+            // Ensure initialization pre-binds b0 for the extended stages (GS/HS/DS).
+            for stage in [
+                ShaderStage::Vertex,
+                ShaderStage::Pixel,
+                ShaderStage::Geometry,
+                ShaderStage::Hull,
+                ShaderStage::Domain,
+                ShaderStage::Compute,
+            ] {
+                let cb0 = exec
+                    .bindings
+                    .stage(stage)
+                    .constant_buffer(0)
+                    .expect("b0 should be bound");
+                assert_eq!(cb0.buffer, legacy_constants_buffer_id(stage));
+                assert_eq!(cb0.offset, 0);
+                assert_eq!(cb0.size, None);
+            }
+
+            let mut encoder = exec
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("aerogpu_cmd test SET_SHADER_CONSTANTS_F stage_ex"),
+                });
+
+            // `SET_SHADER_CONSTANTS_F` uses the legacy `shader_stage` enum plus the `stage_ex` ABI
+            // extension. For HS/DS writes, the stream encodes stage=COMPUTE and stage_ex=3/4.
+            let vec4_count = 1u32;
+            let size_bytes = (24 + 16) as u32;
+
+            // Hull (HS) constants: stage=COMPUTE, stage_ex=3.
+            let mut cmd_bytes = Vec::with_capacity(size_bytes as usize);
+            cmd_bytes
+                .extend_from_slice(&(AerogpuCmdOpcode::SetShaderConstantsF as u32).to_le_bytes());
+            cmd_bytes.extend_from_slice(&size_bytes.to_le_bytes());
+            cmd_bytes.extend_from_slice(&2u32.to_le_bytes()); // stage = compute
+            cmd_bytes.extend_from_slice(&0u32.to_le_bytes()); // start_register
+            cmd_bytes.extend_from_slice(&vec4_count.to_le_bytes());
+            cmd_bytes.extend_from_slice(&3u32.to_le_bytes()); // stage_ex = hull
+            cmd_bytes.extend_from_slice(&[0x11u8; 16]);
+            exec.exec_set_shader_constants_f(&mut encoder, &cmd_bytes)
+                .expect("SET_SHADER_CONSTANTS_F (HS) should succeed");
+            assert!(
+                exec.encoder_used_buffers
+                    .contains(&legacy_constants_buffer_id(ShaderStage::Hull)),
+                "expected HS legacy constants buffer to be referenced"
+            );
+            assert!(
+                !exec.encoder_used_buffers
+                    .contains(&legacy_constants_buffer_id(ShaderStage::Compute)),
+                "stage_ex HS write must not clobber the real compute stage legacy constants buffer"
+            );
+
+            // Domain (DS) constants: stage=COMPUTE, stage_ex=4.
+            let mut cmd_bytes = Vec::with_capacity(size_bytes as usize);
+            cmd_bytes
+                .extend_from_slice(&(AerogpuCmdOpcode::SetShaderConstantsF as u32).to_le_bytes());
+            cmd_bytes.extend_from_slice(&size_bytes.to_le_bytes());
+            cmd_bytes.extend_from_slice(&2u32.to_le_bytes()); // stage = compute
+            cmd_bytes.extend_from_slice(&0u32.to_le_bytes()); // start_register
+            cmd_bytes.extend_from_slice(&vec4_count.to_le_bytes());
+            cmd_bytes.extend_from_slice(&4u32.to_le_bytes()); // stage_ex = domain
+            cmd_bytes.extend_from_slice(&[0x22u8; 16]);
+            exec.exec_set_shader_constants_f(&mut encoder, &cmd_bytes)
+                .expect("SET_SHADER_CONSTANTS_F (DS) should succeed");
+            assert!(
+                exec.encoder_used_buffers
+                    .contains(&legacy_constants_buffer_id(ShaderStage::Domain)),
+                "expected DS legacy constants buffer to be referenced"
+            );
+            assert!(
+                !exec.encoder_used_buffers
+                    .contains(&legacy_constants_buffer_id(ShaderStage::Compute)),
+                "stage_ex DS write must not clobber the real compute stage legacy constants buffer"
+            );
+
+            // Real compute constants: stage=COMPUTE, stage_ex=0.
+            let mut cmd_bytes = Vec::with_capacity(size_bytes as usize);
+            cmd_bytes
+                .extend_from_slice(&(AerogpuCmdOpcode::SetShaderConstantsF as u32).to_le_bytes());
+            cmd_bytes.extend_from_slice(&size_bytes.to_le_bytes());
+            cmd_bytes.extend_from_slice(&2u32.to_le_bytes()); // stage = compute
+            cmd_bytes.extend_from_slice(&0u32.to_le_bytes()); // start_register
+            cmd_bytes.extend_from_slice(&vec4_count.to_le_bytes());
+            cmd_bytes.extend_from_slice(&0u32.to_le_bytes()); // stage_ex = compute
+            cmd_bytes.extend_from_slice(&[0x33u8; 16]);
+            exec.exec_set_shader_constants_f(&mut encoder, &cmd_bytes)
+                .expect("SET_SHADER_CONSTANTS_F (CS) should succeed");
+            assert!(
+                exec.encoder_used_buffers
+                    .contains(&legacy_constants_buffer_id(ShaderStage::Compute)),
+                "expected CS legacy constants buffer to be referenced"
+            );
         });
     }
 
