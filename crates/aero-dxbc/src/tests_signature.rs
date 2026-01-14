@@ -7,243 +7,129 @@ const VS_2_0_SIMPLE_DXBC: &[u8] =
     include_bytes!("../../aero-d3d9/tests/fixtures/dxbc/vs_2_0_simple.dxbc");
 
 fn build_signature_chunk() -> Vec<u8> {
-    // Header:
-    //   u32 param_count
-    //   u32 param_offset (from chunk start)
-    //
-    // Entry layout (24 bytes):
-    //   u32 semantic_name_offset
-    //   u32 semantic_index
-    //   u32 system_value_type
-    //   u32 component_type
-    //   u32 register
-    //   u8  mask
-    //   u8  read_write_mask
-    //   u8  stream
-    //   u8  min_precision (ignored)
-    let mut bytes = Vec::new();
-
-    let param_count = 2u32;
-    let param_offset = 8u32;
-
-    bytes.extend_from_slice(&param_count.to_le_bytes());
-    bytes.extend_from_slice(&param_offset.to_le_bytes());
-
-    let table_start = bytes.len();
-    assert_eq!(table_start, 8);
-
-    let entry_size = 24usize;
-    let string_table_offset = (table_start + (entry_size * param_count as usize)) as u32;
-
-    let pos_name_offset = string_table_offset;
-    let tex_name_offset = string_table_offset + ("POSITION\0".len() as u32);
-
-    // POSITION (register 0, xyzw)
-    bytes.extend_from_slice(&pos_name_offset.to_le_bytes());
-    bytes.extend_from_slice(&0u32.to_le_bytes()); // semantic_index
-    bytes.extend_from_slice(&0u32.to_le_bytes()); // system_value_type (D3D_NAME_UNDEFINED)
-    bytes.extend_from_slice(&3u32.to_le_bytes()); // component_type (float32)
-    bytes.extend_from_slice(&0u32.to_le_bytes()); // register
-    bytes.extend_from_slice(&u32::from_le_bytes([0xF, 0xF, 0, 0]).to_le_bytes()); // mask/rw/stream/min_prec
-
-    // TEXCOORD0 (register 1, xy)
-    bytes.extend_from_slice(&tex_name_offset.to_le_bytes());
-    bytes.extend_from_slice(&0u32.to_le_bytes()); // semantic_index
-    bytes.extend_from_slice(&0u32.to_le_bytes()); // system_value_type
-    bytes.extend_from_slice(&3u32.to_le_bytes()); // component_type
-    bytes.extend_from_slice(&1u32.to_le_bytes()); // register
-    bytes.extend_from_slice(&u32::from_le_bytes([0x3, 0x3, 0, 0]).to_le_bytes()); // mask/rw/stream/min_prec
-
-    bytes.extend_from_slice(b"POSITION\0");
-    bytes.extend_from_slice(b"TEXCOORD\0");
-
-    bytes
+    dxbc_test_utils::build_signature_chunk_v0(&[
+        dxbc_test_utils::SignatureEntryDesc {
+            semantic_name: "POSITION",
+            semantic_index: 0,
+            system_value_type: 0,
+            component_type: 3, // float32
+            register: 0,
+            mask: 0xF,
+            read_write_mask: 0xF,
+            stream: 0,
+        },
+        dxbc_test_utils::SignatureEntryDesc {
+            semantic_name: "TEXCOORD",
+            semantic_index: 0,
+            system_value_type: 0,
+            component_type: 3, // float32
+            register: 1,
+            mask: 0x3,
+            read_write_mask: 0x3,
+            stream: 0,
+        },
+    ])
 }
 
 fn build_signature_chunk_with_registers(pos_reg: u32, tex_reg: u32) -> Vec<u8> {
-    let mut bytes = Vec::new();
-
-    let param_count = 2u32;
-    let param_offset = 8u32;
-
-    bytes.extend_from_slice(&param_count.to_le_bytes());
-    bytes.extend_from_slice(&param_offset.to_le_bytes());
-
-    let table_start = bytes.len();
-    assert_eq!(table_start, 8);
-
-    let entry_size = 24usize;
-    let string_table_offset = (table_start + (entry_size * param_count as usize)) as u32;
-
-    let pos_name_offset = string_table_offset;
-    let tex_name_offset = string_table_offset + ("POSITION\0".len() as u32);
-
-    // POSITION
-    bytes.extend_from_slice(&pos_name_offset.to_le_bytes());
-    bytes.extend_from_slice(&0u32.to_le_bytes()); // semantic_index
-    bytes.extend_from_slice(&0u32.to_le_bytes()); // system_value_type
-    bytes.extend_from_slice(&3u32.to_le_bytes()); // component_type
-    bytes.extend_from_slice(&pos_reg.to_le_bytes());
-    bytes.extend_from_slice(&u32::from_le_bytes([0xF, 0xF, 0, 0]).to_le_bytes()); // mask/rw/stream/min_prec
-
-    // TEXCOORD0
-    bytes.extend_from_slice(&tex_name_offset.to_le_bytes());
-    bytes.extend_from_slice(&0u32.to_le_bytes()); // semantic_index
-    bytes.extend_from_slice(&0u32.to_le_bytes()); // system_value_type
-    bytes.extend_from_slice(&3u32.to_le_bytes()); // component_type
-    bytes.extend_from_slice(&tex_reg.to_le_bytes());
-    bytes.extend_from_slice(&u32::from_le_bytes([0x3, 0x3, 0, 0]).to_le_bytes()); // mask/rw/stream/min_prec
-
-    bytes.extend_from_slice(b"POSITION\0");
-    bytes.extend_from_slice(b"TEXCOORD\0");
-
-    bytes
+    dxbc_test_utils::build_signature_chunk_v0(&[
+        dxbc_test_utils::SignatureEntryDesc {
+            semantic_name: "POSITION",
+            semantic_index: 0,
+            system_value_type: 0,
+            component_type: 3, // float32
+            register: pos_reg,
+            mask: 0xF,
+            read_write_mask: 0xF,
+            stream: 0,
+        },
+        dxbc_test_utils::SignatureEntryDesc {
+            semantic_name: "TEXCOORD",
+            semantic_index: 0,
+            system_value_type: 0,
+            component_type: 3, // float32
+            register: tex_reg,
+            mask: 0x3,
+            read_write_mask: 0x3,
+            stream: 0,
+        },
+    ])
 }
 
 fn build_signature_chunk_v1_with_registers(pos_reg: u32, tex_reg: u32) -> Vec<u8> {
-    // Same payload as `build_signature_chunk_with_registers`, but uses the 32-byte
-    // (v1) entry layout where stream/min-precision are stored as DWORDs.
-    let mut bytes = Vec::new();
-
-    let param_count = 2u32;
-    let param_offset = 8u32;
-
-    bytes.extend_from_slice(&param_count.to_le_bytes());
-    bytes.extend_from_slice(&param_offset.to_le_bytes());
-
-    let table_start = bytes.len();
-    assert_eq!(table_start, 8);
-
-    let entry_size = 32usize;
-    let string_table_offset = (table_start + (entry_size * param_count as usize)) as u32;
-
-    let pos_name_offset = string_table_offset;
-    let tex_name_offset = string_table_offset + ("POSITION\0".len() as u32);
-
-    // POSITION
-    bytes.extend_from_slice(&pos_name_offset.to_le_bytes());
-    bytes.extend_from_slice(&0u32.to_le_bytes()); // semantic_index
-    bytes.extend_from_slice(&0u32.to_le_bytes()); // system_value_type
-    bytes.extend_from_slice(&3u32.to_le_bytes()); // component_type
-    bytes.extend_from_slice(&pos_reg.to_le_bytes());
-    bytes.extend_from_slice(&u32::from_le_bytes([0xF, 0xF, 0, 0]).to_le_bytes()); // mask/rw/pad
-    bytes.extend_from_slice(&0u32.to_le_bytes()); // stream
-    bytes.extend_from_slice(&0u32.to_le_bytes()); // min_precision
-
-    // TEXCOORD0
-    bytes.extend_from_slice(&tex_name_offset.to_le_bytes());
-    bytes.extend_from_slice(&0u32.to_le_bytes()); // semantic_index
-    bytes.extend_from_slice(&0u32.to_le_bytes()); // system_value_type
-    bytes.extend_from_slice(&3u32.to_le_bytes()); // component_type
-    bytes.extend_from_slice(&tex_reg.to_le_bytes());
-    bytes.extend_from_slice(&u32::from_le_bytes([0x3, 0x3, 0, 0]).to_le_bytes()); // mask/rw/pad
-    bytes.extend_from_slice(&0u32.to_le_bytes()); // stream
-    bytes.extend_from_slice(&0u32.to_le_bytes()); // min_precision
-
-    bytes.extend_from_slice(b"POSITION\0");
-    bytes.extend_from_slice(b"TEXCOORD\0");
-
-    bytes
+    dxbc_test_utils::build_signature_chunk_v1(&[
+        dxbc_test_utils::SignatureEntryDesc {
+            semantic_name: "POSITION",
+            semantic_index: 0,
+            system_value_type: 0,
+            component_type: 3, // float32
+            register: pos_reg,
+            mask: 0xF,
+            read_write_mask: 0xF,
+            stream: 0,
+        },
+        dxbc_test_utils::SignatureEntryDesc {
+            semantic_name: "TEXCOORD",
+            semantic_index: 0,
+            system_value_type: 0,
+            component_type: 3, // float32
+            register: tex_reg,
+            mask: 0x3,
+            read_write_mask: 0x3,
+            stream: 0,
+        },
+    ])
 }
 
 fn build_signature_chunk_v1() -> Vec<u8> {
-    // Same payload as `build_signature_chunk`, but uses a 32-byte entry layout
-    // where stream/min-precision are stored as DWORDs at the end of each entry.
-    let mut bytes = Vec::new();
-
-    let param_count = 2u32;
-    let param_offset = 8u32;
-
-    bytes.extend_from_slice(&param_count.to_le_bytes());
-    bytes.extend_from_slice(&param_offset.to_le_bytes());
-
-    let table_start = bytes.len();
-    assert_eq!(table_start, 8);
-
-    let entry_size = 32usize;
-    let string_table_offset = (table_start + (entry_size * param_count as usize)) as u32;
-
-    let pos_name_offset = string_table_offset;
-    let tex_name_offset = string_table_offset + ("POSITION\0".len() as u32);
-
-    // POSITION
-    bytes.extend_from_slice(&pos_name_offset.to_le_bytes());
-    bytes.extend_from_slice(&0u32.to_le_bytes()); // semantic_index
-    bytes.extend_from_slice(&0u32.to_le_bytes()); // system_value_type
-    bytes.extend_from_slice(&3u32.to_le_bytes()); // component_type
-    bytes.extend_from_slice(&0u32.to_le_bytes()); // register
-    bytes.extend_from_slice(&u32::from_le_bytes([0xF, 0xF, 0, 0]).to_le_bytes()); // mask/rw/pad
-    bytes.extend_from_slice(&0u32.to_le_bytes()); // stream
-    bytes.extend_from_slice(&0u32.to_le_bytes()); // min_precision
-
-    // TEXCOORD0
-    bytes.extend_from_slice(&tex_name_offset.to_le_bytes());
-    bytes.extend_from_slice(&0u32.to_le_bytes()); // semantic_index
-    bytes.extend_from_slice(&0u32.to_le_bytes()); // system_value_type
-    bytes.extend_from_slice(&3u32.to_le_bytes()); // component_type
-    bytes.extend_from_slice(&1u32.to_le_bytes()); // register
-    bytes.extend_from_slice(&u32::from_le_bytes([0x3, 0x3, 0, 0]).to_le_bytes()); // mask/rw/pad
-    bytes.extend_from_slice(&0u32.to_le_bytes()); // stream
-    bytes.extend_from_slice(&0u32.to_le_bytes()); // min_precision
-
-    bytes.extend_from_slice(b"POSITION\0");
-    bytes.extend_from_slice(b"TEXCOORD\0");
-
-    bytes
+    dxbc_test_utils::build_signature_chunk_v1(&[
+        dxbc_test_utils::SignatureEntryDesc {
+            semantic_name: "POSITION",
+            semantic_index: 0,
+            system_value_type: 0,
+            component_type: 3, // float32
+            register: 0,
+            mask: 0xF,
+            read_write_mask: 0xF,
+            stream: 0,
+        },
+        dxbc_test_utils::SignatureEntryDesc {
+            semantic_name: "TEXCOORD",
+            semantic_index: 0,
+            system_value_type: 0,
+            component_type: 3, // float32
+            register: 1,
+            mask: 0x3,
+            read_write_mask: 0x3,
+            stream: 0,
+        },
+    ])
 }
 
 fn build_signature_chunk_v1_one_entry(stream: u32) -> Vec<u8> {
-    let mut bytes = Vec::new();
-
-    let param_count = 1u32;
-    let param_offset = 8u32;
-
-    bytes.extend_from_slice(&param_count.to_le_bytes());
-    bytes.extend_from_slice(&param_offset.to_le_bytes());
-
-    let table_start = bytes.len();
-    assert_eq!(table_start, 8);
-
-    let entry_size = 32usize;
-    let string_table_offset = (table_start + entry_size) as u32;
-
-    bytes.extend_from_slice(&string_table_offset.to_le_bytes()); // semantic_name_offset
-    bytes.extend_from_slice(&0u32.to_le_bytes()); // semantic_index
-    bytes.extend_from_slice(&0u32.to_le_bytes()); // system_value_type
-    bytes.extend_from_slice(&3u32.to_le_bytes()); // component_type
-    bytes.extend_from_slice(&0u32.to_le_bytes()); // register
-    bytes.extend_from_slice(&u32::from_le_bytes([0xF, 0xF, 0, 0]).to_le_bytes()); // mask/rw/pad
-    bytes.extend_from_slice(&stream.to_le_bytes()); // stream
-    bytes.extend_from_slice(&0u32.to_le_bytes()); // min_precision
-
-    bytes.extend_from_slice(b"POSITION\0");
-    bytes
+    dxbc_test_utils::build_signature_chunk_v1(&[dxbc_test_utils::SignatureEntryDesc {
+        semantic_name: "POSITION",
+        semantic_index: 0,
+        system_value_type: 0,
+        component_type: 3, // float32
+        register: 0,
+        mask: 0xF,
+        read_write_mask: 0xF,
+        stream,
+    }])
 }
 
 fn build_signature_chunk_v0_one_entry(stream: u8) -> Vec<u8> {
-    let mut bytes = Vec::new();
-
-    let param_count = 1u32;
-    let param_offset = 8u32;
-
-    bytes.extend_from_slice(&param_count.to_le_bytes());
-    bytes.extend_from_slice(&param_offset.to_le_bytes());
-
-    let table_start = bytes.len();
-    assert_eq!(table_start, 8);
-
-    let entry_size = 24usize;
-    let string_table_offset = (table_start + entry_size) as u32;
-
-    bytes.extend_from_slice(&string_table_offset.to_le_bytes()); // semantic_name_offset
-    bytes.extend_from_slice(&0u32.to_le_bytes()); // semantic_index
-    bytes.extend_from_slice(&0u32.to_le_bytes()); // system_value_type
-    bytes.extend_from_slice(&3u32.to_le_bytes()); // component_type
-    bytes.extend_from_slice(&0u32.to_le_bytes()); // register
-    bytes.extend_from_slice(&u32::from_le_bytes([0xF, 0xF, stream, 0]).to_le_bytes()); // mask/rw/stream/min_prec
-
-    bytes.extend_from_slice(b"POSITION\0");
-    bytes
+    dxbc_test_utils::build_signature_chunk_v0(&[dxbc_test_utils::SignatureEntryDesc {
+        semantic_name: "POSITION",
+        semantic_index: 0,
+        system_value_type: 0,
+        component_type: 3, // float32
+        register: 0,
+        mask: 0xF,
+        read_write_mask: 0xF,
+        stream: u32::from(stream),
+    }])
 }
 
 fn build_signature_chunk_v0_one_entry_padded(stream: u8) -> Vec<u8> {
@@ -698,12 +584,20 @@ fn signature_chunk_semantic_name_offset_into_header_is_rejected() {
 
 #[test]
 fn signature_chunk_missing_null_terminator_is_rejected() {
-    let mut bytes = build_signature_chunk();
-    // Overwrite the last byte (null terminator of the final string) so there's
-    // no terminating `\0` in the remaining data.
-    *bytes
-        .last_mut()
-        .expect("signature bytes should be non-empty") = b'X';
+    // Build a well-formed chunk with a semantic name that doesn't require string-table padding
+    // ("ABC\0" is already 4-byte aligned). This ensures the null terminator is at the end of the
+    // payload, so overwriting the last byte removes it entirely.
+    let mut bytes = dxbc_test_utils::build_signature_chunk_v0(&[dxbc_test_utils::SignatureEntryDesc {
+        semantic_name: "ABC",
+        semantic_index: 0,
+        system_value_type: 0,
+        component_type: 3,
+        register: 0,
+        mask: 0xF,
+        read_write_mask: 0xF,
+        stream: 0,
+    }]);
+    *bytes.last_mut().expect("signature bytes should be non-empty") = b'X';
 
     let err = parse_signature_chunk(&bytes).unwrap_err();
     assert!(matches!(err, DxbcError::InvalidChunk { .. }));
