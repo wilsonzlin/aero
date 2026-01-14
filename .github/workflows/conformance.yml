@@ -30,7 +30,7 @@ jobs:
           toolchain: stable
           locked: always
       - name: Run conformance subset
-        run: cargo test ${{ steps.setup-rust.outputs.cargo_locked_flag }} -p conformance --test conformance -- --nocapture
+        run: cargo xtask conformance -- --nocapture
       - name: Upload report
         if: always()
         uses: actions/upload-artifact@v4
@@ -54,7 +54,7 @@ jobs:
           toolchain: stable
           locked: always
       - name: Run conformance corpus
-        run: cargo test ${{ steps.setup-rust.outputs.cargo_locked_flag }} -p conformance --test conformance -- --nocapture
+        run: cargo xtask conformance -- --nocapture
       - name: Upload report
         if: always()
         uses: actions/upload-artifact@v4
