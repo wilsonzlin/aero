@@ -287,6 +287,9 @@ By default these artifacts are written next to the per-test logs (or next to `re
 - `dbgctl_<test>_dump_last_cmd.txt`
 - `dbgctl_<test>_cmd_*.bin` + siblings (`.txt` metadata, and on AGPU an optional `.alloc_table.bin`)
 
+When `--json` is enabled, the suite runner also appends these dbgctl outputs to the failing test’s `artifacts` array
+in both the aggregated suite report (`report.json`) and the per-test `<test>.json` output.
+
 Use `--dbgctl-timeout-ms=NNNN` to bound how long the runner will wait for `aerogpu_dbgctl.exe` itself (default: 5000ms).
 
 To also write BMP dumps next to the binaries:

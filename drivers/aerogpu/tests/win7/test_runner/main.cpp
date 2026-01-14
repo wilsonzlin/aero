@@ -1373,12 +1373,14 @@ int main(int argc, char** argv) {
         // Most tests include adapter info, but some low-level tests intentionally avoid instantiating
         // D3D/DXGI and therefore leave the adapter field null. Keep the suite report useful by
         // populating the adapter from the suite-level D3D9Ex query when available.
+        bool obj_modified = false;
         if (suite_adapter.present) {
           const char* const kNeedle = "\"adapter\":null";
           size_t pos = obj.find(kNeedle);
           if (pos != std::string::npos) {
             const std::string replacement = std::string("\"adapter\":") + BuildAdapterJsonObject(suite_adapter);
             obj.replace(pos, strlen(kNeedle), replacement);
+            obj_modified = true;
           }
         }
         if (!dbgctl_artifacts.empty()) {
@@ -1387,6 +1389,20 @@ int main(int argc, char** argv) {
             aerogpu_test::PrintfStdout("INFO: %s: failed to inject dbgctl artifacts into JSON: %s",
                                        test_name.c_str(),
                                        inject_err.c_str());
+          } else {
+            obj_modified = true;
+          }
+        }
+        if (obj_modified) {
+          std::string err;
+          std::string output = obj;
+          output.push_back('\n');
+          if (!aerogpu_test::WriteFileStringW(per_test_json_path, output, &err)) {
+            // Reporting should not change the test outcome.
+            aerogpu_test::PrintfStdout(
+                "INFO: aerogpu_test_runner: failed to rewrite per-test JSON report to %ls: %s",
+                per_test_json_path.c_str(),
+                err.c_str());
           }
         }
         test_json_objects.push_back(obj);
