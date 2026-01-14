@@ -289,8 +289,10 @@ quietly accreting more responsibilities.
 
 **Intended canonical home**
 
-- Target: `crates/aero-machine` grows beyond BSP-only execution by adopting (or re-implementing) the
-  SMP scheduling and APIC-delivery logic behind a stable API.
+- Target: `crates/aero-machine` evolves from the current **SMP bring-up scaffolding** (per-vCPU LAPIC
+  state/MMIO, INIT/SIPI, cooperative AP execution) into a full multi-vCPU execution environment by
+  adopting (or re-implementing) the SMP scheduling and APIC-delivery logic behind a stable API.
+  See [`docs/21-smp.md`](./21-smp.md) for the up-to-date gap list.
 - If the SMP code needs to be reusable independently of `aero-machine`, `crates/aero-smp-model`
   already provides a minimal deterministic model suitable for unit tests and snapshot validation.
 
