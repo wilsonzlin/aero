@@ -72,48 +72,44 @@ fn build_gs_point_to_fullscreen_triangle_sample_t0_s0_dxbc() -> Vec<u8> {
     let t0 = 0x0010_0072u32; // resource operand (t#)
     let s0 = 0x0010_0062u32; // sampler operand (s#)
 
-    let mut body: Vec<u32> = Vec::new();
-    body.push(opcode_token(OPCODE_DCL_GS_INPUT_PRIMITIVE, 2));
-    body.push(PRIM_POINT);
-    body.push(opcode_token(OPCODE_DCL_GS_OUTPUT_TOPOLOGY, 2));
-    body.push(TOPO_TRIANGLE_STRIP);
-    body.push(opcode_token(OPCODE_DCL_GS_MAX_OUTPUT_VERTEX_COUNT, 2));
-    body.push(3);
-
-    // dcl_resource_texture2d t0
-    body.push(opcode_token(OPCODE_DCL_RESOURCE, 4));
-    body.push(t0);
-    body.push(0); // t0
-    body.push(2); // dim=2 => Texture2D
-
-    // dcl_sampler s0
-    body.push(opcode_token(OPCODE_DCL_SAMPLER, 3));
-    body.push(s0);
-    body.push(0); // s0
-
-    // dcl_output o0.xyzw (position)
-    body.push(opcode_token(OPCODE_DCL_OUTPUT, 3));
-    body.push(dst_o);
-    body.push(0); // o0
-
-    // dcl_output o1.xyzw (varying used by ps_passthrough)
-    body.push(opcode_token(OPCODE_DCL_OUTPUT, 3));
-    body.push(dst_o);
-    body.push(1); // o1
-
-    // sample o1, l(0.5,0.5,0,0), t0, s0
-    body.push(opcode_token(OPCODE_SAMPLE, 12));
-    body.push(dst_o);
-    body.push(1); // o1
-    body.push(imm_vec4);
-    body.push(0.5f32.to_bits());
-    body.push(0.5f32.to_bits());
-    body.push(0.0f32.to_bits());
-    body.push(0.0f32.to_bits());
-    body.push(t0);
-    body.push(0); // t0
-    body.push(s0);
-    body.push(0); // s0
+    let mut body: Vec<u32> = vec![
+        opcode_token(OPCODE_DCL_GS_INPUT_PRIMITIVE, 2),
+        PRIM_POINT,
+        opcode_token(OPCODE_DCL_GS_OUTPUT_TOPOLOGY, 2),
+        TOPO_TRIANGLE_STRIP,
+        opcode_token(OPCODE_DCL_GS_MAX_OUTPUT_VERTEX_COUNT, 2),
+        3,
+        // dcl_resource_texture2d t0
+        opcode_token(OPCODE_DCL_RESOURCE, 4),
+        t0,
+        0, // t0
+        2, // dim=2 => Texture2D
+        // dcl_sampler s0
+        opcode_token(OPCODE_DCL_SAMPLER, 3),
+        s0,
+        0, // s0
+        // dcl_output o0.xyzw (position)
+        opcode_token(OPCODE_DCL_OUTPUT, 3),
+        dst_o,
+        0, // o0
+        // dcl_output o1.xyzw (varying used by ps_passthrough)
+        opcode_token(OPCODE_DCL_OUTPUT, 3),
+        dst_o,
+        1, // o1
+        // sample o1, l(0.5,0.5,0,0), t0, s0
+        opcode_token(OPCODE_SAMPLE, 12),
+        dst_o,
+        1, // o1
+        imm_vec4,
+        0.5f32.to_bits(),
+        0.5f32.to_bits(),
+        0.0f32.to_bits(),
+        0.0f32.to_bits(),
+        t0,
+        0, // t0
+        s0,
+        0, // s0
+    ];
 
     let emit_pos = |body: &mut Vec<u32>, x: f32, y: f32| {
         // mov o0, l(x,y,0,1)
