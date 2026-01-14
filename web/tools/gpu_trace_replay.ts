@@ -2455,23 +2455,32 @@ void main() {
             if (cmdSizeBytes < AEROGPU_CMD_SET_VERTEX_BUFFERS_SIZE_BYTES) fail("SET_VERTEX_BUFFERS packet too small");
             const startSlot = dv.getUint32(off + 8, true);
             const bufferCount = dv.getUint32(off + 12, true);
-            if (startSlot !== 0) fail("SET_VERTEX_BUFFERS only supports start_slot=0");
             const neededBytes = AEROGPU_CMD_SET_VERTEX_BUFFERS_SIZE_BYTES + bufferCount * 16;
             if (cmdSizeBytes < neededBytes) fail("SET_VERTEX_BUFFERS packet too small for bindings");
             if (bufferCount === 0) break;
 
-            // First binding.
-            const bindOff = off + AEROGPU_CMD_SET_VERTEX_BUFFERS_SIZE_BYTES;
-            const bufHandle = dv.getUint32(bindOff + 0, true);
-            const strideBytes = dv.getUint32(bindOff + 4, true);
-            const offsetBytes = dv.getUint32(bindOff + 8, true);
-            const glBuf = buffers.get(bufHandle);
-            if (!glBuf) fail("unknown vertex buffer handle=" + bufHandle);
-            gl.bindBuffer(gl.ARRAY_BUFFER, glBuf);
-            gl.enableVertexAttribArray(0);
-            gl.vertexAttribPointer(0, 2, gl.FLOAT, false, strideBytes, offsetBytes + 0);
-            gl.enableVertexAttribArray(1);
-            gl.vertexAttribPointer(1, 4, gl.FLOAT, false, strideBytes, offsetBytes + 8);
+            // Minimal trace replay only models slot 0 for the triangle fixture.
+            for (let i = 0; i < bufferCount; i++) {
+              const slot = startSlot + i;
+              if (slot !== 0) continue;
+              const bindOff = off + AEROGPU_CMD_SET_VERTEX_BUFFERS_SIZE_BYTES + i * 16;
+              const bufHandle = dv.getUint32(bindOff + 0, true);
+              const strideBytes = dv.getUint32(bindOff + 4, true);
+              const offsetBytes = dv.getUint32(bindOff + 8, true);
+              if (bufHandle === 0) {
+                gl.bindBuffer(gl.ARRAY_BUFFER, null);
+                gl.disableVertexAttribArray(0);
+                gl.disableVertexAttribArray(1);
+                continue;
+              }
+              const glBuf = buffers.get(bufHandle);
+              if (!glBuf) fail("unknown vertex buffer handle=" + bufHandle);
+              gl.bindBuffer(gl.ARRAY_BUFFER, glBuf);
+              gl.enableVertexAttribArray(0);
+              gl.vertexAttribPointer(0, 2, gl.FLOAT, false, strideBytes, offsetBytes + 0);
+              gl.enableVertexAttribArray(1);
+              gl.vertexAttribPointer(1, 4, gl.FLOAT, false, strideBytes, offsetBytes + 8);
+            }
             break;
           }
 
