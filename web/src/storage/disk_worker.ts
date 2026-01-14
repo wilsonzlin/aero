@@ -875,6 +875,9 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
       }
 
       const probe = await probeRemoteDisk(url);
+      if (!Number.isSafeInteger(probe.size) || probe.size <= 0) {
+        throw new Error(`Remote disk size is not a positive safe integer (size=${probe.size}).`);
+      }
       if (probe.size % 512 !== 0) {
         throw new Error(`Remote disk size is not sector-aligned (size=${probe.size}, sector=512).`);
       }

@@ -2,8 +2,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { installMemoryOpfs, MemoryDirectoryHandle } from "../test_utils/memory_opfs";
 
+let probeSize = 1024 * 512;
+
 vi.mock("../platform/remote_disk", () => ({
-  probeRemoteDisk: async () => ({ size: 1024 * 512 }),
+  probeRemoteDisk: async () => ({ size: probeSize }),
   stableCacheKey: async () => "cache-key",
 }));
 
@@ -107,5 +109,13 @@ describe("disk_worker add_remote validation", () => {
     expect(resp.error?.message).toMatch(/cacheLimitBytes/i);
     expect(resp.error?.message).toMatch(/non-negative/i);
   });
-});
 
+  it("rejects remote sizes larger than MAX_SAFE_INTEGER", async () => {
+    probeSize = 9007199254740992; // 2^53 (not a safe JS integer)
+    const resp = await sendAddRemote({
+      url: "https://example.invalid/disk.img",
+    });
+    expect(resp.ok).toBe(false);
+    expect(resp.error?.message).toMatch(/safe integer/i);
+  });
+});

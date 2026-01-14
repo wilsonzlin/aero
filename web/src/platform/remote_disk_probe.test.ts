@@ -180,4 +180,45 @@ describe("probeRemoteDisk", () => {
       /Content-Encoding/i,
     );
   });
+
+  it("falls back to Content-Range when HEAD Content-Length is not a safe integer", async () => {
+    const { baseUrl, close } = await withServer((req, res) => {
+      if ((req.url ?? "") !== "/image.bin") {
+        res.statusCode = 404;
+        res.end("not found");
+        return;
+      }
+
+      if (req.method === "HEAD") {
+        res.statusCode = 200;
+        // Not a safe JS integer (2^53).
+        res.setHeader("content-length", "9007199254740992");
+        res.end();
+        return;
+      }
+
+      if (req.method === "GET") {
+        const range = req.headers.range;
+        if (typeof range !== "string" || range !== "bytes=0-0") {
+          res.statusCode = 416;
+          res.end();
+          return;
+        }
+        res.statusCode = 206;
+        res.setHeader("accept-ranges", "bytes");
+        res.setHeader("content-range", "bytes 0-0/1024");
+        res.setHeader("content-length", "1");
+        res.end(Buffer.from([0]));
+        return;
+      }
+
+      res.statusCode = 405;
+      res.end("method not allowed");
+    });
+    closeServer = close;
+
+    const result = await probeRemoteDisk(`${baseUrl}/image.bin`, { credentials: "omit" });
+    expect(result.partialOk).toBe(true);
+    expect(result.size).toBe(1024);
+  });
 });

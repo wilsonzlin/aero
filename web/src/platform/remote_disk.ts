@@ -222,7 +222,9 @@ export async function probeRemoteDisk(
     const head = await fetch(url, { method: "HEAD", credentials: opts.credentials });
     if (head.ok) {
       const headSize = Number(head.headers.get("content-length") ?? "NaN");
-      if (Number.isFinite(headSize) && headSize > 0) {
+      // Only trust sizes that are representable as safe integers. The remote disk stack uses
+      // JS numbers for offsets/lengths, so >2^53 risks precision loss.
+      if (Number.isFinite(headSize) && headSize > 0 && Number.isSafeInteger(headSize)) {
         size = headSize;
       }
       acceptRanges = head.headers.get("accept-ranges") ?? "";
@@ -255,7 +257,7 @@ export async function probeRemoteDisk(
       size = parseContentRangeHeader(contentRange).total;
     }
 
-    if (size === null || !Number.isFinite(size) || size <= 0) {
+    if (size === null || !Number.isFinite(size) || size <= 0 || !Number.isSafeInteger(size)) {
       throw new Error(
         "Remote server did not provide a readable image size via Content-Length (HEAD) or Content-Range (Range GET).",
       );
