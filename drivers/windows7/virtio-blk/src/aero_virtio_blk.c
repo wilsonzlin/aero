@@ -550,6 +550,12 @@ static BOOLEAN AerovblkDeviceBringUp(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, 
      * the device could still be writing used-ring entries while we recycle
      * request contexts.
      */
+    /*
+     * Best-effort: clear virtio MSI-X vector routing before reset so we don't
+     * receive message interrupts for vectors that are about to be torn down /
+     * reprogrammed.
+     */
+    (void)VirtioPciDisableMsixVectors(&devExt->Vdev, /*QueueCount=*/1);
     VirtioPciResetDevice(&devExt->Vdev);
 
     StorPortAcquireSpinLock(devExt, InterruptLock, &lock);
