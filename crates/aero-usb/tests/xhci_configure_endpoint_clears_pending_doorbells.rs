@@ -117,6 +117,8 @@ fn xhci_configure_endpoint_drop_clears_pending_doorbells() {
     ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
 
     ctrl.set_dcbaap(dcbaa);
+    // Transfer execution only runs while USBCMD.RUN is set.
+    ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
     let enable = ctrl.enable_slot(&mut mem);
     assert_eq!(enable.completion_code, CommandCompletionCode::Success);
     let slot_id = enable.slot_id;
@@ -184,6 +186,8 @@ fn xhci_configure_endpoint_deconfigure_clears_pending_doorbells() {
     ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
 
     ctrl.set_dcbaap(dcbaa);
+    // Transfer execution only runs while USBCMD.RUN is set.
+    ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
     let enable = ctrl.enable_slot(&mut mem);
     assert_eq!(enable.completion_code, CommandCompletionCode::Success);
     let slot_id = enable.slot_id;
