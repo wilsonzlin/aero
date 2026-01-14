@@ -5370,7 +5370,8 @@ HRESULT AEROGPU_D3D9_CALL device_process_vertices_internal(
   const bool fixedfunc = (!dev->user_vs);
   const bool src_xyz_diffuse = (dev->fvf == kSupportedFvfXyzDiffuse);
   const bool src_xyz_diffuse_tex1 = (dev->fvf == kSupportedFvfXyzDiffuseTex1);
-  if (!(fixedfunc && (src_xyz_diffuse || src_xyz_diffuse_tex1))) {
+  const bool src_xyz_tex1 = (dev->fvf == kSupportedFvfXyzTex1);
+  if (!(fixedfunc && (src_xyz_diffuse || src_xyz_diffuse_tex1 || src_xyz_tex1))) {
     return D3DERR_NOTAVAILABLE;
   }
 
@@ -5576,8 +5577,28 @@ HRESULT AEROGPU_D3D9_CALL device_process_vertices_internal(
 
   // Fixed-function fallback: implement a minimal CPU vertex transform for common
   // FVF paths when no user shaders are bound.
-  if (fixedfunc && (src_xyz_diffuse || src_xyz_diffuse_tex1)) {
-    const uint32_t src_min_stride = src_xyz_diffuse_tex1 ? 24u : 16u;
+  if (fixedfunc && (src_xyz_diffuse || src_xyz_diffuse_tex1 || src_xyz_tex1)) {
+    uint32_t src_min_stride = 0;
+    bool src_has_diffuse = false;
+    uint32_t src_diffuse_offset = 0;
+    bool src_has_tex0 = false;
+    uint32_t src_tex0_offset = 0;
+    if (src_xyz_diffuse) {
+      src_min_stride = 16u;
+      src_has_diffuse = true;
+      src_diffuse_offset = 12u;
+    } else if (src_xyz_diffuse_tex1) {
+      src_min_stride = 24u;
+      src_has_diffuse = true;
+      src_diffuse_offset = 12u;
+      src_has_tex0 = true;
+      src_tex0_offset = 16u;
+    } else if (src_xyz_tex1) {
+      src_min_stride = 20u;
+      src_has_tex0 = true;
+      src_tex0_offset = 12u;
+    }
+
     if (src_stride < src_min_stride) {
 #if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
       if (dst_locked) {
@@ -5614,7 +5635,7 @@ HRESULT AEROGPU_D3D9_CALL device_process_vertices_internal(
 #endif
       return kD3DErrInvalidCall;
     }
-    if (src_xyz_diffuse_tex1 && dst_layout.has_tex0 && dst_layout.tex0_offset + 8u > dst_stride) {
+    if (src_has_tex0 && dst_layout.has_tex0 && dst_layout.tex0_offset + 8u > dst_stride) {
 #if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
       if (dst_locked) {
         (void)wddm_unlock_allocation(dev->wddm_callbacks, dev->wddm_device, dst_res->wddm_hAllocation, dev->wddm_context.hContext);
@@ -5705,11 +5726,11 @@ HRESULT AEROGPU_D3D9_CALL device_process_vertices_internal(
       write_f32_unaligned(dst + dst_layout.pos_offset + 8, out_z);
       write_f32_unaligned(dst + dst_layout.pos_offset + 12, out_rhw);
 
-      if (dst_layout.has_diffuse && src_stride >= 16) {
-        std::memcpy(dst + dst_layout.diffuse_offset, src + 12, 4);
+      if (src_has_diffuse && dst_layout.has_diffuse) {
+        std::memcpy(dst + dst_layout.diffuse_offset, src + src_diffuse_offset, 4);
       }
-      if (src_xyz_diffuse_tex1 && dst_layout.has_tex0 && src_stride >= 24) {
-        std::memcpy(dst + dst_layout.tex0_offset, src + 16, 8);
+      if (src_has_tex0 && dst_layout.has_tex0) {
+        std::memcpy(dst + dst_layout.tex0_offset, src + src_tex0_offset, 8);
       }
     }
   } else {
