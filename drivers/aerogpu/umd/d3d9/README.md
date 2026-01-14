@@ -440,6 +440,8 @@ Implementation notes (bring-up):
 - For `D3DFVF_XYZ*` fixed-function FVFs, the fixed-function VS applies the combined world/view/projection matrix
   (built from cached `SetTransform` state and uploaded by `ensure_fixedfunc_wvp_constants_locked()` into a reserved
   VS constant range; currently `c240..c243`).
+  - The range is intentionally high so it is unlikely to collide with app/user shader constants when switching between
+    fixed-function and programmable paths.
   - See also: `docs/graphics/win7-d3d9-fixedfunc-wvp.md` (WVP constants + `ProcessVertices` notes).
 - Shader-stage interop is supported: when exactly one stage is bound (VS-only or PS-only), the draw paths bind a
   fixed-function fallback shader for the missing stage at draw time (see `bind_draw_shaders_locked()`).
