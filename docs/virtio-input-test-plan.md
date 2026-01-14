@@ -306,6 +306,9 @@ Tip: `hidtest.exe --counters` can help diagnose “input buffered while no pendi
 - `PendingRingDepth`/`PendingRingDrops`: READ_REPORT backlog in `DEVICE_CONTEXT.PendingReportRing[]` (primary buffering layer).
 - Compare with `ReportRingDepth`/`ReportRingDrops`: translation-layer ring (`virtio_input_device.report_ring`).
 
+Tip: `hidtest.exe --interrupt-info` / `--interrupt-info-json` can help diagnose the effective interrupt mode (INTx vs MSI-X),
+message count granted by Windows, and MSI-X vector routing (config vs per-queue).
+
 After the driver is installed and confirmed working, you can optionally disable PS/2 in QEMU (`-machine ...,i8042=off`) to ensure you are not accidentally testing the emulated PS/2 devices. Only do this once you have a known-good virtio-input driver; otherwise you may lose input in the guest.
 
 ### 3.4 Expected pass/fail signals (Windows 7)
@@ -380,7 +383,25 @@ Success looks like:
 - Harness exit code `0`
 - Serial log contains `AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS`
 
-### 4.3 Optional: end-to-end input event delivery (QMP injection + guest HID report read)
+### 4.3 Optional: MSI-X interrupt mode diagnostics / enforcement (`virtio-input-msix`)
+
+The Aero contract v1 requires INTx and permits MSI-X as an optional enhancement. When debugging MSI-X enablement (or when
+intentionally exercising MSI-X code paths under QEMU), the guest selftest may emit:
+
+- `AERO_VIRTIO_SELFTEST|TEST|virtio-input-msix|PASS/FAIL/SKIP|mode=<intx|msix>|messages=<n>|mapping=...|...`
+
+To make MSI-X a **hard harness requirement** (end-to-end, guest-reported effective mode):
+
+- PowerShell: `-RequireVirtioInputMsix`
+- Python: `--require-virtio-input-msix`
+
+To increase the chance that Windows grants enough MSI-X messages, request a larger MSI-X table size from QEMU
+(best-effort; requires QEMU support for the `vectors=` device property):
+
+- PowerShell: `-VirtioInputVectors N` (or global `-VirtioMsixVectors N`)
+- Python: `--virtio-input-vectors N` (or global `--virtio-msix-vectors N`)
+
+### 4.4 Optional: end-to-end input event delivery (QMP injection + guest HID report read)
 
 The default guest marker `virtio-input` validates **enumeration** and the **HID report descriptor** contract (keyboard-only + mouse-only devices).
 It does **not** prove that real virtio-input events (virtio queues → KMDF HID → user-mode) are delivered.
@@ -446,7 +467,7 @@ If the guest selftest is too old (or otherwise misconfigured) and does not emit 
 If QMP input injection fails (for example QMP is unreachable or the QEMU build does not support `input-send-event`),
 the harness fails (PowerShell: `QMP_INPUT_INJECT_FAILED`; Python: `FAIL: QMP_INPUT_INJECT_FAILED: ...`).
 
-### 4.3.1 Optional: end-to-end mouse wheel + horizontal wheel (QMP injection + guest HID report read)
+### 4.4.1 Optional: end-to-end mouse wheel + horizontal wheel (QMP injection + guest HID report read)
 
 The base `virtio-input-events` marker validates keyboard + relative mouse motion/click delivery.
 To also validate **mouse scrolling**, the guest selftest emits an additional marker:
@@ -478,7 +499,7 @@ may be multiples of the injected values.
 If the running QEMU build rejects all tested axis name combinations (`wheel`/`vscroll` × `hscroll`/`hwheel`), the harness
 fails with a clear error (upgrade QEMU or omit `-WithInputWheel` / `--with-input-wheel` (or aliases)).
 
-### 4.3.2 Optional: end-to-end Consumer Control (media keys) (QMP injection + guest HID report read)
+### 4.4.2 Optional: end-to-end Consumer Control (media keys) (QMP injection + guest HID report read)
 
 This is the Consumer Control / media keys companion to `virtio-input-events` (keyboard + relative mouse).
 
@@ -511,7 +532,7 @@ If the guest was not provisioned with `--test-input-media-keys`, the guest will 
 If QMP input injection fails (for example QMP is unreachable or the QEMU build does not support multimedia qcodes), the harness
 fails (PowerShell: `QMP_MEDIA_KEYS_UNSUPPORTED`; Python: `FAIL: QMP_MEDIA_KEYS_UNSUPPORTED: ...`).
 
-### 4.3.3 Optional: extended virtio-input events (modifiers + extra buttons + per-feature wheel markers)
+### 4.4.3 Optional: extended virtio-input events (modifiers + extra buttons + per-feature wheel markers)
 
 The base `virtio-input-events` marker validates basic keyboard + mouse motion/click delivery, and `virtio-input-wheel`
 validates scrolling. To also validate additional HID report paths deterministically, the guest selftest can emit three
@@ -540,7 +561,7 @@ When enabled, the harness:
 2. Injects an extended deterministic sequence via QMP `input-send-event` (modifiers + side/extra buttons + wheel)
 3. Requires all three `virtio-input-events-*` markers above to PASS
 
-### 4.4 Optional: end-to-end tablet (absolute pointer) event delivery (QMP injection + guest HID report read)
+### 4.5 Optional: end-to-end tablet (absolute pointer) event delivery (QMP injection + guest HID report read)
 
 This is the tablet/absolute-pointer companion to `virtio-input-events` (keyboard + relative mouse).
 

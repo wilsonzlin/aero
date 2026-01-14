@@ -363,16 +363,26 @@ Copy `hidtest.exe` into the guest and run it from an elevated Command Prompt.
    hidtest.exe --reset-counters --counters
    hidtest.exe --reset-counters --counters-json
    ```
-    Note: `--reset-counters` requires opening the HID interface with write access; if it fails, rerun elevated.
-    For how to interpret the counters output (normal increments vs drops/overruns), see:
-    - [`tools/hidtest/README.md` → Counters interpretation](../../tools/hidtest/README.md#counters-interpretation)
+     Note: `--reset-counters` requires opening the HID interface with write access; if it fails, rerun elevated.
+     For how to interpret the counters output (normal increments vs drops/overruns), see:
+     - [`tools/hidtest/README.md` → Counters interpretation](../../tools/hidtest/README.md#counters-interpretation)
 
-    Quick interpretation (after you generate some input):
+     Quick interpretation (after you generate some input):
 
-    - Normal: `VirtioEvents` and `IoctlHidReadReport` increase; `ReadReportPended` and `ReadReportCompleted` increase and stay close; depth gauges like `PendingRingDepth` stay low.
-    - Bad: `PendingRingDrops` / `ReportRingDrops` / `VirtioEventDrops` increasing indicates dropped input; `ReportRingOverruns` / `VirtioEventOverruns` should remain `0` (non-zero indicates oversized events/reports).
+     - Normal: `VirtioEvents` and `IoctlHidReadReport` increase; `ReadReportPended` and `ReadReportCompleted` increase and stay close; depth gauges like `PendingRingDepth` stay low.
+     - Bad: `PendingRingDrops` / `ReportRingDrops` / `VirtioEventDrops` increasing indicates dropped input; `ReportRingOverruns` / `VirtioEventOverruns` should remain `0` (non-zero indicates oversized events/reports).
 
-8. (Optional) negative tests (invalid user pointers; should fail cleanly without crashing the guest):
+8. (Optional) query driver state / interrupt mode diagnostics:
+   ```bat
+   hidtest.exe --keyboard --state
+   hidtest.exe --keyboard --interrupt-info
+   hidtest.exe --keyboard --interrupt-info-json
+
+   REM Probe short-buffer negotiation (expect ERROR_INSUFFICIENT_BUFFER):
+   hidtest.exe --ioctl-query-interrupt-info-short
+   ```
+
+9. (Optional) negative tests (invalid user pointers; should fail cleanly without crashing the guest):
    ```bat
    hidtest.exe --keyboard --ioctl-bad-xfer-packet
    hidtest.exe --keyboard --ioctl-bad-write-report
