@@ -120,7 +120,7 @@ It should:
 2. If the shared handle is a real NT handle, duplicate it into a child process (`DuplicateHandle`); otherwise pass the raw numeric value (token-style handles).
 3. Child opens the resource and validates content via readback.
 
-This test catches the common bug where `share_token` is (incorrectly) derived from the process-local shared `HANDLE` value: producer and consumer handle values commonly differ, so `IMPORT_SHARED_SURFACE` would fail to resolve the previously-exported surface.
+This test catches the common bug where `share_token` is (incorrectly) derived from the user-mode shared `HANDLE` numeric value: for real NT handles, producer and consumer numeric values commonly differ (for example after `DuplicateHandle`), so `IMPORT_SHARED_SURFACE` would fail to resolve the previously-exported surface.
 
 ### Validation: cross-bitness shared surfaces (Win7 x64 / WOW64)
 

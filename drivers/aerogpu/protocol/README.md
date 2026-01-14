@@ -250,7 +250,8 @@ validation rules, `backing_offset_bytes` / `row_pitch_bytes` interpretation, ali
      must still complete/advance the fence (to avoid deadlock).
  - For D3D9Ex shared surfaces, `share_token` (as used by
    `EXPORT_SHARED_SURFACE`/`IMPORT_SHARED_SURFACE`) must be stable across guest
-   processes and must not be derived from process-local handle values.
+   processes and must not be derived from user-mode shared `HANDLE` numeric
+   values.
   Canonical contract: the Win7 KMD generates a stable non-zero `share_token` and
    persists it in the preserved WDDM allocation private driver data blob
    (`aerogpu_wddm_alloc_priv.share_token` in `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`).

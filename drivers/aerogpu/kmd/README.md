@@ -362,7 +362,7 @@ These values live in **WDDM allocation private driver data** (`aerogpu_wddm_allo
 - The UMD supplies `alloc_id`/`flags` (and optional metadata) to the KMD.
 - The KMD writes back `size_bytes` and (for shared allocations) a stable 64-bit `share_token` during `DxgkDdiCreateAllocation` and again during `DxgkDdiOpenAllocation`.
 - For **shared allocations**, dxgkrnl preserves the blob and returns the exact same bytes on `OpenResource`/`DxgkDdiOpenAllocation` in another process, ensuring both processes observe identical IDs.
-- Do **not** derive `share_token` from the numeric value of the D3D shared `HANDLE`: handle values are process-local and not stable cross-process.
+- Do **not** derive `share_token` from the numeric value of the user-mode shared `HANDLE`: for real NT handles the numeric value is process-local (commonly different after `DuplicateHandle`), and even token-style shared handles must not be treated as stable protocol keys.
 - The KMD stores the IDs in its allocation bookkeeping and uses `alloc_id` when building the per-submit allocation table for the emulator.
 - To avoid silent corruption, the KMD rejects submissions where the allocation list contains the same `alloc_id` for different backing base addresses (`gpa`). (Size may vary due to alignment; the allocation table uses the maximum observed size for a given `alloc_id`.)
 

@@ -12,7 +12,7 @@ This directory contains “graphics stack” implementation notes and bring-up c
 - `win7-wddm11-aerogpu-driver.md` — WDDM 1.1 KMD+UMD architecture (adapter bring-up, memory model, submission rings, fences/interrupts, scanout/vblank).
 - `win7-aerogpu-validation.md` — Win7 driver stability checklist (TDR avoidance, vblank pacing expectations, debug playbook).
 - `win7-vblank-present-requirements.md` — minimal vblank/present timing contract needed to keep DWM (Aero) stable.
-- `win7-shared-surfaces-share-token.md` — D3D9Ex/DWM shared surface share_token strategy (stable cross-process token vs process-local user-mode `HANDLE` values).
+- `win7-shared-surfaces-share-token.md` — D3D9Ex/DWM shared surface share_token strategy (stable cross-process token vs user-mode `HANDLE` numeric values, which are not stable cross-process).
 
 ## D3D shader translation notes
 

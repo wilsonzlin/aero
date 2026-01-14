@@ -1291,8 +1291,10 @@ AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_present_ex) == 24);
  *   `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`). dxgkrnl preserves this blob
  *   and returns the exact same bytes on cross-process `OpenResource`, so both
  *   processes observe the same token.
- * - Do NOT use the numeric value of the D3D shared `HANDLE` as `share_token`:
- *   handle values are process-local and not stable cross-process.
+ * - Do NOT use the numeric value of the user-mode shared `HANDLE` as `share_token`:
+ *   for real NT handles it is process-local (commonly different after
+ *   `DuplicateHandle`), and even token-style shared handles must not be treated
+ *   as stable protocol keys.
  * - The host stores a mapping of (share_token -> resource).
  * - MVP limitation: the shared resource must be backed by a single guest
  *   allocation (i.e. one contiguous guest memory range).

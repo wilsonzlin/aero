@@ -234,8 +234,10 @@ DXGI/D3D10/11 shared resource interop is implemented in the **Win7/WDDM 1.1 WDK 
   `width/height/format` and map the D3D9 format to a compatible `DXGI_FORMAT`.
 
 On Win7/WDDM 1.1, `share_token` must be stable across guest processes. AeroGPU does
-**not** use the numeric value of the D3D shared `HANDLE` as `share_token` (handle
-values are process-local and not stable cross-process).
+**not** use the numeric value of the user-mode shared `HANDLE` as `share_token`:
+for real NT handles the numeric value is process-local (commonly different after
+`DuplicateHandle`), and even token-style shared handles must not be treated as a
+stable protocol key.
 
 Canonical contract: on Win7/WDDM 1.1, the Win7 KMD generates a stable non-zero
 `share_token` and persists it in the preserved WDDM allocation private driver data blob

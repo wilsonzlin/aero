@@ -3,8 +3,9 @@
 CI guardrail: AeroGPU Win7 shared-surface `share_token` contract.
 
 Background:
-- D3D shared `HANDLE` numeric values are process-local and must NOT be used as the
-  AeroGPU protocol `share_token`.
+- D3D shared `HANDLE` numeric values are not stable cross-process (for real NT
+  handles they are process-local; some stacks use token-style shared handles) and
+  must NOT be used as the AeroGPU protocol `share_token`.
 - On Win7/WDDM 1.1, the canonical AeroGPU contract is that the Win7 KMD generates
   a stable non-zero `share_token` and persists it in the preserved WDDM allocation
   private driver data blob (`aerogpu_wddm_alloc_priv.share_token` in

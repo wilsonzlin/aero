@@ -158,8 +158,10 @@ typedef struct aerogpu_wddm_alloc_priv {
    * Must be 0 for non-shared allocations (KMD rejects non-zero tokens when the
    * shared flag is not set).
    *
-   * Do NOT derive this from the numeric value of the D3D shared `HANDLE`: handle
-   * values are process-local and not stable cross-process.
+   * Do NOT derive this from the numeric value of the user-mode shared `HANDLE`:
+   * for real NT handles it is process-local (commonly different after
+   * `DuplicateHandle`), and even token-style shared handles must not be treated
+   * as stable protocol keys.
    */
   aerogpu_wddm_u64 share_token;
 
