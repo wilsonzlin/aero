@@ -1356,79 +1356,86 @@ struct Device {
     // Device is being destroyed without the runtime entrypoint (e.g. stack
     // allocation in host-side unit tests). Free internal objects that the
     // runtime does not know about.
-    std::lock_guard<std::mutex> lock(mutex);
+    //
+    // Destructors are implicitly `noexcept`; be defensive so failures in
+    // best-effort cleanup (e.g. mutex lock errors) cannot trigger
+    // `std::terminate`.
+    try {
+      std::lock_guard<std::mutex> lock(mutex);
 
-    for (size_t i = 0; i < static_cast<size_t>(FixedFuncVariant::COUNT); ++i) {
-      auto& pipe = fixedfunc_pipelines[i];
-      delete pipe.vertex_decl;
-      pipe.vertex_decl = nullptr;
-      delete pipe.vs;
-      pipe.vs = nullptr;
-      delete pipe.vs_lit;
-      pipe.vs_lit = nullptr;
-      delete pipe.vs_fog;
-      pipe.vs_fog = nullptr;
-      delete pipe.vs_lit_fog;
-      pipe.vs_lit_fog = nullptr;
-      pipe.ps = nullptr;
-    }
-
-    for (auto& it : fvf_vertex_decl_cache) {
-      delete it.second;
-    }
-    fvf_vertex_decl_cache.clear();
-
-    Shader* destroyed_fixedfunc_ps[sizeof(fixedfunc_ps_variants) / sizeof(fixedfunc_ps_variants[0])] = {};
-    size_t destroyed_fixedfunc_ps_len = 0;
-    for (Shader*& ps : fixedfunc_ps_variants) {
-      if (!ps) {
-        continue;
+      for (size_t i = 0; i < static_cast<size_t>(FixedFuncVariant::COUNT); ++i) {
+        auto& pipe = fixedfunc_pipelines[i];
+        delete pipe.vertex_decl;
+        pipe.vertex_decl = nullptr;
+        delete pipe.vs;
+        pipe.vs = nullptr;
+        delete pipe.vs_lit;
+        pipe.vs_lit = nullptr;
+        delete pipe.vs_fog;
+        pipe.vs_fog = nullptr;
+        delete pipe.vs_lit_fog;
+        pipe.vs_lit_fog = nullptr;
+        pipe.ps = nullptr;
       }
-      bool already_destroyed = false;
-      for (size_t i = 0; i < destroyed_fixedfunc_ps_len; ++i) {
-        if (destroyed_fixedfunc_ps[i] == ps) {
-          already_destroyed = true;
-          break;
+
+      for (auto& it : fvf_vertex_decl_cache) {
+        delete it.second;
+      }
+      fvf_vertex_decl_cache.clear();
+
+      Shader* destroyed_fixedfunc_ps[sizeof(fixedfunc_ps_variants) / sizeof(fixedfunc_ps_variants[0])] = {};
+      size_t destroyed_fixedfunc_ps_len = 0;
+      for (Shader*& ps : fixedfunc_ps_variants) {
+        if (!ps) {
+          continue;
         }
+        bool already_destroyed = false;
+        for (size_t i = 0; i < destroyed_fixedfunc_ps_len; ++i) {
+          if (destroyed_fixedfunc_ps[i] == ps) {
+            already_destroyed = true;
+            break;
+          }
+        }
+        if (!already_destroyed) {
+          destroyed_fixedfunc_ps[destroyed_fixedfunc_ps_len++] = ps;
+          delete ps;
+        }
+        ps = nullptr;
       }
-      if (!already_destroyed) {
-        destroyed_fixedfunc_ps[destroyed_fixedfunc_ps_len++] = ps;
-        delete ps;
-      }
-      ps = nullptr;
-    }
-    fixedfunc_ps_variant_cache.clear();
-    fixedfunc_ps_interop = nullptr;
+      fixedfunc_ps_variant_cache.clear();
+      fixedfunc_ps_interop = nullptr;
 
-    delete up_vertex_buffer;
-    up_vertex_buffer = nullptr;
-    for (uint32_t s = 0; s < 16; ++s) {
-      delete instancing_vertex_buffers[s];
-      instancing_vertex_buffers[s] = nullptr;
-    }
-    delete up_index_buffer;
-    up_index_buffer = nullptr;
-
-    for (SwapChain* sc : swapchains) {
-      if (!sc) {
-        continue;
+      delete up_vertex_buffer;
+      up_vertex_buffer = nullptr;
+      for (uint32_t s = 0; s < 16; ++s) {
+        delete instancing_vertex_buffers[s];
+        instancing_vertex_buffers[s] = nullptr;
       }
-      for (Resource* bb : sc->backbuffers) {
-        delete bb;
-      }
-      delete sc;
-    }
-    swapchains.clear();
-    current_swapchain = nullptr;
+      delete up_index_buffer;
+      up_index_buffer = nullptr;
 
-    delete builtin_copy_vs;
-    builtin_copy_vs = nullptr;
-    delete builtin_copy_ps;
-    builtin_copy_ps = nullptr;
-    delete builtin_copy_decl;
-    builtin_copy_decl = nullptr;
-    delete builtin_copy_vb;
-    builtin_copy_vb = nullptr;
+      for (SwapChain* sc : swapchains) {
+        if (!sc) {
+          continue;
+        }
+        for (Resource* bb : sc->backbuffers) {
+          delete bb;
+        }
+        delete sc;
+      }
+      swapchains.clear();
+      current_swapchain = nullptr;
+
+      delete builtin_copy_vs;
+      builtin_copy_vs = nullptr;
+      delete builtin_copy_ps;
+      builtin_copy_ps = nullptr;
+      delete builtin_copy_decl;
+      builtin_copy_decl = nullptr;
+      delete builtin_copy_vb;
+      builtin_copy_vb = nullptr;
+    } catch (...) {
+    }
 
     // Ensure we don't attempt cleanup again if the object is somehow deleted via
     // `device_destroy()` after stack destruction paths.

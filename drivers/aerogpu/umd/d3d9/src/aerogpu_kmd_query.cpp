@@ -269,8 +269,14 @@ struct AerogpuKmdQuery::D3DKMT_GETSCANLINE {
 
 AerogpuKmdQuery::AerogpuKmdQuery() = default;
 
-AerogpuKmdQuery::~AerogpuKmdQuery() {
-  Shutdown();
+AerogpuKmdQuery::~AerogpuKmdQuery() noexcept {
+  // Destructors are implicitly `noexcept`; be defensive so failures in the
+  // best-effort shutdown path (e.g. mutex lock errors) cannot trigger
+  // `std::terminate` during adapter teardown.
+  try {
+    Shutdown();
+  } catch (...) {
+  }
 }
 
 bool AerogpuKmdQuery::InitFromLuid(LUID adapter_luid) {

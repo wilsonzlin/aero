@@ -61,8 +61,11 @@ constexpr uint32_t kD3d9CullNone = 1;
 template <typename F>
 struct ScopeExit {
   F f;
-  ~ScopeExit() {
-    f();
+  ~ScopeExit() noexcept {
+    try {
+      f();
+    } catch (...) {
+    }
   }
 };
 

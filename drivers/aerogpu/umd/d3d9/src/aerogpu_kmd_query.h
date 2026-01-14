@@ -30,7 +30,7 @@ namespace aerogpu {
 class AerogpuKmdQuery {
  public:
   AerogpuKmdQuery();
-  ~AerogpuKmdQuery();
+  ~AerogpuKmdQuery() noexcept;
 
   AerogpuKmdQuery(const AerogpuKmdQuery&) = delete;
   AerogpuKmdQuery& operator=(const AerogpuKmdQuery&) = delete;

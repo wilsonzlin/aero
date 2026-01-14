@@ -21763,20 +21763,23 @@ struct ScopedResourceRead {
     return E_INVALIDARG;
   }
 
-  ~ScopedResourceRead() {
+  ~ScopedResourceRead() noexcept {
+    try {
 #if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
-    if (locked && dev && dev->wddm_device != 0 && hAllocation != 0) {
-      const HRESULT hr =
-          wddm_unlock_allocation(dev->wddm_callbacks, dev->wddm_device, hAllocation, dev->wddm_context.hContext);
-      if (FAILED(hr)) {
-        logf("aerogpu-d3d9: ScopedResourceRead UnlockCb(%s) failed hr=0x%08lx alloc_id=%u hAllocation=%llu\n",
-             tag ? tag : "?",
-             static_cast<unsigned long>(hr),
-             static_cast<unsigned>(alloc_id),
-             static_cast<unsigned long long>(hAllocation));
+      if (locked && dev && dev->wddm_device != 0 && hAllocation != 0) {
+        const HRESULT hr =
+            wddm_unlock_allocation(dev->wddm_callbacks, dev->wddm_device, hAllocation, dev->wddm_context.hContext);
+        if (FAILED(hr)) {
+          logf("aerogpu-d3d9: ScopedResourceRead UnlockCb(%s) failed hr=0x%08lx alloc_id=%u hAllocation=%llu\n",
+               tag ? tag : "?",
+               static_cast<unsigned long>(hr),
+               static_cast<unsigned>(alloc_id),
+               static_cast<unsigned long long>(hAllocation));
+        }
       }
-    }
 #endif
+    } catch (...) {
+    }
   }
 };
 
@@ -23892,16 +23895,19 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive(
         AutoUnlock(Device* dev, WddmAllocationHandle hAllocation, uint32_t alloc_id, const char* tag)
             : dev(dev), hAllocation(hAllocation), alloc_id(alloc_id), tag(tag) {}
 
-        ~AutoUnlock() {
-          if (locked && dev && dev->wddm_device != 0 && hAllocation != 0) {
-            const HRESULT hr = wddm_unlock_allocation(dev->wddm_callbacks, dev->wddm_device, hAllocation, dev->wddm_context.hContext);
-            if (FAILED(hr)) {
-              logf("aerogpu-d3d9: draw_indexed_primitive fixedfunc: UnlockCb(%s) failed hr=0x%08lx alloc_id=%u hAllocation=%llu\n",
-                   tag ? tag : "?",
-                   static_cast<unsigned long>(hr),
-                   static_cast<unsigned>(alloc_id),
-                   static_cast<unsigned long long>(hAllocation));
+        ~AutoUnlock() noexcept {
+          try {
+            if (locked && dev && dev->wddm_device != 0 && hAllocation != 0) {
+              const HRESULT hr = wddm_unlock_allocation(dev->wddm_callbacks, dev->wddm_device, hAllocation, dev->wddm_context.hContext);
+              if (FAILED(hr)) {
+                logf("aerogpu-d3d9: draw_indexed_primitive fixedfunc: UnlockCb(%s) failed hr=0x%08lx alloc_id=%u hAllocation=%llu\n",
+                     tag ? tag : "?",
+                     static_cast<unsigned long>(hr),
+                     static_cast<unsigned>(alloc_id),
+                     static_cast<unsigned long long>(hAllocation));
+              }
             }
+          } catch (...) {
           }
         }
       };
