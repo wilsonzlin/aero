@@ -65,43 +65,53 @@ void log_init() {
 
 #if defined(_WIN32)
 
-bool aerogpu_d3d10_11_log_enabled() {
-  std::call_once(g_log_init_once, log_init);
-  return g_log_enabled.load(std::memory_order_relaxed);
-}
-
-void aerogpu_d3d10_11_log_set_enabled(bool enabled) {
-  std::call_once(g_log_init_once, log_init);
-  g_log_enabled.store(enabled, std::memory_order_relaxed);
-}
-
-void aerogpu_d3d10_11_vlogf(const char* fmt, va_list args) {
-  if (!aerogpu_d3d10_11_log_enabled()) {
-    return;
-  }
-
-  std::lock_guard<std::mutex> lock(g_log_mutex);
-
-  char msg[2048];
-  int n = vsnprintf(msg, sizeof(msg), fmt, args);
-  if (n < 0) {
-    return;
-  }
-
-  char buf[2304];
-  int m = snprintf(buf, sizeof(buf), "AEROGPU_D3D11DDI: %s\n", msg);
-  if (m < 0) {
-    return;
-  }
-
-  OutputDebugStringA(buf);
-  if (g_log_file) {
-    fputs(buf, g_log_file);
-    fflush(g_log_file);
+bool aerogpu_d3d10_11_log_enabled() noexcept {
+  try {
+    std::call_once(g_log_init_once, log_init);
+    return g_log_enabled.load(std::memory_order_relaxed);
+  } catch (...) {
+    return false;
   }
 }
 
-void aerogpu_d3d10_11_logf(const char* fmt, ...) {
+void aerogpu_d3d10_11_log_set_enabled(bool enabled) noexcept {
+  try {
+    std::call_once(g_log_init_once, log_init);
+    g_log_enabled.store(enabled, std::memory_order_relaxed);
+  } catch (...) {
+  }
+}
+
+void aerogpu_d3d10_11_vlogf(const char* fmt, va_list args) noexcept {
+  try {
+    if (!aerogpu_d3d10_11_log_enabled()) {
+      return;
+    }
+
+    std::lock_guard<std::mutex> lock(g_log_mutex);
+
+    char msg[2048];
+    int n = vsnprintf(msg, sizeof(msg), fmt, args);
+    if (n < 0) {
+      return;
+    }
+
+    char buf[2304];
+    int m = snprintf(buf, sizeof(buf), "AEROGPU_D3D11DDI: %s\n", msg);
+    if (m < 0) {
+      return;
+    }
+
+    OutputDebugStringA(buf);
+    if (g_log_file) {
+      fputs(buf, g_log_file);
+      fflush(g_log_file);
+    }
+  } catch (...) {
+  }
+}
+
+void aerogpu_d3d10_11_logf(const char* fmt, ...) noexcept {
   va_list args;
   va_start(args, fmt);
   aerogpu_d3d10_11_vlogf(fmt, args);

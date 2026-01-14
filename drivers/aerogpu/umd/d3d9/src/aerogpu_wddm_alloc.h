@@ -28,21 +28,21 @@ HRESULT wddm_create_allocation(const WddmDeviceCallbacks& callbacks,
                                const aerogpu_wddm_alloc_priv* priv,
                                uint32_t priv_size,
                                WddmAllocationHandle* hAllocationOut,
-                               WddmHandle hContext = 0);
+                               WddmHandle hContext = 0) noexcept;
 
 HRESULT wddm_destroy_allocation(const WddmDeviceCallbacks& callbacks,
-                                 WddmHandle hDevice,
-                                 WddmAllocationHandle hAllocation,
-                                 WddmHandle hContext = 0);
+                                  WddmHandle hDevice,
+                                  WddmAllocationHandle hAllocation,
+                                  WddmHandle hContext = 0) noexcept;
 
 HRESULT wddm_lock_allocation(const WddmDeviceCallbacks& callbacks,
-                              WddmHandle hDevice,
-                              WddmAllocationHandle hAllocation,
-                              uint64_t offset_bytes,
-                              uint64_t size_bytes,
-                              uint32_t lock_flags,
-                              void** out_ptr,
-                              WddmHandle hContext = 0);
+                               WddmHandle hDevice,
+                               WddmAllocationHandle hAllocation,
+                               uint64_t offset_bytes,
+                               uint64_t size_bytes,
+                               uint32_t lock_flags,
+                               void** out_ptr,
+                               WddmHandle hContext = 0) noexcept;
 
 inline HRESULT wddm_lock_allocation(const WddmDeviceCallbacks& callbacks,
                                      WddmHandle hDevice,
@@ -50,7 +50,7 @@ inline HRESULT wddm_lock_allocation(const WddmDeviceCallbacks& callbacks,
                                      uint64_t offset_bytes,
                                      uint64_t size_bytes,
                                      void** out_ptr,
-                                     WddmHandle hContext = 0) {
+                                     WddmHandle hContext = 0) noexcept {
   return wddm_lock_allocation(callbacks,
                               hDevice,
                               hAllocation,
@@ -62,8 +62,8 @@ inline HRESULT wddm_lock_allocation(const WddmDeviceCallbacks& callbacks,
 }
 
 HRESULT wddm_unlock_allocation(const WddmDeviceCallbacks& callbacks,
-                                WddmHandle hDevice,
-                                WddmAllocationHandle hAllocation,
-                                WddmHandle hContext = 0);
+                                 WddmHandle hDevice,
+                                 WddmAllocationHandle hAllocation,
+                                 WddmHandle hContext = 0) noexcept;
 
 } // namespace aerogpu

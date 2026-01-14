@@ -34,7 +34,7 @@
 
 namespace aerogpu::d3d10trace {
 
-inline int level() {
+inline int level() noexcept {
   // 0 = disabled, 1 = default, 2 = verbose.
   static std::atomic<int> cached{0};
   int v = cached.load(std::memory_order_acquire);
@@ -64,71 +64,77 @@ inline int level() {
   return lvl;
 }
 
-inline void vlogf(const char* fmt, va_list args) {
+inline void vlogf(const char* fmt, va_list args) noexcept {
   if (level() <= 0) {
     return;
   }
 
-  static std::mutex g_mu;
-  static std::atomic<uint64_t> g_seq{0};
+  // This tracing path can be called from error handling and during bring-up.
+  // Keep it best-effort so it cannot throw across ABI boundaries (e.g. via
+  // std::mutex lock failures).
+  try {
+    static std::mutex g_mu;
+    static std::atomic<uint64_t> g_seq{0};
 
-  std::lock_guard<std::mutex> lock(g_mu);
+    std::lock_guard<std::mutex> lock(g_mu);
 
-  const uint64_t seq = g_seq.fetch_add(1, std::memory_order_relaxed);
+    const uint64_t seq = g_seq.fetch_add(1, std::memory_order_relaxed);
 
-  uint32_t tid = 0;
-  uint32_t ms = 0;
+    uint32_t tid = 0;
+    uint32_t ms = 0;
 #if defined(_WIN32)
-  tid = static_cast<uint32_t>(GetCurrentThreadId());
-  ms = static_cast<uint32_t>(GetTickCount());
+    tid = static_cast<uint32_t>(GetCurrentThreadId());
+    ms = static_cast<uint32_t>(GetTickCount());
 #endif
 
-  char buf[2048];
-  int prefix = std::snprintf(buf, sizeof(buf), "[AeroGPU:D3D10 t=%u tid=%u #%llu] ",
-                             ms,
-                             tid,
-                             static_cast<unsigned long long>(seq));
-  if (prefix < 0) {
-    return;
-  }
-
-  size_t off = static_cast<size_t>(prefix);
-  if (off >= sizeof(buf)) {
-    off = sizeof(buf) - 1;
-  }
-
-  int wrote = std::vsnprintf(buf + off, sizeof(buf) - off, fmt, args);
-  if (wrote < 0) {
-    return;
-  }
-
-  // Ensure newline termination so DebugView doesn't concatenate unrelated lines.
-  size_t len = std::strlen(buf);
-  if (len == 0 || buf[len - 1] != '\n') {
-    if (len + 1 < sizeof(buf)) {
-      buf[len] = '\n';
-      buf[len + 1] = '\0';
-    } else {
-      buf[sizeof(buf) - 2] = '\n';
-      buf[sizeof(buf) - 1] = '\0';
+    char buf[2048];
+    int prefix = std::snprintf(buf, sizeof(buf), "[AeroGPU:D3D10 t=%u tid=%u #%llu] ",
+                               ms,
+                               tid,
+                               static_cast<unsigned long long>(seq));
+    if (prefix < 0) {
+      return;
     }
-  }
+
+    size_t off = static_cast<size_t>(prefix);
+    if (off >= sizeof(buf)) {
+      off = sizeof(buf) - 1;
+    }
+
+    int wrote = std::vsnprintf(buf + off, sizeof(buf) - off, fmt, args);
+    if (wrote < 0) {
+      return;
+    }
+
+    // Ensure newline termination so DebugView doesn't concatenate unrelated lines.
+    size_t len = std::strlen(buf);
+    if (len == 0 || buf[len - 1] != '\n') {
+      if (len + 1 < sizeof(buf)) {
+        buf[len] = '\n';
+        buf[len + 1] = '\0';
+      } else {
+        buf[sizeof(buf) - 2] = '\n';
+        buf[sizeof(buf) - 1] = '\0';
+      }
+    }
 
 #if defined(_WIN32)
-  OutputDebugStringA(buf);
+    OutputDebugStringA(buf);
 #else
-  std::fputs(buf, stderr);
+    std::fputs(buf, stderr);
 #endif
+  } catch (...) {
+  }
 }
 
-inline void logf(const char* fmt, ...) {
+inline void logf(const char* fmt, ...) noexcept {
   va_list args;
   va_start(args, fmt);
   vlogf(fmt, args);
   va_end(args);
 }
 
-inline HRESULT ret_hr(const char* func, HRESULT hr) {
+inline HRESULT ret_hr(const char* func, HRESULT hr) noexcept {
   if (level() <= 0) {
     return hr;
   }
