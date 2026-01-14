@@ -2468,9 +2468,9 @@ static NTSTATUS AeroGpuBuildAllocTable(_Inout_ AEROGPU_ADAPTER* Adapter,
                 readonlyCount += 1;
             }
         }
-        InterlockedIncrement64(&Adapter->PerfAllocTableCount);
         InterlockedAdd64(&Adapter->PerfAllocTableEntries, (LONGLONG)entryCount);
         InterlockedAdd64(&Adapter->PerfAllocTableReadonlyEntries, (LONGLONG)readonlyCount);
+        InterlockedIncrement64(&Adapter->PerfAllocTableCount);
     }
 
     *OutVa = tableVa;
@@ -12093,13 +12093,13 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
             out->alloc_table_count = (uint64_t)InterlockedCompareExchange64(&adapter->PerfAllocTableCount, 0, 0);
         }
         if (pEscape->PrivateDriverDataSize >=
-            (offsetof(aerogpu_escape_query_perf_out, alloc_table_entries) + sizeof(aerogpu_escape_u64))) {
-            out->alloc_table_entries = (uint64_t)InterlockedCompareExchange64(&adapter->PerfAllocTableEntries, 0, 0);
-        }
-        if (pEscape->PrivateDriverDataSize >=
             (offsetof(aerogpu_escape_query_perf_out, alloc_table_readonly_entries) + sizeof(aerogpu_escape_u64))) {
             out->alloc_table_readonly_entries =
                 (uint64_t)InterlockedCompareExchange64(&adapter->PerfAllocTableReadonlyEntries, 0, 0);
+        }
+        if (pEscape->PrivateDriverDataSize >=
+            (offsetof(aerogpu_escape_query_perf_out, alloc_table_entries) + sizeof(aerogpu_escape_u64))) {
+            out->alloc_table_entries = (uint64_t)InterlockedCompareExchange64(&adapter->PerfAllocTableEntries, 0, 0);
         }
 
         return STATUS_SUCCESS;

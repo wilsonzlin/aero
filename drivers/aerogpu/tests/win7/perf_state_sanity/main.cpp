@@ -86,6 +86,10 @@ static int RunPerfStateSanity(int argc, char** argv) {
   uint64_t last_contig_pool_hit = 0;
   uint64_t last_contig_pool_miss = 0;
   uint64_t last_contig_pool_bytes_saved = 0;
+  bool have_alloc_table_counters = false;
+  uint64_t last_alloc_table_count = 0;
+  uint64_t last_alloc_table_entries = 0;
+  uint64_t last_alloc_table_readonly_entries = 0;
   bool have_get_scanline_counters = false;
   bool saw_get_scanline_counters = false;
   uint64_t last_get_scanline_cache_hits = 0;
@@ -195,6 +199,58 @@ static int RunPerfStateSanity(int argc, char** argv) {
       last_contig_pool_bytes_saved = bytes_saved;
     }
 
+    const bool have_alloc_table =
+        (q.hdr.size >= offsetof(aerogpu_escape_query_perf_out, alloc_table_readonly_entries) + sizeof(q.alloc_table_readonly_entries));
+    if (i == 0) {
+      have_alloc_table_counters = have_alloc_table;
+    } else if (have_alloc_table != have_alloc_table_counters) {
+      aerogpu_test::kmt::CloseAdapter(&kmt, adapter);
+      aerogpu_test::kmt::UnloadD3DKMT(&kmt);
+      return reporter.Fail("QUERY_PERF struct size changed across samples (alloc_table present=%s -> %s)",
+                           have_alloc_table_counters ? "true" : "false",
+                           have_alloc_table ? "true" : "false");
+    }
+    if (have_alloc_table) {
+      // Counters are monotonic for the lifetime of the adapter; validate basic invariants.
+      const uint64_t table_count = (uint64_t)q.alloc_table_count;
+      const uint64_t entries = (uint64_t)q.alloc_table_entries;
+      const uint64_t readonly_entries = (uint64_t)q.alloc_table_readonly_entries;
+
+      if (i != 0) {
+        if (table_count < last_alloc_table_count || entries < last_alloc_table_entries ||
+            readonly_entries < last_alloc_table_readonly_entries) {
+          aerogpu_test::kmt::CloseAdapter(&kmt, adapter);
+          aerogpu_test::kmt::UnloadD3DKMT(&kmt);
+          return reporter.Fail(
+              "Alloc table counters went backwards (count=%I64u->%I64u entries=%I64u->%I64u readonly_entries=%I64u->%I64u)",
+              (unsigned long long)last_alloc_table_count,
+              (unsigned long long)table_count,
+              (unsigned long long)last_alloc_table_entries,
+              (unsigned long long)entries,
+              (unsigned long long)last_alloc_table_readonly_entries,
+              (unsigned long long)readonly_entries);
+        }
+      }
+      if (readonly_entries > entries) {
+        aerogpu_test::kmt::CloseAdapter(&kmt, adapter);
+        aerogpu_test::kmt::UnloadD3DKMT(&kmt);
+        return reporter.Fail("Alloc table counters are inconsistent (readonly_entries=%I64u entries=%I64u)",
+                             (unsigned long long)readonly_entries,
+                             (unsigned long long)entries);
+      }
+      if (entries < table_count) {
+        aerogpu_test::kmt::CloseAdapter(&kmt, adapter);
+        aerogpu_test::kmt::UnloadD3DKMT(&kmt);
+        return reporter.Fail("Alloc table counters are inconsistent (entries=%I64u count=%I64u)",
+                             (unsigned long long)entries,
+                             (unsigned long long)table_count);
+      }
+
+      last_alloc_table_count = table_count;
+      last_alloc_table_entries = entries;
+      last_alloc_table_readonly_entries = readonly_entries;
+    }
+
     const bool have_get_scanline =
         (q.hdr.size >= offsetof(aerogpu_escape_query_perf_out, get_scanline_mmio_polls) + sizeof(q.get_scanline_mmio_polls));
     if (i == 0) {
@@ -297,6 +353,14 @@ static int RunPerfStateSanity(int argc, char** argv) {
                                  (unsigned long long)q.contig_pool_hit,
                                  (unsigned long long)q.contig_pool_miss,
                                  (unsigned long long)q.contig_pool_bytes_saved);
+    }
+    if (have_alloc_table) {
+      aerogpu_test::PrintfStdout("INFO: %s: [%lu] alloc_table(count=%I64u entries=%I64u readonly_entries=%I64u)",
+                                 kTestName,
+                                 (unsigned long)i,
+                                 (unsigned long long)q.alloc_table_count,
+                                 (unsigned long long)q.alloc_table_entries,
+                                 (unsigned long long)q.alloc_table_readonly_entries);
     }
     if (have_get_scanline &&
         (q.flags & AEROGPU_DBGCTL_QUERY_PERF_FLAG_GETSCANLINE_COUNTERS_VALID) != 0) {
