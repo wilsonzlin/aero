@@ -813,15 +813,31 @@ impl Emitter<'_> {
                     if has_sum {
                         self.emit_operand(index);
                         if scale != 1 {
-                            self.f.instruction(&Instruction::I64Const(scale as i64));
-                            self.f.instruction(&Instruction::I64Mul);
+                            if scale.is_power_of_two() {
+                                // Multiply by 2/4/8: emit a shift instead of an i64.mul.
+                                //
+                                // This is equivalent under wrapping arithmetic and tends to
+                                // generate better code in Wasm engines.
+                                let sh = u32::from(scale.trailing_zeros()) as i64;
+                                self.f.instruction(&Instruction::I64Const(sh));
+                                self.f.instruction(&Instruction::I64Shl);
+                            } else {
+                                self.f.instruction(&Instruction::I64Const(scale as i64));
+                                self.f.instruction(&Instruction::I64Mul);
+                            }
                         }
                         self.f.instruction(&Instruction::I64Add);
                     } else {
                         self.emit_operand(index);
                         if scale != 1 {
-                            self.f.instruction(&Instruction::I64Const(scale as i64));
-                            self.f.instruction(&Instruction::I64Mul);
+                            if scale.is_power_of_two() {
+                                let sh = u32::from(scale.trailing_zeros()) as i64;
+                                self.f.instruction(&Instruction::I64Const(sh));
+                                self.f.instruction(&Instruction::I64Shl);
+                            } else {
+                                self.f.instruction(&Instruction::I64Const(scale as i64));
+                                self.f.instruction(&Instruction::I64Mul);
+                            }
                         }
                         has_sum = true;
                     }
