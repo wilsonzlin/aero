@@ -102,6 +102,19 @@ static std::string WideToUtf8(const std::wstring &s) {
   return WideToUtf8(s.c_str());
 }
 
+static bool IsNumericArg(const wchar_t *s) {
+  if (!s || !s[0]) {
+    return false;
+  }
+  // `wcstoul` / `_wcstoui64` may clobber `errno` even on success; preserve it so argument
+  // pre-scans don't affect later diagnostics.
+  const int savedErrno = errno;
+  wchar_t *end = NULL;
+  (void)_wcstoui64(s, &end, 0);
+  errno = savedErrno;
+  return end && end != s && *end == 0;
+}
+
 static std::string HexU32(uint32_t v) {
   char buf[32];
   sprintf_s(buf, sizeof(buf), "0x%08lx", (unsigned long)v);
@@ -11268,9 +11281,9 @@ int wmain(int argc, wchar_t **argv) {
       if (i + 1 < argc) {
         const wchar_t *next = argv[i + 1];
         // Disambiguate between JSON output path and the next option:
-        // - paths typically start with a drive letter or '\\'
         // - options use '-' or '/' prefixes
-        if (next && next[0] != L'-' && next[0] != L'/') {
+        // - numeric args are more likely to be values for other flags/commands (use `--json=<path>` for numeric file names)
+        if (next && next[0] != L'-' && next[0] != L'/' && !IsNumericArg(next)) {
           g_json_path = next;
           i += 1;
         }
@@ -11350,9 +11363,9 @@ int wmain(int argc, wchar_t **argv) {
       if (i + 1 < argc) {
         const wchar_t *next = argv[i + 1];
         // Disambiguate between JSON output path and the next option:
-        // - paths typically start with a drive letter or '\\'
         // - options use '-' or '/' prefixes
-        if (next && next[0] != L'-' && next[0] != L'/') {
+        // - numeric args are more likely to be values for other flags/commands (use `--json=<path>` for numeric file names)
+        if (next && next[0] != L'-' && next[0] != L'/' && !IsNumericArg(next)) {
           g_json_path = next;
           i += 1;
         }
