@@ -458,9 +458,14 @@ Known gaps / limitations (enforced by code):
 
 - Shader translation rejects unsupported tokens/opcodes:
   - [`crates/aero-d3d9/src/shader.rs`](../../crates/aero-d3d9/src/shader.rs) (`ShaderError::Unsupported*`)
-- The translation entrypoint rejects shaders that *sample* from 1D/3D textures because the current
-  command stream/runtime only supports binding 2D + cube textures:
-  - [`crates/aero-d3d9/src/shader_translate.rs`](../../crates/aero-d3d9/src/shader_translate.rs) (`validate_sampler_texture_types`)
+- Sampler texture types (1D/2D/3D/cube):
+  - Translation accepts used sampler texture types 1D/2D/3D/cube and rejects only unknown sampler-type encodings:
+    - [`crates/aero-d3d9/src/shader_translate.rs`](../../crates/aero-d3d9/src/shader_translate.rs) (`validate_sampler_texture_types`)
+    - Tests: [`crates/aero-gpu/tests/aerogpu_d3d9_resource_validation.rs`](../../crates/aero-gpu/tests/aerogpu_d3d9_resource_validation.rs) (accepts `dcl_1d` + `dcl_volume`, rejects unknown)
+  - Current runtime/protocol limitation: the AeroGPU command stream can only create guest-backed **2D** textures today
+    (`CREATE_TEXTURE2D`; cube is represented as `array_layers=6`), so it cannot yet supply real guest-backed 1D/3D
+    textures. For 1D/3D sampler declarations, the D3D9 executor binds a dummy 1D/3D texture view for that binding slot.
+    - Tests: [`crates/aero-d3d9/tests/software_textures.rs`](../../crates/aero-d3d9/tests/software_textures.rs) (CPU/software 1D/3D sampling correctness)
 - SM3 IR builder rejects some control-flow / addressing forms:
   - [`crates/aero-d3d9/src/sm3/ir_builder.rs`](../../crates/aero-d3d9/src/sm3/ir_builder.rs)
 

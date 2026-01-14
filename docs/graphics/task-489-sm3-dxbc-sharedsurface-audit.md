@@ -405,8 +405,10 @@ bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --test sm3_wgsl_tex --locked
 - The SM3 WGSL backend supports sampler texture types 1D/2D/3D/cube.
 - WGSL does not support `textureSampleBias` for `texture_1d`; `texldb` for 1D samplers is lowered via
   `textureSampleGrad` with `dpdx`/`dpdy` scaled by `exp2(bias)`.
-- The SM3 software reference interpreter (`crates/aero-d3d9/src/sm3/software.rs`) supports `Texture2D` + `TextureCube`
-  sampling, but does not yet emulate 1D/3D textures.
+- Software interpreters emulate 1D + 3D sampling:
+  - Legacy interpreter: `crates/aero-d3d9/src/software.rs` (`Texture1D`/`Texture3D` + `Op::Texld`)
+  - SM3 interpreter: `crates/aero-d3d9/src/sm3/software.rs` (`IrOp::TexSample`)
+  - Tests: `crates/aero-d3d9/tests/software_textures.rs` (CPU sampling correctness)
 - The legacy token-stream translator in `crates/aero-d3d9/src/shader.rs` supports sampler texture type declarations for
   1D/2D/3D/cube (`dcl_1d` / `dcl_2d` / `dcl_volume` / `dcl_cube`) and emits the corresponding WGSL bindings
   (`texture_1d<f32>` / `texture_2d<f32>` / `texture_3d<f32>` / `texture_cube<f32>`) with the correct coordinate
@@ -414,11 +416,9 @@ bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --test sm3_wgsl_tex --locked
   - Evidence: `crates/aero-d3d9/src/tests.rs::legacy_translator_emits_texture_1d_and_x_coords` and
     `crates/aero-d3d9/src/tests.rs::legacy_translator_emits_texture_3d_and_xyz_coords`.
 - Note: the AeroGPU command protocol currently only creates 2D textures (`CREATE_TEXTURE2D`), so it cannot yet supply
-  real guest-backed 1D/3D textures.
-  - The SM3 WGSL backend can lower 1D/3D sampler declarations (used heavily in `aero-d3d9` naga-validation tests).
-  - However, the D3D9 translation entrypoint (`translate_d3d9_shader_to_wgsl`) currently rejects shaders that *sample*
-    from 1D/3D textures; unused `dcl_1d` / `dcl_volume` declarations are accepted. (See
-    `docs/graphics/d3d9-sm2-sm3-shader-translation.md` for the current contract.)
+  real guest-backed 1D/3D textures (cube is represented as `array_layers=6`).
+  - Translation supports 1D/3D sampler declarations and sampling ops, but the D3D9 executor binds dummy 1D/3D textures
+    for those sampler dimensions until the protocol gains real 1D/3D texture creation/binding.
 - The WGSL generator does not attempt to model sampler *state* (filtering/address modes/LOD bias/etc.) directly;
   those are handled in runtime pipeline setup. Depth-compare sampling is also not modeled in the SM3 WGSL generator.
   (This is tracked in `docs/graphics/d3d9-sm2-sm3-shader-translation.md`.)
