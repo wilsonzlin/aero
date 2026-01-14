@@ -21,6 +21,24 @@ fn input_help_mentions_flags_and_steps() {
         .stdout(predicate::str::contains("aero-devices-input"))
         .stdout(predicate::str::contains("aero-usb"))
         .stdout(predicate::str::contains("ehci_snapshot_roundtrip"))
+        .stdout(predicate::str::contains(
+            "hid_composite_mouse_snapshot_compat",
+        ))
+        .stdout(predicate::str::contains(
+            "hid_configuration_snapshot_clamping",
+        ))
+        .stdout(predicate::str::contains(
+            "hid_consumer_control_snapshot_clamping",
+        ))
+        .stdout(predicate::str::contains("hid_gamepad_snapshot_clamping"))
+        .stdout(predicate::str::contains("hid_keyboard_snapshot_sanitization"))
+        .stdout(predicate::str::contains("hid_mouse_snapshot_clamping"))
+        .stdout(predicate::str::contains(
+            "usb_hub_snapshot_configuration_clamping",
+        ))
+        .stdout(predicate::str::contains(
+            "attached_device_snapshot_address_clamping",
+        ))
         .stdout(predicate::str::contains("aero-machine"))
         .stdout(predicate::str::contains("aero-wasm"))
         .stdout(predicate::str::contains("cargo test -p aero-wasm"))
