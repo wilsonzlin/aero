@@ -268,6 +268,7 @@ aerogpu_dbgctl [--display \\.\DISPLAY1] [--ring-id N] [--timeout-ms N] [--json[=
 Examples:
 
 ```
+aerogpu_dbgctl --help
 aerogpu_dbgctl --list-displays
 aerogpu_dbgctl --status
 aerogpu_dbgctl --status --json
