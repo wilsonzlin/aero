@@ -1665,4 +1665,105 @@ describe("RemoteRangeDisk", () => {
 
     await disk.close();
   });
+
+  it("handles quota errors mid-read after some chunks were cached and restarts safely", async () => {
+    const chunkSize = 512;
+    const data = makeTestData(chunkSize * 4);
+    let rangeGets = 0;
+
+    const fetchFn: typeof fetch = async (_input, init) => {
+      const method = String(init?.method ?? "GET").toUpperCase();
+      const headers = init?.headers;
+      const rangeHeader =
+        headers instanceof Headers
+          ? (headers.get("Range") ?? headers.get("range") ?? undefined)
+          : typeof headers === "object" && headers
+            ? (((headers as any).Range as string | undefined) ?? ((headers as any).range as string | undefined))
+            : undefined;
+
+      if (method === "HEAD") {
+        return new Response(null, {
+          status: 200,
+          headers: { "Content-Length": String(data.byteLength), ETag: "\"v1\"" },
+        });
+      }
+
+      if (method === "GET" && typeof rangeHeader === "string") {
+        rangeGets += 1;
+        const m = /^bytes=(\d+)-(\d+)$/.exec(rangeHeader);
+        if (!m) throw new Error(`invalid Range header: ${rangeHeader}`);
+        const start = Number(m[1]);
+        const endInclusive = Number(m[2]);
+        const endExclusive = endInclusive + 1;
+        const body = data.slice(start, endExclusive);
+
+        return new Response(body, {
+          status: 206,
+          headers: {
+            "Content-Range": `bytes ${start}-${endInclusive}/${data.byteLength}`,
+            ETag: "\"v1\"",
+          },
+        });
+      }
+
+      throw new Error(`unexpected request method=${method} range=${String(rangeHeader)}`);
+    };
+
+    class FlakyQuotaDisk extends MemorySparseDisk {
+      writeCalls = 0;
+      override async writeBlock(blockIndex: number, bytes: Uint8Array): Promise<void> {
+        this.writeCalls += 1;
+        // Allow the first chunk to be written, then simulate quota exhaustion.
+        if (this.writeCalls >= 2) {
+          throw new DOMException("quota exceeded", "QuotaExceededError");
+        }
+        await super.writeBlock(blockIndex, bytes);
+      }
+    }
+
+    class FlakyQuotaFactory implements RemoteRangeDiskSparseCacheFactory {
+      lastCreated: FlakyQuotaDisk | null = null;
+
+      async open(_cacheId: string): Promise<RemoteRangeDiskSparseCache> {
+        throw new Error("cache not found");
+      }
+
+      async create(
+        _cacheId: string,
+        opts: { diskSizeBytes: number; blockSizeBytes: number },
+      ): Promise<RemoteRangeDiskSparseCache> {
+        this.lastCreated = new FlakyQuotaDisk(opts.diskSizeBytes, opts.blockSizeBytes);
+        return this.lastCreated;
+      }
+    }
+
+    const factory = new FlakyQuotaFactory();
+    const disk = await RemoteRangeDisk.open("https://example.invalid/image.bin", {
+      cacheKeyParts: { imageId: "quota-drop-mid-read", version: "v1", deliveryType: remoteRangeDeliveryType(chunkSize) },
+      chunkSize,
+      // Deterministic ordering: chunk 0 caches successfully, chunk 1 hits quota.
+      maxConcurrentFetches: 1,
+      readAheadChunks: 0,
+      metadataStore: new MemoryMetadataStore(),
+      sparseCacheFactory: factory,
+      fetchFn,
+    });
+
+    const buf = new Uint8Array(chunkSize * 3);
+    await disk.readSectors(0, buf);
+    expect(buf).toEqual(data.subarray(0, buf.byteLength));
+
+    // One successful write, then a quota error; no further persistent writes should be attempted.
+    expect(factory.lastCreated?.writeCalls).toBe(2);
+
+    const snapshot = disk.getTelemetrySnapshot();
+    expect(snapshot.cacheLimitBytes).toBe(0);
+    expect(snapshot.cachedBytes).toBe(0);
+
+    // The read spans 3 chunks. We expect an initial pass (3 fetches) and a restart that re-fetches
+    // chunk 0 once persistence is disabled.
+    expect(rangeGets).toBe(4);
+
+    await disk.close();
+  });
 });
