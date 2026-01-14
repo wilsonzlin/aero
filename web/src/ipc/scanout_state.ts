@@ -15,6 +15,14 @@ export const SCANOUT_SOURCE_LEGACY_VBE_LFB = 1 as const;
 export const SCANOUT_SOURCE_WDDM = 2 as const;
 
 // Scanout format values use the AeroGPU `AerogpuFormat` numeric (`u32`) discriminants.
+//
+// Semantics (from the AeroGPU protocol):
+// - `*X8*` formats (`B8G8R8X8*`, `R8G8B8X8*`) do not carry alpha. When converting to RGBA
+//   (e.g. for scanout presentation/cursor blending), treat alpha as fully opaque (`0xff`)
+//   and ignore the stored `X` byte.
+// - `*_SRGB` variants are layout-identical to their UNORM counterparts; only the color space
+//   interpretation differs. Presenters must avoid double-applying gamma when handling sRGB
+//   scanout formats.
 export const SCANOUT_FORMAT_B8G8R8X8 = AerogpuFormat.B8G8R8X8Unorm;
 export const SCANOUT_FORMAT_B8G8R8A8 = AerogpuFormat.B8G8R8A8Unorm;
 export const SCANOUT_FORMAT_B8G8R8X8_SRGB = AerogpuFormat.B8G8R8X8UnormSrgb;
