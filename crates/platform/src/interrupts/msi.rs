@@ -75,6 +75,20 @@ impl MsiTrigger for ApicSystem {
 
 impl MsiTrigger for PlatformInterrupts {
     fn trigger_msi(&mut self, message: MsiMessage) {
+        // This platform implementation only models xAPIC-style MSI delivery, where the interrupt
+        // is encoded as a write to the Local APIC MMIO window (0xFEE0_0000 + destination ID in the
+        // address).
+        //
+        // Some guests/devices may temporarily program MSI with an invalid address (e.g. before
+        // writing the address registers, or due to buggy drivers). Real hardware would then write
+        // to some other physical address and would not necessarily deliver an interrupt. To avoid
+        // spuriously injecting interrupts, drop MSIs that do not target the LAPIC window.
+        //
+        // Note: x2APIC MSI (where the destination is encoded differently) is not modelled yet.
+        if (message.address >> 32) != 0 || (message.address & 0xFFF0_0000) != 0xFEE0_0000 {
+            return;
+        }
+
         let vector = message.vector();
         let dest = message.destination_id();
         let dest_is_logical = message.destination_is_logical();
@@ -185,6 +199,24 @@ mod tests {
 
         assert_eq!(ints.get_pending_for_apic(bsp_id), Some(0x44));
         assert_eq!(ints.get_pending_for_apic(0), Some(0x44));
+    }
+
+    #[test]
+    fn platform_interrupts_msi_drops_non_apic_addresses() {
+        let mut ints = PlatformInterrupts::new();
+        ints.set_mode(PlatformInterruptMode::Apic);
+        enable_lapic_svr_for_apic(&ints, 0);
+
+        // Address 0 is not a valid LAPIC MSI address; it should not inject an interrupt.
+        ints.trigger_msi(MsiMessage { address: 0, data: 0x0044 });
+        assert_eq!(ints.get_pending_for_apic(0), None);
+
+        // High dword set is also invalid in our xAPIC-only MSI model.
+        ints.trigger_msi(MsiMessage {
+            address: 0x1_0000_0000 | 0xFEE0_0000,
+            data: 0x0045,
+        });
+        assert_eq!(ints.get_pending_for_apic(0), None);
     }
 
     #[test]
