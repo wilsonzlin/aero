@@ -245,6 +245,8 @@ Ops/features referenced by the scratchpad tasks:
   - `wgsl_texldd_emits_texture_sample_grad`
   - `wgsl_vs_texld_emits_texture_sample_level`
   - `wgsl_dcl_1d_sampler_emits_texture_1d_and_x_coord`
+  - `wgsl_dcl_1d_sampler_texldp_emits_projective_divide_x`
+  - `wgsl_dcl_1d_sampler_texldd_emits_texture_sample_grad_x`
   - `wgsl_dcl_cube_sampler_emits_texture_cube_and_xyz_coords`
   - `wgsl_dcl_volume_sampler_emits_texture_3d_and_xyz_coords`
   - `wgsl_dcl_cube_sampler_texldp_emits_projective_divide_xyz`
