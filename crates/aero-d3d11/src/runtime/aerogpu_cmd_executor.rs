@@ -6487,7 +6487,7 @@ impl AerogpuD3d11Executor {
                 &hs_params_alloc,
                 &draw_scratch.vs_out,
                 &draw_scratch.hs_out,
-                &draw_scratch.hs_patch_constants,
+                &draw_scratch.hs_tess_factors,
             )?;
             {
                 let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -6548,7 +6548,7 @@ impl AerogpuD3d11Executor {
             let layout_bg = layout_pipeline.create_bind_group_group3(
                 &self.device,
                 &layout_params_alloc,
-                &draw_scratch.hs_patch_constants,
+                &draw_scratch.hs_tess_factors,
                 &draw_scratch.tess_metadata,
                 &draw_scratch.indirect_args,
                 &debug_alloc,
