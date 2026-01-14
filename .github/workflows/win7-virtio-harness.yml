@@ -1097,13 +1097,13 @@ jobs:
               echo "- QEMU command: \`${qemu_cmdline}\`"
             fi
             if [[ -n "${result_marker}" ]]; then
-              echo "- Guest result marker: ${result_marker}"
+              echo "- Guest result marker: \`${result_marker}\`"
             fi
             if [[ -n "${blk_resize_marker}" ]]; then
-              echo "- Guest virtio-blk-resize marker: ${blk_resize_marker}"
+              echo "- Guest virtio-blk-resize marker: \`${blk_resize_marker}\`"
             fi
               if [[ -n "${blk_reset_marker}" ]]; then
-                echo "- Guest virtio-blk-reset marker: ${blk_reset_marker}"
+                echo "- Guest virtio-blk-reset marker: \`${blk_reset_marker}\`"
               fi
               if [[ -n "${blk_reset_marker_line}" ]]; then
                 echo "- Guest virtio-blk-reset marker line: \`${blk_reset_marker_line}\`"
@@ -1124,7 +1124,7 @@ jobs:
                 echo "- Host virtio-blk miniport reset recovery marker: \`${blk_miniport_reset_recovery_host_marker}\`"
               fi
               if [[ -n "${net_link_flap_marker}" ]]; then
-                echo "- Guest virtio-net-link-flap marker: ${net_link_flap_marker}"
+                echo "- Guest virtio-net-link-flap marker: \`${net_link_flap_marker}\`"
               fi
             if [[ -n "${net_offload_csum_marker}" ]]; then
               echo "- Guest virtio-net-offload-csum marker: \`${net_offload_csum_marker}\`"
@@ -1178,16 +1178,16 @@ jobs:
               echo "- Host virtio-snd-eventq marker: \`${snd_eventq_host_marker}\`"
             fi
             if [[ -n "${snd_marker}" ]]; then
-              echo "- Guest virtio-snd marker: ${snd_marker}"
+              echo "- Guest virtio-snd marker: \`${snd_marker}\`"
             fi
             if [[ -n "${input_events_marker}" ]]; then
-              echo "- Guest virtio-input-events marker: ${input_events_marker}"
+              echo "- Guest virtio-input-events marker: \`${input_events_marker}\`"
             fi
             if [[ -n "${input_wheel_marker}" ]]; then
-              echo "- Guest virtio-input-wheel marker: ${input_wheel_marker}"
+              echo "- Guest virtio-input-wheel marker: \`${input_wheel_marker}\`"
             fi
             if [[ -n "${input_media_keys_marker}" ]]; then
-              echo "- Guest virtio-input-media-keys marker: ${input_media_keys_marker}"
+              echo "- Guest virtio-input-media-keys marker: \`${input_media_keys_marker}\`"
             fi
             if [[ -n "${input_binding_host_marker}" ]]; then
               echo "- Host virtio-input binding marker: \`${input_binding_host_marker}\`"
@@ -1202,13 +1202,13 @@ jobs:
               echo "- Guest virtio-input-leds marker: \`${input_leds_marker}\`"
             fi
             if [[ -n "${input_events_modifiers_marker}" ]]; then
-              echo "- Guest virtio-input-events-modifiers marker: ${input_events_modifiers_marker}"
+              echo "- Guest virtio-input-events-modifiers marker: \`${input_events_modifiers_marker}\`"
             fi
             if [[ -n "${input_events_buttons_marker}" ]]; then
-              echo "- Guest virtio-input-events-buttons marker: ${input_events_buttons_marker}"
+              echo "- Guest virtio-input-events-buttons marker: \`${input_events_buttons_marker}\`"
             fi
             if [[ -n "${input_events_wheel_marker}" ]]; then
-              echo "- Guest virtio-input-events-wheel marker: ${input_events_wheel_marker}"
+              echo "- Guest virtio-input-events-wheel marker: \`${input_events_wheel_marker}\`"
             fi
             if [[ -n "${input_inject_marker}" ]]; then
               echo "- Host virtio-input injection marker: \`${input_inject_marker}\`"
@@ -1217,7 +1217,7 @@ jobs:
               echo "- Host virtio-input media keys injection marker: \`${input_media_keys_inject_marker}\`"
             fi
             if [[ -n "${input_tablet_marker}" ]]; then
-              echo "- Guest virtio-input-tablet-events marker: ${input_tablet_marker}"
+              echo "- Guest virtio-input-tablet-events marker: \`${input_tablet_marker}\`"
             fi
              if [[ -n "${input_tablet_inject_marker}" ]]; then
                echo "- Host virtio-input tablet injection marker: \`${input_tablet_inject_marker}\`"
@@ -1226,16 +1226,16 @@ jobs:
                echo "- Host QEMU PCI preflight marker: \`${pci_preflight_marker}\`"
              fi
              if [[ -n "${snd_capture_marker}" ]]; then
-               echo "- Guest virtio-snd-capture marker: ${snd_capture_marker}"
+               echo "- Guest virtio-snd-capture marker: \`${snd_capture_marker}\`"
              fi
             if [[ -n "${snd_duplex_marker}" ]]; then
-              echo "- Guest virtio-snd-duplex marker: ${snd_duplex_marker}"
+              echo "- Guest virtio-snd-duplex marker: \`${snd_duplex_marker}\`"
             fi
             if [[ -n "${snd_buffer_limits_marker}" ]]; then
-              echo "- Guest virtio-snd-buffer-limits marker: ${snd_buffer_limits_marker}"
+              echo "- Guest virtio-snd-buffer-limits marker: \`${snd_buffer_limits_marker}\`"
             fi
             if [[ -n "${wav_marker}" ]]; then
-              echo "- Host wav marker: ${wav_marker}"
+              echo "- Host wav marker: \`${wav_marker}\`"
             fi
             if [[ "${{ steps.harness.outcome }}" != "success" ]]; then
               if [[ -f "${harness_log}" ]]; then
