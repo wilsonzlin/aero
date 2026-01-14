@@ -115,6 +115,45 @@ describe("InputCapture buffer recycling", () => {
     );
   });
 
+  it("removes the worker message listener on stop()", () => {
+    withStubbedDocument((doc) =>
+      withStubbedWindow(() => {
+        const canvas = {
+          tabIndex: 0,
+          addEventListener: () => {},
+          removeEventListener: () => {},
+          focus: () => {},
+        } as unknown as HTMLCanvasElement;
+
+        doc.activeElement = canvas;
+
+        let added: ((ev: MessageEvent<unknown>) => void) | null = null;
+        let removed: ((ev: MessageEvent<unknown>) => void) | null = null;
+
+        const ioWorker = {
+          addEventListener: (type: "message", listener: (ev: MessageEvent<unknown>) => void) => {
+            if (type === "message") {
+              added = listener;
+            }
+          },
+          removeEventListener: (type: "message", listener: (ev: MessageEvent<unknown>) => void) => {
+            if (type === "message") {
+              removed = listener;
+            }
+          },
+          postMessage: () => {},
+        };
+
+        const capture = new InputCapture(canvas, ioWorker as any, { enableGamepad: false, recycleBuffers: true });
+        capture.start();
+        expect(added).not.toBeNull();
+
+        capture.stop();
+        expect(removed).toBe(added);
+      }),
+    );
+  });
+
   it("reuses recycled buffers even when the recycle response arrives after flush (one-flush delay)", () => {
     withStubbedDocument(() => {
       const canvas = {
