@@ -113,12 +113,19 @@ func TestUdpPortBinding_RemoteAllowlist_ExpiresByIdleTimeout(t *testing.T) {
 	b.AllowRemote(remote, start)
 
 	// Allowed shortly after creation (and refreshes the timestamp).
-	if ok := b.remoteAllowed(remote, start.Add(500*time.Millisecond)); !ok {
+	refreshAt := start.Add(500 * time.Millisecond)
+	if ok := b.remoteAllowed(remote, refreshAt); !ok {
 		t.Fatalf("expected remote to be allowed before TTL expiry")
 	}
 
+	// Refresh should extend TTL. If the timestamp were not refreshed at 500ms, this
+	// would be denied (1.4s since initial allowlist entry).
+	if ok := b.remoteAllowed(remote, start.Add(1400*time.Millisecond)); !ok {
+		t.Fatalf("expected remote to remain allowed after refresh")
+	}
+
 	// Expires after idle timeout.
-	if ok := b.remoteAllowed(remote, start.Add(2*time.Second)); ok {
+	if ok := b.remoteAllowed(remote, start.Add(2500*time.Millisecond)); ok {
 		t.Fatalf("expected remote to be denied after TTL expiry")
 	}
 
