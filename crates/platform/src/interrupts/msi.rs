@@ -92,13 +92,12 @@ impl MsiTrigger for PlatformInterrupts {
             // - Destination ID 0xFF is treated as a broadcast to all LAPICs.
             // - Otherwise, `dest` is treated as a simple 8-bit mask where bit `n` targets LAPIC APIC ID `n`.
             if dest == 0xFF {
-                for lapic in self.lapics_iter() {
-                    lapic.inject_fixed_interrupt(vector);
-                }
+                self.inject_fixed_broadcast(vector);
                 return;
             }
 
-            for lapic in self.lapics_iter() {
+            for cpu in 0..self.cpu_count() {
+                let lapic = self.lapic(cpu);
                 let apic_id = lapic.apic_id();
                 if apic_id < 8 && (dest & (1u8 << apic_id)) != 0 {
                     lapic.inject_fixed_interrupt(vector);
