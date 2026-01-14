@@ -84,23 +84,19 @@ Feature matrix for the Win7 WDK-backed UMDs:
   - D3D10 / D3D10.1: `CreateGeometryShader` + `GsSetShader` (and GS resource bindings: `GsSetConstantBuffers`, `GsSetShaderResources`, `GsSetSamplers`) are forwarded into the command stream (GS handle carried via `aerogpu_cmd_bind_shaders.reserved0` (legacy compat)).
   - D3D11:
     - `CreateGeometryShader` + `GsSetShader` are forwarded into the command stream (GS handle carried via `aerogpu_cmd_bind_shaders.reserved0` for legacy compat).
-    - GS stage resource binding DDIs (`GsSetConstantBuffers`, `GsSetShaderResources`, `GsSetSamplers`) emit binding packets.
+    - GS stage resource binding DDIs (`GsSetConstantBuffers`, `GsSetShaderResources`, `GsSetSamplers`) emit binding packets; bindings are tracked by the host but not yet consumed by the placeholder prepass.
   - Host/WebGPU execution:
-    - WebGPU has no geometry stage; GS is emulated via a **compute prepass + indirect draw** pipeline.
-    - The host decodes the GS DXBC/SM4 module and translates it to WGSL compute in `crates/aero-d3d11/src/runtime/gs_translate.rs`. The generated compute shader executes the GS instruction stream per input primitive and produces:
-      - an expanded vertex buffer
-      - an expanded **triangle-list** index buffer
-      - `DrawIndexedIndirectArgs` so the render pass can consume the expansion via `draw_indexed_indirect`
-    - Output topology: `TriangleStream` (`triangle_strip`). `RestartStrip()` / `cut` terminates the current strip; strip output is expanded into a triangle list with CUT semantics (see `crates/aero-d3d11/src/runtime/strip_to_list.rs`).
-    - The command stream exposes an ABI extension for extended D3D11 stages (`stage_ex`; see `enum aerogpu_shader_stage_ex` in `drivers/aerogpu/protocol/aerogpu_cmd.h`). The host executor supports both the legacy `stage = GEOMETRY` encoding and the newer extended-stage encoding.
-    - Win7 validation tests:
+    - WebGPU has no geometry stage; GS is emulated via a **compute prepass + indirect draw** pipeline when GS/HS/DS emulation is required.
+    - Current executor behavior is still bring-up oriented: the prepass emits placeholder geometry (synthetic triangle-list primitives) and does **not** execute the guest GS DXBC yet.
+    - A prototype SM4 GS → WGSL compute translator exists in `crates/aero-d3d11/src/runtime/gs_translate.rs` (with strip→list + `RestartStrip`/`cut` handling in `crates/aero-d3d11/src/runtime/strip_to_list.rs`), but it is not yet wired into the command executor.
+    - The command stream exposes an ABI extension for extended D3D11 stages (`stage_ex`; see `enum aerogpu_shader_stage_ex` in `drivers/aerogpu/protocol/aerogpu_cmd.h`). The host executor accepts both the direct `AEROGPU_SHADER_STAGE_GEOMETRY` (`stage = 3`) encoding and the `stage_ex` encoding.
+    - Win7 GS tests (WIP):
       - `drivers/aerogpu/tests/win7/d3d11_geometry_shader_smoke`
       - `drivers/aerogpu/tests/win7/d3d11_geometry_shader_restart_strip`
-      - Host-side tests live under `crates/aero-d3d11/tests/` (e.g. `gs_translate.rs`; run via `cargo test -p aero-d3d11`).
-    - Current tested GS subset:
+    - Bring-up subset (initial target for real GS execution):
       - Input primitives: `point` and `triangle` (non-adjacency)
-      - Output: `TriangleStream` only (stream 0)
-      - Shader instructions/operands: a small SM4 subset (enough for the tests: `mov`/`add` + immediate constants + `v#[]` inputs + `emit`/`cut`)
+      - Output: `TriangleStream` (`triangle_strip`) only (stream 0)
+      - Shader instructions/operands: a small SM4 subset (enough for tests: `mov`/`add` + immediate constants + `v#[]` inputs + `emit`/`cut`)
   - Known unsupported / not yet implemented:
     - Stream-output (SO / `CreateGeometryShaderWithStreamOutput`, `SOSetTargets`, etc.).
     - Multi-stream GS output (`emit_stream` / `cut_stream`); non-zero stream indices are not supported.
