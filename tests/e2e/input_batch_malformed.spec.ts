@@ -240,5 +240,8 @@ test("IO worker survives malformed in:input-batch messages", async ({ page }) =>
   expect(receivedDelta).toBeGreaterThanOrEqual(4);
   expect(processedDelta).toBeGreaterThanOrEqual(2);
   expect(droppedDelta).toBeGreaterThanOrEqual(2);
-  expect(receivedDelta).toBeGreaterThanOrEqual(processedDelta + droppedDelta);
+  // `IoInputBatchDropCounter` can increment for batches that are still processed
+  // (e.g. when a claimed event count is clamped), so do not assert strict partitioning.
+  expect(receivedDelta).toBeGreaterThanOrEqual(processedDelta);
+  expect(receivedDelta).toBeGreaterThanOrEqual(droppedDelta);
 });
