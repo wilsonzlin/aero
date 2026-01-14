@@ -731,6 +731,11 @@ impl PortLogic {
                     v |= LS_J_FS;
                 }
             }
+            if let Some(dev) = dev {
+                if dev.speed() == UsbSpeed::Low {
+                    v |= LSDA;
+                }
+            }
         }
         if self.connect_change {
             v |= CSC;
@@ -743,11 +748,6 @@ impl PortLogic {
         }
         if self.resume_detect {
             v |= RD;
-        }
-        if let Some(dev) = dev {
-            if dev.speed() == UsbSpeed::Low {
-                v |= LSDA;
-            }
         }
         if self.reset {
             v |= PR;

@@ -322,6 +322,59 @@ fn usb2_companion_routing_snapshot_roundtrip_is_order_independent() {
 }
 
 #[test]
+fn usb2_companion_routing_uhci_lsda_is_clear_when_port_is_ehci_owned() {
+    // UHCI root hub PORTSC bits.
+    const PORTSC_CCS: u16 = 1 << 0;
+    const PORTSC_LSDA: u16 = 1 << 8;
+
+    struct LowSpeedDevice;
+
+    impl UsbDeviceModel for LowSpeedDevice {
+        fn speed(&self) -> UsbSpeed {
+            UsbSpeed::Low
+        }
+
+        fn handle_control_request(
+            &mut self,
+            _setup: SetupPacket,
+            _data_stage: Option<&[u8]>,
+        ) -> ControlResponse {
+            ControlResponse::Stall
+        }
+    }
+
+    let mux = Rc::new(RefCell::new(Usb2PortMux::new(1)));
+
+    let mut uhci = UhciController::new();
+    uhci.hub_mut().attach_usb2_port_mux(0, mux.clone(), 0);
+
+    let mut ehci = EhciController::new_with_port_count(1);
+    ehci.hub_mut().attach_usb2_port_mux(0, mux.clone(), 0);
+
+    mux.borrow_mut().attach(0, Box::new(LowSpeedDevice));
+
+    // With CONFIGFLAG=0, the port is companion-owned so UHCI should see the low-speed attach.
+    let portsc = uhci.io_read(REG_PORTSC1, 2) as u16;
+    assert_ne!(portsc & PORTSC_CCS, 0, "expected device connected in UHCI view");
+    assert_ne!(
+        portsc & PORTSC_LSDA,
+        0,
+        "expected LSDA set for low-speed device"
+    );
+
+    // Claim the port for EHCI; UHCI should see it as disconnected and must not report LSDA.
+    ehci.mmio_write(REG_CONFIGFLAG, 4, CONFIGFLAG_CF);
+
+    let portsc = uhci.io_read(REG_PORTSC1, 2) as u16;
+    assert_eq!(portsc & PORTSC_CCS, 0, "expected CCS clear when EHCI owns port");
+    assert_eq!(
+        portsc & PORTSC_LSDA,
+        0,
+        "expected LSDA clear when EHCI owns port"
+    );
+}
+
+#[test]
 fn usb2_companion_routing_snapshot_restore_preserves_device_suspend_state() {
     #[derive(Clone)]
     struct SuspendedSpy(Rc<RefCell<bool>>);
