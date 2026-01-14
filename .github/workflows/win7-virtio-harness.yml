@@ -488,7 +488,11 @@ jobs:
             fi
 
             echo "python3: $(python3 --version 2>&1 || true)"
-            echo "qemu: $(\"${qemu_system}\" --version 2>&1 | head -n 1 || true)"
+            if command -v "${qemu_system}" >/dev/null 2>&1; then
+              echo "qemu: $(\"${qemu_system}\" --version 2>&1 | head -n 1 || true)"
+            else
+              echo "qemu: (not found)"
+            fi
             echo
 
             echo "Running host-harness unit tests..."
