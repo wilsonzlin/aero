@@ -269,6 +269,9 @@ Notes:
   `ci/package-drivers.ps1` (or the `*-bundle.zip` file itself; the wrapper can auto-extract and auto-detect the layout).
 - Determinism is controlled by `SOURCE_DATE_EPOCH` (or `-SourceDateEpoch`). When unset, the wrapper uses the HEAD commit
   timestamp to keep outputs stable for a given commit.
+- When `-BuildId` is not provided, the wrapper defaults `build_id` in `manifest.json` to the HEAD commit SHA (or an
+  equivalent commit SHA environment variable). This keeps the ISO/zip and `manifest.json` reproducible across CI reruns
+  for the same inputs.
 
 Outputs:
 

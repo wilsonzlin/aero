@@ -408,21 +408,24 @@ function Get-VersionString {
 }
 
 function Get-BuildIdString {
-  $candidates = @(
-    $env:GITHUB_RUN_ID,
-    $env:GITHUB_RUN_NUMBER,
-    $env:BUILD_BUILDID,
-    $env:CI_PIPELINE_ID
-  )
-  foreach ($c in $candidates) {
-    if (-not [string]::IsNullOrWhiteSpace($c)) {
-      return ([string]$c).Trim()
-    }
-  }
-
+  # For reproducible artifacts, avoid CI run identifiers (which change on every rerun).
+  # Prefer a stable source identifier such as the git commit SHA.
   $sha = Try-GetGitValue -Args @("rev-parse", "--short=12", "HEAD")
   if (-not [string]::IsNullOrWhiteSpace($sha)) {
     return $sha
+  }
+
+  $candidates = @(
+    $env:GITHUB_SHA,
+    $env:CI_COMMIT_SHA,
+    $env:BUILD_SOURCEVERSION
+  )
+  foreach ($c in $candidates) {
+    if (-not [string]::IsNullOrWhiteSpace($c)) {
+      $s = ([string]$c).Trim()
+      if ($s.Length -gt 12) { $s = $s.Substring(0, 12) }
+      return $s
+    }
   }
 
   return "local"
@@ -1873,6 +1876,7 @@ if (-not [string]::IsNullOrWhiteSpace($DriverNameMapJson)) {
 if ([string]::IsNullOrWhiteSpace($Version)) {
   $Version = Get-VersionString
 }
+$buildIdExplicit = $PSBoundParameters.ContainsKey("BuildId") -and -not [string]::IsNullOrWhiteSpace($BuildId)
 if ([string]::IsNullOrWhiteSpace($BuildId)) {
   $BuildId = Get-BuildIdString
 }
@@ -1901,11 +1905,31 @@ if ($DeterminismSelfTest) {
   $outDirRun2 = $outDirResolved.TrimEnd("\", "/") + ".determinism-selftest-$nonce-run2"
 
   $cleanup = $false
+  $oldGhRunId = $env:GITHUB_RUN_ID
+  $oldGhRunNumber = $env:GITHUB_RUN_NUMBER
+  $oldBuildBuildId = $env:BUILD_BUILDID
+  $oldCiPipelineId = $env:CI_PIPELINE_ID
   try {
     Ensure-EmptyDirectory -Path $outDirRun1
     Ensure-EmptyDirectory -Path $outDirRun2
 
+    # Simulate different CI build numbers between runs (these must NOT affect output).
+    $env:GITHUB_RUN_ID = "111"
+    $env:GITHUB_RUN_NUMBER = "111"
+    $env:BUILD_BUILDID = "111"
+    $env:CI_PIPELINE_ID = "111"
+    if (-not $buildIdExplicit) {
+      $BuildId = Get-BuildIdString
+    }
     Invoke-GuestToolsPackagingRun -StageRoot $stageRootRun1 -OutDirResolved $outDirRun1 -RunLabel "Determinism self-test (run 1/2)" | Out-Null
+
+    $env:GITHUB_RUN_ID = "222"
+    $env:GITHUB_RUN_NUMBER = "222"
+    $env:BUILD_BUILDID = "222"
+    $env:CI_PIPELINE_ID = "222"
+    if (-not $buildIdExplicit) {
+      $BuildId = Get-BuildIdString
+    }
     Invoke-GuestToolsPackagingRun -StageRoot $stageRootRun2 -OutDirResolved $outDirRun2 -RunLabel "Determinism self-test (run 2/2)" | Out-Null
 
     Assert-GuestToolsArtifactsMatch -OutDirA $outDirRun1 -OutDirB $outDirRun2
@@ -1914,6 +1938,11 @@ if ($DeterminismSelfTest) {
     Write-Host ""
     Write-Host "Determinism self-test passed."
   } finally {
+    if ($null -eq $oldGhRunId) { Remove-Item env:GITHUB_RUN_ID -ErrorAction SilentlyContinue } else { $env:GITHUB_RUN_ID = $oldGhRunId }
+    if ($null -eq $oldGhRunNumber) { Remove-Item env:GITHUB_RUN_NUMBER -ErrorAction SilentlyContinue } else { $env:GITHUB_RUN_NUMBER = $oldGhRunNumber }
+    if ($null -eq $oldBuildBuildId) { Remove-Item env:BUILD_BUILDID -ErrorAction SilentlyContinue } else { $env:BUILD_BUILDID = $oldBuildBuildId }
+    if ($null -eq $oldCiPipelineId) { Remove-Item env:CI_PIPELINE_ID -ErrorAction SilentlyContinue } else { $env:CI_PIPELINE_ID = $oldCiPipelineId }
+
     if ($cleanup) {
       foreach ($p in @($outDirRun1, $outDirRun2, $stageRootRun1, $stageRootRun2)) {
         if (Test-Path -LiteralPath $p) {
