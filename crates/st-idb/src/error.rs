@@ -6,12 +6,16 @@ pub type Result<T> = std::result::Result<T, StorageError>;
 pub enum StorageError {
     #[error("IndexedDB is not available in this context")]
     IndexedDbUnavailable,
+    #[error("IndexedDB database is missing st-idb metadata (not initialized)")]
+    MissingMeta,
     #[error("disk I/O out of bounds (offset={offset}, len={len}, capacity={capacity})")]
     OutOfBounds {
         offset: u64,
         len: usize,
         capacity: u64,
     },
+    #[error("invalid configuration: {0}")]
+    InvalidConfig(&'static str),
     #[error("stored data is corrupt or has an unexpected format: {0}")]
     Corrupt(&'static str),
     #[error("unsupported on-disk format version {0}")]

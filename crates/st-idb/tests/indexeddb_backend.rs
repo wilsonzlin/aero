@@ -1,5 +1,7 @@
 use st_idb::io::storage::backends::indexeddb::{IndexedDbBackend, IndexedDbBackendOptions};
 use st_idb::io::storage::DiskBackend;
+use st_idb::platform::storage::indexeddb as idb;
+use st_idb::StorageError;
 use wasm_bindgen_test::wasm_bindgen_test;
 
 wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_worker);
@@ -25,13 +27,97 @@ async fn persistence_across_reopen() {
     backend.flush().await.unwrap();
     drop(backend);
 
-    let mut backend2 =
-        IndexedDbBackend::open(&db_name, capacity, IndexedDbBackendOptions::default())
-            .await
-            .unwrap();
+    let mut backend2 = IndexedDbBackend::open_existing(&db_name, IndexedDbBackendOptions::default())
+        .await
+        .unwrap();
+    assert_eq!(backend2.capacity(), capacity);
     let mut buf = vec![0u8; 11];
     backend2.read_at(0, &mut buf).await.unwrap();
     assert_eq!(&buf, b"hello world");
+
+    IndexedDbBackend::delete_database(&db_name).await.unwrap();
+}
+
+#[wasm_bindgen_test(async)]
+async fn non_default_block_size_persists_and_open_existing_works() {
+    let db_name = unique_db_name("st-idb-block-size");
+    let _ = IndexedDbBackend::delete_database(&db_name).await;
+
+    let capacity = 8 * 1024 * 1024;
+    let block_size = 64 * 1024;
+
+    let mut backend = IndexedDbBackend::create(
+        &db_name,
+        capacity,
+        block_size,
+        IndexedDbBackendOptions::default(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(backend.block_size(), block_size);
+
+    // Write across a block boundary to ensure the on-disk block size is respected.
+    backend
+        .write_at((block_size - 3) as u64, b"abcdef")
+        .await
+        .unwrap();
+    backend.flush().await.unwrap();
+    drop(backend);
+
+    let mut backend2 = IndexedDbBackend::open_existing(&db_name, IndexedDbBackendOptions::default())
+        .await
+        .unwrap();
+    assert_eq!(backend2.capacity(), capacity);
+    assert_eq!(backend2.block_size(), block_size);
+
+    let mut buf = vec![0u8; 6];
+    backend2
+        .read_at((block_size - 3) as u64, &mut buf)
+        .await
+        .unwrap();
+    assert_eq!(&buf, b"abcdef");
+
+    IndexedDbBackend::delete_database(&db_name).await.unwrap();
+}
+
+#[wasm_bindgen_test(async)]
+async fn open_existing_rejects_missing_meta_keys() {
+    let db_name = unique_db_name("st-idb-missing-meta");
+    let _ = IndexedDbBackend::delete_database(&db_name).await;
+
+    // Create a DB with the expected schema but without any metadata entries.
+    let db = idb::open_database_with_schema(&db_name, 1, |db, old, _new| {
+        if old < 1 {
+            db.create_object_store("meta")?;
+            db.create_object_store("blocks")?;
+        }
+        Ok(())
+    })
+    .await
+    .unwrap();
+    db.close();
+
+    let err = IndexedDbBackend::open_existing(&db_name, IndexedDbBackendOptions::default())
+        .await
+        .err()
+        .expect("expected open_existing to fail for missing meta");
+    assert!(matches!(err, StorageError::MissingMeta));
+
+    // Add only one meta key and ensure we still reject it as corrupt/incomplete.
+    let db = idb::open_database_with_schema(&db_name, 1, |_db, _old, _new| Ok(()))
+        .await
+        .unwrap();
+    idb::put_string(&db, "meta", "format_version", "1")
+        .await
+        .unwrap();
+    db.close();
+
+    let err = IndexedDbBackend::open_existing(&db_name, IndexedDbBackendOptions::default())
+        .await
+        .err()
+        .expect("expected open_existing to fail for missing meta keys");
+    assert!(matches!(err, StorageError::Corrupt("missing block_size")));
 
     IndexedDbBackend::delete_database(&db_name).await.unwrap();
 }
@@ -120,10 +206,9 @@ async fn eviction_writeback_persists_without_explicit_flush() {
     backend.write_at(block_size as u64, b"other").await.unwrap();
     drop(backend);
 
-    let mut backend2 =
-        IndexedDbBackend::open(&db_name, capacity, IndexedDbBackendOptions::default())
-            .await
-            .unwrap();
+    let mut backend2 = IndexedDbBackend::open_existing(&db_name, IndexedDbBackendOptions::default())
+        .await
+        .unwrap();
     let mut buf = vec![0u8; 10];
     backend2.read_at(0, &mut buf).await.unwrap();
     assert_eq!(&buf, b"persist me");
@@ -149,10 +234,9 @@ async fn crash_safety_simulation_unflushed_write_lost() {
     // Intentionally skip flush() to simulate crash.
     drop(backend);
 
-    let mut backend2 =
-        IndexedDbBackend::open(&db_name, capacity, IndexedDbBackendOptions::default())
-            .await
-            .unwrap();
+    let mut backend2 = IndexedDbBackend::open_existing(&db_name, IndexedDbBackendOptions::default())
+        .await
+        .unwrap();
     let mut buf = vec![0u8; 3];
     backend2.read_at(0, &mut buf).await.unwrap();
     assert_eq!(&buf, b"old");
@@ -161,10 +245,9 @@ async fn crash_safety_simulation_unflushed_write_lost() {
     backend2.flush().await.unwrap();
     drop(backend2);
 
-    let mut backend3 =
-        IndexedDbBackend::open(&db_name, capacity, IndexedDbBackendOptions::default())
-            .await
-            .unwrap();
+    let mut backend3 = IndexedDbBackend::open_existing(&db_name, IndexedDbBackendOptions::default())
+        .await
+        .unwrap();
     let mut buf2 = vec![0u8; 3];
     backend3.read_at(0, &mut buf2).await.unwrap();
     assert_eq!(&buf2, b"new");

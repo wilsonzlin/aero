@@ -65,6 +65,9 @@ mod wasm {
     fn disk_error_from_idb(err: StIdbError) -> DiskError {
         match err {
             StIdbError::IndexedDbUnavailable => DiskError::BackendUnavailable,
+            StIdbError::MissingMeta => {
+                DiskError::Io("indexeddb database is missing st-idb metadata".to_string())
+            }
             StIdbError::QuotaExceeded => DiskError::QuotaExceeded,
             StIdbError::OutOfBounds {
                 offset,
@@ -75,6 +78,7 @@ mod wasm {
                 len,
                 capacity,
             },
+            StIdbError::InvalidConfig(msg) => DiskError::InvalidConfig(msg),
             StIdbError::Corrupt(msg) => DiskError::Io(format!("indexeddb corrupt: {msg}")),
             StIdbError::UnsupportedFormat(version) => {
                 DiskError::NotSupported(format!("unsupported indexeddb format version {version}"))

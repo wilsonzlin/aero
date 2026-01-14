@@ -6,6 +6,11 @@ use std::collections::HashSet;
 use wasm_bindgen::JsValue;
 
 const DEFAULT_BLOCK_SIZE: usize = 1024 * 1024; // 1 MiB
+// Hard cap to avoid absurd allocations from untrusted/corrupt metadata.
+//
+// Larger blocks can be useful for sequential throughput, but extremely large blocks cause
+// pathological I/O patterns and huge in-memory allocations when caching/reading blocks.
+const MAX_BLOCK_SIZE: usize = 64 * 1024 * 1024; // 64 MiB
 const META_STORE: &str = "meta";
 const BLOCKS_STORE: &str = "blocks";
 const META_KEY_FORMAT_VERSION: &str = "format_version";
@@ -42,25 +47,89 @@ pub struct IndexedDbBackend {
 }
 
 impl IndexedDbBackend {
+    /// Open an existing IndexedDB-backed disk using persisted metadata.
+    ///
+    /// Unlike [`Self::open`], this does **not** require the caller to redundantly pass `capacity`
+    /// or `block_size`: both are loaded from IndexedDB metadata.
+    ///
+    /// If the database exists but is missing metadata (i.e. it was not initialized via `st-idb`),
+    /// this returns [`StorageError::MissingMeta`].
+    pub async fn open_existing(
+        db_name: impl Into<String>,
+        opts: IndexedDbBackendOptions,
+    ) -> Result<Self> {
+        let db_name = db_name.into();
+        let db = Self::open_database(&db_name).await?;
+
+        let meta = Self::read_meta(&db)
+            .await?
+            .ok_or(StorageError::MissingMeta)?;
+        Self::validate_meta(&meta)?;
+
+        let block_size = meta.block_size as usize;
+        Self::validate_block_size_meta(block_size)?;
+
+        Ok(Self {
+            db_name,
+            db,
+            capacity: meta.capacity,
+            cache: BlockCache::new(block_size, opts.max_resident_bytes),
+            dirty: HashSet::new(),
+            flush_chunk_blocks: opts.flush_chunk_blocks.max(1),
+            stats: DiskBackendStats::default(),
+        })
+    }
+
+    /// Create (or reopen) an IndexedDB-backed disk with an explicit `block_size`.
+    ///
+    /// If the database already contains metadata, the stored `capacity` and `block_size` must
+    /// match the provided values.
+    pub async fn create(
+        db_name: impl Into<String>,
+        capacity: u64,
+        block_size: usize,
+        opts: IndexedDbBackendOptions,
+    ) -> Result<Self> {
+        Self::validate_block_size_arg(block_size)?;
+        let db_name = db_name.into();
+        let db = Self::open_database(&db_name).await?;
+
+        let existing_meta = Self::read_meta(&db).await?;
+        let (disk_capacity, disk_block_size) = match existing_meta {
+            None => {
+                Self::write_meta(&db, capacity, block_size).await?;
+                (capacity, block_size)
+            }
+            Some(meta) => {
+                Self::validate_meta(&meta)?;
+                if meta.capacity != capacity {
+                    return Err(StorageError::Corrupt("capacity mismatch"));
+                }
+                if meta.block_size != block_size as u32 {
+                    return Err(StorageError::Corrupt("block size mismatch"));
+                }
+                (meta.capacity, meta.block_size as usize)
+            }
+        };
+
+        Ok(Self {
+            db_name,
+            db,
+            capacity: disk_capacity,
+            cache: BlockCache::new(disk_block_size, opts.max_resident_bytes),
+            dirty: HashSet::new(),
+            flush_chunk_blocks: opts.flush_chunk_blocks.max(1),
+            stats: DiskBackendStats::default(),
+        })
+    }
+
     pub async fn open(
         db_name: impl Into<String>,
         capacity: u64,
         opts: IndexedDbBackendOptions,
     ) -> Result<Self> {
         let db_name = db_name.into();
-
-        let db = idb::open_database_with_schema(&db_name, DB_SCHEMA_VERSION, |db, old, _new| {
-            // Schema migrations.
-            //
-            // We version at the IndexedDB level so future format changes can
-            // migrate object stores safely. For now, only v1 exists.
-            if old < 1 {
-                db.create_object_store(META_STORE)?;
-                db.create_object_store(BLOCKS_STORE)?;
-            }
-            Ok(())
-        })
-        .await?;
+        let db = Self::open_database(&db_name).await?;
 
         let existing_meta = Self::read_meta(&db).await?;
         let (disk_capacity, block_size) = match existing_meta {
@@ -69,15 +138,11 @@ impl IndexedDbBackend {
                 (capacity, DEFAULT_BLOCK_SIZE)
             }
             Some(meta) => {
-                if meta.format_version != FORMAT_VERSION {
-                    return Err(StorageError::UnsupportedFormat(meta.format_version));
-                }
-                if meta.block_size != DEFAULT_BLOCK_SIZE as u32 {
-                    return Err(StorageError::Corrupt("block size mismatch"));
-                }
+                Self::validate_meta(&meta)?;
                 if meta.capacity != capacity {
                     return Err(StorageError::Corrupt("capacity mismatch"));
                 }
+                Self::validate_block_size_meta(meta.block_size as usize)?;
                 (meta.capacity, meta.block_size as usize)
             }
         };
@@ -137,6 +202,52 @@ impl IndexedDbBackend {
         self.cache.clear();
         self.dirty.clear();
         Ok(())
+    }
+
+    async fn open_database(db_name: &str) -> Result<web_sys::IdbDatabase> {
+        idb::open_database_with_schema(db_name, DB_SCHEMA_VERSION, |db, old, _new| {
+            // Schema migrations.
+            //
+            // We version at the IndexedDB level so future format changes can
+            // migrate object stores safely. For now, only v1 exists.
+            if old < 1 {
+                db.create_object_store(META_STORE)?;
+                db.create_object_store(BLOCKS_STORE)?;
+            }
+            Ok(())
+        })
+        .await
+    }
+
+    fn validate_meta(meta: &DiskMeta) -> Result<()> {
+        if meta.format_version != FORMAT_VERSION {
+            return Err(StorageError::UnsupportedFormat(meta.format_version));
+        }
+        Ok(())
+    }
+
+    fn validate_block_size_common(block_size: usize) -> std::result::Result<(), &'static str> {
+        if block_size == 0 {
+            return Err("block_size must be non-zero");
+        }
+        if !block_size.is_multiple_of(512) {
+            return Err("block_size must be a multiple of 512");
+        }
+        if !block_size.is_power_of_two() {
+            return Err("block_size must be a power of two");
+        }
+        if block_size > MAX_BLOCK_SIZE {
+            return Err("block_size too large");
+        }
+        Ok(())
+    }
+
+    fn validate_block_size_arg(block_size: usize) -> Result<()> {
+        Self::validate_block_size_common(block_size).map_err(StorageError::InvalidConfig)
+    }
+
+    fn validate_block_size_meta(block_size: usize) -> Result<()> {
+        Self::validate_block_size_common(block_size).map_err(StorageError::Corrupt)
     }
 
     async fn read_meta(db: &web_sys::IdbDatabase) -> Result<Option<DiskMeta>> {
