@@ -64,12 +64,14 @@ expected outcome is either:
 
 ### VGA / VBE (legacy display)
 
-**Emulator (deprecated)**
+**Emulator (deprecated/compat-only)**
 
-- Legacy VGA register model + planar/packed memory pipelines:
-  - `crates/emulator/src/devices/vga/*`
-- Shared framebuffer / VBE helpers:
-  - `crates/emulator/src/display/*`
+- Legacy VGA/VBE implementation: historically lived under `crates/emulator/src/devices/vga/*`.
+  That copy has been removed in favour of the canonical `aero-gpu-vga` crate.
+- Compatibility re-export + small glue helpers:
+  - `crates/emulator/src/devices/vga.rs`
+- Compatibility re-export for the shared framebuffer ABI (source of truth lives in `aero-shared`):
+  - `crates/emulator/src/display/mod.rs`
 
 **Canonical replacement**
 
@@ -78,10 +80,10 @@ expected outcome is either:
 
 **Deletion targets (in `crates/emulator`)**
 
-- `src/devices/vga/`
+- `src/devices/vga.rs` (compat wrapper), once no callers need the legacy `emulator::devices::vga::*` paths
 - `src/display/`
 - VGA/VBE-focused emulator tests once equivalents exist in the canonical stack:
-  - `tests/vga_*`
+  - `tests/vga_smoke.rs`
   - `tests/vbe*`
 
 ### PCI / interrupts / “platform wiring”
@@ -91,15 +93,14 @@ top-level “machine wiring” layer because it contained bespoke PCI + APIC + p
 
 **Emulator (deprecated)**
 
-- Chipset glue / wiring:
-  - `crates/emulator/src/chipset.rs`
-  - `crates/emulator/src/memory_bus.rs`
-- Interrupt controller models:
-  - `crates/emulator/src/devices/ioapic.rs`
-  - `crates/emulator/src/devices/lapic.rs`
-- Emulator-local PCI framework / BAR routing:
+- Emulator-local PCI framework / BAR routing (legacy; do not extend):
   - `crates/emulator/src/io/pci.rs`
   - `crates/emulator/src/devices/pci/mod.rs` (excluding the AeroGPU device model; see below)
+
+Note: emulator-local chipset/APIC wiring that previously lived under `crates/emulator/src/*` has been
+migrated to the canonical `aero-machine`/`aero-pc-platform`/`aero-interrupts` stack and no longer
+exists in the emulator crate. The remaining emulator-local PCI code is still a potential source of
+confusion and should not grow.
 
 **Canonical replacement**
 
@@ -113,10 +114,6 @@ top-level “machine wiring” layer because it contained bespoke PCI + APIC + p
 
 **Deletion targets (in `crates/emulator`)**
 
-- `src/chipset.rs`
-- `src/memory_bus.rs`
-- `src/devices/ioapic.rs`
-- `src/devices/lapic.rs`
 - `src/io/pci.rs`
 - `src/devices/pci/mod.rs` (after AeroGPU is extracted; see “Unique remaining pieces”)
 
