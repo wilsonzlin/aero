@@ -64,6 +64,8 @@ class QuotaChunkWriteStore implements BinaryStore {
   chunkWrites = 0;
   lastChunkWritePath: string | null = null;
 
+  constructor(private readonly quotaErrorName: string = "QuotaExceededError") {}
+
   async read(path: string): Promise<Uint8Array<ArrayBuffer> | null> {
     const data = this.files.get(path);
     return data ? data.slice() : null;
@@ -75,7 +77,7 @@ class QuotaChunkWriteStore implements BinaryStore {
       this.lastChunkWritePath = path;
       // Simulate an OPFS-style partially written/truncated file before failing.
       this.files.set(path, data.slice(0, Math.min(16, data.byteLength)));
-      throw new DOMException("quota", "QuotaExceededError");
+      throw new DOMException("quota", this.quotaErrorName);
     }
     this.files.set(path, data.slice());
   }
@@ -784,6 +786,84 @@ describe("RemoteChunkedDisk", () => {
     });
 
     expect(disk.getTelemetrySnapshot().cacheLimitBytes).toBe(chunkSize * 8);
+
+    const buf1 = new Uint8Array(512);
+    await disk.readSectors(0, buf1);
+    expect(buf1).toEqual(img.slice(0, 512));
+    expect(hits.get("/chunks/00000000.bin")).toBe(1);
+    expect(store.chunkWrites).toBe(1);
+
+    // Persistent caching should be disabled after the first quota error.
+    expect(disk.getTelemetrySnapshot().cacheLimitBytes).toBe(0);
+
+    // Best-effort: ensure no orphaned partially written chunk file remains.
+    expect(store.lastChunkWritePath).toBeTruthy();
+    expect(store.files.has(store.lastChunkWritePath!)).toBe(false);
+
+    const buf2 = new Uint8Array(512);
+    await disk.readSectors(0, buf2);
+    expect(buf2).toEqual(img.slice(0, 512));
+    // With caching disabled, this must re-fetch the chunk.
+    expect(hits.get("/chunks/00000000.bin")).toBe(2);
+    // And should not attempt to persist again.
+    expect(store.chunkWrites).toBe(1);
+
+    const t = disk.getTelemetrySnapshot();
+    expect(t.cacheHits).toBe(0);
+    expect(t.cachedBytes).toBe(0);
+
+    await disk.close();
+  });
+
+  it("tolerates Firefox quota error names when persisting fetched chunks (disables caching)", async () => {
+    const chunkSize = 1024; // multiple of 512
+    const totalSize = chunkSize;
+    const chunkCount = 1;
+
+    const img = buildTestImageBytes(totalSize);
+    const chunk0 = img.slice(0, chunkSize);
+
+    const manifest = {
+      schema: "aero.chunked-disk-image.v1",
+      imageId: "test",
+      version: "v1",
+      mimeType: "application/octet-stream",
+      totalSize,
+      chunkSize,
+      chunkCount,
+      chunkIndexWidth: 8,
+      chunks: [{ size: chunkSize, sha256: await sha256Hex(chunk0) }],
+    };
+
+    const { baseUrl, hits, close } = await withServer((_req, res) => {
+      const url = new URL(_req.url ?? "/", "http://localhost");
+      if (url.pathname === "/manifest.json") {
+        res.statusCode = 200;
+        res.setHeader("content-type", "application/json");
+        res.end(JSON.stringify(manifest));
+        return;
+      }
+
+      if (url.pathname === "/chunks/00000000.bin") {
+        res.statusCode = 200;
+        res.setHeader("content-type", "application/octet-stream");
+        res.end(chunk0);
+        return;
+      }
+
+      res.statusCode = 404;
+      res.end("not found");
+    });
+    closeServer = close;
+
+    const store = new QuotaChunkWriteStore("NS_ERROR_DOM_QUOTA_REACHED");
+    const disk = await RemoteChunkedDisk.open(`${baseUrl}/manifest.json`, {
+      store,
+      cacheLimitBytes: chunkSize * 8,
+      prefetchSequentialChunks: 0,
+      retryBaseDelayMs: 0,
+      maxConcurrentFetches: 1,
+    });
 
     const buf1 = new Uint8Array(512);
     await disk.readSectors(0, buf1);

@@ -491,8 +491,16 @@ function hasOpfsRoot(): boolean {
 
 function isQuotaExceededError(err: unknown): boolean {
   if (err instanceof IdbRemoteChunkCacheQuotaError) return true;
-  if (!err || typeof err !== "object") return false;
-  return (err as { name?: unknown }).name === "QuotaExceededError";
+  // Browser/file system quota failures typically surface as a DOMException named
+  // "QuotaExceededError". Firefox uses a different name for the same condition.
+  if (!err) return false;
+  const name =
+    err instanceof DOMException || err instanceof Error
+      ? err.name
+      : typeof err === "object" && "name" in err
+        ? ((err as { name?: unknown }).name as unknown)
+        : undefined;
+  return name === "QuotaExceededError" || name === "NS_ERROR_DOM_QUOTA_REACHED";
 }
 
 function asSafeInt(value: unknown, label: string): number {
