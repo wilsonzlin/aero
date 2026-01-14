@@ -86,6 +86,9 @@ jobs:
       - name: Check virtio-snd INF alias stays in sync (byte-for-byte)
         run: python3 drivers/windows7/virtio-snd/scripts/check-inf-alias.py
 
+      - name: Check virtio-input INF alias stays in sync (models-only divergence)
+        run: python3 drivers/windows7/virtio-input/scripts/check-inf-alias.py
+
       - name: Unit tests (Win7 host harness wav verification)
         run: python3 -m unittest discover -s drivers/windows7/tests/host-harness/tests -p 'test_*.py'
 
