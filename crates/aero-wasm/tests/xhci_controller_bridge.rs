@@ -78,15 +78,14 @@ fn xhci_controller_bridge_step_frames_gates_dma_on_pci_bme() {
     bridge.mmio_write(regs::REG_CRCR_HI as u32, 4, 0);
     bridge.mmio_write(regs::REG_USBCMD as u32, 4, regs::USBCMD_RUN);
 
-    // With bus mastering disabled, stepping must not read guest RAM. The xHCI model should see
-    // open-bus 0xFF values instead.
+    // With bus mastering disabled, ticking must not read guest RAM at all.
     bridge.step_frame();
     let snap = bridge.save_state();
     let ctrl_bytes = bridge_snapshot_ctrl_bytes(&snap);
     assert_eq!(
         ctrl_snapshot_last_tick_dma_dword(ctrl_bytes),
-        0xffff_ffff,
-        "expected tick-driven DMA read to observe open-bus while BME is disabled"
+        0,
+        "expected tick-driven DMA to be skipped while BME is disabled"
     );
     assert_eq!(
         &guest[0x1000..0x1004],

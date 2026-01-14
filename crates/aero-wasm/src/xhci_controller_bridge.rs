@@ -265,7 +265,7 @@ impl XhciControllerBridge {
     /// - When BME is set, the controller can DMA into guest RAM via [`WasmGuestMemory`]. Stepping
     ///   also runs transfer-ring work and drains queued events into the guest-configured event ring.
     /// - When BME is clear, the controller still advances internal timers (e.g. port reset timers)
-    ///   but all DMA observes open-bus reads (`0xFF`) and ignores writes via [`NoDmaMemory`].
+    ///   but does not perform any DMA.
     pub fn step_frames(&mut self, frames: u32) {
         if frames == 0 {
             return;
@@ -283,13 +283,9 @@ impl XhciControllerBridge {
             }
         } else {
             // Advance controller/port timers. Without this, operations like PORTSC port reset will
-            // never complete (the xHCI model clears PR/PED after a timeout in `tick_1ms`).
-            //
-            // Use `tick_1ms_with_dma` with a NoDmaMemory bus so any DMA that occurs observes open-bus
-            // reads instead of touching guest RAM.
-            let mut mem = NoDmaMemory;
+            // never complete (the xHCI model clears PR/PED after a timeout).
             for _ in 0..frames {
-                self.ctrl.tick_1ms_with_dma(&mut mem);
+                self.ctrl.tick_1ms_no_dma();
             }
         }
 
