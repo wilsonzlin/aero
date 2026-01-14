@@ -397,7 +397,7 @@ The selftest logs to:
     - When `--test-snd` is enabled, the selftest also checks for a virtio-snd capture endpoint and emits
       `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|PASS|endpoint_present` when present.
       If the capture endpoint is missing, the capture test is reported as `SKIP|endpoint_missing` unless `--require-snd-capture` is set.
-    - `--test-snd-capture` runs a capture smoke test (WASAPI, fallback to waveIn) that records for a short interval.
+    - `--test-snd-capture` (or env var `AERO_VIRTIO_SELFTEST_TEST_SND_CAPTURE=1`) runs a capture smoke test (WASAPI, fallback to waveIn) that records for a short interval.
       This passes even on silence by default; use `--require-non-silence` to require a non-silent buffer.
     - `--test-snd-buffer-limits` (or env var `AERO_VIRTIO_SELFTEST_TEST_SND_BUFFER_LIMITS=1`) runs a WASAPI buffer sizing stress test and emits:
       `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-buffer-limits|PASS/FAIL|...`

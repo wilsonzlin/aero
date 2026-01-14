@@ -1911,7 +1911,7 @@ To run the virtio-snd **capture** smoke test (and enable the full-duplex regress
 
 - Add `-RequireSndCapture` to fail if no virtio-snd capture endpoint is present.
 - Add `-RequireNonSilence` to fail the smoke test if only silence is captured.
-- Add `-TestSndBufferLimits` to provision the guest scheduled task with `--test-snd-buffer-limits`
+- Add `-TestSndBufferLimits` to provision the guest scheduled task with `--test-snd-buffer-limits` (or env var `AERO_VIRTIO_SELFTEST_TEST_SND_BUFFER_LIMITS=1`)
   (required when running the host harness with `-WithSndBufferLimits` / `--with-snd-buffer-limits`).
 - Add `-AllowVirtioSndTransitional` to accept a transitional virtio-snd PCI ID (typically `PCI\VEN_1AF4&DEV_1018`) in the guest selftest
   (intended for debugging/backcompat outside the strict harness setup).
