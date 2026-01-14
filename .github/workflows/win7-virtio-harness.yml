@@ -335,11 +335,13 @@ jobs:
           snd_marker=""
           input_events_marker=""
           input_wheel_marker=""
+          input_media_keys_marker=""
           input_events_modifiers_marker=""
           input_events_buttons_marker=""
           input_events_wheel_marker=""
           input_tablet_marker=""
           input_inject_marker=""
+          input_media_keys_inject_marker=""
           input_tablet_inject_marker=""
           snd_capture_marker=""
           snd_duplex_marker=""
@@ -353,6 +355,7 @@ jobs:
             snd_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-snd\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
             input_events_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-input-events\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
             input_wheel_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-input-wheel\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
+            input_media_keys_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-input-media-keys\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
             input_events_modifiers_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-input-events-modifiers\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
             input_events_buttons_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-input-events-buttons\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
             input_events_wheel_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-input-events-wheel\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
@@ -364,6 +367,7 @@ jobs:
           if [[ -f "${harness_log}" ]]; then
             wav_marker="$(grep -Eo 'AERO_VIRTIO_WIN7_HOST\\|VIRTIO_SND_WAV\\|[A-Z]+' "${harness_log}" | tail -n 1 || true)"
             input_inject_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|' "${harness_log}" | tail -n 1 || true)"
+            input_media_keys_inject_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_MEDIA_KEYS_INJECT|' "${harness_log}" | tail -n 1 || true)"
             input_tablet_inject_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_TABLET_EVENTS_INJECT|' "${harness_log}" | tail -n 1 || true)"
             # Extract the last structured failure token from the harness output, if present.
             # Example: "FAIL: MISSING_VIRTIO_INPUT_EVENTS: ..."
@@ -400,6 +404,9 @@ jobs:
             if [[ -n "${input_wheel_marker}" ]]; then
               echo "- Guest virtio-input-wheel marker: ${input_wheel_marker}"
             fi
+            if [[ -n "${input_media_keys_marker}" ]]; then
+              echo "- Guest virtio-input-media-keys marker: ${input_media_keys_marker}"
+            fi
             if [[ -n "${input_events_modifiers_marker}" ]]; then
               echo "- Guest virtio-input-events-modifiers marker: ${input_events_modifiers_marker}"
             fi
@@ -411,6 +418,9 @@ jobs:
             fi
             if [[ -n "${input_inject_marker}" ]]; then
               echo "- Host virtio-input injection marker: \`${input_inject_marker}\`"
+            fi
+            if [[ -n "${input_media_keys_inject_marker}" ]]; then
+              echo "- Host virtio-input media keys injection marker: \`${input_media_keys_inject_marker}\`"
             fi
             if [[ -n "${input_tablet_marker}" ]]; then
               echo "- Guest virtio-input-tablet-events marker: ${input_tablet_marker}"

@@ -789,6 +789,10 @@ This requires a guest image provisioned with `--test-input-events` (for example 
 To also exercise the optional virtio-input wheel marker (`virtio-input-wheel`), set the workflow input
 `with_virtio_input_wheel=true` (requires the same guest `--test-input-events` provisioning).
 
+To also exercise the optional virtio-input Consumer Control / media keys marker (`virtio-input-media-keys`), set the workflow input
+`with_virtio_input_media_keys=true`. This requires a guest image provisioned with `--test-input-media-keys` (for example via
+`New-AeroWin7TestImage.ps1 -TestInputMediaKeys` (alias: `-TestMediaKeys`)).
+
 To exercise the extended virtio-input markers (`virtio-input-events-modifiers/buttons/wheel`), set the workflow input
 `with_virtio_input_events_extended=true`. This requires a guest image provisioned with `--test-input-events` and
 `--test-input-events-extended` (or env var `AERO_VIRTIO_SELFTEST_TEST_INPUT_EVENTS_EXTENDED=1`; for example via
