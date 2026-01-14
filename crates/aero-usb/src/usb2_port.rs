@@ -111,6 +111,20 @@ impl Usb2PortMux {
         let Some(p) = self.ports.get_mut(port) else {
             return;
         };
+        // When this physical port is currently routed to EHCI, the companion controller should not
+        // be able to affect shared device state (suspend/resume/reset). Still allow W1C status bits
+        // to be cleared from the companion view.
+        if p.effective_owner != Usb2PortOwner::Companion {
+            const CSC: u16 = 1 << 1;
+            const PEDC: u16 = 1 << 3;
+            const RD: u16 = 1 << 6;
+
+            let write_mask = write_mask & (CSC | PEDC | RD);
+            let mut no_dev = None;
+            p.uhci.write_portsc(value, write_mask, &mut no_dev);
+            return;
+        }
+
         p.uhci.write_portsc(value, write_mask, &mut p.device);
     }
 
@@ -128,6 +142,11 @@ impl Usb2PortMux {
         let Some(p) = self.ports.get_mut(port) else {
             return;
         };
+        if p.effective_owner != Usb2PortOwner::Companion {
+            let mut no_dev = None;
+            p.uhci.bus_reset(&mut no_dev);
+            return;
+        }
         p.uhci.bus_reset(&mut p.device);
     }
 
@@ -217,10 +236,14 @@ impl Usb2PortMux {
             return;
         };
 
-        // When the port is owned by the companion controller, EHCI should not drive reset/enable,
-        // but it should still allow software to clear latched change bits.
+        // When the port is owned by the companion controller, EHCI should not drive
+        // reset/enable/suspend/resume. It may still clear latched change bits, but those writes
+        // must not mutate the shared device model (e.g. clearing its suspended state).
         if p.effective_owner != Usb2PortOwner::Ehci {
             write_mask &= CSC | PEDC;
+            let mut no_dev = None;
+            p.ehci.write_portsc_ehci(value, write_mask, &mut no_dev);
+            return;
         }
 
         p.ehci.write_portsc_ehci(value, write_mask, &mut p.device);
@@ -240,6 +263,11 @@ impl Usb2PortMux {
         let Some(p) = self.ports.get_mut(port) else {
             return;
         };
+        if p.effective_owner != Usb2PortOwner::Ehci {
+            let mut no_dev = None;
+            p.ehci.bus_reset(&mut no_dev);
+            return;
+        }
         p.ehci.bus_reset(&mut p.device);
     }
 
