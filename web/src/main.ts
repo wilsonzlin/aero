@@ -4284,6 +4284,32 @@ function renderAudioPanel(): HTMLElement {
           entries.push({ path: `${dir}/screenshot-error.txt`, data: encoder.encode(message) });
         }
 
+        // Chrome trace export (best-effort). This is only meaningful if trace was enabled at some
+        // point (e.g. via `?trace` or `aero.perf.traceStart()`), but exporting an empty trace is
+        // cheap and still useful for recording the thread/worker metadata.
+        try {
+          const data = await perf.exportTrace({ asString: true });
+          const payload = typeof data === "string" ? data : JSON.stringify(data);
+          entries.push({ path: `${dir}/trace.json`, data: encoder.encode(payload) });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          entries.push({ path: `${dir}/trace-error.txt`, data: encoder.encode(message) });
+        }
+
+        // Perf HUD export (best-effort). This captures the low-rate perf telemetry visible in the
+        // on-page HUD and can be useful for correlating audio underruns with CPU/GPU stalls.
+        try {
+          const perfApi = (globalThis as any)?.aero?.perf;
+          const exportFn = perfApi?.export;
+          if (typeof exportFn === "function") {
+            const data = exportFn.call(perfApi);
+            entries.push({ path: `${dir}/perf-hud.json`, data: encoder.encode(JSON.stringify(data, null, 2)) });
+          }
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          entries.push({ path: `${dir}/perf-hud-error.txt`, data: encoder.encode(message) });
+        }
+
         const tarBytes = createTarArchive(entries, { mtimeSec });
         // `BlobPart` typings require ArrayBuffer-backed views; defensively normalize.
         const tarPayload = ensureArrayBufferBacked(tarBytes);

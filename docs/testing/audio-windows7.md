@@ -275,6 +275,8 @@ Alternative (if the web UI exposes it):
   - `audio-metrics.json`
   - `hda-codec-state.json` (best-effort; requires the I/O worker)
   - `screenshot-*.png` (best-effort; requires the GPU worker)
+  - `trace.json` (best-effort; Chrome trace export; includes worker thread metadata and any recorded spans/counters if tracing was enabled)
+  - `perf-hud.json` (best-effort; on-page perf HUD capture export, if available)
 
 Quick interpretation tips:
 
