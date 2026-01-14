@@ -267,16 +267,16 @@ Define a scanout description readable by the presentation pipeline:
 
 ```rust
 #[repr(C)]
-pub struct ScanoutState {
-    pub generation: u32,          // increment on every complete update
-    pub source: u32,              // 0=LegacyText, 1=LegacyVbeLfb, 2=Wddm
-    pub base_paddr_lo: u32,       // guest physical address (low)
-    pub base_paddr_hi: u32,       // guest physical address (high)
-    pub width: u32,
-    pub height: u32,
-    pub pitch_bytes: u32,
-    pub format: u32,              // 0=B8G8R8X8 (for now)
-}
+ pub struct ScanoutState {
+     pub generation: u32,          // increment on every complete update
+     pub source: u32,              // 0=LegacyText, 1=LegacyVbeLfb, 2=Wddm
+     pub base_paddr_lo: u32,       // guest physical address (low)
+     pub base_paddr_hi: u32,       // guest physical address (high)
+     pub width: u32,
+     pub height: u32,
+     pub pitch_bytes: u32,
+     pub format: u32,              // enum aerogpu_format (e.g. AEROGPU_FORMAT_B8G8R8X8_UNORM)
+ }
 ```
 
 The update rule:
@@ -293,25 +293,35 @@ This makes scanout switching glitch-free without locks.
 
 ### Required WDDM scanout programming surface (BAR0)
 
-To allow the WDDM KMD to take ownership of scanout (and to let the emulator switch the canvas over cleanly), AeroGPU must expose a minimal set of scanout registers in BAR0.
+The canonical A3A0:0001 MMIO register map is defined by
+[`drivers/aerogpu/protocol/aerogpu_pci.h`](../drivers/aerogpu/protocol/aerogpu_pci.h)
+(grep for `AEROGPU_MMIO_REG_SCANOUT0_*`). This section exists only to summarize the scanout
+programming subset relevant to **boot-display handoff**.
 
-If a broader AeroGPU protocol already exists, this section defines the *minimum required semantics*:
+Scanout 0 registers (BAR0):
 
 | Offset | Name | Width | Description |
 |--------|------|-------|-------------|
-| 0x0000 | `SCANOUT_CTRL` | 32 | Bit 0: `ENABLE` (1 = scanout active). Bit 1: `COMMIT` (write 1 to request atomic apply). |
-| 0x0004 | `SCANOUT_BASE_LO` | 32 | Scanout base guest physical address (low 32). |
-| 0x0008 | `SCANOUT_BASE_HI` | 32 | Scanout base guest physical address (high 32). |
-| 0x000C | `SCANOUT_PITCH_BYTES` | 32 | Bytes per scanline. |
-| 0x0010 | `SCANOUT_WIDTH` | 32 | Visible width in pixels. |
-| 0x0014 | `SCANOUT_HEIGHT` | 32 | Visible height in pixels. |
-| 0x0018 | `SCANOUT_FORMAT` | 32 | Pixel format enum (at least `B8G8R8X8`). |
+| `0x0400` | `SCANOUT0_ENABLE` (`AEROGPU_MMIO_REG_SCANOUT0_ENABLE`) | 32 | 0/1 |
+| `0x0404` | `SCANOUT0_WIDTH` (`AEROGPU_MMIO_REG_SCANOUT0_WIDTH`) | 32 | Width in pixels |
+| `0x0408` | `SCANOUT0_HEIGHT` (`AEROGPU_MMIO_REG_SCANOUT0_HEIGHT`) | 32 | Height in pixels |
+| `0x040C` | `SCANOUT0_FORMAT` (`AEROGPU_MMIO_REG_SCANOUT0_FORMAT`) | 32 | `enum aerogpu_format` |
+| `0x0410` | `SCANOUT0_PITCH_BYTES` (`AEROGPU_MMIO_REG_SCANOUT0_PITCH_BYTES`) | 32 | Bytes per scanline |
+| `0x0414` | `SCANOUT0_FB_GPA_LO` (`AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_LO`) | 32 | Framebuffer guest physical address (low 32) |
+| `0x0418` | `SCANOUT0_FB_GPA_HI` (`AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_HI`) | 32 | Framebuffer guest physical address (high 32) |
 
-**Atomic update rule (recommended):**
+**Atomic / "commit" semantics (canonical A3A0):**
 
-1. Driver writes `*_BASE`, `PITCH`, `WIDTH`, `HEIGHT`, `FORMAT`
-2. Driver writes `SCANOUT_CTRL.ENABLE=1` and then pulses `SCANOUT_CTRL.COMMIT=1`
-3. Device updates `ScanoutState` in one step on COMMIT (ignoring partially-written state)
+- There is **no** separate `COMMIT` register/bit in the canonical A3A0 MMIO ABI. The Windows KMD
+  stages `SCANOUT0_*` values and then writes `SCANOUT0_ENABLE`.
+- Treat the write to `SCANOUT0_ENABLE` as the **commit point**:
+  - Update `ScanoutState` when `SCANOUT0_ENABLE` transitions **0 → 1** (use the current values of
+    `SCANOUT0_FB_GPA_*`, `WIDTH`, `HEIGHT`, `PITCH_BYTES`, `FORMAT`).
+  - While `SCANOUT0_ENABLE == 1`, update `ScanoutState` on configuration changes (Task 420).
+- Presentation commands read the current scanout programming: `AEROGPU_CMD_PRESENT` uses the
+  currently-programmed `SCANOUT0_*` registers, and drivers may update `SCANOUT0_FB_GPA_*` before
+  PRESENT to implement flips (see
+  [`drivers/aerogpu/protocol/aerogpu_cmd.h`](../drivers/aerogpu/protocol/aerogpu_cmd.h)).
 
 ### When legacy VGA/VBE owns scanout
 
@@ -320,7 +330,7 @@ If a broader AeroGPU protocol already exists, this section defines the *minimum 
 
 ### When WDDM owns scanout
 
-When the AeroGPU WDDM driver is loaded, it programs the AeroGPU scanout registers (BAR0). As soon as the device observes a valid “enable” transition, it updates `ScanoutState`:
+When the AeroGPU WDDM driver is loaded, it programs the AeroGPU scanout registers (BAR0). As soon as the device observes `SCANOUT0_ENABLE` transition **0 → 1**, it updates `ScanoutState`:
 
 - `source = Wddm`
 - `base_paddr = value programmed by driver`
@@ -330,10 +340,10 @@ From this point onward, **VGA/VBE writes do not affect the visible display**.
 
 ### Compatibility rule once WDDM is active
 
-After the first successful WDDM scanout enable:
+After the first successful WDDM scanout enable (`SCANOUT0_ENABLE=1`):
 
 - Legacy VGA/VBE ports and memory windows may continue to accept reads/writes for compatibility.
-- The emulator presentation must ignore legacy sources unless WDDM explicitly disables scanout or the VM resets.
+- The emulator presentation must ignore legacy sources unless WDDM explicitly disables scanout (e.g. `SCANOUT0_ENABLE=0`) or the VM resets.
 
 This prevents legacy writes (e.g. an errant `INT 10h`) from stealing the primary display after the desktop is up.
 
