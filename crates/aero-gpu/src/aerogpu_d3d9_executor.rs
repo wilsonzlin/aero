@@ -1690,11 +1690,11 @@ impl AerogpuD3d9Executor {
             Some(compute_wgpu_caps_hash(&device, downlevel_flags)),
         );
 
-        // D3D9 shader translation uses a single uniform buffer split into stable regions for the
-        // float/int/bool register files:
-        // - binding(0): float4 constants (`c#`)
-        // - binding(1): int4 constants (`i#`)
-        // - binding(2): bool constants (`b#`, encoded as `vec4<u32>` per register)
+        // D3D9 shader translation uses a single uniform buffer at @group(0) @binding(0), split
+        // into stable regions for the float/int/bool register files (matches `aero-d3d9` WGSL):
+        // - float constants (`c#`): 512 * vec4<f32> (VS then PS)
+        // - int constants (`i#`):   512 * vec4<i32> (VS then PS)
+        // - bool constants (`b#`):  512 * u32 (VS then PS), packed as `array<vec4<u32>, 128>`
         //
         // Each region contains 512 registers, where indices:
         // - [0..255]   = vertex shader constants

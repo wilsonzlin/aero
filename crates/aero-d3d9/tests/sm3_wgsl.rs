@@ -4136,9 +4136,7 @@ fn sm3_wgsl_is_compatible_with_aerogpu_d3d9_pipeline_layout() {
     // Coarse integration test that SM3 WGSL bindings match the existing AeroGPU D3D9 executor
     // pipeline layout contract:
     // - group(0): constants (VERTEX+FRAGMENT)
-    //   - binding(0): float4 constants (`c#`)
-    //   - binding(1): int4 constants (`i#`)
-    //   - binding(2): bool constants (`b#`, stored as `vec4<u32>` per register)
+    //   - binding(0): packed constants uniform buffer (float + int + bool banks)
     // - group(1): VS samplers (VERTEX only)
     // - group(2): PS samplers (FRAGMENT only)
     // - group(3): optional half-pixel-center adjustment uniform (VERTEX only)
