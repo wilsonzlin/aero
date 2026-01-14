@@ -249,14 +249,19 @@ Packaged locations:
 Pass the full path:
 
 ```cmd
-bin\aerogpu_test_runner.exe --log-dir=logs --dbgctl=X:\drivers\amd64\aerogpu\tools\aerogpu_dbgctl.exe
+:: Point directly at the dbgctl shipped on the Guest Tools ISO/zip (replace <GuestToolsDrive>, e.g. D).
+:: Win7 x64:
+bin\aerogpu_test_runner.exe --log-dir=logs --dbgctl=<GuestToolsDrive>:\drivers\amd64\aerogpu\tools\aerogpu_dbgctl.exe
+:: Win7 x86:
+:: bin\aerogpu_test_runner.exe --log-dir=logs --dbgctl=<GuestToolsDrive>:\drivers\x86\aerogpu\tools\aerogpu_dbgctl.exe
 ```
 
-Or (if you prefer `--dbgctl=aerogpu_dbgctl.exe`) copy it next to the runner binaries first:
+Or copy dbgctl next to the runner and use a shorter `--dbgctl` path:
 
 ```cmd
-copy X:\drivers\amd64\aerogpu\tools\aerogpu_dbgctl.exe bin\
-bin\aerogpu_test_runner.exe --log-dir=logs --dbgctl=aerogpu_dbgctl.exe
+:: Win7 x86: copy from <GuestToolsDrive>:\drivers\x86\aerogpu\tools\aerogpu_dbgctl.exe
+copy /y <GuestToolsDrive>:\drivers\amd64\aerogpu\tools\aerogpu_dbgctl.exe bin\
+bin\aerogpu_test_runner.exe --log-dir=logs --dbgctl=bin\aerogpu_dbgctl.exe
 ```
 
 By default the snapshot is written next to the per-test logs (or next to `report.json` when `--json` is used).

@@ -36,6 +36,7 @@ Driver package version (INF/UMD/KMD build id):
 Device HWID: VID=0xA3A0 / DID=0x0001
 Test signing: (on/off)
 Session: (local console / RDP / other)
+Guest Tools drive letter: (mounted ISO/zip, e.g. D)
 
 Guest OS:
 - Win7 SP1 x86: (winver string, e.g. 6.1.7601 Service Pack 1 Build 7601)
@@ -43,9 +44,9 @@ Guest OS:
 
 Test suite:
 - x86 command:
-  bin\\aerogpu_test_runner.exe --json --log-dir=logs --dbgctl=X:\\drivers\\x86\\aerogpu\\tools\\aerogpu_dbgctl.exe --require-vid=0xA3A0 --require-did=0x0001 --require-umd
+  bin\\aerogpu_test_runner.exe --json --log-dir=logs --dbgctl=<GuestToolsDrive>:\\drivers\\x86\\aerogpu\\tools\\aerogpu_dbgctl.exe --require-vid=0xA3A0 --require-did=0x0001 --require-umd
 - x64 command:
-  bin\\aerogpu_test_runner.exe --json --log-dir=logs --dbgctl=X:\\drivers\\amd64\\aerogpu\\tools\\aerogpu_dbgctl.exe --require-vid=0xA3A0 --require-did=0x0001 --require-umd
+  bin\\aerogpu_test_runner.exe --json --log-dir=logs --dbgctl=<GuestToolsDrive>:\\drivers\\amd64\\aerogpu\\tools\\aerogpu_dbgctl.exe --require-vid=0xA3A0 --require-did=0x0001 --require-umd
 
 Results summary:
 - Win7 x86: PASS=  FAIL=  SKIP=
@@ -59,7 +60,7 @@ Artifacts collected:
  - failing test --dump outputs (BMP/bin) (dir):
  - dbgctl last-submission cmd dump (`--dump-last-submit`) outputs (cmd.bin + alloc.bin + cmd.bin.txt) (when available):
  - Event Viewer: dxgkrnl/display events around failures (exported EVTX):
- - KMD snapshots: aerogpu_dbgctl --query-fence/--dump-ring/--dump-vblank/--dump-createalloc (outputs saved):
+ - KMD snapshots: aerogpu_dbgctl.exe --query-fence/--dump-ring/--dump-vblank/--dump-createalloc (outputs saved):
  Notes:
 ```
 
@@ -429,7 +430,9 @@ Even if you can’t run GPUView in the VM, a saved ETL is still valuable for off
 
 ## 5) Debug playbook (with `aerogpu_dbgctl`)
 
-`aerogpu_dbgctl` is assumed to be a small command-line tool shipped with the driver package that talks to the AeroGPU KMD via a **driver-private escape** path (`DxgkDdiEscape` via `D3DKMTEscape`).
+`aerogpu_dbgctl.exe` is assumed to be a small command-line tool shipped with the driver package that talks to the AeroGPU KMD via a **driver-private escape** path (`DxgkDdiEscape` via `D3DKMTEscape`).
+
+### 5.1 Where to find dbgctl (packaged locations)
 
 Packaged locations:
 
@@ -445,38 +448,47 @@ You can run it in-place from those directories, copy it somewhere on `PATH`, or 
 **Bitness policy:** dbgctl is shipped as a single **x86** binary and copied into both the x86 and x64 driver packages.
 On Windows 7 x64 it runs via **WOW64**. This ensures Windows 7 x86 users can always run the shipped tool.
 
-### 5.1 Typical workflow
+Example (run directly from a mounted Guest Tools ISO/zip; replace `<GuestToolsDrive>` with the drive letter, e.g. `D`):
+
+```bat
+cd /d <GuestToolsDrive>:\drivers\amd64\aerogpu\tools
+aerogpu_dbgctl.exe --status
+```
+
+All commands below assume you either run `aerogpu_dbgctl.exe` via a full path, or `cd` into the directory containing `aerogpu_dbgctl.exe` first (as above).
+
+### 5.2 Typical workflow
 
 1. **Turn on verbose logs** (checked build via WinDbg / `DbgPrintEx` filtering; dbgctl log-level control is optional/driver-specific)
 2. **Reproduce the issue quickly** (Aero enable, dxdiag test, your sample).
 3. **Snapshot state immediately after**
    ```bat
-   aerogpu_dbgctl --query-version
-   aerogpu_dbgctl --query-umd-private
-   aerogpu_dbgctl --query-fence
-   aerogpu_dbgctl --dump-ring --ring-id 0
-   aerogpu_dbgctl --dump-last-submit --cmd-out C:\cmd.bin --alloc-out C:\alloc.bin
-   aerogpu_dbgctl --dump-createalloc
-   aerogpu_dbgctl --dump-vblank
-   aerogpu_dbgctl --query-perf
+   aerogpu_dbgctl.exe --query-version
+   aerogpu_dbgctl.exe --query-umd-private
+   aerogpu_dbgctl.exe --query-fence
+   aerogpu_dbgctl.exe --dump-ring --ring-id 0
+   aerogpu_dbgctl.exe --dump-last-submit --cmd-out C:\cmd.bin --alloc-out C:\alloc.bin
+   aerogpu_dbgctl.exe --dump-createalloc
+   aerogpu_dbgctl.exe --dump-vblank
+   aerogpu_dbgctl.exe --query-perf
     ```
 4. **If the desktop is frozen but the VM is alive**, dump again (to see if anything advances).
 
 Optional: if you suspect vblank pacing/jitter, sample a few times:
 
 ```bat
-aerogpu_dbgctl --dump-vblank --vblank-samples 10 --vblank-interval-ms 200
+aerogpu_dbgctl.exe --dump-vblank --vblank-samples 10 --vblank-interval-ms 200
 ```
 
 If you suspect the OS is not receiving vblank events at all (interrupt/wait wiring issues), measure the WDDM vblank wait path directly:
 
 ```bat
-aerogpu_dbgctl --wait-vblank --vblank-samples 120 --timeout-ms 2000
+aerogpu_dbgctl.exe --wait-vblank --vblank-samples 120 --timeout-ms 2000
 ```
 
 Follow-up check:
 
-- Run `aerogpu_dbgctl --dump-vblank` and look at `IRQ_ENABLE` and `vblank_interrupt_type`.
+- Run `aerogpu_dbgctl.exe --dump-vblank` and look at `IRQ_ENABLE` and `vblank_interrupt_type`.
   - If `vblank_interrupt_type` is `(not enabled or not reported)` even after calling `--wait-vblank`, dxgkrnl may not be enabling vblank interrupts for the adapter (or the KMD is not seeing `DxgkDdiControlInterrupt` calls / is too old to report it).
   - If `vblank_interrupt_type` is set but `IRQ_ENABLE` does not include `VBLANK`, the KMD is likely not programming the device IRQ enable mask correctly.
   - On Win7/WDDM 1.1, the vblank interrupt type should correspond to `DXGK_INTERRUPT_TYPE_CRTC_VSYNC` (see `drivers/aerogpu/kmd/tools/wdk_abi_probe` if you need the numeric enum value).
@@ -484,12 +496,12 @@ Follow-up check:
 And if you suspect scanline/vblank state queries are broken, sample `D3DKMTGetScanLine`:
 
 ```bat
-aerogpu_dbgctl --query-scanline --vblank-samples 50 --vblank-interval-ms 10
+aerogpu_dbgctl.exe --query-scanline --vblank-samples 50 --vblank-interval-ms 10
 ```
 
 If you need to debug a hang or incorrect rendering without attaching WinDbg, capture a last-submission cmd stream + alloc table dump and decode it on the host (see [Dumping the last AeroGPU submission (cmd stream and alloc table)](../windows7-driver-troubleshooting.md#dumping-the-last-aerogpu-submission-cmd-stream-and-alloc-table)).
 
-### 5.2 Suggested `aerogpu_dbgctl` commands (implemented today)
+### 5.3 Suggested `aerogpu_dbgctl` commands (implemented today)
 
 For the canonical, up-to-date command list and global options, see:
 `drivers/aerogpu/tools/win7_dbgctl/README.md`.
@@ -530,9 +542,9 @@ The key is: **one command to capture “where are my fences and why aren’t the
 
 Some bring-up playbooks mention additional “debug knobs” (runtime log verbosity control, hang injection, forced reset, start/stop perf recording to a file, etc.).
 Those are **not implemented** by the in-tree Win7 dbgctl tool today; treat them as driver-specific extensions if/when added.
-For lightweight, snapshot-style counters, use `aerogpu_dbgctl --query-perf`.
+For lightweight, snapshot-style counters, use `aerogpu_dbgctl.exe --query-perf`.
 
-### 5.3 Common error codes and likely causes
+### 5.4 Common error codes and likely causes
 
 | Symptom | Error / signal | Likely causes | First checks |
 |---|---|---|---|
@@ -544,7 +556,7 @@ For lightweight, snapshot-style counters, use `aerogpu_dbgctl --query-perf`.
 | Aero turns off (Basic theme) without a BSOD | “The color scheme has been changed…” notification | DWM device removed/reset, vblank pacing broken, present failures | verify `dwm.exe` still running; check 4101; check `--dump-vblank` cadence (seq/time monotonic) |
 | Desktop freezes with no recovery | no logs after a point; hard hang | TdrLevel disabled, deadlock at DISPATCH_LEVEL, interrupt storm, spinlock inversion | re-enable TDR; add watchdog logs; check vblank generator independence from render thread |
 
-### 5.4 Backend/submission failure (AEROGPU_IRQ_ERROR) expectations
+### 5.5 Backend/submission failure (AEROGPU_IRQ_ERROR) expectations
 
 If the host backend/emulator detects a submission failure and raises `AEROGPU_IRQ_ERROR`, the Win7 KMD should surface this as a **DMA fault** to dxgkrnl. In a manual repro on a Win7 guest, this typically shows up as:
 
@@ -552,7 +564,7 @@ If the host backend/emulator detects a submission failure and raises `AEROGPU_IR
   - `DXGI_ERROR_DEVICE_HUNG` (`0x887A0006`) / `DXGI_ERROR_DEVICE_REMOVED` (`0x887A0005`)
   - `D3DERR_DEVICELOST` (D3D9)
 - System log entries consistent with a graphics fault/TDR (often **Display** Event ID **4101** near the time of the error).
-- `aerogpu_dbgctl --query-fence` reporting a non-zero `error_irq_count` and a `last_error_fence` near the failing submission.
+- `aerogpu_dbgctl.exe --query-fence` reporting a non-zero `error_irq_count` and a `last_error_fence` near the failing submission.
 
 ---
 
@@ -564,7 +576,7 @@ If you’re unsure what to implement first, aim for this minimal set:
 2. **Synthetic vblank** at 60 Hz with logging and missed-count tracking.
 3. **Small, bounded submissions** (split work; fence per submission; completion <100 ms).
 4. A `ResetFromTimeout` implementation that can recover without BSOD.
-5. `aerogpu_dbgctl --query-fence/--dump-ring/--dump-vblank` works even after a failure.
+5. `aerogpu_dbgctl.exe --query-fence/--dump-ring/--dump-vblank` works even after a failure.
 
 Once this recipe is stable, expand: more modes, more features, better pacing accuracy, and higher throughput.
 

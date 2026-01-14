@@ -79,24 +79,31 @@ This produces one or more small, shareable artifacts:
 - `cmd.bin.txt`: a small text summary (ring index, fence, GPAs/sizes).
 
 ### 1) Guest (Windows 7): dump the last submission
-
+ 
 Run this inside the guest as soon as possible after reproducing:
-
+ 
 ```bat
-aerogpu_dbgctl --dump-last-submit --cmd-out C:\cmd.bin --alloc-out C:\alloc.bin
+:: Replace <GuestToolsDrive> with the drive letter of the mounted Guest Tools ISO/zip (e.g. D).
+:: Win7 x64:
+cd /d <GuestToolsDrive>:\drivers\amd64\aerogpu\tools
+:: Win7 x86:
+:: cd /d <GuestToolsDrive>:\drivers\x86\aerogpu\tools
+
+aerogpu_dbgctl.exe --dump-last-submit --cmd-out C:\cmd.bin --alloc-out C:\alloc.bin
 ```
 
 Then copy `C:\cmd.bin`, `C:\cmd.bin.txt`, and (if present) `C:\alloc.bin` to the host machine (shared folder, ISO, whatever is convenient).
 
 Notes:
 
+- On Win7 x64, dbgctl can be the **x86** build running under WOW64; the Guest Tools `drivers\amd64\...\tools\` directory also ships an x86 `aerogpu_dbgctl.exe` so you can run it directly from the mounted media without editing `PATH`.
 - If dbgctl refuses to dump due to the default size cap (1 MiB), re-run with `--force`:
-  - `aerogpu_dbgctl --dump-last-submit --cmd-out C:\cmd.bin --alloc-out C:\alloc.bin --force`
+  - `aerogpu_dbgctl.exe --dump-last-submit --cmd-out C:\cmd.bin --alloc-out C:\alloc.bin --force`
 - To capture an older submission (for example if the newest submit is a tiny no-op), use `--index-from-tail`:
-  - `aerogpu_dbgctl --dump-last-submit --index-from-tail 1 --cmd-out C:\prev_cmd.bin --alloc-out C:\prev_alloc.bin`
+  - `aerogpu_dbgctl.exe --dump-last-submit --index-from-tail 1 --cmd-out C:\prev_cmd.bin --alloc-out C:\prev_alloc.bin`
 - To dump multiple recent submissions in one run, use `--count N` (writes one output per submission, like `cmd_0.bin`, `cmd_1.bin`, ...).
   - Note: `--alloc-out` is only supported when dumping a single submission (`--count 1`). When dumping multiple submissions, dbgctl writes alloc tables (when present) to `<cmd_path>.alloc_table.bin` next to each dumped cmd stream.
-  - `aerogpu_dbgctl --dump-last-submit --count 4 --cmd-out C:\cmd.bin`
+  - `aerogpu_dbgctl.exe --dump-last-submit --count 4 --cmd-out C:\cmd.bin`
 - If your build uses multiple rings, select the ring with `--ring-id N` (default is 0).
 
 ### 2) Host: decode the submission
