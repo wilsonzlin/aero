@@ -1390,7 +1390,7 @@ static bool DumpGpaToFile(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint64_
     io.status = (aerogpu_escape_u32)STATUS_INVALID_PARAMETER;
     io.bytes_copied = 0;
 
-    NTSTATUS st = SendAerogpuEscapeDirect(f, hAdapter, &io, sizeof(io));
+    NTSTATUS st = SendAerogpuEscape(f, hAdapter, &io, sizeof(io));
     if (!NT_SUCCESS(st)) {
       PrintNtStatus(L"D3DKMTEscape(read-gpa) failed", f, st);
       goto cleanup;
@@ -3796,7 +3796,7 @@ static NTSTATUS ReadGpa(const D3DKMT_FUNCS *f,
   io->size_bytes = (aerogpu_escape_u32)sizeBytes;
   io->reserved0 = 0;
 
-  const NTSTATUS st = SendAerogpuEscapeDirect(f, hAdapter, io, io->hdr.size);
+  const NTSTATUS st = SendAerogpuEscape(f, hAdapter, io, io->hdr.size);
   if (!NT_SUCCESS(st)) {
     return st;
   }
@@ -6740,7 +6740,7 @@ static int DoReadGpa(const D3DKMT_FUNCS *f,
   io.size_bytes = (aerogpu_escape_u32)want;
   io.reserved0 = 0;
 
-  const NTSTATUS st = SendAerogpuEscapeDirect(f, hAdapter, &io, sizeof(io));
+  const NTSTATUS st = SendAerogpuEscape(f, hAdapter, &io, sizeof(io));
   if (!NT_SUCCESS(st)) {
     PrintNtStatus(L"read-gpa failed", f, st);
     if (st == STATUS_NOT_SUPPORTED) {
