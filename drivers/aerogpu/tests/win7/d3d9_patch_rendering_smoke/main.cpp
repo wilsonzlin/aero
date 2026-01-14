@@ -723,7 +723,7 @@ static int RunD3D9PatchRenderingSmoke(int argc, char** argv) {
     return stage_rc;
   }
 
-  // Stage 3: DrawTriPatch (smoke test).
+  // Stage 3: DrawTriPatch twice (cache hit path).
   hr = dev->Clear(0, NULL, D3DCLEAR_TARGET, kClearRed, 1.0f, 0);
   if (FAILED(hr)) {
     return reporter.FailHresult("Clear", hr);
@@ -735,7 +735,12 @@ static int RunD3D9PatchRenderingSmoke(int argc, char** argv) {
   hr = dev->DrawTriPatch(2, tri_segs, &tri_info);
   if (FAILED(hr)) {
     dev->EndScene();
-    return reporter.FailHresult("DrawTriPatch", hr);
+    return reporter.FailHresult("DrawTriPatch (first)", hr);
+  }
+  hr = dev->DrawTriPatch(2, tri_segs, &tri_info);
+  if (FAILED(hr)) {
+    dev->EndScene();
+    return reporter.FailHresult("DrawTriPatch (second)", hr);
   }
   hr = dev->EndScene();
   if (FAILED(hr)) {
@@ -743,7 +748,7 @@ static int RunD3D9PatchRenderingSmoke(int argc, char** argv) {
   }
   stage_rc = ValidateBackbufferStage(kTestName,
                                      &reporter,
-                                     "tri",
+                                     "tri_twice",
                                      dev.get(),
                                      backbuffer.get(),
                                      sysmem.get(),
