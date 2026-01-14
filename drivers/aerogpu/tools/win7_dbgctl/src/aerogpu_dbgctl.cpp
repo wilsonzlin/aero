@@ -4097,6 +4097,13 @@ static int DoQueryPerf(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
     }
     wprintf(L"\n");
   }
+  if (q.hdr.size >= offsetof(aerogpu_escape_query_perf_out, alloc_table_readonly_entries) +
+                         sizeof(q.alloc_table_readonly_entries)) {
+    wprintf(L"  alloc_table: count=%I64u entries=%I64u readonly_entries=%I64u\n",
+            (unsigned long long)q.alloc_table_count,
+            (unsigned long long)q.alloc_table_entries,
+            (unsigned long long)q.alloc_table_readonly_entries);
+  }
 
   wprintf(L"Raw:\n");
   wprintf(L"  last_submitted_fence=%I64u\n", (unsigned long long)q.last_submitted_fence);
@@ -4131,6 +4138,12 @@ static int DoQueryPerf(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
                            sizeof(q.pending_meta_handle_bytes)) {
       wprintf(L"  pending_meta_handle_bytes=%I64u\n", (unsigned long long)q.pending_meta_handle_bytes);
     }
+  }
+  if (q.hdr.size >= offsetof(aerogpu_escape_query_perf_out, alloc_table_readonly_entries) +
+                         sizeof(q.alloc_table_readonly_entries)) {
+    wprintf(L"  alloc_table_count=%I64u\n", (unsigned long long)q.alloc_table_count);
+    wprintf(L"  alloc_table_entries=%I64u\n", (unsigned long long)q.alloc_table_entries);
+    wprintf(L"  alloc_table_readonly_entries=%I64u\n", (unsigned long long)q.alloc_table_readonly_entries);
   }
   wprintf(L"  reset_from_timeout_count=%I64u\n", (unsigned long long)q.reset_from_timeout_count);
   wprintf(L"  last_reset_time_100ns=%I64u\n", (unsigned long long)q.last_reset_time_100ns);
@@ -8246,6 +8259,20 @@ static int DoQueryPerfJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, std::s
     JsonWriteU64HexDec(w, "hit", q.contig_pool_hit);
     JsonWriteU64HexDec(w, "miss", q.contig_pool_miss);
     JsonWriteU64HexDec(w, "bytes_saved", q.contig_pool_bytes_saved);
+  }
+  w.EndObject();
+
+  w.Key("alloc_table");
+  w.BeginObject();
+  const bool haveAllocTable =
+      (q.hdr.size >= offsetof(aerogpu_escape_query_perf_out, alloc_table_readonly_entries) +
+                         sizeof(q.alloc_table_readonly_entries));
+  w.Key("available");
+  w.Bool(haveAllocTable);
+  if (haveAllocTable) {
+    JsonWriteU64HexDec(w, "count", q.alloc_table_count);
+    JsonWriteU64HexDec(w, "entries", q.alloc_table_entries);
+    JsonWriteU64HexDec(w, "readonly_entries", q.alloc_table_readonly_entries);
   }
   w.EndObject();
 
