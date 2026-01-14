@@ -174,6 +174,7 @@ impl XhciPciDevice {
 
     fn service_interrupts(&mut self) {
         let level = self.irq.level() || self.controller.irq_level();
+        let mut mutated_msi_state = false;
 
         // MSI/MSI-X delivery is edge-triggered. Use the INTx-derived level as an internal
         // "interrupt requested" signal and trigger MSI/MSI-X on a rising edge.
@@ -209,10 +210,17 @@ impl XhciPciDevice {
                             // capability will set its pending bit and we should not fall back to
                             // INTx while MSI is enabled.
                             let _ = msi.trigger(&mut **target);
+                            mutated_msi_state = true;
                         }
                     }
                 }
             }
+        }
+
+        if mutated_msi_state {
+            // Ensure MSI pending bits (if set) are reflected in the config bytes so a subsequent
+            // config write (e.g. unmask) doesn't clobber them.
+            self.config.sync_capabilities();
         }
 
         self.last_irq_level = level;

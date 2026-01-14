@@ -23,6 +23,11 @@ use std::rc::Rc;
 /// present) so device models that deliver interrupts from MMIO side effects observe the correct
 /// interrupt configuration.
 ///
+/// Note: MSI "pending bits" are device-managed (set when a vector is masked at the time an
+/// interrupt is raised). In setups where the canonical PCI config space is decoupled from the
+/// device model, the platform cannot observe device-generated pending bits, so this wrapper does
+/// **not** overwrite the device model's pending bit latch when synchronizing MSI state.
+///
 /// This is intentionally BAR-scoped: it only syncs the BAR index passed at construction.
 ///
 /// This replaces older one-off platform-specific wrappers (e.g. for AHCI/NVMe) with a reusable
@@ -62,7 +67,6 @@ impl<T: PciDevice> PciConfigSyncedMmioBar<T> {
                         msi.message_address(),
                         msi.message_data(),
                         msi.mask_bits(),
-                        msi.pending_bits(),
                     )
                 });
             let msix_state = cfg
@@ -86,7 +90,7 @@ impl<T: PciDevice> PciConfigSyncedMmioBar<T> {
         // Syncing the interrupt capability state here keeps "enable MSI, then touch MMIO" flows
         // deterministic and matches what real hardware does (the programmed MSI registers live in
         // PCI config space, not in the BAR window).
-        if let Some((enabled, addr, data, mask, pending)) = msi_state {
+        if let Some((enabled, addr, data, mask)) = msi_state {
             if let Some(off) = cfg.find_capability(PCI_CAP_ID_MSI) {
                 let base = u16::from(off);
                 let ctrl = cfg.read(base + 0x02, 2) as u16;
@@ -99,13 +103,11 @@ impl<T: PciDevice> PciConfigSyncedMmioBar<T> {
                     cfg.write(base + 0x0c, 2, u32::from(data));
                     if per_vector_masking {
                         cfg.write(base + 0x10, 4, mask);
-                        cfg.write(base + 0x14, 4, pending);
                     }
                 } else {
                     cfg.write(base + 0x08, 2, u32::from(data));
                     if per_vector_masking {
                         cfg.write(base + 0x0c, 4, mask);
-                        cfg.write(base + 0x10, 4, pending);
                     }
                 }
 

@@ -2521,13 +2521,20 @@ impl NvmePciDevice {
             }
         }
 
+        let mut mutated_msi_state = false;
         if let Some(msi) = self.config.capability_mut::<MsiCapability>() {
             if msi.enabled() {
                 let pending = msi.pending_bits() != 0;
                 if !prev_intx || pending {
                     let _ = msi.trigger(target.as_mut());
+                    mutated_msi_state = true;
                 }
             }
+        }
+        if mutated_msi_state {
+            // Ensure MSI pending bits (if set) are reflected in the config bytes so a subsequent
+            // config write (e.g. unmask) doesn't clobber them.
+            self.config.sync_capabilities();
         }
     }
 }

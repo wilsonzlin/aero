@@ -1713,7 +1713,6 @@ impl PcPlatform {
                                                 cfg.read(base + 0x08, 4),
                                                 cfg.read(base + 0x0c, 2) as u16,
                                                 cfg.read(base + 0x10, 4),
-                                                cfg.read(base + 0x14, 4),
                                             )
                                         });
                                     (command, msi)
@@ -1725,7 +1724,7 @@ impl PcPlatform {
                         // outside the platform (e.g. in unit tests).
                         let mut ahci = ahci_for_intx.borrow_mut();
                         ahci.config_mut().set_command(command);
-                        if let Some((ctrl, addr_lo, addr_hi, data, mask, pending)) = msi_state {
+                        if let Some((ctrl, addr_lo, addr_hi, data, mask)) = msi_state {
                             if let Some(off) = ahci
                                 .config_mut()
                                 .find_capability(aero_devices::pci::msi::PCI_CAP_ID_MSI)
@@ -1735,7 +1734,6 @@ impl PcPlatform {
                                 ahci.config_mut().write(base + 0x08, 4, addr_hi);
                                 ahci.config_mut().write(base + 0x0c, 2, u32::from(data));
                                 ahci.config_mut().write(base + 0x10, 4, mask);
-                                ahci.config_mut().write(base + 0x14, 4, pending);
                                 ahci.config_mut().write(base + 0x02, 2, u32::from(ctrl));
                             }
                         }
@@ -2731,7 +2729,6 @@ impl PcPlatform {
                                 cfg.read(base + 0x08, 4),
                                 cfg.read(base + 0x0c, 2) as u16,
                                 cfg.read(base + 0x10, 4),
-                                cfg.read(base + 0x14, 4),
                             )
                         });
                     (command, msi)
@@ -2744,7 +2741,7 @@ impl PcPlatform {
         {
             let mut ahci = ahci.borrow_mut();
             ahci.config_mut().set_command(command);
-            if let Some((ctrl, addr_lo, addr_hi, data, mask, pending)) = msi_state {
+            if let Some((ctrl, addr_lo, addr_hi, data, mask)) = msi_state {
                 if let Some(off) = ahci
                     .config_mut()
                     .find_capability(aero_devices::pci::msi::PCI_CAP_ID_MSI)
@@ -2754,7 +2751,6 @@ impl PcPlatform {
                     ahci.config_mut().write(base + 0x08, 4, addr_hi);
                     ahci.config_mut().write(base + 0x0c, 2, u32::from(data));
                     ahci.config_mut().write(base + 0x10, 4, mask);
-                    ahci.config_mut().write(base + 0x14, 4, pending);
                     ahci.config_mut().write(base + 0x02, 2, u32::from(ctrl));
                 }
             }

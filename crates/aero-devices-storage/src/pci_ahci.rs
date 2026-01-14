@@ -137,10 +137,19 @@ impl AhciPciDevice {
 
     fn service_interrupts(&mut self) {
         let level = self.irq.level();
+        let pending = self
+            .config
+            .capability::<MsiCapability>()
+            .is_some_and(|msi| msi.pending_bits() != 0);
 
         // MSI delivery is edge-triggered; fire only on a rising edge of the internal interrupt
         // condition. (INTx remains level-triggered via `intx_level()`.)
-        if level && !self.last_irq_level {
+        //
+        // For masked MSI vectors, `MsiCapability::trigger()` records a pending bit but does not
+        // automatically re-deliver on unmask; re-trigger while the interrupt condition persists so
+        // guests can observe delivery after unmask.
+        let mut mutated_msi_state = false;
+        if level && (!self.last_irq_level || pending) {
             if let (Some(target), Some(msi)) = (
                 self.msi_target.as_mut(),
                 self.config.capability_mut::<MsiCapability>(),
@@ -148,7 +157,14 @@ impl AhciPciDevice {
                 // Ignore the return value: if the guest masked the vector, the capability will set
                 // its pending bit and we should not fall back to INTx while MSI is enabled.
                 let _ = msi.trigger(&mut **target);
+                mutated_msi_state = true;
             }
+        }
+
+        if mutated_msi_state {
+            // Ensure any device-updated MSI fields (e.g. pending bit) are reflected in the backing
+            // config-space bytes so a subsequent config write (e.g. unmask) doesn't clobber them.
+            self.config.sync_capabilities();
         }
 
         self.last_irq_level = level;
@@ -429,6 +445,10 @@ fn all_ones(size: usize) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bus::TestMemory;
+    use aero_platform::interrupts::msi::MsiMessage;
+    use std::cell::RefCell;
+    use std::rc::Rc;
 
     const HBA_REG_IS: u64 = 0x08;
     const PORT0_BASE: u64 = 0x100;
@@ -437,6 +457,17 @@ mod tests {
     const PORT_REG_IS: u64 = 0x10;
     const PORT_REG_IE: u64 = 0x14;
     const PORT_REG_SERR: u64 = 0x30;
+
+    #[derive(Clone, Default)]
+    struct RecordingMsi {
+        log: Rc<RefCell<Vec<MsiMessage>>>,
+    }
+
+    impl MsiTrigger for RecordingMsi {
+        fn trigger_msi(&mut self, message: MsiMessage) {
+            self.log.borrow_mut().push(message);
+        }
+    }
 
     #[test]
     fn pci_config_exposes_single_msi_capability() {
@@ -447,6 +478,69 @@ mod tests {
             .filter(|cap| cap.id == aero_devices::pci::msi::PCI_CAP_ID_MSI)
             .count();
         assert_eq!(msi_count, 1);
+    }
+
+    #[test]
+    fn msi_masked_interrupt_sets_pending_and_redelivers_on_unmask() {
+        let mut dev = AhciPciDevice::new(1);
+        // Enable bus mastering so `process()` runs (and services interrupts) even though we don't
+        // queue any DMA work in this unit test.
+        dev.config_mut().set_command(1 << 2);
+
+        let log = Rc::new(RefCell::new(Vec::new()));
+        dev.set_msi_target(Some(Box::new(RecordingMsi { log: log.clone() })));
+
+        let cap_offset = dev
+            .config_mut()
+            .find_capability(aero_devices::pci::msi::PCI_CAP_ID_MSI)
+            .expect("missing MSI capability") as u16;
+
+        // Program MSI message address/data and enable it.
+        dev.config_mut()
+            .write(cap_offset + 0x04, 4, 0xfee0_0000);
+        dev.config_mut().write(cap_offset + 0x08, 4, 0);
+        dev.config_mut().write(cap_offset + 0x0c, 2, 0x0045);
+        // Mask the single vector.
+        dev.config_mut().write(cap_offset + 0x10, 4, 1);
+        let ctrl = dev.config_mut().read(cap_offset + 0x02, 2) as u16;
+        dev.config_mut()
+            .write(cap_offset + 0x02, 2, u32::from(ctrl | 0x0001));
+
+        // Synthesize an asserted interrupt by setting PxIS + PxIE with GHC.IE enabled.
+        let mut state = dev.controller.snapshot_state();
+        state.hba.ghc |= 1 << 1; // GHC.IE
+        state.ports[0].is = 1; // PxIS.DHRS
+        state.ports[0].ie = 1; // PxIE.DHRE (enable)
+        dev.controller.restore_state(&state);
+
+        let mut mem = TestMemory::new(4096);
+        dev.process(&mut mem);
+
+        // MSI should have been suppressed due to masking, and the capability should record a
+        // pending bit.
+        assert!(log.borrow().is_empty());
+        assert_ne!(
+            dev.config()
+                .capability::<MsiCapability>()
+                .expect("missing MSI capability")
+                .pending_bits()
+                & 1,
+            0
+        );
+
+        // Unmask and process again without clearing the interrupt condition. The device should
+        // re-trigger and deliver the MSI.
+        dev.config_mut().write(cap_offset + 0x10, 4, 0);
+        dev.process(&mut mem);
+
+        let msgs = log.borrow();
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].vector(), 0x45);
+
+        // Subsequent polls while the level remains asserted must not spam MSI deliveries.
+        drop(msgs);
+        dev.process(&mut mem);
+        assert_eq!(log.borrow().len(), 1);
     }
 
     #[test]
