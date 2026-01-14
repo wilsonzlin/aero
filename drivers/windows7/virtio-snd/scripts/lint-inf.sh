@@ -497,6 +497,41 @@ fi
 
 if [ -f "$INF_IOPORT" ]; then
   require_ascii_only "$INF_IOPORT" "inf/aero-virtio-snd-ioport.inf"
+  note "checking ioport legacy INF HWID binding..."
+  section_contains_norm \
+    "$INF_IOPORT" \
+    'AeroVirtioSndIoPortModels.NTx86' \
+    'pci\ven_1af4&dev_1018&rev_00' \
+    "inf/aero-virtio-snd-ioport.inf must bind PCI\\VEN_1AF4&DEV_1018&REV_00 in [AeroVirtioSndIoPortModels.NTx86]"
+
+  section_contains_norm \
+    "$INF_IOPORT" \
+    'AeroVirtioSndIoPortModels.NTamd64' \
+    'pci\ven_1af4&dev_1018&rev_00' \
+    "inf/aero-virtio-snd-ioport.inf must bind PCI\\VEN_1AF4&DEV_1018&REV_00 in [AeroVirtioSndIoPortModels.NTamd64]"
+
+  # Guardrail: ensure we never accidentally loosen the match to DEV_1018 without revision gating.
+  if awk '
+    {
+      sub(/\r$/, "")
+      line = $0
+      # Skip full-line comments.
+      if (line ~ /^[[:space:]]*;/) next
+      # Strip inline comments.
+      sub(/[[:space:]]*;.*$/, "", line)
+      if (line == "") next
+
+      low = tolower(line)
+      if (index(low, "pci\\ven_1af4&dev_1018") != 0 && index(low, "&rev_00") == 0) {
+        print line
+        exit 0
+      }
+    }
+    END { exit 1 }
+  ' "$INF_IOPORT" >/dev/null; then
+    fail "inf/aero-virtio-snd-ioport.inf must not contain unqualified PCI\\VEN_1AF4&DEV_1018 matches (missing &REV_00)"
+  fi
+
   note "checking ioport legacy INF bring-up toggle defaults..."
   section_contains_norm \
     "$INF_IOPORT" \
@@ -515,6 +550,31 @@ if [ -f "$INF_IOPORT" ]; then
     'AeroVirtioSndIoPort_Parameters_AddReg' \
     'hkr,parameters,forcenullbackend,0x00010001,0' \
     "inf/aero-virtio-snd-ioport.inf must seed HKR\\Parameters\\ForceNullBackend under the hardware key"
+
+  note "checking ioport legacy INF SYS/service consistency..."
+  section_contains_norm \
+    "$INF_IOPORT" \
+    'AeroVirtioSndIoPort.AddReg' \
+    'ntmpdriver,,virtiosnd_ioport.sys' \
+    "inf/aero-virtio-snd-ioport.inf must reference virtiosnd_ioport.sys via NTMPDriver"
+
+  section_contains_norm \
+    "$INF_IOPORT" \
+    'AeroVirtioSndIoPort_Install.NT.Services' \
+    'addservice=aeroviosnd_ioport' \
+    "inf/aero-virtio-snd-ioport.inf must install the aeroviosnd_ioport service (AddService)"
+
+  section_contains_norm \
+    "$INF_IOPORT" \
+    'AeroVirtioSndIoPort_Service_Inst' \
+    'servicebinary=%12%\virtiosnd_ioport.sys' \
+    "inf/aero-virtio-snd-ioport.inf must reference virtiosnd_ioport.sys via ServiceBinary"
+
+  section_contains_norm \
+    "$INF_IOPORT" \
+    'AeroVirtioSndIoPort.CopyFiles' \
+    'virtiosnd_ioport.sys' \
+    "inf/aero-virtio-snd-ioport.inf must copy virtiosnd_ioport.sys (AeroVirtioSndIoPort.CopyFiles)"
 
   note "checking ioport legacy INF does not opt into MSI/MSI-X..."
   # The I/O-port legacy driver uses only line-based INTx (IoConnectInterrupt) and
