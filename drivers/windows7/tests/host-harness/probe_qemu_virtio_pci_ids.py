@@ -426,6 +426,7 @@ def main() -> int:
         except OSError as e:
             print(f"ERROR: failed to start qemu-system binary: {args.qemu_system}: {e}", file=sys.stderr)
             return 2
+        err: Exception | None = None
         try:
             greeting = _read_qmp_obj(proc.stdout)
             if "QMP" not in greeting:
@@ -461,13 +462,11 @@ def main() -> int:
                 )
             if not filtered:
                 print("  (no matching devices found in query-pci output)")
-                err = (proc.stderr.read() or "").strip()
-                if err:
-                    print("")
-                    print("--- QEMU stderr ---")
-                    print(err)
 
             return 0
+        except Exception as e:
+            err = e
+            return 2
         finally:
             try:
                 _qmp_exec(proc, "quit", None, 99)
@@ -480,6 +479,17 @@ def main() -> int:
                     proc.kill()
                 except Exception:
                     pass
+
+            if err is not None:
+                print(f"ERROR: {err}", file=sys.stderr)
+                try:
+                    qemu_err = (proc.stderr.read() or "").strip() if proc.stderr is not None else ""
+                except Exception:
+                    qemu_err = ""
+                if qemu_err:
+                    print("", file=sys.stderr)
+                    print("--- QEMU stderr ---", file=sys.stderr)
+                    print(qemu_err, file=sys.stderr)
 
 
 if __name__ == "__main__":
