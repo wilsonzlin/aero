@@ -28,10 +28,12 @@ class Win7VirtioHarnessWorkflowJobSummaryLogTailsTests(unittest.TestCase):
         self.assertIn("<details><summary>serial.log (tail)</summary>", self.text)
         self.assertIn('tail -n 200 "${serial_log}"', self.text)
 
+        self.assertIn("<details><summary>http.log (tail)</summary>", self.text)
+        self.assertIn('tail -n 200 "${http_log}"', self.text)
+
         self.assertIn("<details><summary>qemu.stderr.log (tail)</summary>", self.text)
         self.assertIn('tail -n 200 "${qemu_stderr_log}"', self.text)
 
 
 if __name__ == "__main__":
     unittest.main()
-
