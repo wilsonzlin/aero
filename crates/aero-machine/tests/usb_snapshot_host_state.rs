@@ -7,6 +7,9 @@ use aero_usb::{
     ControlResponse, SetupPacket, UsbDeviceModel, UsbInResult, UsbWebUsbPassthroughDevice,
 };
 
+const EXTERNAL_HUB_ROOT_PORT: u8 = Machine::UHCI_EXTERNAL_HUB_ROOT_PORT;
+const WEBUSB_ROOT_PORT: u8 = Machine::UHCI_WEBUSB_ROOT_PORT;
+
 fn queue_webusb_control_in_action(dev: &UsbWebUsbPassthroughDevice) {
     let setup = SetupPacket {
         bm_request_type: 0x80,
@@ -83,7 +86,7 @@ fn snapshot_restore_clears_uhci_webusb_host_state() {
     .unwrap();
 
     let webusb = UsbWebUsbPassthroughDevice::new();
-    vm.usb_attach_root(1, Box::new(webusb.clone()))
+    vm.usb_attach_root(WEBUSB_ROOT_PORT, Box::new(webusb.clone()))
         .expect("attach WebUSB device behind UHCI");
 
     queue_webusb_control_in_action(&webusb);
@@ -115,7 +118,7 @@ fn snapshot_restore_clears_uhci_webusb_bulk_in_host_state() {
     .unwrap();
 
     let webusb = UsbWebUsbPassthroughDevice::new();
-    vm.usb_attach_root(1, Box::new(webusb.clone()))
+    vm.usb_attach_root(WEBUSB_ROOT_PORT, Box::new(webusb.clone()))
         .expect("attach WebUSB device behind UHCI");
 
     queue_webusb_bulk_in_action(&webusb);
@@ -151,7 +154,7 @@ fn snapshot_restore_clears_ehci_webusb_bulk_in_host_state() {
     .unwrap();
 
     let webusb = UsbWebUsbPassthroughDevice::new();
-    vm.usb_ehci_attach_root(1, Box::new(webusb.clone()))
+    vm.usb_ehci_attach_root(WEBUSB_ROOT_PORT, Box::new(webusb.clone()))
         .expect("attach WebUSB device behind EHCI");
 
     queue_webusb_bulk_in_action(&webusb);
@@ -187,7 +190,7 @@ fn snapshot_restore_clears_ehci_webusb_host_state() {
     .unwrap();
 
     let webusb = UsbWebUsbPassthroughDevice::new();
-    vm.usb_ehci_attach_root(1, Box::new(webusb.clone()))
+    vm.usb_ehci_attach_root(WEBUSB_ROOT_PORT, Box::new(webusb.clone()))
         .expect("attach WebUSB device behind EHCI");
 
     queue_webusb_control_in_action(&webusb);
@@ -220,15 +223,19 @@ fn snapshot_restore_clears_muxed_webusb_host_state() {
     .unwrap();
 
     let webusb = UsbWebUsbPassthroughDevice::new();
-    vm.usb_attach_root(1, Box::new(webusb.clone()))
-        .expect("attach WebUSB device behind UHCI root port 1");
+    vm.usb_attach_root(WEBUSB_ROOT_PORT, Box::new(webusb.clone()))
+        .expect("attach WebUSB device behind UHCI");
 
     // When both UHCI and EHCI are enabled, the first two root ports are backed by a shared USB2
     // mux, so the same physical device should be visible from both controllers.
     {
         let ehci = vm.ehci().expect("ehci enabled");
         assert!(
-            ehci.borrow().controller().hub().port_device(1).is_some(),
+            ehci.borrow()
+                .controller()
+                .hub()
+                .port_device(usize::from(WEBUSB_ROOT_PORT))
+                .is_some(),
             "expected EHCI to observe the UHCI-attached device via the shared USB2 mux"
         );
     }
@@ -274,15 +281,19 @@ fn snapshot_restore_clears_muxed_webhid_feature_report_host_state() {
         None,
         None,
     );
-    vm.usb_attach_root(1, Box::new(webhid.clone()))
-        .expect("attach WebHID passthrough device behind UHCI root port 1");
+    vm.usb_attach_root(EXTERNAL_HUB_ROOT_PORT, Box::new(webhid.clone()))
+        .expect("attach WebHID passthrough device behind UHCI");
 
     // When both UHCI and EHCI are enabled, the first two root ports are backed by a shared USB2
     // mux, so the same physical device should be visible from both controllers.
     {
         let ehci = vm.ehci().expect("ehci enabled");
         assert!(
-            ehci.borrow().controller().hub().port_device(1).is_some(),
+            ehci.borrow()
+                .controller()
+                .hub()
+                .port_device(usize::from(EXTERNAL_HUB_ROOT_PORT))
+                .is_some(),
             "expected EHCI to observe the UHCI-attached device via the shared USB2 mux"
         );
     }
@@ -325,11 +336,11 @@ fn snapshot_restore_clears_webusb_host_state_behind_hub() {
 
     // Attach a hub at UHCI root port 0, then attach a WebUSB passthrough device behind that hub to
     // ensure `AttachedUsbDevice::reset_host_state_for_restore()` recurses through nested hubs.
-    vm.usb_attach_root(0, Box::new(UsbHubDevice::with_port_count(4)))
+    vm.usb_attach_root(EXTERNAL_HUB_ROOT_PORT, Box::new(UsbHubDevice::with_port_count(4)))
         .expect("attach hub behind UHCI root port 0");
 
     let webusb = UsbWebUsbPassthroughDevice::new();
-    vm.usb_attach_at_path(&[0, 1], Box::new(webusb.clone()))
+    vm.usb_attach_at_path(&[EXTERNAL_HUB_ROOT_PORT, 1], Box::new(webusb.clone()))
         .expect("attach WebUSB device behind hub port 1");
 
     queue_webusb_control_in_action(&webusb);
@@ -361,11 +372,11 @@ fn snapshot_restore_clears_ehci_webusb_host_state_behind_hub() {
     })
     .unwrap();
 
-    vm.usb_ehci_attach_root(0, Box::new(UsbHubDevice::with_port_count(4)))
+    vm.usb_ehci_attach_root(EXTERNAL_HUB_ROOT_PORT, Box::new(UsbHubDevice::with_port_count(4)))
         .expect("attach hub behind EHCI root port 0");
 
     let webusb = UsbWebUsbPassthroughDevice::new();
-    vm.usb_ehci_attach_at_path(&[0, 1], Box::new(webusb.clone()))
+    vm.usb_ehci_attach_at_path(&[EXTERNAL_HUB_ROOT_PORT, 1], Box::new(webusb.clone()))
         .expect("attach WebUSB device behind hub port 1");
 
     queue_webusb_control_in_action(&webusb);
@@ -409,7 +420,7 @@ fn snapshot_restore_clears_uhci_webhid_feature_report_host_state() {
         None,
     );
 
-    vm.usb_attach_root(0, Box::new(webhid.clone()))
+    vm.usb_attach_root(EXTERNAL_HUB_ROOT_PORT, Box::new(webhid.clone()))
         .expect("attach WebHID passthrough device behind UHCI");
 
     // Queue a host-side feature report request and simulate the host popping it before snapshot.
@@ -465,7 +476,7 @@ fn snapshot_restore_clears_ehci_webhid_feature_report_host_state() {
         None,
     );
 
-    vm.usb_ehci_attach_root(0, Box::new(webhid.clone()))
+    vm.usb_ehci_attach_root(EXTERNAL_HUB_ROOT_PORT, Box::new(webhid.clone()))
         .expect("attach WebHID passthrough device behind EHCI");
 
     // Queue a host-side feature report request and simulate the host popping it before snapshot.
@@ -509,7 +520,7 @@ fn snapshot_restore_clears_webhid_feature_report_host_state_behind_hub() {
 
     // Attach a hub at UHCI root port 0, then attach a WebHID passthrough device behind that hub to
     // ensure `AttachedUsbDevice::reset_host_state_for_restore()` recurses through nested hubs.
-    vm.usb_attach_root(0, Box::new(UsbHubDevice::with_port_count(4)))
+    vm.usb_attach_root(EXTERNAL_HUB_ROOT_PORT, Box::new(UsbHubDevice::with_port_count(4)))
         .expect("attach hub behind UHCI root port 0");
 
     let webhid = UsbHidPassthroughHandle::new(
@@ -524,7 +535,7 @@ fn snapshot_restore_clears_webhid_feature_report_host_state_behind_hub() {
         None,
         None,
     );
-    vm.usb_attach_at_path(&[0, 1], Box::new(webhid.clone()))
+    vm.usb_attach_at_path(&[EXTERNAL_HUB_ROOT_PORT, 1], Box::new(webhid.clone()))
         .expect("attach WebHID passthrough device behind hub port 1");
 
     queue_webhid_feature_report_request(&webhid);
@@ -565,7 +576,7 @@ fn snapshot_restore_clears_ehci_webhid_feature_report_host_state_behind_hub() {
     })
     .unwrap();
 
-    vm.usb_ehci_attach_root(0, Box::new(UsbHubDevice::with_port_count(4)))
+    vm.usb_ehci_attach_root(EXTERNAL_HUB_ROOT_PORT, Box::new(UsbHubDevice::with_port_count(4)))
         .expect("attach hub behind EHCI root port 0");
 
     let webhid = UsbHidPassthroughHandle::new(
@@ -580,7 +591,7 @@ fn snapshot_restore_clears_ehci_webhid_feature_report_host_state_behind_hub() {
         None,
         None,
     );
-    vm.usb_ehci_attach_at_path(&[0, 1], Box::new(webhid.clone()))
+    vm.usb_ehci_attach_at_path(&[EXTERNAL_HUB_ROOT_PORT, 1], Box::new(webhid.clone()))
         .expect("attach WebHID passthrough device behind hub port 1");
 
     queue_webhid_feature_report_request(&webhid);

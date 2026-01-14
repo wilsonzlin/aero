@@ -17,6 +17,9 @@ use aero_usb::{
 };
 use pretty_assertions::{assert_eq, assert_ne};
 
+const EXTERNAL_HUB_ROOT_PORT: u8 = Machine::UHCI_EXTERNAL_HUB_ROOT_PORT;
+const WEBUSB_ROOT_PORT: u8 = Machine::UHCI_WEBUSB_ROOT_PORT;
+
 fn sample_hid_report_descriptor_input_2_bytes() -> Vec<u8> {
     vec![
         0x06, 0x00, 0xff, // Usage Page (Vendor-defined 0xFF00)
@@ -159,12 +162,15 @@ fn snapshot_restore_preserves_host_attached_xhci_device_handles() {
     .unwrap();
 
     // Host attach a hub + a shareable USB HID keyboard handle.
-    vm.usb_xhci_attach_at_path(&[0], Box::new(UsbHubDevice::with_port_count(2)))
+    vm.usb_xhci_attach_at_path(
+        &[EXTERNAL_HUB_ROOT_PORT],
+        Box::new(UsbHubDevice::with_port_count(2)),
+    )
         .expect("attach hub at root port 0");
 
     let keyboard = UsbHidKeyboardHandle::new();
     let keyboard_handle = keyboard.clone();
-    vm.usb_xhci_attach_at_path(&[0, 1], Box::new(keyboard))
+    vm.usb_xhci_attach_at_path(&[EXTERNAL_HUB_ROOT_PORT, 1], Box::new(keyboard))
         .expect("attach keyboard behind hub");
 
     // Configure the keyboard so injected key events buffer interrupt reports.
@@ -234,7 +240,7 @@ fn snapshot_restore_clears_xhci_webusb_host_state() {
     .unwrap();
 
     let webusb = UsbWebUsbPassthroughDevice::new();
-    vm.usb_xhci_attach_root(1, Box::new(webusb.clone()))
+    vm.usb_xhci_attach_root(WEBUSB_ROOT_PORT, Box::new(webusb.clone()))
         .expect("attach webusb device at root port 1");
 
     // Queue a host action so there is host-side asynchronous state to clear.
@@ -289,11 +295,14 @@ fn snapshot_restore_clears_xhci_webusb_host_state_behind_hub() {
     })
     .unwrap();
 
-    vm.usb_xhci_attach_at_path(&[0], Box::new(UsbHubDevice::with_port_count(2)))
+    vm.usb_xhci_attach_at_path(
+        &[EXTERNAL_HUB_ROOT_PORT],
+        Box::new(UsbHubDevice::with_port_count(2)),
+    )
         .expect("attach hub at root port 0");
 
     let webusb = UsbWebUsbPassthroughDevice::new();
-    vm.usb_xhci_attach_at_path(&[0, 1], Box::new(webusb.clone()))
+    vm.usb_xhci_attach_at_path(&[EXTERNAL_HUB_ROOT_PORT, 1], Box::new(webusb.clone()))
         .expect("attach webusb device behind hub");
 
     // Queue a host action so there is host-side asynchronous state to clear.
@@ -361,7 +370,7 @@ fn snapshot_restore_clears_xhci_webhid_feature_report_host_state() {
         None,
     );
 
-    vm.usb_xhci_attach_root(0, Box::new(webhid.clone()))
+    vm.usb_xhci_attach_root(EXTERNAL_HUB_ROOT_PORT, Box::new(webhid.clone()))
         .expect("attach WebHID passthrough device behind xHCI");
 
     // Queue a host-side feature report request and simulate the host popping it before snapshot.
@@ -405,7 +414,10 @@ fn snapshot_restore_clears_xhci_webhid_feature_report_host_state_behind_hub() {
     })
     .unwrap();
 
-    vm.usb_xhci_attach_at_path(&[0], Box::new(UsbHubDevice::with_port_count(2)))
+    vm.usb_xhci_attach_at_path(
+        &[EXTERNAL_HUB_ROOT_PORT],
+        Box::new(UsbHubDevice::with_port_count(2)),
+    )
         .expect("attach hub at root port 0");
 
     let webhid = UsbHidPassthroughHandle::new(
@@ -421,7 +433,7 @@ fn snapshot_restore_clears_xhci_webhid_feature_report_host_state_behind_hub() {
         None,
     );
 
-    vm.usb_xhci_attach_at_path(&[0, 1], Box::new(webhid.clone()))
+    vm.usb_xhci_attach_at_path(&[EXTERNAL_HUB_ROOT_PORT, 1], Box::new(webhid.clone()))
         .expect("attach WebHID passthrough device behind hub port 1");
 
     queue_webhid_feature_report_request(&webhid);
@@ -463,7 +475,7 @@ fn snapshot_restore_clears_xhci_webusb_bulk_in_host_state() {
     .unwrap();
 
     let webusb = UsbWebUsbPassthroughDevice::new();
-    vm.usb_xhci_attach_root(1, Box::new(webusb.clone()))
+    vm.usb_xhci_attach_root(WEBUSB_ROOT_PORT, Box::new(webusb.clone()))
         .expect("attach webusb device at root port 1");
 
     queue_webusb_bulk_in_action(&webusb);
