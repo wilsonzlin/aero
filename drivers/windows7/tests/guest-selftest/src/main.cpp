@@ -5115,6 +5115,38 @@ static VirtioNetTestResult VirtioNetTest(Logger& log, const Options& opt) {
   }
   out.devinst = chosen->devinst;
 
+  // Emit ctrl_vq diagnostics as early as possible (even if the adapter is later
+  // rejected due to binding/contract checks) so bring-up logs always include
+  // feature negotiation state when available.
+  {
+    const auto msg_count = QueryAllocatedMessageInterruptCount(log, chosen->devinst);
+    if (msg_count.has_value()) {
+      out.msi_messages = static_cast<int>(*msg_count);
+      log.Logf("virtio-net: interrupt mode=%s message_count=%d", (*msg_count > 0) ? "MSI" : "INTx",
+               out.msi_messages);
+    } else {
+      log.LogLine("virtio-net: interrupt mode query failed");
+    }
+  }
+
+  if (const auto diag = QueryVirtioNetCtrlVqDiag(log, *chosen)) {
+    log.Logf("virtio-net-ctrl-vq|INFO|host_features=0x%016I64x|guest_features=0x%016I64x|ctrl_vq=%lu|ctrl_rx=%lu|ctrl_vlan=%lu|ctrl_mac_addr=%lu|queue_index=%lu|queue_size=%lu|cmd_sent=%llu|cmd_ok=%llu|cmd_err=%llu|cmd_timeout=%llu",
+             static_cast<unsigned long long>(diag->host_features),
+             static_cast<unsigned long long>(diag->guest_features),
+             static_cast<unsigned long>(diag->ctrl_vq_negotiated),
+             static_cast<unsigned long>(diag->ctrl_rx_negotiated),
+             static_cast<unsigned long>(diag->ctrl_vlan_negotiated),
+             static_cast<unsigned long>(diag->ctrl_mac_addr_negotiated),
+             static_cast<unsigned long>(diag->ctrl_vq_queue_index),
+             static_cast<unsigned long>(diag->ctrl_vq_queue_size),
+             static_cast<unsigned long long>(diag->cmd_sent),
+             static_cast<unsigned long long>(diag->cmd_ok),
+             static_cast<unsigned long long>(diag->cmd_err),
+             static_cast<unsigned long long>(diag->cmd_timeout));
+  } else {
+    log.LogLine("virtio-net-ctrl-vq|INFO|diag_unavailable");
+  }
+
   // Ensure the selected NIC is using the in-tree Aero virtio-net miniport, not a third-party
   // virtio driver (e.g. virtio-win netkvm). Also ensure the device matches the Aero contract HWID.
   static const wchar_t kExpectedService[] = L"aero_virtio_net";
@@ -5168,35 +5200,6 @@ static VirtioNetTestResult VirtioNetTest(Logger& log, const Options& opt) {
   log.Logf("virtio-net: adapter up name=%s guid=%s ipv4=%u.%u.%u.%u",
            WideToUtf8(chosen_friendly).c_str(), WideToUtf8(chosen->instance_id).c_str(), a, b, c,
            d);
-
-  {
-    const auto msg_count = QueryAllocatedMessageInterruptCount(log, chosen->devinst);
-    if (msg_count.has_value()) {
-      out.msi_messages = static_cast<int>(*msg_count);
-      log.Logf("virtio-net: interrupt mode=%s message_count=%d", (*msg_count > 0) ? "MSI" : "INTx",
-               out.msi_messages);
-    } else {
-      log.LogLine("virtio-net: interrupt mode query failed");
-    }
-  }
-
-  if (const auto diag = QueryVirtioNetCtrlVqDiag(log, *chosen)) {
-    log.Logf("virtio-net-ctrl-vq|INFO|host_features=0x%016I64x|guest_features=0x%016I64x|ctrl_vq=%lu|ctrl_rx=%lu|ctrl_vlan=%lu|ctrl_mac_addr=%lu|queue_index=%lu|queue_size=%lu|cmd_sent=%llu|cmd_ok=%llu|cmd_err=%llu|cmd_timeout=%llu",
-             static_cast<unsigned long long>(diag->host_features),
-             static_cast<unsigned long long>(diag->guest_features),
-             static_cast<unsigned long>(diag->ctrl_vq_negotiated),
-             static_cast<unsigned long>(diag->ctrl_rx_negotiated),
-             static_cast<unsigned long>(diag->ctrl_vlan_negotiated),
-             static_cast<unsigned long>(diag->ctrl_mac_addr_negotiated),
-             static_cast<unsigned long>(diag->ctrl_vq_queue_index),
-             static_cast<unsigned long>(diag->ctrl_vq_queue_size),
-             static_cast<unsigned long long>(diag->cmd_sent),
-             static_cast<unsigned long long>(diag->cmd_ok),
-             static_cast<unsigned long long>(diag->cmd_err),
-             static_cast<unsigned long long>(diag->cmd_timeout));
-  } else {
-    log.LogLine("virtio-net-ctrl-vq|INFO|diag_unavailable");
-  }
 
   if (!DnsResolveWithFallback(log, opt.dns_host)) return out;
   if (!HttpGet(log, opt.http_url)) return out;
