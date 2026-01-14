@@ -620,20 +620,32 @@ fn decodes_cmd_stream_dump_to_stable_listing() {
 
     assert!(listing.contains("SetBlendState"));
     assert!(listing.contains("enable=1"));
-    assert!(listing.contains("src_factor_name=SrcAlpha"));
-    assert!(listing.contains("dst_factor_name=InvSrcAlpha"));
-    assert!(listing.contains("blend_op_name=Max"));
+    assert!(listing.contains("src_factor_name=SrcAlpha"), "{listing}");
+    assert!(listing.contains("dst_factor_name=InvSrcAlpha"), "{listing}");
+    assert!(listing.contains("blend_op_name=Max"), "{listing}");
+    assert!(
+        listing.contains("src_factor_alpha_name=InvDestAlpha"),
+        "{listing}"
+    );
+    assert!(
+        listing.contains("dst_factor_alpha_name=Constant"),
+        "{listing}"
+    );
     assert!(listing.contains("color_write_mask=0x0F"));
     assert!(listing.contains("sample_mask=0xFFFFFFFF"));
 
     assert!(listing.contains("SetDepthStencilState"));
-    assert!(listing.contains("depth_func_name=Equal"));
+    assert!(listing.contains("depth_func_name=Equal"), "{listing}");
     assert!(listing.contains("stencil_read_mask=0xAA"));
     assert!(listing.contains("stencil_write_mask=0x55"));
 
     assert!(listing.contains("SetRasterizerState"));
-    assert!(listing.contains("fill_mode_name=Wireframe"));
-    assert!(listing.contains("cull_mode_name=Back"));
+    assert!(listing.contains("fill_mode_name=Wireframe"), "{listing}");
+    assert!(listing.contains("cull_mode_name=Back"), "{listing}");
+    assert!(
+        listing.contains("flags_names=DepthClipDisable"),
+        "{listing}"
+    );
     assert!(listing.contains("depth_bias=-1"));
     assert!(listing.contains("flags=0x00000001"));
 
@@ -1199,7 +1211,9 @@ fn json_listing_decodes_new_opcodes() {
     assert_eq!(blend["decoded"]["blend_op_name"], "Max");
     assert_eq!(blend["decoded"]["color_write_mask"], 0x0F);
     assert_eq!(blend["decoded"]["src_factor_alpha"], 5);
+    assert_eq!(blend["decoded"]["src_factor_alpha_name"], "InvDestAlpha");
     assert_eq!(blend["decoded"]["dst_factor_alpha"], 6);
+    assert_eq!(blend["decoded"]["dst_factor_alpha_name"], "Constant");
     assert_eq!(blend["decoded"]["blend_op_alpha"], 7);
     assert_eq!(blend["decoded"]["sample_mask"], 0xFFFF_FFFFu64);
     assert_eq!(
@@ -1224,6 +1238,7 @@ fn json_listing_decodes_new_opcodes() {
     assert_eq!(raster["decoded"]["cull_mode_name"], "Back");
     assert_eq!(raster["decoded"]["depth_bias"], -1);
     assert_eq!(raster["decoded"]["flags"], 1);
+    assert_eq!(raster["decoded"]["flags_names"], "DepthClipDisable");
 
     let destroy_input_layout = find_packet("DestroyInputLayout");
     assert_eq!(

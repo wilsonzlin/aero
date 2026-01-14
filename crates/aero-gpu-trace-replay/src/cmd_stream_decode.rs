@@ -2,7 +2,8 @@ use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuBlendFactor, AerogpuBlendOp, AerogpuCmdDecodeError, AerogpuCmdOpcode,
     AerogpuCmdStreamHeader, AerogpuCmdStreamIter, AerogpuCompareFunc, AerogpuCullMode,
     AerogpuFillMode, AerogpuIndexFormat, AerogpuPrimitiveTopology, AerogpuSamplerAddressMode,
-    AerogpuSamplerFilter, AerogpuShaderStage, AEROGPU_STAGE_EX_MIN_ABI_MINOR,
+    AerogpuSamplerFilter, AerogpuShaderStage, AEROGPU_RASTERIZER_FLAG_DEPTH_CLIP_DISABLE,
+    AEROGPU_STAGE_EX_MIN_ABI_MINOR,
 };
 use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
 use serde_json::{json, Value};
@@ -610,6 +611,9 @@ fn decode_known_fields(
             let src_factor = read_u32_le(pkt.payload, 4).unwrap();
             let dst_factor = read_u32_le(pkt.payload, 8).unwrap();
             let blend_op = read_u32_le(pkt.payload, 12).unwrap();
+            let src_factor_alpha = read_u32_le(pkt.payload, 20).unwrap();
+            let dst_factor_alpha = read_u32_le(pkt.payload, 24).unwrap();
+            let blend_op_alpha = read_u32_le(pkt.payload, 28).unwrap();
 
             out.insert("enable".into(), json!(enable));
             out.insert("src_factor".into(), json!(src_factor));
@@ -625,18 +629,18 @@ fn decode_known_fields(
                 out.insert("blend_op_name".into(), Value::String(name));
             }
             out.insert("color_write_mask".into(), json!(pkt.payload[16]));
-            out.insert(
-                "src_factor_alpha".into(),
-                json!(read_u32_le(pkt.payload, 20).unwrap()),
-            );
-            out.insert(
-                "dst_factor_alpha".into(),
-                json!(read_u32_le(pkt.payload, 24).unwrap()),
-            );
-            out.insert(
-                "blend_op_alpha".into(),
-                json!(read_u32_le(pkt.payload, 28).unwrap()),
-            );
+            out.insert("src_factor_alpha".into(), json!(src_factor_alpha));
+            if let Some(name) = decode_blend_factor_name(src_factor_alpha) {
+                out.insert("src_factor_alpha_name".into(), Value::String(name));
+            }
+            out.insert("dst_factor_alpha".into(), json!(dst_factor_alpha));
+            if let Some(name) = decode_blend_factor_name(dst_factor_alpha) {
+                out.insert("dst_factor_alpha_name".into(), Value::String(name));
+            }
+            out.insert("blend_op_alpha".into(), json!(blend_op_alpha));
+            if let Some(name) = decode_blend_op_name(blend_op_alpha) {
+                out.insert("blend_op_alpha_name".into(), Value::String(name));
+            }
             // blend_constant_rgba_f32[4] at payload offset 32.
             let mut rgba = Vec::new();
             for i in 0..4 {
@@ -653,23 +657,18 @@ fn decode_known_fields(
                 out.insert("decode_error".into(), json!("truncated payload"));
                 return out;
             }
+            let depth_enable = read_u32_le(pkt.payload, 0).unwrap();
+            let depth_write_enable = read_u32_le(pkt.payload, 4).unwrap();
             let depth_func = read_u32_le(pkt.payload, 8).unwrap();
-            out.insert(
-                "depth_enable".into(),
-                json!(read_u32_le(pkt.payload, 0).unwrap()),
-            );
-            out.insert(
-                "depth_write_enable".into(),
-                json!(read_u32_le(pkt.payload, 4).unwrap()),
-            );
+            let stencil_enable = read_u32_le(pkt.payload, 12).unwrap();
+
+            out.insert("depth_enable".into(), json!(depth_enable));
+            out.insert("depth_write_enable".into(), json!(depth_write_enable));
             out.insert("depth_func".into(), json!(depth_func));
             if let Some(name) = decode_compare_func_name(depth_func) {
                 out.insert("depth_func_name".into(), Value::String(name));
             }
-            out.insert(
-                "stencil_enable".into(),
-                json!(read_u32_le(pkt.payload, 12).unwrap()),
-            );
+            out.insert("stencil_enable".into(), json!(stencil_enable));
             out.insert("stencil_read_mask".into(), json!(pkt.payload[16]));
             out.insert("stencil_write_mask".into(), json!(pkt.payload[17]));
         }
@@ -680,6 +679,11 @@ fn decode_known_fields(
             }
             let fill_mode = read_u32_le(pkt.payload, 0).unwrap();
             let cull_mode = read_u32_le(pkt.payload, 4).unwrap();
+            let front_ccw = read_u32_le(pkt.payload, 8).unwrap();
+            let scissor_enable = read_u32_le(pkt.payload, 12).unwrap();
+            let depth_bias = read_i32_le(pkt.payload, 16).unwrap();
+            let flags = read_u32_le(pkt.payload, 20).unwrap();
+
             out.insert("fill_mode".into(), json!(fill_mode));
             if let Some(name) = decode_fill_mode_name(fill_mode) {
                 out.insert("fill_mode_name".into(), Value::String(name));
@@ -688,19 +692,13 @@ fn decode_known_fields(
             if let Some(name) = decode_cull_mode_name(cull_mode) {
                 out.insert("cull_mode_name".into(), Value::String(name));
             }
-            out.insert(
-                "front_ccw".into(),
-                json!(read_u32_le(pkt.payload, 8).unwrap()),
-            );
-            out.insert(
-                "scissor_enable".into(),
-                json!(read_u32_le(pkt.payload, 12).unwrap()),
-            );
-            out.insert(
-                "depth_bias".into(),
-                json!(read_i32_le(pkt.payload, 16).unwrap()),
-            );
-            out.insert("flags".into(), json!(read_u32_le(pkt.payload, 20).unwrap()));
+            out.insert("front_ccw".into(), json!(front_ccw));
+            out.insert("scissor_enable".into(), json!(scissor_enable));
+            out.insert("depth_bias".into(), json!(depth_bias));
+            out.insert("flags".into(), json!(flags));
+            if let Some(names) = decode_rasterizer_flags_names(flags) {
+                out.insert("flags_names".into(), Value::String(names));
+            }
         }
         AerogpuCmdOpcode::SetVertexBuffers => match pkt.decode_set_vertex_buffers_payload_le() {
             Ok((cmd, bindings)) => {
@@ -1293,6 +1291,17 @@ fn decode_fill_mode_name(mode: u32) -> Option<String> {
 
 fn decode_cull_mode_name(mode: u32) -> Option<String> {
     AerogpuCullMode::from_u32(mode).map(|m| format!("{m:?}"))
+}
+
+fn decode_rasterizer_flags_names(flags: u32) -> Option<String> {
+    let mut names = Vec::new();
+    if (flags & AEROGPU_RASTERIZER_FLAG_DEPTH_CLIP_DISABLE) != 0 {
+        names.push("DepthClipDisable");
+    }
+    if names.is_empty() {
+        return None;
+    }
+    Some(names.join("|"))
 }
 
 fn decode_format_name(format: u32) -> Option<String> {

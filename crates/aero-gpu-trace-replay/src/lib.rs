@@ -4,7 +4,7 @@ use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuCmdStreamHeader, AerogpuCmdStreamIter, AerogpuCompareFunc, AerogpuCullMode,
     AerogpuFillMode, AerogpuIndexFormat, AerogpuPrimitiveTopology, AerogpuSamplerAddressMode,
     AerogpuSamplerFilter, AerogpuShaderStage, AerogpuVertexBufferBinding, AEROGPU_CLEAR_COLOR,
-    AEROGPU_STAGE_EX_MIN_ABI_MINOR,
+    AEROGPU_RASTERIZER_FLAG_DEPTH_CLIP_DISABLE, AEROGPU_STAGE_EX_MIN_ABI_MINOR,
 };
 use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
 use sha2::{Digest, Sha256};
@@ -916,6 +916,17 @@ fn sampler_address_mode_name(mode: u32) -> Option<String> {
     AerogpuSamplerAddressMode::from_u32(mode).map(|m| format!("{m:?}"))
 }
 
+fn rasterizer_flags_names(flags: u32) -> Option<String> {
+    let mut names = Vec::new();
+    if (flags & AEROGPU_RASTERIZER_FLAG_DEPTH_CLIP_DISABLE) != 0 {
+        names.push("DepthClipDisable");
+    }
+    if names.is_empty() {
+        return None;
+    }
+    Some(names.join("|"))
+}
+
 /// Decode an AeroGPU command stream (`aerogpu_cmd_stream_header` + packet sequence) and return a
 /// stable, grep-friendly opcode listing.
 ///
@@ -1329,6 +1340,15 @@ pub fn decode_cmd_stream_listing(
                         let dst_factor = u32_le_at(pkt.payload, 8).unwrap();
                         let blend_op = u32_le_at(pkt.payload, 12).unwrap();
                         let color_write_mask = pkt.payload[16];
+                        let src_factor_alpha = u32_le_at(pkt.payload, 20).unwrap();
+                        let dst_factor_alpha = u32_le_at(pkt.payload, 24).unwrap();
+                        let blend_op_alpha = u32_le_at(pkt.payload, 28).unwrap();
+                        let blend_constant = [
+                            f32_bits_at(pkt.payload, 32).unwrap(),
+                            f32_bits_at(pkt.payload, 36).unwrap(),
+                            f32_bits_at(pkt.payload, 40).unwrap(),
+                            f32_bits_at(pkt.payload, 44).unwrap(),
+                        ];
                         let sample_mask = u32_le_at(pkt.payload, 48).unwrap();
                         let _ = write!(line, " enable={enable} src_factor={src_factor}");
                         if let Some(name) = blend_factor_name(src_factor) {
@@ -1342,10 +1362,28 @@ pub fn decode_cmd_stream_listing(
                         if let Some(name) = blend_op_name(blend_op) {
                             let _ = write!(line, " blend_op_name={name}");
                         }
+                        let _ = write!(line, " color_write_mask=0x{color_write_mask:02X}");
+                        let _ = write!(line, " src_factor_alpha={src_factor_alpha}");
+                        if let Some(name) = blend_factor_name(src_factor_alpha) {
+                            let _ = write!(line, " src_factor_alpha_name={name}");
+                        }
+                        let _ = write!(line, " dst_factor_alpha={dst_factor_alpha}");
+                        if let Some(name) = blend_factor_name(dst_factor_alpha) {
+                            let _ = write!(line, " dst_factor_alpha_name={name}");
+                        }
+                        let _ = write!(line, " blend_op_alpha={blend_op_alpha}");
+                        if let Some(name) = blend_op_name(blend_op_alpha) {
+                            let _ = write!(line, " blend_op_alpha_name={name}");
+                        }
                         let _ = write!(
                             line,
-                            " color_write_mask=0x{color_write_mask:02X} sample_mask=0x{sample_mask:08X}"
+                            " blend_constant_rgba=[{},{},{},{}]",
+                            fmt_f32_3(blend_constant[0]),
+                            fmt_f32_3(blend_constant[1]),
+                            fmt_f32_3(blend_constant[2]),
+                            fmt_f32_3(blend_constant[3])
                         );
+                        let _ = write!(line, " sample_mask=0x{sample_mask:08X}");
                     }
                     AerogpuCmdOpcode::SetDepthStencilState => {
                         if pkt.payload.len() < 20 {
@@ -1399,6 +1437,9 @@ pub fn decode_cmd_stream_listing(
                             line,
                             " front_ccw={front_ccw} scissor_enable={scissor_enable} depth_bias={depth_bias} flags=0x{flags:08X}"
                         );
+                        if let Some(names) = rasterizer_flags_names(flags) {
+                            let _ = write!(line, " flags_names={names}");
+                        }
                     }
 
                     AerogpuCmdOpcode::Clear => {
