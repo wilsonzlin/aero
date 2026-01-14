@@ -1146,6 +1146,37 @@ impl WasmTieredVm {
         self.vcpu.cpu.state.msr.tsc
     }
 
+    /// Return the current interrupt shadow counter (`PendingEventState.interrupt_inhibit`).
+    ///
+    /// This is a Rust-only helper intended for wasm-bindgen integration tests that need to assert
+    /// tiered-execution bookkeeping semantics (e.g. commit-flag rollback behavior).
+    pub fn cpu_interrupt_inhibit(&self) -> u8 {
+        self.vcpu.cpu.pending.interrupt_inhibit()
+    }
+
+    /// Install a synthetic Tier-1 block into the JIT cache for Rust-only tests.
+    ///
+    /// The installed block does not participate in page-version validation (`page_versions` is
+    /// empty), making it suitable for unit tests that only need to exercise dispatcher retirement
+    /// semantics.
+    pub fn install_test_tier1_handle(
+        &mut self,
+        entry_rip: u64,
+        table_index: u32,
+        instruction_count: u32,
+        inhibit_interrupts_after_block: bool,
+    ) {
+        let jit = self.dispatcher.jit_mut();
+        let mut meta = jit.snapshot_meta(0, 0);
+        meta.instruction_count = instruction_count;
+        meta.inhibit_interrupts_after_block = inhibit_interrupts_after_block;
+        jit.install_handle(CompiledBlockHandle {
+            entry_rip,
+            table_index,
+            meta,
+        });
+    }
+
     fn init_code_version_table_fields(
         jit_abi: &mut JitAbiBuffer,
         jit: &mut JitRuntime<WasmJitBackend, CompileQueue>,

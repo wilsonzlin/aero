@@ -234,3 +234,125 @@ fn tiered_vm_commit_flag_rollback_retires_zero_instructions_node() {
         "committed JIT blocks must advance TSC by instructions_retired"
     );
 }
+
+#[wasm_bindgen_test]
+fn tiered_vm_commit_flag_rollback_does_not_touch_interrupt_shadow_node() {
+    installAeroTieredCommitFlagTestShims();
+
+    let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x2000);
+    let mut vm = WasmTieredVm::new(guest_base, guest_size).expect("new WasmTieredVm");
+
+    const ENTRY0: u64 = 0x1000;
+    const ENTRY1: u64 = 0x2000;
+    const ENTRY2: u64 = 0x3000;
+
+    vm.reset_real_mode(ENTRY0 as u32);
+    vm.install_test_tier1_handle(ENTRY0, 0, 1, true);
+    vm.install_test_tier1_handle(ENTRY1, 1, 1, true);
+    vm.install_test_tier1_handle(ENTRY2, 2, 5, false);
+
+    let commit_flag_offset = jit_commit_flag_offset();
+
+    assert_eq!(
+        vm.cpu_interrupt_inhibit(),
+        0,
+        "sanity check: interrupt shadow should start inactive"
+    );
+
+    let hook = Closure::wrap(Box::new(
+        move |table_index: u32, cpu_ptr: u32, _jit_ctx_ptr: u32| -> i64 {
+            let commit_flag_ptr = cpu_ptr + commit_flag_offset;
+            let before = unsafe {
+                core::ptr::read_unaligned(core::ptr::with_exposed_provenance::<u32>(
+                    commit_flag_ptr as usize,
+                ))
+            };
+            assert_eq!(
+                before, 1,
+                "commit flag should be set to 1 before host hook runs"
+            );
+
+            match table_index {
+                // 1) Roll back a block that *would* create an interrupt shadow if committed.
+                0 => {
+                    unsafe {
+                        core::ptr::write_unaligned(
+                            core::ptr::with_exposed_provenance_mut::<u32>(commit_flag_ptr as usize),
+                            0,
+                        );
+                    }
+                    ENTRY1 as i64
+                }
+                // 2) Commit a block that creates an interrupt shadow.
+                1 => ENTRY2 as i64,
+                // 3) Roll back a block with a non-zero instruction_count; it must not age the shadow.
+                2 => {
+                    unsafe {
+                        core::ptr::write_unaligned(
+                            core::ptr::with_exposed_provenance_mut::<u32>(commit_flag_ptr as usize),
+                            0,
+                        );
+                    }
+                    ENTRY2 as i64
+                }
+                other => panic!("unexpected JIT table index {other}"),
+            }
+        },
+    ) as Box<dyn FnMut(u32, u32, u32) -> i64>);
+    let _guard = GlobalThisValueGuard::set("__aero_jit_call", hook.as_ref());
+
+    // Step 1: rollback should not apply inhibit_interrupts_after_block.
+    let tsc_before = vm.cpu_tsc();
+    match vm.step_raw() {
+        StepOutcome::Block {
+            tier: ExecutedTier::Jit,
+            instructions_retired,
+            ..
+        } => assert_eq!(instructions_retired, 0),
+        other => panic!("expected JIT block outcome, got {other:?}"),
+    }
+    assert_eq!(vm.cpu_tsc(), tsc_before, "rollback must not advance TSC");
+    assert_eq!(
+        vm.cpu_interrupt_inhibit(),
+        0,
+        "rollback must not apply inhibit_interrupts_after_block"
+    );
+
+    // Step 2: committed block applies inhibit_interrupts_after_block (shadow becomes active).
+    let tsc_before = vm.cpu_tsc();
+    match vm.step_raw() {
+        StepOutcome::Block {
+            tier: ExecutedTier::Jit,
+            instructions_retired,
+            ..
+        } => assert_eq!(instructions_retired, 1),
+        other => panic!("expected JIT block outcome, got {other:?}"),
+    }
+    assert_eq!(
+        vm.cpu_tsc().wrapping_sub(tsc_before),
+        1,
+        "committed blocks must advance TSC by instruction_count"
+    );
+    assert_eq!(
+        vm.cpu_interrupt_inhibit(),
+        1,
+        "committed blocks must apply inhibit_interrupts_after_block"
+    );
+
+    // Step 3: rollback must not age an existing interrupt shadow.
+    let tsc_before = vm.cpu_tsc();
+    match vm.step_raw() {
+        StepOutcome::Block {
+            tier: ExecutedTier::Jit,
+            instructions_retired,
+            ..
+        } => assert_eq!(instructions_retired, 0),
+        other => panic!("expected JIT block outcome, got {other:?}"),
+    }
+    assert_eq!(vm.cpu_tsc(), tsc_before, "rollback must not advance TSC");
+    assert_eq!(
+        vm.cpu_interrupt_inhibit(),
+        1,
+        "rollback must not age interrupt shadow state"
+    );
+}
