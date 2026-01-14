@@ -4316,7 +4316,6 @@ impl AerogpuD3d11Executor {
         let centered_placeholder_triangle = tessellation_placeholder
             || matches!(self.state.primitive_topology, CmdPrimitiveTopology::PointList);
         let mut use_indexed_indirect = opcode == OPCODE_DRAW_INDEXED;
-        let uniform_align = self.device.limits().min_uniform_buffer_offset_alignment as u64;
         let expanded_vertex_alloc: ExpansionScratchAlloc;
         let expanded_index_alloc: ExpansionScratchAlloc;
         let indirect_args_alloc: ExpansionScratchAlloc;
