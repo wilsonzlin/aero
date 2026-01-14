@@ -96,4 +96,30 @@ describe("runtime/boot_device_backend", () => {
       }
     }
   });
+
+  it("ignores inherited machine CPU boot config fields", () => {
+    const originalWindowDescriptor = Object.getOwnPropertyDescriptor(globalThis, "window");
+
+    try {
+      const win: any = { aero: { debug: {} } };
+      Object.defineProperty(globalThis, "window", { value: win, configurable: true, writable: true });
+
+      const inherited = Object.create({ bootDrive: 0x80, cdBootDrive: 0xe0, bootFromCdIfPresent: true });
+      const coordinator: any = {
+        getBootDisks: () => null,
+        getMachineCpuActiveBootDevice: () => null,
+        getMachineCpuBootConfig: () => inherited,
+      };
+
+      installBootDeviceBackendOnAeroGlobal(coordinator);
+
+      expect(win.aero.debug.getMachineCpuBootConfig()).toBe(null);
+    } finally {
+      if (originalWindowDescriptor) {
+        Object.defineProperty(globalThis, "window", originalWindowDescriptor);
+      } else {
+        Reflect.deleteProperty(globalThis, "window");
+      }
+    }
+  });
 });

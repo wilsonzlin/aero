@@ -97,9 +97,12 @@ export function installBootDeviceBackendOnAeroGlobal(coordinator: WorkerCoordina
         if (value < 0 || value > 0xff) return null;
         return value;
       };
-      const bootDrive = sanitizeDrive(rec.bootDrive);
-      const cdBootDrive = sanitizeDrive(rec.cdBootDrive);
-      const bootFromCdIfPresent = rec.bootFromCdIfPresent;
+      // Treat boot config as untrusted; ignore inherited values (prototype pollution).
+      const bootDriveRaw = hasOwn(rec as object, "bootDrive") ? rec.bootDrive : undefined;
+      const cdBootDriveRaw = hasOwn(rec as object, "cdBootDrive") ? rec.cdBootDrive : undefined;
+      const bootFromCdIfPresent = hasOwn(rec as object, "bootFromCdIfPresent") ? rec.bootFromCdIfPresent : undefined;
+      const bootDrive = sanitizeDrive(bootDriveRaw);
+      const cdBootDrive = sanitizeDrive(cdBootDriveRaw);
       if (bootDrive === null || cdBootDrive === null) return null;
       if (typeof bootFromCdIfPresent !== "boolean") return null;
       return { bootDrive, cdBootDrive, bootFromCdIfPresent };
