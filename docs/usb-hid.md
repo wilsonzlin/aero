@@ -21,7 +21,7 @@ Browser-oriented convenience wrappers live in `aero_usb::web` (`crates/aero-usb/
 The emulator re-exports these helpers at `emulator::io::usb::hid::usage`.
 The browser-side `KeyboardEvent.code -> HID usage` mapping lives in `web/src/input/hid_usage.ts`.
 
-For USB HID **gamepad** details (composite device layout, Windows 7 driver binding expectations, and the exact gamepad report descriptor/report bytes), see
+For USB HID **gamepad** details (Windows 7 driver binding expectations, and the exact gamepad report descriptor/report bytes), see
 [`docs/usb-hid-gamepad.md`](./usb-hid-gamepad.md). The Rust↔TypeScript report packing contract is pinned by
 `docs/fixtures/hid_gamepad_report_vectors.json` (plus the clamping-focused
 `docs/fixtures/hid_gamepad_report_clamping_vectors.json`) and validated by tests on both sides.

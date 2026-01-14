@@ -933,8 +933,7 @@ Current implementation details:
     - **Mouse:** virtio-input (once the guest sets `DRIVER_OK`) → PS/2 i8042 while the synthetic USB mouse is unconfigured → synthetic USB mouse (once configured; or if PS/2 is unavailable)
     - **Gamepad:** synthetic USB gamepad (no virtio/PS/2 fallback)
 
-For USB HID **gamepad** details (including the composite HID topology and the exact
-gamepad report descriptor + byte layout), see
+For USB HID **gamepad** details (report descriptor + byte layout), see
 [`docs/usb-hid-gamepad.md`](./usb-hid-gamepad.md).
 
 For WebHID device passthrough (where the browser does not expose the raw HID

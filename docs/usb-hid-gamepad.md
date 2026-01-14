@@ -1,52 +1,43 @@
-# USB HID Gamepad + Composite HID Topology
+# USB HID Gamepad + Synthetic HID Topology
 
 This document describes two related pieces of the USB input story:
 
 1. The **USB HID gamepad report format** used by the emulator.
-2. The **USB composite HID device** topology used to present **keyboard + mouse + gamepad**
-   while consuming only **one UHCI root hub port**.
+2. The guest-visible **synthetic HID topology** used to expose keyboard/mouse/gamepad input
+   while consuming only **one root port** on the guest USB controller.
 
 > Source of truth: [ADR 0015](./adr/0015-canonical-usb-stack.md) defines the canonical USB
 > stack for the browser runtime (`crates/aero-usb` + `web/` host integration). This document focuses
-> on the HID composite/report contract on top of that stack.
+> on the HID report/device contract on top of that stack.
 
 ---
 
-## Why a composite HID device?
+## Guest-visible topology (external hub on root port 0)
 
-The UHCI root hub model exposes only two downstream ports (`PORTSC1`/`PORTSC2`). A naïve
-approach (separate USB devices for keyboard, mouse, and gamepad) would require three
-ports or an external USB hub.
+The legacy guest USB controllers used by Aero (especially UHCI) expose only a small number of root
+ports. To expose multiple HID devices without fighting for root ports, the input stack uses an
+**external USB hub** attached on **root port 0**, then attaches synthetic devices behind it.
 
-The emulator provides a **single USB device** with multiple HID interfaces so the
-default input stack (keyboard + mouse + gamepad) consumes only one port and leaves
-the other root port free (e.g. for WebHID/WebUSB passthrough devices, potentially
-behind an external USB hub device).
+Current topology (see also [`docs/08-input-devices.md`](./08-input-devices.md)):
 
-- Windows 7 enumerates the device as a composite device (`usbccgp.sys` parent PDO)
-- Each HID interface binds via the in-box HID stack (`hidusb.sys` + `hidclass.sys`)
-  and then the appropriate client driver (e.g. `kbdhid.sys` / `mouhid.sys`)
+- Root port **0**: external USB hub
+  - hub port **1**: USB HID keyboard
+  - hub port **2**: USB HID mouse
+  - hub port **3**: USB HID gamepad
+  - hub port **4**: USB HID consumer-control (media keys)
+  - hub ports **5+**: dynamically-allocated passthrough devices (e.g. WebHID)
+- Root port **1**: reserved for WebUSB passthrough
 
-Reference implementation (browser/WASM): `aero_usb::hid::composite::UsbCompositeHidInput`
-(`crates/aero-usb/src/hid/composite.rs`).
+Source-of-truth constants live in `web/src/usb/uhci_external_hub.ts` and are used by the worker
+runtime for UHCI/EHCI/xHCI builds.
 
----
+This approach keeps Windows 7 driver binding simple: each device binds via the in-box HID stack
+(`hidusb.sys` + `hidclass.sys`) and then the appropriate client driver (`kbdhid.sys`, `mouhid.sys`,
+`hidgame.sys`, …).
 
-## Composite device interface layout
-
-The composite device exposes **one configuration** with **three interfaces**:
-
-| Interface | Function  | Class/Subclass/Protocol            | Interrupt IN EP | Max packet |
-|----------:|-----------|------------------------------------|-----------------|-----------:|
-| 0         | Keyboard  | HID / Boot (1) / Keyboard (1)      | `0x81`          | 8 bytes    |
-| 1         | Mouse     | HID / Boot (1) / Mouse (2)         | `0x82`          | 4 bytes    |
-| 2         | Gamepad   | HID / None (0) / None (0)          | `0x83`          | 8 bytes    |
-
-Each interface includes:
-
-- An interface descriptor
-- A HID descriptor (`0x21`) that references that interface’s report descriptor length
-- An interrupt IN endpoint descriptor
+Note: `aero_usb::hid::composite::UsbCompositeHidInput` (device ID `UCMP`) still exists as an
+alternative/legacy composite-device model used by some tests, but the default runtime topology is
+the external-hub approach above.
 
 ---
 
