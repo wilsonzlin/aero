@@ -2366,13 +2366,13 @@ fn gs_translate_supports_setp_and_predicated_emit_cut() {
                     modifier: OperandModifier::None,
                 },
             },
-            // setp p0.x, primitive_id, 0 (NE_U is an unordered float compare in SM4)
+            // setp p0.x, primitive_id, 0 (`*_U` is an unordered float compare in SM4)
             Sm4Inst::Setp {
                 dst: PredicateDstOperand {
                     reg: PredicateRef { index: 0 },
                     mask: WriteMask::X,
                 },
-                op: Sm4CmpOp::NeU,
+                op: Sm4CmpOp::LtU,
                 a: SrcOperand {
                     kind: SrcKind::Register(RegisterRef {
                         file: RegFile::Input,
