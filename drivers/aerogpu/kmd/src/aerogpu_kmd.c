@@ -2829,7 +2829,14 @@ static __forceinline BOOLEAN AeroGpuV1SubmitPathUsable(_In_ const AEROGPU_ADAPTE
     if (Adapter->RingHeader->entry_count != ringEntryCount) {
         return FALSE;
     }
-    if (Adapter->RingHeader->entry_stride_bytes < sizeof(struct aerogpu_submit_desc)) {
+    /* KMD expects the fixed descriptor stride used by the current ABI. */
+    if (Adapter->RingHeader->entry_stride_bytes != sizeof(struct aerogpu_submit_desc)) {
+        return FALSE;
+    }
+    if ((ULONGLONG)Adapter->RingHeader->size_bytes < minRingBytes) {
+        return FALSE;
+    }
+    if (Adapter->RingHeader->size_bytes > (uint32_t)Adapter->RingSizeBytes) {
         return FALSE;
     }
 
