@@ -49,7 +49,12 @@ When `D3DRS_LIGHTING` is enabled for the `NORMAL` variants, the UMD additionally
 - Uploads are gated by `Device::fixedfunc_lighting_dirty` and occur at draw time when a lit fixed-function VS variant is active.
 - Like the WVP constants, this uses a high constant range to reduce collisions with app/user VS constants. Even so, the UMD will mark `fixedfunc_lighting_dirty` when user shaders or `SetShaderConstF` write overlapping registers so the constants are refreshed when switching back to the lit fixed-function path.
 
-Note: the fixed-function fallback supports only `TEXCOORD0=float2` for `TEX1` FVFs (default `D3DFVF_TEXCOORDSIZE2(0)`). Other `D3DFVF_TEXCOORDSIZE*` encodings for texcoord set 0 are accepted for input-layout translation (user shaders), but fixed-function draws will fail with `D3DERR_INVALIDCALL` when the fixed-function path is active.
+Note: for `TEX1` fixed-function FVFs, `TEXCOORD0` may be declared as `float1/2/3/4` via `D3DFVF_TEXCOORDSIZE*`.
+The fixed-function fallback uses the first two components as `(u, v)` (`float1` implies `v=0`; extra components are ignored).
+
+Exception: patch rendering (`DrawRectPatch` / `DrawTriPatch`) currently assumes `TEXCOORD0=float2` when `D3DFVF_TEX1` is used
+and rejects other encodings (`D3DERR_INVALIDCALL`), since the CPU tessellation path writes only `(u, v)` pairs into the
+generated vertices.
 
 ## Pre-transformed `D3DFVF_XYZRHW*` draws (no WVP)
 

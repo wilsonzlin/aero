@@ -35,6 +35,11 @@ constexpr uint32_t kD3dFvfXyzRhw = 0x00000004u;
 constexpr uint32_t kD3dFvfNormal = 0x00000010u;
 constexpr uint32_t kD3dFvfDiffuse = 0x00000040u;
 constexpr uint32_t kD3dFvfTex1 = 0x00000100u;
+// D3DFVF_TEXCOORDSIZE*(0) bits (two bits at offset 16) for TEXCOORD0.
+// Encoding: 0 -> float2, 1 -> float3, 2 -> float4, 3 -> float1.
+constexpr uint32_t kD3dFvfTexCoordSize1_0 = 0x00030000u;
+constexpr uint32_t kD3dFvfTexCoordSize3_0 = 0x00010000u;
+constexpr uint32_t kD3dFvfTexCoordSize4_0 = 0x00020000u;
 // D3DFVF_TEXCOORDSIZE3(1): `TEXCOORD1` is float3. For TEX1 FVFs, set 1 is unused,
 // but some runtimes may leave garbage bits in the unused D3DFVF_TEXCOORDSIZE range.
 constexpr uint32_t kD3dFvfTexCoordSize3_1 = 0x00040000u;
@@ -106,8 +111,10 @@ constexpr uint32_t kPsOpTexld = 0x04000042u;
 // argument modifiers are encoded into the generated shader bytecode.
 constexpr uint32_t kPsSrcTemp0Comp = 0x06E40000u;  // (1 - r0.xyzw)
 constexpr uint32_t kPsSrcTemp0W = 0x00FF0000u;     // r0.wwww (alpha replicate)
+constexpr uint32_t kPsSrcTemp0WComp = 0x06FF0000u; // (1 - r0.wwww) (complement + alpha replicate)
 constexpr uint32_t kPsSrcInput0Comp = 0x16E40000u; // (1 - v0.xyzw)
 constexpr uint32_t kPsSrcInput0W = 0x10FF0000u;    // v0.wwww (alpha replicate)
+constexpr uint32_t kPsSrcInput0WComp = 0x16FF0000u; // (1 - v0.wwww) (complement + alpha replicate)
 
 bool Check(bool cond, const char* msg) {
   if (!cond) {
@@ -424,6 +431,38 @@ struct VertexXyzrhwDiffuseTex1 {
   float v;
 };
 
+struct VertexXyzrhwDiffuseTex1F1 {
+  float x;
+  float y;
+  float z;
+  float rhw;
+  uint32_t color;
+  float u;
+};
+
+struct VertexXyzrhwDiffuseTex1F3 {
+  float x;
+  float y;
+  float z;
+  float rhw;
+  uint32_t color;
+  float u;
+  float v;
+  float w;
+};
+
+struct VertexXyzrhwDiffuseTex1F4 {
+  float x;
+  float y;
+  float z;
+  float rhw;
+  uint32_t color;
+  float u;
+  float v;
+  float w;
+  float q;
+};
+
 struct VertexXyzrhwTex1 {
   float x;
   float y;
@@ -447,6 +486,35 @@ struct VertexXyzDiffuseTex1 {
   uint32_t color;
   float u;
   float v;
+};
+
+struct VertexXyzDiffuseTex1F1 {
+  float x;
+  float y;
+  float z;
+  uint32_t color;
+  float u;
+};
+
+struct VertexXyzDiffuseTex1F3 {
+  float x;
+  float y;
+  float z;
+  uint32_t color;
+  float u;
+  float v;
+  float w;
+};
+
+struct VertexXyzDiffuseTex1F4 {
+  float x;
+  float y;
+  float z;
+  uint32_t color;
+  float u;
+  float v;
+  float w;
+  float q;
 };
 
 struct VertexXyzTex1 {
@@ -515,6 +583,7 @@ static_assert(sizeof(D3DVERTEXELEMENT9_COMPAT) == 8, "D3DVERTEXELEMENT9_COMPAT m
 constexpr uint8_t kD3dDeclTypeFloat2 = 1;
 constexpr uint8_t kD3dDeclTypeFloat3 = 2;
 constexpr uint8_t kD3dDeclTypeFloat4 = 3;
+constexpr uint8_t kD3dDeclTypeFloat1 = 0;
 constexpr uint8_t kD3dDeclTypeD3dColor = 4;
 constexpr uint8_t kD3dDeclTypeUnused = 17;
 
@@ -2277,6 +2346,268 @@ bool TestFvfXyzDiffuseTex1EmitsTextureAndShaders() {
   }
   if (!Check(st->texture != 0, "SET_TEXTURE texture handle non-zero")) {
     return false;
+  }
+
+  return true;
+}
+
+bool TestFixedfuncTex1SupportsTexcoordSizeBits() {
+  struct Case {
+    const char* name = nullptr;
+    uint32_t tex0_size_bits = 0;
+    uint8_t decl_type = kD3dDeclTypeFloat2;
+    // For XYZRHW draws.
+    const void* tri_xyzrhw = nullptr;
+    uint32_t stride_xyzrhw = 0;
+    // For XYZ draws.
+    const void* tri_xyz = nullptr;
+    uint32_t stride_xyz = 0;
+  };
+
+  const VertexXyzrhwDiffuseTex1F1 tri_xyzrhw_f1[3] = {
+      {0.0f, 0.0f, 0.0f, 1.0f, 0xFFFFFFFFu, 0.0f},
+      {1.0f, 0.0f, 0.0f, 1.0f, 0xFFFFFFFFu, 1.0f},
+      {0.0f, 1.0f, 0.0f, 1.0f, 0xFFFFFFFFu, 0.5f},
+  };
+  const VertexXyzrhwDiffuseTex1F3 tri_xyzrhw_f3[3] = {
+      {0.0f, 0.0f, 0.0f, 1.0f, 0xFFFFFFFFu, 0.0f, 0.0f, 0.0f},
+      {1.0f, 0.0f, 0.0f, 1.0f, 0xFFFFFFFFu, 1.0f, 0.0f, 0.0f},
+      {0.0f, 1.0f, 0.0f, 1.0f, 0xFFFFFFFFu, 0.0f, 1.0f, 0.0f},
+  };
+  const VertexXyzrhwDiffuseTex1F4 tri_xyzrhw_f4[3] = {
+      {0.0f, 0.0f, 0.0f, 1.0f, 0xFFFFFFFFu, 0.0f, 0.0f, 0.0f, 1.0f},
+      {1.0f, 0.0f, 0.0f, 1.0f, 0xFFFFFFFFu, 1.0f, 0.0f, 0.0f, 1.0f},
+      {0.0f, 1.0f, 0.0f, 1.0f, 0xFFFFFFFFu, 0.0f, 1.0f, 0.0f, 1.0f},
+  };
+
+  const VertexXyzDiffuseTex1F1 tri_xyz_f1[3] = {
+      {-1.0f, -1.0f, 0.0f, 0xFFFFFFFFu, 0.0f},
+      {1.0f, -1.0f, 0.0f, 0xFFFFFFFFu, 1.0f},
+      {-1.0f, 1.0f, 0.0f, 0xFFFFFFFFu, 0.0f},
+  };
+  const VertexXyzDiffuseTex1F3 tri_xyz_f3[3] = {
+      {-1.0f, -1.0f, 0.0f, 0xFFFFFFFFu, 0.0f, 0.0f, 0.0f},
+      {1.0f, -1.0f, 0.0f, 0xFFFFFFFFu, 1.0f, 0.0f, 0.0f},
+      {-1.0f, 1.0f, 0.0f, 0xFFFFFFFFu, 0.0f, 1.0f, 0.0f},
+  };
+  const VertexXyzDiffuseTex1F4 tri_xyz_f4[3] = {
+      {-1.0f, -1.0f, 0.0f, 0xFFFFFFFFu, 0.0f, 0.0f, 0.0f, 1.0f},
+      {1.0f, -1.0f, 0.0f, 0xFFFFFFFFu, 1.0f, 0.0f, 0.0f, 1.0f},
+      {-1.0f, 1.0f, 0.0f, 0xFFFFFFFFu, 0.0f, 1.0f, 0.0f, 1.0f},
+  };
+
+  const Case cases[] = {
+      {"texcoord0_float1",
+       kD3dFvfTexCoordSize1_0,
+       kD3dDeclTypeFloat1,
+       tri_xyzrhw_f1,
+       static_cast<uint32_t>(sizeof(VertexXyzrhwDiffuseTex1F1)),
+       tri_xyz_f1,
+       static_cast<uint32_t>(sizeof(VertexXyzDiffuseTex1F1))},
+      {"texcoord0_float3",
+       kD3dFvfTexCoordSize3_0,
+       kD3dDeclTypeFloat3,
+       tri_xyzrhw_f3,
+       static_cast<uint32_t>(sizeof(VertexXyzrhwDiffuseTex1F3)),
+       tri_xyz_f3,
+       static_cast<uint32_t>(sizeof(VertexXyzDiffuseTex1F3))},
+      {"texcoord0_float4",
+       kD3dFvfTexCoordSize4_0,
+       kD3dDeclTypeFloat4,
+       tri_xyzrhw_f4,
+       static_cast<uint32_t>(sizeof(VertexXyzrhwDiffuseTex1F4)),
+       tri_xyz_f4,
+       static_cast<uint32_t>(sizeof(VertexXyzDiffuseTex1F4))},
+  };
+
+  for (const auto& c : cases) {
+    // -------------------------------------------------------------------------
+    // XYZRHW | DIFFUSE | TEX1 with non-default TEXCOORDSIZE0
+    // -------------------------------------------------------------------------
+    {
+      CleanupDevice cleanup;
+      if (!CreateDevice(&cleanup)) {
+        return false;
+      }
+
+      auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+      if (!Check(dev != nullptr, "device pointer")) {
+        return false;
+      }
+
+      dev->cmd.reset();
+
+      const uint32_t fvf = kFvfXyzrhwDiffuseTex1 | c.tex0_size_bits;
+      HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, fvf);
+      if (!Check(hr == S_OK, c.name)) {
+        return false;
+      }
+
+      VertexDecl* expected_decl = nullptr;
+      {
+        std::lock_guard<std::mutex> lock(dev->mutex);
+        const auto it = dev->fvf_vertex_decl_cache.find(fvf);
+        if (!Check(it != dev->fvf_vertex_decl_cache.end(), "custom FVF decl cached (XYZRHW)")) {
+          return false;
+        }
+        expected_decl = it->second;
+        if (!Check(expected_decl != nullptr, "custom FVF decl non-null (XYZRHW)")) {
+          return false;
+        }
+        if (!Check(dev->vertex_decl == expected_decl, "custom FVF decl bound (XYZRHW)")) {
+          return false;
+        }
+      }
+
+      const D3DVERTEXELEMENT9_COMPAT expected_blob[] = {
+          {0, 0, kD3dDeclTypeFloat4, kD3dDeclMethodDefault, kD3dDeclUsagePositionT, 0},
+          {0, 16, kD3dDeclTypeD3dColor, kD3dDeclMethodDefault, kD3dDeclUsageColor, 0},
+          {0, 20, c.decl_type, kD3dDeclMethodDefault, kD3dDeclUsageTexcoord, 0},
+          {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0},
+      };
+      if (!Check(expected_decl->blob.size() == sizeof(expected_blob), "custom decl blob size (XYZRHW)")) {
+        return false;
+      }
+      if (!Check(std::memcmp(expected_decl->blob.data(), expected_blob, sizeof(expected_blob)) == 0,
+                 "custom decl blob matches expected layout (XYZRHW)")) {
+        return false;
+      }
+
+      D3DDDI_HRESOURCE hTex{};
+      if (!CreateDummyTexture(&cleanup, &hTex)) {
+        return false;
+      }
+      hr = cleanup.device_funcs.pfnSetTexture(cleanup.hDevice, /*stage=*/0, hTex);
+      if (!Check(hr == S_OK, "SetTexture(stage0)")) {
+        return false;
+      }
+
+      hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+          cleanup.hDevice,
+          D3DDDIPT_TRIANGLELIST,
+          /*primitive_count=*/1,
+          c.tri_xyzrhw,
+          c.stride_xyzrhw);
+      if (!Check(hr == S_OK, "DrawPrimitiveUP(XYZRHW custom TEXCOORDSIZE0)")) {
+        std::fprintf(stderr, "FAIL: %s: DrawPrimitiveUP(XYZRHW) hr=0x%08x\n", c.name, static_cast<unsigned>(hr));
+        return false;
+      }
+
+      {
+        std::lock_guard<std::mutex> lock(dev->mutex);
+        if (!Check(dev->vertex_decl == expected_decl, "custom FVF decl preserved at draw (XYZRHW)")) {
+          return false;
+        }
+        if (!Check(dev->ps != nullptr, "PS bound (XYZRHW)")) {
+          return false;
+        }
+        if (!Check(ShaderContainsToken(dev->ps, kPsOpTexld), "PS contains texld (XYZRHW)")) {
+          return false;
+        }
+        if (!Check(ShaderContainsToken(dev->ps, kPsOpMul), "PS contains mul (XYZRHW)")) {
+          return false;
+        }
+      }
+    }
+
+    // -------------------------------------------------------------------------
+    // XYZ | DIFFUSE | TEX1 WVP path with non-default TEXCOORDSIZE0
+    // -------------------------------------------------------------------------
+    {
+      CleanupDevice cleanup;
+      if (!CreateDevice(&cleanup)) {
+        return false;
+      }
+
+      auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+      if (!Check(dev != nullptr, "device pointer")) {
+        return false;
+      }
+
+      dev->cmd.reset();
+
+      const uint32_t fvf = kFvfXyzDiffuseTex1 | c.tex0_size_bits;
+      HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, fvf);
+      if (!Check(hr == S_OK, c.name)) {
+        return false;
+      }
+
+      VertexDecl* expected_decl = nullptr;
+      {
+        std::lock_guard<std::mutex> lock(dev->mutex);
+        const auto it = dev->fvf_vertex_decl_cache.find(fvf);
+        if (!Check(it != dev->fvf_vertex_decl_cache.end(), "custom FVF decl cached (XYZ)")) {
+          return false;
+        }
+        expected_decl = it->second;
+        if (!Check(expected_decl != nullptr, "custom FVF decl non-null (XYZ)")) {
+          return false;
+        }
+        if (!Check(dev->vertex_decl == expected_decl, "custom FVF decl bound (XYZ)")) {
+          return false;
+        }
+      }
+
+      const D3DVERTEXELEMENT9_COMPAT expected_blob[] = {
+          {0, 0, kD3dDeclTypeFloat3, kD3dDeclMethodDefault, kD3dDeclUsagePosition, 0},
+          {0, 12, kD3dDeclTypeD3dColor, kD3dDeclMethodDefault, kD3dDeclUsageColor, 0},
+          {0, 16, c.decl_type, kD3dDeclMethodDefault, kD3dDeclUsageTexcoord, 0},
+          {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0},
+      };
+      if (!Check(expected_decl->blob.size() == sizeof(expected_blob), "custom decl blob size (XYZ)")) {
+        return false;
+      }
+      if (!Check(std::memcmp(expected_decl->blob.data(), expected_blob, sizeof(expected_blob)) == 0,
+                 "custom decl blob matches expected layout (XYZ)")) {
+        return false;
+      }
+
+      D3DDDI_HRESOURCE hTex{};
+      if (!CreateDummyTexture(&cleanup, &hTex)) {
+        return false;
+      }
+      hr = cleanup.device_funcs.pfnSetTexture(cleanup.hDevice, /*stage=*/0, hTex);
+      if (!Check(hr == S_OK, "SetTexture(stage0)")) {
+        return false;
+      }
+
+      hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+          cleanup.hDevice,
+          D3DDDIPT_TRIANGLELIST,
+          /*primitive_count=*/1,
+          c.tri_xyz,
+          c.stride_xyz);
+      if (!Check(hr == S_OK, "DrawPrimitiveUP(XYZ custom TEXCOORDSIZE0)")) {
+        std::fprintf(stderr, "FAIL: %s: DrawPrimitiveUP(XYZ) hr=0x%08x\n", c.name, static_cast<unsigned>(hr));
+        return false;
+      }
+
+      {
+        std::lock_guard<std::mutex> lock(dev->mutex);
+        if (!Check(dev->vertex_decl == expected_decl, "custom FVF decl preserved at draw (XYZ)")) {
+          return false;
+        }
+        if (!Check(dev->fixedfunc_vs_xyz_diffuse_tex1 != nullptr, "fixedfunc_vs_xyz_diffuse_tex1 created")) {
+          return false;
+        }
+        if (!Check(dev->vs == dev->fixedfunc_vs_xyz_diffuse_tex1, "XYZ custom TEXCOORDSIZE0 binds WVP VS")) {
+          return false;
+        }
+        if (!Check(ShaderBytecodeEquals(dev->vs, fixedfunc::kVsWvpPosColorTex0),
+                   "XYZ custom TEXCOORDSIZE0 VS bytecode matches kVsWvpPosColorTex0")) {
+          return false;
+        }
+        if (!Check(dev->ps != nullptr, "PS bound (XYZ)")) {
+          return false;
+        }
+        if (!Check(ShaderContainsToken(dev->ps, kPsOpTexld), "PS contains texld (XYZ)")) {
+          return false;
+        }
+        if (!Check(ShaderContainsToken(dev->ps, kPsOpMul), "PS contains mul (XYZ)")) {
+          return false;
+        }
+      }
+    }
   }
 
   return true;
@@ -6432,8 +6763,16 @@ bool TestStage0ArgModifiersEmitSourceMods() {
   const Case cases[] = {
       {"color_texture_complement", kD3dTaTexture | kD3dTaComplement, kPsSrcTemp0Comp, /*expect_texld=*/true},
       {"color_texture_alpha_replicate", kD3dTaTexture | kD3dTaAlphaReplicate, kPsSrcTemp0W, /*expect_texld=*/true},
+      {"color_texture_comp_alpha_replicate",
+       kD3dTaTexture | kD3dTaComplement | kD3dTaAlphaReplicate,
+       kPsSrcTemp0WComp,
+       /*expect_texld=*/true},
       {"color_diffuse_complement", kD3dTaDiffuse | kD3dTaComplement, kPsSrcInput0Comp, /*expect_texld=*/false},
       {"color_diffuse_alpha_replicate", kD3dTaDiffuse | kD3dTaAlphaReplicate, kPsSrcInput0W, /*expect_texld=*/false},
+      {"color_diffuse_comp_alpha_replicate",
+       kD3dTaDiffuse | kD3dTaComplement | kD3dTaAlphaReplicate,
+       kPsSrcInput0WComp,
+       /*expect_texld=*/false},
   };
 
   const VertexXyzrhwDiffuseTex1 tri[3] = {
@@ -7771,6 +8110,9 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestFvfXyzDiffuseTex1EmitsTextureAndShaders()) {
+    return 1;
+  }
+  if (!aerogpu::TestFixedfuncTex1SupportsTexcoordSizeBits()) {
     return 1;
   }
   if (!aerogpu::TestFvfXyzDiffuseTex1EmitsTransformConstantsAndDecl()) {

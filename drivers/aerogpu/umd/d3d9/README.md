@@ -457,7 +457,7 @@ Not yet implemented for **fixed-function emulation** (examples; expected by some
 - Multiple lights / non-directional lights (point/spot): `SetLight`/`LightEnable` are cached for `Get*`/state blocks,
   but only **directional light 0** is consumed by the bring-up fixed-function lighting path.
 - Vertex blending / indexed vertex blending (`D3DFVF_XYZB*`, `D3DRS_VERTEXBLEND`, `D3DRS_INDEXEDVERTEXBLENDENABLE`, etc)
-- Multiple texture coordinate sets (`D3DFVF_TEX2+`) or non-`float2` `TEXCOORD0` encodings
+- Multiple texture coordinate sets (`D3DFVF_TEX2+`)
 - Full stage-state-driven fixed-function emulation (stage1+ texture combiners, fog, fixed-function lighting, etc). Stage0 has a guarded partial emulation path (see “Limitations (bring-up)” below).
 
 Implementation notes (bring-up):
