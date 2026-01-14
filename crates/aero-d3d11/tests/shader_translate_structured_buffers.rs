@@ -1,10 +1,10 @@
 use aero_d3d11::binding_model::{BINDING_BASE_TEXTURE, BINDING_BASE_UAV};
+use aero_d3d11::DxbcFile;
 use aero_d3d11::{
     translate_sm4_module_to_wgsl, BufferKind, BufferRef, DstOperand, OperandModifier, RegFile,
     RegisterRef, ShaderModel, ShaderSignatures, ShaderStage, Sm4Decl, Sm4Inst, Sm4Module, SrcKind,
     SrcOperand, Swizzle, UavRef, WriteMask,
 };
-use aero_d3d11::DxbcFile;
 
 fn dummy_dxbc() -> DxbcFile<'static> {
     // Minimal DXBC container with no chunks. The translator only uses the DXBC input for
@@ -82,17 +82,18 @@ fn translates_structured_buffer_address_math() {
         ],
     };
 
-    let translated =
-        translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
     naga::front::wgsl::parse_str(&translated.wgsl).expect("WGSL should parse");
 
     // Ensure the generated bindings match the binding model.
-    assert!(translated
-        .wgsl
-        .contains(&format!("@binding({}) var<storage, read> t0", BINDING_BASE_TEXTURE)));
-    assert!(translated
-        .wgsl
-        .contains(&format!("@binding({}) var<storage, read_write> u0", BINDING_BASE_UAV)));
+    assert!(translated.wgsl.contains(&format!(
+        "@binding({}) var<storage, read> t0",
+        BINDING_BASE_TEXTURE
+    )));
+    assert!(translated.wgsl.contains(&format!(
+        "@binding({}) var<storage, read_write> u0",
+        BINDING_BASE_UAV
+    )));
 
     // Address calculation: base_word = (index * stride_bytes + byte_offset) / 4.
     assert!(

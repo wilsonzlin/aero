@@ -205,7 +205,11 @@ impl PciCapability for MsiCapability {
             config[base + 0x0f] = 0;
 
             if self.per_vector_masking {
-                Self::write_u32(config, base + 0x10, self.mask_bits & Self::SUPPORTED_VECTOR_MASK);
+                Self::write_u32(
+                    config,
+                    base + 0x10,
+                    self.mask_bits & Self::SUPPORTED_VECTOR_MASK,
+                );
                 Self::write_u32(
                     config,
                     base + 0x14,
@@ -217,7 +221,11 @@ impl PciCapability for MsiCapability {
             config[base + 0x0a] = 0;
             config[base + 0x0b] = 0;
             if self.per_vector_masking {
-                Self::write_u32(config, base + 0x0c, self.mask_bits & Self::SUPPORTED_VECTOR_MASK);
+                Self::write_u32(
+                    config,
+                    base + 0x0c,
+                    self.mask_bits & Self::SUPPORTED_VECTOR_MASK,
+                );
                 Self::write_u32(
                     config,
                     base + 0x10,

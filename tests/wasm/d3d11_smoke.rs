@@ -622,7 +622,8 @@ fn d3d11_compute_structured_buffer_copy_sm5() {
             ],
         };
 
-        let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+        let translated =
+            translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
         let wgsl = translated.wgsl;
 
         // Populate the input buffer with u32 words representing non-integral f32 values so our

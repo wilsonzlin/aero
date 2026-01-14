@@ -54,14 +54,22 @@ fn decodes_structured_buffer_stride_from_decls() {
     assert!(
         module.decls.iter().any(|d| matches!(
             d,
-            Sm4Decl::ResourceBuffer { slot: 0, stride: 16, kind: BufferKind::Structured }
+            Sm4Decl::ResourceBuffer {
+                slot: 0,
+                stride: 16,
+                kind: BufferKind::Structured
+            }
         )),
         "expected decoded ResourceStructured t0 stride 16"
     );
     assert!(
         module.decls.iter().any(|d| matches!(
             d,
-            Sm4Decl::UavBuffer { slot: 0, stride: 32, kind: BufferKind::Structured }
+            Sm4Decl::UavBuffer {
+                slot: 0,
+                stride: 32,
+                kind: BufferKind::Structured
+            }
         )),
         "expected decoded UavStructured u0 stride 32"
     );

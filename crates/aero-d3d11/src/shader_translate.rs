@@ -3345,7 +3345,9 @@ fn scan_resources(
                 validate_slot("srv_buffer", *slot, MAX_TEXTURE_SLOTS)?;
                 srv_buffers.insert(*slot);
 
-                let entry = declared_srv_buffers.entry(*slot).or_insert((*kind, *stride));
+                let entry = declared_srv_buffers
+                    .entry(*slot)
+                    .or_insert((*kind, *stride));
                 // Prefer a larger stride if multiple declarations exist (defensive).
                 entry.0 = *kind;
                 entry.1 = entry.1.max(*stride);
@@ -3354,7 +3356,9 @@ fn scan_resources(
                 validate_slot("uav_buffer", *slot, MAX_UAV_SLOTS)?;
                 uav_buffers.insert(*slot);
 
-                let entry = declared_uav_buffers.entry(*slot).or_insert((*kind, *stride));
+                let entry = declared_uav_buffers
+                    .entry(*slot)
+                    .or_insert((*kind, *stride));
                 entry.0 = *kind;
                 entry.1 = entry.1.max(*stride);
             }
@@ -3592,13 +3596,12 @@ fn scan_resources(
                 validate_slot("srv_buffer", buffer.slot, MAX_TEXTURE_SLOTS)?;
                 srv_buffers.insert(buffer.slot);
 
-                let (kind, stride) = declared_srv_buffers
-                    .get(&buffer.slot)
-                    .copied()
-                    .ok_or(ShaderTranslateError::MissingStructuredBufferStride {
+                let (kind, stride) = declared_srv_buffers.get(&buffer.slot).copied().ok_or(
+                    ShaderTranslateError::MissingStructuredBufferStride {
                         kind: "srv_buffer",
                         slot: buffer.slot,
-                    })?;
+                    },
+                )?;
                 if !matches!(kind, crate::sm4_ir::BufferKind::Structured) || stride == 0 {
                     return Err(ShaderTranslateError::MissingStructuredBufferStride {
                         kind: "srv_buffer",
@@ -3624,13 +3627,12 @@ fn scan_resources(
                 validate_slot("uav_buffer", uav.slot, MAX_UAV_SLOTS)?;
                 uav_buffers.insert(uav.slot);
 
-                let (kind, stride) = declared_uav_buffers
-                    .get(&uav.slot)
-                    .copied()
-                    .ok_or(ShaderTranslateError::MissingStructuredBufferStride {
+                let (kind, stride) = declared_uav_buffers.get(&uav.slot).copied().ok_or(
+                    ShaderTranslateError::MissingStructuredBufferStride {
                         kind: "uav_buffer",
                         slot: uav.slot,
-                    })?;
+                    },
+                )?;
                 if !matches!(kind, crate::sm4_ir::BufferKind::Structured) || stride == 0 {
                     return Err(ShaderTranslateError::MissingStructuredBufferStride {
                         kind: "uav_buffer",
@@ -3664,13 +3666,12 @@ fn scan_resources(
                 }
                 uavs_non_atomic_used.insert(uav.slot);
 
-                let (kind, stride) = declared_uav_buffers
-                    .get(&uav.slot)
-                    .copied()
-                    .ok_or(ShaderTranslateError::MissingStructuredBufferStride {
+                let (kind, stride) = declared_uav_buffers.get(&uav.slot).copied().ok_or(
+                    ShaderTranslateError::MissingStructuredBufferStride {
                         kind: "uav_buffer",
                         slot: uav.slot,
-                    })?;
+                    },
+                )?;
                 if !matches!(kind, crate::sm4_ir::BufferKind::Structured) || stride == 0 {
                     return Err(ShaderTranslateError::MissingStructuredBufferStride {
                         kind: "uav_buffer",
