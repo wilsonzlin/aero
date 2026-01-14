@@ -552,6 +552,14 @@ fn win7_aero_guest_tools_spec_rejects_transitional_virtio_ids_in_infs() -> anyho
             "aero_virtio_input",
             r"PCI\VEN_1AF4&DEV_1052&REV_01",
         )?;
+        // virtio-input ships multiple INFs (keyboard/mouse + tablet) but uses the same driver
+        // service name.
+        write_stub_pci_driver(
+            &drivers_dir.join(arch).join("virtio-input"),
+            "aero_virtio_tablet",
+            "aero_virtio_input",
+            r"PCI\VEN_1AF4&DEV_1052&REV_01",
+        )?;
     }
 
     let out_ok = tempfile::tempdir()?;
@@ -598,6 +606,12 @@ fn win7_aero_guest_tools_spec_rejects_transitional_virtio_ids_in_infs() -> anyho
         write_stub_pci_driver(
             &drivers_bad_dir.join(arch).join("virtio-input"),
             "aero_virtio_input",
+            "aero_virtio_input",
+            r"PCI\VEN_1AF4&DEV_1052&REV_01",
+        )?;
+        write_stub_pci_driver(
+            &drivers_bad_dir.join(arch).join("virtio-input"),
+            "aero_virtio_tablet",
             "aero_virtio_input",
             r"PCI\VEN_1AF4&DEV_1052&REV_01",
         )?;
