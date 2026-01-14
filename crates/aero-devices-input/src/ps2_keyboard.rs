@@ -107,9 +107,26 @@ impl Ps2Keyboard {
         if self.scancode_set != 2 {
             return;
         }
-        for &byte in bytes {
-            self.push_out(byte);
+
+        // Host-provided scancode bytes are untrusted and can be arbitrarily large (e.g. a buggy or
+        // malicious caller passing a multi-megabyte slice). Iterating over the entire slice would
+        // be wasted work because the output queue is bounded: we can only retain the last
+        // `MAX_OUTPUT_BYTES` bytes anyway.
+        if bytes.len() >= MAX_OUTPUT_BYTES {
+            self.out.clear();
+            let start = bytes.len() - MAX_OUTPUT_BYTES;
+            self.out.extend(bytes[start..].iter().copied());
+            return;
         }
+
+        let total_len = self.out.len().saturating_add(bytes.len());
+        if total_len > MAX_OUTPUT_BYTES {
+            let drop = total_len - MAX_OUTPUT_BYTES;
+            for _ in 0..drop {
+                let _ = self.out.pop_front();
+            }
+        }
+        self.out.extend(bytes.iter().copied());
     }
 
     /// Alias for [`Ps2Keyboard::inject_scancode_bytes`].
@@ -341,5 +358,26 @@ mod tests {
         let drained: Vec<u8> = std::iter::from_fn(|| kb.pop_output()).collect();
         let drop = bytes.len() - MAX_OUTPUT_BYTES;
         assert_eq!(drained, bytes[drop..]);
+    }
+
+    #[test]
+    fn inject_scancode_bytes_truncates_oversized_input_sequence() {
+        let mut kb = Ps2Keyboard::new();
+
+        // Seed the output queue so we cover the "drop old bytes" behavior.
+        kb.inject_scancode_bytes(&[0xAA, 0xBB]);
+
+        let bytes: Vec<u8> = (0..(MAX_OUTPUT_BYTES as u32 + 10))
+            .map(|v| v as u8)
+            .collect();
+        kb.inject_scancode_bytes(&bytes);
+
+        let drained: Vec<u8> = std::iter::from_fn(|| kb.pop_output()).collect();
+        let drop = bytes.len() - MAX_OUTPUT_BYTES;
+        assert_eq!(
+            drained,
+            bytes[drop..],
+            "expected oversized injection to keep only the last MAX_OUTPUT_BYTES bytes"
+        );
     }
 }
