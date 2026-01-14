@@ -325,17 +325,20 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
     }
 
     let mut cmd = tools::npm();
-    if node_dir == repo_root {
+    let step_desc = if node_dir == repo_root {
         cmd.current_dir(&repo_root)
             .args(["-w", "web", "run", "test:unit", "--"]);
+        "Web: npm -w web run test:unit -- src/input src/hid src/platform/* (plus WebUSB/WebHID topology guards)"
+            .to_string()
     } else {
         cmd.current_dir(&node_dir).args(["run", "test:unit", "--"]);
-    }
+        let node_dir_display = paths::display_rel_path(&node_dir);
+        format!(
+            "Web: npm run test:unit -- src/input src/hid src/platform/* (plus WebUSB/WebHID topology guards; node dir: {node_dir_display})"
+        )
+    };
     cmd.args(WEB_UNIT_TEST_PATHS.iter().copied());
-    match runner.run_step(
-        "Web: npm -w web run test:unit -- src/input src/hid src/platform/* (plus WebUSB/WebHID topology guards)",
-        &mut cmd,
-    ) {
+    match runner.run_step(&step_desc, &mut cmd) {
         Ok(()) => {}
         Err(XtaskError::Message(msg)) if msg.starts_with("missing required command: npm") => {
             return Err(XtaskError::Message(format!(
