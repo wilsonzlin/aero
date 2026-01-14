@@ -2557,6 +2557,10 @@ fn sm5_uav_and_raw_buffer_opcode_constants_match_d3d11_tokenized_format() {
     assert_eq!(OPCODE_ENDLOOP, 0x30);
     assert_eq!(OPCODE_CONTINUE, 0x31);
     assert_eq!(OPCODE_CONTINUEC, 0x32);
+    assert_eq!(OPCODE_SWITCH, 0x35);
+    assert_eq!(OPCODE_CASE, 0x36);
+    assert_eq!(OPCODE_DEFAULT, 0x37);
+    assert_eq!(OPCODE_ENDSWITCH, 0x38);
     // Integer arithmetic opcodes.
     assert_eq!(OPCODE_IABS, 0x61);
     assert_eq!(OPCODE_INEG, 0x62);
