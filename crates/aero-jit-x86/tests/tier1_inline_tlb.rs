@@ -1892,6 +1892,137 @@ fn tier1_inline_tlb_cross_page_store_fastpath_wraps_u64_address_space() {
 }
 
 #[test]
+fn tier1_inline_tlb_cross_page_load_fastpath_wraps_u64_address_space_w64_on_prefilled_tlb_hits() {
+    // Exercise all W64 cross-page offsets across the u64 boundary, using prefilled TLB entries to
+    // avoid calling `mmu_translate` on huge virtual addresses.
+    let flags = TLB_FLAG_READ | TLB_FLAG_WRITE | TLB_FLAG_EXEC | TLB_FLAG_IS_RAM;
+    let hi_page_data = 0x1000 | flags;
+    let lo_page_data = 0x0000 | flags;
+
+    let mut ram = vec![0u8; 0x2000];
+    ram[0x1FF9..0x2000].copy_from_slice(&[1, 2, 3, 4, 5, 6, 7]);
+    ram[0..7].copy_from_slice(&[8, 9, 10, 11, 12, 13, 14]);
+
+    // For a W64 load, the last 7 bytes of a 4KiB page cross into the next page.
+    for shift_bytes in 1u64..=7u64 {
+        // shift_bytes==1 corresponds to vaddr offset 0xFF9; shift_bytes==7 to offset 0xFFF.
+        let addr = u64::MAX - (7 - shift_bytes);
+
+        let mut expected_bytes = Vec::new();
+        let high_start = (shift_bytes - 1) as usize;
+        expected_bytes.extend_from_slice(&[1, 2, 3, 4, 5, 6, 7][high_start..]);
+        expected_bytes.extend_from_slice(&[8, 9, 10, 11, 12, 13, 14][0..high_start + 1]);
+        let expected = u64::from_le_bytes(expected_bytes.try_into().unwrap());
+
+        let mut b = IrBuilder::new(0x1000);
+        let a0 = b.const_int(Width::W64, addr);
+        let v0 = b.load(Width::W64, a0);
+        b.write_reg(
+            GuestReg::Gpr {
+                reg: Gpr::Rax,
+                width: Width::W64,
+                high8: false,
+            },
+            v0,
+        );
+        let block = b.finish(IrTerminator::Jump { target: 0x3000 });
+        block.validate().unwrap();
+
+        let cpu = CpuState {
+            rip: 0x1000,
+            ..Default::default()
+        };
+
+        let (next_rip, got_cpu, _got_ram, host_state) = run_wasm_inner_with_prefilled_tlbs(
+            &block,
+            cpu,
+            ram.clone(),
+            u64::MAX,
+            &[(addr, hi_page_data), (0, lo_page_data)],
+            Tier1WasmOptions {
+                inline_tlb: true,
+                inline_tlb_cross_page_fastpath: true,
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(next_rip, 0x3000, "addr={addr:#x}");
+        assert_eq!(got_cpu.rip, 0x3000, "addr={addr:#x}");
+        assert_eq!(
+            got_cpu.gpr[Gpr::Rax.as_u8() as usize],
+            expected,
+            "addr={addr:#x}"
+        );
+
+        assert_eq!(host_state.mmio_exit_calls, 0, "addr={addr:#x}");
+        assert_eq!(host_state.slow_mem_reads, 0, "addr={addr:#x}");
+        assert_eq!(host_state.slow_mem_writes, 0, "addr={addr:#x}");
+        assert_eq!(host_state.mmu_translate_calls, 0, "addr={addr:#x}");
+    }
+}
+
+#[test]
+fn tier1_inline_tlb_cross_page_store_fastpath_wraps_u64_address_space_w64_on_prefilled_tlb_hits() {
+    // Like `tier1_inline_tlb_cross_page_store_fastpath_wraps_u64_address_space_w32`, but for W64
+    // stores and all crossing offsets (shift_bytes 1..=7).
+    let hi_vpn = u64::MAX >> PAGE_SHIFT;
+    let flags = TLB_FLAG_READ | TLB_FLAG_WRITE | TLB_FLAG_EXEC | TLB_FLAG_IS_RAM;
+    let hi_page_data = 0x1000 | flags;
+    let lo_page_data = 0x0000 | flags;
+
+    let value: u64 = 0x0807_0605_0403_0201;
+    let bytes = value.to_le_bytes();
+
+    for shift_bytes in 1u64..=7u64 {
+        let addr = u64::MAX - (7 - shift_bytes);
+
+        let mut b = IrBuilder::new(0x1000);
+        let a0 = b.const_int(Width::W64, addr);
+        let v0 = b.const_int(Width::W64, value);
+        b.store(Width::W64, a0, v0);
+        let block = b.finish(IrTerminator::Jump { target: 0x3000 });
+        block.validate().unwrap();
+
+        let cpu = CpuState {
+            rip: 0x1000,
+            ..Default::default()
+        };
+
+        let ram = vec![0xccu8; 0x2000];
+        let mut expected_ram = ram.clone();
+        for (i, b) in bytes.iter().enumerate() {
+            let v = addr.wrapping_add(i as u64);
+            let vpn = v >> PAGE_SHIFT;
+            let phys_base = if vpn == hi_vpn { 0x1000 } else { 0 };
+            let phys = (phys_base + (v & 0xFFF)) as usize;
+            expected_ram[phys] = *b;
+        }
+
+        let (next_rip, got_cpu, got_ram, host_state) = run_wasm_inner_with_prefilled_tlbs(
+            &block,
+            cpu,
+            ram,
+            u64::MAX,
+            &[(addr, hi_page_data), (0, lo_page_data)],
+            Tier1WasmOptions {
+                inline_tlb: true,
+                inline_tlb_cross_page_fastpath: true,
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(next_rip, 0x3000, "addr={addr:#x}");
+        assert_eq!(got_cpu.rip, 0x3000, "addr={addr:#x}");
+        assert_eq!(got_ram, expected_ram, "addr={addr:#x}");
+
+        assert_eq!(host_state.mmio_exit_calls, 0, "addr={addr:#x}");
+        assert_eq!(host_state.slow_mem_reads, 0, "addr={addr:#x}");
+        assert_eq!(host_state.slow_mem_writes, 0, "addr={addr:#x}");
+        assert_eq!(host_state.mmu_translate_calls, 0, "addr={addr:#x}");
+    }
+}
+
+#[test]
 fn tier1_inline_tlb_cross_page_load_fastpath_wraps_u64_address_space_w32() {
     // Like `tier1_inline_tlb_cross_page_load_fastpath_wraps_u64_address_space`, but exercise the
     // W32 split/recombine logic across the u64 boundary.
