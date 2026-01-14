@@ -109,6 +109,7 @@ fn virtio_blk_msix_delivers_to_lapic_in_apic_mode() {
     // BAR0 layout for Aero's virtio-pci contract.
     const COMMON: u64 = profile::VIRTIO_COMMON_CFG_BAR0_OFFSET as u64;
     const NOTIFY: u64 = profile::VIRTIO_NOTIFY_CFG_BAR0_OFFSET as u64;
+    const NOTIFY_MULT: u64 = profile::VIRTIO_NOTIFY_OFF_MULTIPLIER as u64;
 
     // Basic feature negotiation (accept whatever the device offers).
     m.write_physical_u8(bar0_base + COMMON + 0x14, 1); // ACKNOWLEDGE
@@ -162,7 +163,9 @@ fn virtio_blk_msix_delivers_to_lapic_in_apic_mode() {
     assert_eq!(interrupts.borrow().get_pending(), None);
 
     // Doorbell queue 0, then allow the device to process.
-    m.write_physical_u16(bar0_base + NOTIFY, 0);
+    let notify_off = m.read_physical_u16(bar0_base + COMMON + 0x1e);
+    let notify_addr = bar0_base + NOTIFY + u64::from(notify_off) * NOTIFY_MULT;
+    m.write_physical_u16(notify_addr, 0);
     m.process_virtio_blk();
 
     assert_eq!(m.read_physical_u16(used + 2), 1);

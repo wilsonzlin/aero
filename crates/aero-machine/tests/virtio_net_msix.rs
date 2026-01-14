@@ -214,16 +214,10 @@ fn virtio_net_msix_delivers_to_lapic_in_apic_mode() {
     interrupts.borrow_mut().eoi(vector as u8);
     assert_eq!(interrupts.borrow().get_pending(), None);
 
-    // Disable MSI-X via PCI config space (without BAR0 MMIO). The machine should mirror the MSI-X
-    // enable state into the transport during polling so the device falls back to legacy INTx.
+    // Set MSI-X Function Mask (bit 14). While MSI-X is enabled, this should suppress all MSI-X
+    // interrupts without falling back to legacy INTx.
     let ctrl = cfg_read(&mut m, bdf, msix_cap + 0x02, 2) as u16;
-    cfg_write(
-        &mut m,
-        bdf,
-        msix_cap + 0x02,
-        2,
-        u32::from(ctrl & !(1 << 15)),
-    );
+    cfg_write(&mut m, bdf, msix_cap + 0x02, 2, u32::from(ctrl | (1 << 14)));
 
     // Re-submit the same descriptor chain a second time.
     m.write_physical_u16(avail + 2, 2); // idx
@@ -233,6 +227,35 @@ fn virtio_net_msix_delivers_to_lapic_in_apic_mode() {
     m.poll_network();
 
     assert_eq!(m.read_physical_u16(used + 2), 2);
+    assert!(
+        !virtio_net.borrow().irq_level(),
+        "virtio-net should not assert legacy INTx while MSI-X is enabled (even if masked)"
+    );
+    assert_eq!(
+        interrupts.borrow().get_pending(),
+        None,
+        "expected no MSI-X delivery while MSI-X is function-masked"
+    );
+
+    // Disable MSI-X via PCI config space (without BAR0 MMIO). The machine should mirror the MSI-X
+    // enable state into the transport during polling so the device falls back to legacy INTx.
+    let ctrl = cfg_read(&mut m, bdf, msix_cap + 0x02, 2) as u16;
+    cfg_write(
+        &mut m,
+        bdf,
+        msix_cap + 0x02,
+        2,
+        u32::from(ctrl & !((1 << 15) | (1 << 14))),
+    );
+
+    // Re-submit the same descriptor chain a third time.
+    m.write_physical_u16(avail + 2, 3); // idx
+    m.write_physical_u16(avail + 8, 0); // ring[2]
+
+    m.write_physical_u16(notify_addr, 0);
+    m.poll_network();
+
+    assert_eq!(m.read_physical_u16(used + 2), 3);
     assert!(
         virtio_net.borrow().irq_level(),
         "virtio-net should assert legacy INTx once MSI-X is disabled"
