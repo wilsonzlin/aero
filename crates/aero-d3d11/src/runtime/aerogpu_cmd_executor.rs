@@ -10257,7 +10257,9 @@ impl AerogpuD3d11Executor {
             ShaderStage::Geometry => {
                 // Attempt to translate a minimal subset of SM4 geometry shaders into a compute-based
                 // geometry prepass. If translation fails (unsupported opcodes/declarations), fall
-                // back to an empty compute shader so the handle can still be created/bound.
+                // back to an empty compute shader so the handle can still be created/bound; draws
+                // with that GS bound will later return a clear "geometry shader not supported"
+                // error.
                 let translation =
                     match crate::sm4::decode_program(&program).context("decode SM4/5 token stream")
                     {
