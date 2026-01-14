@@ -1135,21 +1135,33 @@ impl UhciRuntime {
                     "UHCI runtime snapshot includes passthrough HID device state but no external hub snapshot is present",
                 ));
             }
-            let mut d = Decoder::new(buf);
-            let recs = d.vec_bytes().map_err(|e| {
-                js_error(&format!(
-                    "Invalid UHCI runtime snapshot passthrough HID device list: {e}"
-                ))
-            })?;
-            d.finish().map_err(|e| {
-                js_error(&format!(
-                    "Invalid UHCI runtime snapshot passthrough HID device list: {e}"
-                ))
-            })?;
-
             let mut out = HashMap::new();
-            for (idx, rec) in recs.into_iter().enumerate() {
-                let mut rd = Decoder::new(&rec);
+            let max_ports = hub_port_count.expect("checked Some above") as usize;
+            let mut d = Decoder::new(buf);
+            let count = d.u32().map_err(|e| {
+                js_error(&format!(
+                    "Invalid UHCI runtime snapshot passthrough HID device list: {e}"
+                ))
+            })? as usize;
+            // Snapshot is untrusted; cap work to the number of hub ports so a corrupted snapshot
+            // cannot encode millions of empty records and force pathological decode loops.
+            if count > max_ports {
+                return Err(js_error(&format!(
+                    "UHCI runtime snapshot has too many passthrough HID devices ({count}, max {max_ports})"
+                )));
+            }
+            for idx in 0..count {
+                let rec_len = d.u32().map_err(|e| {
+                    js_error(&format!(
+                        "Invalid UHCI runtime snapshot passthrough HID device list: {e}"
+                    ))
+                })? as usize;
+                let rec = d.bytes(rec_len).map_err(|e| {
+                    js_error(&format!(
+                        "Invalid UHCI runtime snapshot passthrough HID device list: {e}"
+                    ))
+                })?;
+                let mut rd = Decoder::new(rec);
                 let hub_port = rd.u8().map_err(|e| {
                     js_error(&format!(
                         "Invalid UHCI runtime snapshot passthrough HID record #{idx}: {e}"
@@ -1160,11 +1172,9 @@ impl UhciRuntime {
                         "Invalid UHCI runtime snapshot passthrough HID record #{idx}: hub port 0 is not valid",
                     )));
                 }
-                if let Some(max_port) = hub_port_count
-                    && hub_port > max_port
-                {
+                if hub_port as usize > max_ports {
                     return Err(js_error(&format!(
-                        "Invalid UHCI runtime snapshot passthrough HID record #{idx}: hub port {hub_port} exceeds hub port count {max_port}",
+                        "Invalid UHCI runtime snapshot passthrough HID record #{idx}: hub port {hub_port} exceeds hub port count {max_ports}",
                     )));
                 }
                 let state = rd.vec_u8().map_err(|e| {
@@ -1184,6 +1194,11 @@ impl UhciRuntime {
                     )));
                 }
             }
+            d.finish().map_err(|e| {
+                js_error(&format!(
+                    "Invalid UHCI runtime snapshot passthrough HID device list: {e}"
+                ))
+            })?;
             out
         } else {
             HashMap::new()

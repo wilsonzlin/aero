@@ -1,7 +1,10 @@
 #![cfg(target_arch = "wasm32")]
 
+use aero_io_snapshot::io::state::{SnapshotVersion, SnapshotWriter};
+use aero_io_snapshot::io::state::codec::Encoder;
 use aero_usb::passthrough::UsbHostAction;
-use aero_wasm::{UhciControllerBridge, WEBUSB_ROOT_PORT, WebUsbUhciBridge};
+use aero_wasm::{UhciControllerBridge, UhciRuntime, WEBUSB_ROOT_PORT, WebUsbUhciBridge};
+use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_test::wasm_bindgen_test;
 
 mod common;
@@ -119,6 +122,24 @@ fn first_action_id(actions: &[UsbHostAction]) -> u32 {
     }
 }
 
+fn js_error_message(err: &JsValue) -> String {
+    if let Some(s) = err.as_string() {
+        return s;
+    }
+    if err.is_instance_of::<js_sys::Error>() {
+        return err
+            .clone()
+            .dyn_into::<js_sys::Error>()
+            .unwrap()
+            .message()
+            .into();
+    }
+    js_sys::Reflect::get(err, &JsValue::from_str("message"))
+        .ok()
+        .and_then(|v| v.as_string())
+        .unwrap_or_else(|| format!("{err:?}"))
+}
+
 #[wasm_bindgen_test]
 fn bridge_emits_host_actions_from_guest_frame_list() {
     let (guest_base, _guest_size) = common::alloc_guest_region_bytes(0x8000);
@@ -234,6 +255,53 @@ fn uhci_controller_bridge_does_not_reuse_action_ids_across_disconnect_reconnect(
     assert!(
         second_id > first_id,
         "expected WebUSB UsbHostAction.id to be monotonic across disconnect/reconnect (first={first_id}, second={second_id})"
+    );
+}
+
+#[wasm_bindgen_test]
+fn uhci_runtime_snapshot_rejects_too_many_passthrough_hid_records() {
+    // This test is specifically about snapshot parsing robustness: the UHCI runtime snapshot format
+    // includes an optional list of nested USB HID passthrough device snapshots keyed by external hub
+    // port. A corrupted snapshot could encode an absurd record count and force a long decode loop.
+    //
+    // The runtime should cap the record count by the hub port count and fail early.
+    let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x1000);
+    let mut runtime = UhciRuntime::new(guest_base, guest_size).expect("UhciRuntime::new ok");
+
+    const TAG_CONTROLLER: u16 = 1;
+    const TAG_IRQ_LEVEL: u16 = 2;
+    const TAG_EXTERNAL_HUB_PORT_COUNT: u16 = 3;
+    const TAG_EXTERNAL_HUB_STATE: u16 = 4;
+    const TAG_USB_HID_PASSTHROUGH_DEVICES: u16 = 8;
+
+    let mut w = SnapshotWriter::new(*b"UHRT", SnapshotVersion::new(1, 0));
+    // Controller snapshot bytes are required but are not parsed until after the passthrough list has
+    // been validated; an empty blob is sufficient for this early-rejection test.
+    w.field_bytes(TAG_CONTROLLER, Vec::new());
+    w.field_bool(TAG_IRQ_LEVEL, false);
+    w.field_u8(TAG_EXTERNAL_HUB_PORT_COUNT, 1);
+    // External hub state must be present if port count is present; contents are irrelevant for this
+    // test since we fail before attempting to restore it.
+    w.field_bytes(TAG_EXTERNAL_HUB_STATE, Vec::new());
+
+    // Encode a list with count=2 even though the hub has only 1 port.
+    w.field_bytes(
+        TAG_USB_HID_PASSTHROUGH_DEVICES,
+        Encoder::new().u32(2).finish(),
+    );
+
+    let snapshot = w.finish();
+    let err = runtime
+        .load_state(&snapshot)
+        .expect_err("expected snapshot restore to reject malformed passthrough HID list");
+    assert!(
+        err.is_instance_of::<js_sys::Error>(),
+        "expected a JS Error; got {err:?}"
+    );
+    let msg = js_error_message(&err);
+    assert!(
+        msg.contains("too many passthrough HID devices"),
+        "unexpected error message: {msg}"
     );
 }
 
