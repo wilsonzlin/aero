@@ -125,6 +125,9 @@ impl<R: Read + Seek> TraceReader<R> {
             .checked_add(meta_len)
             .ok_or(TraceReadError::TocOutOfBounds)?;
         let record_stream_end = footer.toc_offset;
+        if record_stream_end < record_stream_start {
+            return Err(TraceReadError::TocOutOfBounds);
+        }
         for entry in &toc.entries {
             if entry.start_offset < record_stream_start || entry.start_offset > record_stream_end {
                 return Err(TraceReadError::TocOutOfBounds);
@@ -296,7 +299,9 @@ fn read_record<R: Read + Seek>(reader: &mut R, end: u64) -> Result<TraceRecord, 
         return Err(TraceReadError::RecordOutOfBounds);
     }
 
-    let mut payload = vec![0u8; payload_len as usize];
+    let payload_len_usize =
+        usize::try_from(payload_len).map_err(|_| TraceReadError::RecordOutOfBounds)?;
+    let mut payload = vec![0u8; payload_len_usize];
     reader.read_exact(&mut payload)?;
 
     let record_type = RecordType::from_u8(record_type_raw)
@@ -358,10 +363,11 @@ fn read_record<R: Read + Seek>(reader: &mut R, end: u64) -> Result<TraceRecord, 
                 u32::from_le_bytes(payload[48..52].try_into().unwrap()) as usize;
             let _reserved1 = u32::from_le_bytes(payload[52..56].try_into().unwrap());
 
+            let memory_ranges_len = memory_range_count
+                .checked_mul(AEROGPU_SUBMISSION_MEMORY_RANGE_ENTRY_SIZE as usize)
+                .ok_or(TraceReadError::RecordOutOfBounds)?;
             let required_len = header_size
-                .checked_add(
-                    memory_range_count * (AEROGPU_SUBMISSION_MEMORY_RANGE_ENTRY_SIZE as usize),
-                )
+                .checked_add(memory_ranges_len)
                 .ok_or(TraceReadError::RecordOutOfBounds)?;
             if required_len > payload.len() {
                 return Err(TraceReadError::RecordOutOfBounds);
