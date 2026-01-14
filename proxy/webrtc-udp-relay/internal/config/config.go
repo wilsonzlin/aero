@@ -19,72 +19,72 @@ import (
 )
 
 const (
-	EnvListenAddr          = "AERO_WEBRTC_UDP_RELAY_LISTEN_ADDR"
-	EnvPublicBaseURL       = "AERO_WEBRTC_UDP_RELAY_PUBLIC_BASE_URL"
-	EnvAllowedOrigins      = "ALLOWED_ORIGINS"
-	EnvLogFormat           = "AERO_WEBRTC_UDP_RELAY_LOG_FORMAT"
-	EnvLogLevel            = "AERO_WEBRTC_UDP_RELAY_LOG_LEVEL"
-	EnvShutdownTimeout     = "AERO_WEBRTC_UDP_RELAY_SHUTDOWN_TIMEOUT"
-	EnvMode                = "AERO_WEBRTC_UDP_RELAY_MODE"
-	EnvICEGatheringTimeout = "AERO_WEBRTC_UDP_RELAY_ICE_GATHERING_TIMEOUT"
+	envVarListenAddr          = "AERO_WEBRTC_UDP_RELAY_LISTEN_ADDR"
+	envVarPublicBaseURL       = "AERO_WEBRTC_UDP_RELAY_PUBLIC_BASE_URL"
+	envVarAllowedOrigins      = "ALLOWED_ORIGINS"
+	envVarLogFormat           = "AERO_WEBRTC_UDP_RELAY_LOG_FORMAT"
+	envVarLogLevel            = "AERO_WEBRTC_UDP_RELAY_LOG_LEVEL"
+	envVarShutdownTimeout     = "AERO_WEBRTC_UDP_RELAY_SHUTDOWN_TIMEOUT"
+	envVarMode                = "AERO_WEBRTC_UDP_RELAY_MODE"
+	envVarICEGatheringTimeout = "AERO_WEBRTC_UDP_RELAY_ICE_GATHERING_TIMEOUT"
 
 	// Relay engine knobs.
-	EnvUDPBindingIdleTimeout         = "UDP_BINDING_IDLE_TIMEOUT"
-	EnvUDPInboundFilterMode          = "UDP_INBOUND_FILTER_MODE"
-	EnvUDPRemoteAllowlistIdleTimeout = "UDP_REMOTE_ALLOWLIST_IDLE_TIMEOUT"
-	EnvUDPReadBufferBytes            = "UDP_READ_BUFFER_BYTES"
-	EnvDataChannelSendQueueBytes     = "DATACHANNEL_SEND_QUEUE_BYTES"
-	EnvMaxDatagramPayloadBytes       = "MAX_DATAGRAM_PAYLOAD_BYTES"
-	EnvMaxAllowedRemotesPerBinding   = "MAX_ALLOWED_REMOTES_PER_BINDING"
-	EnvPreferV2                      = "PREFER_V2"
+	envVarUDPBindingIdleTimeout         = "UDP_BINDING_IDLE_TIMEOUT"
+	envVarUDPInboundFilterMode          = "UDP_INBOUND_FILTER_MODE"
+	envVarUDPRemoteAllowlistIdleTimeout = "UDP_REMOTE_ALLOWLIST_IDLE_TIMEOUT"
+	envVarUDPReadBufferBytes            = "UDP_READ_BUFFER_BYTES"
+	envVarDataChannelSendQueueBytes     = "DATACHANNEL_SEND_QUEUE_BYTES"
+	envVarMaxDatagramPayloadBytes       = "MAX_DATAGRAM_PAYLOAD_BYTES"
+	envVarMaxAllowedRemotesPerBinding   = "MAX_ALLOWED_REMOTES_PER_BINDING"
+	envVarPreferV2                      = "PREFER_V2"
 
 	// L2 tunnel bridging (WebRTC DataChannel "l2" <-> backend WS).
-	EnvL2BackendWSURL = "L2_BACKEND_WS_URL"
+	envVarL2BackendWSURL = "L2_BACKEND_WS_URL"
 	// Preferred env vars for backend auth/header hardening.
-	EnvL2BackendOrigin             = "L2_BACKEND_ORIGIN"
-	EnvL2BackendToken              = "L2_BACKEND_TOKEN"
-	EnvL2BackendWSOrigin           = "L2_BACKEND_WS_ORIGIN"
-	EnvL2BackendWSToken            = "L2_BACKEND_WS_TOKEN"
-	EnvL2BackendForwardOrigin      = "L2_BACKEND_FORWARD_ORIGIN"
-	EnvL2BackendAuthForwardMode    = "L2_BACKEND_AUTH_FORWARD_MODE"
-	EnvL2BackendOriginOverride     = "L2_BACKEND_ORIGIN_OVERRIDE"
-	EnvL2BackendForwardAeroSession = "L2_BACKEND_FORWARD_AERO_SESSION"
-	EnvL2MaxMessageBytes           = "L2_MAX_MESSAGE_BYTES"
+	envVarL2BackendOrigin             = "L2_BACKEND_ORIGIN"
+	envVarL2BackendToken              = "L2_BACKEND_TOKEN"
+	envVarL2BackendWSOrigin           = "L2_BACKEND_WS_ORIGIN"
+	envVarL2BackendWSToken            = "L2_BACKEND_WS_TOKEN"
+	envVarL2BackendForwardOrigin      = "L2_BACKEND_FORWARD_ORIGIN"
+	envVarL2BackendAuthForwardMode    = "L2_BACKEND_AUTH_FORWARD_MODE"
+	envVarL2BackendOriginOverride     = "L2_BACKEND_ORIGIN_OVERRIDE"
+	envVarL2BackendForwardAeroSession = "L2_BACKEND_FORWARD_AERO_SESSION"
+	envVarL2MaxMessageBytes           = "L2_MAX_MESSAGE_BYTES"
 
 	// Quota/rate limiting knobs (required by the task).
-	EnvMaxSessions = "MAX_SESSIONS"
-	// EnvSessionPreallocTTL controls how long sessions allocated via POST /session
+	envVarMaxSessions = "MAX_SESSIONS"
+	// envVarSessionPreallocTTL controls how long sessions allocated via POST /session
 	// remain reserved before being automatically released.
-	EnvSessionPreallocTTL              = "SESSION_PREALLOC_TTL"
-	EnvMaxUDPPpsPerSession             = "MAX_UDP_PPS_PER_SESSION"
-	EnvMaxUDPBpsPerSession             = "MAX_UDP_BPS_PER_SESSION"
-	EnvMaxUDPPpsPerDest                = "MAX_UDP_PPS_PER_DEST"
-	EnvMaxUDPBindingsPerSession        = "MAX_UDP_BINDINGS_PER_SESSION"
-	EnvMaxUniqueDestinationsPerSession = "MAX_UNIQUE_DESTINATIONS_PER_SESSION"
-	EnvMaxUDPDestBucketsPerSession     = "MAX_UDP_DEST_BUCKETS_PER_SESSION"
-	EnvMaxDataChannelBpsPerSession     = "MAX_DC_BPS_PER_SESSION"
-	EnvHardCloseAfterViolations        = "HARD_CLOSE_AFTER_VIOLATIONS"
-	EnvViolationWindowSeconds          = "VIOLATION_WINDOW_SECONDS"
+	envVarSessionPreallocTTL              = "SESSION_PREALLOC_TTL"
+	envVarMaxUDPPpsPerSession             = "MAX_UDP_PPS_PER_SESSION"
+	envVarMaxUDPBpsPerSession             = "MAX_UDP_BPS_PER_SESSION"
+	envVarMaxUDPPpsPerDest                = "MAX_UDP_PPS_PER_DEST"
+	envVarMaxUDPBindingsPerSession        = "MAX_UDP_BINDINGS_PER_SESSION"
+	envVarMaxUniqueDestinationsPerSession = "MAX_UNIQUE_DESTINATIONS_PER_SESSION"
+	envVarMaxUDPDestBucketsPerSession     = "MAX_UDP_DEST_BUCKETS_PER_SESSION"
+	envVarMaxDataChannelBpsPerSession     = "MAX_DC_BPS_PER_SESSION"
+	envVarHardCloseAfterViolations        = "HARD_CLOSE_AFTER_VIOLATIONS"
+	envVarViolationWindowSeconds          = "VIOLATION_WINDOW_SECONDS"
 
 	// Signaling / WebSocket auth + hardening.
-	EnvAuthMode                      = "AUTH_MODE"
-	EnvAPIKey                        = "API_KEY"
-	EnvJWTSecret                     = "JWT_SECRET"
-	EnvSignalingAuthTimeout          = "SIGNALING_AUTH_TIMEOUT"
-	EnvSignalingWSIdleTimeout        = "SIGNALING_WS_IDLE_TIMEOUT"
-	EnvSignalingWSPingInterval       = "SIGNALING_WS_PING_INTERVAL"
-	EnvMaxSignalingMessageBytes      = "MAX_SIGNALING_MESSAGE_BYTES"
-	EnvMaxSignalingMessagesPerSecond = "MAX_SIGNALING_MESSAGES_PER_SECOND"
+	envVarAuthMode                      = "AUTH_MODE"
+	envVarAPIKey                        = "API_KEY"
+	envVarJWTSecret                     = "JWT_SECRET"
+	envVarSignalingAuthTimeout          = "SIGNALING_AUTH_TIMEOUT"
+	envVarSignalingWSIdleTimeout        = "SIGNALING_WS_IDLE_TIMEOUT"
+	envVarSignalingWSPingInterval       = "SIGNALING_WS_PING_INTERVAL"
+	envVarMaxSignalingMessageBytes      = "MAX_SIGNALING_MESSAGE_BYTES"
+	envVarMaxSignalingMessagesPerSecond = "MAX_SIGNALING_MESSAGES_PER_SECOND"
 
 	// WebSocket UDP relay fallback (/udp) keepalive + idle management.
-	EnvUDPWSIdleTimeout  = "UDP_WS_IDLE_TIMEOUT"
-	EnvUDPWSPingInterval = "UDP_WS_PING_INTERVAL"
+	envVarUDPWSIdleTimeout  = "UDP_WS_IDLE_TIMEOUT"
+	envVarUDPWSPingInterval = "UDP_WS_PING_INTERVAL"
 
 	// coturn TURN REST (ephemeral) credentials.
-	EnvTURNRESTSharedSecret   = "TURN_REST_SHARED_SECRET"
-	EnvTURNRESTTTLSeconds     = "TURN_REST_TTL_SECONDS"
-	EnvTURNRESTUsernamePrefix = "TURN_REST_USERNAME_PREFIX"
-	EnvTURNRESTRealm          = "TURN_REST_REALM"
+	envVarTURNRESTSharedSecret   = "TURN_REST_SHARED_SECRET"
+	envVarTURNRESTTTLSeconds     = "TURN_REST_TTL_SECONDS"
+	envVarTURNRESTUsernamePrefix = "TURN_REST_USERNAME_PREFIX"
+	envVarTURNRESTRealm          = "TURN_REST_REALM"
 
 	DefaultListenAddr                       = "127.0.0.1:8080"
 	DefaultShutdown                         = 15 * time.Second
@@ -137,41 +137,41 @@ const (
 const DefaultMaxUDPDestBucketsPerSession = 1024
 
 const (
-	EnvWebRTCUDPPortMin = "WEBRTC_UDP_PORT_MIN"
-	EnvWebRTCUDPPortMax = "WEBRTC_UDP_PORT_MAX"
+	envVarWebRTCUDPPortMin = "WEBRTC_UDP_PORT_MIN"
+	envVarWebRTCUDPPortMax = "WEBRTC_UDP_PORT_MAX"
 
-	// EnvWebRTCSessionConnectTimeout bounds how long a server-side PeerConnection
+	// envVarWebRTCSessionConnectTimeout bounds how long a server-side PeerConnection
 	// may remain in a non-connected state before being closed. This prevents
 	// clients from leaking PeerConnections via HTTP offer endpoints.
-	EnvWebRTCSessionConnectTimeout = "WEBRTC_SESSION_CONNECT_TIMEOUT"
+	envVarWebRTCSessionConnectTimeout = "WEBRTC_SESSION_CONNECT_TIMEOUT"
 
-	EnvWebRTCNAT1To1IPs             = "WEBRTC_NAT_1TO1_IPS"
-	EnvWebRTCNAT1To1IPCandidateType = "WEBRTC_NAT_1TO1_IP_CANDIDATE_TYPE"
+	envVarWebRTCNAT1To1IPs             = "WEBRTC_NAT_1TO1_IPS"
+	envVarWebRTCNAT1To1IPCandidateType = "WEBRTC_NAT_1TO1_IP_CANDIDATE_TYPE"
 
-	EnvWebRTCUDPListenIP     = "WEBRTC_UDP_LISTEN_IP"
+	envVarWebRTCUDPListenIP  = "WEBRTC_UDP_LISTEN_IP"
 	DefaultWebRTCUDPListenIP = "0.0.0.0"
 
 	// WebRTC DataChannel DoS hardening.
 	//
 	// These settings cap inbound SCTP/DataChannel message allocation in pion
 	// before DataChannel.OnMessage handlers run.
-	EnvWebRTCDataChannelMaxMessageBytes = "WEBRTC_DATACHANNEL_MAX_MESSAGE_BYTES"
-	EnvWebRTCSCTPMaxReceiveBufferBytes  = "WEBRTC_SCTP_MAX_RECEIVE_BUFFER_BYTES"
+	envVarWebRTCDataChannelMaxMessageBytes = "WEBRTC_DATACHANNEL_MAX_MESSAGE_BYTES"
+	envVarWebRTCSCTPMaxReceiveBufferBytes  = "WEBRTC_SCTP_MAX_RECEIVE_BUFFER_BYTES"
 )
 
 const (
-	FlagWebRTCUDPPortMin = "webrtc-udp-port-min"
-	FlagWebRTCUDPPortMax = "webrtc-udp-port-max"
+	flagWebRTCUDPPortMin = "webrtc-udp-port-min"
+	flagWebRTCUDPPortMax = "webrtc-udp-port-max"
 
-	FlagWebRTCSessionConnectTimeout = "webrtc-session-connect-timeout"
+	flagWebRTCSessionConnectTimeout = "webrtc-session-connect-timeout"
 
-	FlagWebRTCNAT1To1IPs             = "webrtc-nat-1to1-ips"
-	FlagWebRTCNAT1To1IPCandidateType = "webrtc-nat-1to1-ip-candidate-type"
+	flagWebRTCNAT1To1IPs             = "webrtc-nat-1to1-ips"
+	flagWebRTCNAT1To1IPCandidateType = "webrtc-nat-1to1-ip-candidate-type"
 
-	FlagWebRTCUDPListenIP = "webrtc-udp-listen-ip"
+	flagWebRTCUDPListenIP = "webrtc-udp-listen-ip"
 
-	FlagWebRTCDataChannelMaxMessageBytes = "webrtc-datachannel-max-message-bytes"
-	FlagWebRTCSCTPMaxReceiveBufferBytes  = "webrtc-sctp-max-receive-buffer-bytes"
+	flagWebRTCDataChannelMaxMessageBytes = "webrtc-datachannel-max-message-bytes"
+	flagWebRTCSCTPMaxReceiveBufferBytes  = "webrtc-sctp-max-receive-buffer-bytes"
 )
 
 // RecommendedWebRTCUDPPortRangeSize is an intentionally conservative minimum.
@@ -380,29 +380,29 @@ func Load(args []string) (Config, error) {
 }
 
 func load(lookup func(string) (string, bool), args []string) (Config, error) {
-	envMode, _ := lookup(EnvMode)
+	envMode, _ := lookup(envVarMode)
 	modeDefault := string(DefaultMode)
 	if envMode != "" {
 		modeDefault = envMode
 	}
 
-	envLogFormat, envLogFormatOK := lookup(EnvLogFormat)
+	envLogFormat, envLogFormatOK := lookup(envVarLogFormat)
 	envLogFormatSet := envLogFormatOK && envLogFormat != ""
 	logFormatDefault := envLogFormat
 	if !envLogFormatSet {
 		logFormatDefault = defaultLogFormatForMode(modeDefault)
 	}
 
-	envLogLevel, envLogLevelOK := lookup(EnvLogLevel)
+	envLogLevel, envLogLevelOK := lookup(envVarLogLevel)
 	envLogLevelSet := envLogLevelOK && envLogLevel != ""
 	logLevelDefault := envLogLevel
 	if !envLogLevelSet {
 		logLevelDefault = defaultLogLevelForMode(modeDefault)
 	}
 
-	listenAddr := envOrDefault(lookup, EnvListenAddr, DefaultListenAddr)
-	publicBaseURL := envOrDefault(lookup, EnvPublicBaseURL, "")
-	allowedOriginsStr := envOrDefault(lookup, EnvAllowedOrigins, "")
+	listenAddr := envOrDefault(lookup, envVarListenAddr, DefaultListenAddr)
+	publicBaseURL := envOrDefault(lookup, envVarPublicBaseURL, "")
+	allowedOriginsStr := envOrDefault(lookup, envVarAllowedOrigins, "")
 	iceServersJSON := envOrDefault(lookup, envICEServersJSON, "")
 	stunURLs := envOrDefault(lookup, envStunURLs, "")
 	turnURLs := envOrDefault(lookup, envTurnURLs, "")
@@ -410,190 +410,190 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 	turnCredential := envOrDefault(lookup, envTurnCredential, "")
 
 	preferV2 := false
-	if raw, ok := lookup(EnvPreferV2); ok && strings.TrimSpace(raw) != "" {
+	if raw, ok := lookup(envVarPreferV2); ok && strings.TrimSpace(raw) != "" {
 		v, err := strconv.ParseBool(strings.TrimSpace(raw))
 		if err != nil {
-			return Config{}, fmt.Errorf("invalid %s %q: %w", EnvPreferV2, raw, err)
+			return Config{}, fmt.Errorf("invalid %s %q: %w", envVarPreferV2, raw, err)
 		}
 		preferV2 = v
 	}
-	turnRESTSharedSecret := envOrDefault(lookup, EnvTURNRESTSharedSecret, "")
+	turnRESTSharedSecret := envOrDefault(lookup, envVarTURNRESTSharedSecret, "")
 	turnRESTTTLSeconds := DefaultTURNRESTTTLSeconds
-	if raw, ok := lookup(EnvTURNRESTTTLSeconds); ok && strings.TrimSpace(raw) != "" {
+	if raw, ok := lookup(envVarTURNRESTTTLSeconds); ok && strings.TrimSpace(raw) != "" {
 		n, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
 		if err != nil {
-			return Config{}, fmt.Errorf("invalid %s %q: %w", EnvTURNRESTTTLSeconds, raw, err)
+			return Config{}, fmt.Errorf("invalid %s %q: %w", envVarTURNRESTTTLSeconds, raw, err)
 		}
 		turnRESTTTLSeconds = n
 	}
-	turnRESTUsernamePrefix := envOrDefault(lookup, EnvTURNRESTUsernamePrefix, DefaultTURNRESTUsernamePrefix)
-	turnRESTRealm := envOrDefault(lookup, EnvTURNRESTRealm, "")
+	turnRESTUsernamePrefix := envOrDefault(lookup, envVarTURNRESTUsernamePrefix, DefaultTURNRESTUsernamePrefix)
+	turnRESTRealm := envOrDefault(lookup, envVarTURNRESTRealm, "")
 
 	udpBindingIdleTimeout := DefaultUDPBindingIdleTimeout
-	if raw, ok := lookup(EnvUDPBindingIdleTimeout); ok && strings.TrimSpace(raw) != "" {
+	if raw, ok := lookup(envVarUDPBindingIdleTimeout); ok && strings.TrimSpace(raw) != "" {
 		d, err := time.ParseDuration(strings.TrimSpace(raw))
 		if err != nil {
-			return Config{}, fmt.Errorf("invalid %s %q: %w", EnvUDPBindingIdleTimeout, raw, err)
+			return Config{}, fmt.Errorf("invalid %s %q: %w", envVarUDPBindingIdleTimeout, raw, err)
 		}
 		udpBindingIdleTimeout = d
 	}
 
-	udpInboundFilterModeStr := envOrDefault(lookup, EnvUDPInboundFilterMode, string(DefaultUDPInboundFilterMode))
+	udpInboundFilterModeStr := envOrDefault(lookup, envVarUDPInboundFilterMode, string(DefaultUDPInboundFilterMode))
 	udpRemoteAllowlistIdleTimeout := udpBindingIdleTimeout
-	envAllowlistTTL, envAllowlistTTLOK := lookup(EnvUDPRemoteAllowlistIdleTimeout)
+	envAllowlistTTL, envAllowlistTTLOK := lookup(envVarUDPRemoteAllowlistIdleTimeout)
 	envAllowlistTTLSet := envAllowlistTTLOK && strings.TrimSpace(envAllowlistTTL) != ""
 	if envAllowlistTTLSet {
 		d, err := time.ParseDuration(strings.TrimSpace(envAllowlistTTL))
 		if err != nil {
-			return Config{}, fmt.Errorf("invalid %s %q: %w", EnvUDPRemoteAllowlistIdleTimeout, envAllowlistTTL, err)
+			return Config{}, fmt.Errorf("invalid %s %q: %w", envVarUDPRemoteAllowlistIdleTimeout, envAllowlistTTL, err)
 		}
 		udpRemoteAllowlistIdleTimeout = d
 	}
 
-	maxDatagramPayloadBytes, err := envIntOrDefault(lookup, EnvMaxDatagramPayloadBytes, DefaultMaxDatagramPayloadBytes)
+	maxDatagramPayloadBytes, err := envIntOrDefault(lookup, envVarMaxDatagramPayloadBytes, DefaultMaxDatagramPayloadBytes)
 	if err != nil {
 		return Config{}, err
 	}
 	// Track whether the UDP read buffer size was explicitly configured so we can
 	// derive a default from MAX_DATAGRAM_PAYLOAD_BYTES when unset.
-	envUDPReadBufferBytes, envUDPReadBufferBytesOK := lookup(EnvUDPReadBufferBytes)
+	envUDPReadBufferBytes, envUDPReadBufferBytesOK := lookup(envVarUDPReadBufferBytes)
 	envUDPReadBufferBytesSet := envUDPReadBufferBytesOK && strings.TrimSpace(envUDPReadBufferBytes) != ""
 
-	udpReadBufferBytes, err := envIntOrDefault(lookup, EnvUDPReadBufferBytes, maxDatagramPayloadBytes+1)
+	udpReadBufferBytes, err := envIntOrDefault(lookup, envVarUDPReadBufferBytes, maxDatagramPayloadBytes+1)
 	if err != nil {
 		return Config{}, err
 	}
-	dataChannelSendQueueBytes, err := envIntOrDefault(lookup, EnvDataChannelSendQueueBytes, DefaultDataChannelSendQueueBytes)
+	dataChannelSendQueueBytes, err := envIntOrDefault(lookup, envVarDataChannelSendQueueBytes, DefaultDataChannelSendQueueBytes)
 	if err != nil {
 		return Config{}, err
 	}
-	maxAllowedRemotesPerBinding, err := envIntOrDefault(lookup, EnvMaxAllowedRemotesPerBinding, DefaultMaxAllowedRemotesPerBinding)
+	maxAllowedRemotesPerBinding, err := envIntOrDefault(lookup, envVarMaxAllowedRemotesPerBinding, DefaultMaxAllowedRemotesPerBinding)
 	if err != nil {
 		return Config{}, err
 	}
-	l2BackendWSURL := envOrDefault(lookup, EnvL2BackendWSURL, "")
-	l2BackendWSOrigin := envOrDefault(lookup, EnvL2BackendWSOrigin, "")
-	l2BackendWSToken := envOrDefault(lookup, EnvL2BackendToken, envOrDefault(lookup, EnvL2BackendWSToken, ""))
-	l2BackendOriginOverride := envOrDefault(lookup, EnvL2BackendOrigin, envOrDefault(lookup, EnvL2BackendOriginOverride, ""))
+	l2BackendWSURL := envOrDefault(lookup, envVarL2BackendWSURL, "")
+	l2BackendWSOrigin := envOrDefault(lookup, envVarL2BackendWSOrigin, "")
+	l2BackendWSToken := envOrDefault(lookup, envVarL2BackendToken, envOrDefault(lookup, envVarL2BackendWSToken, ""))
+	l2BackendOriginOverride := envOrDefault(lookup, envVarL2BackendOrigin, envOrDefault(lookup, envVarL2BackendOriginOverride, ""))
 
 	l2BackendForwardAeroSession := false
-	if raw, ok := lookup(EnvL2BackendForwardAeroSession); ok && strings.TrimSpace(raw) != "" {
+	if raw, ok := lookup(envVarL2BackendForwardAeroSession); ok && strings.TrimSpace(raw) != "" {
 		v, err := strconv.ParseBool(strings.TrimSpace(raw))
 		if err != nil {
-			return Config{}, fmt.Errorf("invalid %s %q: %w", EnvL2BackendForwardAeroSession, raw, err)
+			return Config{}, fmt.Errorf("invalid %s %q: %w", envVarL2BackendForwardAeroSession, raw, err)
 		}
 		l2BackendForwardAeroSession = v
 	}
 
 	l2BackendForwardOrigin := false
-	envForwardOrigin, envForwardOriginOK := lookup(EnvL2BackendForwardOrigin)
+	envForwardOrigin, envForwardOriginOK := lookup(envVarL2BackendForwardOrigin)
 	envForwardOriginSet := envForwardOriginOK && strings.TrimSpace(envForwardOrigin) != ""
 	if envForwardOriginSet {
 		v, err := strconv.ParseBool(strings.TrimSpace(envForwardOrigin))
 		if err != nil {
-			return Config{}, fmt.Errorf("invalid %s %q: %w", EnvL2BackendForwardOrigin, envForwardOrigin, err)
+			return Config{}, fmt.Errorf("invalid %s %q: %w", envVarL2BackendForwardOrigin, envForwardOrigin, err)
 		}
 		l2BackendForwardOrigin = v
 	}
 
 	l2BackendAuthForwardModeStr := string(L2BackendAuthForwardModeQuery)
-	envAuthForwardMode, envAuthForwardModeOK := lookup(EnvL2BackendAuthForwardMode)
+	envAuthForwardMode, envAuthForwardModeOK := lookup(envVarL2BackendAuthForwardMode)
 	envAuthForwardModeSet := envAuthForwardModeOK && strings.TrimSpace(envAuthForwardMode) != ""
 	if envAuthForwardModeSet {
 		l2BackendAuthForwardModeStr = strings.TrimSpace(envAuthForwardMode)
 	}
-	l2MaxMessageBytes, err := envIntOrDefault(lookup, EnvL2MaxMessageBytes, DefaultL2MaxMessageBytes)
+	l2MaxMessageBytes, err := envIntOrDefault(lookup, envVarL2MaxMessageBytes, DefaultL2MaxMessageBytes)
 	if err != nil {
 		return Config{}, err
 	}
-	webrtcDataChannelMaxMessageBytes, err := envIntOrDefault(lookup, EnvWebRTCDataChannelMaxMessageBytes, 0)
+	webrtcDataChannelMaxMessageBytes, err := envIntOrDefault(lookup, envVarWebRTCDataChannelMaxMessageBytes, 0)
 	if err != nil {
 		return Config{}, err
 	}
-	webrtcSCTPMaxReceiveBufferBytes, err := envIntOrDefault(lookup, EnvWebRTCSCTPMaxReceiveBufferBytes, 0)
+	webrtcSCTPMaxReceiveBufferBytes, err := envIntOrDefault(lookup, envVarWebRTCSCTPMaxReceiveBufferBytes, 0)
 	if err != nil {
 		return Config{}, err
 	}
 
 	shutdownTimeout := DefaultShutdown
-	if raw, ok := lookup(EnvShutdownTimeout); ok && raw != "" {
+	if raw, ok := lookup(envVarShutdownTimeout); ok && raw != "" {
 		d, err := time.ParseDuration(raw)
 		if err != nil {
-			return Config{}, fmt.Errorf("invalid %s %q: %w", EnvShutdownTimeout, raw, err)
+			return Config{}, fmt.Errorf("invalid %s %q: %w", envVarShutdownTimeout, raw, err)
 		}
 		shutdownTimeout = d
 	}
 
 	iceGatherTimeout := DefaultICEGatherTimeout
-	if raw, ok := lookup(EnvICEGatheringTimeout); ok && strings.TrimSpace(raw) != "" {
+	if raw, ok := lookup(envVarICEGatheringTimeout); ok && strings.TrimSpace(raw) != "" {
 		d, err := time.ParseDuration(raw)
 		if err != nil {
-			return Config{}, fmt.Errorf("invalid %s %q: %w", EnvICEGatheringTimeout, raw, err)
+			return Config{}, fmt.Errorf("invalid %s %q: %w", envVarICEGatheringTimeout, raw, err)
 		}
 		iceGatherTimeout = d
 	}
 
 	webrtcSessionConnectTimeout := DefaultWebRTCSessionConnectTimeout
-	if raw, ok := lookup(EnvWebRTCSessionConnectTimeout); ok && strings.TrimSpace(raw) != "" {
+	if raw, ok := lookup(envVarWebRTCSessionConnectTimeout); ok && strings.TrimSpace(raw) != "" {
 		d, err := time.ParseDuration(strings.TrimSpace(raw))
 		if err != nil {
-			return Config{}, fmt.Errorf("invalid %s %q: %w", EnvWebRTCSessionConnectTimeout, raw, err)
+			return Config{}, fmt.Errorf("invalid %s %q: %w", envVarWebRTCSessionConnectTimeout, raw, err)
 		}
 		webrtcSessionConnectTimeout = d
 	}
 
-	maxSessions, err := envIntOrDefault(lookup, EnvMaxSessions, 0)
+	maxSessions, err := envIntOrDefault(lookup, envVarMaxSessions, 0)
 	if err != nil {
 		return Config{}, err
 	}
 	sessionPreallocTTL := DefaultSessionPreallocTTL
-	if raw, ok := lookup(EnvSessionPreallocTTL); ok && strings.TrimSpace(raw) != "" {
+	if raw, ok := lookup(envVarSessionPreallocTTL); ok && strings.TrimSpace(raw) != "" {
 		d, err := time.ParseDuration(strings.TrimSpace(raw))
 		if err != nil {
-			return Config{}, fmt.Errorf("invalid %s %q: %w", EnvSessionPreallocTTL, raw, err)
+			return Config{}, fmt.Errorf("invalid %s %q: %w", envVarSessionPreallocTTL, raw, err)
 		}
 		sessionPreallocTTL = d
 	}
-	maxUDPPpsPerSession, err := envIntOrDefault(lookup, EnvMaxUDPPpsPerSession, 0)
+	maxUDPPpsPerSession, err := envIntOrDefault(lookup, envVarMaxUDPPpsPerSession, 0)
 	if err != nil {
 		return Config{}, err
 	}
-	maxUDPBpsPerSession, err := envIntOrDefault(lookup, EnvMaxUDPBpsPerSession, 0)
+	maxUDPBpsPerSession, err := envIntOrDefault(lookup, envVarMaxUDPBpsPerSession, 0)
 	if err != nil {
 		return Config{}, err
 	}
-	maxUDPPpsPerDest, err := envIntOrDefault(lookup, EnvMaxUDPPpsPerDest, 0)
+	maxUDPPpsPerDest, err := envIntOrDefault(lookup, envVarMaxUDPPpsPerDest, 0)
 	if err != nil {
 		return Config{}, err
 	}
-	maxUDPBindingsPerSession, err := envIntOrDefault(lookup, EnvMaxUDPBindingsPerSession, DefaultMaxUDPBindingsPerSession)
+	maxUDPBindingsPerSession, err := envIntOrDefault(lookup, envVarMaxUDPBindingsPerSession, DefaultMaxUDPBindingsPerSession)
 	if err != nil {
 		return Config{}, err
 	}
-	maxUniqueDestinationsPerSession, err := envIntOrDefault(lookup, EnvMaxUniqueDestinationsPerSession, 0)
+	maxUniqueDestinationsPerSession, err := envIntOrDefault(lookup, envVarMaxUniqueDestinationsPerSession, 0)
 	if err != nil {
 		return Config{}, err
 	}
-	envMaxUDPDestBuckets, envMaxUDPDestBucketsOK := lookup(EnvMaxUDPDestBucketsPerSession)
+	envMaxUDPDestBuckets, envMaxUDPDestBucketsOK := lookup(envVarMaxUDPDestBucketsPerSession)
 	envMaxUDPDestBucketsSet := envMaxUDPDestBucketsOK && strings.TrimSpace(envMaxUDPDestBuckets) != ""
-	maxUDPDestBucketsPerSession, err := envIntOrDefault(lookup, EnvMaxUDPDestBucketsPerSession, DefaultMaxUDPDestBucketsPerSession)
+	maxUDPDestBucketsPerSession, err := envIntOrDefault(lookup, envVarMaxUDPDestBucketsPerSession, DefaultMaxUDPDestBucketsPerSession)
 	if err != nil {
 		return Config{}, err
 	}
-	maxDataChannelBpsPerSession, err := envIntOrDefault(lookup, EnvMaxDataChannelBpsPerSession, 0)
+	maxDataChannelBpsPerSession, err := envIntOrDefault(lookup, envVarMaxDataChannelBpsPerSession, 0)
 	if err != nil {
 		return Config{}, err
 	}
-	hardCloseAfterViolations, err := envIntOrDefault(lookup, EnvHardCloseAfterViolations, 0)
+	hardCloseAfterViolations, err := envIntOrDefault(lookup, envVarHardCloseAfterViolations, 0)
 	if err != nil {
 		return Config{}, err
 	}
 
 	violationWindow := DefaultViolationWindow
-	if raw, ok := lookup(EnvViolationWindowSeconds); ok && strings.TrimSpace(raw) != "" {
+	if raw, ok := lookup(envVarViolationWindowSeconds); ok && strings.TrimSpace(raw) != "" {
 		seconds, err := strconv.Atoi(strings.TrimSpace(raw))
 		if err != nil {
-			return Config{}, fmt.Errorf("invalid %s %q: %w", EnvViolationWindowSeconds, raw, err)
+			return Config{}, fmt.Errorf("invalid %s %q: %w", envVarViolationWindowSeconds, raw, err)
 		}
 		if seconds > 0 {
 			violationWindow = time.Duration(seconds) * time.Second
@@ -601,102 +601,102 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 	}
 
 	authModeDefault := string(DefaultAuthMode)
-	if raw, ok := lookup(EnvAuthMode); ok && strings.TrimSpace(raw) != "" {
+	if raw, ok := lookup(envVarAuthMode); ok && strings.TrimSpace(raw) != "" {
 		authModeDefault = strings.TrimSpace(raw)
 	}
 
-	apiKey := envOrDefault(lookup, EnvAPIKey, "")
-	jwtSecret := envOrDefault(lookup, EnvJWTSecret, "")
+	apiKey := envOrDefault(lookup, envVarAPIKey, "")
+	jwtSecret := envOrDefault(lookup, envVarJWTSecret, "")
 
 	signalingAuthTimeout := DefaultSignalingAuthTimeout
-	if raw, ok := lookup(EnvSignalingAuthTimeout); ok && strings.TrimSpace(raw) != "" {
+	if raw, ok := lookup(envVarSignalingAuthTimeout); ok && strings.TrimSpace(raw) != "" {
 		d, err := time.ParseDuration(strings.TrimSpace(raw))
 		if err != nil {
-			return Config{}, fmt.Errorf("invalid %s %q: %w", EnvSignalingAuthTimeout, raw, err)
+			return Config{}, fmt.Errorf("invalid %s %q: %w", envVarSignalingAuthTimeout, raw, err)
 		}
 		signalingAuthTimeout = d
 	}
 
 	signalingWSIdleTimeout := DefaultSignalingWSIdleTimeout
-	if raw, ok := lookup(EnvSignalingWSIdleTimeout); ok && strings.TrimSpace(raw) != "" {
+	if raw, ok := lookup(envVarSignalingWSIdleTimeout); ok && strings.TrimSpace(raw) != "" {
 		d, err := time.ParseDuration(strings.TrimSpace(raw))
 		if err != nil {
-			return Config{}, fmt.Errorf("invalid %s %q: %w", EnvSignalingWSIdleTimeout, raw, err)
+			return Config{}, fmt.Errorf("invalid %s %q: %w", envVarSignalingWSIdleTimeout, raw, err)
 		}
 		signalingWSIdleTimeout = d
 	}
 
 	signalingWSPingInterval := DefaultSignalingWSPingInterval
-	if raw, ok := lookup(EnvSignalingWSPingInterval); ok && strings.TrimSpace(raw) != "" {
+	if raw, ok := lookup(envVarSignalingWSPingInterval); ok && strings.TrimSpace(raw) != "" {
 		d, err := time.ParseDuration(strings.TrimSpace(raw))
 		if err != nil {
-			return Config{}, fmt.Errorf("invalid %s %q: %w", EnvSignalingWSPingInterval, raw, err)
+			return Config{}, fmt.Errorf("invalid %s %q: %w", envVarSignalingWSPingInterval, raw, err)
 		}
 		signalingWSPingInterval = d
 	}
 
 	maxSignalingMessageBytes := DefaultMaxSignalingMessageBytes
-	if raw, ok := lookup(EnvMaxSignalingMessageBytes); ok && strings.TrimSpace(raw) != "" {
+	if raw, ok := lookup(envVarMaxSignalingMessageBytes); ok && strings.TrimSpace(raw) != "" {
 		n, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
 		if err != nil {
-			return Config{}, fmt.Errorf("invalid %s %q: %w", EnvMaxSignalingMessageBytes, raw, err)
+			return Config{}, fmt.Errorf("invalid %s %q: %w", envVarMaxSignalingMessageBytes, raw, err)
 		}
 		maxSignalingMessageBytes = n
 	}
 
 	maxSignalingMessagesPerSecond := DefaultMaxSignalingMessagesPerSecond
-	if raw, ok := lookup(EnvMaxSignalingMessagesPerSecond); ok && strings.TrimSpace(raw) != "" {
+	if raw, ok := lookup(envVarMaxSignalingMessagesPerSecond); ok && strings.TrimSpace(raw) != "" {
 		n, err := strconv.Atoi(strings.TrimSpace(raw))
 		if err != nil {
-			return Config{}, fmt.Errorf("invalid %s %q: %w", EnvMaxSignalingMessagesPerSecond, raw, err)
+			return Config{}, fmt.Errorf("invalid %s %q: %w", envVarMaxSignalingMessagesPerSecond, raw, err)
 		}
 		maxSignalingMessagesPerSecond = n
 	}
 
 	udpWSIdleTimeout := DefaultUDPWSIdleTimeout
-	if raw, ok := lookup(EnvUDPWSIdleTimeout); ok && strings.TrimSpace(raw) != "" {
+	if raw, ok := lookup(envVarUDPWSIdleTimeout); ok && strings.TrimSpace(raw) != "" {
 		d, err := time.ParseDuration(strings.TrimSpace(raw))
 		if err != nil {
-			return Config{}, fmt.Errorf("invalid %s %q: %w", EnvUDPWSIdleTimeout, raw, err)
+			return Config{}, fmt.Errorf("invalid %s %q: %w", envVarUDPWSIdleTimeout, raw, err)
 		}
 		udpWSIdleTimeout = d
 	}
 
 	udpWSPingInterval := DefaultUDPWSPingInterval
-	if raw, ok := lookup(EnvUDPWSPingInterval); ok && strings.TrimSpace(raw) != "" {
+	if raw, ok := lookup(envVarUDPWSPingInterval); ok && strings.TrimSpace(raw) != "" {
 		d, err := time.ParseDuration(strings.TrimSpace(raw))
 		if err != nil {
-			return Config{}, fmt.Errorf("invalid %s %q: %w", EnvUDPWSPingInterval, raw, err)
+			return Config{}, fmt.Errorf("invalid %s %q: %w", envVarUDPWSPingInterval, raw, err)
 		}
 		udpWSPingInterval = d
 	}
 
 	// WebRTC network defaults (env values become flag defaults).
 	var webrtcUDPPortMin uint
-	if raw, ok := lookup(EnvWebRTCUDPPortMin); ok && strings.TrimSpace(raw) != "" {
+	if raw, ok := lookup(envVarWebRTCUDPPortMin); ok && strings.TrimSpace(raw) != "" {
 		p, err := parsePortString(raw)
 		if err != nil {
-			return Config{}, fmt.Errorf("invalid %s %q: %w", EnvWebRTCUDPPortMin, raw, err)
+			return Config{}, fmt.Errorf("invalid %s %q: %w", envVarWebRTCUDPPortMin, raw, err)
 		}
 		webrtcUDPPortMin = uint(p)
 	}
 
 	var webrtcUDPPortMax uint
-	if raw, ok := lookup(EnvWebRTCUDPPortMax); ok && strings.TrimSpace(raw) != "" {
+	if raw, ok := lookup(envVarWebRTCUDPPortMax); ok && strings.TrimSpace(raw) != "" {
 		p, err := parsePortString(raw)
 		if err != nil {
-			return Config{}, fmt.Errorf("invalid %s %q: %w", EnvWebRTCUDPPortMax, raw, err)
+			return Config{}, fmt.Errorf("invalid %s %q: %w", envVarWebRTCUDPPortMax, raw, err)
 		}
 		webrtcUDPPortMax = uint(p)
 	}
 
 	if (webrtcUDPPortMin == 0) != (webrtcUDPPortMax == 0) {
-		return Config{}, fmt.Errorf("%s and %s must be set together (or both unset)", EnvWebRTCUDPPortMin, EnvWebRTCUDPPortMax)
+		return Config{}, fmt.Errorf("%s and %s must be set together (or both unset)", envVarWebRTCUDPPortMin, envVarWebRTCUDPPortMax)
 	}
 
-	webrtcUDPListenIPStr := envOrDefault(lookup, EnvWebRTCUDPListenIP, DefaultWebRTCUDPListenIP)
-	webrtcNAT1To1IPsStr := envOrDefault(lookup, EnvWebRTCNAT1To1IPs, "")
-	webrtcNAT1To1CandidateTypeStr := envOrDefault(lookup, EnvWebRTCNAT1To1IPCandidateType, string(NAT1To1CandidateTypeHost))
+	webrtcUDPListenIPStr := envOrDefault(lookup, envVarWebRTCUDPListenIP, DefaultWebRTCUDPListenIP)
+	webrtcNAT1To1IPsStr := envOrDefault(lookup, envVarWebRTCNAT1To1IPs, "")
+	webrtcNAT1To1CandidateTypeStr := envOrDefault(lookup, envVarWebRTCNAT1To1IPCandidateType, string(NAT1To1CandidateTypeHost))
 	fs := flag.NewFlagSet("aero-webrtc-udp-relay", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 
@@ -710,75 +710,75 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 
 	fs.StringVar(&listenAddr, "listen-addr", listenAddr, "HTTP listen address (host:port)")
 	fs.StringVar(&publicBaseURL, "public-base-url", publicBaseURL, "Public base URL (optional; used for logging)")
-	fs.StringVar(&allowedOriginsStr, "allowed-origins", allowedOriginsStr, "Comma-separated list of allowed browser origins (env "+EnvAllowedOrigins+")")
+	fs.StringVar(&allowedOriginsStr, "allowed-origins", allowedOriginsStr, "Comma-separated list of allowed browser origins (env "+envVarAllowedOrigins+")")
 	fs.StringVar(&modeStr, "mode", modeDefault, "Run mode: dev or prod")
 	fs.StringVar(&logFormatStr, "log-format", logFormatDefault, "Log format: text or json")
 	fs.StringVar(&logLevelStr, "log-level", logLevelDefault, "Log level: debug, info, warn, error")
 	fs.DurationVar(&shutdownTimeout, "shutdown-timeout", shutdownTimeout, "Graceful shutdown timeout (e.g. 15s)")
 	fs.DurationVar(&iceGatherTimeout, "ice-gather-timeout", iceGatherTimeout, "Max time to wait for ICE gathering on non-trickle HTTP signaling endpoints (/offer, /webrtc/offer) (e.g. 2s)")
-	fs.DurationVar(&webrtcSessionConnectTimeout, FlagWebRTCSessionConnectTimeout, webrtcSessionConnectTimeout, "Max time to wait for WebRTC sessions to connect before closing (env "+EnvWebRTCSessionConnectTimeout+")")
+	fs.DurationVar(&webrtcSessionConnectTimeout, flagWebRTCSessionConnectTimeout, webrtcSessionConnectTimeout, "Max time to wait for WebRTC sessions to connect before closing (env "+envVarWebRTCSessionConnectTimeout+")")
 	fs.StringVar(&iceServersJSON, "ice-servers-json", iceServersJSON, "ICE server JSON config (AERO_ICE_SERVERS_JSON)")
 	fs.StringVar(&stunURLs, "stun-urls", stunURLs, "comma-separated STUN URLs (AERO_STUN_URLS)")
 	fs.StringVar(&turnURLs, "turn-urls", turnURLs, "comma-separated TURN URLs (AERO_TURN_URLS)")
 	fs.StringVar(&turnUsername, "turn-username", turnUsername, "TURN username (AERO_TURN_USERNAME)")
 	fs.StringVar(&turnCredential, "turn-credential", turnCredential, "TURN credential (AERO_TURN_CREDENTIAL)")
-	fs.StringVar(&turnRESTSharedSecret, "turn-rest-shared-secret", turnRESTSharedSecret, "TURN REST shared secret ("+EnvTURNRESTSharedSecret+")")
-	fs.Int64Var(&turnRESTTTLSeconds, "turn-rest-ttl-seconds", turnRESTTTLSeconds, "TURN REST credential TTL seconds ("+EnvTURNRESTTTLSeconds+")")
-	fs.StringVar(&turnRESTUsernamePrefix, "turn-rest-username-prefix", turnRESTUsernamePrefix, "TURN REST username prefix ("+EnvTURNRESTUsernamePrefix+")")
-	fs.StringVar(&turnRESTRealm, "turn-rest-realm", turnRESTRealm, "TURN realm (coturn config; "+EnvTURNRESTRealm+")")
+	fs.StringVar(&turnRESTSharedSecret, "turn-rest-shared-secret", turnRESTSharedSecret, "TURN REST shared secret ("+envVarTURNRESTSharedSecret+")")
+	fs.Int64Var(&turnRESTTTLSeconds, "turn-rest-ttl-seconds", turnRESTTTLSeconds, "TURN REST credential TTL seconds ("+envVarTURNRESTTTLSeconds+")")
+	fs.StringVar(&turnRESTUsernamePrefix, "turn-rest-username-prefix", turnRESTUsernamePrefix, "TURN REST username prefix ("+envVarTURNRESTUsernamePrefix+")")
+	fs.StringVar(&turnRESTRealm, "turn-rest-realm", turnRESTRealm, "TURN realm (coturn config; "+envVarTURNRESTRealm+")")
 
-	fs.UintVar(&webrtcUDPPortMin, FlagWebRTCUDPPortMin, webrtcUDPPortMin, "Min UDP port for WebRTC ICE (0 = unset; env "+EnvWebRTCUDPPortMin+")")
-	fs.UintVar(&webrtcUDPPortMax, FlagWebRTCUDPPortMax, webrtcUDPPortMax, "Max UDP port for WebRTC ICE (0 = unset; env "+EnvWebRTCUDPPortMax+")")
-	fs.StringVar(&webrtcUDPListenIPStr, FlagWebRTCUDPListenIP, webrtcUDPListenIPStr, "Local listen IP for WebRTC ICE UDP sockets (env "+EnvWebRTCUDPListenIP+")")
-	fs.StringVar(&webrtcNAT1To1IPsStr, FlagWebRTCNAT1To1IPs, webrtcNAT1To1IPsStr, "Comma-separated public IPs to advertise for WebRTC ICE (env "+EnvWebRTCNAT1To1IPs+")")
-	fs.StringVar(&webrtcNAT1To1CandidateTypeStr, FlagWebRTCNAT1To1IPCandidateType, webrtcNAT1To1CandidateTypeStr, "Candidate type for NAT 1:1 IPs: host or srflx (env "+EnvWebRTCNAT1To1IPCandidateType+")")
-	fs.IntVar(&webrtcDataChannelMaxMessageBytes, FlagWebRTCDataChannelMaxMessageBytes, webrtcDataChannelMaxMessageBytes, "Max inbound WebRTC DataChannel message size in bytes (0 = auto; env "+EnvWebRTCDataChannelMaxMessageBytes+")")
-	fs.IntVar(&webrtcSCTPMaxReceiveBufferBytes, FlagWebRTCSCTPMaxReceiveBufferBytes, webrtcSCTPMaxReceiveBufferBytes, "Max SCTP receive buffer size in bytes (0 = auto; env "+EnvWebRTCSCTPMaxReceiveBufferBytes+")")
+	fs.UintVar(&webrtcUDPPortMin, flagWebRTCUDPPortMin, webrtcUDPPortMin, "Min UDP port for WebRTC ICE (0 = unset; env "+envVarWebRTCUDPPortMin+")")
+	fs.UintVar(&webrtcUDPPortMax, flagWebRTCUDPPortMax, webrtcUDPPortMax, "Max UDP port for WebRTC ICE (0 = unset; env "+envVarWebRTCUDPPortMax+")")
+	fs.StringVar(&webrtcUDPListenIPStr, flagWebRTCUDPListenIP, webrtcUDPListenIPStr, "Local listen IP for WebRTC ICE UDP sockets (env "+envVarWebRTCUDPListenIP+")")
+	fs.StringVar(&webrtcNAT1To1IPsStr, flagWebRTCNAT1To1IPs, webrtcNAT1To1IPsStr, "Comma-separated public IPs to advertise for WebRTC ICE (env "+envVarWebRTCNAT1To1IPs+")")
+	fs.StringVar(&webrtcNAT1To1CandidateTypeStr, flagWebRTCNAT1To1IPCandidateType, webrtcNAT1To1CandidateTypeStr, "Candidate type for NAT 1:1 IPs: host or srflx (env "+envVarWebRTCNAT1To1IPCandidateType+")")
+	fs.IntVar(&webrtcDataChannelMaxMessageBytes, flagWebRTCDataChannelMaxMessageBytes, webrtcDataChannelMaxMessageBytes, "Max inbound WebRTC DataChannel message size in bytes (0 = auto; env "+envVarWebRTCDataChannelMaxMessageBytes+")")
+	fs.IntVar(&webrtcSCTPMaxReceiveBufferBytes, flagWebRTCSCTPMaxReceiveBufferBytes, webrtcSCTPMaxReceiveBufferBytes, "Max SCTP receive buffer size in bytes (0 = auto; env "+envVarWebRTCSCTPMaxReceiveBufferBytes+")")
 
 	fs.IntVar(&maxSessions, "max-sessions", maxSessions, "Maximum concurrent sessions (0 = unlimited)")
-	fs.DurationVar(&sessionPreallocTTL, "session-prealloc-ttl", sessionPreallocTTL, "TTL for sessions allocated via POST /session (env "+EnvSessionPreallocTTL+")")
+	fs.DurationVar(&sessionPreallocTTL, "session-prealloc-ttl", sessionPreallocTTL, "TTL for sessions allocated via POST /session (env "+envVarSessionPreallocTTL+")")
 	fs.IntVar(&maxUDPPpsPerSession, "max-udp-pps-per-session", maxUDPPpsPerSession, "Outbound UDP packets/sec per session (0 = unlimited)")
 	fs.IntVar(&maxUDPBpsPerSession, "max-udp-bps-per-session", maxUDPBpsPerSession, "Outbound UDP bytes/sec per session (0 = unlimited)")
 	fs.IntVar(&maxUDPPpsPerDest, "max-udp-pps-per-dest", maxUDPPpsPerDest, "Outbound UDP packets/sec per destination per session (0 = unlimited)")
-	fs.IntVar(&maxUDPBindingsPerSession, "max-udp-bindings-per-session", maxUDPBindingsPerSession, "Maximum UDP bindings per session (env "+EnvMaxUDPBindingsPerSession+")")
+	fs.IntVar(&maxUDPBindingsPerSession, "max-udp-bindings-per-session", maxUDPBindingsPerSession, "Maximum UDP bindings per session (env "+envVarMaxUDPBindingsPerSession+")")
 	fs.IntVar(&maxUniqueDestinationsPerSession, "max-unique-destinations-per-session", maxUniqueDestinationsPerSession, "Maximum unique UDP destinations per session (0 = unlimited)")
-	fs.IntVar(&maxUDPDestBucketsPerSession, "max-udp-dest-buckets-per-session", maxUDPDestBucketsPerSession, "Maximum per-destination UDP rate limiter buckets per session (env "+EnvMaxUDPDestBucketsPerSession+")")
+	fs.IntVar(&maxUDPDestBucketsPerSession, "max-udp-dest-buckets-per-session", maxUDPDestBucketsPerSession, "Maximum per-destination UDP rate limiter buckets per session (env "+envVarMaxUDPDestBucketsPerSession+")")
 	fs.IntVar(&maxDataChannelBpsPerSession, "max-dc-bps-per-session", maxDataChannelBpsPerSession, "DataChannel bytes/sec per session (relay -> client) (0 = unlimited)")
 	fs.IntVar(&hardCloseAfterViolations, "hard-close-after-violations", hardCloseAfterViolations, "Close session after N rate/quota violations (0 = disabled)")
 	fs.DurationVar(&violationWindow, "violation-window", violationWindow, "Violation window for hard close")
 
-	fs.BoolVar(&preferV2, "prefer-v2", preferV2, "Prefer v2 relay->client frames once the client demonstrates v2 support (env "+EnvPreferV2+")")
-	fs.DurationVar(&udpBindingIdleTimeout, "udp-binding-idle-timeout", udpBindingIdleTimeout, "Close idle UDP bindings after this duration (env "+EnvUDPBindingIdleTimeout+")")
-	fs.StringVar(&udpInboundFilterModeStr, "udp-inbound-filter-mode", udpInboundFilterModeStr, "Inbound UDP filtering: any (full-cone) or address_and_port (recommended) (env "+EnvUDPInboundFilterMode+")")
-	fs.DurationVar(&udpRemoteAllowlistIdleTimeout, "udp-remote-allowlist-idle-timeout", udpRemoteAllowlistIdleTimeout, "Expire UDP remote allowlist entries after this duration (default: udp-binding-idle-timeout; env "+EnvUDPRemoteAllowlistIdleTimeout+")")
-	fs.IntVar(&udpReadBufferBytes, "udp-read-buffer-bytes", udpReadBufferBytes, "UDP socket read buffer size in bytes (env "+EnvUDPReadBufferBytes+")")
-	fs.IntVar(&dataChannelSendQueueBytes, "datachannel-send-queue-bytes", dataChannelSendQueueBytes, "Max queued outbound DataChannel bytes before dropping (env "+EnvDataChannelSendQueueBytes+")")
-	fs.IntVar(&maxDatagramPayloadBytes, "max-datagram-payload-bytes", maxDatagramPayloadBytes, "Max UDP datagram payload bytes for relay frames (env "+EnvMaxDatagramPayloadBytes+")")
-	fs.IntVar(&maxAllowedRemotesPerBinding, "max-allowed-remotes-per-binding", maxAllowedRemotesPerBinding, "Maximum remote endpoints tracked per UDP binding allowlist (env "+EnvMaxAllowedRemotesPerBinding+")")
-	fs.StringVar(&l2BackendWSURL, "l2-backend-ws-url", l2BackendWSURL, "Backend WebSocket URL for L2 tunnel bridging (env "+EnvL2BackendWSURL+")")
-	fs.StringVar(&l2BackendWSOrigin, "l2-backend-ws-origin", l2BackendWSOrigin, "Origin header value to send when dialing the L2 backend WebSocket (env "+EnvL2BackendWSOrigin+")")
-	fs.StringVar(&l2BackendWSToken, "l2-backend-token", l2BackendWSToken, "Optional token to present to the L2 backend via WebSocket subprotocol (sent as "+l2tunnel.TokenSubprotocolPrefix+"<token>; env "+EnvL2BackendToken+")")
+	fs.BoolVar(&preferV2, "prefer-v2", preferV2, "Prefer v2 relay->client frames once the client demonstrates v2 support (env "+envVarPreferV2+")")
+	fs.DurationVar(&udpBindingIdleTimeout, "udp-binding-idle-timeout", udpBindingIdleTimeout, "Close idle UDP bindings after this duration (env "+envVarUDPBindingIdleTimeout+")")
+	fs.StringVar(&udpInboundFilterModeStr, "udp-inbound-filter-mode", udpInboundFilterModeStr, "Inbound UDP filtering: any (full-cone) or address_and_port (recommended) (env "+envVarUDPInboundFilterMode+")")
+	fs.DurationVar(&udpRemoteAllowlistIdleTimeout, "udp-remote-allowlist-idle-timeout", udpRemoteAllowlistIdleTimeout, "Expire UDP remote allowlist entries after this duration (default: udp-binding-idle-timeout; env "+envVarUDPRemoteAllowlistIdleTimeout+")")
+	fs.IntVar(&udpReadBufferBytes, "udp-read-buffer-bytes", udpReadBufferBytes, "UDP socket read buffer size in bytes (env "+envVarUDPReadBufferBytes+")")
+	fs.IntVar(&dataChannelSendQueueBytes, "datachannel-send-queue-bytes", dataChannelSendQueueBytes, "Max queued outbound DataChannel bytes before dropping (env "+envVarDataChannelSendQueueBytes+")")
+	fs.IntVar(&maxDatagramPayloadBytes, "max-datagram-payload-bytes", maxDatagramPayloadBytes, "Max UDP datagram payload bytes for relay frames (env "+envVarMaxDatagramPayloadBytes+")")
+	fs.IntVar(&maxAllowedRemotesPerBinding, "max-allowed-remotes-per-binding", maxAllowedRemotesPerBinding, "Maximum remote endpoints tracked per UDP binding allowlist (env "+envVarMaxAllowedRemotesPerBinding+")")
+	fs.StringVar(&l2BackendWSURL, "l2-backend-ws-url", l2BackendWSURL, "Backend WebSocket URL for L2 tunnel bridging (env "+envVarL2BackendWSURL+")")
+	fs.StringVar(&l2BackendWSOrigin, "l2-backend-ws-origin", l2BackendWSOrigin, "Origin header value to send when dialing the L2 backend WebSocket (env "+envVarL2BackendWSOrigin+")")
+	fs.StringVar(&l2BackendWSToken, "l2-backend-token", l2BackendWSToken, "Optional token to present to the L2 backend via WebSocket subprotocol (sent as "+l2tunnel.TokenSubprotocolPrefix+"<token>; env "+envVarL2BackendToken+")")
 	fs.StringVar(
 		&l2BackendWSToken,
 		"l2-backend-ws-token",
 		l2BackendWSToken,
-		"Optional token to present to the L2 backend via WebSocket subprotocol (sent as "+l2tunnel.TokenSubprotocolPrefix+"<token>; env "+EnvL2BackendWSToken+")",
+		"Optional token to present to the L2 backend via WebSocket subprotocol (sent as "+l2tunnel.TokenSubprotocolPrefix+"<token>; env "+envVarL2BackendWSToken+")",
 	)
-	fs.BoolVar(&l2BackendForwardOrigin, "l2-backend-forward-origin", l2BackendForwardOrigin, "Forward Origin header when dialing the L2 backend WebSocket (env "+EnvL2BackendForwardOrigin+")")
-	fs.StringVar(&l2BackendAuthForwardModeFlag, "l2-backend-auth-forward-mode", l2BackendAuthForwardModeStr, "L2 backend auth forwarding mode: none, query, subprotocol (env "+EnvL2BackendAuthForwardMode+")")
-	fs.StringVar(&l2BackendOriginOverride, "l2-backend-origin", l2BackendOriginOverride, "Alias for --l2-backend-origin-override (env "+EnvL2BackendOrigin+")")
-	fs.StringVar(&l2BackendOriginOverride, "l2-backend-origin-override", l2BackendOriginOverride, "Override Origin header sent to the L2 backend WebSocket (env "+EnvL2BackendOriginOverride+")")
-	fs.BoolVar(&l2BackendForwardAeroSession, "l2-backend-forward-aero-session", l2BackendForwardAeroSession, "Forward the caller's aero_session cookie to the L2 backend WebSocket as Cookie: aero_session=... (env "+EnvL2BackendForwardAeroSession+")")
-	fs.IntVar(&l2MaxMessageBytes, "l2-max-message-bytes", l2MaxMessageBytes, "Max L2 tunnel message size in bytes (env "+EnvL2MaxMessageBytes+")")
+	fs.BoolVar(&l2BackendForwardOrigin, "l2-backend-forward-origin", l2BackendForwardOrigin, "Forward Origin header when dialing the L2 backend WebSocket (env "+envVarL2BackendForwardOrigin+")")
+	fs.StringVar(&l2BackendAuthForwardModeFlag, "l2-backend-auth-forward-mode", l2BackendAuthForwardModeStr, "L2 backend auth forwarding mode: none, query, subprotocol (env "+envVarL2BackendAuthForwardMode+")")
+	fs.StringVar(&l2BackendOriginOverride, "l2-backend-origin", l2BackendOriginOverride, "Alias for --l2-backend-origin-override (env "+envVarL2BackendOrigin+")")
+	fs.StringVar(&l2BackendOriginOverride, "l2-backend-origin-override", l2BackendOriginOverride, "Override Origin header sent to the L2 backend WebSocket (env "+envVarL2BackendOriginOverride+")")
+	fs.BoolVar(&l2BackendForwardAeroSession, "l2-backend-forward-aero-session", l2BackendForwardAeroSession, "Forward the caller's aero_session cookie to the L2 backend WebSocket as Cookie: aero_session=... (env "+envVarL2BackendForwardAeroSession+")")
+	fs.IntVar(&l2MaxMessageBytes, "l2-max-message-bytes", l2MaxMessageBytes, "Max L2 tunnel message size in bytes (env "+envVarL2MaxMessageBytes+")")
 
-	fs.StringVar(&authModeStr, "auth-mode", authModeDefault, "Signaling auth mode: none, api_key, or jwt (env "+EnvAuthMode+")")
-	fs.DurationVar(&signalingAuthTimeout, "signaling-auth-timeout", signalingAuthTimeout, "Signaling WS auth timeout (env "+EnvSignalingAuthTimeout+")")
-	fs.DurationVar(&signalingWSIdleTimeout, "signaling-ws-idle-timeout", signalingWSIdleTimeout, "Close idle signaling WebSocket connections after this duration (env "+EnvSignalingWSIdleTimeout+")")
-	fs.DurationVar(&signalingWSPingInterval, "signaling-ws-ping-interval", signalingWSPingInterval, "Send ping frames on signaling WebSocket connections at this interval (must be < --signaling-ws-idle-timeout; env "+EnvSignalingWSPingInterval+")")
-	fs.Int64Var(&maxSignalingMessageBytes, "max-signaling-message-bytes", maxSignalingMessageBytes, "Max inbound signaling WS message size in bytes (env "+EnvMaxSignalingMessageBytes+")")
-	fs.IntVar(&maxSignalingMessagesPerSecond, "max-signaling-messages-per-second", maxSignalingMessagesPerSecond, "Max inbound signaling WS messages per second (env "+EnvMaxSignalingMessagesPerSecond+")")
-	fs.DurationVar(&udpWSIdleTimeout, "udp-ws-idle-timeout", udpWSIdleTimeout, "Close idle /udp WebSocket connections after this duration (env "+EnvUDPWSIdleTimeout+")")
-	fs.DurationVar(&udpWSPingInterval, "udp-ws-ping-interval", udpWSPingInterval, "Send ping frames on /udp WebSocket connections at this interval (must be < --udp-ws-idle-timeout; env "+EnvUDPWSPingInterval+")")
+	fs.StringVar(&authModeStr, "auth-mode", authModeDefault, "Signaling auth mode: none, api_key, or jwt (env "+envVarAuthMode+")")
+	fs.DurationVar(&signalingAuthTimeout, "signaling-auth-timeout", signalingAuthTimeout, "Signaling WS auth timeout (env "+envVarSignalingAuthTimeout+")")
+	fs.DurationVar(&signalingWSIdleTimeout, "signaling-ws-idle-timeout", signalingWSIdleTimeout, "Close idle signaling WebSocket connections after this duration (env "+envVarSignalingWSIdleTimeout+")")
+	fs.DurationVar(&signalingWSPingInterval, "signaling-ws-ping-interval", signalingWSPingInterval, "Send ping frames on signaling WebSocket connections at this interval (must be < --signaling-ws-idle-timeout; env "+envVarSignalingWSPingInterval+")")
+	fs.Int64Var(&maxSignalingMessageBytes, "max-signaling-message-bytes", maxSignalingMessageBytes, "Max inbound signaling WS message size in bytes (env "+envVarMaxSignalingMessageBytes+")")
+	fs.IntVar(&maxSignalingMessagesPerSecond, "max-signaling-messages-per-second", maxSignalingMessagesPerSecond, "Max inbound signaling WS messages per second (env "+envVarMaxSignalingMessagesPerSecond+")")
+	fs.DurationVar(&udpWSIdleTimeout, "udp-ws-idle-timeout", udpWSIdleTimeout, "Close idle /udp WebSocket connections after this duration (env "+envVarUDPWSIdleTimeout+")")
+	fs.DurationVar(&udpWSPingInterval, "udp-ws-ping-interval", udpWSPingInterval, "Send ping frames on /udp WebSocket connections at this interval (must be < --udp-ws-idle-timeout; env "+envVarUDPWSPingInterval+")")
 
 	if err := fs.Parse(args); err != nil {
 		return Config{}, err
@@ -839,7 +839,7 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 
 	udpInboundFilterMode, err := parseUDPInboundFilterMode(udpInboundFilterModeStr)
 	if err != nil {
-		return Config{}, fmt.Errorf("invalid %s/--udp-inbound-filter-mode %q: %w", EnvUDPInboundFilterMode, udpInboundFilterModeStr, err)
+		return Config{}, fmt.Errorf("invalid %s/--udp-inbound-filter-mode %q: %w", envVarUDPInboundFilterMode, udpInboundFilterModeStr, err)
 	}
 
 	if listenAddr == "" {
@@ -849,46 +849,46 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 		return Config{}, fmt.Errorf("shutdown timeout must be > 0")
 	}
 	if iceGatherTimeout <= 0 {
-		return Config{}, fmt.Errorf("%s/--ice-gather-timeout must be > 0", EnvICEGatheringTimeout)
+		return Config{}, fmt.Errorf("%s/--ice-gather-timeout must be > 0", envVarICEGatheringTimeout)
 	}
 	if webrtcSessionConnectTimeout <= 0 {
-		return Config{}, fmt.Errorf("%s/--%s must be > 0", EnvWebRTCSessionConnectTimeout, FlagWebRTCSessionConnectTimeout)
+		return Config{}, fmt.Errorf("%s/--%s must be > 0", envVarWebRTCSessionConnectTimeout, flagWebRTCSessionConnectTimeout)
 	}
 	if udpBindingIdleTimeout <= 0 {
-		return Config{}, fmt.Errorf("%s/--udp-binding-idle-timeout must be > 0", EnvUDPBindingIdleTimeout)
+		return Config{}, fmt.Errorf("%s/--udp-binding-idle-timeout must be > 0", envVarUDPBindingIdleTimeout)
 	}
 	if udpRemoteAllowlistIdleTimeout <= 0 {
-		return Config{}, fmt.Errorf("%s/--udp-remote-allowlist-idle-timeout must be > 0", EnvUDPRemoteAllowlistIdleTimeout)
+		return Config{}, fmt.Errorf("%s/--udp-remote-allowlist-idle-timeout must be > 0", envVarUDPRemoteAllowlistIdleTimeout)
 	}
 	if udpReadBufferBytes <= 0 {
-		return Config{}, fmt.Errorf("%s/--udp-read-buffer-bytes must be > 0", EnvUDPReadBufferBytes)
+		return Config{}, fmt.Errorf("%s/--udp-read-buffer-bytes must be > 0", envVarUDPReadBufferBytes)
 	}
 	if dataChannelSendQueueBytes <= 0 {
-		return Config{}, fmt.Errorf("%s/--datachannel-send-queue-bytes must be > 0", EnvDataChannelSendQueueBytes)
+		return Config{}, fmt.Errorf("%s/--datachannel-send-queue-bytes must be > 0", envVarDataChannelSendQueueBytes)
 	}
 	if maxDatagramPayloadBytes <= 0 {
-		return Config{}, fmt.Errorf("%s/--max-datagram-payload-bytes must be > 0", EnvMaxDatagramPayloadBytes)
+		return Config{}, fmt.Errorf("%s/--max-datagram-payload-bytes must be > 0", envVarMaxDatagramPayloadBytes)
 	}
 	minReadBuf := maxDatagramPayloadBytes + 1
 	if udpReadBufferBytes < minReadBuf {
 		return Config{}, fmt.Errorf("%s/--udp-read-buffer-bytes must be >= %s+1 (%d); got %d",
-			EnvUDPReadBufferBytes,
-			EnvMaxDatagramPayloadBytes,
+			envVarUDPReadBufferBytes,
+			envVarMaxDatagramPayloadBytes,
 			minReadBuf,
 			udpReadBufferBytes,
 		)
 	}
 	if maxAllowedRemotesPerBinding <= 0 {
-		return Config{}, fmt.Errorf("%s/--max-allowed-remotes-per-binding must be > 0", EnvMaxAllowedRemotesPerBinding)
+		return Config{}, fmt.Errorf("%s/--max-allowed-remotes-per-binding must be > 0", envVarMaxAllowedRemotesPerBinding)
 	}
 	if l2MaxMessageBytes <= 0 {
-		return Config{}, fmt.Errorf("%s/--l2-max-message-bytes must be > 0", EnvL2MaxMessageBytes)
+		return Config{}, fmt.Errorf("%s/--l2-max-message-bytes must be > 0", envVarL2MaxMessageBytes)
 	}
 	if webrtcDataChannelMaxMessageBytes < 0 {
-		return Config{}, fmt.Errorf("%s/--%s must be >= 0 (0 = auto)", EnvWebRTCDataChannelMaxMessageBytes, FlagWebRTCDataChannelMaxMessageBytes)
+		return Config{}, fmt.Errorf("%s/--%s must be >= 0 (0 = auto)", envVarWebRTCDataChannelMaxMessageBytes, flagWebRTCDataChannelMaxMessageBytes)
 	}
 	if webrtcSCTPMaxReceiveBufferBytes < 0 {
-		return Config{}, fmt.Errorf("%s/--%s must be >= 0 (0 = auto)", EnvWebRTCSCTPMaxReceiveBufferBytes, FlagWebRTCSCTPMaxReceiveBufferBytes)
+		return Config{}, fmt.Errorf("%s/--%s must be >= 0 (0 = auto)", envVarWebRTCSCTPMaxReceiveBufferBytes, flagWebRTCSCTPMaxReceiveBufferBytes)
 	}
 
 	// Derive WebRTC DataChannel/SCTP size limits if not explicitly configured.
@@ -903,12 +903,12 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 		effectiveDCMax = defaultWebRTCDataChannelMaxMessageBytes(maxDatagramPayloadBytes, l2MaxMessageBytes)
 	}
 	if effectiveDCMax <= 0 {
-		return Config{}, fmt.Errorf("%s/--%s must be > 0", EnvWebRTCDataChannelMaxMessageBytes, FlagWebRTCDataChannelMaxMessageBytes)
+		return Config{}, fmt.Errorf("%s/--%s must be > 0", envVarWebRTCDataChannelMaxMessageBytes, flagWebRTCDataChannelMaxMessageBytes)
 	}
 	if effectiveDCMax < minDCMax {
 		return Config{}, fmt.Errorf("%s/--%s must be >= %d (max of MAX_DATAGRAM_PAYLOAD_BYTES+%d and L2_MAX_MESSAGE_BYTES)",
-			EnvWebRTCDataChannelMaxMessageBytes,
-			FlagWebRTCDataChannelMaxMessageBytes,
+			envVarWebRTCDataChannelMaxMessageBytes,
+			flagWebRTCDataChannelMaxMessageBytes,
 			minDCMax,
 			webrtcDataChannelUDPFrameOverheadBytes,
 		)
@@ -919,75 +919,75 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 		effectiveSCTPRecvBuf = defaultWebRTCSCTPMaxReceiveBufferBytes(effectiveDCMax)
 	}
 	if effectiveSCTPRecvBuf <= 0 {
-		return Config{}, fmt.Errorf("%s/--%s must be > 0", EnvWebRTCSCTPMaxReceiveBufferBytes, FlagWebRTCSCTPMaxReceiveBufferBytes)
+		return Config{}, fmt.Errorf("%s/--%s must be > 0", envVarWebRTCSCTPMaxReceiveBufferBytes, flagWebRTCSCTPMaxReceiveBufferBytes)
 	}
 	if effectiveSCTPRecvBuf < effectiveDCMax {
 		return Config{}, fmt.Errorf("%s/--%s must be >= %d (must be >= %s)",
-			EnvWebRTCSCTPMaxReceiveBufferBytes,
-			FlagWebRTCSCTPMaxReceiveBufferBytes,
+			envVarWebRTCSCTPMaxReceiveBufferBytes,
+			flagWebRTCSCTPMaxReceiveBufferBytes,
 			effectiveDCMax,
-			EnvWebRTCDataChannelMaxMessageBytes,
+			envVarWebRTCDataChannelMaxMessageBytes,
 		)
 	}
 	if effectiveSCTPRecvBuf < minWebRTCSCTPReceiveBufferBytes {
 		return Config{}, fmt.Errorf("%s/--%s must be >= %d (SCTP receive buffer too small)",
-			EnvWebRTCSCTPMaxReceiveBufferBytes,
-			FlagWebRTCSCTPMaxReceiveBufferBytes,
+			envVarWebRTCSCTPMaxReceiveBufferBytes,
+			flagWebRTCSCTPMaxReceiveBufferBytes,
 			minWebRTCSCTPReceiveBufferBytes,
 		)
 	}
 	if maxUDPBindingsPerSession <= 0 {
-		return Config{}, fmt.Errorf("%s/--max-udp-bindings-per-session must be > 0", EnvMaxUDPBindingsPerSession)
+		return Config{}, fmt.Errorf("%s/--max-udp-bindings-per-session must be > 0", envVarMaxUDPBindingsPerSession)
 	}
 	if maxUDPDestBucketsPerSession <= 0 {
-		return Config{}, fmt.Errorf("%s/--max-udp-dest-buckets-per-session must be > 0", EnvMaxUDPDestBucketsPerSession)
+		return Config{}, fmt.Errorf("%s/--max-udp-dest-buckets-per-session must be > 0", envVarMaxUDPDestBucketsPerSession)
 	}
 	if sessionPreallocTTL <= 0 {
-		return Config{}, fmt.Errorf("%s/--session-prealloc-ttl must be > 0", EnvSessionPreallocTTL)
+		return Config{}, fmt.Errorf("%s/--session-prealloc-ttl must be > 0", envVarSessionPreallocTTL)
 	}
 	if authMode == AuthModeAPIKey && strings.TrimSpace(apiKey) == "" {
-		return Config{}, fmt.Errorf("%s must be set when %s=%s", EnvAPIKey, EnvAuthMode, AuthModeAPIKey)
+		return Config{}, fmt.Errorf("%s must be set when %s=%s", envVarAPIKey, envVarAuthMode, AuthModeAPIKey)
 	}
 	if authMode == AuthModeJWT && strings.TrimSpace(jwtSecret) == "" {
-		return Config{}, fmt.Errorf("%s must be set when %s=%s", EnvJWTSecret, EnvAuthMode, AuthModeJWT)
+		return Config{}, fmt.Errorf("%s must be set when %s=%s", envVarJWTSecret, envVarAuthMode, AuthModeJWT)
 	}
 	if signalingAuthTimeout <= 0 {
-		return Config{}, fmt.Errorf("%s/--signaling-auth-timeout must be > 0", EnvSignalingAuthTimeout)
+		return Config{}, fmt.Errorf("%s/--signaling-auth-timeout must be > 0", envVarSignalingAuthTimeout)
 	}
 	if signalingWSIdleTimeout <= 0 {
-		return Config{}, fmt.Errorf("%s/--signaling-ws-idle-timeout must be > 0", EnvSignalingWSIdleTimeout)
+		return Config{}, fmt.Errorf("%s/--signaling-ws-idle-timeout must be > 0", envVarSignalingWSIdleTimeout)
 	}
 	if signalingWSPingInterval <= 0 {
-		return Config{}, fmt.Errorf("%s/--signaling-ws-ping-interval must be > 0", EnvSignalingWSPingInterval)
+		return Config{}, fmt.Errorf("%s/--signaling-ws-ping-interval must be > 0", envVarSignalingWSPingInterval)
 	}
 	if signalingWSPingInterval >= signalingWSIdleTimeout {
-		return Config{}, fmt.Errorf("%s/--signaling-ws-ping-interval must be < %s/--signaling-ws-idle-timeout", EnvSignalingWSPingInterval, EnvSignalingWSIdleTimeout)
+		return Config{}, fmt.Errorf("%s/--signaling-ws-ping-interval must be < %s/--signaling-ws-idle-timeout", envVarSignalingWSPingInterval, envVarSignalingWSIdleTimeout)
 	}
 	if maxSignalingMessageBytes <= 0 {
-		return Config{}, fmt.Errorf("%s/--max-signaling-message-bytes must be > 0", EnvMaxSignalingMessageBytes)
+		return Config{}, fmt.Errorf("%s/--max-signaling-message-bytes must be > 0", envVarMaxSignalingMessageBytes)
 	}
 	if maxSignalingMessagesPerSecond <= 0 {
-		return Config{}, fmt.Errorf("%s/--max-signaling-messages-per-second must be > 0", EnvMaxSignalingMessagesPerSecond)
+		return Config{}, fmt.Errorf("%s/--max-signaling-messages-per-second must be > 0", envVarMaxSignalingMessagesPerSecond)
 	}
 	if udpWSIdleTimeout <= 0 {
-		return Config{}, fmt.Errorf("%s/--udp-ws-idle-timeout must be > 0", EnvUDPWSIdleTimeout)
+		return Config{}, fmt.Errorf("%s/--udp-ws-idle-timeout must be > 0", envVarUDPWSIdleTimeout)
 	}
 	if udpWSPingInterval <= 0 {
-		return Config{}, fmt.Errorf("%s/--udp-ws-ping-interval must be > 0", EnvUDPWSPingInterval)
+		return Config{}, fmt.Errorf("%s/--udp-ws-ping-interval must be > 0", envVarUDPWSPingInterval)
 	}
 	if udpWSPingInterval >= udpWSIdleTimeout {
-		return Config{}, fmt.Errorf("%s/--udp-ws-ping-interval must be < %s/--udp-ws-idle-timeout", EnvUDPWSPingInterval, EnvUDPWSIdleTimeout)
+		return Config{}, fmt.Errorf("%s/--udp-ws-ping-interval must be < %s/--udp-ws-idle-timeout", envVarUDPWSPingInterval, envVarUDPWSIdleTimeout)
 	}
 
 	if strings.TrimSpace(turnRESTSharedSecret) != "" {
 		if turnRESTTTLSeconds <= 0 {
-			return Config{}, fmt.Errorf("%s must be > 0 when %s is set", EnvTURNRESTTTLSeconds, EnvTURNRESTSharedSecret)
+			return Config{}, fmt.Errorf("%s must be > 0 when %s is set", envVarTURNRESTTTLSeconds, envVarTURNRESTSharedSecret)
 		}
 		if strings.TrimSpace(turnRESTUsernamePrefix) == "" {
-			return Config{}, fmt.Errorf("%s must be non-empty when %s is set", EnvTURNRESTUsernamePrefix, EnvTURNRESTSharedSecret)
+			return Config{}, fmt.Errorf("%s must be non-empty when %s is set", envVarTURNRESTUsernamePrefix, envVarTURNRESTSharedSecret)
 		}
 		if strings.Contains(turnRESTUsernamePrefix, ":") {
-			return Config{}, fmt.Errorf("%s must not contain ':'", EnvTURNRESTUsernamePrefix)
+			return Config{}, fmt.Errorf("%s must not contain ':'", envVarTURNRESTUsernamePrefix)
 		}
 	}
 
@@ -995,17 +995,17 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 	if webrtcUDPPortMin != 0 || webrtcUDPPortMax != 0 {
 		if webrtcUDPPortMin == 0 || webrtcUDPPortMax == 0 {
 			return Config{}, fmt.Errorf("%s/%s and %s/%s must be set together (or both unset)",
-				EnvWebRTCUDPPortMin, "--"+FlagWebRTCUDPPortMin,
-				EnvWebRTCUDPPortMax, "--"+FlagWebRTCUDPPortMax,
+				envVarWebRTCUDPPortMin, "--"+flagWebRTCUDPPortMin,
+				envVarWebRTCUDPPortMax, "--"+flagWebRTCUDPPortMax,
 			)
 		}
 		min, err := parsePortUint(webrtcUDPPortMin)
 		if err != nil {
-			return Config{}, fmt.Errorf("%s/%s: %w", EnvWebRTCUDPPortMin, "--"+FlagWebRTCUDPPortMin, err)
+			return Config{}, fmt.Errorf("%s/%s: %w", envVarWebRTCUDPPortMin, "--"+flagWebRTCUDPPortMin, err)
 		}
 		max, err := parsePortUint(webrtcUDPPortMax)
 		if err != nil {
-			return Config{}, fmt.Errorf("%s/%s: %w", EnvWebRTCUDPPortMax, "--"+FlagWebRTCUDPPortMax, err)
+			return Config{}, fmt.Errorf("%s/%s: %w", envVarWebRTCUDPPortMax, "--"+flagWebRTCUDPPortMax, err)
 		}
 		if min > max {
 			return Config{}, fmt.Errorf("WebRTC UDP port range min (%d) must be <= max (%d)", min, max)
@@ -1019,14 +1019,14 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 
 	webrtcUDPListenIP := net.ParseIP(strings.TrimSpace(webrtcUDPListenIPStr))
 	if webrtcUDPListenIP == nil {
-		return Config{}, fmt.Errorf("invalid %s/%s %q", EnvWebRTCUDPListenIP, "--"+FlagWebRTCUDPListenIP, webrtcUDPListenIPStr)
+		return Config{}, fmt.Errorf("invalid %s/%s %q", envVarWebRTCUDPListenIP, "--"+flagWebRTCUDPListenIP, webrtcUDPListenIPStr)
 	}
 
 	var webrtcNAT1To1IPs []string
 	if strings.TrimSpace(webrtcNAT1To1IPsStr) != "" {
 		ips, err := parseIPList(webrtcNAT1To1IPsStr)
 		if err != nil {
-			return Config{}, fmt.Errorf("invalid %s/%s %q: %w", EnvWebRTCNAT1To1IPs, "--"+FlagWebRTCNAT1To1IPs, webrtcNAT1To1IPsStr, err)
+			return Config{}, fmt.Errorf("invalid %s/%s %q: %w", envVarWebRTCNAT1To1IPs, "--"+flagWebRTCNAT1To1IPs, webrtcNAT1To1IPsStr, err)
 		}
 		webrtcNAT1To1IPs = ips
 	}
@@ -1036,28 +1036,28 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 	}
 	webrtcNAT1To1CandidateType, err := parseCandidateType(webrtcNAT1To1CandidateTypeStr)
 	if err != nil {
-		return Config{}, fmt.Errorf("invalid %s/%s %q: %w", EnvWebRTCNAT1To1IPCandidateType, "--"+FlagWebRTCNAT1To1IPCandidateType, webrtcNAT1To1CandidateTypeStr, err)
+		return Config{}, fmt.Errorf("invalid %s/%s %q: %w", envVarWebRTCNAT1To1IPCandidateType, "--"+flagWebRTCNAT1To1IPCandidateType, webrtcNAT1To1CandidateTypeStr, err)
 	}
 
 	allowedOrigins, err := parseAllowedOrigins(allowedOriginsStr)
 	if err != nil {
-		return Config{}, fmt.Errorf("%s/%s: %w", EnvAllowedOrigins, "--allowed-origins", err)
+		return Config{}, fmt.Errorf("%s/%s: %w", envVarAllowedOrigins, "--allowed-origins", err)
 	}
 
 	if strings.TrimSpace(l2BackendWSURL) != "" {
 		u, err := url.Parse(strings.TrimSpace(l2BackendWSURL))
 		if err != nil {
-			return Config{}, fmt.Errorf("invalid %s/%s %q: %w", EnvL2BackendWSURL, "--l2-backend-ws-url", l2BackendWSURL, err)
+			return Config{}, fmt.Errorf("invalid %s/%s %q: %w", envVarL2BackendWSURL, "--l2-backend-ws-url", l2BackendWSURL, err)
 		}
 		scheme := strings.ToLower(u.Scheme)
 		if scheme != "ws" && scheme != "wss" {
-			return Config{}, fmt.Errorf("invalid %s/%s %q (expected ws:// or wss://)", EnvL2BackendWSURL, "--l2-backend-ws-url", l2BackendWSURL)
+			return Config{}, fmt.Errorf("invalid %s/%s %q (expected ws:// or wss://)", envVarL2BackendWSURL, "--l2-backend-ws-url", l2BackendWSURL)
 		}
 		if u.Host == "" {
-			return Config{}, fmt.Errorf("invalid %s/%s %q (missing host)", EnvL2BackendWSURL, "--l2-backend-ws-url", l2BackendWSURL)
+			return Config{}, fmt.Errorf("invalid %s/%s %q (missing host)", envVarL2BackendWSURL, "--l2-backend-ws-url", l2BackendWSURL)
 		}
 		if u.User != nil {
-			return Config{}, fmt.Errorf("invalid %s/%s %q (must not include credentials)", EnvL2BackendWSURL, "--l2-backend-ws-url", l2BackendWSURL)
+			return Config{}, fmt.Errorf("invalid %s/%s %q (must not include credentials)", envVarL2BackendWSURL, "--l2-backend-ws-url", l2BackendWSURL)
 		}
 		// Preserve the original string (including path/query) but ensure whitespace
 		// isn't part of the configured URL.
@@ -1069,7 +1069,7 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 		if strings.TrimSpace(l2BackendWSOrigin) != "" && strings.TrimSpace(l2BackendOriginOverride) == "" {
 			origin, err := normalizeOriginHeaderValue(l2BackendWSOrigin)
 			if err != nil {
-				return Config{}, fmt.Errorf("invalid %s/%s %q: %w", EnvL2BackendWSOrigin, "--l2-backend-ws-origin", l2BackendWSOrigin, err)
+				return Config{}, fmt.Errorf("invalid %s/%s %q: %w", envVarL2BackendWSOrigin, "--l2-backend-ws-origin", l2BackendWSOrigin, err)
 			}
 			l2BackendWSOrigin = origin
 		}
@@ -1077,7 +1077,7 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 		if strings.TrimSpace(l2BackendWSToken) != "" {
 			token := strings.TrimSpace(l2BackendWSToken)
 			if !isValidWebSocketSubprotocolToken(token) {
-				return Config{}, fmt.Errorf("invalid %s/%s: token must be a valid WebSocket subprotocol token (RFC 7230 tchar); got %q", EnvL2BackendWSToken, "--l2-backend-ws-token", l2BackendWSToken)
+				return Config{}, fmt.Errorf("invalid %s/%s: token must be a valid WebSocket subprotocol token (RFC 7230 tchar); got %q", envVarL2BackendWSToken, "--l2-backend-ws-token", l2BackendWSToken)
 			}
 			l2BackendWSToken = token
 		}
@@ -1087,7 +1087,7 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 		l2BackendWSToken = strings.TrimSpace(l2BackendWSToken)
 		// RFC 6455: Sec-WebSocket-Protocol values must be HTTP "tokens".
 		if !isHTTPToken(l2BackendWSToken) {
-			return Config{}, fmt.Errorf("invalid %s/%s (token is not valid for Sec-WebSocket-Protocol)", EnvL2BackendWSToken, "--l2-backend-ws-token")
+			return Config{}, fmt.Errorf("invalid %s/%s (token is not valid for Sec-WebSocket-Protocol)", envVarL2BackendWSToken, "--l2-backend-ws-token")
 		}
 	}
 
@@ -1099,7 +1099,7 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 	if strings.TrimSpace(l2BackendOriginOverride) != "" {
 		origin, err := normalizeOriginValue(l2BackendOriginOverride)
 		if err != nil {
-			return Config{}, fmt.Errorf("invalid %s/%s %q: %w", EnvL2BackendOriginOverride, "--l2-backend-origin-override", l2BackendOriginOverride, err)
+			return Config{}, fmt.Errorf("invalid %s/%s %q: %w", envVarL2BackendOriginOverride, "--l2-backend-origin-override", l2BackendOriginOverride, err)
 		}
 		// Treat L2_BACKEND_ORIGIN_OVERRIDE/--l2-backend-origin-override as an alias
 		// that overrides the backend Origin header configured via L2_BACKEND_WS_ORIGIN.
@@ -1319,7 +1319,7 @@ func parseAuthMode(raw string) (AuthMode, error) {
 	case string(AuthModeJWT):
 		return AuthModeJWT, nil
 	default:
-		return "", fmt.Errorf("invalid %s %q (expected %s, %s, or %s)", EnvAuthMode, raw, AuthModeNone, AuthModeAPIKey, AuthModeJWT)
+		return "", fmt.Errorf("invalid %s %q (expected %s, %s, or %s)", envVarAuthMode, raw, AuthModeNone, AuthModeAPIKey, AuthModeJWT)
 	}
 }
 
@@ -1332,7 +1332,7 @@ func parseL2BackendAuthForwardMode(raw string) (L2BackendAuthForwardMode, error)
 	case string(L2BackendAuthForwardModeSubprotocol):
 		return L2BackendAuthForwardModeSubprotocol, nil
 	default:
-		return "", fmt.Errorf("invalid %s %q (expected %s, %s, or %s)", EnvL2BackendAuthForwardMode, raw,
+		return "", fmt.Errorf("invalid %s %q (expected %s, %s, or %s)", envVarL2BackendAuthForwardMode, raw,
 			L2BackendAuthForwardModeNone,
 			L2BackendAuthForwardModeQuery,
 			L2BackendAuthForwardModeSubprotocol,

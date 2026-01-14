@@ -16,7 +16,7 @@ func lookupMap(m map[string]string) func(string) (string, bool) {
 
 func TestDefaultsDev(t *testing.T) {
 	cfg, err := load(lookupMap(map[string]string{
-		EnvAPIKey: "secret",
+		envVarAPIKey: "secret",
 	}), nil)
 	if err != nil {
 		t.Fatalf("load: %v", err)
@@ -120,8 +120,8 @@ func TestDefaultsDev(t *testing.T) {
 
 func TestMaxUDPDestBuckets_DefaultsToMaxUniqueDestinations(t *testing.T) {
 	cfg, err := load(lookupMap(map[string]string{
-		EnvAPIKey:                          "secret",
-		EnvMaxUniqueDestinationsPerSession: "123",
+		envVarAPIKey:                          "secret",
+		envVarMaxUniqueDestinationsPerSession: "123",
 	}), nil)
 	if err != nil {
 		t.Fatalf("load: %v", err)
@@ -133,9 +133,9 @@ func TestMaxUDPDestBuckets_DefaultsToMaxUniqueDestinations(t *testing.T) {
 
 func TestMaxUDPDestBuckets_EnvOverride(t *testing.T) {
 	cfg, err := load(lookupMap(map[string]string{
-		EnvAPIKey:                          "secret",
-		EnvMaxUniqueDestinationsPerSession: "123",
-		EnvMaxUDPDestBucketsPerSession:     "7",
+		envVarAPIKey:                          "secret",
+		envVarMaxUniqueDestinationsPerSession: "123",
+		envVarMaxUDPDestBucketsPerSession:     "7",
 	}), nil)
 	if err != nil {
 		t.Fatalf("load: %v", err)
@@ -147,7 +147,7 @@ func TestMaxUDPDestBuckets_EnvOverride(t *testing.T) {
 
 func TestMaxUDPDestBuckets_DefaultsToMaxUniqueDestinations_Flag(t *testing.T) {
 	cfg, err := load(lookupMap(map[string]string{
-		EnvAPIKey: "secret",
+		envVarAPIKey: "secret",
 	}), []string{"--max-unique-destinations-per-session", "123"})
 	if err != nil {
 		t.Fatalf("load: %v", err)
@@ -159,8 +159,8 @@ func TestMaxUDPDestBuckets_DefaultsToMaxUniqueDestinations_Flag(t *testing.T) {
 
 func TestSessionPreallocTTL_EnvOverride(t *testing.T) {
 	cfg, err := load(lookupMap(map[string]string{
-		EnvAPIKey:             "secret",
-		EnvSessionPreallocTTL: "5s",
+		envVarAPIKey:             "secret",
+		envVarSessionPreallocTTL: "5s",
 	}), nil)
 	if err != nil {
 		t.Fatalf("load: %v", err)
@@ -172,8 +172,8 @@ func TestSessionPreallocTTL_EnvOverride(t *testing.T) {
 
 func TestSessionPreallocTTL_FlagOverride(t *testing.T) {
 	cfg, err := load(lookupMap(map[string]string{
-		EnvAPIKey:             "secret",
-		EnvSessionPreallocTTL: "5s",
+		envVarAPIKey:             "secret",
+		envVarSessionPreallocTTL: "5s",
 	}), []string{"--session-prealloc-ttl", "10s"})
 	if err != nil {
 		t.Fatalf("load: %v", err)
@@ -185,8 +185,8 @@ func TestSessionPreallocTTL_FlagOverride(t *testing.T) {
 
 func TestSessionPreallocTTL_RejectsZero(t *testing.T) {
 	_, err := load(lookupMap(map[string]string{
-		EnvAPIKey:             "secret",
-		EnvSessionPreallocTTL: "0s",
+		envVarAPIKey:             "secret",
+		envVarSessionPreallocTTL: "0s",
 	}), nil)
 	if err == nil {
 		t.Fatalf("expected error, got nil")
@@ -195,8 +195,8 @@ func TestSessionPreallocTTL_RejectsZero(t *testing.T) {
 
 func TestMaxDatagramPayloadBytes_EnvOverride(t *testing.T) {
 	cfg, err := load(lookupMap(map[string]string{
-		EnvAPIKey:                  "secret",
-		EnvMaxDatagramPayloadBytes: "1400",
+		envVarAPIKey:                  "secret",
+		envVarMaxDatagramPayloadBytes: "1400",
 	}), nil)
 	if err != nil {
 		t.Fatalf("load: %v", err)
@@ -211,25 +211,25 @@ func TestMaxDatagramPayloadBytes_EnvOverride(t *testing.T) {
 
 func TestUDPReadBufferBytes_RequiresMaxDatagramPayloadBytesPlusOne(t *testing.T) {
 	_, err := load(lookupMap(map[string]string{
-		EnvAPIKey:                  "secret",
-		EnvUDPReadBufferBytes:      "1200",
-		EnvMaxDatagramPayloadBytes: "1200",
+		envVarAPIKey:                  "secret",
+		envVarUDPReadBufferBytes:      "1200",
+		envVarMaxDatagramPayloadBytes: "1200",
 	}), nil)
 	if err == nil {
 		t.Fatalf("expected error, got nil")
 	}
-	if !strings.Contains(err.Error(), EnvUDPReadBufferBytes) {
-		t.Fatalf("err=%v, expected mention of %s", err, EnvUDPReadBufferBytes)
+	if !strings.Contains(err.Error(), envVarUDPReadBufferBytes) {
+		t.Fatalf("err=%v, expected mention of %s", err, envVarUDPReadBufferBytes)
 	}
 }
 
 func TestWebSocketTimeouts_EnvOverride(t *testing.T) {
 	cfg, err := load(lookupMap(map[string]string{
-		EnvAPIKey:                  "secret",
-		EnvSignalingWSIdleTimeout:  "10s",
-		EnvSignalingWSPingInterval: "3s",
-		EnvUDPWSIdleTimeout:        "11s",
-		EnvUDPWSPingInterval:       "4s",
+		envVarAPIKey:                  "secret",
+		envVarSignalingWSIdleTimeout:  "10s",
+		envVarSignalingWSPingInterval: "3s",
+		envVarUDPWSIdleTimeout:        "11s",
+		envVarUDPWSPingInterval:       "4s",
 	}), nil)
 	if err != nil {
 		t.Fatalf("load: %v", err)
@@ -251,9 +251,9 @@ func TestWebSocketTimeouts_EnvOverride(t *testing.T) {
 func TestWebSocketTimeouts_RejectsPingIntervalGTEIdleTimeout(t *testing.T) {
 	t.Run("signaling", func(t *testing.T) {
 		_, err := load(lookupMap(map[string]string{
-			EnvAPIKey:                  "secret",
-			EnvSignalingWSIdleTimeout:  "1s",
-			EnvSignalingWSPingInterval: "1s",
+			envVarAPIKey:                  "secret",
+			envVarSignalingWSIdleTimeout:  "1s",
+			envVarSignalingWSPingInterval: "1s",
 		}), nil)
 		if err == nil {
 			t.Fatalf("expected error, got nil")
@@ -262,9 +262,9 @@ func TestWebSocketTimeouts_RejectsPingIntervalGTEIdleTimeout(t *testing.T) {
 
 	t.Run("udp", func(t *testing.T) {
 		_, err := load(lookupMap(map[string]string{
-			EnvAPIKey:            "secret",
-			EnvUDPWSIdleTimeout:  "1s",
-			EnvUDPWSPingInterval: "1s",
+			envVarAPIKey:            "secret",
+			envVarUDPWSIdleTimeout:  "1s",
+			envVarUDPWSPingInterval: "1s",
 		}), nil)
 		if err == nil {
 			t.Fatalf("expected error, got nil")
@@ -274,9 +274,9 @@ func TestWebSocketTimeouts_RejectsPingIntervalGTEIdleTimeout(t *testing.T) {
 
 func TestWebRTCDataChannelMaxMessageBytes_AutoDerivesFromRelayLimits(t *testing.T) {
 	cfg, err := load(lookupMap(map[string]string{
-		EnvAPIKey:                  "secret",
-		EnvMaxDatagramPayloadBytes: "1400",
-		EnvL2MaxMessageBytes:       "2048",
+		envVarAPIKey:                  "secret",
+		envVarMaxDatagramPayloadBytes: "1400",
+		envVarL2MaxMessageBytes:       "2048",
 	}), nil)
 	if err != nil {
 		t.Fatalf("load: %v", err)
@@ -291,9 +291,9 @@ func TestWebRTCDataChannelMaxMessageBytes_AutoDerivesFromRelayLimits(t *testing.
 
 func TestWebRTCDataChannelMaxMessageBytes_EnvOverride_TooSmall(t *testing.T) {
 	_, err := load(lookupMap(map[string]string{
-		EnvAPIKey:                           "secret",
-		EnvL2MaxMessageBytes:                "4096",
-		EnvWebRTCDataChannelMaxMessageBytes: "1024",
+		envVarAPIKey:                           "secret",
+		envVarL2MaxMessageBytes:                "4096",
+		envVarWebRTCDataChannelMaxMessageBytes: "1024",
 	}), nil)
 	if err == nil {
 		t.Fatalf("expected error, got nil")
@@ -302,8 +302,8 @@ func TestWebRTCDataChannelMaxMessageBytes_EnvOverride_TooSmall(t *testing.T) {
 
 func TestUDPInboundFilterMode_EnvOverride(t *testing.T) {
 	cfg, err := load(lookupMap(map[string]string{
-		EnvAPIKey:               "secret",
-		EnvUDPInboundFilterMode: "any",
+		envVarAPIKey:               "secret",
+		envVarUDPInboundFilterMode: "any",
 	}), nil)
 	if err != nil {
 		t.Fatalf("load: %v", err)
@@ -315,8 +315,8 @@ func TestUDPInboundFilterMode_EnvOverride(t *testing.T) {
 
 func TestUDPInboundFilterMode_Invalid(t *testing.T) {
 	_, err := load(lookupMap(map[string]string{
-		EnvAPIKey:               "secret",
-		EnvUDPInboundFilterMode: "nope",
+		envVarAPIKey:               "secret",
+		envVarUDPInboundFilterMode: "nope",
 	}), nil)
 	if err == nil {
 		t.Fatalf("expected error, got nil")
@@ -325,8 +325,8 @@ func TestUDPInboundFilterMode_Invalid(t *testing.T) {
 
 func TestUDPInboundFilterMode_FlagOverride(t *testing.T) {
 	cfg, err := load(lookupMap(map[string]string{
-		EnvAPIKey:               "secret",
-		EnvUDPInboundFilterMode: "address_and_port",
+		envVarAPIKey:               "secret",
+		envVarUDPInboundFilterMode: "address_and_port",
 	}), []string{"--udp-inbound-filter-mode", "any"})
 	if err != nil {
 		t.Fatalf("load: %v", err)
@@ -338,7 +338,7 @@ func TestUDPInboundFilterMode_FlagOverride(t *testing.T) {
 
 func TestUDPRemoteAllowlistIdleTimeout_DefaultsToBindingIdleTimeoutWhenBindingOverriddenByFlag(t *testing.T) {
 	cfg, err := load(lookupMap(map[string]string{
-		EnvAPIKey: "secret",
+		envVarAPIKey: "secret",
 	}), []string{"--udp-binding-idle-timeout", "10s"})
 	if err != nil {
 		t.Fatalf("load: %v", err)
@@ -353,8 +353,8 @@ func TestUDPRemoteAllowlistIdleTimeout_DefaultsToBindingIdleTimeoutWhenBindingOv
 
 func TestUDPRemoteAllowlistIdleTimeout_DefaultsToBindingIdleTimeoutWhenBindingOverriddenByEnv(t *testing.T) {
 	cfg, err := load(lookupMap(map[string]string{
-		EnvAPIKey:                "secret",
-		EnvUDPBindingIdleTimeout: "10s",
+		envVarAPIKey:                "secret",
+		envVarUDPBindingIdleTimeout: "10s",
 	}), nil)
 	if err != nil {
 		t.Fatalf("load: %v", err)
@@ -369,8 +369,8 @@ func TestUDPRemoteAllowlistIdleTimeout_DefaultsToBindingIdleTimeoutWhenBindingOv
 
 func TestUDPRemoteAllowlistIdleTimeout_EnvOverride(t *testing.T) {
 	cfg, err := load(lookupMap(map[string]string{
-		EnvAPIKey:                        "secret",
-		EnvUDPRemoteAllowlistIdleTimeout: "30s",
+		envVarAPIKey:                        "secret",
+		envVarUDPRemoteAllowlistIdleTimeout: "30s",
 	}), nil)
 	if err != nil {
 		t.Fatalf("load: %v", err)
@@ -382,8 +382,8 @@ func TestUDPRemoteAllowlistIdleTimeout_EnvOverride(t *testing.T) {
 
 func TestUDPRemoteAllowlistIdleTimeout_Invalid(t *testing.T) {
 	_, err := load(lookupMap(map[string]string{
-		EnvAPIKey:                        "secret",
-		EnvUDPRemoteAllowlistIdleTimeout: "nope",
+		envVarAPIKey:                        "secret",
+		envVarUDPRemoteAllowlistIdleTimeout: "nope",
 	}), nil)
 	if err == nil {
 		t.Fatalf("expected error, got nil")
@@ -393,8 +393,8 @@ func TestUDPRemoteAllowlistIdleTimeout_Invalid(t *testing.T) {
 func TestUDPBindingIdleTimeout_RejectsNonPositive(t *testing.T) {
 	t.Run("zero", func(t *testing.T) {
 		_, err := load(lookupMap(map[string]string{
-			EnvAPIKey:                "secret",
-			EnvUDPBindingIdleTimeout: "0s",
+			envVarAPIKey:                "secret",
+			envVarUDPBindingIdleTimeout: "0s",
 		}), nil)
 		if err == nil {
 			t.Fatalf("expected error, got nil")
@@ -403,8 +403,8 @@ func TestUDPBindingIdleTimeout_RejectsNonPositive(t *testing.T) {
 
 	t.Run("negative", func(t *testing.T) {
 		_, err := load(lookupMap(map[string]string{
-			EnvAPIKey:                "secret",
-			EnvUDPBindingIdleTimeout: "-1s",
+			envVarAPIKey:                "secret",
+			envVarUDPBindingIdleTimeout: "-1s",
 		}), nil)
 		if err == nil {
 			t.Fatalf("expected error, got nil")
@@ -415,8 +415,8 @@ func TestUDPBindingIdleTimeout_RejectsNonPositive(t *testing.T) {
 func TestUDPRemoteAllowlistIdleTimeout_RejectsNonPositive(t *testing.T) {
 	t.Run("zero", func(t *testing.T) {
 		_, err := load(lookupMap(map[string]string{
-			EnvAPIKey:                        "secret",
-			EnvUDPRemoteAllowlistIdleTimeout: "0s",
+			envVarAPIKey:                        "secret",
+			envVarUDPRemoteAllowlistIdleTimeout: "0s",
 		}), nil)
 		if err == nil {
 			t.Fatalf("expected error, got nil")
@@ -425,8 +425,8 @@ func TestUDPRemoteAllowlistIdleTimeout_RejectsNonPositive(t *testing.T) {
 
 	t.Run("negative", func(t *testing.T) {
 		_, err := load(lookupMap(map[string]string{
-			EnvAPIKey:                        "secret",
-			EnvUDPRemoteAllowlistIdleTimeout: "-1s",
+			envVarAPIKey:                        "secret",
+			envVarUDPRemoteAllowlistIdleTimeout: "-1s",
 		}), nil)
 		if err == nil {
 			t.Fatalf("expected error, got nil")
@@ -436,8 +436,8 @@ func TestUDPRemoteAllowlistIdleTimeout_RejectsNonPositive(t *testing.T) {
 
 func TestUDPRemoteAllowlistIdleTimeout_FlagOverride(t *testing.T) {
 	cfg, err := load(lookupMap(map[string]string{
-		EnvAPIKey:                        "secret",
-		EnvUDPRemoteAllowlistIdleTimeout: "30s",
+		envVarAPIKey:                        "secret",
+		envVarUDPRemoteAllowlistIdleTimeout: "30s",
 	}), []string{"--udp-remote-allowlist-idle-timeout", "10s"})
 	if err != nil {
 		t.Fatalf("load: %v", err)
@@ -449,8 +449,8 @@ func TestUDPRemoteAllowlistIdleTimeout_FlagOverride(t *testing.T) {
 
 func TestMaxAllowedRemotesPerBinding_EnvOverride(t *testing.T) {
 	cfg, err := load(lookupMap(map[string]string{
-		EnvAPIKey:                      "secret",
-		EnvMaxAllowedRemotesPerBinding: "42",
+		envVarAPIKey:                      "secret",
+		envVarMaxAllowedRemotesPerBinding: "42",
 	}), nil)
 	if err != nil {
 		t.Fatalf("load: %v", err)
@@ -463,8 +463,8 @@ func TestMaxAllowedRemotesPerBinding_EnvOverride(t *testing.T) {
 func TestMaxAllowedRemotesPerBinding_Invalid(t *testing.T) {
 	t.Run("non_int", func(t *testing.T) {
 		_, err := load(lookupMap(map[string]string{
-			EnvAPIKey:                      "secret",
-			EnvMaxAllowedRemotesPerBinding: "nope",
+			envVarAPIKey:                      "secret",
+			envVarMaxAllowedRemotesPerBinding: "nope",
 		}), nil)
 		if err == nil {
 			t.Fatalf("expected error, got nil")
@@ -473,8 +473,8 @@ func TestMaxAllowedRemotesPerBinding_Invalid(t *testing.T) {
 
 	t.Run("non_positive", func(t *testing.T) {
 		_, err := load(lookupMap(map[string]string{
-			EnvAPIKey:                      "secret",
-			EnvMaxAllowedRemotesPerBinding: "0",
+			envVarAPIKey:                      "secret",
+			envVarMaxAllowedRemotesPerBinding: "0",
 		}), nil)
 		if err == nil {
 			t.Fatalf("expected error, got nil")
@@ -484,8 +484,8 @@ func TestMaxAllowedRemotesPerBinding_Invalid(t *testing.T) {
 
 func TestMaxAllowedRemotesPerBinding_FlagOverride(t *testing.T) {
 	cfg, err := load(lookupMap(map[string]string{
-		EnvAPIKey:                      "secret",
-		EnvMaxAllowedRemotesPerBinding: "30",
+		envVarAPIKey:                      "secret",
+		envVarMaxAllowedRemotesPerBinding: "30",
 	}), []string{"--max-allowed-remotes-per-binding", "10"})
 	if err != nil {
 		t.Fatalf("load: %v", err)
@@ -497,9 +497,9 @@ func TestMaxAllowedRemotesPerBinding_FlagOverride(t *testing.T) {
 
 func TestWebRTCSCTPMaxReceiveBufferBytes_EnvOverride(t *testing.T) {
 	cfg, err := load(lookupMap(map[string]string{
-		EnvAPIKey:                           "secret",
-		EnvWebRTCDataChannelMaxMessageBytes: "4096",
-		EnvWebRTCSCTPMaxReceiveBufferBytes:  "8192",
+		envVarAPIKey:                           "secret",
+		envVarWebRTCDataChannelMaxMessageBytes: "4096",
+		envVarWebRTCSCTPMaxReceiveBufferBytes:  "8192",
 	}), nil)
 	if err != nil {
 		t.Fatalf("load: %v", err)
@@ -516,17 +516,17 @@ func TestWebRTCSCTPMaxReceiveBufferBytes_RejectsBelow1500(t *testing.T) {
 	// pion/sctp rejects values below ~1500 during association setup (INIT/INIT-ACK
 	// validation). Ensure config validation rejects these values early.
 	_, err := load(lookupMap(map[string]string{
-		EnvAPIKey:                           "secret",
-		EnvMaxDatagramPayloadBytes:          "1",
-		EnvL2MaxMessageBytes:                "1",
-		EnvWebRTCDataChannelMaxMessageBytes: "25",   // MAX_DATAGRAM_PAYLOAD_BYTES+24
-		EnvWebRTCSCTPMaxReceiveBufferBytes:  "1000", // < 1500
+		envVarAPIKey:                           "secret",
+		envVarMaxDatagramPayloadBytes:          "1",
+		envVarL2MaxMessageBytes:                "1",
+		envVarWebRTCDataChannelMaxMessageBytes: "25",   // MAX_DATAGRAM_PAYLOAD_BYTES+24
+		envVarWebRTCSCTPMaxReceiveBufferBytes:  "1000", // < 1500
 	}), nil)
 	if err == nil {
 		t.Fatalf("expected error, got nil")
 	}
-	if !strings.Contains(err.Error(), EnvWebRTCSCTPMaxReceiveBufferBytes) {
-		t.Fatalf("err=%v, expected mention of %s", err, EnvWebRTCSCTPMaxReceiveBufferBytes)
+	if !strings.Contains(err.Error(), envVarWebRTCSCTPMaxReceiveBufferBytes) {
+		t.Fatalf("err=%v, expected mention of %s", err, envVarWebRTCSCTPMaxReceiveBufferBytes)
 	}
 	if !strings.Contains(err.Error(), "1500") {
 		t.Fatalf("err=%v, expected mention of minimum 1500", err)
@@ -535,7 +535,7 @@ func TestWebRTCSCTPMaxReceiveBufferBytes_RejectsBelow1500(t *testing.T) {
 
 func TestDefaultsProdWhenModeFlagSet(t *testing.T) {
 	cfg, err := load(lookupMap(map[string]string{
-		EnvAPIKey: "secret",
+		envVarAPIKey: "secret",
 	}), []string{"--mode", "prod"})
 	if err != nil {
 		t.Fatalf("load: %v", err)
@@ -550,7 +550,7 @@ func TestDefaultsProdWhenModeFlagSet(t *testing.T) {
 
 func TestLogFormatExplicitOverride(t *testing.T) {
 	cfg, err := load(lookupMap(map[string]string{
-		EnvAPIKey: "secret",
+		envVarAPIKey: "secret",
 	}), []string{"--mode", "prod", "--log-format", "text"})
 	if err != nil {
 		t.Fatalf("load: %v", err)
@@ -562,8 +562,8 @@ func TestLogFormatExplicitOverride(t *testing.T) {
 
 func TestWebRTCUDPPortRange_RequiresBoth(t *testing.T) {
 	_, err := load(lookupMap(map[string]string{
-		EnvAPIKey:           "secret",
-		EnvWebRTCUDPPortMin: "40000",
+		envVarAPIKey:           "secret",
+		envVarWebRTCUDPPortMin: "40000",
 	}), nil)
 	if err == nil {
 		t.Fatalf("expected error, got nil")
@@ -572,9 +572,9 @@ func TestWebRTCUDPPortRange_RequiresBoth(t *testing.T) {
 
 func TestWebRTCUDPPortRange_TooSmall(t *testing.T) {
 	_, err := load(lookupMap(map[string]string{
-		EnvAPIKey:           "secret",
-		EnvWebRTCUDPPortMin: "40000",
-		EnvWebRTCUDPPortMax: "40010",
+		envVarAPIKey:           "secret",
+		envVarWebRTCUDPPortMin: "40000",
+		envVarWebRTCUDPPortMax: "40010",
 	}), nil)
 	if err == nil {
 		t.Fatalf("expected error, got nil")
@@ -586,9 +586,9 @@ func TestWebRTCUDPPortRange_TooSmall(t *testing.T) {
 
 func TestWebRTCUDPPortRange_OK(t *testing.T) {
 	cfg, err := load(lookupMap(map[string]string{
-		EnvAPIKey:           "secret",
-		EnvWebRTCUDPPortMin: "40000",
-		EnvWebRTCUDPPortMax: "40199",
+		envVarAPIKey:           "secret",
+		envVarWebRTCUDPPortMin: "40000",
+		envVarWebRTCUDPPortMax: "40199",
 	}), nil)
 	if err != nil {
 		t.Fatalf("load: %v", err)
@@ -603,9 +603,9 @@ func TestWebRTCUDPPortRange_OK(t *testing.T) {
 
 func TestWebRTCNAT1To1IPsAndCandidateType(t *testing.T) {
 	cfg, err := load(lookupMap(map[string]string{
-		EnvAPIKey:                       "secret",
-		EnvWebRTCNAT1To1IPs:             "203.0.113.10, 203.0.113.11",
-		EnvWebRTCNAT1To1IPCandidateType: "srflx",
+		envVarAPIKey:                       "secret",
+		envVarWebRTCNAT1To1IPs:             "203.0.113.10, 203.0.113.11",
+		envVarWebRTCNAT1To1IPCandidateType: "srflx",
 	}), nil)
 	if err != nil {
 		t.Fatalf("load: %v", err)
@@ -620,8 +620,8 @@ func TestWebRTCNAT1To1IPsAndCandidateType(t *testing.T) {
 
 func TestWebRTCNAT1To1IPs_InvalidCandidateType(t *testing.T) {
 	_, err := load(lookupMap(map[string]string{
-		EnvAPIKey:                       "secret",
-		EnvWebRTCNAT1To1IPCandidateType: "nope",
+		envVarAPIKey:                       "secret",
+		envVarWebRTCNAT1To1IPCandidateType: "nope",
 	}), nil)
 	if err == nil {
 		t.Fatalf("expected error, got nil")
@@ -630,8 +630,8 @@ func TestWebRTCNAT1To1IPs_InvalidCandidateType(t *testing.T) {
 
 func TestWebRTCNAT1To1IPs_InvalidIPs(t *testing.T) {
 	_, err := load(lookupMap(map[string]string{
-		EnvAPIKey:           "secret",
-		EnvWebRTCNAT1To1IPs: "nope",
+		envVarAPIKey:           "secret",
+		envVarWebRTCNAT1To1IPs: "nope",
 	}), nil)
 	if err == nil {
 		t.Fatalf("expected error, got nil")
@@ -640,8 +640,8 @@ func TestWebRTCNAT1To1IPs_InvalidIPs(t *testing.T) {
 
 func TestWebRTCUDPListenIP(t *testing.T) {
 	cfg, err := load(lookupMap(map[string]string{
-		EnvAPIKey:            "secret",
-		EnvWebRTCUDPListenIP: "10.0.0.123",
+		envVarAPIKey:            "secret",
+		envVarWebRTCUDPListenIP: "10.0.0.123",
 	}), nil)
 	if err != nil {
 		t.Fatalf("load: %v", err)
@@ -653,8 +653,8 @@ func TestWebRTCUDPListenIP(t *testing.T) {
 
 func TestWebRTCUDPListenIP_Invalid(t *testing.T) {
 	_, err := load(lookupMap(map[string]string{
-		EnvAPIKey:            "secret",
-		EnvWebRTCUDPListenIP: "bad.ip",
+		envVarAPIKey:            "secret",
+		envVarWebRTCUDPListenIP: "bad.ip",
 	}), nil)
 	if err == nil {
 		t.Fatalf("expected error, got nil")
@@ -666,23 +666,23 @@ func TestAuthModeAPIKey_RequiresAPIKey(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected error, got nil")
 	}
-	if !strings.Contains(err.Error(), EnvAPIKey) {
-		t.Fatalf("err=%v, expected mention of %s", err, EnvAPIKey)
+	if !strings.Contains(err.Error(), envVarAPIKey) {
+		t.Fatalf("err=%v, expected mention of %s", err, envVarAPIKey)
 	}
 }
 
 func TestL2BackendWSURL_ValidatesSchemeAndHost(t *testing.T) {
 	_, err := load(lookupMap(map[string]string{
-		EnvAPIKey:         "secret",
-		EnvL2BackendWSURL: "http://example.com/l2",
+		envVarAPIKey:         "secret",
+		envVarL2BackendWSURL: "http://example.com/l2",
 	}), nil)
 	if err == nil {
 		t.Fatalf("expected error, got nil")
 	}
 
 	_, err = load(lookupMap(map[string]string{
-		EnvAPIKey:         "secret",
-		EnvL2BackendWSURL: "ws:///l2",
+		envVarAPIKey:         "secret",
+		envVarL2BackendWSURL: "ws:///l2",
 	}), nil)
 	if err == nil {
 		t.Fatalf("expected error, got nil")
@@ -691,11 +691,11 @@ func TestL2BackendWSURL_ValidatesSchemeAndHost(t *testing.T) {
 
 func TestL2BackendWSURL_AcceptsWebSocketURL(t *testing.T) {
 	cfg, err := load(lookupMap(map[string]string{
-		EnvAPIKey:            "secret",
-		EnvL2BackendWSURL:    "ws://127.0.0.1:8090/l2",
-		EnvL2BackendWSOrigin: "HTTPS://Example.COM:443/",
-		EnvL2BackendWSToken:  "test-token",
-		EnvL2MaxMessageBytes: "2048",
+		envVarAPIKey:            "secret",
+		envVarL2BackendWSURL:    "ws://127.0.0.1:8090/l2",
+		envVarL2BackendWSOrigin: "HTTPS://Example.COM:443/",
+		envVarL2BackendWSToken:  "test-token",
+		envVarL2MaxMessageBytes: "2048",
 	}), nil)
 	if err != nil {
 		t.Fatalf("load: %v", err)
@@ -722,8 +722,8 @@ func TestL2BackendWSURL_AcceptsWebSocketURL(t *testing.T) {
 
 func TestL2BackendWSToken_AcceptsHTTPToken(t *testing.T) {
 	cfg, err := load(lookupMap(map[string]string{
-		EnvAPIKey:           "secret",
-		EnvL2BackendWSToken: "jwt_like.token-123",
+		envVarAPIKey:           "secret",
+		envVarL2BackendWSToken: "jwt_like.token-123",
 	}), nil)
 	if err != nil {
 		t.Fatalf("load: %v", err)
@@ -735,8 +735,8 @@ func TestL2BackendWSToken_AcceptsHTTPToken(t *testing.T) {
 
 func TestL2BackendForwardAeroSession_EnvOverride(t *testing.T) {
 	cfg, err := load(lookupMap(map[string]string{
-		EnvAPIKey:                      "secret",
-		EnvL2BackendForwardAeroSession: "true",
+		envVarAPIKey:                      "secret",
+		envVarL2BackendForwardAeroSession: "true",
 	}), nil)
 	if err != nil {
 		t.Fatalf("load: %v", err)
@@ -748,21 +748,21 @@ func TestL2BackendForwardAeroSession_EnvOverride(t *testing.T) {
 
 func TestL2BackendWSToken_RejectsInvalidToken(t *testing.T) {
 	_, err := load(lookupMap(map[string]string{
-		EnvAPIKey:           "secret",
-		EnvL2BackendWSToken: "not a token",
+		envVarAPIKey:           "secret",
+		envVarL2BackendWSToken: "not a token",
 	}), nil)
 	if err == nil {
 		t.Fatalf("expected error, got nil")
 	}
-	if !strings.Contains(err.Error(), EnvL2BackendWSToken) {
-		t.Fatalf("expected error mentioning %s (err=%v)", EnvL2BackendWSToken, err)
+	if !strings.Contains(err.Error(), envVarL2BackendWSToken) {
+		t.Fatalf("expected error mentioning %s (err=%v)", envVarL2BackendWSToken, err)
 	}
 }
 
 func TestL2BackendToken_EnvAlias_AcceptsHTTPToken(t *testing.T) {
 	cfg, err := load(lookupMap(map[string]string{
-		EnvAPIKey:         "secret",
-		EnvL2BackendToken: "jwt_like.token-123",
+		envVarAPIKey:         "secret",
+		envVarL2BackendToken: "jwt_like.token-123",
 	}), nil)
 	if err != nil {
 		t.Fatalf("load: %v", err)
@@ -774,9 +774,9 @@ func TestL2BackendToken_EnvAlias_AcceptsHTTPToken(t *testing.T) {
 
 func TestL2BackendOrigin_EnvAlias_NormalizesAndValidates(t *testing.T) {
 	cfg, err := load(lookupMap(map[string]string{
-		EnvAPIKey:          "secret",
-		EnvL2BackendWSURL:  "ws://127.0.0.1:8090/l2",
-		EnvL2BackendOrigin: "HTTPS://Example.COM:443/",
+		envVarAPIKey:          "secret",
+		envVarL2BackendWSURL:  "ws://127.0.0.1:8090/l2",
+		envVarL2BackendOrigin: "HTTPS://Example.COM:443/",
 	}), nil)
 	if err != nil {
 		t.Fatalf("load: %v", err)
@@ -788,8 +788,8 @@ func TestL2BackendOrigin_EnvAlias_NormalizesAndValidates(t *testing.T) {
 
 func TestL2BackendOrigin_EnvAlias_RejectsPath(t *testing.T) {
 	_, err := load(lookupMap(map[string]string{
-		EnvAPIKey:          "secret",
-		EnvL2BackendOrigin: "https://example.com/path",
+		envVarAPIKey:          "secret",
+		envVarL2BackendOrigin: "https://example.com/path",
 	}), nil)
 	if err == nil {
 		t.Fatalf("expected error, got nil")
@@ -798,8 +798,8 @@ func TestL2BackendOrigin_EnvAlias_RejectsPath(t *testing.T) {
 
 func TestL2BackendToken_EnvAlias_RejectsComma(t *testing.T) {
 	_, err := load(lookupMap(map[string]string{
-		EnvAPIKey:         "secret",
-		EnvL2BackendToken: "abc,def",
+		envVarAPIKey:         "secret",
+		envVarL2BackendToken: "abc,def",
 	}), nil)
 	if err == nil {
 		t.Fatalf("expected error, got nil")
@@ -808,9 +808,9 @@ func TestL2BackendToken_EnvAlias_RejectsComma(t *testing.T) {
 
 func TestL2BackendAuthForwardMode_Subprotocol(t *testing.T) {
 	cfg, err := load(lookupMap(map[string]string{
-		EnvAPIKey:                   "secret",
-		EnvL2BackendWSURL:           "ws://127.0.0.1:8090/l2",
-		EnvL2BackendAuthForwardMode: "subprotocol",
+		envVarAPIKey:                   "secret",
+		envVarL2BackendWSURL:           "ws://127.0.0.1:8090/l2",
+		envVarL2BackendAuthForwardMode: "subprotocol",
 	}), nil)
 	if err != nil {
 		t.Fatalf("load: %v", err)
@@ -822,9 +822,9 @@ func TestL2BackendAuthForwardMode_Subprotocol(t *testing.T) {
 
 func TestL2BackendOriginOverride_NormalizesAndValidates(t *testing.T) {
 	cfg, err := load(lookupMap(map[string]string{
-		EnvAPIKey:                  "secret",
-		EnvL2BackendWSURL:          "ws://127.0.0.1:8090/l2",
-		EnvL2BackendOriginOverride: "HTTPS://Example.COM:443/",
+		envVarAPIKey:                  "secret",
+		envVarL2BackendWSURL:          "ws://127.0.0.1:8090/l2",
+		envVarL2BackendOriginOverride: "HTTPS://Example.COM:443/",
 	}), nil)
 	if err != nil {
 		t.Fatalf("load: %v", err)
@@ -836,9 +836,9 @@ func TestL2BackendOriginOverride_NormalizesAndValidates(t *testing.T) {
 
 func TestL2BackendOriginAlias_NormalizesAndValidates(t *testing.T) {
 	cfg, err := load(lookupMap(map[string]string{
-		EnvAPIKey:          "secret",
-		EnvL2BackendWSURL:  "ws://127.0.0.1:8090/l2",
-		EnvL2BackendOrigin: "HTTPS://Example.COM:443/",
+		envVarAPIKey:          "secret",
+		envVarL2BackendWSURL:  "ws://127.0.0.1:8090/l2",
+		envVarL2BackendOrigin: "HTTPS://Example.COM:443/",
 	}), nil)
 	if err != nil {
 		t.Fatalf("load: %v", err)
@@ -850,8 +850,8 @@ func TestL2BackendOriginAlias_NormalizesAndValidates(t *testing.T) {
 
 func TestL2BackendTokenAlias_AcceptsHTTPToken(t *testing.T) {
 	cfg, err := load(lookupMap(map[string]string{
-		EnvAPIKey:         "secret",
-		EnvL2BackendToken: "jwt_like.token-123",
+		envVarAPIKey:         "secret",
+		envVarL2BackendToken: "jwt_like.token-123",
 	}), nil)
 	if err != nil {
 		t.Fatalf("load: %v", err)
@@ -863,10 +863,10 @@ func TestL2BackendTokenAlias_AcceptsHTTPToken(t *testing.T) {
 
 func TestL2BackendOriginOverride_IgnoresInvalidWSOrigin(t *testing.T) {
 	cfg, err := load(lookupMap(map[string]string{
-		EnvAPIKey:                  "secret",
-		EnvL2BackendWSURL:          "ws://127.0.0.1:8090/l2",
-		EnvL2BackendWSOrigin:       "https://invalid.example.com/path",
-		EnvL2BackendOriginOverride: "HTTPS://Example.COM:443/",
+		envVarAPIKey:                  "secret",
+		envVarL2BackendWSURL:          "ws://127.0.0.1:8090/l2",
+		envVarL2BackendWSOrigin:       "https://invalid.example.com/path",
+		envVarL2BackendOriginOverride: "HTTPS://Example.COM:443/",
 	}), nil)
 	if err != nil {
 		t.Fatalf("load: %v", err)
