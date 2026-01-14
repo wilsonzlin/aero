@@ -2520,7 +2520,16 @@ impl XhciController {
             for ev in events {
                 let residual = ev.residual & 0x00ff_ffff;
                 let status = residual | (u32::from(ev.completion_code.as_u8()) << 24);
-                let mut trb = Trb::new(ev.trb_ptr & !0x0f, status, 0);
+                let mut trb = if let Some(event_data) = ev.event_data {
+                    // xHCI spec: when an Event Data TRB terminates the TD, the Transfer Event TRB
+                    // sets ED=1 and copies the Event Data TRB `parameter` value into the Transfer
+                    // Event TRB parameter field (instead of a TRB pointer).
+                    let mut trb = Trb::new(event_data, status, 0);
+                    trb.control |= Trb::CONTROL_EVENT_DATA_BIT;
+                    trb
+                } else {
+                    Trb::new(ev.trb_ptr & !0x0f, status, 0)
+                };
                 trb.set_trb_type(TrbType::TransferEvent);
                 trb.set_slot_id(slot_id);
                 trb.set_endpoint_id(Self::endpoint_id_from_ep_addr(ev.ep_addr));

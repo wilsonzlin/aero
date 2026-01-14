@@ -231,6 +231,7 @@ fn assert_single_success_event(events: &[TransferEvent], ep_addr: u8, trb_ptr: u
         &[TransferEvent {
             ep_addr,
             trb_ptr,
+            event_data: None,
             residual,
             completion_code: CompletionCode::Success,
         }]
@@ -480,6 +481,7 @@ fn xhci_bulk_in_short_packet_sets_residual_bytes() {
         &[TransferEvent {
             ep_addr: 0x81,
             trb_ptr: normal_trb_addr,
+            event_data: None,
             residual: 5,
             completion_code: CompletionCode::ShortPacket,
         }]
@@ -924,6 +926,7 @@ fn xhci_transfer_executor_advances_past_unsupported_trb_and_processes_next() {
         &[TransferEvent {
             ep_addr: 0x81,
             trb_ptr: bad_trb_addr,
+            event_data: None,
             residual: 0,
             completion_code: CompletionCode::TrbError,
         }]
@@ -991,6 +994,7 @@ fn xhci_transfer_executor_noop_trb_advances_ring_and_does_not_touch_device() {
         &[TransferEvent {
             ep_addr: 0x81,
             trb_ptr: noop_addr,
+            event_data: None,
             residual: 0,
             completion_code: CompletionCode::Success,
         }]

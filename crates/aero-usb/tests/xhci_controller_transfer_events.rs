@@ -5,7 +5,7 @@ use aero_usb::xhci::interrupter::IMAN_IE;
 use aero_usb::xhci::regs;
 use aero_usb::xhci::trb::{Trb, TrbType, TRB_LEN};
 use aero_usb::xhci::{CommandCompletionCode, XhciController};
-use aero_usb::{ControlResponse, MemoryBus, SetupPacket, UsbDeviceModel, UsbWebUsbPassthroughDevice};
+use aero_usb::{ControlResponse, MemoryBus, SetupPacket, UsbDeviceModel, UsbInResult, UsbWebUsbPassthroughDevice};
 
 mod util;
 
@@ -14,6 +14,22 @@ use util::{Alloc, TestMemory};
 fn make_normal_trb(buf_ptr: u64, len: u32, cycle: bool, ioc: bool) -> Trb {
     let mut trb = Trb::new(buf_ptr, len & Trb::STATUS_TRANSFER_LEN_MASK, 0);
     trb.set_trb_type(TrbType::Normal);
+    trb.set_cycle(cycle);
+    if ioc {
+        trb.control |= Trb::CONTROL_IOC_BIT;
+    }
+    trb
+}
+
+fn make_chained_normal_trb(buf_ptr: u64, len: u32, cycle: bool) -> Trb {
+    let mut trb = make_normal_trb(buf_ptr, len, cycle, false);
+    trb.control |= Trb::CONTROL_CHAIN_BIT;
+    trb
+}
+
+fn make_event_data_trb(event_data: u64, cycle: bool, ioc: bool) -> Trb {
+    let mut trb = Trb::new(event_data, 0, 0);
+    trb.set_trb_type(TrbType::EventData);
     trb.set_cycle(cycle);
     if ioc {
         trb.control |= Trb::CONTROL_IOC_BIT;
@@ -81,6 +97,28 @@ fn configure_event_ring(ctrl: &mut XhciController, mem: &mut TestMemory, erstba:
     ctrl.mmio_write(mem, regs::REG_INTR0_ERDP_LO, 4, ring_base as u32);
     ctrl.mmio_write(mem, regs::REG_INTR0_ERDP_HI, 4, (ring_base >> 32) as u32);
     ctrl.mmio_write(mem, regs::REG_INTR0_IMAN, 4, IMAN_IE);
+}
+
+#[derive(Clone, Debug)]
+struct FixedInterruptInDevice;
+
+impl UsbDeviceModel for FixedInterruptInDevice {
+    fn handle_control_request(
+        &mut self,
+        _setup: SetupPacket,
+        _data_stage: Option<&[u8]>,
+    ) -> ControlResponse {
+        ControlResponse::Stall
+    }
+
+    fn handle_in_transfer(&mut self, ep_addr: u8, max_len: usize) -> UsbInResult {
+        assert_eq!(ep_addr, 0x81);
+        let mut data = vec![0xde, 0xad, 0xbe, 0xef];
+        if data.len() > max_len {
+            data.truncate(max_len);
+        }
+        UsbInResult::Data(data)
+    }
 }
 
 #[test]
@@ -171,6 +209,63 @@ fn xhci_controller_interrupt_in_dmas_and_emits_transfer_event_trb() {
     assert_eq!(ev.slot_id(), slot_id);
     assert_eq!(ev.endpoint_id(), EP_ID);
     assert_eq!(ev.pointer(), ring_base);
+    assert_eq!(ev.completion_code_raw(), 1); // Success
+    assert_eq!(ev.status & 0x00ff_ffff, 0); // residual
+}
+
+#[test]
+fn xhci_controller_transfer_event_sets_ed_bit_and_copies_event_data_parameter() {
+    let mut xhci = XhciController::new();
+    xhci.attach_device(0, Box::new(FixedInterruptInDevice));
+    while xhci.pop_pending_event().is_some() {}
+
+    let mut mem = TestMemory::new(0x20_000);
+    let mut alloc = Alloc::new(0x1000);
+
+    let dcbaa = alloc.alloc(0x800, 0x40) as u64;
+    let dev_ctx = alloc.alloc(0x400, 0x40) as u64;
+    set_dcbaap(&mut xhci, &mut mem, dcbaa);
+
+    let enable = xhci.enable_slot(&mut mem);
+    assert_eq!(enable.completion_code, CommandCompletionCode::Success);
+    let slot_id = enable.slot_id;
+    assert_ne!(slot_id, 0);
+    configure_dcbaa(&mut mem, dcbaa, slot_id, dev_ctx);
+
+    let mut slot_ctx = SlotContext::default();
+    slot_ctx.set_root_hub_port_number(1);
+    let addr = xhci.address_device(slot_id, slot_ctx);
+    assert_eq!(addr.completion_code, CommandCompletionCode::Success);
+
+    let erstba = alloc.alloc(0x40, 0x10) as u64;
+    let event_ring = alloc.alloc((TRB_LEN * 16) as u32, 0x10) as u64;
+    configure_event_ring(&mut xhci, &mut mem, erstba, event_ring, 16);
+
+    let ring_base = alloc.alloc((TRB_LEN * 2) as u32, 0x10) as u64;
+    let buf = alloc.alloc(4, 0x10) as u64;
+
+    // Endpoint 1 IN => endpoint id 3.
+    const EP_ID: u8 = 3;
+    write_endpoint_context(&mut mem, dev_ctx, EP_ID, 7, 8, ring_base, true);
+
+    // TD: Normal (CH=1) then Event Data (IOC=1). The Transfer Event TRB should set ED=1 and copy
+    // the Event Data TRB `parameter` payload.
+    Trb::write_to(&make_chained_normal_trb(buf, 4, true), &mut mem, ring_base);
+    Trb::write_to(&make_event_data_trb(0xfeed_beef, true, true), &mut mem, ring_base + TRB_LEN as u64);
+
+    ring_endpoint_doorbell(&mut xhci, &mut mem, slot_id, EP_ID);
+    xhci.service_event_ring(&mut mem);
+
+    let mut got = [0u8; 4];
+    mem.read(buf as u32, &mut got);
+    assert_eq!(got, [0xde, 0xad, 0xbe, 0xef]);
+
+    let ev = Trb::read_from(&mut mem, event_ring);
+    assert_eq!(ev.trb_type(), TrbType::TransferEvent);
+    assert!(ev.control & Trb::CONTROL_EVENT_DATA_BIT != 0);
+    assert_eq!(ev.parameter, 0xfeed_beef);
+    assert_eq!(ev.slot_id(), slot_id);
+    assert_eq!(ev.endpoint_id(), EP_ID);
     assert_eq!(ev.completion_code_raw(), 1); // Success
     assert_eq!(ev.status & 0x00ff_ffff, 0); // residual
 }

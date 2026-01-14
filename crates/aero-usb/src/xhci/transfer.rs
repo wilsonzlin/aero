@@ -34,6 +34,11 @@ pub struct TransferEvent {
     pub ep_addr: u8,
     /// Pointer to the TRB that generated the event (typically the last TRB of the TD).
     pub trb_ptr: u64,
+    /// If the TD terminates with an Event Data TRB, this holds the TRB's `parameter` payload.
+    ///
+    /// Real xHCI controllers set the Transfer Event TRB's ED bit and copy this value into the
+    /// Transfer Event TRB parameter field (instead of a TRB pointer).
+    pub event_data: Option<u64>,
     /// The number of bytes remaining (residual) in the TD.
     pub residual: u32,
     pub completion_code: CompletionCode,
@@ -51,6 +56,7 @@ struct TdDescriptor {
     total_len: u32,
     last_trb_ptr: u64,
     last_ioc: bool,
+    event_data: Option<u64>,
     next_dequeue_ptr: u64,
     next_cycle: bool,
 }
@@ -228,6 +234,7 @@ impl XhciTransferExecutor {
                     total_len: 0,
                     last_trb_ptr: ep.ring.dequeue_ptr,
                     last_ioc: false,
+                    event_data: None,
                     next_dequeue_ptr: ep.ring.dequeue_ptr,
                     next_cycle: ep.ring.cycle,
                 };
@@ -240,6 +247,7 @@ impl XhciTransferExecutor {
                         self.pending_events.push(TransferEvent {
                             ep_addr: ep.ep_addr,
                             trb_ptr,
+                            event_data: None,
                             residual: 0,
                             completion_code: CompletionCode::TrbError,
                         });
@@ -260,6 +268,7 @@ impl XhciTransferExecutor {
                         self.pending_events.push(TransferEvent {
                             ep_addr: ep.ep_addr,
                             trb_ptr,
+                            event_data: None,
                             residual: 0,
                             completion_code: CompletionCode::TrbError,
                         });
@@ -271,6 +280,7 @@ impl XhciTransferExecutor {
                     self.pending_events.push(TransferEvent {
                         ep_addr: ep.ep_addr,
                         trb_ptr,
+                        event_data: None,
                         residual: 0,
                         completion_code: CompletionCode::Success,
                     });
@@ -285,6 +295,7 @@ impl XhciTransferExecutor {
                 let event = TransferEvent {
                     ep_addr: ep.ep_addr,
                     trb_ptr: ep.ring.dequeue_ptr,
+                    event_data: None,
                     residual: 0,
                     completion_code: CompletionCode::TrbError,
                 };
@@ -313,6 +324,7 @@ impl XhciTransferExecutor {
                 self.pending_events.push(TransferEvent {
                     ep_addr: ep.ep_addr,
                     trb_ptr: ep.ring.dequeue_ptr,
+                    event_data: None,
                     residual: 0,
                     completion_code: CompletionCode::TrbError,
                 });
@@ -331,6 +343,7 @@ impl XhciTransferExecutor {
         self.pending_events.push(TransferEvent {
             ep_addr: ep.ep_addr,
             trb_ptr: ep.ring.dequeue_ptr,
+            event_data: None,
             residual: 0,
             completion_code: CompletionCode::TrbError,
         });
@@ -350,6 +363,7 @@ impl XhciTransferExecutor {
         td.total_len = 0;
         td.last_trb_ptr = ptr;
         td.last_ioc = false;
+        td.event_data = None;
         td.next_dequeue_ptr = ptr;
         td.next_cycle = cycle;
 
@@ -404,8 +418,8 @@ impl XhciTransferExecutor {
                     // bytes, but may carry a driver-owned pointer in `parameter` for use by the real
                     // xHC when generating Transfer Events.
                     //
-                    // This executor does not currently surface that pointer, but we still accept
-                    // the TRB so guests that use Event Data TD terminators do not fault/halt.
+                    // Expose the event-data payload so callers can set the Transfer Event TRB ED
+                    // bit and preserve the parameter field semantics expected by real xHCI drivers.
                     let trb_ptr = ptr;
                     if trb.chain() {
                         // Event Data TRBs are not expected to be chained.
@@ -418,6 +432,7 @@ impl XhciTransferExecutor {
 
                     td.last_trb_ptr = trb_ptr;
                     td.last_ioc = trb.ioc();
+                    td.event_data = Some(trb.parameter);
                     td.next_dequeue_ptr = ptr;
                     td.next_cycle = cycle;
                     return GatherTdResult::Ready;
@@ -497,6 +512,7 @@ impl XhciTransferExecutor {
             self.pending_events.push(TransferEvent {
                 ep_addr: ep.ep_addr,
                 trb_ptr: td.last_trb_ptr,
+                event_data: td.event_data,
                 residual,
                 completion_code,
             });

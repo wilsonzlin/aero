@@ -73,6 +73,11 @@ impl Trb {
     pub const CONTROL_CYCLE_BIT: u32 = 1 << 0;
     /// Link TRB "toggle cycle" bit (TC) in the control dword.
     pub const CONTROL_LINK_TOGGLE_CYCLE: u32 = 1 << 1;
+    /// Transfer Event TRB "event data" bit (ED) in the control dword.
+    ///
+    /// When set, the Transfer Event TRB parameter field contains a driver-provided payload copied
+    /// from an Event Data TRB, rather than a TRB pointer.
+    pub const CONTROL_EVENT_DATA_BIT: u32 = 1 << 2;
     /// TRB chain bit (CH) in the control dword.
     pub const CONTROL_CHAIN_BIT: u32 = 1 << 4;
     /// TRB interrupt-on-completion bit (IOC) in the control dword.

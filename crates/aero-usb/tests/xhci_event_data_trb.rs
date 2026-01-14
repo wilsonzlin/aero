@@ -110,6 +110,7 @@ fn xhci_td_can_terminate_with_event_data_trb() {
         &[TransferEvent {
             ep_addr: 0x81,
             trb_ptr: event_data_trb_addr,
+            event_data: Some(0xfeed_beef),
             residual: 0,
             completion_code: CompletionCode::Success,
         }]
@@ -119,4 +120,3 @@ fn xhci_td_can_terminate_with_event_data_trb() {
         ring_base + 2 * TRB_LEN
     );
 }
-
