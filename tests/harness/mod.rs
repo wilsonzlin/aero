@@ -356,17 +356,33 @@ struct ScreenshotMismatchArtifacts {
     warnings: Vec<String>,
 }
 
-fn write_screenshot_mismatch_artifacts(
-    golden: &Path,
-    cfg: &ImageMatchConfig,
-    actual: &RgbaImage,
-    expected: &RgbaImage,
-    diff: &ImageDiff,
-    qemu_cmdline: &[String],
-    serial_log_src: &Path,
-    qemu_log: &str,
+struct ScreenshotMismatchArtifactContext<'a> {
+    golden: &'a Path,
+    cfg: &'a ImageMatchConfig,
+    actual: &'a RgbaImage,
+    expected: &'a RgbaImage,
+    diff: &'a ImageDiff,
+    qemu_cmdline: &'a [String],
+    serial_log_src: &'a Path,
+    qemu_log: &'a str,
     nonce: u64,
+}
+
+fn write_screenshot_mismatch_artifacts(
+    ctx: ScreenshotMismatchArtifactContext<'_>,
 ) -> ScreenshotMismatchArtifacts {
+    let ScreenshotMismatchArtifactContext {
+        golden,
+        cfg,
+        actual,
+        expected,
+        diff,
+        qemu_cmdline,
+        serial_log_src,
+        qemu_log,
+        nonce,
+    } = ctx;
+
     let label = screenshot_artifact_label(golden, cfg);
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -514,15 +530,14 @@ fn write_screenshot_mismatch_artifacts(
         },
     });
 
-    match serde_json::to_vec_pretty(&meta)
+    if let Some(err) = serde_json::to_vec_pretty(&meta)
         .ok()
         .and_then(|bytes| std::fs::write(&meta_path, bytes).err())
     {
-        Some(err) => warnings.push(format!(
+        warnings.push(format!(
             "failed to write metadata {}: {err}",
             meta_path.display()
-        )),
-        None => {}
+        ));
     }
 
     ScreenshotMismatchArtifacts {
@@ -759,15 +774,17 @@ impl QemuVm {
                     let nonce = self.qmp.next_nonce();
                     let qemu_log = self.stderr.snapshot_lossy();
                     let artifacts = write_screenshot_mismatch_artifacts(
-                        golden,
-                        cfg,
-                        &actual,
-                        &expected,
-                        &diff,
-                        &self.qemu_cmdline,
-                        &self.serial_path,
-                        &qemu_log,
-                        nonce,
+                        ScreenshotMismatchArtifactContext {
+                            golden,
+                            cfg,
+                            actual: &actual,
+                            expected: &expected,
+                            diff: &diff,
+                            qemu_cmdline: &self.qemu_cmdline,
+                            serial_log_src: &self.serial_path,
+                            qemu_log: &qemu_log,
+                            nonce,
+                        },
                     );
                     msg.push_str(&format!(
                         "\nartifacts:\n  dir:      {}\n  actual:   {}\n  expected: {}\n  diff:     {}\n  serial:   {}\n  qemu_log: {}\n  meta:     {}",
