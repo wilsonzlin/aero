@@ -151,9 +151,12 @@ On `VIRTIO_SND_R_PCM_INFO(start_id=0, count=2)`, the driver expects **two** `vir
   - `VIRTIO_SND_R_PCM_RELEASE` (`0x0103`)
   - `VIRTIO_SND_R_PCM_START` (`0x0104`)
   - `VIRTIO_SND_R_PCM_STOP` (`0x0105`)
-- [ ] `PCM_SET_PARAMS` parameters expected by the driver:
+- [ ] Contract v1 `PCM_SET_PARAMS` parameters expected by the driver:
   - Stream 0 (output): `channels=2`, `format=S16`, `rate=48000`, `features=0`
   - Stream 1 (input): `channels=1`, `format=S16`, `rate=48000`, `features=0`
+  - (Optional/non-contract) If the device advertises additional formats/rates/channel counts in `PCM_INFO`, the Win7
+    driver may send those values in `PCM_SET_PARAMS` when Windows selects them. If you advertise extra capabilities,
+    ensure you actually implement them.
 
 ## TX/RX buffer framing (PCM xfer + status)
 
