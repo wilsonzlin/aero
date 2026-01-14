@@ -36,9 +36,14 @@ test("IO worker does not switch mouse backend while a button is held (prevents s
   const result = await page.evaluate(async () => {
     const { allocateSharedMemorySegments, createSharedMemoryViews, StatusIndex } = await import("/web/src/runtime/shared_layout.ts");
     const { InputEventQueue } = await import("/web/src/input/event_queue.ts");
+    const { MessageType } = await import("/web/src/runtime/protocol.ts");
     const { emptySetBootDisksMessage } = await import("/web/src/runtime/boot_disks_protocol.ts");
 
     // This test only needs a tiny guest RAM window for virtqueue descriptors/buffers.
+    //
+    // Keep allocations small to reduce memory pressure when Playwright runs tests fully-parallel
+    // across multiple browsers, and to avoid Firefox structured-clone issues when init messages
+    // contain multiple aliased SharedArrayBuffers.
     const segments = allocateSharedMemorySegments({
       guestRamMiB: 1,
       vramMiB: 0,
@@ -84,6 +89,14 @@ test("IO worker does not switch mouse backend while a button is held (prevents s
     });
     ioWorker.addEventListener("messageerror", () => {
       ioWorkerError = "io.worker messageerror";
+    });
+    ioWorker.addEventListener("message", (ev) => {
+      if (ioWorkerError) return;
+      const data = ev.data as { type?: unknown; role?: unknown; message?: unknown } | undefined;
+      if (!data || typeof data !== "object") return;
+      if (data.type === MessageType.ERROR && data.role === "io") {
+        ioWorkerError = typeof data.message === "string" ? data.message : String(data.message);
+      }
     });
 
     const waitForAtomic = async (idx: number, expected: number, timeoutMs: number): Promise<void> => {
@@ -707,8 +720,6 @@ test("IO worker does not switch mouse backend while a button is held (prevents s
         ioIpcSab: segments.ioIpc,
         sharedFramebuffer: segments.sharedFramebuffer,
         sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,
-        scanoutState: segments.scanoutState,
-        scanoutStateOffsetBytes: segments.scanoutStateOffsetBytes,
       });
       ioWorker.postMessage(emptySetBootDisksMessage());
 

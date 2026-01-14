@@ -40,11 +40,14 @@ test("IO worker switches keyboard input from i8042 scancodes to virtio-input aft
   const result = await page.evaluate(async () => {
     const { allocateSharedMemorySegments, createSharedMemoryViews, StatusIndex } = await import("/web/src/runtime/shared_layout.ts");
     const { InputEventQueue } = await import("/web/src/input/event_queue.ts");
+    const { MessageType } = await import("/web/src/runtime/protocol.ts");
     const { emptySetBootDisksMessage } = await import("/web/src/runtime/boot_disks_protocol.ts");
 
-    // This test only needs a tiny guest RAM window for virtqueue descriptors/buffers. Keep it
-    // small to avoid unnecessary memory pressure when Playwright runs tests fully-parallel across
-    // multiple browsers.
+    // This test only needs a tiny guest RAM window for virtqueue descriptors/buffers.
+    //
+    // Keep allocations small to reduce memory pressure when Playwright runs tests fully-parallel
+    // across multiple browsers, and to avoid Firefox structured-clone issues when init messages
+    // contain multiple aliased SharedArrayBuffers.
     const segments = allocateSharedMemorySegments({
       guestRamMiB: 1,
       vramMiB: 0,
@@ -126,6 +129,25 @@ test("IO worker switches keyboard input from i8042 scancodes to virtio-input aft
       (timer as unknown as { unref?: () => void }).unref?.();
     });
 
+    let ioWorkerError: string | null = null;
+    const onIoWorkerMessage = (ev: MessageEvent) => {
+      const data = ev.data as { type?: unknown; role?: unknown; message?: unknown } | undefined;
+      if (!data || typeof data !== "object") return;
+      if (data.type === MessageType.ERROR && data.role === "io") {
+        ioWorkerError = typeof data.message === "string" ? data.message : String(data.message);
+      }
+    };
+    const onIoWorkerError = (ev: Event) => {
+      const e = ev as ErrorEvent | undefined;
+      ioWorkerError = e?.message || "io.worker error";
+    };
+    const onIoWorkerMessageError = () => {
+      ioWorkerError = "io.worker messageerror";
+    };
+    ioWorker.addEventListener("message", onIoWorkerMessage);
+    ioWorker.addEventListener("error", onIoWorkerError);
+    ioWorker.addEventListener("messageerror", onIoWorkerMessageError);
+
     // io.worker waits for an initial boot disk selection message before reporting READY.
     ioWorker.postMessage(emptySetBootDisksMessage());
     ioWorker.postMessage({
@@ -136,13 +158,12 @@ test("IO worker switches keyboard input from i8042 scancodes to virtio-input aft
       ioIpcSab: segments.ioIpc,
       sharedFramebuffer: segments.sharedFramebuffer,
       sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,
-      scanoutState: segments.scanoutState,
-      scanoutStateOffsetBytes: segments.scanoutStateOffsetBytes,
     });
 
     const waitForAtomic = async (idx: number, expected: number, timeoutMs: number): Promise<void> => {
       const start = typeof performance?.now === "function" ? performance.now() : Date.now();
       while ((typeof performance?.now === "function" ? performance.now() : Date.now()) - start < timeoutMs) {
+        if (ioWorkerError) throw new Error(`io.worker failed: ${ioWorkerError}`);
         if (Atomics.load(status, idx) === expected) return;
         await new Promise((resolve) => setTimeout(resolve, 10));
       }
@@ -152,6 +173,7 @@ test("IO worker switches keyboard input from i8042 scancodes to virtio-input aft
     const waitForIoInputBatchCounter = async (prev: number, timeoutMs: number): Promise<number> => {
       const start = typeof performance?.now === "function" ? performance.now() : Date.now();
       while ((typeof performance?.now === "function" ? performance.now() : Date.now()) - start < timeoutMs) {
+        if (ioWorkerError) throw new Error(`io.worker failed: ${ioWorkerError}`);
         const cur = Atomics.load(status, StatusIndex.IoInputBatchCounter) >>> 0;
         if (cur > prev) return cur;
         await new Promise((resolve) => setTimeout(resolve, 10));

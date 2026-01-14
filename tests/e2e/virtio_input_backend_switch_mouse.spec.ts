@@ -38,10 +38,13 @@ test(
   const result = await page.evaluate(async () => {
     const { allocateSharedMemorySegments, createSharedMemoryViews, StatusIndex } = await import("/web/src/runtime/shared_layout.ts");
     const { emptySetBootDisksMessage } = await import("/web/src/runtime/boot_disks_protocol.ts");
+    const { MessageType } = await import("/web/src/runtime/protocol.ts");
 
-    // This test only needs a tiny guest RAM window for virtqueue descriptors/buffers. Keep it
-    // small to avoid unnecessary memory pressure when Playwright runs tests fully-parallel across
-    // multiple browsers.
+    // This test only needs a tiny guest RAM window for virtqueue descriptors/buffers.
+    //
+    // Keep allocations small to reduce memory pressure when Playwright runs tests fully-parallel
+    // across multiple browsers, and to avoid Firefox structured-clone issues when init messages
+    // contain multiple aliased SharedArrayBuffers.
     const segments = allocateSharedMemorySegments({
       guestRamMiB: 1,
       vramMiB: 0,
@@ -118,10 +121,30 @@ test(
       (timer as unknown as { unref?: () => void }).unref?.();
     });
 
+    let ioWorkerError: string | null = null;
+    const onIoWorkerMessage = (ev: MessageEvent) => {
+      const data = ev.data as { type?: unknown; role?: unknown; message?: unknown } | undefined;
+      if (!data || typeof data !== "object") return;
+      if (data.type === MessageType.ERROR && data.role === "io") {
+        ioWorkerError = typeof data.message === "string" ? data.message : String(data.message);
+      }
+    };
+    const onIoWorkerError = (ev: Event) => {
+      const e = ev as ErrorEvent | undefined;
+      ioWorkerError = e?.message || "io.worker error";
+    };
+    const onIoWorkerMessageError = () => {
+      ioWorkerError = "io.worker messageerror";
+    };
+    ioWorker.addEventListener("message", onIoWorkerMessage);
+    ioWorker.addEventListener("error", onIoWorkerError);
+    ioWorker.addEventListener("messageerror", onIoWorkerMessageError);
+
     const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
     const waitFor = async (predicate: () => boolean, timeoutMs: number, name: string) => {
       const deadline = (typeof performance?.now === "function" ? performance.now() : Date.now()) + timeoutMs;
       while ((typeof performance?.now === "function" ? performance.now() : Date.now()) < deadline) {
+        if (ioWorkerError) throw new Error(`io.worker failed: ${ioWorkerError}`);
         if (predicate()) return;
         await sleep(5);
       }
@@ -137,6 +160,11 @@ test(
         (timer as unknown as { unref?: () => void }).unref?.();
 
         const onMessage = (ev: MessageEvent<unknown>) => {
+          if (ioWorkerError) {
+            cleanup();
+            reject(new Error(`io.worker failed: ${ioWorkerError}`));
+            return;
+          }
           if (!predicate(ev.data)) return;
           cleanup();
           resolve(ev.data);
@@ -642,8 +670,6 @@ test(
         ioIpcSab: segments.ioIpc,
         sharedFramebuffer: segments.sharedFramebuffer,
         sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,
-        scanoutState: segments.scanoutState,
-        scanoutStateOffsetBytes: segments.scanoutStateOffsetBytes,
       });
       ioWorker.postMessage(emptySetBootDisksMessage());
 
