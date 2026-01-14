@@ -5,6 +5,7 @@ use libfuzzer_sys::fuzz_target;
 
 use aero_io_snapshot::io::state::IoSnapshot;
 use aero_usb::hid::UsbHidKeyboardHandle;
+use aero_usb::hub::UsbHubDevice;
 use aero_usb::memory::MemoryBus;
 use aero_usb::xhci::context::{EndpointContext, SlotContext, CONTEXT_SIZE};
 use aero_usb::xhci::{regs, trb::*, XhciController};
@@ -166,7 +167,9 @@ fn seed_controller_state(bus: &mut FuzzBus, xhci: &mut XhciController) {
     // Input Slot Context: bind to roothub port 1 (the 0th port in the controller model).
     let mut slot_ctx = SlotContext::default();
     slot_ctx.set_root_hub_port_number(1);
-    slot_ctx.set_route_string(0);
+    // Route string `0x1` == hub port 1 behind the root port. This matches the hub topology we
+    // attach in the fuzzer harness (root port 1 -> hub -> port 1 -> keyboard).
+    slot_ctx.set_route_string(1);
     slot_ctx.set_context_entries(1);
     slot_ctx.write_to(bus, INPUT_CTX_BASE + CONTEXT_SIZE as u64);
 
@@ -186,7 +189,7 @@ fn seed_controller_state(bus: &mut FuzzBus, xhci: &mut XhciController) {
     {
         let mut slot_ctx = SlotContext::default();
         slot_ctx.set_root_hub_port_number(1);
-        slot_ctx.set_route_string(0);
+        slot_ctx.set_route_string(1);
         // EP1 IN is context index 3, so ContextEntries should be >= 3.
         slot_ctx.set_context_entries(3);
         slot_ctx.write_to(bus, CONFIG_INPUT_CTX_BASE + CONTEXT_SIZE as u64);
@@ -306,7 +309,7 @@ fn rearm_command_ring(bus: &mut FuzzBus, xhci: &mut XhciController, seed: Comman
             // Reinstate input Slot Context fields so Address Device has a valid topology binding.
             let mut slot_ctx = SlotContext::default();
             slot_ctx.set_root_hub_port_number(1);
-            slot_ctx.set_route_string(0);
+            slot_ctx.set_route_string(1);
             slot_ctx.set_context_entries(1);
             slot_ctx.write_to(bus, INPUT_CTX_BASE + CONTEXT_SIZE as u64);
 
@@ -415,7 +418,11 @@ fuzz_target!(|data: &[u8]| {
     // Attach a USB HID keyboard so port snapshots include nested device trees and we can inject key
     // events during fuzzing.
     let kbd = UsbHidKeyboardHandle::new();
-    xhci.attach_device(0, Box::new(kbd.clone()));
+    // Mirror the browser runtime topology: an external hub on root port 0 with a synthetic keyboard
+    // on hub port 1.
+    let mut hub = UsbHubDevice::new();
+    hub.attach(1, Box::new(kbd.clone()));
+    xhci.attach_device(0, Box::new(hub));
 
     seed_controller_state(&mut bus, &mut xhci);
 
@@ -499,8 +506,12 @@ fuzz_target!(|data: &[u8]| {
                 // Snapshot roundtrip to stress TLV encode/decode and nested device snapshots.
                 let snap = xhci.save_state();
                 let mut fresh = XhciController::new();
-                // Pre-attach keyboard so restored snapshots apply onto the same Rc handle.
-                fresh.attach_device(0, Box::new(kbd.clone()));
+                // Pre-attach the hub+keyboard topology so restored snapshots apply onto the same
+                // shared keyboard handle (so key_event injection keeps affecting the attached
+                // device after restore).
+                let mut hub = UsbHubDevice::new();
+                hub.attach(1, Box::new(kbd.clone()));
+                fresh.attach_device(0, Box::new(hub));
                 let _ = fresh.load_state(&snap);
                 xhci = fresh;
             }
