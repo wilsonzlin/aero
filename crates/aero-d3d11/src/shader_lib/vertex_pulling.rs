@@ -72,8 +72,7 @@ mod tests {
 
     #[test]
     fn wgsl_parses_and_validates() {
-        let module =
-            naga::front::wgsl::parse_str(WGSL).expect("vertex_pulling.wgsl should parse");
+        let module = naga::front::wgsl::parse_str(WGSL).expect("vertex_pulling.wgsl should parse");
         let mut validator = naga::valid::Validator::new(
             naga::valid::ValidationFlags::all(),
             naga::valid::Capabilities::all(),
