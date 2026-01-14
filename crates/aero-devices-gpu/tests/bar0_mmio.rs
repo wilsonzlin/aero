@@ -500,6 +500,79 @@ fn scanout_and_cursor_fb_gpa_mmio_64bit_write_roundtrips() {
 }
 
 #[test]
+fn scanout_and_cursor_fb_gpa_updates_are_atomic_for_readback() {
+    let mut mem = memory::Bus::new(0x20_000);
+
+    // Use the default (immediate) backend config; this test only exercises scanout/cursor readback.
+    let mut dev = new_test_device(AeroGpuExecutorConfig::default());
+
+    let scanout_fb0 = 0x5000u64;
+    let scanout_fb1 = 0x6000u64;
+    mem.write_physical(scanout_fb0, &[1, 2, 3, 4]);
+    mem.write_physical(scanout_fb1, &[5, 6, 7, 8]);
+
+    dev.write(mmio::SCANOUT0_WIDTH, 4, 1);
+    dev.write(mmio::SCANOUT0_HEIGHT, 4, 1);
+    dev.write(mmio::SCANOUT0_PITCH_BYTES, 4, 4);
+    dev.write(mmio::SCANOUT0_FORMAT, 4, AeroGpuFormat::R8G8B8A8Unorm as u64);
+    dev.write(mmio::SCANOUT0_ENABLE, 4, 1);
+
+    dev.write(mmio::SCANOUT0_FB_GPA_LO, 4, scanout_fb0);
+    dev.write(mmio::SCANOUT0_FB_GPA_HI, 4, scanout_fb0 >> 32);
+    assert_eq!(
+        dev.read_scanout0_rgba(&mut mem).unwrap(),
+        vec![1, 2, 3, 4],
+        "baseline scanout readback should use fb0"
+    );
+
+    // LO-only write must not expose a torn address to readback; keep using fb0 until HI commit.
+    dev.write(mmio::SCANOUT0_FB_GPA_LO, 4, scanout_fb1);
+    assert_eq!(
+        dev.read_scanout0_rgba(&mut mem).unwrap(),
+        vec![1, 2, 3, 4],
+        "scanout readback must remain on fb0 after LO-only update"
+    );
+    dev.write(mmio::SCANOUT0_FB_GPA_HI, 4, scanout_fb1 >> 32);
+    assert_eq!(
+        dev.read_scanout0_rgba(&mut mem).unwrap(),
+        vec![5, 6, 7, 8],
+        "scanout readback should flip to fb1 after HI commit"
+    );
+
+    let cursor_fb0 = 0x7000u64;
+    let cursor_fb1 = 0x8000u64;
+    mem.write_physical(cursor_fb0, &[9, 10, 11, 12]);
+    mem.write_physical(cursor_fb1, &[13, 14, 15, 16]);
+
+    dev.write(mmio::CURSOR_WIDTH, 4, 1);
+    dev.write(mmio::CURSOR_HEIGHT, 4, 1);
+    dev.write(mmio::CURSOR_PITCH_BYTES, 4, 4);
+    dev.write(mmio::CURSOR_FORMAT, 4, AeroGpuFormat::R8G8B8A8Unorm as u64);
+    dev.write(mmio::CURSOR_ENABLE, 4, 1);
+
+    dev.write(mmio::CURSOR_FB_GPA_LO, 4, cursor_fb0);
+    dev.write(mmio::CURSOR_FB_GPA_HI, 4, cursor_fb0 >> 32);
+    assert_eq!(
+        dev.read_cursor_rgba(&mut mem).unwrap(),
+        vec![9, 10, 11, 12],
+        "baseline cursor readback should use fb0"
+    );
+
+    dev.write(mmio::CURSOR_FB_GPA_LO, 4, cursor_fb1);
+    assert_eq!(
+        dev.read_cursor_rgba(&mut mem).unwrap(),
+        vec![9, 10, 11, 12],
+        "cursor readback must remain on fb0 after LO-only update"
+    );
+    dev.write(mmio::CURSOR_FB_GPA_HI, 4, cursor_fb1 >> 32);
+    assert_eq!(
+        dev.read_cursor_rgba(&mut mem).unwrap(),
+        vec![13, 14, 15, 16],
+        "cursor readback should flip to fb1 after HI commit"
+    );
+}
+
+#[test]
 fn cursor_xy_mmio_roundtrips_preserve_signed_values() {
     let mut dev = AeroGpuPciDevice::new(AeroGpuDeviceConfig::default());
     dev.config_mut().set_command(1 << 1);

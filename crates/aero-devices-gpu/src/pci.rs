@@ -87,6 +87,22 @@ pub struct AeroGpuPciDevice {
     boot_time_ns: Option<u64>,
     vblank_irq_enable_pending: bool,
 
+    /// Pending LO dword for `SCANOUT0_FB_GPA` while waiting for the HI write commit.
+    scanout0_fb_gpa_pending_lo: u32,
+    /// Whether the guest has written `SCANOUT0_FB_GPA_LO` without a subsequent HI write.
+    ///
+    /// This avoids exposing a torn 64-bit framebuffer address to scanout readers; drivers
+    /// typically write LO then HI.
+    scanout0_fb_gpa_lo_pending: bool,
+
+    /// Pending LO dword for `CURSOR_FB_GPA` while waiting for the HI write commit.
+    cursor_fb_gpa_pending_lo: u32,
+    /// Whether the guest has written `CURSOR_FB_GPA_LO` without a subsequent HI write.
+    ///
+    /// This avoids exposing a torn 64-bit cursor framebuffer address; drivers typically write LO
+    /// then HI.
+    cursor_fb_gpa_lo_pending: bool,
+
     doorbell_pending: bool,
     ring_reset_pending_dma: bool,
 }
@@ -150,6 +166,10 @@ impl AeroGpuPciDevice {
             next_vblank_deadline_ns: None,
             boot_time_ns: None,
             vblank_irq_enable_pending: false,
+            scanout0_fb_gpa_pending_lo: 0,
+            scanout0_fb_gpa_lo_pending: false,
+            cursor_fb_gpa_pending_lo: 0,
+            cursor_fb_gpa_lo_pending: false,
             doorbell_pending: false,
             ring_reset_pending_dma: false,
         }
@@ -463,7 +483,15 @@ impl AeroGpuPciDevice {
             mmio::SCANOUT0_HEIGHT => self.regs.scanout0.height,
             mmio::SCANOUT0_FORMAT => self.regs.scanout0.format as u32,
             mmio::SCANOUT0_PITCH_BYTES => self.regs.scanout0.pitch_bytes,
-            mmio::SCANOUT0_FB_GPA_LO => self.regs.scanout0.fb_gpa as u32,
+            mmio::SCANOUT0_FB_GPA_LO => {
+                // Expose the pending LO value while keeping `fb_gpa` stable to avoid consumers
+                // observing a torn 64-bit address mid-update.
+                if self.scanout0_fb_gpa_lo_pending {
+                    self.scanout0_fb_gpa_pending_lo
+                } else {
+                    self.regs.scanout0.fb_gpa as u32
+                }
+            }
             mmio::SCANOUT0_FB_GPA_HI => (self.regs.scanout0.fb_gpa >> 32) as u32,
 
             mmio::SCANOUT0_VBLANK_SEQ_LO => self.regs.scanout0_vblank_seq as u32,
@@ -481,7 +509,13 @@ impl AeroGpuPciDevice {
             mmio::CURSOR_WIDTH => self.regs.cursor.width,
             mmio::CURSOR_HEIGHT => self.regs.cursor.height,
             mmio::CURSOR_FORMAT => self.regs.cursor.format as u32,
-            mmio::CURSOR_FB_GPA_LO => self.regs.cursor.fb_gpa as u32,
+            mmio::CURSOR_FB_GPA_LO => {
+                if self.cursor_fb_gpa_lo_pending {
+                    self.cursor_fb_gpa_pending_lo
+                } else {
+                    self.regs.cursor.fb_gpa as u32
+                }
+            }
             mmio::CURSOR_FB_GPA_HI => (self.regs.cursor.fb_gpa >> 32) as u32,
             mmio::CURSOR_PITCH_BYTES => self.regs.cursor.pitch_bytes,
 
@@ -552,6 +586,9 @@ impl AeroGpuPciDevice {
                     self.next_vblank_deadline_ns = None;
                     self.regs.irq_status &= !irq_bits::SCANOUT_VBLANK;
                     self.update_irq_level();
+                    // Reset torn-update tracking so a stale LO write can't affect future updates.
+                    self.scanout0_fb_gpa_pending_lo = 0;
+                    self.scanout0_fb_gpa_lo_pending = false;
                 }
                 self.regs.scanout0.enable = new_enable;
             }
@@ -568,15 +605,32 @@ impl AeroGpuPciDevice {
                 self.regs.scanout0.pitch_bytes = value;
             }
             mmio::SCANOUT0_FB_GPA_LO => {
-                self.regs.scanout0.fb_gpa =
-                    (self.regs.scanout0.fb_gpa & 0xffff_ffff_0000_0000) | u64::from(value);
+                // Avoid exposing a torn 64-bit `fb_gpa` update. Treat the LO write as starting a
+                // new update and commit the combined value on the subsequent HI write.
+                self.scanout0_fb_gpa_pending_lo = value;
+                self.scanout0_fb_gpa_lo_pending = true;
             }
             mmio::SCANOUT0_FB_GPA_HI => {
-                self.regs.scanout0.fb_gpa =
-                    (self.regs.scanout0.fb_gpa & 0x0000_0000_ffff_ffff) | (u64::from(value) << 32);
+                // Drivers typically write LO then HI; treat HI as the commit point.
+                let lo = if self.scanout0_fb_gpa_lo_pending {
+                    u64::from(self.scanout0_fb_gpa_pending_lo)
+                } else {
+                    self.regs.scanout0.fb_gpa & 0xffff_ffff
+                };
+                self.regs.scanout0.fb_gpa = (u64::from(value) << 32) | lo;
+                self.scanout0_fb_gpa_lo_pending = false;
             }
 
-            mmio::CURSOR_ENABLE => self.regs.cursor.enable = value != 0,
+            mmio::CURSOR_ENABLE => {
+                let prev_enable = self.regs.cursor.enable;
+                let new_enable = value != 0;
+                self.regs.cursor.enable = new_enable;
+                if prev_enable && !new_enable {
+                    // Reset torn-update tracking so a stale LO write can't affect future updates.
+                    self.cursor_fb_gpa_pending_lo = 0;
+                    self.cursor_fb_gpa_lo_pending = false;
+                }
+            }
             mmio::CURSOR_X => self.regs.cursor.x = value as i32,
             mmio::CURSOR_Y => self.regs.cursor.y = value as i32,
             mmio::CURSOR_HOT_X => self.regs.cursor.hot_x = value,
@@ -585,12 +639,20 @@ impl AeroGpuPciDevice {
             mmio::CURSOR_HEIGHT => self.regs.cursor.height = value,
             mmio::CURSOR_FORMAT => self.regs.cursor.format = AeroGpuFormat::from_u32(value),
             mmio::CURSOR_FB_GPA_LO => {
-                self.regs.cursor.fb_gpa =
-                    (self.regs.cursor.fb_gpa & 0xffff_ffff_0000_0000) | u64::from(value);
+                // Avoid exposing a torn 64-bit cursor base update. Treat the LO write as starting a
+                // new update and commit the combined value on the subsequent HI write.
+                self.cursor_fb_gpa_pending_lo = value;
+                self.cursor_fb_gpa_lo_pending = true;
             }
             mmio::CURSOR_FB_GPA_HI => {
-                self.regs.cursor.fb_gpa =
-                    (self.regs.cursor.fb_gpa & 0x0000_0000_ffff_ffff) | (u64::from(value) << 32);
+                // Drivers typically write LO then HI; treat HI as the commit point.
+                let lo = if self.cursor_fb_gpa_lo_pending {
+                    u64::from(self.cursor_fb_gpa_pending_lo)
+                } else {
+                    self.regs.cursor.fb_gpa & 0xffff_ffff
+                };
+                self.regs.cursor.fb_gpa = (u64::from(value) << 32) | lo;
+                self.cursor_fb_gpa_lo_pending = false;
             }
             mmio::CURSOR_PITCH_BYTES => self.regs.cursor.pitch_bytes = value,
 
@@ -624,6 +686,10 @@ impl PciDevice for AeroGpuPciDevice {
         }
         self.executor.reset();
         self.irq_level = false;
+        self.scanout0_fb_gpa_pending_lo = 0;
+        self.scanout0_fb_gpa_lo_pending = false;
+        self.cursor_fb_gpa_pending_lo = 0;
+        self.cursor_fb_gpa_lo_pending = false;
         self.doorbell_pending = false;
         self.ring_reset_pending_dma = false;
         self.next_vblank_deadline_ns = None;
@@ -855,7 +921,7 @@ fn all_ones(size: usize) -> u64 {
 
 impl IoSnapshot for AeroGpuPciDevice {
     const DEVICE_ID: [u8; 4] = *b"AGPU";
-    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 1);
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 2);
 
     fn save_state(&self) -> Vec<u8> {
         const TAG_REGS: u16 = 1;
@@ -867,6 +933,10 @@ impl IoSnapshot for AeroGpuPciDevice {
         const TAG_DOORBELL_PENDING: u16 = 7;
         const TAG_RING_RESET_PENDING_DMA: u16 = 8;
         const TAG_PENDING_SUBMISSIONS: u16 = 9;
+        const TAG_SCANOUT0_FB_GPA_PENDING_LO: u16 = 10;
+        const TAG_SCANOUT0_FB_GPA_LO_PENDING: u16 = 11;
+        const TAG_CURSOR_FB_GPA_PENDING_LO: u16 = 12;
+        const TAG_CURSOR_FB_GPA_LO_PENDING: u16 = 13;
 
         let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
         w.field_bytes(TAG_REGS, encode_regs(&self.regs));
@@ -889,6 +959,10 @@ impl IoSnapshot for AeroGpuPciDevice {
         );
         w.field_bool(TAG_DOORBELL_PENDING, self.doorbell_pending);
         w.field_bool(TAG_RING_RESET_PENDING_DMA, self.ring_reset_pending_dma);
+        w.field_u32(TAG_SCANOUT0_FB_GPA_PENDING_LO, self.scanout0_fb_gpa_pending_lo);
+        w.field_bool(TAG_SCANOUT0_FB_GPA_LO_PENDING, self.scanout0_fb_gpa_lo_pending);
+        w.field_u32(TAG_CURSOR_FB_GPA_PENDING_LO, self.cursor_fb_gpa_pending_lo);
+        w.field_bool(TAG_CURSOR_FB_GPA_LO_PENDING, self.cursor_fb_gpa_lo_pending);
         w.finish()
     }
 
@@ -902,6 +976,10 @@ impl IoSnapshot for AeroGpuPciDevice {
         const TAG_DOORBELL_PENDING: u16 = 7;
         const TAG_RING_RESET_PENDING_DMA: u16 = 8;
         const TAG_PENDING_SUBMISSIONS: u16 = 9;
+        const TAG_SCANOUT0_FB_GPA_PENDING_LO: u16 = 10;
+        const TAG_SCANOUT0_FB_GPA_LO_PENDING: u16 = 11;
+        const TAG_CURSOR_FB_GPA_PENDING_LO: u16 = 12;
+        const TAG_CURSOR_FB_GPA_LO_PENDING: u16 = 13;
 
         let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
         r.ensure_device_major(Self::DEVICE_VERSION.major)?;
@@ -917,6 +995,10 @@ impl IoSnapshot for AeroGpuPciDevice {
         let vblank_irq_enable_pending = r.bool(TAG_VBLANK_IRQ_ENABLE_PENDING)?.unwrap_or(false);
         let doorbell_pending = r.bool(TAG_DOORBELL_PENDING)?.unwrap_or(false);
         let ring_reset_pending_dma = r.bool(TAG_RING_RESET_PENDING_DMA)?.unwrap_or(false);
+        let scanout0_fb_gpa_pending_lo = r.u32(TAG_SCANOUT0_FB_GPA_PENDING_LO)?.unwrap_or(0);
+        let scanout0_fb_gpa_lo_pending = r.bool(TAG_SCANOUT0_FB_GPA_LO_PENDING)?.unwrap_or(false);
+        let cursor_fb_gpa_pending_lo = r.u32(TAG_CURSOR_FB_GPA_PENDING_LO)?.unwrap_or(0);
+        let cursor_fb_gpa_lo_pending = r.bool(TAG_CURSOR_FB_GPA_LO_PENDING)?.unwrap_or(false);
 
         // Reset executor state up-front so any fields not restored from the snapshot do not leak
         // across restore calls.
@@ -938,6 +1020,10 @@ impl IoSnapshot for AeroGpuPciDevice {
         self.vblank_irq_enable_pending = vblank_irq_enable_pending;
         self.doorbell_pending = doorbell_pending;
         self.ring_reset_pending_dma = ring_reset_pending_dma;
+        self.scanout0_fb_gpa_pending_lo = scanout0_fb_gpa_pending_lo;
+        self.scanout0_fb_gpa_lo_pending = scanout0_fb_gpa_lo_pending;
+        self.cursor_fb_gpa_pending_lo = cursor_fb_gpa_pending_lo;
+        self.cursor_fb_gpa_lo_pending = cursor_fb_gpa_lo_pending;
 
         // If vblank is disabled or scanout is off, ensure no vblank deadline remains scheduled.
         if self.vblank_period_ns.is_none() || !self.regs.scanout0.enable {
