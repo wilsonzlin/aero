@@ -67,7 +67,9 @@ describe("disk_worker list_remote_caches", () => {
       { imageId: "img2", version: "v1", deliveryType: remoteRangeDeliveryType(1024) },
       { chunkSizeBytes: 1024, validators: { sizeBytes: 1024 * 1024 } },
     );
+    const indexWriteMs = nowMs + 1234;
     {
+      vi.setSystemTime(indexWriteMs);
       const remoteCacheDir = await opfsGetRemoteCacheDir();
       const dir = await remoteCacheDir.getDirectoryHandle(openedLru.cacheKey, { create: false });
       const handle = await dir.getFileHandle("index.json", { create: true });
@@ -125,7 +127,7 @@ describe("disk_worker list_remote_caches", () => {
     expect(fromIndex).toMatchObject({
       cacheKey: openedLru.cacheKey,
       cachedBytes: 1536,
-      lastAccessedAtMs: nowMs,
+      lastAccessedAtMs: indexWriteMs,
       cachedChunks: 2,
     });
   });

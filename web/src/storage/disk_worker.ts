@@ -264,32 +264,32 @@ async function opfsReadLruChunkCacheBytes(
       // ignore and fall back to scanning
     }
 
-     if (scanChunksFallback) {
-       // Fall back to scanning the chunk files if the index is missing/corrupt.
-       try {
-         const chunksDir = await cacheDir.getDirectoryHandle("chunks", { create: false });
-         let total = 0;
-         for await (const [name, handle] of chunksDir.entries()) {
-           if (handle.kind !== "file") continue;
-           if (!name.endsWith(".bin")) continue;
-           const file = await (handle as FileSystemFileHandle).getFile();
-           total += file.size;
-         }
-         return total;
-       } catch {
-         // ignore
-       }
-     }
-   } catch {
-     // cache directory missing or OPFS unavailable
-   }
+    if (scanChunksFallback) {
+      // Fall back to scanning the chunk files if the index is missing/corrupt.
+      try {
+        const chunksDir = await cacheDir.getDirectoryHandle("chunks", { create: false });
+        let total = 0;
+        for await (const [name, handle] of chunksDir.entries()) {
+          if (handle.kind !== "file") continue;
+          if (!name.endsWith(".bin")) continue;
+          const file = await (handle as FileSystemFileHandle).getFile();
+          total += file.size;
+        }
+        return total;
+      } catch {
+        // ignore
+      }
+    }
+  } catch {
+    // cache directory missing or OPFS unavailable
+  }
   return 0;
 }
 
 async function opfsReadLruChunkCacheIndexStats(
   remoteCacheDir: FileSystemDirectoryHandle,
   cacheKey: string,
-): Promise<{ totalBytes: number; chunkCount: number } | null> {
+): Promise<{ totalBytes: number; chunkCount: number; lastModifiedMs?: number } | null> {
   // Keep in sync with `OpfsLruChunkCache`'s index bounds.
   const MAX_LRU_INDEX_JSON_BYTES = 64 * 1024 * 1024; // 64 MiB
   const MAX_LRU_INDEX_CHUNK_ENTRIES = 1_000_000;
@@ -299,6 +299,12 @@ async function opfsReadLruChunkCacheIndexStats(
     const indexHandle = await cacheDir.getFileHandle("index.json", { create: false });
     const file = await indexHandle.getFile();
     if (!Number.isFinite(file.size) || file.size < 0 || file.size > MAX_LRU_INDEX_JSON_BYTES) return null;
+    const lastModifiedMs =
+      typeof (file as unknown as { lastModified?: unknown }).lastModified === "number" &&
+      Number.isFinite((file as unknown as { lastModified: number }).lastModified) &&
+      (file as unknown as { lastModified: number }).lastModified >= 0
+        ? (file as unknown as { lastModified: number }).lastModified
+        : undefined;
     const raw = await file.text();
     if (!raw.trim()) return null;
 
@@ -320,7 +326,7 @@ async function opfsReadLruChunkCacheIndexStats(
       if (typeof byteLength === "number" && Number.isFinite(byteLength) && byteLength > 0) totalBytes += byteLength;
     }
 
-    return { totalBytes, chunkCount };
+    return { totalBytes, chunkCount, lastModifiedMs };
   } catch {
     return null;
   }
@@ -1408,6 +1414,9 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
               if (stats && stats.totalBytes > status.cachedBytes) {
                 status.cachedBytes = stats.totalBytes;
                 status.cachedChunks = Math.max(status.cachedChunks, stats.chunkCount);
+                if (typeof stats.lastModifiedMs === "number" && stats.lastModifiedMs > status.lastAccessedAtMs) {
+                  status.lastAccessedAtMs = stats.lastModifiedMs;
+                }
               }
             } catch {
               // best-effort

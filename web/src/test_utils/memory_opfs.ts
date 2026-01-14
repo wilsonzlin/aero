@@ -13,7 +13,10 @@ function notFound(): DOMException {
 }
 
 class MemoryFile {
-  constructor(private readonly data: Uint8Array) {}
+  constructor(
+    private readonly data: Uint8Array,
+    readonly lastModified: number,
+  ) {}
 
   get size(): number {
     return this.data.byteLength;
@@ -70,6 +73,7 @@ class MemoryWritable {
 
 export class MemoryFileHandle {
   readonly kind = "file" as const;
+  private lastModifiedMs = Date.now();
 
   constructor(
     readonly name: string,
@@ -77,13 +81,16 @@ export class MemoryFileHandle {
   ) {}
 
   async getFile(): Promise<MemoryFile> {
-    return new MemoryFile(this.data);
+    return new MemoryFile(this.data, this.lastModifiedMs);
   }
 
   async createSyncAccessHandle(): Promise<FileSystemSyncAccessHandle> {
     let closed = false;
     const assertOpen = () => {
       if (closed) throw new Error("SyncAccessHandle closed");
+    };
+    const touch = () => {
+      this.lastModifiedMs = Date.now();
     };
 
     return {
@@ -110,6 +117,7 @@ export class MemoryFileHandle {
           this.data = next;
         }
         this.data.set(src, at);
+        touch();
         return src.byteLength;
       },
       flush: () => {
@@ -128,11 +136,13 @@ export class MemoryFileHandle {
         if (newSize === this.data.byteLength) return;
         if (newSize < this.data.byteLength) {
           this.data = this.data.subarray(0, newSize).slice();
+          touch();
           return;
         }
         const next = new Uint8Array(newSize);
         next.set(this.data);
         this.data = next;
+        touch();
       },
     } satisfies FileSystemSyncAccessHandle;
   }
@@ -142,6 +152,7 @@ export class MemoryFileHandle {
     return new MemoryWritable(
       (out) => {
         this.data = out;
+        this.lastModifiedMs = Date.now();
       },
       base,
     );
