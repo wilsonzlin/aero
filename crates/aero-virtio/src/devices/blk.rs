@@ -24,6 +24,9 @@ pub const VIRTIO_BLK_T_GET_ID: u32 = 8;
 pub const VIRTIO_BLK_T_DISCARD: u32 = 11;
 pub const VIRTIO_BLK_T_WRITE_ZEROES: u32 = 13;
 
+// `struct virtio_blk_discard_write_zeroes::flags` (virtio spec).
+pub const VIRTIO_BLK_WRITE_ZEROES_FLAG_UNMAP: u32 = 1 << 0;
+
 pub const VIRTIO_BLK_S_OK: u8 = 0;
 pub const VIRTIO_BLK_S_IOERR: u8 = 1;
 pub const VIRTIO_BLK_S_UNSUPP: u8 = 2;
@@ -97,7 +100,9 @@ impl VirtioBlkConfig {
         cfg[44..48].copy_from_slice(&align_sectors_u32.to_le_bytes()); // discard_sector_alignment
         cfg[48..52].copy_from_slice(&max_sectors.to_le_bytes()); // max_write_zeroes_sectors
         cfg[52..56].copy_from_slice(&self.seg_max.to_le_bytes()); // max_write_zeroes_seg
-                                                                  // write_zeroes_may_unmap: 0 (false); unused1 is zeroed.
+        // write_zeroes_may_unmap: allow `WRITE_ZEROES` to deallocate underlying storage ("unmap")
+        // as long as the guest-visible read-after-write semantics remain zero.
+        cfg[56] = 1;
 
         // Avoid truncating on 32-bit targets: guest MMIO offsets are `u64` but config space is a
         // small fixed-size array.
@@ -1122,6 +1127,14 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
                             };
                             chunk_size = chunk_size.max(blk_usize).max(512);
                             let zero_buf = vec![0u8; chunk_size];
+                            let mut read_buf = if segs
+                                .iter()
+                                .any(|seg| (seg.flags & VIRTIO_BLK_WRITE_ZEROES_FLAG_UNMAP) != 0)
+                            {
+                                vec![0u8; chunk_size]
+                            } else {
+                                Vec::new()
+                            };
 
                             'seg_loop: for seg in &segs {
                                 let num_sectors = u64::from(seg.num_sectors);
@@ -1158,20 +1171,98 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
                                     break;
                                 }
 
-                                while remaining != 0 {
-                                    let take = remaining.min(zero_buf.len() as u64) as usize;
-                                    if self.backend.write_at(byte_off, &zero_buf[..take]).is_err() {
-                                        status = VIRTIO_BLK_S_IOERR;
-                                        break 'seg_loop;
+                                if remaining == 0 {
+                                    continue;
+                                }
+
+                                // If the driver requests UNMAP, treat WRITE_ZEROES as a best-effort
+                                // discard (hole punch) and fall back to explicit zero writes only if
+                                // needed to enforce read-after-write semantics.
+                                if (seg.flags & VIRTIO_BLK_WRITE_ZEROES_FLAG_UNMAP) != 0 {
+                                    let byte_len = remaining;
+                                    let mut needs_zero_fallback =
+                                        self.backend.discard_range(byte_off, byte_len).is_err();
+
+                                    if !needs_zero_fallback {
+                                        let mut scan_off = byte_off;
+                                        let mut scan_remaining = byte_len;
+                                        while scan_remaining != 0 {
+                                            let take = scan_remaining
+                                                .min(read_buf.len() as u64)
+                                                as usize;
+                                            match self
+                                                .backend
+                                                .read_at(scan_off, &mut read_buf[..take])
+                                            {
+                                                Ok(()) => {
+                                                    if read_buf[..take].iter().any(|b| *b != 0) {
+                                                        if self.backend
+                                                            .write_at(scan_off, &zero_buf[..take])
+                                                            .is_err()
+                                                        {
+                                                            status = VIRTIO_BLK_S_IOERR;
+                                                            break 'seg_loop;
+                                                        }
+                                                    }
+                                                }
+                                                Err(_) => {
+                                                    needs_zero_fallback = true;
+                                                    break;
+                                                }
+                                            }
+                                            scan_off = match scan_off.checked_add(take as u64) {
+                                                Some(v) => v,
+                                                None => {
+                                                    needs_zero_fallback = true;
+                                                    break;
+                                                }
+                                            };
+                                            scan_remaining =
+                                                scan_remaining.saturating_sub(take as u64);
+                                        }
                                     }
-                                    byte_off = match byte_off.checked_add(take as u64) {
-                                        Some(v) => v,
-                                        None => {
+
+                                    if needs_zero_fallback {
+                                        let mut cur_off = byte_off;
+                                        let mut remaining = byte_len;
+                                        while remaining != 0 {
+                                            let take =
+                                                remaining.min(zero_buf.len() as u64) as usize;
+                                            if self.backend
+                                                .write_at(cur_off, &zero_buf[..take])
+                                                .is_err()
+                                            {
+                                                status = VIRTIO_BLK_S_IOERR;
+                                                break 'seg_loop;
+                                            }
+                                            cur_off = match cur_off.checked_add(take as u64) {
+                                                Some(v) => v,
+                                                None => {
+                                                    status = VIRTIO_BLK_S_IOERR;
+                                                    break 'seg_loop;
+                                                }
+                                            };
+                                            remaining = remaining.saturating_sub(take as u64);
+                                        }
+                                    }
+                                } else {
+                                    while remaining != 0 {
+                                        let take =
+                                            remaining.min(zero_buf.len() as u64) as usize;
+                                        if self.backend.write_at(byte_off, &zero_buf[..take]).is_err()
+                                        {
                                             status = VIRTIO_BLK_S_IOERR;
                                             break 'seg_loop;
                                         }
-                                    };
-                                    remaining = remaining.saturating_sub(take as u64);
+                                        byte_off = match byte_off.checked_add(take as u64) {
+                                            Some(v) => v,
+                                            None => {
+                                                status = VIRTIO_BLK_S_IOERR;
+                                                break 'seg_loop;
+                                            }
+                                        };
+                                        remaining = remaining.saturating_sub(take as u64);
+                                    }
                                 }
                             }
                         }

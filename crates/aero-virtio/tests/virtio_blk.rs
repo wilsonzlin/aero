@@ -9,6 +9,7 @@ use aero_virtio::devices::blk::{
     VIRTIO_BLK_MAX_REQUEST_DESCRIPTORS, VIRTIO_BLK_SECTOR_SIZE, VIRTIO_BLK_S_IOERR,
     VIRTIO_BLK_S_UNSUPP, VIRTIO_BLK_T_DISCARD, VIRTIO_BLK_T_FLUSH, VIRTIO_BLK_T_GET_ID,
     VIRTIO_BLK_T_IN, VIRTIO_BLK_T_OUT, VIRTIO_BLK_T_WRITE_ZEROES,
+    VIRTIO_BLK_WRITE_ZEROES_FLAG_UNMAP,
 };
 use aero_virtio::memory::{
     read_u32_le, write_u16_le, write_u32_le, write_u64_le, GuestMemory, GuestRam,
@@ -64,6 +65,61 @@ impl BlockBackend for SharedDisk {
 
     fn device_id(&self) -> [u8; 20] {
         *b"aero-virtio-testdisk"
+    }
+}
+
+#[derive(Clone)]
+struct TrackingDiscardDisk {
+    data: Rc<RefCell<Vec<u8>>>,
+    discards: Rc<Cell<u32>>,
+    writes: Rc<Cell<u32>>,
+}
+
+impl BlockBackend for TrackingDiscardDisk {
+    fn len(&self) -> u64 {
+        self.data.borrow().len() as u64
+    }
+
+    fn read_at(&mut self, offset: u64, dst: &mut [u8]) -> Result<(), BlockBackendError> {
+        let offset: usize = offset
+            .try_into()
+            .map_err(|_| BlockBackendError::OutOfBounds)?;
+        let end = offset
+            .checked_add(dst.len())
+            .ok_or(BlockBackendError::OutOfBounds)?;
+        dst.copy_from_slice(&self.data.borrow()[offset..end]);
+        Ok(())
+    }
+
+    fn write_at(&mut self, offset: u64, src: &[u8]) -> Result<(), BlockBackendError> {
+        self.writes.set(self.writes.get().saturating_add(1));
+        let offset: usize = offset
+            .try_into()
+            .map_err(|_| BlockBackendError::OutOfBounds)?;
+        let end = offset
+            .checked_add(src.len())
+            .ok_or(BlockBackendError::OutOfBounds)?;
+        self.data.borrow_mut()[offset..end].copy_from_slice(src);
+        Ok(())
+    }
+
+    fn discard_range(&mut self, offset: u64, len: u64) -> Result<(), BlockBackendError> {
+        self.discards.set(self.discards.get().saturating_add(1));
+        let offset: usize = offset
+            .try_into()
+            .map_err(|_| BlockBackendError::OutOfBounds)?;
+        let len: usize = len
+            .try_into()
+            .map_err(|_| BlockBackendError::OutOfBounds)?;
+        let end = offset
+            .checked_add(len)
+            .ok_or(BlockBackendError::OutOfBounds)?;
+        self.data.borrow_mut()[offset..end].fill(0);
+        Ok(())
+    }
+
+    fn device_id(&self) -> [u8; 20] {
+        *b"aero-virtio-trimdisk"
     }
 }
 
@@ -330,6 +386,33 @@ fn setup_with_sizes(disk_len: usize, mem_len: usize) -> Setup {
     (dev, caps, mem, backing, flushes)
 }
 
+fn setup_tracking_discard_disk(
+    disk_len: usize,
+) -> (
+    VirtioPciDevice,
+    Caps,
+    GuestRam,
+    Rc<RefCell<Vec<u8>>>,
+    Rc<Cell<u32>>,
+    Rc<Cell<u32>>,
+) {
+    let backing = Rc::new(RefCell::new(vec![0u8; disk_len]));
+    let discards = Rc::new(Cell::new(0u32));
+    let writes = Rc::new(Cell::new(0u32));
+    let backend = TrackingDiscardDisk {
+        data: backing.clone(),
+        discards: discards.clone(),
+        writes: writes.clone(),
+    };
+
+    let blk = VirtioBlk::new(backend);
+    let dev = VirtioPciDevice::new(Box::new(blk), Box::new(InterruptLog::default()));
+
+    let (dev, caps, mem) = setup_pci_device(dev);
+
+    (dev, caps, mem, backing, discards, writes)
+}
+
 fn setup_with_irq(irq: TestIrq) -> SetupWithIrq {
     let backing = Rc::new(RefCell::new(vec![0u8; 4096]));
     let flushes = Rc::new(Cell::new(0u32));
@@ -374,6 +457,14 @@ fn virtio_blk_config_exposes_capacity_and_block_size() {
     assert_eq!(size_max, 0);
     assert_eq!(seg_max, 126);
     assert_eq!(blk_size, 512);
+}
+
+#[test]
+fn virtio_blk_config_advertises_write_zeroes_may_unmap() {
+    let (mut dev, caps, _mem, _backing, _flushes) = setup();
+    let mut buf = [0u8; 1];
+    dev.bar0_read(caps.device + 56, &mut buf);
+    assert_eq!(buf[0], 1);
 }
 
 #[test]
@@ -816,6 +907,49 @@ fn virtio_blk_write_zeroes_writes_zeroes_and_returns_ok() {
 
     assert_eq!(mem.get_slice(status, 1).unwrap()[0], 0);
     assert!(backing.borrow()[off..off + len].iter().all(|b| *b == 0));
+}
+
+#[test]
+fn virtio_blk_write_zeroes_unmap_prefers_discard_range_when_possible() {
+    let (mut dev, caps, mut mem, backing, discards, writes) = setup_tracking_discard_disk(4096);
+
+    // Pre-fill sector 1 with non-zero bytes, then request WRITE_ZEROES with the UNMAP flag.
+    backing.borrow_mut()[512..1024].fill(0xa5);
+
+    let header = 0x7000;
+    let seg = 0x8000;
+    let status = 0x9000;
+
+    write_u32_le(&mut mem, header, VIRTIO_BLK_T_WRITE_ZEROES).unwrap();
+    write_u32_le(&mut mem, header + 4, 0).unwrap();
+    write_u64_le(&mut mem, header + 8, 0).unwrap();
+
+    write_u64_le(&mut mem, seg, 1).unwrap();
+    write_u32_le(&mut mem, seg + 8, 1).unwrap();
+    write_u32_le(&mut mem, seg + 12, VIRTIO_BLK_WRITE_ZEROES_FLAG_UNMAP).unwrap();
+
+    mem.write(status, &[0xff]).unwrap();
+
+    write_desc(&mut mem, DESC_TABLE, 0, header, 16, 0x0001, 1);
+    write_desc(&mut mem, DESC_TABLE, 1, seg, 16, 0x0001, 2);
+    write_desc(&mut mem, DESC_TABLE, 2, status, 1, 0x0002, 0);
+
+    write_u16_le(&mut mem, AVAIL_RING, 0).unwrap();
+    write_u16_le(&mut mem, AVAIL_RING + 2, 1).unwrap();
+    write_u16_le(&mut mem, AVAIL_RING + 4, 0).unwrap();
+    write_u16_le(&mut mem, USED_RING, 0).unwrap();
+    write_u16_le(&mut mem, USED_RING + 2, 0).unwrap();
+
+    kick_queue0(&mut dev, &caps, &mut mem);
+
+    assert_eq!(mem.get_slice(status, 1).unwrap()[0], 0);
+    assert_eq!(discards.get(), 1, "UNMAP must call discard_range()");
+    assert_eq!(
+        writes.get(),
+        0,
+        "discard_range() returned zeros; device should not re-write zeros"
+    );
+    assert!(backing.borrow()[512..1024].iter().all(|b| *b == 0));
 }
 
 #[test]
