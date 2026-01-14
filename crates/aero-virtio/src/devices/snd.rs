@@ -1147,6 +1147,9 @@ fn write_all_in(mem: &mut dyn GuestMemory, chain: &DescriptorChain, data: &[u8])
             break;
         }
         let take = (d.len as usize).min(remaining.len());
+        if take == 0 {
+            continue;
+        }
         let Ok(dst) = mem.get_slice_mut(d.addr, take) else {
             break;
         };
@@ -2019,6 +2022,38 @@ mod tests {
         assert_eq!(read_u32_le(&mem, used + 8).unwrap(), 8);
         assert_eq!(mem.get_slice(buf, 8).unwrap(), &evt);
         assert!(snd.pending_events.is_empty());
+    }
+
+    #[test]
+    fn virtio_snd_write_all_in_skips_zero_length_descriptors() {
+        let mut mem = GuestRam::new(0x10000);
+        let desc_table = 0x1000;
+        let avail = 0x2000;
+        let used = 0x3000;
+        let out_addr = 0x4000;
+        let valid_in_addr = 0x5000;
+        let oob_in_addr = 0x10000 + 1;
+
+        write_bytes(&mut mem, out_addr, &[1, 2, 3, 4]);
+
+        // OUT request, then a zero-length IN descriptor with an out-of-bounds address, followed by
+        // a valid IN descriptor for the response.
+        let chain = build_chain(
+            &mut mem,
+            desc_table,
+            avail,
+            used,
+            &[
+                (out_addr, 4, false),
+                (oob_in_addr, 0, true),
+                (valid_in_addr, 4, true),
+            ],
+        );
+
+        let resp = [0xAA, 0xBB, 0xCC, 0xDD];
+        let written = write_all_in(&mut mem, &chain, &resp);
+        assert_eq!(written, resp.len() as u32);
+        assert_eq!(mem.get_slice(valid_in_addr, resp.len()).unwrap(), &resp);
     }
 
     #[test]
