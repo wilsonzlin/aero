@@ -503,3 +503,114 @@ fn create_io_queues_and_rw_roundtrip_sgl_segment_multiblock_multi_sector() {
     mem.read_physical(out3, &mut out[len1 + len2..]);
     assert_eq!(out, payload);
 }
+
+#[test]
+fn create_io_queues_and_rw_roundtrip_sgl_last_segment_root() {
+    let disk_sectors = 1024u64;
+    let capacity_bytes = disk_sectors * SECTOR_SIZE as u64;
+    let disk = RawDisk::create(MemBackend::new(), capacity_bytes).unwrap();
+    let mut ctrl = NvmeController::new(from_virtual_disk(Box::new(disk)).unwrap());
+    let mut mem = TestMem::new(2 * 1024 * 1024);
+
+    let asq = 0x10000;
+    let acq = 0x20000;
+    let io_cq = 0x40000;
+    let io_sq = 0x50000;
+
+    // Enable the controller with a 16-entry admin queue pair.
+    ctrl.mmio_write(0x0024, 4, 0x000f_000f); // AQA
+    ctrl.mmio_write(0x0028, 8, asq); // ASQ
+    ctrl.mmio_write(0x0030, 8, acq); // ACQ
+    ctrl.mmio_write(0x0014, 4, 1); // CC.EN
+
+    // Create IO CQ (qid=1, size=16, PC+IEN).
+    let mut cmd = build_command(0x05, 0);
+    set_cid(&mut cmd, 1);
+    set_prp1(&mut cmd, io_cq);
+    set_cdw10(&mut cmd, (15u32 << 16) | 1);
+    set_cdw11(&mut cmd, 0x3);
+    mem.write_physical(asq, &cmd);
+    ctrl.mmio_write(0x1000, 4, 1);
+    ctrl.process(&mut mem);
+
+    // Create IO SQ (qid=1, size=16, CQID=1).
+    let mut cmd = build_command(0x01, 0);
+    set_cid(&mut cmd, 2);
+    set_prp1(&mut cmd, io_sq);
+    set_cdw10(&mut cmd, (15u32 << 16) | 1);
+    set_cdw11(&mut cmd, 1);
+    mem.write_physical(asq + 64, &cmd);
+    ctrl.mmio_write(0x1000, 4, 2);
+    ctrl.process(&mut mem);
+
+    // Write 1 sector using a root Last Segment descriptor that points to a list of Data Blocks.
+    let sector_size = 512usize;
+    let split = 123usize;
+    let payload: Vec<u8> = (0..sector_size as u32).map(|v| (v & 0xff) as u8).collect();
+
+    let buf1 = 0x60000u64;
+    let buf2 = 0x61003u64; // intentionally unaligned
+    mem.write_physical(buf1, &payload[..split]);
+    mem.write_physical(buf2, &payload[split..]);
+
+    let list = 0x70000u64;
+    write_sgl_desc(&mut mem, list, buf1, split as u32, 0x00);
+    write_sgl_desc(
+        &mut mem,
+        list + 16,
+        buf2,
+        (sector_size - split) as u32,
+        0x00,
+    );
+
+    let mut cmd = build_command(0x01, 1); // WRITE, PSDT=SGL
+    set_cid(&mut cmd, 0x60);
+    set_nsid(&mut cmd, 1);
+    set_prp1(&mut cmd, list);
+    // Root Last Segment descriptor: 2 descriptors = 32 bytes.
+    set_prp2(&mut cmd, 32u64 | ((0x03u64) << 56));
+    set_cdw10(&mut cmd, 0);
+    set_cdw11(&mut cmd, 0);
+    set_cdw12(&mut cmd, 0);
+    mem.write_physical(io_sq, &cmd);
+    ctrl.mmio_write(0x1008, 4, 1);
+    ctrl.process(&mut mem);
+
+    let cqe = read_cqe(&mut mem, io_cq);
+    assert_eq!(cqe.cid, 0x60);
+    assert_eq!(cqe.status & !0x1, 0);
+
+    // Read it back using another root Last Segment descriptor.
+    let out1 = 0x62000u64;
+    let out2 = 0x63007u64;
+    let list_r = 0x71000u64;
+    write_sgl_desc(&mut mem, list_r, out1, split as u32, 0x00);
+    write_sgl_desc(
+        &mut mem,
+        list_r + 16,
+        out2,
+        (sector_size - split) as u32,
+        0x00,
+    );
+
+    let mut cmd = build_command(0x02, 1); // READ, PSDT=SGL
+    set_cid(&mut cmd, 0x61);
+    set_nsid(&mut cmd, 1);
+    set_prp1(&mut cmd, list_r);
+    set_prp2(&mut cmd, 32u64 | ((0x03u64) << 56));
+    set_cdw10(&mut cmd, 0);
+    set_cdw11(&mut cmd, 0);
+    set_cdw12(&mut cmd, 0);
+    mem.write_physical(io_sq + 64, &cmd);
+    ctrl.mmio_write(0x1008, 4, 2);
+    ctrl.process(&mut mem);
+
+    let cqe = read_cqe(&mut mem, io_cq + 16);
+    assert_eq!(cqe.cid, 0x61);
+    assert_eq!(cqe.status & !0x1, 0);
+
+    let mut out = vec![0u8; sector_size];
+    mem.read_physical(out1, &mut out[..split]);
+    mem.read_physical(out2, &mut out[split..]);
+    assert_eq!(out, payload);
+}
