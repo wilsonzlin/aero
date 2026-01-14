@@ -589,6 +589,74 @@ fn tier2_code_version_guard_can_inline_version_table_reads() {
 }
 
 #[test]
+fn tier2_trace_exit_reason_is_reset_to_none_on_each_entry() {
+    // The Tier-2 trace ABI uses `jit_ctx::TRACE_EXIT_REASON_OFFSET` to communicate why a trace
+    // exited. This value must be reset to `TRACE_EXIT_REASON_NONE` at the start of *each* trace
+    // invocation so callers don't observe stale invalidation reasons from a previous run.
+    let mut trace = TraceIr {
+        prologue: vec![Instr::GuardCodeVersion {
+            page: 0,
+            expected: 1,
+            exit_rip: 0x9999,
+        }],
+        body: vec![],
+        kind: TraceKind::Linear,
+    };
+
+    let opt = optimize_trace(&mut trace, &OptConfig::default());
+    let wasm = Tier2WasmCodegen::new().compile_trace_with_options(
+        &trace,
+        &opt.regalloc,
+        Tier2WasmOptions {
+            code_version_guard_import: false,
+            ..Default::default()
+        },
+    );
+    validate_wasm(&wasm);
+
+    let (mut store, memory, func) =
+        instantiate_trace_without_code_page_version(&wasm, HostEnv::default());
+    let guest_mem_init = vec![0u8; GUEST_MEM_SIZE];
+    memory.write(&mut store, 0, &guest_mem_init).unwrap();
+
+    let mut cpu_bytes = vec![0u8; abi::CPU_STATE_SIZE as usize];
+    let mut init_state = T2State::default();
+    init_state.cpu.rip = 0x1111;
+    init_state.cpu.rflags = abi::RFLAGS_RESERVED1;
+    write_cpu_state(&mut cpu_bytes, &init_state.cpu);
+    memory
+        .write(&mut store, CPU_PTR as usize, &cpu_bytes)
+        .unwrap();
+
+    // Mismatch the guard so the first invocation invalidates.
+    let table_ptr = install_code_version_table(&memory, &mut store, &[0]);
+
+    let got_rip = func.call(&mut store, (CPU_PTR, JIT_CTX_PTR)).unwrap() as u64;
+    assert_eq!(got_rip, 0x9999);
+    let exit_reason = read_u32_from_memory(
+        &memory,
+        &store,
+        CPU_PTR as usize + jit_ctx::TRACE_EXIT_REASON_OFFSET as usize,
+    );
+    assert_eq!(exit_reason, jit_ctx::TRACE_EXIT_REASON_CODE_INVALIDATION);
+
+    // Update the table so the guard passes. The next invocation must reset exit reason to NONE.
+    write_u32_to_memory(&memory, &mut store, table_ptr as usize, 1);
+    memory
+        .write(&mut store, CPU_PTR as usize, &cpu_bytes)
+        .unwrap();
+
+    let got_rip = func.call(&mut store, (CPU_PTR, JIT_CTX_PTR)).unwrap() as u64;
+    assert_eq!(got_rip, 0x1111);
+    let exit_reason = read_u32_from_memory(
+        &memory,
+        &store,
+        CPU_PTR as usize + jit_ctx::TRACE_EXIT_REASON_OFFSET as usize,
+    );
+    assert_eq!(exit_reason, jit_ctx::TRACE_EXIT_REASON_NONE);
+}
+
+#[test]
 fn tier2_inline_code_version_guard_treats_empty_table_as_zero() {
     // When the runtime has not configured a code-version table (`len == 0`), inline guards should
     // treat all pages as version 0 and must not dereference the table pointer (which is expected
