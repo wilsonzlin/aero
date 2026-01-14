@@ -68,7 +68,16 @@ class WebGl2Backend {
       stencil: false,
     });
     if (!gl) throw new Error('WebGL2 context unavailable');
+    // Deterministic presentation: disable sources of driver variance and ensure a clean state.
     gl.disable(gl.DITHER);
+    gl.disable(gl.DEPTH_TEST);
+    gl.disable(gl.CULL_FACE);
+    gl.disable(gl.BLEND);
+    gl.disable(gl.SCISSOR_TEST);
+    gl.disable(gl.STENCIL_TEST);
+    gl.disable(gl.SAMPLE_ALPHA_TO_COVERAGE);
+    gl.disable(gl.SAMPLE_COVERAGE);
+    gl.colorMask(true, true, true, true);
     gl.viewport(0, 0, width, height);
     return new WebGl2Backend(gl, width, height);
   }
