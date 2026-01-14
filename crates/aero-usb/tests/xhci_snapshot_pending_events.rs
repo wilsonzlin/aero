@@ -1,4 +1,4 @@
-use aero_io_snapshot::io::state::{IoSnapshot, SnapshotReader};
+use aero_io_snapshot::io::state::{IoSnapshot, SnapshotReader, SnapshotWriter, SnapshotVersion};
 use aero_usb::xhci::interrupter::IMAN_IE;
 use aero_usb::xhci::trb::{Trb, TrbType};
 use aero_usb::xhci::{regs, XhciController};
@@ -145,6 +145,66 @@ fn xhci_snapshot_roundtrip_preserves_tick_time_and_dma_state() {
         r2.u64(TAG_TIME_MS).expect("read time_ms").unwrap_or(0),
         4
     );
+    assert_eq!(
+        r2.u32(TAG_LAST_TICK_DMA_DWORD)
+            .expect("read last_tick_dma_dword")
+            .unwrap_or(0),
+        dma_value
+    );
+}
+
+#[test]
+fn xhci_snapshot_load_accepts_legacy_time_tag_collision_mapping() {
+    // Current snapshot tags (v0.7+).
+    const TAG_TIME_MS: u16 = 27;
+    const TAG_LAST_TICK_DMA_DWORD: u16 = 28;
+    // Legacy encoding bug: tag 26 was used for time_ms and tag 27 for last_tick_dma_dword.
+    const TAG_EP0_CONTROL_TD_FULL: u16 = 26;
+
+    let mut mem = TestMemory::new(0x20_000);
+    let mut xhci = XhciController::new();
+
+    // Establish a known tick + DMA state so we can observe it after roundtrip.
+    let crcr_addr = 0x1000u64;
+    let dma_value = 0x5566_7788u32;
+    MemoryBus::write_u32(&mut mem, crcr_addr, dma_value);
+    xhci.mmio_write(&mut mem, regs::REG_CRCR_LO, 4, crcr_addr as u32);
+    xhci.mmio_write(&mut mem, regs::REG_CRCR_HI, 4, (crcr_addr >> 32) as u32);
+    xhci.mmio_write(&mut mem, regs::REG_USBCMD, 4, regs::USBCMD_RUN);
+    for _ in 0..2 {
+        xhci.tick_1ms_with_dma(&mut mem);
+    }
+
+    let bytes = xhci.save_state();
+    let r = SnapshotReader::parse(&bytes, *b"XHCI").expect("parse xHCI snapshot");
+
+    // Build a legacy snapshot by:
+    // - dropping tag 26 (EP0 TD full),
+    // - moving tag 27 (time_ms) -> 26,
+    // - moving tag 28 (last_tick_dma_dword) -> 27.
+    let mut w = SnapshotWriter::new(*b"XHCI", SnapshotVersion::new(0, 7));
+    for (tag, field) in r.iter_fields() {
+        match tag {
+            TAG_EP0_CONTROL_TD_FULL => {
+                // Legacy bug overwrote this field.
+                continue;
+            }
+            TAG_TIME_MS => w.field_bytes(TAG_EP0_CONTROL_TD_FULL, field.to_vec()),
+            TAG_LAST_TICK_DMA_DWORD => w.field_bytes(TAG_TIME_MS, field.to_vec()),
+            other => w.field_bytes(other, field.to_vec()),
+        };
+    }
+    let legacy_bytes = w.finish();
+
+    let mut restored = XhciController::new();
+    restored
+        .load_state(&legacy_bytes)
+        .expect("load legacy-collision snapshot");
+
+    // Saving the restored controller should emit the canonical v0.7 tag mapping again.
+    let bytes2 = restored.save_state();
+    let r2 = SnapshotReader::parse(&bytes2, *b"XHCI").expect("parse restored snapshot");
+    assert_eq!(r2.u64(TAG_TIME_MS).expect("read time_ms").unwrap_or(0), 2);
     assert_eq!(
         r2.u32(TAG_LAST_TICK_DMA_DWORD)
             .expect("read last_tick_dma_dword")
