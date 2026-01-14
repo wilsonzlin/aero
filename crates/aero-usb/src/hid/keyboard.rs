@@ -284,23 +284,25 @@ impl IoSnapshot for UsbHidKeyboard {
 
         if let Some(buf) = r.bytes(TAG_PENDING_REPORTS) {
             let mut d = Decoder::new(buf);
-            let reports = d.vec_bytes()?;
-            d.finish()?;
-            if reports.len() > MAX_PENDING_REPORTS {
+            let count = d.u32()? as usize;
+            if count > MAX_PENDING_REPORTS {
                 return Err(SnapshotError::InvalidFieldEncoding(
                     "keyboard pending reports",
                 ));
             }
             self.pending_reports.clear();
-            for report in reports {
-                if report.len() != self.last_report.len() {
+            for _ in 0..count {
+                let len = d.u32()? as usize;
+                if len != self.last_report.len() {
                     return Err(SnapshotError::InvalidFieldEncoding(
                         "keyboard report length",
                     ));
                 }
+                let report = d.bytes_vec(len)?;
                 self.pending_reports
                     .push_back(report.try_into().expect("len checked"));
             }
+            d.finish()?;
         }
 
         Ok(())
@@ -1239,6 +1241,29 @@ mod tests {
         let mut kb = UsbHidKeyboard::new();
         match kb.load_state(&snapshot) {
             Err(SnapshotError::InvalidFieldEncoding("keyboard pressed keys")) => {}
+            other => panic!("expected InvalidFieldEncoding, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn snapshot_restore_rejects_oversized_pending_reports_count() {
+        const TAG_PENDING_REPORTS: u16 = 13;
+
+        let snapshot = {
+            let mut w =
+                SnapshotWriter::new(UsbHidKeyboard::DEVICE_ID, UsbHidKeyboard::DEVICE_VERSION);
+            w.field_bytes(
+                TAG_PENDING_REPORTS,
+                Encoder::new()
+                    .u32(MAX_PENDING_REPORTS as u32 + 1)
+                    .finish(),
+            );
+            w.finish()
+        };
+
+        let mut kb = UsbHidKeyboard::new();
+        match kb.load_state(&snapshot) {
+            Err(SnapshotError::InvalidFieldEncoding("keyboard pending reports")) => {}
             other => panic!("expected InvalidFieldEncoding, got {other:?}"),
         }
     }

@@ -800,16 +800,17 @@ impl RootHub {
 
     pub(crate) fn load_snapshot_ports(&mut self, buf: &[u8]) -> SnapshotResult<()> {
         let mut d = Decoder::new(buf);
-        let port_records = d.vec_bytes()?;
-        d.finish()?;
-
-        if port_records.len() != self.ports.len() {
+        let count = d.u32()? as usize;
+        if count != self.ports.len() {
             return Err(SnapshotError::InvalidFieldEncoding("root hub ports"));
         }
 
-        for (port, rec) in self.ports.iter_mut().zip(port_records.into_iter()) {
-            port.load_snapshot_record(&rec)?;
+        for port in &mut self.ports {
+            let len = d.u32()? as usize;
+            let rec = d.bytes(len)?;
+            port.load_snapshot_record(rec)?;
         }
+        d.finish()?;
 
         Ok(())
     }

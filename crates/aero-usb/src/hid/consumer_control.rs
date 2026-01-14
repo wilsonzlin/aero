@@ -27,6 +27,7 @@ use super::{
 
 const INTERRUPT_IN_EP: u8 = 0x81;
 const MAX_PENDING_REPORTS: usize = 64;
+const MAX_PRESSED_USAGES: usize = 256;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ConsumerControlReport {
@@ -197,6 +198,9 @@ impl IoSnapshot for UsbHidConsumerControl {
         if let Some(buf) = r.bytes(TAG_PRESSED_USAGES) {
             let mut d = Decoder::new(buf);
             let count = d.u32()? as usize;
+            if count > MAX_PRESSED_USAGES {
+                return Err(SnapshotError::InvalidFieldEncoding("consumer pressed usages"));
+            }
             self.pressed_usages.clear();
             self.pressed_usages
                 .try_reserve_exact(count)
@@ -216,23 +220,25 @@ impl IoSnapshot for UsbHidConsumerControl {
 
         if let Some(buf) = r.bytes(TAG_PENDING_REPORTS) {
             let mut d = Decoder::new(buf);
-            let pending = d.vec_bytes()?;
-            d.finish()?;
-            if pending.len() > MAX_PENDING_REPORTS {
+            self.pending_reports.clear();
+            let count = d.u32()? as usize;
+            if count > MAX_PENDING_REPORTS {
                 return Err(SnapshotError::InvalidFieldEncoding(
                     "consumer pending reports",
                 ));
             }
-            self.pending_reports.clear();
-            for report in pending {
-                if report.len() != self.last_report.len() {
+            for _ in 0..count {
+                let len = d.u32()? as usize;
+                if len != self.last_report.len() {
                     return Err(SnapshotError::InvalidFieldEncoding(
                         "consumer report length",
                     ));
                 }
+                let report = d.bytes_vec(len)?;
                 self.pending_reports
                     .push_back(report.try_into().expect("len checked"));
             }
+            d.finish()?;
         }
 
         Ok(())
@@ -709,3 +715,58 @@ pub(super) static HID_REPORT_DESCRIPTOR: [u8; 23] = [
     0x81, 0x00, // Input (Data,Array,Abs)
     0xc0, // End Collection
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn snapshot_restore_rejects_oversized_pressed_usages_count() {
+        const TAG_PRESSED_USAGES: u16 = 9;
+
+        let snapshot = {
+            let mut w = SnapshotWriter::new(
+                UsbHidConsumerControl::DEVICE_ID,
+                UsbHidConsumerControl::DEVICE_VERSION,
+            );
+            w.field_bytes(
+                TAG_PRESSED_USAGES,
+                Encoder::new()
+                    .u32(MAX_PRESSED_USAGES as u32 + 1)
+                    .finish(),
+            );
+            w.finish()
+        };
+
+        let mut dev = UsbHidConsumerControl::new();
+        match dev.load_state(&snapshot) {
+            Err(SnapshotError::InvalidFieldEncoding("consumer pressed usages")) => {}
+            other => panic!("expected InvalidFieldEncoding, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn snapshot_restore_rejects_oversized_pending_reports_count() {
+        const TAG_PENDING_REPORTS: u16 = 11;
+
+        let snapshot = {
+            let mut w = SnapshotWriter::new(
+                UsbHidConsumerControl::DEVICE_ID,
+                UsbHidConsumerControl::DEVICE_VERSION,
+            );
+            w.field_bytes(
+                TAG_PENDING_REPORTS,
+                Encoder::new()
+                    .u32(MAX_PENDING_REPORTS as u32 + 1)
+                    .finish(),
+            );
+            w.finish()
+        };
+
+        let mut dev = UsbHidConsumerControl::new();
+        match dev.load_state(&snapshot) {
+            Err(SnapshotError::InvalidFieldEncoding("consumer pending reports")) => {}
+            other => panic!("expected InvalidFieldEncoding, got {other:?}"),
+        }
+    }
+}

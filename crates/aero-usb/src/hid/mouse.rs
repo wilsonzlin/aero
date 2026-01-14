@@ -243,16 +243,17 @@ impl IoSnapshot for UsbHidMouse {
 
         if let Some(buf) = r.bytes(TAG_PENDING_REPORTS) {
             let mut d = Decoder::new(buf);
-            let reports = d.vec_bytes()?;
-            d.finish()?;
-            if reports.len() > MAX_PENDING_REPORTS {
+            self.pending_reports.clear();
+            let count = d.u32()? as usize;
+            if count > MAX_PENDING_REPORTS {
                 return Err(SnapshotError::InvalidFieldEncoding("mouse pending reports"));
             }
-            self.pending_reports.clear();
-            for report in reports {
-                if report.len() != 4 {
+            for _ in 0..count {
+                let len = d.u32()? as usize;
+                if len != 4 {
                     return Err(SnapshotError::InvalidFieldEncoding("mouse report length"));
                 }
+                let report = d.bytes(len)?;
                 self.pending_reports.push_back(MouseReport {
                     buttons: report[0],
                     x: report[1] as i8,
@@ -260,6 +261,7 @@ impl IoSnapshot for UsbHidMouse {
                     wheel: report[3] as i8,
                 });
             }
+            d.finish()?;
         }
 
         Ok(())
@@ -1048,5 +1050,27 @@ mod tests {
         }
 
         assert!(mouse.pending_reports.len() <= MAX_PENDING_REPORTS);
+    }
+
+    #[test]
+    fn snapshot_restore_rejects_oversized_pending_reports_count() {
+        const TAG_PENDING_REPORTS: u16 = 13;
+
+        let snapshot = {
+            let mut w = SnapshotWriter::new(UsbHidMouse::DEVICE_ID, UsbHidMouse::DEVICE_VERSION);
+            w.field_bytes(
+                TAG_PENDING_REPORTS,
+                Encoder::new()
+                    .u32(MAX_PENDING_REPORTS as u32 + 1)
+                    .finish(),
+            );
+            w.finish()
+        };
+
+        let mut mouse = UsbHidMouse::new();
+        match mouse.load_state(&snapshot) {
+            Err(SnapshotError::InvalidFieldEncoding("mouse pending reports")) => {}
+            other => panic!("expected InvalidFieldEncoding, got {other:?}"),
+        }
     }
 }

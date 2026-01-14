@@ -752,24 +752,26 @@ impl IoSnapshot for UsbCompositeHidInput {
         }
         if let Some(buf) = r.bytes(TAG_KBD_PENDING_REPORTS) {
             let mut d = Decoder::new(buf);
-            let reports = d.vec_bytes()?;
-            d.finish()?;
-            if reports.len() > MAX_PENDING_KEYBOARD_REPORTS {
+            self.keyboard.pending_reports.clear();
+            let count = d.u32()? as usize;
+            if count > MAX_PENDING_KEYBOARD_REPORTS {
                 return Err(SnapshotError::InvalidFieldEncoding(
                     "keyboard pending reports",
                 ));
             }
-            self.keyboard.pending_reports.clear();
-            for report in reports {
-                if report.len() != self.keyboard.last_report.len() {
+            for _ in 0..count {
+                let len = d.u32()? as usize;
+                if len != self.keyboard.last_report.len() {
                     return Err(SnapshotError::InvalidFieldEncoding(
                         "keyboard report length",
                     ));
                 }
+                let report = d.bytes_vec(len)?;
                 self.keyboard
                     .pending_reports
                     .push_back(report.try_into().expect("len checked"));
             }
+            d.finish()?;
         }
 
         self.mouse.idle_rate = r.u8(TAG_MOUSE_IDLE_RATE)?.unwrap_or(0);
@@ -786,16 +788,17 @@ impl IoSnapshot for UsbCompositeHidInput {
         self.mouse.wheel = r.i32(TAG_MOUSE_WHEEL)?.unwrap_or(0);
         if let Some(buf) = r.bytes(TAG_MOUSE_PENDING_REPORTS) {
             let mut d = Decoder::new(buf);
-            let reports = d.vec_bytes()?;
-            d.finish()?;
-            if reports.len() > MAX_PENDING_MOUSE_REPORTS {
+            self.mouse.pending_reports.clear();
+            let count = d.u32()? as usize;
+            if count > MAX_PENDING_MOUSE_REPORTS {
                 return Err(SnapshotError::InvalidFieldEncoding("mouse pending reports"));
             }
-            self.mouse.pending_reports.clear();
-            for report in reports {
-                if report.len() != 4 {
+            for _ in 0..count {
+                let len = d.u32()? as usize;
+                if len != 4 {
                     return Err(SnapshotError::InvalidFieldEncoding("mouse report length"));
                 }
+                let report = d.bytes(len)?;
                 self.mouse.pending_reports.push_back(MouseReport {
                     buttons: report[0],
                     x: report[1] as i8,
@@ -803,6 +806,7 @@ impl IoSnapshot for UsbCompositeHidInput {
                     wheel: report[3] as i8,
                 });
             }
+            d.finish()?;
         }
 
         self.gamepad.buttons = r.u16(TAG_GAMEPAD_BUTTONS)?.unwrap_or(0);
@@ -819,22 +823,24 @@ impl IoSnapshot for UsbCompositeHidInput {
         }
         if let Some(buf) = r.bytes(TAG_GAMEPAD_PENDING_REPORTS) {
             let mut d = Decoder::new(buf);
-            let reports = d.vec_bytes()?;
-            d.finish()?;
-            if reports.len() > MAX_PENDING_GAMEPAD_REPORTS {
+            self.gamepad.pending_reports.clear();
+            let count = d.u32()? as usize;
+            if count > MAX_PENDING_GAMEPAD_REPORTS {
                 return Err(SnapshotError::InvalidFieldEncoding(
                     "gamepad pending reports",
                 ));
             }
-            self.gamepad.pending_reports.clear();
-            for report in reports {
-                if report.len() != self.gamepad.last_report.len() {
+            for _ in 0..count {
+                let len = d.u32()? as usize;
+                if len != self.gamepad.last_report.len() {
                     return Err(SnapshotError::InvalidFieldEncoding("gamepad report length"));
                 }
+                let report = d.bytes_vec(len)?;
                 self.gamepad
                     .pending_reports
                     .push_back(report.try_into().expect("len checked"));
             }
+            d.finish()?;
         }
 
         self.keyboard_interrupt_in_halted = r.bool(TAG_KBD_INTERRUPT_HALTED)?.unwrap_or(false);
@@ -1813,6 +1819,31 @@ mod tests {
         let mut dev = UsbCompositeHidInput::new();
         match dev.load_state(&snapshot) {
             Err(SnapshotError::InvalidFieldEncoding("keyboard pressed keys")) => {}
+            other => panic!("expected InvalidFieldEncoding, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn snapshot_restore_rejects_oversized_keyboard_pending_reports_count() {
+        const TAG_KBD_PENDING_REPORTS: u16 = 16;
+
+        let snapshot = {
+            let mut w = SnapshotWriter::new(
+                UsbCompositeHidInput::DEVICE_ID,
+                UsbCompositeHidInput::DEVICE_VERSION,
+            );
+            w.field_bytes(
+                TAG_KBD_PENDING_REPORTS,
+                Encoder::new()
+                    .u32(MAX_PENDING_KEYBOARD_REPORTS as u32 + 1)
+                    .finish(),
+            );
+            w.finish()
+        };
+
+        let mut dev = UsbCompositeHidInput::new();
+        match dev.load_state(&snapshot) {
+            Err(SnapshotError::InvalidFieldEncoding("keyboard pending reports")) => {}
             other => panic!("expected InvalidFieldEncoding, got {other:?}"),
         }
     }
