@@ -3,12 +3,12 @@ import type { HidTopologyManager } from "../hid/wasm_hid_guest_bridge";
 import type { XhciTopologyBridge } from "../hid/xhci_hid_topology";
 
 type XhciTopologyBridgeLike = {
-  // wasm-bindgen bridges expose `free()`, but unit tests may use plain objects without it.
-  free?: () => void;
   attach_hub: (rootPort: number, portCount: number) => void;
   detach_at_path: (path: number[]) => void;
   attach_webhid_device: (path: number[], device: unknown) => void;
   attach_usb_hid_passthrough_device: (path: number[], device: unknown) => void;
+  // wasm-bindgen bridges expose `free()`, but unit tests and alternate shims may not.
+  free?: () => void;
 };
 
 /**
@@ -43,7 +43,13 @@ export function createXhciTopologyBridgeShim(bridge: unknown): XhciTopologyBridg
   const rawFree = (bridge as { free?: unknown }).free;
   const freeFn = typeof rawFree === "function" ? rawFree : () => {};
   return {
-    free: () => freeFn.call(bridge),
+    free: () => {
+      try {
+        freeFn.call(bridge);
+      } catch {
+        // ignore
+      }
+    },
     attach_hub: (rootPort, portCount) => obj.attach_hub.call(bridge, rootPort, portCount),
     detach_at_path: (path) => obj.detach_at_path.call(bridge, path),
     attach_webhid_device: (path, device) => obj.attach_webhid_device.call(bridge, path, device),
