@@ -2199,6 +2199,71 @@ def validate_virtio_input_model_lines(
             )
 
 
+def inf_functional_bytes(path: Path) -> bytes:
+    """
+    Return the INF content starting from the first section header line.
+
+    This intentionally ignores the leading comment/banner block so a legacy alias
+    INF can use a different filename header while still enforcing byte-for-byte
+    equality of all functional sections/keys.
+    """
+
+    data = path.read_bytes()
+    lines = data.splitlines(keepends=True)
+
+    for i, line in enumerate(lines):
+        stripped = line.lstrip(b" \t")
+
+        # First section header (e.g. "[Version]") starts the functional region.
+        if stripped.startswith(b"["):
+            return b"".join(lines[i:])
+
+        # Ignore leading comments and blank lines.
+        if stripped.startswith(b";") or stripped in (b"\n", b"\r\n", b"\r"):
+            continue
+
+        # Unexpected preamble content (not comment, not blank, not section):
+        # treat it as functional to avoid masking drift.
+        return b"".join(lines[i:])
+
+    raise RuntimeError(f"{path}: could not find a section header (e.g. [Version])")
+
+
+def check_inf_alias_drift(*, canonical: Path, alias: Path, repo_root: Path, label: str) -> str | None:
+    try:
+        canonical_body = inf_functional_bytes(canonical)
+    except Exception as e:
+        return f"{label}: failed to read canonical INF functional bytes: {e}"
+
+    try:
+        alias_body = inf_functional_bytes(alias)
+    except Exception as e:
+        return f"{label}: failed to read alias INF functional bytes: {e}"
+
+    if canonical_body == alias_body:
+        return None
+
+    canonical_lines = canonical_body.decode("utf-8", errors="replace").splitlines(keepends=True)
+    alias_lines = alias_body.decode("utf-8", errors="replace").splitlines(keepends=True)
+
+    canonical_label = str(canonical.relative_to(repo_root))
+    alias_label = str(alias.relative_to(repo_root))
+
+    diff = difflib.unified_diff(
+        canonical_lines,
+        alias_lines,
+        fromfile=canonical_label,
+        tofile=alias_label,
+        lineterm="\n",
+    )
+
+    return (
+        f"{label}: INF alias drift detected.\n"
+        "The alias INF must match the canonical INF from [Version] onward.\n\n"
+        + "".join(diff)
+    )
+
+
 def _normalized_inf_lines_without_sections(path: Path, *, drop_sections: set[str]) -> list[str]:
     """
     Normalized INF representation for drift checks:
@@ -4392,24 +4457,9 @@ def main() -> None:
                 inf_path=inf_path,
                 strict_hwid=strict_hwid,
                 contract_rev=contract_rev,
-                require_fallback=False,
+                require_fallback=True,
                 errors=errors,
             )
-            # The canonical keyboard/mouse INF is intentionally SUBSYS-only. Keep the
-            # exact generic fallback HWID string out of the canonical INF entirely
-            # (even in comments) so it can't be cargo-culted back into the models
-            # sections and so repo-wide greps remain a reliable guardrail.
-            strict_hwid_hits: list[str] = []
-            for line_no, raw in enumerate(read_text(inf_path).splitlines(), start=1):
-                if strict_hwid.lower() in raw.lower():
-                    strict_hwid_hits.append(f"{inf_path.as_posix()}:{line_no}: {raw.rstrip()}")
-            if strict_hwid_hits:
-                errors.append(
-                    format_error(
-                        f"{inf_path.as_posix()}: canonical virtio-input INF must not contain the strict generic fallback HWID ({strict_hwid}); fallback is available only via virtio-input.inf.disabled:",
-                        strict_hwid_hits,
-                    )
-                )
 
     # ---------------------------------------------------------------------
     # 6) INF alias drift guardrails (legacy filename aliases must stay in sync).
@@ -4431,9 +4481,9 @@ def main() -> None:
         strict_hwid = f"{base_hwid}&REV_{contract_rev:02X}"
 
         # The legacy alias INF is kept for compatibility with workflows that reference the
-        # legacy `virtio-input.inf` name. It is allowed to diverge in the models sections
-        # (`[Aero.NTx86]` / `[Aero.NTamd64]`) to provide an opt-in strict fallback HWID
-        # (no SUBSYS), but must otherwise stay in sync with the canonical INF.
+        # legacy `virtio-input.inf` name. It is a filename alias only: it is expected to
+        # stay byte-for-byte identical to the canonical INF from the first section header
+        # (`[Version]`) onward (only the leading banner/comments may differ).
         validate_virtio_input_model_lines(
             inf_path=virtio_input_alias,
             strict_hwid=strict_hwid,
@@ -4442,14 +4492,12 @@ def main() -> None:
             errors=errors,
         )
 
-        # The alias INF may differ in the models sections (it adds the generic fallback),
-        # but should otherwise stay in sync with the canonical INF.
-        drift = check_inf_alias_drift_excluding_sections(
+        # Keep the alias byte-identical to the canonical INF from the first section header (`[Version]`) onward.
+        drift = check_inf_alias_drift(
             canonical=virtio_input_canonical,
             alias=virtio_input_alias,
             repo_root=REPO_ROOT,
             label="virtio-input",
-            drop_sections={"Aero.NTx86", "Aero.NTamd64"},
         )
         if drift:
             errors.append(drift)

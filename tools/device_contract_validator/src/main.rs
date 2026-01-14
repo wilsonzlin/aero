@@ -1208,19 +1208,12 @@ fn validate_virtio_input_device_desc_split(
     // INFs should bind both functions to the same install sections, but use distinct
     // DeviceDesc strings so they appear with different names in Device Manager.
     //
-    // Policy:
-    // - The canonical virtio-input keyboard/mouse INF (`aero_virtio_input.inf`) is SUBSYS-only
-    //   (binds only the keyboard/mouse subsystem-qualified IDs) to keep keyboard/mouse vs tablet
-    //   bindings disjoint.
-    // - The legacy filename alias (`virtio-input.inf.disabled` → `virtio-input.inf`) may add an
-    //   opt-in strict (REV-qualified) generic fallback HWID (no SUBSYS) for environments where
-    //   the Aero subsystem IDs are not exposed/recognized.
-    // - Tablet devices bind via `aero_virtio_tablet.inf` (more specific SUBSYS match) and will win
-    //   over the generic fallback when that INF is installed.
+    // If `require_fallback=true`, the INF must also include a strict, revision-gated generic
+    // fallback HWID (no SUBSYS): `PCI\VEN_1AF4&DEV_1052&REV_01`. This keeps driver binding
+    // revision-gated even if subsystem IDs are not exposed/recognized.
     //
-    // The `require_fallback` flag controls which policy is enforced:
-    // - require_fallback=false: forbid the strict fallback HWID.
-    // - require_fallback=true: require exactly one strict fallback HWID.
+    // Tablet devices bind via `aero_virtio_tablet.inf` (more specific SUBSYS match) and will
+    // win over the generic fallback when that INF is installed.
     let strings = parse_inf_strings(inf_text);
     let rev = format!("{expected_rev:02X}");
     let kb_hwid = format!("{base_hwid}&SUBSYS_00101AF4&REV_{rev}");
@@ -1413,82 +1406,6 @@ fn validate_virtio_input_device_desc_split(
     }
 
     Ok(())
-}
-
-fn strip_inf_comments_for_alias_diff(line: &str) -> String {
-    // INF comments begin with ';' outside of quoted strings.
-    let mut out = String::with_capacity(line.len());
-    let mut in_quotes = false;
-    for ch in line.chars() {
-        if ch == '"' {
-            in_quotes = !in_quotes;
-        }
-        if !in_quotes && ch == ';' {
-            break;
-        }
-        out.push(ch);
-    }
-    out
-}
-
-fn normalized_inf_lines_for_alias_diff(inf_text: &str, ignore_models: bool) -> Result<Vec<String>> {
-    // Keep this intentionally lightweight and deterministic:
-    // - start at the first section header (or the first non-comment line if it appears before any header)
-    // - strip inline comments and empty lines
-    // - optionally drop the models sections entirely
-    let lines: Vec<&str> = inf_text.lines().collect();
-
-    let mut start: Option<usize> = None;
-    for (i, raw) in lines.iter().enumerate() {
-        let stripped = raw.trim_start_matches(|c| c == ' ' || c == '\t');
-        if stripped.starts_with('[') {
-            start = Some(i);
-            break;
-        }
-        if stripped.starts_with(';') || stripped.trim().is_empty() {
-            continue;
-        }
-        // Unexpected functional content before the first section header: keep it.
-        start = Some(i);
-        break;
-    }
-
-    let Some(start) = start else {
-        bail!("INF has no section headers (e.g. [Version])");
-    };
-
-    let mut out: Vec<String> = Vec::new();
-    let mut skipping = false;
-    for raw in &lines[start..] {
-        let active = strip_inf_comments_for_alias_diff(raw).trim().to_string();
-        if active.is_empty() {
-            continue;
-        }
-        if active.starts_with('[') {
-            let Some(end) = active.find(']') else {
-                // Malformed header: treat as content so drift is detected.
-                if !skipping {
-                    out.push(active);
-                }
-                continue;
-            };
-            // INF section names are case-insensitive. Normalize them so we don't flag drift due to
-            // casing-only differences.
-            let sect = active[1..end].trim().to_ascii_lowercase();
-            skipping = ignore_models && matches!(sect.as_str(), "aero.ntx86" | "aero.ntamd64");
-            if skipping {
-                continue;
-            }
-            out.push(format!("[{sect}]"));
-            continue;
-        }
-
-        if skipping {
-            continue;
-        }
-        out.push(active);
-    }
-    Ok(out)
 }
 
 #[cfg(test)]
@@ -1928,17 +1845,20 @@ fn validate_in_tree_infs(repo_root: &Path, devices: &BTreeMap<String, DeviceEntr
                         &inf_text,
                         &base,
                         expected_rev,
-                        /* require_fallback */ false,
+                        // The canonical virtio-input INF is strict to the Aero contract v1 HWIDs:
+                        // it includes the subsystem-qualified keyboard/mouse IDs plus a strict
+                        // REV-qualified generic fallback (no SUBSYS).
+                        /* require_fallback */
+                        true,
                     )
                     .with_context(|| {
                         format!("{name}: validate virtio-input canonical DeviceDesc split")
                     })?;
 
-                    // Optional: validate the legacy alias INF (if present). This alias is kept for
-                    // compatibility with workflows that reference `virtio-input.inf`. It is allowed
-                    // to differ in the models sections to provide an opt-in strict generic fallback
-                    // HWID, but should stay in sync with the canonical INF outside of the models
-                    // sections.
+                    // Optional: validate the legacy alias INF (if present), which is a compatibility
+                    // shim for tooling that still expects `virtio-input.inf`. It is expected to stay
+                    // byte-for-byte identical to the canonical INF from the first section header
+                    // (`[Version]`) onward (only the leading banner/comments may differ).
                     let alias_candidates = [
                         inf_path.with_file_name("virtio-input.inf"),
                         inf_path.with_file_name("virtio-input.inf.disabled"),
@@ -1964,46 +1884,22 @@ fn validate_in_tree_infs(repo_root: &Path, devices: &BTreeMap<String, DeviceEntr
                             )
                         })?;
 
-                        let canonical_lines =
-                            normalized_inf_lines_for_alias_diff(&inf_text, /* ignore_models */ true)
-                                .with_context(|| {
-                                    format!(
-                                        "{name}: normalize virtio-input canonical INF for alias drift check"
-                                    )
-                                })?;
-                        let alias_lines = normalized_inf_lines_for_alias_diff(
-                            &alias_text,
-                            /* ignore_models */ true,
-                        )
-                        .with_context(|| {
-                            format!(
-                                "{name}: normalize virtio-input alias INF for drift check: {}",
-                                alias.display()
-                            )
+                        // Ensure the alias stays in sync with the canonical INF (functional content).
+                        // This is intentionally byte-level so drift in comments/whitespace/ordering is
+                        // detected, matching `drivers/windows7/virtio-input/scripts/check-inf-alias.py`.
+                        let canonical_body = inf_functional_bytes(inf_path).with_context(|| {
+                            format!("{name}: read canonical virtio-input INF functional bytes")
                         })?;
-                        if canonical_lines != alias_lines {
-                            // Find the first mismatch to make the error actionable without needing a full diff dependency.
-                            let first_diff = canonical_lines
-                                .iter()
-                                .zip(alias_lines.iter())
-                                .position(|(a, b)| a != b)
-                                .unwrap_or_else(|| canonical_lines.len().min(alias_lines.len()));
-                            let canonical_line =
-                                canonical_lines.get(first_diff).cloned().unwrap_or_default();
-                            let alias_line =
-                                alias_lines.get(first_diff).cloned().unwrap_or_default();
+                        let alias_body = inf_functional_bytes(&alias).with_context(|| {
+                            format!("{name}: read legacy virtio-input alias INF functional bytes")
+                        })?;
+                        if canonical_body != alias_body {
                             bail!(
-                                "{name}: virtio-input INF alias drift detected outside models sections.\n\
-                                 canonical: {}\n\
-                                 alias:     {}\n\
-                                 first mismatch at normalized line {}:\n\
-                                   canonical: {}\n\
-                                   alias:     {}",
+                                "{name}: virtio-input legacy alias INF drift detected: {} vs {}\n\
+The alias INF must be byte-for-byte identical to the canonical INF from the first section header (`[Version]`) onward.\n\
+Tip: run `python3 drivers/windows7/virtio-input/scripts/check-inf-alias.py` to diagnose drift.",
                                 inf_path.display(),
                                 alias.display(),
-                                first_diff + 1,
-                                canonical_line,
-                                alias_line
                             );
                         }
                     }
@@ -2290,6 +2186,60 @@ fn format_bullets(items: &BTreeSet<String>) -> String {
         .map(|s| format!("  - {s}"))
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+fn inf_functional_bytes(path: &Path) -> Result<Vec<u8>> {
+    // Return the INF content starting from the first section header line (typically `[Version]`).
+    //
+    // This intentionally ignores the leading comment/banner block so legacy alias INFs can include
+    // filename notes while still enforcing byte-for-byte equality of all functional content.
+    //
+    // This mirrors the policy implemented by:
+    // - drivers/windows7/virtio-input/scripts/check-inf-alias.py
+    let data = fs::read(path).with_context(|| format!("read {}", path.display()))?;
+    if data.is_empty() {
+        bail!("INF {} is empty", path.display());
+    }
+
+    let mut line_start = 0usize;
+    while line_start < data.len() {
+        // Find end-of-line (including the newline byte, if present).
+        let mut i = line_start;
+        while i < data.len() && data[i] != b'\n' {
+            i += 1;
+        }
+        let next_start = if i < data.len() && data[i] == b'\n' { i + 1 } else { i };
+        let line = &data[line_start..next_start];
+
+        let stripped = line
+            .iter()
+            .copied()
+            .skip_while(|b| *b == b' ' || *b == b'\t')
+            .collect::<Vec<u8>>();
+
+        if stripped.first() == Some(&b'[') {
+            return Ok(data[line_start..].to_vec());
+        }
+
+        // Ignore leading comments and blank lines.
+        if stripped.first() == Some(&b';')
+            || stripped == b"\n"
+            || stripped == b"\r\n"
+            || stripped == b"\r"
+        {
+            line_start = next_start;
+            continue;
+        }
+
+        // Unexpected non-comment preamble content before the first section header:
+        // treat it as functional to avoid masking drift.
+        return Ok(data[line_start..].to_vec());
+    }
+
+    bail!(
+        "INF {}: could not find a section header (e.g. [Version])",
+        path.display()
+    )
 }
 
 fn read_inf_text(path: &Path) -> Result<String> {
