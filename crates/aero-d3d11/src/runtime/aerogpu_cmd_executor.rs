@@ -1169,6 +1169,7 @@ pub struct AerogpuD3d11Executor {
     gs_scratch: GsScratchPool,
     next_scratch_buffer_id: u64,
     expansion_scratch: ExpansionScratchAllocator,
+    expansion_uniform_scratch: ExpansionScratchAllocator,
     tessellation: TessellationRuntime,
 
     dummy_uniform: wgpu::Buffer,
@@ -1443,6 +1444,14 @@ impl AerogpuD3d11Executor {
             gs_scratch: GsScratchPool::default(),
             next_scratch_buffer_id: 1u64 << 32,
             expansion_scratch: ExpansionScratchAllocator::new(ExpansionScratchDescriptor::default()),
+            expansion_uniform_scratch: ExpansionScratchAllocator::new(ExpansionScratchDescriptor {
+                label: Some("aero-d3d11 expansion uniform scratch"),
+                // Uniform payloads for geometry prepasses are small; keep this buffer lightweight but
+                // allow it to grow on demand.
+                per_frame_size: 64 * 1024, // 64 KiB
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                ..ExpansionScratchDescriptor::default()
+            }),
             tessellation: TessellationRuntime::default(),
             dummy_uniform,
             dummy_storage,
@@ -1686,6 +1695,7 @@ impl AerogpuD3d11Executor {
         self.gpu_scratch.clear();
         self.gs_scratch.clear();
         self.expansion_scratch.reset();
+        self.expansion_uniform_scratch.reset();
         self.tessellation.reset();
         self.encoder_has_commands = false;
         self.encoder_used_buffers.clear();
@@ -3062,7 +3072,7 @@ impl AerogpuD3d11Executor {
 
         let uniform_bytes = pulling.pack_uniform_bytes(&slots, vertex_pulling_draw);
         let uniform_alloc = self
-            .expansion_scratch
+            .expansion_uniform_scratch
             .alloc_metadata(&self.device, uniform_bytes.len() as u64, uniform_align)
             .map_err(|e| anyhow!("GS prepass: alloc vertex pulling uniform: {e}"))?;
         self.queue.write_buffer(
@@ -3286,6 +3296,11 @@ impl AerogpuD3d11Executor {
             pipeline as *const wgpu::ComputePipeline
         };
         let fill_pipeline = unsafe { &*fill_pipeline_ptr };
+        let empty_bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("aerogpu_cmd empty bind group"),
+            layout: empty_bgl.layout.as_ref(),
+            entries: &[],
+        });
 
         self.encoder_has_commands = true;
         {
@@ -3295,6 +3310,9 @@ impl AerogpuD3d11Executor {
             });
             pass.set_pipeline(fill_pipeline);
             pass.set_bind_group(0, &fill_bg, &[]);
+            for group in 1..VERTEX_PULLING_GROUP {
+                pass.set_bind_group(group, &empty_bg, &[]);
+            }
             pass.set_bind_group(VERTEX_PULLING_GROUP, &vp_bg, &[]);
             pass.dispatch_workgroups(primitive_count, 1, 1);
         }
@@ -3338,7 +3356,7 @@ impl AerogpuD3d11Executor {
         params_bytes[4..8].copy_from_slice(&instance_count.to_le_bytes());
         params_bytes[8..12].copy_from_slice(&vertex_pulling_draw.first_instance.to_le_bytes());
         let params_alloc = self
-            .expansion_scratch
+            .expansion_uniform_scratch
             .alloc_metadata(&self.device, params_bytes.len() as u64, uniform_align)
             .map_err(|e| anyhow!("GS prepass: alloc params buffer: {e}"))?;
         self.queue.write_buffer(
@@ -11618,6 +11636,7 @@ impl AerogpuD3d11Executor {
         });
         self.submit_encoder(encoder, "aerogpu_cmd encoder after present");
         self.expansion_scratch.begin_frame();
+        self.expansion_uniform_scratch.begin_frame();
         Ok(())
     }
 
@@ -11653,12 +11672,14 @@ impl AerogpuD3d11Executor {
         });
         self.submit_encoder(encoder, "aerogpu_cmd encoder after present_ex");
         self.expansion_scratch.begin_frame();
+        self.expansion_uniform_scratch.begin_frame();
         Ok(())
     }
 
     fn exec_flush(&mut self, encoder: &mut wgpu::CommandEncoder) -> Result<()> {
         self.submit_encoder(encoder, "aerogpu_cmd encoder after flush");
         self.expansion_scratch.begin_frame();
+        self.expansion_uniform_scratch.begin_frame();
         Ok(())
     }
 
