@@ -3052,11 +3052,11 @@ function Try-EmitAeroVirtioBlkResetMarker {
   
   $out = "AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RESET|$status"
 
-  # Backcompat: older selftests may emit `...|SKIP|flag_not_set` (no `reason=` field).
-  # Mirror it as `reason=...` so log scraping can treat it uniformly.
-  if ($status -eq "SKIP" -and (-not $fields.ContainsKey("reason"))) {
+  # Backcompat: older selftests may emit `...|SKIP|flag_not_set` or `...|FAIL|post_reset_io_failed` (no `reason=` field).
+  # Mirror the trailing token as `reason=...` so log scraping can treat it uniformly.
+  if (($status -eq "SKIP" -or $status -eq "FAIL") -and (-not $fields.ContainsKey("reason"))) {
     for ($i = 0; $i -lt $toks.Count; $i++) {
-      if ($toks[$i].Trim().ToUpperInvariant() -eq "SKIP") {
+      if ($toks[$i].Trim().ToUpperInvariant() -eq $status) {
         if ($i + 1 -lt $toks.Count) {
           $reasonTok = $toks[$i + 1].Trim()
           if (-not [string]::IsNullOrEmpty($reasonTok) -and ($reasonTok.IndexOf("=") -lt 0)) {
@@ -7506,6 +7506,7 @@ try {
         -SerialLogPath $SerialLogPath
       if ($null -ne $line) {
         if ($line -match "reason=([^|\r\n]+)") { $reason = $Matches[1] }
+        elseif ($line -match "\|FAIL\|([^|\r\n=]+)") { $reason = $Matches[1] }
         if ($line -match "(?:^|\|)err=([^|\r\n]+)") { $err = $Matches[1] }
       }
       Write-Host "FAIL: VIRTIO_BLK_RESET_FAILED: virtio-blk-reset test reported FAIL while -WithBlkReset was enabled (reason=$reason err=$err)"

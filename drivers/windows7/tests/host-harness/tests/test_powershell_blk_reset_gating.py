@@ -48,6 +48,8 @@ class PowerShellBlkResetGatingTests(unittest.TestCase):
         self.assertIn('-Prefix "AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|FAIL|"', self.text)
         self.assertIn('reason=([^|\\r\\n]+)', self.text)
         self.assertIn('err=([^|\\r\\n]+)', self.text)
+        # Backcompat: older guest selftests may emit `...|FAIL|post_reset_io_failed` (no `reason=` field).
+        self.assertIn("\\|FAIL\\|([^|\\r\\n=]+)", self.text)
 
     def test_host_marker_is_emitted(self) -> None:
         # The PowerShell harness should mirror the guest marker into a stable host marker
