@@ -137,7 +137,9 @@ mod tests {
     use super::*;
     use aero_devices::pci::{PciBdf, PciBus, PciConfigSpace, PciInterruptPin};
     use aero_pci_routing as pci_routing;
-    use firmware::bios::{A20Gate, Bios, BiosConfig, FirmwareMemory, InMemoryDisk, BIOS_SECTOR_SIZE};
+    use firmware::bios::{
+        A20Gate, Bios, BiosConfig, FirmwareMemory, InMemoryDisk, BIOS_SECTOR_SIZE,
+    };
     use memory::{DenseMemory, MapError, PhysicalMemoryBus};
     use std::cell::RefCell;
     use std::rc::Rc;

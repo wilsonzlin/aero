@@ -1892,12 +1892,7 @@ impl AerogpuCmdWriter {
             stage_ex != AerogpuShaderStageEx::None,
             "DISPATCH stage_ex must be non-zero (0 is reserved for legacy/default)"
         );
-        self.dispatch_with_stage_ex(
-            group_count_x,
-            group_count_y,
-            group_count_z,
-            Some(stage_ex),
-        );
+        self.dispatch_with_stage_ex(group_count_x, group_count_y, group_count_z, Some(stage_ex));
     }
 
     pub fn present(&mut self, scanout_id: u32, flags: u32) {

@@ -1,7 +1,11 @@
 use aero_machine::{Machine, MachineConfig, RunExit, ScanoutSource};
 use pretty_assertions::assert_eq;
 
-fn build_mode13h_write_pixel_boot_sector(x: u16, y: u16, color: u8) -> [u8; aero_storage::SECTOR_SIZE] {
+fn build_mode13h_write_pixel_boot_sector(
+    x: u16,
+    y: u16,
+    color: u8,
+) -> [u8; aero_storage::SECTOR_SIZE] {
     let mut sector = [0u8; aero_storage::SECTOR_SIZE];
     let mut i = 0usize;
 

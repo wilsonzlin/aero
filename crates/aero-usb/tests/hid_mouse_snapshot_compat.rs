@@ -22,7 +22,10 @@ fn mouse_snapshot_load_accepts_legacy_report_without_hwheel_byte() {
     w.field_u8(TAG_CONFIGURATION, 1);
     // Ensure we use report protocol formatting for the mouse (5-byte reports).
     w.field_u8(TAG_PROTOCOL, 1);
-    w.field_bytes(TAG_PENDING_REPORTS, Encoder::new().vec_bytes(&pending).finish());
+    w.field_bytes(
+        TAG_PENDING_REPORTS,
+        Encoder::new().vec_bytes(&pending).finish(),
+    );
     let snap = w.finish();
 
     let mut mouse = UsbHidMouseHandle::new();
@@ -42,4 +45,3 @@ fn mouse_snapshot_load_accepts_legacy_report_without_hwheel_byte() {
         UsbInResult::Nak
     ));
 }
-

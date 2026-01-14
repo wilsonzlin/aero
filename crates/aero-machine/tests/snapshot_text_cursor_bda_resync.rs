@@ -43,7 +43,12 @@ fn write_crtc_cursor_regs(m: &mut Machine, start: u8, end: u8, pos: u16) {
     m.io_write(0x3D5, 1, u32::from((pos & 0x00FF) as u8));
 }
 
-fn build_int10_set_cursor_boot_sector(row: u8, col: u8, start: u8, end: u8) -> [u8; aero_storage::SECTOR_SIZE] {
+fn build_int10_set_cursor_boot_sector(
+    row: u8,
+    col: u8,
+    start: u8,
+    end: u8,
+) -> [u8; aero_storage::SECTOR_SIZE] {
     let mut sector = [0u8; aero_storage::SECTOR_SIZE];
     let mut i = 0usize;
 

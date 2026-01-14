@@ -10,7 +10,8 @@ use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode, AerogpuCmdStreamHeader,
     AerogpuSamplerAddressMode, AerogpuSamplerFilter, AerogpuShaderResourceBufferBinding,
     AerogpuShaderStage, AerogpuShaderStageEx, AerogpuUnorderedAccessBufferBinding,
-    AEROGPU_CMD_STREAM_MAGIC, AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER, AEROGPU_RESOURCE_USAGE_TEXTURE,
+    AEROGPU_CMD_STREAM_MAGIC, AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER,
+    AEROGPU_RESOURCE_USAGE_TEXTURE,
 };
 use aero_protocol::aerogpu::aerogpu_pci::{AerogpuFormat, AEROGPU_ABI_VERSION_U32};
 use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
@@ -588,12 +589,14 @@ fn aerogpu_cmd_legacy_geometry_stage_bindings_update_geometry_bucket() {
         w.set_constant_buffers(
             AerogpuShaderStage::Geometry,
             0,
-            &[aero_protocol::aerogpu::aerogpu_cmd::AerogpuConstantBufferBinding {
-                buffer: 444,
-                offset_bytes: 0,
-                size_bytes: 16,
-                reserved0: 0,
-            }],
+            &[
+                aero_protocol::aerogpu::aerogpu_cmd::AerogpuConstantBufferBinding {
+                    buffer: 444,
+                    offset_bytes: 0,
+                    size_bytes: 16,
+                    reserved0: 0,
+                },
+            ],
         );
         w.set_shader_resource_buffers(
             AerogpuShaderStage::Geometry,

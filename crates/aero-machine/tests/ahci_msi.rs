@@ -187,7 +187,13 @@ fn ahci_msi_masked_interrupt_sets_pending_and_redelivers_after_unmask() {
     m.write_physical_u32(abar + PORT_BASE + PORT_REG_IS, PORT_IS_DHRS);
     write_cmd_header(&mut m, clb, 0, ctba, 1, false);
     write_cfis(&mut m, ctba, ATA_CMD_IDENTIFY, 0, 0);
-    write_prdt(&mut m, ctba, 0, identify_buf, aero_storage::SECTOR_SIZE as u32);
+    write_prdt(
+        &mut m,
+        ctba,
+        0,
+        identify_buf,
+        aero_storage::SECTOR_SIZE as u32,
+    );
     m.write_physical_u32(abar + PORT_BASE + PORT_REG_CI, 1);
 
     assert_eq!(
@@ -319,7 +325,13 @@ fn ahci_msi_unprogrammed_address_sets_pending_and_delivers_after_programming() {
     m.write_physical_u32(abar + PORT_BASE + PORT_REG_IS, PORT_IS_DHRS);
     write_cmd_header(&mut m, clb, 0, ctba, 1, false);
     write_cfis(&mut m, ctba, ATA_CMD_IDENTIFY, 0, 0);
-    write_prdt(&mut m, ctba, 0, identify_buf, aero_storage::SECTOR_SIZE as u32);
+    write_prdt(
+        &mut m,
+        ctba,
+        0,
+        identify_buf,
+        aero_storage::SECTOR_SIZE as u32,
+    );
     m.write_physical_u32(abar + PORT_BASE + PORT_REG_CI, 1);
 
     assert_eq!(

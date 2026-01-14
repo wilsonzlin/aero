@@ -173,7 +173,13 @@ fn snapshot_restore_roundtrips_ahci_state_and_redrives_intx_level() {
 
     write_cmd_header(&mut vm, clb, 0, ctba, 1, false);
     write_cfis(&mut vm, ctba, 0xEC, 0, 0); // ATA IDENTIFY
-    write_prdt(&mut vm, ctba, 0, identify_buf, aero_storage::SECTOR_SIZE as u32);
+    write_prdt(
+        &mut vm,
+        ctba,
+        0,
+        identify_buf,
+        aero_storage::SECTOR_SIZE as u32,
+    );
     vm.write_physical_u32(abar + PORT_BASE + PORT_REG_CI, 1);
 
     for _ in 0..16 {

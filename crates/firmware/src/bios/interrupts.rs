@@ -5,9 +5,9 @@ use aero_cpu_core::state::{
 use super::{
     disk_err_to_int13_status, set_real_mode_seg, Bios, BiosBus, BiosMemoryBus, BlockDevice,
     CdromDevice, DiskError, ElToritoBootMediaType, BDA_BASE, BDA_KEYBOARD_BUF_HEAD_OFFSET,
-    BDA_KEYBOARD_BUF_START, BDA_KEYBOARD_BUF_TAIL_OFFSET, BIOS_SEGMENT, CDROM_SECTOR_SIZE,
-    DISKETTE_PARAM_TABLE_OFFSET, EBDA_BASE, EBDA_SIZE, FIXED_DISK_PARAM_TABLE_OFFSET,
-    KEYBOARD_QUEUE_CAPACITY, BIOS_SECTOR_SIZE,
+    BDA_KEYBOARD_BUF_START, BDA_KEYBOARD_BUF_TAIL_OFFSET, BIOS_SECTOR_SIZE, BIOS_SEGMENT,
+    CDROM_SECTOR_SIZE, DISKETTE_PARAM_TABLE_OFFSET, EBDA_BASE, EBDA_SIZE,
+    FIXED_DISK_PARAM_TABLE_OFFSET, KEYBOARD_QUEUE_CAPACITY,
 };
 use crate::cpu::CpuState as FirmwareCpuState;
 
@@ -47,11 +47,7 @@ impl<'a> CdromAsBlockDevice<'a> {
 }
 
 impl BlockDevice for CdromAsBlockDevice<'_> {
-    fn read_sector(
-        &mut self,
-        lba: u64,
-        buf: &mut [u8; BIOS_SECTOR_SIZE],
-    ) -> Result<(), DiskError> {
+    fn read_sector(&mut self, lba: u64, buf: &mut [u8; BIOS_SECTOR_SIZE]) -> Result<(), DiskError> {
         let iso_lba = lba / 4;
         let sub = (lba % 4) as usize;
         if iso_lba >= self.cdrom.size_in_sectors() {

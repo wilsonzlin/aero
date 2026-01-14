@@ -66,7 +66,9 @@ fn build_int10_vbe_set_mode_then_wait_then_text_boot_sector() -> [u8; aero_stora
     sector
 }
 
-fn build_int10_vbe_set_mode_then_hlt_boot_sector_for_mode(mode: u16) -> [u8; aero_storage::SECTOR_SIZE] {
+fn build_int10_vbe_set_mode_then_hlt_boot_sector_for_mode(
+    mode: u16,
+) -> [u8; aero_storage::SECTOR_SIZE] {
     let mut sector = [0u8; aero_storage::SECTOR_SIZE];
     let mut i = 0usize;
 

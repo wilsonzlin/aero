@@ -241,8 +241,7 @@ pub struct InMemoryDisk {
 impl InMemoryDisk {
     pub fn new(mut data: Vec<u8>) -> Self {
         if !data.len().is_multiple_of(BIOS_SECTOR_SIZE) {
-            let new_len =
-                (data.len() + (BIOS_SECTOR_SIZE - 1)) & !(BIOS_SECTOR_SIZE - 1);
+            let new_len = (data.len() + (BIOS_SECTOR_SIZE - 1)) & !(BIOS_SECTOR_SIZE - 1);
             data.resize(new_len, 0);
         }
         Self { data }

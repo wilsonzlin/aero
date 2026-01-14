@@ -3,7 +3,10 @@ use pretty_assertions::assert_eq;
 
 const BANK_WINDOW_SIZE: u64 = 0x10000;
 
-fn build_int10_vbe_banked_window_boot_sector(bank: u16, value: u8) -> [u8; aero_storage::SECTOR_SIZE] {
+fn build_int10_vbe_banked_window_boot_sector(
+    bank: u16,
+    value: u8,
+) -> [u8; aero_storage::SECTOR_SIZE] {
     let mut sector = [0u8; aero_storage::SECTOR_SIZE];
     let mut i = 0usize;
 

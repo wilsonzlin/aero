@@ -72,7 +72,10 @@ fn build_int10_vbe_set_mode_then_text_mode_boot_sector() -> [u8; aero_storage::S
     sector
 }
 
-fn build_int10_vbe_set_mode_and_display_start_boot_sector(x_off: u16, y_off: u16) -> [u8; aero_storage::SECTOR_SIZE] {
+fn build_int10_vbe_set_mode_and_display_start_boot_sector(
+    x_off: u16,
+    y_off: u16,
+) -> [u8; aero_storage::SECTOR_SIZE] {
     let mut sector = [0u8; aero_storage::SECTOR_SIZE];
     let mut i = 0usize;
 

@@ -30,7 +30,11 @@ fn build_int10_set_cursor_pos_boot_sector(row: u8, col: u8) -> [u8; aero_storage
     sector
 }
 
-fn build_int10_set_cursor_pos_on_page_boot_sector(page: u8, row: u8, col: u8) -> [u8; aero_storage::SECTOR_SIZE] {
+fn build_int10_set_cursor_pos_on_page_boot_sector(
+    page: u8,
+    row: u8,
+    col: u8,
+) -> [u8; aero_storage::SECTOR_SIZE] {
     let mut sector = [0u8; aero_storage::SECTOR_SIZE];
     let mut i = 0usize;
 
@@ -292,7 +296,9 @@ fn build_set_start_address_and_set_cursor_pos_boot_sector(
     sector
 }
 
-fn build_set_start_address_and_set_mode_03h_boot_sector(start_addr: u16) -> [u8; aero_storage::SECTOR_SIZE] {
+fn build_set_start_address_and_set_mode_03h_boot_sector(
+    start_addr: u16,
+) -> [u8; aero_storage::SECTOR_SIZE] {
     let mut sector = [0u8; aero_storage::SECTOR_SIZE];
     let mut i = 0usize;
 

@@ -196,7 +196,12 @@ fn aerogpu_text_mode_scanout_honors_blink_bit_for_background_color() {
     assert_eq!(m.display_framebuffer()[0], 0xFF00_0000);
 }
 
-fn build_cursor_boot_sector(row: u8, col: u8, start: u8, end: u8) -> [u8; aero_storage::SECTOR_SIZE] {
+fn build_cursor_boot_sector(
+    row: u8,
+    col: u8,
+    start: u8,
+    end: u8,
+) -> [u8; aero_storage::SECTOR_SIZE] {
     let mut sector = [0u8; aero_storage::SECTOR_SIZE];
     let mut i = 0usize;
 

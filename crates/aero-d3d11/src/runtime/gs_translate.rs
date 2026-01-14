@@ -56,13 +56,13 @@ use crate::binding_model::{
     BINDING_BASE_CBUFFER, BINDING_BASE_SAMPLER, BINDING_BASE_TEXTURE, BINDING_BASE_UAV,
     BIND_GROUP_INTERNAL_EMULATION, EXPANDED_VERTEX_MAX_VARYINGS,
 };
+use crate::shader_translate::StorageTextureFormat;
 use crate::sm4::ShaderStage;
 use crate::sm4_ir::{
     BufferKind, CmpOp, CmpType, GsInputPrimitive, GsOutputTopology, OperandModifier,
     PredicateDstOperand, PredicateOperand, RegFile, RegisterRef, Sm4CmpOp, Sm4Decl, Sm4Inst,
     Sm4Module, Sm4TestBool, SrcKind, Swizzle, WriteMask,
 };
-use crate::shader_translate::StorageTextureFormat;
 
 /// `@group(0)` binding numbers used by the translated GS compute prepass.
 ///
@@ -1942,7 +1942,8 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_impl(
                     )?;
                 }
 
-                if uav_buffer_decls.contains_key(&uav.slot) || used_uav_buffers.contains(&uav.slot) {
+                if uav_buffer_decls.contains_key(&uav.slot) || used_uav_buffers.contains(&uav.slot)
+                {
                     return Err(GsTranslateError::UnsupportedOperand {
                         inst_index,
                         opcode: "store_uav_typed",
@@ -4118,7 +4119,8 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_impl(
                     //
                     // DXBC registers are untyped; interpret the coordinate lanes strictly as
                     // integer bits (bitcast `f32` -> `i32`) with no float-to-int heuristics.
-                    let coord_i = emit_src_vec4_i32(inst_index, "store_uav_typed", coord, &input_sivs)?;
+                    let coord_i =
+                        emit_src_vec4_i32(inst_index, "store_uav_typed", coord, &input_sivs)?;
                     let x = format!("({coord_i}).x");
                     let y = format!("({coord_i}).y");
 

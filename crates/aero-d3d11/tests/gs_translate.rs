@@ -811,7 +811,10 @@ fn sm5_gs_store_uav_typed_emits_group3_storage_texture_and_texture_store() {
                 topology: GsOutputTopology::Point(1),
             },
             Sm4Decl::GsMaxOutputVertexCount { max: 1 },
-            Sm4Decl::UavTyped2D { slot: 0, format: 28 }, // DXGI_FORMAT_R8G8B8A8_UNORM
+            Sm4Decl::UavTyped2D {
+                slot: 0,
+                format: 28,
+            }, // DXGI_FORMAT_R8G8B8A8_UNORM
         ],
         instructions: vec![
             Sm4Inst::StoreUavTyped {
