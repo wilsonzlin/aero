@@ -472,6 +472,9 @@ test("IO worker switches keyboard input from i8042 scancodes to virtio-input aft
     let virtioEvents: Array<{ type: number; code: number; value: number }> = [];
     let keyboardBackendSwitchesBefore = 0;
     let keyboardBackendSwitchesAfter = 0;
+    let keyboardBackendAfterPhase1 = 0;
+    let keyboardBackendAfterPhase2 = 0;
+    let virtioKeyboardDriverOkAfterPhase2 = 0;
 
     const drainI8042UntilNonEmpty = async (timeoutMs: number): Promise<{ bytes: number[] }> => {
       const start = typeof performance?.now === "function" ? performance.now() : Date.now();
@@ -498,6 +501,7 @@ test("IO worker switches keyboard input from i8042 scancodes to virtio-input aft
       const batchCounter0 = Atomics.load(status, StatusIndex.IoInputBatchCounter) >>> 0;
       sendKeyboardAInputBatch();
       await waitForIoInputBatchCounter(batchCounter0, 2000);
+      keyboardBackendAfterPhase1 = Atomics.load(status, StatusIndex.IoInputKeyboardBackend) | 0;
       const drained1 = await drainI8042UntilNonEmpty(2000);
       phase1I8042Bytes = drained1.bytes.length;
 
@@ -535,6 +539,8 @@ test("IO worker switches keyboard input from i8042 scancodes to virtio-input aft
       const drained2 = (await callCpu("drainI8042", {}, 2000)) as { bytes: number[] };
       phase2I8042Bytes = drained2.bytes.length;
       keyboardBackendSwitchesAfter = Atomics.load(status, StatusIndex.IoKeyboardBackendSwitchCounter) >>> 0;
+      keyboardBackendAfterPhase2 = Atomics.load(status, StatusIndex.IoInputKeyboardBackend) | 0;
+      virtioKeyboardDriverOkAfterPhase2 = Atomics.load(status, StatusIndex.IoInputVirtioKeyboardDriverOk) | 0;
 
       if (((virtioUsedIdxAfter - virtioUsedIdxInitial) >>> 0) !== expectedUsedDelta) {
         throw new Error(`virtio used.idx delta mismatch: initial=${virtioUsedIdxInitial} after=${virtioUsedIdxAfter}`);
@@ -554,19 +560,25 @@ test("IO worker switches keyboard input from i8042 scancodes to virtio-input aft
       virtioEvents,
       keyboardBackendSwitchesBefore,
       keyboardBackendSwitchesAfter,
+      keyboardBackendAfterPhase1,
+      keyboardBackendAfterPhase2,
+      virtioKeyboardDriverOkAfterPhase2,
     };
   });
 
   expect(result.virtioIdFn0 >>> 0).toBe(0x1052_1af4);
 
   // Phase 1: before virtio DRIVER_OK, scancode injection should reach i8042.
+  expect(result.keyboardBackendAfterPhase1).toBe(0); // ps2
   expect(result.phase1I8042Bytes).toBeGreaterThan(0);
 
   // Phase 2: after virtio driver OK, scancode injection must stop.
   expect(result.phase2I8042Bytes).toBe(0);
+  expect(result.virtioKeyboardDriverOkAfterPhase2).toBe(1);
+  expect(result.keyboardBackendAfterPhase2).toBe(2); // virtio
 
   // Backend switching should be observable via the IO worker telemetry counter.
-  expect(result.keyboardBackendSwitchesAfter).toBeGreaterThan(result.keyboardBackendSwitchesBefore);
+  expect(result.keyboardBackendSwitchesAfter - result.keyboardBackendSwitchesBefore).toBe(1);
 
   // Phase 2: virtio eventq should receive EV_KEY/EV_SYN pairs for press and release.
   const delta = result.virtioUsedIdxAfter - result.virtioUsedIdxInitial;

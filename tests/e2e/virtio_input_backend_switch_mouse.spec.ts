@@ -641,6 +641,7 @@ test("IO worker switches mouse input from PS/2 (i8042 AUX packets) to virtio-inp
       // Phase 1: virtio driver_ok is false; mouse goes through i8042 AUX output.
       await sendMouseMoveBatch(dx, dyPs2);
       const phase1 = await cpuCall("drainI8042");
+      const mouseBackendAfterPhase1 = Atomics.load(status, StatusIndex.IoInputMouseBackend) | 0;
 
       // Phase 2: guest completes virtio init + DRIVER_OK; mouse goes through virtio-input eventq.
       const mouseBackendSwitchesBefore = Atomics.load(status, StatusIndex.IoMouseBackendSwitchCounter) >>> 0;
@@ -655,8 +656,24 @@ test("IO worker switches mouse input from PS/2 (i8042 AUX packets) to virtio-inp
       const phase2BtnUp = await cpuCall("collectAfterPhase2");
 
       const mouseBackendSwitchesAfter = Atomics.load(status, StatusIndex.IoMouseBackendSwitchCounter) >>> 0;
+      const mouseBackendAfterPhase2 = Atomics.load(status, StatusIndex.IoInputMouseBackend) | 0;
+      const virtioMouseDriverOkAfterPhase2 = Atomics.load(status, StatusIndex.IoInputVirtioMouseDriverOk) | 0;
 
-      return { initRes, dx, dyPs2, phase1, virtioInit, phase2Move, phase2BtnDown, phase2BtnUp, mouseBackendSwitchesBefore, mouseBackendSwitchesAfter };
+      return {
+        initRes,
+        dx,
+        dyPs2,
+        phase1,
+        virtioInit,
+        phase2Move,
+        phase2BtnDown,
+        phase2BtnUp,
+        mouseBackendSwitchesBefore,
+        mouseBackendSwitchesAfter,
+        mouseBackendAfterPhase1,
+        mouseBackendAfterPhase2,
+        virtioMouseDriverOkAfterPhase2,
+      };
     } finally {
       cpuWorker.terminate();
       ioWorker.terminate();
@@ -670,6 +687,7 @@ test("IO worker switches mouse input from PS/2 (i8042 AUX packets) to virtio-inp
 
   // Phase 1: i8042 should output some mouse bytes.
   expect(result.phase1.bytes.length).toBeGreaterThan(0);
+  expect(result.mouseBackendAfterPhase1).toBe(0); // ps2
   // Prefer an AUX-bit assertion, but don't overfit the packet contents.
   expect(result.phase1.statuses.some((st: number) => (st & 0x20) !== 0)).toBe(true);
 
@@ -678,7 +696,9 @@ test("IO worker switches mouse input from PS/2 (i8042 AUX packets) to virtio-inp
   expect(result.phase2Move.i8042.bytes).toEqual([]);
 
   // Backend switching should be observable via the IO worker telemetry counter.
-  expect(result.mouseBackendSwitchesAfter).toBeGreaterThan(result.mouseBackendSwitchesBefore);
+  expect(result.mouseBackendSwitchesAfter - result.mouseBackendSwitchesBefore).toBe(1);
+  expect(result.virtioMouseDriverOkAfterPhase2).toBe(1);
+  expect(result.mouseBackendAfterPhase2).toBe(2); // virtio
 
   // For a single mouse move, expect EV_REL(REL_X), EV_REL(REL_Y), EV_SYN(SYN_REPORT).
   expect(result.phase2Move.delta).toBe(3);
