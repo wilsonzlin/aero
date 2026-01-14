@@ -15076,6 +15076,14 @@ fn cs_main() {
                 }
             };
 
+            if !exec.caps.supports_compute || !exec.caps.supports_indirect_execution {
+                skip_or_panic(
+                    module_path!(),
+                    "backend lacks compute/indirect execution required for GS/HS/DS emulation",
+                );
+                return;
+            }
+
             // Keep the per-frame scratch capacity small (but deterministic) so that the test can
             // assert that repeated GS prepass draws do not force the allocator to grow/reallocate.
             let mut desc = ExpansionScratchDescriptor::default();
@@ -15133,19 +15141,8 @@ fn cs_main() {
 
             let stream = writer.finish();
             let mut guest_mem = VecGuestMemory::new(0);
-            match exec.execute_cmd_stream(&stream, None, &mut guest_mem) {
-                Ok(_) => {}
-                Err(e) => {
-                    let msg = e.to_string();
-                    // Some wgpu backends (notably GL/WebGL2) do not support compute pipelines. GS
-                    // emulation is compute-based, so skip rather than failing the whole suite.
-                    if msg.contains("Unsupported") && msg.contains("compute") {
-                        skip_or_panic(module_path!(), &format!("compute unsupported ({msg})"));
-                        return;
-                    }
-                    panic!("unexpected execute_cmd_stream error: {e:#}");
-                }
-            }
+            exec.execute_cmd_stream(&stream, None, &mut guest_mem)
+                .expect("execute_cmd_stream should succeed on backends that support emulation");
 
             let cap_after = exec
                 .expansion_scratch
