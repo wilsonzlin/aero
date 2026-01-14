@@ -1161,7 +1161,7 @@ jobs:
             if [[ -n "${input_media_keys_marker}" ]]; then
               echo "- Guest virtio-input-media-keys marker: ${input_media_keys_marker}"
             fi
-            if [[ "${{ inputs.require_virtio_input_binding }}" == "true" && -n "${input_binding_host_marker}" ]]; then
+            if [[ -n "${input_binding_host_marker}" ]]; then
               echo "- Host virtio-input binding marker: \`${input_binding_host_marker}\`"
             fi
             if [[ -n "${input_bind_host_marker}" ]]; then
