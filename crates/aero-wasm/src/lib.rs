@@ -222,7 +222,7 @@ thread_local! {
     //
     // We use `thread_local!` instead of the unstable `#[thread_local]` attribute so
     // the threaded WASM build can compile on stable Rust.
-    static TLS_DUMMY: u8 = 0;
+    static TLS_DUMMY: u8 = const { 0 };
 }
 
 #[wasm_bindgen(start)]
@@ -370,24 +370,18 @@ pub fn jit_abi_constants() -> JsValue {
         set_u32("page_size", PAGE_SIZE as u32);
         set_u32("page_offset_mask", PAGE_OFFSET_MASK as u32);
         set_u32("jit_tlb_entries", JIT_TLB_ENTRIES as u32);
-        set_u32("jit_tlb_entry_bytes", JIT_TLB_ENTRY_SIZE as u32);
+        set_u32("jit_tlb_entry_bytes", JIT_TLB_ENTRY_SIZE);
         set_u32("jit_tlb_flag_read", TLB_FLAG_READ as u32);
         set_u32("jit_tlb_flag_write", TLB_FLAG_WRITE as u32);
         set_u32("jit_tlb_flag_exec", TLB_FLAG_EXEC as u32);
         set_u32("jit_tlb_flag_is_ram", TLB_FLAG_IS_RAM as u32);
-        set_u32("tier2_ctx_offset", TIER2_CTX_OFFSET as u32);
-        set_u32("tier2_ctx_size", TIER2_CTX_SIZE as u32);
+        set_u32("tier2_ctx_offset", TIER2_CTX_OFFSET);
+        set_u32("tier2_ctx_size", TIER2_CTX_SIZE);
         set_u32("trace_exit_reason_offset", TRACE_EXIT_REASON_OFFSET);
-        set_u32(
-            "code_version_table_ptr_offset",
-            CODE_VERSION_TABLE_PTR_OFFSET as u32,
-        );
-        set_u32(
-            "code_version_table_len_offset",
-            CODE_VERSION_TABLE_LEN_OFFSET as u32,
-        );
+        set_u32("code_version_table_ptr_offset", CODE_VERSION_TABLE_PTR_OFFSET);
+        set_u32("code_version_table_len_offset", CODE_VERSION_TABLE_LEN_OFFSET);
         let commit_flag_offset = TIER2_CTX_OFFSET + TIER2_CTX_SIZE;
-        set_u32("commit_flag_offset", commit_flag_offset as u32);
+        set_u32("commit_flag_offset", commit_flag_offset);
         set_u32("commit_flag_bytes", 4);
 
         let mut gpr_off_u32 = [0u32; GPR_COUNT];
@@ -752,14 +746,14 @@ pub(crate) fn validate_shared_guest_ram_layout(
     // Validate that guest RAM begins after the reserved runtime region and is
     // page-aligned (wasm linear memory is addressed in 64KiB pages).
     if guest_base_u64 < expected_base {
-        return Err(js_error(&format!(
+        return Err(js_error(format!(
             "{api}: invalid guest_base=0x{guest_base:x}. Guest RAM must begin at or above the reserved runtime region end (expected >= 0x{expected_base:x}).\n\
 This usually means the JS coordinator's shared-guest-memory layout constants are out of sync with this WASM build.\n\
 Fix: ensure `web/src/runtime/shared_layout.ts` matches `crates/aero-wasm/src/guest_layout.rs` and rebuild both together."
         )));
     }
     if guest_base_u64 % guest_layout::WASM_PAGE_BYTES != 0 {
-        return Err(js_error(&format!(
+        return Err(js_error(format!(
             "{api}: invalid guest_base=0x{guest_base:x}. guest_base must be 64KiB-aligned (wasm page size)."
         )));
     }
@@ -781,7 +775,7 @@ Fix: ensure `web/src/runtime/shared_layout.ts` matches `crates/aero-wasm/src/gue
     // The shared guest RAM layout reserves the high PCI MMIO window; guest RAM
     // must not extend into that region.
     if guest_size_u64 > guest_layout::GUEST_PCI_MMIO_BASE {
-        return Err(js_error(&format!(
+        return Err(js_error(format!(
             "{api}: invalid guest_size=0x{guest_size_u64:x}. Guest RAM must be <= 0x{mmio_base:x} (GUEST_PCI_MMIO_BASE) so PCI MMIO BARs never overlap guest RAM.",
             mmio_base = guest_layout::GUEST_PCI_MMIO_BASE
         )));
@@ -789,9 +783,9 @@ Fix: ensure `web/src/runtime/shared_layout.ts` matches `crates/aero-wasm/src/gue
 
     let end = guest_base_u64
         .checked_add(guest_size_u64)
-        .ok_or_else(|| js_error(&format!("{api}: guest_base + guest_size overflow")))?;
+        .ok_or_else(|| js_error(format!("{api}: guest_base + guest_size overflow")))?;
     if end > mem_bytes {
-        return Err(js_error(&format!(
+        return Err(js_error(format!(
             "{api}: guest RAM mapping out of bounds: guest_base=0x{guest_base:x} guest_size=0x{guest_size_u64:x} end=0x{end:x} wasm_mem=0x{mem_bytes:x}.\n\
 Fix: ensure the imported WebAssembly.Memory is created with byteLength >= guest_base + guest_size (and that the coordinator/WASM agree on the layout)."
         )));
@@ -875,7 +869,7 @@ mod shared_guest_ram_layout_validation_tests {
     fn rejects_guest_size_overlapping_mmio_window() {
         ensure_reserved_pages();
         let base = super::guest_layout::RUNTIME_RESERVED_BYTES as u32;
-        let too_big = (super::guest_layout::GUEST_PCI_MMIO_BASE as u64 + 0x1_0000) as u32;
+        let too_big = (super::guest_layout::GUEST_PCI_MMIO_BASE + 0x1_0000) as u32;
         let err = validate_shared_guest_ram_layout("test", base, too_big)
             .expect_err("expected validation error");
         let msg = js_err_message(err);
@@ -942,12 +936,10 @@ pub fn synthesize_webhid_report_descriptor(
     // similarly large intermediate string.
     let collections: Vec<aero_usb::hid::webhid::HidCollectionInfo> =
         serde_path_to_error::deserialize(serde_wasm_bindgen::Deserializer::from(collections_json))
-            .map_err(|err| js_error(&format!("Invalid WebHID collection schema: {err}")))?;
+            .map_err(|err| js_error(format!("Invalid WebHID collection schema: {err}")))?;
 
     let bytes = synthesize_webhid_report_descriptor_bytes(&collections).map_err(|err| {
-        js_error(&format!(
-            "Failed to synthesize HID report descriptor: {err}"
-        ))
+        js_error(format!("Failed to synthesize HID report descriptor: {err}"))
     })?;
 
     Ok(Uint8Array::from(bytes.as_slice()))
@@ -1063,6 +1055,13 @@ pub struct UsbHidBridge {
     gamepad: UsbHidGamepad,
     consumer: UsbHidConsumerControl,
     mouse_buttons: u8,
+}
+
+#[cfg(target_arch = "wasm32")]
+impl Default for UsbHidBridge {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -1398,10 +1397,10 @@ impl WebHidPassthroughBridge {
     ) -> Result<Self, JsValue> {
         let collections: Vec<webhid::HidCollectionInfo> =
             serde_path_to_error::deserialize(serde_wasm_bindgen::Deserializer::from(collections))
-                .map_err(|err| js_error(&format!("Invalid WebHID collection schema: {err}")))?;
+                .map_err(|err| js_error(format!("Invalid WebHID collection schema: {err}")))?;
 
         let report_descriptor = webhid::synthesize_report_descriptor(&collections)
-            .map_err(|e| js_error(&format!("failed to synthesize HID report descriptor: {e}")))?;
+            .map_err(|e| js_error(format!("failed to synthesize HID report descriptor: {e}")))?;
 
         let (interface_subclass, interface_protocol) = webhid::infer_boot_interface(&collections)
             .map(|(subclass, protocol)| (Some(subclass), Some(protocol)))
@@ -1807,6 +1806,13 @@ pub struct UsbPassthroughBridge {
 }
 
 #[cfg(target_arch = "wasm32")]
+impl Default for UsbPassthroughBridge {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
 impl UsbPassthroughBridge {
     #[wasm_bindgen(constructor)]
@@ -1967,6 +1973,13 @@ pub struct UsbPassthroughDemo {
 }
 
 #[cfg(target_arch = "wasm32")]
+impl Default for UsbPassthroughDemo {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
 impl UsbPassthroughDemo {
     #[wasm_bindgen(constructor)]
@@ -2011,6 +2024,13 @@ impl UsbPassthroughDemo {
 pub struct SineTone {
     phase: f32,
     scratch: Vec<f32>,
+}
+
+#[cfg(target_arch = "wasm32")]
+impl Default for SineTone {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[cfg(test)]
@@ -2556,7 +2576,7 @@ impl HdaPlaybackDemo {
         }
 
         // One BDL entry pointing at the PCM buffer, IOC=1.
-        self.mem.write_u64(bdl_base + 0, pcm_base);
+        self.mem.write_u64(bdl_base, pcm_base);
         self.mem.write_u32(bdl_base + 8, pcm_len_bytes as u32);
         self.mem.write_u32(bdl_base + 12, 1);
 
@@ -3004,7 +3024,9 @@ impl CpuWorkerDemo {
 
         #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
         {
-            if guest_counter_offset_bytes == 0 || guest_counter_offset_bytes % 4 != 0 {
+            if guest_counter_offset_bytes == 0
+                || !guest_counter_offset_bytes.is_multiple_of(4)
+            {
                 return Err(JsValue::from_str(
                     "guest_counter_offset_bytes must be a non-zero multiple of 4",
                 ));
@@ -3017,7 +3039,7 @@ impl CpuWorkerDemo {
                 ram_size_bytes as u64
             };
 
-            if framebuffer_offset_bytes == 0 || framebuffer_offset_bytes % 4 != 0 {
+            if framebuffer_offset_bytes == 0 || !framebuffer_offset_bytes.is_multiple_of(4) {
                 return Err(JsValue::from_str(
                     "framebuffer_offset_bytes must be a non-zero multiple of 4",
                 ));
@@ -3818,23 +3840,22 @@ impl Machine {
         let mut cfg = aero_machine::MachineConfig::browser_defaults(ram_size_bytes as u64);
         cfg.enable_synthetic_usb_hid = true;
 
-        if let Some(options) = options {
-            if !options.is_null() && !options.is_undefined() {
-                if !options.is_object() {
-                    return Err(JsValue::from_str("Machine options must be an object"));
-                }
+        if let Some(options) = options && !options.is_null() && !options.is_undefined() {
+            if !options.is_object() {
+                return Err(JsValue::from_str("Machine options must be an object"));
+            }
 
-                let get_bool = |key: &str| -> Result<Option<bool>, JsValue> {
-                    let v = Reflect::get(&options, &JsValue::from_str(key))?;
-                    if v.is_undefined() || v.is_null() {
-                        return Ok(None);
-                    }
-                    v.as_bool()
-                        .ok_or_else(|| {
-                            JsValue::from_str(&format!("Machine option `{key}` must be a boolean"))
-                        })
-                        .map(Some)
-                };
+            let get_bool = |key: &str| -> Result<Option<bool>, JsValue> {
+                let v = Reflect::get(&options, &JsValue::from_str(key))?;
+                if v.is_undefined() || v.is_null() {
+                    return Ok(None);
+                }
+                v.as_bool()
+                    .ok_or_else(|| {
+                        JsValue::from_str(&format!("Machine option `{key}` must be a boolean"))
+                    })
+                    .map(Some)
+            };
 
                 if let Some(v) = get_bool("enable_pc_platform")? {
                     cfg.enable_pc_platform = v;
@@ -5130,7 +5151,7 @@ impl Machine {
         // in-bounds before we create a reference into linear memory.
         let page_bytes = crate::guest_layout::WASM_PAGE_BYTES as usize;
         let reserved_bytes = crate::guest_layout::RUNTIME_RESERVED_BYTES as usize;
-        let cur_pages = core::arch::wasm32::memory_size(0) as usize;
+        let cur_pages = core::arch::wasm32::memory_size(0);
         let cur_bytes = cur_pages.saturating_mul(page_bytes);
         if cur_bytes >= reserved_bytes {
             return;
@@ -5146,7 +5167,7 @@ impl Machine {
         let prev = core::arch::wasm32::memory_grow(0, delta_pages);
         if prev == usize::MAX {
             // Re-check and abort if we still cannot satisfy the runtime layout contract.
-            let pages = core::arch::wasm32::memory_size(0) as usize;
+            let pages = core::arch::wasm32::memory_size(0);
             let bytes = pages.saturating_mul(page_bytes);
             if bytes < reserved_bytes {
                 panic!(

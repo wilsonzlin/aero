@@ -497,6 +497,13 @@ pub struct GuestCpuBenchHarness {
 }
 
 #[cfg(target_arch = "wasm32")]
+impl Default for GuestCpuBenchHarness {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
 impl GuestCpuBenchHarness {
     #[wasm_bindgen(constructor)]

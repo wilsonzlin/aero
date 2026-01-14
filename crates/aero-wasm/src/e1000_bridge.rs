@@ -7,8 +7,6 @@
 //! The E1000's descriptor rings live in guest RAM; this bridge implements
 //! [`memory::MemoryBus`] so the Rust device model can DMA into the shared wasm
 //! linear memory guest region (see `guest_ram_layout`).
-#![cfg(target_arch = "wasm32")]
-
 use wasm_bindgen::prelude::*;
 
 use js_sys::Uint8Array;
@@ -277,7 +275,7 @@ impl E1000Bridge {
         if size == 0 {
             return 0;
         }
-        let end = offset.checked_add(size as u32).unwrap_or(u32::MAX);
+        let end = offset.saturating_add(size as u32);
         if end > E1000_MMIO_SIZE {
             return 0xFFFF_FFFF;
         }
@@ -289,7 +287,7 @@ impl E1000Bridge {
         if size == 0 {
             return;
         }
-        let end = offset.checked_add(size as u32).unwrap_or(u32::MAX);
+        let end = offset.saturating_add(size as u32);
         if end > E1000_MMIO_SIZE {
             return;
         }
@@ -301,7 +299,7 @@ impl E1000Bridge {
         if size == 0 {
             return 0;
         }
-        let end = offset.checked_add(size as u32).unwrap_or(u32::MAX);
+        let end = offset.saturating_add(size as u32);
         if end > E1000_IO_SIZE {
             return 0xFFFF_FFFF;
         }
@@ -313,7 +311,7 @@ impl E1000Bridge {
         if size == 0 {
             return;
         }
-        let end = offset.checked_add(size as u32).unwrap_or(u32::MAX);
+        let end = offset.saturating_add(size as u32);
         if end > E1000_IO_SIZE {
             return;
         }
@@ -334,7 +332,7 @@ impl E1000Bridge {
         if size == 0 {
             return;
         }
-        let end = offset.checked_add(size as u32).unwrap_or(u32::MAX);
+        let end = offset.saturating_add(size as u32);
         if end > 256 {
             return;
         }
@@ -360,7 +358,7 @@ impl E1000Bridge {
         // frames. By accepting `Uint8Array` we can validate the length first and
         // only copy bounded frames.
         let len = frame.length() as usize;
-        if len < MIN_L2_FRAME_LEN || len > MAX_L2_FRAME_LEN {
+        if !(MIN_L2_FRAME_LEN..=MAX_L2_FRAME_LEN).contains(&len) {
             return;
         }
         let mut buf = vec![0u8; len];
@@ -378,7 +376,7 @@ impl E1000Bridge {
 
     pub fn pop_tx_frame(&mut self) -> Option<Uint8Array> {
         let frame = self.dev.pop_tx_frame()?;
-        if frame.len() < MIN_L2_FRAME_LEN || frame.len() > MAX_L2_FRAME_LEN {
+        if !(MIN_L2_FRAME_LEN..=MAX_L2_FRAME_LEN).contains(&frame.len()) {
             return None;
         }
         Some(Uint8Array::from(frame.as_slice()))

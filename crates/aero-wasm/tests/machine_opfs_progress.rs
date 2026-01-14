@@ -65,11 +65,11 @@ async fn set_disk_opfs_with_progress_invokes_callback() {
         "expected progress callback to be invoked at least twice; got {samples:?}"
     );
     assert!(
-        samples.iter().any(|&v| v == 0.0),
+        samples.contains(&0.0),
         "expected progress callback to include 0.0; got {samples:?}"
     );
     assert!(
-        samples.iter().any(|&v| v == 1.0),
+        samples.contains(&1.0),
         "expected progress callback to include 1.0; got {samples:?}"
     );
 }
@@ -109,11 +109,11 @@ async fn attach_ide_primary_master_disk_opfs_with_progress_invokes_callback() {
         "expected progress callback to be invoked at least twice; got {samples:?}"
     );
     assert!(
-        samples.iter().any(|&v| v == 0.0),
+        samples.contains(&0.0),
         "expected progress callback to include 0.0; got {samples:?}"
     );
     assert!(
-        samples.iter().any(|&v| v == 1.0),
+        samples.contains(&1.0),
         "expected progress callback to include 1.0; got {samples:?}"
     );
 }

@@ -6,8 +6,6 @@
 //! - inject host keyboard/mouse events,
 //! - snapshot/restore device state via `aero-io-snapshot` deterministic bytes, and
 //! - observe IRQ/A20/reset side effects.
-#![cfg(target_arch = "wasm32")]
-
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -93,6 +91,12 @@ pub struct I8042Bridge {
     sys: Rc<RefCell<SystemState>>,
     irq: Rc<RefCell<IrqState>>,
     mouse_buttons: u8,
+}
+
+impl Default for I8042Bridge {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[wasm_bindgen]

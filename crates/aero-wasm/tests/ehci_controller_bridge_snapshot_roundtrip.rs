@@ -19,7 +19,7 @@ fn ehci_controller_bridge_step_frames_advances_frindex_and_snapshot_roundtrips()
 
     // CAPLENGTH is an 8-bit value at MMIO offset 0x00; it gives the base offset of the operational
     // register block.
-    let caplen = (ctrl.mmio_read(0, 1) & 0xFF) as u32;
+    let caplen = ctrl.mmio_read(0, 1) & 0xFF;
 
     // Bring the controller into the Running state so FRINDEX advances when ticking.
     ctrl.mmio_write(caplen + OP_REG_USBCMD, 4, USBCMD_RUN);
@@ -39,7 +39,7 @@ fn ehci_controller_bridge_step_frames_advances_frindex_and_snapshot_roundtrips()
     let mut ctrl2 = EhciControllerBridge::new(guest_base, guest_size).unwrap();
     ctrl2.load_state(&snapshot).unwrap();
 
-    let caplen2 = (ctrl2.mmio_read(0, 1) & 0xFF) as u32;
+    let caplen2 = ctrl2.mmio_read(0, 1) & 0xFF;
     assert_eq!(caplen2, caplen, "CAPLENGTH must be stable across restore");
     assert_eq!(ctrl2.mmio_read(caplen + OP_REG_FRINDEX, 4) & 0x3FFF, after);
 }

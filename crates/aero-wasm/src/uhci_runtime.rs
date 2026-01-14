@@ -1,5 +1,3 @@
-#![cfg(target_arch = "wasm32")]
-
 use std::collections::HashMap;
 
 use js_sys::{Array, Object, Reflect, Uint8Array};
@@ -361,10 +359,10 @@ impl UhciRuntime {
         self.ensure_external_hub(hub_port)?;
 
         // Clear any existing device at this hub port so we do not silently stack devices.
-        if let Some(prev_device_id) = self.webhid_hub_ports.get(&hub_port).copied() {
-            if prev_device_id != device_id {
-                self.webhid_detach(prev_device_id);
-            }
+        if let Some(prev_device_id) = self.webhid_hub_ports.get(&hub_port).copied()
+            && prev_device_id != device_id
+        {
+            self.webhid_detach(prev_device_id);
         }
 
         self.webhid_detach(device_id);
@@ -624,7 +622,10 @@ impl UhciRuntime {
                         .get(i)
                         .as_f64()
                         .and_then(|v| {
-                            if v.is_finite() && v.fract() == 0.0 && v >= 0.0 && v <= 255.0 {
+                            if v.is_finite()
+                                && v.fract() == 0.0
+                                && (0.0..=255.0).contains(&v)
+                            {
                                 Some(v as u8)
                             } else {
                                 None
@@ -685,12 +686,10 @@ impl UhciRuntime {
     pub fn webusb_attach(&mut self, preferred_port: Option<u8>) -> Result<u32, JsValue> {
         self.webusb_detach();
 
-        if let Some(preferred) = preferred_port {
-            if preferred as usize != WEBUSB_ROOT_PORT {
-                return Err(js_error(&format!(
-                    "Invalid preferredPort {preferred} for WebUSB (expected {WEBUSB_ROOT_PORT})"
-                )));
-            }
+        if let Some(preferred) = preferred_port && preferred as usize != WEBUSB_ROOT_PORT {
+            return Err(js_error(&format!(
+                "Invalid preferredPort {preferred} for WebUSB (expected {WEBUSB_ROOT_PORT})"
+            )));
         }
 
         if !self.port_is_free(WEBUSB_ROOT_PORT) {
@@ -783,7 +782,10 @@ impl UhciRuntime {
                         .get(i)
                         .as_f64()
                         .and_then(|v| {
-                            if v.is_finite() && v.fract() == 0.0 && v >= 0.0 && v <= 255.0 {
+                            if v.is_finite()
+                                && v.fract() == 0.0
+                                && (0.0..=255.0).contains(&v)
+                            {
                                 Some(v as u8)
                             } else {
                                 None
@@ -1116,12 +1118,10 @@ impl UhciRuntime {
                 "UHCI runtime snapshot has inconsistent external hub fields (expected both portCount + state)",
             ));
         }
-        if let Some(count) = hub_port_count {
-            if count == 0 {
-                return Err(js_error(
-                    "UHCI runtime snapshot has invalid external hub port count 0",
-                ));
-            }
+        if let Some(count) = hub_port_count && count == 0 {
+            return Err(js_error(
+                "UHCI runtime snapshot has invalid external hub port count 0",
+            ));
         }
 
         let hub_port_count_hint = r
@@ -1164,12 +1164,10 @@ impl UhciRuntime {
                         "Invalid UHCI runtime snapshot passthrough HID record #{idx}: hub port 0 is not valid",
                     )));
                 }
-                if let Some(max_port) = hub_port_count {
-                    if hub_port > max_port {
-                        return Err(js_error(&format!(
-                            "Invalid UHCI runtime snapshot passthrough HID record #{idx}: hub port {hub_port} exceeds hub port count {max_port}",
-                        )));
-                    }
+                if let Some(max_port) = hub_port_count && hub_port > max_port {
+                    return Err(js_error(&format!(
+                        "Invalid UHCI runtime snapshot passthrough HID record #{idx}: hub port {hub_port} exceeds hub port count {max_port}",
+                    )));
                 }
                 let state = rd.vec_u8().map_err(|e| {
                     js_error(&format!(
@@ -1306,8 +1304,7 @@ impl UhciRuntime {
             let mut hub_ports = std::collections::HashMap::new();
 
             for entry in &webhid_entries {
-                if let Some(prev) = ids.insert(entry.device_id, ()) {
-                    let _ = prev;
+                if ids.insert(entry.device_id, ()).is_some() {
                     return Err(js_error(&format!(
                         "UHCI runtime snapshot has duplicate WebHID deviceId {}",
                         entry.device_id
@@ -1698,10 +1695,8 @@ impl UhciRuntime {
         if self.webhid_ports[port].is_some() {
             return false;
         }
-        if let Some(webusb) = self.webusb.as_ref() {
-            if webusb.port == port {
-                return false;
-            }
+        if let Some(webusb) = self.webusb.as_ref() && webusb.port == port {
+            return false;
         }
         true
     }
@@ -1844,9 +1839,7 @@ impl UhciRuntime {
                     .into_iter()
                     .filter_map(|(path, hub_port, dev)| {
                         let idx = (hub_port - 1) as usize;
-                        if hub.downstream_device_mut(idx).is_none() {
-                            return None;
-                        }
+                        hub.downstream_device_mut(idx)?;
 
                         Some((path.clone(), dev.clone()))
                     })

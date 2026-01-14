@@ -75,7 +75,7 @@ fn install_control_in_schedule(guest_base: u32) -> u32 {
         }
 
         // QH: head=terminate, element=SETUP TD.
-        common::write_u32(guest_base + qh_addr + 0x00, LINK_PTR_T);
+        common::write_u32(guest_base + qh_addr, LINK_PTR_T);
         common::write_u32(guest_base + qh_addr + 0x04, setup_td);
 
         // Setup packet: GET_DESCRIPTOR (device), 8 bytes.
@@ -89,19 +89,19 @@ fn install_control_in_schedule(guest_base: u32) -> u32 {
         common::write_bytes(guest_base + setup_buf, &setup_packet);
 
         // SETUP TD.
-        common::write_u32(guest_base + setup_td + 0x00, data_td);
+        common::write_u32(guest_base + setup_td, data_td);
         common::write_u32(guest_base + setup_td + 0x04, td_ctrl(true, false));
         common::write_u32(guest_base + setup_td + 0x08, td_token(0x2D, 0, 0, false, 8));
         common::write_u32(guest_base + setup_td + 0x0C, setup_buf);
 
         // DATA IN TD (will NAK until host completion is pushed).
-        common::write_u32(guest_base + data_td + 0x00, status_td);
+        common::write_u32(guest_base + data_td, status_td);
         common::write_u32(guest_base + data_td + 0x04, td_ctrl(true, false));
         common::write_u32(guest_base + data_td + 0x08, td_token(0x69, 0, 0, true, 8));
         common::write_u32(guest_base + data_td + 0x0C, data_buf);
 
         // STATUS OUT TD (0-length, IOC).
-        common::write_u32(guest_base + status_td + 0x00, LINK_PTR_T);
+        common::write_u32(guest_base + status_td, LINK_PTR_T);
         common::write_u32(guest_base + status_td + 0x04, td_ctrl(true, true));
         common::write_u32(guest_base + status_td + 0x08, td_token(0xE1, 0, 0, true, 0));
         common::write_u32(guest_base + status_td + 0x0C, 0);
@@ -318,7 +318,7 @@ fn bridge_blocks_guest_schedule_dma_until_pci_bus_master_enable() {
         }
 
         // QH: head=terminate, element=SETUP TD.
-        common::write_u32(guest_base + qh_addr + 0x00, LINK_PTR_T);
+        common::write_u32(guest_base + qh_addr, LINK_PTR_T);
         common::write_u32(guest_base + qh_addr + 0x04, setup_td);
 
         // Setup packet: GET_DESCRIPTOR (device), 8 bytes.
@@ -332,19 +332,19 @@ fn bridge_blocks_guest_schedule_dma_until_pci_bus_master_enable() {
         common::write_bytes(guest_base + setup_buf, &setup_packet);
 
         // SETUP TD.
-        common::write_u32(guest_base + setup_td + 0x00, data_td);
+        common::write_u32(guest_base + setup_td, data_td);
         common::write_u32(guest_base + setup_td + 0x04, td_ctrl(true, false));
         common::write_u32(guest_base + setup_td + 0x08, td_token(0x2D, 0, 0, false, 8));
         common::write_u32(guest_base + setup_td + 0x0C, setup_buf);
 
         // DATA IN TD (will NAK until host completion is pushed).
-        common::write_u32(guest_base + data_td + 0x00, status_td);
+        common::write_u32(guest_base + data_td, status_td);
         common::write_u32(guest_base + data_td + 0x04, td_ctrl(true, false));
         common::write_u32(guest_base + data_td + 0x08, td_token(0x69, 0, 0, true, 8));
         common::write_u32(guest_base + data_td + 0x0C, data_buf);
 
         // STATUS OUT TD (0-length, IOC).
-        common::write_u32(guest_base + status_td + 0x00, LINK_PTR_T);
+        common::write_u32(guest_base + status_td, LINK_PTR_T);
         common::write_u32(guest_base + status_td + 0x04, td_ctrl(true, true));
         common::write_u32(guest_base + status_td + 0x08, td_token(0xE1, 0, 0, true, 0));
         common::write_u32(guest_base + status_td + 0x0C, 0);
@@ -461,7 +461,7 @@ fn uhci_controller_bridge_emits_host_actions_on_webusb_port() {
         }
 
         // QH: head=terminate, element=SETUP TD.
-        common::write_u32(qh_linear + 0x00, LINK_PTR_T);
+        common::write_u32(qh_linear, LINK_PTR_T);
         common::write_u32(qh_linear + 0x04, setup_td);
 
         // Setup packet: GET_DESCRIPTOR (device), 8 bytes.
@@ -475,19 +475,19 @@ fn uhci_controller_bridge_emits_host_actions_on_webusb_port() {
         common::write_bytes(setup_buf_linear, &setup_packet);
 
         // SETUP TD.
-        common::write_u32(setup_td_linear + 0x00, data_td);
+        common::write_u32(setup_td_linear, data_td);
         common::write_u32(setup_td_linear + 0x04, td_ctrl(true, false));
         common::write_u32(setup_td_linear + 0x08, td_token(0x2D, 0, 0, false, 8));
         common::write_u32(setup_td_linear + 0x0C, setup_buf);
 
         // DATA IN TD (will NAK until host completion is pushed).
-        common::write_u32(data_td_linear + 0x00, status_td);
+        common::write_u32(data_td_linear, status_td);
         common::write_u32(data_td_linear + 0x04, td_ctrl(true, false));
         common::write_u32(data_td_linear + 0x08, td_token(0x69, 0, 0, true, 8));
         common::write_u32(data_td_linear + 0x0C, data_buf);
 
         // STATUS OUT TD (0-length, IOC).
-        common::write_u32(status_td_linear + 0x00, LINK_PTR_T);
+        common::write_u32(status_td_linear, LINK_PTR_T);
         common::write_u32(status_td_linear + 0x04, td_ctrl(true, true));
         common::write_u32(status_td_linear + 0x08, td_token(0xE1, 0, 0, true, 0));
         common::write_u32(status_td_linear + 0x0C, 0);

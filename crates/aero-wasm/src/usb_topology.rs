@@ -1,5 +1,3 @@
-#![cfg(target_arch = "wasm32")]
-
 use wasm_bindgen::prelude::*;
 
 fn js_error(message: impl core::fmt::Display) -> JsValue {

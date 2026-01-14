@@ -3,8 +3,6 @@
 //! Keep this module small and dependency-free: it is used by both the
 //! `guest_ram_layout` API and the wasm32 runtime allocator enforcement.
 
-#![cfg(target_arch = "wasm32")]
-
 /// WebAssembly linear memory page size (wasm32 / wasm64).
 pub const WASM_PAGE_BYTES: u64 = 64 * 1024;
 

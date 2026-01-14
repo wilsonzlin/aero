@@ -580,6 +580,12 @@ impl WebUsbUhciPassthroughHarness {
     }
 }
 
+impl Default for WebUsbUhciPassthroughHarness {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[wasm_bindgen]
 impl WebUsbUhciPassthroughHarness {
     #[wasm_bindgen(constructor)]
@@ -698,13 +704,13 @@ impl WebUsbUhciPassthroughHarness {
         // Drive one UHCI frame worth of work.
         self.ctrl.tick_1ms(&mut self.mem);
 
-        if let Some(chain) = &self.pending_chain {
-            if let Some(err) = chain.error_reason(&self.mem) {
-                self.phase = HarnessPhase::Error;
-                self.phase_detail = err;
-                self.pending_chain = None;
-                return self.status();
-            }
+        if let Some(chain) = &self.pending_chain
+            && let Some(err) = chain.error_reason(&self.mem)
+        {
+            self.phase = HarnessPhase::Error;
+            self.phase_detail = err;
+            self.pending_chain = None;
+            return self.status();
         }
         if let Some(err) = self.last_error.take() {
             self.phase = HarnessPhase::Error;

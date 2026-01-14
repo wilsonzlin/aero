@@ -10,8 +10,6 @@
 //! For new full-system work (PCI/devices/networking), prefer the canonical `Machine` WASM export
 //! (`crates/aero-wasm::Machine`, backed by `crates/aero-machine::Machine`).
 
-#![cfg(target_arch = "wasm32")]
-
 use wasm_bindgen::prelude::*;
 
 use js_sys::{Object, Reflect, Uint8Array};
@@ -498,16 +496,16 @@ impl WasmVm {
         let mut cpu = Vec::new();
         cpu_state
             .encode_v2(&mut cpu)
-            .map_err(|e| js_error(&format!("Failed to encode CPU state: {e}")))?;
+            .map_err(|e| js_error(format!("Failed to encode CPU state: {e}")))?;
 
         let mut mmu = Vec::new();
         mmu_state
             .encode_v2(&mut mmu)
-            .map_err(|e| js_error(&format!("Failed to encode MMU state: {e}")))?;
+            .map_err(|e| js_error(format!("Failed to encode MMU state: {e}")))?;
 
         let cpu_internal = cpu_internal_state
             .to_device_state()
-            .map_err(|e| js_error(&format!("Failed to encode CPU internal state: {e}")))?
+            .map_err(|e| js_error(format!("Failed to encode CPU internal state: {e}")))?
             .data;
 
         let cpu_js = Uint8Array::from(cpu.as_slice());
@@ -536,22 +534,22 @@ impl WasmVm {
     /// next [`WasmVm::run_slice`] is deterministic.
     pub fn load_state_v2(&mut self, cpu: &[u8], mmu: &[u8]) -> Result<(), JsValue> {
         if cpu.len() > MAX_STATE_BLOB_LEN {
-            return Err(js_error(&format!(
+            return Err(js_error(format!(
                 "CPU state blob too large: {} bytes (max {MAX_STATE_BLOB_LEN})",
                 cpu.len()
             )));
         }
         if mmu.len() > MAX_STATE_BLOB_LEN {
-            return Err(js_error(&format!(
+            return Err(js_error(format!(
                 "MMU state blob too large: {} bytes (max {MAX_STATE_BLOB_LEN})",
                 mmu.len()
             )));
         }
 
         let cpu_state = aero_snapshot::CpuState::decode_v2(&mut std::io::Cursor::new(cpu))
-            .map_err(|e| js_error(&format!("Failed to decode CPU state: {e}")))?;
+            .map_err(|e| js_error(format!("Failed to decode CPU state: {e}")))?;
         let mmu_state = aero_snapshot::MmuState::decode_v2(&mut std::io::Cursor::new(mmu))
-            .map_err(|e| js_error(&format!("Failed to decode MMU state: {e}")))?;
+            .map_err(|e| js_error(format!("Failed to decode MMU state: {e}")))?;
 
         aero_snapshot::apply_cpu_state_to_cpu_core(&cpu_state, &mut self.cpu.state);
         aero_snapshot::apply_mmu_state_to_cpu_core(&mmu_state, &mut self.cpu.state);
@@ -583,14 +581,14 @@ impl WasmVm {
     /// all pending-event state to deterministic defaults.
     pub fn load_cpu_internal_state_v2(&mut self, bytes: &[u8]) -> Result<(), JsValue> {
         if bytes.len() > MAX_STATE_BLOB_LEN {
-            return Err(js_error(&format!(
+            return Err(js_error(format!(
                 "CPU_INTERNAL state blob too large: {} bytes (max {MAX_STATE_BLOB_LEN})",
                 bytes.len()
             )));
         }
 
         let state = aero_snapshot::CpuInternalState::decode(&mut std::io::Cursor::new(bytes))
-            .map_err(|e| js_error(&format!("Failed to decode CPU internal state: {e}")))?;
+            .map_err(|e| js_error(format!("Failed to decode CPU internal state: {e}")))?;
         aero_snapshot::apply_cpu_internal_state_to_cpu_core(&state, &mut self.cpu);
         Ok(())
     }

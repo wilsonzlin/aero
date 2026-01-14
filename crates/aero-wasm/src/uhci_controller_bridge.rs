@@ -6,8 +6,6 @@
 //! The UHCI schedule (frame list / QHs / TDs) lives in guest RAM. In the browser runtime, guest
 //! physical address 0 begins at `guest_base` within the WASM linear memory; this bridge implements
 //! `aero_usb::MemoryBus` so the controller can read/write descriptors directly.
-#![cfg(target_arch = "wasm32")]
-
 use wasm_bindgen::prelude::*;
 
 use js_sys::Uint8Array;
@@ -247,7 +245,7 @@ impl UhciControllerBridge {
         let was_connected = self.webusb_connected;
 
         match (was_connected, connected) {
-            (true, true) | (false, false) => return,
+            (true, true) | (false, false) => (),
             (false, true) => {
                 let dev = self
                     .webusb
@@ -304,10 +302,8 @@ impl UhciControllerBridge {
 
     /// Reset the WebUSB passthrough device without disturbing the rest of the USB topology.
     pub fn reset(&mut self) {
-        if self.webusb_connected {
-            if let Some(dev) = self.webusb.as_ref() {
-                dev.reset();
-            }
+        if self.webusb_connected && let Some(dev) = self.webusb.as_ref() {
+            dev.reset();
         }
     }
 
@@ -385,10 +381,8 @@ impl UhciControllerBridge {
         let mut w = SnapshotWriter::new(UHCI_BRIDGE_DEVICE_ID, UHCI_BRIDGE_DEVICE_VERSION);
         w.field_bytes(TAG_CONTROLLER, self.ctrl.save_state());
         w.field_bool(TAG_IRQ_ASSERTED, self.ctrl.irq_level());
-        if self.webusb_connected {
-            if let Some(dev) = self.webusb.as_ref() {
-                w.field_bytes(TAG_WEBUSB_DEVICE, dev.save_state());
-            }
+        if self.webusb_connected && let Some(dev) = self.webusb.as_ref() {
+            w.field_bytes(TAG_WEBUSB_DEVICE, dev.save_state());
         }
         w.finish()
     }

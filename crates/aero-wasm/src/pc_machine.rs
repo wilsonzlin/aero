@@ -2,7 +2,6 @@
 //!
 //! This exposes a full PCI-capable PC platform (including the E1000 NIC model) through
 //! wasm-bindgen so the browser runtime can attach the NET_TX / NET_RX AIPC rings directly.
-#![cfg(target_arch = "wasm32")]
 #![forbid(unsafe_code)]
 
 use wasm_bindgen::prelude::*;

@@ -12,8 +12,6 @@
 //! Node-based wasm-bindgen tests do not provide OPFS, so we also export in-memory helpers:
 //! - `vm_snapshot_save(cpu, mmu, devices) -> Uint8Array`
 //! - `vm_snapshot_restore(bytes) -> { cpu, mmu, devices? }`
-#![cfg(target_arch = "wasm32")]
-
 use std::io::{Cursor, Read, Seek, Write};
 
 use wasm_bindgen::JsCast;

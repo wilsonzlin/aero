@@ -67,7 +67,7 @@ fn setup_webusb_control_in_frame_list(guest_base: u32) -> u32 {
         }
 
         // QH: head=terminate, element=SETUP TD.
-        common::write_u32(guest_base + qh_addr + 0x00, LINK_PTR_T);
+        common::write_u32(guest_base + qh_addr, LINK_PTR_T);
         common::write_u32(guest_base + qh_addr + 0x04, setup_td);
 
         // Setup packet: GET_DESCRIPTOR (device), 8 bytes.
@@ -81,19 +81,19 @@ fn setup_webusb_control_in_frame_list(guest_base: u32) -> u32 {
         common::write_bytes(guest_base + setup_buf, &setup_packet);
 
         // SETUP TD.
-        common::write_u32(guest_base + setup_td + 0x00, data_td);
+        common::write_u32(guest_base + setup_td, data_td);
         common::write_u32(guest_base + setup_td + 0x04, td_ctrl(true));
         common::write_u32(guest_base + setup_td + 0x08, td_token(0x2D, 0, 0, false, 8));
         common::write_u32(guest_base + setup_td + 0x0C, setup_buf);
 
         // DATA IN TD (will NAK until host completion is pushed).
-        common::write_u32(guest_base + data_td + 0x00, status_td);
+        common::write_u32(guest_base + data_td, status_td);
         common::write_u32(guest_base + data_td + 0x04, td_ctrl(true));
         common::write_u32(guest_base + data_td + 0x08, td_token(0x69, 0, 0, true, 8));
         common::write_u32(guest_base + data_td + 0x0C, setup_buf + 0x10);
 
         // STATUS OUT TD (0-length, IOC bit omitted here).
-        common::write_u32(guest_base + status_td + 0x00, LINK_PTR_T);
+        common::write_u32(guest_base + status_td, LINK_PTR_T);
         common::write_u32(guest_base + status_td + 0x04, td_ctrl(true));
         common::write_u32(guest_base + status_td + 0x08, td_token(0xE1, 0, 0, true, 0));
         common::write_u32(guest_base + status_td + 0x0C, 0);

@@ -26,7 +26,7 @@ fn bridge_snapshot_tick_count(bytes: &[u8]) -> u64 {
         .unwrap_or(0)
 }
 
-fn bridge_snapshot_ctrl_bytes<'a>(bytes: &'a [u8]) -> &'a [u8] {
+fn bridge_snapshot_ctrl_bytes(bytes: &[u8]) -> &[u8] {
     let r = SnapshotReader::parse(bytes, BRIDGE_ID).expect("parse XhciControllerBridge snapshot");
     r.bytes(TAG_BRIDGE_CONTROLLER)
         .expect("missing controller state bytes")

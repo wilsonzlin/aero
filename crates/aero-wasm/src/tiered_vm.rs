@@ -17,8 +17,6 @@
 //! full-system work (devices/networking), prefer the canonical `Machine` WASM export
 //! (`crates/aero-wasm::Machine`, backed by `crates/aero-machine::Machine`).
 
-#![cfg(target_arch = "wasm32")]
-
 use std::collections::{HashSet, VecDeque};
 use std::rc::Rc;
 
@@ -133,7 +131,7 @@ const _: () = {
     // Commit flag is a `u32` slot at a stable offset after the Tier-2 context region.
     assert!(COMMIT_FLAG_BYTES == 4);
     assert!(COMMIT_FLAG_OFFSET == TIER2_CTX_OFFSET + TIER2_CTX_SIZE);
-    assert!(COMMIT_FLAG_OFFSET % 4 == 0);
+    assert!(COMMIT_FLAG_OFFSET.is_multiple_of(4));
 };
 
 /// Exported Tier-1 JIT ABI layout constants.
@@ -991,8 +989,8 @@ impl WasmJitBackend {
     }
 
     fn sync_cpu_to_abi(&self, state: &aero_cpu_core::state::CpuState) {
-        for i in 0..16 {
-            let off = CPU_GPR_OFF[i] as u32;
+        for (i, off) in CPU_GPR_OFF.iter().enumerate() {
+            let off = *off as u32;
             self.write_u64_at(self.cpu_ptr + off, state.gpr[i]);
         }
         self.write_u64_at(self.cpu_ptr + (CPU_RIP_OFF as u32), state.rip);
@@ -1014,8 +1012,8 @@ impl WasmJitBackend {
     }
 
     fn sync_cpu_from_abi(&self, state: &mut aero_cpu_core::state::CpuState) {
-        for i in 0..16 {
-            let off = CPU_GPR_OFF[i] as u32;
+        for (i, off) in CPU_GPR_OFF.iter().enumerate() {
+            let off = *off as u32;
             state.gpr[i] = self.read_u64_at(self.cpu_ptr + off);
         }
         state.rip = self.read_u64_at(self.cpu_ptr + (CPU_RIP_OFF as u32));

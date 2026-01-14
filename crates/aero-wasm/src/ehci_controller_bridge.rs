@@ -13,8 +13,6 @@
 //! - When the guest clears PCI command bit 2 (BME), the controller must not be able to DMA into
 //!   guest RAM. We enforce this by swapping in a `NoDmaMemory` adapter (open-bus reads, ignored
 //!   writes) while still advancing controller time / FRINDEX.
-#![cfg(target_arch = "wasm32")]
-
 use wasm_bindgen::prelude::*;
 
 use js_sys::Uint8Array;
@@ -300,10 +298,8 @@ impl EhciControllerBridge {
 
     /// Reset the WebUSB passthrough device without disturbing the rest of the USB topology.
     pub fn reset(&mut self) {
-        if self.webusb_connected {
-            if let Some(dev) = self.webusb.as_ref() {
-                dev.reset();
-            }
+        if self.webusb_connected && let Some(dev) = self.webusb.as_ref() {
+            dev.reset();
         }
     }
 

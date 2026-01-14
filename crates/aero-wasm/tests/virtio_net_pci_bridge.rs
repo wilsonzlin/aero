@@ -93,12 +93,12 @@ fn virtio_net_pci_bridge_smoke_and_irq_latch() {
         u32::from(VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER),
     );
 
-    bridge.mmio_write(COMMON + 0x00, 4, 0); // device_feature_select
+    bridge.mmio_write(COMMON, 4, 0); // device_feature_select
     let f0 = bridge.mmio_read(COMMON + 0x04, 4);
     bridge.mmio_write(COMMON + 0x08, 4, 0); // driver_feature_select
     bridge.mmio_write(COMMON + 0x0c, 4, f0); // driver_features
 
-    bridge.mmio_write(COMMON + 0x00, 4, 1);
+    bridge.mmio_write(COMMON, 4, 1);
     let f1 = bridge.mmio_read(COMMON + 0x04, 4);
     bridge.mmio_write(COMMON + 0x08, 4, 1);
     bridge.mmio_write(COMMON + 0x0c, 4, f1);

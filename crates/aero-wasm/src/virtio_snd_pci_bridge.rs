@@ -12,8 +12,6 @@
 //! Audio output is delivered to the browser via the canonical AudioWorklet `SharedArrayBuffer` ring
 //! buffer (`aero_platform::audio::worklet_bridge::WorkletBridge`). Microphone capture samples are
 //! consumed from the canonical mic ring buffer (`aero_platform::audio::mic_bridge::MicBridge`).
-#![cfg(target_arch = "wasm32")]
-
 use wasm_bindgen::prelude::*;
 
 use js_sys::{SharedArrayBuffer, Uint8Array};
@@ -516,7 +514,7 @@ impl VirtioSndPciBridge {
             1 | 2 | 4 => size as usize,
             _ => return 0,
         };
-        let end = offset.checked_add(size as u32).unwrap_or(u32::MAX);
+        let end = offset.saturating_add(size as u32);
         if self.legacy_io_size == 0 || end > self.legacy_io_size {
             return 0xffff_ffff;
         }
@@ -531,7 +529,7 @@ impl VirtioSndPciBridge {
             1 | 2 | 4 => size as usize,
             _ => return,
         };
-        let end = offset.checked_add(size as u32).unwrap_or(u32::MAX);
+        let end = offset.saturating_add(size as u32);
         if self.legacy_io_size == 0 || end > self.legacy_io_size {
             return;
         }
@@ -798,15 +796,15 @@ impl VirtioSndPciBridge {
         let mut pending_state = Some(ring_state);
         {
             let output = self.snd_mut().output_mut();
-            if let Some(ring) = output.worklet_ring() {
-                if let Some(mut ring_state) = pending_state.take() {
-                    if ring_state.capacity_frames != 0
-                        && ring_state.capacity_frames != ring.capacity_frames()
-                    {
-                        ring_state.capacity_frames = 0;
-                    }
-                    ring.restore_state(&ring_state);
+            if let Some(ring) = output.worklet_ring()
+                && let Some(mut ring_state) = pending_state.take()
+            {
+                if ring_state.capacity_frames != 0
+                    && ring_state.capacity_frames != ring.capacity_frames()
+                {
+                    ring_state.capacity_frames = 0;
                 }
+                ring.restore_state(&ring_state);
             }
         }
         self.pending_audio_ring_state = pending_state;

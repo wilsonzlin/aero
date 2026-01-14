@@ -3,7 +3,6 @@
 //! This is intended for browser integrations that:
 //! - run the PCI device model in the CPU worker (inside the `aero-wasm` module), and
 //! - forward drained submissions to a GPU worker for execution.
-#![cfg(target_arch = "wasm32")]
 
 use wasm_bindgen::prelude::*;
 
@@ -257,7 +256,7 @@ impl AerogpuBridge {
             return 0;
         }
 
-        let end = offset.checked_add(size as u32).unwrap_or(u32::MAX);
+        let end = offset.saturating_add(size as u32);
         if end as u64 > aero_devices_gpu::regs::AEROGPU_PCI_BAR0_SIZE_BYTES {
             return 0xFFFF_FFFF;
         }
@@ -271,7 +270,7 @@ impl AerogpuBridge {
             return;
         }
 
-        let end = offset.checked_add(size as u32).unwrap_or(u32::MAX);
+        let end = offset.saturating_add(size as u32);
         if end as u64 > aero_devices_gpu::regs::AEROGPU_PCI_BAR0_SIZE_BYTES {
             return;
         }

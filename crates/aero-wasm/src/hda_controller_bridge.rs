@@ -13,8 +13,6 @@
 //! - The snapshot includes `AudioWorkletRingState` (read/write indices + capacity) for determinism.
 //! - Host audio samples are not serialized; on restore we clear the AudioWorklet ring samples to
 //!   silence via `WorkletBridge::restore_state`.
-#![cfg(target_arch = "wasm32")]
-
 use wasm_bindgen::prelude::*;
 
 use js_sys::{Object, Reflect, SharedArrayBuffer, Uint8Array};

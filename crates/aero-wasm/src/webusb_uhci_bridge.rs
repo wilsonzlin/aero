@@ -1,5 +1,3 @@
-#![cfg(target_arch = "wasm32")]
-
 use wasm_bindgen::prelude::*;
 
 use js_sys::Uint8Array;
@@ -125,7 +123,7 @@ impl WebUsbUhciBridge {
         let was_connected = self.webusb_connected;
 
         match (was_connected, connected) {
-            (true, true) | (false, false) => return,
+            (true, true) | (false, false) => (),
             (false, true) => {
                 let dev = self
                     .webusb
@@ -165,10 +163,8 @@ impl WebUsbUhciBridge {
         let completion: UsbHostCompletion = serde_wasm_bindgen::from_value(completion)
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
-        if self.webusb_connected {
-            if let Some(dev) = self.webusb.as_ref() {
-                dev.push_completion(completion);
-            }
+        if self.webusb_connected && let Some(dev) = self.webusb.as_ref() {
+            dev.push_completion(completion);
         }
 
         Ok(())
@@ -181,10 +177,8 @@ impl WebUsbUhciBridge {
             u32::from(aero_usb::uhci::regs::USBCMD_HCRESET),
         );
 
-        if self.webusb_connected {
-            if let Some(dev) = self.webusb.as_ref() {
-                dev.reset();
-            }
+        if self.webusb_connected && let Some(dev) = self.webusb.as_ref() {
+            dev.reset();
         }
     }
 
@@ -282,13 +276,11 @@ impl WebUsbUhciBridge {
         if let Some(hub_state) = self.with_external_hub(|hub| hub.save_state()) {
             w.field_bytes(TAG_EXTERNAL_HUB, hub_state);
         }
-        if self.webusb_connected {
-            if let Some(dev) = self.webusb.as_ref() {
-                // Persist the WebUSB passthrough device's USB-visible state (address, control-transfer
-                // stage, etc) so that after restoring a VM snapshot the guest's TD retries can make
-                // forward progress. Host-side action queues are cleared on restore (see `load_state`).
-                w.field_bytes(TAG_WEBUSB_DEVICE, dev.save_state());
-            }
+        if self.webusb_connected && let Some(dev) = self.webusb.as_ref() {
+            // Persist the WebUSB passthrough device's USB-visible state (address, control-transfer
+            // stage, etc) so that after restoring a VM snapshot the guest's TD retries can make
+            // forward progress. Host-side action queues are cleared on restore (see `load_state`).
+            w.field_bytes(TAG_WEBUSB_DEVICE, dev.save_state());
         }
         w.finish()
     }

@@ -15,8 +15,6 @@
 //! reserved region. If the runtime tries to allocate more than the reserved
 //! bytes, allocations fail (panic/abort) instead of silently corrupting guest RAM.
 
-#![cfg(target_arch = "wasm32")]
-
 use core::alloc::{GlobalAlloc, Layout};
 use core::cmp::min;
 use core::sync::atomic::{AtomicU8, Ordering};
@@ -91,7 +89,7 @@ impl RuntimeAllocator {
         // size and keep the allocator bounded to avoid out-of-bounds access.
         let page_bytes = WASM_PAGE_BYTES as usize;
         let reserved_bytes = RUNTIME_RESERVED_BYTES as usize;
-        let cur_pages = core::arch::wasm32::memory_size(0) as usize;
+        let cur_pages = core::arch::wasm32::memory_size(0);
         let cur_bytes = cur_pages.saturating_mul(page_bytes);
         if cur_bytes < reserved_bytes {
             let desired_pages = reserved_bytes.div_ceil(page_bytes);
@@ -110,7 +108,7 @@ impl RuntimeAllocator {
         // In the worker/shared-memory configuration, the imported memory is
         // allocated as `runtime_reserved + guest_size`, so this effectively caps
         // runtime allocations to `[heap_base, runtime_reserved)`.
-        let pages = core::arch::wasm32::memory_size(0) as usize;
+        let pages = core::arch::wasm32::memory_size(0);
         let mem_bytes = pages.saturating_mul(page_bytes);
         // Keep a small guard at the end so probes can safely touch e.g. the last 4 bytes
         // of the runtime-reserved region (immediately below guest RAM) without overlapping

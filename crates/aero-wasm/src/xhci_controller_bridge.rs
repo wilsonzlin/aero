@@ -14,8 +14,6 @@
 //! - a coarse stepping hook (`step_frames` / `tick`) for deterministic time progression
 //! - IRQ level query (`irq_asserted`)
 //! - deterministic snapshot/restore helpers.
-#![cfg(target_arch = "wasm32")]
-
 use wasm_bindgen::prelude::*;
 
 use js_sys::Uint8Array;
@@ -361,7 +359,7 @@ impl XhciControllerBridge {
         if actions.is_empty() {
             return Ok(JsValue::NULL);
         }
-        serde_wasm_bindgen::to_value(&actions).map_err(|e| js_error(e))
+        serde_wasm_bindgen::to_value(&actions).map_err(js_error)
     }
 
     pub fn push_completion(&mut self, completion: JsValue) -> Result<(), JsValue> {
@@ -371,8 +369,7 @@ impl XhciControllerBridge {
             return Ok(());
         }
 
-        let completion: UsbHostCompletion =
-            serde_wasm_bindgen::from_value(completion).map_err(|e| js_error(e))?;
+        let completion: UsbHostCompletion = serde_wasm_bindgen::from_value(completion).map_err(js_error)?;
 
         if let Some(dev) = self.webusb.as_ref() {
             dev.push_completion(completion);
@@ -380,10 +377,8 @@ impl XhciControllerBridge {
         Ok(())
     }
     pub fn reset(&mut self) {
-        if self.webusb_connected {
-            if let Some(dev) = self.webusb.as_ref() {
-                dev.reset();
-            }
+        if self.webusb_connected && let Some(dev) = self.webusb.as_ref() {
+            dev.reset();
         }
     }
 
@@ -394,7 +389,7 @@ impl XhciControllerBridge {
         let Some(summary) = self.webusb.as_ref().map(|d| d.pending_summary()) else {
             return Ok(JsValue::NULL);
         };
-        serde_wasm_bindgen::to_value(&summary).map_err(|e| js_error(e))
+        serde_wasm_bindgen::to_value(&summary).map_err(js_error)
     }
 
     /// Serialize the current xHCI controller state into a deterministic snapshot blob.
@@ -406,10 +401,8 @@ impl XhciControllerBridge {
         let mut w = SnapshotWriter::new(XHCI_BRIDGE_DEVICE_ID, XHCI_BRIDGE_DEVICE_VERSION);
         w.field_bytes(TAG_CONTROLLER, self.ctrl.save_state());
         w.field_u64(TAG_TICK_COUNT, self.tick_count);
-        if self.webusb_connected {
-            if let Some(dev) = self.webusb.as_ref() {
-                w.field_bytes(TAG_WEBUSB_DEVICE, dev.save_state());
-            }
+        if self.webusb_connected && let Some(dev) = self.webusb.as_ref() {
+            w.field_bytes(TAG_WEBUSB_DEVICE, dev.save_state());
         }
         w.finish()
     }

@@ -17,8 +17,6 @@
 //! Host networking is bridged through the existing Aero IPC (AIPC) rings:
 //! - `NET_TX`: guest -> host (packets transmitted by the virtio-net device)
 //! - `NET_RX`: host -> guest (packets received by the virtio-net device)
-#![cfg(target_arch = "wasm32")]
-
 use wasm_bindgen::prelude::*;
 
 use js_sys::{BigInt, Object, Reflect, SharedArrayBuffer};
@@ -389,7 +387,7 @@ impl VirtioNetPciBridge {
             1 | 2 | 4 => size as usize,
             _ => return 0,
         };
-        let end = offset.checked_add(size as u32).unwrap_or(u32::MAX);
+        let end = offset.saturating_add(size as u32);
         if self.legacy_io_size == 0 || end > self.legacy_io_size {
             return 0xffff_ffff;
         }
@@ -403,7 +401,7 @@ impl VirtioNetPciBridge {
             1 | 2 | 4 => size as usize,
             _ => return,
         };
-        let end = offset.checked_add(size as u32).unwrap_or(u32::MAX);
+        let end = offset.saturating_add(size as u32);
         if self.legacy_io_size == 0 || end > self.legacy_io_size {
             return;
         }

@@ -231,7 +231,7 @@ impl WebUsbEhciPassthroughHarness {
                     return;
                 }
 
-                let max_len = remaining.min(MAX_CONTROL_PACKET).max(1);
+                let max_len = remaining.clamp(1, MAX_CONTROL_PACKET);
                 match dev.handle_in(0, max_len) {
                     aero_usb::device::UsbInResult::Data(chunk) => {
                         pending.received.extend_from_slice(&chunk);
@@ -271,6 +271,12 @@ impl WebUsbEhciPassthroughHarness {
                 }
             },
         }
+    }
+}
+
+impl Default for WebUsbEhciPassthroughHarness {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

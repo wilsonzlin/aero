@@ -218,7 +218,7 @@ fn setup_webusb_control_in_frame_list(guest: &common::GuestRegion) -> u32 {
     }
 
     // QH: head=terminate, element=SETUP TD.
-    guest.write_u32(qh_addr + 0x00, LINK_PTR_T);
+    guest.write_u32(qh_addr, LINK_PTR_T);
     guest.write_u32(qh_addr + 0x04, setup_td);
 
     // Setup packet: GET_DESCRIPTOR (device), 8 bytes.
@@ -232,19 +232,19 @@ fn setup_webusb_control_in_frame_list(guest: &common::GuestRegion) -> u32 {
     guest.write_bytes(setup_buf, &setup_packet);
 
     // SETUP TD.
-    guest.write_u32(setup_td + 0x00, data_td);
+    guest.write_u32(setup_td, data_td);
     guest.write_u32(setup_td + 0x04, td_ctrl(true, false));
     guest.write_u32(setup_td + 0x08, td_token(0x2D, 0, 0, false, 8));
     guest.write_u32(setup_td + 0x0C, setup_buf);
 
     // DATA IN TD (will NAK until host completion is pushed).
-    guest.write_u32(data_td + 0x00, status_td);
+    guest.write_u32(data_td, status_td);
     guest.write_u32(data_td + 0x04, td_ctrl(true, false));
     guest.write_u32(data_td + 0x08, td_token(0x69, 0, 0, true, 8));
     guest.write_u32(data_td + 0x0C, setup_buf + 0x10);
 
     // STATUS OUT TD (0-length, IOC).
-    guest.write_u32(status_td + 0x00, LINK_PTR_T);
+    guest.write_u32(status_td, LINK_PTR_T);
     guest.write_u32(status_td + 0x04, td_ctrl(true, true));
     guest.write_u32(status_td + 0x08, td_token(0xE1, 0, 0, true, 0));
     guest.write_u32(status_td + 0x0C, 0);
@@ -268,7 +268,7 @@ fn setup_webhid_set_report_control_out_frame_list(
         guest.write_u32(fl_base + i * 4, qh_addr | LINK_PTR_Q);
     }
 
-    guest.write_u32(qh_addr + 0x00, LINK_PTR_T);
+    guest.write_u32(qh_addr, LINK_PTR_T);
     guest.write_u32(qh_addr + 0x04, setup_td);
 
     // HID SET_REPORT(Output, reportId=0), wLength = payload length.
@@ -287,19 +287,19 @@ fn setup_webhid_set_report_control_out_frame_list(
     guest.write_bytes(data_buf, payload);
 
     // SETUP TD.
-    guest.write_u32(setup_td + 0x00, data_td);
+    guest.write_u32(setup_td, data_td);
     guest.write_u32(setup_td + 0x04, td_ctrl(true, false));
     guest.write_u32(setup_td + 0x08, td_token(0x2D, 0, 0, false, 8));
     guest.write_u32(setup_td + 0x0C, setup_buf);
 
     // DATA OUT TD.
-    guest.write_u32(data_td + 0x00, status_td);
+    guest.write_u32(data_td, status_td);
     guest.write_u32(data_td + 0x04, td_ctrl(true, false));
     guest.write_u32(data_td + 0x08, td_token(0xE1, 0, 0, true, payload.len()));
     guest.write_u32(data_td + 0x0C, data_buf);
 
     // STATUS IN TD (ZLP, IOC).
-    guest.write_u32(status_td + 0x00, LINK_PTR_T);
+    guest.write_u32(status_td, LINK_PTR_T);
     guest.write_u32(status_td + 0x04, td_ctrl(true, true));
     guest.write_u32(status_td + 0x08, td_token(0x69, 0, 0, true, 0));
     guest.write_u32(status_td + 0x0C, 0);
@@ -411,7 +411,7 @@ fn uhci_runtime_snapshot_truncates_webhid_product_string() {
     let name = std::str::from_utf8(name_bytes).expect("product name utf8");
 
     let expected = "😀".repeat(63);
-    assert_eq!(name_len, expected.as_bytes().len());
+    assert_eq!(name_len, expected.len());
     assert_eq!(name, expected.as_str());
     assert_eq!(name.encode_utf16().count(), 126);
 
