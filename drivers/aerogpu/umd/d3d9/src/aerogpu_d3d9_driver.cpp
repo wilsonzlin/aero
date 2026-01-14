@@ -15036,12 +15036,13 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
 
   // Fixed-function state: transforms. Cached for GetTransform/state blocks.
   //
-  // WORLD/VIEW/PROJECTION are also consumed by bring-up fixed-function paths:
+  // WORLD/VIEW/PROJECTION are consumed by bring-up fixed-function paths:
   // - untransformed `D3DFVF_XYZ*`: internal WVP VS variants and a reserved high VS
   //   constant range (c240..c243) uploaded by `ensure_fixedfunc_wvp_constants_locked()`.
-  // - pre-transformed `D3DFVF_XYZRHW*`: draw-time `XYZRHW` -> clip-space conversion.
+  // - the fixed-function `ProcessVertices` subset.
   //
-  // Transforms are also consumed by the fixed-function `ProcessVertices` subset.
+  // Pre-transformed `D3DFVF_XYZRHW*` draws do not use WORLD/VIEW/PROJECTION; they
+  // use a viewport-based draw-time `XYZRHW` -> clip-space conversion.
   if (sb->transform_mask.any()) {
     for (uint32_t t = 0; t < Device::kTransformCacheCount; ++t) {
       if (!sb->transform_mask.test(t)) {
