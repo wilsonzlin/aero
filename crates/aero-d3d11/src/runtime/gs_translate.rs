@@ -1927,36 +1927,14 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_packed(
                     a: &crate::sm4_ir::SrcOperand,
                     b: &crate::sm4_ir::SrcOperand|
      -> Result<String, GsTranslateError> {
-        // Mirror the signature-driven shader translator: compare-based flow control performs
-        // floating-point comparisons by default, with the `*_u` variants comparing the raw integer
-        // bits as `u32`.
-        let unsigned = matches!(
-            op,
-            Sm4CmpOp::EqU
-                | Sm4CmpOp::NeU
-                | Sm4CmpOp::LtU
-                | Sm4CmpOp::GeU
-                | Sm4CmpOp::LeU
-                | Sm4CmpOp::GtU
-        );
-        let (a, b) = if unsigned {
-            let a_u = emit_src_vec4_u32(inst_index, opcode, a, &input_sivs)?;
-            let b_u = emit_src_vec4_u32(inst_index, opcode, b, &input_sivs)?;
-            (format!("({a_u}).x"), format!("({b_u}).x"))
-        } else {
-            let a = emit_src_vec4(inst_index, opcode, a, &input_sivs)?;
-            let b = emit_src_vec4(inst_index, opcode, b, &input_sivs)?;
-            (format!("({a}).x"), format!("({b}).x"))
-        };
-        let op_str = match op {
-            Sm4CmpOp::Eq | Sm4CmpOp::EqU => "==",
-            Sm4CmpOp::Ne | Sm4CmpOp::NeU => "!=",
-            Sm4CmpOp::Lt | Sm4CmpOp::LtU => "<",
-            Sm4CmpOp::Le | Sm4CmpOp::LeU => "<=",
-            Sm4CmpOp::Gt | Sm4CmpOp::GtU => ">",
-            Sm4CmpOp::Ge | Sm4CmpOp::GeU => ">=",
-        };
-        Ok(format!("{a} {op_str} {b}"))
+        // Compare-based flow control uses the same D3D10/11 tokenized-program comparison encoding
+        // as `setp`: `*_U` variants are unordered float comparisons and are true when either
+        // operand is NaN.
+        let a_vec = emit_src_vec4(inst_index, opcode, a, &input_sivs)?;
+        let b_vec = emit_src_vec4(inst_index, opcode, b, &input_sivs)?;
+        let a = format!("({a_vec}).x");
+        let b = format!("({b_vec}).x");
+        Ok(emit_sm4_cmp_op_scalar_bool(op, &a, &b))
     };
 
     let mut gs_emit_args = String::from("o0");
@@ -2317,35 +2295,18 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_packed(
                     w.line("continue;");
                 }
                 Sm4Inst::Setp { dst, op, a, b } => {
-                    let unsigned = matches!(
-                        op,
-                        Sm4CmpOp::EqU
-                            | Sm4CmpOp::NeU
-                            | Sm4CmpOp::LtU
-                            | Sm4CmpOp::GeU
-                            | Sm4CmpOp::LeU
-                            | Sm4CmpOp::GtU
-                    );
-                    let a_expr = if unsigned {
-                        emit_src_vec4_u32(inst_index, "setp", a, &input_sivs)?
-                    } else {
-                        emit_src_vec4(inst_index, "setp", a, &input_sivs)?
-                    };
-                    let b_expr = if unsigned {
-                        emit_src_vec4_u32(inst_index, "setp", b, &input_sivs)?
-                    } else {
-                        emit_src_vec4(inst_index, "setp", b, &input_sivs)?
-                    };
-                    let cmp = match op {
-                        Sm4CmpOp::Eq | Sm4CmpOp::EqU => "==",
-                        Sm4CmpOp::Ne | Sm4CmpOp::NeU => "!=",
-                        Sm4CmpOp::Lt | Sm4CmpOp::LtU => "<",
-                        Sm4CmpOp::Ge | Sm4CmpOp::GeU => ">=",
-                        Sm4CmpOp::Le | Sm4CmpOp::LeU => "<=",
-                        Sm4CmpOp::Gt | Sm4CmpOp::GtU => ">",
-                    };
-                    let expr = format!("({a_expr}) {cmp} ({b_expr})");
-                    emit_write_masked_bool(&mut w, *dst, expr)?;
+                    let setp_a = format!("setp_a_{inst_index}");
+                    let setp_b = format!("setp_b_{inst_index}");
+                    let setp_cmp = format!("setp_cmp_{inst_index}");
+                    let a_expr = emit_src_vec4(inst_index, "setp", a, &input_sivs)?;
+                    let b_expr = emit_src_vec4(inst_index, "setp", b, &input_sivs)?;
+                    w.line(&format!("let {setp_a} = {a_expr};"));
+                    w.line(&format!("let {setp_b} = {b_expr};"));
+                    w.line(&format!(
+                        "let {setp_cmp} = {};",
+                        emit_sm4_cmp_op_vec4_bool(*op, &setp_a, &setp_b)
+                    ));
+                    emit_write_masked_bool(&mut w, *dst, setp_cmp)?;
                 }
                 Sm4Inst::Mov { dst, src } => {
                     let rhs = emit_src_vec4(inst_index, "mov", src, &input_sivs)?;
@@ -3558,6 +3519,44 @@ fn emit_write_masked_bool(
         }
     }
     Ok(())
+}
+
+fn emit_sm4_cmp_op_scalar_bool(op: Sm4CmpOp, a: &str, b: &str) -> String {
+    match op {
+        // Ordered comparisons.
+        Sm4CmpOp::Eq => format!("({a}) == ({b})"),
+        // NOTE: ordered "not equal" is false when either operand is NaN.
+        // WGSL doesn't expose a NaN test in the standard library (in the naga/WGSL version we
+        // target), so use the IEEE property that `NaN != NaN`.
+        Sm4CmpOp::Ne => format!("((({a}) != ({b})) && (({a}) == ({a})) && (({b}) == ({b})))"),
+        Sm4CmpOp::Lt => format!("({a}) < ({b})"),
+        Sm4CmpOp::Ge => format!("({a}) >= ({b})"),
+        Sm4CmpOp::Le => format!("({a}) <= ({b})"),
+        Sm4CmpOp::Gt => format!("({a}) > ({b})"),
+        // Unordered comparisons (`*_U`) are true if either operand is NaN.
+        //
+        // Use `x != x` to test for NaN (true iff NaN).
+        Sm4CmpOp::EqU => format!("((({a}) == ({b})) || (({a}) != ({a})) || (({b}) != ({b})))"),
+        Sm4CmpOp::NeU => format!("((({a}) != ({b})) || (({a}) != ({a})) || (({b}) != ({b})))"),
+        Sm4CmpOp::LtU => format!("((({a}) < ({b})) || (({a}) != ({a})) || (({b}) != ({b})))"),
+        Sm4CmpOp::GeU => format!("((({a}) >= ({b})) || (({a}) != ({a})) || (({b}) != ({b})))"),
+        Sm4CmpOp::LeU => format!("((({a}) <= ({b})) || (({a}) != ({a})) || (({b}) != ({b})))"),
+        Sm4CmpOp::GtU => format!("((({a}) > ({b})) || (({a}) != ({a})) || (({b}) != ({b})))"),
+    }
+}
+
+fn emit_sm4_cmp_op_vec4_bool(op: Sm4CmpOp, a_vec4: &str, b_vec4: &str) -> String {
+    let comps = ['x', 'y', 'z', 'w'];
+    let mut lanes = Vec::with_capacity(4);
+    for c in comps {
+        let a = format!("({a_vec4}).{c}");
+        let b = format!("({b_vec4}).{c}");
+        lanes.push(emit_sm4_cmp_op_scalar_bool(op, &a, &b));
+    }
+    format!(
+        "vec4<bool>({}, {}, {}, {})",
+        lanes[0], lanes[1], lanes[2], lanes[3]
+    )
 }
 
 fn emit_test_predicate_scalar(pred: &PredicateOperand) -> String {

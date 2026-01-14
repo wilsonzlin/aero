@@ -1062,6 +1062,15 @@ pub enum Sm4CmpOp {
     Ge,
     Le,
     Gt,
+    /// Unordered floating-point compare variants (`*_U` in the D3D10/11 tokenized program format).
+    ///
+    /// In `d3d10tokenizedprogramformat.h` / `d3d11tokenizedprogramformat.h` this corresponds to
+    /// `D3D10_SB_INSTRUCTION_COMPARISON` / `D3D11_SB_INSTRUCTION_COMPARISON` values like
+    /// `D3D10_SB_COMPARISON_EQ_U`. The `_U` suffix means **unordered** (NaN-aware) float
+    /// comparisons: the result is true if either operand is NaN.
+    ///
+    /// Unsigned integer comparisons are encoded separately in DXBC (e.g. `ult`/`uge` opcodes) and
+    /// are not represented by this enum.
     EqU,
     NeU,
     LtU,

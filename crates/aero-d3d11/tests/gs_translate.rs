@@ -2162,7 +2162,7 @@ fn gs_translate_supports_setp_and_predicated_emit_cut() {
                     modifier: OperandModifier::None,
                 },
             },
-            // setp p0.x, primitive_id, 0 (unsigned raw-bit compare)
+            // setp p0.x, primitive_id, 0 (NE_U is an unordered float compare in SM4)
             Sm4Inst::Setp {
                 dst: PredicateDstOperand {
                     reg: PredicateRef { index: 0 },

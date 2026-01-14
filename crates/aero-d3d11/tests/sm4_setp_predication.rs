@@ -398,6 +398,74 @@ fn decodes_and_translates_trailing_predicated_mov() {
 }
 
 #[test]
+fn translates_setp_unordered_float_cmp_uses_nan_handling() {
+    let mut body = Vec::<u32>::new();
+
+    // setp p0.x, l(NaN), l(0.0), lt_u
+    //
+    // In `D3D10_SB_INSTRUCTION_COMPARISON`, the `_U` suffix means "unordered" float compare:
+    // comparisons are true if either operand is NaN.
+    let dst_p0x = reg_dst(OPERAND_TYPE_PREDICATE, 0, WriteMask::X);
+    let src_nan = imm32_scalar(0x7fc0_0000u32);
+    let src_zero = imm32_scalar(0.0f32.to_bits());
+    // Compare op encoding used by the decoder: 10 = LtU.
+    let setp_len = 1 + dst_p0x.len() as u32 + src_nan.len() as u32 + src_zero.len() as u32;
+    body.push(opcode_token_setp(setp_len, 10));
+    body.extend_from_slice(&dst_p0x);
+    body.extend_from_slice(&src_nan);
+    body.extend_from_slice(&src_zero);
+
+    // mov o0, l(0, 0, 0, 0)
+    let imm0 = imm32_vec4([0u32; 4]);
+    body.push(opcode_token(OPCODE_MOV, 1 + 2 + imm0.len() as u32));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+    body.extend_from_slice(&imm0);
+
+    // (+p0.x) mov o0, l(1, 1, 1, 1)
+    let imm1 = imm32_vec4([1.0f32.to_bits(); 4]);
+    let pred_p0x = pred_operand(0, 0);
+    body.push(opcode_token(
+        OPCODE_MOV,
+        1 + pred_p0x.len() as u32 + 2 + imm1.len() as u32,
+    ));
+    body.extend_from_slice(&pred_p0x);
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+    body.extend_from_slice(&imm1);
+
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    // Stage type 0 is pixel shader.
+    let tokens = make_sm5_program_tokens(0, &body);
+
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, tokens_to_bytes(&tokens)),
+        (FOURCC_ISGN, build_signature_chunk(&[])),
+        (
+            FOURCC_OSGN,
+            build_signature_chunk(&[sig_param("SV_Target", 0, 0, 0b1111)]),
+        ),
+    ]);
+
+    let dxbc = aero_d3d11::DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
+    let module = aero_d3d11::sm4::decode_program(&program).expect("SM4 decode");
+
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+
+    assert!(
+        translated.wgsl.contains("!= ((setp_a_0).x)") || translated.wgsl.contains("!= ((setp_b_0).x)"),
+        "expected unordered setp compare to include NaN handling (`x != x`):\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated.wgsl.contains("if (p0.x) {"),
+        "expected predicated mov to translate to if(p0.x):\n{}",
+        translated.wgsl
+    );
+}
+#[test]
 fn decodes_and_translates_inverted_predicated_mov() {
     let mut body = Vec::<u32>::new();
 
@@ -932,7 +1000,10 @@ fn decodes_and_translates_predicate_operand_swizzle_mask_and_negation() {
     body.extend_from_slice(&src_v0x);
     body.extend_from_slice(&src_zero);
 
-    // setp p1.x, l(1u), l(2u), lt_u
+    // setp p1.x, l(1), l(2), lt_u
+    //
+    // Note: In SM4/SM5 token streams the `_U` suffix on comparisons denotes "unordered" float
+    // compares (NaN-aware), not unsigned integer compares.
     let dst_p1x = reg_dst(OPERAND_TYPE_PREDICATE, 1, WriteMask::X);
     let imm_u32 = |v: u32| imm32_scalar(v);
     let a_u = imm_u32(1);
@@ -1041,8 +1112,8 @@ fn decodes_and_translates_predicate_operand_swizzle_mask_and_negation() {
         translated.wgsl
     );
     assert!(
-        translated.wgsl.contains("vec4<u32>(0x00000001u") && translated.wgsl.contains("<"),
-        "expected unsigned setp to operate on u32 vectors:\n{}",
+        translated.wgsl.contains("!= ((setp_a_1).x)") || translated.wgsl.contains("!= ((setp_b_1).x)"),
+        "expected lt_u setp to include unordered NaN handling (`x != x`):\n{}",
         translated.wgsl
     );
 }
