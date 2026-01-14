@@ -57,8 +57,8 @@ For the consolidated virtio-input end-to-end validation plan (device model + dri
     - The selftest opens the virtio-input keyboard + mouse HID interfaces and reads **input reports** directly via `ReadFile`
       on the HID device path (no window focus required).
     - Intended to be paired with host-side QMP injection (`input-send-event`) when the harness is run with:
-      - PowerShell: `-WithInputEvents` (alias: `-WithVirtioInputEvents`)
-      - Python: `--with-input-events` (alias: `--with-virtio-input-events`)
+      - PowerShell: `-WithInputEvents` (aliases: `-WithVirtioInputEvents`, `-EnableVirtioInputEvents`)
+      - Python: `--with-input-events` (aliases: `--with-virtio-input-events`, `--enable-virtio-input-events`, `--require-virtio-input-events`)
     - Expected injected sequence (used by the host harness via QMP `input-send-event`):
       - keyboard: `'a'` press + release
       - mouse: small relative move + left click
@@ -68,8 +68,8 @@ For the consolidated virtio-input end-to-end validation plan (device model + dri
   - Optional end-to-end **scroll wheel** smoke test (`virtio-input-wheel`):
     - Runs as part of the `--test-input-events` flow (no separate guest flag).
     - Intended to be paired with host-side QMP injection (`input-send-event`) when the harness is run with:
-      - PowerShell: `-WithInputWheel`
-      - Python: `--with-input-wheel`
+      - PowerShell: `-WithInputWheel` (aliases: `-WithVirtioInputWheel`, `-EnableVirtioInputWheel`)
+      - Python: `--with-input-wheel` (aliases: `--with-virtio-input-wheel`, `--enable-virtio-input-wheel`)
     - Validates that the mouse HID input reports include:
       - vertical wheel (HID Generic Desktop `Wheel`)
       - horizontal wheel (HID Consumer `AC Pan`, sourced from Linux `REL_HWHEEL`)
@@ -87,8 +87,8 @@ For the consolidated virtio-input end-to-end validation plan (device model + dri
     - The selftest opens the virtio tablet HID interface and reads input reports via `ReadFile` (no window focus required).
     - Requires a virtio tablet device (typically QEMU `-device virtio-tablet-pci`) to be present and bound to virtio-input.
     - Intended to be paired with host-side QMP injection (`input-send-event`) when the harness is run with:
-      - PowerShell: `-WithInputTabletEvents` (alias: `-WithTabletEvents`)
-      - Python: `--with-input-tablet-events` (alias: `--with-tablet-events`)
+      - PowerShell: `-WithInputTabletEvents` (aliases: `-WithVirtioInputTabletEvents`, `-EnableVirtioInputTabletEvents`, `-WithTabletEvents`, `-EnableTabletEvents`)
+      - Python: `--with-input-tablet-events` (aliases: `--with-virtio-input-tablet-events`, `--with-tablet-events`, `--enable-virtio-input-tablet-events`, `--require-virtio-input-tablet-events`)
     - Expected injected sequence (used by the host harness via QMP `input-send-event`):
       - absolute move to (0,0) (reset)
       - absolute move to (10000,20000) (target)
