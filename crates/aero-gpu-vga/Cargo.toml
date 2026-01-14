@@ -6,6 +6,8 @@ license = "MIT OR Apache-2.0"
 
 [dependencies]
 aero-io-snapshot = { path = "../aero-io-snapshot", optional = true }
+memory = { path = "../memory", optional = true }
+aero-platform = { path = "../platform", optional = true }
 
 [target.'cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))'.dependencies]
 aero-shared = { path = "../aero-shared" }
@@ -13,6 +15,9 @@ aero-shared = { path = "../aero-shared" }
 [features]
 default = []
 io-snapshot = ["dep:aero-io-snapshot"]
+integration-memory = ["dep:memory"]
+integration-platform = ["dep:aero-platform"]
+integration = ["integration-memory", "integration-platform"]
 
 [dev-dependencies]
 aero-io-snapshot = { path = "../aero-io-snapshot" }

@@ -21,7 +21,7 @@ aero-pci-firmware-adapter = { path = "../aero-pci-firmware-adapter" }
 aero-pc-constants = { path = "../aero-pc-constants" }
 aero-platform = { path = "../platform" }
 aero-snapshot = { path = "../aero-snapshot", features = ["io-snapshot"] }
-aero-gpu-vga = { path = "../aero-gpu-vga", features = ["io-snapshot"] }
+aero-gpu-vga = { path = "../aero-gpu-vga", features = ["io-snapshot", "integration-memory", "integration-platform"] }
 aero-storage = { path = "../aero-storage" }
 aero-usb = { path = "../aero-usb" }
 # Machine snapshots include E1000 runtime state via `aero_snapshot::io_snapshot_bridge`, so we

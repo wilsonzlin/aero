@@ -66,7 +66,10 @@ use aero_devices_storage::atapi::{AtapiCdrom, IsoBackend};
 use aero_storage::{MemBackend, RawDisk};
 use aero_devices_storage::pci_ahci::AhciPciDevice;
 use aero_devices_storage::pci_ide::{Piix3IdePciDevice, PRIMARY_PORTS, SECONDARY_PORTS};
-use aero_gpu_vga::{DisplayOutput as _, PortIO as _, VgaDevice};
+use aero_gpu_vga::{
+    DisplayOutput as _, PortIO as _, VgaDevice, VgaLegacyMmioHandler, VgaLfbMmioHandler,
+    VgaPortIoDevice,
+};
 use aero_interrupts::apic::{IOAPIC_MMIO_BASE, IOAPIC_MMIO_SIZE, LAPIC_MMIO_BASE, LAPIC_MMIO_SIZE};
 use aero_io_snapshot::io::state::{
     IoSnapshot, SnapshotReader as IoSnapshotReader, SnapshotResult as IoSnapshotResult,
@@ -1671,52 +1674,6 @@ impl PciDevice for UhciPciConfigDevice {
 }
 
 // -----------------------------------------------------------------------------
-// VGA port/MMIO adapters
-// -----------------------------------------------------------------------------
-
-struct VgaPortIo {
-    dev: Rc<RefCell<VgaDevice>>,
-}
-
-impl aero_platform::io::PortIoDevice for VgaPortIo {
-    fn read(&mut self, port: u16, size: u8) -> u32 {
-        self.dev.borrow_mut().port_read(port, size as usize)
-    }
-
-    fn write(&mut self, port: u16, size: u8, value: u32) {
-        self.dev.borrow_mut().port_write(port, size as usize, value);
-    }
-}
-
-struct VgaMmio {
-    base: u64,
-    dev: Rc<RefCell<VgaDevice>>,
-}
-
-impl MmioHandler for VgaMmio {
-    fn read(&mut self, offset: u64, size: usize) -> u64 {
-        let addr = self.base.wrapping_add(offset);
-        let mut out = 0u64;
-        let mut dev = self.dev.borrow_mut();
-        for i in 0..size {
-            let paddr = addr.wrapping_add(i as u64) as u32;
-            let byte = dev.mem_read_u8(paddr);
-            out |= (byte as u64) << (i * 8);
-        }
-        out
-    }
-
-    fn write(&mut self, offset: u64, size: usize, value: u64) {
-        let addr = self.base.wrapping_add(offset);
-        let mut dev = self.dev.borrow_mut();
-        for i in 0..size {
-            let paddr = addr.wrapping_add(i as u64) as u32;
-            let byte = ((value >> (i * 8)) & 0xFF) as u8;
-            dev.mem_write_u8(paddr, byte);
-        }
-    }
-}
-// -----------------------------------------------------------------------------
 // VGA / SVGA integration (legacy VGA + Bochs VBE_DISPI)
 // -----------------------------------------------------------------------------
 
@@ -1777,50 +1734,6 @@ impl PciDevice for VgaPciConfigDevice {
 
     fn config_mut(&mut self) -> &mut aero_devices::pci::PciConfigSpace {
         &mut self.cfg
-    }
-}
-
-struct VgaLfbMmio {
-    dev: Rc<RefCell<VgaDevice>>,
-}
-
-impl MmioHandler for VgaLfbMmio {
-    fn read(&mut self, offset: u64, size: usize) -> u64 {
-        if size == 0 {
-            return 0;
-        }
-        let size = match size {
-            1 | 2 | 4 | 8 => size,
-            _ => size.clamp(1, 8),
-        };
-
-        let base = u64::from(aero_gpu_vga::SVGA_LFB_BASE).wrapping_add(offset);
-        let mut out = 0u64;
-        let mut dev = self.dev.borrow_mut();
-        for i in 0..size {
-            let paddr = base.wrapping_add(i as u64);
-            let b = dev.mem_read_u8(u32::try_from(paddr).unwrap_or(0)) as u64;
-            out |= b << (i * 8);
-        }
-        out
-    }
-
-    fn write(&mut self, offset: u64, size: usize, value: u64) {
-        if size == 0 {
-            return;
-        }
-        let size = match size {
-            1 | 2 | 4 | 8 => size,
-            _ => size.clamp(1, 8),
-        };
-
-        let base = u64::from(aero_gpu_vga::SVGA_LFB_BASE).wrapping_add(offset);
-        let mut dev = self.dev.borrow_mut();
-        for i in 0..size {
-            let paddr = base.wrapping_add(i as u64);
-            let b = ((value >> (i * 8)) & 0xFF) as u8;
-            dev.mem_write_u8(u32::try_from(paddr).unwrap_or(0), b);
-        }
     }
 }
 
@@ -2855,71 +2768,6 @@ impl aero_platform::io::PortIoDevice for PciIoBarWindow {
             .router
             .borrow_mut()
             .dispatch_write(port, size_usize, value);
-    }
-}
-
-struct VgaLegacyMmio {
-    base: u64,
-    vga: Rc<RefCell<VgaDevice>>,
-}
-
-impl MmioHandler for VgaLegacyMmio {
-    fn read(&mut self, offset: u64, size: usize) -> u64 {
-        if size == 0 {
-            return 0;
-        }
-        if !(1..=8).contains(&size) {
-            return u64::MAX;
-        }
-
-        let mut out = 0u64;
-        let base = self.base.wrapping_add(offset);
-        let mut vga = self.vga.borrow_mut();
-        for i in 0..size {
-            let paddr = base.wrapping_add(i as u64);
-            let b = vga.mem_read_u8(u32::try_from(paddr).unwrap_or(0)) as u64;
-            out |= b << (i * 8);
-        }
-        out
-    }
-
-    fn write(&mut self, offset: u64, size: usize, value: u64) {
-        if size == 0 || !(1..=8).contains(&size) {
-            return;
-        }
-
-        let base = self.base.wrapping_add(offset);
-        let mut vga = self.vga.borrow_mut();
-        for i in 0..size {
-            let paddr = base.wrapping_add(i as u64);
-            let b = ((value >> (i * 8)) & 0xFF) as u8;
-            vga.mem_write_u8(u32::try_from(paddr).unwrap_or(0), b);
-        }
-    }
-}
-
-struct VgaPortWindow {
-    vga: Rc<RefCell<VgaDevice>>,
-}
-
-impl aero_platform::io::PortIoDevice for VgaPortWindow {
-    fn read(&mut self, port: u16, size: u8) -> u32 {
-        let size = match size {
-            0 => return 0,
-            1 | 2 | 4 => size as usize,
-            _ => return u32::MAX,
-        };
-        let mut vga = self.vga.borrow_mut();
-        vga.port_read(port, size)
-    }
-
-    fn write(&mut self, port: u16, size: u8, value: u32) {
-        let size = match size {
-            1 | 2 | 4 => size as usize,
-            _ => return,
-        };
-        let mut vga = self.vga.borrow_mut();
-        vga.port_write(port, size, value);
     }
 }
 
@@ -5734,9 +5582,9 @@ impl Machine {
 
             self.mem
                 .map_mmio_once(VGA_LEGACY_MMIO_BASE, VGA_LEGACY_MMIO_SIZE, || {
-                    Box::new(VgaLegacyMmio {
-                        base: VGA_LEGACY_MMIO_BASE,
-                        vga: vga.clone(),
+                    Box::new(VgaLegacyMmioHandler {
+                        base_paddr: VGA_LEGACY_MMIO_BASE as u32,
+                        dev: vga.clone(),
                     })
                 });
 
@@ -5744,17 +5592,17 @@ impl Machine {
             self.io.register_range(
                 aero_gpu_vga::VGA_LEGACY_IO_START,
                 aero_gpu_vga::VGA_LEGACY_IO_END - aero_gpu_vga::VGA_LEGACY_IO_START + 1,
-                Box::new(VgaPortWindow { vga: vga.clone() }),
+                Box::new(VgaPortIoDevice { dev: vga.clone() }),
             );
             self.io
-                .register_range(0x01CE, 0x0002, Box::new(VgaPortWindow { vga: vga.clone() }));
+                .register_range(0x01CE, 0x0002, Box::new(VgaPortIoDevice { dev: vga.clone() }));
 
             // Map the VBE/SVGA linear framebuffer at the configured LFB base (legacy default:
             // `SVGA_LFB_BASE`).
             let lfb_base = u64::from(aero_gpu_vga::SVGA_LFB_BASE);
             let lfb_len = vga.borrow().vram().len() as u64;
             self.mem.map_mmio_once(lfb_base, lfb_len, || {
-                Box::new(VgaLfbMmio { dev: vga.clone() })
+                Box::new(VgaLfbMmioHandler { dev: vga.clone() })
             });
         } else if !self.cfg.enable_pc_platform {
             self.vga = None;
@@ -5890,12 +5738,12 @@ impl Machine {
                     aero_gpu_vga::VGA_LEGACY_IO_END - aero_gpu_vga::VGA_LEGACY_IO_START + 1,
                     {
                         let vga = vga.clone();
-                        move |_port| Box::new(VgaPortIo { dev: vga.clone() })
+                        move |_port| Box::new(VgaPortIoDevice { dev: vga.clone() })
                     },
                 );
                 self.io.register_shared_range(0x01CE, 2, {
                     let vga = vga.clone();
-                    move |_port| Box::new(VgaPortIo { dev: vga.clone() })
+                    move |_port| Box::new(VgaPortIoDevice { dev: vga.clone() })
                 });
 
                 // Map the legacy VGA memory window (`0xA0000..0xC0000`). The SVGA linear framebuffer
@@ -5908,8 +5756,8 @@ impl Machine {
                 self.mem.map_mmio_once(legacy_base, legacy_len, {
                     let vga = vga.clone();
                     move || {
-                        Box::new(VgaMmio {
-                            base: legacy_base,
+                        Box::new(VgaLegacyMmioHandler {
+                            base_paddr: aero_gpu_vga::VGA_LEGACY_MEM_START,
                             dev: vga,
                         })
                     }
@@ -6481,7 +6329,7 @@ impl Machine {
                         router.register_handler(
                             VGA_PCI_BDF,
                             VGA_PCI_BAR_INDEX,
-                            VgaLfbMmio { dev: vga },
+                            VgaLfbMmioHandler { dev: vga },
                         );
                     }
                     if let Some(aerogpu) = aerogpu.clone() {
@@ -8416,17 +8264,15 @@ impl snapshot::SnapshotTarget for Machine {
                         // install the default VGA port ranges now.
                         self.io.register_shared_range(
                             aero_gpu_vga::VGA_LEGACY_IO_START,
-                            aero_gpu_vga::VGA_LEGACY_IO_END
-                                - aero_gpu_vga::VGA_LEGACY_IO_START
-                                + 1,
+                            aero_gpu_vga::VGA_LEGACY_IO_END - aero_gpu_vga::VGA_LEGACY_IO_START + 1,
                             {
                                 let vga = vga.clone();
-                                move |_port| Box::new(VgaPortIo { dev: vga.clone() })
+                                move |_port| Box::new(VgaPortIoDevice { dev: vga.clone() })
                             },
                         );
                         self.io.register_shared_range(0x01CE, 2, {
                             let vga = vga.clone();
-                            move |_port| Box::new(VgaPortIo { dev: vga.clone() })
+                            move |_port| Box::new(VgaPortIoDevice { dev: vga.clone() })
                         });
 
                         // MMIO mappings persist in the physical bus; install legacy + LFB.
@@ -8437,8 +8283,8 @@ impl snapshot::SnapshotTarget for Machine {
                         self.mem.map_mmio_once(legacy_base, legacy_len, {
                             let vga = vga.clone();
                             move || {
-                                Box::new(VgaMmio {
-                                    base: legacy_base,
+                                Box::new(VgaLegacyMmioHandler {
+                                    base_paddr: aero_gpu_vga::VGA_LEGACY_MEM_START,
                                     dev: vga,
                                 })
                             }
@@ -8448,10 +8294,7 @@ impl snapshot::SnapshotTarget for Machine {
                         self.mem.map_mmio_once(lfb_base, lfb_len, {
                             let vga = vga.clone();
                             move || {
-                                Box::new(VgaMmio {
-                                    base: lfb_base,
-                                    dev: vga,
-                                })
+                                Box::new(VgaLfbMmioHandler { dev: vga })
                             }
                         });
 
@@ -9154,7 +8997,7 @@ mod tests {
         let vga = Rc::new(RefCell::new(VgaDevice::new()));
         vga.borrow_mut().vram_mut()[0] = 0xAA;
 
-        let mut mmio = VgaLfbMmio { dev: vga.clone() };
+        let mut mmio = VgaLfbMmioHandler { dev: vga.clone() };
 
         assert_eq!(MmioHandler::read(&mut mmio, 0, 0), 0);
         MmioHandler::write(&mut mmio, 0, 0, 0x55);
@@ -9167,9 +9010,9 @@ mod tests {
         let vga = Rc::new(RefCell::new(VgaDevice::new()));
         vga.borrow_mut().vram_mut()[0] = 0xAA;
 
-        let mut mmio = VgaLegacyMmio {
-            base: aero_gpu_vga::VGA_LEGACY_MEM_START as u64,
-            vga: vga.clone(),
+        let mut mmio = VgaLegacyMmioHandler {
+            base_paddr: aero_gpu_vga::VGA_LEGACY_MEM_START,
+            dev: vga.clone(),
         };
 
         assert_eq!(MmioHandler::read(&mut mmio, 0, 0), 0);

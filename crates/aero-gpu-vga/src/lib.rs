@@ -29,6 +29,16 @@ use palette::{rgb_to_rgba_u32, Rgb};
 pub use snapshot::{VgaSnapshotError, VgaSnapshotV1};
 use text_font::FONT8X8_CP437;
 
+#[cfg(feature = "integration-memory")]
+mod integration_memory;
+#[cfg(feature = "integration-memory")]
+pub use integration_memory::{VgaLegacyMmioHandler, VgaLfbMmioHandler};
+
+#[cfg(feature = "integration-platform")]
+mod integration_platform;
+#[cfg(feature = "integration-platform")]
+pub use integration_platform::VgaPortIoDevice;
+
 #[cfg(any(test, feature = "io-snapshot"))]
 use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
 #[cfg(any(test, feature = "io-snapshot"))]
