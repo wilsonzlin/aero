@@ -116,10 +116,44 @@ static void test_eventq_drain_dispatches_pcm_events(void)
     TEST_ASSERT(ctx.parse_failures == 0u);
 }
 
+static void test_eventq_drain_tolerates_trailing_bytes(void)
+{
+    VIRTIOSND_HOST_QUEUE q;
+    EVENTQ_TEST_CTX ctx;
+    struct {
+        VIRTIO_SND_EVENT evt;
+        UINT32 extra;
+    } msg;
+    ULONG drained;
+
+    VirtioSndHostQueueInit(&q, 8);
+    RtlZeroMemory(&ctx, sizeof(ctx));
+    RtlZeroMemory(&msg, sizeof(msg));
+
+    msg.evt.type = VIRTIO_SND_EVT_PCM_PERIOD_ELAPSED;
+    msg.evt.data = VIRTIO_SND_CAPTURE_STREAM_ID;
+    msg.extra = 0xAABBCCDDu;
+
+    /*
+     * The virtio-snd spec allows an eventq message to be completed with trailing
+     * bytes. The parser should consume the standard header and ignore the rest.
+     */
+    VirtioSndHostQueuePushUsed(&q, &msg, (UINT32)sizeof(msg));
+
+    drained = EventqTestDrainUsed(&q.Queue, &ctx);
+    TEST_ASSERT(drained == 1u);
+    TEST_ASSERT(ctx.calls == 1u);
+    TEST_ASSERT(ctx.last_type == VIRTIO_SND_EVT_PCM_PERIOD_ELAPSED);
+    TEST_ASSERT(ctx.last_data == VIRTIO_SND_CAPTURE_STREAM_ID);
+    TEST_ASSERT(ctx.period_count[VIRTIO_SND_CAPTURE_STREAM_ID] == 1u);
+    TEST_ASSERT(ctx.parse_failures == 0u);
+}
+
 int main(void)
 {
     test_eventq_drain_ignores_short_messages();
     test_eventq_drain_dispatches_pcm_events();
+    test_eventq_drain_tolerates_trailing_bytes();
 
     printf("virtiosnd_eventq_tests: PASS\n");
     return 0;
