@@ -57,38 +57,6 @@ fn validate_mmio_size(size: u8) -> usize {
     }
 }
 
-fn parse_usb_path(path: JsValue) -> Result<Vec<u8>, JsValue> {
-    let parts: Vec<u32> = serde_wasm_bindgen::from_value(path)
-        .map_err(|e| js_error(format!("Invalid USB topology path: {e}")))?;
-    if parts.is_empty() {
-        return Err(js_error("USB topology path must not be empty"));
-    }
-
-    let mut out = Vec::with_capacity(parts.len());
-    for (i, part) in parts.into_iter().enumerate() {
-        if i == 0 {
-            if part > 255 {
-                return Err(js_error("USB root port must be in 0..=255"));
-            }
-            out.push(part as u8);
-            continue;
-        }
-        if !(1..=255).contains(&part) {
-            return Err(js_error("USB hub port numbers must be in 1..=255"));
-        }
-        out.push(part as u8);
-    }
-    Ok(out)
-}
-
-fn parse_ehci_usb_path(path: JsValue) -> Result<Vec<u8>, JsValue> {
-    let parsed = parse_usb_path(path)?;
-    if let Some(&root) = parsed.first() {
-        ensure_not_webusb_root_port(root)?;
-    }
-    Ok(parsed)
-}
-
 fn map_attach_error(err: UsbHubAttachError) -> JsValue {
     match err {
         UsbHubAttachError::NotAHub => js_error("device is not a USB hub"),
@@ -135,6 +103,22 @@ pub struct EhciControllerBridge {
 }
 
 impl EhciControllerBridge {
+    fn parse_ehci_usb_path(&self, path: JsValue) -> Result<Vec<u8>, JsValue> {
+        let port_count = self.ctrl.hub().num_ports();
+        if port_count == 0 {
+            return Err(js_error("EHCI controller has no root ports"));
+        }
+        let max_root_port = port_count
+            .saturating_sub(1)
+            .min(usize::from(u8::MAX)) as u8;
+
+        let parsed = crate::usb_topology::parse_usb_path(path, max_root_port)?;
+        if let Some(&root) = parsed.first() {
+            ensure_not_webusb_root_port(root)?;
+        }
+        Ok(parsed)
+    }
+
     /// Rust-only helper for tests: connect an arbitrary USB device model to a root port.
     pub fn connect_device_for_test(&mut self, root_port: usize, device: Box<dyn UsbDeviceModel>) {
         self.ctrl
@@ -351,7 +335,7 @@ impl EhciControllerBridge {
     /// - `path[0]` is the root port index (0-based).
     /// - `path[1..]` are hub ports (1-based).
     pub fn detach_at_path(&mut self, path: JsValue) -> Result<(), JsValue> {
-        let path = parse_ehci_usb_path(path)?;
+        let path = self.parse_ehci_usb_path(path)?;
         detach_device_at_path(&mut self.ctrl, &path)
     }
 
@@ -361,7 +345,7 @@ impl EhciControllerBridge {
         path: JsValue,
         device: &crate::WebHidPassthroughBridge,
     ) -> Result<(), JsValue> {
-        let path = parse_ehci_usb_path(path)?;
+        let path = self.parse_ehci_usb_path(path)?;
         attach_device_at_path(&mut self.ctrl, &path, Box::new(device.as_usb_device()))
     }
 
@@ -371,7 +355,7 @@ impl EhciControllerBridge {
         path: JsValue,
         device: &crate::UsbHidPassthroughBridge,
     ) -> Result<(), JsValue> {
-        let path = parse_ehci_usb_path(path)?;
+        let path = self.parse_ehci_usb_path(path)?;
         attach_device_at_path(&mut self.ctrl, &path, Box::new(device.as_usb_device()))
     }
 
