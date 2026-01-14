@@ -63,6 +63,7 @@ fn trace_builder_guards_all_code_pages_in_trace() {
                 term: Terminator::Return,
             },
         ],
+        ip_mask: u64::MAX,
     };
 
     let env = RuntimeEnv::default();
@@ -117,6 +118,7 @@ fn trace_builder_loop_guards_only_in_body() {
                 term: Terminator::Jump(BlockId(0)),
             },
         ],
+        ip_mask: u64::MAX,
     };
 
     let env = RuntimeEnv::default();

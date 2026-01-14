@@ -2456,6 +2456,7 @@ fn tier2_trace_wasm_matches_interpreter_on_loop_side_exit() {
                 term: Terminator::Return,
             },
         ],
+        ip_mask: u64::MAX,
     };
 
     let mut profile = ProfileData::default();
@@ -2593,6 +2594,7 @@ fn tier2_trace_wasm_matches_interpreter_on_loop_side_exit_with_inline_code_versi
                 term: Terminator::Return,
             },
         ],
+        ip_mask: u64::MAX,
     };
 
     let mut profile = ProfileData::default();
@@ -2929,6 +2931,7 @@ fn tier2_loop_trace_invalidates_on_mid_execution_code_version_bump() {
                 term: Terminator::Return,
             },
         ],
+        ip_mask: u64::MAX,
     };
 
     let mut profile = ProfileData::default();

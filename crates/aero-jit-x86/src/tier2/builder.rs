@@ -96,6 +96,7 @@ impl<'a, B: Tier1Bus> Tier2CfgBuilder<'a, B> {
                         },
                     }],
                     entry: id,
+                    ip_mask: self.ip_mask,
                 };
             }
         };
@@ -116,7 +117,11 @@ impl<'a, B: Tier1Bus> Tier2CfgBuilder<'a, B> {
             .into_iter()
             .map(|b| b.expect("missing block"))
             .collect();
-        Function { blocks, entry }
+        Function {
+            blocks,
+            entry,
+            ip_mask: self.ip_mask,
+        }
     }
 
     fn get_or_create_block(&mut self, rip: u64) -> Option<BlockId> {

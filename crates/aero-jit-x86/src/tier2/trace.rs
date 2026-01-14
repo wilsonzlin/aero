@@ -165,12 +165,32 @@ impl<'a> TraceBuilder<'a> {
         for &block_id in &trace.blocks {
             let block = self.func.block(block_id);
             let len = block.code_len.max(1) as u64;
-            let start = block.start_rip;
+            let ip_mask = self.func.ip_mask;
+            let start = block.start_rip & ip_mask;
             let start_page = start >> crate::PAGE_SHIFT;
-            let end = start.saturating_add(len - 1);
-            let end_page = end >> crate::PAGE_SHIFT;
-            for page in start_page..=end_page {
-                pages.insert(page);
+            if ip_mask == u64::MAX {
+                let end = start.saturating_add(len - 1);
+                let end_page = end >> crate::PAGE_SHIFT;
+                for page in start_page..=end_page {
+                    pages.insert(page);
+                }
+            } else {
+                let max_page = ip_mask >> crate::PAGE_SHIFT;
+                let end = start.saturating_add(len - 1) & ip_mask;
+                let end_page = end >> crate::PAGE_SHIFT;
+                if start_page <= end_page {
+                    for page in start_page..=end_page {
+                        pages.insert(page);
+                    }
+                } else {
+                    // Wrapped past the architectural IP width (e.g. 16-bit/32-bit boundary).
+                    for page in start_page..=max_page {
+                        pages.insert(page);
+                    }
+                    for page in 0..=end_page {
+                        pages.insert(page);
+                    }
+                }
             }
         }
 

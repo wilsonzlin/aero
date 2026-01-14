@@ -334,6 +334,7 @@ fn tier2_trace_is_invalidated_via_jit_runtime_page_versions() {
                 term: Terminator::Return,
             },
         ],
+        ip_mask: u64::MAX,
     };
 
     let mut profile = ProfileData::default();

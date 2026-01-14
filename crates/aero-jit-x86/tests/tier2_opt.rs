@@ -1151,6 +1151,7 @@ fn trace_builder_builds_loop_trace_and_deopts_with_precise_rip() {
                 term: Terminator::Return,
             },
         ],
+        ip_mask: u64::MAX,
     };
 
     let mut profile = ProfileData::default();

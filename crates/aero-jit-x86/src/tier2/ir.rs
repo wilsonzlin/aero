@@ -626,6 +626,14 @@ impl TraceIr {
 pub struct Function {
     pub blocks: Vec<Block>,
     pub entry: BlockId,
+    /// Architectural instruction pointer mask used by the Tier-2 CFG builder.
+    ///
+    /// This is `u64::MAX` for 64-bit mode, `0xffff_ffff` for 32-bit mode, and `0xffff` for 16-bit
+    /// mode.
+    ///
+    /// Tier-2 uses this to model architectural IP wrap semantics (e.g. blocks whose executed code
+    /// bytes span the 16-bit/32-bit wrap boundary) when generating code-version guards.
+    pub ip_mask: u64,
 }
 
 impl Function {

@@ -14,7 +14,9 @@ use std::collections::{HashSet, VecDeque};
 use std::sync::{Arc, Mutex};
 
 use aero_cpu_core::jit::cache::{CompiledBlockHandle, CompiledBlockMeta, PageVersionSnapshot};
-use aero_cpu_core::jit::runtime::{CompileRequestSink, JitBackend, JitRuntime, PAGE_SHIFT};
+use aero_cpu_core::jit::runtime::{
+    CompileRequestSink, JitBackend, JitRuntime, PageVersionTracker, PAGE_SHIFT,
+};
 
 use crate::compiler::tier1::compile_tier1_block_with_options;
 use crate::tier1::{BlockLimits, Tier1WasmOptions};
@@ -183,7 +185,24 @@ where
         // RIP→PADDR mapping exists.
         let code_paddr = entry_rip;
         let snapshot_len = snapshot_len_for_limits(self.limits);
-        let pre_meta: CompiledBlockMeta = jit.snapshot_meta(code_paddr, snapshot_len);
+        let ip_mask = ip_mask_for_bitness(bitness);
+        let pre_meta: CompiledBlockMeta = if ip_mask == u64::MAX {
+            jit.snapshot_meta(code_paddr, snapshot_len)
+        } else {
+            CompiledBlockMeta {
+                code_paddr,
+                byte_len: snapshot_len,
+                page_versions_generation: jit.page_versions().generation(),
+                page_versions: snapshot_page_versions_wrapping(
+                    jit.page_versions(),
+                    code_paddr,
+                    snapshot_len,
+                    ip_mask,
+                ),
+                instruction_count: 0,
+                inhibit_interrupts_after_block: false,
+            }
+        };
 
         let compilation = compile_tier1_block_with_options(
             &self.provider,
@@ -192,7 +211,7 @@ where
             self.limits,
             self.wasm_options,
         )?;
-        let mut meta = shrink_meta(pre_meta, compilation.byte_len);
+        let mut meta = shrink_meta(pre_meta, compilation.byte_len, ip_mask);
         meta.instruction_count = compilation.instruction_count;
         meta.inhibit_interrupts_after_block = false;
 
@@ -230,9 +249,9 @@ fn snapshot_len_for_limits(limits: BlockLimits) -> u32 {
     max_bytes.saturating_add(15)
 }
 
-fn shrink_meta(mut meta: CompiledBlockMeta, byte_len: u32) -> CompiledBlockMeta {
+fn shrink_meta(mut meta: CompiledBlockMeta, byte_len: u32, ip_mask: u64) -> CompiledBlockMeta {
     meta.byte_len = byte_len;
-    meta.page_versions = shrink_page_versions(meta.code_paddr, byte_len, meta.page_versions);
+    meta.page_versions = shrink_page_versions(meta.code_paddr, byte_len, meta.page_versions, ip_mask);
     meta
 }
 
@@ -240,18 +259,127 @@ fn shrink_page_versions(
     code_paddr: u64,
     byte_len: u32,
     mut page_versions: Vec<PageVersionSnapshot>,
+    ip_mask: u64,
 ) -> Vec<PageVersionSnapshot> {
     if byte_len == 0 {
         page_versions.clear();
         return page_versions;
     }
 
-    let start_page = code_paddr >> PAGE_SHIFT;
-    let end = code_paddr.saturating_add(byte_len as u64 - 1);
+    let start = code_paddr & ip_mask;
+    let start_page = start >> PAGE_SHIFT;
+    if ip_mask == u64::MAX {
+        let end = start.saturating_add(byte_len as u64 - 1);
+        let end_page = end >> PAGE_SHIFT;
+        page_versions.retain(|snap| snap.page >= start_page && snap.page <= end_page);
+        return page_versions;
+    }
+
+    let max_page = ip_mask >> PAGE_SHIFT;
+    let end = start.saturating_add(byte_len as u64 - 1) & ip_mask;
+    let end_page = end >> PAGE_SHIFT;
+    if start_page <= end_page {
+        page_versions.retain(|snap| snap.page >= start_page && snap.page <= end_page);
+    } else {
+        page_versions.retain(|snap| {
+            (snap.page >= start_page && snap.page <= max_page) || snap.page <= end_page
+        });
+    }
+    page_versions
+}
+
+#[track_caller]
+fn ip_mask_for_bitness(bitness: u32) -> u64 {
+    match bitness {
+        32 => 0xffff_ffff,
+        64 => u64::MAX,
+        // Tier-1 only partially models 16-bit mode, but keep metadata consistent with the
+        // architectural IP width for callers that use `bitness=16`.
+        16 => 0xffff,
+        other => panic!("invalid x86 bitness {other}"),
+    }
+}
+
+fn snapshot_page_versions_wrapping(
+    tracker: &PageVersionTracker,
+    code_paddr: u64,
+    byte_len: u32,
+    ip_mask: u64,
+) -> Vec<PageVersionSnapshot> {
+    if byte_len == 0 {
+        return Vec::new();
+    }
+
+    let pages = spanned_pages_wrapping(
+        code_paddr,
+        byte_len,
+        ip_mask,
+        PageVersionTracker::MAX_SNAPSHOT_PAGES,
+    );
+
+    pages
+        .into_iter()
+        .map(|page| PageVersionSnapshot {
+            page,
+            version: tracker.version(page),
+        })
+        .collect()
+}
+
+fn spanned_pages_wrapping(
+    code_paddr: u64,
+    byte_len: u32,
+    ip_mask: u64,
+    max_pages: usize,
+) -> Vec<u64> {
+    if byte_len == 0 || max_pages == 0 {
+        return Vec::new();
+    }
+    let len = u64::from(byte_len);
+
+    let start = code_paddr & ip_mask;
+    let start_page = start >> PAGE_SHIFT;
+
+    if ip_mask == u64::MAX {
+        let end = start.saturating_add(len.saturating_sub(1));
+        let end_page = end >> PAGE_SHIFT;
+        let page_count = end_page.saturating_sub(start_page).saturating_add(1);
+        let clamped_pages = page_count.min(max_pages as u64);
+        if clamped_pages == 0 {
+            return Vec::new();
+        }
+        let clamped_end_page = start_page.saturating_add(clamped_pages - 1);
+        return (start_page..=clamped_end_page).collect();
+    }
+
+    let max_page = ip_mask >> PAGE_SHIFT;
+    let end_unmasked = start.saturating_add(len.saturating_sub(1));
+    let end = end_unmasked & ip_mask;
     let end_page = end >> PAGE_SHIFT;
 
-    page_versions.retain(|snap| snap.page >= start_page && snap.page <= end_page);
-    page_versions
+    let mut out = Vec::new();
+    if start_page <= end_page {
+        for page in start_page..=end_page {
+            out.push(page);
+            if out.len() >= max_pages {
+                break;
+            }
+        }
+    } else {
+        for page in start_page..=max_page {
+            out.push(page);
+            if out.len() >= max_pages {
+                return out;
+            }
+        }
+        for page in 0..=end_page {
+            out.push(page);
+            if out.len() >= max_pages {
+                break;
+            }
+        }
+    }
+    out
 }
 
 #[cfg(test)]
