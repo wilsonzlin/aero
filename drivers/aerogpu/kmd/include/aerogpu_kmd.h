@@ -138,7 +138,7 @@ typedef struct _AEROGPU_ALLOC_TABLE_SCRATCH {
 
     struct aerogpu_alloc_entry* TmpEntries;
     uint32_t* Seen;
-    UINT* SeenIndex;
+    uint16_t* SeenIndex;
     uint32_t* SeenEpoch;
     uint32_t Epoch;
 
