@@ -3,7 +3,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::binding_model::{
     BINDING_BASE_CBUFFER, BINDING_BASE_SAMPLER, BINDING_BASE_TEXTURE, BINDING_BASE_UAV,
-    MAX_CBUFFER_SLOTS, MAX_SAMPLER_SLOTS, MAX_TEXTURE_SLOTS, MAX_UAV_SLOTS,
+    D3D11_MAX_CONSTANT_BUFFER_SLOTS, MAX_CBUFFER_SLOTS, MAX_SAMPLER_SLOTS, MAX_TEXTURE_SLOTS,
+    MAX_UAV_SLOTS,
 };
 use crate::signature::{DxbcSignature, DxbcSignatureParameter, ShaderSignatures};
 use crate::sm4::opcode::opcode_name;
@@ -356,7 +357,7 @@ impl fmt::Display for ShaderTranslateError {
                 match *kind {
                     "cbuffer" => write!(
                         f,
-                        "cbuffer slot {slot} is out of range (max {max}); b# slots map to @binding({BINDING_BASE_CBUFFER} + slot) and must stay below the texture base @binding({BINDING_BASE_TEXTURE})"
+                        "D3D11 cbuffer slot {slot} is out of range (max {max}); D3D11 exposes 14 constant buffer slots per stage (b0..b13). b# slots map to @binding({BINDING_BASE_CBUFFER} + slot) and must stay below the texture base @binding({BINDING_BASE_TEXTURE})"
                     ),
                     "texture" => write!(
                         f,
@@ -3372,7 +3373,9 @@ fn scan_resources(
     for inst in &module.instructions {
         let mut scan_src = |src: &crate::sm4_ir::SrcOperand| -> Result<(), ShaderTranslateError> {
             if let SrcKind::ConstantBuffer { slot, reg } = src.kind {
-                validate_slot("cbuffer", slot, MAX_CBUFFER_SLOTS)?;
+                // D3D11 only exposes `b0..b13` (14 slots) per stage, even though the binding model
+                // could represent more without colliding with `t#` bindings.
+                validate_slot("cbuffer", slot, D3D11_MAX_CONSTANT_BUFFER_SLOTS)?;
                 let entry = cbuffers.entry(slot).or_insert(0);
                 *entry = (*entry).max(reg + 1);
             }
