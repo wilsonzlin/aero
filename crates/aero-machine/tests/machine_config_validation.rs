@@ -1,4 +1,6 @@
+use aero_gpu_vga::VBE_FRAMEBUFFER_OFFSET;
 use aero_machine::{Machine, MachineConfig, MachineError};
+use aero_pc_constants::PCI_MMIO_BASE;
 
 #[test]
 fn cpu_count_must_be_non_zero() {
@@ -30,6 +32,54 @@ fn cpu_count_must_be_non_zero() {
         msg.contains("docs/09-bios-firmware.md"),
         "error message must also point to the firmware SMP boot docs; got: {msg}"
     );
+}
+
+#[test]
+fn vga_lfb_must_fit_inside_pci_mmio_window_when_derived_from_vram_bar_base() {
+    // This exercises the derived legacy VGA LFB base path:
+    //   lfb_base = vga_vram_bar_base + vga_lfb_offset
+    //
+    // When the PC platform is enabled, the LFB must be reachable via the PCI MMIO window, so the
+    // machine rejects configurations whose (aligned) LFB base falls outside that range.
+    // Mirror `Machine::legacy_vga_pci_bar_size_bytes_for_cfg` for the default config.
+    let bar_size = aero_gpu_vga::DEFAULT_VRAM_SIZE.max(aero_gpu_vga::VGA_VRAM_SIZE);
+    let bar_size = u32::try_from(bar_size).unwrap_or(u32::MAX);
+    let bar_size = bar_size
+        .max(0x10)
+        .checked_next_power_of_two()
+        .unwrap_or(0x8000_0000);
+    let window_start = u32::try_from(PCI_MMIO_BASE).expect("PCI MMIO base fits in u32");
+    // Place the derived LFB base below the PCI MMIO window. Choose an aligned base so alignment
+    // masking does not change it.
+    let vram_bar_base = window_start.saturating_sub(bar_size) & !(bar_size - 1);
+    assert!(u64::from(vram_bar_base) < PCI_MMIO_BASE);
+
+    let lfb_offset = VBE_FRAMEBUFFER_OFFSET as u32;
+    let cfg = MachineConfig {
+        enable_pc_platform: true,
+        enable_vga: true,
+        enable_aerogpu: false,
+        vga_lfb_base: None,
+        vga_vram_bar_base: Some(vram_bar_base),
+        vga_lfb_offset: Some(lfb_offset),
+        ..Default::default()
+    };
+
+    let err = match Machine::new(cfg) {
+        Ok(_) => panic!("expected invalid VGA LFB base to be rejected"),
+        Err(e) => e,
+    };
+    let MachineError::VgaLfbOutsidePciMmioWindow {
+        requested_base,
+        aligned_base,
+        size,
+    } = err
+    else {
+        panic!("unexpected error: {err:?}");
+    };
+    assert_eq!(requested_base, vram_bar_base.wrapping_add(lfb_offset));
+    assert_eq!(aligned_base, vram_bar_base);
+    assert_eq!(size, bar_size);
 }
 
 #[test]
