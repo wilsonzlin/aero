@@ -10,10 +10,8 @@
 ; Note: this file is checked in disabled-by-default (as `*.inf.disabled`) to
 ; avoid accidentally shipping/installing **two** INFs that match the same HWIDs.
 ;
-; Maintenance note: this alias INF is expected to stay in sync with
-; `aero_virtio_input.inf` for all functional content except the models sections
-; ([Aero.NTx86] / [Aero.NTamd64]) where it can provide an opt-in generic fallback
-; HWID (no SUBSYS).
+; Maintenance note: from the `[Version]` section onward, this file must stay
+; byte-for-byte identical to `aero_virtio_input.inf` (CI enforces this).
 ;
 ; Aero virtio-input PCI device -> HIDClass KMDF minidriver (Windows 7 SP1)
 ;

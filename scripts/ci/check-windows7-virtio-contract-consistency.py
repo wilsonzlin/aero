@@ -2976,10 +2976,7 @@ def main() -> None:
         base_hwid = f"PCI\\VEN_{contract_any.vendor_id:04X}&DEV_{contract_any.device_id:04X}"
         strict_hwid = f"{base_hwid}&REV_{contract_rev:02X}"
         hwids_upper = {h.upper() for h in hwids}
-        # Most in-tree virtio INFs include a less-specific `PCI\\VEN_...&DEV_...&REV_..` model entry.
-        # virtio-input is intentionally SUBSYS-only (keyboard/mouse only) so it doesn't overlap with
-        # the tablet INF; allow absence of the base+REV fallback there.
-        if device_name != "virtio-input" and strict_hwid.upper() not in hwids_upper:
+        if strict_hwid.upper() not in hwids_upper:
             errors.append(
                 format_error(
                     f"{inf_path.as_posix()}: missing strict REV-qualified hardware ID (required for contract major safety):",
@@ -3028,7 +3025,7 @@ def main() -> None:
                 inf_path=inf_path,
                 strict_hwid=strict_hwid,
                 contract_rev=contract_rev,
-                require_fallback=False,
+                require_fallback=True,
                 errors=errors,
             )
 
@@ -3060,13 +3057,11 @@ def main() -> None:
             errors=errors,
         )
 
-        # Keep the alias file behavior in sync with the canonical INF everywhere else.
-        drift = check_inf_alias_drift_excluding_sections(
+        drift = check_inf_alias_drift(
             canonical=virtio_input_canonical,
             alias=virtio_input_alias,
             repo_root=REPO_ROOT,
             label="virtio-input",
-            drop_sections={"Aero.NTx86", "Aero.NTamd64"},
         )
         if drift:
             errors.append(drift)
