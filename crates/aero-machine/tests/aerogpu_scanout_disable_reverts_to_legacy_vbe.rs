@@ -182,8 +182,8 @@ fn aerogpu_scanout_disable_publishes_wddm_disabled_even_with_legacy_vbe_panning_
     assert_eq!(snap_wddm.source, SCANOUT_SOURCE_WDDM);
     let gen_wddm = snap_wddm.generation;
 
-    // Explicitly disable WDDM scanout. Even though a legacy VBE scanout is configured (including
-    // panning/stride), the shared scanout descriptor should publish a disabled WDDM descriptor.
+    // Explicitly disable WDDM scanout. This releases WDDM ownership and should revert the shared
+    // scanout descriptor back to the legacy VBE source (including panning/stride).
     m.write_physical_u32(
         bar0_base + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_ENABLE),
         0,
@@ -192,10 +192,10 @@ fn aerogpu_scanout_disable_publishes_wddm_disabled_even_with_legacy_vbe_panning_
 
     let snap = scanout_state.snapshot();
     assert_ne!(snap.generation, gen_wddm);
-    assert_eq!(snap.source, SCANOUT_SOURCE_WDDM);
-    assert_eq!(snap.base_paddr(), 0);
-    assert_eq!(snap.width, 0);
-    assert_eq!(snap.height, 0);
-    assert_eq!(snap.pitch_bytes, 0);
+    assert_eq!(snap.source, SCANOUT_SOURCE_LEGACY_VBE_LFB);
+    assert_eq!(snap.base_paddr(), expected_legacy_base);
+    assert_eq!(snap.width, 1024);
+    assert_eq!(snap.height, 768);
+    assert_eq!(snap.pitch_bytes, u32::from(bytes_per_scan_line));
     assert_eq!(snap.format, SCANOUT_FORMAT_B8G8R8X8);
 }

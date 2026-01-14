@@ -947,8 +947,8 @@ impl AeroGpuMmioDevice {
         }
 
         // Claim the WDDM scanout once a valid configuration has been programmed, even if
-        // `SCANOUT0_ENABLE` was already 1 (Win7 KMD init sequence). Ownership is held until the VM
-        // resets; `SCANOUT0_ENABLE=0` is treated as a visibility toggle rather than a release.
+        // `SCANOUT0_ENABLE` was already 1 (Win7 KMD init sequence). Ownership is held until the
+        // guest disables scanout (`SCANOUT0_ENABLE=0`) or the VM resets.
         self.wddm_scanout_active = true;
 
         // Mark dirty so scanout consumers see the transition immediately.
@@ -1877,8 +1877,8 @@ impl AeroGpuMmioDevice {
                 // scanout.
                 //
                 // The Win7 AeroGPU KMD uses `SCANOUT0_ENABLE` as a visibility toggle. Clearing it
-                // should blank presentation but must *not* release WDDM ownership (legacy scanout
-                // stays suppressed until device reset).
+                // explicitly disables scanout and releases WDDM ownership so the host may fall back
+                // to legacy VGA/VBE presentation.
                 if self.scanout0_enable && !new_enable {
                     // Disabling scanout stops vblank scheduling, drops any pending vblank IRQ, and
                     // flushes any vsync-paced fences.
@@ -1897,6 +1897,11 @@ impl AeroGpuMmioDevice {
                     }
                 }
                 self.scanout0_enable = new_enable;
+                if !new_enable {
+                    // Explicit disable releases the "WDDM owns scanout" claim so hosts may fall back
+                    // to legacy VGA/VBE presentation.
+                    self.wddm_scanout_active = false;
+                }
                 #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
                 {
                     self.scanout0_dirty = true;
