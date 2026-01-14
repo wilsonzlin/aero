@@ -1,4 +1,4 @@
-use aero_devices::pci::{PciBdf, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
+use aero_devices::pci::{PciBdf, PciInterruptPin, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
 use aero_machine::{Machine, MachineConfig};
 use aero_protocol::aerogpu::aerogpu_cmd::AEROGPU_PRESENT_FLAG_VSYNC;
 use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
@@ -111,7 +111,7 @@ fn write_submit_desc(
 #[test]
 fn vsync_present_fence_does_not_complete_until_vblank_tick() {
     let mut m = new_test_machine();
-    let (_bdf, bar0) = setup_pci_and_get_bar0(&mut m);
+    let (bdf, bar0) = setup_pci_and_get_bar0(&mut m);
 
     let ring_gpa = 0x10000u64;
     let fence_gpa = 0x20000u64;
@@ -178,9 +178,14 @@ fn vsync_present_fence_does_not_complete_until_vblank_tick() {
         pci::AEROGPU_IRQ_FENCE,
     );
 
+    let pci_intx = m.pci_intx_router().expect("pc platform enabled");
+    let interrupts = m.platform_interrupts().expect("pc platform enabled");
+    let gsi = pci_intx.borrow().gsi_for_intx(bdf, PciInterruptPin::IntA);
+
     // Doorbell + process.
     m.write_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_DOORBELL), 1);
     m.process_aerogpu();
+    m.poll_pci_intx_lines();
 
     // Doorbell must not complete vsynced presents: the fence should remain pending.
     let completed_fence = read_mmio_u64(
@@ -193,6 +198,10 @@ fn vsync_present_fence_does_not_complete_until_vblank_tick() {
 
     let irq_status = m.read_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_IRQ_STATUS));
     assert_eq!(irq_status & pci::AEROGPU_IRQ_FENCE, 0);
+    assert!(
+        !interrupts.borrow().gsi_level(gsi),
+        "INTx should not assert before the next vblank tick"
+    );
 
     // Ring head should advance to match tail.
     assert_eq!(m.read_physical_u32(ring_gpa + 24), 1);
@@ -203,6 +212,7 @@ fn vsync_present_fence_does_not_complete_until_vblank_tick() {
     );
     m.tick_platform(period_ns);
     m.process_aerogpu();
+    m.poll_pci_intx_lines();
 
     let completed_fence = read_mmio_u64(
         &mut m,
@@ -214,6 +224,10 @@ fn vsync_present_fence_does_not_complete_until_vblank_tick() {
 
     let irq_status = m.read_physical_u32(bar0 + u64::from(pci::AEROGPU_MMIO_REG_IRQ_STATUS));
     assert_ne!(irq_status & pci::AEROGPU_IRQ_FENCE, 0);
+    assert!(
+        interrupts.borrow().gsi_level(gsi),
+        "expected AeroGPU INTx to assert after vsync-paced fence completion"
+    );
 
     assert_eq!(m.read_physical_u64(fence_gpa + 8), signal_fence);
 }

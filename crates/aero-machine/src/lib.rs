@@ -54,7 +54,7 @@ use aero_devices::a20_gate::{A20Gate as A20GateDevice, A20_GATE_PORT};
 use aero_devices::acpi_pm::{
     register_acpi_pm, AcpiPmCallbacks, AcpiPmConfig, AcpiPmIo, SharedAcpiPmIo,
 };
-use aero_devices::clock::{Clock, ManualClock};
+use aero_devices::clock::ManualClock;
 use aero_devices::debugcon::{register_debugcon, SharedDebugConLog};
 use aero_devices::dma::{register_dma8237, Dma8237};
 use aero_devices::hpet;
@@ -8610,7 +8610,7 @@ impl Machine {
     /// -> advance head -> update completed fence + fence page) to make forward progress during
     /// `StartDevice` and early submission.
     pub fn process_aerogpu(&mut self) {
-        let (Some(aerogpu), Some(pci_cfg), Some(clock)) =
+        let (Some(aerogpu), Some(pci_cfg), Some(_clock)) =
             (&self.aerogpu_mmio, &self.pci_cfg, &self.platform_clock)
         else {
             return;
@@ -8632,7 +8632,6 @@ impl Machine {
             (command, bar0_base, bar1_base)
         };
 
-        let now_ns = clock.now_ns();
         let mut dev = aerogpu.borrow_mut();
         // Keep the AeroGPU model's internal PCI config image coherent with the canonical PCI config
         // space owned by the machine.
@@ -8641,7 +8640,6 @@ impl Machine {
             .set_bar_base(aero_devices::pci::profile::AEROGPU_BAR0_INDEX, bar0_base);
         dev.config_mut()
             .set_bar_base(aero_devices::pci::profile::AEROGPU_BAR1_VRAM_INDEX, bar1_base);
-        dev.tick_vblank(now_ns);
         dev.process(&mut self.mem);
 
         // Publish WDDM scanout state updates based on BAR0 scanout registers.
