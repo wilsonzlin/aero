@@ -36,7 +36,7 @@ The canonical `aero_machine::Machine` supports **two mutually-exclusive** displa
   The BIOS VBE implementation uses a linear framebuffer inside BAR1. `aero_machine` sets the VBE
   `PhysBasePtr` to `BAR1_BASE + 0x40000` (see `crates/aero-machine/src/lib.rs::VBE_LFB_OFFSET`) so
   INT 10h VBE mode set/clear writes land in BAR1-backed VRAM (leaving the first 256KiB reserved for
-  legacy VGA planar/text backing).
+  legacy VGA planar/text backing: 4 × 64KiB planes).
 
   Full 3D command execution is not wired into `aero_machine` yet. Shared device-side building
   blocks (ring executor + backend boundary) live in `crates/aero-devices-gpu`, with legacy sandbox

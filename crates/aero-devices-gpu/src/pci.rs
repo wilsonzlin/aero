@@ -18,20 +18,18 @@ const PCI_COMMAND_MEM_ENABLE: u16 = 1 << 1;
 const PCI_COMMAND_BUS_MASTER_ENABLE: u16 = 1 << 2;
 const PCI_COMMAND_INTX_DISABLE: u16 = 1 << 10;
 
-/// Size of the legacy VGA window (`0xA0000..0xC0000`).
+/// Size of the guest-visible legacy VGA window backing region (`0xA0000..0xBFFFF`, 128KiB).
 ///
-/// This reflects the guest-visible alias aperture size (128KiB). In Aero's canonical AeroGPU BAR1
-/// layout (shared with `aero_gpu_vga` / `aero_machine`), the legacy VGA window aliases into
-/// `VRAM[0..0x20000)`. The VBE packed-pixel framebuffer begins at [`VBE_LFB_OFFSET`] (after the full
-/// 4-plane VGA planar region).
+/// In Aero's canonical AeroGPU BAR1 layout (shared with `aero_gpu_vga` / `aero_machine`), the
+/// legacy VGA window aliases into `VRAM[0..0x20000)`. The full 4-plane VGA planar region spans
+/// `VRAM[0..0x40000)`, and the VBE packed-pixel framebuffer begins at [`VBE_LFB_OFFSET`].
 pub const LEGACY_VGA_VRAM_BYTES: u64 = 0x20_000;
 
 /// Offset within BAR1/VRAM where the VBE linear framebuffer (LFB) region begins.
 ///
 /// The canonical AeroGPU VRAM layout reserves the first 256KiB for legacy VGA planar memory
 /// (4 × 64KiB planes). VBE packed-pixel framebuffer writes are mapped after this region so
-/// firmware/bootloaders/Windows can draw into the LFB without overwriting the legacy VGA plane
-/// backing.
+/// firmware/bootloaders/Windows can draw into the LFB without overwriting VGA plane contents.
 ///
 /// See `docs/16-aerogpu-vga-vesa-compat.md`.
 pub const VBE_LFB_OFFSET: u64 = 0x40_000;
