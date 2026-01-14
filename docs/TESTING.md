@@ -154,6 +154,9 @@ cargo xtask input --rust-only --with-wasm
 cargo xtask input --wasm --rust-only
 cargo xtask input --e2e
 
+# If your Node workspace entrypoint is `web/` (rather than repo root), use:
+cargo xtask input --node-dir web
+
 # Boot display (VGA/VBE/INT10) regression suite (device model + BIOS INT10 + machine wiring)
 bash ./scripts/ci/run-vga-vbe-tests.sh
 ```
