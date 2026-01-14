@@ -1302,29 +1302,48 @@ mod tests {
                 "expected group layouts for groups 0..=3"
             );
 
-            // Internal GS emulation buffers use a dedicated bind group to avoid colliding with D3D
-            // slot-derived bindings. Use an existing (otherwise empty) group index so the test stays
-            // within WebGPU's baseline `maxBindGroups >= 4` guarantee.
-            let internal_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("gs emulation internal bind group layout"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+            // Internal GS emulation buffers share `@group(3)` with the GS stage bindings. They use
+            // bindings in the internal range (`BINDING_BASE_INTERNAL..`) so they don't collide with
+            // slot-derived D3D11 bindings (`b#`/`t#`/`s#`/`u#`) within the group.
+            //
+            // Keep this disjoint from the vertex/index pulling helpers, which also consume part of
+            // the internal binding-number space.
+            let out_vertices_binding: u32 = crate::binding_model::BINDING_BASE_INTERNAL + 64;
+
+            let group3_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("gs emulation group3 bind group layout"),
+                entries: &[
+                    // GS cbuffer (b0 → @binding(0)).
+                    wgpu::BindGroupLayoutEntry {
+                        binding: BINDING_BASE_CBUFFER,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: wgpu::BufferSize::new(16),
+                        },
+                        count: None,
                     },
-                    count: None,
-                }],
+                    // Internal output buffer.
+                    wgpu::BindGroupLayoutEntry {
+                        binding: out_vertices_binding,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
             });
 
-            let mut layout_refs: Vec<&wgpu::BindGroupLayout> = info
-                .group_layouts
-                .iter()
-                .map(|l| l.layout.as_ref())
-                .collect();
-            layout_refs[2] = &internal_layout;
+            let layout_refs: [&wgpu::BindGroupLayout; 4] = [
+                info.group_layouts[0].layout.as_ref(),
+                info.group_layouts[1].layout.as_ref(),
+                info.group_layouts[2].layout.as_ref(),
+                &group3_layout,
+            ];
 
             let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("gs emulation pipeline layout"),
@@ -1345,7 +1364,7 @@ struct Vertex {
   color: vec4<f32>,
 };
 
-@group(2) @binding(0) var<storage, read_write> out_vertices: array<Vertex>;
+@group(3) @binding(__OUT_VERTICES_BINDING__) var<storage, read_write> out_vertices: array<Vertex>;
 
 fn base_pos(i: u32) -> vec2<f32> {
   if (i == 0u) { return vec2<f32>(-0.5, -0.5); }
@@ -1370,8 +1389,10 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {
 
   // Touch the VS cbuffer so the binding is considered live (it is otherwise unused here).
   _ = vs_cb0.regs[0].x;
-}
-"#;
+ }
+ "#;
+            let compute_wgsl =
+                compute_wgsl.replace("__OUT_VERTICES_BINDING__", &out_vertices_binding.to_string());
 
             let compute_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("gs emulation compute module"),
@@ -1583,14 +1604,6 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
                 dummy_texture_view: &dummy_texture_view,
                 default_sampler: &default_sampler,
             };
-            let gs_provider = UniformProvider {
-                id: BufferId(2),
-                buffer: &gs_cb0_buffer,
-                dummy_uniform: &dummy_uniform,
-                dummy_storage: &dummy_storage,
-                dummy_texture_view: &dummy_texture_view,
-                default_sampler: &default_sampler,
-            };
 
             let mut bind_group_cache = BindGroupCache::new(32);
             let bg0 = build_bind_group(
@@ -1601,14 +1614,6 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
                 &vs_provider,
             )
             .expect("build group0 bind group");
-            let bg3 = build_bind_group(
-                device,
-                &mut bind_group_cache,
-                &info.group_layouts[3],
-                &info.group_bindings[3],
-                &gs_provider,
-            )
-            .expect("build group3 bind group");
 
             // Empty groups still appear in the pipeline layout; create empty bind groups so we can
             // bind every group index consistently.
@@ -1629,13 +1634,19 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::VERTEX,
                 mapped_at_creation: false,
             });
-            let internal_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("gs emulation internal bind group"),
-                layout: &internal_layout,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: out_vertices.as_entire_binding(),
-                }],
+            let bg3 = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("gs emulation group3 bind group"),
+                layout: &group3_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: BINDING_BASE_CBUFFER,
+                        resource: gs_cb0_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: out_vertices_binding,
+                        resource: out_vertices.as_entire_binding(),
+                    },
+                ],
             });
 
             let output_tex = device.create_texture(&wgpu::TextureDescriptor {
@@ -1717,7 +1728,6 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
                 bg0: &wgpu::BindGroup,
                 bg3: &wgpu::BindGroup,
                 empty_bg: &wgpu::BindGroup,
-                internal_bg: &wgpu::BindGroup,
                 render_pipeline: &wgpu::RenderPipeline,
                 out_vertices: &wgpu::Buffer,
                 output_tex: &wgpu::Texture,
@@ -1744,7 +1754,7 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
                     pass.set_pipeline(compute_pipeline);
                     pass.set_bind_group(0, bg0, &[]);
                     pass.set_bind_group(1, empty_bg, &[]);
-                    pass.set_bind_group(2, internal_bg, &[]);
+                    pass.set_bind_group(2, empty_bg, &[]);
                     pass.set_bind_group(3, bg3, &[]);
                     pass.dispatch_workgroups(3, 1, 1);
                 }
@@ -1784,9 +1794,8 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
                 &gs_cb0_buffer,
                 &compute_pipeline,
                 bg0.as_ref(),
-                bg3.as_ref(),
+                &bg3,
                 &empty_bg,
-                &internal_bg,
                 &render_pipeline,
                 &out_vertices,
                 &output_tex,
@@ -1800,9 +1809,8 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
                 &gs_cb0_buffer,
                 &compute_pipeline,
                 bg0.as_ref(),
-                bg3.as_ref(),
+                &bg3,
                 &empty_bg,
-                &internal_bg,
                 &render_pipeline,
                 &out_vertices,
                 &output_tex,
