@@ -149,6 +149,51 @@ fn xhci_tick_1ms_with_dma_does_not_dma_after_host_controller_error_even_with_run
 }
 
 #[test]
+fn xhci_reset_clears_host_controller_error_and_allows_dma_again() {
+    let mut mem = CountingMem::new(0x20_000);
+    let mut xhci = XhciController::new();
+
+    // Program CRCR so the tick-driven DMA path has a valid target while RUN is set.
+    let crcr_addr = 0x3000u64;
+    MemoryBus::write_u32(&mut mem, crcr_addr, 0x1122_3344);
+    xhci.mmio_write(regs::REG_CRCR_LO, 4, crcr_addr);
+    xhci.mmio_write(regs::REG_CRCR_HI, 4, crcr_addr >> 32);
+    xhci.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
+
+    // Sanity check: without HCE, the tick path should DMA.
+    mem.reset_counts();
+    xhci.tick_1ms_with_dma(&mut mem);
+    assert!(
+        mem.reads > 0 || mem.writes > 0,
+        "expected tick-driven DMA before HCE is latched"
+    );
+
+    force_hce(&mut xhci, &mut mem);
+
+    // Controller reset should clear the fatal error state.
+    xhci.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_HCRST));
+    let sts = xhci.mmio_read(regs::REG_USBSTS, 4) as u32;
+    assert_eq!(
+        sts & regs::USBSTS_HCE,
+        0,
+        "controller reset should clear HCE"
+    );
+
+    // After reset, reprogram RUN + CRCR and ensure DMA works again.
+    MemoryBus::write_u32(&mut mem, crcr_addr, 0x5566_7788);
+    xhci.mmio_write(regs::REG_CRCR_LO, 4, crcr_addr);
+    xhci.mmio_write(regs::REG_CRCR_HI, 4, crcr_addr >> 32);
+    xhci.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
+
+    mem.reset_counts();
+    xhci.tick_1ms_with_dma(&mut mem);
+    assert!(
+        mem.reads > 0 || mem.writes > 0,
+        "expected tick-driven DMA after clearing HCE via controller reset"
+    );
+}
+
+#[test]
 fn xhci_tick_does_not_dma_after_host_controller_error_even_with_active_endpoint() {
     #[derive(Default)]
     struct NakDevice;
