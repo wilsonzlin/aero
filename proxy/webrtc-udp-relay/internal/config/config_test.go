@@ -374,6 +374,50 @@ func TestUDPRemoteAllowlistIdleTimeout_Invalid(t *testing.T) {
 	}
 }
 
+func TestUDPBindingIdleTimeout_RejectsNonPositive(t *testing.T) {
+	t.Run("zero", func(t *testing.T) {
+		_, err := load(lookupMap(map[string]string{
+			EnvAPIKey:                "secret",
+			EnvUDPBindingIdleTimeout: "0s",
+		}), nil)
+		if err == nil {
+			t.Fatalf("expected error, got nil")
+		}
+	})
+
+	t.Run("negative", func(t *testing.T) {
+		_, err := load(lookupMap(map[string]string{
+			EnvAPIKey:                "secret",
+			EnvUDPBindingIdleTimeout: "-1s",
+		}), nil)
+		if err == nil {
+			t.Fatalf("expected error, got nil")
+		}
+	})
+}
+
+func TestUDPRemoteAllowlistIdleTimeout_RejectsNonPositive(t *testing.T) {
+	t.Run("zero", func(t *testing.T) {
+		_, err := load(lookupMap(map[string]string{
+			EnvAPIKey:                        "secret",
+			EnvUDPRemoteAllowlistIdleTimeout: "0s",
+		}), nil)
+		if err == nil {
+			t.Fatalf("expected error, got nil")
+		}
+	})
+
+	t.Run("negative", func(t *testing.T) {
+		_, err := load(lookupMap(map[string]string{
+			EnvAPIKey:                        "secret",
+			EnvUDPRemoteAllowlistIdleTimeout: "-1s",
+		}), nil)
+		if err == nil {
+			t.Fatalf("expected error, got nil")
+		}
+	})
+}
+
 func TestUDPRemoteAllowlistIdleTimeout_FlagOverride(t *testing.T) {
 	cfg, err := load(lookupMap(map[string]string{
 		EnvAPIKey:                        "secret",
