@@ -71,8 +71,11 @@ fn vga_pci_stub_does_not_collide_with_canonical_aerogpu_bdf() {
     }
 
     // When `enable_vga=true` and the PC platform is enabled, the canonical machine exposes a
-    // Bochs/QEMU-style “Standard VGA” PCI stub (`1234:1111`, `00:0c.0`) used only for VBE LFB
-    // routing. It is intentionally absent when `enable_aerogpu=true`.
+    // Bochs/QEMU-style “Standard VGA” PCI stub (`1234:1111`, `00:0c.0`) so the VBE LFB is reachable
+    // via the PCI MMIO window / BAR router.
+    //
+    // This stub is not part of the long-term paravirtual device contract, and must be absent when
+    // AeroGPU is enabled.
     let vga_bdf = profile::VGA_TRANSITIONAL_STUB.bdf;
     let vga_vendor = bus.read_config(vga_bdf, 0x00, 2) as u16;
     // Guardrail: ensure no canonical paravirtual device profile uses this BDF.

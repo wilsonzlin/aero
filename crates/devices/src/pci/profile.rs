@@ -909,16 +909,19 @@ pub const NIC_RTL8139: PciDeviceProfile = PciDeviceProfile {
 /// is routed through the stub's BAR0 inside the PCI MMIO window (BAR base assigned by BIOS POST /
 /// the PCI allocator, and may be relocated when other PCI devices are present).
 ///
-/// This stub is intentionally absent when AeroGPU is enabled to avoid exposing two VGA-class PCI
-/// display controllers to the guest (which can confuse Windows driver binding).
+/// This stub is intentionally absent when AeroGPU is enabled so the guest sees only the AeroGPU
+/// VGA-class PCI device (avoiding Windows driver binding confusion).
 ///
 /// It is *not* AeroGPU. The canonical AeroGPU contract is [`AEROGPU`].
 pub const VGA_TRANSITIONAL_STUB: PciDeviceProfile = PciDeviceProfile {
     name: "vga-transitional-stub",
-    // Historical fixed BDF used by Aero's transitional VGA PCI stub (`00:0c.0`).
+    // Stable historical BDF used by the canonical machine for the transitional VGA PCI stub
+    // (`00:0c.0`).
     //
-    // The canonical `aero_machine::Machine` exposes this PCI function only in `enable_vga=true` +
-    // `enable_pc_platform=true` mode (see above). When `enable_aerogpu=true`, the stub is absent.
+    // Keep this stable: tests and documentation assume `00:0c.0` remains reserved for this
+    // identity when the stub is exposed (`enable_vga=true` + `enable_pc_platform=true`). The stub
+    // is not part of the long-term Windows paravirtual device contract and must be absent when
+    // `enable_aerogpu=true`.
     bdf: PciBdf::new(0, 0x0c, 0),
     // Bochs/QEMU "Standard VGA" IDs.
     vendor_id: aero_gpu_vga::VGA_PCI_VENDOR_ID,
