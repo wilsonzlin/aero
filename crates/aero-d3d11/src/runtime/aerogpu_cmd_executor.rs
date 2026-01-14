@@ -3781,6 +3781,31 @@ impl AerogpuD3d11Executor {
                 count: None,
             },
         ];
+
+        // The GS prepass bind group uses 5 storage buffers (expanded verts/indices/indirect/counters
+        // + the flattened GS input payload). Some downlevel backends request very small limits via
+        // `wgpu::Limits::downlevel_defaults()` (e.g. max_storage_buffers_per_shader_stage=4),
+        // which would otherwise cause a wgpu validation panic during bind group layout creation.
+        let max_storage = self.device.limits().max_storage_buffers_per_shader_stage;
+        let storage_bindings = gs_bgl_entries
+            .iter()
+            .filter(|e| {
+                e.visibility.contains(wgpu::ShaderStages::COMPUTE)
+                    && matches!(
+                        e.ty,
+                        wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { .. },
+                            ..
+                        }
+                    )
+            })
+            .count() as u32;
+        if storage_bindings > max_storage {
+            bail!(
+                "GS prepass requires {storage_bindings} storage buffers in compute bind group 0, but this device/backend only supports max_storage_buffers_per_shader_stage={max_storage}"
+            );
+        }
+
         let gs_bgl = self
             .bind_group_layout_cache
             .get_or_create(&self.device, &gs_bgl_entries);
@@ -4869,6 +4894,31 @@ impl AerogpuD3d11Executor {
                 },
             ]);
             prepass_bgl_entries.sort_by_key(|e| e.binding);
+
+            // wgpu validates storage buffer binding counts at bind-group-layout creation time.
+            // The compute prepass uses multiple storage buffers for expansion outputs, plus
+            // additional storage buffers for vertex/index pulling. On some downlevel backends
+            // (notably GL paths), `max_storage_buffers_per_shader_stage` can be as low as 4, which
+            // is insufficient even for the minimal prepass.
+            let max_storage = self.device.limits().max_storage_buffers_per_shader_stage;
+            let storage_bindings = prepass_bgl_entries
+                .iter()
+                .filter(|e| {
+                    e.visibility.contains(wgpu::ShaderStages::COMPUTE)
+                        && matches!(
+                            e.ty,
+                            wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { .. },
+                                ..
+                            }
+                        )
+                })
+                .count() as u32;
+            if storage_bindings > max_storage {
+                bail!(
+                    "geometry prepass requires {storage_bindings} storage buffers in compute bind group 3, but this device/backend only supports max_storage_buffers_per_shader_stage={max_storage}"
+                );
+            }
 
             let prepass_bgl = self
                 .bind_group_layout_cache

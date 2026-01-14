@@ -45,6 +45,16 @@ pub fn skip_if_compute_or_indirect_unsupported(test_name: &str, err: &anyhow::Er
         return true;
     }
 
+    // Some downlevel backends support compute shaders but have very low storage buffer binding
+    // limits (e.g. max_storage_buffers_per_shader_stage=4 on some GL paths). The compute prepass
+    // uses multiple storage buffers for expansion output plus vertex/index pulling.
+    if msg.contains("max_storage_buffers_per_shader_stage")
+        || msg.contains("Too many bindings of type StorageBuffers")
+    {
+        skip_or_panic(test_name, "storage buffer bindings unsupported/too limited for compute prepass");
+        return true;
+    }
+
     false
 }
 
