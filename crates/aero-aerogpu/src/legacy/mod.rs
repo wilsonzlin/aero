@@ -202,6 +202,15 @@ impl PciConfigSpace {
 
     fn read(&self, offset: u16, size: usize) -> u32 {
         let offset = offset as usize;
+        if !matches!(size, 1 | 2 | 4) {
+            return 0;
+        }
+        if offset
+            .checked_add(size)
+            .is_none_or(|end| end > self.data.len())
+        {
+            return 0;
+        }
         match size {
             1 => self.data[offset] as u32,
             2 => u16::from_le_bytes(self.data[offset..offset + 2].try_into().unwrap()) as u32,
@@ -212,6 +221,15 @@ impl PciConfigSpace {
 
     fn write(&mut self, offset: u16, size: usize, value: u32) {
         let offset = offset as usize;
+        if !matches!(size, 1 | 2 | 4) {
+            return;
+        }
+        if offset
+            .checked_add(size)
+            .is_none_or(|end| end > self.data.len())
+        {
+            return;
+        }
         match size {
             1 => self.data[offset] = value as u8,
             2 => self.data[offset..offset + 2].copy_from_slice(&(value as u16).to_le_bytes()),
@@ -770,6 +788,21 @@ impl AeroGpuLegacyPciDevice {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn config_space_oob_accesses_do_not_panic() {
+        let mut cfg = PciConfigSpace::new();
+
+        assert_eq!(cfg.read(0x100, 1), 0);
+        assert_eq!(cfg.read(0xff, 2), 0);
+        assert_eq!(cfg.read(0xfe, 4), 0);
+        assert_eq!(cfg.read(0, 3), 0);
+
+        cfg.write(0x100, 1, 0x12);
+        cfg.write(0xff, 2, 0x1234);
+        cfg.write(0xfe, 4, 0x1234_5678);
+        cfg.write(0, 3, 0xDEAD_BEEF);
+    }
 
     #[test]
     fn pci_bar_probe_subword_reads_return_mask_bytes() {
