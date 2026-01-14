@@ -129,6 +129,20 @@ impl XhciPciDevice {
         }
         self.controller.irq_level()
     }
+
+    /// Advance the controller by 1ms.
+    ///
+    /// This ticks internal timers (MFINDEX + port reset/debounce) regardless of DMA, but gates
+    /// transfer execution + event ring delivery on PCI `COMMAND.BME` so clearing bus mastering does
+    /// not cause the controller model to interpret guest ring pointers using "open bus" reads.
+    pub fn tick_1ms(&mut self, mem: &mut dyn MemoryBus) {
+        if self.bus_master_enabled() {
+            let mut adapter = AeroUsbMemoryBus::Dma(mem);
+            self.controller.tick_1ms(&mut adapter);
+        } else {
+            self.controller.tick_1ms_no_dma();
+        }
+    }
 }
 
 impl PciDevice for XhciPciDevice {

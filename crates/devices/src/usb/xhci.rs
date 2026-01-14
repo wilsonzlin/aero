@@ -269,6 +269,9 @@ impl XhciPciDevice {
  
     /// Advance the device by 1ms.
     pub fn tick_1ms(&mut self, mem: &mut MemoryBus) {
+        // Transfer execution + event ring delivery both perform DMA. Gate them on PCI COMMAND.BME
+        // (bit 2) so clearing bus mastering does not interpret guest ERST state via open-bus reads
+        // (which would spuriously set USBSTS.HCE and/or drop pending events).
         let dma_enabled = (self.config.command() & (1 << 2)) != 0;
  
         enum TickMemoryBus<'a> {
@@ -658,10 +661,15 @@ fn all_ones(size: usize) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::{regs, XhciPciDevice};
+    use aero_platform::address_filter::AddressFilter;
+    use aero_platform::chipset::ChipsetState;
+    use aero_platform::memory::MemoryBus;
     use aero_io_snapshot::io::state::IoSnapshot;
+    use aero_usb::xhci::trb::{Trb, TrbType};
     use crate::pci::config::PciClassCode;
     use crate::pci::msi::PCI_CAP_ID_MSI;
     use crate::pci::{profile, PciBarDefinition, PciDevice};
+    use memory::MemoryBus as _;
     use memory::MmioHandler;
     use std::cell::RefCell;
     use std::rc::Rc;
@@ -848,5 +856,65 @@ mod tests {
         assert_eq!(usbcmd, expected_usbcmd);
         assert_eq!(crcr, expected_crcr);
         assert!(restored.irq_level());
+    }
+
+    #[test]
+    fn tick_1ms_bme_gates_event_ring_dma_and_avoids_spurious_hce() {
+        const ERST_PADDR: u64 = 0x1000;
+        const SEG_PADDR: u64 = 0x2000;
+        const SEG_TRBS: u32 = 16;
+
+        let chipset = ChipsetState::new(true);
+        let filter = AddressFilter::new(chipset.a20());
+        let mut mem = MemoryBus::new(filter, 0x10000);
+
+        // Program the Event Ring Segment Table (ERST) in guest memory.
+        mem.write_u64(ERST_PADDR, SEG_PADDR);
+        mem.write_u32(ERST_PADDR + 8, SEG_TRBS);
+        mem.write_u32(ERST_PADDR + 12, 0);
+
+        let mut dev = XhciPciDevice::default();
+        dev.config_mut().set_command(1 << 1); // MEM (but no BME yet).
+
+        // Configure interrupter 0 to point at our ERST.
+        MmioHandler::write(&mut dev, regs::REG_INTR0_ERSTSZ, 4, 1);
+        MmioHandler::write(&mut dev, regs::REG_INTR0_ERSTBA_LO, 4, ERST_PADDR);
+        MmioHandler::write(&mut dev, regs::REG_INTR0_ERSTBA_HI, 4, ERST_PADDR >> 32);
+        MmioHandler::write(&mut dev, regs::REG_INTR0_ERDP_LO, 4, SEG_PADDR);
+        MmioHandler::write(&mut dev, regs::REG_INTR0_ERDP_HI, 4, SEG_PADDR >> 32);
+
+        let mut trb = Trb::default();
+        trb.set_trb_type(TrbType::PortStatusChangeEvent);
+        dev.controller_mut().post_event(trb);
+        assert_eq!(dev.controller().pending_event_count(), 1);
+
+        // With BME clear, ticking should not attempt to DMA into the event ring (and must not set
+        // Host Controller Error due to "invalid" ERST reads).
+        dev.tick_1ms(&mut mem);
+
+        let usbsts = MmioHandler::read(&mut dev, regs::REG_USBSTS, 4) as u32;
+        assert_eq!(usbsts & regs::USBSTS_HCE, 0);
+        assert_eq!(dev.controller().pending_event_count(), 1);
+
+        let mut buf = [0u8; 16];
+        mem.read_physical(SEG_PADDR, &mut buf);
+        assert!(
+            buf.iter().all(|&b| b == 0),
+            "event ring should remain untouched while DMA is disabled"
+        );
+        assert!(!dev.irq_level());
+
+        // Enabling BME should allow the tick to deliver the event and assert the interrupt.
+        dev.config_mut().set_command((1 << 1) | (1 << 2)); // MEM | BME
+        dev.tick_1ms(&mut mem);
+
+        assert_eq!(dev.controller().pending_event_count(), 0);
+
+        let mut buf = [0u8; 16];
+        mem.read_physical(SEG_PADDR, &mut buf);
+        let written = Trb::from_bytes(buf);
+        assert_eq!(written.trb_type(), TrbType::PortStatusChangeEvent);
+        assert!(written.cycle(), "event TRB should have cycle bit set on first enqueue");
+        assert!(dev.irq_level());
     }
 }
