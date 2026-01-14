@@ -40,6 +40,7 @@ fn opcode_token(opcode: u32, len_dwords: u32) -> u32 {
     opcode | (len_dwords << OPCODE_LEN_SHIFT)
 }
 
+#[allow(clippy::vec_init_then_push)]
 fn build_gs_point_to_fullscreen_triangle_sample_t0_s0_dxbc() -> Vec<u8> {
     // gs_4_0 token stream (Aero's legacy SM4 encoding) that:
     // - Declares Texture2D t0 and Sampler s0.
