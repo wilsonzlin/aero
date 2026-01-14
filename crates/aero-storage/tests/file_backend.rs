@@ -1,7 +1,8 @@
 #![cfg(not(target_arch = "wasm32"))]
 
 use aero_storage::{
-    DiskError, DiskFormat, DiskImage, FileBackend, StorageBackend as _, VirtualDisk, SECTOR_SIZE,
+    AeroSparseConfig, AeroSparseDisk, DiskError, DiskFormat, DiskImage, FileBackend,
+    StorageBackend as _, VirtualDisk, SECTOR_SIZE,
 };
 use tempfile::tempdir;
 
@@ -104,6 +105,35 @@ fn file_backend_write_extends_file_and_zero_fills_gap() {
     let mut tail = [0u8; 2];
     backend.read_at(6, &mut tail).unwrap();
     assert_eq!(tail, [0xAA, 0xBB]);
+}
+
+#[test]
+fn file_backend_aerospar_disk_persists_after_reopen() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("disk.aerospar");
+
+    {
+        let backend = FileBackend::create(&path, 0).unwrap();
+        let mut disk = AeroSparseDisk::create(
+            backend,
+            AeroSparseConfig {
+                disk_size_bytes: (SECTOR_SIZE * 128) as u64,
+                block_size_bytes: 4096,
+            },
+        )
+        .unwrap();
+
+        disk.write_at(123, &[9, 8, 7, 6]).unwrap();
+        disk.flush().unwrap();
+    }
+
+    let backend = FileBackend::open_rw(&path).unwrap();
+    let mut disk = DiskImage::open_auto(backend).unwrap();
+    assert_eq!(disk.format(), DiskFormat::AeroSparse);
+
+    let mut back = [0u8; 4];
+    disk.read_at(123, &mut back).unwrap();
+    assert_eq!(back, [9, 8, 7, 6]);
 }
 
 #[test]
