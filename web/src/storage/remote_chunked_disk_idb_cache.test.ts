@@ -538,6 +538,70 @@ describe("RemoteChunkedDisk (IndexedDB cache)", () => {
     await disk.close();
   });
 
+  it("tolerates quota errors when reading from the cache (treat as cache miss + disable caching)", async () => {
+    const chunkSize = 512 * 1024;
+    const totalSize = chunkSize;
+    const chunkCount = 1;
+
+    const img = buildTestImageBytes(totalSize);
+    const chunk0 = img.slice(0, chunkSize);
+
+    const { baseUrl, hits, close } = await withServer((req, res) => {
+      const url = new URL(req.url ?? "/", "http://localhost");
+      if (url.pathname === "/manifest.json") {
+        res.statusCode = 200;
+        res.setHeader("content-type", "application/json");
+        res.setHeader("etag", '"m1"');
+        res.end(
+          JSON.stringify({
+            schema: "aero.chunked-disk-image.v1",
+            imageId: "test",
+            version: "v1",
+            mimeType: "application/octet-stream",
+            totalSize,
+            chunkSize,
+            chunkCount,
+            chunkIndexWidth: 8,
+          }),
+        );
+        return;
+      }
+
+      if (url.pathname === "/chunks/00000000.bin") {
+        res.statusCode = 200;
+        res.setHeader("content-type", "application/octet-stream");
+        res.end(chunk0);
+        return;
+      }
+
+      res.statusCode = 404;
+      res.end("not found");
+    });
+    closeServer = close;
+
+    const disk = await RemoteChunkedDisk.open(`${baseUrl}/manifest.json`, {
+      cacheBackend: "idb",
+      cacheLimitBytes: chunkSize * 8,
+      prefetchSequentialChunks: 0,
+      retryBaseDelayMs: 0,
+    });
+
+    // Force the cache read path to throw a quota error.
+    const chunkCache = (disk as unknown as { chunkCache?: any }).chunkCache;
+    if (!chunkCache?.getChunk) throw new Error("expected chunk cache");
+    chunkCache.getChunk = async () => {
+      throw new IdbRemoteChunkCacheQuotaError();
+    };
+
+    const buf = new Uint8Array(512);
+    await disk.readSectors(0, buf);
+    expect(buf).toEqual(img.slice(0, 512));
+    expect(hits.get("/chunks/00000000.bin")).toBe(1);
+    expect(disk.getTelemetrySnapshot().cacheLimitBytes).toBe(0);
+
+    await disk.close();
+  });
+
   it("disables persistent caching entirely when cacheLimitBytes is 0", async () => {
     const chunkSize = 512 * 1024;
     const totalSize = chunkSize;

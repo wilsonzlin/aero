@@ -399,8 +399,13 @@ class IdbChunkCache implements ChunkCache {
       // Heal: cached but mismatched size (stale/corrupt record).
       await this.cache.delete(chunkIndex);
       // Best-effort: refresh cachedBytes after a heal.
-      const status = await this.cache.getStatus();
-      this.cachedBytes = status.bytesUsed;
+      try {
+        const status = await this.cache.getStatus();
+        this.cachedBytes = status.bytesUsed;
+      } catch (err) {
+        // Healing/telemetry only; quota errors here must not break reads.
+        if (!(err instanceof IdbRemoteChunkCacheQuotaError)) throw err;
+      }
       return null;
     }
     // Stored in IndexedDB as an ArrayBuffer, so this is safe.
@@ -1537,7 +1542,16 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
     const generation = this.cacheGeneration;
     this.telemetry.blockRequests += 1;
 
-    const cached = await this.chunkCache.getChunk(chunkIndex);
+    let cached: Uint8Array<ArrayBuffer> | null = null;
+    try {
+      cached = await this.chunkCache.getChunk(chunkIndex);
+    } catch (err) {
+      if (!isQuotaExceededError(err)) throw err;
+      // Cache read paths must never fail the disk read due to quota. Disable caching for the
+      // remainder of the disk lifetime and fall back to network-only reads.
+      this.disableCachingDueToQuota();
+      cached = null;
+    }
     if (cached) {
       if (generation === this.cacheGeneration) {
         this.telemetry.cacheHits += 1;
