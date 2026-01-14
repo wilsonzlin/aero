@@ -1162,6 +1162,14 @@ To force INTx-only mode (disable MSI-X by passing `vectors=0` on the virtio devi
 `force_intx=true`. This passes `--force-intx` (alias: `--virtio-disable-msix`) to the Python harness. Note: some QEMU
 builds may reject `vectors=0`; in that case the harness will fail fast with the QEMU error in the stderr sidecar log.
 
+To require the guest virtio drivers to use a specific interrupt family, set either:
+
+- `require_intx=true` (passes `--require-intx`), or
+- `require_msi=true` (passes `--require-msi`; accepts both MSI and MSI-X as “MSI family”).
+
+These inputs are mutually exclusive. Note: `force_intx=true` is incompatible with `require_msi=true` (the workflow will
+fail fast before launching QEMU).
+
 The workflow can also optionally exercise the end-to-end virtio-input event delivery path (guest HID report verification +
 host-side input injection via QMP/HMP) by setting the workflow input `with_virtio_input_events=true`.
 This requires a guest image provisioned with `--test-input-events` (for example via
@@ -1200,6 +1208,16 @@ after the guest emits the readiness marker (`...|virtio-blk-resize|READY|...`), 
 - The guest image must be provisioned with `--test-blk-resize` (or env var `AERO_VIRTIO_SELFTEST_TEST_BLK_RESIZE=1`),
   for example via `New-AeroWin7TestImage.ps1 -TestBlkResize`.
 - Optional: set `blk_resize_delta_mib=<N>` to override the default growth delta (MiB).
+
+To ensure you are using a guest image provisioned with the virtio-blk MSI/MSI-X expectation gate, set the workflow input
+`require_expect_blk_msi=true` (passes `--require-expect-blk-msi`). This fails if the guest CONFIG marker does not include
+`expect_blk_msi=1` (i.e. the image was not provisioned with `aero-virtio-selftest.exe --expect-blk-msi`).
+
+To fail when the guest virtio-blk driver reports StorPort recovery/reset/abort activity (best-effort; requires the guest
+to emit recovery counters markers), set either:
+
+- `require_no_blk_recovery=true` (passes `--require-no-blk-recovery`), or
+- `fail_on_blk_recovery=true` (passes `--fail-on-blk-recovery`, a narrower subset).
 
 To require the optional virtio-blk reset test (`virtio-blk-reset`), set the workflow input `with_blk_reset=true`.
 This requires a guest image provisioned with `--test-blk-reset` (or env var `AERO_VIRTIO_SELFTEST_TEST_BLK_RESET=1`),

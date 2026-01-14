@@ -43,6 +43,16 @@ on:
         required: false
         default: false
         type: boolean
+      require_intx:
+        description: Require INTx interrupt mode for attached virtio devices (blk/net/input/snd)
+        required: false
+        default: false
+        type: boolean
+      require_msi:
+        description: Require MSI/MSI-X interrupt mode for attached virtio devices (blk/net/input/snd)
+        required: false
+        default: false
+        type: boolean
       with_virtio_input_events:
         description: Inject deterministic virtio-input events via QMP (keyboard + mouse) and require virtio-input-events to PASS (requires a guest image provisioned with --test-input-events)
         required: false
@@ -88,6 +98,21 @@ on:
         required: false
         default: ""
         type: string
+      require_expect_blk_msi:
+        description: Fail if the guest was not provisioned with --expect-blk-msi (CONFIG marker expect_blk_msi=1)
+        required: false
+        default: false
+        type: boolean
+      require_no_blk_recovery:
+        description: Fail if virtio-blk recovery/reset/abort counters are non-zero (when available from guest markers)
+        required: false
+        default: false
+        type: boolean
+      fail_on_blk_recovery:
+        description: Fail if virtio-blk-counters marker reports abort/reset_device/reset_bus activity (subset of require_no_blk_recovery)
+        required: false
+        default: false
+        type: boolean
       with_blk_reset:
         description: Require virtio-blk-reset to PASS (requires a guest image provisioned with --test-blk-reset)
         required: false
@@ -189,6 +214,8 @@ jobs:
             echo "  follow_serial: '${{ inputs.follow_serial }}'"
             echo "  qemu_preflight_pci: '${{ inputs.qemu_preflight_pci }}'"
             echo "  force_intx: '${{ inputs.force_intx }}'"
+            echo "  require_intx: '${{ inputs.require_intx }}'"
+            echo "  require_msi: '${{ inputs.require_msi }}'"
             echo "  with_virtio_input_events: '${{ inputs.with_virtio_input_events }}'"
             echo "  with_virtio_input_wheel: '${{ inputs.with_virtio_input_wheel }}'"
             echo "  with_virtio_input_media_keys: '${{ inputs.with_virtio_input_media_keys }}'"
@@ -198,6 +225,9 @@ jobs:
             echo "  with_virtio_input_tablet_events: '${{ inputs.with_virtio_input_tablet_events }}'"
             echo "  with_blk_resize: '${{ inputs.with_blk_resize }}'"
             echo "  blk_resize_delta_mib: '${{ inputs.blk_resize_delta_mib }}'"
+            echo "  require_expect_blk_msi: '${{ inputs.require_expect_blk_msi }}'"
+            echo "  require_no_blk_recovery: '${{ inputs.require_no_blk_recovery }}'"
+            echo "  fail_on_blk_recovery: '${{ inputs.fail_on_blk_recovery }}'"
             echo "  with_blk_reset: '${{ inputs.with_blk_reset }}'"
             echo "  with_net_link_flap: '${{ inputs.with_net_link_flap }}'"
             echo "  require_net_csum_offload: '${{ inputs.require_net_csum_offload }}'"
@@ -262,6 +292,8 @@ jobs:
             virtio_snd_wav_peak_threshold="${{ inputs.virtio_snd_wav_peak_threshold }}"
             virtio_snd_wav_rms_threshold="${{ inputs.virtio_snd_wav_rms_threshold }}"
             force_intx="${{ inputs.force_intx }}"
+            require_intx="${{ inputs.require_intx }}"
+            require_msi="${{ inputs.require_msi }}"
             with_virtio_input_events="${{ inputs.with_virtio_input_events }}"
             with_virtio_input_wheel="${{ inputs.with_virtio_input_wheel }}"
             with_virtio_input_media_keys="${{ inputs.with_virtio_input_media_keys }}"
@@ -271,10 +303,22 @@ jobs:
             with_virtio_input_tablet_events="${{ inputs.with_virtio_input_tablet_events }}"
             with_blk_resize="${{ inputs.with_blk_resize }}"
             blk_resize_delta_mib="${{ inputs.blk_resize_delta_mib }}"
+            require_expect_blk_msi="${{ inputs.require_expect_blk_msi }}"
+            require_no_blk_recovery="${{ inputs.require_no_blk_recovery }}"
+            fail_on_blk_recovery="${{ inputs.fail_on_blk_recovery }}"
             with_blk_reset="${{ inputs.with_blk_reset }}"
             with_net_link_flap="${{ inputs.with_net_link_flap }}"
             require_net_csum_offload="${{ inputs.require_net_csum_offload }}"
             with_snd_buffer_limits="${{ inputs.with_snd_buffer_limits }}"
+
+            if [[ "${require_intx}" == "true" && "${require_msi}" == "true" ]]; then
+              echo "ERROR: workflow inputs require_intx=true and require_msi=true are mutually exclusive" >&2
+              exit 1
+            fi
+            if [[ "${force_intx}" == "true" && "${require_msi}" == "true" ]]; then
+              echo "ERROR: workflow input force_intx=true is incompatible with require_msi=true (force_intx disables MSI-X)" >&2
+              exit 1
+            fi
 
             # Remove stale output from previous runs (self-hosted runners persist state).
             rm -f "${virtio_snd_wav_path}"
@@ -299,6 +343,12 @@ jobs:
             fi
             if [[ "${force_intx}" == "true" ]]; then
               args+=(--force-intx)
+            fi
+            if [[ "${require_intx}" == "true" ]]; then
+              args+=(--require-intx)
+            fi
+            if [[ "${require_msi}" == "true" ]]; then
+              args+=(--require-msi)
             fi
             if [[ "${with_virtio_input_events}" == "true" ]]; then
               args+=(--with-input-events)
@@ -334,6 +384,15 @@ jobs:
                 fi
                 args+=(--blk-resize-delta-mib "${blk_resize_delta_mib}")
               fi
+            fi
+            if [[ "${require_expect_blk_msi}" == "true" ]]; then
+              args+=(--require-expect-blk-msi)
+            fi
+            if [[ "${require_no_blk_recovery}" == "true" ]]; then
+              args+=(--require-no-blk-recovery)
+            fi
+            if [[ "${fail_on_blk_recovery}" == "true" ]]; then
+              args+=(--fail-on-blk-recovery)
             fi
             if [[ "${with_blk_reset}" == "true" ]]; then
               args+=(--with-blk-reset)
@@ -428,6 +487,7 @@ jobs:
           harness_log="${log_dir}/harness.log"
           serial_log="${log_dir}/win7-virtio-serial.log"
 
+          config_marker=""
           result_marker=""
           blk_resize_marker=""
           blk_reset_marker=""
@@ -459,7 +519,14 @@ jobs:
           failure_line=""
           error_line=""
           force_intx_host_marker=""
+          blk_irq_host_marker=""
+          net_irq_host_marker=""
+          snd_irq_host_marker=""
+          input_irq_host_marker=""
+          blk_recovery_host_marker=""
+          blk_counters_host_marker=""
           if [[ -f "${serial_log}" ]]; then
+            config_marker="$(grep -F 'AERO_VIRTIO_SELFTEST|CONFIG|' "${serial_log}" | tail -n 1 | tr -d '\r' || true)"
             result_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|RESULT\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
             blk_resize_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-blk-resize\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
             blk_reset_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-blk-reset\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
@@ -489,6 +556,12 @@ jobs:
               input_tablet_inject_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_TABLET_EVENTS_INJECT|' "${harness_log}" | tail -n 1 || true)"
               input_binding_host_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_BINDING|' "${harness_log}" | tail -n 1 || true)"
               force_intx_host_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|CONFIG|force_intx=1' "${harness_log}" | tail -n 1 || true)"
+              blk_irq_host_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_IRQ|' "${harness_log}" | tail -n 1 || true)"
+              net_irq_host_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_IRQ|' "${harness_log}" | tail -n 1 || true)"
+              snd_irq_host_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_IRQ|' "${harness_log}" | tail -n 1 || true)"
+              input_irq_host_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_IRQ|' "${harness_log}" | tail -n 1 || true)"
+              blk_recovery_host_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RECOVERY|' "${harness_log}" | tail -n 1 || true)"
+              blk_counters_host_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_COUNTERS|' "${harness_log}" | tail -n 1 || true)"
               pci_preflight_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|QEMU_PCI_PREFLIGHT|' "${harness_log}" | tail -n 1 || true)"
               blk_resize_request_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RESIZE|REQUEST|' "${harness_log}" | tail -n 1 || true)"
               blk_resize_fail_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RESIZE|FAIL|reason=' "${harness_log}" | tail -n 1 || true)"
@@ -516,6 +589,31 @@ jobs:
             echo "- Harness exit code: ${{ steps.harness.outputs.exit_code || 'unknown' }}"
             if [[ "${{ inputs.force_intx }}" == "true" && -n "${force_intx_host_marker}" ]]; then
               echo "- Host force INTx marker: \`${force_intx_host_marker}\`"
+            fi
+            if [[ "${{ inputs.require_expect_blk_msi }}" == "true" && -n "${config_marker}" ]]; then
+              echo "- Guest CONFIG marker: \`${config_marker}\`"
+            fi
+            if [[ "${{ inputs.require_intx }}" == "true" || "${{ inputs.require_msi }}" == "true" ]]; then
+              if [[ -n "${blk_irq_host_marker}" ]]; then
+                echo "- Host virtio-blk IRQ marker: \`${blk_irq_host_marker}\`"
+              fi
+              if [[ -n "${net_irq_host_marker}" ]]; then
+                echo "- Host virtio-net IRQ marker: \`${net_irq_host_marker}\`"
+              fi
+              if [[ -n "${snd_irq_host_marker}" ]]; then
+                echo "- Host virtio-snd IRQ marker: \`${snd_irq_host_marker}\`"
+              fi
+              if [[ -n "${input_irq_host_marker}" ]]; then
+                echo "- Host virtio-input IRQ marker: \`${input_irq_host_marker}\`"
+              fi
+            fi
+            if [[ "${{ inputs.require_no_blk_recovery }}" == "true" || "${{ inputs.fail_on_blk_recovery }}" == "true" ]]; then
+              if [[ -n "${blk_recovery_host_marker}" ]]; then
+                echo "- Host virtio-blk recovery marker: \`${blk_recovery_host_marker}\`"
+              fi
+              if [[ -n "${blk_counters_host_marker}" ]]; then
+                echo "- Host virtio-blk counters marker: \`${blk_counters_host_marker}\`"
+              fi
             fi
             if [[ -n "${failure_token}" ]]; then
               echo "- Harness failure token: ${failure_token}"
