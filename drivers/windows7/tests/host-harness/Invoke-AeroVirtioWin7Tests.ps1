@@ -2371,7 +2371,7 @@ function Get-AeroVirtioIrqMode {
 
   # Prefer standalone guest IRQ diagnostics markers:
   #   virtio-<dev>-irq|INFO/WARN|mode=intx/msi/msix|...
-  $re = [regex]::new("(?m)^\\s*virtio-" + [regex]::Escape($dev) + "-irq\\|(INFO|WARN)(?:\\|(?<rest>.*))?$")
+  $re = [regex]::new("(?m)^\s*virtio-" + [regex]::Escape($dev) + "-irq\|(INFO|WARN)(?:\|(?<rest>.*))?$")
   $matches = $re.Matches($Tail)
   if ($matches.Count -gt 0) {
     $rest = $matches[$matches.Count - 1].Groups["rest"].Value
