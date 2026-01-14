@@ -67,7 +67,8 @@ supports *sector-aligned* byte offsets and lengths.
   enables MSI and the platform attaches an `aero_platform::interrupts::msi::MsiTrigger` sink via
   `NvmePciDevice::set_msi_target`, NVMe completions trigger MSI deliveries instead of asserting
   INTx.
-- MSI-X is also supported with a single table entry backed by BAR0.
+- MSI-X is also supported with a single table entry backed by BAR0; when MSI-X is enabled and an
+  MSI sink is attached, completions trigger MSI-X deliveries instead of asserting INTx.
 
 ## Best-effort semantics
 

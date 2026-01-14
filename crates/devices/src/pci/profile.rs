@@ -349,7 +349,7 @@ pub const NVME_BARS: [PciBarProfile; 1] = [PciBarProfile::mem64(0, 0x4000, false
 ///
 /// Aero's NVMe device model uses a single interrupt vector, so a single-vector MSI capability is
 /// sufficient. We also expose a minimal MSI-X table/PBA in BAR0 so modern guests can bind MSI-X
-/// capable NVMe drivers (even if the controller model currently uses INTx/MSI delivery).
+/// capable NVMe drivers and use message-signaled interrupts instead of legacy INTx.
 pub const NVME_CAPS: [PciCapabilityProfile; 2] = [
     PciCapabilityProfile::Msi {
         is_64bit: true,

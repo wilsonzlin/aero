@@ -1602,8 +1602,8 @@ impl PcPlatform {
                 NvmePciDevice::try_new_from_virtual_disk(disk)
                     .expect("NVMe disk should be 512-byte aligned"),
             ));
-            // Provide an MSI sink so the NVMe device model can deliver MSI when the guest enables
-            // it via PCI config space.
+            // Provide an MSI sink so the NVMe device model can deliver MSI/MSI-X when the guest
+            // enables it via PCI config space.
             nvme.borrow_mut()
                 .set_msi_target(Some(Box::new(interrupts.clone())));
 

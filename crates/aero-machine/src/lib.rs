@@ -6034,8 +6034,8 @@ impl Machine {
                         // Reset in-place while keeping the `Rc` identity stable for any persistent
                         // MMIO mappings.
                         nvme.borrow_mut().reset();
-                        // Ensure an MSI sink is attached so the device can deliver MSI when the
-                        // guest enables it.
+                        // Ensure an MSI sink is attached so the device can deliver MSI/MSI-X when
+                        // the guest enables it.
                         nvme.borrow_mut()
                             .set_msi_target(Some(Box::new(interrupts.clone())));
                         Some(nvme.clone())
