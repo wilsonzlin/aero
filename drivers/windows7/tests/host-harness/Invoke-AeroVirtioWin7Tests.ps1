@@ -1150,7 +1150,10 @@ function Try-EmitAeroVirtioIrqDiagnosticsMarkers {
   }
 
   $byDev = & $parseText $Tail
-  if ($byDev.Count -eq 0 -and (-not [string]::IsNullOrEmpty($SerialLogPath)) -and (Test-Path -LiteralPath $SerialLogPath)) {
+
+  # If a serial log path is provided, merge any additional markers from the full file so early
+  # virtio-*-irq lines are not lost when the rolling tail buffer is truncated.
+  if ((-not [string]::IsNullOrEmpty($SerialLogPath)) -and (Test-Path -LiteralPath $SerialLogPath)) {
     try {
       # Avoid reading the entire file into memory; scan line-by-line and keep the last marker per device.
       $fs = [System.IO.File]::Open($SerialLogPath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
