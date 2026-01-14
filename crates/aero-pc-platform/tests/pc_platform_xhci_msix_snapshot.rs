@@ -523,12 +523,7 @@ fn pc_platform_xhci_msix_snapshot_restore_preserves_function_mask_pending_and_de
 
     // Enable MSI-X and set Function Mask (bit 14).
     let ctrl = pci_cfg_read_u16(&mut pc, bdf, msix_base + 0x02);
-    pci_cfg_write_u16(
-        &mut pc,
-        bdf,
-        msix_base + 0x02,
-        ctrl | (1 << 15) | (1 << 14),
-    );
+    pci_cfg_write_u16(&mut pc, bdf, msix_base + 0x02, ctrl | (1 << 15) | (1 << 14));
 
     // Program table entry 0 (unmasked): destination = BSP (APIC ID 0), vector = 0x6c.
     let vector: u8 = 0x6c;
@@ -567,7 +562,11 @@ fn pc_platform_xhci_msix_snapshot_restore_preserves_function_mask_pending_and_de
 
     // Clear the interrupt condition before snapshot/unmask. Pending delivery should still occur
     // once the function mask is cleared.
-    pc.xhci.as_ref().unwrap().borrow_mut().clear_event_interrupt();
+    pc.xhci
+        .as_ref()
+        .unwrap()
+        .borrow_mut()
+        .clear_event_interrupt();
     assert_ne!(
         pc.memory.read_u64(bar0_base + pba_offset) & 1,
         0,

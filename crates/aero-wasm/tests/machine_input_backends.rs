@@ -1,7 +1,7 @@
 #![cfg(not(target_arch = "wasm32"))]
 
-use aero_io_snapshot::io::state::IoSnapshot as _;
 use aero_devices::i8042::I8042_DATA_PORT;
+use aero_io_snapshot::io::state::IoSnapshot as _;
 use aero_usb::hid::KEYBOARD_LED_MASK;
 use aero_usb::{ControlResponse, SetupPacket, UsbDeviceModel};
 use aero_virtio::devices::input::{BTN_LEFT, KEY_A, VirtioInput};

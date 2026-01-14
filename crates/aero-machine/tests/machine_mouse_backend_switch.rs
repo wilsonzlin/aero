@@ -212,7 +212,10 @@ fn inject_input_batch_mouse_button_release_after_snapshot_restore_clears_usb_eve
     cmd |= 0x0006; // MEM + BUSMASTER
     cfg_write(&mut restored, bdf, 0x04, 2, u32::from(cmd));
     restored.write_physical_u8(bar0 + 0x14, VIRTIO_STATUS_DRIVER_OK);
-    assert!(restored.virtio_input_mouse_driver_ok(), "expected DRIVER_OK");
+    assert!(
+        restored.virtio_input_mouse_driver_ok(),
+        "expected DRIVER_OK"
+    );
 
     // Release all buttons after restore.
     let words_release: [u32; 6] = [1, 0, 3, 0, 0x00, 0];
