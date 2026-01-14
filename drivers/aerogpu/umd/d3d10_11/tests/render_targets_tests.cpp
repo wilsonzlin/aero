@@ -137,6 +137,43 @@ bool TestGappedRtvBindingIsEncoded() {
   return true;
 }
 
+bool TestBindOnlyDsvEmitsDepthStencilHandle() {
+  Device dev{};
+
+  Resource depth{};
+  depth.handle = 3001;
+
+  DepthStencilView dsv{};
+  dsv.texture = depth.handle;
+  dsv.resource = &depth;
+
+  SetRenderTargetsStateLocked(&dev, /*num_rtvs=*/0, /*rtvs=*/nullptr, &dsv);
+  if (!Check(EmitSetRenderTargetsCmdFromStateLocked(&dev), "EmitSetRenderTargetsCmdFromStateLocked(dsv-only)")) {
+    return false;
+  }
+  dev.cmd.finalize();
+
+  const uint8_t* bytes = dev.cmd.data();
+  const size_t len = dev.cmd.size();
+  const auto* cmd = FindLastSetRenderTargets(bytes, len);
+  if (!Check(cmd != nullptr, "SET_RENDER_TARGETS packet must exist (dsv-only)")) {
+    return false;
+  }
+
+  if (!Check(cmd->color_count == 0, "dsv-only bind has color_count==0")) {
+    return false;
+  }
+  if (!Check(cmd->depth_stencil == depth.handle, "dsv-only bind sets depth_stencil")) {
+    return false;
+  }
+  for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
+    if (!Check(cmd->colors[i] == 0, "dsv-only bind leaves colors[i]==0")) {
+      return false;
+    }
+  }
+  return true;
+}
+
 } // namespace
 
 int main() {
@@ -144,6 +181,9 @@ int main() {
     return 1;
   }
   if (!TestGappedRtvBindingIsEncoded()) {
+    return 1;
+  }
+  if (!TestBindOnlyDsvEmitsDepthStencilHandle()) {
     return 1;
   }
   return 0;
