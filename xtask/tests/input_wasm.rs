@@ -78,7 +78,8 @@ fn said_runs_wasm_pack_without_node_modules() -> Result<(), Box<dyn std::error::
         .env("AERO_XTASK_TEST_LOG", &log_path)
         .env("PATH", path)
         .assert()
-        .success();
+        .success()
+        .stdout(predicates::str::contains("skipped npm + Playwright"));
 
     let log = fs::read_to_string(&log_path)?;
     let invocations = parse_invocations(&log);

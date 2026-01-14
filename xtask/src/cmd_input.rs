@@ -260,7 +260,11 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
 
     if opts.rust_only {
         println!();
-        println!("==> Rust-only input test steps passed.");
+        if opts.wasm {
+            println!("==> Input test steps passed (--rust-only; skipped npm + Playwright).");
+        } else {
+            println!("==> Rust-only input test steps passed.");
+        }
         return Ok(());
     }
 
