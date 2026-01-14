@@ -108,7 +108,9 @@ void test_xyz_diffuse() {
   pv.hDestBuffer.pDrvPrivate = &dst;
   pv.hVertexDecl.pDrvPrivate = &decl;
   pv.Flags = 0;
-  pv.DestStride = 20;
+  // Some runtimes may omit DestStride; ensure we infer it from the destination
+  // vertex declaration.
+  pv.DestStride = 0;
 
   D3DDDI_HDEVICE hDevice{};
   hDevice.pDrvPrivate = &dev;
@@ -130,6 +132,64 @@ void test_xyz_diffuse() {
   uint32_t diffuse = 0;
   std::memcpy(&diffuse, dst.storage.data() + 16, 4);
   assert(diffuse == 0xAABBCCDDu);
+}
+
+void test_xyz_diffuse_padded_dest_stride() {
+  Adapter adapter;
+  Device dev(&adapter);
+
+  dev.fvf = kFvfXyz | kFvfDiffuse;
+  dev.viewport = {0.0f, 0.0f, 100.0f, 100.0f, 0.0f, 1.0f};
+  dev.transform_matrices[256][12] = 1.0f;
+
+  Resource src;
+  src.kind = ResourceKind::Buffer;
+  src.size_bytes = 16;
+  src.storage.resize(16);
+  write_f32(src.storage, 0, 0.0f);
+  write_f32(src.storage, 4, 0.0f);
+  write_f32(src.storage, 8, 0.0f);
+  write_u32(src.storage, 12, 0xAABBCCDDu);
+
+  // Destination stride larger than the declaration's minimum.
+  constexpr uint32_t kDestStride = 24;
+  Resource dst;
+  dst.kind = ResourceKind::Buffer;
+  dst.size_bytes = kDestStride;
+  dst.storage.resize(kDestStride);
+
+  const D3DVERTEXELEMENT9_COMPAT elems[] = {
+      {0, 0, kDeclTypeFloat4, kDeclMethodDefault, kDeclUsagePositionT, 0},
+      {0, 16, kDeclTypeD3dColor, kDeclMethodDefault, kDeclUsageColor, 0},
+      {0xFF, 0, kDeclTypeUnused, 0, 0, 0},
+  };
+  VertexDecl decl;
+  decl.blob.resize(sizeof(elems));
+  std::memcpy(decl.blob.data(), elems, sizeof(elems));
+
+  dev.streams[0].vb = &src;
+  dev.streams[0].offset_bytes = 0;
+  dev.streams[0].stride_bytes = 16;
+
+  D3DDDIARG_PROCESSVERTICES pv{};
+  pv.SrcStartIndex = 0;
+  pv.DestIndex = 0;
+  pv.VertexCount = 1;
+  pv.hDestBuffer.pDrvPrivate = &dst;
+  pv.hVertexDecl.pDrvPrivate = &decl;
+  pv.Flags = 0;
+  pv.DestStride = kDestStride;
+
+  D3DDDI_HDEVICE hDevice{};
+  hDevice.pDrvPrivate = &dev;
+
+  const HRESULT hr = device_process_vertices(hDevice, &pv);
+  assert(SUCCEEDED(hr));
+
+  // Padding bytes must be zeroed deterministically.
+  for (size_t i = 20; i < kDestStride; ++i) {
+    assert(dst.storage[i] == 0);
+  }
 }
 
 void test_xyz_diffuse_z_stays_ndc() {
@@ -524,6 +584,7 @@ void test_copy_xyzrhw_diffuse_offsets() {
 
 int main() {
   aerogpu::test_xyz_diffuse();
+  aerogpu::test_xyz_diffuse_padded_dest_stride();
   aerogpu::test_xyz_diffuse_z_stays_ndc();
   aerogpu::test_xyz_diffuse_tex1();
   aerogpu::test_xyz_diffuse_offsets();
