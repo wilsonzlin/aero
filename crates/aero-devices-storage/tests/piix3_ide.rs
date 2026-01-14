@@ -2225,6 +2225,127 @@ fn ata_dma_missing_prd_eot_sets_error_status() {
 }
 
 #[test]
+fn ata_dma_error_irq_is_latched_while_nien_is_set_and_surfaces_after_reenable() {
+    let capacity = 4 * SECTOR_SIZE as u64;
+    let mut disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
+    let mut sector0 = vec![0u8; SECTOR_SIZE];
+    sector0[0..4].copy_from_slice(b"TEST");
+    disk.write_sectors(0, &sector0).unwrap();
+
+    let ide = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
+    ide.borrow_mut()
+        .controller
+        .attach_primary_master_ata(AtaDrive::new(Box::new(disk)).unwrap());
+    ide.borrow_mut().config_mut().set_command(0x0005); // IO decode + Bus Master
+
+    let mut ioports = IoPortBus::new();
+    register_piix3_ide_ports(&mut ioports, ide.clone());
+
+    let mut mem = Bus::new(0x20_000);
+    let bm_base = ide.borrow().bus_master_base();
+
+    let prd_addr = 0x1000u64;
+    let dma_buf = 0x3000u64;
+
+    // Malformed PRD entry without EOT flag (but long enough for the transfer).
+    mem.write_u32(prd_addr, dma_buf as u32);
+    mem.write_u16(prd_addr + 4, SECTOR_SIZE as u16);
+    mem.write_u16(prd_addr + 6, 0x0000);
+    ioports.write(bm_base + 4, 4, prd_addr as u32);
+
+    // Mask IDE interrupts (nIEN=1).
+    ioports.write(PRIMARY_PORTS.ctrl_base, 1, 0x02);
+
+    // READ DMA for LBA 0, 1 sector.
+    ioports.write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 2, 1, 1);
+    ioports.write(PRIMARY_PORTS.cmd_base + 3, 1, 0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 4, 1, 0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 5, 1, 0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 7, 1, 0xC8);
+
+    ioports.write(bm_base, 1, 0x09);
+    ide.borrow_mut().tick(&mut mem);
+
+    // DMA error occurred.
+    let bm_st = ioports.read(bm_base + 2, 1) as u8;
+    assert_eq!(bm_st & 0x07, 0x06);
+    assert_eq!(ioports.read(PRIMARY_PORTS.cmd_base + 1, 1) as u8, 0x04);
+
+    // Interrupt should be latched internally but masked from the output.
+    assert!(!ide.borrow().controller.primary_irq_pending());
+
+    // Re-enable interrupts; the pending IRQ should now surface.
+    ioports.write(PRIMARY_PORTS.ctrl_base, 1, 0x00);
+    assert!(ide.borrow().controller.primary_irq_pending());
+
+    // Reading Status acknowledges and clears the pending interrupt.
+    let _ = ioports.read(PRIMARY_PORTS.cmd_base + 7, 1);
+    assert!(!ide.borrow().controller.primary_irq_pending());
+}
+
+#[test]
+fn ata_dma_error_irq_can_be_acknowledged_while_nien_is_set() {
+    let capacity = 4 * SECTOR_SIZE as u64;
+    let mut disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
+    let mut sector0 = vec![0u8; SECTOR_SIZE];
+    sector0[0..4].copy_from_slice(b"TEST");
+    disk.write_sectors(0, &sector0).unwrap();
+
+    let ide = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
+    ide.borrow_mut()
+        .controller
+        .attach_primary_master_ata(AtaDrive::new(Box::new(disk)).unwrap());
+    ide.borrow_mut().config_mut().set_command(0x0005); // IO decode + Bus Master
+
+    let mut ioports = IoPortBus::new();
+    register_piix3_ide_ports(&mut ioports, ide.clone());
+
+    let mut mem = Bus::new(0x20_000);
+    let bm_base = ide.borrow().bus_master_base();
+
+    let prd_addr = 0x1000u64;
+    let dma_buf = 0x3000u64;
+
+    mem.write_u32(prd_addr, dma_buf as u32);
+    mem.write_u16(prd_addr + 4, SECTOR_SIZE as u16);
+    mem.write_u16(prd_addr + 6, 0x0000); // missing EOT
+    ioports.write(bm_base + 4, 4, prd_addr as u32);
+
+    // Mask IDE interrupts (nIEN=1).
+    ioports.write(PRIMARY_PORTS.ctrl_base, 1, 0x02);
+
+    // READ DMA for LBA 0, 1 sector.
+    ioports.write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 2, 1, 1);
+    ioports.write(PRIMARY_PORTS.cmd_base + 3, 1, 0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 4, 1, 0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 5, 1, 0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 7, 1, 0xC8);
+
+    ioports.write(bm_base, 1, 0x09);
+    ide.borrow_mut().tick(&mut mem);
+
+    // Confirm DMA error occurred.
+    let bm_st = ioports.read(bm_base + 2, 1) as u8;
+    assert_eq!(bm_st & 0x07, 0x06);
+
+    // Output should be masked by nIEN.
+    assert!(!ide.borrow().controller.primary_irq_pending());
+
+    // Acknowledge the interrupt while still masked.
+    let _ = ioports.read(PRIMARY_PORTS.cmd_base + 7, 1);
+
+    // Re-enable interrupts; the IRQ should not surface.
+    ioports.write(PRIMARY_PORTS.ctrl_base, 1, 0x00);
+    assert!(!ide.borrow().controller.primary_irq_pending());
+
+    // BMIDE status bits are independent and must be cleared explicitly.
+    let bm_st_after = ioports.read(bm_base + 2, 1) as u8;
+    assert_eq!(bm_st_after & 0x07, 0x06);
+}
+
+#[test]
 fn ata_dma_prd_too_short_sets_error_status() {
     let capacity = 4 * SECTOR_SIZE as u64;
     let mut disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
