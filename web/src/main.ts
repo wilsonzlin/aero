@@ -7351,7 +7351,6 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
         }
       } catch (err) {
         error.textContent = err instanceof Error ? err.message : String(err);
-        workerCoordinator.setBootDisks({}, null, null);
       } finally {
         booting = false;
       }
@@ -7399,7 +7398,6 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
         workerCoordinator.setBootDisks(selection.mounts, selection.hdd ?? null, selection.cd ?? null);
       } catch (err) {
         error.textContent = err instanceof Error ? err.message : String(err);
-        workerCoordinator.setBootDisks({}, null, null);
       }
       try {
         stopWorkersInputCapture();
