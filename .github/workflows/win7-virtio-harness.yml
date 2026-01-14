@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       disk_image_path:
-        description: Path on the self-hosted runner to a prepared Win7 qcow2/vhdx disk image (required)
+        description: Path on the self-hosted runner to a prepared Win7 qcow2/vhdx disk image (required unless dry_run=true)
         required: false
         default: ""
         type: string
@@ -14,7 +14,7 @@ on:
         default: qemu-system-x86_64
         type: string
       qemu_extra_args:
-        description: Optional extra QEMU args to pass through to qemu-system-* (one arg per line; forwarded after --)
+        description: Optional extra QEMU args to pass through to qemu-system-* (one arg per line; forwarded after --; blank/# lines ignored)
         required: false
         default: ""
         type: string
