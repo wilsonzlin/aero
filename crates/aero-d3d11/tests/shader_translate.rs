@@ -600,6 +600,75 @@ fn translates_pixel_depth_output_sv_depth_via_output_depth_register() {
 }
 
 #[test]
+fn translates_pixel_depth_output_sv_depth_less_equal_semantic() {
+    // Conservative depth output (`SV_DepthLessEqual`) should still translate to `frag_depth`
+    // (WGSL does not currently expose the conservative contract).
+    let osgn_params = vec![sig_param("SV_DepthLessEqual", 0, 0, 0b0001)];
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, Vec::new()),
+        (FOURCC_ISGN, build_signature_chunk(&[])),
+        (FOURCC_OSGN, build_signature_chunk(&osgn_params)),
+    ]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+
+    let module = Sm4Module {
+        stage: ShaderStage::Pixel,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: Vec::new(),
+        instructions: vec![
+            Sm4Inst::Mov {
+                dst: dst(RegFile::OutputDepth, 0, WriteMask::X),
+                src: src_imm([0.25, 0.0, 0.0, 0.0]),
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+    assert!(
+        translated.wgsl.contains("@builtin(frag_depth)"),
+        "expected frag_depth output in WGSL:\n{}",
+        translated.wgsl
+    );
+}
+
+#[test]
+fn translates_pixel_depth_output_sv_depth_greater_equal_semantic() {
+    // Conservative depth output (`SV_DepthGreaterEqual`) should still translate to `frag_depth`.
+    let osgn_params = vec![sig_param("SV_DepthGreaterEqual", 0, 0, 0b0001)];
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, Vec::new()),
+        (FOURCC_ISGN, build_signature_chunk(&[])),
+        (FOURCC_OSGN, build_signature_chunk(&osgn_params)),
+    ]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+
+    let module = Sm4Module {
+        stage: ShaderStage::Pixel,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: Vec::new(),
+        instructions: vec![
+            Sm4Inst::Mov {
+                dst: dst(RegFile::OutputDepth, 0, WriteMask::X),
+                src: src_imm([0.25, 0.0, 0.0, 0.0]),
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+    assert!(
+        translated.wgsl.contains("@builtin(frag_depth)"),
+        "expected frag_depth output in WGSL:\n{}",
+        translated.wgsl
+    );
+}
+
+#[test]
 fn translates_cbuffer_and_arithmetic_ops() {
     let osgn_params = vec![sig_param("SV_Target", 0, 0, 0b1111)];
     let dxbc_bytes = build_dxbc(&[

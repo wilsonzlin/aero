@@ -674,7 +674,14 @@ fn build_io_maps(
     if module.stage == ShaderStage::Pixel {
         ps_sv_depth_reg = outputs
             .values()
-            .find(|p| p.sys_value == Some(D3D_NAME_DEPTH))
+            .find(|p| {
+                matches!(
+                    p.sys_value,
+                    Some(D3D_NAME_DEPTH)
+                        | Some(D3D_NAME_DEPTH_GREATER_EQUAL)
+                        | Some(D3D_NAME_DEPTH_LESS_EQUAL)
+                )
+            })
             .map(|p| p.param.register);
         if ps_sv_depth_reg.is_none() {
             // Some toolchains emit the legacy `DEPTH` semantic with `system_value_type` unset.
@@ -1415,6 +1422,8 @@ const D3D_NAME_GROUP_INDEX: u32 = 22;
 const D3D_NAME_GROUP_THREAD_ID: u32 = 23;
 const D3D_NAME_TARGET: u32 = 64;
 const D3D_NAME_DEPTH: u32 = 65;
+const D3D_NAME_DEPTH_GREATER_EQUAL: u32 = 67;
+const D3D_NAME_DEPTH_LESS_EQUAL: u32 = 68;
 
 fn builtin_from_d3d_name(name: u32) -> Option<Builtin> {
     match name {
@@ -1478,6 +1487,12 @@ fn semantic_to_d3d_name(name: &str) -> Option<u32> {
     if is_sv_depth(name) {
         return Some(D3D_NAME_DEPTH);
     }
+    if is_sv_depth_greater_equal(name) {
+        return Some(D3D_NAME_DEPTH_GREATER_EQUAL);
+    }
+    if is_sv_depth_less_equal(name) {
+        return Some(D3D_NAME_DEPTH_LESS_EQUAL);
+    }
     None
 }
 
@@ -1530,6 +1545,14 @@ fn is_sv_depth(name: &str) -> bool {
     name.eq_ignore_ascii_case("SV_Depth")
         || name.eq_ignore_ascii_case("SV_DEPTH")
         || name.eq_ignore_ascii_case("DEPTH")
+}
+
+fn is_sv_depth_greater_equal(name: &str) -> bool {
+    name.eq_ignore_ascii_case("SV_DepthGreaterEqual") || name.eq_ignore_ascii_case("SV_DEPTHGREATEREQUAL")
+}
+
+fn is_sv_depth_less_equal(name: &str) -> bool {
+    name.eq_ignore_ascii_case("SV_DepthLessEqual") || name.eq_ignore_ascii_case("SV_DEPTHLESSEQUAL")
 }
 
 fn expand_to_vec4(expr: &str, p: &ParamInfo) -> String {
