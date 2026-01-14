@@ -21875,6 +21875,248 @@ bool TestFvfXyzNormalTex1FogSelectsFogVsAndLitFogVs() {
   return true;
 }
 
+bool TestFvfXyzNormalDiffuseFogSelectsFogVsAndLitFogVs() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetRenderState != nullptr, "pfnSetRenderState is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // Portable D3DRS_* numeric values (from d3d9types.h).
+  constexpr uint32_t kD3dRsFogEnable = 28u;    // D3DRS_FOGENABLE
+  constexpr uint32_t kD3dRsFogColor = 34u;     // D3DRS_FOGCOLOR
+  constexpr uint32_t kD3dRsFogTableMode = 35u; // D3DRS_FOGTABLEMODE
+  constexpr uint32_t kD3dRsFogStart = 36u;     // D3DRS_FOGSTART (float bits)
+  constexpr uint32_t kD3dRsFogEnd = 37u;       // D3DRS_FOGEND   (float bits)
+  constexpr uint32_t kD3dFogLinear = 3u;       // D3DFOG_LINEAR
+  constexpr uint32_t kD3dRsLighting = 137u;    // D3DRS_LIGHTING
+  constexpr uint32_t kD3dRsAmbient = 26u;      // D3DRS_AMBIENT
+
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzNormalDiffuse);
+  if (!Check(hr == S_OK, "SetFVF(XYZ|NORMAL|DIFFUSE)")) {
+    return false;
+  }
+
+  // Enable linear fog.
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogEnable, 1u);
+  if (!Check(hr == S_OK, "SetRenderState(FOGENABLE=1)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogTableMode, kD3dFogLinear);
+  if (!Check(hr == S_OK, "SetRenderState(FOGTABLEMODE=LINEAR)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogColor, 0xFFFF0000u);
+  if (!Check(hr == S_OK, "SetRenderState(FOGCOLOR=red)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogStart, F32Bits(0.2f));
+  if (!Check(hr == S_OK, "SetRenderState(FOGSTART)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogEnd, F32Bits(0.8f));
+  if (!Check(hr == S_OK, "SetRenderState(FOGEND)")) {
+    return false;
+  }
+
+  // Lighting off: should select the unlit fog VS variant.
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsLighting, 0u);
+  if (!Check(hr == S_OK, "SetRenderState(LIGHTING=FALSE)")) {
+    return false;
+  }
+
+  const VertexXyzNormalDiffuse tri[3] = {
+      {0.0f, 0.0f, 0.25f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu},
+      {1.0f, 0.0f, 0.25f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu},
+      {0.0f, 1.0f, 0.25f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu},
+  };
+
+  dev->cmd.reset();
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzNormalDiffuse));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(XYZ|NORMAL|DIFFUSE; fog on; lighting off)")) {
+    return false;
+  }
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->vs != nullptr, "XYZ|NORMAL|DIFFUSE fog: VS bound (lighting off)")) {
+      return false;
+    }
+    if (!Check(ShaderBytecodeEquals(dev->vs, fixedfunc::kVsWvpPosNormalDiffuseFog),
+               "XYZ|NORMAL|DIFFUSE fog: selected unlit fog VS variant")) {
+      return false;
+    }
+    if (!Check(dev->ps != nullptr, "XYZ|NORMAL|DIFFUSE fog: PS bound (lighting off)")) {
+      return false;
+    }
+    if (!Check(ShaderContainsToken(dev->ps, 0x20E40001u), "XYZ|NORMAL|DIFFUSE fog: PS references c1 (fog color)")) {
+      return false;
+    }
+  }
+
+  // Lighting on: should select lit+fog VS variant.
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsLighting, 1u);
+  if (!Check(hr == S_OK, "SetRenderState(LIGHTING=TRUE)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsAmbient, 0xFF000000u);
+  if (!Check(hr == S_OK, "SetRenderState(AMBIENT=black)")) {
+    return false;
+  }
+
+  D3DLIGHT9 light0{};
+  light0.Type = D3DLIGHT_DIRECTIONAL;
+  light0.Direction = {0.0f, 0.0f, -1.0f};
+  light0.Diffuse = {1.0f, 1.0f, 1.0f, 1.0f};
+  light0.Ambient = {0.0f, 0.0f, 0.0f, 1.0f};
+  hr = device_set_light(cleanup.hDevice, /*index=*/0, &light0);
+  if (!Check(hr == S_OK, "SetLight(0)")) {
+    return false;
+  }
+  hr = device_light_enable(cleanup.hDevice, /*index=*/0, TRUE);
+  if (!Check(hr == S_OK, "LightEnable(0, TRUE)")) {
+    return false;
+  }
+
+  D3DMATERIAL9 mat{};
+  mat.Diffuse = {1.0f, 1.0f, 1.0f, 1.0f};
+  mat.Ambient = {0.0f, 0.0f, 0.0f, 1.0f};
+  mat.Emissive = {0.0f, 0.0f, 0.0f, 0.0f};
+  hr = device_set_material(cleanup.hDevice, &mat);
+  if (!Check(hr == S_OK, "SetMaterial")) {
+    return false;
+  }
+
+  dev->cmd.reset();
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzNormalDiffuse));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(XYZ|NORMAL|DIFFUSE; fog on; lighting on)")) {
+    return false;
+  }
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->vs != nullptr, "XYZ|NORMAL|DIFFUSE fog: VS bound (lighting on)")) {
+      return false;
+    }
+    if (!Check(ShaderBytecodeEquals(dev->vs, fixedfunc::kVsWvpLitPosNormalDiffuseFog),
+               "XYZ|NORMAL|DIFFUSE fog: selected lit fog VS variant")) {
+      return false;
+    }
+    if (!Check(ShaderReferencesConstRegister(dev->vs, kFixedfuncLightingStartRegister),
+               "XYZ|NORMAL|DIFFUSE fog: lit fog VS references lighting start register c208")) {
+      return false;
+    }
+    if (!Check(!ShaderReferencesConstRegister(dev->vs, 244u),
+               "XYZ|NORMAL|DIFFUSE fog: lit fog VS does not reference legacy c244 layout")) {
+      return false;
+    }
+    if (!Check(dev->ps != nullptr, "XYZ|NORMAL|DIFFUSE fog: PS bound (lighting on)")) {
+      return false;
+    }
+    if (!Check(ShaderContainsToken(dev->ps, 0x20E40001u), "XYZ|NORMAL|DIFFUSE fog: PS references c1 (fog color)")) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+bool TestFvfXyzNormalDiffuseTex1FogSelectsFogVsWhenLightingOff() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetRenderState != nullptr, "pfnSetRenderState is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // Portable D3DRS_* numeric values (from d3d9types.h).
+  constexpr uint32_t kD3dRsFogEnable = 28u;    // D3DRS_FOGENABLE
+  constexpr uint32_t kD3dRsFogColor = 34u;     // D3DRS_FOGCOLOR
+  constexpr uint32_t kD3dRsFogTableMode = 35u; // D3DRS_FOGTABLEMODE
+  constexpr uint32_t kD3dRsFogStart = 36u;     // D3DRS_FOGSTART (float bits)
+  constexpr uint32_t kD3dRsFogEnd = 37u;       // D3DRS_FOGEND   (float bits)
+  constexpr uint32_t kD3dFogLinear = 3u;       // D3DFOG_LINEAR
+  constexpr uint32_t kD3dRsLighting = 137u;    // D3DRS_LIGHTING
+
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzNormalDiffuseTex1);
+  if (!Check(hr == S_OK, "SetFVF(XYZ|NORMAL|DIFFUSE|TEX1)")) {
+    return false;
+  }
+
+  // Enable linear fog.
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogEnable, 1u);
+  if (!Check(hr == S_OK, "SetRenderState(FOGENABLE=1)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogTableMode, kD3dFogLinear);
+  if (!Check(hr == S_OK, "SetRenderState(FOGTABLEMODE=LINEAR)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogColor, 0xFFFF0000u);
+  if (!Check(hr == S_OK, "SetRenderState(FOGCOLOR=red)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogStart, F32Bits(0.2f));
+  if (!Check(hr == S_OK, "SetRenderState(FOGSTART)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogEnd, F32Bits(0.8f));
+  if (!Check(hr == S_OK, "SetRenderState(FOGEND)")) {
+    return false;
+  }
+
+  // Lighting off: should select the unlit fog VS variant.
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsLighting, 0u);
+  if (!Check(hr == S_OK, "SetRenderState(LIGHTING=FALSE)")) {
+    return false;
+  }
+
+  const VertexXyzNormalDiffuseTex1 tri[3] = {
+      {0.0f, 0.0f, 0.25f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu, /*u=*/0.0f, /*v=*/0.0f},
+      {1.0f, 0.0f, 0.25f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu, /*u=*/1.0f, /*v=*/0.0f},
+      {0.0f, 1.0f, 0.25f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu, /*u=*/0.0f, /*v=*/1.0f},
+  };
+
+  dev->cmd.reset();
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzNormalDiffuseTex1));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(XYZ|NORMAL|DIFFUSE|TEX1; fog on; lighting off)")) {
+    return false;
+  }
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->vs != nullptr, "XYZ|NORMAL|DIFFUSE|TEX1 fog: VS bound (lighting off)")) {
+      return false;
+    }
+    if (!Check(ShaderBytecodeEquals(dev->vs, fixedfunc::kVsWvpPosNormalDiffuseTex1Fog),
+               "XYZ|NORMAL|DIFFUSE|TEX1 fog: selected unlit fog VS variant")) {
+      return false;
+    }
+    if (!Check(dev->ps != nullptr, "XYZ|NORMAL|DIFFUSE|TEX1 fog: PS bound (lighting off)")) {
+      return false;
+    }
+    if (!Check(ShaderContainsToken(dev->ps, 0x20E40001u),
+               "XYZ|NORMAL|DIFFUSE|TEX1 fog: PS references c1 (fog color)")) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 bool TestFvfXyzNormalDiffuseTex1FogLightingSelectsLitFogVs() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -22408,6 +22650,12 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestFvfXyzNormalTex1FogSelectsFogVsAndLitFogVs()) {
+    return 1;
+  }
+  if (!aerogpu::TestFvfXyzNormalDiffuseFogSelectsFogVsAndLitFogVs()) {
+    return 1;
+  }
+  if (!aerogpu::TestFvfXyzNormalDiffuseTex1FogSelectsFogVsWhenLightingOff()) {
     return 1;
   }
   if (!aerogpu::TestFvfXyzNormalDiffuseTex1FogLightingSelectsLitFogVs()) {
