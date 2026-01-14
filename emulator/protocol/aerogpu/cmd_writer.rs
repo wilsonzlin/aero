@@ -465,24 +465,16 @@ impl AerogpuCmdWriter {
 
     /// Stage-ex aware variant of [`Self::create_shader_dxbc`].
     ///
-    /// Encodes `stage_ex` into `reserved0` and sets the legacy `stage` field to `COMPUTE`.
-    ///
-    /// Note: `stage_ex = 0` (DXBC Pixel program-type) cannot be encoded here because
-    /// `reserved0 == 0` is reserved for legacy/default "no stage_ex".
+    /// Encoding:
+    /// - Legacy stages (Pixel/Vertex/Compute): use the legacy `stage` field and keep `reserved0 = 0`.
+    /// - Extended stages (Geometry/Hull/Domain): set `stage = COMPUTE` and write
+    ///   `reserved0 = stage_ex` (DXBC program-type 2/3/4).
     pub fn create_shader_dxbc_ex(
         &mut self,
         shader_handle: AerogpuHandle,
         stage_ex: AerogpuShaderStageEx,
         dxbc_bytes: &[u8],
     ) {
-        // `stage_ex == 0` is reserved for legacy/default (old guests always write 0 into reserved
-        // fields). As a result, the DXBC program-type value `0 = Pixel` cannot be encoded into
-        // `reserved0` and must use the legacy encoding (`stage = PIXEL`, `reserved0 = 0`) via
-        // `create_shader_dxbc` instead.
-        if stage_ex == AerogpuShaderStageEx::Pixel {
-            panic!("CREATE_SHADER_DXBC stage_ex cannot encode DXBC Pixel program type (0)");
-        }
-
         let (stage, reserved0) = encode_stage_ex(stage_ex);
         assert!(dxbc_bytes.len() <= u32::MAX as usize);
         let unpadded_size = size_of::<AerogpuCmdCreateShaderDxbc>()
