@@ -101,6 +101,44 @@ impl IndexedDbBackend {
         idb::delete_database(db_name).await
     }
 
+    /// Deletes all persisted block entries, leaving the database metadata intact.
+    ///
+    /// This is intended as a maintenance API for clearing large sparse disks without
+    /// deleting the entire database. Work is chunked across multiple bounded
+    /// transactions with event-loop yields between chunks.
+    ///
+    /// On success, this also clears the in-memory block cache and dirty tracking so
+    /// subsequent reads observe an all-zero disk.
+    pub async fn clear_blocks(&mut self) -> Result<()> {
+        // Keep transactions bounded so we don't monopolize the browser with a
+        // single long-running IndexedDB transaction.
+        const CHUNK_KEYS: u32 = 512;
+
+        loop {
+            // Fetch a limited set of keys in a *separate* transaction so we don't
+            // need to await mid-transaction while also issuing delete requests.
+            let keys = idb::get_all_keys_limited(&self.db, BLOCKS_STORE, CHUNK_KEYS).await?;
+            if keys.is_empty() {
+                break;
+            }
+
+            let (tx, store) = idb::transaction_rw(&self.db, BLOCKS_STORE)?;
+            for key in &keys {
+                let _ = store.delete(key).map_err(StorageError::from)?;
+            }
+            idb::await_transaction(tx).await?;
+
+            // Yield to the event loop between chunks.
+            idb::yield_to_event_loop().await;
+        }
+
+        // Drop all cached/dirty blocks so reads don't return stale data and
+        // future flushes don't resurrect deleted blocks.
+        self.cache.clear();
+        self.dirty.clear();
+        Ok(())
+    }
+
     async fn read_meta(db: &web_sys::IdbDatabase) -> Result<Option<DiskMeta>> {
         let format_version = idb::get_string(db, META_STORE, META_KEY_FORMAT_VERSION).await?;
         if format_version.is_none() {

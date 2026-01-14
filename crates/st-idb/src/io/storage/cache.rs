@@ -82,4 +82,8 @@ impl BlockCache {
     pub fn pop(&mut self, idx: &u64) -> Option<CachedBlock> {
         self.lru.pop(idx)
     }
+
+    pub fn clear(&mut self) {
+        self.lru.clear();
+    }
 }

@@ -171,3 +171,42 @@ async fn crash_safety_simulation_unflushed_write_lost() {
 
     IndexedDbBackend::delete_database(&db_name).await.unwrap();
 }
+
+#[wasm_bindgen_test(async)]
+async fn clear_blocks_resets_persisted_data_and_cache() {
+    let db_name = unique_db_name("st-idb-clear-blocks");
+    let _ = IndexedDbBackend::delete_database(&db_name).await;
+
+    let capacity = 8 * 1024 * 1024;
+    let mut backend =
+        IndexedDbBackend::open(&db_name, capacity, IndexedDbBackendOptions::default())
+            .await
+            .unwrap();
+
+    backend.write_at(0, b"hello world").await.unwrap();
+    backend.flush().await.unwrap();
+
+    // Sanity: read back the data (may hit cache).
+    let mut buf = vec![0u8; 11];
+    backend.read_at(0, &mut buf).await.unwrap();
+    assert_eq!(&buf, b"hello world");
+
+    backend.clear_blocks().await.unwrap();
+
+    // Reads should observe an all-zero disk (no stale cache).
+    let mut cleared = vec![0xAA; 11];
+    backend.read_at(0, &mut cleared).await.unwrap();
+    assert_eq!(cleared, vec![0u8; 11]);
+
+    // And the clearing should persist across re-open.
+    drop(backend);
+    let mut backend2 =
+        IndexedDbBackend::open(&db_name, capacity, IndexedDbBackendOptions::default())
+            .await
+            .unwrap();
+    let mut cleared2 = vec![0xAA; 11];
+    backend2.read_at(0, &mut cleared2).await.unwrap();
+    assert_eq!(cleared2, vec![0u8; 11]);
+
+    IndexedDbBackend::delete_database(&db_name).await.unwrap();
+}

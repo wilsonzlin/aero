@@ -289,6 +289,27 @@ pub async fn get_value(
     }
 }
 
+pub async fn get_all_keys_limited(
+    db: &web_sys::IdbDatabase,
+    store: &str,
+    limit: u32,
+) -> Result<Vec<JsValue>> {
+    if limit == 0 {
+        return Ok(Vec::new());
+    }
+
+    let (tx, store) = transaction_ro(db, store)?;
+    // Use an explicit `undefined` query to use the store's natural ordering.
+    let request = store
+        .get_all_keys_with_key_and_limit(&JsValue::UNDEFINED, limit)
+        .map_err(StorageError::from)?;
+    await_transaction(tx).await?;
+
+    let value = request.result().map_err(StorageError::from)?;
+    let arr = js_sys::Array::from(&value);
+    Ok(arr.iter().collect())
+}
+
 pub async fn put_value(
     db: &web_sys::IdbDatabase,
     store: &str,
