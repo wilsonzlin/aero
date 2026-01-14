@@ -165,9 +165,16 @@ fn code_cache_matches_reference_lru_model() {
         match op {
             0 => {
                 // Insert
-                // Include some oversize blocks to exercise the "block too large for max_bytes"
-                // eviction path as well.
-                let byte_len = (rng.next_u64() % 120 + 1) as u32;
+                // Mostly generate small blocks, with occasional oversize blocks to exercise the
+                // "block too large for max_bytes" eviction path without constantly flushing the
+                // cache (which would reduce LRU coverage).
+                let r = rng.next_u64();
+                let byte_len = if (r & 0x0f) == 0 {
+                    // Guaranteed oversize (max_bytes is 50 in this test).
+                    80
+                } else {
+                    (r % 20 + 1) as u32
+                };
                 let evicted = cache.insert(handle(entry_rip, byte_len));
                 let expected = reference.insert(entry_rip, byte_len);
                 assert_eq!(evicted, expected, "eviction mismatch at step {step}");
