@@ -487,8 +487,8 @@ Current uses:
   prepass is not selected (for example, when no GS is bound or when the IA topology is not supported by
   the translated prepass), these route through the synthetic-expansion fallback prepass.
 - **Tests that force compute-prepass without a real GS:** e.g.
-  `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_compute_prepass_smoke.rs` binds a dummy GS
-  handle and patches the topology to a patchlist value to validate the executor path.
+  `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_compute_prepass_smoke.rs` forces the
+  compute-prepass path by selecting an adjacency topology (without binding any GS/HS/DS shader).
 
 ---
 
@@ -505,9 +505,9 @@ End-to-end GS emulation (compute prepass executes guest GS DXBC) is covered by:
 - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_linelist_emits_triangle.rs`
 - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_linelistadj_emits_triangle.rs`
 - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_restart_strip.rs`
+- `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_trianglelist_vs_as_compute_feeds_gs_inputs.rs`
 - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_trianglelist_emits_triangle.rs`
 - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_trianglelistadj_emits_triangle.rs`
-- `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_trianglelist_vs_as_compute_feeds_gs_inputs.rs`
 - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_reads_srv_buffer_translated_prepass.rs`
 - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_texture_t0_translated_prepass.rs`
 - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_samples_texture_translated_prepass.rs`
