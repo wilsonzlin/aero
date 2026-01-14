@@ -1444,6 +1444,9 @@ with an implementation-defined workgroup size chosen by the translator/runtime.
         indexing rule).
       - Writes tess factors to `tess_patch_constants[patch_instance_id]` (`SV_TessFactor` /
         `SV_InsideTessFactor`).
+      - System values mapping (recommended):
+        - `SV_PrimitiveID = patch_instance_id` (or `patch_id` if instancing is flattened).
+        - `SV_InstanceID = first_instance + instance_id` (if not flattened).
       - Note: HS patch-constant produces the tess factors but does not inherently know output buffer
         capacities. Allocation of per-patch output ranges can be done either:
         - in a separate deterministic tessellation **layout pass** (recommended; see “Tessellation
@@ -1471,6 +1474,10 @@ with an implementation-defined workgroup size chosen by the translator/runtime.
     - HS control-point pass (per patch control point):
       - Reads control points from `vs_out`.
       - Writes HS output control points to scratch (may be in-place in `vs_out` for bring-up).
+      - System values mapping (recommended):
+        - `SV_OutputControlPointID = control_point_id`
+        - `SV_PrimitiveID = patch_instance_id`
+        - `SV_InstanceID = first_instance + instance_id` (if not flattened).
       - Dispatch mapping:
         - `global_invocation_id.x` = `patch_id`
         - `global_invocation_id.y` = `control_point_id` (`0..control_points`)
@@ -1484,6 +1491,11 @@ with an implementation-defined workgroup size chosen by the translator/runtime.
         (`base_vertex/base_index`) when emitting into the shared `tess_out_*` buffers.
       - DS consumes the HS patch-constant outputs (at minimum tess factors) via
         `tess_patch_constants[patch_instance_id]`.
+      - System values mapping (recommended):
+        - `SV_DomainLocation`: computed from `domain_vertex_id` and the patch’s tess level(s) using
+          the concrete enumeration rules above.
+        - `SV_PrimitiveID = patch_instance_id`
+        - `SV_InstanceID = first_instance + instance_id` (if not flattened).
       - Dispatch mapping (recommended; conservative bounds):
         - `global_invocation_id.x` = `patch_id`
         - `global_invocation_id.y` = `instance_id`
