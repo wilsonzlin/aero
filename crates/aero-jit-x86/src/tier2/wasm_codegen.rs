@@ -156,6 +156,7 @@ impl Tier2WasmCodegen {
         let mut has_load_mem = false;
         let mut has_store_mem = false;
         let mut needs_fast_path = false;
+        let mut store_needs_fast_path = false;
         let mut uses_read_u8 = false;
         let mut uses_read_u16 = false;
         let mut uses_read_u32 = false;
@@ -166,9 +167,21 @@ impl Tier2WasmCodegen {
         let mut uses_write_u64 = false;
         let mut has_code_version_guards = false;
         let mut uses_rflags = false;
+
+        let always_cross_page = |addr: Operand, size_bytes: u32| -> bool {
+            if size_bytes <= 1 {
+                return false;
+            }
+            let Operand::Const(addr) = addr else {
+                return false;
+            };
+            let cross_limit = PAGE_OFFSET_MASK.saturating_sub(size_bytes.saturating_sub(1) as u64);
+            (addr & PAGE_OFFSET_MASK) > cross_limit
+        };
+
         for inst in trace.iter_instrs() {
             match *inst {
-                Instr::LoadMem { width, .. } => {
+                Instr::LoadMem { width, addr, .. } => {
                     has_load_mem = true;
                     match width {
                         Width::W8 => uses_read_u8 = true,
@@ -176,14 +189,33 @@ impl Tier2WasmCodegen {
                         Width::W32 => uses_read_u32 = true,
                         Width::W64 => uses_read_u64 = true,
                     }
+                    let size_bytes = match width {
+                        Width::W8 => 1u32,
+                        Width::W16 => 2u32,
+                        Width::W32 => 4u32,
+                        Width::W64 => 8u32,
+                    };
+                    if !always_cross_page(addr, size_bytes) {
+                        needs_fast_path = true;
+                    }
                 }
-                Instr::StoreMem { width, .. } => {
+                Instr::StoreMem { width, addr, .. } => {
                     has_store_mem = true;
                     match width {
                         Width::W8 => uses_write_u8 = true,
                         Width::W16 => uses_write_u16 = true,
                         Width::W32 => uses_write_u32 = true,
                         Width::W64 => uses_write_u64 = true,
+                    }
+                    let size_bytes = match width {
+                        Width::W8 => 1u32,
+                        Width::W16 => 2u32,
+                        Width::W32 => 4u32,
+                        Width::W64 => 8u32,
+                    };
+                    if !always_cross_page(addr, size_bytes) {
+                        needs_fast_path = true;
+                        store_needs_fast_path = true;
                     }
                 }
                 Instr::GuardCodeVersion { .. } => has_code_version_guards = true,
@@ -201,42 +233,11 @@ impl Tier2WasmCodegen {
         // Some traces consist solely of constant cross-page loads/stores which always fall back to
         // the slow helpers for correctness; in that case we can omit the `mmu_translate` import and
         // the inline-TLB locals entirely.
-        if has_mem_ops && options.inline_tlb {
-            let always_cross_page = |addr: Operand, size_bytes: u32| -> bool {
-                if size_bytes <= 1 {
-                    return false;
-                }
-                let Operand::Const(addr) = addr else {
-                    return false;
-                };
-                let cross_limit =
-                    PAGE_OFFSET_MASK.saturating_sub(size_bytes.saturating_sub(1) as u64);
-                (addr & PAGE_OFFSET_MASK) > cross_limit
-            };
-
-            for inst in trace.iter_instrs() {
-                match *inst {
-                    Instr::LoadMem { addr, width, .. } | Instr::StoreMem { addr, width, .. } => {
-                        let size_bytes = match width {
-                            Width::W8 => 1u32,
-                            Width::W16 => 2u32,
-                            Width::W32 => 4u32,
-                            Width::W64 => 8u32,
-                        };
-                        if !always_cross_page(addr, size_bytes) {
-                            needs_fast_path = true;
-                            break;
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
         options.inline_tlb &= has_mem_ops && needs_fast_path;
 
         let needs_code_page_version_import =
             options.code_version_guard_import && has_code_version_guards;
-        let needs_code_version_table = (options.inline_tlb && has_store_mem)
+        let needs_code_version_table = (options.inline_tlb && store_needs_fast_path)
             || (!options.code_version_guard_import && has_code_version_guards);
 
         let value_count = max_value_id(trace).max(1);
@@ -1415,6 +1416,49 @@ impl Emitter<'_> {
                             .expect("mem_write_u8 import missing"),
                     ));
                 }
+                Width::W16 => {
+                    self.f.instruction(&Instruction::I64Const(0xffff));
+                    self.f.instruction(&Instruction::I64And);
+                    self.f.instruction(&Instruction::I32WrapI64);
+                    self.f.instruction(&Instruction::Call(
+                        self.imported
+                            .mem_write_u16
+                            .expect("mem_write_u16 import missing"),
+                    ));
+                }
+                Width::W32 => {
+                    self.f
+                        .instruction(&Instruction::I64Const(0xffff_ffffu64 as i64));
+                    self.f.instruction(&Instruction::I64And);
+                    self.f.instruction(&Instruction::I32WrapI64);
+                    self.f.instruction(&Instruction::Call(
+                        self.imported
+                            .mem_write_u32
+                            .expect("mem_write_u32 import missing"),
+                    ));
+                }
+                Width::W64 => {
+                    self.f.instruction(&Instruction::Call(
+                        self.imported
+                            .mem_write_u64
+                            .expect("mem_write_u64 import missing"),
+                    ));
+                }
+            }
+            return;
+        }
+
+        if self.layout.code_version_table_ptr.is_none() {
+            // This trace does not have code-version table locals, which means it does not contain
+            // any store that can hit the inline-TLB RAM fast-path (all stores are provably
+            // cross-page constant accesses). Emit the slow helper call directly.
+            self.f
+                .instruction(&Instruction::LocalGet(self.layout.cpu_ptr_local()));
+            self.emit_operand(addr);
+            self.emit_operand(src);
+
+            match width {
+                Width::W8 => unreachable!("8-bit stores always require the fast-path"),
                 Width::W16 => {
                     self.f.instruction(&Instruction::I64Const(0xffff));
                     self.f.instruction(&Instruction::I64And);
