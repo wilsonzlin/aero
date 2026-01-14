@@ -3401,6 +3401,37 @@ mod tests {
         Ok(())
     }
 
+    #[tokio::test]
+    async fn compute_image_version_sha256_hashes_virtual_disk_bytes_for_raw() -> Result<()> {
+        use std::io::Write;
+
+        let disk_size_bytes = 16 * 1024u64;
+
+        let mut data = vec![0u8; disk_size_bytes as usize];
+        data[0..8].copy_from_slice(b"RAWTEST!");
+        for (i, b) in data.iter_mut().enumerate().skip(8) {
+            *b = (i % 251) as u8;
+        }
+
+        let mut tmp = tempfile::NamedTempFile::new().context("create tempfile")?;
+        tmp.as_file_mut()
+            .write_all(&data)
+            .context("write raw image")?;
+        tmp.as_file_mut().flush().context("flush raw image")?;
+
+        let expected_version = format!("sha256-{}", sha256_hex(&data));
+
+        // Auto detection should fall back to raw for unknown bytes.
+        let version = compute_image_version_sha256(tmp.path(), InputFormat::Auto).await?;
+        assert_eq!(version, expected_version);
+
+        // Explicit raw should also match.
+        let version = compute_image_version_sha256(tmp.path(), InputFormat::Raw).await?;
+        assert_eq!(version, expected_version);
+
+        Ok(())
+    }
+
     #[test]
     fn chunk_count_rounds_up() {
         assert_eq!(chunk_count(0, 8), 0);
