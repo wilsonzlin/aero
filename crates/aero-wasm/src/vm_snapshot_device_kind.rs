@@ -122,10 +122,26 @@ mod tests {
     }
 
     #[test]
+    fn parse_device_kind_legacy_usb_alias_canonicalizes_on_encode() {
+        let id = parse_device_kind(DEVICE_KIND_USB_UHCI).expect("legacy usb.uhci should parse");
+        assert_eq!(id, DeviceId::USB);
+        assert_eq!(
+            kind_from_device_id(id),
+            DEVICE_KIND_USB,
+            "encoding should emit canonical usb kind"
+        );
+    }
+
+    #[test]
     fn parse_device_kind_accepts_device_dot_u32_ids() {
         assert_eq!(parse_device_kind("device.0"), Some(DeviceId(0)));
         // Parsers may accept leading zeros; encoders should canonicalize them away.
         assert_eq!(parse_device_kind("device.00999"), Some(DeviceId(999)));
+        // Known numeric ids should still map to canonical string kinds when re-encoded.
+        assert_eq!(
+            kind_from_device_id(parse_device_kind("device.12").expect("device.12 parses")),
+            DEVICE_KIND_USB
+        );
         assert_eq!(
             parse_device_kind("device.4294967295"),
             Some(DeviceId(u32::MAX))
