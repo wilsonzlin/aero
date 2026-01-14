@@ -986,7 +986,12 @@ file” buffer that the translated GS code can index with a simple formula.
 
 **Layout**
 
-`gs_inputs` is a read-only storage buffer of `vec4<f32>` registers.
+`gs_inputs` is a storage buffer of `vec4<f32>` registers.
+
+Note: `gs_inputs` is conceptually **read-only**, but the current translated-GS pipeline declares it
+as `var<storage, read_write>` so it can share a backing scratch buffer with other read/write
+allocations without tripping WebGPU’s per-buffer STORAGE_READ vs STORAGE_READ_WRITE exclusivity
+rules.
 
 In the baseline internal binding scheme, this buffer is bound at:
 
@@ -1000,7 +1005,7 @@ internal bind group at `@group(0)` (separate from the stage-scoped `@group(3)` G
 - `@binding(2)`: indirect args (`DrawIndexedIndirectArgs`, read_write)
 - `@binding(3)`: atomic counters (read_write)
 - `@binding(4)`: uniform params (uniform)
-- `@binding(5)`: `gs_inputs` (read)
+- `@binding(5)`: `gs_inputs` (`storage, read_write`; conceptually read-only)
  
 If the GS references D3D resources (constant buffers, SRVs, samplers), the translator also declares
 them in the executor’s shared internal/emulation bind group:

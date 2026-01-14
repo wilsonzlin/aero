@@ -462,6 +462,7 @@ Representative test pointers:
   - [`crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_point_to_triangle.rs`](../../crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_point_to_triangle.rs)
   - [`crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_restart_strip.rs`](../../crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_restart_strip.rs)
   - [`crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_pointlist_draw_indexed.rs`](../../crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_pointlist_draw_indexed.rs)
+  - [`crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_output_topology_pointlist.rs`](../../crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_output_topology_pointlist.rs)
   - [`crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_trianglelist_emits_triangle.rs`](../../crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_trianglelist_emits_triangle.rs)
   - [`crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_cbuffer_b0_translated_prepass.rs`](../../crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_cbuffer_b0_translated_prepass.rs)
   - [`crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_line_strip_output.rs`](../../crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_line_strip_output.rs)
