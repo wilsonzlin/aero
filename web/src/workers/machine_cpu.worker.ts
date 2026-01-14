@@ -2,7 +2,14 @@
 
 import type { AeroConfig } from "../config/aero_config";
 import { decodeCommand, encodeEvent, type Command, type Event } from "../ipc/protocol";
-import { createSharedMemoryViews, ringRegionsForWorker, setReadyFlag, StatusIndex, type WorkerRole } from "../runtime/shared_layout";
+import {
+  createSharedMemoryViews,
+  ringRegionsForWorker,
+  setReadyFlag,
+  StatusIndex,
+  type SharedMemorySegments,
+  type WorkerRole,
+} from "../runtime/shared_layout";
 import {
   type ConfigAckMessage,
   type ConfigUpdateMessage,
@@ -190,7 +197,7 @@ async function initAndRun(init: WorkerInitMessage): Promise<void> {
   role = init.role ?? "cpu";
 
   try {
-    const segments = {
+    const segments: SharedMemorySegments = {
       control: init.controlSab,
       guestMemory: init.guestMemory,
       vram: init.vram,
