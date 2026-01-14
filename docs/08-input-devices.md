@@ -916,7 +916,8 @@ In the web runtime, browser keyboard/mouse/gamepad events can be exposed to the 
 
 Current implementation details:
 
-- The I/O worker attaches an **external USB hub** on UHCI root port 0 and then attaches four
+- The I/O worker attaches an **external USB hub** on root port 0 (UHCI by default; EHCI/xHCI when
+  available) and then attaches four
   fixed "synthetic" USB HID devices behind it:
   - hub port 1: USB keyboard (boot protocol)
   - hub port 2: USB mouse (boot protocol + wheel)
