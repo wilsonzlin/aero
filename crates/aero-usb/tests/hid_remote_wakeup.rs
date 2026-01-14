@@ -259,6 +259,18 @@ fn hid_keyboard_remote_wakeup_sets_uhci_resume_detect_through_external_hub() {
             w_length: 0,
         },
     );
+    // Enable DEVICE_REMOTE_WAKEUP on the hub itself so it can forward downstream remote wake events.
+    control_no_data(
+        &mut ctrl,
+        1,
+        SetupPacket {
+            bm_request_type: 0x00,
+            b_request: 0x03, // SET_FEATURE
+            w_value: 0x0001, // DEVICE_REMOTE_WAKEUP
+            w_index: 0,
+            w_length: 0,
+        },
+    );
 
     // Attach a keyboard behind downstream hub port 1.
     let keyboard = UsbHidKeyboardHandle::new();
