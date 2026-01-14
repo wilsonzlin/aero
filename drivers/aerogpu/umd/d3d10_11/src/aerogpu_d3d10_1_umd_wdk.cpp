@@ -102,16 +102,16 @@ void LogModulePathOnce() {
 }
 
 // D3D10_BIND_* subset (numeric values from d3d10.h).
-constexpr uint32_t kD3D10BindVertexBuffer = 0x1;
-constexpr uint32_t kD3D10BindIndexBuffer = 0x2;
-constexpr uint32_t kD3D10BindConstantBuffer = 0x4;
-constexpr uint32_t kD3D10BindShaderResource = 0x8;
-constexpr uint32_t kD3D10BindRenderTarget = 0x20;
-constexpr uint32_t kD3D10BindDepthStencil = 0x40;
+using aerogpu::d3d10_11::kD3D10BindVertexBuffer;
+using aerogpu::d3d10_11::kD3D10BindIndexBuffer;
+using aerogpu::d3d10_11::kD3D10BindConstantBuffer;
+using aerogpu::d3d10_11::kD3D10BindShaderResource;
+using aerogpu::d3d10_11::kD3D10BindRenderTarget;
+using aerogpu::d3d10_11::kD3D10BindDepthStencil;
 
 using aerogpu::d3d10_11::kMaxConstantBufferSlots;
-constexpr uint32_t kAeroGpuD3D10MaxSrvSlots = 128;
-constexpr uint32_t kAeroGpuD3D10MaxSamplerSlots = 16;
+constexpr uint32_t kAeroGpuD3D10MaxSrvSlots = aerogpu::d3d10_11::kMaxShaderResourceSlots;
+constexpr uint32_t kAeroGpuD3D10MaxSamplerSlots = aerogpu::d3d10_11::kMaxSamplerSlots;
 
 // D3D10-class IA supports 16 vertex buffer slots (D3D10_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT).
 // Some WDK header revisions omit the constant; provide a conservative fallback.

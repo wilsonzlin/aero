@@ -64,6 +64,15 @@ constexpr uint32_t kD3D11BindRenderTarget = 0x20;
 constexpr uint32_t kD3D11BindDepthStencil = 0x40;
 constexpr uint32_t kD3D11BindUnorderedAccess = 0x80;
 
+// D3D10_BIND_* subset (numeric values from d3d10.h). These share values with the
+// corresponding D3D11 bind flags for the overlapping subset we care about.
+constexpr uint32_t kD3D10BindVertexBuffer = kD3D11BindVertexBuffer;
+constexpr uint32_t kD3D10BindIndexBuffer = kD3D11BindIndexBuffer;
+constexpr uint32_t kD3D10BindConstantBuffer = kD3D11BindConstantBuffer;
+constexpr uint32_t kD3D10BindShaderResource = kD3D11BindShaderResource;
+constexpr uint32_t kD3D10BindRenderTarget = kD3D11BindRenderTarget;
+constexpr uint32_t kD3D10BindDepthStencil = kD3D11BindDepthStencil;
+
 // D3D11_CPU_ACCESS_* subset (numeric values from d3d11.h).
 constexpr uint32_t kD3D11CpuAccessWrite = 0x10000;
 constexpr uint32_t kD3D11CpuAccessRead = 0x20000;

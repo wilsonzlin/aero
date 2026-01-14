@@ -284,12 +284,12 @@ uint32_t dxgi_index_format_to_aerogpu(uint32_t dxgi_format) {
 }
 
 // D3D10_BIND_* and D3D11_BIND_* share values for the common subset we care about.
-constexpr uint32_t kD3D10BindVertexBuffer = 0x1;
-constexpr uint32_t kD3D10BindIndexBuffer = 0x2;
-constexpr uint32_t kD3D10BindConstantBuffer = 0x4;
-constexpr uint32_t kD3D10BindShaderResource = 0x8;
-constexpr uint32_t kD3D10BindRenderTarget = 0x20;
-constexpr uint32_t kD3D10BindDepthStencil = 0x40;
+using aerogpu::d3d10_11::kD3D10BindVertexBuffer;
+using aerogpu::d3d10_11::kD3D10BindIndexBuffer;
+using aerogpu::d3d10_11::kD3D10BindConstantBuffer;
+using aerogpu::d3d10_11::kD3D10BindShaderResource;
+using aerogpu::d3d10_11::kD3D10BindRenderTarget;
+using aerogpu::d3d10_11::kD3D10BindDepthStencil;
 
 uint32_t bind_flags_to_usage_flags(uint32_t bind_flags) {
   // D3D10 and D3D11 bind flags share numeric values for the subset we care about.
