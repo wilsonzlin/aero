@@ -10,6 +10,8 @@ All file paths are repository-relative.
   Cargo home to avoid shared registry lock contention:
   `AERO_ISOLATE_CARGO_HOME=1 bash ./scripts/safe-run.sh ...`
 - On cold builds, some targets may need a longer timeout (e.g. `AERO_TIMEOUT=1200`).
+- Some integration tests depend on `wgpu`/WebGPU availability and may auto-skip on headless systems.
+  Set `AERO_REQUIRE_WEBGPU=1` to force these tests to fail instead of skipping.
 
 ---
 
