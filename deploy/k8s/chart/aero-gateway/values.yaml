@@ -164,6 +164,10 @@ l2Proxy:
   # Disabled by default. To enable, set capture.dir to a writable directory inside
   # the container.
   #
+  # Note: the `aero-l2-proxy` image runs as a non-root user (uid 10001). If you
+  # mount a PVC at `capture.dir`, you may need to set `l2Proxy.podSecurityContext.fsGroup`
+  # so the volume is writable.
+  #
   # WARNING: capture files contain raw network traffic and may include sensitive
   # user data (DNS queries, plaintext protocols, credentials, etc.). Treat them
   # as secrets and avoid enabling capture on internet-exposed production
