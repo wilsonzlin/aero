@@ -283,12 +283,12 @@ bash ./scripts/safe-run.sh cargo test -p aero-machine --test boot_int10_aerogpu_
 bash ./scripts/safe-run.sh cargo test -p aero-machine --test aerogpu_ring_noop_fence --locked
 bash ./scripts/safe-run.sh cargo test -p aero-machine --test aerogpu_bar0_mmio_vblank --locked
 
-# Run D3D9 integration test
-bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --test d3d9_blend_depth_stencil --locked
-bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --test d3d9_vertex_input --locked
+# Run D3D9 focused tests
+bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --test vertex_decl_translate --locked
+bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --test d3d9_fixed_function --locked
 
 # Run D3D11 smoke test
-bash ./scripts/safe-run.sh cargo test -p aero-d3d11 --test d3d11_smoke --locked
+bash ./scripts/safe-run.sh cargo test -p aero-d3d11 --test aerogpu_cmd_smoke --locked
 ```
 
 **Note:** GPU tests may be skipped on headless/GPU-less machines. Set `AERO_REQUIRE_WEBGPU=1` to force failure if no GPU is available.
