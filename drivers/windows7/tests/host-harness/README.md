@@ -334,8 +334,31 @@ pwsh ./drivers/windows7/tests/host-harness/Invoke-AeroVirtioWin7Tests.ps1 `
 
 ### virtio-blk StorPort recovery counters (optional gating)
 
-Newer virtio-blk miniport builds expose StorPort recovery counters via the miniport query IOCTL contract. When present,
-the guest selftest appends these counters to the virtio-blk machine marker:
+Newer virtio-blk miniport builds expose StorPort recovery counters via the miniport query IOCTL contract.
+
+The guest selftest emits a dedicated machine-readable marker when the IOCTL payload includes the counter region:
+
+`AERO_VIRTIO_SELFTEST|TEST|virtio-blk-counters|INFO|abort=...|reset_device=...|reset_bus=...|pnp=...|ioctl_reset=...|capacity_change_events=...`
+
+If the payload is too short (older miniport contract / truncated), it emits:
+
+`AERO_VIRTIO_SELFTEST|TEST|virtio-blk-counters|SKIP|reason=ioctl_payload_truncated|returned_len=...`
+
+For log scraping, the host harness mirrors the last observed guest marker into a stable host marker:
+
+`AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_COUNTERS|INFO/SKIP|abort=...|reset_device=...|reset_bus=...|pnp=...|ioctl_reset=...|capacity_change_events=...`
+
+To enforce a minimal “no unexpected aborts/resets” policy (checks `abort`/`reset_device`/`reset_bus` only), enable:
+
+- PowerShell: `-FailOnBlkRecovery`
+- Python: `--fail-on-blk-recovery`
+
+On failure it emits:
+
+`FAIL: VIRTIO_BLK_RECOVERY_DETECTED: ...`
+
+Additionally, when the guest includes recovery fields on the main virtio-blk marker, the guest selftest appends these
+counters to the virtio-blk marker (best-effort):
 
 - `abort_srb`
 - `reset_device_srb`
@@ -351,7 +374,7 @@ For log scraping, the host harness mirrors these into a stable host marker:
 
 `AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RECOVERY|INFO|abort_srb=...|reset_device_srb=...|reset_bus_srb=...|pnp_srb=...|ioctl_reset=...`
 
-To enforce a “no unexpected resets/aborts” policy in CI, enable:
+To enforce a stricter “no unexpected resets/aborts” policy (checks all fields above) in CI, enable:
 
 - PowerShell: `-RequireNoBlkRecovery`
 - Python: `--require-no-blk-recovery`

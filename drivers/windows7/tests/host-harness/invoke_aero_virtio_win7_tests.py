@@ -102,6 +102,11 @@ emitting a deterministic failure token:
 
 - `FAIL: VIRTIO_BLK_RECOVERY_NONZERO: ...`
 
+When `--fail-on-blk-recovery` is enabled, the harness fails if the guest reports non-zero virtio-blk abort/reset activity
+via the dedicated `virtio-blk-counters` marker, emitting:
+
+- `FAIL: VIRTIO_BLK_RECOVERY_DETECTED: ...`
+
 Note: virtio-blk miniport IRQ diagnostics may report `mode=msi` even when MSI-X vectors are assigned; the harness infers
 MSI-X (`irq_mode=msix`) when any `msix_*_vector` field is non-`0xFFFF`.
 
