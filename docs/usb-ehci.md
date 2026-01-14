@@ -45,15 +45,19 @@ What exists today (bring-up stage):
 - A minimal **periodic schedule** engine (frame list + interrupt QH/qTD) is implemented for interrupt polling.
 - Snapshot/restore is implemented for EHCI controller state and attached USB topology.
 - Companion routing semantics (`CONFIGFLAG` / `PORT_OWNER`) are implemented. EHCI treats
-  `PORT_OWNER=1` ports as companion-owned/unreachable; full shared-port wiring to UHCI companions is
-  still being integrated.
+  `PORT_OWNER=1` ports as companion-owned/unreachable.
+- Shared-port routing is **partially wired** in the canonical `aero_machine::Machine`: when both
+  UHCI and EHCI are enabled, **ports 0–1** are backed by a shared `Usb2PortMux`, so ownership handoff
+  moves the same attached device model between controllers (see `crates/aero-machine/src/lib.rs` and
+  `crates/aero-usb/src/usb2_port.rs`).
 
 What is *not* implemented yet (still MVP-relevant):
 
 - Isochronous periodic descriptors (`iTD` / `siTD`) and split/TT behavior.
 - MSI/MSI-X (Aero uses PCI INTx for EHCI).
-- Full platform wiring for **shared root ports** between EHCI and UHCI companions (routing a single
-  physical device between two PCI functions) is still in progress.
+- Full platform wiring for **all shared root ports** between EHCI and UHCI companions (routing a
+  single physical device between two PCI functions) is still in progress; today only ports 0–1 are
+  muxed in `aero_machine::Machine`.
 
 Current code locations:
 
@@ -61,6 +65,8 @@ Current code locations:
 - Rust EHCI tests: `crates/aero-usb/tests/ehci*.rs`
 - Shared USB2 port mux model (EHCI↔UHCI routing building block): `crates/aero-usb/src/usb2_port.rs`
   (+ `crates/aero-usb/tests/usb2_companion_routing.rs`)
+- Canonical machine wiring (PC platform init; installs shared `Usb2PortMux` when UHCI+EHCI enabled):
+  `crates/aero-machine/src/lib.rs`
 - Browser PCI device wrapper (worker runtime): `web/src/io/devices/ehci.ts` (+ `ehci.test.ts`)
 - Native PCI device wrapper (MMIO BAR + IRQ + DMA gating): `crates/devices/src/usb/ehci.rs`
 
@@ -218,9 +224,12 @@ The EHCI operational register block includes:
 - Status bits that are defined as **W1C** are W1C in Aero. Writes that attempt to set read-only
   bits are masked out.
 - `USBSTS.HCHALTED` is derived from `USBCMD.RunStop` and reset state; it is not directly writable.
-- The “schedule status” bits (`USBSTS.ASS` / `USBSTS.PSS`) are modeled as derived state from
-  `USBCMD.RunStop` + `USBCMD.ASE`/`USBCMD.PSE` (set when the controller is running and the
-  corresponding schedule is enabled).
+- The “schedule status” bits (`USBSTS.PSS` / `USBSTS.ASS`) are modeled as **derived read-only** bits:
+  - `USBSTS.PSS` reflects `USBCMD.RS && USBCMD.PSE` (periodic schedule enabled + controller running).
+  - `USBSTS.ASS` reflects `USBCMD.RS && USBCMD.ASE` (async schedule enabled + controller running).
+  - These bits are *not* treated as latched state inside `USBSTS`; reads derive them from `USBCMD`
+    (stored `PSS/ASS` bits are masked out) so snapshots/tests cannot accidentally persist a stale
+    schedule status.
 - `USBCMD.HCRESET` resets controller-local state (registers and scheduler bookkeeping) but should
   not implicitly detach devices from the root hub; device topology is modeled separately.
 - `USBCMD.IAAD` (Interrupt on Async Advance Doorbell) is implemented:
@@ -245,7 +254,8 @@ Each port tracks:
 - **Suspend/Resume** (SUSP/FPR) and a **resume timer** (if modeled)
 - **Port power** (`PP`) (Aero currently models ports as powered-on by default, but honors writes)
 - **Port owner** (`PORT_OWNER`) for companion routing (modeled; `PORT_OWNER=1` makes the port
-  unreachable from EHCI; full shared-port wiring to UHCI companions is still being integrated)
+  unreachable from EHCI; in the canonical machine ports 0–1 may be backed by `Usb2PortMux` so
+  ownership handoff routes the same attached device between EHCI and UHCI)
 
 Implementation note:
 
@@ -512,12 +522,28 @@ In Aero’s EHCI model:
   guest sees a port change interrupt when `USBINTR.PCD` is enabled.
 
 Separate (but related): `aero_usb::usb2_port::Usb2PortMux` can model a **single physical USB 2.0
-root port** shared between an EHCI controller and a UHCI companion, and is used by unit tests as a
-building block for future platform wiring (`crates/aero-usb/tests/usb2_companion_routing.rs`).
+root port** shared between an EHCI controller and a UHCI companion. It is an MVP abstraction focused
+on `CONFIGFLAG` / `PORT_OWNER` handoff:
 
-### Planned integration with UHCI companions
+- One physical port has one attached device model.
+- Ownership changes move that device between EHCI and UHCI (modelled as a logical disconnect/reconnect).
+- Split transactions / TT behaviour is **not** modelled.
 
-The intended platform topology is:
+This mux is covered by `crates/aero-usb/tests/usb2_companion_routing.rs` and is wired into the
+canonical `aero_machine::Machine` when both UHCI and EHCI are enabled: ports 0–1 are backed by a
+shared mux so ownership handoff moves the same attached device between controllers (see
+`crates/aero-machine/src/lib.rs` and `crates/aero-usb/src/usb2_port.rs`).
+
+### Platform wiring with UHCI companions (current + future)
+
+Today (canonical machine):
+
+- If only EHCI is enabled, all EHCI root ports are local to EHCI; `PORT_OWNER=1` makes a port
+  companion-owned/unreachable (no companion device is actually attached).
+- If both UHCI and EHCI are enabled, ports 0–1 are routed through a shared `Usb2PortMux`, so the same
+  device can be handed between controllers via `CONFIGFLAG` and `PORT_OWNER`.
+
+Longer term, the intended platform topology is:
 
 ```
 PCI: EHCI function (USB 2.0, high-speed)
@@ -555,6 +581,7 @@ Current bring-up tests cover basic register/port behavior, schedule traversal, a
 - `crates/aero-usb/tests/ehci_async.rs` (async schedule QH/qTD traversal)
 - `crates/aero-usb/tests/ehci_periodic.rs` (periodic frame list + interrupt QH/qTD polling)
 - `crates/aero-usb/tests/ehci_snapshot.rs` (small snapshot roundtrip smoke test)
+- `crates/aero-usb/tests/usb2_companion_routing.rs` (shared-port mux: device moves between EHCI+UHCI)
 - `crates/aero-usb/tests/ehci_snapshot_roundtrip.rs` (snapshot/restore)
 - `crates/aero-usb/tests/ehci_legacy_handoff.rs` (legacy BIOS handoff)
 
