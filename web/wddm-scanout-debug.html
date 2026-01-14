@@ -64,6 +64,13 @@
       <div id="panel">
         <h1>WDDM scanout debug</h1>
         <p>
+          <small>
+            Requirements: COOP/COEP (<code>crossOriginIsolated</code>) + <code>SharedArrayBuffer</code> + OffscreenCanvas
+            WebGL2 (Chromium-only today). Run <code>npm run dev:harness</code> and open
+            <code>/web/wddm-scanout-debug.html</code>.
+          </small>
+        </p>
+        <p>
           Expected: quadrants are <strong>red</strong>/<strong>green</strong>/<strong>blue</strong>/<strong>white</strong>
           with a small marker square at top-left. When <em>Source=WDDM</em> and <em>X byte=0x00</em>, the output should
           still be fully opaque (no checkered background bleeding through).

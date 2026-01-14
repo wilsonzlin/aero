@@ -22,10 +22,15 @@
     </style>
   </head>
   <body>
+    <div>
+      <small>
+        Automated harness used by <code>tests/e2e/wddm_scanout_smoke.spec.ts</code>. Requires COOP/COEP +
+        OffscreenCanvas WebGL2.
+      </small>
+    </div>
     <canvas id="frame"></canvas>
     <div id="backend"></div>
     <div id="status"></div>
     <script type="module" src="./wddm-scanout-smoke.ts"></script>
   </body>
 </html>
-
