@@ -175,3 +175,41 @@ async fn cow_opfs_open_unavailable_error_includes_operation_and_both_paths_and_h
         "expected DedicatedWorker hint in message, got: {msg}"
     );
 }
+
+#[wasm_bindgen_test(async)]
+async fn install_media_iso_opfs_existing_unavailable_error_includes_operation_and_hint() {
+    if cfg!(target_feature = "atomics") {
+        // This API is intentionally unsupported in threaded WASM builds.
+        return;
+    }
+    if aero_opfs::opfs_sync_access_supported() {
+        return;
+    }
+
+    let path = unique_path("opfs-error-install-media-existing", "iso");
+    let mut m = aero_wasm::Machine::new(2 * 1024 * 1024).expect("Machine::new");
+    let err = m
+        .attach_install_media_iso_opfs_existing(path.clone())
+        .await
+        .expect_err("expected OPFS-backed ISO attach to fail when OPFS sync access unavailable");
+
+    let msg = js_error_message(err);
+    if !is_opfs_unavailable_message(&msg) {
+        if should_skip_opfs_message(&msg) {
+            return;
+        }
+        panic!("unexpected error (expected NotSupported/BackendUnavailable): {msg}");
+    }
+    assert!(
+        msg.contains("Machine.attach_install_media_iso_opfs_existing"),
+        "expected operation name in message, got: {msg}"
+    );
+    assert!(
+        msg.contains(&path),
+        "expected OPFS path in message, got: {msg}"
+    );
+    assert!(
+        msg.contains("DedicatedWorker"),
+        "expected DedicatedWorker hint in message, got: {msg}"
+    );
+}

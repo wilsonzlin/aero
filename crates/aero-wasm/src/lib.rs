@@ -3032,10 +3032,12 @@ impl Machine {
         {
             let backend = aero_opfs::OpfsBackend::open_existing(&path)
                 .await
-                .map_err(|e| JsValue::from_str(&e.to_string()))?;
+                .map_err(|e| {
+                    opfs_disk_error_to_js("Machine.attach_install_media_iso_opfs_existing", &path, e)
+                })?;
             self.inner
                 .attach_install_media_iso(Box::new(backend))
-                .map_err(|e| JsValue::from_str(&e.to_string()))
+                .map_err(js_error)
         }
     }
 
