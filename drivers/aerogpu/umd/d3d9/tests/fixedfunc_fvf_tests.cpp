@@ -7833,7 +7833,14 @@ bool TestFvfXyzNormalEmitsLightingConstants() {
              "WVP constant upload emitted once")) {
     return false;
   }
-  if (!Check(CountVsConstantUploads(buf, len, /*start_register=*/244u, /*vec4_count=*/10u) == 1,
+
+  // Fixed-function lighting constants are uploaded as a single contiguous block
+  // (see `kFixedfuncLightingStartRegister`/`kFixedfuncLightingVec4Count` in the
+  // driver). Keep local constants here so tests remain portable (they build
+  // without the Windows SDK/WDK).
+  constexpr uint32_t kLightingStart = 208u;
+  constexpr uint32_t kLightingVec4 = 29u;
+  if (!Check(CountVsConstantUploads(buf, len, kLightingStart, kLightingVec4) == 1,
              "lighting constant upload emitted once")) {
     return false;
   }
@@ -7848,13 +7855,15 @@ bool TestFvfXyzNormalEmitsLightingConstants() {
     return false;
   }
 
-  const float* lighting = FindVsConstantsPayload(buf, len, /*start_register=*/244u, /*vec4_count=*/10u);
+  const float* lighting = FindVsConstantsPayload(buf, len, kLightingStart, kLightingVec4);
   if (!Check(lighting != nullptr, "lighting constants payload present")) {
     return false;
   }
-  // c253: global ambient (blue ARGB -> RGBA {0,0,1,1}).
-  if (!Check(lighting[9 * 4 + 0] == 0.0f && lighting[9 * 4 + 1] == 0.0f &&
-             lighting[9 * 4 + 2] == 1.0f && lighting[9 * 4 + 3] == 1.0f,
+  // c236: global ambient (blue ARGB -> RGBA {0,0,1,1}).
+  constexpr uint32_t kGlobalAmbientReg = 236u;
+  constexpr uint32_t kGlobalAmbientRel = (kGlobalAmbientReg - kLightingStart);
+  if (!Check(lighting[kGlobalAmbientRel * 4 + 0] == 0.0f && lighting[kGlobalAmbientRel * 4 + 1] == 0.0f &&
+             lighting[kGlobalAmbientRel * 4 + 2] == 1.0f && lighting[kGlobalAmbientRel * 4 + 3] == 1.0f,
              "global ambient constant reflects D3DRS_AMBIENT")) {
     return false;
   }
@@ -7941,17 +7950,21 @@ bool TestFvfXyzNormalTex1EmitsLightingConstants() {
              "WVP constant upload emitted once (TEX1)")) {
     return false;
   }
-  if (!Check(CountVsConstantUploads(buf, len, /*start_register=*/244u, /*vec4_count=*/10u) == 1,
+  constexpr uint32_t kLightingStart = 208u;
+  constexpr uint32_t kLightingVec4 = 29u;
+  if (!Check(CountVsConstantUploads(buf, len, kLightingStart, kLightingVec4) == 1,
              "lighting constant upload emitted once (TEX1)")) {
     return false;
   }
 
-  const float* lighting = FindVsConstantsPayload(buf, len, /*start_register=*/244u, /*vec4_count=*/10u);
+  const float* lighting = FindVsConstantsPayload(buf, len, kLightingStart, kLightingVec4);
   if (!Check(lighting != nullptr, "lighting constants payload present (TEX1)")) {
     return false;
   }
-  if (!Check(lighting[9 * 4 + 0] == 0.0f && lighting[9 * 4 + 1] == 0.0f &&
-             lighting[9 * 4 + 2] == 1.0f && lighting[9 * 4 + 3] == 1.0f,
+  constexpr uint32_t kGlobalAmbientReg = 236u;
+  constexpr uint32_t kGlobalAmbientRel = (kGlobalAmbientReg - kLightingStart);
+  if (!Check(lighting[kGlobalAmbientRel * 4 + 0] == 0.0f && lighting[kGlobalAmbientRel * 4 + 1] == 0.0f &&
+             lighting[kGlobalAmbientRel * 4 + 2] == 1.0f && lighting[kGlobalAmbientRel * 4 + 3] == 1.0f,
              "global ambient constant reflects D3DRS_AMBIENT (TEX1)")) {
     return false;
   }
