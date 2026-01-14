@@ -9083,7 +9083,11 @@ static BOOLEAN AeroGpuCmdStreamRequiresAllocTable(_In_reads_bytes_opt_(SizeBytes
     ULONG offset = sizeof(struct aerogpu_cmd_stream_header);
     const ULONG streamSize = sh.size_bytes;
  
-    while (offset + sizeof(struct aerogpu_cmd_hdr) <= streamSize) {
+    while (offset < streamSize) {
+        const ULONG remaining = streamSize - offset;
+        if (remaining < sizeof(struct aerogpu_cmd_hdr)) {
+            break;
+        }
         struct aerogpu_cmd_hdr hdr;
         RtlCopyMemory(&hdr, bytes + offset, sizeof(hdr));
  
