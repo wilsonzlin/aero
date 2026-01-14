@@ -1350,8 +1350,29 @@ export interface WasmApi {
          * Optional for older WASM builds.
          */
         webhid_drain_feature_report_requests?(): Array<{ deviceId: number; requestId: number; reportId: number }> | null;
-        webhid_complete_feature_report_request?(deviceId: number, requestId: number, reportId: number, data: Uint8Array): void;
-        webhid_fail_feature_report_request?(deviceId: number, requestId: number, reportId: number): void;
+        /**
+         * Complete a pending `GET_REPORT (Feature)` request.
+         *
+         * Newer builds accept an explicit success flag and return whether the completion was
+         * accepted by the guest-visible UHCI model.
+         */
+        webhid_complete_feature_report_request?(
+            deviceId: number,
+            requestId: number,
+            reportId: number,
+            ok: boolean,
+            data?: Uint8Array,
+        ): boolean;
+        /**
+         * Legacy completion API (pre `webhid_complete_feature_report_request`) used by older WASM builds.
+         */
+        webhid_push_feature_report_result?(
+            deviceId: number,
+            requestId: number,
+            reportId: number,
+            ok: boolean,
+            data?: Uint8Array,
+        ): void;
 
         /**
          * Attach a pre-built USB HID passthrough device at the given topology path.

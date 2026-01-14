@@ -1220,18 +1220,27 @@ export class I8042Controller implements PortIoHandler {
     }
 
     let cur = prev;
-    const applyBit = (bit: number): void => {
-      if ((delta & bit) === 0) return;
-      if ((next & bit) !== 0) cur |= bit;
-      else cur &= ~bit;
-      this.#mouse.setButtons(cur, true);
-    };
     // Deterministic ordering matching the Rust bridge: left, right, middle, side, extra.
-    applyBit(0x01);
-    applyBit(0x02);
-    applyBit(0x04);
-    applyBit(0x08);
-    applyBit(0x10);
+    if (delta & 0x01) {
+      cur = (cur & ~0x01) | (next & 0x01);
+      this.#mouse.setButtons(cur, true);
+    }
+    if (delta & 0x02) {
+      cur = (cur & ~0x02) | (next & 0x02);
+      this.#mouse.setButtons(cur, true);
+    }
+    if (delta & 0x04) {
+      cur = (cur & ~0x04) | (next & 0x04);
+      this.#mouse.setButtons(cur, true);
+    }
+    if (delta & 0x08) {
+      cur = (cur & ~0x08) | (next & 0x08);
+      this.#mouse.setButtons(cur, true);
+    }
+    if (delta & 0x10) {
+      cur = (cur & ~0x10) | (next & 0x10);
+      this.#mouse.setButtons(cur, true);
+    }
 
     this.#pumpDeviceQueues();
     this.#syncStatusAndIrq();

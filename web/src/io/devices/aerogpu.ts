@@ -510,6 +510,10 @@ export class AeroGpuPciDevice implements PciDevice, TickableDevice {
     }
     if (source === null) return null;
 
+    // `source` is assigned in both the VRAM and RAM branches above; keep this defensive so the
+    // return type stays exact even as the cursor validation logic evolves.
+    if (source === null) return null;
+
     const key = `${fbGpa64.toString(16)}:${pitchBytes}:${width}x${height}:${this.#cursorFormat >>> 0}`;
     return { width, height, pitchBytes, rowBytes, format: this.#cursorFormat >>> 0, baseOffset, source, key };
   }
