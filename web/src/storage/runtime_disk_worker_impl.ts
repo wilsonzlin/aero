@@ -263,8 +263,17 @@ function opfsRemoteRangeDiskMetadataStore(metaFileName: string): RemoteRangeDisk
     async write(_cacheId: string, meta: any) {
       const handle = await opfsGetDiskFileHandle(metaFileName, { create: true });
       const writable = await handle.createWritable({ keepExistingData: false });
-      await writable.write(JSON.stringify(meta, null, 2));
-      await writable.close();
+      try {
+        await writable.write(JSON.stringify(meta, null, 2));
+        await writable.close();
+      } catch (err) {
+        try {
+          await writable.abort(err);
+        } catch {
+          // ignore abort failures
+        }
+        throw err;
+      }
     },
     async delete(_cacheId: string) {
       await opfsDeleteDisk(metaFileName);
@@ -299,8 +308,17 @@ async function readCacheBinding(fileName: string): Promise<RemoteCacheBinding | 
 async function writeCacheBinding(fileName: string, binding: RemoteCacheBinding): Promise<void> {
   const handle = await opfsGetDiskFileHandle(fileName, { create: true });
   const writable = await handle.createWritable({ keepExistingData: false });
-  await writable.write(JSON.stringify(binding, null, 2));
-  await writable.close();
+  try {
+    await writable.write(JSON.stringify(binding, null, 2));
+    await writable.close();
+  } catch (err) {
+    try {
+      await writable.abort(err);
+    } catch {
+      // ignore abort failures
+    }
+    throw err;
+  }
 }
 
 async function ensureRemoteCacheBinding(expected: RemoteCacheBinding["base"], cacheFileName: string): Promise<void> {
