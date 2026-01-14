@@ -578,14 +578,16 @@ mod tests {
             ("ine", OPCODE_INE),
             ("ult", OPCODE_ULT),
             ("uge", OPCODE_UGE),
+            ("ftoi", OPCODE_FTOI),
+            ("ftou", OPCODE_FTOU),
+            ("itof", OPCODE_ITOF),
+            ("utof", OPCODE_UTOF),
         ];
 
         let mut seen = std::collections::BTreeMap::<u32, &'static str>::new();
         for &(name, opcode) in opcodes {
             if let Some(prev) = seen.insert(opcode, name) {
-                panic!(
-                    "opcode constant collision: {prev} and {name} both map to 0x{opcode:04x}"
-                );
+                panic!("opcode constant collision: {prev} and {name} both map to 0x{opcode:04x}");
             }
         }
     }
