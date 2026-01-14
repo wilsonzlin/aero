@@ -55,10 +55,10 @@ Steps:
      --test xhci_controller_webusb_ep0 --test xhci_doorbell0 --test xhci_usbcmd_run_gates_transfers --test xhci_webusb_passthrough
      (or: --usb-all to run the full aero-usb test suite)
   3. (optional: --machine) cargo test -p aero-machine --lib --locked --test machine_i8042_snapshot_pending_bytes --test machine_virtio_input
-     --test machine_uhci --test uhci_snapshot --test machine_uhci_snapshot_roundtrip --test uhci_usb_topology_api --test machine_usb_attach_at_path
-     --test machine_ehci --test machine_usb2_companion_routing --test machine_uhci_synthetic_usb_hid
-     --test machine_uhci_synthetic_hid --test machine_uhci_synthetic_usb_hid_mouse_buttons --test machine_uhci_synthetic_usb_hid_gamepad
-     --test machine_uhci_synthetic_usb_hid_reports --test machine_xhci --test machine_xhci_snapshot --test xhci_snapshot --test machine_xhci_usb_attach_at_path
+      --test machine_uhci --test uhci_snapshot --test machine_uhci_snapshot_roundtrip --test uhci_usb_topology_api --test machine_usb_attach_at_path
+      --test machine_ehci --test machine_usb2_companion_routing --test machine_uhci_synthetic_usb_hid
+      --test machine_uhci_synthetic_hid --test machine_uhci_synthetic_usb_hid_mouse_buttons --test machine_uhci_synthetic_usb_hid_gamepad
+      --test machine_uhci_synthetic_usb_hid_reports --test machine_xhci --test machine_xhci_snapshot --test xhci_snapshot --test machine_xhci_usb_attach_at_path --test usb_snapshot_host_state
   4. (optional: --wasm) wasm-pack test --node crates/aero-wasm --test webusb_uhci_bridge --test xhci_webusb_bridge --locked
   5. (optional: --with-wasm) cargo test -p aero-wasm --locked --test machine_input_injection --test machine_input_backends
   6. (unless --rust-only) npm -w web run test:unit -- src/input src/usb/usb_guest_controller.test.ts src/usb/webusb_passthrough_runtime.test.ts src/usb/xhci_webusb_bridge.test.ts src/usb/xhci_webusb_passthrough_runtime.test.ts src/usb/uhci_webusb_root_port_rust_drift.test.ts src/usb/ehci_webusb_root_port_rust_drift.test.ts src/usb/xhci_webusb_root_port_rust_drift.test.ts
@@ -206,6 +206,8 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
             "xhci_snapshot",
             "--test",
             "machine_xhci_usb_attach_at_path",
+            "--test",
+            "usb_snapshot_host_state",
         ]);
         runner.run_step(
             "Rust: cargo test -p aero-machine --lib --locked --test machine_i8042_snapshot_pending_bytes --test machine_virtio_input --test machine_uhci --test uhci_snapshot --test machine_uhci_snapshot_roundtrip --test uhci_usb_topology_api --test machine_usb_attach_at_path --test machine_ehci --test machine_usb2_companion_routing --test machine_uhci_synthetic_usb_hid --test machine_uhci_synthetic_hid --test machine_uhci_synthetic_usb_hid_mouse_buttons --test machine_uhci_synthetic_usb_hid_gamepad --test machine_uhci_synthetic_usb_hid_reports --test machine_xhci --test machine_xhci_snapshot --test xhci_snapshot --test machine_xhci_usb_attach_at_path",
