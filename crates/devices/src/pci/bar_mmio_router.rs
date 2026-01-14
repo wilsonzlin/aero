@@ -632,7 +632,8 @@ mod tests {
         // unmapped rather than saturating the range end to `u64::MAX` (which would incorrectly
         // route almost all high addresses).
         let window_base = 0xFFFF_FFFF_FFFF_0000;
-        let bdf = PciBdf::new(0, 12, 0);
+        // Avoid `00:0c.0`, which is reserved by the historical Bochs/QEMU VGA stub contract.
+        let bdf = PciBdf::new(0, 14, 0);
 
         let mut bus = PciBus::new();
         let mut cfg = PciConfigSpace::new(0x1234, 0x5678);

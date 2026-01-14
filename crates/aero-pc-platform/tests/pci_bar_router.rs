@@ -95,7 +95,8 @@ fn pci_bar_router_routes_mmio_and_tracks_bar_reprogramming() {
 
     // Pick a BDF that isn't used by the built-in platform devices (00:02.0 AHCI, 00:04.0 HDA,
     // 00:05.0 E1000, etc.) to avoid collisions if additional defaults are enabled.
-    let bdf = PciBdf::new(0, 12, 0);
+    // Avoid `00:0c.0`, which is reserved by the historical Bochs/QEMU VGA stub contract.
+    let bdf = PciBdf::new(0, 14, 0);
 
     // Add a PCI config-space function with a single 4KiB MMIO BAR0.
     let mut cfg = PciConfigSpace::new(0x1234, 0x5678);
