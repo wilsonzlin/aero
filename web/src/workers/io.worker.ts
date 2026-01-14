@@ -2900,7 +2900,7 @@ let machineHostOnlyEventLogged = false;
 function maybeAnnounceMachineHostOnlyMode(): void {
   if (!machineHostOnlyMode) return;
   const message =
-    "vmRuntime=machine; IO worker running in machine host-only mode (skipping boot disk open; disks owned by CPU worker)";
+    "vmRuntime=machine; IO worker running in machine host-only mode (skipping guest device models + ioIpc server; disks owned by CPU worker)";
   if (!machineHostOnlyConsoleLogged) {
     machineHostOnlyConsoleLogged = true;
     console.info(`[io.worker] ${message}`);
