@@ -3375,6 +3375,176 @@ bool TestCaptureStateBlockUsesEffectiveViewportFromRenderTarget() {
   return true;
 }
 
+bool TestCaptureStateBlockUsesEffectiveScissorRectFromRenderTarget() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnCreateStateBlock != nullptr, "pfnCreateStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnCaptureStateBlock != nullptr, "pfnCaptureStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnApplyStateBlock != nullptr, "pfnApplyStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDeleteStateBlock != nullptr, "pfnDeleteStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetRenderTarget != nullptr, "pfnSetRenderTarget is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetRenderState != nullptr, "pfnSetRenderState is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetScissorRect != nullptr, "pfnSetScissorRect is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // Create a pixel state block so it includes scissor state. Capture after binding
+  // an RT and enabling scissor without ever calling SetScissorRect: the driver
+  // should fall back to a viewport/RT-sized scissor rect rather than leaving it
+  // unset.
+  D3D9DDI_HSTATEBLOCK hSb{};
+  // D3DSBT_PIXELSTATE = 2 (matches d3d9types.h).
+  HRESULT hr = cleanup.device_funcs.pfnCreateStateBlock(cleanup.hDevice, /*type_u32=*/2u, &hSb);
+  if (!Check(hr == S_OK, "CreateStateBlock(PIXELSTATE)")) {
+    return false;
+  }
+  if (!Check(hSb.pDrvPrivate != nullptr, "CreateStateBlock returned handle")) {
+    return false;
+  }
+
+  // Bind a render-target surface with a known size.
+  constexpr uint32_t rt_w = 640u;
+  constexpr uint32_t rt_h = 480u;
+  D3D9DDIARG_CREATERESOURCE create_rt{};
+  create_rt.type = 1u;    // D3DRTYPE_SURFACE
+  create_rt.format = 22u; // D3DFMT_X8R8G8B8
+  create_rt.width = rt_w;
+  create_rt.height = rt_h;
+  create_rt.depth = 1;
+  create_rt.mip_levels = 1;
+  create_rt.usage = 0x00000001u; // D3DUSAGE_RENDERTARGET
+  create_rt.pool = 0;
+  create_rt.size = 0;
+  create_rt.hResource.pDrvPrivate = nullptr;
+  create_rt.pSharedHandle = nullptr;
+  create_rt.pPrivateDriverData = nullptr;
+  create_rt.PrivateDriverDataSize = 0;
+  create_rt.wddm_hAllocation = 0;
+
+  hr = cleanup.device_funcs.pfnCreateResource(cleanup.hDevice, &create_rt);
+  if (!Check(hr == S_OK, "CreateResource(render target surface)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+  if (!Check(create_rt.hResource.pDrvPrivate != nullptr, "CreateResource returned RT handle")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+  cleanup.resources.push_back(create_rt.hResource);
+
+  hr = cleanup.device_funcs.pfnSetRenderTarget(cleanup.hDevice, /*slot=*/0, create_rt.hResource);
+  if (!Check(hr == S_OK, "SetRenderTarget(RT0)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  // Enable scissor via render state without calling SetScissorRect. The UMD should
+  // fix up the unset rect to a viewport/RT-sized rect.
+  constexpr uint32_t kD3dRsScissorTestEnable = 174u; // D3DRS_SCISSORTESTENABLE
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsScissorTestEnable, 1u);
+  if (!Check(hr == S_OK, "SetRenderState(SCISSORTESTENABLE=1)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  // Capture scissor state into the block.
+  hr = cleanup.device_funcs.pfnCaptureStateBlock(cleanup.hDevice, hSb);
+  if (!Check(hr == S_OK, "CaptureStateBlock(scissor)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  // Change scissor state to a different user-set rect so ApplyStateBlock must
+  // restore the captured RT-sized (non-user-set) rect.
+  RECT other{};
+  other.left = 10;
+  other.top = 20;
+  other.right = 110;
+  other.bottom = 220;
+  hr = cleanup.device_funcs.pfnSetScissorRect(cleanup.hDevice, &other, TRUE);
+  if (!Check(hr == S_OK, "SetScissorRect(other)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  dev->cmd.reset();
+  hr = cleanup.device_funcs.pfnApplyStateBlock(cleanup.hDevice, hSb);
+  if (!Check(hr == S_OK, "ApplyStateBlock(CaptureStateBlock scissor)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->scissor_enabled == TRUE, "ApplyStateBlock restores scissor enabled")) {
+      cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+      return false;
+    }
+    if (!Check(dev->render_states[kD3dRsScissorTestEnable] == 1u, "ApplyStateBlock restores render state 174")) {
+      cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+      return false;
+    }
+    if (!Check(!dev->scissor_rect_user_set, "ApplyStateBlock restores scissor_rect_user_set=false")) {
+      cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+      return false;
+    }
+    if (!Check(dev->scissor_rect.left == 0 &&
+                   dev->scissor_rect.top == 0 &&
+                   dev->scissor_rect.right == static_cast<LONG>(rt_w) &&
+                   dev->scissor_rect.bottom == static_cast<LONG>(rt_h),
+               "ApplyStateBlock restores effective RT-sized scissor rect")) {
+      cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+      return false;
+    }
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(ApplyStateBlock CaptureStateBlock scissor)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  bool saw_scissor = false;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_SCISSOR)) {
+    if (hdr->size_bytes < sizeof(aerogpu_cmd_set_scissor)) {
+      continue;
+    }
+    const auto* sc = reinterpret_cast<const aerogpu_cmd_set_scissor*>(hdr);
+    if (sc->x == 0 && sc->y == 0 && sc->width == static_cast<int32_t>(rt_w) && sc->height == static_cast<int32_t>(rt_h)) {
+      saw_scissor = true;
+      break;
+    }
+  }
+  if (!Check(saw_scissor, "ApplyStateBlock emits SET_SCISSOR for effective RT-sized rect")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+  return true;
+}
+
 bool TestApplyStateBlockScissorRenderStateEmitsSetScissor() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -22961,6 +23131,9 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestCaptureStateBlockUsesEffectiveViewportFromRenderTarget()) {
+    return 1;
+  }
+  if (!aerogpu::TestCaptureStateBlockUsesEffectiveScissorRectFromRenderTarget()) {
     return 1;
   }
   if (!aerogpu::TestApplyStateBlockScissorRenderStateEmitsSetScissor()) {
