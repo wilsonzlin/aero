@@ -148,11 +148,7 @@ fn build_ps_solid_rgba_dxbc(rgba: [f32; 4]) -> Vec<u8> {
         shdr.extend_from_slice(&t.to_le_bytes());
     }
 
-    build_dxbc_container(&[
-        (*b"ISGN", isgn),
-        (*b"OSGN", osgn),
-        (*b"SHDR", shdr),
-    ])
+    build_dxbc_container(&[(*b"ISGN", isgn), (*b"OSGN", osgn), (*b"SHDR", shdr)])
 }
 
 fn fixture_path() -> PathBuf {
@@ -205,8 +201,8 @@ fn make_cmd_stream() -> Vec<u8> {
     // Fullscreen triangle positions (float3).
     let vertices: [f32; 9] = [
         -1.0, -1.0, 0.0, // v0
-        -1.0, 3.0, 0.0,  // v1
-        3.0, -1.0, 0.0,  // v2
+        -1.0, 3.0, 0.0, // v1
+        3.0, -1.0, 0.0, // v2
     ];
     let mut vb_bytes = Vec::with_capacity(vertices.len() * 4);
     for f in vertices {

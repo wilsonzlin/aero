@@ -237,7 +237,11 @@ fn aerogpu_vbe_lfb_fastpath_honors_panning_and_stride() {
         .expect("legacy base should be >= lfb_base");
     let y_off_eff = delta / pitch;
     let x_bytes = delta % pitch;
-    assert_eq!(x_bytes % 4, 0, "display start X offset must be 4-byte aligned");
+    assert_eq!(
+        x_bytes % 4,
+        0,
+        "display start X offset must be 4-byte aligned"
+    );
     let x_off_eff = x_bytes / 4;
 
     let base_no_y = lfb_base + x_off_eff * 4;
