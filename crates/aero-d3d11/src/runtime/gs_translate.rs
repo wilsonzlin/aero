@@ -9,6 +9,11 @@
 //! - Writes a `DrawIndexedIndirectArgs` struct so the render pass can consume the expanded
 //!   geometry via `draw_indexed_indirect`.
 //!
+//! Note: this module is **not yet wired into the AeroGPU command executor**. The current
+//! `aerogpu_cmd_executor` compute-prepass path still uses placeholder WGSL shaders
+//! (`GEOMETRY_PREPASS_CS_WGSL` / `GEOMETRY_PREPASS_CS_VERTEX_PULLING_WGSL`). This translator is used
+//! by unit tests and exists as scaffolding for eventual real GS DXBC execution.
+//!
 //! The initial implementation is intentionally minimal and only supports the instructions/operands
 //! required by the Win7 GS tests (mov/add + immediate constants + `v#[]` inputs + `emit`/`cut` on
 //! stream 0).
