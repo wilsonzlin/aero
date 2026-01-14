@@ -4,6 +4,8 @@ import type { AeroConfig } from "../config/aero_config";
 import { decodeCommand, encodeEvent, type Command, type Event } from "../ipc/protocol";
 import { InputEventType } from "../input/event_queue";
 import {
+  IO_IPC_NET_RX_QUEUE_KIND,
+  IO_IPC_NET_TX_QUEUE_KIND,
   createSharedMemoryViews,
   ringRegionsForWorker,
   setReadyFlag,
@@ -44,6 +46,8 @@ let role: WorkerRole = "cpu";
 let status: Int32Array | null = null;
 let commandRing: RingBuffer | null = null;
 let eventRing: RingBuffer | null = null;
+let ioIpcSab: SharedArrayBuffer | null = null;
+let guestRamSizeBytes: number | null = null;
 
 let currentConfig: AeroConfig | null = null;
 let currentConfigVersion = 0;
@@ -150,6 +154,7 @@ function serializeError(err: unknown): MachineSnapshotSerializedError {
 }
 
 function getMachineRamSizeBytes(): number {
+  if (guestRamSizeBytes && guestRamSizeBytes > 0) return guestRamSizeBytes >>> 0;
   const mib = currentConfig?.guestMemoryMiB;
   if (typeof mib === "number" && Number.isFinite(mib) && mib > 0) {
     const bytes = mib * 1024 * 1024;
@@ -159,12 +164,61 @@ function getMachineRamSizeBytes(): number {
   return 1 * 1024 * 1024;
 }
 
+function isNetworkingEnabled(config: AeroConfig | null): boolean {
+  // Option C (L2 tunnel) is enabled when proxyUrl is configured.
+  return !!(config?.proxyUrl && config.proxyUrl.trim().length > 0);
+}
+
+function detachMachineNetwork(): void {
+  const m = wasmMachine;
+  if (!m) return;
+  try {
+    const fn =
+      (m as unknown as { detach_network?: unknown }).detach_network ??
+      (m as unknown as { detach_net_rings?: unknown }).detach_net_rings;
+    if (typeof fn === "function") {
+      (fn as () => void).call(m);
+    }
+  } catch {
+    // ignore
+  }
+}
+
+function attachMachineNetwork(): void {
+  const m = wasmMachine;
+  if (!m) return;
+  if (!isNetworkingEnabled(currentConfig)) return;
+  const sab = ioIpcSab;
+  if (!sab) return;
+
+  try {
+    const attachFromSab = (m as unknown as { attach_l2_tunnel_from_io_ipc_sab?: unknown }).attach_l2_tunnel_from_io_ipc_sab;
+    if (typeof attachFromSab === "function") {
+      (attachFromSab as (sab: SharedArrayBuffer) => void).call(m, sab);
+      return;
+    }
+
+    const attachRings =
+      (m as unknown as { attach_l2_tunnel_rings?: unknown }).attach_l2_tunnel_rings ??
+      (m as unknown as { attach_net_rings?: unknown }).attach_net_rings;
+    const openRing = wasmApi?.open_ring_by_kind;
+    if (typeof attachRings === "function" && typeof openRing === "function") {
+      const tx = openRing(sab, IO_IPC_NET_TX_QUEUE_KIND, 0);
+      const rx = openRing(sab, IO_IPC_NET_RX_QUEUE_KIND, 0);
+      (attachRings as (tx: unknown, rx: unknown) => void).call(m, tx, rx);
+    }
+  } catch {
+    // ignore
+  }
+}
+
 function ensureWasmMachine(): { api: WasmApi; machine: InstanceType<WasmApi["Machine"]> } {
   const api = wasmApi;
   if (!api) throw new Error("WASM is not initialized; cannot restore machine snapshot.");
   if (!api.Machine) throw new Error("Machine export unavailable in this WASM build.");
   if (!wasmMachine) {
     wasmMachine = new api.Machine(getMachineRamSizeBytes());
+    attachMachineNetwork();
   }
   return { api, machine: wasmMachine };
 }
@@ -317,16 +371,34 @@ ctx.onmessage = (ev) => {
           return;
         }
 
+        if (!vmSnapshotPaused) {
+          postVmSnapshot({
+            kind: "vm.snapshot.machine.saved",
+            requestId,
+            ok: false,
+            error: serializeError(new Error("VM is not paused; call vm.snapshot.pause before saving.")),
+          } satisfies VmSnapshotMachineSavedMessage);
+          return;
+        }
+
         enqueueSnapshotOp(async () => {
           try {
             const { machine } = ensureWasmMachine();
-            const fn = (machine as unknown as { snapshot_full_to_opfs?: unknown }).snapshot_full_to_opfs;
+            const fn =
+              (machine as unknown as { snapshot_full_to_opfs?: unknown }).snapshot_full_to_opfs ??
+              (machine as unknown as { snapshot_dirty_to_opfs?: unknown }).snapshot_dirty_to_opfs;
             if (typeof fn !== "function") {
               throw new Error("Machine.snapshot_full_to_opfs(path) is unavailable in this WASM build.");
             }
-            await Promise.resolve((fn as (path: string) => unknown).call(machine, path));
+            detachMachineNetwork();
+            try {
+              await Promise.resolve((fn as (path: string) => unknown).call(machine, path));
+            } finally {
+              attachMachineNetwork();
+            }
             postVmSnapshot({ kind: "vm.snapshot.machine.saved", requestId, ok: true } satisfies VmSnapshotMachineSavedMessage);
           } catch (err) {
+            attachMachineNetwork();
             postVmSnapshot({
               kind: "vm.snapshot.machine.saved",
               requestId,
@@ -350,6 +422,16 @@ ctx.onmessage = (ev) => {
           return;
         }
 
+        if (!vmSnapshotPaused) {
+          postVmSnapshot({
+            kind: "vm.snapshot.machine.restored",
+            requestId,
+            ok: false,
+            error: serializeError(new Error("VM is not paused; call vm.snapshot.pause before restoring.")),
+          } satisfies VmSnapshotMachineRestoredMessage);
+          return;
+        }
+
         enqueueSnapshotOp(async () => {
           try {
             const { api, machine } = ensureWasmMachine();
@@ -357,9 +439,15 @@ ctx.onmessage = (ev) => {
             // preserves overlay refs as *OPFS path strings* (relative to `navigator.storage.getDirectory()`).
             //
             // After restoring, re-open those OPFS images and reattach them to the canonical machine.
-            await restoreMachineSnapshotFromOpfsAndReattachDisks({ api, machine, path, logPrefix: "machine_cpu.worker" });
+            detachMachineNetwork();
+            try {
+              await restoreMachineSnapshotFromOpfsAndReattachDisks({ api, machine, path, logPrefix: "machine_cpu.worker" });
+            } finally {
+              attachMachineNetwork();
+            }
             postVmSnapshot({ kind: "vm.snapshot.machine.restored", requestId, ok: true } satisfies VmSnapshotMachineRestoredMessage);
           } catch (err) {
+            attachMachineNetwork();
             postVmSnapshot({
               kind: "vm.snapshot.machine.restored",
               requestId,
@@ -394,9 +482,15 @@ ctx.onmessage = (ev) => {
         // preserves overlay refs as *OPFS path strings* (relative to `navigator.storage.getDirectory()`).
         //
         // After restoring, re-open those OPFS images and reattach them to the canonical machine.
-        await restoreMachineSnapshotFromOpfsAndReattachDisks({ api, machine, path, logPrefix: "machine_cpu.worker" });
+        detachMachineNetwork();
+        try {
+          await restoreMachineSnapshotFromOpfsAndReattachDisks({ api, machine, path, logPrefix: "machine_cpu.worker" });
+        } finally {
+          attachMachineNetwork();
+        }
         postSnapshot({ kind: "machine.snapshot.restored", requestId, ok: true });
       } catch (err) {
+        attachMachineNetwork();
         postSnapshot({ kind: "machine.snapshot.restored", requestId, ok: false, error: serializeError(err) });
       }
     });
@@ -419,14 +513,20 @@ ctx.onmessage = (ev) => {
     enqueueSnapshotOp(async () => {
       try {
         const { api, machine } = ensureWasmMachine();
-        await restoreMachineSnapshotAndReattachDisks({
-          api,
-          machine,
-          bytes: new Uint8Array(bytes),
-          logPrefix: "machine_cpu.worker",
-        });
+        detachMachineNetwork();
+        try {
+          await restoreMachineSnapshotAndReattachDisks({
+            api,
+            machine,
+            bytes: new Uint8Array(bytes),
+            logPrefix: "machine_cpu.worker",
+          });
+        } finally {
+          attachMachineNetwork();
+        }
         postSnapshot({ kind: "machine.snapshot.restored", requestId, ok: true });
       } catch (err) {
+        attachMachineNetwork();
         postSnapshot({ kind: "machine.snapshot.restored", requestId, ok: false, error: serializeError(err) });
       }
     });
@@ -443,6 +543,11 @@ ctx.onmessage = (ev) => {
     const update = msg as ConfigUpdateMessage;
     currentConfig = update.config;
     currentConfigVersion = update.version;
+    if (isNetworkingEnabled(currentConfig)) {
+      attachMachineNetwork();
+    } else {
+      detachMachineNetwork();
+    }
     post({ kind: "config.ack", version: currentConfigVersion } satisfies ConfigAckMessage);
     return;
   }
@@ -472,6 +577,9 @@ async function initAndRun(init: WorkerInitMessage): Promise<void> {
 
     const views = createSharedMemoryViews(segments);
     status = views.status;
+    guestRamSizeBytes = views.guestLayout.guest_size;
+    ioIpcSab = segments.ioIpc;
+    attachMachineNetwork();
 
     const regions = ringRegionsForWorker(role);
     commandRing = new RingBuffer(segments.control, regions.command.byteOffset);
