@@ -82,15 +82,16 @@ This is the **coordination hub**. You wire together the work from all other work
     messages are dropped if a guest enables MSI-X; INTx-only (or polling) remains the safe baseline.
 - **NVMe MSI/MSI-X is implemented (but Win7 support is opt-in/experimental)**:
   `aero-devices-nvme` exposes MSI + MSI-X capabilities (currently single-vector MSI-X) and delivers
-  message-signaled interrupts when enabled (see `crates/aero-devices-nvme/README.md`, plus
-  `crates/aero-devices-nvme/tests/interrupts.rs`, plus `pc_platform_nvme` tests).
+  message-signaled interrupts when enabled (see `crates/aero-devices-nvme/README.md`,
+  `crates/aero-devices-nvme/tests/interrupts.rs`, and `pc_platform_nvme` tests).
   Note: Windows 7 has no in-box NVMe driver.
 - **MSI/MSI-X delivery targets LAPIC(s) (APIC-mode only)**:
   `PlatformInterrupts::trigger_msi` decodes the MSI address/data and injects a fixed interrupt into
-  the selected LAPIC(s) (see `crates/platform/src/interrupts/msi.rs` and
-  `crates/platform-compat/tests/smp_msi_routing.rs`). In **PIC mode** the platform polls the 8259
-  PIC instead of LAPICs, so MSIs are effectively dropped/ignored until the guest switches to APIC
-  mode. Also ensure the guest leaves the LAPIC software-enabled (SVR[8]=1).
+  the selected LAPIC(s) (destination ID `0xFF` broadcasts to all LAPICs; see
+  `crates/platform/src/interrupts/msi.rs` and `crates/platform-compat/tests/smp_msi_routing.rs`).
+  In **PIC mode** the platform polls the 8259 PIC instead of LAPICs, so MSIs are effectively
+  dropped/ignored until the guest switches to APIC mode. Also ensure the guest leaves the LAPIC
+  software-enabled (SVR[8]=1).
 ---
 
 ## Key Crates & Directories
