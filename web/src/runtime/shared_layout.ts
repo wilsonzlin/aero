@@ -455,6 +455,9 @@ export function computeGuestRamLayout(desiredGuestBytes: number): GuestRamLayout
  *
  * Returns `null` for ECAM/PCI holes or out-of-range addresses.
  *
+ * Implementation lives in `web/src/arch/guest_ram_translate.ts`; this wrapper adapts it to the
+ * `GuestRamLayout` shape used throughout the runtime.
+ *
  * This mirrors the PC/Q35 address translation in `crates/aero-wasm/src/guest_phys.rs`.
  */
 export function guestPaddrToRamOffset(layout: GuestRamLayout, paddr: number): number | null {
