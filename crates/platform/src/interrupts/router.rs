@@ -754,10 +754,6 @@ impl PlatformInterrupts {
         }
     }
 
-    pub(crate) fn lapics_iter(&self) -> impl Iterator<Item = &LocalApic> {
-        self.lapics.iter().map(|lapic| lapic.as_ref())
-    }
-
     /// Take and clear the pending INIT-reset flag for `apic_id`.
     ///
     /// The platform interrupt fabric marks this flag when it delivers an INIT IPI with
