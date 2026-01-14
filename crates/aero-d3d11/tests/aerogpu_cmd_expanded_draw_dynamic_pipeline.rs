@@ -3,8 +3,8 @@ mod common;
 use aero_d3d11::runtime::aerogpu_cmd_executor::AerogpuD3d11Executor;
 use aero_gpu::guest_memory::VecGuestMemory;
 use aero_protocol::aerogpu::aerogpu_cmd::{
-    AerogpuIndexFormat, AerogpuPrimitiveTopology, AerogpuShaderStage, AEROGPU_CLEAR_COLOR,
-    AEROGPU_RESOURCE_USAGE_INDEX_BUFFER, AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
+    AerogpuPrimitiveTopology, AerogpuShaderStage, AEROGPU_CLEAR_COLOR,
+    AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
 };
 use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
 use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
@@ -31,7 +31,6 @@ fn aerogpu_cmd_expanded_draw_dynamic_pipeline() {
         }
 
         const RT: u32 = 1;
-        const DUMMY_IB: u32 = 2;
         const VS: u32 = 3;
         const PS: u32 = 4;
 
@@ -51,22 +50,19 @@ fn aerogpu_cmd_expanded_draw_dynamic_pipeline() {
         writer.set_render_targets(&[RT], 0);
         writer.clear(AEROGPU_CLEAR_COLOR, [0.0, 0.0, 0.0, 1.0], 1.0, 0);
 
-        // Bind a dummy index buffer so `DRAW_INDEXED` is accepted (the expanded path generates and
-        // uses its own index buffer internally).
-        writer.create_buffer(DUMMY_IB, AEROGPU_RESOURCE_USAGE_INDEX_BUFFER, 16, 0, 0);
-        writer.set_index_buffer(DUMMY_IB, AerogpuIndexFormat::Uint16, 0);
-
         writer.create_shader_dxbc(VS, AerogpuShaderStage::Vertex, VS_PASSTHROUGH);
         writer.create_shader_dxbc(PS, AerogpuShaderStage::Pixel, PS_PASSTHROUGH);
 
-        // Force the compute-prepass expanded-vertex path by binding a dummy GS handle.
-        writer.bind_shaders_with_gs(VS, 0xCAFE_BABE, PS, 0);
-        // Use a point-list IA topology; the prepass expands each primitive into a triangle list.
-        writer.set_primitive_topology(AerogpuPrimitiveTopology::PointList);
+        // Force the compute-prepass expanded-vertex path by using a topology that requires
+        // GS/HS/DS emulation (patchlists).
+        //
+        // Note: this test is intended to exercise the placeholder expansion path. Avoid indexed
+        // draws here because the placeholder prepass binds index-pulling resources even when they
+        // are unused, which can exceed `max_storage_buffers_per_shader_stage` on some adapters.
+        writer.bind_shaders(VS, PS, 0);
+        writer.set_primitive_topology(AerogpuPrimitiveTopology::PatchList1);
 
-        // The executor replaces this with `draw_indexed_indirect` using the generated indirect args
-        // and index buffer.
-        writer.draw_indexed(1, 1, 0, 0, 0);
+        writer.draw(1, 1, 0, 0);
 
         let stream = writer.finish();
 
