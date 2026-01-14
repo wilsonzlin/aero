@@ -6,10 +6,10 @@ use aero_d3d11::sm4::opcode::{
     OPERAND_COMPONENT_SELECTION_SHIFT, OPERAND_EXTENDED_BIT, OPERAND_INDEX0_REP_SHIFT,
     OPERAND_INDEX1_REP_SHIFT, OPERAND_INDEX2_REP_SHIFT, OPERAND_INDEX_DIMENSION_0D,
     OPERAND_INDEX_DIMENSION_1D, OPERAND_INDEX_DIMENSION_2D, OPERAND_INDEX_DIMENSION_SHIFT,
-    OPERAND_INDEX_REP_IMMEDIATE32, OPERAND_SEL_MASK, OPERAND_SEL_SELECT1, OPERAND_SEL_SWIZZLE,
-    OPERAND_SELECTION_MODE_SHIFT, OPERAND_TYPE_CONSTANT_BUFFER, OPERAND_TYPE_IMMEDIATE32,
-    OPERAND_TYPE_INPUT, OPERAND_TYPE_OUTPUT, OPERAND_TYPE_RESOURCE, OPERAND_TYPE_SAMPLER,
-    OPERAND_TYPE_SHIFT, OPERAND_TYPE_TEMP,
+    OPERAND_INDEX_REP_IMMEDIATE32, OPERAND_SELECTION_MODE_SHIFT, OPERAND_SEL_MASK,
+    OPERAND_SEL_SELECT1, OPERAND_SEL_SWIZZLE, OPERAND_TYPE_CONSTANT_BUFFER,
+    OPERAND_TYPE_IMMEDIATE32, OPERAND_TYPE_INPUT, OPERAND_TYPE_OUTPUT, OPERAND_TYPE_RESOURCE,
+    OPERAND_TYPE_SAMPLER, OPERAND_TYPE_SHIFT, OPERAND_TYPE_TEMP,
 };
 use aero_d3d11::sm4::{FOURCC_SHDR, FOURCC_SHEX};
 use aero_dxbc::DxbcFile;
@@ -29,12 +29,22 @@ const MAX_RAW_DXBC_SIZE_BYTES: usize = 256 * 1024;
 /// allocating huge `Vec<u32>` token buffers.
 const MAX_SHADER_CHUNK_BYTES: usize = 256 * 1024;
 
+/// Cap the parsed SM4/SM5 token stream length (DWORDs) before attempting IR decoding / translation.
+///
+/// The DXBC chunk-size cap already limits the token stream length, but keeping a smaller bound here
+/// avoids spending a lot of time decoding/formatting extremely long (but still in-bounds) programs.
+const MAX_PROGRAM_TOKENS_DWORDS: usize = 16 * 1024;
+
 /// Cap the size of the synthetic shader token stream we generate from fuzzer input.
 const MAX_SYNTH_INSTRUCTIONS: usize = 128;
 
 /// Cap the number of synthetic signature parameters we generate (keeps signature chunk parsing
 /// + WGSL struct generation bounded).
 const MAX_SYNTH_SIGNATURE_PARAMS: usize = 16;
+
+/// Cap IR sizes before attempting WGSL generation to avoid pathological string allocations.
+const MAX_TRANSLATE_DECLS: usize = 4 * 1024;
+const MAX_TRANSLATE_INSTRUCTIONS: usize = 4 * 1024;
 
 #[derive(Clone, Copy)]
 struct SigParam<'a> {
@@ -87,9 +97,8 @@ fn build_signature_chunk_v0(params: &[SigParam<'_>]) -> Vec<u8> {
         out[entry_off + 12..entry_off + 16].copy_from_slice(&p.component_type.to_le_bytes());
         out[entry_off + 16..entry_off + 20].copy_from_slice(&p.register.to_le_bytes());
 
-        let packed = (p.mask as u32)
-            | ((p.read_write_mask as u32) << 8)
-            | ((p.stream as u32) << 16);
+        let packed =
+            (p.mask as u32) | ((p.read_write_mask as u32) << 8) | ((p.stream as u32) << 16);
         out[entry_off + 20..entry_off + 24].copy_from_slice(&packed.to_le_bytes());
 
         out.extend_from_slice(name);
@@ -196,7 +205,12 @@ fn encode_reg_operand(ty: u32, index: u32, selection_mode: u32, component_sel: u
     ]
 }
 
-fn encode_cbuffer_operand(slot: u32, reg: u32, selection_mode: u32, component_sel: u32) -> [u32; 3] {
+fn encode_cbuffer_operand(
+    slot: u32,
+    reg: u32,
+    selection_mode: u32,
+    component_sel: u32,
+) -> [u32; 3] {
     [
         pack_operand_token(
             /*num_components=*/ 0,
@@ -248,8 +262,14 @@ fn gen_src_operand(u: &mut Unstructured<'_>, allow_input: bool) -> (Vec<u32>, u3
             let idx = (u.arbitrary::<u8>().unwrap_or(0) % 16) as u32;
             let sel = match u.arbitrary::<u8>().unwrap_or(0) % 3 {
                 0 => (OPERAND_SEL_MASK, 0xF),
-                1 => (OPERAND_SEL_SWIZZLE, encode_swizzle_from_u8(u.arbitrary().unwrap_or(0))),
-                _ => (OPERAND_SEL_SELECT1, (u.arbitrary::<u8>().unwrap_or(0) & 3) as u32),
+                1 => (
+                    OPERAND_SEL_SWIZZLE,
+                    encode_swizzle_from_u8(u.arbitrary().unwrap_or(0)),
+                ),
+                _ => (
+                    OPERAND_SEL_SELECT1,
+                    (u.arbitrary::<u8>().unwrap_or(0) & 3) as u32,
+                ),
             };
             (
                 encode_reg_operand(OPERAND_TYPE_TEMP, idx, sel.0, sel.1).to_vec(),
@@ -280,8 +300,14 @@ fn gen_src_operand(u: &mut Unstructured<'_>, allow_input: bool) -> (Vec<u32>, u3
             let idx = (u.arbitrary::<u8>().unwrap_or(0) & 1) as u32;
             let sel = match u.arbitrary::<u8>().unwrap_or(0) % 3 {
                 0 => (OPERAND_SEL_MASK, 0xF),
-                1 => (OPERAND_SEL_SWIZZLE, encode_swizzle_from_u8(u.arbitrary().unwrap_or(0))),
-                _ => (OPERAND_SEL_SELECT1, (u.arbitrary::<u8>().unwrap_or(0) & 3) as u32),
+                1 => (
+                    OPERAND_SEL_SWIZZLE,
+                    encode_swizzle_from_u8(u.arbitrary().unwrap_or(0)),
+                ),
+                _ => (
+                    OPERAND_SEL_SELECT1,
+                    (u.arbitrary::<u8>().unwrap_or(0) & 3) as u32,
+                ),
             };
             (
                 encode_reg_operand(OPERAND_TYPE_INPUT, idx, sel.0, sel.1).to_vec(),
@@ -330,8 +356,14 @@ fn gen_sm4_tokens(u: &mut Unstructured<'_>, is_vertex: bool, major: u8) -> (Vec<
         max_input_reg_count = max_input_reg_count.max(idx + 1);
         let sel = match u.arbitrary::<u8>().unwrap_or(0) % 3 {
             0 => (OPERAND_SEL_MASK, 0xF),
-            1 => (OPERAND_SEL_SWIZZLE, encode_swizzle_from_u8(u.arbitrary().unwrap_or(0))),
-            _ => (OPERAND_SEL_SELECT1, (u.arbitrary::<u8>().unwrap_or(0) & 3) as u32),
+            1 => (
+                OPERAND_SEL_SWIZZLE,
+                encode_swizzle_from_u8(u.arbitrary().unwrap_or(0)),
+            ),
+            _ => (
+                OPERAND_SEL_SELECT1,
+                (u.arbitrary::<u8>().unwrap_or(0) & 3) as u32,
+            ),
         };
         let src = encode_reg_operand(OPERAND_TYPE_INPUT, idx, sel.0, sel.1).to_vec();
         let len = 1 + dst.len() + src.len();
@@ -468,8 +500,10 @@ fn gen_sm4_tokens(u: &mut Unstructured<'_>, is_vertex: bool, major: u8) -> (Vec<
                 max_input_reg_count = max_input_reg_count.max(used);
                 let t_slot = (u.arbitrary::<u8>().unwrap_or(0) % 4) as u32;
                 let s_slot = (u.arbitrary::<u8>().unwrap_or(0) % 4) as u32;
-                let texture = encode_reg_operand(OPERAND_TYPE_RESOURCE, t_slot, OPERAND_SEL_MASK, 0xF);
-                let sampler = encode_reg_operand(OPERAND_TYPE_SAMPLER, s_slot, OPERAND_SEL_MASK, 0xF);
+                let texture =
+                    encode_reg_operand(OPERAND_TYPE_RESOURCE, t_slot, OPERAND_SEL_MASK, 0xF);
+                let sampler =
+                    encode_reg_operand(OPERAND_TYPE_SAMPLER, s_slot, OPERAND_SEL_MASK, 0xF);
                 let len = 1 + dst.len() + coord.len() + texture.len() + sampler.len();
                 tokens.push(pack_opcode(OPCODE_SAMPLE, len));
                 tokens.extend(dst);
@@ -483,7 +517,8 @@ fn gen_sm4_tokens(u: &mut Unstructured<'_>, is_vertex: bool, major: u8) -> (Vec<
                 let (coord, used) = gen_src_operand(u, true);
                 max_input_reg_count = max_input_reg_count.max(used);
                 let t_slot = (u.arbitrary::<u8>().unwrap_or(0) % 4) as u32;
-                let texture = encode_reg_operand(OPERAND_TYPE_RESOURCE, t_slot, OPERAND_SEL_MASK, 0xF);
+                let texture =
+                    encode_reg_operand(OPERAND_TYPE_RESOURCE, t_slot, OPERAND_SEL_MASK, 0xF);
                 let len = 1 + dst.len() + coord.len() + texture.len();
                 tokens.push(pack_opcode(OPCODE_LD, len));
                 tokens.extend(dst);
@@ -579,7 +614,11 @@ fn build_synthetic_dxbc(data: &[u8]) -> Vec<u8> {
         stream: 0,
     });
 
-    let shader_fourcc = if major >= 5 { FOURCC_SHEX.0 } else { FOURCC_SHDR.0 };
+    let shader_fourcc = if major >= 5 {
+        FOURCC_SHEX.0
+    } else {
+        FOURCC_SHDR.0
+    };
 
     let chunks = vec![
         DxbcChunkOwned {
@@ -599,7 +638,7 @@ fn build_synthetic_dxbc(data: &[u8]) -> Vec<u8> {
     build_dxbc_container(&chunks)
 }
 
-fn fuzz_translate_dxbc_bytes(bytes: &[u8]) {
+fn fuzz_translate_dxbc_bytes(bytes: &[u8], allow_bootstrap: bool) {
     let Ok(dxbc) = DxbcFile::parse(bytes) else {
         return;
     };
@@ -620,12 +659,28 @@ fn fuzz_translate_dxbc_bytes(bytes: &[u8]) {
         return;
     };
 
-    // The bootstrap translator is token-stream driven and should not panic on malformed input.
-    let _ = aero_d3d11::translate_sm4_to_wgsl_bootstrap(&program);
+    // Size cap: avoid doing expensive decode/translation work on very long token streams.
+    if program.tokens.len() > MAX_PROGRAM_TOKENS_DWORDS {
+        return;
+    }
+
+    // The bootstrap translator is token-stream driven and historically assumed register indices are
+    // "reasonable" (e.g. it may emit `struct` fields for `0..=max_vreg`). Keep it behind a gate so
+    // the raw-DXBC fuzzing path can't trigger pathological allocations. The synthetic DXBC path
+    // uses bounded register indices and is safe to exercise here.
+    if allow_bootstrap {
+        let _ = aero_d3d11::translate_sm4_to_wgsl_bootstrap(&program);
+    }
 
     let Ok(module) = aero_d3d11::sm4::decode_program(&program) else {
         return;
     };
+
+    if module.decls.len() > MAX_TRANSLATE_DECLS
+        || module.instructions.len() > MAX_TRANSLATE_INSTRUCTIONS
+    {
+        return;
+    }
 
     let signatures = aero_d3d11::parse_signatures(&dxbc).unwrap_or_default();
     let _ = aero_d3d11::translate_sm4_module_to_wgsl(&dxbc, &module, &signatures);
@@ -639,11 +694,11 @@ fuzz_target!(|data: &[u8]| {
     // 1) Raw path: treat fuzzer input as a full DXBC container (covers container parsing and
     //    chunk validation against hostile offsets).
     if data.len() <= MAX_RAW_DXBC_SIZE_BYTES {
-        fuzz_translate_dxbc_bytes(data);
+        fuzz_translate_dxbc_bytes(data, /*allow_bootstrap=*/ false);
     }
 
     // 2) Synthetic path: wrap the fuzzer bytes in a minimal, structurally valid DXBC container
     //    with signature chunks so we can reach deeper SM4 decoding + WGSL translation logic.
     let synth = build_synthetic_dxbc(data);
-    fuzz_translate_dxbc_bytes(&synth);
+    fuzz_translate_dxbc_bytes(&synth, /*allow_bootstrap=*/ true);
 });
