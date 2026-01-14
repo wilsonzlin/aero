@@ -570,6 +570,65 @@ fn decodes_and_translates_minimal_compute_shader_without_signatures() {
 }
 
 #[test]
+fn decodes_and_translates_half_float_conversions_in_compute_shader_without_signatures() {
+    // Minimal compute shader token stream:
+    // - dcl_thread_group 1,1,1
+    // - mov r0, l(1,2,3,4)
+    // - f32tof16 r1, r0
+    // - f16tof32 r2, r1
+    // - ret
+    let mut body = vec![
+        opcode_token(OPCODE_DCL_THREAD_GROUP, 4),
+        1,
+        1,
+        1,
+    ];
+
+    // mov r0, l(1, 2, 3, 4)
+    body.push(opcode_token(OPCODE_MOV, (1 + 2 + 1 + 4) as u32));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 0, WriteMask::XYZW));
+    body.extend_from_slice(&imm32_vec4([
+        1.0f32.to_bits(),
+        2.0f32.to_bits(),
+        3.0f32.to_bits(),
+        4.0f32.to_bits(),
+    ]));
+
+    // f32tof16 r1, r0
+    body.push(opcode_token(OPCODE_F32TOF16, 5));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 1, WriteMask::XYZW));
+    body.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, &[0], Swizzle::XYZW));
+
+    // f16tof32 r2, r1
+    body.push(opcode_token(OPCODE_F16TOF32, 5));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 2, WriteMask::XYZW));
+    body.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, &[1], Swizzle::XYZW));
+
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    // Stage type 5 = compute shader.
+    let tokens = make_sm5_program_tokens(5, &body);
+    let dxbc_bytes = build_dxbc(&[(FOURCC_SHEX, tokens_to_bytes(&tokens))]);
+
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
+    assert_eq!(program.stage, aero_d3d11::ShaderStage::Compute);
+
+    // Compute shaders frequently omit ISGN/OSGN signature chunks; decoding should still succeed.
+    let module = decode_program(&program).expect("SM4 decode");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+    assert!(signatures.isgn.is_none());
+    assert!(signatures.osgn.is_none());
+
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert!(translated.wgsl.contains("@compute"));
+    assert!(translated.wgsl.contains("pack2x16float"));
+    assert!(translated.wgsl.contains("unpack2x16float"));
+    assert!(translated.wgsl.contains("& 0xffffu"));
+    assert_wgsl_validates(&translated.wgsl);
+}
+
+#[test]
 fn decodes_and_translates_compute_shader_with_srv_and_uav_buffers() {
     // Minimal compute shader token stream:
     // - dcl_thread_group 8,1,1
