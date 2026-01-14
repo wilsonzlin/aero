@@ -125,13 +125,16 @@ enum aerogpu_cmd_opcode {
   AEROGPU_CMD_DESTROY_SAMPLER = 0x521,
   AEROGPU_CMD_SET_SAMPLERS = 0x522,
   AEROGPU_CMD_SET_CONSTANT_BUFFERS = 0x523,
+  /* D3D11-style buffer SRV table binding (t# where SRV is a buffer view). */
   AEROGPU_CMD_SET_SHADER_RESOURCE_BUFFERS = 0x524,
+  /* D3D11-style UAV table binding for buffers (u#). */
   AEROGPU_CMD_SET_UNORDERED_ACCESS_BUFFERS = 0x525,
 
   /* Drawing */
   AEROGPU_CMD_CLEAR = 0x600,
   AEROGPU_CMD_DRAW = 0x601,
   AEROGPU_CMD_DRAW_INDEXED = 0x602,
+  /* Compute dispatch. */
   AEROGPU_CMD_DISPATCH = 0x603,
 
   /* Presentation */
@@ -277,7 +280,7 @@ enum aerogpu_resource_usage_flags {
   AEROGPU_RESOURCE_USAGE_RENDER_TARGET = (1u << 4),
   AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL = (1u << 5),
   AEROGPU_RESOURCE_USAGE_SCANOUT = (1u << 6),
-  /* WebGPU STORAGE / STORAGE_BINDING usage. */
+  /* Storage binding usage (WebGPU STORAGE / STORAGE_BINDING; SRV/UAV buffers). */
   AEROGPU_RESOURCE_USAGE_STORAGE = (1u << 7),
 };
 
@@ -985,6 +988,8 @@ AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_shader_resource_buffer_binding) == 1
 /*
  * SET_SHADER_RESOURCE_BUFFERS:
  *
+ * Binds buffer shader-resource views (SRV buffers; t# where the SRV is a buffer view).
+ *
  * Payload format:
  *   struct aerogpu_cmd_set_shader_resource_buffers
  *   struct aerogpu_shader_resource_buffer_binding bindings[buffer_count]
@@ -1017,6 +1022,8 @@ AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_unordered_access_buffer_binding) == 
 
 /*
  * SET_UNORDERED_ACCESS_BUFFERS:
+ *
+ * Binds unordered-access (storage) buffers (UAV buffers; u#).
  *
  * Payload format:
  *   struct aerogpu_cmd_set_unordered_access_buffers

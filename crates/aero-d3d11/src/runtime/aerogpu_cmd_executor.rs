@@ -11672,6 +11672,9 @@ fn map_buffer_usage_flags(flags: u32, supports_compute: bool) -> wgpu::BufferUsa
     if flags & AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER != 0 {
         usage |= wgpu::BufferUsages::UNIFORM;
     }
+    if flags & AEROGPU_RESOURCE_USAGE_STORAGE != 0 {
+        usage |= wgpu::BufferUsages::STORAGE;
+    }
     // Allow readback for tests / future host interop.
     usage |= wgpu::BufferUsages::COPY_SRC;
     usage

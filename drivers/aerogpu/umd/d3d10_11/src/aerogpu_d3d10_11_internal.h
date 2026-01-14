@@ -42,6 +42,7 @@ constexpr uint32_t kDeviceDestroyLiveCookie = 0xA3E0D311u;
 constexpr uint32_t kMaxConstantBufferSlots = 14;
 constexpr uint32_t kMaxShaderResourceSlots = 128;
 constexpr uint32_t kMaxSamplerSlots = 16;
+constexpr uint32_t kMaxUavSlots = 8;
 
 // D3D11_BIND_* subset (numeric values from d3d11.h).
 constexpr uint32_t kD3D11BindVertexBuffer = 0x1;
@@ -50,6 +51,7 @@ constexpr uint32_t kD3D11BindConstantBuffer = 0x4;
 constexpr uint32_t kD3D11BindShaderResource = 0x8;
 constexpr uint32_t kD3D11BindRenderTarget = 0x20;
 constexpr uint32_t kD3D11BindDepthStencil = 0x40;
+constexpr uint32_t kD3D11BindUnorderedAccess = 0x80;
 
 // D3D11_CPU_ACCESS_* subset (numeric values from d3d11.h).
 constexpr uint32_t kD3D11CpuAccessWrite = 0x10000;
@@ -387,6 +389,9 @@ inline uint32_t bind_flags_to_usage_flags(uint32_t bind_flags) {
   }
   if (bind_flags & kD3D11BindShaderResource) {
     usage |= AEROGPU_RESOURCE_USAGE_TEXTURE;
+  }
+  if (bind_flags & (kD3D11BindShaderResource | kD3D11BindUnorderedAccess)) {
+    usage |= AEROGPU_RESOURCE_USAGE_STORAGE;
   }
   if (bind_flags & kD3D11BindRenderTarget) {
     usage |= AEROGPU_RESOURCE_USAGE_RENDER_TARGET;
@@ -903,16 +908,22 @@ struct Device {
   aerogpu_handle_t current_vs = 0;
   aerogpu_handle_t current_ps = 0;
   aerogpu_handle_t current_gs = 0;
+  aerogpu_handle_t current_cs = 0;
   aerogpu_handle_t current_input_layout = 0;
   InputLayout* current_input_layout_obj = nullptr;
   uint32_t current_topology = AEROGPU_TOPOLOGY_TRIANGLELIST;
 
   aerogpu_constant_buffer_binding vs_constant_buffers[kMaxConstantBufferSlots] = {};
   aerogpu_constant_buffer_binding ps_constant_buffers[kMaxConstantBufferSlots] = {};
+  aerogpu_constant_buffer_binding cs_constant_buffers[kMaxConstantBufferSlots] = {};
   aerogpu_handle_t vs_srvs[kMaxShaderResourceSlots] = {};
   aerogpu_handle_t ps_srvs[kMaxShaderResourceSlots] = {};
+  aerogpu_handle_t cs_srvs[kMaxShaderResourceSlots] = {};
+  aerogpu_handle_t cs_srv_buffers[kMaxShaderResourceSlots] = {};
   aerogpu_handle_t vs_samplers[kMaxSamplerSlots] = {};
   aerogpu_handle_t ps_samplers[kMaxSamplerSlots] = {};
+  aerogpu_handle_t cs_samplers[kMaxSamplerSlots] = {};
+  aerogpu_handle_t cs_uav_buffers[kMaxUavSlots] = {};
 
   // Minimal software-state tracking for the Win7 guest tests. This allows the
   // UMD to produce correct staging readback results even when the submission
