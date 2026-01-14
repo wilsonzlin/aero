@@ -342,9 +342,8 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {{
         let ia_bgl = pulling.create_bind_group_layout(&device);
         let ia_bg = pulling.create_bind_group(&device, &ia_bgl, &[&vb], &ia_uniform);
 
-        // Pipeline layout must include group layouts for groups 0..VERTEX_PULLING_GROUP.
-        let layouts: [&wgpu::BindGroupLayout; 5] =
-            [&out_bgl, &empty_bgl, &empty_bgl, &empty_bgl, &ia_bgl];
+        // Pipeline layout must include group layouts for groups 0..=VERTEX_PULLING_GROUP.
+        let layouts: [&wgpu::BindGroupLayout; 4] = [&out_bgl, &empty_bgl, &empty_bgl, &ia_bgl];
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("vertex pulling pipeline layout"),
@@ -543,8 +542,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {{
         let ia_bgl = pulling.create_bind_group_layout(&device);
         let ia_bg = pulling.create_bind_group(&device, &ia_bgl, &[&vb], &ia_uniform);
 
-        let layouts: [&wgpu::BindGroupLayout; 5] =
-            [&out_bgl, &empty_bgl, &empty_bgl, &empty_bgl, &ia_bgl];
+        let layouts: [&wgpu::BindGroupLayout; 4] = [&out_bgl, &empty_bgl, &empty_bgl, &ia_bgl];
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("vertex pulling unorm pipeline layout"),
             bind_group_layouts: &layouts,
