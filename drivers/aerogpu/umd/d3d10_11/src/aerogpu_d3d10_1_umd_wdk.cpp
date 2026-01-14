@@ -1136,10 +1136,26 @@ static void TrackBoundTargetsForSubmitLocked(AeroGpuDevice* dev) {
   TrackWddmAllocForSubmitLocked(dev, dev->current_dsv_res, /*write=*/true);
 }
 
+static void NormalizeRenderTargetsLocked(AeroGpuDevice* dev) {
+  if (!dev) {
+    return;
+  }
+
+  // Clamp count to the protocol maximum and keep unused slots cleared. D3D10.1
+  // allows NULL RTVs within the `[0, NumViews)` array; those are represented as
+  // `colors[i]==0` while keeping `color_count==NumViews` (gaps preserved).
+  dev->current_rtv_count = std::min<uint32_t>(dev->current_rtv_count, AEROGPU_MAX_RENDER_TARGETS);
+  for (uint32_t i = dev->current_rtv_count; i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
+    dev->current_rtvs[i] = 0;
+    dev->current_rtv_resources[i] = nullptr;
+  }
+}
+
 static void EmitSetRenderTargetsLocked(AeroGpuDevice* dev) {
   if (!dev) {
     return;
   }
+  NormalizeRenderTargetsLocked(dev);
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_render_targets>(AEROGPU_CMD_SET_RENDER_TARGETS);
   if (!cmd) {
     set_error(dev, E_OUTOFMEMORY);

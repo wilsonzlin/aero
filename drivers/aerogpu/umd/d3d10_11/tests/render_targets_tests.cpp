@@ -123,6 +123,14 @@ bool TestGappedRtvBindingIsEncoded() {
   if (!Check(cmd->colors[1] == res1.handle, "gapped RTV binding keeps colors[1]")) {
     return false;
   }
+  for (uint32_t i = 2; i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
+    if (!Check(cmd->colors[i] == 0, "SET_RENDER_TARGETS colors[i]==0 (trailing)")) {
+      return false;
+    }
+  }
+  if (!Check(cmd->depth_stencil == 0, "SET_RENDER_TARGETS depth_stencil==0 (gap)")) {
+    return false;
+  }
   return true;
 }
 
