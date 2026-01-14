@@ -202,6 +202,12 @@ These can be provided via `config.data`, `gateway.extraEnv`, or an existing Secr
 
 Inbound UDP filtering note: `proxy/webrtc-udp-relay` defaults to `UDP_INBOUND_FILTER_MODE=address_and_port` (only accept inbound UDP from remote address+port tuples the guest previously sent to). You can switch to full-cone behavior with `UDP_INBOUND_FILTER_MODE=any` (**less safe**) if required by your workload.
 
+WebRTC DataChannel hardening note: `proxy/webrtc-udp-relay` configures pion/SCTP caps to mitigate oversized WebRTC DataChannel message DoS and to bound receive-side buffering/allocation before `DataChannel.OnMessage` runs. These are configurable on the relay via:
+
+- `WEBRTC_DATACHANNEL_MAX_MESSAGE_BYTES` (SDP `a=max-message-size` hint; 0 = auto)
+- `WEBRTC_SCTP_MAX_RECEIVE_BUFFER_BYTES` (hard receive-side cap; 0 = auto; must be ≥ `WEBRTC_DATACHANNEL_MAX_MESSAGE_BYTES` and ≥ `1500`)
+- `WEBRTC_SESSION_CONNECT_TIMEOUT` (close server-side PeerConnections that never connect; default `30s`)
+
 Security note: `GET /webrtc/ice` responses may include sensitive TURN credentials (especially TURN REST ephemeral creds) and are explicitly **non-cacheable** (`Cache-Control: no-store`, `Pragma: no-cache`, `Expires: 0`). Ensure your Ingress/proxy preserves these headers and does not inject caching headers for `/webrtc/ice`.
 
 See also:
