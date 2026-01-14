@@ -374,9 +374,12 @@ typedef struct _AEROGPU_ADAPTER {
      *
      * Note: This driver is built for both x86 and x64. On x86, plain 64-bit
      * loads/stores are not atomic and can tear (leading to bogus fence
-     * comparisons/clamping and flaky dbgctl output). Always access these fields
-     * via Interlocked*64 operations (e.g. AeroGpuAtomicReadU64/AeroGpuAtomicWriteU64)
-     * or while holding an appropriate lock on *all* paths that touch them.
+     * comparisons/clamping and flaky dbgctl output).
+     *
+     * These fields are accessed from ISR/DPC paths without taking PendingLock,
+     * so callers must use Interlocked*64 operations (e.g.
+     * AeroGpuAtomicReadU64/AeroGpuAtomicWriteU64) even if they already hold
+     * PendingLock.
      *
      * Interlocked*64 requires 8-byte alignment, so these fields are explicitly
      * aligned.

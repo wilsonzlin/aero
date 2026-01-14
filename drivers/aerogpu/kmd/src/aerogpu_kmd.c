@@ -1005,6 +1005,17 @@ static VOID AeroGpuFreeSharedHandleTokens(_Inout_ AEROGPU_ADAPTER* Adapter)
 /* ---- Helpers ------------------------------------------------------------ */
 
 /*
+ * Atomic helpers for shared 64-bit state.
+ *
+ * Defined below; forward-declared here so early helpers (e.g. completed fence
+ * reads) can use the shared abstraction.
+ */
+static __forceinline ULONGLONG AeroGpuAtomicReadU64(_In_ volatile ULONGLONG* Value);
+static __forceinline VOID AeroGpuAtomicWriteU64(_Inout_ volatile ULONGLONG* Value, _In_ ULONGLONG NewValue);
+static __forceinline ULONGLONG AeroGpuAtomicExchangeU64(_Inout_ volatile ULONGLONG* Value, _In_ ULONGLONG NewValue);
+static __forceinline ULONG AeroGpuAtomicReadU32(_In_ volatile ULONG* Value);
+
+/*
  * Read a 64-bit MMIO value exposed as two 32-bit registers in LO/HI form.
  *
  * Use an HI/LO/HI pattern to avoid tearing if the device updates the value
@@ -1048,8 +1059,7 @@ static ULONGLONG AeroGpuReadCompletedFence(_In_ const AEROGPU_ADAPTER* Adapter)
         return 0;
     }
 
-    const ULONGLONG cachedLastCompleted =
-        (ULONGLONG)InterlockedCompareExchange64((volatile LONGLONG*)&Adapter->LastCompletedFence, 0, 0);
+    const ULONGLONG cachedLastCompleted = AeroGpuAtomicReadU64((volatile ULONGLONG*)&Adapter->LastCompletedFence);
 
     /*
      * If a shared fence page is configured, prefer reading it. This is always a
@@ -3749,7 +3759,7 @@ static NTSTATUS APIENTRY AeroGpuDdiStartDevice(_In_ const PVOID MiniportDeviceCo
      * Ensure the next IRQ_ERROR can be surfaced to dxgkrnl even if the OS reuses
      * fence IDs across adapter restarts (TDR / PnP stop-start).
      */
-    InterlockedExchange64((volatile LONGLONG*)&adapter->LastNotifiedErrorFence, -1);
+    AeroGpuAtomicWriteU64(&adapter->LastNotifiedErrorFence, (ULONGLONG)(LONGLONG)-1);
 
     adapter->StartInfo = *DxgkStartInfo;
     adapter->DxgkInterface = *DxgkInterface;
@@ -9846,7 +9856,7 @@ static NTSTATUS APIENTRY AeroGpuDdiRestartFromTimeout(_In_ const HANDLE hAdapter
     /* Clear any KMD-side latched "device error" state recorded from IRQ_ERROR. */
     InterlockedExchange(&adapter->DeviceErrorLatched, 0);
     /* Allow future IRQ_ERROR notifications even if fence IDs repeat after TDR. */
-    InterlockedExchange64((volatile LONGLONG*)&adapter->LastNotifiedErrorFence, -1);
+    AeroGpuAtomicWriteU64(&adapter->LastNotifiedErrorFence, (ULONGLONG)(LONGLONG)-1);
 
     if (!adapter->Bar0) {
         return STATUS_SUCCESS;
