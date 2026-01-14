@@ -130,7 +130,8 @@ fn operand_token(
     token |= num_components & OPERAND_NUM_COMPONENTS_MASK;
     token |= (selection_mode & OPERAND_SELECTION_MODE_MASK) << OPERAND_SELECTION_MODE_SHIFT;
     token |= (ty & OPERAND_TYPE_MASK) << OPERAND_TYPE_SHIFT;
-    token |= (component_sel & OPERAND_COMPONENT_SELECTION_MASK) << OPERAND_COMPONENT_SELECTION_SHIFT;
+    token |=
+        (component_sel & OPERAND_COMPONENT_SELECTION_MASK) << OPERAND_COMPONENT_SELECTION_SHIFT;
     token |= (index_dim & OPERAND_INDEX_DIMENSION_MASK) << OPERAND_INDEX_DIMENSION_SHIFT;
     token |= OPERAND_INDEX_REP_IMMEDIATE32 << OPERAND_INDEX0_REP_SHIFT;
     token |= OPERAND_INDEX_REP_IMMEDIATE32 << OPERAND_INDEX1_REP_SHIFT;
@@ -146,7 +147,10 @@ fn swizzle_bits(swz: [u8; 4]) -> u32 {
 }
 
 fn reg_dst(ty: u32, idx: u32, mask: WriteMask) -> Vec<u32> {
-    vec![operand_token(ty, 2, OPERAND_SEL_MASK, mask.0 as u32, 1, false), idx]
+    vec![
+        operand_token(ty, 2, OPERAND_SEL_MASK, mask.0 as u32, 1, false),
+        idx,
+    ]
 }
 
 fn reg_src(ty: u32, indices: &[u32], swizzle: Swizzle) -> Vec<u32> {

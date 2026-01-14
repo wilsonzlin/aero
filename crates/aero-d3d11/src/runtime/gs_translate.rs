@@ -3694,10 +3694,7 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_impl(
                     let load_lane = |bit: u8, offset: u32| {
                         if (mask_bits & bit) != 0 {
                             if used_uavs_atomic.contains(&uav.slot) {
-                                format!(
-                                    "atomicLoad(&u{}.data[{base_name} + {offset}u])",
-                                    uav.slot
-                                )
+                                format!("atomicLoad(&u{}.data[{base_name} + {offset}u])", uav.slot)
                             } else {
                                 format!("u{}.data[{base_name} + {offset}u]", uav.slot)
                             }
@@ -3828,10 +3825,7 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_impl(
                     let load_lane = |bit: u8, offset: u32| {
                         if (mask_bits & bit) != 0 {
                             if used_uavs_atomic.contains(&uav.slot) {
-                                format!(
-                                    "atomicLoad(&u{}.data[{base_name} + {offset}u])",
-                                    uav.slot
-                                )
+                                format!("atomicLoad(&u{}.data[{base_name} + {offset}u])", uav.slot)
                             } else {
                                 format!("u{}.data[{base_name} + {offset}u]", uav.slot)
                             }
@@ -3879,7 +3873,8 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_impl(
 
                         // Store raw bits. Buffer stores must preserve the underlying 32-bit lane
                         // patterns.
-                        let value_u = emit_src_vec4_u32(inst_index, "store_raw", value, &input_sivs)?;
+                        let value_u =
+                            emit_src_vec4_u32(inst_index, "store_raw", value, &input_sivs)?;
                         let value_name = format!("store_raw_val{inst_index}");
                         w.line(&format!("let {value_name}: vec4<u32> = {value_u};"));
 
@@ -3949,12 +3944,8 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_impl(
                             "let {base_name}: u32 = (({index_name}) * {stride}u + ({offset_name})) / 4u;"
                         ));
 
-                        let value_u = emit_src_vec4_u32(
-                            inst_index,
-                            "store_structured",
-                            value,
-                            &input_sivs,
-                        )?;
+                        let value_u =
+                            emit_src_vec4_u32(inst_index, "store_structured", value, &input_sivs)?;
                         let value_name = format!("store_struct_val{inst_index}");
                         w.line(&format!("let {value_name}: vec4<u32> = {value_u};"));
 
