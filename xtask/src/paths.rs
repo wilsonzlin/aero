@@ -85,7 +85,9 @@ pub fn resolve_node_dir(repo_root: &Path, cli_override: Option<&str>) -> Result<
     }
 
     if let Some(dir) =
-        env_var_nonempty("AERO_NODE_DIR").or_else(|| env_var_nonempty("AERO_WEB_DIR"))
+        env_var_nonempty("AERO_NODE_DIR")
+            .or_else(|| env_var_nonempty("AERO_WEB_DIR"))
+            .or_else(|| env_var_nonempty("WEB_DIR"))
     {
         return normalize_and_validate_node_dir(repo_root, &dir);
     }
@@ -101,7 +103,8 @@ pub fn resolve_node_dir(repo_root: &Path, cli_override: Option<&str>) -> Result<
     }
 
     Err(XtaskError::Message(
-        "unable to locate package.json; pass --node-dir <path> or set AERO_NODE_DIR".to_string(),
+        "unable to locate package.json; pass --node-dir <path> or set AERO_NODE_DIR (deprecated: AERO_WEB_DIR/WEB_DIR)"
+            .to_string(),
     ))
 }
 

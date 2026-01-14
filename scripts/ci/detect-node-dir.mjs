@@ -170,6 +170,9 @@ if (!overrideDir) {
 if (!overrideDir) {
     overrideDir = process.env.AERO_WEB_DIR?.trim() || null;
 }
+if (!overrideDir) {
+    overrideDir = process.env.WEB_DIR?.trim() || null;
+}
 
 if (!githubOutputPath) {
     githubOutputPath = process.env.GITHUB_OUTPUT?.trim() || null;
