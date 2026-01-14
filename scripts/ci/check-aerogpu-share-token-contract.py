@@ -24,6 +24,7 @@ This script is intentionally narrow and fast:
 from __future__ import annotations
 
 import pathlib
+import re
 import sys
 from typing import Iterable
 
@@ -99,13 +100,19 @@ def extract_c_function_body_span(text: str, func_name: str) -> tuple[int, str] |
     extract a single known KMD helper for a CI guardrail.
     """
 
-    idx = text.find(func_name)
-    if idx < 0:
+    # Prefer matching the actual function definition (avoid false matches on call
+    # sites elsewhere in the file).
+    m = re.search(rf"(?m)^\s*static\b[^\n;]*\b{re.escape(func_name)}\s*\(", text)
+    if m is None:
         return None
+    idx = m.start()
 
     # Find the first '{' after the name and then brace-match.
-    brace_start = text.find("{", idx)
+    brace_start = text.find("{", m.end())
     if brace_start < 0:
+        return None
+    # Reject forward declarations (prototype ends with ';').
+    if text.find(";", m.end(), brace_start) != -1:
         return None
 
     depth = 0
