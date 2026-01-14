@@ -130,8 +130,13 @@ export class IdbChunkDisk implements AsyncSectorDisk {
       const recIndex = hasOwn(rec, "index") ? rec.index : undefined;
       const dataRaw = hasOwn(rec, "data") ? rec.data : undefined;
       if (id === this.diskId && recIndex === index) {
-        const dataAny = dataRaw as any;
-        const bytes = dataAny instanceof ArrayBuffer ? new Uint8Array(dataAny) : dataAny instanceof Uint8Array ? dataAny : null;
+        let bytes: Uint8Array | null = null;
+        const dataObj = dataRaw as unknown as object;
+        if (dataObj instanceof ArrayBuffer) {
+          bytes = new Uint8Array(dataObj);
+        } else if (dataObj instanceof Uint8Array) {
+          bytes = dataObj;
+        }
         if (bytes) {
           entry.data.set(bytes.subarray(0, Math.min(expectedLen, bytes.byteLength)));
         }

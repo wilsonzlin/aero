@@ -109,7 +109,7 @@ describe("IdbCowDisk", () => {
       const db = await openDiskManagerDb();
       try {
         const tx = db.transaction(["chunks"], "readwrite");
-        tx.objectStore("chunks").put({ id: "overlay_proto", data: new ArrayBuffer(512) } as any);
+        tx.objectStore("chunks").put({ id: "overlay_proto", data: new ArrayBuffer(512) });
         await idbTxDone(tx);
       } finally {
         db.close();
@@ -128,7 +128,7 @@ describe("IdbCowDisk", () => {
       await cow.close();
     } finally {
       if (indexExisting) Object.defineProperty(Object.prototype, "index", indexExisting);
-      else delete (Object.prototype as any).index;
+      else Reflect.deleteProperty(Object.prototype, "index");
     }
   });
 });

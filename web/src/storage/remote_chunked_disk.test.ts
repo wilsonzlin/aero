@@ -771,7 +771,7 @@ describe("RemoteChunkedDisk", () => {
     } finally {
       globalThis.fetch = prevFetch;
       if (existing) Object.defineProperty(Object.prototype, "credentials", existing);
-      else delete (Object.prototype as any).credentials;
+      else Reflect.deleteProperty(Object.prototype, "credentials");
     }
   });
 

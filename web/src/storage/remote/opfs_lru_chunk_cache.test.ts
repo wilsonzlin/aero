@@ -204,7 +204,7 @@ describe("OpfsLruChunkCache", () => {
       await expect(cache.getChunk(0, 4)).resolves.toEqual(new Uint8Array([1, 2, 3, 4]));
     } finally {
       if (existing) Object.defineProperty(Object.prototype, "0", existing);
-      else delete (Object.prototype as any)["0"];
+      else Reflect.deleteProperty(Object.prototype, "0");
     }
   });
 
@@ -416,7 +416,10 @@ describe("OpfsLruChunkCache", () => {
 
     // Inject a file object that reports a huge size and throws if read. The cache should
     // treat it as corrupt based on size alone.
-    (indexHandle as any).getFile = async () => ({
+    const h = indexHandle as unknown as {
+      getFile: () => Promise<{ size: number; text: () => Promise<string>; arrayBuffer: () => Promise<ArrayBuffer> }>;
+    };
+    h.getFile = async () => ({
       size: 64 * 1024 * 1024 + 1,
       async text() {
         throw new Error("should not read oversized index.json");

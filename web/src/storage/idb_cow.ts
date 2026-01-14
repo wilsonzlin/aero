@@ -36,8 +36,7 @@ async function loadAllocatedChunks(diskId: string): Promise<Set<number>> {
           const id = hasOwn(value, "id") ? value.id : undefined;
           const idx = hasOwn(value, "index") ? value.index : undefined;
           const dataRaw = hasOwn(value, "data") ? value.data : undefined;
-          const dataAny = dataRaw as any;
-          const okData = dataAny instanceof ArrayBuffer || dataAny instanceof Uint8Array;
+          const okData = dataRaw instanceof ArrayBuffer || dataRaw instanceof Uint8Array;
           if (id === diskId && typeof idx === "number" && Number.isInteger(idx) && idx >= 0 && okData) {
             allocated.add(idx);
           }

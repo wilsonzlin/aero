@@ -344,18 +344,17 @@ function safeDataFromIdbChunkRecord(rec: unknown, diskId: string, index: number)
   if (id !== diskId || idx !== index) return undefined;
   if (!hasOwn(rec, "data")) return undefined;
   const dataRaw = rec.data;
-  const dataAny = dataRaw as any;
-  if (dataAny instanceof ArrayBuffer) return dataAny;
+  if (dataRaw instanceof ArrayBuffer) return dataRaw;
   // Legacy/foreign implementations may store Uint8Array instead of ArrayBuffer.
-  if (dataAny instanceof Uint8Array) {
-    if (
-      dataAny.buffer instanceof ArrayBuffer &&
-      dataAny.byteOffset === 0 &&
-      dataAny.byteLength === dataAny.buffer.byteLength
-    ) {
-      return dataAny.buffer;
+  if (dataRaw instanceof Uint8Array) {
+    const view = dataRaw;
+    if (view.buffer instanceof ArrayBuffer && view.byteOffset === 0 && view.byteLength === view.buffer.byteLength) {
+      return view.buffer;
     }
-    return dataAny.slice().buffer;
+    // Defensive: copy to ensure the returned value is backed by a plain ArrayBuffer.
+    const copy = new Uint8Array(view.byteLength);
+    copy.set(view);
+    return copy.buffer;
   }
   return undefined;
 }

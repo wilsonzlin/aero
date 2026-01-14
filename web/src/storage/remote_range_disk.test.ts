@@ -517,7 +517,7 @@ describe("RemoteRangeDisk", () => {
       await disk.close();
     } finally {
       if (chunkSizeExisting) Object.defineProperty(Object.prototype, "chunkSize", chunkSizeExisting);
-      else delete (Object.prototype as any).chunkSize;
+      else Reflect.deleteProperty(Object.prototype, "chunkSize");
 
       if (nav) nav.storage = prevStorage;
     }

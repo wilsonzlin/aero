@@ -20,7 +20,11 @@ function createRangeFetch(data: Uint8Array<ArrayBuffer>): { fetch: typeof fetch;
       headers instanceof Headers
         ? headers.get("Range") || undefined
         : typeof headers === "object" && headers
-          ? ((headers as any).Range as string | undefined) ?? ((headers as any).range as string | undefined)
+          ? (() => {
+              const rec = headers as Record<string, unknown>;
+              const v = rec.Range ?? rec.range;
+              return typeof v === "string" ? v : undefined;
+            })()
           : undefined;
 
     if (method === "HEAD") {

@@ -49,8 +49,7 @@ describe("IdbChunkDisk prototype pollution hardening", () => {
       }
     } finally {
       if (existing) Object.defineProperty(Object.prototype, "data", existing);
-      else delete (Object.prototype as any).data;
+      else Reflect.deleteProperty(Object.prototype, "data");
     }
   });
 });
-
