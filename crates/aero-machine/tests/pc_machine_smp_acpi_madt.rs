@@ -39,6 +39,7 @@ fn pc_machine_cpu_count_2_publishes_madt_with_two_cpus() {
     let mut pc = PcMachine::new_with_config(PcMachineConfig {
         ram_size_bytes: 4 * 1024 * 1024,
         cpu_count: 2,
+        smbios_uuid_seed: 0,
         enable_hda: false,
         enable_e1000: false,
     })
@@ -111,4 +112,3 @@ fn pc_machine_cpu_count_2_publishes_madt_with_two_cpus() {
     cpu_ids.sort_unstable();
     assert_eq!(cpu_ids, vec![0, 1]);
 }
-
