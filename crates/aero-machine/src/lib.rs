@@ -602,6 +602,9 @@ pub struct MachineConfig {
     ///
     /// When unset, defaults to [`aero_gpu_vga::SVGA_LFB_BASE`].
     ///
+    /// Note: The effective base is aligned down to the legacy VGA PCI BAR size (a power of two) so
+    /// it matches how PCI config space masks BAR base addresses.
+    ///
     /// Note: This is only used when the standalone legacy VGA/VBE path is active
     /// (`enable_vga=true` and `enable_aerogpu=false`).
     ///
@@ -631,6 +634,9 @@ pub struct MachineConfig {
     ///
     /// When unset, the machine derives a coherent `vram_bar_base` from the configured LFB base and
     /// LFB offset (`vram_bar_base = lfb_base - lfb_offset`).
+    ///
+    /// Note: The effective LFB base is aligned down to the legacy VGA PCI BAR size (a power of
+    /// two), which may cause the derived `vram_bar_base` to differ from the configured value.
     ///
     /// Note: This is only used when the standalone legacy VGA/VBE path is active
     /// (`enable_vga=true` and `enable_aerogpu=false`).
