@@ -24,7 +24,7 @@ use crate::binding_model::{
 /// These groups are reserved for guest-translated shaders. Internal/emulation
 /// pipelines may opt into additional bind groups beyond this range, but guest
 /// shaders must remain constrained to `0..=MAX_GUEST_BIND_GROUP_INDEX`.
-const MAX_GUEST_BIND_GROUP_INDEX: u32 = BIND_GROUP_INTERNAL_EMULATION - 1;
+const MAX_GUEST_BIND_GROUP_INDEX: u32 = BIND_GROUP_INTERNAL_EMULATION;
 pub(super) const UNIFORM_BINDING_SIZE_ALIGN: u64 = 16;
 const STORAGE_BINDING_SIZE_ALIGN: u64 = 4;
 
@@ -557,6 +557,14 @@ mod tests {
             || v.eq_ignore_ascii_case("true")
             || v.eq_ignore_ascii_case("yes")
             || v.eq_ignore_ascii_case("on")
+    }
+
+    #[test]
+    fn guest_bind_group_range_includes_group3() {
+        assert_eq!(
+            MAX_GUEST_BIND_GROUP_INDEX, BIND_GROUP_INTERNAL_EMULATION,
+            "guest binding range must include @group(3) for D3D11 extended stages (GS/HS/DS)"
+        );
     }
 
     fn skip_or_panic(test_name: &str, reason: &str) {
@@ -1174,8 +1182,9 @@ mod tests {
             let device = rt.device();
             let mut layout_cache = BindGroupLayoutCache::new();
 
+            let internal_only_group = MAX_GUEST_BIND_GROUP_INDEX + 1;
             let guest = vec![crate::Binding {
-                group: BIND_GROUP_INTERNAL_EMULATION,
+                group: internal_only_group,
                 binding: BINDING_BASE_TEXTURE,
                 visibility: wgpu::ShaderStages::VERTEX,
                 kind: crate::BindingKind::Texture2D { slot: 0 },
@@ -1186,7 +1195,7 @@ mod tests {
                 &mut layout_cache,
                 [ShaderBindingSet::Guest(guest.as_slice())],
                 BindGroupIndexValidation::GuestAndInternal {
-                    max_internal_bind_group_index: BIND_GROUP_INTERNAL_EMULATION,
+                    max_internal_bind_group_index: internal_only_group,
                 },
             )
             .unwrap_err()
