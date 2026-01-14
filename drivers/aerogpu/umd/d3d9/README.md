@@ -71,6 +71,9 @@ The AeroGPU D3D9 UMD supports both models. Command emission calls `ensure_cmd_sp
 When the UMD acquires transient buffers via `AllocateCb`, it returns them via `DeallocateCb` after submission (or at device teardown if the buffer was never submitted).
 Some runtimes size the returned buffers to the exact requested byte count, so when using `AllocateCb` the UMD requests at
 least one page (4KB) to avoid immediately reacquiring submit buffers after tracking allocations.
+If submit-buffer reacquisition does occur while the command stream is still empty, `wddm_ensure_recording_buffers()`
+preserves and replays any tracked allocations across the re-acquire (see `AllocationListTracker::snapshot_tracked_allocations()`
+and `AllocationListTracker::replay_tracked_allocations()` in `src/aerogpu_wddm_alloc_list.*`).
 
 ### Runtime variance: pDmaBuffer vs pCommandBuffer
 
