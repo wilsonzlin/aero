@@ -330,7 +330,7 @@ func TestUDPWebSocketServer_JWTRejectsConcurrentSessionsWithSameSID(t *testing.T
 		SignalingAuthTimeout:     50 * time.Millisecond,
 		MaxSignalingMessageBytes: 64 * 1024,
 	}
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	sm := NewSessionManager(cfg, m, nil)
 	relayCfg := defaultConfig()
 
@@ -368,7 +368,7 @@ func TestUDPWebSocketServer_JWTAuthViaHeader(t *testing.T) {
 		SignalingAuthTimeout:     50 * time.Millisecond,
 		MaxSignalingMessageBytes: 64 * 1024,
 	}
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	sm := NewSessionManager(cfg, m, nil)
 	relayCfg := defaultConfig()
 
@@ -399,7 +399,7 @@ func TestUDPWebSocketServer_JWTAuthViaHeader_XAPIKeyAlias(t *testing.T) {
 		SignalingAuthTimeout:     50 * time.Millisecond,
 		MaxSignalingMessageBytes: 64 * 1024,
 	}
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	sm := NewSessionManager(cfg, m, nil)
 	relayCfg := defaultConfig()
 
@@ -430,7 +430,7 @@ func TestUDPWebSocketServer_JWTRejectsConcurrentSessionsWithSameSID_HeaderAlias(
 		SignalingAuthTimeout:     50 * time.Millisecond,
 		MaxSignalingMessageBytes: 64 * 1024,
 	}
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	sm := NewSessionManager(cfg, m, nil)
 	relayCfg := defaultConfig()
 
@@ -472,7 +472,7 @@ func TestUDPWebSocketServer_JWTRejectsConcurrentSessionsWithSameSID_QueryParamAl
 		SignalingAuthTimeout:     50 * time.Millisecond,
 		MaxSignalingMessageBytes: 64 * 1024,
 	}
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	sm := NewSessionManager(cfg, m, nil)
 	relayCfg := defaultConfig()
 
@@ -512,7 +512,7 @@ func TestUDPWebSocketServer_JWTRejectsConcurrentSessionsWithSameSID_FirstMessage
 		SignalingAuthTimeout:     2 * time.Second,
 		MaxSignalingMessageBytes: 64 * 1024,
 	}
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	sm := NewSessionManager(cfg, m, nil)
 	relayCfg := defaultConfig()
 
@@ -556,7 +556,7 @@ func TestUDPWebSocketServer_JWTRejectsConcurrentSessionsWithSameSID_FirstMessage
 		SignalingAuthTimeout:     2 * time.Second,
 		MaxSignalingMessageBytes: 64 * 1024,
 	}
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	sm := NewSessionManager(cfg, m, nil)
 	relayCfg := defaultConfig()
 
@@ -602,7 +602,7 @@ func TestUDPWebSocketServer_JWTAllowsConcurrentSessionsWithDifferentSID(t *testi
 		SignalingAuthTimeout:     2 * time.Second,
 		MaxSignalingMessageBytes: 64 * 1024,
 	}
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	sm := NewSessionManager(cfg, m, nil)
 	relayCfg := defaultConfig()
 
@@ -640,7 +640,7 @@ func TestUDPWebSocketServer_JWTAllowsConcurrentSessionsWithDifferentSID_FirstMes
 		SignalingAuthTimeout:     2 * time.Second,
 		MaxSignalingMessageBytes: 64 * 1024,
 	}
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	sm := NewSessionManager(cfg, m, nil)
 	relayCfg := defaultConfig()
 
@@ -686,7 +686,7 @@ func TestUDPWebSocketServer_RelaysV1IPv4(t *testing.T) {
 		SignalingAuthTimeout:     50 * time.Millisecond,
 		MaxSignalingMessageBytes: 64 * 1024,
 	}
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	sm := NewSessionManager(cfg, m, nil)
 	relayCfg := defaultConfig()
 	relayCfg.PreferV2 = true
@@ -747,7 +747,7 @@ func TestUDPWebSocketServer_RelaysV2IPv4WhenNegotiated(t *testing.T) {
 		SignalingAuthTimeout:     50 * time.Millisecond,
 		MaxSignalingMessageBytes: 64 * 1024,
 	}
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	sm := NewSessionManager(cfg, m, nil)
 	relayCfg := defaultConfig()
 	relayCfg.PreferV2 = true
@@ -808,7 +808,7 @@ func TestUDPWebSocketServer_RelaysV2IPv6(t *testing.T) {
 		SignalingAuthTimeout:     50 * time.Millisecond,
 		MaxSignalingMessageBytes: 64 * 1024,
 	}
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	sm := NewSessionManager(cfg, m, nil)
 	relayCfg := defaultConfig()
 
@@ -871,7 +871,7 @@ func TestUDPWebSocketServer_InboundFilterAddressAndPort_DropsUnexpectedSourcePor
 		SignalingAuthTimeout:     50 * time.Millisecond,
 		MaxSignalingMessageBytes: 64 * 1024,
 	}
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	sm := NewSessionManager(cfg, m, nil)
 	relayCfg := defaultConfig()
 	relayCfg.InboundFilterMode = InboundFilterAddressAndPort
@@ -953,7 +953,7 @@ func TestUDPWebSocketServer_InboundFilterAny_AllowsUnexpectedSourcePort(t *testi
 		SignalingAuthTimeout:     50 * time.Millisecond,
 		MaxSignalingMessageBytes: 64 * 1024,
 	}
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	sm := NewSessionManager(cfg, m, nil)
 	relayCfg := defaultConfig()
 	relayCfg.InboundFilterMode = InboundFilterAny
@@ -1018,7 +1018,7 @@ func TestUDPWebSocketServer_RemoteAllowlistEvictionIncrementsMetric(t *testing.T
 		SignalingAuthTimeout:     50 * time.Millisecond,
 		MaxSignalingMessageBytes: 64 * 1024,
 	}
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	sm := NewSessionManager(cfg, m, nil)
 	relayCfg := defaultConfig()
 	relayCfg.InboundFilterMode = InboundFilterAddressAndPort
@@ -1082,7 +1082,7 @@ func TestUDPWebSocketServer_DroppedByPolicyIncrementsMetric(t *testing.T) {
 		SignalingAuthTimeout:     50 * time.Millisecond,
 		MaxSignalingMessageBytes: 64 * 1024,
 	}
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	sm := NewSessionManager(cfg, m, nil)
 	relayCfg := defaultConfig()
 
@@ -1138,7 +1138,7 @@ func TestUDPWebSocketServer_RateLimitedIncrementsMetric(t *testing.T) {
 
 		MaxUDPPpsPerSession: 1,
 	}
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	sm := NewSessionManager(cfg, m, clk)
 	relayCfg := defaultConfig()
 
@@ -1196,7 +1196,7 @@ func TestUDPWebSocketServer_QuotaExceededIncrementsMetric(t *testing.T) {
 		MaxSignalingMessageBytes:        64 * 1024,
 		MaxUniqueDestinationsPerSession: 1,
 	}
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	sm := NewSessionManager(cfg, m, nil)
 	relayCfg := defaultConfig()
 
@@ -1262,7 +1262,7 @@ func TestUDPWebSocketServer_DroppedOversizedIncrementsMetric(t *testing.T) {
 		SignalingAuthTimeout:     50 * time.Millisecond,
 		MaxSignalingMessageBytes: 64 * 1024,
 	}
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	sm := NewSessionManager(cfg, m, nil)
 	relayCfg := defaultConfig()
 	relayCfg.MaxDatagramPayloadBytes = 5
@@ -1337,7 +1337,7 @@ func TestUDPWebSocketServer_DroppedMalformedIncrementsMetric(t *testing.T) {
 		SignalingAuthTimeout:     50 * time.Millisecond,
 		MaxSignalingMessageBytes: 64 * 1024,
 	}
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	sm := NewSessionManager(cfg, m, nil)
 	relayCfg := defaultConfig()
 
@@ -1406,7 +1406,7 @@ func TestUDPWebSocketServer_FramesInOutMetrics(t *testing.T) {
 		SignalingAuthTimeout:     50 * time.Millisecond,
 		MaxSignalingMessageBytes: 64 * 1024,
 	}
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	sm := NewSessionManager(cfg, m, nil)
 	relayCfg := defaultConfig()
 
@@ -1462,7 +1462,7 @@ func TestUDPWebSocketServer_AuthMessageRequired(t *testing.T) {
 		SignalingAuthTimeout:     2 * time.Second,
 		MaxSignalingMessageBytes: 64 * 1024,
 	}
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	sm := NewSessionManager(cfg, m, nil)
 	relayCfg := defaultConfig()
 
@@ -1510,7 +1510,7 @@ func TestUDPWebSocketServer_AuthTimeoutClosesWithoutAuthMessage(t *testing.T) {
 		SignalingAuthTimeout:     200 * time.Millisecond,
 		MaxSignalingMessageBytes: 64 * 1024,
 	}
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	sm := NewSessionManager(cfg, m, nil)
 	relayCfg := defaultConfig()
 
@@ -1557,7 +1557,7 @@ func TestUDPWebSocketServer_APIKeyAuthViaHeader(t *testing.T) {
 		SignalingAuthTimeout:     50 * time.Millisecond,
 		MaxSignalingMessageBytes: 64 * 1024,
 	}
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	sm := NewSessionManager(cfg, m, nil)
 	relayCfg := defaultConfig()
 
@@ -1587,7 +1587,7 @@ func TestUDPWebSocketServer_APIKeyAuthViaHeader_AuthorizationBearerAlias(t *test
 		SignalingAuthTimeout:     50 * time.Millisecond,
 		MaxSignalingMessageBytes: 64 * 1024,
 	}
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	sm := NewSessionManager(cfg, m, nil)
 	relayCfg := defaultConfig()
 
@@ -1620,7 +1620,7 @@ func TestUDPWebSocketServer_AuthMessageThenRelay(t *testing.T) {
 		SignalingAuthTimeout:     2 * time.Second,
 		MaxSignalingMessageBytes: 64 * 1024,
 	}
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	sm := NewSessionManager(cfg, m, nil)
 	relayCfg := defaultConfig()
 	relayCfg.PreferV2 = true
@@ -1682,7 +1682,7 @@ func TestUDPWebSocketServer_AuthMessage_TokenAliasInAPIKeyMode(t *testing.T) {
 		SignalingAuthTimeout:     2 * time.Second,
 		MaxSignalingMessageBytes: 64 * 1024,
 	}
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	sm := NewSessionManager(cfg, m, nil)
 	relayCfg := defaultConfig()
 
@@ -1715,7 +1715,7 @@ func TestUDPWebSocketServer_AuthMessageRejectsMismatchedKeys(t *testing.T) {
 		SignalingAuthTimeout:     2 * time.Second,
 		MaxSignalingMessageBytes: 64 * 1024,
 	}
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	sm := NewSessionManager(cfg, m, nil)
 	relayCfg := defaultConfig()
 
@@ -1765,7 +1765,7 @@ func TestUDPWebSocketServer_IgnoresRedundantAuthMessage(t *testing.T) {
 		SignalingAuthTimeout:     2 * time.Second,
 		MaxSignalingMessageBytes: 64 * 1024,
 	}
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	sm := NewSessionManager(cfg, m, nil)
 	relayCfg := defaultConfig()
 	relayCfg.PreferV2 = true
@@ -1826,7 +1826,7 @@ func TestUDPWebSocketServer_QueryTokenAlias(t *testing.T) {
 		SignalingAuthTimeout:     2 * time.Second,
 		MaxSignalingMessageBytes: 64 * 1024,
 	}
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	sm := NewSessionManager(cfg, m, nil)
 	relayCfg := defaultConfig()
 	relayCfg.PreferV2 = true
@@ -1879,7 +1879,7 @@ func TestUDPWebSocketServer_RecordsBackpressureDrops(t *testing.T) {
 		SignalingAuthTimeout:     50 * time.Millisecond,
 		MaxSignalingMessageBytes: 64 * 1024,
 	}
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	sm := NewSessionManager(cfg, m, nil)
 
 	// Ensure the outbound send queue can't fit even a single UDP frame so we can
@@ -1929,7 +1929,7 @@ func TestUDPWebSocketServer_OriginChecks(t *testing.T) {
 		SignalingAuthTimeout:     50 * time.Millisecond,
 		MaxSignalingMessageBytes: 64 * 1024,
 	}
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	sm := NewSessionManager(cfg, m, nil)
 	relayCfg := defaultConfig()
 
@@ -2005,7 +2005,7 @@ func TestUDPWebSocketServer_OriginChecks_AllowsConfiguredOrigin(t *testing.T) {
 		SignalingAuthTimeout:     50 * time.Millisecond,
 		MaxSignalingMessageBytes: 64 * 1024,
 	}
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	sm := NewSessionManager(cfg, m, nil)
 	relayCfg := defaultConfig()
 

@@ -32,7 +32,7 @@ func TestWebRTCDataChannel_OversizeMessage_IgnoresSDP_ClosesSession(t *testing.T
 		t.Fatalf("NewAPI: %v", err)
 	}
 
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	sm := relay.NewSessionManager(config.Config{}, m, nil)
 	quota, err := sm.CreateSessionWithKey("")
 	if err != nil {
@@ -123,7 +123,7 @@ func TestWebRTCDataChannel_OversizeL2Message_IgnoresSDP_ClosesSession(t *testing
 
 	wsURL, backendConnected := newHoldingL2Backend(t)
 
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	sm := relay.NewSessionManager(config.Config{}, m, nil)
 	quota, err := sm.CreateSessionWithKey("")
 	if err != nil {

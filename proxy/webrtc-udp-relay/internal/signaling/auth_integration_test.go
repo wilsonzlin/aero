@@ -179,7 +179,7 @@ func startSignalingServer(t *testing.T, cfg config.Config) (*httptest.Server, *m
 	if err != nil {
 		t.Fatalf("NewAuthAuthorizer: %v", err)
 	}
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	sm := relay.NewSessionManager(cfg, m, nil)
 
 	srv := signaling.NewServer(signaling.Config{

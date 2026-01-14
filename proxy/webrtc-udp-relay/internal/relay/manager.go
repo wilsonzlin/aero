@@ -36,7 +36,7 @@ func (sm *SessionManager) sessionIDInUseLocked(id string) bool {
 
 func NewSessionManager(cfg config.Config, m *metrics.Metrics, clock clock) *SessionManager {
 	if m == nil {
-		m = metrics.New()
+		m = &metrics.Metrics{}
 	}
 	return &SessionManager{
 		cfg:      cfg,

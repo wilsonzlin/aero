@@ -115,7 +115,7 @@ func TestSessionRelay_IdleTimeoutCleanup(t *testing.T) {
 func TestUdpPortBinding_RemoteAllowlist(t *testing.T) {
 	dc := &fakeDataChannel{sent: make(chan []byte, 128)}
 	p := policy.NewDevDestinationPolicy()
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	cfg := defaultConfig()
 	cfg.InboundFilterMode = InboundFilterAddressAndPort
 	cfg.RemoteAllowlistIdleTimeout = time.Minute

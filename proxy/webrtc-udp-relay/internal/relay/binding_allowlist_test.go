@@ -42,7 +42,7 @@ func TestUdpPortBinding_AllowRemote_EvictsOldest(t *testing.T) {
 	cfg.RemoteAllowlistIdleTimeout = time.Minute
 	cfg.MaxAllowedRemotesPerBinding = 3
 
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	b := &udpPortBinding{
 		cfg:     cfg,
 		metrics: m,
@@ -143,7 +143,7 @@ func TestUdpPortBinding_AllowRemote_PrunesExpiredBeforeEvicting(t *testing.T) {
 	cfg.RemoteAllowlistIdleTimeout = 1 * time.Second
 	cfg.MaxAllowedRemotesPerBinding = 2
 
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	b := &udpPortBinding{
 		cfg:     cfg,
 		metrics: m,
@@ -194,7 +194,7 @@ func TestUdpPortBinding_InboundFilterAny_IgnoresAllowlist(t *testing.T) {
 	cfg.RemoteAllowlistIdleTimeout = 1 * time.Second
 	cfg.MaxAllowedRemotesPerBinding = 1
 
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	b := &udpPortBinding{
 		cfg:     cfg,
 		metrics: m,

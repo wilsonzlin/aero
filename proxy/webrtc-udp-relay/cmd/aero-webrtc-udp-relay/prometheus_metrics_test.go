@@ -10,7 +10,7 @@ import (
 )
 
 func TestPrometheusHandler_ExposesSnapshot(t *testing.T) {
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	m.Inc("foo")
 	m.Add("bar", 2)
 	m.Inc(`quote"back\slash`)

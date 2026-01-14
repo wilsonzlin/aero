@@ -15,7 +15,7 @@ func TestSession_SoftRateLimitDropsButKeepsSession(t *testing.T) {
 		MaxUDPPpsPerSession:             2,
 		MaxUniqueDestinationsPerSession: 10,
 	}
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	sm := NewSessionManager(cfg, m, clk)
 	s, err := sm.CreateSessionWithKey("")
 	if err != nil {
@@ -48,7 +48,7 @@ func TestSession_HardModeClosesAfterViolations(t *testing.T) {
 		ViolationWindow:                 10 * time.Second,
 		MaxUniqueDestinationsPerSession: 10,
 	}
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	sm := NewSessionManager(cfg, m, clk)
 	s, err := sm.CreateSessionWithKey("")
 	if err != nil {
@@ -78,7 +78,7 @@ func TestSession_EnforcesUniqueDestinationQuota(t *testing.T) {
 	cfg := config.Config{
 		MaxUniqueDestinationsPerSession: 1,
 	}
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	sm := NewSessionManager(cfg, m, clk)
 	s, err := sm.CreateSessionWithKey("")
 	if err != nil {
@@ -103,7 +103,7 @@ func TestSession_EnforcesDataChannelBps(t *testing.T) {
 	cfg := config.Config{
 		MaxDataChannelBpsPerSession: 4,
 	}
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	sm := NewSessionManager(cfg, m, clk)
 	s, err := sm.CreateSessionWithKey("")
 	if err != nil {
@@ -126,7 +126,7 @@ func TestSession_EnforcesUDPBpsPerSession(t *testing.T) {
 	cfg := config.Config{
 		MaxUDPBpsPerSession: 4,
 	}
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	sm := NewSessionManager(cfg, m, clk)
 	s, err := sm.CreateSessionWithKey("")
 	if err != nil {
@@ -152,7 +152,7 @@ func TestSession_EnforcesUDPPpsPerDest(t *testing.T) {
 		MaxUDPPpsPerDest:                1,
 		MaxUniqueDestinationsPerSession: 10,
 	}
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	sm := NewSessionManager(cfg, m, clk)
 	s, err := sm.CreateSessionWithKey("")
 	if err != nil {
@@ -178,7 +178,7 @@ func TestSession_UDPDestBucketEvictionsMetric(t *testing.T) {
 		MaxUDPPpsPerDest:            100,
 		MaxUDPDestBucketsPerSession: 4,
 	}
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	sm := NewSessionManager(cfg, m, clk)
 	s, err := sm.CreateSessionWithKey("")
 	if err != nil {

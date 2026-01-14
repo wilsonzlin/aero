@@ -36,7 +36,7 @@ func decodeHTTPErrorResponse(t *testing.T, resp *http.Response) httpErrorRespons
 
 func TestServer_EnforcesMaxSessions(t *testing.T) {
 	cfg := config.Config{MaxSessions: 1}
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	sm := relay.NewSessionManager(cfg, m, nil)
 
 	mediaEngine := &webrtc.MediaEngine{}
@@ -223,7 +223,7 @@ func (failingAuthorizer) Authorize(r *http.Request, firstMsg *clientHello) (auth
 
 func TestServer_WebSocketInternalAuthErrorCloses1011(t *testing.T) {
 	cfg := config.Config{}
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	sm := relay.NewSessionManager(cfg, m, nil)
 
 	srv := NewServer(Config{
@@ -271,7 +271,7 @@ func TestServer_WebSocketInternalAuthErrorCloses1011(t *testing.T) {
 
 func TestServer_HTTPInternalAuthErrorReturns500(t *testing.T) {
 	cfg := config.Config{}
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	sm := relay.NewSessionManager(cfg, m, nil)
 
 	srv := NewServer(Config{
@@ -360,7 +360,7 @@ func TestServer_Offer_ICEGatheringTimeoutReturnsAnswer(t *testing.T) {
 
 	api := webrtc.NewAPI()
 	cfg := config.Config{MaxSessions: 1}
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	sm := relay.NewSessionManager(cfg, m, nil)
 
 	srv := NewServer(Config{
@@ -458,7 +458,7 @@ func TestServer_WebRTCOffer_ICEGatheringTimeoutReturnsAnswer(t *testing.T) {
 
 	api := webrtc.NewAPI()
 	cfg := config.Config{MaxSessions: 1}
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	sm := relay.NewSessionManager(cfg, m, nil)
 
 	srv := NewServer(Config{
@@ -547,7 +547,7 @@ func TestServer_WebRTCOffer_ICEGatheringTimeoutReturnsAnswer(t *testing.T) {
 
 func TestServer_WebRTCOffer_CanceledRequestClosesSession(t *testing.T) {
 	cfg := config.Config{MaxSessions: 1}
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	sm := relay.NewSessionManager(cfg, m, nil)
 
 	// Force GatheringCompletePromise to never resolve so the handler blocks until
@@ -661,7 +661,7 @@ func TestServer_WebRTCOffer_CanceledRequestClosesSession(t *testing.T) {
 
 func TestServer_Offer_CanceledRequestClosesSession(t *testing.T) {
 	cfg := config.Config{MaxSessions: 1}
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	sm := relay.NewSessionManager(cfg, m, nil)
 
 	// Force GatheringCompletePromise to never resolve so the handler blocks until
@@ -786,7 +786,7 @@ func (unauthorizedAuthorizer) Authorize(r *http.Request, firstMsg *clientHello) 
 
 func TestServer_SessionEndpoint_RequiresAuth(t *testing.T) {
 	cfg := config.Config{}
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	sm := relay.NewSessionManager(cfg, m, nil)
 
 	srv := NewServer(Config{
@@ -827,7 +827,7 @@ func TestServer_SessionEndpoint_RequiresAuth(t *testing.T) {
 
 func TestServer_SessionEndpoint_ExpiresAndReleasesSession(t *testing.T) {
 	cfg := config.Config{MaxSessions: 1}
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	sm := relay.NewSessionManager(cfg, m, nil)
 
 	preallocTTL := 250 * time.Millisecond
@@ -898,7 +898,7 @@ func TestServer_SessionEndpoint_ExpiresAndReleasesSession(t *testing.T) {
 
 func TestServer_Close_ClosesPreallocatedSessions(t *testing.T) {
 	cfg := config.Config{MaxSessions: 1}
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	sm := relay.NewSessionManager(cfg, m, nil)
 
 	srv := NewServer(Config{
@@ -930,7 +930,7 @@ func TestServer_Close_ClosesPreallocatedSessions(t *testing.T) {
 
 func TestServer_WebRTCOffer_ConnectTimeoutClosesSession(t *testing.T) {
 	cfg := config.Config{MaxSessions: 1}
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	sm := relay.NewSessionManager(cfg, m, nil)
 
 	mediaEngine := &webrtc.MediaEngine{}

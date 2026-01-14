@@ -25,7 +25,7 @@ func startSignalingAndUDPServer(t *testing.T, cfg config.Config) (*httptest.Serv
 	if err != nil {
 		t.Fatalf("NewAuthAuthorizer: %v", err)
 	}
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	sm := relay.NewSessionManager(cfg, m, nil)
 
 	sig := signaling.NewServer(signaling.Config{

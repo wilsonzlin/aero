@@ -17,7 +17,7 @@ func TestSessionRelay_EnforcesOutboundUDPRateLimit(t *testing.T) {
 	cfg := config.Config{
 		MaxUDPPpsPerSession: 1,
 	}
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	sm := NewSessionManager(cfg, m, clk)
 	sess, err := sm.CreateSessionWithKey("")
 	if err != nil {
@@ -101,7 +101,7 @@ func TestSessionRelay_EnforcesInboundDataChannelRateLimit(t *testing.T) {
 	cfg := config.Config{
 		MaxDataChannelBpsPerSession: frameLen,
 	}
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	sm := NewSessionManager(cfg, m, clk)
 	sess, err := sm.CreateSessionWithKey("")
 	if err != nil {

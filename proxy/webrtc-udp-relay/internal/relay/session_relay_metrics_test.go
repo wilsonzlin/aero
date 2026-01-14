@@ -14,7 +14,7 @@ import (
 )
 
 func TestSessionRelay_WebRTCUDPMetrics_MalformedFrame(t *testing.T) {
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	sm := NewSessionManager(config.Config{}, m, nil)
 	sess, err := sm.CreateSessionWithKey("")
 	if err != nil {
@@ -36,7 +36,7 @@ func TestSessionRelay_WebRTCUDPMetrics_MalformedFrame(t *testing.T) {
 }
 
 func TestSessionRelay_WebRTCUDPMetrics_OversizedPayload(t *testing.T) {
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	sm := NewSessionManager(config.Config{}, m, nil)
 	sess, err := sm.CreateSessionWithKey("")
 	if err != nil {
@@ -66,7 +66,7 @@ func TestSessionRelay_WebRTCUDPMetrics_OversizedPayload(t *testing.T) {
 }
 
 func TestSessionRelay_WebRTCUDPMetrics_BackpressureDrop(t *testing.T) {
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	sm := NewSessionManager(config.Config{}, m, nil)
 	sess, err := sm.CreateSessionWithKey("")
 	if err != nil {
@@ -137,7 +137,7 @@ func TestSessionRelay_WebRTCUDPMetrics_BackpressureDrop(t *testing.T) {
 }
 
 func TestSessionRelay_WebRTCUDPMetrics_AllowlistDropDoesNotCountAsWebRTCUDPDropped(t *testing.T) {
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	sm := NewSessionManager(config.Config{}, m, nil)
 	sess, err := sm.CreateSessionWithKey("")
 	if err != nil {
@@ -232,7 +232,7 @@ func TestSessionRelay_WebRTCUDPMetrics_AllowlistDropDoesNotCountAsWebRTCUDPDropp
 }
 
 func TestSessionRelay_DefaultMetricsSink_UsesSessionMetrics(t *testing.T) {
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	// Construct a minimal session with an attached metrics registry. This test is
 	// intentionally focused on the metrics-sink wiring (NewSessionRelay should
 	// default to session.metrics when the explicit sink is nil); it does not

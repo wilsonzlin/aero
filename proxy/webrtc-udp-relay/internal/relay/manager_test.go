@@ -11,7 +11,7 @@ import (
 )
 
 func TestSessionManager_AssignsHexSessionIDsAndRemovesOnClose(t *testing.T) {
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	sm := NewSessionManager(config.Config{}, m, nil)
 	activeSessions := func() int {
 		sm.mu.Lock()
@@ -48,7 +48,7 @@ func TestSessionManager_AssignsHexSessionIDsAndRemovesOnClose(t *testing.T) {
 
 func TestSessionManager_EnforcesMaxSessions(t *testing.T) {
 	cfg := config.Config{MaxSessions: 1}
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	sm := NewSessionManager(cfg, m, nil)
 	activeSessions := func() int {
 		sm.mu.Lock()
@@ -87,7 +87,7 @@ func TestSessionManager_EnforcesMaxSessions(t *testing.T) {
 }
 
 func TestSessionManager_CreateSessionWithKey_RejectsWhenKeyAlreadyActive(t *testing.T) {
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	sm := NewSessionManager(config.Config{}, m, nil)
 
 	s1, err := sm.CreateSessionWithKey("sid_test")
@@ -111,7 +111,7 @@ func TestSessionManager_CreateSessionWithKey_RejectsWhenKeyAlreadyActive(t *test
 }
 
 func TestSessionManager_CreateSessionWithKey_DoesNotTrimKey(t *testing.T) {
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	sm := NewSessionManager(config.Config{}, m, nil)
 
 	// Whitespace keys should still be treated as stable keys. This protects
@@ -130,7 +130,7 @@ func TestSessionManager_CreateSessionWithKey_DoesNotTrimKey(t *testing.T) {
 }
 
 func TestSessionManager_CreateSessionWithKey_AllowsDifferentKeys(t *testing.T) {
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	sm := NewSessionManager(config.Config{}, m, nil)
 
 	s1, err := sm.CreateSessionWithKey("sid_a")
@@ -165,7 +165,7 @@ func TestSessionManager_CreateSession_AvoidsIDCollisionWithKeyedSession(t *testi
 	buf = append(buf, bytes.Repeat([]byte{0x01}, 16)...)
 	rand.Reader = bytes.NewReader(buf)
 
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	sm := NewSessionManager(config.Config{}, m, nil)
 
 	keyed, err := sm.CreateSessionWithKey("sid_test")
@@ -198,7 +198,7 @@ func TestSessionManager_CreateSessionWithKey_AvoidsIDCollisionWithRandomSession(
 	buf = append(buf, bytes.Repeat([]byte{0x01}, 16)...)
 	rand.Reader = bytes.NewReader(buf)
 
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	sm := NewSessionManager(config.Config{}, m, nil)
 
 	random, err := sm.CreateSessionWithKey("")

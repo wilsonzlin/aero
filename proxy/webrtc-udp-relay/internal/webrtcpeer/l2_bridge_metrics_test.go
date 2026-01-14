@@ -16,7 +16,7 @@ import (
 )
 
 func TestL2Bridge_OversizedMessageIncrementsMetricAndClosesBridge(t *testing.T) {
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	sm := relay.NewSessionManager(config.Config{}, m, nil)
 	sess, err := sm.CreateSessionWithKey("")
 	if err != nil {
@@ -49,7 +49,7 @@ func TestL2Bridge_OversizedMessageIncrementsMetricAndClosesBridge(t *testing.T) 
 }
 
 func TestL2Bridge_QuotaDropIncrementsMetric(t *testing.T) {
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	sm := relay.NewSessionManager(config.Config{
 		// Force quota.HandleInboundToClient to drop on the first frame.
 		MaxDataChannelBpsPerSession: 1,
@@ -102,7 +102,7 @@ func TestL2Bridge_QuotaDropIncrementsMetric(t *testing.T) {
 }
 
 func TestL2Bridge_DialCanceledDoesNotIncrementDialErrorMetric(t *testing.T) {
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	sm := relay.NewSessionManager(config.Config{}, m, nil)
 	sess, err := sm.CreateSessionWithKey("")
 	if err != nil {

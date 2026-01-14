@@ -296,7 +296,7 @@ func TestICEEndpoint_AuthAPIKey(t *testing.T) {
 		APIKey:          "secret",
 		ICEServers:      []webrtc.ICEServer{{URLs: []string{"stun:stun.example.com:3478"}}},
 	}
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	baseURL := startTestServer(t, cfg, func(srv *server) { srv.SetMetrics(m) })
 
 	t.Run("missing", func(t *testing.T) {
@@ -404,7 +404,7 @@ func TestICEEndpoint_AuthJWT(t *testing.T) {
 		JWTSecret:       "secret",
 		ICEServers:      []webrtc.ICEServer{{URLs: []string{"stun:stun.example.com:3478"}}},
 	}
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	baseURL := startTestServer(t, cfg, func(srv *server) { srv.SetMetrics(m) })
 
 	t.Run("missing", func(t *testing.T) {

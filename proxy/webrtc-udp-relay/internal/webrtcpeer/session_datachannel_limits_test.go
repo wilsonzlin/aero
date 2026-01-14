@@ -84,7 +84,7 @@ func TestSession_RejectsUnknownAndDuplicateDataChannels(t *testing.T) {
 
 	wsURL, backendConnected := newHoldingL2Backend(t)
 
-	m := metrics.New()
+	m := &metrics.Metrics{}
 	sm := relay.NewSessionManager(config.Config{}, m, nil)
 	quota, err := sm.CreateSessionWithKey("")
 	if err != nil {

@@ -113,14 +113,11 @@ type Metrics struct {
 	m  map[string]uint64
 }
 
-func New() *Metrics {
-	return &Metrics{
-		m: make(map[string]uint64),
-	}
-}
-
 func (m *Metrics) Inc(name string) {
 	m.mu.Lock()
+	if m.m == nil {
+		m.m = make(map[string]uint64)
+	}
 	m.m[name]++
 	m.mu.Unlock()
 }
@@ -130,6 +127,9 @@ func (m *Metrics) Add(name string, delta uint64) {
 		return
 	}
 	m.mu.Lock()
+	if m.m == nil {
+		m.m = make(map[string]uint64)
+	}
 	m.m[name] += delta
 	m.mu.Unlock()
 }
