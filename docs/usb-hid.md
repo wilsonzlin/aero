@@ -170,6 +170,7 @@ Aero models these inputs using a dedicated USB HID **consumer-control** device m
 Mapping helpers (keep in sync):
 
 - Rust: `crates/aero-usb/src/hid/usage.rs::keyboard_code_to_consumer_usage`
+- Rust (browser convenience wrapper): `crates/aero-usb/src/web.rs::keyboard_code_to_consumer_usage`
 - TypeScript: `web/src/input/hid_usage.ts::keyboardCodeToConsumerUsage`
 
 To prevent drift, the supported mapping set is pinned by:
