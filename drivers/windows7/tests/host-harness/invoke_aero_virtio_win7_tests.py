@@ -3574,6 +3574,8 @@ def main() -> int:
             irq_diag_carry = b""
             virtio_blk_marker_line: Optional[str] = None
             virtio_blk_marker_carry = b""
+            virtio_blk_counters_marker_line: Optional[str] = None
+            virtio_blk_counters_marker_carry = b""
             virtio_input_msix_marker: Optional[_VirtioInputMsixMarker] = None
             expect_blk_msi_config: Optional[str] = None
             saw_virtio_blk_pass = False
@@ -3663,6 +3665,12 @@ def main() -> int:
                         chunk,
                         prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk|",
                         carry=virtio_blk_marker_carry,
+                    )
+                    virtio_blk_counters_marker_line, virtio_blk_counters_marker_carry = _update_last_marker_line_from_chunk(
+                        virtio_blk_counters_marker_line,
+                        chunk,
+                        prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-counters|",
+                        carry=virtio_blk_counters_marker_carry,
                     )
                     tail += chunk
                     if expect_blk_msi_config is None and b"AERO_VIRTIO_SELFTEST|CONFIG|" in tail:
@@ -6082,12 +6090,20 @@ def main() -> int:
                     virtio_blk_marker_line = raw2.decode("utf-8", errors="replace").strip()
                 except Exception:
                     pass
+        if virtio_blk_counters_marker_carry:
+            raw = virtio_blk_counters_marker_carry.rstrip(b"\r")
+            raw2 = raw.lstrip()
+            if raw2.startswith(b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-counters|"):
+                try:
+                    virtio_blk_counters_marker_line = raw2.decode("utf-8", errors="replace").strip()
+                except Exception:
+                    pass
 
         _emit_virtio_blk_irq_host_marker(tail, blk_test_line=virtio_blk_marker_line, irq_diag_markers=irq_diag_markers)
         _emit_virtio_blk_msix_host_marker(tail)
         _emit_virtio_blk_io_host_marker(tail, blk_test_line=virtio_blk_marker_line)
         _emit_virtio_blk_recovery_host_marker(tail, blk_test_line=virtio_blk_marker_line)
-        _emit_virtio_blk_counters_host_marker(tail)
+        _emit_virtio_blk_counters_host_marker(tail, blk_counters_line=virtio_blk_counters_marker_line)
         _emit_virtio_net_large_host_marker(tail)
         _emit_virtio_net_udp_host_marker(tail)
         _emit_virtio_net_udp_dns_host_marker(tail)
@@ -8022,7 +8038,9 @@ def _emit_virtio_blk_io_host_marker(tail: bytes, *, blk_test_line: Optional[str]
     print("|".join(parts))
 
 
-def _emit_virtio_blk_counters_host_marker(tail: bytes) -> None:
+def _emit_virtio_blk_counters_host_marker(
+    tail: bytes, *, blk_counters_line: Optional[str] = None
+) -> None:
     """
     Best-effort: emit a host-side marker mirroring the guest's virtio-blk recovery/reset/abort counters.
 
@@ -8035,7 +8053,11 @@ def _emit_virtio_blk_counters_host_marker(tail: bytes) -> None:
 
     This does not affect harness PASS/FAIL; it's only for log scraping/diagnostics.
     """
-    marker_line = _try_extract_last_marker_line(tail, b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-counters|")
+    marker_line = blk_counters_line
+    if marker_line is None:
+        marker_line = _try_extract_last_marker_line(
+            tail, b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-counters|"
+        )
     if marker_line is None:
         return
 

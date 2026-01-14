@@ -9,6 +9,7 @@ import io
 import sys
 import unittest
 from pathlib import Path
+from typing import Optional
 
 
 def _load_harness():
@@ -28,10 +29,13 @@ class VirtioBlkCountersMarkerTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.harness = _load_harness()
 
-    def _emit(self, tail: bytes) -> str:
+    def _emit(self, tail: bytes, *, line: Optional[str] = None) -> str:
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
-            self.harness._emit_virtio_blk_counters_host_marker(tail)
+            if line is None:
+                self.harness._emit_virtio_blk_counters_host_marker(tail)
+            else:
+                self.harness._emit_virtio_blk_counters_host_marker(tail, blk_counters_line=line)
         return buf.getvalue().strip()
 
     def test_emits_info_with_all_fields(self) -> None:
@@ -61,7 +65,18 @@ class VirtioBlkCountersMarkerTests(unittest.TestCase):
         out = self._emit(tail)
         self.assertEqual(out, "")
 
+    def test_uses_explicit_marker_line_override(self) -> None:
+        line = (
+            "AERO_VIRTIO_SELFTEST|TEST|virtio-blk-counters|INFO|abort=0|reset_device=0|reset_bus=0|"
+            "pnp=0|ioctl_reset=0|capacity_change_events=not_supported"
+        )
+        out = self._emit(b"", line=line)
+        self.assertEqual(
+            out,
+            "AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_COUNTERS|INFO|abort=0|reset_device=0|reset_bus=0|pnp=0|"
+            "ioctl_reset=0|capacity_change_events=not_supported",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
-
