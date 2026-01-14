@@ -191,10 +191,11 @@ Notes:
   in WASM builds that omit UHCI, the same topology manager can be backed by `EhciControllerBridge`).
 - WebUSB passthrough supports both legacy UHCI (full-speed view) and high-speed controllers. When
   the WASM build exports the WebUSB passthrough hooks on xHCI/EHCI bridges (`set_connected`,
-  `drain_actions`, `push_completion`, `reset`, `pending_summary`), the I/O worker deterministically prefers xHCI (then
-  EHCI) for guest-visible WebUSB passthrough and disables the UHCI-only
-  `OTHER_SPEED_CONFIGURATION` descriptor translation. Otherwise it falls back to the UHCI-based
-  passthrough path. As of today, xHCI remains bring-up quality: command ring coverage is incomplete
+  `drain_actions`, `push_completion`, `reset`, `pending_summary`), the web runtime can opt into
+  routing guest-visible WebUSB passthrough via EHCI/xHCI (default is UHCI). In EHCI/xHCI mode, the
+  I/O worker disables the UHCI-only `OTHER_SPEED_CONFIGURATION` descriptor translation so the guest
+  sees current-speed descriptors unmodified. Otherwise it falls back to the UHCI-based passthrough
+  path. As of today, xHCI remains bring-up quality: command ring coverage is incomplete
   and the transfer plane is still limited (endpoint 0 + a subset of bulk/interrupt Normal TRB
   transfers) and under active development/validation, so UHCI remains the known-good attachment
   path for HID in practice. See
