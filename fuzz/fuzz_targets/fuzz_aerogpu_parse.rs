@@ -218,6 +218,11 @@ fn fuzz_cmd_stream(cmd_bytes: &[u8]) {
                     };
                     let _ = cmd::decode_cmd_copy_texture2d_le(packet_bytes);
                 }
+                Some(cmd::AerogpuCmdOpcode::Dispatch) => {
+                    if let Some(packet_bytes) = packet_bytes(cmd_bytes, &pkt) {
+                        let _ = cmd::decode_cmd_dispatch_le(packet_bytes);
+                    }
+                }
                 Some(cmd::AerogpuCmdOpcode::SetVertexBuffers) => {
                     let _ = pkt.decode_set_vertex_buffers_payload_le();
                     if let Some(packet_bytes) = packet_bytes(cmd_bytes, &pkt) {
@@ -1025,6 +1030,7 @@ fuzz_target!(|data: &[u8]| {
         + cmd::AerogpuCmdClear::SIZE_BYTES
         + cmd::AerogpuCmdDraw::SIZE_BYTES
         + cmd::AerogpuCmdDrawIndexed::SIZE_BYTES
+        + cmd::AerogpuCmdDispatch::SIZE_BYTES
         + cmd::AerogpuCmdPresent::SIZE_BYTES
         + cmd::AerogpuCmdPresentEx::SIZE_BYTES
         + cmd::AerogpuCmdExportSharedSurface::SIZE_BYTES
@@ -1455,6 +1461,14 @@ fuzz_target!(|data: &[u8]| {
         &mut off,
         cmd::AerogpuCmdOpcode::DrawIndexed as u32,
         cmd::AerogpuCmdDrawIndexed::SIZE_BYTES,
+    );
+
+    // DISPATCH (fixed-size)
+    let _ = write_pkt_hdr(
+        cmd_synth.as_mut_slice(),
+        &mut off,
+        cmd::AerogpuCmdOpcode::Dispatch as u32,
+        cmd::AerogpuCmdDispatch::SIZE_BYTES,
     );
 
     // PRESENT (fixed-size)
