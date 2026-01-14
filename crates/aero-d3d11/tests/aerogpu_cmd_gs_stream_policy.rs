@@ -204,6 +204,64 @@ fn rejects_nonzero_emit_stream_index_after_implicit_zero() {
 }
 
 #[test]
+fn rejects_nonzero_emitthen_cut_stream_index_after_implicit_zero() {
+    pollster::block_on(async {
+        let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+            Ok(exec) => exec,
+            Err(e) => {
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                return;
+            }
+        };
+
+        let dxbc = build_sm5_gs_stream_op_implicit_zero_then(OPCODE_EMITTHENCUT_STREAM, 1);
+
+        let mut writer = AerogpuCmdWriter::new();
+        writer.create_shader_dxbc(1, AerogpuShaderStage::Geometry, &dxbc);
+        let stream = writer.finish();
+
+        let mut guest_mem = VecGuestMemory::new(0);
+        let err = exec
+            .execute_cmd_stream(&stream, None, &mut guest_mem)
+            .expect_err("expected CREATE_SHADER_DXBC to reject non-zero stream index");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("emitthen_cut_stream") && msg.contains("stream") && msg.contains("1"),
+            "unexpected error: {err:#}"
+        );
+    });
+}
+
+#[test]
+fn rejects_nonzero_cut_stream_index_after_implicit_zero() {
+    pollster::block_on(async {
+        let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+            Ok(exec) => exec,
+            Err(e) => {
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                return;
+            }
+        };
+
+        let dxbc = build_sm5_gs_stream_op_implicit_zero_then(OPCODE_CUT_STREAM, 1);
+
+        let mut writer = AerogpuCmdWriter::new();
+        writer.create_shader_dxbc(1, AerogpuShaderStage::Geometry, &dxbc);
+        let stream = writer.finish();
+
+        let mut guest_mem = VecGuestMemory::new(0);
+        let err = exec
+            .execute_cmd_stream(&stream, None, &mut guest_mem)
+            .expect_err("expected CREATE_SHADER_DXBC to reject non-zero stream index");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("cut_stream") && msg.contains("stream") && msg.contains("1"),
+            "unexpected error: {err:#}"
+        );
+    });
+}
+
+#[test]
 fn rejects_nonzero_emitthen_cut_stream_index() {
     pollster::block_on(async {
         let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
