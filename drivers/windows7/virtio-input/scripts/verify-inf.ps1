@@ -244,8 +244,8 @@ function Add-Failure([System.Collections.Generic.List[string]]$Failures, [string
   }
 }
 
-$exitCode = 0
-try {
+  $exitCode = 0
+  try {
   $infPathResolved = Resolve-ExistingFile -Path $InfPath -ArgName '-InfPath'
 
   $rawLines = Read-InfLines -Path $infPathResolved
@@ -413,7 +413,8 @@ foreach ($installSect in $installWdfSections) {
 #   (distinct keyboard/mouse naming):
 #     PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01
 #     PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01
-# - All virtio-input INFs must also include the strict, REV-qualified generic fallback HWID (no SUBSYS):
+# - It must also include the strict, REV-qualified generic fallback HWID (no SUBSYS) so driver binding remains
+#   revision-gated even if subsystem IDs are absent/ignored:
 #     PCI\VEN_1AF4&DEV_1052&REV_01
 # - Legacy alias `virtio-input.inf{,.disabled}` (if present) is a filename alias only and must remain byte-for-byte identical
 #   to `aero_virtio_input.inf` from the first section header (`[Version]`) onward (only the leading banner/comments may differ).

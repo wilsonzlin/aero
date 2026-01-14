@@ -1236,13 +1236,17 @@ fn validate_virtio_input_device_desc_split(
     // Policy (AERO-W7-VIRTIO v1):
     // - The canonical INF referenced by the device contract (`aero_virtio_input.inf`) is expected
     //   to bind keyboard/mouse via SUBSYS-qualified HWIDs (distinct naming) and include a strict,
-    //   revision-gated generic fallback HWID (no SUBSYS): `{base_hwid}&REV_{expected_rev:02X}`.
+    //   REV-qualified generic fallback HWID (no SUBSYS): `{base_hwid}&REV_{expected_rev:02X}`.
+    //   The strict fallback exists so driver binding remains revision-gated even when subsystem IDs
+    //   are absent/ignored.
     // - Legacy filename aliases (`virtio-input.inf` / `virtio-input.inf.disabled`, if present) are
     //   compatibility shims for tooling that references the legacy basename. They must remain in
     //   sync with the canonical INF from the first section header (`[Version]`) onward (only the
     //   leading banner/comments may differ), so they do not change HWID matching behavior.
     // - Tablet devices bind via `aero_virtio_tablet.inf` (more specific SUBSYS match) and win over
     //   the generic fallback when that INF is installed.
+    // - The INF must not include a revision-less base HWID (`{base_hwid}`), which would overlap
+    //   with tablets and defeat revision gating.
     let strings = parse_inf_strings(inf_text);
     let rev = format!("{expected_rev:02X}");
     let kb_hwid = format!("{base_hwid}&SUBSYS_00101AF4&REV_{rev}");
@@ -1416,13 +1420,13 @@ mod virtio_input_device_desc_split_tests {
     #[test]
     fn virtio_input_device_desc_split_rejects_missing_fallback() {
         let inf = r#"
- [Aero.NTx86]
- %AeroVirtioKeyboard.DeviceDesc% = AeroVirtioInput_Install.NTx86, PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01
- %AeroVirtioMouse.DeviceDesc%    = AeroVirtioInput_Install.NTx86, PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01
+  [Aero.NTx86]
+  %AeroVirtioKeyboard.DeviceDesc% = AeroVirtioInput_Install.NTx86, PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01
+  %AeroVirtioMouse.DeviceDesc%    = AeroVirtioInput_Install.NTx86, PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01
 
 [Aero.NTamd64]
-%AeroVirtioKeyboard.DeviceDesc% = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01
-%AeroVirtioMouse.DeviceDesc%    = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01
+ %AeroVirtioKeyboard.DeviceDesc% = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01
+ %AeroVirtioMouse.DeviceDesc%    = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01
 
  [Strings]
  AeroVirtioKeyboard.DeviceDesc = "Aero VirtIO Keyboard"
@@ -1436,10 +1440,10 @@ mod virtio_input_device_desc_split_tests {
     #[test]
     fn virtio_input_device_desc_split_accepts_with_fallback() {
         let inf = r#"
- [Aero.NTx86]
- %AeroVirtioKeyboard.DeviceDesc% = AeroVirtioInput_Install.NTx86, PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01
- %AeroVirtioMouse.DeviceDesc%    = AeroVirtioInput_Install.NTx86, PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01
-%AeroVirtioInput.DeviceDesc%    = AeroVirtioInput_Install.NTx86, PCI\VEN_1AF4&DEV_1052&REV_01
+  [Aero.NTx86]
+  %AeroVirtioKeyboard.DeviceDesc% = AeroVirtioInput_Install.NTx86, PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01
+  %AeroVirtioMouse.DeviceDesc%    = AeroVirtioInput_Install.NTx86, PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01
+ %AeroVirtioInput.DeviceDesc%    = AeroVirtioInput_Install.NTx86, PCI\VEN_1AF4&DEV_1052&REV_01
 
 [Aero.NTamd64]
 %AeroVirtioKeyboard.DeviceDesc% = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01
@@ -1821,7 +1825,7 @@ fn validate_in_tree_infs(repo_root: &Path, devices: &BTreeMap<String, DeviceEntr
                         expected_rev,
                     )
                     .with_context(|| {
-                        format!("{name}: validate virtio-input canonical DeviceDesc split")
+                        format!("{name}: validate virtio-input DeviceDesc split")
                     })?;
 
                     // Optional: validate the legacy filename alias INF (if present). This alias is kept for
@@ -1835,40 +1839,17 @@ fn validate_in_tree_infs(repo_root: &Path, devices: &BTreeMap<String, DeviceEntr
                         inf_path.with_file_name("virtio-input.inf"),
                         inf_path.with_file_name("virtio-input.inf.disabled"),
                     ];
-                    let mut canonical_body = None::<Vec<u8>>;
+                    let canonical_bytes = inf_functional_bytes(inf_path).with_context(|| {
+                        format!("{name}: read canonical virtio-input INF functional bytes")
+                    })?;
                     for alias in alias_candidates {
                         if !alias.exists() {
                             continue;
                         }
-                        let alias_text = read_inf_text(&alias).with_context(|| {
-                            format!("{name}: read virtio-input legacy alias INF")
-                        })?;
-                        validate_virtio_input_device_desc_split(
-                            &alias,
-                            &alias_text,
-                            &base,
-                            expected_rev,
-                        )
-                        .with_context(|| {
-                            format!(
-                                "{name}: validate virtio-input legacy alias DeviceDesc split: {}",
-                                alias.display()
-                            )
-                        })?;
-
-                        // Ensure the alias stays in sync with the canonical INF (functional content).
-                        // Ensure the alias stays in sync with the canonical INF (functional content).
-                        // This is intentionally byte-level so drift in comments/whitespace/ordering is
-                        // detected.
-                        if canonical_body.is_none() {
-                            canonical_body = Some(inf_functional_bytes(inf_path).with_context(|| {
-                                format!("{name}: read canonical virtio-input INF functional bytes")
-                            })?);
-                        }
-                        let alias_body = inf_functional_bytes(&alias).with_context(|| {
+                        let alias_bytes = inf_functional_bytes(&alias).with_context(|| {
                             format!("{name}: read legacy virtio-input alias INF functional bytes")
                         })?;
-                        if canonical_body.as_ref().expect("set above") != &alias_body {
+                        if canonical_bytes != alias_bytes {
                             bail!(
                                 "{name}: virtio-input legacy alias INF drift detected: {} vs {}\n\
 The alias INF must be byte-for-byte identical to the canonical INF from the first section header (`[Version]`) onward (leading banner/comments may differ).\n\
@@ -2163,80 +2144,6 @@ fn format_bullets(items: &BTreeSet<String>) -> String {
         .join("\n")
 }
 
-fn first_nonblank_ascii_byte(line: &[u8], first_line: bool) -> Option<u8> {
-    let mut line = line;
-    if first_line {
-        // Strip BOMs for detection only (returned bytes still include them).
-        if line.starts_with(b"\xef\xbb\xbf") {
-            line = &line[3..];
-        } else if line.starts_with(b"\xff\xfe") || line.starts_with(b"\xfe\xff") {
-            line = &line[2..];
-        }
-    }
-
-    for &b in line {
-        // NUL, tab, LF, CR, space
-        if b == 0 || b == b'\t' || b == b'\n' || b == b'\r' || b == b' ' {
-            continue;
-        }
-        return Some(b);
-    }
-    None
-}
-
-fn inf_functional_bytes(path: &Path) -> Result<Vec<u8>> {
-    // Return the INF content starting from the first section header line (typically `[Version]`).
-    //
-    // This intentionally ignores the leading comment/banner block so legacy alias INFs can include
-    // filename notes while still enforcing byte-for-byte equality of all functional content.
-    //
-    // This mirrors the policy implemented by:
-    // - drivers/windows7/virtio-input/scripts/check-inf-alias.py
-    let data = fs::read(path).with_context(|| format!("read {}", path.display()))?;
-    if data.is_empty() {
-        bail!("INF {} is empty", path.display());
-    }
-
-    let mut i = 0usize;
-    let mut first_line = true;
-    while i < data.len() {
-        let line_start = i;
-        while i < data.len() && data[i] != b'\n' {
-            i += 1;
-        }
-        // Skip '\n'.
-        if i < data.len() && data[i] == b'\n' {
-            i += 1;
-        }
-        let line = &data[line_start..i];
-
-        let first = first_nonblank_ascii_byte(line, first_line);
-        first_line = false;
-        let Some(first) = first else {
-            continue;
-        };
-
-        // First section header (e.g. "[Version]") starts the functional region.
-        if first == b'[' {
-            return Ok(data[line_start..].to_vec());
-        }
-
-        // Ignore leading comments.
-        if first == b';' {
-            continue;
-        }
-
-        // Unexpected preamble content (not comment, not blank, not section):
-        // treat it as functional to avoid masking drift.
-        return Ok(data[line_start..].to_vec());
-    }
-
-    bail!(
-        "INF {}: could not find a section header (e.g. [Version])",
-        path.display()
-    )
-}
-
 fn read_inf_text(path: &Path) -> Result<String> {
     let bytes = fs::read(path).with_context(|| format!("read {}", path.display()))?;
     // INF files are often ASCII/UTF-8, but can be UTF-16LE/BE (with or without BOM).
@@ -2318,6 +2225,71 @@ fn read_inf_text(path: &Path) -> Result<String> {
         return Ok(stripped.to_string());
     }
     Ok(text)
+}
+
+fn first_nonblank_ascii_byte(line: &[u8], first_line: bool) -> Option<u8> {
+    // Robust to UTF-16 where ASCII characters are NUL-separated.
+    let line = if first_line {
+        if line.starts_with(&[0xEF, 0xBB, 0xBF]) {
+            &line[3..]
+        } else if line.starts_with(&[0xFF, 0xFE]) || line.starts_with(&[0xFE, 0xFF]) {
+            &line[2..]
+        } else {
+            line
+        }
+    } else {
+        line
+    };
+
+    for &b in line {
+        // NUL, tab, LF, CR, space
+        if b == 0 || b == b'\t' || b == b'\n' || b == b'\r' || b == b' ' {
+            continue;
+        }
+        return Some(b);
+    }
+    None
+}
+
+fn inf_functional_bytes(path: &Path) -> Result<Vec<u8>> {
+    // Return the INF content starting from the first section header line (typically `[Version]`).
+    //
+    // This intentionally ignores the leading comment/banner block so a legacy alias INF can use a
+    // different filename header while still enforcing byte-for-byte equality of all functional
+    // sections/keys.
+    let data = fs::read(path).with_context(|| format!("read {}", path.display()))?;
+
+    let mut line_start = 0usize;
+    let mut is_first_line = true;
+    while line_start < data.len() {
+        let mut line_end = line_start;
+        while line_end < data.len() && data[line_end] != b'\n' {
+            line_end += 1;
+        }
+        if line_end < data.len() && data[line_end] == b'\n' {
+            line_end += 1;
+        }
+        let line = &data[line_start..line_end];
+        let first = first_nonblank_ascii_byte(line, is_first_line);
+        is_first_line = false;
+
+        let Some(first) = first else {
+            line_start = line_end;
+            continue;
+        };
+        if first == b';' {
+            line_start = line_end;
+            continue;
+        }
+        if first == b'[' {
+            return Ok(data[line_start..].to_vec());
+        }
+        // Unexpected functional content before any section header: treat it as functional to avoid
+        // masking drift.
+        return Ok(data[line_start..].to_vec());
+    }
+
+    bail!("{}: could not find a section header (e.g. [Version])", path.display());
 }
 
 fn decode_utf16(bytes: &[u8], little_endian: bool) -> String {

@@ -134,26 +134,31 @@ fn inf_installs_service(contents: &str, expected_service: &str) -> bool {
     })
 }
 
-fn inf_body_from_first_section(contents: &str) -> &str {
-    // Return the "functional" region of an INF: from the first section header
-    // (typically `[Version]`) onward. The virtio-input filename alias policy only
-    // allows the leading banner/comment block to differ.
-    let mut offset = 0;
+fn inf_functional_text(contents: &str) -> &str {
+    // Return the "functional" region of an INF: from the first section header (typically
+    // `[Version]`) onward.
+    //
+    // This intentionally ignores the leading comment/banner block so legacy alias INFs can use a
+    // different filename banner while still enforcing byte-for-byte equality of all functional
+    // sections/keys.
+    let mut offset = 0usize;
     for line in contents.split_inclusive('\n') {
-        let trimmed = line.trim_start_matches(['\0', ' ', '\t', '\r', '\n']);
+        let logical = line.trim_end_matches(['\r', '\n']);
+        let trimmed =
+            logical.trim_start_matches(|c: char| matches!(c, '\0' | ' ' | '\t' | '\u{feff}'));
         if trimmed.is_empty() {
+            offset += line.len();
+            continue;
+        }
+        if trimmed.starts_with(';') {
             offset += line.len();
             continue;
         }
         if trimmed.starts_with('[') {
             return &contents[offset..];
         }
-        if trimmed.starts_with(';') {
-            offset += line.len();
-            continue;
-        }
-        // Unexpected functional content before a section header; treat it as
-        // functional to avoid masking drift.
+        // Unexpected functional content before any section header: treat it as functional to avoid
+        // masking drift.
         return &contents[offset..];
     }
     panic!("INF did not contain a section header (e.g. [Version])");
@@ -562,7 +567,6 @@ fn windows_device_contract_virtio_input_inf_uses_distinct_keyboard_mouse_device_
         assert_eq!(kbd_desc, "%AeroVirtioKeyboard.DeviceDesc%");
         assert_eq!(mouse_desc, "%AeroVirtioMouse.DeviceDesc%");
     }
-
     let kbd_name = strings
         .get("aerovirtiokeyboard.devicedesc")
         .expect("missing AeroVirtioKeyboard.DeviceDesc in [Strings]");
@@ -624,9 +628,9 @@ fn windows_device_contract_virtio_input_alias_inf_stays_in_sync_with_canonical()
         std::fs::read_to_string(&alias_path).expect("read virtio-input alias INF from repository");
 
     assert_eq!(
-        inf_body_from_first_section(&inf_contents),
-        inf_body_from_first_section(&canonical_contents),
-        "alias INF {} must match canonical INF {} from the first section header onward",
+        inf_functional_text(&inf_contents),
+        inf_functional_text(&canonical_contents),
+        "alias INF {} must be byte-identical to canonical INF {} from the first section header onward",
         alias_path.display(),
         canonical_path.display(),
     );

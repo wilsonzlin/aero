@@ -351,6 +351,96 @@ def check_inf_alias_drift(*, canonical: Path, alias: Path, repo_root: Path, labe
     )
 
 
+def check_inf_alias_drift_excluding_sections(
+    *,
+    canonical: Path,
+    alias: Path,
+    repo_root: Path,
+    label: str,
+    drop_sections: set[str],
+) -> str | None:
+    """
+    Compare the canonical INF against a legacy filename alias while allowing some non-functional drift.
+
+    This is intentionally *not* a full INF parser. It implements a narrow policy used for guardrails:
+      - Ignore the leading banner/comment block (start comparison from the first section header).
+      - Strip `;` comments (including inline comments).
+      - Normalize section-header casing (Windows INF section names are case-insensitive).
+      - Optionally drop entire sections by name (case-insensitive) via `drop_sections`.
+
+    Returns:
+      - None if no drift is detected under the above normalization
+      - A human-readable diff string otherwise
+    """
+
+    drop_lower = {s.strip().lower() for s in drop_sections if s.strip()}
+
+    def _normalize(*, text: str) -> list[str]:
+        out: list[str] = []
+        in_preamble = True
+        skipping = False
+
+        # Normalize line endings + ignore the leading banner/comments.
+        for raw in text.splitlines():
+            stripped = raw.lstrip()
+
+            if in_preamble:
+                if not stripped or stripped.startswith(";"):
+                    continue
+                # First section header starts the functional region.
+                if stripped.startswith("["):
+                    in_preamble = False
+                else:
+                    # Unexpected non-comment content before any section header: treat it as functional
+                    # to avoid masking drift.
+                    in_preamble = False
+
+            # Strip comments.
+            line = raw.split(";", 1)[0].strip()
+            if not line:
+                continue
+
+            # Section header: normalize casing and optionally drop.
+            if line.startswith("[") and "]" in line:
+                end = line.find("]")
+                name = line[1:end].strip()
+                name_lower = name.lower()
+                skipping = name_lower in drop_lower
+                if skipping:
+                    continue
+                out.append(f"[{name_lower}]")
+                continue
+
+            if skipping:
+                continue
+
+            out.append(line)
+
+        return out
+
+    try:
+        canonical_text = read_text(canonical)
+        alias_text = read_text(alias)
+    except Exception as e:
+        return f"{label}: failed to read INF(s): {e}"
+
+    canonical_norm = _normalize(text=canonical_text)
+    alias_norm = _normalize(text=alias_text)
+    if canonical_norm == alias_norm:
+        return None
+
+    canonical_label = str(canonical.relative_to(repo_root))
+    alias_label = str(alias.relative_to(repo_root))
+    diff = difflib.unified_diff(
+        [line + "\n" for line in canonical_norm],
+        [line + "\n" for line in alias_norm],
+        fromfile=canonical_label,
+        tofile=alias_label,
+        lineterm="\n",
+    )
+    return f"{label}: INF alias drift detected after normalization:\n" + "".join(diff)
+
+
 def parse_contract_major_version(md: str) -> int:
     m = re.search(r"^\*\*Contract version:\*\*\s*`(?P<major>\d+)\.", md, flags=re.M)
     if not m:

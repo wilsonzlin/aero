@@ -236,7 +236,7 @@ The list will also include more specific forms, e.g.:
 
 The in-tree Aero Win7 virtio-input INFs are intentionally **revision-gated** (Aero contract v1, `REV_01`).
 
-- Keyboard/mouse (canonical; recommended): `aero_virtio_input.inf`
+- Keyboard/mouse: `aero_virtio_input.inf`
   - matches `SUBSYS_00101AF4` / `SUBSYS_00111AF4` for distinct Device Manager names (**Aero VirtIO Keyboard** / **Aero VirtIO Mouse**).
   - includes a strict revision-gated generic fallback match (no `SUBSYS`): `PCI\VEN_1AF4&DEV_1052&REV_01` (Device Manager name: **Aero VirtIO Input Device**).
 - Tablet: `aero_virtio_tablet.inf` matches `SUBSYS_00121AF4` (Aero contract tablet). This HWID is more specific than the generic fallback, so it will win when it matches.

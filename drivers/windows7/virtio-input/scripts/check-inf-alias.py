@@ -100,13 +100,17 @@ def _decode_lines_for_diff(data: bytes) -> list[str]:
             out.append(line)
     return out
 
-
 def main() -> int:
     virtio_input_root = Path(__file__).resolve().parents[1]
     repo_root = virtio_input_root.parents[2]
     inf_dir = virtio_input_root / "inf"
 
     canonical = inf_dir / "aero_virtio_input.inf"
+    if not canonical.exists():
+        sys.stderr.write(
+            f"virtio-input INF alias drift check: canonical INF not found: {canonical}\n"
+        )
+        return 1
 
     # The repo keeps the alias checked in disabled-by-default, but developers may
     # locally enable it by renaming to `virtio-input.inf`. Support both so the
