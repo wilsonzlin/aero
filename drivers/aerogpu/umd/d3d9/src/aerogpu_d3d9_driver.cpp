@@ -16000,6 +16000,10 @@ void d3d9_write_handle(HandleT* out, void* pDrvPrivate) {
 //   columns uploaded into a reserved high VS constant range (`c240..c243`).
 //   - When `D3DFVF_DIFFUSE` is omitted, the internal VS supplies an opaque white
 //     diffuse color.
+//   - When `D3DRS_LIGHTING` is enabled for the `D3DFVF_XYZ | D3DFVF_NORMAL |
+//     D3DFVF_DIFFUSE{,TEX1}` bring-up subset, the fixed-function fallback binds a
+//     lit VS variant and consumes an additional reserved lighting constant block
+//     (`c244..c253`) uploaded by `ensure_fixedfunc_lighting_constants_locked()`.
 // - Pre-transformed `D3DFVF_XYZRHW*` vertices are converted from screen-space
 //   `XYZRHW` (`POSITIONT`) to clip-space on the CPU at draw time
 //   (`convert_xyzrhw_to_clipspace_locked()`).
