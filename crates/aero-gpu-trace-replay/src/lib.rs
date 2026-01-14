@@ -1458,6 +1458,13 @@ pub fn decode_cmd_stream_listing(
                         if stage == 2 && stage_ex != 0 {
                             let _ = write!(line, " stage_ex={stage_ex}");
                         }
+                        let data = &pkt.payload[16..payload_len];
+                        let _ = write!(
+                            line,
+                            " data_len={} data_prefix={}",
+                            data.len(),
+                            hex_prefix(data, 16)
+                        );
                     }
                     AerogpuCmdOpcode::SetConstantBuffers => {
                         let (cmd, bindings) = pkt

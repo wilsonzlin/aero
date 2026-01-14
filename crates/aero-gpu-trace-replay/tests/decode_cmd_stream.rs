@@ -277,6 +277,8 @@ fn decodes_cmd_stream_dump_to_stable_listing() {
     assert!(listing.contains("SetShaderConstantsF"));
     assert!(listing.contains("vec4_count=1"));
     assert!(listing.contains("stage_ex=4")); // Domain
+    assert!(listing.contains("data_len=16"));
+    assert!(listing.contains("data_prefix=0000803f000000400000404000008040"));
 }
 
 #[test]
@@ -367,4 +369,9 @@ fn json_listing_decodes_new_opcodes() {
     assert_eq!(set_consts["decoded"]["stage"], 2);
     assert_eq!(set_consts["decoded"]["vec4_count"], 1);
     assert_eq!(set_consts["decoded"]["stage_ex"], 4);
+    assert_eq!(set_consts["decoded"]["data_len"], 16);
+    assert_eq!(
+        set_consts["decoded"]["data_prefix"],
+        "0000803f000000400000404000008040"
+    );
 }

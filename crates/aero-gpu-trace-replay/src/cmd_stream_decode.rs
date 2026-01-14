@@ -522,6 +522,26 @@ fn decode_known_fields(
             if let Some(float_count) = vec4_count.checked_mul(4) {
                 out.insert("float_count".into(), json!(float_count));
             }
+            let Some(data_len) = vec4_count.checked_mul(16) else {
+                out.insert("decode_error".into(), json!("vec4_count overflow"));
+                return out;
+            };
+            let data_len = data_len as usize;
+            let data_start = 16usize;
+            let Some(data_end) = data_start.checked_add(data_len) else {
+                out.insert("decode_error".into(), json!("vec4_count overflow"));
+                return out;
+            };
+            if data_end > pkt.payload.len() {
+                out.insert(
+                    "decode_error".into(),
+                    json!("payload too small for vec4_count"),
+                );
+                return out;
+            }
+            let data = &pkt.payload[data_start..data_end];
+            out.insert("data_len".into(), json!(data.len()));
+            out.insert("data_prefix".into(), json!(hex_prefix(data, 16)));
         }
         AerogpuCmdOpcode::SetConstantBuffers => {
             match pkt.decode_set_constant_buffers_payload_le() {
@@ -729,6 +749,18 @@ fn read_u64_le(buf: &[u8], off: usize) -> Option<u64> {
 
 fn read_f32_le(buf: &[u8], off: usize) -> Option<f32> {
     read_u32_le(buf, off).map(f32::from_bits)
+}
+
+fn hex_prefix(bytes: &[u8], max_len: usize) -> String {
+    let mut out = String::new();
+    let take = bytes.len().min(max_len);
+    for b in &bytes[..take] {
+        let _ = write!(out, "{b:02x}");
+    }
+    if bytes.len() > max_len {
+        out.push_str("..");
+    }
+    out
 }
 
 fn cmd_decode_error_kind(err: &AerogpuCmdDecodeError) -> &'static str {
