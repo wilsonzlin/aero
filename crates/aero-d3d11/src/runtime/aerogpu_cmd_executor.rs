@@ -17101,6 +17101,89 @@ fn main() {{
     }
 
     #[test]
+    fn draw_rejects_storage_bindings_when_supports_compute_forced_off() {
+        pollster::block_on(async {
+            let exec = match AerogpuD3d11Executor::new_for_tests().await {
+                Ok(exec) => exec,
+                Err(e) => {
+                    skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                    return;
+                }
+            };
+            // Force compute off even if the underlying adapter supports it, so the test validates
+            // the draw-time storage-binding checks deterministically.
+            let AerogpuD3d11Executor {
+                device,
+                queue,
+                backend,
+                ..
+            } = exec;
+            let mut exec =
+                AerogpuD3d11Executor::new_with_supports_compute(device, queue, backend, false);
+            // Seed dummy VS/PS shader records. We intentionally do not provide valid WGSL (pipeline
+            // creation should not be reached once storage bindings are rejected).
+            const VS: u32 = 1;
+            const PS: u32 = 2;
+            exec.resources.shaders.insert(
+                VS,
+                ShaderResource {
+                    stage: ShaderStage::Vertex,
+                    wgsl_hash: 0,
+                    depth_clamp_wgsl_hash: None,
+                    dxbc_hash_fnv1a64: 0,
+                    entry_point: "vs_main",
+                    vs_input_signature: Vec::new(),
+                    reflection: ShaderReflection::default(),
+                    wgsl_source: String::new(),
+                },
+            );
+            let mut ps_reflection = ShaderReflection::default();
+            ps_reflection.bindings.push(crate::Binding {
+                group: ShaderStage::Pixel.as_bind_group_index(),
+                binding: BINDING_BASE_UAV,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                kind: crate::BindingKind::UavTexture2DWriteOnly {
+                    slot: 0,
+                    format: crate::StorageTextureFormat::Rgba8Unorm,
+                },
+            });
+            exec.resources.shaders.insert(
+                PS,
+                ShaderResource {
+                    stage: ShaderStage::Pixel,
+                    wgsl_hash: 0,
+                    depth_clamp_wgsl_hash: None,
+                    dxbc_hash_fnv1a64: 0,
+                    entry_point: "ps_main",
+                    vs_input_signature: Vec::new(),
+                    reflection: ps_reflection,
+                    wgsl_source: String::new(),
+                },
+            );
+            // Bind a render target so the draw path reaches shader validation.
+            exec.state.render_targets = vec![Some(123)];
+            exec.state.vs = Some(VS);
+            exec.state.ps = Some(PS);
+            let mut writer = AerogpuCmdWriter::new();
+            writer.draw(3, 1, 0, 0);
+            let stream = writer.finish();
+            let mut guest_mem = VecGuestMemory::new(0);
+            let err = exec
+                .execute_cmd_stream(&stream, None, &mut guest_mem)
+                .expect_err("draw should fail when compute/storage bindings are present");
+            let msg = err.to_string();
+            assert!(
+                msg.contains("uses SRV/UAV storage bindings"),
+                "unexpected error: {msg:#}"
+            );
+            assert!(
+                msg.contains("COMPUTE_SHADERS"),
+                "unexpected error: {msg:#}"
+            );
+        });
+    }
+
+    #[test]
     fn vertex_index_buffers_are_bindable_as_storage_when_compute_is_supported() {
         pollster::block_on(async {
             let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
