@@ -32,6 +32,7 @@ from pathlib import Path
 
 
 MODELS_SECTIONS = {"aero.ntx86", "aero.ntamd64"}
+FALLBACK_HWID = r"PCI\VEN_1AF4&DEV_1052&REV_01"
 
 
 def strip_inf_comments(line: str) -> str:
@@ -100,6 +101,42 @@ def inf_functional_lines(path: Path) -> list[str]:
     return out
 
 
+def find_hwid_model_lines(*, path: Path, section: str, hwid: str) -> tuple[bool, list[str]]:
+    """
+    Find model lines containing `hwid` within a specific models section.
+
+    Returns `(section_seen, matches)` where `matches` contains the (comment-stripped)
+    lines that included `hwid`.
+    """
+
+    raw_lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+
+    target = section.lower()
+    section_seen = False
+    matches: list[str] = []
+
+    current: str | None = None
+    for line in raw_lines:
+        stripped = line.lstrip(" \t")
+        if stripped.startswith("[") and "]" in stripped:
+            current = stripped[1 : stripped.index("]")].strip().lower()
+            if current == target:
+                section_seen = True
+            continue
+
+        if current != target:
+            continue
+
+        no_comment = strip_inf_comments(line).strip()
+        if not no_comment:
+            continue
+
+        if hwid.lower() in no_comment.lower():
+            matches.append(no_comment)
+
+    return section_seen, matches
+
+
 def main() -> int:
     virtio_input_root = Path(__file__).resolve().parents[1]
     repo_root = virtio_input_root.parents[2]
@@ -125,6 +162,39 @@ def main() -> int:
     canonical_body = inf_functional_lines(canonical)
     alias_body = inf_functional_lines(alias)
     if canonical_body == alias_body:
+        # Even if the functional regions match, ensure the alias still provides the
+        # opt-in fallback model line and the canonical INF remains SUBSYS-only.
+        for sect in ("Aero.NTx86", "Aero.NTamd64"):
+            canonical_seen, canonical_matches = find_hwid_model_lines(
+                path=canonical, section=sect, hwid=FALLBACK_HWID
+            )
+            alias_seen, alias_matches = find_hwid_model_lines(path=alias, section=sect, hwid=FALLBACK_HWID)
+
+            if not canonical_seen:
+                sys.stderr.write(f"{canonical}: missing required models section [{sect}].\n")
+                return 1
+            if not alias_seen:
+                sys.stderr.write(f"{alias}: missing required models section [{sect}].\n")
+                return 1
+
+            if canonical_matches:
+                sys.stderr.write(
+                    "virtio-input INF policy violation: the canonical INF must be SUBSYS-gated "
+                    f"(no generic fallback {FALLBACK_HWID}).\n"
+                )
+                sys.stderr.write(f"Found fallback model line(s) in {canonical} [{sect}]:\n")
+                for line in canonical_matches:
+                    sys.stderr.write(f"  {line}\n")
+                return 1
+
+            if not alias_matches:
+                sys.stderr.write(
+                    "virtio-input INF policy violation: the legacy alias INF must include the opt-in "
+                    f"fallback model line {FALLBACK_HWID}.\n"
+                )
+                sys.stderr.write(f"Missing fallback model line in {alias} [{sect}].\n")
+                return 1
+
         return 0
 
     sys.stderr.write("virtio-input INF alias drift detected.\n")
