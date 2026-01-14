@@ -129,25 +129,39 @@ def extract_c_function_body_span(text: str, func_name: str) -> tuple[int, str] |
     return None
 
 
-def check_no_pool_alloc_under_allocations_lock(errors: list[str]) -> None:
+POOL_OP_NEEDLES = (
+    # Allocation APIs that can take global locks and/or significantly extend the
+    # critical section. We conservatively treat lookaside allocs as allocations
+    # too: they can fall back to pool allocation when the list is empty.
+    "ExAllocatePoolWithTag(",
+    "ExAllocatePool(",
+    "ExAllocatePool2(",
+    "ExAllocateFromNPagedLookasideList(",
+    "ExAllocateFromPagedLookasideList(",
+    # Pool/allocator frees can also be expensive on some stacks; keep them out
+    # of spin-locked regions as well.
+    "ExFreePoolWithTag(",
+    "ExFreePool(",
+    "ExFreeToNPagedLookasideList(",
+    "ExFreeToPagedLookasideList(",
+)
+
+
+def check_no_pool_ops_under_allocations_lock_in_func(
+    errors: list[str],
+    *,
+    kmd_path: pathlib.Path,
+    text: str,
+    func_name: str,
+    lock_held_on_entry: bool,
+) -> None:
     """
-    Guardrail for AGPU-ShareToken refcount tracking:
-
-    - `AeroGpuShareTokenRefIncrementLocked` must not perform pool operations
-      while `Adapter->AllocationsLock` is held.
-    - The implementation is expected to drop the spin lock, allocate, then
-      re-acquire and re-check before inserting.
+    Enforce: no potentially expensive pool operations while `Adapter->AllocationsLock` is held.
     """
 
-    kmd_path = ROOT / "drivers" / "aerogpu" / "kmd" / "src" / "aerogpu_kmd.c"
-    if not kmd_path.exists():
-        errors.append(f"{kmd_path.relative_to(ROOT)}: missing (cannot validate share-token locking guardrail)")
-        return
-
-    text = read_text(kmd_path)
-    span = extract_c_function_body_span(text, "AeroGpuShareTokenRefIncrementLocked")
+    span = extract_c_function_body_span(text, func_name)
     if span is None:
-        errors.append(f"{kmd_path.relative_to(ROOT)}: AeroGpuShareTokenRefIncrementLocked not found")
+        errors.append(f"{kmd_path.relative_to(ROOT)}: {func_name} not found")
         return
     brace_start, body = span
     base_line = text[:brace_start].count("\n") + 1
@@ -164,26 +178,9 @@ def check_no_pool_alloc_under_allocations_lock(errors: list[str]) -> None:
         r"\bKeAcquireSpinLockRaiseToDpc\s*\(\s*&\s*(?:Adapter|adapter)\s*->\s*AllocationsLock\b"
     )
 
-    # Pool operations that can take global locks and/or significantly extend the
-    # critical section. We conservatively treat lookaside allocs as allocations
-    # too: they can fall back to pool allocation when the list is empty. Pool
-    # frees can also be expensive on some stacks, so keep them out of the
-    # AllocationsLock hold region as well.
-    alloc_needles = (
-        "ExAllocatePoolWithTag(",
-        "ExAllocatePool(",
-        "ExAllocatePool2(",
-        "ExAllocateFromNPagedLookasideList(",
-        "ExAllocateFromPagedLookasideList(",
-        "ExFreePoolWithTag(",
-        "ExFreePool(",
-        "ExFreeToNPagedLookasideList(",
-        "ExFreeToPagedLookasideList(",
-    )
-    alloc_re = re.compile("|".join(re.escape(n) for n in alloc_needles))
+    pool_op_re = re.compile("|".join(re.escape(n) for n in POOL_OP_NEEDLES))
 
-    # Scan events by offset (more robust than line-based scanning if the call
-    # spans multiple lines).
+    # Scan events by offset (more robust than line-based scanning if the call spans multiple lines).
     events: list[tuple[int, str, str]] = []
     for m in re_lock_release.finditer(body):
         events.append((m.start(), "release", m.group(0)))
@@ -191,14 +188,12 @@ def check_no_pool_alloc_under_allocations_lock(errors: list[str]) -> None:
         events.append((m.start(), "acquire", m.group(0)))
     for m in re_lock_acquire_raise.finditer(body):
         events.append((m.start(), "acquire", m.group(0)))
-    for m in alloc_re.finditer(body):
-        events.append((m.start(), "alloc", m.group(0)))
+    for m in pool_op_re.finditer(body):
+        events.append((m.start(), "pool", m.group(0)))
 
     events.sort(key=lambda e: e[0])
 
-    # This helper is named "*Locked" and is expected to be entered with the lock
-    # held by the caller.
-    lock_held = True
+    lock_held = lock_held_on_entry
     for pos, kind, snippet in events:
         if kind == "release":
             lock_held = False
@@ -207,13 +202,51 @@ def check_no_pool_alloc_under_allocations_lock(errors: list[str]) -> None:
             lock_held = True
             continue
 
-        if kind == "alloc" and lock_held:
-            # Convert body-relative offset to a file line number.
+        if kind == "pool" and lock_held:
             file_line = base_line + body[:pos].count("\n")
             call_name = snippet.rstrip("(")
             errors.append(
-                f"{kmd_path.relative_to(ROOT)}:{file_line}: {call_name} called while Adapter->AllocationsLock is held"
+                f"{kmd_path.relative_to(ROOT)}:{file_line}: {call_name} called while Adapter->AllocationsLock is held ({func_name})"
             )
+
+
+def check_no_pool_alloc_under_allocations_lock(errors: list[str]) -> None:
+    """
+    Guardrail for AGPU-ShareToken refcount tracking:
+
+    - `AeroGpuShareTokenRefIncrementLocked` must not perform pool operations
+      while `Adapter->AllocationsLock` is held.
+    - The implementation is expected to drop the spin lock, allocate, then
+      re-acquire and re-check before inserting.
+    """
+
+    kmd_path = ROOT / "drivers" / "aerogpu" / "kmd" / "src" / "aerogpu_kmd.c"
+    if not kmd_path.exists():
+        errors.append(f"{kmd_path.relative_to(ROOT)}: missing (cannot validate share-token locking guardrail)")
+        return
+
+    text = read_text(kmd_path)
+    check_no_pool_ops_under_allocations_lock_in_func(
+        errors,
+        kmd_path=kmd_path,
+        text=text,
+        func_name="AeroGpuShareTokenRefIncrementLocked",
+        lock_held_on_entry=True,
+    )
+    check_no_pool_ops_under_allocations_lock_in_func(
+        errors,
+        kmd_path=kmd_path,
+        text=text,
+        func_name="AeroGpuShareTokenRefDecrement",
+        lock_held_on_entry=False,
+    )
+    check_no_pool_ops_under_allocations_lock_in_func(
+        errors,
+        kmd_path=kmd_path,
+        text=text,
+        func_name="AeroGpuFreeAllShareTokenRefs",
+        lock_held_on_entry=False,
+    )
 
 
 def main() -> int:
