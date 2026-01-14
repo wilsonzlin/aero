@@ -172,8 +172,9 @@ Test pointers (ABI conformance / drift detection):
 - [x] `VID:DID = A3A0:0001`
 - [x] BDF `00:07.0`
 - [x] BAR1 VRAM + legacy VGA window aliasing
-- [~] BAR0 MMIO register block + ring/fence transport + scanout/vblank registers
+- [~] BAR0 MMIO register block + ring/fence transport + scanout/vblank + error-info registers
   - Ring processing is currently **no-op** (fence completion only); full command execution is not implemented.
+  - Error-info latches are implemented (ABI 1.3+) behind `AEROGPU_FEATURE_ERROR_INFO` (`AEROGPU_MMIO_REG_ERROR_*` + `AEROGPU_IRQ_ERROR`).
 
 Code pointers:
 
