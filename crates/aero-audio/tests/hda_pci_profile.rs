@@ -38,10 +38,12 @@ fn hda_pci_config_matches_canonical_profile() {
         .unwrap_or(0);
     assert_eq!(read_u8(&mut dev, 0x3d), expected_pin);
 
+    let expected_bar0_size =
+        u32::try_from(HDA_ICH6.bars[0].size).expect("HDA BAR0 size should fit in u32");
     assert_eq!(
         dev.config().bar_definition(0),
         Some(PciBarDefinition::Mmio32 {
-            size: 0x4000,
+            size: expected_bar0_size,
             prefetchable: false,
         })
     );

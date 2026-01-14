@@ -1,8 +1,9 @@
 use aero_audio::hda::{HdaController, HDA_MMIO_SIZE};
+use aero_devices::pci::profile::HDA_BARS;
 
 #[test]
 fn hda_mmio_high_offsets_are_ignored_without_panicking() {
-    assert_eq!(HDA_MMIO_SIZE, 0x4000);
+    assert_eq!(HDA_MMIO_SIZE as u64, HDA_BARS[0].size);
 
     let mut hda = HdaController::new();
     let bar_end = HDA_MMIO_SIZE as u64;

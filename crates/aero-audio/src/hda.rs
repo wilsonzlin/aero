@@ -14,7 +14,7 @@ use aero_io_snapshot::io::audio::state::{
 };
 
 /// Size of the HDA MMIO region.
-pub const HDA_MMIO_SIZE: usize = 0x4000;
+pub const HDA_MMIO_SIZE: usize = aero_devices::pci::profile::HDA_BARS[0].size as usize;
 
 /// Host-side telemetry for HDA microphone/capture.
 ///

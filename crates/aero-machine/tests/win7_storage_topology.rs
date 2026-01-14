@@ -8,7 +8,8 @@
 //! - `crates/aero-pc-platform/tests/windows7_storage_topology.rs`
 
 use aero_devices::pci::profile::{
-    AHCI_ABAR_BAR_INDEX, AHCI_ABAR_SIZE_U32, IDE_PIIX3, ISA_PIIX3, NVME_CONTROLLER, SATA_AHCI_ICH9,
+    AHCI_ABAR_BAR_INDEX, AHCI_ABAR_SIZE_U32, IDE_PIIX3, ISA_PIIX3, NVME_BAR0_SIZE, NVME_CONTROLLER,
+    SATA_AHCI_ICH9,
 };
 use aero_devices::pci::{
     PciBarDefinition, PciBarKind, PciBdf, PciInterruptPin, PciIntxRouter, PciIntxRouterConfig,
@@ -216,7 +217,7 @@ fn machine_win7_storage_topology_nvme_enabled_has_canonical_bdf_and_interrupt_li
     assert_eq!(
         cfg.bar_definition(0),
         Some(PciBarDefinition::Mmio64 {
-            size: 0x4000,
+            size: NVME_BAR0_SIZE,
             prefetchable: false
         }),
         "NVME_CONTROLLER BAR0 definition drifted"
@@ -225,11 +226,11 @@ fn machine_win7_storage_topology_nvme_enabled_has_canonical_bdf_and_interrupt_li
         .bar_range(0)
         .expect("NVME_CONTROLLER BAR0 should be assigned by PCI BIOS POST");
     assert_eq!(bar0.kind, PciBarKind::Mmio64);
-    assert_eq!(bar0.size, 0x4000);
+    assert_eq!(bar0.size, NVME_BAR0_SIZE);
     // Do not freeze the BAR base address (allocator-dependent), but ensure it is non-zero and
     // properly aligned for the BAR size.
     assert_ne!(bar0.base, 0);
-    assert_eq!(bar0.base & (0x4000 - 1), 0);
+    assert_eq!(bar0.base & (NVME_BAR0_SIZE - 1), 0);
 
     // NVMe 00:03.0 INTA -> GSI 13.
     let expected_gsi = router.gsi_for_intx(NVME_BDF, PciInterruptPin::IntA);
