@@ -7673,8 +7673,8 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
       } else if (bootDiskSelection.mounts.cdId) {
         parts.push(`cd=${bootDiskSelection.mounts.cdId} (missing)`);
       }
-      if (bootDiskSelection.hdd || bootDiskSelection.cd) {
-        const boot = bootDiskSelection.bootDevice ?? (bootDiskSelection.cd ? "cdrom" : "hdd");
+      if (bootDiskSelection.mounts.hddId || bootDiskSelection.mounts.cdId) {
+        const boot = bootDiskSelection.bootDevice ?? (bootDiskSelection.mounts.cdId ? "cdrom" : "hdd");
         parts.push(`boot=${boot}`);
       }
       diskLine.textContent = parts.length ? `disks: ${parts.join(" ")}` : "disks: (no mounts)";
