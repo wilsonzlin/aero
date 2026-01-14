@@ -158,6 +158,11 @@ aerogpu_add_win7_test(transfer_feature_sanity
 )
 target_link_libraries(transfer_feature_sanity PRIVATE user32 gdi32)
 
+aerogpu_add_win7_test(dbgctl_escape_security_sanity
+  dbgctl_escape_security_sanity/main.cpp
+)
+target_link_libraries(dbgctl_escape_security_sanity PRIVATE user32 gdi32)
+
 aerogpu_add_win7_test(d3d9_raster_status_sanity
   d3d9_raster_status_sanity/main.cpp
 )

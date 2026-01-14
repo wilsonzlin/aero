@@ -913,6 +913,23 @@ static bool EqualsIgnoreCaseAscii(const std::string& a, const char* b) {
   return true;
 }
 
+static DWORD EffectivePerTestTimeoutMs(const std::string& test_name, DWORD default_timeout_ms, bool enforce_timeout) {
+  if (!enforce_timeout) {
+    return default_timeout_ms;
+  }
+
+  // Some tests are expected to complete very quickly; cap their time budget so a hang in a
+  // security-sensitive escape does not stall the entire suite for the global timeout duration.
+  if (EqualsIgnoreCaseAscii(test_name, "dbgctl_escape_security_sanity")) {
+    const DWORD kCapMs = 5000;
+    if (default_timeout_ms > kCapMs) {
+      return kCapMs;
+    }
+  }
+
+  return default_timeout_ms;
+}
+
 static bool ReadTestsFromManifest(const std::wstring& manifest_path,
                                  std::vector<std::string>* out_tests,
                                  std::string* err) {
@@ -1256,7 +1273,14 @@ int main(int argc, char** argv) {
       out_files.stderr_path = aerogpu_test::JoinPath(log_dir, stderr_leaf.c_str());
     }
 
-    RunResult rr = RunProcessWithTimeoutW(exe_path, args, timeout_ms, enforce_timeout, out_files_ptr);
+    const DWORD per_test_timeout_ms = EffectivePerTestTimeoutMs(test_name, timeout_ms, enforce_timeout);
+    if (enforce_timeout && per_test_timeout_ms != timeout_ms) {
+      aerogpu_test::PrintfStdout("INFO: %s: using capped timeout=%lu ms",
+                                 test_name.c_str(),
+                                 (unsigned long)per_test_timeout_ms);
+    }
+
+    RunResult rr = RunProcessWithTimeoutW(exe_path, args, per_test_timeout_ms, enforce_timeout, out_files_ptr);
     if (!rr.started) {
       failures++;
       aerogpu_test::PrintfStdout("FAIL: %s (failed to start: %s)", test_name.c_str(), rr.err.c_str());
@@ -1272,10 +1296,13 @@ int main(int argc, char** argv) {
 
     if (rr.timed_out) {
       failures++;
-      aerogpu_test::PrintfStdout("FAIL: %s (timed out after %lu ms)", test_name.c_str(), (unsigned long)timeout_ms);
+      aerogpu_test::PrintfStdout("FAIL: %s (timed out after %lu ms)",
+                                 test_name.c_str(),
+                                 (unsigned long)per_test_timeout_ms);
       fallback.status = "FAIL";
       fallback.exit_code = (int)rr.exit_code;
-      fallback.failure = aerogpu_test::FormatString("timed out after %lu ms", (unsigned long)timeout_ms);
+      fallback.failure =
+          aerogpu_test::FormatString("timed out after %lu ms", (unsigned long)per_test_timeout_ms);
 
       if (!dbgctl_path.empty()) {
         const std::wstring out_dir = !log_dir.empty() ? log_dir : (!report_dir.empty() ? report_dir : bin_dir);
