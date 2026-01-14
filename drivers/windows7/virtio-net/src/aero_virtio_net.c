@@ -3096,7 +3096,9 @@ static NDIS_STATUS AerovNetOidSet(_Inout_ AEROVNET_ADAPTER* Adapter, _Inout_ PND
         return NDIS_STATUS_NOT_SUPPORTED;
       }
 
+      NdisAcquireSpinLock(&Adapter->Lock);
       Adapter->PacketFilter = Filter;
+      NdisReleaseSpinLock(&Adapter->Lock);
       AerovNetCtrlUpdateRxMode(Adapter);
       BytesRead = sizeof(Filter);
       break;
@@ -3130,10 +3132,12 @@ static NDIS_STATUS AerovNetOidSet(_Inout_ AEROVNET_ADAPTER* Adapter, _Inout_ PND
         return NDIS_STATUS_MULTICAST_FULL;
       }
 
+      NdisAcquireSpinLock(&Adapter->Lock);
       Adapter->MulticastListSize = Count;
       if (Count) {
         RtlCopyMemory(Adapter->MulticastList, InBuffer, InLen);
       }
+      NdisReleaseSpinLock(&Adapter->Lock);
 
       AerovNetCtrlUpdateRxMode(Adapter);
       BytesRead = InLen;
@@ -3167,7 +3171,9 @@ static NDIS_STATUS AerovNetOidSet(_Inout_ AEROVNET_ADAPTER* Adapter, _Inout_ PND
         return SetStatus;
       }
 
+      NdisAcquireSpinLock(&Adapter->Lock);
       RtlCopyMemory(Adapter->CurrentMac, NewMac, ETH_LENGTH_OF_ADDRESS);
+      NdisReleaseSpinLock(&Adapter->Lock);
       AerovNetCtrlUpdateRxMode(Adapter);
       BytesRead = ETH_LENGTH_OF_ADDRESS;
       break;
