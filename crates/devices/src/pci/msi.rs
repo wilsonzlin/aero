@@ -106,8 +106,9 @@ impl MsiCapability {
     /// - If the single supported vector is masked, delivery is suppressed and the pending bit
     ///   is set.
     /// - The pending bit is cleared when the device successfully delivers a message.
-    /// - The pending bit is *not* automatically re-delivered on unmask; callers should
-    ///   re-trigger if they rely on that behavior.
+    /// - The pending bit is *not* automatically re-delivered on unmask by this capability; device
+    ///   models should re-trigger when a pending bit is latched (for example, from a periodic tick
+    ///   or when handling PCI config writes that unmask MSI).
     pub fn trigger<T: MsiTrigger + ?Sized>(&mut self, platform: &mut T) -> bool {
         if !self.enabled {
             return false;

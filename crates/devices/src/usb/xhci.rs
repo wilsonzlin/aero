@@ -178,10 +178,14 @@ impl XhciPciDevice {
         // MSI/MSI-X delivery is edge-triggered. Use the INTx-derived level as an internal
         // "interrupt requested" signal and trigger MSI/MSI-X on a rising edge.
         //
-        // For masked MSI vectors, the PCI capability logic latches a pending bit but does not
-        // automatically re-deliver on unmask; re-trigger while the interrupt condition persists so
-        // guests can observe delivery after unmask. (MSI-X has an architectural Pending Bit Array
-        // and is handled separately below.)
+        // For masked MSI vectors, the PCI capability logic latches a pending bit. Device models
+        // should re-trigger while either:
+        // - the interrupt condition persists, or
+        // - a pending bit is latched,
+        // so guests can observe delivery after unmask (even if the original interrupt condition has
+        // since been cleared).
+        //
+        // (MSI-X has an architectural Pending Bit Array and is handled separately below.)
         if let Some(target) = self.msi_target.as_mut() {
             // Prefer MSI-X over MSI when enabled to avoid double delivery.
             if let Some(msix) = self.config.capability_mut::<MsixCapability>() {
