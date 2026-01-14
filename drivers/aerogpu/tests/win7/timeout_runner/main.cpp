@@ -360,7 +360,13 @@ int main(int argc, char** argv) {
       std::vector<unsigned char> bytes;
       std::string read_err;
       if (aerogpu_test::ReadFileBytes(json_path_w, &bytes, &read_err)) {
-        std::string obj = TrimAsciiWhitespace(std::string(bytes.begin(), bytes.end()));
+        std::string obj(bytes.begin(), bytes.end());
+        // Be tolerant of UTF-8 BOMs produced by some editors/tools.
+        if (obj.size() >= 3 && (unsigned char)obj[0] == 0xEF && (unsigned char)obj[1] == 0xBB &&
+            (unsigned char)obj[2] == 0xBF) {
+          obj = obj.substr(3);
+        }
+        obj = TrimAsciiWhitespace(obj);
         if (!obj.empty() && LooksLikeTestReportJsonObject(obj)) {
           have_json = true;
         }
