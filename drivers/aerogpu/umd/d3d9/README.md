@@ -27,7 +27,7 @@ The command stream does **not** reference resources by a per-submission “alloc
 
 The Win7 D3D9 runtime exposes a device-managed cursor API (`SetCursorProperties`, `SetCursorPosition`, `ShowCursor`).
 AeroGPU implements this as a **software cursor overlay** composited over the present source surface immediately before emitting
-`AEROGPU_CMD_PRESENT_EX`. Supported cursor bitmap formats: `A8R8G8B8`, `X8R8G8B8`, `A8B8G8R8`.
+`AEROGPU_CMD_PRESENT_EX`. Supported cursor bitmap formats: `A8R8G8B8`, `X8R8G8B8` (treated as opaque alpha=1.0), `A8B8G8R8`.
 
 Code anchors (see `src/aerogpu_d3d9_driver.cpp` unless noted):
 

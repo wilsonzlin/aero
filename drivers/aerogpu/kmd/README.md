@@ -214,7 +214,7 @@ The scanout path is 32bpp BGRA/XRGB-like. The KMD only claims support for format
 existing `CommitVidPn` + `SetVidPnSourceAddress` behavior (4 bytes per pixel; pitch is treated as
 `>= width*4` and may be aligned up):
 
-* `D3DDDIFMT_X8R8G8B8`
+* `D3DDDIFMT_X8R8G8B8` (treated as fully opaque; the unused `X` byte must not affect scanout)
 * `D3DDDIFMT_A8R8G8B8` (byte-layout compatible; alpha is ignored by scanout)
 
 **Mode list**
