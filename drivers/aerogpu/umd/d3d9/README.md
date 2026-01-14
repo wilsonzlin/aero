@@ -468,6 +468,8 @@ Implementation notes (bring-up):
   - `D3DFVF_XYZ | D3DFVF_TEX1` (no diffuse) uses `fixedfunc::kVsTransformPosWhiteTex1`.
   - The range is intentionally high so it is unlikely to collide with app/user shader constants when switching between
     fixed-function and programmable paths.
+    - Even so, when switching back to fixed-function WVP vertex shaders the UMD forces a re-upload (`fixedfunc_matrix_dirty`)
+      since user shaders may have written overlapping VS constant registers.
   - See also: `docs/graphics/win7-d3d9-fixedfunc-wvp.md` (WVP draw-time paths + `ProcessVertices` notes).
 - Shader-stage interop is supported: when exactly one stage is bound (VS-only or PS-only), the draw paths bind a
   fixed-function fallback shader for the missing stage at draw time (see `bind_draw_shaders_locked()`).
