@@ -364,7 +364,7 @@ def _extract_rust_const_ints(profile_rs_text: str) -> dict[str, int]:
     # only handles `pub const NAME: u16 = 0x...;`-style definitions used for IDs.
     consts: dict[str, int] = {}
     const_re = re.compile(
-        r"^\s*pub const (?P<name>[A-Z0-9_]+):\s*u(?P<bits>8|16|32|64)\s*=\s*(?P<value>0x[0-9a-fA-F_]+|[0-9_]+)\s*;\s*$"
+        r"^\s*pub const (?P<name>[A-Z0-9_]+):\s*u(?P<bits>8|16|32|64)\s*=\s*(?P<value>0x[0-9a-fA-F_]+|[0-9_]+)\s*;\s*(?://.*)?$"
     )
     for line in profile_rs_text.splitlines():
         m = const_re.match(line)
