@@ -269,6 +269,16 @@ typedef struct _VIRTIOSND_DEVICE_EXTENSION {
     PKEVENT EventqStreamNotify[VIRTIOSND_EVENTQ_MAX_NOTIFY_STREAMS];
 
     /*
+     * PERIOD_ELAPSED bookkeeping used by WaveRT to coalesce its periodic timer
+     * with event-driven wakeups (avoid double PacketCount increments).
+     *
+     * Sequence counters are incremented once per PERIOD_ELAPSED event.
+     * The timestamp is in 100ns units (KeQueryInterruptTime).
+     */
+    volatile LONG PcmPeriodSeq[VIRTIOSND_EVENTQ_MAX_NOTIFY_STREAMS];
+    volatile LONGLONG PcmLastPeriodEventTime100ns[VIRTIOSND_EVENTQ_MAX_NOTIFY_STREAMS];
+
+    /*
      * Best-effort WaveRT XRUN recovery work item (coalesced).
      *
      * XRUN events are delivered at DISPATCH_LEVEL; WaveRT recovery may require
@@ -284,7 +294,6 @@ typedef struct _VIRTIOSND_DEVICE_EXTENSION {
 
     /* Jack state reflected through the PortCls topology miniport. */
     VIRTIOSND_JACK_STATE JackState;
-
     BOOLEAN Started;
     BOOLEAN Removed;
 } VIRTIOSND_DEVICE_EXTENSION, *PVIRTIOSND_DEVICE_EXTENSION;

@@ -116,6 +116,16 @@ typedef struct _VIRTIOSND_WAVERT_STREAM {
     KSAUDIO_POSITION *PositionRegister;
     ULONGLONG *ClockRegister;
     ULONG PacketCount;
+#if !defined(AERO_VIRTIO_SND_IOPORT_LEGACY)
+    /*
+     * Optional eventq-driven tick coalescing:
+     *  - Dx->PcmPeriodSeq[] increments on each PERIOD_ELAPSED event.
+     *  - When eventq is active, avoid double-processing the periodic WaveRT timer
+     *    ticks by observing the sequence + last-event timestamp.
+     */
+    LONG LastPcmPeriodSeq;
+    BOOLEAN PcmEventsSeen;
+#endif
 
     ULONG PeriodBytes;
     ULONGLONG Period100ns;
@@ -534,6 +544,10 @@ VirtIoSndWaveRtResetStopState(_Inout_ PVIRTIOSND_WAVERT_STREAM Stream)
     Stream->SubmittedLinearPositionBytes = 0;
     Stream->SubmittedRingPositionBytes = 0;
     Stream->PacketCount = 0;
+#if !defined(AERO_VIRTIO_SND_IOPORT_LEGACY)
+    Stream->LastPcmPeriodSeq = 0;
+    Stream->PcmEventsSeen = FALSE;
+#endif
     oldEvent = Stream->NotificationEvent;
     Stream->NotificationEvent = NULL;
     if (Stream->PositionRegister != NULL) {
@@ -1037,6 +1051,42 @@ VirtIoSndWaveRtDpcRoutine(
         KeReleaseSpinLock(&stream->Lock, oldIrql);
         goto Exit;
     }
+
+    dx = (stream->Miniport != NULL) ? stream->Miniport->Dx : NULL;
+
+#if !defined(AERO_VIRTIO_SND_IOPORT_LEGACY)
+    /*
+     * When the device emits eventq PERIOD_ELAPSED notifications, the INTx/MSI DPC
+     * can queue this WaveRT DPC directly. Keep the periodic timer as a fallback,
+     * but avoid double-processing timer ticks while events are flowing.
+     *
+     * Do NOT apply this optimization in polling-only mode (no interrupts),
+     * because the periodic timer is still the only scheduling mechanism.
+     */
+    if (dx != NULL && (dx->Intx.InterruptObject != NULL || dx->MessageInterruptsActive)) {
+        const ULONG streamId = stream->Capture ? VIRTIO_SND_CAPTURE_STREAM_ID : VIRTIO_SND_PLAYBACK_STREAM_ID;
+        const LONG seq = InterlockedCompareExchange(&dx->PcmPeriodSeq[streamId], 0, 0);
+
+        if (seq != stream->LastPcmPeriodSeq) {
+            stream->LastPcmPeriodSeq = seq;
+            stream->PcmEventsSeen = TRUE;
+        } else if (stream->PcmEventsSeen) {
+            const ULONGLONG lastEvt100ns = (ULONGLONG)InterlockedCompareExchange64(&dx->PcmLastPeriodEventTime100ns[streamId], 0, 0);
+            const ULONGLONG nowEvt100ns = KeQueryInterruptTime();
+            ULONGLONG threshold100ns = stream->Period100ns;
+
+            if (threshold100ns != 0) {
+                threshold100ns *= 2;
+            }
+
+            if (lastEvt100ns != 0 && threshold100ns != 0 && nowEvt100ns >= lastEvt100ns &&
+                (nowEvt100ns - lastEvt100ns) < threshold100ns) {
+                KeReleaseSpinLock(&stream->Lock, oldIrql);
+                goto Exit;
+            }
+        }
+    }
+#endif
 
     periodBytes = stream->PeriodBytes;
     bufferSize = stream->BufferSize;
@@ -2678,6 +2728,8 @@ static ULONG STDMETHODCALLTYPE VirtIoSndWaveRtStream_Release(_In_ IMiniportWaveR
         PKEVENT oldEvent;
         VIRTIOSND_PORTCLS_DX dx;
 
+        dx = (stream->Miniport != NULL) ? stream->Miniport->Dx : NULL;
+
         VirtIoSndWaveRtStopTimer(stream);
 
         oldEvent = NULL;
@@ -2957,6 +3009,12 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_SetState(_In_ IMiniportW
 
                 KeAcquireSpinLock(&stream->Lock, &oldIrql);
                 stream->State = KSSTATE_RUN;
+#if !defined(AERO_VIRTIO_SND_IOPORT_LEGACY)
+                if (dx != NULL) {
+                    stream->LastPcmPeriodSeq = InterlockedCompareExchange(&dx->PcmPeriodSeq[VIRTIO_SND_CAPTURE_STREAM_ID], 0, 0);
+                    stream->PcmEventsSeen = FALSE;
+                }
+#endif
                 KeReleaseSpinLock(&stream->Lock, oldIrql);
 
                 VirtIoSndWaveRtStartTimer(stream);
@@ -3572,6 +3630,12 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_SetState(_In_ IMiniportW
         KeAcquireSpinLock(&stream->Lock, &oldIrql);
         stream->SubmittedLinearPositionBytes = submittedLinearBytes;
         stream->SubmittedRingPositionBytes = submittedRingBytes;
+#if !defined(AERO_VIRTIO_SND_IOPORT_LEGACY)
+        if (dx != NULL) {
+            stream->LastPcmPeriodSeq = InterlockedCompareExchange(&dx->PcmPeriodSeq[VIRTIO_SND_PLAYBACK_STREAM_ID], 0, 0);
+            stream->PcmEventsSeen = FALSE;
+        }
+#endif
         KeReleaseSpinLock(&stream->Lock, oldIrql);
 
         VirtIoSndWaveRtStartTimer(stream);

@@ -278,6 +278,16 @@ static VOID VirtIoSndDrainEventqUsed(_In_ USHORT QueueIndex, _In_opt_ void *Cook
                  * timer-based pacing for contract v1 compatibility.
                  */
                 (VOID)VirtIoSndEventqSignalStreamNotificationEvent(dx, evt.Data);
+                /*
+                 * If WaveRT uses eventq PERIOD_ELAPSED to queue additional DPC
+                 * wakeups, keep a per-stream sequence+timestamp for the WaveRT
+                 * timer path to coalesce duplicate ticks (avoid double packet
+                 * count increments).
+                 */
+                if (evt.Data < RTL_NUMBER_OF(dx->PcmPeriodSeq)) {
+                    (VOID)InterlockedIncrement(&dx->PcmPeriodSeq[evt.Data]);
+                    (VOID)InterlockedExchange64(&dx->PcmLastPeriodEventTime100ns[evt.Data], (LONGLONG)KeQueryInterruptTime());
+                }
                 /* PCM period notifications may be high rate; log at a low rate. */
                 logEvent = VirtIoSndShouldLogRareCounter(eventCount);
                 break;
@@ -570,6 +580,8 @@ VOID VirtIoSndInterruptInitialize(PVIRTIOSND_DEVICE_EXTENSION Dx)
     RtlZeroMemory(Dx->MsixQueueVectors, sizeof(Dx->MsixQueueVectors));
 
     RtlZeroMemory(Dx->QueueDrainCount, sizeof(Dx->QueueDrainCount));
+    RtlZeroMemory(Dx->PcmPeriodSeq, sizeof(Dx->PcmPeriodSeq));
+    RtlZeroMemory(Dx->PcmLastPeriodEventTime100ns, sizeof(Dx->PcmLastPeriodEventTime100ns));
 }
 
 _Use_decl_annotations_

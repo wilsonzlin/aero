@@ -774,6 +774,14 @@ VirtIoSndHwDrainEventqUsed(
                  * pacing for contract v1 compatibility.
                  */
                 (VOID)VirtIoSndEventqSignalStreamNotificationEvent(dx, evt.Data);
+                /*
+                 * Keep per-stream PERIOD_ELAPSED bookkeeping for WaveRT's DPC
+                 * routine to coalesce timer ticks vs event-driven wakeups.
+                 */
+                if (evt.Data < RTL_NUMBER_OF(dx->PcmPeriodSeq)) {
+                    (VOID)InterlockedIncrement(&dx->PcmPeriodSeq[evt.Data]);
+                    (VOID)InterlockedExchange64(&dx->PcmLastPeriodEventTime100ns[evt.Data], (LONGLONG)KeQueryInterruptTime());
+                }
                 break;
             case VIRTIO_SND_EVENT_KIND_PCM_XRUN:
                 InterlockedIncrement(&dx->EventqStats.PcmXrun);
