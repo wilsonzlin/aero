@@ -3891,8 +3891,8 @@ def main() -> None:
         base_hwid = f"PCI\\VEN_{contract_any.vendor_id:04X}&DEV_{contract_any.device_id:04X}"
         strict_hwid = f"{base_hwid}&REV_{contract_rev:02X}"
         hwids_upper = {h.upper() for h in hwids}
-        # Win7 virtio INFs include a strict (no SUBSYS) Vendor/Device+REV match so binding
-        # remains revision-gated even if subsystem IDs are absent/ignored.
+        # Win7 virtio INFs must include a strict (no SUBSYS) Vendor/Device+REV match so
+        # binding remains revision-gated even if subsystem IDs are absent/ignored.
         if strict_hwid.upper() not in hwids_upper:
             errors.append(
                 format_error(
@@ -3966,9 +3966,8 @@ def main() -> None:
         strict_hwid = f"{base_hwid}&REV_{contract_rev:02X}"
 
         # The legacy alias INF is kept for compatibility with workflows that reference the
-        # legacy `virtio-input.inf` name. It is allowed/expected to include the strict
-        # generic fallback HWID (no SUBSYS), but must otherwise stay in sync with the
-        # canonical INF outside the models sections.
+        # legacy `virtio-input.inf` name. From [Version] onward it must be byte-for-byte
+        # identical to the canonical INF so behavior cannot drift.
         validate_virtio_input_model_lines(
             inf_path=virtio_input_alias,
             strict_hwid=strict_hwid,
@@ -3977,13 +3976,11 @@ def main() -> None:
             errors=errors,
         )
 
-        # Keep the alias in sync with the canonical INF outside the models sections.
-        drift = check_inf_alias_drift_excluding_sections(
+        drift = check_inf_alias_drift(
             canonical=virtio_input_canonical,
             alias=virtio_input_alias,
             repo_root=REPO_ROOT,
             label="virtio-input",
-            drop_sections={"Aero.NTx86", "Aero.NTamd64"},
         )
         if drift:
             errors.append(drift)

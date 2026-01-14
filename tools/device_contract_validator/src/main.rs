@@ -1550,9 +1550,9 @@ AeroVirtioMouse.DeviceDesc    = "Aero VirtIO Mouse"
 
 [Strings]
 AeroVirtioKeyboard.DeviceDesc = "Aero VirtIO Keyboard"
-AeroVirtioMouse.DeviceDesc    = "Aero VirtIO Mouse"
-AeroVirtioInput.DeviceDesc    = "Aero VirtIO Input Device"
-AeroVirtioTablet.DeviceDesc   = "Aero VirtIO Tablet Device"
+        AeroVirtioMouse.DeviceDesc    = "Aero VirtIO Mouse"
+        AeroVirtioInput.DeviceDesc    = "Aero VirtIO Input Device"
+        AeroVirtioTablet.DeviceDesc   = "Aero VirtIO Tablet Device"
 "#;
         let err = validate(inf, true).unwrap_err();
         let msg = format!("{err:#}");
@@ -1786,14 +1786,9 @@ fn validate_in_tree_infs(repo_root: &Path, devices: &BTreeMap<String, DeviceEntr
                     .with_context(|| format!("{name}: parse contract PCI revision for {base}"))?;
                 let strict = format!("{base}&REV_{expected_rev:02X}");
 
-                // Most in-tree virtio INFs include a less-specific `PCI\\VEN_...&DEV_...&REV_..` model entry.
-                //
-                // virtio-input is intentionally SUBSYS-only (keyboard + mouse) so the canonical keyboard/mouse INF
-                // does not overlap with the tablet INF. The generic (no SUBSYS) fallback HWID is carried only by
-                // the opt-in legacy alias INF (`virtio-input.inf.disabled`).
-                if dev.device != "virtio-input"
-                    && !active_hwids.iter().any(|h| h.eq_ignore_ascii_case(&strict))
-                {
+                // In-tree virtio INFs must include a strict `PCI\\VEN_...&DEV_...&REV_..` model entry so driver
+                // binding remains revision-gated even if subsystem IDs are absent/ignored.
+                if !active_hwids.iter().any(|h| h.eq_ignore_ascii_case(&strict)) {
                     bail!(
                         "{name}: INF {} missing strict revision-gated HWID {strict}.\nActive HWIDs found in INF:\n{}",
                         inf_path.display(),
@@ -1842,8 +1837,8 @@ fn validate_in_tree_infs(repo_root: &Path, devices: &BTreeMap<String, DeviceEntr
                         format!("{name}: validate virtio-input canonical DeviceDesc split")
                     })?;
 
-                    // Optional: validate the legacy alias INF (if present) which is allowed to carry
-                    // a strict generic fallback HWID for environments that don't expose subsystem IDs.
+                    // Optional: validate the legacy alias INF (if present) which should remain in sync
+                    // with the canonical INF from [Version] onward.
                     let alias_candidates = [
                         inf_path.with_file_name("virtio-input.inf"),
                         inf_path.with_file_name("virtio-input.inf.disabled"),
