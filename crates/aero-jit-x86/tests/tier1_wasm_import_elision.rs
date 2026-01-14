@@ -1,8 +1,8 @@
 use aero_jit_x86::tier1::ir::{IrBuilder, IrTerminator};
 use aero_jit_x86::tier1::Tier1WasmCodegen;
 use aero_jit_x86::wasm::{
-    IMPORT_MEM_READ_U8, IMPORT_MEM_WRITE_U16, IMPORT_MEM_WRITE_U32, IMPORT_MEM_WRITE_U64,
-    IMPORT_MEM_WRITE_U8, IMPORT_MEMORY, IMPORT_MODULE,
+    IMPORT_JIT_EXIT, IMPORT_MEM_READ_U8, IMPORT_MEM_WRITE_U16, IMPORT_MEM_WRITE_U32,
+    IMPORT_MEM_WRITE_U64, IMPORT_MEM_WRITE_U8, IMPORT_MEMORY, IMPORT_MODULE,
 };
 use aero_types::Width;
 use wasmparser::{Parser, Payload, TypeRef};
@@ -131,5 +131,38 @@ fn tier1_block_with_store_imports_mem_write_helpers() {
         type_count(&wasm),
         2,
         "expected Tier-1 block with a single store to define only the mem_write_u8 and block function types"
+    );
+}
+
+#[test]
+fn tier1_block_with_call_helper_imports_jit_exit() {
+    let mut b = IrBuilder::new(0x1000);
+    b.call_helper("dummy", Vec::new(), None);
+    let ir = b.finish(IrTerminator::Jump { target: 0x2000 });
+    ir.validate().unwrap();
+
+    let wasm = Tier1WasmCodegen::new().compile_block(&ir);
+    let imports = import_entries(&wasm);
+
+    assert_eq!(
+        imports.len(),
+        2,
+        "expected Tier-1 block with CallHelper to only import env.memory + env.jit_exit, got {imports:?}"
+    );
+
+    let mut found_jit_exit = false;
+    for (module, name, _ty) in imports {
+        if module == IMPORT_MODULE && name == IMPORT_JIT_EXIT {
+            found_jit_exit = true;
+        }
+        assert_ne!(name, IMPORT_MEM_READ_U8);
+        assert_ne!(name, IMPORT_MEM_WRITE_U8);
+    }
+
+    assert!(found_jit_exit, "expected env.jit_exit import for CallHelper block");
+    assert_eq!(
+        type_count(&wasm),
+        2,
+        "expected Tier-1 CallHelper-only block to define only the jit_exit and block function types"
     );
 }
