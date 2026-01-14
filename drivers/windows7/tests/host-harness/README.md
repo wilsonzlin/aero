@@ -31,6 +31,9 @@ This directory contains the host-side scripts used to run the Windows 7 guest se
       - (optional) Consumer Control / media keys: `--test-input-media-keys`
         (or env var `AERO_VIRTIO_SELFTEST_TEST_INPUT_MEDIA_KEYS=1`; if provisioning via `New-AeroWin7TestImage.ps1`, pass
         `-TestInputMediaKeys` (alias: `-TestMediaKeys`))
+      - (optional) keyboard LED/statusq smoke test: `--test-input-led`
+        (or env var `AERO_VIRTIO_SELFTEST_TEST_INPUT_LED=1`; if provisioning via `New-AeroWin7TestImage.ps1`, pass
+        `-TestInputLed`)
       - tablet / absolute pointer: `--test-input-tablet-events` (alias: `--test-tablet-events`)
         (or env var `AERO_VIRTIO_SELFTEST_TEST_INPUT_TABLET_EVENTS=1` / `AERO_VIRTIO_SELFTEST_TEST_TABLET_EVENTS=1`)
       - Pair these with host-side QMP injection flags (so the harness injects events and requires the corresponding
@@ -39,6 +42,7 @@ This directory contains the host-side scripts used to run the Windows 7 guest se
         - wheel: PowerShell `-WithInputWheel` / Python `--with-input-wheel`
         - extended events: PowerShell `-WithInputEventsExtended` / Python `--with-input-events-extended`
         - media keys: PowerShell `-WithInputMediaKeys` / Python `--with-input-media-keys`
+        - LED/statusq: PowerShell `-WithInputLed` / Python `--with-input-led` (no QMP injection required)
         - tablet: PowerShell `-WithInputTabletEvents` / Python `--with-input-tablet-events`
   - has virtio-snd installed if you intend to test audio
     - the guest selftest will exercise virtio-snd playback automatically when a virtio-snd device is present and confirm

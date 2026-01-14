@@ -53,6 +53,11 @@ on:
         required: false
         default: false
         type: boolean
+      with_virtio_input_led:
+        description: Require virtio-input-led (keyboard LED/statusq) to PASS (requires a guest image provisioned with --test-input-led)
+        required: false
+        default: false
+        type: boolean
       with_virtio_input_events_extended:
         description: Inject extended virtio-input events via QMP (modifiers/buttons/wheel) and require virtio-input-events-* markers to PASS (requires a guest image provisioned with --test-input-events and --test-input-events-extended)
         required: false
@@ -161,6 +166,7 @@ jobs:
             echo "  with_virtio_input_events: '${{ inputs.with_virtio_input_events }}'"
             echo "  with_virtio_input_wheel: '${{ inputs.with_virtio_input_wheel }}'"
             echo "  with_virtio_input_media_keys: '${{ inputs.with_virtio_input_media_keys }}'"
+            echo "  with_virtio_input_led: '${{ inputs.with_virtio_input_led }}'"
             echo "  with_virtio_input_events_extended: '${{ inputs.with_virtio_input_events_extended }}'"
             echo "  with_virtio_input_tablet_events: '${{ inputs.with_virtio_input_tablet_events }}'"
             echo "  with_blk_resize: '${{ inputs.with_blk_resize }}'"
@@ -228,6 +234,7 @@ jobs:
             with_virtio_input_events="${{ inputs.with_virtio_input_events }}"
             with_virtio_input_wheel="${{ inputs.with_virtio_input_wheel }}"
             with_virtio_input_media_keys="${{ inputs.with_virtio_input_media_keys }}"
+            with_virtio_input_led="${{ inputs.with_virtio_input_led }}"
             with_virtio_input_events_extended="${{ inputs.with_virtio_input_events_extended }}"
             with_virtio_input_tablet_events="${{ inputs.with_virtio_input_tablet_events }}"
             with_blk_resize="${{ inputs.with_blk_resize }}"
@@ -263,6 +270,9 @@ jobs:
             fi
             if [[ "${with_virtio_input_media_keys}" == "true" ]]; then
               args+=(--with-input-media-keys)
+            fi
+            if [[ "${with_virtio_input_led}" == "true" ]]; then
+              args+=(--with-input-led)
             fi
             if [[ "${with_virtio_input_events_extended}" == "true" ]]; then
               args+=(--with-input-events-extended)

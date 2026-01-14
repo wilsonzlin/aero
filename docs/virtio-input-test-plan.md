@@ -356,6 +356,9 @@ Optional self-hosted CI wrapper:
       - (Requires a guest image provisioned with `--test-input-events` for events/wheel, also `--test-input-media-keys` for media keys,
         also `--test-input-events-extended` for the extended markers, and `--test-input-tablet-events` (alias: `--test-tablet-events`)
         for tablet.)
+    - To require the optional virtio-input LED/statusq smoke test:
+      - `with_virtio_input_led=true`
+      - (Requires a guest image provisioned with `--test-input-led` or env var `AERO_VIRTIO_SELFTEST_TEST_INPUT_LED=1`.)
     - To enable the optional virtio-blk runtime resize test (`virtio-blk-resize`):
       - `with_blk_resize=true`
       - optional: `blk_resize_delta_mib=<N>` to override the default growth delta (MiB)
@@ -407,7 +410,59 @@ To increase the chance that Windows grants enough MSI-X messages, request a larg
 - PowerShell: `-VirtioInputVectors N` (or global `-VirtioMsixVectors N`)
 - Python: `--virtio-input-vectors N` (or global `--virtio-msix-vectors N`)
 
-### 4.4 Optional: end-to-end input event delivery (QMP injection + guest HID report read)
+### 4.4 Optional: keyboard LED/statusq smoke test (guest HID output report write)
+
+AERO-W7-VIRTIO v1 requires virtio-input to consume and complete all `statusq` descriptors (contents may be ignored).
+The guest selftest can exercise this end-to-end by sending HID keyboard LED **output reports** (CapsLock/NumLock/ScrollLock),
+which the driver translates into `EV_LED` events on `statusq`.
+
+Guest marker:
+
+- `AERO_VIRTIO_SELFTEST|TEST|virtio-input-led|PASS/FAIL/SKIP|...`
+
+Guest image requirement:
+
+- Provision the guest selftest to run with `--test-input-led` (or set guest env var `AERO_VIRTIO_SELFTEST_TEST_INPUT_LED=1`).
+
+Host harness flags (marker requirement only; no QMP injection needed):
+
+- PowerShell: `-WithInputLed`
+- Python: `--with-input-led`
+
+PowerShell:
+
+```powershell
+pwsh ./drivers/windows7/tests/host-harness/Invoke-AeroVirtioWin7Tests.ps1 `
+  -QemuSystem qemu-system-x86_64 `
+  -DiskImagePath ./win7-aero-tests.qcow2 `
+  -WithInputLed `
+  -TimeoutSeconds 600 `
+  -Snapshot
+```
+
+Python:
+
+```bash
+python3 drivers/windows7/tests/host-harness/invoke_aero_virtio_win7_tests.py \
+  --qemu-system qemu-system-x86_64 \
+  --disk-image ./win7-aero-tests.qcow2 \
+  --with-input-led \
+  --timeout-seconds 600 \
+  --snapshot
+```
+
+If the guest was not provisioned with `--test-input-led`, the guest will emit:
+`AERO_VIRTIO_SELFTEST|TEST|virtio-input-led|SKIP|flag_not_set` and the harness will fail when `-WithInputLed` / `--with-input-led` is enabled
+(PowerShell: `VIRTIO_INPUT_LED_SKIPPED`; Python: `FAIL: VIRTIO_INPUT_LED_SKIPPED: ...`).
+
+If the guest reports `AERO_VIRTIO_SELFTEST|TEST|virtio-input-led|FAIL|...`, the harness fails
+(PowerShell: `VIRTIO_INPUT_LED_FAILED`; Python: `FAIL: VIRTIO_INPUT_LED_FAILED: ...`).
+
+If the guest selftest is too old (or misconfigured) and does not emit any `virtio-input-led` marker at all
+(PASS/SKIP/FAIL) after completing `virtio-input`, the harness fails early
+(PowerShell: `MISSING_VIRTIO_INPUT_LED`; Python: `FAIL: MISSING_VIRTIO_INPUT_LED: ...`).
+
+### 4.5 Optional: end-to-end input event delivery (QMP injection + guest HID report read)
 
 The default guest marker `virtio-input` validates **enumeration** and the **HID report descriptor** contract (keyboard-only + mouse-only devices).
 It does **not** prove that real virtio-input events (virtio queues → KMDF HID → user-mode) are delivered.
@@ -473,7 +528,7 @@ If the guest selftest is too old (or otherwise misconfigured) and does not emit 
 If QMP input injection fails (for example QMP is unreachable or the QEMU build does not support `input-send-event`),
 the harness fails (PowerShell: `QMP_INPUT_INJECT_FAILED`; Python: `FAIL: QMP_INPUT_INJECT_FAILED: ...`).
 
-### 4.4.1 Optional: end-to-end mouse wheel + horizontal wheel (QMP injection + guest HID report read)
+### 4.5.1 Optional: end-to-end mouse wheel + horizontal wheel (QMP injection + guest HID report read)
 
 The base `virtio-input-events` marker validates keyboard + relative mouse motion/click delivery.
 To also validate **mouse scrolling**, the guest selftest emits an additional marker:
@@ -505,7 +560,7 @@ may be multiples of the injected values.
 If the running QEMU build rejects all tested axis name combinations (`wheel`/`vscroll` × `hscroll`/`hwheel`), the harness
 fails with a clear error (upgrade QEMU or omit `-WithInputWheel` / `--with-input-wheel` (or aliases)).
 
-### 4.4.2 Optional: end-to-end Consumer Control (media keys) (QMP injection + guest HID report read)
+### 4.5.2 Optional: end-to-end Consumer Control (media keys) (QMP injection + guest HID report read)
 
 This is the Consumer Control / media keys companion to `virtio-input-events` (keyboard + relative mouse).
 
@@ -538,7 +593,7 @@ If the guest was not provisioned with `--test-input-media-keys`, the guest will 
 If QMP input injection fails (for example QMP is unreachable or the QEMU build does not support multimedia qcodes), the harness
 fails (PowerShell: `QMP_MEDIA_KEYS_UNSUPPORTED`; Python: `FAIL: QMP_MEDIA_KEYS_UNSUPPORTED: ...`).
 
-### 4.4.3 Optional: extended virtio-input events (modifiers + extra buttons + per-feature wheel markers)
+### 4.5.3 Optional: extended virtio-input events (modifiers + extra buttons + per-feature wheel markers)
 
 The base `virtio-input-events` marker validates basic keyboard + mouse motion/click delivery, and `virtio-input-wheel`
 validates scrolling. To also validate additional HID report paths deterministically, the guest selftest can emit three
@@ -567,7 +622,7 @@ When enabled, the harness:
 2. Injects an extended deterministic sequence via QMP `input-send-event` (modifiers + side/extra buttons + wheel)
 3. Requires all three `virtio-input-events-*` markers above to PASS
 
-### 4.5 Optional: end-to-end tablet (absolute pointer) event delivery (QMP injection + guest HID report read)
+### 4.6 Optional: end-to-end tablet (absolute pointer) event delivery (QMP injection + guest HID report read)
 
 This is the tablet/absolute-pointer companion to `virtio-input-events` (keyboard + relative mouse).
 
