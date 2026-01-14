@@ -1,4 +1,4 @@
-use super::{PciBdf, PciDevice, SharedPciConfigPorts};
+use super::{msi::PCI_CAP_ID_MSI, msix::PCI_CAP_ID_MSIX, MsiCapability, MsixCapability, PciBdf, PciDevice, SharedPciConfigPorts};
 use memory::MmioHandler;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -40,7 +40,7 @@ impl<T> PciConfigSyncedMmioBar<T> {
 
 impl<T: PciDevice> PciConfigSyncedMmioBar<T> {
     fn sync_pci_state(&mut self) {
-        let (command, bar_base) = {
+        let (command, bar_base, msi_state, msix_state) = {
             let mut pci_cfg = self.pci_cfg.borrow_mut();
             let cfg = pci_cfg.bus_mut().device_config(self.bdf);
             let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
@@ -48,13 +48,67 @@ impl<T: PciDevice> PciConfigSyncedMmioBar<T> {
                 .and_then(|cfg| cfg.bar_range(self.bar))
                 .map(|range| range.base)
                 .unwrap_or(0);
-            (command, bar_base)
+            let msi_state = cfg.and_then(|cfg| cfg.capability::<MsiCapability>()).map(|msi| {
+                (
+                    msi.enabled(),
+                    msi.message_address(),
+                    msi.message_data(),
+                    msi.mask_bits(),
+                    msi.pending_bits(),
+                )
+            });
+            let msix_state = cfg
+                .and_then(|cfg| cfg.capability::<MsixCapability>())
+                .map(|msix| (msix.enabled(), msix.function_masked()));
+            (command, bar_base, msi_state, msix_state)
         };
 
         let mut dev = self.dev.borrow_mut();
         dev.config_mut().set_command(command);
         if bar_base != 0 {
             dev.config_mut().set_bar_base(self.bar, bar_base);
+        }
+
+        // Keep MSI/MSI-X enable state synchronized as well. Some device models (e.g. xHCI) may
+        // assert an interrupt condition as a side-effect of an MMIO write, and MSI delivery is
+        // edge-triggered. If the device model observes the interrupt edge before it sees MSI
+        // enabled, it can miss the MSI pulse and then suppress legacy INTx once MSI becomes active.
+        //
+        // Syncing the interrupt capability state here keeps "enable MSI, then touch MMIO" flows
+        // deterministic and matches what real hardware does (the programmed MSI registers live in
+        // PCI config space, not in the BAR window).
+        if let Some((enabled, addr, data, mask, pending)) = msi_state {
+            if let Some(off) = dev.config_mut().find_capability(PCI_CAP_ID_MSI) {
+                let base = u16::from(off);
+                dev.config_mut().write(base + 0x04, 4, addr as u32);
+                dev.config_mut().write(base + 0x08, 4, (addr >> 32) as u32);
+                dev.config_mut().write(base + 0x0c, 2, u32::from(data));
+                dev.config_mut().write(base + 0x10, 4, mask);
+                dev.config_mut().write(base + 0x14, 4, pending);
+
+                let ctrl = dev.config_mut().read(base + 0x02, 2) as u16;
+                let new_ctrl = if enabled { ctrl | 0x0001 } else { ctrl & !0x0001 };
+                dev.config_mut().write(base + 0x02, 2, u32::from(new_ctrl));
+            }
+        }
+
+        if let Some((enabled, function_masked)) = msix_state {
+            if let Some(off) = dev.config_mut().find_capability(PCI_CAP_ID_MSIX) {
+                let base = u16::from(off);
+                let ctrl = dev.config_mut().read(base + 0x02, 2) as u16;
+                let mut new_ctrl = ctrl;
+                if enabled {
+                    new_ctrl |= 1 << 15;
+                } else {
+                    new_ctrl &= !(1 << 15);
+                }
+                if function_masked {
+                    new_ctrl |= 1 << 14;
+                } else {
+                    new_ctrl &= !(1 << 14);
+                }
+                dev.config_mut().write(base + 0x02, 2, u32::from(new_ctrl));
+            }
         }
     }
 }
