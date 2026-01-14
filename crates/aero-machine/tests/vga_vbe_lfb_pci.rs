@@ -101,9 +101,13 @@ fn vga_vbe_lfb_base_can_be_derived_from_vram_bar_base_and_lfb_offset() {
     //
     // The effective VBE LFB base should be:
     // `lfb_base = vga_vram_bar_base + vga_lfb_offset`.
+    // Use a derived base *outside* the BIOS PCI BAR allocator default window
+    // (`PciResourceAllocatorConfig::default().mmio_base..+mmio_size`, currently
+    // `0xE000_0000..0xF000_0000`) to ensure we exercise the full PCI MMIO router mapping rather
+    // than accidentally relying on the allocator sub-window.
     let lfb_offset: u32 = 0x0002_0000; // 128KiB
-    let vram_bar_base: u32 = 0xE0FE_0000;
-    let expected_lfb_base: u32 = 0xE100_0000;
+    let vram_bar_base: u32 = 0xCFFE_0000;
+    let expected_lfb_base: u32 = 0xD000_0000;
     assert_eq!(
         vram_bar_base.wrapping_add(lfb_offset),
         expected_lfb_base,
