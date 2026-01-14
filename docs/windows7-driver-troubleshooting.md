@@ -95,6 +95,8 @@ Notes:
   - `aerogpu_dbgctl --dump-last-cmd --out C:\cmd.bin --force`
 - To capture an older submission (for example if the newest submit is a tiny no-op), use `--index-from-tail`:
   - `aerogpu_dbgctl --dump-last-cmd --index-from-tail 1 --out C:\prev_cmd.bin`
+- To dump multiple recent submissions in one run, use `--count N` (writes one output per submission, like `cmd_0.bin`, `cmd_1.bin`, ...):
+  - `aerogpu_dbgctl --dump-last-cmd --count 4 --out C:\cmd.bin`
 - If your build uses multiple rings, select the ring with `--ring-id N` (default is 0).
 
 ### 2) Host: decode the submission

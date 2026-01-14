@@ -5060,6 +5060,10 @@ static int DoDumpLastCmd(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t
   wprintf(L"  head: 0x%08lx\n", (unsigned long)head);
   wprintf(L"  tail: 0x%08lx\n", (unsigned long)tail);
 
+  if (actualCount != count) {
+    wprintf(L"  note: requested --count=%lu but only %lu descriptors are available from index_from_tail=%lu\n",
+            (unsigned long)count, (unsigned long)actualCount, (unsigned long)indexFromTail);
+  }
   if (actualCount > 1) {
     wprintf(L"  dumping: index_from_tail=%lu..%lu (%lu submissions)\n", (unsigned long)indexFromTail,
             (unsigned long)(indexFromTail + actualCount - 1u), (unsigned long)actualCount);
