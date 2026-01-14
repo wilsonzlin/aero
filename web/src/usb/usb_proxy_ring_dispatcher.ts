@@ -15,6 +15,15 @@ type DispatcherEntry = {
 
 const DEFAULT_DRAIN_INTERVAL_MS = 4;
 
+// Bound per-tick completion-ring drains so a busy or malicious producer can't keep
+// the worker spinning in the drain loop (starving unrelated I/O work). When the
+// caps are hit we continue draining on the next interval.
+const MAX_USB_COMPLETION_RING_RECORDS_PER_DRAIN_TICK = 256;
+// Approximate payload byte budget for draining. Large completion payloads (bulkIn /
+// controlIn data) require copying out of the SharedArrayBuffer; draining too many
+// in one tick can create large transient allocations.
+const MAX_USB_COMPLETION_RING_BYTES_PER_DRAIN_TICK = 1024 * 1024;
+
 // When the VM runtime is snapshot-paused, the IO worker must not allow async completion delivery
 // (including the SharedArrayBuffer completion-ring fast path) to mutate guest-visible state while
 // the snapshot writer is reading guest RAM/device blobs.
@@ -36,14 +45,26 @@ export function setUsbProxyCompletionRingDispatchPaused(paused: boolean): void {
 // drain loop per completion ring buffer and then fan-out to all subscribed runtimes.
 const completionDispatchers = new WeakMap<SharedArrayBuffer, DispatcherEntry>();
 
+function completionPayloadBytes(completion: UsbHostCompletion): number {
+  if (completion.status === "success") {
+    if (completion.kind === "controlIn" || completion.kind === "bulkIn") {
+      return completion.data.byteLength >>> 0;
+    }
+    return 0;
+  }
+  return 0;
+}
+
 function drain(entry: DispatcherEntry): void {
   if (completionDispatchPaused) return;
   if (entry.broken) return;
   const { ring, handlers } = entry;
   if (handlers.size === 0) return;
 
-  // eslint-disable-next-line no-constant-condition
-  while (true) {
+  let remainingRecords = MAX_USB_COMPLETION_RING_RECORDS_PER_DRAIN_TICK;
+  let remainingBytes = MAX_USB_COMPLETION_RING_BYTES_PER_DRAIN_TICK;
+
+  while (remainingRecords > 0 && remainingBytes > 0) {
     let completion: UsbHostCompletion | null = null;
     try {
       completion = ring.popCompletion();
@@ -77,6 +98,9 @@ function drain(entry: DispatcherEntry): void {
         // receiving completions.
       }
     }
+
+    remainingRecords -= 1;
+    remainingBytes -= completionPayloadBytes(completion);
   }
 }
 

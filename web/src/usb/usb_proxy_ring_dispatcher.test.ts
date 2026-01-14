@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { createUsbProxyRingBuffer, USB_PROXY_RING_CTRL_BYTES, UsbProxyRing } from "./usb_proxy_ring";
 import { subscribeUsbProxyCompletionRing } from "./usb_proxy_ring_dispatcher";
@@ -38,6 +38,56 @@ describe("usb/usb_proxy_ring_dispatcher", () => {
 
     unsubscribeA();
     unsubscribeB();
+  });
+
+  it("caps per-tick completion-ring drains (record count)", async () => {
+    vi.useFakeTimers();
+    try {
+      const sab = createUsbProxyRingBuffer(16 * 1024);
+      const ring = new UsbProxyRing(sab);
+      for (let i = 0; i < 300; i += 1) {
+        expect(ring.pushCompletion({ kind: "bulkIn", id: i + 1, status: "success", data: Uint8Array.of(1) })).toBe(true);
+      }
+
+      const seen: number[] = [];
+      const unsubscribe = subscribeUsbProxyCompletionRing(sab, (c) => seen.push(c.id), { drainIntervalMs: 1 });
+
+      // Initial drain runs via queueMicrotask.
+      await Promise.resolve();
+      expect(seen).toHaveLength(256);
+
+      // Next tick drains the remaining records.
+      await vi.advanceTimersByTimeAsync(1);
+      expect(seen).toHaveLength(300);
+
+      unsubscribe();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("caps per-tick completion-ring drains (payload bytes)", async () => {
+    vi.useFakeTimers();
+    try {
+      const sab = createUsbProxyRingBuffer(3 * 1024 * 1024);
+      const ring = new UsbProxyRing(sab);
+      const payload = new Uint8Array(1024 * 1024);
+      expect(ring.pushCompletion({ kind: "bulkIn", id: 1, status: "success", data: payload })).toBe(true);
+      expect(ring.pushCompletion({ kind: "bulkIn", id: 2, status: "success", data: payload })).toBe(true);
+
+      const seen: number[] = [];
+      const unsubscribe = subscribeUsbProxyCompletionRing(sab, (c) => seen.push(c.id), { drainIntervalMs: 1 });
+
+      await Promise.resolve();
+      expect(seen).toEqual([1]);
+
+      await vi.advanceTimersByTimeAsync(1);
+      expect(seen).toEqual([1, 2]);
+
+      unsubscribe();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("invokes onError when completion ring records are corrupted", async () => {
