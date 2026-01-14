@@ -162,6 +162,18 @@ const postToMain = (msg: OutboundGpuRuntimeMessage, transfer?: Transferable[]) =
   ctx.postMessage({ ...msg, ...GPU_MESSAGE_BASE }, transfer ?? []);
 };
 
+function toTransferableArrayBuffer(view: Uint8Array): ArrayBuffer {
+  // `postMessage(..., [buf])` only accepts transferable `ArrayBuffer`s (not `SharedArrayBuffer`),
+  // and screenshot/cursor protocols require a tight-packed backing store.
+  const bufLike = view.buffer;
+  if (bufLike instanceof ArrayBuffer && view.byteOffset === 0 && view.byteLength === bufLike.byteLength) {
+    return bufLike;
+  }
+  const buf = new ArrayBuffer(view.byteLength);
+  new Uint8Array(buf).set(view);
+  return buf;
+}
+
 const postRuntimeError = (message: string) => {
   if (!status) return;
   pushRuntimeEvent({ kind: 'log', level: 'error', message });
