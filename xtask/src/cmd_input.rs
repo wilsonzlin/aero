@@ -245,7 +245,7 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
                 }
 
                 return Err(XtaskError::Message(
-                    "missing required command: node\n\nInstall Node, or run `cargo xtask input --rust-only` to skip Node/Playwright."
+                    "missing required command: node\n\nInstall Node, or run `cargo xtask input --rust-only` to skip npm + Playwright."
                         .to_string(),
                 ));
             }
@@ -294,7 +294,7 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
     if !has_node_modules {
         return Err(XtaskError::Message(
             "node_modules is missing; install Node dependencies first (e.g. `npm ci`), \
-             or run `cargo xtask input --rust-only` to skip Node/Playwright"
+             or run `cargo xtask input --rust-only` to skip npm + Playwright"
                 .to_string(),
         ));
     }
@@ -322,7 +322,7 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
         Ok(()) => {}
         Err(XtaskError::Message(msg)) if msg.starts_with("missing required command: npm") => {
             return Err(XtaskError::Message(format!(
-                "{msg}\n\nInstall Node tooling, or run `cargo xtask input --rust-only` to skip Node/Playwright."
+                "{msg}\n\nInstall Node tooling, or run `cargo xtask input --rust-only` to skip npm + Playwright."
             )));
         }
         Err(err) => return Err(err),
@@ -338,7 +338,7 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
             Ok(()) => {}
             Err(XtaskError::Message(msg)) if msg.starts_with("missing required command: npm") => {
                 return Err(XtaskError::Message(format!(
-                    "{msg}\n\nInstall Node tooling, or run `cargo xtask input --rust-only` to skip Node/Playwright."
+                    "{msg}\n\nInstall Node tooling, or run `cargo xtask input --rust-only` to skip npm + Playwright."
                 )));
             }
             Err(err) => return Err(err),
