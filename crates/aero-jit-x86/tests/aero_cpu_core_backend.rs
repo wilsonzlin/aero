@@ -541,6 +541,98 @@ fn wasmtime_backend_mmio_exit_rolls_back_code_version_bumps() {
 
 #[test]
 #[cfg(feature = "tier1-inline-tlb")]
+fn wasmtime_backend_cross_page_inline_store_bumps_both_pages() {
+    fn read_u32_le(backend: &WasmtimeBackend<CpuState>, addr: u64) -> u32 {
+        let bytes = [
+            backend.read_u8(addr),
+            backend.read_u8(addr + 1),
+            backend.read_u8(addr + 2),
+            backend.read_u8(addr + 3),
+        ];
+        u32::from_le_bytes(bytes)
+    }
+
+    let entry = 0x1000u64;
+
+    // Cross-page store/load: address 0xFFF spans pages 0 and 1 for a 64-bit access.
+    let addr_u64 = (aero_jit_x86::PAGE_SIZE - 1) as u64;
+    let value_u64 = 0x1122_3344_5566_7788u64;
+
+    let mut builder = IrBuilder::new(entry);
+    let addr = builder.const_int(Width::W64, addr_u64);
+    let value = builder.const_int(Width::W64, value_u64);
+    builder.store(Width::W64, addr, value);
+    let loaded = builder.load(Width::W64, addr);
+    builder.write_reg(
+        GuestReg::Gpr {
+            reg: Gpr::Rax,
+            width: Width::W64,
+            high8: false,
+        },
+        loaded,
+    );
+    let block = builder.finish(IrTerminator::Jump { target: 0x2000 });
+
+    let wasm = Tier1WasmCodegen::new().compile_block_with_options(
+        &block,
+        Tier1WasmOptions {
+            inline_tlb: true,
+            inline_tlb_cross_page_fastpath: true,
+            ..Default::default()
+        },
+    );
+
+    let mut backend: WasmtimeBackend<CpuState> = WasmtimeBackend::new();
+    let idx = backend.add_compiled_block(&wasm);
+
+    let cpu_ptr = WasmtimeBackend::<CpuState>::DEFAULT_CPU_PTR as u64;
+    let table_ptr = read_u32_le(
+        &backend,
+        cpu_ptr + jit_ctx::CODE_VERSION_TABLE_PTR_OFFSET as u64,
+    ) as u64;
+    let table_len = read_u32_le(
+        &backend,
+        cpu_ptr + jit_ctx::CODE_VERSION_TABLE_LEN_OFFSET as u64,
+    ) as u64;
+    assert!(
+        table_len >= 2,
+        "table_len should cover at least pages 0 and 1 for this test"
+    );
+
+    let entry0_off = table_ptr + 0 * 4;
+    let entry1_off = table_ptr + 1 * 4;
+    assert_eq!(read_u32_le(&backend, entry0_off), 0);
+    assert_eq!(read_u32_le(&backend, entry1_off), 0);
+
+    let mut cpu = CpuState {
+        rip: entry,
+        ..Default::default()
+    };
+    let exit = backend.execute(idx, &mut cpu);
+    assert_eq!(exit.next_rip, 0x2000);
+    assert!(!exit.exit_to_interpreter);
+    assert!(exit.committed);
+
+    assert_eq!(cpu.gpr[Gpr::Rax.as_u8() as usize], value_u64);
+    assert_eq!(
+        read_u32_le(&backend, entry0_off),
+        1,
+        "cross-page inline store should bump page 0"
+    );
+    assert_eq!(
+        read_u32_le(&backend, entry1_off),
+        1,
+        "cross-page inline store should bump page 1"
+    );
+
+    let got = (0..8u64)
+        .map(|i| backend.read_u8(addr_u64 + i))
+        .collect::<Vec<_>>();
+    assert_eq!(got, value_u64.to_le_bytes());
+}
+
+#[test]
+#[cfg(feature = "tier1-inline-tlb")]
 fn wasmtime_backend_inline_tlb_mmio_exit_sets_next_rip() {
     let entry = 0x1000u64;
 
