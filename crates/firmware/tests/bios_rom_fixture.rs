@@ -31,8 +31,8 @@ fn bios_rom_fixture_matches_generator() {
 
         panic!(
             "`assets/bios.bin` is out of date or has been modified ({details}).\n\
-Regenerate with: cargo xtask fixtures\n\
-(or: cargo run -p firmware --bin gen_bios_rom --locked)"
+Regenerate with: cargo xtask bios-rom\n\
+(or: cargo xtask fixtures, or: cargo run -p firmware --bin gen_bios_rom --locked)"
         );
     }
 }
