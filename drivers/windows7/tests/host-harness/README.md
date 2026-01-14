@@ -1168,6 +1168,9 @@ On the self-hosted runner you need:
 By default the workflow runs QEMU with `memory_mb=2048` and `smp=2`. Override these via the workflow inputs if your
 runner has different resource constraints.
 
+If your guest image was provisioned with a non-default `--http-path`, override it via the workflow input `http_path`
+(the default matches the harness default `/aero-virtio-selftest`).
+
 To enable the optional host-side QEMU PCI ID preflight (`query-pci` via QMP), set the workflow input
 `qemu_preflight_pci=true`. This helps catch missing/ignored `x-pci-revision=0x01` (REV_01) configuration early.
 

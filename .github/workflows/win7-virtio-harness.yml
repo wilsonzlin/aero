@@ -33,6 +33,11 @@ on:
         required: false
         default: "18080"
         type: string
+      http_path:
+        description: HTTP path served by the harness (guest requests http://10.0.2.2:<port><path>)
+        required: false
+        default: "/aero-virtio-selftest"
+        type: string
       udp_port:
         description: UDP port on the runner for the harness echo server (guest reaches it as 10.0.2.2:<port>)
         required: false
@@ -287,6 +292,7 @@ jobs:
             echo "  memory_mb: '${{ inputs.memory_mb }}'"
             echo "  smp: '${{ inputs.smp }}'"
             echo "  http_port: '${{ inputs.http_port }}'"
+            echo "  http_path: '${{ inputs.http_path }}'"
             echo "  udp_port: '${{ inputs.udp_port }}'"
             echo "  disable_udp: '${{ inputs.disable_udp }}'"
             echo "  snapshot: '${{ inputs.snapshot }}'"
@@ -335,6 +341,7 @@ jobs:
             memory_mb="${{ inputs.memory_mb }}"
             smp="${{ inputs.smp }}"
             http_port="${{ inputs.http_port }}"
+            http_path="${{ inputs.http_path }}"
             udp_port="${{ inputs.udp_port }}"
 
             if [[ -z "${disk_image_path}" ]]; then
@@ -384,6 +391,14 @@ jobs:
             fi
             if (( http_port < 1 || http_port > 65535 )); then
               echo "ERROR: workflow input 'http_port' must be in range 1..65535, got: '${http_port}'"
+              exit 1
+            fi
+            if [[ -z "${http_path}" ]]; then
+              echo "ERROR: workflow input 'http_path' must be non-empty"
+              exit 1
+            fi
+            if [[ "${http_path}" != /* ]]; then
+              echo "ERROR: workflow input 'http_path' must start with '/', got: '${http_path}'"
               exit 1
             fi
             if [[ -z "${udp_port}" || ! "${udp_port}" =~ ^[0-9]+$ ]]; then
@@ -538,6 +553,7 @@ jobs:
               --serial-log "${serial_log}"
               --http-log "${http_log}"
               --http-port "${http_port}"
+              --http-path "${http_path}"
               --udp-port "${udp_port}"
               --timeout-seconds "${timeout_seconds}"
             )
