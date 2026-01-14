@@ -141,9 +141,9 @@ export class JitWorkerClient {
             return;
           }
           const response = value as JitTier1CompiledResponse;
-          if ("module" in response) {
+          if ("module" in response && response.module) {
             resolve({
-              module: response.module,
+              module: response.module as WebAssembly.Module,
               entryRip: response.entryRip,
               codeByteLen: response.codeByteLen,
               exitToInterpreter: response.exitToInterpreter,
@@ -151,7 +151,7 @@ export class JitWorkerClient {
             return;
           }
           resolve({
-            wasmBytes: response.wasmBytes,
+            wasmBytes: response.wasmBytes as ArrayBuffer,
             entryRip: response.entryRip,
             codeByteLen: response.codeByteLen,
             exitToInterpreter: response.exitToInterpreter,

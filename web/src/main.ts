@@ -5553,6 +5553,12 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
       return;
     }
 
+    if (response.type !== "jit:compiled") {
+      jitDemoLine.textContent = `jit: unexpected response (${response.type})`;
+      jitDemoError.textContent = "JIT demo expected a jit:compiled response.";
+      return;
+    }
+
     const cached = response.cached ? " (cached)" : "";
     jitDemoLine.textContent = `jit: compiled demo module in ${response.durationMs.toFixed(2)}ms${cached}`;
   }
