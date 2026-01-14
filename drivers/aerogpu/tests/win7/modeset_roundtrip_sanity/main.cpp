@@ -567,14 +567,16 @@ static bool WaitForScanoutMatch(const D3DKMT_FUNCS* kmt,
                                         (unsigned long)last_status);
     } else {
       *err = aerogpu_test::FormatString(
-          "scanout did not match within %lu ms (want=%lux%lu cached=%lux%lu fmt=%lu pitch=%lu mmio=%lux%lu fmt=%lu pitch=%lu fb_gpa=0x%I64X)",
+          "scanout did not match within %lu ms (want=%lux%lu cached: en=%lu %lux%lu fmt=%lu pitch=%lu mmio: en=%lu %lux%lu fmt=%lu pitch=%lu fb_gpa=0x%I64X)",
           (unsigned long)timeout_ms,
           (unsigned long)expected_w,
           (unsigned long)expected_h,
+          (unsigned long)last.cached_enable,
           (unsigned long)last.cached_width,
           (unsigned long)last.cached_height,
           (unsigned long)last.cached_format,
           (unsigned long)last.cached_pitch_bytes,
+          (unsigned long)last.mmio_enable,
           (unsigned long)last.mmio_width,
           (unsigned long)last.mmio_height,
           (unsigned long)last.mmio_format,
