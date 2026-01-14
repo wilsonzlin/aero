@@ -2,6 +2,7 @@ use std::boxed::Box;
 
 use aero_io_snapshot::io::state::{IoSnapshot, SnapshotReader, SnapshotWriter};
 use aero_usb::xhci::context::SlotContext;
+use aero_usb::xhci::regs;
 use aero_usb::xhci::trb::{Trb, TrbType, TRB_LEN};
 use aero_usb::xhci::XhciController;
 use aero_usb::{ControlResponse, MemoryBus, SetupPacket, UsbDeviceModel, UsbInResult};
@@ -127,6 +128,9 @@ fn xhci_snapshot_does_not_process_halted_active_endpoints_without_device_context
         addr.completion_code,
         aero_usb::xhci::CommandCompletionCode::Success
     );
+
+    // Execute transfers while the controller is running so restore-time execution is meaningful.
+    ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
 
     // Endpoint 1 IN => endpoint id 3.
     const EP_ID: u8 = 3;
