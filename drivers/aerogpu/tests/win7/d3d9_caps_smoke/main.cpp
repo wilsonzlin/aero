@@ -181,9 +181,17 @@ static int RunD3D9CapsSmoke(int argc, char** argv) {
     return reporter.Fail("DevCaps missing D3DDEVCAPS_HWTRANSFORMANDLIGHT");
   }
 
-  const DWORD patch_caps = D3DDEVCAPS_NPATCHES | D3DDEVCAPS_RTPATCHES | D3DDEVCAPS_QUINTICRTPATCHES;
-  if ((caps.DevCaps & patch_caps) != 0) {
-    return reporter.Fail("DevCaps unexpectedly advertises patch support: DevCaps=0x%08lX", (unsigned long)caps.DevCaps);
+  if ((caps.DevCaps & D3DDEVCAPS_RTPATCHES) == 0) {
+    return reporter.Fail("DevCaps missing D3DDEVCAPS_RTPATCHES");
+  }
+  const DWORD unsupported_patch_caps = D3DDEVCAPS_NPATCHES | D3DDEVCAPS_QUINTICRTPATCHES;
+  if ((caps.DevCaps & unsupported_patch_caps) != 0) {
+    return reporter.Fail("DevCaps unexpectedly advertises unsupported patch caps: DevCaps=0x%08lX",
+                         (unsigned long)caps.DevCaps);
+  }
+  if (caps.MaxNpatchTessellationLevel <= 0.0f) {
+    return reporter.Fail("MaxNpatchTessellationLevel must be > 0 when patch caps are advertised (got %.2f)",
+                         (double)caps.MaxNpatchTessellationLevel);
   }
 
   if ((caps.RasterCaps & D3DPRASTERCAPS_SCISSORTEST) == 0) {
@@ -207,4 +215,3 @@ static int RunD3D9CapsSmoke(int argc, char** argv) {
 int main(int argc, char** argv) {
   return RunD3D9CapsSmoke(argc, argv);
 }
-

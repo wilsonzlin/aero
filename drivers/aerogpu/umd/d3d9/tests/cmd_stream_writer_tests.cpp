@@ -1175,10 +1175,16 @@ bool TestAdapterCapsAndQueryAdapterInfo() {
   if (!Check((caps.RasterCaps & D3DPRASTERCAPS_SCISSORTEST) != 0, "RasterCaps includes SCISSORTEST")) {
     return false;
   }
-  // Patch/NPatch draw DDIs are not implemented; caps should remain conservative
-  // to avoid the runtime selecting unsupported paths.
-  const uint32_t patch_caps = D3DDEVCAPS_NPATCHES | D3DDEVCAPS_RTPATCHES | D3DDEVCAPS_QUINTICRTPATCHES;
-  if (!Check((caps.DevCaps & patch_caps) == 0, "DevCaps does not advertise patch support")) {
+  // Patch rendering is implemented (DrawRectPatch/DrawTriPatch/DeletePatch), but
+  // N-patches and quintic RT patches are not.
+  if (!Check((caps.DevCaps & D3DDEVCAPS_RTPATCHES) != 0, "DevCaps advertises RTPATCHES")) {
+    return false;
+  }
+  const uint32_t unsupported_patch_caps = D3DDEVCAPS_NPATCHES | D3DDEVCAPS_QUINTICRTPATCHES;
+  if (!Check((caps.DevCaps & unsupported_patch_caps) == 0, "DevCaps does not advertise unsupported patch caps")) {
+    return false;
+  }
+  if (!Check(caps.MaxNpatchTessellationLevel > 0.0f, "MaxNpatchTessellationLevel > 0")) {
     return false;
   }
   // If we enumerate a depth/stencil format, we must advertise the corresponding

@@ -237,7 +237,10 @@ void fill_d3d9_caps(D3DCAPS9* out) {
   // We still report SM2.0 (VS/PS 2.0) as required by DWM on Win7.
   out->DevCaps = D3DDEVCAPS_HWTRANSFORMANDLIGHT |
                  D3DDEVCAPS_DRAWPRIMITIVES2 |
-                 D3DDEVCAPS_DRAWPRIMITIVES2EX;
+                 D3DDEVCAPS_DRAWPRIMITIVES2EX |
+                 // Cubic Bezier rect/tri patches are implemented by the UMD
+                 // (DrawRectPatch/DrawTriPatch/DeletePatch).
+                 D3DDEVCAPS_RTPATCHES;
 
   out->Caps2 = D3DCAPS2_CANRENDERWINDOWED | D3DCAPS2_CANSHARERESOURCE;
 
@@ -334,6 +337,10 @@ void fill_d3d9_caps(D3DCAPS9* out) {
 
   out->MaxPrimitiveCount = 0xFFFFFu;
   out->MaxVertexIndex = 0xFFFFFu;
+
+  // Patch tessellation: clamp to the max segment count supported by the UMD's
+  // CPU tessellation path.
+  out->MaxNpatchTessellationLevel = 64.0f;
 
   // Only advertise declaration types that are implemented by the AeroGPU D3D9
   // vertex-input path end-to-end. Over-advertising here can cause D3D9 runtimes
@@ -472,10 +479,11 @@ HRESULT get_caps(Adapter* adapter, const D3D9DDIARG_GETCAPS* pGetCaps) {
       std::memset(caps, 0, sizeof(*caps));
       caps->DeviceType = D3DDEVTYPE_HAL;
       caps->AdapterOrdinal = 0;
-      caps->Caps2 = D3DCAPS2_CANRENDERWINDOWED | D3DCAPS2_CANSHARERESOURCE;
-      caps->DevCaps = D3DDEVCAPS_HWTRANSFORMANDLIGHT |
-                      D3DDEVCAPS_DRAWPRIMITIVES2 |
-                      D3DDEVCAPS_DRAWPRIMITIVES2EX;
+       caps->Caps2 = D3DCAPS2_CANRENDERWINDOWED | D3DCAPS2_CANSHARERESOURCE;
+       caps->DevCaps = D3DDEVCAPS_HWTRANSFORMANDLIGHT |
+                       D3DDEVCAPS_DRAWPRIMITIVES2 |
+                       D3DDEVCAPS_DRAWPRIMITIVES2EX |
+                       D3DDEVCAPS_RTPATCHES;
       caps->PrimitiveMiscCaps = D3DPMISCCAPS_CLIPTLVERTS;
       caps->RasterCaps = D3DPRASTERCAPS_SCISSORTEST;
       const DWORD cmp_caps = D3DPCMPCAPS_NEVER |
@@ -498,9 +506,9 @@ HRESULT get_caps(Adapter* adapter, const D3D9DDIARG_GETCAPS* pGetCaps) {
                           D3DSTENCILCAPS_DECR |
                           D3DSTENCILCAPS_TWOSIDED;
       caps->ShadeCaps = D3DPSHADECAPS_COLORGOURAUDRGB;
-      caps->TextureCaps = D3DPTEXTURECAPS_ALPHA;
-      caps->TextureFilterCaps = D3DPTFILTERCAPS_MINFPOINT | D3DPTFILTERCAPS_MINFLINEAR | D3DPTFILTERCAPS_MAGFPOINT |
-                                D3DPTFILTERCAPS_MAGFLINEAR;
+       caps->TextureCaps = D3DPTEXTURECAPS_ALPHA | D3DPTEXTURECAPS_MIPMAP;
+       caps->TextureFilterCaps = D3DPTFILTERCAPS_MINFPOINT | D3DPTFILTERCAPS_MINFLINEAR | D3DPTFILTERCAPS_MIPFPOINT |
+                                 D3DPTFILTERCAPS_MAGFPOINT | D3DPTFILTERCAPS_MAGFLINEAR;
       caps->StretchRectFilterCaps = caps->TextureFilterCaps;
       caps->TextureAddressCaps = D3DPTADDRESSCAPS_CLAMP | D3DPTADDRESSCAPS_WRAP;
       caps->SrcBlendCaps = D3DPBLENDCAPS_ZERO | D3DPBLENDCAPS_ONE | D3DPBLENDCAPS_SRCALPHA | D3DPBLENDCAPS_INVSRCALPHA;
@@ -520,10 +528,11 @@ HRESULT get_caps(Adapter* adapter, const D3D9DDIARG_GETCAPS* pGetCaps) {
       caps->NumSimultaneousRTs = 4;
       caps->VS20Caps.NumTemps = 32;
       caps->VS20Caps.NumInstructionSlots = 256;
-      caps->PS20Caps.NumTemps = 32;
-      caps->PS20Caps.NumInstructionSlots = 512;
-      caps->PixelShader1xMaxValue = 1.0f;
-      return S_OK;
+       caps->PS20Caps.NumTemps = 32;
+       caps->PS20Caps.NumInstructionSlots = 512;
+       caps->MaxNpatchTessellationLevel = 64.0f;
+       caps->PixelShader1xMaxValue = 1.0f;
+       return S_OK;
 #endif
     }
     case D3DDDICAPS_GETFORMATCOUNT: {
