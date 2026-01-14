@@ -183,3 +183,60 @@ fn machine_tick_platform_mirrors_ehci_bar0_when_guest_clears_it_to_zero() {
         assert_eq!(dev.config().bar_range(bar).unwrap().base, 0);
     }
 }
+
+#[test]
+fn machine_process_ide_mirrors_bar4_when_guest_clears_it_to_zero() {
+    let mut vm = Machine::new(MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_ide: true,
+        // Keep this test focused on PCI config <-> device model mirroring.
+        enable_vga: false,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        ..Default::default()
+    })
+    .unwrap();
+
+    let ide = vm.ide().expect("ide enabled");
+    let pci_cfg = vm.pci_config_ports().expect("pc platform enabled");
+    let bdf = profile::IDE_PIIX3.bdf;
+
+    let bar = 4u8;
+    let bar_cfg_offset = 0x10u16 + u16::from(bar) * 4;
+
+    // BIOS POST must assign a non-zero base address to BAR4 (Bus Master IDE I/O window).
+    let bar4_base = {
+        let mut pci_cfg = pci_cfg.borrow_mut();
+        let cfg = pci_cfg
+            .bus_mut()
+            .device_config(bdf)
+            .expect("IDE config function must exist");
+        cfg.bar_range(bar).expect("IDE BAR4 must exist").base
+    };
+    assert_ne!(bar4_base, 0, "expected IDE BAR4 base to be assigned");
+
+    // Sync once so the device model observes the assigned BAR4 base.
+    vm.process_ide();
+    {
+        let dev = ide.borrow();
+        assert_eq!(dev.config().bar_range(bar).unwrap().base, bar4_base);
+    }
+
+    // Now simulate a guest unassigning BAR4 by programming it to 0.
+    {
+        let mut pci_cfg = pci_cfg.borrow_mut();
+        pci_cfg.bus_mut().write_config(bdf, bar_cfg_offset, 4, 0);
+    }
+
+    // Re-sync: BAR4 base=0 must still be mirrored into the device model (BAR-present-with-base=0).
+    vm.process_ide();
+    {
+        let mut dev = ide.borrow_mut();
+        assert_eq!(dev.config().bar_range(bar).unwrap().base, 0);
+        // I/O BARs must still expose bit0=1 to indicate an I/O BAR even when the base is 0.
+        assert_eq!(dev.config_mut().read(bar_cfg_offset, 4), 0x1);
+    }
+}
