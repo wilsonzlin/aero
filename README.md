@@ -328,6 +328,8 @@ Browsers cannot open arbitrary TCP/UDP sockets directly. Aero’s guest networki
 
   The same service also exposes `GET /udp` as a WebSocket UDP relay fallback using the same v1/v2 framing. WebSockets are reliable and ordered, so this cannot preserve true UDP loss/reordering semantics; treat it as a fallback/debug path when WebRTC isn’t available.
 
+  Inbound filtering note: by default the relay only forwards inbound UDP from remote address+port tuples that the guest previously sent to (`UDP_INBOUND_FILTER_MODE=address_and_port`). You can switch to full-cone behavior with `UDP_INBOUND_FILTER_MODE=any` (**less safe**; see the relay README).
+
   When deploying the relay separately, `backend/aero-gateway` can optionally mint short-lived relay credentials via the `udpRelay` field in `POST /session` (or `POST /udp-relay/token`).
 
 ### Local dev workflow (run alongside Vite)

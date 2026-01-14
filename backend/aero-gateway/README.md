@@ -215,6 +215,8 @@ When configured, the gateway includes an `udpRelay` field in `POST /session` res
 - `UDP_RELAY_AUDIENCE` (optional; JWT `aud`)
 - `UDP_RELAY_ISSUER` (optional; JWT `iss`)
 
+Note: inbound UDP filtering (NAT behavior) is configured on the relay service itself. By default, `proxy/webrtc-udp-relay` only forwards inbound UDP from remote address+port tuples that the guest previously sent to (`UDP_INBOUND_FILTER_MODE=address_and_port`). You can switch to full-cone behavior with `UDP_INBOUND_FILTER_MODE=any` (**less safe**; see the relay README).
+
 ### Built-in TLS (HTTPS/WSS)
 
 - `TLS_ENABLED=1|0` (default: `0`)
