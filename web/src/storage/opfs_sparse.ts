@@ -309,7 +309,6 @@ export class OpfsAeroSparseDisk implements SparseBlockDisk {
       if (!Number.isSafeInteger(fileSize) || fileSize < 0) {
         throw new Error(`invalid file size: ${fileSize}`);
       }
-
       if (fileSize < header.dataOffset) {
         throw new Error("data region out of bounds");
       }
