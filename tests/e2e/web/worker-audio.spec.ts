@@ -2,7 +2,6 @@ import { expect, test } from "@playwright/test";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { SetBootDisksMessage } from "../../../web/src/runtime/boot_disks_protocol";
 
 const thisDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = dirname(dirname(dirname(thisDir)));
@@ -62,22 +61,19 @@ test("worker audio fills the shared ring buffer (no postMessage audio copies)", 
   test.skip(!support.wasmThreads, "Shared WebAssembly.Memory (WASM threads) is unavailable in this Playwright environment.");
   test.skip(!support.audioWorklet, "AudioWorklet is unavailable in this Playwright environment.");
 
-  const bootDisksMessage: SetBootDisksMessage = { type: "setBootDisks", mounts: {}, hdd: null, cd: null };
-
   await page.setContent(`
-    <button id="start">Start audio</button>
-    <pre id="log"></pre>
-    <script type="module">
-      import { WorkerCoordinator } from "/web/src/runtime/coordinator.ts";
-      import { createAudioOutput } from "/web/src/platform/audio.ts";
+     <button id="start">Start audio</button>
+     <pre id="log"></pre>
+     <script type="module">
+       import { WorkerCoordinator } from "/web/src/runtime/coordinator.ts";
+       import { createAudioOutput } from "/web/src/platform/audio.ts";
 
-      const log = document.getElementById("log");
-      const coordinator = new WorkerCoordinator();
-      window.__coordinator = coordinator;
-      const bootDisksMessage = ${JSON.stringify(bootDisksMessage)};
+       const log = document.getElementById("log");
+       const coordinator = new WorkerCoordinator();
+       window.__coordinator = coordinator;
 
-       // Minimal config that keeps worker boot cheap.
-       const config = {
+        // Minimal config that keeps worker boot cheap.
+        const config = {
          // Keep guest memory small; the runtime reserves a large fixed region for
          // the WASM heap, so huge guest sizes significantly increase total
          // SharedArrayBuffer memory pressure and can cause audio underruns in
@@ -90,12 +86,12 @@ test("worker audio fills the shared ring buffer (no postMessage audio copies)", 
          logLevel: "info",
       };
 
-       try {
-         coordinator.start(config);
-         coordinator.getIoWorker()?.postMessage(bootDisksMessage);
-       } catch (err) {
-         log.textContent = err instanceof Error ? err.message : String(err);
-       }
+        try {
+          coordinator.start(config);
+          coordinator.setBootDisks({}, null, null);
+        } catch (err) {
+          log.textContent = err instanceof Error ? err.message : String(err);
+        }
 
       document.getElementById("start").addEventListener("click", async () => {
         log.textContent = "";

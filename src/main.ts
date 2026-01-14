@@ -32,7 +32,6 @@ import {
 import { startSyntheticMic, type SyntheticMicSource } from '../web/src/audio/synthetic_mic';
 import type { AeroConfig } from '../web/src/config/aero_config';
 import { WorkerCoordinator } from '../web/src/runtime/coordinator';
-import type { SetBootDisksMessage } from '../web/src/runtime/boot_disks_protocol';
 import { StatusIndex } from '../web/src/runtime/shared_layout';
 import { decodeInputBackendStatus } from '../web/src/input/input_backend_status';
 import { explainWebUsbError, formatWebUsbError } from '../web/src/platform/webusb_troubleshooting';
@@ -1155,9 +1154,7 @@ function renderAudioPanel(): HTMLElement {
         // This harness does not mount any disks, but sending an explicit empty selection
         // keeps the worker lifecycle consistent and avoids the CPU demo busy-waiting on
         // `StatusIndex.IoReady`.
-        workerCoordinator
-          .getIoWorker()
-          ?.postMessage({ type: "setBootDisks", mounts: {}, hdd: null, cd: null } satisfies SetBootDisksMessage);
+        workerCoordinator.setBootDisks({}, null, null);
       } catch (err) {
         status.textContent = err instanceof Error ? err.message : String(err);
         return;
@@ -1561,9 +1558,7 @@ function renderAudioPanel(): HTMLElement {
 
       try {
         workerCoordinator.start(workerConfig);
-        workerCoordinator
-          .getIoWorker()
-          ?.postMessage({ type: "setBootDisks", mounts: {}, hdd: null, cd: null } satisfies SetBootDisksMessage);
+        workerCoordinator.setBootDisks({}, null, null);
       } catch (err) {
         status.textContent = err instanceof Error ? err.message : String(err);
         return;
@@ -1737,9 +1732,7 @@ function renderAudioPanel(): HTMLElement {
       let workerError: string | null = null;
       try {
         workerCoordinator.start(workerConfig);
-        workerCoordinator
-          .getIoWorker()
-          ?.postMessage({ type: "setBootDisks", mounts: {}, hdd: null, cd: null } satisfies SetBootDisksMessage);
+        workerCoordinator.setBootDisks({}, null, null);
         // This demo performs a CPU-worker mic loopback (consume synthetic mic samples and write
         // them into the AudioWorklet output ring). Ensure the microphone ring is routed to the
         // CPU worker so it becomes the sole SPSC consumer (and so we don't accidentally keep the
@@ -1872,9 +1865,7 @@ function renderAudioPanel(): HTMLElement {
         // samples and DMA-write PCM into guest RAM. The default microphone ring-buffer policy
         // routes the mic to the CPU worker when no disk is attached (demo mode), so override it
         // here to ensure the IO worker receives the capture ring.
-        workerCoordinator
-          .getIoWorker()
-          ?.postMessage({ type: "setBootDisks", mounts: {}, hdd: null, cd: null } satisfies SetBootDisksMessage);
+        workerCoordinator.setBootDisks({}, null, null);
         // Demo mode defaults the mic ring consumer to the CPU worker, but HDA capture lives in the IO worker.
         // Route the microphone ring explicitly so the IO worker is the sole SPSC consumer.
         workerCoordinator.setMicrophoneRingBufferOwner("io");

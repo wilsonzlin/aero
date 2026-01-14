@@ -1,7 +1,6 @@
 import { fnv1a32Hex } from "./src/utils/fnv1a";
 import { startFrameScheduler } from "./src/main/frameScheduler";
 import { WorkerCoordinator } from "./src/runtime/coordinator";
-import type { SetBootDisksMessage } from "./src/runtime/boot_disks_protocol";
 import { GPU_PROTOCOL_NAME, GPU_PROTOCOL_VERSION, isGpuWorkerMessageBase } from "./src/ipc/gpu-protocol";
 import { SHARED_FRAMEBUFFER_HEADER_U32_LEN, SharedFramebufferHeaderIndex } from "./src/ipc/shared-layout";
 
@@ -76,7 +75,7 @@ async function main() {
   }
 
   coordinator.start(config as any);
-  coordinator.getIoWorker()?.postMessage({ type: "setBootDisks", mounts: {}, hdd: null, cd: null } satisfies SetBootDisksMessage);
+  coordinator.setBootDisks({}, null, null);
 
   const gpuWorker = coordinator.getWorker("gpu");
   const frameStateSab = coordinator.getFrameStateSab();

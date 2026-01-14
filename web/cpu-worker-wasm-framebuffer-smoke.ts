@@ -1,6 +1,5 @@
 import { fnv1a32Hex } from "./src/utils/fnv1a";
 import { WorkerCoordinator } from "./src/runtime/coordinator";
-import type { SetBootDisksMessage } from "./src/runtime/boot_disks_protocol";
 import {
   CPU_WORKER_DEMO_FRAMEBUFFER_HEIGHT,
   CPU_WORKER_DEMO_FRAMEBUFFER_OFFSET_BYTES,
@@ -87,7 +86,7 @@ async function main() {
       activeDiskImage: null,
       logLevel: "info",
     });
-    coordinator.getIoWorker()?.postMessage({ type: "setBootDisks", mounts: {}, hdd: null, cd: null } satisfies SetBootDisksMessage);
+    coordinator.setBootDisks({}, null, null);
 
     const guestMemory = coordinator.getGuestMemory();
     if (!guestMemory) {

@@ -8,7 +8,6 @@ import {
   READ_POS_INDEX as MIC_READ_POS_INDEX,
   WRITE_POS_INDEX as MIC_WRITE_POS_INDEX,
 } from "../../web/src/audio/mic_ring.js";
-import type { SetBootDisksMessage } from "../../web/src/runtime/boot_disks_protocol";
 
 const PREVIEW_ORIGIN = process.env.AERO_PLAYWRIGHT_PREVIEW_ORIGIN ?? "http://127.0.0.1:4173";
 
@@ -57,9 +56,7 @@ test("HDA capture stream DMA-writes microphone PCM into guest RAM (synthetic mic
 
     coord.start(workerConfig);
     // io.worker waits for the first `setBootDisks` message before reporting READY.
-    coord
-      .getIoWorker()
-      ?.postMessage({ type: "setBootDisks", mounts: {}, hdd: null, cd: null } satisfies SetBootDisksMessage);
+    coord.setBootDisks({}, null, null);
 
     // Force mic ring ownership to the IO worker so the HDA capture engine is the consumer.
     coord.setMicrophoneRingBufferOwner("io");
