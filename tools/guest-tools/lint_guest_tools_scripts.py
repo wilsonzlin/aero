@@ -66,6 +66,26 @@ def _any_regex(patterns: Sequence[str], *, flags: int = re.IGNORECASE | re.MULTI
     return lambda text: any(rx.search(text) is not None for rx in compiled)
 
 
+def _label_block(text: str, label: str) -> str | None:
+    """
+    Extract a best-effort "label block" from a Windows batch script.
+
+    Returns the text starting at `:<label>` up to (but not including) the next label
+    line (`^:[A-Za-z0-9_]+`), or EOF.
+
+    This is intentionally heuristic and used only for lint invariants that need to
+    inspect a specific mode section (e.g. :check_mode).
+    """
+
+    m = re.search(rf"(?im)^:{re.escape(label)}\b", text)
+    if not m:
+        return None
+    start = m.start()
+    m2 = re.search(r"(?im)^:[A-Za-z0-9_]+\b", text[m.end() :])
+    end = m.end() + m2.start() if m2 else len(text)
+    return text[start:end]
+
+
 def _read_text(path: Path) -> str:
     try:
         return path.read_text(encoding="utf-8", errors="replace")
@@ -174,6 +194,34 @@ def lint_files(*, setup_cmd: Path, uninstall_cmd: Path, verify_ps1: Path) -> Lis
                         ]
                     )(text)
                 )
+            ),
+        ),
+        Invariant(
+            description="In /check mode, logs to %TEMP% (does not require Administrator access to C:\\AeroGuestTools)",
+            expected_hint='Under :check_mode, sets INSTALL_ROOT to a %TEMP% path (e.g. set "INSTALL_ROOT=%TEMP%\\AeroGuestToolsCheck")',
+            predicate=lambda text: (
+                (block := _label_block(text, "check_mode")) is not None
+                and re.search(r'(?i)\bset\s+"INSTALL_ROOT=%TEMP%[\\/]', block) is not None
+            ),
+        ),
+        Invariant(
+            description="In /check mode, validates certificate payload without importing certificates",
+            expected_hint="Under :check_mode, calls :validate_cert_payload",
+            predicate=lambda text: (
+                (block := _label_block(text, "check_mode")) is not None
+                and re.search(r"(?i)\bcall\s+:?validate_cert_payload\b", block) is not None
+            ),
+        ),
+        Invariant(
+            description="In /check mode, avoids system-changing actions (no install_certs/stage_all_drivers/preseed_storage_boot)",
+            expected_hint=":check_mode should not call :install_certs, :stage_all_drivers, :preseed_storage_boot, :maybe_enable_testsigning, or :skip_storage_preseed",
+            predicate=lambda text: (
+                (block := _label_block(text, "check_mode")) is not None
+                and re.search(
+                    r"(?i)\bcall\s+:?(install_certs|stage_all_drivers|preseed_storage_boot|maybe_enable_testsigning|skip_storage_preseed)\b",
+                    block,
+                )
+                is None
             ),
         ),
         Invariant(

@@ -59,6 +59,8 @@ def _synthetic_setup_text(
                 r'if /i "%%~A"=="/validate" set "ARG_CHECK=1"',
                 r'if "%ARG_CHECK%"=="1" goto :check_mode',
                 r":check_mode",
+                r'set "INSTALL_ROOT=%TEMP%\AeroGuestToolsCheck"',
+                r"call :validate_cert_payload",
             ]
         )
 
