@@ -7,8 +7,8 @@
 //! - HBA memory registers (CAP/GHC/IS/PI/VS)
 //! - Per-port registers (CLB/FB/IS/IE/CMD/TFD/SIG/SSTS/CI)
 //! - Command list parsing (command header + command table + PRDT)
-//! - ATA commands: IDENTIFY, READ/WRITE DMA(+EXT), READ/WRITE SECTORS(+EXT), FLUSH CACHE(_EXT),
-//!   SET FEATURES
+//! - ATA commands: IDENTIFY, READ/WRITE DMA (28-bit + EXT), READ/WRITE SECTORS (PIO 28-bit + EXT),
+//!   FLUSH CACHE(_EXT), SET FEATURES
 
 use std::fmt;
 use std::io;
@@ -1171,7 +1171,7 @@ mod tests {
         mem.write_u32(addr + 12, (dbc - 1) & 0x003F_FFFF);
     }
 
-    fn write_cfis(mem: &mut TestMemory, ctba: u64, command: u8, lba: u64, count: u16) {
+    fn write_cfis48(mem: &mut TestMemory, ctba: u64, command: u8, lba: u64, count: u16) {
         let mut cfis = [0u8; 64];
         cfis[0] = 0x27;
         cfis[1] = 0x80;
@@ -1191,13 +1191,19 @@ mod tests {
         mem.write_physical(ctba, &cfis);
     }
 
-    fn write_cfis_28(mem: &mut TestMemory, ctba: u64, command: u8, lba: u32, count: u8) {
+    fn write_cfis(mem: &mut TestMemory, ctba: u64, command: u8, lba: u64, count: u16) {
+        write_cfis48(mem, ctba, command, lba, count);
+    }
+
+    fn write_cfis_28(mem: &mut TestMemory, ctba: u64, command: u8, lba: u64, count: u8) {
         assert!(lba <= 0x0FFF_FFFF);
         let mut cfis = [0u8; 64];
         cfis[0] = 0x27;
         cfis[1] = 0x80;
         cfis[2] = command;
-        cfis[7] = 0x40 | ((lba >> 24) as u8 & 0x0F);
+        // 28-bit LBA: bits 24..27 are stored in the Device register low nibble when LBA mode is
+        // enabled.
+        cfis[7] = 0xE0 | ((lba >> 24) as u8 & 0x0F);
 
         cfis[4] = (lba & 0xFF) as u8;
         cfis[5] = ((lba >> 8) & 0xFF) as u8;
@@ -1215,6 +1221,10 @@ mod tests {
         sector[0..4].copy_from_slice(&marker);
         disk.write_sectors(lba, &sector).unwrap();
         AtaDrive::new(Box::new(disk)).unwrap()
+    }
+
+    fn write_cfis28(mem: &mut TestMemory, ctba: u64, command: u8, lba: u64, count: u8) {
+        write_cfis_28(mem, ctba, command, lba, count);
     }
 
     #[test]
@@ -1237,7 +1247,7 @@ mod tests {
         ctl.write_u32(PORT_BASE + PORT_REG_CMD, PORT_CMD_ST | PORT_CMD_FRE);
 
         write_cmd_header(&mut mem, clb, 0, ctba, 1, false);
-        write_cfis(&mut mem, ctba, ATA_CMD_IDENTIFY, 0, 0);
+        write_cfis48(&mut mem, ctba, ATA_CMD_IDENTIFY, 0, 0);
         write_prdt(&mut mem, ctba, 0, data_buf, SECTOR_SIZE as u32);
 
         ctl.write_u32(PORT_BASE + PORT_REG_CI, 1);
@@ -1281,7 +1291,7 @@ mod tests {
 
         let run_identify = |ctl: &mut AhciController, mem: &mut TestMemory| {
             write_cmd_header(mem, clb, 0, ctba, 1, false);
-            write_cfis(mem, ctba, ATA_CMD_IDENTIFY, 0, 0);
+            write_cfis48(mem, ctba, ATA_CMD_IDENTIFY, 0, 0);
             write_prdt(mem, ctba, 0, data_buf, SECTOR_SIZE as u32);
 
             ctl.write_u32(PORT_BASE + PORT_REG_CI, 1);
@@ -1551,7 +1561,7 @@ mod tests {
 
         // READ DMA EXT (LBA=4, 1 sector).
         write_cmd_header(&mut mem, clb, 0, ctba, 1, false);
-        write_cfis(&mut mem, ctba, ATA_CMD_READ_DMA_EXT, 4, 1);
+        write_cfis48(&mut mem, ctba, ATA_CMD_READ_DMA_EXT, 4, 1);
         write_prdt(&mut mem, ctba, 0, data_buf, SECTOR_SIZE as u32);
         ctl.write_u32(PORT_BASE + PORT_REG_CI, 1);
         ctl.process(&mut mem);
@@ -1567,7 +1577,7 @@ mod tests {
         mem.write_physical(write_buf + 4, &vec![0u8; SECTOR_SIZE - 4]);
 
         write_cmd_header(&mut mem, clb, 0, ctba, 1, true);
-        write_cfis(&mut mem, ctba, ATA_CMD_WRITE_DMA_EXT, 5, 1);
+        write_cfis48(&mut mem, ctba, ATA_CMD_WRITE_DMA_EXT, 5, 1);
         write_prdt(&mut mem, ctba, 0, write_buf, SECTOR_SIZE as u32);
         ctl.write_u32(PORT_BASE + PORT_REG_CI, 1);
         ctl.process(&mut mem);
@@ -1575,7 +1585,205 @@ mod tests {
         // Verify by reading back via READ DMA EXT into a new buffer.
         let verify_buf = 0x7000;
         write_cmd_header(&mut mem, clb, 0, ctba, 1, false);
-        write_cfis(&mut mem, ctba, ATA_CMD_READ_DMA_EXT, 5, 1);
+        write_cfis48(&mut mem, ctba, ATA_CMD_READ_DMA_EXT, 5, 1);
+        write_prdt(&mut mem, ctba, 0, verify_buf, SECTOR_SIZE as u32);
+        ctl.write_u32(PORT_BASE + PORT_REG_CI, 1);
+        ctl.process(&mut mem);
+
+        let mut verify = [0u8; 4];
+        mem.read_physical(verify_buf, &mut verify);
+        assert_eq!(verify, [1, 2, 3, 4]);
+        assert!(irq.level());
+    }
+
+    #[test]
+    fn read_write_dma_28_roundtrip_and_lba_high_nibble() {
+        let irq = TestIrqLine::default();
+        let mut ctl = AhciController::new(Box::new(irq.clone()), 1);
+        let mut mem = TestMemory::new(0x20_000);
+
+        // Use a sparse disk so we can access LBAs that exercise the 28-bit high nibble in the
+        // Device register without allocating gigabytes of backing storage.
+        let high_lba: u64 = 0x0100_0000;
+        let cfg = AeroSparseConfig {
+            disk_size_bytes: (high_lba + 16) * SECTOR_SIZE as u64,
+            block_size_bytes: 1024 * 1024,
+        };
+        let mut disk = AeroSparseDisk::create(MemBackend::new(), cfg).unwrap();
+
+        // Pre-populate the high LBA with a marker to validate parsing of bits 24..27.
+        let mut sector = vec![0u8; SECTOR_SIZE];
+        sector[0..4].copy_from_slice(&[0xAA, 0xBB, 0xCC, 0xDD]);
+        disk.write_sectors(high_lba, &sector).unwrap();
+
+        ctl.attach_drive(0, AtaDrive::new(Box::new(disk)).unwrap());
+
+        let clb = 0x1000;
+        let fb = 0x2000;
+        let ctba = 0x3000;
+        let data_buf = 0x5000;
+
+        ctl.write_u32(PORT_BASE + PORT_REG_CLB, clb as u32);
+        ctl.write_u32(PORT_BASE + PORT_REG_CLBU, 0);
+        ctl.write_u32(PORT_BASE + PORT_REG_FB, fb as u32);
+        ctl.write_u32(PORT_BASE + PORT_REG_FBU, 0);
+        ctl.write_u32(HBA_REG_GHC, GHC_IE | GHC_AE);
+        ctl.write_u32(PORT_BASE + PORT_REG_IE, PORT_IS_DHRS);
+        ctl.write_u32(PORT_BASE + PORT_REG_CMD, PORT_CMD_ST | PORT_CMD_FRE);
+
+        // READ DMA (28-bit) from high_lba.
+        write_cmd_header(&mut mem, clb, 0, ctba, 1, false);
+        write_cfis28(&mut mem, ctba, ATA_CMD_READ_DMA, high_lba, 1);
+        write_prdt(&mut mem, ctba, 0, data_buf, SECTOR_SIZE as u32);
+        ctl.write_u32(PORT_BASE + PORT_REG_CI, 1);
+        ctl.process(&mut mem);
+
+        let mut out = [0u8; 4];
+        mem.read_physical(data_buf, &mut out);
+        assert_eq!(out, [0xAA, 0xBB, 0xCC, 0xDD]);
+
+        // WRITE DMA (28-bit) to high_lba+1.
+        let write_buf = 0x6000;
+        mem.write_physical(write_buf, &[1, 2, 3, 4]);
+        mem.write_physical(write_buf + 4, &vec![0u8; SECTOR_SIZE - 4]);
+
+        write_cmd_header(&mut mem, clb, 0, ctba, 1, true);
+        write_cfis28(&mut mem, ctba, ATA_CMD_WRITE_DMA, high_lba + 1, 1);
+        write_prdt(&mut mem, ctba, 0, write_buf, SECTOR_SIZE as u32);
+        ctl.write_u32(PORT_BASE + PORT_REG_CI, 1);
+        ctl.process(&mut mem);
+
+        // Verify using READ DMA (28-bit).
+        let verify_buf = 0x7000;
+        write_cmd_header(&mut mem, clb, 0, ctba, 1, false);
+        write_cfis28(&mut mem, ctba, ATA_CMD_READ_DMA, high_lba + 1, 1);
+        write_prdt(&mut mem, ctba, 0, verify_buf, SECTOR_SIZE as u32);
+        ctl.write_u32(PORT_BASE + PORT_REG_CI, 1);
+        ctl.process(&mut mem);
+
+        let mut verify = [0u8; 4];
+        mem.read_physical(verify_buf, &mut verify);
+        assert_eq!(verify, [1, 2, 3, 4]);
+        assert!(irq.level());
+    }
+
+    #[test]
+    fn read_write_pio_28_roundtrip() {
+        let irq = TestIrqLine::default();
+        let mut ctl = AhciController::new(Box::new(irq.clone()), 1);
+        let mut mem = TestMemory::new(0x20_000);
+
+        // Disk with one sector at LBA=4 containing a marker.
+        let capacity = 64 * SECTOR_SIZE as u64;
+        let mut disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
+        let mut sector = vec![0u8; SECTOR_SIZE];
+        sector[0..4].copy_from_slice(&[9, 8, 7, 6]);
+        disk.write_sectors(4, &sector).unwrap();
+        ctl.attach_drive(0, AtaDrive::new(Box::new(disk)).unwrap());
+
+        let clb = 0x1000;
+        let fb = 0x2000;
+        let ctba = 0x3000;
+        let data_buf = 0x5000;
+
+        ctl.write_u32(PORT_BASE + PORT_REG_CLB, clb as u32);
+        ctl.write_u32(PORT_BASE + PORT_REG_FB, fb as u32);
+        ctl.write_u32(HBA_REG_GHC, GHC_IE | GHC_AE);
+        ctl.write_u32(PORT_BASE + PORT_REG_IE, PORT_IS_DHRS);
+        ctl.write_u32(PORT_BASE + PORT_REG_CMD, PORT_CMD_ST | PORT_CMD_FRE);
+
+        // READ SECTORS (PIO) (LBA=4, 1 sector).
+        write_cmd_header(&mut mem, clb, 0, ctba, 1, false);
+        write_cfis28(&mut mem, ctba, ATA_CMD_READ_SECTORS, 4, 1);
+        write_prdt(&mut mem, ctba, 0, data_buf, SECTOR_SIZE as u32);
+        ctl.write_u32(PORT_BASE + PORT_REG_CI, 1);
+        ctl.process(&mut mem);
+
+        let mut out = [0u8; 4];
+        mem.read_physical(data_buf, &mut out);
+        assert_eq!(out, [9, 8, 7, 6]);
+
+        // WRITE SECTORS (PIO) (LBA=5, 1 sector).
+        let write_buf = 0x6000;
+        mem.write_physical(write_buf, &[1, 2, 3, 4]);
+        mem.write_physical(write_buf + 4, &vec![0u8; SECTOR_SIZE - 4]);
+
+        write_cmd_header(&mut mem, clb, 0, ctba, 1, true);
+        write_cfis28(&mut mem, ctba, ATA_CMD_WRITE_SECTORS, 5, 1);
+        write_prdt(&mut mem, ctba, 0, write_buf, SECTOR_SIZE as u32);
+        ctl.write_u32(PORT_BASE + PORT_REG_CI, 1);
+        ctl.process(&mut mem);
+
+        // Verify by reading back via READ SECTORS (PIO).
+        let verify_buf = 0x7000;
+        write_cmd_header(&mut mem, clb, 0, ctba, 1, false);
+        write_cfis28(&mut mem, ctba, ATA_CMD_READ_SECTORS, 5, 1);
+        write_prdt(&mut mem, ctba, 0, verify_buf, SECTOR_SIZE as u32);
+        ctl.write_u32(PORT_BASE + PORT_REG_CI, 1);
+        ctl.process(&mut mem);
+
+        let mut verify = [0u8; 4];
+        mem.read_physical(verify_buf, &mut verify);
+        assert_eq!(verify, [1, 2, 3, 4]);
+        assert!(irq.level());
+    }
+
+    #[test]
+    fn read_write_pio_ext_roundtrip() {
+        let irq = TestIrqLine::default();
+        let mut ctl = AhciController::new(Box::new(irq.clone()), 1);
+        let mut mem = TestMemory::new(0x20_000);
+
+        // Use a sparse disk so we can validate 48-bit LBA parsing via the high LBA bytes.
+        let high_lba: u64 = 0x0100_0000;
+        let cfg = AeroSparseConfig {
+            disk_size_bytes: (high_lba + 16) * SECTOR_SIZE as u64,
+            block_size_bytes: 1024 * 1024,
+        };
+        let mut disk = AeroSparseDisk::create(MemBackend::new(), cfg).unwrap();
+
+        let mut sector = vec![0u8; SECTOR_SIZE];
+        sector[0..4].copy_from_slice(&[0x11, 0x22, 0x33, 0x44]);
+        disk.write_sectors(high_lba, &sector).unwrap();
+        ctl.attach_drive(0, AtaDrive::new(Box::new(disk)).unwrap());
+
+        let clb = 0x1000;
+        let fb = 0x2000;
+        let ctba = 0x3000;
+        let data_buf = 0x5000;
+
+        ctl.write_u32(PORT_BASE + PORT_REG_CLB, clb as u32);
+        ctl.write_u32(PORT_BASE + PORT_REG_FB, fb as u32);
+        ctl.write_u32(HBA_REG_GHC, GHC_IE | GHC_AE);
+        ctl.write_u32(PORT_BASE + PORT_REG_IE, PORT_IS_DHRS);
+        ctl.write_u32(PORT_BASE + PORT_REG_CMD, PORT_CMD_ST | PORT_CMD_FRE);
+
+        // READ SECTORS EXT (PIO 48-bit) (LBA=high_lba, 1 sector).
+        write_cmd_header(&mut mem, clb, 0, ctba, 1, false);
+        write_cfis48(&mut mem, ctba, ATA_CMD_READ_SECTORS_EXT, high_lba, 1);
+        write_prdt(&mut mem, ctba, 0, data_buf, SECTOR_SIZE as u32);
+        ctl.write_u32(PORT_BASE + PORT_REG_CI, 1);
+        ctl.process(&mut mem);
+
+        let mut out = [0u8; 4];
+        mem.read_physical(data_buf, &mut out);
+        assert_eq!(out, [0x11, 0x22, 0x33, 0x44]);
+
+        // WRITE SECTORS EXT (PIO 48-bit) (LBA=high_lba+1, 1 sector).
+        let write_buf = 0x6000;
+        mem.write_physical(write_buf, &[1, 2, 3, 4]);
+        mem.write_physical(write_buf + 4, &vec![0u8; SECTOR_SIZE - 4]);
+
+        write_cmd_header(&mut mem, clb, 0, ctba, 1, true);
+        write_cfis48(&mut mem, ctba, ATA_CMD_WRITE_SECTORS_EXT, high_lba + 1, 1);
+        write_prdt(&mut mem, ctba, 0, write_buf, SECTOR_SIZE as u32);
+        ctl.write_u32(PORT_BASE + PORT_REG_CI, 1);
+        ctl.process(&mut mem);
+
+        // Verify by reading back via READ SECTORS EXT.
+        let verify_buf = 0x7000;
+        write_cmd_header(&mut mem, clb, 0, ctba, 1, false);
+        write_cfis48(&mut mem, ctba, ATA_CMD_READ_SECTORS_EXT, high_lba + 1, 1);
         write_prdt(&mut mem, ctba, 0, verify_buf, SECTOR_SIZE as u32);
         ctl.write_u32(PORT_BASE + PORT_REG_CI, 1);
         ctl.process(&mut mem);
@@ -1676,11 +1884,11 @@ mod tests {
         let mut mem = TestMemory::new(0x20_000);
 
         // Use LBAs that require the device register nibble (bits 24..27) for 28-bit commands.
-        let lba_read: u32 = 0x0100_0004;
-        let lba_write: u32 = 0x0100_0005;
+        let lba_read: u64 = 0x0100_0004;
+        let lba_write: u64 = 0x0100_0005;
 
         // Create a large *sparse* disk so we can use high LBAs without allocating gigabytes.
-        let sector_count = (lba_write as u64) + 0x10;
+        let sector_count = lba_write + 0x10;
         let capacity_bytes = sector_count * SECTOR_SIZE as u64;
         let mut disk = AeroSparseDisk::create(
             MemBackend::new(),
@@ -1693,7 +1901,7 @@ mod tests {
 
         let mut sector = vec![0u8; SECTOR_SIZE];
         sector[0..4].copy_from_slice(&[9, 8, 7, 6]);
-        disk.write_sectors(lba_read as u64, &sector).unwrap();
+        disk.write_sectors(lba_read, &sector).unwrap();
         ctl.attach_drive(0, AtaDrive::new(Box::new(disk)).unwrap());
 
         let clb = 0x1000;
@@ -2136,7 +2344,7 @@ mod tests {
 
         // Issue an unsupported command (0x00).
         write_cmd_header(&mut mem, clb, 0, ctba, 0, false);
-        write_cfis(&mut mem, ctba, 0x00, 0, 0);
+        write_cfis48(&mut mem, ctba, 0x00, 0, 0);
 
         ctl.write_u32(PORT_BASE + PORT_REG_CI, 1);
         ctl.process(&mut mem);
