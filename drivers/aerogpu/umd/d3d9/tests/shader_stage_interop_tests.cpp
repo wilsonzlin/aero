@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "aerogpu_cmd_stream_writer.h"
+#include "aerogpu_d3d9_fixedfunc_shaders.h"
 #include "aerogpu_d3d9_objects.h"
 
 namespace aerogpu {
@@ -23,6 +24,11 @@ constexpr uint32_t kFvfXyzrhwDiffuse = kD3dFvfXyzRhw | kD3dFvfDiffuse;
 constexpr uint32_t kFvfXyzrhwTex1 = kD3dFvfXyzRhw | kD3dFvfTex1;
 constexpr uint32_t kFvfXyzTex1 = kD3dFvfXyz | kD3dFvfTex1;
 constexpr uint32_t kFvfUnsupportedXyz = kD3dFvfXyz;
+
+// D3DTSS_* texture stage state IDs (from d3d9types.h).
+constexpr uint32_t kD3dTssColorOp = 1u;
+// D3DTEXTUREOP values (from d3d9types.h).
+constexpr uint32_t kD3dTopDisable = 1u;
 
 // Trivial vs_2_0 token stream (no declaration):
 //   mov oPos, v0
@@ -60,6 +66,17 @@ bool Check(bool cond, const char* msg) {
     return false;
   }
   return true;
+}
+
+template <size_t N>
+bool ShaderBytecodeEquals(const Shader* shader, const uint32_t (&expected)[N]) {
+  if (!shader) {
+    return false;
+  }
+  if (shader->bytecode.size() != sizeof(expected)) {
+    return false;
+  }
+  return std::memcmp(shader->bytecode.data(), expected, sizeof(expected)) == 0;
 }
 
 size_t StreamBytesUsed(const uint8_t* buf, size_t capacity) {
@@ -173,6 +190,7 @@ struct CleanupDevice {
   D3DDDI_HADAPTER hAdapter{};
   D3DDDI_HDEVICE hDevice{};
   std::vector<D3D9DDI_HSHADER> shaders;
+  std::vector<D3DDDI_HRESOURCE> resources;
   bool has_adapter = false;
   bool has_device = false;
 
@@ -181,6 +199,13 @@ struct CleanupDevice {
       for (auto& s : shaders) {
         if (s.pDrvPrivate) {
           device_funcs.pfnDestroyShader(hDevice, s);
+        }
+      }
+    }
+    if (has_device && device_funcs.pfnDestroyResource) {
+      for (auto& r : resources) {
+        if (r.pDrvPrivate) {
+          device_funcs.pfnDestroyResource(hDevice, r);
         }
       }
     }
@@ -239,12 +264,57 @@ bool CreateDevice(CleanupDevice* cleanup) {
   if (!Check(cleanup->device_funcs.pfnSetShader != nullptr, "pfnSetShader")) {
     return false;
   }
+  if (!Check(cleanup->device_funcs.pfnCreateResource != nullptr, "pfnCreateResource")) {
+    return false;
+  }
+  if (!Check(cleanup->device_funcs.pfnSetTexture != nullptr, "pfnSetTexture")) {
+    return false;
+  }
+  if (!Check(cleanup->device_funcs.pfnSetTextureStageState != nullptr, "pfnSetTextureStageState")) {
+    return false;
+  }
   if (!Check(cleanup->device_funcs.pfnDrawPrimitiveUP != nullptr, "pfnDrawPrimitiveUP")) {
     return false;
   }
   if (!Check(cleanup->device_funcs.pfnDestroyShader != nullptr, "pfnDestroyShader")) {
     return false;
   }
+  if (!Check(cleanup->device_funcs.pfnDestroyResource != nullptr, "pfnDestroyResource")) {
+    return false;
+  }
+  return true;
+}
+
+bool CreateDummyTexture(CleanupDevice* cleanup, D3DDDI_HRESOURCE* out_tex) {
+  if (!cleanup || !out_tex) {
+    return false;
+  }
+  // D3DFMT_X8R8G8B8 = 22.
+  D3D9DDIARG_CREATERESOURCE create_res{};
+  create_res.type = 3u; // D3DRTYPE_TEXTURE (conventional value; AeroGPU currently treats this as metadata)
+  create_res.format = 22u;
+  create_res.width = 2;
+  create_res.height = 2;
+  create_res.depth = 1;
+  create_res.mip_levels = 1;
+  create_res.usage = 0;
+  create_res.pool = 0;
+  create_res.size = 0;
+  create_res.hResource.pDrvPrivate = nullptr;
+  create_res.pSharedHandle = nullptr;
+  create_res.pPrivateDriverData = nullptr;
+  create_res.PrivateDriverDataSize = 0;
+  create_res.wddm_hAllocation = 0;
+
+  HRESULT hr = cleanup->device_funcs.pfnCreateResource(cleanup->hDevice, &create_res);
+  if (!Check(hr == S_OK, "CreateResource(texture2d)")) {
+    return false;
+  }
+  if (!Check(create_res.hResource.pDrvPrivate != nullptr, "CreateResource returned hResource")) {
+    return false;
+  }
+  cleanup->resources.push_back(create_res.hResource);
+  *out_tex = create_res.hResource;
   return true;
 }
 
@@ -358,6 +428,94 @@ bool TestVsOnlyBindsFixedfuncPs() {
     offset += hdr->size_bytes;
   }
   return Check(saw_user_vs_bind, "saw BIND_SHADERS with user VS handle");
+}
+
+bool TestVsOnlyStage0StateUpdatesFixedfuncPs() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+  dev->cmd.reset();
+
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzrhwDiffuse);
+  if (!Check(hr == S_OK, "SetFVF(XYZRHW|DIFFUSE)")) {
+    return false;
+  }
+
+  D3D9DDI_HSHADER hVs{};
+  hr = cleanup.device_funcs.pfnCreateShader(cleanup.hDevice,
+                                            kD3d9ShaderStageVs,
+                                            kUserVsPassthroughPosColor,
+                                            static_cast<uint32_t>(sizeof(kUserVsPassthroughPosColor)),
+                                            &hVs);
+  if (!Check(hr == S_OK, "CreateShader(VS)")) {
+    return false;
+  }
+  if (!Check(hVs.pDrvPrivate != nullptr, "CreateShader(VS) returned handle")) {
+    return false;
+  }
+  cleanup.shaders.push_back(hVs);
+
+  // Bind VS only: the driver should bind a fixed-function PS fallback.
+  hr = cleanup.device_funcs.pfnSetShader(cleanup.hDevice, kD3d9ShaderStageVs, hVs);
+  if (!Check(hr == S_OK, "SetShader(VS)")) {
+    return false;
+  }
+
+  // With no texture bound, the fallback PS should be passthrough.
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->ps != nullptr, "VS-only: PS bound")) {
+      return false;
+    }
+    if (!Check(ShaderBytecodeEquals(dev->ps, fixedfunc::kPsPassthroughColor),
+               "VS-only: initial PS is passthrough")) {
+      return false;
+    }
+  }
+
+  // Bind texture0: the stage0 PS should update immediately.
+  D3DDDI_HRESOURCE hTex{};
+  if (!CreateDummyTexture(&cleanup, &hTex)) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTexture(cleanup.hDevice, /*stage=*/0, hTex);
+  if (!Check(hr == S_OK, "SetTexture(stage0)")) {
+    return false;
+  }
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->ps != nullptr, "VS-only: PS bound after SetTexture")) {
+      return false;
+    }
+    if (!Check(ShaderBytecodeEquals(dev->ps, fixedfunc::kPsStage0ModulateTexture),
+               "VS-only: SetTexture updates PS to modulate/texture")) {
+      return false;
+    }
+  }
+
+  // Disable stage0: PS should switch back to passthrough.
+  hr = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, /*stage=*/0, kD3dTssColorOp, kD3dTopDisable);
+  if (!Check(hr == S_OK, "SetTextureStageState(COLOROP=DISABLE)")) {
+    return false;
+  }
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->ps != nullptr, "VS-only: PS bound after SetTextureStageState")) {
+      return false;
+    }
+    if (!Check(ShaderBytecodeEquals(dev->ps, fixedfunc::kPsPassthroughColor),
+               "VS-only: COLOROP=DISABLE updates PS to passthrough")) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 bool TestPsOnlyBindsFixedfuncVs() {
@@ -701,6 +859,9 @@ bool TestUnsupportedFvfPsOnlyFailsWithoutDraw() {
 
 int main() {
   if (!aerogpu::TestVsOnlyBindsFixedfuncPs()) {
+    return 1;
+  }
+  if (!aerogpu::TestVsOnlyStage0StateUpdatesFixedfuncPs()) {
     return 1;
   }
   if (!aerogpu::TestPsOnlyBindsFixedfuncVs()) {
