@@ -5753,12 +5753,42 @@ impl AerogpuD3d11Executor {
 
             if opcode == OPCODE_SET_INDEX_BUFFER {
                 // `struct aerogpu_cmd_set_index_buffer` (24 bytes)
-                if cmd_bytes.len() >= 12 {
-                    let buffer = read_u32_le(cmd_bytes, 8)?;
-                    if buffer != 0 {
+                if cmd_bytes.len() >= 24 {
+                    let buffer_raw = read_u32_le(cmd_bytes, 8)?;
+                    let format_u32 = read_u32_le(cmd_bytes, 12)?;
+
+                    // For strip topologies, primitive restart depends on the index format and must
+                    // be baked into the render pipeline (`PrimitiveState.strip_index_format`).
+                    // Rebinding/unbinding the index buffer (or changing its format) requires
+                    // restarting the render pass so the outer loop can rebuild the pipeline.
+                    let Some(wgpu_topology) =
+                        self.state.primitive_topology.wgpu_topology_for_direct_draw()
+                    else {
+                        break;
+                    };
+                    if matches!(
+                        wgpu_topology,
+                        wgpu::PrimitiveTopology::LineStrip | wgpu::PrimitiveTopology::TriangleStrip
+                    ) {
+                        let cur_strip_index_format = self.state.index_buffer.map(|ib| ib.format);
+                        let next_strip_index_format = if buffer_raw == 0 {
+                            None
+                        } else {
+                            Some(match format_u32 {
+                                0 => wgpu::IndexFormat::Uint16,
+                                1 => wgpu::IndexFormat::Uint32,
+                                _ => break,
+                            })
+                        };
+                        if cur_strip_index_format != next_strip_index_format {
+                            break;
+                        }
+                    }
+
+                    if buffer_raw != 0 {
                         let buffer = self
                             .shared_surfaces
-                            .resolve_cmd_handle(buffer, "SET_INDEX_BUFFER")?;
+                            .resolve_cmd_handle(buffer_raw, "SET_INDEX_BUFFER")?;
                         if let Some(buf) = self.resources.buffers.get(&buffer) {
                             if buf.backing.is_some()
                                 && buf.dirty.is_some()

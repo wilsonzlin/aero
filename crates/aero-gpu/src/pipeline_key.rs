@@ -218,12 +218,12 @@ pub struct RenderPipelineKey {
     pub depth_stencil: Option<DepthStencilKey>,
 
     pub primitive_topology: wgpu::PrimitiveTopology,
-    /// Index format used for strip primitive restart.
+    /// Index format used to enable primitive restart for strip topologies.
     ///
     /// WebGPU requires this to be specified in the render pipeline when using indexed strip
-    /// topologies (`LineStrip` / `TriangleStrip`) and when primitive restart should be enabled.
+    /// topologies (`LineStrip` / `TriangleStrip`) and primitive restart semantics are desired.
     ///
-    /// This is `None` for non-strip topologies (or when no index buffer is bound).
+    /// This must be `None` for non-strip topologies.
     pub strip_index_format: Option<wgpu::IndexFormat>,
     pub cull_mode: Option<wgpu::Face>,
     pub front_face: wgpu::FrontFace,
