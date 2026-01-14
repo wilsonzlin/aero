@@ -251,7 +251,8 @@ fn snapshot_len_for_limits(limits: BlockLimits) -> u32 {
 
 fn shrink_meta(mut meta: CompiledBlockMeta, byte_len: u32, ip_mask: u64) -> CompiledBlockMeta {
     meta.byte_len = byte_len;
-    meta.page_versions = shrink_page_versions(meta.code_paddr, byte_len, meta.page_versions, ip_mask);
+    meta.page_versions =
+        shrink_page_versions(meta.code_paddr, byte_len, meta.page_versions, ip_mask);
     meta
 }
 

@@ -1499,10 +1499,8 @@ fn tier2_inline_tlb_dynamic_w32_load_cross_page_check_boundary() {
     let slow_addr: u64 = PAGE_SIZE + (PAGE_SIZE - 3); // 0x1FFD
 
     let mut ram = vec![0u8; 0x20_000];
-    ram[fast_addr as usize..fast_addr as usize + 4]
-        .copy_from_slice(&0xAABB_CCDDu32.to_le_bytes());
-    ram[slow_addr as usize..slow_addr as usize + 4]
-        .copy_from_slice(&0x1122_3344u32.to_le_bytes());
+    ram[fast_addr as usize..fast_addr as usize + 4].copy_from_slice(&0xAABB_CCDDu32.to_le_bytes());
+    ram[slow_addr as usize..slow_addr as usize + 4].copy_from_slice(&0x1122_3344u32.to_le_bytes());
 
     let cpu_ptr = ram.len() as u64;
 
@@ -1521,13 +1519,8 @@ fn tier2_inline_tlb_dynamic_w32_load_cross_page_check_boundary() {
     assert_eq!(host.slow_mem_writes, 0);
 
     // offset == 0xFFD: should take the slow helper path.
-    let (ret, _got_ram, gpr, host) = run_trace_with_init_gprs(
-        &trace,
-        ram,
-        cpu_ptr,
-        0x20_000,
-        &[(Gpr::Rax, slow_addr)],
-    );
+    let (ret, _got_ram, gpr, host) =
+        run_trace_with_init_gprs(&trace, ram, cpu_ptr, 0x20_000, &[(Gpr::Rax, slow_addr)]);
     assert_eq!(ret, 0x1000);
     assert_eq!(gpr[Gpr::Rbx.as_u8() as usize] as u32, 0x1122_3344);
     assert_eq!(host.mmu_translate_calls, 0);
@@ -1575,13 +1568,8 @@ fn tier2_inline_tlb_dynamic_w32_store_cross_page_check_boundary() {
     assert_eq!(host.slow_mem_writes, 0);
 
     // offset == 0xFFD: should take the slow helper path.
-    let (ret, got_ram, _gpr, host) = run_trace_with_init_gprs(
-        &trace,
-        ram,
-        cpu_ptr,
-        0x20_000,
-        &[(Gpr::Rax, slow_addr)],
-    );
+    let (ret, got_ram, _gpr, host) =
+        run_trace_with_init_gprs(&trace, ram, cpu_ptr, 0x20_000, &[(Gpr::Rax, slow_addr)]);
     assert_eq!(ret, 0x1000);
     assert_eq!(read_u32_le(&got_ram, slow_addr as usize), 0xDDCC_BBAA);
     assert_eq!(host.mmu_translate_calls, 0);

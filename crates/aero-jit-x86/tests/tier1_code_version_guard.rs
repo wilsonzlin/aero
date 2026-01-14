@@ -163,6 +163,10 @@ fn tier1_code_version_guard_wraps_ip_across_bitness_boundary() {
         // block and request recompilation.
         jit.on_guest_write(0x0, 1);
         assert!(jit.prepare_block(entry).is_none());
-        assert_eq!(queue.drain(), vec![entry], "expected invalidation for bitness={bitness}");
+        assert_eq!(
+            queue.drain(),
+            vec![entry],
+            "expected invalidation for bitness={bitness}"
+        );
     }
 }
