@@ -54,6 +54,14 @@ class VirtioSndMsixHostMarkerTests(unittest.TestCase):
             "AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_MSIX|SKIP|reason=diag_unavailable|err=2",
         )
 
+    def test_emits_fail_marker(self) -> None:
+        tail = b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-msix|FAIL|reason=device_missing|err=2\n"
+        out = self._emit(tail)
+        self.assertEqual(
+            out,
+            "AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_MSIX|FAIL|reason=device_missing|err=2",
+        )
+
     def test_emits_extra_fields_sorted(self) -> None:
         tail = (
             b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-msix|PASS|mode=msix|messages=5|config_vector=0|queue0_vector=1|"
