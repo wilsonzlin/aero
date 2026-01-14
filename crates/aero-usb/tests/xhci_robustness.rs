@@ -8,6 +8,7 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 
 use aero_usb::xhci::ring::{RingCursor, RingError, RingPoll};
 use aero_usb::xhci::trb::{Trb, TrbType};
+use aero_usb::xhci::regs;
 use aero_usb::xhci::XhciController;
 use aero_usb::{ControlResponse, MemoryBus, SetupPacket, UsbDeviceModel};
 
@@ -239,4 +240,28 @@ fn xhci_command_ring_link_loop_is_bounded_by_step_budget() {
     );
     assert_eq!(cur.dequeue_ptr(), ring_base);
     assert_eq!(cur.cycle_state(), true);
+}
+
+#[test]
+fn xhci_doorbell0_sets_host_controller_error_on_open_bus_command_ring_fetch() {
+    // Malformed ring: CRCR points outside mapped guest memory and DMA reads return 0xFF. The
+    // controller must treat this as a fatal ring error and latch USBSTS.HCE.
+    let mut xhci = XhciController::new();
+    let mut mem = SafeMemory::new(0x1000);
+
+    let bad_ring_ptr = 0x2000u64;
+    xhci.mmio_write(&mut mem, regs::REG_CRCR_LO, 4, (bad_ring_ptr as u32) | 1);
+    xhci.mmio_write(&mut mem, regs::REG_CRCR_HI, 4, (bad_ring_ptr >> 32) as u32);
+    xhci.mmio_write(&mut mem, regs::REG_USBCMD, 4, regs::USBCMD_RUN);
+
+    // Ring doorbell 0 (command ring).
+    xhci.mmio_write(&mut mem, u64::from(regs::DBOFF_VALUE), 4, 0);
+
+    let sts = xhci.mmio_read(&mut mem, regs::REG_USBSTS, 4);
+    assert_ne!(sts & regs::USBSTS_HCE, 0, "controller should latch HCE");
+
+    // HCE is sticky; additional doorbells should not clear it.
+    xhci.mmio_write(&mut mem, u64::from(regs::DBOFF_VALUE), 4, 0);
+    let sts2 = xhci.mmio_read(&mut mem, regs::REG_USBSTS, 4);
+    assert_ne!(sts2 & regs::USBSTS_HCE, 0, "HCE should remain set");
 }
