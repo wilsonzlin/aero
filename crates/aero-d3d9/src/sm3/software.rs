@@ -2182,12 +2182,12 @@ mod tests {
         // conflict resolutions more likely to accidentally duplicate a variant, and this file uses
         // `#[deny(unreachable_patterns)]`, turning that into a hard build break.
         assert!(
-            !fn_src.contains("| IrOp::Dp2Add")
-                && !fn_src.contains("|IrOp::Dp2Add")
-                && !fn_src.contains("| IrOp::Mad")
-                && !fn_src.contains("|IrOp::Mad")
-                && !fn_src.contains("| IrOp::Lrp")
-                && !fn_src.contains("|IrOp::Lrp"),
+            !fn_src.contains("| IrOp::Dp2Add {")
+                && !fn_src.contains("|IrOp::Dp2Add {")
+                && !fn_src.contains("| IrOp::Mad {")
+                && !fn_src.contains("|IrOp::Mad {")
+                && !fn_src.contains("| IrOp::Lrp {")
+                && !fn_src.contains("|IrOp::Lrp {"),
             "collect_used_pixel_inputs_op should keep Dp2Add/Mad/Lrp as separate match arms (no or-pattern group)"
         );
     }
