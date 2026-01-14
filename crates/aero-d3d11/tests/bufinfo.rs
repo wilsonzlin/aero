@@ -156,3 +156,49 @@ fn decodes_and_translates_bufinfo_raw_to_array_length() {
     assert_wgsl_validates(&translated.wgsl);
 
 }
+
+#[test]
+fn decodes_and_translates_bufinfo_structured_uses_decl_stride() {
+    let mut body = Vec::<u32>::new();
+
+    // dcl_thread_group 1, 1, 1
+    body.push(opcode_token(OPCODE_DCL_THREAD_GROUP, 4));
+    body.push(1);
+    body.push(1);
+    body.push(1);
+
+    // dcl_resource_structured t0, stride=16
+    body.push(opcode_token(OPCODE_DCL_RESOURCE_STRUCTURED, 4));
+    body.extend_from_slice(&reg_src_resource(0));
+    body.push(16);
+
+    // bufinfo r0.xy, t0
+    body.push(opcode_token(OPCODE_TEST_BUFINFO, 1 + 2 + 2));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 0, WriteMask(0b0011)));
+    body.extend_from_slice(&reg_src_resource(0));
+
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    // Stage type 5 = compute shader.
+    let tokens = make_sm5_program_tokens(5, &body);
+    let dxbc_bytes = build_dxbc(&[(FOURCC_SHEX, tokens_to_bytes(&tokens))]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+
+    let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
+    assert_eq!(program.stage, aero_d3d11::ShaderStage::Compute);
+
+    let module = decode_program(&program).expect("SM4 decode");
+    assert!(
+        matches!(module.instructions[0], Sm4Inst::BufInfoStructured { stride_bytes: 16, .. }),
+        "expected structured bufinfo to be refined using the declared stride"
+    );
+
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &ShaderSignatures::default())
+        .expect("translate");
+    assert!(
+        translated.wgsl.contains("f32(16u)"),
+        "expected structured bufinfo to include stride:\n{}",
+        translated.wgsl
+    );
+    assert_wgsl_validates(&translated.wgsl);
+}

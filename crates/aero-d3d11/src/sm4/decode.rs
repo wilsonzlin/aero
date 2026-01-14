@@ -1,4 +1,5 @@
 use core::fmt;
+use std::collections::BTreeMap;
 
 use crate::sm4_ir::{
     BufferKind, BufferRef, DstOperand, OperandModifier, RegFile, RegisterRef, SamplerRef, Sm4Decl,
@@ -212,6 +213,39 @@ pub fn decode_program(program: &Sm4Program) -> Result<Sm4Module, Sm4DecodeError>
 
         instructions.push(decode_instruction(opcode, inst_toks, i)?);
         i += len;
+    }
+
+    // Post-processing: refine certain instruction forms using information from declarations.
+    //
+    // `bufinfo` output packing differs between raw and structured buffers; the instruction token
+    // stream does not encode the stride directly, so we derive it from the corresponding
+    // `dcl_resource_structured` declaration when available.
+    //
+    // This keeps `decode_instruction` context-free while still letting downstream stages (e.g. WGSL
+    // translation) distinguish `ByteAddressBuffer.GetDimensions` from
+    // `StructuredBuffer.GetDimensions`.
+    let mut srv_buffer_decls: BTreeMap<u32, (BufferKind, u32)> = BTreeMap::new();
+    for decl in &decls {
+        if let Sm4Decl::ResourceBuffer { slot, stride, kind } = decl {
+            srv_buffer_decls.insert(*slot, (*kind, *stride));
+        }
+    }
+    if !srv_buffer_decls.is_empty() {
+        for inst in &mut instructions {
+            if let Sm4Inst::BufInfoRaw { dst, buffer } = inst {
+                if let Some((BufferKind::Structured, stride)) =
+                    srv_buffer_decls.get(&buffer.slot).copied()
+                {
+                    if stride != 0 {
+                        *inst = Sm4Inst::BufInfoStructured {
+                            dst: dst.clone(),
+                            buffer: *buffer,
+                            stride_bytes: stride,
+                        };
+                    }
+                }
+            }
+        }
     }
 
     Ok(Sm4Module {
