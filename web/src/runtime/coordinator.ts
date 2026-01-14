@@ -477,10 +477,17 @@ export class WorkerCoordinator {
       const TEST_UI_GUEST_RAM_FLOOR_MIB = 256;
       const isTestLikeConfig = config.guestMemoryMiB < TEST_UI_GUEST_RAM_FLOOR_MIB;
       const isTinyGuestConfig = config.guestMemoryMiB <= 1 && config.vramMiB === 0;
+      // When no gateway/proxy is configured, the net worker will remain idle. Avoid allocating the
+      // NET_TX/NET_RX AIPC rings in tiny test/demo configs to reduce shared-memory allocations.
+      const omitNetIpcRings = isTestLikeConfig && config.proxyUrl === null;
       const segments = allocateSharedMemorySegments({
         guestRamMiB: config.guestMemoryMiB,
         vramMiB: config.vramMiB,
-        ioIpcOptions: isTestLikeConfig ? { includeHidIn: false } : undefined,
+        ioIpcOptions: isTestLikeConfig
+          ? omitNetIpcRings
+            ? { includeNet: false, includeHidIn: false }
+            : { includeHidIn: false }
+          : undefined,
         sharedFramebufferLayout: isTinyGuestConfig ? { width: 64, height: 64, tileSize: 32 } : undefined,
       });
       const shared = createSharedMemoryViews(segments);

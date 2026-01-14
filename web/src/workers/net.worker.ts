@@ -546,7 +546,37 @@ async function runLoop(): Promise<void> {
   const rxRing = netRxRing;
   const cmdRing = commandRing;
   if (!forwarder || !txRing || !rxRing) {
-    throw new Error("net.worker was not initialized correctly (missing forwarder or rings).");
+    // Some tiny test/demo coordinator configs omit the NET_TX/NET_RX AIPC rings to reduce
+    // shared-memory allocations. In that mode the net worker remains idle but still responds
+    // to runtime control commands (shutdown/snapshot orchestration).
+    while (Atomics.load(status, StatusIndex.StopRequested) !== 1) {
+      if (snapshotPaused) {
+        drainRuntimeCommands();
+        if (Atomics.load(status, StatusIndex.StopRequested) === 1) break;
+        if (!snapshotResumePromise) {
+          snapshotResumePromise = new Promise<void>((resolve) => {
+            snapshotResumeResolve = resolve;
+          });
+        }
+        await Promise.race([snapshotResumePromise, cmdRing.waitForDataAsync(1000)]);
+        continue;
+      }
+
+      drainRuntimeCommands();
+      if (Atomics.load(status, StatusIndex.StopRequested) === 1) break;
+      await cmdRing.waitForDataAsync(1000);
+    }
+
+    pushEvent({ kind: "log", level: "info", message: "worker shutdown" });
+    shuttingDown = true;
+    l2TunnelClient = null;
+    l2Forwarder?.stop();
+    l2Forwarder = null;
+    l2TunnelProxyUrl = null;
+    l2TunnelTelemetry = null;
+    setReadyFlag(status, role, false);
+    ctx.close();
+    return;
   }
 
   const hasWaitAsync = typeof (Atomics as unknown as { waitAsync?: unknown }).waitAsync === "function";
@@ -700,37 +730,48 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
       commandRing = new RingBuffer(segments.control, regions.command.byteOffset);
       eventRing = new RingBuffer(segments.control, regions.event.byteOffset);
 
-      netTxRing = openRingByKind(segments.ioIpc, IO_IPC_NET_TX_QUEUE_KIND);
-      netRxRing = openRingByKind(segments.ioIpc, IO_IPC_NET_RX_QUEUE_KIND);
-
-      l2Forwarder = new L2TunnelForwarder(netTxRing, netRxRing, {
-        onTunnelEvent: (ev) => {
-          l2TunnelTelemetry?.onTunnelEvent(ev);
-          if (ev.type === "open") {
-            clearReconnectTimer();
-            l2ReconnectAttempts = 0;
-            return;
-          }
-          if (ev.type === "close") {
-            // Drop the reference early so late events from the closed tunnel
-            // don't race with a new client instance.
-            l2TunnelClient = null;
-            // Treat a closed tunnel as "no tunnel" for the forwarder so `sendFrame()`
-            // failures don't behave like backpressure (which would otherwise stall
-            // NET_TX draining and allow stale frames to leak after reconnect).
-            l2Forwarder?.setTunnel(null);
-            scheduleReconnect();
-          }
-        },
-      });
-      if (tracer.isEnabled()) {
-        l2Forwarder.setOnFrame(traceFrame);
+      try {
+        netTxRing = openRingByKind(segments.ioIpc, IO_IPC_NET_TX_QUEUE_KIND);
+        netRxRing = openRingByKind(segments.ioIpc, IO_IPC_NET_RX_QUEUE_KIND);
+      } catch {
+        netTxRing = null;
+        netRxRing = null;
       }
-      l2TunnelTelemetry = new L2TunnelTelemetry({
-        intervalMs: L2_STATS_LOG_INTERVAL_MS,
-        getStats: () => l2Forwarder!.stats(),
-        emitLog: (level, message) => pushEvent({ kind: "log", level, message }),
-      });
+
+      if (netTxRing && netRxRing) {
+        l2Forwarder = new L2TunnelForwarder(netTxRing, netRxRing, {
+          onTunnelEvent: (ev) => {
+            l2TunnelTelemetry?.onTunnelEvent(ev);
+            if (ev.type === "open") {
+              clearReconnectTimer();
+              l2ReconnectAttempts = 0;
+              return;
+            }
+            if (ev.type === "close") {
+              // Drop the reference early so late events from the closed tunnel
+              // don't race with a new client instance.
+              l2TunnelClient = null;
+              // Treat a closed tunnel as "no tunnel" for the forwarder so `sendFrame()`
+              // failures don't behave like backpressure (which would otherwise stall
+              // NET_TX draining and allow stale frames to leak after reconnect).
+              l2Forwarder?.setTunnel(null);
+              scheduleReconnect();
+            }
+          },
+        });
+        if (tracer.isEnabled()) {
+          l2Forwarder.setOnFrame(traceFrame);
+        }
+        l2TunnelTelemetry = new L2TunnelTelemetry({
+          intervalMs: L2_STATS_LOG_INTERVAL_MS,
+          getStats: () => l2Forwarder!.stats(),
+          emitLog: (level, message) => pushEvent({ kind: "log", level, message }),
+        });
+      } else {
+        l2Forwarder = null;
+        l2TunnelTelemetry = null;
+        pushEvent({ kind: "log", level: "info", message: "NET_TX/NET_RX rings missing; network disabled." });
+      }
 
       if (init.perfChannel) {
         perfWriter = new PerfWriter(init.perfChannel.buffer, {
