@@ -192,7 +192,17 @@ enum aerogpu_error_code {
 
 /*
  * Resource / scanout formats.
- * Values are stable once published. Unknown values must be treated as invalid.
+ *
+ * Notes:
+ * - Values are stable once published. Unknown values must be treated as invalid.
+ * - `*X8*` formats (`B8G8R8X8*`, `R8G8B8X8*`) do not carry alpha. The 8-bit "X"
+ *   channel is unused and may be undefined; when converting to RGBA (e.g. for
+ *   scanout/cursor presentation or blending), consumers MUST treat alpha as
+ *   fully opaque (1.0 / 0xFF) and ignore the stored "X" value.
+ * - `*_SRGB` variants have identical bit/byte layout to their corresponding
+ *   `*_UNORM` formats; only the *interpretation* differs. Sampling should
+ *   decode sRGB to linear, and render-target writes/views may encode linear to
+ *   sRGB, following the usual sRGB rules.
  */
 enum aerogpu_format {
   AEROGPU_FORMAT_INVALID = 0,

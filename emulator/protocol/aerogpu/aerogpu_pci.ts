@@ -138,6 +138,18 @@ export const AerogpuErrorCode = {
 
 export type AerogpuErrorCode = (typeof AerogpuErrorCode)[keyof typeof AerogpuErrorCode];
 
+/**
+ * Resource / scanout formats.
+ *
+ * Semantics:
+ * - `*X8*` formats (`B8G8R8X8*`, `R8G8B8X8*`) do not carry alpha. The 8-bit "X"
+ *   channel is unused; when converting to RGBA for scanout presentation or
+ *   cursor blending, consumers must treat alpha as fully opaque (`0xff`) and
+ *   ignore the stored "X" byte.
+ * - sRGB variants have the same bit/byte layout as their UNORM counterparts;
+ *   only the color space interpretation differs (sampling decodes sRGB to
+ *   linear, render-target writes/views may encode linear to sRGB).
+ */
 export const AerogpuFormat = {
   Invalid: 0,
   B8G8R8A8Unorm: 1,

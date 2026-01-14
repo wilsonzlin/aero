@@ -197,6 +197,17 @@ Scanout configuration:
 | `0x0414` | `AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_LO` | RW | Framebuffer GPA (low 32 bits) |
 | `0x0418` | `AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_HI` | RW | Framebuffer GPA (high 32 bits) |
 
+#### 2.5.1 Scanout/cursor `enum aerogpu_format` semantics (X8 alpha + sRGB)
+
+These semantics apply to both `AEROGPU_MMIO_REG_SCANOUT0_FORMAT` and `AEROGPU_MMIO_REG_CURSOR_FORMAT`:
+
+- **X8 formats are fully opaque.** For `B8G8R8X8*` / `R8G8B8X8*` formats, the 8-bit `X` channel is unused.
+  Consumers must ignore the stored `X` byte and treat alpha as fully opaque (`A = 1.0` / `0xFF`) when converting
+  to RGBA for scanout presentation or cursor blending.
+- **sRGB formats change interpretation, not layout.** `*_UNORM_SRGB` formats have the exact same byte layout as the
+  corresponding `*_UNORM` formats; only the *interpretation* differs. Sampling should decode sRGB→linear and
+  render-target writes/views may encode linear→sRGB. Scanout/cursor presenters must not double-apply gamma.
+
 Vblank timing registers (only when `AEROGPU_FEATURE_VBLANK` is set; see `vblank.md` for semantics):
 
 | Offset | Name | Access | Description |

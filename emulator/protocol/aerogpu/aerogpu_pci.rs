@@ -132,6 +132,16 @@ pub const AEROGPU_MMIO_REG_CURSOR_PITCH_BYTES: u32 = 0x0528;
 
 /* ---------------------------------- Enums -------------------------------- */
 
+/// Resource / scanout formats.
+///
+/// Semantics:
+/// - `*X8*` formats (`B8G8R8X8*`, `R8G8B8X8*`) do not carry alpha. The 8-bit "X"
+///   channel is unused; when converting to RGBA for scanout presentation or
+///   cursor blending, consumers must treat alpha as fully opaque (`0xFF`) and
+///   ignore the stored "X" byte.
+/// - sRGB variants have the same bit/byte layout as their UNORM counterparts;
+///   only the color space interpretation differs (sampling decodes sRGB to
+///   linear, render-target writes/views may encode linear to sRGB).
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AerogpuErrorCode {
