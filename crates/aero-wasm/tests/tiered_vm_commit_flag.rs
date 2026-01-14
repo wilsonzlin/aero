@@ -9,6 +9,32 @@ use wasm_bindgen_test::wasm_bindgen_test;
 
 mod common;
 
+#[wasm_bindgen(inline_js = r#"
+export function installAeroTieredCommitFlagTestShims() {
+  if (typeof globalThis.__aero_mmio_read !== "function") {
+    globalThis.__aero_mmio_read = function (addr, _size) { return Number(addr) >>> 0; };
+  }
+  if (typeof globalThis.__aero_mmio_write !== "function") {
+    globalThis.__aero_mmio_write = function (_addr, _size, _value) { };
+  }
+  if (typeof globalThis.__aero_io_port_read !== "function") {
+    globalThis.__aero_io_port_read = function (_port, _size) { return 0; };
+  }
+  if (typeof globalThis.__aero_io_port_write !== "function") {
+    globalThis.__aero_io_port_write = function (_port, _size, _value) { };
+  }
+  if (typeof globalThis.__aero_jit_call !== "function") {
+    // Default Tier-1 JIT hook: force an interpreter exit.
+    globalThis.__aero_jit_call = function (_tableIndex, _cpuPtr, _jitCtxPtr) {
+      return -1n;
+    };
+  }
+}
+"#)]
+extern "C" {
+    fn installAeroTieredCommitFlagTestShims();
+}
+
 struct GlobalThisValueGuard {
     global: Object,
     key: JsValue,
@@ -57,6 +83,8 @@ fn jit_commit_flag_offset() -> u32 {
 
 #[wasm_bindgen_test]
 fn tiered_vm_commit_flag_cleared_means_no_retirement_node() {
+    installAeroTieredCommitFlagTestShims();
+
     let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x2000);
     let guest = common::GuestRegion {
         base: guest_base,
@@ -116,6 +144,8 @@ fn tiered_vm_commit_flag_cleared_means_no_retirement_node() {
 
 #[wasm_bindgen_test]
 fn tiered_vm_commit_flag_default_means_retirement_node() {
+    installAeroTieredCommitFlagTestShims();
+
     let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x2000);
     let guest = common::GuestRegion {
         base: guest_base,
