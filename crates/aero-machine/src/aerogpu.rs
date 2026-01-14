@@ -22,16 +22,30 @@ const RING_HEAD_OFFSET: u64 = offset_of!(ring::AerogpuRingHeader, head) as u64;
 const RING_TAIL_OFFSET: u64 = offset_of!(ring::AerogpuRingHeader, tail) as u64;
 const RING_HEADER_SIZE_BYTES: u64 = ring::AerogpuRingHeader::SIZE_BYTES as u64;
 
+const FENCE_PAGE_MAGIC_OFFSET: u64 = offset_of!(ring::AerogpuFencePage, magic) as u64;
+const FENCE_PAGE_ABI_VERSION_OFFSET: u64 = offset_of!(ring::AerogpuFencePage, abi_version) as u64;
+const FENCE_PAGE_COMPLETED_FENCE_OFFSET: u64 =
+    offset_of!(ring::AerogpuFencePage, completed_fence) as u64;
+const FENCE_PAGE_SIZE_BYTES: u64 = ring::AerogpuFencePage::SIZE_BYTES as u64;
+
+const _: () = {
+    assert!(FENCE_PAGE_MAGIC_OFFSET + 4 <= FENCE_PAGE_SIZE_BYTES);
+    assert!(FENCE_PAGE_ABI_VERSION_OFFSET + 4 <= FENCE_PAGE_SIZE_BYTES);
+    assert!(FENCE_PAGE_COMPLETED_FENCE_OFFSET + 8 <= FENCE_PAGE_SIZE_BYTES);
+};
+
 const MAX_CMD_STREAM_SIZE_BYTES: u32 = 64 * 1024 * 1024;
 
 fn write_fence_page(mem: &mut dyn MemoryBus, gpa: u64, abi_version: u32, completed_fence: u64) {
-    // AeroGPU fence page layout:
-    //   u32 magic
-    //   u32 abi_version
-    //   u64 completed_fence
-    mem.write_u32(gpa, ring::AEROGPU_FENCE_PAGE_MAGIC);
-    mem.write_u32(gpa + 4, abi_version);
-    mem.write_u64(gpa + 8, completed_fence);
+    mem.write_u32(gpa + FENCE_PAGE_MAGIC_OFFSET, ring::AEROGPU_FENCE_PAGE_MAGIC);
+    mem.write_u32(gpa + FENCE_PAGE_ABI_VERSION_OFFSET, abi_version);
+    mem.write_u64(
+        gpa + FENCE_PAGE_COMPLETED_FENCE_OFFSET,
+        completed_fence,
+    );
+
+    // Keep writes within the defined struct size; do not touch the rest of the page.
+    let _ = FENCE_PAGE_SIZE_BYTES;
 }
 
 // -----------------------------------------------------------------------------
