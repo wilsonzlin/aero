@@ -58,6 +58,20 @@ export type MachineHandle = {
      */
     set_disk_opfs?(path: string, create: boolean, sizeBytes: bigint): Promise<void>;
     /**
+     * Open (or create) an OPFS-backed disk image and attach it as the machine's canonical disk,
+     * reporting create/resize progress via a callback.
+     *
+     * The callback is invoked with a numeric progress value in `[0.0, 1.0]`.
+     *
+     * Optional for older WASM builds.
+     */
+    set_disk_opfs_with_progress?(
+        path: string,
+        create: boolean,
+        sizeBytes: bigint,
+        progress: (progress: number) => void,
+    ): Promise<void>;
+    /**
      * Open an existing OPFS-backed disk image (using the file's current size) and attach it as
      * the machine's canonical disk.
      *
@@ -109,6 +123,19 @@ export type MachineHandle = {
         path: string,
         create: boolean,
         sizeBytes: bigint,
+    ): Promise<void>;
+    /**
+     * Open (or create) an OPFS-backed disk image and attach it as the canonical Windows 7 IDE
+     * primary channel master ATA disk (`disk_id=2`), reporting create/resize progress via a
+     * callback.
+     *
+     * Optional for older WASM builds.
+     */
+    attach_ide_primary_master_disk_opfs_with_progress?(
+        path: string,
+        create: boolean,
+        sizeBytes: bigint,
+        progress: (progress: number) => void,
     ): Promise<void>;
     /**
      * Open an existing OPFS-backed disk image (using the file's current size) and attach it as the
