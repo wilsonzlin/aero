@@ -40,6 +40,7 @@ WINDOWS_DEVICE_CONTRACT_VIRTIO_WIN_JSON = REPO_ROOT / "docs/windows-device-contr
 # it's easy to update the INFs but forget to update these examples.
 WIN7_VIRTIO_TESTS_ROOT = REPO_ROOT / "drivers/windows7/tests"
 WIN7_TEST_IMAGE_PS1 = WIN7_VIRTIO_TESTS_ROOT / "host-harness/New-AeroWin7TestImage.ps1"
+WIN7_VIRTIO_GUEST_SELFTEST_MAIN_CPP = WIN7_VIRTIO_TESTS_ROOT / "guest-selftest/src/main.cpp"
 INSTRUCTIONS_ROOT = REPO_ROOT / "instructions"
 DEPRECATED_WIN7_TEST_INF_BASENAMES: tuple[str, ...] = (
     # Pre-rename INF basenames.
@@ -134,6 +135,11 @@ AERO_VIRTIO_NET_DRIVER_HEADER = REPO_ROOT / "drivers/windows7/virtio-net/include
 AERO_VIRTIO_INPUT_DRIVER_HEADER = REPO_ROOT / "drivers/windows7/virtio-input/src/virtio_input.h"
 AERO_VIRTIO_PCI_MODERN_TRANSPORT_H = REPO_ROOT / "drivers/windows/virtio/pci-modern/virtio_pci_modern_transport.h"
 AERO_VIRTIO_PCI_MODERN_TRANSPORT_C = REPO_ROOT / "drivers/windows/virtio/pci-modern/virtio_pci_modern_transport.c"
+
+# Transitional / legacy driver packages are out-of-scope for AERO-W7-VIRTIO v1,
+# but we still keep them consistent with in-guest tooling (selftest) so that
+# optional transitional paths remain debuggable.
+AERO_VIRTIO_SND_LEGACY_INF = REPO_ROOT / "drivers/windows7/virtio-snd/inf/aero-virtio-snd-legacy.inf"
 
 
 def fail(message: str) -> None:
@@ -271,6 +277,77 @@ class VirtioPciModernLayout:
     device_offset: int
     device_len: int
     notify_off_multiplier: int
+
+
+@dataclass(frozen=True)
+class LocatedString:
+    value: str
+    file: Path
+    line_no: int
+    line: str
+
+    def format_location(self) -> str:
+        return f"{self.file.as_posix()}:{self.line_no}: {self.line.strip()}"
+
+
+def parse_inf_addservice_entries(path: Path) -> list[LocatedString]:
+    """
+    Parse `AddService = <name>, ...` lines from an INF.
+
+    This is intentionally lightweight (line-based, comment-tolerant) and only
+    intended for contract/CI drift checks.
+    """
+
+    text = read_text(path)
+    out: list[LocatedString] = []
+    for line_no, raw in enumerate(text.splitlines(), start=1):
+        stripped = raw.strip()
+        if not stripped:
+            continue
+        if stripped.startswith(";"):
+            continue
+
+        active = raw
+        if ";" in active:
+            active = active.split(";", 1)[0]
+
+        m = re.match(r'^\s*AddService\s*=\s*"?([^",\s]+)"?\s*(?:,|$)', active, flags=re.I)
+        if not m:
+            continue
+        out.append(LocatedString(value=m.group(1), file=path, line_no=line_no, line=raw.rstrip()))
+
+    return out
+
+
+def parse_guest_selftest_expected_service_names(path: Path) -> Mapping[str, LocatedString]:
+    """
+    Extract hardcoded expected Windows service names from the Win7 guest selftest.
+
+    We keep parsing intentionally regex-based (no C++ parser) but reasonably
+    specific to the current source patterns so drift is caught early.
+    """
+
+    text = read_text(path)
+    patterns: Mapping[str, re.Pattern[str]] = {
+        # virtio-net binding check inside VirtioNetTest().
+        "virtio-net": re.compile(r'\bkExpectedService\s*\[\s*\]\s*=\s*L"(?P<svc>[^"]+)"'),
+        # virtio-snd modern / transitional service name expectations.
+        "virtio-snd": re.compile(r'\bkVirtioSndExpectedServiceModern\b\s*=\s*L"(?P<svc>[^"]+)"'),
+        "virtio-snd-transitional": re.compile(
+            r'\bkVirtioSndExpectedServiceTransitional\b\s*=\s*L"(?P<svc>[^"]+)"'
+        ),
+    }
+
+    out: dict[str, LocatedString] = {}
+    for line_no, line in enumerate(text.splitlines(), start=1):
+        for key, pat in patterns.items():
+            if key in out:
+                continue
+            m = pat.search(line)
+            if not m:
+                continue
+            out[key] = LocatedString(value=m.group("svc"), file=path, line_no=line_no, line=line.rstrip())
+    return out
 
 
 def parse_contract_fixed_mmio_layout(md: str) -> VirtioPciModernLayout:
@@ -1337,6 +1414,8 @@ def main() -> None:
     w7_md = read_text(W7_VIRTIO_CONTRACT_MD)
     windows_md = read_text(WINDOWS_DEVICE_CONTRACT_MD)
 
+    guest_selftest_services = parse_guest_selftest_expected_service_names(WIN7_VIRTIO_GUEST_SELFTEST_MAIN_CPP)
+
     try:
         manifest = json.loads(read_text(WINDOWS_DEVICE_CONTRACT_JSON))
     except json.JSONDecodeError as e:
@@ -1947,6 +2026,64 @@ def main() -> None:
                         ],
                     )
                 )
+
+            # -------------------------------------------------------------
+            # 2.1.1) Guest selftest hardcoded service-name expectations must
+            #        stay aligned with the contract + shipped INFs.
+            # -------------------------------------------------------------
+            if device_name in ("virtio-net", "virtio-snd"):
+                selftest = guest_selftest_services.get(device_name)
+                if selftest is None:
+                    errors.append(
+                        format_error(
+                            f"{device_name}: could not locate expected service name in guest selftest:",
+                            [
+                                f"file: {WIN7_VIRTIO_GUEST_SELFTEST_MAIN_CPP.as_posix()}",
+                                "hint: update scripts/ci/check-windows7-virtio-contract-consistency.py to match guest-selftest source changes",
+                            ],
+                        )
+                    )
+                elif selftest.value != service_name:
+                    addservices = parse_inf_addservice_entries(inf_path)
+                    inf_match = next((e for e in addservices if e.value.lower() == service_name.lower()), None)
+                    errors.append(
+                        format_error(
+                            f"{device_name}: guest selftest expected Windows service name mismatch:",
+                            [
+                                f"expected (from {WINDOWS_DEVICE_CONTRACT_JSON.as_posix()} devices[{device_name}].driver_service_name): {service_name!r}",
+                                f"found: {selftest.format_location()}",
+                                f"INF AddService (expected): {inf_match.format_location() if inf_match else f'(missing) {inf_path.as_posix()}'}",
+                            ],
+                        )
+                    )
+
+            if device_name == "virtio-snd":
+                # Transitional virtio-snd is out-of-scope for AERO-W7-VIRTIO v1,
+                # but the guest selftest has an opt-in transitional path which
+                # should remain aligned with the legacy INF service name.
+                selftest_trans = guest_selftest_services.get("virtio-snd-transitional")
+                if selftest_trans is not None and AERO_VIRTIO_SND_LEGACY_INF.exists():
+                    legacy_addservices = parse_inf_addservice_entries(AERO_VIRTIO_SND_LEGACY_INF)
+                    legacy_match = next(
+                        (e for e in legacy_addservices if e.value.lower() == selftest_trans.value.lower()),
+                        None,
+                    )
+                    if legacy_match is None:
+                        errors.append(
+                            format_error(
+                                "virtio-snd: guest selftest transitional expected Windows service name is not installed by the legacy INF:",
+                                [
+                                    f"found: {selftest_trans.format_location()}",
+                                    f"expected to match an AddService entry in: {AERO_VIRTIO_SND_LEGACY_INF.as_posix()}",
+                                    "legacy INF AddService entries:",
+                                    *(
+                                        [f"- {e.format_location()}" for e in legacy_addservices]
+                                        if legacy_addservices
+                                        else ["- (none found)"]
+                                    ),
+                                ],
+                            )
+                        )
 
     # ---------------------------------------------------------------------
     # 2.2) Canonical Windows driver source constants must match the contract.
