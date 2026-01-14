@@ -33,7 +33,7 @@ Device Manager names:
 
 - Keyboard: `PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01` → `inf/aero_virtio_input.inf`
 - Mouse: `PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01` → `inf/aero_virtio_input.inf`
-- Generic fallback (when subsystem IDs are not exposed): `PCI\VEN_1AF4&DEV_1052&REV_01` → `inf/virtio-input.inf.disabled` (rename to `virtio-input.inf` to enable)
+- Generic fallback (when subsystem IDs are not exposed): `PCI\VEN_1AF4&DEV_1052&REV_01` → `inf/aero_virtio_input.inf` (keyboard/mouse; legacy filename alias `inf/virtio-input.inf.disabled` is available for workflows that still expect `virtio-input.inf`)
 - Tablet (absolute pointer / EV_ABS): `PCI\VEN_1AF4&DEV_1052&SUBSYS_00121AF4&REV_01` → `inf/aero_virtio_tablet.inf`
 
 The `...&SUBSYS_...&REV_01` variants use distinct `DeviceDesc` strings so the keyboard and mouse PCI functions show up as separate named devices in Device Manager (**Aero VirtIO Keyboard** / **Aero VirtIO Mouse**).
