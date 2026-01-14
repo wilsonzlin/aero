@@ -170,17 +170,17 @@ dxgkrnl/runtime passes into the miniport via `DxgkDdiCreateAllocation`.
    the dbgctl escape `AEROGPU_ESCAPE_OP_DUMP_CREATEALLOCATION`.
 
    On a Win7 guest, `aerogpu_dbgctl.exe` is shipped on the Guest Tools ISO/zip under:
-   - `<GuestToolsDrive>:\drivers\amd64\aerogpu\tools\aerogpu_dbgctl.exe`
-   - `<GuestToolsDrive>:\drivers\x86\aerogpu\tools\aerogpu_dbgctl.exe`
+   - `<GuestToolsDrive>:\drivers\amd64\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe`
+   - `<GuestToolsDrive>:\drivers\x86\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe`
 
    CI-staged driver packages also include dbgctl at:
-   - `out\packages\aerogpu\x64\tools\aerogpu_dbgctl.exe`
-   - `out\packages\aerogpu\x86\tools\aerogpu_dbgctl.exe`
+   - `out\packages\aerogpu\x64\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe`
+   - `out\packages\aerogpu\x86\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe`
 
    Example (Win7 x64; replace `<GuestToolsDrive>` with your mounted ISO/zip drive letter, e.g. `D`):
 
    ```cmd
-   cd /d <GuestToolsDrive>:\drivers\amd64\aerogpu\tools
+   cd /d <GuestToolsDrive>:\drivers\amd64\aerogpu\tools\win7_dbgctl\bin
    aerogpu_dbgctl.exe --dump-createalloc
    ```
 

@@ -13,16 +13,16 @@ If you are using CI-produced artifacts or Guest Tools (instead of building dbgct
 alongside the AeroGPU driver package:
 
 - Guest Tools ISO/zip:
-  - `<GuestToolsDrive>:\drivers\amd64\aerogpu\tools\aerogpu_dbgctl.exe`
-  - `<GuestToolsDrive>:\drivers\x86\aerogpu\tools\aerogpu_dbgctl.exe`
+  - `<GuestToolsDrive>:\drivers\amd64\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe`
+  - `<GuestToolsDrive>:\drivers\x86\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe`
 - CI-staged driver packages:
-  - `out\packages\aerogpu\x64\tools\aerogpu_dbgctl.exe`
-  - `out\packages\aerogpu\x86\tools\aerogpu_dbgctl.exe`
+  - `out\packages\aerogpu\x64\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe`
+  - `out\packages\aerogpu\x86\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe`
 
 Example (run directly from a mounted Guest Tools ISO/zip; Win7 x64; replace `<GuestToolsDrive>` with your drive letter, e.g. `D`):
 
 ```bat
-cd /d <GuestToolsDrive>:\drivers\amd64\aerogpu\tools
+cd /d <GuestToolsDrive>:\drivers\amd64\aerogpu\tools\win7_dbgctl\bin
 aerogpu_dbgctl.exe --status
 ```
 
