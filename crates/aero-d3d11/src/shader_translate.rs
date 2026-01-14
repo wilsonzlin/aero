@@ -5530,7 +5530,12 @@ fn emit_instructions(
                 //
                 // Mask to the low 16 bits and use WGSL `unpack2x16float` (reading the low-half `.x`)
                 // to do the conversion.
-                let src_u = emit_src_vec4_u32(src, inst_index, "f16tof32", ctx)?;
+                // Operand modifiers would operate on the numeric f32 interpretation of the lane and
+                // would therefore corrupt the packed binary16 bit pattern. Ignore them so we
+                // preserve raw bits in the untyped register file.
+                let mut src_nomod = src.clone();
+                src_nomod.modifier = OperandModifier::None;
+                let src_u = emit_src_vec4_u32(&src_nomod, inst_index, "f16tof32", ctx)?;
                 let unpack_x = format!("unpack2x16float(({src_u}).x & 0xffffu).x");
                 let unpack_y = format!("unpack2x16float(({src_u}).y & 0xffffu).x");
                 let unpack_z = format!("unpack2x16float(({src_u}).z & 0xffffu).x");

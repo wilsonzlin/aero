@@ -2133,7 +2133,7 @@ fn translates_store_uav_typed_uses_raw_integer_bits_not_float_heuristics() {
     let signatures = parse_signatures(&dxbc).expect("parse signatures");
 
     // Use float bit patterns that look like exact integers as floats (e.g. 1.0 = 0x3f800000).
-    // `store_uav_typed` must interpret these operands as *integer bits* in the untyped register
+    // Typed UAV stores must interpret these operands as *integer bits* in the untyped register
     // file, not as numeric floats that "happen to be integers".
     let coord = SrcOperand {
         kind: SrcKind::ImmediateF32([1.0f32.to_bits(), 2.0f32.to_bits(), 0, 0]),
@@ -2166,22 +2166,23 @@ fn translates_store_uav_typed_uses_raw_integer_bits_not_float_heuristics() {
 
     let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
     assert_wgsl_validates(&translated.wgsl);
-    let store_line = translated
-        .wgsl
-        .lines()
-        .find(|l| l.contains("textureStore("))
-        .expect("expected a textureStore call");
     assert!(
-        store_line.contains("bitcast<i32>(0x3f800000u)"),
-        "expected raw bit pattern 0x3f800000 (f32 1.0) to flow into textureStore as i32 bits:\n{}",
-        store_line
+        translated.wgsl.contains("textureStore("),
+        "expected a textureStore call:\n{}",
+        translated.wgsl
     );
     assert!(
-        !store_line.contains("select(")
-            && !store_line.contains("floor(")
-            && !store_line.contains("i32("),
-        "textureStore coordinate lowering should not use float-vs-bitcast heuristics or numeric f32->i32 conversions:\n{}",
-        store_line
+        translated.wgsl.contains("bitcast<i32>(0x3f800000u)")
+            && translated.wgsl.contains("bitcast<i32>(0x40000000u)"),
+        "expected raw bit patterns to flow into textureStore coords as i32 bits:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        !translated.wgsl.contains("select(")
+            && !translated.wgsl.contains("floor(")
+            && !translated.wgsl.contains("i32("),
+        "textureStore lowering should not use float-vs-bitcast heuristics or numeric f32->i32 conversions:\n{}",
+        translated.wgsl
     );
 }
 
