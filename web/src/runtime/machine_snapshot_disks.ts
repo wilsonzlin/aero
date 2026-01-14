@@ -213,20 +213,36 @@ export async function reattachMachineSnapshotDisks(opts: {
         // `win7.base` even when the underlying file is an `.aerospar` image. Detect this case via the
         // header when we can.
         let isAerosparBase = base.toLowerCase().endsWith(".aerospar");
-        if (!isAerosparBase && canOpenAerospar) {
+        if (!isAerosparBase) {
           const blockSize = await tryReadAerosparseBlockSizeBytesFromOpfs(base, prefix);
           isAerosparBase = blockSize != null;
         }
 
         if (isAerosparBase) {
-          if (!canOpenAerospar) {
-            throw new Error(
-              `${prefix} Snapshot restore reported an aerosparse base disk for disk_id=${diskId}, but this WASM build cannot open it (missing Machine.set_disk_aerospar_opfs_open* exports).`,
-            );
+          if (canOpenAerospar) {
+            await callMaybeAsync(openAerospar as (...args: unknown[]) => unknown, machine, [base]);
+            machine.set_ahci_port0_disk_overlay_ref?.(base, "");
+            continue;
           }
-          await callMaybeAsync(openAerospar as (...args: unknown[]) => unknown, machine, [base]);
-          machine.set_ahci_port0_disk_overlay_ref?.(base, "");
-          continue;
+
+          const openViaFormat =
+            typeof setDiskExistingAndSetOverlayRef === "function" && setDiskExistingAndSetOverlayRef.length >= 2
+              ? setDiskExistingAndSetOverlayRef
+              : typeof setDiskExisting === "function" && setDiskExisting.length >= 2
+                ? setDiskExisting
+                : null;
+          if (openViaFormat != null) {
+            // Newer WASM builds support an explicit `baseFormat` parameter for `set_disk_opfs_existing`,
+            // so we can reopen aerosparse disks even when the dedicated `set_disk_aerospar_opfs_open`
+            // exports are absent.
+            await callMaybeAsync(openViaFormat as (...args: unknown[]) => unknown, machine, [base, "aerospar"]);
+            machine.set_ahci_port0_disk_overlay_ref?.(base, "");
+            continue;
+          }
+
+          throw new Error(
+            `${prefix} Snapshot restore reported an aerosparse base disk for disk_id=${diskId}, but this WASM build cannot open it (missing Machine.set_disk_aerospar_opfs_open* and Machine.set_disk_opfs_existing(base, \"aerospar\") support).`,
+          );
         }
 
         const attachExisting =
