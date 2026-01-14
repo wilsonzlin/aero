@@ -472,7 +472,6 @@ fn fuzz_frame_source(bytes: &[u8]) {
     let flags_raw = u.arbitrary::<u32>().unwrap_or(0);
 
     let rest = u.take_rest();
-    let mut rest_u = Unstructured::new(rest);
 
     // Mix the remaining bytes into the backing store so we don't only test zero-filled buffers.
     let backing_bytes = unsafe {
@@ -482,28 +481,11 @@ fn fuzz_frame_source(bytes: &[u8]) {
     backing_bytes[..copy_len].copy_from_slice(&rest[..copy_len]);
 
     let header = unsafe { &*(backing_words.as_ptr() as *const SharedFramebufferHeader) };
-    header.init(layout);
-
-    // Apply fuzzed header values (may be inconsistent with the layout).
-    header.magic.store(magic_raw, Ordering::SeqCst);
-    header.version.store(version_raw, Ordering::SeqCst);
-    header.format.store(format_raw, Ordering::SeqCst);
-    header.stride_bytes.store(stride_candidate, Ordering::SeqCst);
-    header
-        .dirty_words_per_buffer
-        .store(dirty_words_raw, Ordering::SeqCst);
-    header.tiles_x.store(tiles_x_raw, Ordering::SeqCst);
-    header.tiles_y.store(tiles_y_raw, Ordering::SeqCst);
-
-    header.active_index.store(active_index_raw, Ordering::SeqCst);
-    header.frame_seq.store(frame_seq_raw, Ordering::SeqCst);
-    header.buf0_frame_seq.store(buf0_seq_raw, Ordering::SeqCst);
-    header.buf1_frame_seq.store(buf1_seq_raw, Ordering::SeqCst);
-    header.flags.store(flags_raw, Ordering::SeqCst);
 
     let base_ptr = backing_words.as_mut_ptr() as *mut u8;
 
     let mut drive = |mut source: FrameSource| {
+        let mut rest_u = Unstructured::new(rest);
         let shared = source.shared();
         let layout = shared.layout();
         let header = shared.header();
@@ -549,34 +531,109 @@ fn fuzz_frame_source(bytes: &[u8]) {
         let _ = source.poll_frame();
     };
 
+    let write_header = |magic: u32,
+                        version: u32,
+                        format: u32,
+                        stride_bytes: u32,
+                        dirty_words_per_buffer: u32,
+                        tiles_x: u32,
+                        tiles_y: u32| {
+        // Always start from a known-good baseline layout so we can safely re-run `from_shared_memory`
+        // multiple times per fuzz input while keeping the backing store consistent with the
+        // allocation.
+        header.init(layout);
+
+        // Apply (potentially inconsistent) guest-controlled header values.
+        header.magic.store(magic, Ordering::SeqCst);
+        header.version.store(version, Ordering::SeqCst);
+        header.format.store(format, Ordering::SeqCst);
+        header.stride_bytes.store(stride_bytes, Ordering::SeqCst);
+        header
+            .dirty_words_per_buffer
+            .store(dirty_words_per_buffer, Ordering::SeqCst);
+        header.tiles_x.store(tiles_x, Ordering::SeqCst);
+        header.tiles_y.store(tiles_y, Ordering::SeqCst);
+
+        header.active_index.store(active_index_raw, Ordering::SeqCst);
+        header.frame_seq.store(frame_seq_raw, Ordering::SeqCst);
+        header.buf0_frame_seq.store(buf0_seq_raw, Ordering::SeqCst);
+        header.buf1_frame_seq.store(buf1_seq_raw, Ordering::SeqCst);
+        header.flags.store(flags_raw, Ordering::SeqCst);
+    };
+
     // Fuzzed header.
+    write_header(
+        magic_raw,
+        version_raw,
+        format_raw,
+        stride_candidate,
+        dirty_words_raw,
+        tiles_x_raw,
+        tiles_y_raw,
+    );
+    let _ = unsafe { FrameSource::from_shared_memory(base_ptr, 0) }.map(&mut drive);
+
+    // Patched magic only: exercise version/format/layout error paths without requiring the fuzzer to
+    // guess the 32-bit magic prefix.
+    write_header(
+        SHARED_FRAMEBUFFER_MAGIC,
+        version_raw,
+        format_raw,
+        stride_candidate,
+        dirty_words_raw,
+        tiles_x_raw,
+        tiles_y_raw,
+    );
+    let _ = unsafe { FrameSource::from_shared_memory(base_ptr, 0) }.map(&mut drive);
+
+    // Patched magic+version: same as above but bypass the version gate as well.
+    write_header(
+        SHARED_FRAMEBUFFER_MAGIC,
+        SHARED_FRAMEBUFFER_VERSION,
+        format_raw,
+        stride_candidate,
+        dirty_words_raw,
+        tiles_x_raw,
+        tiles_y_raw,
+    );
+    let _ = unsafe { FrameSource::from_shared_memory(base_ptr, 0) }.map(&mut drive);
+
+    // Patched: valid magic/version/format/stride but fuzzed dirty/tile metadata to hit the header
+    // mismatch checks.
+    write_header(
+        SHARED_FRAMEBUFFER_MAGIC,
+        SHARED_FRAMEBUFFER_VERSION,
+        FramebufferFormat::Rgba8 as u32,
+        layout.stride_bytes,
+        dirty_words_raw,
+        tiles_x_raw,
+        tiles_y_raw,
+    );
+    let _ = unsafe { FrameSource::from_shared_memory(base_ptr, 0) }.map(&mut drive);
+
+    // Patched: valid magic/version/format/stride/dirty_words but fuzzed tiles to hit TilesMismatch.
+    write_header(
+        SHARED_FRAMEBUFFER_MAGIC,
+        SHARED_FRAMEBUFFER_VERSION,
+        FramebufferFormat::Rgba8 as u32,
+        layout.stride_bytes,
+        layout.dirty_words_per_buffer,
+        tiles_x_raw,
+        tiles_y_raw,
+    );
     let _ = unsafe { FrameSource::from_shared_memory(base_ptr, 0) }.map(&mut drive);
 
     // Patched header: force valid magic/version/format and consistent layout-derived tile metadata
     // so the fuzzer can reach the steady-state poll/present paths more often.
-    header.init(layout);
-    header.magic.store(SHARED_FRAMEBUFFER_MAGIC, Ordering::SeqCst);
-    header
-        .version
-        .store(SHARED_FRAMEBUFFER_VERSION, Ordering::SeqCst);
-    header
-        .format
-        .store(FramebufferFormat::Rgba8 as u32, Ordering::SeqCst);
-    header
-        .stride_bytes
-        .store(stride_candidate.max(min_stride), Ordering::SeqCst);
-    header
-        .dirty_words_per_buffer
-        .store(layout.dirty_words_per_buffer, Ordering::SeqCst);
-    header.tiles_x.store(layout.tiles_x, Ordering::SeqCst);
-    header.tiles_y.store(layout.tiles_y, Ordering::SeqCst);
-
-    header.active_index.store(active_index_raw, Ordering::SeqCst);
-    header.frame_seq.store(frame_seq_raw, Ordering::SeqCst);
-    header.buf0_frame_seq.store(buf0_seq_raw, Ordering::SeqCst);
-    header.buf1_frame_seq.store(buf1_seq_raw, Ordering::SeqCst);
-    header.flags.store(flags_raw, Ordering::SeqCst);
-
+    write_header(
+        SHARED_FRAMEBUFFER_MAGIC,
+        SHARED_FRAMEBUFFER_VERSION,
+        FramebufferFormat::Rgba8 as u32,
+        stride_candidate.max(min_stride),
+        layout.dirty_words_per_buffer,
+        layout.tiles_x,
+        layout.tiles_y,
+    );
     let _ = unsafe { FrameSource::from_shared_memory(base_ptr, 0) }.map(&mut drive);
 }
 
