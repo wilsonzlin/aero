@@ -275,7 +275,7 @@ fn decodes_and_translates_setp_and_predicated_mov() {
     let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
     let module = aero_d3d11::sm4::decode_program(&program).expect("SM4 decode");
 
-    assert!(matches!(module.instructions[0], Sm4Inst::Setp { .. }));
+    assert!(matches!(&module.instructions[0], Sm4Inst::Setp { .. }));
     assert!(matches!(
         &module.instructions[2],
         Sm4Inst::Predicated {
@@ -372,7 +372,7 @@ fn decodes_and_translates_trailing_predicated_mov() {
     let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
     let module = aero_d3d11::sm4::decode_program(&program).expect("SM4 decode");
 
-    assert!(matches!(module.instructions[0], Sm4Inst::Setp { .. }));
+    assert!(matches!(&module.instructions[0], Sm4Inst::Setp { .. }));
     assert!(matches!(
         &module.instructions[2],
         Sm4Inst::Predicated {
@@ -518,7 +518,7 @@ fn decodes_and_translates_inverted_predicated_mov() {
     let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
     let module = aero_d3d11::sm4::decode_program(&program).expect("SM4 decode");
 
-    assert!(matches!(module.instructions[0], Sm4Inst::Setp { .. }));
+    assert!(matches!(&module.instructions[0], Sm4Inst::Setp { .. }));
     assert!(matches!(
         &module.instructions[2],
         Sm4Inst::Predicated {
@@ -599,7 +599,7 @@ fn decodes_and_translates_trailing_inverted_predicated_mov() {
     let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
     let module = aero_d3d11::sm4::decode_program(&program).expect("SM4 decode");
 
-    assert!(matches!(module.instructions[0], Sm4Inst::Setp { .. }));
+    assert!(matches!(&module.instructions[0], Sm4Inst::Setp { .. }));
     assert!(matches!(
         &module.instructions[2],
         Sm4Inst::Predicated {
@@ -684,7 +684,7 @@ fn decodes_and_translates_trailing_predicated_setp() {
     let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
     let module = aero_d3d11::sm4::decode_program(&program).expect("SM4 decode");
 
-    assert!(matches!(module.instructions[0], Sm4Inst::Setp { .. }));
+    assert!(matches!(&module.instructions[0], Sm4Inst::Setp { .. }));
     assert!(matches!(
         &module.instructions[1],
         Sm4Inst::Predicated {
@@ -761,7 +761,7 @@ fn decodes_and_translates_predicated_ret() {
     let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
     let module = aero_d3d11::sm4::decode_program(&program).expect("SM4 decode");
 
-    assert!(matches!(module.instructions[2], Sm4Inst::Predicated { .. }));
+    assert!(matches!(&module.instructions[2], Sm4Inst::Predicated { .. }));
     assert!(matches!(
         &module.instructions[2],
         Sm4Inst::Predicated {
@@ -1390,7 +1390,7 @@ fn decodes_and_translates_predicated_break_in_loop() {
     let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
     let module = aero_d3d11::sm4::decode_program(&program).expect("SM4 decode");
 
-    assert!(matches!(module.instructions[1], Sm4Inst::Loop));
+    assert!(matches!(&module.instructions[1], Sm4Inst::Loop));
     assert!(matches!(
         &module.instructions[2],
         Sm4Inst::Predicated { inner, .. } if matches!(inner.as_ref(), Sm4Inst::Break)
@@ -1457,7 +1457,7 @@ fn decodes_and_translates_predicated_continue_in_loop() {
     let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
     let module = aero_d3d11::sm4::decode_program(&program).expect("SM4 decode");
 
-    assert!(matches!(module.instructions[1], Sm4Inst::Loop));
+    assert!(matches!(&module.instructions[1], Sm4Inst::Loop));
     assert!(matches!(
         &module.instructions[2],
         Sm4Inst::Predicated { inner, .. } if matches!(inner.as_ref(), Sm4Inst::Continue)
@@ -1520,8 +1520,8 @@ fn decodes_and_translates_predicated_break_in_switch_case() {
     let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
     let module = aero_d3d11::sm4::decode_program(&program).expect("SM4 decode");
 
-    assert!(matches!(module.instructions[0], Sm4Inst::Switch { .. }));
-    assert!(matches!(module.instructions[1], Sm4Inst::Case { .. }));
+    assert!(matches!(&module.instructions[0], Sm4Inst::Switch { .. }));
+    assert!(matches!(&module.instructions[1], Sm4Inst::Case { .. }));
     assert!(matches!(
         &module.instructions[2],
         Sm4Inst::Predicated { inner, .. } if matches!(inner.as_ref(), Sm4Inst::Break)

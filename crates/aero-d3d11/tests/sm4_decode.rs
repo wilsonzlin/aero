@@ -904,7 +904,7 @@ fn does_not_misclassify_unknown_instruction_as_decl() {
 
     assert_eq!(module.decls.len(), 1);
     assert_eq!(module.instructions.len(), 3);
-    assert!(matches!(module.instructions[1], Sm4Inst::Mov { .. }));
+    assert!(matches!(&module.instructions[1], Sm4Inst::Mov { .. }));
 }
 
 #[test]
@@ -939,7 +939,7 @@ fn skips_nop_without_ending_decl_section() {
 
     assert_eq!(module.decls.len(), 1);
     assert_eq!(module.instructions.len(), 2);
-    assert!(matches!(module.instructions[0], Sm4Inst::Mov { .. }));
+    assert!(matches!(&module.instructions[0], Sm4Inst::Mov { .. }));
 }
 
 #[test]
@@ -1029,7 +1029,7 @@ fn preserves_non_comment_customdata_and_does_not_end_decl_section() {
 
     // Customdata should not appear as an executable instruction.
     assert_eq!(module.instructions.len(), 2);
-    assert!(matches!(module.instructions[0], Sm4Inst::Mov { .. }));
+    assert!(matches!(&module.instructions[0], Sm4Inst::Mov { .. }));
 }
 
 #[test]
@@ -1214,7 +1214,7 @@ fn decodes_sample_via_structural_fallback() {
     let module = decode_program(&program).expect("decode");
 
     assert_eq!(module.decls, vec![Sm4Decl::Unknown { opcode: DCL_DUMMY }]);
-    assert!(matches!(module.instructions[0], Sm4Inst::Sample { .. }));
+    assert!(matches!(&module.instructions[0], Sm4Inst::Sample { .. }));
 }
 
 #[test]
@@ -1245,7 +1245,7 @@ fn does_not_misclassify_scalar_resource_op_as_ld() {
         Sm4Program::parse_program_tokens(&tokens_to_bytes(&tokens)).expect("parse_program_tokens");
     let module = decode_program(&program).expect("decode");
 
-    assert!(matches!(module.instructions[0], Sm4Inst::ResInfo { .. }));
+    assert!(matches!(&module.instructions[0], Sm4Inst::ResInfo { .. }));
     assert!(!module
         .instructions
         .iter()
@@ -1662,17 +1662,17 @@ fn decodes_integer_and_bitwise_ops() {
     let module = aero_d3d11::sm4::decode_program(&program).expect("decode");
 
     assert_eq!(module.instructions.len(), 11);
-    assert!(matches!(module.instructions[0], Sm4Inst::IAdd { .. }));
-    assert!(matches!(module.instructions[1], Sm4Inst::ISub { .. }));
-    assert!(matches!(module.instructions[2], Sm4Inst::IMul { .. }));
-    assert!(matches!(module.instructions[3], Sm4Inst::And { .. }));
-    assert!(matches!(module.instructions[4], Sm4Inst::Or { .. }));
-    assert!(matches!(module.instructions[5], Sm4Inst::Xor { .. }));
-    assert!(matches!(module.instructions[6], Sm4Inst::Not { .. }));
-    assert!(matches!(module.instructions[7], Sm4Inst::IShl { .. }));
-    assert!(matches!(module.instructions[8], Sm4Inst::IShr { .. }));
-    assert!(matches!(module.instructions[9], Sm4Inst::UShr { .. }));
-    assert!(matches!(module.instructions[10], Sm4Inst::Ret));
+    assert!(matches!(&module.instructions[0], Sm4Inst::IAdd { .. }));
+    assert!(matches!(&module.instructions[1], Sm4Inst::ISub { .. }));
+    assert!(matches!(&module.instructions[2], Sm4Inst::IMul { .. }));
+    assert!(matches!(&module.instructions[3], Sm4Inst::And { .. }));
+    assert!(matches!(&module.instructions[4], Sm4Inst::Or { .. }));
+    assert!(matches!(&module.instructions[5], Sm4Inst::Xor { .. }));
+    assert!(matches!(&module.instructions[6], Sm4Inst::Not { .. }));
+    assert!(matches!(&module.instructions[7], Sm4Inst::IShl { .. }));
+    assert!(matches!(&module.instructions[8], Sm4Inst::IShr { .. }));
+    assert!(matches!(&module.instructions[9], Sm4Inst::UShr { .. }));
+    assert!(matches!(&module.instructions[10], Sm4Inst::Ret));
 }
 
 #[test]
@@ -2851,9 +2851,9 @@ fn decodes_hull_shader_phase_markers_as_decls() {
         ]
     );
     assert_eq!(module.instructions.len(), 3);
-    assert!(matches!(module.instructions[0], Sm4Inst::Mov { .. }));
-    assert!(matches!(module.instructions[1], Sm4Inst::Mov { .. }));
-    assert!(matches!(module.instructions[2], Sm4Inst::Ret));
+    assert!(matches!(&module.instructions[0], Sm4Inst::Mov { .. }));
+    assert!(matches!(&module.instructions[1], Sm4Inst::Mov { .. }));
+    assert!(matches!(&module.instructions[2], Sm4Inst::Ret));
 }
 
 #[test]
@@ -3030,7 +3030,7 @@ fn decodes_compute_builtin_operand_types() {
             },
         }
     );
-    assert!(matches!(module.instructions[4], Sm4Inst::Ret));
+    assert!(matches!(&module.instructions[4], Sm4Inst::Ret));
 }
 
 #[test]
@@ -3362,7 +3362,7 @@ fn decodes_store_raw_via_structural_fallback() {
     let module = decode_program(&program).expect("decode");
 
     assert!(
-        matches!(module.instructions[0], Sm4Inst::StoreRaw { .. }),
+        matches!(&module.instructions[0], Sm4Inst::StoreRaw { .. }),
         "expected structural fallback to decode StoreRaw, got {:?}",
         module.instructions[0]
     );
@@ -3417,7 +3417,7 @@ fn refines_unknown_uav_store_to_raw_when_decl_is_buffer() {
     let module = decode_program(&program).expect("decode");
 
     assert!(
-        matches!(module.instructions[0], Sm4Inst::StoreRaw { .. }),
+        matches!(&module.instructions[0], Sm4Inst::StoreRaw { .. }),
         "expected decl-based refinement to yield StoreRaw, got {:?}",
         module.instructions[0]
     );
@@ -3492,7 +3492,7 @@ fn refines_unknown_uav_store_to_typed_when_decl_is_typed() {
         "expected typed UAV declaration to be decoded"
     );
     assert!(
-        matches!(module.instructions[0], Sm4Inst::StoreUavTyped { .. }),
+        matches!(&module.instructions[0], Sm4Inst::StoreUavTyped { .. }),
         "expected decl-based refinement to yield StoreUavTyped, got {:?}",
         module.instructions[0]
     );
@@ -3752,7 +3752,7 @@ fn decodes_ld_structured_uav_via_structural_fallback() {
     let module = decode_program(&program).expect("decode");
 
     assert!(
-        matches!(module.instructions[0], Sm4Inst::LdStructuredUav { .. }),
+        matches!(&module.instructions[0], Sm4Inst::LdStructuredUav { .. }),
         "expected structural fallback to decode LdStructuredUav, got {:?}",
         module.instructions[0]
     );
@@ -3974,7 +3974,7 @@ fn decodes_store_structured_via_structural_fallback() {
     let module = decode_program(&program).expect("decode");
 
     assert!(
-        matches!(module.instructions[0], Sm4Inst::StoreStructured { .. }),
+        matches!(&module.instructions[0], Sm4Inst::StoreStructured { .. }),
         "expected structural fallback to decode StoreStructured, got {:?}",
         module.instructions[0]
     );

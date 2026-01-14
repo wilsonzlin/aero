@@ -129,7 +129,7 @@ fn decodes_and_translates_resinfo_for_texture2d() {
             .any(|d| matches!(d, Sm4Decl::ResourceTexture2D { slot: 0 })),
         "expected decoder to emit ResourceTexture2D decl for t0"
     );
-    assert!(matches!(module.instructions[0], Sm4Inst::ResInfo { .. }));
+    assert!(matches!(&module.instructions[0], Sm4Inst::ResInfo { .. }));
 
     let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &ShaderSignatures::default())
         .expect("translate");

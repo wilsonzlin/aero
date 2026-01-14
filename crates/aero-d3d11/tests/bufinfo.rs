@@ -121,7 +121,7 @@ fn decodes_and_translates_bufinfo_raw_to_array_length() {
     assert_eq!(program.stage, aero_d3d11::ShaderStage::Compute);
 
     let module = decode_program(&program).expect("SM4 decode");
-    assert!(matches!(module.instructions[0], Sm4Inst::BufInfoRaw { .. }));
+    assert!(matches!(&module.instructions[0], Sm4Inst::BufInfoRaw { .. }));
 
     let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &ShaderSignatures::default())
         .expect("translate");
