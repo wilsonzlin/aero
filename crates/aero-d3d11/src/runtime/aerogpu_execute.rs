@@ -106,33 +106,19 @@ pub struct AerogpuResources {
 const DEFAULT_BIND_GROUP_CACHE_CAPACITY: usize = 4096;
 const DUMMY_UNIFORM_SIZE_BYTES: u64 = 4096 * 16;
 
-/// Fixed expanded-geometry passthrough vertex shader used for geometry-shader emulation draws.
+/// Generate a passthrough vertex shader for consuming fixed-array expanded vertices.
 ///
-/// The GS prepass writes vertices in the same format as `runtime/gs_translate`:
-/// - `@location(0)` = clip-space position (`o0`)
-/// - `@location(1)` = first varying register (`o1`)
+/// The GS prepass writes vertices in the same fixed-array format as `runtime/gs_translate`:
+/// `ExpandedVertex { pos, varyings[loc] }`, where `pos` is clip-space position (`o0`) and
+/// `varyings[loc]` holds output register `o{loc}`.
 ///
-/// The shader forwards `o1` as `@location(1)` so it can be linked/trimmed against the bound pixel
-/// shader's input interface.
-const GS_EXPANDED_DRAW_PASSTHROUGH_VS_WGSL: &str = r#"
-struct VsIn {
-    @location(0) v0: vec4<f32>,
-    @location(1) v1: vec4<f32>,
-};
-
-struct VsOut {
-    @builtin(position) pos: vec4<f32>,
-    @location(1) o1: vec4<f32>,
-};
-
-@vertex
-fn vs_main(input: VsIn) -> VsOut {
-    var out: VsOut;
-    out.pos = input.v0;
-    out.o1 = input.v1;
-    return out;
+/// For compatibility with WebGPU vertex attribute limits, this passthrough VS accepts packed input
+/// attribute locations (`1..N`) and forwards them to the (potentially sparse) fragment-stage
+/// locations requested by the pixel shader. The runtime maps those packed attribute locations back
+/// to the fixed-array expanded vertex buffer offsets when building the vertex buffer layout.
+fn gs_fixed_array_passthrough_vs_wgsl(locations: impl IntoIterator<Item = u32>) -> String {
+    PassthroughVertexShaderKey::from_locations(locations).wgsl()
 }
-"#;
 
 /// A minimal `aerogpu_cmd`-style executor focused on D3D10/11 rendering.
 ///
@@ -2578,50 +2564,61 @@ impl AerogpuCmdRuntime {
         }
 
         // ---------------------------------------------------------------------
-        // Render pass: consume expanded buffers using a fixed passthrough VS + the bound PS.
+        // Render pass: consume expanded buffers using a generated passthrough VS + the bound PS.
         // ---------------------------------------------------------------------
-        let (vs_base_hash, _module) = self.pipelines.get_or_create_shader_module(
-            &self.device,
-            ShaderStage::Vertex,
-            GS_EXPANDED_DRAW_PASSTHROUGH_VS_WGSL,
-            Some("aero-d3d11 aerogpu GS expanded passthrough VS"),
-        );
-
-        // Link VS/PS interfaces by trimming unused varyings (mirrors the normal pipeline path).
+        // Determine the PS varying locations we must output. This is driven by the `PsIn` struct's
+        // declared `@location(N)` members, but we drop any inputs that the PS does not actually
+        // reference so we can stay within WebGPU's vertex-attribute limits.
         let ps_declared_inputs = super::wgsl_link::locations_in_struct(&ps.wgsl, "PsIn")?;
-        let vs_outputs =
-            super::wgsl_link::locations_in_struct(GS_EXPANDED_DRAW_PASSTHROUGH_VS_WGSL, "VsOut")?;
-
-        let mut ps_link_locations = ps_declared_inputs.clone();
-        let mut linked_ps_wgsl = std::borrow::Cow::Borrowed(ps.wgsl.as_str());
-        let ps_missing_locations: BTreeSet<u32> = ps_declared_inputs
-            .difference(&vs_outputs)
+        let ps_used_locations = super::wgsl_link::referenced_ps_input_locations(&ps.wgsl);
+        let ps_link_locations: BTreeSet<u32> = ps_declared_inputs
+            .intersection(&ps_used_locations)
             .copied()
             .collect();
-        if !ps_missing_locations.is_empty() {
-            let ps_used_locations = super::wgsl_link::referenced_ps_input_locations(&ps.wgsl);
-            let used_missing: Vec<u32> = ps_missing_locations
-                .intersection(&ps_used_locations)
-                .copied()
-                .collect();
-            if let Some(&loc) = used_missing.first() {
-                bail!(
-                    "pixel shader reads @location({loc}), but expanded GS passthrough VS does not output it"
-                );
-            }
 
-            ps_link_locations = ps_declared_inputs
-                .intersection(&vs_outputs)
-                .copied()
-                .collect();
-            if ps_link_locations != ps_declared_inputs {
-                linked_ps_wgsl =
-                    std::borrow::Cow::Owned(super::wgsl_link::trim_ps_inputs_to_locations(
-                        linked_ps_wgsl.as_ref(),
-                        &ps_link_locations,
-                    ));
-            }
+        // Validate varying locations against the fixed-array expanded vertex format.
+        //
+        // Location 0 is reserved for position (`o0`), which is stored in `ExpandedVertex.pos`
+        // rather than the varying table.
+        if let Some(&loc) = ps_link_locations
+            .iter()
+            .find(|&&loc| loc == 0 || loc >= EXPANDED_VERTEX_MAX_VARYINGS)
+        {
+            bail!(
+                "pixel shader reads @location({loc}), but expanded GS vertex format supports locations 1..{} (location 0 is reserved for position)",
+                EXPANDED_VERTEX_MAX_VARYINGS.saturating_sub(1)
+            );
         }
+
+        // Validate against WebGPU vertex attribute limits. The expanded buffer uses one vertex
+        // attribute per vec4, plus one for position.
+        let required_vertex_attributes = 1u32 + ps_link_locations.len() as u32;
+        let max_vertex_attributes = self.device.limits().max_vertex_attributes;
+        if required_vertex_attributes > max_vertex_attributes {
+            bail!(
+                "expanded GS draw requires {required_vertex_attributes} vertex attributes (pos + {} varyings), but device limit max_vertex_attributes={max_vertex_attributes}",
+                ps_link_locations.len()
+            );
+        }
+
+        // Link VS/PS interfaces by trimming unused varyings (mirrors the normal pipeline path).
+        let mut linked_ps_wgsl = std::borrow::Cow::Borrowed(ps.wgsl.as_str());
+        if ps_link_locations != ps_declared_inputs {
+            linked_ps_wgsl =
+                std::borrow::Cow::Owned(super::wgsl_link::trim_ps_inputs_to_locations(
+                    linked_ps_wgsl.as_ref(),
+                    &ps_link_locations,
+                ));
+        }
+
+        let passthrough_vs_wgsl =
+            gs_fixed_array_passthrough_vs_wgsl(ps_link_locations.iter().copied());
+        let (linked_vs_hash, _module) = self.pipelines.get_or_create_shader_module(
+            &self.device,
+            ShaderStage::Vertex,
+            &passthrough_vs_wgsl,
+            Some("aero-d3d11 aerogpu GS expanded passthrough VS"),
+        );
 
         // Trim fragment outputs to the currently-bound render target slots.
         let mut keep_output_locations = BTreeSet::new();
@@ -2656,41 +2653,34 @@ impl AerogpuCmdRuntime {
             hash
         };
 
-        let linked_vs_hash = if vs_outputs == ps_link_locations {
-            vs_base_hash
-        } else {
-            let linked_vs_wgsl = super::wgsl_link::trim_vs_outputs_to_locations(
-                GS_EXPANDED_DRAW_PASSTHROUGH_VS_WGSL,
-                &ps_link_locations,
-            );
-            let (hash, _module) = self.pipelines.get_or_create_shader_module(
-                &self.device,
-                ShaderStage::Vertex,
-                &linked_vs_wgsl,
-                Some("aero-d3d11 aerogpu GS expanded linked vertex shader"),
-            );
-            hash
-        };
-
-        // Expanded vertex buffer layout: position (`pos`) plus the full varying array. This draw
-        // path currently only consumes varying register 1 (`o1`) via `@location(1)`.
+        // Expanded vertex buffer layout: position (`pos`) plus a sparse selection of varyings from
+        // the fixed-size varying table. We pack varyings into input locations 1..N to stay within
+        // WebGPU's `max_vertex_attributes` limit, and remap those to the original varying locations
+        // in the generated passthrough VS.
+        let mut expanded_attributes: Vec<wgpu::VertexAttribute> =
+            Vec::with_capacity(1 + ps_link_locations.len());
+        expanded_attributes.push(wgpu::VertexAttribute {
+            format: wgpu::VertexFormat::Float32x4,
+            offset: 0,
+            shader_location: 0,
+        });
+        for (i, &loc) in ps_link_locations.iter().enumerate() {
+            let input_loc = 1u32 + i as u32;
+            // `ExpandedVertex { pos, varyings }` => varyings[loc] is at offset
+            // 16 (pos) + 16*loc.
+            let offset = 16u64
+                .checked_mul(1u64 + u64::from(loc))
+                .ok_or_else(|| anyhow!("expanded vertex varying offset overflow"))?;
+            expanded_attributes.push(wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32x4,
+                offset,
+                shader_location: input_loc,
+            });
+        }
         let expanded_layout = VertexBufferLayoutOwned {
             array_stride: EXPANDED_VERTEX_STRIDE_BYTES,
             step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: vec![
-                wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Float32x4,
-                    offset: 0,
-                    shader_location: 0,
-                },
-                wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Float32x4,
-                    // `ExpandedVertex { pos, varyings }` => varyings[1] is at offset
-                    // 16 (pos) + 16*1.
-                    offset: 32,
-                    shader_location: 1,
-                },
-            ],
+            attributes: expanded_attributes,
         };
         let vertex_buffer_keys = vec![VertexBufferLayoutKey {
             array_stride: expanded_layout.array_stride,
