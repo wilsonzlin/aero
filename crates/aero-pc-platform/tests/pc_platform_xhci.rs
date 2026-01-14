@@ -4,6 +4,9 @@ use aero_devices::pci::{
     PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT,
 };
 use aero_pc_platform::{PcPlatform, PcPlatformConfig};
+use aero_platform::interrupts::{
+    InterruptController, PlatformInterruptMode, IMCR_DATA_PORT, IMCR_INDEX, IMCR_SELECT_PORT,
+};
 use memory::MemoryBus as _;
 use memory::MmioHandler;
 use std::cell::RefCell;
@@ -45,6 +48,17 @@ const RT_ERDP_HI: u64 = RT_ERDP + 4;
 
 const IMAN_IP: u32 = 1 << 0;
 const IMAN_IE: u32 = 1 << 1;
+
+fn program_ioapic_entry(pc: &mut PcPlatform, gsi: u32, low: u32, high: u32) {
+    let redtbl_low = 0x10u32 + gsi * 2;
+    let redtbl_high = redtbl_low + 1;
+
+    let mut interrupts = pc.interrupts.borrow_mut();
+    interrupts.ioapic_mmio_write(0x00, redtbl_low);
+    interrupts.ioapic_mmio_write(0x10, low);
+    interrupts.ioapic_mmio_write(0x00, redtbl_high);
+    interrupts.ioapic_mmio_write(0x10, high);
+}
 
 fn cfg_addr(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
     0x8000_0000
@@ -758,4 +772,59 @@ fn pc_platform_xhci_run_stop_sets_usbsts_eint_and_triggers_intx() {
 
     pc.poll_pci_intx_lines();
     assert_eq!(pc.interrupts.borrow().pic().get_pending_vector(), None);
+}
+
+#[test]
+fn pc_platform_routes_xhci_intx_via_ioapic_in_apic_mode() {
+    let mut pc = PcPlatform::new_with_config(
+        2 * 1024 * 1024,
+        PcPlatformConfig {
+            enable_ahci: false,
+            enable_uhci: false,
+            enable_xhci: true,
+            ..Default::default()
+        },
+    );
+
+    let bdf = USB_XHCI_QEMU.bdf;
+
+    let bar0_raw = read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x10);
+    let bar0_base = u64::from(bar0_raw & 0xffff_fff0);
+    assert_ne!(bar0_base, 0, "BAR0 should be assigned by BIOS POST");
+
+    // Switch to APIC mode via IMCR.
+    pc.io.write_u8(IMCR_SELECT_PORT, IMCR_INDEX);
+    pc.io.write_u8(IMCR_DATA_PORT, 0x01);
+    assert_eq!(pc.interrupts.borrow().mode(), PlatformInterruptMode::Apic);
+
+    // Route the xHCI INTx line to vector 0x60, level-triggered + active-low.
+    let vector = 0x60u32;
+    let low = vector | (1 << 13) | (1 << 15); // polarity_low + level-triggered, unmasked
+    let gsi = pc.pci_intx.gsi_for_intx(bdf, PciInterruptPin::IntA);
+    program_ioapic_entry(&mut pc, gsi, low, 0);
+
+    // Determine CAPLENGTH so we can locate the operational register block.
+    let cap = pc.memory.read_u32(bar0_base);
+    let caplength = (cap & 0xFF) as u64;
+    assert_ne!(caplength, 0);
+
+    let usbcmd_addr = bar0_base + caplength;
+    let usbsts_addr = usbcmd_addr + 4;
+
+    // Start the controller. The PC platform tick loop runs xHCI at a 1ms cadence.
+    pc.memory.write_u32(usbcmd_addr, 1);
+    pc.tick(1_000_000);
+
+    pc.poll_pci_intx_lines();
+    assert_eq!(pc.interrupts.borrow().get_pending(), Some(vector as u8));
+
+    // Acknowledge the interrupt (vector in service).
+    pc.interrupts.borrow_mut().acknowledge(vector as u8);
+
+    // Clear the controller IRQ and propagate the deassertion before sending EOI.
+    pc.memory.write_u32(usbsts_addr, 1 << 3);
+    pc.poll_pci_intx_lines();
+
+    pc.interrupts.borrow_mut().eoi(vector as u8);
+    assert_eq!(pc.interrupts.borrow().get_pending(), None);
 }
