@@ -41,10 +41,12 @@ fn vga_pci_stub_does_not_collide_with_canonical_aerogpu_bdf() {
         assert_eq!(aerogpu_device, 0x0001);
     }
 
-    // Historically the canonical machine exposed a Bochs/QEMU-style VGA PCI stub
-    // (`1234:1111`, see `aero_devices::pci::profile::VGA_TRANSITIONAL_STUB`) used only for VBE LFB
-    // routing. The canonical machine no longer relies on this, and now expects this BDF to be
-    // empty.
+    // The canonical machine historically exposed a Bochs/QEMU-style VGA PCI stub (`1234:1111`,
+    // `00:0c.0`) used only for VBE LFB routing.
+    //
+    // Phase 2 removes this stub when AeroGPU owns the legacy VGA/VBE path, so treat it as
+    // optional: if present, validate it retains the expected IDs and does not collide with any
+    // canonical device profiles; if absent, do not fail.
     let vga_bdf = aero_devices::pci::profile::VGA_TRANSITIONAL_STUB.bdf;
     let vga_vendor = bus.read_config(vga_bdf, 0x00, 2) as u16;
     // Guardrail: ensure no canonical paravirtual device profile uses this BDF (even though it is
@@ -58,10 +60,17 @@ fn vga_pci_stub_does_not_collide_with_canonical_aerogpu_bdf() {
         );
     }
 
-    assert_eq!(
-        vga_vendor, 0xFFFF,
-        "expected {vga_bdf:?} to be empty; transitional VGA PCI stub (1234:1111) was removed"
-    );
+    if vga_vendor != 0xFFFF {
+        let vga_device = bus.read_config(vga_bdf, 0x02, 2) as u16;
+        assert_eq!(
+            vga_vendor,
+            aero_devices::pci::profile::VGA_TRANSITIONAL_STUB.vendor_id
+        );
+        assert_eq!(
+            vga_device,
+            aero_devices::pci::profile::VGA_TRANSITIONAL_STUB.device_id
+        );
+    }
 }
 
 #[test]
