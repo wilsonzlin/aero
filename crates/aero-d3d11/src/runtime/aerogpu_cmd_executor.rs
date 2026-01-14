@@ -3980,6 +3980,7 @@ impl AerogpuD3d11Executor {
         };
 
         if let Some((gs_handle, gs_meta)) = gs_prepass {
+            let uniform_align = self.device.limits().min_uniform_buffer_offset_alignment as u64;
             // The GS translator writes `DrawIndexedIndirectArgs`, so always render via
             // `draw_indexed_indirect`.
             use_indexed_indirect = true;
