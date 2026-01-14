@@ -2187,11 +2187,18 @@ fn decodes_and_translates_ftoi_conversion() {
     let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
     let module = decode_program(&program).expect("SM4 decode");
 
-    assert!(
-        matches!(module.instructions[1], Sm4Inst::Ftoi { .. }),
-        "expected second instruction to decode as ftoi: {:#?}",
-        module.instructions
-    );
+    match &module.instructions[1] {
+        Sm4Inst::Ftoi { dst, .. } => {
+            assert!(
+                !dst.saturate,
+                "expected ftoi_sat to ignore saturate flag on integer results"
+            );
+        }
+        other => panic!(
+            "expected second instruction to decode as ftoi, got: {other:?}\nfull program: {:#?}",
+            module.instructions
+        ),
+    }
 
     let signatures = parse_signatures(&dxbc).expect("parse signatures");
     let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
@@ -2233,9 +2240,9 @@ fn decodes_and_translates_ftou_conversion() {
         (-4.0f32).to_bits(),
     ]));
 
-    // ftou r1, r0
+    // ftou_sat r1, r0 (saturate should be ignored for integer results)
     let len_without_ext = 1u32 + 2 + 2;
-    body.push(opcode_token(OPCODE_FTOU, len_without_ext));
+    body.extend_from_slice(&opcode_token_with_sat(OPCODE_FTOU, len_without_ext));
     body.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 1, WriteMask::XYZW));
     body.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, &[0], Swizzle::XYZW));
 
@@ -2260,11 +2267,18 @@ fn decodes_and_translates_ftou_conversion() {
     let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
     let module = decode_program(&program).expect("SM4 decode");
 
-    assert!(
-        matches!(module.instructions[1], Sm4Inst::Ftou { .. }),
-        "expected second instruction to decode as ftou: {:#?}",
-        module.instructions
-    );
+    match &module.instructions[1] {
+        Sm4Inst::Ftou { dst, .. } => {
+            assert!(
+                !dst.saturate,
+                "expected ftou_sat to ignore saturate flag on integer results"
+            );
+        }
+        other => panic!(
+            "expected second instruction to decode as ftou, got: {other:?}\nfull program: {:#?}",
+            module.instructions
+        ),
+    }
 
     let signatures = parse_signatures(&dxbc).expect("parse signatures");
     let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
@@ -2276,6 +2290,12 @@ fn decodes_and_translates_ftou_conversion() {
             .wgsl
             .contains("bitcast<vec4<f32>>(vec4<u32>(r0))"),
         "expected ftou to emit bitcast<vec4<f32>>(vec4<u32>(...)):\n{}",
+        translated.wgsl
+    );
+    // Saturate should not be applied to integer results.
+    assert!(
+        !translated.wgsl.contains("clamp(("),
+        "did not expect any clamp() calls for ftou:\n{}",
         translated.wgsl
     );
 }
