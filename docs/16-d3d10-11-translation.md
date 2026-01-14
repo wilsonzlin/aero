@@ -840,7 +840,9 @@ expansion outputs store the same logical interface that the pixel shader consume
 raw 32-bit lanes:
 
 - `pos_bits`: `vec4<u32>` containing IEEE-754 `f32` bits for `SV_Position`
-- `vN_bits`: `vec4<u32>` per linked varying location `N`
+- `varyings[i]`: `vec4<u32>` for the *i*th linked varying, where varyings are ordered by ascending
+  `@location` number (i.e. `varying_locations` is a sorted list and `varyings[i]` corresponds to
+  `@location(varying_locations[i])`).
 
 One concrete layout:
 
@@ -852,12 +854,12 @@ struct ExpandedVertex {
 }
 ```
 
-Where `VARYING_COUNT` is derived from the linked VS/GS/DS → PS signature intersection (the same
-location set used by the direct render path). The passthrough vertex shader then:
+Where `VARYING_COUNT` is the number of linked varyings in the VS/GS/DS → PS signature intersection.
+The passthrough vertex shader then:
 
 - loads `pos_bits` and `bitcast<vec4<f32>>()` to write `@builtin(position)`, and
-- for each location `N`, loads `varyings[N]` and bitcasts to the exact WGSL type declared by the
-  translated PS input (respecting interpolation modifiers).
+- for each varying location `N` (with dense index `i`), loads `varyings[i]` and bitcasts to the
+  exact WGSL type declared by the translated PS input (respecting interpolation modifiers).
 
 Stride (bytes):
 
@@ -867,6 +869,24 @@ expanded_vertex_stride = 16 * (1 + VARYING_COUNT)
 
 This encoding is intentionally “register-like”: it avoids WGSL struct layout pitfalls and keeps the
 expansion pipeline independent of scalar type.
+
+**Vertex buffer view (for the final draw):**
+
+The final expansion output buffer (`tess_out_vertices` or `gs_out_vertices`) is consumed by the
+render pipeline by binding it as a WebGPU **vertex buffer**.
+
+To match the packed `ExpandedVertex` layout above:
+
+- Each `vec4<u32>` lane is represented as a `VertexFormat::Uint32x4` attribute.
+- `pos_bits` is bound at a dedicated `@location(P)` chosen to not collide with PS varying locations.
+- Each varying location `N` is bound at `@location(N)`.
+- Attribute offsets are tightly packed 16-byte chunks:
+  - `pos_bits` offset = 0
+  - the `i`th varying in ascending-location order offset = `16 * (1 + i)`
+- `array_stride = expanded_vertex_stride_bytes`
+
+This keeps the final draw in the “normal” vertex-input path (no storage-buffer reads in the vertex
+stage), while still being bit-preserving via `bitcast`.
 
 #### 2.3) Indirect draw argument formats
 
@@ -958,16 +978,10 @@ with an implementation-defined workgroup size chosen by the translator/runtime.
 
 **Passthrough VS strategy (concrete)**
 
-The current executor implements the final render stage by drawing a **host-generated vertex
-buffer** (the final expansion output) with a small **passthrough vertex shader** plus the original
-pixel shader.
-
-The passthrough VS uses normal WebGPU vertex inputs (not storage-buffer vertex pulling). It
-expects:
-
-- A dedicated clip-space position attribute stored as `vec4<f32>`.
-- One `vec4<f32>` attribute for each varying location required by the pixel shader, which the
-  passthrough VS forwards unchanged to the fragment stage.
+The final render stage uses a small **passthrough vertex shader** plus the original pixel shader.
+The passthrough VS uses normal WebGPU vertex inputs (no storage-buffer reads in the vertex stage)
+and is “bit-preserving”: it accepts `vec4<u32>` lanes and bitcasts them into the types expected by
+the pixel shader interface.
 
 The D3D11 command executor generates this passthrough WGSL on demand (see
 `wgsl_gs_passthrough_vertex_shader` in `crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs`).
@@ -976,22 +990,23 @@ Conceptually:
 ```wgsl
 struct VsIn {
   // P is chosen to not collide with varying locations.
-  @location(P) pos: vec4<f32>,
+  @location(P) pos_bits: vec4<u32>,
   // One attribute per varying required by the PS.
-  @location(N) vN: vec4<f32>,
+  @location(N) vN_bits: vec4<u32>,
 };
 
 struct VsOut {
   @builtin(position) pos: vec4<f32>,
+  // For each varying location N: the exact type required by the translated PS input signature.
   @location(N) vN: vec4<f32>,
 };
 
 @vertex
 fn vs_main(input: VsIn) -> VsOut {
   var out: VsOut;
-  out.pos = input.pos;
+  out.pos = bitcast<vec4<f32>>(input.pos_bits);
   // For each varying location N:
-  //   out.vN = input.vN;
+  //   out.vN = bitcast<vec4<f32>>(input.vN_bits);
   return out;
 }
 ```
@@ -1002,9 +1017,13 @@ Notes:
   the pixel shader’s input interface.
 - This path is limited by WebGPU’s vertex input limits (`max_vertex_attributes` and the highest used
   `@location`). When exceeded, the executor fails with a clear “GS passthrough” error.
-- The passthrough VS has no bindings; the render pipeline layout still uses the normal stage-scoped
-  bind groups for the application’s VS/PS resources (even though the passthrough VS itself does not
-  read from them).
+- The passthrough VS has no bindings; however the render pipeline layout must still include the PS
+  bind group(s) (typically `@group(1)`). Implementations may include an empty `@group(0)` or the
+  original VS layout for cache compatibility, but no VS resources are required by the passthrough VS
+  itself.
+- Implementation note: the in-tree placeholder GS prepass currently writes `vec4<f32>` attributes.
+  When switching to the `ExpandedVertex` bit-preserving layout described above, update the
+  passthrough VS generator and the vertex buffer formats to use `Uint32x4`.
 
 #### 2.5) Render-pass splitting constraints
 
