@@ -16,7 +16,9 @@ fn pack_u16_indices_to_words(indices: &[u16]) -> Vec<u32> {
 }
 
 async fn create_device_queue() -> Result<(wgpu::Device, wgpu::Queue, bool)> {
-    common::wgpu::create_device_queue("aero-d3d11 index_pulling test device").await
+    let (device, queue, supports_compute) =
+        common::wgpu::create_device_queue("aero-d3d11 index_pulling test device").await?;
+    Ok((device, queue, supports_compute))
 }
 
 async fn run_index_pulling_case(

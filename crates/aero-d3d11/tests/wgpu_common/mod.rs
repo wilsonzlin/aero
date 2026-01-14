@@ -13,7 +13,8 @@ mod common;
 pub async fn create_device_queue(
     device_label: &str,
 ) -> Result<(wgpu::Device, wgpu::Queue, bool)> {
-    common::wgpu::create_device_queue(device_label).await
+    let (device, queue, supports_compute) = common::wgpu::create_device_queue(device_label).await?;
+    Ok((device, queue, supports_compute))
 }
 
 pub async fn read_texture_rgba8(

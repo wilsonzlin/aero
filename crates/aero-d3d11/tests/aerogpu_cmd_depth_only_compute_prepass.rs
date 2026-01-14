@@ -48,6 +48,15 @@ fn aerogpu_cmd_depth_only_compute_prepass_writes_depth() {
             return;
         }
 
+        if !exec.capabilities().supports_compute {
+            common::skip_or_panic(module_path!(), "compute unsupported");
+            return;
+        }
+        if !exec.capabilities().supports_indirect_execution {
+            common::skip_or_panic(module_path!(), "indirect execution unsupported");
+            return;
+        }
+
         const VB: u32 = 1;
         const C: u32 = 2;
         const D: u32 = 3;

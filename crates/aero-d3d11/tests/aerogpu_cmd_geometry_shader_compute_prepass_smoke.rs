@@ -62,6 +62,15 @@ fn aerogpu_cmd_geometry_shader_compute_prepass_smoke() {
             return;
         }
 
+        if !exec.capabilities().supports_compute {
+            common::skip_or_panic(module_path!(), "compute unsupported");
+            return;
+        }
+        if !exec.capabilities().supports_indirect_execution {
+            common::skip_or_panic(module_path!(), "indirect execution unsupported");
+            return;
+        }
+
         const RT: u32 = 1;
         const VS: u32 = 2;
         const PS: u32 = 3;

@@ -80,16 +80,17 @@ fn compute_bitfield_ops_produce_expected_results() {
             "::compute_bitfield_ops_produce_expected_results"
         );
 
-        let (device, queue, supports_compute) =
-            match common::wgpu::create_device_queue("aero-d3d11 bitfield semantics test device")
-                .await
-            {
-                Ok(v) => v,
-                Err(err) => {
-                    common::skip_or_panic(test_name, &format!("wgpu unavailable ({err:#})"));
-                    return;
-                }
-            };
+        let (device, queue, supports_compute) = match common::wgpu::create_device_queue(
+            "aero-d3d11 bitfield semantics test device",
+        )
+        .await
+        {
+            Ok(v) => v,
+            Err(err) => {
+                common::skip_or_panic(test_name, &format!("wgpu unavailable ({err:#})"));
+                return;
+            }
+        };
 
         if !supports_compute {
             common::skip_or_panic(test_name, "compute unsupported");

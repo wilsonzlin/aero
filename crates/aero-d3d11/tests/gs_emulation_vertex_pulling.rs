@@ -60,7 +60,9 @@ fn build_pos2_color4_ilay_blob() -> Vec<u8> {
 }
 
 async fn create_device_queue() -> Result<(wgpu::Device, wgpu::Queue, bool)> {
-    common::wgpu::create_device_queue("aero-d3d11 vertex pulling test device").await
+    let (device, queue, supports_compute) =
+        common::wgpu::create_device_queue("aero-d3d11 vertex pulling test device").await?;
+    Ok((device, queue, supports_compute))
 }
 
 async fn read_buffer(

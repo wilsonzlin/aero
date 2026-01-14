@@ -63,6 +63,15 @@ fn aerogpu_cmd_geometry_shader_compute_prepass_vertex_pulling_smoke() {
             return;
         }
 
+        if !exec.capabilities().supports_compute {
+            common::skip_or_panic(module_path!(), "compute unsupported");
+            return;
+        }
+        if !exec.capabilities().supports_indirect_execution {
+            common::skip_or_panic(module_path!(), "indirect execution unsupported");
+            return;
+        }
+
         let mut stream = CMD_TRIANGLE_SM4.to_vec();
         patch_first_bind_shaders_set_dummy_gs(&mut stream, 0xCAFE_BABE);
 

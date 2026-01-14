@@ -48,6 +48,15 @@ fn aerogpu_cmd_geometry_shader_compute_prepass_draw_indexed_smoke() {
             return;
         }
 
+        if !exec.capabilities().supports_compute {
+            common::skip_or_panic(module_path!(), "compute unsupported");
+            return;
+        }
+        if !exec.capabilities().supports_indirect_execution {
+            common::skip_or_panic(module_path!(), "indirect execution unsupported");
+            return;
+        }
+
         const RT: u32 = 1;
         const VB: u32 = 2;
         const IB: u32 = 3;
