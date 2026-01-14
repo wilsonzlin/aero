@@ -167,7 +167,6 @@ Aero uses a typed configuration object (`AeroConfig`) that can be sourced from m
 | `mem`     | number (MiB) | `guestMemoryMiB` | `?mem=2048` |
 | `workers` | bool | `enableWorkers` | `?workers=0` |
 | `webgpu`  | bool | `enableWebGPU` | `?webgpu=1` |
-| `vm`      | string (`legacy` or `machine`) | `vm` | `?vm=machine` |
 | `proxy`   | string \| `null` | `proxyUrl` | `?proxy=https%3A%2F%2Fgateway.example.com` |
 | `disk`    | string \| `null` | `activeDiskImage` | `?disk=win7-sp1.img` |
 | `log`     | `trace|debug|info|warn|error` | `logLevel` | `?log=debug` |
@@ -190,12 +189,17 @@ Aero uses a typed configuration object (`AeroConfig`) that can be sourced from m
 - `proxy` (`proxyUrl`) may be either an absolute `ws(s)://` / `http(s)://` URL or a same-origin path like `/l2` (legacy alias: `/eth`).
 - `vmRuntime` can also be set via `?machine=1` (shorthand for `?vm=machine`).
 
-### VM runtime modes (`vm`)
+### VM runtime modes (`vmRuntime`)
 
 Aero currently exposes two browser VM runtimes:
 
-- **Legacy mode** (`vm=legacy`, default): the historical split runtime where the CPU loop runs in WASM and port I/O / MMIO are forwarded to TypeScript device shims.
-- **Machine mode** (`vm=machine`): runs the canonical full-system VM (`api.Machine`, backed by `aero_machine::Machine`) and uses its canonical device topology.
+- **Legacy mode** (`vmRuntime=legacy`, default): the historical split runtime where the CPU loop runs in WASM and port I/O / MMIO are forwarded to TypeScript device shims.
+- **Machine mode** (`vmRuntime=machine`): runs the canonical full-system VM (`api.Machine`, backed by `aero_machine::Machine`) and uses its canonical device topology.
+
+Selection:
+
+- Config: `vmRuntime: "legacy" | "machine"`
+- URL: `?vm=legacy|machine` (alias: `?vmRuntime=...`)
 
 Machine mode is required for Windows 7 storage bring-up because Windows Setup expects a compatibility-first controller topology:
 
