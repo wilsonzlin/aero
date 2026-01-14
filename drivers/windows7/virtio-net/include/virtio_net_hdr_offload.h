@@ -139,6 +139,11 @@ typedef struct _VIRTIO_NET_HDR_OFFLOAD_RX_INFO {
  * Parse an Ethernet frame (with up to 2 VLAN tags) and locate the L3/L4 headers.
  * Offsets are relative to the beginning of the Ethernet frame.
  *
+ * This function validates that the buffer contains the full IP packet as
+ * described by IPv4 `total_len` / IPv6 `payload_len` (jumbograms are not
+ * supported). For parsing only the headers from a partial buffer (common on
+ * transmit), see `VirtioNetHdrOffloadParseFrameHeaders`.
+ *
  * Notes:
  * - On success, `Info->L4Proto` is always populated (for IPv4/IPv6). If the
  *   transport header cannot be parsed (unsupported protocol, non-first fragment,
@@ -147,6 +152,17 @@ typedef struct _VIRTIO_NET_HDR_OFFLOAD_RX_INFO {
  *   or an IPv6 Fragment header).
  */
 VIRTIO_NET_HDR_OFFLOAD_STATUS VirtioNetHdrOffloadParseFrame(const uint8_t* Frame, size_t FrameLen, VIRTIO_NET_HDR_OFFLOAD_FRAME_INFO* Info);
+
+/*
+ * Like `VirtioNetHdrOffloadParseFrame`, but only requires enough bytes to locate
+ * and parse the L3/L4 headers. The function does not require that the buffer
+ * contains the full IP packet as implied by IPv4 `total_len`/IPv6 `payload_len`.
+ *
+ * This is useful for transmit paths where only the headers are available in a
+ * contiguous buffer (e.g. large TSO packets).
+ */
+VIRTIO_NET_HDR_OFFLOAD_STATUS VirtioNetHdrOffloadParseFrameHeaders(const uint8_t* Frame, size_t FrameLen,
+                                                                   VIRTIO_NET_HDR_OFFLOAD_FRAME_INFO* Info);
 
 /*
  * Compute virtio-net header fields for checksum offload and/or TSO.

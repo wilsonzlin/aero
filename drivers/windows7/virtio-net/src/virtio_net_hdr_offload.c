@@ -96,7 +96,7 @@ static VIRTIO_NET_HDR_OFFLOAD_STATUS VirtioNetHdrOffloadParseUdp(const uint8_t* 
 }
 
 static VIRTIO_NET_HDR_OFFLOAD_STATUS VirtioNetHdrOffloadParseIpv4(const uint8_t* Frame, size_t FrameLen, size_t L3Offset,
-                                                                  VIRTIO_NET_HDR_OFFLOAD_FRAME_INFO* Info) {
+                                                                  VIRTIO_NET_HDR_OFFLOAD_FRAME_INFO* Info, int StrictLength) {
   VIRTIO_NET_HDR_OFFLOAD_STATUS St;
   const uint8_t* Ip;
   uint8_t Version;
@@ -135,11 +135,16 @@ static VIRTIO_NET_HDR_OFFLOAD_STATUS VirtioNetHdrOffloadParseIpv4(const uint8_t*
   if (TotalLen < (uint16_t)IpHdrLen) {
     return VIRTIO_NET_HDR_OFFLOAD_STATUS_MALFORMED;
   }
-  if (TotalLen != 0 && (size_t)TotalLen > FrameLen - L3Offset) {
+  if (StrictLength && TotalLen != 0 && (size_t)TotalLen > FrameLen - L3Offset) {
     return VIRTIO_NET_HDR_OFFLOAD_STATUS_TRUNCATED;
   }
 
-  MaxEnd = (TotalLen != 0) ? (L3Offset + (size_t)TotalLen) : FrameLen;
+  if (TotalLen != 0) {
+    size_t PacketEnd = L3Offset + (size_t)TotalLen;
+    MaxEnd = (PacketEnd < FrameLen) ? PacketEnd : FrameLen;
+  } else {
+    MaxEnd = FrameLen;
+  }
 
   Info->L3Proto = (uint8_t)VIRTIO_NET_HDR_OFFLOAD_L3_IPV4;
   Info->L3Offset = (uint16_t)L3Offset;
@@ -180,7 +185,7 @@ static VIRTIO_NET_HDR_OFFLOAD_STATUS VirtioNetHdrOffloadParseIpv4(const uint8_t*
 }
 
 static VIRTIO_NET_HDR_OFFLOAD_STATUS VirtioNetHdrOffloadParseIpv6(const uint8_t* Frame, size_t FrameLen, size_t L3Offset,
-                                                                  VIRTIO_NET_HDR_OFFLOAD_FRAME_INFO* Info) {
+                                                                  VIRTIO_NET_HDR_OFFLOAD_FRAME_INFO* Info, int StrictLength) {
   VIRTIO_NET_HDR_OFFLOAD_STATUS St;
   const uint8_t* Ip;
   uint8_t Version;
@@ -207,10 +212,13 @@ static VIRTIO_NET_HDR_OFFLOAD_STATUS VirtioNetHdrOffloadParseIpv6(const uint8_t*
    * Payload length excludes the 40-byte base header. If it's non-zero, ensure
    * the packet isn't truncated. (We don't currently support jumbograms.)
    */
-  if ((size_t)PayloadLen > FrameLen - L3Offset - 40u) {
+  if (StrictLength && (size_t)PayloadLen > FrameLen - L3Offset - 40u) {
     return VIRTIO_NET_HDR_OFFLOAD_STATUS_TRUNCATED;
   }
-  MaxEnd = L3Offset + 40u + (size_t)PayloadLen;
+  {
+    size_t PacketEnd = L3Offset + 40u + (size_t)PayloadLen;
+    MaxEnd = (PacketEnd < FrameLen) ? PacketEnd : FrameLen;
+  }
 
   NextHdr = Ip[6];
   Offset = L3Offset + 40u;
@@ -322,8 +330,8 @@ static VIRTIO_NET_HDR_OFFLOAD_STATUS VirtioNetHdrOffloadParseIpv6(const uint8_t*
   }
 }
 
-VIRTIO_NET_HDR_OFFLOAD_STATUS VirtioNetHdrOffloadParseFrame(const uint8_t* Frame, size_t FrameLen,
-                                                            VIRTIO_NET_HDR_OFFLOAD_FRAME_INFO* Info) {
+static VIRTIO_NET_HDR_OFFLOAD_STATUS VirtioNetHdrOffloadParseFrameInternal(const uint8_t* Frame, size_t FrameLen,
+                                                                           VIRTIO_NET_HDR_OFFLOAD_FRAME_INFO* Info, int StrictLength) {
   VIRTIO_NET_HDR_OFFLOAD_STATUS St;
   size_t Offset;
   uint16_t EtherType;
@@ -365,12 +373,21 @@ VIRTIO_NET_HDR_OFFLOAD_STATUS VirtioNetHdrOffloadParseFrame(const uint8_t* Frame
 
   switch (EtherType) {
     case 0x0800u:
-      return VirtioNetHdrOffloadParseIpv4(Frame, FrameLen, Offset, Info);
+      return VirtioNetHdrOffloadParseIpv4(Frame, FrameLen, Offset, Info, StrictLength);
     case 0x86DDu:
-      return VirtioNetHdrOffloadParseIpv6(Frame, FrameLen, Offset, Info);
+      return VirtioNetHdrOffloadParseIpv6(Frame, FrameLen, Offset, Info, StrictLength);
     default:
       return VIRTIO_NET_HDR_OFFLOAD_STATUS_UNSUPPORTED;
   }
+}
+
+VIRTIO_NET_HDR_OFFLOAD_STATUS VirtioNetHdrOffloadParseFrame(const uint8_t* Frame, size_t FrameLen, VIRTIO_NET_HDR_OFFLOAD_FRAME_INFO* Info) {
+  return VirtioNetHdrOffloadParseFrameInternal(Frame, FrameLen, Info, 1);
+}
+
+VIRTIO_NET_HDR_OFFLOAD_STATUS VirtioNetHdrOffloadParseFrameHeaders(const uint8_t* Frame, size_t FrameLen,
+                                                                   VIRTIO_NET_HDR_OFFLOAD_FRAME_INFO* Info) {
+  return VirtioNetHdrOffloadParseFrameInternal(Frame, FrameLen, Info, 0);
 }
 
 VIRTIO_NET_HDR_OFFLOAD_STATUS VirtioNetHdrOffloadBuildTxHdr(const VIRTIO_NET_HDR_OFFLOAD_FRAME_INFO* Info,
@@ -446,7 +463,7 @@ VIRTIO_NET_HDR_OFFLOAD_STATUS VirtioNetHdrOffloadBuildTxHdrFromFrame(const uint8
     return VIRTIO_NET_HDR_OFFLOAD_STATUS_OK;
   }
 
-  St = VirtioNetHdrOffloadParseFrame(Frame, FrameLen, &Info);
+  St = VirtioNetHdrOffloadParseFrameHeaders(Frame, FrameLen, &Info);
   if (St != VIRTIO_NET_HDR_OFFLOAD_STATUS_OK) {
     return St;
   }

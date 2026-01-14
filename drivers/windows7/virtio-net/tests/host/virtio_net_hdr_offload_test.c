@@ -110,6 +110,100 @@ static int test_ipv4_tcp_no_vlan(void) {
   return 0;
 }
 
+static int test_tx_tso_build_with_partial_ipv4_buffer(void) {
+  /* Only L2+L3+L4 headers are present, but IPv4 total_len claims a much larger packet. */
+  static const uint8_t Frame[] = {
+      /* dst/src */
+      0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb,
+      /* ethertype IPv4 */
+      0x08, 0x00,
+      /* IPv4 header */
+      0x45, 0x00, 0x0f, 0xa0, /* ihl=5, total_len=4000 */
+      0x00, 0x00, 0x00, 0x00, 0x40, 0x06, 0x00, 0x00, /* proto=TCP */
+      0xc0, 0x00, 0x02, 0x01, 0xc6, 0x33, 0x64, 0x02,
+      /* TCP header */
+      0x1f, 0x90, 0x00, 0x50, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x50, 0x10, 0x00, 0x00,
+      0x00, 0x00, 0x00, 0x00,
+  };
+
+  VIRTIO_NET_HDR_OFFLOAD_FRAME_INFO Info;
+  VIRTIO_NET_HDR_OFFLOAD_TX_REQUEST TxReq;
+  VIRTIO_NET_HDR Hdr;
+  VIRTIO_NET_HDR_OFFLOAD_STATUS St;
+
+  /* Strict parsing should reject because total_len exceeds provided bytes. */
+  St = VirtioNetHdrOffloadParseFrame(Frame, sizeof(Frame), &Info);
+  ASSERT_EQ_INT(St, VIRTIO_NET_HDR_OFFLOAD_STATUS_TRUNCATED);
+
+  /* Header-only parse must succeed. */
+  St = VirtioNetHdrOffloadParseFrameHeaders(Frame, sizeof(Frame), &Info);
+  ASSERT_EQ_INT(St, VIRTIO_NET_HDR_OFFLOAD_STATUS_OK);
+  ASSERT_EQ_U8(Info.L3Proto, VIRTIO_NET_HDR_OFFLOAD_L3_IPV4);
+  ASSERT_EQ_U8(Info.L4Proto, 6);
+  ASSERT_EQ_U16(Info.PayloadOffset, 54);
+
+  memset(&TxReq, 0, sizeof(TxReq));
+  TxReq.Tso = 1;
+  TxReq.TsoMss = 1460;
+  St = VirtioNetHdrOffloadBuildTxHdrFromFrame(Frame, sizeof(Frame), &TxReq, &Hdr);
+  ASSERT_EQ_INT(St, VIRTIO_NET_HDR_OFFLOAD_STATUS_OK);
+  ASSERT_EQ_U8(Hdr.GsoType, VIRTIO_NET_HDR_GSO_TCPV4);
+  ASSERT_EQ_U16(Hdr.GsoSize, 1460);
+  ASSERT_EQ_U16(Hdr.HdrLen, 54);
+  ASSERT_EQ_U16(Hdr.CsumStart, 34);
+  ASSERT_EQ_U16(Hdr.CsumOffset, 16);
+
+  return 0;
+}
+
+static int test_tx_tso_build_with_partial_ipv6_buffer(void) {
+  /* Only L2+L3+L4 headers are present, but IPv6 payload_len claims a much larger packet. */
+  static const uint8_t Frame[] = {
+      /* dst/src */
+      0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb,
+      /* ethertype IPv6 */
+      0x86, 0xdd,
+      /* IPv6 header: version=6, payload_len=4096, next=TCP, hop=64 */
+      0x60, 0x00, 0x00, 0x00, 0x10, 0x00, 0x06, 0x40,
+      /* src addr */
+      0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    1,
+      /* dst addr */
+      0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    2,
+      /* TCP header */
+      0x1f, 0x90, 0x00, 0x50, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x50, 0x10, 0x00, 0x00,
+      0x00, 0x00, 0x00, 0x00,
+  };
+
+  VIRTIO_NET_HDR_OFFLOAD_FRAME_INFO Info;
+  VIRTIO_NET_HDR_OFFLOAD_TX_REQUEST TxReq;
+  VIRTIO_NET_HDR Hdr;
+  VIRTIO_NET_HDR_OFFLOAD_STATUS St;
+
+  /* Strict parsing should reject because payload_len exceeds provided bytes. */
+  St = VirtioNetHdrOffloadParseFrame(Frame, sizeof(Frame), &Info);
+  ASSERT_EQ_INT(St, VIRTIO_NET_HDR_OFFLOAD_STATUS_TRUNCATED);
+
+  /* Header-only parse must succeed. */
+  St = VirtioNetHdrOffloadParseFrameHeaders(Frame, sizeof(Frame), &Info);
+  ASSERT_EQ_INT(St, VIRTIO_NET_HDR_OFFLOAD_STATUS_OK);
+  ASSERT_EQ_U8(Info.L3Proto, VIRTIO_NET_HDR_OFFLOAD_L3_IPV6);
+  ASSERT_EQ_U8(Info.L4Proto, 6);
+  ASSERT_EQ_U16(Info.PayloadOffset, 74);
+
+  memset(&TxReq, 0, sizeof(TxReq));
+  TxReq.Tso = 1;
+  TxReq.TsoMss = 1440;
+  St = VirtioNetHdrOffloadBuildTxHdrFromFrame(Frame, sizeof(Frame), &TxReq, &Hdr);
+  ASSERT_EQ_INT(St, VIRTIO_NET_HDR_OFFLOAD_STATUS_OK);
+  ASSERT_EQ_U8(Hdr.GsoType, VIRTIO_NET_HDR_GSO_TCPV6);
+  ASSERT_EQ_U16(Hdr.GsoSize, 1440);
+  ASSERT_EQ_U16(Hdr.HdrLen, 74);
+  ASSERT_EQ_U16(Hdr.CsumStart, 54);
+  ASSERT_EQ_U16(Hdr.CsumOffset, 16);
+
+  return 0;
+}
+
 static int test_no_offload_builds_zero(void) {
   VIRTIO_NET_HDR_OFFLOAD_FRAME_INFO Info;
   VIRTIO_NET_HDR_OFFLOAD_TX_REQUEST TxReq;
@@ -979,6 +1073,8 @@ int main(void) {
 
   rc = 0;
   rc |= test_ipv4_tcp_no_vlan();
+  rc |= test_tx_tso_build_with_partial_ipv4_buffer();
+  rc |= test_tx_tso_build_with_partial_ipv6_buffer();
   rc |= test_no_offload_builds_zero();
   rc |= test_ipv4_udp_no_vlan();
   rc |= test_ipv4_vlan_udp();
