@@ -26,6 +26,7 @@ If WebUSB calls like `requestDevice()`, `device.open()`, or `device.claimInterfa
 
 - For a quick browser-level smoke test, use the in-app **WebUSB** panel (main UI) or open the standalone diagnostics page:
   - For an end-to-end passthrough smoke test (UHCI TDs → WASM harness → WebUSB → completions), use the in-app **“UHCI passthrough harness (WebUSB)”** panel. It runs a minimal USB enumeration sequence and prints the resulting device + configuration descriptor bytes.
+  - For an EHCI-oriented passthrough smoke test (validates WebUSB action↔completion plumbing + EHCI-style `USBSTS`/IRQ semantics; not a full qTD/QH schedule engine), use the in-app **“EHCI passthrough harness (WebUSB)”** panel.
   - `/webusb_diagnostics.html`
   - The diagnostics page can also list `navigator.usb.getDevices()` (already-granted devices) and copy a JSON summary for bug reports.
 - **Secure context required:** WebUSB requires `https://` or `http://localhost` (`isSecureContext === true`).
@@ -196,6 +197,10 @@ When we say “USB passthrough” in Aero, what is realistically achievable in t
 
 - **Forwarding USB control/bulk/interrupt transfers** for a **vendor-specific interface** that WebUSB can claim.
 
+Note: the **guest-visible USB controller** matters. Aero’s production passthrough path is currently
+UHCI (full-speed), which can be incompatible with some **high-speed-only** devices. High-speed
+passthrough is planned via EHCI/xHCI.
+
 We should avoid promising:
 
 - HID passthrough (keyboards/mice/controllers)
@@ -208,3 +213,5 @@ Those need separate, purpose-built integrations (virtio input, file import/expor
 ## Related docs
 
 - [`docs/webusb-passthrough.md`](./webusb-passthrough.md) — UHCI ↔ WebUSB passthrough architecture and TD-level NAK pending semantics
+- [`docs/usb-ehci.md`](./usb-ehci.md) — EHCI (USB 2.0) emulation contracts
+- [`docs/usb-xhci.md`](./usb-xhci.md) — xHCI (USB 3.x) emulation contracts
