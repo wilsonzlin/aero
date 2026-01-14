@@ -23,6 +23,7 @@
 #include <vector>
 
 #include "aerogpu_cmd_writer.h"
+#include "aerogpu_dxgi_format.h"
 #include "../../common/aerogpu_win32_security.h"
 #include "aerogpu_d3d10_11_log.h"
 #include "aerogpu_d3d10_11_wddm_submit_alloc.h"
@@ -68,39 +69,6 @@ constexpr uint32_t kD3D11UsageStaging = 3;
 // when swapchain backbuffer handles are rotated.
 constexpr uint32_t kAeroGpuD3D11MaxSrvSlots = 128;
 
-// DXGI_FORMAT subset (numeric values from dxgiformat.h).
-constexpr uint32_t kDxgiFormatUnknown = 0;
-constexpr uint32_t kDxgiFormatR32G32B32A32Float = 2;
-constexpr uint32_t kDxgiFormatR32G32B32Float = 6;
-constexpr uint32_t kDxgiFormatR32G32Float = 16;
-constexpr uint32_t kDxgiFormatR8G8B8A8Typeless = 27;
-constexpr uint32_t kDxgiFormatR8G8B8A8Unorm = 28;
-constexpr uint32_t kDxgiFormatR8G8B8A8UnormSrgb = 29;
-constexpr uint32_t kDxgiFormatBc1Typeless = 70;
-constexpr uint32_t kDxgiFormatBc1Unorm = 71;
-constexpr uint32_t kDxgiFormatBc1UnormSrgb = 72;
-constexpr uint32_t kDxgiFormatBc2Typeless = 73;
-constexpr uint32_t kDxgiFormatBc2Unorm = 74;
-constexpr uint32_t kDxgiFormatBc2UnormSrgb = 75;
-constexpr uint32_t kDxgiFormatBc3Typeless = 76;
-constexpr uint32_t kDxgiFormatBc3Unorm = 77;
-constexpr uint32_t kDxgiFormatBc3UnormSrgb = 78;
-constexpr uint32_t kDxgiFormatR32Uint = 42;
-constexpr uint32_t kDxgiFormatD32Float = 40;
-constexpr uint32_t kDxgiFormatD24UnormS8Uint = 45;
-constexpr uint32_t kDxgiFormatR16Uint = 57;
-constexpr uint32_t kDxgiFormatB5G6R5Unorm = 85;
-constexpr uint32_t kDxgiFormatB5G5R5A1Unorm = 86;
-constexpr uint32_t kDxgiFormatB8G8R8A8Unorm = 87;
-constexpr uint32_t kDxgiFormatB8G8R8X8Unorm = 88;
-constexpr uint32_t kDxgiFormatB8G8R8A8Typeless = 90;
-constexpr uint32_t kDxgiFormatB8G8R8A8UnormSrgb = 91;
-constexpr uint32_t kDxgiFormatB8G8R8X8Typeless = 92;
-constexpr uint32_t kDxgiFormatB8G8R8X8UnormSrgb = 93;
-constexpr uint32_t kDxgiFormatBc7Typeless = 97;
-constexpr uint32_t kDxgiFormatBc7Unorm = 98;
-constexpr uint32_t kDxgiFormatBc7UnormSrgb = 99;
-
 inline uint32_t f32_bits(float v) {
   uint32_t bits = 0;
   static_assert(sizeof(bits) == sizeof(v), "float must be 32-bit");
@@ -141,139 +109,6 @@ constexpr uint64_t AlignUpU64(uint64_t value, uint64_t alignment) {
 // power of two.
 constexpr uint32_t AlignUpU32(uint32_t value, uint32_t alignment) {
   return static_cast<uint32_t>((value + alignment - 1) & ~(alignment - 1));
-}
-
-inline uint32_t dxgi_format_to_aerogpu(uint32_t dxgi_format) {
-  switch (dxgi_format) {
-    case kDxgiFormatB5G6R5Unorm:
-      return AEROGPU_FORMAT_B5G6R5_UNORM;
-    case kDxgiFormatB5G5R5A1Unorm:
-      return AEROGPU_FORMAT_B5G5R5A1_UNORM;
-    case kDxgiFormatB8G8R8A8Unorm:
-    case kDxgiFormatB8G8R8A8Typeless:
-      return AEROGPU_FORMAT_B8G8R8A8_UNORM;
-    case kDxgiFormatB8G8R8A8UnormSrgb:
-      return AEROGPU_FORMAT_B8G8R8A8_UNORM_SRGB;
-    case kDxgiFormatB8G8R8X8Unorm:
-    case kDxgiFormatB8G8R8X8Typeless:
-      return AEROGPU_FORMAT_B8G8R8X8_UNORM;
-    case kDxgiFormatB8G8R8X8UnormSrgb:
-      return AEROGPU_FORMAT_B8G8R8X8_UNORM_SRGB;
-    case kDxgiFormatR8G8B8A8Unorm:
-    case kDxgiFormatR8G8B8A8Typeless:
-      return AEROGPU_FORMAT_R8G8B8A8_UNORM;
-    case kDxgiFormatR8G8B8A8UnormSrgb:
-      return AEROGPU_FORMAT_R8G8B8A8_UNORM_SRGB;
-    case kDxgiFormatBc1Typeless:
-    case kDxgiFormatBc1Unorm:
-      return AEROGPU_FORMAT_BC1_RGBA_UNORM;
-    case kDxgiFormatBc1UnormSrgb:
-      return AEROGPU_FORMAT_BC1_RGBA_UNORM_SRGB;
-    case kDxgiFormatBc2Typeless:
-    case kDxgiFormatBc2Unorm:
-      return AEROGPU_FORMAT_BC2_RGBA_UNORM;
-    case kDxgiFormatBc2UnormSrgb:
-      return AEROGPU_FORMAT_BC2_RGBA_UNORM_SRGB;
-    case kDxgiFormatBc3Typeless:
-    case kDxgiFormatBc3Unorm:
-      return AEROGPU_FORMAT_BC3_RGBA_UNORM;
-    case kDxgiFormatBc3UnormSrgb:
-      return AEROGPU_FORMAT_BC3_RGBA_UNORM_SRGB;
-    case kDxgiFormatBc7Typeless:
-    case kDxgiFormatBc7Unorm:
-      return AEROGPU_FORMAT_BC7_RGBA_UNORM;
-    case kDxgiFormatBc7UnormSrgb:
-      return AEROGPU_FORMAT_BC7_RGBA_UNORM_SRGB;
-    case kDxgiFormatD24UnormS8Uint:
-      return AEROGPU_FORMAT_D24_UNORM_S8_UINT;
-    case kDxgiFormatD32Float:
-      return AEROGPU_FORMAT_D32_FLOAT;
-    default:
-      return AEROGPU_FORMAT_INVALID;
-  }
-}
-
-namespace detail {
-
-// Some DDIs ask format/cap questions on an adapter, while others ask through a
-// device/context that holds an `adapter` pointer. Keep the feature-gating helpers
-// generic so D3D10/D3D10.1/D3D11 UMDs can share the same logic without having to
-// keep per-UMD copies in sync.
-template <typename T, typename = void>
-struct HasAdapterMember : std::false_type {};
-
-template <typename T>
-struct HasAdapterMember<T, std::void_t<decltype(&T::adapter)>> : std::true_type {};
-
-template <typename T>
-inline auto GetCapsAdapter(const T* dev_or_adapter) {
-  if constexpr (HasAdapterMember<T>::value) {
-    return dev_or_adapter ? dev_or_adapter->adapter : nullptr;
-  } else {
-    return dev_or_adapter;
-  }
-}
-
-inline bool AbiMajorMinorAtLeast(const aerogpu_umd_private_v1& blob, uint32_t want_major, uint32_t want_minor) {
-  const uint32_t major = blob.device_abi_version_u32 >> 16;
-  const uint32_t minor = blob.device_abi_version_u32 & 0xFFFFu;
-  return (major == want_major) && (minor >= want_minor);
-}
-
-} // namespace detail
-
-template <typename T>
-inline bool SupportsTransfer(const T* dev_or_adapter) {
-  const auto* adapter = detail::GetCapsAdapter(dev_or_adapter);
-  if (!adapter || !adapter->umd_private_valid) {
-    return false;
-  }
-  const aerogpu_umd_private_v1& blob = adapter->umd_private;
-  if ((blob.device_features & AEROGPU_UMDPRIV_FEATURE_TRANSFER) == 0) {
-    return false;
-  }
-  return detail::AbiMajorMinorAtLeast(blob, AEROGPU_ABI_MAJOR, /*want_minor=*/1);
-}
-
-template <typename T>
-inline bool SupportsSrgbFormats(const T* dev_or_adapter) {
-  // ABI 1.2 adds explicit sRGB format variants. When running against an older
-  // host/device ABI, map sRGB DXGI formats to UNORM equivalents so the command
-  // stream stays compatible.
-  const auto* adapter = detail::GetCapsAdapter(dev_or_adapter);
-  if (!adapter || !adapter->umd_private_valid) {
-    return false;
-  }
-  return detail::AbiMajorMinorAtLeast(adapter->umd_private, AEROGPU_ABI_MAJOR, /*want_minor=*/2);
-}
-
-template <typename T>
-inline bool SupportsBcFormats(const T* dev_or_adapter) {
-  const auto* adapter = detail::GetCapsAdapter(dev_or_adapter);
-  if (!adapter || !adapter->umd_private_valid) {
-    return false;
-  }
-  return detail::AbiMajorMinorAtLeast(adapter->umd_private, AEROGPU_ABI_MAJOR, /*want_minor=*/2);
-}
-
-template <typename T>
-inline uint32_t dxgi_format_to_aerogpu_compat(const T* dev_or_adapter, uint32_t dxgi_format) {
-  if (!SupportsSrgbFormats(dev_or_adapter)) {
-    switch (dxgi_format) {
-      case kDxgiFormatB8G8R8A8UnormSrgb:
-        dxgi_format = kDxgiFormatB8G8R8A8Unorm;
-        break;
-      case kDxgiFormatB8G8R8X8UnormSrgb:
-        dxgi_format = kDxgiFormatB8G8R8X8Unorm;
-        break;
-      case kDxgiFormatR8G8B8A8UnormSrgb:
-        dxgi_format = kDxgiFormatR8G8B8A8Unorm;
-        break;
-      default:
-        break;
-    }
-  }
-  return dxgi_format_to_aerogpu(dxgi_format);
 }
 
 struct AerogpuTextureFormatLayout {

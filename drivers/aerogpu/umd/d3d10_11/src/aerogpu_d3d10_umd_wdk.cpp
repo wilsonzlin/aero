@@ -7514,7 +7514,8 @@ void APIENTRY ClearRenderTargetView(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRENDERTA
     bool is_16bpp = false;
     uint16_t packed16 = 0;
 
-    if (res->dxgi_format == kDxgiFormatB5G6R5Unorm || res->dxgi_format == kDxgiFormatB5G5R5A1Unorm) {
+    if (res->dxgi_format == aerogpu::d3d10_11::kDxgiFormatB5G6R5Unorm ||
+        res->dxgi_format == aerogpu::d3d10_11::kDxgiFormatB5G5R5A1Unorm) {
       bytes_per_pixel = 2;
       is_16bpp = true;
     }
@@ -7575,13 +7576,13 @@ void APIENTRY ClearRenderTargetView(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRENDERTA
         };
 
         bool have_packed = false;
-        if (res->dxgi_format == kDxgiFormatB5G6R5Unorm) {
+        if (res->dxgi_format == aerogpu::d3d10_11::kDxgiFormatB5G6R5Unorm) {
           const uint16_t r5 = static_cast<uint16_t>(float_to_unorm(color[0], 31));
           const uint16_t g6 = static_cast<uint16_t>(float_to_unorm(color[1], 63));
           const uint16_t b5 = static_cast<uint16_t>(float_to_unorm(color[2], 31));
           packed16 = static_cast<uint16_t>((r5 << 11) | (g6 << 5) | b5);
           have_packed = true;
-        } else if (res->dxgi_format == kDxgiFormatB5G5R5A1Unorm) {
+        } else if (res->dxgi_format == aerogpu::d3d10_11::kDxgiFormatB5G5R5A1Unorm) {
           const uint16_t r5 = static_cast<uint16_t>(float_to_unorm(color[0], 31));
           const uint16_t g5 = static_cast<uint16_t>(float_to_unorm(color[1], 31));
           const uint16_t b5 = static_cast<uint16_t>(float_to_unorm(color[2], 31));
@@ -7604,25 +7605,25 @@ void APIENTRY ClearRenderTargetView(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRENDERTA
         for (uint32_t x = 0; x < res->width; ++x) {
           uint8_t* dst = row + static_cast<size_t>(x) * 4;
           switch (res->dxgi_format) {
-            case kDxgiFormatR8G8B8A8Unorm:
-            case kDxgiFormatR8G8B8A8UnormSrgb:
-            case kDxgiFormatR8G8B8A8Typeless:
+            case aerogpu::d3d10_11::kDxgiFormatR8G8B8A8Unorm:
+            case aerogpu::d3d10_11::kDxgiFormatR8G8B8A8UnormSrgb:
+            case aerogpu::d3d10_11::kDxgiFormatR8G8B8A8Typeless:
               dst[0] = out_r;
               dst[1] = out_g;
               dst[2] = out_b;
               dst[3] = out_a;
               break;
-            case kDxgiFormatB8G8R8X8Unorm:
-            case kDxgiFormatB8G8R8X8UnormSrgb:
-            case kDxgiFormatB8G8R8X8Typeless:
+            case aerogpu::d3d10_11::kDxgiFormatB8G8R8X8Unorm:
+            case aerogpu::d3d10_11::kDxgiFormatB8G8R8X8UnormSrgb:
+            case aerogpu::d3d10_11::kDxgiFormatB8G8R8X8Typeless:
               dst[0] = out_b;
               dst[1] = out_g;
               dst[2] = out_r;
               dst[3] = 255;
               break;
-            case kDxgiFormatB8G8R8A8Unorm:
-            case kDxgiFormatB8G8R8A8UnormSrgb:
-            case kDxgiFormatB8G8R8A8Typeless:
+            case aerogpu::d3d10_11::kDxgiFormatB8G8R8A8Unorm:
+            case aerogpu::d3d10_11::kDxgiFormatB8G8R8A8UnormSrgb:
+            case aerogpu::d3d10_11::kDxgiFormatB8G8R8A8Typeless:
             default:
               dst[0] = out_b;
               dst[1] = out_g;
@@ -7834,25 +7835,25 @@ static bool SoftwareDrawTriangleListLocked(D3D10DDI_HDEVICE hDevice, AeroGpuDevi
 
             uint8_t* dst = row + static_cast<size_t>(x) * 4;
             switch (rt->dxgi_format) {
-              case kDxgiFormatR8G8B8A8Unorm:
-              case kDxgiFormatR8G8B8A8UnormSrgb:
-              case kDxgiFormatR8G8B8A8Typeless:
+              case aerogpu::d3d10_11::kDxgiFormatR8G8B8A8Unorm:
+              case aerogpu::d3d10_11::kDxgiFormatR8G8B8A8UnormSrgb:
+              case aerogpu::d3d10_11::kDxgiFormatR8G8B8A8Typeless:
                 dst[0] = out_r;
                 dst[1] = out_g;
                 dst[2] = out_b;
                 dst[3] = out_a;
                 break;
-              case kDxgiFormatB8G8R8X8Unorm:
-              case kDxgiFormatB8G8R8X8UnormSrgb:
-              case kDxgiFormatB8G8R8X8Typeless:
+              case aerogpu::d3d10_11::kDxgiFormatB8G8R8X8Unorm:
+              case aerogpu::d3d10_11::kDxgiFormatB8G8R8X8UnormSrgb:
+              case aerogpu::d3d10_11::kDxgiFormatB8G8R8X8Typeless:
                 dst[0] = out_b;
                 dst[1] = out_g;
                 dst[2] = out_r;
                 dst[3] = 255;
                 break;
-              case kDxgiFormatB8G8R8A8Unorm:
-              case kDxgiFormatB8G8R8A8UnormSrgb:
-              case kDxgiFormatB8G8R8A8Typeless:
+              case aerogpu::d3d10_11::kDxgiFormatB8G8R8A8Unorm:
+              case aerogpu::d3d10_11::kDxgiFormatB8G8R8A8UnormSrgb:
+              case aerogpu::d3d10_11::kDxgiFormatB8G8R8A8Typeless:
               default:
                 dst[0] = out_b;
                 dst[1] = out_g;
@@ -8333,8 +8334,6 @@ HRESULT APIENTRY GetCaps(D3D10DDI_HADAPTER hAdapter, const D3D10DDIARG_GETCAPS* 
     std::memset(pCaps->pData, 0, pCaps->DataSize);
   }
   auto* caps_adapter = FromHandle<D3D10DDI_HADAPTER, AeroGpuAdapter>(hAdapter);
-  const bool supports_bc = aerogpu::d3d10_11::SupportsBcFormats(caps_adapter);
-  const bool supports_srgb = aerogpu::d3d10_11::SupportsSrgbFormats(caps_adapter);
 
   switch (pCaps->Type) {
     case D3D10DDICAPS_TYPE_D3D10_FEATURE_LEVEL:
@@ -8379,82 +8378,37 @@ HRESULT APIENTRY GetCaps(D3D10DDI_HADAPTER hAdapter, const D3D10DDIARG_GETCAPS* 
         fmt->Format = in_format;
         const uint32_t format = static_cast<uint32_t>(in_format);
 
+        const uint32_t caps = aerogpu::d3d10_11::AerogpuDxgiFormatCapsMask(caps_adapter, format);
         UINT support = 0;
-        switch (format) {
-          case kDxgiFormatB5G6R5Unorm:
-          case kDxgiFormatB5G5R5A1Unorm:
-            support = D3D10_FORMAT_SUPPORT_TEXTURE2D | D3D10_FORMAT_SUPPORT_RENDER_TARGET |
-                      D3D10_FORMAT_SUPPORT_SHADER_SAMPLE | D3D10_FORMAT_SUPPORT_DISPLAY | D3D10_FORMAT_SUPPORT_BLENDABLE |
-                      D3D10_FORMAT_SUPPORT_CPU_LOCKABLE;
-            break;
-          case kDxgiFormatB8G8R8A8Unorm:
-          case kDxgiFormatB8G8R8A8Typeless:
-            support = D3D10_FORMAT_SUPPORT_TEXTURE2D | D3D10_FORMAT_SUPPORT_RENDER_TARGET |
-                      D3D10_FORMAT_SUPPORT_SHADER_SAMPLE | D3D10_FORMAT_SUPPORT_DISPLAY | D3D10_FORMAT_SUPPORT_BLENDABLE |
-                      D3D10_FORMAT_SUPPORT_CPU_LOCKABLE;
-            break;
-          case kDxgiFormatB8G8R8A8UnormSrgb:
-            support = supports_srgb ? (D3D10_FORMAT_SUPPORT_TEXTURE2D | D3D10_FORMAT_SUPPORT_RENDER_TARGET |
-                                       D3D10_FORMAT_SUPPORT_SHADER_SAMPLE | D3D10_FORMAT_SUPPORT_DISPLAY |
-                                       D3D10_FORMAT_SUPPORT_BLENDABLE | D3D10_FORMAT_SUPPORT_CPU_LOCKABLE)
-                                   : 0;
-            break;
-          case kDxgiFormatB8G8R8X8Unorm:
-          case kDxgiFormatB8G8R8X8Typeless:
-            support = D3D10_FORMAT_SUPPORT_TEXTURE2D | D3D10_FORMAT_SUPPORT_RENDER_TARGET |
-                      D3D10_FORMAT_SUPPORT_SHADER_SAMPLE | D3D10_FORMAT_SUPPORT_DISPLAY | D3D10_FORMAT_SUPPORT_BLENDABLE |
-                      D3D10_FORMAT_SUPPORT_CPU_LOCKABLE;
-            break;
-          case kDxgiFormatB8G8R8X8UnormSrgb:
-            support = supports_srgb ? (D3D10_FORMAT_SUPPORT_TEXTURE2D | D3D10_FORMAT_SUPPORT_RENDER_TARGET |
-                                       D3D10_FORMAT_SUPPORT_SHADER_SAMPLE | D3D10_FORMAT_SUPPORT_DISPLAY |
-                                       D3D10_FORMAT_SUPPORT_BLENDABLE | D3D10_FORMAT_SUPPORT_CPU_LOCKABLE)
-                                   : 0;
-            break;
-          case kDxgiFormatR8G8B8A8Unorm:
-          case kDxgiFormatR8G8B8A8Typeless:
-            support = D3D10_FORMAT_SUPPORT_TEXTURE2D | D3D10_FORMAT_SUPPORT_RENDER_TARGET |
-                      D3D10_FORMAT_SUPPORT_SHADER_SAMPLE | D3D10_FORMAT_SUPPORT_DISPLAY | D3D10_FORMAT_SUPPORT_BLENDABLE |
-                      D3D10_FORMAT_SUPPORT_CPU_LOCKABLE;
-            break;
-          case kDxgiFormatR8G8B8A8UnormSrgb:
-            support = supports_srgb ? (D3D10_FORMAT_SUPPORT_TEXTURE2D | D3D10_FORMAT_SUPPORT_RENDER_TARGET |
-                                       D3D10_FORMAT_SUPPORT_SHADER_SAMPLE | D3D10_FORMAT_SUPPORT_DISPLAY |
-                                       D3D10_FORMAT_SUPPORT_BLENDABLE | D3D10_FORMAT_SUPPORT_CPU_LOCKABLE)
-                                   : 0;
-            break;
-          case kDxgiFormatBc1Typeless:
-          case kDxgiFormatBc1Unorm:
-          case kDxgiFormatBc1UnormSrgb:
-          case kDxgiFormatBc2Typeless:
-          case kDxgiFormatBc2Unorm:
-          case kDxgiFormatBc2UnormSrgb:
-          case kDxgiFormatBc3Typeless:
-          case kDxgiFormatBc3Unorm:
-          case kDxgiFormatBc3UnormSrgb:
-          case kDxgiFormatBc7Typeless:
-          case kDxgiFormatBc7Unorm:
-          case kDxgiFormatBc7UnormSrgb:
-            support = supports_bc ? (D3D10_FORMAT_SUPPORT_TEXTURE2D | D3D10_FORMAT_SUPPORT_SHADER_SAMPLE |
-                                     D3D10_FORMAT_SUPPORT_CPU_LOCKABLE)
-                                  : 0;
-            break;
-          case kDxgiFormatR32G32B32A32Float:
-          case kDxgiFormatR32G32B32Float:
-          case kDxgiFormatR32G32Float:
-            support = D3D10_FORMAT_SUPPORT_BUFFER | D3D10_FORMAT_SUPPORT_IA_VERTEX_BUFFER;
-            break;
-          case kDxgiFormatR16Uint:
-          case kDxgiFormatR32Uint:
-            support = D3D10_FORMAT_SUPPORT_BUFFER | D3D10_FORMAT_SUPPORT_IA_INDEX_BUFFER;
-            break;
-          case kDxgiFormatD24UnormS8Uint:
-          case kDxgiFormatD32Float:
-            support = D3D10_FORMAT_SUPPORT_TEXTURE2D | D3D10_FORMAT_SUPPORT_DEPTH_STENCIL;
-            break;
-          default:
-            support = 0;
-            break;
+        if (caps & aerogpu::d3d10_11::kAerogpuDxgiFormatCapTexture2D) {
+          support |= D3D10_FORMAT_SUPPORT_TEXTURE2D;
+        }
+        if (caps & aerogpu::d3d10_11::kAerogpuDxgiFormatCapRenderTarget) {
+          support |= D3D10_FORMAT_SUPPORT_RENDER_TARGET;
+        }
+        if (caps & aerogpu::d3d10_11::kAerogpuDxgiFormatCapDepthStencil) {
+          support |= D3D10_FORMAT_SUPPORT_DEPTH_STENCIL;
+        }
+        if (caps & aerogpu::d3d10_11::kAerogpuDxgiFormatCapShaderSample) {
+          support |= D3D10_FORMAT_SUPPORT_SHADER_SAMPLE;
+        }
+        if (caps & aerogpu::d3d10_11::kAerogpuDxgiFormatCapDisplay) {
+          support |= D3D10_FORMAT_SUPPORT_DISPLAY;
+        }
+        if (caps & aerogpu::d3d10_11::kAerogpuDxgiFormatCapBlendable) {
+          support |= D3D10_FORMAT_SUPPORT_BLENDABLE;
+        }
+        if (caps & aerogpu::d3d10_11::kAerogpuDxgiFormatCapCpuLockable) {
+          support |= D3D10_FORMAT_SUPPORT_CPU_LOCKABLE;
+        }
+        if (caps & aerogpu::d3d10_11::kAerogpuDxgiFormatCapBuffer) {
+          support |= D3D10_FORMAT_SUPPORT_BUFFER;
+        }
+        if (caps & aerogpu::d3d10_11::kAerogpuDxgiFormatCapIaVertexBuffer) {
+          support |= D3D10_FORMAT_SUPPORT_IA_VERTEX_BUFFER;
+        }
+        if (caps & aerogpu::d3d10_11::kAerogpuDxgiFormatCapIaIndexBuffer) {
+          support |= D3D10_FORMAT_SUPPORT_IA_INDEX_BUFFER;
         }
 
         fmt->FormatSupport = support;
@@ -8468,29 +8422,8 @@ HRESULT APIENTRY GetCaps(D3D10DDI_HADAPTER hAdapter, const D3D10DDIARG_GETCAPS* 
       // D3D10::CheckMultisampleQualityLevels. Treat 1x as supported (quality 1),
       // no MSAA yet.
       if (pCaps->DataSize >= sizeof(DXGI_FORMAT) + sizeof(UINT) * 2) {
-        bool supported_format = false;
-        switch (static_cast<uint32_t>(msaa_format)) {
-          case kDxgiFormatB5G6R5Unorm:
-          case kDxgiFormatB5G5R5A1Unorm:
-          case kDxgiFormatB8G8R8A8Unorm:
-          case kDxgiFormatB8G8R8A8Typeless:
-          case kDxgiFormatB8G8R8X8Unorm:
-          case kDxgiFormatB8G8R8X8Typeless:
-          case kDxgiFormatR8G8B8A8Unorm:
-          case kDxgiFormatR8G8B8A8Typeless:
-          case kDxgiFormatD24UnormS8Uint:
-          case kDxgiFormatD32Float:
-            supported_format = true;
-            break;
-          case kDxgiFormatB8G8R8A8UnormSrgb:
-          case kDxgiFormatB8G8R8X8UnormSrgb:
-          case kDxgiFormatR8G8B8A8UnormSrgb:
-            supported_format = supports_srgb;
-            break;
-          default:
-            supported_format = false;
-            break;
-        }
+        const bool supported_format =
+            aerogpu::d3d10_11::AerogpuSupportsMultisampleQualityLevels(caps_adapter, static_cast<uint32_t>(msaa_format));
         uint8_t* out_bytes = reinterpret_cast<uint8_t*>(pCaps->pData);
         *reinterpret_cast<DXGI_FORMAT*>(out_bytes) = msaa_format;
         *reinterpret_cast<UINT*>(out_bytes + sizeof(DXGI_FORMAT)) = msaa_sample_count;

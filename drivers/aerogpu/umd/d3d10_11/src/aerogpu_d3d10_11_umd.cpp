@@ -299,47 +299,39 @@ constexpr uint32_t kD3D11FormatSupportDisplay = 0x80000;
 // D3D11_RESOURCE_MISC_SHARED (numeric value from d3d11.h).
 constexpr uint32_t kD3D11ResourceMiscShared = 0x2;
 
-uint32_t d3d11_format_support_flags(uint32_t dxgi_format) {
-  switch (dxgi_format) {
-    case kDxgiFormatB5G6R5Unorm:
-    case kDxgiFormatB5G5R5A1Unorm:
-    case kDxgiFormatB8G8R8A8Unorm:
-    case kDxgiFormatB8G8R8A8UnormSrgb:
-    case kDxgiFormatB8G8R8A8Typeless:
-    case kDxgiFormatB8G8R8X8Unorm:
-    case kDxgiFormatB8G8R8X8UnormSrgb:
-    case kDxgiFormatB8G8R8X8Typeless:
-    case kDxgiFormatR8G8B8A8Unorm:
-    case kDxgiFormatR8G8B8A8UnormSrgb:
-    case kDxgiFormatR8G8B8A8Typeless:
-      return kD3D11FormatSupportTexture2D | kD3D11FormatSupportRenderTarget | kD3D11FormatSupportShaderSample |
-             kD3D11FormatSupportBlendable | kD3D11FormatSupportCpuLockable | kD3D11FormatSupportDisplay;
-    case kDxgiFormatBc1Typeless:
-    case kDxgiFormatBc1Unorm:
-    case kDxgiFormatBc1UnormSrgb:
-    case kDxgiFormatBc2Typeless:
-    case kDxgiFormatBc2Unorm:
-    case kDxgiFormatBc2UnormSrgb:
-    case kDxgiFormatBc3Typeless:
-    case kDxgiFormatBc3Unorm:
-    case kDxgiFormatBc3UnormSrgb:
-    case kDxgiFormatBc7Typeless:
-    case kDxgiFormatBc7Unorm:
-    case kDxgiFormatBc7UnormSrgb:
-      return kD3D11FormatSupportTexture2D | kD3D11FormatSupportShaderSample | kD3D11FormatSupportCpuLockable;
-    case kDxgiFormatD24UnormS8Uint:
-    case kDxgiFormatD32Float:
-      return kD3D11FormatSupportTexture2D | kD3D11FormatSupportDepthStencil;
-    case kDxgiFormatR16Uint:
-    case kDxgiFormatR32Uint:
-      return kD3D11FormatSupportBuffer | kD3D11FormatSupportIaIndexBuffer;
-    case kDxgiFormatR32G32Float:
-    case kDxgiFormatR32G32B32Float:
-    case kDxgiFormatR32G32B32A32Float:
-      return kD3D11FormatSupportBuffer | kD3D11FormatSupportIaVertexBuffer;
-    default:
-      return 0;
+struct AeroGpuAdapter;
+
+uint32_t d3d11_format_support_flags(const AeroGpuAdapter* adapter, uint32_t dxgi_format) {
+  const uint32_t caps = aerogpu::d3d10_11::AerogpuDxgiFormatCapsMask(adapter, dxgi_format);
+  uint32_t support = 0;
+  if (caps & aerogpu::d3d10_11::kAerogpuDxgiFormatCapTexture2D) {
+    support |= kD3D11FormatSupportTexture2D;
   }
+  if (caps & aerogpu::d3d10_11::kAerogpuDxgiFormatCapRenderTarget) {
+    support |= kD3D11FormatSupportRenderTarget | kD3D11FormatSupportBlendable;
+  }
+  if (caps & aerogpu::d3d10_11::kAerogpuDxgiFormatCapDepthStencil) {
+    support |= kD3D11FormatSupportDepthStencil;
+  }
+  if (caps & aerogpu::d3d10_11::kAerogpuDxgiFormatCapShaderSample) {
+    support |= kD3D11FormatSupportShaderSample;
+  }
+  if (caps & aerogpu::d3d10_11::kAerogpuDxgiFormatCapCpuLockable) {
+    support |= kD3D11FormatSupportCpuLockable;
+  }
+  if (caps & aerogpu::d3d10_11::kAerogpuDxgiFormatCapDisplay) {
+    support |= kD3D11FormatSupportDisplay;
+  }
+  if (caps & aerogpu::d3d10_11::kAerogpuDxgiFormatCapBuffer) {
+    support |= kD3D11FormatSupportBuffer;
+  }
+  if (caps & aerogpu::d3d10_11::kAerogpuDxgiFormatCapIaVertexBuffer) {
+    support |= kD3D11FormatSupportIaVertexBuffer;
+  }
+  if (caps & aerogpu::d3d10_11::kAerogpuDxgiFormatCapIaIndexBuffer) {
+    support |= kD3D11FormatSupportIaIndexBuffer;
+  }
+  return support;
 }
 
 uint64_t AlignUpU64(uint64_t value, uint64_t alignment) {
@@ -514,6 +506,12 @@ struct AeroGpuAdapter {
   uint64_t next_fence = 1;
   uint64_t completed_fence = 0;
 
+  // Minimal, portable equivalent of the Win7 `DXGKQAITYPE_UMDRIVERPRIVATE` blob
+  // used by the WDK build. This allows the portable UMD and unit tests to run
+  // the same format/feature gating logic (BC formats, sRGB formats, transfer
+  // commands) as the real WDK UMDs.
+  aerogpu_umd_private_v1 umd_private = {};
+  bool umd_private_valid = false;
 };
 
 #if defined(_WIN32)
@@ -1698,7 +1696,17 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
       return E_NOTIMPL;
     }
 
-    const uint32_t aer_fmt = aerogpu::d3d10_11::dxgi_format_to_aerogpu(pDesc->Format);
+    // Keep CreateResource format handling in sync with the WDK UMDs:
+    // - sRGB formats are mapped to UNORM on older host ABIs.
+    // - BC formats are rejected when the host ABI does not support them.
+    if (!aerogpu::d3d10_11::AerogpuSupportsDxgiFormatCompat(
+            dev,
+            pDesc->Format,
+            aerogpu::d3d10_11::AerogpuFormatUsage::Texture2D)) {
+      AEROGPU_D3D10_RET_HR(E_NOTIMPL);
+    }
+
+    const uint32_t aer_fmt = aerogpu::d3d10_11::dxgi_format_to_aerogpu_compat(dev, pDesc->Format);
     if (aer_fmt == AEROGPU_FORMAT_INVALID) {
       AEROGPU_D3D10_RET_HR(E_NOTIMPL);
     }
@@ -2349,7 +2357,7 @@ HRESULT map_resource_locked(AeroGpuDevice* dev,
   uint32_t mapped_depth_pitch = 0;
 
   if (res->kind == ResourceKind::Texture2D) {
-    const uint32_t aer_fmt = aerogpu::d3d10_11::dxgi_format_to_aerogpu(res->dxgi_format);
+    const uint32_t aer_fmt = aerogpu::d3d10_11::dxgi_format_to_aerogpu_compat(dev, res->dxgi_format);
     if (aer_fmt == AEROGPU_FORMAT_INVALID) {
       return E_INVALIDARG;
     }
@@ -2897,7 +2905,7 @@ void AEROGPU_APIENTRY UpdateSubresourceUP(D3D10DDI_HDEVICE hDevice,
       dirty_offset_bytes = 0;
       dirty_size_bytes = res->size_bytes;
     } else if (res->kind == ResourceKind::Texture2D) {
-      const uint32_t aer_fmt = aerogpu::d3d10_11::dxgi_format_to_aerogpu(res->dxgi_format);
+      const uint32_t aer_fmt = aerogpu::d3d10_11::dxgi_format_to_aerogpu_compat(dev, res->dxgi_format);
       if (aer_fmt == AEROGPU_FORMAT_INVALID) {
         cb->pfnUnmapAllocation(cb->pUserContext, res->alloc_handle);
         return;
@@ -3065,7 +3073,7 @@ void AEROGPU_APIENTRY UpdateSubresourceUP(D3D10DDI_HDEVICE hDevice,
     }
 
     if (res->kind == ResourceKind::Texture2D) {
-      const uint32_t aerogpu_format = aerogpu::d3d10_11::dxgi_format_to_aerogpu(res->dxgi_format);
+      const uint32_t aerogpu_format = aerogpu::d3d10_11::dxgi_format_to_aerogpu_compat(dev, res->dxgi_format);
       const AerogpuTextureFormatLayout fmt_layout = aerogpu_texture_format_layout(aerogpu_format);
       Texture2DSubresourceLayout sub_layout{};
       if (!fmt_layout.valid ||
@@ -3159,7 +3167,7 @@ void AEROGPU_APIENTRY UpdateSubresourceUP(D3D10DDI_HDEVICE hDevice,
   }
 
   if (res->kind == ResourceKind::Texture2D) {
-    const uint32_t aerogpu_format = aerogpu::d3d10_11::dxgi_format_to_aerogpu(res->dxgi_format);
+    const uint32_t aerogpu_format = aerogpu::d3d10_11::dxgi_format_to_aerogpu_compat(dev, res->dxgi_format);
     const AerogpuTextureFormatLayout fmt_layout = aerogpu_texture_format_layout(aerogpu_format);
     Texture2DSubresourceLayout sub_layout{};
     if (!fmt_layout.valid ||
@@ -3381,7 +3389,7 @@ void AEROGPU_APIENTRY CopyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE 
         src->height == 0) {
       return;
     }
-    const uint32_t aerogpu_format = aerogpu::d3d10_11::dxgi_format_to_aerogpu(src->dxgi_format);
+    const uint32_t aerogpu_format = aerogpu::d3d10_11::dxgi_format_to_aerogpu_compat(dev, src->dxgi_format);
     const AerogpuTextureFormatLayout fmt_layout = aerogpu_texture_format_layout(aerogpu_format);
     if (!fmt_layout.valid) {
       return;
@@ -3645,7 +3653,7 @@ HRESULT AEROGPU_APIENTRY CopySubresourceRegion(D3D10DDI_HDEVICE hDevice,
       return E_INVALIDARG;
     }
 
-    const uint32_t aerogpu_format = aerogpu::d3d10_11::dxgi_format_to_aerogpu(src->dxgi_format);
+    const uint32_t aerogpu_format = aerogpu::d3d10_11::dxgi_format_to_aerogpu_compat(dev, src->dxgi_format);
     const AerogpuTextureFormatLayout fmt_layout = aerogpu_texture_format_layout(aerogpu_format);
     if (!fmt_layout.valid) {
       return E_INVALIDARG;
@@ -4464,7 +4472,7 @@ void AEROGPU_APIENTRY ClearRTV(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRENDERTARGETV
     const uint8_t out_a = static_cast<uint8_t>(float_to_unorm(rgba[3], 255));
 
     switch (rt->dxgi_format) {
-      case kDxgiFormatB5G6R5Unorm: {
+      case aerogpu::d3d10_11::kDxgiFormatB5G6R5Unorm: {
         const uint16_t r5 = static_cast<uint16_t>(float_to_unorm(rgba[0], 31));
         const uint16_t g6 = static_cast<uint16_t>(float_to_unorm(rgba[1], 63));
         const uint16_t b5 = static_cast<uint16_t>(float_to_unorm(rgba[2], 31));
@@ -4473,7 +4481,7 @@ void AEROGPU_APIENTRY ClearRTV(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRENDERTARGETV
         is_16bpp = true;
         break;
       }
-      case kDxgiFormatB5G5R5A1Unorm: {
+      case aerogpu::d3d10_11::kDxgiFormatB5G5R5A1Unorm: {
         const uint16_t r5 = static_cast<uint16_t>(float_to_unorm(rgba[0], 31));
         const uint16_t g5 = static_cast<uint16_t>(float_to_unorm(rgba[1], 31));
         const uint16_t b5 = static_cast<uint16_t>(float_to_unorm(rgba[2], 31));
@@ -4483,27 +4491,27 @@ void AEROGPU_APIENTRY ClearRTV(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRENDERTARGETV
         is_16bpp = true;
         break;
       }
-      case kDxgiFormatR8G8B8A8Unorm:
-      case kDxgiFormatR8G8B8A8UnormSrgb:
-      case kDxgiFormatR8G8B8A8Typeless:
+      case aerogpu::d3d10_11::kDxgiFormatR8G8B8A8Unorm:
+      case aerogpu::d3d10_11::kDxgiFormatR8G8B8A8UnormSrgb:
+      case aerogpu::d3d10_11::kDxgiFormatR8G8B8A8Typeless:
         px32[0] = out_r;
         px32[1] = out_g;
         px32[2] = out_b;
         px32[3] = out_a;
         bytes_per_pixel = 4;
         break;
-      case kDxgiFormatB8G8R8X8Unorm:
-      case kDxgiFormatB8G8R8X8UnormSrgb:
-      case kDxgiFormatB8G8R8X8Typeless:
+      case aerogpu::d3d10_11::kDxgiFormatB8G8R8X8Unorm:
+      case aerogpu::d3d10_11::kDxgiFormatB8G8R8X8UnormSrgb:
+      case aerogpu::d3d10_11::kDxgiFormatB8G8R8X8Typeless:
         px32[0] = out_b;
         px32[1] = out_g;
         px32[2] = out_r;
         px32[3] = 255;
         bytes_per_pixel = 4;
         break;
-      case kDxgiFormatB8G8R8A8Unorm:
-      case kDxgiFormatB8G8R8A8UnormSrgb:
-      case kDxgiFormatB8G8R8A8Typeless:
+      case aerogpu::d3d10_11::kDxgiFormatB8G8R8A8Unorm:
+      case aerogpu::d3d10_11::kDxgiFormatB8G8R8A8UnormSrgb:
+      case aerogpu::d3d10_11::kDxgiFormatB8G8R8A8Typeless:
         px32[0] = out_b;
         px32[1] = out_g;
         px32[2] = out_r;
@@ -6129,7 +6137,7 @@ struct AEROGPU_D3D11_FEATURE_DATA_MULTISAMPLE_QUALITY_LEVELS {
   uint32_t NumQualityLevels;
 };
 
-HRESULT AEROGPU_APIENTRY GetCaps(D3D10DDI_HADAPTER, const D3D10DDIARG_GETCAPS* pGetCaps) {
+HRESULT AEROGPU_APIENTRY GetCaps(D3D10DDI_HADAPTER hAdapter, const D3D10DDIARG_GETCAPS* pGetCaps) {
   if (!pGetCaps) {
     return E_INVALIDARG;
   }
@@ -6144,6 +6152,8 @@ HRESULT AEROGPU_APIENTRY GetCaps(D3D10DDI_HADAPTER, const D3D10DDIARG_GETCAPS* p
     // missing/empty output buffers as a no-op query.
     return S_OK;
   }
+
+  const auto* adapter = hAdapter.pDrvPrivate ? FromHandle<D3D10DDI_HADAPTER, AeroGpuAdapter>(hAdapter) : nullptr;
 
   switch (type) {
     case AEROGPU_D3D11DDICAPS_FEATURE_LEVELS: {
@@ -6221,7 +6231,7 @@ HRESULT AEROGPU_APIENTRY GetCaps(D3D10DDI_HADAPTER, const D3D10DDIARG_GETCAPS* p
         return E_INVALIDARG;
       }
       auto* fs = reinterpret_cast<AEROGPU_D3D11_FEATURE_DATA_FORMAT_SUPPORT*>(data);
-      fs->OutFormatSupport = d3d11_format_support_flags(fs->InFormat);
+      fs->OutFormatSupport = d3d11_format_support_flags(adapter, fs->InFormat);
       return S_OK;
     }
 
@@ -6240,9 +6250,7 @@ HRESULT AEROGPU_APIENTRY GetCaps(D3D10DDI_HADAPTER, const D3D10DDIARG_GETCAPS* p
       }
       auto* ms = reinterpret_cast<AEROGPU_D3D11_FEATURE_DATA_MULTISAMPLE_QUALITY_LEVELS*>(data);
       // No MSAA support yet; report only the implicit 1x case.
-      const uint32_t support = d3d11_format_support_flags(ms->Format);
-      const bool supported_format = (support & kD3D11FormatSupportTexture2D) != 0 &&
-                                    (support & (kD3D11FormatSupportRenderTarget | kD3D11FormatSupportDepthStencil)) != 0;
+      const bool supported_format = aerogpu::d3d10_11::AerogpuSupportsMultisampleQualityLevels(adapter, ms->Format);
       ms->NumQualityLevels = (ms->SampleCount == 1 && supported_format) ? 1u : 0u;
       return S_OK;
     }
@@ -6280,6 +6288,17 @@ HRESULT OpenAdapterCommon(D3D10DDIARG_OPENADAPTER* pOpenData) {
     AEROGPU_D3D10_RET_HR(E_OUTOFMEMORY);
   }
   pOpenData->hAdapter.pDrvPrivate = adapter;
+
+  // Portable build: assume we are running against an in-repo AeroGPU host that
+  // supports the current protocol ABI. This keeps format support (BC/sRGB) and
+  // transfer/copy feature gates in sync with the WDK UMDs.
+  adapter->umd_private_valid = true;
+  adapter->umd_private.size_bytes = sizeof(adapter->umd_private);
+  adapter->umd_private.struct_version = AEROGPU_UMDPRIV_STRUCT_VERSION_V1;
+  adapter->umd_private.device_mmio_magic = 0;
+  adapter->umd_private.device_abi_version_u32 = AEROGPU_ABI_VERSION_U32;
+  adapter->umd_private.device_features = AEROGPU_UMDPRIV_FEATURE_TRANSFER;
+  adapter->umd_private.flags = 0;
 
 
   D3D10DDI_ADAPTERFUNCS funcs = {};

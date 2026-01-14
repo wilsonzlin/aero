@@ -1861,8 +1861,6 @@ HRESULT AEROGPU_APIENTRY GetCaps11(D3D10DDI_HADAPTER hAdapter, const D3D11DDIARG
   void* data = pGetCaps->pData;
   const UINT size = pGetCaps->DataSize;
   const Adapter* adapter = hAdapter.pDrvPrivate ? FromHandle<D3D10DDI_HADAPTER, Adapter>(hAdapter) : nullptr;
-  const bool supports_bc = SupportsBcFormats(adapter);
-  const bool supports_srgb = SupportsSrgbFormats(adapter);
 
 #if defined(AEROGPU_D3D10_11_CAPS_LOG)
   // Emit caps queries unconditionally when AEROGPU_D3D10_11_CAPS_LOG is defined;
@@ -2011,85 +2009,37 @@ HRESULT AEROGPU_APIENTRY GetCaps11(D3D10DDI_HADAPTER hAdapter, const D3D11DDIARG
       zero_out();
       *reinterpret_cast<DXGI_FORMAT*>(data) = format;
 
+      const uint32_t caps = AerogpuDxgiFormatCapsMask(adapter, static_cast<uint32_t>(format));
       UINT support = 0;
-      switch (static_cast<uint32_t>(format)) {
-        case kDxgiFormatB5G6R5Unorm:
-        case kDxgiFormatB5G5R5A1Unorm:
-          support = D3D11_FORMAT_SUPPORT_TEXTURE2D | D3D11_FORMAT_SUPPORT_RENDER_TARGET |
-                    D3D11_FORMAT_SUPPORT_SHADER_SAMPLE | D3D11_FORMAT_SUPPORT_BLENDABLE |
-                    D3D11_FORMAT_SUPPORT_CPU_LOCKABLE | D3D11_FORMAT_SUPPORT_DISPLAY;
-          break;
-        case kDxgiFormatB8G8R8A8Unorm:
-        case kDxgiFormatB8G8R8A8Typeless:
-          support = D3D11_FORMAT_SUPPORT_TEXTURE2D | D3D11_FORMAT_SUPPORT_RENDER_TARGET |
-                    D3D11_FORMAT_SUPPORT_SHADER_SAMPLE | D3D11_FORMAT_SUPPORT_BLENDABLE |
-                    D3D11_FORMAT_SUPPORT_CPU_LOCKABLE | D3D11_FORMAT_SUPPORT_DISPLAY;
-          break;
-        case kDxgiFormatB8G8R8A8UnormSrgb:
-          support = supports_srgb ? (D3D11_FORMAT_SUPPORT_TEXTURE2D | D3D11_FORMAT_SUPPORT_RENDER_TARGET |
-                                     D3D11_FORMAT_SUPPORT_SHADER_SAMPLE | D3D11_FORMAT_SUPPORT_BLENDABLE |
-                                     D3D11_FORMAT_SUPPORT_CPU_LOCKABLE | D3D11_FORMAT_SUPPORT_DISPLAY)
-                                 : 0;
-          break;
-        case kDxgiFormatB8G8R8X8Unorm:
-        case kDxgiFormatB8G8R8X8Typeless:
-          support = D3D11_FORMAT_SUPPORT_TEXTURE2D | D3D11_FORMAT_SUPPORT_RENDER_TARGET |
-                    D3D11_FORMAT_SUPPORT_SHADER_SAMPLE | D3D11_FORMAT_SUPPORT_BLENDABLE |
-                    D3D11_FORMAT_SUPPORT_CPU_LOCKABLE | D3D11_FORMAT_SUPPORT_DISPLAY;
-          break;
-        case kDxgiFormatB8G8R8X8UnormSrgb:
-          support = supports_srgb ? (D3D11_FORMAT_SUPPORT_TEXTURE2D | D3D11_FORMAT_SUPPORT_RENDER_TARGET |
-                                     D3D11_FORMAT_SUPPORT_SHADER_SAMPLE | D3D11_FORMAT_SUPPORT_BLENDABLE |
-                                     D3D11_FORMAT_SUPPORT_CPU_LOCKABLE | D3D11_FORMAT_SUPPORT_DISPLAY)
-                                 : 0;
-          break;
-        case kDxgiFormatR8G8B8A8Unorm:
-        case kDxgiFormatR8G8B8A8Typeless:
-          support = D3D11_FORMAT_SUPPORT_TEXTURE2D | D3D11_FORMAT_SUPPORT_RENDER_TARGET |
-                    D3D11_FORMAT_SUPPORT_SHADER_SAMPLE | D3D11_FORMAT_SUPPORT_BLENDABLE |
-                    D3D11_FORMAT_SUPPORT_CPU_LOCKABLE | D3D11_FORMAT_SUPPORT_DISPLAY;
-          break;
-        case kDxgiFormatR8G8B8A8UnormSrgb:
-          support = supports_srgb ? (D3D11_FORMAT_SUPPORT_TEXTURE2D | D3D11_FORMAT_SUPPORT_RENDER_TARGET |
-                                     D3D11_FORMAT_SUPPORT_SHADER_SAMPLE | D3D11_FORMAT_SUPPORT_BLENDABLE |
-                                     D3D11_FORMAT_SUPPORT_CPU_LOCKABLE | D3D11_FORMAT_SUPPORT_DISPLAY)
-                                  : 0;
-          break;
-        case kDxgiFormatBc1Typeless:
-        case kDxgiFormatBc1Unorm:
-        case kDxgiFormatBc1UnormSrgb:
-        case kDxgiFormatBc2Typeless:
-        case kDxgiFormatBc2Unorm:
-        case kDxgiFormatBc2UnormSrgb:
-        case kDxgiFormatBc3Typeless:
-        case kDxgiFormatBc3Unorm:
-        case kDxgiFormatBc3UnormSrgb:
-        case kDxgiFormatBc7Typeless:
-        case kDxgiFormatBc7Unorm:
-        case kDxgiFormatBc7UnormSrgb:
-          if (supports_bc) {
-            support = D3D11_FORMAT_SUPPORT_TEXTURE2D | D3D11_FORMAT_SUPPORT_SHADER_SAMPLE |
-                      D3D11_FORMAT_SUPPORT_CPU_LOCKABLE;
-          } else {
-            support = 0;
-          }
-          break;
-        case kDxgiFormatD24UnormS8Uint:
-        case kDxgiFormatD32Float:
-          support = D3D11_FORMAT_SUPPORT_TEXTURE2D | D3D11_FORMAT_SUPPORT_DEPTH_STENCIL;
-          break;
-        case kDxgiFormatR16Uint:
-        case kDxgiFormatR32Uint:
-          support = D3D11_FORMAT_SUPPORT_BUFFER | D3D11_FORMAT_SUPPORT_IA_INDEX_BUFFER;
-          break;
-        case kDxgiFormatR32G32B32A32Float:
-        case kDxgiFormatR32G32B32Float:
-        case kDxgiFormatR32G32Float:
-          support = D3D11_FORMAT_SUPPORT_BUFFER | D3D11_FORMAT_SUPPORT_IA_VERTEX_BUFFER;
-          break;
-        default:
-          support = 0;
-          break;
+      if (caps & kAerogpuDxgiFormatCapTexture2D) {
+        support |= D3D11_FORMAT_SUPPORT_TEXTURE2D;
+      }
+      if (caps & kAerogpuDxgiFormatCapRenderTarget) {
+        support |= D3D11_FORMAT_SUPPORT_RENDER_TARGET;
+      }
+      if (caps & kAerogpuDxgiFormatCapDepthStencil) {
+        support |= D3D11_FORMAT_SUPPORT_DEPTH_STENCIL;
+      }
+      if (caps & kAerogpuDxgiFormatCapShaderSample) {
+        support |= D3D11_FORMAT_SUPPORT_SHADER_SAMPLE;
+      }
+      if (caps & kAerogpuDxgiFormatCapDisplay) {
+        support |= D3D11_FORMAT_SUPPORT_DISPLAY;
+      }
+      if (caps & kAerogpuDxgiFormatCapBlendable) {
+        support |= D3D11_FORMAT_SUPPORT_BLENDABLE;
+      }
+      if (caps & kAerogpuDxgiFormatCapCpuLockable) {
+        support |= D3D11_FORMAT_SUPPORT_CPU_LOCKABLE;
+      }
+      if (caps & kAerogpuDxgiFormatCapBuffer) {
+        support |= D3D11_FORMAT_SUPPORT_BUFFER;
+      }
+      if (caps & kAerogpuDxgiFormatCapIaVertexBuffer) {
+        support |= D3D11_FORMAT_SUPPORT_IA_VERTEX_BUFFER;
+      }
+      if (caps & kAerogpuDxgiFormatCapIaIndexBuffer) {
+        support |= D3D11_FORMAT_SUPPORT_IA_INDEX_BUFFER;
       }
 
       auto* out_bytes = reinterpret_cast<uint8_t*>(data);
@@ -2131,29 +2081,8 @@ HRESULT AEROGPU_APIENTRY GetCaps11(D3D10DDI_HADAPTER hAdapter, const D3D11DDIARG
       auto* out = reinterpret_cast<D3D11_FEATURE_DATA_MULTISAMPLE_QUALITY_LEVELS*>(data);
       out->Format = in.Format;
       out->SampleCount = in.SampleCount;
-      bool supported_format = false;
-      switch (static_cast<uint32_t>(in.Format)) {
-        case kDxgiFormatB5G6R5Unorm:
-        case kDxgiFormatB5G5R5A1Unorm:
-        case kDxgiFormatB8G8R8A8Unorm:
-        case kDxgiFormatB8G8R8A8Typeless:
-        case kDxgiFormatB8G8R8X8Unorm:
-        case kDxgiFormatB8G8R8X8Typeless:
-        case kDxgiFormatR8G8B8A8Unorm:
-        case kDxgiFormatR8G8B8A8Typeless:
-        case kDxgiFormatD24UnormS8Uint:
-        case kDxgiFormatD32Float:
-          supported_format = true;
-          break;
-        case kDxgiFormatB8G8R8A8UnormSrgb:
-        case kDxgiFormatB8G8R8X8UnormSrgb:
-        case kDxgiFormatR8G8B8A8UnormSrgb:
-          supported_format = supports_srgb;
-          break;
-        default:
-          supported_format = false;
-          break;
-      }
+      const bool supported_format =
+          AerogpuSupportsMultisampleQualityLevels(adapter, static_cast<uint32_t>(in.Format));
       out->NumQualityLevels = (in.SampleCount == 1 && supported_format) ? 1u : 0u;
       return S_OK;
     }
