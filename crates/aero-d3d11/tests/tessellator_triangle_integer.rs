@@ -96,3 +96,32 @@ fn triangle_integer_indices_are_in_bounds_non_degenerate_and_cw() {
         }
     }
 }
+
+#[test]
+fn triangle_integer_barycentrics_are_normalized_for_common_levels() {
+    const EPS: f32 = 1e-5;
+
+    // Keep this focused on a few representative levels so it stays fast and deterministic while
+    // still exercising non-power-of-two division (e.g. n=3).
+    for n in [1u32, 2, 3, 4, 16] {
+        let vc = tri_integer_vertex_count(n);
+        for v in 0..vc {
+            let ijk = tri_integer_vertex_ijk(n, v);
+            assert_eq!(
+                ijk.i + ijk.j + ijk.k,
+                n,
+                "i+j+k must equal n for n={n}, v={v}: {ijk:?}"
+            );
+
+            let inv = 1.0 / n as f32;
+            let u = ijk.i as f32 * inv;
+            let vv = ijk.j as f32 * inv;
+            let w = ijk.k as f32 * inv;
+            let sum = u + vv + w;
+            assert!(
+                (sum - 1.0).abs() <= EPS,
+                "float barycentrics must sum to 1 (n={n}, v={v}, ijk={ijk:?}, sum={sum})"
+            );
+        }
+    }
+}
