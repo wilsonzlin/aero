@@ -193,7 +193,7 @@ treat the implementation as “bring-up” quality rather than a complete xHCI.
     - device endpoint doorbells are latched and can drive a bounded endpoint-0 control transfer
       executor (Setup/Data/Status TRBs) when the controller is ticked
     - command ring doorbell (doorbell 0) is latched and triggers bounded command ring processing
-      while the controller is running.
+      (No-Op / Enable Slot / Address Device subset) while the controller is running.
     - runtime interrupter 0 registers + ERST-backed guest event ring producer are modeled (used by
       Rust tests and by the web/WASM bridge via `step_frames()`/`poll()`).
   - A DMA read on the first transition of `USBCMD.RUN` (primarily to validate **PCI Bus Master Enable gating** in wrappers).
@@ -226,8 +226,9 @@ treat the implementation as “bring-up” quality rather than a complete xHCI.
   - Deterministic snapshot/restore of the controller state + tick counter (+ optional WebUSB device
     state when connected).
 
-These are **not** full xHCI implementations. In particular, transfer execution for non-control endpoints
-is not implemented yet, and command ring coverage is still incomplete.
+These are **not** full xHCI implementations. In particular, command ring coverage is still incomplete
+(bounded to a subset of commands), and transfer execution for non-control endpoints is not yet wired
+into the guest-visible MMIO model.
 
 #### TRB + ring building blocks
 
@@ -371,10 +372,12 @@ Snapshotting follows the repo’s general device snapshot conventions (see [`doc
 - The xHCI device snapshot captures **guest-visible register state** and any controller bookkeeping that is not stored in guest RAM.
   - Today, `aero_usb::xhci::XhciController` snapshots a small subset of state (`USBCMD`, `USBSTS`,
     `CRCR`, `PORT_COUNT`, `DCBAAP`, and Interrupter 0 regs: `IMAN`, `IMOD`, `ERSTSZ`, `ERSTBA`, `ERDP`)
-    under `IoSnapshot::DEVICE_ID = b\"XHCI\"`, version `0.3` (slot state is not snapshotted yet).
-  - Current limitations: the `XHCI` snapshot does **not** yet capture per-port state, pending event
-    TRBs, or slot/endpoint contexts; restores should be treated as “best-effort bring-up” rather
-    than a bit-perfect resume of an in-flight xHCI driver.
+    under `IoSnapshot::DEVICE_ID = b\"XHCI\"`, version `0.3` (slot/endpoint state is still not snapshotted yet).
+  - `0.3` additionally snapshots root port state (PORTSC bits + reset timers) and any attached USB
+    device models (via nested `AttachedUsbDevice` snapshots).
+  - Current limitations: the `XHCI` snapshot does **not** yet capture pending event TRBs or full
+    slot/endpoint contexts; restores should be treated as “best-effort bring-up” rather than a
+    bit-perfect resume of an in-flight xHCI driver.
 - The web/WASM bridge (`aero_wasm::XhciControllerBridge`) snapshots as `XHCB` (version `1.1`) and currently stores:
   - the underlying `aero_usb::xhci::XhciController` snapshot bytes,
   - a tick counter (used for deterministic stepping in future scheduling work), and

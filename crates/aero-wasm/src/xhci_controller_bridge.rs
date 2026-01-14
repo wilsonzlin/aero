@@ -588,9 +588,13 @@ impl XhciControllerBridge {
             .map_err(|e| js_error(format!("Invalid xHCI bridge snapshot: {e}")))?
             .unwrap_or(0);
 
-        // Attach/detach the WebUSB passthrough device after restoring controller state so the
-        // topology is preserved (the xHCI controller snapshot does not yet include device
-        // attachments).
+        // Attach/detach the WebUSB passthrough device after restoring controller state so the guest
+        // topology matches the bridge-level snapshot.
+        //
+        // WebUSB passthrough is backed by a host-managed `UsbWebUsbPassthroughDevice` handle. We
+        // reattach that stable handle here (rather than relying on any device instance
+        // reconstructed purely from the controller snapshot bytes) so the JS host integration keeps
+        // draining actions / pushing completions into the correct device model.
         self.set_connected(has_webusb);
 
         if let Some(buf) = r.bytes(TAG_WEBUSB_DEVICE) {
