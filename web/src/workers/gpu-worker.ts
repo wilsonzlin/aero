@@ -1310,7 +1310,7 @@ const tryReadScanoutRgba8 = (snap: ScanoutStateSnapshot): ScanoutReadback | null
   // total byte count is within `MAX_SCANOUT_RGBA8_BYTES` (e.g. width=1, height=64M).
   const MAX_WDDM_SCANOUT_DIM = 16384;
   if (width > MAX_WDDM_SCANOUT_DIM || height > MAX_WDDM_SCANOUT_DIM) {
-    emitWddmScanoutInvalid(snap, "WDDM scanout: width/height exceeds size limit", {
+    emitScanoutReadbackInvalid(snap, "Scanout: width/height exceeds size limit", {
       width,
       height,
       maxDim: MAX_WDDM_SCANOUT_DIM,
