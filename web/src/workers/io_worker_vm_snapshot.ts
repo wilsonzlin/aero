@@ -205,7 +205,8 @@ function mergeUsbSnapshotBytes(cached: Uint8Array, fresh: Uint8Array): Uint8Arra
     return fresh;
   }
 
-  // Interpret legacy bytes as a UHCI-only snapshot for backward compatibility.
+  // Interpret legacy bytes as a single-controller snapshot for backward compatibility.
+  // (Most commonly UHCI, but some older builds stored raw xHCI/EHCI blobs under the outer USB entry.)
   // If the bytes *look* like a container but fail to decode, treat them as corrupt and drop them.
   const cachedEntries = cachedDecoded
     ? cachedDecoded.entries
