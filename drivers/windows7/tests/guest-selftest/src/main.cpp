@@ -11511,6 +11511,8 @@ int wmain(int argc, wchar_t** argv) {
     marker += "|irq_message_count=";
     marker += std::to_string(static_cast<unsigned long>(irq_message_count));
     log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-blk-msix|SKIP|reason=no_miniport_info");
+    log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-blk-counters|SKIP|reason=no_miniport_info");
+    log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset-recovery|SKIP|reason=no_miniport_info");
   }
 
   // Always include perf fields (stable ordering) so the host harness can surface throughput regressions.

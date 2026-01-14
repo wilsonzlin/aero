@@ -17,10 +17,12 @@ For the consolidated virtio-input end-to-end validation plan (device model + dri
       reported as `not_supported` on older miniport builds):
       - `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-counters|INFO|abort=...|reset_device=...|reset_bus=...|pnp=...|ioctl_reset=...|capacity_change_events=<n|not_supported>`
       - `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-counters|SKIP|reason=ioctl_payload_truncated|returned_len=...`
+      - `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-counters|SKIP|reason=no_miniport_info`
     - The selftest also emits a dedicated marker for timeout/error recovery activity counters when the miniport reports
       the optional reset-recovery region:
       - `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset-recovery|INFO|reset_detected=...|hw_reset_bus=...`
       - `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset-recovery|SKIP|reason=ioctl_payload_truncated|returned_len=...`
+      - `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset-recovery|SKIP|reason=no_miniport_info`
     - The selftest also logs additional miniport diagnostics when present in the IOCTL payload:
       - `virtio-blk-miniport-flags|INFO|raw=...|removed=...|surprise_removed=...|reset_in_progress=...|reset_pending=...`
       - `virtio-blk-miniport-reset-recovery|INFO|reset_detected=...|hw_reset_bus=...`
