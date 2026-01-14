@@ -52,6 +52,11 @@ fn enc_inst_sm3(opcode: u16, params: &[u32]) -> Vec<u32> {
 }
 
 #[allow(dead_code)]
+fn enc_inst_sm3(opcode: u16, params: &[u32]) -> Vec<u32> {
+    enc_inst(opcode, params)
+}
+
+#[allow(dead_code)]
 fn enc_inst_with_extra_sm3(opcode: u16, extra: u32, params: &[u32]) -> Vec<u32> {
     enc_inst_with_extra(opcode, extra, params)
 }
