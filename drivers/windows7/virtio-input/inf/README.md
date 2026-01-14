@@ -41,7 +41,8 @@ expectations (HID class, catalog filename, KMDF version, required contract v1 HW
 distinct keyboard vs mouse `DeviceDesc` strings, INF binding/identity guardrails, and MSI interrupt settings).
 
 The validator targets the keyboard/mouse INF (`aero_virtio_input.inf`) by default, and can also be pointed at the legacy
-filename alias INF. It expects the following contract-v1 HWIDs to be present in both `[Aero.NTx86]` and `[Aero.NTamd64]`:
+filename alias INF (`virtio-input.inf` / `virtio-input.inf.disabled`). It expects the following contract-v1 HWIDs to be
+present in both `[Aero.NTx86]` and `[Aero.NTamd64]`:
 
 - `PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01` (keyboard)
 - `PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01` (mouse)
