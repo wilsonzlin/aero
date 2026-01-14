@@ -131,6 +131,13 @@ fn xhci_configure_endpoint_drop_clears_pending_doorbells() {
     out_slot_ctx.set_root_hub_port_number(1);
     out_slot_ctx.write_to(&mut mem, dev_ctx);
 
+    // Ensure the output Slot Context in guest memory is populated. Configure Endpoint reads the Slot
+    // Context from the output Device Context and mirrors it back into controller-local state; if we
+    // leave it zeroed, the slot would no longer resolve to an attached device after the drop path.
+    let mut out_slot_ctx = SlotContext::default();
+    out_slot_ctx.set_root_hub_port_number(1);
+    out_slot_ctx.write_to(&mut mem, dev_ctx);
+
     // Queue an endpoint doorbell but do not tick: the coalescing bitmap should mark it pending.
     ctrl.ring_doorbell(slot_id, EP_ID);
 
