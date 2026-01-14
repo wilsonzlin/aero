@@ -187,6 +187,95 @@ export class UsbProxyRing {
     return u32(Atomics.load(this.#ctrl, CtrlIndex.Dropped));
   }
 
+  /**
+   * Peek the next action record's payload byte length without mutating the ring.
+   *
+   * This is intended for *action rings* (worker -> main thread) so the broker can
+   * apply backpressure before popping/allocating large payload buffers.
+   *
+   * Returns:
+   * - `null` when the ring is empty (or only contains wrap padding)
+   * - `0` for non-payload actions (`controlIn`, `bulkIn`)
+   * - `>0` for payload actions (`controlOut`, `bulkOut`)
+   *
+   * Throws when ring corruption is detected.
+   */
+  peekNextActionPayloadBytes(): number | null {
+    const tail = u32(Atomics.load(this.#ctrl, CtrlIndex.Tail));
+    let head = u32(Atomics.load(this.#ctrl, CtrlIndex.Head));
+    let used = u32(tail - head);
+    if (used > this.#cap) {
+      throw new Error("USB proxy ring corrupted (action ring tail/head out of range).");
+    }
+    if (used === 0) return null;
+
+    // Simulate the consumer's wrap/marker skipping logic without mutating `head`.
+    while (used !== 0) {
+      const headIndex = head % this.#cap;
+      const remaining = this.#cap - headIndex;
+
+      if (remaining < USB_PROXY_RING_MIN_HEADER_BYTES) {
+        if (remaining > used) {
+          throw new Error("USB proxy ring corrupted (action ring head/tail inconsistent: incomplete wrap padding).");
+        }
+        head = u32(head + remaining);
+        used = u32(used - remaining);
+        continue;
+      }
+
+      const kindTag = this.#view.getUint8(headIndex + 0) as UsbRecordKindTag;
+      if (kindTag === UsbRecordKindTag.WrapMarker) {
+        if (remaining > used) {
+          throw new Error("USB proxy ring corrupted (action ring wrap marker beyond tail).");
+        }
+        head = u32(head + remaining);
+        used = u32(used - remaining);
+        continue;
+      }
+
+      const kind = this.#actionTagToKind(kindTag);
+      if (!kind) {
+        throw new Error(`USB proxy ring corrupted (unknown action kind tag: ${kindTag}).`);
+      }
+
+      switch (kind) {
+        case "controlIn":
+        case "bulkIn":
+          return 0;
+        case "controlOut": {
+          const base = headIndex + USB_PROXY_ACTION_HEADER_BYTES;
+          const fixed = USB_PROXY_ACTION_HEADER_BYTES + SETUP_PACKET_BYTES + 4;
+          if (fixed > remaining) throw new Error("USB proxy ring corrupted (controlOut record straddles wrap boundary).");
+          const setup = decodeSetupPacket(this.#view, base);
+          const dataLen = this.#view.getUint32(base + SETUP_PACKET_BYTES, true) >>> 0;
+          if (dataLen !== setup.wLength) {
+            throw new Error(
+              `USB proxy ring corrupted (controlOut payload length mismatch: wLength=${setup.wLength} dataLen=${dataLen}).`,
+            );
+          }
+          const end = fixed + dataLen;
+          const total = alignUp(end, USB_PROXY_RING_ALIGN);
+          if (total > remaining) throw new Error("USB proxy ring corrupted (controlOut payload exceeds ring segment).");
+          if (total > used) throw new Error("USB proxy ring corrupted (controlOut record exceeds available bytes).");
+          return dataLen;
+        }
+        case "bulkOut": {
+          const base = headIndex + USB_PROXY_ACTION_HEADER_BYTES;
+          const fixed = USB_PROXY_ACTION_HEADER_BYTES + 8;
+          if (fixed > remaining) throw new Error("USB proxy ring corrupted (bulkOut record straddles wrap boundary).");
+          const dataLen = this.#view.getUint32(base + 4, true) >>> 0;
+          const end = fixed + dataLen;
+          const total = alignUp(end, USB_PROXY_RING_ALIGN);
+          if (total > remaining) throw new Error("USB proxy ring corrupted (bulkOut payload exceeds ring segment).");
+          if (total > used) throw new Error("USB proxy ring corrupted (bulkOut record exceeds available bytes).");
+          return dataLen;
+        }
+      }
+    }
+
+    return null;
+  }
+
   pushAction(action: UsbHostAction, options?: UsbProxyActionOptions): boolean {
     // Producer-side validation: keep the ring robust by refusing to encode records that the
     // consumer would later treat as corruption (and detach the SAB fast-path).

@@ -910,4 +910,95 @@ describe("usb/UsbBroker", () => {
     await broker.detachSelectedDevice("bye");
     await expect(p1).resolves.toEqual({ kind: "bulkOut", id: 1, status: "error", message: "bye" });
   }, 15000);
+
+  it("does not drain the action ring when a payload would exceed maxPendingActionBytes (ring backpressure)", async () => {
+    vi.useFakeTimers();
+    const originalCoiDescriptor = Object.getOwnPropertyDescriptor(globalThis, "crossOriginIsolated");
+    Object.defineProperty(globalThis, "crossOriginIsolated", {
+      value: true,
+      configurable: true,
+      enumerable: true,
+      writable: true,
+    });
+
+    try {
+      const resolvers: Array<(c: BackendUsbHostCompletion) => void> = [];
+
+      vi.doMock("./webusb_backend", () => ({
+        WebUsbBackend: class {
+          async ensureOpenAndClaimed(): Promise<void> {}
+
+          execute(action: { id: number }): Promise<BackendUsbHostCompletion> {
+            return new Promise((resolve) => {
+              resolvers.push(resolve);
+              void action;
+            });
+          }
+        },
+      }));
+
+      const device = { vendorId: 1, productId: 2, close: async () => {} } as unknown as USBDevice;
+      const usb = new FakeUsb(device);
+      stubNavigatorUsb(usb);
+
+      const { UsbBroker } = await import("./usb_broker");
+      const { UsbProxyRing } = await import("./usb_proxy_ring");
+
+      const broker = new UsbBroker({
+        // Keep the byte budget small so two 800-byte bulkOut payloads exceed it.
+        maxPendingActions: 10,
+        maxPendingActionBytes: 1000,
+        // Ensure the action ring can hold an 800-byte payload record.
+        ringActionCapacityBytes: 2048,
+        ringDrainIntervalMs: 8,
+      });
+      await broker.requestDevice();
+
+      const port = new FakePort();
+      broker.attachWorkerPort(port as unknown as MessagePort);
+
+      const ringAttach = port.posted.find((m) => (m as { type?: unknown }).type === "usb.ringAttach") as
+        | { type: "usb.ringAttach"; actionRing: SharedArrayBuffer; completionRing: SharedArrayBuffer }
+        | undefined;
+      expect(ringAttach).toBeTruthy();
+
+      // Fill the broker's byte budget with an in-flight action.
+      const payload = new Uint8Array(800);
+      const pending = broker.execute({ kind: "bulkOut", id: 1, endpoint: 0x01, data: payload });
+
+      await Promise.resolve();
+      expect(resolvers).toHaveLength(1);
+
+      // Send another action via the ring; it should not be drained until bytes free.
+      const ringProducer = new UsbProxyRing(ringAttach!.actionRing);
+      expect(ringProducer.pushAction({ kind: "bulkOut", id: 2, endpoint: 0x01, data: payload })).toBe(true);
+
+      const ctrl = new Int32Array(ringAttach!.actionRing, 0, 3);
+      const headBefore = Atomics.load(ctrl, 0);
+
+      vi.advanceTimersByTime(8);
+
+      const headAfter = Atomics.load(ctrl, 0);
+      expect(headAfter).toBe(headBefore);
+
+      // Clean up the in-flight action so the broker's async queue can settle.
+      resolvers[0]!({ kind: "bulkOut", id: 1, status: "success", bytesWritten: payload.byteLength });
+      await expect(pending).resolves.toEqual({
+        kind: "bulkOut",
+        id: 1,
+        status: "success",
+        bytesWritten: payload.byteLength,
+      });
+
+      broker.detachWorkerPort(port as unknown as MessagePort);
+      await broker.detachSelectedDevice("bye");
+    } finally {
+      vi.useRealTimers();
+      if (originalCoiDescriptor) {
+        Object.defineProperty(globalThis, "crossOriginIsolated", originalCoiDescriptor);
+      } else {
+        Reflect.deleteProperty(globalThis as unknown as { crossOriginIsolated?: unknown }, "crossOriginIsolated");
+      }
+    }
+  }, 15000);
 });

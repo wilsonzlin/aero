@@ -637,8 +637,16 @@ export class UsbBroker {
       // If a real device is selected and the execute queue is already full, stop
       // draining here to apply backpressure to the ring producer instead of
       // pulling unbounded work onto the main thread.
-      if (this.device && !this.disconnectError && !this.hasQueueCapacity(0)) {
-        break;
+      if (this.device && !this.disconnectError) {
+        let nextPayloadBytes: number | null = null;
+        try {
+          nextPayloadBytes = actionRing.peekNextActionPayloadBytes();
+        } catch (err) {
+          this.disableRingsForPort(port, err);
+          break;
+        }
+        if (nextPayloadBytes === null) break;
+        if (!this.hasQueueCapacity(nextPayloadBytes)) break;
       }
 
       let record: { action: UsbHostAction; options?: UsbProxyActionOptions } | null = null;
