@@ -284,6 +284,9 @@ npm run test:protocol
 # Browser e2e: WDDM scanout state presentation (no Win7 guest; validates BGRX->RGBA + alpha policy)
 npm run test:e2e -- tests/e2e/wddm_scanout_smoke.spec.ts
 
+# Manual (interactive): WDDM scanout debug harness (toggle scanoutState source/base_paddr/pitch and XRGB alpha forcing)
+# Open `/web/wddm-scanout-debug.html` under a COOP/COEP-enabled dev server (e.g. `npm run dev:harness`).
+
 # Run emulator-side AeroGPU device model tests
 bash ./scripts/safe-run.sh cargo test -p emulator --test aerogpu_end_to_end --locked
 

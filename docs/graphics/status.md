@@ -382,6 +382,7 @@ Impact:
 - The GPU worker can present WDDM scanout from guest RAM when `ScanoutState` is published with `source=WDDM` and a non-zero `base_paddr`:
   - Code: [`web/src/workers/gpu-worker.ts`](../../web/src/workers/gpu-worker.ts) (`tryReadWddmScanoutFrame`)
   - E2E test: [`tests/e2e/wddm_scanout_smoke.spec.ts`](../../tests/e2e/wddm_scanout_smoke.spec.ts) (harness: [`web/wddm-scanout-smoke.ts`](../../web/wddm-scanout-smoke.ts))
+- Manual harness: [`web/wddm-scanout-debug.html`](../../web/wddm-scanout-debug.html) (interactive toggles for scanoutState source/base_paddr/pitch and BGRX X-byte alpha forcing)
 - Current limitation: `ScanoutState` is currently used as a compact "scanout pointer" and only publishes `B8G8R8X8` (BGRA is treated as compatible); unsupported scanout formats publish a deterministic disabled descriptor.
 
 Impact:
