@@ -133,7 +133,10 @@ See also: [`docs/windows/virtio-pci-modern-interrupt-debugging.md`](../../../doc
 
 - `src/aero_virtio_net.c` – NDIS miniport implementation + virtio-net datapath
 - `include/aero_virtio_net.h` – driver-local definitions
+- `include/virtio_net_hdr_offload.h` + `src/virtio_net_hdr_offload.c` – portable virtio-net header/L2/L3/L4 parsing helpers (host-testable)
+- `src/aero_virtio_net_offload.c` + `include/aero_virtio_net_offload.h` – portable TX header builder used by the miniport
 - `inf/aero_virtio_net.inf` – network class INF for installation on Win7 x86/x64
+- `tests/host/` – host-side unit tests for the portable offload logic (buildable on Linux/macOS via CMake)
 
 ## Building
 
