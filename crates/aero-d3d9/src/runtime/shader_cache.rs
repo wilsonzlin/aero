@@ -27,7 +27,9 @@ use crate::shader_limits::MAX_D3D9_SHADER_BLOB_BYTES;
 /// to bump that global cache version when only the D3D9 translator changes.
 // v4: shader translation now optionally applies the D3D9 half-pixel center convention when
 // `ShaderTranslationFlags::half_pixel_center` is enabled.
-pub const D3D9_TRANSLATOR_CACHE_VERSION: u32 = 4;
+// v5: add `lrp` opcode support in the D3D9 translators (affects WGSL semantics for shaders that
+// previously translated but produced incorrect output).
+pub const D3D9_TRANSLATOR_CACHE_VERSION: u32 = 5;
 
 fn default_d3d9_translator_cache_version() -> u32 {
     D3D9_TRANSLATOR_CACHE_VERSION
