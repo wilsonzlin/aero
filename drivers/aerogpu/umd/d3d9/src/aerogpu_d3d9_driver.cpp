@@ -5036,17 +5036,11 @@ static HRESULT ensure_fixedfunc_ps_fallback_locked(Device* dev, Shader** out_ps)
     case kSupportedFvfXyzrhwTex1:
       ps_slot = &dev->fixedfunc_ps_tex1;
       break;
-    case kSupportedFvfXyzrhwTex1:
-      ps_slot = &dev->fixedfunc_ps_tex1;
-      break;
     case kSupportedFvfXyzDiffuse:
       // XYZ+DIFFUSE uses the same fixed-function PS slot as the XYZRHW variant.
       ps_slot = &dev->fixedfunc_ps;
       break;
     case kSupportedFvfXyzDiffuseTex1:
-    case kSupportedFvfXyzTex1:
-      ps_slot = &dev->fixedfunc_ps_xyz_diffuse_tex1;
-      break;
     case kSupportedFvfXyzTex1:
       ps_slot = &dev->fixedfunc_ps_xyz_diffuse_tex1;
       break;
