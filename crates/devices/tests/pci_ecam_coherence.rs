@@ -272,12 +272,18 @@ fn pci_ecam_unaligned_cross_dword_bar_write_updates_both_bars() {
     cfg_ports
         .borrow_mut()
         .io_write(PCI_CFG_ADDR_PORT, 4, cfg_addr(0, 2, 0, 0x10));
-    assert_eq!(cfg_ports.borrow_mut().io_read(PCI_CFG_DATA_PORT, 4), 0x5A00_0000);
+    assert_eq!(
+        cfg_ports.borrow_mut().io_read(PCI_CFG_DATA_PORT, 4),
+        0x5A00_0000
+    );
 
     cfg_ports
         .borrow_mut()
         .io_write(PCI_CFG_ADDR_PORT, 4, cfg_addr(0, 2, 0, 0x14));
-    assert_eq!(cfg_ports.borrow_mut().io_read(PCI_CFG_DATA_PORT, 4), 0x0000_00A1);
+    assert_eq!(
+        cfg_ports.borrow_mut().io_read(PCI_CFG_DATA_PORT, 4),
+        0x0000_00A1
+    );
 }
 
 #[test]
