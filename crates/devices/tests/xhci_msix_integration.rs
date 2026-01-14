@@ -588,6 +588,65 @@ fn xhci_msix_function_mask_pending_delivers_on_unmask_even_after_interrupt_clear
 }
 
 #[test]
+fn xhci_msix_reset_clears_pba_pending_bit() {
+    let chipset = ChipsetState::new(true);
+    let filter = AddressFilter::new(chipset.a20());
+    let mut mem = PlatformMemoryBus::new(filter, 0x1000);
+
+    let mut dev = XhciPciDevice::default();
+    dev.config_mut().set_command(1 << 1);
+
+    let interrupts = Rc::new(RefCell::new(PlatformInterrupts::new()));
+    interrupts
+        .borrow_mut()
+        .set_mode(PlatformInterruptMode::Apic);
+    dev.set_msi_target(Some(Box::new(interrupts.clone())));
+
+    // Program a masked MSI-X entry, enable MSI-X, then raise an interrupt so the PBA pending bit is
+    // set.
+    program_msix_table_entry0(&mut dev, 0xfee0_0000, 0x45, true);
+    enable_msix(&mut dev);
+
+    let (table_base, pba_base) = {
+        let msix = dev
+            .config()
+            .capability::<MsixCapability>()
+            .expect("MSI-X capability");
+        (u64::from(msix.table_offset()), u64::from(msix.pba_offset()))
+    };
+
+    dev.raise_event_interrupt();
+    assert_eq!(interrupts.borrow_mut().get_pending(), None);
+    assert_eq!(
+        MmioHandler::read(&mut dev, pba_base, 8) & 1,
+        1,
+        "masked trigger should set PBA pending bit"
+    );
+
+    // Reset should clear the MSI-X PBA pending bit so re-enabling MSI-X does not deliver a stale
+    // interrupt.
+    dev.reset();
+
+    dev.config_mut().set_command(1 << 1);
+    enable_msix(&mut dev);
+
+    assert_eq!(
+        MmioHandler::read(&mut dev, pba_base, 8) & 1,
+        0,
+        "PBA pending bit should be cleared by reset"
+    );
+
+    // Unmask entry 0. With no interrupt condition asserted post-reset, this must not deliver.
+    MmioHandler::write(&mut dev, table_base + 0x0c, 4, 0);
+    dev.tick_1ms(&mut mem);
+    assert_eq!(
+        interrupts.borrow_mut().get_pending(),
+        None,
+        "reset must prevent stale pending MSI-X delivery"
+    );
+}
+
+#[test]
 fn xhci_snapshot_roundtrip_preserves_msix_table_and_pba() {
     let mut dev = XhciPciDevice::default();
     dev.config_mut().set_command(1 << 1);
