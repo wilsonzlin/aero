@@ -27,7 +27,11 @@ static void PrintUsage() {
   aerogpu_test::PrintfStdout(
       "  --log-dir=DIR         If set, redirect each test's stdout/stderr to <test>.stdout.txt / <test>.stderr.txt in DIR.");
   aerogpu_test::PrintfStdout(
+      "                        When --json is enabled, failing tests include these log files in the JSON artifacts array.");
+  aerogpu_test::PrintfStdout(
       "  --dbgctl=PATH         Optional path to aerogpu_dbgctl.exe; if set, run '--status' and a recent cmd dump after test failures/timeouts.");
+  aerogpu_test::PrintfStdout(
+      "                        When --json is enabled, failing tests include dbgctl outputs in the JSON artifacts array.");
   aerogpu_test::PrintfStdout("  --dbgctl-timeout-ms=NNNN  Timeout for the dbgctl process itself (wrapper kill). Default: 5000.");
   aerogpu_test::PrintfStdout("");
   aerogpu_test::PrintfStdout("All other flags are forwarded to each test (e.g. --dump, --hidden, --require-vid=...).");
