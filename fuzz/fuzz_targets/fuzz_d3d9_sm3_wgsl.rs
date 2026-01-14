@@ -83,14 +83,15 @@ fn build_patched_shader(seed: &[u8]) -> Vec<u8> {
     // This helps libFuzzer reach deep decode/IR/WGSL paths without having to discover the
     // version/opcode encodings from scratch.
 
-    let mode = seed.get(6).copied().unwrap_or(0) % 9;
+    let mode = seed.get(6).copied().unwrap_or(0) % 10;
 
     // For the texture-sampling path, force a pixel shader so we can exercise `texldd`.
     let stage_is_pixel = ((seed.get(0).copied().unwrap_or(0) & 1 != 0) || mode == 4) && mode != 7;
 
-    // For the `mova`/relative-constant, `loop`, and `predicate` modes, force SM3 so address/loop
-    // registers are valid and we can exercise predicate-aware WGSL lowering more reliably.
-    let major = if mode == 2 || mode == 5 || mode == 6 || mode == 7 {
+    // For the `mova`/relative-constant, `loop`, `predicate`, `dcl`, and `subroutine` modes, force
+    // SM3 so address/loop/predicate/label registers are valid and we can exercise deeper structured
+    // control-flow and subroutine lowering paths more reliably.
+    let major = if mode == 2 || mode == 5 || mode == 6 || mode == 7 || mode == 9 {
         3u32
     } else {
         2u32 + ((seed.get(1).copied().unwrap_or(0) as u32) & 1)
@@ -516,7 +517,42 @@ fn build_patched_shader(seed: &[u8]) -> Vec<u8> {
             tokens.push(opcode_token(39, 0, 0));
         }
 
-        _ => unreachable!("mode is reduced modulo 9"),
+        // Call/label/ret subroutines (SM3).
+        9 => {
+            let label_idx = seed.get(13).copied().unwrap_or(0) % 4;
+            let label_token = src_token(18, label_idx, 0xE4, 0);
+
+            // call/callnz l#, cond
+            let use_callnz = seed.get(14).copied().unwrap_or(0) & 1 != 0;
+            if use_callnz {
+                // callnz: label, cond
+                tokens.push(opcode_token(26, 2, 0));
+                tokens.push(label_token);
+                tokens.push(src0);
+            } else {
+                // call: label
+                tokens.push(opcode_token(25, 1, 0));
+                tokens.push(label_token);
+            }
+
+            // ret (terminate main program before subroutine bodies)
+            tokens.push(opcode_token(28, 0, 0));
+
+            // label l#
+            tokens.push(opcode_token(30, 1, 0));
+            tokens.push(label_token);
+
+            // subroutine body: add dst, src0, src1
+            tokens.push(opcode_token(2, 3, mod_bits));
+            tokens.push(dst);
+            tokens.push(src0);
+            tokens.push(src1);
+
+            // ret
+            tokens.push(opcode_token(28, 0, 0));
+        }
+
+        _ => unreachable!("mode is reduced modulo 10"),
     };
 
     tokens.push(0x0000_FFFF);

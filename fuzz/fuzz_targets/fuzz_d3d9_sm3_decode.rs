@@ -81,17 +81,77 @@ fn src_token_rel_const(
     [base, rel]
 }
 
+fn align4(value: usize) -> usize {
+    (value + 3) & !3
+}
+
+fn build_dxbc_container(chunks: &[([u8; 4], &[u8])]) -> Vec<u8> {
+    // Minimal DXBC container builder (copied from `aero-dxbc` test utils).
+    //
+    // Layout:
+    // - magic:      4 bytes ("DXBC")
+    // - checksum:  16 bytes (unused here; all zeros)
+    // - reserved:   4 bytes (typically 1)
+    // - total_size: 4 bytes
+    // - chunk_count:4 bytes
+    // - chunk_offsets: chunk_count * 4 bytes
+    // - chunks:
+    //     - fourcc: 4 bytes
+    //     - size:   4 bytes
+    //     - data:   size bytes (padded to 4-byte alignment)
+    let header_size = 4 + 16 + 4 + 4 + 4 + (4 * chunks.len());
+    let chunk_bytes = chunks
+        .iter()
+        .map(|(_, data)| align4(8 + data.len()))
+        .sum::<usize>();
+
+    let mut out = Vec::with_capacity(header_size + chunk_bytes);
+
+    out.extend_from_slice(b"DXBC");
+    out.extend_from_slice(&[0u8; 16]); // checksum (MD5; ignored by parsers)
+    out.extend_from_slice(&1u32.to_le_bytes()); // reserved
+    out.extend_from_slice(&0u32.to_le_bytes()); // total_size placeholder
+    out.extend_from_slice(&(chunks.len() as u32).to_le_bytes());
+
+    // Reserve space for the chunk offset table and fill it in once we know the offsets.
+    let offsets_pos = out.len();
+    out.resize(out.len() + 4 * chunks.len(), 0);
+
+    let mut offsets = Vec::with_capacity(chunks.len());
+    for (fourcc, data) in chunks {
+        offsets.push(out.len() as u32);
+
+        out.extend_from_slice(fourcc);
+        out.extend_from_slice(&(data.len() as u32).to_le_bytes());
+        out.extend_from_slice(data);
+        out.resize(align4(out.len()), 0);
+    }
+
+    // Fill offsets.
+    for (i, offset) in offsets.iter().enumerate() {
+        let pos = offsets_pos + i * 4;
+        out[pos..pos + 4].copy_from_slice(&offset.to_le_bytes());
+    }
+
+    // Fill total_size.
+    let total_size = out.len() as u32;
+    let total_size_pos = 4 + 16 + 4;
+    out[total_size_pos..total_size_pos + 4].copy_from_slice(&total_size.to_le_bytes());
+
+    out
+}
+
 fn build_patched_shader(seed: &[u8]) -> Vec<u8> {
     // Build a tiny, self-consistent shader token stream derived from the fuzzer input.
     // This helps libFuzzer reach deeper decode/IR paths without having to discover the
     // version/opcode encodings from scratch.
 
-    let mode = seed.get(6).copied().unwrap_or(0) % 8;
+    let mode = seed.get(6).copied().unwrap_or(0) % 9;
     let stage_is_pixel = (seed.get(0).copied().unwrap_or(0) & 1 != 0) && mode != 2 && mode != 6;
-    // For the `mova`/relative-constant, `loop`, `predicate`, and `dcl` modes, force SM3 so
-    // address/loop/predicate registers are valid and we reach deeper semantic-remapping and
-    // structured-control-flow IR paths more reliably.
-    let major = if mode == 2 || mode == 4 || mode == 5 || mode == 6 {
+    // For the `mova`/relative-constant, `loop`, `predicate`, `dcl`, and `subroutine` modes, force
+    // SM3 so address/loop/predicate/label registers are valid and we reach deeper semantic-remapping
+    // and structured-control-flow IR paths more reliably.
+    let major = if mode == 2 || mode == 4 || mode == 5 || mode == 6 || mode == 8 {
         3u32
     } else {
         2u32 + ((seed.get(1).copied().unwrap_or(0) as u32) & 1)
@@ -137,7 +197,7 @@ fn build_patched_shader(seed: &[u8]) -> Vec<u8> {
     let include_def = seed.get(5).copied().unwrap_or(0) & 1 != 0;
     let def_dst = dst_token(2, c0, 0);
 
-    let mut tokens: Vec<u32> = Vec::with_capacity(24);
+    let mut tokens: Vec<u32> = Vec::with_capacity(48);
     tokens.push(version_token);
     if include_def {
         // def c#, imm0..imm3
@@ -375,7 +435,42 @@ fn build_patched_shader(seed: &[u8]) -> Vec<u8> {
             tokens.push(opcode_token(39, 0, 0));
         }
 
-        _ => unreachable!("mode is reduced modulo 8"),
+        // Call/label/ret subroutines (SM3).
+        8 => {
+            let label_idx = seed.get(13).copied().unwrap_or(0) % 4;
+            let label_token = src_token(18, label_idx, 0xE4, 0);
+
+            // call/callnz l#, cond
+            let use_callnz = seed.get(14).copied().unwrap_or(0) & 1 != 0;
+            if use_callnz {
+                // callnz: label, cond
+                tokens.push(opcode_token(26, 2, 0));
+                tokens.push(label_token);
+                tokens.push(src0);
+            } else {
+                // call: label
+                tokens.push(opcode_token(25, 1, 0));
+                tokens.push(label_token);
+            }
+
+            // ret (terminate main program before subroutine bodies)
+            tokens.push(opcode_token(28, 0, 0));
+
+            // label l#
+            tokens.push(opcode_token(30, 1, 0));
+            tokens.push(label_token);
+
+            // subroutine body: add dst, src0, src1
+            tokens.push(opcode_token(2, 3, mod_bits));
+            tokens.push(dst);
+            tokens.push(src0);
+            tokens.push(src1);
+
+            // ret
+            tokens.push(opcode_token(28, 0, 0));
+        }
+
+        _ => unreachable!("mode is reduced modulo 9"),
     };
 
     // End token.
@@ -413,10 +508,7 @@ fuzz_target!(|data: &[u8]| {
     let _ = aero_d3d9::shader::parse(&patched);
     // Also wrap the patched SM2/3 token stream in a minimal DXBC container to exercise the DXBC
     // parsing and shader-bytecode extraction entrypoints in `aero_d3d9::dxbc`.
-    let patched_dxbc = aero_dxbc::test_utils::build_container(&[(
-        aero_dxbc::FourCC(*b"SHDR"),
-        patched.as_slice(),
-    )]);
+    let patched_dxbc = build_dxbc_container(&[(*b"SHDR", patched.as_slice())]);
     let _ = aero_d3d9::shader::parse(&patched_dxbc);
     if let Ok(bytes) = aero_d3d9::dxbc::extract_shader_bytecode(&patched_dxbc) {
         decode_build_verify(bytes);
