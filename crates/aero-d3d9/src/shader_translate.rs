@@ -548,13 +548,10 @@ impl Sm3TranslateFailure {
                 }
 
                 let msg = e.message.to_ascii_lowercase();
-                if msg.contains("not supported") {
-                    return true;
-                }
-
-                // Some opcodes require additional decoding support beyond the IR builder (e.g.
-                // legacy vs SM2/SM3 TEX variants). Allow fallback on these explicit encoding gaps.
-                msg.contains("tex has unsupported encoding")
+                // Do **not** fall back for opcode-specific encoding errors (e.g. invalid TEX opcode
+                // "specific" fields). Those indicate malformed bytecode and the legacy translator
+                // is intentionally more permissive, which could make fallback an escape hatch.
+                msg.contains("not supported")
             }
 
             // Verify errors represent malformed IR and should not fall back.

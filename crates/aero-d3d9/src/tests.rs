@@ -3051,6 +3051,42 @@ fn translate_entrypoint_rejects_unknown_sampler_texture_type() {
 }
 
 #[test]
+fn translate_entrypoint_rejects_invalid_tex_specific_field() {
+    // The `tex` opcode (0x42) uses a 4-bit "specific" field in opcode_token[16..20] to select
+    // between `texld` (0), `texldp` (1), and `texldb` (2). Other values are malformed input and
+    // must not trigger legacy fallback.
+    let mut words = vec![0xFFFF_0300]; // ps_3_0
+    // dcl_2d s0
+    words.extend(enc_inst_with_extra(
+        0x001F,
+        2u32 << 16,
+        &[enc_dst(10, 0, 0xF)],
+    ));
+    // texld r0, t0, s0 with invalid specific field 3.
+    words.extend(enc_inst_with_extra(
+        0x0042,
+        3u32 << 16,
+        &[enc_dst(0, 0, 0xF), enc_src(3, 0, 0xE4), enc_src(10, 0, 0xE4)],
+    ));
+    // mov oC0, r0
+    words.extend(enc_inst(
+        0x0001,
+        &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)],
+    ));
+    words.push(0x0000_FFFF);
+
+    let err = shader_translate::translate_d3d9_shader_to_wgsl(
+        &to_bytes(&words),
+        shader::WgslOptions::default(),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(err, shader_translate::ShaderTranslateError::Malformed(_)),
+        "{err:?}"
+    );
+}
+
+#[test]
 fn translate_entrypoint_rejects_nested_relative_addressing() {
     // Craft a minimal ps_3_0 shader with nested relative addressing in a source operand.
     // Nested relative addressing is malformed SM2/SM3 bytecode and should be rejected as

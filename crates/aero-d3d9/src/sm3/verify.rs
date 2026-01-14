@@ -1,5 +1,5 @@
 use crate::shader_limits::MAX_D3D9_SHADER_CONTROL_FLOW_NESTING;
-use crate::sm3::decode::{ResultShift, SrcModifier};
+use crate::sm3::decode::{ResultShift, SrcModifier, TextureType};
 use crate::sm3::ir::{
     Block, CompareOp, Cond, Dst, IrOp, RegFile, ShaderIr, Src, Stmt, TexSampleKind,
 };
@@ -19,6 +19,19 @@ impl std::fmt::Display for VerifyError {
 impl std::error::Error for VerifyError {}
 
 pub fn verify_ir(ir: &ShaderIr) -> Result<(), VerifyError> {
+    // Reject unknown sampler texture types early. These are invalid DCL encodings and should not
+    // be treated as a fallbackable "unsupported feature" (otherwise malformed shaders could use
+    // legacy fallback as an escape hatch).
+    for sampler in &ir.samplers {
+        if let TextureType::Unknown(v) = sampler.texture_type {
+            return Err(VerifyError {
+                message: format!(
+                    "unknown sampler texture type value {v} declared for s{}",
+                    sampler.index
+                ),
+            });
+        }
+    }
     verify_block(&ir.body, ir.version.stage, 0, 0, false)?;
     for body in ir.subroutines.values() {
         verify_block(body, ir.version.stage, 0, 0, true)?;
