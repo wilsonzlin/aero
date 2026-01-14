@@ -181,6 +181,13 @@ function resolveWebUsbBackendOptions(options?: WebUsbBackendOptions): Required<W
   return { translateOtherSpeedConfigurationDescriptor: options?.translateOtherSpeedConfigurationDescriptor ?? true };
 }
 
+// WebUSB bulk transfers can represent multi-packet transfers. Keep the requested transfer length
+// bounded so a malicious guest cannot ask the browser to allocate multi-gigabyte buffers.
+//
+// Note: `UsbPassthroughDevice` snapshots clamp action payloads to 4MiB, so using the same cap keeps
+// runtime behaviour aligned with snapshot safety limits.
+const MAX_WEBUSB_BULK_TRANSFER_BYTES = 4 * 1024 * 1024;
+
 function shouldTranslateConfigurationDescriptor(
   setup: SetupPacket,
   options: Required<WebUsbBackendOptions>,
@@ -399,6 +406,13 @@ export class WebUsbBackend {
           `Invalid bulkIn endpoint address ${hex8(endpoint)} (expected IN endpoint address with reserved bits clear and endpoint number 1-15)`,
         );
       }
+      if (action.length > MAX_WEBUSB_BULK_TRANSFER_BYTES) {
+        return errorCompletion(
+          action.kind,
+          action.id,
+          `bulkIn length too large (${action.length} bytes, max ${MAX_WEBUSB_BULK_TRANSFER_BYTES})`,
+        );
+      }
     } else if (action.kind === "bulkOut") {
       const endpoint = action.endpoint;
       const endpointNumber = endpoint & 0x0f;
@@ -409,6 +423,10 @@ export class WebUsbBackend {
           action.id,
           `Invalid bulkOut endpoint address ${hex8(endpoint)} (expected OUT endpoint address with reserved bits clear and endpoint number 1-15)`,
         );
+      }
+      const len = action.data.byteLength >>> 0;
+      if (len > MAX_WEBUSB_BULK_TRANSFER_BYTES) {
+        return errorCompletion(action.kind, action.id, `bulkOut payload too large (${len} bytes, max ${MAX_WEBUSB_BULK_TRANSFER_BYTES})`);
       }
     }
 

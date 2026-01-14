@@ -594,4 +594,50 @@ describe("WebUsbBackend.execute bulk endpoint validation", () => {
       expect(transferOut).not.toHaveBeenCalled();
     });
   });
+
+  it("rejects bulkIn actions with lengths above the safety cap", async () => {
+    await withFakeNavigatorUsb(async () => {
+      const transferIn = vi.fn<[number, number], Promise<USBInTransferResult>>();
+      transferIn.mockResolvedValueOnce({ status: "ok", data: dataViewFromBytes([0x00]) });
+
+      const device: Partial<USBDevice> = {
+        opened: true,
+        configuration: null,
+        configurations: [],
+        open: vi.fn(async () => {}),
+        selectConfiguration: vi.fn(async () => {}),
+        claimInterface: vi.fn(async () => {}),
+        transferIn,
+      };
+
+      const backend = new WebUsbBackend(device as USBDevice);
+      const tooLarge = 4 * 1024 * 1024 + 1;
+      const res = await backend.execute({ kind: "bulkIn", id: 5, endpoint: 0x81, length: tooLarge });
+      expect(res).toMatchObject({ kind: "bulkIn", id: 5, status: "error" });
+      expect(transferIn).not.toHaveBeenCalled();
+    });
+  });
+
+  it("rejects bulkOut payloads above the safety cap", async () => {
+    await withFakeNavigatorUsb(async () => {
+      const transferOut = vi.fn<[number, BufferSource], Promise<USBOutTransferResult>>();
+      transferOut.mockResolvedValueOnce({ status: "ok", bytesWritten: 0 });
+
+      const device: Partial<USBDevice> = {
+        opened: true,
+        configuration: null,
+        configurations: [],
+        open: vi.fn(async () => {}),
+        selectConfiguration: vi.fn(async () => {}),
+        claimInterface: vi.fn(async () => {}),
+        transferOut,
+      };
+
+      const backend = new WebUsbBackend(device as USBDevice);
+      const tooLarge = new Uint8Array(4 * 1024 * 1024 + 1);
+      const res = await backend.execute({ kind: "bulkOut", id: 6, endpoint: 0x02, data: tooLarge });
+      expect(res).toMatchObject({ kind: "bulkOut", id: 6, status: "error" });
+      expect(transferOut).not.toHaveBeenCalled();
+    });
+  });
 });
