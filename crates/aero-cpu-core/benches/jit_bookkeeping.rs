@@ -452,7 +452,6 @@ fn bench_jit_runtime_prepare_block(c: &mut Criterion) {
                 checksum ^= h.map(|h| u64::from(h.table_index)).unwrap_or(0);
             }
             black_box(checksum);
-            black_box(metrics.cache_hit.load(Ordering::Relaxed));
         });
     });
 
@@ -478,7 +477,6 @@ fn bench_jit_runtime_prepare_block(c: &mut Criterion) {
                 black_box(jit.prepare_block(black_box(rip)));
             }
             black_box(jit.hotness(rip));
-            black_box(metrics.cache_miss.load(Ordering::Relaxed));
         });
     });
 
