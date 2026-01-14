@@ -475,6 +475,100 @@ mod tests {
     use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
     use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
 
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum MapExpectation {
+        Ok(wgpu::TextureFormat),
+        Unsupported,
+    }
+
+    macro_rules! acmd_format_expectations {
+        ($($variant:ident => $expectation:expr,)+) => {
+            // Keep the protocol-format list and expectation match table in sync by generating both
+            // from the same source of truth.
+            //
+            // The match is intentionally exhaustive (no `_ => ...`), so adding a new protocol enum
+            // variant forces this test to be updated.
+            const ALL_PROTOCOL_FORMATS: &[AerogpuFormat] = &[
+                $(AerogpuFormat::$variant,)+
+            ];
+
+            fn expected_mapping(format: AerogpuFormat) -> MapExpectation {
+                match format {
+                    $(AerogpuFormat::$variant => $expectation,)+
+                }
+            }
+        };
+    }
+
+    acmd_format_expectations! {
+        Invalid => MapExpectation::Unsupported,
+
+        B8G8R8A8Unorm => MapExpectation::Ok(wgpu::TextureFormat::Bgra8Unorm),
+        B8G8R8X8Unorm => MapExpectation::Ok(wgpu::TextureFormat::Bgra8Unorm),
+        R8G8B8A8Unorm => MapExpectation::Ok(wgpu::TextureFormat::Rgba8Unorm),
+        R8G8B8X8Unorm => MapExpectation::Ok(wgpu::TextureFormat::Rgba8Unorm),
+
+        B5G6R5Unorm => MapExpectation::Unsupported,
+        B5G5R5A1Unorm => MapExpectation::Unsupported,
+
+        B8G8R8A8UnormSrgb => MapExpectation::Ok(wgpu::TextureFormat::Bgra8UnormSrgb),
+        B8G8R8X8UnormSrgb => MapExpectation::Ok(wgpu::TextureFormat::Bgra8UnormSrgb),
+        R8G8B8A8UnormSrgb => MapExpectation::Ok(wgpu::TextureFormat::Rgba8UnormSrgb),
+        R8G8B8X8UnormSrgb => MapExpectation::Ok(wgpu::TextureFormat::Rgba8UnormSrgb),
+
+        D24UnormS8Uint => MapExpectation::Unsupported,
+        D32Float => MapExpectation::Unsupported,
+
+        BC1RgbaUnorm => MapExpectation::Unsupported,
+        BC1RgbaUnormSrgb => MapExpectation::Unsupported,
+        BC2RgbaUnorm => MapExpectation::Unsupported,
+        BC2RgbaUnormSrgb => MapExpectation::Unsupported,
+        BC3RgbaUnorm => MapExpectation::Unsupported,
+        BC3RgbaUnormSrgb => MapExpectation::Unsupported,
+        BC7RgbaUnorm => MapExpectation::Unsupported,
+        BC7RgbaUnormSrgb => MapExpectation::Unsupported,
+    }
+
+    #[test]
+    fn map_texture_format_covers_all_protocol_formats() {
+        for &format in ALL_PROTOCOL_FORMATS {
+            let got = map_texture_format(format as u32);
+            match expected_mapping(format) {
+                MapExpectation::Ok(expected) => {
+                    let mapped = got.unwrap_or_else(|err| {
+                        panic!(
+                            "map_texture_format should accept protocol format {format:?} ({}), got error: {err:?}",
+                            format as u32
+                        )
+                    });
+                    assert_eq!(mapped, expected, "format={format:?}");
+                }
+                MapExpectation::Unsupported => match got {
+                    Ok(v) => panic!(
+                        "map_texture_format should reject protocol format {format:?} ({}), got Ok({v:?})",
+                        format as u32
+                    ),
+                    Err(AeroGpuAcmdExecutorError::UnsupportedTextureFormat { format: raw, reason }) => {
+                        assert_eq!(raw, format as u32, "format field mismatch");
+                        assert!(
+                            !reason.trim().is_empty(),
+                            "unsupported format {format:?} should include a reason"
+                        );
+                        if is_bc_format(raw) {
+                            assert!(
+                                reason.contains("BC"),
+                                "BC formats should mention BC in the error reason, got: {reason}"
+                            );
+                        }
+                    }
+                    Err(other) => panic!(
+                        "expected UnsupportedTextureFormat for {format:?}, got {other:?}"
+                    ),
+                },
+            }
+        }
+    }
+
     #[test]
     fn map_texture_format_accepts_uncompressed_srgb_formats() {
         assert_eq!(

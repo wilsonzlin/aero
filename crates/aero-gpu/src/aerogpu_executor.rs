@@ -4366,6 +4366,216 @@ mod tests {
         assert!(!is_x8_format(pci::AerogpuFormat::R8G8B8A8UnormSrgb as u32));
     }
 
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum MapExpectation {
+        Ok {
+            format: wgpu::TextureFormat,
+            transform: TextureUploadTransform,
+        },
+        Unsupported,
+    }
+
+    macro_rules! executor_format_expectations {
+        ($($variant:ident => { bc_off: $bc_off:expr, bc_on: $bc_on:expr $(,)? },)+) => {
+            // Keep the protocol-format list and the match tables in sync by generating everything
+            // from the same source of truth.
+            //
+            // Both matches are intentionally exhaustive (no `_ => ...`), so adding a new protocol
+            // enum variant forces these tests to be updated.
+            const ALL_PROTOCOL_FORMATS: &[pci::AerogpuFormat] = &[
+                $(pci::AerogpuFormat::$variant,)+
+            ];
+
+            fn expected_map_bc_off(format: pci::AerogpuFormat) -> MapExpectation {
+                match format {
+                    $(pci::AerogpuFormat::$variant => $bc_off,)+
+                }
+            }
+
+            fn expected_map_bc_on(format: pci::AerogpuFormat) -> MapExpectation {
+                match format {
+                    $(pci::AerogpuFormat::$variant => $bc_on,)+
+                }
+            }
+        };
+    }
+
+    executor_format_expectations! {
+        Invalid => { bc_off: MapExpectation::Unsupported, bc_on: MapExpectation::Unsupported },
+
+        B8G8R8A8Unorm => {
+            bc_off: MapExpectation::Ok { format: wgpu::TextureFormat::Bgra8Unorm, transform: TextureUploadTransform::Direct },
+            bc_on: MapExpectation::Ok { format: wgpu::TextureFormat::Bgra8Unorm, transform: TextureUploadTransform::Direct },
+        },
+        B8G8R8X8Unorm => {
+            bc_off: MapExpectation::Ok { format: wgpu::TextureFormat::Bgra8Unorm, transform: TextureUploadTransform::Direct },
+            bc_on: MapExpectation::Ok { format: wgpu::TextureFormat::Bgra8Unorm, transform: TextureUploadTransform::Direct },
+        },
+        R8G8B8A8Unorm => {
+            bc_off: MapExpectation::Ok { format: wgpu::TextureFormat::Rgba8Unorm, transform: TextureUploadTransform::Direct },
+            bc_on: MapExpectation::Ok { format: wgpu::TextureFormat::Rgba8Unorm, transform: TextureUploadTransform::Direct },
+        },
+        R8G8B8X8Unorm => {
+            bc_off: MapExpectation::Ok { format: wgpu::TextureFormat::Rgba8Unorm, transform: TextureUploadTransform::Direct },
+            bc_on: MapExpectation::Ok { format: wgpu::TextureFormat::Rgba8Unorm, transform: TextureUploadTransform::Direct },
+        },
+
+        B5G6R5Unorm => {
+            bc_off: MapExpectation::Ok { format: wgpu::TextureFormat::Rgba8Unorm, transform: TextureUploadTransform::B5G6R5ToRgba8 },
+            bc_on: MapExpectation::Ok { format: wgpu::TextureFormat::Rgba8Unorm, transform: TextureUploadTransform::B5G6R5ToRgba8 },
+        },
+        B5G5R5A1Unorm => {
+            bc_off: MapExpectation::Ok { format: wgpu::TextureFormat::Rgba8Unorm, transform: TextureUploadTransform::B5G5R5A1ToRgba8 },
+            bc_on: MapExpectation::Ok { format: wgpu::TextureFormat::Rgba8Unorm, transform: TextureUploadTransform::B5G5R5A1ToRgba8 },
+        },
+
+        B8G8R8A8UnormSrgb => {
+            bc_off: MapExpectation::Ok { format: wgpu::TextureFormat::Bgra8UnormSrgb, transform: TextureUploadTransform::Direct },
+            bc_on: MapExpectation::Ok { format: wgpu::TextureFormat::Bgra8UnormSrgb, transform: TextureUploadTransform::Direct },
+        },
+        B8G8R8X8UnormSrgb => {
+            bc_off: MapExpectation::Ok { format: wgpu::TextureFormat::Bgra8UnormSrgb, transform: TextureUploadTransform::Direct },
+            bc_on: MapExpectation::Ok { format: wgpu::TextureFormat::Bgra8UnormSrgb, transform: TextureUploadTransform::Direct },
+        },
+        R8G8B8A8UnormSrgb => {
+            bc_off: MapExpectation::Ok { format: wgpu::TextureFormat::Rgba8UnormSrgb, transform: TextureUploadTransform::Direct },
+            bc_on: MapExpectation::Ok { format: wgpu::TextureFormat::Rgba8UnormSrgb, transform: TextureUploadTransform::Direct },
+        },
+        R8G8B8X8UnormSrgb => {
+            bc_off: MapExpectation::Ok { format: wgpu::TextureFormat::Rgba8UnormSrgb, transform: TextureUploadTransform::Direct },
+            bc_on: MapExpectation::Ok { format: wgpu::TextureFormat::Rgba8UnormSrgb, transform: TextureUploadTransform::Direct },
+        },
+
+        // The minimal executor does not currently support depth formats.
+        D24UnormS8Uint => { bc_off: MapExpectation::Unsupported, bc_on: MapExpectation::Unsupported },
+        D32Float => { bc_off: MapExpectation::Unsupported, bc_on: MapExpectation::Unsupported },
+
+        BC1RgbaUnorm => {
+            bc_off: MapExpectation::Ok { format: wgpu::TextureFormat::Rgba8Unorm, transform: TextureUploadTransform::Bc1ToRgba8 },
+            bc_on: MapExpectation::Ok { format: wgpu::TextureFormat::Bc1RgbaUnorm, transform: TextureUploadTransform::Direct },
+        },
+        BC1RgbaUnormSrgb => {
+            bc_off: MapExpectation::Ok { format: wgpu::TextureFormat::Rgba8UnormSrgb, transform: TextureUploadTransform::Bc1ToRgba8 },
+            bc_on: MapExpectation::Ok { format: wgpu::TextureFormat::Bc1RgbaUnormSrgb, transform: TextureUploadTransform::Direct },
+        },
+        BC2RgbaUnorm => {
+            bc_off: MapExpectation::Ok { format: wgpu::TextureFormat::Rgba8Unorm, transform: TextureUploadTransform::Bc2ToRgba8 },
+            bc_on: MapExpectation::Ok { format: wgpu::TextureFormat::Bc2RgbaUnorm, transform: TextureUploadTransform::Direct },
+        },
+        BC2RgbaUnormSrgb => {
+            bc_off: MapExpectation::Ok { format: wgpu::TextureFormat::Rgba8UnormSrgb, transform: TextureUploadTransform::Bc2ToRgba8 },
+            bc_on: MapExpectation::Ok { format: wgpu::TextureFormat::Bc2RgbaUnormSrgb, transform: TextureUploadTransform::Direct },
+        },
+        BC3RgbaUnorm => {
+            bc_off: MapExpectation::Ok { format: wgpu::TextureFormat::Rgba8Unorm, transform: TextureUploadTransform::Bc3ToRgba8 },
+            bc_on: MapExpectation::Ok { format: wgpu::TextureFormat::Bc3RgbaUnorm, transform: TextureUploadTransform::Direct },
+        },
+        BC3RgbaUnormSrgb => {
+            bc_off: MapExpectation::Ok { format: wgpu::TextureFormat::Rgba8UnormSrgb, transform: TextureUploadTransform::Bc3ToRgba8 },
+            bc_on: MapExpectation::Ok { format: wgpu::TextureFormat::Bc3RgbaUnormSrgb, transform: TextureUploadTransform::Direct },
+        },
+        BC7RgbaUnorm => {
+            bc_off: MapExpectation::Ok { format: wgpu::TextureFormat::Rgba8Unorm, transform: TextureUploadTransform::Bc7ToRgba8 },
+            bc_on: MapExpectation::Ok { format: wgpu::TextureFormat::Bc7RgbaUnorm, transform: TextureUploadTransform::Direct },
+        },
+        BC7RgbaUnormSrgb => {
+            bc_off: MapExpectation::Ok { format: wgpu::TextureFormat::Rgba8UnormSrgb, transform: TextureUploadTransform::Bc7ToRgba8 },
+            bc_on: MapExpectation::Ok { format: wgpu::TextureFormat::Bc7RgbaUnormSrgb, transform: TextureUploadTransform::Direct },
+        },
+    }
+
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn map_format_conformance_bc_disabled() {
+        pollster::block_on(async {
+            let Some((device, queue)) = create_device_queue(wgpu::Features::empty()).await else {
+                return;
+            };
+            let exec = AeroGpuExecutor::new(device, queue).expect("executor init must succeed");
+
+            for &format in ALL_PROTOCOL_FORMATS {
+                let got = exec.map_format(format as u32, /*width=*/ 4, /*height=*/ 4, 1);
+                match expected_map_bc_off(format) {
+                    MapExpectation::Ok {
+                        format: expected_format,
+                        transform: expected_transform,
+                    } => {
+                        let (wgpu_format, transform) = got.unwrap_or_else(|err| {
+                            panic!(
+                                "map_format should accept protocol format {format:?} ({}), got error: {err:?}",
+                                format as u32
+                            )
+                        });
+                        assert_eq!(wgpu_format, expected_format, "format={format:?}");
+                        assert_eq!(transform, expected_transform, "format={format:?}");
+                    }
+                    MapExpectation::Unsupported => match got {
+                        Ok(v) => panic!(
+                            "map_format should reject protocol format {format:?} ({}), got Ok({v:?})",
+                            format as u32
+                        ),
+                        Err(ExecutorError::Validation(message)) => {
+                            assert!(
+                                message.contains("unsupported aerogpu_format"),
+                                "unexpected error message for {format:?}: {message}"
+                            );
+                        }
+                        Err(other) => panic!(
+                            "expected validation error for {format:?}, got {other:?}"
+                        ),
+                    },
+                }
+            }
+        });
+    }
+
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn map_format_conformance_bc_enabled() {
+        pollster::block_on(async {
+            let Some((device, queue)) =
+                create_device_queue(wgpu::Features::TEXTURE_COMPRESSION_BC).await
+            else {
+                return;
+            };
+            let exec = AeroGpuExecutor::new(device, queue).expect("executor init must succeed");
+
+            for &format in ALL_PROTOCOL_FORMATS {
+                let got = exec.map_format(format as u32, /*width=*/ 4, /*height=*/ 4, 1);
+                match expected_map_bc_on(format) {
+                    MapExpectation::Ok {
+                        format: expected_format,
+                        transform: expected_transform,
+                    } => {
+                        let (wgpu_format, transform) = got.unwrap_or_else(|err| {
+                            panic!(
+                                "map_format should accept protocol format {format:?} ({}), got error: {err:?}",
+                                format as u32
+                            )
+                        });
+                        assert_eq!(wgpu_format, expected_format, "format={format:?}");
+                        assert_eq!(transform, expected_transform, "format={format:?}");
+                    }
+                    MapExpectation::Unsupported => match got {
+                        Ok(v) => panic!(
+                            "map_format should reject protocol format {format:?} ({}), got Ok({v:?})",
+                            format as u32
+                        ),
+                        Err(ExecutorError::Validation(message)) => {
+                            assert!(
+                                message.contains("unsupported aerogpu_format"),
+                                "unexpected error message for {format:?}: {message}"
+                            );
+                        }
+                        Err(other) => panic!(
+                            "expected validation error for {format:?}, got {other:?}"
+                        ),
+                    },
+                }
+            }
+        });
+    }
+
     fn build_alloc_table_with_stride(entries: &[(u32, u64, u64)], entry_stride: u32) -> Vec<u8> {
         let size_bytes =
             ring::AerogpuAllocTableHeader::SIZE_BYTES as u32 + entries.len() as u32 * entry_stride;
