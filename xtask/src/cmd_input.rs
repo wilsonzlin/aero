@@ -70,7 +70,10 @@ const AERO_USB_FOCUSED_TESTS: &[&str] = &[
 const AERO_MACHINE_FOCUSED_TESTS: &[&str] = &[
     "machine_i8042_snapshot_pending_bytes",
     "machine_input_batch_ps2_to_usb_backend_switch",
+    "machine_input_batch_usb_keyboard_unconfigured",
     "machine_input_batch_usb_mouse_unconfigured",
+    "machine_input_batch_usb_gamepad_unconfigured",
+    "machine_input_batch_usb_consumer_control_unconfigured",
     "machine_virtio_input",
     "virtio_input_event_delivery",
     "machine_keyboard_backend_switch",
