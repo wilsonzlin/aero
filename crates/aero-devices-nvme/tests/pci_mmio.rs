@@ -1,3 +1,5 @@
+use aero_devices::pci::msix::PCI_CAP_ID_MSIX;
+use aero_devices::pci::MsixCapability;
 use aero_devices::pci::PciDevice as _;
 use aero_devices_nvme::NvmePciDevice;
 use memory::MmioHandler as _;
@@ -54,6 +56,46 @@ fn bar0_mmio_size0_is_noop() {
     let cc_after = dev.read(NVME_CC, 4) as u32;
     assert_eq!(cc_after, cc_before);
     assert_eq!(cc_after & 1, 0, "CC.EN must remain unchanged");
+}
+
+#[test]
+fn bar0_mmio_routes_msix_table_and_pba() {
+    let mut dev = NvmePciDevice::default();
+    dev.config_mut().set_command(0x0002); // MEM
+
+    let _cap = dev
+        .config_mut()
+        .find_capability(PCI_CAP_ID_MSIX)
+        .expect("NVMe should expose an MSI-X capability");
+
+    let (table_base, pba_base) = {
+        let msix = dev
+            .config()
+            .capability::<MsixCapability>()
+            .expect("MSI-X capability should exist");
+        assert_eq!(msix.table_bir(), 0);
+        assert_eq!(msix.pba_bir(), 0);
+        (
+            msix.table_offset() as u64,
+            msix.pba_offset() as u64,
+        )
+    };
+
+    // MSI-X table entry 0 is 16 bytes: addr_lo, addr_hi, data, vector_control.
+    dev.write(table_base + 0x0, 4, 0xfee0_0000);
+    dev.write(table_base + 0x4, 4, 0);
+    dev.write(table_base + 0x8, 4, 0x0045);
+    dev.write(table_base + 0xc, 4, 0); // unmasked
+
+    assert_eq!(dev.read(table_base + 0x0, 4) as u32, 0xfee0_0000);
+    assert_eq!(dev.read(table_base + 0x4, 4) as u32, 0);
+    assert_eq!(dev.read(table_base + 0x8, 4) as u32, 0x0045);
+    assert_eq!(dev.read(table_base + 0xc, 4) as u32, 0);
+
+    // PBA is guest-visible but read-only; writes must be ignored.
+    assert_eq!(dev.read(pba_base, 8), 0);
+    dev.write(pba_base, 8, u64::MAX);
+    assert_eq!(dev.read(pba_base, 8), 0);
 }
 
 #[test]
