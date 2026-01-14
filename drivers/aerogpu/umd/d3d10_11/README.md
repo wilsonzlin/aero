@@ -22,8 +22,8 @@ Feature matrix for the Win7 WDK-backed UMDs:
 | Feature | D3D10 (`src/aerogpu_d3d10_umd_wdk.cpp`) | D3D10.1 (`src/aerogpu_d3d10_1_umd_wdk.cpp`) | D3D11 (`src/aerogpu_d3d11_umd_wdk.cpp`) |
 | --- | --- | --- | --- |
 | MRT (multiple render targets) | Up to `AEROGPU_MAX_RENDER_TARGETS` (8)\* | Up to `AEROGPU_MAX_RENDER_TARGETS` (8)\* | Up to `AEROGPU_MAX_RENDER_TARGETS` (8)\* |
-| Pipeline state encoding (blend / raster / depth) | **Supported** | **Blend only** (raster/depth are stubs) | **Supported** |
-| Vertex buffer binding | **Multiple slots** supported (`StartSlot/NumBuffers` forwarded) | **Single slot** only (`StartSlot=0, NumBuffers=1`) | **Multiple slots** supported (`StartSlot/NumBuffers` forwarded) |
+| Pipeline state encoding (blend / raster / depth) | **Supported** | **Supported** | **Supported** |
+| Vertex buffer binding | **Multiple slots** supported (`StartSlot/NumBuffers` forwarded) | **Multiple slots** supported (`StartSlot/NumBuffers` forwarded) | **Multiple slots** supported (`StartSlot/NumBuffers` forwarded) |
 | Constant buffers | VS/PS supported (14 slots, whole-buffer binding) | VS/PS supported (14 slots, whole-buffer binding) | VS/PS supported (14 slots, `{FirstConstant, NumConstants}` ranges supported) |
 | Samplers | VS/PS supported (16 slots; `CREATE_SAMPLER` + `SET_SAMPLERS`) | VS/PS supported (16 slots; `CREATE_SAMPLER` + `SET_SAMPLERS`) | VS/PS supported (16 slots; basic filter/address modes) |
 
@@ -48,7 +48,7 @@ Feature matrix for the Win7 WDK-backed UMDs:
   - Staging readback uses `AEROGPU_CMD_COPY_*` + `AEROGPU_COPY_FLAG_WRITEBACK_DST` when the host exposes `AEROGPU_FEATURE_TRANSFER` (ABI 1.1+)
 - Pipeline state **encoding** into the command stream:
   - D3D10: `AEROGPU_CMD_SET_BLEND_STATE`, `AEROGPU_CMD_SET_RASTERIZER_STATE`, `AEROGPU_CMD_SET_DEPTH_STENCIL_STATE`
-  - D3D10.1: `AEROGPU_CMD_SET_BLEND_STATE` (raster/depth state is currently stubbed)
+  - D3D10.1: `AEROGPU_CMD_SET_BLEND_STATE`, `AEROGPU_CMD_SET_RASTERIZER_STATE`, `AEROGPU_CMD_SET_DEPTH_STENCIL_STATE`
   - D3D11: `AEROGPU_CMD_SET_BLEND_STATE`, `AEROGPU_CMD_SET_RASTERIZER_STATE`, `AEROGPU_CMD_SET_DEPTH_STENCIL_STATE`
 - DXGI swapchain bring-up: `Present` + backbuffer identity rotation (`RotateResourceIdentities`), with presentation via `AEROGPU_CMD_PRESENT` (sync interval 0 vs non-zero)
 
