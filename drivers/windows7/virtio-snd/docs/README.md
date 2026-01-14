@@ -255,13 +255,13 @@ Backend layer (WaveRT ↔ virtio-snd):
 - The WaveRT miniport uses the backend interface in `include/backend.h`.
 - Default backend: `src/backend_virtio.c` (submits one period of PCM to `txq` each tick).
 - Fallback backend: `src/backend_null.c` (silent; used for debugging and when virtio bring-up fails).
-- To force the Null backend even when virtio is available, set `ForceNullBackend` (`REG_DWORD`) = `1` under the device's per-instance **Parameters** key:
+- To force the Null backend even when virtio is available, set `ForceNullBackend` (`REG_DWORD`) = `1` under the device instance’s **Device Parameters\\Parameters** key:
   - `HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Device Parameters\Parameters\ForceNullBackend`
     - You can find `<DeviceInstancePath>` via **Device Manager → device → Details → “Device instance path”**.
     - The shipped INFs create `ForceNullBackend` with a default value of `0` (normal virtio backend).
   - When `ForceNullBackend=1`, the adapter will also tolerate virtio transport start failures (no Code 10) so PortCls/WaveRT behavior can be tested even if the virtio-snd device/emulator is unavailable.
   - With the Null backend, both render and capture endpoints remain functional from the Windows audio stack’s perspective, but record/play silence.
-- Optional bring-up flag: `AllowPollingOnly` (`REG_DWORD`) under the same per-instance **Parameters** key:
+- Optional bring-up flag: `AllowPollingOnly` (`REG_DWORD`) under the same per-device **Device Parameters\\Parameters** key:
   - `HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Device Parameters\Parameters\AllowPollingOnly`
   - Default: `0` (created by the INF)
   - When `AllowPollingOnly=1`, the driver may start even if no usable interrupt resource can be discovered/connected (neither MSI/MSI-X nor INTx).
