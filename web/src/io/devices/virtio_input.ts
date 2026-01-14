@@ -732,8 +732,12 @@ export class VirtioInputPciFunction implements PciDevice, TickableDevice {
 
   injectKey(code: number, pressed: boolean): void {
     if (this.#destroyed) return;
+    // Linux input defines code 0 as KEY_RESERVED / BTN_RESERVED. Treat it as a no-op so host-side
+    // injection cannot generate spurious events for an invalid code.
+    const key = code >>> 0;
+    if (key === 0) return;
     try {
-      this.#dev.inject_key(code >>> 0, Boolean(pressed));
+      this.#dev.inject_key(key, Boolean(pressed));
     } catch {
       // ignore
     }
@@ -742,8 +746,11 @@ export class VirtioInputPciFunction implements PciDevice, TickableDevice {
 
   injectRelMove(dx: number, dy: number): void {
     if (this.#destroyed) return;
+    const x = dx | 0;
+    const y = dy | 0;
+    if (x === 0 && y === 0) return;
     try {
-      this.#dev.inject_rel(dx | 0, dy | 0);
+      this.#dev.inject_rel(x, y);
     } catch {
       // ignore
     }
