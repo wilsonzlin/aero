@@ -9751,6 +9751,10 @@ impl Machine {
         let use_usb_mouse = self.input_batch_mouse_backend == 1 && usb_mouse_present;
         let use_ps2_mouse = self.input_batch_mouse_backend == 0 && ps2_available;
         let mut virtio_input_dirty = false;
+        // Defensive: some "release all buttons" paths can expand a single batch event into many
+        // virtio events (one per button). Avoid repeating that work if a malicious input batch
+        // contains multiple identical "buttons=0" events.
+        let mut synced_mouse_all_released = false;
 
         fn hid_usage_to_linux_key(usage: u8) -> Option<u16> {
             use aero_virtio::devices::input::*;
@@ -10265,6 +10269,11 @@ impl Machine {
                     self.input_batch_mouse_buttons_mask = next;
 
                     if prev_batch_mask == 0 && next == 0 {
+                        if synced_mouse_all_released {
+                            // Already performed a best-effort "all released" sync for this batch.
+                            continue;
+                        }
+                        synced_mouse_all_released = true;
                         // Unknown "all released" snapshot: best-effort clear all mouse backends.
                         // Like keyboards, host-side held-state tracking is not part of the snapshot
                         // format, so after restore we may only observe the release event.
