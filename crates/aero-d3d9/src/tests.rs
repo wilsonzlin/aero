@@ -2836,6 +2836,72 @@ fn translate_entrypoint_rejects_invalid_ifc_compare_op_after_fallback() {
 }
 
 #[test]
+fn translate_entrypoint_rejects_out_of_range_register_index_after_fallback() {
+    // Ensure register index limits are still enforced (and classified as malformed) even when the
+    // shader triggers SM3→legacy fallback due to an unknown opcode.
+    //
+    // Note: The SM3 decoder currently allows larger indices for some output register files, while
+    // the legacy parser applies tighter D3D9 caps. This test ensures those legacy-parser failures
+    // are treated as `Malformed`, not a generic translation error.
+    let mut words = vec![0xFFFE_0200]; // vs_2_0
+    // Unknown opcode triggers fallback.
+    words.extend(enc_inst(0x1234, &[]));
+    // mov oD200, v0 (oD index exceeds Aero's supported range)
+    words.extend(enc_inst(
+        0x0001,
+        &[enc_dst(5, 200, 0xF), enc_src(1, 0, 0xE4)],
+    ));
+    words.push(0x0000_FFFF);
+
+    let err = shader_translate::translate_d3d9_shader_to_wgsl(
+        &to_bytes(&words),
+        shader::WgslOptions::default(),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(err, shader_translate::ShaderTranslateError::Malformed(_)),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn translate_entrypoint_rejects_unknown_sampler_texture_type() {
+    // An unknown `dcl_* s#` texture type encoding should be treated as malformed input (not a
+    // fallbackable "unsupported feature").
+    //
+    // This triggers fallback via the SM3 WGSL generator error, then ensures the legacy parser's
+    // sampler-type rejection is surfaced as `Malformed`.
+    let mut words = vec![0xFFFF_0300]; // ps_3_0
+    // dcl_<unknown> s0 (texture type 0 encoded in opcode_token[16..20])
+    words.extend(enc_inst_with_extra(
+        0x001F,
+        0u32 << 16,
+        &[enc_dst(10, 0, 0xF)],
+    ));
+    // texld r0, t0, s0
+    words.extend(enc_inst(
+        0x0042,
+        &[enc_dst(0, 0, 0xF), enc_src(3, 0, 0xE4), enc_src(10, 0, 0xE4)],
+    ));
+    // mov oC0, r0
+    words.extend(enc_inst(
+        0x0001,
+        &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)],
+    ));
+    words.push(0x0000_FFFF);
+
+    let err = shader_translate::translate_d3d9_shader_to_wgsl(
+        &to_bytes(&words),
+        shader::WgslOptions::default(),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(err, shader_translate::ShaderTranslateError::Malformed(_)),
+        "{err:?}"
+    );
+}
+
+#[test]
 fn translate_entrypoint_rejects_nested_relative_addressing() {
     // Craft a minimal ps_3_0 shader with nested relative addressing in a source operand.
     // Nested relative addressing is malformed SM2/SM3 bytecode and should be rejected as
