@@ -256,6 +256,110 @@ fn tier2_shr_count_1_sets_cf_from_old_lsb() {
 }
 
 #[test]
+fn tier2_shl_count_1_clears_cf_observed_by_jc() {
+    // mov al, 1
+    // shl al, 1     ; CF=0
+    // jc +3         ; must NOT take (CF cleared by shift)
+    // mov al, 1
+    // int3
+    // mov al, 2
+    // int3
+    const CODE: &[u8] = &[
+        0xB0, 0x01, // mov al, 1
+        0xD0, 0xE0, // shl al, 1
+        0x72, 0x03, // jc +3
+        0xB0, 0x01, // mov al, 1
+        0xCC, // int3
+        0xB0, 0x02, // mov al, 2
+        0xCC, // int3
+    ];
+
+    let init_rflags = aero_jit_x86::abi::RFLAGS_RESERVED1 | RFLAGS_CF;
+    let (_func, exit, state) = run_x86_with_rflags(CODE, init_rflags);
+
+    assert_eq!(exit, RunExit::SideExit { next_rip: 8 });
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize] & 0xff, 1);
+}
+
+#[test]
+fn tier2_shr_count_1_clears_cf_observed_by_jc() {
+    // mov al, 2
+    // shr al, 1     ; CF=0
+    // jc +3         ; must NOT take
+    // mov al, 1
+    // int3
+    // mov al, 2
+    // int3
+    const CODE: &[u8] = &[
+        0xB0, 0x02, // mov al, 2
+        0xD0, 0xE8, // shr al, 1
+        0x72, 0x03, // jc +3
+        0xB0, 0x01, // mov al, 1
+        0xCC, // int3
+        0xB0, 0x02, // mov al, 2
+        0xCC, // int3
+    ];
+
+    let init_rflags = aero_jit_x86::abi::RFLAGS_RESERVED1 | RFLAGS_CF;
+    let (_func, exit, state) = run_x86_with_rflags(CODE, init_rflags);
+
+    assert_eq!(exit, RunExit::SideExit { next_rip: 8 });
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize] & 0xff, 1);
+}
+
+#[test]
+fn tier2_shl_count_1_clears_of_observed_by_jo() {
+    // mov al, 1
+    // shl al, 1     ; OF=0
+    // jo +3         ; must NOT take
+    // mov al, 1
+    // int3
+    // mov al, 2
+    // int3
+    const CODE: &[u8] = &[
+        0xB0, 0x01, // mov al, 1
+        0xD0, 0xE0, // shl al, 1
+        0x70, 0x03, // jo +3
+        0xB0, 0x01, // mov al, 1
+        0xCC, // int3
+        0xB0, 0x02, // mov al, 2
+        0xCC, // int3
+    ];
+
+    let init_rflags = aero_jit_x86::abi::RFLAGS_RESERVED1 | RFLAGS_OF;
+    let (_func, exit, state) = run_x86_with_rflags(CODE, init_rflags);
+
+    assert_eq!(exit, RunExit::SideExit { next_rip: 8 });
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize] & 0xff, 1);
+}
+
+#[test]
+fn tier2_shr_count_1_clears_of_observed_by_jo() {
+    // mov al, 1
+    // shr al, 1     ; OF=0 (old MSB=0)
+    // jo +3         ; must NOT take
+    // mov al, 1
+    // int3
+    // mov al, 2
+    // int3
+    const CODE: &[u8] = &[
+        0xB0, 0x01, // mov al, 1
+        0xD0, 0xE8, // shr al, 1
+        0x70, 0x03, // jo +3
+        0xB0, 0x01, // mov al, 1
+        0xCC, // int3
+        0xB0, 0x02, // mov al, 2
+        0xCC, // int3
+    ];
+
+    let init_rflags = aero_jit_x86::abi::RFLAGS_RESERVED1 | RFLAGS_OF;
+    let (_func, exit, state) = run_x86_with_rflags(CODE, init_rflags);
+
+    assert_eq!(exit, RunExit::SideExit { next_rip: 8 });
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize] & 0xff, 1);
+}
+
+#[test]
 fn tier2_masks_8bit_shift_count_for_flag_updates() {
     // mov al, 0x81
     // shl al, 33        ; x86 masks to 5 bits => count==1
