@@ -138,6 +138,23 @@ describe("runtime/boot_disks_protocol (machineBootDisksToOpfsSpec)", () => {
     expect(() => machineBootDisksToOpfsSpec(msg)).toThrow(/unsupported format/i);
   });
 
+  it("rejects unknown HDD format metadata", () => {
+    const hdd = {
+      source: "local",
+      id: "disk-unknown",
+      name: "Disk unknown",
+      backend: "opfs",
+      kind: "hdd",
+      format: "unknown",
+      fileName: "disk.img",
+      sizeBytes: 512,
+      createdAtMs: 0,
+    } satisfies DiskImageMetadata;
+
+    const msg: SetBootDisksMessage = { ...emptySetBootDisksMessage(), hdd, cd: null };
+    expect(() => machineBootDisksToOpfsSpec(msg)).toThrow(/requires explicit HDD format metadata/i);
+  });
+
   it("rejects non-ISO CD formats", () => {
     const cd = {
       source: "local",
