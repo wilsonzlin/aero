@@ -1391,6 +1391,7 @@ test("TypeScript layout matches C headers", () => {
   assert.equal(konst("AEROGPU_DBGCTL_QUERY_CURSOR_FLAG_CURSOR_SUPPORTED"), 1n);
   assert.equal(konst("AEROGPU_DBGCTL_QUERY_ERROR_FLAGS_VALID"), 1n << 31n);
   assert.equal(konst("AEROGPU_DBGCTL_QUERY_ERROR_FLAG_ERROR_SUPPORTED"), 1n);
+  assert.equal(konst("AEROGPU_DBGCTL_QUERY_ERROR_FLAG_ERROR_LATCHED"), 2n);
 
   // Coverage guard: keep the C ABI dump helper in sync with the Escape headers.
   const expectedEscapeConsts = [

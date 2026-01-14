@@ -4415,6 +4415,10 @@ fn rust_layout_matches_c_headers() {
         abi.konst("AEROGPU_DBGCTL_QUERY_ERROR_FLAG_ERROR_SUPPORTED"),
         1
     );
+    assert_eq!(
+        abi.konst("AEROGPU_DBGCTL_QUERY_ERROR_FLAG_ERROR_LATCHED"),
+        1u64 << 1
+    );
 
     // -------------------------- Escape header coverage guards --------------------------
     //
