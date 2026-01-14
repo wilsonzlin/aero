@@ -374,4 +374,84 @@ mod tests {
         let err = bm.execute_dma(&mut mem, &mut req).unwrap_err();
         assert_eq!(err, DmaError::PrdMissingEndOfTable);
     }
+
+    #[test]
+    fn dma_direction_mismatch_is_reported() {
+        let mut bm = BusMasterChannel::new();
+        let mut mem = Bus::new(0x1000);
+
+        // Program Bus Master direction=ToMemory.
+        bm.write(0, 1, 0x09);
+
+        // Request direction=FromMemory should be rejected.
+        let mut req = DmaRequest {
+            direction: DmaDirection::FromMemory,
+            buffer: vec![0u8; 4],
+            commit: None,
+        };
+        let err = bm.execute_dma(&mut mem, &mut req).unwrap_err();
+        assert_eq!(err, DmaError::DirectionMismatch);
+    }
+
+    #[test]
+    fn prd_too_short_is_reported() {
+        let mut bm = BusMasterChannel::new();
+
+        let prd_base: u64 = 0x1000;
+        let dma_buf: u64 = 0x2000;
+        let mut mem = Bus::new(0x4000);
+
+        // Single 256-byte PRD with EOT, but the request buffer is 512 bytes.
+        mem.write_u32(prd_base, dma_buf as u32);
+        mem.write_u16(prd_base + 4, 256);
+        mem.write_u16(prd_base + 6, 0x8000);
+
+        bm.write(4, 4, prd_base as u32);
+        // Direction=ToMemory.
+        bm.write(0, 1, 0x09);
+
+        let mut req = DmaRequest::ata_read(vec![0xA5; 512]);
+        let err = bm.execute_dma(&mut mem, &mut req).unwrap_err();
+        assert_eq!(err, DmaError::PrdTooShort);
+
+        // The first segment should have been transferred before we discovered the table ended.
+        let mut out = vec![0u8; 256];
+        mem.read_physical(dma_buf, &mut out);
+        assert_eq!(&out[..], &[0xA5; 256]);
+    }
+
+    #[test]
+    fn prd_missing_eot_is_reported() {
+        let mut bm = BusMasterChannel::new();
+
+        let prd_base: u64 = 0x1000;
+        let dma_buf0: u64 = 0x2000;
+        let dma_buf1: u64 = 0x3000;
+        let mut mem = Bus::new(0x4000);
+
+        // Two PRDs covering the full buffer but neither has EOT set.
+        mem.write_u32(prd_base, dma_buf0 as u32);
+        mem.write_u16(prd_base + 4, 256);
+        mem.write_u16(prd_base + 6, 0x0000);
+
+        mem.write_u32(prd_base + 8, dma_buf1 as u32);
+        mem.write_u16(prd_base + 8 + 4, 256);
+        mem.write_u16(prd_base + 8 + 6, 0x0000);
+
+        bm.write(4, 4, prd_base as u32);
+        bm.write(0, 1, 0x09); // direction=ToMemory
+
+        let buf: Vec<u8> = (0u16..512u16).map(|v| (v & 0xff) as u8).collect();
+        let mut req = DmaRequest::ata_read(buf.clone());
+        let err = bm.execute_dma(&mut mem, &mut req).unwrap_err();
+        assert_eq!(err, DmaError::PrdMissingEndOfTable);
+
+        // Data should still have been written into the guest buffers.
+        let mut seg0 = vec![0u8; 256];
+        let mut seg1 = vec![0u8; 256];
+        mem.read_physical(dma_buf0, &mut seg0);
+        mem.read_physical(dma_buf1, &mut seg1);
+        assert_eq!(seg0, buf[..256]);
+        assert_eq!(seg1, buf[256..]);
+    }
 }

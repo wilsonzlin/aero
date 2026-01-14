@@ -1849,7 +1849,12 @@ fn ata_dma_missing_prd_eot_sets_error_status() {
     ide.borrow_mut().tick(&mut mem);
 
     let st = ioports.read(bm_base + 2, 1) as u8;
-    assert_eq!(st & 0x06, 0x06, "BMIDE status should have IRQ+ERR set");
+    assert_eq!(
+        st & 0x07,
+        0x06,
+        "BMIDE status should have IRQ+ERR set and ACTIVE clear"
+    );
+    assert!(ide.borrow().controller.primary_irq_pending());
 }
 
 #[test]
@@ -1891,7 +1896,11 @@ fn ata_dma_prd_too_short_sets_error_status() {
     ide.borrow_mut().tick(&mut mem);
 
     let st = ioports.read(bm_base + 2, 1) as u8;
-    assert_eq!(st & 0x06, 0x06, "BMIDE status should have IRQ+ERR set");
+    assert_eq!(
+        st & 0x07,
+        0x06,
+        "BMIDE status should have IRQ+ERR set and ACTIVE clear"
+    );
     assert!(ide.borrow().controller.primary_irq_pending());
 }
 
@@ -1938,7 +1947,11 @@ fn ata_dma_direction_mismatch_sets_error_status() {
     ide.borrow_mut().tick(&mut mem);
 
     let st = ioports.read(bm_base + 2, 1) as u8;
-    assert_eq!(st & 0x06, 0x06, "BMIDE status should have IRQ+ERR set");
+    assert_eq!(
+        st & 0x07,
+        0x06,
+        "BMIDE status should have IRQ+ERR set and ACTIVE clear"
+    );
     assert!(ide.borrow().controller.primary_irq_pending());
 }
 
