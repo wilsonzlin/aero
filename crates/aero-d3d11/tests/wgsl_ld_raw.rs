@@ -1,4 +1,6 @@
 mod common;
+#[allow(dead_code)]
+mod wgpu_common;
 
 use aero_d3d11::binding_model::{BINDING_BASE_TEXTURE, BINDING_BASE_UAV};
 use aero_d3d11::{
@@ -20,80 +22,26 @@ fn build_minimal_dxbc() -> Vec<u8> {
     bytes
 }
 
-async fn create_wgpu_device_for_tests() -> anyhow::Result<(wgpu::Device, wgpu::Queue)> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-
-        let needs_runtime_dir = std::env::var("XDG_RUNTIME_DIR")
-            .ok()
-            .map(|v| v.is_empty())
-            .unwrap_or(true);
-        if needs_runtime_dir {
-            let dir =
-                std::env::temp_dir().join(format!("aero-d3d11-xdg-runtime-{}", std::process::id()));
-            let _ = std::fs::create_dir_all(&dir);
-            let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
-            std::env::set_var("XDG_RUNTIME_DIR", &dir);
-        }
-    }
-
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-        // Prefer GL on Linux CI to avoid crashes in some Vulkan software adapters.
-        backends: if cfg!(target_os = "linux") {
-            wgpu::Backends::GL
-        } else {
-            wgpu::Backends::PRIMARY
-        },
-        ..Default::default()
-    });
-
-    let adapter = match instance
-        .request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::LowPower,
-            compatible_surface: None,
-            force_fallback_adapter: true,
-        })
-        .await
-    {
-        Some(adapter) => Some(adapter),
-        None => {
-            instance
-                .request_adapter(&wgpu::RequestAdapterOptions {
-                    power_preference: wgpu::PowerPreference::LowPower,
-                    compatible_surface: None,
-                    force_fallback_adapter: false,
-                })
-                .await
-        }
-    }
-    .ok_or_else(|| anyhow::anyhow!("wgpu: no suitable adapter found"))?;
-
-    let (device, queue) = adapter
-        .request_device(
-            &wgpu::DeviceDescriptor {
-                label: Some("aero-d3d11 ld_raw test device"),
-                required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::downlevel_defaults(),
-            },
-            None,
-        )
-        .await
-        .map_err(|e| anyhow::anyhow!("wgpu: request_device failed: {e:?}"))?;
-
-    Ok((device, queue))
-}
-
 #[test]
 fn compute_shader_ld_raw_reads_from_storage_buffer() {
     pollster::block_on(async {
-        let (device, queue) = match create_wgpu_device_for_tests().await {
-            Ok(v) => v,
-            Err(err) => {
-                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({err:#})"));
-                return;
-            }
-        };
+        let test_name = concat!(
+            module_path!(),
+            "::compute_shader_ld_raw_reads_from_storage_buffer"
+        );
+
+        let (device, queue, supports_compute) =
+            match wgpu_common::create_device_queue("aero-d3d11 ld_raw test device").await {
+                Ok(v) => v,
+                Err(err) => {
+                    common::skip_or_panic(test_name, &format!("wgpu unavailable ({err:#})"));
+                    return;
+                }
+            };
+        if !supports_compute {
+            common::skip_or_panic(test_name, "compute unsupported");
+            return;
+        }
 
         // Input data: 8 words (32 bytes).
         let input_words: [u32; 8] = [
@@ -108,8 +56,8 @@ fn compute_shader_ld_raw_reads_from_storage_buffer() {
         ];
 
         // Output buffer: 12 words (48 bytes). Shader writes:
-        // - words[4..8] = input_words[4..8] (numeric float address path)
-        // - words[8..12] = input_words[4..8] (bitcast address path)
+        // - words[4..8] = input_words[4..8] (byte offset = 16)
+        // - words[8..12] = input_words[4..8] (byte offset = 32)
         let output_words_len: usize = 12;
 
         let input = device.create_buffer(&wgpu::BufferDescriptor {
@@ -330,7 +278,10 @@ fn compute_shader_ld_raw_reads_from_storage_buffer() {
         slice.map_async(wgpu::MapMode::Read, move |v| {
             sender.send(v).ok();
         });
+        #[cfg(not(target_arch = "wasm32"))]
         device.poll(wgpu::Maintain::Wait);
+        #[cfg(target_arch = "wasm32")]
+        device.poll(wgpu::Maintain::Poll);
         receiver
             .receive()
             .await
