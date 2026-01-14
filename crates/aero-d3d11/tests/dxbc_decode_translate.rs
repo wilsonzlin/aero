@@ -3162,6 +3162,86 @@ fn decodes_and_translates_lt_float_compare_shader_from_dxbc() {
 }
 
 #[test]
+fn decodes_and_translates_ne_float_compare_emits_nan_guard() {
+    // D3D's float `ne` opcode is an ordered not-equal: it is false when either operand is NaN.
+    // Ensure translation emits NaN guards (`x == x`) so WGSL doesn't treat NaNs as not-equal.
+    let mut body = Vec::<u32>::new();
+
+    // mov r0, l(NaN, NaN, NaN, NaN)
+    let dst_r0 = reg_dst(OPERAND_TYPE_TEMP, 0, WriteMask::XYZW);
+    let nan = imm32_vec4([0x7fc0_0000u32; 4]);
+    body.push(opcode_token(
+        OPCODE_MOV,
+        1 + dst_r0.len() as u32 + nan.len() as u32,
+    ));
+    body.extend_from_slice(&dst_r0);
+    body.extend_from_slice(&nan);
+
+    // mov r1, l(0, 0, 0, 0)
+    let dst_r1 = reg_dst(OPERAND_TYPE_TEMP, 1, WriteMask::XYZW);
+    let zero = imm32_vec4([0u32; 4]);
+    body.push(opcode_token(
+        OPCODE_MOV,
+        1 + dst_r1.len() as u32 + zero.len() as u32,
+    ));
+    body.extend_from_slice(&dst_r1);
+    body.extend_from_slice(&zero);
+
+    // ne o0, r0, r1
+    let dst_o0 = reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW);
+    let src_r0 = reg_src(OPERAND_TYPE_TEMP, &[0], Swizzle::XYZW);
+    let src_r1 = reg_src(OPERAND_TYPE_TEMP, &[1], Swizzle::XYZW);
+    body.push(opcode_token(
+        OPCODE_NE,
+        1 + dst_o0.len() as u32 + src_r0.len() as u32 + src_r1.len() as u32,
+    ));
+    body.extend_from_slice(&dst_o0);
+    body.extend_from_slice(&src_r0);
+    body.extend_from_slice(&src_r1);
+
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    // Stage type 0 = pixel shader.
+    let tokens = make_sm5_program_tokens(0, &body);
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, tokens_to_bytes(&tokens)),
+        (FOURCC_ISGN, build_signature_chunk(&[])),
+        (
+            FOURCC_OSGN,
+            build_signature_chunk(&[sig_param("SV_Target", 0, 0, 0b1111)]),
+        ),
+    ]);
+
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
+    assert_eq!(program.stage, aero_d3d11::ShaderStage::Pixel);
+
+    let module = decode_program(&program).expect("SM4 decode");
+    assert!(matches!(
+        module.instructions[2],
+        Sm4Inst::Cmp {
+            op: CmpOp::Ne,
+            ty: CmpType::F32,
+            ..
+        }
+    ));
+
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_parses(&translated.wgsl);
+    assert!(
+        translated.wgsl.contains("((r0).x) == ((r0).x)"),
+        "expected ordered ne to include NaN guard for lhs (`x == x`):\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated.wgsl.contains("((r1).x) == ((r1).x)"),
+        "expected ordered ne to include NaN guard for rhs (`x == x`):\n{}",
+        translated.wgsl
+    );
+}
+
+#[test]
 fn decodes_float_compare_ignores_saturate_flag() {
     // Like integer compares, float compares write predicate-mask bits (0xffffffff / 0) into the
     // untyped register file. Saturate is only meaningful for numeric float results, so the decoder

@@ -5967,7 +5967,14 @@ fn emit_instructions(
                     CmpType::F32 => {
                         let a = emit_src_vec4(a, inst_index, opcode, ctx)?;
                         let b = emit_src_vec4(b, inst_index, opcode, ctx)?;
-                        cmp_expr(&a, &b)
+                        // `ne` is an ordered float comparison in D3D token streams: it is false when
+                        // either operand is NaN. WGSL's `!=` is unordered, so add explicit NaN
+                        // guards to match D3D semantics.
+                        if *op == CmpOp::Ne {
+                            emit_sm4_cmp_op_vec4_bool(Sm4CmpOp::Ne, &a, &b)
+                        } else {
+                            cmp_expr(&a, &b)
+                        }
                     }
                     CmpType::I32 => {
                         let a = emit_src_vec4_i32(a, inst_index, opcode, ctx)?;
