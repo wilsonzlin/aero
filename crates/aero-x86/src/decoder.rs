@@ -2702,6 +2702,22 @@ mod tests {
 
     #[test]
     fn decodes_control_and_debug_register_operands() {
+        for mode in [DecodeMode::Bits16, DecodeMode::Bits32] {
+            // mov ax/eax, cr0
+            let inst = decode(&[0x0F, 0x20, 0xC0], mode, 0).unwrap();
+            assert!(inst
+                .operands
+                .iter()
+                .any(|op| matches!(op, Operand::Control { index: 0 })));
+
+            // mov ax/eax, dr0
+            let inst = decode(&[0x0F, 0x21, 0xC0], mode, 0).unwrap();
+            assert!(inst
+                .operands
+                .iter()
+                .any(|op| matches!(op, Operand::Debug { index: 0 })));
+        }
+
         // mov rax, cr0
         let inst = decode(&[0x48, 0x0F, 0x20, 0xC0], DecodeMode::Bits64, 0).unwrap();
         assert!(inst
