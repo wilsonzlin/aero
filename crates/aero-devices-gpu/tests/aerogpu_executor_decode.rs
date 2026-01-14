@@ -1638,3 +1638,77 @@ fn deferred_mode_advances_completed_fence_in_order_even_with_out_of_order_comple
     assert_eq!(regs.completed_fence, 3);
     assert_ne!(regs.irq_status & irq_bits::FENCE, 0);
 }
+
+#[test]
+fn deferred_mode_applies_completion_received_before_submit_for_immediate_fence() {
+    let mut mem = VecMemory::new(0x40_000);
+    let mut regs = AeroGpuRegs::default();
+    regs.irq_enable = irq_bits::FENCE;
+
+    let mut exec = AeroGpuExecutor::new(AeroGpuExecutorConfig {
+        verbose: false,
+        keep_last_submissions: 0,
+        fence_completion: AeroGpuFenceCompletionMode::Deferred,
+    });
+    exec.set_backend(Box::new(NullAeroGpuBackend::new()));
+
+    // Completion arrives before the doorbell consumes the submit descriptor.
+    exec.complete_fence(&mut regs, &mut mem, 7);
+    assert_eq!(regs.completed_fence, 0);
+
+    let ring_gpa = 0x1000u64;
+    let ring_size = 0x1000u32;
+    write_ring(&mut mem, ring_gpa, ring_size, 8, 0, 1, regs.abi_version);
+    let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
+    write_submit_desc(&mut mem, desc_gpa, 0, 0, 0, 0, 7);
+
+    regs.ring_gpa = ring_gpa;
+    regs.ring_size_bytes = ring_size;
+    regs.ring_control = ring_control::ENABLE;
+
+    exec.process_doorbell(&mut regs, &mut mem);
+    assert_eq!(mem.read_u32(ring_gpa + RING_HEAD_OFFSET), 1);
+    assert_eq!(regs.completed_fence, 7);
+    assert_ne!(regs.irq_status & irq_bits::FENCE, 0);
+}
+
+#[test]
+fn deferred_mode_does_not_bypass_vsync_gating_for_completion_received_before_submit() {
+    let mut mem = VecMemory::new(0x40_000);
+    let mut regs = AeroGpuRegs::default();
+    regs.features |= FEATURE_VBLANK;
+    regs.scanout0.enable = true;
+    regs.irq_enable = irq_bits::FENCE;
+
+    let mut exec = AeroGpuExecutor::new(AeroGpuExecutorConfig {
+        verbose: false,
+        keep_last_submissions: 0,
+        fence_completion: AeroGpuFenceCompletionMode::Deferred,
+    });
+    exec.set_backend(Box::new(NullAeroGpuBackend::new()));
+
+    // Fence completion arrives before the submission is even processed.
+    exec.complete_fence(&mut regs, &mut mem, 1);
+    assert_eq!(regs.completed_fence, 0);
+
+    let cmd_gpa = 0x6000u64;
+    let stream_size = write_vsync_present_cmd_stream(&mut mem, cmd_gpa, regs.abi_version);
+
+    let ring_gpa = 0x1000u64;
+    let ring_size = 0x1000u32;
+    write_ring(&mut mem, ring_gpa, ring_size, 8, 0, 1, regs.abi_version);
+    let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
+    write_submit_desc(&mut mem, desc_gpa, cmd_gpa, stream_size, 0, 0, 1);
+
+    regs.ring_gpa = ring_gpa;
+    regs.ring_size_bytes = ring_size;
+    regs.ring_control = ring_control::ENABLE;
+
+    exec.process_doorbell(&mut regs, &mut mem);
+    assert_eq!(mem.read_u32(ring_gpa + RING_HEAD_OFFSET), 1);
+
+    // Even though the fence was already "complete", vsync gating must still delay completion until vblank.
+    assert_eq!(regs.completed_fence, 0);
+    exec.process_vblank_tick(&mut regs, &mut mem);
+    assert_eq!(regs.completed_fence, 1);
+}
