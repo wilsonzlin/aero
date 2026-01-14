@@ -2256,6 +2256,11 @@ fn pc_platform_uhci_external_hub_remote_wakeup_triggers_resume_detect_and_intx()
         [0x00, 0x09, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00], // SET_CONFIGURATION(1)
     );
 
+    // Enable remote wakeup on the hub as well so it can propagate downstream wake events upstream.
+    // This mirrors real host behaviour: every device in the suspend path must have
+    // DEVICE_REMOTE_WAKEUP enabled for remote wake to be forwarded.
+    control_no_data(&mut pc, 1, [0x00, 0x03, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00]);
+
     // Power + reset downstream hub port 1 so the keyboard becomes enabled/powered.
     control_no_data(
         &mut pc,
