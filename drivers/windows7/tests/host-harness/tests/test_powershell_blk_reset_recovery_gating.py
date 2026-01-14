@@ -27,7 +27,20 @@ class PowerShellBlkResetRecoveryGatingTests(unittest.TestCase):
         self.assertIn("FAIL: VIRTIO_BLK_RESET_RECOVERY_NONZERO:", self.text)
         self.assertIn("FAIL: VIRTIO_BLK_RESET_RECOVERY_DETECTED:", self.text)
 
+    def test_reset_recovery_parser_falls_back_to_miniport_diag(self) -> None:
+        # Backward compatibility: when the guest does not emit the dedicated AERO marker
+        # (`AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset-recovery|...`), the harness should
+        # still be able to gate using the older miniport diagnostic line.
+        m = re.search(
+            re.compile(
+                r"(?ims)^function\s+Get-AeroVirtioBlkResetRecoveryCounters\b.*?(?=^function\s+)"
+            ),
+            self.text,
+        )
+        self.assertIsNotNone(m)
+        assert m is not None
+        self.assertIn("virtio-blk-miniport-reset-recovery|", m.group(0))
+
 
 if __name__ == "__main__":
     unittest.main()
-

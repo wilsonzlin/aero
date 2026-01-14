@@ -39,6 +39,21 @@ class VirtioBlkResetRecoveryGatingTests(unittest.TestCase):
         msg = h._check_no_blk_reset_recovery_requirement(tail)
         self.assertIsNone(msg)
 
+    def test_gate_falls_back_to_miniport_diagnostic_marker(self) -> None:
+        h = self.harness
+        tail = b"virtio-blk-miniport-reset-recovery|INFO|reset_detected=1|hw_reset_bus=0\n"
+        msg = h._check_no_blk_reset_recovery_requirement(tail)
+        self.assertEqual(
+            msg,
+            "FAIL: VIRTIO_BLK_RESET_RECOVERY_NONZERO: reset_detected=1 hw_reset_bus=0",
+        )
+
+    def test_gate_ignores_warn_miniport_diagnostic_marker(self) -> None:
+        h = self.harness
+        tail = b"virtio-blk-miniport-reset-recovery|WARN|reason=missing_counters|returned_len=20|expected_min=24\n"
+        msg = h._check_no_blk_reset_recovery_requirement(tail)
+        self.assertIsNone(msg)
+
     def test_require_gate_fails_on_reset_detected(self) -> None:
         h = self.harness
         tail = (
@@ -57,6 +72,14 @@ class VirtioBlkResetRecoveryGatingTests(unittest.TestCase):
         )
         msg = h._check_fail_on_blk_reset_recovery_requirement(tail)
         self.assertIsNone(msg)
+
+        # Backward compatible fallback: parse legacy miniport diagnostic lines.
+        tail_diag = b"virtio-blk-miniport-reset-recovery|INFO|reset_detected=1|hw_reset_bus=2\n"
+        msg_diag = h._check_fail_on_blk_reset_recovery_requirement(tail_diag)
+        self.assertEqual(
+            msg_diag,
+            "FAIL: VIRTIO_BLK_RESET_RECOVERY_DETECTED: hw_reset_bus=2 reset_detected=1",
+        )
 
         tail2 = (
             b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset-recovery|INFO|reset_detected=1|hw_reset_bus=2\n"
@@ -88,4 +111,3 @@ class VirtioBlkResetRecoveryGatingTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

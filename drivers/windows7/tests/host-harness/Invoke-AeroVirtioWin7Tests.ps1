@@ -2818,14 +2818,31 @@ function Get-AeroVirtioBlkResetRecoveryCounters {
     return $v
   }
 
-  $prefix = "AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset-recovery|"
-  $line = Try-ExtractLastAeroMarkerLine -Tail $Tail -Prefix $prefix -SerialLogPath $SerialLogPath
-  if ($null -eq $line) { return $null }
+  $aeroPrefix = "AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset-recovery|"
+  $line = Try-ExtractLastAeroMarkerLine -Tail $Tail -Prefix $aeroPrefix -SerialLogPath $SerialLogPath
+  $fromAeroMarker = $true
+  if ($null -eq $line) {
+    # Backward compatible fallback: older guest selftests did not emit the dedicated AERO marker, but
+    # did emit the miniport diagnostic line.
+    $fromAeroMarker = $false
+    $miniportPrefix = "virtio-blk-miniport-reset-recovery|"
+    $line = Try-ExtractLastAeroMarkerLine -Tail $Tail -Prefix $miniportPrefix -SerialLogPath $SerialLogPath
+    if ($null -eq $line) { return $null }
+  }
 
   $toks = $line.Split("|")
-  if ($toks.Count -ge 4) {
-    $s = $toks[3].Trim().ToUpperInvariant()
-    if ($s -eq "SKIP") { return $null }
+  if ($fromAeroMarker) {
+    if ($toks.Count -ge 4) {
+      $s = $toks[3].Trim().ToUpperInvariant()
+      if ($s -eq "SKIP") { return $null }
+    }
+  } else {
+    if ($toks.Count -ge 2) {
+      $s = $toks[1].Trim().ToUpperInvariant()
+      if ($s -ne "INFO") { return $null }
+    } else {
+      return $null
+    }
   }
 
   $fields = @{}
