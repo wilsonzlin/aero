@@ -81,6 +81,9 @@ pub struct UsbHidKeyboard {
     protocol: HidProtocol,
     leds: u8,
 
+    ticks_ms: u32,
+    last_interrupt_in_ms: u32,
+
     modifiers: u8,
     pressed_keys: Vec<u8>,
 
@@ -146,6 +149,10 @@ impl UsbDeviceModel for UsbHidKeyboardHandle {
         self.0.borrow_mut().handle_interrupt_in(ep_addr)
     }
 
+    fn tick_1ms(&mut self) {
+        self.0.borrow_mut().tick_1ms();
+    }
+
     fn set_suspended(&mut self, suspended: bool) {
         self.0.borrow_mut().set_suspended(suspended);
     }
@@ -163,7 +170,7 @@ impl Default for UsbHidKeyboard {
 
 impl IoSnapshot for UsbHidKeyboard {
     const DEVICE_ID: [u8; 4] = *b"UKBD";
-    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 1);
 
     fn save_state(&self) -> Vec<u8> {
         const TAG_ADDRESS: u16 = 1;
@@ -179,6 +186,8 @@ impl IoSnapshot for UsbHidKeyboard {
         const TAG_PRESSED_KEYS: u16 = 11;
         const TAG_LAST_REPORT: u16 = 12;
         const TAG_PENDING_REPORTS: u16 = 13;
+        const TAG_TICKS_MS: u16 = 14;
+        const TAG_LAST_INTERRUPT_IN_MS: u16 = 15;
 
         let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
 
@@ -191,6 +200,9 @@ impl IoSnapshot for UsbHidKeyboard {
         w.field_u8(TAG_PROTOCOL, self.protocol as u8);
         w.field_u8(TAG_IDLE_RATE, self.idle_rate);
         w.field_u8(TAG_LEDS, self.leds);
+
+        w.field_u32(TAG_TICKS_MS, self.ticks_ms);
+        w.field_u32(TAG_LAST_INTERRUPT_IN_MS, self.last_interrupt_in_ms);
 
         w.field_u8(TAG_MODIFIERS, self.modifiers);
         w.field_bytes(
@@ -218,6 +230,8 @@ impl IoSnapshot for UsbHidKeyboard {
         const TAG_PROTOCOL: u16 = 7;
         const TAG_IDLE_RATE: u16 = 8;
         const TAG_LEDS: u16 = 9;
+        const TAG_TICKS_MS: u16 = 14;
+        const TAG_LAST_INTERRUPT_IN_MS: u16 = 15;
         const TAG_MODIFIERS: u16 = 10;
         const TAG_PRESSED_KEYS: u16 = 11;
         const TAG_LAST_REPORT: u16 = 12;
@@ -245,6 +259,9 @@ impl IoSnapshot for UsbHidKeyboard {
 
         self.idle_rate = r.u8(TAG_IDLE_RATE)?.unwrap_or(0);
         self.leds = r.u8(TAG_LEDS)?.unwrap_or(0) & KEYBOARD_LED_MASK;
+
+        self.ticks_ms = r.u32(TAG_TICKS_MS)?.unwrap_or(0);
+        self.last_interrupt_in_ms = r.u32(TAG_LAST_INTERRUPT_IN_MS)?.unwrap_or(0);
         self.modifiers = r.u8(TAG_MODIFIERS)?.unwrap_or(0);
 
         if let Some(buf) = r.bytes(TAG_PRESSED_KEYS) {
@@ -310,6 +327,8 @@ impl UsbHidKeyboard {
             idle_rate: 0,
             protocol: HidProtocol::Report,
             leds: 0,
+            ticks_ms: 0,
+            last_interrupt_in_ms: 0,
             modifiers: 0,
             pressed_keys: Vec::new(),
             last_report: [0; 8],
@@ -683,6 +702,9 @@ impl UsbDeviceModel for UsbHidKeyboard {
                         return ControlResponse::Stall;
                     }
                     self.idle_rate = (setup.w_value >> 8) as u8;
+                    // HID 1.11 7.2.4: SET_IDLE loads the idle timer. Model this by restarting our
+                    // last-report timestamp so the next periodic report is due after `idle_rate`.
+                    self.last_interrupt_in_ms = self.ticks_ms;
                     ControlResponse::Ack
                 }
                 HID_REQUEST_GET_PROTOCOL => {
@@ -722,10 +744,26 @@ impl UsbDeviceModel for UsbHidKeyboard {
         if self.interrupt_in_halted {
             return UsbInResult::Stall;
         }
-        match self.pending_reports.pop_front() {
-            Some(r) => UsbInResult::Data(r.to_vec()),
-            None => UsbInResult::Nak,
+        if let Some(r) = self.pending_reports.pop_front() {
+            self.last_interrupt_in_ms = self.ticks_ms;
+            return UsbInResult::Data(r.to_vec());
         }
+
+        if self.idle_rate != 0 {
+            let idle_ms = u32::from(self.idle_rate) * 4;
+            if self.ticks_ms.wrapping_sub(self.last_interrupt_in_ms) >= idle_ms {
+                let report = self.current_input_report().to_bytes();
+                self.last_report = report;
+                self.last_interrupt_in_ms = self.ticks_ms;
+                return UsbInResult::Data(report.to_vec());
+            }
+        }
+
+        UsbInResult::Nak
+    }
+
+    fn tick_1ms(&mut self) {
+        self.ticks_ms = self.ticks_ms.wrapping_add(1);
     }
 
     fn set_suspended(&mut self, suspended: bool) {

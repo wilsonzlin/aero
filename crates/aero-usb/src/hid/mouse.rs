@@ -64,6 +64,9 @@ pub struct UsbHidMouse {
     idle_rate: u8,
     protocol: HidProtocol,
 
+    ticks_ms: u32,
+    last_interrupt_in_ms: u32,
+
     buttons: u8,
     dx: i32,
     dy: i32,
@@ -123,6 +126,10 @@ impl UsbDeviceModel for UsbHidMouseHandle {
         self.0.borrow_mut().handle_interrupt_in(ep_addr)
     }
 
+    fn tick_1ms(&mut self) {
+        self.0.borrow_mut().tick_1ms();
+    }
+
     fn set_suspended(&mut self, suspended: bool) {
         self.0.borrow_mut().set_suspended(suspended);
     }
@@ -140,7 +147,7 @@ impl Default for UsbHidMouse {
 
 impl IoSnapshot for UsbHidMouse {
     const DEVICE_ID: [u8; 4] = *b"UMSE";
-    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 1);
 
     fn save_state(&self) -> Vec<u8> {
         const TAG_ADDRESS: u16 = 1;
@@ -156,6 +163,8 @@ impl IoSnapshot for UsbHidMouse {
         const TAG_DY: u16 = 11;
         const TAG_WHEEL: u16 = 12;
         const TAG_PENDING_REPORTS: u16 = 13;
+        const TAG_TICKS_MS: u16 = 14;
+        const TAG_LAST_INTERRUPT_IN_MS: u16 = 15;
 
         let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
 
@@ -168,6 +177,8 @@ impl IoSnapshot for UsbHidMouse {
         w.field_u8(TAG_IDLE_RATE, self.idle_rate);
         w.field_u8(TAG_PROTOCOL, self.protocol as u8);
         w.field_u8(TAG_BUTTONS, self.buttons);
+        w.field_u32(TAG_TICKS_MS, self.ticks_ms);
+        w.field_u32(TAG_LAST_INTERRUPT_IN_MS, self.last_interrupt_in_ms);
         w.field_i32(TAG_DX, self.dx);
         w.field_i32(TAG_DY, self.dy);
         w.field_i32(TAG_WHEEL, self.wheel);
@@ -199,6 +210,8 @@ impl IoSnapshot for UsbHidMouse {
         const TAG_DY: u16 = 11;
         const TAG_WHEEL: u16 = 12;
         const TAG_PENDING_REPORTS: u16 = 13;
+        const TAG_TICKS_MS: u16 = 14;
+        const TAG_LAST_INTERRUPT_IN_MS: u16 = 15;
 
         let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
         r.ensure_device_major(Self::DEVICE_VERSION.major)?;
@@ -222,6 +235,8 @@ impl IoSnapshot for UsbHidMouse {
         }
 
         self.buttons = r.u8(TAG_BUTTONS)?.unwrap_or(0);
+        self.ticks_ms = r.u32(TAG_TICKS_MS)?.unwrap_or(0);
+        self.last_interrupt_in_ms = r.u32(TAG_LAST_INTERRUPT_IN_MS)?.unwrap_or(0);
         self.dx = r.i32(TAG_DX)?.unwrap_or(0);
         self.dy = r.i32(TAG_DY)?.unwrap_or(0);
         self.wheel = r.i32(TAG_WHEEL)?.unwrap_or(0);
@@ -275,6 +290,8 @@ impl UsbHidMouse {
             interrupt_in_halted: false,
             idle_rate: 0,
             protocol: HidProtocol::Report,
+            ticks_ms: 0,
+            last_interrupt_in_ms: 0,
             buttons: 0,
             dx: 0,
             dy: 0,
@@ -641,6 +658,9 @@ impl UsbDeviceModel for UsbHidMouse {
                         return ControlResponse::Stall;
                     }
                     self.idle_rate = (setup.w_value >> 8) as u8;
+                    // HID 1.11 7.2.4: SET_IDLE loads the idle timer; restart our last-report
+                    // timestamp.
+                    self.last_interrupt_in_ms = self.ticks_ms;
                     ControlResponse::Ack
                 }
                 HID_REQUEST_GET_PROTOCOL => {
@@ -680,10 +700,31 @@ impl UsbDeviceModel for UsbHidMouse {
         if self.interrupt_in_halted {
             return UsbInResult::Stall;
         }
-        match self.pending_reports.pop_front() {
-            Some(r) => UsbInResult::Data(r.to_bytes(self.protocol)),
-            None => UsbInResult::Nak,
+        if let Some(r) = self.pending_reports.pop_front() {
+            self.last_interrupt_in_ms = self.ticks_ms;
+            return UsbInResult::Data(r.to_bytes(self.protocol));
         }
+
+        if self.idle_rate != 0 {
+            let idle_ms = u32::from(self.idle_rate) * 4;
+            if self.ticks_ms.wrapping_sub(self.last_interrupt_in_ms) >= idle_ms {
+                self.last_interrupt_in_ms = self.ticks_ms;
+                let report = MouseReport {
+                    buttons: self.buttons,
+                    x: 0,
+                    y: 0,
+                    wheel: 0,
+                }
+                .to_bytes(self.protocol);
+                return UsbInResult::Data(report);
+            }
+        }
+
+        UsbInResult::Nak
+    }
+
+    fn tick_1ms(&mut self) {
+        self.ticks_ms = self.ticks_ms.wrapping_add(1);
     }
 
     fn set_suspended(&mut self, suspended: bool) {
