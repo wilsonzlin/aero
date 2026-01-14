@@ -37,8 +37,11 @@ fn smp_init_and_sipi_update_ap_cpu_state() {
     assert!(m.cpu_by_index(1).halted);
 
     // Send a SIPI (STARTUP) to vector 0x08 (physical start address 0x8000).
+    //
+    // STARTUP IPIs are edge-triggered; the ICR "Level" bit is treated as don't-care. Keep it
+    // clear here to ensure we don't accidentally regress into level-gated delivery.
     let sipi_vector = 0x08u32;
-    m.write_lapic_u32(0, ICR_LOW_OFF, sipi_vector | (0b110u32 << 8) | (1u32 << 14));
+    m.write_lapic_u32(0, ICR_LOW_OFF, sipi_vector | (0b110u32 << 8));
 
     let ap = m.cpu_by_index(1);
     assert!(!ap.halted);
@@ -76,11 +79,14 @@ fn smp_fixed_ipi_sets_pending_vector_in_destination_lapic() {
 
     // Destination APIC ID 1.
     m.write_lapic_u32(0, ICR_HIGH_OFF, 1u32 << 24);
-    // Fixed delivery mode (0b000) + Level=Assert, vector in bits 0..7.
+    // Fixed delivery mode (0b000), vector in bits 0..7.
+    //
+    // Fixed IPIs are edge-triggered; the ICR "Level" bit is treated as don't-care. Keep it clear
+    // here to ensure we don't accidentally regress into level-gated delivery.
     m.write_lapic_u32(
         0,
         ICR_LOW_OFF,
-        u32::from(vector) | (0b000u32 << 8) | (1u32 << 14),
+        u32::from(vector) | (0b000u32 << 8),
     );
 
     assert_eq!(interrupts.borrow().get_pending_for_apic(1), Some(vector));
