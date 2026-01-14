@@ -28,9 +28,25 @@ async function trySaveSnapshotToOpfs(snapshot) {
     const { getOpfsStateDir } = await import("../platform/opfs");
     const dir = await getOpfsStateDir();
     const handle = await dir.getFileHandle(OPFS_CRASH_SNAPSHOT_FILE, { create: true });
-    const writable = await handle.createWritable();
-    await writable.write(safeJsonStringify(snapshot, 2));
-    await writable.close();
+    let writable = null;
+    try {
+      writable = await handle.createWritable({ keepExistingData: false });
+    } catch {
+      // Some implementations may not accept options; fall back to default.
+      writable = await handle.createWritable();
+    }
+    try {
+      await writable.write(safeJsonStringify(snapshot, 2));
+      await writable.close();
+    } catch (err) {
+      // Abort on error so a failed write does not leave behind a truncated/partial crash snapshot.
+      try {
+        if (writable && typeof writable.abort === "function") await writable.abort(err);
+      } catch {
+        // ignore
+      }
+      throw err;
+    }
     return `opfs:state/${OPFS_CRASH_SNAPSHOT_FILE}`;
   } catch {
     return null;

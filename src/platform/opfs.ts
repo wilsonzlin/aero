@@ -115,16 +115,20 @@ export async function importFileToOpfs(
         onProgress?.({ writtenBytes, totalBytes });
       }
     }
+    await writable.close();
   } catch (err) {
     try {
-      await writable.abort();
+      await reader.cancel(err);
+    } catch {
+      // ignore
+    }
+    try {
+      await writable.abort(err);
     } catch {
       // ignore
     }
     throw err;
   }
-
-  await writable.close();
   onProgress?.({ writtenBytes, totalBytes });
   return handle;
 }
@@ -175,4 +179,3 @@ export async function openSyncAccessHandleInDedicatedWorker(
   const handle = await openFileHandle(path, options);
   return await createSyncAccessHandleInDedicatedWorker(handle);
 }
-

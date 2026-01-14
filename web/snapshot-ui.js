@@ -16,9 +16,25 @@ async function getOpfsRoot() {
 async function saveSnapshotToOpfs(bytes) {
   const root = await getOpfsRoot();
   const handle = await root.getFileHandle(OPFS_SNAPSHOT_FILE, { create: true });
-  const writable = await handle.createWritable();
-  await writable.write(bytes);
-  await writable.close();
+  let writable = null;
+  try {
+    writable = await handle.createWritable({ keepExistingData: false });
+  } catch {
+    // Some implementations may not accept options; fall back to default.
+    writable = await handle.createWritable();
+  }
+  try {
+    await writable.write(bytes);
+    await writable.close();
+  } catch (err) {
+    // Abort on error so a failed write does not leave behind a truncated/partial snapshot file.
+    try {
+      if (writable && typeof writable.abort === "function") await writable.abort(err);
+    } catch {
+      // ignore
+    }
+    throw err;
+  }
 }
 
 async function loadSnapshotFromOpfs() {

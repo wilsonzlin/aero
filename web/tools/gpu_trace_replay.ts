@@ -748,9 +748,24 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
       dir = await dir.getDirectoryHandle(part, { create: true });
     }
     const handle = await dir.getFileHandle(filename, { create: true });
-    const writable = await handle.createWritable();
-    await writable.write(bytes);
-    await writable.close();
+    let writable: FileSystemWritableFileStream;
+    try {
+      writable = await handle.createWritable({ keepExistingData: false });
+    } catch {
+      // Some implementations may not accept options; fall back to default.
+      writable = await handle.createWritable();
+    }
+    try {
+      await writable.write(bytes);
+      await writable.close();
+    } catch (err) {
+      try {
+        await writable.abort(err);
+      } catch {
+        // ignore
+      }
+      throw err;
+    }
   }
 
   async function loadFromOpfs(path) {
