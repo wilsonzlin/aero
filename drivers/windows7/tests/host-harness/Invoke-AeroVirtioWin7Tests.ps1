@@ -8106,7 +8106,32 @@ try {
       $scriptExitCode = 1
     }
     "VIRTIO_INPUT_EVENTS_FAILED" {
-      Write-Host "FAIL: VIRTIO_INPUT_EVENTS_FAILED: virtio-input-events test reported FAIL while input injection flags were enabled (-WithInputEvents/-WithVirtioInputEvents/-EnableVirtioInputEvents, -WithInputWheel/-WithVirtioInputWheel/-EnableVirtioInputWheel, -WithInputEventsExtended/-WithInputEventsExtra)"
+      $reason = "unknown"
+      $err = "unknown"
+      $kbdReports = ""
+      $mouseReports = ""
+      $kbdBadReports = ""
+      $mouseBadReports = ""
+      $line = Try-ExtractLastAeroMarkerLine `
+        -Tail $result.Tail `
+        -Prefix "AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|FAIL|" `
+        -SerialLogPath $SerialLogPath
+      if ($null -ne $line) {
+        if ($line -match "reason=([^|\r\n]+)") { $reason = $Matches[1] }
+        elseif ($line -match "\|FAIL\|([^|\r\n=]+)(?:\||$)") { $reason = $Matches[1] }
+        if ($line -match "(?:^|\|)err=([^|\r\n]+)") { $err = $Matches[1] }
+        if ($line -match "(?:^|\|)kbd_reports=([^|\r\n]+)") { $kbdReports = $Matches[1] }
+        if ($line -match "(?:^|\|)mouse_reports=([^|\r\n]+)") { $mouseReports = $Matches[1] }
+        if ($line -match "(?:^|\|)kbd_bad_reports=([^|\r\n]+)") { $kbdBadReports = $Matches[1] }
+        if ($line -match "(?:^|\|)mouse_bad_reports=([^|\r\n]+)") { $mouseBadReports = $Matches[1] }
+      }
+      $details = "(reason=$reason err=$err"
+      if (-not [string]::IsNullOrEmpty($kbdReports)) { $details += " kbd_reports=$kbdReports" }
+      if (-not [string]::IsNullOrEmpty($mouseReports)) { $details += " mouse_reports=$mouseReports" }
+      if (-not [string]::IsNullOrEmpty($kbdBadReports)) { $details += " kbd_bad_reports=$kbdBadReports" }
+      if (-not [string]::IsNullOrEmpty($mouseBadReports)) { $details += " mouse_bad_reports=$mouseBadReports" }
+      $details += ")"
+      Write-Host "FAIL: VIRTIO_INPUT_EVENTS_FAILED: virtio-input-events test reported FAIL while input injection flags were enabled (-WithInputEvents/-WithVirtioInputEvents/-EnableVirtioInputEvents, -WithInputWheel/-WithVirtioInputWheel/-EnableVirtioInputWheel, -WithInputEventsExtended/-WithInputEventsExtra) $details"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue

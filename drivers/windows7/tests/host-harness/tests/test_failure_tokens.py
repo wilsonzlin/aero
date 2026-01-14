@@ -313,6 +313,20 @@ class FailureTokenTests(unittest.TestCase):
         self.assertIn("wsa=10060", msg)
         self.assertIn("bytes=0", msg)
 
+    def test_virtio_input_events_fail_tokens_include_reason_and_err(self) -> None:
+        h = self.harness
+
+        msg = h._virtio_input_events_fail_failure_message(
+            b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|FAIL|reason=timeout|err=5|kbd_reports=1|mouse_reports=2|kbd_bad_reports=0|mouse_bad_reports=0\n",
+            req_flags_desc="--with-input-events",
+        )
+        self.assertRegex(msg, _TOKEN_RE)
+        self.assertTrue(msg.startswith("FAIL: VIRTIO_INPUT_EVENTS_FAILED:"))
+        self.assertIn("reason=timeout", msg)
+        self.assertIn("err=5", msg)
+        self.assertIn("kbd_reports=1", msg)
+        self.assertIn("--with-input-events", msg)
+
     def test_virtio_input_tablet_events_skip_tokens(self) -> None:
         h = self.harness
 

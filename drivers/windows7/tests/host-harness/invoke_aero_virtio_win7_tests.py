@@ -2635,6 +2635,64 @@ def _virtio_input_led_required_failure_message(
     )
 
 
+def _virtio_input_events_fail_failure_message(
+    tail: bytes, *, marker_line: Optional[str] = None, req_flags_desc: str = "--with-input-events"
+) -> str:
+    # Guest marker:
+    #   AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|FAIL|reason=<...>|err=<win32>|kbd_reports=...|mouse_reports=...|...
+    prefix = b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|FAIL|"
+    prefix_str = "AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|FAIL|"
+    marker = marker_line
+    if marker is not None and not marker.startswith(prefix_str):
+        marker = None
+    if marker is None:
+        marker = _try_extract_last_marker_line(tail, prefix)
+
+    details = ""
+    if marker is not None:
+        fields = _parse_marker_kv_fields(marker)
+        reason = (fields.get("reason") or "").strip()
+        if not reason:
+            # Backcompat: allow `...|FAIL|timeout|err=...` (no `reason=` key).
+            try:
+                toks = marker.split("|")
+                if toks and "FAIL" in toks:
+                    idx = toks.index("FAIL")
+                    if idx + 1 < len(toks):
+                        tok = toks[idx + 1].strip()
+                        if tok and "=" not in tok:
+                            reason = tok
+            except Exception:
+                reason = reason
+        parts: list[str] = []
+        if reason:
+            parts.append(f"reason={_sanitize_marker_value(reason)}")
+        err = (fields.get("err") or "").strip()
+        if err:
+            parts.append(f"err={_sanitize_marker_value(err)}")
+        for k in (
+            "kbd_reports",
+            "mouse_reports",
+            "kbd_bad_reports",
+            "mouse_bad_reports",
+            "kbd_a_down",
+            "kbd_a_up",
+            "mouse_move",
+            "mouse_left_down",
+            "mouse_left_up",
+        ):
+            v = (fields.get(k) or "").strip()
+            if v:
+                parts.append(f"{k}={_sanitize_marker_value(v)}")
+        if parts:
+            details = " (" + " ".join(parts) + ")"
+
+    return (
+        "FAIL: VIRTIO_INPUT_EVENTS_FAILED: virtio-input-events test reported FAIL while "
+        f"{req_flags_desc} was enabled{details}"
+    )
+
+
 def _virtio_input_tablet_events_skip_failure_message(
     tail: bytes, *, marker_line: Optional[str] = None
 ) -> str:
@@ -5894,8 +5952,11 @@ def main() -> int:
                             break
                         if saw_virtio_input_events_fail:
                             print(
-                                "FAIL: VIRTIO_INPUT_EVENTS_FAILED: virtio-input-events test reported FAIL while "
-                                f"{input_events_req_flags_desc} was enabled",
+                                _virtio_input_events_fail_failure_message(
+                                    tail,
+                                    marker_line=virtio_input_events_marker_line,
+                                    req_flags_desc=input_events_req_flags_desc,
+                                ),
                                 file=sys.stderr,
                             )
                             _print_tail(serial_log)
@@ -6422,8 +6483,11 @@ def main() -> int:
                             if need_input_events:
                                 if saw_virtio_input_events_fail:
                                     print(
-                                        "FAIL: VIRTIO_INPUT_EVENTS_FAILED: selftest RESULT=PASS but virtio-input-events test reported FAIL "
-                                        f"while {input_events_req_flags_desc} was enabled",
+                                        _virtio_input_events_fail_failure_message(
+                                            tail,
+                                            marker_line=virtio_input_events_marker_line,
+                                            req_flags_desc=input_events_req_flags_desc,
+                                        ),
                                         file=sys.stderr,
                                     )
                                     _print_tail(serial_log)
@@ -6865,8 +6929,11 @@ def main() -> int:
                         if need_input_events:
                             if saw_virtio_input_events_fail:
                                 print(
-                                    "FAIL: VIRTIO_INPUT_EVENTS_FAILED: virtio-input-events test reported FAIL while "
-                                    f"{input_events_req_flags_desc} was enabled",
+                                    _virtio_input_events_fail_failure_message(
+                                        tail,
+                                        marker_line=virtio_input_events_marker_line,
+                                        req_flags_desc=input_events_req_flags_desc,
+                                    ),
                                     file=sys.stderr,
                                 )
                                 _print_tail(serial_log)
@@ -8926,8 +8993,11 @@ def main() -> int:
                             if need_input_events:
                                 if saw_virtio_input_events_fail:
                                     print(
-                                        "FAIL: VIRTIO_INPUT_EVENTS_FAILED: virtio-input-events test reported FAIL while "
-                                        f"{input_events_req_flags_desc} was enabled",
+                                        _virtio_input_events_fail_failure_message(
+                                            tail,
+                                            marker_line=virtio_input_events_marker_line,
+                                            req_flags_desc=input_events_req_flags_desc,
+                                        ),
                                         file=sys.stderr,
                                     )
                                     _print_tail(serial_log)
