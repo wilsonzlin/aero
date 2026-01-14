@@ -45,6 +45,22 @@ class VirtioNetMsixMarkerTests(unittest.TestCase):
         self.assertEqual(fields.get("rx_vector"), "1")
         self.assertEqual(fields.get("tx_vector"), "2")
 
+    def test_parses_optional_extra_fields(self) -> None:
+        tail = (
+            b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|PASS|mode=msix|messages=3|"
+            b"config_vector=0|rx_vector=1|tx_vector=2|flags=0x20|intr0=1|dpc0=2|"
+            b"rx_drained=7|tx_drained=8\n"
+        )
+        parsed = self.harness._parse_virtio_net_msix_marker(tail)
+        assert parsed is not None
+        status, fields = parsed
+        self.assertEqual(status, "PASS")
+        self.assertEqual(fields.get("flags"), "0x20")
+        self.assertEqual(fields.get("intr0"), "1")
+        self.assertEqual(fields.get("dpc0"), "2")
+        self.assertEqual(fields.get("rx_drained"), "7")
+        self.assertEqual(fields.get("tx_drained"), "8")
+
     def test_uses_last_marker(self) -> None:
         tail = (
             b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|FAIL|mode=intx|messages=0\n"
@@ -59,4 +75,3 @@ class VirtioNetMsixMarkerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

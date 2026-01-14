@@ -45,6 +45,19 @@ class VirtioNetMsixHostMarkerTests(unittest.TestCase):
             "AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_MSIX|PASS|mode=msix|messages=3|config_vector=0|rx_vector=1|tx_vector=2",
         )
 
+    def test_emits_extra_fields_sorted(self) -> None:
+        tail = (
+            b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|PASS|mode=msix|messages=3|"
+            b"config_vector=0|rx_vector=1|tx_vector=2|flags=0x20|intr0=1|dpc0=2|"
+            b"rx_drained=7|tx_drained=8\n"
+        )
+        out = self._emit(tail)
+        # Extra fields are appended in sorted order after the stable base fields.
+        self.assertEqual(
+            out,
+            "AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_MSIX|PASS|mode=msix|messages=3|config_vector=0|rx_vector=1|tx_vector=2|dpc0=2|flags=0x20|intr0=1|rx_drained=7|tx_drained=8",
+        )
+
     def test_emits_skip_marker(self) -> None:
         tail = b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|SKIP|reason=not_supported\n"
         out = self._emit(tail)
@@ -58,4 +71,3 @@ class VirtioNetMsixHostMarkerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

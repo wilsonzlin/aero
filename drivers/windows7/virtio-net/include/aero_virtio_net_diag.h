@@ -146,3 +146,11 @@ typedef struct _AEROVNET_DIAG_INFO {
     uint32_t TxBuffersDrained;
 } AEROVNET_DIAG_INFO;
 #pragma pack(pop)
+
+/*
+ * Keep the IOCTL payload a stable size so both kernel- and user-mode consumers can
+ * rely on a deterministic upper bound. Fields may be appended in the future; older
+ * consumers should always gate reads based on `Size` / returned bytes.
+ */
+#define AEROVNET_DIAG_INFO_EXPECTED_SIZE 256u
+typedef char _aerovnet_diag_info_size_check[(sizeof(AEROVNET_DIAG_INFO) == AEROVNET_DIAG_INFO_EXPECTED_SIZE) ? 1 : -1];

@@ -394,6 +394,8 @@ Notes:
   - `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-msix|PASS|mode=intx/msix|messages=<n>|config_vector=<v>|queue_vector=<v>`
     (emitted when the virtio-blk miniport IOCTL includes interrupt diagnostics; the harness can require `mode=msix`)
   - `AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|PASS/FAIL/SKIP|mode=intx/msi/msix/unknown|messages=<n>|config_vector=<n|none>|rx_vector=<n|none>|tx_vector=<n|none>`
+    - Newer virtio-net driver/selftest builds may append additional diagnostic fields (best-effort), for example:
+      `flags=0x...|intr0=...|intr1=...|intr2=...|dpc0=...|dpc1=...|dpc2=...|rx_drained=...|tx_drained=...`.
   - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-msix|PASS/SKIP|mode=intx/msix/none/unknown|messages=<n>|config_vector=<v>|queue0_vector=<v>|...`
   - `AERO_VIRTIO_SELFTEST|TEST|virtio-input-msix|PASS/FAIL/SKIP|mode=intx/msix/unknown|messages=<n>|mapping=...|...`
     (the marker is always emitted; `--require-input-msix` makes non-`mode=msix` fail the overall selftest)
