@@ -163,7 +163,9 @@ python3 drivers/windows7/tests/host-harness/invoke_aero_virtio_win7_tests.py \
 The Python harness prints:
 
 1. A machine-readable JSON argv array (first line)
-2. A best-effort shell-escaped single-line command (second line)
+2. A best-effort single-line command (second line):
+   - POSIX: shell-escaped via `shlex.quote`
+   - Windows: cmdline-escaped via `subprocess.list2cmdline`
 
 ### Forcing / limiting virtio MSI-X vector count (QEMU `vectors=`)
 
