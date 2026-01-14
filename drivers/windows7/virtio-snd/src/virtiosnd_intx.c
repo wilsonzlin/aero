@@ -28,7 +28,7 @@
 
 typedef struct _VIRTIOSND_EVENTQ_DRAIN_CONTEXT {
     PVIRTIOSND_DEVICE_EXTENSION Dx;
-    ULONG Reposted;
+    ULONGLONG RepostMask;
 } VIRTIOSND_EVENTQ_DRAIN_CONTEXT, *PVIRTIOSND_EVENTQ_DRAIN_CONTEXT;
 
 static BOOLEAN VirtIoSndMessageIsr(_In_ PKINTERRUPT Interrupt, _In_ PVOID ServiceContext, _In_ ULONG MessageID);
@@ -85,16 +85,20 @@ static __forceinline BOOLEAN VirtIoSndShouldLogRareCounter(_In_ LONG Count)
     return ((u & (u - 1u)) == 0u) ? TRUE : FALSE;
 }
 
+/*
+ * eventq contents are device-controlled; keep error logging rate-limited even in
+ * free builds.
+ */
+static volatile LONG g_eventqErrorLog;
+
 static VOID VirtIoSndDrainEventqUsed(_In_ USHORT QueueIndex, _In_opt_ void *Cookie, _In_ UINT32 UsedLen, _In_opt_ void *Context)
 {
-    static volatile LONG s_eventqErrorLog;
     PVIRTIOSND_EVENTQ_DRAIN_CONTEXT ctx;
     PVIRTIOSND_DEVICE_EXTENSION dx;
     ULONG_PTR poolBase;
     ULONG_PTR poolEnd;
     ULONG_PTR cookiePtr;
     ULONG_PTR off;
-    VIRTIOSND_SG sg;
     NTSTATUS status;
     EVT_VIRTIOSND_EVENTQ_EVENT* cb;
     void* cbCtx;
@@ -127,7 +131,7 @@ static VOID VirtIoSndDrainEventqUsed(_In_ USHORT QueueIndex, _In_opt_ void *Cook
      * emits malformed/unknown events.
      */
     if (Cookie == NULL) {
-        if (VirtIoSndShouldRateLimitLog(&s_eventqErrorLog)) {
+        if (VirtIoSndShouldRateLimitLog(&g_eventqErrorLog)) {
             VIRTIOSND_TRACE_ERROR("eventq completion with NULL cookie (len=%lu)\n", (ULONG)UsedLen);
         }
         return;
@@ -142,7 +146,7 @@ static VOID VirtIoSndDrainEventqUsed(_In_ USHORT QueueIndex, _In_opt_ void *Cook
     }
 
     if (dx->EventqBufferPool.Va == NULL || dx->EventqBufferPool.DmaAddr == 0 || dx->EventqBufferPool.Size == 0) {
-        if (VirtIoSndShouldRateLimitLog(&s_eventqErrorLog)) {
+        if (VirtIoSndShouldRateLimitLog(&g_eventqErrorLog)) {
             VIRTIOSND_TRACE_ERROR(
                 "eventq completion but buffer pool is not initialized (cookie=%p len=%lu)\n",
                 Cookie,
@@ -156,7 +160,7 @@ static VOID VirtIoSndDrainEventqUsed(_In_ USHORT QueueIndex, _In_opt_ void *Cook
     cookiePtr = (ULONG_PTR)Cookie;
 
     if (cookiePtr < poolBase || cookiePtr >= poolEnd) {
-        if (VirtIoSndShouldRateLimitLog(&s_eventqErrorLog)) {
+        if (VirtIoSndShouldRateLimitLog(&g_eventqErrorLog)) {
             VIRTIOSND_TRACE_ERROR("eventq completion cookie out of range (cookie=%p len=%lu)\n", Cookie, (ULONG)UsedLen);
         }
         return;
@@ -165,22 +169,37 @@ static VOID VirtIoSndDrainEventqUsed(_In_ USHORT QueueIndex, _In_opt_ void *Cook
     /* Ensure cookie points at the start of one of our fixed-size buffers. */
     off = cookiePtr - poolBase;
     if ((off % (ULONG_PTR)VIRTIOSND_EVENTQ_BUFFER_SIZE) != 0) {
-        if (VirtIoSndShouldRateLimitLog(&s_eventqErrorLog)) {
+        if (VirtIoSndShouldRateLimitLog(&g_eventqErrorLog)) {
             VIRTIOSND_TRACE_ERROR("eventq completion cookie misaligned (cookie=%p len=%lu)\n", Cookie, (ULONG)UsedLen);
         }
         return;
     }
 
     if (off + (ULONG_PTR)VIRTIOSND_EVENTQ_BUFFER_SIZE > poolEnd - poolBase) {
-        if (VirtIoSndShouldRateLimitLog(&s_eventqErrorLog)) {
+        if (VirtIoSndShouldRateLimitLog(&g_eventqErrorLog)) {
             VIRTIOSND_TRACE_ERROR("eventq completion cookie range overflow (cookie=%p len=%lu)\n", Cookie, (ULONG)UsedLen);
         }
         return;
     }
 
+    /*
+     * Defer reposting this buffer until after the used ring is fully drained.
+     *
+     * If a device floods events and completes a buffer immediately after it is
+     * reposted, reposting within the drain loop can cause an unbounded DPC loop.
+     * By deferring, each DPC invocation drains at most the fixed outstanding
+     * buffer pool and re-enables event delivery in a bounded way.
+     */
+    {
+        const ULONG idx = (ULONG)(off / (ULONG_PTR)VIRTIOSND_EVENTQ_BUFFER_SIZE);
+        if (idx < 64u) {
+            ctx->RepostMask |= (1ull << idx);
+        }
+    }
+
     if (UsedLen > (UINT32)VIRTIOSND_EVENTQ_BUFFER_SIZE) {
         /* Device bug: used length should never exceed posted writable capacity. */
-        if (VirtIoSndShouldRateLimitLog(&s_eventqErrorLog)) {
+        if (VirtIoSndShouldRateLimitLog(&g_eventqErrorLog)) {
             VIRTIOSND_TRACE_ERROR(
                 "eventq completion length too large: %lu > %u (cookie=%p)\n",
                 (ULONG)UsedLen,
@@ -298,13 +317,13 @@ static VOID VirtIoSndDrainEventqUsed(_In_ USHORT QueueIndex, _In_opt_ void *Cook
                 }
             }
         } else {
-            if (VirtIoSndShouldRateLimitLog(&s_eventqErrorLog)) {
+            if (VirtIoSndShouldRateLimitLog(&g_eventqErrorLog)) {
                 VIRTIOSND_TRACE_ERROR("eventq: failed to parse event (len=%lu): 0x%08X\n", (ULONG)cappedLen, (UINT)status);
             }
         }
     } else if (UsedLen != 0) {
         InterlockedIncrement(&dx->EventqStats.ShortBuffers);
-        if (VirtIoSndShouldRateLimitLog(&s_eventqErrorLog)) {
+        if (VirtIoSndShouldRateLimitLog(&g_eventqErrorLog)) {
             VIRTIOSND_TRACE_ERROR(
                 "eventq: short completion ignored (%lu < %Iu)\n",
                 (ULONG)UsedLen,
@@ -340,20 +359,6 @@ static VOID VirtIoSndDrainEventqUsed(_In_ USHORT QueueIndex, _In_opt_ void *Cook
             InterlockedDecrement(&dx->EventqCallbackInFlight);
         }
     }
-
-    sg.addr = dx->EventqBufferPool.DmaAddr + (UINT64)off;
-    sg.len = (UINT32)VIRTIOSND_EVENTQ_BUFFER_SIZE;
-    sg.write = TRUE;
-
-    status = VirtioSndQueueSubmit(&dx->Queues[VIRTIOSND_QUEUE_EVENT], &sg, 1, Cookie);
-    if (!NT_SUCCESS(status)) {
-        if (VirtIoSndShouldRateLimitLog(&s_eventqErrorLog)) {
-            VIRTIOSND_TRACE_ERROR("eventq repost failed: 0x%08X (cookie=%p)\n", (UINT)status, Cookie);
-        }
-        return;
-    }
-
-    ctx->Reposted++;
 }
 
 static VOID VirtIoSndAckConfigChange(_Inout_ PVIRTIOSND_DEVICE_EXTENSION dx)
@@ -427,10 +432,39 @@ static __forceinline VOID VirtIoSndDrainQueue(_Inout_ PVIRTIOSND_DEVICE_EXTENSIO
     case VIRTIOSND_QUEUE_EVENT:
     {
         VIRTIOSND_EVENTQ_DRAIN_CONTEXT eventqDrain;
+        VIRTIOSND_SG sg;
+        NTSTATUS status;
+        ULONG reposted;
+        ULONG i;
+
         eventqDrain.Dx = dx;
-        eventqDrain.Reposted = 0;
+        eventqDrain.RepostMask = 0;
         VirtioSndQueueSplitDrainUsed(&dx->QueueSplit[VIRTIOSND_QUEUE_EVENT], VirtIoSndDrainEventqUsed, &eventqDrain);
-        if (eventqDrain.Reposted != 0 && !dx->Removed) {
+
+        reposted = 0;
+        if (eventqDrain.RepostMask != 0 && !dx->Removed &&
+            dx->EventqBufferPool.Va != NULL && dx->EventqBufferPool.DmaAddr != 0 &&
+            dx->EventqBufferCount != 0) {
+            for (i = 0; i < dx->EventqBufferCount && i < 64u; ++i) {
+                if ((eventqDrain.RepostMask & (1ull << i)) == 0) {
+                    continue;
+                }
+
+                sg.addr = dx->EventqBufferPool.DmaAddr + ((UINT64)i * (UINT64)VIRTIOSND_EVENTQ_BUFFER_SIZE);
+                sg.len = (UINT32)VIRTIOSND_EVENTQ_BUFFER_SIZE;
+                sg.write = TRUE;
+
+                status = VirtioSndQueueSubmit(&dx->Queues[VIRTIOSND_QUEUE_EVENT], &sg, 1,
+                                              (PUCHAR)dx->EventqBufferPool.Va + ((SIZE_T)i * (SIZE_T)VIRTIOSND_EVENTQ_BUFFER_SIZE));
+                if (NT_SUCCESS(status)) {
+                    reposted++;
+                } else if (VirtIoSndShouldRateLimitLog(&g_eventqErrorLog)) {
+                    VIRTIOSND_TRACE_ERROR("eventq repost failed: 0x%08X (buf=%lu)\n", (UINT)status, i);
+                }
+            }
+        }
+
+        if (reposted != 0 && !dx->Removed) {
             VirtioSndQueueKick(&dx->Queues[VIRTIOSND_QUEUE_EVENT]);
         }
         break;

@@ -624,7 +624,7 @@ static VOID VirtIoSndEventqInitBestEffort(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx
 
 typedef struct _VIRTIOSND_EVENTQ_POLL_CONTEXT {
     PVIRTIOSND_DEVICE_EXTENSION Dx;
-    ULONG Reposted;
+    ULONGLONG RepostMask;
 } VIRTIOSND_EVENTQ_POLL_CONTEXT, *PVIRTIOSND_EVENTQ_POLL_CONTEXT;
 
 static VOID
@@ -640,7 +640,6 @@ VirtIoSndHwDrainEventqUsed(
     ULONG_PTR poolEnd;
     ULONG_PTR cookiePtr;
     ULONG_PTR off;
-    VIRTIOSND_SG sg;
     NTSTATUS status;
     EVT_VIRTIOSND_EVENTQ_EVENT* cb;
     void* cbCtx;
@@ -699,6 +698,21 @@ VirtIoSndHwDrainEventqUsed(
 
     if (off + (ULONG_PTR)VIRTIOSND_EVENTQ_BUFFER_SIZE > poolEnd - poolBase) {
         return;
+    }
+
+    /*
+     * Defer reposting until after the used ring is drained.
+     *
+     * If a device floods events and completes a buffer immediately after it is
+     * reposted, reposting within the drain loop can cause an unbounded loop at
+     * DISPATCH_LEVEL. By deferring, each poll invocation drains at most the
+     * fixed outstanding buffer pool.
+     */
+    {
+        const ULONG idx = (ULONG)(off / (ULONG_PTR)VIRTIOSND_EVENTQ_BUFFER_SIZE);
+        if (idx < 64u) {
+            ctx->RepostMask |= (1ull << idx);
+        }
     }
 
     /*
@@ -799,17 +813,6 @@ VirtIoSndHwDrainEventqUsed(
             InterlockedDecrement(&dx->EventqCallbackInFlight);
         }
     }
-
-    sg.addr = dx->EventqBufferPool.DmaAddr + (UINT64)off;
-    sg.len = (UINT32)VIRTIOSND_EVENTQ_BUFFER_SIZE;
-    sg.write = TRUE;
-
-    status = VirtioSndQueueSubmit(&dx->Queues[VIRTIOSND_QUEUE_EVENT], &sg, 1, Cookie);
-    if (!NT_SUCCESS(status)) {
-        return;
-    }
-
-    ctx->Reposted++;
 }
 
 _Use_decl_annotations_
@@ -817,6 +820,10 @@ VOID
 VirtIoSndHwPollAllUsed(PVIRTIOSND_DEVICE_EXTENSION Dx)
 {
     VIRTIOSND_EVENTQ_POLL_CONTEXT eventqDrain;
+    VIRTIOSND_SG sg;
+    NTSTATUS status;
+    ULONG reposted;
+    ULONG i;
 
     if (Dx == NULL) {
         return;
@@ -839,9 +846,31 @@ VirtIoSndHwPollAllUsed(PVIRTIOSND_DEVICE_EXTENSION Dx)
      *  - rxq: deliver capture completions via the registered callback
      */
     eventqDrain.Dx = Dx;
-    eventqDrain.Reposted = 0;
+    eventqDrain.RepostMask = 0;
     VirtioSndQueueSplitDrainUsed(&Dx->QueueSplit[VIRTIOSND_QUEUE_EVENT], VirtIoSndHwDrainEventqUsed, &eventqDrain);
-    if (eventqDrain.Reposted != 0 && !Dx->Removed) {
+
+    reposted = 0;
+    if (eventqDrain.RepostMask != 0 && !Dx->Removed &&
+        Dx->EventqBufferPool.Va != NULL && Dx->EventqBufferPool.DmaAddr != 0 &&
+        Dx->EventqBufferCount != 0) {
+        for (i = 0; i < Dx->EventqBufferCount && i < 64u; ++i) {
+            if ((eventqDrain.RepostMask & (1ull << i)) == 0) {
+                continue;
+            }
+
+            sg.addr = Dx->EventqBufferPool.DmaAddr + ((UINT64)i * (UINT64)VIRTIOSND_EVENTQ_BUFFER_SIZE);
+            sg.len = (UINT32)VIRTIOSND_EVENTQ_BUFFER_SIZE;
+            sg.write = TRUE;
+
+            status = VirtioSndQueueSubmit(&Dx->Queues[VIRTIOSND_QUEUE_EVENT], &sg, 1,
+                                          (PUCHAR)Dx->EventqBufferPool.Va + ((SIZE_T)i * (SIZE_T)VIRTIOSND_EVENTQ_BUFFER_SIZE));
+            if (NT_SUCCESS(status)) {
+                reposted++;
+            }
+        }
+    }
+
+    if (reposted != 0 && !Dx->Removed) {
         VirtioSndQueueKick(&Dx->Queues[VIRTIOSND_QUEUE_EVENT]);
     }
 
