@@ -1058,6 +1058,9 @@ static void TrackDrawStateLocked(AeroGpuDevice* dev) {
 }
 
 void set_error(AeroGpuDevice* dev, HRESULT hr) {
+  if (!HasLiveCookie(dev, kD3D10_1DeviceLiveCookie)) {
+    return;
+  }
   // Many D3D10/DDI entrypoints are `void` and must signal failures via the
   // runtime callback instead of returning HRESULT. Log these so bring-up can
   // quickly correlate failures to the last DDI call.

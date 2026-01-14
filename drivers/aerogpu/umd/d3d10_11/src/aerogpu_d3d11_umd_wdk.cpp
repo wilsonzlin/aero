@@ -520,7 +520,7 @@ static void InitLockForWrite(D3DDDICB_LOCK* lock) {
 }
 
 static void SetError(Device* dev, HRESULT hr) {
-  if (!dev) {
+  if (!HasLiveCookie(dev, kDeviceDestroyLiveCookie)) {
     return;
   }
   auto* callbacks = reinterpret_cast<const D3D11DDI_DEVICECALLBACKS*>(dev->runtime_callbacks);

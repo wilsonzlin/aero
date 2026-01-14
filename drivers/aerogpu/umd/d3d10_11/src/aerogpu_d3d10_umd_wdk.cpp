@@ -1113,6 +1113,9 @@ HRESULT AeroGpuWaitForFence(AeroGpuDevice* dev, uint64_t fence, uint32_t timeout
 }
 
 void SetError(D3D10DDI_HDEVICE hDevice, HRESULT hr) {
+  if (!IsDeviceLive(hDevice)) {
+    return;
+  }
   auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
   if (!dev || !dev->callbacks.pfnSetErrorCb) {
     return;
