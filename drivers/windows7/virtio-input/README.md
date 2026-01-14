@@ -223,7 +223,9 @@ End-to-end input report delivery is validated by the Win7 harness when enabled:
 
 Optional: also validate scroll wheel + horizontal wheel end-to-end:
 
-- Run the host harness with `-WithInputWheel` / `--with-input-wheel`.
+- Run the host harness with:
+  - PowerShell: `-WithInputWheel` (alias: `-WithVirtioInputWheel`)
+  - Python: `--with-input-wheel` (aliases: `--with-virtio-input-wheel`, `--require-virtio-input-wheel`, `--enable-virtio-input-wheel`)
 - Expected guest marker:
   - `AERO_VIRTIO_SELFTEST|TEST|virtio-input-wheel|PASS|...`
 
