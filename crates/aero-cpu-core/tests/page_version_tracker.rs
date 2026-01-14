@@ -2,7 +2,7 @@ use aero_cpu_core::jit::runtime::{PageVersionTracker, PAGE_SIZE};
 
 #[test]
 fn page_version_table_pointer_is_stable_and_mutable() {
-    let mut tracker = PageVersionTracker::new(64);
+    let tracker = PageVersionTracker::new(64);
     let (ptr0, len0) = tracker.table_ptr_len();
     assert_eq!(len0, 64);
 

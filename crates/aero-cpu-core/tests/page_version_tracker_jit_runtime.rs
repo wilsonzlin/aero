@@ -41,7 +41,7 @@ fn raw_table_mutation_is_observed_by_version_and_snapshot_meta() {
         cache_max_bytes: 0,
         code_version_max_pages: 8,
     };
-    let mut jit = JitRuntime::new(config, NullBackend, RecordingCompileSink::default());
+    let jit = JitRuntime::new(config, NullBackend, RecordingCompileSink::default());
 
     let (ptr, len) = jit.code_version_table_ptr_len();
     assert_eq!(len, 8);
