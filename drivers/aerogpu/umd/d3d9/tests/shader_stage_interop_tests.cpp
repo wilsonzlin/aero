@@ -1321,6 +1321,104 @@ bool TestPsOnlyBindsFixedfuncVsXyzTex1() {
   return Check(saw_user_ps_bind, "saw BIND_SHADERS with user PS handle");
 }
 
+bool TestPsOnlyIgnoresUnsupportedStage0State() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+  dev->cmd.reset();
+
+  // PS-only interop: bind a user PS but leave VS unset so the draw path injects
+  // a fixed-function VS fallback derived from the active FVF.
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzTex1);
+  if (!Check(hr == S_OK, "SetFVF(XYZ|TEX1)")) {
+    return false;
+  }
+
+  D3D9DDI_HSHADER hPs{};
+  hr = cleanup.device_funcs.pfnCreateShader(cleanup.hDevice,
+                                            kD3d9ShaderStagePs,
+                                            kUserPsPassthroughColor,
+                                            static_cast<uint32_t>(sizeof(kUserPsPassthroughColor)),
+                                            &hPs);
+  if (!Check(hr == S_OK, "CreateShader(PS)")) {
+    return false;
+  }
+  if (!Check(hPs.pDrvPrivate != nullptr, "CreateShader(PS) returned handle")) {
+    return false;
+  }
+  cleanup.shaders.push_back(hPs);
+
+  auto* ps = reinterpret_cast<Shader*>(hPs.pDrvPrivate);
+  const aerogpu_handle_t ps_handle = ps ? ps->handle : 0;
+
+  hr = cleanup.device_funcs.pfnSetShader(cleanup.hDevice, kD3d9ShaderStagePs, hPs);
+  if (!Check(hr == S_OK, "SetShader(PS)")) {
+    return false;
+  }
+
+  // Set an intentionally unsupported stage0 texture op. Since a user PS is
+  // bound, fixed-function stage-state emulation must be ignored (D3D9 semantics)
+  // and the draw must still succeed.
+  hr = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, /*stage=*/0, kD3dTssColorOp, kD3dTopAddSigned2x);
+  if (!Check(hr == S_OK, "SetTextureStageState(COLOROP=ADDSIGNED2X)")) {
+    return false;
+  }
+
+  const VertexXyzTex1 tri[3] = {
+      {0.0f, 0.0f, 0.0f, 0.0f, 0.0f},
+      {1.0f, 0.0f, 0.0f, 1.0f, 0.0f},
+      {0.0f, 1.0f, 0.0f, 0.0f, 1.0f},
+  };
+
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(cleanup.hDevice, D3DDDIPT_TRIANGLELIST, 1, tri, sizeof(VertexXyzTex1));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(PS-only, unsupported stage0 state)")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(PS-only, unsupported stage0 state)")) {
+    return false;
+  }
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_DRAW) >= 1, "DRAW emitted")) {
+    return false;
+  }
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_BIND_SHADERS) >= 1, "BIND_SHADERS emitted")) {
+    return false;
+  }
+
+  bool saw_user_ps_bind = false;
+  size_t offset = sizeof(aerogpu_cmd_stream_header);
+  const size_t stream_len = StreamBytesUsed(buf, len);
+  while (offset + sizeof(aerogpu_cmd_hdr) <= stream_len) {
+    const auto* hdr = reinterpret_cast<const aerogpu_cmd_hdr*>(buf + offset);
+    if (hdr->opcode == AEROGPU_CMD_BIND_SHADERS && hdr->size_bytes >= sizeof(aerogpu_cmd_bind_shaders)) {
+      const auto* bind = reinterpret_cast<const aerogpu_cmd_bind_shaders*>(hdr);
+      if (!Check(bind->vs != 0 && bind->ps != 0, "BIND_SHADERS must not bind null handles")) {
+        return false;
+      }
+      if (bind->ps == ps_handle) {
+        saw_user_ps_bind = true;
+      }
+    }
+    if (hdr->size_bytes == 0 || hdr->size_bytes > stream_len - offset) {
+      break;
+    }
+    offset += hdr->size_bytes;
+  }
+  if (!Check(saw_user_ps_bind, "saw BIND_SHADERS with user PS handle")) {
+    return false;
+  }
+  return CheckNoNullShaderBinds(buf, len);
+}
+
 bool TestPsOnlyXyzDiffuseBindsWvpVs() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -1659,6 +1757,9 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestPsOnlyBindsFixedfuncVsXyzTex1()) {
+    return 1;
+  }
+  if (!aerogpu::TestPsOnlyIgnoresUnsupportedStage0State()) {
     return 1;
   }
   if (!aerogpu::TestPsOnlyXyzDiffuseBindsWvpVs()) {
