@@ -1129,3 +1129,59 @@ fn vertex_ret_inside_if_does_not_break_brace_balancing() {
         translated.wgsl
     );
 }
+
+#[test]
+fn decodes_and_translates_depth_output_via_output_depth_operand() {
+    // Minimal ps_5_0:
+    //   mov oDepth.x, l(0.25)
+    //   ret
+    //
+    // The `oDepth` operand is encoded using `D3D10_SB_OPERAND_TYPE_OUTPUT_DEPTH` and does not
+    // necessarily contain a concrete `o#` index; it must be mapped via the output signature's
+    // `SV_Depth` register.
+    let mut body = Vec::<u32>::new();
+
+    let imm = imm32_vec4([0.25f32.to_bits(); 4]);
+    body.push(opcode_token(OPCODE_MOV, (1 + 1 + imm.len()) as u32));
+    body.push(operand_token(
+        OPERAND_TYPE_OUTPUT_DEPTH,
+        2,
+        OPERAND_SEL_MASK,
+        WriteMask::X.0 as u32,
+        0,
+        false,
+    ));
+    body.extend_from_slice(&imm);
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    let tokens = make_sm5_program_tokens(0, &body);
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, tokens_to_bytes(&tokens)),
+        (FOURCC_ISGN, build_signature_chunk(&[])),
+        (
+            FOURCC_OSGN,
+            // Use an unusual register index to ensure the translator is actually using the
+            // signature mapping rather than the (missing) operand index.
+            build_signature_chunk(&[sig_param("SV_Depth", 0, 5, 0b0001)]),
+        ),
+    ]);
+
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
+    let module = decode_program(&program).expect("SM4 decode");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+
+    assert!(
+        translated.wgsl.contains("@builtin(frag_depth)"),
+        "expected pixel depth output in WGSL:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated.wgsl.contains("var o5: vec4<f32>"),
+        "{}",
+        translated.wgsl
+    );
+    assert!(translated.wgsl.contains("o5.x"), "{}", translated.wgsl);
+    assert_wgsl_validates(&translated.wgsl);
+}
