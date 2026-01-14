@@ -355,29 +355,26 @@ Representative test pointers:
 - [`crates/aero-d3d11/tests/aerogpu_cmd_smoke.rs`](../../crates/aero-d3d11/tests/aerogpu_cmd_smoke.rs)
 - [`crates/aero-d3d11/tests/aerogpu_cmd_textured_triangle.rs`](../../crates/aero-d3d11/tests/aerogpu_cmd_textured_triangle.rs)
 - Compute translation/execution: [`crates/aero-d3d11/tests/d3d11_runtime_compute_dispatch.rs`](../../crates/aero-d3d11/tests/d3d11_runtime_compute_dispatch.rs), [`crates/aero-d3d11/tests/shader_translate_compute.rs`](../../crates/aero-d3d11/tests/shader_translate_compute.rs)
-- Geometry shader emulation (compute prepass): [`crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_point_to_triangle.rs`](../../crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_point_to_triangle.rs), [`crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_restart_strip.rs`](../../crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_restart_strip.rs)
-- GS translator unit tests: [`crates/aero-d3d11/tests/gs_translate.rs`](../../crates/aero-d3d11/tests/gs_translate.rs)
+- Geometry-stage scaffolding (compute prepass path; currently placeholder): [`crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_compute_prepass_smoke.rs`](../../crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_compute_prepass_smoke.rs), [`crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_compute_prepass_primitive_id.rs`](../../crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_compute_prepass_primitive_id.rs)
+- In-progress GS translator unit tests: [`crates/aero-d3d11/tests/gs_translate.rs`](../../crates/aero-d3d11/tests/gs_translate.rs)
 - Guest-side Win7 tests live under [`drivers/aerogpu/tests/win7/`](../../drivers/aerogpu/tests/win7/) (see e.g. `d3d10_*`, `d3d11_*`)
 
 Known gaps / limitations (enforced by code/tests):
 
-- Geometry shaders are **emulated via compute** (WebGPU has no GS stage):
-  - GS DXBC is decoded and translated to WGSL compute for a supported subset:
-    - Translator: [`crates/aero-d3d11/src/runtime/gs_translate.rs`](../../crates/aero-d3d11/src/runtime/gs_translate.rs)
-    - Translator tests: [`crates/aero-d3d11/tests/gs_translate.rs`](../../crates/aero-d3d11/tests/gs_translate.rs)
-  - Strip output is expanded into list indices with correct `CutVertex` / `RestartStrip` semantics:
-    - Reference implementation: [`crates/aero-d3d11/src/runtime/strip_to_list.rs`](../../crates/aero-d3d11/src/runtime/strip_to_list.rs)
-    - End-to-end test: [`crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_restart_strip.rs`](../../crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_restart_strip.rs)
-  - The executor routes draws through a compute prepass (expanded buffers + indirect args) followed by a normal render pass:
-    - Code: [`crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs`](../../crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs) (`gs_hs_ds_emulation_required`, `exec_draw_with_compute_prepass`)
-- Current GS limitations (non-exhaustive):
-  - No adjacency input topologies (`*_ADJ`)
-  - No multi-stream output (`emit_stream` / `cut_stream`); only stream 0 is supported
-  - Output topology: `triangle_strip` (`TriangleStream`) only (expanded into a triangle list)
-  - No GS instancing (`dcl_gsinstancecount` / `[instance(n)]`)
-  - No stream-out (SO / transform feedback)
-- Tessellation (Hull/Domain) execution is not implemented; patchlist topologies are accepted in `SET_PRIMITIVE_TOPOLOGY` but draws error (`patchlist topology requires tessellation emulation`) until HS/DS execution exists.
-  - Code: [`crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs`](../../crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs) (`patchlist topology requires tessellation emulation`)
+- Geometry shaders are **emulated via compute** (WebGPU has no GS stage), but the current “compute prepass” is still a **placeholder**:
+  - it emits fixed triangles (see `GEOMETRY_PREPASS_CS_WGSL`), and
+  - it does **not** execute guest GS/HS/DS DXBC yet.
+  - Design/notes: [`docs/graphics/geometry-shader-emulation.md`](./geometry-shader-emulation.md) (“Current limitation” section)
+  - Code: [`crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs`](../../crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs) (`gs_hs_ds_emulation_required`, `exec_draw_with_compute_prepass`)
+  - Tests: [`crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_compute_prepass_smoke.rs`](../../crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_compute_prepass_smoke.rs)
+- In-progress helpers for future GS execution exist, but are not yet wired into the command executor:
+  - Translator: [`crates/aero-d3d11/src/runtime/gs_translate.rs`](../../crates/aero-d3d11/src/runtime/gs_translate.rs) + tests [`crates/aero-d3d11/tests/gs_translate.rs`](../../crates/aero-d3d11/tests/gs_translate.rs)
+  - Strip output expansion reference: [`crates/aero-d3d11/src/runtime/strip_to_list.rs`](../../crates/aero-d3d11/src/runtime/strip_to_list.rs)
+- GS/HS/DS shader objects are accepted via the `stage_ex` ABI extension, but are currently stored as **stub WGSL modules** (no guest GS/HS/DS DXBC execution yet). Legacy `AerogpuShaderStage::Geometry` (non-`stage_ex`) shader creation is accepted-but-ignored; however, resource bindings for the legacy GS stage (`shader_stage = GEOMETRY`) are still accepted and tracked so apps that set GS resources do not fail.
+  - Code: [`crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs`](../../crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs) (`exec_create_shader_dxbc`, `from_aerogpu_u32_with_stage_ex`)
+  - Tests: [`crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_ignore.rs`](../../crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_ignore.rs)
+- Tessellation (Hull/Domain) execution is not implemented. Patchlist topologies are accepted in `SET_PRIMITIVE_TOPOLOGY`, but HS/DS shader execution is not wired yet (binding HS/DS hits a `todo!`), and the current compute-prepass path is still placeholder (no real tessellation).
+  - Code: [`crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs`](../../crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs) (`CmdPrimitiveTopology::PatchList`, `gs_hs_ds_emulation_required`, `exec_draw_with_compute_prepass`)
 
 Roadmap/plan docs:
 

@@ -6,8 +6,8 @@ WebGPU render pipeline.
 
 This document describes:
 
-- what is **implemented today** (GS DXBC translation + compute execution path, binding model, current limitations), and
-- the **next steps** for broader GS feature coverage (more opcodes/topologies, more system values, etc).
+- what is **implemented today** (command-stream plumbing, binding model, compute-prepass scaffolding + current limitations), and
+- the **next steps** (wire up GS DXBC translation + bytecode execution, then expand opcode/topology coverage, system values, etc).
 
 > Related: [`docs/16-d3d10-11-translation.md`](../16-d3d10-11-translation.md) (high-level D3D10/11→WebGPU mapping).
 
@@ -72,15 +72,15 @@ For simplicity and portability, Aero’s emulation expands strips into lists:
 This avoids needing to generate restart indices and keeps the draw stage in the most widely-supported
 primitive topologies.
 
-Note: today the GS translator focuses on `triangle_strip` output; `line_strip` output support is a
-planned follow-up.
+Note: there is an in-progress GS→WGSL compute translator (`crates/aero-d3d11/src/runtime/gs_translate.rs`)
+which currently focuses on `triangle_strip` output; it is not yet wired into the command executor.
 
 ---
 
 ## Current implementation status (AeroGPU command-stream executor)
 
-The AeroGPU D3D10/11 command-stream executor implements geometry shaders by inserting a GPU-side
-compute expansion prepass before the render pass.
+The AeroGPU D3D10/11 command-stream executor has the plumbing needed to emulate GS/HS/DS via a GPU-side
+compute expansion prepass, but it is not yet a full “execute guest GS DXBC” implementation.
 
 Implemented today:
 
@@ -90,26 +90,26 @@ Implemented today:
   encoding; HS/DS require `stage_ex`.
 - **Extended `BIND_SHADERS`**: the `BIND_SHADERS` packet can carry `gs/hs/ds` handles, and draws route
   through a dedicated “compute prepass” path when any of these stages are bound.
-- **GS DXBC execution via compute emulation (supported subset)**:
-  - GS DXBC is decoded to SM4 IR and translated to WGSL compute (see
-    `crates/aero-d3d11/src/runtime/gs_translate.rs`).
-  - The compute prepass executes the GS instruction stream per input primitive and expands
-    `EmitVertex` / `CutVertex` output into list geometry suitable for a normal WebGPU draw.
-    Strip-cut semantics are validated by reference implementations in
-    `crates/aero-d3d11/src/runtime/strip_to_list.rs`.
-- **Compute→indirect→render pipeline plumbing**: the executor runs the GS compute prepass to write an
+- **Compute→indirect→render pipeline plumbing**: the executor runs a compute prepass to write an
   expanded vertex/index buffer + indirect args, then renders via `draw_indirect` /
   `draw_indexed_indirect` (see `crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs`).
 
+Current limitation (important):
+
+- The draw-time compute prepass is currently a **placeholder** (see `GEOMETRY_PREPASS_CS_WGSL`) that
+  emits fixed triangles and does **not** execute the guest’s GS/HS/DS DXBC yet.
+- DXBC payloads that parse as GS/HS/DS are accepted at `CREATE_SHADER_DXBC` time, but are currently
+  stored as stub WGSL modules (no real execution yet).
+
 Test pointers:
 
-- Translator validation: `crates/aero-d3d11/tests/gs_translate.rs`
-- End-to-end GS execution: `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_point_to_triangle.rs`
-- Strip cut/restart semantics: `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_restart_strip.rs`
+- Placeholder compute-prepass smoke: `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_compute_prepass_smoke.rs`
+- In-progress GS translator unit tests (not wired into the executor yet): `crates/aero-d3d11/tests/gs_translate.rs`
+- Future end-to-end semantics (once wired): `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_restart_strip.rs`
 
 ---
 
-## Supported GS feature subset (current)
+## Target GS feature subset (initial)
 
 ### Input primitive types
 
@@ -131,7 +131,8 @@ D3D geometry shaders only declare one of:
 - `linestrip`
 - `trianglestrip`
 
-The current implementation focuses on `trianglestrip` output, expanded into a **triangle list** for rendering.
+The initial GS translator/execution target focuses on `trianglestrip` output, expanded into a
+**triangle list** for rendering.
 
 Planned follow-ups include:
 

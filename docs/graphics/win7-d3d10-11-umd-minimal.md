@@ -201,8 +201,8 @@ Pipeline state
 * Geometry shader object creation:
   * `pfnCalcPrivateGeometryShaderSize` + `pfnCreateGeometryShader` + `pfnDestroyGeometryShader`
   * note: the **GS stage exists in D3D10**, but many “first triangle” tests never create/bind a GS (it is valid to have no GS bound).
-  * AeroGPU note: WebGPU has no geometry shader stage. The command stream can encode a GS handle (via `aerogpu_cmd_bind_shaders::reserved0`).
-    GS DXBC is forwarded to the host and emulated via a compute prepass (supported subset).
+  * AeroGPU note: WebGPU has no geometry shader stage. The command stream can encode a GS handle (e.g. via `aerogpu_cmd_bind_shaders::reserved0` or the extended GS/HS/DS fields).
+    Today the executor’s compute-prepass path is still a placeholder (fixed triangles) and does not execute guest GS DXBC yet.
     See [`geometry-shader-emulation.md`](./geometry-shader-emulation.md) and [`docs/16-d3d10-11-translation.md`](../16-d3d10-11-translation.md).
 * Stream-output state / SO buffers (`pfnSoSetTargets`, etc)
 * Queries/predication:
