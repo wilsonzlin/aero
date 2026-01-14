@@ -41,7 +41,7 @@ static int RunD3D9DynamicVbLockSemantics(int argc, char** argv) {
   const char* kTestName = "d3d9_dynamic_vb_lock_semantics";
   if (aerogpu_test::HasHelpArg(argc, argv)) {
     aerogpu_test::PrintfStdout(
-        "Usage: %s.exe [--hidden] [--allow-microsoft] [--allow-non-aerogpu] [--require-umd] [--require-vid=0x####] [--require-did=0x####]",
+        "Usage: %s.exe [--hidden] [--json[=PATH]] [--allow-microsoft] [--allow-non-aerogpu] [--require-umd] [--require-vid=0x####] [--require-did=0x####]",
         kTestName);
     return 0;
   }
@@ -447,4 +447,3 @@ int main(int argc, char** argv) {
   Sleep(30);
   return rc;
 }
-
