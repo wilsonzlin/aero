@@ -58,3 +58,92 @@ fn aerogpu_cmd_create_shader_dxbc_stage_ex_stores_hs_ds() {
         assert_eq!(exec.shader_entry_point(DS_SHADER).unwrap(), "ds_main");
     });
 }
+
+#[test]
+fn aerogpu_cmd_create_shader_dxbc_stage_ex_rejects_zero_handle() {
+    pollster::block_on(async {
+        let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+            Ok(exec) => exec,
+            Err(e) => {
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                return;
+            }
+        };
+
+        // Minimal HS DXBC container (program type 3).
+        let hs_dxbc = build_dxbc(&[(FourCC(*b"SHEX"), build_minimal_sm4_program_chunk(3))]);
+
+        let mut writer = AerogpuCmdWriter::new();
+        writer.create_shader_dxbc_ex(0, AerogpuShaderStageEx::Hull, &hs_dxbc);
+        let stream = writer.finish();
+
+        let mut guest_mem = VecGuestMemory::new(0);
+        let err = exec
+            .execute_cmd_stream(&stream, None, &mut guest_mem)
+            .expect_err("shader_handle==0 should be rejected");
+        assert!(
+            err.to_string().contains("invalid shader_handle 0"),
+            "unexpected error: {err:#}"
+        );
+    });
+}
+
+#[test]
+fn aerogpu_cmd_create_shader_dxbc_stage_ex_rejects_empty_payload() {
+    pollster::block_on(async {
+        let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+            Ok(exec) => exec,
+            Err(e) => {
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                return;
+            }
+        };
+
+        let mut writer = AerogpuCmdWriter::new();
+        writer.create_shader_dxbc_ex(1, AerogpuShaderStageEx::Hull, &[]);
+        let stream = writer.finish();
+
+        let mut guest_mem = VecGuestMemory::new(0);
+        let err = exec
+            .execute_cmd_stream(&stream, None, &mut guest_mem)
+            .expect_err("empty DXBC payload should be rejected");
+        assert!(
+            err.to_string().contains("empty DXBC payload"),
+            "unexpected error: {err:#}"
+        );
+    });
+}
+
+#[test]
+fn aerogpu_cmd_create_shader_dxbc_stage_ex_stage_mismatch_includes_stage_ex() {
+    pollster::block_on(async {
+        let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+            Ok(exec) => exec,
+            Err(e) => {
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                return;
+            }
+        };
+
+        // HS DXBC but encoded as a DS stage-ex packet.
+        let hs_dxbc = build_dxbc(&[(FourCC(*b"SHEX"), build_minimal_sm4_program_chunk(3))]);
+
+        let mut writer = AerogpuCmdWriter::new();
+        writer.create_shader_dxbc_ex(1, AerogpuShaderStageEx::Domain, &hs_dxbc);
+        let stream = writer.finish();
+
+        let mut guest_mem = VecGuestMemory::new(0);
+        let err = exec
+            .execute_cmd_stream(&stream, None, &mut guest_mem)
+            .expect_err("stage mismatch should error");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("stage mismatch"),
+            "unexpected error (missing stage mismatch): {err:#}"
+        );
+        assert!(
+            msg.contains("stage_ex=4"),
+            "expected stage_ex value in error message, got: {msg}"
+        );
+    });
+}
