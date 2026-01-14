@@ -345,6 +345,41 @@ fn malformed_last_chunk_offset_out_of_bounds_with_large_chunk_count() {
 }
 
 #[test]
+fn parse_accepts_max_chunk_count_with_repeated_offsets() {
+    // Construct a DXBC with the maximum accepted chunk_count, where every offset
+    // points at the same valid empty chunk header. This ensures the validation
+    // loop and the chunk iterator handle the max count without panicking.
+    let chunk_count = 4096u32;
+    let offset_table_end = 4 + 16 + 4 + 4 + 4 + (chunk_count as usize * 4);
+    let total_size = offset_table_end + 8; // one chunk header, no payload
+
+    let mut bytes = Vec::with_capacity(total_size);
+    bytes.extend_from_slice(b"DXBC");
+    bytes.extend_from_slice(&[0u8; 16]); // checksum
+    bytes.extend_from_slice(&1u32.to_le_bytes()); // reserved
+    bytes.extend_from_slice(&(total_size as u32).to_le_bytes());
+    bytes.extend_from_slice(&chunk_count.to_le_bytes());
+
+    for _ in 0..chunk_count {
+        bytes.extend_from_slice(&(offset_table_end as u32).to_le_bytes());
+    }
+    assert_eq!(bytes.len(), offset_table_end);
+
+    // One valid empty chunk header.
+    bytes.extend_from_slice(b"JUNK");
+    bytes.extend_from_slice(&0u32.to_le_bytes());
+    assert_eq!(bytes.len(), total_size);
+
+    let file = DxbcFile::parse(&bytes).expect("DXBC parse should succeed");
+    assert_eq!(file.header().chunk_count, chunk_count);
+    assert_eq!(file.chunks().count(), chunk_count as usize);
+    for chunk in file.chunks().take(3) {
+        assert_eq!(chunk.fourcc, FourCC(*b"JUNK"));
+        assert!(chunk.data.is_empty());
+    }
+}
+
+#[test]
 fn malformed_last_chunk_size_out_of_bounds_with_large_chunk_count() {
     // Ensure size/bounds validation remains safe even when only the *last* chunk
     // index hits the failing case under the maximum chunk count.
