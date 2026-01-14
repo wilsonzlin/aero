@@ -2092,6 +2092,177 @@ bool TestVsOnlyUnsupportedStage0ApplyStateBlockSetShaderSucceedsDrawFails() {
   return Check(saw_user_vs_bind, "saw BIND_SHADERS with user VS handle after ApplyStateBlock");
 }
 
+bool TestVsOnlyApplyStateBlockSetsUnsupportedStage0StateSucceedsDrawFails() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+
+  if (!Check(cleanup.device_funcs.pfnBeginStateBlock != nullptr, "pfnBeginStateBlock")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnEndStateBlock != nullptr, "pfnEndStateBlock")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnApplyStateBlock != nullptr, "pfnApplyStateBlock")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDeleteStateBlock != nullptr, "pfnDeleteStateBlock")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+  dev->cmd.reset();
+
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzrhwDiffuse);
+  if (!Check(hr == S_OK, "SetFVF(XYZRHW|DIFFUSE)")) {
+    return false;
+  }
+
+  // Create a user VS for VS-only interop.
+  D3D9DDI_HSHADER hVs{};
+  hr = cleanup.device_funcs.pfnCreateShader(cleanup.hDevice,
+                                            kD3d9ShaderStageVs,
+                                            kUserVsPassthroughPosColor,
+                                            static_cast<uint32_t>(sizeof(kUserVsPassthroughPosColor)),
+                                            &hVs);
+  if (!Check(hr == S_OK, "CreateShader(VS)")) {
+    return false;
+  }
+  if (!Check(hVs.pDrvPrivate != nullptr, "CreateShader(VS) returned handle")) {
+    return false;
+  }
+  cleanup.shaders.push_back(hVs);
+
+  auto* vs = reinterpret_cast<Shader*>(hVs.pDrvPrivate);
+  const aerogpu_handle_t vs_handle = vs ? vs->handle : 0;
+
+  // Record a state block that *sets* an unsupported stage0 state and binds a VS.
+  // Regression: ApplyStateBlock must tolerate the unsupported stage state and
+  // succeed; only draws should fail.
+  hr = cleanup.device_funcs.pfnBeginStateBlock(cleanup.hDevice);
+  if (!Check(hr == S_OK, "BeginStateBlock")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, /*stage=*/0, kD3dTssColorOp, kD3dTopAddSigned2x);
+  if (!Check(hr == S_OK, "SetTextureStageState(COLOROP=ADDSIGNED2X) during BeginStateBlock succeeds")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetShader(cleanup.hDevice, kD3d9ShaderStageVs, hVs);
+  if (!Check(hr == S_OK, "SetShader(VS) during BeginStateBlock succeeds")) {
+    return false;
+  }
+  D3D9DDI_HSTATEBLOCK hSb{};
+  hr = cleanup.device_funcs.pfnEndStateBlock(cleanup.hDevice, &hSb);
+  if (!Check(hr == S_OK, "EndStateBlock")) {
+    return false;
+  }
+  if (!Check(hSb.pDrvPrivate != nullptr, "EndStateBlock returned handle")) {
+    return false;
+  }
+
+  // Restore a supported stage0 state and clear VS so ApplyStateBlock must set
+  // both stage state and VS again.
+  hr = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, /*stage=*/0, kD3dTssColorOp, kD3dTopDisable);
+  if (!Check(hr == S_OK, "SetTextureStageState(COLOROP=DISABLE) succeeds (restore)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+  D3D9DDI_HSHADER null_shader{};
+  hr = cleanup.device_funcs.pfnSetShader(cleanup.hDevice, kD3d9ShaderStageVs, null_shader);
+  if (!Check(hr == S_OK, "SetShader(VS=null)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  // Reset the command stream so we only observe ApplyStateBlock + the failing draw.
+  dev->cmd.reset();
+
+  hr = cleanup.device_funcs.pfnApplyStateBlock(cleanup.hDevice, hSb);
+  if (!Check(hr == S_OK, "ApplyStateBlock succeeds when applying unsupported stage0 state + VS-only interop")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  // Applying the state block must have bound a safe passthrough PS (no texld/mul).
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->ps != nullptr, "ApplyStateBlock: PS bound")) {
+      cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+      return false;
+    }
+    if (!Check(!ShaderContainsToken(dev->ps, kPsOpTexld), "ApplyStateBlock: fallback PS does not contain texld")) {
+      cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+      return false;
+    }
+    if (!Check(!ShaderContainsToken(dev->ps, kPsOpMul), "ApplyStateBlock: fallback PS does not contain mul")) {
+      cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+      return false;
+    }
+  }
+
+  const size_t baseline = dev->cmd.bytes_used();
+
+  const VertexXyzrhwDiffuse tri[3] = {
+      {0.0f, 0.0f, 0.0f, 1.0f, 0xFFFF0000u},
+      {1.0f, 0.0f, 0.0f, 1.0f, 0xFF00FF00u},
+      {0.0f, 1.0f, 0.0f, 1.0f, 0xFF0000FFu},
+  };
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(cleanup.hDevice, D3DDDIPT_TRIANGLELIST, 1, tri, sizeof(VertexXyzrhwDiffuse));
+  if (!Check(hr == D3DERR_INVALIDCALL, "DrawPrimitiveUP(VS-only, unsupported stage0) returns INVALIDCALL")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+  if (!Check(dev->cmd.bytes_used() == baseline, "unsupported draw emits no new commands")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(ApplyStateBlock applies unsupported stage0 state)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_DRAW) == 0, "no DRAW opcodes emitted")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_DRAW_INDEXED) == 0, "no DRAW_INDEXED opcodes emitted")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+  if (!Check(CheckNoNullShaderBinds(buf, len), "BIND_SHADERS must not bind null handles")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  // Ensure ApplyStateBlock resulted in a bind referencing the user VS handle.
+  bool saw_user_vs_bind = false;
+  size_t offset = sizeof(aerogpu_cmd_stream_header);
+  const size_t stream_len = StreamBytesUsed(buf, len);
+  while (offset + sizeof(aerogpu_cmd_hdr) <= stream_len) {
+    const auto* hdr = reinterpret_cast<const aerogpu_cmd_hdr*>(buf + offset);
+    if (hdr->opcode == AEROGPU_CMD_BIND_SHADERS && hdr->size_bytes >= sizeof(aerogpu_cmd_bind_shaders)) {
+      const auto* bind = reinterpret_cast<const aerogpu_cmd_bind_shaders*>(hdr);
+      if (bind->vs == vs_handle) {
+        saw_user_vs_bind = true;
+      }
+    }
+    if (hdr->size_bytes == 0 || hdr->size_bytes > stream_len - offset) {
+      break;
+    }
+    offset += hdr->size_bytes;
+  }
+
+  cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+  return Check(saw_user_vs_bind, "saw BIND_SHADERS with user VS handle after ApplyStateBlock");
+}
+
 bool TestPsOnlyBindsFixedfuncVs() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -2928,6 +3099,9 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestVsOnlyUnsupportedStage0ApplyStateBlockSetShaderSucceedsDrawFails()) {
+    return 1;
+  }
+  if (!aerogpu::TestVsOnlyApplyStateBlockSetsUnsupportedStage0StateSucceedsDrawFails()) {
     return 1;
   }
   if (!aerogpu::TestPsOnlyBindsFixedfuncVs()) {
