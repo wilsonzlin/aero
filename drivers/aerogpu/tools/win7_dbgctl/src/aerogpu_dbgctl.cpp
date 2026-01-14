@@ -5895,6 +5895,9 @@ static int DoSelftest(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t ti
     STAGE_DONE = 4,
   };
 
+  const bool timeBudgetExhausted =
+      (!q.passed && q.error_code == AEROGPU_DBGCTL_SELFTEST_ERR_TIME_BUDGET_EXHAUSTED);
+
   SelftestStage failedStage = STAGE_DONE;
   if (!q.passed) {
     switch (q.error_code) {
@@ -5912,6 +5915,12 @@ static int DoSelftest(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t ti
     case AEROGPU_DBGCTL_SELFTEST_ERR_CURSOR_RW_MISMATCH:
       failedStage = STAGE_CURSOR;
       break;
+    case AEROGPU_DBGCTL_SELFTEST_ERR_TIME_BUDGET_EXHAUSTED:
+      // The KMD only reports TIME_BUDGET_EXHAUSTED after the ring head advancement check
+      // succeeds, while attempting optional sub-checks. Treat it as "after ring" but
+      // handle per-subcheck reporting below.
+      failedStage = STAGE_VBLANK;
+      break;
     default:
       failedStage = STAGE_RING;
       break;
@@ -5927,58 +5936,67 @@ static int DoSelftest(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t ti
   };
 
   // Ring is always the first check.
-  if (q.passed || failedStage > STAGE_RING) {
+  if (q.passed || timeBudgetExhausted || failedStage > STAGE_RING) {
     PrintStep(L"ring", L"PASS", L"ring head advances");
   } else {
     PrintStep(L"ring", L"FAIL", SelftestErrorToString(q.error_code));
   }
 
   // VBlank (optional, feature-gated).
-  if (!haveFeatures) {
-    PrintStep(L"vblank", L"?", L"(features unknown)");
+  if (timeBudgetExhausted) {
+    PrintStep(L"vblank", L"SKIP", L"time budget exhausted (increase --timeout-ms)");
+  } else if (!haveFeatures) {
+    PrintStep(L"vblank", L"?", L"features unknown");
   } else if (!featureVblank) {
-    PrintStep(L"vblank", L"SKIP", L"(AEROGPU_FEATURE_VBLANK not set)");
+    PrintStep(L"vblank", L"SKIP", L"AEROGPU_FEATURE_VBLANK not set");
   } else if (scanoutKnown && !scanoutEnabled) {
-    PrintStep(L"vblank", L"SKIP", L"(scanout disabled)");
+    PrintStep(L"vblank", L"SKIP", L"scanout disabled");
   } else if (q.passed || failedStage > STAGE_VBLANK) {
     PrintStep(L"vblank", L"PASS", L"SCANOUT0_VBLANK_SEQ changes");
   } else if (failedStage == STAGE_VBLANK) {
     PrintStep(L"vblank", L"FAIL", SelftestErrorToString(q.error_code));
   } else {
-    PrintStep(L"vblank", L"SKIP", L"(not reached)");
+    PrintStep(L"vblank", L"SKIP", L"not reached");
   }
 
   // IRQ sanity (currently uses vblank IRQ as a safe trigger).
-  if (!haveFeatures) {
-    PrintStep(L"irq", L"?", L"(features unknown)");
+  if (timeBudgetExhausted) {
+    PrintStep(L"irq", L"SKIP", L"time budget exhausted (increase --timeout-ms)");
+  } else if (!haveFeatures) {
+    PrintStep(L"irq", L"?", L"features unknown");
   } else if (!featureVblank) {
-    PrintStep(L"irq", L"SKIP", L"(requires vblank feature)");
+    PrintStep(L"irq", L"SKIP", L"requires vblank feature");
   } else if (scanoutKnown && !scanoutEnabled) {
-    PrintStep(L"irq", L"SKIP", L"(scanout disabled)");
+    PrintStep(L"irq", L"SKIP", L"scanout disabled");
   } else if (q.passed || failedStage > STAGE_IRQ) {
     PrintStep(L"irq", L"PASS", L"IRQ_STATUS latch/ACK + ISR + DPC");
   } else if (failedStage == STAGE_IRQ) {
     PrintStep(L"irq", L"FAIL", SelftestErrorToString(q.error_code));
   } else {
-    PrintStep(L"irq", L"SKIP", L"(not reached)");
+    PrintStep(L"irq", L"SKIP", L"not reached");
   }
 
   // Cursor (optional, feature-gated).
-  if (!haveFeatures) {
-    PrintStep(L"cursor", L"?", L"(features unknown)");
+  if (timeBudgetExhausted) {
+    PrintStep(L"cursor", L"SKIP", L"time budget exhausted (increase --timeout-ms)");
+  } else if (!haveFeatures) {
+    PrintStep(L"cursor", L"?", L"features unknown");
   } else if (!featureCursor) {
-    PrintStep(L"cursor", L"SKIP", L"(AEROGPU_FEATURE_CURSOR not set)");
+    PrintStep(L"cursor", L"SKIP", L"AEROGPU_FEATURE_CURSOR not set");
   } else if (q.passed || failedStage > STAGE_CURSOR) {
     PrintStep(L"cursor", L"PASS", L"cursor reg RW");
   } else if (failedStage == STAGE_CURSOR) {
     PrintStep(L"cursor", L"FAIL", SelftestErrorToString(q.error_code));
   } else {
-    PrintStep(L"cursor", L"SKIP", L"(not reached)");
+    PrintStep(L"cursor", L"SKIP", L"not reached");
   }
 
   wprintf(L"Selftest: %s\n", q.passed ? L"PASS" : L"FAIL");
   if (!q.passed) {
     wprintf(L"Error code: %lu (%s)\n", (unsigned long)q.error_code, SelftestErrorToString(q.error_code));
+    if (q.error_code == AEROGPU_DBGCTL_SELFTEST_ERR_TIME_BUDGET_EXHAUSTED) {
+      wprintf(L"Hint: increase --timeout-ms so all optional sub-checks can run.\n");
+    }
     // Return the KMD-provided stable error code for automation (0 == PASS).
     // If a buggy/older KMD reports failure with error_code==0, fall back to 1.
     return (q.error_code != 0) ? (int)q.error_code : 1;
@@ -8052,6 +8070,9 @@ static int DoSelftestJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_
     STAGE_DONE = 4,
   };
 
+  const bool timeBudgetExhausted =
+      (!q.passed && q.error_code == AEROGPU_DBGCTL_SELFTEST_ERR_TIME_BUDGET_EXHAUSTED);
+
   SelftestStage failedStage = STAGE_DONE;
   if (!q.passed) {
     switch (q.error_code) {
@@ -8069,6 +8090,9 @@ static int DoSelftestJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_
     case AEROGPU_DBGCTL_SELFTEST_ERR_CURSOR_RW_MISMATCH:
       failedStage = STAGE_CURSOR;
       break;
+    case AEROGPU_DBGCTL_SELFTEST_ERR_TIME_BUDGET_EXHAUSTED:
+      failedStage = STAGE_VBLANK;
+      break;
     default:
       failedStage = STAGE_RING;
       break;
@@ -8079,6 +8103,11 @@ static int DoSelftestJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_
                                   bool featureKnown,
                                   bool featureEnabled,
                                   bool requireScanout) -> const char * {
+    if (timeBudgetExhausted) {
+      // Ring head advancement completed, but the KMD ran out of time budget during optional checks.
+      // Mark optional checks as skipped/incomplete rather than attributing failure to a specific stage.
+      return (stage == STAGE_RING) ? "pass" : "skip";
+    }
     if (!featureKnown) {
       return "unknown";
     }
