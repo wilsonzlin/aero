@@ -687,6 +687,7 @@ fn cmd_writer_emits_pipeline_and_binding_packets() {
         ),
         (
             AerogpuCmdOpcode::SetShaderConstantsB as u32,
+            // Bool constants are encoded as scalar u32 values (0/1) per register.
             size_of::<AerogpuCmdSetShaderConstantsB>() + 8,
         ),
         (
@@ -2089,6 +2090,7 @@ fn cmd_writer_emits_set_shader_constants_i_with_vec4_aligned_i32_payload() {
 }
 
 #[test]
+fn cmd_writer_emits_set_shader_constants_b_as_scalar_u32_per_register() {
 fn cmd_writer_emits_set_shader_constants_b_as_scalar_u32_values() {
     let data: [u32; 2] = [0, 1];
 

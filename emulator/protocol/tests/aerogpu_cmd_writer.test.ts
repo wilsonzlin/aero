@@ -191,6 +191,7 @@ test("AerogpuCmdWriter emits pipeline and binding packets", () => {
   const expected: Array<[number, number]> = [
     [AerogpuCmdOpcode.SetShaderConstantsF, AEROGPU_CMD_SET_SHADER_CONSTANTS_F_SIZE + 16],
     [AerogpuCmdOpcode.SetShaderConstantsI, AEROGPU_CMD_SET_SHADER_CONSTANTS_I_SIZE + 16],
+    // Bool constants are encoded as scalar u32 values (0/1) per register.
     [AerogpuCmdOpcode.SetShaderConstantsB, AEROGPU_CMD_SET_SHADER_CONSTANTS_B_SIZE + 8],
     [AerogpuCmdOpcode.SetTexture, AEROGPU_CMD_SET_TEXTURE_SIZE],
     [AerogpuCmdOpcode.SetSamplerState, AEROGPU_CMD_SET_SAMPLER_STATE_SIZE],
@@ -303,7 +304,6 @@ test("AerogpuCmdWriter.setShaderConstantsB encodes bool regs as scalar u32 value
   // Register 0: false -> 0.
   const payloadBase = pkt0 + AEROGPU_CMD_SET_SHADER_CONSTANTS_B_SIZE;
   assert.equal(view.getUint32(payloadBase + 0, true), 0);
-
   // Register 1: true -> 1.
   assert.equal(view.getUint32(payloadBase + 4, true), 1);
 });
