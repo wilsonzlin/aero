@@ -1641,6 +1641,143 @@ static NTSTATUS QueryAdapterInfoWithTimeout(const D3DKMT_FUNCS *f, D3DKMT_HANDLE
   return (w == WAIT_TIMEOUT) ? STATUS_TIMEOUT : STATUS_INVALID_PARAMETER;
 }
 
+typedef struct OpenAdapterThreadCtx {
+  const D3DKMT_FUNCS *f;
+  D3DKMT_OPENADAPTERFROMHDC open;
+  NTSTATUS status;
+  HANDLE done_event;
+} OpenAdapterThreadCtx;
+
+static DWORD WINAPI OpenAdapterThreadProc(LPVOID param) {
+  OpenAdapterThreadCtx *ctx = (OpenAdapterThreadCtx *)param;
+  if (!ctx || !ctx->f || !ctx->f->OpenAdapterFromHdc || !ctx->done_event) {
+    if (ctx && ctx->done_event) {
+      ctx->status = STATUS_INVALID_PARAMETER;
+      SetEvent(ctx->done_event);
+    }
+    return 0;
+  }
+
+  ctx->status = ctx->f->OpenAdapterFromHdc(&ctx->open);
+  SetEvent(ctx->done_event);
+  return 0;
+}
+
+static NTSTATUS OpenAdapterFromHdcWithTimeout(const D3DKMT_FUNCS *f, D3DKMT_OPENADAPTERFROMHDC *inout) {
+  if (!f || !f->OpenAdapterFromHdc || !inout) {
+    return STATUS_INVALID_PARAMETER;
+  }
+  if (g_escape_timeout_ms == 0) {
+    return f->OpenAdapterFromHdc(inout);
+  }
+
+  OpenAdapterThreadCtx *ctx =
+      (OpenAdapterThreadCtx *)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*ctx));
+  if (!ctx) {
+    return STATUS_INSUFFICIENT_RESOURCES;
+  }
+  ctx->f = f;
+  ctx->open = *inout;
+  ctx->status = 0;
+  ctx->done_event = CreateEventW(NULL, TRUE, FALSE, NULL);
+  if (!ctx->done_event) {
+    HeapFree(GetProcessHeap(), 0, ctx);
+    return STATUS_INSUFFICIENT_RESOURCES;
+  }
+
+  HANDLE thread = CreateThread(NULL, 0, OpenAdapterThreadProc, ctx, 0, NULL);
+  if (!thread) {
+    CloseHandle(ctx->done_event);
+    HeapFree(GetProcessHeap(), 0, ctx);
+    return STATUS_INSUFFICIENT_RESOURCES;
+  }
+
+  DWORD w = WaitForSingleObject(ctx->done_event, g_escape_timeout_ms);
+  if (w == WAIT_OBJECT_0) {
+    const NTSTATUS st = ctx->status;
+    *inout = ctx->open;
+    CloseHandle(thread);
+    CloseHandle(ctx->done_event);
+    HeapFree(GetProcessHeap(), 0, ctx);
+    return st;
+  }
+
+  // Timeout or failure; leak the context (thread may be stuck inside kernel) and avoid
+  // deadlock-prone cleanup.
+  CloseHandle(thread);
+  InterlockedExchange(&g_skip_close_adapter, 1);
+  return (w == WAIT_TIMEOUT) ? STATUS_TIMEOUT : STATUS_INVALID_PARAMETER;
+}
+
+typedef struct CloseAdapterThreadCtx {
+  const D3DKMT_FUNCS *f;
+  D3DKMT_CLOSEADAPTER close;
+  NTSTATUS status;
+  HANDLE done_event;
+} CloseAdapterThreadCtx;
+
+static DWORD WINAPI CloseAdapterThreadProc(LPVOID param) {
+  CloseAdapterThreadCtx *ctx = (CloseAdapterThreadCtx *)param;
+  if (!ctx || !ctx->f || !ctx->f->CloseAdapter || !ctx->done_event) {
+    if (ctx && ctx->done_event) {
+      ctx->status = STATUS_INVALID_PARAMETER;
+      SetEvent(ctx->done_event);
+    }
+    return 0;
+  }
+
+  ctx->status = ctx->f->CloseAdapter(&ctx->close);
+  SetEvent(ctx->done_event);
+  return 0;
+}
+
+static NTSTATUS CloseAdapterWithTimeout(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
+  if (!f || !f->CloseAdapter || !hAdapter) {
+    return STATUS_INVALID_PARAMETER;
+  }
+
+  D3DKMT_CLOSEADAPTER close;
+  ZeroMemory(&close, sizeof(close));
+  close.hAdapter = hAdapter;
+  if (g_escape_timeout_ms == 0) {
+    return f->CloseAdapter(&close);
+  }
+
+  CloseAdapterThreadCtx *ctx =
+      (CloseAdapterThreadCtx *)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*ctx));
+  if (!ctx) {
+    return STATUS_INSUFFICIENT_RESOURCES;
+  }
+  ctx->f = f;
+  ctx->close = close;
+  ctx->status = 0;
+  ctx->done_event = CreateEventW(NULL, TRUE, FALSE, NULL);
+  if (!ctx->done_event) {
+    HeapFree(GetProcessHeap(), 0, ctx);
+    return STATUS_INSUFFICIENT_RESOURCES;
+  }
+
+  HANDLE thread = CreateThread(NULL, 0, CloseAdapterThreadProc, ctx, 0, NULL);
+  if (!thread) {
+    CloseHandle(ctx->done_event);
+    HeapFree(GetProcessHeap(), 0, ctx);
+    return STATUS_INSUFFICIENT_RESOURCES;
+  }
+
+  DWORD w = WaitForSingleObject(ctx->done_event, g_escape_timeout_ms);
+  if (w == WAIT_OBJECT_0) {
+    const NTSTATUS st = ctx->status;
+    CloseHandle(thread);
+    CloseHandle(ctx->done_event);
+    HeapFree(GetProcessHeap(), 0, ctx);
+    return st;
+  }
+
+  CloseHandle(thread);
+  InterlockedExchange(&g_skip_close_adapter, 1);
+  return (w == WAIT_TIMEOUT) ? STATUS_TIMEOUT : STATUS_INVALID_PARAMETER;
+}
+
 typedef struct GetScanLineThreadCtx {
   const D3DKMT_FUNCS *f;
   D3DKMT_GETSCANLINE scan;
@@ -11963,8 +12100,10 @@ int wmain(int argc, wchar_t **argv) {
   D3DKMT_OPENADAPTERFROMHDC open;
   ZeroMemory(&open, sizeof(open));
   open.hDc = hdc;
-  NTSTATUS st = f.OpenAdapterFromHdc(&open);
-  DeleteDC(hdc);
+  NTSTATUS st = OpenAdapterFromHdcWithTimeout(&f, &open);
+  if (st != STATUS_TIMEOUT) {
+    DeleteDC(hdc);
+  }
   if (!NT_SUCCESS(st)) {
     PrintNtStatus(L"D3DKMTOpenAdapterFromHdc failed", &f, st);
     if (g_json_output) {
@@ -12144,10 +12283,7 @@ int wmain(int argc, wchar_t **argv) {
     return rc;
   }
 
-  D3DKMT_CLOSEADAPTER close;
-  ZeroMemory(&close, sizeof(close));
-  close.hAdapter = open.hAdapter;
-  st = f.CloseAdapter(&close);
+  st = CloseAdapterWithTimeout(&f, open.hAdapter);
   if (!NT_SUCCESS(st)) {
     PrintNtStatus(L"D3DKMTCloseAdapter failed", &f, st);
     if (rc == 0) {
