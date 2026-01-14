@@ -105,9 +105,6 @@ const TRB_CTRL_IDT: u32 = 1 << 6;
 /// Maximum number of event TRBs written into the guest event ring per controller tick.
 pub const EVENT_ENQUEUE_BUDGET_PER_TICK: usize = 64;
 
-// Bounded command ring processing budget used by `mmio_read`/`mmio_write` to prevent guest-driven
-// hangs during doorbell storms.
-const COMMAND_BUDGET_PER_MMIO: usize = 16;
 const COMMAND_RING_STEP_BUDGET: usize = RING_STEP_BUDGET;
 
 /// Deterministic per-frame work budgets for xHCI stepping.
@@ -2070,30 +2067,6 @@ impl XhciController {
         self.cmd_kick = true;
     }
 
-    fn maybe_process_command_ring(&mut self, mem: &mut dyn MemoryBus) {
-        if !self.cmd_kick {
-            return;
-        }
-        if self.host_controller_error {
-            self.cmd_kick = false;
-            return;
-        }
-        if (self.usbcmd & regs::USBCMD_RUN) == 0 {
-            return;
-        }
-        if !mem.dma_enabled() {
-            return;
-        }
-        // Process a bounded number of command TRBs and flush completion events to the guest event
-        // ring.
-        let ring_empty = self.process_command_ring(mem, COMMAND_BUDGET_PER_MMIO);
-        self.sync_crcr_from_command_ring();
-        self.service_event_ring(mem);
-        if ring_empty {
-            self.cmd_kick = false;
-        }
-    }
-
     /// Return the USB device currently bound to a slot, if any.
     pub fn slot_device_mut(&mut self, slot_id: u8) -> Option<&mut AttachedUsbDevice> {
         let idx = usize::from(slot_id);
@@ -2434,7 +2407,8 @@ impl XhciController {
             return work;
         }
 
-        // Command ring processing is gated on `USBCMD.RUN` to match `maybe_process_command_ring`.
+        // Command ring processing is gated on `USBCMD.RUN` (a halted controller does not execute
+        // commands, even if the guest rings doorbell 0).
         if self.cmd_kick && (self.usbcmd & regs::USBCMD_RUN) != 0 && !self.host_controller_error {
             let ring_empty = self.process_command_ring_budgeted(
                 mem,
