@@ -289,6 +289,19 @@ The relay supports authentication via `AUTH_MODE` (and `API_KEY`/`JWT_SECRET`). 
 are also used by `backend/aero-gateway` to mint `udpRelay.token` in `POST /session` so the
 frontend can discover how to authenticate to the relay.
 
+#### Optional: WebRTC DataChannel / SCTP hardening (oversized message DoS)
+
+The relay enforces `MAX_DATAGRAM_PAYLOAD_BYTES` / `L2_MAX_MESSAGE_BYTES` at the application layer, but
+malicious peers can attempt to send extremely large WebRTC DataChannel messages that may be fully buffered by pion
+before `DataChannel.OnMessage` is invoked.
+
+To mitigate this, the relay supports these env vars (passed through by `deploy/docker-compose.yml` and configurable via `deploy/.env`):
+
+- `WEBRTC_DATACHANNEL_MAX_MESSAGE_BYTES` (0 = auto): advertised max message size via SDP `a=max-message-size` (best-effort for compliant peers).
+- `WEBRTC_SCTP_MAX_RECEIVE_BUFFER_BYTES` (0 = auto): hard receive-side buffering cap in pion/SCTP (must be ≥ `WEBRTC_DATACHANNEL_MAX_MESSAGE_BYTES` and ≥ `1500`).
+
+See `proxy/webrtc-udp-relay/README.md` for details (including how the auto-derived defaults are computed).
+
 The relay also enforces a **UDP destination policy** (to prevent accidental open-proxy deployments).
 By default, `proxy/webrtc-udp-relay` uses `DESTINATION_POLICY_PRESET=production` (**deny by default**),
 so you must configure an allowlist (CIDRs/ports) before UDP relay traffic will flow.
