@@ -234,6 +234,11 @@ param(
   # This is optional so older guest selftest binaries (which don't emit the marker) can still run.
   [Parameter(Mandatory = $false)]
   [switch]$RequireVirtioInputMsix,
+  # If set, require at least one checksum-offloaded TX packet in the virtio-net driver.
+  # This checks the guest marker:
+  #   AERO_VIRTIO_SELFTEST|TEST|virtio-net-offload-csum|PASS|tx_csum=...
+  [Parameter(Mandatory = $false)]
+  [switch]$RequireNetCsumOffload,
 
   # If set, wait for the guest marker:
   #   AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|READY
@@ -834,6 +839,8 @@ function Wait-AeroSelftestResult {
     [Parameter(Mandatory = $false)] [bool]$RequireVirtioBlkResizePass = $false,
     # Delta in MiB to grow the virtio-blk backing device when RequireVirtioBlkResizePass is enabled.
     [Parameter(Mandatory = $false)] [int]$VirtioBlkResizeDeltaMiB = 64,
+    # If true, require at least one checksum-offloaded TX packet from virtio-net.
+    [Parameter(Mandatory = $false)] [bool]$RequireNetCsumOffload = $false,
     # If true, require the optional virtio-input-events marker to PASS (host will inject events via QMP).
     [Parameter(Mandatory = $false)]
     [Alias("EnableVirtioInputEvents")]
@@ -1508,6 +1515,14 @@ function Wait-AeroSelftestResult {
           if ($null -ne $msixCheck) { return $msixCheck }
           $blkResetCheck = Test-VirtioBlkResetRequirement -Tail $tail
           if ($null -ne $blkResetCheck) { return $blkResetCheck }
+
+          if ($RequireNetCsumOffload) {
+            $csum = Get-AeroVirtioNetOffloadCsumStatsFromTail -Tail $tail
+            if ($null -eq $csum) { return @{ Result = "MISSING_VIRTIO_NET_CSUM_OFFLOAD"; Tail = $tail } }
+            if ($csum.Status -ne "PASS") { return @{ Result = "VIRTIO_NET_CSUM_OFFLOAD_FAILED"; Tail = $tail } }
+            if ($null -eq $csum.TxCsum) { return @{ Result = "VIRTIO_NET_CSUM_OFFLOAD_MISSING_FIELDS"; Tail = $tail } }
+            if ($csum.TxCsum -le 0) { return @{ Result = "VIRTIO_NET_CSUM_OFFLOAD_ZERO"; Tail = $tail } }
+          }
           return @{ Result = "PASS"; Tail = $tail }
         }
 
@@ -1594,6 +1609,14 @@ function Wait-AeroSelftestResult {
                 if ($null -ne $msixCheck) { return $msixCheck }
                 $blkResetCheck = Test-VirtioBlkResetRequirement -Tail $tail
                 if ($null -ne $blkResetCheck) { return $blkResetCheck }
+
+                if ($RequireNetCsumOffload) {
+                  $csum = Get-AeroVirtioNetOffloadCsumStatsFromTail -Tail $tail
+                  if ($null -eq $csum) { return @{ Result = "MISSING_VIRTIO_NET_CSUM_OFFLOAD"; Tail = $tail } }
+                  if ($csum.Status -ne "PASS") { return @{ Result = "VIRTIO_NET_CSUM_OFFLOAD_FAILED"; Tail = $tail } }
+                  if ($null -eq $csum.TxCsum) { return @{ Result = "VIRTIO_NET_CSUM_OFFLOAD_MISSING_FIELDS"; Tail = $tail } }
+                  if ($csum.TxCsum -le 0) { return @{ Result = "VIRTIO_NET_CSUM_OFFLOAD_ZERO"; Tail = $tail } }
+                }
                 return @{ Result = "PASS"; Tail = $tail }
               }
               if ($sawVirtioSndDuplexSkip) {
@@ -1689,6 +1712,14 @@ function Wait-AeroSelftestResult {
         if ($null -ne $msixCheck) { return $msixCheck }
         $blkResetCheck = Test-VirtioBlkResetRequirement -Tail $tail
         if ($null -ne $blkResetCheck) { return $blkResetCheck }
+
+        if ($RequireNetCsumOffload) {
+          $csum = Get-AeroVirtioNetOffloadCsumStatsFromTail -Tail $tail
+          if ($null -eq $csum) { return @{ Result = "MISSING_VIRTIO_NET_CSUM_OFFLOAD"; Tail = $tail } }
+          if ($csum.Status -ne "PASS") { return @{ Result = "VIRTIO_NET_CSUM_OFFLOAD_FAILED"; Tail = $tail } }
+          if ($null -eq $csum.TxCsum) { return @{ Result = "VIRTIO_NET_CSUM_OFFLOAD_MISSING_FIELDS"; Tail = $tail } }
+          if ($csum.TxCsum -le 0) { return @{ Result = "VIRTIO_NET_CSUM_OFFLOAD_ZERO"; Tail = $tail } }
+        }
         return @{ Result = "PASS"; Tail = $tail }
       }
       if ($tail -match "AERO_VIRTIO_SELFTEST\|RESULT\|FAIL") {
@@ -3866,6 +3897,61 @@ function Test-AeroVirtioIrqModeEnforcement {
   }
 
   return @{ Ok = $true }
+}
+
+function Get-AeroVirtioNetOffloadCsumStatsFromTail {
+  param(
+    [Parameter(Mandatory = $true)] [string]$Tail
+  )
+
+  $prefix = "AERO_VIRTIO_SELFTEST|TEST|virtio-net-offload-csum|"
+  $matches = [regex]::Matches($Tail, [regex]::Escape($prefix) + "[^`r`n]*")
+  if ($matches.Count -eq 0) { return $null }
+
+  $line = $matches[$matches.Count - 1].Value
+  $fields = @{}
+  foreach ($tok in $line.Split("|")) {
+    $idx = $tok.IndexOf("=")
+    if ($idx -le 0) { continue }
+    $k = $tok.Substring(0, $idx)
+    $v = $tok.Substring($idx + 1)
+    if (-not [string]::IsNullOrEmpty($k)) {
+      $fields[$k] = $v
+    }
+  }
+
+  $status = "INFO"
+  if ($line -match "\|FAIL(\||$)") { $status = "FAIL" }
+  elseif ($line -match "\|PASS(\||$)") { $status = "PASS" }
+
+  function Try-ParseU64([string]$v) {
+    if ([string]::IsNullOrEmpty($v)) { return $null }
+    $v = $v.Trim()
+    try {
+      if ($v -match "^0[xX]([0-9a-fA-F]+)$") {
+        return [UInt64]::Parse($Matches[1], [System.Globalization.NumberStyles]::AllowHexSpecifier)
+      }
+      return [UInt64]$v
+    } catch {
+      return $null
+    }
+  }
+
+  $tx = $null
+  $rx = $null
+  $fallback = $null
+  if ($fields.ContainsKey("tx_csum")) { $tx = Try-ParseU64 $fields["tx_csum"] }
+  if ($fields.ContainsKey("rx_csum")) { $rx = Try-ParseU64 $fields["rx_csum"] }
+  if ($fields.ContainsKey("fallback")) { $fallback = Try-ParseU64 $fields["fallback"] }
+
+  return [PSCustomObject]@{
+    Line     = $line
+    Status   = $status
+    TxCsum   = $tx
+    RxCsum   = $rx
+    Fallback = $fallback
+    Fields   = $fields
+  }
 }
 
 function Invoke-AeroVirtioSndWavVerification {
@@ -6188,6 +6274,7 @@ try {
         -RequireVirtioSndBufferLimitsPass ([bool]$WithSndBufferLimits) `
         -RequireVirtioBlkResizePass ([bool]$needBlkResize) `
         -VirtioBlkResizeDeltaMiB ([int]$BlkResizeDeltaMiB) `
+        -RequireNetCsumOffload ([bool]$RequireNetCsumOffload) `
         -RequireVirtioInputEventsPass ([bool]$needInputEvents) `
         -RequireVirtioInputMediaKeysPass ([bool]$needInputMediaKeys) `
         -RequireVirtioInputLedPass ([bool]$needInputLed) `
@@ -7047,6 +7134,38 @@ try {
       try { $reason = [string]$result.MsixReason } catch { }
       if ([string]::IsNullOrEmpty($reason)) { $reason = "failed to query QEMU PCI MSI-X state via QMP" }
       Write-Host "FAIL: QMP_MSIX_CHECK_FAILED: $reason"
+      if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
+        Write-Host "`n--- Serial tail ---"
+        Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
+      }
+      $scriptExitCode = 1
+    }
+    "MISSING_VIRTIO_NET_CSUM_OFFLOAD" {
+      Write-Host "FAIL: MISSING_VIRTIO_NET_CSUM_OFFLOAD: missing virtio-net-offload-csum marker while -RequireNetCsumOffload was enabled"
+      if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
+        Write-Host "`n--- Serial tail ---"
+        Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
+      }
+      $scriptExitCode = 1
+    }
+    "VIRTIO_NET_CSUM_OFFLOAD_FAILED" {
+      Write-Host "FAIL: VIRTIO_NET_CSUM_OFFLOAD_FAILED: virtio-net-offload-csum marker did not PASS while -RequireNetCsumOffload was enabled"
+      if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
+        Write-Host "`n--- Serial tail ---"
+        Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
+      }
+      $scriptExitCode = 1
+    }
+    "VIRTIO_NET_CSUM_OFFLOAD_MISSING_FIELDS" {
+      Write-Host "FAIL: VIRTIO_NET_CSUM_OFFLOAD_MISSING_FIELDS: virtio-net-offload-csum marker missing tx_csum field"
+      if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
+        Write-Host "`n--- Serial tail ---"
+        Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
+      }
+      $scriptExitCode = 1
+    }
+    "VIRTIO_NET_CSUM_OFFLOAD_ZERO" {
+      Write-Host "FAIL: VIRTIO_NET_CSUM_OFFLOAD_ZERO: checksum offload requirement not met (tx_csum=0)"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue

@@ -90,7 +90,7 @@ static const NDIS_OID g_SupportedOids[] = {
     OID_802_3_MULTICAST_LIST,
     OID_802_3_MAXIMUM_LIST_SIZE,
 
-    // TX offloads (Win7 NDIS 6.20)
+    // Offloads (NDIS 6.20).
     OID_TCP_OFFLOAD_HARDWARE_CAPABILITIES,
     OID_TCP_OFFLOAD_CURRENT_CONFIG,
     OID_TCP_OFFLOAD_PARAMETERS,
@@ -148,6 +148,636 @@ static USHORT AerovNetReadLe16FromPciCfg(_In_reads_bytes_(256) const UCHAR* Cfg,
 
   RtlCopyMemory(&V, Cfg + Offset, sizeof(V));
   return V;
+}
+
+static __forceinline USHORT AerovNetReadBe16(_In_reads_bytes_(2) const UCHAR* P) {
+  return (USHORT)(((USHORT)P[0] << 8) | (USHORT)P[1]);
+}
+
+static __forceinline ULONG AerovNetReadBe32(_In_reads_bytes_(4) const UCHAR* P) {
+  return ((ULONG)P[0] << 24) | ((ULONG)P[1] << 16) | ((ULONG)P[2] << 8) | (ULONG)P[3];
+}
+
+static __forceinline VOID AerovNetWriteBe16(_Out_writes_bytes_(2) UCHAR* P, _In_ USHORT V) {
+  P[0] = (UCHAR)((V >> 8) & 0xFF);
+  P[1] = (UCHAR)(V & 0xFF);
+}
+
+static __forceinline VOID AerovNetWriteBe32(_Out_writes_bytes_(4) UCHAR* P, _In_ ULONG V) {
+  P[0] = (UCHAR)((V >> 24) & 0xFF);
+  P[1] = (UCHAR)((V >> 16) & 0xFF);
+  P[2] = (UCHAR)((V >> 8) & 0xFF);
+  P[3] = (UCHAR)(V & 0xFF);
+}
+
+#define AEROVNET_ETHERTYPE_IPV4 0x0800u
+#define AEROVNET_ETHERTYPE_IPV6 0x86DDu
+#define AEROVNET_ETHERTYPE_VLAN 0x8100u
+#define AEROVNET_ETHERTYPE_QINQ 0x88A8u
+#define AEROVNET_ETHERTYPE_VLAN_9100 0x9100u
+
+typedef enum _AEROVNET_L3_TYPE {
+  AerovNetL3None = 0,
+  AerovNetL3Ipv4,
+  AerovNetL3Ipv6,
+} AEROVNET_L3_TYPE;
+
+typedef enum _AEROVNET_L4_TYPE {
+  AerovNetL4None = 0,
+  AerovNetL4Tcp,
+  AerovNetL4Udp,
+} AEROVNET_L4_TYPE;
+
+typedef struct _AEROVNET_PACKET_INFO {
+  AEROVNET_L3_TYPE L3;
+  AEROVNET_L4_TYPE L4;
+  USHORT L2Len;
+  USHORT L3Offset;
+  USHORT L4Offset;
+  USHORT L4Len;
+  USHORT L4CsumOffset; // Offset of checksum field within the L4 header.
+  USHORT Ipv4HeaderLen;
+  UCHAR IpProtocol; // TCP=6, UDP=17
+  UCHAR SrcAddr[16]; // IPv4 uses first 4 bytes
+  UCHAR DstAddr[16]; // IPv4 uses first 4 bytes
+} AEROVNET_PACKET_INFO;
+
+// One's complement checksum accumulator (network byte order, 16-bit words).
+typedef struct _AEROVNET_CSUM_STATE {
+  ULONG Sum;
+  BOOLEAN Odd;
+  UCHAR OddByte;
+} AEROVNET_CSUM_STATE;
+
+static VOID AerovNetCsumAccumulateBytes(_Inout_ AEROVNET_CSUM_STATE* St, _In_reads_bytes_(Len) const UCHAR* Data, _In_ ULONG Len) {
+  ULONG I;
+
+  if (!St || !Data || Len == 0) {
+    return;
+  }
+
+  I = 0;
+
+  if (St->Odd) {
+    // Consume the first byte to complete the odd trailing byte from the previous chunk.
+    St->Sum += ((ULONG)St->OddByte << 8) | (ULONG)Data[0];
+    St->Odd = FALSE;
+    St->OddByte = 0;
+    I = 1;
+  }
+
+  for (; I + 1 < Len; I += 2) {
+    St->Sum += ((ULONG)Data[I] << 8) | (ULONG)Data[I + 1];
+  }
+
+  if (I < Len) {
+    St->Odd = TRUE;
+    St->OddByte = Data[I];
+  }
+}
+
+static __forceinline USHORT AerovNetCsumFold(_In_ ULONG Sum) {
+  // Fold to 16 bits: add carries until none remain.
+  while (Sum >> 16) {
+    Sum = (Sum & 0xFFFFu) + (Sum >> 16);
+  }
+  return (USHORT)Sum;
+}
+
+static __forceinline USHORT AerovNetCsumFinalize(_In_ AEROVNET_CSUM_STATE* St) {
+  ULONG Sum;
+
+  if (!St) {
+    return 0;
+  }
+
+  Sum = St->Sum;
+  if (St->Odd) {
+    Sum += ((ULONG)St->OddByte << 8);
+  }
+
+  return (USHORT)(~AerovNetCsumFold(Sum) & 0xFFFFu);
+}
+
+static __forceinline USHORT AerovNetCsumFoldState(_In_ const AEROVNET_CSUM_STATE* St) {
+  ULONG Sum;
+
+  if (!St) {
+    return 0;
+  }
+
+  Sum = St->Sum;
+  if (St->Odd) {
+    Sum += ((ULONG)St->OddByte << 8);
+  }
+  return AerovNetCsumFold(Sum);
+}
+
+static BOOLEAN AerovNetNetBufferCopyBytes(_In_ PNET_BUFFER Nb, _In_ ULONG Offset, _Out_writes_bytes_(Bytes) UCHAR* Dest, _In_ ULONG Bytes) {
+  PMDL Mdl;
+  ULONG MdlOffset;
+  ULONG Remaining;
+
+  if (!Nb || !Dest) {
+    return FALSE;
+  }
+
+  if (Bytes == 0) {
+    return TRUE;
+  }
+
+  if (Offset + Bytes > NET_BUFFER_DATA_LENGTH(Nb)) {
+    return FALSE;
+  }
+
+  Mdl = NET_BUFFER_CURRENT_MDL(Nb);
+  MdlOffset = NET_BUFFER_CURRENT_MDL_OFFSET(Nb) + Offset;
+  Remaining = Bytes;
+
+  while (Mdl && Remaining) {
+    ULONG MdlBytes;
+    PUCHAR Va;
+    ULONG Copy;
+
+    MdlBytes = MmGetMdlByteCount(Mdl);
+    if (MdlOffset >= MdlBytes) {
+      MdlOffset -= MdlBytes;
+      Mdl = Mdl->Next;
+      continue;
+    }
+
+    Va = (PUCHAR)MmGetSystemAddressForMdlSafe(Mdl, NormalPagePriority);
+    if (!Va) {
+      return FALSE;
+    }
+
+    Copy = MdlBytes - MdlOffset;
+    if (Copy > Remaining) {
+      Copy = Remaining;
+    }
+
+    RtlCopyMemory(Dest, Va + MdlOffset, Copy);
+    Dest += Copy;
+    Remaining -= Copy;
+    MdlOffset = 0;
+    Mdl = Mdl->Next;
+  }
+
+  return (Remaining == 0);
+}
+
+static BOOLEAN AerovNetNetBufferWriteBytes(_In_ PNET_BUFFER Nb, _In_ ULONG Offset, _In_reads_bytes_(Bytes) const UCHAR* Src, _In_ ULONG Bytes) {
+  PMDL Mdl;
+  ULONG MdlOffset;
+  ULONG Remaining;
+
+  if (!Nb || !Src) {
+    return FALSE;
+  }
+
+  if (Bytes == 0) {
+    return TRUE;
+  }
+
+  if (Offset + Bytes > NET_BUFFER_DATA_LENGTH(Nb)) {
+    return FALSE;
+  }
+
+  Mdl = NET_BUFFER_CURRENT_MDL(Nb);
+  MdlOffset = NET_BUFFER_CURRENT_MDL_OFFSET(Nb) + Offset;
+  Remaining = Bytes;
+
+  while (Mdl && Remaining) {
+    ULONG MdlBytes;
+    PUCHAR Va;
+    ULONG Copy;
+
+    MdlBytes = MmGetMdlByteCount(Mdl);
+    if (MdlOffset >= MdlBytes) {
+      MdlOffset -= MdlBytes;
+      Mdl = Mdl->Next;
+      continue;
+    }
+
+    Va = (PUCHAR)MmGetSystemAddressForMdlSafe(Mdl, NormalPagePriority);
+    if (!Va) {
+      return FALSE;
+    }
+
+    Copy = MdlBytes - MdlOffset;
+    if (Copy > Remaining) {
+      Copy = Remaining;
+    }
+
+    RtlCopyMemory(Va + MdlOffset, Src, Copy);
+    Src += Copy;
+    Remaining -= Copy;
+    MdlOffset = 0;
+    Mdl = Mdl->Next;
+  }
+
+  return (Remaining == 0);
+}
+
+static VOID AerovNetCsumAccumulateNetBuffer(_Inout_ AEROVNET_CSUM_STATE* St, _In_ PNET_BUFFER Nb, _In_ ULONG Offset, _In_ ULONG Len) {
+  PMDL Mdl;
+  ULONG MdlOffset;
+  ULONG Remaining;
+
+  if (!St || !Nb || Len == 0) {
+    return;
+  }
+
+  if (Offset + Len > NET_BUFFER_DATA_LENGTH(Nb)) {
+    return;
+  }
+
+  Mdl = NET_BUFFER_CURRENT_MDL(Nb);
+  MdlOffset = NET_BUFFER_CURRENT_MDL_OFFSET(Nb) + Offset;
+  Remaining = Len;
+
+  while (Mdl && Remaining) {
+    ULONG MdlBytes;
+    PUCHAR Va;
+    ULONG Copy;
+
+    MdlBytes = MmGetMdlByteCount(Mdl);
+    if (MdlOffset >= MdlBytes) {
+      MdlOffset -= MdlBytes;
+      Mdl = Mdl->Next;
+      continue;
+    }
+
+    Va = (PUCHAR)MmGetSystemAddressForMdlSafe(Mdl, NormalPagePriority);
+    if (!Va) {
+      return;
+    }
+
+    Copy = MdlBytes - MdlOffset;
+    if (Copy > Remaining) {
+      Copy = Remaining;
+    }
+
+    AerovNetCsumAccumulateBytes(St, Va + MdlOffset, Copy);
+    Remaining -= Copy;
+    MdlOffset = 0;
+    Mdl = Mdl->Next;
+  }
+}
+
+static VOID AerovNetCsumAccumulatePseudoHeader(_Inout_ AEROVNET_CSUM_STATE* St, _In_ const AEROVNET_PACKET_INFO* Info) {
+  UCHAR Tmp[40];
+
+  if (!St || !Info) {
+    return;
+  }
+
+  RtlZeroMemory(Tmp, sizeof(Tmp));
+
+  if (Info->L3 == AerovNetL3Ipv4) {
+    // IPv4 pseudo header:
+    //   src(4) dst(4) zero(1) proto(1) len(2)
+    RtlCopyMemory(Tmp + 0, Info->SrcAddr, 4);
+    RtlCopyMemory(Tmp + 4, Info->DstAddr, 4);
+    Tmp[8] = 0;
+    Tmp[9] = Info->IpProtocol;
+    AerovNetWriteBe16(Tmp + 10, Info->L4Len);
+    AerovNetCsumAccumulateBytes(St, Tmp, 12);
+    return;
+  }
+
+  if (Info->L3 == AerovNetL3Ipv6) {
+    // IPv6 pseudo header:
+    //   src(16) dst(16) len(4) zero(3) next_header(1)
+    RtlCopyMemory(Tmp + 0, Info->SrcAddr, 16);
+    RtlCopyMemory(Tmp + 16, Info->DstAddr, 16);
+    AerovNetWriteBe32(Tmp + 32, (ULONG)Info->L4Len);
+    Tmp[39] = Info->IpProtocol;
+    AerovNetCsumAccumulateBytes(St, Tmp, 40);
+    return;
+  }
+}
+
+static BOOLEAN AerovNetParsePacketInfo(_In_reads_bytes_(AvailLen) const UCHAR* Frame, _In_ ULONG FrameLen, _In_ ULONG AvailLen,
+                                      _Out_ AEROVNET_PACKET_INFO* Info) {
+  ULONG Offset;
+  USHORT EtherType;
+  ULONG L2Len;
+  ULONG Tags;
+
+  if (!Info) {
+    return FALSE;
+  }
+
+  RtlZeroMemory(Info, sizeof(*Info));
+
+  if (!Frame || FrameLen < 14 || AvailLen < 14) {
+    return FALSE;
+  }
+
+  // Ethernet: dst(6) src(6) ethertype(2)
+  EtherType = AerovNetReadBe16(Frame + 12);
+  L2Len = 14;
+  Tags = 0;
+
+  while ((EtherType == AEROVNET_ETHERTYPE_VLAN || EtherType == AEROVNET_ETHERTYPE_QINQ || EtherType == AEROVNET_ETHERTYPE_VLAN_9100) && Tags < 2) {
+    // VLAN tag: TPID(2) TCI(2) inner_ethertype(2)
+    if (FrameLen < L2Len + 4) {
+      return FALSE;
+    }
+    if (AvailLen < L2Len + 4) {
+      return FALSE;
+    }
+
+    EtherType = AerovNetReadBe16(Frame + L2Len + 2);
+    L2Len += 4;
+    Tags++;
+  }
+
+  Info->L2Len = (USHORT)L2Len;
+  Info->L3Offset = (USHORT)L2Len;
+
+  if (EtherType == AEROVNET_ETHERTYPE_IPV4) {
+    const ULONG IpOff = L2Len;
+    UCHAR Vhl;
+    ULONG Ihl;
+    ULONG HdrLen;
+    ULONG TotalLen;
+    UCHAR Proto;
+    USHORT Frag;
+    ULONG L4Len;
+
+    if (FrameLen < IpOff + 20 || AvailLen < IpOff + 20) {
+      return FALSE;
+    }
+
+    Vhl = Frame[IpOff + 0];
+    if ((Vhl >> 4) != 4) {
+      return FALSE;
+    }
+
+    Ihl = (ULONG)(Vhl & 0x0F);
+    HdrLen = Ihl * 4;
+    if (HdrLen < 20 || (HdrLen & 3) != 0) {
+      return FALSE;
+    }
+    if (FrameLen < IpOff + HdrLen || AvailLen < IpOff + HdrLen) {
+      return FALSE;
+    }
+
+    TotalLen = (ULONG)AerovNetReadBe16(Frame + IpOff + 2);
+    if (TotalLen < HdrLen) {
+      return FALSE;
+    }
+    if (TotalLen > FrameLen - IpOff) {
+      // Malformed length; clamp to the actual buffer to avoid OOB.
+      TotalLen = FrameLen - IpOff;
+    }
+
+    Proto = Frame[IpOff + 9];
+    Frag = AerovNetReadBe16(Frame + IpOff + 6);
+    if ((Frag & 0x1FFFu) != 0 || (Frag & 0x2000u) != 0) {
+      // Fragmented: do not attempt L4 parsing/offload (first fragment checksum covers whole packet).
+      Info->L3 = AerovNetL3Ipv4;
+      Info->Ipv4HeaderLen = (USHORT)HdrLen;
+      Info->IpProtocol = Proto;
+      RtlCopyMemory(Info->SrcAddr, Frame + IpOff + 12, 4);
+      RtlCopyMemory(Info->DstAddr, Frame + IpOff + 16, 4);
+      return TRUE;
+    }
+
+    Offset = IpOff + HdrLen;
+    if (Offset > FrameLen) {
+      return FALSE;
+    }
+    L4Len = TotalLen - HdrLen;
+    if (L4Len > 0xFFFFu) {
+      return FALSE;
+    }
+
+    Info->L3 = AerovNetL3Ipv4;
+    Info->Ipv4HeaderLen = (USHORT)HdrLen;
+    Info->IpProtocol = Proto;
+    RtlCopyMemory(Info->SrcAddr, Frame + IpOff + 12, 4);
+    RtlCopyMemory(Info->DstAddr, Frame + IpOff + 16, 4);
+
+    if (Proto == 6) {
+      // TCP.
+      if (FrameLen < Offset + 20 || AvailLen < Offset + 20) {
+        return FALSE;
+      }
+      Info->L4 = AerovNetL4Tcp;
+      Info->L4Offset = (USHORT)Offset;
+      Info->L4Len = (USHORT)L4Len;
+      Info->L4CsumOffset = 16;
+      return TRUE;
+    }
+
+    if (Proto == 17) {
+      // UDP.
+      if (FrameLen < Offset + 8 || AvailLen < Offset + 8) {
+        return FALSE;
+      }
+      Info->L4 = AerovNetL4Udp;
+      Info->L4Offset = (USHORT)Offset;
+      Info->L4Len = (USHORT)L4Len;
+      Info->L4CsumOffset = 6;
+      return TRUE;
+    }
+
+    // IPv4 but unsupported L4 protocol.
+    return TRUE;
+  }
+
+  if (EtherType == AEROVNET_ETHERTYPE_IPV6) {
+    const ULONG IpOff = L2Len;
+    UCHAR Ver;
+    USHORT PayloadLen;
+    UCHAR Next;
+    ULONG Offset6;
+    ULONG ExtLen;
+    ULONG Iter;
+
+    if (FrameLen < IpOff + 40 || AvailLen < IpOff + 40) {
+      return FALSE;
+    }
+
+    Ver = (UCHAR)(Frame[IpOff + 0] >> 4);
+    if (Ver != 6) {
+      return FALSE;
+    }
+
+    PayloadLen = AerovNetReadBe16(Frame + IpOff + 4);
+    Next = Frame[IpOff + 6];
+
+    Info->L3 = AerovNetL3Ipv6;
+    Info->Ipv4HeaderLen = 0;
+    RtlCopyMemory(Info->SrcAddr, Frame + IpOff + 8, 16);
+    RtlCopyMemory(Info->DstAddr, Frame + IpOff + 24, 16);
+
+    Offset6 = IpOff + 40;
+    ExtLen = 0;
+
+    // Parse a limited set of extension headers to locate TCP/UDP.
+    for (Iter = 0; Iter < 8; Iter++) {
+      if (Next == 6 || Next == 17) {
+        break;
+      }
+
+      if (Next == 0 || Next == 43 || Next == 60) {
+        // Hop-by-Hop / Routing / Destination Options: next(1) hdrlen(1) ...
+        ULONG HdrBytes;
+        if (FrameLen < Offset6 + 8 || AvailLen < Offset6 + 8) {
+          return FALSE;
+        }
+        HdrBytes = ((ULONG)Frame[Offset6 + 1] + 1u) * 8u;
+        if (FrameLen < Offset6 + HdrBytes || AvailLen < Offset6 + HdrBytes) {
+          return FALSE;
+        }
+        Next = Frame[Offset6 + 0];
+        Offset6 += HdrBytes;
+        ExtLen += HdrBytes;
+        continue;
+      }
+
+      if (Next == 44) {
+        // Fragment header: 8 bytes.
+        USHORT Frag;
+        if (FrameLen < Offset6 + 8 || AvailLen < Offset6 + 8) {
+          return FALSE;
+        }
+        Next = Frame[Offset6 + 0];
+        Frag = AerovNetReadBe16(Frame + Offset6 + 2);
+        if ((Frag & 0xFFF8u) != 0 || (Frag & 0x0001u) != 0) {
+          // Fragmented: do not attempt L4 parsing/offload.
+          Info->IpProtocol = Next;
+          return TRUE;
+        }
+        Offset6 += 8;
+        ExtLen += 8;
+        continue;
+      }
+
+      // Unsupported extension header.
+      Info->IpProtocol = Next;
+      return TRUE;
+    }
+
+    if (PayloadLen < ExtLen) {
+      return FALSE;
+    }
+
+    if (Next == 6) {
+      ULONG L4Len;
+      if (FrameLen < Offset6 + 20 || AvailLen < Offset6 + 20) {
+        return FALSE;
+      }
+      L4Len = (ULONG)PayloadLen - ExtLen;
+      if (L4Len > 0xFFFFu) {
+        return FALSE;
+      }
+      Info->IpProtocol = 6;
+      Info->L4 = AerovNetL4Tcp;
+      Info->L4Offset = (USHORT)Offset6;
+      Info->L4Len = (USHORT)L4Len;
+      Info->L4CsumOffset = 16;
+      return TRUE;
+    }
+
+    if (Next == 17) {
+      ULONG L4Len;
+      if (FrameLen < Offset6 + 8 || AvailLen < Offset6 + 8) {
+        return FALSE;
+      }
+      L4Len = (ULONG)PayloadLen - ExtLen;
+      if (L4Len > 0xFFFFu) {
+        return FALSE;
+      }
+      Info->IpProtocol = 17;
+      Info->L4 = AerovNetL4Udp;
+      Info->L4Offset = (USHORT)Offset6;
+      Info->L4Len = (USHORT)L4Len;
+      Info->L4CsumOffset = 6;
+      return TRUE;
+    }
+
+    // IPv6 but unsupported L4 protocol.
+    Info->IpProtocol = Next;
+    return TRUE;
+  }
+
+  return FALSE;
+}
+
+static BOOLEAN AerovNetComputeIpv4HeaderChecksum(_In_reads_bytes_(HdrLen) const UCHAR* Ipv4Hdr, _In_ ULONG HdrLen, _Out_ USHORT* OutChecksum) {
+  AEROVNET_CSUM_STATE St;
+  UCHAR Tmp[60];
+
+  if (OutChecksum) {
+    *OutChecksum = 0;
+  }
+
+  if (!Ipv4Hdr || !OutChecksum || HdrLen < 20 || HdrLen > sizeof(Tmp) || (HdrLen & 3) != 0) {
+    return FALSE;
+  }
+
+  RtlCopyMemory(Tmp, Ipv4Hdr, HdrLen);
+  Tmp[10] = 0;
+  Tmp[11] = 0;
+
+  RtlZeroMemory(&St, sizeof(St));
+  AerovNetCsumAccumulateBytes(&St, Tmp, HdrLen);
+  *OutChecksum = AerovNetCsumFinalize(&St);
+  return TRUE;
+}
+
+static BOOLEAN AerovNetWriteNetBufferBe16(_In_ PNET_BUFFER Nb, _In_ ULONG Offset, _In_ USHORT V) {
+  UCHAR Tmp[2];
+  AerovNetWriteBe16(Tmp, V);
+  return AerovNetNetBufferWriteBytes(Nb, Offset, Tmp, sizeof(Tmp));
+}
+
+static BOOLEAN AerovNetComputeAndWriteL4ChecksumNetBuffer(_In_ PNET_BUFFER Nb, _In_ const AEROVNET_PACKET_INFO* Info) {
+  AEROVNET_CSUM_STATE St;
+  ULONG L4Off;
+  ULONG L4Len;
+  ULONG CsumField;
+  USHORT Csum;
+
+  if (!Nb || !Info) {
+    return FALSE;
+  }
+
+  if (Info->L4 != AerovNetL4Tcp && Info->L4 != AerovNetL4Udp) {
+    return FALSE;
+  }
+
+  L4Off = Info->L4Offset;
+  L4Len = Info->L4Len;
+  CsumField = L4Off + (ULONG)Info->L4CsumOffset;
+
+  if (L4Off + L4Len > NET_BUFFER_DATA_LENGTH(Nb)) {
+    // Clamp to the actual NB length (Ethernet padding etc).
+    L4Len = NET_BUFFER_DATA_LENGTH(Nb) - L4Off;
+  }
+
+  if (CsumField + 2 > L4Off + L4Len) {
+    return FALSE;
+  }
+
+  RtlZeroMemory(&St, sizeof(St));
+  AerovNetCsumAccumulatePseudoHeader(&St, Info);
+
+  // L4 header+payload, with checksum field treated as zero.
+  AerovNetCsumAccumulateNetBuffer(&St, Nb, L4Off, (ULONG)Info->L4CsumOffset);
+  AerovNetCsumAccumulateNetBuffer(&St, Nb, CsumField + 2, (L4Off + L4Len) - (CsumField + 2));
+
+  Csum = AerovNetCsumFinalize(&St);
+  if (Info->L4 == AerovNetL4Udp && Csum == 0) {
+    Csum = 0xFFFF;
+  }
+
+  return AerovNetWriteNetBufferBe16(Nb, CsumField, Csum);
 }
 
 static VOID AerovNetFreeTxRequestNoLock(_Inout_ AEROVNET_ADAPTER* Adapter, _Inout_ AEROVNET_TX_REQUEST* TxReq) {
@@ -329,8 +959,8 @@ static BOOLEAN AerovNetAcceptFrame(_In_ const AEROVNET_ADAPTER* Adapter, _In_rea
   return AerovNetMacEqual(Dst, Adapter->CurrentMac) ? TRUE : FALSE;
 }
 
-static VOID AerovNetIndicateRxChecksum(_In_ const AEROVNET_ADAPTER* Adapter, _Inout_ PNET_BUFFER_LIST Nbl,
-                                      _In_reads_bytes_(FrameLen) const UCHAR* Frame, _In_ ULONG FrameLen, _In_ const VIRTIO_NET_HDR* Vhdr) {
+static VOID AerovNetIndicateRxChecksum(_Inout_ AEROVNET_ADAPTER* Adapter, _Inout_ PNET_BUFFER_LIST Nbl,
+                                       _In_reads_bytes_(FrameLen) const UCHAR* Frame, _In_ ULONG FrameLen, _In_ const VIRTIO_NET_HDR* Vhdr) {
   NDIS_TCP_IP_CHECKSUM_NET_BUFFER_LIST_INFO CsumInfo;
   VIRTIO_NET_HDR_OFFLOAD_RX_INFO RxInfo;
   VIRTIO_NET_HDR_OFFLOAD_FRAME_INFO FrameInfo;
@@ -354,11 +984,25 @@ static VOID AerovNetIndicateRxChecksum(_In_ const AEROVNET_ADAPTER* Adapter, _In
     return;
   }
 
-  // Only trust checksum info when the device explicitly marks the data as
-  // validated, and the header does not request checksum computation by the
-  // guest.
   (void)VirtioNetHdrOffloadParseRxHdr(Vhdr, &RxInfo);
-  if (!RxInfo.CsumValid || RxInfo.NeedsCsum) {
+
+  // If the device requests that the guest compute a checksum, complete it in
+  // software to avoid indicating a packet with an invalid checksum up the
+  // stack. (Virtio's NEEDS_CSUM scheme is a "partial checksum" completion.)
+  if (RxInfo.NeedsCsum) {
+    PNET_BUFFER Nb;
+    AEROVNET_PACKET_INFO Pkt;
+
+    Nb = NET_BUFFER_LIST_FIRST_NB(Nbl);
+    if (Nb && AerovNetParsePacketInfo(Frame, FrameLen, FrameLen, &Pkt)) {
+      (VOID)AerovNetComputeAndWriteL4ChecksumNetBuffer(Nb, &Pkt);
+    }
+    return;
+  }
+
+  // Only indicate checksum success when the device explicitly marks the data as
+  // validated.
+  if (!RxInfo.CsumValid) {
     return;
   }
 
@@ -373,40 +1017,66 @@ static VOID AerovNetIndicateRxChecksum(_In_ const AEROVNET_ADAPTER* Adapter, _In
 
   CsumInfo.Value = 0;
 
-  if (FrameInfo.L3Proto == (uint8_t)VIRTIO_NET_HDR_OFFLOAD_L3_IPV4) {
-    // IPv4 includes a header checksum. virtio-net's DATA_VALID flag indicates
-    // L4 checksum validity; validate the IPv4 header checksum directly to avoid
-    // claiming success without verification.
-    {
-      const ULONG IpOffset = (ULONG)FrameInfo.L3Offset;
-      const ULONG IpHdrLen = (ULONG)FrameInfo.L3Len;
-      if (IpOffset + IpHdrLen <= FrameLen && AerovNetIsValidIpv4HeaderChecksum(Frame + IpOffset, IpHdrLen)) {
-        CsumInfo.Receive.IpChecksumSucceeded = 1;
-      } else {
-        CsumInfo.Receive.IpChecksumFailed = 1;
-      }
-    }
+  // Do not claim L4 checksum validity on fragmented packets: the checksum covers
+  // the reassembled payload, which this miniport does not validate.
+  if (!FrameInfo.IsFragmented) {
+    BOOLEAN RxEnabled = FALSE;
+    BOOLEAN IpHdrChecked = FALSE;
+    BOOLEAN IpHdrValid = FALSE;
 
-    // Do not claim L4 checksum validity on fragmented packets: the checksum
-    // covers the reassembled payload, which this miniport does not validate.
-    if (!FrameInfo.IsFragmented) {
+    if (FrameInfo.L3Proto == (uint8_t)VIRTIO_NET_HDR_OFFLOAD_L3_IPV4) {
+      // IPv4 includes a header checksum. virtio-net's DATA_VALID flag indicates
+      // L4 checksum validity; validate the IPv4 header checksum directly to avoid
+      // claiming success without verification.
+      {
+        const ULONG IpOffset = (ULONG)FrameInfo.L3Offset;
+        const ULONG IpHdrLen = (ULONG)FrameInfo.L3Len;
+        IpHdrChecked = TRUE;
+        IpHdrValid = (IpOffset + IpHdrLen <= FrameLen) ? AerovNetIsValidIpv4HeaderChecksum(Frame + IpOffset, IpHdrLen) : FALSE;
+      }
+
       if (FrameInfo.L4Proto == 6u) {
-        CsumInfo.Receive.TcpChecksumSucceeded = 1;
+        RxEnabled = Adapter->RxChecksumV4Enabled;
+        if (RxEnabled) {
+          if (IpHdrChecked) {
+            if (IpHdrValid) {
+              CsumInfo.Receive.IpChecksumSucceeded = 1;
+            } else {
+              CsumInfo.Receive.IpChecksumFailed = 1;
+            }
+          }
+          CsumInfo.Receive.TcpChecksumSucceeded = 1;
+          InterlockedIncrement64((volatile LONG64*)&Adapter->StatRxCsumValidatedTcp4);
+        }
       } else if (FrameInfo.L4Proto == 17u) {
-        CsumInfo.Receive.UdpChecksumSucceeded = 1;
+        RxEnabled = Adapter->RxUdpChecksumV4Enabled;
+        if (RxEnabled) {
+          if (IpHdrChecked) {
+            if (IpHdrValid) {
+              CsumInfo.Receive.IpChecksumSucceeded = 1;
+            } else {
+              CsumInfo.Receive.IpChecksumFailed = 1;
+            }
+          }
+          CsumInfo.Receive.UdpChecksumSucceeded = 1;
+          InterlockedIncrement64((volatile LONG64*)&Adapter->StatRxCsumValidatedUdp4);
+        }
+      }
+    } else if (FrameInfo.L3Proto == (uint8_t)VIRTIO_NET_HDR_OFFLOAD_L3_IPV6) {
+      if (FrameInfo.L4Proto == 6u) {
+        RxEnabled = Adapter->RxChecksumV6Enabled;
+        if (RxEnabled) {
+          CsumInfo.Receive.TcpChecksumSucceeded = 1;
+          InterlockedIncrement64((volatile LONG64*)&Adapter->StatRxCsumValidatedTcp6);
+        }
+      } else if (FrameInfo.L4Proto == 17u) {
+        RxEnabled = Adapter->RxUdpChecksumV6Enabled;
+        if (RxEnabled) {
+          CsumInfo.Receive.UdpChecksumSucceeded = 1;
+          InterlockedIncrement64((volatile LONG64*)&Adapter->StatRxCsumValidatedUdp6);
+        }
       }
     }
-  } else if (FrameInfo.L3Proto == (uint8_t)VIRTIO_NET_HDR_OFFLOAD_L3_IPV6) {
-    // IPv6 has no header checksum; only indicate TCP/UDP if identified.
-    if (!FrameInfo.IsFragmented) {
-      if (FrameInfo.L4Proto == 6u) {
-        CsumInfo.Receive.TcpChecksumSucceeded = 1;
-      } else if (FrameInfo.L4Proto == 17u) {
-        CsumInfo.Receive.UdpChecksumSucceeded = 1;
-      }
-    }
-  } else {
-    return;
   }
 
   if (CsumInfo.Value != 0) {
@@ -1146,20 +1816,33 @@ static NDIS_STATUS AerovNetBuildTxHeader(_Inout_ AEROVNET_ADAPTER* Adapter, _Ino
   AEROVNET_VIRTIO_NET_HDR BuiltHdr;
   AEROVNET_TX_OFFLOAD_INTENT Intent;
   AEROVNET_OFFLOAD_PARSE_INFO Info;
+  NDIS_TCP_IP_CHECKSUM_NET_BUFFER_LIST_INFO CsumInfo;
   ULONG FrameLen;
   UCHAR HeaderBytes[256];
   UCHAR FullFrameBytes[2048];
   ULONG CopyLen;
   PVOID FramePtr;
   AEROVNET_OFFLOAD_RESULT OffRes;
+  BOOLEAN WantIpHdrChecksum;
+  BOOLEAN WantTcpChecksum;
+  BOOLEAN WantUdpChecksum;
+  BOOLEAN WantL4Checksum;
 
   if (!Adapter || !TxReq || !TxReq->Nbl || !TxReq->Nb || !TxReq->HeaderVa) {
     return NDIS_STATUS_INVALID_PACKET;
   }
 
+  // Contract v1 behavior for non-offload packets: virtio-net header is all zeros.
+  RtlZeroMemory(TxReq->HeaderVa, Adapter->RxHeaderBytes);
+
   RtlZeroMemory(&Intent, sizeof(Intent));
   RtlZeroMemory(&BuiltHdr, sizeof(BuiltHdr));
   RtlZeroMemory(&Info, sizeof(Info));
+
+  WantIpHdrChecksum = FALSE;
+  WantTcpChecksum = FALSE;
+  WantUdpChecksum = FALSE;
+  WantL4Checksum = FALSE;
 
   // LSO/TSO request (per-NBL).
   {
@@ -1173,30 +1856,26 @@ static NDIS_STATUS AerovNetBuildTxHeader(_Inout_ AEROVNET_ADAPTER* Adapter, _Ino
     }
   }
 
-  // TCP checksum offload request (per-NBL).
+  // Non-TSO packets rely on NDIS checksum metadata.
   if (!Intent.WantTso) {
-    NDIS_TCP_IP_CHECKSUM_NET_BUFFER_LIST_INFO CsumInfo;
     CsumInfo.Value = (ULONG_PTR)NET_BUFFER_LIST_INFO(TxReq->Nbl, TcpIpChecksumNetBufferListInfo);
+    WantTcpChecksum = CsumInfo.Transmit.TcpChecksum ? TRUE : FALSE;
+    WantUdpChecksum = CsumInfo.Transmit.UdpChecksum ? TRUE : FALSE;
+    WantIpHdrChecksum = CsumInfo.Transmit.IpHeaderChecksum ? TRUE : FALSE;
+    WantL4Checksum = (WantTcpChecksum || WantUdpChecksum) ? TRUE : FALSE;
 
-    if (CsumInfo.Transmit.TcpChecksum) {
-      Intent.WantTcpChecksum = 1;
+    Intent.WantTcpChecksum = WantTcpChecksum ? 1u : 0u;
+    Intent.WantUdpChecksum = WantUdpChecksum ? 1u : 0u;
+
+    if (!WantIpHdrChecksum && !WantL4Checksum) {
+      // Normal packet: all zeros.
+      return NDIS_STATUS_SUCCESS;
     }
-
-    if (CsumInfo.Transmit.UdpChecksum) {
-      Intent.WantUdpChecksum = 1;
-    }
-
-    // Do not accept unsupported checksum requests (we only advertise L4 checksum).
-    // The packet can only request one of TCP or UDP checksum offload.
-    if (CsumInfo.Transmit.IpHeaderChecksum || (CsumInfo.Transmit.TcpChecksum && CsumInfo.Transmit.UdpChecksum)) {
+  } else {
+    // TSO implies checksum offload; ensure the device negotiated checksum support.
+    if (!Adapter->TxChecksumSupported) {
       return NDIS_STATUS_INVALID_PACKET;
     }
-  }
-
-  if (!Intent.WantTso && !Intent.WantTcpChecksum && !Intent.WantUdpChecksum) {
-    // Normal packet: all zeros.
-    RtlZeroMemory(TxReq->HeaderVa, Adapter->RxHeaderBytes);
-    return NDIS_STATUS_SUCCESS;
   }
 
   FrameLen = NET_BUFFER_DATA_LENGTH(TxReq->Nb);
@@ -1217,6 +1896,29 @@ static NDIS_STATUS AerovNetBuildTxHeader(_Inout_ AEROVNET_ADAPTER* Adapter, _Ino
   }
   if (!FramePtr) {
     return NDIS_STATUS_INVALID_PACKET;
+  }
+
+  // Best-effort: if the OS requested IPv4 header checksum offload, compute it in software.
+  if (WantIpHdrChecksum) {
+    AEROVNET_PACKET_INFO Pkt;
+    USHORT Ipv4HdrCsum;
+    RtlZeroMemory(&Pkt, sizeof(Pkt));
+    Ipv4HdrCsum = 0;
+    if (AerovNetParsePacketInfo((const UCHAR*)FramePtr, FrameLen, CopyLen, &Pkt)) {
+      if (Pkt.L3 == AerovNetL3Ipv4 && Pkt.Ipv4HeaderLen != 0) {
+        const ULONG IpOff = (ULONG)Pkt.L3Offset;
+        if (CopyLen >= IpOff + (ULONG)Pkt.Ipv4HeaderLen) {
+          if (AerovNetComputeIpv4HeaderChecksum((const UCHAR*)FramePtr + IpOff, (ULONG)Pkt.Ipv4HeaderLen, &Ipv4HdrCsum)) {
+            (VOID)AerovNetWriteNetBufferBe16(TxReq->Nb, IpOff + 10, Ipv4HdrCsum);
+          }
+        }
+      }
+    }
+  }
+
+  // If only IPv4 header checksum was requested, we're done (virtio header stays zero).
+  if (!Intent.WantTso && !WantL4Checksum) {
+    return NDIS_STATUS_SUCCESS;
   }
 
   OffRes = AerovNetBuildTxVirtioNetHdr((const uint8_t*)FramePtr, (size_t)CopyLen, &Intent, &BuiltHdr, &Info);
@@ -1245,6 +1947,7 @@ static NDIS_STATUS AerovNetBuildTxHeader(_Inout_ AEROVNET_ADAPTER* Adapter, _Ino
     // For checksum-only requests, fall back to software checksumming when
     // possible (or send with no offload metadata for non-applicable frames).
     if (Intent.WantTcpChecksum) {
+      InterlockedIncrement64((volatile LONG64*)&Adapter->StatTxCsumFallback);
       if (!AerovNetComputeAndWriteL4Checksum(TxReq->Nb, (const UCHAR*)FramePtr, CopyLen, 6u)) {
         return NDIS_STATUS_INVALID_PACKET;
       }
@@ -1253,6 +1956,7 @@ static NDIS_STATUS AerovNetBuildTxHeader(_Inout_ AEROVNET_ADAPTER* Adapter, _Ino
 #endif
       Adapter->StatTxTcpCsumFallback++;
     } else if (Intent.WantUdpChecksum) {
+      InterlockedIncrement64((volatile LONG64*)&Adapter->StatTxCsumFallback);
       if (!AerovNetComputeAndWriteL4Checksum(TxReq->Nb, (const UCHAR*)FramePtr, CopyLen, 17u)) {
         return NDIS_STATUS_INVALID_PACKET;
       }
@@ -1260,35 +1964,39 @@ static NDIS_STATUS AerovNetBuildTxHeader(_Inout_ AEROVNET_ADAPTER* Adapter, _Ino
       InterlockedIncrement(&g_AerovNetDbgTxUdpCsumFallback);
 #endif
       Adapter->StatTxUdpCsumFallback++;
+    } else {
+      return NDIS_STATUS_INVALID_PACKET;
     }
 
     RtlZeroMemory(TxReq->HeaderVa, Adapter->RxHeaderBytes);
     return NDIS_STATUS_SUCCESS;
   }
 
-  // Validate negotiated capabilities and the offload enablement that was in
-  // effect when this request was accepted. Offload enablement can change at
-  // runtime via OID_TCP_OFFLOAD_PARAMETERS, so queued/pending sends must not
-  // consult the live adapter config.
+  // Validate negotiated capabilities and the offload enablement that was in effect
+  // when this request was accepted. Offload enablement can change at runtime via
+  // OID_TCP_OFFLOAD_PARAMETERS, so queued/pending sends must not consult the live
+  // adapter config.
   if (Intent.WantTso) {
     if (Intent.TsoMss == 0) {
       return NDIS_STATUS_INVALID_PACKET;
     }
     if (Info.IpVersion == 4) {
-      if (!Adapter->TxTsoV4Supported || !TxReq->TxTsoV4Enabled) {
+      if (!Adapter->TxTsoV4Supported || !TxReq->TxTsoV4Enabled || !TxReq->TxChecksumV4Enabled) {
         return NDIS_STATUS_INVALID_PACKET;
       }
     } else if (Info.IpVersion == 6) {
-      if (!Adapter->TxTsoV6Supported || !TxReq->TxTsoV6Enabled) {
+      if (!Adapter->TxTsoV6Supported || !TxReq->TxTsoV6Enabled || !TxReq->TxChecksumV6Enabled) {
         return NDIS_STATUS_INVALID_PACKET;
       }
     } else {
       return NDIS_STATUS_INVALID_PACKET;
     }
   } else {
+    // Checksum offload only.
     if (!Adapter->TxChecksumSupported) {
       // Host doesn't support checksum offload; compute in software.
       if (Intent.WantTcpChecksum) {
+        InterlockedIncrement64((volatile LONG64*)&Adapter->StatTxCsumFallback);
         if (!AerovNetComputeAndWriteL4Checksum(TxReq->Nb, (const UCHAR*)FramePtr, CopyLen, 6u)) {
           return NDIS_STATUS_INVALID_PACKET;
         }
@@ -1297,6 +2005,7 @@ static NDIS_STATUS AerovNetBuildTxHeader(_Inout_ AEROVNET_ADAPTER* Adapter, _Ino
 #endif
         Adapter->StatTxTcpCsumFallback++;
       } else if (Intent.WantUdpChecksum) {
+        InterlockedIncrement64((volatile LONG64*)&Adapter->StatTxCsumFallback);
         if (!AerovNetComputeAndWriteL4Checksum(TxReq->Nb, (const UCHAR*)FramePtr, CopyLen, 17u)) {
           return NDIS_STATUS_INVALID_PACKET;
         }
@@ -1309,12 +2018,15 @@ static NDIS_STATUS AerovNetBuildTxHeader(_Inout_ AEROVNET_ADAPTER* Adapter, _Ino
       RtlZeroMemory(TxReq->HeaderVa, Adapter->RxHeaderBytes);
       return NDIS_STATUS_SUCCESS;
     }
+
     if (Intent.WantTcpChecksum && Intent.WantUdpChecksum) {
       return NDIS_STATUS_INVALID_PACKET;
     }
+
     if (Info.IpVersion == 4) {
       if (Intent.WantTcpChecksum) {
         if (!TxReq->TxChecksumV4Enabled) {
+          InterlockedIncrement64((volatile LONG64*)&Adapter->StatTxCsumFallback);
           if (!AerovNetComputeAndWriteL4Checksum(TxReq->Nb, (const UCHAR*)FramePtr, CopyLen, 6u)) {
             return NDIS_STATUS_INVALID_PACKET;
           }
@@ -1327,6 +2039,7 @@ static NDIS_STATUS AerovNetBuildTxHeader(_Inout_ AEROVNET_ADAPTER* Adapter, _Ino
         }
       } else if (Intent.WantUdpChecksum) {
         if (!TxReq->TxUdpChecksumV4Enabled) {
+          InterlockedIncrement64((volatile LONG64*)&Adapter->StatTxCsumFallback);
           if (!AerovNetComputeAndWriteL4Checksum(TxReq->Nb, (const UCHAR*)FramePtr, CopyLen, 17u)) {
             return NDIS_STATUS_INVALID_PACKET;
           }
@@ -1343,6 +2056,7 @@ static NDIS_STATUS AerovNetBuildTxHeader(_Inout_ AEROVNET_ADAPTER* Adapter, _Ino
     } else if (Info.IpVersion == 6) {
       if (Intent.WantTcpChecksum) {
         if (!TxReq->TxChecksumV6Enabled) {
+          InterlockedIncrement64((volatile LONG64*)&Adapter->StatTxCsumFallback);
           if (!AerovNetComputeAndWriteL4Checksum(TxReq->Nb, (const UCHAR*)FramePtr, CopyLen, 6u)) {
             return NDIS_STATUS_INVALID_PACKET;
           }
@@ -1355,6 +2069,7 @@ static NDIS_STATUS AerovNetBuildTxHeader(_Inout_ AEROVNET_ADAPTER* Adapter, _Ino
         }
       } else if (Intent.WantUdpChecksum) {
         if (!TxReq->TxUdpChecksumV6Enabled) {
+          InterlockedIncrement64((volatile LONG64*)&Adapter->StatTxCsumFallback);
           if (!AerovNetComputeAndWriteL4Checksum(TxReq->Nb, (const UCHAR*)FramePtr, CopyLen, 17u)) {
             return NDIS_STATUS_INVALID_PACKET;
           }
@@ -1379,6 +2094,29 @@ static NDIS_STATUS AerovNetBuildTxHeader(_Inout_ AEROVNET_ADAPTER* Adapter, _Ino
     Adapter->StatTxTcpCsumOffload++;
   }
 
+  // For checksum offload, virtio-net expects the checksum field in the packet to
+  // contain the pseudo-header checksum. Compute and write it.
+  if (BuiltHdr.Flags & AEROVNET_VIRTIO_NET_HDR_F_NEEDS_CSUM) {
+    AEROVNET_PACKET_INFO Pkt;
+    AEROVNET_CSUM_STATE Pseudo;
+    USHORT PseudoSum;
+    ULONG CsumFieldOffset;
+
+    RtlZeroMemory(&Pkt, sizeof(Pkt));
+    RtlZeroMemory(&Pseudo, sizeof(Pseudo));
+    PseudoSum = 0;
+
+    if (AerovNetParsePacketInfo((const UCHAR*)FramePtr, FrameLen, CopyLen, &Pkt)) {
+      AerovNetCsumAccumulatePseudoHeader(&Pseudo, &Pkt);
+      PseudoSum = AerovNetCsumFoldState(&Pseudo);
+
+      CsumFieldOffset = (ULONG)BuiltHdr.CsumStart + (ULONG)BuiltHdr.CsumOffset;
+      if (CsumFieldOffset + 2 <= FrameLen) {
+        (VOID)AerovNetWriteNetBufferBe16(TxReq->Nb, CsumFieldOffset, PseudoSum);
+      }
+    }
+  }
+
 #if DBG
   if (Intent.WantUdpChecksum) {
     InterlockedIncrement(&g_AerovNetDbgTxUdpCsumOffload);
@@ -1393,6 +2131,22 @@ static NDIS_STATUS AerovNetBuildTxHeader(_Inout_ AEROVNET_ADAPTER* Adapter, _Ino
   // copy the base fields.
   RtlZeroMemory(TxReq->HeaderVa, Adapter->RxHeaderBytes);
   RtlCopyMemory(TxReq->HeaderVa, &BuiltHdr, sizeof(BuiltHdr));
+
+  // Instrumentation: TX checksum offload usage by protocol.
+  if (Info.L4Protocol == 6u) {
+    if (Info.IpVersion == 4) {
+      InterlockedIncrement64((volatile LONG64*)&Adapter->StatTxCsumOffloadTcp4);
+    } else if (Info.IpVersion == 6) {
+      InterlockedIncrement64((volatile LONG64*)&Adapter->StatTxCsumOffloadTcp6);
+    }
+  } else if (Info.L4Protocol == 17u) {
+    if (Info.IpVersion == 4) {
+      InterlockedIncrement64((volatile LONG64*)&Adapter->StatTxCsumOffloadUdp4);
+    } else if (Info.IpVersion == 6) {
+      InterlockedIncrement64((volatile LONG64*)&Adapter->StatTxCsumOffloadUdp6);
+    }
+  }
+
   return NDIS_STATUS_SUCCESS;
 }
 
@@ -2625,6 +3379,16 @@ static NDIS_STATUS AerovNetVirtioStart(_Inout_ AEROVNET_ADAPTER* Adapter) {
   Adapter->TxTsoV6Enabled = Adapter->TxTsoV6Supported;
   Adapter->TxTsoMaxOffloadSize = 0x00010000u; // 64KiB total packet size.
 
+  // Enable receive checksum indication by default when the device negotiated
+  // VIRTIO_NET_F_GUEST_CSUM. NDIS can toggle it via OID_TCP_OFFLOAD_PARAMETERS.
+  {
+    const BOOLEAN RxCsum = (Adapter->GuestFeatures & VIRTIO_NET_F_GUEST_CSUM) ? TRUE : FALSE;
+    Adapter->RxChecksumV4Enabled = RxCsum;
+    Adapter->RxChecksumV6Enabled = RxCsum;
+    Adapter->RxUdpChecksumV4Enabled = RxCsum;
+    Adapter->RxUdpChecksumV6Enabled = RxCsum;
+  }
+
   // Read virtio-net device config (MAC + link status).
   RtlZeroMemory(Mac, sizeof(Mac));
   NtStatus = VirtioPciReadDeviceConfig(&Adapter->Vdev, 0, Mac, sizeof(Mac));
@@ -3253,7 +4017,6 @@ static VOID AerovNetInterruptDpcWork(_Inout_ AEROVNET_ADAPTER* Adapter, _In_ BOO
       }
     }
   }
-
   // Link state change handling (config interrupt).
   if (DoConfig) {
     USHORT LinkStatus;
@@ -3583,61 +4346,85 @@ ReleaseAndExit:
 }
 
 static VOID AerovNetBuildNdisOffload(_In_ const AEROVNET_ADAPTER* Adapter, _In_ BOOLEAN UseCurrentConfig, _Out_ NDIS_OFFLOAD* Offload) {
-  BOOLEAN CsumV4;
-  BOOLEAN CsumV6;
-  BOOLEAN UdpCsumV4;
-  BOOLEAN UdpCsumV6;
+  BOOLEAN TxTcp4;
+  BOOLEAN TxUdp4;
+  BOOLEAN TxTcp6;
+  BOOLEAN TxUdp6;
+  BOOLEAN RxTcp4;
+  BOOLEAN RxUdp4;
+  BOOLEAN RxTcp6;
+  BOOLEAN RxUdp6;
   BOOLEAN TsoV4;
   BOOLEAN TsoV6;
+  BOOLEAN RxSupported;
+
+  if (!Offload) {
+    return;
+  }
 
   RtlZeroMemory(Offload, sizeof(*Offload));
   Offload->Header.Type = NDIS_OBJECT_TYPE_OFFLOAD;
   Offload->Header.Revision = NDIS_OFFLOAD_REVISION_1;
   Offload->Header.Size = (USHORT)sizeof(*Offload);
 
+  // Start with negotiated (hardware) capabilities.
+  TxTcp4 = Adapter->TxChecksumSupported;
+  TxUdp4 = Adapter->TxChecksumSupported;
+  TxTcp6 = Adapter->TxChecksumSupported;
+  TxUdp6 = Adapter->TxChecksumSupported;
+
+  RxSupported = ((Adapter->GuestFeatures & VIRTIO_NET_F_GUEST_CSUM) != 0) ? TRUE : FALSE;
+  RxTcp4 = RxSupported;
+  RxUdp4 = RxSupported;
+  RxTcp6 = RxSupported;
+  RxUdp6 = RxSupported;
+
+  TsoV4 = Adapter->TxTsoV4Supported;
+  TsoV6 = Adapter->TxTsoV6Supported;
+
   if (UseCurrentConfig) {
-    CsumV4 = Adapter->TxChecksumV4Enabled;
-    CsumV6 = Adapter->TxChecksumV6Enabled;
-    UdpCsumV4 = Adapter->TxUdpChecksumV4Enabled;
-    UdpCsumV6 = Adapter->TxUdpChecksumV6Enabled;
-    TsoV4 = Adapter->TxTsoV4Enabled;
-    TsoV6 = Adapter->TxTsoV6Enabled;
-  } else {
-    CsumV4 = Adapter->TxChecksumSupported;
-    CsumV6 = Adapter->TxChecksumSupported;
-    UdpCsumV4 = Adapter->TxChecksumSupported;
-    UdpCsumV6 = Adapter->TxChecksumSupported;
-    TsoV4 = Adapter->TxTsoV4Supported;
-    TsoV6 = Adapter->TxTsoV6Supported;
+    // Reflect current enablement state (toggled via OID_TCP_OFFLOAD_PARAMETERS).
+    TxTcp4 = TxTcp4 && Adapter->TxChecksumV4Enabled;
+    TxUdp4 = TxUdp4 && Adapter->TxUdpChecksumV4Enabled;
+    TxTcp6 = TxTcp6 && Adapter->TxChecksumV6Enabled;
+    TxUdp6 = TxUdp6 && Adapter->TxUdpChecksumV6Enabled;
+    RxTcp4 = RxTcp4 && Adapter->RxChecksumV4Enabled;
+    RxUdp4 = RxUdp4 && Adapter->RxUdpChecksumV4Enabled;
+    RxTcp6 = RxTcp6 && Adapter->RxChecksumV6Enabled;
+    RxUdp6 = RxUdp6 && Adapter->RxUdpChecksumV6Enabled;
+
+    // TSO implies TCP checksum offload.
+    TsoV4 = TsoV4 && Adapter->TxTsoV4Enabled && Adapter->TxChecksumV4Enabled;
+    TsoV6 = TsoV6 && Adapter->TxTsoV6Enabled && Adapter->TxChecksumV6Enabled;
   }
 
-  // Checksum offload (TX only).
+  // Only L4 checksum offload is supported. IPv4 header checksum is always computed in software.
   Offload->Checksum.IPv4Transmit.Encapsulation = NDIS_ENCAPSULATION_IEEE_802_3;
-  Offload->Checksum.IPv4Transmit.IpOptionsSupported = (CsumV4 || UdpCsumV4) ? NDIS_OFFLOAD_SUPPORTED : NDIS_OFFLOAD_NOT_SUPPORTED;
-  Offload->Checksum.IPv4Transmit.TcpOptionsSupported = CsumV4 ? NDIS_OFFLOAD_SUPPORTED : NDIS_OFFLOAD_NOT_SUPPORTED;
-  Offload->Checksum.IPv4Transmit.TcpChecksum = CsumV4 ? NDIS_OFFLOAD_SUPPORTED : NDIS_OFFLOAD_NOT_SUPPORTED;
-  Offload->Checksum.IPv4Transmit.UdpChecksum = UdpCsumV4 ? NDIS_OFFLOAD_SUPPORTED : NDIS_OFFLOAD_NOT_SUPPORTED;
+  Offload->Checksum.IPv4Transmit.IpOptionsSupported = (TxTcp4 || TxUdp4) ? NDIS_OFFLOAD_SUPPORTED : NDIS_OFFLOAD_NOT_SUPPORTED;
+  Offload->Checksum.IPv4Transmit.TcpOptionsSupported = TxTcp4 ? NDIS_OFFLOAD_SUPPORTED : NDIS_OFFLOAD_NOT_SUPPORTED;
   Offload->Checksum.IPv4Transmit.IpChecksum = NDIS_OFFLOAD_NOT_SUPPORTED;
+  Offload->Checksum.IPv4Transmit.TcpChecksum = TxTcp4 ? NDIS_OFFLOAD_SUPPORTED : NDIS_OFFLOAD_NOT_SUPPORTED;
+  Offload->Checksum.IPv4Transmit.UdpChecksum = TxUdp4 ? NDIS_OFFLOAD_SUPPORTED : NDIS_OFFLOAD_NOT_SUPPORTED;
 
   Offload->Checksum.IPv4Receive.Encapsulation = NDIS_ENCAPSULATION_IEEE_802_3;
   Offload->Checksum.IPv4Receive.IpOptionsSupported = NDIS_OFFLOAD_NOT_SUPPORTED;
   Offload->Checksum.IPv4Receive.TcpOptionsSupported = NDIS_OFFLOAD_NOT_SUPPORTED;
-  Offload->Checksum.IPv4Receive.TcpChecksum = NDIS_OFFLOAD_NOT_SUPPORTED;
-  Offload->Checksum.IPv4Receive.UdpChecksum = NDIS_OFFLOAD_NOT_SUPPORTED;
   Offload->Checksum.IPv4Receive.IpChecksum = NDIS_OFFLOAD_NOT_SUPPORTED;
+  Offload->Checksum.IPv4Receive.TcpChecksum = RxTcp4 ? NDIS_OFFLOAD_SUPPORTED : NDIS_OFFLOAD_NOT_SUPPORTED;
+  Offload->Checksum.IPv4Receive.UdpChecksum = RxUdp4 ? NDIS_OFFLOAD_SUPPORTED : NDIS_OFFLOAD_NOT_SUPPORTED;
 
   Offload->Checksum.IPv6Transmit.Encapsulation = NDIS_ENCAPSULATION_IEEE_802_3;
   Offload->Checksum.IPv6Transmit.IpExtensionHeadersSupported =
-      (CsumV6 || UdpCsumV6) ? NDIS_OFFLOAD_SUPPORTED : NDIS_OFFLOAD_NOT_SUPPORTED;
-  Offload->Checksum.IPv6Transmit.TcpOptionsSupported = CsumV6 ? NDIS_OFFLOAD_SUPPORTED : NDIS_OFFLOAD_NOT_SUPPORTED;
-  Offload->Checksum.IPv6Transmit.TcpChecksum = CsumV6 ? NDIS_OFFLOAD_SUPPORTED : NDIS_OFFLOAD_NOT_SUPPORTED;
-  Offload->Checksum.IPv6Transmit.UdpChecksum = UdpCsumV6 ? NDIS_OFFLOAD_SUPPORTED : NDIS_OFFLOAD_NOT_SUPPORTED;
+      (TxTcp6 || TxUdp6) ? NDIS_OFFLOAD_SUPPORTED : NDIS_OFFLOAD_NOT_SUPPORTED;
+  Offload->Checksum.IPv6Transmit.TcpOptionsSupported = TxTcp6 ? NDIS_OFFLOAD_SUPPORTED : NDIS_OFFLOAD_NOT_SUPPORTED;
+  Offload->Checksum.IPv6Transmit.TcpChecksum = TxTcp6 ? NDIS_OFFLOAD_SUPPORTED : NDIS_OFFLOAD_NOT_SUPPORTED;
+  Offload->Checksum.IPv6Transmit.UdpChecksum = TxUdp6 ? NDIS_OFFLOAD_SUPPORTED : NDIS_OFFLOAD_NOT_SUPPORTED;
 
   Offload->Checksum.IPv6Receive.Encapsulation = NDIS_ENCAPSULATION_IEEE_802_3;
   Offload->Checksum.IPv6Receive.IpExtensionHeadersSupported = NDIS_OFFLOAD_NOT_SUPPORTED;
   Offload->Checksum.IPv6Receive.TcpOptionsSupported = NDIS_OFFLOAD_NOT_SUPPORTED;
-  Offload->Checksum.IPv6Receive.TcpChecksum = NDIS_OFFLOAD_NOT_SUPPORTED;
-  Offload->Checksum.IPv6Receive.UdpChecksum = NDIS_OFFLOAD_NOT_SUPPORTED;
+  Offload->Checksum.IPv6Receive.TcpChecksum = RxTcp6 ? NDIS_OFFLOAD_SUPPORTED : NDIS_OFFLOAD_NOT_SUPPORTED;
+  Offload->Checksum.IPv6Receive.UdpChecksum = RxUdp6 ? NDIS_OFFLOAD_SUPPORTED : NDIS_OFFLOAD_NOT_SUPPORTED;
 
   // Large send offload v2 (TX only).
   Offload->LsoV2.IPv4.Encapsulation = NDIS_ENCAPSULATION_IEEE_802_3;
@@ -3653,28 +4440,12 @@ static VOID AerovNetBuildNdisOffload(_In_ const AEROVNET_ADAPTER* Adapter, _In_ 
   Offload->LsoV2.IPv6.IpExtensionHeadersSupported = TsoV6 ? NDIS_OFFLOAD_SUPPORTED : NDIS_OFFLOAD_NOT_SUPPORTED;
 }
 
-static NDIS_STATUS AerovNetSetOffloadAttributes(_Inout_ AEROVNET_ADAPTER* Adapter) {
-  NDIS_STATUS Status;
-  NDIS_OFFLOAD HwOffload;
-  NDIS_OFFLOAD DefaultOffload;
-  NDIS_MINIPORT_ADAPTER_OFFLOAD_ATTRIBUTES OffloadAttr;
+static __forceinline BOOLEAN AerovNetOffloadParamTxEnabled(_In_ UCHAR V) {
+  return (V == NDIS_OFFLOAD_PARAMETERS_TX_ENABLED_RX_DISABLED || V == NDIS_OFFLOAD_PARAMETERS_TX_RX_ENABLED);
+}
 
-  if (!Adapter) {
-    return NDIS_STATUS_FAILURE;
-  }
-
-  AerovNetBuildNdisOffload(Adapter, FALSE, &HwOffload);
-  AerovNetBuildNdisOffload(Adapter, TRUE, &DefaultOffload);
-
-  RtlZeroMemory(&OffloadAttr, sizeof(OffloadAttr));
-  OffloadAttr.Header.Type = NDIS_OBJECT_TYPE_MINIPORT_ADAPTER_OFFLOAD_ATTRIBUTES;
-  OffloadAttr.Header.Revision = NDIS_MINIPORT_ADAPTER_OFFLOAD_ATTRIBUTES_REVISION_1;
-  OffloadAttr.Header.Size = (USHORT)sizeof(OffloadAttr);
-  OffloadAttr.DefaultOffloadConfiguration = &DefaultOffload;
-  OffloadAttr.HardwareOffloadCapabilities = &HwOffload;
-
-  Status = NdisMSetMiniportAttributes(Adapter->MiniportAdapterHandle, (PNDIS_MINIPORT_ADAPTER_ATTRIBUTES)&OffloadAttr);
-  return Status;
+static __forceinline BOOLEAN AerovNetOffloadParamRxEnabled(_In_ UCHAR V) {
+  return (V == NDIS_OFFLOAD_PARAMETERS_RX_ENABLED_TX_DISABLED || V == NDIS_OFFLOAD_PARAMETERS_TX_RX_ENABLED);
 }
 
 static NDIS_STATUS AerovNetOidQuery(_Inout_ AEROVNET_ADAPTER* Adapter, _Inout_ PNDIS_OID_REQUEST OidRequest) {
@@ -4059,26 +4830,17 @@ static NDIS_STATUS AerovNetOidSet(_Inout_ AEROVNET_ADAPTER* Adapter, _Inout_ PND
 
   switch (Oid) {
     case OID_TCP_OFFLOAD_PARAMETERS: {
-      NDIS_OFFLOAD_PARAMETERS* Params;
-      ULONG MinSize;
+      const NDIS_OFFLOAD_PARAMETERS* Params;
       NDIS_STATUS SetStatus;
 
-      if (InLen < sizeof(NDIS_OBJECT_HEADER)) {
-        return NDIS_STATUS_INVALID_LENGTH;
-      }
-
-      Params = (NDIS_OFFLOAD_PARAMETERS*)InBuffer;
-      BytesNeeded = Params->Header.Size;
-      if (BytesNeeded == 0) {
-        return NDIS_STATUS_INVALID_DATA;
-      }
+      BytesNeeded = sizeof(NDIS_OFFLOAD_PARAMETERS);
       if (InLen < BytesNeeded) {
         break;
       }
 
-      // We only rely on fields present in revision 1.
-      MinSize = FIELD_OFFSET(NDIS_OFFLOAD_PARAMETERS, LsoV2IPv6) + sizeof(UCHAR);
-      if (Params->Header.Size < MinSize) {
+      Params = (const NDIS_OFFLOAD_PARAMETERS*)InBuffer;
+      if (Params->Header.Type != NDIS_OBJECT_TYPE_DEFAULT || Params->Header.Revision != NDIS_OFFLOAD_PARAMETERS_REVISION_1 ||
+          Params->Header.Size < sizeof(NDIS_OFFLOAD_PARAMETERS)) {
         return NDIS_STATUS_INVALID_DATA;
       }
 
@@ -4087,8 +4849,13 @@ static NDIS_STATUS AerovNetOidSet(_Inout_ AEROVNET_ADAPTER* Adapter, _Inout_ PND
         BOOLEAN TxCsumV6;
         BOOLEAN TxUdpCsumV4;
         BOOLEAN TxUdpCsumV6;
+        BOOLEAN RxCsumV4;
+        BOOLEAN RxCsumV6;
+        BOOLEAN RxUdpCsumV4;
+        BOOLEAN RxUdpCsumV6;
         BOOLEAN TxTsoV4;
         BOOLEAN TxTsoV6;
+        const BOOLEAN RxSupported = ((Adapter->GuestFeatures & VIRTIO_NET_F_GUEST_CSUM) != 0) ? TRUE : FALSE;
 
         SetStatus = NDIS_STATUS_SUCCESS;
 
@@ -4101,93 +4868,82 @@ static NDIS_STATUS AerovNetOidSet(_Inout_ AEROVNET_ADAPTER* Adapter, _Inout_ PND
         TxCsumV6 = Adapter->TxChecksumV6Enabled;
         TxUdpCsumV4 = Adapter->TxUdpChecksumV4Enabled;
         TxUdpCsumV6 = Adapter->TxUdpChecksumV6Enabled;
+        RxCsumV4 = Adapter->RxChecksumV4Enabled;
+        RxCsumV6 = Adapter->RxChecksumV6Enabled;
+        RxUdpCsumV4 = Adapter->RxUdpChecksumV4Enabled;
+        RxUdpCsumV6 = Adapter->RxUdpChecksumV6Enabled;
         TxTsoV4 = Adapter->TxTsoV4Enabled;
         TxTsoV6 = Adapter->TxTsoV6Enabled;
 
         // NDIS_OFFLOAD_PARAMETERS fields are UCHAR enums:
         // 0 = no change, 1 = disabled, 2 = tx enabled, 3 = rx enabled, 4 = tx+rx enabled.
-        // We only support transmit offloads.
         {
           UCHAR V = Params->TCPIPv4Checksum;
           if (V != 0) {
-            if (V == 1 || V == 3) {
-              TxCsumV4 = FALSE;
-            } else if (V == 2 || V == 4) {
-              TxCsumV4 = TRUE;
-            } else {
+            if (V < 1 || V > 4) {
               SetStatus = NDIS_STATUS_INVALID_DATA;
               goto TcpOffloadParamsDone;
             }
+            TxCsumV4 = AerovNetOffloadParamTxEnabled(V);
+            RxCsumV4 = AerovNetOffloadParamRxEnabled(V);
           }
         }
 
         {
           UCHAR V = Params->TCPIPv6Checksum;
           if (V != 0) {
-            if (V == 1 || V == 3) {
-              TxCsumV6 = FALSE;
-            } else if (V == 2 || V == 4) {
-              TxCsumV6 = TRUE;
-            } else {
+            if (V < 1 || V > 4) {
               SetStatus = NDIS_STATUS_INVALID_DATA;
               goto TcpOffloadParamsDone;
             }
+            TxCsumV6 = AerovNetOffloadParamTxEnabled(V);
+            RxCsumV6 = AerovNetOffloadParamRxEnabled(V);
           }
         }
 
         {
           UCHAR V = Params->UDPIPv4Checksum;
           if (V != 0) {
-            if (V == 1 || V == 3) {
-              TxUdpCsumV4 = FALSE;
-            } else if (V == 2 || V == 4) {
-              TxUdpCsumV4 = TRUE;
-            } else {
+            if (V < 1 || V > 4) {
               SetStatus = NDIS_STATUS_INVALID_DATA;
               goto TcpOffloadParamsDone;
             }
+            TxUdpCsumV4 = AerovNetOffloadParamTxEnabled(V);
+            RxUdpCsumV4 = AerovNetOffloadParamRxEnabled(V);
           }
         }
 
         {
           UCHAR V = Params->UDPIPv6Checksum;
           if (V != 0) {
-            if (V == 1 || V == 3) {
-              TxUdpCsumV6 = FALSE;
-            } else if (V == 2 || V == 4) {
-              TxUdpCsumV6 = TRUE;
-            } else {
+            if (V < 1 || V > 4) {
               SetStatus = NDIS_STATUS_INVALID_DATA;
               goto TcpOffloadParamsDone;
             }
+            TxUdpCsumV6 = AerovNetOffloadParamTxEnabled(V);
+            RxUdpCsumV6 = AerovNetOffloadParamRxEnabled(V);
           }
         }
 
         {
           UCHAR V = Params->LsoV2IPv4;
           if (V != 0) {
-            if (V == 1 || V == 3) {
-              TxTsoV4 = FALSE;
-            } else if (V == 2 || V == 4) {
-              TxTsoV4 = TRUE;
-            } else {
+            if (V < 1 || V > 4) {
               SetStatus = NDIS_STATUS_INVALID_DATA;
               goto TcpOffloadParamsDone;
             }
+            TxTsoV4 = AerovNetOffloadParamTxEnabled(V);
           }
         }
 
         {
           UCHAR V = Params->LsoV2IPv6;
           if (V != 0) {
-            if (V == 1 || V == 3) {
-              TxTsoV6 = FALSE;
-            } else if (V == 2 || V == 4) {
-              TxTsoV6 = TRUE;
-            } else {
+            if (V < 1 || V > 4) {
               SetStatus = NDIS_STATUS_INVALID_DATA;
               goto TcpOffloadParamsDone;
             }
+            TxTsoV6 = AerovNetOffloadParamTxEnabled(V);
           }
         }
 
@@ -4197,6 +4953,20 @@ static NDIS_STATUS AerovNetOidSet(_Inout_ AEROVNET_ADAPTER* Adapter, _Inout_ PND
           TxCsumV6 = FALSE;
           TxUdpCsumV4 = FALSE;
           TxUdpCsumV6 = FALSE;
+        }
+        if (!RxSupported) {
+          RxCsumV4 = FALSE;
+          RxCsumV6 = FALSE;
+          RxUdpCsumV4 = FALSE;
+          RxUdpCsumV6 = FALSE;
+        }
+
+        // TSO requires TCP checksum offload.
+        if (!TxCsumV4) {
+          TxTsoV4 = FALSE;
+        }
+        if (!TxCsumV6) {
+          TxTsoV6 = FALSE;
         }
         if (!Adapter->TxTsoV4Supported) {
           TxTsoV4 = FALSE;
@@ -4209,6 +4979,10 @@ static NDIS_STATUS AerovNetOidSet(_Inout_ AEROVNET_ADAPTER* Adapter, _Inout_ PND
         Adapter->TxChecksumV6Enabled = TxCsumV6;
         Adapter->TxUdpChecksumV4Enabled = TxUdpCsumV4;
         Adapter->TxUdpChecksumV6Enabled = TxUdpCsumV6;
+        Adapter->RxChecksumV4Enabled = RxCsumV4;
+        Adapter->RxChecksumV6Enabled = RxCsumV6;
+        Adapter->RxUdpChecksumV4Enabled = RxUdpCsumV4;
+        Adapter->RxUdpChecksumV6Enabled = RxUdpCsumV6;
         Adapter->TxTsoV4Enabled = TxTsoV4;
         Adapter->TxTsoV6Enabled = TxTsoV6;
 
@@ -4220,7 +4994,7 @@ TcpOffloadParamsDone:
         }
       }
 
-      BytesRead = BytesNeeded;
+      BytesRead = sizeof(NDIS_OFFLOAD_PARAMETERS);
       break;
     }
 
@@ -4812,6 +5586,9 @@ static NDIS_STATUS AerovNetMiniportInitializeEx(_In_ NDIS_HANDLE MiniportAdapter
   NDIS_STATUS Status;
   AEROVNET_ADAPTER* Adapter;
   NDIS_MINIPORT_ADAPTER_REGISTRATION_ATTRIBUTES Reg;
+  NDIS_MINIPORT_ADAPTER_OFFLOAD_ATTRIBUTES OffAttr;
+  NDIS_OFFLOAD OffloadCaps;
+  NDIS_OFFLOAD OffloadConfig;
   NDIS_MINIPORT_ADAPTER_GENERAL_ATTRIBUTES Gen;
   NDIS_MINIPORT_INTERRUPT_CHARACTERISTICS Intr;
   NDIS_SG_DMA_DESCRIPTION DmaDesc;
@@ -4925,6 +5702,39 @@ static NDIS_STATUS AerovNetMiniportInitializeEx(_In_ NDIS_HANDLE MiniportAdapter
     return Status;
   }
 
+  RtlZeroMemory(&OffloadCaps, sizeof(OffloadCaps));
+  RtlZeroMemory(&OffloadConfig, sizeof(OffloadConfig));
+  AerovNetBuildNdisOffload(Adapter, FALSE, &OffloadCaps);
+  AerovNetBuildNdisOffload(Adapter, TRUE, &OffloadConfig);
+
+  RtlZeroMemory(&OffAttr, sizeof(OffAttr));
+  OffAttr.Header.Type = NDIS_OBJECT_TYPE_MINIPORT_ADAPTER_OFFLOAD_ATTRIBUTES;
+  OffAttr.Header.Revision = NDIS_MINIPORT_ADAPTER_OFFLOAD_ATTRIBUTES_REVISION_1;
+  OffAttr.Header.Size = sizeof(OffAttr);
+  OffAttr.DefaultOffloadConfiguration = &OffloadConfig;
+  OffAttr.HardwareOffloadCapabilities = &OffloadCaps;
+
+  Status = NdisMSetMiniportAttributes(MiniportAdapterHandle, (PNDIS_MINIPORT_ADAPTER_ATTRIBUTES)&OffAttr);
+  if (Status != NDIS_STATUS_SUCCESS) {
+    // Fail safe: if NDIS rejects the offload advertisement, disable offloads
+    // entirely so the upper stack does not send packets that rely on hardware
+    // assistance.
+    Adapter->TxChecksumSupported = FALSE;
+    Adapter->TxTsoV4Supported = FALSE;
+    Adapter->TxTsoV6Supported = FALSE;
+    Adapter->TxChecksumV4Enabled = FALSE;
+    Adapter->TxChecksumV6Enabled = FALSE;
+    Adapter->TxUdpChecksumV4Enabled = FALSE;
+    Adapter->TxUdpChecksumV6Enabled = FALSE;
+    Adapter->TxTsoV4Enabled = FALSE;
+    Adapter->TxTsoV6Enabled = FALSE;
+    Adapter->RxChecksumV4Enabled = FALSE;
+    Adapter->RxChecksumV6Enabled = FALSE;
+    Adapter->RxUdpChecksumV4Enabled = FALSE;
+    Adapter->RxUdpChecksumV6Enabled = FALSE;
+    Adapter->TxTsoMaxOffloadSize = 0;
+  }
+
   // General attributes.
   RtlZeroMemory(&Gen, sizeof(Gen));
   Gen.Header.Type = NDIS_OBJECT_TYPE_MINIPORT_ADAPTER_GENERAL_ATTRIBUTES;
@@ -4953,13 +5763,6 @@ static NDIS_STATUS AerovNetMiniportInitializeEx(_In_ NDIS_HANDLE MiniportAdapter
   Gen.SupportedOidListLength = sizeof(g_SupportedOids);
 
   Status = NdisMSetMiniportAttributes(MiniportAdapterHandle, (PNDIS_MINIPORT_ADAPTER_ATTRIBUTES)&Gen);
-  if (Status != NDIS_STATUS_SUCCESS) {
-    AerovNetCleanupAdapter(Adapter);
-    return Status;
-  }
-
-  // Offload capabilities (only advertise negotiated virtio-net features).
-  Status = AerovNetSetOffloadAttributes(Adapter);
   if (Status != NDIS_STATUS_SUCCESS) {
     AerovNetCleanupAdapter(Adapter);
     return Status;
@@ -5062,6 +5865,7 @@ static NTSTATUS AerovNetDiagDispatchDeviceControl(_In_ PDEVICE_OBJECT DeviceObje
   NTSTATUS Status;
   AEROVNET_ADAPTER* Adapter;
   AEROVNET_DIAG_INFO Info;
+  AEROVNET_OFFLOAD_STATS OffloadStats;
   ULONG CopyLen;
   volatile virtio_pci_common_cfg* CommonCfg;
 
@@ -5075,7 +5879,7 @@ static NTSTATUS AerovNetDiagDispatchDeviceControl(_In_ PDEVICE_OBJECT DeviceObje
   CopyLen = 0;
   CommonCfg = NULL;
 
-  if (Ioctl != AEROVNET_DIAG_IOCTL_QUERY) {
+  if (Ioctl != AEROVNET_DIAG_IOCTL_QUERY && Ioctl != AEROVNET_IOCTL_QUERY_OFFLOAD_STATS) {
     Irp->IoStatus.Status = Status;
     Irp->IoStatus.Information = 0;
     IoCompleteRequest(Irp, IO_NO_INCREMENT);
@@ -5083,6 +5887,14 @@ static NTSTATUS AerovNetDiagDispatchDeviceControl(_In_ PDEVICE_OBJECT DeviceObje
   }
 
   if (Irp->AssociatedIrp.SystemBuffer == NULL || OutLen < sizeof(ULONG) * 2) {
+    Status = STATUS_BUFFER_TOO_SMALL;
+    Irp->IoStatus.Status = Status;
+    Irp->IoStatus.Information = 0;
+    IoCompleteRequest(Irp, IO_NO_INCREMENT);
+    return Status;
+  }
+
+  if (Ioctl == AEROVNET_IOCTL_QUERY_OFFLOAD_STATS && OutLen < sizeof(OffloadStats)) {
     Status = STATUS_BUFFER_TOO_SMALL;
     Irp->IoStatus.Status = Status;
     Irp->IoStatus.Information = 0;
@@ -5099,13 +5911,6 @@ static NTSTATUS AerovNetDiagDispatchDeviceControl(_In_ PDEVICE_OBJECT DeviceObje
     return Status;
   }
 
-  RtlZeroMemory(&Info, sizeof(Info));
-  Info.Version = AEROVNET_DIAG_INFO_VERSION;
-  Info.Size = sizeof(Info);
-  Info.MsixConfigVector = VIRTIO_PCI_MSI_NO_VECTOR;
-  Info.MsixRxVector = VIRTIO_PCI_MSI_NO_VECTOR;
-  Info.MsixTxVector = VIRTIO_PCI_MSI_NO_VECTOR;
-
   // Snapshot cached state under the adapter lock.
   NdisAcquireSpinLock(&Adapter->Lock);
   if (Adapter->State == AerovNetAdapterStopped || Adapter->SurpriseRemoved) {
@@ -5119,149 +5924,175 @@ static NTSTATUS AerovNetDiagDispatchDeviceControl(_In_ PDEVICE_OBJECT DeviceObje
     return Status;
   }
 
-  Info.HostFeatures = Adapter->HostFeatures;
-  Info.GuestFeatures = Adapter->GuestFeatures;
+  if (Ioctl == AEROVNET_DIAG_IOCTL_QUERY) {
+    RtlZeroMemory(&Info, sizeof(Info));
+    Info.Version = AEROVNET_DIAG_INFO_VERSION;
+    Info.Size = sizeof(Info);
+    Info.MsixConfigVector = VIRTIO_PCI_MSI_NO_VECTOR;
+    Info.MsixRxVector = VIRTIO_PCI_MSI_NO_VECTOR;
+    Info.MsixTxVector = VIRTIO_PCI_MSI_NO_VECTOR;
 
-  Info.InterruptMode = Adapter->UseMsix ? AEROVNET_INTERRUPT_MODE_MSI : AEROVNET_INTERRUPT_MODE_INTX;
-  // `MessageCount` reflects how many message interrupts Windows granted, not
-  // necessarily whether the driver ended up using MSI-X (we can fall back to
-  // INTx if vector programming fails).
-  Info.MessageCount = (ULONG)Adapter->MsixMessageCount;
-  Info.MsixConfigVector = Adapter->MsixConfigVector;
-  Info.MsixRxVector = Adapter->MsixRxVector;
-  Info.MsixTxVector = Adapter->MsixTxVector;
-  CommonCfg = Adapter->Vdev.CommonCfg;
+    Info.HostFeatures = Adapter->HostFeatures;
+    Info.GuestFeatures = Adapter->GuestFeatures;
 
-  if (Adapter->UseMsix) {
-    Info.Flags |= AEROVNET_DIAG_FLAG_USE_MSIX;
-    if (Adapter->MsixAllOnVector0) {
-      Info.Flags |= AEROVNET_DIAG_FLAG_MSIX_ALL_ON_VECTOR0;
+    Info.InterruptMode = Adapter->UseMsix ? AEROVNET_INTERRUPT_MODE_MSI : AEROVNET_INTERRUPT_MODE_INTX;
+    // `MessageCount` reflects how many message interrupts Windows granted, not
+    // necessarily whether the driver ended up using MSI-X (we can fall back to
+    // INTx if vector programming fails).
+    Info.MessageCount = (ULONG)Adapter->MsixMessageCount;
+    Info.MsixConfigVector = Adapter->MsixConfigVector;
+    Info.MsixRxVector = Adapter->MsixRxVector;
+    Info.MsixTxVector = Adapter->MsixTxVector;
+    CommonCfg = Adapter->Vdev.CommonCfg;
+
+    if (Adapter->UseMsix) {
+      Info.Flags |= AEROVNET_DIAG_FLAG_USE_MSIX;
+      if (Adapter->MsixAllOnVector0) {
+        Info.Flags |= AEROVNET_DIAG_FLAG_MSIX_ALL_ON_VECTOR0;
+      }
     }
-  }
 
-  if (Adapter->SurpriseRemoved) {
-    Info.Flags |= AEROVNET_DIAG_FLAG_SURPRISE_REMOVED;
-  }
-
-  if (Adapter->State == AerovNetAdapterRunning) {
-    Info.Flags |= AEROVNET_DIAG_FLAG_ADAPTER_RUNNING;
-  } else if (Adapter->State == AerovNetAdapterPaused) {
-    Info.Flags |= AEROVNET_DIAG_FLAG_ADAPTER_PAUSED;
-  }
-
-  Info.RxQueueSize = Adapter->RxVq.QueueSize;
-  Info.TxQueueSize = Adapter->TxVq.QueueSize;
-
-  Info.RxAvailIdx = (USHORT)Adapter->RxVq.Vq.avail_idx;
-  Info.RxUsedIdx = (Adapter->RxVq.Vq.used != NULL) ? (USHORT)Adapter->RxVq.Vq.used->idx : 0;
-  Info.TxAvailIdx = (USHORT)Adapter->TxVq.Vq.avail_idx;
-  Info.TxUsedIdx = (Adapter->TxVq.Vq.used != NULL) ? (USHORT)Adapter->TxVq.Vq.used->idx : 0;
-
-  Info.TxChecksumSupported = Adapter->TxChecksumSupported ? 1 : 0;
-  Info.TxTsoV4Supported = Adapter->TxTsoV4Supported ? 1 : 0;
-  Info.TxTsoV6Supported = Adapter->TxTsoV6Supported ? 1 : 0;
-  Info.TxChecksumV4Enabled = Adapter->TxChecksumV4Enabled ? 1 : 0;
-  Info.TxChecksumV6Enabled = Adapter->TxChecksumV6Enabled ? 1 : 0;
-  Info.TxTsoV4Enabled = Adapter->TxTsoV4Enabled ? 1 : 0;
-  Info.TxTsoV6Enabled = Adapter->TxTsoV6Enabled ? 1 : 0;
-
-  Info.StatTxPackets = Adapter->StatTxPackets;
-  Info.StatTxBytes = Adapter->StatTxBytes;
-  Info.StatRxPackets = Adapter->StatRxPackets;
-  Info.StatRxBytes = Adapter->StatRxBytes;
-  Info.StatTxErrors = Adapter->StatTxErrors;
-  Info.StatRxErrors = Adapter->StatRxErrors;
-  Info.StatRxNoBuffers = Adapter->StatRxNoBuffers;
-
-  Info.RxVqErrorFlags = (ULONG)virtqueue_split_get_error_flags(&Adapter->RxVq.Vq);
-  Info.TxVqErrorFlags = (ULONG)virtqueue_split_get_error_flags(&Adapter->TxVq.Vq);
-
-  Info.TxTsoMaxOffloadSize = Adapter->TxTsoMaxOffloadSize;
-  Info.TxUdpChecksumV4Enabled = Adapter->TxUdpChecksumV4Enabled ? 1 : 0;
-  Info.TxUdpChecksumV6Enabled = Adapter->TxUdpChecksumV6Enabled ? 1 : 0;
-
-  Info.CtrlVqNegotiated = (Adapter->GuestFeatures & VIRTIO_NET_F_CTRL_VQ) ? 1 : 0;
-  Info.CtrlRxNegotiated = (Adapter->GuestFeatures & VIRTIO_NET_F_CTRL_RX) ? 1 : 0;
-  Info.CtrlVlanNegotiated = (Adapter->GuestFeatures & VIRTIO_NET_F_CTRL_VLAN) ? 1 : 0;
-  Info.CtrlMacAddrNegotiated = (Adapter->GuestFeatures & VIRTIO_NET_F_CTRL_MAC_ADDR) ? 1 : 0;
-
-  Info.CtrlVqQueueIndex = Adapter->CtrlVq.QueueIndex;
-  Info.CtrlVqQueueSize = Adapter->CtrlVq.QueueSize;
-  Info.CtrlVqErrorFlags = (ULONG)virtqueue_split_get_error_flags(&Adapter->CtrlVq.Vq);
-
-  Info.CtrlCmdSent = Adapter->StatCtrlVqCmdSent;
-  Info.CtrlCmdOk = Adapter->StatCtrlVqCmdOk;
-  Info.CtrlCmdErr = Adapter->StatCtrlVqCmdErr;
-  Info.CtrlCmdTimeout = Adapter->StatCtrlVqCmdTimeout;
-
-  Info.StatTxTcpCsumOffload = Adapter->StatTxTcpCsumOffload;
-  Info.StatTxTcpCsumFallback = Adapter->StatTxTcpCsumFallback;
-  Info.StatTxUdpCsumOffload = Adapter->StatTxUdpCsumOffload;
-  Info.StatTxUdpCsumFallback = Adapter->StatTxUdpCsumFallback;
-
-  RtlCopyMemory(Info.PermanentMac, Adapter->PermanentMac, sizeof(Info.PermanentMac));
-  RtlCopyMemory(Info.CurrentMac, Adapter->CurrentMac, sizeof(Info.CurrentMac));
-  Info.LinkUp = Adapter->LinkUp ? 1u : 0u;
-  NdisReleaseSpinLock(&Adapter->Lock);
-
-  // Read back the currently programmed MSI-X vectors from virtio common config.
-  //
-  // Only attempt this if:
-  //  - we're at PASSIVE_LEVEL (IOCTL path)
-  //  - BAR0 is still mapped (not surprise removed / not halted)
-  if (KeGetCurrentIrql() == PASSIVE_LEVEL && CommonCfg != NULL && !Adapter->SurpriseRemoved) {
-    KIRQL OldIrql;
-    USHORT MsixConfig;
-    USHORT MsixRx;
-    USHORT MsixTx;
-
-    MsixConfig = READ_REGISTER_USHORT((volatile USHORT*)&CommonCfg->msix_config);
-    KeMemoryBarrier();
-
-    MsixRx = VIRTIO_PCI_MSI_NO_VECTOR;
-    MsixTx = VIRTIO_PCI_MSI_NO_VECTOR;
-
-    KeAcquireSpinLock(&Adapter->Vdev.CommonCfgLock, &OldIrql);
-
-    WRITE_REGISTER_USHORT((volatile USHORT*)&CommonCfg->queue_select, 0);
-    KeMemoryBarrier();
-    /*
-     * Flush posted MMIO selector writes (see docs/windows7-virtio-driver-contract.md §1.5.0).
-     * Without a readback, some platforms can observe the old queue_select value
-     * when reading queue_msix_vector immediately after the write.
-     */
-    (VOID)READ_REGISTER_USHORT((volatile USHORT*)&CommonCfg->queue_select);
-    KeMemoryBarrier();
-    MsixRx = READ_REGISTER_USHORT((volatile USHORT*)&CommonCfg->queue_msix_vector);
-    KeMemoryBarrier();
-
-    WRITE_REGISTER_USHORT((volatile USHORT*)&CommonCfg->queue_select, 1);
-    KeMemoryBarrier();
-    (VOID)READ_REGISTER_USHORT((volatile USHORT*)&CommonCfg->queue_select);
-    KeMemoryBarrier();
-    MsixTx = READ_REGISTER_USHORT((volatile USHORT*)&CommonCfg->queue_msix_vector);
-    KeMemoryBarrier();
-
-    KeReleaseSpinLock(&Adapter->Vdev.CommonCfgLock, OldIrql);
-
-    Info.MsixConfigVector = MsixConfig;
-    Info.MsixRxVector = MsixRx;
-    Info.MsixTxVector = MsixTx;
-
-    // If vectors are assigned, treat the effective mode as MSI/MSI-X even if
-    // `UseMsix` was not set (should be rare; included for observability).
-    if (MsixConfig != VIRTIO_PCI_MSI_NO_VECTOR || MsixRx != VIRTIO_PCI_MSI_NO_VECTOR || MsixTx != VIRTIO_PCI_MSI_NO_VECTOR) {
-      Info.InterruptMode = AEROVNET_INTERRUPT_MODE_MSI;
+    if (Adapter->SurpriseRemoved) {
+      Info.Flags |= AEROVNET_DIAG_FLAG_SURPRISE_REMOVED;
     }
-  }
 
-  CopyLen = OutLen;
-  if (CopyLen > sizeof(Info)) {
-    CopyLen = sizeof(Info);
-  }
+    if (Adapter->State == AerovNetAdapterRunning) {
+      Info.Flags |= AEROVNET_DIAG_FLAG_ADAPTER_RUNNING;
+    } else if (Adapter->State == AerovNetAdapterPaused) {
+      Info.Flags |= AEROVNET_DIAG_FLAG_ADAPTER_PAUSED;
+    }
 
-  RtlCopyMemory(Irp->AssociatedIrp.SystemBuffer, &Info, CopyLen);
-  Status = STATUS_SUCCESS;
+    Info.RxQueueSize = Adapter->RxVq.QueueSize;
+    Info.TxQueueSize = Adapter->TxVq.QueueSize;
+
+    Info.RxAvailIdx = (USHORT)Adapter->RxVq.Vq.avail_idx;
+    Info.RxUsedIdx = (Adapter->RxVq.Vq.used != NULL) ? (USHORT)Adapter->RxVq.Vq.used->idx : 0;
+    Info.TxAvailIdx = (USHORT)Adapter->TxVq.Vq.avail_idx;
+    Info.TxUsedIdx = (Adapter->TxVq.Vq.used != NULL) ? (USHORT)Adapter->TxVq.Vq.used->idx : 0;
+
+    Info.TxChecksumSupported = Adapter->TxChecksumSupported ? 1 : 0;
+    Info.TxTsoV4Supported = Adapter->TxTsoV4Supported ? 1 : 0;
+    Info.TxTsoV6Supported = Adapter->TxTsoV6Supported ? 1 : 0;
+    Info.TxChecksumV4Enabled = Adapter->TxChecksumV4Enabled ? 1 : 0;
+    Info.TxChecksumV6Enabled = Adapter->TxChecksumV6Enabled ? 1 : 0;
+    Info.TxTsoV4Enabled = Adapter->TxTsoV4Enabled ? 1 : 0;
+    Info.TxTsoV6Enabled = Adapter->TxTsoV6Enabled ? 1 : 0;
+
+    Info.StatTxPackets = Adapter->StatTxPackets;
+    Info.StatTxBytes = Adapter->StatTxBytes;
+    Info.StatRxPackets = Adapter->StatRxPackets;
+    Info.StatRxBytes = Adapter->StatRxBytes;
+    Info.StatTxErrors = Adapter->StatTxErrors;
+    Info.StatRxErrors = Adapter->StatRxErrors;
+    Info.StatRxNoBuffers = Adapter->StatRxNoBuffers;
+
+    Info.RxVqErrorFlags = (ULONG)virtqueue_split_get_error_flags(&Adapter->RxVq.Vq);
+    Info.TxVqErrorFlags = (ULONG)virtqueue_split_get_error_flags(&Adapter->TxVq.Vq);
+
+    Info.TxTsoMaxOffloadSize = Adapter->TxTsoMaxOffloadSize;
+    Info.TxUdpChecksumV4Enabled = Adapter->TxUdpChecksumV4Enabled ? 1 : 0;
+    Info.TxUdpChecksumV6Enabled = Adapter->TxUdpChecksumV6Enabled ? 1 : 0;
+
+    Info.CtrlVqNegotiated = (Adapter->GuestFeatures & VIRTIO_NET_F_CTRL_VQ) ? 1 : 0;
+    Info.CtrlRxNegotiated = (Adapter->GuestFeatures & VIRTIO_NET_F_CTRL_RX) ? 1 : 0;
+    Info.CtrlVlanNegotiated = (Adapter->GuestFeatures & VIRTIO_NET_F_CTRL_VLAN) ? 1 : 0;
+    Info.CtrlMacAddrNegotiated = (Adapter->GuestFeatures & VIRTIO_NET_F_CTRL_MAC_ADDR) ? 1 : 0;
+
+    Info.CtrlVqQueueIndex = Adapter->CtrlVq.QueueIndex;
+    Info.CtrlVqQueueSize = Adapter->CtrlVq.QueueSize;
+    Info.CtrlVqErrorFlags = (ULONG)virtqueue_split_get_error_flags(&Adapter->CtrlVq.Vq);
+
+    Info.CtrlCmdSent = Adapter->StatCtrlVqCmdSent;
+    Info.CtrlCmdOk = Adapter->StatCtrlVqCmdOk;
+    Info.CtrlCmdErr = Adapter->StatCtrlVqCmdErr;
+    Info.CtrlCmdTimeout = Adapter->StatCtrlVqCmdTimeout;
+    Info.StatTxTcpCsumOffload = Adapter->StatTxTcpCsumOffload;
+    Info.StatTxTcpCsumFallback = Adapter->StatTxTcpCsumFallback;
+    Info.StatTxUdpCsumOffload = Adapter->StatTxUdpCsumOffload;
+    Info.StatTxUdpCsumFallback = Adapter->StatTxUdpCsumFallback;
+    NdisReleaseSpinLock(&Adapter->Lock);
+
+    // Read back the currently programmed MSI-X vectors from virtio common config.
+    //
+    // Only attempt this if:
+    //  - we're at PASSIVE_LEVEL (IOCTL path)
+    //  - BAR0 is still mapped (not surprise removed / not halted)
+    if (KeGetCurrentIrql() == PASSIVE_LEVEL && CommonCfg != NULL && !Adapter->SurpriseRemoved) {
+      KIRQL OldIrql;
+      USHORT MsixConfig;
+      USHORT MsixRx;
+      USHORT MsixTx;
+
+      MsixConfig = READ_REGISTER_USHORT((volatile USHORT*)&CommonCfg->msix_config);
+      KeMemoryBarrier();
+
+      MsixRx = VIRTIO_PCI_MSI_NO_VECTOR;
+      MsixTx = VIRTIO_PCI_MSI_NO_VECTOR;
+
+      KeAcquireSpinLock(&Adapter->Vdev.CommonCfgLock, &OldIrql);
+
+      WRITE_REGISTER_USHORT((volatile USHORT*)&CommonCfg->queue_select, 0);
+      KeMemoryBarrier();
+      /*
+       * Flush posted MMIO selector writes (see docs/windows7-virtio-driver-contract.md §1.5.0).
+       * Without a readback, some platforms can observe the old queue_select value
+       * when reading queue_msix_vector immediately after the write.
+       */
+      (VOID)READ_REGISTER_USHORT((volatile USHORT*)&CommonCfg->queue_select);
+      KeMemoryBarrier();
+      MsixRx = READ_REGISTER_USHORT((volatile USHORT*)&CommonCfg->queue_msix_vector);
+      KeMemoryBarrier();
+
+      WRITE_REGISTER_USHORT((volatile USHORT*)&CommonCfg->queue_select, 1);
+      KeMemoryBarrier();
+      (VOID)READ_REGISTER_USHORT((volatile USHORT*)&CommonCfg->queue_select);
+      KeMemoryBarrier();
+      MsixTx = READ_REGISTER_USHORT((volatile USHORT*)&CommonCfg->queue_msix_vector);
+      KeMemoryBarrier();
+
+      KeReleaseSpinLock(&Adapter->Vdev.CommonCfgLock, OldIrql);
+
+      Info.MsixConfigVector = MsixConfig;
+      Info.MsixRxVector = MsixRx;
+      Info.MsixTxVector = MsixTx;
+
+      // If vectors are assigned, treat the effective mode as MSI/MSI-X even if
+      // `UseMsix` was not set (should be rare; included for observability).
+      if (MsixConfig != VIRTIO_PCI_MSI_NO_VECTOR || MsixRx != VIRTIO_PCI_MSI_NO_VECTOR || MsixTx != VIRTIO_PCI_MSI_NO_VECTOR) {
+        Info.InterruptMode = AEROVNET_INTERRUPT_MODE_MSI;
+      }
+    }
+
+    CopyLen = OutLen;
+    if (CopyLen > sizeof(Info)) {
+      CopyLen = sizeof(Info);
+    }
+
+    RtlCopyMemory(Irp->AssociatedIrp.SystemBuffer, &Info, CopyLen);
+    Status = STATUS_SUCCESS;
+  } else {
+    RtlZeroMemory(&OffloadStats, sizeof(OffloadStats));
+    OffloadStats.Version = AEROVNET_OFFLOAD_STATS_VERSION;
+    OffloadStats.Size = sizeof(OffloadStats);
+    RtlCopyMemory(OffloadStats.Mac, Adapter->CurrentMac, ETH_LENGTH_OF_ADDRESS);
+    OffloadStats.HostFeatures = Adapter->HostFeatures;
+    OffloadStats.GuestFeatures = Adapter->GuestFeatures;
+    OffloadStats.TxCsumOffloadTcp4 = Adapter->StatTxCsumOffloadTcp4;
+    OffloadStats.TxCsumOffloadTcp6 = Adapter->StatTxCsumOffloadTcp6;
+    OffloadStats.TxCsumOffloadUdp4 = Adapter->StatTxCsumOffloadUdp4;
+    OffloadStats.TxCsumOffloadUdp6 = Adapter->StatTxCsumOffloadUdp6;
+    OffloadStats.RxCsumValidatedTcp4 = Adapter->StatRxCsumValidatedTcp4;
+    OffloadStats.RxCsumValidatedTcp6 = Adapter->StatRxCsumValidatedTcp6;
+    OffloadStats.RxCsumValidatedUdp4 = Adapter->StatRxCsumValidatedUdp4;
+    OffloadStats.RxCsumValidatedUdp6 = Adapter->StatRxCsumValidatedUdp6;
+    OffloadStats.TxCsumFallback = Adapter->StatTxCsumFallback;
+
+    NdisReleaseSpinLock(&Adapter->Lock);
+
+    RtlCopyMemory(Irp->AssociatedIrp.SystemBuffer, &OffloadStats, sizeof(OffloadStats));
+    CopyLen = sizeof(OffloadStats);
+    Status = STATUS_SUCCESS;
+  }
 
   AerovNetDiagDereferenceAdapter(Adapter);
 

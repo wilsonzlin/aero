@@ -627,6 +627,30 @@ static_assert(sizeof(AEROVNET_DIAG_INFO) <= 256, "AEROVNET_DIAG_INFO size");
 static_assert(AEROVNET_DIAG_IOCTL_QUERY == CTL_CODE(FILE_DEVICE_UNKNOWN, 0x800u, METHOD_BUFFERED, FILE_READ_ACCESS),
               "AEROVNET_DIAG_IOCTL_QUERY value");
 
+// Userspace mirror of `drivers/windows7/virtio-net/include/aero_virtio_net.h` checksum offload stats IOCTL contract.
+// Served by the same control device as the virtio-net diagnostics interface.
+static constexpr const wchar_t* kAerovnetOffloadDevicePath = kAerovnetDiagDevicePath;
+static constexpr ULONG kAerovnetIoctlQueryOffloadStats =
+    CTL_CODE(FILE_DEVICE_NETWORK, 0xA80, METHOD_BUFFERED, FILE_READ_ACCESS);
+
+struct AEROVNET_OFFLOAD_STATS {
+  DWORD Version;
+  DWORD Size;
+  uint8_t Mac[6];
+  uint8_t Reserved0[2];
+  uint64_t HostFeatures;
+  uint64_t GuestFeatures;
+  uint64_t TxCsumOffloadTcp4;
+  uint64_t TxCsumOffloadTcp6;
+  uint64_t TxCsumOffloadUdp4;
+  uint64_t TxCsumOffloadUdp6;
+  uint64_t RxCsumValidatedTcp4;
+  uint64_t RxCsumValidatedTcp6;
+  uint64_t RxCsumValidatedUdp4;
+  uint64_t RxCsumValidatedUdp6;
+  uint64_t TxCsumFallback;
+};
+
 static std::string VirtioFeaturesToString(ULONGLONG f) {
   char buf[64];
   // Windows 7 MSVCRT lacks `%llx` in some configurations; use I64 explicitly.
@@ -7800,6 +7824,37 @@ static VirtioNetTestResult VirtioNetTest(Logger& log, const Options& opt) {
   return out;
 }
 
+static std::optional<AEROVNET_OFFLOAD_STATS> QueryAerovnetOffloadStats(Logger& log) {
+  HANDLE h = CreateFileW(kAerovnetOffloadDevicePath, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                         OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+  if (h == INVALID_HANDLE_VALUE) {
+    log.Logf("virtio-net: open AeroVirtioNet control device failed err=%lu", GetLastError());
+    return std::nullopt;
+  }
+
+  AEROVNET_OFFLOAD_STATS stats{};
+  DWORD bytes = 0;
+  const BOOL ok = DeviceIoControl(h, kAerovnetIoctlQueryOffloadStats, nullptr, 0, &stats, sizeof(stats), &bytes,
+                                  nullptr);
+  const DWORD err = ok ? ERROR_SUCCESS : GetLastError();
+  CloseHandle(h);
+
+  if (!ok) {
+    log.Logf("virtio-net: IOCTL query offload stats failed err=%lu", static_cast<unsigned long>(err));
+    return std::nullopt;
+  }
+  if (bytes < sizeof(AEROVNET_OFFLOAD_STATS)) {
+    log.Logf("virtio-net: IOCTL query offload stats returned too few bytes=%lu", bytes);
+    return std::nullopt;
+  }
+  if (stats.Size < sizeof(AEROVNET_OFFLOAD_STATS)) {
+    log.Logf("virtio-net: IOCTL query offload stats returned Size=%lu (expected >=%zu)",
+             static_cast<unsigned long>(stats.Size), sizeof(AEROVNET_OFFLOAD_STATS));
+    return std::nullopt;
+  }
+  return stats;
+}
+
 static const char* MmDeviceStateToString(DWORD state) {
   switch (state) {
     case DEVICE_STATE_ACTIVE:
@@ -11955,6 +12010,26 @@ int wmain(int argc, wchar_t** argv) {
         static_cast<unsigned long long>(net.large_bytes), static_cast<unsigned long long>(net.large_hash),
         net.large_mbps, net.upload_ok ? 1 : 0, static_cast<unsigned long long>(net.upload_bytes), net.upload_mbps,
         (net.msi_messages < 0) ? -1 : (net.msi_messages > 0 ? 1 : 0), net.msi_messages, net_irq_fields.c_str());
+
+    const auto offload = QueryAerovnetOffloadStats(log);
+    if (!offload.has_value()) {
+      log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-net-offload-csum|FAIL");
+      all_ok = false;
+    } else {
+      const uint64_t tx_csum = offload->TxCsumOffloadTcp4 + offload->TxCsumOffloadTcp6 +
+                               offload->TxCsumOffloadUdp4 + offload->TxCsumOffloadUdp6;
+      const uint64_t rx_csum = offload->RxCsumValidatedTcp4 + offload->RxCsumValidatedTcp6 +
+                               offload->RxCsumValidatedUdp4 + offload->RxCsumValidatedUdp6;
+      const uint64_t fallback = offload->TxCsumFallback;
+
+      log.Logf("virtio-net: csum_offload tx=%llu rx=%llu fallback=%llu features=%s",
+               static_cast<unsigned long long>(tx_csum), static_cast<unsigned long long>(rx_csum),
+               static_cast<unsigned long long>(fallback),
+               VirtioFeaturesToString(static_cast<ULONGLONG>(offload->GuestFeatures)).c_str());
+      log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-net-offload-csum|PASS|tx_csum=%llu|rx_csum=%llu|fallback=%llu",
+               static_cast<unsigned long long>(tx_csum), static_cast<unsigned long long>(rx_csum),
+               static_cast<unsigned long long>(fallback));
+    }
     all_ok = all_ok && net.ok;
     if (opt.test_net_link_flap) {
       all_ok = all_ok && net.link_flap_ok;

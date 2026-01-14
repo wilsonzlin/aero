@@ -262,6 +262,14 @@ typedef struct _AEROVNET_ADAPTER {
   BOOLEAN TxTsoV4Enabled;
   BOOLEAN TxTsoV6Enabled;
 
+  // Runtime RX checksum indication enable flags (controlled by OID_TCP_OFFLOAD_PARAMETERS).
+  // These control whether the miniport sets TcpIpChecksumNetBufferListInfo for received
+  // frames where the device reported checksum validation.
+  BOOLEAN RxChecksumV4Enabled;
+  BOOLEAN RxChecksumV6Enabled;
+  BOOLEAN RxUdpChecksumV4Enabled;
+  BOOLEAN RxUdpChecksumV6Enabled;
+
   ULONG TxTsoMaxOffloadSize;
 
   BOOLEAN LinkUp;
@@ -314,6 +322,24 @@ typedef struct _AEROVNET_ADAPTER {
   ULONGLONG StatCtrlVqCmdOk;
   ULONGLONG StatCtrlVqCmdErr;
   ULONGLONG StatCtrlVqCmdTimeout;
+
+  // Checksum offload counters (per-adapter).
+  // - tx: packets where the driver asked the device to compute L4 checksum (virtio_net_hdr NEEDS_CSUM)
+  // - rx: packets where the device reported checksum validation (virtio_net_hdr DATA_VALID)
+  // - fallback: packets where checksum offload was requested by the OS but the driver computed it in software
+  ULONGLONG StatTxCsumOffloadTcp4;
+  ULONGLONG StatTxCsumOffloadTcp6;
+  ULONGLONG StatTxCsumOffloadUdp4;
+  ULONGLONG StatTxCsumOffloadUdp6;
+  ULONGLONG StatRxCsumValidatedTcp4;
+  ULONGLONG StatRxCsumValidatedTcp6;
+  ULONGLONG StatRxCsumValidatedUdp4;
+  ULONGLONG StatRxCsumValidatedUdp6;
+  ULONGLONG StatTxCsumFallback;
+
+  // Global adapter list link (for control IOCTL queries).
+  LIST_ENTRY GlobalLink;
+  BOOLEAN InGlobalList;
 } AEROVNET_ADAPTER;
 
 // Helpers for per-NBL bookkeeping via MiniportReserved.
@@ -322,3 +348,40 @@ typedef struct _AEROVNET_ADAPTER {
 
 #define AEROVNET_NBL_SET_STATUS(_nbl, _val) ((_nbl)->MiniportReserved[1] = (PVOID)(ULONG_PTR)(_val))
 #define AEROVNET_NBL_GET_STATUS(_nbl) ((NDIS_STATUS)(ULONG_PTR)((_nbl)->MiniportReserved[1]))
+
+// User-mode diagnostics IOCTL surface.
+//
+// The virtio-net miniport registers a global read-only diagnostics device (currently
+// `\\.\AeroVirtioNetDiag`). This IOCTL exists so the guest selftest and host harness can
+// observe checksum offload behavior in a black-box manner.
+
+#define AEROVNET_OFFLOAD_STATS_VERSION 1u
+
+typedef struct _AEROVNET_OFFLOAD_STATS {
+  ULONG Version;
+  ULONG Size;
+
+  // Adapter identity.
+  UCHAR Mac[ETH_LENGTH_OF_ADDRESS];
+  UCHAR _Reserved0[2];
+
+  // Negotiated virtio feature sets (raw bitmasks).
+  ULONGLONG HostFeatures;
+  ULONGLONG GuestFeatures;
+
+  // Counters.
+  ULONGLONG TxCsumOffloadTcp4;
+  ULONGLONG TxCsumOffloadTcp6;
+  ULONGLONG TxCsumOffloadUdp4;
+  ULONGLONG TxCsumOffloadUdp6;
+  ULONGLONG RxCsumValidatedTcp4;
+  ULONGLONG RxCsumValidatedTcp6;
+  ULONGLONG RxCsumValidatedUdp4;
+  ULONGLONG RxCsumValidatedUdp6;
+  ULONGLONG TxCsumFallback;
+} AEROVNET_OFFLOAD_STATS;
+
+// IOCTL: query checksum offload stats for the first adapter bound to this driver.
+// - Input: none
+// - Output: AEROVNET_OFFLOAD_STATS
+#define AEROVNET_IOCTL_QUERY_OFFLOAD_STATS CTL_CODE(FILE_DEVICE_NETWORK, 0xA80, METHOD_BUFFERED, FILE_READ_ACCESS)
