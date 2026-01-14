@@ -179,14 +179,21 @@ fn ethernet_l2_l3_l4_header_len(frame: &[u8]) -> Option<usize> {
     let mut ethertype = u16::from_be_bytes([frame[12], frame[13]]);
     let mut l3_off = ETH_HDR_LEN;
 
-    // Optional 802.1Q / 802.1ad VLAN tag. Keep parsing simple and support a single tag; if the
-    // frame is more exotic, we conservatively drop it.
-    if ethertype == 0x8100 || ethertype == 0x88a8 {
-        if frame.len() < l3_off + 4 {
-            return None;
+    // Optional 802.1Q / 802.1ad VLAN tags. Support up to two tags (Q-in-Q). If the frame is more
+    // exotic, we conservatively drop it.
+    for _ in 0..2 {
+        if ethertype == 0x8100 || ethertype == 0x88a8 {
+            if frame.len() < l3_off + 4 {
+                return None;
+            }
+            ethertype = u16::from_be_bytes([frame[l3_off + 2], frame[l3_off + 3]]);
+            l3_off += 4;
+        } else {
+            break;
         }
-        ethertype = u16::from_be_bytes([frame[l3_off + 2], frame[l3_off + 3]]);
-        l3_off += 4;
+    }
+    if ethertype == 0x8100 || ethertype == 0x88a8 {
+        return None;
     }
 
     match ethertype {
@@ -1209,6 +1216,32 @@ mod tests {
         out
     }
 
+    fn wrap_vlan(frame: &[u8], outer_ethertype: u16) -> Vec<u8> {
+        assert!(
+            frame.len() >= 14,
+            "need at least an Ethernet header to wrap with VLAN"
+        );
+        let mut out = Vec::with_capacity(frame.len() + 4);
+        // dst/src MACs (12 bytes)
+        out.extend_from_slice(&frame[..12]);
+        // outer ethertype: VLAN / provider bridging
+        out.extend_from_slice(&outer_ethertype.to_be_bytes());
+        // VLAN tag (TCI=0)
+        out.extend_from_slice(&0u16.to_be_bytes());
+        // inner ethertype: preserved from the wrapped frame
+        out.extend_from_slice(&frame[12..14]);
+        // rest of frame after the original ethertype
+        out.extend_from_slice(&frame[14..]);
+        out
+    }
+
+    fn make_qinq_ipv4_tcp_frame(payload: &[u8]) -> Vec<u8> {
+        // Typical Q-in-Q: outer provider tag (0x88A8), inner customer tag (0x8100).
+        let inner = make_ipv4_tcp_frame(payload, 0);
+        let inner = wrap_vlan(&inner, 0x8100);
+        wrap_vlan(&inner, 0x88a8)
+    }
+
     fn make_arp_request_frame() -> Vec<u8> {
         let mut buf = Vec::with_capacity(14 + 28);
 
@@ -1596,6 +1629,21 @@ mod tests {
             .expect("expected parseable VLAN IPv4/TCP frame");
 
         assert_eq!(out.len(), 14 + 4 + 20 + 20);
+        assert_eq!(out.as_slice(), &frame[..out.len()]);
+    }
+
+    #[test]
+    fn headers_only_redactor_keeps_l2_qinq_vlan_l3_l4_headers_for_qinq_ipv4_tcp() {
+        let frame = make_qinq_ipv4_tcp_frame(b"hello qinq");
+        let redactor = HeadersOnlyRedactor {
+            max_ethernet_bytes: 2048,
+        };
+
+        let out = redactor
+            .redact_ethernet(FrameDirection::GuestTx, &frame)
+            .expect("expected parseable Q-in-Q VLAN IPv4/TCP frame");
+
+        assert_eq!(out.len(), 14 + 8 + 20 + 20);
         assert_eq!(out.as_slice(), &frame[..out.len()]);
     }
 
