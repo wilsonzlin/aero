@@ -77,6 +77,10 @@ Regression tests:
 - `crates/aero-usb/tests/xhci_stop_endpoint_unschedules.rs` asserts that `Stop Endpoint` unschedules
   an active endpoint immediately (so it does not continue consuming per-tick budgets without a new
   doorbell).
+- `crates/aero-usb/tests/xhci_snapshot_halted_active_endpoint_no_dcbaap.rs` asserts that a restored
+  controller does not execute a queued endpoint when the guest Device Context is unavailable
+  (DCBAAP=0) and the controller-local shadow Endpoint Context marks it Halted. This prevents a
+  malformed snapshot image from bypassing doorbell gating via `active_endpoints`.
 
 ---
 
@@ -268,9 +272,9 @@ spec), so treat the implementation as “bring-up” quality rather than a compl
     - device endpoint doorbells are latched and can drive bounded transfer execution:
       - endpoint 0 control transfers (Setup/Data/Status TRBs), and
       - bulk/interrupt endpoints via Normal TRBs (via `transfer::XhciTransferExecutor`).
-      Transfer execution is performed by the controller’s tick path (e.g. `tick_1ms` /
-      `step_1ms`) when DMA is enabled; MMIO doorbell writes only latch work, so wrappers must drive
-      periodic ticks for forward progress.
+      Transfer execution is performed by the controller’s tick path (e.g. `tick_1ms` / `step_1ms`)
+      when DMA is enabled **and** the controller is running (`USBCMD.RUN=1`). MMIO doorbell writes
+      only latch work, so wrappers must drive periodic ticks for forward progress.
     - runtime interrupter 0 registers + ERST-backed guest event ring producer are modeled (used by
       Rust tests and by the web/WASM bridge via `step_frames()`/`poll()`).
   - A small DMA read on the rising edge of `USBCMD.RUN` (primarily to validate **PCI Bus Master Enable gating** in wrappers).
