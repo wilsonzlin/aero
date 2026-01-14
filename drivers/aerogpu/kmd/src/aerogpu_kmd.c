@@ -1058,6 +1058,17 @@ static BOOLEAN AeroGpuTryReadErrorFence32(_In_ const AEROGPU_ADAPTER* Adapter, _
     }
 
     /*
+     * Avoid MMIO reads while the adapter is not in D0 or submissions are blocked
+     * (resume/teardown windows). In these states the BAR mapping may still exist,
+     * but the device can be inaccessible or MMIO state may be unstable.
+     */
+    if ((DXGK_DEVICE_POWER_STATE)InterlockedCompareExchange((volatile LONG*)&Adapter->DevicePowerState, 0, 0) !=
+            DxgkDevicePowerStateD0 ||
+        InterlockedCompareExchange((volatile LONG*)&Adapter->AcceptingSubmissions, 0, 0) == 0) {
+        return FALSE;
+    }
+
+    /*
      * Error registers are part of the versioned (AGPU) ABI v1.3+ contract.
      *
      * Even though the fence itself is a 64-bit field in the device ABI, Win7's WDDM
