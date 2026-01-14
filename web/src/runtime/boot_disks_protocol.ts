@@ -18,6 +18,10 @@ export function emptySetBootDisksMessage(): SetBootDisksMessage {
   return { type: "setBootDisks", mounts: {}, hdd: null, cd: null };
 }
 
+function isObjectLikeRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
 /**
  * Best-effort parser for untrusted `postMessage` data.
  *
@@ -26,17 +30,24 @@ export function emptySetBootDisksMessage(): SetBootDisksMessage {
  *   object-like so downstream code doesn't accidentally treat e.g. a string as metadata.
  */
 export function normalizeSetBootDisksMessage(msg: unknown): SetBootDisksMessage | null {
-  if (!msg || typeof msg !== "object") return null;
+  if (!isObjectLikeRecord(msg)) return null;
   const rec = msg as Partial<SetBootDisksMessage> & { type?: unknown };
   if (rec.type !== "setBootDisks") return null;
 
-  const mountsRaw = rec.mounts;
-  const mounts = (mountsRaw && typeof mountsRaw === "object" ? mountsRaw : {}) as MountConfig;
+  // Mount IDs are the only fields used outside the disk metadata. Normalize to a plain object and
+  // accept only string values so downstream code can treat them as opaque IDs without re-validating.
+  const mountsRaw = (rec as { mounts?: unknown }).mounts;
+  const mounts: MountConfig = {};
+  if (isObjectLikeRecord(mountsRaw)) {
+    const raw = mountsRaw as { hddId?: unknown; cdId?: unknown };
+    if (typeof raw.hddId === "string") mounts.hddId = raw.hddId;
+    if (typeof raw.cdId === "string") mounts.cdId = raw.cdId;
+  }
 
   const hddRaw = (rec as { hdd?: unknown }).hdd;
   const cdRaw = (rec as { cd?: unknown }).cd;
-  const hdd = (hddRaw && typeof hddRaw === "object" ? (hddRaw as DiskImageMetadata) : null) as DiskImageMetadata | null;
-  const cd = (cdRaw && typeof cdRaw === "object" ? (cdRaw as DiskImageMetadata) : null) as DiskImageMetadata | null;
+  const hdd = (isObjectLikeRecord(hddRaw) ? (hddRaw as DiskImageMetadata) : null) as DiskImageMetadata | null;
+  const cd = (isObjectLikeRecord(cdRaw) ? (cdRaw as DiskImageMetadata) : null) as DiskImageMetadata | null;
 
   return { type: "setBootDisks", mounts, hdd, cd };
 }

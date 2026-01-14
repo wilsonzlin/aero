@@ -35,6 +35,22 @@ describe("runtime/boot_disks_protocol", () => {
       });
     });
 
+    it("sanitizes mount IDs to strings", () => {
+      expect(
+        normalizeSetBootDisksMessage({
+          type: "setBootDisks",
+          mounts: { hddId: 123, cdId: "cd0" },
+          hdd: null,
+          cd: null,
+        }),
+      ).toEqual({
+        type: "setBootDisks",
+        mounts: { cdId: "cd0" },
+        hdd: null,
+        cd: null,
+      });
+    });
+
     it("passes through object-like disk metadata without deep validation", () => {
       const hdd = { some: "meta" };
       const cd = { other: "meta" };
@@ -51,4 +67,3 @@ describe("runtime/boot_disks_protocol", () => {
     });
   });
 });
-
