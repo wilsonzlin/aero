@@ -93,6 +93,7 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
             "tests/e2e/virtio_input_backend_switch_keyboard_held.spec.ts",
             "tests/e2e/virtio_input_backend_switch_mouse.spec.ts",
             "tests/e2e/virtio_input_backend_switch_mouse_held.spec.ts",
+            "tests/e2e/workers_panel_input_capture.spec.ts",
         ]);
         cmd.args(&opts.pw_extra_args);
 
