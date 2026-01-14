@@ -49,12 +49,10 @@ fn exercise_dxbc(bytes: &[u8]) {
     let _ = dxbc.get_signature(FourCC(*b"PSGN"));
 
     // Other common DXBC reflection/debug chunks used by Aero.
-    if let Some(rdef) = dxbc.get_chunk(FourCC(*b"RDEF")) {
-        let _ = aero_dxbc::parse_rdef_chunk(rdef.data);
-    }
-    if let Some(ctab) = dxbc.get_chunk(FourCC(*b"CTAB")) {
-        let _ = aero_dxbc::parse_ctab_chunk(ctab.data);
-    }
+    // Use the higher-level helpers so we also cover variant/fallback IDs and duplicate-chunk
+    // handling (e.g. `RD11` for RDEF).
+    let _ = dxbc.get_rdef();
+    let _ = dxbc.get_ctab();
 
     // SM4/SM5 token parsing (no GPU required).
     let _ = aero_dxbc::sm4::Sm4Program::parse_from_dxbc(&dxbc);
@@ -145,20 +143,17 @@ fn build_signature_chunk(seed: &[u8], entry_size: usize, param_count: usize) -> 
         let rw_mask = seed.get(36 + entry_index).copied().unwrap_or(0xF);
         let stream = (seed.get(40 + entry_index).copied().unwrap_or(0) % 4) as u32;
 
-        match entry_size {
-            24 => {
-                let packed = (mask as u32 & 0xFF)
-                    | ((rw_mask as u32 & 0xFF) << 8)
-                    | ((stream & 0xFF) << 16);
-                out[entry_start + 20..entry_start + 24].copy_from_slice(&packed.to_le_bytes());
-            }
-            32 => {
-                out[entry_start + 20] = mask;
-                out[entry_start + 21] = rw_mask;
-                out[entry_start + 24..entry_start + 28].copy_from_slice(&stream.to_le_bytes());
-                // min_precision at entry_start+28..32 is left as 0.
-            }
-            _ => unreachable!(),
+        if entry_size == 24 {
+            let packed = (mask as u32 & 0xFF)
+                | ((rw_mask as u32 & 0xFF) << 8)
+                | ((stream & 0xFF) << 16);
+            out[entry_start + 20..entry_start + 24].copy_from_slice(&packed.to_le_bytes());
+        } else {
+            // entry_size == 32
+            out[entry_start + 20] = mask;
+            out[entry_start + 21] = rw_mask;
+            out[entry_start + 24..entry_start + 28].copy_from_slice(&stream.to_le_bytes());
+            // min_precision at entry_start+28..32 is left as 0.
         }
 
         // Copy this entry's semantic string (already built/terminated).
