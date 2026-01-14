@@ -262,6 +262,12 @@ pub enum ShaderError {
     UnsupportedSrcModifier(u8),
     #[error("unsupported ifc comparison op {0}")]
     UnsupportedCompareOp(u8),
+    #[error("relative addressing is not supported")]
+    RelativeAddressingUnsupported,
+    #[error("tex has unsupported encoding (specific=0x{0:x})")]
+    UnsupportedTexSpecificField(u8),
+    #[error("unknown result shift modifier {0}")]
+    UnknownResultShiftModifier(u8),
     #[error("register index {index} in {file:?} exceeds maximum {max}")]
     RegisterIndexTooLarge {
         file: RegisterFile,
@@ -316,6 +322,14 @@ fn decode_reg_num(token: u32) -> u16 {
     (token & 0x7FF) as u16
 }
 
+// D3D9 SM2/SM3 uses bit 13 on register tokens to indicate relative addressing and an additional
+// follow-up register token (e.g. `c0[a0.x]`).
+//
+// The legacy token-stream translator only supports single-token operands; relative addressing is
+// rejected to avoid mis-parsing malformed bytecode (especially when legacy fallback is triggered
+// by an earlier unsupported opcode).
+const RELATIVE_ADDR: u32 = 0x0000_2000;
+
 fn decode_src_modifier(modifier: u8) -> Result<SrcModifier, ShaderError> {
     // Matches `D3DSHADER_PARAM_SRCMOD_TYPE` / `D3DSHADER_SRCMOD` encoding.
     Ok(match modifier {
@@ -338,6 +352,9 @@ fn decode_src_modifier(modifier: u8) -> Result<SrcModifier, ShaderError> {
 }
 
 fn decode_src(token: u32) -> Result<Src, ShaderError> {
+    if (token & RELATIVE_ADDR) != 0 {
+        return Err(ShaderError::RelativeAddressingUnsupported);
+    }
     let reg_type = decode_reg_type(token);
     let reg_num = decode_reg_num(token);
     let swizzle_byte = ((token >> 16) & 0xFF) as u8;
@@ -425,6 +442,9 @@ fn validate_src_for_stage(stage: ShaderStage, src: &Src) -> Result<(), ShaderErr
 }
 
 fn decode_dst(token: u32) -> Result<Dst, ShaderError> {
+    if (token & RELATIVE_ADDR) != 0 {
+        return Err(ShaderError::RelativeAddressingUnsupported);
+    }
     let reg_type = decode_reg_type(token);
     let reg_num = decode_reg_num(token);
     let mask = ((token >> 16) & 0xF) as u8;
@@ -665,6 +685,9 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
                 [decl_token, dst_token, ..] => (*decl_token, *dst_token),
                 _ => return Err(ShaderError::UnexpectedEof),
             };
+            if (dst_token & RELATIVE_ADDR) != 0 {
+                return Err(ShaderError::RelativeAddressingUnsupported);
+            }
 
             // Sampler declaration: `dcl_* s#` (e.g. `dcl_2d s0`, `dcl_cube s1`).
             //
@@ -738,6 +761,9 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
                 return Err(ShaderError::UnexpectedEof);
             }
             let dst_token = params[0];
+            if (dst_token & RELATIVE_ADDR) != 0 {
+                return Err(ShaderError::RelativeAddressingUnsupported);
+            }
             let reg_type = decode_reg_type(dst_token);
             if reg_type != 2 {
                 return Err(ShaderError::UnsupportedRegisterType(reg_type));
@@ -768,6 +794,9 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
                 return Err(ShaderError::UnexpectedEof);
             }
             let dst_token = params[0];
+            if (dst_token & RELATIVE_ADDR) != 0 {
+                return Err(ShaderError::RelativeAddressingUnsupported);
+            }
             let reg_type = decode_reg_type(dst_token);
             if reg_type != 14 {
                 return Err(ShaderError::UnsupportedRegisterType(reg_type));
@@ -955,6 +984,10 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
                     _ => unreachable!("arithmetic op matched above"),
                 };
 
+                if let ResultShift::Unknown(v) = result_modifier.shift {
+                    return Err(ShaderError::UnknownResultShiftModifier(v));
+                }
+
                 // The legacy translator only supports single-token operands. Reject token streams
                 // whose instruction length doesn't match the opcode's fixed operand count (after
                 // stripping the optional predicate token above).
@@ -985,8 +1018,18 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
             }
             Op::Texld => {
                 // texld dst, coord, sampler
+                if let ResultShift::Unknown(v) = result_modifier.shift {
+                    return Err(ShaderError::UnknownResultShiftModifier(v));
+                }
                 if params.len() != 3 {
                     return Err(ShaderError::UnexpectedEof);
+                }
+                // SM2/SM3 `tex` opcode uses a 4-bit "specific" field in opcode_token[16..20] to
+                // select between `texld` (0), `texldp` (1), and `texldb` (2). Other values are
+                // malformed.
+                let specific = ((token >> 16) & 0xF) as u8;
+                if specific > 2 {
+                    return Err(ShaderError::UnsupportedTexSpecificField(specific));
                 }
                 let dst = decode_dst(params[0])?;
                 validate_dst_for_stage(stage, &dst)?;
@@ -1012,7 +1055,7 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
                     dst: Some(dst),
                     src: vec![coord],
                     sampler: Some(sampler_index),
-                    imm: Some((token >> 16) & 0x1),
+                    imm: Some(u32::from(specific)),
                     result_modifier,
                 }
             }
@@ -1860,42 +1903,87 @@ fn texld_sample_expr(
     let coord = inst.src[0];
     let s = inst.sampler.unwrap_or(0);
     let coord_expr = src_expr(&coord, const_defs_f32, const_base);
-    let project = inst.imm.unwrap_or(0) != 0;
+    let specific = inst.imm.unwrap_or(0) as u8;
     let ty = sampler_texture_types
         .get(&s)
         .copied()
         .unwrap_or(TextureType::Texture2D);
-    let coords = match ty {
-        TextureType::TextureCube | TextureType::Texture3D => {
-            if project {
-                format!("(({}).xyz / ({}).w)", coord_expr, coord_expr)
-            } else {
-                format!("({}).xyz", coord_expr)
-            }
-        }
-        TextureType::Texture2D => {
-            if project {
-                format!("(({}).xy / ({}).w)", coord_expr, coord_expr)
-            } else {
-                format!("({}).xy", coord_expr)
-            }
-        }
-        TextureType::Texture1D => {
-            if project {
-                format!("(({}).x / ({}).w)", coord_expr, coord_expr)
-            } else {
-                format!("({}).x", coord_expr)
-            }
-        }
-        _ => {
-            unreachable!("unsupported sampler texture types are rejected during WGSL generation")
-        }
-    };
+    let sample = match specific {
+        // texld: implicit LOD.
+        0 | 1 => {
+            let project = specific == 1;
+            let coords = match ty {
+                TextureType::TextureCube | TextureType::Texture3D => {
+                    if project {
+                        format!("(({}).xyz / ({}).w)", coord_expr, coord_expr)
+                    } else {
+                        format!("({}).xyz", coord_expr)
+                    }
+                }
+                TextureType::Texture2D => {
+                    if project {
+                        format!("(({}).xy / ({}).w)", coord_expr, coord_expr)
+                    } else {
+                        format!("({}).xy", coord_expr)
+                    }
+                }
+                TextureType::Texture1D => {
+                    if project {
+                        format!("(({}).x / ({}).w)", coord_expr, coord_expr)
+                    } else {
+                        format!("({}).x", coord_expr)
+                    }
+                }
+                _ => unreachable!(
+                    "unsupported sampler texture types are rejected during WGSL generation"
+                ),
+            };
 
-    let sample = match stage {
-        // Vertex stage has no implicit derivatives, so use an explicit LOD.
-        ShaderStage::Vertex => format!("textureSampleLevel(tex{}, samp{}, {}, 0.0)", s, s, coords),
-        ShaderStage::Pixel => format!("textureSample(tex{}, samp{}, {})", s, s, coords),
+            match stage {
+                // Vertex stage has no implicit derivatives, so use an explicit LOD.
+                ShaderStage::Vertex => {
+                    format!("textureSampleLevel(tex{}, samp{}, {}, 0.0)", s, s, coords)
+                }
+                ShaderStage::Pixel => format!("textureSample(tex{}, samp{}, {})", s, s, coords),
+            }
+        }
+        // texldb: implicit LOD with bias (bias comes from coord.w).
+        2 => {
+            let coords = match ty {
+                TextureType::TextureCube | TextureType::Texture3D => format!("({}).xyz", coord_expr),
+                TextureType::Texture2D => format!("({}).xy", coord_expr),
+                TextureType::Texture1D => format!("({}).x", coord_expr),
+                _ => unreachable!(
+                    "unsupported sampler texture types are rejected during WGSL generation"
+                ),
+            };
+
+            match stage {
+                // The legacy translator does not model bias in the vertex stage; fall back to the
+                // same explicit-LOD sampling used for texld.
+                ShaderStage::Vertex => {
+                    format!("textureSampleLevel(tex{}, samp{}, {}, 0.0)", s, s, coords)
+                }
+                ShaderStage::Pixel => {
+                    let bias = format!("({}).w", coord_expr);
+                    // WGSL does not support `textureSampleBias` for 1D textures.
+                    // Approximate bias by scaling the implicit derivatives and using
+                    // `textureSampleGrad`, which accepts explicit gradients for 1D.
+                    if ty == TextureType::Texture1D {
+                        let scale = format!("exp2({bias})");
+                        let ddx = format!("(dpdx({coords}) * {scale})");
+                        let ddy = format!("(dpdy({coords}) * {scale})");
+                        format!(
+                            "textureSampleGrad(tex{}, samp{}, {}, {}, {})",
+                            s, s, coords, ddx, ddy
+                        )
+                    } else {
+                        format!("textureSampleBias(tex{}, samp{}, {}, {})", s, s, coords, bias)
+                    }
+                }
+            }
+        }
+        _ => unreachable!("tex specific field is validated during parsing"),
     };
     apply_result_modifier(sample, inst.result_modifier)
 }
