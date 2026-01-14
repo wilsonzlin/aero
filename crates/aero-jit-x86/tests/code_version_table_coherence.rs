@@ -137,7 +137,7 @@ fn wasmtime_code_version_table_is_coherent_with_jit_runtime_on_guest_write() {
         cache_max_bytes: 0,
         code_version_max_pages: DEFAULT_CODE_VERSION_MAX_PAGES,
     };
-    let mut jit = JitRuntime::new(config, backend, NullCompileSink::default());
+    let mut jit = JitRuntime::new(config, backend, NullCompileSink);
 
     // Install with `byte_len=0` so the host-side snapshot validator does not prevent the guard from
     // executing (the guard itself is what this test is exercising).

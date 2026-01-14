@@ -3118,10 +3118,10 @@ fn decode_aerogpu_snapshot_v1(bytes: &[u8]) -> Option<AeroGpuSnapshotV1> {
                 .get((off + 5)..(off + 5 + PALETTE_LEN))
                 .unwrap_or(&[]);
             let mut palette = [[0u8; 3]; 256];
-            for idx in 0..256usize {
+            for (idx, entry) in palette.iter_mut().enumerate() {
                 let base = idx * 3;
                 if base + 2 < pal_bytes.len() {
-                    palette[idx] = [pal_bytes[base], pal_bytes[base + 1], pal_bytes[base + 2]];
+                    *entry = [pal_bytes[base], pal_bytes[base + 1], pal_bytes[base + 2]];
                 }
             }
             Some(AeroGpuVgaDacSnapshotV1 { pel_mask, palette })
@@ -3306,10 +3306,10 @@ fn apply_aerogpu_snapshot_v2(
                 .get((off + 5)..(off + 5 + PALETTE_LEN))
                 .unwrap_or(&[]);
             let mut palette = [[0u8; 3]; 256];
-            for idx in 0..256usize {
+            for (idx, entry) in palette.iter_mut().enumerate() {
                 let base = idx * 3;
                 if base + 2 < pal_bytes.len() {
-                    palette[idx] = [pal_bytes[base], pal_bytes[base + 1], pal_bytes[base + 2]];
+                    *entry = [pal_bytes[base], pal_bytes[base + 1], pal_bytes[base + 2]];
                 }
             }
             vram.pel_mask = pel_mask;
