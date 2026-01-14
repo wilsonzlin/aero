@@ -630,20 +630,17 @@ const tryReadHwCursorImageRgba8 = (
           const isBgra = (format >>> 0) === CURSOR_FORMAT_B8G8R8A8;
           const isBgrx = (format >>> 0) === CURSOR_FORMAT_B8G8R8X8;
           if (!isBgra && !isBgrx) return null;
+          const kind: ScanoutSwizzleKind = isBgra ? "bgra" : "bgrx";
 
-          for (let y = 0; y < h; y += 1) {
-            const srcRow = y * pitch;
-            const dstRow = y * rowBytes;
-            for (let x = 0; x < w; x += 1) {
-              const s = srcRow + x * 4;
-              const d = dstRow + x * 4;
-              // BGR(A/X) -> RGBA.
-              out[d + 0] = src[s + 2]!;
-              out[d + 1] = src[s + 1]!;
-              out[d + 2] = src[s + 0]!;
-              out[d + 3] = isBgra ? src[s + 3]! : 255;
-            }
-          }
+          convertScanoutToRgba8({
+            src,
+            srcStrideBytes: pitch,
+            dst: out,
+            dstStrideBytes: rowBytes,
+            width: w,
+            height: h,
+            kind,
+          });
 
           return out;
         }
@@ -671,20 +668,17 @@ const tryReadHwCursorImageRgba8 = (
   const isBgra = (format >>> 0) === CURSOR_FORMAT_B8G8R8A8;
   const isBgrx = (format >>> 0) === CURSOR_FORMAT_B8G8R8X8;
   if (!isBgra && !isBgrx) return null;
+  const kind: ScanoutSwizzleKind = isBgra ? "bgra" : "bgrx";
 
-  for (let y = 0; y < h; y += 1) {
-    const srcRow = y * pitch;
-    const dstRow = y * rowBytes;
-    for (let x = 0; x < w; x += 1) {
-      const s = srcRow + x * 4;
-      const d = dstRow + x * 4;
-      // BGR(A/X) -> RGBA.
-      out[d + 0] = src[s + 2]!;
-      out[d + 1] = src[s + 1]!;
-      out[d + 2] = src[s + 0]!;
-      out[d + 3] = isBgra ? src[s + 3]! : 255;
-    }
-  }
+  convertScanoutToRgba8({
+    src,
+    srcStrideBytes: pitch,
+    dst: out,
+    dstStrideBytes: rowBytes,
+    width: w,
+    height: h,
+    kind,
+  });
 
   return out;
 };
