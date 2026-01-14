@@ -3266,6 +3266,226 @@ bool TestCreateResourceAllowsNullPrivateDataWhenNotAllocBacked() {
   return Check(res->backing_alloc_id == 0, "resource remains host-allocated (alloc_id == 0)");
 }
 
+bool TestUnlockX1R5G5B5ForcesAlphaBitAndUploadsFixedBytes() {
+#if defined(_WIN32)
+  return true;
+#else
+  constexpr uint32_t kD3dFmtX1R5G5B5 = 24u;
+  constexpr D3DDDIFORMAT kFmtX1R5G5B5 = static_cast<D3DDDIFORMAT>(kD3dFmtX1R5G5B5);
+
+  // Skip if the format isn't enabled in the build.
+  if (aerogpu::d3d9_format_to_aerogpu(kD3dFmtX1R5G5B5) == AEROGPU_FORMAT_INVALID) {
+    std::fprintf(stderr, "INFO: skipping X1R5G5B5 unlock fixup test (format not enabled)\n");
+    return true;
+  }
+  if (!Check(aerogpu::bytes_per_pixel(kFmtX1R5G5B5) == 2u, "bytes_per_pixel(X1R5G5B5)==2")) {
+    return false;
+  }
+
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    D3DDDI_HRESOURCE hResource{};
+    bool has_adapter = false;
+    bool has_device = false;
+    bool has_resource = false;
+
+    ~Cleanup() {
+      if (has_resource && device_funcs.pfnDestroyResource) {
+        device_funcs.pfnDestroyResource(hDevice, hResource);
+      }
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  if (!Check(cleanup.device_funcs.pfnCreateResource != nullptr, "CreateResource must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDestroyResource != nullptr, "DestroyResource must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnLock != nullptr && cleanup.device_funcs.pfnUnlock != nullptr, "Lock/Unlock must be available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  std::vector<uint8_t> dma(4096, 0);
+  dev->cmd.set_span(dma.data(), dma.size());
+  dev->cmd.reset();
+  struct CmdModeGuard {
+    Device* dev = nullptr;
+    ~CmdModeGuard() {
+      if (dev) {
+        // Cleanup destructors may submit; ensure they don't reference our span buffer.
+        dev->cmd.set_vector();
+      }
+    }
+  } cmd_guard{dev};
+
+  D3D9DDIARG_CREATERESOURCE create_res{};
+  create_res.type = 0;
+  create_res.format = kD3dFmtX1R5G5B5;
+  create_res.width = 4;
+  create_res.height = 1;
+  create_res.depth = 1;
+  create_res.mip_levels = 1;
+  create_res.usage = 0;
+  create_res.pool = 0; // default pool (host-backed in portable build)
+  create_res.size = 0;
+  create_res.hResource.pDrvPrivate = nullptr;
+  create_res.pSharedHandle = nullptr;
+  create_res.pPrivateDriverData = nullptr;
+  create_res.PrivateDriverDataSize = 0;
+  create_res.wddm_hAllocation = 0;
+
+  hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_res);
+  if (!Check(hr == S_OK, "CreateResource(X1R5G5B5)")) {
+    return false;
+  }
+  if (!Check(create_res.hResource.pDrvPrivate != nullptr, "CreateResource returned resource handle")) {
+    return false;
+  }
+  cleanup.hResource = create_res.hResource;
+  cleanup.has_resource = true;
+
+  auto* res = reinterpret_cast<Resource*>(create_res.hResource.pDrvPrivate);
+  if (!Check(res != nullptr, "resource pointer")) {
+    return false;
+  }
+  if (!Check(res->handle != 0, "X1R5G5B5 resource has host handle")) {
+    return false;
+  }
+  if (!Check(res->backing_alloc_id == 0, "X1R5G5B5 resource is host-backed in portable build")) {
+    return false;
+  }
+  if (!Check(res->storage.size() >= res->size_bytes && res->size_bytes >= 4u, "resource storage sized")) {
+    return false;
+  }
+
+  // Reset the command stream so we only capture the Unlock writeback.
+  std::memset(dma.data(), 0, dma.size());
+  dev->cmd.reset();
+
+  // Initialize storage with zeros so we can verify that Unlock only touches the
+  // expected bytes.
+  std::memset(res->storage.data(), 0, res->storage.size());
+
+  constexpr uint32_t kOffset = 1; // odd offset to exercise alignment logic
+  constexpr uint32_t kSize = 3;   // spans high byte of texel0 and texel1
+
+  D3D9DDIARG_LOCK lock{};
+  lock.hResource = create_res.hResource;
+  lock.offset_bytes = kOffset;
+  lock.size_bytes = kSize;
+  lock.flags = 0;
+  D3DDDI_LOCKEDBOX box{};
+  hr = cleanup.device_funcs.pfnLock(create_dev.hDevice, &lock, &box);
+  if (!Check(hr == S_OK, "Lock(X1R5G5B5)")) {
+    return false;
+  }
+  if (!Check(box.pData != nullptr, "Lock returns pData")) {
+    return false;
+  }
+
+  auto* bytes = static_cast<uint8_t*>(box.pData);
+  // bytes[0] and bytes[2] are the high bytes of two texels in X1R5G5B5; Unlock
+  // must force their MSBs to 1. bytes[1] is a low byte and must be preserved.
+  bytes[0] = 0x12;
+  bytes[1] = 0x56;
+  bytes[2] = 0x34;
+
+  D3D9DDIARG_UNLOCK unlock{};
+  unlock.hResource = create_res.hResource;
+  unlock.offset_bytes = 0;
+  unlock.size_bytes = 0;
+  hr = cleanup.device_funcs.pfnUnlock(create_dev.hDevice, &unlock);
+  if (!Check(hr == S_OK, "Unlock(X1R5G5B5)")) {
+    return false;
+  }
+
+  // Verify bytes were fixed in-place before upload.
+  const uint8_t expected_fixed[3] = {
+      static_cast<uint8_t>(0x12u | 0x80u),
+      0x56u,
+      static_cast<uint8_t>(0x34u | 0x80u),
+  };
+  if (!Check(res->storage[kOffset + 0] == expected_fixed[0], "X1R5G5B5 high byte 0 alpha bit set")) {
+    return false;
+  }
+  if (!Check(res->storage[kOffset + 1] == expected_fixed[1], "X1R5G5B5 low byte preserved")) {
+    return false;
+  }
+  if (!Check(res->storage[kOffset + 2] == expected_fixed[2], "X1R5G5B5 high byte 1 alpha bit set")) {
+    return false;
+  }
+  if (!Check(res->storage[0] == 0u && res->storage[4] == 0u, "Unlock does not touch bytes outside range")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  if (!Check(ValidateStream(dma.data(), dma.size()), "command stream validation")) {
+    return false;
+  }
+
+  if (!Check(CountOpcode(dma.data(), dma.size(), AEROGPU_CMD_UPLOAD_RESOURCE) == 1, "Unlock emits one UPLOAD_RESOURCE")) {
+    return false;
+  }
+  const CmdLoc upload = FindLastOpcode(dma.data(), dma.size(), AEROGPU_CMD_UPLOAD_RESOURCE);
+  if (!Check(upload.hdr != nullptr, "UPLOAD_RESOURCE location")) {
+    return false;
+  }
+  const auto* upload_cmd = reinterpret_cast<const aerogpu_cmd_upload_resource*>(upload.hdr);
+  if (!Check(upload_cmd->resource_handle == res->handle, "UPLOAD_RESOURCE resource_handle")) {
+    return false;
+  }
+  if (!Check(upload_cmd->offset_bytes == kOffset, "UPLOAD_RESOURCE offset")) {
+    return false;
+  }
+  if (!Check(upload_cmd->size_bytes == kSize, "UPLOAD_RESOURCE size")) {
+    return false;
+  }
+  const uint8_t* payload = reinterpret_cast<const uint8_t*>(upload_cmd) + sizeof(*upload_cmd);
+  return Check(std::memcmp(payload, expected_fixed, sizeof(expected_fixed)) == 0, "UPLOAD_RESOURCE payload contains fixed bytes");
+#endif
+}
+
 bool TestAllocBackedUnlockEmitsDirtyRange() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
@@ -16047,6 +16267,7 @@ int main() {
   failures += !aerogpu::TestLockInfersMipLevelPitchFromOffsetBytes();
   failures += !aerogpu::TestRgb16FormatMappingAndLayout();
   failures += !aerogpu::TestCreateResourceComputes16BitTexturePitchAndFormat();
+  failures += !aerogpu::TestUnlockX1R5G5B5ForcesAlphaBitAndUploadsFixedBytes();
   failures += !aerogpu::TestGenerateMipSubLevelsBoxFilter2d();
   failures += !aerogpu::TestGenerateMipSubLevelsAllocBackedEmitsDirtyRange();
   failures += !aerogpu::TestCreateResourceIgnoresStaleAllocPrivDataForNonShared();
