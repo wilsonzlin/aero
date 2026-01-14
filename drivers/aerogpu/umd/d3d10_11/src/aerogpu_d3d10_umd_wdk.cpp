@@ -2752,12 +2752,16 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     res->dxgi_format = static_cast<uint32_t>(pDesc->Format);
 
     if (res->sample_count == 0) {
+      AEROGPU_D3D10_11_LOG("D3D10 CreateResource: rejecting Texture2D with invalid SampleDesc.Count=0");
       res->~AeroGpuResource();
       return E_INVALIDARG;
     }
     if (res->sample_count != 1 || res->sample_quality != 0) {
       // Multisample resources require MSAA view types and resolve operations
       // that are not yet supported by the AeroGPU D3D10 UMD.
+      AEROGPU_D3D10_11_LOG("D3D10 CreateResource: rejecting MSAA Texture2D SampleDesc=(%u,%u)",
+                           static_cast<unsigned>(res->sample_count),
+                           static_cast<unsigned>(res->sample_quality));
       res->~AeroGpuResource();
       return E_NOTIMPL;
     }
