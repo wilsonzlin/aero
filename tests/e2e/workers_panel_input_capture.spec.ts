@@ -36,7 +36,7 @@ test("Workers panel: VGA canvas captures keyboard input and forwards batches to 
   // Ensure the VM workers started and the workers panel input capture is active.
   await page.waitForFunction(() => {
     const text = document.querySelector("#workers-input-status")?.textContent ?? "";
-    return text.includes("ioWorker=ready") && /ioBatches=\\d+/.test(text);
+    return text.includes("ioWorker=ready") && /ioBatches=\d+/.test(text);
   });
 
   const initialBatches = await page.evaluate(() => {
