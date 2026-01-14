@@ -673,7 +673,7 @@ impl D3D11Runtime {
             // `wgpu::Queue::write_texture` requires COPY_DST. Also include COPY_SRC so test helpers
             // like `read_texture_rgba8` can safely copy out of textures even if the protocol usage
             // omitted it.
-            usage: map_texture_usage(usage)
+            usage: map_texture_usage(usage, self.supports_compute)
                 | wgpu::TextureUsages::COPY_SRC
                 | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
@@ -1192,6 +1192,7 @@ impl D3D11Runtime {
 
         let binding_count = take(payload, &mut cursor)? as usize;
         let bindings = self.decode_binding_defs(payload, &mut cursor, binding_count)?;
+        self.validate_storage_binding_capabilities("CreateRenderPipeline", &bindings)?;
         let bind_group_layout_entries: Vec<wgpu::BindGroupLayoutEntry> =
             bindings.iter().map(binding_def_to_layout_entry).collect();
         let bind_group_layout = self
@@ -1450,6 +1451,30 @@ impl D3D11Runtime {
             });
         }
         Ok(bindings)
+    }
+
+    fn validate_storage_binding_capabilities(
+        &self,
+        op: &str,
+        bindings: &[BindingDef],
+    ) -> Result<()> {
+        if self.supports_compute {
+            return Ok(());
+        }
+
+        let uses_storage = bindings.iter().any(|binding| {
+            matches!(
+                binding.kind,
+                BindingKind::StorageBuffer { .. } | BindingKind::StorageTexture2DWriteOnly { .. }
+            )
+        });
+        if uses_storage {
+            bail!(
+                "{op} requires compute shaders (storage buffer/texture bindings), but this backend/device does not support compute"
+            );
+        }
+
+        Ok(())
     }
 
     fn exec_copy_buffer_to_buffer(
@@ -2630,7 +2655,7 @@ fn map_buffer_usage(usage: BufferUsage, supports_compute: bool) -> wgpu::BufferU
     out
 }
 
-fn map_texture_usage(usage: TextureUsage) -> wgpu::TextureUsages {
+fn map_texture_usage(usage: TextureUsage, supports_compute: bool) -> wgpu::TextureUsages {
     let mut out = wgpu::TextureUsages::empty();
     if usage.contains(TextureUsage::COPY_SRC) {
         out |= wgpu::TextureUsages::COPY_SRC;
@@ -2641,7 +2666,9 @@ fn map_texture_usage(usage: TextureUsage) -> wgpu::TextureUsages {
     if usage.contains(TextureUsage::TEXTURE_BINDING) {
         out |= wgpu::TextureUsages::TEXTURE_BINDING;
     }
-    if usage.contains(TextureUsage::STORAGE_BINDING) {
+    // Downlevel backends without compute support (e.g. WebGL2) do not support storage textures.
+    // Gate this to avoid wgpu validation errors when creating textures.
+    if supports_compute && usage.contains(TextureUsage::STORAGE_BINDING) {
         out |= wgpu::TextureUsages::STORAGE_BINDING;
     }
     if usage.contains(TextureUsage::RENDER_ATTACHMENT) {
@@ -2727,7 +2754,7 @@ fn binding_def_to_layout_entry(def: &BindingDef) -> wgpu::BindGroupLayoutEntry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aero_gpu::protocol_d3d11::{CmdWriter, RenderPipelineDesc};
+    use aero_gpu::protocol_d3d11::{BindingDesc, CmdWriter, RenderPipelineDesc};
 
     #[test]
     fn take_bytes_extracts_prefix() {
@@ -3072,6 +3099,80 @@ mod tests {
     }
 
     #[test]
+    fn create_render_pipeline_errors_cleanly_when_storage_bindings_used_and_compute_unsupported() {
+        pollster::block_on(async {
+            let mut rt = match D3D11Runtime::new_for_tests().await {
+                Ok(rt) => rt,
+                Err(err) => {
+                    eprintln!("skipping {}: wgpu unavailable ({err:#})", module_path!());
+                    return;
+                }
+            };
+
+            // Force-disable compute so the error path is deterministic regardless of the host GPU.
+            rt.supports_compute = false;
+
+            let vs_wgsl = r#"
+                @vertex
+                fn vs_main(@builtin(vertex_index) idx: u32) -> @builtin(position) vec4<f32> {
+                    var pos = array<vec2<f32>, 3>(
+                        vec2<f32>(-1.0, -1.0),
+                        vec2<f32>( 3.0, -1.0),
+                        vec2<f32>(-1.0,  3.0),
+                    );
+                    return vec4<f32>(pos[idx], 0.0, 1.0);
+                }
+            "#;
+
+            let fs_wgsl = r#"
+                @fragment
+                fn fs_main() -> @location(0) vec4<f32> {
+                    return vec4<f32>(1.0, 0.0, 0.0, 1.0);
+                }
+            "#;
+
+            let bindings = [
+                BindingDesc {
+                    binding: 0,
+                    ty: BindingType::StorageBufferReadOnly,
+                    visibility: ShaderStageFlags::FRAGMENT,
+                    storage_texture_format: None,
+                },
+                BindingDesc {
+                    binding: 1,
+                    ty: BindingType::StorageTexture2DWriteOnly,
+                    visibility: ShaderStageFlags::FRAGMENT,
+                    storage_texture_format: Some(DxgiFormat::R8G8B8A8Unorm),
+                },
+            ];
+
+            let mut writer = CmdWriter::new();
+            writer.create_shader_module_wgsl(1, vs_wgsl);
+            writer.create_shader_module_wgsl(2, fs_wgsl);
+            writer.create_render_pipeline(
+                3,
+                RenderPipelineDesc {
+                    vs_shader: 1,
+                    fs_shader: 2,
+                    color_format: DxgiFormat::R8G8B8A8Unorm,
+                    depth_format: DxgiFormat::Unknown,
+                    topology: PrimitiveTopology::TriangleList,
+                    vertex_buffers: &[],
+                    bindings: &bindings,
+                },
+            );
+
+            let err = rt.execute(&writer.finish()).unwrap_err();
+            let msg = err.to_string();
+            assert!(
+                msg.contains("CreateRenderPipeline requires compute shaders"),
+                "unexpected error: {msg:#}"
+            );
+            assert!(msg.contains("does not support compute"), "unexpected error: {msg:#}");
+        });
+    }
+
+    #[test]
     fn map_buffer_usage_gates_storage_on_compute_support() {
         let bu = map_buffer_usage(BufferUsage::VERTEX, false);
         assert!(bu.contains(wgpu::BufferUsages::VERTEX));
@@ -3082,5 +3183,14 @@ mod tests {
 
         let storage_compute = map_buffer_usage(BufferUsage::STORAGE, true);
         assert!(storage_compute.contains(wgpu::BufferUsages::STORAGE));
+    }
+
+    #[test]
+    fn map_texture_usage_gates_storage_on_compute_support() {
+        let usage = map_texture_usage(TextureUsage::STORAGE_BINDING, false);
+        assert!(!usage.contains(wgpu::TextureUsages::STORAGE_BINDING));
+
+        let usage = map_texture_usage(TextureUsage::STORAGE_BINDING, true);
+        assert!(usage.contains(wgpu::TextureUsages::STORAGE_BINDING));
     }
 }
