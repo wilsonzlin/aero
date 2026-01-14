@@ -1809,6 +1809,7 @@ mod tests {
     fn drive_address_reflects_head_bits_from_device_reg() {
         let mut ctl = IdeController::new(0xFFF0);
         ctl.primary.drive_present[0] = true;
+        ctl.primary.drive_present[1] = true;
 
         let device_port = ctl.primary.ports.cmd_base + ATA_REG_DEVICE;
         // Select master with head=7 (low nibble).
@@ -1816,13 +1817,13 @@ mod tests {
 
         let drive_addr_port = ctl.primary.ports.ctrl_base + ATA_CTRL_DRIVE_ADDRESS;
         let val = ctl.io_read(drive_addr_port, 1) as u8;
-        assert_eq!(val & 0x0F, 0x07);
+        // DADR reports the *active-low* head select lines.
+        assert_eq!(val & 0x0F, 0x08);
 
-        // Select slave with head=5; even if the slave is absent, the register should still reflect
-        // the taskfile image.
+        // Select slave with head=5.
         ctl.io_write(device_port, 1, 0xF5);
         let val = ctl.io_read(drive_addr_port, 1) as u8;
         assert_eq!(val & 0x10, 0x10);
-        assert_eq!(val & 0x0F, 0x05);
+        assert_eq!(val & 0x0F, 0x0A);
     }
 }
