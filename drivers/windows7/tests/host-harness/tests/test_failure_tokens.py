@@ -154,6 +154,28 @@ class FailureTokenTests(unittest.TestCase):
         self.assertRegex(msg, _TOKEN_RE)
         self.assertTrue(msg.startswith("FAIL: VIRTIO_BLK_RECOVERY_DETECTED:"))
 
+    def test_virtio_blk_reset_recovery_nonzero_token(self) -> None:
+        h = self.harness
+
+        msg = h._check_no_blk_reset_recovery_requirement(
+            b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset-recovery|INFO|reset_detected=1|hw_reset_bus=0\n"
+        )
+        self.assertIsNotNone(msg)
+        assert msg is not None
+        self.assertRegex(msg, _TOKEN_RE)
+        self.assertTrue(msg.startswith("FAIL: VIRTIO_BLK_RESET_RECOVERY_NONZERO:"))
+
+    def test_virtio_blk_reset_recovery_detected_token(self) -> None:
+        h = self.harness
+
+        msg = h._check_fail_on_blk_reset_recovery_requirement(
+            b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset-recovery|INFO|reset_detected=1|hw_reset_bus=2\n"
+        )
+        self.assertIsNotNone(msg)
+        assert msg is not None
+        self.assertRegex(msg, _TOKEN_RE)
+        self.assertTrue(msg.startswith("FAIL: VIRTIO_BLK_RESET_RECOVERY_DETECTED:"))
+
     def test_virtio_blk_reset_skip_tokens(self) -> None:
         h = self.harness
 

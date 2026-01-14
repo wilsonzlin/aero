@@ -122,6 +122,17 @@ via the dedicated `virtio-blk-counters` marker, emitting:
 
 - `FAIL: VIRTIO_BLK_RECOVERY_DETECTED: ...`
 
+When `--require-no-blk-reset-recovery` is enabled, the harness fails if the guest reports non-zero virtio-blk timeout/error
+recovery activity counters (`reset_detected` / `hw_reset_bus`) via the dedicated `virtio-blk-reset-recovery` marker,
+emitting:
+
+- `FAIL: VIRTIO_BLK_RESET_RECOVERY_NONZERO: ...`
+
+When `--fail-on-blk-reset-recovery` is enabled, the harness fails if the guest reports non-zero virtio-blk hardware reset
+invocations (`hw_reset_bus`) via the dedicated `virtio-blk-reset-recovery` marker, emitting:
+
+- `FAIL: VIRTIO_BLK_RESET_RECOVERY_DETECTED: ...`
+
 When the guest virtio-snd selftest fails due to the `ForceNullBackend` bring-up toggle (which disables the virtio
 transport and makes host-side wav verification silent), the harness emits:
 
@@ -3615,6 +3626,23 @@ def _build_arg_parser() -> argparse.ArgumentParser:
             "machine-readable virtio-blk-counters marker (checks abort/reset_device/reset_bus only)."
         ),
     )
+    parser.add_argument(
+        "--require-no-blk-reset-recovery",
+        action="store_true",
+        help=(
+            "Fail the harness if the guest reports non-zero virtio-blk timeout/error recovery activity via the "
+            "machine-readable virtio-blk-reset-recovery marker (checks reset_detected/hw_reset_bus). "
+            "On failure, emits: FAIL: VIRTIO_BLK_RESET_RECOVERY_NONZERO:"
+        ),
+    )
+    parser.add_argument(
+        "--fail-on-blk-reset-recovery",
+        action="store_true",
+        help=(
+            "Fail the harness if the guest reports non-zero virtio-blk reset activity via the "
+            "machine-readable virtio-blk-reset-recovery marker (checks hw_reset_bus only)."
+        ),
+    )
 
     return parser
 
@@ -6428,6 +6456,26 @@ def main() -> int:
                                 _print_tail(serial_log)
                                 result_code = 1
                                 break
+                        if args.require_no_blk_reset_recovery:
+                            msg = _check_no_blk_reset_recovery_requirement(
+                                tail,
+                                blk_reset_recovery_line=virtio_blk_reset_recovery_marker_line,
+                            )
+                            if msg is not None:
+                                print(msg, file=sys.stderr)
+                                _print_tail(serial_log)
+                                result_code = 1
+                                break
+                        if args.fail_on_blk_reset_recovery:
+                            msg = _check_fail_on_blk_reset_recovery_requirement(
+                                tail,
+                                blk_reset_recovery_line=virtio_blk_reset_recovery_marker_line,
+                            )
+                            if msg is not None:
+                                print(msg, file=sys.stderr)
+                                _print_tail(serial_log)
+                                result_code = 1
+                                break
 
                         if args.require_net_csum_offload or getattr(args, "require_net_udp_csum_offload", False):
                             csum_tail = (
@@ -8128,6 +8176,26 @@ def main() -> int:
                             if args.fail_on_blk_recovery:
                                 msg = _check_fail_on_blk_recovery_requirement(
                                     tail, blk_counters_line=virtio_blk_counters_marker_line
+                                )
+                                if msg is not None:
+                                    print(msg, file=sys.stderr)
+                                    _print_tail(serial_log)
+                                    result_code = 1
+                                    break
+                            if args.require_no_blk_reset_recovery:
+                                msg = _check_no_blk_reset_recovery_requirement(
+                                    tail,
+                                    blk_reset_recovery_line=virtio_blk_reset_recovery_marker_line,
+                                )
+                                if msg is not None:
+                                    print(msg, file=sys.stderr)
+                                    _print_tail(serial_log)
+                                    result_code = 1
+                                    break
+                            if args.fail_on_blk_reset_recovery:
+                                msg = _check_fail_on_blk_reset_recovery_requirement(
+                                    tail,
+                                    blk_reset_recovery_line=virtio_blk_reset_recovery_marker_line,
                                 )
                                 if msg is not None:
                                     print(msg, file=sys.stderr)
@@ -9961,6 +10029,11 @@ _VIRTIO_BLK_COUNTERS_KEYS = (
     "ioctl_reset",
 )
 
+_VIRTIO_BLK_RESET_RECOVERY_KEYS = (
+    "reset_detected",
+    "hw_reset_bus",
+)
+
 
 def _try_parse_int_base0(s: str) -> Optional[int]:
     try:
@@ -10125,6 +10198,80 @@ def _check_fail_on_blk_recovery_requirement(
         return (
             "FAIL: VIRTIO_BLK_RECOVERY_DETECTED:"
             f" abort={counters['abort']} reset_device={counters['reset_device']} reset_bus={counters['reset_bus']}"
+        )
+    return None
+
+
+def _try_parse_virtio_blk_reset_recovery_counters(
+    tail: bytes, *, blk_reset_recovery_line: Optional[str] = None
+) -> Optional[dict[str, int]]:
+    """
+    Best-effort: extract virtio-blk timeout/error recovery counters from the dedicated guest marker.
+
+    Guest marker:
+      AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset-recovery|INFO|reset_detected=...|hw_reset_bus=...
+      AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset-recovery|SKIP|reason=...|returned_len=...
+    """
+    marker_line = blk_reset_recovery_line
+    if marker_line is None:
+        marker_line = _try_extract_last_marker_line(
+            tail, b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset-recovery|"
+        )
+    if not marker_line:
+        return None
+
+    toks = marker_line.split("|")
+    status = toks[3] if len(toks) >= 4 else ""
+    if status == "SKIP":
+        return None
+
+    fields = _parse_marker_kv_fields(marker_line)
+    counters: dict[str, int] = {}
+    for k in _VIRTIO_BLK_RESET_RECOVERY_KEYS:
+        if k not in fields:
+            return None
+        v = _try_parse_int_base0(fields[k])
+        if v is None:
+            return None
+        counters[k] = v
+    return counters
+
+
+def _check_no_blk_reset_recovery_requirement(
+    tail: bytes,
+    *,
+    threshold: int = 0,
+    blk_reset_recovery_line: Optional[str] = None,
+) -> Optional[str]:
+    counters = _try_parse_virtio_blk_reset_recovery_counters(
+        tail, blk_reset_recovery_line=blk_reset_recovery_line
+    )
+    if counters is None:
+        return None
+    if counters["reset_detected"] > threshold or counters["hw_reset_bus"] > threshold:
+        return (
+            "FAIL: VIRTIO_BLK_RESET_RECOVERY_NONZERO:"
+            f" reset_detected={counters['reset_detected']} hw_reset_bus={counters['hw_reset_bus']}"
+        )
+    return None
+
+
+def _check_fail_on_blk_reset_recovery_requirement(
+    tail: bytes,
+    *,
+    threshold: int = 0,
+    blk_reset_recovery_line: Optional[str] = None,
+) -> Optional[str]:
+    counters = _try_parse_virtio_blk_reset_recovery_counters(
+        tail, blk_reset_recovery_line=blk_reset_recovery_line
+    )
+    if counters is None:
+        return None
+    # Looser mode: only treat an actual StorPort HwResetBus invocation as a failure.
+    if counters["hw_reset_bus"] > threshold:
+        return (
+            "FAIL: VIRTIO_BLK_RESET_RECOVERY_DETECTED:"
+            f" hw_reset_bus={counters['hw_reset_bus']} reset_detected={counters['reset_detected']}"
         )
     return None
 

@@ -429,6 +429,20 @@ The host harness mirrors this into:
 
 `AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RESET_RECOVERY|INFO/SKIP|reset_detected=...|hw_reset_bus=...`
 
+To enforce that virtio-blk did not trigger timeout/error recovery resets (best-effort; ignores missing/SKIP markers), enable:
+
+- PowerShell:
+  - `-RequireNoBlkResetRecovery` (fails on any non-zero `reset_detected` or `hw_reset_bus`)
+  - `-FailOnBlkResetRecovery` (fails on any non-zero `hw_reset_bus` only)
+- Python:
+  - `--require-no-blk-reset-recovery`
+  - `--fail-on-blk-reset-recovery`
+
+On failure it emits deterministic tokens:
+
+- `FAIL: VIRTIO_BLK_RESET_RECOVERY_NONZERO: ...`
+- `FAIL: VIRTIO_BLK_RESET_RECOVERY_DETECTED: ...`
+
 To enforce a minimal “no unexpected aborts/resets” policy (checks `abort`/`reset_device`/`reset_bus` only), enable:
 
 - PowerShell: `-FailOnBlkRecovery`
