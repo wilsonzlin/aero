@@ -151,7 +151,12 @@ pub fn translate_dxbc_to_wgsl_with_options(
 ) -> Result<TranslatedShader, TranslateError> {
     let token_stream = dxbc::extract_shader_bytecode(bytes)?;
 
-    let decoded = decode_u8_le_bytes(token_stream)?;
+    let token_stream = crate::token_stream::normalize_sm2_sm3_instruction_lengths(token_stream)
+        .map_err(|message| crate::sm3::decode::DecodeError {
+            token_index: 0,
+            message,
+        })?;
+    let decoded = decode_u8_le_bytes(token_stream.as_ref())?;
     let ir = build_ir(&decoded)?;
     verify_ir(&ir)?;
 

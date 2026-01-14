@@ -93,7 +93,12 @@ pub fn translate_to_wgsl_with_options(
     token_stream: &[u8],
     options: WgslOptions,
 ) -> Result<WgslTranslation, Sm3WgslError> {
-    let decoded = crate::sm3::decode_u8_le_bytes(token_stream)?;
+    let token_stream = crate::token_stream::normalize_sm2_sm3_instruction_lengths(token_stream)
+        .map_err(|message| crate::sm3::decode::DecodeError {
+            token_index: 0,
+            message,
+        })?;
+    let decoded = crate::sm3::decode_u8_le_bytes(token_stream.as_ref())?;
     let ir = crate::sm3::build_ir(&decoded)?;
     crate::sm3::verify_ir(&ir)?;
     let WgslOutput {

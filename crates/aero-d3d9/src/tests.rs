@@ -3189,6 +3189,25 @@ fn translate_entrypoint_accepts_operand_count_length_encoding_in_dxbc_container(
 }
 
 #[test]
+fn sm3_translate_to_wgsl_accepts_operand_count_length_encoding() {
+    // `aero_d3d9::sm3::wgsl::translate_to_wgsl` is used by `aero-gpu`'s experimental
+    // `D3d9ShaderCache`. Ensure it accepts the operand-count length encoding used by some legacy
+    // shader blobs.
+    let vs_bytes = to_bytes(&assemble_vs2_passthrough_operand_count_len());
+    let translated = crate::sm3::wgsl::translate_to_wgsl(&vs_bytes).unwrap();
+    assert!(translated.wgsl.contains("@vertex"));
+    assert_eq!(translated.entry_point, "vs_main");
+
+    let module = naga::front::wgsl::parse_str(&translated.wgsl).expect("wgsl parse");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
+}
+
+#[test]
 fn translate_entrypoint_sm3_supports_texcoord8_vertex_inputs() {
     // TEXCOORD8 is outside the fixed StandardLocationMap TEXCOORD0..7 range. Ensure the SM3
     // translator uses the adaptive semantic mapping and does not fall back to the legacy

@@ -17,6 +17,7 @@ pub mod shader_translate;
 pub mod sm3;
 pub mod software;
 pub mod state;
+mod token_stream;
 pub mod vertex;
 
 #[cfg(test)]
