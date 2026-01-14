@@ -299,6 +299,7 @@ bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --test sm3_decode --locked
 - `b6b6bec11` — `test(sm3): cover 1D texldp/texldd and clean up software matcher`
 - `362261e8d` — `test(sm3): cover texldl swizzles for 1D/3D/cube samplers`
 - `02e042470` — `fix(sm3): support texldb bias for 1D textures in WGSL`
+- `dae0504ad` — `test(sm3): ensure predicated texldb avoids non-uniform control flow`
 - `b10bb36f3` — `docs(graphics): mark SM3 TexSample/texkill tasks 401/402 done`
 - `6617e2bc5` — `docs(graphics): cross-link SM3 shader translation task notes`
 - `9f3c546f8` — `docs(graphics): link task-489 audit from SM3 translation notes`
