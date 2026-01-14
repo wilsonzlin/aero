@@ -379,9 +379,13 @@ def main() -> int:
         except Exception:
             pass
 
-    device_help_text: Final[str] = (
-        _qemu_device_help_text(args.qemu_system) or "" if (args.with_virtio_snd or args.with_virtio_tablet) else ""
-    )
+    device_help_text: Final[str] = ""
+    if args.with_virtio_snd or args.with_virtio_tablet:
+        help_text = _qemu_device_help_text(args.qemu_system)
+        if help_text is None:
+            print(f"ERROR: qemu-system binary not found: {args.qemu_system}", file=sys.stderr)
+            return 2
+        device_help_text = help_text or ""
 
     with tempfile.TemporaryDirectory(prefix="aero-qemu-pci-probe-") as td:
         disk_path = Path(td) / "disk.img"
