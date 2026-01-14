@@ -141,6 +141,12 @@ ServiceType   = 1  ; SERVICE_KERNEL_DRIVER
 StartType     = 3  ; SERVICE_DEMAND_START
 ErrorControl  = 1  ; SERVICE_ERROR_NORMAL
 ServiceBinary = %12%\aero_virtio_input.sys
+AddReg        = AeroVirtioInput_Service_AddReg
+
+[AeroVirtioInput_Service_AddReg]
+; Optional debug/diagnostic parameters (HKLM\SYSTEM\CurrentControlSet\Services\aero_virtio_input\Parameters).
+; Use NOCLOBBER so upgrades do not overwrite explicit user settings.
+HKR, Parameters, StatusQDropOnFull, 0x00010003, 0
 
 ;------------------------------------------------------------------------------
 ; KMDF
