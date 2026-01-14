@@ -5,8 +5,8 @@ use crate::device::{AttachedUsbDevice, UsbInResult, UsbOutResult};
 use crate::{MemoryBus, SetupPacket, UsbDeviceModel, UsbSpeed};
 
 use super::context::{
-    EndpointContext, EndpointType, InputContext32, SlotContext, XHCI_ROUTE_STRING_MAX_DEPTH,
-    XHCI_ROUTE_STRING_MAX_PORT,
+    EndpointContext, EndpointType, InputContext32, SlotContext, SLOT_STATE_ADDRESSED,
+    SLOT_STATE_CONFIGURED, XHCI_ROUTE_STRING_MAX_DEPTH, XHCI_ROUTE_STRING_MAX_PORT,
 };
 use super::trb::{CompletionCode, Trb, TrbType, TRB_LEN};
 
@@ -978,9 +978,8 @@ impl CommandRingProcessor {
         };
 
         // Update internal slot state.
-        let prev_ep0_state =
-            EndpointContext::read_from(mem, dev_ctx_ptr + DEVICE_EP0_CTX_OFFSET).endpoint_state()
-                as u32;
+        let prev_ep0_state = EndpointContext::read_from(mem, dev_ctx_ptr + DEVICE_EP0_CTX_OFFSET)
+            .endpoint_state() as u32;
         let effective_ep0_state = if prev_ep0_state == 0 {
             EP_STATE_RUNNING
         } else {
@@ -1031,6 +1030,8 @@ impl CommandRingProcessor {
         };
         let mut out_slot_ctx = SlotContext::read_from(mem, out_slot_addr);
         out_slot_ctx.set_speed(psiv);
+        // Address Device transitions the slot to the Addressed state (xHCI 1.2 §4.6.5).
+        out_slot_ctx.set_slot_state(SLOT_STATE_ADDRESSED);
         out_slot_ctx.write_to(mem, out_slot_addr);
 
         // Apply EP0 Context (preserve Endpoint State field).
@@ -1124,6 +1125,8 @@ impl CommandRingProcessor {
             // Update the Slot Context Context Entries field to reflect an EP0-only configuration.
             let mut slot_ctx = SlotContext::read_from(mem, dev_ctx_ptr + DEVICE_SLOT_CTX_OFFSET);
             slot_ctx.set_context_entries(1);
+            // Deconfigure returns the slot to the Addressed state (xHCI 1.2 §6.4.3.5).
+            slot_ctx.set_slot_state(SLOT_STATE_ADDRESSED);
             slot_ctx.write_to(mem, dev_ctx_ptr + DEVICE_SLOT_CTX_OFFSET);
 
             return CompletionCode::Success;
@@ -1332,12 +1335,8 @@ impl CommandRingProcessor {
         if (add_flags & ICC_CTX_FLAG_SLOT) != 0 {
             let in_slot_addr = input_ctx_ptr + INPUT_SLOT_CTX_OFFSET;
             let out_slot_addr = dev_ctx_ptr + DEVICE_SLOT_CTX_OFFSET;
-            if let Err(code) = self.copy_slot_context_preserve_state(
-                mem,
-                in_slot_addr,
-                out_slot_addr,
-                true,
-            )
+            if let Err(code) =
+                self.copy_slot_context_preserve_state(mem, in_slot_addr, out_slot_addr, true)
             {
                 return code;
             }
@@ -1385,6 +1384,11 @@ impl CommandRingProcessor {
                 }
             }
         }
+
+        // Configure Endpoint transitions the slot to the Configured state (xHCI 1.2 §6.4.3.5).
+        let mut slot_ctx = SlotContext::read_from(mem, dev_ctx_ptr + DEVICE_SLOT_CTX_OFFSET);
+        slot_ctx.set_slot_state(SLOT_STATE_CONFIGURED);
+        slot_ctx.write_to(mem, dev_ctx_ptr + DEVICE_SLOT_CTX_OFFSET);
 
         CompletionCode::Success
     }
@@ -1820,6 +1824,15 @@ mod tests {
             mem.write_u32(addr + 4, 0xfeed_f00d);
         }
 
+        // Seed a Slot Context that appears configured so deconfigure can transition it back to an
+        // EP0-only Addressed state.
+        let mut slot_ctx = SlotContext::default();
+        slot_ctx.set_root_hub_port_number(1);
+        slot_ctx.set_usb_device_address(1);
+        slot_ctx.set_context_entries(5);
+        slot_ctx.set_slot_state(SLOT_STATE_CONFIGURED);
+        slot_ctx.write_to(&mut mem, dev_ctx + DEVICE_SLOT_CTX_OFFSET);
+
         // Build a deconfigure Configure Endpoint TRB.
         // Input context pointer must be readable/aligned; contents are ignored in deconfigure mode.
         mem.write_u32(input_ctx, 0); // drop flags
@@ -1851,6 +1864,11 @@ mod tests {
             1,
             "deconfigure should leave the slot configured with only EP0"
         );
+        assert_eq!(
+            slot_ctx.slot_state(),
+            SLOT_STATE_ADDRESSED,
+            "deconfigure should transition slot state back to Addressed"
+        );
 
         // Internal endpoint state should be dropped as well.
         let slot = processor.slots[usize::from(slot_id)]
@@ -1862,6 +1880,80 @@ mod tests {
                 "expected internal endpoint state for dci={dci} to be cleared"
             );
         }
+    }
+
+    #[test]
+    fn configure_endpoint_transitions_slot_state_to_configured() {
+        let mut mem = TestMem::new(0x20_000);
+        let mem_size = mem.data.len() as u64;
+
+        let dcbaa = 0x1000u64;
+        let dev_ctx = 0x2000u64;
+        let input_ctx = 0x3000u64;
+
+        let max_slots = 8;
+        let slot_id = 1u8;
+
+        let mut processor = CommandRingProcessor::new(
+            mem_size,
+            max_slots,
+            dcbaa,
+            CommandRing::new(0),
+            EventRing::new(0, 0),
+        );
+
+        // Enable the slot and install DCBAA[slot_id] -> device context pointer.
+        let (code, enabled_slot_id) = processor.handle_enable_slot(&mut mem);
+        assert_eq!(code, CompletionCode::Success);
+        assert_eq!(enabled_slot_id, slot_id);
+        mem.write_u64(dcbaa + 8, dev_ctx);
+
+        // Bind the slot to a reachable device.
+        processor.attach_root_port(1, Box::new(DummyDevice));
+        {
+            let slot = processor.slots[usize::from(slot_id)]
+                .as_mut()
+                .expect("slot state should exist");
+            slot.root_port = Some(1);
+            slot.route = Vec::new();
+            slot.address = 1;
+        }
+
+        // Seed the output Slot Context in an Addressed state.
+        let mut out_slot_ctx = SlotContext::default();
+        out_slot_ctx.set_root_hub_port_number(1);
+        out_slot_ctx.set_route_string(0);
+        out_slot_ctx.set_usb_device_address(1);
+        out_slot_ctx.set_slot_state(SLOT_STATE_ADDRESSED);
+        out_slot_ctx.write_to(&mut mem, dev_ctx + DEVICE_SLOT_CTX_OFFSET);
+
+        // Input Control Context: add Endpoint 1 IN (DCI=3).
+        mem.write_u32(input_ctx + ICC_DROP_FLAGS_OFFSET, 0);
+        mem.write_u32(input_ctx + ICC_ADD_FLAGS_OFFSET, ICC_CTX_FLAG_EP1_IN);
+
+        // Slot Context is present in the Input Context layout even if not added; keep it valid.
+        let mut in_slot_ctx = SlotContext::default();
+        in_slot_ctx.set_root_hub_port_number(1);
+        in_slot_ctx.write_to(&mut mem, input_ctx + INPUT_SLOT_CTX_OFFSET);
+
+        // Endpoint 1 IN context lives at Input Context index DCI+1 = 4.
+        let mut ep1in = EndpointContext::default();
+        // Endpoint type = Interrupt IN (7), MPS = 8.
+        ep1in.set_dword(1, (7u32 << 3) | (8u32 << 16));
+        ep1in.set_tr_dequeue_pointer(0x5000, true);
+        ep1in.write_to(&mut mem, input_ctx + 4 * CONTEXT_SIZE);
+
+        let mut trb = Trb::new(input_ctx, 0, 0);
+        trb.set_trb_type(TrbType::ConfigureEndpointCommand);
+        trb.set_slot_id(slot_id);
+
+        assert_eq!(
+            processor.handle_configure_endpoint(&mut mem, trb),
+            CompletionCode::Success
+        );
+
+        let slot_ctx = SlotContext::read_from(&mut mem, dev_ctx + DEVICE_SLOT_CTX_OFFSET);
+        assert_eq!(slot_ctx.slot_state(), SLOT_STATE_CONFIGURED);
     }
 
     #[test]

@@ -1,5 +1,8 @@
 use aero_usb::hid::UsbHidKeyboardHandle;
-use aero_usb::xhci::context::{EndpointContext, InputControlContext, SlotContext, CONTEXT_SIZE};
+use aero_usb::xhci::context::{
+    EndpointContext, InputControlContext, SlotContext, CONTEXT_SIZE, SLOT_STATE_ADDRESSED,
+    SLOT_STATE_CONFIGURED,
+};
 use aero_usb::xhci::trb::{CompletionCode, Trb, TrbType, TRB_LEN};
 use aero_usb::xhci::XhciController;
 use aero_usb::MemoryBus;
@@ -93,6 +96,7 @@ fn configure_endpoint_preserves_xhc_owned_slot_context_fields() {
 
     let slot_after_address = SlotContext::read_from(&mut mem, dev_ctx);
     assert_eq!(slot_after_address.usb_device_address(), slot_id);
+    assert_eq!(slot_after_address.slot_state(), SLOT_STATE_ADDRESSED);
     let speed_after_address = slot_after_address.speed();
 
     // --- Configure Endpoint (TRB2) with Slot Context included ---
@@ -154,6 +158,7 @@ fn configure_endpoint_preserves_xhc_owned_slot_context_fields() {
         slot_id,
         "Configure Endpoint must preserve the xHC-owned USB device address"
     );
+    assert_eq!(slot_after_cfg.slot_state(), SLOT_STATE_CONFIGURED);
     assert_eq!(
         slot_after_cfg.speed(),
         speed_after_address,

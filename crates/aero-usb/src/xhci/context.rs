@@ -22,6 +22,14 @@ pub const DEVICE_CONTEXT_ENTRY_COUNT: usize = 32;
 /// Maximum number of contexts in an Input Context (Input Control + Device Context).
 pub const INPUT_CONTEXT_ENTRY_COUNT: usize = 33;
 
+/// Slot Context Slot State field values (DW3 bits 31:27).
+///
+/// Reference: xHCI 1.2 §6.2.2 "Slot Context".
+pub const SLOT_STATE_DISABLED_OR_ENABLED: u8 = 0;
+pub const SLOT_STATE_DEFAULT: u8 = 1;
+pub const SLOT_STATE_ADDRESSED: u8 = 2;
+pub const SLOT_STATE_CONFIGURED: u8 = 3;
+
 /// Upper bound for iterating context indices in flags fields.
 ///
 /// This is fixed by the spec (32 bits) and does **not** depend on guest values.
@@ -272,6 +280,16 @@ impl SlotContext {
 
     pub fn set_usb_device_address(&mut self, addr: u8) {
         self.dwords[3] = (self.dwords[3] & !0xff) | (addr as u32);
+    }
+
+    /// Slot State field (DW3 bits 27..=31).
+    pub fn slot_state(&self) -> u8 {
+        ((self.dwords[3] >> 27) & 0x1f) as u8
+    }
+
+    pub fn set_slot_state(&mut self, state: u8) {
+        let state = (state as u32) & 0x1f;
+        self.dwords[3] = (self.dwords[3] & !(0x1f << 27)) | (state << 27);
     }
 }
 

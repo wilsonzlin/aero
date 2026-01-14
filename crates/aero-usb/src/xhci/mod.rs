@@ -150,6 +150,7 @@ pub struct TickWork {
 
 use self::context::{
     Dcbaa, DeviceContext32, EndpointContext, InputControlContext, SlotContext, CONTEXT_SIZE,
+    SLOT_STATE_ADDRESSED, SLOT_STATE_CONFIGURED, SLOT_STATE_DEFAULT,
 };
 use self::ring::{RingCursor, RingError, RingPoll};
 
@@ -1361,6 +1362,13 @@ impl XhciController {
         let merged_dw3 = (slot_ctx.dword(3) & !SLOT_STATE_MASK_DWORD3)
             | (out_slot.dword(3) & SLOT_STATE_MASK_DWORD3);
         slot_ctx.set_dword(3, merged_dw3);
+        // Address Device transitions the slot to Default/Addressed (xHCI 1.2 §4.6.5). Model the
+        // BSR=1 variant as leaving the device in the Default state.
+        slot_ctx.set_slot_state(if bsr {
+            SLOT_STATE_DEFAULT
+        } else {
+            SLOT_STATE_ADDRESSED
+        });
 
         // Endpoint state is controller-owned. Preserve the existing state if the output context
         // already has one, otherwise set the endpoint to Running.
@@ -1593,6 +1601,8 @@ impl XhciController {
             // Reflect EP0-only configuration in the Slot Context.
             let mut slot_ctx = SlotContext::read_from(mem, dev_ctx_ptr);
             slot_ctx.set_context_entries(1);
+            // Deconfigure returns the slot to the Addressed state (xHCI 1.2 §6.4.3.5).
+            slot_ctx.set_slot_state(SLOT_STATE_ADDRESSED);
             slot_ctx.write_to(mem, dev_ctx_ptr);
             {
                 let slot_state = &mut self.slots[slot_idx];
@@ -1740,6 +1750,16 @@ impl XhciController {
                     *state = ControlTdState::default();
                 }
             }
+        }
+
+        // Configure Endpoint transitions the slot to the Configured state (xHCI 1.2 §6.4.3.5).
+        let mut slot_ctx = SlotContext::read_from(mem, dev_ctx_ptr);
+        slot_ctx.set_slot_state(SLOT_STATE_CONFIGURED);
+        slot_ctx.write_to(mem, dev_ctx_ptr);
+        {
+            let slot_state = &mut self.slots[slot_idx];
+            slot_state.slot_context = slot_ctx;
+            slot_state.device_context_ptr = dev_ctx_ptr;
         }
 
         self.queue_command_completion_event(cmd_paddr, CompletionCode::Success, slot_id);

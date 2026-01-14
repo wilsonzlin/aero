@@ -1,8 +1,8 @@
 mod util;
 
 use aero_usb::hub::UsbHubDevice;
-use aero_usb::xhci::context::{EndpointContext, CONTEXT_SIZE};
 use aero_usb::xhci::command_ring::{CommandRing, CommandRingProcessor, EventRing};
+use aero_usb::xhci::context::{EndpointContext, SlotContext, CONTEXT_SIZE, SLOT_STATE_ADDRESSED};
 use aero_usb::xhci::trb::{CompletionCode, Trb, TrbType};
 use aero_usb::{ControlResponse, UsbDeviceModel};
 
@@ -112,6 +112,10 @@ fn enable_slot_then_address_device_emits_completion_event_and_sets_address() {
         .port_device(1)
         .expect("device should still be attached");
     assert_ne!(dev.address(), 0);
+
+    // Address Device transitions the slot to the Addressed state in the output Slot Context.
+    let slot_ctx = SlotContext::read_from(&mut mem, dev_ctx as u64);
+    assert_eq!(slot_ctx.slot_state(), SLOT_STATE_ADDRESSED);
 
     // Address Device configures EP0; the output Endpoint Context state must be Running (1).
     let ep0 = EndpointContext::read_from(&mut mem, (dev_ctx as u64) + (CONTEXT_SIZE as u64));

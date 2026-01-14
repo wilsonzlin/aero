@@ -1,5 +1,7 @@
 use aero_usb::hid::UsbHidKeyboardHandle;
-use aero_usb::xhci::context::{EndpointContext, InputControlContext, SlotContext, CONTEXT_SIZE};
+use aero_usb::xhci::context::{
+    EndpointContext, InputControlContext, SlotContext, CONTEXT_SIZE, SLOT_STATE_ADDRESSED,
+};
 use aero_usb::xhci::regs;
 use aero_usb::xhci::trb::{CompletionCode, Trb, TrbType, TRB_LEN};
 use aero_usb::xhci::XhciController;
@@ -104,6 +106,7 @@ fn enable_slot_then_address_device_binds_port_and_writes_context() {
     assert_eq!(out_slot.speed(), regs::PSIV_FULL_SPEED);
     assert_eq!(out_slot.route_string(), 0);
     assert_eq!(out_slot.usb_device_address(), slot_id);
+    assert_eq!(out_slot.slot_state(), SLOT_STATE_ADDRESSED);
     assert_ne!(
         out_slot.dword(3) >> 27,
         guest_slot_state,
