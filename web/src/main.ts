@@ -4071,6 +4071,8 @@ function renderAudioPanel(): HTMLElement {
     capacityFrames: number;
     readFrameIndex: number;
     writeFrameIndex: number;
+    underrunCount: number;
+    overrunCount: number;
     availableFrames: number;
     framesCaptured: number;
     signal: AudioSignalStats;
@@ -4229,6 +4231,21 @@ function renderAudioPanel(): HTMLElement {
     if (available > cap) available = cap;
     if (available === 0) return { ok: false, error: "Audio output ringBuffer is empty." };
 
+    let underrunCount = 0;
+    let overrunCount = 0;
+    try {
+      if (ring.underrunCount instanceof Uint32Array) {
+        const view = ring.underrunCount as Uint32Array;
+        underrunCount = Atomics.load(view, 0) >>> 0;
+      }
+      if (ring.overrunCount instanceof Uint32Array) {
+        const view = ring.overrunCount as Uint32Array;
+        overrunCount = Atomics.load(view, 0) >>> 0;
+      }
+    } catch {
+      // ignore; best-effort only.
+    }
+
     const maxFrames = Math.max(1, Math.floor(sampleRate * Math.max(0.1, opts.maxSeconds)));
     const frames = Math.min(available, maxFrames);
     const start = read % cap;
@@ -4249,6 +4266,8 @@ function renderAudioPanel(): HTMLElement {
       capacityFrames: cap,
       readFrameIndex: read,
       writeFrameIndex: write,
+      underrunCount,
+      overrunCount,
       availableFrames: available,
       framesCaptured: frames,
       signal,
@@ -4737,7 +4756,7 @@ function renderAudioPanel(): HTMLElement {
               data: encoder.encode(JSON.stringify({ timeIso, ...res.meta }, null, 2)),
             });
             summaryLines.push(
-              `audio-output-${item.name}.wav: frames=${res.meta.framesCaptured} sr=${res.meta.sampleRate} cc=${res.meta.channelCount} rms=${formatDbfsFromLinear(res.meta.signal.rms)}dBFS peak=${formatDbfsFromLinear(res.meta.signal.peakAbs)}dBFS`,
+              `audio-output-${item.name}.wav: frames=${res.meta.framesCaptured} sr=${res.meta.sampleRate} cc=${res.meta.channelCount} underruns=${res.meta.underrunCount} overruns=${res.meta.overrunCount} rms=${formatDbfsFromLinear(res.meta.signal.rms)}dBFS peak=${formatDbfsFromLinear(res.meta.signal.peakAbs)}dBFS`,
             );
           }
 
