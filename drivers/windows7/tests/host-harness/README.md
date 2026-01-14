@@ -317,10 +317,10 @@ By default, the harness will still PASS when Windows falls back to INTx (MSI/MSI
 MSI-X as disabled on the corresponding PCI function (best-effort introspection via QMP `query-pci` or HMP `info pci`).
 
 - PowerShell:
-  - `-RequireVirtioNetMsix` *(also requires the guest `virtio-net-msix` marker to report `mode=msix`)*
+  - `-RequireVirtioNetMsix` *(alias: `-RequireNetMsix`; also requires the guest `virtio-net-msix` marker to report `mode=msix`)*
   - `-RequireVirtioBlkMsix`
   - `-RequireVirtioSndMsix` *(requires `-WithVirtioSnd`; also requires the guest `virtio-snd-msix` marker to report `mode=msix`)*
-  - `-RequireVirtioInputMsix` *(guest marker check: requires `AERO_VIRTIO_SELFTEST|TEST|virtio-input-msix|...` to report `mode=msix`)*
+  - `-RequireVirtioInputMsix` *(alias: `-RequireInputMsix`; guest marker check: requires `AERO_VIRTIO_SELFTEST|TEST|virtio-input-msix|...` to report `mode=msix`)*
 - Python:
   - `--require-virtio-net-msix` *(also requires the guest `virtio-net-msix` marker to report `mode=msix`)*
   - `--require-virtio-blk-msix`
