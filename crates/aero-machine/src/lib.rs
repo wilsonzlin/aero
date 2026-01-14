@@ -487,7 +487,6 @@ pub enum MachineError {
     UhciRequiresPcPlatform,
     E1000RequiresPcPlatform,
     VirtioNetRequiresPcPlatform,
-    AerogpuRequiresPcPlatform,
     AerogpuConflictsWithVga,
     MultipleNicsEnabled,
 }
@@ -530,9 +529,6 @@ impl fmt::Display for MachineError {
             }
             MachineError::VirtioNetRequiresPcPlatform => {
                 write!(f, "enable_virtio_net requires enable_pc_platform=true")
-            }
-            MachineError::AerogpuRequiresPcPlatform => {
-                write!(f, "enable_aerogpu requires enable_pc_platform=true")
             }
             MachineError::AerogpuConflictsWithVga => {
                 write!(
@@ -2964,7 +2960,7 @@ impl Machine {
         }
         if cfg.enable_aerogpu {
             if !cfg.enable_pc_platform {
-                return Err(MachineError::AerogpuRequiresPcPlatform);
+                return Err(MachineError::AeroGpuRequiresPcPlatform);
             }
             if cfg.enable_vga {
                 return Err(MachineError::AerogpuConflictsWithVga);
