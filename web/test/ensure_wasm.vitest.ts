@@ -27,7 +27,7 @@ describe("web/scripts/ensure_wasm.mjs", () => {
       // Pretend the JIT crate exists.
       if (p.endsWith("/crates/aero-jit-wasm/Cargo.toml")) return true;
 
-      // Core + GPU outputs already exist.
+      // Core + GPU + D3D11 outputs already exist.
       if (p.includes("/web/src/wasm/pkg-single/") && (p.endsWith("/aero_wasm.js") || p.endsWith("/aero_wasm_bg.wasm"))) {
         return true;
       }
@@ -151,7 +151,7 @@ describe("web/scripts/ensure_wasm.mjs", () => {
       // Pretend the JIT crate exists.
       if (p.endsWith("/crates/aero-jit-wasm/Cargo.toml")) return true;
 
-      // Core + GPU outputs already exist for the threaded build.
+      // Core + GPU + D3D11 outputs already exist for the threaded build.
       if (
         p.includes("/web/src/wasm/pkg-threaded/") &&
         (p.endsWith("/aero_wasm.js") || p.endsWith("/aero_wasm_bg.wasm"))
@@ -252,7 +252,7 @@ describe("web/scripts/ensure_wasm.mjs", () => {
       // JIT crate missing.
       if (p.endsWith("/crates/aero-jit-wasm/Cargo.toml")) return false;
 
-      // Core + GPU outputs exist.
+      // Core + GPU + D3D11 outputs exist.
       if (p.includes("/web/src/wasm/pkg-single/") && (p.endsWith("/aero_wasm.js") || p.endsWith("/aero_wasm_bg.wasm"))) {
         return true;
       }
@@ -294,7 +294,7 @@ describe("web/scripts/ensure_wasm.mjs", () => {
       // Pretend the JIT crate exists.
       if (p.endsWith("/crates/aero-jit-wasm/Cargo.toml")) return true;
 
-      // Single variant already fully built (core + gpu + jit).
+      // Single variant already fully built (core + gpu + d3d11 + jit).
       if (p.includes("/web/src/wasm/pkg-single/") && (p.endsWith("/aero_wasm.js") || p.endsWith("/aero_wasm_bg.wasm"))) {
         return true;
       }
@@ -380,7 +380,7 @@ describe("web/scripts/ensure_wasm.mjs", () => {
       // Pretend the JIT crate exists.
       if (p.endsWith("/crates/aero-jit-wasm/Cargo.toml")) return true;
 
-      // Core + GPU outputs already exist.
+      // Core + GPU + D3D11 outputs already exist.
       if (p.includes("/web/src/wasm/pkg-single/") && (p.endsWith("/aero_wasm.js") || p.endsWith("/aero_wasm_bg.wasm"))) {
         return true;
       }

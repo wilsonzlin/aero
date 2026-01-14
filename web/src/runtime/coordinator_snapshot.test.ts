@@ -516,6 +516,8 @@ describe("runtime/coordinator (worker VM snapshots)", () => {
     net.emitMessage({ kind: "vm.snapshot.paused", requestId: net.posted[0]!.message.requestId, ok: true });
     await flushMicrotasks();
 
+    // Machine runtime does not use the legacy CPU-state + IO snapshot builder flow.
+    expect(cpu.posted.some((m) => m.message.kind === "vm.snapshot.getCpuState")).toBe(false);
     expect(cpu.posted[1]?.message.kind).toBe("vm.snapshot.machine.saveToOpfs");
     expect(cpu.posted[1]?.message.path).toBe("state/test.snap");
     expect(io.posted.some((m) => m.message.kind === "vm.snapshot.saveToOpfs")).toBe(false);
@@ -569,6 +571,9 @@ describe("runtime/coordinator (worker VM snapshots)", () => {
     expect(txRing.tryPop()).toBeNull();
     expect(rxRing.tryPop()).toBeNull();
 
+    // Machine runtime restores the snapshot in the CPU worker and does not dispatch legacy CPU state blobs.
+    expect(io.posted.some((m) => m.message.kind === "vm.snapshot.restoreFromOpfs")).toBe(false);
+    expect(cpu.posted.some((m) => m.message.kind === "vm.snapshot.setCpuState")).toBe(false);
     expect(cpu.posted[1]?.message.kind).toBe("vm.snapshot.machine.restoreFromOpfs");
     expect(cpu.posted[1]?.message.path).toBe("state/test.snap");
 
