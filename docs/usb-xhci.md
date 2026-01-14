@@ -87,6 +87,14 @@ Native integration (not yet wired into the canonical `Machine` by default):
 - Native PCI wrapper (IRQ/MSI plumbing): `crates/devices/src/usb/xhci.rs` (`XhciPciDevice`)
 - Emulator crate glue (module path): `emulator::io::usb::xhci` (thin wrapper around `aero_usb::xhci`)
 
+Notes:
+
+- `crates/devices/src/usb/xhci.rs` is currently a **standalone PCI/MMIO stub** with its own register
+  backing store for enumeration/IRQ smoke tests. It is **not yet** wired to the canonical
+  `aero_usb::xhci::XhciController`.
+- The canonical Rust xHCI controller model (`aero_usb::xhci::XhciController`) is currently exercised
+  via Rust tests and the web/WASM bridge (`aero_wasm::XhciControllerBridge`).
+
 ### PCI identity (canonical)
 
 The repo defines a stable PCI identity for xHCI in `crates/devices`, and both native + web runtimes
@@ -150,7 +158,7 @@ for modern guests and for high-speed/superspeed passthrough, but the in-tree cod
 
 #### Minimal controller MMIO surfaces
 
-- Native/shared Rust: `aero_usb::xhci::XhciController`
+- Rust controller model: `aero_usb::xhci::XhciController`
   - Minimal MMIO register file with basic unaligned access handling:
     - Capability registers: CAPLENGTH/HCIVERSION, HCSPARAMS1 (port count), HCCPARAMS1 (xECP), DBOFF, RTSOFF.
     - A small Supported Protocol xECP list (USB 2.0 + speed IDs) sized to `port_count`.
