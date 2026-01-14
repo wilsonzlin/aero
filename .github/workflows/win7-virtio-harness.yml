@@ -328,17 +328,21 @@ jobs:
             echo "Inputs:"
             echo "  disk_image_path: '${{ inputs.disk_image_path }}'"
             echo "  qemu_system: '${{ inputs.qemu_system }}'"
-            if [[ -n "${{ inputs.qemu_extra_args }}" ]]; then
+            qemu_extra_args_items=()
+            while IFS= read -r line; do
+              line="${line%$'\r'}"
+              line="${line#"${line%%[![:space:]]*}"}"
+              line="${line%"${line##*[![:space:]]}"}"
+              if [[ -z "${line}" || "${line}" == \#* ]]; then
+                continue
+              fi
+              qemu_extra_args_items+=("${line}")
+            done <<<"${{ inputs.qemu_extra_args }}"
+            if (( ${#qemu_extra_args_items[@]} > 0 )); then
               echo "  qemu_extra_args:"
-              while IFS= read -r line; do
-                line="${line%$'\r'}"
-                line="${line#"${line%%[![:space:]]*}"}"
-                line="${line%"${line##*[![:space:]]}"}"
-                if [[ -z "${line}" || "${line}" == \#* ]]; then
-                  continue
-                fi
+              for line in "${qemu_extra_args_items[@]}"; do
                 echo "    - ${line}"
-              done <<<"${{ inputs.qemu_extra_args }}"
+              done
             else
               echo "  qemu_extra_args: ''"
             fi
@@ -860,13 +864,17 @@ jobs:
               args+=(--with-snd-buffer-limits)
             fi
             if [[ -n "${qemu_extra_args}" ]]; then
-              args+=(--)
+              qemu_extra_added=false
               while IFS= read -r line; do
                 line="${line%$'\r'}"
                 line="${line#"${line%%[![:space:]]*}"}"
                 line="${line%"${line##*[![:space:]]}"}"
                 if [[ -z "${line}" || "${line}" == \#* ]]; then
                   continue
+                fi
+                if [[ "${qemu_extra_added}" != "true" ]]; then
+                  args+=(--)
+                  qemu_extra_added=true
                 fi
                 args+=("${line}")
               done <<<"${qemu_extra_args}"
