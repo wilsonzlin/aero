@@ -1168,16 +1168,25 @@ There are two valid implementation strategies:
 2. **Indexed list emission (less duplication):** write one vertex per `EmitVertex` and generate a
    separate `gs_out_indices` list, then use `drawIndexedIndirect`.
 
-The baseline bring-up path should prefer (1). In that case, the worst-case per-primitive output
-vertex bound (for sizing `out_max_vertices`) is:
+Both strategies are valid. When implementing real GS bytecode execution, **indexed list emission**
+(2) is generally preferable because it matches `EmitVertex` semantics naturally (one output vertex
+per `emit`) and avoids duplicating vertex payloads; the in-tree GS→WGSL translator also uses this
+approach for its initial supported subset (see `crates/aero-d3d11/src/runtime/gs_translate.rs`).
+
+For sizing, define:
+
+- `M = gs_maxvertexcount` from the GS bytecode.
+- `max_list_vertices_per_input_prim` = worst-case number of **list vertices** emitted when expanding
+  a strip into a list. (This is also the worst-case number of **list indices** when using strategy
+  (2), since each list vertex corresponds to one index.)
+
+Then the per-primitive bound is:
 
 | GS declared output | Max `EmitVertex` per input prim | Max list vertices per input prim |
 |---|---:|---:|
 | `point` | `M` | `M` |
 | `line_strip` | `M` | `2 * max(0, M - 1)` |
 | `triangle_strip` | `M` | `3 * max(0, M - 2)` |
-
-Where `M = gs_maxvertexcount` from the GS bytecode.
 
 So a conservative capacity is:
 
@@ -1190,6 +1199,43 @@ If using strategy (2), then:
 
 - `out_max_vertices = input_prim_count * instance_count * gs_instance_count * M`
 - `out_max_indices = input_prim_count * instance_count * gs_instance_count * max_list_vertices_per_input_prim`
+
+**Strip → list emission algorithm (indexed; recommended)**
+
+To implement `EmitVertex` / `CutVertex` for strip output topologies while ultimately rendering a list
+topology, maintain per-invocation local strip assembly state:
+
+- `emitted_count: u32` (clamped to `M`)
+- `strip_len: u32` (length of the current strip since the last `CutVertex`)
+- for `line_strip`: `prev: u32` (previous emitted vertex index)
+- for `triangle_strip`: `prev0: u32`, `prev1: u32` (previous two emitted vertex indices)
+
+On `CutVertex`:
+
+- set `strip_len = 0`.
+
+On each `EmitVertex`:
+
+1. If `emitted_count >= M`, ignore the emit (D3D clamps by `maxvertexcount`).
+2. Allocate one output vertex index `vtx_idx` and write the vertex payload.
+3. Emit list indices based on the strip state:
+   - `line_strip` → `line_list`:
+     - if `strip_len >= 1`, append indices `(prev, vtx_idx)` (2 indices).
+     - update `prev = vtx_idx`.
+   - `triangle_strip` → `triangle_list`:
+     - if `strip_len == 0`, set `prev0 = vtx_idx`.
+     - else if `strip_len == 1`, set `prev1 = vtx_idx`.
+     - else:
+       - let `i = strip_len` (0-based length before appending this vertex).
+       - to preserve strip winding, swap the first two vertices on odd `i`:
+         - if `(i & 1) == 0`: emit `(prev0, prev1, vtx_idx)`
+         - else:            emit `(prev1, prev0, vtx_idx)`
+       - advance the strip window: `prev0 = prev1; prev1 = vtx_idx`.
+4. Increment: `strip_len += 1`, `emitted_count += 1`.
+
+When using a global append counter (`counters`) for output allocation, `vtx_idx` can be obtained via
+`atomicAdd(&counters.out_vertex_count, 1)`, and list indices can be appended similarly. This matches
+the approach used by the in-tree GS translator’s generated WGSL.
 
 **Expanded vertex layout (target; bit-preserving):**
 
