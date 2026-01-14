@@ -632,7 +632,10 @@ Notes:
 
 NVMe provides a simpler, higher-throughput datapath than AHCI (doorbells + DMA queues).
 The reference implementation lives in `crates/aero-devices-nvme/` and is designed to plug
-into Aero’s `DiskBackend` abstraction and `MemoryBus` DMA interface.
+into Aero’s `aero_storage::VirtualDisk` abstraction and `memory::MemoryBus` DMA interface.
+
+NVMe LBAs are currently fixed at **512 bytes** in this device model. NVMe constructors validate
+that the attached `VirtualDisk` has a capacity that is a multiple of 512.
 
 ### Implemented (MVP)
 
@@ -706,7 +709,7 @@ pub struct VirtioBlkDevice {
     request_vq: Virtqueue,
     
     // Backend
-    disk: Box<dyn DiskBackend>,
+    disk: Box<dyn aero_storage::VirtualDisk>,
 }
 
 #[repr(C)]
