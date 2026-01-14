@@ -84,10 +84,12 @@ pub fn require_gs_prepass_or_skip(
         );
         return false;
     }
-    // The GS prepass path always needs several storage buffers (expanded vertices/indices +
-    // indirect args/counters + GS inputs). Some downlevel devices can advertise compute support but
-    // still expose a very small `max_storage_buffers_per_shader_stage`, which can trigger wgpu
-    // validation panics during pipeline/bind-group creation. Skip these tests up front.
+    // The GS/HS/DS emulation paths rely on storage buffers. WebGPU guarantees at least 4 storage
+    // buffers per stage, but some downlevel configurations expose fewer. Skip these tests up front
+    // to avoid wgpu validation errors during pipeline/bind group creation.
+    //
+    // Note: some specific tests (e.g. vertex pulling smoke tests) may require *more* than 4 storage
+    // buffers per stage; those tests should perform their own limit checks.
     let max_storage = exec.device().limits().max_storage_buffers_per_shader_stage;
     if max_storage < 4 {
         skip_or_panic(
