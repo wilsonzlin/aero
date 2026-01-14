@@ -1,6 +1,6 @@
 use aero_gpu_trace::{
     AerogpuSubmissionCapture, BlobKind, TraceMeta, TraceReadError, TraceReader, TraceRecord,
-    TraceWriteError, TraceWriter, CONTAINER_VERSION, TRACE_FOOTER_SIZE,
+    TraceWriteError, TraceWriter, CONTAINER_VERSION, TRACE_FOOTER_SIZE, TRACE_HEADER_SIZE,
 };
 use std::io::Cursor;
 
@@ -205,6 +205,31 @@ fn reject_trace_with_toc_entry_present_out_of_bounds() {
     let entry_start = toc_offset + 16; // TOC_HEADER_SIZE
     let present_offset_field = entry_start + 16;
     bytes[present_offset_field..present_offset_field + 8].copy_from_slice(&u64::MAX.to_le_bytes());
+
+    let err = match TraceReader::open(Cursor::new(bytes)) {
+        Ok(_) => panic!("expected trace open to fail"),
+        Err(err) => err,
+    };
+    assert!(matches!(err, TraceReadError::TocOutOfBounds));
+}
+
+#[test]
+fn reject_trace_with_meta_len_overlapping_record_stream() {
+    let mut bytes = minimal_trace_bytes(0);
+
+    // Read the real toc_offset from the footer, then corrupt meta_len so that:
+    //   record_stream_start = TRACE_HEADER_SIZE + meta_len
+    // becomes *after* toc_offset, which is invalid.
+    let footer_size = TRACE_FOOTER_SIZE as usize;
+    let footer_start = bytes.len() - footer_size;
+    let toc_offset = read_u64_le(&bytes, footer_start + 16);
+
+    let meta_len = toc_offset
+        .checked_sub(TRACE_HEADER_SIZE as u64)
+        .unwrap()
+        .checked_add(1)
+        .unwrap();
+    bytes[24..28].copy_from_slice(&(meta_len as u32).to_le_bytes());
 
     let err = match TraceReader::open(Cursor::new(bytes)) {
         Ok(_) => panic!("expected trace open to fail"),
