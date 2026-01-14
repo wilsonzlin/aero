@@ -135,7 +135,8 @@ Already implemented:
       - `hid.ringAttach` (`HidReportRing`) for **output/feature reports** (worker → main; can be
         disabled via `hid.ringDetach` on ring corruption)
       (see [Forwarding mechanism](#forwarding-mechanism)).
-    - Fallback/legacy path: `postMessage` forwarding (`hid.inputReport` / `hid.sendReport`).
+    - Fallback/legacy path: `postMessage` forwarding (`hid.inputReport` / `hid.sendReport` /
+      `hid.getFeatureReport` / `hid.featureReportResult`).
 - **Worker-side WASM bridge (TypeScript)**
   - `web/src/workers/io.worker.ts` creates a WASM `WebHidPassthroughBridge` per attached device and
     drains output reports back to the broker.
