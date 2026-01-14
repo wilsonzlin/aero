@@ -1704,22 +1704,44 @@ fn decode_report_map(
     buf: &[u8],
     what: &'static str,
 ) -> SnapshotResult<()> {
-    const MAX_REPORTS: usize = 1024;
+    // Report IDs are encoded as u8, so a well-formed snapshot can never contain more than 256
+    // distinct entries.
+    const MAX_REPORTS: usize = 256;
     const MAX_REPORT_BYTES: usize = 1024 * 1024;
+    // Hard upper bound for the total bytes allocated by a single report map to avoid restoring
+    // snapshots that would allocate an unreasonable amount of memory (e.g. 256 x 1MiB).
+    const MAX_TOTAL_REPORT_BYTES: usize = 8 * 1024 * 1024;
 
+    // Pass 1: validate count and total bytes without allocating.
     let mut d = Decoder::new(buf);
     let count = d.u32()? as usize;
     if count > MAX_REPORTS {
         return Err(SnapshotError::InvalidFieldEncoding(what));
     }
-
-    map.clear();
+    let mut total = 0usize;
     for _ in 0..count {
-        let report_id = d.u8()?;
+        d.u8()?; // report_id
         let len = d.u32()? as usize;
         if len > MAX_REPORT_BYTES {
             return Err(SnapshotError::InvalidFieldEncoding(what));
         }
+        total = total
+            .checked_add(len)
+            .ok_or(SnapshotError::InvalidFieldEncoding(what))?;
+        if total > MAX_TOTAL_REPORT_BYTES {
+            return Err(SnapshotError::InvalidFieldEncoding(what));
+        }
+        d.bytes(len)?; // advance
+    }
+    d.finish()?;
+
+    // Pass 2: decode and allocate knowing the structure and total bytes are bounded.
+    let mut d = Decoder::new(buf);
+    let count = d.u32()? as usize;
+    map.clear();
+    for _ in 0..count {
+        let report_id = d.u8()?;
+        let len = d.u32()? as usize;
         let data = d.bytes(len)?.to_vec();
         map.insert(report_id, data);
     }
@@ -1935,18 +1957,36 @@ impl IoSnapshot for UsbHidPassthrough {
 
         if let Some(buf) = r.bytes(TAG_PENDING_INPUT_REPORTS) {
             const MAX_REPORT_BYTES: usize = 128 * 1024;
+            const MAX_TOTAL_BYTES: usize = 8 * 1024 * 1024;
 
+            // Pass 1: validate count and total bytes without allocating.
             let mut d = Decoder::new(buf);
             let count = d.u32()? as usize;
             if count > self.max_pending_input_reports {
                 return Err(SnapshotError::InvalidFieldEncoding("pending input reports"));
             }
-            self.pending_input_reports.clear();
+            let mut total = 0usize;
             for _ in 0..count {
                 let len = d.u32()? as usize;
                 if len > MAX_REPORT_BYTES {
                     return Err(SnapshotError::InvalidFieldEncoding("pending input reports"));
                 }
+                total = total
+                    .checked_add(len)
+                    .ok_or(SnapshotError::InvalidFieldEncoding("pending input reports"))?;
+                if total > MAX_TOTAL_BYTES {
+                    return Err(SnapshotError::InvalidFieldEncoding("pending input reports"));
+                }
+                d.bytes(len)?;
+            }
+            d.finish()?;
+
+            // Pass 2: decode and allocate.
+            let mut d = Decoder::new(buf);
+            let count = d.u32()? as usize;
+            self.pending_input_reports.clear();
+            for _ in 0..count {
+                let len = d.u32()? as usize;
                 self.pending_input_reports.push_back(d.bytes(len)?.to_vec());
             }
             d.finish()?;
@@ -1954,7 +1994,9 @@ impl IoSnapshot for UsbHidPassthrough {
 
         if let Some(buf) = r.bytes(TAG_PENDING_OUTPUT_REPORTS) {
             const MAX_REPORT_BYTES: usize = 128 * 1024;
+            const MAX_TOTAL_BYTES: usize = 8 * 1024 * 1024;
 
+            // Pass 1: validate count and total bytes without allocating.
             let mut d = Decoder::new(buf);
             let count = d.u32()? as usize;
             if count > self.max_pending_output_reports {
@@ -1962,15 +2004,37 @@ impl IoSnapshot for UsbHidPassthrough {
                     "pending output reports",
                 ));
             }
+            let mut total = 0usize;
             for _ in 0..count {
-                let report_type = d.u8()?;
-                let report_id = d.u8()?;
+                d.u8()?; // report_type
+                d.u8()?; // report_id
                 let len = d.u32()? as usize;
                 if len > MAX_REPORT_BYTES {
                     return Err(SnapshotError::InvalidFieldEncoding(
                         "pending output reports",
                     ));
                 }
+                total = total
+                    .checked_add(len)
+                    .ok_or(SnapshotError::InvalidFieldEncoding(
+                        "pending output reports",
+                    ))?;
+                if total > MAX_TOTAL_BYTES {
+                    return Err(SnapshotError::InvalidFieldEncoding(
+                        "pending output reports",
+                    ));
+                }
+                d.bytes(len)?;
+            }
+            d.finish()?;
+
+            // Pass 2: decode and allocate.
+            let mut d = Decoder::new(buf);
+            let count = d.u32()? as usize;
+            for _ in 0..count {
+                let report_type = d.u8()?;
+                let report_id = d.u8()?;
+                let len = d.u32()? as usize;
                 let data = d.bytes(len)?.to_vec();
                 self.pending_output_reports
                     .push_back(UsbHidPassthroughOutputReport {
@@ -3521,6 +3585,145 @@ mod tests {
 
         match dev.load_state(&snapshot) {
             Err(SnapshotError::InvalidFieldEncoding("pending output reports")) => {}
+            other => panic!("expected InvalidFieldEncoding, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn snapshot_restore_rejects_pending_input_reports_total_bytes_over_limit() {
+        const TAG_MAX_PENDING_INPUT_REPORTS: u16 = 8;
+        const TAG_PENDING_INPUT_REPORTS: u16 = 10;
+
+        let pending = {
+            // Per-report limit is 128KiB; total budget is 8MiB.
+            let payload = vec![0u8; 128 * 1024];
+            let mut enc = Encoder::new().u32(65);
+            for _ in 0..64 {
+                enc = enc.u32(payload.len() as u32).bytes(&payload);
+            }
+            // Exceed the total budget; omit payload bytes so the loader must fail before reading.
+            enc.u32(1).finish()
+        };
+
+        let snapshot = {
+            let mut w = SnapshotWriter::new(
+                UsbHidPassthrough::DEVICE_ID,
+                UsbHidPassthrough::DEVICE_VERSION,
+            );
+            w.field_u32(TAG_MAX_PENDING_INPUT_REPORTS, u32::MAX);
+            w.field_bytes(TAG_PENDING_INPUT_REPORTS, pending);
+            w.finish()
+        };
+
+        let mut dev = UsbHidPassthroughHandle::new(
+            0x1234,
+            0x5678,
+            "Vendor".into(),
+            "Product".into(),
+            None,
+            sample_report_descriptor_with_ids(),
+            false,
+            None,
+            None,
+            None,
+        );
+
+        match dev.load_state(&snapshot) {
+            Err(SnapshotError::InvalidFieldEncoding("pending input reports")) => {}
+            other => panic!("expected InvalidFieldEncoding, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn snapshot_restore_rejects_pending_output_reports_total_bytes_over_limit() {
+        const TAG_MAX_PENDING_OUTPUT_REPORTS: u16 = 9;
+        const TAG_PENDING_OUTPUT_REPORTS: u16 = 14;
+
+        let pending = {
+            // Per-report limit is 128KiB; total budget is 8MiB.
+            let payload = vec![0u8; 128 * 1024];
+            let mut enc = Encoder::new().u32(65);
+            for _ in 0..64 {
+                enc = enc
+                    .u8(2) // report_type
+                    .u8(1) // report_id
+                    .u32(payload.len() as u32)
+                    .bytes(&payload);
+            }
+            // Exceed the total budget; omit payload bytes so the loader must fail before reading.
+            enc.u8(2).u8(1).u32(1).finish()
+        };
+
+        let snapshot = {
+            let mut w = SnapshotWriter::new(
+                UsbHidPassthrough::DEVICE_ID,
+                UsbHidPassthrough::DEVICE_VERSION,
+            );
+            w.field_u32(TAG_MAX_PENDING_OUTPUT_REPORTS, u32::MAX);
+            w.field_bytes(TAG_PENDING_OUTPUT_REPORTS, pending);
+            w.finish()
+        };
+
+        let mut dev = UsbHidPassthroughHandle::new(
+            0x1234,
+            0x5678,
+            "Vendor".into(),
+            "Product".into(),
+            None,
+            sample_report_descriptor_with_ids(),
+            false,
+            None,
+            None,
+            None,
+        );
+
+        match dev.load_state(&snapshot) {
+            Err(SnapshotError::InvalidFieldEncoding("pending output reports")) => {}
+            other => panic!("expected InvalidFieldEncoding, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn snapshot_restore_rejects_last_input_reports_total_bytes_over_limit() {
+        const TAG_LAST_INPUT_REPORTS: u16 = 11;
+
+        let reports = {
+            let payload = vec![0u8; 1024 * 1024];
+            let mut enc = Encoder::new().u32(9);
+            for report_id in 1u8..=8 {
+                enc = enc
+                    .u8(report_id)
+                    .u32(payload.len() as u32)
+                    .bytes(&payload);
+            }
+            // Exceed the total budget; omit payload bytes so the loader must fail before reading.
+            enc.u8(9).u32(1).finish()
+        };
+
+        let snapshot = {
+            let mut w = SnapshotWriter::new(
+                UsbHidPassthrough::DEVICE_ID,
+                UsbHidPassthrough::DEVICE_VERSION,
+            );
+            w.field_bytes(TAG_LAST_INPUT_REPORTS, reports);
+            w.finish()
+        };
+
+        let mut dev = UsbHidPassthroughHandle::new(
+            0x1234,
+            0x5678,
+            "Vendor".into(),
+            "Product".into(),
+            None,
+            sample_report_descriptor_with_ids(),
+            false,
+            None,
+            None,
+            None,
+        );
+
+        match dev.load_state(&snapshot) {
+            Err(SnapshotError::InvalidFieldEncoding("last input reports")) => {}
             other => panic!("expected InvalidFieldEncoding, got {other:?}"),
         }
     }
