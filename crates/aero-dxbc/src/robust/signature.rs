@@ -21,7 +21,13 @@ pub(crate) fn parse_signature(fourcc: FourCc, bytes: &[u8]) -> Result<DxbcSignat
     let param_count = r.read_u32_le()?;
     let param_offset = r.read_u32_le()?;
 
-    let entry_size = 24usize;
+    // Support both common D3D10+ signature entry layouts:
+    // - v0: 24-byte entries (`*SGN`, `PCSG`)
+    // - v1: 32-byte entries (`*SG1`, `PCG1`)
+    //
+    // `aero-dxbc`'s non-robust parser also supports a heuristic for unknown FourCCs, but for the
+    // legacy robust module keep the mapping simple and FourCC-driven.
+    let entry_size = if fourcc.as_bytes()[3] == b'1' { 32usize } else { 24usize };
     let table_bytes =
         (param_count as usize)
             .checked_mul(entry_size)

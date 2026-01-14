@@ -267,20 +267,59 @@ impl DxbcShader {
             .map(|c| reflection::parse_rdef(c.data))
             .transpose()?;
 
-        let input_signature = container
-            .find_first(&FourCc::from("ISGN"))
-            .map(|c| signature::parse_signature(c.fourcc, c.data))
-            .transpose()?;
+        fn parse_signature_variants<'a>(
+            container: &DxbcContainer<'a>,
+            kinds: &[FourCc],
+        ) -> Option<Result<DxbcSignature, DxbcError>> {
+            let mut any = false;
+            let mut first_err = None;
+            for &kind in kinds {
+                for chunk in container.chunks.iter().filter(|c| c.fourcc == kind) {
+                    any = true;
+                    match signature::parse_signature(chunk.fourcc, chunk.data) {
+                        Ok(sig) => return Some(Ok(sig)),
+                        Err(err) => {
+                            if first_err.is_none() {
+                                first_err = Some(err);
+                            }
+                        }
+                    }
+                }
+            }
+            if !any {
+                None
+            } else {
+                // `any == true` implies we attempted to parse at least one signature chunk, so
+                // `first_err` must have been populated.
+                Some(Err(first_err.expect("signature parse did not record an error")))
+            }
+        }
 
-        let output_signature = container
-            .find_first(&FourCc::from("OSGN"))
-            .map(|c| signature::parse_signature(c.fourcc, c.data))
-            .transpose()?;
+        // Prefer the `*SG1` variants but accept `*SGN` when needed. Some toolchains emit duplicate
+        // signature chunks; iterate in file order and take the first one that parses successfully.
+        let input_signature =
+            parse_signature_variants(&container, &[FourCc::from("ISG1"), FourCc::from("ISGN")])
+                .transpose()?;
 
-        let patch_constant_signature = container
-            .find_first(&FourCc::from("PSGN"))
-            .map(|c| signature::parse_signature(c.fourcc, c.data))
-            .transpose()?;
+        let output_signature =
+            parse_signature_variants(&container, &[FourCc::from("OSG1"), FourCc::from("OSGN")])
+                .transpose()?;
+
+        // Tessellation uses two signature spellings for patch-constant IO:
+        // - `PCSG` / `PCG1` for hull shader patch-constant outputs
+        // - `PSGN` / `PSG1` for domain shader patch-constant inputs
+        //
+        // Prefer the dedicated patch-constant signature but fall back to the patch signature.
+        let patch_constant_signature = parse_signature_variants(
+            &container,
+            &[
+                FourCc::from("PCG1"),
+                FourCc::from("PCSG"),
+                FourCc::from("PSG1"),
+                FourCc::from("PSGN"),
+            ],
+        )
+        .transpose()?;
 
         let stats = container
             .find_first(&FourCc::from("STAT"))
@@ -290,7 +329,8 @@ impl DxbcShader {
         let mut unknown_chunks = Vec::new();
         for chunk in &container.chunks {
             match chunk.fourcc.as_bytes() {
-                b"SHDR" | b"SHEX" | b"RDEF" | b"ISGN" | b"OSGN" | b"PSGN" | b"STAT" => {}
+                b"SHDR" | b"SHEX" | b"RDEF" | b"STAT" => {}
+                b"ISGN" | b"ISG1" | b"OSGN" | b"OSG1" | b"PSGN" | b"PSG1" | b"PCSG" | b"PCG1" => {}
                 _ => unknown_chunks.push(chunk.fourcc),
             }
         }
