@@ -1788,9 +1788,18 @@ impl AerogpuD3d9Executor {
         };
 
         std::mem::swap(&mut self.constants_buffer, &mut next.constants_buffer);
-        std::mem::swap(&mut self.constants_bind_group, &mut next.constants_bind_group);
-        std::mem::swap(&mut self.samplers_bind_group_vs, &mut next.samplers_bind_group_vs);
-        std::mem::swap(&mut self.samplers_bind_group_ps, &mut next.samplers_bind_group_ps);
+        std::mem::swap(
+            &mut self.constants_bind_group,
+            &mut next.constants_bind_group,
+        );
+        std::mem::swap(
+            &mut self.samplers_bind_group_vs,
+            &mut next.samplers_bind_group_vs,
+        );
+        std::mem::swap(
+            &mut self.samplers_bind_group_ps,
+            &mut next.samplers_bind_group_ps,
+        );
         std::mem::swap(
             &mut self.samplers_bind_groups_dirty,
             &mut next.samplers_bind_groups_dirty,
@@ -2302,6 +2311,51 @@ impl AerogpuD3d9Executor {
 
             let bytecode_stage = reflection.stage.to_stage();
             if expected_stage != bytecode_stage {
+                // Stage mismatches can be caused either by:
+                // - a guest bug (CREATE_SHADER_DXBC stage doesn't match the DXBC bytecode), or
+                // - stale/corrupt cached reflection metadata (Persistent hit).
+                //
+                // Avoid invalidating the cache on guest bugs, but do attempt a single
+                // invalidate+retranslate cycle when the persistent cache returns mismatched stage
+                // metadata.
+                if source == aero_d3d9::runtime::ShaderCacheSource::Persistent {
+                    let stage_matches_expected = match shader::parse(dxbc_bytes) {
+                        Ok(program) => program.version.stage == expected_stage,
+                        Err(err) => {
+                            debug!(
+                                shader_handle,
+                                ?err,
+                                "failed to parse DXBC while validating cached shader stage; invalidating and retranslating"
+                            );
+                            true
+                        }
+                    };
+                    if stage_matches_expected {
+                        debug!(
+                            shader_handle,
+                            expected = ?expected_stage,
+                            cached = ?bytecode_stage,
+                            "cached shader stage metadata is incorrect; invalidating and retranslating"
+                        );
+                        if !invalidated_once {
+                            invalidated_once = true;
+                            let _ = self
+                                .persistent_shader_cache
+                                .invalidate(dxbc_bytes, flags.clone())
+                                .await;
+                            self.stats.set_d3d9_shader_cache_disabled(
+                                self.persistent_shader_cache.is_persistent_disabled(),
+                            );
+                            continue;
+                        }
+                        return self.create_shader_dxbc_in_memory(
+                            shader_handle,
+                            expected_stage,
+                            dxbc_bytes,
+                        );
+                    }
+                }
+
                 return Err(AerogpuD3d9Error::ShaderStageMismatch {
                     shader_handle,
                     expected: expected_stage,
@@ -4985,13 +5039,15 @@ impl AerogpuD3d9Executor {
                         SharedSurfaceError::TokenRefersToDestroyed { share_token, .. } => {
                             AerogpuD3d9Error::UnknownShareToken(share_token)
                         }
-                        SharedSurfaceError::AliasAlreadyBound { alias, existing, new } => {
-                            AerogpuD3d9Error::SharedSurfaceAliasAlreadyBound {
-                                alias,
-                                existing,
-                                new,
-                            }
-                        }
+                        SharedSurfaceError::AliasAlreadyBound {
+                            alias,
+                            existing,
+                            new,
+                        } => AerogpuD3d9Error::SharedSurfaceAliasAlreadyBound {
+                            alias,
+                            existing,
+                            new,
+                        },
                         SharedSurfaceError::HandleStillInUse(handle) => {
                             AerogpuD3d9Error::ResourceHandleInUse(handle)
                         }
