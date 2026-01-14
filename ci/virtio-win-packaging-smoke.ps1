@@ -1258,6 +1258,22 @@ if ($resolvedGuestToolsProfile -eq "full") {
       throw "Did not expect driver-pack manifest to list '$notWant' as included for the partial-optional scenario. Included: $($partialIncludedDrivers -join ', ')"
     }
   }
+
+  # -StrictOptional should reject partial optional drivers (regardless of the best-effort
+  # normalization behaviour in the default mode).
+  Write-Host "Validating -StrictOptional rejects partial optional drivers..."
+  $partialStrictOutDir = Join-Path $OutRoot "driver-pack-partial-optional-strict"
+  Ensure-EmptyDirectory -Path $partialStrictOutDir
+  $partialStrictLog = Join-Path $logsDir "make-driver-pack-partial-optional-strict.log"
+  & pwsh -NoProfile -ExecutionPolicy Bypass -File $driverPackScript `
+    -VirtioWinRoot $syntheticPartialRoot `
+    -OutDir $partialStrictOutDir `
+    -Drivers "viostor","netkvm","viosnd","vioinput" `
+    -StrictOptional `
+    -NoZip *>&1 | Tee-Object -FilePath $partialStrictLog
+  if ($LASTEXITCODE -eq 0) {
+    throw "Expected make-driver-pack.ps1 -StrictOptional to fail for partial optional drivers. See $partialStrictLog"
+  }
 }
 
 # When optional drivers are both present in the synthetic virtio-win tree and declared in the
