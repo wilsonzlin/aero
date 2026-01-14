@@ -19,6 +19,7 @@ pub const PORTSC_PS_MASK: u32 = 0x0f << PORTSC_PS_SHIFT;
 
 pub const PORTSC_CSC: u32 = 1 << 17;
 pub const PORTSC_PEC: u32 = 1 << 18;
+pub const PORTSC_PRC: u32 = 1 << 21;
 
 // Reset signalling for USB2 ports is ~50ms (similar to the UHCI root hub model).
 const RESET_DURATION_MS: u16 = 50;
@@ -65,6 +66,7 @@ pub(crate) struct XhciPort {
 
     reset: bool,
     reset_timer_ms: u16,
+    port_reset_change: bool,
 
     link_state: XhciUsb2LinkState,
     speed: Option<UsbSpeed>,
@@ -80,6 +82,7 @@ impl XhciPort {
             port_enabled_change: false,
             reset: false,
             reset_timer_ms: 0,
+            port_reset_change: false,
             link_state: XhciUsb2LinkState::U3,
             speed: None,
         }
@@ -115,6 +118,7 @@ impl XhciPort {
         // Cancel any in-flight reset.
         self.reset = false;
         self.reset_timer_ms = 0;
+        self.port_reset_change = false;
 
         changed
     }
@@ -139,6 +143,7 @@ impl XhciPort {
         // Cancel any in-flight reset.
         self.reset = false;
         self.reset_timer_ms = 0;
+        self.port_reset_change = false;
 
         changed
     }
@@ -174,6 +179,9 @@ impl XhciPort {
         if self.port_enabled_change {
             v |= PORTSC_PEC;
         }
+        if self.port_reset_change {
+            v |= PORTSC_PRC;
+        }
 
         v
     }
@@ -188,6 +196,9 @@ impl XhciPort {
         }
         if value & PORTSC_PEC != 0 {
             self.port_enabled_change = false;
+        }
+        if value & PORTSC_PRC != 0 {
+            self.port_reset_change = false;
         }
 
         // Port Reset (PR): writing 1 starts a reset. Hardware clears PR when complete.
@@ -218,6 +229,7 @@ impl XhciPort {
             self.reset_timer_ms = self.reset_timer_ms.saturating_sub(1);
             if self.reset_timer_ms == 0 {
                 self.reset = false;
+                changed |= self.set_port_reset_change();
 
                 // If a device is still present, the port becomes enabled after reset completes.
                 if self.connected && !self.enabled {
@@ -252,6 +264,14 @@ impl XhciPort {
             return false;
         }
         self.port_enabled_change = true;
+        true
+    }
+
+    fn set_port_reset_change(&mut self) -> bool {
+        if self.port_reset_change {
+            return false;
+        }
+        self.port_reset_change = true;
         true
     }
 }

@@ -43,7 +43,7 @@ pub mod trb;
 
 mod port;
 
-pub use port::{PORTSC_CCS, PORTSC_CSC, PORTSC_PEC, PORTSC_PED, PORTSC_PR};
+pub use port::{PORTSC_CCS, PORTSC_CSC, PORTSC_PEC, PORTSC_PED, PORTSC_PR, PORTSC_PRC};
 
 use alloc::boxed::Box;
 use alloc::collections::VecDeque;
@@ -787,11 +787,10 @@ impl XhciController {
         let aligned = offset & !3;
         let shift = (offset & 3) * 8;
 
-        // Operational registers base is at CAPLENGTH. xHCI port registers begin at
-        // `OperationalBase + 0x400` with 0x10 bytes per port.
-        let port_regs_base = u64::from(regs::CAPLENGTH_BYTES) + 0x400;
+        let port_regs_base = regs::REG_USBCMD + regs::port::PORTREGS_BASE;
         let port_regs_end =
-            port_regs_base.saturating_add(u64::from(self.port_count) * 0x10 /*stride*/);
+            port_regs_base + u64::from(self.port_count) * regs::port::PORTREGS_STRIDE;
+
         // Reflect interrupter pending in USBSTS.EINT for drivers.
         let usbsts = self.usbsts
             | if self.interrupter0.interrupt_pending() {
@@ -803,10 +802,10 @@ impl XhciController {
         let value32 = match aligned {
             off if off >= port_regs_base && off < port_regs_end => {
                 let rel = off - port_regs_base;
-                let port = (rel / 0x10) as usize;
-                let reg_off = rel % 0x10;
+                let port = (rel / regs::port::PORTREGS_STRIDE) as usize;
+                let reg_off = rel % regs::port::PORTREGS_STRIDE;
                 match reg_off {
-                    0x00 => self.ports.get(port).map(|p| p.read_portsc()).unwrap_or(0),
+                    regs::port::PORTSC => self.ports.get(port).map(|p| p.read_portsc()).unwrap_or(0),
                     _ => 0,
                 }
             }
@@ -921,28 +920,24 @@ impl XhciController {
             _ => return,
         };
 
+        let portregs_base = regs::REG_USBCMD + regs::port::PORTREGS_BASE;
+        let portregs_end =
+            portregs_base + u64::from(self.port_count) * regs::port::PORTREGS_STRIDE;
+
+        if aligned >= portregs_base && aligned < portregs_end {
+            let rel = aligned - portregs_base;
+            let port = (rel / regs::port::PORTREGS_STRIDE) as usize;
+            let off_in_port = rel % regs::port::PORTREGS_STRIDE;
+            if off_in_port == regs::port::PORTSC {
+                // PORTSC is write-sensitive (W1C change bits, PR start). Forward the guest write.
+                self.write_portsc(port, value_shifted);
+            }
+            return;
+        }
+
         let merge = |cur: u32| (cur & !mask) | (value_shifted & mask);
 
-        // Operational registers base is at CAPLENGTH. xHCI port registers begin at
-        // `OperationalBase + 0x400` with 0x10 bytes per port.
-        let port_regs_base = u64::from(regs::CAPLENGTH_BYTES) + 0x400;
-        let port_regs_end =
-            port_regs_base.saturating_add(u64::from(self.port_count) * 0x10 /*stride*/);
-
         match aligned {
-            off if off >= port_regs_base && off < port_regs_end => {
-                let rel = off - port_regs_base;
-                let port = (rel / 0x10) as usize;
-                let reg_off = rel % 0x10;
-                if reg_off == 0x00 {
-                    // Merge partial writes against the current PORTSC value.
-                    let cur = self.ports.get(port).map(|p| p.read_portsc()).unwrap_or(0);
-                    let next = merge(cur);
-                    if port < self.ports.len() {
-                        self.write_portsc(port, next);
-                    }
-                }
-            }
             regs::REG_USBCMD => {
                 let prev = self.usbcmd;
                 self.usbcmd = merge(self.usbcmd);

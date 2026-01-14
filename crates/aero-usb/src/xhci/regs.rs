@@ -184,3 +184,29 @@ pub const fn encode_psi(psiv: u8, psit: u8, mantissa: u8, exponent: u8) -> u32 {
         | ((mantissa as u32) << 8)
         | ((exponent as u32 & 0x3) << 16)
 }
+
+/// Per-port registers (part of the operational register space).
+///
+/// xHCI exposes a block of port register sets beginning at offset `0x400` from the operational
+/// register base (i.e. `REG_USBCMD + 0x400`). Each port has a 0x10-byte register set:
+/// - PORTSC (Port Status and Control) @ +0x0
+/// - PORTPMSC (Port Power Management Status and Control) @ +0x4
+/// - PORTLI (Port Link Info) @ +0x8
+/// - PORTHLPMC (Port Hardware LPM Control) @ +0xc
+///
+/// The current controller model only implements `PORTSC`; the remaining registers read as 0 and
+/// ignore writes.
+pub mod port {
+    /// Base offset (from the operational register base) for the port register block.
+    pub const PORTREGS_BASE: u64 = 0x400;
+    /// Stride between port register sets in bytes.
+    pub const PORTREGS_STRIDE: u64 = 0x10;
+
+    /// Offset of PORTSC within a port register set.
+    pub const PORTSC: u64 = 0x00;
+
+    #[inline]
+    pub const fn portsc_offset(port: usize) -> u64 {
+        super::REG_USBCMD + PORTREGS_BASE + (port as u64) * PORTREGS_STRIDE + PORTSC
+    }
+}
