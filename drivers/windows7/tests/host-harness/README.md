@@ -274,6 +274,11 @@ virtio devices the harness creates by appending `vectors=0`:
 - PowerShell: `-VirtioDisableMsix`
 - Python: `--virtio-disable-msix`
 
+Aliases:
+
+- PowerShell: `-ForceIntx` / `-IntxOnly`
+- Python: `--force-intx` / `--intx-only`
+
 Notes:
 
 - `-VirtioDisableMsix` / `--virtio-disable-msix` is **mutually exclusive** with the MSI-X vector override flags
@@ -281,6 +286,8 @@ Notes:
   `-RequireVirtio*Msix` / `--require-virtio-*-msix`.
 - Some QEMU builds may reject `vectors=0`. In that case, the harness fails fast and includes the QEMU error in the
   usual stderr sidecar log (`<serial-base>.qemu.stderr.log`).
+- When enabled, the harness emits a machine-readable host marker:
+  - `AERO_VIRTIO_WIN7_HOST|CONFIG|force_intx=1`
 
 Expected markers (guest-side, for log scraping):
 
@@ -1153,6 +1160,7 @@ Notes:
 
 - The harness prefers the standalone guest lines `virtio-<dev>-irq|INFO/WARN|mode=...` when present.
 - For virtio-blk, it also understands dedicated `virtio-blk-irq` markers and falls back to `irq_mode=...` on `AERO_VIRTIO_SELFTEST|TEST|virtio-blk|...`.
+
 ### virtio-net driver diagnostics (`virtio-net-diag`)
 
 Newer guest selftest binaries emit a best-effort virtio-net driver diagnostic line (feature bits, offload toggles, IRQ

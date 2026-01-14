@@ -2995,11 +2995,13 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--virtio-disable-msix",
+        "--force-intx",
+        "--intx-only",
         action="store_true",
         help=(
             "Disable MSI-X for virtio-pci devices created by the harness (virtio-net/blk/input/snd) "
             "so Windows 7 must use legacy INTx + ISR paths. This appends ',vectors=0' to each virtio "
-            "`-device` arg."
+            "`-device` arg. Aliases: --force-intx/--intx-only."
         ),
     )
     parser.add_argument(
@@ -3959,6 +3961,9 @@ def main() -> int:
             irq_mode_devices.append("virtio-input")
         if args.enable_virtio_snd:
             irq_mode_devices.append("virtio-snd")
+
+        if virtio_disable_msix:
+            print("AERO_VIRTIO_WIN7_HOST|CONFIG|force_intx=1")
 
         print("Launching QEMU:")
         print("  " + _format_commandline_for_host(qemu_args))

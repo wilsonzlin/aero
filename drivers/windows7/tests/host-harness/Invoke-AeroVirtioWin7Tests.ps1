@@ -78,6 +78,7 @@ param(
   # by appending `,vectors=0` to each virtio `-device` arg (INTx-only mode). This requires the QEMU
   # virtio `vectors` device property.
   [Parameter(Mandatory = $false)]
+  [Alias("ForceIntx", "IntxOnly")]
   [switch]$VirtioDisableMsix,
 
   # If set, require INTx interrupt mode for attached virtio devices (blk/net/input/snd).
@@ -6101,7 +6102,11 @@ try {
     ) + $virtioTabletArgs + @(
       "-drive", $drive,
       "-device", $blk
-    ) + $virtioSndArgs + $QemuExtraArgs
+  ) + $virtioSndArgs + $QemuExtraArgs
+  }
+
+  if ($VirtioDisableMsix) {
+    Write-Host "AERO_VIRTIO_WIN7_HOST|CONFIG|force_intx=1"
   }
 
   Write-Host "Starting HTTP server on 127.0.0.1:$HttpPort$HttpPath ..."
@@ -6123,10 +6128,10 @@ try {
 
   Write-Host "Launching QEMU:"
   Write-Host "  $QemuSystem $($qemuArgs -join ' ')"
- 
+
   $proc = Start-Process -FilePath $QemuSystem -ArgumentList $qemuArgs -PassThru -RedirectStandardError $qemuStderrPath
   $scriptExitCode = 0
-   
+
   $result = $null
   try {
     if ([bool]$QemuPreflightPci) {
