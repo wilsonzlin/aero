@@ -359,6 +359,129 @@ describe("workers/machine_cpu.worker (worker_threads)", () => {
     }
   }, 20_000);
 
+  it("updates held-key and held-mouse-button telemetry from HID usage + button events (dummy machine)", async () => {
+    const segments = allocateTestSegments();
+    const status = new Int32Array(segments.control, STATUS_OFFSET_BYTES, STATUS_INTS);
+
+    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
+    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
+    const worker = new Worker(new URL("./machine_cpu.worker.ts", import.meta.url), {
+      type: "module",
+      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+    } as unknown as WorkerOptions);
+
+    try {
+      const workerReady = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as Partial<ProtocolMessage>)?.type === MessageType.READY && (msg as { role?: unknown }).role === "cpu",
+        10_000,
+      );
+
+      worker.postMessage({
+        kind: "config.update",
+        version: 1,
+        config: makeConfig(),
+      });
+      worker.postMessage(makeInit(segments));
+      await workerReady;
+
+      worker.postMessage({ kind: "__test.machine_cpu.enableDummyMachine" });
+
+      const nowUs = Math.round(performance.now() * 1000) >>> 0;
+      const tsUs = (nowUs - 1_000_000) >>> 0;
+
+      // Press a key via KeyHidUsage (usage=4).
+      {
+        const buf = new ArrayBuffer((2 + 4) * 4);
+        const words = new Int32Array(buf);
+        words[0] = 1;
+        words[1] = tsUs | 0;
+        words[2] = InputEventType.KeyHidUsage;
+        words[3] = tsUs | 0;
+        words[4] = 0x04 | (1 << 8); // usage=4 pressed=1
+        words[5] = 0;
+
+        const recycledPromise = waitForWorkerMessage(
+          worker,
+          (msg) => (msg as { type?: unknown }).type === "in:input-batch-recycle",
+          10_000,
+        );
+        worker.postMessage({ type: "in:input-batch", buffer: buf, recycle: true }, [buf]);
+        await recycledPromise;
+
+        expect(Atomics.load(status, StatusIndex.IoInputKeyboardHeldCount)).toBe(1);
+      }
+
+      // Release the same key.
+      {
+        const buf = new ArrayBuffer((2 + 4) * 4);
+        const words = new Int32Array(buf);
+        words[0] = 1;
+        words[1] = tsUs | 0;
+        words[2] = InputEventType.KeyHidUsage;
+        words[3] = tsUs | 0;
+        words[4] = 0x04; // usage=4 pressed=0
+        words[5] = 0;
+
+        const recycledPromise = waitForWorkerMessage(
+          worker,
+          (msg) => (msg as { type?: unknown }).type === "in:input-batch-recycle",
+          10_000,
+        );
+        worker.postMessage({ type: "in:input-batch", buffer: buf, recycle: true }, [buf]);
+        await recycledPromise;
+
+        expect(Atomics.load(status, StatusIndex.IoInputKeyboardHeldCount)).toBe(0);
+      }
+
+      // Mouse buttons held mask.
+      {
+        const buf = new ArrayBuffer((2 + 4) * 4);
+        const words = new Int32Array(buf);
+        words[0] = 1;
+        words[1] = tsUs | 0;
+        words[2] = InputEventType.MouseButtons;
+        words[3] = tsUs | 0;
+        words[4] = 0x03; // left+right
+        words[5] = 0;
+
+        const recycledPromise = waitForWorkerMessage(
+          worker,
+          (msg) => (msg as { type?: unknown }).type === "in:input-batch-recycle",
+          10_000,
+        );
+        worker.postMessage({ type: "in:input-batch", buffer: buf, recycle: true }, [buf]);
+        await recycledPromise;
+
+        expect(Atomics.load(status, StatusIndex.IoInputMouseButtonsHeldMask)).toBe(3);
+      }
+
+      // Mouse buttons up.
+      {
+        const buf = new ArrayBuffer((2 + 4) * 4);
+        const words = new Int32Array(buf);
+        words[0] = 1;
+        words[1] = tsUs | 0;
+        words[2] = InputEventType.MouseButtons;
+        words[3] = tsUs | 0;
+        words[4] = 0x00;
+        words[5] = 0;
+
+        const recycledPromise = waitForWorkerMessage(
+          worker,
+          (msg) => (msg as { type?: unknown }).type === "in:input-batch-recycle",
+          10_000,
+        );
+        worker.postMessage({ type: "in:input-batch", buffer: buf, recycle: true }, [buf]);
+        await recycledPromise;
+
+        expect(Atomics.load(status, StatusIndex.IoInputMouseButtonsHeldMask)).toBe(0);
+      }
+    } finally {
+      await worker.terminate();
+    }
+  }, 20_000);
+
   it("queues input batches while snapshot-paused and flushes them on resume", async () => {
     const segments = allocateTestSegments();
     const status = new Int32Array(segments.control, STATUS_OFFSET_BYTES, STATUS_INTS);

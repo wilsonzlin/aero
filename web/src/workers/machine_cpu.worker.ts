@@ -198,6 +198,28 @@ const queuedInputBatches: Array<{ buffer: ArrayBuffer; recycle: boolean }> = [];
 // Preallocate small scancode buffers for len=1..4.
 const packedScancodeScratch = [new Uint8Array(0), new Uint8Array(1), new Uint8Array(2), new Uint8Array(3), new Uint8Array(4)];
 
+// Best-effort held-state telemetry. We keep the same indices/semantics as `io.worker.ts` so the
+// input diagnostics panel can detect stuck keys/buttons in machine runtime.
+const pressedKeyboardHidUsages = new Uint8Array(256);
+let pressedKeyboardHidUsageCount = 0;
+let mouseButtonsMask = 0;
+
+function updatePressedKeyboardHidUsage(usage: number, pressed: boolean): void {
+  const idx = usage & 0xff;
+  const prev = pressedKeyboardHidUsages[idx] !== 0;
+  if (pressed) {
+    if (!prev) {
+      pressedKeyboardHidUsages[idx] = 1;
+      pressedKeyboardHidUsageCount = Math.min(256, pressedKeyboardHidUsageCount + 1);
+    }
+    return;
+  }
+  if (prev) {
+    pressedKeyboardHidUsages[idx] = 0;
+    pressedKeyboardHidUsageCount = Math.max(0, pressedKeyboardHidUsageCount - 1);
+  }
+}
+
 // End-to-end input latency telemetry (main thread capture -> CPU worker injection).
 //
 // Keep this in sync with the IO worker's input telemetry so debug HUDs (input diagnostics panel)
@@ -545,7 +567,12 @@ function handleInputBatch(buffer: ArrayBuffer): void {
     if (eventLatencyUs > eventLatencyMaxUsBatch) {
       eventLatencyMaxUsBatch = eventLatencyUs;
     }
-    if (type === InputEventType.KeyScancode) {
+    if (type === InputEventType.KeyHidUsage) {
+      const packed = words[off + 2] >>> 0;
+      const usage = packed & 0xff;
+      const pressed = ((packed >>> 8) & 1) !== 0;
+      updatePressedKeyboardHidUsage(usage, pressed);
+    } else if (type === InputEventType.KeyScancode) {
       const packed = words[off + 2] >>> 0;
       const len = Math.min(words[off + 3] >>> 0, 4);
       if (len === 0) continue;
@@ -587,6 +614,7 @@ function handleInputBatch(buffer: ArrayBuffer): void {
     } else if (type === InputEventType.MouseButtons) {
       const buttons = words[off + 2] & 0xff;
       const mask = buttons & 0x1f;
+      mouseButtonsMask = mask;
       try {
         if (typeof m.inject_mouse_buttons_mask === "function") {
           m.inject_mouse_buttons_mask(mask);
@@ -615,6 +643,9 @@ function handleInputBatch(buffer: ArrayBuffer): void {
     Atomics.store(st, StatusIndex.IoInputEventLatencyAvgUs, eventLatencyAvgUs | 0);
     Atomics.store(st, StatusIndex.IoInputEventLatencyEwmaUs, ioInputEventLatencyEwmaUs | 0);
     Atomics.store(st, StatusIndex.IoInputEventLatencyMaxUs, ioInputEventLatencyMaxUs | 0);
+
+    Atomics.store(st, StatusIndex.IoInputKeyboardHeldCount, pressedKeyboardHidUsageCount | 0);
+    Atomics.store(st, StatusIndex.IoInputMouseButtonsHeldMask, mouseButtonsMask & 0x1f);
   }
 }
 
