@@ -51,7 +51,6 @@ use alloc::boxed::Box;
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
 use core::fmt;
-
 use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
 use aero_io_snapshot::io::state::{
     IoSnapshot, SnapshotError, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter,
@@ -87,6 +86,94 @@ use self::context::{
     Dcbaa, DeviceContext32, EndpointContext, InputControlContext, SlotContext, CONTEXT_SIZE,
 };
 use self::ring::{RingCursor, RingPoll};
+
+/// A `UsbDeviceModel` proxy that forwards calls to a device model owned elsewhere.
+///
+/// # Safety
+///
+/// This is used to let [`transfer::XhciTransferExecutor`] operate on device models stored inside
+/// the controller's root hub/slot topology without moving them out of the hub data structures.
+///
+/// The executor is single-threaded and all access is routed through the controller, so it is up to
+/// the controller implementation to ensure the pointer remains valid (e.g. by dropping the
+/// executor when a device is detached) and that it does not create overlapping mutable borrows of
+/// the underlying model.
+struct UsbDeviceModelPtr {
+    ptr: *mut dyn UsbDeviceModel,
+}
+
+impl UsbDeviceModelPtr {
+    fn new(ptr: *mut dyn UsbDeviceModel) -> Self {
+        Self { ptr }
+    }
+
+    #[inline]
+    unsafe fn model(&self) -> &dyn UsbDeviceModel {
+        &*self.ptr
+    }
+
+    #[inline]
+    unsafe fn model_mut(&mut self) -> &mut dyn UsbDeviceModel {
+        &mut *self.ptr
+    }
+}
+
+impl UsbDeviceModel for UsbDeviceModelPtr {
+    fn speed(&self) -> crate::UsbSpeed {
+        unsafe { self.model().speed() }
+    }
+
+    fn reset(&mut self) {
+        unsafe { self.model_mut().reset() }
+    }
+
+    fn cancel_control_transfer(&mut self) {
+        unsafe { self.model_mut().cancel_control_transfer() }
+    }
+
+    fn handle_control_request(
+        &mut self,
+        setup: crate::SetupPacket,
+        data_stage: Option<&[u8]>,
+    ) -> crate::ControlResponse {
+        unsafe { self.model_mut().handle_control_request(setup, data_stage) }
+    }
+
+    fn handle_in_transfer(&mut self, ep: u8, max_len: usize) -> crate::UsbInResult {
+        unsafe { self.model_mut().handle_in_transfer(ep, max_len) }
+    }
+
+    fn handle_out_transfer(&mut self, ep: u8, data: &[u8]) -> crate::UsbOutResult {
+        unsafe { self.model_mut().handle_out_transfer(ep, data) }
+    }
+
+    fn as_hub(&self) -> Option<&dyn crate::hub::UsbHub> {
+        unsafe { self.model().as_hub() }
+    }
+
+    fn as_hub_mut(&mut self) -> Option<&mut dyn crate::hub::UsbHub> {
+        unsafe { self.model_mut().as_hub_mut() }
+    }
+
+    fn tick_1ms(&mut self) {
+        unsafe { self.model_mut().tick_1ms() }
+    }
+
+    fn set_suspended(&mut self, suspended: bool) {
+        unsafe { self.model_mut().set_suspended(suspended) }
+    }
+
+    fn poll_remote_wakeup(&mut self) -> bool {
+        unsafe { self.model_mut().poll_remote_wakeup() }
+    }
+
+    fn child_device_mut_for_address(
+        &mut self,
+        address: u8,
+    ) -> Option<&mut crate::device::AttachedUsbDevice> {
+        unsafe { self.model_mut().child_device_mut_for_address(address) }
+    }
+}
 
 /// xHCI command completion codes (subset).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -310,10 +397,21 @@ pub struct XhciController {
     // --- Endpoint transfer execution (subset) ---
     active_endpoints: Vec<ActiveEndpoint>,
     ep0_control_td: Vec<ControlTdState>,
+
+    /// Per-slot transfer-ring executors for bulk/interrupt endpoints.
+    ///
+    /// Each executor holds its own per-endpoint ring state and a lightweight proxy that forwards
+    /// USB requests to the device model currently bound to the slot.
+    transfer_executors: Vec<Option<transfer::XhciTransferExecutor>>,
 }
 
 impl fmt::Debug for XhciController {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let active_execs = self
+            .transfer_executors
+            .iter()
+            .filter(|e| e.is_some())
+            .count();
         f.debug_struct("XhciController")
             .field("port_count", &self.port_count)
             .field("ext_caps_dwords", &self.ext_caps.len())
@@ -329,6 +427,7 @@ impl fmt::Debug for XhciController {
             .field("dropped_event_trbs", &self.dropped_event_trbs)
             .field("interrupter0", &self.interrupter0)
             .field("active_endpoints", &self.active_endpoints.len())
+            .field("transfer_executors", &active_execs)
             .finish()
     }
 }
@@ -358,6 +457,8 @@ impl XhciController {
             .take(DEFAULT_MAX_SLOTS + 1)
             .collect();
         let slot_count = slots.len();
+        let transfer_executors: Vec<Option<transfer::XhciTransferExecutor>> =
+            core::iter::repeat_with(|| None).take(slot_count).collect();
         let mut ctrl = Self {
             port_count,
             ext_caps: Vec::new(),
@@ -377,6 +478,7 @@ impl XhciController {
             dropped_event_trbs: 0,
             active_endpoints: Vec::new(),
             ep0_control_td: vec![ControlTdState::default(); slot_count],
+            transfer_executors,
         };
 
         ctrl.rebuild_ext_caps();
@@ -555,6 +657,7 @@ impl XhciController {
             enabled: true,
             ..SlotState::default()
         };
+        self.transfer_executors[usize::from(slot_id)] = None;
 
         CommandCompletion::success(slot_id)
     }
@@ -921,10 +1024,15 @@ impl XhciController {
             return CommandCompletion::failure(CommandCompletionCode::ContextStateError);
         }
 
-        let slot = &mut self.slots[idx];
-        slot.port_id = Some(root_port);
-        slot.device_attached = true;
-        slot.slot_context = slot_ctx;
+        {
+            let slot = &mut self.slots[idx];
+            slot.port_id = Some(root_port);
+            slot.device_attached = true;
+            slot.slot_context = slot_ctx;
+        }
+        // The slot's bound device may have changed; drop any existing transfer executor so it is
+        // recreated with a fresh device-model pointer on the next doorbell.
+        self.transfer_executors[idx] = None;
 
         CommandCompletion::success(slot_id)
     }
@@ -1054,6 +1162,16 @@ impl XhciController {
         slot.endpoint_contexts[usize::from(endpoint_id - 1)] = ep_ctx;
         slot.device_context_ptr = dev_ctx_ptr;
 
+        // Clear any transfer-executor halted state for this endpoint so new doorbells can run.
+        if let Some(ep_addr) = Self::ep_addr_from_endpoint_id(endpoint_id) {
+            if let Some(slot_exec) = self.transfer_executors.get_mut(slot_idx) {
+                if let Some(mut exec) = slot_exec.take() {
+                    exec.reset_endpoint(ep_addr);
+                    *slot_exec = Some(exec);
+                }
+            }
+        }
+
         CommandCompletion::success(slot_id)
     }
 
@@ -1105,6 +1223,16 @@ impl XhciController {
         if endpoint_id == 1 {
             if let Some(state) = self.ep0_control_td.get_mut(slot_idx) {
                 *state = ControlTdState::default();
+            }
+        }
+
+        // Clear any transfer-executor halted state for this endpoint so new doorbells can run.
+        if let Some(ep_addr) = Self::ep_addr_from_endpoint_id(endpoint_id) {
+            if let Some(slot_exec) = self.transfer_executors.get_mut(slot_idx) {
+                if let Some(mut exec) = slot_exec.take() {
+                    exec.reset_endpoint(ep_addr);
+                    *slot_exec = Some(exec);
+                }
             }
         }
 
@@ -1287,7 +1415,7 @@ impl XhciController {
     /// Process active endpoints.
     ///
     /// This is intentionally bounded to avoid guest-induced hangs (e.g. malformed transfer rings).
-    pub fn tick(&mut self, mem: &mut (impl MemoryBus + ?Sized)) {
+    pub fn tick(&mut self, mem: &mut dyn MemoryBus) {
         let mut trb_budget = MAX_TRBS_PER_TICK;
         let mut i = 0;
         while i < self.active_endpoints.len() && trb_budget > 0 {
@@ -1437,9 +1565,12 @@ impl XhciController {
         // reachable. Leave the slot enabled but mark the device as detached so `slot_device_mut()`
         // fails fast.
         let port_id = (port + 1) as u8;
-        for slot in self.slots.iter_mut().skip(1) {
+        for (slot_id, slot) in self.slots.iter_mut().enumerate().skip(1) {
             if slot.enabled && slot.port_id == Some(port_id) {
                 slot.device_attached = false;
+                if let Some(exec) = self.transfer_executors.get_mut(slot_id) {
+                    *exec = None;
+                }
             }
         }
     }
@@ -1607,7 +1738,6 @@ impl XhciController {
             regs::REG_INTR0_ERSTBA_HI => (self.interrupter0.erstba_raw() >> 32) as u32,
             regs::REG_INTR0_ERDP_LO => self.interrupter0.erdp_raw() as u32,
             regs::REG_INTR0_ERDP_HI => (self.interrupter0.erdp_raw() >> 32) as u32,
-
             _ => 0,
         };
 
@@ -1801,7 +1931,6 @@ impl XhciController {
                 let v = (self.interrupter0.erdp_raw() & 0x0000_0000_ffff_ffff) | (hi << 32);
                 self.interrupter0.write_erdp(v);
             }
-
             _ => {}
         }
 
@@ -1839,22 +1968,106 @@ impl XhciController {
 
     fn process_endpoint(
         &mut self,
-        mem: &mut (impl MemoryBus + ?Sized),
+        mem: &mut dyn MemoryBus,
         slot_id: u8,
         endpoint_id: u8,
         trb_budget: usize,
     ) -> EndpointOutcome {
-        // Only control endpoint 0 (DCI=1) is modelled today.
-        if endpoint_id != 1 {
-            return EndpointOutcome::idle();
-        }
-
         let slot_idx = usize::from(slot_id);
         let Some(slot) = self.slots.get(slot_idx) else {
             return EndpointOutcome::idle();
         };
         if !slot.enabled || !slot.device_attached {
             return EndpointOutcome::idle();
+        }
+
+        // Bulk/interrupt endpoints are delegated to `transfer::XhciTransferExecutor` and execute at
+        // most one TD per controller tick.
+        if endpoint_id != 1 {
+            let Some(ep_addr) = Self::ep_addr_from_endpoint_id(endpoint_id) else {
+                return EndpointOutcome::idle();
+            };
+
+            // Lazily create a transfer executor for the slot, pointing at the currently attached
+            // device model.
+            if self
+                .transfer_executors
+                .get(slot_idx)
+                .and_then(|e| e.as_ref())
+                .is_none()
+            {
+                let dev_ptr = match self.slot_device_mut(slot_id) {
+                    Some(dev) => dev.model_mut() as *mut dyn UsbDeviceModel,
+                    None => return EndpointOutcome::idle(),
+                };
+                self.transfer_executors[slot_idx] = Some(transfer::XhciTransferExecutor::new(
+                    Box::new(UsbDeviceModelPtr::new(dev_ptr)),
+                ));
+            }
+
+            let Some(mut exec) = self
+                .transfer_executors
+                .get_mut(slot_idx)
+                .and_then(|e| e.take())
+            else {
+                return EndpointOutcome::idle();
+            };
+
+            self.ensure_endpoint_mapped_from_context(mem, &mut exec, slot_id, endpoint_id, ep_addr);
+
+            let before = exec
+                .endpoint_state(ep_addr)
+                .map(|st| (st.ring.dequeue_ptr, st.ring.cycle));
+
+            exec.poll_endpoint(mem, ep_addr);
+
+            let after = exec
+                .endpoint_state(ep_addr)
+                .map(|st| (st.ring.dequeue_ptr, st.ring.cycle));
+
+            // If the dequeue pointer advanced, reflect it back into the Endpoint Context TR Dequeue
+            // Pointer field so guests that inspect the Device Context observe progress.
+            let trbs_consumed = if before != after { 1 } else { 0 };
+            if let (Some((before_ptr, before_cycle)), Some((after_ptr, after_cycle))) = (before, after) {
+                if before_ptr != after_ptr || before_cycle != after_cycle {
+                    self.write_endpoint_dequeue_to_context(
+                        mem,
+                        slot_id,
+                        endpoint_id,
+                        after_ptr,
+                        after_cycle,
+                    );
+                    // Keep controller-local ring cursor state in sync.
+                    self.slots[slot_idx].transfer_rings[usize::from(endpoint_id - 1)] =
+                        Some(RingCursor::new(after_ptr, after_cycle));
+                }
+            }
+
+            // Drain and emit transfer events.
+            let events = exec.take_events();
+            for ev in events {
+                let residual = ev.residual & 0x00ff_ffff;
+                let status = residual | (u32::from(ev.completion_code.as_u8()) << 24);
+                let mut trb = Trb::new(ev.trb_ptr & !0x0f, status, 0);
+                trb.set_trb_type(TrbType::TransferEvent);
+                trb.set_slot_id(slot_id);
+                trb.set_endpoint_id(Self::endpoint_id_from_ep_addr(ev.ep_addr));
+                self.post_event(trb);
+            }
+
+            // Keep the endpoint active if the next TRB is ready (or we're waiting on an inflight
+            // device completion).
+            let keep_active = exec
+                .endpoint_state(ep_addr)
+                .is_some_and(|st| !st.halted && Trb::read_from(mem, st.ring.dequeue_ptr).cycle() == st.ring.cycle);
+
+            self.transfer_executors[slot_idx] = Some(exec);
+
+            return if keep_active {
+                EndpointOutcome::keep(trbs_consumed)
+            } else {
+                EndpointOutcome::done(trbs_consumed)
+            };
         }
 
         let Some(mut ring) = slot.transfer_rings[0] else {
@@ -2144,6 +2357,123 @@ impl XhciController {
         } else {
             EndpointOutcome::done(trbs_consumed)
         }
+    }
+
+    fn ep_addr_from_endpoint_id(endpoint_id: u8) -> Option<u8> {
+        // Endpoint ID 0 is reserved, endpoint ID 1 is EP0 (not supported by the transfer executor).
+        if endpoint_id < 2 || endpoint_id > 31 {
+            return None;
+        }
+        let ep_num = endpoint_id / 2;
+        let is_in = (endpoint_id & 1) != 0;
+        Some(ep_num | if is_in { 0x80 } else { 0x00 })
+    }
+
+    fn endpoint_id_from_ep_addr(ep_addr: u8) -> u8 {
+        let ep_num = ep_addr & 0x0f;
+        if ep_num == 0 {
+            return 1;
+        }
+        let is_in = (ep_addr & 0x80) != 0;
+        ep_num
+            .saturating_mul(2)
+            .saturating_add(if is_in { 1 } else { 0 })
+    }
+
+    fn ensure_endpoint_mapped_from_context(
+        &mut self,
+        mem: &mut dyn MemoryBus,
+        exec: &mut transfer::XhciTransferExecutor,
+        slot_id: u8,
+        endpoint_id: u8,
+        ep_addr: u8,
+    ) {
+        let Some((dequeue_ptr, cycle)) =
+            self.read_endpoint_dequeue_from_context(mem, slot_id, endpoint_id)
+        else {
+            return;
+        };
+
+        if let Some(st) = exec.endpoint_state_mut(ep_addr) {
+            st.ring.dequeue_ptr = dequeue_ptr;
+            st.ring.cycle = cycle;
+        } else {
+            exec.add_endpoint_with_cycle(ep_addr, dequeue_ptr, cycle);
+        }
+    }
+
+    fn read_endpoint_dequeue_from_context(
+        &self,
+        mem: &mut dyn MemoryBus,
+        slot_id: u8,
+        endpoint_id: u8,
+    ) -> Option<(u64, bool)> {
+        if endpoint_id == 0 || endpoint_id > 31 {
+            return None;
+        }
+        if self.dcbaap == 0 {
+            return None;
+        }
+        let dcbaa = context::Dcbaa::new(self.dcbaap);
+        let dev_ctx_ptr = dcbaa.read_device_context_ptr(mem, slot_id).ok()? & !0x3f;
+        if dev_ctx_ptr == 0 {
+            return None;
+        }
+        let dev_ctx = context::DeviceContext32::new(dev_ctx_ptr);
+        let ep_ctx = dev_ctx.endpoint_context(mem, endpoint_id).ok()?;
+        match ep_ctx.endpoint_type() {
+            context::EndpointType::BulkIn
+            | context::EndpointType::BulkOut
+            | context::EndpointType::InterruptIn
+            | context::EndpointType::InterruptOut => {}
+            _ => return None,
+        }
+        let dequeue_ptr = ep_ctx.tr_dequeue_pointer();
+        if dequeue_ptr == 0 {
+            return None;
+        }
+        Some((dequeue_ptr, ep_ctx.dcs()))
+    }
+
+    fn write_endpoint_dequeue_to_context(
+        &self,
+        mem: &mut dyn MemoryBus,
+        slot_id: u8,
+        endpoint_id: u8,
+        dequeue_ptr: u64,
+        cycle: bool,
+    ) {
+        if endpoint_id == 0 || endpoint_id > 31 {
+            return;
+        }
+        if self.dcbaap == 0 {
+            return;
+        }
+        let dcbaa = context::Dcbaa::new(self.dcbaap);
+        let Ok(dev_ctx_ptr) = dcbaa.read_device_context_ptr(mem, slot_id) else {
+            return;
+        };
+        let dev_ctx_ptr = dev_ctx_ptr & !0x3f;
+        if dev_ctx_ptr == 0 {
+            return;
+        }
+
+        let ctx_base = match dev_ctx_ptr.checked_add(u64::from(endpoint_id).saturating_mul(context::CONTEXT_SIZE as u64)) {
+            Some(v) => v,
+            None => return,
+        };
+
+        let tr_dequeue_raw = (dequeue_ptr & !0x0f) | u64::from(cycle as u8);
+        let lo_addr = match ctx_base.checked_add(8) {
+            Some(v) => v,
+            None => return,
+        };
+        let hi_addr = match ctx_base.checked_add(12) {
+            Some(v) => v,
+            None => return,
+        };
+        mem.write_u32(lo_addr, tr_dequeue_raw as u32);
+        mem.write_u32(hi_addr, (tr_dequeue_raw >> 32) as u32);
     }
 
     fn dma_on_run(&mut self, mem: &mut dyn MemoryBus) {

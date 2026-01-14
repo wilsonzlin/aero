@@ -75,6 +75,10 @@ impl TransferRingState {
             cycle: true,
         }
     }
+
+    pub fn new_with_cycle(dequeue_ptr: u64, cycle: bool) -> Self {
+        Self { dequeue_ptr, cycle }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -89,6 +93,14 @@ impl EndpointState {
         Self {
             ep_addr,
             ring: TransferRingState::new(dequeue_ptr),
+            halted: false,
+        }
+    }
+
+    pub fn new_with_cycle(ep_addr: u8, dequeue_ptr: u64, cycle: bool) -> Self {
+        Self {
+            ep_addr,
+            ring: TransferRingState::new_with_cycle(dequeue_ptr, cycle),
             halted: false,
         }
     }
@@ -126,6 +138,13 @@ impl XhciTransferExecutor {
             .insert(ep_addr, EndpointState::new(ep_addr, dequeue_ptr));
     }
 
+    pub fn add_endpoint_with_cycle(&mut self, ep_addr: u8, dequeue_ptr: u64, cycle: bool) {
+        self.endpoints.insert(
+            ep_addr,
+            EndpointState::new_with_cycle(ep_addr, dequeue_ptr, cycle),
+        );
+    }
+
     pub fn endpoint_state(&self, ep_addr: u8) -> Option<&EndpointState> {
         self.endpoints.get(&ep_addr)
     }
@@ -136,6 +155,31 @@ impl XhciTransferExecutor {
 
     pub fn take_events(&mut self) -> Vec<TransferEvent> {
         core::mem::take(&mut self.pending_events)
+    }
+
+    /// Attempt to process at most one TD for a specific endpoint.
+    ///
+    /// This is useful for wiring into xHCI doorbell behavior where the guest explicitly notifies
+    /// the controller that a particular endpoint has new work available.
+    pub fn poll_endpoint<M: MemoryBus + ?Sized>(&mut self, mem: &mut M, ep_addr: u8) {
+        self.device.tick_1ms();
+
+        // See `tick_1ms`: move the endpoint map out to avoid holding a mutable borrow of
+        // `self.endpoints` while calling helpers that need `&mut self`.
+        let mut endpoints = core::mem::take(&mut self.endpoints);
+        if let Some(ep) = endpoints.get_mut(&ep_addr) {
+            if !ep.halted {
+                self.process_one_td(mem, ep);
+            }
+        }
+        self.endpoints = endpoints;
+    }
+
+    /// Clears the halted (stalled) state of an endpoint.
+    pub fn reset_endpoint(&mut self, ep_addr: u8) {
+        if let Some(ep) = self.endpoints.get_mut(&ep_addr) {
+            ep.halted = false;
+        }
     }
 
     pub fn tick_1ms<M: MemoryBus + ?Sized>(&mut self, mem: &mut M) {

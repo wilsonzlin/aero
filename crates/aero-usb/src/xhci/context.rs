@@ -74,7 +74,6 @@ fn write_context32_dwords(
     }
     mem.write_physical(paddr, &raw);
 }
-
 fn read_u64_le(mem: &mut (impl MemoryBus + ?Sized), paddr: u64) -> u64 {
     mem.read_u64(paddr)
 }
