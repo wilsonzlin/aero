@@ -207,6 +207,10 @@ Behavior:
 4. QMP: `set_link name=<same> up=true`
 5. Require guest marker: `AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|PASS|...` (missing/SKIP/FAIL becomes a deterministic harness failure)
 
+The guest `virtio-net-link-flap` marker includes timing fields (`down_sec`, `up_sec`) and, when supported by the
+installed `aero_virtio_net` diagnostics device, also reports best-effort config interrupt counters
+(`cfg_vector`, `cfg_intr_*`, `cfg_intr_*_delta`) to validate the link transitions were driven by config interrupts.
+
 The host harness also emits a CI-scrapable marker:
 
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_LINK_FLAP|PASS|name=<aero_virtio_net0|net0>|down_delay_sec=3`
