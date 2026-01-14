@@ -1422,6 +1422,12 @@ To attach virtio-snd and require the guest virtio-snd playback/capture/duplex te
 `with_virtio_snd=true`. By default the workflow uses the `wav` backend (`virtio_snd_audio_backend=wav`), uploads
 `virtio-snd.wav`, and (by default) verifies the captured audio is non-silent (`virtio_snd_verify_wav=true`).
 
+To override the non-silence thresholds used by wav verification, set either (non-negative integers; requires
+`with_virtio_snd=true`):
+
+- `virtio_snd_wav_peak_threshold=<N>`
+- `virtio_snd_wav_rms_threshold=<N>`
+
 To require the virtio-snd buffer limits stress test (`virtio-snd-buffer-limits`), set the workflow input
 `with_snd_buffer_limits=true` (requires `with_virtio_snd=true` and a guest image provisioned with `--test-snd-buffer-limits`,
 for example via `New-AeroWin7TestImage.ps1 -TestSndBufferLimits`).
