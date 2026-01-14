@@ -356,6 +356,24 @@ bool TestFvfXyzrhwDiffuseEmitsSaneCommands() {
     return false;
   }
 
+  // With no bound texture, the fixed-function fallback should not select a
+  // texture-sampling PS even though the D3D9 default stage0 COLOROP is MODULATE.
+  // (This is a common configuration for untextured apps that never touch stage
+  // state but rely on vertex diffuse.)
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->fixedfunc_ps != nullptr, "fixedfunc_ps created")) {
+      return false;
+    }
+    if (!Check(dev->ps == dev->fixedfunc_ps, "fixed-function PS is bound (no texture)")) {
+      return false;
+    }
+    if (!Check(ShaderBytecodeEquals(dev->ps, fixedfunc::kPsPassthroughColor),
+               "fixed-function PS bytecode (no texture -> passthrough)")) {
+      return false;
+    }
+  }
+
   aerogpu_handle_t expected_vb = 0;
   {
     std::lock_guard<std::mutex> lock(dev->mutex);
