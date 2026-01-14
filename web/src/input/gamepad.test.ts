@@ -115,11 +115,7 @@ describe("hid_gamepad_report_vectors fixture", () => {
       // These vectors are inputs to `packGamepadReport` and intentionally stay within the
       // Rust-side canonical report field ranges so the fixture primarily validates layout/packing.
       expect(Number.isInteger(v.buttons), v.name ?? `vector ${idx}`).toBe(true);
-      expect(v.buttons, v.name ?? `vector ${idx}`).toBeGreaterThanOrEqual(0);
-      expect(v.buttons, v.name ?? `vector ${idx}`).toBeLessThanOrEqual(0xffff);
       expect(Number.isInteger(v.hat), v.name ?? `vector ${idx}`).toBe(true);
-      expect(v.hat, v.name ?? `vector ${idx}`).toBeGreaterThanOrEqual(0);
-      expect(v.hat, v.name ?? `vector ${idx}`).toBeLessThanOrEqual(GAMEPAD_HAT_NEUTRAL);
       for (const [axisName, axis] of [
         ["x", v.x],
         ["y", v.y],

@@ -81,9 +81,11 @@ function snapshotDeviceKindForWasm(kind: string): string {
 }
 
 function normalizeRestoredDeviceKind(kind: string): string {
+  // Normalize:
+  // - `device.<id>` → canonical kind string (or `device.<id>` for unknown IDs)
+  // - legacy kind aliases (e.g. `usb.uhci`) → canonical kind string (`usb`)
   const id = vmSnapshotDeviceKindToId(kind);
-  if (id !== null) return vmSnapshotDeviceIdToKind(id);
-  return kind;
+  return id === null ? kind : vmSnapshotDeviceIdToKind(id);
 }
 
 function copyU8ToArrayBuffer(bytes: Uint8Array): ArrayBuffer {

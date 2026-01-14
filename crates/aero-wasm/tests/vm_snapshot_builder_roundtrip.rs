@@ -321,7 +321,7 @@ fn vm_snapshot_builder_roundtrips_guest_ram_and_device_states() {
             "net.stack",
             "usb"
         ],
-        "restored device kinds should be canonicalized"
+        "restored device kinds should be canonical"
     );
     assert_eq!(
         devices_by_kind.get("usb").unwrap(),

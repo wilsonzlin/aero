@@ -729,7 +729,7 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
     expect((xhciLoad.mock.calls[0]![0] as Uint8Array)).toEqual(xhciBytes);
   });
 
-  it("preserves unknown device blobs across restore → save (device list merge semantics)", async () => {
+  it("canonicalizes legacy usb.uhci blobs on restore and re-saves them as canonical usb (device list merge semantics)", async () => {
     const unknownBytes = new Uint8Array([0xde, 0xad, 0xbe, 0xef]);
     const usbOld = new Uint8Array([0x01]);
     const usbFresh = new Uint8Array([0x02]);
@@ -738,7 +738,7 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
       cpu: new Uint8Array([0xaa]),
       mmu: new Uint8Array([0xbb]),
       devices: [
-        { kind: `device.${VM_SNAPSHOT_DEVICE_ID_USB}`, bytes: usbOld },
+        { kind: "usb.uhci", bytes: usbOld },
         { kind: "device.123", bytes: unknownBytes },
       ],
     }));
@@ -767,6 +767,10 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
         netStack: null,
       },
     });
+
+    // Restores should accept the legacy `usb.uhci` kind and normalize it to canonical `usb` so
+    // follow-up saves don't emit duplicate USB entries.
+    expect(restored.restoredDevices.map((d) => d.kind)).toEqual(["usb", "device.123"]);
 
     await saveIoWorkerVmSnapshotToOpfs({
       api,

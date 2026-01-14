@@ -102,7 +102,7 @@ export function resolveVmSnapshotRestoreFromOpfsExport(api: WasmApi): VmSnapshot
 }
 
 export function parseAeroIoSnapshotVersion(bytes: Uint8Array): { version: number; flags: number } {
-  // `usb.uhci` snapshots may be a multi-controller container starting with the magic "AUSB".
+  // USB snapshots may be a multi-controller container starting with the magic "AUSB".
   // When present, forward the container's own version/flags into the outer `DeviceState` metadata
   // so `WorkerVmSnapshot.add_device_state` preserves clear versioning for the USB blob.
   if (

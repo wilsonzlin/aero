@@ -87,6 +87,7 @@ mod tests {
     fn parse_device_kind_accepts_known_device_kinds() {
         assert_eq!(parse_device_kind("usb"), Some(DeviceId::USB));
         // Legacy alias accepted for backwards compatibility.
+        // Legacy alias accepted for backwards compatibility.
         assert_eq!(parse_device_kind("usb.uhci"), Some(DeviceId::USB));
         assert_eq!(parse_device_kind("input.i8042"), Some(DeviceId::I8042));
         assert_eq!(parse_device_kind("audio.hda"), Some(DeviceId::HDA));
