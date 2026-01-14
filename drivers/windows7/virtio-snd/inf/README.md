@@ -48,6 +48,20 @@ The **contract v1** and **transitional/QEMU** virtio-snd INFs create per-device 
   - `0` (default): interrupt-driven (fail `START_DEVICE` if no usable interrupt resource can be discovered/connected — neither MSI/MSI-X nor INTx)
   - `1`: allow polling-only mode when no usable interrupt can be discovered/connected
 
+## MSI/MSI-X (message-signaled interrupts)
+
+The contract v1 and transitional/QEMU packages both opt into message-signaled interrupts on Windows 7 via:
+
+`HKR\Interrupt Management\MessageSignaledInterruptProperties`
+
+with:
+
+- `MSISupported = 1`
+- `MessageNumberLimit = 8` (requests enough vectors for config + 4 queues, with a small buffer for future growth)
+
+The legacy **I/O-port** bring-up package (`aero-virtio-snd-ioport.inf` / `virtiosnd_ioport.sys`) does **not** currently opt
+into MSI/MSI-X.
+
 The legacy **I/O-port** bring-up package (`aero-virtio-snd-ioport.inf` / `virtiosnd_ioport.sys`) currently creates/uses
 `ForceNullBackend` only.
 
