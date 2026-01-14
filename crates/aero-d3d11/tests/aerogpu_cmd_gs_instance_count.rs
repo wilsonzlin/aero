@@ -2,8 +2,8 @@ mod common;
 
 use aero_d3d11::runtime::aerogpu_cmd_executor::AerogpuD3d11Executor;
 use aero_d3d11::sm4::opcode as sm4_opcode;
-use aero_d3d11::WriteMask;
 use aero_d3d11::FourCC;
+use aero_d3d11::WriteMask;
 use aero_dxbc::test_utils as dxbc_test_utils;
 use aero_gpu::guest_memory::VecGuestMemory;
 use aero_protocol::aerogpu::aerogpu_cmd::{
@@ -121,11 +121,7 @@ fn build_gs_instance_colored_split(count: u32) -> Vec<u8> {
 
     // dcl_input_siv v0.xyzw, SV_GSInstanceID
     tokens.push(opcode_token(DCL_DUMMY, 4));
-    tokens.extend_from_slice(&reg_dst(
-        sm4_opcode::OPERAND_TYPE_INPUT,
-        0,
-        WriteMask::XYZW,
-    ));
+    tokens.extend_from_slice(&reg_dst(sm4_opcode::OPERAND_TYPE_INPUT, 0, WriteMask::XYZW));
     tokens.push(D3D_NAME_GS_INSTANCE_ID);
 
     // dcl_output o0.xyzw (position)
@@ -145,20 +141,12 @@ fn build_gs_instance_colored_split(count: u32) -> Vec<u8> {
 
     // utof r0.xyzw, v0.xyzw
     tokens.push(opcode_token(sm4_opcode::OPCODE_UTOF, 5));
-    tokens.extend_from_slice(&reg_dst(
-        sm4_opcode::OPERAND_TYPE_TEMP,
-        0,
-        WriteMask::XYZW,
-    ));
+    tokens.extend_from_slice(&reg_dst(sm4_opcode::OPERAND_TYPE_TEMP, 0, WriteMask::XYZW));
     tokens.extend_from_slice(&reg_src(sm4_opcode::OPERAND_TYPE_INPUT, 0));
 
     // mul r1.xyzw, r0.xyzw, l(1,0,0,0)  (x offset per instance)
     tokens.push(opcode_token(sm4_opcode::OPCODE_MUL, 10));
-    tokens.extend_from_slice(&reg_dst(
-        sm4_opcode::OPERAND_TYPE_TEMP,
-        1,
-        WriteMask::XYZW,
-    ));
+    tokens.extend_from_slice(&reg_dst(sm4_opcode::OPERAND_TYPE_TEMP, 1, WriteMask::XYZW));
     tokens.extend_from_slice(&reg_src(sm4_opcode::OPERAND_TYPE_TEMP, 0));
     tokens.extend_from_slice(&imm32_vec4([
         1.0f32.to_bits(),
@@ -251,10 +239,7 @@ fn build_gs_instance_colored_split(count: u32) -> Vec<u8> {
 #[test]
 fn aerogpu_cmd_supports_gs_instance_count() {
     pollster::block_on(async {
-        let test_name = concat!(
-            module_path!(),
-            "::aerogpu_cmd_supports_gs_instance_count"
-        );
+        let test_name = concat!(module_path!(), "::aerogpu_cmd_supports_gs_instance_count");
         let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
             Ok(exec) => exec,
             Err(e) => {

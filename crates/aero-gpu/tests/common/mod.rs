@@ -61,10 +61,7 @@ pub fn wgpu_backend_webgpu(
     match backend {
         Ok(backend) => Some(backend.lock().unwrap_or_else(|poison| poison.into_inner())),
         Err(err) => {
-            skip_or_panic(
-                test_name,
-                &format!("wgpu backend init failed: {err}"),
-            );
+            skip_or_panic(test_name, &format!("wgpu backend init failed: {err}"));
             None
         }
     }
