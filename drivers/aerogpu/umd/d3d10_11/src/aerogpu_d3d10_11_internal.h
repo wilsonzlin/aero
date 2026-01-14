@@ -1285,24 +1285,24 @@ inline void validate_and_emit_viewports_locked(Device* dev,
   // D3D11: NumViewports==0 disables viewports (runtime clear-state path). Encode this as a
   // zero-area viewport so the host runtime falls back to its default full-target viewport.
   if (num_viewports == 0) {
+    auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_viewport>(AEROGPU_CMD_SET_VIEWPORT);
+    if (!cmd) {
+      set_error(E_OUTOFMEMORY);
+      return;
+    }
+    cmd->x_f32 = f32_bits(0.0f);
+    cmd->y_f32 = f32_bits(0.0f);
+    cmd->width_f32 = f32_bits(0.0f);
+    cmd->height_f32 = f32_bits(0.0f);
+    cmd->min_depth_f32 = f32_bits(0.0f);
+    cmd->max_depth_f32 = f32_bits(1.0f);
+
     dev->viewport_x = 0.0f;
     dev->viewport_y = 0.0f;
     dev->viewport_width = 0.0f;
     dev->viewport_height = 0.0f;
     dev->viewport_min_depth = 0.0f;
     dev->viewport_max_depth = 1.0f;
-
-    auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_viewport>(AEROGPU_CMD_SET_VIEWPORT);
-    if (!cmd) {
-      set_error(E_OUTOFMEMORY);
-      return;
-    }
-    cmd->x_f32 = f32_bits(dev->viewport_x);
-    cmd->y_f32 = f32_bits(dev->viewport_y);
-    cmd->width_f32 = f32_bits(dev->viewport_width);
-    cmd->height_f32 = f32_bits(dev->viewport_height);
-    cmd->min_depth_f32 = f32_bits(dev->viewport_min_depth);
-    cmd->max_depth_f32 = f32_bits(dev->viewport_max_depth);
     return;
   }
 
@@ -1328,13 +1328,6 @@ inline void validate_and_emit_viewports_locked(Device* dev,
     set_error(E_NOTIMPL);
   }
 
-  dev->viewport_x = vp0.TopLeftX;
-  dev->viewport_y = vp0.TopLeftY;
-  dev->viewport_width = vp0.Width;
-  dev->viewport_height = vp0.Height;
-  dev->viewport_min_depth = vp0.MinDepth;
-  dev->viewport_max_depth = vp0.MaxDepth;
-
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_viewport>(AEROGPU_CMD_SET_VIEWPORT);
   if (!cmd) {
     set_error(E_OUTOFMEMORY);
@@ -1346,6 +1339,13 @@ inline void validate_and_emit_viewports_locked(Device* dev,
   cmd->height_f32 = f32_bits(vp0.Height);
   cmd->min_depth_f32 = f32_bits(vp0.MinDepth);
   cmd->max_depth_f32 = f32_bits(vp0.MaxDepth);
+
+  dev->viewport_x = vp0.TopLeftX;
+  dev->viewport_y = vp0.TopLeftY;
+  dev->viewport_width = vp0.Width;
+  dev->viewport_height = vp0.Height;
+  dev->viewport_min_depth = vp0.MinDepth;
+  dev->viewport_max_depth = vp0.MaxDepth;
 }
 
 template <typename RectT, typename SetErrorFn>
@@ -1360,12 +1360,6 @@ inline void validate_and_emit_scissor_rects_locked(Device* dev,
   // D3D11: NumRects==0 disables scissor rects. Encode this as a 0x0 rect; the host command executor
   // treats width/height <= 0 as "scissor disabled".
   if (num_rects == 0) {
-    dev->scissor_valid = false;
-    dev->scissor_left = 0;
-    dev->scissor_top = 0;
-    dev->scissor_right = 0;
-    dev->scissor_bottom = 0;
-
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_scissor>(AEROGPU_CMD_SET_SCISSOR);
     if (!cmd) {
       set_error(E_OUTOFMEMORY);
@@ -1375,6 +1369,12 @@ inline void validate_and_emit_scissor_rects_locked(Device* dev,
     cmd->y = 0;
     cmd->width = 0;
     cmd->height = 0;
+
+    dev->scissor_valid = false;
+    dev->scissor_left = 0;
+    dev->scissor_top = 0;
+    dev->scissor_right = 0;
+    dev->scissor_bottom = 0;
     return;
   }
 
@@ -1402,12 +1402,6 @@ inline void validate_and_emit_scissor_rects_locked(Device* dev,
 
   const int32_t w = clamp_i64_to_i32(static_cast<int64_t>(r0.right) - static_cast<int64_t>(r0.left));
   const int32_t h = clamp_i64_to_i32(static_cast<int64_t>(r0.bottom) - static_cast<int64_t>(r0.top));
-  dev->scissor_valid = (w > 0 && h > 0);
-  dev->scissor_left = r0.left;
-  dev->scissor_top = r0.top;
-  dev->scissor_right = r0.right;
-  dev->scissor_bottom = r0.bottom;
-
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_scissor>(AEROGPU_CMD_SET_SCISSOR);
   if (!cmd) {
     set_error(E_OUTOFMEMORY);
@@ -1417,6 +1411,12 @@ inline void validate_and_emit_scissor_rects_locked(Device* dev,
   cmd->y = r0.top;
   cmd->width = w;
   cmd->height = h;
+
+  dev->scissor_valid = (w > 0 && h > 0);
+  dev->scissor_left = r0.left;
+  dev->scissor_top = r0.top;
+  dev->scissor_right = r0.right;
+  dev->scissor_bottom = r0.bottom;
 }
 
 template <typename THandle, typename TObject>
