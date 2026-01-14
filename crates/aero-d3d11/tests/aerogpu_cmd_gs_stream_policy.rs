@@ -19,6 +19,14 @@ fn load_fixture(name: &str) -> Vec<u8> {
 }
 
 fn build_sm5_gs_emitthen_cut_stream(stream: u32) -> Vec<u8> {
+    build_sm5_gs_stream_op(OPCODE_EMITTHENCUT_STREAM, stream)
+}
+
+fn build_sm5_gs_cut_stream(stream: u32) -> Vec<u8> {
+    build_sm5_gs_stream_op(OPCODE_CUT_STREAM, stream)
+}
+
+fn build_sm5_gs_stream_op(stream_opcode: u32, stream: u32) -> Vec<u8> {
     fn opcode_token(opcode: u32, len: u32) -> u32 {
         opcode | (len << OPCODE_LEN_SHIFT)
     }
@@ -68,7 +76,7 @@ fn build_sm5_gs_emitthen_cut_stream(stream: u32) -> Vec<u8> {
     let version = ((2u32) << 16) | (5u32 << 4);
     let stream_op = imm32_scalar(stream);
     let body = [
-        opcode_token(OPCODE_EMITTHENCUT_STREAM, 1 + stream_op.len() as u32),
+        opcode_token(stream_opcode, 1 + stream_op.len() as u32),
         stream_op[0],
         stream_op[1],
         opcode_token(OPCODE_RET, 1),
@@ -136,6 +144,35 @@ fn rejects_nonzero_emitthen_cut_stream_index() {
         let msg = err.to_string();
         assert!(
             msg.contains("emitthen_cut_stream") && msg.contains("stream") && msg.contains("1"),
+            "unexpected error: {err:#}"
+        );
+    });
+}
+
+#[test]
+fn rejects_nonzero_cut_stream_index() {
+    pollster::block_on(async {
+        let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+            Ok(exec) => exec,
+            Err(e) => {
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                return;
+            }
+        };
+
+        let dxbc = build_sm5_gs_cut_stream(1);
+
+        let mut writer = AerogpuCmdWriter::new();
+        writer.create_shader_dxbc(1, AerogpuShaderStage::Geometry, &dxbc);
+        let stream = writer.finish();
+
+        let mut guest_mem = VecGuestMemory::new(0);
+        let err = exec
+            .execute_cmd_stream(&stream, None, &mut guest_mem)
+            .expect_err("expected CREATE_SHADER_DXBC to reject non-zero stream index");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("cut_stream") && msg.contains("stream") && msg.contains("1"),
             "unexpected error: {err:#}"
         );
     });
