@@ -45,14 +45,46 @@ fn parse_minimal_dxbc_and_iterate_chunks() {
 fn parse_allows_misaligned_chunk_offsets() {
     // Some real-world DXBC containers (and fuzzed inputs) may not maintain strict
     // 4-byte alignment for chunk starts. The parser should handle this safely.
-    let bytes = build_dxbc(&[
-        (FourCC(*b"SHDR"), &[1]),      // chunk 1 will start at an unaligned offset
-        (FourCC(*b"JUNK"), &[2, 3]),   // also make total_size non-4-aligned
-    ]);
+    //
+    // Note: `test_utils::build_container` 4-byte aligns chunks, so we must build
+    // this container manually.
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(b"DXBC");
+    bytes.extend_from_slice(&[0u8; 16]); // checksum
+    bytes.extend_from_slice(&1u32.to_le_bytes()); // reserved
+
+    // total_size placeholder
+    bytes.extend_from_slice(&0u32.to_le_bytes());
+
+    let chunk_count = 2u32;
+    bytes.extend_from_slice(&chunk_count.to_le_bytes());
+
+    // Offsets for two chunks.
+    let offset_table_pos = bytes.len();
+    bytes.extend_from_slice(&[0u8; 8]);
+
+    // First chunk starts immediately after the offset table (40).
+    let chunk0_off = bytes.len() as u32;
+    bytes.extend_from_slice(b"SHDR");
+    bytes.extend_from_slice(&1u32.to_le_bytes());
+    bytes.push(1);
+
+    // Second chunk starts immediately after the first chunk without padding (49).
+    let chunk1_off = bytes.len() as u32;
+    bytes.extend_from_slice(b"JUNK");
+    bytes.extend_from_slice(&2u32.to_le_bytes());
+    bytes.extend_from_slice(&[2, 3]);
+
+    // Fill offsets.
+    bytes[offset_table_pos..offset_table_pos + 4].copy_from_slice(&chunk0_off.to_le_bytes());
+    bytes[offset_table_pos + 4..offset_table_pos + 8].copy_from_slice(&chunk1_off.to_le_bytes());
+
+    // Fill total_size.
+    let total_size = bytes.len() as u32;
+    bytes[24..28].copy_from_slice(&total_size.to_le_bytes());
 
     // Sanity check: ensure we actually produced a misaligned offset for the
     // second chunk.
-    let offset_table_pos = 4 + 16 + 4 + 4 + 4;
     let second_off =
         u32::from_le_bytes(bytes[offset_table_pos + 4..offset_table_pos + 8].try_into().unwrap())
             as usize;
@@ -273,6 +305,55 @@ fn malformed_last_chunk_offset_out_of_bounds_with_large_chunk_count() {
     assert!(matches!(err, DxbcError::OutOfBounds { .. }));
     assert!(err.context().contains("chunk 4095"));
     assert!(err.context().contains("header"));
+    assert!(err.context().contains("outside total_size"));
+}
+
+#[test]
+fn malformed_last_chunk_size_out_of_bounds_with_large_chunk_count() {
+    // Ensure size/bounds validation remains safe even when only the *last* chunk
+    // index hits the failing case under the maximum chunk count.
+    let chunk_count = 4096u32;
+    let offset_table_end = 4 + 16 + 4 + 4 + 4 + (chunk_count as usize * 4);
+    let first_chunk_off = offset_table_end;
+    let second_chunk_off = first_chunk_off + 8;
+    let total_size = second_chunk_off + 8; // two chunk headers, no payload bytes
+
+    let mut bytes = Vec::with_capacity(total_size);
+    bytes.extend_from_slice(b"DXBC");
+    bytes.extend_from_slice(&[0u8; 16]); // checksum
+    bytes.extend_from_slice(&1u32.to_le_bytes()); // reserved
+    bytes.extend_from_slice(&(total_size as u32).to_le_bytes());
+    bytes.extend_from_slice(&chunk_count.to_le_bytes());
+
+    for i in 0..chunk_count {
+        // For chunk indices 0..4094, point at a valid empty chunk header. For the
+        // last chunk (4095), point at a different header that declares a payload
+        // of 1 byte even though no bytes remain.
+        let off = if i == chunk_count - 1 {
+            second_chunk_off as u32
+        } else {
+            first_chunk_off as u32
+        };
+        bytes.extend_from_slice(&off.to_le_bytes());
+    }
+    assert_eq!(bytes.len(), offset_table_end);
+
+    // First chunk header: valid empty chunk.
+    bytes.extend_from_slice(b"JUNK");
+    bytes.extend_from_slice(&0u32.to_le_bytes());
+    assert_eq!(bytes.len(), second_chunk_off);
+
+    // Second chunk header: declares a payload of 1 byte, but there are 0 bytes
+    // remaining after the header.
+    bytes.extend_from_slice(b"SHDR");
+    bytes.extend_from_slice(&1u32.to_le_bytes());
+    assert_eq!(bytes.len(), total_size);
+
+    let err = DxbcFile::parse(&bytes).unwrap_err();
+    assert!(matches!(err, DxbcError::OutOfBounds { .. }));
+    assert!(err.context().contains("chunk 4095"));
+    assert!(err.context().contains("SHDR"));
+    assert!(err.context().contains("data"));
     assert!(err.context().contains("outside total_size"));
 }
 
