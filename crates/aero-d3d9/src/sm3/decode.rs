@@ -233,7 +233,6 @@ impl Opcode {
             Self::Frc => 19,
             Self::Nrm => 36,
             Self::SinCos => 37,
-            Self::Dst => 17,
             Self::Call => 25,
             Self::Loop => 27,
             Self::Ret => 28,
