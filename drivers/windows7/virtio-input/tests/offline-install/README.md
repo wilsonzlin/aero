@@ -13,17 +13,18 @@ test images where you want input working immediately).
 > - Keyboard/mouse: `aero_virtio_input.inf`
 >   - Contract keyboard HWID: `...&SUBSYS_00101AF4&REV_01`
 >   - Contract mouse HWID: `...&SUBSYS_00111AF4&REV_01`
->   - Strict generic fallback HWID (no `SUBSYS`): `PCI\VEN_1AF4&DEV_1052&REV_01`
->     - When binding via the fallback entry, Device Manager will show the generic **Aero VirtIO Input Device** name.
+>   - Note: canonical INF is intentionally **SUBSYS-only** (no strict generic fallback).
 > - Tablet/absolute pointer: `aero_virtio_tablet.inf` (`...&SUBSYS_00121AF4&REV_01`)
 >   - Tablet binding is more specific, so it wins over the generic fallback when the tablet subsystem ID is present and
 >     both packages are installed.
 >   - If the tablet subsystem ID is missing (or the tablet INF is not staged), the device may bind via the generic fallback
->     entry and show up as **Aero VirtIO Input Device**.
+>     entry **when enabled via the legacy alias INF** and show up as **Aero VirtIO Input Device**.
 > - Optional legacy filename alias: `virtio-input.inf.disabled` → rename to `virtio-input.inf` to enable.
->   - Filename alias only: from the first section header (`[Version]`) onward, it must remain byte-identical to
->     `aero_virtio_input.inf` (banner/comments may differ; see `drivers/windows7/virtio-input/scripts/check-inf-alias.py`).
->   - Because it is identical, it does **not** change HWID matching behavior (and is not required for fallback binding).
+>   - Adds opt-in strict generic fallback binding (no `SUBSYS`): `PCI\VEN_1AF4&DEV_1052&REV_01`
+>     - When binding via the fallback entry, Device Manager will show the generic **Aero VirtIO Input Device** name.
+>   - Alias sync policy: outside the models sections (`[Aero.NTx86]` / `[Aero.NTamd64]`), from the first section header
+>     (`[Version]`) onward, it must remain byte-identical to `aero_virtio_input.inf` (banner/comments may differ; see
+>     `drivers/windows7/virtio-input/scripts/check-inf-alias.py`).
 >   - Do **not** stage/install both basenames at once: choose **either** `aero_virtio_input.inf` **or** `virtio-input.inf`.
 
 The commands below assume you already have a **built driver package directory** containing:
