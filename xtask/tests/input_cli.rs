@@ -140,6 +140,15 @@ fn input_help_mentions_flags_and_steps() {
             "src/platform/webusb_troubleshooting.test.ts",
         ))
         .stdout(predicate::str::contains(
+            "src/runtime/wasm_loader_uhci_runtime_webhid_types.test.ts",
+        ))
+        .stdout(predicate::str::contains(
+            "src/runtime/wasm_loader_uhci_runtime_webusb_types.test.ts",
+        ))
+        .stdout(predicate::str::contains(
+            "src/runtime/wasm_loader_usb_snapshot_types.test.ts",
+        ))
+        .stdout(predicate::str::contains(
             "src/workers/input_batch_recycle_guard.test.ts",
         ))
         .stdout(predicate::str::contains(
