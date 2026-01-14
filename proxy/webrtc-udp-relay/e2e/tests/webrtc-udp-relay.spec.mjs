@@ -539,6 +539,7 @@ async function spawnRelayServer(extraEnv = {}) {
          WEBRTC_UDP_LISTEN_IP: "",
          WEBRTC_UDP_PORT_MIN: "",
          WEBRTC_UDP_PORT_MAX: "",
+         WEBRTC_SESSION_CONNECT_TIMEOUT: "",
          WEBRTC_DATACHANNEL_MAX_MESSAGE_BYTES: "",
          WEBRTC_SCTP_MAX_RECEIVE_BUFFER_BYTES: "",
          // Let the Playwright-served page (random localhost port) talk to the relay.
