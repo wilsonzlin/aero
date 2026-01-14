@@ -383,3 +383,154 @@ fn hid_keyboard_remote_wakeup_sets_uhci_resume_detect_through_external_hub() {
         "expected IRQ level high when USBINTR.RESUME is enabled and USBSTS.RESUMEDETECT is set"
     );
 }
+
+#[test]
+fn hid_keyboard_remote_wakeup_does_not_propagate_through_external_hub_without_hub_remote_wakeup() {
+    let mut ctrl = UhciController::new();
+
+    // Attach an external hub to root port 0 (the browser runtime's synthetic HID topology).
+    ctrl.hub_mut().attach(0, Box::new(UsbHubDevice::new()));
+    ctrl.hub_mut().force_enable_for_tests(0);
+
+    // Enable Resume interrupts so remote wake latches USBSTS.RESUMEDETECT and raises IRQ.
+    ctrl.io_write(REG_USBINTR, 2, USBINTR_RESUME as u32);
+
+    // Enumerate/configure the hub: address 0 -> address 1, then SET_CONFIGURATION(1).
+    //
+    // Note: we intentionally do *not* enable DEVICE_REMOTE_WAKEUP on the hub.
+    control_no_data(
+        &mut ctrl,
+        0,
+        SetupPacket {
+            bm_request_type: 0x00,
+            b_request: 0x05, // SET_ADDRESS
+            w_value: 1,
+            w_index: 0,
+            w_length: 0,
+        },
+    );
+    control_no_data(
+        &mut ctrl,
+        1,
+        SetupPacket {
+            bm_request_type: 0x00,
+            b_request: 0x09, // SET_CONFIGURATION
+            w_value: 1,
+            w_index: 0,
+            w_length: 0,
+        },
+    );
+
+    // Attach a keyboard behind downstream hub port 1.
+    let keyboard = UsbHidKeyboardHandle::new();
+    ctrl.hub_mut()
+        .attach_at_path(&[0, 1], Box::new(keyboard.clone()))
+        .expect("attach keyboard behind hub port 1");
+
+    // Power and reset the hub port so the keyboard becomes reachable.
+    control_no_data(
+        &mut ctrl,
+        1,
+        SetupPacket {
+            bm_request_type: 0x23, // HostToDevice | Class | Other (port)
+            b_request: 0x03,       // SET_FEATURE
+            w_value: HUB_PORT_FEATURE_POWER,
+            w_index: 1,
+            w_length: 0,
+        },
+    );
+    control_no_data(
+        &mut ctrl,
+        1,
+        SetupPacket {
+            bm_request_type: 0x23,
+            b_request: 0x03, // SET_FEATURE
+            w_value: HUB_PORT_FEATURE_RESET,
+            w_index: 1,
+            w_length: 0,
+        },
+    );
+
+    let mut mem = TestMemory::new(0x1000);
+    for _ in 0..50 {
+        ctrl.tick_1ms(&mut mem);
+    }
+
+    // Minimal enumeration/configuration for the keyboard + enable device remote wakeup.
+    control_no_data(
+        &mut ctrl,
+        0,
+        SetupPacket {
+            bm_request_type: 0x00,
+            b_request: 0x05, // SET_ADDRESS
+            w_value: 2,
+            w_index: 0,
+            w_length: 0,
+        },
+    );
+    control_no_data(
+        &mut ctrl,
+        2,
+        SetupPacket {
+            bm_request_type: 0x00,
+            b_request: 0x09, // SET_CONFIGURATION
+            w_value: 1,
+            w_index: 0,
+            w_length: 0,
+        },
+    );
+    control_no_data(
+        &mut ctrl,
+        2,
+        SetupPacket {
+            bm_request_type: 0x00,
+            b_request: 0x03, // SET_FEATURE
+            w_value: 0x0001, // DEVICE_REMOTE_WAKEUP
+            w_index: 0,
+            w_length: 0,
+        },
+    );
+    assert!(keyboard.configured(), "expected keyboard to be configured");
+
+    // Put the *root* port into suspend, which should suspend the hub and its downstream devices.
+    let cur_portsc = ctrl.io_read(REG_PORTSC1, 2) as u16;
+    ctrl.io_write(
+        REG_PORTSC1,
+        2,
+        (cur_portsc | PORTSC_PED | PORTSC_SUSP) as u32,
+    );
+    let portsc = ctrl.io_read(REG_PORTSC1, 2) as u16;
+    assert!(
+        portsc & PORTSC_SUSP != 0,
+        "expected root port to be suspended"
+    );
+    assert_eq!(
+        portsc & PORTSC_RD,
+        0,
+        "resume-detect must not be asserted before remote wake triggers"
+    );
+
+    // Inject a keypress while suspended. Since the hub has not enabled DEVICE_REMOTE_WAKEUP, it
+    // must not propagate the downstream remote wake request upstream.
+    keyboard.key_event(0x04, true); // HID usage for KeyA.
+
+    assert!(!ctrl.irq_level(), "no IRQ expected before ticking the hub");
+    ctrl.tick_1ms(&mut mem);
+
+    let portsc = ctrl.io_read(REG_PORTSC1, 2) as u16;
+    assert_eq!(
+        portsc & PORTSC_RD,
+        0,
+        "unexpected Resume Detect even though hub remote wake is disabled"
+    );
+    let usbsts = ctrl.io_read(REG_USBSTS, 2) as u16;
+    assert_eq!(
+        usbsts & USBSTS_RESUMEDETECT,
+        0,
+        "unexpected UHCI USBSTS.RESUMEDETECT even though hub remote wake is disabled"
+    );
+    assert!(
+        !ctrl.irq_level(),
+        "unexpected IRQ even though hub remote wake is disabled"
+    );
+}
