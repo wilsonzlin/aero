@@ -4,6 +4,9 @@ import { Worker, type WorkerOptions } from "node:worker_threads";
 
 import {
   CURSOR_FORMAT_B8G8R8A8,
+  CURSOR_FORMAT_B8G8R8X8,
+  CURSOR_FORMAT_R8G8B8A8,
+  CURSOR_FORMAT_R8G8B8X8,
   CURSOR_STATE_GENERATION_BUSY_BIT,
   CURSOR_STATE_BYTE_LEN,
   CURSOR_STATE_U32_LEN,
@@ -12,8 +15,16 @@ import {
   snapshotCursorState,
   wrapCursorState,
 } from "./cursor_state";
+import { AerogpuFormat } from "../../../emulator/protocol/aerogpu/aerogpu_pci";
 
 describe("ipc/cursor_state", () => {
+  it("cursor format constants match AerogpuFormat discriminants", () => {
+    expect(CURSOR_FORMAT_B8G8R8A8).toBe(AerogpuFormat.B8G8R8A8Unorm);
+    expect(CURSOR_FORMAT_B8G8R8X8).toBe(AerogpuFormat.B8G8R8X8Unorm);
+    expect(CURSOR_FORMAT_R8G8B8A8).toBe(AerogpuFormat.R8G8B8A8Unorm);
+    expect(CURSOR_FORMAT_R8G8B8X8).toBe(AerogpuFormat.R8G8B8X8Unorm);
+  });
+
   it("wrapCursorState validates size and publish wraps across the busy-bit boundary", () => {
     const sab = new SharedArrayBuffer(CURSOR_STATE_BYTE_LEN);
     const words = wrapCursorState(sab, 0);
@@ -161,4 +172,3 @@ describe("ipc/cursor_state", () => {
     }
   });
 });
-

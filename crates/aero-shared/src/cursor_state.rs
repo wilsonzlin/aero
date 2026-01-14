@@ -284,6 +284,14 @@ mod tests {
     use std::thread;
 
     #[test]
+    fn cursor_format_constants_match_aerogpu_format_discriminants() {
+        assert_eq!(CURSOR_FORMAT_B8G8R8A8, AerogpuFormat::B8G8R8A8Unorm as u32);
+        assert_eq!(CURSOR_FORMAT_B8G8R8X8, AerogpuFormat::B8G8R8X8Unorm as u32);
+        assert_eq!(CURSOR_FORMAT_R8G8B8A8, AerogpuFormat::R8G8B8A8Unorm as u32);
+        assert_eq!(CURSOR_FORMAT_R8G8B8X8, AerogpuFormat::R8G8B8X8Unorm as u32);
+    }
+
+    #[test]
     fn cursor_state_struct_matches_declared_u32_len() {
         assert_eq!(core::mem::size_of::<CursorState>(), CURSOR_STATE_BYTE_LEN);
     }
