@@ -40,7 +40,8 @@ async function waitForWorkerMessage(
       const maybeProtocol = msg as Partial<ProtocolMessage> | undefined;
       if (maybeProtocol?.type === MessageType.ERROR) {
         cleanup();
-        const errMsg = typeof (maybeProtocol as { message?: unknown }).message === "string" ? (maybeProtocol as any).message : "";
+        const maybeMessage = (maybeProtocol as { message?: unknown }).message;
+        const errMsg = typeof maybeMessage === "string" ? maybeMessage : "";
         reject(new Error(`worker reported error${errMsg ? `: ${errMsg}` : ""}`));
         return;
       }
@@ -161,7 +162,10 @@ describe("workers/gpu-worker snapshot pause", () => {
       worker.postMessage({ kind: "vm.snapshot.pause", requestId: 1 });
       await waitForWorkerMessage(
         worker,
-        (msg) => (msg as any)?.kind === "vm.snapshot.paused" && (msg as any)?.requestId === 1 && (msg as any)?.ok === true,
+        (msg) =>
+          (msg as { kind?: unknown }).kind === "vm.snapshot.paused" &&
+          (msg as { requestId?: unknown }).requestId === 1 &&
+          (msg as { ok?: unknown }).ok === true,
         5_000,
       );
 
@@ -184,7 +188,8 @@ describe("workers/gpu-worker snapshot pause", () => {
       await expect(
         waitForWorkerMessage(
           worker,
-          (msg) => (msg as any)?.type === "submit_complete" && (msg as any)?.requestId === 7,
+          (msg) =>
+            (msg as { type?: unknown }).type === "submit_complete" && (msg as { requestId?: unknown }).requestId === 7,
           100,
         ),
       ).rejects.toThrow(/timed out/i);
@@ -193,20 +198,23 @@ describe("workers/gpu-worker snapshot pause", () => {
       worker.postMessage({ kind: "vm.snapshot.resume", requestId: 2 });
       await waitForWorkerMessage(
         worker,
-        (msg) => (msg as any)?.kind === "vm.snapshot.resumed" && (msg as any)?.requestId === 2 && (msg as any)?.ok === true,
+        (msg) =>
+          (msg as { kind?: unknown }).kind === "vm.snapshot.resumed" &&
+          (msg as { requestId?: unknown }).requestId === 2 &&
+          (msg as { ok?: unknown }).ok === true,
         5_000,
       );
 
       const complete = await waitForWorkerMessage(
         worker,
         (msg) =>
-          (msg as any)?.type === "submit_complete" &&
-          (msg as any)?.requestId === 7 &&
-          (msg as any)?.protocol === GPU_PROTOCOL_NAME &&
-          (msg as any)?.protocolVersion === GPU_PROTOCOL_VERSION,
+          (msg as { type?: unknown }).type === "submit_complete" &&
+          (msg as { requestId?: unknown }).requestId === 7 &&
+          (msg as { protocol?: unknown }).protocol === GPU_PROTOCOL_NAME &&
+          (msg as { protocolVersion?: unknown }).protocolVersion === GPU_PROTOCOL_VERSION,
         5_000,
       );
-      expect((complete as any).completedFence).toBe(1n);
+      expect((complete as { completedFence?: unknown }).completedFence).toBe(1n);
     } finally {
       await worker.terminate();
     }
@@ -296,7 +304,10 @@ describe("workers/gpu-worker snapshot pause", () => {
       await expect(
         waitForWorkerMessage(
           worker,
-          (msg) => (msg as any)?.kind === "vm.snapshot.paused" && (msg as any)?.requestId === 1 && (msg as any)?.ok === true,
+          (msg) =>
+            (msg as { kind?: unknown }).kind === "vm.snapshot.paused" &&
+            (msg as { requestId?: unknown }).requestId === 1 &&
+            (msg as { ok?: unknown }).ok === true,
           100,
         ),
       ).rejects.toThrow(/timed out/i);
@@ -305,7 +316,10 @@ describe("workers/gpu-worker snapshot pause", () => {
 
       await waitForWorkerMessage(
         worker,
-        (msg) => (msg as any)?.kind === "vm.snapshot.paused" && (msg as any)?.requestId === 1 && (msg as any)?.ok === true,
+        (msg) =>
+          (msg as { kind?: unknown }).kind === "vm.snapshot.paused" &&
+          (msg as { requestId?: unknown }).requestId === 1 &&
+          (msg as { ok?: unknown }).ok === true,
         5_000,
       );
     } finally {
@@ -514,7 +528,10 @@ describe("workers/gpu-worker snapshot pause", () => {
       worker.postMessage({ kind: "vm.snapshot.resume", requestId: 2 });
       await waitForWorkerMessage(
         worker,
-        (msg) => (msg as any)?.kind === "vm.snapshot.resumed" && (msg as any)?.requestId === 2 && (msg as any)?.ok === true,
+        (msg) =>
+          (msg as { kind?: unknown }).kind === "vm.snapshot.resumed" &&
+          (msg as { requestId?: unknown }).requestId === 2 &&
+          (msg as { ok?: unknown }).ok === true,
         5_000,
       );
 
@@ -559,7 +576,10 @@ describe("workers/gpu-worker snapshot pause", () => {
       worker.postMessage({ kind: "vm.snapshot.pause", requestId: 1 });
       await waitForWorkerMessage(
         worker,
-        (msg) => (msg as any)?.kind === "vm.snapshot.paused" && (msg as any)?.requestId === 1 && (msg as any)?.ok === true,
+        (msg) =>
+          (msg as { kind?: unknown }).kind === "vm.snapshot.paused" &&
+          (msg as { requestId?: unknown }).requestId === 1 &&
+          (msg as { ok?: unknown }).ok === true,
         5_000,
       );
 
@@ -606,7 +626,9 @@ describe("workers/gpu-worker snapshot pause", () => {
 
       const probeImport = (await waitForWorkerMessage(
         worker,
-        (msg) => (msg as { type?: unknown }).type === "mock_presenter_globals_probe" && (msg as any)?.phase === "import",
+        (msg) =>
+          (msg as { type?: unknown }).type === "mock_presenter_globals_probe" &&
+          (msg as { phase?: unknown }).phase === "import",
         10_000,
       )) as { scanoutOk?: boolean; cursorOk?: boolean };
       // Still paused: globals should be disabled.
@@ -617,7 +639,10 @@ describe("workers/gpu-worker snapshot pause", () => {
       worker.postMessage({ kind: "vm.snapshot.resume", requestId: 2 });
       await waitForWorkerMessage(
         worker,
-        (msg) => (msg as any)?.kind === "vm.snapshot.resumed" && (msg as any)?.requestId === 2 && (msg as any)?.ok === true,
+        (msg) =>
+          (msg as { kind?: unknown }).kind === "vm.snapshot.resumed" &&
+          (msg as { requestId?: unknown }).requestId === 2 &&
+          (msg as { ok?: unknown }).ok === true,
         5_000,
       );
 
@@ -637,7 +662,9 @@ describe("workers/gpu-worker snapshot pause", () => {
 
       const probePresent = (await waitForWorkerMessage(
         worker,
-        (msg) => (msg as { type?: unknown }).type === "mock_presenter_globals_probe" && (msg as any)?.phase === "present",
+        (msg) =>
+          (msg as { type?: unknown }).type === "mock_presenter_globals_probe" &&
+          (msg as { phase?: unknown }).phase === "present",
         10_000,
       )) as { scanoutOk?: boolean; cursorOk?: boolean };
       expect(probePresent.scanoutOk).toBe(true);

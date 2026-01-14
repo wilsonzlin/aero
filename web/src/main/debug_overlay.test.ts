@@ -4,9 +4,28 @@ import { DebugOverlay } from "../../ui/debug_overlay";
 import { SCANOUT_FORMAT_B8G8R8X8 } from "../ipc/scanout_state";
 
 describe("DebugOverlay hotkey handling", () => {
-  const originalWindow = (globalThis as any).window;
-  const originalDocument = (globalThis as any).document;
-  const originalHTMLElement = (globalThis as any).HTMLElement;
+  const originalWindowDescriptor = Object.getOwnPropertyDescriptor(globalThis, "window");
+  const originalDocumentDescriptor = Object.getOwnPropertyDescriptor(globalThis, "document");
+  const originalHTMLElementDescriptor = Object.getOwnPropertyDescriptor(globalThis, "HTMLElement");
+
+  function stubGlobal(name: string, value: unknown): void {
+    Object.defineProperty(globalThis, name, {
+      value,
+      configurable: true,
+      enumerable: true,
+      writable: true,
+    });
+  }
+
+  function restoreGlobal(name: string, descriptor: PropertyDescriptor | undefined): void {
+    if (descriptor) {
+      Object.defineProperty(globalThis, name, descriptor);
+    } else {
+      Reflect.deleteProperty(globalThis, name);
+    }
+  }
+
+  type DebugOverlayHarness = { _root: FakeDiv };
 
   type Listener = { listener: (ev: any) => void; options?: unknown };
   let keydownListeners: Listener[] = [];
@@ -28,25 +47,25 @@ describe("DebugOverlay hotkey handling", () => {
   beforeEach(() => {
     keydownListeners = [];
 
-    (globalThis as any).HTMLElement = FakeHTMLElement;
-    (globalThis as any).document = {
+    stubGlobal("HTMLElement", FakeHTMLElement);
+    stubGlobal("document", {
       createElement: () => new FakeDiv(),
       body: { appendChild: vi.fn() },
-    };
-    (globalThis as any).window = {
+    });
+    stubGlobal("window", {
       addEventListener: (type: string, listener: (ev: any) => void, options?: unknown) => {
         if (type === "keydown") keydownListeners.push({ listener, options });
       },
       removeEventListener: vi.fn(),
       setInterval: () => 0,
       clearInterval: () => {},
-    };
+    });
   });
 
   afterEach(() => {
-    (globalThis as any).window = originalWindow;
-    (globalThis as any).document = originalDocument;
-    (globalThis as any).HTMLElement = originalHTMLElement;
+    restoreGlobal("window", originalWindowDescriptor);
+    restoreGlobal("document", originalDocumentDescriptor);
+    restoreGlobal("HTMLElement", originalHTMLElementDescriptor);
   });
 
   it("toggles only on unmodified keydown events that are not already defaultPrevented", () => {
@@ -58,7 +77,7 @@ describe("DebugOverlay hotkey handling", () => {
     expect(keydownListeners).toHaveLength(1);
     expect(keydownListeners[0]!.options).toBeUndefined();
 
-    const root = (overlay as any)._root as FakeDiv;
+    const root = (overlay as unknown as DebugOverlayHarness)._root;
     expect(root.style.display).toBe("block");
 
     const preventDefault = vi.fn();
@@ -170,7 +189,7 @@ describe("DebugOverlay hotkey handling", () => {
     const overlay = new DebugOverlay(() => snapshot, { parent, toggleKey: "F3", updateIntervalMs: 10 });
     overlay.show();
 
-    const root = (overlay as any)._root as FakeDiv;
+    const root = (overlay as unknown as DebugOverlayHarness)._root;
     expect(root.textContent).toContain("Backend: webgpu");
     expect(root.textContent).toContain("Presents: 1/2  Recoveries: 1/3  Surface reconfigures: 4");
     expect(root.textContent).toContain("Recoveries (WDDM): 1/1");
@@ -218,7 +237,7 @@ describe("DebugOverlay hotkey handling", () => {
     const overlay = new DebugOverlay(() => snapshot, { parent, toggleKey: "F3", updateIntervalMs: 10 });
     overlay.show();
 
-    const root = (overlay as any)._root as FakeDiv;
+    const root = (overlay as unknown as DebugOverlayHarness)._root;
     expect(root.textContent).toContain("Scanout:");
     expect(root.textContent).toContain("fmt=B8G8R8X8Unorm (2)");
 

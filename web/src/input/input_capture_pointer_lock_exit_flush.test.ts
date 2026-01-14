@@ -4,6 +4,17 @@ import { InputEventType } from "./event_queue";
 import { InputCapture } from "./input_capture";
 import { decodeInputBatchEvents, makeCanvasStub, withStubbedDocument } from "./test_utils";
 
+type InputCapturePointerLockExitHarness = {
+  pointerLock: { locked: boolean };
+  hasFocus: boolean;
+  handleKeyDown: (ev: KeyboardEvent) => void;
+  handleMouseDown: (ev: MouseEvent) => void;
+  pressedCodes: Set<string>;
+  mouseButtons: number;
+  handlePointerLockChange: (locked: boolean) => void;
+  queue: { size: number };
+};
+
 describe("InputCapture pointer-lock exit safety flush", () => {
   it("flushes an immediate all-released snapshot when pointer lock exits while the canvas is not focused", () => {
     withStubbedDocument((doc) => {
@@ -15,14 +26,15 @@ describe("InputCapture pointer-lock exit safety flush", () => {
       };
 
       const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false, recycleBuffers: false });
+      const h = capture as unknown as InputCapturePointerLockExitHarness;
 
       // Force pointer lock active and canvas focus already lost.
       doc.pointerLockElement = canvas;
-      (capture as any).pointerLock.locked = true;
-      (capture as any).hasFocus = false;
+      h.pointerLock.locked = true;
+      h.hasFocus = false;
 
       // Hold a key + mouse button while pointer locked.
-      (capture as any).handleKeyDown({
+      h.handleKeyDown({
         code: "KeyA",
         repeat: false,
         timeStamp: 0,
@@ -34,7 +46,7 @@ describe("InputCapture pointer-lock exit safety flush", () => {
         stopPropagation: vi.fn(),
       } as unknown as KeyboardEvent);
 
-      (capture as any).handleMouseDown({
+      h.handleMouseDown({
         button: 0,
         target: canvas,
         timeStamp: 1,
@@ -42,14 +54,14 @@ describe("InputCapture pointer-lock exit safety flush", () => {
         stopPropagation: vi.fn(),
       } as unknown as MouseEvent);
 
-      expect((capture as any).pressedCodes.has("KeyA")).toBe(true);
-      expect((capture as any).mouseButtons).toBe(1);
+      expect(h.pressedCodes.has("KeyA")).toBe(true);
+      expect(h.mouseButtons).toBe(1);
 
       // Pointer lock exits and the canvas is still not focused. This must flush an "all released"
       // state immediately so the guest can't be left with latched inputs.
       doc.pointerLockElement = null;
-      (capture as any).pointerLock.locked = false;
-      (capture as any).handlePointerLockChange(false);
+      h.pointerLock.locked = false;
+      h.handlePointerLockChange(false);
 
       expect(posted).toHaveLength(1);
 
@@ -70,9 +82,9 @@ describe("InputCapture pointer-lock exit safety flush", () => {
       expect(events.some((e) => e.type === InputEventType.MouseButtons && (e.a | 0) === 0)).toBe(true);
 
       // Pressed-state tracking should be cleared so future capture sessions start cleanly.
-      expect((capture as any).pressedCodes.size).toBe(0);
-      expect((capture as any).mouseButtons).toBe(0);
-      expect((capture as any).queue.size).toBe(0);
+      expect(h.pressedCodes.size).toBe(0);
+      expect(h.mouseButtons).toBe(0);
+      expect(h.queue.size).toBe(0);
     });
   });
 });

@@ -19,7 +19,7 @@ afterEach(() => {
   if (originalDocumentDescriptor) {
     Object.defineProperty(globalThis, "document", originalDocumentDescriptor);
   } else {
-    Reflect.deleteProperty(globalThis as any, "document");
+    Reflect.deleteProperty(globalThis, "document");
   }
 });
 
@@ -67,8 +67,9 @@ describe("mountInputDiagnosticsPanel", () => {
   it("renders and updates when fed snapshots", () => {
     stubDocument(new FakeDocument());
 
-    const host = document.createElement("div") as unknown as HTMLElement;
+    const host = document.createElement("div");
     const panel = mountInputDiagnosticsPanel(host);
+    const hostText = (): string => host.textContent ?? "";
 
     const status = new Int32Array(new SharedArrayBuffer(STATUS_BYTES));
     Atomics.store(status, StatusIndex.IoInputKeyboardBackend, encodeInputBackendStatus("ps2"));
@@ -93,25 +94,25 @@ describe("mountInputDiagnosticsPanel", () => {
     Atomics.store(status, StatusIndex.IoInputEventLatencyMaxUs, 700);
 
     panel.setSnapshot(readInputDiagnosticsSnapshotFromStatus(status));
-    expect((host as any).textContent).toContain("keyboard_backend=ps2");
-    expect((host as any).textContent).toContain("mouse_backend=usb");
-    expect((host as any).textContent).toContain("virtio_mouse.driver_ok=yes");
-    expect((host as any).textContent).toContain("synthetic_usb_keyboard.configured=yes");
-    expect((host as any).textContent).toContain("mouse_buttons_mask=0x0000001f");
-    expect((host as any).textContent).toContain("mouse_buttons_held=left,right,middle,back,forward");
-    expect((host as any).textContent).toContain("keyboard_held_count=2");
-    expect((host as any).textContent).toContain("io.batches_received=10");
-    expect((host as any).textContent).toContain("io.batches_processed=9");
-    expect((host as any).textContent).toContain("io.batches_dropped=1");
-    expect((host as any).textContent).toContain("io.events_processed=123");
-    expect((host as any).textContent).toContain("io.keyboard_backend_switches=4");
-    expect((host as any).textContent).toContain("io.mouse_backend_switches=5");
-    expect((host as any).textContent).toContain("io.batch_send_latency_us=1500 us (1.500 ms)");
-    expect((host as any).textContent).toContain("io.batch_send_latency_ewma_us=2000 us (2.000 ms)");
-    expect((host as any).textContent).toContain("io.batch_send_latency_max_us=2500 us (2.500 ms)");
-    expect((host as any).textContent).toContain("io.event_latency_avg_us=500 us (0.500 ms)");
-    expect((host as any).textContent).toContain("io.event_latency_ewma_us=600 us (0.600 ms)");
-    expect((host as any).textContent).toContain("io.event_latency_max_us=700 us (0.700 ms)");
+    expect(hostText()).toContain("keyboard_backend=ps2");
+    expect(hostText()).toContain("mouse_backend=usb");
+    expect(hostText()).toContain("virtio_mouse.driver_ok=yes");
+    expect(hostText()).toContain("synthetic_usb_keyboard.configured=yes");
+    expect(hostText()).toContain("mouse_buttons_mask=0x0000001f");
+    expect(hostText()).toContain("mouse_buttons_held=left,right,middle,back,forward");
+    expect(hostText()).toContain("keyboard_held_count=2");
+    expect(hostText()).toContain("io.batches_received=10");
+    expect(hostText()).toContain("io.batches_processed=9");
+    expect(hostText()).toContain("io.batches_dropped=1");
+    expect(hostText()).toContain("io.events_processed=123");
+    expect(hostText()).toContain("io.keyboard_backend_switches=4");
+    expect(hostText()).toContain("io.mouse_backend_switches=5");
+    expect(hostText()).toContain("io.batch_send_latency_us=1500 us (1.500 ms)");
+    expect(hostText()).toContain("io.batch_send_latency_ewma_us=2000 us (2.000 ms)");
+    expect(hostText()).toContain("io.batch_send_latency_max_us=2500 us (2.500 ms)");
+    expect(hostText()).toContain("io.event_latency_avg_us=500 us (0.500 ms)");
+    expect(hostText()).toContain("io.event_latency_ewma_us=600 us (0.600 ms)");
+    expect(hostText()).toContain("io.event_latency_max_us=700 us (0.700 ms)");
 
     Atomics.store(status, StatusIndex.IoInputKeyboardBackend, encodeInputBackendStatus("virtio"));
     Atomics.store(status, StatusIndex.IoInputMouseBackend, encodeInputBackendStatus("virtio"));
@@ -135,24 +136,24 @@ describe("mountInputDiagnosticsPanel", () => {
     Atomics.store(status, StatusIndex.IoInputEventLatencyMaxUs, 1000);
 
     panel.setSnapshot(readInputDiagnosticsSnapshotFromStatus(status));
-    expect((host as any).textContent).toContain("keyboard_backend=virtio");
-    expect((host as any).textContent).toContain("mouse_backend=virtio");
-    expect((host as any).textContent).toContain("virtio_keyboard.driver_ok=yes");
-    expect((host as any).textContent).toContain("synthetic_usb_mouse.configured=yes");
-    expect((host as any).textContent).toContain("mouse_buttons_mask=0x00000000");
-    expect((host as any).textContent).toContain("mouse_buttons_held=(none)");
-    expect((host as any).textContent).toContain("keyboard_held_count=0");
-    expect((host as any).textContent).toContain("io.batches_received=42");
-    expect((host as any).textContent).toContain("io.batches_processed=42");
-    expect((host as any).textContent).toContain("io.batches_dropped=0");
-    expect((host as any).textContent).toContain("io.events_processed=999");
-    expect((host as any).textContent).toContain("io.keyboard_backend_switches=6");
-    expect((host as any).textContent).toContain("io.mouse_backend_switches=7");
-    expect((host as any).textContent).toContain("io.batch_send_latency_us=3000 us (3.000 ms)");
-    expect((host as any).textContent).toContain("io.batch_send_latency_ewma_us=3500 us (3.500 ms)");
-    expect((host as any).textContent).toContain("io.batch_send_latency_max_us=4000 us (4.000 ms)");
-    expect((host as any).textContent).toContain("io.event_latency_avg_us=800 us (0.800 ms)");
-    expect((host as any).textContent).toContain("io.event_latency_ewma_us=900 us (0.900 ms)");
-    expect((host as any).textContent).toContain("io.event_latency_max_us=1000 us (1.000 ms)");
+    expect(hostText()).toContain("keyboard_backend=virtio");
+    expect(hostText()).toContain("mouse_backend=virtio");
+    expect(hostText()).toContain("virtio_keyboard.driver_ok=yes");
+    expect(hostText()).toContain("synthetic_usb_mouse.configured=yes");
+    expect(hostText()).toContain("mouse_buttons_mask=0x00000000");
+    expect(hostText()).toContain("mouse_buttons_held=(none)");
+    expect(hostText()).toContain("keyboard_held_count=0");
+    expect(hostText()).toContain("io.batches_received=42");
+    expect(hostText()).toContain("io.batches_processed=42");
+    expect(hostText()).toContain("io.batches_dropped=0");
+    expect(hostText()).toContain("io.events_processed=999");
+    expect(hostText()).toContain("io.keyboard_backend_switches=6");
+    expect(hostText()).toContain("io.mouse_backend_switches=7");
+    expect(hostText()).toContain("io.batch_send_latency_us=3000 us (3.000 ms)");
+    expect(hostText()).toContain("io.batch_send_latency_ewma_us=3500 us (3.500 ms)");
+    expect(hostText()).toContain("io.batch_send_latency_max_us=4000 us (4.000 ms)");
+    expect(hostText()).toContain("io.event_latency_avg_us=800 us (0.800 ms)");
+    expect(hostText()).toContain("io.event_latency_ewma_us=900 us (0.900 ms)");
+    expect(hostText()).toContain("io.event_latency_max_us=1000 us (1.000 ms)");
   });
 });

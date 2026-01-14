@@ -95,8 +95,7 @@ describe("runtime disk snapshot payload", () => {
   });
 
   it("rejects wrong version", () => {
-    const snapshot = sampleSnapshot() as any;
-    snapshot.version = 2;
+    const snapshot = { ...sampleSnapshot(), version: 2 };
     expect(() => deserializeRuntimeDiskSnapshot(encodeJson(snapshot))).toThrow(/Unsupported disk snapshot version/);
   });
 
@@ -116,7 +115,7 @@ describe("runtime disk snapshot payload", () => {
       expect(() => deserializeRuntimeDiskSnapshot(encodeJson({ nextHandle: 1, disks: [] }))).toThrow(/Unsupported disk snapshot version/);
     } finally {
       if (existing) Object.defineProperty(Object.prototype, "version", existing);
-      else delete (Object.prototype as any).version;
+      else Reflect.deleteProperty(Object.prototype, "version");
     }
   });
 
@@ -131,16 +130,25 @@ describe("runtime disk snapshot payload", () => {
       const decoded = deserializeRuntimeDiskSnapshot(serializeRuntimeDiskSnapshot(sampleSnapshot()));
       const remote = decoded.disks[1]?.backend;
       expect(remote?.kind).toBe("remote");
-      expect((remote as any).base.leaseEndpoint).toBeUndefined();
+      if (!remote || remote.kind !== "remote") {
+        throw new Error("Expected decoded snapshot to contain a remote disk at index 1");
+      }
+      expect(remote.base.leaseEndpoint).toBeUndefined();
     } finally {
       if (existing) Object.defineProperty(Object.prototype, "leaseEndpoint", existing);
-      else delete (Object.prototype as any).leaseEndpoint;
+      else Reflect.deleteProperty(Object.prototype, "leaseEndpoint");
     }
   });
 
   it("defaults remote cacheLimitBytes when missing (backward compatibility)", () => {
-    const snapshot = sampleSnapshot() as any;
-    delete snapshot.disks[1].backend.cache.cacheLimitBytes;
+    const baseSnapshot = sampleSnapshot();
+    const disks = baseSnapshot.disks.map((disk, idx) => {
+      if (idx !== 1) return disk;
+      if (disk.backend.kind !== "remote") return disk;
+      const { cacheLimitBytes: _cacheLimitBytes, ...cacheWithoutLimit } = disk.backend.cache;
+      return { ...disk, backend: { ...disk.backend, cache: cacheWithoutLimit } };
+    });
+    const snapshot = { ...baseSnapshot, disks };
 
     const decoded = deserializeRuntimeDiskSnapshot(encodeJson(snapshot));
     expect(decoded.disks[1]?.backend).toMatchObject({
@@ -150,40 +158,59 @@ describe("runtime disk snapshot payload", () => {
   });
 
   it("rejects disk entry with non-integer handle", () => {
-    const snapshot = sampleSnapshot() as any;
+    const snapshot = sampleSnapshot();
     snapshot.disks[0].handle = 1.5;
     expect(() => deserializeRuntimeDiskSnapshot(encodeJson(snapshot))).toThrow(/handle/);
   });
 
   it("rejects unsupported sectorSize", () => {
-    const snapshot = sampleSnapshot() as any;
+    const snapshot = sampleSnapshot();
     snapshot.disks[0].sectorSize = 123;
     expect(() => deserializeRuntimeDiskSnapshot(encodeJson(snapshot))).toThrow(/sectorSize/);
   });
 
   it("rejects remote leaseEndpoint with http://", () => {
-    const snapshot = sampleSnapshot() as any;
-    snapshot.disks[1].backend.base.leaseEndpoint = "http://evil.example/lease";
+    const snapshot = sampleSnapshot();
+    const backend = snapshot.disks[1]?.backend;
+    if (!backend || backend.kind !== "remote") {
+      throw new Error("Expected sample snapshot disk[1] to be remote");
+    }
+    backend.base.leaseEndpoint = "http://evil.example/lease";
     expect(() => deserializeRuntimeDiskSnapshot(encodeJson(snapshot))).toThrow(/leaseEndpoint/);
   });
 
   it("rejects remote chunkSize not multiple of 512", () => {
-    const snapshot = sampleSnapshot() as any;
-    snapshot.disks[1].backend.base.chunkSize = 1000;
+    const snapshot = sampleSnapshot();
+    const backend = snapshot.disks[1]?.backend;
+    if (!backend || backend.kind !== "remote") {
+      throw new Error("Expected sample snapshot disk[1] to be remote");
+    }
+    backend.base.chunkSize = 1000;
     expect(() => deserializeRuntimeDiskSnapshot(encodeJson(snapshot))).toThrow(/chunkSize/);
     expect(() => deserializeRuntimeDiskSnapshot(encodeJson(snapshot))).toThrow(/multiple of 512/);
   });
 
   it("rejects overlay blockSizeBytes that is not a power of two", () => {
-    const snapshot = sampleSnapshot() as any;
-    snapshot.disks[0].backend.overlay.blockSizeBytes = 3 * 512;
+    const snapshot = sampleSnapshot();
+    const backend = snapshot.disks[0]?.backend;
+    if (!backend || backend.kind !== "local") {
+      throw new Error("Expected sample snapshot disk[0] to be local");
+    }
+    if (!backend.overlay) {
+      throw new Error("Expected sample snapshot disk[0] to include an overlay");
+    }
+    backend.overlay.blockSizeBytes = 3 * 512;
     expect(() => deserializeRuntimeDiskSnapshot(encodeJson(snapshot))).toThrow(/blockSizeBytes/);
     expect(() => deserializeRuntimeDiskSnapshot(encodeJson(snapshot))).toThrow(/power of two/);
   });
 
   it("rejects excessively long strings", () => {
-    const snapshot = sampleSnapshot() as any;
-    snapshot.disks[0].backend.key = "a".repeat(64 * 1024 + 1);
+    const snapshot = sampleSnapshot();
+    const backend = snapshot.disks[0]?.backend;
+    if (!backend || backend.kind !== "local") {
+      throw new Error("Expected sample snapshot disk[0] to be local");
+    }
+    backend.key = "a".repeat(64 * 1024 + 1);
     expect(() => deserializeRuntimeDiskSnapshot(encodeJson(snapshot))).toThrow(/string too long/);
   });
 
@@ -219,8 +246,8 @@ describe("runtime disk snapshot payload", () => {
     expect(
       shouldInvalidateRemoteCache(expected, {
         version: 1,
-        base: { ...(expected as any), deliveryType: 123 },
-      } as any),
+        base: { ...expected, deliveryType: 123 },
+      } as unknown as RemoteCacheBinding),
     ).toBe(true);
   });
 
@@ -247,12 +274,12 @@ describe("runtime disk snapshot payload", () => {
       Object.defineProperty(Object.prototype, "base", { value: { ...expected }, configurable: true });
 
       // Missing `version`/`base` must not be satisfied by prototype pollution.
-      expect(shouldInvalidateRemoteCache(expected, {} as any)).toBe(true);
+      expect(shouldInvalidateRemoteCache(expected, {} as unknown as RemoteCacheBinding)).toBe(true);
     } finally {
       if (existingVersion) Object.defineProperty(Object.prototype, "version", existingVersion);
-      else delete (Object.prototype as any).version;
+      else Reflect.deleteProperty(Object.prototype, "version");
       if (existingBase) Object.defineProperty(Object.prototype, "base", existingBase);
-      else delete (Object.prototype as any).base;
+      else Reflect.deleteProperty(Object.prototype, "base");
     }
   });
 
@@ -283,8 +310,8 @@ describe("runtime disk snapshot payload", () => {
     expect(
       shouldInvalidateRemoteOverlay(expected, {
         version: 1,
-        base: { ...(expected as any), deliveryType: 123 },
-      } as any),
+        base: { ...expected, deliveryType: 123 },
+      } as unknown as RemoteCacheBinding),
     ).toBe(false);
 
     // Missing/invalid expectedValidator info is not positive evidence of mismatch; keep overlay.
@@ -292,7 +319,7 @@ describe("runtime disk snapshot payload", () => {
       shouldInvalidateRemoteOverlay(expected, {
         version: 1,
         base: { imageId: expected.imageId, version: expected.version, deliveryType: expected.deliveryType, chunkSize: expected.chunkSize },
-      } as any),
+      } as unknown as RemoteCacheBinding),
     ).toBe(false);
 
     expect(
@@ -330,12 +357,12 @@ describe("runtime disk snapshot payload", () => {
 
       // Missing `version`/`base` must not be satisfied by prototype pollution. If they are, this would
       // cause overlay invalidation (data loss).
-      expect(shouldInvalidateRemoteOverlay(expected, {} as any)).toBe(false);
+      expect(shouldInvalidateRemoteOverlay(expected, {} as unknown as RemoteCacheBinding)).toBe(false);
     } finally {
       if (existingVersion) Object.defineProperty(Object.prototype, "version", existingVersion);
-      else delete (Object.prototype as any).version;
+      else Reflect.deleteProperty(Object.prototype, "version");
       if (existingBase) Object.defineProperty(Object.prototype, "base", existingBase);
-      else delete (Object.prototype as any).base;
+      else Reflect.deleteProperty(Object.prototype, "base");
     }
   });
 });

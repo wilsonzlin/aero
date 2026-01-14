@@ -4,6 +4,13 @@ import { InputEventType } from "./event_queue";
 import { InputCapture } from "./input_capture";
 import { decodeInputBatchEvents, makeCanvasStub, withStubbedDocument } from "./test_utils";
 
+type InputCaptureTouchHarness = {
+  handlePointerDown: (ev: Partial<PointerEvent>) => void;
+  handlePointerMove: (ev: Partial<PointerEvent>) => void;
+  handlePointerUp: (ev: Partial<PointerEvent>) => void;
+  mouseButtons: number;
+};
+
 describe("InputCapture touch (PointerEvent) fallback", () => {
   it("translates touch drag into relative MouseMove with correct sign conventions", () => {
     withStubbedDocument(() => {
@@ -22,7 +29,9 @@ describe("InputCapture touch (PointerEvent) fallback", () => {
         touchTapToClick: false,
       });
 
-      (capture as any).handlePointerDown({
+      const h = capture as unknown as InputCaptureTouchHarness;
+
+      h.handlePointerDown({
         pointerId: 1,
         pointerType: "touch",
         clientX: 100,
@@ -32,7 +41,7 @@ describe("InputCapture touch (PointerEvent) fallback", () => {
         stopPropagation: vi.fn(),
       } satisfies Partial<PointerEvent>);
 
-      (capture as any).handlePointerMove({
+      h.handlePointerMove({
         pointerId: 1,
         pointerType: "touch",
         clientX: 110,
@@ -43,7 +52,7 @@ describe("InputCapture touch (PointerEvent) fallback", () => {
       } satisfies Partial<PointerEvent>);
 
       // End the gesture to avoid a later tap being detected; movement is large enough to not count as a tap.
-      (capture as any).handlePointerUp({
+      h.handlePointerUp({
         pointerId: 1,
         pointerType: "touch",
         clientX: 110,
@@ -83,7 +92,9 @@ describe("InputCapture touch (PointerEvent) fallback", () => {
         touchTapToClick: true,
       });
 
-      (capture as any).handlePointerDown({
+      const h = capture as unknown as InputCaptureTouchHarness;
+
+      h.handlePointerDown({
         pointerId: 1,
         pointerType: "touch",
         clientX: 50,
@@ -93,7 +104,7 @@ describe("InputCapture touch (PointerEvent) fallback", () => {
         stopPropagation: vi.fn(),
       } satisfies Partial<PointerEvent>);
 
-      (capture as any).handlePointerUp({
+      h.handlePointerUp({
         pointerId: 1,
         pointerType: "touch",
         clientX: 50,
@@ -136,7 +147,9 @@ describe("InputCapture touch (PointerEvent) fallback", () => {
         touchTapToClick: true,
       });
 
-      (capture as any).handlePointerDown({
+      const h = capture as unknown as InputCaptureTouchHarness;
+
+      h.handlePointerDown({
         pointerId: 1,
         pointerType: "touch",
         clientX: Number.NaN,
@@ -146,7 +159,7 @@ describe("InputCapture touch (PointerEvent) fallback", () => {
         stopPropagation: vi.fn(),
       } satisfies Partial<PointerEvent>);
 
-      (capture as any).handlePointerUp({
+      h.handlePointerUp({
         pointerId: 1,
         pointerType: "touch",
         clientX: Number.NaN,
@@ -159,7 +172,7 @@ describe("InputCapture touch (PointerEvent) fallback", () => {
       capture.flushNow();
 
       expect(posted).toHaveLength(0);
-      expect((capture as any).mouseButtons).toBe(0);
+      expect(h.mouseButtons).toBe(0);
     });
   });
 
@@ -179,7 +192,9 @@ describe("InputCapture touch (PointerEvent) fallback", () => {
         touchTapToClick: true,
       });
 
-      (capture as any).handlePointerDown({
+      const h = capture as unknown as InputCaptureTouchHarness;
+
+      h.handlePointerDown({
         pointerId: Number.NaN,
         pointerType: "touch",
         clientX: 0,
@@ -189,7 +204,7 @@ describe("InputCapture touch (PointerEvent) fallback", () => {
         stopPropagation: vi.fn(),
       } satisfies Partial<PointerEvent>);
 
-      (capture as any).handlePointerUp({
+      h.handlePointerUp({
         pointerId: Number.NaN,
         pointerType: "touch",
         clientX: 0,
@@ -202,7 +217,7 @@ describe("InputCapture touch (PointerEvent) fallback", () => {
       capture.flushNow();
 
       expect(posted).toHaveLength(0);
-      expect((capture as any).mouseButtons).toBe(0);
+      expect(h.mouseButtons).toBe(0);
     });
   });
 });

@@ -3,6 +3,29 @@ import { describe, expect, it, vi } from "vitest";
 import { WebGpuPresenterBackend } from "./webgpu-presenter-backend";
 import { PresenterError } from "./presenter";
 
+type WebGpuPresenterBackendHarness = {
+  opts: { onError?: (err: PresenterError) => void };
+  destroyed: boolean;
+  device: unknown;
+  installUncapturedErrorHandler: (device: unknown) => void;
+  uninstallUncapturedErrorHandler: () => void;
+  seenUncapturedErrorKeys: Set<string>;
+
+  canvas: unknown;
+  queue: { writeTexture: (...args: unknown[]) => unknown };
+  ctx: unknown;
+  pipeline: unknown;
+  bindGroup: unknown;
+  frameTexture: unknown;
+  renderToCanvas: () => boolean;
+  srcWidth: number;
+  srcHeight: number;
+};
+
+function harness(backend: WebGpuPresenterBackend): WebGpuPresenterBackendHarness {
+  return backend as unknown as WebGpuPresenterBackendHarness;
+}
+
 class FakeGpuDevice {
   private listeners = new Map<string, Set<(ev: any) => void>>();
 
@@ -30,14 +53,15 @@ class FakeGpuDeviceOnProperty {
 describe("WebGpuPresenterBackend uncaptured error handler", () => {
   it("forwards uncapturederror via onError and dedupes identical messages", () => {
     const backend = new WebGpuPresenterBackend();
+    const h = harness(backend);
     const device = new FakeGpuDevice();
 
     const onError = vi.fn();
-    (backend as any).opts = { onError };
-    (backend as any).destroyed = false;
-    (backend as any).device = device;
+    h.opts = { onError };
+    h.destroyed = false;
+    h.device = device;
 
-    (backend as any).installUncapturedErrorHandler(device);
+    h.installUncapturedErrorHandler(device);
 
     const preventDefault = vi.fn();
     device.emit("uncapturederror", { preventDefault, error: { name: "GPUValidationError", message: "oops" } });
@@ -55,14 +79,15 @@ describe("WebGpuPresenterBackend uncaptured error handler", () => {
 
   it("does not prefix primitive errors with constructor name (e.g. String: ...)", () => {
     const backend = new WebGpuPresenterBackend();
+    const h = harness(backend);
     const device = new FakeGpuDevice();
 
     const onError = vi.fn();
-    (backend as any).opts = { onError };
-    (backend as any).destroyed = false;
-    (backend as any).device = device;
+    h.opts = { onError };
+    h.destroyed = false;
+    h.device = device;
 
-    (backend as any).installUncapturedErrorHandler(device);
+    h.installUncapturedErrorHandler(device);
 
     device.emit("uncapturederror", { error: "boom" });
     expect(onError).toHaveBeenCalledTimes(1);
@@ -73,15 +98,16 @@ describe("WebGpuPresenterBackend uncaptured error handler", () => {
 
   it("uninstall prevents further forwarding", () => {
     const backend = new WebGpuPresenterBackend();
+    const h = harness(backend);
     const device = new FakeGpuDevice();
 
     const onError = vi.fn();
-    (backend as any).opts = { onError };
-    (backend as any).destroyed = false;
-    (backend as any).device = device;
+    h.opts = { onError };
+    h.destroyed = false;
+    h.device = device;
 
-    (backend as any).installUncapturedErrorHandler(device);
-    (backend as any).uninstallUncapturedErrorHandler();
+    h.installUncapturedErrorHandler(device);
+    h.uninstallUncapturedErrorHandler();
 
     device.emit("uncapturederror", { error: { name: "GPUValidationError", message: "oops" } });
     expect(onError).toHaveBeenCalledTimes(0);
@@ -89,14 +115,15 @@ describe("WebGpuPresenterBackend uncaptured error handler", () => {
 
   it("falls back to onuncapturederror property when addEventListener is unavailable", () => {
     const backend = new WebGpuPresenterBackend();
+    const h = harness(backend);
     const device = new FakeGpuDeviceOnProperty();
 
     const onError = vi.fn();
-    (backend as any).opts = { onError };
-    (backend as any).destroyed = false;
-    (backend as any).device = device;
+    h.opts = { onError };
+    h.destroyed = false;
+    h.device = device;
 
-    (backend as any).installUncapturedErrorHandler(device);
+    h.installUncapturedErrorHandler(device);
 
     expect(device.onuncapturederror).toBeTypeOf("function");
     device.onuncapturederror?.({ error: { name: "GPUValidationError", message: "oops" } });
@@ -106,50 +133,52 @@ describe("WebGpuPresenterBackend uncaptured error handler", () => {
     expect(err).toBeInstanceOf(PresenterError);
     expect(err.code).toBe("webgpu_uncaptured_error");
 
-    (backend as any).uninstallUncapturedErrorHandler();
+    h.uninstallUncapturedErrorHandler();
     expect(device.onuncapturederror).toBeNull();
   });
 
   it("bounds its per-init dedupe cache size", () => {
     const backend = new WebGpuPresenterBackend();
+    const h = harness(backend);
     const device = new FakeGpuDevice();
 
     const onError = vi.fn();
-    (backend as any).opts = { onError };
-    (backend as any).destroyed = false;
-    (backend as any).device = device;
+    h.opts = { onError };
+    h.destroyed = false;
+    h.device = device;
 
-    (backend as any).installUncapturedErrorHandler(device);
+    h.installUncapturedErrorHandler(device);
 
     for (let i = 0; i < 200; i += 1) {
       device.emit("uncapturederror", { error: { name: "GPUValidationError", message: `msg-${i}` } });
     }
 
     expect(onError).toHaveBeenCalledTimes(200);
-    expect(((backend as any).seenUncapturedErrorKeys as Set<string>).size).toBeLessThanOrEqual(128);
+    expect(h.seenUncapturedErrorKeys.size).toBeLessThanOrEqual(128);
   });
 });
 
 describe("WebGpuPresenterBackend presentDirtyRects", () => {
   it("passes only the populated portion of the dirty-rect staging buffer to writeTexture()", () => {
     const backend = new WebGpuPresenterBackend();
+    const h = harness(backend);
 
     const writeTexture = vi.fn();
-    (backend as any).canvas = {} as any;
-    (backend as any).device = {} as any;
-    (backend as any).queue = { writeTexture } as any;
-    (backend as any).ctx = {} as any;
-    (backend as any).pipeline = {} as any;
-    (backend as any).bindGroup = {} as any;
-    (backend as any).frameTexture = {} as any;
+    h.canvas = {};
+    h.device = {};
+    h.queue = { writeTexture };
+    h.ctx = {};
+    h.pipeline = {};
+    h.bindGroup = {};
+    h.frameTexture = {};
     // Avoid pulling in the full WebGPU rendering path; presentDirtyRects should still upload.
-    (backend as any).renderToCanvas = () => true;
+    h.renderToCanvas = () => true;
 
     const srcWidth = 256;
     const srcHeight = 256;
     const stride = srcWidth * 4;
-    (backend as any).srcWidth = srcWidth;
-    (backend as any).srcHeight = srcHeight;
+    h.srcWidth = srcWidth;
+    h.srcHeight = srcHeight;
 
     const frame = new Uint8Array(stride * srcHeight);
 

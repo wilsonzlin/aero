@@ -3,6 +3,13 @@ import { describe, expect, it } from "vitest";
 import { InputCapture } from "./input_capture";
 import { makeCanvasStub, withStubbedDocument } from "./test_utils";
 
+type InputCaptureRecycleBuffersHarness = {
+  hasFocus: boolean;
+  queue: { pushMouseButtons: (buttons: number, mask: number) => void };
+  handleWorkerMessage: (ev: { data: unknown }) => void;
+  recycledBuffersBySize: Map<number, ArrayBuffer[]>;
+};
+
 describe("InputCapture buffer recycling", () => {
   it("reuses ArrayBuffer instances when the worker recycles input batches", () => {
     withStubbedDocument(() => {
@@ -14,13 +21,14 @@ describe("InputCapture buffer recycling", () => {
       };
 
       const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false, recycleBuffers: true });
+      const h = capture as unknown as InputCaptureRecycleBuffersHarness;
 
       // Ensure capture is in an active state (required for gamepad polling, though disabled here).
-      (capture as any).hasFocus = true;
+      h.hasFocus = true;
 
       // Flush #1: posts buffer A. The queue allocates the next buffer *before* we process a recycle
       // message, so the next flush cannot immediately reuse A.
-      (capture as any).queue.pushMouseButtons(1, 1);
+      h.queue.pushMouseButtons(1, 1);
       capture.flushNow();
       expect(posted).toHaveLength(1);
       const msg1 = posted[0].msg as { buffer: ArrayBuffer; recycle?: true };
@@ -28,10 +36,10 @@ describe("InputCapture buffer recycling", () => {
       expect(msg1.recycle).toBe(true);
 
       // Simulate the worker transferring buffer A back for reuse.
-      (capture as any).handleWorkerMessage({ data: { type: "in:input-batch-recycle", buffer: bufA } });
+      h.handleWorkerMessage({ data: { type: "in:input-batch-recycle", buffer: bufA } });
 
       // Flush #2: should use buffer B (allocated during flush #1), not A.
-      (capture as any).queue.pushMouseButtons(2, 2);
+      h.queue.pushMouseButtons(2, 2);
       capture.flushNow();
       expect(posted).toHaveLength(2);
       const msg2 = posted[1].msg as { buffer: ArrayBuffer; recycle?: true };
@@ -41,7 +49,7 @@ describe("InputCapture buffer recycling", () => {
 
       // Flush #3: after flush #2, the queue allocates a new buffer and should reuse A from the
       // recycle bucket.
-      (capture as any).queue.pushMouseButtons(3, 3);
+      h.queue.pushMouseButtons(3, 3);
       capture.flushNow();
       expect(posted).toHaveLength(3);
       const msg3 = posted[2].msg as { buffer: ArrayBuffer; recycle?: true };
@@ -60,10 +68,11 @@ describe("InputCapture buffer recycling", () => {
       };
 
       const capture = new InputCapture(canvas, ioWorker, { enableGamepad: false, recycleBuffers: false });
-      (capture as any).hasFocus = true;
+      const h = capture as unknown as InputCaptureRecycleBuffersHarness;
+      h.hasFocus = true;
 
       // Flush #1: should not set `recycle: true`.
-      (capture as any).queue.pushMouseButtons(1, 1);
+      h.queue.pushMouseButtons(1, 1);
       capture.flushNow();
       expect(posted).toHaveLength(1);
       const msg1 = posted[0].msg as { buffer: ArrayBuffer; recycle?: true };
@@ -71,11 +80,11 @@ describe("InputCapture buffer recycling", () => {
       const bufA = msg1.buffer;
 
       // Recycle messages are ignored when recycling is disabled.
-      (capture as any).handleWorkerMessage({ data: { type: "in:input-batch-recycle", buffer: bufA } });
-      expect(((capture as any).recycledBuffersBySize as Map<number, ArrayBuffer[]>).size).toBe(0);
+      h.handleWorkerMessage({ data: { type: "in:input-batch-recycle", buffer: bufA } });
+      expect(h.recycledBuffersBySize.size).toBe(0);
 
       // Flush #2: must not reuse A.
-      (capture as any).queue.pushMouseButtons(2, 2);
+      h.queue.pushMouseButtons(2, 2);
       capture.flushNow();
       expect(posted).toHaveLength(2);
       const msg2 = posted[1].msg as { buffer: ArrayBuffer; recycle?: true };
@@ -83,7 +92,7 @@ describe("InputCapture buffer recycling", () => {
       expect(msg2.buffer).not.toBe(bufA);
 
       // Flush #3: also must not reuse A even though we sent a recycle message.
-      (capture as any).queue.pushMouseButtons(3, 3);
+      h.queue.pushMouseButtons(3, 3);
       capture.flushNow();
       expect(posted).toHaveLength(3);
       const msg3 = posted[2].msg as { buffer: ArrayBuffer; recycle?: true };
