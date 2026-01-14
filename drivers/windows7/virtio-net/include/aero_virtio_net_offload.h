@@ -49,6 +49,7 @@ _Static_assert(sizeof(AEROVNET_VIRTIO_NET_HDR) == 10, "AEROVNET_VIRTIO_NET_HDR m
 #define AEROVNET_VIRTIO_NET_HDR_GSO_NONE 0u
 #define AEROVNET_VIRTIO_NET_HDR_GSO_TCPV4 1u
 #define AEROVNET_VIRTIO_NET_HDR_GSO_TCPV6 4u
+#define AEROVNET_VIRTIO_NET_HDR_GSO_ECN 0x80u
 
 typedef struct _AEROVNET_TX_OFFLOAD_INTENT {
   /* Request TCP checksum offload (no segmentation). */
@@ -59,6 +60,9 @@ typedef struct _AEROVNET_TX_OFFLOAD_INTENT {
 
   /* Request TCP segmentation offload (TSO/LSO). Implies NEEDS_CSUM. */
   uint8_t WantTso;
+
+  /* If set, set the virtio-net ECN bit when CWR is present (TSO only). */
+  uint8_t TsoEcn;
 
   /* MSS for TSO/LSO (bytes of TCP payload per segment). */
   uint16_t TsoMss;

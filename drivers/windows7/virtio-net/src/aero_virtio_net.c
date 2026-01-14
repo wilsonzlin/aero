@@ -822,6 +822,8 @@ static NDIS_STATUS AerovNetBuildTxHeader(_Inout_ AEROVNET_ADAPTER* Adapter, _Ino
       USHORT Mss = (USHORT)(LsoVal & 0xFFFFFu); // MSS is stored in the low 20 bits.
       Intent.WantTso = 1;
       Intent.TsoMss = Mss;
+      // Enable virtio-net ECN semantics for TSO packets when supported by the host.
+      Intent.TsoEcn = (Adapter->GuestFeatures & VIRTIO_NET_F_HOST_ECN) ? 1u : 0u;
     }
   }
 
@@ -1919,7 +1921,8 @@ static NDIS_STATUS AerovNetVirtioStart(_Inout_ AEROVNET_ADAPTER* Adapter) {
   //   commands when supported (including RX mode toggles via CTRL_RX).
   // - MRG_RXBUF: allow a single received packet to span multiple buffers.
   WantedFeatures = AEROVNET_FEATURE_RING_EVENT_IDX | VIRTIO_NET_F_CSUM | VIRTIO_NET_F_GUEST_CSUM | VIRTIO_NET_F_HOST_TSO4 | VIRTIO_NET_F_HOST_TSO6 |
-                   VIRTIO_NET_F_CTRL_VQ | VIRTIO_NET_F_CTRL_MAC_ADDR | VIRTIO_NET_F_CTRL_VLAN | VIRTIO_NET_F_CTRL_RX | VIRTIO_NET_F_MRG_RXBUF;
+                   VIRTIO_NET_F_HOST_ECN | VIRTIO_NET_F_CTRL_VQ | VIRTIO_NET_F_CTRL_MAC_ADDR | VIRTIO_NET_F_CTRL_VLAN | VIRTIO_NET_F_CTRL_RX |
+                   VIRTIO_NET_F_MRG_RXBUF;
   NegotiatedFeatures = 0;
 
   NtStatus = VirtioPciNegotiateFeatures(&Adapter->Vdev, RequiredFeatures, WantedFeatures, &NegotiatedFeatures);

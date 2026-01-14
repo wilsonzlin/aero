@@ -73,7 +73,24 @@ AEROVNET_OFFLOAD_RESULT AerovNetBuildTxVirtioNetHdr(const uint8_t* frame,
   memset(&TxReq, 0, sizeof(TxReq));
   TxReq.NeedsCsum = 1;
   TxReq.Tso = (intent->WantTso != 0) ? 1u : 0u;
+  TxReq.TsoEcn = 0;
   TxReq.TsoMss = intent->TsoMss;
+  if (TxReq.Tso != 0 && intent->TsoEcn != 0) {
+    /*
+     * virtio-net ECN handling (VIRTIO_NET_F_HOST_ECN):
+     * only set the ECN bit for TSO packets where the original TCP header has CWR set.
+     *
+     * `VirtioNetHdrOffloadParseFrameHeaders` already validated that the TCP header is
+     * present in the provided buffer.
+     */
+    size_t FlagsOff = (size_t)FrameInfo.L4Offset + 13u;
+    if (FlagsOff < frame_len) {
+      uint8_t TcpFlags = frame[FlagsOff];
+      if ((TcpFlags & 0x80u) != 0) { /* CWR */
+        TxReq.TsoEcn = 1u;
+      }
+    }
+  }
 
   memset(&Built, 0, sizeof(Built));
   St = VirtioNetHdrOffloadBuildTxHdr(&FrameInfo, &TxReq, &Built);

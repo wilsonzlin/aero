@@ -570,6 +570,74 @@ static void test_ipv4_tcp_lso_partial_headers(void)
     assert(info.HeadersLen == (uint16_t)(14 + 20 + 20));
 }
 
+static void test_ipv4_tcp_lso_ecn_when_cwr_and_enabled(void)
+{
+    uint8_t pkt[14 + 20 + 20 + 4000];
+    AEROVNET_TX_OFFLOAD_INTENT intent;
+    AEROVNET_VIRTIO_NET_HDR hdr;
+    AEROVNET_OFFLOAD_RESULT res;
+
+    build_eth(pkt, 0x0800);
+    build_ipv4_tcp(pkt + 14, 4000);
+    build_tcp_header(pkt + 14 + 20);
+    /* TCP flags (byte 13): set CWR. */
+    pkt[14 + 20 + 13] = 0x80;
+
+    memset(&intent, 0, sizeof(intent));
+    intent.WantTso = 1;
+    intent.TsoEcn = 1;
+    intent.TsoMss = 1460;
+
+    res = AerovNetBuildTxVirtioNetHdr(pkt, sizeof(pkt), &intent, &hdr, NULL);
+    assert(res == AEROVNET_OFFLOAD_OK);
+    assert(hdr.GsoType == (AEROVNET_VIRTIO_NET_HDR_GSO_TCPV4 | AEROVNET_VIRTIO_NET_HDR_GSO_ECN));
+}
+
+static void test_ipv4_tcp_lso_no_ecn_when_enabled_but_no_cwr(void)
+{
+    uint8_t pkt[14 + 20 + 20 + 4000];
+    AEROVNET_TX_OFFLOAD_INTENT intent;
+    AEROVNET_VIRTIO_NET_HDR hdr;
+    AEROVNET_OFFLOAD_RESULT res;
+
+    build_eth(pkt, 0x0800);
+    build_ipv4_tcp(pkt + 14, 4000);
+    build_tcp_header(pkt + 14 + 20);
+    /* TCP flags remain 0 (no CWR). */
+
+    memset(&intent, 0, sizeof(intent));
+    intent.WantTso = 1;
+    intent.TsoEcn = 1;
+    intent.TsoMss = 1460;
+
+    res = AerovNetBuildTxVirtioNetHdr(pkt, sizeof(pkt), &intent, &hdr, NULL);
+    assert(res == AEROVNET_OFFLOAD_OK);
+    assert(hdr.GsoType == AEROVNET_VIRTIO_NET_HDR_GSO_TCPV4);
+}
+
+static void test_ipv4_tcp_lso_no_ecn_when_cwr_but_disabled(void)
+{
+    uint8_t pkt[14 + 20 + 20 + 4000];
+    AEROVNET_TX_OFFLOAD_INTENT intent;
+    AEROVNET_VIRTIO_NET_HDR hdr;
+    AEROVNET_OFFLOAD_RESULT res;
+
+    build_eth(pkt, 0x0800);
+    build_ipv4_tcp(pkt + 14, 4000);
+    build_tcp_header(pkt + 14 + 20);
+    /* TCP flags: CWR set. */
+    pkt[14 + 20 + 13] = 0x80;
+
+    memset(&intent, 0, sizeof(intent));
+    intent.WantTso = 1;
+    intent.TsoEcn = 0;
+    intent.TsoMss = 1460;
+
+    res = AerovNetBuildTxVirtioNetHdr(pkt, sizeof(pkt), &intent, &hdr, NULL);
+    assert(res == AEROVNET_OFFLOAD_OK);
+    assert(hdr.GsoType == AEROVNET_VIRTIO_NET_HDR_GSO_TCPV4);
+}
+
 static void test_ipv4_tcp_options_lso(void)
 {
     /* TCP header data offset = 6 (24 bytes). */
@@ -811,6 +879,9 @@ int main(void)
     test_ipv4_ip_options_tcp_checksum_only();
     test_ipv4_tcp_lso();
     test_ipv4_tcp_lso_partial_headers();
+    test_ipv4_tcp_lso_ecn_when_cwr_and_enabled();
+    test_ipv4_tcp_lso_no_ecn_when_enabled_but_no_cwr();
+    test_ipv4_tcp_lso_no_ecn_when_cwr_but_disabled();
     test_ipv4_tcp_options_lso();
     test_ipv4_qinq_tcp_lso();
     test_ipv6_tcp_lso();
