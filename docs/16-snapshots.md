@@ -278,7 +278,9 @@ For the browser USB stack (guest-visible USB controller(s) + runtime/bridge stat
 - `DeviceState.data = aero-io-snapshot` TLV blob produced by the USB stack.
   - Inner `DEVICE_ID` examples:
     - UHCI: `UHRT` for `UhciRuntime`, `UHCB` for `UhciControllerBridge`, `WUHB` for `WebUsbUhciBridge`.
-    - xHCI: controller-specific tags (e.g. `XHRT` for an xHCI runtime/bridge implementation).
+    - xHCI: `XHCI` for the core controller (`aero_usb::xhci::XhciController`), `XHCB` for the WASM
+      bridge (`aero_wasm::XhciControllerBridge`), and `XHCP` for the native PCI wrapper
+      (`aero_devices::usb::xhci::XhciPciDevice`).
   - `aero_machine::Machine` snapshots may store `DeviceId::USB` as a small adapter-level wrapper TLV (`USBC`) that nests the guest-visible UHCI PCI device snapshot (`UHCP`) plus host-managed timing accumulator state used for deterministic 1ms ticking.
 - `DeviceState.version` / `DeviceState.flags` mirror the inner device `SnapshotVersion (major, minor)` per the `aero_snapshot::io_snapshot_bridge` convention
 
