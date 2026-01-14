@@ -23,9 +23,10 @@ fn input_help_mentions_flags_and_steps() {
         .stdout(predicate::str::contains("ehci_snapshot_roundtrip"))
         .stdout(predicate::str::contains("aero-machine"))
         .stdout(predicate::str::contains("aero-wasm"))
-        .stdout(predicate::str::contains(
-            "machine_i8042_snapshot_pending_bytes",
-        ))
+        .stdout(predicate::str::contains("cargo test -p aero-wasm"))
+        .stdout(predicate::str::contains("machine_input_injection"))
+        .stdout(predicate::str::contains("machine_input_backends"))
+        .stdout(predicate::str::contains("machine_i8042_snapshot_pending_bytes"))
         .stdout(predicate::str::contains("machine_virtio_input"))
         .stdout(predicate::str::contains("machine_uhci"))
         .stdout(predicate::str::contains("uhci_snapshot"))
