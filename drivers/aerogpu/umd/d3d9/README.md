@@ -110,6 +110,49 @@ For fence waiting / throttling:
 - If `hSyncObject` is present, the UMD prefers kernel waits via `D3DKMTWaitForSynchronizationObject` for bounded waits (e.g. PresentEx max-frame-latency throttling).
 - If `hSyncObject` is absent, the UMD falls back to polling the AeroGPU KMD fence counters via `D3DKMTEscape` (`AerogpuKmdQuery`), throttled to avoid spamming syscalls in tight EVENT-query polling loops.
 
+## HWND occlusion handling (Present / PresentEx / CheckDeviceState)
+
+On Windows 7, the D3D9Ex runtime (notably `dwm.exe`) uses the UMD’s handling of **occlusion/minimized** scenarios to avoid pathological present loops. AeroGPU implements a shared, best-effort HWND heuristic (`hwnd_is_occluded()` in `src/aerogpu_d3d9_driver.cpp`) used by:
+
+- `pfnPresent` (`Device::Present`)
+- `pfnPresentEx` (`Device::PresentEx`)
+- `pfnCheckDeviceState` (`Device::CheckDeviceState`)
+
+### Return behavior
+
+- `CheckDeviceState(hWnd)`:
+  - returns `S_PRESENT_OCCLUDED` when the destination window is considered occluded,
+  - otherwise returns `S_OK` (or `D3DERR_DEVICELOST` if the device is lost).
+- `Present` / `PresentEx`:
+  - if the destination window is considered occluded, returns `S_PRESENT_OCCLUDED`.
+    - The call is still treated as a **flush point**: the UMD submits any pending render work and advances the D3D9Ex present statistics (used by `GetPresentStats` / `GetLastPresentCount`).
+    - The UMD does **not** submit a present packet while occluded.
+  - otherwise, proceeds normally (including PresentEx max-frame-latency throttling and `D3DERR_WASSTILLDRAWING` behavior when `D3DPRESENT_DONOTWAIT` is used).
+
+### Occlusion heuristics
+
+The occlusion heuristic is intentionally **conservative** and **non-blocking** (it only queries cached Win32 window state; no waits). A window is treated as occluded when any of the following are true:
+
+- The resolved top-level window is minimized/iconic (`IsIconic(topLevel) != 0`).
+- The client rectangle has non-positive size (`GetClientRect(hwnd)` yields `width <= 0` or `height <= 0`).
+  - If the present target is a child HWND, both the child and its root/top-level window are checked.
+- Optional: when `AEROGPU_D3D9_OCCLUDE_INVISIBLE=1` is set, an invisible top-level window (`IsWindowVisible(topLevel) == FALSE`) is also treated as occluded.
+
+Explicitly: `IsWindowVisible(topLevel) == FALSE` is **not** treated as occluded by default. Some Win7 guest tests intentionally present to hidden windows to validate pacing/throttling paths; treating invisible windows as occluded would change those return codes and can mask regressions.
+
+Notes:
+
+- `NULL` or stale/invalid HWNDs are treated as “not occluded” to avoid spurious `S_PRESENT_OCCLUDED` returns. When callers pass `NULL` to `Present`/`PresentEx`, AeroGPU falls back to the swap chain’s HWND (when available).
+
+### Environment variable: `AEROGPU_D3D9_OCCLUDE_INVISIBLE`
+
+`AEROGPU_D3D9_OCCLUDE_INVISIBLE` controls whether `IsWindowVisible(topLevel) == FALSE` is considered “occluded” by the heuristic above.
+
+- Default: **disabled**
+- Set `AEROGPU_D3D9_OCCLUDE_INVISIBLE=1` to enable treating invisible windows as occluded
+
+This exists so Win7 bring-up/debugging can opt into more aggressive occlusion behavior when needed, without breaking hidden-window tests/pacing coverage by default.
+
 ## Command stream writer
 
 UMD command emission uses a small serialization helper in:
