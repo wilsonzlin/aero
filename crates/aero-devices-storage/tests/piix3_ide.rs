@@ -2220,6 +2220,70 @@ fn bus_master_status_register_is_rw1c_for_irq_and_error_bits() {
 }
 
 #[test]
+fn bmide_stopping_engine_does_not_clear_irq_status_bit() {
+    let capacity = 4 * SECTOR_SIZE as u64;
+    let mut disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
+    let mut sector0 = vec![0u8; SECTOR_SIZE];
+    sector0[..4].copy_from_slice(b"PING");
+    disk.write_sectors(0, &sector0).unwrap();
+
+    let ide = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
+    ide.borrow_mut()
+        .controller
+        .attach_primary_master_ata(AtaDrive::new(Box::new(disk)).unwrap());
+    ide.borrow_mut().config_mut().set_command(0x0005); // IO decode + Bus Master
+
+    let mut ioports = IoPortBus::new();
+    register_piix3_ide_ports(&mut ioports, ide.clone());
+
+    let mut mem = Bus::new(0x20_000);
+    let prd_addr = 0x1000u64;
+    let dma_buf = 0x2000u64;
+
+    // PRD table: one entry, end-of-table, 512 bytes.
+    mem.write_u32(prd_addr, dma_buf as u32);
+    mem.write_u16(prd_addr + 4, SECTOR_SIZE as u16);
+    mem.write_u16(prd_addr + 6, 0x8000);
+
+    let bm_base = ide.borrow().bus_master_base();
+    ioports.write(bm_base + 4, 4, prd_addr as u32);
+
+    // Successful READ DMA (LBA 0, 1 sector).
+    ioports.write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 2, 1, 1);
+    ioports.write(PRIMARY_PORTS.cmd_base + 3, 1, 0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 4, 1, 0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 5, 1, 0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 7, 1, 0xC8); // READ DMA
+    ioports.write(bm_base, 1, 0x09); // start + read (device -> memory)
+    ide.borrow_mut().tick(&mut mem);
+
+    let st = ioports.read(bm_base + 2, 1) as u8;
+    assert_eq!(st & 0x07, 0x04);
+
+    // Stopping the engine should clear only ACTIVE, not the IRQ status bit.
+    ioports.write(bm_base, 1, 0x00);
+    let cmd = ioports.read(bm_base, 1) as u8;
+    assert_eq!(cmd & 0x09, 0);
+
+    let st = ioports.read(bm_base + 2, 1) as u8;
+    assert_eq!(
+        st & 0x07,
+        0x04,
+        "BMIDE IRQ bit should persist until cleared via RW1C"
+    );
+
+    // Clear interrupt (RW1C).
+    ioports.write(bm_base + 2, 1, 0x04);
+    let st = ioports.read(bm_base + 2, 1) as u8;
+    assert_eq!(st & 0x07, 0);
+
+    // Acknowledge IDE IRQ latch.
+    let _ = ioports.read(PRIMARY_PORTS.cmd_base + 7, 1);
+    assert!(!ide.borrow().controller.primary_irq_pending());
+}
+
+#[test]
 fn bmide_rw1c_does_not_acknowledge_ide_irq_latch() {
     let capacity = 4 * SECTOR_SIZE as u64;
     let mut disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
