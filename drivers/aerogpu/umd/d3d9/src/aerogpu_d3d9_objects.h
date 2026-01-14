@@ -492,6 +492,51 @@ struct Resource {
 
   std::vector<uint8_t> storage;
   std::vector<uint8_t> shared_private_driver_data;
+
+  // ---------------------------------------------------------------------------
+  // Dynamic buffer renaming (D3DLOCK_DISCARD / D3DLOCK_NOOVERWRITE)
+  // ---------------------------------------------------------------------------
+  //
+  // AeroGPU guest-backed buffers (default pool + allocation-table indirection)
+  // do not embed CPU-written bytes into the command stream. Instead, the host
+  // observes updates by reading guest memory after submission, using the
+  // RESOURCE_DIRTY_RANGE command as a "changed" notification.
+  //
+  // This means dynamic vertex/index buffers require D3D9's DISCARD/NOOVERWRITE
+  // semantics to be implemented in the UMD: if we reuse the same backing memory
+  // for multiple draws within one submission (or while previous draws are still
+  // in flight), later CPU writes can corrupt earlier draws.
+  //
+  // We implement DISCARD as buffer renaming: swap the Resource's host handle and
+  // (when applicable) guest backing allocation to a fresh backing not in use by
+  // the GPU. Old backings are kept alive and tracked by fence ranges until they
+  // are safe to reuse.
+  struct DynamicBufferRange {
+    uint32_t offset_bytes = 0;
+    uint32_t size_bytes = 0;
+    // Fence value for the submission that uses this range.
+    // 0 means the draw was recorded but not yet submitted.
+    uint64_t fence_value = 0;
+  };
+
+  struct DynamicBufferBacking {
+    aerogpu_handle_t handle = 0;
+    uint32_t backing_alloc_id = 0;
+    uint32_t backing_offset_bytes = 0;
+    WddmAllocationHandle wddm_hAllocation = 0;
+    std::vector<uint8_t> storage;
+    std::vector<DynamicBufferRange> in_flight_ranges;
+  };
+
+  // Current backing's in-flight ranges (tracked via draw calls).
+  std::vector<DynamicBufferRange> dynamic_in_flight_ranges;
+  // Inactive backings (the current backing is stored in the Resource's primary
+  // fields: handle/backing_alloc_id/wddm_hAllocation/storage).
+  std::vector<DynamicBufferBacking> dynamic_backings;
+  // Submission-local bookkeeping: true when this Resource is present in
+  // Device::dynamic_pending_buffers (so submit() can stamp pending ranges with
+  // a fence value).
+  bool dynamic_pending_listed = false;
 };
 
 struct SwapChain {
@@ -847,6 +892,11 @@ struct Device {
   // D3D9Ex EVENT queries are tracked as "pending" until the next submission
   // boundary stamps them with a fence value (see `Query::submitted`).
   std::vector<Query*> pending_event_queries;
+
+  // Dynamic buffer renaming: resources that have ranges recorded with
+  // `fence_value==0` in the current command buffer. These are patched up with
+  // the submission fence ID when the command buffer is submitted.
+  std::vector<Resource*> dynamic_pending_buffers;
 
   // D3D9Ex throttling + present statistics.
   //

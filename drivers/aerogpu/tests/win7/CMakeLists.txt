@@ -310,6 +310,11 @@ aerogpu_add_win7_test(d3d9_process_vertices_smoke
 )
 target_link_libraries(d3d9_process_vertices_smoke PRIVATE user32 gdi32 d3d9)
 
+aerogpu_add_win7_test(d3d9_dynamic_vb_lock_semantics
+  d3d9_dynamic_vb_lock_semantics/main.cpp
+)
+target_link_libraries(d3d9_dynamic_vb_lock_semantics PRIVATE user32 gdi32 d3d9)
+
 aerogpu_add_win7_test(d3d9ex_stretchrect
   d3d9ex_stretchrect/main.cpp
 )
