@@ -4,13 +4,15 @@ use aero_dxbc::{test_utils as dxbc_test_utils, FourCC};
 use aero_d3d11::runtime::aerogpu_cmd_executor::AerogpuD3d11Executor;
 use aero_gpu::guest_memory::VecGuestMemory;
 use aero_protocol::aerogpu::aerogpu_cmd::{
-    AerogpuPrimitiveTopology, AerogpuShaderStage, AerogpuShaderStageEx, AerogpuVertexBufferBinding,
-    AEROGPU_CLEAR_COLOR, AEROGPU_RESOURCE_USAGE_RENDER_TARGET, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
+    AerogpuCullMode, AerogpuFillMode, AerogpuPrimitiveTopology, AerogpuShaderStage,
+    AerogpuShaderStageEx, AerogpuVertexBufferBinding, AEROGPU_CLEAR_COLOR,
+    AEROGPU_RESOURCE_USAGE_RENDER_TARGET, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
 };
 use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
 use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
 
 const ILAY_POS3_COLOR: &[u8] = include_bytes!("fixtures/ilay_pos3_color.bin");
+const DXBC_GS_POINT_TO_TRIANGLE: &[u8] = include_bytes!("fixtures/gs_point_to_triangle.dxbc");
 
 fn build_dxbc(chunks: &[([u8; 4], Vec<u8>)]) -> Vec<u8> {
     let refs: Vec<(FourCC, &[u8])> = chunks
@@ -18,6 +20,85 @@ fn build_dxbc(chunks: &[([u8; 4], Vec<u8>)]) -> Vec<u8> {
         .map(|(fourcc, data)| (FourCC(*fourcc), data.as_slice()))
         .collect();
     dxbc_test_utils::build_container(&refs)
+}
+
+async fn create_executor_with_compute_and_indirect() -> Option<AerogpuD3d11Executor> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let needs_runtime_dir = std::env::var("XDG_RUNTIME_DIR")
+            .ok()
+            .map(|v| v.is_empty())
+            .unwrap_or(true);
+        if needs_runtime_dir {
+            let dir =
+                std::env::temp_dir().join(format!("aero-d3d11-xdg-runtime-{}", std::process::id()));
+            let _ = std::fs::create_dir_all(&dir);
+            let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+            std::env::set_var("XDG_RUNTIME_DIR", &dir);
+        }
+    }
+
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+        // Prefer GL on Linux CI to avoid crashes in some Vulkan software adapters.
+        backends: if cfg!(target_os = "linux") {
+            wgpu::Backends::GL
+        } else {
+            wgpu::Backends::PRIMARY
+        },
+        ..Default::default()
+    });
+
+    let adapter = match instance
+        .request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::LowPower,
+            compatible_surface: None,
+            force_fallback_adapter: true,
+        })
+        .await
+    {
+        Some(adapter) => Some(adapter),
+        None => {
+            instance
+                .request_adapter(&wgpu::RequestAdapterOptions {
+                    power_preference: wgpu::PowerPreference::LowPower,
+                    compatible_surface: None,
+                    force_fallback_adapter: false,
+                })
+                .await
+        }
+    }?;
+
+    let downlevel = adapter.get_downlevel_capabilities();
+    let flags = downlevel.flags;
+    if !flags.contains(wgpu::DownlevelFlags::COMPUTE_SHADERS) {
+        return None;
+    }
+    if !flags.contains(wgpu::DownlevelFlags::INDIRECT_EXECUTION) {
+        return None;
+    }
+
+    let backend = adapter.get_info().backend;
+    let (device, queue) = adapter
+        .request_device(
+            &wgpu::DeviceDescriptor {
+                label: Some("aero-d3d11 GS point->triangle test device"),
+                required_features: wgpu::Features::empty(),
+                required_limits: wgpu::Limits::downlevel_defaults(),
+            },
+            None,
+        )
+        .await
+        .ok()?;
+
+    Some(AerogpuD3d11Executor::new_with_supports(
+        device,
+        queue,
+        backend,
+        flags.contains(wgpu::DownlevelFlags::COMPUTE_SHADERS),
+        flags.contains(wgpu::DownlevelFlags::INDIRECT_EXECUTION),
+    ))
 }
 
 #[derive(Clone, Copy)]
@@ -155,69 +236,6 @@ fn build_ps_solid_green_dxbc() -> Vec<u8> {
     build_dxbc(&[(*b"ISGN", isgn), (*b"OSGN", osgn), (*b"SHDR", shdr)])
 }
 
-fn build_gs_point_to_triangle_dxbc() -> Vec<u8> {
-    // gs_4_0: emit three fixed clip-space vertices (triangle) and return.
-    //
-    // Note: This test uses a tiny, hand-authored DXBC container. The token stream intentionally
-    // omits many of the declarations a real `fxc` shader would include; the executor/translator
-    // relies on the ISGN/OSGN signature chunks instead.
-
-    // Input: the VS's SV_Position at v0 (not actually read by the instruction stream).
-    let isgn = build_signature_chunk(&[SigParam {
-        semantic_name: "SV_Position",
-        semantic_index: 0,
-        register: 0,
-        mask: 0x0f,
-    }]);
-    // Output: SV_Position at o0.
-    let osgn = build_signature_chunk(&[SigParam {
-        semantic_name: "SV_Position",
-        semantic_index: 0,
-        register: 0,
-        mask: 0x0f,
-    }]);
-
-    // SM4 opcode IDs are `D3D10_SB_OPCODE_TYPE` values.
-    //
-    // `emit` is a geometry-shader-only instruction and is not used by existing shader fixtures.
-    const OPCODE_EMIT: u32 = 0x43;
-
-    let version_token = 0x0002_0040u32; // gs_4_0
-    let mov_token = 0x01u32 | (8u32 << 11);
-    let emit_token = OPCODE_EMIT | (1u32 << 11);
-    let ret_token = 0x3eu32 | (1u32 << 11);
-
-    let dst_o0 = 0x0010_f022u32;
-    let imm_vec4 = 0x0000_f042u32;
-
-    let f = |v: f32| v.to_bits();
-    let tri = [
-        [-0.5f32, -0.5, 0.0, 1.0],
-        [0.0, 0.5, 0.0, 1.0],
-        [0.5, -0.5, 0.0, 1.0],
-    ];
-
-    let mut tokens = vec![version_token, 0 /* length patched below */];
-    for v in tri {
-        tokens.extend_from_slice(&[
-            mov_token,
-            dst_o0,
-            0, // o0 index
-            imm_vec4,
-            f(v[0]),
-            f(v[1]),
-            f(v[2]),
-            f(v[3]),
-            emit_token,
-        ]);
-    }
-    tokens.push(ret_token);
-    tokens[1] = tokens.len() as u32;
-
-    let shdr = tokens_to_bytes(&tokens);
-    build_dxbc(&[(*b"ISGN", isgn), (*b"OSGN", osgn), (*b"SHDR", shdr)])
-}
-
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 struct VertexPos3Color4 {
@@ -228,10 +246,13 @@ struct VertexPos3Color4 {
 #[test]
 fn aerogpu_cmd_geometry_shader_point_list_expands_to_triangle() {
     pollster::block_on(async {
-        let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
-            Ok(exec) => exec,
-            Err(e) => {
-                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+        let mut exec = match create_executor_with_compute_and_indirect().await {
+            Some(exec) => exec,
+            None => {
+                common::skip_or_panic(
+                    module_path!(),
+                    "WebGPU compute shaders / indirect execution not supported",
+                );
                 return;
             }
         };
@@ -281,11 +302,7 @@ fn aerogpu_cmd_geometry_shader_point_list_expands_to_triangle() {
 
         writer.create_shader_dxbc(VS, AerogpuShaderStage::Vertex, &build_vs_pos_only_dxbc());
         // Create a GS via the `stage_ex` ABI extension (CREATE_SHADER_DXBC.reserved0).
-        writer.create_shader_dxbc_ex(
-            GS,
-            AerogpuShaderStageEx::Geometry,
-            &build_gs_point_to_triangle_dxbc(),
-        );
+        writer.create_shader_dxbc_ex(GS, AerogpuShaderStageEx::Geometry, DXBC_GS_POINT_TO_TRIANGLE);
         writer.create_shader_dxbc(PS, AerogpuShaderStage::Pixel, &build_ps_solid_green_dxbc());
 
         writer.create_input_layout(IL, ILAY_POS3_COLOR);
@@ -303,6 +320,15 @@ fn aerogpu_cmd_geometry_shader_point_list_expands_to_triangle() {
         writer.set_primitive_topology(AerogpuPrimitiveTopology::PointList);
 
         writer.bind_shaders_with_gs(VS, GS, PS, 0);
+        // Disable face culling so the test does not depend on backend-specific winding conventions.
+        writer.set_rasterizer_state_ext(
+            AerogpuFillMode::Solid,
+            AerogpuCullMode::None,
+            false,
+            false,
+            0,
+            false,
+        );
 
         writer.clear(AEROGPU_CLEAR_COLOR, [1.0, 0.0, 0.0, 1.0], 1.0, 0);
         writer.draw(1, 1, 0, 0);

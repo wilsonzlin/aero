@@ -54,6 +54,11 @@ The files are intentionally tiny and deterministic, so CI does **not** require
   * Shader model: `gs_4_0`
   * Chunks: `SHDR`
   * Behavior: `dcl_inputprimitive`, `dcl_outputtopology`, `dcl_maxvertexcount`, `mov r0, v0[0]`, `emit`, `cut`, `ret`
+* `gs_point_to_triangle.dxbc`
+  * Shader model: `gs_4_0`
+  * Chunks: `ISGN`, `OSGN`, `SHDR`
+  * Behavior: emits three `SV_Position` vertices (triangle strip) to form a large
+    triangle covering the center of the render target.
 
 These fixtures are **hand-authored** DXBC containers with the standard D3D10+
 signature chunk layout. The SM4 token streams are intentionally tiny:
