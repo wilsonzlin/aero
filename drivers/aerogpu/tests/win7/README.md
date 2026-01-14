@@ -94,11 +94,24 @@ drivers/aerogpu/tests/win7/
   d3d9ex_stateblock_sanity/
   d3d9ex_scissor_sanity/
   d3d9ex_draw_indexed_primitive_up/
+  d3d9ex_instancing_sanity/
   d3d9ex_multiframe_triangle/
+  d3d9ex_ps_only_triangle/
   d3d9ex_vb_dirty_range/
   d3d9_process_vertices_smoke/
+  d3d9_dynamic_vb_lock_semantics/
+  d3d9_mipmapped_texture_smoke/
+  d3d9_texture_16bit_sampling/
+  d3d9_fixedfunc_xyz_diffuse/
+  d3d9_fixedfunc_xyz_diffuse_tex1/
+  d3d9_fixedfunc_textured_wvp/
+  d3d9_fixedfunc_wvp_triangle/
+  d3d9_shader_stage_interop/
+  d3d9_patch_sanity/
+  d3d9_patch_rendering_smoke/
   d3d9ex_stretchrect/
   d3d9ex_query_latency/
+  d3d9ex_texture_16bit_formats/
   d3d9ex_shared_surface/
   d3d9ex_shared_surface_ipc/
   d3d9ex_alloc_id_persistence/
@@ -136,6 +149,8 @@ drivers/aerogpu/tests/win7/
   d3d11_compute_smoke/
   readback_sanity/
 ```
+
+Note: the list above is a snapshot for orientation; the authoritative ordered test list is `tests_manifest.txt`.
 
 ## Prerequisites (Windows 7 guest)
 
