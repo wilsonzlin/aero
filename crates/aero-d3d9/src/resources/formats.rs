@@ -629,13 +629,6 @@ mod tests {
                             | D3DFormat::A4R4G4B4,
                             TextureUsageKind::Sampled | TextureUsageKind::RenderTarget,
                         ) => true,
-                        (
-                            D3DFormat::R5G6B5
-                            | D3DFormat::A1R5G5B5
-                            | D3DFormat::X1R5G5B5
-                            | D3DFormat::A4R4G4B4,
-                            TextureUsageKind::Sampled | TextureUsageKind::RenderTarget,
-                        ) => true,
                         (D3DFormat::Dxt1 | D3DFormat::Dxt3 | D3DFormat::Dxt5, TextureUsageKind::Sampled) => {
                             true
                         }
