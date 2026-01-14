@@ -8,6 +8,7 @@ use aero_cpu_core::{AssistReason, CpuBus, Exception};
 use aero_cpu_core::CpuCore;
 
 use crate::corpus::TestCase;
+use crate::signals;
 use crate::{CpuState, ExecOutcome, Fault};
 
 pub struct AeroBackend {
@@ -143,9 +144,9 @@ impl AeroBackend {
 
 fn map_tier0_exception(exception: Exception, mem_fault_signal: i32) -> Fault {
     match exception {
-        Exception::InvalidOpcode => Fault::Signal(libc::SIGILL),
+        Exception::InvalidOpcode => Fault::Signal(signals::SIGILL),
         Exception::MemoryFault => Fault::Signal(mem_fault_signal),
-        Exception::DivideError => Fault::Signal(libc::SIGFPE),
+        Exception::DivideError => Fault::Signal(signals::SIGFPE),
         // Leave the name intact to make mismatches readable (and because it is already stable).
         Exception::Unimplemented(name) => Fault::Unsupported(name),
         Exception::GeneralProtection(_) => Fault::Unsupported("tier0 exception: #GP"),
@@ -441,7 +442,7 @@ mod tests {
             .find(|t| matches!(t.kind, TemplateKind::MovRaxM64Abs0))
             .expect("mem fault template missing");
 
-        let mem_fault_signal = libc::SIGSEGV;
+        let mem_fault_signal = signals::SIGSEGV;
         let mut backend = AeroBackend::new(mem_fault_signal);
         let mem_base = 0x1000u64;
         let mut rng = corpus::XorShift64::new(0x_0bad_f00d_f00d_f00d);
@@ -460,7 +461,7 @@ mod tests {
         let mut ud2_case = TestCase::generate(1, ud2, &mut rng, mem_base);
         ud2_case.init.rflags = FLAG_FIXED_1;
         let ud2_out = backend.execute(&ud2_case);
-        assert_eq!(ud2_out.fault, Some(Fault::Signal(libc::SIGILL)));
+        assert_eq!(ud2_out.fault, Some(Fault::Signal(signals::SIGILL)));
 
         let mut mem_fault_case = TestCase::generate(2, mem_fault, &mut rng, mem_base);
         mem_fault_case.init.rflags = FLAG_FIXED_1;

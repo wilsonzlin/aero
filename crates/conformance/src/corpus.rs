@@ -2316,7 +2316,7 @@ mod tests {
             "randomized memory already matched expected write"
         );
 
-        let mut aero = crate::aero::AeroBackend::new(libc::SIGSEGV);
+        let mut aero = crate::aero::AeroBackend::new(crate::signals::SIGSEGV);
         let outcome = aero.execute(&case);
         assert!(outcome.fault.is_none());
         assert_eq!(&outcome.memory[start..end], expected);

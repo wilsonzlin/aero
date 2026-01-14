@@ -35,6 +35,7 @@ mod aero;
 mod corpus;
 mod reference;
 mod report;
+mod signals;
 
 pub use report::{ConformanceReport, CoverageSummary};
 
@@ -165,7 +166,7 @@ pub fn run(
     let memory_fault_signal = if isolate {
         detect_memory_fault_signal(&mut reference, &base_templates)
     } else {
-        libc::SIGSEGV
+        signals::SIGSEGV
     };
 
     let templates = templates_for_run(base_templates)?;
@@ -355,7 +356,7 @@ fn detect_memory_fault_signal(
 ) -> i32 {
     // Default to SIGSEGV; overridden if the host backend reports SIGBUS (or another signal) for
     // user-mode memory faults on this platform.
-    let default = libc::SIGSEGV;
+    let default = signals::SIGSEGV;
     let Some(template) = templates
         .iter()
         .find(|t| matches!(t.kind, corpus::TemplateKind::MovRaxM64Abs0))
@@ -544,8 +545,8 @@ mod tests {
             }
 
             let expected_fault = match template.kind {
-                corpus::TemplateKind::Ud2 => Fault::Signal(libc::SIGILL),
-                corpus::TemplateKind::DivRbxByZero => Fault::Signal(libc::SIGFPE),
+                corpus::TemplateKind::Ud2 => Fault::Signal(signals::SIGILL),
+                corpus::TemplateKind::DivRbxByZero => Fault::Signal(signals::SIGFPE),
                 corpus::TemplateKind::MovRaxM64Abs0
                 | corpus::TemplateKind::GuardedOobLoad
                 | corpus::TemplateKind::GuardedOobStore => Fault::Signal(mem_fault_signal),
@@ -598,7 +599,7 @@ mod tests {
 
         let _lock = ENV_LOCK.lock().unwrap();
         let mut reference = ReferenceBackend::new().expect("reference backend unavailable");
-        let mut aero = aero::AeroBackend::new(libc::SIGSEGV);
+        let mut aero = aero::AeroBackend::new(signals::SIGSEGV);
 
         let template = corpus::templates()
             .into_iter()
