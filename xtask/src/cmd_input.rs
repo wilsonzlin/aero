@@ -53,6 +53,7 @@ const AERO_USB_FOCUSED_TESTS: &[&str] = &[
     "hid_consumer_control_snapshot_clamping",
     "hid_gamepad_snapshot_clamping",
     "hid_keyboard_snapshot_sanitization",
+    "hid_keyboard_leds",
     "hid_mouse_snapshot_clamping",
     "usb_hub_snapshot_configuration_clamping",
     "attached_device_snapshot_address_clamping",
