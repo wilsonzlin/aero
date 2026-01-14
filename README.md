@@ -213,7 +213,10 @@ See [`docs/05-storage-topology-win7.md`](./docs/05-storage-topology-win7.md) for
 In browsers, OPFS `FileSystemSyncAccessHandle` is **exclusive**: only **one** SyncAccessHandle may exist for a given file at a time.
 Accidentally opening the same disk image twice (even in the same origin) typically fails with an `InvalidStateError` due to the file lock.
 
-The machine runtime avoids this by opening each OPFS-backed disk image once and sharing it across the BIOS + storage controllers via the canonical `SharedDisk` attachment (so the VM does not “double-open” the same file for INT13 vs AHCI/IDE).
+The machine runtime avoids this in two ways:
+
+- **Single owner:** only the worker that runs the canonical `api.Machine` opens OPFS-backed disks; other workers avoid opening competing handles to the same file.
+- **Single attachment inside the VM:** `api.Machine` uses the canonical `SharedDisk` wiring so BIOS INT13 and storage controllers observe the same bytes without independently opening the disk file.
 
 #### Disk overlay-ref strings (snapshots)
 
