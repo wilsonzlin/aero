@@ -1713,8 +1713,6 @@ def main() -> int:
     if not args.enable_virtio_snd:
         if args.virtio_snd_audio_backend != "none" or args.virtio_snd_wav_path is not None:
             parser.error("--virtio-snd-* options require --with-virtio-snd/--enable-virtio-snd")
-        if args.require_virtio_snd_msix:
-            parser.error("--require-virtio-snd-msix requires --with-virtio-snd/--enable-virtio-snd")
     elif args.virtio_snd_audio_backend == "wav" and not args.virtio_snd_wav_path:
         parser.error("--virtio-snd-wav-path is required when --virtio-snd-audio-backend=wav")
 
