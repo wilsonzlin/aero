@@ -173,3 +173,48 @@ fn tick_e1000_filters_invalid_rx_frames_and_flushes_to_guest_memory() {
 
     assert_eq!(dma.read_vec(0x3000, valid.len()), valid);
 }
+
+#[test]
+fn tick_e1000_accepts_min_l2_frame_len() {
+    let mut dev = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
+    dev.pci_config_write(0x04, 2, 0x4);
+    let mut dma = TestDma::new(0x40_000);
+    setup_rx_ring(&mut dev, &mut dma);
+
+    let mut backend = L2TunnelBackend::with_limits(8, 8, 2048);
+    let frame = build_test_frame(&[]);
+    assert_eq!(frame.len(), MIN_L2_FRAME_LEN);
+    backend.push_rx_frame(frame.clone());
+
+    let before = dma.read_vec(0x3000, frame.len());
+    assert_ne!(before, frame, "sanity: buffer should not contain frame yet");
+
+    let counts = tick_e1000_with_counts(&mut dev, &mut dma, &mut backend, 0, 1);
+    assert_eq!(counts.rx_frames, 1);
+    assert_eq!(counts.rx_bytes, frame.len());
+
+    assert_eq!(dma.read_vec(0x3000, frame.len()), frame);
+}
+
+#[test]
+fn tick_e1000_accepts_max_l2_frame_len() {
+    let mut dev = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
+    dev.pci_config_write(0x04, 2, 0x4);
+    let mut dma = TestDma::new(0x40_000);
+    setup_rx_ring(&mut dev, &mut dma);
+
+    let mut backend = L2TunnelBackend::with_limits(8, 8, 2048);
+    let payload = vec![0u8; MAX_L2_FRAME_LEN - MIN_L2_FRAME_LEN];
+    let frame = build_test_frame(&payload);
+    assert_eq!(frame.len(), MAX_L2_FRAME_LEN);
+    backend.push_rx_frame(frame.clone());
+
+    let before = dma.read_vec(0x3000, frame.len());
+    assert_ne!(before, frame, "sanity: buffer should not contain frame yet");
+
+    let counts = tick_e1000_with_counts(&mut dev, &mut dma, &mut backend, 0, 1);
+    assert_eq!(counts.rx_frames, 1);
+    assert_eq!(counts.rx_bytes, frame.len());
+
+    assert_eq!(dma.read_vec(0x3000, frame.len()), frame);
+}
