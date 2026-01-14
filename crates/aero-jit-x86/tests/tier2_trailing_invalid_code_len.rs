@@ -23,7 +23,7 @@ fn tier2_trace_builder_ignores_trailing_invalid_page() {
 
     let func = build_function_from_x86(&bus, entry, 64, CfgBuildConfig::default());
 
-    let mut env = RuntimeEnv::default();
+    let env = RuntimeEnv::default();
     // `RuntimeEnv` starts with all page versions at 0; we only care about which pages are guarded.
     env.page_versions.set_version(0, 1);
     env.page_versions.set_version(1, 1);
@@ -56,4 +56,3 @@ fn tier2_trace_builder_ignores_trailing_invalid_page() {
 
     assert_eq!(guarded_pages, vec![0]);
 }
-

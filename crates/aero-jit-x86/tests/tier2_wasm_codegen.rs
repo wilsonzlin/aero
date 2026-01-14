@@ -837,7 +837,7 @@ fn tier2_trace_wasm_matches_interpreter_on_loop_side_exit() {
     profile.edge_counts.insert((BlockId(0), BlockId(1)), 1_000);
     profile.hot_backedges.insert((BlockId(0), BlockId(0)));
 
-    let mut page_versions = PageVersionTracker::default();
+    let page_versions = PageVersionTracker::default();
     page_versions.set_version(0, 7);
 
     let builder = TraceBuilder::new(
@@ -865,7 +865,7 @@ fn tier2_trace_wasm_matches_interpreter_on_loop_side_exit() {
         init_state.cpu.rflags |= 1u64 << flag.rflags_bit();
     }
 
-    let mut env = RuntimeEnv::default();
+    let env = RuntimeEnv::default();
     env.page_versions.set_version(0, 7);
 
     let mut interp_state = init_state.clone();
@@ -1061,7 +1061,7 @@ fn tier2_loop_trace_invalidates_on_mid_execution_code_version_bump() {
     profile.edge_counts.insert((BlockId(0), BlockId(1)), 1_000);
     profile.hot_backedges.insert((BlockId(0), BlockId(0)));
 
-    let mut page_versions = PageVersionTracker::default();
+    let page_versions = PageVersionTracker::default();
     page_versions.set_version(0, 1);
     page_versions.set_version(1, 2);
 
@@ -1458,7 +1458,7 @@ mod random_traces {
         // Tier-2 WASM compilation + instantiation is more expensive than pure interpreter checks, so
         // keep the iteration count modest while still providing broad coverage.
         for i in 0..75 {
-            let mut env = RuntimeEnv::default();
+            let env = RuntimeEnv::default();
             // Install a small code-version table so random traces can exercise
             // `Instr::GuardCodeVersion` both in the interpreter and in WASM.
             let mut code_versions: Vec<u32> = (0..8).map(|_| rng.gen()).collect();

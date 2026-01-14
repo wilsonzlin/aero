@@ -99,7 +99,7 @@ fn trace_builder_classifies_hot_backedge_as_loop() {
     profile.edge_counts.insert((entry, entry), 9_000);
     profile.edge_counts.insert((entry, exit), 1_000);
     profile.hot_backedges.insert((entry, entry));
-    let mut page_versions = PageVersionTracker::default();
+    let page_versions = PageVersionTracker::default();
     page_versions.set_version(0, 1);
 
     let cfg = TraceConfig {
@@ -125,7 +125,7 @@ fn trace_builder_falls_back_to_linear_without_hot_backedge() {
     profile.edge_counts.insert((entry, entry), 9_000);
     profile.edge_counts.insert((entry, exit), 1_000);
     // Do not mark (entry -> entry) as a hot backedge.
-    let mut page_versions = PageVersionTracker::default();
+    let page_versions = PageVersionTracker::default();
     page_versions.set_version(0, 1);
 
     let cfg = TraceConfig {

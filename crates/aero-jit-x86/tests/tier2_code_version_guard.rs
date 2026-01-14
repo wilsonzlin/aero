@@ -21,7 +21,7 @@ fn guard_code_version_invalidates_on_version_mismatch() {
         kind: TraceKind::Linear,
     };
 
-    let mut env = RuntimeEnv::default();
+    let env = RuntimeEnv::default();
     let mut bus = SimpleBus::new(1);
 
     let mut state = T2State::default();
@@ -65,7 +65,7 @@ fn trace_builder_guards_all_code_pages_in_trace() {
         ],
     };
 
-    let mut env = RuntimeEnv::default();
+    let env = RuntimeEnv::default();
     env.page_versions.set_version(0, 1);
     env.page_versions.set_version(2, 1);
 
@@ -119,7 +119,7 @@ fn trace_builder_loop_guards_only_in_body() {
         ],
     };
 
-    let mut env = RuntimeEnv::default();
+    let env = RuntimeEnv::default();
     env.page_versions.set_version(0, 1);
     env.page_versions.set_version(2, 1);
 

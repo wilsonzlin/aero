@@ -274,7 +274,7 @@ fn flag_elimination_keeps_flags_live_across_guard_code_version_exit() {
         kind: TraceKind::Loop,
     };
 
-    let mut env = RuntimeEnv::default();
+    let env = RuntimeEnv::default();
     env.page_versions.set_version(0, 0); // force invalidation
 
     let mut baseline_state = T2State::default();
@@ -1177,7 +1177,7 @@ fn trace_builder_builds_loop_trace_and_deopts_with_precise_rip() {
     profile.edge_counts.insert((BlockId(0), BlockId(0)), 9_000);
     profile.edge_counts.insert((BlockId(0), BlockId(1)), 1_000);
     profile.hot_backedges.insert((BlockId(0), BlockId(0)));
-    let mut env = RuntimeEnv::default();
+    let env = RuntimeEnv::default();
     env.page_versions.set_version(0, 7);
 
     let cfg = TraceConfig {
