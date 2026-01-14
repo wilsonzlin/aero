@@ -1,8 +1,8 @@
 # Win7 shared surfaces: ShareToken vs user-mode HANDLE (AeroGPU)
 
-This note documents the **Win7 shared-surface strategy** used by AeroGPU (D3D9Ex *and* DXGI/D3D10/D3D11) so future work does not accidentally rely on **process-local handle numeric values**.
+This note documents the **Win7 shared-surface strategy** used by AeroGPU (D3D9Ex *and* DXGI/D3D10/D3D11) so future work does not accidentally rely on **user-mode `HANDLE` numeric values** (which are not stable cross-process).
 
-## Problem: D3D “shared handles” are process-local
+## Problem: D3D “shared handles” are not stable cross-process
 
 On Windows 7, D3D9/D3D9Ex exposes resource sharing via a user-mode `HANDLE` (e.g. `pSharedHandle` in `CreateTexture`, `CreateRenderTarget`, etc).
 
@@ -87,7 +87,7 @@ into `reserved0` (marker bit set; `format/width/height`), and the D3D10/11 UMD m
 
 ### 2) Open shared resource → import (token)
 
-1. The OS duplicates/inherits the shared `HANDLE` into the consumer process.
+1. If the shared handle is a real NT handle, the OS duplicates/inherits the shared `HANDLE` into the consumer process.
 2. Consumer opens the resource; dxgkrnl returns the preserved allocation private driver data so the UMD can recover the same `share_token`.
 3. The UMD sends `AEROGPU_CMD_IMPORT_SHARED_SURFACE` with `share_token`.
 

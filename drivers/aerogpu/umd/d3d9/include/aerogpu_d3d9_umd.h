@@ -1223,8 +1223,10 @@ typedef struct _D3D9DDIARG_CREATERESOURCE {
   // - For shared allocations, dxgkrnl preserves the blob and returns the exact
   //   same bytes on cross-process opens, so both processes observe identical IDs.
   //
-  // Do NOT derive `share_token` from the numeric value of the D3D shared `HANDLE`
-  // (process-local).
+  // Do NOT derive `share_token` from the numeric value of the D3D shared `HANDLE`:
+  // for real NT handles it is process-local (commonly different after
+  // `DuplicateHandle`), and some D3D9Ex stacks use token-style shared handles that
+  // still must not be treated as a stable protocol key.
   //
   // See also: drivers/aerogpu/protocol/aerogpu_wddm_alloc.h
   //
