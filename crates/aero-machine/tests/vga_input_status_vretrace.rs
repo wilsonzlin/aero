@@ -1,7 +1,7 @@
 use aero_machine::{Machine, MachineConfig};
 
 #[test]
-fn aerogpu_input_status1_vertical_retrace_bit_tracks_vblank_cadence() {
+fn vga_input_status1_vertical_retrace_bit_tracks_vblank_cadence() {
     // Legacy real-mode code frequently polls VGA Input Status 1 (0x3DA) bit 3 ("vertical retrace")
     // as a crude 60Hz timing source. Ensure we present a deterministic vblank pulse that toggles
     // with a stable cadence as guest time advances.

@@ -2,7 +2,7 @@ use aero_machine::{Machine, MachineConfig};
 use pretty_assertions::assert_eq;
 
 #[test]
-fn aerogpu_vga_ports_minimal_semantics() {
+fn vga_ports_minimal_semantics() {
     for enable_pc_platform in [false, true] {
         let cfg = MachineConfig {
             ram_size_bytes: 2 * 1024 * 1024,
