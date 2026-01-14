@@ -13471,6 +13471,128 @@ bool TestFixedfuncFogConstantsDedupAndReuploadOnChange() {
   return true;
 }
 
+bool TestFixedfuncFogConstantsReuploadAfterPsConstClobber() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetRenderState != nullptr, "pfnSetRenderState is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetShaderConstF != nullptr, "pfnSetShaderConstF is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // Portable D3DRS_* numeric values (from d3d9types.h).
+  constexpr uint32_t kD3dRsFogEnable = 28u;     // D3DRS_FOGENABLE
+  constexpr uint32_t kD3dRsFogColor = 34u;      // D3DRS_FOGCOLOR
+  constexpr uint32_t kD3dRsFogTableMode = 35u;  // D3DRS_FOGTABLEMODE
+  constexpr uint32_t kD3dRsFogStart = 36u;      // D3DRS_FOGSTART (float bits)
+  constexpr uint32_t kD3dRsFogEnd = 37u;        // D3DRS_FOGEND   (float bits)
+  constexpr uint32_t kD3dFogLinear = 3u;        // D3DFOG_LINEAR
+
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzrhwDiffuseTex1);
+  if (!Check(hr == S_OK, "SetFVF(XYZRHW|DIFFUSE|TEX1)")) {
+    return false;
+  }
+
+  // Enable linear fog with float-friendly values so the expected payload compares
+  // bitwise.
+  constexpr float fog_start = 0.25f;
+  constexpr float fog_end = 0.75f;
+  constexpr float inv_range = 2.0f;
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogEnable, 1u);
+  if (!Check(hr == S_OK, "SetRenderState(FOGENABLE=1)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogTableMode, kD3dFogLinear);
+  if (!Check(hr == S_OK, "SetRenderState(FOGTABLEMODE=LINEAR)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogColor, 0xFFFF0000u);
+  if (!Check(hr == S_OK, "SetRenderState(FOGCOLOR=red)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogStart, F32Bits(fog_start));
+  if (!Check(hr == S_OK, "SetRenderState(FOGSTART)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsFogEnd, F32Bits(fog_end));
+  if (!Check(hr == S_OK, "SetRenderState(FOGEND)")) {
+    return false;
+  }
+
+  const VertexXyzrhwDiffuseTex1 tri[3] = {
+      {0.0f, 0.0f, 0.25f, 1.0f, 0xFF00FF00u, 0.0f, 0.0f},
+      {1.0f, 0.0f, 0.25f, 1.0f, 0xFF00FF00u, 1.0f, 0.0f},
+      {0.0f, 1.0f, 0.25f, 1.0f, 0xFF00FF00u, 0.0f, 1.0f},
+  };
+
+  // First draw: emits fog constants and seeds the PS constant cache.
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzrhwDiffuseTex1));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(initial fog draw)")) {
+    return false;
+  }
+
+  // Simulate an app clobbering the reserved fog constant range (c1..c2).
+  const float junk[8] = {123.0f, 456.0f, 789.0f, 1011.0f, 1112.0f, 1314.0f, 1516.0f, 1718.0f};
+  hr = cleanup.device_funcs.pfnSetShaderConstF(cleanup.hDevice, kD3dShaderStagePs, /*start_reg=*/1u, junk, /*vec4_count=*/2u);
+  if (!Check(hr == S_OK, "SetShaderConstF(PS, c1..c2 clobber)")) {
+    return false;
+  }
+
+  // Capture only the draw-time fog constant restore.
+  dev->cmd.reset();
+
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzrhwDiffuseTex1));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(after fog const clobber)")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(fog const clobber restore)")) {
+    return false;
+  }
+
+  const float expected[8] = {
+      // c1: fog color (RGBA from ARGB red).
+      1.0f, 0.0f, 0.0f, 1.0f,
+      // c2: fog params (x=fog_start, y=inv_fog_range, z/w unused).
+      fog_start, inv_range, 0.0f, 0.0f,
+  };
+
+  size_t uploads = 0;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_F)) {
+    const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(hdr);
+    if (sc->stage != AEROGPU_SHADER_STAGE_PIXEL || sc->start_register != 1u || sc->vec4_count != 2u) {
+      continue;
+    }
+    const size_t need = sizeof(*sc) + sizeof(expected);
+    if (!Check(hdr->size_bytes >= need, "fog clobber restore: SET_SHADER_CONSTANTS_F contains payload")) {
+      return false;
+    }
+    const auto* payload = reinterpret_cast<const float*>(reinterpret_cast<const uint8_t*>(sc) + sizeof(*sc));
+    if (std::memcmp(payload, expected, sizeof(expected)) != 0) {
+      return Check(false, "fog clobber restore: payload matches expected c1/c2 data");
+    }
+    ++uploads;
+  }
+  if (!Check(uploads == 1, "fog clobber restore: fog constants uploaded once")) {
+    return false;
+  }
+
+  return true;
+}
+
 bool TestFixedfuncFogVertexModeEmitsConstants() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -14397,6 +14519,9 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestFixedfuncFogConstantsDedupAndReuploadOnChange()) {
+    return 1;
+  }
+  if (!aerogpu::TestFixedfuncFogConstantsReuploadAfterPsConstClobber()) {
     return 1;
   }
   if (!aerogpu::TestFixedfuncFogVertexModeEmitsConstants()) {
