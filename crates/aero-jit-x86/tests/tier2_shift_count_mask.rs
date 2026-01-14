@@ -3,7 +3,11 @@ mod tier1_common;
 use aero_jit_x86::tier2::interp::{run_function, RunExit, RuntimeEnv, T2State};
 use aero_jit_x86::tier2::{build_function_from_x86, CfgBuildConfig};
 use aero_types::Gpr;
-use tier1_common::SimpleBus;
+use tier1_common::{pick_invalid_opcode, SimpleBus};
+
+fn invalid() -> u8 {
+    pick_invalid_opcode(64)
+}
 
 fn run_x86(code: &[u8]) -> (RunExit, T2State) {
     let mut bus = SimpleBus::new(64);
@@ -21,7 +25,7 @@ fn run_x86(code: &[u8]) -> (RunExit, T2State) {
     (exit, state)
 }
 
-fn assert_side_exit_at_int3(exit: RunExit, code: &[u8]) {
+fn assert_side_exit_at_invalid(exit: RunExit, code: &[u8]) {
     assert_eq!(
         exit,
         RunExit::SideExit {
@@ -34,15 +38,15 @@ fn assert_side_exit_at_int3(exit: RunExit, code: &[u8]) {
 fn tier2_masks_shift_count_for_32bit_operands_like_x86() {
     // mov eax, 1
     // shl eax, 33
-    // int3
-    const CODE: &[u8] = &[
+    // <invalid>
+    let code = [
         0xB8, 0x01, 0x00, 0x00, 0x00, // mov eax, 1
         0xC1, 0xE0, 0x21, // shl eax, 33
-        0xCC, // int3 (decoded as Invalid => ExitToInterpreter at RIP=8)
+        invalid(),
     ];
 
-    let (exit, state) = run_x86(CODE);
-    assert_side_exit_at_int3(exit, CODE);
+    let (exit, state) = run_x86(&code);
+    assert_side_exit_at_invalid(exit, &code);
     assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize], 2);
 }
 
@@ -50,15 +54,15 @@ fn tier2_masks_shift_count_for_32bit_operands_like_x86() {
 fn tier2_masks_shift_count_for_8bit_operands_like_x86() {
     // mov al, 1
     // shl al, 33
-    // int3
-    const CODE: &[u8] = &[
+    // <invalid>
+    let code = [
         0xB0, 0x01, // mov al, 1
         0xC0, 0xE0, 0x21, // shl al, 33
-        0xCC, // int3
+        invalid(),
     ];
 
-    let (exit, state) = run_x86(CODE);
-    assert_side_exit_at_int3(exit, CODE);
+    let (exit, state) = run_x86(&code);
+    assert_side_exit_at_invalid(exit, &code);
     assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize], 2);
 }
 
@@ -66,18 +70,18 @@ fn tier2_masks_shift_count_for_8bit_operands_like_x86() {
 fn tier2_masks_8bit_shift_counts_to_5_bits_not_3_bits() {
     // mov al, 1
     // shl al, 9
-    // int3
+    // <invalid>
     //
     // x86 masks 8-bit shift counts to 5 bits, so 9 is *not* reduced to 1.
     // If we (incorrectly) masked by (width.bits()-1)==7, this would behave like shl al, 1.
-    const CODE: &[u8] = &[
+    let code = [
         0xB0, 0x01, // mov al, 1
         0xC0, 0xE0, 0x09, // shl al, 9
-        0xCC, // int3
+        invalid(),
     ];
 
-    let (exit, state) = run_x86(CODE);
-    assert_side_exit_at_int3(exit, CODE);
+    let (exit, state) = run_x86(&code);
+    assert_side_exit_at_invalid(exit, &code);
     assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize], 0);
 }
 
@@ -85,15 +89,15 @@ fn tier2_masks_8bit_shift_counts_to_5_bits_not_3_bits() {
 fn tier2_masks_shift_count_for_high8_operands_like_x86() {
     // mov ah, 1
     // shl ah, 33
-    // int3
-    const CODE: &[u8] = &[
+    // <invalid>
+    let code = [
         0xB4, 0x01, // mov ah, 1
         0xC0, 0xE4, 0x21, // shl ah, 33
-        0xCC, // int3
+        invalid(),
     ];
 
-    let (exit, state) = run_x86(CODE);
-    assert_side_exit_at_int3(exit, CODE);
+    let (exit, state) = run_x86(&code);
+    assert_side_exit_at_invalid(exit, &code);
     assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize], 0x200);
 }
 
@@ -101,17 +105,17 @@ fn tier2_masks_shift_count_for_high8_operands_like_x86() {
 fn tier2_masks_high8_shift_counts_to_5_bits_not_3_bits() {
     // mov ah, 1
     // shl ah, 9
-    // int3
+    // <invalid>
     //
     // x86 masks 8-bit shift counts to 5 bits, so 9 is *not* reduced to 1.
-    const CODE: &[u8] = &[
+    let code = [
         0xB4, 0x01, // mov ah, 1
         0xC0, 0xE4, 0x09, // shl ah, 9
-        0xCC, // int3
+        invalid(),
     ];
 
-    let (exit, state) = run_x86(CODE);
-    assert_side_exit_at_int3(exit, CODE);
+    let (exit, state) = run_x86(&code);
+    assert_side_exit_at_invalid(exit, &code);
     assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize], 0);
 }
 
@@ -119,15 +123,15 @@ fn tier2_masks_high8_shift_counts_to_5_bits_not_3_bits() {
 fn tier2_masks_shift_count_for_32bit_shr_like_x86() {
     // mov eax, 0x80000000
     // shr eax, 33
-    // int3
-    const CODE: &[u8] = &[
+    // <invalid>
+    let code = [
         0xB8, 0x00, 0x00, 0x00, 0x80, // mov eax, 0x80000000
         0xC1, 0xE8, 0x21, // shr eax, 33
-        0xCC, // int3
+        invalid(),
     ];
 
-    let (exit, state) = run_x86(CODE);
-    assert_side_exit_at_int3(exit, CODE);
+    let (exit, state) = run_x86(&code);
+    assert_side_exit_at_invalid(exit, &code);
     assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize], 0x4000_0000);
 }
 
@@ -135,15 +139,15 @@ fn tier2_masks_shift_count_for_32bit_shr_like_x86() {
 fn tier2_masks_shift_count_for_32bit_sar_like_x86() {
     // mov eax, 0x80000000
     // sar eax, 33
-    // int3
-    const CODE: &[u8] = &[
+    // <invalid>
+    let code = [
         0xB8, 0x00, 0x00, 0x00, 0x80, // mov eax, 0x80000000
         0xC1, 0xF8, 0x21, // sar eax, 33
-        0xCC, // int3
+        invalid(),
     ];
 
-    let (exit, state) = run_x86(CODE);
-    assert_side_exit_at_int3(exit, CODE);
+    let (exit, state) = run_x86(&code);
+    assert_side_exit_at_invalid(exit, &code);
     assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize], 0xC000_0000);
 }
 
@@ -151,15 +155,15 @@ fn tier2_masks_shift_count_for_32bit_sar_like_x86() {
 fn tier2_masks_shift_count_for_16bit_operands_like_x86() {
     // 66 mov ax, 1
     // 66 shl ax, 33
-    // int3
-    const CODE: &[u8] = &[
+    // <invalid>
+    let code = [
         0x66, 0xB8, 0x01, 0x00, // mov ax, 1
         0x66, 0xC1, 0xE0, 0x21, // shl ax, 33
-        0xCC, // int3 (decoded as Invalid => ExitToInterpreter at RIP=8)
+        invalid(),
     ];
 
-    let (exit, state) = run_x86(CODE);
-    assert_side_exit_at_int3(exit, CODE);
+    let (exit, state) = run_x86(&code);
+    assert_side_exit_at_invalid(exit, &code);
     assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize], 2);
 }
 
@@ -167,17 +171,17 @@ fn tier2_masks_shift_count_for_16bit_operands_like_x86() {
 fn tier2_masks_16bit_shift_counts_to_5_bits_not_4_bits() {
     // 66 mov ax, 1
     // 66 shl ax, 17
-    // int3
+    // <invalid>
     //
     // x86 masks 16-bit shift counts to 5 bits, so 17 is *not* reduced to 1.
-    const CODE: &[u8] = &[
+    let code = [
         0x66, 0xB8, 0x01, 0x00, // mov ax, 1
         0x66, 0xC1, 0xE0, 0x11, // shl ax, 17
-        0xCC, // int3
+        invalid(),
     ];
 
-    let (exit, state) = run_x86(CODE);
-    assert_side_exit_at_int3(exit, CODE);
+    let (exit, state) = run_x86(&code);
+    assert_side_exit_at_invalid(exit, &code);
     assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize], 0);
 }
 
@@ -185,15 +189,15 @@ fn tier2_masks_16bit_shift_counts_to_5_bits_not_4_bits() {
 fn tier2_masks_shift_count_for_16bit_shr_like_x86() {
     // mov ax, 0x8000
     // shr ax, 33
-    // int3
-    const CODE: &[u8] = &[
+    // <invalid>
+    let code = [
         0x66, 0xB8, 0x00, 0x80, // mov ax, 0x8000
         0x66, 0xC1, 0xE8, 0x21, // shr ax, 33
-        0xCC, // int3
+        invalid(),
     ];
 
-    let (exit, state) = run_x86(CODE);
-    assert_side_exit_at_int3(exit, CODE);
+    let (exit, state) = run_x86(&code);
+    assert_side_exit_at_invalid(exit, &code);
     assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize], 0x4000);
 }
 
@@ -201,15 +205,15 @@ fn tier2_masks_shift_count_for_16bit_shr_like_x86() {
 fn tier2_masks_shift_count_for_16bit_sar_like_x86() {
     // mov ax, 0x8000
     // sar ax, 33
-    // int3
-    const CODE: &[u8] = &[
+    // <invalid>
+    let code = [
         0x66, 0xB8, 0x00, 0x80, // mov ax, 0x8000
         0x66, 0xC1, 0xF8, 0x21, // sar ax, 33
-        0xCC, // int3
+        invalid(),
     ];
 
-    let (exit, state) = run_x86(CODE);
-    assert_side_exit_at_int3(exit, CODE);
+    let (exit, state) = run_x86(&code);
+    assert_side_exit_at_invalid(exit, &code);
     assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize], 0xC000);
 }
 
@@ -217,15 +221,15 @@ fn tier2_masks_shift_count_for_16bit_sar_like_x86() {
 fn tier2_masks_shift_count_for_8bit_shr_like_x86() {
     // mov al, 0x80
     // shr al, 33
-    // int3
-    const CODE: &[u8] = &[
+    // <invalid>
+    let code = [
         0xB0, 0x80, // mov al, 0x80
         0xC0, 0xE8, 0x21, // shr al, 33
-        0xCC, // int3
+        invalid(),
     ];
 
-    let (exit, state) = run_x86(CODE);
-    assert_side_exit_at_int3(exit, CODE);
+    let (exit, state) = run_x86(&code);
+    assert_side_exit_at_invalid(exit, &code);
     assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize], 0x40);
 }
 
@@ -233,15 +237,15 @@ fn tier2_masks_shift_count_for_8bit_shr_like_x86() {
 fn tier2_masks_shift_count_for_8bit_sar_like_x86() {
     // mov al, 0x80
     // sar al, 33
-    // int3
-    const CODE: &[u8] = &[
+    // <invalid>
+    let code = [
         0xB0, 0x80, // mov al, 0x80
         0xC0, 0xF8, 0x21, // sar al, 33
-        0xCC, // int3
+        invalid(),
     ];
 
-    let (exit, state) = run_x86(CODE);
-    assert_side_exit_at_int3(exit, CODE);
+    let (exit, state) = run_x86(&code);
+    assert_side_exit_at_invalid(exit, &code);
     assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize], 0xC0);
 }
 
@@ -249,15 +253,15 @@ fn tier2_masks_shift_count_for_8bit_sar_like_x86() {
 fn tier2_masks_shift_count_for_high8_shr_like_x86() {
     // mov ah, 0x80
     // shr ah, 33
-    // int3
-    const CODE: &[u8] = &[
+    // <invalid>
+    let code = [
         0xB4, 0x80, // mov ah, 0x80
         0xC0, 0xEC, 0x21, // shr ah, 33
-        0xCC, // int3
+        invalid(),
     ];
 
-    let (exit, state) = run_x86(CODE);
-    assert_side_exit_at_int3(exit, CODE);
+    let (exit, state) = run_x86(&code);
+    assert_side_exit_at_invalid(exit, &code);
     assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize], 0x4000);
 }
 
@@ -265,15 +269,15 @@ fn tier2_masks_shift_count_for_high8_shr_like_x86() {
 fn tier2_masks_shift_count_for_high8_sar_like_x86() {
     // mov ah, 0x80
     // sar ah, 33
-    // int3
-    const CODE: &[u8] = &[
+    // <invalid>
+    let code = [
         0xB4, 0x80, // mov ah, 0x80
         0xC0, 0xFC, 0x21, // sar ah, 33
-        0xCC, // int3
+        invalid(),
     ];
 
-    let (exit, state) = run_x86(CODE);
-    assert_side_exit_at_int3(exit, CODE);
+    let (exit, state) = run_x86(&code);
+    assert_side_exit_at_invalid(exit, &code);
     assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize], 0xC000);
 }
 
@@ -281,15 +285,15 @@ fn tier2_masks_shift_count_for_high8_sar_like_x86() {
 fn tier2_masks_shift_count_for_64bit_operands_like_x86() {
     // mov rax, 1
     // shl rax, 65
-    // int3
-    const CODE: &[u8] = &[
+    // <invalid>
+    let code = [
         0x48, 0xC7, 0xC0, 0x01, 0x00, 0x00, 0x00, // mov rax, 1
         0x48, 0xC1, 0xE0, 0x41, // shl rax, 65
-        0xCC, // int3
+        invalid(),
     ];
 
-    let (exit, state) = run_x86(CODE);
-    assert_side_exit_at_int3(exit, CODE);
+    let (exit, state) = run_x86(&code);
+    assert_side_exit_at_invalid(exit, &code);
     assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize], 2);
 }
 
@@ -297,16 +301,16 @@ fn tier2_masks_shift_count_for_64bit_operands_like_x86() {
 fn tier2_masks_shift_count_uses_6_bits_for_64bit_operands() {
     // mov rax, 1
     // shl rax, 32
-    // int3
+    // <invalid>
     //
     // x86 masks 64-bit shift counts to 6 bits (mod 64), so 32 is *not* reduced to 0.
-    const CODE: &[u8] = &[
+    let code = [
         0x48, 0xC7, 0xC0, 0x01, 0x00, 0x00, 0x00, // mov rax, 1
         0x48, 0xC1, 0xE0, 0x20, // shl rax, 32
-        0xCC, // int3
+        invalid(),
     ];
 
-    let (exit, state) = run_x86(CODE);
-    assert_side_exit_at_int3(exit, CODE);
+    let (exit, state) = run_x86(&code);
+    assert_side_exit_at_invalid(exit, &code);
     assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize], 1u64 << 32);
 }

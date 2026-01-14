@@ -2,60 +2,72 @@ mod tier1_common;
 
 use aero_cpu_core::jit::runtime::PageVersionTracker;
 use aero_types::{Flag, FlagSet, Width};
-use tier1_common::SimpleBus;
+use tier1_common::{pick_invalid_opcode, SimpleBus};
 
 use aero_jit_x86::tier2::ir::{Function, Instr, Terminator, TraceKind};
 use aero_jit_x86::tier2::profile::{ProfileData, TraceConfig};
 use aero_jit_x86::tier2::trace::TraceBuilder;
 use aero_jit_x86::tier2::{build_function_from_x86, CfgBuildConfig};
 
+fn invalid() -> u8 {
+    pick_invalid_opcode(64)
+}
+
 // Tiny x86 program:
 //
 //   0x00: dec rcx
 //   0x03: jne 0x00
-//   0x05: int3  (decoded as Invalid by the Tier-1 front-end => exit-to-interpreter)
+//   0x05: <invalid>  (decoded as `InstKind::Invalid` by the Tier-1 front-end => side-exit)
 //
 // This yields a 2-block CFG:
 //   block0: branch (backedge to 0x00, fallthrough to 0x05)
 //   block1: side-exit/return
-const CODE: &[u8] = &[
-    0x48, 0xff, 0xc9, // dec rcx
-    0x75, 0xfb, // jne -5 (to 0x00)
-    0xcc, // int3
-];
+fn code() -> [u8; 6] {
+    [
+        0x48, 0xff, 0xc9, // dec rcx
+        0x75, 0xfb, // jne -5 (to 0x00)
+        invalid(),
+    ]
+}
 
 // Tiny x86 program that performs a memory store and load:
 //
 //   0x00: mov byte ptr [rax], 0x12
 //   0x03: mov al, byte ptr [rax]
-//   0x05: int3
-const MEM_CODE: &[u8] = &[
-    0xc6, 0x00, 0x12, // mov byte ptr [rax], 0x12
-    0x8a, 0x00, // mov al, byte ptr [rax]
-    0xcc, // int3
-];
+//   0x05: <invalid>
+fn mem_code() -> [u8; 6] {
+    [
+        0xc6, 0x00, 0x12, // mov byte ptr [rax], 0x12
+        0x8a, 0x00, // mov al, byte ptr [rax]
+        invalid(),
+    ]
+}
 
 // Tiny x86 program that uses a parity conditional jump (JP):
 //
 //   0x00: xor eax, eax
 //   0x02: jp 0x00
-//   0x04: int3
-const JP_CODE: &[u8] = &[
-    0x31, 0xc0, // xor eax, eax
-    0x7a, 0xfc, // jp -4 (to 0x00)
-    0xcc, // int3
-];
+//   0x04: <invalid>
+fn jp_code() -> [u8; 5] {
+    [
+        0x31, 0xc0, // xor eax, eax
+        0x7a, 0xfc, // jp -4 (to 0x00)
+        invalid(),
+    ]
+}
 
-// Same as `JP_CODE`, but with JNP.
-const JNP_CODE: &[u8] = &[
-    0x31, 0xc0, // xor eax, eax
-    0x7b, 0xfc, // jnp -4 (to 0x00)
-    0xcc, // int3
-];
+// Same as `jp_code`, but with JNP.
+fn jnp_code() -> [u8; 5] {
+    [
+        0x31, 0xc0, // xor eax, eax
+        0x7b, 0xfc, // jnp -4 (to 0x00)
+        invalid(),
+    ]
+}
 
 fn build_test_func() -> Function {
     let mut bus = SimpleBus::new(64);
-    bus.load(0, CODE);
+    bus.load(0, &code());
     build_function_from_x86(&bus, 0, 64, CfgBuildConfig::default())
 }
 
@@ -141,7 +153,8 @@ fn trace_builder_falls_back_to_linear_without_hot_backedge() {
 
 #[test]
 fn lowers_tier1_load_store_into_tier2_memory_ops() {
-    let func = build_func(MEM_CODE);
+    let code = mem_code();
+    let func = build_func(&code);
     let entry = func.entry;
 
     let instrs = &func.block(entry).instrs;
@@ -161,7 +174,7 @@ fn lowers_tier1_load_store_into_tier2_memory_ops() {
     )));
 
     // Historically, Tier-2 would bail on Tier-1 memory ops by emitting an unconditional
-    // side-exit at the *entry* RIP. We should only side-exit for the final `int3`
+    // side-exit at the *entry* RIP. We should only side-exit for the final invalid
     // terminator (exit RIP = 0x6).
     assert!(!instrs
         .iter()
@@ -170,8 +183,8 @@ fn lowers_tier1_load_store_into_tier2_memory_ops() {
 
 #[test]
 fn supports_parity_conditions_jp_and_jnp() {
-    for code in [JP_CODE, JNP_CODE] {
-        let func = build_func(code);
+    for code in [jp_code(), jnp_code()] {
+        let func = build_func(&code);
 
         assert_eq!(func.block(func.entry).start_rip, 0);
         assert!(func.find_block_by_rip(0).is_some());
