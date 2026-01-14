@@ -1,6 +1,23 @@
-use aero_devices::pci::profile::CANONICAL_IO_DEVICES;
+use aero_devices::pci::profile::{self, CANONICAL_IO_DEVICES};
 use aero_devices::pci::PciBdf;
+use aero_gpu_vga::{
+    DEFAULT_VRAM_SIZE, VGA_PCI_CLASS_CODE, VGA_PCI_DEVICE_ID, VGA_PCI_PROG_IF, VGA_PCI_SUBCLASS,
+    VGA_PCI_VENDOR_ID,
+};
 use aero_machine::{Machine, MachineConfig};
+
+#[test]
+fn vga_transitional_stub_profile_matches_aero_gpu_vga_constants() {
+    // `aero_devices::pci::profile::VGA_TRANSITIONAL_STUB` exists as a shared definition of the
+    // historical Bochs/QEMU VGA PCI identity. Ensure it stays in sync with the canonical legacy
+    // VGA/VBE device model crate (`aero_gpu_vga`).
+    assert_eq!(profile::VGA_TRANSITIONAL_STUB.vendor_id, VGA_PCI_VENDOR_ID);
+    assert_eq!(profile::VGA_TRANSITIONAL_STUB.device_id, VGA_PCI_DEVICE_ID);
+    assert_eq!(profile::VGA_TRANSITIONAL_STUB.class.base_class, VGA_PCI_CLASS_CODE);
+    assert_eq!(profile::VGA_TRANSITIONAL_STUB.class.sub_class, VGA_PCI_SUBCLASS);
+    assert_eq!(profile::VGA_TRANSITIONAL_STUB.class.prog_if, VGA_PCI_PROG_IF);
+    assert_eq!(profile::VGA_TRANSITIONAL_STUB_BAR0_SIZE, DEFAULT_VRAM_SIZE as u64);
+}
 
 #[test]
 fn vga_pci_stub_does_not_collide_with_canonical_aerogpu_bdf() {
@@ -47,7 +64,7 @@ fn vga_pci_stub_does_not_collide_with_canonical_aerogpu_bdf() {
     // Phase 2 removes this stub when AeroGPU owns the legacy VGA/VBE path, so treat it as
     // optional: if present, validate it retains the expected IDs and does not collide with any
     // canonical device profiles; if absent, do not fail.
-    let vga_bdf = aero_devices::pci::profile::VGA_TRANSITIONAL_STUB.bdf;
+    let vga_bdf = profile::VGA_TRANSITIONAL_STUB.bdf;
     let vga_vendor = bus.read_config(vga_bdf, 0x00, 2) as u16;
     // Guardrail: ensure no canonical paravirtual device profile uses this BDF (even though it is
     // currently expected to be empty).
@@ -64,11 +81,11 @@ fn vga_pci_stub_does_not_collide_with_canonical_aerogpu_bdf() {
         let vga_device = bus.read_config(vga_bdf, 0x02, 2) as u16;
         assert_eq!(
             vga_vendor,
-            aero_devices::pci::profile::VGA_TRANSITIONAL_STUB.vendor_id
+            profile::VGA_TRANSITIONAL_STUB.vendor_id
         );
         assert_eq!(
             vga_device,
-            aero_devices::pci::profile::VGA_TRANSITIONAL_STUB.device_id
+            profile::VGA_TRANSITIONAL_STUB.device_id
         );
     }
 }
@@ -95,14 +112,14 @@ fn aerogpu_is_exposed_at_canonical_bdf_without_transitional_vga_stub_when_enable
     let mut pci_cfg = pci_cfg.borrow_mut();
     let bus = pci_cfg.bus_mut();
 
-    let aerogpu_bdf = aero_devices::pci::profile::AEROGPU.bdf;
+    let aerogpu_bdf = profile::AEROGPU.bdf;
     let aerogpu_vendor = bus.read_config(aerogpu_bdf, 0x00, 2) as u16;
     let aerogpu_device = bus.read_config(aerogpu_bdf, 0x02, 2) as u16;
     assert_eq!(aerogpu_vendor, 0xA3A0);
     assert_eq!(aerogpu_device, 0x0001);
 
     // Transitional VGA stub must be absent when AeroGPU is enabled.
-    let vga_bdf = aero_devices::pci::profile::VGA_TRANSITIONAL_STUB.bdf;
+    let vga_bdf = profile::VGA_TRANSITIONAL_STUB.bdf;
     let vga_vendor = bus.read_config(vga_bdf, 0x00, 2) as u16;
     assert_eq!(
         vga_vendor, 0xFFFF,

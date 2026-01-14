@@ -896,13 +896,21 @@ pub const NIC_RTL8139: PciDeviceProfile = PciDeviceProfile {
 
 /// Bochs/QEMU-compatible VGA PCI identity used as a transitional compatibility shim.
 ///
-/// This PCI function exists only so firmware/OS can discover a VGA-compatible display controller
-/// and map the Bochs VBE linear framebuffer (LFB) via PCI BAR0.
+/// This profile represents the historical Bochs/QEMU "Standard VGA" PCI stub (`1234:1111`) that
+/// some firmware/OS implementations use to discover a VGA-compatible controller and map the Bochs
+/// VBE linear framebuffer (LFB) via PCI BAR0.
+///
+/// Note: The canonical `aero_machine::Machine` no longer exposes this device, but the identity is
+/// kept here as a reserved contract for compatibility tests and alternate machine integrations.
 ///
 /// It is *not* AeroGPU. The canonical AeroGPU contract is [`AEROGPU`].
 pub const VGA_TRANSITIONAL_STUB: PciDeviceProfile = PciDeviceProfile {
     name: "vga-transitional-stub",
-    // Canonical BDF used by `aero_machine::Machine` for the legacy VGA/VBE device model.
+    // Historical fixed BDF used by Aero's deprecated transitional VGA PCI stub (`00:0c.0`).
+    //
+    // The canonical `aero_machine::Machine` no longer exposes this PCI function (it routes the VBE
+    // LFB directly inside the PCI MMIO window), but we keep the identity here as a reserved
+    // contract for compatibility tests and alternate machine integrations.
     bdf: PciBdf::new(0, 0x0c, 0),
     // Bochs/QEMU "Standard VGA" IDs.
     vendor_id: 0x1234,
