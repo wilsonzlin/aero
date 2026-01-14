@@ -7,8 +7,8 @@ use aero_storage::{
 use aero_virtio::devices::blk::{
     BlockBackend, BlockBackendError, VirtioBlk, VIRTIO_BLK_MAX_REQUEST_DATA_BYTES,
     VIRTIO_BLK_MAX_REQUEST_DESCRIPTORS, VIRTIO_BLK_SECTOR_SIZE, VIRTIO_BLK_S_IOERR,
-    VIRTIO_BLK_S_UNSUPP, VIRTIO_BLK_T_DISCARD, VIRTIO_BLK_T_FLUSH, VIRTIO_BLK_T_IN,
-    VIRTIO_BLK_T_OUT, VIRTIO_BLK_T_WRITE_ZEROES,
+    VIRTIO_BLK_S_UNSUPP, VIRTIO_BLK_T_DISCARD, VIRTIO_BLK_T_FLUSH, VIRTIO_BLK_T_GET_ID,
+    VIRTIO_BLK_T_IN, VIRTIO_BLK_T_OUT, VIRTIO_BLK_T_WRITE_ZEROES,
 };
 use aero_virtio::memory::{
     read_u32_le, write_u16_le, write_u32_le, write_u64_le, GuestMemory, GuestRam,
@@ -503,6 +503,52 @@ fn virtio_blk_processes_multi_segment_write_then_read() {
     kick_queue0(&mut dev, &caps, &mut mem);
     assert_eq!(mem.get_slice(status, 1).unwrap()[0], VIRTIO_BLK_S_UNSUPP);
     assert_eq!(read_u32_le(&mem, USED_RING + 4 + 3 * 8 + 4).unwrap(), 0);
+}
+
+#[test]
+fn virtio_blk_get_id_returns_backend_device_id() {
+    let (mut dev, caps, mut mem, _backing, _flushes) = setup();
+
+    let header = 0x7000;
+    let id_buf = 0x8000;
+    let status = 0x9000;
+
+    write_u32_le(&mut mem, header, VIRTIO_BLK_T_GET_ID).unwrap();
+    write_u32_le(&mut mem, header + 4, 0).unwrap();
+    write_u64_le(&mut mem, header + 8, 0).unwrap();
+
+    // Use a larger-than-required buffer and ensure the device writes only the 20-byte ID.
+    let mut id_space = vec![0xa5u8; 32];
+    mem.write(id_buf, &id_space).unwrap();
+    mem.write(status, &[0xff]).unwrap();
+
+    write_desc(&mut mem, DESC_TABLE, 0, header, 16, VIRTQ_DESC_F_NEXT, 1);
+    write_desc(
+        &mut mem,
+        DESC_TABLE,
+        1,
+        id_buf,
+        id_space.len() as u32,
+        VIRTQ_DESC_F_NEXT | VIRTQ_DESC_F_WRITE,
+        2,
+    );
+    write_desc(&mut mem, DESC_TABLE, 2, status, 1, VIRTQ_DESC_F_WRITE, 0);
+
+    write_u16_le(&mut mem, AVAIL_RING, 0).unwrap();
+    write_u16_le(&mut mem, AVAIL_RING + 2, 1).unwrap();
+    write_u16_le(&mut mem, AVAIL_RING + 4, 0).unwrap();
+    write_u16_le(&mut mem, USED_RING, 0).unwrap();
+    write_u16_le(&mut mem, USED_RING + 2, 0).unwrap();
+
+    kick_queue0(&mut dev, &caps, &mut mem);
+
+    let got = mem.get_slice(id_buf, id_space.len()).unwrap();
+    assert_eq!(&got[..20], b"aero-virtio-testdisk");
+    // Bytes past the 20-byte ID are ignored.
+    id_space[..20].copy_from_slice(b"aero-virtio-testdisk");
+    assert_eq!(got, id_space.as_slice());
+    assert_eq!(mem.get_slice(status, 1).unwrap()[0], 0);
+    assert_eq!(read_u32_le(&mem, USED_RING + 8).unwrap(), 0);
 }
 
 #[test]

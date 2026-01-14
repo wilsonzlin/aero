@@ -904,7 +904,6 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
                     } else {
                         let id = self.backend.device_id();
                         let mut remaining: &[u8] = &id;
-
                         for (d, seg_off, seg_len) in &data_segs {
                             if remaining.is_empty() {
                                 break;
