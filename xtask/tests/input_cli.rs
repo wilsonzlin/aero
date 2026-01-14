@@ -185,6 +185,9 @@ fn input_help_mentions_flags_and_steps() {
             "src/runtime/wasm_loader_usb_snapshot_types.test.ts",
         ))
         .stdout(predicate::str::contains(
+            "src/runtime/wasm_loader_worker_vm_snapshot_types.test.ts",
+        ))
+        .stdout(predicate::str::contains(
             "src/workers/input_batch_recycle_guard.test.ts",
         ))
         .stdout(predicate::str::contains(

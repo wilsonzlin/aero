@@ -163,6 +163,7 @@ const WEB_UNIT_TEST_PATHS: &[&str] = &[
     "src/runtime/wasm_loader_uhci_runtime_webhid_types.test.ts",
     "src/runtime/wasm_loader_uhci_runtime_webusb_types.test.ts",
     "src/runtime/wasm_loader_usb_snapshot_types.test.ts",
+    "src/runtime/wasm_loader_worker_vm_snapshot_types.test.ts",
     "src/workers/input_batch_recycle_guard.test.ts",
     "src/workers/io_hid_input_ring.test.ts",
     "src/workers/io_hid_output_report_forwarding.test.ts",
