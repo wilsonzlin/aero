@@ -50,7 +50,8 @@ Quick reality check (as of this repo revision):
   - `Machine::aerogpu_drain_submissions` exposes newly-decoded submissions (`cmd_stream` + optional alloc table) for
     out-of-process execution.
   - `Machine::aerogpu_enable_submission_bridge` / `Machine::aerogpu_complete_fence` enable “external executor” semantics
-    (fences require host completion).
+    (fences require host completion). Vsync `PRESENT` fences are still paced by the device model: after the host reports
+    completion, the fence becomes eligible to complete on the **next vblank** (Win7/WDDM timing contract).
   - Optional in-process backends exist for native/tests: `aerogpu_set_backend_immediate/null` (+ feature-gated
     `aerogpu_set_backend_wgpu`).
   - WDDM scanout presentation/boot→WDDM handoff is implemented in `Machine::display_present` and the shared
