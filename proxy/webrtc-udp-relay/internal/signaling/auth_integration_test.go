@@ -190,6 +190,7 @@ func startSignalingServer(t *testing.T, cfg config.Config) (*httptest.Server, *m
 		Policy:                        policy.NewDevDestinationPolicy(),
 		Authorizer:                    authz,
 		ICEGatheringTimeout:           2 * time.Second,
+		SessionPreallocTTL:            cfg.SessionPreallocTTL,
 		SignalingAuthTimeout:          cfg.SignalingAuthTimeout,
 		MaxSignalingMessageBytes:      cfg.MaxSignalingMessageBytes,
 		MaxSignalingMessagesPerSecond: cfg.MaxSignalingMessagesPerSecond,
@@ -689,6 +690,78 @@ func TestAuth_JWT_AllowsConcurrentSessionsWithDifferentSID_SessionEndpoint(t *te
 	}
 	if idA == idB {
 		t.Fatalf("expected distinct session IDs, got %q", idA)
+	}
+}
+
+func TestAuth_JWT_ReleasesSIDAfterSessionPreallocTTLExpires(t *testing.T) {
+	cfg := config.Config{
+		AuthMode:           config.AuthModeJWT,
+		JWTSecret:          "supersecret",
+		SessionPreallocTTL: 50 * time.Millisecond,
+	}
+	ts, _ := startSignalingServer(t, cfg)
+
+	now := time.Now().Unix()
+	tokenA := makeJWTWithIat(cfg.JWTSecret, "sess_test_prealloc_ttl", now-10)
+	tokenB := makeJWTWithIat(cfg.JWTSecret, "sess_test_prealloc_ttl", now-9)
+
+	do := func(token string) (status int, text string, errCode string) {
+		req, err := http.NewRequest(http.MethodPost, ts.URL+"/session", nil)
+		if err != nil {
+			t.Fatalf("NewRequest: %v", err)
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("Do: %v", err)
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		text = strings.TrimSpace(string(body))
+
+		if resp.StatusCode != http.StatusCreated {
+			var errResp struct {
+				Code string `json:"code"`
+			}
+			_ = json.Unmarshal(body, &errResp)
+			errCode = errResp.Code
+		}
+
+		return resp.StatusCode, text, errCode
+	}
+
+	firstStatus, firstID, _ := do(tokenA)
+	if firstStatus != http.StatusCreated {
+		t.Fatalf("first /session status=%d, want %d", firstStatus, http.StatusCreated)
+	}
+	if firstID == "" {
+		t.Fatalf("expected non-empty session id")
+	}
+
+	secondStatus, _, secondCode := do(tokenB)
+	if secondStatus != http.StatusConflict {
+		t.Fatalf("second /session status=%d, want %d", secondStatus, http.StatusConflict)
+	}
+	if secondCode != "session_already_active" {
+		t.Fatalf("second /session code=%q, want %q", secondCode, "session_already_active")
+	}
+
+	var thirdStatus int
+	var thirdID string
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		thirdStatus, thirdID, _ = do(tokenB)
+		if thirdStatus == http.StatusCreated {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	if thirdStatus != http.StatusCreated {
+		t.Fatalf("third /session status=%d, want %d (after TTL expiry)", thirdStatus, http.StatusCreated)
+	}
+	if thirdID == "" {
+		t.Fatalf("expected non-empty session id after TTL expiry")
 	}
 }
 
