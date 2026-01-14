@@ -77,12 +77,13 @@ async function main() {
       logLevel: "info",
     } as any);
 
+    const cpuWorker = coordinator.getCpuWorker();
     const ioWorker = coordinator.getWorker("io");
     const gpuWorker = coordinator.getWorker("gpu");
     const frameStateSab = coordinator.getFrameStateSab();
     const sharedFramebuffer = coordinator.getSharedFramebuffer();
 
-    if (!ioWorker || !gpuWorker || !frameStateSab || !sharedFramebuffer) {
+    if (!cpuWorker || !ioWorker || !gpuWorker || !frameStateSab || !sharedFramebuffer) {
       throw new Error("Runtime workers did not expose expected shared resources.");
     }
 

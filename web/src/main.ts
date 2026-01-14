@@ -7321,6 +7321,8 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
         const platformFeatures = forceJitCspBlock.checked ? { ...report, jit_dynamic_wasm: false } : report;
         const diskManager = await diskManagerPromise;
         const selection = await getBootDiskSelection(diskManager);
+        // Inform the worker coordinator before starting so it can route audio/mic ring ownership
+        // correctly (legacy demo vs legacy VM mode).
         workerCoordinator.setBootDisks(selection.mounts, selection.hdd ?? null, selection.cd ?? null);
 
         // When no boot disks are mounted, the workers panel runs in a lightweight demo mode
@@ -7670,7 +7672,6 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
       : `vmState=${vmState}`;
     jitDemoButton.disabled = statuses.jit.state !== "ready" || jitDemoInFlight;
     forceJitCspBlock.disabled = anyActive;
-
     const ioWorker = workerCoordinator.getIoWorker();
     if (ioWorker !== attachedIoWorker) {
       if (attachedIoWorker) {

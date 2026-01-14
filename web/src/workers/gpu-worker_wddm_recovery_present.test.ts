@@ -233,6 +233,7 @@ describe("workers/gpu-worker WDDM scanout recovery", () => {
         px.byteLength >= 4
           ? (((px[0] ?? 0) | ((px[1] ?? 0) << 8) | ((px[2] ?? 0) << 16) | ((px[3] ?? 0) << 24)) >>> 0)
           : 0;
+      // WDDM scanout readback preserves alpha for BGRA formats.
       expect(firstPixel).toBe(0x44332211);
     } finally {
       await worker.terminate();

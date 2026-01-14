@@ -926,12 +926,15 @@ describe("runtime/coordinator", () => {
       enableWorkers: true,
       enableWebGPU: false,
       proxyUrl: null,
-      activeDiskImage: null,
+      // Ensure legacy demo mode is not derived from this deprecated config field.
+      activeDiskImage: "ignored.img",
       vmRuntime: "legacy",
       logLevel: "info",
     };
     (coordinator as any).spawnWorker("cpu", segments);
     (coordinator as any).spawnWorker("io", segments);
+
+    coordinator.setBootDisks({ type: "setBootDisks", mounts: {}, hdd: null, cd: null });
 
     const cpuWorker = (coordinator as any).workers.cpu.worker as MockWorker;
     const ioWorker = (coordinator as any).workers.io.worker as MockWorker;
@@ -946,15 +949,26 @@ describe("runtime/coordinator", () => {
     expect(ioAudio?.type).toBe("setAudioRingBuffer");
     expect(ioAudio?.ringBuffer).toBe(null);
 
+    // Isolate mic-ring attachment behaviour from any prior audio-ring messages.
+    cpuWorker.posted.length = 0;
+    ioWorker.posted.length = 0;
+
     const micSab = new SharedArrayBuffer(256);
     coordinator.setMicrophoneRingBuffer(micSab, 48_000);
 
     const cpuMic = cpuWorker.posted.at(-1)?.message as { ringBuffer?: unknown; type?: unknown } | undefined;
-    const ioMic = ioWorker.posted.at(-1)?.message as { ringBuffer?: unknown; type?: unknown } | undefined;
     expect(cpuMic?.type).toBe("setMicrophoneRingBuffer");
     expect(cpuMic?.ringBuffer).toBe(micSab);
-    expect(ioMic?.type).toBe("setMicrophoneRingBuffer");
-    expect(ioMic?.ringBuffer).toBe(null);
+    // The IO worker must not receive the mic ring buffer in demo mode; it may not
+    // receive an explicit detach message if it was already detached.
+    expect(
+      ioWorker.posted.some((m) => m.message?.type === "setMicrophoneRingBuffer" && m.message?.ringBuffer === micSab),
+    ).toBe(false);
+    const ioMic = ioWorker.posted.at(-1)?.message as { ringBuffer?: unknown; type?: unknown } | undefined;
+    if (ioMic) {
+      expect(ioMic.type).toBe("setMicrophoneRingBuffer");
+      expect(ioMic.ringBuffer).toBe(null);
+    }
   });
 
   it("does not treat activeDiskImage as a VM-mode toggle for audio/mic ring routing (deprecated)", () => {
@@ -967,12 +981,15 @@ describe("runtime/coordinator", () => {
       enableWorkers: true,
       enableWebGPU: false,
       proxyUrl: null,
-      activeDiskImage: "disk.img",
+      // Ensure legacy VM mode is not derived from this deprecated config field.
+      activeDiskImage: null,
       vmRuntime: "legacy",
       logLevel: "info",
     };
     (coordinator as any).spawnWorker("cpu", segments);
     (coordinator as any).spawnWorker("io", segments);
+
+    coordinator.setBootDisks({ type: "setBootDisks", mounts: { hddId: "disk1" }, hdd: null, cd: null });
 
     const cpuWorker = (coordinator as any).workers.cpu.worker as MockWorker;
     const ioWorker = (coordinator as any).workers.io.worker as MockWorker;
@@ -1030,19 +1047,26 @@ describe("runtime/coordinator", () => {
     expect(ioAudio?.type).toBe("setAudioRingBuffer");
     expect(ioAudio?.ringBuffer).toBe(audioSab);
 
+    // Isolate mic-ring attachment behaviour from any prior audio-ring messages.
+    cpuWorker.posted.length = 0;
+    ioWorker.posted.length = 0;
+
     const micSab = new SharedArrayBuffer(256);
     coordinator.setMicrophoneRingBuffer(micSab, 48_000);
 
-    // The coordinator suppresses re-sending identical ring-buffer attachments to avoid
-    // resetting device state / discarding buffered microphone samples. In VM mode, the
-    // CPU worker's mic attachment stays `null`, so a call to `setMicrophoneRingBuffer`
-    // may only send a message to the IO worker.
-    const cpuMic = lastMessageOfType(cpuWorker, "setMicrophoneRingBuffer") as { ringBuffer?: unknown; type?: unknown } | undefined;
-    const ioMic = lastMessageOfType(ioWorker, "setMicrophoneRingBuffer") as { ringBuffer?: unknown; type?: unknown } | undefined;
-    expect(cpuMic?.type).toBe("setMicrophoneRingBuffer");
-    expect(cpuMic?.ringBuffer).toBe(null);
+    const ioMic = ioWorker.posted.at(-1)?.message as { ringBuffer?: unknown; type?: unknown } | undefined;
     expect(ioMic?.type).toBe("setMicrophoneRingBuffer");
     expect(ioMic?.ringBuffer).toBe(micSab);
+    // The CPU worker must not receive the mic ring buffer in VM mode; it may not
+    // receive an explicit detach message if it was already detached.
+    expect(
+      cpuWorker.posted.some((m) => m.message?.type === "setMicrophoneRingBuffer" && m.message?.ringBuffer === micSab),
+    ).toBe(false);
+    const cpuMic = cpuWorker.posted.at(-1)?.message as { ringBuffer?: unknown; type?: unknown } | undefined;
+    if (cpuMic) {
+      expect(cpuMic.type).toBe("setMicrophoneRingBuffer");
+      expect(cpuMic.ringBuffer).toBe(null);
+    }
   });
 
   it.each([null, "disk.img"] as const)(
@@ -1070,22 +1094,33 @@ describe("runtime/coordinator", () => {
       const audioSab = new SharedArrayBuffer(1024);
       coordinator.setAudioRingBuffer(audioSab, 128, 2, 48_000);
 
-      const cpuAudio = cpuWorker.posted.at(-1)?.message as { ringBuffer?: unknown; type?: unknown } | undefined;
-      const ioAudio = ioWorker.posted.at(-1)?.message as { ringBuffer?: unknown; type?: unknown } | undefined;
+      const cpuAudio = lastMessageOfType(cpuWorker, "setAudioRingBuffer") as { ringBuffer?: unknown; type?: unknown } | undefined;
+      const ioAudio = lastMessageOfType(ioWorker, "setAudioRingBuffer") as { ringBuffer?: unknown; type?: unknown } | undefined;
       expect(cpuAudio?.type).toBe("setAudioRingBuffer");
       expect(cpuAudio?.ringBuffer).toBe(audioSab);
       expect(ioAudio?.type).toBe("setAudioRingBuffer");
       expect(ioAudio?.ringBuffer).toBe(null);
 
+      // Isolate mic-ring attachment behaviour from any prior audio-ring messages.
+      cpuWorker.posted.length = 0;
+      ioWorker.posted.length = 0;
+
       const micSab = new SharedArrayBuffer(256);
       coordinator.setMicrophoneRingBuffer(micSab, 48_000);
 
-      const cpuMic = cpuWorker.posted.at(-1)?.message as { ringBuffer?: unknown; type?: unknown } | undefined;
-      const ioMic = ioWorker.posted.at(-1)?.message as { ringBuffer?: unknown; type?: unknown } | undefined;
+      const cpuMic = lastMessageOfType(cpuWorker, "setMicrophoneRingBuffer") as { ringBuffer?: unknown; type?: unknown } | undefined;
       expect(cpuMic?.type).toBe("setMicrophoneRingBuffer");
       expect(cpuMic?.ringBuffer).toBe(micSab);
-      expect(ioMic?.type).toBe("setMicrophoneRingBuffer");
-      expect(ioMic?.ringBuffer).toBe(null);
+
+      // IO must not receive the mic ring buffer in machine runtime.
+      expect(
+        ioWorker.posted.some((m) => m.message?.type === "setMicrophoneRingBuffer" && m.message?.ringBuffer === micSab),
+      ).toBe(false);
+      const ioMic = lastMessageOfType(ioWorker, "setMicrophoneRingBuffer") as { ringBuffer?: unknown; type?: unknown } | undefined;
+      if (ioMic) {
+        expect(ioMic.type).toBe("setMicrophoneRingBuffer");
+        expect(ioMic.ringBuffer).toBe(null);
+      }
     },
   );
 

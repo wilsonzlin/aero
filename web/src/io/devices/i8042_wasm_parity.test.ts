@@ -254,14 +254,15 @@ describe("io/devices/i8042 TS <-> WASM parity", () => {
       writeToMouseWasm(bridge, 0xf2);
       expect(assertDrainParity("mouse device id parity (explorer enabled)")).toEqual([0xfa, 0x04]);
 
+      // Reset button image before validating side/extra packets so the expected packet count stays
+      // deterministic (host-side injection emits one packet per changed button bit).
+      injectMouseButtons(ts, bridge, 0x00);
+      expect(assertDrainParity("mouse release before explorer side/extra test")).toHaveLength(4);
+
       // Side+extra (back+forward) buttons are only encoded in the 4th byte in device-id 0x04 mode.
       injectMouseButtons(ts, bridge, 0x18);
-      // Host injections provide an absolute bitmask; the canonical Rust model emits one packet per
-      // button transition. At this point the left button is still held (0x01), so moving to
-      // side+extra (0x18) flips 3 bits (left up, side down, extra down) => 3 packets * 4 bytes.
-      expect(assertDrainParity("mouse side/extra button parity (explorer mode)")).toHaveLength(12);
+      expect(assertDrainParity("mouse side/extra button parity (explorer mode)")).toHaveLength(8);
       injectMouseButtons(ts, bridge, 0x00);
-      // Releasing side+extra flips 2 bits => 2 packets * 4 bytes.
       expect(assertDrainParity("mouse side/extra release parity (explorer mode)")).toHaveLength(8);
 
       // Disable Set-2 -> Set-1 translation (command byte bit 6) and ensure raw Set-2 output stays in parity.
