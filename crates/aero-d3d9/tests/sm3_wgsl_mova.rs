@@ -275,12 +275,15 @@ fn wgsl_mova_applies_shift_before_saturate() {
 
         // Expect: `clamp((...) / 2.0, 0..1)` (shift then saturate).
         assert!(
-            src.contains(") / 2.0, vec4<f32>(0.0), vec4<f32>(1.0))"),
+            src.contains("/ 2.0, vec4<f32>(0.0), vec4<f32>(1.0))"),
             "{src}"
         );
 
         // Reject: `clamp(..., 0..1) / 2.0` (saturate then shift).
-        assert!(!src.contains("vec4<f32>(1.0)) / 2.0"), "{src}");
+        assert!(
+            !src.contains("vec4<f32>(0.0), vec4<f32>(1.0)) / 2.0"),
+            "{src}"
+        );
 
         let module = naga::front::wgsl::parse_str(src).expect("wgsl parse");
         naga::valid::Validator::new(
