@@ -1542,6 +1542,59 @@ async fn public_chunked_responses_with_cookie_are_not_publicly_cacheable() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn public_chunked_responses_with_authorization_are_not_publicly_cacheable() {
+    let (app, _dir, _manifest) = setup_app(None).await;
+
+    for uri in [
+        "/v1/images/disk/chunked/manifest.json",
+        "/v1/images/disk/chunked/chunks/00000000.bin",
+    ] {
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(uri)
+                    .header(header::AUTHORIZATION, "Bearer deadbeef")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK, "{uri}");
+        assert_eq!(
+            resp.headers()[header::CACHE_CONTROL].to_str().unwrap(),
+            "private, no-store, no-transform",
+            "{uri}"
+        );
+    }
+
+    // Repeat for explicit versioned endpoints.
+    let (app, _dir, _manifest) = setup_versioned_app().await;
+    for uri in [
+        "/v1/images/disk/chunked/v1/manifest.json",
+        "/v1/images/disk/chunked/v1/chunks/00000000.bin",
+    ] {
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(uri)
+                    .header(header::AUTHORIZATION, "Bearer deadbeef")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK, "{uri}");
+        assert_eq!(
+            resp.headers()[header::CACHE_CONTROL].to_str().unwrap(),
+            "private, no-store, no-transform",
+            "{uri}"
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn private_images_are_not_publicly_cacheable_for_chunked_endpoints() {
     let dir = tempdir().expect("tempdir");
 
