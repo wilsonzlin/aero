@@ -5286,32 +5286,11 @@ static HRESULT ensure_fixedfunc_ps_fallback_locked(Device* dev, Shader** out_ps)
     return E_INVALIDARG;
   }
 
-  // Prefer an FVF-specific cache slot when possible so fixed-function stage0
-  // state changes don't force redundant shader creation.
-  Shader** ps_slot = &dev->fixedfunc_ps;
-  switch (dev->fvf) {
-    case kSupportedFvfXyzrhwDiffuse:
-      ps_slot = &dev->fixedfunc_ps;
-      break;
-    case kSupportedFvfXyzrhwDiffuseTex1:
-    case kSupportedFvfXyzrhwTex1:
-      ps_slot = &dev->fixedfunc_ps_tex1;
-      break;
-    case kSupportedFvfXyzDiffuse:
-      // XYZ+DIFFUSE uses the same fixed-function PS slot as the XYZRHW variant.
-      ps_slot = &dev->fixedfunc_ps;
-      break;
-    case kSupportedFvfXyzDiffuseTex1:
-    case kSupportedFvfXyzTex1:
-      ps_slot = &dev->fixedfunc_ps_xyz_diffuse_tex1;
-      break;
-    default:
-      ps_slot = &dev->fixedfunc_ps;
-      break;
-  }
-
-  // This helper selects/creates the fixed-function PS variant based on stage0
-  // state. It also hot-rebinds if the PS being replaced is currently bound.
+  // VS-only interop (user VS bound, PS NULL): fixed-function stage0 PS fallback.
+  //
+  // Use the dedicated interop cache slot so SetShader() and draw-time binding
+  // agree on the PS handle (avoid redundant binds/restores around draws).
+  Shader** ps_slot = &dev->fixedfunc_ps_interop;
   HRESULT hr = ensure_fixedfunc_pixel_shader_locked(dev, ps_slot);
   if (FAILED(hr)) {
     return hr;
