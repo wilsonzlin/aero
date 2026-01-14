@@ -4605,9 +4605,9 @@ impl Machine {
         // Once WDDM scanout has been claimed, do not fall back to the BIOS VBE/text paths while
         // the claim is held.
         //
-        // Note: an explicit `SCANOUT0_ENABLE=0` write releases the WDDM claim in the AeroGPU BAR0
-        // device model (`wddm_scanout_active` becomes false), so this path is primarily defensive
-        // against inconsistent snapshot state.
+        // The AeroGPU Win7 driver uses `SCANOUT0_ENABLE` as a visibility toggle
+        // (`DxgkDdiSetVidPnSourceVisibility`). When it is cleared, we render a blank frame but keep
+        // WDDM ownership sticky (legacy VGA/VBE must not steal scanout back until reset).
         if !state.enable {
             self.display_fb.clear();
             self.display_width = 0;
