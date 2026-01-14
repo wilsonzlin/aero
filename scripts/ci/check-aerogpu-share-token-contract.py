@@ -18,8 +18,8 @@ This script is intentionally narrow and fast:
   descriptions (for example: referencing the deleted
   `aerogpu_alloc_privdata.h` model).
 - Enforce a key KMD invariant for share-token refcount tracking: avoid
-  potentially expensive allocation calls under `Adapter->AllocationsLock` (spin
-  lock hold time / contention).
+  potentially expensive pool operations (alloc/free) under
+  `Adapter->AllocationsLock` (spin lock hold time / contention).
 """
 
 from __future__ import annotations
@@ -133,8 +133,8 @@ def check_no_pool_alloc_under_allocations_lock(errors: list[str]) -> None:
     """
     Guardrail for AGPU-ShareToken refcount tracking:
 
-    - `AeroGpuShareTokenRefIncrementLocked` must not perform allocations while
-      `Adapter->AllocationsLock` is held.
+    - `AeroGpuShareTokenRefIncrementLocked` must not perform pool operations
+      while `Adapter->AllocationsLock` is held.
     - The implementation is expected to drop the spin lock, allocate, then
       re-acquire and re-check before inserting.
     """
@@ -177,6 +177,8 @@ def check_no_pool_alloc_under_allocations_lock(errors: list[str]) -> None:
         "ExAllocateFromPagedLookasideList(",
         "ExFreePoolWithTag(",
         "ExFreePool(",
+        "ExFreeToNPagedLookasideList(",
+        "ExFreeToPagedLookasideList(",
     )
     alloc_re = re.compile("|".join(re.escape(n) for n in alloc_needles))
 
