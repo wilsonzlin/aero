@@ -1831,27 +1831,12 @@ pub fn decode_cmd_copy_buffer_le(
 ) -> Result<AerogpuCmdCopyBuffer, AerogpuCmdDecodeError> {
     let hdr = decode_cmd_hdr_le(buf)?;
     let packet_len = validate_packet_len(buf, hdr)?;
-    if AerogpuCmdOpcode::from_u32(hdr.opcode) != Some(AerogpuCmdOpcode::CopyBuffer) {
-        return Err(AerogpuCmdDecodeError::UnexpectedOpcode {
-            found: hdr.opcode,
-            expected: AerogpuCmdOpcode::CopyBuffer,
-        });
-    }
-
-    let payload = &buf[AerogpuCmdHdr::SIZE_BYTES..packet_len];
-    let expected_payload_size = size_of::<AerogpuCmdCopyBuffer>() - AerogpuCmdHdr::SIZE_BYTES;
-    validate_expected_payload_size(expected_payload_size, payload)?;
-
-    Ok(AerogpuCmdCopyBuffer {
+    let packet = AerogpuCmdPacket {
         hdr,
-        dst_buffer: u32::from_le_bytes(payload[0..4].try_into().unwrap()),
-        src_buffer: u32::from_le_bytes(payload[4..8].try_into().unwrap()),
-        dst_offset_bytes: u64::from_le_bytes(payload[8..16].try_into().unwrap()),
-        src_offset_bytes: u64::from_le_bytes(payload[16..24].try_into().unwrap()),
-        size_bytes: u64::from_le_bytes(payload[24..32].try_into().unwrap()),
-        flags: u32::from_le_bytes(payload[32..36].try_into().unwrap()),
-        reserved0: u32::from_le_bytes(payload[36..40].try_into().unwrap()),
-    })
+        opcode: AerogpuCmdOpcode::from_u32(hdr.opcode),
+        payload: &buf[AerogpuCmdHdr::SIZE_BYTES..packet_len],
+    };
+    packet.decode_copy_buffer_payload_le()
 }
 
 /// Decode COPY_TEXTURE2D.
@@ -1860,34 +1845,12 @@ pub fn decode_cmd_copy_texture2d_le(
 ) -> Result<AerogpuCmdCopyTexture2d, AerogpuCmdDecodeError> {
     let hdr = decode_cmd_hdr_le(buf)?;
     let packet_len = validate_packet_len(buf, hdr)?;
-    if AerogpuCmdOpcode::from_u32(hdr.opcode) != Some(AerogpuCmdOpcode::CopyTexture2d) {
-        return Err(AerogpuCmdDecodeError::UnexpectedOpcode {
-            found: hdr.opcode,
-            expected: AerogpuCmdOpcode::CopyTexture2d,
-        });
-    }
-
-    let payload = &buf[AerogpuCmdHdr::SIZE_BYTES..packet_len];
-    let expected_payload_size = size_of::<AerogpuCmdCopyTexture2d>() - AerogpuCmdHdr::SIZE_BYTES;
-    validate_expected_payload_size(expected_payload_size, payload)?;
-
-    Ok(AerogpuCmdCopyTexture2d {
+    let packet = AerogpuCmdPacket {
         hdr,
-        dst_texture: u32::from_le_bytes(payload[0..4].try_into().unwrap()),
-        src_texture: u32::from_le_bytes(payload[4..8].try_into().unwrap()),
-        dst_mip_level: u32::from_le_bytes(payload[8..12].try_into().unwrap()),
-        dst_array_layer: u32::from_le_bytes(payload[12..16].try_into().unwrap()),
-        src_mip_level: u32::from_le_bytes(payload[16..20].try_into().unwrap()),
-        src_array_layer: u32::from_le_bytes(payload[20..24].try_into().unwrap()),
-        dst_x: u32::from_le_bytes(payload[24..28].try_into().unwrap()),
-        dst_y: u32::from_le_bytes(payload[28..32].try_into().unwrap()),
-        src_x: u32::from_le_bytes(payload[32..36].try_into().unwrap()),
-        src_y: u32::from_le_bytes(payload[36..40].try_into().unwrap()),
-        width: u32::from_le_bytes(payload[40..44].try_into().unwrap()),
-        height: u32::from_le_bytes(payload[44..48].try_into().unwrap()),
-        flags: u32::from_le_bytes(payload[48..52].try_into().unwrap()),
-        reserved0: u32::from_le_bytes(payload[52..56].try_into().unwrap()),
-    })
+        opcode: AerogpuCmdOpcode::from_u32(hdr.opcode),
+        payload: &buf[AerogpuCmdHdr::SIZE_BYTES..packet_len],
+    };
+    packet.decode_copy_texture2d_payload_le()
 }
 
 /// Decode DISPATCH.
@@ -2386,6 +2349,58 @@ impl<'a> AerogpuCmdPacket<'a> {
             },
             data_bytes,
         ))
+    }
+
+    pub fn decode_copy_buffer_payload_le(&self) -> Result<AerogpuCmdCopyBuffer, AerogpuCmdDecodeError> {
+        if self.opcode != Some(AerogpuCmdOpcode::CopyBuffer) {
+            return Err(AerogpuCmdDecodeError::UnexpectedOpcode {
+                found: self.hdr.opcode,
+                expected: AerogpuCmdOpcode::CopyBuffer,
+            });
+        }
+        let expected_payload_size = size_of::<AerogpuCmdCopyBuffer>() - AerogpuCmdHdr::SIZE_BYTES;
+        validate_expected_payload_size(expected_payload_size, self.payload)?;
+        Ok(AerogpuCmdCopyBuffer {
+            hdr: self.hdr,
+            dst_buffer: u32::from_le_bytes(self.payload[0..4].try_into().unwrap()),
+            src_buffer: u32::from_le_bytes(self.payload[4..8].try_into().unwrap()),
+            dst_offset_bytes: u64::from_le_bytes(self.payload[8..16].try_into().unwrap()),
+            src_offset_bytes: u64::from_le_bytes(self.payload[16..24].try_into().unwrap()),
+            size_bytes: u64::from_le_bytes(self.payload[24..32].try_into().unwrap()),
+            flags: u32::from_le_bytes(self.payload[32..36].try_into().unwrap()),
+            reserved0: u32::from_le_bytes(self.payload[36..40].try_into().unwrap()),
+        })
+    }
+
+    pub fn decode_copy_texture2d_payload_le(
+        &self,
+    ) -> Result<AerogpuCmdCopyTexture2d, AerogpuCmdDecodeError> {
+        if self.opcode != Some(AerogpuCmdOpcode::CopyTexture2d) {
+            return Err(AerogpuCmdDecodeError::UnexpectedOpcode {
+                found: self.hdr.opcode,
+                expected: AerogpuCmdOpcode::CopyTexture2d,
+            });
+        }
+        let expected_payload_size =
+            size_of::<AerogpuCmdCopyTexture2d>() - AerogpuCmdHdr::SIZE_BYTES;
+        validate_expected_payload_size(expected_payload_size, self.payload)?;
+        Ok(AerogpuCmdCopyTexture2d {
+            hdr: self.hdr,
+            dst_texture: u32::from_le_bytes(self.payload[0..4].try_into().unwrap()),
+            src_texture: u32::from_le_bytes(self.payload[4..8].try_into().unwrap()),
+            dst_mip_level: u32::from_le_bytes(self.payload[8..12].try_into().unwrap()),
+            dst_array_layer: u32::from_le_bytes(self.payload[12..16].try_into().unwrap()),
+            src_mip_level: u32::from_le_bytes(self.payload[16..20].try_into().unwrap()),
+            src_array_layer: u32::from_le_bytes(self.payload[20..24].try_into().unwrap()),
+            dst_x: u32::from_le_bytes(self.payload[24..28].try_into().unwrap()),
+            dst_y: u32::from_le_bytes(self.payload[28..32].try_into().unwrap()),
+            src_x: u32::from_le_bytes(self.payload[32..36].try_into().unwrap()),
+            src_y: u32::from_le_bytes(self.payload[36..40].try_into().unwrap()),
+            width: u32::from_le_bytes(self.payload[40..44].try_into().unwrap()),
+            height: u32::from_le_bytes(self.payload[44..48].try_into().unwrap()),
+            flags: u32::from_le_bytes(self.payload[48..52].try_into().unwrap()),
+            reserved0: u32::from_le_bytes(self.payload[52..56].try_into().unwrap()),
+        })
     }
 
     pub fn decode_create_input_layout_payload_le(

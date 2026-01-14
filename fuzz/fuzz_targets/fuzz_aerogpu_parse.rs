@@ -214,12 +214,14 @@ fn fuzz_cmd_stream(cmd_bytes: &[u8]) {
                     }
                 }
                 Some(cmd::AerogpuCmdOpcode::CopyBuffer) => {
+                    let _ = pkt.decode_copy_buffer_payload_le();
                     let Some(packet_bytes) = packet_bytes(cmd_bytes, &pkt) else {
                         continue;
                     };
                     let _ = cmd::decode_cmd_copy_buffer_le(packet_bytes);
                 }
                 Some(cmd::AerogpuCmdOpcode::CopyTexture2d) => {
+                    let _ = pkt.decode_copy_texture2d_payload_le();
                     let Some(packet_bytes) = packet_bytes(cmd_bytes, &pkt) else {
                         continue;
                     };
