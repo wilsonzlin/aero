@@ -154,17 +154,18 @@ services in Rust.
 
   - `Machine::handle_bios_interrupt(vector)` → `bios.dispatch_interrupt(vector, ...)`
 
-In the canonical machine, BIOS INT 13h is wired to a **single selected boot medium**:
+In the canonical machine, BIOS INT 13h can expose **both** of the canonical media backends:
 
-- If `boot_drive` is an HDD drive number (`DL=0x80..=0xDF`), INT 13h routes to the primary HDD
-  backend (also attached to AHCI port 0).
-- If `boot_drive` is a CD drive number (`DL=0xE0..=0xEF`), INT 13h routes to the install-media ISO
-  backend (also attached to IDE secondary master ATAPI).
+- HDD0: `DL=0x80` (512-byte sectors), routed to the machine’s primary HDD backend (also attached to
+  AHCI port 0).
+- CD0: `DL=0xE0` (2048-byte sectors via INT 13h Extensions/EDD), routed to the machine’s install ISO
+  backend when present (also attached to IDE secondary master ATAPI).
 
-Note: the BIOS currently models only the selected boot drive as “present” to INT 13h; other drive
-numbers are treated as not present. The host selects which medium firmware sees by setting
-`boot_drive` (via `MachineConfig::boot_drive` at construction time, or via
-`Machine::set_boot_drive(...)` + `Machine::reset()`).
+Boot selection is still primarily driven by `boot_drive` (the `DL` value firmware uses when
+transferring control to the boot sector / El Torito boot image), configured via
+`MachineConfig::boot_drive` at construction time or via `Machine::set_boot_drive(...)` +
+`Machine::reset()`. For host convenience, firmware also supports an optional “CD-first when present”
+policy flag (`firmware::bios::BiosConfig::boot_from_cd_if_present`).
 
 For CD boots/reads, the BIOS supports two backend shapes:
 

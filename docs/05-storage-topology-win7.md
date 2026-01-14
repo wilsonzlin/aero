@@ -86,14 +86,20 @@ For BIOS INT 13h, sector units differ by drive number:
 - HDD (`DL=0x80..=0xDF`): 512-byte sectors.
 - CD-ROM (`DL=0xE0..=0xEF`): 2048-byte logical blocks via INT 13h Extensions (EDD).
 
-Note: Aero BIOS currently exposes only the selected boot drive (`BiosConfig::boot_drive` / `DL`) as
-present to INT 13h; other drive numbers are treated as not present.
+Note: In the canonical machine topology, BIOS INT 13h can service **both** HDD0 (`DL=0x80`) and the
+install-media CD-ROM (`DL=0xE0`) when both backends are provided (primary disk + install ISO). HDD
+drive presence is derived from the BIOS Data Area fixed-disk count (`0x40:0x75`); when booting from
+CD, the integration layer ensures this count still advertises HDD0 so guests can access it during
+setup/boot.
 
 ### 1) Windows 7 install / recovery flow
 
 1. Select **CD0** as the BIOS boot drive (**`DL=0xE0`**) *before* reset. In `aero_machine`, this is
    `Machine::set_boot_drive(0xE0)` followed by `Machine::reset()`. BIOS transfers control to the CD
    boot image with that CD drive number in `DL`.
+   - Optional convenience: hosts may instead enable a “CD-first when present” policy
+     (`firmware::bios::BiosConfig::boot_from_cd_if_present = true`) so firmware attempts CD boot
+     first and falls back to the configured HDD boot drive when no CD is attached.
 2. The boot ISO must be attached and presented as an **ATAPI CD-ROM** on **PIIX3 IDE secondary
    master** (`disk_id=1`) before BIOS POST/boot:
    - Rust: `Machine::attach_install_media_iso_bytes(...)` (in-memory ISO) or
@@ -109,15 +115,15 @@ present to INT 13h; other drive numbers are treated as not present.
    and resetting (i.e. configure `firmware::bios::BiosConfig::boot_drive = 0x80`, set
    `aero_machine::MachineConfig::boot_drive = 0x80` at construction time, or in `aero_machine` call
    `Machine::set_boot_drive(0x80)` and `Machine::reset()`).
-   - Note: Aero’s BIOS does **not** currently probe a list of devices; `boot_drive` is an explicit
-     selection.
+   - Note: Aero’s BIOS boot selection is still primarily driven by an explicit `boot_drive` (`DL`),
+     but it also supports an optional “CD-first when present” policy flag for host convenience.
 5. Windows Setup enumerates the **AHCI disk** on **ICH9 AHCI port 0** and installs Windows onto it.
 
 Implementation note (Rust): in `aero_machine`, the initial BIOS boot drive can be set up-front via
 `MachineConfig::boot_drive` (for example `MachineConfig::win7_install_defaults(...)` sets
-`boot_drive=0xE0` for CD-first install, while the default is `boot_drive=0x80` for HDD boot). You can
-also switch at runtime via `Machine::set_boot_drive(0xE0|0x80)` and then call `Machine::reset()` to
-re-run BIOS POST with the new `DL` value.
+`boot_drive=0xE0` to boot directly from CD0, while the default is `boot_drive=0x80` for HDD boot).
+You can also switch at runtime via `Machine::set_boot_drive(0xE0|0x80)` and then call
+`Machine::reset()` to re-run BIOS POST with the new `DL` value.
 
 Browser/wasm note: `crates/aero-wasm` exports `Machine` to JS and also exposes
 `machine.set_boot_drive(0xE0|0x80)` alongside `machine.reset()`. The same rule applies: set the boot

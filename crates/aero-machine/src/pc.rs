@@ -289,6 +289,21 @@ impl PcMachine {
         self.bios.set_boot_drive(boot_drive);
     }
 
+    /// Enable/disable the firmware "CD-first when present" boot policy.
+    ///
+    /// Call [`PcMachine::reset`] to apply the new policy to the next boot.
+    pub fn set_boot_from_cd_if_present(&mut self, enabled: bool) {
+        self.bios.set_boot_from_cd_if_present(enabled);
+    }
+
+    /// Set the BIOS drive number used when booting from CD-ROM under the
+    /// "CD-first when present" policy.
+    ///
+    /// Call [`PcMachine::reset`] to apply the new value to the next boot.
+    pub fn set_cd_boot_drive(&mut self, cd_boot_drive: u8) {
+        self.bios.set_cd_boot_drive(cd_boot_drive);
+    }
+
     /// Attach a ring-buffer-backed L2 tunnel network backend.
     pub fn attach_l2_tunnel_rings<TX: FrameRing + 'static, RX: FrameRing + 'static>(
         &mut self,
@@ -362,12 +377,16 @@ impl PcMachine {
                 })
                 .collect();
         }
-        // Preserve the host-selected BIOS boot drive across resets.
+        // Preserve the host-selected BIOS boot policy across resets.
         let boot_drive = self.bios.config().boot_drive;
+        let cd_boot_drive = self.bios.config().cd_boot_drive;
+        let boot_from_cd_if_present = self.bios.config().boot_from_cd_if_present;
 
         self.bios = Bios::new(BiosConfig {
             memory_size_bytes: self.cfg.ram_size_bytes,
             boot_drive,
+            cd_boot_drive,
+            boot_from_cd_if_present,
             cpu_count: self.cfg.cpu_count,
             smbios_uuid_seed: self.cfg.smbios_uuid_seed,
             ..Default::default()

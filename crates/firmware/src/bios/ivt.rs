@@ -113,10 +113,14 @@ pub fn init_bda(bus: &mut dyn BiosBus, boot_drive: u8) {
     // *not* contribute to the fixed-disk count, otherwise guests may believe there are dozens of
     // hard disks (e.g. DL=0xE0 => 97).
     //
-    // Note: this BIOS currently exposes only the selected boot drive as "present" to INT 13h
-    // (i.e., a single BIOS boot medium chosen via `BiosConfig::boot_drive`).
+    // Note: BIOS INT 13h "drive present" checks for fixed disks consult this BDA count.
     //
-    // Reflect that in the BDA:
+    // Derive the count from the configured boot drive to keep it deterministic and (critically) to
+    // avoid inflating the count when booting from El Torito CD-ROM drive numbers (`0xE0..=0xEF`).
+    // Higher-level integrations that expose an HDD even while booting from CD may patch this field
+    // after POST (see `bios::post`).
+    //
+    // Policy:
     // - If booting from a floppy (`DL < 0x80`), report *no* fixed disks installed.
     // - If booting from a fixed disk (`DL 0x80..=0xDF`), report enough fixed disks to include the
     //   selected boot disk.

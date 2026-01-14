@@ -601,6 +601,25 @@ impl Bios {
         self.config.boot_drive = boot_drive;
     }
 
+    /// Configure the host boot policy flag for "boot from CD-ROM first when present".
+    ///
+    /// When enabled and a CD-ROM backend is provided to [`Bios::post`], firmware POST will attempt
+    /// an El Torito boot from [`BiosConfig::cd_boot_drive`] and fall back to the configured
+    /// [`BiosConfig::boot_drive`] on failure.
+    ///
+    /// This is host-controlled policy rather than guest-visible state; it is stored in the BIOS
+    /// configuration so snapshots can preserve it and higher-level machine reset logic can
+    /// re-apply it deterministically.
+    pub fn set_boot_from_cd_if_present(&mut self, enabled: bool) {
+        self.config.boot_from_cd_if_present = enabled;
+    }
+
+    /// Set the BIOS drive number to use for CD-ROM boot when
+    /// [`BiosConfig::boot_from_cd_if_present`] is enabled.
+    pub fn set_cd_boot_drive(&mut self, cd_boot_drive: u8) {
+        self.config.cd_boot_drive = cd_boot_drive;
+    }
+
     pub fn tty_output(&self) -> &[u8] {
         let start = self.tty_output_start.min(self.tty_output.len());
         &self.tty_output[start..]

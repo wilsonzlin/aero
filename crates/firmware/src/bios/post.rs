@@ -203,14 +203,21 @@ impl Bios {
 
         // Optional host boot-order policy: attempt to boot from CD if present, otherwise (or on
         // failure) fall back to the configured `boot_drive` (typically HDD0, 0x80).
+        //
+        // Note: This is host-controlled convenience policy; it should not permanently rewrite the
+        // configured fallback boot drive. We temporarily swap `boot_drive` only for the duration of
+        // the CD boot attempt, then restore it regardless of success so subsequent resets can still
+        // fall back to the original selection when no CD is present.
         let fallback_drive = self.config.boot_drive;
         if self.config.boot_from_cd_if_present && cdrom.is_some() {
-            self.config.boot_drive = self.config.cd_boot_drive;
-            if boot_current(self, cpu, bus, disk, &mut cdrom).is_ok() {
+            let cd_boot_drive = self.config.cd_boot_drive;
+            self.config.boot_drive = cd_boot_drive;
+            let cd_res = boot_current(self, cpu, bus, disk, &mut cdrom);
+            // Always restore the configured fallback boot drive.
+            self.config.boot_drive = fallback_drive;
+            if cd_res.is_ok() {
                 return Ok(());
             }
-            // Restore the configured fallback boot drive (HDD) before retrying.
-            self.config.boot_drive = fallback_drive;
         }
 
         boot_current(self, cpu, bus, disk, &mut cdrom)?;

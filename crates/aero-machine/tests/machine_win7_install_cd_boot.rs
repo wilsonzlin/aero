@@ -132,8 +132,31 @@ fn build_minimal_eltorito_iso(boot_char: u8) -> Vec<u8> {
     iso
 }
 
+fn build_minimal_mbr_disk(boot_char: u8) -> Vec<u8> {
+    let mut mbr = vec![0u8; 512];
+
+    let mut i = 0usize;
+    // mov dx, 0x3f8
+    mbr[i..i + 3].copy_from_slice(&[0xBA, 0xF8, 0x03]);
+    i += 3;
+    // mov al, imm8
+    mbr[i..i + 2].copy_from_slice(&[0xB0, boot_char]);
+    i += 2;
+    // out dx, al
+    mbr[i] = 0xEE;
+    i += 1;
+    // hlt; jmp $-3 (stay halted even if interrupts wake us)
+    mbr[i..i + 3].copy_from_slice(&[0xF4, 0xEB, 0xFD]);
+
+    // BIOS boot signature.
+    mbr[510] = 0x55;
+    mbr[511] = 0xAA;
+
+    mbr
+}
+
 #[test]
-fn machine_win7_install_helper_sets_boot_drive_e0_and_boots_eltorito_iso() {
+fn machine_win7_install_helper_boots_eltorito_iso_and_falls_back_to_hdd_after_eject() {
     let iso_bytes = build_minimal_eltorito_iso(b'I');
     let iso = RawDisk::open(MemBackend::from_vec(iso_bytes)).unwrap();
 
@@ -144,4 +167,13 @@ fn machine_win7_install_helper_sets_boot_drive_e0_and_boots_eltorito_iso() {
 
     run_until_halt(&mut m);
     assert_eq!(m.take_serial_output(), vec![b'I']);
+
+    // Install media ejected: next reset should fall back to HDD boot (DL=0x80).
+    m.set_disk_image(build_minimal_mbr_disk(b'D')).unwrap();
+    m.eject_install_media();
+    m.reset();
+    assert_eq!(m.cpu().gpr[gpr::RDX] as u8, 0x80);
+
+    run_until_halt(&mut m);
+    assert_eq!(m.take_serial_output(), vec![b'D']);
 }

@@ -613,7 +613,7 @@ impl MachineConfig {
         cfg
     }
 
-    /// Configuration preset for the canonical Windows 7 install / recovery flow (CD-first).
+    /// Configuration preset for the canonical Windows 7 install / recovery flow (boot from CD).
     ///
     /// This is equivalent to [`MachineConfig::win7_storage_defaults`], but configures firmware to
     /// boot from the first CD-ROM drive (`boot_drive = 0xE0`) so El Torito install media boots
@@ -3961,8 +3961,8 @@ impl Machine {
     /// This configures:
     /// - the canonical Windows 7 storage topology (AHCI + IDE at canonical BDFs),
     /// - the IDE secondary master as an ATAPI CD-ROM backed by `iso`, and
-    /// - firmware boot drive selection to boot from the first CD-ROM (`DL=0xE0`) so El Torito
-    ///   install media boots without additional boilerplate.
+    /// - firmware boot policy to prefer the first CD-ROM (`DL=0xE0`) when install media is present
+    ///   so El Torito install media boots without additional boilerplate.
     ///
     /// Notes:
     /// - The install ISO is stored separately from the canonical [`SharedDisk`] so callers can
@@ -3987,7 +3987,8 @@ impl Machine {
     /// to tweak other config fields) and then want to attach an install ISO and reboot into it.
     ///
     /// This method:
-    /// - sets the firmware boot drive to `0xE0` (CD0),
+    /// - enables the firmware "CD-first when present" boot policy (boot from `DL=0xE0` when install
+    ///   media is attached, otherwise fall back to the configured HDD boot drive),
     /// - attaches the ISO as an ATAPI CD-ROM on the IDE secondary master (if IDE is enabled),
     /// - then resets the machine.
     #[cfg(not(target_arch = "wasm32"))]
@@ -3995,8 +3996,10 @@ impl Machine {
         &mut self,
         iso: Box<dyn aero_storage::VirtualDisk + Send>,
     ) -> std::io::Result<()> {
-        // Canonical Win7 install flow boots from the first CD-ROM.
-        self.set_boot_drive(0xE0);
+        // Canonical Win7 install flow prefers the first CD-ROM when install media is present, but
+        // keeps the configured HDD boot drive as a fallback (e.g. after ejecting the ISO).
+        self.set_cd_boot_drive(0xE0);
+        self.set_boot_from_cd_if_present(true);
 
         // Attach the ISO to the canonical install-media attachment point (IDE secondary master).
         self.attach_ide_secondary_master_iso(iso)?;
@@ -4178,6 +4181,28 @@ impl Machine {
         } else {
             BootDevice::Hdd
         }
+    }
+
+    /// Enable/disable the firmware "CD-first when present" boot policy.
+    ///
+    /// When enabled, firmware POST will attempt to boot from the first CD-ROM drive when install
+    /// media is attached, and fall back to the configured [`Machine::set_boot_drive`] selection
+    /// (typically HDD0, `DL=0x80`) when no CD is present or the CD is not bootable.
+    ///
+    /// Call [`Machine::reset`] to apply the new policy to the next boot.
+    pub fn set_boot_from_cd_if_present(&mut self, enabled: bool) {
+        self.bios.set_boot_from_cd_if_present(enabled);
+    }
+
+    /// Set the BIOS drive number used when booting from CD-ROM under the
+    /// "CD-first when present" policy.
+    ///
+    /// Conventional El Torito CD-ROM drive numbers are `0xE0..=0xEF`; the canonical machine uses
+    /// `0xE0` for the first CD-ROM.
+    ///
+    /// Call [`Machine::reset`] to apply the new value to the next boot.
+    pub fn set_cd_boot_drive(&mut self, cd_boot_drive: u8) {
+        self.bios.set_cd_boot_drive(cd_boot_drive);
     }
 
     /// Returns the configured vCPU count.
@@ -8612,6 +8637,8 @@ impl Machine {
         // Preserve any host-selected boot drive (e.g. CD vs HDD) across resets and snapshot
         // restores.
         let boot_drive = self.bios.config().boot_drive;
+        let cd_boot_drive = self.bios.config().cd_boot_drive;
+        let boot_from_cd_if_present = self.bios.config().boot_from_cd_if_present;
         self.boot_drive = boot_drive;
         // The BIOS is HLE and by default keeps the VBE linear framebuffer inside guest RAM so the
         // firmware-only tests can access it without MMIO routing.
@@ -8631,6 +8658,8 @@ impl Machine {
         self.bios = Bios::new(BiosConfig {
             memory_size_bytes: self.cfg.ram_size_bytes,
             boot_drive,
+            cd_boot_drive,
+            boot_from_cd_if_present,
             cpu_count: self.cfg.cpu_count,
             smbios_uuid_seed: self.cfg.smbios_uuid_seed,
             enable_acpi: self.cfg.enable_pc_platform && self.cfg.enable_acpi,
