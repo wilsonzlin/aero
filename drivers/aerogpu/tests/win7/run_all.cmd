@@ -162,23 +162,21 @@ exit /b 0
 :run_manifest_line
 set "NAME=%~1"
 shift
+:run_manifest_line_normalize
 if "%NAME%"=="" exit /b 0
 if "%NAME:~0,1%"=="#" exit /b 0
 if "%NAME:~0,1%"==";" exit /b 0
 if /I "%NAME%"=="rem" exit /b 0
 if "%NAME:~0,2%"=="::" exit /b 0
 
-rem Handle UTF-8 BOM in tests_manifest.txt: `for /f` will include it in the first token,
-rem which would otherwise prevent comment filtering and test lookup.
+rem Handle UTF-8 BOM / non-ASCII prefix bytes in tests_manifest.txt: `for /f` may include
+rem them in the first token, which would otherwise prevent comment filtering and test lookup.
+set "FIRST=%NAME:~0,1%"
 set "BAD="
-for /f "delims=0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_" %%Z in ("%NAME%") do set "BAD=%%Z"
+for /f "delims=0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_" %%Z in ("%FIRST%") do set "BAD=1"
 if defined BAD (
-  set "NAME=%NAME:~3%"
-  if "%NAME%"=="" exit /b 0
-  if "%NAME:~0,1%"=="#" exit /b 0
-  if "%NAME:~0,1%"==";" exit /b 0
-  if /I "%NAME%"=="rem" exit /b 0
-  if "%NAME:~0,2%"=="::" exit /b 0
+  set "NAME=%NAME:~1%"
+  goto run_manifest_line_normalize
 )
 
 call :run_test "%NAME%" %*
