@@ -2395,7 +2395,7 @@ function handleDeviceLost(message: string, details?: unknown, startRecovery?: bo
       })());
   const enrichedDetails: Record<string, unknown> = {
     ...(details === undefined ? {} : { cause: details }),
-    ...(scanoutSnap ? { scanout: scanoutSnap } : {}),
+    ...(scanoutSnap ? { scanout: { ...scanoutSnap, format_str: aerogpuFormatToString(scanoutSnap.format >>> 0) } } : {}),
     scanout_is_wddm: scanoutIsWddm,
     wddm_owns_scanout_fallback: wddmOwnsScanoutFallback,
     aerogpu_last_output_source: aerogpuLastOutputSource,
@@ -2458,7 +2458,7 @@ async function attemptRecovery(reason: string): Promise<void> {
     message: `Attempting GPU recovery (${reason})`,
     details: {
       reason,
-      ...(scanoutAtStart ? { scanout: scanoutAtStart } : {}),
+      ...(scanoutAtStart ? { scanout: { ...scanoutAtStart, format_str: aerogpuFormatToString(scanoutAtStart.format >>> 0) } } : {}),
       scanout_is_wddm: scanoutWasWddm,
       wddm_owns_scanout_fallback: wddmOwnsScanoutFallback,
       aerogpu_last_output_source: aerogpuLastOutputSource,
@@ -2531,7 +2531,7 @@ async function attemptRecovery(reason: string): Promise<void> {
       category: "DeviceLost",
       message: "GPU recovery succeeded",
       details: {
-        ...(scanoutAtEnd ? { scanout: scanoutAtEnd } : {}),
+        ...(scanoutAtEnd ? { scanout: { ...scanoutAtEnd, format_str: aerogpuFormatToString(scanoutAtEnd.format >>> 0) } } : {}),
         scanout_is_wddm: scanoutIsWddm,
         wddm_owns_scanout_fallback: wddmOwnsScanoutFallback,
         aerogpu_last_output_source: aerogpuLastOutputSource,
