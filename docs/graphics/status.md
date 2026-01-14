@@ -43,7 +43,7 @@ Coordination note:
 | AeroGPU sandbox device model + executor (legacy integration surface) | `[~]` | [`crates/emulator/src/devices/pci/aerogpu.rs`](../../crates/emulator/src/devices/pci/aerogpu.rs) + [`crates/emulator/src/gpu_worker/aerogpu_executor.rs`](../../crates/emulator/src/gpu_worker/aerogpu_executor.rs) |
 | Scanout shared-memory contracts | `[x]` | [`crates/aero-shared/src/`](../../crates/aero-shared/src/) + [`web/src/ipc/`](../../web/src/ipc/) |
 | D3D9 translation/execution (subset) | `[~]` | [`crates/aero-d3d9/`](../../crates/aero-d3d9/) + [`crates/aero-gpu/src/aerogpu_d3d9_executor.rs`](../../crates/aero-gpu/src/aerogpu_d3d9_executor.rs) + [`docs/graphics/d3d9-sm2-sm3-shader-translation.md`](./d3d9-sm2-sm3-shader-translation.md) |
-| D3D10/11 translation/execution (subset; VS/PS/CS + GS compute emulation) | `[~]` | [`crates/aero-d3d11/`](../../crates/aero-d3d11/) |
+| D3D10/11 translation/execution (subset; VS/PS/CS + GS compute-prepass scaffolding (placeholder; no guest GS DXBC yet)) | `[~]` | [`crates/aero-d3d11/`](../../crates/aero-d3d11/) |
 | Web presenters/backends (WebGPU + WebGL2) | `[x]` | [`web/src/gpu/`](../../web/src/gpu/) |
 | End-to-end Win7 WDDM + accelerated rendering in the **canonical browser machine** | `[ ]` | See [7) Critical path integration gaps](#7-current-critical-path-integration-gaps-factual) |
 
