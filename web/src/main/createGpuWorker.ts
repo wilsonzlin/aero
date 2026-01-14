@@ -440,20 +440,25 @@ export function createGpuWorker(params: CreateGpuWorkerParams): GpuWorkerHandle 
         const normalizedContextId = Number.isFinite(contextId) ? contextId >>> 0 : 0;
         const flags = typeof opts?.flags === "number" && Number.isFinite(opts.flags) ? opts.flags >>> 0 : undefined;
         const engineId = typeof opts?.engineId === "number" && Number.isFinite(opts.engineId) ? opts.engineId >>> 0 : undefined;
-        worker.postMessage(
-          {
-            ...GPU_MESSAGE_BASE,
-            type: "submit_aerogpu",
-            requestId,
-            contextId: normalizedContextId,
-            ...(flags !== undefined ? { flags } : {}),
-            ...(engineId !== undefined ? { engineId } : {}),
-            signalFence,
-            cmdStream,
-            ...(allocTable ? { allocTable } : {}),
-          },
-          transfer,
-        );
+        const msg = {
+          ...GPU_MESSAGE_BASE,
+          type: "submit_aerogpu",
+          requestId,
+          contextId: normalizedContextId,
+          ...(flags !== undefined ? { flags } : {}),
+          ...(engineId !== undefined ? { engineId } : {}),
+          signalFence,
+          cmdStream,
+          ...(allocTable ? { allocTable } : {}),
+        } as const;
+
+        // Prefer zero-copy transfer, but fall back to structured clone for environments that reject
+        // transfer lists (or when buffers are not transferable).
+        try {
+          worker.postMessage(msg, transfer);
+        } catch {
+          worker.postMessage(msg);
+        }
         return new Promise<GpuRuntimeSubmitCompleteMessage>((resolve, reject) => {
           submitRequests.set(requestId, { resolve, reject });
           startTickPump();

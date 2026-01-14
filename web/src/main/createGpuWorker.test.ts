@@ -150,6 +150,52 @@ describe("main/createGpuWorker", () => {
     vi.useRealTimers();
   });
 
+  it("falls back to posting submit_aerogpu without a transfer list when transfers are rejected", async () => {
+    let submitAttempts = 0;
+    let sawTransferAttempt = false;
+    let sawFallbackAttempt = false;
+
+    class RejectTransferWorker extends MockWorker {
+      override postMessage(message: unknown, transfer?: unknown[]): void {
+        const m = message as { type?: unknown };
+        if (m.type === "submit_aerogpu") {
+          submitAttempts += 1;
+          const hasTransfer = Array.isArray(transfer) && transfer.length > 0;
+          if (hasTransfer) sawTransferAttempt = true;
+          else sawFallbackAttempt = true;
+          if (hasTransfer) {
+            throw new Error("transfer list rejected");
+          }
+        }
+        super.postMessage(message, transfer);
+      }
+    }
+
+    globalThis.Worker = RejectTransferWorker as unknown as typeof Worker;
+
+    vi.useFakeTimers();
+
+    const canvas = {
+      transferControlToOffscreen: () => ({}) as unknown as OffscreenCanvas,
+    } as unknown as HTMLCanvasElement;
+
+    const handle = createGpuWorker({ canvas, width: 2, height: 2, devicePixelRatio: 1 });
+    await handle.ready;
+
+    const submitPromise = handle.submitAerogpu(new ArrayBuffer(4), 1n);
+
+    // Allow submit to be posted and tick pump to run.
+    await vi.advanceTimersByTimeAsync(20);
+    await expect(submitPromise).resolves.toMatchObject({ completedFence: 1n });
+
+    expect(submitAttempts).toBe(2);
+    expect(sawTransferAttempt).toBe(true);
+    expect(sawFallbackAttempt).toBe(true);
+
+    handle.shutdown();
+    vi.useRealTimers();
+  });
+
   it("rejects submitAerogpu if shutdown races with submit registration", async () => {
     vi.useFakeTimers();
 
