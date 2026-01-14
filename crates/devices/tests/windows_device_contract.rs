@@ -589,14 +589,12 @@ fn windows_device_contract_virtio_input_alias_inf_includes_generic_fallback_mode
             mouse_desc.to_ascii_lowercase(),
             "{section}: keyboard/mouse DeviceDesc tokens must be distinct"
         );
-        assert_ne!(
-            fallback_desc.to_ascii_lowercase(),
-            kbd_desc.to_ascii_lowercase(),
+        assert!(
+            !fallback_desc.eq_ignore_ascii_case(&kbd_desc),
             "{section}: fallback DeviceDesc token must be generic (not keyboard)"
         );
-        assert_ne!(
-            fallback_desc.to_ascii_lowercase(),
-            mouse_desc.to_ascii_lowercase(),
+        assert!(
+            !fallback_desc.eq_ignore_ascii_case(&mouse_desc),
             "{section}: fallback DeviceDesc token must be generic (not mouse)"
         );
 
