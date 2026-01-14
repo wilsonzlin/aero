@@ -1780,6 +1780,7 @@ mod tests {
 
     use super::*;
     use crate::input_layout::{AEROGPU_INPUT_LAYOUT_BLOB_MAGIC, AEROGPU_INPUT_LAYOUT_BLOB_VERSION};
+    use aero_protocol::aerogpu::aerogpu_cmd::AEROGPU_RESOURCE_USAGE_STORAGE;
 
     #[test]
     fn maps_aerogpu_formats() {
