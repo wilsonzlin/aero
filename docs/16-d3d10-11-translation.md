@@ -1322,18 +1322,19 @@ Let:
 Within the chosen internal group, the expansion-internal bindings are reserved and stable so the
 runtime can share common helper WGSL across VS/GS/HS/DS compute variants:
 
-- `@binding(256)`: `ExpandParams` (uniform/storage; draw parameters + topology info)
+- `@binding(256)`: `ExpandParams` (uniform/storage; IA offsets/strides + draw/topology info)
 - `@binding(257..=264)`: vertex buffers `vb0..vb7` as read-only storage (after slot compaction)
-- `@binding(265)`: index buffer (read-only storage; absent → bind dummy)
-- `@binding(266)`: `vs_out` (read_write storage)
-- `@binding(267)`: `tess_out_vertices` (read_write storage)
-- `@binding(268)`: `tess_out_indices` (read_write storage)
-- `@binding(269)`: `gs_out_vertices` (read_write storage)
-- `@binding(270)`: `gs_out_indices` (read_write storage)
-- `@binding(271)`: `indirect_args` (read_write storage)
-- `@binding(272)`: `counters` (read_write storage; atomics)
-- `@binding(273)`: `tess_patch_state` (read_write storage; per patch, used by HS/DS emulation)
-- `@binding(274)`: `tess_patch_constants` (read_write storage; per patch tess factors for DS)
+- `@binding(265)`: `IndexPullingParams` (uniform; indexed draws only; optional helper binding)
+- `@binding(266)`: index buffer as read-only storage (`array<u32>` words; indexed draws only; absent → dummy)
+- `@binding(267)`: `vs_out` (read_write storage)
+- `@binding(268)`: `tess_out_vertices` (read_write storage)
+- `@binding(269)`: `tess_out_indices` (read_write storage)
+- `@binding(270)`: `gs_out_vertices` (read_write storage)
+- `@binding(271)`: `gs_out_indices` (read_write storage)
+- `@binding(272)`: `indirect_args` (read_write storage)
+- `@binding(273)`: `counters` (read_write storage; atomics)
+- `@binding(274)`: `tess_patch_state` (read_write storage; per patch, used by HS/DS emulation)
+- `@binding(275)`: `tess_patch_constants` (read_write storage; per patch tess factors for DS)
 
 **`ExpandParams` layout (concrete; `@binding(256)`)**
 
@@ -1362,29 +1363,34 @@ struct AerogpuExpandVertexBuffer {
 
 // Total size: 192 bytes.
 struct AerogpuExpandParams {
+  // Compact IA vertex-buffer bindings (after slot compaction).
+  // Each entry corresponds to vbN in `@binding(257 + N)`.
+  struct AerogpuExpandVertexBuffer vb[8];
+
+  // Vertex pulling draw parameters (matches the tail of `AeroVpIaUniform` when using a fixed 8-slot
+  // IA uniform).
+  uint32_t first_vertex;
+  uint32_t first_instance;
+  int32_t  base_vertex; // 0 for Draw
+  uint32_t first_index; // 0 for Draw
+
+  // Draw + topology.
   uint32_t draw_kind;   // 0 = Draw, 1 = DrawIndexed
   uint32_t topology;    // enum aerogpu_primitive_topology (including adj/patchlist extensions)
   uint32_t vertex_count;
   uint32_t index_count; // 0 for Draw
 
+  // Indexed draw metadata.
   uint32_t instance_count;
-  uint32_t first_vertex;
-  uint32_t first_index;    // 0 for Draw
-  uint32_t first_instance;
-
-  int32_t  base_vertex;    // 0 for Draw
-  uint32_t index_format;   // enum aerogpu_index_format (valid only for DrawIndexed)
-  uint32_t index_offset_bytes; // IA index-buffer binding offset in bytes
+  uint32_t index_format;      // enum aerogpu_index_format (valid only for DrawIndexed)
+  uint32_t index_offset_bytes; // IA index-buffer binding offset in bytes (optional; see note below)
   uint32_t expanded_vertex_stride_bytes;
 
-  uint32_t out_max_vertices; // capacity of the current output vertex buffer (elements)
-  uint32_t out_max_indices;  // capacity of the current output index buffer (elements; 0 if unused)
+  // Output capacities (elements, not bytes).
+  uint32_t out_max_vertices;
+  uint32_t out_max_indices; // 0 if unused
   uint32_t _pad0;
   uint32_t _pad1;
-
-  // Compact IA vertex-buffer bindings (after slot compaction).
-  // Each entry corresponds to vbN in `@binding(257 + N)`.
-  struct AerogpuExpandVertexBuffer vb[8];
 };
 ```
 
@@ -1395,7 +1401,31 @@ struct ExpandParams { /* same fields */ }
 @group(3) @binding(256) var<uniform> params: ExpandParams;
 ```
 
-**`counters` layout (concrete; `@binding(272)`)**
+Note: D3D11 index-buffer binding offsets are not guaranteed to be 256-byte aligned, so for compute
+index pulling it is often simplest to fold the IA index-buffer byte offset into `first_index` on
+the host (if the offset is stride-aligned). In that case, set `index_offset_bytes = 0` and treat
+`first_index` as the fully-adjusted first index. This is what the current in-tree executor does for
+its placeholder prepass.
+
+**`IndexPullingParams` layout (concrete; `@binding(265)`; optional helper)**
+
+The in-tree index-pulling WGSL helper (`crates/aero-d3d11/src/runtime/index_pulling.rs`) models the
+index buffer as `array<u32>` and uses a tiny uniform for `{first_index, base_vertex, index_format}`.
+This binding is optional if your expansion shaders read those fields from `ExpandParams` directly,
+but reserving it makes it easy to reuse the helper as-is:
+
+```wgsl
+struct IndexPullingParams {
+  first_index: u32;
+  base_vertex: i32;
+  index_format: u32; // 0 = u16, 1 = u32
+  _pad0: u32;
+}
+@group(3) @binding(265) var<uniform> ip: IndexPullingParams;
+@group(3) @binding(266) var<storage, read> index_words: array<u32>;
+```
+
+**`counters` layout (concrete; `@binding(273)`)**
 
 The counters buffer is written by expansion passes and read when finalizing indirect args:
 
@@ -1406,7 +1436,7 @@ struct ExpandCounters {
   overflow: atomic<u32>; // 0/1 (set when any pass exceeds out_*_max)
   _pad0: u32;
 }
-@group(3) @binding(272) var<storage, read_write> counters: ExpandCounters;
+@group(3) @binding(273) var<storage, read_write> counters: ExpandCounters;
 ```
 
 **Counter usage (allocation + overflow; normative)**
@@ -1425,7 +1455,7 @@ Note: `atomicAdd` will still increment the counter even in the overflow case. Th
 the finalize step MUST turn the indirect draw count(s) into 0 when `overflow != 0`, so the render
 pass deterministically draws nothing.
 
-**`tess_patch_state` layout (concrete; `@binding(273)`)**
+**`tess_patch_state` layout (concrete; `@binding(274)`)**
 
 Tessellation requires per-patch state that is produced by the HS patch-constant pass and then
 consumed by subsequent tessellator/DS passes (and optionally GS).
@@ -1452,7 +1482,7 @@ struct TessPatchState {
 }
 // Bind group index is `3` in the baseline design (shared with GS/HS/DS resources and other internal
 // emulation bindings).
-@group(3) @binding(273) var<storage, read_write> tess_patch_state: array<TessPatchState>;
+@group(3) @binding(274) var<storage, read_write> tess_patch_state: array<TessPatchState>;
 ```
 
 Entry count: `patch_count * instance_count` (one patch-state entry per patch per instance).
@@ -1462,7 +1492,7 @@ Indexing rule (normative):
 - `patch_instance_id = instance_id * patch_count + patch_id`
 - `tess_patch_state[patch_instance_id]` corresponds to `(patch_id, instance_id)`.
 
-**`tess_patch_constants` layout (concrete; `@binding(274)`)**
+**`tess_patch_constants` layout (concrete; `@binding(275)`)**
 
 The HS patch-constant function produces tessellation factors and (optionally) other patch-constant
 data. DS consumes the patch-constant data, including the tess factors.
@@ -1492,7 +1522,7 @@ struct TessPatchConstants {
 }
 // Bind group index is `3` in the baseline design (shared with GS/HS/DS resources). Implementations
 // using a dedicated internal group instead use `@group(4)`.
-@group(3) @binding(274) var<storage, read_write> tess_patch_constants: array<TessPatchConstants>;
+@group(3) @binding(275) var<storage, read_write> tess_patch_constants: array<TessPatchConstants>;
 ```
 
 HS writes `f32` tess factors by storing their bit patterns:
