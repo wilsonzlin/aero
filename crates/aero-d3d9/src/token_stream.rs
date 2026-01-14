@@ -124,6 +124,22 @@ fn score_sm2_sm3_length_encoding(
             } else {
                 score -= 1;
             }
+
+            // Additional heuristic: for common register-only ops, operand tokens should not look
+            // like opcode tokens. Penalize encodings that treat the terminating `end` token (or a
+            // comment block header) as an operand.
+            //
+            // This makes the detection more robust against malformed streams with bogus length
+            // fields that could otherwise be misclassified as operand-count encoding.
+            //
+            // Skip opcodes that legitimately include immediate values.
+            if !matches!(opcode, 0x0051 | 0x0052 | 0x0053) && operand_len > 0 {
+                let last_operand = read_token_u32_le(token_stream, idx + total_len - 1)?;
+                let last_opcode = (last_operand & 0xFFFF) as u16;
+                if matches!(last_opcode, 0xFFFF | 0xFFFE) {
+                    score -= 4;
+                }
+            }
         }
 
         idx += total_len;
