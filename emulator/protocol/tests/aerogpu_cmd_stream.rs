@@ -1,6 +1,7 @@
 use aero_protocol::aerogpu::aerogpu_cmd::{
     decode_cmd_create_input_layout_blob_le, decode_cmd_create_shader_dxbc_payload_le,
-    decode_cmd_set_vertex_buffers_bindings_le, decode_cmd_upload_resource_payload_le,
+    decode_cmd_dispatch_le, decode_cmd_set_vertex_buffers_bindings_le,
+    decode_cmd_upload_resource_payload_le,
     AerogpuCmdDecodeError, AerogpuCmdOpcode, AerogpuCmdStreamHeader, AerogpuCmdStreamIter,
     AEROGPU_CMD_STREAM_MAGIC,
 };
@@ -559,6 +560,22 @@ fn free_function_payload_decoders_allow_trailing_bytes() {
     assert_eq!(bindings.len(), 1);
     let buffer = bindings[0].buffer;
     assert_eq!(buffer, 11);
+
+    let mut dispatch_payload = Vec::new();
+    push_u32(&mut dispatch_payload, 1); // group_count_x
+    push_u32(&mut dispatch_payload, 2); // group_count_y
+    push_u32(&mut dispatch_payload, 3); // group_count_z
+    push_u32(&mut dispatch_payload, 0); // reserved0
+    push_u32(&mut dispatch_payload, 0xDEAD_BEEF); // trailing extension
+    let dispatch_packet = build_packet(AerogpuCmdOpcode::Dispatch as u32, dispatch_payload);
+
+    let dispatch = decode_cmd_dispatch_le(&dispatch_packet).unwrap();
+    let group_count_x = dispatch.group_count_x;
+    let group_count_y = dispatch.group_count_y;
+    let group_count_z = dispatch.group_count_z;
+    assert_eq!(group_count_x, 1);
+    assert_eq!(group_count_y, 2);
+    assert_eq!(group_count_z, 3);
 }
 
 #[test]

@@ -1528,6 +1528,30 @@ pub fn decode_cmd_copy_texture2d_le(
     })
 }
 
+/// Decode DISPATCH.
+pub fn decode_cmd_dispatch_le(buf: &[u8]) -> Result<AerogpuCmdDispatch, AerogpuCmdDecodeError> {
+    let hdr = decode_cmd_hdr_le(buf)?;
+    let packet_len = validate_packet_len(buf, hdr)?;
+    if AerogpuCmdOpcode::from_u32(hdr.opcode) != Some(AerogpuCmdOpcode::Dispatch) {
+        return Err(AerogpuCmdDecodeError::UnexpectedOpcode {
+            found: hdr.opcode,
+            expected: AerogpuCmdOpcode::Dispatch,
+        });
+    }
+
+    let payload = &buf[AerogpuCmdHdr::SIZE_BYTES..packet_len];
+    let expected_payload_size = size_of::<AerogpuCmdDispatch>() - AerogpuCmdHdr::SIZE_BYTES;
+    validate_expected_payload_size(expected_payload_size, payload)?;
+
+    Ok(AerogpuCmdDispatch {
+        hdr,
+        group_count_x: u32::from_le_bytes(payload[0..4].try_into().unwrap()),
+        group_count_y: u32::from_le_bytes(payload[4..8].try_into().unwrap()),
+        group_count_z: u32::from_le_bytes(payload[8..12].try_into().unwrap()),
+        reserved0: u32::from_le_bytes(payload[12..16].try_into().unwrap()),
+    })
+}
+
 /// Decode SET_VERTEX_BUFFERS and parse the trailing `aerogpu_vertex_buffer_binding[]`.
 pub fn decode_cmd_set_vertex_buffers_bindings_le(
     buf: &[u8],

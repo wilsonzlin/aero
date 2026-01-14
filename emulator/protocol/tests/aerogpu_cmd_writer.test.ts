@@ -23,9 +23,9 @@ import {
   AEROGPU_CMD_SET_SAMPLERS_SIZE,
   AEROGPU_CMD_SET_CONSTANT_BUFFERS_SIZE,
   AEROGPU_CMD_SET_SHADER_RESOURCE_BUFFERS_SIZE,
-  AEROGPU_CMD_SET_UNORDERED_ACCESS_BUFFERS_SIZE,
   AEROGPU_CMD_SET_SHADER_CONSTANTS_F_SIZE,
   AEROGPU_CMD_SET_TEXTURE_SIZE,
+  AEROGPU_CMD_SET_UNORDERED_ACCESS_BUFFERS_SIZE,
   AerogpuCmdOpcode,
   AerogpuCmdWriter,
   AerogpuBlendFactor,
@@ -38,6 +38,9 @@ import {
   AerogpuShaderStage,
   AerogpuShaderStageEx,
   alignUp,
+  decodeCmdDispatchPayload,
+  decodeCmdSetShaderResourceBuffersPayload,
+  decodeCmdSetUnorderedAccessBuffersPayload,
   decodeStageEx,
   decodeCmdStreamHeader,
   encodeStageEx,
@@ -297,6 +300,83 @@ test("AerogpuCmdWriter emits sampler binding table packets", () => {
   assert.equal(view.getUint32(cursor + AEROGPU_CMD_HDR_OFF_SIZE_BYTES, true), AEROGPU_CMD_DESTROY_SAMPLER_SIZE);
   assert.equal(view.getUint32(cursor + 8, true), 1);
   cursor += AEROGPU_CMD_DESTROY_SAMPLER_SIZE;
+
+  // FLUSH
+  assert.equal(view.getUint32(cursor + AEROGPU_CMD_HDR_OFF_OPCODE, true), AerogpuCmdOpcode.Flush);
+  assert.equal(view.getUint32(cursor + AEROGPU_CMD_HDR_OFF_SIZE_BYTES, true), 16);
+  cursor += 16;
+
+  assert.equal(cursor, bytes.byteLength);
+});
+
+test("AerogpuCmdWriter emits SRV/UAV binding table packets and DISPATCH", () => {
+  const w = new AerogpuCmdWriter();
+  w.setShaderResourceBuffers(AerogpuShaderStage.Pixel, 1, [
+    { buffer: 10, offsetBytes: 0, sizeBytes: 64 },
+    { buffer: 11, offsetBytes: 16, sizeBytes: 0 },
+  ]);
+  w.setUnorderedAccessBuffers(AerogpuShaderStage.Compute, 0, [
+    { buffer: 20, offsetBytes: 4, sizeBytes: 128, initialCount: 0 },
+  ]);
+  w.dispatch(1, 2, 3);
+  w.flush();
+
+  const bytes = w.finish();
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+
+  let cursor = AEROGPU_CMD_STREAM_HEADER_SIZE;
+
+  // SET_SHADER_RESOURCE_BUFFERS
+  assert.equal(
+    view.getUint32(cursor + AEROGPU_CMD_HDR_OFF_OPCODE, true),
+    AerogpuCmdOpcode.SetShaderResourceBuffers,
+  );
+  assert.equal(
+    view.getUint32(cursor + AEROGPU_CMD_HDR_OFF_SIZE_BYTES, true),
+    AEROGPU_CMD_SET_SHADER_RESOURCE_BUFFERS_SIZE + 2 * 16,
+  );
+  const srvs = decodeCmdSetShaderResourceBuffersPayload(bytes, cursor);
+  assert.equal(srvs.shaderStage, AerogpuShaderStage.Pixel);
+  assert.equal(srvs.startSlot, 1);
+  assert.equal(srvs.bufferCount, 2);
+  assert.equal(srvs.reserved0, 0);
+  assert.equal(srvs.bindings.getUint32(0, true), 10);
+  assert.equal(srvs.bindings.getUint32(4, true), 0);
+  assert.equal(srvs.bindings.getUint32(8, true), 64);
+  assert.equal(srvs.bindings.getUint32(16, true), 11);
+  assert.equal(srvs.bindings.getUint32(20, true), 16);
+  assert.equal(srvs.bindings.getUint32(24, true), 0);
+  cursor += AEROGPU_CMD_SET_SHADER_RESOURCE_BUFFERS_SIZE + 2 * 16;
+
+  // SET_UNORDERED_ACCESS_BUFFERS
+  assert.equal(
+    view.getUint32(cursor + AEROGPU_CMD_HDR_OFF_OPCODE, true),
+    AerogpuCmdOpcode.SetUnorderedAccessBuffers,
+  );
+  assert.equal(
+    view.getUint32(cursor + AEROGPU_CMD_HDR_OFF_SIZE_BYTES, true),
+    AEROGPU_CMD_SET_UNORDERED_ACCESS_BUFFERS_SIZE + 16,
+  );
+  const uavs = decodeCmdSetUnorderedAccessBuffersPayload(bytes, cursor);
+  assert.equal(uavs.shaderStage, AerogpuShaderStage.Compute);
+  assert.equal(uavs.startSlot, 0);
+  assert.equal(uavs.uavCount, 1);
+  assert.equal(uavs.reserved0, 0);
+  assert.equal(uavs.bindings.getUint32(0, true), 20);
+  assert.equal(uavs.bindings.getUint32(4, true), 4);
+  assert.equal(uavs.bindings.getUint32(8, true), 128);
+  assert.equal(uavs.bindings.getUint32(12, true), 0);
+  cursor += AEROGPU_CMD_SET_UNORDERED_ACCESS_BUFFERS_SIZE + 16;
+
+  // DISPATCH
+  assert.equal(view.getUint32(cursor + AEROGPU_CMD_HDR_OFF_OPCODE, true), AerogpuCmdOpcode.Dispatch);
+  assert.equal(view.getUint32(cursor + AEROGPU_CMD_HDR_OFF_SIZE_BYTES, true), 24);
+  const dispatch = decodeCmdDispatchPayload(bytes, cursor);
+  assert.equal(dispatch.groupCountX, 1);
+  assert.equal(dispatch.groupCountY, 2);
+  assert.equal(dispatch.groupCountZ, 3);
+  assert.equal(dispatch.reserved0, 0);
+  cursor += 24;
 
   // FLUSH
   assert.equal(view.getUint32(cursor + AEROGPU_CMD_HDR_OFF_OPCODE, true), AerogpuCmdOpcode.Flush);

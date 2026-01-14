@@ -1278,6 +1278,34 @@ export function decodeCmdSetUnorderedAccessBuffersPayloadFromPacket(
   };
 }
 
+export interface AerogpuCmdDispatchPayload {
+  groupCountX: number;
+  groupCountY: number;
+  groupCountZ: number;
+  reserved0: number;
+}
+
+export function decodeCmdDispatchPayload(bytes: Uint8Array, packetOffset = 0): AerogpuCmdDispatchPayload {
+  return decodeCmdDispatchPayloadFromPacket(decodePacketFromBytes(bytes, packetOffset));
+}
+
+export function decodeCmdDispatchPayloadFromPacket(packet: AerogpuCmdPacket): AerogpuCmdDispatchPayload {
+  validatePacketPayloadLen(packet);
+  if (packet.opcode !== AerogpuCmdOpcode.Dispatch) {
+    throw new Error(`Unexpected opcode: 0x${packet.opcode.toString(16)} (expected DISPATCH)`);
+  }
+  if (packet.payload.byteLength < 16) {
+    throw new Error("Buffer too small for DISPATCH payload");
+  }
+
+  const view = new DataView(packet.payload.buffer, packet.payload.byteOffset, packet.payload.byteLength);
+  const groupCountX = view.getUint32(0, true);
+  const groupCountY = view.getUint32(4, true);
+  const groupCountZ = view.getUint32(8, true);
+  const reserved0 = view.getUint32(12, true);
+  return { groupCountX, groupCountY, groupCountZ, reserved0 };
+}
+
 export interface AerogpuCmdSetShaderConstantsFPayload {
   stage: number;
   startRegister: number;
