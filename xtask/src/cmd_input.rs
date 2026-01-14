@@ -216,6 +216,7 @@ fn e2e_step_detail(pw_extra_args: &[String]) -> String {
 mod tests {
     use super::*;
     use std::collections::HashSet;
+    use std::fs;
 
     #[test]
     fn parse_args_rejects_rust_only_with_e2e() {
@@ -243,6 +244,18 @@ mod tests {
         assert!(
             INPUT_E2E_SPECS.contains(&INPUT_BATCH_MALFORMED_SPEC),
             "expected input_batch_malformed spec to be part of the input e2e subset"
+        );
+    }
+
+    #[test]
+    fn cmd_input_source_mentions_malformed_spec_once() {
+        let src_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/cmd_input.rs");
+        let src = fs::read_to_string(&src_path)
+            .unwrap_or_else(|err| panic!("read {src_path:?}: {err}"));
+        let occurrences = src.matches(INPUT_BATCH_MALFORMED_SPEC).count();
+        assert_eq!(
+            occurrences, 1,
+            "expected {INPUT_BATCH_MALFORMED_SPEC} to appear exactly once in {src_path:?}"
         );
     }
 
