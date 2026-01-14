@@ -2192,6 +2192,13 @@ async fn verify_chunk_once(
         })
         .with_context(|| format!("GET s3://{bucket}/{key}"))?;
 
+    if let Some(encoding) = resp.content_encoding() {
+        let encoding = encoding.trim();
+        if !encoding.eq_ignore_ascii_case("identity") {
+            bail!("unexpected Content-Encoding for s3://{bucket}/{key}: {encoding}");
+        }
+    }
+
     let content_length = resp.content_length();
     if let Some(content_length) = content_length {
         let len_u64: u64 = content_length.try_into().map_err(|_| {
@@ -2202,10 +2209,16 @@ async fn verify_chunk_once(
                 "size mismatch: expected {expected_size} bytes, got {len_u64} bytes (Content-Length)"
             );
         }
+
+        // If we don't have a checksum to verify, Content-Length already validated the size. Avoid
+        // downloading the body unnecessarily.
+        if expected_sha256.is_none() {
+            return Ok(());
+        }
     }
 
-    // Always stream the body to validate that the object can be downloaded and the actual byte
-    // length matches the manifest (even when no sha256 is present).
+    // Stream the body to validate it can be downloaded and the actual byte length matches the
+    // manifest. When a sha256 checksum is provided, we hash incrementally while streaming.
 
     let mut reader = resp.body.into_async_read();
     let mut hasher = expected_sha256.map(|_| Sha256::new());
