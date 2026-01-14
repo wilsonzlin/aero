@@ -858,6 +858,21 @@ impl AeroGpuExecutor {
     }
 }
 
+// -----------------------------------------------------------------------------
+// Defensive caps (guest-driven scanout writeback)
+// -----------------------------------------------------------------------------
+//
+// If the host backend supplies a presented scanout, the executor can write it back into guest
+// memory (SCANOUT0_FB_GPA). The guest controls the scanout register values, so we must avoid
+// allocating unbounded intermediate buffers or attempting writes that wrap the physical address
+// space.
+//
+// Keep a tighter cap on wasm32 where heaps are more constrained.
+#[cfg(target_arch = "wasm32")]
+const MAX_SCANOUT_WRITEBACK_BYTES: usize = 32 * 1024 * 1024;
+#[cfg(not(target_arch = "wasm32"))]
+const MAX_SCANOUT_WRITEBACK_BYTES: usize = 64 * 1024 * 1024;
+
 fn write_scanout0_rgba8(
     regs: &AeroGpuRegs,
     mem: &mut dyn MemoryBus,
@@ -881,19 +896,12 @@ fn write_scanout0_rgba8(
     if src_width == 0 || src_height == 0 {
         return Ok(());
     }
-    let expected_src_len = src_width
-        .checked_mul(src_height)
-        .and_then(|v| v.checked_mul(4))
-        .ok_or_else(|| "scanout dimensions overflow".to_string())?;
-    if scanout.rgba8.len() < expected_src_len {
-        return Err(format!(
-            "scanout rgba8 buffer too small: need {expected_src_len} bytes for {src_width}x{src_height}, have {}",
-            scanout.rgba8.len()
-        ));
-    }
 
     let copy_width = dst_width.min(src_width);
     let copy_height = dst_height.min(src_height);
+    if copy_width == 0 || copy_height == 0 {
+        return Ok(());
+    }
 
     let dst_bpp = regs
         .scanout0
@@ -907,6 +915,44 @@ fn write_scanout0_rgba8(
     if pitch < row_bytes {
         return Err(format!(
             "scanout pitch_bytes {pitch} is smaller than row_bytes {row_bytes}"
+        ));
+    }
+
+    // Cap total bytes written and validate GPA arithmetic does not wrap.
+    let total_write_bytes = row_bytes
+        .checked_mul(copy_height)
+        .ok_or_else(|| "scanout size overflow".to_string())?;
+    if total_write_bytes > MAX_SCANOUT_WRITEBACK_BYTES {
+        return Err(format!(
+            "scanout writeback too large: {copy_width}x{copy_height} @ {dst_bpp}Bpp = {total_write_bytes} bytes (cap {MAX_SCANOUT_WRITEBACK_BYTES})"
+        ));
+    }
+
+    let pitch_u64 = u64::from(regs.scanout0.pitch_bytes);
+    let row_bytes_u64 = u64::try_from(row_bytes).map_err(|_| "scanout row bytes overflow".to_string())?;
+    let last_row_gpa = regs
+        .scanout0
+        .fb_gpa
+        .checked_add(
+            (copy_height as u64)
+                .checked_sub(1)
+                .and_then(|rows| rows.checked_mul(pitch_u64))
+                .ok_or_else(|| "scanout address overflow".to_string())?,
+        )
+        .ok_or_else(|| "scanout address overflow".to_string())?;
+    last_row_gpa
+        .checked_add(row_bytes_u64)
+        .ok_or_else(|| "scanout address overflow".to_string())?;
+
+    // Ensure the backend scanout buffer is large enough for the portion we will read.
+    let required_src_len = src_width
+        .checked_mul(copy_height)
+        .and_then(|v| v.checked_mul(4))
+        .ok_or_else(|| "scanout dimensions overflow".to_string())?;
+    if scanout.rgba8.len() < required_src_len {
+        return Err(format!(
+            "scanout rgba8 buffer too small: need {required_src_len} bytes for {src_width}x{copy_height}, have {}",
+            scanout.rgba8.len()
         ));
     }
 
@@ -980,7 +1026,7 @@ fn write_scanout0_rgba8(
             }
         }
 
-        let row_gpa = regs.scanout0.fb_gpa + (y as u64) * (regs.scanout0.pitch_bytes as u64);
+        let row_gpa = regs.scanout0.fb_gpa + (y as u64) * pitch_u64;
         mem.write_physical(row_gpa, &row_buf);
     }
 
@@ -1539,5 +1585,55 @@ mod tests {
 
         assert_eq!(mem.read_u32(fb_gpa), u32::from_le_bytes([3, 2, 1, 4]));
         assert_eq!(regs.completed_fence, fence);
+    }
+
+    #[test]
+    fn scanout_writeback_rejects_oversized_dimensions_before_touching_buffer() {
+        let mut mem = Bus::new(0x1000);
+        let mut regs = AeroGpuRegs::default();
+        regs.scanout0.enable = true;
+        regs.scanout0.width = 1;
+        regs.scanout0.height = u32::try_from(MAX_SCANOUT_WRITEBACK_BYTES / 4 + 1).unwrap();
+        regs.scanout0.format = AeroGpuFormat::R8G8B8A8Unorm;
+        regs.scanout0.pitch_bytes = 4;
+        regs.scanout0.fb_gpa = 0x100;
+
+        // Do not allocate a huge RGBA buffer; the writeback path should reject on size alone.
+        let scanout = AeroGpuBackendScanout {
+            width: 1,
+            height: regs.scanout0.height,
+            rgba8: Vec::new(),
+        };
+
+        let err = write_scanout0_rgba8(&regs, &mut mem, &scanout).unwrap_err();
+        assert!(
+            err.contains("too large"),
+            "expected size error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn scanout_writeback_rejects_address_overflow() {
+        let mut mem = Bus::new(0x1000);
+        let mut regs = AeroGpuRegs::default();
+        regs.scanout0.enable = true;
+        regs.scanout0.width = 1;
+        regs.scanout0.height = 2;
+        regs.scanout0.format = AeroGpuFormat::R8G8B8A8Unorm;
+        regs.scanout0.pitch_bytes = 4;
+        // Force wrap when computing `fb_gpa + pitch * (height - 1)`.
+        regs.scanout0.fb_gpa = u64::MAX - 1;
+
+        let scanout = AeroGpuBackendScanout {
+            width: 1,
+            height: 2,
+            rgba8: Vec::new(),
+        };
+
+        let err = write_scanout0_rgba8(&regs, &mut mem, &scanout).unwrap_err();
+        assert!(
+            err.contains("address overflow"),
+            "expected address overflow error, got: {err}"
+        );
     }
 }
