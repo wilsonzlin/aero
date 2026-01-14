@@ -1032,6 +1032,78 @@ describe("RemoteChunkedDisk", () => {
     await disk.close();
   });
 
+  it("disables caching when clearCache hits quota (and continues serving reads)", async () => {
+    const chunkSize = 1024; // multiple of 512
+    const totalSize = chunkSize;
+    const chunkCount = 1;
+
+    const img = buildTestImageBytes(totalSize);
+    const chunk0 = img.slice(0, chunkSize);
+
+    const manifest = {
+      schema: "aero.chunked-disk-image.v1",
+      imageId: "test",
+      version: "v1",
+      mimeType: "application/octet-stream",
+      totalSize,
+      chunkSize,
+      chunkCount,
+      chunkIndexWidth: 8,
+      chunks: [{ size: chunkSize, sha256: await sha256Hex(chunk0) }],
+    };
+
+    const { baseUrl, hits, close } = await withServer((_req, res) => {
+      const url = new URL(_req.url ?? "/", "http://localhost");
+      if (url.pathname === "/manifest.json") {
+        res.statusCode = 200;
+        res.setHeader("content-type", "application/json");
+        res.end(JSON.stringify(manifest));
+        return;
+      }
+
+      if (url.pathname === "/chunks/00000000.bin") {
+        res.statusCode = 200;
+        res.setHeader("content-type", "application/octet-stream");
+        res.end(chunk0);
+        return;
+      }
+
+      res.statusCode = 404;
+      res.end("not found");
+    });
+    closeServer = close;
+
+    const store = new QuotaMetaWriteStore();
+    const disk = await RemoteChunkedDisk.open(`${baseUrl}/manifest.json`, {
+      store,
+      cacheLimitBytes: chunkSize * 8,
+      prefetchSequentialChunks: 0,
+      retryBaseDelayMs: 0,
+      maxConcurrentFetches: 1,
+    });
+
+    // Prime the cache.
+    const buf1 = new Uint8Array(512);
+    await disk.readSectors(0, buf1);
+    expect(buf1).toEqual(img.slice(0, 512));
+    expect(hits.get("/chunks/00000000.bin")).toBe(1);
+
+    // Simulate quota failure during clearCache (which re-creates meta.json).
+    const baseMetaWrites = store.metaWrites;
+    store.throwOnMetaWrites = true;
+    await expect(disk.clearCache()).resolves.toBeUndefined();
+    expect(store.metaWrites).toBe(baseMetaWrites + 1);
+    expect(disk.getTelemetrySnapshot().cacheLimitBytes).toBe(0);
+
+    // Disk should remain usable after the quota-induced cache disable.
+    const buf2 = new Uint8Array(512);
+    await disk.readSectors(0, buf2);
+    expect(buf2).toEqual(img.slice(0, 512));
+    expect(hits.get("/chunks/00000000.bin")).toBe(2);
+
+    await disk.close();
+  });
+
   it("tolerates Firefox quota error names when persisting fetched chunks (disables caching)", async () => {
     const chunkSize = 1024; // multiple of 512
     const totalSize = chunkSize;

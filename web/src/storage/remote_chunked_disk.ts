@@ -1445,14 +1445,10 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
     try {
       await this.chunkCache.clear();
     } catch (err) {
-      if (err instanceof IdbRemoteChunkCacheQuotaError) {
-        // If the persistent cache cannot be cleared due to quota errors, disable caching for the
-        // remainder of the disk lifetime. Reads remain usable (network-only).
-        this.chunkCache.close?.();
-        this.chunkCache = new NoopChunkCache();
-      } else {
-        throw err;
-      }
+      if (!isQuotaExceededError(err)) throw err;
+      // If the persistent cache cannot be cleared due to quota errors, disable caching for the
+      // remainder of the disk lifetime. Reads remain usable (network-only).
+      this.disableCachingDueToQuota();
     }
   }
 
