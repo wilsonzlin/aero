@@ -1,6 +1,5 @@
 mod common;
 
-use aero_gpu::aerogpu_executor::AeroGpuExecutor;
 use aero_gpu::{readback_rgba8, TextureRegion, VecGuestMemory};
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode,
@@ -60,67 +59,13 @@ fn build_stream(packets: impl FnOnce(&mut Vec<u8>)) -> Vec<u8> {
     out
 }
 
-async fn create_device_queue() -> Option<(wgpu::Device, wgpu::Queue)> {
-    common::ensure_xdg_runtime_dir();
-
-    // Avoid wgpu's GL backend on Linux: wgpu-hal's GLES pipeline reflection can panic for some
-    // shader pipelines (observed in CI sandboxes), which turns these tests into hard failures.
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-        backends: if cfg!(target_os = "linux") {
-            wgpu::Backends::PRIMARY
-        } else {
-            wgpu::Backends::all()
-        },
-        ..Default::default()
-    });
-
-    let adapter = match instance
-        .request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::LowPower,
-            compatible_surface: None,
-            force_fallback_adapter: true,
-        })
-        .await
-    {
-        Some(adapter) => Some(adapter),
-        None => {
-            instance
-                .request_adapter(&wgpu::RequestAdapterOptions {
-                    power_preference: wgpu::PowerPreference::LowPower,
-                    compatible_surface: None,
-                    force_fallback_adapter: false,
-                })
-                .await
-        }
-    }?;
-
-    let (device, queue) = adapter
-        .request_device(
-            &wgpu::DeviceDescriptor {
-                label: Some("aerogpu executor srgb rt test device"),
-                required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::downlevel_defaults(),
-            },
-            None,
-        )
-        .await
-        .ok()?;
-
-    Some((device, queue))
-}
-
 #[test]
 fn executor_clear_srgb_render_target_is_supported() {
     pollster::block_on(async {
-        let (device, queue) = match create_device_queue().await {
-            Some(v) => v,
-            None => {
-                common::skip_or_panic(module_path!(), "no wgpu adapter available");
-                return;
-            }
+        let mut exec = match common::aerogpu_executor_or_skip(module_path!()) {
+            Some(exec) => exec,
+            None => return,
         };
-
-        let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
         let mut guest = VecGuestMemory::new(0x1000);
 
         const RT_HANDLE: u32 = 1;
@@ -196,15 +141,10 @@ fn executor_clear_srgb_render_target_is_supported() {
 #[test]
 fn executor_clear_bgra_srgb_render_target_encodes_linear_values() {
     pollster::block_on(async {
-        let (device, queue) = match create_device_queue().await {
-            Some(v) => v,
-            None => {
-                common::skip_or_panic(module_path!(), "no wgpu adapter available");
-                return;
-            }
+        let mut exec = match common::aerogpu_executor_or_skip(module_path!()) {
+            Some(exec) => exec,
+            None => return,
         };
-
-        let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
         let mut guest = VecGuestMemory::new(0x1000);
 
         const RT_HANDLE: u32 = 1;
@@ -282,15 +222,10 @@ fn executor_clear_bgra_srgb_render_target_encodes_linear_values() {
 #[test]
 fn executor_samples_srgb_texture_and_decodes_texels() {
     pollster::block_on(async {
-        let (device, queue) = match create_device_queue().await {
-            Some(v) => v,
-            None => {
-                common::skip_or_panic(module_path!(), "no wgpu adapter available");
-                return;
-            }
+        let mut exec = match common::aerogpu_executor_or_skip(module_path!()) {
+            Some(exec) => exec,
+            None => return,
         };
-
-        let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
         let mut guest = VecGuestMemory::new(0x1000);
 
         // Full-screen triangle (pos: vec2<f32>).
@@ -434,15 +369,10 @@ fn executor_samples_srgb_texture_and_decodes_texels() {
 #[test]
 fn executor_samples_bgra_srgb_texture_and_decodes_texels() {
     pollster::block_on(async {
-        let (device, queue) = match create_device_queue().await {
-            Some(v) => v,
-            None => {
-                common::skip_or_panic(module_path!(), "no wgpu adapter available");
-                return;
-            }
+        let mut exec = match common::aerogpu_executor_or_skip(module_path!()) {
+            Some(exec) => exec,
+            None => return,
         };
-
-        let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
         let mut guest = VecGuestMemory::new(0x1000);
 
         // Full-screen triangle (pos: vec2<f32>).
@@ -591,15 +521,10 @@ fn executor_samples_bgra_srgb_texture_and_decodes_texels() {
 #[test]
 fn executor_draw_to_x8_srgb_render_target_forces_opaque_alpha() {
     pollster::block_on(async {
-        let (device, queue) = match create_device_queue().await {
-            Some(v) => v,
-            None => {
-                common::skip_or_panic(module_path!(), "no wgpu adapter available");
-                return;
-            }
+        let mut exec = match common::aerogpu_executor_or_skip(module_path!()) {
+            Some(exec) => exec,
+            None => return,
         };
-
-        let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
         let mut guest = VecGuestMemory::new(0x1000);
 
         // Full-screen triangle (pos: vec2<f32>).
@@ -767,15 +692,10 @@ fn executor_draw_to_x8_srgb_render_target_forces_opaque_alpha() {
 #[test]
 fn executor_upload_x8_srgb_forces_opaque_alpha() {
     pollster::block_on(async {
-        let (device, queue) = match create_device_queue().await {
-            Some(v) => v,
-            None => {
-                common::skip_or_panic(module_path!(), "no wgpu adapter available");
-                return;
-            }
+        let mut exec = match common::aerogpu_executor_or_skip(module_path!()) {
+            Some(exec) => exec,
+            None => return,
         };
-
-        let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
         let mut guest = VecGuestMemory::new(0x1000);
 
         let cases = [

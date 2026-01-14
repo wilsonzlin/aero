@@ -192,6 +192,9 @@ impl Opcode {
             46 => Self::Mova,
             65 => Self::TexKill, // 0x41
             66 => Self::Tex,     // 0x42 (texld/texldp)
+            // Some tooling emits `setp` with opcode 0x4E, while the D3D9 SDK opcode
+            // table lists it at 0x5E. Accept both.
+            78 => Self::Setp,    // 0x4E
             93 => Self::TexLdd,  // 0x5D
             94 => Self::Setp,    // 0x5E
             95 => Self::TexLdl,  // 0x5F
@@ -799,43 +802,46 @@ pub fn decode_u32_tokens(tokens: &[u32]) -> Result<DecodedShader, DecodeError> {
             length_candidates[1] = 0;
         }
 
-        let decode_predicate = |pred_token: u32,
-                                abs_token_index: usize|
-         -> Result<Predicate, DecodeError> {
-            let (pred_src, consumed) =
-                decode_src_operand(&[pred_token], 0, stage, major).map_err(|mut err| {
-                    err.token_index += abs_token_index;
-                    err
-                })?;
-            if consumed != 1 {
-                return Err(DecodeError {
-                    token_index: abs_token_index,
-                    message: "unexpected multi-token predicate operand".to_owned(),
-                });
-            }
-            if pred_src.reg.file != RegisterFile::Predicate {
-                return Err(DecodeError {
-                    token_index: abs_token_index,
-                    message: format!("expected predicate register, got {:?}", pred_src.reg.file),
-                });
-            }
-
-            let (component, negate) = match pred_src.modifier {
-                SrcModifier::None => (pred_src.swizzle.0[0], false),
-                SrcModifier::Negate => (pred_src.swizzle.0[0], true),
-                other => {
+        let decode_predicate =
+            |pred_token: u32, abs_token_index: usize| -> Result<Predicate, DecodeError> {
+                let (pred_src, consumed) = decode_src_operand(&[pred_token], 0, stage, major)
+                    .map_err(|mut err| {
+                        err.token_index += abs_token_index;
+                        err
+                    })?;
+                if consumed != 1 {
                     return Err(DecodeError {
                         token_index: abs_token_index,
-                        message: format!("unsupported predicate modifier {other:?}"),
+                        message: "unexpected multi-token predicate operand".to_owned(),
                     });
                 }
+                if pred_src.reg.file != RegisterFile::Predicate {
+                    return Err(DecodeError {
+                        token_index: abs_token_index,
+                        message: format!(
+                            "expected predicate register, got {:?}",
+                            pred_src.reg.file
+                        ),
+                    });
+                }
+
+                let (component, negate) = match pred_src.modifier {
+                    SrcModifier::None => (pred_src.swizzle.0[0], false),
+                    SrcModifier::Negate => (pred_src.swizzle.0[0], true),
+                    other => {
+                        return Err(DecodeError {
+                            token_index: abs_token_index,
+                            message: format!("unsupported predicate modifier {other:?}"),
+                        });
+                    }
+                };
+
+                Ok(Predicate {
+                    reg: pred_src.reg,
+                    component,
+                    negate,
+                })
             };
-            Ok(Predicate {
-                reg: pred_src.reg,
-                component,
-                negate,
-            })
-        };
 
         let mut last_err = None;
         let mut decoded = None;
@@ -1293,11 +1299,11 @@ fn decode_operands_and_extras(
             )?;
         }
         Opcode::Dcl => {
-            // D3D9 `dcl` is unfortunately not uniform across profiles/compilers.
+            // `dcl` encoding differs slightly between toolchains.
             //
-            // Common encodings observed in the wild:
-            // - `dcl <dst>` (1 operand token) for some SM2/SM3 declarations.
-            // - `dcl <decl_token>, <dst>` (2 operand tokens) where `decl_token` encodes usage/index.
+            // Modern form:
+            //   dcl <dst>
+            //     - usage/usage_index (or sampler texture type) are packed into opcode_token[16..24].
             //
             // For translation/telemetry, it is more important that decoding does not fail than it
             // is to recover every semantic detail. We accept both forms.

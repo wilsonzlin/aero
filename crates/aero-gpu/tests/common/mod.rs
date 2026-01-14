@@ -151,6 +151,120 @@ pub async fn aerogpu_executor(
 }
 
 #[allow(dead_code)]
+pub fn aerogpu_executor_or_skip(
+    test_name: &str,
+) -> Option<
+    futures_intrusive::sync::MutexGuard<'static, aero_gpu::aerogpu_executor::AeroGpuExecutor>,
+> {
+    pollster::block_on(aerogpu_executor(test_name))
+}
+
+#[allow(dead_code)]
+pub fn aerogpu_executor_bc(
+) -> Option<std::sync::MutexGuard<'static, aero_gpu::aerogpu_executor::AeroGpuExecutor>> {
+    use std::sync::{Mutex, OnceLock};
+
+    static EXECUTOR: OnceLock<Option<Mutex<aero_gpu::aerogpu_executor::AeroGpuExecutor>>> =
+        OnceLock::new();
+
+    let exec = EXECUTOR.get_or_init(|| {
+        pollster::block_on(async {
+            ensure_xdg_runtime_dir();
+
+            // Avoid wgpu's GL backend on Linux: wgpu-hal's GLES pipeline reflection can panic for
+            // some shader pipelines (observed in CI sandboxes), which turns these tests into hard
+            // failures.
+            let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+                backends: if cfg!(target_os = "linux") {
+                    wgpu::Backends::PRIMARY
+                } else {
+                    wgpu::Backends::all()
+                },
+                ..Default::default()
+            });
+
+            // Try a couple different adapter options; the default request may land on an adapter
+            // that doesn't support BC compression even when another does (e.g. integrated vs
+            // discrete).
+            let adapter_opts = [
+                wgpu::RequestAdapterOptions {
+                    power_preference: wgpu::PowerPreference::LowPower,
+                    compatible_surface: None,
+                    force_fallback_adapter: true,
+                },
+                wgpu::RequestAdapterOptions {
+                    power_preference: wgpu::PowerPreference::LowPower,
+                    compatible_surface: None,
+                    force_fallback_adapter: false,
+                },
+                wgpu::RequestAdapterOptions {
+                    power_preference: wgpu::PowerPreference::HighPerformance,
+                    compatible_surface: None,
+                    force_fallback_adapter: false,
+                },
+            ];
+
+            for opts in adapter_opts {
+                let Some(adapter) = instance.request_adapter(&opts).await else {
+                    continue;
+                };
+                if !adapter
+                    .features()
+                    .contains(wgpu::Features::TEXTURE_COMPRESSION_BC)
+                {
+                    continue;
+                }
+                // Avoid CPU software adapters on Linux for native BC paths; they are a common
+                // source of flakes and crashes (even if they advertise TEXTURE_COMPRESSION_BC).
+                if cfg!(target_os = "linux")
+                    && adapter.get_info().device_type == wgpu::DeviceType::Cpu
+                {
+                    continue;
+                }
+
+                let Ok((device, queue)) = adapter
+                    .request_device(
+                        &wgpu::DeviceDescriptor {
+                            label: Some("aerogpu executor test device (BC)"),
+                            required_features: wgpu::Features::TEXTURE_COMPRESSION_BC,
+                            required_limits: wgpu::Limits::downlevel_defaults(),
+                        },
+                        None,
+                    )
+                    .await
+                else {
+                    continue;
+                };
+
+                return aero_gpu::aerogpu_executor::AeroGpuExecutor::new(device, queue)
+                    .map(Mutex::new)
+                    .ok();
+            }
+
+            None
+        })
+    });
+
+    let mutex = exec.as_ref()?;
+    let mut guard = mutex.lock().unwrap_or_else(|err| err.into_inner());
+    guard.reset();
+    Some(guard)
+}
+
+#[allow(dead_code)]
+pub fn aerogpu_executor_bc_or_skip(
+    test_name: &str,
+) -> Option<std::sync::MutexGuard<'static, aero_gpu::aerogpu_executor::AeroGpuExecutor>> {
+    match aerogpu_executor_bc() {
+        Some(exec) => Some(exec),
+        None => {
+            skip_or_panic(test_name, "no wgpu adapter supports TEXTURE_COMPRESSION_BC");
+            None
+        }
+    }
+}
+
+#[allow(dead_code)]
 pub fn ensure_xdg_runtime_dir() {
     #[cfg(unix)]
     {

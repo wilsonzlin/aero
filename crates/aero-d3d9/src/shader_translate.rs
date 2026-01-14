@@ -503,7 +503,7 @@ fn validate_sampler_texture_types(
             continue;
         }
         return Err(ShaderTranslateError::Translation(format!(
-            "unsupported sampler texture type {ty:?} for s{sampler}"
+            "unsupported sampler texture type {ty:?} for s{sampler} (supported: 1D/2D/3D/Cube)"
         )));
     }
     Ok(())

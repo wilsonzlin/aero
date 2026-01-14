@@ -223,7 +223,7 @@ fn d3d9_create_shader_dxbc_accepts_cube_sampler_declaration() {
 }
 
 #[test]
-fn d3d9_create_shader_dxbc_rejects_volume_sampler_declaration() {
+fn d3d9_create_shader_dxbc_accepts_volume_sampler_declaration() {
     let mut exec = match common::d3d9_executor(module_path!()) {
         Some(exec) => exec,
         None => return,
@@ -235,14 +235,7 @@ fn d3d9_create_shader_dxbc_rejects_volume_sampler_declaration() {
     let stream = writer.finish();
 
     match exec.execute_cmd_stream(&stream) {
-        Ok(_) => panic!("expected CREATE_SHADER_DXBC with dcl_volume to be rejected"),
-        Err(AerogpuD3d9Error::ShaderTranslation(msg)) => {
-            assert!(
-                msg.contains("unsupported sampler texture type"),
-                "unexpected error message: {msg}"
-            );
-            assert!(msg.contains("Texture3D"), "unexpected error message: {msg}");
-        }
+        Ok(_) => {}
         Err(other) => panic!("unexpected error: {other:?}"),
     }
 }

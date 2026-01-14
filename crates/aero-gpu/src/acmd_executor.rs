@@ -57,6 +57,9 @@ impl Drop for AeroGpuAcmdExecutor {
         // Some wgpu backends (particularly headless CI configurations) are sensitive to devices
         // being dropped while work is still in-flight. Ensure all submitted work completes before
         // tearing down the executor to avoid sporadic driver/backend crashes across tests.
+        if std::thread::panicking() {
+            return;
+        }
         self.device.poll(wgpu::Maintain::Wait);
     }
 }

@@ -1,6 +1,6 @@
 mod common;
 
-use aero_gpu::aerogpu_executor::{AeroGpuExecutor, AllocEntry, AllocTable};
+use aero_gpu::aerogpu_executor::{AllocEntry, AllocTable};
 use aero_gpu::{readback_buffer, readback_rgba8, GuestMemory, TextureRegion, VecGuestMemory};
 use aero_protocol::aerogpu::{
     aerogpu_cmd::{
@@ -72,127 +72,6 @@ fn env_truthy(name: &str) -> bool {
         || v.eq_ignore_ascii_case("true")
         || v.eq_ignore_ascii_case("yes")
         || v.eq_ignore_ascii_case("on")
-}
-
-async fn create_device_queue() -> Option<(wgpu::Device, wgpu::Queue)> {
-    common::ensure_xdg_runtime_dir();
-
-    // Avoid wgpu's GL backend on Linux: wgpu-hal's GLES pipeline reflection can panic for some
-    // shader pipelines (observed in CI sandboxes), which turns these tests into hard failures.
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-        backends: if cfg!(target_os = "linux") {
-            wgpu::Backends::PRIMARY
-        } else {
-            wgpu::Backends::all()
-        },
-        ..Default::default()
-    });
-
-    let adapter = match instance
-        .request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::LowPower,
-            compatible_surface: None,
-            force_fallback_adapter: true,
-        })
-        .await
-    {
-        Some(adapter) => Some(adapter),
-        None => {
-            instance
-                .request_adapter(&wgpu::RequestAdapterOptions {
-                    power_preference: wgpu::PowerPreference::LowPower,
-                    compatible_surface: None,
-                    force_fallback_adapter: false,
-                })
-                .await
-        }
-    }?;
-
-    let (device, queue) = adapter
-        .request_device(
-            &wgpu::DeviceDescriptor {
-                label: Some("aerogpu executor bc test device"),
-                // Do not enable TEXTURE_COMPRESSION_BC so the executor must take the CPU
-                // decompression fallback path.
-                required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::downlevel_defaults(),
-            },
-            None,
-        )
-        .await
-        .ok()?;
-
-    Some((device, queue))
-}
-
-async fn create_device_queue_bc() -> Option<(wgpu::Device, wgpu::Queue)> {
-    common::ensure_xdg_runtime_dir();
-
-    // Avoid wgpu's GL backend on Linux: wgpu-hal's GLES pipeline reflection can panic for some
-    // shader pipelines (observed in CI sandboxes), which turns these tests into hard failures.
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-        backends: if cfg!(target_os = "linux") {
-            wgpu::Backends::PRIMARY
-        } else {
-            wgpu::Backends::all()
-        },
-        ..Default::default()
-    });
-
-    // Try a couple different adapter options; the default request may land on an adapter that
-    // doesn't support BC compression even when another does (e.g. integrated vs discrete).
-    let adapter_opts = [
-        wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::LowPower,
-            compatible_surface: None,
-            force_fallback_adapter: true,
-        },
-        wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::LowPower,
-            compatible_surface: None,
-            force_fallback_adapter: false,
-        },
-        wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
-            compatible_surface: None,
-            force_fallback_adapter: false,
-        },
-    ];
-
-    for opts in adapter_opts {
-        let Some(adapter) = instance.request_adapter(&opts).await else {
-            continue;
-        };
-        if !adapter
-            .features()
-            .contains(wgpu::Features::TEXTURE_COMPRESSION_BC)
-        {
-            continue;
-        }
-        // Avoid CPU software adapters on Linux for native BC paths; they are a common source of
-        // flakes and crashes (even if they advertise TEXTURE_COMPRESSION_BC).
-        if cfg!(target_os = "linux") && adapter.get_info().device_type == wgpu::DeviceType::Cpu {
-            continue;
-        }
-
-        let Ok((device, queue)) = adapter
-            .request_device(
-                &wgpu::DeviceDescriptor {
-                    label: Some("aerogpu executor bc direct test device"),
-                    required_features: wgpu::Features::TEXTURE_COMPRESSION_BC,
-                    required_limits: wgpu::Limits::downlevel_defaults(),
-                },
-                None,
-            )
-            .await
-        else {
-            continue;
-        };
-
-        return Some((device, queue));
-    }
-
-    None
 }
 
 fn fullscreen_triangle_vb_bytes() -> Vec<u8> {
@@ -377,15 +256,10 @@ async fn run_bc_cpu_fallback_sample_test(
     bc_data: &[u8],
     expected_rgba: [u8; 4],
 ) {
-    let (device, queue) = match create_device_queue().await {
-        Some(v) => v,
-        None => {
-            common::skip_or_panic(test_name, "no wgpu adapter available");
-            return;
-        }
+    let mut exec = match common::aerogpu_executor_or_skip(test_name) {
+        Some(exec) => exec,
+        None => return,
     };
-
-    let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
     let mut guest = VecGuestMemory::new(0x1000);
 
     let vb_bytes = fullscreen_triangle_vb_bytes();
@@ -427,15 +301,10 @@ async fn run_bc_direct_sample_test(
         return;
     }
 
-    let (device, queue) = match create_device_queue_bc().await {
-        Some(v) => v,
-        None => {
-            common::skip_or_panic(test_name, "no wgpu adapter supports TEXTURE_COMPRESSION_BC");
-            return;
-        }
+    let mut exec = match common::aerogpu_executor_bc_or_skip(test_name) {
+        Some(exec) => exec,
+        None => return,
     };
-
-    let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
     let mut guest = VecGuestMemory::new(0x1000);
 
     let vb_bytes = fullscreen_triangle_vb_bytes();
@@ -493,15 +362,10 @@ fn executor_upload_bc1_srgb_cpu_fallback_decodes_on_sample() {
         "::executor_upload_bc1_srgb_cpu_fallback_decodes_on_sample"
     );
     pollster::block_on(async {
-        let (device, queue) = match create_device_queue().await {
-            Some(v) => v,
-            None => {
-                common::skip_or_panic(TEST_NAME, "no wgpu adapter available");
-                return;
-            }
+        let mut exec = match common::aerogpu_executor_or_skip(TEST_NAME) {
+            Some(exec) => exec,
+            None => return,
         };
-
-        let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
         let mut guest = VecGuestMemory::new(0x1000);
 
         // Full-screen triangle (pos: vec2<f32>).
@@ -654,15 +518,10 @@ fn executor_upload_bc2_srgb_cpu_fallback_decodes_on_sample() {
         "::executor_upload_bc2_srgb_cpu_fallback_decodes_on_sample"
     );
     pollster::block_on(async {
-        let (device, queue) = match create_device_queue().await {
-            Some(v) => v,
-            None => {
-                common::skip_or_panic(TEST_NAME, "no wgpu adapter available");
-                return;
-            }
+        let mut exec = match common::aerogpu_executor_or_skip(TEST_NAME) {
+            Some(exec) => exec,
+            None => return,
         };
-
-        let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
         let mut guest = VecGuestMemory::new(0x1000);
 
         // Full-screen triangle (pos: vec2<f32>).
@@ -817,15 +676,10 @@ fn executor_upload_bc3_srgb_cpu_fallback_decodes_on_sample() {
         "::executor_upload_bc3_srgb_cpu_fallback_decodes_on_sample"
     );
     pollster::block_on(async {
-        let (device, queue) = match create_device_queue().await {
-            Some(v) => v,
-            None => {
-                common::skip_or_panic(TEST_NAME, "no wgpu adapter available");
-                return;
-            }
+        let mut exec = match common::aerogpu_executor_or_skip(TEST_NAME) {
+            Some(exec) => exec,
+            None => return,
         };
-
-        let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
         let mut guest = VecGuestMemory::new(0x1000);
 
         // Full-screen triangle (pos: vec2<f32>).
@@ -981,15 +835,10 @@ fn executor_upload_bc7_srgb_cpu_fallback_decodes_on_sample() {
         "::executor_upload_bc7_srgb_cpu_fallback_decodes_on_sample"
     );
     pollster::block_on(async {
-        let (device, queue) = match create_device_queue().await {
-            Some(v) => v,
-            None => {
-                common::skip_or_panic(TEST_NAME, "no wgpu adapter available");
-                return;
-            }
+        let mut exec = match common::aerogpu_executor_or_skip(TEST_NAME) {
+            Some(exec) => exec,
+            None => return,
         };
-
-        let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
         let mut guest = VecGuestMemory::new(0x1000);
 
         // Full-screen triangle (pos: vec2<f32>).
@@ -1347,15 +1196,10 @@ fn executor_bc_non_multiple_dimensions_use_physical_copy_extents() {
             return;
         }
 
-        let (device, queue) = match create_device_queue_bc().await {
-            Some(v) => v,
-            None => {
-                common::skip_or_panic(TEST_NAME, "no wgpu adapter supports TEXTURE_COMPRESSION_BC");
-                return;
-            }
+        let mut exec = match common::aerogpu_executor_bc_or_skip(TEST_NAME) {
+            Some(exec) => exec,
+            None => return,
         };
-
-        let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
         let mut guest = VecGuestMemory::new(0x1000);
 
         let stream = build_stream(|out| {
@@ -1447,15 +1291,10 @@ fn executor_bc_writeback_uses_physical_copy_extents() {
             return;
         }
 
-        let (device, queue) = match create_device_queue_bc().await {
-            Some(v) => v,
-            None => {
-                common::skip_or_panic(TEST_NAME, "no wgpu adapter supports TEXTURE_COMPRESSION_BC");
-                return;
-            }
+        let mut exec = match common::aerogpu_executor_bc_or_skip(TEST_NAME) {
+            Some(exec) => exec,
+            None => return,
         };
-
-        let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
 
         const TEX_GPA: u64 = 0x1000;
         const TEX_ALLOC_ID: u32 = 1;
@@ -1608,15 +1447,10 @@ fn executor_bc_dirty_range_upload_pads_small_mips() {
             return;
         }
 
-        let (device, queue) = match create_device_queue_bc().await {
-            Some(v) => v,
-            None => {
-                common::skip_or_panic(TEST_NAME, "no wgpu adapter supports TEXTURE_COMPRESSION_BC");
-                return;
-            }
+        let mut exec = match common::aerogpu_executor_bc_or_skip(TEST_NAME) {
+            Some(exec) => exec,
+            None => return,
         };
-
-        let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
 
         const TEX_GPA: u64 = 0x1000;
         const TEX_ALLOC_ID: u32 = 1;
@@ -1766,15 +1600,10 @@ fn executor_bc_dirty_range_upload_pads_small_mips() {
 #[test]
 fn executor_rejects_misaligned_bc_copy_region() {
     pollster::block_on(async {
-        let (device, queue) = match create_device_queue().await {
-            Some(v) => v,
-            None => {
-                common::skip_or_panic(module_path!(), "no wgpu adapter available");
-                return;
-            }
+        let mut exec = match common::aerogpu_executor_or_skip(module_path!()) {
+            Some(exec) => exec,
+            None => return,
         };
-
-        let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
         let mut guest = VecGuestMemory::new(0x1000);
 
         let stream = build_stream(|out| {
@@ -1859,15 +1688,10 @@ fn executor_falls_back_for_unaligned_bc_texture_dimensions_even_when_bc_is_enabl
             return;
         }
 
-        let (device, queue) = match create_device_queue_bc().await {
-            Some(v) => v,
-            None => {
-                common::skip_or_panic(TEST_NAME, "no wgpu adapter supports TEXTURE_COMPRESSION_BC");
-                return;
-            }
+        let mut exec = match common::aerogpu_executor_bc_or_skip(TEST_NAME) {
+            Some(exec) => exec,
+            None => return,
         };
-
-        let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
         let mut guest = VecGuestMemory::new(0x1000);
 
         // Regression: wgpu/WebGPU rejects BC textures unless the base dimensions are multiples of

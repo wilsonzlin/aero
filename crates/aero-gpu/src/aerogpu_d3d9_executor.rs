@@ -148,6 +148,24 @@ pub struct AerogpuD3d9Executor {
     encoder: Option<wgpu::CommandEncoder>,
 }
 
+impl Drop for AerogpuD3d9Executor {
+    fn drop(&mut self) {
+        // Tests frequently create and destroy headless executors. Some wgpu backends/drivers are
+        // sensitive to dropping a device while work is still in-flight, which can manifest as
+        // intermittent SIGSEGVs in CI. Make teardown best-effort deterministic by flushing any
+        // pending encoder and waiting for the device to go idle.
+        if std::thread::panicking() {
+            return;
+        }
+
+        if let Some(encoder) = self.encoder.take() {
+            self.queue.submit(Some(encoder.finish()));
+        }
+
+        self.device.poll(wgpu::Maintain::Wait);
+    }
+}
+
 /// Metadata + view for a scanout that has been presented via `PRESENT`/`PRESENT_EX`.
 ///
 /// This is primarily intended for WASM presenters which need to blit the scanout to a surface
@@ -9468,11 +9486,17 @@ impl AerogpuD3d9Executor {
         sampler
     }
 
-    fn canonicalize_sampler_state(&self, mut state: D3d9SamplerState) -> D3d9SamplerState {
-        let border_supported = self
-            .device
-            .features()
-            .contains(wgpu::Features::ADDRESS_MODE_CLAMP_TO_BORDER);
+    fn canonicalize_sampler_state(&self, state: D3d9SamplerState) -> D3d9SamplerState {
+        Self::canonicalize_sampler_state_for_caps(self.device.features(), self.downlevel_flags, state)
+    }
+
+    fn canonicalize_sampler_state_for_caps(
+        device_features: wgpu::Features,
+        downlevel_flags: wgpu::DownlevelFlags,
+        mut state: D3d9SamplerState,
+    ) -> D3d9SamplerState {
+        let border_supported =
+            device_features.contains(wgpu::Features::ADDRESS_MODE_CLAMP_TO_BORDER);
 
         let mut uses_border = false;
         for addr in [
@@ -9545,9 +9569,8 @@ impl AerogpuD3d9Executor {
         // Anisotropy.
         let anisotropic_requested = state.min_filter == d3d9::D3DTEXF_ANISOTROPIC
             || state.mag_filter == d3d9::D3DTEXF_ANISOTROPIC;
-        let anisotropic_supported = self
-            .downlevel_flags
-            .contains(wgpu::DownlevelFlags::ANISOTROPIC_FILTERING);
+        let anisotropic_supported =
+            downlevel_flags.contains(wgpu::DownlevelFlags::ANISOTROPIC_FILTERING);
         if anisotropic_requested && anisotropic_supported {
             state.max_anisotropy = state.max_anisotropy.clamp(1, 16);
         } else {
@@ -10856,38 +10879,6 @@ mod tests {
         build_alpha_test_wgsl_variant, cmd, d3d9, guest_texture_linear_layout, AerogpuD3d9Error,
         AerogpuD3d9Executor, AerogpuFormat, D3d9SamplerState,
     };
-    use std::sync::{Arc, Mutex, OnceLock};
-
-    #[cfg(not(target_arch = "wasm32"))]
-    fn shared_executor() -> Option<&'static Mutex<AerogpuD3d9Executor>> {
-        static EXEC: OnceLock<Option<&'static Mutex<AerogpuD3d9Executor>>> = OnceLock::new();
-        EXEC.get_or_init(|| {
-            let exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
-                Ok(exec) => exec,
-                Err(AerogpuD3d9Error::AdapterNotFound) => return None,
-                Err(err) => panic!("failed to create executor: {err}"),
-            };
-            Some(Box::leak(Box::new(Mutex::new(exec))))
-        })
-        .as_ref()
-        .copied()
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    fn with_executor<R>(f: impl FnOnce(&mut AerogpuD3d9Executor) -> R) -> Option<R> {
-        let exec = shared_executor()?;
-        let mut exec = exec.lock().unwrap();
-        exec.reset();
-        Some(f(&mut exec))
-    }
-
-    // Most of the D3D9 executor unit tests rely on a headless wgpu device. Those tests are not
-    // executed for `wasm32-unknown-unknown` in CI; they are only compiled. Avoid pulling non-Send
-    // WebGPU types (wgpu Device/Queue/etc) into global statics on wasm, which is rejected by Rust.
-    #[cfg(target_arch = "wasm32")]
-    fn with_executor<R>(_f: impl FnOnce(&mut AerogpuD3d9Executor) -> R) -> Option<R> {
-        None
-    }
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     struct BlockExpectation {
@@ -11139,47 +11130,63 @@ mod tests {
     #[test]
     #[cfg(not(target_arch = "wasm32"))]
     fn d3d9_sampler_maxanisotropy_affects_sampler_only_when_anisotropic_supported() {
-        let Some(()) = with_executor(|exec| {
-            // MAXANISOTROPY should have no effect unless anisotropic filtering is actually requested.
-            let default_sampler = exec.sampler_for_state(D3d9SamplerState::default());
-            let non_aniso = D3d9SamplerState {
-                max_anisotropy: 16,
-                ..Default::default()
-            };
-            let non_aniso_sampler = exec.sampler_for_state(non_aniso);
-            assert!(
-                Arc::ptr_eq(&default_sampler, &non_aniso_sampler),
-                "MAXANISOTROPY should not change the sampler when anisotropic filtering is not requested"
-            );
+        // This logic is purely about sampler canonicalization + caching keys; avoid creating a real
+        // wgpu device here so we don't depend on system GPU backends during unit tests.
+        let device_features = wgpu::Features::empty();
+        let no_aniso = wgpu::DownlevelFlags::empty();
+        let aniso_supported = wgpu::DownlevelFlags::ANISOTROPIC_FILTERING;
 
-            if !exec
-                .downlevel_flags
-                .contains(wgpu::DownlevelFlags::ANISOTROPIC_FILTERING)
-            {
-                return;
-            }
-
-            let aniso_2 = D3d9SamplerState {
-                min_filter: d3d9::D3DTEXF_ANISOTROPIC,
-                mag_filter: d3d9::D3DTEXF_ANISOTROPIC,
-                mip_filter: d3d9::D3DTEXF_LINEAR,
-                max_anisotropy: 2,
-                ..Default::default()
-            };
-
-            let aniso_16 = D3d9SamplerState {
-                max_anisotropy: 16,
-                ..aniso_2
-            };
-
-            let sampler_2 = exec.sampler_for_state(aniso_2);
-            let sampler_16 = exec.sampler_for_state(aniso_16);
-            assert!(
-                !Arc::ptr_eq(&sampler_2, &sampler_16),
-                "different MAXANISOTROPY values should produce distinct samplers when anisotropy is supported"
-            );
-        }) else {
-            return;
+        // MAXANISOTROPY should have no effect unless anisotropic filtering is actually requested.
+        let non_aniso = D3d9SamplerState {
+            max_anisotropy: 16,
+            ..Default::default()
         };
+        let default_key = AerogpuD3d9Executor::canonicalize_sampler_state_for_caps(
+            device_features,
+            no_aniso,
+            D3d9SamplerState::default(),
+        );
+        let non_aniso_key =
+            AerogpuD3d9Executor::canonicalize_sampler_state_for_caps(device_features, no_aniso, non_aniso);
+        assert_eq!(
+            default_key, non_aniso_key,
+            "MAXANISOTROPY should not affect the canonical sampler state when anisotropic filtering is not requested"
+        );
+
+        let aniso_2 = D3d9SamplerState {
+            min_filter: d3d9::D3DTEXF_ANISOTROPIC,
+            mag_filter: d3d9::D3DTEXF_ANISOTROPIC,
+            mip_filter: d3d9::D3DTEXF_LINEAR,
+            max_anisotropy: 2,
+            ..Default::default()
+        };
+
+        let aniso_16 = D3d9SamplerState {
+            max_anisotropy: 16,
+            ..aniso_2
+        };
+
+        // When anisotropy isn't supported, the canonical state should squash MAXANISOTROPY.
+        let key_2_no_aniso =
+            AerogpuD3d9Executor::canonicalize_sampler_state_for_caps(device_features, no_aniso, aniso_2);
+        let key_16_no_aniso =
+            AerogpuD3d9Executor::canonicalize_sampler_state_for_caps(device_features, no_aniso, aniso_16);
+        assert_eq!(key_2_no_aniso, key_16_no_aniso);
+        assert_eq!(key_2_no_aniso.max_anisotropy, 1);
+
+        // When anisotropy is supported *and* requested, MAXANISOTROPY should influence the key.
+        let key_2_supported = AerogpuD3d9Executor::canonicalize_sampler_state_for_caps(
+            device_features,
+            aniso_supported,
+            aniso_2,
+        );
+        let key_16_supported = AerogpuD3d9Executor::canonicalize_sampler_state_for_caps(
+            device_features,
+            aniso_supported,
+            aniso_16,
+        );
+        assert_ne!(key_2_supported, key_16_supported);
+        assert_eq!(key_2_supported.max_anisotropy, 2);
+        assert_eq!(key_16_supported.max_anisotropy, 16);
     }
 }
