@@ -4376,6 +4376,7 @@ impl AerogpuD3d11Executor {
                 "const TEMP_REG_COUNT: u32 = {}u;\n\n",
                 temp_reg_count
             ));
+            out.push_str("const VERTS_PER_PRIM: u32 = 1u;\n\n");
             out.push_str(
                 "fn aero_vs_default() -> vec4<f32> { return vec4<f32>(0.0, 0.0, 0.0, 1.0); }\n\n",
             );
@@ -4557,19 +4558,24 @@ impl AerogpuD3d11Executor {
             out.push_str("@compute @workgroup_size(1)\n");
             out.push_str("fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {\n");
             out.push_str("  let prim_id: u32 = id.x;\n");
+            out.push_str(
+                "  for (var vert_in_prim: u32 = 0u; vert_in_prim < VERTS_PER_PRIM; vert_in_prim = vert_in_prim + 1u) {\n",
+            );
             if indexed_draw {
                 out.push_str(
-                    "  let vertex_index: u32 = u32(index_pulling_resolve_vertex_id(prim_id));\n",
+                    "    let vertex_index: u32 = u32(index_pulling_resolve_vertex_id(prim_id * VERTS_PER_PRIM + vert_in_prim));\n",
                 );
             } else {
-                out.push_str("  let vertex_index: u32 = aero_vp_ia.first_vertex + prim_id;\n");
+                out.push_str(
+                    "    let vertex_index: u32 = aero_vp_ia.first_vertex + prim_id * VERTS_PER_PRIM + vert_in_prim;\n",
+                );
             }
-            out.push_str(&format!("  var r: array<vec4<f32>, {temp_reg_count}>;\n"));
+            out.push_str(&format!("    var r: array<vec4<f32>, {temp_reg_count}>;\n"));
             out.push_str(&format!(
-                "  var o: array<vec4<f32>, {gs_input_reg_count}>;\n"
+                "    var o: array<vec4<f32>, {gs_input_reg_count}>;\n"
             ));
-            out.push_str("  for (var i: u32 = 0u; i < TEMP_REG_COUNT; i = i + 1u) { r[i] = vec4<f32>(0.0); }\n");
-            out.push_str("  for (var i: u32 = 0u; i < GS_INPUT_REG_COUNT; i = i + 1u) { o[i] = aero_vs_default(); }\n\n");
+            out.push_str("    for (var i: u32 = 0u; i < TEMP_REG_COUNT; i = i + 1u) { r[i] = vec4<f32>(0.0); }\n");
+            out.push_str("    for (var i: u32 = 0u; i < GS_INPUT_REG_COUNT; i = i + 1u) { o[i] = aero_vs_default(); }\n\n");
 
             for (idx, inst) in module.instructions.iter().enumerate().take(inst_count) {
                 match inst {
@@ -4614,10 +4620,13 @@ impl AerogpuD3d11Executor {
             }
 
             out.push_str(
-                "\n  for (var reg: u32 = 0u; reg < GS_INPUT_REG_COUNT; reg = reg + 1u) {\n",
+                "\n    for (var reg: u32 = 0u; reg < GS_INPUT_REG_COUNT; reg = reg + 1u) {\n",
             );
-            out.push_str("    let idx: u32 = prim_id * GS_INPUT_REG_COUNT + reg;\n");
-            out.push_str("    gs_inputs.data[idx] = o[reg];\n");
+            out.push_str(
+                "      let idx: u32 = ((prim_id * VERTS_PER_PRIM + vert_in_prim) * GS_INPUT_REG_COUNT + reg);\n",
+            );
+            out.push_str("      gs_inputs.data[idx] = o[reg];\n");
+            out.push_str("    }\n");
             out.push_str("  }\n");
             out.push_str("}\n");
             Ok(out)
@@ -5823,6 +5832,7 @@ impl AerogpuD3d11Executor {
                 "const TEMP_REG_COUNT: u32 = {}u;\n\n",
                 temp_reg_count
             ));
+            out.push_str("const VERTS_PER_PRIM: u32 = 3u;\n\n");
             out.push_str(
                 "fn aero_vs_default() -> vec4<f32> { return vec4<f32>(0.0, 0.0, 0.0, 1.0); }\n\n",
             );
@@ -5882,15 +5892,14 @@ impl AerogpuD3d11Executor {
 
             out.push_str("@compute @workgroup_size(1)\n");
             out.push_str("fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {\n");
-            out.push_str("  let prim_id: u32 = id.x;\n");
-            out.push_str(
-                "  for (var vert_in_prim: u32 = 0u; vert_in_prim < 3u; vert_in_prim = vert_in_prim + 1u) {\n",
-            );
+            out.push_str("  let invocation_id: u32 = id.x;\n");
             if indexed_draw {
-                out.push_str("  let vertex_index: u32 = u32(index_pulling_resolve_vertex_id(prim_id * 3u + vert_in_prim));\n");
+                out.push_str(
+                    "  let vertex_index: u32 = u32(index_pulling_resolve_vertex_id(invocation_id));\n",
+                );
             } else {
                 out.push_str(
-                    "  let vertex_index: u32 = aero_vp_ia.first_vertex + prim_id * 3u + vert_in_prim;\n",
+                    "  let vertex_index: u32 = aero_vp_ia.first_vertex + invocation_id;\n",
                 );
             }
             out.push_str(&format!("  var r: array<vec4<f32>, {temp_reg_count}>;\n"));
@@ -5945,11 +5954,8 @@ impl AerogpuD3d11Executor {
             out.push_str(
                 "\n  for (var reg: u32 = 0u; reg < GS_INPUT_REG_COUNT; reg = reg + 1u) {\n",
             );
-            out.push_str(
-                "    let idx: u32 = ((prim_id * 3u + vert_in_prim) * GS_INPUT_REG_COUNT + reg);\n",
-            );
+            out.push_str("    let idx: u32 = invocation_id * GS_INPUT_REG_COUNT + reg;\n");
             out.push_str("    gs_inputs.data[idx] = o[reg];\n");
-            out.push_str("  }\n");
             out.push_str("  }\n");
             out.push_str("}\n");
             Ok(out)
@@ -14554,14 +14560,14 @@ impl AerogpuD3d11Executor {
                 // back to an empty compute shader so the handle can still be created/bound; draws
                 // with that GS bound will later return a clear "geometry shader not supported"
                 // error.
-                let translation: Option<super::gs_translate::GsPrepassTranslation> = match crate::sm4::decode_program(&program)
-                    .context("decode SM4/5 token stream")
-                {
-                    Ok(module) => {
-                        bindings = crate::shader_translate::reflect_resource_bindings(&module)
-                            .ok()
-                            .unwrap_or_default();
-                        match super::gs_translate::translate_gs_module_to_wgsl_compute_prepass_with_entry_point_fixed(
+                let translation: Option<super::gs_translate::GsPrepassTranslation> =
+                    match crate::sm4::decode_program(&program).context("decode SM4/5 token stream")
+                    {
+                        Ok(module) => {
+                            bindings = crate::shader_translate::reflect_resource_bindings(&module)
+                                .ok()
+                                .unwrap_or_default();
+                            match super::gs_translate::translate_gs_module_to_wgsl_compute_prepass_with_entry_point_fixed(
                             &module,
                             entry_point,
                         ) {
@@ -14571,12 +14577,12 @@ impl AerogpuD3d11Executor {
                                 None
                             }
                         }
-                    }
-                    Err(e) => {
-                        gs_prepass_error = Some(e.to_string());
-                        None
-                    }
-                };
+                        }
+                        Err(e) => {
+                            gs_prepass_error = Some(e.to_string());
+                            None
+                        }
+                    };
                 if let Some(t) = translation {
                     gs_prepass = Some(GsPrepassMetadata {
                         verts_per_primitive: t.info.input_verts_per_primitive,
