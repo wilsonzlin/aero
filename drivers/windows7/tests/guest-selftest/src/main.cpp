@@ -9975,9 +9975,8 @@ int wmain(int argc, wchar_t** argv) {
      * unchanged for throughput regression tracking.
      */
     {
-      constexpr size_t kCountersEnd = offsetof(AEROVBLK_QUERY_INFO, IoctlResetCount) + sizeof(ULONG);
       constexpr size_t kCapEventsEnd = offsetof(AEROVBLK_QUERY_INFO, CapacityChangeEvents) + sizeof(ULONG);
-      if (blk_miniport_info->returned_len >= kCountersEnd) {
+      if (blk_miniport_info->returned_len >= kCapEventsEnd) {
         const auto& info = blk_miniport_info->info;
         std::string counter_marker = "AERO_VIRTIO_SELFTEST|TEST|virtio-blk-counters|INFO";
         counter_marker += "|abort=";
@@ -9991,11 +9990,7 @@ int wmain(int argc, wchar_t** argv) {
         counter_marker += "|ioctl_reset=";
         counter_marker += std::to_string(static_cast<unsigned long>(info.IoctlResetCount));
         counter_marker += "|capacity_change_events=";
-        if (blk_miniport_info->returned_len >= kCapEventsEnd) {
-          counter_marker += std::to_string(static_cast<unsigned long>(info.CapacityChangeEvents));
-        } else {
-          counter_marker += "not_supported";
-        }
+        counter_marker += std::to_string(static_cast<unsigned long>(info.CapacityChangeEvents));
         log.LogLine(counter_marker);
       } else {
         log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-blk-counters|SKIP|reason=ioctl_payload_truncated|returned_len=%zu",
