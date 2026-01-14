@@ -666,6 +666,46 @@ fn assemble_ps3_nonuniform_if_dsx() -> Vec<u32> {
     out
 }
 
+fn assemble_ps3_nonuniform_if_dsy() -> Vec<u32> {
+    // ps_3_0
+    //
+    // Uses a non-uniform branch condition (`v0`) around `dsy` to exercise the legacy translator's
+    // uniform-control-flow workaround for WGSL derivative ops.
+    let mut out = vec![0xFFFF0300];
+    // if v0
+    out.extend(enc_inst(0x0028, &[enc_src(1, 0, 0xE4)]));
+    // dsy r0, v0
+    out.extend(enc_inst(0x0057, &[enc_dst(0, 0, 0xF), enc_src(1, 0, 0xE4)]));
+    // endif
+    out.extend(enc_inst(0x002B, &[]));
+    // mov oC0, r0
+    out.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)]));
+    out.push(0x0000FFFF);
+    out
+}
+
+fn assemble_ps3_nonuniform_ifc_dsx() -> Vec<u32> {
+    // ps_3_0
+    //
+    // Uses `ifc` (compare) around `dsx` to ensure the uniform-control-flow rewrite handles `ifc`
+    // conditions in addition to simple `if`.
+    let mut out = vec![0xFFFF0300];
+    // ifc v0, c0 (cmp_code=4 => !=)
+    out.extend(enc_inst_with_extra(
+        0x0029,
+        4u32 << 16,
+        &[enc_src(1, 0, 0xE4), enc_src(2, 0, 0xE4)],
+    ));
+    // dsx r0, v0
+    out.extend(enc_inst(0x0056, &[enc_dst(0, 0, 0xF), enc_src(1, 0, 0xE4)]));
+    // endif
+    out.extend(enc_inst(0x002B, &[]));
+    // mov oC0, r0
+    out.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)]));
+    out.push(0x0000FFFF);
+    out
+}
+
 fn assemble_ps3_nonuniform_if_dsx_then_mov() -> Vec<u32> {
     // ps_3_0
     //
@@ -3648,6 +3688,44 @@ fn legacy_translator_nonuniform_if_dsx_avoids_invalid_control_flow() {
 
     assert!(wgsl.wgsl.contains("dpdx("));
     // Branch should be lowered to `select` so that `dpdx` is evaluated unconditionally.
+    assert!(!wgsl.wgsl.contains("if ("));
+}
+
+#[test]
+fn legacy_translator_nonuniform_if_dsy_avoids_invalid_control_flow() {
+    let ps_bytes = to_bytes(&assemble_ps3_nonuniform_if_dsy());
+    let program = shader::parse(&ps_bytes).unwrap();
+    let ir = shader::to_ir(&program);
+    let wgsl = shader::generate_wgsl(&ir).unwrap();
+
+    let module = naga::front::wgsl::parse_str(&wgsl.wgsl).expect("wgsl parse");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
+
+    assert!(wgsl.wgsl.contains("dpdy("));
+    assert!(!wgsl.wgsl.contains("if ("));
+}
+
+#[test]
+fn legacy_translator_nonuniform_ifc_dsx_avoids_invalid_control_flow() {
+    let ps_bytes = to_bytes(&assemble_ps3_nonuniform_ifc_dsx());
+    let program = shader::parse(&ps_bytes).unwrap();
+    let ir = shader::to_ir(&program);
+    let wgsl = shader::generate_wgsl(&ir).unwrap();
+
+    let module = naga::front::wgsl::parse_str(&wgsl.wgsl).expect("wgsl parse");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
+
+    assert!(wgsl.wgsl.contains("dpdx("));
     assert!(!wgsl.wgsl.contains("if ("));
 }
 
