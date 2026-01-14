@@ -3341,6 +3341,90 @@ bool TestHostOwnedCopyResourceBufferReadback() {
   return true;
 }
 
+bool TestHostOwnedCopyResourceBufferReadbackPadsSize() {
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/false, /*async_fences=*/false),
+             "InitTestDevice(copy buffer host-owned padded size)")) {
+    return false;
+  }
+
+  TestResource src{};
+  TestResource dst{};
+  if (!Check(CreateStagingBuffer(&dev, /*byte_width=*/15, AEROGPU_D3D11_CPU_ACCESS_WRITE, &src), "CreateStagingBuffer(src)")) {
+    return false;
+  }
+  if (!Check(CreateStagingBuffer(&dev, /*byte_width=*/15, AEROGPU_D3D11_CPU_ACCESS_READ, &dst), "CreateStagingBuffer(dst)")) {
+    return false;
+  }
+
+  const uint8_t expected[15] = {0x5A, 0x4B, 0x3C, 0x2D, 0x1E, 0x0F, 0xAA, 0xBB,
+                                0xCC, 0xDD, 0xEE, 0xFF, 0x10, 0x20, 0x30};
+
+  AEROGPU_DDI_MAPPED_SUBRESOURCE mapped = {};
+  HRESULT hr = dev.device_funcs.pfnMap(dev.hDevice,
+                                       src.hResource,
+                                       /*subresource=*/0,
+                                       AEROGPU_DDI_MAP_WRITE,
+                                       /*map_flags=*/0,
+                                       &mapped);
+  if (!Check(hr == S_OK, "Map(WRITE) src buffer")) {
+    return false;
+  }
+  if (!Check(mapped.pData != nullptr, "Map returned non-null pData")) {
+    return false;
+  }
+  std::memcpy(mapped.pData, expected, sizeof(expected));
+  dev.device_funcs.pfnUnmap(dev.hDevice, src.hResource, /*subresource=*/0);
+
+  dev.device_funcs.pfnCopyResource(dev.hDevice, dst.hResource, src.hResource);
+
+  AEROGPU_DDI_MAPPED_SUBRESOURCE readback = {};
+  hr = dev.device_funcs.pfnMap(dev.hDevice,
+                               dst.hResource,
+                               /*subresource=*/0,
+                               AEROGPU_DDI_MAP_READ,
+                               /*map_flags=*/0,
+                               &readback);
+  if (!Check(hr == S_OK, "Map(READ) dst buffer")) {
+    return false;
+  }
+  if (!Check(readback.pData != nullptr, "Map(READ) returned non-null pData")) {
+    return false;
+  }
+  if (!Check(std::memcmp(readback.pData, expected, sizeof(expected)) == 0, "CopyResource buffer bytes")) {
+    return false;
+  }
+  dev.device_funcs.pfnUnmap(dev.hDevice, dst.hResource, /*subresource=*/0);
+
+  if (!Check(ValidateStream(dev.harness.last_stream.data(), dev.harness.last_stream.size()), "ValidateStream")) {
+    return false;
+  }
+  const uint8_t* stream = dev.harness.last_stream.data();
+  const size_t stream_len = StreamBytesUsed(stream, dev.harness.last_stream.size());
+
+  CmdLoc copy_loc = FindLastOpcode(stream, stream_len, AEROGPU_CMD_COPY_BUFFER);
+  if (!Check(copy_loc.hdr != nullptr, "COPY_BUFFER emitted")) {
+    return false;
+  }
+  const auto* copy_cmd = reinterpret_cast<const aerogpu_cmd_copy_buffer*>(stream + copy_loc.offset);
+  if (!Check(copy_cmd->dst_offset_bytes == 0, "COPY_BUFFER dst_offset_bytes == 0")) {
+    return false;
+  }
+  if (!Check(copy_cmd->src_offset_bytes == 0, "COPY_BUFFER src_offset_bytes == 0")) {
+    return false;
+  }
+  if (!Check(copy_cmd->size_bytes == 16, "COPY_BUFFER size_bytes padded to 16")) {
+    return false;
+  }
+
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, dst.hResource);
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, src.hResource);
+
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
 bool TestSubmitAllocListTracksBoundConstantBuffer() {
   TestDevice dev{};
   if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/true, /*async_fences=*/false), "InitTestDevice(track CB alloc)")) {
@@ -5552,6 +5636,85 @@ bool TestHostOwnedUpdateSubresourceUPBufferBoxUploads() {
   return true;
 }
 
+bool TestHostOwnedUpdateSubresourceUPBufferBoxUnalignedPadsTo4() {
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/false, /*async_fences=*/false),
+             "InitTestDevice(UpdateSubresourceUP unaligned box buffer host-owned)")) {
+    return false;
+  }
+
+  TestResource buf{};
+  if (!Check(CreateStagingBuffer(&dev, /*byte_width=*/16, /*cpu_access_flags=*/0, &buf), "CreateStagingBuffer")) {
+    return false;
+  }
+
+  const uint8_t patch[5] = {0xDE, 0xC0, 0xAD, 0xBE, 0xEF};
+  AEROGPU_DDI_BOX box{};
+  box.left = 1;
+  box.right = 6;
+  box.top = 0;
+  box.bottom = 1;
+  box.front = 0;
+  box.back = 1;
+
+  dev.device_funcs.pfnUpdateSubresourceUP(dev.hDevice,
+                                          buf.hResource,
+                                          /*dst_subresource=*/0,
+                                          &box,
+                                          patch,
+                                          /*SysMemPitch=*/0,
+                                          /*SysMemSlicePitch=*/0);
+  const HRESULT hr = dev.device_funcs.pfnFlush(dev.hDevice);
+  if (!Check(hr == S_OK, "Flush after UpdateSubresourceUP")) {
+    return false;
+  }
+
+  if (!Check(ValidateStream(dev.harness.last_stream.data(), dev.harness.last_stream.size()), "ValidateStream")) {
+    return false;
+  }
+
+  const uint8_t* stream = dev.harness.last_stream.data();
+  const size_t stream_len = StreamBytesUsed(stream, dev.harness.last_stream.size());
+
+  if (!Check(CountOpcode(stream, stream_len, AEROGPU_CMD_UPLOAD_RESOURCE) == 1,
+             "host-owned UpdateSubresourceUP(unaligned box) should emit UPLOAD_RESOURCE")) {
+    return false;
+  }
+
+  CmdLoc upload_loc = FindLastOpcode(stream, stream_len, AEROGPU_CMD_UPLOAD_RESOURCE);
+  if (!Check(upload_loc.hdr != nullptr, "UPLOAD_RESOURCE emitted")) {
+    return false;
+  }
+  const auto* upload_cmd = reinterpret_cast<const aerogpu_cmd_upload_resource*>(stream + upload_loc.offset);
+  if (!Check(upload_cmd->offset_bytes == 0, "UPLOAD_RESOURCE offset_bytes aligned down to 0")) {
+    return false;
+  }
+  if (!Check(upload_cmd->size_bytes == 8, "UPLOAD_RESOURCE size_bytes aligned up to 8")) {
+    return false;
+  }
+
+  const size_t payload_offset = upload_loc.offset + sizeof(*upload_cmd);
+  const size_t payload_size = static_cast<size_t>(upload_cmd->size_bytes);
+  if (!Check(payload_offset + payload_size <= stream_len, "UPLOAD_RESOURCE payload fits")) {
+    return false;
+  }
+
+  uint8_t expected[8] = {};
+  expected[0] = 0;
+  std::memcpy(expected + 1, patch, sizeof(patch));
+  expected[6] = 0;
+  expected[7] = 0;
+  if (!Check(std::memcmp(stream + payload_offset, expected, sizeof(expected)) == 0,
+             "UPLOAD_RESOURCE payload padded/aligned bytes")) {
+    return false;
+  }
+
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, buf.hResource);
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
 bool TestHostOwnedUpdateSubresourceUPTextureBoxUploads() {
   TestDevice dev{};
   if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/false, /*async_fences=*/false), "InitTestDevice(UpdateSubresourceUP box tex2d host-owned)")) {
@@ -6420,6 +6583,81 @@ bool TestHostOwnedCreateBufferInitialDataUploads() {
   }
 
   if (!Check(dev.harness.last_allocs.empty(), "host-owned CreateResource(initial) alloc list empty")) {
+    return false;
+  }
+
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, buf.hResource);
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
+bool TestHostOwnedCreateBufferInitialDataPadsTo4() {
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/false, /*async_fences=*/false),
+             "InitTestDevice(CreateResource initial buffer host-owned padded)")) {
+    return false;
+  }
+
+  const uint8_t initial[15] = {0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF,
+                               0x10, 0x32, 0x54, 0x76, 0x98, 0xBA, 0xDC};
+  uint8_t expected_payload[16] = {};
+  std::memcpy(expected_payload, initial, sizeof(initial));
+  expected_payload[15] = 0;
+
+  TestResource buf{};
+  if (!Check(CreateBufferWithInitialData(&dev,
+                                         /*byte_width=*/sizeof(initial),
+                                         AEROGPU_D3D11_USAGE_DEFAULT,
+                                         /*bind_flags=*/0,
+                                         /*cpu_access_flags=*/0,
+                                         initial,
+                                         &buf),
+             "CreateBufferWithInitialData")) {
+    return false;
+  }
+
+  const HRESULT hr = dev.device_funcs.pfnFlush(dev.hDevice);
+  if (!Check(hr == S_OK, "Flush after CreateResource")) {
+    return false;
+  }
+
+  if (!Check(ValidateStream(dev.harness.last_stream.data(), dev.harness.last_stream.size()), "ValidateStream")) {
+    return false;
+  }
+
+  const uint8_t* stream = dev.harness.last_stream.data();
+  const size_t stream_len = StreamBytesUsed(stream, dev.harness.last_stream.size());
+
+  CmdLoc create_loc = FindLastOpcode(stream, stream_len, AEROGPU_CMD_CREATE_BUFFER);
+  if (!Check(create_loc.hdr != nullptr, "CREATE_BUFFER emitted")) {
+    return false;
+  }
+  const auto* create_cmd = reinterpret_cast<const aerogpu_cmd_create_buffer*>(stream + create_loc.offset);
+  if (!Check(create_cmd->size_bytes == 16, "CREATE_BUFFER size_bytes padded to 16")) {
+    return false;
+  }
+  if (!Check(create_cmd->backing_alloc_id == 0, "host-owned CREATE_BUFFER backing_alloc_id == 0")) {
+    return false;
+  }
+
+  CmdLoc upload_loc = FindLastOpcode(stream, stream_len, AEROGPU_CMD_UPLOAD_RESOURCE);
+  if (!Check(upload_loc.hdr != nullptr, "UPLOAD_RESOURCE emitted")) {
+    return false;
+  }
+  const auto* upload_cmd = reinterpret_cast<const aerogpu_cmd_upload_resource*>(stream + upload_loc.offset);
+  if (!Check(upload_cmd->offset_bytes == 0, "UPLOAD_RESOURCE offset_bytes == 0")) {
+    return false;
+  }
+  if (!Check(upload_cmd->size_bytes == 16, "UPLOAD_RESOURCE size_bytes padded to 16")) {
+    return false;
+  }
+  const size_t payload_offset = upload_loc.offset + sizeof(*upload_cmd);
+  if (!Check(payload_offset + sizeof(expected_payload) <= stream_len, "UPLOAD_RESOURCE payload fits")) {
+    return false;
+  }
+  if (!Check(std::memcmp(stream + payload_offset, expected_payload, sizeof(expected_payload)) == 0,
+             "UPLOAD_RESOURCE payload bytes padded")) {
     return false;
   }
 
@@ -9091,6 +9329,7 @@ int main() {
   ok &= TestSubmitAllocListTracksBoundShaderResource();
   ok &= TestSubmitAllocWriteFlagsForDraw();
   ok &= TestHostOwnedCopyResourceBufferReadback();
+  ok &= TestHostOwnedCopyResourceBufferReadbackPadsSize();
   ok &= TestHostOwnedCopyResourceTextureReadback();
   ok &= TestHostOwnedCopyResourceBcTextureReadback();
   ok &= TestHostOwnedCopySubresourceRegionBcTextureReadback();
@@ -9107,6 +9346,7 @@ int main() {
   ok &= TestHostOwnedUpdateSubresourceUPBcTextureUploads();
   ok &= TestGuestBackedUpdateSubresourceUPBcTextureDirtyRange();
   ok &= TestHostOwnedUpdateSubresourceUPBufferBoxUploads();
+  ok &= TestHostOwnedUpdateSubresourceUPBufferBoxUnalignedPadsTo4();
   ok &= TestHostOwnedUpdateSubresourceUPTextureBoxUploads();
   ok &= TestGuestBackedUpdateSubresourceUPBufferBoxDirtyRange();
   ok &= TestGuestBackedUpdateSubresourceUPTextureBoxDirtyRange();
@@ -9115,6 +9355,7 @@ int main() {
   ok &= TestHostOwnedUpdateSubresourceUPBcTextureBoxRejectsMisaligned();
   ok &= TestGuestBackedUpdateSubresourceUPBcTextureBoxRejectsMisaligned();
   ok &= TestHostOwnedCreateBufferInitialDataUploads();
+  ok &= TestHostOwnedCreateBufferInitialDataPadsTo4();
   ok &= TestGuestBackedCreateBufferInitialDataDirtyRange();
   ok &= TestCreateBufferSrvUavBindsMarkStorageUsage();
   ok &= TestHostOwnedCreateTextureInitialDataUploads();
