@@ -26,6 +26,7 @@ function fail(message) {
 }
 
 try {
+  run("npm run check:node");
   run("npm run generate:goldens");
 } catch (err) {
   fail("error: failed to run golden generator (`npm run generate:goldens`).");
