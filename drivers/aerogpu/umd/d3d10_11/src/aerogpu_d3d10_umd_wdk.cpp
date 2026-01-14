@@ -328,10 +328,10 @@ static void LogLockPitchMismatchMaybe(uint32_t dxgi_format,
 }
 
 static bool ValidateTexture2DRowSpan(uint32_t aerogpu_format,
-                                    const Texture2DSubresourceLayout& sub,
-                                    uint32_t pitch_bytes,
-                                    uint64_t allocation_size_bytes,
-                                    uint32_t* out_row_bytes) {
+                                     const Texture2DSubresourceLayout& sub,
+                                     uint32_t pitch_bytes,
+                                     uint64_t allocation_size_bytes,
+                                     uint32_t* out_row_bytes) {
   if (out_row_bytes) {
     *out_row_bytes = 0;
   }
@@ -377,6 +377,8 @@ static bool ValidateTexture2DRowSpan(uint32_t aerogpu_format,
   }
   return true;
 }
+
+static bool ValidateWddmTexturePitch(const struct AeroGpuResource* res, uint32_t wddm_pitch);
 
 static uint32_t aerogpu_mip_dim(uint32_t base, uint32_t mip_level) {
   return aerogpu::d3d10_11::aerogpu_mip_dim(base, mip_level);
@@ -801,6 +803,12 @@ struct AeroGpuResource {
   uint32_t mapped_wddm_slice_pitch = 0;
 };
 
+// Some WDK/runtime combinations omit `D3DDDICB_LOCK::Pitch` or report it as 0 for
+// non-surface allocations. For AeroGPU-packed Texture2D resources, the host-side
+// executor interprets guest memory using `res->row_pitch_bytes` for mip0. When
+// the runtime returns a non-zero pitch that does not match this value, treating
+// the allocation as a packed linear blob is unsafe and can corrupt subresource
+// packing.
 static bool ValidateWddmTexturePitch(const AeroGpuResource* res, uint32_t wddm_pitch) {
   if (!res || res->kind != ResourceKind::Texture2D) {
     return true;

@@ -7366,23 +7366,40 @@ static NTSTATUS APIENTRY AeroGpuDdiLock(_In_ const HANDLE hAdapter, _Inout_ DXGK
      * Pitch metadata (optional).
      *
      * On Win7, the runtime's D3DKMTLock path can return row/slice pitch for
-     * surface allocations. dxgkrnl may pre-populate Pitch/SlicePitch; only fill
-     * them when they are currently 0 so we don't clobber a runtime-provided
-     * value.
+     * surface allocations. dxgkrnl may pre-populate Pitch/SlicePitch, but for
+     * AeroGPU system-memory allocations the pitch is defined by the allocation's
+     * private metadata (PitchBytes) or the current scanout pitch (for primaries).
+     *
+     * Prefer the driver-defined pitch whenever available so user-mode observes a
+     * consistent linear layout (the AeroGPU UMD and host-side executor both rely
+     * on this for packed Texture2D uploads).
      */
-    if (pLock->Pitch == 0) {
-        ULONG pitch = alloc->PitchBytes;
-        if (pitch == 0 && (alloc->Flags & AEROGPU_KMD_ALLOC_FLAG_PRIMARY) && adapter->CurrentPitch != 0) {
-            pitch = adapter->CurrentPitch;
-        }
-        pLock->Pitch = pitch;
+    ULONG desiredPitch = alloc->PitchBytes;
+    if (desiredPitch == 0 && (alloc->Flags & AEROGPU_KMD_ALLOC_FLAG_PRIMARY) && adapter->CurrentPitch != 0) {
+        desiredPitch = adapter->CurrentPitch;
     }
-    if (pLock->SlicePitch == 0 && pLock->Pitch != 0) {
-        if ((alloc->Flags & AEROGPU_KMD_ALLOC_FLAG_PRIMARY) && adapter->CurrentHeight != 0) {
-            ULONGLONG slice = (ULONGLONG)pLock->Pitch * (ULONGLONG)adapter->CurrentHeight;
-            if (slice > (ULONGLONG)MAXULONG) {
-                slice = (ULONGLONG)MAXULONG;
-            }
+    if (desiredPitch != 0) {
+#if DBG
+        static LONG g_PitchOverrideLogs = 0;
+        if (pLock->Pitch != 0 && pLock->Pitch != desiredPitch) {
+            AEROGPU_LOG_RATELIMITED(g_PitchOverrideLogs,
+                                    8,
+                                    "Lock: overriding dxgkrnl Pitch=%lu with driver pitch=%lu (alloc_id=%lu)",
+                                    (ULONG)pLock->Pitch,
+                                    desiredPitch,
+                                    alloc->AllocationId);
+        }
+#endif
+        pLock->Pitch = desiredPitch;
+    }
+
+    /* For primary surfaces, also provide a consistent SlicePitch derived from the final Pitch. */
+    if ((alloc->Flags & AEROGPU_KMD_ALLOC_FLAG_PRIMARY) && pLock->Pitch != 0 && adapter->CurrentHeight != 0) {
+        ULONGLONG slice = (ULONGLONG)pLock->Pitch * (ULONGLONG)adapter->CurrentHeight;
+        if (slice > (ULONGLONG)MAXULONG) {
+            slice = (ULONGLONG)MAXULONG;
+        }
+        if (pLock->SlicePitch == 0 || pLock->SlicePitch != (ULONG)slice) {
             pLock->SlicePitch = (ULONG)slice;
         }
     }
