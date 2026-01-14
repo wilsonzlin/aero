@@ -1709,8 +1709,14 @@ static VOID AeroGpuFreeContiguousNonCached(_Inout_ AEROGPU_ADAPTER* Adapter, _In
                  * Update high watermark under the lock to keep it monotonic and avoid
                  * needing an additional atomic.
                  */
-                if ((LONGLONG)Adapter->ContigPool.BytesRetained > Adapter->ContigPool.HighWatermarkBytes) {
-                    Adapter->ContigPool.HighWatermarkBytes = (LONGLONG)Adapter->ContigPool.BytesRetained;
+                const LONGLONG retained = (LONGLONG)Adapter->ContigPool.BytesRetained;
+                if (retained > Adapter->ContigPool.HighWatermarkBytes) {
+                    /*
+                     * Keep the store atomic even on x86 so concurrent readers (which may use
+                     * InterlockedCompareExchange64 without taking the pool lock) never observe
+                     * a torn 64-bit value.
+                     */
+                    InterlockedExchange64(&Adapter->ContigPool.HighWatermarkBytes, retained);
                 }
 #endif
             }
