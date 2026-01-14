@@ -286,7 +286,7 @@ fn map_device_io_error(err: io::Error) -> BlockBackendError {
 ///
 /// This means platform code can do:
 ///
-/// ```rust,ignore
+/// ```rust
 /// use aero_storage::{MemBackend, RawDisk, SECTOR_SIZE};
 /// use aero_virtio::devices::blk::VirtioBlkDisk;
 ///
