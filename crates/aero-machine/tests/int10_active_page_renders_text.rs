@@ -1,4 +1,3 @@
-use aero_gpu_vga::DisplayOutput;
 use aero_machine::{Machine, MachineConfig, RunExit};
 use pretty_assertions::assert_eq;
 
@@ -76,12 +75,8 @@ fn int10_active_page_select_makes_page_visible_via_crtc_start_address() {
     m.reset();
     run_until_halt(&mut m);
 
-    let vga = m.vga().expect("VGA enabled");
-    let pixel0 = {
-        let mut vga = vga.borrow_mut();
-        vga.present();
-        vga.get_framebuffer()[0]
-    };
+    m.display_present();
+    let pixel0 = m.display_framebuffer()[0];
 
     // The guest wrote a space with a blue background into the top-left cell of page 1. Without
     // correctly mirroring AH=05 active page -> CRTC start address, we'd still be displaying page 0

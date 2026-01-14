@@ -156,6 +156,123 @@ fn set_cpu_apic_base_bsp_bit(cpu: &mut CpuCore, is_bsp: bool) {
 pub mod pc;
 pub use pc::{PcMachine, PcMachineConfig};
 
+trait LegacyVgaFrontend: aero_gpu_vga::PortIO {
+    fn set_text_mode_80x25(&mut self);
+    fn set_mode_13h(&mut self);
+}
+
+impl LegacyVgaFrontend for VgaDevice {
+    fn set_text_mode_80x25(&mut self) {
+        VgaDevice::set_text_mode_80x25(self);
+    }
+
+    fn set_mode_13h(&mut self) {
+        VgaDevice::set_mode_13h(self);
+    }
+}
+
+impl aero_gpu_vga::PortIO for AeroGpuDevice {
+    fn port_read(&mut self, port: u16, size: usize) -> u32 {
+        let size = match size {
+            0 => return 0,
+            1 | 2 | 4 => size,
+            _ => return u32::MAX,
+        };
+
+        let mut out = 0u32;
+        for i in 0..size {
+            let p = port.wrapping_add(i as u16);
+            let b = self.vga_port_read_u8(p) as u32;
+            out |= b << (i * 8);
+        }
+        out
+    }
+
+    fn port_write(&mut self, port: u16, size: usize, val: u32) {
+        let size = match size {
+            1 | 2 | 4 => size,
+            _ => return,
+        };
+
+        for i in 0..size {
+            let p = port.wrapping_add(i as u16);
+            let b = ((val >> (i * 8)) & 0xFF) as u8;
+            self.vga_port_write_u8(p, b);
+        }
+    }
+}
+
+impl LegacyVgaFrontend for AeroGpuDevice {
+    fn set_text_mode_80x25(&mut self) {
+        // Approximate VGA text mode defaults used by `aero_gpu_vga::VgaDevice::set_text_mode_80x25`.
+        self.attr_flip_flop = false;
+        self.attr_index = 0;
+        self.seq_index = 0;
+        self.gc_index = 0;
+        self.crtc_index = 0;
+
+        // Attribute mode control: bit0=0 => text.
+        self.attr_regs[0x10] = 1 << 2; // line graphics enable
+        // Enable all 4 color planes by default.
+        self.attr_regs[0x12] = 0x0F; // color plane enable
+        self.attr_regs[0x14] = 0x00; // color select
+        // Identity palette mapping for indices 0..15.
+        for i in 0..16 {
+            self.attr_regs[i] = i as u8;
+        }
+
+        // Sequencer memory mode: chain-4 disabled, odd/even enabled.
+        self.seq_regs[4] = 0x02;
+        // Sequencer map mask: enable planes 0 and 1 for text.
+        self.seq_regs[2] = 0x03;
+
+        // Graphics controller misc: memory map = 0b11 => B8000, and odd/even.
+        self.gc_regs[6] = 0x0C;
+        self.gc_regs[5] = 0x10; // odd/even
+        self.gc_regs[4] = 0x00; // read map select
+
+        // Cursor + start address defaults.
+        self.crtc_regs[0x0A] = 0x00;
+        self.crtc_regs[0x0B] = 0x0F;
+        self.crtc_regs[0x0C] = 0x00;
+        self.crtc_regs[0x0D] = 0x00;
+        self.crtc_regs[0x0E] = 0x00;
+        self.crtc_regs[0x0F] = 0x00;
+    }
+
+    fn set_mode_13h(&mut self) {
+        // Approximate VGA mode 13h defaults used by `aero_gpu_vga::VgaDevice::set_mode_13h`.
+        self.attr_flip_flop = false;
+        self.attr_index = 0;
+        self.seq_index = 0;
+        self.gc_index = 0;
+        self.crtc_index = 0;
+
+        // Attribute mode control: graphics enable.
+        self.attr_regs[0x10] = 0x01;
+        self.attr_regs[0x12] = 0x0F;
+        self.attr_regs[0x14] = 0x00;
+        for i in 0..16 {
+            self.attr_regs[i] = i as u8;
+        }
+
+        // Sequencer memory mode: enable chain-4 and disable odd/even.
+        self.seq_regs[4] = 0x0E;
+        self.seq_regs[2] = 0x0F;
+
+        // Graphics controller misc: memory map = 0b01 => A0000 64KB.
+        self.gc_regs[6] = 0x04;
+        self.gc_regs[5] = 0x40; // 256-color shift register, no odd/even
+        self.gc_regs[4] = 0x00;
+
+        // Reset cursor/start address regs to a deterministic baseline.
+        self.crtc_regs[0x0C] = 0x00;
+        self.crtc_regs[0x0D] = 0x00;
+        self.crtc_regs[0x0E] = 0x00;
+        self.crtc_regs[0x0F] = 0x00;
+    }
+}
+
 /// Configuration for [`Machine`].
 ///
 /// # Platform wiring vs firmware tables
@@ -8273,8 +8390,25 @@ impl Machine {
         RunExit::Completed { executed }
     }
 
+    fn with_legacy_vga_frontend_mut<F, R>(&mut self, f: F) -> Option<R>
+    where
+        F: FnOnce(&mut dyn LegacyVgaFrontend) -> R,
+    {
+        if let Some(vga) = &self.vga {
+            let mut vga = vga.borrow_mut();
+            return Some(f(&mut *vga));
+        }
+
+        if let Some(aerogpu) = &self.aerogpu {
+            let mut dev = aerogpu.borrow_mut();
+            return Some(f(&mut *dev));
+        }
+
+        None
+    }
+
     fn sync_text_mode_cursor_bda_to_vga_crtc(&mut self) {
-        let Some(vga) = &self.vga else {
+        if self.vga.is_none() && self.aerogpu.is_none() {
             return;
         };
 
@@ -8296,29 +8430,29 @@ impl Machine {
             .saturating_mul(cols)
             .saturating_add(u16::from(col));
 
-        let mut vga = vga.borrow_mut();
-
         // CRTC index/data ports are 0x3D4/0x3D5.
         //
         // The BIOS cursor position is stored as a row/column pair, but the VGA CRTC cursor
         // location registers are in units of character cells relative to the current text start
         // address (CRTC regs 0x0C/0x0D). Read the current start address so the cursor remains
         // visible if the guest has panned the text window.
-        vga.port_write(0x3D4, 1, 0x0C);
-        let start_hi = vga.port_read(0x3D5, 1) as u8;
-        vga.port_write(0x3D4, 1, 0x0D);
-        let start_lo = vga.port_read(0x3D5, 1) as u8;
-        let start_addr = (((u16::from(start_hi)) << 8) | u16::from(start_lo)) & 0x3FFF;
-        let cursor_addr = start_addr.wrapping_add(cell_index) & 0x3FFF;
+        let _ = self.with_legacy_vga_frontend_mut(|vga| {
+            vga.port_write(0x3D4, 1, 0x0C);
+            let start_hi = vga.port_read(0x3D5, 1) as u8;
+            vga.port_write(0x3D4, 1, 0x0D);
+            let start_lo = vga.port_read(0x3D5, 1) as u8;
+            let start_addr = (((u16::from(start_hi)) << 8) | u16::from(start_lo)) & 0x3FFF;
+            let cursor_addr = start_addr.wrapping_add(cell_index) & 0x3FFF;
 
-        vga.port_write(0x3D4, 1, 0x0A);
-        vga.port_write(0x3D5, 1, cursor_start as u32);
-        vga.port_write(0x3D4, 1, 0x0B);
-        vga.port_write(0x3D5, 1, cursor_end as u32);
-        vga.port_write(0x3D4, 1, 0x0E);
-        vga.port_write(0x3D5, 1, u32::from((cursor_addr >> 8) as u8));
-        vga.port_write(0x3D4, 1, 0x0F);
-        vga.port_write(0x3D5, 1, u32::from((cursor_addr & 0x00FF) as u8));
+            vga.port_write(0x3D4, 1, 0x0A);
+            vga.port_write(0x3D5, 1, cursor_start as u32);
+            vga.port_write(0x3D4, 1, 0x0B);
+            vga.port_write(0x3D5, 1, cursor_end as u32);
+            vga.port_write(0x3D4, 1, 0x0E);
+            vga.port_write(0x3D5, 1, u32::from((cursor_addr >> 8) as u8));
+            vga.port_write(0x3D4, 1, 0x0F);
+            vga.port_write(0x3D5, 1, u32::from((cursor_addr & 0x00FF) as u8));
+        });
     }
 
     fn aerogpu_bar1_base(&self) -> Option<u64> {
@@ -8389,14 +8523,13 @@ impl Machine {
         let is_set_mode_13h = int10_is_set_mode && set_mode == 0x13;
 
         if int10_is_set_mode {
-            if let Some(vga) = &self.vga {
-                let mut vga = vga.borrow_mut();
+            let _ = self.with_legacy_vga_frontend_mut(|vga| {
                 if is_set_mode_13h {
                     vga.set_mode_13h();
                 } else if is_set_mode_03h {
                     vga.set_text_mode_80x25();
                 }
-            }
+            });
         }
 
         // VBE mode sets (INT 10h AX=4F02) optionally clear the framebuffer. The HLE BIOS
@@ -8595,26 +8728,70 @@ impl Machine {
                         } else if is_set_mode_03h || vbe_mode_before.is_some() {
                             vga.borrow_mut().set_text_mode_80x25();
                         }
+                    }
+                }
+            }
 
-                        // INT 10h AH=05 "Select Active Display Page" updates the BDA but does not
-                        // program VGA ports in our HLE BIOS. Mirror the active-page start address into
-                        // the CRTC start address regs so the visible text window matches BIOS state.
-                        let is_set_active_page = (ax_before & 0xFF00) == 0x0500;
-                        if is_set_active_page {
-                            let page = BiosDataArea::read_active_page(&mut self.mem);
-                            let page_size_bytes = BiosDataArea::read_page_size(&mut self.mem);
-                            let cells_per_page = page_size_bytes / 2;
-                            let start_addr =
-                                u16::from(page).saturating_mul(cells_per_page) & 0x3FFF;
+            // Mirror VBE palette updates into the legacy VGA frontend even when the standalone VGA
+            // device model is disabled (AeroGPU-backed legacy VGA decode).
+            //
+            // Note: The AeroGPU VBE scanout path (`display_present_aerogpu_vbe_lfb`) renders using
+            // the BIOS' canonical palette array, so this primarily exists for guest software that
+            // expects VGA DAC ports (0x3C8/0x3C9) to reflect BIOS palette state.
+            if self.vga.is_none() {
+                let bl = (bx_before & 0x00FF) as u8;
+                if ax_before == 0x4F09 && ax_after == 0x004F && (bl & 0x7F) == 0 {
+                    if let Some(mode_id) = self.bios.video.vbe.current_mode {
+                        if let Some(mode_info) = self.bios.video.vbe.find_mode(mode_id) {
+                            if mode_info.bpp == 8 {
+                                let start = (dx_before as usize).min(255);
+                                let count = (cx_before as usize).min(256 - start);
+                                if count != 0 {
+                                    let bits = self.bios.video.vbe.dac_width_bits;
+                                    let mut entries: Vec<(u8, u8, u8)> = Vec::with_capacity(count);
+                                    for idx in start..start + count {
+                                        let base = idx * 4;
+                                        let b = self.bios.video.vbe.palette[base];
+                                        let g = self.bios.video.vbe.palette[base + 1];
+                                        let r = self.bios.video.vbe.palette[base + 2];
+                                        let (r, g, b) = if bits >= 8 {
+                                            (r >> 2, g >> 2, b >> 2)
+                                        } else {
+                                            (r & 0x3F, g & 0x3F, b & 0x3F)
+                                        };
+                                        entries.push((r, g, b));
+                                    }
 
-                            let mut vga = vga.borrow_mut();
-                            vga.port_write(0x3D4, 1, 0x0C);
-                            vga.port_write(0x3D5, 1, u32::from((start_addr >> 8) as u8));
-                            vga.port_write(0x3D4, 1, 0x0D);
-                            vga.port_write(0x3D5, 1, u32::from((start_addr & 0x00FF) as u8));
+                                    let _ = self.with_legacy_vga_frontend_mut(|vga| {
+                                        vga.port_write(0x3C8, 1, start as u32);
+                                        for (r, g, b) in entries {
+                                            vga.port_write(0x3C9, 1, r as u32);
+                                            vga.port_write(0x3C9, 1, g as u32);
+                                            vga.port_write(0x3C9, 1, b as u32);
+                                        }
+                                    });
+                                }
+                            }
                         }
                     }
                 }
+            }
+
+            // INT 10h AH=05 "Select Active Display Page" updates the BDA but does not program VGA
+            // ports in our HLE BIOS. Mirror the active-page start address into the CRTC start
+            // address regs so the visible text window matches BIOS state (and so guests that read
+            // VGA ports observe coherent values even when AeroGPU owns the legacy VGA decode).
+            if self.bios.video.vbe.current_mode.is_none() && (ax_before & 0xFF00) == 0x0500 {
+                let page = BiosDataArea::read_active_page(&mut self.mem);
+                let page_size_bytes = BiosDataArea::read_page_size(&mut self.mem);
+                let cells_per_page = page_size_bytes / 2;
+                let start_addr = u16::from(page).saturating_mul(cells_per_page) & 0x3FFF;
+                let _ = self.with_legacy_vga_frontend_mut(|vga| {
+                    vga.port_write(0x3D4, 1, 0x0C);
+                    vga.port_write(0x3D5, 1, u32::from((start_addr >> 8) as u8));
+                    vga.port_write(0x3D4, 1, 0x0D);
+                    vga.port_write(0x3D5, 1, u32::from((start_addr & 0x00FF) as u8));
+                });
             }
 
             // Keep the AeroGPU legacy window coherent with BIOS VBE state so the A0000 banked window
