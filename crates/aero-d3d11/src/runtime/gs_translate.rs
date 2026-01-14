@@ -380,6 +380,34 @@ pub struct GsPrepassTranslation {
     pub info: GsPrepassInfo,
 }
 
+fn default_varyings_from_decls(module: &Sm4Module) -> Vec<u32> {
+    // The caller-facing translation helpers default to exporting all declared GS output registers
+    // (excluding position at o0) into the expanded-vertex varying table.
+    //
+    // This keeps the behavior robust for typical FXC/DXC output signatures without requiring the
+    // executor to know which pixel-shader varyings will be consumed at draw time.
+    //
+    // Note: `Sm4Decl::Output` declarations come from `dcl_output o#.*` tokens. System-value outputs
+    // (`Sm4Decl::OutputSiv`) are currently ignored by the GS prepass translator; position is always
+    // assumed to be `o0` and is stored in `ExpandedVertex.pos`.
+    let mut out = Vec::new();
+    for decl in &module.decls {
+        let Sm4Decl::Output { reg, mask } = decl else {
+            continue;
+        };
+        if *reg == 0 {
+            continue;
+        }
+        if mask.0 == 0 {
+            continue;
+        }
+        out.push(*reg);
+    }
+    out.sort_unstable();
+    out.dedup();
+    out
+}
+
 /// Translate a decoded SM4 geometry shader module into a WGSL compute shader implementing the
 /// geometry prepass, selecting which output varyings are written into the expanded vertex buffer.
 ///
@@ -425,7 +453,8 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_packed(
 pub fn translate_gs_module_to_wgsl_compute_prepass(
     module: &Sm4Module,
 ) -> Result<String, GsTranslateError> {
-    translate_gs_module_to_wgsl_compute_prepass_packed(module, &[1])
+    let varyings = default_varyings_from_decls(module);
+    translate_gs_module_to_wgsl_compute_prepass_packed(module, &varyings)
 }
 
 /// Variant of [`translate_gs_module_to_wgsl_compute_prepass`] that allows overriding the compute
@@ -434,7 +463,8 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
     module: &Sm4Module,
     entry_point: &str,
 ) -> Result<GsPrepassTranslation, GsTranslateError> {
-    translate_gs_module_to_wgsl_compute_prepass_with_entry_point_packed(module, entry_point, &[1])
+    let varyings = default_varyings_from_decls(module);
+    translate_gs_module_to_wgsl_compute_prepass_with_entry_point_packed(module, entry_point, &varyings)
 }
 
 fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_packed(
@@ -4347,6 +4377,52 @@ mod tests {
         assert!(
             wgsl.contains("out_vertices.data[vtx_idx].varyings[7u] = o7;"),
             "expected varying location 7 store:\n{wgsl}"
+        );
+    }
+
+    #[test]
+    fn gs_translate_defaults_to_declared_output_varyings() {
+        // The convenience `translate_gs_module_to_wgsl_compute_prepass` helper should export all
+        // declared GS outputs (excluding `o0` position) into the expanded-vertex varying table.
+        let module = Sm4Module {
+            stage: ShaderStage::Geometry,
+            model: ShaderModel { major: 4, minor: 0 },
+            decls: vec![
+                Sm4Decl::GsInputPrimitive {
+                    primitive: GsInputPrimitive::Point(1),
+                },
+                Sm4Decl::GsOutputTopology {
+                    topology: GsOutputTopology::TriangleStrip(3),
+                },
+                Sm4Decl::GsMaxOutputVertexCount { max: 1 },
+                Sm4Decl::Output {
+                    reg: 0,
+                    mask: WriteMask::XYZW,
+                },
+                Sm4Decl::Output {
+                    reg: 1,
+                    mask: WriteMask::XYZW,
+                },
+                Sm4Decl::Output {
+                    reg: 7,
+                    mask: WriteMask::XYZW,
+                },
+            ],
+            instructions: vec![Sm4Inst::Ret],
+        };
+        let wgsl = translate_gs_module_to_wgsl_compute_prepass(&module)
+            .expect("translation should succeed");
+        assert!(
+            wgsl.contains("out_vertices.data[vtx_idx].varyings[1u] = o1;"),
+            "expected declared output o1 to be exported by default:\n{wgsl}"
+        );
+        assert!(
+            wgsl.contains("out_vertices.data[vtx_idx].varyings[7u] = o7;"),
+            "expected declared output o7 to be exported by default:\n{wgsl}"
+        );
+        assert!(
+            !wgsl.contains("varyings[0u]"),
+            "expected location 0 to remain reserved for position:\n{wgsl}"
         );
     }
 

@@ -515,7 +515,7 @@ fn sm4_gs_emit_cut_translates_to_wgsl_compute_prepass() {
     );
     assert!(
         wgsl.contains("gs_emit(o0, o1"),
-        "expected generated WGSL to call gs_emit"
+        "expected generated WGSL to call gs_emit:\n{wgsl}"
     );
     assert!(
         wgsl.contains("gs_cut(&strip_len)"),
@@ -1060,8 +1060,8 @@ fn sm4_gs_emitthen_cut_translates_to_wgsl_compute_prepass() {
         "expected generated WGSL to contain gs_cut helper function"
     );
     assert!(
-        wgsl.contains("gs_emit(o0, o1"),
-        "expected generated WGSL to call gs_emit"
+        wgsl.contains("gs_emit(o0,"),
+        "expected generated WGSL to call gs_emit:\n{wgsl}"
     );
     assert!(
         wgsl.contains("gs_cut(&strip_len)"),
@@ -2128,6 +2128,16 @@ fn gs_translate_supports_setp_and_predicated_emit_cut() {
                 reg: 0,
                 mask: WriteMask::X,
                 sys_value: D3D_NAME_PRIMITIVE_ID,
+            },
+            // Keep the module realistic: `decode_program` normally emits these from `dcl_output`
+            // tokens, and the GS translator uses them to determine which varyings to export.
+            Sm4Decl::Output {
+                reg: 0,
+                mask: WriteMask::XYZW,
+            },
+            Sm4Decl::Output {
+                reg: 1,
+                mask: WriteMask::XYZW,
             },
         ],
         instructions: vec![
