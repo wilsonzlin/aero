@@ -342,8 +342,24 @@ function abiDump(): AbiDump {
   const compile = spawnSync("cc", ["-I", repoRoot, "-std=c11", "-o", outPath, cSrc], { encoding: "utf8" });
   assert.equal(compile.status, 0, `cc failed: ${compile.stderr}\n${compile.stdout}`);
 
-  const run = spawnSync(outPath, [], { encoding: "utf8" });
-  assert.equal(run.status, 0, `ABI dump helper failed: ${run.stderr}\n${run.stdout}`);
+  // `ETXTBSY` ("text file busy") can happen on some filesystems if the compiler/linker still has
+  // the output file open when we immediately attempt to execute it. Retry a few times with small
+  // backoff to make this test robust under parallel runs.
+  const sleepMs = (ms: number) => {
+    // Node doesn't provide a built-in synchronous sleep; Atomics.wait is the standard workaround.
+    const sab = new SharedArrayBuffer(4);
+    const ia = new Int32Array(sab);
+    Atomics.wait(ia, 0, 0, ms);
+  };
+  let run = spawnSync(outPath, [], { encoding: "utf8" });
+  for (let attempt = 0; attempt < 10; attempt++) {
+    // When spawn fails, status is null and error is set.
+    if (!run.error) break;
+    if ((run.error as NodeJS.ErrnoException).code !== "ETXTBSY") break;
+    sleepMs(5 * (attempt + 1));
+    run = spawnSync(outPath, [], { encoding: "utf8" });
+  }
+  assert.equal(run.status, 0, `ABI dump helper failed: ${run.error ?? ""}\n${run.stderr}\n${run.stdout}`);
 
   cachedAbi = parseAbiDump(run.stdout);
   return cachedAbi;
