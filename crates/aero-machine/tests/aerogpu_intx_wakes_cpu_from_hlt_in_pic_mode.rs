@@ -113,7 +113,11 @@ fn aerogpu_intx_wakes_cpu_from_hlt_in_pic_mode() {
         "expected AeroGPU INTx to route to legacy PIC IRQ (<16), got gsi={gsi}"
     );
     let irq = u8::try_from(gsi).unwrap();
-    let vector = if irq < 8 { 0x20 + irq } else { 0x28 + (irq - 8) };
+    let vector = if irq < 8 {
+        0x20 + irq
+    } else {
+        0x28 + (irq - 8)
+    };
 
     let flag_addr = 0x0500u16;
     let flag_value = 0x5Au8;
@@ -221,4 +225,3 @@ fn aerogpu_intx_wakes_cpu_from_hlt_in_pic_mode() {
         m.read_physical_u8(u64::from(flag_addr))
     );
 }
-
