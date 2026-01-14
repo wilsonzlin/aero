@@ -1019,7 +1019,38 @@ static void print_vioinput_state(const VIOINPUT_STATE *st, DWORD bytes)
         wprintf(L"  StatusQDropOnFull: <missing>\n");
     }
     if (avail >= offsetof(VIOINPUT_STATE, KeyboardLedSupportedMask) + sizeof(ULONG)) {
-        wprintf(L"  KeyboardLedSupportedMask: 0x%02lX\n", st->KeyboardLedSupportedMask & 0x1Ful);
+        ULONG mask = st->KeyboardLedSupportedMask & 0x1Ful;
+        size_t i;
+        int first;
+        struct {
+            ULONG bit;
+            const WCHAR *name;
+        } bits[] = {
+            {0x01, L"Num"},
+            {0x02, L"Caps"},
+            {0x04, L"Scroll"},
+            {0x08, L"Compose"},
+            {0x10, L"Kana"},
+        };
+
+        wprintf(L"  KeyboardLedSupportedMask: 0x%02lX", mask);
+        if (mask == 0) {
+            wprintf(L" (none)");
+        } else {
+            wprintf(L" (");
+            first = 1;
+            for (i = 0; i < (sizeof(bits) / sizeof(bits[0])); i++) {
+                if ((mask & bits[i].bit) != 0) {
+                    if (!first) {
+                        wprintf(L"|");
+                    }
+                    first = 0;
+                    wprintf(L"%ls", bits[i].name);
+                }
+            }
+            wprintf(L")");
+        }
+        wprintf(L"\n");
     } else {
         wprintf(L"  KeyboardLedSupportedMask: <missing>\n");
     }
