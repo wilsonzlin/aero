@@ -5282,57 +5282,18 @@ impl Machine {
             return;
         };
 
-        // Detect Bochs VBE linear framebuffer modes programmed via the VBE_DISPI index/data ports
-        // (`aero_gpu_vga::VBE_DISPI_INDEX_PORT` / `aero_gpu_vga::VBE_DISPI_DATA_PORT`).
-        let regs = vga.borrow().vbe;
-        let vbe_enabled = (regs.enable & 0x0001) != 0;
-        let lfb_enabled = (regs.enable & 0x0040) != 0;
-        if vbe_enabled && lfb_enabled {
-            // This legacy VBE scanout publication path currently only supports the canonical boot
-            // pixel format: 32bpp packed pixels `B8G8R8X8`.
-            //
-            // If the guest programs a palettized VBE mode (e.g. 8bpp), fall back to the implicit
-            // legacy scanout path rather than publishing a misleading 32bpp descriptor.
-            if regs.bpp != 32 {
-                self.publish_legacy_text_scanout();
-                return;
-            }
-
-            let width = regs.xres as u32;
-            let height = regs.yres as u32;
-            if width == 0 || height == 0 {
-                // Treat invalid modes as text for robustness.
-                self.publish_legacy_text_scanout();
-                return;
-            }
-
-            let stride_pixels = if regs.virt_width != 0 {
-                regs.virt_width as u32
-            } else {
-                width
-            };
-            let bytes_per_pixel = 4u64;
-            let pitch_bytes = stride_pixels.saturating_mul(bytes_per_pixel as u32);
-
-            // Encode panning offsets by adjusting the scanout base (ScanoutState has no explicit
-            // `x_offset`/`y_offset` fields).
-            let base = u64::from(vga.borrow().lfb_base())
-                .saturating_add(u64::from(regs.y_offset).saturating_mul(u64::from(pitch_bytes)))
-                .saturating_add(u64::from(regs.x_offset).saturating_mul(bytes_per_pixel));
-
-            self.publish_scanout(ScanoutStateUpdate {
-                source: SCANOUT_SOURCE_LEGACY_VBE_LFB,
-                base_paddr_lo: base as u32,
-                base_paddr_hi: (base >> 32) as u32,
-                width,
-                height,
-                pitch_bytes,
-                format: SCANOUT_FORMAT_B8G8R8X8,
-            });
-            return;
+        // Prefer the canonical helper that accounts for BIOS VBE scanline overrides (INT 10h
+        // AX=4F06) in addition to the Bochs VBE register file.
+        let update = vga.borrow().active_scanout_update();
+        if update.source == SCANOUT_SOURCE_LEGACY_VBE_LFB
+            && update.width != 0
+            && update.height != 0
+            && update.pitch_bytes != 0
+        {
+            self.publish_scanout(update);
+        } else {
+            self.publish_legacy_text_scanout();
         }
-
-        self.publish_legacy_text_scanout();
     }
 
     /// Returns and clears any accumulated BIOS "TTY output".
