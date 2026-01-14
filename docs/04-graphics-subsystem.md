@@ -152,6 +152,9 @@ Key properties:
 - **Header is an array of 32-bit atomics** so it can be accessed from both Rust and JS via `AtomicU32` / `Int32Array + Atomics`.
 - **Double buffering** (`slot 0` and `slot 1`):
   - producer writes into the “back” slot, then publishes it by flipping `active_index` and incrementing `frame_seq`.
+- Producer also sets a `frame_dirty` flag (`SharedFramebufferHeaderIndex.FRAME_DIRTY`) on publish. This is a producer→consumer “new frame” / liveness flag that some implementations may `Atomics.wait` on.
+  - Published by: `SharedFramebufferWriter::write_frame()` in `crates/aero-shared/src/shared_framebuffer.rs`
+  - Cleared by the GPU worker: `presentOnce()` in `web/src/workers/gpu-worker.ts` (clears after consuming a legacy frame, and also when scanout owns output to avoid stale legacy-dirty state).
 - Optional **dirty-tile tracking**:
   - each slot may have a dirty bitset (`dirty_words_per_buffer`)
   - dirty tiles are converted to pixel rects by:
@@ -177,6 +180,7 @@ The GPU worker:
 4. Uploads either:
    - a full frame (`present()`), or
    - rect updates (`presentDirtyRects()` when the selected backend supports it).
+5. Clears the producer→consumer `frame_dirty` flag (`SharedFramebufferHeaderIndex.FRAME_DIRTY`) after consuming a frame.
 
 Code pointers:
 
@@ -230,7 +234,7 @@ Code pointers:
   - Supported formats today (AeroGPU `AerogpuFormat` discriminants): `B8G8R8X8` / `B8G8R8A8` / `R8G8B8X8` / `R8G8B8A8` (plus `_SRGB` variants). X8 formats force `A=255`; A8 formats preserve alpha. `_SRGB` variants are layout-identical (swizzle only; no gamma conversion during readback).
   - Note: `base_paddr == 0` is treated as a placeholder scanout descriptor for the host-side AeroGPU path when `source=WDDM` (no guest-memory readback). Legacy VBE scanout expects a real framebuffer.
   - The RAM-vs-VRAM resolution and the VRAM base-paddr contract are documented in [`docs/16-aerogpu-vga-vesa-compat.md`](./16-aerogpu-vga-vesa-compat.md#vram-bar1-backing-as-a-sharedarraybuffer).
-  - Unit tests: `web/src/workers/gpu-worker_wddm_scanout_readback.test.ts`, `web/src/workers/gpu-worker_scanout_vram_missing.test.ts`.
+  - Unit tests: `web/src/workers/gpu-worker_wddm_scanout_readback.test.ts`, `web/src/workers/gpu-worker_scanout_vram_missing.test.ts`, `web/src/workers/gpu-worker_wddm_tick_gate.test.ts`.
 - **Canonical Rust machine (optional):** `crates/aero-machine/src/lib.rs` can publish scanout-source updates into an `aero_shared::scanout_state::ScanoutState` provided by the host:
   - `Machine::set_scanout_state()` installs the shared descriptor.
   - `Machine::reset()` publishes `LEGACY_TEXT` on reset.
