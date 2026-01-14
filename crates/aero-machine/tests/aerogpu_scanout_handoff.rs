@@ -69,7 +69,6 @@ fn build_boot_sector_vbe_then_wait_then_text_mode() -> [u8; 512] {
 
     // hlt
     sector[i] = 0xF4;
-    i += 1;
 
     // Patch the JNE to loop_start.
     // The `jne rel8` offset is relative to the instruction *after* the displacement byte.
