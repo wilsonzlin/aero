@@ -1990,7 +1990,10 @@ def _try_qmp_net_link_flap(
     name_used = _try_qmp_set_link_any(endpoint, names=names, up=False)
     time.sleep(float(down_delay_seconds))
     try:
-        _try_qmp_set_link(endpoint, name=name_used, up=True)
+        # Prefer reusing the same identifier that succeeded for the DOWN phase, but allow a
+        # best-effort fallback to the other candidate names when bringing the link back UP.
+        names_up = [name_used] + [n for n in names if n != name_used]
+        name_used = _try_qmp_set_link_any(endpoint, names=names_up, up=True)
     except Exception as e:
         # Preserve the name that was accepted for the DOWN phase so callers can report it in
         # host-side markers even if the UP phase fails.
