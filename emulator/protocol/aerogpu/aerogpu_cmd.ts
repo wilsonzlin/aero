@@ -1670,7 +1670,9 @@ export class AerogpuCmdWriter {
   /**
    * Stage-ex aware variant of {@link createShaderDxbc}.
    *
-   * Encodes `stageEx` into `(stage, reserved0)` using {@link encodeStageEx}.
+   * Encodes `stageEx` using the ABI `stage_ex` mechanism (see `drivers/aerogpu/protocol/aerogpu_cmd.h`):
+   * - The legacy `stage` field is forced to `COMPUTE`.
+   * - The `reserved0` field carries the non-zero `stageEx` discriminator.
    *
    * Note: `stageEx == 0` (DXBC Pixel program-type) is not representable here because `reserved0 == 0`
    * is reserved for the legacy/default encoding (old guests always write 0 into reserved fields).

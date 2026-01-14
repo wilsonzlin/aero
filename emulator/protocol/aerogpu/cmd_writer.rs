@@ -485,10 +485,12 @@ impl AerogpuCmdWriter {
 
     /// Stage-ex aware variant of [`Self::create_shader_dxbc`].
     ///
-    /// Encoding:
-    /// - Legacy stages (Pixel/Vertex/Compute): use the legacy `stage` field and keep `reserved0 = 0`.
-    /// - Extended stages (Geometry/Hull/Domain): set `stage = COMPUTE` and write
-    ///   `reserved0 = stage_ex` (DXBC program-type 2/3/4).
+    /// Encodes `stage_ex` using the ABI `stage_ex` mechanism (see `drivers/aerogpu/protocol/aerogpu_cmd.h`):
+    /// - The legacy `stage` field is forced to `COMPUTE`.
+    /// - The `reserved0` field carries the non-zero `stage_ex` discriminator.
+    ///
+    /// Pixel shaders are not representable via `stage_ex` (0 is reserved for legacy compute). Emit pixel
+    /// shaders via [`Self::create_shader_dxbc`] using `stage = PIXEL` and `reserved0 = 0`.
     pub fn create_shader_dxbc_ex(
         &mut self,
         shader_handle: AerogpuHandle,
