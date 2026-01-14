@@ -12,6 +12,15 @@ fn minimal_trace_bytes(command_abi_version: u32) -> Vec<u8> {
     writer.finish().unwrap()
 }
 
+fn trace_with_blob(command_abi_version: u32) -> Vec<u8> {
+    let meta = TraceMeta::new("test", command_abi_version);
+    let mut writer = TraceWriter::new(Vec::<u8>::new(), &meta).expect("TraceWriter::new");
+    writer.begin_frame(0).unwrap();
+    let _id = writer.write_blob(BlobKind::BufferData, b"blob data").unwrap();
+    writer.present(0).unwrap();
+    writer.finish().unwrap()
+}
+
 fn trace_with_aerogpu_submission_v2(command_abi_version: u32) -> Vec<u8> {
     let meta = TraceMeta::new("test", command_abi_version);
     let mut writer = TraceWriter::new_v2(Vec::<u8>::new(), &meta).expect("TraceWriter::new_v2");
@@ -102,6 +111,48 @@ fn reject_trace_with_too_old_container_version() {
         Err(err) => err,
     };
     assert!(matches!(err, TraceReadError::UnsupportedContainerVersion(0)));
+}
+
+#[test]
+fn reject_unknown_record_type_in_supported_container_version() {
+    let mut bytes = minimal_trace_bytes(0);
+
+    let meta_len = read_u32_le(&bytes, 24) as usize;
+    let record_stream_start = 32 + meta_len;
+
+    // First record is BeginFrame; corrupt its record_type byte.
+    bytes[record_stream_start] = 0xFF;
+
+    let mut reader = TraceReader::open(Cursor::new(bytes)).expect("TraceReader::open");
+    let entry = reader.frame_entries()[0];
+    let err = reader
+        .read_records_in_range(entry.start_offset, entry.end_offset)
+        .unwrap_err();
+    assert!(matches!(err, TraceReadError::UnknownRecordType(0xFF)));
+}
+
+#[test]
+fn reject_unknown_blob_kind() {
+    let mut bytes = trace_with_blob(0);
+
+    let meta_len = read_u32_le(&bytes, 24) as usize;
+    let record_stream_start = 32 + meta_len;
+
+    // Record layout: BeginFrame (12 bytes) then Blob.
+    let blob_record_start = record_stream_start + 12;
+    // Blob payload starts after the 8-byte record header. BlobKind is at payload + 8.
+    let blob_kind_off = blob_record_start + 8 + 8;
+    bytes[blob_kind_off..blob_kind_off + 4].copy_from_slice(&0xDEAD_BEEFu32.to_le_bytes());
+
+    let mut reader = TraceReader::open(Cursor::new(bytes)).expect("TraceReader::open");
+    let entry = reader.frame_entries()[0];
+    let err = reader
+        .read_records_in_range(entry.start_offset, entry.end_offset)
+        .unwrap_err();
+    assert!(matches!(
+        err,
+        TraceReadError::UnknownBlobKind(v) if v == 0xDEAD_BEEF
+    ));
 }
 
 #[test]
