@@ -306,7 +306,10 @@ pub fn jit_abi_constants() -> JsValue {
         use aero_cpu_core::state::{
             CPU_GPR_OFF, CPU_RFLAGS_OFF, CPU_RIP_OFF, CPU_STATE_ALIGN, CPU_STATE_SIZE, GPR_COUNT,
         };
-        use aero_jit_x86::jit_ctx::{JitContext, TIER2_CTX_OFFSET, TIER2_CTX_SIZE};
+        use aero_jit_x86::jit_ctx::{
+            CODE_VERSION_TABLE_LEN_OFFSET, CODE_VERSION_TABLE_PTR_OFFSET, JitContext, TIER2_CTX_OFFSET,
+            TIER2_CTX_SIZE,
+        };
         use aero_jit_x86::{
             JIT_TLB_ENTRIES, JIT_TLB_ENTRY_SIZE, PAGE_OFFSET_MASK, PAGE_SHIFT, PAGE_SIZE,
             TLB_FLAG_EXEC, TLB_FLAG_IS_RAM, TLB_FLAG_READ, TLB_FLAG_WRITE,
@@ -340,6 +343,14 @@ pub fn jit_abi_constants() -> JsValue {
         set_u32("jit_tlb_flag_is_ram", TLB_FLAG_IS_RAM as u32);
         set_u32("tier2_ctx_offset", TIER2_CTX_OFFSET as u32);
         set_u32("tier2_ctx_size", TIER2_CTX_SIZE as u32);
+        set_u32(
+            "code_version_table_ptr_offset",
+            CODE_VERSION_TABLE_PTR_OFFSET as u32,
+        );
+        set_u32(
+            "code_version_table_len_offset",
+            CODE_VERSION_TABLE_LEN_OFFSET as u32,
+        );
         let commit_flag_offset = TIER2_CTX_OFFSET + TIER2_CTX_SIZE;
         set_u32("commit_flag_offset", commit_flag_offset as u32);
         set_u32("commit_flag_bytes", 4);
@@ -375,7 +386,10 @@ mod jit_abi_constants_tests {
     use aero_cpu_core::state::{
         CPU_GPR_OFF, CPU_RFLAGS_OFF, CPU_RIP_OFF, CPU_STATE_ALIGN, CPU_STATE_SIZE, GPR_COUNT,
     };
-    use aero_jit_x86::jit_ctx::{JitContext, TIER2_CTX_OFFSET, TIER2_CTX_SIZE};
+    use aero_jit_x86::jit_ctx::{
+        CODE_VERSION_TABLE_LEN_OFFSET, CODE_VERSION_TABLE_PTR_OFFSET, JitContext, TIER2_CTX_OFFSET,
+        TIER2_CTX_SIZE,
+    };
     use aero_jit_x86::{
         JIT_TLB_ENTRIES, JIT_TLB_ENTRY_SIZE, PAGE_OFFSET_MASK, PAGE_SHIFT, PAGE_SIZE,
         TLB_FLAG_EXEC, TLB_FLAG_IS_RAM, TLB_FLAG_READ, TLB_FLAG_WRITE,
@@ -430,6 +444,14 @@ mod jit_abi_constants_tests {
         );
         assert_eq!(read_u32(&obj, "tier2_ctx_offset"), TIER2_CTX_OFFSET);
         assert_eq!(read_u32(&obj, "tier2_ctx_size"), TIER2_CTX_SIZE);
+        assert_eq!(
+            read_u32(&obj, "code_version_table_ptr_offset"),
+            CODE_VERSION_TABLE_PTR_OFFSET
+        );
+        assert_eq!(
+            read_u32(&obj, "code_version_table_len_offset"),
+            CODE_VERSION_TABLE_LEN_OFFSET
+        );
         assert_eq!(
             read_u32(&obj, "commit_flag_offset"),
             TIER2_CTX_OFFSET + TIER2_CTX_SIZE
