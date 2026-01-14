@@ -8909,6 +8909,19 @@ void AEROGPU_APIENTRY RotateResourceIdentities(D3D10DDI_HDEVICE hDevice,
     for (uint32_t i = 0; i < count; ++i) {
       cmd->colors[i] = dev->current_rtvs[i];
     }
+
+    // Bring-up logging: swapchains may rebind RT state via RotateResourceIdentities.
+    AEROGPU_D3D10_11_LOG("SET_RENDER_TARGETS (rotate): color_count=%u depth=%u colors=[%u,%u,%u,%u,%u,%u,%u,%u]",
+                         static_cast<unsigned>(cmd->color_count),
+                         static_cast<unsigned>(cmd->depth_stencil),
+                         static_cast<unsigned>(cmd->colors[0]),
+                         static_cast<unsigned>(cmd->colors[1]),
+                         static_cast<unsigned>(cmd->colors[2]),
+                         static_cast<unsigned>(cmd->colors[3]),
+                         static_cast<unsigned>(cmd->colors[4]),
+                         static_cast<unsigned>(cmd->colors[5]),
+                         static_cast<unsigned>(cmd->colors[6]),
+                         static_cast<unsigned>(cmd->colors[7]));
   }
 
   auto is_rotated = [&resources](const AeroGpuResource* res) -> bool {

@@ -10281,6 +10281,19 @@ void AEROGPU_APIENTRY RotateResourceIdentities11(D3D11DDI_HDEVICECONTEXT hCtx, D
     for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
       cmd->colors[i] = (i < bound_rtv_count) ? new_rtvs[i] : 0;
     }
+
+    // Bring-up logging: swapchains may rebind RT state via RotateResourceIdentities.
+    AEROGPU_D3D10_11_LOG("SET_RENDER_TARGETS (rotate): color_count=%u depth=%u colors=[%u,%u,%u,%u,%u,%u,%u,%u]",
+                         static_cast<unsigned>(bound_rtv_count),
+                         static_cast<unsigned>(new_dsv),
+                         static_cast<unsigned>(cmd->colors[0]),
+                         static_cast<unsigned>(cmd->colors[1]),
+                         static_cast<unsigned>(cmd->colors[2]),
+                         static_cast<unsigned>(cmd->colors[3]),
+                         static_cast<unsigned>(cmd->colors[4]),
+                         static_cast<unsigned>(cmd->colors[5]),
+                         static_cast<unsigned>(cmd->colors[6]),
+                         static_cast<unsigned>(cmd->colors[7]));
   }
 
   for (uint32_t slot = 0; slot < dev->current_vs_srvs.size(); ++slot) {
