@@ -462,7 +462,24 @@ class Ps2Keyboard {
   scanningEnabled = true;
   expectingData = false;
   lastCommand = 0;
-  readonly outQueue: number[] = [];
+  readonly #outBuf = new Uint8Array(MAX_KEYBOARD_OUTPUT_QUEUE);
+  #outHead = 0;
+  #outTail = 0;
+  #outLen = 0;
+
+  #clearOutQueue(): void {
+    this.#outHead = 0;
+    this.#outTail = 0;
+    this.#outLen = 0;
+  }
+
+  #pushOut(b: number): void {
+    if (this.#outLen >= MAX_KEYBOARD_OUTPUT_QUEUE) return;
+    this.#outBuf[this.#outTail] = b & 0xff;
+    this.#outTail += 1;
+    if (this.#outTail === MAX_KEYBOARD_OUTPUT_QUEUE) this.#outTail = 0;
+    this.#outLen += 1;
+  }
 
   resetDefaults(): void {
     this.scancodeSet = 2;
@@ -472,7 +489,7 @@ class Ps2Keyboard {
     this.scanningEnabled = true;
     this.expectingData = false;
     this.lastCommand = 0;
-    this.outQueue.length = 0;
+    this.#clearOutQueue();
   }
 
   injectScancodes(bytes: Uint8Array): void {
@@ -482,8 +499,19 @@ class Ps2Keyboard {
     if (this.scancodeSet !== 2) return;
     // Use index iteration to avoid allocating a TypedArray iterator (hot path under key-repeat).
     for (let i = 0; i < bytes.byteLength; i += 1) {
-      if (this.outQueue.length >= MAX_KEYBOARD_OUTPUT_QUEUE) break;
-      this.outQueue.push(bytes[i]! & 0xff);
+      if (this.#outLen >= MAX_KEYBOARD_OUTPUT_QUEUE) break;
+      this.#pushOut(bytes[i]!);
+    }
+  }
+
+  injectScancodesPacked(packedLE: number, len: number): void {
+    if (!this.scanningEnabled) return;
+    if (this.scancodeSet !== 2) return;
+    let packed = packedLE >>> 0;
+    for (let i = 0; i < len; i += 1) {
+      if (this.#outLen >= MAX_KEYBOARD_OUTPUT_QUEUE) break;
+      this.#pushOut(packed);
+      packed >>>= 8;
     }
   }
 
@@ -498,13 +526,16 @@ class Ps2Keyboard {
   }
 
   popOutputByte(): number | null {
-    const b = this.outQueue.shift();
-    return typeof b === "number" ? (b & 0xff) : null;
+    if (this.#outLen === 0) return null;
+    const b = this.#outBuf[this.#outHead] & 0xff;
+    this.#outHead += 1;
+    if (this.#outHead === MAX_KEYBOARD_OUTPUT_QUEUE) this.#outHead = 0;
+    this.#outLen -= 1;
+    return b;
   }
 
   #queueByte(b: number): void {
-    if (this.outQueue.length >= MAX_KEYBOARD_OUTPUT_QUEUE) return;
-    this.outQueue.push(b & 0xff);
+    this.#pushOut(b);
   }
 
   #handleCommand(cmd: number): void {
@@ -606,9 +637,14 @@ class Ps2Keyboard {
     w.u8(this.lastCommand);
     w.u8(0); // padding
 
-    const len = Math.min(this.outQueue.length, MAX_KEYBOARD_OUTPUT_QUEUE);
+    const len = this.#outLen;
     w.u32(len);
-    for (let i = 0; i < len; i++) w.u8(this.outQueue[i]!);
+    let idx = this.#outHead;
+    for (let i = 0; i < len; i++) {
+      w.u8(this.#outBuf[idx]!);
+      idx += 1;
+      if (idx === MAX_KEYBOARD_OUTPUT_QUEUE) idx = 0;
+    }
   }
 
   loadState(r: ByteReader): void {
@@ -623,8 +659,10 @@ class Ps2Keyboard {
 
     const lenRaw = r.u32();
     const len = Math.min(lenRaw, MAX_KEYBOARD_OUTPUT_QUEUE);
-    this.outQueue.length = 0;
-    for (let i = 0; i < len; i++) this.outQueue.push(r.u8() & 0xff);
+    this.#clearOutQueue();
+    for (let i = 0; i < len; i++) {
+      this.#pushOut(r.u8());
+    }
     if (lenRaw > len) r.skip(lenRaw - len);
   }
 }
@@ -682,7 +720,24 @@ class Ps2Mouse {
   readonly sampleRateSeq: number[] = [];
   expectingData = false;
   lastCommand = 0;
-  readonly outQueue: number[] = [];
+  readonly #outBuf = new Uint8Array(MAX_MOUSE_OUTPUT_QUEUE);
+  #outHead = 0;
+  #outTail = 0;
+  #outLen = 0;
+
+  #clearOutQueue(): void {
+    this.#outHead = 0;
+    this.#outTail = 0;
+    this.#outLen = 0;
+  }
+
+  #pushOut(b: number): void {
+    if (this.#outLen >= MAX_MOUSE_OUTPUT_QUEUE) return;
+    this.#outBuf[this.#outTail] = b & 0xff;
+    this.#outTail += 1;
+    if (this.#outTail === MAX_MOUSE_OUTPUT_QUEUE) this.#outTail = 0;
+    this.#outLen += 1;
+  }
 
   resetDefaults(): void {
     this.mode = "stream";
@@ -698,7 +753,7 @@ class Ps2Mouse {
     this.sampleRateSeq.length = 0;
     this.expectingData = false;
     this.lastCommand = 0;
-    this.outQueue.length = 0;
+    this.#clearOutQueue();
   }
 
   receiveByte(byte: number): void {
@@ -729,13 +784,16 @@ class Ps2Mouse {
   }
 
   popOutputByte(): number | null {
-    const b = this.outQueue.shift();
-    return typeof b === "number" ? (b & 0xff) : null;
+    if (this.#outLen === 0) return null;
+    const b = this.#outBuf[this.#outHead] & 0xff;
+    this.#outHead += 1;
+    if (this.#outHead === MAX_MOUSE_OUTPUT_QUEUE) this.#outHead = 0;
+    this.#outLen -= 1;
+    return b;
   }
 
   #queueByte(b: number): void {
-    if (this.outQueue.length >= MAX_MOUSE_OUTPUT_QUEUE) return;
-    this.outQueue.push(b & 0xff);
+    this.#pushOut(b);
   }
 
   #statusByte(): number {
@@ -906,9 +964,14 @@ class Ps2Mouse {
     w.i32(this.dy);
     w.i32(this.dz);
 
-    const outLen = Math.min(this.outQueue.length, MAX_MOUSE_OUTPUT_QUEUE);
+    const outLen = this.#outLen;
     w.u32(outLen);
-    for (let i = 0; i < outLen; i++) w.u8(this.outQueue[i]!);
+    let idx = this.#outHead;
+    for (let i = 0; i < outLen; i++) {
+      w.u8(this.#outBuf[idx]!);
+      idx += 1;
+      if (idx === MAX_MOUSE_OUTPUT_QUEUE) idx = 0;
+    }
   }
 
   loadState(r: ByteReader): void {
@@ -933,8 +996,10 @@ class Ps2Mouse {
 
     const outLenRaw = r.u32();
     const outLen = Math.min(outLenRaw, MAX_MOUSE_OUTPUT_QUEUE);
-    this.outQueue.length = 0;
-    for (let i = 0; i < outLen; i++) this.outQueue.push(r.u8() & 0xff);
+    this.#clearOutQueue();
+    for (let i = 0; i < outLen; i++) {
+      this.#pushOut(r.u8());
+    }
     if (outLenRaw > outLen) r.skip(outLenRaw - outLen);
   }
 }
@@ -982,7 +1047,10 @@ export class I8042Controller implements PortIoHandler {
   //
   // Including the sequence number avoids missing IRQ pulses when consecutive head bytes have the
   // same value+source (object identity previously provided this property).
-  #outQueue: number[] = [];
+  readonly #outBuf = new Uint32Array(MAX_CONTROLLER_OUTPUT_QUEUE);
+  #outHead = 0;
+  #outTail = 0;
+  #outLen = 0;
   #outSeq = 1;
   #irqLastHead: number | null = null;
   // When both devices have pending output, alternate which device gets priority so bytes can
@@ -1005,10 +1073,10 @@ export class I8042Controller implements PortIoHandler {
 
     switch (port & 0xffff) {
       case 0x0060: {
-        const item = this.#outQueue.shift();
+        const item = this.#outShift();
         this.#pumpDeviceQueues();
         this.#syncStatusAndIrq();
-        return typeof item === "number" ? item & 0xff : 0x00;
+        return item === null ? 0x00 : item & 0xff;
       }
       case 0x0064:
         return this.#readStatus();
@@ -1060,16 +1128,7 @@ export class I8042Controller implements PortIoHandler {
     const n = Math.floor(len);
     if (n !== len || n < 1 || n > 4) return;
 
-    // Keep behaviour consistent with `injectKeyboardBytes`: inject through the keyboard device,
-    // respecting scanningEnabled/scancodeSet and the keyboard output queue limit.
-    if (this.#keyboard.scanningEnabled && this.#keyboard.scancodeSet === 2) {
-      let packed = packedLE >>> 0;
-      for (let i = 0; i < n; i++) {
-        if (this.#keyboard.outQueue.length >= MAX_KEYBOARD_OUTPUT_QUEUE) break;
-        this.#keyboard.outQueue.push(packed & 0xff);
-        packed >>>= 8;
-      }
-    }
+    this.#keyboard.injectScancodesPacked(packedLE, n);
 
     this.#pumpDeviceQueues();
     this.#syncStatusAndIrq();
@@ -1325,12 +1384,45 @@ export class I8042Controller implements PortIoHandler {
     const v = value & 0xff;
     const s = source & 0x03;
     const seq = this.#outSeq++;
-    // See `#outQueue` comment for layout.
+    // See `#outBuf` comment for layout.
     return seq * 1024 + (s << 8) + v;
   }
 
   #outSource(packed: number): OutputSource {
     return ((packed >>> 8) & 0x03) as OutputSource;
+  }
+
+  #outClear(): void {
+    this.#outHead = 0;
+    this.#outTail = 0;
+    this.#outLen = 0;
+  }
+
+  #outPeek(): number | null {
+    if (this.#outLen === 0) return null;
+    return this.#outBuf[this.#outHead]! >>> 0;
+  }
+
+  #outPush(packed: number): boolean {
+    if (this.#outLen >= MAX_CONTROLLER_OUTPUT_QUEUE) return false;
+    this.#outBuf[this.#outTail] = packed >>> 0;
+    this.#outTail += 1;
+    if (this.#outTail === MAX_CONTROLLER_OUTPUT_QUEUE) this.#outTail = 0;
+    this.#outLen += 1;
+    return true;
+  }
+
+  #outShift(): number | null {
+    if (this.#outLen === 0) return null;
+    const item = this.#outBuf[this.#outHead]! >>> 0;
+    this.#outHead += 1;
+    if (this.#outHead === MAX_CONTROLLER_OUTPUT_QUEUE) this.#outHead = 0;
+    this.#outLen -= 1;
+    if (this.#outLen === 0) {
+      // Keep head/tail aligned to avoid growth in the mod-arithmetic state.
+      this.#outTail = this.#outHead;
+    }
+    return item;
   }
 
   #pullKeyboardOutput(): boolean {
@@ -1339,11 +1431,11 @@ export class I8042Controller implements PortIoHandler {
     if (kb === null) return false;
     if (this.#translationEnabled()) {
       const out = this.#translator.feed(kb);
-      if (out !== null && this.#outQueue.length < MAX_CONTROLLER_OUTPUT_QUEUE) {
-        this.#outQueue.push(this.#packOut(out, OUTPUT_SOURCE_KEYBOARD));
+      if (out !== null) {
+        this.#outPush(this.#packOut(out, OUTPUT_SOURCE_KEYBOARD));
       }
-    } else if (this.#outQueue.length < MAX_CONTROLLER_OUTPUT_QUEUE) {
-      this.#outQueue.push(this.#packOut(kb, OUTPUT_SOURCE_KEYBOARD));
+    } else {
+      this.#outPush(this.#packOut(kb, OUTPUT_SOURCE_KEYBOARD));
     }
     // Return true if we consumed a device byte, even if translation produced no output (e.g. F0 prefix).
     return true;
@@ -1353,15 +1445,13 @@ export class I8042Controller implements PortIoHandler {
     if (!this.#mousePortEnabled()) return false;
     const ms = this.#mouse.popOutputByte();
     if (ms === null) return false;
-    if (this.#outQueue.length < MAX_CONTROLLER_OUTPUT_QUEUE) {
-      this.#outQueue.push(this.#packOut(ms, OUTPUT_SOURCE_MOUSE));
-    }
+    this.#outPush(this.#packOut(ms, OUTPUT_SOURCE_MOUSE));
     return true;
   }
 
   #enqueue(value: number, source: OutputSource): void {
-    if (this.#outQueue.length >= MAX_CONTROLLER_OUTPUT_QUEUE) return;
-    this.#outQueue.push(this.#packOut(value, source));
+    if (this.#outLen >= MAX_CONTROLLER_OUTPUT_QUEUE) return;
+    this.#outPush(this.#packOut(value, source));
     this.#syncStatusAndIrq();
   }
 
@@ -1371,12 +1461,12 @@ export class I8042Controller implements PortIoHandler {
     // completely empty. This ensures:
     // - controller replies queued while OBF is set are delivered before additional device bytes,
     // - keyboard and mouse bytes can interleave fairly when both devices have pending output.
-    if (this.#outQueue.length !== 0) return;
+    if (this.#outLen !== 0) return;
 
     // Keep pulling until we have at least one output byte available, or both device queues are empty.
     // When both devices have output, pull 1 byte from each (order depends on `#preferMouse`) so
     // bytes can interleave (mirroring Rust's `prefer_mouse` behavior).
-    while (this.#outQueue.length === 0) {
+    while (this.#outLen === 0) {
       const takeMouseFirst = this.#preferMouse;
       let progressed = false;
       if (takeMouseFirst) {
@@ -1391,10 +1481,10 @@ export class I8042Controller implements PortIoHandler {
   }
 
   #syncStatusAndIrq(): void {
-    if (this.#outQueue.length > 0) this.#status |= STATUS_OBF;
+    if (this.#outLen > 0) this.#status |= STATUS_OBF;
     else this.#status &= ~STATUS_OBF;
 
-    const head = this.#outQueue[0] ?? null;
+    const head = this.#outPeek();
     const headSource = head === null ? null : this.#outSource(head);
     if (headSource === OUTPUT_SOURCE_MOUSE) this.#status |= STATUS_AUX_OBF;
     else this.#status &= ~STATUS_AUX_OBF;
@@ -1452,12 +1542,15 @@ export class I8042Controller implements PortIoHandler {
     w.u8(this.#outputPort);
     w.u8(this.#pendingCommand === null ? 0xff : this.#pendingCommand & 0xff);
 
-    const outLen = Math.min(this.#outQueue.length, MAX_CONTROLLER_OUTPUT_QUEUE);
+    const outLen = this.#outLen;
     w.u32(outLen);
+    let idx = this.#outHead;
     for (let i = 0; i < outLen; i++) {
-      const item = this.#outQueue[i]!;
+      const item = this.#outBuf[idx]! >>> 0;
       w.u8(item & 0xff);
       w.u8((item >>> 8) & 0x03);
+      idx += 1;
+      if (idx === MAX_CONTROLLER_OUTPUT_QUEUE) idx = 0;
     }
 
     this.#keyboard.saveState(w);
@@ -1522,14 +1615,14 @@ export class I8042Controller implements PortIoHandler {
       // Ignore system control errors during snapshot restore; the VM can still continue.
     }
 
-    this.#outQueue.length = 0;
+    this.#outClear();
     this.#outSeq = 1;
     const outLenRaw = r.u32();
     const outLen = Math.min(outLenRaw, MAX_CONTROLLER_OUTPUT_QUEUE);
     for (let i = 0; i < outLen; i++) {
       const value = r.u8() & 0xff;
       const source = decodeOutputSource(r.u8());
-      this.#outQueue.push(this.#packOut(value, source));
+      this.#outPush(this.#packOut(value, source));
     }
     if (outLenRaw > outLen) {
       // Each entry is (value:u8, source:u8).
@@ -1542,7 +1635,7 @@ export class I8042Controller implements PortIoHandler {
     // When a byte is already present in the output buffer, `preferMouse` is fully determined by
     // its source (see Rust `prefer_mouse` contract). Override the snapshot flag for backwards
     // compatibility with older snapshots that did not record this bit.
-    const head = this.#outQueue[0] ?? null;
+    const head = this.#outPeek();
     if (head !== null) {
       this.#preferMouse = this.#outSource(head) === OUTPUT_SOURCE_KEYBOARD;
     }
@@ -1550,7 +1643,7 @@ export class I8042Controller implements PortIoHandler {
     // Restore derived status bits. Snapshot restore should not emit spurious IRQ pulses for any
     // already-buffered output byte; pending edge-triggered interrupts must be captured/restored
     // by the interrupt controller (PIC/APIC) model instead.
-    this.#irqLastHead = this.#outQueue[0] ?? null;
+    this.#irqLastHead = head;
     this.#syncStatusAndIrq();
   }
 
