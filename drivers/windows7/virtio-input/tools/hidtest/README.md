@@ -131,6 +131,13 @@ If the interface could not be opened, most fields will be `null` and `openErr` w
 - `deviceDesc` — Device description string (Device Manager “Device description”)
 - `service` — bound service name (driver service key)
 
+Select a specific HID interface by Device Instance ID (useful when multiple similar HID devices are present):
+
+```bat
+hidtest.exe --list
+hidtest.exe --instance-id "HID\VID_1AF4&PID_0001&MI_00\7&2c7c3b5b&0&0000" --state --json
+```
+
 Run the virtio-input descriptor selftest (prints `PASS`/`FAIL` lines and exits non-zero on mismatch):
 
 ```bat
@@ -184,7 +191,7 @@ The JSON output includes additional fields for the optional collection descripto
 
 `--selftest` exits `0` on pass and `1` on fail.
 
-`--selftest` is intentionally standalone and cannot be combined with `--state`, `--interrupt-info`, `--list`, descriptor dump options, `--vid`, `--pid`, `--index`, counters, LED writes, or negative-test options.
+`--selftest` is intentionally standalone and cannot be combined with `--state`, `--interrupt-info`, `--list`, descriptor dump options, `--vid`, `--pid`, `--index`, `--instance-id`, counters, LED writes, or negative-test options.
 
 Tip: pass `--quiet` with `--selftest` to suppress the per-device enumeration output (leaving only the `HIDTEST|SELFTEST|...` lines).
 

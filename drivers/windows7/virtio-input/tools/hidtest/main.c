@@ -347,6 +347,7 @@ typedef struct OPTIONS {
     int have_vid;
     int have_pid;
     int have_index;
+    int have_instance_id;
     int have_duration;
     int have_count;
     int get_log_mask;
@@ -389,6 +390,7 @@ typedef struct OPTIONS {
     USHORT vid;
     USHORT pid;
     DWORD index;
+    WCHAR instance_id_filter[512];
     DWORD duration_secs;
     DWORD count;
     DWORD set_log_mask;
@@ -2810,7 +2812,7 @@ static void print_usage(void)
     wprintf(L"Usage:\n");
     wprintf(L"  hidtest.exe [--list [--json]]\n");
     wprintf(L"  hidtest.exe --selftest [--keyboard|--mouse|--tablet] [--json]\n");
-    wprintf(L"  hidtest.exe [--keyboard|--mouse|--tablet|--consumer] [--index N] [--vid 0x1234] [--pid 0x5678]\n");
+    wprintf(L"  hidtest.exe [--keyboard|--mouse|--tablet|--consumer] [--index N] [--instance-id ID] [--vid 0x1234] [--pid 0x5678]\n");
     wprintf(L"             [--led 0x1F | --led-hidd 0x1F | --led-ioctl-set-output 0x1F | --led-cycle | --led-spam N] [--dump-desc]\n");
     wprintf(L"             [--duration SECS] [--count N]\n");
     wprintf(L"             [--dump-collection-desc]\n");
@@ -2843,6 +2845,8 @@ static void print_usage(void)
     wprintf(L"  --consumer      Prefer/select the Consumer Control collection (UsagePage=Consumer, Usage=Consumer Control)\n");
     wprintf(L"  --tablet        Prefer/select the virtio-input tablet interface (VID 0x1AF4, PID 0x0003)\n");
     wprintf(L"  --index N       Open HID interface at enumeration index N\n");
+    wprintf(L"  --instance-id ID\n");
+    wprintf(L"                 Filter by Device Instance ID (from --list/--list --json)\n");
     wprintf(L"  --vid 0xVID     Filter by vendor ID (hex)\n");
     wprintf(L"  --pid 0xPID     Filter by product ID (hex)\n");
     wprintf(L"  --duration SECS Exit report read loop after SECS seconds\n");
@@ -4593,7 +4597,7 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
     }
 
     iface_index = 0;
-    have_hard_filters = opt->have_index || opt->have_vid || opt->have_pid;
+    have_hard_filters = opt->have_index || opt->have_vid || opt->have_pid || opt->have_instance_id;
     have_usage_filter = opt->want_keyboard || opt->want_mouse || opt->want_consumer || opt->want_tablet;
     usage_only = have_usage_filter && !have_hard_filters;
     for (;;) {
@@ -4699,6 +4703,15 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
         if (handle == INVALID_HANDLE_VALUE) {
             if (!opt->quiet) {
                 wprintf(L"[%lu] %ls\n", iface_index, detail->DevicePath);
+                if (instance_id_valid) {
+                    wprintf(L"      InstanceId: %ls\n", instance_id);
+                }
+                if (device_desc_valid) {
+                    wprintf(L"      DeviceDesc: %ls\n", device_desc);
+                }
+                if (service_valid) {
+                    wprintf(L"      Service: %ls\n", service);
+                }
                 print_last_error_w(L"      CreateFile");
             }
             free(detail);
@@ -4720,6 +4733,15 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
 
         if (!opt->quiet) {
             wprintf(L"[%lu] %ls\n", iface_index, detail->DevicePath);
+            if (instance_id_valid) {
+                wprintf(L"      InstanceId: %ls\n", instance_id);
+            }
+            if (device_desc_valid) {
+                wprintf(L"      DeviceDesc: %ls\n", device_desc);
+            }
+            if (service_valid) {
+                wprintf(L"      Service: %ls\n", service);
+            }
             if (attr_valid) {
                 wprintf(L"      VID:PID %04X:%04X (ver %04X)\n", attr.VendorID, attr.ProductID,
                         attr.VersionNumber);
@@ -4873,6 +4895,9 @@ static int enumerate_hid_devices(const OPTIONS *opt, SELECTED_DEVICE *out)
             } else if (!device_matches_opts(opt, iface_index, &attr)) {
                 match = 0;
             }
+        }
+        if (match && opt->have_instance_id) {
+            match = instance_id_valid && (wcscmp(instance_id, opt->instance_id_filter) == 0);
         }
         if (match && opt->want_keyboard) {
             match = is_keyboard;
@@ -7310,6 +7335,18 @@ int wmain(int argc, wchar_t **argv)
             i++;
             continue;
         }
+        if ((wcscmp(argv[i], L"--instance-id") == 0) && i + 1 < argc) {
+            size_t n = wcslen(argv[i + 1]);
+            size_t cap = sizeof(opt.instance_id_filter) / sizeof(opt.instance_id_filter[0]);
+            if (n >= cap) {
+                wprintf(L"InstanceId too long (max %lu chars)\n", (unsigned long)(cap - 1));
+                return 2;
+            }
+            wcscpy(opt.instance_id_filter, argv[i + 1]);
+            opt.have_instance_id = 1;
+            i++;
+            continue;
+        }
 
         if ((wcscmp(argv[i], L"--duration") == 0) && i + 1 < argc) {
             if (!parse_u32_dec(argv[i + 1], &opt.duration_secs)) {
@@ -7448,17 +7485,17 @@ int wmain(int argc, wchar_t **argv)
     }
     if (opt.selftest &&
         (opt.query_state || opt.query_interrupt_info || opt.list_only || opt.dump_desc || opt.dump_collection_desc || opt.have_vid || opt.have_pid ||
-         opt.have_index || opt.have_led_mask || opt.led_cycle || opt.led_spam || opt.ioctl_bad_xfer_packet || opt.ioctl_bad_write_report ||
-          opt.ioctl_bad_read_xfer_packet || opt.ioctl_bad_read_report || opt.ioctl_bad_get_input_xfer_packet ||
-          opt.ioctl_bad_get_input_report || opt.ioctl_bad_set_output_xfer_packet ||
-          opt.ioctl_bad_set_output_report || opt.ioctl_bad_get_report_descriptor || opt.ioctl_bad_get_collection_descriptor ||
-          opt.ioctl_bad_get_device_descriptor || opt.ioctl_bad_get_string || opt.ioctl_bad_get_indexed_string ||
-          opt.ioctl_bad_get_string_out || opt.ioctl_bad_get_indexed_string_out || opt.ioctl_query_counters_short ||
-          opt.ioctl_query_state_short || opt.ioctl_query_interrupt_info_short ||
-          opt.ioctl_get_input_report || opt.hidd_get_input_report || opt.hidd_bad_set_output_report || opt.have_led_ioctl_set_output ||
-          opt.query_counters || opt.query_counters_json || opt.reset_counters)) {
+         opt.have_index || opt.have_instance_id || opt.have_led_mask || opt.led_cycle || opt.led_spam || opt.ioctl_bad_xfer_packet || opt.ioctl_bad_write_report ||
+           opt.ioctl_bad_read_xfer_packet || opt.ioctl_bad_read_report || opt.ioctl_bad_get_input_xfer_packet ||
+           opt.ioctl_bad_get_input_report || opt.ioctl_bad_set_output_xfer_packet ||
+           opt.ioctl_bad_set_output_report || opt.ioctl_bad_get_report_descriptor || opt.ioctl_bad_get_collection_descriptor ||
+           opt.ioctl_bad_get_device_descriptor || opt.ioctl_bad_get_string || opt.ioctl_bad_get_indexed_string ||
+           opt.ioctl_bad_get_string_out || opt.ioctl_bad_get_indexed_string_out || opt.ioctl_query_counters_short ||
+           opt.ioctl_query_state_short || opt.ioctl_query_interrupt_info_short ||
+           opt.ioctl_get_input_report || opt.hidd_get_input_report || opt.hidd_bad_set_output_report || opt.have_led_ioctl_set_output ||
+           opt.query_counters || opt.query_counters_json || opt.reset_counters)) {
         wprintf(
-            L"--selftest cannot be combined with --state/--interrupt-info, --list, descriptor dump options, --vid/--pid/--index, counters, LED, or negative-test options.\n");
+            L"--selftest cannot be combined with --state/--interrupt-info, --list, descriptor dump options, --vid/--pid/--index/--instance-id, counters, LED, or negative-test options.\n");
         return 2;
     }
     if (opt.query_state &&
