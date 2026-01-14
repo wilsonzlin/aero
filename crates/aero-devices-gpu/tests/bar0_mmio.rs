@@ -755,11 +755,9 @@ fn irq_ack_sub_dword_writes_clear_the_correct_bit_lanes() {
     dev.config_mut().set_command(1 << 1);
 
     dev.regs.irq_status = irq_bits::FENCE | irq_bits::ERROR;
-    dev.write(
-        mmio::IRQ_ENABLE,
-        4,
-        (irq_bits::FENCE | irq_bits::ERROR) as u64,
-    );
+    // Enable both bits using sub-dword writes to ensure byte-lane merges preserve the other bytes.
+    dev.write(mmio::IRQ_ENABLE + 0, 1, 0x01);
+    dev.write(mmio::IRQ_ENABLE + 3, 1, 0x80);
     assert!(dev.irq_level());
 
     // Clear ERROR via the high byte lane (bit 31 is byte 3, bit 7).
