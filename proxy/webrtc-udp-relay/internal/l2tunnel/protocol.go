@@ -80,8 +80,8 @@ var DefaultLimits = limits{
 	MaxControlPayload: defaultMaxControlPayload,
 }
 
-// Message is a decoded L2 tunnel message.
-type Message struct {
+// message is a decoded L2 tunnel message.
+type message struct {
 	Version byte
 	Type    byte
 	Flags   byte
@@ -126,21 +126,21 @@ func EncodeWithLimits(msgType byte, flags byte, payload []byte, limits limits) (
 
 // decodeWithLimits decodes an L2 tunnel message while enforcing the provided
 // payload limits.
-func decodeWithLimits(buf []byte, limits limits) (Message, error) {
+func decodeWithLimits(buf []byte, limits limits) (message, error) {
 	if len(buf) < headerLen {
-		return Message{}, &decodeError{
+		return message{}, &decodeError{
 			Code:    decodeErrorTooShort,
 			Message: fmt.Sprintf("message too short: %d < %d", len(buf), headerLen),
 		}
 	}
 	if buf[0] != magic {
-		return Message{}, &decodeError{
+		return message{}, &decodeError{
 			Code:    decodeErrorInvalidMagic,
 			Message: fmt.Sprintf("invalid magic: 0x%02x", buf[0]),
 		}
 	}
 	if buf[1] != version {
-		return Message{}, &decodeError{
+		return message{}, &decodeError{
 			Code:    decodeErrorUnsupportedVersion,
 			Message: fmt.Sprintf("unsupported version: 0x%02x", buf[1]),
 		}
@@ -151,13 +151,13 @@ func decodeWithLimits(buf []byte, limits limits) (Message, error) {
 	payload := buf[headerLen:]
 	max := limits.maxPayloadForType(msgType)
 	if len(payload) > max {
-		return Message{}, &decodeError{
+		return message{}, &decodeError{
 			Code:    decodeErrorPayloadTooLarge,
 			Message: fmt.Sprintf("payload too large: %d > %d", len(payload), max),
 		}
 	}
 
-	return Message{
+	return message{
 		Version: buf[1],
 		Type:    msgType,
 		Flags:   flags,
@@ -176,7 +176,7 @@ func EncodePong(payload []byte) ([]byte, error) {
 }
 
 // DecodeMessage decodes an L2 tunnel message using DefaultLimits.
-func DecodeMessage(buf []byte) (Message, error) {
+func DecodeMessage(buf []byte) (message, error) {
 	return decodeWithLimits(buf, DefaultLimits)
 }
 
