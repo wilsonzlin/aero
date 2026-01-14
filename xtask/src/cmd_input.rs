@@ -49,7 +49,7 @@ Steps:
      --test hid_usage_keyboard_fixture --test hid_usage_consumer_fixture --test xhci_enum_smoke
      (or: --usb-all to run the full aero-usb test suite)
   3. (optional: --machine) cargo test -p aero-machine --lib --locked --test machine_uhci --test machine_ehci --test machine_usb2_companion_routing
-     --test machine_uhci_synthetic_usb_hid --test machine_uhci_synthetic_usb_hid_mouse_buttons --test machine_uhci_synthetic_usb_hid_gamepad
+     --test machine_uhci_synthetic_usb_hid --test machine_uhci_synthetic_hid --test machine_uhci_synthetic_usb_hid_mouse_buttons --test machine_uhci_synthetic_usb_hid_gamepad
      --test machine_uhci_synthetic_usb_hid_reports --test machine_xhci --test xhci_snapshot --test machine_xhci_usb_attach_at_path
   4. (optional: --wasm) wasm-pack test --node crates/aero-wasm --test webusb_uhci_bridge --test xhci_webusb_bridge --locked
   5. (optional: --with-wasm) cargo test -p aero-wasm --locked --test machine_input_injection --test machine_input_backends
@@ -141,6 +141,8 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
             "--test",
             "machine_uhci_synthetic_usb_hid",
             "--test",
+            "machine_uhci_synthetic_hid",
+            "--test",
             "machine_uhci_synthetic_usb_hid_mouse_buttons",
             "--test",
             "machine_uhci_synthetic_usb_hid_gamepad",
@@ -154,7 +156,7 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
             "machine_xhci_usb_attach_at_path",
         ]);
         runner.run_step(
-            "Rust: cargo test -p aero-machine --lib --locked --test machine_uhci --test machine_ehci --test machine_usb2_companion_routing --test machine_uhci_synthetic_usb_hid --test machine_uhci_synthetic_usb_hid_mouse_buttons --test machine_uhci_synthetic_usb_hid_gamepad --test machine_uhci_synthetic_usb_hid_reports --test machine_xhci --test xhci_snapshot --test machine_xhci_usb_attach_at_path",
+            "Rust: cargo test -p aero-machine --lib --locked --test machine_uhci --test machine_ehci --test machine_usb2_companion_routing --test machine_uhci_synthetic_usb_hid --test machine_uhci_synthetic_hid --test machine_uhci_synthetic_usb_hid_mouse_buttons --test machine_uhci_synthetic_usb_hid_gamepad --test machine_uhci_synthetic_usb_hid_reports --test machine_xhci --test xhci_snapshot --test machine_xhci_usb_attach_at_path",
             &mut cmd,
         )?;
     }
