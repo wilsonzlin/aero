@@ -56,7 +56,7 @@ fn push_set_shader_resource_buffer(stream: &mut Vec<u8>, stage: u32, slot: u32, 
     stream.extend_from_slice(&slot.to_le_bytes()); // start_slot
     stream.extend_from_slice(&1u32.to_le_bytes()); // buffer_count
     stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0 / stage_ex
-    // struct aerogpu_shader_resource_buffer_binding
+                                                   // struct aerogpu_shader_resource_buffer_binding
     stream.extend_from_slice(&buffer.to_le_bytes()); // buffer handle (0 = unbind)
     stream.extend_from_slice(&0u32.to_le_bytes()); // offset_bytes
     stream.extend_from_slice(&0u32.to_le_bytes()); // size_bytes (0 = full buffer)
@@ -160,7 +160,12 @@ fn aerogpu_cmd_srv_buffer_unbind_clears_binding() {
         const SRV_BUF: u32 = 1234;
 
         let mut stream = new_stream();
-        push_set_shader_resource_buffer(&mut stream, AerogpuShaderStage::Compute as u32, 0, SRV_BUF);
+        push_set_shader_resource_buffer(
+            &mut stream,
+            AerogpuShaderStage::Compute as u32,
+            0,
+            SRV_BUF,
+        );
         push_set_shader_resource_buffer(&mut stream, AerogpuShaderStage::Compute as u32, 0, 0);
         let stream = finish_stream(stream);
 
