@@ -710,7 +710,7 @@ fn compute_translate_and_run_compute_builtin_operand_types_write_packed_values()
                 translated.wgsl
             );
         }
-        let binding_u0 = BINDING_BASE_UAV + 0;
+        let binding_u0 = BINDING_BASE_UAV;
         assert!(
             translated
                 .wgsl
