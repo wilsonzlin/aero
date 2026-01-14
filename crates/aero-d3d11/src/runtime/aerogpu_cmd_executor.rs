@@ -171,7 +171,9 @@ const DEFAULT_BIND_GROUP_CACHE_CAPACITY: usize = 4096;
 // This prepass is scaffolding for GS/HS/DS compute-based emulation. In particular:
 // - `@builtin(global_invocation_id).x` is treated as the GS `SV_PrimitiveID`
 // - `@builtin(global_invocation_id).y` is treated as the GS `SV_GSInstanceID`
-const GEOMETRY_PREPASS_EXPANDED_VERTEX_STRIDE_BYTES: u64 = 32;
+const GEOMETRY_PREPASS_EXPANDED_VERTEX_REG_COUNT: u32 = 2;
+const GEOMETRY_PREPASS_EXPANDED_VERTEX_STRIDE_BYTES: u64 =
+    GEOMETRY_PREPASS_EXPANDED_VERTEX_REG_COUNT as u64 * 16;
 // Use the indexed-indirect layout size since it is a strict superset of `DrawIndirectArgs`.
 const GEOMETRY_PREPASS_INDIRECT_ARGS_SIZE_BYTES: u64 =
     core::mem::size_of::<DrawIndexedIndirectArgs>() as u64;
@@ -420,26 +422,6 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {
         out_indirect[3] = 0u;
         out_indirect[4] = 0u;
     }
-}
-"#;
-
-const EXPANDED_DRAW_PASSTHROUGH_VS_WGSL: &str = r#"
-struct VsIn {
-    @location(0) v0: vec4<f32>,
-    @location(1) v1: vec4<f32>,
-};
-
-struct VsOut {
-    @builtin(position) pos: vec4<f32>,
-    @location(1) o1: vec4<f32>,
-};
-
-@vertex
-fn vs_main(input: VsIn) -> VsOut {
-    var out: VsOut;
-    out.pos = input.v0;
-    out.o1 = input.v1;
-    return out;
 }
 "#;
 
@@ -3956,6 +3938,11 @@ impl AerogpuD3d11Executor {
         // `PipelineCache` returns a reference tied to the mutable borrow. Convert it to a raw
         // pointer so we can keep using executor state while the render pass is alive.
         let render_pipeline_ptr = {
+            let expanded_topology = self
+                .state
+                .primitive_topology
+                .wgpu_topology_for_direct_draw()
+                .unwrap_or(wgpu::PrimitiveTopology::TriangleList);
             let (_key, pipeline) = get_or_create_render_pipeline_for_expanded_draw(
                 &self.device,
                 &mut self.pipeline_cache,
@@ -3963,6 +3950,8 @@ impl AerogpuD3d11Executor {
                 &self.resources,
                 &self.state,
                 layout_key,
+                GEOMETRY_PREPASS_EXPANDED_VERTEX_REG_COUNT,
+                expanded_topology,
             )?;
             pipeline as *const wgpu::RenderPipeline
         };
@@ -12701,6 +12690,47 @@ fn get_or_create_render_pipeline_for_state<'a>(
     Ok((key, pipeline, wgpu_slot_to_d3d_slot))
 }
 
+fn expanded_draw_passthrough_vs_wgsl(pass_locations: &BTreeSet<u32>) -> String {
+    let mut wgsl = String::new();
+    wgsl.push_str("struct VsIn {\n");
+    wgsl.push_str("    @location(0) v0: vec4<f32>,\n");
+    for &loc in pass_locations {
+        if loc == 0 {
+            continue;
+        }
+        wgsl.push_str(&format!(
+            "    @location({loc}) v{loc}: vec4<f32>,\n"
+        ));
+    }
+    wgsl.push_str("};\n\n");
+
+    wgsl.push_str("struct VsOut {\n");
+    wgsl.push_str("    @builtin(position) pos: vec4<f32>,\n");
+    for &loc in pass_locations {
+        if loc == 0 {
+            continue;
+        }
+        wgsl.push_str(&format!(
+            "    @location({loc}) o{loc}: vec4<f32>,\n"
+        ));
+    }
+    wgsl.push_str("};\n\n");
+
+    wgsl.push_str("@vertex\n");
+    wgsl.push_str("fn vs_main(input: VsIn) -> VsOut {\n");
+    wgsl.push_str("    var out: VsOut;\n");
+    wgsl.push_str("    out.pos = input.v0;\n");
+    for &loc in pass_locations {
+        if loc == 0 {
+            continue;
+        }
+        wgsl.push_str(&format!("    out.o{loc} = input.v{loc};\n"));
+    }
+    wgsl.push_str("    return out;\n");
+    wgsl.push_str("}\n");
+    wgsl
+}
+
 fn get_or_create_render_pipeline_for_expanded_draw<'a>(
     device: &wgpu::Device,
     pipeline_cache: &'a mut PipelineCache,
@@ -12708,6 +12738,8 @@ fn get_or_create_render_pipeline_for_expanded_draw<'a>(
     resources: &AerogpuD3d11Resources,
     state: &AerogpuD3d11State,
     layout_key: PipelineLayoutKey,
+    expanded_reg_count: u32,
+    expanded_topology: wgpu::PrimitiveTopology,
 ) -> Result<(RenderPipelineKey, &'a wgpu::RenderPipeline)> {
     let ps_handle = state
         .ps
@@ -12720,31 +12752,34 @@ fn get_or_create_render_pipeline_for_expanded_draw<'a>(
         bail!("shader {ps_handle} is not a pixel shader");
     }
 
-    // Compile (and cache) the expanded-vertex passthrough VS.
-    let (vs_base_hash, _module) = pipeline_cache.get_or_create_shader_module(
-        device,
-        map_pipeline_cache_stage(ShaderStage::Vertex),
-        EXPANDED_DRAW_PASSTHROUGH_VS_WGSL,
-        Some("aerogpu_cmd expanded passthrough VS"),
-    );
+    if expanded_reg_count == 0 {
+        bail!("expanded draw: expanded_reg_count must be > 0");
+    }
+    let expanded_reg_count_usize: usize = expanded_reg_count
+        .try_into()
+        .map_err(|_| anyhow!("expanded draw: expanded_reg_count out of range"))?;
 
-    let vs_depth_clamp_hash = if !state.depth_clip_enabled {
-        let clamped = wgsl_depth_clamp_variant(EXPANDED_DRAW_PASSTHROUGH_VS_WGSL);
-        let (hash, _module) = pipeline_cache.get_or_create_shader_module(
-            device,
-            map_pipeline_cache_stage(ShaderStage::Vertex),
-            &clamped,
-            Some("aerogpu_cmd expanded passthrough VS (depth clamp)"),
+    // WebGPU's baseline vertex attribute limit is 16. Expanded post-DS vertex buffers model each
+    // output register as one `vec4<f32>` attribute, so ensure we don't exceed that limit.
+    if expanded_reg_count_usize > crate::input_layout::MAX_WGPU_VERTEX_ATTRIBUTES as usize {
+        bail!(
+            "expanded draw: expanded_reg_count={expanded_reg_count} exceeds WebGPU vertex attribute limit ({})",
+            crate::input_layout::MAX_WGPU_VERTEX_ATTRIBUTES
         );
-        Some(hash)
+    }
+
+    // Pass through all non-position registers (1..reg_count-1).
+    let pass_locations: BTreeSet<u32> = (1..expanded_reg_count).collect();
+    let base_vs_wgsl = expanded_draw_passthrough_vs_wgsl(&pass_locations);
+    let selected_vs_wgsl = if state.depth_clip_enabled {
+        std::borrow::Cow::Borrowed(base_vs_wgsl.as_str())
     } else {
-        None
+        std::borrow::Cow::Owned(wgsl_depth_clamp_variant(&base_vs_wgsl))
     };
 
     // Link VS/PS interfaces by trimming unused varyings (mirrors the normal pipeline path).
     let ps_declared_inputs = super::wgsl_link::locations_in_struct(&ps.wgsl_source, "PsIn")?;
-    let vs_outputs =
-        super::wgsl_link::locations_in_struct(EXPANDED_DRAW_PASSTHROUGH_VS_WGSL, "VsOut")?;
+    let vs_outputs = super::wgsl_link::locations_in_struct(&base_vs_wgsl, "VsOut")?;
 
     let mut ps_link_locations = ps_declared_inputs.clone();
     let mut linked_ps_wgsl = std::borrow::Cow::Borrowed(ps.wgsl_source.as_str());
@@ -12809,48 +12844,36 @@ fn get_or_create_render_pipeline_for_expanded_draw<'a>(
     };
 
     let needs_trim = vs_outputs != ps_link_locations;
-    let selected_vs_hash = if state.depth_clip_enabled {
-        vs_base_hash
+    let final_vs_wgsl = if needs_trim {
+        super::wgsl_link::trim_vs_outputs_to_locations(selected_vs_wgsl.as_ref(), &ps_link_locations)
     } else {
-        vs_depth_clamp_hash.unwrap_or(vs_base_hash)
+        selected_vs_wgsl.into_owned()
     };
-    let vertex_shader = if !needs_trim {
-        selected_vs_hash
-    } else {
-        let base_vs_wgsl = if state.depth_clip_enabled {
-            std::borrow::Cow::Borrowed(EXPANDED_DRAW_PASSTHROUGH_VS_WGSL)
-        } else {
-            std::borrow::Cow::Owned(wgsl_depth_clamp_variant(EXPANDED_DRAW_PASSTHROUGH_VS_WGSL))
-        };
-        let trimmed_vs_wgsl = super::wgsl_link::trim_vs_outputs_to_locations(
-            base_vs_wgsl.as_ref(),
-            &ps_link_locations,
-        );
-        let (hash, _module) = pipeline_cache.get_or_create_shader_module(
-            device,
-            map_pipeline_cache_stage(ShaderStage::Vertex),
-            &trimmed_vs_wgsl,
-            Some("aerogpu_cmd expanded linked vertex shader"),
-        );
-        hash
-    };
+    let (vertex_shader, _module) = pipeline_cache.get_or_create_shader_module(
+        device,
+        map_pipeline_cache_stage(ShaderStage::Vertex),
+        &final_vs_wgsl,
+        Some("aerogpu_cmd expanded passthrough VS"),
+    );
 
-    // Expanded vertex buffer layout: (pos: vec4) + (o1: vec4).
+    // Expanded vertex buffer layout: `reg_count` contiguous `vec4<f32>` registers.
+    let expanded_stride_bytes: wgpu::BufferAddress = expanded_reg_count
+        .checked_mul(16)
+        .ok_or_else(|| anyhow!("expanded draw: expanded vertex stride overflow"))?
+        .into();
+    let mut expanded_attributes: Vec<wgpu::VertexAttribute> =
+        Vec::with_capacity(expanded_reg_count_usize);
+    for reg_index in 0..expanded_reg_count {
+        expanded_attributes.push(wgpu::VertexAttribute {
+            format: wgpu::VertexFormat::Float32x4,
+            offset: (reg_index as wgpu::BufferAddress) * 16,
+            shader_location: reg_index,
+        });
+    }
     let vertex_buffer = VertexBufferLayoutOwned {
-        array_stride: GEOMETRY_PREPASS_EXPANDED_VERTEX_STRIDE_BYTES,
+        array_stride: expanded_stride_bytes,
         step_mode: wgpu::VertexStepMode::Vertex,
-        attributes: vec![
-            wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::Float32x4,
-                offset: 0,
-                shader_location: 0,
-            },
-            wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::Float32x4,
-                offset: 16,
-                shader_location: 1,
-            },
-        ],
+        attributes: expanded_attributes,
     };
     let vb_layout = vertex_buffer.as_wgpu();
     let vb_key: aero_gpu::pipeline_key::VertexBufferLayoutKey = (&vb_layout).into();
@@ -12953,16 +12976,19 @@ fn get_or_create_render_pipeline_for_expanded_draw<'a>(
     };
     let depth_stencil_key = depth_stencil_state.as_ref().map(|ds| ds.clone().into());
 
-    // The compute prepass emits expanded triangle-list geometry regardless of the original D3D11
-    // primitive topology (patchlists + adjacency are not directly expressible in WebGPU).
-    let topology = wgpu::PrimitiveTopology::TriangleList;
+    let strip_index_format = match expanded_topology {
+        wgpu::PrimitiveTopology::LineStrip | wgpu::PrimitiveTopology::TriangleStrip => {
+            Some(wgpu::IndexFormat::Uint32)
+        }
+        _ => None,
+    };
     let key = RenderPipelineKey {
         vertex_shader,
         fragment_shader,
         color_targets,
         depth_stencil: depth_stencil_key,
-        primitive_topology: topology,
-        strip_index_format: None,
+        primitive_topology: expanded_topology,
+        strip_index_format,
         cull_mode: state.cull_mode,
         front_face: state.front_face,
         vertex_buffers: vec![vb_key],
@@ -12992,8 +13018,8 @@ fn get_or_create_render_pipeline_for_expanded_draw<'a>(
                     targets: &color_target_states,
                 }),
                 primitive: wgpu::PrimitiveState {
-                    topology,
-                    strip_index_format: None,
+                    topology: expanded_topology,
+                    strip_index_format,
                     front_face,
                     cull_mode,
                     polygon_mode: wgpu::PolygonMode::Fill,
