@@ -24,10 +24,11 @@ This document describes the chosen HS/DS emulation approach so future contributo
 > - Patchlist topology **without HS/DS bound** currently runs the built-in **synthetic expansion**
 >   compute prepass that expands a deterministic triangle (to validate render-pass splitting +
 >   indirect draw plumbing), not real tessellation semantics.
-> - Patchlist topology **with HS+DS bound** (currently PatchList3 only) routes through an initial tessellation prepass pipeline
->   (VS-as-compute vertex pulling + HS passthrough + tessellator layout + DS passthrough). This path
->   currently requires an input layout for vertex pulling. Guest
->   HS/DS DXBC is not executed yet (tess factors are currently fixed in the passthrough HS).
+> - Patchlist topology **with HS+DS bound** (currently PatchList3 only) routes through an initial
+>   tessellation prepass pipeline (VS-as-compute vertex pulling placeholder + HS passthrough + layout
+>   pass + DS passthrough). This path currently requires an input layout for vertex pulling. Guest
+>   HS/DS DXBC is not executed yet; tess factors are currently fixed in the passthrough HS
+>   (currently `4.0`).
 > - The in-progress tessellation runtime lives under
 >   `crates/aero-d3d11/src/runtime/tessellation/` and contains real building blocks (layout pass,
 >   tri-domain integer index generation, DS evaluation templates, sizing/guardrails). This code is
@@ -111,8 +112,20 @@ render (passthrough VS + original PS)
 If a GS is bound, an additional **GS-as-compute** expansion pass runs after DS and before render
 (see the GS doc).
 
-The remainder of this section describes the *target* HS/DS pipeline; some passes exist today only as
-unit-testable building blocks.
+Bring-up note (what is currently wired into the executor for PatchList3+HS+DS):
+
+- `VS-as-compute` is executed as a compute shader using vertex pulling, but it is still a
+  passthrough placeholder (guest VS DXBC is not executed yet).
+- The HS is currently a **passthrough** kernel that copies control points and writes a fixed tess
+  factor (`4.0`) into `hs_tess_factors` (one `vec4<f32>` per patch).
+- The DS is currently a **passthrough** kernel that expands triangle-domain integer tessellation and
+  emits both:
+  - `ExpandedVertex { pos, varyings[32] }` records, and
+  - a u32 triangle-list index buffer.
+
+The remainder of this section describes the *target* HS/DS pipeline; many passes already exist as
+unit-testable building blocks, but guest HS/DS DXBC execution and full stage linking are still
+in-progress.
 
 ### 0) Input assembler: patchlists
 
@@ -218,6 +231,9 @@ Current implementation note: `crates/aero-d3d11/src/runtime/tessellation/tri_dom
 implements a compute pass that writes a packed `u32` triangle-list index buffer for triangle-domain
 integer tessellation.
 
+Bring-up note: the currently-wired PatchList3 DS passthrough kernel emits indices directly, so the
+standalone index-generation pass is not used in the executor draw path yet.
+
 ### 7) Render pass
 
 Finally, the draw is rendered with a normal WebGPU render pipeline:
@@ -260,6 +276,17 @@ In tessellation code, this addressing scheme is used for:
 - `vs_out`: VS outputs per **input control point**
 - `hs_out`: HS outputs per **output control point**
 - `hs_patch_constants`: HS patch constants per **patch**
+
+### HS tess factors (`hs_tess_factors`)
+
+The tessellation layout pass consumes tess factors from a compact, per-patch buffer:
+
+- element type: `vec4<f32>`
+- count: `HS_TESS_FACTOR_VEC4S_PER_PATCH` `vec4<f32>` values per patch (currently 1)
+- meaning for the current tri-domain integer path: `{edge0, edge1, edge2, inside}`
+
+This buffer is written by the HS patch-constant phase (and today by the passthrough HS) and then
+consumed by the deterministic serial layout pass (`runtime/tessellation/layout_pass.rs`).
 
 ### Expanded vertices + indices
 

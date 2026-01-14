@@ -517,7 +517,7 @@ Known gaps / limitations (enforced by code/tests):
   - Patchlist topology **with HS+DS bound** routes through an initial tessellation compute prepass
     pipeline (currently PatchList3 only) that expands the patch list into an indexed triangle list
     for rendering. Guest HS/DS DXBC is not executed yet; the pipeline uses placeholder/passthrough
-    stages.
+    stages (HS passthrough currently writes a fixed tess factor: `4.0`).
   - Tessellation building blocks live under `crates/aero-d3d11/src/runtime/tessellation/` (VS-as-compute
     stub, HS passthrough, layout pass, DS passthrough, index gen, sizing/guardrails).
   - Guest HS/DS handles/resources are tracked for state/binding, but not executed yet.
