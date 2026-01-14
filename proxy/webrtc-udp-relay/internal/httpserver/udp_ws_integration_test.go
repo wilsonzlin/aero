@@ -44,7 +44,7 @@ func startUDPEchoServer(t *testing.T) (*net.UDPConn, *net.UDPAddr) {
 	return conn, addr
 }
 
-func registerUDPWS(t *testing.T, cfg config.Config, srv *Server) {
+func registerUDPWS(t *testing.T, cfg config.Config, srv *server) {
 	t.Helper()
 
 	destPolicy, err := policy.NewDestinationPolicyFromEnv()
@@ -123,7 +123,7 @@ func TestUDPWebSocket_RoundTripV1AndV2(t *testing.T) {
 		PreferV2:                 true,
 	}
 
-	baseURL := startTestServer(t, cfg, func(srv *Server) {
+	baseURL := startTestServer(t, cfg, func(srv *server) {
 		registerUDPWS(t, cfg, srv)
 	})
 
@@ -205,7 +205,7 @@ func TestUDPWebSocket_APIKeyAuth(t *testing.T) {
 		MaxSignalingMessageBytes: 64 * 1024,
 	}
 
-	baseURL := startTestServer(t, cfg, func(srv *Server) {
+	baseURL := startTestServer(t, cfg, func(srv *server) {
 		registerUDPWS(t, cfg, srv)
 	})
 
@@ -283,7 +283,7 @@ func TestUDPWebSocket_JWTAuth_QueryParam(t *testing.T) {
 		MaxSignalingMessageBytes: 64 * 1024,
 	}
 
-	baseURL := startTestServer(t, cfg, func(srv *Server) {
+	baseURL := startTestServer(t, cfg, func(srv *server) {
 		registerUDPWS(t, cfg, srv)
 	})
 

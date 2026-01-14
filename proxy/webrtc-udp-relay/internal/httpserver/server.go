@@ -27,7 +27,7 @@ type BuildInfo struct {
 	BuildTime string `json:"buildTime"`
 }
 
-type Server struct {
+type server struct {
 	log   *slog.Logger
 	cfg   config.Config
 	build BuildInfo
@@ -40,8 +40,8 @@ type Server struct {
 	srv *http.Server
 }
 
-func New(cfg config.Config, logger *slog.Logger, build BuildInfo) *Server {
-	s := &Server{
+func New(cfg config.Config, logger *slog.Logger, build BuildInfo) *server {
+	s := &server{
 		log:   logger,
 		cfg:   cfg,
 		build: build,
@@ -95,28 +95,28 @@ func noStoreICEHeadersMiddleware() middleware {
 // endpoints (e.g. auth failures) will increment counters.
 //
 // It should only be called during startup before Serve is called.
-func (s *Server) SetMetrics(m *metrics.Metrics) {
+func (s *server) SetMetrics(m *metrics.Metrics) {
 	s.metrics = m
 }
 
 // Mux returns the underlying ServeMux for registering additional routes.
 // It must only be used during startup before Serve is called.
-func (s *Server) Mux() *http.ServeMux {
+func (s *server) Mux() *http.ServeMux {
 	return s.mux
 }
 
-func (s *Server) Serve(l net.Listener) error {
+func (s *server) Serve(l net.Listener) error {
 	s.ready.Store(true)
 	s.log.Info("http server serving", "addr", l.Addr().String())
 	return s.srv.Serve(l)
 }
 
-func (s *Server) Shutdown(ctx context.Context) error {
+func (s *server) Shutdown(ctx context.Context) error {
 	s.ready.Store(false)
 	return s.srv.Shutdown(ctx)
 }
 
-func (s *Server) registerRoutes() {
+func (s *server) registerRoutes() {
 	s.mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 	})
@@ -316,7 +316,7 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	_ = enc.Encode(v)
 }
 
-func (s *Server) Close() error {
+func (s *server) Close() error {
 	s.ready.Store(false)
 	return s.srv.Close()
 }

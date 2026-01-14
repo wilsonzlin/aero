@@ -7,7 +7,7 @@ import (
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/origin"
 )
 
-func (s *Server) originMiddleware() middleware {
+func (s *server) originMiddleware() middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			s.withOriginPolicy(func(w http.ResponseWriter, r *http.Request) {
@@ -17,7 +17,7 @@ func (s *Server) originMiddleware() middleware {
 	}
 }
 
-func (s *Server) withOriginPolicy(next http.HandlerFunc) http.HandlerFunc {
+func (s *server) withOriginPolicy(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		origins := r.Header.Values("Origin")
 		if len(origins) == 0 {

@@ -83,18 +83,15 @@ type Config struct {
 	WebRTCDataChannelMaxMessageBytes int
 }
 
-// Server implements the relay's HTTP/WebSocket signaling surface.
+// server implements the relay's HTTP/WebSocket signaling surface.
 //
 // Endpoints:
 //   - POST /offer          : versioned, non-trickle offer/answer exchange (used by integration tests)
 //   - POST /session        : optional session pre-allocation (used by other tasks)
 //   - GET  /webrtc/signal  : WebSocket signaling with trickle ICE
 //   - POST /webrtc/offer   : HTTP offer -> answer (non-trickle ICE fallback)
-type Server struct {
+type server struct {
 	// Sessions enforces global session quotas.
-	//
-	// This field is intentionally exported so tests and callers can use a simple
-	// struct literal (e.g. &Server{Sessions: sm}).
 	Sessions *relay.SessionManager
 
 	// WebRTC is the server-side pion API used to construct PeerConnections.
@@ -136,8 +133,8 @@ type preSessionReservation struct {
 
 var gatheringCompletePromise = webrtc.GatheringCompletePromise
 
-func NewServer(cfg Config) *Server {
-	return &Server{
+func NewServer(cfg Config) *server {
+	return &server{
 		Sessions:                    cfg.Sessions,
 		WebRTC:                      cfg.WebRTC,
 		ICEServers:                  cfg.ICEServers,
@@ -160,7 +157,7 @@ func NewServer(cfg Config) *Server {
 	}
 }
 
-func (s *Server) RegisterRoutes(mux *http.ServeMux) {
+func (s *server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /offer", s.handleOffer)
 	mux.HandleFunc("POST /session", s.handleCreateSession)
 
@@ -168,7 +165,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /webrtc/offer", s.handleWebRTCOffer)
 }
 
-func (s *Server) Close() {
+func (s *server) Close() {
 	s.mu.Lock()
 	webrtcSessions := make([]*webrtcpeer.Session, 0, len(s.webrtcSessions))
 	for sess := range s.webrtcSessions {
@@ -198,7 +195,7 @@ func (s *Server) Close() {
 	}
 }
 
-func (s *Server) trackWebRTCSession(sess *webrtcpeer.Session) {
+func (s *server) trackWebRTCSession(sess *webrtcpeer.Session) {
 	if sess == nil {
 		return
 	}
@@ -210,7 +207,7 @@ func (s *Server) trackWebRTCSession(sess *webrtcpeer.Session) {
 	s.mu.Unlock()
 }
 
-func (s *Server) untrackWebRTCSession(sess *webrtcpeer.Session) {
+func (s *server) untrackWebRTCSession(sess *webrtcpeer.Session) {
 	if sess == nil {
 		return
 	}
@@ -221,56 +218,56 @@ func (s *Server) untrackWebRTCSession(sess *webrtcpeer.Session) {
 	s.mu.Unlock()
 }
 
-func (s *Server) authorizer() authorizer {
+func (s *server) authorizer() authorizer {
 	if s.Authorizer == nil {
 		return allowAllAuthorizer{}
 	}
 	return s.Authorizer
 }
 
-func (s *Server) iceGatheringTimeout() time.Duration {
+func (s *server) iceGatheringTimeout() time.Duration {
 	if s.ICEGatheringTimeout <= 0 {
 		return 2 * time.Second
 	}
 	return s.ICEGatheringTimeout
 }
 
-func (s *Server) webrtcSessionConnectTimeout() time.Duration {
+func (s *server) webrtcSessionConnectTimeout() time.Duration {
 	if s.WebRTCSessionConnectTimeout <= 0 {
 		return 30 * time.Second
 	}
 	return s.WebRTCSessionConnectTimeout
 }
 
-func (s *Server) signalingAuthTimeout() time.Duration {
+func (s *server) signalingAuthTimeout() time.Duration {
 	if s.SignalingAuthTimeout <= 0 {
 		return 2 * time.Second
 	}
 	return s.SignalingAuthTimeout
 }
 
-func (s *Server) signalingWSIdleTimeout() time.Duration {
+func (s *server) signalingWSIdleTimeout() time.Duration {
 	if s.SignalingWSIdleTimeout <= 0 {
 		return 60 * time.Second
 	}
 	return s.SignalingWSIdleTimeout
 }
 
-func (s *Server) signalingWSPingInterval() time.Duration {
+func (s *server) signalingWSPingInterval() time.Duration {
 	if s.SignalingWSPingInterval <= 0 {
 		return 20 * time.Second
 	}
 	return s.SignalingWSPingInterval
 }
 
-func (s *Server) maxSignalingMessageBytes() int64 {
+func (s *server) maxSignalingMessageBytes() int64 {
 	if s.MaxSignalingMessageBytes <= 0 {
 		return 64 * 1024
 	}
 	return s.MaxSignalingMessageBytes
 }
 
-func (s *Server) maxSignalingMessagesPerSecond() int {
+func (s *server) maxSignalingMessagesPerSecond() int {
 	if s.MaxSignalingMessagesPerSecond <= 0 {
 		return 50
 	}
@@ -279,14 +276,14 @@ func (s *Server) maxSignalingMessagesPerSecond() int {
 
 const defaultSessionPreallocTTL = 60 * time.Second
 
-func (s *Server) sessionPreallocTTL() time.Duration {
+func (s *server) sessionPreallocTTL() time.Duration {
 	if s.SessionPreallocTTL <= 0 {
 		return defaultSessionPreallocTTL
 	}
 	return s.SessionPreallocTTL
 }
 
-func (s *Server) incMetric(name string) {
+func (s *server) incMetric(name string) {
 	if s.Sessions == nil {
 		return
 	}
@@ -297,7 +294,7 @@ func (s *Server) incMetric(name string) {
 	m.Inc(name)
 }
 
-func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
+func (s *server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	if !s.checkOrigin(r) {
 		writeJSONError(w, http.StatusForbidden, "forbidden", "forbidden")
 		return
@@ -383,7 +380,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte(sessionID))
 }
 
-func (s *Server) handleOffer(w http.ResponseWriter, r *http.Request) {
+func (s *server) handleOffer(w http.ResponseWriter, r *http.Request) {
 	if !s.checkOrigin(r) {
 		writeJSONError(w, http.StatusForbidden, "forbidden", "forbidden")
 		return
@@ -538,7 +535,7 @@ func (s *Server) handleOffer(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) handleWebRTCOffer(w http.ResponseWriter, r *http.Request) {
+func (s *server) handleWebRTCOffer(w http.ResponseWriter, r *http.Request) {
 	if !s.checkOrigin(r) {
 		writeJSONError(w, http.StatusForbidden, "forbidden", "forbidden")
 		return
@@ -686,7 +683,7 @@ func (s *Server) handleWebRTCOffer(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) handleWebSocketSignal(w http.ResponseWriter, r *http.Request) {
+func (s *server) handleWebSocketSignal(w http.ResponseWriter, r *http.Request) {
 	if !s.checkOrigin(r) {
 		writeJSONError(w, http.StatusForbidden, "forbidden", "forbidden")
 		return
@@ -752,7 +749,7 @@ func (s *Server) handleWebSocketSignal(w http.ResponseWriter, r *http.Request) {
 	ws.run()
 }
 
-func (s *Server) checkOrigin(r *http.Request) bool {
+func (s *server) checkOrigin(r *http.Request) bool {
 	origins := r.Header.Values("Origin")
 	if len(origins) == 0 {
 		return true
@@ -772,7 +769,7 @@ func (s *Server) checkOrigin(r *http.Request) bool {
 	return origin.IsAllowed(normalizedOrigin, originHost, r.Host, s.AllowedOrigins)
 }
 
-func (s *Server) allocateRelaySession(sessionKey string) (string, *relay.Session, error) {
+func (s *server) allocateRelaySession(sessionKey string) (string, *relay.Session, error) {
 	if s.Sessions == nil {
 		id, err := newSessionID()
 		if err != nil {
@@ -865,7 +862,7 @@ func expectEOF(dec *json.Decoder) error {
 }
 
 type wsSession struct {
-	srv  *Server
+	srv  *server
 	conn *websocket.Conn
 	req  *http.Request
 
