@@ -11,7 +11,7 @@ The goal is to keep three moving parts coherent and spec-aligned:
 
 - **Guest USB host controller emulation**:
   - **UHCI** (USB 1.1 full-speed; synchronous, TD-driven)
-  - **EHCI/xHCI** (USB 2.0 high-speed; planned for passthrough)
+  - **EHCI/xHCI** (USB 2.0 high-speed; supported/experimental for passthrough)
     - EHCI controller emulation design/implementation notes: [`docs/usb-ehci.md`](./usb-ehci.md)
     - xHCI controller emulation design/implementation notes: [`docs/usb-xhci.md`](./usb-xhci.md)
 - **Rust device model** (`UsbPassthroughDevice`; runs inside WASM/worker)
