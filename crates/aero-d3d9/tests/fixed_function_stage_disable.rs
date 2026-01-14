@@ -228,6 +228,136 @@ fn state_hash_ignores_texcoord_state_when_stage_does_not_sample_texture() {
 }
 
 #[test]
+fn state_hash_normalizes_default_texcoord_index_to_stage_index() {
+    // `None` means "use the stage index" (D3D9 default). This should be hashed the same as an
+    // explicit `TEXCOORDINDEX = stage_index`, since it generates identical WGSL.
+    let base_stage = TextureStageState {
+        color_op: TextureOp::SelectArg1,
+        color_arg0: TextureArg::Current,
+        color_arg1: TextureArg::Texture,
+        color_arg2: TextureArg::Current,
+        alpha_op: TextureOp::SelectArg1,
+        alpha_arg0: TextureArg::Current,
+        alpha_arg1: TextureArg::Texture,
+        alpha_arg2: TextureArg::Current,
+        ..Default::default()
+    };
+
+    // Stage0: default (`None`) vs explicit 0 should generate the same shader.
+    let mut stages_default = [TextureStageState::default(); 8];
+    stages_default[0] = TextureStageState {
+        texcoord_index: None,
+        ..base_stage
+    };
+    let mut stages_explicit = stages_default;
+    stages_explicit[0].texcoord_index = Some(0);
+
+    let desc_default = FixedFunctionShaderDesc {
+        fvf: Fvf(Fvf::XYZ | ((1u32) << Fvf::TEXCOUNT_SHIFT)),
+        stages: stages_default,
+        alpha_test: AlphaTestState::default(),
+        fog: FogState::default(),
+        lighting: LightingState::default(),
+    };
+    let desc_explicit = FixedFunctionShaderDesc {
+        stages: stages_explicit,
+        ..desc_default.clone()
+    };
+
+    assert_eq!(desc_default.state_hash(), desc_explicit.state_hash());
+    assert_eq!(
+        generate_fixed_function_shaders(&desc_default).fragment_wgsl,
+        generate_fixed_function_shaders(&desc_explicit).fragment_wgsl
+    );
+
+    // Stage1: default (`None`) vs explicit 1 should also be equivalent when TEXCOORD1 exists.
+    let mut stages_default = [TextureStageState::default(); 8];
+    stages_default[0] = TextureStageState {
+        color_op: TextureOp::SelectArg1,
+        color_arg0: TextureArg::Current,
+        color_arg1: TextureArg::Diffuse,
+        color_arg2: TextureArg::Current,
+        alpha_op: TextureOp::SelectArg1,
+        alpha_arg0: TextureArg::Current,
+        alpha_arg1: TextureArg::Diffuse,
+        alpha_arg2: TextureArg::Current,
+        ..Default::default()
+    };
+    stages_default[1] = TextureStageState {
+        texcoord_index: None,
+        ..base_stage
+    };
+    let mut stages_explicit = stages_default;
+    stages_explicit[1].texcoord_index = Some(1);
+
+    let desc_default = FixedFunctionShaderDesc {
+        fvf: Fvf(Fvf::XYZ | ((2u32) << Fvf::TEXCOUNT_SHIFT)),
+        stages: stages_default,
+        alpha_test: AlphaTestState::default(),
+        fog: FogState::default(),
+        lighting: LightingState::default(),
+    };
+    let desc_explicit = FixedFunctionShaderDesc {
+        stages: stages_explicit,
+        ..desc_default.clone()
+    };
+
+    assert_eq!(desc_default.state_hash(), desc_explicit.state_hash());
+
+    let wgsl_default = generate_fixed_function_shaders(&desc_default).fragment_wgsl;
+    let wgsl_explicit = generate_fixed_function_shaders(&desc_explicit).fragment_wgsl;
+    assert_eq!(wgsl_default, wgsl_explicit);
+    assert!(
+        wgsl_default.contains("input.tex1"),
+        "expected stage1 to use TEXCOORD1:\n{wgsl_default}"
+    );
+}
+
+#[test]
+fn state_hash_normalizes_out_of_range_texcoord_index_to_tex0() {
+    // The shader generator falls back to TEXCOORD0 when the requested texcoord set doesn't exist.
+    // Hashing should match that behavior, so changing TEXCOORDINDEX out of range does not thrash
+    // the shader cache.
+    let base_stage = TextureStageState {
+        color_op: TextureOp::SelectArg1,
+        color_arg0: TextureArg::Current,
+        color_arg1: TextureArg::Texture,
+        color_arg2: TextureArg::Current,
+        alpha_op: TextureOp::SelectArg1,
+        alpha_arg0: TextureArg::Current,
+        alpha_arg1: TextureArg::Texture,
+        alpha_arg2: TextureArg::Current,
+        ..Default::default()
+    };
+
+    let mut stages_tex0 = [TextureStageState::default(); 8];
+    stages_tex0[0] = TextureStageState {
+        texcoord_index: Some(0),
+        ..base_stage
+    };
+    let mut stages_oob = stages_tex0;
+    stages_oob[0].texcoord_index = Some(7);
+
+    let desc_tex0 = FixedFunctionShaderDesc {
+        fvf: Fvf(Fvf::XYZ | ((1u32) << Fvf::TEXCOUNT_SHIFT)),
+        stages: stages_tex0,
+        alpha_test: AlphaTestState::default(),
+        fog: FogState::default(),
+        lighting: LightingState::default(),
+    };
+    let desc_oob = FixedFunctionShaderDesc {
+        stages: stages_oob,
+        ..desc_tex0.clone()
+    };
+
+    assert_eq!(desc_tex0.state_hash(), desc_oob.state_hash());
+    assert_eq!(
+        generate_fixed_function_shaders(&desc_tex0).fragment_wgsl,
+        generate_fixed_function_shaders(&desc_oob).fragment_wgsl
+    );
+}
+
+#[test]
 fn state_hash_includes_texcoord_index_texture_transform_and_result_target() {
     let base_stage = TextureStageState {
         color_op: TextureOp::SelectArg1,

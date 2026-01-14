@@ -110,7 +110,12 @@ impl FixedFunctionShaderDesc {
             write_u8(hash, arg.flags.bits());
         }
 
-        fn write_stage(hash: &mut u64, stage: &TextureStageState) {
+        fn write_stage(
+            hash: &mut u64,
+            stage: &TextureStageState,
+            stage_index: usize,
+            texcoord_count: usize,
+        ) {
             write_u8(hash, stage.color_op as u8);
             // Hash only args that can affect shader generation. For unused args, write a fixed
             // placeholder so irrelevant state changes do not cause cache misses.
@@ -171,7 +176,20 @@ impl FixedFunctionShaderDesc {
             // this stage actually samples from `D3DTA_TEXTURE`, either explicitly via an arg or
             // implicitly via the op).
             if stage_uses_texture(stage) {
-                write_u8(hash, stage.texcoord_index.unwrap_or(0xFF));
+                // Match the generator's texcoord selection rules:
+                // - Default (`None`) maps to the stage index.
+                // - If the FVF does not provide enough texcoords, it falls back to TEXCOORD0.
+                // - If the FVF provides no texcoords at all, the generator uses constant (0,0,0,1)
+                //   coordinates and the index is irrelevant.
+                let raw_index = stage.texcoord_index.unwrap_or(stage_index as u8) as usize;
+                let effective_index = if texcoord_count == 0 {
+                    0xFF
+                } else if raw_index < texcoord_count {
+                    raw_index as u8
+                } else {
+                    0
+                };
+                write_u8(hash, effective_index);
                 write_u8(hash, stage.texture_transform as u8);
             } else {
                 write_u8(hash, 0xFF);
@@ -181,6 +199,7 @@ impl FixedFunctionShaderDesc {
         }
 
         let temp_analysis = analyze_temp_usage(self);
+        let texcoord_count = self.fvf.texcoord_count();
 
         // D3D9 fixed-function stage disabling is keyed off COLOROP: if stage N has
         // `D3DTSS_COLOROP = D3DTOP_DISABLE`, that stage and all subsequent stages are disabled.
@@ -192,7 +211,7 @@ impl FixedFunctionShaderDesc {
             if !temp_analysis.emit_stage[stage_index] {
                 continue;
             }
-            write_stage(&mut hash, stage);
+            write_stage(&mut hash, stage, stage_index, texcoord_count);
         }
 
         // Alpha testing is only observable when enabled *and* the compare func can actually
