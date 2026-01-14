@@ -339,6 +339,16 @@ int main(void) {
   PRINT_OFF("aerogpu_cmd_set_shader_constants_f", struct aerogpu_cmd_set_shader_constants_f, start_register);
   PRINT_OFF("aerogpu_cmd_set_shader_constants_f", struct aerogpu_cmd_set_shader_constants_f, vec4_count);
   PRINT_OFF("aerogpu_cmd_set_shader_constants_f", struct aerogpu_cmd_set_shader_constants_f, reserved0);
+  PRINT_OFF("aerogpu_cmd_set_shader_constants_i", struct aerogpu_cmd_set_shader_constants_i, hdr);
+  PRINT_OFF("aerogpu_cmd_set_shader_constants_i", struct aerogpu_cmd_set_shader_constants_i, stage);
+  PRINT_OFF("aerogpu_cmd_set_shader_constants_i", struct aerogpu_cmd_set_shader_constants_i, start_register);
+  PRINT_OFF("aerogpu_cmd_set_shader_constants_i", struct aerogpu_cmd_set_shader_constants_i, vec4_count);
+  PRINT_OFF("aerogpu_cmd_set_shader_constants_i", struct aerogpu_cmd_set_shader_constants_i, reserved0);
+  PRINT_OFF("aerogpu_cmd_set_shader_constants_b", struct aerogpu_cmd_set_shader_constants_b, hdr);
+  PRINT_OFF("aerogpu_cmd_set_shader_constants_b", struct aerogpu_cmd_set_shader_constants_b, stage);
+  PRINT_OFF("aerogpu_cmd_set_shader_constants_b", struct aerogpu_cmd_set_shader_constants_b, start_register);
+  PRINT_OFF("aerogpu_cmd_set_shader_constants_b", struct aerogpu_cmd_set_shader_constants_b, bool_count);
+  PRINT_OFF("aerogpu_cmd_set_shader_constants_b", struct aerogpu_cmd_set_shader_constants_b, reserved0);
 
   PRINT_OFF("aerogpu_cmd_set_shader_constants_i", struct aerogpu_cmd_set_shader_constants_i, hdr);
   PRINT_OFF("aerogpu_cmd_set_shader_constants_i", struct aerogpu_cmd_set_shader_constants_i, stage);
@@ -934,6 +944,8 @@ int main(void) {
   PRINT_CONST(AEROGPU_CMD_CREATE_INPUT_LAYOUT);
   PRINT_CONST(AEROGPU_CMD_DESTROY_INPUT_LAYOUT);
   PRINT_CONST(AEROGPU_CMD_SET_INPUT_LAYOUT);
+  PRINT_CONST(AEROGPU_CMD_SET_SHADER_CONSTANTS_I);
+  PRINT_CONST(AEROGPU_CMD_SET_SHADER_CONSTANTS_B);
   PRINT_CONST(AEROGPU_CMD_SET_BLEND_STATE);
   PRINT_CONST(AEROGPU_CMD_SET_DEPTH_STENCIL_STATE);
   PRINT_CONST(AEROGPU_CMD_SET_RASTERIZER_STATE);

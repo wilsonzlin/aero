@@ -51,12 +51,19 @@ async fn create_executor_with_bc_features() -> Option<AerogpuD3d9Executor> {
             }
 
             let downlevel_flags = adapter.get_downlevel_capabilities().flags;
+
+            // The D3D9 executor's constants uniform buffer exceeds wgpu's downlevel default 16 KiB
+            // binding size.
+            let mut required_limits = wgpu::Limits::downlevel_defaults();
+            required_limits.max_uniform_buffer_binding_size =
+                required_limits.max_uniform_buffer_binding_size.max(18432);
+
             let Ok((device, queue)) = adapter
                 .request_device(
                     &wgpu::DeviceDescriptor {
                         label: Some("aerogpu d3d9 bc writeback test device"),
                         required_features: wgpu::Features::TEXTURE_COMPRESSION_BC,
-                        required_limits: wgpu::Limits::downlevel_defaults(),
+                        required_limits,
                     },
                     None,
                 )

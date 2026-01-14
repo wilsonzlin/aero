@@ -631,8 +631,6 @@ fn validate_wgsl_binding_contract(
     half_pixel_center: bool,
 ) -> Result<(), String> {
     let mut has_constants = false;
-    let mut has_constants_i = false;
-    let mut has_constants_b = false;
     let mut has_half_pixel = false;
     let sampler_group_expected = match stage {
         shader::ShaderStage::Vertex => 1u32,
@@ -659,24 +657,6 @@ fn validate_wgsl_binding_contract(
                         ));
                     }
                     has_constants = true;
-                    continue;
-                }
-                "constants_i" => {
-                    if group != 0 || binding != 1 {
-                        return Err(format!(
-                            "constants_i uniform has unexpected binding (@group({group}) @binding({binding})); expected @group(0) @binding(1)"
-                        ));
-                    }
-                    has_constants_i = true;
-                    continue;
-                }
-                "constants_b" => {
-                    if group != 0 || binding != 2 {
-                        return Err(format!(
-                            "constants_b uniform has unexpected binding (@group({group}) @binding({binding})); expected @group(0) @binding(2)"
-                        ));
-                    }
-                    has_constants_b = true;
                     continue;
                 }
                 "half_pixel" => {
@@ -795,12 +775,6 @@ fn validate_wgsl_binding_contract(
 
     if !has_constants {
         return Err("WGSL is missing the expected constants uniform binding".into());
-    }
-    if !has_constants_i {
-        return Err("WGSL is missing the expected constants_i uniform binding".into());
-    }
-    if !has_constants_b {
-        return Err("WGSL is missing the expected constants_b uniform binding".into());
     }
     if stage == shader::ShaderStage::Vertex && half_pixel_center && !has_half_pixel {
         return Err(
@@ -1007,11 +981,21 @@ impl Default for RasterizerState {
 }
 
 const MAX_SAMPLERS: usize = 16;
-const CONSTANTS_REGION_SIZE_BYTES: u64 = 512 * 16;
-const CONSTANTS_FLOATS_OFFSET_BYTES: u64 = 0;
-const CONSTANTS_INTS_OFFSET_BYTES: u64 = 512 * 16;
-const CONSTANTS_BOOLS_OFFSET_BYTES: u64 = 512 * 16 * 2;
-const CONSTANTS_BUFFER_SIZE_BYTES: usize = 512 * 16 * 3;
+// D3D9 shader constants are represented as a single stable uniform buffer (group(0) binding(0))
+// with 3 banks:
+// - Float (c#): 512 vec4<f32> (VS then PS)
+// - Int   (i#): 512 vec4<i32> (VS then PS)
+// - Bool  (b#): 512 u32       (VS then PS)
+const CONSTANTS_BUFFER_FLOAT_BANK_SIZE_BYTES: usize = 512 * 16;
+const CONSTANTS_BUFFER_INT_BANK_SIZE_BYTES: usize = 512 * 16;
+const CONSTANTS_BUFFER_BOOL_BANK_SIZE_BYTES: usize = 512 * 4;
+const CONSTANTS_BUFFER_FLOAT_BANK_OFFSET_BYTES: u64 = 0;
+const CONSTANTS_BUFFER_INT_BANK_OFFSET_BYTES: u64 = CONSTANTS_BUFFER_FLOAT_BANK_SIZE_BYTES as u64;
+const CONSTANTS_BUFFER_BOOL_BANK_OFFSET_BYTES: u64 =
+    (CONSTANTS_BUFFER_FLOAT_BANK_SIZE_BYTES + CONSTANTS_BUFFER_INT_BANK_SIZE_BYTES) as u64;
+const CONSTANTS_BUFFER_SIZE_BYTES: usize = CONSTANTS_BUFFER_FLOAT_BANK_SIZE_BYTES
+    + CONSTANTS_BUFFER_INT_BANK_SIZE_BYTES
+    + CONSTANTS_BUFFER_BOOL_BANK_SIZE_BYTES;
 const HALF_PIXEL_UNIFORM_SIZE_BYTES: usize = 16;
 const MAX_REASONABLE_RENDER_STATE_ID: u32 = 4096;
 const MAX_REASONABLE_SAMPLER_STATE_ID: u32 = 4096;
@@ -1078,38 +1062,16 @@ fn create_constants_buffer(device: &wgpu::Device) -> wgpu::Buffer {
 fn create_constants_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
     device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("aerogpu-d3d9.constants_bind_group_layout"),
-        entries: &[
-            wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: wgpu::BufferSize::new(CONSTANTS_REGION_SIZE_BYTES),
-                },
-                count: None,
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: wgpu::BufferSize::new(CONSTANTS_BUFFER_SIZE_BYTES as u64),
             },
-            wgpu::BindGroupLayoutEntry {
-                binding: 1,
-                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: wgpu::BufferSize::new(CONSTANTS_REGION_SIZE_BYTES),
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 2,
-                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: wgpu::BufferSize::new(CONSTANTS_REGION_SIZE_BYTES),
-                },
-                count: None,
-            },
-        ],
+            count: None,
+        }],
     })
 }
 
@@ -1196,32 +1158,10 @@ fn create_constants_bind_group(
     device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("aerogpu-d3d9.constants_bind_group"),
         layout,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                    buffer: constants_buffer,
-                    offset: CONSTANTS_FLOATS_OFFSET_BYTES,
-                    size: wgpu::BufferSize::new(CONSTANTS_REGION_SIZE_BYTES),
-                }),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                    buffer: constants_buffer,
-                    offset: CONSTANTS_INTS_OFFSET_BYTES,
-                    size: wgpu::BufferSize::new(CONSTANTS_REGION_SIZE_BYTES),
-                }),
-            },
-            wgpu::BindGroupEntry {
-                binding: 2,
-                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                    buffer: constants_buffer,
-                    offset: CONSTANTS_BOOLS_OFFSET_BYTES,
-                    size: wgpu::BufferSize::new(CONSTANTS_REGION_SIZE_BYTES),
-                }),
-            },
-        ],
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: constants_buffer.as_entire_binding(),
+        }],
     })
 }
 
@@ -1601,12 +1541,16 @@ impl AerogpuD3d9Executor {
         let downlevel_flags = adapter.get_downlevel_capabilities().flags;
 
         let required_features = crate::wgpu_features::negotiated_features(&adapter);
+        let mut required_limits = wgpu::Limits::downlevel_defaults();
+        required_limits.max_uniform_buffer_binding_size = required_limits
+            .max_uniform_buffer_binding_size
+            .max(CONSTANTS_BUFFER_SIZE_BYTES as u32);
         let (device, queue) = adapter
             .request_device(
                 &wgpu::DeviceDescriptor {
                     label: Some("aero-gpu AerogpuD3d9Executor"),
                     required_features,
-                    required_limits: wgpu::Limits::downlevel_defaults(),
+                    required_limits,
                 },
                 None,
             )
@@ -6121,8 +6065,12 @@ impl AerogpuD3d9Executor {
                 // D3D9 keeps separate constant register files per stage; match the shader
                 // translation layout (vertex constants first, then pixel constants).
                 let stage_base = match stage {
-                    s if s == cmd::AerogpuShaderStage::Vertex as u32 => 0u64,
-                    s if s == cmd::AerogpuShaderStage::Pixel as u32 => 256u64 * 16,
+                    s if s == cmd::AerogpuShaderStage::Vertex as u32 => {
+                        CONSTANTS_BUFFER_FLOAT_BANK_OFFSET_BYTES
+                    }
+                    s if s == cmd::AerogpuShaderStage::Pixel as u32 => {
+                        CONSTANTS_BUFFER_FLOAT_BANK_OFFSET_BYTES + 256u64 * 16
+                    }
                     _ => {
                         return Err(AerogpuD3d9Error::Validation(format!(
                             "SET_SHADER_CONSTANTS_F: unsupported stage {stage}"
@@ -6141,7 +6089,7 @@ impl AerogpuD3d9Executor {
                     )));
                 }
 
-                let offset = (CONSTANTS_FLOATS_OFFSET_BYTES + stage_base)
+                let offset = stage_base
                     .checked_add(start_register as u64 * 16)
                     .ok_or_else(|| {
                         AerogpuD3d9Error::Validation(
@@ -6192,9 +6140,15 @@ impl AerogpuD3d9Executor {
                     return Ok(());
                 }
 
+                // D3D9 keeps separate constant register files per stage; match the shader
+                // translation layout (vertex constants first, then pixel constants).
                 let stage_base = match stage {
-                    s if s == cmd::AerogpuShaderStage::Vertex as u32 => 0u64,
-                    s if s == cmd::AerogpuShaderStage::Pixel as u32 => 256u64 * 16,
+                    s if s == cmd::AerogpuShaderStage::Vertex as u32 => {
+                        CONSTANTS_BUFFER_INT_BANK_OFFSET_BYTES
+                    }
+                    s if s == cmd::AerogpuShaderStage::Pixel as u32 => {
+                        CONSTANTS_BUFFER_INT_BANK_OFFSET_BYTES + 256u64 * 16
+                    }
                     _ => {
                         return Err(AerogpuD3d9Error::Validation(format!(
                             "SET_SHADER_CONSTANTS_I: unsupported stage {stage}"
@@ -6213,7 +6167,7 @@ impl AerogpuD3d9Executor {
                     )));
                 }
 
-                let offset = (CONSTANTS_INTS_OFFSET_BYTES + stage_base)
+                let offset = stage_base
                     .checked_add(start_register as u64 * 16)
                     .ok_or_else(|| {
                         AerogpuD3d9Error::Validation(
@@ -6232,6 +6186,8 @@ impl AerogpuD3d9Executor {
                     )));
                 }
 
+                // Use an encoder-ordered copy to guarantee the constants update is visible to
+                // subsequent draws in the same submission.
                 self.ensure_encoder();
                 let staging = self
                     .device
@@ -6262,9 +6218,15 @@ impl AerogpuD3d9Executor {
                     return Ok(());
                 }
 
+                // D3D9 keeps separate constant register files per stage; match the shader
+                // translation layout (vertex constants first, then pixel constants).
                 let stage_base = match stage {
-                    s if s == cmd::AerogpuShaderStage::Vertex as u32 => 0u64,
-                    s if s == cmd::AerogpuShaderStage::Pixel as u32 => 256u64 * 16,
+                    s if s == cmd::AerogpuShaderStage::Vertex as u32 => {
+                        CONSTANTS_BUFFER_BOOL_BANK_OFFSET_BYTES
+                    }
+                    s if s == cmd::AerogpuShaderStage::Pixel as u32 => {
+                        CONSTANTS_BUFFER_BOOL_BANK_OFFSET_BYTES + 256u64 * 4
+                    }
                     _ => {
                         return Err(AerogpuD3d9Error::Validation(format!(
                             "SET_SHADER_CONSTANTS_B: unsupported stage {stage}"
@@ -6283,8 +6245,8 @@ impl AerogpuD3d9Executor {
                     )));
                 }
 
-                let offset = (CONSTANTS_BOOLS_OFFSET_BYTES + stage_base)
-                    .checked_add(start_register as u64 * 16)
+                let offset = stage_base
+                    .checked_add(start_register as u64 * 4)
                     .ok_or_else(|| {
                         AerogpuD3d9Error::Validation(
                             "SET_SHADER_CONSTANTS_B: register offset overflow".into(),
@@ -6302,6 +6264,8 @@ impl AerogpuD3d9Executor {
                     )));
                 }
 
+                // Use an encoder-ordered copy to guarantee the constants update is visible to
+                // subsequent draws in the same submission.
                 self.ensure_encoder();
                 let staging = self
                     .device

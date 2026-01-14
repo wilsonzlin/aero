@@ -3256,17 +3256,15 @@ pub fn generate_wgsl_with_options(
 
     let mut wgsl = String::new();
 
-    // Shader constants: D3D9 has separate per-stage register files (VS=0..255, PS=256..511).
-    // Pack each register file into a stable per-type uniform buffer:
-    // - binding(0): float4 constants (`c#`)
-    // - binding(1): int4 constants (`i#`)
-    // - binding(2): bool constants (`b#`, represented as `vec4<u32>` per register)
-    wgsl.push_str("struct Constants { c: array<vec4<f32>, 512>, };\n");
-    wgsl.push_str("struct ConstantsI { i: array<vec4<i32>, 512>, };\n");
-    wgsl.push_str("struct ConstantsB { b: array<vec4<u32>, 512>, };\n");
-    wgsl.push_str("@group(0) @binding(0) var<uniform> constants: Constants;\n");
-    wgsl.push_str("@group(0) @binding(1) var<uniform> constants_i: ConstantsI;\n");
-    wgsl.push_str("@group(0) @binding(2) var<uniform> constants_b: ConstantsB;\n");
+    // Shader constants: pack per-stage register files into a single uniform buffer to keep
+    // bindings stable across shader stages (VS=0..255, PS=256..511).
+    // Uniform buffers use std140-like layout rules: arrays have a minimum 16-byte stride even for
+    // scalar elements. Store the bool bank as `vec4<u32>` (4 bools per element) to keep a tight
+    // 2048-byte layout (512 u32 values) while remaining WGSL-valid.
+    wgsl.push_str(
+        "struct Constants { c: array<vec4<f32>, 512>, i: array<vec4<i32>, 512>, b: array<vec4<u32>, 128>, };\n",
+    );
+    wgsl.push_str("@group(0) @binding(0) var<uniform> constants: Constants;\n\n");
 
     let sampler_group = sampler_bind_group(ir.version.stage);
 
@@ -3573,18 +3571,28 @@ pub fn generate_wgsl_with_options(
             }
 
             // Load uniform-provided integer/bool constants into private registers so SM3 call
-            // targets can read them. Embedded `defi` / `defb` values are emitted as module-scope
+            // targets can read them. Embedded `defi` / `defb` constants are emitted as module-scope
             // `const` and do not require initialization here.
             for idx in &usage.int_consts {
                 if !i32_defs.contains_key(idx) {
-                    let _ = writeln!(wgsl, "  i{idx} = constants_i.i[CONST_BASE + {idx}u];");
+                    let _ = writeln!(wgsl, "  i{idx} = constants.i[CONST_BASE + {idx}u];");
                 }
             }
             for idx in &usage.bool_consts {
                 if !bool_defs.contains_key(idx) {
+                    // Bool constants are stored packed as `vec4<u32>` in the uniform buffer
+                    // (4 scalar bools per element) to satisfy WGSL uniform layout rules while
+                    // remaining compact.
+                    let vec_idx = (const_base / 4u32) + (*idx / 4u32);
+                    let comp = match *idx % 4u32 {
+                        0 => "x",
+                        1 => "y",
+                        2 => "z",
+                        _ => "w",
+                    };
                     let _ = writeln!(
                         wgsl,
-                        "  b{idx} = constants_b.b[CONST_BASE + {idx}u] != vec4<u32>(0u);"
+                        "  b{idx} = vec4<bool>(constants.b[{vec_idx}u].{comp} != 0u);"
                     );
                 }
             }
@@ -3810,18 +3818,28 @@ pub fn generate_wgsl_with_options(
             }
 
             // Load uniform-provided integer/bool constants into private registers so SM3 call
-            // targets can read them. Embedded `defi` / `defb` values are emitted as module-scope
+            // targets can read them. Embedded `defi` / `defb` constants are emitted as module-scope
             // `const` and do not require initialization here.
             for idx in &usage.int_consts {
                 if !i32_defs.contains_key(idx) {
-                    let _ = writeln!(wgsl, "  i{idx} = constants_i.i[CONST_BASE + {idx}u];");
+                    let _ = writeln!(wgsl, "  i{idx} = constants.i[CONST_BASE + {idx}u];");
                 }
             }
             for idx in &usage.bool_consts {
                 if !bool_defs.contains_key(idx) {
+                    // Bool constants are stored packed as `vec4<u32>` in the uniform buffer
+                    // (4 scalar bools per element) to satisfy WGSL uniform layout rules while
+                    // remaining compact.
+                    let vec_idx = (const_base / 4u32) + (*idx / 4u32);
+                    let comp = match *idx % 4u32 {
+                        0 => "x",
+                        1 => "y",
+                        2 => "z",
+                        _ => "w",
+                    };
                     let _ = writeln!(
                         wgsl,
-                        "  b{idx} = constants_b.b[CONST_BASE + {idx}u] != vec4<u32>(0u);"
+                        "  b{idx} = vec4<bool>(constants.b[{vec_idx}u].{comp} != 0u);"
                     );
                 }
             }

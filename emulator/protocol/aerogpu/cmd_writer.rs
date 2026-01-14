@@ -18,10 +18,11 @@ use super::aerogpu_cmd::{
     AerogpuCmdSetConstantBuffers, AerogpuCmdSetDepthStencilState, AerogpuCmdSetIndexBuffer,
     AerogpuCmdSetInputLayout, AerogpuCmdSetPrimitiveTopology, AerogpuCmdSetRasterizerState,
     AerogpuCmdSetRenderState, AerogpuCmdSetRenderTargets, AerogpuCmdSetSamplerState,
-    AerogpuCmdSetSamplers, AerogpuCmdSetScissor, AerogpuCmdSetShaderConstantsF,
-    AerogpuCmdSetShaderResourceBuffers, AerogpuCmdSetTexture, AerogpuCmdSetUnorderedAccessBuffers,
-    AerogpuCmdSetVertexBuffers, AerogpuCmdSetViewport, AerogpuCmdStreamFlags,
-    AerogpuCmdStreamHeader, AerogpuCmdUploadResource, AerogpuCompareFunc,
+    AerogpuCmdSetSamplers, AerogpuCmdSetScissor, AerogpuCmdSetShaderConstantsB,
+    AerogpuCmdSetShaderConstantsF, AerogpuCmdSetShaderConstantsI, AerogpuCmdSetShaderResourceBuffers,
+    AerogpuCmdSetTexture, AerogpuCmdSetUnorderedAccessBuffers, AerogpuCmdSetVertexBuffers,
+    AerogpuCmdSetViewport, AerogpuCmdStreamFlags, AerogpuCmdStreamHeader, AerogpuCmdUploadResource,
+    AerogpuCompareFunc,
     AerogpuConstantBufferBinding, AerogpuCullMode, AerogpuFillMode, AerogpuHandle,
     AerogpuIndexFormat, AerogpuPrimitiveTopology, AerogpuSamplerAddressMode, AerogpuSamplerFilter,
     AerogpuShaderResourceBufferBinding, AerogpuShaderStage, AerogpuShaderStageEx,
@@ -1422,8 +1423,6 @@ impl AerogpuCmdWriter {
         start_register: u32,
         data: &[i32],
     ) {
-        use super::aerogpu_cmd::AerogpuCmdSetShaderConstantsI;
-
         assert_eq!(
             data.len() % 4,
             0,
@@ -1440,8 +1439,8 @@ impl AerogpuCmdWriter {
         let unpadded_size = size_of::<AerogpuCmdSetShaderConstantsI>()
             .checked_add(payload_size)
             .expect("SET_SHADER_CONSTANTS_I packet too large (usize overflow)");
-        let base = self.append_raw(AerogpuCmdOpcode::SetShaderConstantsI, unpadded_size);
         let (stage, reserved0) = encode_shader_stage_with_ex(stage, stage_ex);
+        let base = self.append_raw(AerogpuCmdOpcode::SetShaderConstantsI, unpadded_size);
         self.write_u32_at(
             base + offset_of!(AerogpuCmdSetShaderConstantsI, stage),
             stage,
@@ -1461,7 +1460,7 @@ impl AerogpuCmdWriter {
 
         let payload_base = base + size_of::<AerogpuCmdSetShaderConstantsI>();
         for (i, &v) in data.iter().enumerate() {
-            self.write_u32_at(payload_base + i * 4, v as u32);
+            self.write_i32_at(payload_base + i * 4, v);
         }
     }
 
@@ -1489,12 +1488,8 @@ impl AerogpuCmdWriter {
 
     /// Set D3D9-style bool shader constants.
     ///
-    /// `data` is a contiguous range of scalar bool registers, represented as `u32`
-    /// values (`0` = false, non-zero = true).
-    ///
-    /// AeroGPU represents each bool register as a `vec4<u32>` in the constants
-    /// uniform buffer (replicated across all 4 lanes) to support register-like
-    /// swizzle access in shader translation.
+    /// `data` is a contiguous range of scalar bool registers, encoded as `u32` values
+    /// where each element must be either `0` or `1`.
     pub fn set_shader_constants_b(
         &mut self,
         stage: AerogpuShaderStage,
@@ -1511,20 +1506,24 @@ impl AerogpuCmdWriter {
         start_register: u32,
         data: &[u32],
     ) {
-        use super::aerogpu_cmd::AerogpuCmdSetShaderConstantsB;
-
         assert!(data.len() <= u32::MAX as usize);
+        for &v in data {
+            assert!(
+                v == 0 || v == 1,
+                "SET_SHADER_CONSTANTS_B values must be 0 or 1 (got {v})"
+            );
+        }
 
         let bool_count = data.len() as u32;
         let payload_size = data
             .len()
-            .checked_mul(16)
+            .checked_mul(4)
             .expect("SET_SHADER_CONSTANTS_B packet too large (usize overflow)");
         let unpadded_size = size_of::<AerogpuCmdSetShaderConstantsB>()
             .checked_add(payload_size)
             .expect("SET_SHADER_CONSTANTS_B packet too large (usize overflow)");
-        let base = self.append_raw(AerogpuCmdOpcode::SetShaderConstantsB, unpadded_size);
         let (stage, reserved0) = encode_shader_stage_with_ex(stage, stage_ex);
+        let base = self.append_raw(AerogpuCmdOpcode::SetShaderConstantsB, unpadded_size);
         self.write_u32_at(
             base + offset_of!(AerogpuCmdSetShaderConstantsB, stage),
             stage,
@@ -1544,12 +1543,7 @@ impl AerogpuCmdWriter {
 
         let payload_base = base + size_of::<AerogpuCmdSetShaderConstantsB>();
         for (i, &v) in data.iter().enumerate() {
-            let v = if v == 0 { 0 } else { 1 };
-            let off = payload_base + i * 16;
-            self.write_u32_at(off, v);
-            self.write_u32_at(off + 4, v);
-            self.write_u32_at(off + 8, v);
-            self.write_u32_at(off + 12, v);
+            self.write_u32_at(payload_base + i * 4, v);
         }
     }
 

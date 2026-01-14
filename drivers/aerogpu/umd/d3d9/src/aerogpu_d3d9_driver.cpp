@@ -15641,7 +15641,6 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
       cmd->start_register = start;
       cmd->vec4_count = count;
       cmd->reserved0 = 0;
-
       reg = end + 1;
     }
     return S_OK;
@@ -15678,24 +15677,12 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
         continue;
       }
 
-      // AeroGPU represents each bool register as a `vec4<u32>` (16 bytes) in the
-      // constants uniform buffer. Expand scalar bools into that representation.
-      std::vector<uint32_t> expanded;
-      expanded.resize(static_cast<size_t>(count) * 4u);
+      std::array<uint32_t, 256> payload{};
       for (uint32_t i = 0; i < count; ++i) {
-        const uint32_t v = src[start + i] ? 1u : 0u;
-        const size_t base = static_cast<size_t>(i) * 4u;
-        expanded[base + 0] = v;
-        expanded[base + 1] = v;
-        expanded[base + 2] = v;
-        expanded[base + 3] = v;
+        payload[i] = src[start + i] ? 1u : 0u;
       }
-
       auto* cmd = append_with_payload_locked<aerogpu_cmd_set_shader_constants_b>(
-          dev,
-          AEROGPU_CMD_SET_SHADER_CONSTANTS_B,
-          expanded.data(),
-          expanded.size() * sizeof(uint32_t));
+          dev, AEROGPU_CMD_SET_SHADER_CONSTANTS_B, payload.data(), static_cast<size_t>(count) * sizeof(uint32_t));
       if (!cmd) {
         return E_OUTOFMEMORY;
       }
@@ -18186,19 +18173,12 @@ HRESULT device_set_shader_const_b_impl(
     return trace.ret(S_OK);
   }
 
-  std::vector<uint32_t> expanded;
-  expanded.resize(static_cast<size_t>(count) * 4u);
+  std::array<uint32_t, 256> payload{};
   for (uint32_t i = 0; i < count; ++i) {
-    const uint32_t v = dst[start + i] ? 1u : 0u;
-    const size_t base = static_cast<size_t>(i) * 4u;
-    expanded[base + 0] = v;
-    expanded[base + 1] = v;
-    expanded[base + 2] = v;
-    expanded[base + 3] = v;
+    payload[i] = dst[start + i] ? 1u : 0u;
   }
-
   auto* cmd = append_with_payload_locked<aerogpu_cmd_set_shader_constants_b>(
-      dev, AEROGPU_CMD_SET_SHADER_CONSTANTS_B, expanded.data(), expanded.size() * sizeof(uint32_t));
+      dev, AEROGPU_CMD_SET_SHADER_CONSTANTS_B, payload.data(), static_cast<size_t>(count) * sizeof(uint32_t));
   if (!cmd) {
     return trace.ret(E_OUTOFMEMORY);
   }
@@ -19561,24 +19541,16 @@ HRESULT AEROGPU_D3D9_CALL device_set_shader_const_b(
     return trace.ret(S_OK);
   }
 
-  // AeroGPU represents each bool register as a `vec4<u32>` (16 bytes) in the
-  // constants uniform buffer. Expand scalar bools into that representation.
-  std::vector<uint32_t> expanded;
-  expanded.resize(static_cast<size_t>(count) * 4u);
+  // Payload uses a single u32 per bool register (0 or 1).
+  std::array<uint32_t, 256> payload{};
   for (uint32_t i = 0; i < count; ++i) {
-    const uint32_t v = dst[start + i] ? 1u : 0u;
-    const size_t base = static_cast<size_t>(i) * 4u;
-    expanded[base + 0] = v;
-    expanded[base + 1] = v;
-    expanded[base + 2] = v;
-    expanded[base + 3] = v;
+    payload[i] = dst[start + i] ? 1u : 0u;
   }
-
   auto* cmd = append_with_payload_locked<aerogpu_cmd_set_shader_constants_b>(
       dev,
       AEROGPU_CMD_SET_SHADER_CONSTANTS_B,
-      expanded.data(),
-      expanded.size() * sizeof(uint32_t));
+      payload.data(),
+      static_cast<size_t>(count) * sizeof(uint32_t));
   if (!cmd) {
     return trace.ret(E_OUTOFMEMORY);
   }
@@ -19588,7 +19560,6 @@ HRESULT AEROGPU_D3D9_CALL device_set_shader_const_b(
   cmd->reserved0 = 0;
   return trace.ret(S_OK);
 }
-
 // -----------------------------------------------------------------------------
 // Device cursor DDIs (portable build)
 // -----------------------------------------------------------------------------
@@ -27005,7 +26976,6 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
   AEROGPU_SET_D3D9DDI_FN(pfnUpdateTexture, device_update_texture);
 
 #undef AEROGPU_SET_D3D9DDI_FN
- 
   if (!d3d9_validate_nonnull_vtable(pDeviceFuncs, "D3D9DDI_DEVICEFUNCS")) {
     aerogpu::logf("aerogpu-d3d9: CreateDevice: device vtable contains NULL entrypoints; failing\n");
     pCreateDevice->hDevice.pDrvPrivate = nullptr;

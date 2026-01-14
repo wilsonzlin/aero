@@ -841,18 +841,28 @@ pub fn decode_u32_tokens(tokens: &[u32]) -> Result<DecodedShader, DecodeError> {
             })
         };
 
-        let mut last_err = None;
+        // When we try multiple interpretations of the opcode length field, prefer the
+        // error from the first attempt (the "length includes opcode" encoding) if
+        // *all* attempts fail. This keeps error messages stable and typically
+        // points at the true failure rather than a secondary parse error from an
+        // alternative length interpretation.
+        let mut first_err: Option<DecodeError> = None;
+        let mut last_err: Option<DecodeError> = None;
         let mut decoded = None;
 
         for length in length_candidates.into_iter().filter(|&l| l != 0) {
             if token_index + length > tokens.len() {
-                last_err = Some(DecodeError {
+                let err = DecodeError {
                     token_index,
                     message: format!(
                         "instruction length {length} exceeds remaining tokens {}",
                         tokens.len() - token_index
                     ),
-                });
+                };
+                if first_err.is_none() {
+                    first_err = Some(err.clone());
+                }
+                last_err = Some(err);
                 break;
             }
 
@@ -874,10 +884,14 @@ pub fn decode_u32_tokens(tokens: &[u32]) -> Result<DecodedShader, DecodeError> {
             for &(pred_is_prefix, operand_base_offset) in pred_positions {
                 let (predicate, operand_tokens) = if predicated {
                     if operand_tokens_full.is_empty() {
-                        last_err = Some(DecodeError {
+                        let err = DecodeError {
                             token_index,
                             message: "predicated instruction missing predicate token".to_owned(),
-                        });
+                        };
+                        if first_err.is_none() {
+                            first_err = Some(err.clone());
+                        }
+                        last_err = Some(err);
                         continue;
                     }
                     if pred_is_prefix {
@@ -885,6 +899,9 @@ pub fn decode_u32_tokens(tokens: &[u32]) -> Result<DecodedShader, DecodeError> {
                         let pred = match decode_predicate(operand_tokens_full[0], pred_abs) {
                             Ok(p) => p,
                             Err(err) => {
+                                if first_err.is_none() {
+                                    first_err = Some(err.clone());
+                                }
                                 last_err = Some(err);
                                 continue;
                             }
@@ -898,6 +915,9 @@ pub fn decode_u32_tokens(tokens: &[u32]) -> Result<DecodedShader, DecodeError> {
                         ) {
                             Ok(p) => p,
                             Err(err) => {
+                                if first_err.is_none() {
+                                    first_err = Some(err.clone());
+                                }
                                 last_err = Some(err);
                                 continue;
                             }
@@ -920,6 +940,9 @@ pub fn decode_u32_tokens(tokens: &[u32]) -> Result<DecodedShader, DecodeError> {
                     Err(mut err) => {
                         // Convert from operand-token-local index to absolute token index.
                         err.token_index += location.token_index + 1 + operand_base_offset;
+                        if first_err.is_none() {
+                            first_err = Some(err.clone());
+                        }
                         last_err = Some(err);
                     }
                 }
@@ -931,10 +954,14 @@ pub fn decode_u32_tokens(tokens: &[u32]) -> Result<DecodedShader, DecodeError> {
         }
 
         let Some((length, predicate, operands, dcl, comment_data)) = decoded else {
-            return Err(last_err.unwrap_or_else(|| DecodeError {
-                token_index,
-                message: "failed to decode instruction".to_owned(),
-            }));
+            return Err(
+                first_err
+                    .or(last_err)
+                    .unwrap_or_else(|| DecodeError {
+                    token_index,
+                    message: "failed to decode instruction".to_owned(),
+                }),
+            );
         };
 
         instructions.push(DecodedInstruction {
@@ -1845,6 +1872,12 @@ fn decode_dcl_usage(
             4 => TextureType::Texture3D,
             other => TextureType::Unknown(other),
         };
+        if matches!(texture_type, TextureType::Unknown(_)) {
+            return Err(DecodeError {
+                token_index: 0,
+                message: format!("unsupported sampler texture type {texture_type:?}"),
+            });
+        }
         return Ok(DclUsage::TextureType(texture_type));
     }
 

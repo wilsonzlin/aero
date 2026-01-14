@@ -1533,6 +1533,8 @@ typedef HRESULT(AEROGPU_D3D9_CALL* PFND3D9DDI_CREATESHADER)(D3DDDI_HDEVICE hDevi
 typedef HRESULT(AEROGPU_D3D9_CALL* PFND3D9DDI_SETSHADER)(D3DDDI_HDEVICE hDevice, uint32_t stage, D3D9DDI_HSHADER hShader);
 typedef HRESULT(AEROGPU_D3D9_CALL* PFND3D9DDI_DESTROYSHADER)(D3DDDI_HDEVICE hDevice, D3D9DDI_HSHADER hShader);
 typedef HRESULT(AEROGPU_D3D9_CALL* PFND3D9DDI_SETSHADERCONSTF)(D3DDDI_HDEVICE hDevice, uint32_t stage, uint32_t start_reg, const float* pData, uint32_t vec4_count);
+// Optional shader integer/bool constant DDIs. Some WDK vintages expose these in the device function
+// table; in portable mode we include them so host-side tests can exercise the paths.
 typedef HRESULT(AEROGPU_D3D9_CALL* PFND3D9DDI_SETSHADERCONSTI)(D3DDDI_HDEVICE hDevice, uint32_t stage, uint32_t start_reg, const int32_t* pData, uint32_t vec4_count);
 typedef HRESULT(AEROGPU_D3D9_CALL* PFND3D9DDI_SETSHADERCONSTB)(D3DDDI_HDEVICE hDevice, uint32_t stage, uint32_t start_reg, const BOOL* pData, uint32_t bool_count);
 typedef HRESULT(AEROGPU_D3D9_CALL* PFND3D9DDI_SETSTREAMSOURCE)(D3DDDI_HDEVICE hDevice, uint32_t stream, D3DDDI_HRESOURCE hVb, uint32_t offset_bytes, uint32_t stride_bytes);
@@ -1725,11 +1727,8 @@ struct _D3D9DDI_DEVICEFUNCS {
   PFND3D9DDI_SETCURSORPOSITION pfnSetCursorPosition;
   PFND3D9DDI_SHOWCURSOR pfnShowCursor;
 
-  // Shader int/bool constant entrypoints.
-  //
-  // These are placed at the tail in portable builds to keep the anchor offsets
-  // for the earlier WDK ABI stable. The driver uses compile-time detection to
-  // populate these only when the struct declares them.
+  // Optional shader integer/bool constant DDIs. These are not part of the Win7 D3D9DDI_DEVICEFUNCS
+  // layout we anchor to, so keep them at the tail in portable builds.
   PFND3D9DDI_SETSHADERCONSTI pfnSetShaderConstI;
   PFND3D9DDI_SETSHADERCONSTB pfnSetShaderConstB;
 };

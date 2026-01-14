@@ -103,16 +103,15 @@ enum aerogpu_cmd_opcode {
   /* D3D9-style shader constant updates (float4 registers). */
   AEROGPU_CMD_SET_SHADER_CONSTANTS_F = 0x203,
 
-  /* D3D9-style shader constant updates (int4 registers). */
-  AEROGPU_CMD_SET_SHADER_CONSTANTS_I = 0x207,
-
-  /* D3D9-style shader constant updates (bool registers). */
-  AEROGPU_CMD_SET_SHADER_CONSTANTS_B = 0x208,
-
   /* D3D9 vertex declaration / D3D10+ input layout blob (opaque to protocol). */
   AEROGPU_CMD_CREATE_INPUT_LAYOUT = 0x204,
   AEROGPU_CMD_DESTROY_INPUT_LAYOUT = 0x205,
   AEROGPU_CMD_SET_INPUT_LAYOUT = 0x206,
+
+  /* D3D9-style shader constant updates (int4 registers). */
+  AEROGPU_CMD_SET_SHADER_CONSTANTS_I = 0x207,
+  /* D3D9-style shader constant updates (bool registers). */
+  AEROGPU_CMD_SET_SHADER_CONSTANTS_B = 0x208,
 
   /* Pipeline state */
   AEROGPU_CMD_SET_BLEND_STATE = 0x300,
@@ -721,8 +720,11 @@ AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_set_shader_constants_f) == 24);
  *
  * Payload format:
  *   struct aerogpu_cmd_set_shader_constants_i
- *   int32_t data[vec4_count * 4]
+ *   int32_t data[vec4_count * 4] (little-endian)
  *   padding to 4-byte alignment
+ *
+ * Forward-compat: Readers MUST treat `hdr.size_bytes` as a minimum and ignore any trailing bytes
+ * they do not understand.
  */
 #pragma pack(push, 1)
 struct aerogpu_cmd_set_shader_constants_i {
@@ -749,15 +751,13 @@ AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_set_shader_constants_i) == 24);
  * SET_SHADER_CONSTANTS_B:
  * D3D9-style bool constants.
  *
- * Notes:
- * - D3D9 bool registers are scalar, but AeroGPU represents them as a vec4<u32>
- *   per register (replicated across all 4 components) to support register-like
- *   access with swizzles in shader translation backends.
- *
  * Payload format:
  *   struct aerogpu_cmd_set_shader_constants_b
- *   uint32_t data[bool_count * 4]   // vec4<u32> per register
+ *   uint32_t data[bool_count] where each element is 0 or 1.
  *   padding to 4-byte alignment
+ *
+ * Forward-compat: Readers MUST treat `hdr.size_bytes` as a minimum and ignore any trailing bytes
+ * they do not understand.
  */
 #pragma pack(push, 1)
 struct aerogpu_cmd_set_shader_constants_b {

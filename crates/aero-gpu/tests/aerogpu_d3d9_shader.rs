@@ -54,7 +54,13 @@ fn create_test_device() -> Option<(wgpu::Device, wgpu::Queue)> {
         &wgpu::DeviceDescriptor {
             label: Some("aero-gpu d3d9 shader test device"),
             required_features: wgpu::Features::empty(),
-            required_limits: wgpu::Limits::downlevel_defaults(),
+            required_limits: {
+                let mut limits = wgpu::Limits::downlevel_defaults();
+                // Match `aero-gpu`'s D3D9 executor constants buffer size.
+                limits.max_uniform_buffer_binding_size =
+                    limits.max_uniform_buffer_binding_size.max(18432);
+                limits
+            },
         },
         None,
     ))
@@ -191,20 +197,25 @@ fn d3d9_token_stream_shaders_render_fullscreen_triangle() {
     let vs = cache.get(1).unwrap();
     let ps = cache.get(2).unwrap();
 
-    // Constants layout matches the AeroGPU D3D9 executor contract:
+    // Constants buffer: float + int + bool constant banks for VS+PS.
     //
-    // group(0):
-    // - binding(0): float4 constants (`c#`) as `array<vec4<f32>, 512>`
-    // - binding(1): int4 constants (`i#`) as `array<vec4<i32>, 512>`
-    // - binding(2): bool constants (`b#`) as `array<vec4<u32>, 512>`
+    // This must match the `Constants` WGSL layout used by the shader translators, and the upload
+    // layout used by the D3D9 executor.
     //
-    // The executor binds these as 3 slices of a single uniform buffer. Mirror that setup so this
-    // test stays aligned with the runtime pipeline layout.
-    const CONSTANTS_REGION_SIZE_BYTES: u64 = 512 * 16;
+    // Byte layout:
+    // - Float constants: 512 * vec4<f32> (VS then PS)
+    // - Int constants:   512 * vec4<i32> (VS then PS)
+    // - Bool constants:  512 * u32 (VS then PS)
+    //
+    // Note: bools are packed in WGSL as `array<vec4<u32>, 128>`, but the underlying uniform bytes
+    // are still a linear `u32[512]` region.
+    const CONSTANTS_FLOAT_BANK_SIZE_BYTES: u64 = 512 * 16;
+    const CONSTANTS_INT_BANK_SIZE_BYTES: u64 = 512 * 16;
+    const CONSTANTS_BOOL_BANK_SIZE_BYTES: u64 = 512 * 4;
     const CONSTANTS_FLOATS_OFFSET_BYTES: u64 = 0;
-    const CONSTANTS_INTS_OFFSET_BYTES: u64 = CONSTANTS_REGION_SIZE_BYTES;
-    const CONSTANTS_BOOLS_OFFSET_BYTES: u64 = CONSTANTS_REGION_SIZE_BYTES * 2;
-    const CONSTANTS_BUFFER_SIZE_BYTES: u64 = CONSTANTS_REGION_SIZE_BYTES * 3;
+    const CONSTANTS_BUFFER_SIZE_BYTES: u64 = CONSTANTS_FLOAT_BANK_SIZE_BYTES
+        + CONSTANTS_INT_BANK_SIZE_BYTES
+        + CONSTANTS_BOOL_BANK_SIZE_BYTES;
     let constants = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("d3d9 constants"),
         size: CONSTANTS_BUFFER_SIZE_BYTES,
@@ -265,7 +276,7 @@ fn d3d9_token_stream_shaders_render_fullscreen_triangle() {
     });
 
     // Match `aero-d3d9` token stream shader translation binding contract:
-    // - group(0): constants (bindings 0/1/2)
+    // - group(0): constants (binding 0)
     // - group(1): VS texture/sampler bindings
     // - group(2): PS texture/sampler bindings
     //
@@ -274,38 +285,16 @@ fn d3d9_token_stream_shaders_render_fullscreen_triangle() {
     //   sampler binding = 2*s + 1
     let constants_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("d3d9 constants bgl"),
-        entries: &[
-            wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: wgpu::BufferSize::new(CONSTANTS_REGION_SIZE_BYTES),
-                },
-                count: None,
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: wgpu::BufferSize::new(CONSTANTS_BUFFER_SIZE_BYTES),
             },
-            wgpu::BindGroupLayoutEntry {
-                binding: 1,
-                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: wgpu::BufferSize::new(CONSTANTS_REGION_SIZE_BYTES),
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 2,
-                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: wgpu::BufferSize::new(CONSTANTS_REGION_SIZE_BYTES),
-                },
-                count: None,
-            },
-        ],
+            count: None,
+        }],
     });
     let vs_samplers_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("d3d9 vs samplers bgl (empty)"),
@@ -338,32 +327,10 @@ fn d3d9_token_stream_shaders_render_fullscreen_triangle() {
     let constants_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("d3d9 constants bg"),
         layout: &constants_bgl,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                    buffer: &constants,
-                    offset: CONSTANTS_FLOATS_OFFSET_BYTES,
-                    size: wgpu::BufferSize::new(CONSTANTS_REGION_SIZE_BYTES),
-                }),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                    buffer: &constants,
-                    offset: CONSTANTS_INTS_OFFSET_BYTES,
-                    size: wgpu::BufferSize::new(CONSTANTS_REGION_SIZE_BYTES),
-                }),
-            },
-            wgpu::BindGroupEntry {
-                binding: 2,
-                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                    buffer: &constants,
-                    offset: CONSTANTS_BOOLS_OFFSET_BYTES,
-                    size: wgpu::BufferSize::new(CONSTANTS_REGION_SIZE_BYTES),
-                }),
-            },
-        ],
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: constants.as_entire_binding(),
+        }],
     });
     let vs_samplers_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("d3d9 vs samplers bg (empty)"),

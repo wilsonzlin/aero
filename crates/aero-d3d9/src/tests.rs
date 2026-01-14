@@ -1304,6 +1304,58 @@ fn assemble_ps3_defb_if_high_index(branch: bool) -> Vec<u32> {
     out
 }
 
+fn assemble_ps3_runtime_ib_constants() -> Vec<u32> {
+    // ps_3_0 (uses i0 and b0 without defi/defb so runtime SetShaderConstI/B values are required).
+    let mut out = vec![0xFFFF0300];
+
+    // mov r0, c0
+    out.extend(enc_inst_sm3(
+        0x0001,
+        &[enc_dst(0, 0, 0xF), enc_src(2, 0, 0xE4)],
+    ));
+
+    // loop aL, i0
+    out.extend(enc_inst_sm3(
+        0x001B,
+        &[
+            enc_src(15, 0, 0xE4), // aL
+            enc_src(7, 0, 0xE4),  // i0
+        ],
+    ));
+
+    // add r0, r0, c0
+    out.extend(enc_inst_sm3(
+        0x0002,
+        &[
+            enc_dst(0, 0, 0xF),  // r0
+            enc_src(0, 0, 0xE4), // r0
+            enc_src(2, 0, 0xE4), // c0
+        ],
+    ));
+
+    // endloop
+    out.extend(enc_inst_sm3(0x001D, &[]));
+
+    // if b0
+    out.extend(enc_inst_sm3(0x0028, &[enc_src(14, 0, 0x00)]));
+    // mov oC0, r0
+    out.extend(enc_inst_sm3(
+        0x0001,
+        &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)],
+    ));
+    // else
+    out.extend(enc_inst_sm3(0x002A, &[]));
+    // mov oC0, c1
+    out.extend(enc_inst_sm3(
+        0x0001,
+        &[enc_dst(8, 0, 0xF), enc_src(2, 1, 0xE4)],
+    ));
+    // endif
+    out.extend(enc_inst_sm3(0x002B, &[]));
+    out.push(0x0000FFFF);
+    out
+}
+
 fn assemble_ps3_predicated_lrp() -> Vec<u32> {
     // ps_3_0
     let mut out = vec![0xFFFF0300];
@@ -3487,6 +3539,45 @@ fn translate_entrypoint_accepts_operand_count_length_encoding_with_rep() {
     assert!(
         translated.wgsl.contains("_aero_rep_count"),
         "{}",
+        translated.wgsl
+    );
+
+    let module = naga::front::wgsl::parse_str(&translated.wgsl).expect("wgsl parse");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
+    assert!(translated.wgsl.contains("@fragment"));
+    assert_eq!(translated.entry_point, "fs_main");
+}
+
+#[test]
+fn translate_entrypoint_sm3_loads_runtime_int_bool_constants() {
+    // Regression: `i#` / `b#` registers set via SetShaderConstI/B must be read from the runtime
+    // constants uniform buffer when `defi`/`defb` are not present.
+    let ps_bytes = to_bytes(&assemble_ps3_runtime_ib_constants());
+    let translated =
+        shader_translate::translate_d3d9_shader_to_wgsl(&ps_bytes, shader::WgslOptions::default())
+            .unwrap();
+    assert_eq!(
+        translated.backend,
+        shader_translate::ShaderTranslateBackend::Sm3
+    );
+
+    assert!(
+        translated
+            .wgsl
+            .contains("i0 = constants.i[CONST_BASE + 0u];"),
+        "WGSL must initialize i0 from constants.i[]\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated
+            .wgsl
+            .contains("b0 = vec4<bool>(constants.b[64u].x != 0u);"),
+        "WGSL must initialize b0 from constants.b[]\n{}",
         translated.wgsl
     );
 

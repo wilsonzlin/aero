@@ -229,11 +229,17 @@ fn create_executor_with_d24s8_support() -> Option<AerogpuD3d9Executor> {
 
     let downlevel_flags = adapter.get_downlevel_capabilities().flags;
 
+    // The D3D9 executor's constants uniform buffer exceeds wgpu's downlevel default 16 KiB binding
+    // size.
+    let mut required_limits = wgpu::Limits::downlevel_defaults();
+    required_limits.max_uniform_buffer_binding_size =
+        required_limits.max_uniform_buffer_binding_size.max(18432);
+
     let (device, queue) = match pollster::block_on(adapter.request_device(
         &wgpu::DeviceDescriptor {
             label: Some("aero-gpu AerogpuD3d9Executor two-sided stencil test"),
             required_features: wgpu::Features::empty(),
-            required_limits: wgpu::Limits::downlevel_defaults(),
+            required_limits,
         },
         None,
     )) {

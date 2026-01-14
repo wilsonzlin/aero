@@ -62,11 +62,11 @@ pub enum AerogpuCmdOpcode {
     DestroyShader = 0x201,
     BindShaders = 0x202,
     SetShaderConstantsF = 0x203,
-    SetShaderConstantsI = 0x207,
-    SetShaderConstantsB = 0x208,
     CreateInputLayout = 0x204,
     DestroyInputLayout = 0x205,
     SetInputLayout = 0x206,
+    SetShaderConstantsI = 0x207,
+    SetShaderConstantsB = 0x208,
 
     SetBlendState = 0x300,
     SetDepthStencilState = 0x301,
@@ -124,11 +124,11 @@ impl AerogpuCmdOpcode {
             0x201 => Some(Self::DestroyShader),
             0x202 => Some(Self::BindShaders),
             0x203 => Some(Self::SetShaderConstantsF),
-            0x207 => Some(Self::SetShaderConstantsI),
-            0x208 => Some(Self::SetShaderConstantsB),
             0x204 => Some(Self::CreateInputLayout),
             0x205 => Some(Self::DestroyInputLayout),
             0x206 => Some(Self::SetInputLayout),
+            0x207 => Some(Self::SetShaderConstantsI),
+            0x208 => Some(Self::SetShaderConstantsB),
             0x300 => Some(Self::SetBlendState),
             0x301 => Some(Self::SetDepthStencilState),
             0x302 => Some(Self::SetRasterizerState),
@@ -904,6 +904,7 @@ impl AerogpuCmdSetShaderConstantsF {
 #[derive(Clone, Copy)]
 pub struct AerogpuCmdSetShaderConstantsI {
     pub hdr: AerogpuCmdHdr,
+    /// Shader stage selector (legacy enum).
     pub stage: u32,
     pub start_register: u32,
     pub vec4_count: u32,
@@ -915,12 +916,17 @@ pub struct AerogpuCmdSetShaderConstantsI {
 
 impl AerogpuCmdSetShaderConstantsI {
     pub const SIZE_BYTES: usize = 24;
+
+    pub fn resolved_stage(&self) -> Result<AerogpuD3dShaderStage, AerogpuStageResolveError> {
+        resolve_stage(self.stage, self.reserved0)
+    }
 }
 
 #[repr(C, packed)]
 #[derive(Clone, Copy)]
 pub struct AerogpuCmdSetShaderConstantsB {
     pub hdr: AerogpuCmdHdr,
+    /// Shader stage selector (legacy enum).
     pub stage: u32,
     pub start_register: u32,
     pub bool_count: u32,
@@ -932,6 +938,10 @@ pub struct AerogpuCmdSetShaderConstantsB {
 
 impl AerogpuCmdSetShaderConstantsB {
     pub const SIZE_BYTES: usize = 24;
+
+    pub fn resolved_stage(&self) -> Result<AerogpuD3dShaderStage, AerogpuStageResolveError> {
+        resolve_stage(self.stage, self.reserved0)
+    }
 }
 
 pub const AEROGPU_INPUT_LAYOUT_BLOB_MAGIC: u32 = 0x5941_4C49; // "ILAY" LE
@@ -1918,12 +1928,9 @@ pub fn decode_cmd_set_shader_constants_i_payload_le(
     Ok((cmd, out))
 }
 
-/// Decode SET_SHADER_CONSTANTS_B and return the raw u32 payload.
+/// Decode SET_SHADER_CONSTANTS_B and return the bool payload as raw u32 values.
 ///
-/// Notes:
-/// - D3D9 bool constant registers are scalar.
-/// - AeroGPU represents each register as a `vec4<u32>` (replicated across all 4 lanes),
-///   so the returned payload length is `bool_count * 4`.
+/// Payload encoding: `uint32_t data[bool_count]` where each element is 0 or 1.
 pub fn decode_cmd_set_shader_constants_b_payload_le(
     buf: &[u8],
 ) -> Result<(AerogpuCmdSetShaderConstantsB, Vec<u32>), AerogpuCmdDecodeError> {
@@ -1941,10 +1948,7 @@ pub fn decode_cmd_set_shader_constants_b_payload_le(
     let packet_len = validate_packet_len(buf, hdr)?;
 
     let bool_count = u32::from_le_bytes(buf[16..20].try_into().unwrap());
-    let u32_count = (bool_count as usize)
-        .checked_mul(4)
-        .ok_or(AerogpuCmdDecodeError::BufferTooSmall)?;
-    let payload_size_bytes = u32_count
+    let payload_size_bytes = (bool_count as usize)
         .checked_mul(4)
         .ok_or(AerogpuCmdDecodeError::BufferTooSmall)?;
     let payload_start = AerogpuCmdSetShaderConstantsB::SIZE_BYTES;
@@ -1966,9 +1970,9 @@ pub fn decode_cmd_set_shader_constants_b_payload_le(
     };
 
     let mut out = Vec::new();
-    out.try_reserve_exact(u32_count)
+    out.try_reserve_exact(bool_count as usize)
         .map_err(|_| AerogpuCmdDecodeError::CountOverflow)?;
-    for i in 0..u32_count {
+    for i in 0..bool_count as usize {
         let off = payload_start + i * 4;
         out.push(u32::from_le_bytes(buf[off..off + 4].try_into().unwrap()));
     }

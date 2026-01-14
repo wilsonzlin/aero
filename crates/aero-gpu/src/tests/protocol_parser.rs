@@ -94,14 +94,13 @@ fn protocol_parses_all_opcodes() {
         constants_b_bytes.extend_from_slice(&v.to_le_bytes());
     }
 
-    let constants_i32 = [1i32, 2, 3, 4, 5, 6, 7, 8];
+    let constants_i32 = [1i32, -2, 3, 4, 5, 6, 7, 8];
     let mut constants_i_bytes = Vec::new();
     for v in constants_i32 {
         constants_i_bytes.extend_from_slice(&v.to_le_bytes());
     }
 
-    // Bool constants are represented as vec4<u32> per bool register.
-    let constants_b = [1u32, 1, 1, 1];
+    let constants_b = [0u32, 1, 1, 0];
     let mut constants_b_bytes = Vec::new();
     for v in constants_b {
         constants_b_bytes.extend_from_slice(&v.to_le_bytes());
@@ -281,7 +280,7 @@ fn protocol_parses_all_opcodes() {
 
         emit_packet(out, AeroGpuOpcode::SetShaderConstantsI as u32, |out| {
             push_u32(out, 1); // stage
-            push_u32(out, 4); // start_register
+            push_u32(out, 9); // start_register
             push_u32(out, 2); // vec4_count
             push_u32(out, 0); // reserved0
             out.extend_from_slice(&constants_i_bytes);
@@ -289,8 +288,8 @@ fn protocol_parses_all_opcodes() {
 
         emit_packet(out, AeroGpuOpcode::SetShaderConstantsB as u32, |out| {
             push_u32(out, 0); // stage
-            push_u32(out, 6); // start_register
-            push_u32(out, 1); // bool_count
+            push_u32(out, 12); // start_register
+            push_u32(out, constants_b.len() as u32); // bool_count
             push_u32(out, 0); // reserved0
             out.extend_from_slice(&constants_b_bytes);
         });
@@ -733,11 +732,13 @@ fn protocol_parses_all_opcodes() {
             stage,
             start_register,
             vec4_count,
+            stage_ex,
             data,
         } => {
             assert_eq!(stage, 1);
-            assert_eq!(start_register, 4);
+            assert_eq!(start_register, 9);
             assert_eq!(vec4_count, 2);
+            assert_eq!(stage_ex, 0);
             assert_eq!(data, constants_i_bytes);
         }
         other => panic!("unexpected cmd: {other:?}"),
@@ -748,11 +749,13 @@ fn protocol_parses_all_opcodes() {
             stage,
             start_register,
             bool_count,
+            stage_ex,
             data,
         } => {
             assert_eq!(stage, 0);
-            assert_eq!(start_register, 6);
-            assert_eq!(bool_count, 1);
+            assert_eq!(start_register, 12);
+            assert_eq!(bool_count as usize, constants_b.len());
+            assert_eq!(stage_ex, 0);
             assert_eq!(data, constants_b_bytes);
         }
         other => panic!("unexpected cmd: {other:?}"),
@@ -1181,6 +1184,8 @@ fn protocol_preserves_stage_ex_for_stage_bound_packets() {
     let stage_ex_set_srv_buffers = AerogpuShaderStageEx::Compute as u32;
     let stage_ex_set_uav_buffers = 6u32;
     let stage_ex_set_constants_f = 7u32;
+    let stage_ex_set_constants_i = 8u32;
+    let stage_ex_set_constants_b = 9u32;
 
     let dxbc_bytes = [9u8, 8, 7, 6];
 
@@ -1188,6 +1193,18 @@ fn protocol_preserves_stage_ex_for_stage_bound_packets() {
     let mut constants_bytes = Vec::new();
     for v in constants_f32 {
         constants_bytes.extend_from_slice(&v.to_le_bytes());
+    }
+
+    let constants_i32 = [1i32, -2, 3, 4];
+    let mut constants_i_bytes = Vec::new();
+    for v in constants_i32 {
+        constants_i_bytes.extend_from_slice(&v.to_le_bytes());
+    }
+
+    let constants_b = [0u32, 1];
+    let mut constants_b_bytes = Vec::new();
+    for v in constants_b {
+        constants_b_bytes.extend_from_slice(&v.to_le_bytes());
     }
 
     let stream = build_stream(|out| {
@@ -1261,10 +1278,26 @@ fn protocol_preserves_stage_ex_for_stage_bound_packets() {
             push_u32(out, stage_ex_set_constants_f); // reserved0 (stage_ex)
             out.extend_from_slice(&constants_bytes);
         });
+
+        emit_packet(out, AeroGpuOpcode::SetShaderConstantsI as u32, |out| {
+            push_u32(out, stage_compute); // stage
+            push_u32(out, 8); // start_register
+            push_u32(out, 1); // vec4_count
+            push_u32(out, stage_ex_set_constants_i); // reserved0 (stage_ex)
+            out.extend_from_slice(&constants_i_bytes);
+        });
+
+        emit_packet(out, AeroGpuOpcode::SetShaderConstantsB as u32, |out| {
+            push_u32(out, stage_compute); // stage
+            push_u32(out, 3); // start_register
+            push_u32(out, constants_b.len() as u32); // bool_count
+            push_u32(out, stage_ex_set_constants_b); // reserved0 (stage_ex)
+            out.extend_from_slice(&constants_b_bytes);
+        });
     });
 
     let parsed = parse_cmd_stream(&stream).expect("parse should succeed");
-    assert_eq!(parsed.cmds.len(), 7);
+    assert_eq!(parsed.cmds.len(), 9);
 
     match &parsed.cmds[0] {
         AeroGpuCmd::CreateShaderDxbc {
@@ -1344,6 +1377,26 @@ fn protocol_preserves_stage_ex_for_stage_bound_packets() {
             assert_eq!(*stage_ex, stage_ex_set_constants_f);
         }
         other => panic!("unexpected cmd[6]: {other:?}"),
+    }
+
+    match &parsed.cmds[7] {
+        AeroGpuCmd::SetShaderConstantsI {
+            stage, stage_ex, ..
+        } => {
+            assert_eq!(*stage, stage_compute);
+            assert_eq!(*stage_ex, stage_ex_set_constants_i);
+        }
+        other => panic!("unexpected cmd[7]: {other:?}"),
+    }
+
+    match &parsed.cmds[8] {
+        AeroGpuCmd::SetShaderConstantsB {
+            stage, stage_ex, ..
+        } => {
+            assert_eq!(*stage, stage_compute);
+            assert_eq!(*stage_ex, stage_ex_set_constants_b);
+        }
+        other => panic!("unexpected cmd[8]: {other:?}"),
     }
 }
 

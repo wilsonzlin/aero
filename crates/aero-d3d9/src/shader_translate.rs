@@ -143,7 +143,7 @@ impl ShaderTranslation {
     /// Bind group index used for texture/sampler bindings in this shader stage.
     ///
     /// Contract:
-    /// - group(0): constants shared by VS/PS (bindings 0/1/2 for float/int/bool constants)
+    /// - group(0): constants shared by VS/PS (binding 0)
     /// - group(1): VS texture/sampler bindings
     /// - group(2): PS texture/sampler bindings
     /// - group(3): optional half-pixel-center uniform buffer (VS only)

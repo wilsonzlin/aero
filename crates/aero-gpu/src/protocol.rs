@@ -308,12 +308,20 @@ pub enum AeroGpuCmd<'a> {
         stage: u32,
         start_register: u32,
         vec4_count: u32,
+        /// Extended shader stage selector encoded in the packet's `reserved0` field.
+        ///
+        /// See `CreateShaderDxbc.stage_ex` for details.
+        stage_ex: u32,
         data: &'a [u8],
     },
     SetShaderConstantsB {
         stage: u32,
         start_register: u32,
         bool_count: u32,
+        /// Extended shader stage selector encoded in the packet's `reserved0` field.
+        ///
+        /// See `CreateShaderDxbc.stage_ex` for details.
+        stage_ex: u32,
         data: &'a [u8],
     },
 
@@ -797,6 +805,7 @@ pub fn parse_cmd_stream(
             Some(AeroGpuOpcode::SetShaderConstantsI) => {
                 let cmd: protocol::AerogpuCmdSetShaderConstantsI = read_packed_prefix(packet)?;
                 let vec4_count = u32::from_le(cmd.vec4_count);
+                let stage_ex = u32::from_le(cmd.reserved0);
                 let data_len = (vec4_count as usize)
                     .checked_mul(16)
                     .ok_or(AeroGpuCmdStreamParseError::BufferTooSmall)?;
@@ -811,14 +820,16 @@ pub fn parse_cmd_stream(
                     stage: u32::from_le(cmd.stage),
                     start_register: u32::from_le(cmd.start_register),
                     vec4_count,
+                    stage_ex,
                     data,
                 }
             }
             Some(AeroGpuOpcode::SetShaderConstantsB) => {
                 let cmd: protocol::AerogpuCmdSetShaderConstantsB = read_packed_prefix(packet)?;
                 let bool_count = u32::from_le(cmd.bool_count);
+                let stage_ex = u32::from_le(cmd.reserved0);
                 let data_len = (bool_count as usize)
-                    .checked_mul(16)
+                    .checked_mul(4)
                     .ok_or(AeroGpuCmdStreamParseError::BufferTooSmall)?;
                 let data_start = protocol::AerogpuCmdSetShaderConstantsB::SIZE_BYTES;
                 let data_end = data_start
@@ -831,6 +842,7 @@ pub fn parse_cmd_stream(
                     stage: u32::from_le(cmd.stage),
                     start_register: u32::from_le(cmd.start_register),
                     bool_count,
+                    stage_ex,
                     data,
                 }
             }

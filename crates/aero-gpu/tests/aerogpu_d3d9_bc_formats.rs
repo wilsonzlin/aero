@@ -93,6 +93,13 @@ async fn create_executor_no_bc_features() -> Option<AerogpuD3d9Executor> {
 
     let downlevel_flags = adapter.get_downlevel_capabilities().flags;
 
+    // The D3D9 executor uses a single uniform buffer that includes float + int + bool constant
+    // banks. This exceeds wgpu's downlevel default `max_uniform_buffer_binding_size` (16 KiB), so
+    // the tests must request a larger limit explicitly.
+    let mut required_limits = wgpu::Limits::downlevel_defaults();
+    required_limits.max_uniform_buffer_binding_size =
+        required_limits.max_uniform_buffer_binding_size.max(18432);
+
     let (device, queue) = adapter
         .request_device(
             &wgpu::DeviceDescriptor {
@@ -100,7 +107,7 @@ async fn create_executor_no_bc_features() -> Option<AerogpuD3d9Executor> {
                 // Do not request TEXTURE_COMPRESSION_BC so the executor must take the CPU
                 // decompression fallback path.
                 required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::downlevel_defaults(),
+                required_limits,
             },
             None,
         )
@@ -150,12 +157,17 @@ async fn create_executor_with_bc_features() -> Option<AerogpuD3d9Executor> {
 
             let downlevel_flags = adapter.get_downlevel_capabilities().flags;
 
+            // See `create_executor_no_bc_features` for why this must exceed 16 KiB.
+            let mut required_limits = wgpu::Limits::downlevel_defaults();
+            required_limits.max_uniform_buffer_binding_size =
+                required_limits.max_uniform_buffer_binding_size.max(18432);
+
             let Ok((device, queue)) = adapter
                 .request_device(
                     &wgpu::DeviceDescriptor {
                         label: Some("aerogpu d3d9 bc (direct) test device"),
                         required_features: wgpu::Features::TEXTURE_COMPRESSION_BC,
-                        required_limits: wgpu::Limits::downlevel_defaults(),
+                        required_limits,
                     },
                     None,
                 )
