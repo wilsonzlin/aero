@@ -16641,6 +16641,83 @@ bool TestFixedfuncFogConstantsReuploadAfterPsConstClobber() {
   return true;
 }
 
+bool TestXyzrhwConversionIgnoresViewportMinMaxZ() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetViewport != nullptr, "pfnSetViewport is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // Use non-default viewport MinZ/MaxZ to ensure pre-transformed POSITIONT.z is
+  // treated as D3D9 NDC depth (0..1) rather than being "unmapped" from MinZ/MaxZ.
+  //
+  // For bring-up, AeroGPU intentionally ignores MinZ/MaxZ for XYZRHW conversion
+  // (see d3d9 docs/README limitations).
+  D3DDDIVIEWPORTINFO vp{};
+  vp.X = 0.0f;
+  vp.Y = 0.0f;
+  vp.Width = 256.0f;
+  vp.Height = 256.0f;
+  vp.MinZ = 0.25f;
+  vp.MaxZ = 0.75f;
+  HRESULT hr = cleanup.device_funcs.pfnSetViewport(cleanup.hDevice, &vp);
+  if (!Check(hr == S_OK, "SetViewport(MinZ/MaxZ)")) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzrhwDiffuse);
+  if (!Check(hr == S_OK, "SetFVF(XYZRHW|DIFFUSE)")) {
+    return false;
+  }
+
+  dev->cmd.reset();
+
+  // Choose Z == MinZ so an implementation that incorrectly unmapped MinZ/MaxZ
+  // would convert depth to 0 (rather than leaving it at 0.25).
+  const VertexXyzrhwDiffuse tri[3] = {
+      {0.0f, 0.0f, 0.25f, 0.5f, 0xFFFFFFFFu},
+      {1.0f, 0.0f, 0.25f, 0.5f, 0xFFFFFFFFu},
+      {0.0f, 1.0f, 0.25f, 0.5f, 0xFFFFFFFFu},
+  };
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzrhwDiffuse));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(XYZRHW conversion ignores MinZ/MaxZ)")) {
+    return false;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->up_vertex_buffer != nullptr, "XYZRHW conversion: scratch VB created")) {
+      return false;
+    }
+    if (!Check(dev->up_vertex_buffer->storage.size() >= sizeof(tri),
+               "XYZRHW conversion: scratch VB storage contains uploaded vertices")) {
+      return false;
+    }
+
+    float clip_z = 0.0f;
+    float clip_w = 0.0f;
+    std::memcpy(&clip_z, dev->up_vertex_buffer->storage.data() + 8, sizeof(float));
+    std::memcpy(&clip_w, dev->up_vertex_buffer->storage.data() + 12, sizeof(float));
+    if (!Check(clip_w == 2.0f, "XYZRHW conversion: produced clip_w == 1/rhw")) {
+      return false;
+    }
+    // Expect clip_z = z * clip_w (z treated as NDC depth).
+    if (!Check(clip_z == 0.5f, "XYZRHW conversion: ignores MinZ/MaxZ (clip_z == z*w)")) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 bool TestFixedfuncFogVertexModeEmitsConstants() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -17762,6 +17839,9 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestFixedfuncFogConstantsReuploadAfterPsConstClobber()) {
+    return 1;
+  }
+  if (!aerogpu::TestXyzrhwConversionIgnoresViewportMinMaxZ()) {
     return 1;
   }
   if (!aerogpu::TestFixedfuncFogVertexModeEmitsConstants()) {
