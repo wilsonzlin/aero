@@ -13,6 +13,7 @@ const REG_USBCMD: u16 = 0x00;
 const REG_USBINTR: u16 = 0x04;
 const REG_FRBASEADD: u16 = 0x08;
 const REG_PORTSC1: u16 = 0x10;
+const REG_PORTSC2: u16 = 0x12;
 
 const USBCMD_RUN: u16 = 1 << 0;
 const USBINTR_IOC: u16 = 1 << 2;
@@ -445,7 +446,9 @@ impl WebUsbUhciPassthroughHarness {
     fn init_with_mem(mut mem: VecMemory) -> Self {
         let mut ctrl = UhciController::new();
         let webusb = UsbWebUsbPassthroughDevice::new();
-        ctrl.hub_mut().attach(0, Box::new(webusb.clone()));
+        let root_port_webusb = crate::webusb_ports::WEBUSB_ROOT_PORT as usize;
+        ctrl.hub_mut()
+            .attach(root_port_webusb, Box::new(webusb.clone()));
 
         mem.clear();
         let alloc = Alloc::new(0x3000);
@@ -458,7 +461,12 @@ impl WebUsbUhciPassthroughHarness {
         ctrl.io_write(REG_USBINTR, 2, USBINTR_IOC as u32);
 
         // Start port reset; we will tick for 50 frames before enabling RUN.
-        ctrl.io_write(REG_PORTSC1, 2, PORTSC_PR as u32);
+        let portsc = match root_port_webusb {
+            0 => REG_PORTSC1,
+            1 => REG_PORTSC2,
+            _ => panic!("unsupported UHCI WebUSB root port {root_port_webusb} for harness"),
+        };
+        ctrl.io_write(portsc, 2, PORTSC_PR as u32);
 
         // Install a terminating QH so we can patch in TD chains later.
         write_qh(&mut mem, qh_addr, LINK_PTR_T, LINK_PTR_T);
