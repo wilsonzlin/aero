@@ -7950,7 +7950,8 @@ impl Machine {
     /// - `wheel > 0` means wheel moved up.
     pub fn inject_ps2_mouse_motion(&mut self, dx: i32, dy: i32, wheel: i32) {
         // `aero_devices_input::Ps2Mouse` expects browser-style +Y=down internally.
-        self.inject_mouse_motion(dx, -dy, wheel);
+        // Host input values are untrusted; avoid overflow when negating `i32::MIN`.
+        self.inject_mouse_motion(dx, 0i32.saturating_sub(dy), wheel);
     }
 
     /// Inject a PS/2 mouse button state into the i8042 controller, if present.
@@ -14913,6 +14914,31 @@ mod tests {
         m.inject_ps2_mouse_motion(0, 5, 0);
         let packet: Vec<u8> = (0..3).map(|_| ctrl.borrow_mut().read_port(0x60)).collect();
         assert_eq!(packet, vec![0x08, 0x00, 0x05]);
+    }
+
+    #[test]
+    fn inject_ps2_mouse_motion_handles_i32_min_without_overflow() {
+        let mut m = Machine::new(MachineConfig {
+            ram_size_bytes: 2 * 1024 * 1024,
+            ..Default::default()
+        })
+        .unwrap();
+        let ctrl = m.i8042.as_ref().expect("i8042 enabled").clone();
+
+        // Enable mouse reporting so injected motion generates stream packets.
+        {
+            let mut dev = ctrl.borrow_mut();
+            dev.write_port(0x64, 0xD4);
+            dev.write_port(0x60, 0xF4);
+        }
+        assert_eq!(ctrl.borrow_mut().read_port(0x60), 0xFA); // ACK
+
+        // `dy` uses PS/2 convention (+Y is up). If `dy == i32::MIN`, inverting it would overflow
+        // without saturating arithmetic.
+        m.inject_ps2_mouse_motion(0, i32::MIN, 0);
+
+        let packet: Vec<u8> = (0..3).map(|_| ctrl.borrow_mut().read_port(0x60)).collect();
+        assert_eq!(packet, vec![0x28, 0x00, 0x80]);
     }
 
     #[test]

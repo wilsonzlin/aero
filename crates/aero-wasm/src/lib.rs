@@ -5944,7 +5944,8 @@ impl Machine {
     pub fn inject_ps2_mouse_motion(&mut self, dx: i32, dy: i32, wheel: i32) {
         // The canonical machine mouse injection API uses browser-style coordinates (+Y is down).
         // Convert PS/2 convention (+Y is up) into that API.
-        self.inject_mouse_motion(dx, -dy, wheel);
+        // Host input values are untrusted; avoid overflow when negating `i32::MIN`.
+        self.inject_mouse_motion(dx, 0i32.saturating_sub(dy), wheel);
     }
 
     /// Inject relative mouse movement into the guest PS/2 i8042 controller.

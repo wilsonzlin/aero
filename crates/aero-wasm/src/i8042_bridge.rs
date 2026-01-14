@@ -162,7 +162,9 @@ impl I8042Bridge {
         // `aero_devices_input::Ps2Mouse` stores browser-style motion (positive Y down) and flips
         // the sign when encoding PS/2 packets. Convert here so the JS side can stay in PS/2
         // coordinates (matching `InputEventType.MouseMove`).
-        self.ctrl.inject_mouse_motion(dx, -dy, 0);
+        // Host input values are untrusted; avoid overflow when negating `i32::MIN`.
+        self.ctrl
+            .inject_mouse_motion(dx, 0i32.saturating_sub(dy), 0);
     }
 
     /// Inject a PS/2 mouse wheel movement (positive = wheel up).
@@ -174,7 +176,9 @@ impl I8042Bridge {
     ///
     /// `dy` uses PS/2 convention: positive is up.
     pub fn inject_ps2_mouse_motion(&mut self, dx: i32, dy: i32, wheel: i32) {
-        self.ctrl.inject_mouse_motion(dx, -dy, wheel);
+        // Host input values are untrusted; avoid overflow when negating `i32::MIN`.
+        self.ctrl
+            .inject_mouse_motion(dx, 0i32.saturating_sub(dy), wheel);
     }
 
     /// Set PS/2 mouse button state as a bitmask matching DOM `MouseEvent.buttons` (low 5 bits).

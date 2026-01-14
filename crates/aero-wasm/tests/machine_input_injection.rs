@@ -29,6 +29,8 @@ fn machine_mouse_injection_exports_forward_without_panicking() {
     m.inject_mouse_motion(10, 5, 1);
     // PS/2 coordinate variant (+Y up).
     m.inject_ps2_mouse_motion(10, 5, 1);
+    // Extreme dy should not overflow during PS/2 -> browser coordinate conversion.
+    m.inject_ps2_mouse_motion(0, i32::MIN, 0);
 
     // Button injection via DOM `MouseEvent.button` mapping.
     m.inject_mouse_button(aero_wasm::MouseButton::Left as u8, true);
