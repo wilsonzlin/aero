@@ -95,9 +95,7 @@ fn boot_int10_vbe_display_start() {
     })
     .unwrap();
 
-    let boot = build_int10_vbe_display_start_boot_sector(
-        u32::try_from(m.vbe_lfb_base()).expect("VGA LFB base should fit in u32"),
-    );
+    let boot = build_int10_vbe_display_start_boot_sector(m.vbe_lfb_base_u32());
     m.set_disk_image(boot.to_vec()).unwrap();
     m.reset();
     run_until_halt(&mut m);

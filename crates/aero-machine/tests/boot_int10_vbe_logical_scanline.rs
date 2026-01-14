@@ -195,9 +195,7 @@ fn boot_int10_vbe_logical_scanline_updates_stride_and_renderer_uses_it() {
     })
     .unwrap();
 
-    let boot = build_int10_vbe_logical_scanline_boot_sector(
-        u32::try_from(m.vbe_lfb_base()).expect("VGA LFB base should fit in u32"),
-    );
+    let boot = build_int10_vbe_logical_scanline_boot_sector(m.vbe_lfb_base_u32());
 
     m.set_disk_image(boot.to_vec()).unwrap();
     m.reset();
