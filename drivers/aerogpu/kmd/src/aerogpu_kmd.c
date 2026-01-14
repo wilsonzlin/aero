@@ -7373,15 +7373,13 @@ static NTSTATUS APIENTRY AeroGpuDdiResetFromTimeout(_In_ const HANDLE hAdapter)
         KeReleaseSpinLock(&adapter->PendingLock, pendingIrql);
     }
 
-    if (poweredOn && adapter->Bar0Length >= (AEROGPU_MMIO_REG_IRQ_ENABLE + sizeof(ULONG))) {
-        KIRQL irqIrql;
-        KeAcquireSpinLock(&adapter->IrqEnableLock, &irqIrql);
-        /* Avoid enabling device IRQs if we failed to register an ISR. */
-        AeroGpuWriteRegU32(adapter,
-                           AEROGPU_MMIO_REG_IRQ_ENABLE,
-                           adapter->InterruptRegistered ? adapter->IrqEnableMask : 0);
-        KeReleaseSpinLock(&adapter->IrqEnableLock, irqIrql);
-    }
+    /*
+     * Keep device IRQ generation disabled until DxgkDdiRestartFromTimeout.
+     *
+     * DxgkDdiResetFromTimeout runs while the OS is resetting scheduling state; enabling the
+     * device's level-triggered interrupt line here can create interrupt storms or stale pending
+     * bits before RestartFromTimeout has restored a consistent ring/MMIO configuration.
+     */
 
     if (adapter->DxgkInterface.DxgkCbNotifyInterrupt) {
         DXGKARGCB_NOTIFY_INTERRUPT notify;
