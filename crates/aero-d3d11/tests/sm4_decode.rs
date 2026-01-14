@@ -1400,6 +1400,13 @@ fn sm5_uav_and_raw_buffer_opcode_constants_match_d3d11_tokenized_format() {
     // These constants are used by upcoming compute/UAV decoding work. Keep this test in sync with
     // `d3d11tokenizedprogramformat.h` (`D3D11_SB_*` enums).
     assert_eq!(OPERAND_TYPE_UNORDERED_ACCESS_VIEW, 30);
+    // Integer arithmetic opcodes.
+    assert_eq!(OPCODE_IABS, 0x61);
+    assert_eq!(OPCODE_INEG, 0x62);
+    assert_eq!(OPCODE_IMIN, 0x63);
+    assert_eq!(OPCODE_IMAX, 0x64);
+    assert_eq!(OPCODE_UMIN, 0x65);
+    assert_eq!(OPCODE_UMAX, 0x66);
     assert_eq!(OPCODE_DCL_THREAD_GROUP, 0x11f);
     assert_eq!(OPCODE_DCL_RESOURCE_RAW, 0x205);
     assert_eq!(OPCODE_DCL_RESOURCE_STRUCTURED, 0x206);
