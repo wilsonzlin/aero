@@ -8,7 +8,7 @@ use crate::shader;
 use crate::shader_limits::MAX_D3D9_SHADER_BLOB_BYTES;
 use crate::sm3;
 use crate::sm3::decode::TextureType;
-use crate::vertex::{DeclUsage, StandardLocationMap, VertexLocationMap};
+use crate::vertex::{AdaptiveLocationMap, DeclUsage, VertexLocationMap};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ShaderTranslateBackend {
@@ -338,11 +338,10 @@ fn collect_semantic_locations_sm3(ir: &sm3::ir::ShaderIr) -> Vec<shader::Semanti
         return Vec::new();
     }
 
-    let map = StandardLocationMap;
-    let mut out = Vec::<shader::SemanticLocation>::new();
-    let mut seen = HashSet::<(DeclUsage, u8)>::new();
-
-    // Iterate in DCL order so the mapping is deterministic.
+    // Vertex input semantics are remapped using the adaptive semantic->location allocator in the
+    // SM3 IR builder. Mirror that mapping here so callers (e.g. the runtime vertex fetch path) can
+    // bind vertex buffers using the same locations as the generated WGSL.
+    let mut input_dcl_order = Vec::<(DeclUsage, u8)>::new();
     for decl in &ir.inputs {
         if decl.reg.file != sm3::ir::RegFile::Input {
             continue;
@@ -350,12 +349,20 @@ fn collect_semantic_locations_sm3(ir: &sm3::ir::ShaderIr) -> Vec<shader::Semanti
         let Some((usage, usage_index)) = semantic_to_decl_usage(&decl.semantic) else {
             continue;
         };
+        input_dcl_order.push((usage, usage_index));
+    }
+    let Ok(map) = AdaptiveLocationMap::new(input_dcl_order.clone()) else {
+        return Vec::new();
+    };
+    let mut out = Vec::<shader::SemanticLocation>::new();
+    let mut seen = HashSet::<(DeclUsage, u8)>::new();
+
+    // Iterate in DCL order so the mapping is deterministic.
+    for (usage, usage_index) in input_dcl_order {
         if !seen.insert((usage, usage_index)) {
             continue;
         }
         let Ok(location) = map.location_for(usage, usage_index) else {
-            // Unsupported semantics are tolerated here: SM3 semantic remapping is only enabled
-            // when all *used* vertex inputs are mappable by `StandardLocationMap`.
             continue;
         };
         out.push(shader::SemanticLocation {
