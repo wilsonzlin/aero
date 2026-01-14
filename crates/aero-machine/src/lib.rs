@@ -4442,8 +4442,7 @@ impl Machine {
     /// Returns the currently active scanout source according to the scanout handoff policy.
     ///
     /// Policy summary:
-    /// - Before the guest ever enables the AeroGPU WDDM scanout, legacy VGA/VBE output is
-    ///   presented.
+    /// - Before the guest claims the AeroGPU WDDM scanout, legacy VGA/VBE output is presented.
     /// - Once the guest claims AeroGPU scanout (writes a valid `SCANOUT0_*` config and enables it),
     ///   WDDM owns scanout until the guest disables scanout (`SCANOUT0_ENABLE=0`) or the VM resets.
     ///   While WDDM owns scanout, legacy VGA/VBE is ignored by presentation even if legacy MMIO/PIO
