@@ -410,9 +410,10 @@ To connect them, the worker maintains per-device queues:
 Note: Aero currently caps passthrough HID **input reports** to fit in a single interrupt IN packet
 (**64 bytes**, including the report ID prefix when report IDs are in use). We currently do not
 support splitting a single HID input report across multiple interrupt transactions, so oversized
-input reports are rejected at attach/descriptor-synthesis time. (Output/feature reports use control
-transfers and are subject to separate caps; very large feature reports may fall back to
-`postMessage` on the host boundary when the SAB output ring is enabled.)
+input reports are rejected at attach/descriptor-synthesis time. (Output reports may be delivered
+via HID-class `SET_REPORT` control transfers and/or an interrupt OUT endpoint (device-dependent);
+output/feature reports are normalized and capped separately. Very large feature report payloads
+may fall back to `postMessage` on the host boundary when the SAB output ring is enabled.)
 
 #### Output/feature reports (guest → device)
 
