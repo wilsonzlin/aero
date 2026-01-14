@@ -620,9 +620,29 @@ let snapshotResumeResolve: (() => void) | null = null;
 let snapshotPausePromise: Promise<void> | null = null;
 let snapshotPauseEpoch = 0;
 
-let tickInFlightCount = 0;
-let tickInFlightPromise: Promise<void> | null = null;
-let tickInFlightResolve: (() => void) | null = null;
+// Tracks async tasks that may touch guest RAM/VRAM/shared state and therefore must fully complete
+// before we ACK `vm.snapshot.paused`.
+//
+// Includes:
+// - tick/present work (`handleTick()`)
+// - screenshot requests (which can force a tick/present and/or read scanout/cursor state)
+let snapshotBarrierInFlightCount = 0;
+let snapshotBarrierInFlightPromise: Promise<void> | null = null;
+let snapshotBarrierInFlightResolve: (() => void) | null = null;
+
+const beginSnapshotBarrierTask = (): void => {
+  snapshotBarrierInFlightCount += 1;
+};
+
+const endSnapshotBarrierTask = (): void => {
+  snapshotBarrierInFlightCount -= 1;
+  if (snapshotBarrierInFlightCount <= 0) {
+    snapshotBarrierInFlightCount = 0;
+    snapshotBarrierInFlightResolve?.();
+    snapshotBarrierInFlightPromise = null;
+    snapshotBarrierInFlightResolve = null;
+  }
+};
 
 type SnapshotGuestMemoryBackup = {
   guestU8: Uint8Array | null;
@@ -753,17 +773,17 @@ const ensureSnapshotPaused = async (): Promise<void> => {
 
     // Also wait for any in-flight tick/present work to finish; ticks are spawned as "fire and
     // forget" tasks, so we must explicitly track/drain them before acknowledging snapshot pause.
-    while (tickInFlightCount > 0) {
+    while (snapshotBarrierInFlightCount > 0) {
       if (!snapshotPaused || snapshotPauseEpoch !== pauseEpoch) {
         throw new Error("Snapshot pause canceled by resume.");
       }
-      if (!tickInFlightPromise) {
-        tickInFlightPromise = new Promise<void>((resolve) => {
-          tickInFlightResolve = resolve;
+      if (!snapshotBarrierInFlightPromise) {
+        snapshotBarrierInFlightPromise = new Promise<void>((resolve) => {
+          snapshotBarrierInFlightResolve = resolve;
         });
       }
       // Allow snapshot resume to cancel the pause attempt even if a tick/present is hung.
-      await Promise.race([tickInFlightPromise, waitUntilSnapshotResumed()]);
+      await Promise.race([snapshotBarrierInFlightPromise, waitUntilSnapshotResumed()]);
     }
 
     if (!snapshotPaused || snapshotPauseEpoch !== pauseEpoch) {
@@ -3387,7 +3407,7 @@ const handleSubmitAerogpu = async (req: GpuRuntimeSubmitAerogpuMessage): Promise
 };
 
 const handleTick = async () => {
-  tickInFlightCount += 1;
+  beginSnapshotBarrierTask();
   try {
     syncPerfFrame();
     const perfEnabled =
@@ -3527,13 +3547,7 @@ const handleTick = async () => {
       maybePostMetrics();
     }
   } finally {
-    tickInFlightCount -= 1;
-    if (tickInFlightCount <= 0) {
-      tickInFlightCount = 0;
-      tickInFlightResolve?.();
-      tickInFlightPromise = null;
-      tickInFlightResolve = null;
-    }
+    endSnapshotBarrierTask();
   }
 };
 
@@ -4355,52 +4369,54 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
     case "screenshot": {
       const req = msg as GpuRuntimeScreenshotRequestMessage;
       void (async () => {
-        const postStub = (seq?: number) => {
-          const rgba8 = new ArrayBuffer(4);
-          new Uint8Array(rgba8).set([0, 0, 0, 255]);
-          postToMain(
-            {
-              type: "screenshot",
-              requestId: req.requestId,
-              width: 1,
-              height: 1,
-              rgba8,
-              origin: "top-left",
-              ...(typeof seq === "number" ? { frameSeq: seq } : {}),
-            },
-            [rgba8],
-          );
-        };
-
-        const waitForNotPresenting = async (timeoutMs: number): Promise<boolean> => {
-          const deadline = performance.now() + timeoutMs;
-          while (presenting && performance.now() < deadline) {
-            await new Promise((resolve) => setTimeout(resolve, 0));
-          }
-          return !presenting;
-        };
-
+        beginSnapshotBarrierTask();
         try {
-          await maybeSendReady();
-          if (isDeviceLost && recoveryPromise) {
-            // If a recovery attempt is already underway, wait briefly so the screenshot
-            // can capture real pixels instead of immediately returning the 1x1 stub.
-            // (Still bounded so the API cannot hang indefinitely.)
-            await Promise.race([
-              recoveryPromise,
-              new Promise((resolve) => setTimeout(resolve, 750)),
-            ]);
-            await maybeSendReady();
-          }
+          const postStub = (seq?: number) => {
+            const rgba8 = new ArrayBuffer(4);
+            new Uint8Array(rgba8).set([0, 0, 0, 255]);
+            postToMain(
+              {
+                type: "screenshot",
+                requestId: req.requestId,
+                width: 1,
+                height: 1,
+                rgba8,
+                origin: "top-left",
+                ...(typeof seq === "number" ? { frameSeq: seq } : {}),
+              },
+              [rgba8],
+            );
+          };
 
-          if (snapshotPaused) {
-            // Snapshot pause must not touch guest RAM/VRAM. Respond with a stub screenshot (the
-            // caller can retry after resume if desired).
-            const seqNow = frameState ? lastPresentedSeq : undefined;
-            postStub(typeof seqNow === "number" ? seqNow : undefined);
-            return;
-          }
-          const includeCursor = req.includeCursor === true;
+          const waitForNotPresenting = async (timeoutMs: number): Promise<boolean> => {
+            const deadline = performance.now() + timeoutMs;
+            while (presenting && performance.now() < deadline) {
+              await new Promise((resolve) => setTimeout(resolve, 0));
+            }
+            return !presenting;
+          };
+
+          try {
+            await maybeSendReady();
+            if (isDeviceLost && recoveryPromise) {
+              // If a recovery attempt is already underway, wait briefly so the screenshot
+              // can capture real pixels instead of immediately returning the 1x1 stub.
+              // (Still bounded so the API cannot hang indefinitely.)
+              await Promise.race([
+                recoveryPromise,
+                new Promise((resolve) => setTimeout(resolve, 750)),
+              ]);
+              await maybeSendReady();
+            }
+
+            if (snapshotPaused) {
+              // Snapshot pause must not touch guest RAM/VRAM. Respond with a stub screenshot (the
+              // caller can retry after resume if desired).
+              const seqNow = frameState ? lastPresentedSeq : undefined;
+              postStub(typeof seqNow === "number" ? seqNow : undefined);
+              return;
+            }
+            const includeCursor = req.includeCursor === true;
 
           // Ensure the screenshot corresponds to the latest frame the presenter has actually
           // consumed. The shared framebuffer producer can advance `frameSeq` before the presenter
@@ -5141,27 +5157,30 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
 
           // Presenter not ready (or device lost): return a minimal stub instead of hanging.
           postStub(typeof seq === "number" ? seq : undefined);
-        } catch (err) {
-          const seqNow = frameState ? lastPresentedSeq : getCurrentFrameInfo()?.frameSeq;
-          const deviceLostCode = getDeviceLostCode(err);
-          if (deviceLostCode) {
-            const startRecovery = deviceLostCode !== "webgl_context_lost";
-            handleDeviceLost(
-              err instanceof Error ? err.message : String(err),
-              { source: "screenshot", code: deviceLostCode, error: err },
-              startRecovery,
-            );
-          } else {
-            emitGpuEvent({
-              time_ms: performance.now(),
-              backend_kind: backendKindForEvent(),
-              severity: "error",
-              category: "Screenshot",
-              message: err instanceof Error ? err.message : String(err),
-              details: err instanceof Error ? { message: err.message, stack: err.stack } : String(err),
-            });
+          } catch (err) {
+            const seqNow = frameState ? lastPresentedSeq : getCurrentFrameInfo()?.frameSeq;
+            const deviceLostCode = getDeviceLostCode(err);
+            if (deviceLostCode) {
+              const startRecovery = deviceLostCode !== "webgl_context_lost";
+              handleDeviceLost(
+                err instanceof Error ? err.message : String(err),
+                { source: "screenshot", code: deviceLostCode, error: err },
+                startRecovery,
+              );
+            } else {
+              emitGpuEvent({
+                time_ms: performance.now(),
+                backend_kind: backendKindForEvent(),
+                severity: "error",
+                category: "Screenshot",
+                message: err instanceof Error ? err.message : String(err),
+                details: err instanceof Error ? { message: err.message, stack: err.stack } : String(err),
+              });
+            }
+            postStub(typeof seqNow === "number" ? seqNow : undefined);
           }
-          postStub(typeof seqNow === "number" ? seqNow : undefined);
+        } finally {
+          endSnapshotBarrierTask();
         }
       })();
       break;
@@ -5178,51 +5197,53 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
         //
         // Best-effort: if the active presenter backend does not implement presented readback yet,
         // we fall back to `presenter.screenshot()` (source bytes).
-        const postStub = (seq?: number) => {
-          const rgba8 = new ArrayBuffer(4);
-          new Uint8Array(rgba8).set([0, 0, 0, 255]);
-          postToMain(
-            {
-              type: "screenshot_presented",
-              requestId: req.requestId,
-              width: 1,
-              height: 1,
-              rgba8,
-              origin: "top-left",
-              ...(typeof seq === "number" ? { frameSeq: seq } : {}),
-            },
-            [rgba8],
-          );
-        };
-
-        const waitForNotPresenting = async (timeoutMs: number): Promise<boolean> => {
-          const deadline = performance.now() + timeoutMs;
-          while (presenting && performance.now() < deadline) {
-            await new Promise((resolve) => setTimeout(resolve, 0));
-          }
-          return !presenting;
-        };
-
+        beginSnapshotBarrierTask();
         try {
-          await maybeSendReady();
+          const postStub = (seq?: number) => {
+            const rgba8 = new ArrayBuffer(4);
+            new Uint8Array(rgba8).set([0, 0, 0, 255]);
+            postToMain(
+              {
+                type: "screenshot_presented",
+                requestId: req.requestId,
+                width: 1,
+                height: 1,
+                rgba8,
+                origin: "top-left",
+                ...(typeof seq === "number" ? { frameSeq: seq } : {}),
+              },
+              [rgba8],
+            );
+          };
 
-          if (isDeviceLost && recoveryPromise) {
-            await Promise.race([
-              recoveryPromise,
-              new Promise((resolve) => setTimeout(resolve, 750)),
-            ]);
+          const waitForNotPresenting = async (timeoutMs: number): Promise<boolean> => {
+            const deadline = performance.now() + timeoutMs;
+            while (presenting && performance.now() < deadline) {
+              await new Promise((resolve) => setTimeout(resolve, 0));
+            }
+            return !presenting;
+          };
+
+          try {
             await maybeSendReady();
-          }
 
-          if (snapshotPaused) {
-            // Snapshot pause must not touch guest RAM/VRAM. Respond with a stub screenshot (the
-            // caller can retry after resume if desired).
-            const seqNow = frameState ? lastPresentedSeq : undefined;
-            postStub(typeof seqNow === "number" ? seqNow : undefined);
-            return;
-          }
+            if (isDeviceLost && recoveryPromise) {
+              await Promise.race([
+                recoveryPromise,
+                new Promise((resolve) => setTimeout(resolve, 750)),
+              ]);
+              await maybeSendReady();
+            }
 
-          const includeCursor = req.includeCursor === true;
+            if (snapshotPaused) {
+              // Snapshot pause must not touch guest RAM/VRAM. Respond with a stub screenshot (the
+              // caller can retry after resume if desired).
+              const seqNow = frameState ? lastPresentedSeq : undefined;
+              postStub(typeof seqNow === "number" ? seqNow : undefined);
+              return;
+            }
+
+            const includeCursor = req.includeCursor === true;
 
           // Similar to the deterministic `screenshot` path, ensure we run a present pass when scanout is
           // WDDM/VBE-owned so the presented output (canvas pixels) reflects the latest scanout bytes
@@ -5311,27 +5332,30 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
               getCursorPresenter()?.redraw?.();
             }
           }
-        } catch (err) {
-          const seqNow = frameState ? lastPresentedSeq : getCurrentFrameInfo()?.frameSeq;
-          const deviceLostCode = getDeviceLostCode(err);
-          if (deviceLostCode) {
-            const startRecovery = deviceLostCode !== "webgl_context_lost";
-            handleDeviceLost(
-              err instanceof Error ? err.message : String(err),
-              { source: "screenshot_presented", code: deviceLostCode, error: err },
-              startRecovery,
-            );
-          } else {
-            emitGpuEvent({
-              time_ms: performance.now(),
-              backend_kind: backendKindForEvent(),
-              severity: "error",
-              category: "Screenshot",
-              message: err instanceof Error ? err.message : String(err),
-              details: err instanceof Error ? { message: err.message, stack: err.stack } : String(err),
-            });
+          } catch (err) {
+            const seqNow = frameState ? lastPresentedSeq : getCurrentFrameInfo()?.frameSeq;
+            const deviceLostCode = getDeviceLostCode(err);
+            if (deviceLostCode) {
+              const startRecovery = deviceLostCode !== "webgl_context_lost";
+              handleDeviceLost(
+                err instanceof Error ? err.message : String(err),
+                { source: "screenshot_presented", code: deviceLostCode, error: err },
+                startRecovery,
+              );
+            } else {
+              emitGpuEvent({
+                time_ms: performance.now(),
+                backend_kind: backendKindForEvent(),
+                severity: "error",
+                category: "Screenshot",
+                message: err instanceof Error ? err.message : String(err),
+                details: err instanceof Error ? { message: err.message, stack: err.stack } : String(err),
+              });
+            }
+            postStub(typeof seqNow === "number" ? seqNow : undefined);
           }
-          postStub(typeof seqNow === "number" ? seqNow : undefined);
+        } finally {
+          endSnapshotBarrierTask();
         }
       })();
       break;
