@@ -21,10 +21,10 @@ Status:
   modern guests (or Windows 7 only when an xHCI driver is installed).
 - EHCI supports minimal async/periodic schedule walking (control/bulk + interrupt polling) and
   snapshot/restore; see [`docs/usb-ehci.md`](./usb-ehci.md) for current scope/limitations.
-- The web runtime currently exposes an xHCI PCI function backed by `XhciControllerBridge`, but the
-  controller is still missing key guest-visible functionality (doorbells, command ring processing,
-  transfer scheduling), so treat it as a placeholder for now. (The Rust model now includes a basic
-  runtime interrupter + ERST-backed event ring producer used by unit tests.)
+- The web runtime currently exposes an xHCI PCI function backed by `aero_wasm::XhciControllerBridge`
+  (wrapping `aero_usb::xhci::XhciController`), but the controller is still missing key guest-visible
+  functionality (doorbells, full command/transfer ring processing, etc), so treat it as a
+  bring-up/placeholder surface for now.
 
 > Canonical USB stack selection: see [ADR 0015](./adr/0015-canonical-usb-stack.md) (`crates/aero-usb` + `crates/aero-wasm` + `web/`).
 
@@ -127,9 +127,11 @@ Notes:
     `00:0d.0`, but falls back to auto-allocation if the slot is occupied.
   - WASM bridge export: `crates/aero-wasm/src/xhci_controller_bridge.rs` (`XhciControllerBridge`),
     which wraps the Rust controller model (`aero_usb::xhci::XhciController`) and exposes:
+    - the full 64KiB MMIO window (`aero_usb::xhci::XhciController::MMIO_SIZE == 0x10000`, matching
+      the TS BAR size `XHCI_MMIO_BAR_SIZE`),
     - MMIO reads/writes,
-    - PCI command gating (e.g. DMA is gated on Bus Master Enable),
-    - INTx IRQ level (`irq_asserted()`), and
+    - PCI command gating (DMA gated on Bus Master Enable via `set_pci_command()`),
+    - INTx IRQ level (`irq_asserted()` mirrors `XhciController::irq_level()` / USBSTS.EINT), and
     - deterministic snapshot/restore (controller state + a tick counter).
 - The IRQ line observed by the guest depends on platform routing (PIRQ swizzle); see [`docs/pci-device-compatibility.md`](./pci-device-compatibility.md) and [`docs/irq-semantics.md`](./irq-semantics.md).
 - `aero_machine::Machine` does not yet expose an xHCI controller by default (today it wires UHCI for
@@ -162,23 +164,29 @@ for modern guests and for high-speed/superspeed passthrough, but the in-tree cod
 #### Minimal controller MMIO surfaces
 
 - Rust controller model: `aero_usb::xhci::XhciController`
+  - 64KiB MMIO window (`XhciController::MMIO_SIZE == 0x10000`) with basic unaligned access handling.
   - Minimal MMIO register file with basic unaligned access handling:
     - Capability registers: CAPLENGTH/HCIVERSION, HCSPARAMS1 (port count), HCCPARAMS1 (xECP), DBOFF, RTSOFF.
     - A small Supported Protocol xECP list (USB 2.0 + speed IDs) sized to `port_count`.
     - Operational registers (subset): USBCMD, USBSTS, CRCR, DCBAAP.
   - DBOFF/RTSOFF report realistic offsets. The doorbell array is not implemented yet, but the
     runtime interrupter 0 registers + ERST-backed guest event ring producer are modeled (used by
-    unit tests).
+    Rust tests and by the web/WASM bridge via `poll()`).
   - A DMA read on the first transition of `USBCMD.RUN` (primarily to validate **PCI Bus Master Enable gating** in wrappers).
-  - A level-triggered interrupt condition surfaced as `irq_level()` (USBSTS.EINT), used to validate **INTx disable gating**.
+  - A level-triggered interrupt condition surfaced as `irq_level()` (USBSTS.EINT + interrupter
+    pending), used to validate **INTx disable gating**.
   - DCBAAP register storage and controller-local slot allocation (Enable Slot scaffolding).
   - Topology-only slot binding (`Address Device`/`Configure Endpoint`) via Slot Context `RootHubPortNumber` + `RouteString`.
   - USB2-only root hub/port model: PORTSC operational registers + reset timer + Port Status Change Event TRBs (queued host-side and delivered via interrupter 0 event ring when configured).
 - Web/WASM: `aero_wasm::XhciControllerBridge`
-  - Forwards MMIO reads/writes into the canonical Rust controller model (`aero_usb::xhci::XhciController`).
-  - `step_frames()` / `tick()` counter only (no scheduling yet).
-  - Deterministic snapshot/restore of the controller state + tick count.
-  - IRQ level surfaced via `irq_asserted()` (level-triggered INTx semantics).
+  - Wraps `XhciController` (shared Rust model) and forwards MMIO reads/writes from the TS PCI device.
+  - Enforces **PCI BME DMA gating** by swapping the memory bus implementation when bus mastering is
+    disabled (the controller still updates register state, but must not touch guest RAM).
+  - `step_frames()` advances controller/port timers (`XhciController::tick_1ms`) and increments a tick counter.
+  - `poll()` drains any queued event TRBs into the guest event ring (`XhciController::service_event_ring`);
+    DMA is gated on BME.
+  - `irq_asserted()` reflects `XhciController::irq_level()` (USBSTS.EINT / interrupter pending).
+  - Deterministic snapshot/restore of the controller state + tick counter.
 
 These are **not** full xHCI implementations. In particular, the guest-visible doorbell array and
 full command ring integration are not implemented yet.
@@ -200,8 +208,8 @@ command/event behavior:
 
 - `command_ring::CommandRingProcessor`: parses a guest command ring and writes completion events into
   a guest event ring (single-segment).
-  - Implemented commands: `NoOp`, `Evaluate Context`, `Stop Endpoint`, `Reset Endpoint`,
-    `Set TR Dequeue Pointer`.
+  - Implemented commands (subset): `Enable Slot`, `Disable Slot`, `No-Op`, `Address Device`,
+    `Configure Endpoint`, `Evaluate Context`, `Stop Endpoint`, `Reset Endpoint`, `Set TR Dequeue Pointer`.
 - `command`: a minimal endpoint-management state machine used by tests and by early enumeration
   harnesses.
 
