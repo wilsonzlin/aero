@@ -948,7 +948,18 @@ def _qmp_error_is_command_not_found(e: BaseException, *, command: str) -> bool:
     """
 
     cmd = command.lower()
+    # Match QEMU-style phrasing:
+    #   "The command input-send-event has not been found"
+    # and variants with quotes around the command name.
+    cmd_pat = re.compile(
+        rf"\bcommand\s+['\"]?{re.escape(cmd)}['\"]?\s+has\s+not\s+been\s+found\b"
+    )
     if isinstance(e, _QmpCommandError):
+        if (e.execute or "").lower() != cmd:
+            # Structured QMP error refers to a different command; do not treat it as
+            # `command` being missing.
+            return False
+
         # Most accurate case: we have the QMP error response.
         cls = (e.error_class or "").lower()
         desc = (e.error_desc or "").lower()
@@ -958,20 +969,17 @@ def _qmp_error_is_command_not_found(e: BaseException, *, command: str) -> bool:
         # Some QEMU builds may not use CommandNotFound but still describe an unknown command.
         # Keep this conservative so we don't accidentally treat "device not found" (etc) as a
         # missing QMP command.
-        if cmd in desc and (
-            "unknown command" in desc or "has not been found" in desc or "command not found" in desc
-        ):
+        if cmd in desc and ("unknown command" in desc or "command not found" in desc):
+            return True
+        if cmd_pat.search(desc):
             return True
         return False
 
     # Best-effort fallback when callers surface only a stringified error.
     msg = str(e).lower()
-    if cmd in msg and (
-        "commandnotfound" in msg
-        or "has not been found" in msg
-        or "unknown command" in msg
-        or "command not found" in msg
-    ):
+    if cmd in msg and ("commandnotfound" in msg or "unknown command" in msg or "command not found" in msg):
+        return True
+    if cmd_pat.search(msg):
         return True
     return False
 
