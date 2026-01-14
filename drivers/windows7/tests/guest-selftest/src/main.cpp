@@ -1941,6 +1941,35 @@ static std::optional<DWORD> QueryDeviceDevRegDword(HDEVINFO devinfo, SP_DEVINFO_
   return std::nullopt;
 }
 
+static std::optional<DWORD> QueryDeviceDriverRegDword(HDEVINFO devinfo, SP_DEVINFO_DATA* dev,
+                                                      const wchar_t* value_name) {
+  if (!devinfo || devinfo == INVALID_HANDLE_VALUE || !dev || !value_name) return std::nullopt;
+
+  HKEY root = SetupDiOpenDevRegKey(devinfo, dev, DICS_FLAG_GLOBAL, 0, DIREG_DRV, KEY_QUERY_VALUE);
+  if (root == INVALID_HANDLE_VALUE) return std::nullopt;
+
+  // Bring-up toggles are typically placed under a Parameters subkey, but some
+  // environments may store values directly under the driver key as a fallback.
+  HKEY params = INVALID_HANDLE_VALUE;
+  const LONG rc = RegOpenKeyExW(root, L"Parameters", 0, KEY_QUERY_VALUE, &params);
+  if (rc == ERROR_SUCCESS && params != INVALID_HANDLE_VALUE) {
+    auto value = QueryRegDword(params, value_name);
+    RegCloseKey(params);
+    if (value.has_value()) {
+      RegCloseKey(root);
+      return value;
+    }
+  }
+
+  if (auto value = QueryRegDword(root, value_name)) {
+    RegCloseKey(root);
+    return value;
+  }
+
+  RegCloseKey(root);
+  return std::nullopt;
+}
+
 struct VirtioSndPciDevice {
   DEVINST devinst = 0;
   std::wstring instance_id;
@@ -2082,8 +2111,12 @@ static std::vector<VirtioSndPciDevice> DetectVirtioSndPciDevices(Logger& log, bo
     }
     if (auto force = QueryDeviceDevRegDword(devinfo, &dev, L"ForceNullBackend")) {
       snd.force_null_backend = *force;
+    } else if (auto force = QueryDeviceDriverRegDword(devinfo, &dev, L"ForceNullBackend")) {
+      snd.force_null_backend = *force;
     }
     if (auto allow = QueryDeviceDevRegDword(devinfo, &dev, L"AllowPollingOnly")) {
+      snd.allow_polling_only = *allow;
+    } else if (auto allow = QueryDeviceDriverRegDword(devinfo, &dev, L"AllowPollingOnly")) {
       snd.allow_polling_only = *allow;
     }
 

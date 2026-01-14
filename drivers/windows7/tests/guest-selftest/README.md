@@ -175,6 +175,8 @@ For the consolidated virtio-input end-to-end validation plan (device model + dri
     - Registry path: `HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Device Parameters\Parameters\AllowPollingOnly`
     - When set to `1`, the driver may start in polling-only mode if no usable interrupt resource can be connected (neither MSI/MSI-X nor INTx). Intended for early device-model bring-up.
     - Changing this value requires a reboot or disable/enable cycle so Windows re-runs `START_DEVICE`.
+  - Backwards compatibility note: older driver installs may have these values under the driver software key instead of the per-device key.
+    The driver and selftest both check the per-device location first, then fall back to the driver key.
   - If WASAPI fails, a WinMM `waveOut` fallback is attempted.
   - By default, if a supported virtio-snd PCI function is detected, the selftest exercises playback automatically.
     - If no supported device is detected, virtio-snd is reported as **SKIP**.
