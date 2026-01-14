@@ -396,10 +396,11 @@ bool TestColorFillDoesNotBindNullShaders() {
   // BIND_SHADERS with vs==0 or ps==0.
   {
     std::lock_guard<std::mutex> lock(dev->mutex);
-    dev->vs = nullptr;
-    dev->ps = nullptr;
-    dev->user_vs = nullptr;
-    dev->user_ps = nullptr;
+    if (!Check(dev->vs == nullptr && dev->ps == nullptr &&
+                   dev->user_vs == nullptr && dev->user_ps == nullptr,
+               "initial shader bindings are null")) {
+      return false;
+    }
   }
 
   dev->cmd.reset();
@@ -455,10 +456,11 @@ bool TestBltDoesNotBindNullShaders() {
 
   {
     std::lock_guard<std::mutex> lock(dev->mutex);
-    dev->vs = nullptr;
-    dev->ps = nullptr;
-    dev->user_vs = nullptr;
-    dev->user_ps = nullptr;
+    if (!Check(dev->vs == nullptr && dev->ps == nullptr &&
+                   dev->user_vs == nullptr && dev->user_ps == nullptr,
+               "initial shader bindings are null")) {
+      return false;
+    }
   }
 
   dev->cmd.reset();
@@ -997,27 +999,6 @@ bool TestPsOnlyXyzDiffuseBindsWvpVs() {
   if (!Check(hr == S_OK, "SetShader(PS)")) {
     return false;
   }
-
-  // Force draw-time interop to emit a bind by temporarily poisoning the currently
-  // bound VS with an unrelated user shader. The PS remains the user PS (PS-only
-  // interop still applies because user_vs is NULL).
-  D3D9DDI_HSHADER hVsDummy{};
-  hr = cleanup.device_funcs.pfnCreateShader(cleanup.hDevice,
-                                            kD3d9ShaderStageVs,
-                                            kUserVsPassthroughPosColor,
-                                            static_cast<uint32_t>(sizeof(kUserVsPassthroughPosColor)),
-                                            &hVsDummy);
-  if (!Check(hr == S_OK, "CreateShader(VS dummy)")) {
-    return false;
-  }
-  if (!Check(hVsDummy.pDrvPrivate != nullptr, "CreateShader(VS dummy) returned handle")) {
-    return false;
-  }
-  cleanup.shaders.push_back(hVsDummy);
-  dev->vs = reinterpret_cast<Shader*>(hVsDummy.pDrvPrivate);
-  dev->ps = ps;
-
-  dev->cmd.reset();
 
   // Force a deterministic WVP upload. Fixed-function XYZ interop uses an internal
   // WVP VS variant and uploads the matrix into c240..c243 as column vectors.

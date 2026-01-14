@@ -12096,6 +12096,12 @@ bool TestDrawStateTrackingPreSplitRetainsAllocs() {
   if (!Check(cleanup.device_funcs.pfnSetFVF != nullptr, "SetFVF must be available")) {
     return false;
   }
+  if (!Check(cleanup.device_funcs.pfnSetRenderTarget != nullptr, "SetRenderTarget must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetTexture != nullptr, "SetTexture must be available")) {
+    return false;
+  }
   if (!Check(cleanup.device_funcs.pfnDrawPrimitiveUP != nullptr, "DrawPrimitiveUP must be available")) {
     return false;
   }
@@ -12154,7 +12160,8 @@ bool TestDrawStateTrackingPreSplitRetainsAllocs() {
 
   // Bind two distinct alloc-backed resources in draw state. (We don't need to
   // emit SetRenderTarget/SetTexture packets; we only need the pointers for
-  // allocation tracking.)
+  // allocation tracking.) Use the DDIs to avoid poking internal Device caches
+  // directly.
   Resource rt{};
   rt.kind = ResourceKind::Texture2D;
   rt.handle = 0x2000u;
@@ -12169,10 +12176,17 @@ bool TestDrawStateTrackingPreSplitRetainsAllocs() {
   tex.share_token = 0;
   tex.wddm_hAllocation = 0x3000u;
 
-  {
-    std::lock_guard<std::mutex> lock(dev->mutex);
-    dev->render_targets[0] = &rt;
-    dev->textures[0] = &tex;
+  D3DDDI_HRESOURCE hRt{};
+  hRt.pDrvPrivate = &rt;
+  hr = cleanup.device_funcs.pfnSetRenderTarget(create_dev.hDevice, /*slot=*/0, hRt);
+  if (!Check(hr == S_OK, "SetRenderTarget(state tracking RT0)")) {
+    return false;
+  }
+  D3DDDI_HRESOURCE hTex{};
+  hTex.pDrvPrivate = &tex;
+  hr = cleanup.device_funcs.pfnSetTexture(create_dev.hDevice, /*stage=*/0, hTex);
+  if (!Check(hr == S_OK, "SetTexture(state tracking TEX0)")) {
+    return false;
   }
 
   D3DDDIVIEWPORTINFO vp{};
@@ -12359,6 +12373,12 @@ bool TestRenderTargetTrackingPreSplitRetainsAllocs() {
   if (!Check(cleanup.device_funcs.pfnCreateResource != nullptr, "CreateResource must be available")) {
     return false;
   }
+  if (!Check(cleanup.device_funcs.pfnSetRenderTarget != nullptr, "SetRenderTarget must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetDepthStencil != nullptr, "SetDepthStencil must be available")) {
+    return false;
+  }
   if (!Check(cleanup.device_funcs.pfnClear != nullptr, "Clear must be available")) {
     return false;
   }
@@ -12423,13 +12443,26 @@ bool TestRenderTargetTrackingPreSplitRetainsAllocs() {
   rt1.share_token = 0;
   rt1.wddm_hAllocation = 0x2001u;
 
-  {
-    std::lock_guard<std::mutex> lock(dev->mutex);
-    dev->render_targets[0] = &rt0;
-    dev->render_targets[1] = &rt1;
-    dev->render_targets[2] = nullptr;
-    dev->render_targets[3] = nullptr;
-    dev->depth_stencil = nullptr;
+  D3DDDI_HRESOURCE hRt0{};
+  hRt0.pDrvPrivate = &rt0;
+  hr = cleanup.device_funcs.pfnSetRenderTarget(create_dev.hDevice, /*slot=*/0, hRt0);
+  if (!Check(hr == S_OK, "SetRenderTarget(RT0)")) {
+    return false;
+  }
+  D3DDDI_HRESOURCE hRt1{};
+  hRt1.pDrvPrivate = &rt1;
+  hr = cleanup.device_funcs.pfnSetRenderTarget(create_dev.hDevice, /*slot=*/1, hRt1);
+  if (!Check(hr == S_OK, "SetRenderTarget(RT1)")) {
+    return false;
+  }
+  D3DDDI_HRESOURCE null_res{};
+  hr = cleanup.device_funcs.pfnSetRenderTarget(create_dev.hDevice, /*slot=*/2, null_res);
+  if (!Check(hr == S_OK, "SetRenderTarget(RT2=null)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetDepthStencil(create_dev.hDevice, null_res);
+  if (!Check(hr == S_OK, "SetDepthStencil(null)")) {
+    return false;
   }
 
   hr = cleanup.device_funcs.pfnClear(create_dev.hDevice,
@@ -12539,10 +12572,17 @@ bool TestDrawStateTrackingDedupsSharedAllocIds() {
   tex.share_token = 0x1122334455667788ull;
   tex.wddm_hAllocation = 200;
 
-  {
-    std::lock_guard<std::mutex> lock(dev->mutex);
-    dev->render_targets[0] = &rt;
-    dev->textures[0] = &tex;
+  D3DDDI_HRESOURCE hRt{};
+  hRt.pDrvPrivate = &rt;
+  hr = cleanup.device_funcs.pfnSetRenderTarget(create_dev.hDevice, /*slot=*/0, hRt);
+  if (!Check(hr == S_OK, "SetRenderTarget(dedup RT0)")) {
+    return false;
+  }
+  D3DDDI_HRESOURCE hTex{};
+  hTex.pDrvPrivate = &tex;
+  hr = cleanup.device_funcs.pfnSetTexture(create_dev.hDevice, /*stage=*/0, hTex);
+  if (!Check(hr == S_OK, "SetTexture(dedup TEX0)")) {
+    return false;
   }
 
   D3DDDIVIEWPORTINFO vp{};
@@ -12647,6 +12687,15 @@ bool TestRotateResourceIdentitiesTrackingPreSplitRetainsAllocs() {
   if (!Check(cleanup.device_funcs.pfnRotateResourceIdentities != nullptr, "RotateResourceIdentities entrypoint")) {
     return false;
   }
+  if (!Check(cleanup.device_funcs.pfnSetRenderTarget != nullptr, "SetRenderTarget must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetDepthStencil != nullptr, "SetDepthStencil must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetTexture != nullptr, "SetTexture must be available")) {
+    return false;
+  }
 
   auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
   if (!Check(dev != nullptr, "device pointer")) {
@@ -12704,19 +12753,34 @@ bool TestRotateResourceIdentitiesTrackingPreSplitRetainsAllocs() {
   {
     std::lock_guard<std::mutex> lock(dev->mutex);
     dev->cmd.reset();
-    dev->render_targets[0] = &rt;
-    dev->render_targets[1] = nullptr;
-    dev->render_targets[2] = nullptr;
-    dev->render_targets[3] = nullptr;
-    dev->depth_stencil = nullptr;
-    dev->textures[0] = &tex0;
-    for (uint32_t i = 1; i < 16; ++i) {
-      dev->textures[i] = nullptr;
-    }
-    for (uint32_t i = 0; i < 16; ++i) {
-      dev->streams[i].vb = nullptr;
-    }
-    dev->index_buffer = nullptr;
+  }
+  D3DDDI_HRESOURCE hRt{};
+  hRt.pDrvPrivate = &rt;
+  hr = cleanup.device_funcs.pfnSetRenderTarget(create_dev.hDevice, /*slot=*/0, hRt);
+  if (!Check(hr == S_OK, "Rotate: SetRenderTarget(RT0)")) {
+    return false;
+  }
+  D3DDDI_HRESOURCE null_res{};
+  hr = cleanup.device_funcs.pfnSetRenderTarget(create_dev.hDevice, /*slot=*/1, null_res);
+  if (!Check(hr == S_OK, "Rotate: SetRenderTarget(RT1=null)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetDepthStencil(create_dev.hDevice, null_res);
+  if (!Check(hr == S_OK, "Rotate: SetDepthStencil(null)")) {
+    return false;
+  }
+  D3DDDI_HRESOURCE hTex0{};
+  hTex0.pDrvPrivate = &tex0;
+  hr = cleanup.device_funcs.pfnSetTexture(create_dev.hDevice, /*stage=*/0, hTex0);
+  if (!Check(hr == S_OK, "Rotate: SetTexture(stage0)")) {
+    return false;
+  }
+  // Keep the command stream empty: RotateResourceIdentities may pre-split the
+  // submission based on allocation-list capacity, so avoid submitting unrelated
+  // state-setting packets in this unit test.
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    dev->cmd.reset();
   }
 
   D3DDDI_HRESOURCE rotate[2]{};
@@ -29632,6 +29696,13 @@ bool TestPresentBackbufferRotationUndoOnSmallAllocList() {
   dev->alloc_list_tracker.rebind(alloc_list, 1, 0xFFFFu);
   dev->alloc_list_tracker.reset();
 
+  if (!Check(cleanup.device_funcs.pfnSetRenderTarget != nullptr, "SetRenderTarget must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetTexture != nullptr, "SetTexture must be available")) {
+    return false;
+  }
+
   {
     std::lock_guard<std::mutex> lock(dev->mutex);
     // Ensure the rebinding sequence references two distinct alloc-backed
@@ -29640,15 +29711,29 @@ bool TestPresentBackbufferRotationUndoOnSmallAllocList() {
     sc->backbuffers[0]->wddm_hAllocation = 0x1111u;
     sc->backbuffers[1]->backing_alloc_id = 2;
     sc->backbuffers[1]->wddm_hAllocation = 0x2222u;
-
-    dev->render_targets[0] = sc->backbuffers[0];
-    dev->render_targets[1] = nullptr;
-    dev->render_targets[2] = nullptr;
-    dev->render_targets[3] = nullptr;
-    dev->textures[0] = sc->backbuffers[1];
-    for (uint32_t i = 1; i < 16; ++i) {
-      dev->textures[i] = nullptr;
-    }
+  }
+  D3DDDI_HRESOURCE hBb0{};
+  hBb0.pDrvPrivate = sc->backbuffers[0];
+  hr = cleanup.device_funcs.pfnSetRenderTarget(create_dev.hDevice, /*slot=*/0, hBb0);
+  if (!Check(hr == S_OK, "SetRenderTarget(backbuffer0)")) {
+    return false;
+  }
+  D3DDDI_HRESOURCE null_res{};
+  hr = cleanup.device_funcs.pfnSetRenderTarget(create_dev.hDevice, /*slot=*/1, null_res);
+  if (!Check(hr == S_OK, "SetRenderTarget(slot1=null)")) {
+    return false;
+  }
+  D3DDDI_HRESOURCE hBb1{};
+  hBb1.pDrvPrivate = sc->backbuffers[1];
+  hr = cleanup.device_funcs.pfnSetTexture(create_dev.hDevice, /*stage=*/0, hBb1);
+  if (!Check(hr == S_OK, "SetTexture(stage0=backbuffer1)")) {
+    return false;
+  }
+  // Keep the command stream empty: PresentEx may need to undo rotation without
+  // submitting any of the setup packets above.
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    dev->cmd.reset();
   }
 
   D3D9DDIARG_PRESENTEX present{};
