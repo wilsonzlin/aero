@@ -51,20 +51,5 @@ fn create_shader_dxbc_legacy_reserved0_remains_zero() {
     }
 }
 
-#[test]
-fn create_shader_dxbc_ex_encodes_pixel_via_legacy_stage_field() {
-    let mut w = AerogpuCmdWriter::new();
-    w.create_shader_dxbc_ex(1, AerogpuShaderStageEx::Pixel, &[0x00]);
-    let bytes = w.finish();
-
-    let pkt_off = AerogpuCmdStreamHeader::SIZE_BYTES;
-    let (cmd, payload) =
-        decode_cmd_create_shader_dxbc_payload_le(&bytes[pkt_off..]).expect("decode packet");
-    let shader_handle = cmd.shader_handle;
-    let stage = cmd.stage;
-    let reserved0 = cmd.reserved0;
-    assert_eq!(shader_handle, 1);
-    assert_eq!(stage, AerogpuShaderStage::Pixel as u32);
-    assert_eq!(reserved0, 0);
-    assert_eq!(payload, &[0x00]);
-}
+// Note: Pixel shaders must use the legacy `stage = PIXEL` encoding; `stage_ex` is intentionally
+// non-zero-only and cannot represent the DXBC program-type 0 value.
