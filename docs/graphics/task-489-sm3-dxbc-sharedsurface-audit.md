@@ -413,9 +413,12 @@ bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --test sm3_wgsl_tex --locked
   dimensionality (`x` / `xy` / `xyz`).
   - Evidence: `crates/aero-d3d9/src/tests.rs::legacy_translator_emits_texture_1d_and_x_coords` and
     `crates/aero-d3d9/src/tests.rs::legacy_translator_emits_texture_3d_and_xyz_coords`.
-  - Note: the AeroGPU command protocol currently only creates 2D textures (`CREATE_TEXTURE2D`). When a translated shader
-    declares 1D/3D samplers, the D3D9 executor binds dummy 1D/3D textures to satisfy the WGSL bind group layout (i.e. the
-    protocol cannot yet supply real guest-backed 1D/3D textures).
+- Note: the AeroGPU command protocol currently only creates 2D textures (`CREATE_TEXTURE2D`), so it cannot yet supply
+  real guest-backed 1D/3D textures.
+  - The SM3 WGSL backend can lower 1D/3D sampler declarations (used heavily in `aero-d3d9` naga-validation tests).
+  - However, the D3D9 translation entrypoint (`translate_d3d9_shader_to_wgsl`) currently rejects shaders that *sample*
+    from 1D/3D textures; unused `dcl_1d` / `dcl_volume` declarations are accepted. (See
+    `docs/graphics/d3d9-sm2-sm3-shader-translation.md` for the current contract.)
 - The WGSL generator does not attempt to model sampler *state* (filtering/address modes/LOD bias/etc.) directly;
   those are handled in runtime pipeline setup. Depth-compare sampling is also not modeled in the SM3 WGSL generator.
   (This is tracked in `docs/graphics/d3d9-sm2-sm3-shader-translation.md`.)
