@@ -277,6 +277,7 @@ impl PageVersionTracker {
     ///
     /// This method therefore acts as a *check*: it ensures `len <= table_len`, panicking if the
     /// configured table is too small.
+    #[track_caller]
     pub fn ensure_table_len(&self, len: usize) {
         assert!(
             len <= self.versions.len(),
@@ -286,11 +287,13 @@ impl PageVersionTracker {
     }
 
     /// Backwards-compatible alias for [`Self::ensure_table_len`].
+    #[track_caller]
     pub fn ensure_tracked_pages(&self, pages: usize) {
         self.ensure_table_len(pages);
     }
 
     /// Backwards-compatible alias for [`Self::ensure_table_len`].
+    #[track_caller]
     pub fn ensure_len(&self, len: usize) {
         self.ensure_table_len(len);
     }
@@ -537,6 +540,7 @@ where
     /// This is a *check* (not a resize): the table length is fixed at construction time via
     /// [`JitConfig::code_version_max_pages`]. If `len` exceeds the configured length, this method
     /// panics.
+    #[track_caller]
     pub fn ensure_page_version_table_len(&self, len: usize) {
         self.page_versions.ensure_len(len);
     }
@@ -568,6 +572,7 @@ where
     /// guards), callers should size the table up-front (via
     /// [`JitConfig::code_version_max_pages`]) so it covers all guest-physical pages that need
     /// tracking. Pages outside the table behave as version 0.
+    #[track_caller]
     pub fn ensure_code_version_table_len(&self, len: usize) {
         self.page_versions.ensure_table_len(len);
     }
@@ -819,6 +824,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::RefCell;
+    use std::panic;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     #[derive(Default)]
@@ -925,6 +932,28 @@ mod tests {
         JitRuntime::new(config, DummyBackend, MockCompileSink::default())
     }
 
+    thread_local! {
+        static LAST_PANIC_LOC: RefCell<Option<(String, u32)>> = RefCell::new(None);
+    }
+
+    fn capture_panic_location(f: impl FnOnce()) -> (String, u32) {
+        LAST_PANIC_LOC.with(|cell| cell.borrow_mut().take());
+        let prev = panic::take_hook();
+        panic::set_hook(Box::new(|info| {
+            if let Some(loc) = info.location() {
+                LAST_PANIC_LOC.with(|cell| {
+                    *cell.borrow_mut() = Some((loc.file().to_string(), loc.line()))
+                });
+            }
+        }));
+
+        let result = panic::catch_unwind(panic::AssertUnwindSafe(f));
+        panic::set_hook(prev);
+
+        assert!(result.is_err(), "expected a panic");
+        LAST_PANIC_LOC.with(|cell| cell.borrow().clone().expect("panic hook did not capture a location"))
+    }
+
     #[test]
     fn page_versions_bump_wraps_u32() {
         let tracker = PageVersionTracker::default();
@@ -943,10 +972,32 @@ mod tests {
     }
 
     #[test]
-    #[should_panic]
-    fn page_versions_ensure_tracked_pages_panics_when_exceeds_configured_len() {
+    fn page_versions_ensure_tracked_pages_panics_at_call_site() {
         let tracker = PageVersionTracker::new(4);
-        tracker.ensure_tracked_pages(5);
+
+        let expected_file = file!();
+        let expected_line = line!() + 2;
+        let (file, line) = capture_panic_location(|| {
+            tracker.ensure_tracked_pages(5);
+        });
+        assert_eq!(file, expected_file);
+        assert_eq!(line, expected_line);
+    }
+
+    #[test]
+    fn jit_runtime_ensure_code_version_table_len_panics_at_call_site() {
+        let rt = make_runtime(JitConfig {
+            code_version_max_pages: 4,
+            ..Default::default()
+        });
+
+        let expected_file = file!();
+        let expected_line = line!() + 2;
+        let (file, line) = capture_panic_location(|| {
+            rt.ensure_code_version_table_len(5);
+        });
+        assert_eq!(file, expected_file);
+        assert_eq!(line, expected_line);
     }
 
     #[test]
