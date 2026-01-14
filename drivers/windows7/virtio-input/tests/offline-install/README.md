@@ -17,15 +17,17 @@ test images where you want input working immediately).
 > - Tablet/absolute pointer: `aero_virtio_tablet.inf` (`...&SUBSYS_00121AF4&REV_01`)
 >   - Tablet binding is more specific, so it wins over the generic fallback when the tablet subsystem ID is present and
 >     both packages are installed.
->   - If the tablet subsystem ID is missing (or the tablet INF is not staged), the device may bind via the generic fallback
->     entry (when enabled via the legacy alias INF) and show up as **Aero VirtIO Input Device**.
+>   - If the tablet subsystem ID is missing (or the tablet INF is not staged), the device can still bind via the strict
+>     generic fallback entry below (no `SUBSYS`) **only** when enabled via the legacy alias INF, and will show up as
+>     **Aero VirtIO Input Device**.
 > - Optional legacy filename alias: `virtio-input.inf.disabled` → rename to `virtio-input.inf` to enable.
 >   - Adds opt-in strict generic fallback binding (no `SUBSYS`): `PCI\VEN_1AF4&DEV_1052&REV_01`
 >     - When binding via the fallback entry, Device Manager will show the generic **Aero VirtIO Input Device** name.
 >   - Alias drift policy: allowed to diverge from `aero_virtio_input.inf` only in the models sections (`[Aero.NTx86]` /
 >     `[Aero.NTamd64]`) where it adds the fallback entry. Outside those sections, from the first section header (`[Version]`)
 >     onward, it is expected to remain byte-identical (banner/comments may differ; see `drivers/windows7/virtio-input/scripts/check-inf-alias.py`).
->   - Enabling it does **change** HWID matching behavior (it enables strict generic fallback binding).
+>   - Enabling it does **change** HWID matching behavior (it enables strict generic fallback binding), and is required if you
+>     want fallback binding.
 >   - Do **not** stage/install both basenames at once: choose **either** `aero_virtio_input.inf` **or** `virtio-input.inf`.
 
 The commands below assume you already have a **built driver package directory** containing:
