@@ -1523,7 +1523,8 @@ def _try_qmp_input_inject_virtio_input_events(
                 else:
                     raise RuntimeError(
                         "QMP input-send-event failed while injecting scroll for "
-                        "--with-input-wheel/--with-virtio-input-wheel or --with-input-events-extended/--with-input-events-extra. "
+                        "--with-input-wheel/--with-virtio-input-wheel/--require-virtio-input-wheel or "
+                        "--with-input-events-extended/--with-input-events-extra. "
                         "Upgrade QEMU or omit those flags. "
                         f"errors={errors}"
                     ) from e
@@ -2802,7 +2803,9 @@ def main() -> int:
     if bool(args.with_input_events):
         input_events_req_flags.append("--with-input-events/--with-virtio-input-events")
     if need_input_wheel:
-        input_events_req_flags.append("--with-input-wheel/--with-virtio-input-wheel")
+        input_events_req_flags.append(
+            "--with-input-wheel/--with-virtio-input-wheel/--require-virtio-input-wheel"
+        )
     if need_input_events_extended:
         input_events_req_flags.append("--with-input-events-extended/--with-input-events-extra")
     input_events_req_flags_desc = "/".join(input_events_req_flags)
@@ -2911,7 +2914,7 @@ def main() -> int:
         ):
             parser.error(
                 "--with-input-events/--with-virtio-input-events"
-                "/--with-input-wheel/--with-virtio-input-wheel"
+                "/--with-input-wheel/--with-virtio-input-wheel/--require-virtio-input-wheel"
                 "/--with-input-events-extended/--with-input-events-extra requires "
                 "QEMU virtio-keyboard-pci and virtio-mouse-pci support. Upgrade QEMU or omit input event injection."
             )
@@ -3136,7 +3139,9 @@ def main() -> int:
                     if need_input_media_keys:
                         req_flags.append("--with-input-media-keys/--with-virtio-input-media-keys")
                     if need_input_wheel:
-                        req_flags.append("--with-input-wheel/--with-virtio-input-wheel")
+                        req_flags.append(
+                            "--with-input-wheel/--with-virtio-input-wheel/--require-virtio-input-wheel"
+                        )
                     if need_input_events_extended:
                         req_flags.append("--with-input-events-extended/--with-input-events-extra")
                     if need_input_tablet_events:
@@ -3173,7 +3178,7 @@ def main() -> int:
         if need_input_media_keys:
             req_flags.append("--with-input-media-keys/--with-virtio-input-media-keys")
         if need_input_wheel:
-            req_flags.append("--with-input-wheel/--with-virtio-input-wheel")
+            req_flags.append("--with-input-wheel/--with-virtio-input-wheel/--require-virtio-input-wheel")
         if need_input_events_extended:
             req_flags.append("--with-input-events-extended/--with-input-events-extra")
         if need_input_tablet_events:
@@ -3953,7 +3958,7 @@ def main() -> int:
                         if saw_virtio_input_wheel_skip:
                             print(
                                 "FAIL: VIRTIO_INPUT_WHEEL_SKIPPED: virtio-input-wheel test was skipped but "
-                                "--with-input-wheel/--with-virtio-input-wheel was enabled",
+                                "--with-input-wheel/--with-virtio-input-wheel/--require-virtio-input-wheel was enabled",
                                 file=sys.stderr,
                             )
                             _print_tail(serial_log)
@@ -3962,7 +3967,7 @@ def main() -> int:
                         if saw_virtio_input_wheel_fail:
                             print(
                                 "FAIL: VIRTIO_INPUT_WHEEL_FAILED: virtio-input-wheel test reported FAIL while "
-                                "--with-input-wheel/--with-virtio-input-wheel was enabled",
+                                "--with-input-wheel/--with-virtio-input-wheel/--require-virtio-input-wheel was enabled",
                                 file=sys.stderr,
                             )
                             _print_tail(serial_log)
@@ -4312,7 +4317,7 @@ def main() -> int:
                                 if saw_virtio_input_wheel_fail:
                                     print(
                                         "FAIL: VIRTIO_INPUT_WHEEL_FAILED: selftest RESULT=PASS but virtio-input-wheel test reported FAIL "
-                                        "while --with-input-wheel/--with-virtio-input-wheel was enabled",
+                                        "while --with-input-wheel/--with-virtio-input-wheel/--require-virtio-input-wheel was enabled",
                                         file=sys.stderr,
                                     )
                                     _print_tail(serial_log)
@@ -4322,13 +4327,13 @@ def main() -> int:
                                     if saw_virtio_input_wheel_skip:
                                         print(
                                             "FAIL: VIRTIO_INPUT_WHEEL_SKIPPED: virtio-input-wheel test was skipped but "
-                                            "--with-input-wheel/--with-virtio-input-wheel was enabled",
+                                            "--with-input-wheel/--with-virtio-input-wheel/--require-virtio-input-wheel was enabled",
                                             file=sys.stderr,
                                         )
                                     else:
                                         print(
                                             "FAIL: MISSING_VIRTIO_INPUT_WHEEL: selftest RESULT=PASS but did not emit virtio-input-wheel test marker "
-                                            "while --with-input-wheel/--with-virtio-input-wheel was enabled",
+                                            "while --with-input-wheel/--with-virtio-input-wheel/--require-virtio-input-wheel was enabled",
                                             file=sys.stderr,
                                         )
                                     _print_tail(serial_log)
@@ -4755,7 +4760,7 @@ def main() -> int:
                             if saw_virtio_input_wheel_fail:
                                 print(
                                     "FAIL: VIRTIO_INPUT_WHEEL_FAILED: virtio-input-wheel test reported FAIL while "
-                                    "--with-input-wheel/--with-virtio-input-wheel was enabled",
+                                    "--with-input-wheel/--with-virtio-input-wheel/--require-virtio-input-wheel was enabled",
                                     file=sys.stderr,
                                 )
                                 _print_tail(serial_log)
@@ -4765,13 +4770,13 @@ def main() -> int:
                                 if saw_virtio_input_wheel_skip:
                                     print(
                                         "FAIL: VIRTIO_INPUT_WHEEL_SKIPPED: virtio-input-wheel test was skipped but "
-                                        "--with-input-wheel/--with-virtio-input-wheel was enabled",
+                                        "--with-input-wheel/--with-virtio-input-wheel/--require-virtio-input-wheel was enabled",
                                         file=sys.stderr,
                                     )
                                 else:
                                     print(
                                         "FAIL: MISSING_VIRTIO_INPUT_WHEEL: did not observe virtio-input-wheel PASS marker while "
-                                        "--with-input-wheel/--with-virtio-input-wheel was enabled",
+                                        "--with-input-wheel/--with-virtio-input-wheel/--require-virtio-input-wheel was enabled",
                                         file=sys.stderr,
                                     )
                                 _print_tail(serial_log)
@@ -5894,7 +5899,7 @@ def main() -> int:
                                 if saw_virtio_input_wheel_fail:
                                     print(
                                         "FAIL: VIRTIO_INPUT_WHEEL_FAILED: virtio-input-wheel test reported FAIL while "
-                                        "--with-input-wheel/--with-virtio-input-wheel was enabled",
+                                        "--with-input-wheel/--with-virtio-input-wheel/--require-virtio-input-wheel was enabled",
                                         file=sys.stderr,
                                     )
                                     _print_tail(serial_log)
@@ -5904,13 +5909,13 @@ def main() -> int:
                                     if saw_virtio_input_wheel_skip:
                                         print(
                                             "FAIL: VIRTIO_INPUT_WHEEL_SKIPPED: virtio-input-wheel test was skipped but "
-                                            "--with-input-wheel/--with-virtio-input-wheel was enabled",
+                                            "--with-input-wheel/--with-virtio-input-wheel/--require-virtio-input-wheel was enabled",
                                             file=sys.stderr,
                                         )
                                     else:
                                         print(
                                             "FAIL: MISSING_VIRTIO_INPUT_WHEEL: did not observe virtio-input-wheel PASS marker while "
-                                            "--with-input-wheel/--with-virtio-input-wheel was enabled",
+                                            "--with-input-wheel/--with-virtio-input-wheel/--require-virtio-input-wheel was enabled",
                                             file=sys.stderr,
                                         )
                                     _print_tail(serial_log)
