@@ -231,6 +231,10 @@ cargo xtask input --machine
 # Targeted WASM USB bridge regression test (runs in Node).
 wasm-pack test --node crates/aero-wasm --test webusb_uhci_bridge
 
+# Note: `wasm-pack test` currently builds *all* `crates/aero-wasm` integration tests, even if you
+# pass `--test ...`. This means compile errors in unrelated WASM tests (e.g. other bridge tests)
+# can still break this command.
+
 # Canonical machine library tests (covers snapshot + USB container wiring).
 cargo test -p aero-machine --lib
 
