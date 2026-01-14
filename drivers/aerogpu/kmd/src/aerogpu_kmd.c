@@ -1634,7 +1634,18 @@ static PVOID AeroGpuAllocContiguous(_Inout_ AEROGPU_ADAPTER* Adapter, _In_ SIZE_
         return NULL;
     }
 
-    RtlZeroMemory(va, Size);
+    /*
+     * Zero the full underlying allocation size (page-rounded when pooled) so any
+     * slack bytes are not left holding stale kernel data.
+     *
+     * This is not the hot submit path (callers that need no-init use
+     * AeroGpuAllocContiguousNoInit), so the extra page-tail zeroing is acceptable.
+     */
+    UINT classIndex = 0;
+    SIZE_T allocSize = 0;
+    const BOOLEAN eligible = AeroGpuContigPoolClassForSize(Size, &classIndex, &allocSize);
+    const SIZE_T zeroBytes = (eligible && allocSize) ? allocSize : Size;
+    RtlZeroMemory(va, zeroBytes);
     return va;
 }
 
