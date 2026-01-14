@@ -404,6 +404,7 @@ reg add HKLM\System\CurrentControlSet\Services\aero_virtio_input\Parameters ^
 
 Then reboot (or disable/enable the device). With the included `hidtest.exe`, you can generate many LED writes and observe drops via:
 
+- `hidtest.exe --keyboard --state` (confirm `StatusQDropOnFull` is enabled)
 - `hidtest.exe --keyboard --led-spam 10000`
 - `hidtest.exe --keyboard --counters` (watch `VirtioStatusDrops`)
 

@@ -182,6 +182,7 @@ reg add HKLM\System\CurrentControlSet\Services\aero_virtio_input\Parameters ^
 Then in the guest:
 
 ```bat
+hidtest.exe --keyboard --state
 hidtest.exe --keyboard --reset-counters
 hidtest.exe --keyboard --led-spam 10000
 hidtest.exe --keyboard --counters

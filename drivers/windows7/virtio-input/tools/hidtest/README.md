@@ -312,6 +312,7 @@ When set to nonzero, pending LED writes are dropped instead of being held until
 the queue drains. You can enable it and then stress the write path with:
 
 ```bat
+hidtest.exe --keyboard --state
 hidtest.exe --keyboard --led-spam 10000
 hidtest.exe --keyboard --counters
 ```
