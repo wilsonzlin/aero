@@ -77,8 +77,8 @@ cargo run --locked -p aero-l2-proxy
 # - Optional: per-session PCAPNG capture (writes one file per tunnel session):
 #   AERO_L2_CAPTURE_DIR=/tmp/aero-l2-captures cargo run --locked -p aero-l2-proxy
 #   # Optional capture limits/tuning:
-#   AERO_L2_CAPTURE_MAX_BYTES=67108864             # default: 64 MiB per session file (`0` disables the cap)
-#   AERO_L2_CAPTURE_FLUSH_INTERVAL_MS=1000         # default: 1000ms (`0` flushes only on close)
+#   AERO_L2_CAPTURE_MAX_BYTES=67108864             # default: 64 MiB per session capture file (includes PCAPNG overhead; `0` disables the cap)
+#   AERO_L2_CAPTURE_FLUSH_INTERVAL_MS=1000         # default: 1000ms (`0` disables periodic flushing; capture is flushed on close)
 # - Optional: have the proxy send protocol-level PINGs (RTT is recorded in Prometheus metrics):
 #   AERO_L2_PING_INTERVAL_MS=1000 cargo run --locked -p aero-l2-proxy
 ```
