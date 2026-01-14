@@ -204,7 +204,12 @@ class WorkerGpuRuntimeImpl implements GpuRuntimeImpl {
   }
 
   async screenshot(): Promise<ImageData> {
-    const shot = await this.handle.requestScreenshot();
+    // `GpuRuntime.screenshot()` is intended to return what the user sees on the canvas.
+    // Request a presented-output readback so:
+    // - the dimensions match the canvas (post-DPR)
+    // - sRGB/alpha presentation policy is applied
+    // - cursor composition is included when the presenter backend applies it
+    const shot = await this.handle.requestPresentedScreenshot();
     return new ImageData(new Uint8ClampedArray(shot.rgba8), shot.width, shot.height);
   }
 }
