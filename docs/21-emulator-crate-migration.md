@@ -152,16 +152,24 @@ USB selection is governed by [ADR 0015](./adr/0015-canonical-usb-stack.md).
 
 - `crates/emulator` currently keeps a compatibility module at `src/io/usb/` that re-exports the
   canonical USB device models and adds legacy integration glue.
+  - Note: legacy PCI/MMIO wrappers for EHCI/xHCI are intentionally feature-gated in the emulator
+    crate (`legacy-usb-ehci`, `legacy-usb-xhci`) so new code does not accidentally depend on the
+    legacy wiring layer.
 
 **Canonical replacement**
 
 - USB device models + host controllers (UHCI/EHCI/xHCI): `crates/aero-usb` ([`src/lib.rs`](../crates/aero-usb/src/lib.rs))
 - UHCI PCI device wrapper (canonical PCI stack): `crates/devices/src/usb/uhci.rs` ([`uhci.rs`](../crates/devices/src/usb/uhci.rs))
+- EHCI PCI device wrapper (canonical PCI stack): `crates/devices/src/usb/ehci.rs` ([`ehci.rs`](../crates/devices/src/usb/ehci.rs))
+- xHCI PCI device wrapper (canonical PCI stack): `crates/devices/src/usb/xhci.rs` ([`xhci.rs`](../crates/devices/src/usb/xhci.rs))
 
 **Deprecation/deletion targets (in `crates/emulator`)**
 
 - Any *standalone* UHCI PCI wrapper / port I/O wiring that duplicates `aero-devices`:
   - `src/io/usb/uhci.rs` (once the emulator is no longer using its bespoke PCI framework)
+- Legacy emulator-specific PCI/MMIO wrappers for `aero-usb` controllers:
+  - `src/io/usb/ehci.rs` (feature-gated by `legacy-usb-ehci`)
+  - `src/io/usb/xhci.rs` (feature-gated by `legacy-usb-xhci`)
 - Any USB “wire contracts” that are not owned by `aero-usb` (do not introduce new ones).
 
 ### Networking backend (L2 tunnel + pumping)
