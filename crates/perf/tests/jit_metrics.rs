@@ -8,6 +8,11 @@ fn jit_metrics_disabled_stays_zero() {
 
     telemetry.jit.record_cache_hit();
     telemetry.jit.record_cache_miss();
+    telemetry.jit.record_cache_install();
+    telemetry.jit.record_cache_evict(3);
+    telemetry.jit.record_cache_invalidate();
+    telemetry.jit.record_cache_stale_install_reject();
+    telemetry.jit.record_compile_request();
     telemetry.jit.record_block_compiled(JitTier::Tier1);
     telemetry.jit.record_block_compiled(JitTier::Tier2);
     telemetry
@@ -23,6 +28,13 @@ fn jit_metrics_disabled_stays_zero() {
     telemetry.jit.set_cache_used_bytes(456);
     telemetry.jit.record_deopt();
     telemetry.jit.record_guard_fail();
+
+    let totals = telemetry.jit.snapshot_totals();
+    assert_eq!(totals.cache_install_total, 0);
+    assert_eq!(totals.cache_evict_total, 0);
+    assert_eq!(totals.cache_invalidate_total, 0);
+    assert_eq!(totals.cache_stale_install_reject_total, 0);
+    assert_eq!(totals.compile_request_total, 0);
 
     let snapshot = telemetry.snapshot();
     assert!(!snapshot.jit.enabled);
@@ -45,12 +57,17 @@ fn jit_metrics_enabled_exports_nonzero_totals() {
     telemetry.jit.set_cache_used_bytes(128);
 
     telemetry.jit.record_cache_miss();
+    telemetry.jit.record_cache_install();
     telemetry.jit.record_block_compiled(JitTier::Tier1);
     telemetry
         .jit
         .add_compile_time(JitTier::Tier1, Duration::from_millis(7));
 
     telemetry.jit.record_cache_hit();
+    telemetry.jit.record_cache_evict(2);
+    telemetry.jit.record_cache_invalidate();
+    telemetry.jit.record_cache_stale_install_reject();
+    telemetry.jit.record_compile_request();
     telemetry.jit.record_block_compiled(JitTier::Tier2);
     telemetry
         .jit
@@ -59,6 +76,13 @@ fn jit_metrics_enabled_exports_nonzero_totals() {
         .jit
         .add_tier2_pass_time(JitTier2Pass::Dce, Duration::from_millis(2));
     telemetry.jit.record_guard_fail();
+
+    let totals = telemetry.jit.snapshot_totals();
+    assert_eq!(totals.cache_install_total, 1);
+    assert_eq!(totals.cache_evict_total, 2);
+    assert_eq!(totals.cache_invalidate_total, 1);
+    assert_eq!(totals.cache_stale_install_reject_total, 1);
+    assert_eq!(totals.compile_request_total, 1);
 
     let snapshot = telemetry.snapshot();
     assert!(snapshot.jit.enabled);
