@@ -194,14 +194,9 @@ fn xhci_configure_endpoint_deconfigure_clears_pending_doorbells() {
     // Deconfigure mode disables all non-EP0 endpoints. Like the drop path, it must clear the
     // pending-doorbell coalescing bitmap for those endpoints so they can be re-doorbelled later.
     InputControlContext::default().write_to(&mut mem, input_ctx);
-    run_drop_or_deconfigure(
-        &mut ctrl,
-        &mut mem,
-        slot_id,
-        cmd_ring,
-        input_ctx,
-        |cmd| cmd.set_configure_endpoint_deconfigure(true),
-    );
+    run_drop_or_deconfigure(&mut ctrl, &mut mem, slot_id, cmd_ring, input_ctx, |cmd| {
+        cmd.set_configure_endpoint_deconfigure(true)
+    });
 
     // Re-populate the endpoint context and ring the doorbell again.
     write_interrupt_in_endpoint_context(&mut mem, dev_ctx, EP_ID, ring_base);

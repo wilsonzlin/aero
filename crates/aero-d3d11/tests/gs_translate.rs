@@ -5,8 +5,8 @@ use aero_d3d11::sm4::decode_program;
 use aero_d3d11::sm4::opcode::*;
 use aero_d3d11::{
     DstOperand, GsInputPrimitive, GsOutputTopology, OperandModifier, RegFile, RegisterRef,
-    ShaderModel, ShaderStage, Sm4Decl, Sm4Inst, Sm4Module, Sm4Program, SrcKind, SrcOperand, Swizzle,
-    WriteMask,
+    ShaderModel, ShaderStage, Sm4Decl, Sm4Inst, Sm4Module, Sm4Program, SrcKind, SrcOperand,
+    Swizzle, WriteMask,
 };
 
 fn opcode_token(opcode: u32, len_dwords: u32) -> u32 {

@@ -52,4 +52,3 @@ fn machine_constructs_with_custom_guest_memory() {
     // Ensure the machine can be reset multiple times without panicking.
     machine.reset();
 }
-

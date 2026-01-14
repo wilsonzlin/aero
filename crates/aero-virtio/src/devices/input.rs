@@ -935,7 +935,10 @@ mod tests {
 
         assert_eq!(dev.pending.len(), MAX_PENDING_EVENTS);
         assert_eq!(dev.pending.front().unwrap().value, 100);
-        assert_eq!(dev.pending.back().unwrap().value, (MAX_PENDING_EVENTS + 99) as i32);
+        assert_eq!(
+            dev.pending.back().unwrap().value,
+            (MAX_PENDING_EVENTS + 99) as i32
+        );
     }
 
     fn write_desc(

@@ -11902,7 +11902,9 @@ impl AerogpuD3d11Executor {
                         if binding_num >= BINDING_BASE_UAV {
                             let slot = binding_num.saturating_sub(BINDING_BASE_UAV);
                             if let Some(buf) = self.bindings.stage(stage).uav_buffer(slot) {
-                                self.ensure_buffer_uploaded(encoder, buf.buffer, allocs, guest_mem)?;
+                                self.ensure_buffer_uploaded(
+                                    encoder, buf.buffer, allocs, guest_mem,
+                                )?;
                             }
                             if let Some(tex) = self.bindings.stage(stage).uav_texture(slot) {
                                 self.ensure_texture_uploaded(
@@ -11925,13 +11927,18 @@ impl AerogpuD3d11Executor {
                                 )?;
                             }
                             if let Some(buf) = self.bindings.stage(stage).srv_buffer(slot) {
-                                self.ensure_buffer_uploaded(encoder, buf.buffer, allocs, guest_mem)?;
+                                self.ensure_buffer_uploaded(
+                                    encoder, buf.buffer, allocs, guest_mem,
+                                )?;
                             }
                         } else if binding_num < BINDING_BASE_TEXTURE {
-                            if let Some(cb) = self.bindings.stage(stage).constant_buffer(binding_num)
+                            if let Some(cb) =
+                                self.bindings.stage(stage).constant_buffer(binding_num)
                             {
                                 if cb.buffer != legacy_constants_buffer_id(stage) {
-                                    self.ensure_buffer_uploaded(encoder, cb.buffer, allocs, guest_mem)?;
+                                    self.ensure_buffer_uploaded(
+                                        encoder, cb.buffer, allocs, guest_mem,
+                                    )?;
                                 }
                             }
                         }
@@ -12009,8 +12016,10 @@ impl AerogpuD3d11Executor {
                 encoder.copy_buffer_to_buffer(src, offset, &scratch.buffer, 0, size);
                 self.encoder_has_commands = true;
                 self.encoder_used_buffers.insert(cb.buffer);
-                self.resource_upload_debug.constant_buffer_scratch_copies =
-                    self.resource_upload_debug.constant_buffer_scratch_copies.saturating_add(1);
+                self.resource_upload_debug.constant_buffer_scratch_copies = self
+                    .resource_upload_debug
+                    .constant_buffer_scratch_copies
+                    .saturating_add(1);
             }
         }
 
@@ -12174,8 +12183,10 @@ impl AerogpuD3d11Executor {
         if !needs_upload {
             return Ok(());
         }
-        self.resource_upload_debug.implicit_buffer_uploads =
-            self.resource_upload_debug.implicit_buffer_uploads.saturating_add(1);
+        self.resource_upload_debug.implicit_buffer_uploads = self
+            .resource_upload_debug
+            .implicit_buffer_uploads
+            .saturating_add(1);
 
         // Preserve command stream ordering relative to any previously encoded GPU work.
         self.submit_encoder_if_has_commands(
@@ -13036,8 +13047,10 @@ impl AerogpuD3d11Executor {
             }
             return Ok(());
         };
-        self.resource_upload_debug.implicit_texture_uploads =
-            self.resource_upload_debug.implicit_texture_uploads.saturating_add(1);
+        self.resource_upload_debug.implicit_texture_uploads = self
+            .resource_upload_debug
+            .implicit_texture_uploads
+            .saturating_add(1);
 
         // Preserve command stream ordering relative to any previously encoded GPU work.
         self.submit_encoder_if_has_commands(
@@ -17010,7 +17023,9 @@ mod tests {
             let pipeline_bindings = reflection_bindings::build_pipeline_bindings_info(
                 &exec.device,
                 &mut exec.bind_group_layout_cache,
-                [reflection_bindings::ShaderBindingSet::Guest(bindings.as_slice())],
+                [reflection_bindings::ShaderBindingSet::Guest(
+                    bindings.as_slice(),
+                )],
                 reflection_bindings::BindGroupIndexValidation::GuestShaders,
             )
             .expect("build_pipeline_bindings_info should succeed");

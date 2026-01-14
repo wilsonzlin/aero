@@ -579,11 +579,8 @@ fn tessellation_layout_pass_wgsl_avoids_isnan_isinf_builtins() {
     // wgpu 0.20's WGSL frontend (naga 0.20) rejects `isNan`/`isInf`.
     // Ensure we don't regress by reintroducing these as function calls.
     let wgsl = wgsl_tessellation_layout_pass(
-        /*group=*/ 0,
-        /*params_binding=*/ 0,
-        /*hs_tess_factors_binding=*/ 1,
-        /*out_patch_meta_binding=*/ 2,
-        /*out_indirect_args_binding=*/ 3,
+        /*group=*/ 0, /*params_binding=*/ 0, /*hs_tess_factors_binding=*/ 1,
+        /*out_patch_meta_binding=*/ 2, /*out_indirect_args_binding=*/ 3,
         /*out_debug_binding=*/ 4,
     );
 

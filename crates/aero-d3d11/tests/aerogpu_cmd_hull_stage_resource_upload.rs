@@ -77,7 +77,10 @@ fn aerogpu_cmd_hull_stage_group3_upload_and_scratch_use_hull_bucket() {
                 group: 3,
                 binding: BINDING_BASE_CBUFFER + 1,
                 visibility: wgpu::ShaderStages::COMPUTE,
-                kind: BindingKind::ConstantBuffer { slot: 1, reg_count: 1 },
+                kind: BindingKind::ConstantBuffer {
+                    slot: 1,
+                    reg_count: 1,
+                },
             }],
         ];
 
@@ -108,4 +111,3 @@ fn aerogpu_cmd_hull_stage_group3_upload_and_scratch_use_hull_bucket() {
         );
     });
 }
-

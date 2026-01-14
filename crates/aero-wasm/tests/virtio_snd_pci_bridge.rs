@@ -613,8 +613,7 @@ fn virtio_snd_pci_bridge_delivers_speaker_jack_event_into_cached_eventq_buffer_o
     let mut buf_before = [0u8; 8];
     guest.read_into(buf, &mut buf_before);
     assert_eq!(
-        &buf_before,
-        &[0xAAu8; 8],
+        &buf_before, &[0xAAu8; 8],
         "eventq buffer should not be modified until an event is queued"
     );
 

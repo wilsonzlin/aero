@@ -321,7 +321,10 @@ fn build_stream_two_ib_two_draws(
     stream.extend_from_slice(&0u64.to_le_bytes()); // offset_bytes
     stream.extend_from_slice(&(ib_u16_bytes.len() as u64).to_le_bytes()); // size_bytes
     stream.extend_from_slice(ib_u16_bytes);
-    stream.resize(stream.len() + (align4(ib_u16_bytes.len()) - ib_u16_bytes.len()), 0);
+    stream.resize(
+        stream.len() + (align4(ib_u16_bytes.len()) - ib_u16_bytes.len()),
+        0,
+    );
     end_cmd(&mut stream, start);
 
     // CREATE_BUFFER (IB32)
@@ -341,7 +344,10 @@ fn build_stream_two_ib_two_draws(
     stream.extend_from_slice(&0u64.to_le_bytes()); // offset_bytes
     stream.extend_from_slice(&(ib_u32_bytes.len() as u64).to_le_bytes()); // size_bytes
     stream.extend_from_slice(ib_u32_bytes);
-    stream.resize(stream.len() + (align4(ib_u32_bytes.len()) - ib_u32_bytes.len()), 0);
+    stream.resize(
+        stream.len() + (align4(ib_u32_bytes.len()) - ib_u32_bytes.len()),
+        0,
+    );
     end_cmd(&mut stream, start);
 
     // CREATE_TEXTURE2D (RT)
@@ -841,11 +847,7 @@ fn aerogpu_cmd_rebuilds_strip_pipeline_when_index_format_changes() {
             &pixels[idx..idx + 4]
         };
         assert_eq!(px(32, 16), &[255, 255, 255, 255], "top quad missing");
-        assert_eq!(
-            px(32, 48),
-            &[255, 255, 255, 255],
-            "bottom quad missing"
-        );
+        assert_eq!(px(32, 48), &[255, 255, 255, 255], "bottom quad missing");
         assert_eq!(px(32, 32), &[0, 0, 0, 255], "expected a gap between draws");
     });
 }
