@@ -9,12 +9,15 @@
 //! The intention is to make "which machine runs in the browser?" an explicit, stable answer:
 //! **`aero_machine::Machine`**.
 //!
-//! ## Current limitation: single-vCPU execution (no SMP scheduling yet)
+//! ## Current limitation: SMP bring-up only (no full multi-vCPU scheduling yet)
 //!
-//! `aero_machine::Machine` currently executes only the bootstrap processor (vCPU0). Higher vCPU
-//! counts can be configured to expose topology via firmware tables (SMBIOS + ACPI) for bring-up
-//! testing, but end-to-end SMP (AP startup, LAPIC IPIs, multi-vCPU scheduling, etc.) is not yet
-//! implemented in the canonical machine/platform.
+//! `aero_machine::Machine` can be configured with `cpu_count > 1` and includes basic SMP plumbing:
+//! per-vCPU LAPIC instances/MMIO routing, AP wait-for-SIPI state, INIT+SIPI delivery via the LAPIC
+//! ICR, and a bounded cooperative AP execution loop inside [`Machine::run_slice`].
+//!
+//! This is sufficient for SMP contract/bring-up tests, but it is **not** a full SMP scheduler or
+//! parallel vCPU execution environment yet. For robust guest boots today, `cpu_count = 1` is still
+//! recommended.
 //!
 //! See `docs/21-smp.md` for the current SMP bring-up plan and progress tracker.
 #![forbid(unsafe_code)]
@@ -7955,7 +7958,6 @@ impl Machine {
             let Some((cpu, after)) = rest.split_first_mut() else {
                 break;
             };
-
             if cpu.state.halted {
                 continue;
             }
