@@ -4,6 +4,7 @@ use aero_image_chunker::{chunk_disk_to_vecs, ChecksumAlgorithm, ImageFormat};
 use aero_storage::{
     AeroSparseConfig, AeroSparseDisk, MemBackend, StorageBackend, VirtualDisk, SECTOR_SIZE,
 };
+use sha2::{Digest, Sha256};
 use tempfile::NamedTempFile;
 
 const QCOW2_OFLAG_COPIED: u64 = 1 << 63;
@@ -25,6 +26,12 @@ fn persist_mem_backend(backend: MemBackend) -> NamedTempFile {
         .expect("write temp image");
     tmp.as_file_mut().flush().expect("flush temp image");
     tmp
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    hex::encode(hasher.finalize())
 }
 
 fn make_qcow2_with_pattern(virtual_size: u64) -> MemBackend {
@@ -175,7 +182,7 @@ fn chunking_aerosparse_uses_virtual_disk_bytes() {
     expected[0..5].copy_from_slice(b"hello");
     expected[5000..5004].copy_from_slice(&[1, 2, 3, 4]);
 
-    let actual: Vec<u8> = chunks.into_iter().flatten().collect();
+    let actual: Vec<u8> = chunks.iter().flat_map(|c| c.iter()).copied().collect();
     assert_eq!(actual, expected);
 }
 
@@ -191,7 +198,7 @@ fn chunking_qcow2_uses_virtual_disk_bytes() {
         tmp.path(),
         ImageFormat::Auto,
         chunk_size,
-        ChecksumAlgorithm::None,
+        ChecksumAlgorithm::Sha256,
     )
     .unwrap();
 
@@ -203,8 +210,18 @@ fn chunking_qcow2_uses_virtual_disk_bytes() {
     let mut expected = vec![0u8; disk_size_bytes as usize];
     expected[0..12].copy_from_slice(b"hello qcow2!");
 
-    let actual: Vec<u8> = chunks.into_iter().flatten().collect();
+    let actual: Vec<u8> = chunks.iter().flat_map(|c| c.iter()).copied().collect();
     assert_eq!(actual, expected);
+
+    // Ensure per-chunk sha256 covers the expanded virtual disk bytes (not the container file bytes).
+    for (i, chunk) in chunks.iter().enumerate() {
+        let expected = sha256_hex(chunk);
+        let actual = manifest.chunks[i]
+            .sha256
+            .as_deref()
+            .expect("sha256 present");
+        assert_eq!(actual, expected, "sha256 mismatch for qcow2 chunk {i}");
+    }
 }
 
 #[test]
@@ -219,7 +236,7 @@ fn chunking_vhd_uses_virtual_disk_bytes() {
         tmp.path(),
         ImageFormat::Auto,
         chunk_size,
-        ChecksumAlgorithm::None,
+        ChecksumAlgorithm::Sha256,
     )
     .unwrap();
 
@@ -231,6 +248,15 @@ fn chunking_vhd_uses_virtual_disk_bytes() {
     let mut expected = vec![0u8; disk_size_bytes as usize];
     expected[0..10].copy_from_slice(b"hello vhd!");
 
-    let actual: Vec<u8> = chunks.into_iter().flatten().collect();
+    let actual: Vec<u8> = chunks.iter().flat_map(|c| c.iter()).copied().collect();
     assert_eq!(actual, expected);
+
+    for (i, chunk) in chunks.iter().enumerate() {
+        let expected = sha256_hex(chunk);
+        let actual = manifest.chunks[i]
+            .sha256
+            .as_deref()
+            .expect("sha256 present");
+        assert_eq!(actual, expected, "sha256 mismatch for vhd chunk {i}");
+    }
 }
