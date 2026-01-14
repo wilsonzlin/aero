@@ -159,6 +159,9 @@ Notes:
 
 - `chunks.length` **MUST** equal `chunkCount` if present.
 - If `chunks` is omitted, the client assumes all chunks are size `chunkSize` except the last, which is derived from `totalSize`.
+- `totalSize` is the size in bytes of the **logical disk byte stream** (what the guest sees / `VirtualDisk::capacity_bytes()`).
+  - For raw disk images, this is typically the same as the input file length.
+  - For sparse/container formats (qcow2/VHD/AeroSparse), this may differ from the on-disk container file size.
 - `sha256` is optional to reduce manifest size and hashing cost; it is strongly recommended when serving from untrusted infrastructure.
 
 ### 1.4 Versioning / immutability
@@ -167,7 +170,7 @@ To safely apply long-lived caching (`immutable`), chunk URLs must never change c
 
 Recommended approach:
 
-- `version` is derived from the *entire* disk image content (e.g., `sha256-<digest>`).
+- `version` is derived from the *entire* logical disk byte stream content (e.g., `sha256-<digest>` over the same bytes that will be served in chunks).
 - All objects are stored under `images/<imageId>/<version>/...`.
 
 This ensures:
@@ -259,8 +262,8 @@ Note on input formats:
 ### 3.1 Pipeline steps
 
 1. **Ingest disk image**
-   - Accept an uploaded image (raw or already-prepared format).
-   - Determine `totalSize` (bytes).
+    - Accept an uploaded image (raw or already-prepared format).
+    - Determine `totalSize` (bytes of the logical disk byte stream / disk capacity).
 
 2. **Choose chunk parameters**
    - Select `chunkSize` (configurable; default 4 MiB).
@@ -268,11 +271,11 @@ Note on input formats:
    - Choose `chunkIndexWidth` (recommend 8).
 
 3. **Split into chunks + hash**
-   - Stream-read the input image sequentially.
-   - For each `chunkIndex`:
-     - Read `min(chunkSize, remainingBytes)` into a buffer.
-     - Optionally compute `sha256` over the chunk bytes.
-     - Record `{ size, sha256? }` in an in-memory manifest structure.
+    - Stream-read the logical disk byte stream sequentially.
+    - For each `chunkIndex`:
+      - Read `min(chunkSize, remainingBytes)` into a buffer.
+      - Optionally compute `sha256` over the chunk bytes.
+      - Record `{ size, sha256? }` in an in-memory manifest structure.
 
 4. **Upload chunks (parallel)**
    - Upload each chunk as an independent object at the computed name.
