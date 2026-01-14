@@ -2630,6 +2630,24 @@ mod tests {
         assert_eq!(dev.port_read(0x3D4, 2), 0x120E);
     }
 
+    #[test]
+    fn outw_to_crtc_mono_index_port_writes_index_and_data() {
+        let mut dev = VgaDevice::new();
+
+        dev.port_write(0x3B4, 2, 0x120E);
+
+        assert_eq!(dev.crtc_index, 0x0E);
+        assert_eq!(dev.crtc[0x0E], 0x12);
+    }
+
+    #[test]
+    fn inw_from_crtc_mono_index_port_returns_index_and_data() {
+        let mut dev = VgaDevice::new();
+
+        dev.port_write(0x3B4, 2, 0x120E);
+        assert_eq!(dev.port_read(0x3B4, 2), 0x120E);
+    }
+
     #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
     #[test]
     fn scanout_update_reports_legacy_text_in_text_mode() {
