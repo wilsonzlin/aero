@@ -335,6 +335,92 @@ void TestIndexedTriangleListInstancedDivisor() {
   assert(std::memcmp(payload1, expected_vb1.data(), expected_vb1.size()) == 0);
 }
 
+void TestIndexedTriangleListNegativeBaseVertex() {
+  aerogpu::Adapter adapter{};
+  aerogpu::Device dev(&adapter);
+  D3DDDI_HDEVICE hDevice{};
+  hDevice.pDrvPrivate = &dev;
+
+  aerogpu::Shader vs{};
+  aerogpu::Shader ps{};
+  BindTestShaders(dev, vs, ps);
+
+  aerogpu::VertexDecl decl{};
+  BindTestDecl(dev, decl);
+
+  // Stream 0 has a positive byte offset and a negative base_vertex, which is a
+  // valid D3D9 pattern (indices can reference vertices "before" the stream
+  // offset).
+  const Vec4 vertices[3] = {
+      {0.0f, 0.0f, 0.0f, 1.0f},
+      {1.0f, 0.0f, 0.0f, 1.0f},
+      {0.0f, 1.0f, 0.0f, 1.0f},
+  };
+  aerogpu::Resource vb0{};
+  vb0.handle = 0x250;
+  vb0.kind = aerogpu::ResourceKind::Buffer;
+  vb0.size_bytes = sizeof(vertices);
+  vb0.storage.resize(sizeof(vertices));
+  std::memcpy(vb0.storage.data(), vertices, sizeof(vertices));
+
+  const InstanceData instances[2] = {
+      {{10.0f, 0.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f, 1.0f}},
+      {{20.0f, 0.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f, 1.0f}},
+  };
+  aerogpu::Resource vb1{};
+  vb1.handle = 0x251;
+  vb1.kind = aerogpu::ResourceKind::Buffer;
+  vb1.size_bytes = sizeof(instances);
+  vb1.storage.resize(sizeof(instances));
+  std::memcpy(vb1.storage.data(), instances, sizeof(instances));
+
+  const uint16_t indices_u16[3] = {0, 1, 2};
+  aerogpu::Resource ib{};
+  ib.handle = 0x252;
+  ib.kind = aerogpu::ResourceKind::Buffer;
+  ib.size_bytes = sizeof(indices_u16);
+  ib.storage.resize(sizeof(indices_u16));
+  std::memcpy(ib.storage.data(), indices_u16, sizeof(indices_u16));
+
+  dev.streams[0] = {&vb0, static_cast<uint32_t>(sizeof(Vec4) * 2), sizeof(Vec4)};
+  dev.streams[1] = {&vb1, 0, sizeof(InstanceData)};
+  dev.index_buffer = &ib;
+  dev.index_format = static_cast<D3DDDIFORMAT>(101); // D3DFMT_INDEX16
+  dev.index_offset_bytes = 0;
+
+  dev.stream_source_freq[0] = kD3DStreamSourceIndexedData | 2u;
+  dev.stream_source_freq[1] = kD3DStreamSourceInstanceData | 1u;
+
+  const HRESULT hr = aerogpu::device_draw_indexed_primitive(
+      hDevice,
+      D3DDDIPT_TRIANGLELIST,
+      /*base_vertex=*/-2,
+      /*min_index=*/0,
+      /*num_vertices=*/3,
+      /*start_index=*/0,
+      /*primitive_count=*/1);
+  assert(hr == S_OK);
+
+  dev.cmd.finalize();
+  const uint8_t* buf = dev.cmd.data();
+  const size_t len = dev.cmd.size();
+
+  assert(dev.instancing_vertex_buffers[0] != nullptr);
+  const aerogpu_cmd_upload_resource* upload0 =
+      FindLastUploadForHandle(buf, len, dev.instancing_vertex_buffers[0]->handle);
+  assert(upload0 != nullptr);
+
+  // Validate expanded stream 0 upload: 2 instances => [v0,v1,v2,v0,v1,v2].
+  const size_t expected_vb0_bytes = sizeof(vertices) * 2;
+  assert(upload0->offset_bytes == 0);
+  assert(upload0->size_bytes == expected_vb0_bytes);
+  std::vector<uint8_t> expected_vb0(expected_vb0_bytes, 0);
+  std::memcpy(expected_vb0.data() + 0, vertices, sizeof(vertices));
+  std::memcpy(expected_vb0.data() + sizeof(vertices), vertices, sizeof(vertices));
+  const uint8_t* payload0 = reinterpret_cast<const uint8_t*>(upload0) + sizeof(*upload0);
+  assert(std::memcmp(payload0, expected_vb0.data(), expected_vb0.size()) == 0);
+}
+
 void TestNonIndexedTriangleListBasic() {
   aerogpu::Adapter adapter{};
   aerogpu::Device dev(&adapter);
@@ -601,6 +687,7 @@ void TestIndexedTriangleStripUsesBaseVertexNoIndexExpansion() {
 int main() {
   TestIndexedTriangleListBasic();
   TestIndexedTriangleListInstancedDivisor();
+  TestIndexedTriangleListNegativeBaseVertex();
   TestNonIndexedTriangleListBasic();
   TestNonIndexedTriangleStripDrawsPerInstance();
   TestIndexedTriangleStripUsesBaseVertexNoIndexExpansion();

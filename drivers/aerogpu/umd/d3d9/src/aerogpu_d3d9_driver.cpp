@@ -22000,13 +22000,37 @@ HRESULT try_draw_instanced_indexed_primitive_locked(
   }
 
   const int64_t vertex_start_signed = static_cast<int64_t>(base_vertex) + static_cast<int64_t>(min_index);
-  if (vertex_start_signed < 0) {
-    return E_INVALIDARG;
-  }
-  if (vertex_start_signed > static_cast<int64_t>(std::numeric_limits<uint32_t>::max())) {
-    return E_INVALIDARG;
-  }
-  const uint32_t vertex_start = static_cast<uint32_t>(vertex_start_signed);
+  auto compute_vertex_base_offset = [&](uint32_t offset_bytes, uint64_t stride, uint64_t* out) -> bool {
+    if (!out || stride == 0) {
+      return false;
+    }
+    const uint64_t base = static_cast<uint64_t>(offset_bytes);
+    if (vertex_start_signed >= 0) {
+      const uint64_t v = static_cast<uint64_t>(vertex_start_signed);
+      if (v != 0 && stride > (std::numeric_limits<uint64_t>::max() / v)) {
+        return false;
+      }
+      const uint64_t delta = v * stride;
+      if (delta > (std::numeric_limits<uint64_t>::max() - base)) {
+        return false;
+      }
+      *out = base + delta;
+      return true;
+    }
+    if (vertex_start_signed == std::numeric_limits<int64_t>::min()) {
+      return false;
+    }
+    const uint64_t v = static_cast<uint64_t>(-vertex_start_signed);
+    if (v != 0 && stride > (std::numeric_limits<uint64_t>::max() / v)) {
+      return false;
+    }
+    const uint64_t delta = v * stride;
+    if (delta > base) {
+      return false;
+    }
+    *out = base - delta;
+    return true;
+  };
 
   if (single_draw_safe) {
     // CPU-expand all participating streams *before* mutating stream bindings.
@@ -22059,8 +22083,10 @@ HRESULT try_draw_instanced_indexed_primitive_locked(
           }
         }
       } else {
-        const uint64_t src_offset =
-            static_cast<uint64_t>(ss.offset_bytes) + static_cast<uint64_t>(vertex_start) * stride;
+        uint64_t src_offset = 0;
+        if (!compute_vertex_base_offset(ss.offset_bytes, stride, &src_offset)) {
+          return E_INVALIDARG;
+        }
         const uint64_t src_size = static_cast<uint64_t>(num_vertices) * stride;
         ScopedResourceRead src;
         hr = src.lock(dev, ss.vb, src_offset, src_size, "instancing VB(vtx)");
@@ -22261,8 +22287,10 @@ HRESULT try_draw_instanced_indexed_primitive_locked(
         return FAILED(hr) ? hr : E_INVALIDARG;
       }
     } else {
-      const uint64_t vertex_base_u64 = static_cast<uint64_t>(ss.offset_bytes) +
-                                       static_cast<uint64_t>(vertex_start) * stride;
+      uint64_t vertex_base_u64 = 0;
+      if (!compute_vertex_base_offset(ss.offset_bytes, stride, &vertex_base_u64)) {
+        return E_INVALIDARG;
+      }
       const uint64_t src_size = static_cast<uint64_t>(num_vertices) * stride;
       if (vertex_base_u64 > ss.vb->size_bytes || src_size > ss.vb->size_bytes - vertex_base_u64) {
         return E_INVALIDARG;
@@ -22315,9 +22343,9 @@ HRESULT try_draw_instanced_indexed_primitive_locked(
         return device_lost_override(dev, E_OUTOFMEMORY);
       }
     } else {
-      const uint64_t delta_bytes = static_cast<uint64_t>(vertex_start) * stride;
-      const uint64_t new_offset_u64 = static_cast<uint64_t>(saved.offset_bytes) + delta_bytes;
-      if (new_offset_u64 > std::numeric_limits<uint32_t>::max()) {
+      uint64_t new_offset_u64 = 0;
+      if (!compute_vertex_base_offset(saved.offset_bytes, stride, &new_offset_u64)
+          || new_offset_u64 > std::numeric_limits<uint32_t>::max()) {
         (void)restore_streams();
         return E_INVALIDARG;
       }
