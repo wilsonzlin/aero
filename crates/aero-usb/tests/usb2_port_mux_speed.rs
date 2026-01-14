@@ -5,10 +5,10 @@ use aero_usb::{UsbSpeed, UsbWebUsbPassthroughDevice};
 const EHCI_PORT_CCS: u32 = 1 << 0;
 const EHCI_PORT_FPR: u32 = 1 << 6;
 const EHCI_PORT_SUSP: u32 = 1 << 7;
+const EHCI_PORT_PR: u32 = 1 << 8;
 const EHCI_PORT_HSP: u32 = 1 << 9;
 const EHCI_PORT_LS_MASK: u32 = 0b11 << 10;
 const EHCI_PORT_OWNER: u32 = 1 << 13;
-const EHCI_PORT_PR: u32 = 1 << 8;
 
 #[test]
 fn usb2_port_mux_ehci_portsc_reports_device_speed() {

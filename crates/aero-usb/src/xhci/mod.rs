@@ -10,15 +10,17 @@
 //!
 //! The controller implementation here is intentionally small; it currently provides:
 //! - a minimal MMIO register file with basic size/unaligned access support
-//! - a DMA read on the first transition of `USBCMD.RUN` (to validate PCI BME gating in the wrapper)
+//! - a small DMA read on the rising edge of `USBCMD.RUN` (to validate PCI BME gating in the wrapper;
+//!   may be deferred until the next tick if DMA isn't available during the MMIO write)
 //! - interrupter 0 event ring delivery (ERST/ERDP/IMAN) with a bounded pre-ERST pending queue
 //! - a level-triggered `irq_level()` surface (to validate PCI INTx disable gating)
 //! - DCBAAP register storage + controller-local slot allocation (Enable Slot scaffolding)
 //! - a minimal runtime interrupter 0 register block + guest event ring producer (ERST-based)
 //! - snapshot/restore support (including basic USB topology) for VM save/restore
 //!
-//! Full xHCI semantics (doorbells, command ring execution, device contexts, multi-interrupter
-//! MSI/MSI-X, etc) remain future work.
+//! The controller also exposes doorbells and bounded command ring/transfer execution, but full xHCI
+//! semantics (complete command/transfer state machines, SuperSpeed, multi-interrupter MSI/MSI-X,
+//! etc) remain future work.
 //!
 //! In addition:
 //! - `command_ring` provides a minimal command ring + event ring processor used by unit tests and
