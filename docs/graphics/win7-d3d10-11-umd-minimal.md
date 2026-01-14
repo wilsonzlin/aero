@@ -378,19 +378,20 @@ Geometry shader note:
 
 * Geometry shaders are part of the D3D10-class pipeline and are expected at `D3D_FEATURE_LEVEL_10_0` and above.
 * If you advertise **FL10_0** (or higher) from `pfnGetCaps`, implement `pfnCreateGeometryShader` / `D3D11DDIARG_CREATEGEOMETRYSHADER` (and the corresponding bind/state entrypoints) even if the first implementation is “limited but functional”.
-  * **Outdated MVP note:** earlier bring-up guidance suggested “accept GS creation but ignore it”. This is no longer viable once you run real GS workloads and the Win7 regression tests below.
-  * **AeroGPU approach (current): forward GS DXBC and emulate on the host (WebGPU).**
+  * **Outdated MVP note:** earlier bring-up guidance suggested “accept GS creation but ignore it”. This is only acceptable for very early bring-up; real apps and the Win7 regression tests below require functional GS execution.
+  * **AeroGPU approach (target): forward GS DXBC and emulate on the host (WebGPU).**
     * The guest UMD treats GS like VS/PS: it forwards the DXBC blob to the host and participates in normal shader lifetime + binding.
     * Since WebGPU has **no GS stage**, AeroGPU emulates GS by inserting a **compute prepass** when a GS is bound:
       1. run the D3D VS as compute (vertex pulling into a scratch buffer),
       2. run the D3D GS as compute to expand primitives into “expanded” vertex/index buffers (plus indirect draw args),
       3. render those buffers with a passthrough VS + the original PS.
+    * **Current repo status:** the host-side executor’s GS/HS/DS compute-prepass path is still a placeholder (fixed triangles) and does **not** execute guest GS DXBC yet; treat the above as the intended design until the prepass is wired to real GS execution. See [`docs/graphics/status.md`](./status.md) and [`geometry-shader-emulation.md`](./geometry-shader-emulation.md).
     * This is **internal** WebGPU compute; it does *not* require exposing the D3D11 compute shader stage (you can still keep D3D11 CS as `NOT_SUPPORTED` initially).
     * Details: [`geometry-shader-emulation.md`](./geometry-shader-emulation.md).
-* Win7 regression tests that define the minimum semantics:
+* Win7 regression tests that define the minimum semantics to target:
   * `drivers/aerogpu/tests/win7/d3d11_geometry_shader_smoke` — basic GS create/bind/execute path.
   * `drivers/aerogpu/tests/win7/d3d11_geometry_shader_restart_strip` — validates `TriangleStream::RestartStrip` / DXBC `cut` handling.
-    * This matters because AeroGPU expands `triangle_strip` GS output into a list topology for rendering; if you drop the cut/restart markers you can generate “bridging” triangles between strips (visible corruption, and this test fails by detecting pixels filled in the gap between two emitted strips).
+    * This matters because the intended AeroGPU GS emulation expands `triangle_strip` output into a list topology for rendering; if you drop the cut/restart markers you can generate “bridging” triangles between strips (visible corruption, and this test fails by detecting pixels filled in the gap between two emitted strips).
 * If you are not ready to support GS (e.g. host backend without compute), prefer advertising only `D3D_FEATURE_LEVEL_9_x` for D3D11 (while still supporting D3D10 separately), or be explicit that some FL10_0 apps will fail when they create/bind GS.
 
 #### 2.2.3 Mandatory context/state binding + draw path
