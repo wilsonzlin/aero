@@ -51,6 +51,13 @@ namespace {
 constexpr HRESULT kD3DErrInvalidCall = 0x8876086CUL;
 constexpr uint32_t kD3d9ShaderStageVs = 0u;
 constexpr uint32_t kD3d9ShaderStagePs = 1u;
+
+// Fixed-function WVP constant block used by the D3D9 UMD. Keep local numeric
+// constants so these tests remain portable (they build without the Windows
+// SDK/WDK).
+constexpr uint32_t kFixedfuncMatrixStartRegister = 240u;
+constexpr uint32_t kFixedfuncMatrixVec4Count = 4u;
+
 constexpr D3DDDIFORMAT kD3dFmtIndex16 = static_cast<D3DDDIFORMAT>(101); // D3DFMT_INDEX16
 constexpr D3DDDIFORMAT kD3dFmtIndex32 = static_cast<D3DDDIFORMAT>(102); // D3DFMT_INDEX32
 
@@ -419,8 +426,8 @@ CmdLoc FindLastVsWvpConstants(const uint8_t* buf, size_t capacity) {
                                      capacity,
                                      stream_len,
                                      AEROGPU_SHADER_STAGE_VERTEX,
-                                     /*start_register=*/240u,
-                                     /*vec4_count=*/4u);
+                                     kFixedfuncMatrixStartRegister,
+                                     kFixedfuncMatrixVec4Count);
 }
 
 bool CheckWvpConstantsUploadedBeforeDraw(const uint8_t* buf,
@@ -431,20 +438,19 @@ bool CheckWvpConstantsUploadedBeforeDraw(const uint8_t* buf,
   if (!buf || !wvp_row_major) {
     return Check(false, "CheckWvpConstantsUploadedBeforeDraw: invalid args");
   }
-  constexpr uint32_t kWvpStartReg = 240u;
-  constexpr uint32_t kWvpVec4Count = 4u;
 
   const CmdLoc loc = FindLastShaderConstsFBefore(buf,
                                                  capacity,
                                                  draw_offset,
                                                  AEROGPU_SHADER_STAGE_VERTEX,
-                                                 kWvpStartReg,
-                                                 kWvpVec4Count);
+                                                 kFixedfuncMatrixStartRegister,
+                                                 kFixedfuncMatrixVec4Count);
   if (!Check(loc.hdr != nullptr, what)) {
     return false;
   }
   const auto* cmd = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(loc.hdr);
-  if (!Check(cmd->hdr.size_bytes >= sizeof(*cmd) + (kWvpVec4Count * 4u * sizeof(float)), "WVP constant payload present")) {
+  if (!Check(cmd->hdr.size_bytes >= sizeof(*cmd) + (kFixedfuncMatrixVec4Count * 4u * sizeof(float)),
+             "WVP constant payload present")) {
     return false;
   }
 
@@ -17964,7 +17970,11 @@ bool TestFvfXyzDiffuseTex1ReuploadsWvpAfterUserVsClobbersConstants() {
   for (int i = 0; i < 16; ++i) {
     clobber[i] = 99.0f;
   }
-  hr = cleanup.device_funcs.pfnSetShaderConstF(create_dev.hDevice, kD3d9ShaderStageVs, 240, clobber, 4);
+  hr = cleanup.device_funcs.pfnSetShaderConstF(create_dev.hDevice,
+                                               kD3d9ShaderStageVs,
+                                               kFixedfuncMatrixStartRegister,
+                                               clobber,
+                                               kFixedfuncMatrixVec4Count);
   if (!Check(hr == S_OK, "SetShaderConstF(VS, c240..c243)")) {
     return false;
   }

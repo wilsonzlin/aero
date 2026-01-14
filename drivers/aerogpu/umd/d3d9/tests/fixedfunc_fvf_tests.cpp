@@ -6080,7 +6080,7 @@ bool TestPsOnlyInteropXyzNormalIgnoresLightingAndDoesNotUploadLightingConstants(
 
   // The synthesized fixed-function VS for `XYZ | NORMAL` uses the WVP constant
   // range (c240..c243) even when lighting is enabled but ignored under interop.
-  if (!Check(CountVsConstantUploads(buf, len, /*start_register=*/240u, /*vec4_count=*/4u) >= 1,
+  if (!Check(CountVsConstantUploads(buf, len, kFixedfuncMatrixStartRegister, kFixedfuncMatrixVec4Count) >= 1,
              "PS-only interop: uploaded WVP constants")) {
     return false;
   }
@@ -6177,14 +6177,12 @@ bool TestPsOnlyInteropXyzNormalTex1IgnoresLightingAndDoesNotUploadLightingConsta
   // The synthesized fixed-function VS for `XYZ | NORMAL | TEX1` uses the WVP
   // constant range (c240..c243) even when lighting is enabled but ignored under
   // interop.
-  if (!Check(CountVsConstantUploads(buf, len, /*start_register=*/240u, /*vec4_count=*/4u) >= 1,
+  if (!Check(CountVsConstantUploads(buf, len, kFixedfuncMatrixStartRegister, kFixedfuncMatrixVec4Count) >= 1,
              "PS-only interop: uploaded WVP constants")) {
     return false;
   }
 
-  constexpr uint32_t kLightingStart = 208u;
-  constexpr uint32_t kLightingVec4 = 29u;
-  if (!Check(CountVsConstantUploads(buf, len, kLightingStart, kLightingVec4) == 0,
+  if (!Check(CountVsConstantUploads(buf, len, kFixedfuncLightingStartRegister, kFixedfuncLightingVec4Count) == 0,
              "PS-only interop: does not upload fixed-function lighting constants")) {
     return false;
   }

@@ -14,6 +14,12 @@ namespace aerogpu {
 constexpr uint32_t kD3d9ShaderStageVs = 0u;
 constexpr uint32_t kD3d9ShaderStagePs = 1u;
 
+// Fixed-function WVP constant block used by the D3D9 UMD. Keep local numeric
+// constants so these tests remain portable (they build without the Windows
+// SDK/WDK).
+constexpr uint32_t kFixedfuncMatrixStartRegister = 240u;
+constexpr uint32_t kFixedfuncMatrixVec4Count = 4u;
+
 // Host-test helper (defined in `src/aerogpu_d3d9_driver.cpp` under "Host-side test
 // entrypoints") used to simulate a user-visible shader state without requiring
 // a DDI call sequence.
@@ -1495,9 +1501,9 @@ bool TestPsOnlyXyzDiffuseBindsWvpVs() {
     const float zeros[16] = {};
     hr = cleanup.device_funcs.pfnSetShaderConstF(cleanup.hDevice,
                                                  kD3d9ShaderStageVs,
-                                                 /*start_reg=*/240,
+                                                 /*start_reg=*/kFixedfuncMatrixStartRegister,
                                                  zeros,
-                                                 /*vec4_count=*/4);
+                                                 /*vec4_count=*/kFixedfuncMatrixVec4Count);
     if (!Check(hr == S_OK, "SetShaderConstF(clobber fixedfunc WVP range)")) {
       return false;
     }
@@ -1577,7 +1583,9 @@ bool TestPsOnlyXyzDiffuseBindsWvpVs() {
     if (hdr->opcode == AEROGPU_CMD_SET_SHADER_CONSTANTS_F &&
         hdr->size_bytes >= sizeof(aerogpu_cmd_set_shader_constants_f) + sizeof(expected_wvp_cols)) {
       const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(hdr);
-      if (sc->stage == AEROGPU_SHADER_STAGE_VERTEX && sc->start_register == 240 && sc->vec4_count == 4) {
+      if (sc->stage == AEROGPU_SHADER_STAGE_VERTEX &&
+          sc->start_register == kFixedfuncMatrixStartRegister &&
+          sc->vec4_count == kFixedfuncMatrixVec4Count) {
         const float* payload = reinterpret_cast<const float*>(
             reinterpret_cast<const uint8_t*>(sc) + sizeof(aerogpu_cmd_set_shader_constants_f));
         if (std::memcmp(payload, expected_wvp_cols, sizeof(expected_wvp_cols)) == 0) {
