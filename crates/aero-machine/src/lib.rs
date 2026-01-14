@@ -7179,9 +7179,25 @@ impl Machine {
 
     /// Inject a browser-style keyboard code into the i8042 controller, if present.
     pub fn inject_browser_key(&mut self, code: &str, pressed: bool) {
-        if let Some(ctrl) = &self.i8042 {
-            ctrl.borrow_mut().inject_browser_key(code, pressed);
+        // `Machine::inject_browser_key` is primarily a PS/2 injection API (i8042), but browsers
+        // expose several "media keys" (volume/playback/navigation) as `KeyboardEvent.code` values
+        // that do not have stable PS/2 Set-2 scancode assignments. Those live on the HID Consumer
+        // usage page (0x0C), and are modeled by Aero as a separate synthetic USB HID device.
+        //
+        // To keep the injection surface ergonomic for callers that only have DOM `code` strings,
+        // fall back to the synthetic consumer-control device when the code is not representable
+        // as a PS/2 scancode.
+        if aero_devices_input::scancode::browser_code_to_set2(code).is_some() {
+            if let Some(ctrl) = &self.i8042 {
+                ctrl.borrow_mut().inject_browser_key(code, pressed);
+            }
+            return;
         }
+
+        let Some(usage) = aero_usb::hid::usage::keyboard_code_to_consumer_usage(code) else {
+            return;
+        };
+        self.inject_usb_hid_consumer_usage(u32::from(usage), pressed);
     }
 
     /// Inject raw PS/2 Set-2 keyboard scancode bytes into the i8042 controller, if present.

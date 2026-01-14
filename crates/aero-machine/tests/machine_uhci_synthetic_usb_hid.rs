@@ -55,7 +55,7 @@ fn configure_consumer_for_reports(consumer: &mut aero_usb::hid::UsbHidConsumerCo
     );
     assert!(
         consumer.configured(),
-        "consumer-control should now be configured"
+        "consumer-control device should now be configured"
     );
 }
 
@@ -252,6 +252,30 @@ fn uhci_synthetic_usb_hid_handles_survive_reset_and_snapshot_restore() {
         poll_consumer_interrupt_in(&mut restored),
         0x00cd,
         "after snapshot restore",
+    );
+}
+
+#[test]
+fn inject_browser_key_routes_consumer_keys_to_synthetic_usb_consumer_control() {
+    let mut m = Machine::new(synthetic_usb_hid_cfg()).unwrap();
+
+    let mut consumer = m
+        .usb_hid_consumer_control_handle()
+        .expect("synthetic consumer-control handle should be present");
+    configure_consumer_for_reports(&mut consumer);
+
+    m.inject_browser_key("AudioVolumeUp", true);
+    expect_consumer_control_report(
+        poll_consumer_interrupt_in(&mut m),
+        0x00e9,
+        "after inject_browser_key keydown",
+    );
+
+    m.inject_browser_key("AudioVolumeUp", false);
+    expect_consumer_control_report(
+        poll_consumer_interrupt_in(&mut m),
+        0,
+        "after inject_browser_key keyup",
     );
 }
 
