@@ -1137,7 +1137,12 @@ export async function saveIoWorkerVmSnapshotToOpfs(opts: {
 
   // Fresh device blobs produced by this IO worker.
   const freshDevices: IoWorkerSnapshotDeviceState[] = collectIoWorkerSnapshotDeviceStates(opts.runtimes);
-  freshDevices.push(...snapshotVramDeviceStates(opts.vram));
+  // Avoid persisting VRAM twice when both the legacy `gpu.vram` path and the newer reserved-id VRAM
+  // path are wired up. Prefer the reserved-id format when `vramU8` is provided (IO worker BAR1
+  // mapping).
+  if (!(opts.vramU8 && opts.vramU8.byteLength)) {
+    freshDevices.push(...snapshotVramDeviceStates(opts.vram));
+  }
 
   // Merge in any coordinator-provided device blobs (e.g. CPU-owned device state like CPU_INTERNAL).
   // Treat these as "fresh" so they override any cached restored blobs of the same kind.
@@ -1309,13 +1314,14 @@ export async function restoreIoWorkerVmSnapshotFromOpfs(opts: {
     let vramChunkBytes = (opts.vramChunkBytes ?? IO_WORKER_VRAM_SNAPSHOT_MAX_CHUNK_BYTES) >>> 0;
     if (!Number.isFinite(vramChunkBytes) || vramChunkBytes <= 0) vramChunkBytes = IO_WORKER_VRAM_SNAPSHOT_MAX_CHUNK_BYTES;
     if (vramChunkBytes > IO_WORKER_VRAM_SNAPSHOT_MAX_CHUNK_BYTES) vramChunkBytes = IO_WORKER_VRAM_SNAPSHOT_MAX_CHUNK_BYTES;
-    let sawVram = false;
+    let vramApplied = false;
+    let reservedVramApplied = false;
     let vramCleared = false;
     let warnedNoVramBuffer = false;
     let warnedVramTruncate = false;
     // When multiple USB blobs are present (shouldn't happen), prefer the canonical kind over legacy
     // aliases so restores are deterministic.
-    const vramChunks: Uint8Array[] = [];
+    const gpuVramChunks: Uint8Array[] = [];
     let usbBytes: Uint8Array | null = null;
     let usbPriority = -1;
     let i8042Bytes: Uint8Array | null = null;
@@ -1337,13 +1343,12 @@ export async function restoreIoWorkerVmSnapshotFromOpfs(opts: {
         kind = VM_SNAPSHOT_DEVICE_PCI_CFG_KIND;
       }
       if (kind === VM_SNAPSHOT_DEVICE_GPU_VRAM_KIND) {
-        vramChunks.push(e.bytes);
+        gpuVramChunks.push(e.bytes);
         continue;
       }
 
       const vramChunkIndex = ioWorkerVramSnapshotChunkIndexFromDeviceKind(kind);
       if (vramChunkIndex !== null) {
-        sawVram = true;
         if (!vramU8) {
           if (!warnedNoVramBuffer) {
             warnedNoVramBuffer = true;
@@ -1351,6 +1356,8 @@ export async function restoreIoWorkerVmSnapshotFromOpfs(opts: {
           }
           continue;
         }
+        vramApplied = true;
+        reservedVramApplied = true;
 
         if (!vramCleared) {
           // Clear first so stale scanout pixels / allocations don't persist when restoring partial
@@ -1417,7 +1424,36 @@ export async function restoreIoWorkerVmSnapshotFromOpfs(opts: {
     if (e1000Bytes) restoreNetE1000DeviceState(opts.runtimes.netE1000, e1000Bytes);
     if (pciBytes) restorePciDeviceState(opts.runtimes.pciBus ?? null, pciBytes);
     if (stackBytes) restoreNetStackDeviceState(opts.runtimes.netStack, stackBytes, { tcpRestorePolicy: "drop" });
-    if (opts.vram) applyVramSnapshotToBuffer(opts.vram, vramChunks);
+    // Backwards compatibility: older snapshots stored VRAM in `gpu.vram` (DeviceId::GPU_VRAM).
+    // When using the reserved-id VRAM snapshot format (`vramU8`), prefer those chunks if present;
+    // otherwise, fall back to applying any `gpu.vram` chunks into `vramU8` so older snapshots still
+    // restore scanout surfaces.
+    if (!reservedVramApplied) {
+      const legacyVram = opts.vram ?? null;
+      if (legacyVram) {
+        try {
+          applyVramSnapshotToBuffer(legacyVram, gpuVramChunks);
+        } catch (err) {
+          console.warn("[io.worker] Failed to apply gpu.vram snapshot blob(s); clearing VRAM buffer.", err);
+          try {
+            legacyVram.fill(0);
+          } catch {
+            // ignore
+          }
+        }
+        if (vramU8 && legacyVram.buffer === vramU8.buffer) {
+          vramApplied = true;
+        }
+      } else if (vramU8 && gpuVramChunks.length) {
+        try {
+          applyVramSnapshotToBuffer(vramU8, gpuVramChunks);
+        } catch (err) {
+          console.warn("[io.worker] Failed to apply legacy gpu.vram snapshot blob(s) to VRAM buffer; clearing VRAM.", err);
+          vramU8.fill(0);
+        }
+        vramApplied = true;
+      }
+    }
 
     // Defensive dedupe: some historical/buggy snapshot producers may emit multiple USB entries
     // (e.g. both `usb` and legacy `usb.uhci`). Ensure the cached/restored device list contains
@@ -1447,11 +1483,9 @@ export async function restoreIoWorkerVmSnapshotFromOpfs(opts: {
       }
     }
 
-    // If the snapshot had no VRAM blobs but the runtime has a BAR1 mapping, clear it so stale
-    // scanout pixels don't persist across restore.
-    if (vramU8 && !sawVram) {
-      vramU8.fill(0);
-    }
+    // If the snapshot had no applicable VRAM blobs but the runtime has a BAR1 mapping, clear it so
+    // stale scanout pixels don't persist across restore.
+    if (vramU8 && !vramApplied) vramU8.fill(0);
 
     return {
       cpu: copyU8ToArrayBuffer(rec.cpu),
@@ -1471,12 +1505,13 @@ export async function restoreIoWorkerVmSnapshotFromOpfs(opts: {
 
     const devices: VmSnapshotDeviceBlob[] = [];
     const restoredDevices: IoWorkerSnapshotDeviceState[] = [];
-    const vramChunks: Uint8Array[] = [];
+    const gpuVramChunks: Uint8Array[] = [];
     const vramU8 = opts.vramU8 ?? null;
     let vramChunkBytes = (opts.vramChunkBytes ?? IO_WORKER_VRAM_SNAPSHOT_MAX_CHUNK_BYTES) >>> 0;
     if (!Number.isFinite(vramChunkBytes) || vramChunkBytes <= 0) vramChunkBytes = IO_WORKER_VRAM_SNAPSHOT_MAX_CHUNK_BYTES;
     if (vramChunkBytes > IO_WORKER_VRAM_SNAPSHOT_MAX_CHUNK_BYTES) vramChunkBytes = IO_WORKER_VRAM_SNAPSHOT_MAX_CHUNK_BYTES;
-    let sawVram = false;
+    let vramApplied = false;
+    let reservedVramApplied = false;
     let vramCleared = false;
     let warnedNoVramBuffer = false;
     let warnedVramTruncate = false;
@@ -1499,7 +1534,6 @@ export async function restoreIoWorkerVmSnapshotFromOpfs(opts: {
 
       const vramChunkIndex = ioWorkerVramSnapshotChunkIndexFromDeviceId(e.id);
       if (vramChunkIndex !== null) {
-        sawVram = true;
         if (!vramU8) {
           if (!warnedNoVramBuffer) {
             warnedNoVramBuffer = true;
@@ -1507,6 +1541,8 @@ export async function restoreIoWorkerVmSnapshotFromOpfs(opts: {
           }
           continue;
         }
+        vramApplied = true;
+        reservedVramApplied = true;
 
         if (!vramCleared) {
           vramU8.fill(0);
@@ -1542,7 +1578,7 @@ export async function restoreIoWorkerVmSnapshotFromOpfs(opts: {
       const canonicalKind = kindIsLegacyPci ? VM_SNAPSHOT_DEVICE_PCI_CFG_KIND : kind;
 
       if (canonicalKind === VM_SNAPSHOT_DEVICE_GPU_VRAM_KIND) {
-        vramChunks.push(e.data);
+        gpuVramChunks.push(e.data);
         continue;
       }
 
@@ -1567,7 +1603,32 @@ export async function restoreIoWorkerVmSnapshotFromOpfs(opts: {
     if (e1000Bytes) restoreNetE1000DeviceState(opts.runtimes.netE1000, e1000Bytes);
     if (pciBytes) restorePciDeviceState(opts.runtimes.pciBus ?? null, pciBytes);
     if (stackBytes) restoreNetStackDeviceState(opts.runtimes.netStack, stackBytes, { tcpRestorePolicy: "drop" });
-    if (opts.vram) applyVramSnapshotToBuffer(opts.vram, vramChunks);
+    if (!reservedVramApplied) {
+      const legacyVram = opts.vram ?? null;
+      if (legacyVram) {
+        try {
+          applyVramSnapshotToBuffer(legacyVram, gpuVramChunks);
+        } catch (err) {
+          console.warn("[io.worker] Failed to apply gpu.vram snapshot blob(s); clearing VRAM buffer.", err);
+          try {
+            legacyVram.fill(0);
+          } catch {
+            // ignore
+          }
+        }
+        if (vramU8 && legacyVram.buffer === vramU8.buffer) {
+          vramApplied = true;
+        }
+      } else if (vramU8 && gpuVramChunks.length) {
+        try {
+          applyVramSnapshotToBuffer(vramU8, gpuVramChunks);
+        } catch (err) {
+          console.warn("[io.worker] Failed to apply legacy gpu.vram snapshot blob(s) to VRAM buffer; clearing VRAM.", err);
+          vramU8.fill(0);
+        }
+        vramApplied = true;
+      }
+    }
 
     // Defensive dedupe: snapshots should not contain multiple entries for the same outer device id,
     // but be robust if they do. Keep exactly one `usb` entry in the cached/restored device list so
@@ -1597,9 +1658,7 @@ export async function restoreIoWorkerVmSnapshotFromOpfs(opts: {
       }
     }
 
-    if (vramU8 && !sawVram) {
-      vramU8.fill(0);
-    }
+    if (vramU8 && !vramApplied) vramU8.fill(0);
 
     return {
       cpu: copyU8ToArrayBuffer(rec.cpu),
