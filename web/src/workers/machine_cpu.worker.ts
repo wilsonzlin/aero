@@ -2,8 +2,9 @@
 
 import type { AeroConfig } from "../config/aero_config";
 import { decodeCommand, encodeEvent, type Command, type Event } from "../ipc/protocol";
-import { InputEventType } from "../input/event_queue";
 import { RingBuffer } from "../ipc/ring_buffer";
+import { UART_COM1 } from "../io/devices/uart16550";
+import { InputEventType } from "../input/event_queue";
 import { normalizeSetBootDisksMessage, type SetBootDisksMessage } from "../runtime/boot_disks_protocol";
 import { planMachineBootDiskAttachment } from "../runtime/machine_disk_attach";
 import {
@@ -20,6 +21,7 @@ import {
   ringRegionsForWorker,
   setReadyFlag,
   StatusIndex,
+  type GuestRamLayout,
   type SharedMemorySegments,
   type WorkerRole,
 } from "../runtime/shared_layout";
@@ -41,18 +43,19 @@ import {
   type VmSnapshotResumedMessage,
   type VmSnapshotSerializedError,
 } from "../runtime/snapshot_protocol";
-import { INPUT_BATCH_HEADER_WORDS, INPUT_BATCH_WORDS_PER_EVENT, validateInputBatchBuffer } from "./io_input_batch";
 import type { WasmApi } from "../runtime/wasm_loader";
+import { diskMetaToOpfsCowPaths } from "../storage/opfs_paths";
+import { INPUT_BATCH_HEADER_WORDS, INPUT_BATCH_WORDS_PER_EVENT, validateInputBatchBuffer } from "./io_input_batch";
 
 /**
- * Minimal "machine CPU" worker entrypoint.
+ * Canonical `api.Machine` CPU worker entrypoint.
  *
  * This worker participates in the coordinator's standard `config.update` + `init` protocol and
- * must be robust in environments where WASM builds are unavailable (e.g. CI runs with `--skip-wasm`).
+ * runs the canonical `api.Machine` (shared guest RAM) when WASM assets are available.
  *
- * NOTE: The current implementation only validates bootstrap wiring and does not yet drive a
- * full-system VM loop; it exists so the worker lifecycle and init contract can be tested via
- * `node:worker_threads` without depending on a built WASM module.
+ * Node `worker_threads` integration tests execute TypeScript sources directly (no Vite transforms)
+ * and typically do not have wasm-pack outputs available. WASM initialization is therefore
+ * best-effort and skipped entirely under Node.
  */
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
@@ -62,15 +65,18 @@ let status: Int32Array | null = null;
 let commandRing: RingBuffer | null = null;
 let eventRing: RingBuffer | null = null;
 let ioIpcSab: SharedArrayBuffer | null = null;
-let guestRamSizeBytes: number | null = null;
+let guestLayout: GuestRamLayout | null = null;
 
 let currentConfig: AeroConfig | null = null;
 let currentConfigVersion = 0;
+let networkWanted = false;
+let networkAttached = false;
 
-// Boot disk selection (shared protocol with the legacy IO worker).
-// The machine CPU worker does not yet use this to attach disks, but it validates compatibility
-// with the canonical `api.Machine` runtime so unsupported selections (IDB backend, remote
-// streaming, unsupported formats) fail fast.
+let running = false;
+let started = false;
+let vmSnapshotPaused = false;
+let machineBusy = false;
+
 let pendingBootDisks: SetBootDisksMessage | null = null;
 
 type InputBatchMessage = {
@@ -103,12 +109,21 @@ type MachineSnapshotRestoreMessage = {
 type MachineSnapshotRestoredMessage =
   | ({ kind: "machine.snapshot.restored"; requestId: number } & MachineSnapshotResultOk)
   | ({ kind: "machine.snapshot.restored"; requestId: number } & MachineSnapshotResultErr);
+type PendingMachineOp =
+  | { kind: "machine.restoreFromOpfs"; requestId: number; path: string }
+  | { kind: "machine.restore"; requestId: number; bytes: Uint8Array }
+  | { kind: "vm.machine.saveToOpfs"; requestId: number; path: string }
+  | { kind: "vm.machine.restoreFromOpfs"; requestId: number; path: string };
+
+const pendingMachineOps: PendingMachineOp[] = [];
 
 let wasmApi: WasmApi | null = null;
-let wasmMachine: InstanceType<WasmApi["Machine"]> | null = null;
-let snapshotOpChain: Promise<void> = Promise.resolve();
-let vmSnapshotPaused = false;
+let machine: InstanceType<WasmApi["Machine"]> | null = null;
 
+const HEARTBEAT_INTERVAL_MS = 250;
+const RUN_SLICE_MAX_INSTS = 50_000;
+
+const MAX_INPUT_BATCHES_PER_TICK = 8;
 const MAX_QUEUED_INPUT_BATCH_BYTES = 4 * 1024 * 1024;
 let queuedInputBatchBytes = 0;
 const queuedInputBatches: Array<{ buffer: ArrayBuffer; recycle: boolean }> = [];
@@ -116,6 +131,10 @@ const queuedInputBatches: Array<{ buffer: ArrayBuffer; recycle: boolean }> = [];
 // Avoid per-event allocations when falling back to `inject_keyboard_bytes` (older WASM builds).
 // Preallocate small scancode buffers for len=1..4.
 const packedScancodeScratch = [new Uint8Array(0), new Uint8Array(1), new Uint8Array(2), new Uint8Array(3), new Uint8Array(4)];
+
+function nowMs(): number {
+  return typeof performance !== "undefined" && typeof performance.now === "function" ? performance.now() : Date.now();
+}
 
 function post(msg: ProtocolMessage | ConfigAckMessage): void {
   ctx.postMessage(msg);
@@ -126,11 +145,7 @@ function postSnapshot(msg: MachineSnapshotRestoredMessage): void {
 }
 
 function postVmSnapshot(
-  msg:
-    | VmSnapshotPausedMessage
-    | VmSnapshotResumedMessage
-    | VmSnapshotMachineSavedMessage
-    | VmSnapshotMachineRestoredMessage,
+  msg: VmSnapshotPausedMessage | VmSnapshotResumedMessage | VmSnapshotMachineSavedMessage | VmSnapshotMachineRestoredMessage,
 ): void {
   ctx.postMessage(msg);
 }
@@ -145,19 +160,33 @@ function pushEvent(evt: Event): void {
   }
 }
 
+function pushEventBlocking(evt: Event, timeoutMs?: number): void {
+  const ring = eventRing;
+  if (!ring) return;
+  try {
+    ring.pushBlocking(encodeEvent(evt), timeoutMs);
+  } catch {
+    // best-effort
+  }
+}
+
 function serializeError(err: unknown): MachineSnapshotSerializedError {
   return serializeVmSnapshotError(err);
 }
 
-function getMachineRamSizeBytes(): number {
-  if (guestRamSizeBytes && guestRamSizeBytes > 0) return guestRamSizeBytes >>> 0;
-  const mib = currentConfig?.guestMemoryMiB;
-  if (typeof mib === "number" && Number.isFinite(mib) && mib > 0) {
-    const bytes = mib * 1024 * 1024;
-    if (Number.isFinite(bytes) && bytes > 0) return bytes >>> 0;
+function isNodeWorkerThreads(): boolean {
+  // Avoid referencing `process` directly so this file remains valid in browser builds without polyfills.
+  const p = (globalThis as unknown as { process?: unknown }).process as { versions?: { node?: unknown } } | undefined;
+  return typeof p?.versions?.node === "string";
+}
+
+async function maybeAwait(result: unknown): Promise<unknown> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const then = (result as any)?.then;
+  if (typeof then === "function") {
+    return await (result as Promise<unknown>);
   }
-  // Fallback for tests/harnesses that have not yet wired `config.update` -> `Machine` sizing.
-  return 1 * 1024 * 1024;
+  return result;
 }
 
 function isNetworkingEnabled(config: AeroConfig | null): boolean {
@@ -166,7 +195,7 @@ function isNetworkingEnabled(config: AeroConfig | null): boolean {
 }
 
 function detachMachineNetwork(): void {
-  const m = wasmMachine;
+  const m = machine;
   if (!m) return;
   try {
     const fn =
@@ -178,12 +207,13 @@ function detachMachineNetwork(): void {
   } catch {
     // ignore
   }
+  networkAttached = false;
 }
 
 function attachMachineNetwork(): void {
-  const m = wasmMachine;
+  const m = machine;
   if (!m) return;
-  if (!isNetworkingEnabled(currentConfig)) return;
+  if (!networkWanted) return;
   const sab = ioIpcSab;
   if (!sab) return;
 
@@ -191,6 +221,7 @@ function attachMachineNetwork(): void {
     const attachFromSab = (m as unknown as { attach_l2_tunnel_from_io_ipc_sab?: unknown }).attach_l2_tunnel_from_io_ipc_sab;
     if (typeof attachFromSab === "function") {
       (attachFromSab as (sab: SharedArrayBuffer) => void).call(m, sab);
+      networkAttached = true;
       return;
     }
 
@@ -202,30 +233,68 @@ function attachMachineNetwork(): void {
       const tx = openRing(sab, IO_IPC_NET_TX_QUEUE_KIND, 0);
       const rx = openRing(sab, IO_IPC_NET_RX_QUEUE_KIND, 0);
       (attachRings as (tx: unknown, rx: unknown) => void).call(m, tx, rx);
+      networkAttached = true;
     }
   } catch {
     // ignore
   }
 }
 
-function ensureWasmMachine(): { api: WasmApi; machine: InstanceType<WasmApi["Machine"]> } {
-  const api = wasmApi;
-  if (!api) throw new Error("WASM is not initialized; cannot perform machine snapshot operation.");
-  if (!api.Machine) throw new Error("Machine export unavailable in this WASM build.");
-  if (!wasmMachine) {
-    wasmMachine = new api.Machine(getMachineRamSizeBytes());
-    attachMachineNetwork();
-  }
-  return { api, machine: wasmMachine };
-}
+async function createWin7MachineWithSharedGuestMemory(api: WasmApi, layout: GuestRamLayout): Promise<InstanceType<WasmApi["Machine"]>> {
+  const guestBase = layout.guest_base >>> 0;
+  const guestSize = layout.guest_size >>> 0;
 
-function enqueueSnapshotOp(op: () => Promise<void>): void {
-  snapshotOpChain = snapshotOpChain.then(op).catch(() => undefined);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const anyApi = api as any;
+  const Machine = anyApi.Machine;
+  if (!Machine) {
+    throw new Error("Machine wasm export is unavailable; cannot start machine_cpu.worker.");
+  }
+
+  type Candidate = { name: string; fn: unknown; thisArg: unknown };
+  const candidates: Candidate[] = [
+    { name: "Machine.new_win7_storage_shared", fn: Machine.new_win7_storage_shared, thisArg: Machine },
+    { name: "Machine.new_shared", fn: Machine.new_shared, thisArg: Machine },
+
+    // Back-compat shims for intermediate builds.
+    { name: "Machine.new_win7_storage_shared_guest_memory", fn: Machine.new_win7_storage_shared_guest_memory, thisArg: Machine },
+    { name: "Machine.new_shared_guest_memory_win7_storage", fn: Machine.new_shared_guest_memory_win7_storage, thisArg: Machine },
+    { name: "Machine.new_shared_guest_memory", fn: Machine.new_shared_guest_memory, thisArg: Machine },
+    { name: "Machine.from_shared_guest_memory_win7_storage", fn: Machine.from_shared_guest_memory_win7_storage, thisArg: Machine },
+    { name: "Machine.from_shared_guest_memory", fn: Machine.from_shared_guest_memory, thisArg: Machine },
+
+    // Free-function factories (older wasm-bindgen exports).
+    { name: "create_win7_machine_shared_guest_memory", fn: anyApi.create_win7_machine_shared_guest_memory, thisArg: anyApi },
+    { name: "create_machine_win7_shared_guest_memory", fn: anyApi.create_machine_win7_shared_guest_memory, thisArg: anyApi },
+    { name: "create_machine_shared_guest_memory_win7", fn: anyApi.create_machine_shared_guest_memory_win7, thisArg: anyApi },
+  ];
+
+  for (const c of candidates) {
+    if (typeof c.fn !== "function") continue;
+    try {
+      const arity = (c.fn as (...args: unknown[]) => unknown).length;
+      let result: unknown;
+      if (arity === 0) {
+        result = (c.fn as () => unknown).call(c.thisArg);
+      } else if (arity === 1) {
+        result = (c.fn as (guestBase: number) => unknown).call(c.thisArg, guestBase);
+      } else {
+        result = (c.fn as (guestBase: number, guestSize: number) => unknown).call(c.thisArg, guestBase, guestSize);
+      }
+      return (await maybeAwait(result)) as InstanceType<WasmApi["Machine"]>;
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn(`[machine_cpu.worker] Failed to construct Machine via ${c.name}:`, err);
+    }
+  }
+
+  throw new Error(
+    "Shared-guest-memory Machine constructor is unavailable in this WASM build. " +
+      "Expected Machine.new_win7_storage_shared(guestBase, guestSize) (or an equivalent factory).",
+  );
 }
 
 function postInputBatchRecycle(buffer: ArrayBuffer): void {
-  // `buffer` should be transferable in normal InputCapture usage. Avoid crashing the worker if the
-  // buffer cannot be transferred for some reason; fall back to a structured clone.
   const msg: InputBatchRecycleMessage = { type: "in:input-batch-recycle", buffer };
   try {
     ctx.postMessage(msg, [buffer]);
@@ -238,30 +307,22 @@ function postInputBatchRecycle(buffer: ArrayBuffer): void {
   }
 }
 
-function flushQueuedInputBatches(): void {
-  if (queuedInputBatches.length === 0) return;
-  const batches = queuedInputBatches.splice(0, queuedInputBatches.length);
-  queuedInputBatchBytes = 0;
-  for (const entry of batches) {
-    handleInputBatch(entry.buffer);
-    if (entry.recycle) {
-      postInputBatchRecycle(entry.buffer);
-    }
+function queueInputBatch(buffer: ArrayBuffer, recycle: boolean): void {
+  if (queuedInputBatchBytes + buffer.byteLength <= MAX_QUEUED_INPUT_BATCH_BYTES) {
+    queuedInputBatches.push({ buffer, recycle });
+    queuedInputBatchBytes += buffer.byteLength;
+  } else if (recycle) {
+    // Drop excess input to keep memory bounded; best-effort recycle the transferred buffer.
+    postInputBatchRecycle(buffer);
   }
 }
 
 function handleInputBatch(buffer: ArrayBuffer): void {
-  const machine = wasmMachine;
-  if (!machine) {
-    // CI `--skip-wasm` or early startup: nothing to inject into.
-    return;
-  }
+  const m = machine;
+  if (!m) return;
 
   const decoded = validateInputBatchBuffer(buffer);
-  if (!decoded.ok) {
-    // Drop malformed input batches; keep the worker alive.
-    return;
-  }
+  if (!decoded.ok) return;
 
   const { words, count } = decoded;
   const base = INPUT_BATCH_HEADER_WORDS;
@@ -273,12 +334,12 @@ function handleInputBatch(buffer: ArrayBuffer): void {
       const len = Math.min(words[off + 3] >>> 0, 4);
       if (len === 0) continue;
       try {
-        if (typeof machine.inject_key_scancode_bytes === "function") {
-          machine.inject_key_scancode_bytes(packed, len);
-        } else if (typeof machine.inject_keyboard_bytes === "function") {
+        if (typeof m.inject_key_scancode_bytes === "function") {
+          m.inject_key_scancode_bytes(packed, len);
+        } else if (typeof m.inject_keyboard_bytes === "function") {
           const bytes = packedScancodeScratch[len]!;
           for (let j = 0; j < len; j++) bytes[j] = (packed >>> (j * 8)) & 0xff;
-          machine.inject_keyboard_bytes(bytes);
+          m.inject_keyboard_bytes(bytes);
         }
       } catch {
         // ignore
@@ -287,11 +348,10 @@ function handleInputBatch(buffer: ArrayBuffer): void {
       const dx = words[off + 2] | 0;
       const dyPs2 = words[off + 3] | 0;
       try {
-        if (typeof machine.inject_ps2_mouse_motion === "function") {
-          machine.inject_ps2_mouse_motion(dx, dyPs2, 0);
-        } else if (typeof machine.inject_mouse_motion === "function") {
-          // Machine expects browser-style coordinates (+Y down).
-          machine.inject_mouse_motion(dx, -dyPs2, 0);
+        if (typeof m.inject_ps2_mouse_motion === "function") {
+          m.inject_ps2_mouse_motion(dx, dyPs2, 0);
+        } else if (typeof m.inject_mouse_motion === "function") {
+          m.inject_mouse_motion(dx, -dyPs2, 0);
         }
       } catch {
         // ignore
@@ -300,32 +360,436 @@ function handleInputBatch(buffer: ArrayBuffer): void {
       const dz = words[off + 2] | 0;
       if (dz === 0) continue;
       try {
-        if (typeof machine.inject_ps2_mouse_motion === "function") {
-          machine.inject_ps2_mouse_motion(0, 0, dz);
-        } else if (typeof machine.inject_mouse_motion === "function") {
-          machine.inject_mouse_motion(0, 0, dz);
+        if (typeof m.inject_ps2_mouse_motion === "function") {
+          m.inject_ps2_mouse_motion(0, 0, dz);
+        } else if (typeof m.inject_mouse_motion === "function") {
+          m.inject_mouse_motion(0, 0, dz);
         }
       } catch {
         // ignore
       }
     } else if (type === InputEventType.MouseButtons) {
-      // DOM `MouseEvent.buttons` bitfield:
-      // - bit0 left, bit1 right, bit2 middle, bit3 back, bit4 forward.
-      //
-      // The canonical Machine PS/2 mouse model can surface back/forward (IntelliMouse
-      // Explorer extensions) when the guest enables it, so preserve the low 5 bits.
       const buttons = words[off + 2] & 0xff;
       const mask = buttons & 0x1f;
       try {
-        if (typeof machine.inject_mouse_buttons_mask === "function") {
-          machine.inject_mouse_buttons_mask(mask);
-        } else if (typeof machine.inject_ps2_mouse_buttons === "function") {
-          machine.inject_ps2_mouse_buttons(mask);
+        if (typeof m.inject_mouse_buttons_mask === "function") {
+          m.inject_mouse_buttons_mask(mask);
+        } else if (typeof m.inject_ps2_mouse_buttons === "function") {
+          m.inject_ps2_mouse_buttons(mask);
         }
       } catch {
         // ignore
       }
     }
+  }
+}
+
+async function applyBootDisks(msg: SetBootDisksMessage): Promise<void> {
+  const m = machine;
+  if (!m) return;
+
+  let changed = false;
+
+  if (msg.hdd) {
+    const cow = diskMetaToOpfsCowPaths(msg.hdd);
+    if (!cow) {
+      throw new Error("setBootDisks: HDD is not OPFS-backed (cannot attach in machine_cpu.worker).");
+    }
+
+    const setPrimary = (m as unknown as { set_primary_hdd_opfs_cow?: unknown }).set_primary_hdd_opfs_cow;
+    if (typeof setPrimary !== "function") {
+      throw new Error("Machine.set_primary_hdd_opfs_cow is unavailable in this WASM build.");
+    }
+
+    // Some builds may extend the API to accept a block size hint; preserve compatibility.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const anyFn = setPrimary as any;
+    const arity = typeof anyFn.length === "number" ? (anyFn.length as number) : 0;
+    const res = arity >= 3 ? anyFn.call(m, cow.basePath, cow.overlayPath, 1024 * 1024) : anyFn.call(m, cow.basePath, cow.overlayPath);
+    await maybeAwait(res);
+    changed = true;
+  }
+
+  if (msg.cd) {
+    const plan = planMachineBootDiskAttachment(msg.cd, "cd");
+    const isoPath = plan.opfsPath;
+
+    const attachIso =
+      (m as unknown as { attach_ide_secondary_master_iso_opfs_existing_and_set_overlay_ref?: unknown })
+        .attach_ide_secondary_master_iso_opfs_existing_and_set_overlay_ref ??
+      (m as unknown as { attach_ide_secondary_master_iso_opfs_existing?: unknown }).attach_ide_secondary_master_iso_opfs_existing ??
+      (m as unknown as { attach_install_media_iso_opfs_and_set_overlay_ref?: unknown }).attach_install_media_iso_opfs_and_set_overlay_ref ??
+      (m as unknown as { attach_install_media_iso_opfs?: unknown }).attach_install_media_iso_opfs ??
+      (m as unknown as { attach_install_media_opfs_iso?: unknown }).attach_install_media_opfs_iso;
+
+    if (typeof attachIso !== "function") {
+      throw new Error("Machine install-media ISO OPFS attach export is unavailable in this WASM build.");
+    }
+
+    await maybeAwait((attachIso as (path: string) => unknown).call(m, isoPath));
+
+    // Best-effort overlay ref: some attach APIs do not set DISKS refs; try to do it here when available.
+    try {
+      const setRef = (m as unknown as { set_ide_secondary_master_atapi_overlay_ref?: unknown }).set_ide_secondary_master_atapi_overlay_ref;
+      if (typeof setRef === "function") {
+        (setRef as (base: string, overlay: string) => void).call(m, isoPath, "");
+      }
+    } catch {
+      // ignore
+    }
+
+    changed = true;
+  }
+
+  if (changed) {
+    try {
+      m.reset();
+    } catch {
+      // ignore
+    }
+  }
+}
+
+function drainSerialOutput(): void {
+  const m = machine;
+  if (!m) return;
+
+  if (typeof m.serial_output_len === "function") {
+    try {
+      const n = m.serial_output_len();
+      if (typeof n === "number" && Number.isFinite(n) && n <= 0) return;
+    } catch {
+      // ignore
+    }
+  }
+
+  if (typeof m.serial_output !== "function") return;
+  const bytes = m.serial_output();
+  if (!(bytes instanceof Uint8Array) || bytes.byteLength === 0) return;
+
+  pushEvent({ kind: "serialOutput", port: UART_COM1.basePort, data: bytes });
+}
+
+function handleRunExit(exit: unknown): void {
+  const kind = (exit as unknown as { kind?: unknown }).kind;
+  const detail = (exit as unknown as { detail?: unknown }).detail;
+  const kindNum = typeof kind === "number" ? (kind | 0) : -1;
+  const detailStr = typeof detail === "string" ? detail : "";
+
+  if (kindNum === 2) {
+    pushEventBlocking({ kind: "resetRequest" }, 250);
+    running = false;
+    return;
+  }
+
+  if (kindNum === 5) {
+    if (/triplefault/i.test(detailStr)) {
+      pushEventBlocking({ kind: "tripleFault" }, 250);
+    } else {
+      pushEventBlocking({ kind: "panic", message: `CPU exit: ${detailStr || "unknown"}` }, 250);
+    }
+    running = false;
+    return;
+  }
+
+  if (kindNum === 4) {
+    pushEventBlocking({ kind: "panic", message: `Exception: ${detailStr || "unknown"}` }, 250);
+    running = false;
+    return;
+  }
+}
+
+async function handleMachineOp(op: PendingMachineOp): Promise<void> {
+  const api = wasmApi;
+  const m = machine;
+
+  if (!api || !m) {
+    const error = serializeError(new Error("WASM Machine is not initialized."));
+    if (op.kind === "vm.machine.saveToOpfs") {
+      postVmSnapshot({ kind: "vm.snapshot.machine.saved", requestId: op.requestId, ok: false, error } satisfies VmSnapshotMachineSavedMessage);
+    } else if (op.kind === "vm.machine.restoreFromOpfs") {
+      postVmSnapshot({
+        kind: "vm.snapshot.machine.restored",
+        requestId: op.requestId,
+        ok: false,
+        error,
+      } satisfies VmSnapshotMachineRestoredMessage);
+    } else {
+      postSnapshot({ kind: "machine.snapshot.restored", requestId: op.requestId, ok: false, error } satisfies MachineSnapshotRestoredMessage);
+    }
+    return;
+  }
+
+  machineBusy = true;
+  detachMachineNetwork();
+
+  try {
+    if (op.kind === "vm.machine.saveToOpfs") {
+      if (!vmSnapshotPaused) {
+        throw new Error("VM is not paused; call vm.snapshot.pause before saving.");
+      }
+      const fn =
+        (m as unknown as { snapshot_full_to_opfs?: unknown }).snapshot_full_to_opfs ??
+        (m as unknown as { snapshot_dirty_to_opfs?: unknown }).snapshot_dirty_to_opfs;
+      if (typeof fn !== "function") {
+        throw new Error("Machine.snapshot_full_to_opfs(path) is unavailable in this WASM build.");
+      }
+      await maybeAwait((fn as (path: string) => unknown).call(m, op.path));
+      postVmSnapshot({ kind: "vm.snapshot.machine.saved", requestId: op.requestId, ok: true } satisfies VmSnapshotMachineSavedMessage);
+      return;
+    }
+
+    if (op.kind === "vm.machine.restoreFromOpfs") {
+      if (!vmSnapshotPaused) {
+        throw new Error("VM is not paused; call vm.snapshot.pause before restoring.");
+      }
+      await restoreMachineSnapshotFromOpfsAndReattachDisks({ api, machine: m, path: op.path, logPrefix: "machine_cpu.worker" });
+      postVmSnapshot({ kind: "vm.snapshot.machine.restored", requestId: op.requestId, ok: true } satisfies VmSnapshotMachineRestoredMessage);
+      return;
+    }
+
+    if (op.kind === "machine.restoreFromOpfs") {
+      await restoreMachineSnapshotFromOpfsAndReattachDisks({ api, machine: m, path: op.path, logPrefix: "machine_cpu.worker" });
+      postSnapshot({ kind: "machine.snapshot.restored", requestId: op.requestId, ok: true });
+      return;
+    }
+
+    await restoreMachineSnapshotAndReattachDisks({ api, machine: m, bytes: op.bytes, logPrefix: "machine_cpu.worker" });
+    postSnapshot({ kind: "machine.snapshot.restored", requestId: op.requestId, ok: true });
+  } catch (err) {
+    const error = serializeError(err);
+    if (op.kind === "vm.machine.saveToOpfs") {
+      postVmSnapshot({ kind: "vm.snapshot.machine.saved", requestId: op.requestId, ok: false, error } satisfies VmSnapshotMachineSavedMessage);
+    } else if (op.kind === "vm.machine.restoreFromOpfs") {
+      postVmSnapshot({ kind: "vm.snapshot.machine.restored", requestId: op.requestId, ok: false, error } satisfies VmSnapshotMachineRestoredMessage);
+    } else {
+      postSnapshot({ kind: "machine.snapshot.restored", requestId: op.requestId, ok: false, error } satisfies MachineSnapshotRestoredMessage);
+    }
+  } finally {
+    machineBusy = false;
+    if (networkWanted) {
+      attachMachineNetwork();
+    }
+  }
+}
+
+async function runLoop(): Promise<void> {
+  const ring = commandRing;
+  const st = status;
+  if (!ring || !st) return;
+
+  let nextHeartbeatMs = nowMs();
+
+  try {
+    while (Atomics.load(st, StatusIndex.StopRequested) !== 1) {
+      while (true) {
+        const bytes = ring.tryPop();
+        if (!bytes) break;
+
+        let cmd: Command;
+        try {
+          cmd = decodeCommand(bytes);
+        } catch {
+          continue;
+        }
+
+        if (cmd.kind === "nop") {
+          running = true;
+          pushEvent({ kind: "ack", seq: cmd.seq } satisfies Event);
+        } else if (cmd.kind === "shutdown") {
+          Atomics.store(st, StatusIndex.StopRequested, 1);
+        }
+      }
+
+      if (Atomics.load(st, StatusIndex.StopRequested) === 1) break;
+
+      const now = nowMs();
+      if (now >= nextHeartbeatMs) {
+        const counter = Atomics.add(st, StatusIndex.HeartbeatCounter, 1) + 1;
+        pushEvent({ kind: "ack", seq: counter });
+        nextHeartbeatMs = now + HEARTBEAT_INTERVAL_MS;
+      }
+
+      // Keep network attachment in sync with config.
+      if (!machineBusy && machine) {
+        if (networkWanted && !networkAttached) {
+          attachMachineNetwork();
+        } else if (!networkWanted && networkAttached) {
+          detachMachineNetwork();
+        }
+      }
+
+      // Snapshot + restore operations.
+      const op = pendingMachineOps.shift();
+      if (op) {
+        await handleMachineOp(op);
+        await new Promise((resolve) => {
+          const timer = setTimeout(resolve, 0);
+          (timer as unknown as { unref?: () => void }).unref?.();
+        });
+        continue;
+      }
+
+      // Boot disks.
+      if (pendingBootDisks && machine && !machineBusy) {
+        const msg = pendingBootDisks;
+        pendingBootDisks = null;
+        machineBusy = true;
+        try {
+          await applyBootDisks(msg);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          pushEvent({ kind: "log", level: "warn", message: `[machine_cpu] setBootDisks failed: ${message}` });
+        } finally {
+          machineBusy = false;
+        }
+
+        await new Promise((resolve) => {
+          const timer = setTimeout(resolve, 0);
+          (timer as unknown as { unref?: () => void }).unref?.();
+        });
+        continue;
+      }
+
+      // Flush queued input (from pause or async ops) when safe. If the machine isn't initialized
+      // (e.g. Node worker_threads tests), still recycle buffers on resume to avoid leaks.
+      if (!vmSnapshotPaused && !machineBusy && queuedInputBatches.length) {
+        const batches = Math.min(MAX_INPUT_BATCHES_PER_TICK, queuedInputBatches.length);
+        for (let i = 0; i < batches; i += 1) {
+          const entry = queuedInputBatches.shift();
+          if (!entry) break;
+          queuedInputBatchBytes = Math.max(0, queuedInputBatchBytes - (entry.buffer.byteLength >>> 0));
+          if (machine) {
+            handleInputBatch(entry.buffer);
+          }
+          if (entry.recycle) {
+            postInputBatchRecycle(entry.buffer);
+          }
+        }
+      }
+
+      if (!running || !machine || vmSnapshotPaused || machineBusy) {
+        await ring.waitForDataAsync(HEARTBEAT_INTERVAL_MS);
+        continue;
+      }
+
+      const exit = machine.run_slice(RUN_SLICE_MAX_INSTS);
+      handleRunExit(exit);
+      drainSerialOutput();
+      try {
+        (exit as unknown as { free?: () => void }).free?.();
+      } catch {
+        // ignore
+      }
+
+      await new Promise((resolve) => {
+        const timer = setTimeout(resolve, 0);
+        (timer as unknown as { unref?: () => void }).unref?.();
+      });
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    pushEvent({ kind: "panic", message } satisfies Event);
+    setReadyFlag(st, role, false);
+    post({ type: MessageType.ERROR, role, message } satisfies ProtocolMessage);
+    ctx.close();
+  } finally {
+    setReadyFlag(st, role, false);
+    if (machine) {
+      try {
+        (machine as unknown as { free?: () => void }).free?.();
+      } catch {
+        // ignore
+      }
+      machine = null;
+    }
+    networkAttached = false;
+  }
+}
+
+async function initWasmInBackground(init: WorkerInitMessage, guestMemory: WebAssembly.Memory): Promise<void> {
+  if (isNodeWorkerThreads()) return;
+
+  try {
+    const { initWasmForContext } = await import("../runtime/wasm_context");
+    const { assertWasmMemoryWiring } = await import("../runtime/wasm_memory_probe");
+
+    const { api, variant } = await initWasmForContext({
+      variant: init.wasmVariant,
+      module: init.wasmModule,
+      memory: guestMemory,
+    });
+
+    wasmApi = api as WasmApi;
+
+    assertWasmMemoryWiring({ api, memory: guestMemory, context: "machine_cpu.worker" });
+
+    const value = typeof api.add === "function" ? api.add(20, 22) : 0;
+    const st = status;
+    if (st && Atomics.load(st, StatusIndex.StopRequested) === 1) return;
+    post({ type: MessageType.WASM_READY, role, variant, value } satisfies ProtocolMessage);
+
+    const layout = guestLayout;
+    if (!layout) return;
+
+    machine = await createWin7MachineWithSharedGuestMemory(api as WasmApi, layout);
+
+    // Attach optional network backend if enabled.
+    if (networkWanted) {
+      attachMachineNetwork();
+    }
+
+    try {
+      machine.reset();
+    } catch {
+      // ignore
+    }
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn("[machine_cpu.worker] WASM init failed (continuing without WASM):", err);
+  }
+}
+
+async function initAndRun(init: WorkerInitMessage): Promise<void> {
+  role = init.role ?? "cpu";
+
+  try {
+    const segments: SharedMemorySegments = {
+      control: init.controlSab,
+      guestMemory: init.guestMemory,
+      vram: init.vram,
+      scanoutState: init.scanoutState,
+      scanoutStateOffsetBytes: init.scanoutStateOffsetBytes ?? 0,
+      cursorState: init.cursorState,
+      cursorStateOffsetBytes: init.cursorStateOffsetBytes ?? 0,
+      ioIpc: init.ioIpcSab,
+      sharedFramebuffer: init.sharedFramebuffer,
+      sharedFramebufferOffsetBytes: init.sharedFramebufferOffsetBytes,
+    } satisfies SharedMemorySegments;
+
+    const views = createSharedMemoryViews(segments);
+    status = views.status;
+    guestLayout = views.guestLayout;
+    ioIpcSab = segments.ioIpc;
+
+    const regions = ringRegionsForWorker(role);
+    commandRing = new RingBuffer(segments.control, regions.command.byteOffset);
+    eventRing = new RingBuffer(segments.control, regions.event.byteOffset);
+
+    setReadyFlag(status, role, true);
+    post({ type: MessageType.READY, role } satisfies ProtocolMessage);
+
+    void initWasmInBackground(init, init.guestMemory);
+
+    if (!started) {
+      started = true;
+      void runLoop();
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (status) setReadyFlag(status, role, false);
+    post({ type: MessageType.ERROR, role, message } satisfies ProtocolMessage);
+    ctx.close();
   }
 }
 
@@ -337,24 +801,30 @@ ctx.onmessage = (ev) => {
     const buffer = input.buffer;
     if (!(buffer instanceof ArrayBuffer)) return;
     const recycle = input.recycle === true;
-    if (vmSnapshotPaused) {
-      if (queuedInputBatchBytes + buffer.byteLength <= MAX_QUEUED_INPUT_BATCH_BYTES) {
-        queuedInputBatches.push({ buffer, recycle });
-        queuedInputBatchBytes += buffer.byteLength;
-      } else if (recycle) {
-        // Drop excess input to keep memory bounded; best-effort recycle the transferred buffer.
+
+    // Don't call into WASM while snapshot-paused or while an async machine op is in flight
+    // (wasm-bindgen `&mut self` reentrancy).
+    if (vmSnapshotPaused || machineBusy) {
+      queueInputBatch(buffer, recycle);
+      return;
+    }
+
+    // If the machine isn't ready yet (or WASM init is skipped under Node), we cannot process input
+    // batches. Still recycle the transferred buffer when requested so the main-thread pool does not
+    // leak memory (and to satisfy worker_threads integration tests).
+    if (!machine) {
+      if (recycle) {
         postInputBatchRecycle(buffer);
       }
       return;
     }
+
     handleInputBatch(buffer);
     if (recycle) {
       postInputBatchRecycle(buffer);
     }
     return;
   }
-  // `in:input-batch-recycle` is normally sent from this worker back to the input producer, but
-  // accept it as a no-op so callers can proxy recycle messages through multiple hops if needed.
   if (input?.type === "in:input-batch-recycle") {
     return;
   }
@@ -374,13 +844,11 @@ ctx.onmessage = (ev) => {
       }
       case "vm.snapshot.resume": {
         vmSnapshotPaused = false;
-        flushQueuedInputBatches();
         postVmSnapshot({ kind: "vm.snapshot.resumed", requestId, ok: true } satisfies VmSnapshotResumedMessage);
         return;
       }
       case "vm.snapshot.machine.saveToOpfs": {
-        const path =
-          typeof (vmSnapshot as Partial<VmSnapshotMachineSaveToOpfsMessage>).path === "string" ? vmSnapshot.path : "";
+        const path = typeof (vmSnapshot as Partial<VmSnapshotMachineSaveToOpfsMessage>).path === "string" ? vmSnapshot.path : "";
         if (!path) {
           postVmSnapshot({
             kind: "vm.snapshot.machine.saved",
@@ -390,7 +858,6 @@ ctx.onmessage = (ev) => {
           } satisfies VmSnapshotMachineSavedMessage);
           return;
         }
-
         if (!vmSnapshotPaused) {
           postVmSnapshot({
             kind: "vm.snapshot.machine.saved",
@@ -400,36 +867,7 @@ ctx.onmessage = (ev) => {
           } satisfies VmSnapshotMachineSavedMessage);
           return;
         }
-
-        enqueueSnapshotOp(async () => {
-          try {
-            if (!vmSnapshotPaused) {
-              throw new Error("Machine CPU worker is not paused; call vm.snapshot.pause before saving.");
-            }
-            const { machine } = ensureWasmMachine();
-            const fn =
-              (machine as unknown as { snapshot_full_to_opfs?: unknown }).snapshot_full_to_opfs ??
-              (machine as unknown as { snapshot_dirty_to_opfs?: unknown }).snapshot_dirty_to_opfs;
-            if (typeof fn !== "function") {
-              throw new Error("Machine.snapshot_full_to_opfs(path) is unavailable in this WASM build.");
-            }
-            detachMachineNetwork();
-            try {
-              await Promise.resolve((fn as (path: string) => unknown).call(machine, path));
-            } finally {
-              attachMachineNetwork();
-            }
-            postVmSnapshot({ kind: "vm.snapshot.machine.saved", requestId, ok: true } satisfies VmSnapshotMachineSavedMessage);
-          } catch (err) {
-            attachMachineNetwork();
-            postVmSnapshot({
-              kind: "vm.snapshot.machine.saved",
-              requestId,
-              ok: false,
-              error: serializeError(err),
-            } satisfies VmSnapshotMachineSavedMessage);
-          }
-        });
+        pendingMachineOps.push({ kind: "vm.machine.saveToOpfs", requestId, path });
         return;
       }
       case "vm.snapshot.machine.restoreFromOpfs": {
@@ -444,7 +882,6 @@ ctx.onmessage = (ev) => {
           } satisfies VmSnapshotMachineRestoredMessage);
           return;
         }
-
         if (!vmSnapshotPaused) {
           postVmSnapshot({
             kind: "vm.snapshot.machine.restored",
@@ -454,34 +891,7 @@ ctx.onmessage = (ev) => {
           } satisfies VmSnapshotMachineRestoredMessage);
           return;
         }
-
-        enqueueSnapshotOp(async () => {
-          try {
-            if (!vmSnapshotPaused) {
-              throw new Error("Machine CPU worker is not paused; call vm.snapshot.pause before restoring.");
-            }
-            const { api, machine } = ensureWasmMachine();
-            // Snapshot restore intentionally drops host-side disk backends (OPFS handles) and only
-            // preserves overlay refs as *OPFS path strings* (relative to `navigator.storage.getDirectory()`).
-            //
-            // After restoring, re-open those OPFS images and reattach them to the canonical machine.
-            detachMachineNetwork();
-            try {
-              await restoreMachineSnapshotFromOpfsAndReattachDisks({ api, machine, path, logPrefix: "machine_cpu.worker" });
-            } finally {
-              attachMachineNetwork();
-            }
-            postVmSnapshot({ kind: "vm.snapshot.machine.restored", requestId, ok: true } satisfies VmSnapshotMachineRestoredMessage);
-          } catch (err) {
-            attachMachineNetwork();
-            postVmSnapshot({
-              kind: "vm.snapshot.machine.restored",
-              requestId,
-              ok: false,
-              error: serializeError(err),
-            } satisfies VmSnapshotMachineRestoredMessage);
-          }
-        });
+        pendingMachineOps.push({ kind: "vm.machine.restoreFromOpfs", requestId, path });
         return;
       }
     }
@@ -500,26 +910,7 @@ ctx.onmessage = (ev) => {
       });
       return;
     }
-
-    enqueueSnapshotOp(async () => {
-      try {
-        const { api, machine } = ensureWasmMachine();
-        // Snapshot restore intentionally drops host-side disk backends (OPFS handles) and only
-        // preserves overlay refs as *OPFS path strings* (relative to `navigator.storage.getDirectory()`).
-        //
-        // After restoring, re-open those OPFS images and reattach them to the canonical machine.
-        detachMachineNetwork();
-        try {
-          await restoreMachineSnapshotFromOpfsAndReattachDisks({ api, machine, path, logPrefix: "machine_cpu.worker" });
-        } finally {
-          attachMachineNetwork();
-        }
-        postSnapshot({ kind: "machine.snapshot.restored", requestId, ok: true });
-      } catch (err) {
-        attachMachineNetwork();
-        postSnapshot({ kind: "machine.snapshot.restored", requestId, ok: false, error: serializeError(err) });
-      }
-    });
+    pendingMachineOps.push({ kind: "machine.restoreFromOpfs", requestId, path });
     return;
   }
 
@@ -535,27 +926,7 @@ ctx.onmessage = (ev) => {
       });
       return;
     }
-
-    enqueueSnapshotOp(async () => {
-      try {
-        const { api, machine } = ensureWasmMachine();
-        detachMachineNetwork();
-        try {
-          await restoreMachineSnapshotAndReattachDisks({
-            api,
-            machine,
-            bytes: new Uint8Array(bytes),
-            logPrefix: "machine_cpu.worker",
-          });
-        } finally {
-          attachMachineNetwork();
-        }
-        postSnapshot({ kind: "machine.snapshot.restored", requestId, ok: true });
-      } catch (err) {
-        attachMachineNetwork();
-        postSnapshot({ kind: "machine.snapshot.restored", requestId, ok: false, error: serializeError(err) });
-      }
-    });
+    pendingMachineOps.push({ kind: "machine.restore", requestId, bytes: new Uint8Array(bytes) });
     return;
   }
 
@@ -583,11 +954,7 @@ ctx.onmessage = (ev) => {
     const update = msg as ConfigUpdateMessage;
     currentConfig = update.config;
     currentConfigVersion = update.version;
-    if (isNetworkingEnabled(currentConfig)) {
-      attachMachineNetwork();
-    } else {
-      detachMachineNetwork();
-    }
+    networkWanted = isNetworkingEnabled(currentConfig);
     post({ kind: "config.ack", version: currentConfigVersion } satisfies ConfigAckMessage);
     return;
   }
@@ -597,139 +964,3 @@ ctx.onmessage = (ev) => {
     void initAndRun(init as WorkerInitMessage);
   }
 };
-
-async function initAndRun(init: WorkerInitMessage): Promise<void> {
-  role = init.role ?? "cpu";
-
-  try {
-    const segments: SharedMemorySegments = {
-      control: init.controlSab,
-      guestMemory: init.guestMemory,
-      vram: init.vram,
-      scanoutState: init.scanoutState,
-      scanoutStateOffsetBytes: init.scanoutStateOffsetBytes ?? 0,
-      cursorState: init.cursorState,
-      cursorStateOffsetBytes: init.cursorStateOffsetBytes ?? 0,
-      ioIpc: init.ioIpcSab,
-      sharedFramebuffer: init.sharedFramebuffer,
-      sharedFramebufferOffsetBytes: init.sharedFramebufferOffsetBytes,
-    } satisfies SharedMemorySegments;
-
-    const views = createSharedMemoryViews(segments);
-    status = views.status;
-    guestRamSizeBytes = views.guestLayout.guest_size;
-    ioIpcSab = segments.ioIpc;
-    attachMachineNetwork();
-
-    const regions = ringRegionsForWorker(role);
-    commandRing = new RingBuffer(segments.control, regions.command.byteOffset);
-    eventRing = new RingBuffer(segments.control, regions.event.byteOffset);
-
-    // Emit READY immediately; WASM initialization is best-effort and should not prevent the
-    // worker from participating in the coordinator lifecycle (mirrors cpu.worker.ts behavior).
-    setReadyFlag(status, role, true);
-    post({ type: MessageType.READY, role } satisfies ProtocolMessage);
-
-    // Kick off WASM init in the background. It may fail when the wasm-pack output is absent
-    // (e.g. CI runs with `--skip-wasm`); keep the worker alive regardless.
-    void initWasmInBackground(init, init.guestMemory);
-
-    void runLoop();
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    if (status) setReadyFlag(status, role, false);
-    post({ type: MessageType.ERROR, role, message } satisfies ProtocolMessage);
-    ctx.close();
-  }
-}
-
-async function runLoop(): Promise<void> {
-  const ring = commandRing;
-  const st = status;
-  if (!ring || !st) return;
-
-  try {
-    while (Atomics.load(st, StatusIndex.StopRequested) !== 1) {
-      // Drain all pending commands.
-      while (true) {
-        const payload = ring.tryPop();
-        if (!payload) break;
-        let cmd: Command;
-        try {
-          cmd = decodeCommand(payload);
-        } catch {
-          // Corrupt or unknown command; ignore.
-          continue;
-        }
-
-        switch (cmd.kind) {
-          case "nop":
-            pushEvent({ kind: "ack", seq: cmd.seq } satisfies Event);
-            break;
-          case "shutdown":
-            Atomics.store(st, StatusIndex.StopRequested, 1);
-            break;
-          default:
-            // Ignore other commands for now; the machine CPU worker currently only exists to
-            // validate worker lifecycle wiring under Node worker_threads.
-            break;
-        }
-      }
-
-      await ring.waitForDataAsync(250);
-    }
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    pushEvent({ kind: "panic", message } satisfies Event);
-    setReadyFlag(st, role, false);
-    post({ type: MessageType.ERROR, role, message } satisfies ProtocolMessage);
-    ctx.close();
-  } finally {
-    setReadyFlag(st, role, false);
-    if (wasmMachine) {
-      try {
-        (wasmMachine as unknown as { free?: () => void }).free?.();
-      } catch {
-        // ignore
-      }
-      wasmMachine = null;
-    }
-  }
-}
-
-async function initWasmInBackground(init: WorkerInitMessage, guestMemory: WebAssembly.Memory): Promise<void> {
-  // This worker is used primarily for worker_threads lifecycle tests. Those tests execute the
-  // TypeScript sources directly under Node (no Vite transforms, and usually without the
-  // wasm-pack output present). Even though `wasm_loader.ts` has a Node-safe fallback for
-  // `import.meta.glob`, initializing WASM here would still either:
-  // - fail with a "Missing WASM package" error (no generated output), or
-  // - introduce unnecessary work/noise into otherwise lightweight tests.
-  //
-  // In real browser/Vite builds, `process` is typically undefined (or lacks `versions.node`),
-  // so WASM init proceeds.
-  const isNode = typeof process !== "undefined" && typeof process.versions?.node === "string";
-  if (isNode) return;
-
-  try {
-    const { initWasmForContext } = await import("../runtime/wasm_context");
-    const { api, variant } = await initWasmForContext({
-      variant: init.wasmVariant,
-      module: init.wasmModule,
-      memory: guestMemory,
-    });
-    wasmApi = api;
-    const value = typeof api.add === "function" ? api.add(20, 22) : 0;
-    const st = status;
-    if (st && Atomics.load(st, StatusIndex.StopRequested) === 1) return;
-    post({ type: MessageType.WASM_READY, role, variant, value } satisfies ProtocolMessage);
-  } catch (err) {
-    // Best-effort; do not crash on missing wasm assets.
-    // Use a guarded log to avoid throwing in environments without console.
-    try {
-      // eslint-disable-next-line no-console
-      console.warn("[machine_cpu.worker] WASM init failed (continuing without WASM):", err);
-    } catch {
-      // ignore
-    }
-  }
-}

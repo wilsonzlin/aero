@@ -1976,7 +1976,7 @@ export class WorkerCoordinator {
         //
         // Keep these as explicit branches so Vite can statically detect + bundle both worker
         // entrypoints.
-        if (this.activeConfig?.vmRuntime === "machine") {
+        if ((this.activeConfig?.vmRuntime ?? "legacy") === "machine") {
           worker = new Worker(new URL("../workers/machine_cpu.worker.ts", import.meta.url), { type: "module" });
         } else {
           worker = new Worker(new URL("../workers/cpu.worker.ts", import.meta.url), { type: "module" });

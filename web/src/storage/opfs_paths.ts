@@ -1,5 +1,12 @@
 import { OPFS_DISKS_PATH, type DiskImageMetadata } from "./metadata";
 
+/**
+ * Helpers for mapping {@link DiskImageMetadata} to OPFS-relative path strings.
+ *
+ * These paths are **relative to the OPFS root** returned by `navigator.storage.getDirectory()`,
+ * and are suitable for passing to Rust/WASM backends (e.g. `aero_opfs`) that expect OPFS paths.
+ */
+
 function normalizeOpfsRelPath(path: string, field: string): string {
   const trimmed = path.trim();
   if (!trimmed) {
@@ -49,8 +56,8 @@ function joinOpfsPath(
 /**
  * Derive a canonical OPFS path (relative to the OPFS root) for a local disk image.
  *
- * This is intended for consumers that need a stable path string to open the same
- * disk from multiple runtimes (e.g. JS and Rust `aero_opfs`).
+ * This is intended for consumers that need a stable path string to open the same disk from
+ * multiple runtimes (e.g. JS and Rust `aero_opfs`).
  */
 export function opfsPathForDisk(meta: DiskImageMetadata): string {
   if (meta.source !== "local") {
@@ -93,3 +100,60 @@ export function opfsOverlayPathForCow(meta: DiskImageMetadata): string {
   const dir = meta.opfsDirectory ?? OPFS_DISKS_PATH;
   return joinOpfsPath(dir, { dirField: "opfsDirectory", fileName: overlayFileName, fileField: "overlayFileName" });
 }
+
+export type OpfsCowPaths = {
+  /**
+   * OPFS path (relative to the OPFS root) to the immutable base image.
+   */
+  basePath: string;
+  /**
+   * OPFS path (relative to the OPFS root) to the overlay image (copy-on-write).
+   */
+  overlayPath: string;
+  /**
+   * Optional overlay block size hint (bytes). Used by some backends (e.g. remote disk overlays).
+   */
+  overlayBlockSizeBytes?: number;
+};
+
+/**
+ * Map a disk metadata record to its base OPFS file path (relative to the OPFS root).
+ *
+ * Returns `null` when the disk is not backed by OPFS (e.g. IndexedDB cache backend).
+ */
+export function diskMetaToOpfsBasePath(meta: DiskImageMetadata): string | null {
+  if (meta.source === "local") {
+    if (meta.backend !== "opfs") return null;
+    return opfsPathForDisk(meta);
+  }
+
+  if (meta.cache.backend !== "opfs") return null;
+  return joinOpfsPath(OPFS_DISKS_PATH, {
+    dirField: "OPFS_DISKS_PATH",
+    fileName: meta.cache.fileName,
+    fileField: "cache.fileName",
+  });
+}
+
+/**
+ * Map a disk metadata record to its copy-on-write (base + overlay) OPFS file paths.
+ *
+ * Returns `null` when the disk cannot be expressed as OPFS paths (e.g. IDB-backed).
+ */
+export function diskMetaToOpfsCowPaths(meta: DiskImageMetadata): OpfsCowPaths | null {
+  if (meta.source === "local") {
+    if (meta.backend !== "opfs") return null;
+    if (meta.kind !== "hdd") return null;
+    const basePath = diskMetaToOpfsBasePath(meta);
+    if (!basePath) return null;
+    const overlayPath = opfsOverlayPathForCow(meta);
+    return { basePath, overlayPath };
+  }
+
+  if (meta.cache.backend !== "opfs") return null;
+  const basePath = diskMetaToOpfsBasePath(meta);
+  if (!basePath) return null;
+  const overlayPath = opfsOverlayPathForCow(meta);
+  return { basePath, overlayPath, overlayBlockSizeBytes: meta.cache.overlayBlockSizeBytes };
+}
+
