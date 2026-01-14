@@ -162,8 +162,8 @@ fn usb2_port_mux_ehci_remote_wakeup_enters_resume_state_through_external_hub() {
             w_length: 0,
         },
     );
-    // Enable DEVICE_REMOTE_WAKEUP on the hub itself so it can forward downstream remote wake
-    // requests upstream while suspended.
+    // Enable DEVICE_REMOTE_WAKEUP on the hub itself (not required for downstream remote-wake
+    // propagation; included for coverage).
     control_no_data(
         &mut ehci,
         1,
@@ -486,8 +486,8 @@ fn ehci_remote_wakeup_enters_resume_state_through_external_hub() {
             w_length: 0,
         },
     );
-    // Enable DEVICE_REMOTE_WAKEUP on the hub itself so it can forward downstream remote wake
-    // requests upstream while suspended.
+    // Enable DEVICE_REMOTE_WAKEUP on the hub itself (not required for downstream remote-wake
+    // propagation; included for coverage).
     control_no_data(
         &mut ehci,
         1,

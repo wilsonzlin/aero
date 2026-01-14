@@ -404,8 +404,8 @@ fn hid_keyboard_remote_wakeup_sets_uhci_resume_detect_through_usb2_port_mux_and_
             w_length: 0,
         },
     );
-    // Enable DEVICE_REMOTE_WAKEUP on the hub itself so it can forward downstream remote wake
-    // requests upstream while suspended.
+    // Enable DEVICE_REMOTE_WAKEUP on the hub itself (not required for downstream remote-wake
+    // propagation; included for coverage).
     control_no_data(
         &mut ctrl,
         1,
@@ -722,8 +722,8 @@ fn hid_keyboard_remote_wakeup_sets_uhci_resume_detect_through_external_hub() {
             w_length: 0,
         },
     );
-    // Enable DEVICE_REMOTE_WAKEUP on the hub itself so it can forward downstream remote wake
-    // requests upstream while suspended.
+    // Enable DEVICE_REMOTE_WAKEUP on the hub itself (not required for downstream remote-wake
+    // propagation; included for coverage).
     control_no_data(
         &mut ctrl,
         1,
@@ -1036,7 +1036,8 @@ fn hid_keyboard_remote_wakeup_sets_uhci_resume_detect_through_nested_hubs() {
             w_length: 0,
         },
     );
-    // Enable DEVICE_REMOTE_WAKEUP on the outer hub so it can forward downstream wake events.
+    // Enable DEVICE_REMOTE_WAKEUP on the outer hub (not required for downstream remote-wake
+    // propagation; included for coverage).
     control_no_data(
         &mut ctrl,
         1,
@@ -1106,7 +1107,8 @@ fn hid_keyboard_remote_wakeup_sets_uhci_resume_detect_through_nested_hubs() {
             w_length: 0,
         },
     );
-    // Enable DEVICE_REMOTE_WAKEUP on the inner hub too.
+    // Enable DEVICE_REMOTE_WAKEUP on the inner hub too (not required for downstream remote-wake
+    // propagation; included for coverage).
     control_no_data(
         &mut ctrl,
         2,
@@ -1264,7 +1266,8 @@ fn hid_keyboard_remote_wakeup_does_not_propagate_through_nested_hubs_without_inn
             w_length: 0,
         },
     );
-    // Enable DEVICE_REMOTE_WAKEUP on the outer hub only.
+    // Enable DEVICE_REMOTE_WAKEUP on the outer hub only (not required for downstream remote-wake
+    // propagation; included for coverage).
     control_no_data(
         &mut ctrl,
         1,
