@@ -2117,7 +2117,6 @@ impl PciDevice for XhciPciConfigDevice {
 // framebuffer (LFB) can be routed via the PCI MMIO window (stub BAR mirrors the configured LFB
 // base; legacy default `SVGA_LFB_BASE`). When AeroGPU is enabled, this transitional PCI stub is
 // intentionally not installed.
-
 const VGA_PCI_BDF: PciBdf = PciBdf::new(0, 0x0c, 0);
 const VGA_PCI_BAR_INDEX: u8 = 0;
 

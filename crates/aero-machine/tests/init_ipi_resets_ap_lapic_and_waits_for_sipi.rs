@@ -34,7 +34,7 @@ fn init_ipi_resets_target_ap_lapic_and_enters_wait_for_sipi() {
     m.write_lapic_u32(0, ICR_LOW_OFF, icr_low);
 
     // LAPIC SVR should reset to the default spurious vector (0xFF). The platform keeps the LAPIC
-    // software-enable bit set so IOAPIC/MSI delivery continues to work after INIT.
+    // software-enable bit set so IOAPIC/MSI delivery remains deterministic across INIT/SIPI bring-up.
     let svr = m.read_lapic_u32(1, LAPIC_SVR_OFF);
     assert_eq!(svr & 0xFF, 0xFF);
     assert_ne!(svr & (1 << 8), 0);
