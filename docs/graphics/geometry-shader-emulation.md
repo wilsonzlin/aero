@@ -86,8 +86,9 @@ This avoids needing to generate restart indices and keeps the draw stage in the 
 primitive topologies.
 
 Note: there is an in-tree GS→WGSL compute translator at `crates/aero-d3d11/src/runtime/gs_translate.rs`.
-The initial implementation focuses on `triangle_strip` output and lowers it to an indexed **triangle
-list** suitable for `draw_indexed_indirect`.
+It supports `pointlist`, `linestrip`, and `trianglestrip` GS output topologies. Strip topologies are
+lowered to indexed list topologies (`linestrip` → **line list**, `trianglestrip` → **triangle list**)
+suitable for `draw_indexed_indirect`.
 It is partially wired into the command executor via the point-list GS prepass path (non-indexed
 `PointList` draws); other topologies still fall back to synthetic expansion.
 
@@ -173,15 +174,15 @@ Not yet supported end-to-end:
 
 ### Output topology / streams
 
-Supported:
+Supported by the GS→WGSL compute translator (`gs_translate.rs`):
 
+- `pointlist` output (indexed **point list**)
+- `linestrip` output, lowered to an indexed **line list** for the final draw
 - `trianglestrip` output, lowered to an indexed **triangle list** for the final draw
 - only **stream 0**
 
 Not yet supported:
 
-- `pointlist` output
-- `linestrip` output
 - multi-stream output (`EmitStream` / `CutStream` / `SV_StreamID`)
 
 ### Supported instruction subset
