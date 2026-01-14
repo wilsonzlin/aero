@@ -1,41 +1,52 @@
 #![no_main]
 
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
-use arbitrary::Unstructured;
-use libfuzzer_sys::fuzz_target;
-
-use aero_cpu_core::state::{gpr, mask_bits, CpuMode, CpuState, Segment};
+use aero_cpu_core::state::{gpr, CpuMode, CpuState, RFLAGS_RESERVED1, Segment};
+use firmware::bda::{
+    BDA_ACTIVE_PAGE_ADDR, BDA_CRTC_BASE_ADDR, BDA_CURSOR_POS_PAGE0_ADDR, BDA_CURSOR_SHAPE_ADDR,
+    BDA_PAGE_SIZE_ADDR, BDA_SCREEN_COLS_ADDR, BDA_TEXT_ROWS_MINUS_ONE_ADDR, BDA_VIDEO_MODE_ADDR,
+    BDA_VIDEO_PAGE_OFFSET_ADDR,
+};
 use firmware::bios::{
-    build_bios_rom, A20Gate, Bios, BiosConfig, FirmwareMemory, BDA_BASE, BIOS_BASE, EBDA_BASE,
+    A20Gate, Bios, BiosBus, BiosConfig, FirmwareMemory, InMemoryDisk, BDA_BASE, EBDA_BASE,
     EBDA_SIZE,
 };
+use libfuzzer_sys::fuzz_target;
 use memory::{DenseMemory, MemoryBus, PhysicalMemoryBus};
 
-const MEM_SIZE: u64 = 2 * 1024 * 1024; // 2MiB (covers full real-mode address space + headroom)
-const MAX_DISK_SECTORS: usize = 32; // 16KiB max
+/// Bound guest RAM so fuzz inputs cannot trigger large allocations.
+const RAM_SIZE: u64 = 2 * 1024 * 1024; // 2 MiB
 
-static BIOS_ROM: OnceLock<Arc<[u8]>> = OnceLock::new();
+/// Bound disk size so fuzz inputs cannot trigger large allocations.
+const MAX_DISK_SECTORS: usize = 4096; // 2 MiB (4096 * 512)
+const MAX_DISK_BYTES: usize = MAX_DISK_SECTORS * 512;
 
-// Lightweight memory bus wrapper that:
-// - provides a bounded RAM backing,
-// - supports ROM mappings,
-// - implements A20 gate wraparound semantics (mask bit 20 when disabled).
-struct FuzzMemory {
+/// Bound initial memory patch data so a single testcase can't do too much work.
+const MAX_MEM_PATCH_BYTES: usize = 64 * 1024;
+
+/// Bound injected keyboard keys.
+const MAX_KEYS: usize = 4;
+
+/// Minimal guest memory bus for BIOS fuzzing.
+///
+/// This mirrors the `TestBus` used in `crates/firmware/tests/el_torito_boot.rs`, but keeps behavior
+/// best-effort: out-of-range accesses are ignored / return 0xFF (via `PhysicalMemoryBus`), and ROM
+/// mapping failures are tolerated to avoid harness panics.
+struct FuzzBus {
     a20_enabled: bool,
     inner: PhysicalMemoryBus,
 }
 
-impl FuzzMemory {
-    fn new(ram_size: u64) -> Self {
-        let ram = DenseMemory::new(ram_size).unwrap_or_else(|_| DenseMemory::new(0).unwrap());
+impl FuzzBus {
+    fn new(size: u64) -> Self {
+        let ram = DenseMemory::new(size).expect("guest RAM allocation failed");
         Self {
-            a20_enabled: true,
+            a20_enabled: false,
             inner: PhysicalMemoryBus::new(Box::new(ram)),
         }
     }
 
-    #[inline]
     fn translate_a20(&self, addr: u64) -> u64 {
         if self.a20_enabled {
             addr
@@ -45,7 +56,7 @@ impl FuzzMemory {
     }
 }
 
-impl A20Gate for FuzzMemory {
+impl A20Gate for FuzzBus {
     fn set_a20_enabled(&mut self, enabled: bool) {
         self.a20_enabled = enabled;
     }
@@ -55,15 +66,16 @@ impl A20Gate for FuzzMemory {
     }
 }
 
-impl FirmwareMemory for FuzzMemory {
+impl FirmwareMemory for FuzzBus {
     fn map_rom(&mut self, base: u64, rom: Arc<[u8]>) {
-        // Ignore mapping errors; this is a fuzz harness and we want to avoid
-        // panicking due to duplicate mappings.
+        // BIOS POST maps ROM both in the conventional 0xF0000 window and at the reset-vector
+        // alias 0xFFFF_0000. `PhysicalMemoryBus` supports sparse ROM mappings, but mapping can still
+        // fail due to overlaps; tolerate failures to keep the harness panic-free.
         let _ = self.inner.map_rom(base, rom);
     }
 }
 
-impl MemoryBus for FuzzMemory {
+impl MemoryBus for FuzzBus {
     fn read_physical(&mut self, paddr: u64, buf: &mut [u8]) {
         if self.a20_enabled {
             self.inner.read_physical(paddr, buf);
@@ -89,7 +101,6 @@ impl MemoryBus for FuzzMemory {
     }
 }
 
-#[inline]
 fn set_real_mode_seg(seg: &mut Segment, selector: u16) {
     seg.selector = selector;
     seg.base = (selector as u64) << 4;
@@ -97,232 +108,241 @@ fn set_real_mode_seg(seg: &mut Segment, selector: u16) {
     seg.access = 0;
 }
 
-// Minimal BIOS Data Area init, loosely mirroring `bios::ivt::init_bda` but without depending on
-// private firmware modules.
-fn init_bda(bus: &mut impl MemoryBus, floppy_drives: u8, hard_disks: u8) {
-    // COM1 present at 0x3F8; no LPT ports.
-    bus.write_u16(BDA_BASE + 0x00, 0x03F8);
-    bus.write_u16(BDA_BASE + 0x02, 0);
-    bus.write_u16(BDA_BASE + 0x04, 0);
-    bus.write_u16(BDA_BASE + 0x06, 0);
-    bus.write_u16(BDA_BASE + 0x08, 0);
-    bus.write_u16(BDA_BASE + 0x0A, 0);
-    bus.write_u16(BDA_BASE + 0x0C, 0);
-
-    // EBDA segment pointer.
+fn init_minimal_bda(bus: &mut dyn BiosBus, boot_drive: u8) {
+    // EBDA segment pointer (0x40:0x0E).
     bus.write_u16(BDA_BASE + 0x0E, (EBDA_BASE / 16) as u16);
+    // Conventional memory size in KiB (0x40:0x13).
+    bus.write_u16(BDA_BASE + 0x13, (EBDA_BASE / 1024) as u16);
+    // EBDA size word at the start of EBDA.
+    bus.write_u16(EBDA_BASE, (EBDA_SIZE / 1024) as u16);
 
-    // Equipment list word (INT 11h).
-    //
-    // - x87 FPU present
-    // - VGA/EGA video (80x25 color)
-    // - one serial port
+    // Fixed disk count (0x40:0x75). This drives INT 13h drive-present probing.
+    let hard_disk_count = if (0x80..=0xDF).contains(&boot_drive) {
+        boot_drive.wrapping_sub(0x80).saturating_add(1)
+    } else {
+        0
+    };
+    bus.write_u8(BDA_BASE + 0x75, hard_disk_count);
+
+    // Minimal equipment word (0x40:0x10) so INT 11h/INT 13h floppy probing has sane defaults.
+    // Match `ivt::init_bda`:
+    // - math coprocessor present
+    // - initial video = 80x25 color
+    // - one serial port (COM1)
     let mut equipment: u16 = (1 << 1) | (2 << 4) | (1 << 9);
-    let floppy_drives = floppy_drives.min(4);
-    if floppy_drives != 0 {
+    if boot_drive < 0x80 {
+        // Report at least one floppy when booting from a floppy drive number.
+        let drives = boot_drive.saturating_add(1).clamp(1, 4);
         equipment |= 1 << 0;
-        equipment |= ((u16::from(floppy_drives.saturating_sub(1))) & 0x3) << 6;
+        equipment |= ((u16::from(drives.saturating_sub(1))) & 0x3) << 6;
     }
     bus.write_u16(BDA_BASE + 0x10, equipment);
-
-    // Keyboard flags + buffer state.
-    bus.write_u16(BDA_BASE + 0x17, 0);
-    // Ring buffer metadata.
-    const KB_BUF_START: u16 = 0x001E;
-    const KB_BUF_END: u16 = 0x003E;
-    bus.write_u16(BDA_BASE + 0x1A, KB_BUF_START);
-    bus.write_u16(BDA_BASE + 0x1C, KB_BUF_START);
-    bus.write_u16(BDA_BASE + 0x80, KB_BUF_START);
-    bus.write_u16(BDA_BASE + 0x82, KB_BUF_END);
-
-    // Fixed disk count.
-    bus.write_u8(BDA_BASE + 0x75, hard_disks.min(4));
-
-    // Conventional memory size (KiB) up to the EBDA base.
-    bus.write_u16(BDA_BASE + 0x13, (EBDA_BASE / 1024) as u16);
-    // EBDA starts with a size field in KiB.
-    bus.write_u16(EBDA_BASE, (EBDA_SIZE / 1024) as u16);
 }
 
-fn prepare_cpu_for_interrupt(u: &mut Unstructured<'_>, vector: u8, cpu: &mut CpuState) {
-    // Common real-mode baseline: keep segments and stack sane.
-    let cs: u16 = u.arbitrary().unwrap_or(0);
-    let ds: u16 = u.arbitrary().unwrap_or(0);
-    let es: u16 = u.arbitrary().unwrap_or(0);
-    // Keep SS out of the BIOS ROM segment so interrupt-frame writes generally hit RAM.
-    let mut ss: u16 = u.arbitrary().unwrap_or(0);
-    if ss >= 0xF000 {
-        ss = 0;
+fn init_minimal_video_state(bus: &mut dyn BiosBus) {
+    // Many BIOS INT 10h services assume the BDA video fields have been initialized (typically by
+    // POST setting mode 03h). Without this, helpers like teletype output can hit arithmetic
+    // underflows (e.g. `cols - 1` when `cols == 0`).
+    bus.write_u8(BDA_VIDEO_MODE_ADDR, 0x03);
+    bus.write_u16(BDA_SCREEN_COLS_ADDR, 80);
+    bus.write_u8(BDA_TEXT_ROWS_MINUS_ONE_ADDR, 25 - 1);
+    bus.write_u16(BDA_PAGE_SIZE_ADDR, 80 * 25 * 2);
+    bus.write_u16(BDA_VIDEO_PAGE_OFFSET_ADDR, 0);
+    bus.write_u8(BDA_ACTIVE_PAGE_ADDR, 0);
+    bus.write_u16(BDA_CRTC_BASE_ADDR, 0x3D4);
+    for page in 0..8u8 {
+        let addr = BDA_CURSOR_POS_PAGE0_ADDR + u64::from(page) * 2;
+        bus.write_u16(addr, 0);
     }
-
-    set_real_mode_seg(&mut cpu.segments.cs, cs);
-    set_real_mode_seg(&mut cpu.segments.ds, ds);
-    set_real_mode_seg(&mut cpu.segments.es, es);
-    set_real_mode_seg(&mut cpu.segments.ss, ss);
-
-    // General purpose registers (16-bit values in real mode).
-    let mut ax: u16 = u.arbitrary().unwrap_or(0);
-    let bx: u16 = u.arbitrary().unwrap_or(0);
-    let mut cx: u16 = u.arbitrary().unwrap_or(0);
-    let mut dx: u16 = u.arbitrary().unwrap_or(0);
-    let si: u16 = u.arbitrary().unwrap_or(0);
-    let di: u16 = u.arbitrary().unwrap_or(0);
-    let bp: u16 = u.arbitrary().unwrap_or(0);
-    let mut sp: u16 = u.arbitrary().unwrap_or(0);
-
-    // Clamp common "count" registers so the harness stays fast even when we hit
-    // handlers with linear loops (e.g. INT 10h text writes, INT 13h sector loops).
-    cx &= 0x00FF;
-    if cx == 0 {
-        cx = 1;
-    }
-
-    // Avoid the INT 13h "AL=0 means 256 sectors" convention by forcing AL != 0
-    // for the CHS/verify paths we generate below.
-    if vector == 0x13 && (ax & 0x00FF) == 0 {
-        ax = (ax & 0xFF00) | 1;
-    }
-
-    // Select only supported subfunctions for interrupts that would otherwise spam `eprintln!`.
-    match vector {
-        0x13 => {
-            const AH: &[u8] = &[
-                0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x08, 0x09, 0x0C, 0x0D, 0x10, 0x11, 0x14, 0x15,
-                0x16, 0x41, 0x42,
-            ];
-            let sel: u8 = u.arbitrary().unwrap_or(0);
-            let ah = AH[sel as usize % AH.len()];
-            ax = (ax & 0x00FF) | (u16::from(ah) << 8);
-
-            // Constrain DL to the range covered by our BDA init (0..3, 0x80..0x83).
-            let drive_sel: u8 = u.arbitrary().unwrap_or(0);
-            let drive = if (drive_sel & 1) == 0 {
-                drive_sel & 0x03
-            } else {
-                0x80 | (drive_sel & 0x03)
-            };
-            dx = (dx & 0xFF00) | u16::from(drive);
-        }
-        0x15 => {
-            const AX: &[u16] = &[
-                0x2400, 0x2401, 0x2402, 0x2403, 0xE801, 0xE820, 0x8600, 0xC000, 0x8800,
-            ];
-            let sel: u8 = u.arbitrary().unwrap_or(0);
-            ax = AX[sel as usize % AX.len()];
-        }
-        0x16 => {
-            const AH: &[u8] = &[0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x0C, 0x10, 0x11, 0x12];
-            let sel: u8 = u.arbitrary().unwrap_or(0);
-            let ah = AH[sel as usize % AH.len()];
-            ax = (ax & 0x00FF) | (u16::from(ah) << 8);
-        }
-        _ => {}
-    }
-
-    cpu.gpr[gpr::RAX] = ax as u64;
-    cpu.gpr[gpr::RBX] = bx as u64;
-    cpu.gpr[gpr::RCX] = cx as u64;
-    cpu.gpr[gpr::RDX] = dx as u64;
-    cpu.gpr[gpr::RSI] = si as u64;
-    cpu.gpr[gpr::RDI] = di as u64;
-    cpu.gpr[gpr::RBP] = bp as u64;
-
-    // Keep SP in range for a 6-byte interrupt frame.
-    sp = sp.saturating_sub(6);
-    cpu.gpr[gpr::RSP] = sp as u64;
-
-    let flags: u16 = u.arbitrary().unwrap_or(0x0200);
-    cpu.set_rflags(flags as u64);
-    cpu.mode = CpuMode::Real;
-    cpu.halted = false;
-    cpu.clear_pending_bios_int();
+    // Cursor shape: start=0x06, end=0x07 (word-packed as start in high byte, end in low byte).
+    bus.write_u16(BDA_CURSOR_SHAPE_ADDR, 0x0607);
 }
 
-fn write_interrupt_frame(bus: &mut impl MemoryBus, cpu: &CpuState, ip: u16, cs: u16, flags: u16) {
+struct Reader<'a> {
+    data: &'a [u8],
+}
+
+impl<'a> Reader<'a> {
+    fn new(data: &'a [u8]) -> Self {
+        Self { data }
+    }
+
+    fn take(&mut self, n: usize) -> &'a [u8] {
+        let (head, tail) = self.data.split_at(n.min(self.data.len()));
+        self.data = tail;
+        head
+    }
+
+    fn u8(&mut self) -> u8 {
+        self.take(1).first().copied().unwrap_or(0)
+    }
+
+    fn u16(&mut self) -> u16 {
+        let b = self.take(2);
+        let lo = b.first().copied().unwrap_or(0) as u16;
+        let hi = b.get(1).copied().unwrap_or(0) as u16;
+        lo | (hi << 8)
+    }
+
+    fn u32(&mut self) -> u32 {
+        let b = self.take(4);
+        let mut out = 0u32;
+        for (i, byte) in b.iter().copied().enumerate() {
+            out |= (byte as u32) << (i * 8);
+        }
+        out
+    }
+
+    fn u64(&mut self) -> u64 {
+        let b = self.take(8);
+        let mut out = 0u64;
+        for (i, byte) in b.iter().copied().enumerate() {
+            out |= (byte as u64) << (i * 8);
+        }
+        out
+    }
+
+    fn vec(&mut self, len: usize) -> Vec<u8> {
+        self.take(len).to_vec()
+    }
+}
+
+fn map_vector(raw: u8) -> u8 {
+    // Bias towards the interrupts implemented by the legacy BIOS dispatcher, while still keeping
+    // some "random vector" coverage for the default handler path.
+    match raw % 12 {
+        0 => 0x10,
+        1 => 0x11,
+        2 => 0x12,
+        3 => 0x13,
+        4 => 0x14,
+        5 => 0x15,
+        6 => 0x16,
+        7 => 0x17,
+        8 => 0x18,
+        9 => 0x19,
+        10 => 0x1A,
+        _ => raw,
+    }
+}
+
+fn install_interrupt_frame(bus: &mut dyn BiosBus, cpu: &mut CpuState, saved_flags: u16) {
+    // `Bios::dispatch_interrupt` expects the CPU to have executed `INT` already, so SS:SP points to
+    // an interrupt frame containing return IP, CS, FLAGS.
+    //
+    // Use wrapping semantics for SP, since real mode stack offsets are 16-bit.
     let sp_bits = cpu.stack_ptr_bits();
+    let mask = aero_cpu_core::state::mask_bits(sp_bits);
     let sp = cpu.stack_ptr();
 
-    let base = cpu.segments.ss.base;
-    let ip_sp = sp & mask_bits(sp_bits);
-    let cs_sp = sp.wrapping_add(2) & mask_bits(sp_bits);
-    let flags_sp = sp.wrapping_add(4) & mask_bits(sp_bits);
+    let ip_sp = sp & mask;
+    let cs_sp = sp.wrapping_add(2) & mask;
+    let flags_sp = sp.wrapping_add(4) & mask;
 
-    let ip_addr = cpu.apply_a20(base.wrapping_add(ip_sp));
-    let cs_addr = cpu.apply_a20(base.wrapping_add(cs_sp));
-    let flags_addr = cpu.apply_a20(base.wrapping_add(flags_sp));
+    let ip_addr = cpu.apply_a20(cpu.segments.ss.base.wrapping_add(ip_sp));
+    let cs_addr = cpu.apply_a20(cpu.segments.ss.base.wrapping_add(cs_sp));
+    let flags_addr = cpu.apply_a20(cpu.segments.ss.base.wrapping_add(flags_sp));
 
-    bus.write_u16(ip_addr, ip);
-    bus.write_u16(cs_addr, cs);
-    bus.write_u16(flags_addr, flags);
+    bus.write_u16(ip_addr, 0);
+    bus.write_u16(cs_addr, 0);
+    bus.write_u16(flags_addr, saved_flags | 0x0002);
 }
 
 fuzz_target!(|data: &[u8]| {
-    let mut u = Unstructured::new(data);
+    let mut r = Reader::new(data);
 
-    // Choose one of the implemented BIOS interrupt vectors.
-    const VECTORS: &[u8] = &[
-        0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A,
-    ];
-    let vector_sel: u8 = u.arbitrary().unwrap_or(0);
-    let vector = VECTORS[vector_sel as usize % VECTORS.len()];
+    let vector_raw = r.u8();
+    let vector = map_vector(vector_raw);
 
-    let mut mem = FuzzMemory::new(MEM_SIZE);
-    let a20_initial: bool = u.arbitrary().unwrap_or(true);
-    mem.set_a20_enabled(a20_initial);
+    let boot_drive = r.u8();
+    let a20_enabled = (r.u8() & 1) != 0;
 
-    // Map the BIOS ROM into the conventional real-mode window so INT 10h/13h pointers returned by
-    // handlers refer to valid bytes.
-    let rom = BIOS_ROM.get_or_init(|| build_bios_rom().into());
-    mem.map_rom(BIOS_BASE, Arc::clone(rom));
+    let key_count = (r.u8() as usize) % (MAX_KEYS + 1);
+    let mut keys = Vec::with_capacity(key_count);
+    for _ in 0..key_count {
+        keys.push(r.u16());
+    }
 
-    // Initialize the BDA/EBDA with a stable baseline so BIOS services that rely on probing (INT 11h,
-    // drive counts, etc.) can make progress.
-    let floppy_drives: u8 = u.int_in_range(0u8..=4).unwrap_or(0);
-    let hard_disks: u8 = u.int_in_range(0u8..=4).unwrap_or(0);
-    init_bda(&mut mem, floppy_drives, hard_disks);
+    // Register values are modeled as full 64-bit GPRs; BIOS code generally masks as needed (16-bit
+    // for most real-mode services, 32-bit for interfaces like INT 15h E820).
+    let rax = r.u64();
+    let rbx = r.u64();
+    let rcx = r.u64();
+    let rdx = r.u64();
+    let rsi = r.u64();
+    let rdi = r.u64();
+    let rbp = r.u64();
+
+    let ds = r.u16();
+    let es = r.u16();
+    let ss = r.u16();
+    let sp = r.u16();
+
+    let saved_flags = r.u16();
+    let cpu_rflags = r.u16();
+
+    let mem_offset = r.u32() as u64;
+    let mem_len = (r.u16() as usize).min(MAX_MEM_PATCH_BYTES);
+    let disk_len = (r.u32() as usize).min(MAX_DISK_BYTES);
+
+    let mem_bytes = r.vec(mem_len);
+    let mut disk_bytes = r.vec(disk_len);
+
+    // Clamp disk size (and keep it sector-aligned) to avoid large allocations and reduce
+    // per-iteration work.
+    disk_bytes.truncate(MAX_DISK_BYTES);
+    disk_bytes.truncate(disk_bytes.len() & !511);
+
+    let mut disk = InMemoryDisk::new(disk_bytes);
+
+    let mut bus = FuzzBus::new(RAM_SIZE);
+    bus.set_a20_enabled(a20_enabled);
+
+    init_minimal_bda(&mut bus, boot_drive);
+    init_minimal_video_state(&mut bus);
+
+    // Apply the input memory patch into guest RAM.
+    if !mem_bytes.is_empty() {
+        let start = mem_offset % RAM_SIZE;
+        let max_len = (RAM_SIZE - start) as usize;
+        let len = mem_bytes.len().min(max_len);
+        bus.write_physical(start, &mem_bytes[..len]);
+    }
 
     let mut bios = Bios::new(BiosConfig {
-        memory_size_bytes: MEM_SIZE,
-        // Avoid ACPI table generation in the harness; interrupt dispatch does not require it and
-        // it would introduce extra work per iteration.
+        memory_size_bytes: RAM_SIZE,
+        boot_drive,
+        // Keep fuzz iterations focused on interrupt dispatch rather than ACPI table generation.
         enable_acpi: false,
         ..BiosConfig::default()
     });
-
-    // Initialize VGA text-mode BDA fields (without clearing the entire text buffer).
-    bios.video.vga.set_text_mode_03h(&mut mem, false);
-
-    // Seed a small keyboard queue so INT 16h can exercise both empty/non-empty paths.
-    let key_count: u8 = u.int_in_range(0u8..=4).unwrap_or(0);
-    for _ in 0..key_count {
-        let key: u16 = u.arbitrary().unwrap_or(0);
+    for key in keys {
         bios.push_key(key);
     }
 
-    // Disk contents (optional, bounded).
-    let sectors: usize = u.int_in_range(0usize..=MAX_DISK_SECTORS).unwrap_or(0);
-    let mut disk_data = vec![0u8; sectors.saturating_mul(512)];
-    for b in &mut disk_data {
-        *b = u.arbitrary().unwrap_or(0);
-    }
-    // Occasionally force a valid boot signature so INT 18h/19h can reach the "success" path.
-    let make_bootable: bool = u.arbitrary().unwrap_or(false);
-    if make_bootable && disk_data.len() >= 512 {
-        disk_data[510] = 0x55;
-        disk_data[511] = 0xAA;
-    }
-    let mut disk = firmware::bios::InMemoryDisk::new(disk_data);
-
     let mut cpu = CpuState::new(CpuMode::Real);
-    cpu.a20_enabled = mem.a20_enabled();
-    prepare_cpu_for_interrupt(&mut u, vector, &mut cpu);
+    cpu.a20_enabled = bus.a20_enabled();
+    cpu.rflags = (cpu_rflags as u64) | RFLAGS_RESERVED1;
 
-    // Install a synthetic interrupt frame at SS:SP matching the layout expected by the BIOS stub
-    // dispatch path.
-    let ret_ip: u16 = u.arbitrary().unwrap_or(0);
-    let ret_cs: u16 = u.arbitrary().unwrap_or(0);
-    let ret_flags: u16 = u.arbitrary().unwrap_or(0x0200);
-    write_interrupt_frame(&mut mem, &cpu, ret_ip, ret_cs, ret_flags);
+    cpu.gpr[gpr::RAX] = rax;
+    cpu.gpr[gpr::RBX] = rbx;
+    cpu.gpr[gpr::RCX] = rcx;
+    cpu.gpr[gpr::RDX] = rdx;
+    cpu.gpr[gpr::RSI] = rsi;
+    cpu.gpr[gpr::RDI] = rdi;
+    cpu.gpr[gpr::RBP] = rbp;
+    cpu.gpr[gpr::RSP] = sp as u64;
 
-    bios.dispatch_interrupt(vector, &mut cpu, &mut mem, &mut disk, None);
+    set_real_mode_seg(&mut cpu.segments.cs, 0);
+    set_real_mode_seg(&mut cpu.segments.ds, ds);
+    set_real_mode_seg(&mut cpu.segments.es, es);
+    set_real_mode_seg(&mut cpu.segments.ss, ss);
+    set_real_mode_seg(&mut cpu.segments.fs, 0);
+    set_real_mode_seg(&mut cpu.segments.gs, 0);
+
+    install_interrupt_frame(&mut bus, &mut cpu, saved_flags);
+
+    // Stress-test BIOS interrupt dispatch for panics / OOB on malformed guest state.
+    bios.dispatch_interrupt(vector, &mut cpu, &mut bus, &mut disk, None);
 });
+

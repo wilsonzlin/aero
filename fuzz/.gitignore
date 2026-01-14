@@ -2,6 +2,8 @@ target/
 artifacts/
 corpus/*
 
-# Keep a tiny checked-in seed corpus for select targets.
+# Keep tiny checked-in seed corpora for select targets.
 !corpus/fuzz_aerogpu_bc_decompress/
 !corpus/fuzz_aerogpu_bc_decompress/**
+!corpus/fuzz_bios_interrupt_dispatch/
+!corpus/fuzz_bios_interrupt_dispatch/**

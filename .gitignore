@@ -226,6 +226,8 @@ fuzz/artifacts/
 fuzz/corpus/*
 !fuzz/corpus/fuzz_aerogpu_bc_decompress/
 !fuzz/corpus/fuzz_aerogpu_bc_decompress/**
+!fuzz/corpus/fuzz_bios_interrupt_dispatch/
+!fuzz/corpus/fuzz_bios_interrupt_dispatch/**
 
 # Aero Win7 virtio selftest build outputs (avoid clutter if building with MSVC locally)
 drivers/windows7/tests/guest-selftest/**/Debug/
