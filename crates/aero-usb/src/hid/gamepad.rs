@@ -258,11 +258,12 @@ impl IoSnapshot for UsbHidGamepad {
         }
 
         self.buttons = r.u16(TAG_BUTTONS)?.unwrap_or(0);
-        self.hat = r.u8(TAG_HAT)?.unwrap_or(8);
-        self.x = r.u8(TAG_X)?.unwrap_or(0) as i8;
-        self.y = r.u8(TAG_Y)?.unwrap_or(0) as i8;
-        self.rx = r.u8(TAG_RX)?.unwrap_or(0) as i8;
-        self.ry = r.u8(TAG_RY)?.unwrap_or(0) as i8;
+        let hat = r.u8(TAG_HAT)?.unwrap_or(8);
+        self.hat = if hat <= 8 { hat } else { 8 };
+        self.x = (r.u8(TAG_X)?.unwrap_or(0) as i8).clamp(-127, 127);
+        self.y = (r.u8(TAG_Y)?.unwrap_or(0) as i8).clamp(-127, 127);
+        self.rx = (r.u8(TAG_RX)?.unwrap_or(0) as i8).clamp(-127, 127);
+        self.ry = (r.u8(TAG_RY)?.unwrap_or(0) as i8).clamp(-127, 127);
 
         if let Some(buf) = r.bytes(TAG_LAST_REPORT) {
             if buf.len() != self.last_report.len() {

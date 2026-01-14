@@ -865,11 +865,12 @@ impl IoSnapshot for UsbCompositeHidInput {
         }
 
         self.gamepad.buttons = r.u16(TAG_GAMEPAD_BUTTONS)?.unwrap_or(0);
-        self.gamepad.hat = r.u8(TAG_GAMEPAD_HAT)?.unwrap_or(8);
-        self.gamepad.x = r.u8(TAG_GAMEPAD_X)?.unwrap_or(0) as i8;
-        self.gamepad.y = r.u8(TAG_GAMEPAD_Y)?.unwrap_or(0) as i8;
-        self.gamepad.rx = r.u8(TAG_GAMEPAD_RX)?.unwrap_or(0) as i8;
-        self.gamepad.ry = r.u8(TAG_GAMEPAD_RY)?.unwrap_or(0) as i8;
+        let hat = r.u8(TAG_GAMEPAD_HAT)?.unwrap_or(8);
+        self.gamepad.hat = if hat <= 8 { hat } else { 8 };
+        self.gamepad.x = (r.u8(TAG_GAMEPAD_X)?.unwrap_or(0) as i8).clamp(-127, 127);
+        self.gamepad.y = (r.u8(TAG_GAMEPAD_Y)?.unwrap_or(0) as i8).clamp(-127, 127);
+        self.gamepad.rx = (r.u8(TAG_GAMEPAD_RX)?.unwrap_or(0) as i8).clamp(-127, 127);
+        self.gamepad.ry = (r.u8(TAG_GAMEPAD_RY)?.unwrap_or(0) as i8).clamp(-127, 127);
         if let Some(buf) = r.bytes(TAG_GAMEPAD_LAST_REPORT) {
             if buf.len() != self.gamepad.last_report.len() {
                 return Err(SnapshotError::InvalidFieldEncoding("gamepad last report"));
