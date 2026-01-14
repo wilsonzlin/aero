@@ -377,10 +377,17 @@ async function idbSumDiskChunkBytes(db: IDBDatabase, diskId: string): Promise<nu
     req.onsuccess = () => {
       const cursor = req.result;
       if (!cursor) return resolve(undefined);
-      const value = cursor.value as { data?: unknown } | undefined;
-      const data = value?.data;
-      if (data && typeof (data as ArrayBufferLike).byteLength === "number") {
-        total += (data as ArrayBufferLike).byteLength;
+      const value = cursor.value as unknown;
+      if (value && typeof value === "object") {
+        const rec = value as Record<string, unknown>;
+        if (hasOwnProp(rec, "data")) {
+          const data = rec.data as any;
+          if (data instanceof ArrayBuffer) {
+            total += data.byteLength;
+          } else if (data instanceof Uint8Array) {
+            total += data.byteLength;
+          }
+        }
       }
       cursor.continue();
     };
@@ -414,9 +421,10 @@ async function opfsReadLruChunkCacheBytes(
       const raw = await file.text();
       if (raw.trim()) {
         try {
-          const parsed = JSON.parse(raw) as unknown;
-          if (parsed && typeof parsed === "object") {
-            const chunks = (parsed as { chunks?: unknown }).chunks;
+           const parsed = JSON.parse(raw) as unknown;
+           if (parsed && typeof parsed === "object") {
+            const parsedRec = parsed as Record<string, unknown>;
+            const chunks = hasOwnProp(parsedRec, "chunks") ? parsedRec.chunks : undefined;
             if (chunks && typeof chunks === "object") {
               let total = 0;
               const obj = chunks as Record<string, unknown>;
@@ -430,23 +438,24 @@ async function opfsReadLruChunkCacheBytes(
                 if (!/^(0|[1-9]\d*)$/.test(key)) {
                   throw new Error("index.json contains non-numeric chunk keys");
                 }
-                const idx = Number(key);
-                if (!Number.isSafeInteger(idx) || idx < 0) {
-                  throw new Error("index.json contains invalid chunk key");
-                }
-                const meta = obj[key];
-                if (!meta || typeof meta !== "object") continue;
-                entries += 1;
-                if (entries > MAX_LRU_INDEX_CHUNK_ENTRIES) {
-                  // Treat pathological indices as corrupt and fall back to scanning.
-                  throw new Error("index.json chunk entries too large");
-                }
-                const byteLength = (meta as { byteLength?: unknown }).byteLength;
-                if (typeof byteLength === "number" && Number.isFinite(byteLength) && byteLength > 0) total += byteLength;
-              }
-              return total;
-            }
-          }
+                 const idx = Number(key);
+                 if (!Number.isSafeInteger(idx) || idx < 0) {
+                   throw new Error("index.json contains invalid chunk key");
+                 }
+                 const meta = obj[key];
+                 if (!meta || typeof meta !== "object") continue;
+                 const metaRec = meta as Record<string, unknown>;
+                 entries += 1;
+                 if (entries > MAX_LRU_INDEX_CHUNK_ENTRIES) {
+                   // Treat pathological indices as corrupt and fall back to scanning.
+                   throw new Error("index.json chunk entries too large");
+                 }
+                 const byteLength = hasOwnProp(metaRec, "byteLength") ? metaRec.byteLength : undefined;
+                 if (typeof byteLength === "number" && Number.isFinite(byteLength) && byteLength > 0) total += byteLength;
+               }
+               return total;
+             }
+           }
         } catch {
           // ignore and fall back to scanning
         }
@@ -501,7 +510,8 @@ async function opfsReadLruChunkCacheIndexStats(
 
     const parsed = JSON.parse(raw) as unknown;
     if (!parsed || typeof parsed !== "object") return null;
-    const chunks = (parsed as { chunks?: unknown }).chunks;
+    const parsedRec = parsed as Record<string, unknown>;
+    const chunks = hasOwnProp(parsedRec, "chunks") ? parsedRec.chunks : undefined;
     if (!chunks || typeof chunks !== "object") return null;
 
     let totalBytes = 0;
@@ -518,9 +528,10 @@ async function opfsReadLruChunkCacheIndexStats(
       if (!Number.isSafeInteger(idx) || idx < 0) return null;
       const meta = obj[key];
       if (!meta || typeof meta !== "object") continue;
+      const metaRec = meta as Record<string, unknown>;
       chunkCount += 1;
       if (chunkCount > MAX_LRU_INDEX_CHUNK_ENTRIES) return null;
-      const byteLength = (meta as { byteLength?: unknown }).byteLength;
+      const byteLength = hasOwnProp(metaRec, "byteLength") ? metaRec.byteLength : undefined;
       if (typeof byteLength === "number" && Number.isFinite(byteLength) && byteLength > 0) totalBytes += byteLength;
     }
 
@@ -655,6 +666,8 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
   const backend = msg.backend;
   const op = msg.op;
   const store = getStore(backend);
+  // Treat postMessage payloads as untrusted; normalize to a record and ignore inherited fields.
+  const payload = isRecord(msg.payload) ? (msg.payload as Record<string, unknown>) : (Object.create(null) as Record<string, unknown>);
 
   switch (op) {
     case "adopt_legacy_images": {
@@ -712,7 +725,7 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
     }
 
     case "set_mounts": {
-      const mounts = normalizeMountConfig(msg.payload);
+      const mounts = normalizeMountConfig(payload);
       await validateMounts(backend, mounts);
 
       const now = Date.now();
@@ -733,11 +746,10 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
     }
 
     case "create_blank": {
-      const payload = (msg.payload || {}) as { name?: unknown; sizeBytes?: unknown; kind?: unknown; format?: unknown };
-      const name = String(payload.name ?? "");
-      const sizeBytes = payload.sizeBytes;
-      const kind = (payload.kind ?? "hdd") as DiskKind;
-      const format = (payload.format ?? "raw") as DiskFormat;
+      const name = String((hasOwnProp(payload, "name") ? payload.name : undefined) ?? "");
+      const sizeBytes = hasOwnProp(payload, "sizeBytes") ? payload.sizeBytes : undefined;
+      const kind = ((hasOwnProp(payload, "kind") ? payload.kind : undefined) ?? "hdd") as DiskKind;
+      const format = ((hasOwnProp(payload, "format") ? payload.format : undefined) ?? "raw") as DiskFormat;
       if (typeof sizeBytes !== "number" || !Number.isFinite(sizeBytes) || !Number.isSafeInteger(sizeBytes) || sizeBytes <= 0) {
         throw new Error("sizeBytes must be a positive safe integer");
       }
@@ -787,7 +799,7 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
         throw new Error("Remote disks are only supported when using the OPFS backend.");
       }
 
-      const rawBlockSizeBytes: unknown = msg.payload?.blockSizeBytes;
+      const rawBlockSizeBytes: unknown = hasOwnProp(payload, "blockSizeBytes") ? payload.blockSizeBytes : undefined;
       let blockSizeBytes: number | undefined;
       if (rawBlockSizeBytes !== undefined) {
         if (typeof rawBlockSizeBytes !== "number" || !Number.isSafeInteger(rawBlockSizeBytes) || rawBlockSizeBytes <= 0) {
@@ -802,7 +814,9 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
         blockSizeBytes = rawBlockSizeBytes;
       }
 
-      const rawPrefetchSequentialBlocks: unknown = msg.payload?.prefetchSequentialBlocks;
+      const rawPrefetchSequentialBlocks: unknown = hasOwnProp(payload, "prefetchSequentialBlocks")
+        ? payload.prefetchSequentialBlocks
+        : undefined;
       let prefetchSequentialBlocks: number | undefined;
       if (rawPrefetchSequentialBlocks !== undefined) {
         if (
@@ -825,7 +839,7 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
         prefetchSequentialBlocks = rawPrefetchSequentialBlocks;
       }
 
-      const rawCacheLimitBytes: unknown = msg.payload?.cacheLimitBytes;
+      const rawCacheLimitBytes: unknown = hasOwnProp(payload, "cacheLimitBytes") ? payload.cacheLimitBytes : undefined;
       let cacheLimitBytes: number | null | undefined;
       if (rawCacheLimitBytes !== undefined) {
         if (rawCacheLimitBytes === null) {
@@ -838,7 +852,7 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
         }
       }
 
-      const url = String(msg.payload?.url ?? "").trim();
+      const url = hasOwnProp(payload, "url") ? String(payload.url ?? "").trim() : "";
       if (!url) throw new Error("Missing url");
 
       // Validate URL early to provide a clearer error than `fetch` might.
@@ -865,7 +879,10 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
         throw new Error(`Remote disk size is not sector-aligned (size=${probe.size}, sector=512).`);
       }
 
-      const filename = msg.payload?.name ? String(msg.payload.name) : parsed.pathname.split("/").filter(Boolean).pop() || "remote.img";
+      const filename =
+        hasOwnProp(payload, "name") && payload.name
+          ? String(payload.name)
+          : parsed.pathname.split("/").filter(Boolean).pop() || "remote.img";
       const format = inferFormatFromFileName(filename);
       if (format === "qcow2" || format === "vhd" || format === "aerospar") {
         throw new Error(`Remote format ${format} is not supported for streaming mounts (use a raw .img or .iso).`);
@@ -901,14 +918,14 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
     }
 
     case "import_file": {
-      const file = msg.payload.file as File | undefined;
+      const file = hasOwnProp(payload, "file") ? (payload.file as File | undefined) : undefined;
       if (!file) throw new Error("Missing file");
 
-      const fileNameOverride = msg.payload.name;
-      const name = (fileNameOverride && String(fileNameOverride)) || file.name;
+      const fileNameOverride = hasOwnProp(payload, "name") ? payload.name : undefined;
+      const name = fileNameOverride ? String(fileNameOverride) : file.name;
 
-      let kind = (msg.payload.kind || inferKindFromFileName(file.name)) as DiskKind;
-      let format = (msg.payload.format || inferFormatFromFileName(file.name)) as DiskFormat;
+      let kind = ((hasOwnProp(payload, "kind") ? payload.kind : undefined) || inferKindFromFileName(file.name)) as DiskKind;
+      let format = ((hasOwnProp(payload, "format") ? payload.format : undefined) || inferFormatFromFileName(file.name)) as DiskFormat;
 
       // Content-based aerosparse sniffing:
       // - If the input file looks like an aerosparse disk, import it as `format="aerospar"` and
@@ -971,11 +988,11 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
         throw new Error("import_convert is only supported for the OPFS backend");
       }
 
-      const file = msg.payload.file as File | undefined;
+      const file = hasOwnProp(payload, "file") ? (payload.file as File | undefined) : undefined;
       if (!file) throw new Error("Missing file");
 
-      const fileNameOverride = msg.payload.name;
-      const name = (fileNameOverride && String(fileNameOverride)) || file.name;
+      const fileNameOverride = hasOwnProp(payload, "name") ? payload.name : undefined;
+      const name = fileNameOverride ? String(fileNameOverride) : file.name;
 
       const id = newDiskId();
       const baseName = id;
@@ -983,7 +1000,8 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
       const destDir = await opfsGetDisksDir();
 
       const manifest = await importConvertToOpfs({ kind: "file", file }, destDir, baseName, {
-        blockSizeBytes: typeof msg.payload.blockSizeBytes === "number" ? msg.payload.blockSizeBytes : undefined,
+        blockSizeBytes:
+          hasOwnProp(payload, "blockSizeBytes") && typeof payload.blockSizeBytes === "number" ? payload.blockSizeBytes : undefined,
         onProgress(p) {
           postProgress(requestId, { phase: "import", processedBytes: p.processedBytes, totalBytes: p.totalBytes });
         },
@@ -1024,14 +1042,13 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
     }
 
     case "create_remote": {
-      const payload = msg.payload || {};
-      const name = String(payload.name || "");
-      const imageId = String(payload.imageId || "");
-      const version = String(payload.version || "");
-      const delivery = payload.delivery as RemoteDiskDelivery;
-      const sizeBytes = payload.sizeBytes;
-      const kind = (payload.kind || "hdd") as DiskKind;
-      const format = (payload.format || "raw") as DiskFormat;
+      const name = String(((hasOwnProp(payload, "name") ? payload.name : undefined) as any) || "");
+      const imageId = String(((hasOwnProp(payload, "imageId") ? payload.imageId : undefined) as any) || "");
+      const version = String(((hasOwnProp(payload, "version") ? payload.version : undefined) as any) || "");
+      const delivery = (hasOwnProp(payload, "delivery") ? payload.delivery : undefined) as RemoteDiskDelivery;
+      const sizeBytes = hasOwnProp(payload, "sizeBytes") ? payload.sizeBytes : undefined;
+      const kind = (((hasOwnProp(payload, "kind") ? payload.kind : undefined) as any) || "hdd") as DiskKind;
+      const format = (((hasOwnProp(payload, "format") ? payload.format : undefined) as any) || "raw") as DiskFormat;
 
       if (!name.trim()) throw new Error("Remote disk name is required");
       if (!imageId) throw new Error("imageId is required");
@@ -1057,21 +1074,27 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
       }
 
       const id = newDiskId();
-      const cacheBackendRaw = payload.cacheBackend ?? backend;
+      const cacheBackendRaw = (hasOwnProp(payload, "cacheBackend") ? payload.cacheBackend : undefined) ?? backend;
       assertValidDiskBackend(cacheBackendRaw);
       const cacheBackend = cacheBackendRaw;
       const defaultChunkSizeBytes = delivery === "chunked" ? CHUNKED_DISK_CHUNK_SIZE : RANGE_STREAM_CHUNK_SIZE;
       const chunkSizeBytes =
-        typeof payload.chunkSizeBytes === "number" && Number.isFinite(payload.chunkSizeBytes) && payload.chunkSizeBytes > 0
+        hasOwnProp(payload, "chunkSizeBytes") &&
+        typeof payload.chunkSizeBytes === "number" &&
+        Number.isFinite(payload.chunkSizeBytes) &&
+        payload.chunkSizeBytes > 0
           ? payload.chunkSizeBytes
           : defaultChunkSizeBytes;
 
       const overlayBlockSizeBytes =
-        typeof payload.overlayBlockSizeBytes === "number" && Number.isFinite(payload.overlayBlockSizeBytes) && payload.overlayBlockSizeBytes > 0
+        hasOwnProp(payload, "overlayBlockSizeBytes") &&
+        typeof payload.overlayBlockSizeBytes === "number" &&
+        Number.isFinite(payload.overlayBlockSizeBytes) &&
+        payload.overlayBlockSizeBytes > 0
           ? payload.overlayBlockSizeBytes
           : RANGE_STREAM_CHUNK_SIZE;
 
-      const cacheLimitBytesRaw = payload.cacheLimitBytes as unknown;
+      const cacheLimitBytesRaw = hasOwnProp(payload, "cacheLimitBytes") ? payload.cacheLimitBytes : undefined;
       const cacheLimitBytes =
         cacheLimitBytesRaw === undefined ? DEFAULT_REMOTE_DISK_CACHE_LIMIT_BYTES : (cacheLimitBytesRaw as number | null);
       assertValidCacheLimitBytes(cacheLimitBytes, "cacheLimitBytes");
@@ -1089,21 +1112,41 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
         assertValidOpfsRemoteChunkSize(overlayBlockSizeBytes, "overlayBlockSizeBytes");
       }
 
-      const urls: RemoteDiskUrls = {
-        ...((payload.urls || {}) as RemoteDiskUrls),
-        ...(payload.url ? { url: String(payload.url) } : {}),
-        ...(payload.leaseEndpoint ? { leaseEndpoint: String(payload.leaseEndpoint) } : {}),
-      };
+      // Use null-prototype objects so untrusted URL inputs cannot affect later property reads via
+      // `Object.prototype`.
+      const urls: RemoteDiskUrls = Object.create(null) as RemoteDiskUrls;
+      const urlsRaw = hasOwnProp(payload, "urls") ? payload.urls : undefined;
+      if (urlsRaw && typeof urlsRaw === "object") {
+        const urlsRec = urlsRaw as Record<string, unknown>;
+        if (hasOwnProp(urlsRec, "url") && typeof urlsRec.url === "string") urls.url = urlsRec.url;
+        if (hasOwnProp(urlsRec, "leaseEndpoint") && typeof urlsRec.leaseEndpoint === "string") urls.leaseEndpoint = urlsRec.leaseEndpoint;
+      }
+      if (hasOwnProp(payload, "url") && payload.url) urls.url = String(payload.url);
+      if (hasOwnProp(payload, "leaseEndpoint") && payload.leaseEndpoint) urls.leaseEndpoint = String(payload.leaseEndpoint);
       if (!urls.url && !urls.leaseEndpoint) {
         throw new Error("Remote disks must provide either urls.url (stable) or urls.leaseEndpoint (same-origin)");
       }
       assertValidLeaseEndpoint(urls.leaseEndpoint);
       assertNonSecretUrl(urls.url);
       assertNonSecretUrl(urls.leaseEndpoint);
-      const validator = payload.validator as RemoteDiskValidator | undefined;
+      let validator: RemoteDiskValidator | undefined = undefined;
+      const validatorRaw = hasOwnProp(payload, "validator") ? payload.validator : undefined;
+      if (validatorRaw && typeof validatorRaw === "object") {
+        const validatorRec = validatorRaw as Record<string, unknown>;
+        const out = Object.create(null) as RemoteDiskValidator;
+        if (hasOwnProp(validatorRec, "etag") && typeof validatorRec.etag === "string") out.etag = validatorRec.etag;
+        if (hasOwnProp(validatorRec, "lastModified") && typeof validatorRec.lastModified === "string") out.lastModified = validatorRec.lastModified;
+        validator = out;
+      }
 
-      const cacheFileName = typeof payload.cacheFileName === "string" && payload.cacheFileName ? payload.cacheFileName : `${id}.cache.aerospar`;
-      const overlayFileName = typeof payload.overlayFileName === "string" && payload.overlayFileName ? payload.overlayFileName : `${id}.overlay.aerospar`;
+      const cacheFileName =
+        hasOwnProp(payload, "cacheFileName") && typeof payload.cacheFileName === "string" && payload.cacheFileName
+          ? payload.cacheFileName
+          : `${id}.cache.aerospar`;
+      const overlayFileName =
+        hasOwnProp(payload, "overlayFileName") && typeof payload.overlayFileName === "string" && payload.overlayFileName
+          ? payload.overlayFileName
+          : `${id}.overlay.aerospar`;
       if (cacheBackend === "opfs") {
         assertValidOpfsFileName(cacheFileName, "cacheFileName");
         assertValidOpfsFileName(overlayFileName, "overlayFileName");
@@ -1141,8 +1184,7 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
     }
 
     case "update_remote": {
-      const payload = msg.payload || {};
-      const id = String(payload.id || "");
+      const id = String(((hasOwnProp(payload, "id") ? payload.id : undefined) as any) || "");
       if (!id) throw new Error("Missing remote disk id");
 
       const meta = await requireDisk(backend, id);
@@ -1150,10 +1192,14 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
         throw new Error("update_remote can only be used with remote disks");
       }
 
-      if (payload.name !== undefined) meta.name = String(payload.name);
-      if (payload.kind !== undefined) meta.kind = payload.kind as DiskKind;
-      if (payload.format !== undefined) meta.format = payload.format as DiskFormat;
-      if (payload.sizeBytes !== undefined) {
+      if (hasOwnProp(payload, "name") && payload.name !== undefined) meta.name = String(payload.name);
+      if (hasOwnProp(payload, "kind") && payload.kind !== undefined) {
+        const next = payload.kind as DiskKind;
+        if (next !== "hdd" && next !== "cd") throw new Error("kind must be 'hdd' or 'cd'");
+        meta.kind = next;
+      }
+      if (hasOwnProp(payload, "format") && payload.format !== undefined) meta.format = payload.format as DiskFormat;
+      if (hasOwnProp(payload, "sizeBytes") && payload.sizeBytes !== undefined) {
         const next = Number(payload.sizeBytes);
         if (!Number.isFinite(next) || next <= 0 || !Number.isSafeInteger(next)) {
           throw new Error("sizeBytes must be a positive safe integer");
@@ -1164,16 +1210,33 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
         meta.sizeBytes = next;
       }
 
-      if (payload.imageId !== undefined) meta.remote.imageId = String(payload.imageId);
-      if (payload.version !== undefined) meta.remote.version = String(payload.version);
-      if (payload.delivery !== undefined) meta.remote.delivery = payload.delivery as RemoteDiskDelivery;
-      if (payload.urls !== undefined || payload.url !== undefined || payload.leaseEndpoint !== undefined) {
-        const nextUrls: RemoteDiskUrls = {
-          ...meta.remote.urls,
-          ...(payload.urls ? (payload.urls as RemoteDiskUrls) : {}),
-          ...(payload.url ? { url: String(payload.url) } : {}),
-          ...(payload.leaseEndpoint ? { leaseEndpoint: String(payload.leaseEndpoint) } : {}),
-        };
+      if (hasOwnProp(payload, "imageId") && payload.imageId !== undefined) meta.remote.imageId = String(payload.imageId);
+      if (hasOwnProp(payload, "version") && payload.version !== undefined) meta.remote.version = String(payload.version);
+      if (hasOwnProp(payload, "delivery") && payload.delivery !== undefined) {
+        const next = payload.delivery as RemoteDiskDelivery;
+        if (next !== "range" && next !== "chunked") throw new Error("delivery must be 'range' or 'chunked'");
+        meta.remote.delivery = next;
+      }
+      if (
+        (hasOwnProp(payload, "urls") && payload.urls !== undefined) ||
+        (hasOwnProp(payload, "url") && payload.url !== undefined) ||
+        (hasOwnProp(payload, "leaseEndpoint") && payload.leaseEndpoint !== undefined)
+      ) {
+        const nextUrls: RemoteDiskUrls = Object.create(null) as RemoteDiskUrls;
+        const currentUrls = meta.remote.urls;
+        if (currentUrls && typeof currentUrls === "object") {
+          const curRec = currentUrls as Record<string, unknown>;
+          if (hasOwnProp(curRec, "url") && typeof curRec.url === "string") nextUrls.url = curRec.url;
+          if (hasOwnProp(curRec, "leaseEndpoint") && typeof curRec.leaseEndpoint === "string") nextUrls.leaseEndpoint = curRec.leaseEndpoint;
+        }
+        const urlsPatch = hasOwnProp(payload, "urls") ? payload.urls : undefined;
+        if (urlsPatch && typeof urlsPatch === "object") {
+          const patchRec = urlsPatch as Record<string, unknown>;
+          if (hasOwnProp(patchRec, "url") && typeof patchRec.url === "string") nextUrls.url = patchRec.url;
+          if (hasOwnProp(patchRec, "leaseEndpoint") && typeof patchRec.leaseEndpoint === "string") nextUrls.leaseEndpoint = patchRec.leaseEndpoint;
+        }
+        if (hasOwnProp(payload, "url") && payload.url) nextUrls.url = String(payload.url);
+        if (hasOwnProp(payload, "leaseEndpoint") && payload.leaseEndpoint) nextUrls.leaseEndpoint = String(payload.leaseEndpoint);
         if (!nextUrls.url && !nextUrls.leaseEndpoint) {
           throw new Error("Remote disks must provide either urls.url (stable) or urls.leaseEndpoint (same-origin)");
         }
@@ -1182,29 +1245,42 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
         assertNonSecretUrl(nextUrls.leaseEndpoint);
         meta.remote.urls = nextUrls;
       }
-      if (payload.validator !== undefined) meta.remote.validator = payload.validator as RemoteDiskValidator;
-
-      if (payload.cacheBackend !== undefined) {
-        assertValidDiskBackend(payload.cacheBackend);
-        meta.cache.backend = payload.cacheBackend;
+      if (hasOwnProp(payload, "validator") && payload.validator !== undefined) {
+        if (payload.validator === null) {
+          meta.remote.validator = undefined;
+        } else if (payload.validator && typeof payload.validator === "object") {
+          const rec = payload.validator as Record<string, unknown>;
+          const out = Object.create(null) as RemoteDiskValidator;
+          if (hasOwnProp(rec, "etag") && typeof rec.etag === "string") out.etag = rec.etag;
+          if (hasOwnProp(rec, "lastModified") && typeof rec.lastModified === "string") out.lastModified = rec.lastModified;
+          meta.remote.validator = out;
+        } else {
+          meta.remote.validator = undefined;
+        }
       }
-      if (payload.chunkSizeBytes !== undefined) {
+
+      if (hasOwnProp(payload, "cacheBackend") && payload.cacheBackend !== undefined) {
+        assertValidDiskBackend(payload.cacheBackend);
+        meta.cache.backend = payload.cacheBackend as DiskBackend;
+      }
+      if (hasOwnProp(payload, "chunkSizeBytes") && payload.chunkSizeBytes !== undefined) {
         const next = Number(payload.chunkSizeBytes);
         if (next % 512 !== 0 || !isPowerOfTwo(next)) {
           throw new Error("chunkSizeBytes must be a power of two and a multiple of 512");
         }
         meta.cache.chunkSizeBytes = next;
       }
-      if (payload.cacheFileName !== undefined) meta.cache.fileName = String(payload.cacheFileName);
-      if (payload.overlayFileName !== undefined) meta.cache.overlayFileName = String(payload.overlayFileName);
-      if (payload.overlayBlockSizeBytes !== undefined) {
+      if (hasOwnProp(payload, "cacheFileName") && payload.cacheFileName !== undefined) meta.cache.fileName = String(payload.cacheFileName);
+      if (hasOwnProp(payload, "overlayFileName") && payload.overlayFileName !== undefined)
+        meta.cache.overlayFileName = String(payload.overlayFileName);
+      if (hasOwnProp(payload, "overlayBlockSizeBytes") && payload.overlayBlockSizeBytes !== undefined) {
         const next = Number(payload.overlayBlockSizeBytes);
         if (next % 512 !== 0 || !isPowerOfTwo(next)) {
           throw new Error("overlayBlockSizeBytes must be a power of two and a multiple of 512");
         }
         meta.cache.overlayBlockSizeBytes = next;
       }
-      if (payload.cacheLimitBytes !== undefined) {
+      if (hasOwnProp(payload, "cacheLimitBytes") && payload.cacheLimitBytes !== undefined) {
         const next = payload.cacheLimitBytes as unknown;
         assertValidCacheLimitBytes(next, "cacheLimitBytes");
         meta.cache.cacheLimitBytes = next;
@@ -1239,7 +1315,9 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
     }
 
     case "stat_disk": {
-      const meta = await requireDisk(backend, msg.payload.id);
+      const diskId = hasOwnProp(payload, "id") ? payload.id : undefined;
+      if (typeof diskId !== "string" || !diskId) throw new Error("Missing disk id");
+      const meta = await requireDisk(backend, diskId);
       let actualSizeBytes = meta.sizeBytes;
 
       if (meta.source === "local") {
@@ -1333,7 +1411,8 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
 
             for (const rec of records) {
               if (!rec || typeof rec !== "object") continue;
-              const bytesUsed = (rec as { bytesUsed?: unknown }).bytesUsed;
+              const recObj = rec as Record<string, unknown>;
+              const bytesUsed = hasOwnProp(recObj, "bytesUsed") ? recObj.bytesUsed : undefined;
               if (typeof bytesUsed === "number" && Number.isFinite(bytesUsed) && bytesUsed > 0) {
                 totalBytes += bytesUsed;
               }
@@ -1427,11 +1506,13 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
     }
 
     case "resize_disk": {
-      const meta = await requireDisk(backend, msg.payload.id);
+      const diskId = hasOwnProp(payload, "id") ? payload.id : undefined;
+      if (typeof diskId !== "string" || !diskId) throw new Error("Missing disk id");
+      const meta = await requireDisk(backend, diskId);
       if (meta.source !== "local") {
         throw new Error("Remote disks cannot be resized");
       }
-      const newSizeBytes = msg.payload.newSizeBytes;
+      const newSizeBytes = hasOwnProp(payload, "newSizeBytes") ? payload.newSizeBytes : undefined;
       if (typeof newSizeBytes !== "number" || newSizeBytes < 0) throw new Error("Invalid newSizeBytes");
       if (meta.kind !== "hdd") {
         throw new Error("Only HDD images can be resized");
@@ -1465,7 +1546,9 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
     }
 
     case "delete_disk": {
-      const meta = await requireDisk(backend, msg.payload.id);
+      const diskId = hasOwnProp(payload, "id") ? payload.id : undefined;
+      if (typeof diskId !== "string" || !diskId) throw new Error("Missing disk id");
+      const meta = await requireDisk(backend, diskId);
       if (meta.source === "local") {
         if (meta.backend === "opfs") {
           if (meta.remote) {
@@ -1593,22 +1676,20 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
         return;
       }
 
-      const payload = (msg.payload || {}) as { olderThanMs?: unknown; maxCaches?: unknown; dryRun?: unknown };
-
-      const olderThanMs = Number(payload.olderThanMs);
+      const olderThanMs = Number(hasOwnProp(payload, "olderThanMs") ? payload.olderThanMs : undefined);
       if (!Number.isFinite(olderThanMs) || olderThanMs < 0) {
         throw new Error("olderThanMs must be a non-negative number");
       }
 
       let maxCaches: number | undefined = undefined;
-      if (payload.maxCaches !== undefined) {
+      if (hasOwnProp(payload, "maxCaches") && payload.maxCaches !== undefined) {
         maxCaches = Number(payload.maxCaches);
         if (!Number.isSafeInteger(maxCaches) || maxCaches < 0) {
           throw new Error("maxCaches must be a non-negative safe integer");
         }
       }
 
-      const dryRun = !!payload.dryRun;
+      const dryRun = hasOwnProp(payload, "dryRun") ? !!payload.dryRun : false;
 
       const remoteCacheDir = await opfsGetRemoteCacheDir();
       const entries = remoteCacheDir.entries?.bind(remoteCacheDir);
@@ -1778,7 +1859,9 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
     }
 
     case "export_disk": {
-      const meta = await requireDisk(backend, msg.payload.id);
+      const diskId = hasOwnProp(payload, "id") ? payload.id : undefined;
+      if (typeof diskId !== "string" || !diskId) throw new Error("Missing disk id");
+      const meta = await requireDisk(backend, diskId);
       if (meta.source !== "local") {
         throw new Error("Remote disks cannot be exported");
       }
@@ -1788,7 +1871,14 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
       const port = msg.port;
       if (!port) throw new Error("Missing MessagePort for export");
 
-      const options = msg.payload.options || {};
+      const optionsPayload = hasOwnProp(payload, "options") ? payload.options : undefined;
+      const optionsRec = isRecord(optionsPayload)
+        ? (optionsPayload as Record<string, unknown>)
+        : (Object.create(null) as Record<string, unknown>);
+      const gzip = hasOwnProp(optionsRec, "gzip") ? !!optionsRec.gzip : false;
+      // Avoid passing a plain `{}` options bag since `options?.gzip` would observe inherited
+      // properties if `Object.prototype.gzip` is polluted.
+      const options = gzip ? { gzip: true } : undefined;
       const progressCb = (p: ImportProgress) => postProgress(requestId, p);
 
       // Respond immediately so the main thread can start consuming the stream.
