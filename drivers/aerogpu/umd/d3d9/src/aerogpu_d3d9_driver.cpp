@@ -8246,7 +8246,12 @@ bool wddm_ensure_recording_buffers(Device* dev, size_t bytes_needed) {
         dev->alloc_list_tracker.list_capacity() != dev->wddm_context.AllocationListSize;
     if (needs_alloc_list_rebind) {
       std::vector<AllocationListTracker::TrackedAllocation> preserved_allocs;
-      if (dev->cmd.empty() && dev->alloc_list_tracker.list_len() != 0) {
+      // If the runtime rotates the allocation-list pointer, we must preserve any
+      // allocations already tracked for the current submission. This can happen
+      // even when the command stream is non-empty (e.g. runtimes that update
+      // allocation-list pointers aggressively). Dropping tracked entries would
+      // cause the subsequent submit to omit required allocations.
+      if (dev->alloc_list_tracker.list_len() != 0) {
         preserved_allocs = dev->alloc_list_tracker.snapshot_tracked_allocations();
       }
       dev->alloc_list_tracker.rebind(reinterpret_cast<D3DDDI_ALLOCATIONLIST*>(dev->wddm_context.pAllocationList),
