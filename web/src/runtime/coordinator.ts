@@ -2463,7 +2463,6 @@ function aeroConfigsEqual(a: AeroConfig, b: AeroConfig): boolean {
     a.proxyUrl === b.proxyUrl &&
     a.activeDiskImage === b.activeDiskImage &&
     a.logLevel === b.logLevel &&
-    a.vmRuntime === b.vmRuntime &&
     a.uiScale === b.uiScale &&
     a.virtioNetMode === b.virtioNetMode &&
     a.virtioInputMode === b.virtioInputMode &&
