@@ -2,10 +2,16 @@ import { describe, expect, it } from "vitest";
 
 import {
   AEROGPU_MMIO_REG_CURSOR_X,
-  AerogpuFormat,
 } from "../../../../emulator/protocol/aerogpu/aerogpu_pci";
 import type { GuestRamLayout } from "../../runtime/shared_layout";
-import { snapshotCursorState, wrapCursorState, CURSOR_STATE_U32_LEN } from "../../ipc/cursor_state";
+import {
+  CURSOR_FORMAT_B8G8R8A8,
+  CURSOR_FORMAT_B8G8R8A8_SRGB,
+  CURSOR_FORMAT_B8G8R8X8,
+  snapshotCursorState,
+  wrapCursorState,
+  CURSOR_STATE_U32_LEN,
+} from "../../ipc/cursor_state";
 import { AeroGpuPciDevice } from "./aerogpu";
 
 function mkLayout(bytes: number): GuestRamLayout {
@@ -48,7 +54,7 @@ describe("io/devices/aerogpu cursor forwarding", () => {
       hotY: 0,
       width: 1,
       height: 1,
-      format: AerogpuFormat.B8G8R8A8Unorm,
+      format: CURSOR_FORMAT_B8G8R8A8,
       fbGpa: gpa,
       pitchBytes: 4,
     });
@@ -64,7 +70,7 @@ describe("io/devices/aerogpu cursor forwarding", () => {
     expect(snap.width >>> 0).toBe(1);
     expect(snap.height >>> 0).toBe(1);
     expect(snap.pitchBytes >>> 0).toBe(4);
-    expect(snap.format >>> 0).toBe(AerogpuFormat.B8G8R8A8Unorm);
+    expect(snap.format >>> 0).toBe(CURSOR_FORMAT_B8G8R8A8);
     expect(snap.basePaddrLo >>> 0).toBe(gpa >>> 0);
     expect(snap.basePaddrHi >>> 0).toBe(0);
   });
@@ -84,7 +90,7 @@ describe("io/devices/aerogpu cursor forwarding", () => {
       hotY: 0,
       width: 1,
       height: 1,
-      format: AerogpuFormat.B8G8R8X8Unorm,
+      format: CURSOR_FORMAT_B8G8R8X8,
       fbGpa: gpa,
       pitchBytes: 4,
     });
@@ -117,7 +123,7 @@ describe("io/devices/aerogpu cursor forwarding", () => {
       hotY: 0,
       width: 1,
       height: 1,
-      format: AerogpuFormat.B8G8R8A8Unorm,
+      format: CURSOR_FORMAT_B8G8R8A8,
       fbGpa: gpa,
       pitchBytes: 4,
     });
@@ -164,7 +170,7 @@ describe("io/devices/aerogpu cursor forwarding", () => {
       hotY: 0,
       width: 1,
       height: 1,
-      format: AerogpuFormat.B8G8R8A8UnormSrgb,
+      format: CURSOR_FORMAT_B8G8R8A8_SRGB,
       fbGpa: gpa,
       pitchBytes: 4,
     });
@@ -205,7 +211,7 @@ describe("io/devices/aerogpu cursor forwarding", () => {
       hotY: 0,
       width: 1,
       height: 1,
-      format: AerogpuFormat.B8G8R8A8Unorm,
+      format: CURSOR_FORMAT_B8G8R8A8,
       fbGpa: gpa,
       pitchBytes: 4,
     });

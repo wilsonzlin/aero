@@ -3,6 +3,14 @@ import type { PciBar, PciDevice } from "../bus/pci.ts";
 import type { TickableDevice } from "../device_manager.ts";
 import { guestPaddrToRamOffset, guestRangeInBounds, type GuestRamLayout } from "../../runtime/shared_layout.ts";
 import {
+  CURSOR_FORMAT_B8G8R8A8,
+  CURSOR_FORMAT_B8G8R8A8_SRGB,
+  CURSOR_FORMAT_B8G8R8X8,
+  CURSOR_FORMAT_B8G8R8X8_SRGB,
+  CURSOR_FORMAT_R8G8B8A8,
+  CURSOR_FORMAT_R8G8B8A8_SRGB,
+  CURSOR_FORMAT_R8G8B8X8,
+  CURSOR_FORMAT_R8G8B8X8_SRGB,
   CursorStateIndex,
   publishCursorState,
   type CursorStateUpdate,
@@ -86,10 +94,10 @@ const linearizeSrgbRgba8InPlace = (rgba: Uint8Array): void => {
 
 function isCursorFormatSrgb(format: number): boolean {
   switch (format >>> 0) {
-    case AerogpuFormat.B8G8R8A8UnormSrgb:
-    case AerogpuFormat.B8G8R8X8UnormSrgb:
-    case AerogpuFormat.R8G8B8A8UnormSrgb:
-    case AerogpuFormat.R8G8B8X8UnormSrgb:
+    case CURSOR_FORMAT_B8G8R8A8_SRGB:
+    case CURSOR_FORMAT_B8G8R8X8_SRGB:
+    case CURSOR_FORMAT_R8G8B8A8_SRGB:
+    case CURSOR_FORMAT_R8G8B8X8_SRGB:
       return true;
     default:
       return false;
@@ -110,17 +118,17 @@ type CursorImagePlan = {
 function cursorFormatKey(format: number): string | null {
   // Match `crates/emulator/src/devices/aerogpu_scanout.rs` cursor handling.
   switch (format >>> 0) {
-    case AerogpuFormat.B8G8R8A8Unorm:
-    case AerogpuFormat.B8G8R8A8UnormSrgb:
+    case CURSOR_FORMAT_B8G8R8A8:
+    case CURSOR_FORMAT_B8G8R8A8_SRGB:
       return "bgra";
-    case AerogpuFormat.B8G8R8X8Unorm:
-    case AerogpuFormat.B8G8R8X8UnormSrgb:
+    case CURSOR_FORMAT_B8G8R8X8:
+    case CURSOR_FORMAT_B8G8R8X8_SRGB:
       return "bgrx";
-    case AerogpuFormat.R8G8B8A8Unorm:
-    case AerogpuFormat.R8G8B8A8UnormSrgb:
+    case CURSOR_FORMAT_R8G8B8A8:
+    case CURSOR_FORMAT_R8G8B8A8_SRGB:
       return "rgba";
-    case AerogpuFormat.R8G8B8X8Unorm:
-    case AerogpuFormat.R8G8B8X8UnormSrgb:
+    case CURSOR_FORMAT_R8G8B8X8:
+    case CURSOR_FORMAT_R8G8B8X8_SRGB:
       return "rgbx";
     default:
       return null;
