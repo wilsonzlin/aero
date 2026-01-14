@@ -3437,7 +3437,117 @@ mod tests {
         // Explicit raw should also match.
         let version = compute_image_version_sha256(tmp.path(), InputFormat::Raw).await?;
         assert_eq!(version, expected_version);
+        Ok(())
+    }
 
+    #[tokio::test]
+    async fn compute_image_version_sha256_hashes_virtual_disk_bytes_for_vhd_dynamic() -> Result<()> {
+        use std::io::Write;
+
+        use aero_storage::{MemBackend, StorageBackend, VhdDisk};
+
+        fn write_be_u32(buf: &mut [u8], offset: usize, val: u32) {
+            buf[offset..offset + 4].copy_from_slice(&val.to_be_bytes());
+        }
+
+        fn write_be_u64(buf: &mut [u8], offset: usize, val: u64) {
+            buf[offset..offset + 8].copy_from_slice(&val.to_be_bytes());
+        }
+
+        fn vhd_footer_checksum(raw: &[u8; SECTOR_SIZE]) -> u32 {
+            let mut sum: u32 = 0;
+            for (i, b) in raw.iter().enumerate() {
+                if (64..68).contains(&i) {
+                    continue;
+                }
+                sum = sum.wrapping_add(*b as u32);
+            }
+            !sum
+        }
+
+        fn vhd_dynamic_header_checksum(raw: &[u8; 1024]) -> u32 {
+            let mut sum: u32 = 0;
+            for (i, b) in raw.iter().enumerate() {
+                if (36..40).contains(&i) {
+                    continue;
+                }
+                sum = sum.wrapping_add(*b as u32);
+            }
+            !sum
+        }
+
+        fn make_vhd_footer(virtual_size: u64, disk_type: u32, data_offset: u64) -> [u8; SECTOR_SIZE]
+        {
+            let mut footer = [0u8; SECTOR_SIZE];
+            footer[0..8].copy_from_slice(b"conectix");
+            write_be_u32(&mut footer, 8, 2); // features
+            write_be_u32(&mut footer, 12, 0x0001_0000); // file_format_version
+            write_be_u64(&mut footer, 16, data_offset);
+            write_be_u64(&mut footer, 40, virtual_size); // original_size
+            write_be_u64(&mut footer, 48, virtual_size); // current_size
+            write_be_u32(&mut footer, 60, disk_type);
+            let checksum = vhd_footer_checksum(&footer);
+            write_be_u32(&mut footer, 64, checksum);
+            footer
+        }
+
+        fn make_vhd_dynamic_empty(virtual_size: u64, block_size: u32) -> MemBackend {
+            assert_eq!(virtual_size % SECTOR_SIZE as u64, 0);
+            assert_eq!(block_size as usize % SECTOR_SIZE, 0);
+
+            let dyn_header_offset = SECTOR_SIZE as u64;
+            let table_offset = dyn_header_offset + 1024u64;
+            let blocks = virtual_size.div_ceil(block_size as u64);
+            let max_table_entries = blocks as u32;
+            let bat_bytes = max_table_entries as u64 * 4;
+            let bat_size = bat_bytes.div_ceil(SECTOR_SIZE as u64) * SECTOR_SIZE as u64;
+
+            let footer = make_vhd_footer(virtual_size, 3, dyn_header_offset);
+            let file_len = (SECTOR_SIZE as u64) + 1024 + bat_size + (SECTOR_SIZE as u64);
+            let mut backend = MemBackend::with_len(file_len).unwrap();
+
+            backend.write_at(0, &footer).unwrap();
+            backend
+                .write_at(file_len - SECTOR_SIZE as u64, &footer)
+                .unwrap();
+
+            let mut dyn_header = [0u8; 1024];
+            dyn_header[0..8].copy_from_slice(b"cxsparse");
+            write_be_u64(&mut dyn_header, 8, u64::MAX);
+            write_be_u64(&mut dyn_header, 16, table_offset);
+            write_be_u32(&mut dyn_header, 24, 0x0001_0000);
+            write_be_u32(&mut dyn_header, 28, max_table_entries);
+            write_be_u32(&mut dyn_header, 32, block_size);
+            let checksum = vhd_dynamic_header_checksum(&dyn_header);
+            write_be_u32(&mut dyn_header, 36, checksum);
+            backend.write_at(dyn_header_offset, &dyn_header).unwrap();
+
+            let bat = vec![0xFFu8; bat_size as usize];
+            backend.write_at(table_offset, &bat).unwrap();
+            backend
+        }
+
+        let virtual_size = 64 * 1024u64;
+        let block_size = 16 * 1024u32;
+        let backend = make_vhd_dynamic_empty(virtual_size, block_size);
+
+        // Use the vhd implementation to allocate blocks and write a pattern.
+        let mut disk = VhdDisk::open(backend)?;
+        disk.write_at(0, b"hello vhd-d!")?;
+        disk.flush()?;
+
+        let mut tmp = tempfile::NamedTempFile::new().context("create tempfile")?;
+        tmp.as_file_mut()
+            .write_all(&disk.into_backend().into_vec())
+            .context("write vhd-d image")?;
+        tmp.as_file_mut().flush().context("flush vhd-d image")?;
+
+        let mut expected = vec![0u8; virtual_size as usize];
+        expected[0..12].copy_from_slice(b"hello vhd-d!");
+        let expected_version = format!("sha256-{}", sha256_hex(&expected));
+
+        let version = compute_image_version_sha256(tmp.path(), InputFormat::Auto).await?;
+        assert_eq!(version, expected_version);
         Ok(())
     }
 
