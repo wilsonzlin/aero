@@ -56,12 +56,12 @@ It:
      virtio-net, and virtio-net-udp so older selftest binaries cannot accidentally pass
   - when --with-virtio-snd is enabled, virtio-snd, virtio-snd-capture, and virtio-snd-duplex must PASS (not SKIP)
   - when --with-snd-buffer-limits is enabled, virtio-snd-buffer-limits must PASS (not FAIL/SKIP/missing)
-  - when --with-input-events (alias: --with-virtio-input-events) is enabled, virtio-input-events must PASS (not FAIL/missing)
+  - when --with-input-events/--with-virtio-input-events/--require-virtio-input-events/--enable-virtio-input-events is enabled, virtio-input-events must PASS (not FAIL/missing)
   - when --with-input-leds/--with-virtio-input-leds/--require-virtio-input-leds/--enable-virtio-input-leds is enabled, virtio-input-leds must PASS (not SKIP/FAIL/missing) (provision the guest with
     --test-input-leds; newer guest selftests also accept --test-input-led and emit the legacy marker)
-  - when --with-input-media-keys is enabled, virtio-input-media-keys must PASS (not FAIL/missing)
+  - when --with-input-media-keys/--with-virtio-input-media-keys/--require-virtio-input-media-keys/--enable-virtio-input-media-keys is enabled, virtio-input-media-keys must PASS (not FAIL/missing)
   - when --with-input-led/--with-virtio-input-led/--require-virtio-input-led/--enable-virtio-input-led is enabled, virtio-input-led must PASS (not FAIL/SKIP/missing)
-  - when --with-input-tablet-events/--with-tablet-events is enabled, virtio-input-tablet-events must PASS (not FAIL/missing)
+  - when --with-input-tablet-events/--with-tablet-events/--with-virtio-input-tablet-events/--require-virtio-input-tablet-events/--enable-virtio-input-tablet-events is enabled, virtio-input-tablet-events must PASS (not FAIL/missing)
   - when --with-blk-resize is enabled, virtio-blk-resize must PASS (not SKIP/FAIL/missing)
   - when --with-blk-reset is enabled, virtio-blk-reset must PASS (not SKIP/FAIL/missing)
 
@@ -1914,9 +1914,9 @@ def _try_qmp_input_inject_virtio_input_tablet_events(endpoint: _QmpEndpoint) -> 
             if not _qmp_error_is_command_not_found(e, command="input-send-event"):
                 raise
             raise RuntimeError(
-                "QMP command 'input-send-event' is required for --with-input-tablet-events "
+                "QMP command 'input-send-event' is required for --with-input-tablet-events/--with-tablet-events/--with-virtio-input-tablet-events/--require-virtio-input-tablet-events/--enable-virtio-input-tablet-events "
                 "(absolute pointer injection), but this QEMU build does not support it. "
-                "Upgrade QEMU or omit --with-input-tablet-events."
+                "Upgrade QEMU or omit --with-input-tablet-events/--with-tablet-events/--with-virtio-input-tablet-events/--require-virtio-input-tablet-events/--enable-virtio-input-tablet-events."
             ) from e
 
 
@@ -3283,7 +3283,7 @@ def _virtio_input_events_extended_fail_failure_message(
 
     return (
         "FAIL: VIRTIO_INPUT_EVENTS_EXTENDED_FAILED: "
-        f"{subtest} reported FAIL while --with-input-events-extended was enabled{details}"
+        f"{subtest} reported FAIL while --with-input-events-extended/--with-input-events-extra was enabled{details}"
     )
 
 
@@ -3327,11 +3327,11 @@ def _virtio_input_media_keys_fail_failure_message(tail: bytes, *, marker_line: O
             details = " (" + " ".join(parts) + ")"
         return (
             "FAIL: VIRTIO_INPUT_MEDIA_KEYS_FAILED: virtio-input-media-keys test reported FAIL while "
-            f"--with-input-media-keys was enabled{details}"
+            f"--with-input-media-keys/--with-virtio-input-media-keys/--require-virtio-input-media-keys/--enable-virtio-input-media-keys was enabled{details}"
         )
     return (
         "FAIL: VIRTIO_INPUT_MEDIA_KEYS_FAILED: virtio-input-media-keys test reported FAIL while "
-        "--with-input-media-keys was enabled"
+        "--with-input-media-keys/--with-virtio-input-media-keys/--require-virtio-input-media-keys/--enable-virtio-input-media-keys was enabled"
     )
 
 
@@ -3373,21 +3373,21 @@ def _virtio_input_tablet_events_skip_failure_message(
             if reason == "flag_not_set":
                 return (
                     "FAIL: VIRTIO_INPUT_TABLET_EVENTS_SKIPPED: virtio-input-tablet-events test was skipped (flag_not_set) but "
-                    "--with-input-tablet-events/--with-tablet-events was enabled (provision the guest with --test-input-tablet-events/--test-tablet-events)"
+                    "--with-input-tablet-events/--with-tablet-events/--with-virtio-input-tablet-events/--require-virtio-input-tablet-events/--enable-virtio-input-tablet-events was enabled (provision the guest with --test-input-tablet-events/--test-tablet-events)"
                 )
             if reason == "no_tablet_device":
                 return (
                     "FAIL: VIRTIO_INPUT_TABLET_EVENTS_SKIPPED: virtio-input-tablet-events test was skipped (no_tablet_device) but "
-                    "--with-input-tablet-events/--with-tablet-events was enabled (ensure a virtio-tablet device is attached "
+                    "--with-input-tablet-events/--with-tablet-events/--with-virtio-input-tablet-events/--require-virtio-input-tablet-events/--enable-virtio-input-tablet-events was enabled (ensure a virtio-tablet device is attached "
                     "(--with-virtio-tablet) and the guest tablet driver is installed)"
                 )
             return (
                 f"FAIL: VIRTIO_INPUT_TABLET_EVENTS_SKIPPED: virtio-input-tablet-events test was skipped ({reason}) but "
-                "--with-input-tablet-events/--with-tablet-events was enabled"
+                "--with-input-tablet-events/--with-tablet-events/--with-virtio-input-tablet-events/--require-virtio-input-tablet-events/--enable-virtio-input-tablet-events was enabled"
             )
     return (
         "FAIL: VIRTIO_INPUT_TABLET_EVENTS_SKIPPED: virtio-input-tablet-events test was skipped but "
-        "--with-input-tablet-events/--with-tablet-events was enabled"
+        "--with-input-tablet-events/--with-tablet-events/--with-virtio-input-tablet-events/--require-virtio-input-tablet-events/--enable-virtio-input-tablet-events was enabled"
     )
 
 
@@ -3441,11 +3441,11 @@ def _virtio_input_tablet_events_fail_failure_message(
             details = " (" + " ".join(parts) + ")"
         return (
             "FAIL: VIRTIO_INPUT_TABLET_EVENTS_FAILED: virtio-input-tablet-events test reported FAIL while "
-            f"--with-input-tablet-events/--with-tablet-events was enabled{details}"
+            f"--with-input-tablet-events/--with-tablet-events/--with-virtio-input-tablet-events/--require-virtio-input-tablet-events/--enable-virtio-input-tablet-events was enabled{details}"
         )
     return (
         "FAIL: VIRTIO_INPUT_TABLET_EVENTS_FAILED: virtio-input-tablet-events test reported FAIL while "
-        "--with-input-tablet-events/--with-tablet-events was enabled"
+        "--with-input-tablet-events/--with-tablet-events/--with-virtio-input-tablet-events/--require-virtio-input-tablet-events/--enable-virtio-input-tablet-events was enabled"
     )
 
 
@@ -4862,7 +4862,9 @@ def main() -> int:
 
     input_events_req_flags: list[str] = []
     if bool(args.with_input_events):
-        input_events_req_flags.append("--with-input-events/--with-virtio-input-events")
+        input_events_req_flags.append(
+            "--with-input-events/--with-virtio-input-events/--require-virtio-input-events/--enable-virtio-input-events"
+        )
     if need_input_wheel:
         input_events_req_flags.append(
             "--with-input-wheel/--with-virtio-input-wheel/--require-virtio-input-wheel/--enable-virtio-input-wheel"
@@ -5017,7 +5019,7 @@ def main() -> int:
             args.qemu_system, "virtio-mouse-pci"
         ):
             parser.error(
-                "--with-input-events/--with-virtio-input-events"
+                "--with-input-events/--with-virtio-input-events/--require-virtio-input-events/--enable-virtio-input-events"
                 "/--with-input-wheel/--with-virtio-input-wheel/--require-virtio-input-wheel/--enable-virtio-input-wheel"
                 "/--with-input-events-extended/--with-input-events-extra requires "
                 "QEMU virtio-keyboard-pci and virtio-mouse-pci support. Upgrade QEMU or omit input event injection."
@@ -5049,7 +5051,7 @@ def main() -> int:
         and not _qemu_has_device(args.qemu_system, "virtio-keyboard-pci")
     ):
         parser.error(
-            "--with-input-media-keys requires QEMU virtio-keyboard-pci support. Upgrade QEMU or omit media key injection."
+            "--with-input-media-keys/--with-virtio-input-media-keys/--require-virtio-input-media-keys/--enable-virtio-input-media-keys requires QEMU virtio-keyboard-pci support. Upgrade QEMU or omit media key injection."
         )
 
     if attach_virtio_tablet and not args.dry_run:
@@ -5059,7 +5061,7 @@ def main() -> int:
             parser.error(str(e))
         if "virtio-tablet-pci" not in help_text:
             parser.error(
-                "--with-virtio-tablet/--with-input-tablet-events/--with-tablet-events/--with-virtio-input-tablet-events requires "
+                "--with-virtio-tablet/--with-input-tablet-events/--with-tablet-events/--with-virtio-input-tablet-events/--require-virtio-input-tablet-events/--enable-virtio-input-tablet-events requires "
                 "QEMU virtio-tablet-pci support. Upgrade QEMU or omit tablet support."
             )
 
@@ -5219,11 +5221,11 @@ def main() -> int:
     # Historically we enabled QMP only when we needed a graceful exit for `-audiodev wav` output, so we
     # wouldn't introduce extra host port/socket dependencies in non-audio harness runs. Input injection
     # also requires QMP, but remains opt-in via:
-    # - --with-input-events / --with-virtio-input-events
-    # - --with-input-media-keys / --with-virtio-input-media-keys
+    # - --with-input-events / --with-virtio-input-events / --require-virtio-input-events / --enable-virtio-input-events
+    # - --with-input-media-keys / --with-virtio-input-media-keys / --require-virtio-input-media-keys / --enable-virtio-input-media-keys
     # - --with-input-wheel
     # - --with-input-events-extended / --with-input-events-extra
-    # - --with-input-tablet-events / --with-tablet-events
+    # - --with-input-tablet-events / --with-tablet-events / --with-virtio-input-tablet-events / --require-virtio-input-tablet-events / --enable-virtio-input-tablet-events
     # - --with-net-link-flap
     # - --with-blk-resize
     # - --require-virtio-*-msix
@@ -5279,9 +5281,13 @@ def main() -> int:
                 ):
                     req_flags: list[str] = []
                     if bool(args.with_input_events):
-                        req_flags.append("--with-input-events/--with-virtio-input-events")
+                        req_flags.append(
+                            "--with-input-events/--with-virtio-input-events/--require-virtio-input-events/--enable-virtio-input-events"
+                        )
                     if need_input_media_keys:
-                        req_flags.append("--with-input-media-keys/--with-virtio-input-media-keys")
+                        req_flags.append(
+                            "--with-input-media-keys/--with-virtio-input-media-keys/--require-virtio-input-media-keys/--enable-virtio-input-media-keys"
+                        )
                     if need_input_wheel:
                         req_flags.append(
                             "--with-input-wheel/--with-virtio-input-wheel/--require-virtio-input-wheel/--enable-virtio-input-wheel"
@@ -5289,7 +5295,9 @@ def main() -> int:
                     if need_input_events_extended:
                         req_flags.append("--with-input-events-extended/--with-input-events-extra")
                     if need_input_tablet_events:
-                        req_flags.append("--with-input-tablet-events/--with-tablet-events")
+                        req_flags.append(
+                            "--with-input-tablet-events/--with-tablet-events/--with-virtio-input-tablet-events/--require-virtio-input-tablet-events/--enable-virtio-input-tablet-events"
+                        )
                     if need_net_link_flap:
                         req_flags.append(
                             "--with-net-link-flap/--with-virtio-net-link-flap/--require-virtio-net-link-flap/--enable-virtio-net-link-flap"
@@ -5325,9 +5333,13 @@ def main() -> int:
     ) and qmp_endpoint is None:
         req_flags: list[str] = []
         if bool(args.with_input_events):
-            req_flags.append("--with-input-events/--with-virtio-input-events")
+            req_flags.append(
+                "--with-input-events/--with-virtio-input-events/--require-virtio-input-events/--enable-virtio-input-events"
+            )
         if need_input_media_keys:
-            req_flags.append("--with-input-media-keys/--with-virtio-input-media-keys")
+            req_flags.append(
+                "--with-input-media-keys/--with-virtio-input-media-keys/--require-virtio-input-media-keys/--enable-virtio-input-media-keys"
+            )
         if need_input_wheel:
             req_flags.append(
                 "--with-input-wheel/--with-virtio-input-wheel/--require-virtio-input-wheel/--enable-virtio-input-wheel"
@@ -5335,7 +5347,9 @@ def main() -> int:
         if need_input_events_extended:
             req_flags.append("--with-input-events-extended/--with-input-events-extra")
         if need_input_tablet_events:
-            req_flags.append("--with-input-tablet-events/--with-tablet-events")
+            req_flags.append(
+                "--with-input-tablet-events/--with-tablet-events/--with-virtio-input-tablet-events/--require-virtio-input-tablet-events/--enable-virtio-input-tablet-events"
+            )
         if need_net_link_flap:
             req_flags.append(
                 "--with-net-link-flap/--with-virtio-net-link-flap/--require-virtio-net-link-flap/--enable-virtio-net-link-flap"
@@ -6762,7 +6776,7 @@ def main() -> int:
                         if saw_virtio_input_media_keys_skip:
                             print(
                                 "FAIL: VIRTIO_INPUT_MEDIA_KEYS_SKIPPED: virtio-input-media-keys test was skipped (flag_not_set) but "
-                                "--with-input-media-keys was enabled (provision the guest with --test-input-media-keys)",
+                                "--with-input-media-keys/--with-virtio-input-media-keys/--require-virtio-input-media-keys/--enable-virtio-input-media-keys was enabled (provision the guest with --test-input-media-keys)",
                                 file=sys.stderr,
                             )
                             _print_tail(serial_log)
@@ -6819,7 +6833,7 @@ def main() -> int:
                                 skipped = "virtio-input-events-wheel"
                             print(
                                 f"FAIL: VIRTIO_INPUT_EVENTS_EXTENDED_SKIPPED: {skipped} was skipped (flag_not_set) but "
-                                "--with-input-events-extended was enabled (provision the guest with --test-input-events-extended)",
+                                "--with-input-events-extended/--with-input-events-extra was enabled (provision the guest with --test-input-events-extended)",
                                 file=sys.stderr,
                             )
                             _print_tail(serial_log)
@@ -7356,13 +7370,13 @@ def main() -> int:
                                     if saw_virtio_input_media_keys_skip:
                                         print(
                                             "FAIL: VIRTIO_INPUT_MEDIA_KEYS_SKIPPED: virtio-input-media-keys test was skipped (flag_not_set) but "
-                                            "--with-input-media-keys was enabled (provision the guest with --test-input-media-keys)",
+                                            "--with-input-media-keys/--with-virtio-input-media-keys/--require-virtio-input-media-keys/--enable-virtio-input-media-keys was enabled (provision the guest with --test-input-media-keys)",
                                             file=sys.stderr,
                                         )
                                     else:
                                         print(
                                             "FAIL: MISSING_VIRTIO_INPUT_MEDIA_KEYS: selftest RESULT=PASS but did not emit virtio-input-media-keys test marker "
-                                            "while --with-input-media-keys was enabled",
+                                            "while --with-input-media-keys/--with-virtio-input-media-keys/--require-virtio-input-media-keys/--enable-virtio-input-media-keys was enabled",
                                             file=sys.stderr,
                                         )
                                     _print_tail(serial_log)
@@ -7410,13 +7424,13 @@ def main() -> int:
                                     if saw_skip:
                                         print(
                                             f"FAIL: VIRTIO_INPUT_EVENTS_EXTENDED_SKIPPED: {name} was skipped (flag_not_set) but "
-                                            "--with-input-events-extended was enabled (provision the guest with --test-input-events-extended)",
+                                            "--with-input-events-extended/--with-input-events-extra was enabled (provision the guest with --test-input-events-extended)",
                                             file=sys.stderr,
                                         )
                                     else:
                                         print(
                                             f"FAIL: MISSING_VIRTIO_INPUT_EVENTS_EXTENDED: did not observe {name} PASS marker while "
-                                            "--with-input-events-extended was enabled",
+                                            "--with-input-events-extended/--with-input-events-extra was enabled",
                                             file=sys.stderr,
                                         )
                                     _print_tail(serial_log)
@@ -7480,7 +7494,7 @@ def main() -> int:
                                     else:
                                         print(
                                             "FAIL: MISSING_VIRTIO_INPUT_TABLET_EVENTS: selftest RESULT=PASS but did not emit virtio-input-tablet-events test marker "
-                                            "while --with-input-tablet-events/--with-tablet-events was enabled",
+                                            "while --with-input-tablet-events/--with-tablet-events/--with-virtio-input-tablet-events/--require-virtio-input-tablet-events/--enable-virtio-input-tablet-events was enabled",
                                             file=sys.stderr,
                                         )
                                     _print_tail(serial_log)
@@ -7856,13 +7870,13 @@ def main() -> int:
                                 if saw_virtio_input_media_keys_skip:
                                     print(
                                         "FAIL: VIRTIO_INPUT_MEDIA_KEYS_SKIPPED: virtio-input-media-keys test was skipped (flag_not_set) but "
-                                        "--with-input-media-keys was enabled (provision the guest with --test-input-media-keys)",
+                                        "--with-input-media-keys/--with-virtio-input-media-keys/--require-virtio-input-media-keys/--enable-virtio-input-media-keys was enabled (provision the guest with --test-input-media-keys)",
                                         file=sys.stderr,
                                     )
                                 else:
                                     print(
                                         "FAIL: MISSING_VIRTIO_INPUT_MEDIA_KEYS: did not observe virtio-input-media-keys PASS marker while "
-                                        "--with-input-media-keys was enabled",
+                                        "--with-input-media-keys/--with-virtio-input-media-keys/--require-virtio-input-media-keys/--enable-virtio-input-media-keys was enabled",
                                         file=sys.stderr,
                                     )
                                 _print_tail(serial_log)
@@ -7952,13 +7966,13 @@ def main() -> int:
                                 if saw_skip:
                                     print(
                                         f"FAIL: VIRTIO_INPUT_EVENTS_EXTENDED_SKIPPED: {name} was skipped (flag_not_set) but "
-                                        "--with-input-events-extended was enabled (provision the guest with --test-input-events-extended)",
+                                        "--with-input-events-extended/--with-input-events-extra was enabled (provision the guest with --test-input-events-extended)",
                                         file=sys.stderr,
                                     )
                                 else:
                                     print(
                                         f"FAIL: MISSING_VIRTIO_INPUT_EVENTS_EXTENDED: did not observe {name} PASS marker while "
-                                        "--with-input-events-extended was enabled",
+                                        "--with-input-events-extended/--with-input-events-extra was enabled",
                                         file=sys.stderr,
                                     )
                                 _print_tail(serial_log)
@@ -8021,7 +8035,7 @@ def main() -> int:
                                     )
                                 else:
                                     print(
-                                        "FAIL: MISSING_VIRTIO_INPUT_TABLET_EVENTS: did not observe virtio-input-tablet-events PASS marker while --with-input-tablet-events/--with-tablet-events was enabled",
+                                        "FAIL: MISSING_VIRTIO_INPUT_TABLET_EVENTS: did not observe virtio-input-tablet-events PASS marker while --with-input-tablet-events/--with-tablet-events/--with-virtio-input-tablet-events/--require-virtio-input-tablet-events/--enable-virtio-input-tablet-events was enabled",
                                         file=sys.stderr,
                                     )
                                 _print_tail(serial_log)
@@ -8509,7 +8523,7 @@ def main() -> int:
                 ):
                     print(
                         "FAIL: MISSING_VIRTIO_INPUT_MEDIA_KEYS: did not observe virtio-input-media-keys marker after virtio-input completed while "
-                        "--with-input-media-keys was enabled (guest selftest too old or missing --test-input-media-keys)",
+                        "--with-input-media-keys/--with-virtio-input-media-keys/--require-virtio-input-media-keys/--enable-virtio-input-media-keys was enabled (guest selftest too old or missing --test-input-media-keys)",
                         file=sys.stderr,
                     )
                     _print_tail(serial_log)
@@ -8544,7 +8558,7 @@ def main() -> int:
                 ):
                     print(
                         "FAIL: MISSING_VIRTIO_INPUT_TABLET_EVENTS: did not observe virtio-input-tablet-events marker after virtio-input completed while "
-                        "--with-input-tablet-events/--with-tablet-events was enabled (guest selftest too old or missing --test-input-tablet-events/--test-tablet-events)",
+                        "--with-input-tablet-events/--with-tablet-events/--with-virtio-input-tablet-events/--require-virtio-input-tablet-events/--enable-virtio-input-tablet-events was enabled (guest selftest too old or missing --test-input-tablet-events/--test-tablet-events)",
                         file=sys.stderr,
                     )
                     _print_tail(serial_log)
@@ -10002,13 +10016,13 @@ def main() -> int:
                                     if saw_virtio_input_media_keys_skip:
                                         print(
                                             "FAIL: VIRTIO_INPUT_MEDIA_KEYS_SKIPPED: virtio-input-media-keys test was skipped (flag_not_set) but "
-                                            "--with-input-media-keys was enabled (provision the guest with --test-input-media-keys)",
+                                            "--with-input-media-keys/--with-virtio-input-media-keys/--require-virtio-input-media-keys/--enable-virtio-input-media-keys was enabled (provision the guest with --test-input-media-keys)",
                                             file=sys.stderr,
                                         )
                                     else:
                                         print(
                                             "FAIL: MISSING_VIRTIO_INPUT_MEDIA_KEYS: did not observe virtio-input-media-keys PASS marker while "
-                                            "--with-input-media-keys was enabled",
+                                            "--with-input-media-keys/--with-virtio-input-media-keys/--require-virtio-input-media-keys/--enable-virtio-input-media-keys was enabled",
                                             file=sys.stderr,
                                         )
                                     _print_tail(serial_log)
@@ -10098,13 +10112,13 @@ def main() -> int:
                                     if saw_skip:
                                         print(
                                             f"FAIL: VIRTIO_INPUT_EVENTS_EXTENDED_SKIPPED: {name} was skipped (flag_not_set) but "
-                                            "--with-input-events-extended was enabled (provision the guest with --test-input-events-extended)",
+                                            "--with-input-events-extended/--with-input-events-extra was enabled (provision the guest with --test-input-events-extended)",
                                             file=sys.stderr,
                                         )
                                     else:
                                         print(
                                             f"FAIL: MISSING_VIRTIO_INPUT_EVENTS_EXTENDED: did not observe {name} PASS marker while "
-                                            "--with-input-events-extended was enabled",
+                                            "--with-input-events-extended/--with-input-events-extra was enabled",
                                             file=sys.stderr,
                                         )
                                     _print_tail(serial_log)
@@ -10137,7 +10151,7 @@ def main() -> int:
                                     else:
                                         print(
                                             "FAIL: MISSING_VIRTIO_INPUT_TABLET_EVENTS: did not observe virtio-input-tablet-events PASS marker while "
-                                            "--with-input-tablet-events/--with-tablet-events was enabled",
+                                            "--with-input-tablet-events/--with-tablet-events/--with-virtio-input-tablet-events/--require-virtio-input-tablet-events/--enable-virtio-input-tablet-events was enabled",
                                             file=sys.stderr,
                                         )
                                     _print_tail(serial_log)
