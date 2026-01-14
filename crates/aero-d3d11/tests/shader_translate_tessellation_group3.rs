@@ -9,6 +9,7 @@ use aero_dxbc::test_utils as dxbc_test_utils;
 const FOURCC_SHEX: FourCC = FourCC(*b"SHEX");
 const FOURCC_ISGN: FourCC = FourCC(*b"ISGN");
 const FOURCC_PSGN: FourCC = FourCC(*b"PSGN");
+const FOURCC_PCSG: FourCC = FourCC(*b"PCSG");
 const FOURCC_OSGN: FourCC = FourCC(*b"OSGN");
 
 fn build_dxbc(chunks: &[(FourCC, Vec<u8>)]) -> Vec<u8> {
@@ -99,6 +100,57 @@ fn translates_ds_cbuffer_in_group3_with_compute_visibility() {
             "@group(3) @binding({BINDING_BASE_CBUFFER}) var<uniform> cb0:"
         )),
         "expected DS constant buffer binding to use @group(3):\n{}",
+        translated.wgsl
+    );
+
+    let cb = translated
+        .reflection
+        .bindings
+        .iter()
+        .find(|b| matches!(b.kind, BindingKind::ConstantBuffer { slot: 0, .. }))
+        .expect("missing cbuffer reflection");
+    assert_eq!(cb.group, 3);
+    assert_eq!(cb.binding, BINDING_BASE_CBUFFER);
+    assert_eq!(cb.visibility, wgpu::ShaderStages::COMPUTE);
+}
+
+#[test]
+fn translates_hs_cbuffer_in_group3_with_compute_visibility() {
+    // HS requires ISGN/OSGN + a patch-constant signature (PCSG or PSGN). Provide an OSGN entry so
+    // the HS output commit path stores `o0` into the control-point output buffer.
+    let osgn_params = vec![sig_param("TEXCOORD", 0, 0, 0b1111)];
+
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, Vec::new()),
+        (FOURCC_ISGN, build_signature_chunk(&[])),
+        (FOURCC_OSGN, build_signature_chunk(&osgn_params)),
+        (FOURCC_PCSG, build_signature_chunk(&[])),
+    ]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+
+    // Minimal HS body that reads cb0[0] and writes it to output register o0.
+    let module = Sm4Module {
+        stage: ShaderStage::Hull,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: Vec::new(),
+        instructions: vec![
+            Sm4Inst::Mov {
+                dst: dst(RegFile::Output, 0, WriteMask::XYZW),
+                src: src_cb(0, 0),
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    naga::front::wgsl::parse_str(&translated.wgsl).expect("generated WGSL failed to parse");
+
+    assert!(
+        translated.wgsl.contains(&format!(
+            "@group(3) @binding({BINDING_BASE_CBUFFER}) var<uniform> cb0:"
+        )),
+        "expected HS constant buffer binding to use @group(3):\n{}",
         translated.wgsl
     );
 
