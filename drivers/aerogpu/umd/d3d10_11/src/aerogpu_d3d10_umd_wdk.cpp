@@ -5863,6 +5863,28 @@ HRESULT APIENTRY CreateShaderResourceView(D3D10DDI_HDEVICE hDevice,
     }
   }
 
+  // Some WDK versions expose SRV flags (e.g. RAW buffer views). The current
+  // AeroGPU D3D10 path has no way to encode SRV flags in the command stream;
+  // reject if requested.
+  __if_exists(D3D10DDIARG_CREATESHADERRESOURCEVIEW::Flags) {
+    uint32_t flags = 0;
+    bool have_flags = false;
+    using FlagsT = decltype(pDesc->Flags);
+    __if_exists(FlagsT::Value) {
+      flags = static_cast<uint32_t>(pDesc->Flags.Value);
+      have_flags = true;
+    }
+    __if_not_exists(FlagsT::Value) {
+      flags = static_cast<uint32_t>(pDesc->Flags);
+      have_flags = true;
+    }
+    if (have_flags && flags != 0) {
+      AEROGPU_D3D10_11_LOG("D3D10 CreateShaderResourceView: rejecting SRV flags=0x%08X (unsupported)",
+                           static_cast<unsigned>(flags));
+      return E_NOTIMPL;
+    }
+  }
+
   uint32_t most_detailed_mip = 0;
   uint32_t mip_levels = 0;
   bool have_most_detailed_mip = false;
