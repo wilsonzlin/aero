@@ -180,4 +180,48 @@ describe("DebugOverlay hotkey handling", () => {
 
     overlay.detach();
   });
+
+  it("falls back to AerogpuFormat mapping when scanout.format_str is missing", () => {
+    const parent = { appendChild: vi.fn() } as unknown as HTMLElement;
+    const snapshot = {
+      framesReceived: 1,
+      framesPresented: 2,
+      framesDropped: 3,
+      droppedFrames: 3,
+      outputSource: "wddm_scanout",
+      presentUpload: { kind: "none" },
+      scanout: {
+        source: 2,
+        generation: 7,
+        base_paddr: "0x0000000000001000",
+        width: 800,
+        height: 600,
+        pitchBytes: 3200,
+        format: SCANOUT_FORMAT_B8G8R8X8,
+        // Intentionally omit format_str to exercise the fallback behavior.
+      },
+      gpuEvents: [{ severity: "warn", category: "CursorReadback", backend_kind: "webgpu", message: "vram missing" }],
+      gpuStats: {
+        backendKind: "webgpu",
+        counters: {
+          presents_attempted: 2,
+          presents_succeeded: 1,
+          recoveries_attempted: 3,
+          recoveries_succeeded: 1,
+          surface_reconfigures: 4,
+          recoveries_attempted_wddm: 1,
+          recoveries_succeeded_wddm: 1,
+        },
+      },
+    };
+
+    const overlay = new DebugOverlay(() => snapshot, { parent, toggleKey: "F3", updateIntervalMs: 10 });
+    overlay.show();
+
+    const root = (overlay as any)._root as FakeDiv;
+    expect(root.textContent).toContain("Scanout:");
+    expect(root.textContent).toContain("fmt=B8G8R8X8Unorm (2)");
+
+    overlay.detach();
+  });
 });
