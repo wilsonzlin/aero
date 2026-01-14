@@ -139,6 +139,20 @@ fn uhci_runtime_webusb_drain_actions_returns_null_when_attached_but_idle() {
 }
 
 #[wasm_bindgen_test]
+fn uhci_runtime_webusb_drain_actions_returns_null_after_detach() {
+    let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x4000);
+    let mut rt = UhciRuntime::new(guest_base, guest_size).expect("new UhciRuntime");
+    rt.webusb_attach(Some(1)).expect("webusb_attach ok");
+    rt.webusb_detach();
+
+    let drained = rt.webusb_drain_actions().expect("webusb_drain_actions ok");
+    assert!(
+        drained.is_null(),
+        "expected webusb_drain_actions() to return null after webusb_detach()"
+    );
+}
+
+#[wasm_bindgen_test]
 fn uhci_runtime_webusb_drain_actions_returns_array_when_action_exists() {
     let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x4000);
     let fl_base = {
@@ -172,4 +186,3 @@ fn uhci_runtime_webusb_drain_actions_returns_array_when_action_exists() {
         "expected at least one queued UsbHostAction"
     );
 }
-

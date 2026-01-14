@@ -4175,6 +4175,13 @@ impl Machine {
             .then_some(bdf)
     }
 
+    /// Return the BIOS-reported VBE linear framebuffer (LFB) base address.
+    ///
+    /// This is the value reported via `INT 10h AX=4F01h` (`VBE ModeInfoBlock.PhysBasePtr`).
+    pub fn vbe_lfb_base(&self) -> u64 {
+        u64::from(self.bios.video.vbe.lfb_base)
+    }
+
     /// Returns the PCI INTx router, if present.
     pub fn pci_intx_router(&self) -> Option<Rc<RefCell<PciIntxRouter>>> {
         self.pci_intx.clone()
