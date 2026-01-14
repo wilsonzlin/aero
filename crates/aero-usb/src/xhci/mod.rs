@@ -892,6 +892,9 @@ impl XhciController {
         mem: &mut M,
         max_trbs: usize,
     ) -> bool {
+        if !mem.dma_enabled() {
+            return true;
+        }
         if self.host_controller_error {
             return true;
         }

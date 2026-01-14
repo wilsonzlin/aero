@@ -122,6 +122,32 @@ fn xhci_tick_1ms_does_not_touch_guest_memory_without_dma() {
 }
 
 #[test]
+fn xhci_process_command_ring_does_not_touch_guest_memory_without_dma() {
+    let mut mem = NoDmaCountingMem::default();
+    let mut xhci = XhciController::new();
+
+    // Program a non-zero command ring pointer so the helper would normally DMA-read TRBs.
+    xhci.set_command_ring(0x1000, true);
+
+    // `process_command_ring` should bail out before touching guest memory when DMA is disabled.
+    let ring_empty = xhci.process_command_ring(&mut mem, 8);
+    assert!(ring_empty, "expected process_command_ring to report no progress without DMA");
+    assert_eq!(
+        mem.reads, 0,
+        "xHCI process_command_ring must not DMA-read guest memory when dma_enabled() is false"
+    );
+    assert_eq!(
+        mem.writes, 0,
+        "xHCI process_command_ring must not DMA-write guest memory when dma_enabled() is false"
+    );
+    assert_eq!(
+        xhci.pending_event_count(),
+        0,
+        "xHCI process_command_ring must not synthesize command completion events without DMA"
+    );
+}
+
+#[test]
 fn xhci_service_event_ring_does_not_touch_guest_memory_without_dma() {
     let mut mem = NoDmaCountingMem::default();
     let mut xhci = XhciController::new();
