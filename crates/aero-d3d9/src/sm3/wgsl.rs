@@ -247,7 +247,10 @@ fn swizzle_suffix(swz: Swizzle) -> Option<String> {
 
 fn wgsl_texture_type(ty: TextureType) -> Result<&'static str, WgslError> {
     Ok(match ty {
-        TextureType::Texture1D => "texture_1d<f32>",
+        // D3D9 "1D" samplers are backed by ordinary 2D textures with height=1. Our D3D9 executor
+        // binds textures as 2D, so lower 1D samplers to `texture_2d` bindings and fix up sample
+        // coordinates during WGSL emission.
+        TextureType::Texture1D => "texture_2d<f32>",
         TextureType::Texture2D => "texture_2d<f32>",
         TextureType::Texture3D => "texture_3d<f32>",
         TextureType::TextureCube => "texture_cube<f32>",
@@ -270,6 +273,34 @@ fn tex_coord_swizzle(ty: TextureType) -> Result<&'static str, WgslError> {
             )));
         }
     })
+}
+
+fn tex_coord_expr(coord_e: &str, ty: TextureType, project: bool) -> Result<String, WgslError> {
+    let swz = tex_coord_swizzle(ty)?;
+    if ty == TextureType::Texture1D {
+        // See `wgsl_texture_type`: treat 1D samplers as 2D bindings (height=1) and keep the Y
+        // coordinate constant so the sample result is independent of the source operand's Y
+        // component.
+        let x = if project {
+            format!("(({coord_e}).{swz} / ({coord_e}).w)")
+        } else {
+            format!("({coord_e}).{swz}")
+        };
+        return Ok(format!("vec2<f32>({x}, 0.5)"));
+    }
+    Ok(if project {
+        format!("(({coord_e}).{swz} / ({coord_e}).w)")
+    } else {
+        format!("({coord_e}).{swz}")
+    })
+}
+
+fn tex_grad_expr(grad_e: &str, ty: TextureType) -> Result<String, WgslError> {
+    let swz = tex_coord_swizzle(ty)?;
+    if ty == TextureType::Texture1D {
+        return Ok(format!("vec2<f32>(({grad_e}).{swz}, 0.0)"));
+    }
+    Ok(format!("({grad_e}).{swz}"))
 }
 
 fn default_vec4(ty: ScalarTy) -> &'static str {
@@ -1263,15 +1294,10 @@ fn emit_branchless_predicated_op_line(
                 .get(sampler)
                 .copied()
                 .unwrap_or(TextureType::Texture2D);
-            let swz = tex_coord_swizzle(tex_ty)?;
 
             let tex = format!("tex{sampler}");
             let samp = format!("samp{sampler}");
-            let coord = if *project {
-                format!("(({coord_e}).{swz} / ({coord_e}).w)")
-            } else {
-                format!("({coord_e}).{swz}")
-            };
+            let coord = tex_coord_expr(&coord_e, tex_ty, *project)?;
             let sample = format!("textureSample({tex}, {samp}, {coord})");
             let sample = apply_float_result_modifiers(sample, modifiers)?;
 
@@ -1303,23 +1329,12 @@ fn emit_branchless_predicated_op_line(
                 .get(sampler)
                 .copied()
                 .unwrap_or(TextureType::Texture2D);
-            let swz = tex_coord_swizzle(tex_ty)?;
 
             let tex = format!("tex{sampler}");
             let samp = format!("samp{sampler}");
-            let coord = format!("({coord_e}).{swz}");
+            let coord = tex_coord_expr(&coord_e, tex_ty, false)?;
             let bias = format!("({coord_e}).w");
-            let sample = if tex_ty == TextureType::Texture1D {
-                // WGSL does not support `textureSampleBias` for 1D textures.
-                // Approximate bias by scaling the implicit derivatives and using
-                // `textureSampleGrad`, which accepts explicit gradients for 1D.
-                let scale = format!("exp2({bias})");
-                let ddx = format!("(dpdx({coord}) * {scale})");
-                let ddy = format!("(dpdy({coord}) * {scale})");
-                format!("textureSampleGrad({tex}, {samp}, {coord}, {ddx}, {ddy})")
-            } else {
-                format!("textureSampleBias({tex}, {samp}, {coord}, {bias})")
-            };
+            let sample = format!("textureSampleBias({tex}, {samp}, {coord}, {bias})");
             let sample = apply_float_result_modifiers(sample, modifiers)?;
 
             let dst_name = reg_var_name(&dst.reg)?;
@@ -2277,18 +2292,13 @@ fn emit_op_line(
                 .get(sampler)
                 .copied()
                 .unwrap_or(TextureType::Texture2D);
-            let swz = tex_coord_swizzle(tex_ty)?;
 
             let tex = format!("tex{sampler}");
             let samp = format!("samp{sampler}");
 
             let sample = match kind {
                 crate::sm3::ir::TexSampleKind::ImplicitLod { project } => {
-                    let uv = if *project {
-                        format!("(({coord_e}).{swz} / ({coord_e}).w)")
-                    } else {
-                        format!("({coord_e}).{swz}")
-                    };
+                    let uv = tex_coord_expr(&coord_e, tex_ty, *project)?;
                     match stage {
                         // Vertex stage has no implicit derivatives, so use an explicit LOD.
                         ShaderStage::Vertex => {
@@ -2303,22 +2313,12 @@ fn emit_op_line(
                             "texldb/Bias texture sampling is only supported in pixel shaders",
                         ));
                     }
-                    let uv = format!("({coord_e}).{swz}");
+                    let uv = tex_coord_expr(&coord_e, tex_ty, false)?;
                     let bias = format!("({coord_e}).w");
-                    // WGSL does not support `textureSampleBias` for 1D textures.
-                    // Approximate bias by scaling the implicit derivatives and using
-                    // `textureSampleGrad`, which accepts explicit gradients for 1D.
-                    if tex_ty == TextureType::Texture1D {
-                        let scale = format!("exp2({bias})");
-                        let ddx = format!("(dpdx({uv}) * {scale})");
-                        let ddy = format!("(dpdy({uv}) * {scale})");
-                        format!("textureSampleGrad({tex}, {samp}, {uv}, {ddx}, {ddy})")
-                    } else {
-                        format!("textureSampleBias({tex}, {samp}, {uv}, {bias})")
-                    }
+                    format!("textureSampleBias({tex}, {samp}, {uv}, {bias})")
                 }
                 crate::sm3::ir::TexSampleKind::ExplicitLod => {
-                    let uv = format!("({coord_e}).{swz}");
+                    let uv = tex_coord_expr(&coord_e, tex_ty, false)?;
                     let lod = format!("({coord_e}).w");
                     format!("textureSampleLevel({tex}, {samp}, {uv}, {lod})")
                 }
@@ -2339,8 +2339,11 @@ fn emit_op_line(
                     if ddx_ty != ScalarTy::F32 || ddy_ty != ScalarTy::F32 {
                         return Err(err("texldd gradients must be float"));
                     }
+                    let uv = tex_coord_expr(&coord_e, tex_ty, false)?;
+                    let ddx = tex_grad_expr(&ddx_e, tex_ty)?;
+                    let ddy = tex_grad_expr(&ddy_e, tex_ty)?;
                     format!(
-                        "textureSampleGrad({tex}, {samp}, ({coord_e}).{swz}, ({ddx_e}).{swz}, ({ddy_e}).{swz})"
+                        "textureSampleGrad({tex}, {samp}, {uv}, {ddx}, {ddy})"
                     )
                 }
             };
@@ -3469,18 +3472,23 @@ pub fn generate_wgsl_with_options(
     let mut sampler_bindings = HashMap::new();
     let mut sampler_texture_types = HashMap::new();
     for s in &usage.samplers {
-        let ty = sampler_type_map
+        let declared_ty = sampler_type_map
             .get(s)
             .copied()
             .unwrap_or(TextureType::Texture2D);
-        let wgsl_tex_ty = wgsl_texture_type(ty)?;
+        let binding_ty = if declared_ty == TextureType::Texture1D {
+            TextureType::Texture2D
+        } else {
+            declared_ty
+        };
+        let wgsl_tex_ty = wgsl_texture_type(binding_ty)?;
         // Binding contract matches the legacy token-stream translator and the AeroGPU executor:
         //   texture binding = 2*s
         //   sampler binding = 2*s + 1
         let tex_binding = s * 2;
         let samp_binding = tex_binding + 1;
         sampler_bindings.insert(*s, (tex_binding, samp_binding));
-        sampler_texture_types.insert(*s, ty);
+        sampler_texture_types.insert(*s, binding_ty);
         let _ = writeln!(
             wgsl,
             "@group({sampler_group}) @binding({tex_binding}) var tex{s}: {wgsl_tex_ty};"

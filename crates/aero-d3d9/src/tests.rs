@@ -8157,9 +8157,10 @@ fn translate_entrypoint_rejects_used_volume_sampler() {
 }
 
 #[test]
-fn translate_entrypoint_rejects_used_1d_sampler() {
-    // Used 1D samplers are rejected by the translation entrypoint because the D3D9 command stream
-    // cannot currently bind 1D resources. (Unused declarations are still accepted.)
+fn translate_entrypoint_supports_used_1d_sampler() {
+    // D3D9 bytecode can declare `dcl_1d` samplers, but the runtime binds textures as 2D (with
+    // height=1). Ensure the translation entrypoint lowers used 1D samplers to 2D bindings rather
+    // than rejecting them.
     let mut words = vec![0xFFFF_0300];
     // dcl_1d s0
     words.extend(enc_inst_with_extra(
@@ -8181,19 +8182,28 @@ fn translate_entrypoint_rejects_used_1d_sampler() {
     words.push(0x0000_FFFF);
 
     let bytes = to_bytes(&words);
-    let err =
+    let translated =
         shader_translate::translate_d3d9_shader_to_wgsl(&bytes, shader::WgslOptions::default())
-            .unwrap_err();
-    assert!(
-        matches!(err, shader_translate::ShaderTranslateError::Translation(_)),
-        "{err:?}"
+            .unwrap();
+    assert!(translated.used_samplers.contains(&0));
+    assert_eq!(
+        translated.sampler_texture_types.get(&0).copied(),
+        Some(TextureType::Texture2D)
     );
-    let msg = err.to_string();
-    assert!(msg.contains("Texture1D") && msg.contains("s0"), "{msg}");
+    assert!(
+        translated.wgsl.contains("texture_2d<f32>"),
+        "wgsl:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated.wgsl.contains("0.5"),
+        "wgsl:\n{}",
+        translated.wgsl
+    );
 }
 
 #[test]
-fn legacy_translator_emits_texture_1d_and_x_coords() {
+fn legacy_translator_emits_texture_1d_as_2d_and_x_coords() {
     // Minimal ps_3_0 that samples from a 1D texture.
     let mut words = vec![0xFFFF_0300];
     // dcl_1d s0
@@ -8229,16 +8239,16 @@ fn legacy_translator_emits_texture_1d_and_x_coords() {
     .expect("wgsl validate");
 
     assert!(
-        wgsl.wgsl.contains("texture_1d<f32>"),
+        wgsl.wgsl.contains("texture_2d<f32>"),
         "wgsl:\n{}",
         wgsl.wgsl
     );
     assert!(
-        wgsl.wgsl
-            .contains("textureSample(tex0, samp0, (t0.xyzw).x)"),
+        wgsl.wgsl.contains("textureSample(tex0, samp0, vec2<f32>("),
         "wgsl:\n{}",
         wgsl.wgsl
     );
+    assert!(wgsl.wgsl.contains("0.5"), "wgsl:\n{}", wgsl.wgsl);
 }
 
 #[test]

@@ -1471,8 +1471,11 @@ pub fn generate_wgsl_with_options(
             .get(&s)
             .copied()
             .unwrap_or(TextureType::Texture2D);
+        // D3D9 "1D" samplers are backed by ordinary 2D textures with height=1. WebGPU does support
+        // true 1D textures, but our D3D9 command stream/executor currently binds textures as 2D.
+        // Treat 1D samplers as 2D bindings and fix up sample coordinates accordingly.
         let wgsl_tex_ty = match ty {
-            TextureType::Texture1D => "texture_1d<f32>",
+            TextureType::Texture1D => "texture_2d<f32>",
             TextureType::Texture2D => "texture_2d<f32>",
             TextureType::TextureCube => "texture_cube<f32>",
             TextureType::Texture3D => "texture_3d<f32>",
@@ -1986,11 +1989,14 @@ fn texld_sample_expr(
                     }
                 }
                 TextureType::Texture1D => {
-                    if project {
+                    // D3D9 1D samplers are treated as 2D bindings (height=1). Use a constant Y to
+                    // keep the translated sample independent of the source operand's Y channel.
+                    let x = if project {
                         format!("(({}).x / ({}).w)", coord_expr, coord_expr)
                     } else {
                         format!("({}).x", coord_expr)
-                    }
+                    };
+                    format!("vec2<f32>({x}, 0.5)")
                 }
                 _ => unreachable!(
                     "unsupported sampler texture types are rejected during WGSL generation"
@@ -2012,7 +2018,9 @@ fn texld_sample_expr(
                     format!("({}).xyz", coord_expr)
                 }
                 TextureType::Texture2D => format!("({}).xy", coord_expr),
-                TextureType::Texture1D => format!("({}).x", coord_expr),
+                TextureType::Texture1D => {
+                    format!("vec2<f32>(({}).x, 0.5)", coord_expr)
+                }
                 _ => unreachable!(
                     "unsupported sampler texture types are rejected during WGSL generation"
                 ),
@@ -2026,23 +2034,10 @@ fn texld_sample_expr(
                 }
                 ShaderStage::Pixel => {
                     let bias = format!("({}).w", coord_expr);
-                    // WGSL does not support `textureSampleBias` for 1D textures.
-                    // Approximate bias by scaling the implicit derivatives and using
-                    // `textureSampleGrad`, which accepts explicit gradients for 1D.
-                    if ty == TextureType::Texture1D {
-                        let scale = format!("exp2({bias})");
-                        let ddx = format!("(dpdx({coords}) * {scale})");
-                        let ddy = format!("(dpdy({coords}) * {scale})");
-                        format!(
-                            "textureSampleGrad(tex{}, samp{}, {}, {}, {})",
-                            s, s, coords, ddx, ddy
-                        )
-                    } else {
-                        format!(
-                            "textureSampleBias(tex{}, samp{}, {}, {})",
-                            s, s, coords, bias
-                        )
-                    }
+                    format!(
+                        "textureSampleBias(tex{}, samp{}, {}, {})",
+                        s, s, coords, bias
+                    )
                 }
             }
         }

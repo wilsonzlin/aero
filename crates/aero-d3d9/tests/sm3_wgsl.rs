@@ -546,7 +546,7 @@ fn wgsl_dcl_volume_sampler_emits_texture_3d_and_xyz_coords() {
 }
 
 #[test]
-fn wgsl_dcl_1d_sampler_emits_texture_1d_and_x_coord() {
+fn wgsl_dcl_1d_sampler_lowers_to_texture_2d_and_vec2_coord() {
     // ps_3_0:
     //   dcl_1d s0
     //   texld r0, c0, s0
@@ -578,20 +578,20 @@ fn wgsl_dcl_1d_sampler_emits_texture_1d_and_x_coord() {
     assert_eq!(wgsl.bind_group_layout.sampler_group, 2);
     assert_eq!(
         wgsl.bind_group_layout.sampler_texture_types.get(&0),
-        Some(&TextureType::Texture1D)
+        Some(&TextureType::Texture2D)
     );
     assert!(
         wgsl.wgsl
-            .contains("@group(2) @binding(0) var tex0: texture_1d<f32>;"),
+            .contains("@group(2) @binding(0) var tex0: texture_2d<f32>;"),
         "{}",
         wgsl.wgsl
     );
     assert!(
-        wgsl.wgsl
-            .contains("textureSample(tex0, samp0, (constants.c[CONST_BASE + 0u]).x)"),
+        wgsl.wgsl.contains("textureSample(tex0, samp0, vec2<f32>("),
         "{}",
         wgsl.wgsl
     );
+    assert!(wgsl.wgsl.contains("0.5"), "{}", wgsl.wgsl);
 
     let module = naga::front::wgsl::parse_str(&wgsl.wgsl).expect("wgsl parse");
     naga::valid::Validator::new(
@@ -634,11 +634,11 @@ fn wgsl_dcl_1d_sampler_texldp_emits_projective_divide_x() {
     let wgsl = generate_wgsl(&ir).unwrap().wgsl;
     assert!(wgsl.contains("textureSample("), "{wgsl}");
     assert!(
-        wgsl.contains(
-            "textureSample(tex0, samp0, ((constants.c[CONST_BASE + 0u]).x / (constants.c[CONST_BASE + 0u]).w))"
-        ),
+        wgsl.contains("textureSample(tex0, samp0, vec2<f32>("),
         "{wgsl}"
     );
+    assert!(wgsl.contains("/ (constants.c[CONST_BASE + 0u]).w"), "{wgsl}");
+    assert!(wgsl.contains("0.5"), "{wgsl}");
 
     let module = naga::front::wgsl::parse_str(&wgsl).expect("wgsl parse");
     naga::valid::Validator::new(
@@ -682,11 +682,10 @@ fn wgsl_dcl_1d_sampler_texldd_emits_texture_sample_grad_x() {
 
     let wgsl = generate_wgsl(&ir).unwrap().wgsl;
     assert!(
-        wgsl.contains(
-            "textureSampleGrad(tex0, samp0, (constants.c[CONST_BASE + 0u]).x, (constants.c[CONST_BASE + 1u]).x, (constants.c[CONST_BASE + 2u]).x)"
-        ),
+        wgsl.contains("textureSampleGrad(tex0, samp0, vec2<f32>("),
         "{wgsl}"
     );
+    assert!(wgsl.contains("0.5"), "{wgsl}");
 
     let module = naga::front::wgsl::parse_str(&wgsl).expect("wgsl parse");
     naga::valid::Validator::new(
@@ -881,7 +880,7 @@ fn wgsl_texldb_emits_texture_sample_bias() {
 }
 
 #[test]
-fn wgsl_dcl_1d_sampler_texldb_emits_texture_sample_grad_x_with_bias() {
+fn wgsl_dcl_1d_sampler_texldb_lowers_to_texture_sample_bias_vec2() {
     // ps_3_0:
     //   dcl_1d s0
     //   texldb r0, c0, s0
@@ -910,16 +909,12 @@ fn wgsl_dcl_1d_sampler_texldb_emits_texture_sample_grad_x_with_bias() {
     verify_ir(&ir).unwrap();
 
     let wgsl = generate_wgsl(&ir).unwrap().wgsl;
+    assert!(wgsl.contains("textureSampleBias("), "{wgsl}");
     assert!(
-        !wgsl.contains("textureSampleBias("),
-        "textureSampleBias is not valid for 1D textures in WGSL\n{wgsl}"
-    );
-    assert!(
-        wgsl.contains(
-            "textureSampleGrad(tex0, samp0, (constants.c[CONST_BASE + 0u]).x, (dpdx((constants.c[CONST_BASE + 0u]).x) * exp2((constants.c[CONST_BASE + 0u]).w)), (dpdy((constants.c[CONST_BASE + 0u]).x) * exp2((constants.c[CONST_BASE + 0u]).w)))"
-        ),
+        wgsl.contains("textureSampleBias(tex0, samp0, vec2<f32>("),
         "{wgsl}"
     );
+    assert!(wgsl.contains("0.5"), "{wgsl}");
 
     let module = naga::front::wgsl::parse_str(&wgsl).expect("wgsl parse");
     naga::valid::Validator::new(
@@ -1313,16 +1308,15 @@ fn wgsl_dcl_1d_sampler_texldl_emits_texture_sample_level_x_lod() {
     let wgsl = generate_wgsl(&ir).unwrap();
     assert_eq!(
         wgsl.bind_group_layout.sampler_texture_types.get(&0),
-        Some(&TextureType::Texture1D)
+        Some(&TextureType::Texture2D)
     );
     assert!(
         wgsl.wgsl
-            .contains(
-                "textureSampleLevel(tex0, samp0, (constants.c[CONST_BASE + 0u]).x, (constants.c[CONST_BASE + 0u]).w)"
-            ),
+            .contains("textureSampleLevel(tex0, samp0, vec2<f32>("),
         "{}",
         wgsl.wgsl
     );
+    assert!(wgsl.wgsl.contains("0.5"), "{}", wgsl.wgsl);
 
     let module = naga::front::wgsl::parse_str(&wgsl.wgsl).expect("wgsl parse");
     naga::valid::Validator::new(
@@ -2247,9 +2241,8 @@ fn wgsl_predicated_texldb_1d_avoids_non_uniform_control_flow() {
     //   mov oC0, r0
     //   end
     //
-    // For 1D textures, WGSL does not support `textureSampleBias`. Our lowering uses `dpdx`/`dpdy`
-    // scaled by `exp2(bias)` and calls `textureSampleGrad`, which must still appear in uniform
-    // control flow when predicated.
+    // Ensure `texldb` on a 1D-declared sampler is still lowered without introducing non-uniform
+    // control flow (WGSL/WebGPU require `textureSampleBias` to be uniform).
     let tokens = vec![
         version_token(ShaderStage::Pixel, 3, 0),
         // dcl_texcoord0 v0  (usage 5 = texcoord)
@@ -2283,12 +2276,9 @@ fn wgsl_predicated_texldb_1d_avoids_non_uniform_control_flow() {
 
     let wgsl = generate_wgsl(&ir).unwrap().wgsl;
     assert!(
-        wgsl.contains("textureSampleGrad("),
-        "expected texldb(1D) to lower via textureSampleGrad; got:\n{wgsl}"
+        wgsl.contains("textureSampleBias("),
+        "expected texldb(1D) to lower via textureSampleBias; got:\n{wgsl}"
     );
-    assert!(wgsl.contains("dpdx("), "{wgsl}");
-    assert!(wgsl.contains("dpdy("), "{wgsl}");
-    assert!(wgsl.contains("exp2("), "{wgsl}");
     assert!(wgsl.contains("select("), "{wgsl}");
     assert!(
         !wgsl.contains("if (p0.x)"),
@@ -2502,8 +2492,9 @@ fn wgsl_nonuniform_if_texldb_1d_avoids_invalid_control_flow() {
     //   mov oC0, r0
     //   end
     //
-    // For 1D textures, texldb uses our dpdx/dpdy+exp2(bias)+textureSampleGrad lowering, which also
-    // must appear in uniform control flow. This test ensures we still avoid emitting an `if`.
+    // Even when the sampler was declared 1D, the translator lowers it to a 2D binding and uses
+    // `textureSampleBias`, which must appear in uniform control flow. Ensure we still avoid
+    // emitting an `if`.
     let tokens = vec![
         version_token(ShaderStage::Pixel, 3, 0),
         // dcl_texcoord0 v0  (usage 5 = texcoord)
@@ -2535,7 +2526,7 @@ fn wgsl_nonuniform_if_texldb_1d_avoids_invalid_control_flow() {
     verify_ir(&ir).unwrap();
 
     let wgsl = generate_wgsl(&ir).unwrap().wgsl;
-    assert!(wgsl.contains("textureSampleGrad("), "{wgsl}");
+    assert!(wgsl.contains("textureSampleBias("), "{wgsl}");
     assert!(wgsl.contains("select("), "{wgsl}");
     assert!(
         !wgsl.contains("if ("),

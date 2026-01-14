@@ -264,9 +264,17 @@ pub fn translate_d3d9_shader_to_wgsl(
                 uses_semantic_locations,
                 semantic_locations,
                 used_samplers,
-                sampler_texture_types,
+                mut sampler_texture_types,
                 ..
             } = ir;
+            // Match the binding policy used by the D3D9 executor and SM3 WGSL generator: 1D samplers
+            // are lowered to 2D bindings (backed by height=1 textures) so the executor can bind
+            // ordinary `Texture2D` resources.
+            for ty in sampler_texture_types.values_mut() {
+                if *ty == TextureType::Texture1D {
+                    *ty = TextureType::Texture2D;
+                }
+            }
             let out = ShaderTranslation {
                 backend: ShaderTranslateBackend::LegacyFallback,
                 version: program.version,
@@ -594,7 +602,15 @@ fn collect_sampler_texture_types_sm3(ir: &sm3::ir::ShaderIr) -> HashMap<u16, Tex
         let Ok(index) = u16::try_from(sampler.index) else {
             continue;
         };
-        out.insert(index, sampler.texture_type);
+        // The D3D9 executor binds textures as 2D/cube today. Treat 1D sampler declarations as 2D
+        // bindings (backed by height=1 textures) so translation output matches the emitted WGSL and
+        // executor bind group layouts.
+        let ty = if sampler.texture_type == TextureType::Texture1D {
+            TextureType::Texture2D
+        } else {
+            sampler.texture_type
+        };
+        out.insert(index, ty);
     }
     out
 }
