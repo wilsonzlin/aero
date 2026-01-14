@@ -249,7 +249,7 @@ Examples (illustrative) INF model entries:
   
 ; aero_virtio_input.inf (virtio-input is a multi-function device: keyboard + mouse)
 ; Includes explicit keyboard/mouse model lines for distinct Device Manager naming, plus a strict revision-gated generic
-; fallback model line (no SUBSYS):
+; fallback model line (no SUBSYS) for environments where subsystem IDs are not exposed/recognized:
 %AeroVirtioKeyboard.DeviceDesc% = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01
 %AeroVirtioMouse.DeviceDesc%    = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01
 %AeroVirtioInput.DeviceDesc%    = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&REV_01
@@ -262,8 +262,8 @@ Examples (illustrative) INF model entries:
 ; - Exists for compatibility with workflows/tools that still reference `virtio-input.inf` instead of `aero_virtio_input.inf`.
 ; - Policy: filename-only alias; expected to match `aero_virtio_input.inf` from `[Version]` onward
 ;   (banner/comments may differ; see `drivers/windows7/virtio-input/scripts/check-inf-alias.py`).
-; - Because it is identical, it does **not** change HWID matching behavior; install only one basename at a time.
-; - Do not ship/install both INFs at the same time: they match overlapping HWIDs and can cause confusing driver selection.
+; - Because it is identical, enabling the alias does not change HWID matching behavior.
+; - Install only one basename at a time (avoid duplicate overlapping INFs that can cause confusing driver selection).
 ```
 
 ### Boot-critical storage (`CriticalDeviceDatabase`)
