@@ -561,6 +561,32 @@ fn int10_vbe_set_scanline_length_in_bytes_rounds_to_whole_pixels() {
 }
 
 #[test]
+fn int10_vbe_set_scanline_length_in_bytes_clamps_to_u16_while_preserving_pixel_alignment() {
+    let mut mem = VecMemory::new(32 * 1024 * 1024);
+    let mut bios = Bios::new(CmosRtc::new(DateTime::new(2026, 1, 1, 0, 0, 0)));
+    let mut cpu = CpuState::default();
+
+    // Enter a 32bpp VBE mode first.
+    cpu.set_ax(0x4F02);
+    cpu.set_bx(0x112 | 0x4000);
+    bios.handle_int10(&mut cpu, &mut mem);
+    assert_eq!(cpu.ax(), 0x004F);
+
+    // Request the largest possible CX value. The BIOS should clamp to the largest scanline length
+    // representable in `u16` while still remaining aligned to whole pixels (4 bytes per pixel).
+    cpu.set_ax(0x4F06);
+    cpu.set_bx(0x0002);
+    cpu.set_cx(u16::MAX);
+    bios.handle_int10(&mut cpu, &mut mem);
+    assert_eq!(cpu.ax(), 0x004F);
+    assert!(!cpu.cf());
+
+    let max_aligned = u16::MAX - (u16::MAX % 4);
+    assert_eq!(cpu.bx(), max_aligned);
+    assert_eq!(cpu.cx(), max_aligned / 4);
+}
+
+#[test]
 fn int10_vbe_misc_services() {
     let mut mem = VecMemory::new(32 * 1024 * 1024);
     let mut bios = Bios::new(CmosRtc::new(DateTime::new(2026, 1, 1, 0, 0, 0)));

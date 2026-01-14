@@ -133,11 +133,13 @@ impl Bios {
                             let bytes_aligned = if bpp == 0 {
                                 0
                             } else {
-                                // Align up to a whole pixel count.
+                                // Align up to a whole pixel count, then clamp to the largest value
+                                // that still fits in `u16` *and* remains whole-pixel aligned.
                                 let bpp_u32 = u32::from(bpp);
                                 let bytes_u32 = u32::from(bytes);
                                 let aligned = bytes_u32.div_ceil(bpp_u32).saturating_mul(bpp_u32);
-                                aligned.min(u32::from(u16::MAX)) as u16
+                                let max_aligned = (u32::from(u16::MAX) / bpp_u32).saturating_mul(bpp_u32);
+                                aligned.min(max_aligned) as u16
                             };
                             self.video.vbe.bytes_per_scan_line =
                                 bytes_aligned.max(mode.bytes_per_scan_line());
