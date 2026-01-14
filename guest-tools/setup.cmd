@@ -248,6 +248,11 @@ if errorlevel 1 (
   call :log "INFO: Administrator privileges detected (not required for /check)."
 )
 
+if "%ARG_VERIFY_MEDIA%"=="1" (
+  call :verify_media_preflight
+  if errorlevel 1 goto :check_fail
+)
+
 call :log_manifest
 if not defined GT_MANIFEST (
   call :log "INFO: Guest Tools manifest.json not found; using legacy defaults."

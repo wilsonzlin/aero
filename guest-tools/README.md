@@ -172,6 +172,7 @@ Optional flags:
   Verify Guest Tools media integrity by hashing all files listed in `manifest.json` before making any system changes.  
   If any file is missing or has a SHA-256 mismatch, setup exits with code `14` and prints remediation guidance:
   "replace the Guest Tools ISO/zip with a fresh copy; do not mix driver folders across versions".
+  Tip: combine with validation-only mode to avoid installation side effects: `setup.cmd /check /verify-media`.
 - `setup.cmd /noreboot`  
   Do not prompt for shutdown/reboot at the end.
 - `setup.cmd /skipstorage` (alias: `/skip-storage`)  
