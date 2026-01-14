@@ -58,7 +58,7 @@ Feature matrix for the Win7 WDK-backed UMDs:
 - **Unordered access views (UAVs) and compute shaders** (FL11+): the D3D11 UMD reports `E_NOTIMPL` for CS/UAV binding. The protocol and host have support for `AEROGPU_CMD_DISPATCH` and buffer UAV bindings (`AEROGPU_CMD_SET_UNORDERED_ACCESS_BUFFERS`), but full D3D11 UAV support still needs texture UAV representation and D3D11 view/subresource selectors.
 - **DXGI format expansion** beyond the protocol’s current `enum aerogpu_format` list: only formats representable in the protocol can be encoded. Adding more DXGI formats requires extending `drivers/aerogpu/protocol/aerogpu_pci.h` + host support.
 - Stencil ops are protocol-limited: the current `aerogpu_depth_stencil_state` only carries **stencil enable + masks**; it does **not** encode stencil funcs/ops (or separate front/back face state).
-- Blend factors are protocol-limited: only `{Zero, One, SrcAlpha, InvSrcAlpha, DestAlpha, InvDestAlpha, Constant, InvConstant}` are representable. Other D3D10/11 blend factors are mapped to conservative fallbacks.
+- Blend factors are protocol-limited: only `{Zero, One, SrcAlpha, InvSrcAlpha, DestAlpha, InvDestAlpha, Constant, InvConstant}` are representable. Other D3D10/11 blend factors (and unsupported blend ops) are rejected at `CreateBlendState` time (`E_NOTIMPL`) to avoid silent misrendering.
 
 ### Still stubbed / known gaps
 

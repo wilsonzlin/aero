@@ -186,6 +186,34 @@ bool TestInvalidBlendOpReturnsInvalidArg() {
   return true;
 }
 
+bool TestDestroyAfterFailedCreateIsSafe() {
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev), "InitTestDevice(destroy after failed create)")) {
+    return false;
+  }
+
+  auto desc = MakeValidBlendDesc();
+  desc.enable = 2;  // invalid (>1)
+
+  std::vector<uint8_t> storage;
+  D3D10DDI_HBLENDSTATE hState = AllocBlendStateStorage(&dev, &desc, &storage);
+  if (!Check(hState.pDrvPrivate != nullptr, "blend state storage")) {
+    return false;
+  }
+
+  const HRESULT hr = dev.device_funcs.pfnCreateBlendState(dev.hDevice, &desc, hState);
+  if (!Check(hr == E_INVALIDARG, "CreateBlendState rejects enable=2 (for destroy-after-failure test)")) {
+    return false;
+  }
+
+  // Some runtimes may still call Destroy on failure; this must not crash.
+  dev.device_funcs.pfnDestroyBlendState(dev.hDevice, hState);
+
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
 bool TestValidateAndConvertRejectsPerRtFactorMismatch() {
   // Portable test for the shared validator: D3D10.1 blend states can encode
   // per-render-target factors/ops, but the protocol cannot. Reject mismatches
@@ -240,13 +268,12 @@ int main() {
   ok &= TestWriteMaskHighBitsReturnsInvalidArg();
   ok &= TestInvalidBlendFactorReturnsInvalidArg();
   ok &= TestInvalidBlendOpReturnsInvalidArg();
+  ok &= TestDestroyAfterFailedCreateIsSafe();
   ok &= TestValidateAndConvertRejectsPerRtFactorMismatch();
   ok &= TestValidateAndConvertRejectsD3d10_1Src1Factor();
-
   if (!ok) {
     return 1;
   }
   std::fprintf(stderr, "PASS: aerogpu_d3d10_11_blend_state_validation_tests\n");
   return 0;
 }
-
