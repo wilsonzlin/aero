@@ -482,6 +482,15 @@ def _parse_rust_u8_array(text: str, const_name: str, *, constants: dict[str, int
     This is intentionally a small, constrained parser for CI guardrails (not a general Rust parser).
     """
 
+    def strip_comments(s: str) -> str:
+        # Support basic `//` and `/* ... */` comments inside array literals so profile.rs can remain
+        # readable without breaking this guardrail check.
+        #
+        # This is still *not* a general Rust parser; it is narrowly scoped to the const initializers
+        # used by `crates/devices/src/pci/profile.rs`.
+        s = re.sub(r"/\*.*?\*/", "", s, flags=re.DOTALL)
+        return " ".join(line.split("//", 1)[0] for line in s.splitlines())
+
     # ---------------------------------------------------------------------
     # 1) Direct array literal form.
     # ---------------------------------------------------------------------
@@ -491,7 +500,7 @@ def _parse_rust_u8_array(text: str, const_name: str, *, constants: dict[str, int
     )
     m = direct_re.search(text)
     if m:
-        body = m.group("body")
+        body = strip_comments(m.group("body"))
         values: list[int] = []
         for token in body.replace("\n", " ").split(","):
             tok = token.strip()
@@ -505,7 +514,7 @@ def _parse_rust_u8_array(text: str, const_name: str, *, constants: dict[str, int
                 except ValueError as e:
                     raise ValueError(
                         f"{DEFAULT_PROFILE_RS_PATH.as_posix()}: {const_name}: unsupported u8 array token {tok!r} "
-                        + "(only integer literals/constants are supported; avoid inline comments or Rust expressions)"
+                        + "(only integer literals/constants are supported; avoid Rust expressions)"
                     ) from e
             if not (0 <= val <= 0xFF):
                 raise ValueError(
@@ -564,7 +573,7 @@ def _parse_rust_u8_array(text: str, const_name: str, *, constants: dict[str, int
     if end is None:
         raise ValueError(f"{DEFAULT_PROFILE_RS_PATH.as_posix()}: {const_name}: unterminated array literal in const block")
 
-    body = block[start + 1 : end]
+    body = strip_comments(block[start + 1 : end])
     values: list[int] = []
 
     def eval_u8(expr: str) -> int:
