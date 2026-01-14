@@ -21,6 +21,24 @@ else
   in_ci=false
 fi
 
+# Cargo registry cache contention can be a major slowdown when many agents share the same host
+# (cargo prints: "Blocking waiting for file lock on package cache"). Mirror the convenient
+# per-checkout Cargo home behavior from `scripts/agent-env.sh` / `scripts/safe-run.sh`: if a
+# `$REPO_ROOT/.cargo-home` directory already exists, prefer it automatically as long as the caller
+# hasn't configured a custom `CARGO_HOME`.
+_aero_default_cargo_home=""
+if [[ -n "${HOME:-}" ]]; then
+  _aero_default_cargo_home="${HOME%/}/.cargo"
+fi
+_aero_effective_cargo_home="${CARGO_HOME:-}"
+_aero_effective_cargo_home="${_aero_effective_cargo_home%/}"
+if [[ -d "$PWD/.cargo-home" ]] \
+  && { [[ -z "${_aero_effective_cargo_home}" ]] || [[ -n "${_aero_default_cargo_home}" && "${_aero_effective_cargo_home}" == "${_aero_default_cargo_home}" ]]; }
+then
+  export CARGO_HOME="$PWD/.cargo-home"
+fi
+unset _aero_default_cargo_home _aero_effective_cargo_home 2>/dev/null || true
+
 start_group() {
   local title="$1"
   if [[ "$in_ci" == "true" ]]; then
