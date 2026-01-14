@@ -70,7 +70,7 @@ fn ide_set_features_set_transfer_mode_updates_snapshot_state() {
     // IDENTIFY DEVICE should reflect the negotiated mode bits (word63/word88) for guests that
     // re-identify after configuring transfer mode.
     io.write(PRIMARY_PORTS.cmd_base + 7, 1, 0xEC);
-    let data_port = PRIMARY_PORTS.cmd_base + 0;
+    let data_port = PRIMARY_PORTS.cmd_base;
     let mut id = [0u8; SECTOR_SIZE];
     for i in 0..(SECTOR_SIZE / 2) {
         let w = io.read(data_port, 2) as u16;
@@ -275,7 +275,7 @@ fn ata_identify_word88_reflects_negotiated_udma_mode() {
     drive.set_transfer_mode_select(0x40).unwrap(); // UDMA0
     let id2 = drive.identify_sector();
     let w88_2 = identify_word(id2, 88);
-    assert_eq!(w88_2 & 0xFF00, 1 << (8 + 0));
+    assert_eq!(w88_2 & 0xFF00, 1 << 8);
 }
 
 #[test]

@@ -1983,7 +1983,7 @@ mod tests {
 
         // Program Bus Master IDE registers: PRD pointer + direction=ToMemory + start.
         ctl.io_write(BM_BASE + 4, 4, PRD_BASE as u32);
-        ctl.io_write(BM_BASE + 0, 1, 0x09);
+        ctl.io_write(BM_BASE, 1, 0x09);
 
         // Issue ATAPI PACKET command with the DMA bit set in Features.
         let cmd_base = PRIMARY_PORTS.cmd_base;
@@ -2092,7 +2092,7 @@ mod tests {
 
         // Program bus master registers: PRD pointer + direction=ToMemory + start.
         ctl.io_write(BM_BASE + 4, 4, PRD_BASE as u32);
-        ctl.io_write(BM_BASE + 0, 1, 0x09);
+        ctl.io_write(BM_BASE, 1, 0x09);
 
         // Issue ATAPI PACKET command with DMA enabled in Features.
         let cmd_base = PRIMARY_PORTS.cmd_base;
@@ -2215,7 +2215,7 @@ mod tests {
 
         // Program secondary bus master registers: PRD pointer + direction=ToMemory + start.
         ctl.io_write(BM_BASE + 8 + 4, 4, PRD_BASE as u32);
-        ctl.io_write(BM_BASE + 8 + 0, 1, 0x09);
+        ctl.io_write(BM_BASE + 8, 1, 0x09);
 
         // Issue ATAPI PACKET command with DMA enabled in Features on the secondary channel.
         let cmd_base = SECONDARY_PORTS.cmd_base;
@@ -2327,7 +2327,7 @@ mod tests {
 
         // Program bus master registers: PRD pointer + direction=ToMemory + start.
         ctl.io_write(BM_BASE + 4, 4, PRD_BASE as u32);
-        ctl.io_write(BM_BASE + 0, 1, 0x09);
+        ctl.io_write(BM_BASE, 1, 0x09);
 
         // Issue ATAPI PACKET command with DMA enabled in Features.
         let cmd_base = PRIMARY_PORTS.cmd_base;
@@ -2425,7 +2425,7 @@ mod tests {
 
         // Program bus master registers: PRD pointer + direction=ToMemory + start.
         ctl.io_write(BM_BASE + 4, 4, PRD_BASE as u32);
-        ctl.io_write(BM_BASE + 0, 1, 0x09);
+        ctl.io_write(BM_BASE, 1, 0x09);
 
         // Issue ATAPI PACKET command with DMA enabled in Features.
         let cmd_base = PRIMARY_PORTS.cmd_base;
@@ -2518,7 +2518,7 @@ mod tests {
 
         // Program bus master registers: PRD pointer + direction=ToMemory + start.
         ctl.io_write(BM_BASE + 4, 4, PRD_BASE as u32);
-        ctl.io_write(BM_BASE + 0, 1, 0x09);
+        ctl.io_write(BM_BASE, 1, 0x09);
 
         // Issue ATAPI PACKET command with DMA enabled in Features.
         let cmd_base = PRIMARY_PORTS.cmd_base;
@@ -2650,7 +2650,7 @@ mod tests {
 
         // Program bus master registers with *wrong* direction: FromMemory (bit3 clear) + start.
         ctl.io_write(BM_BASE + 4, 4, PRD_BASE as u32);
-        ctl.io_write(BM_BASE + 0, 1, 0x01);
+        ctl.io_write(BM_BASE, 1, 0x01);
 
         // Issue ATAPI PACKET command with DMA enabled in Features.
         let cmd_base = PRIMARY_PORTS.cmd_base;
