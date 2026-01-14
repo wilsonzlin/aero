@@ -71,12 +71,8 @@ struct Vertex {
     pos: [f32; 3],
 }
 
-fn make_dxbc(chunks: &[([u8; 4], Vec<u8>)]) -> Vec<u8> {
-    let refs: Vec<(FourCC, &[u8])> = chunks
-        .iter()
-        .map(|(fourcc, data)| (FourCC(*fourcc), data.as_slice()))
-        .collect();
-    dxbc_test_utils::build_container(&refs)
+fn make_dxbc(chunks: &[(FourCC, Vec<u8>)]) -> Vec<u8> {
+    dxbc_test_utils::build_container_owned(chunks)
 }
 
 fn make_sm5_program_tokens(stage_type: u16, body_tokens: &[u32]) -> Vec<u32> {
@@ -202,9 +198,9 @@ fn build_vs_pos3_tex2_to_pos_tex_dxbc() -> Vec<u8> {
         &[mov0.as_slice(), mov1.as_slice(), ret.as_slice()].concat(),
     );
     make_dxbc(&[
-        (*b"SHEX", tokens_to_bytes(&tokens)),
+        (FourCC(*b"SHEX"), tokens_to_bytes(&tokens)),
         (
-            *b"ISGN",
+            FourCC(*b"ISGN"),
             build_sig_chunk(&[
                 SigParam {
                     name: "POSITION",
@@ -221,7 +217,7 @@ fn build_vs_pos3_tex2_to_pos_tex_dxbc() -> Vec<u8> {
             ]),
         ),
         (
-            *b"OSGN",
+            FourCC(*b"OSGN"),
             build_sig_chunk(&[
                 SigParam {
                     name: "TEXCOORD",
