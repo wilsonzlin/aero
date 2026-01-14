@@ -615,9 +615,13 @@ maps to distinct bind groups:
 `AEROGPU_CMD_BIND_SHADERS` is extended by appending `gs/hs/ds` handles after the existing payload.
 
 Compatibility note: the legacy 24-byte packet already has a trailing `reserved0` field. In the
-canonical ABI, this field remains **reserved** (must be 0, host ignores it). The extended layout
-adds `gs/hs/ds` as **trailing fields**; older guests that do not know about the extension simply
-cannot bind those stages.
+canonical ABI this field is repurposed as the **geometry shader (GS) handle**:
+
+- `reserved0 == 0` → GS unbound
+- `reserved0 != 0` → GS is bound to handle `reserved0`
+
+The extended layout appends `{gs, hs, ds}` as explicit trailing fields. When using the extended
+layout, producers SHOULD set `reserved0 = 0` and treat the appended `gs` field as authoritative.
 
 ```c
 // Existing prefix (ABI 1.0+):
@@ -629,7 +633,7 @@ struct aerogpu_cmd_bind_shaders {
    aerogpu_handle_t vs;              // 0 = unbound
    aerogpu_handle_t ps;              // 0 = unbound
    aerogpu_handle_t cs;              // 0 = unbound
-   uint32_t reserved0;               // reserved; must be 0; host ignores
+   uint32_t reserved0;               // legacy GS handle (0 = unbound; non-zero = GS)
 
    // Present when hdr.size_bytes >= 36:
    aerogpu_handle_t gs;              // 0 = unbound
@@ -638,8 +642,10 @@ struct aerogpu_cmd_bind_shaders {
 };
 ```
 
-**Host decoding rule:** if the extension fields are missing, treat `gs/hs/ds` as unbound. Ignore
-`reserved0` (it remains reserved).
+**Host decoding rule:**
+
+- If the extension fields are present (`hdr.size_bytes >= 36`), use the appended `gs/hs/ds`.
+- Otherwise, treat `gs = reserved0` and `hs = ds = 0`.
 
 #### 1.3) Primitive topology extensions: adjacency + patchlists
 
