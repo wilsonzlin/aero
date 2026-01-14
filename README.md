@@ -167,6 +167,7 @@ Aero uses a typed configuration object (`AeroConfig`) that can be sourced from m
 | `mem`     | number (MiB) | `guestMemoryMiB` | `?mem=2048` |
 | `workers` | bool | `enableWorkers` | `?workers=0` |
 | `webgpu`  | bool | `enableWebGPU` | `?webgpu=1` |
+| `vm`      | string (`legacy` or `machine`) | `vm` | `?vm=machine` |
 | `proxy`   | string \| `null` | `proxyUrl` | `?proxy=https%3A%2F%2Fgateway.example.com` |
 | `disk`    | string \| `null` | `activeDiskImage` | `?disk=win7-sp1.img` |
 | `log`     | `trace|debug|info|warn|error` | `logLevel` | `?log=debug` |
@@ -188,6 +189,33 @@ Aero uses a typed configuration object (`AeroConfig`) that can be sourced from m
 - Some settings may be forced off at runtime if the browser lacks required capabilities (e.g. workers require `SharedArrayBuffer` + cross-origin isolation).
 - `proxy` (`proxyUrl`) may be either an absolute `ws(s)://` / `http(s)://` URL or a same-origin path like `/l2` (legacy alias: `/eth`).
 - `vmRuntime` can also be set via `?machine=1` (shorthand for `?vm=machine`).
+
+### VM runtime modes (`vm`)
+
+Aero currently exposes two browser VM runtimes:
+
+- **Legacy mode** (`vm=legacy`, default): the historical split runtime where the CPU loop runs in WASM and port I/O / MMIO are forwarded to TypeScript device shims.
+- **Machine mode** (`vm=machine`): runs the canonical full-system VM (`api.Machine`, backed by `aero_machine::Machine`) and uses its canonical device topology.
+
+Machine mode is required for Windows 7 storage bring-up because Windows Setup expects a compatibility-first controller topology:
+
+- **AHCI (ICH9)** for the primary HDD
+- **IDE (PIIX3) + ATAPI** for the install media (CD-ROM)
+
+See [`docs/05-storage-topology-win7.md`](./docs/05-storage-topology-win7.md) for the normative PCI BDFs, attachment points, and snapshot `disk_id` mapping.
+
+#### OPFS disk locking caveat (SyncAccessHandle)
+
+In browsers, OPFS `FileSystemSyncAccessHandle` is **exclusive**: only **one** SyncAccessHandle may exist for a given file at a time.
+Accidentally opening the same disk image twice (even in the same origin) typically fails with an `InvalidStateError` due to the file lock.
+
+The machine runtime avoids this by opening each OPFS-backed disk image once and sharing it across the BIOS + storage controllers via the canonical `SharedDisk` attachment (so the VM does not “double-open” the same file for INT13 vs AHCI/IDE).
+
+#### Disk overlay-ref strings (snapshots)
+
+Machine snapshots store disk references in the `DISKS` section as `DiskOverlayRefs` entries: `{ disk_id, base_image, overlay_image }`.
+In the browser machine runtime, these strings are interpreted as **OPFS-relative paths** (e.g. `aero/disks/win7.img`), which the host re-opens and re-attaches on restore.
+The stable `disk_id` values and their attachment points are defined in [`docs/05-storage-topology-win7.md`](./docs/05-storage-topology-win7.md).
 
 ## WASM in workers
 

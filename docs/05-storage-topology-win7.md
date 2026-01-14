@@ -169,6 +169,10 @@ Each entry is a `DiskOverlayRef { disk_id, base_image, overlay_image }` keyed by
 Note: `base_image` / `overlay_image` are opaque host identifiers and may be empty strings to
 represent "not configured".
 
+Browser/runtime convention (web `vm=machine` mode): `base_image` / `overlay_image` are interpreted
+as **OPFS-relative paths** (e.g. `aero/disks/win7.img`). Paths are relative to the OPFS root (no
+leading `/`) and must not contain `..` segments.
+
 When restoring a snapshot, storage controller device snapshots intentionally restore only
 guest-visible controller state and **drop any attached host backends** (disk files, ISO handles,
 etc.). The host/runtime must:
