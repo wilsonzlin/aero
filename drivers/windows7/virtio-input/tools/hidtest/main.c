@@ -637,14 +637,17 @@ static void dump_collection_descriptor(HANDLE handle)
     DWORD bytes = 0;
     BOOL ok;
     DWORD i;
+    DWORD ioctl;
 
     ZeroMemory(buf, sizeof(buf));
-    ok = DeviceIoControl(handle, IOCTL_HID_GET_COLLECTION_DESCRIPTOR, NULL, 0, buf, (DWORD)sizeof(buf), &bytes, NULL);
+    ioctl = IOCTL_HID_GET_COLLECTION_DESCRIPTOR;
+    ok = DeviceIoControl(handle, ioctl, NULL, 0, buf, (DWORD)sizeof(buf), &bytes, NULL);
     if (!ok || bytes == 0) {
         bytes = 0;
+        ioctl = IOCTL_HID_GET_COLLECTION_DESCRIPTOR_ALT;
         ok = DeviceIoControl(
             handle,
-            IOCTL_HID_GET_COLLECTION_DESCRIPTOR_ALT,
+            ioctl,
             NULL,
             0,
             buf,
@@ -653,11 +656,13 @@ static void dump_collection_descriptor(HANDLE handle)
             NULL);
     }
     if (!ok || bytes == 0) {
-        print_last_error_w(L"DeviceIoControl(IOCTL_HID_GET_COLLECTION_DESCRIPTOR)");
+        print_last_error_w(
+            (ioctl == IOCTL_HID_GET_COLLECTION_DESCRIPTOR_ALT) ? L"DeviceIoControl(IOCTL_HID_GET_COLLECTION_DESCRIPTOR_ALT)"
+                                                               : L"DeviceIoControl(IOCTL_HID_GET_COLLECTION_DESCRIPTOR)");
         return;
     }
 
-    wprintf(L"\nCollection descriptor (%lu bytes):\n", bytes);
+    wprintf(L"\nCollection descriptor (%lu bytes) (ioctl=0x%08lX):\n", bytes, ioctl);
     for (i = 0; i < bytes; i += 16) {
         DWORD chunk = bytes - i;
         if (chunk > 16) {
