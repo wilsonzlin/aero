@@ -6789,10 +6789,7 @@ impl Machine {
             return;
         }
 
-        let mut bytes = [0u8; 4];
-        for (i, slot) in bytes.iter_mut().enumerate().take(len) {
-            *slot = ((packed >> (i * 8)) & 0xff) as u8;
-        }
+        let bytes = packed.to_le_bytes();
         self.inject_key_scancode_bytes(&bytes[..len]);
     }
 
@@ -13304,6 +13301,25 @@ mod tests {
 
         assert_eq!(ctrl.borrow_mut().read_port(0x60), 0x1e);
         assert_eq!(ctrl.borrow_mut().read_port(0x60), 0x9e);
+    }
+
+    #[test]
+    fn inject_key_scancode_packed_clamps_len_to_4() {
+        let mut m = Machine::new(MachineConfig {
+            ram_size_bytes: 2 * 1024 * 1024,
+            ..Default::default()
+        })
+        .unwrap();
+        let ctrl = m.i8042.as_ref().expect("i8042 enabled").clone();
+
+        // PrintScreen make sequence in Set-2: E0 12 E0 7C (4 bytes). Use an out-of-range length to
+        // ensure the helper clamps safely without panicking.
+        let packed = u32::from_le_bytes([0xE0, 0x12, 0xE0, 0x7C]);
+        m.inject_key_scancode_packed(packed, 255);
+
+        let bytes: Vec<u8> = (0..4).map(|_| ctrl.borrow_mut().read_port(0x60)).collect();
+        // The i8042 translation bit is enabled by default, so we observe Set-1 scancode bytes.
+        assert_eq!(bytes, vec![0xE0, 0x2A, 0xE0, 0x37]);
     }
 
     #[test]

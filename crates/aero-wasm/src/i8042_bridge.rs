@@ -139,11 +139,7 @@ impl I8042Bridge {
             return;
         }
 
-        let mut bytes = [0u8; 4];
-        for (i, slot) in bytes.iter_mut().enumerate().take(len) {
-            *slot = ((packed >> (i * 8)) & 0xff) as u8;
-        }
-
+        let bytes = packed.to_le_bytes();
         self.ctrl.inject_key_scancode_bytes(&bytes[..len]);
     }
 
