@@ -538,7 +538,10 @@ extensions that are implemented in-tree (consumer/media keys).
 | System control keys (power/sleep/wake) | **Not supported** | No HID System Control reports. |
 | Force feedback (`EV_FF`) | **Not supported** | No force feedback / haptics support. |
 
-INF note: tablet devices bind via `inf/aero_virtio_tablet.inf` (HWID `PCI\VEN_1AF4&DEV_1052&SUBSYS_00121AF4&REV_01`). The keyboard/mouse INF intentionally matches only `SUBSYS_0010`/`SUBSYS_0011` to avoid overlap and keep contract bindings strict.
+INF note: tablet devices bind via `inf/aero_virtio_tablet.inf` (HWID `PCI\VEN_1AF4&DEV_1052&SUBSYS_00121AF4&REV_01`).
+The keyboard/mouse INF (`inf/aero_virtio_input.inf`) includes both subsystem-qualified IDs (`SUBSYS_0010`/`SUBSYS_0011`)
+for distinct Device Manager names **and** a revision-gated fallback `PCI\VEN_1AF4&DEV_1052&REV_01` for environments that
+do not expose Aero subsystem IDs.
 
 Device kind / report descriptor selection:
 
@@ -604,9 +607,9 @@ Under QEMU, you typically also need `disable-legacy=on,x-pci-revision=0x01` for 
 the Aero contract major version via `REV_01`).
 
 Also note that stock QEMU virtio-input devices typically expose different (non-Aero) PCI subsystem IDs. The canonical
-`inf/aero_virtio_input.inf` includes a revision-gated generic fallback match (`PCI\VEN_1AF4&DEV_1052&REV_01`), so the
-driver can still bind when subsystem IDs are unavailable or do not match Aero's. Unknown subsystem IDs are allowed by
-the driver.
+`inf/aero_virtio_input.inf` includes a revision-gated generic fallback match (`PCI\VEN_1AF4&DEV_1052&REV_01`), so Windows
+can still bind the driver (with a generic Device Manager name) when the Aero subsystem IDs are unavailable or do not
+match. Unknown subsystem IDs are allowed by the driver.
 
 For authoritative PCI-ID and contract rules, see:
 
