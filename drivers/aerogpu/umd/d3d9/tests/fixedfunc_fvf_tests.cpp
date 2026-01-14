@@ -367,6 +367,13 @@ size_t CountVsConstantUploads(const uint8_t* buf,
                               uint32_t start_register,
                               uint32_t vec4_count);
 
+// Helper (defined later): locate the payload for a VS SET_SHADER_CONSTANTS_F
+// upload matching the requested register range.
+const float* FindVsConstantsPayload(const uint8_t* buf,
+                                    size_t capacity,
+                                    uint32_t start_register,
+                                    uint32_t vec4_count);
+
 struct CleanupDevice {
   D3D9DDI_ADAPTERFUNCS adapter_funcs{};
   D3D9DDI_DEVICEFUNCS device_funcs{};  
@@ -5207,6 +5214,527 @@ bool TestApplyStateBlockLightingEnableReuploadsConstantsAfterClobber() {
       DeleteSb();
       return false;
     }
+  }
+
+  DeleteSb();
+  return true;
+}
+
+bool TestApplyStateBlockLight1ChangeReuploadsLightingConstants() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetFVF != nullptr, "pfnSetFVF is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetRenderState != nullptr, "pfnSetRenderState is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetTransform != nullptr, "pfnSetTransform is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDrawPrimitiveUP != nullptr, "pfnDrawPrimitiveUP is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnBeginStateBlock != nullptr, "pfnBeginStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnEndStateBlock != nullptr, "pfnEndStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnApplyStateBlock != nullptr, "pfnApplyStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDeleteStateBlock != nullptr, "pfnDeleteStateBlock is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzNormalDiffuse);
+  if (!Check(hr == S_OK, "SetFVF(XYZ|NORMAL|DIFFUSE)")) {
+    return false;
+  }
+
+  // Use identity transforms so light data maps cleanly into the fixed-function
+  // lighting constant block.
+  D3DMATRIX identity{};
+  identity.m[0][0] = 1.0f;
+  identity.m[1][1] = 1.0f;
+  identity.m[2][2] = 1.0f;
+  identity.m[3][3] = 1.0f;
+  hr = cleanup.device_funcs.pfnSetTransform(cleanup.hDevice, kD3dTransformWorld0, &identity);
+  if (!Check(hr == S_OK, "SetTransform(WORLD0 identity)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTransform(cleanup.hDevice, kD3dTransformView, &identity);
+  if (!Check(hr == S_OK, "SetTransform(VIEW identity)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTransform(cleanup.hDevice, kD3dTransformProjection, &identity);
+  if (!Check(hr == S_OK, "SetTransform(PROJECTION identity)")) {
+    return false;
+  }
+
+  // Keep texture stage state trivial so the fixed-function PS doesn't require any textures.
+  const auto SetTextureStageState = [&](uint32_t stage, uint32_t state, uint32_t value, const char* msg) -> bool {
+    HRESULT hr2 = S_OK;
+    if (cleanup.device_funcs.pfnSetTextureStageState) {
+      hr2 = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, stage, state, value);
+    } else {
+      hr2 = aerogpu::device_set_texture_stage_state(cleanup.hDevice, stage, state, value);
+    }
+    return Check(hr2 == S_OK, msg);
+  };
+  if (!SetTextureStageState(0, kD3dTssColorOp, kD3dTopSelectArg1, "stage0 COLOROP=SELECTARG1")) {
+    return false;
+  }
+  if (!SetTextureStageState(0, kD3dTssColorArg1, kD3dTaDiffuse, "stage0 COLORARG1=DIFFUSE")) {
+    return false;
+  }
+  if (!SetTextureStageState(0, kD3dTssAlphaOp, kD3dTopDisable, "stage0 ALPHAOP=DISABLE")) {
+    return false;
+  }
+  if (!SetTextureStageState(1, kD3dTssColorOp, kD3dTopDisable, "stage1 COLOROP=DISABLE")) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsLighting, 1u);
+  if (!Check(hr == S_OK, "SetRenderState(LIGHTING=TRUE)")) {
+    return false;
+  }
+
+  // Configure two enabled directional lights so light1 is packed into slot1.
+  D3DLIGHT9 light0{};
+  light0.Type = D3DLIGHT_DIRECTIONAL;
+  light0.Direction = {0.0f, 0.0f, -1.0f};
+  light0.Diffuse = {1.0f, 0.0f, 0.0f, 1.0f};
+  light0.Ambient = {0.0f, 0.0f, 0.0f, 1.0f};
+  hr = device_set_light(cleanup.hDevice, /*index=*/0, &light0);
+  if (!Check(hr == S_OK, "SetLight(0)")) {
+    return false;
+  }
+  hr = device_light_enable(cleanup.hDevice, /*index=*/0, TRUE);
+  if (!Check(hr == S_OK, "LightEnable(0, TRUE)")) {
+    return false;
+  }
+
+  D3DLIGHT9 light1_old{};
+  light1_old.Type = D3DLIGHT_DIRECTIONAL;
+  light1_old.Direction = {1.0f, 0.0f, 0.0f};
+  light1_old.Diffuse = {0.0f, 1.0f, 0.0f, 1.0f};
+  light1_old.Ambient = {0.0f, 0.0f, 0.0f, 1.0f};
+  hr = device_set_light(cleanup.hDevice, /*index=*/1, &light1_old);
+  if (!Check(hr == S_OK, "SetLight(1)")) {
+    return false;
+  }
+  hr = device_light_enable(cleanup.hDevice, /*index=*/1, TRUE);
+  if (!Check(hr == S_OK, "LightEnable(1, TRUE)")) {
+    return false;
+  }
+
+  const VertexXyzNormalDiffuse tri[3] = {
+      {0.0f, 0.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu},
+      {1.0f, 0.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu},
+      {0.0f, 1.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu},
+  };
+
+  // Seed shaders and the lighting constant cache.
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzNormalDiffuse));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(seed lighting constants)")) {
+    return false;
+  }
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(!dev->fixedfunc_lighting_dirty, "seed draw cleared fixedfunc_lighting_dirty")) {
+      return false;
+    }
+  }
+
+  // Record a state block that changes light1 diffuse (green -> blue).
+  D3DLIGHT9 light1_new = light1_old;
+  light1_new.Diffuse = {0.0f, 0.0f, 1.0f, 1.0f};
+
+  D3D9DDI_HSTATEBLOCK hSb{};
+  auto DeleteSb = [&]() {
+    if (hSb.pDrvPrivate) {
+      cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+      hSb.pDrvPrivate = nullptr;
+    }
+  };
+
+  hr = cleanup.device_funcs.pfnBeginStateBlock(cleanup.hDevice);
+  if (!Check(hr == S_OK, "BeginStateBlock(SetLight(1) blue)")) {
+    return false;
+  }
+  hr = device_set_light(cleanup.hDevice, /*index=*/1, &light1_new);
+  if (!Check(hr == S_OK, "SetLight(1 blue) recorded")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnEndStateBlock(cleanup.hDevice, &hSb);
+  if (!Check(hr == S_OK, "EndStateBlock(SetLight(1) blue)")) {
+    return false;
+  }
+  if (!Check(hSb.pDrvPrivate != nullptr, "EndStateBlock returned handle")) {
+    return false;
+  }
+
+  // Restore the old light1 values so ApplyStateBlock transitions state.
+  hr = device_set_light(cleanup.hDevice, /*index=*/1, &light1_old);
+  if (!Check(hr == S_OK, "SetLight(1 old restore)")) {
+    DeleteSb();
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzNormalDiffuse));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(clear dirty after restore)")) {
+    DeleteSb();
+    return false;
+  }
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(!dev->fixedfunc_lighting_dirty, "restore draw cleared fixedfunc_lighting_dirty")) {
+      DeleteSb();
+      return false;
+    }
+  }
+
+  dev->cmd.reset();
+  hr = cleanup.device_funcs.pfnApplyStateBlock(cleanup.hDevice, hSb);
+  if (!Check(hr == S_OK, "ApplyStateBlock(SetLight(1) blue)")) {
+    DeleteSb();
+    return false;
+  }
+  dev->cmd.finalize();
+  const uint8_t* apply_buf = dev->cmd.data();
+  const size_t apply_len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(apply_buf, apply_len), "ValidateStream(ApplyStateBlock light1 change)")) {
+    DeleteSb();
+    return false;
+  }
+  if (!Check(CountOpcode(apply_buf, apply_len, AEROGPU_CMD_CREATE_SHADER_DXBC) == 0,
+             "ApplyStateBlock emits no CREATE_SHADER_DXBC (light1 change)")) {
+    DeleteSb();
+    return false;
+  }
+  const size_t apply_uploads =
+      CountVsConstantUploads(apply_buf, apply_len, kFixedfuncLightingStartRegister, kFixedfuncLightingVec4Count);
+  if (!Check(apply_uploads <= 1, "ApplyStateBlock light1 change: at most one lighting constant upload")) {
+    DeleteSb();
+    return false;
+  }
+
+  dev->cmd.reset();
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzNormalDiffuse));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(after ApplyStateBlock light1 change)")) {
+    DeleteSb();
+    return false;
+  }
+  dev->cmd.finalize();
+  const uint8_t* draw_buf = dev->cmd.data();
+  const size_t draw_len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(draw_buf, draw_len), "ValidateStream(draw after ApplyStateBlock light1 change)")) {
+    DeleteSb();
+    return false;
+  }
+  if (!Check(CountOpcode(draw_buf, draw_len, AEROGPU_CMD_CREATE_SHADER_DXBC) == 0,
+             "draw after ApplyStateBlock emits no CREATE_SHADER_DXBC (light1 change)")) {
+    DeleteSb();
+    return false;
+  }
+  const size_t draw_uploads =
+      CountVsConstantUploads(draw_buf, draw_len, kFixedfuncLightingStartRegister, kFixedfuncLightingVec4Count);
+  if (!Check(draw_uploads <= 1, "draw after ApplyStateBlock light1 change: at most one lighting constant upload")) {
+    DeleteSb();
+    return false;
+  }
+  if (!Check(apply_uploads + draw_uploads == 1,
+             "light1 change refreshed lighting constants once (apply or draw)")) {
+    DeleteSb();
+    return false;
+  }
+
+  const float* payload = FindVsConstantsPayload(apply_buf, apply_len, kFixedfuncLightingStartRegister, kFixedfuncLightingVec4Count);
+  if (!payload) {
+    payload = FindVsConstantsPayload(draw_buf, draw_len, kFixedfuncLightingStartRegister, kFixedfuncLightingVec4Count);
+  }
+  if (!Check(payload != nullptr, "lighting constants payload present for light1 change")) {
+    DeleteSb();
+    return false;
+  }
+
+  // Directional slot1 diffuse is packed at c215 (slot base 214 + 1).
+  constexpr uint32_t kLight1DiffuseRel = (215u - kFixedfuncLightingStartRegister);
+  if (!Check(payload[kLight1DiffuseRel * 4 + 0] == 0.0f &&
+                 payload[kLight1DiffuseRel * 4 + 1] == 0.0f &&
+                 payload[kLight1DiffuseRel * 4 + 2] == 1.0f &&
+                 payload[kLight1DiffuseRel * 4 + 3] == 1.0f,
+             "ApplyStateBlock light1 change updates slot1 diffuse to blue")) {
+    DeleteSb();
+    return false;
+  }
+
+  DeleteSb();
+  return true;
+}
+
+bool TestApplyStateBlockLight1DisableReuploadsLightingConstants() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetFVF != nullptr, "pfnSetFVF is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetRenderState != nullptr, "pfnSetRenderState is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetTransform != nullptr, "pfnSetTransform is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDrawPrimitiveUP != nullptr, "pfnDrawPrimitiveUP is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnBeginStateBlock != nullptr, "pfnBeginStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnEndStateBlock != nullptr, "pfnEndStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnApplyStateBlock != nullptr, "pfnApplyStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDeleteStateBlock != nullptr, "pfnDeleteStateBlock is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzNormalDiffuse);
+  if (!Check(hr == S_OK, "SetFVF(XYZ|NORMAL|DIFFUSE)")) {
+    return false;
+  }
+
+  D3DMATRIX identity{};
+  identity.m[0][0] = 1.0f;
+  identity.m[1][1] = 1.0f;
+  identity.m[2][2] = 1.0f;
+  identity.m[3][3] = 1.0f;
+  hr = cleanup.device_funcs.pfnSetTransform(cleanup.hDevice, kD3dTransformWorld0, &identity);
+  if (!Check(hr == S_OK, "SetTransform(WORLD0 identity)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTransform(cleanup.hDevice, kD3dTransformView, &identity);
+  if (!Check(hr == S_OK, "SetTransform(VIEW identity)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTransform(cleanup.hDevice, kD3dTransformProjection, &identity);
+  if (!Check(hr == S_OK, "SetTransform(PROJECTION identity)")) {
+    return false;
+  }
+
+  const auto SetTextureStageState = [&](uint32_t stage, uint32_t state, uint32_t value, const char* msg) -> bool {
+    HRESULT hr2 = S_OK;
+    if (cleanup.device_funcs.pfnSetTextureStageState) {
+      hr2 = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, stage, state, value);
+    } else {
+      hr2 = aerogpu::device_set_texture_stage_state(cleanup.hDevice, stage, state, value);
+    }
+    return Check(hr2 == S_OK, msg);
+  };
+  if (!SetTextureStageState(0, kD3dTssColorOp, kD3dTopSelectArg1, "stage0 COLOROP=SELECTARG1")) {
+    return false;
+  }
+  if (!SetTextureStageState(0, kD3dTssColorArg1, kD3dTaDiffuse, "stage0 COLORARG1=DIFFUSE")) {
+    return false;
+  }
+  if (!SetTextureStageState(0, kD3dTssAlphaOp, kD3dTopDisable, "stage0 ALPHAOP=DISABLE")) {
+    return false;
+  }
+  if (!SetTextureStageState(1, kD3dTssColorOp, kD3dTopDisable, "stage1 COLOROP=DISABLE")) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsLighting, 1u);
+  if (!Check(hr == S_OK, "SetRenderState(LIGHTING=TRUE)")) {
+    return false;
+  }
+
+  D3DLIGHT9 light0{};
+  light0.Type = D3DLIGHT_DIRECTIONAL;
+  light0.Direction = {0.0f, 0.0f, -1.0f};
+  light0.Diffuse = {1.0f, 0.0f, 0.0f, 1.0f};
+  light0.Ambient = {0.0f, 0.0f, 0.0f, 1.0f};
+  hr = device_set_light(cleanup.hDevice, /*index=*/0, &light0);
+  if (!Check(hr == S_OK, "SetLight(0)")) {
+    return false;
+  }
+  hr = device_light_enable(cleanup.hDevice, /*index=*/0, TRUE);
+  if (!Check(hr == S_OK, "LightEnable(0, TRUE)")) {
+    return false;
+  }
+
+  D3DLIGHT9 light1{};
+  light1.Type = D3DLIGHT_DIRECTIONAL;
+  light1.Direction = {1.0f, 0.0f, 0.0f};
+  light1.Diffuse = {0.0f, 1.0f, 0.0f, 1.0f};
+  light1.Ambient = {0.0f, 0.0f, 0.0f, 1.0f};
+  hr = device_set_light(cleanup.hDevice, /*index=*/1, &light1);
+  if (!Check(hr == S_OK, "SetLight(1)")) {
+    return false;
+  }
+  hr = device_light_enable(cleanup.hDevice, /*index=*/1, TRUE);
+  if (!Check(hr == S_OK, "LightEnable(1, TRUE)")) {
+    return false;
+  }
+
+  const VertexXyzNormalDiffuse tri[3] = {
+      {0.0f, 0.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu},
+      {1.0f, 0.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu},
+      {0.0f, 1.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu},
+  };
+
+  // Seed constants for the two-light configuration.
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzNormalDiffuse));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(seed two-light constants)")) {
+    return false;
+  }
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(!dev->fixedfunc_lighting_dirty, "seed draw cleared fixedfunc_lighting_dirty")) {
+      return false;
+    }
+  }
+
+  // Record a state block that disables light1.
+  D3D9DDI_HSTATEBLOCK hSb{};
+  auto DeleteSb = [&]() {
+    if (hSb.pDrvPrivate) {
+      cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+      hSb.pDrvPrivate = nullptr;
+    }
+  };
+
+  hr = cleanup.device_funcs.pfnBeginStateBlock(cleanup.hDevice);
+  if (!Check(hr == S_OK, "BeginStateBlock(LightEnable(1, FALSE))")) {
+    return false;
+  }
+  hr = device_light_enable(cleanup.hDevice, /*index=*/1, FALSE);
+  if (!Check(hr == S_OK, "LightEnable(1, FALSE) recorded")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnEndStateBlock(cleanup.hDevice, &hSb);
+  if (!Check(hr == S_OK, "EndStateBlock(LightEnable(1, FALSE))")) {
+    return false;
+  }
+  if (!Check(hSb.pDrvPrivate != nullptr, "EndStateBlock returned handle")) {
+    return false;
+  }
+
+  // Restore light1 enabled so ApplyStateBlock transitions state.
+  hr = device_light_enable(cleanup.hDevice, /*index=*/1, TRUE);
+  if (!Check(hr == S_OK, "LightEnable(1, TRUE) restore")) {
+    DeleteSb();
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzNormalDiffuse));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(clear dirty after restore)")) {
+    DeleteSb();
+    return false;
+  }
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(!dev->fixedfunc_lighting_dirty, "restore draw cleared fixedfunc_lighting_dirty")) {
+      DeleteSb();
+      return false;
+    }
+  }
+
+  dev->cmd.reset();
+  hr = cleanup.device_funcs.pfnApplyStateBlock(cleanup.hDevice, hSb);
+  if (!Check(hr == S_OK, "ApplyStateBlock(LightEnable(1, FALSE))")) {
+    DeleteSb();
+    return false;
+  }
+  dev->cmd.finalize();
+  const uint8_t* apply_buf = dev->cmd.data();
+  const size_t apply_len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(apply_buf, apply_len), "ValidateStream(ApplyStateBlock light1 disable)")) {
+    DeleteSb();
+    return false;
+  }
+  if (!Check(CountOpcode(apply_buf, apply_len, AEROGPU_CMD_CREATE_SHADER_DXBC) == 0,
+             "ApplyStateBlock emits no CREATE_SHADER_DXBC (light1 disable)")) {
+    DeleteSb();
+    return false;
+  }
+  const size_t apply_uploads =
+      CountVsConstantUploads(apply_buf, apply_len, kFixedfuncLightingStartRegister, kFixedfuncLightingVec4Count);
+  if (!Check(apply_uploads <= 1, "ApplyStateBlock light1 disable: at most one lighting constant upload")) {
+    DeleteSb();
+    return false;
+  }
+
+  dev->cmd.reset();
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzNormalDiffuse));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(after ApplyStateBlock light1 disable)")) {
+    DeleteSb();
+    return false;
+  }
+  dev->cmd.finalize();
+  const uint8_t* draw_buf = dev->cmd.data();
+  const size_t draw_len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(draw_buf, draw_len), "ValidateStream(draw after ApplyStateBlock light1 disable)")) {
+    DeleteSb();
+    return false;
+  }
+  if (!Check(CountOpcode(draw_buf, draw_len, AEROGPU_CMD_CREATE_SHADER_DXBC) == 0,
+             "draw after ApplyStateBlock emits no CREATE_SHADER_DXBC (light1 disable)")) {
+    DeleteSb();
+    return false;
+  }
+  const size_t draw_uploads =
+      CountVsConstantUploads(draw_buf, draw_len, kFixedfuncLightingStartRegister, kFixedfuncLightingVec4Count);
+  if (!Check(draw_uploads <= 1, "draw after ApplyStateBlock light1 disable: at most one lighting constant upload")) {
+    DeleteSb();
+    return false;
+  }
+  if (!Check(apply_uploads + draw_uploads == 1,
+             "light1 disable refreshed lighting constants once (apply or draw)")) {
+    DeleteSb();
+    return false;
+  }
+
+  const float* payload = FindVsConstantsPayload(apply_buf, apply_len, kFixedfuncLightingStartRegister, kFixedfuncLightingVec4Count);
+  if (!payload) {
+    payload = FindVsConstantsPayload(draw_buf, draw_len, kFixedfuncLightingStartRegister, kFixedfuncLightingVec4Count);
+  }
+  if (!Check(payload != nullptr, "lighting constants payload present for light1 disable")) {
+    DeleteSb();
+    return false;
+  }
+
+  // With only one directional light enabled, slot1 diffuse (c215) should be zero.
+  constexpr uint32_t kLight1DiffuseRel = (215u - kFixedfuncLightingStartRegister);
+  if (!Check(payload[kLight1DiffuseRel * 4 + 0] == 0.0f &&
+                 payload[kLight1DiffuseRel * 4 + 1] == 0.0f &&
+                 payload[kLight1DiffuseRel * 4 + 2] == 0.0f &&
+                 payload[kLight1DiffuseRel * 4 + 3] == 0.0f,
+             "ApplyStateBlock light1 disable clears slot1 diffuse")) {
+    DeleteSb();
+    return false;
   }
 
   DeleteSb();
@@ -18937,6 +19465,12 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestApplyStateBlockLightingEnableReuploadsConstantsAfterClobber()) {
+    return 1;
+  }
+  if (!aerogpu::TestApplyStateBlockLight1ChangeReuploadsLightingConstants()) {
+    return 1;
+  }
+  if (!aerogpu::TestApplyStateBlockLight1DisableReuploadsLightingConstants()) {
     return 1;
   }
   if (!aerogpu::TestFvfXyzDiffuseDrawPrimitiveVbUploadsWvpAndBindsVb()) {

@@ -15293,16 +15293,12 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
     if (sb->light_mask.test(i)) {
       dev->lights[i] = sb->lights[i];
       dev->light_valid[i] = sb->light_valid_bits.test(i);
-      if (i == 0) {
-        dev->fixedfunc_lighting_dirty = true;
-      }
+      dev->fixedfunc_lighting_dirty = true;
       stateblock_record_light_locked(dev, i, dev->lights[i], dev->light_valid[i]);
     }
     if (sb->light_enable_mask.test(i)) {
       dev->light_enabled[i] = sb->light_enable_bits.test(i) ? TRUE : FALSE;
-      if (i == 0) {
-        dev->fixedfunc_lighting_dirty = true;
-      }
+      dev->fixedfunc_lighting_dirty = true;
       stateblock_record_light_enable_locked(dev, i, dev->light_enabled[i]);
     }
   }
