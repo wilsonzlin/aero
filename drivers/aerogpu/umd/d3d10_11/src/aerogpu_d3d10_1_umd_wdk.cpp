@@ -1289,21 +1289,33 @@ inline void ReportNotImpl(Handle0 handle0, Rest...) {
 
 template <typename Ret, typename... Args>
 struct DdiStub<Ret(AEROGPU_APIENTRY*)(Args...)> {
-  static Ret AEROGPU_APIENTRY Call(Args... args) {
-    ((void)args, ...);
-    if constexpr (std::is_same_v<Ret, HRESULT>) {
-      return E_NOTIMPL;
-    } else if constexpr (std::is_same_v<Ret, SIZE_T>) {
-      // Returning zero from a CalcPrivate*Size stub often causes the runtime to
-      // pass a null pDrvPrivate, which in turn tends to crash when the runtime
-      // tries to create/destroy the object. Return a small non-zero size so the
-      // handle always has valid storage, even when Create* returns E_NOTIMPL.
-      return sizeof(uint64_t);
-    } else if constexpr (std::is_same_v<Ret, void>) {
-      ReportNotImpl(args...);
-      return;
-    } else {
-      return Ret{};
+  static Ret AEROGPU_APIENTRY Call(Args... args) noexcept {
+    try {
+      ((void)args, ...);
+      if constexpr (std::is_same_v<Ret, HRESULT>) {
+        return E_NOTIMPL;
+      } else if constexpr (std::is_same_v<Ret, SIZE_T>) {
+        // Returning zero from a CalcPrivate*Size stub often causes the runtime to
+        // pass a null pDrvPrivate, which in turn tends to crash when the runtime
+        // tries to create/destroy the object. Return a small non-zero size so the
+        // handle always has valid storage, even when Create* returns E_NOTIMPL.
+        return sizeof(uint64_t);
+      } else if constexpr (std::is_same_v<Ret, void>) {
+        ReportNotImpl(args...);
+        return;
+      } else {
+        return Ret{};
+      }
+    } catch (...) {
+      if constexpr (std::is_same_v<Ret, HRESULT>) {
+        return E_NOTIMPL;
+      } else if constexpr (std::is_same_v<Ret, SIZE_T>) {
+        return sizeof(uint64_t);
+      } else if constexpr (std::is_same_v<Ret, void>) {
+        return;
+      } else {
+        return Ret{};
+      }
     }
   }
 };
@@ -1427,14 +1439,18 @@ struct DdiTraceStub;
 
 template <typename Ret, typename... Args, DdiTraceStubId Id>
 struct DdiTraceStub<Ret(AEROGPU_APIENTRY*)(Args...), Id> {
-  static Ret AEROGPU_APIENTRY Call(Args... args) {
-    constexpr const char* kName = kDdiTraceStubNames[static_cast<size_t>(Id)];
-    AEROGPU_D3D10_TRACEF("%s (stub)", kName);
+  static Ret AEROGPU_APIENTRY Call(Args... args) noexcept {
+    try {
+      constexpr const char* kName = kDdiTraceStubNames[static_cast<size_t>(Id)];
+      AEROGPU_D3D10_TRACEF("%s (stub)", kName);
 
-    if constexpr (std::is_same_v<Ret, HRESULT>) {
-      const HRESULT hr = DdiStub<Ret(AEROGPU_APIENTRY*)(Args...)>::Call(args...);
-      return ::aerogpu::d3d10trace::ret_hr(kName, hr);
-    } else {
+      if constexpr (std::is_same_v<Ret, HRESULT>) {
+        const HRESULT hr = DdiStub<Ret(AEROGPU_APIENTRY*)(Args...)>::Call(args...);
+        return ::aerogpu::d3d10trace::ret_hr(kName, hr);
+      } else {
+        return DdiStub<Ret(AEROGPU_APIENTRY*)(Args...)>::Call(args...);
+      }
+    } catch (...) {
       return DdiStub<Ret(AEROGPU_APIENTRY*)(Args...)>::Call(args...);
     }
   }
@@ -1445,9 +1461,12 @@ struct DdiErrorStub;
 
 template <typename... Args>
 struct DdiErrorStub<void(AEROGPU_APIENTRY*)(D3D10DDI_HDEVICE, Args...)> {
-  static void AEROGPU_APIENTRY Call(D3D10DDI_HDEVICE hDevice, Args...) {
-    auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
-    set_error(dev, E_NOTIMPL);
+  static void AEROGPU_APIENTRY Call(D3D10DDI_HDEVICE hDevice, Args...) noexcept {
+    try {
+      auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
+      set_error(dev, E_NOTIMPL);
+    } catch (...) {
+    }
   }
 };
 
@@ -1456,15 +1475,27 @@ struct DdiNoopStub;
 
 template <typename Ret, typename... Args>
 struct DdiNoopStub<Ret(AEROGPU_APIENTRY*)(Args...)> {
-  static Ret AEROGPU_APIENTRY Call(Args...) {
-    if constexpr (std::is_same_v<Ret, HRESULT>) {
-      return S_OK;
-    } else if constexpr (std::is_same_v<Ret, SIZE_T>) {
-      return sizeof(uint64_t);
-    } else if constexpr (std::is_same_v<Ret, void>) {
-      return;
-    } else {
-      return Ret{};
+  static Ret AEROGPU_APIENTRY Call(Args...) noexcept {
+    try {
+      if constexpr (std::is_same_v<Ret, HRESULT>) {
+        return S_OK;
+      } else if constexpr (std::is_same_v<Ret, SIZE_T>) {
+        return sizeof(uint64_t);
+      } else if constexpr (std::is_same_v<Ret, void>) {
+        return;
+      } else {
+        return Ret{};
+      }
+    } catch (...) {
+      if constexpr (std::is_same_v<Ret, HRESULT>) {
+        return S_OK;
+      } else if constexpr (std::is_same_v<Ret, SIZE_T>) {
+        return sizeof(uint64_t);
+      } else if constexpr (std::is_same_v<Ret, void>) {
+        return;
+      } else {
+        return Ret{};
+      }
     }
   }
 };

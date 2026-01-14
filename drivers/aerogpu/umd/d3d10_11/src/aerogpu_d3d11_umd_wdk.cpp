@@ -857,20 +857,23 @@ static Device* DeviceFromContext(D3D11DDI_HDEVICECONTEXT hCtx) {
 // ABI boundary.
 template <typename... Args>
 inline void ReportExceptionForArgs(HRESULT hr, Args... args) noexcept {
-  if constexpr (sizeof...(Args) == 0) {
-    return;
-  } else {
-    using First = std::tuple_element_t<0, std::tuple<Args...>>;
-    if constexpr (std::is_same_v<std::decay_t<First>, D3D11DDI_HDEVICE>) {
-      const auto tup = std::forward_as_tuple(args...);
-      const auto hDevice = std::get<0>(tup);
-      auto* dev = hDevice.pDrvPrivate ? FromHandle<D3D11DDI_HDEVICE, Device>(hDevice) : nullptr;
-      SetError(dev, hr);
-    } else if constexpr (std::is_same_v<std::decay_t<First>, D3D11DDI_HDEVICECONTEXT>) {
-      const auto tup = std::forward_as_tuple(args...);
-      const auto hCtx = std::get<0>(tup);
-      SetError(DeviceFromContext(hCtx), hr);
+  try {
+    if constexpr (sizeof...(Args) == 0) {
+      return;
+    } else {
+      using First = std::tuple_element_t<0, std::tuple<Args...>>;
+      if constexpr (std::is_same_v<std::decay_t<First>, D3D11DDI_HDEVICE>) {
+        const auto tup = std::forward_as_tuple(args...);
+        const auto hDevice = std::get<0>(tup);
+        auto* dev = hDevice.pDrvPrivate ? FromHandle<D3D11DDI_HDEVICE, Device>(hDevice) : nullptr;
+        SetError(dev, hr);
+      } else if constexpr (std::is_same_v<std::decay_t<First>, D3D11DDI_HDEVICECONTEXT>) {
+        const auto tup = std::forward_as_tuple(args...);
+        const auto hCtx = std::get<0>(tup);
+        SetError(DeviceFromContext(hCtx), hr);
+      }
     }
+  } catch (...) {
   }
 }
 
@@ -1695,19 +1698,31 @@ struct DdiStub;
 
 template <typename Ret, typename... Args>
 struct DdiStub<Ret(AEROGPU_APIENTRY*)(Args...)> {
-  static Ret AEROGPU_APIENTRY Call(Args... args) {
-    ((void)args, ...);
-    if constexpr (std::is_same_v<Ret, void>) {
-      ReportNotImpl(args...);
-      return;
-    } else if constexpr (std::is_same_v<Ret, HRESULT>) {
-      return E_NOTIMPL;
-    } else if constexpr (std::is_same_v<Ret, SIZE_T>) {
-      // Size queries must not return 0 to avoid runtimes treating the object as
-      // unsupported and then dereferencing null private memory.
-      return sizeof(uint64_t);
-    } else {
-      return Ret{};
+  static Ret AEROGPU_APIENTRY Call(Args... args) noexcept {
+    try {
+      ((void)args, ...);
+      if constexpr (std::is_same_v<Ret, void>) {
+        ReportNotImpl(args...);
+        return;
+      } else if constexpr (std::is_same_v<Ret, HRESULT>) {
+        return E_NOTIMPL;
+      } else if constexpr (std::is_same_v<Ret, SIZE_T>) {
+        // Size queries must not return 0 to avoid runtimes treating the object as
+        // unsupported and then dereferencing null private memory.
+        return sizeof(uint64_t);
+      } else {
+        return Ret{};
+      }
+    } catch (...) {
+      if constexpr (std::is_same_v<Ret, void>) {
+        return;
+      } else if constexpr (std::is_same_v<Ret, HRESULT>) {
+        return E_NOTIMPL;
+      } else if constexpr (std::is_same_v<Ret, SIZE_T>) {
+        return sizeof(uint64_t);
+      } else {
+        return Ret{};
+      }
     }
   }
 };
@@ -1717,18 +1732,30 @@ struct DdiNoopStub;
 
 template <typename Ret, typename... Args>
 struct DdiNoopStub<Ret(AEROGPU_APIENTRY*)(Args...)> {
-  static Ret AEROGPU_APIENTRY Call(Args... args) {
-    ((void)args, ...);
-    if constexpr (std::is_same_v<Ret, HRESULT>) {
-      return E_NOTIMPL;
-    } else if constexpr (std::is_same_v<Ret, SIZE_T>) {
-      // Size queries must not return 0 to avoid runtimes treating the object as
-      // unsupported and then dereferencing null private memory.
-      return sizeof(uint64_t);
-    } else if constexpr (std::is_same_v<Ret, void>) {
-      return;
-    } else {
-      return Ret{};
+  static Ret AEROGPU_APIENTRY Call(Args... args) noexcept {
+    try {
+      ((void)args, ...);
+      if constexpr (std::is_same_v<Ret, HRESULT>) {
+        return E_NOTIMPL;
+      } else if constexpr (std::is_same_v<Ret, SIZE_T>) {
+        // Size queries must not return 0 to avoid runtimes treating the object as
+        // unsupported and then dereferencing null private memory.
+        return sizeof(uint64_t);
+      } else if constexpr (std::is_same_v<Ret, void>) {
+        return;
+      } else {
+        return Ret{};
+      }
+    } catch (...) {
+      if constexpr (std::is_same_v<Ret, HRESULT>) {
+        return E_NOTIMPL;
+      } else if constexpr (std::is_same_v<Ret, SIZE_T>) {
+        return sizeof(uint64_t);
+      } else if constexpr (std::is_same_v<Ret, void>) {
+        return;
+      } else {
+        return Ret{};
+      }
     }
   }
 };
