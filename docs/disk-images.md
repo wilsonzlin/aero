@@ -67,7 +67,7 @@ Access-Control-Allow-Headers: Range, If-Range, If-None-Match, If-Modified-Since
 
 ```
 Access-Control-Allow-Origin: https://your-aero-origin.example
-Access-Control-Expose-Headers: Accept-Ranges, Content-Range, Content-Length, ETag, Last-Modified
+Access-Control-Expose-Headers: Accept-Ranges, Content-Range, Content-Length, Content-Encoding, ETag, Last-Modified
 ```
 
 Notes:

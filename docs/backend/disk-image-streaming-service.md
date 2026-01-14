@@ -201,7 +201,7 @@ Recommended **GET/HEAD response** headers:
 
 ```http
 Access-Control-Allow-Origin: https://app.example.com
-Access-Control-Expose-Headers: Accept-Ranges, Content-Range, Content-Length, ETag
+Access-Control-Expose-Headers: Accept-Ranges, Content-Range, Content-Length, ETag, Content-Encoding
 Vary: Origin
 Accept-Ranges: bytes
 ```

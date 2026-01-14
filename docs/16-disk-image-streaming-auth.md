@@ -332,13 +332,14 @@ Origin handling:
 For successful responses (`200`, `206`, and `416`), the disk bytes endpoint MUST include:
 
 * `Access-Control-Allow-Origin: …` (either `*` or the specific origin)
-* `Access-Control-Expose-Headers: Accept-Ranges, Content-Range, Content-Length, ETag`
+* `Access-Control-Expose-Headers: Accept-Ranges, Content-Range, Content-Length, ETag, Content-Encoding`
 
 `Access-Control-Expose-Headers` is required so browser code can read:
 
 * the returned range (`Content-Range`),
 * the resource size (`Content-Length` on `HEAD` or `Content-Range` total size), and
 * cache validators (`ETag`).
+* and verify no compression transforms were applied (`Content-Encoding` should be absent or `identity`).
 
 ### Preflight caching (`Access-Control-Max-Age`)
 
@@ -452,7 +453,7 @@ Content-Length: 1048576
 ETag: "disk_123:gen_42"
 Cross-Origin-Resource-Policy: same-site
 Access-Control-Allow-Origin: https://app.example.com
-Access-Control-Expose-Headers: Accept-Ranges, Content-Range, Content-Length, ETag
+Access-Control-Expose-Headers: Accept-Ranges, Content-Range, Content-Length, ETag, Content-Encoding
 Vary: Origin
 ```
 
@@ -463,7 +464,7 @@ HTTP/1.1 416 Range Not Satisfiable
 Accept-Ranges: bytes
 Content-Range: bytes */42949672960
 Access-Control-Allow-Origin: https://app.example.com
-Access-Control-Expose-Headers: Accept-Ranges, Content-Range, Content-Length, ETag
+Access-Control-Expose-Headers: Accept-Ranges, Content-Range, Content-Length, ETag, Content-Encoding
 Vary: Origin
 ```
 

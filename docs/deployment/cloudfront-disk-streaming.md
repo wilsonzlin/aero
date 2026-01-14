@@ -382,7 +382,7 @@ Access-Control-Allow-Origin: https://app.example.com
 Access-Control-Allow-Methods: GET, HEAD, OPTIONS
 Access-Control-Allow-Headers: Range, If-Range, If-None-Match, If-Modified-Since, Authorization, Content-Type
 Access-Control-Allow-Credentials: true
-Access-Control-Expose-Headers: Accept-Ranges, Content-Range, Content-Length, ETag
+Access-Control-Expose-Headers: Accept-Ranges, Content-Range, Content-Length, ETag, Content-Encoding
 Access-Control-Max-Age: 86400
 ```
 
@@ -393,7 +393,7 @@ Access-Control-Allow-Origin: *
 Access-Control-Allow-Methods: GET, HEAD, OPTIONS
 Access-Control-Allow-Headers: Range, If-Range, If-None-Match, If-Modified-Since
 Access-Control-Allow-Credentials: false
-Access-Control-Expose-Headers: Accept-Ranges, Content-Range, Content-Length, ETag
+Access-Control-Expose-Headers: Accept-Ranges, Content-Range, Content-Length, ETag, Content-Encoding
 Access-Control-Max-Age: 86400
 ```
 

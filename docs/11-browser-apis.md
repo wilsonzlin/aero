@@ -271,7 +271,7 @@ Vary: Origin, Access-Control-Request-Method, Access-Control-Request-Headers
 
 ```http
 Access-Control-Allow-Origin: https://app.example.com
-Access-Control-Expose-Headers: Accept-Ranges, Content-Range, Content-Length, ETag
+Access-Control-Expose-Headers: Accept-Ranges, Content-Range, Content-Length, ETag, Content-Encoding
 Cross-Origin-Resource-Policy: same-site
 Vary: Origin
 Accept-Ranges: bytes
