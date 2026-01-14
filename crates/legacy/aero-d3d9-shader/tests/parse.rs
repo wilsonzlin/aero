@@ -66,6 +66,16 @@ fn malformed_dxbc_shader_chunk_invalid_byte_length_errors() {
 }
 
 #[test]
+fn malformed_dxbc_shader_chunk_empty_errors() {
+    // DXBC container with an empty shader chunk payload.
+    let shader_bytes: [u8; 0] = [];
+    let dxbc = dxbc_test_utils::build_container(&[(FourCC(*b"SHDR"), shader_bytes.as_slice())]);
+
+    let err = D3d9Shader::parse(&dxbc).unwrap_err();
+    assert_eq!(err, ShaderParseError::Empty);
+}
+
+#[test]
 fn malformed_dxbc_shader_chunk_too_large_errors() {
     // DXBC container where the shader chunk payload is larger than our parser cap.
     let shader_bytes = vec![0u8; 256 * 1024 + 4];
