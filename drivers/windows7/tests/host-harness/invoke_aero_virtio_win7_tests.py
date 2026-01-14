@@ -71,6 +71,7 @@ do not affect PASS/FAIL):
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RESIZE|REQUEST|old_bytes=...|new_bytes=...|qmp_cmd=...`
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RESIZE|FAIL|reason=...|old_bytes=...|new_bytes=...|drive_id=...`
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RESIZE|PASS/FAIL/SKIP/READY|...`
+- `AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RESET|PASS/FAIL/SKIP|performed=...|counter_before=...|counter_after=...|err=...|reason=...`
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_LARGE|PASS/FAIL/INFO|large_ok=...|large_bytes=...|large_fnv1a64=...|large_mbps=...|upload_ok=...|upload_bytes=...|upload_mbps=...|msi=...|msi_messages=...`
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_UDP|PASS/FAIL/SKIP|bytes=...|small_bytes=...|mtu_bytes=...|reason=...|wsa=...`
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_UDP_DNS|PASS/FAIL/SKIP|server=...|query=...|sent=...|recv=...|rcode=...`
@@ -7736,6 +7737,7 @@ def main() -> int:
         )
         _emit_virtio_blk_counters_host_marker(tail, blk_counters_line=virtio_blk_counters_marker_line)
         _emit_virtio_blk_resize_host_marker(tail, blk_resize_line=virtio_blk_resize_marker_line)
+        _emit_virtio_blk_reset_host_marker(tail)
         _emit_virtio_net_large_host_marker(tail)
         _emit_virtio_net_udp_host_marker(tail)
         _emit_virtio_net_udp_dns_host_marker(tail)
@@ -10372,6 +10374,43 @@ def _emit_virtio_blk_resize_host_marker(tail: bytes, *, blk_resize_line: Optiona
     for k in extra:
         parts.append(f"{k}={_sanitize_marker_value(fields[k])}")
 
+    print("|".join(parts))
+
+
+def _emit_virtio_blk_reset_host_marker(tail: bytes, *, blk_reset_line: Optional[str] = None) -> None:
+    """
+    Best-effort: emit a host-side marker mirroring the guest's virtio-blk miniport reset selftest.
+
+    Guest markers:
+      AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|PASS|performed=1|counter_before=...|counter_after=...
+      AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|SKIP|reason=not_supported
+      AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|FAIL|reason=...|err=...
+
+    Host marker:
+      AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RESET|PASS/FAIL/SKIP|...
+
+    This does not affect harness PASS/FAIL; it's only for log scraping/diagnostics.
+    """
+    marker_line = blk_reset_line
+    if marker_line is None:
+        marker_line = _try_extract_last_marker_line(tail, b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|")
+    if marker_line is None:
+        return
+
+    toks = marker_line.split("|")
+    status = toks[3] if len(toks) >= 4 else "INFO"
+    if status not in ("PASS", "FAIL", "SKIP", "INFO"):
+        status = "INFO"
+
+    fields = _parse_marker_kv_fields(marker_line)
+    parts = [f"AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RESET|{status}"]
+    ordered = ("performed", "counter_before", "counter_after", "err", "reason")
+    for k in ordered:
+        if k in fields:
+            parts.append(f"{k}={_sanitize_marker_value(fields[k])}")
+    extra = sorted(k for k in fields if k not in ordered)
+    for k in extra:
+        parts.append(f"{k}={_sanitize_marker_value(fields[k])}")
     print("|".join(parts))
 
 

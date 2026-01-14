@@ -843,6 +843,10 @@ The guest emits one of:
 - `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|SKIP|reason=not_supported` (miniport does not support the reset IOCTL)
 - `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|FAIL|reason=...|err=...`
 
+The harness also mirrors the final guest result marker into a stable host marker for log scraping/debugging:
+
+`AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RESET|PASS/FAIL/SKIP|...`
+
 Example (PowerShell):
 
 ```powershell
