@@ -4,7 +4,7 @@ use arbitrary::Unstructured;
 use libfuzzer_sys::fuzz_target;
 
 use aero_io_snapshot::io::state::IoSnapshot;
-use aero_usb::hid::UsbHidKeyboardHandle;
+use aero_usb::hid::{UsbHidKeyboardHandle, UsbHidMouseHandle};
 use aero_usb::hub::UsbHubDevice;
 use aero_usb::memory::MemoryBus;
 use aero_usb::xhci::context::{EndpointContext, SlotContext, CONTEXT_SIZE};
@@ -27,6 +27,9 @@ const ERST_BASE: u64 = 0x6000;
 const EP0_TR_BASE: u64 = 0x7000;
 const EP1_TR_BASE: u64 = 0x8000;
 const EP1_BUF_BASE: u64 = 0x9000;
+
+const ROUTE_KEYBOARD: u32 = 0x1;
+const ROUTE_MOUSE: u32 = 0x2;
 
 /// Bounded guest-physical memory for xHCI ring fuzzing.
 ///
@@ -167,9 +170,9 @@ fn seed_controller_state(bus: &mut FuzzBus, xhci: &mut XhciController) {
     // Input Slot Context: bind to roothub port 1 (the 0th port in the controller model).
     let mut slot_ctx = SlotContext::default();
     slot_ctx.set_root_hub_port_number(1);
-    // Route string `0x1` == hub port 1 behind the root port. This matches the hub topology we
-    // attach in the fuzzer harness (root port 1 -> hub -> port 1 -> keyboard).
-    slot_ctx.set_route_string(1);
+    // Route string 0x1 == hub port 1 behind the root port. This matches the hub topology we attach
+    // in the fuzzer harness (root port 1 -> hub -> port 1 -> keyboard).
+    slot_ctx.set_route_string(ROUTE_KEYBOARD);
     slot_ctx.set_context_entries(1);
     slot_ctx.write_to(bus, INPUT_CTX_BASE + CONTEXT_SIZE as u64);
 
@@ -189,7 +192,7 @@ fn seed_controller_state(bus: &mut FuzzBus, xhci: &mut XhciController) {
     {
         let mut slot_ctx = SlotContext::default();
         slot_ctx.set_root_hub_port_number(1);
-        slot_ctx.set_route_string(1);
+        slot_ctx.set_route_string(ROUTE_KEYBOARD);
         // EP1 IN is context index 3, so ContextEntries should be >= 3.
         slot_ctx.set_context_entries(3);
         slot_ctx.write_to(bus, CONFIG_INPUT_CTX_BASE + CONTEXT_SIZE as u64);
@@ -284,6 +287,7 @@ fn seed_controller_state(bus: &mut FuzzBus, xhci: &mut XhciController) {
 enum CommandRingSeed {
     EnableSlot,
     AddressDeviceAndEvaluateContext,
+    AddressDeviceAndEvaluateContextMouse,
     ConfigureEndpointEp1In,
     EndpointCommandsEp1In,
 }
@@ -309,7 +313,7 @@ fn rearm_command_ring(bus: &mut FuzzBus, xhci: &mut XhciController, seed: Comman
             // Reinstate input Slot Context fields so Address Device has a valid topology binding.
             let mut slot_ctx = SlotContext::default();
             slot_ctx.set_root_hub_port_number(1);
-            slot_ctx.set_route_string(1);
+            slot_ctx.set_route_string(ROUTE_KEYBOARD);
             slot_ctx.set_context_entries(1);
             slot_ctx.write_to(bus, INPUT_CTX_BASE + CONTEXT_SIZE as u64);
 
@@ -317,6 +321,38 @@ fn rearm_command_ring(bus: &mut FuzzBus, xhci: &mut XhciController, seed: Comman
             bus.write_u64(DCBAA_BASE + 8, DEV_CTX_BASE);
 
             // Program Address Device then Evaluate Context for slot 1.
+            {
+                let mut trb0 = Trb::new(INPUT_CTX_BASE, 0, 0);
+                trb0.set_trb_type(TrbType::AddressDeviceCommand);
+                trb0.set_slot_id(1);
+                trb0.set_address_device_bsr(false);
+                trb0.set_cycle(true);
+                bus.write_trb(CMD_RING_BASE, trb0);
+            }
+            {
+                let mut trb1 = Trb::new(INPUT_CTX_BASE, 0, 0);
+                trb1.set_trb_type(TrbType::EvaluateContextCommand);
+                trb1.set_slot_id(1);
+                trb1.set_cycle(true);
+                bus.write_trb(CMD_RING_BASE + TRB_LEN as u64, trb1);
+            }
+            {
+                let mut stop = Trb::new(0, 0, 0);
+                stop.set_trb_type(TrbType::NoOpCommand);
+                stop.set_cycle(false);
+                bus.write_trb(CMD_RING_BASE + 2 * TRB_LEN as u64, stop);
+            }
+        }
+        CommandRingSeed::AddressDeviceAndEvaluateContextMouse => {
+            let mut slot_ctx = SlotContext::default();
+            slot_ctx.set_root_hub_port_number(1);
+            // Route string 0x2 == hub port 2 behind the root port (mouse).
+            slot_ctx.set_route_string(ROUTE_MOUSE);
+            slot_ctx.set_context_entries(1);
+            slot_ctx.write_to(bus, INPUT_CTX_BASE + CONTEXT_SIZE as u64);
+
+            bus.write_u64(DCBAA_BASE + 8, DEV_CTX_BASE);
+
             {
                 let mut trb0 = Trb::new(INPUT_CTX_BASE, 0, 0);
                 trb0.set_trb_type(TrbType::AddressDeviceCommand);
@@ -418,10 +454,12 @@ fuzz_target!(|data: &[u8]| {
     // Attach a USB HID keyboard so port snapshots include nested device trees and we can inject key
     // events during fuzzing.
     let kbd = UsbHidKeyboardHandle::new();
+    let mouse = UsbHidMouseHandle::new();
     // Mirror the browser runtime topology: an external hub on root port 0 with a synthetic keyboard
-    // on hub port 1.
+    // on hub port 1 and a synthetic mouse on hub port 2.
     let mut hub = UsbHubDevice::new();
     hub.attach(1, Box::new(kbd.clone()));
+    hub.attach(2, Box::new(mouse.clone()));
     xhci.attach_device(0, Box::new(hub));
 
     seed_controller_state(&mut bus, &mut xhci);
@@ -468,6 +506,30 @@ fuzz_target!(|data: &[u8]| {
         xhci.tick_1ms(&mut bus);
     }
 
+    // Switch the slot binding to the mouse and perform one interrupt IN transfer. This exercises
+    // xHCI topology rebinding (Route String changes) and the mouse HID report path.
+    rearm_command_ring(
+        &mut bus,
+        &mut xhci,
+        CommandRingSeed::AddressDeviceAndEvaluateContextMouse,
+    );
+    xhci.tick_1ms(&mut bus);
+
+    // Re-run the EP0 SetConfiguration TD now targeting the mouse.
+    xhci.mmio_write(db1, 4, 1);
+    xhci.tick_1ms(&mut bus);
+
+    // Queue one mouse report and poll it via EP1 IN.
+    mouse.movement(1, -1);
+    if let Some(ring) = xhci
+        .slot_state(1)
+        .and_then(|slot| slot.transfer_ring(3))
+    {
+        seed_ep1_in_td(&mut bus, ring.dequeue_ptr(), ring.cycle_state(), 8);
+        xhci.mmio_write(db1, 4, 3);
+        xhci.tick_1ms(&mut bus);
+    }
+
     let ops: usize = u.int_in_range(0usize..=MAX_OPS).unwrap_or(0);
     let port_count = usize::from(xhci.port_count());
 
@@ -493,10 +555,11 @@ fuzz_target!(|data: &[u8]| {
             7 => {
                 // Rearm the command ring back to a known, small sequence and ring DB0.
                 let mode: u8 = u.arbitrary().unwrap_or(0);
-                let seed = match mode % 4 {
+                let seed = match mode % 5 {
                     0 => CommandRingSeed::EnableSlot,
                     1 => CommandRingSeed::AddressDeviceAndEvaluateContext,
-                    2 => CommandRingSeed::ConfigureEndpointEp1In,
+                    2 => CommandRingSeed::AddressDeviceAndEvaluateContextMouse,
+                    3 => CommandRingSeed::ConfigureEndpointEp1In,
                     _ => CommandRingSeed::EndpointCommandsEp1In,
                 };
                 rearm_command_ring(&mut bus, &mut xhci, seed);
@@ -511,6 +574,7 @@ fuzz_target!(|data: &[u8]| {
                 // device after restore).
                 let mut hub = UsbHubDevice::new();
                 hub.attach(1, Box::new(kbd.clone()));
+                hub.attach(2, Box::new(mouse.clone()));
                 fresh.attach_device(0, Box::new(hub));
                 let _ = fresh.load_state(&snap);
                 xhci = fresh;
@@ -520,9 +584,20 @@ fuzz_target!(|data: &[u8]| {
                 if (sub & 1) == 0 {
                     // Toggle DMA availability and inject keyboard events.
                     bus.dma = (sub & 2) != 0;
-                    let usage: u8 = u.arbitrary().unwrap_or(0);
-                    let pressed: bool = u.arbitrary().unwrap_or(false);
-                    kbd.key_event(usage, pressed);
+                    if (sub & 4) == 0 {
+                        let usage: u8 = u.arbitrary().unwrap_or(0);
+                        let pressed: bool = u.arbitrary().unwrap_or(false);
+                        kbd.key_event(usage, pressed);
+                    } else {
+                        let dx: i8 = u.arbitrary().unwrap_or(0);
+                        let dy: i8 = u.arbitrary().unwrap_or(0);
+                        mouse.movement(i32::from(dx), i32::from(dy));
+                        let wheel: i8 = u.arbitrary().unwrap_or(0);
+                        mouse.wheel(i32::from(wheel));
+                        let button = 1u8 << (u.arbitrary::<u8>().unwrap_or(0) % 5);
+                        let pressed: bool = u.arbitrary().unwrap_or(false);
+                        mouse.button_event(button, pressed);
+                    }
                 } else {
                     // Rearm EP1 IN with a single Normal TRB and ring slot 1's doorbell.
                     if let Some(ring) = xhci
