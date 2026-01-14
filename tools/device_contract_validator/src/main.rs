@@ -1208,14 +1208,19 @@ fn validate_virtio_input_device_desc_split(
     // INFs should bind both functions to the same install sections, but use distinct
     // DeviceDesc strings so they appear with different names in Device Manager.
     //
-    // The virtio-input INF always binds the SUBSYS-qualified keyboard/mouse IDs. The optional legacy
-    // alias INF may additionally bind a strict (REV-qualified) generic fallback HWID (no SUBSYS) so
-    // Windows can bind in environments that do not expose the Aero subsystem IDs (e.g. stock QEMU).
+    // Policy:
+    // - The canonical virtio-input keyboard/mouse INF (`aero_virtio_input.inf`) is SUBSYS-only
+    //   (binds only the keyboard/mouse subsystem-qualified IDs) to keep keyboard/mouse vs tablet
+    //   bindings disjoint.
+    // - The legacy filename alias (`virtio-input.inf.disabled` → `virtio-input.inf`) may add an
+    //   opt-in strict (REV-qualified) generic fallback HWID (no SUBSYS) for environments where
+    //   the Aero subsystem IDs are not exposed/recognized.
+    // - Tablet devices bind via `aero_virtio_tablet.inf` (more specific SUBSYS match) and will win
+    //   over the generic fallback when that INF is installed.
     //
-    // Tablet devices bind via `aero_virtio_tablet.inf` (more specific SUBSYS match) and will win
-    // over the generic fallback when that INF is installed.
-    //
-    // `require_fallback` selects which policy to enforce for the given INF.
+    // The `require_fallback` flag controls which policy is enforced:
+    // - require_fallback=false: forbid the strict fallback HWID.
+    // - require_fallback=true: require exactly one strict fallback HWID.
     let strings = parse_inf_strings(inf_text);
     let rev = format!("{expected_rev:02X}");
     let kb_hwid = format!("{base_hwid}&SUBSYS_00101AF4&REV_{rev}");
@@ -1383,6 +1388,27 @@ fn validate_virtio_input_device_desc_split(
                     fb.raw_line,
                 );
             }
+        }
+    }
+
+    if !require_fallback {
+        // Keep the strict fallback HWID string out of SUBSYS-only INFs entirely (even in comments)
+        // so it can't be cargo-culted back into models sections and so repo-wide greps remain a
+        // reliable guardrail.
+        let fb_upper = fb_hwid.to_ascii_uppercase();
+        let mut hits = Vec::new();
+        for (line_no, raw) in inf_text.lines().enumerate() {
+            if raw.to_ascii_uppercase().contains(&fb_upper) {
+                hits.push(format!("{}: {}", line_no + 1, raw.trim_end()));
+            }
+        }
+        if !hits.is_empty() {
+            bail!(
+                "virtio-input INF {}: must not contain the strict generic fallback HWID string {} anywhere (fallback is available only via virtio-input.inf.disabled):\n{}",
+                inf_path.display(),
+                fb_hwid,
+                hits.join("\n")
+            );
         }
     }
 
@@ -1902,10 +1928,7 @@ fn validate_in_tree_infs(repo_root: &Path, devices: &BTreeMap<String, DeviceEntr
                         &inf_text,
                         &base,
                         expected_rev,
-                        // The canonical virtio-input INF is intentionally strict: SUBSYS-qualified
-                        // keyboard/mouse entries only (no generic fallback).
-                        /* require_fallback */
-                        false,
+                        /* require_fallback */ false,
                     )
                     .with_context(|| {
                         format!("{name}: validate virtio-input canonical DeviceDesc split")
