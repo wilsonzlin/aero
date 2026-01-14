@@ -160,9 +160,10 @@ Notes:
   - The deprecated legacy bring-up AeroGPU device model requires the legacy INFs under `drivers/aerogpu/packaging/win7/legacy/` and enabling the legacy device model feature (`emulator/aerogpu-legacy`).
   - Windows service names are case-insensitive. The canonical AeroGPU INFs install the `aerogpu` service (`AddService = aerogpu, ...`).
     The legacy INFs under `drivers/aerogpu/packaging/win7/legacy/` use different casing (for example `AeroGPU`), but this contract normalizes the name to `aerogpu`.
-  - `virtio-input` is exposed as a **single multi-function PCI device** (two PCI functions on the same slot):
-    - keyboard = function 0 and **must** set the multifunction bit (`header_type = 0x80`) so guests enumerate the mouse function
+  - `virtio-input` is exposed as a **single multi-function PCI device** (multiple PCI functions on the same slot):
+    - keyboard = function 0 and **must** set the multifunction bit (`header_type = 0x80`) so guests enumerate additional functions
     - mouse = function 1
+    - (Optional) tablet = function 2 (absolute pointer / `EV_ABS`; subsystem ID `1AF4:0012`; binds via `drivers/windows7/virtio-input/inf/aero_virtio_tablet.inf`)
 
 Compatibility note (transitional virtio PCI Device IDs):
 
