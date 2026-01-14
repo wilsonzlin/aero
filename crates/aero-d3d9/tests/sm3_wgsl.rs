@@ -1584,8 +1584,11 @@ fn wgsl_defb_if_compiles() {
     .validate(&module)
     .expect("wgsl validate");
 
+    // `defb` lowering is an implementation detail (it may be lifted to a module-scope `const` or
+    // initialized in `fs_main`), but the constant value must be preserved in the output.
     assert!(
-        wgsl.contains("b0 = vec4<bool>(true, true, true, true);"),
+        wgsl.contains("const b0: vec4<bool> = vec4<bool>(true, true, true, true);")
+            || wgsl.contains("b0 = vec4<bool>(true, true, true, true);"),
         "{wgsl}"
     );
     assert!(wgsl.contains("if ("));
@@ -1642,7 +1645,12 @@ fn wgsl_defi_loop_breakc_compiles() {
     .validate(&module)
     .expect("wgsl validate");
 
-    assert!(wgsl.contains("i0 = vec4<i32>(1, 0, 0, 0);"), "{wgsl}");
+    // Like `defb`, `defi` may be emitted as a module-scope `const` or initialized in `fs_main`.
+    assert!(
+        wgsl.contains("const i0: vec4<i32> = vec4<i32>(1, 0, 0, 0);")
+            || wgsl.contains("i0 = vec4<i32>(1, 0, 0, 0);"),
+        "{wgsl}"
+    );
     assert!(wgsl.contains("loop {"), "{wgsl}");
     // Safety cap makes the loop structurally bounded in WGSL.
     assert!(wgsl.contains(">= 1024u"), "{wgsl}");
