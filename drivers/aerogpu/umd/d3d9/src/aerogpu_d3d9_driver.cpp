@@ -10386,6 +10386,10 @@ HRESULT AEROGPU_D3D9_CALL device_process_vertices(
     return trace.ret(kD3DErrInvalidCall);
   }
 
+  const bool same_resource = (src_res == dst_res);
+  const bool bounding_overlap =
+      same_resource && (src_start_offset < dst_end_offset) && (dst_start_offset < src_end_offset);
+
   const uint8_t* src_base = nullptr;
   uint8_t* dst_base = nullptr;
 
@@ -10441,55 +10445,111 @@ HRESULT AEROGPU_D3D9_CALL device_process_vertices(
   WddmScopedLock dst_lock{};
 #endif
 
-  if (src_res->storage.size() >= src_res->size_bytes) {
-    src_base = src_res->storage.data() + static_cast<size_t>(src_start_offset);
-  }
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
-  else if (src_res->wddm_hAllocation != 0 && dev->wddm_device != 0) {
-    const uint64_t lock_size = src_end_offset - src_start_offset;
-    const HRESULT hr = src_lock.lock_allocation(dev, src_res, src_start_offset, lock_size, kD3DLOCK_READONLY);
-    if (FAILED(hr)) {
-      return trace.ret(hr);
+  if (same_resource) {
+    if (src_res->storage.size() >= src_res->size_bytes) {
+      src_base = src_res->storage.data() + static_cast<size_t>(src_start_offset);
+      dst_base = src_res->storage.data() + static_cast<size_t>(dst_start_offset);
     }
-    src_base = reinterpret_cast<const uint8_t*>(src_lock.ptr);
-  }
-#endif
-  else {
-    return trace.ret(kD3DErrInvalidCall);
-  }
-
-  if (dst_res->storage.size() >= dst_res->size_bytes) {
-    dst_base = dst_res->storage.data() + static_cast<size_t>(dst_start_offset);
-  }
 #if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
-  else if (dst_res->wddm_hAllocation != 0 && dev->wddm_device != 0) {
-    const uint64_t lock_size = dst_end_offset - dst_start_offset;
-    const HRESULT hr = dst_lock.lock_allocation(dev, dst_res, dst_start_offset, lock_size, /*lock_flags=*/0);
-    if (FAILED(hr)) {
-      return trace.ret(hr);
+    else if (src_res->wddm_hAllocation != 0 && dev->wddm_device != 0) {
+      // Avoid locking the same allocation twice. Lock a single union range and
+      // derive separate pointers for src/dst.
+      const uint64_t lock_start = std::min(src_start_offset, dst_start_offset);
+      const uint64_t lock_end = std::max(src_end_offset, dst_end_offset);
+      const uint64_t lock_size = lock_end - lock_start;
+      const HRESULT hr = src_lock.lock_allocation(dev, src_res, lock_start, lock_size, /*lock_flags=*/0);
+      if (FAILED(hr)) {
+        return trace.ret(hr);
+      }
+      uint8_t* base = reinterpret_cast<uint8_t*>(src_lock.ptr);
+      src_base = base + static_cast<size_t>(src_start_offset - lock_start);
+      dst_base = base + static_cast<size_t>(dst_start_offset - lock_start);
     }
-    dst_base = reinterpret_cast<uint8_t*>(dst_lock.ptr);
-  }
 #endif
-  else {
-    return trace.ret(kD3DErrInvalidCall);
-  }
-
-  const auto copy_vertex = [&](uint32_t i) {
-    const uint8_t* src = src_base + static_cast<size_t>(i) * src_stride;
-    uint8_t* dst = dst_base + static_cast<size_t>(i) * dst_stride;
-    std::memmove(dst, src, copy_stride);
-  };
-
-  // If source and destination alias the same buffer, copy in a direction that
-  // matches `memmove`-style semantics for overlapping ranges.
-  if (src_res == dst_res && dst_start_offset > src_start_offset) {
-    for (uint32_t i = vertex_count; i-- > 0;) {
-      copy_vertex(i);
+    else {
+      return trace.ret(kD3DErrInvalidCall);
     }
   } else {
+    if (src_res->storage.size() >= src_res->size_bytes) {
+      src_base = src_res->storage.data() + static_cast<size_t>(src_start_offset);
+    }
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+    else if (src_res->wddm_hAllocation != 0 && dev->wddm_device != 0) {
+      const uint64_t lock_size = src_end_offset - src_start_offset;
+      const HRESULT hr = src_lock.lock_allocation(dev, src_res, src_start_offset, lock_size, kD3DLOCK_READONLY);
+      if (FAILED(hr)) {
+        return trace.ret(hr);
+      }
+      src_base = reinterpret_cast<const uint8_t*>(src_lock.ptr);
+    }
+#endif
+    else {
+      return trace.ret(kD3DErrInvalidCall);
+    }
+
+    if (dst_res->storage.size() >= dst_res->size_bytes) {
+      dst_base = dst_res->storage.data() + static_cast<size_t>(dst_start_offset);
+    }
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+    else if (dst_res->wddm_hAllocation != 0 && dev->wddm_device != 0) {
+      const uint64_t lock_size = dst_end_offset - dst_start_offset;
+      const HRESULT hr = dst_lock.lock_allocation(dev, dst_res, dst_start_offset, lock_size, /*lock_flags=*/0);
+      if (FAILED(hr)) {
+        return trace.ret(hr);
+      }
+      dst_base = reinterpret_cast<uint8_t*>(dst_lock.ptr);
+    }
+#endif
+    else {
+      return trace.ret(kD3DErrInvalidCall);
+    }
+  }
+
+  if (bounding_overlap) {
+    // Stride conversions can overlap even when the first dst byte is higher than
+    // the first src byte (or vice versa). Rather than trying to infer a safe
+    // iteration direction, stage the source bytes before writing any destination
+    // bytes.
+    std::vector<uint8_t> staged;
+    const uint64_t staged_size_u64 = static_cast<uint64_t>(vertex_count) * static_cast<uint64_t>(copy_stride);
+    if (staged_size_u64 > static_cast<uint64_t>(std::numeric_limits<size_t>::max())) {
+      return trace.ret(E_OUTOFMEMORY);
+    }
+    try {
+      staged.resize(static_cast<size_t>(staged_size_u64));
+    } catch (...) {
+      return trace.ret(E_OUTOFMEMORY);
+    }
+
     for (uint32_t i = 0; i < vertex_count; ++i) {
-      copy_vertex(i);
+      const uint64_t src_off = static_cast<uint64_t>(i) * static_cast<uint64_t>(src_stride);
+      std::memcpy(staged.data() + static_cast<size_t>(i) * copy_stride,
+                  src_base + static_cast<size_t>(src_off),
+                  copy_stride);
+    }
+    for (uint32_t i = 0; i < vertex_count; ++i) {
+      const uint64_t dst_off = static_cast<uint64_t>(i) * static_cast<uint64_t>(dst_stride);
+      std::memcpy(dst_base + static_cast<size_t>(dst_off),
+                  staged.data() + static_cast<size_t>(i) * copy_stride,
+                  copy_stride);
+    }
+  } else {
+    const auto copy_vertex = [&](uint32_t i) {
+      const uint8_t* src = src_base + static_cast<size_t>(i) * src_stride;
+      uint8_t* dst = dst_base + static_cast<size_t>(i) * dst_stride;
+      std::memmove(dst, src, copy_stride);
+    };
+
+    // If source and destination alias the same buffer, copy in a direction that
+    // matches `memmove`-style semantics for overlapping ranges.
+    if (same_resource && dst_start_offset > src_start_offset) {
+      for (uint32_t i = vertex_count; i-- > 0;) {
+        copy_vertex(i);
+      }
+    } else {
+      for (uint32_t i = 0; i < vertex_count; ++i) {
+        copy_vertex(i);
+      }
     }
   }
 
