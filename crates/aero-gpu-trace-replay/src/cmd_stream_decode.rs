@@ -487,6 +487,9 @@ fn decode_known_fields(
         AerogpuCmdOpcode::SetPrimitiveTopology => {
             if let Some(v) = read_u32_le(pkt.payload, 0) {
                 out.insert("topology".into(), json!(v));
+                if let Some(name) = decode_topology_name(v) {
+                    out.insert("topology_name".into(), Value::String(name));
+                }
             }
         }
         AerogpuCmdOpcode::SetTexture => {
@@ -761,6 +764,25 @@ fn decode_known_fields(
     }
 
     out
+}
+
+fn decode_topology_name(topology: u32) -> Option<String> {
+    // Match the AeroGPU protocol constants, which intentionally use the D3D11 numeric values so
+    // D3D10/11 UMDs can forward the IA topology directly.
+    Some(match topology {
+        1 => "PointList".to_string(),
+        2 => "LineList".to_string(),
+        3 => "LineStrip".to_string(),
+        4 => "TriangleList".to_string(),
+        5 => "TriangleStrip".to_string(),
+        6 => "TriangleFan".to_string(),
+        10 => "LineListAdj".to_string(),
+        11 => "LineStripAdj".to_string(),
+        12 => "TriangleListAdj".to_string(),
+        13 => "TriangleStripAdj".to_string(),
+        33..=64 => format!("PatchList{}", topology - 32),
+        _ => return None,
+    })
 }
 
 fn read_u32_le(buf: &[u8], off: usize) -> Option<u32> {
