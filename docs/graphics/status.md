@@ -526,6 +526,9 @@ Known gaps / limitations (enforced by code/tests):
         VS-as-compute path (vertex pulling + a small VS opcode subset). If VS-as-compute translation fails,
         draws fail unless the VS is a strict passthrough (or `AERO_D3D11_ALLOW_INCORRECT_GS_INPUTS=1` is set
         to force IA-fill for debugging; may misrender).
+    - Supported read-only resource ops in the translated GS subset (non-exhaustive):
+      - Texture2D: `sample`/`sample_l`/`ld`/`resinfo`
+      - SRV buffers: `ld_raw`/`ld_structured`/`bufinfo`
   - Strip output expansion helpers for `CutVertex` / `RestartStrip` semantics:
     - Reference implementation: [`crates/aero-d3d11/src/runtime/strip_to_list.rs`](../../crates/aero-d3d11/src/runtime/strip_to_list.rs)
     - Unit tests: `crates/aero-d3d11/src/runtime/strip_to_list.rs` (module `tests`)
@@ -538,6 +541,8 @@ Known gaps / limitations (enforced by code/tests):
     - Example GS test runs:
       - `cargo test -p aero-d3d11 --test aerogpu_cmd_geometry_shader_point_to_triangle`
       - `cargo test -p aero-d3d11 --test aerogpu_cmd_geometry_shader_restart_strip`
+      - `cargo test -p aero-d3d11 --test aerogpu_cmd_geometry_shader_reads_srv_buffer_translated_prepass`
+      - `cargo test -p aero-d3d11 --test aerogpu_cmd_geometry_shader_texture_t0_translated_prepass`
 - GS/HS/DS shader objects can be created/bound (the command stream binds these stages via
   `BIND_SHADERS`; newer streams may append `{gs,hs,ds}` handles after the stable 24-byte prefix—when
   present the appended handles are authoritative). HS/DS currently compile to minimal compute shaders
