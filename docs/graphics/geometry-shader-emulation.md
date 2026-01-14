@@ -241,17 +241,17 @@ Error policy:
 - Some unsupported GS features are rejected with clear errors (e.g. non-zero stream indices at
   `CREATE_SHADER_DXBC` time and `gsinstancecount > 1` at draw time).
 - If the guest GS DXBC cannot be translated by the current `gs_translate` subset, the GS handle is
-  still accepted but the draw falls back to built-in synthetic/placeholder expansion (i.e. the guest
-  GS bytecode will not execute).
-- The placeholder prepass is intended for scaffolding/tests and for non-GS cases that still need the
-  compute-prepass path; it is not meant as a “compatibility fallback” for arbitrary unsupported GS
-  bytecode.
+  still accepted, but the draw falls back to the built-in synthetic expansion prepass (i.e. the
+  guest GS bytecode will not execute).
+- The synthetic-expansion prepass is intended for scaffolding/tests and for non-GS cases that still
+  need the compute-prepass path; it is not meant as a “compatibility fallback” for arbitrary
+  unsupported GS bytecode.
 
 ---
 
-## Placeholder prepass (`GEOMETRY_PREPASS_CS_WGSL`)
+## Synthetic-expansion prepass (`GEOMETRY_PREPASS_CS_WGSL`)
 
-Even with real GS execution available for a small subset, the executor keeps a **placeholder**
+Even with real GS execution available for a small subset, the executor keeps a **synthetic-expansion**
 compute prepass (`GEOMETRY_PREPASS_CS_WGSL` in
 `crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs`) for cases where the command stream must
 route through the emulation path but there is no real GS/HS/DS kernel to run yet.
@@ -285,7 +285,7 @@ cargo test -p aero-d3d11 --test aerogpu_cmd_geometry_shader_point_to_triangle
 cargo test -p aero-d3d11 --test aerogpu_cmd_geometry_shader_restart_strip
 ```
 
-For placeholder/scaffolding coverage, see:
+For synthetic-expansion/scaffolding coverage, see:
 
 - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_compute_prepass_smoke.rs`
 
