@@ -1605,7 +1605,7 @@ set "AEROGT_PNPUTIL_OUT=!OUT_FILE!"
 
 rem We only need to extract an ASCII OEM*.INF identifier. Decode as ASCII and strip NULs so
 rem UTF-16LE/BE redirected output can still be searched without relying on locale strings.
-for /f "usebackq delims=" %%M in (`"!PWSH!" -NoProfile -ExecutionPolicy Bypass -Command "$p=$env:AEROGT_PNPUTIL_OUT; try{ $bytes=[System.IO.File]::ReadAllBytes($p) }catch{ exit 1 }; $text=[System.Text.Encoding]::ASCII.GetString($bytes); $text=$text.Replace([char]0,''); $m=[regex]::Match($text,'(?i)oem[0-9]+\.inf'); if($m.Success){ $m.Value.Trim() }"`) do (
+for /f "usebackq delims=" %%M in (`"!PWSH!" -NoProfile -ExecutionPolicy Bypass -Command "$p=$env:AEROGT_PNPUTIL_OUT; try{ $bytes=[System.IO.File]::ReadAllBytes($p) }catch{ exit 1 }; $text=[System.Text.Encoding]::ASCII.GetString($bytes); $text=$text.Replace([char]0,''); $m=[regex]::Match($text,'(?i)oem[0-9]+\.inf'); if($m.Success){ $m.Value.Trim() }" 2^>nul`) do (
   set "MATCH=%%M"
   goto :extract_first_pnputil_published_inf_done
 )
