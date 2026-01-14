@@ -15,6 +15,37 @@ const MAX_TOKEN_STREAM_BYTES: usize = 64 * 1024; // 64 KiB
 const MAX_DECLARATIONS: usize = 512;
 const MAX_INSTRUCTIONS: usize = 2048;
 
+fn wrap_dxbc(shader_bytes: &[u8], chunk_fourcc: [u8; 4]) -> Vec<u8> {
+    // Minimal DXBC container with a single shader bytecode chunk.
+    // Header is:
+    // - magic "DXBC"
+    // - 16-byte checksum (ignored by our parser unless md5 feature is enabled)
+    // - 4-byte reserved
+    // - total_size
+    // - chunk_count
+    // followed by chunk offsets table.
+    //
+    // Each chunk is:
+    // - fourcc
+    // - size
+    // - payload bytes
+    const HEADER_SIZE: usize = 32;
+    const OFFSET_TABLE_SIZE: usize = 4;
+    let chunk_offset = (HEADER_SIZE + OFFSET_TABLE_SIZE) as u32;
+    let total_size = chunk_offset as usize + 8 + shader_bytes.len();
+    let mut dxbc = Vec::with_capacity(total_size);
+    dxbc.extend_from_slice(b"DXBC");
+    dxbc.extend_from_slice(&[0u8; 16]); // checksum
+    dxbc.extend_from_slice(&0u32.to_le_bytes()); // reserved
+    dxbc.extend_from_slice(&(total_size as u32).to_le_bytes());
+    dxbc.extend_from_slice(&1u32.to_le_bytes()); // chunk_count
+    dxbc.extend_from_slice(&chunk_offset.to_le_bytes());
+    dxbc.extend_from_slice(&chunk_fourcc);
+    dxbc.extend_from_slice(&(shader_bytes.len() as u32).to_le_bytes());
+    dxbc.extend_from_slice(shader_bytes);
+    dxbc
+}
+
 fn disassemble_bounded(mut shader: aero_d3d9_shader::D3d9Shader) {
     shader.declarations.truncate(MAX_DECLARATIONS);
     shader.instructions.truncate(MAX_INSTRUCTIONS);
@@ -67,6 +98,18 @@ fuzz_target!(|data: &[u8]| {
     // DWORD-aligned so the token-stream parser gets more coverage.
     let patched = patched_token_stream(data);
     if let Ok(shader) = aero_d3d9_shader::D3d9Shader::parse(&patched) {
+        disassemble_bounded(shader);
+    }
+
+    // 3) Wrap the patched token stream in a minimal valid DXBC container. This reliably exercises
+    // the DXBC extraction path even when the raw fuzz input does not start with "DXBC".
+    let chunk = if data.get(0).copied().unwrap_or(0) & 1 == 0 {
+        *b"SHDR"
+    } else {
+        *b"SHEX"
+    };
+    let dxbc = wrap_dxbc(&patched, chunk);
+    if let Ok(shader) = aero_d3d9_shader::D3d9Shader::parse(&dxbc) {
         disassemble_bounded(shader);
     }
 });

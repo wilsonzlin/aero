@@ -1,0 +1,11 @@
+"DXBC"
+"SHDR"
+"SHEX"
+# Common D3D9 version tokens (little-endian u32)
+"\x00\x02\xfe\xff" # vs_2_0
+"\x00\x02\xff\xff" # ps_2_0
+"\x00\x03\xfe\xff" # vs_3_0
+"\x00\x03\xff\xff" # ps_3_0
+# END token (0x0000_FFFF) in little-endian
+"\xff\xff\x00\x00"
+
