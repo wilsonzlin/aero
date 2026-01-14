@@ -20,6 +20,7 @@ use emulator::gpu_worker::aerogpu_executor::{
     AeroGpuExecutor, AeroGpuExecutorConfig, AeroGpuFenceCompletionMode,
 };
 use memory::MemoryBus;
+use std::collections::BTreeMap;
 
 const RING_MAGIC_OFFSET: u64 = core::mem::offset_of!(ProtocolRingHeader, magic) as u64;
 const RING_ABI_VERSION_OFFSET: u64 = core::mem::offset_of!(ProtocolRingHeader, abi_version) as u64;
@@ -112,6 +113,41 @@ impl MemoryBus for VecMemory {
     fn write_physical(&mut self, paddr: u64, buf: &[u8]) {
         let range = self.range(paddr, buf.len());
         self.data[range].copy_from_slice(buf);
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+struct SparseMemory {
+    bytes: BTreeMap<u64, u8>,
+}
+
+impl SparseMemory {
+    fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl MemoryBus for SparseMemory {
+    fn read_physical(&mut self, paddr: u64, buf: &mut [u8]) {
+        for (idx, dst) in buf.iter_mut().enumerate() {
+            let addr = match paddr.checked_add(idx as u64) {
+                Some(v) => v,
+                None => {
+                    *dst = 0;
+                    continue;
+                }
+            };
+            *dst = *self.bytes.get(&addr).unwrap_or(&0);
+        }
+    }
+
+    fn write_physical(&mut self, paddr: u64, buf: &[u8]) {
+        for (idx, src) in buf.iter().copied().enumerate() {
+            let Some(addr) = paddr.checked_add(idx as u64) else {
+                continue;
+            };
+            self.bytes.insert(addr, src);
+        }
     }
 }
 
@@ -469,6 +505,45 @@ fn alloc_table_entry_with_zero_gpa_decodes() {
     );
     assert_eq!(record.submission.allocs.len(), 1);
     assert_eq!(record.submission.allocs[0].gpa, 0);
+}
+
+#[test]
+fn ring_descriptor_gpa_overflow_sets_error_irq_and_advances_head() {
+    let mut mem = SparseMemory::new();
+    let mut regs = AeroGpuRegs::default();
+    let mut exec = AeroGpuExecutor::new(AeroGpuExecutorConfig {
+        verbose: false,
+        keep_last_submissions: 8,
+        fence_completion: AeroGpuFenceCompletionMode::Immediate,
+    });
+
+    // Choose a ring GPA such that `ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES` would overflow.
+    let ring_gpa = u64::MAX - (AEROGPU_RING_HEADER_SIZE_BYTES - 1);
+    let ring_size = 0x1000u32;
+
+    // Minimal valid ring header.
+    mem.write_u32(ring_gpa + RING_MAGIC_OFFSET, AEROGPU_RING_MAGIC);
+    mem.write_u32(ring_gpa + RING_ABI_VERSION_OFFSET, regs.abi_version);
+    mem.write_u32(ring_gpa + RING_SIZE_BYTES_OFFSET, ring_size);
+    mem.write_u32(ring_gpa + RING_ENTRY_COUNT_OFFSET, 8);
+    mem.write_u32(ring_gpa + RING_ENTRY_STRIDE_BYTES_OFFSET, AeroGpuSubmitDesc::SIZE_BYTES);
+    mem.write_u32(ring_gpa + RING_FLAGS_OFFSET, 0);
+    mem.write_u32(ring_gpa + RING_HEAD_OFFSET, 0);
+    mem.write_u32(ring_gpa + RING_TAIL_OFFSET, 1);
+
+    regs.ring_gpa = ring_gpa;
+    regs.ring_size_bytes = ring_size;
+    regs.ring_control = ring_control::ENABLE;
+
+    exec.process_doorbell(&mut regs, &mut mem);
+
+    // Pending work should be dropped by advancing head to tail.
+    assert_eq!(mem.read_u32(ring_gpa + RING_HEAD_OFFSET), 1);
+    assert_eq!(regs.stats.malformed_submissions, 1);
+    assert_ne!(regs.irq_status & irq_bits::ERROR, 0);
+    assert_eq!(regs.error_code, AerogpuErrorCode::Oob as u32);
+    assert_eq!(regs.error_count, 1);
+    assert_eq!(exec.last_submissions.len(), 0);
 }
 
 #[test]
