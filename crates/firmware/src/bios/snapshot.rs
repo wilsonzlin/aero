@@ -6,7 +6,7 @@ use crate::rtc::CmosRtcSnapshot;
 use crate::video::vbe::VbeDevice;
 
 use super::bda_time::BdaTimeSnapshot;
-use super::{Bios, BiosBootDevice, BiosConfig, E820Entry};
+use super::{Bios, BiosBootDevice, BiosConfig, E820Entry, ElToritoBootInfo, ElToritoBootMediaType};
 
 #[derive(Debug, Clone)]
 pub struct VbeSnapshot {
@@ -19,6 +19,31 @@ pub struct VbeSnapshot {
     pub display_start_y: u16,
     pub dac_width_bits: u8,
     pub palette: [u8; 256 * 4],
+}
+
+/// Snapshot representation of cached El Torito boot metadata.
+///
+/// This is populated when the BIOS booted via an El Torito boot catalog entry and is later used to
+/// answer INT 13h AH=4Bh (El Torito disk emulation services).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ElToritoBootInfoSnapshot {
+    /// El Torito boot media type as an El Torito/BIOS encoding (e.g. `0x00` for "no emulation").
+    ///
+    /// This mirrors [`super::ElToritoBootMediaType`] but is stored as a raw `u8` for
+    /// forward-compatibility with potential future media type additions.
+    pub media_type: u8,
+    /// Boot drive number passed to the boot image (DL).
+    pub boot_drive: u8,
+    /// BIOS controller index for the boot device (usually 0).
+    pub controller_index: u8,
+    /// Boot catalog sector (LBA) on the CD-ROM image (if known).
+    pub boot_catalog_lba: Option<u32>,
+    /// Boot image start sector (RBA/LBA) on the CD-ROM image (if known).
+    pub boot_image_lba: Option<u32>,
+    /// Real-mode segment the boot image was loaded to (if known).
+    pub load_segment: Option<u16>,
+    /// Number of 512-byte sectors loaded for the initial boot image (if known).
+    pub sector_count: Option<u16>,
 }
 
 impl Default for VbeSnapshot {
@@ -142,6 +167,7 @@ pub struct BiosSnapshot {
     pub smbios_eps_addr: Option<u32>,
     pub last_int13_status: u8,
     pub vbe: VbeSnapshot,
+    pub el_torito_boot_info: Option<ElToritoBootInfoSnapshot>,
 }
 
 impl BiosSnapshot {
@@ -256,6 +282,38 @@ impl BiosSnapshot {
         w.write_all(&[5])?;
         w.write_all(&self.config.smbios_uuid_seed.to_le_bytes())?;
 
+        // v7 extension block: El Torito boot metadata (INT 13h AH=4Bh services).
+        w.write_all(&[6])?;
+        match self.el_torito_boot_info {
+            Some(info) => {
+                w.write_all(&[1])?;
+                w.write_all(&[info.media_type])?;
+                w.write_all(&[info.boot_drive])?;
+                w.write_all(&[info.controller_index])?;
+
+                let mut mask: u8 = 0;
+                if info.boot_catalog_lba.is_some() {
+                    mask |= 1 << 0;
+                }
+                if info.boot_image_lba.is_some() {
+                    mask |= 1 << 1;
+                }
+                if info.load_segment.is_some() {
+                    mask |= 1 << 2;
+                }
+                if info.sector_count.is_some() {
+                    mask |= 1 << 3;
+                }
+                w.write_all(&[mask])?;
+
+                w.write_all(&info.boot_catalog_lba.unwrap_or(0).to_le_bytes())?;
+                w.write_all(&info.boot_image_lba.unwrap_or(0).to_le_bytes())?;
+                w.write_all(&info.load_segment.unwrap_or(0).to_le_bytes())?;
+                w.write_all(&info.sector_count.unwrap_or(0).to_le_bytes())?;
+            }
+            None => w.write_all(&[0])?,
+        }
+
         Ok(())
     }
 
@@ -355,6 +413,7 @@ impl BiosSnapshot {
 
         let mut last_int13_status = 0;
         let mut vbe = VbeSnapshot::default();
+        let mut el_torito_boot_info: Option<ElToritoBootInfoSnapshot> = None;
         let mut acpi_reclaimable = None;
         let mut acpi_nvs = None;
         let mut smbios_eps_addr = None;
@@ -465,6 +524,43 @@ impl BiosSnapshot {
                         r.read_exact(&mut buf8)?;
                         config.smbios_uuid_seed = u64::from_le_bytes(buf8);
                     }
+                    6 => {
+                        let mut present = [0u8; 1];
+                        r.read_exact(&mut present)?;
+                        if present[0] == 0 {
+                            el_torito_boot_info = None;
+                            continue;
+                        }
+
+                        let mut fields = [0u8; 4];
+                        r.read_exact(&mut fields)?;
+                        let media_type = fields[0];
+                        let boot_drive = fields[1];
+                        let controller_index = fields[2];
+                        let mask = fields[3];
+
+                        let mut buf4 = [0u8; 4];
+                        r.read_exact(&mut buf4)?;
+                        let boot_catalog_raw = u32::from_le_bytes(buf4);
+                        r.read_exact(&mut buf4)?;
+                        let boot_image_raw = u32::from_le_bytes(buf4);
+
+                        let mut buf2 = [0u8; 2];
+                        r.read_exact(&mut buf2)?;
+                        let load_segment_raw = u16::from_le_bytes(buf2);
+                        r.read_exact(&mut buf2)?;
+                        let sector_count_raw = u16::from_le_bytes(buf2);
+
+                        el_torito_boot_info = Some(ElToritoBootInfoSnapshot {
+                            media_type,
+                            boot_drive,
+                            controller_index,
+                            boot_catalog_lba: (mask & (1 << 0) != 0).then_some(boot_catalog_raw),
+                            boot_image_lba: (mask & (1 << 1) != 0).then_some(boot_image_raw),
+                            load_segment: (mask & (1 << 2) != 0).then_some(load_segment_raw),
+                            sector_count: (mask & (1 << 3) != 0).then_some(sector_count_raw),
+                        });
+                    }
                     _ => {
                         // Unknown extension; ignore trailing bytes.
                         break;
@@ -489,6 +585,7 @@ impl BiosSnapshot {
             smbios_eps_addr,
             last_int13_status,
             vbe,
+            el_torito_boot_info,
         })
     }
 }
@@ -512,6 +609,15 @@ impl Bios {
             smbios_eps_addr: self.smbios_eps_addr,
             last_int13_status: self.last_int13_status,
             vbe: VbeSnapshot::from_device(&self.video.vbe),
+            el_torito_boot_info: self.el_torito_boot_info.map(|info| ElToritoBootInfoSnapshot {
+                media_type: info.media_type as u8,
+                boot_drive: info.boot_drive,
+                controller_index: info.controller_index,
+                boot_catalog_lba: info.boot_catalog_lba,
+                boot_image_lba: info.boot_image_lba,
+                load_segment: info.load_segment,
+                sector_count: info.sector_count,
+            }),
         }
     }
 
@@ -533,6 +639,25 @@ impl Bios {
         self.acpi_nvs = snapshot.acpi_nvs;
         self.smbios_eps_addr = snapshot.smbios_eps_addr;
         self.last_int13_status = snapshot.last_int13_status;
+        self.el_torito_boot_info = snapshot.el_torito_boot_info.and_then(|info| {
+            let media_type = match info.media_type {
+                0x00 => ElToritoBootMediaType::NoEmulation,
+                0x01 => ElToritoBootMediaType::Floppy1200KiB,
+                0x02 => ElToritoBootMediaType::Floppy1440KiB,
+                0x03 => ElToritoBootMediaType::Floppy2880KiB,
+                0x04 => ElToritoBootMediaType::HardDisk,
+                _ => return None,
+            };
+            Some(ElToritoBootInfo {
+                media_type,
+                boot_drive: info.boot_drive,
+                controller_index: info.controller_index,
+                boot_catalog_lba: info.boot_catalog_lba,
+                boot_image_lba: info.boot_image_lba,
+                load_segment: info.load_segment,
+                sector_count: info.sector_count,
+            })
+        });
         snapshot.vbe.restore(&mut self.video.vbe);
         if let Some(base) = self.config.vbe_lfb_base {
             self.video.vbe.lfb_base = base;
@@ -546,6 +671,7 @@ mod tests {
 
     use super::*;
     use crate::bios::MAX_TTY_OUTPUT_BYTES;
+    use crate::bios::{ElToritoBootInfo, ElToritoBootMediaType};
 
     #[test]
     fn bios_snapshot_decode_truncates_tty_output_to_a_rolling_tail_window() {
@@ -562,6 +688,64 @@ mod tests {
         assert_eq!(decoded.tty_output.len(), MAX_TTY_OUTPUT_BYTES);
         assert_eq!(decoded.tty_output[0], ((total - MAX_TTY_OUTPUT_BYTES) % 256) as u8);
         assert_eq!(decoded.tty_output[decoded.tty_output.len() - 1], ((total - 1) % 256) as u8);
+    }
+
+    #[test]
+    fn bios_snapshot_encode_decode_preserves_el_torito_boot_info() {
+        let mut bios = Bios::new(BiosConfig::default());
+        bios.el_torito_boot_info = Some(ElToritoBootInfo {
+            media_type: ElToritoBootMediaType::NoEmulation,
+            boot_drive: 0xE0,
+            controller_index: 0,
+            boot_catalog_lba: Some(0x1111_2222),
+            boot_image_lba: Some(0x3333_4444),
+            load_segment: Some(0x07C0),
+            sector_count: Some(4),
+        });
+
+        let snapshot = bios.snapshot();
+        assert_eq!(
+            snapshot.el_torito_boot_info,
+            Some(ElToritoBootInfoSnapshot {
+                media_type: 0x00,
+                boot_drive: 0xE0,
+                controller_index: 0,
+                boot_catalog_lba: Some(0x1111_2222),
+                boot_image_lba: Some(0x3333_4444),
+                load_segment: Some(0x07C0),
+                sector_count: Some(4),
+            })
+        );
+
+        let mut buf = Vec::new();
+        snapshot.encode(&mut buf).unwrap();
+
+        let decoded = BiosSnapshot::decode(&mut Cursor::new(&buf)).unwrap();
+        assert_eq!(decoded.el_torito_boot_info, snapshot.el_torito_boot_info);
+
+        let mut bios2 = Bios::new(BiosConfig::default());
+        let mut mem = crate::memory::VecMemory::new(2 * 1024 * 1024);
+        bios2.restore_snapshot(decoded, &mut mem);
+        assert_eq!(bios2.el_torito_boot_info, bios.el_torito_boot_info);
+    }
+
+    #[test]
+    fn restore_snapshot_resets_el_torito_boot_info_when_absent() {
+        let mut bios = Bios::new(BiosConfig::default());
+        bios.el_torito_boot_info = Some(ElToritoBootInfo {
+            media_type: ElToritoBootMediaType::NoEmulation,
+            boot_drive: 0xE0,
+            controller_index: 0,
+            boot_catalog_lba: Some(1),
+            boot_image_lba: Some(2),
+            load_segment: Some(0x07C0),
+            sector_count: Some(4),
+        });
+
+        let snapshot_none = Bios::new(BiosConfig::default()).snapshot();
+        let mut mem = crate::memory::VecMemory::new(2 * 1024 * 1024);
+        bios.restore_snapshot(snapshot_none, &mut mem);
+        assert_eq!(bios.el_torito_boot_info, None);
     }
 
     const PRE_BOOT_ORDER_EXT_SNAPSHOT: &[u8] = &[
