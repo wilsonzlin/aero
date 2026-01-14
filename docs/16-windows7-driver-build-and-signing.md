@@ -154,6 +154,7 @@ See also the examples under `drivers/_template/`:
 > `drivers/win7/virtio/virtio-transport-test/` is a KMDF smoke-test driver and is intentionally **not** CI-packaged (no `ci-package.json`), so it does not ship in CI-produced driver bundles / Guest Tools artifacts. Its `virtio-transport-test.inf` intentionally binds a **non-contract** virtio PCI HWID (`PCI\VEN_1AF4&DEV_1040`) so it cannot steal binding from production virtio devices if you install it manually alongside other drivers.
 > The virtio-input driver under `drivers/windows7/virtio-input/` is revision-gated to Aero contract v1 (`...&REV_01`).
 > INF matching policy for virtio-input keyboard/mouse:
+>
 > - Canonical INF: `inf/aero_virtio_input.inf`
 >   - Binds the subsystem-qualified keyboard/mouse contract v1 HWIDs (`SUBSYS_0010` / `SUBSYS_0011`, both `&REV_01`) for distinct
 >     Device Manager names.
@@ -166,12 +167,11 @@ See also the examples under `drivers/_template/`:
 >     `drivers/windows7/virtio-input/scripts/check-inf-alias.py`.
 >   - Because it is identical, enabling the alias does **not** change HWID matching behavior.
 >
-> Tablet devices bind via the separate `inf/aero_virtio_tablet.inf` (`SUBSYS_00121AF4`); that INF is more specific and wins
-> over the generic fallback match when both packages are present and the tablet subsystem ID matches. If the tablet INF is not
-> installed (or the device does not expose the tablet subsystem ID), the strict generic fallback entry can also bind to tablet
-> devices (but will use the generic device name).
+> Tablet devices bind via the separate `inf/aero_virtio_tablet.inf` (`SUBSYS_00121AF4`); that HWID is more specific than the generic
+> fallback, so it wins when both packages are installed. If the tablet INF is not installed (or the device does not expose the tablet
+> subsystem ID), the device may bind via the generic fallback and appear as **Aero VirtIO Input Device**.
 >
-> Avoid shipping/installing both basenames at once (they overlap and can cause confusing driver selection). Prefer explicit
+> Avoid shipping/installing both basenames at once: overlapping driver packages can cause confusing driver selection. Prefer explicit
 > `ci-package.json` `infFiles` allowlists so only one of the two INF basenames is packaged.
 
 ```powershell
