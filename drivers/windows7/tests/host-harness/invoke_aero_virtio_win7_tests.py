@@ -3006,6 +3006,7 @@ def _virtio_net_udp_fail_failure_message(tail: bytes, *, marker_line: Optional[s
     # Guest marker:
     #   AERO_VIRTIO_SELFTEST|TEST|virtio-net-udp|PASS|bytes=...|small_bytes=...|mtu_bytes=...|reason=-|wsa=0
     #   AERO_VIRTIO_SELFTEST|TEST|virtio-net-udp|FAIL|bytes=...|small_bytes=...|mtu_bytes=...|reason=...|wsa=<err>
+    #   AERO_VIRTIO_SELFTEST|TEST|virtio-net-udp|SKIP|<token>   # legacy/backcompat (host harness treats as failure by default)
     prefix = b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-udp|FAIL|"
     prefix_str = "AERO_VIRTIO_SELFTEST|TEST|virtio-net-udp|FAIL|"
     marker = marker_line
@@ -3026,6 +3027,37 @@ def _virtio_net_udp_fail_failure_message(tail: bytes, *, marker_line: Optional[s
             details = " (" + " ".join(parts) + ")"
         return f"FAIL: VIRTIO_NET_UDP_FAILED: virtio-net-udp test reported FAIL{details}"
     return "FAIL: VIRTIO_NET_UDP_FAILED: virtio-net-udp test reported FAIL"
+
+
+def _virtio_net_udp_skip_failure_message(tail: bytes, *, marker_line: Optional[str] = None) -> str:
+    # Legacy/backcompat guest marker:
+    #   AERO_VIRTIO_SELFTEST|TEST|virtio-net-udp|SKIP|flag_not_set
+    #   AERO_VIRTIO_SELFTEST|TEST|virtio-net-udp|SKIP|reason=<...>|...
+    marker = marker_line
+    if marker is not None:
+        if (
+            not marker.startswith("AERO_VIRTIO_SELFTEST|TEST|virtio-net-udp|")
+            or _try_extract_marker_status(marker) != "SKIP"
+        ):
+            marker = None
+    if marker is None:
+        marker = _try_extract_last_marker_line(
+            tail, b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-udp|SKIP"
+        )
+
+    reason = ""
+    if marker is not None:
+        fields = _parse_marker_kv_fields(marker)
+        reason = (fields.get("reason") or "").strip()
+        if not reason:
+            reason = _try_extract_plain_marker_token(marker, "SKIP") or ""
+
+    if reason:
+        return (
+            f"FAIL: VIRTIO_NET_UDP_SKIPPED: virtio-net-udp test was skipped ({reason}) but UDP testing is enabled "
+            "(update/provision the guest selftest)"
+        )
+    return "FAIL: VIRTIO_NET_UDP_SKIPPED: virtio-net-udp test was skipped but UDP testing is enabled (update/provision the guest selftest)"
 
 
 def _virtio_input_led_skip_failure_message(tail: bytes, *, marker_line: Optional[str] = None) -> str:
@@ -7749,7 +7781,10 @@ def main() -> int:
                                 if not saw_virtio_net_udp_pass:
                                     if saw_virtio_net_udp_skip:
                                         print(
-                                            "FAIL: VIRTIO_NET_UDP_SKIPPED: virtio-net-udp test was skipped but UDP testing is enabled (update/provision the guest selftest)",
+                                            _virtio_net_udp_skip_failure_message(
+                                                tail,
+                                                marker_line=virtio_net_udp_marker_line,
+                                            ),
                                             file=sys.stderr,
                                         )
                                     else:
@@ -9904,7 +9939,10 @@ def main() -> int:
                                     if not saw_virtio_net_udp_pass:
                                         if saw_virtio_net_udp_skip:
                                             print(
-                                                "FAIL: VIRTIO_NET_UDP_SKIPPED: virtio-net-udp test was skipped but UDP testing is enabled (update/provision the guest selftest)",
+                                                _virtio_net_udp_skip_failure_message(
+                                                    tail,
+                                                    marker_line=virtio_net_udp_marker_line,
+                                                ),
                                                 file=sys.stderr,
                                             )
                                         else:

@@ -450,6 +450,17 @@ class FailureTokenTests(unittest.TestCase):
         self.assertIn("wsa=10060", msg)
         self.assertIn("bytes=0", msg)
 
+    def test_virtio_net_udp_skipped_token_includes_reason_when_present(self) -> None:
+        h = self.harness
+
+        msg = h._virtio_net_udp_skip_failure_message(
+            b"",
+            marker_line="AERO_VIRTIO_SELFTEST|TEST|virtio-net-udp|SKIP|flag_not_set",
+        )
+        self.assertRegex(msg, _TOKEN_RE)
+        self.assertTrue(msg.startswith("FAIL: VIRTIO_NET_UDP_SKIPPED:"))
+        self.assertIn("flag_not_set", msg)
+
     def test_virtio_input_events_fail_tokens_include_reason_and_err(self) -> None:
         h = self.harness
 
