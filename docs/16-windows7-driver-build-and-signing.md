@@ -300,8 +300,9 @@ Integrity manifests (default; disable with `-NoManifest`):
 - `out/artifacts/AeroVirtIO-Win7-<version>.manifest.json` (when ISO is produced)
 - `out/artifacts/AeroVirtIO-Win7-<version>-fat.manifest.json` (when FAT VHD is produced)
 
-Each `*.manifest.json` includes the artifact's `sha256`/`size`, the packaging `version` and
-`signing_policy`, and a stable per-file hash list for mixed-media detection.
+Each `*.manifest.json` includes the artifact's `sha256`/`size`, the packaging `version`,
+`signing_policy`, and (when present) `package.build_id` (defaults to the HEAD commit SHA), plus a
+stable per-file hash list for mixed-media detection.
 
 The packaged artifacts include:
 

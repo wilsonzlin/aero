@@ -279,6 +279,9 @@ Integrity manifests (default):
 Each `*.manifest.json` includes the produced artifact's `sha256` and `size`, the `version` and
 `signing_policy`, and a stable list of packaged file hashes (`files[]`) for mixed-media detection.
 
+`package.build_id` (when present) defaults to the HEAD commit SHA (stable across CI reruns for the
+same inputs).
+
 If `-Version` is not provided, the script derives a deterministic version string from git:
 
 - date: HEAD commit date (formatted `yyyyMMdd`)
@@ -315,6 +318,9 @@ contains both:
 
 - standalone driver bundles (`AeroVirtIO-Win7-*.zip` / `.iso` / optional `.vhd`)
 - Guest Tools media (`aero-guest-tools.iso` / `aero-guest-tools.zip` / `manifest.json` + `aero-guest-tools.manifest.json`)
+
+`manifest.json` includes `package.version` and `package.build_id`. If `-BuildId` is not provided,
+the wrapper defaults it to the HEAD commit SHA (stable across CI reruns for the same inputs).
 
 By default (`-SigningPolicy test`), it injects the public signing certificate
 (`out/certs/aero-test.cer`) into the staged Guest Tools tree so the packaged installer media
