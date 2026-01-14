@@ -105,10 +105,10 @@ services in Rust.
      `firmware::bios::BiosConfig::boot_drive` (configured via `aero_machine::MachineConfig::boot_drive`
      at construction time, or updated via `aero_machine::Machine::set_boot_drive(...)` before reset):
      - **HDD/floppy boot:** reads LBA0 into `0000:7C00` and jumps to `0000:7C00`.
-     - **CD-ROM boot:** when `boot_drive` is in `0xE0..=0xEF`, parses the El Torito boot catalog and
-       loads the **no-emulation** boot image to `load_segment:0000` (commonly `07C0:0000`), then
-       jumps there (see [`docs/05-storage-topology-win7.md`](./05-storage-topology-win7.md) for the
-      canonical Windows 7 install/recovery flow).
+      - **CD-ROM boot:** when `boot_drive` is in `0xE0..=0xEF`, parses the El Torito boot catalog and
+        loads the **no-emulation** boot image to `load_segment:0000` (commonly `07C0:0000`), then
+        jumps there (see [`docs/05-storage-topology-win7.md`](./05-storage-topology-win7.md) for the
+        canonical Windows 7 install/recovery flow).
 - During execution, Tier-0 returns `BatchExit::BiosInterrupt(vector)` when a BIOS stub `HLT` is hit.
   The machine handles it by calling:
 
