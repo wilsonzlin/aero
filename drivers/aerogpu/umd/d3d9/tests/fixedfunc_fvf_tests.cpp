@@ -9196,6 +9196,135 @@ bool TestStage1MissingTextureDisablesStage2Sampling() {
   return Check(!ShaderContainsToken(ps, kPsSampler2), "stage1 missing => PS does not reference s2");
 }
 
+bool TestStage1BlendTextureAlphaRequiresTextureEvenWithoutTextureArgs() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  dev->cmd.reset();
+
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzrhwDiffuseTex1);
+  if (!Check(hr == S_OK, "SetFVF(XYZRHW|DIFFUSE|TEX1)")) {
+    return false;
+  }
+
+  // Bind textures for stage0 and stage2, but leave stage1 unbound. Stage1 uses
+  // BLENDTEXTUREALPHA, which implicitly requires the stage texture even if its
+  // args are DIFFUSE/CURRENT.
+  D3DDDI_HRESOURCE hTex0{};
+  if (!CreateDummyTexture(&cleanup, &hTex0)) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTexture(cleanup.hDevice, /*stage=*/0, hTex0);
+  if (!Check(hr == S_OK, "SetTexture(stage0)")) {
+    return false;
+  }
+
+  D3DDDI_HRESOURCE hTex2{};
+  if (!CreateDummyTexture(&cleanup, &hTex2)) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTexture(cleanup.hDevice, /*stage=*/2, hTex2);
+  if (!Check(hr == S_OK, "SetTexture(stage2)")) {
+    return false;
+  }
+
+  {
+    D3DDDI_HRESOURCE null_tex{};
+    hr = cleanup.device_funcs.pfnSetTexture(cleanup.hDevice, /*stage=*/1, null_tex);
+    if (!Check(hr == S_OK, "SetTexture(stage1=null)")) {
+      return false;
+    }
+  }
+
+  const auto SetTextureStageState = [&](uint32_t stage, uint32_t state, uint32_t value, const char* msg) -> bool {
+    HRESULT hr2 = S_OK;
+    if (cleanup.device_funcs.pfnSetTextureStageState) {
+      hr2 = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, stage, state, value);
+    } else {
+      hr2 = aerogpu::device_set_texture_stage_state(cleanup.hDevice, stage, state, value);
+    }
+    return Check(hr2 == S_OK, msg);
+  };
+
+  // Stage0: sample texture0.
+  if (!SetTextureStageState(0, kD3dTssColorOp, kD3dTopModulate, "stage0 COLOROP=MODULATE")) {
+    return false;
+  }
+  if (!SetTextureStageState(0, kD3dTssColorArg1, kD3dTaTexture, "stage0 COLORARG1=TEXTURE")) {
+    return false;
+  }
+  if (!SetTextureStageState(0, kD3dTssColorArg2, kD3dTaDiffuse, "stage0 COLORARG2=DIFFUSE")) {
+    return false;
+  }
+  if (!SetTextureStageState(0, kD3dTssAlphaOp, kD3dTopDisable, "stage0 ALPHAOP=DISABLE")) {
+    return false;
+  }
+
+  // Stage1: BLENDTEXTUREALPHA uses texture alpha as the blend factor regardless
+  // of arg sources, so stage1 must be treated as sampling its texture.
+  if (!SetTextureStageState(1, kD3dTssColorOp, kD3dTopBlendTextureAlpha, "stage1 COLOROP=BLENDTEXTUREALPHA")) {
+    return false;
+  }
+  if (!SetTextureStageState(1, kD3dTssColorArg1, kD3dTaDiffuse, "stage1 COLORARG1=DIFFUSE")) {
+    return false;
+  }
+  if (!SetTextureStageState(1, kD3dTssColorArg2, kD3dTaCurrent, "stage1 COLORARG2=CURRENT")) {
+    return false;
+  }
+  if (!SetTextureStageState(1, kD3dTssAlphaOp, kD3dTopDisable, "stage1 ALPHAOP=DISABLE")) {
+    return false;
+  }
+
+  // Stage2: would sample texture2 if reached.
+  if (!SetTextureStageState(2, kD3dTssColorOp, kD3dTopSelectArg1, "stage2 COLOROP=SELECTARG1")) {
+    return false;
+  }
+  if (!SetTextureStageState(2, kD3dTssColorArg1, kD3dTaTexture, "stage2 COLORARG1=TEXTURE")) {
+    return false;
+  }
+  if (!SetTextureStageState(2, kD3dTssAlphaOp, kD3dTopDisable, "stage2 ALPHAOP=DISABLE")) {
+    return false;
+  }
+
+  const VertexXyzrhwDiffuseTex1 tri[3] = {
+      {0.0f, 0.0f, 0.0f, 1.0f, 0xFFFFFFFFu, 0.0f, 0.0f},
+      {1.0f, 0.0f, 0.0f, 1.0f, 0xFFFFFFFFu, 1.0f, 0.0f},
+      {0.0f, 1.0f, 0.0f, 1.0f, 0xFFFFFFFFu, 0.0f, 1.0f},
+  };
+
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzrhwDiffuseTex1));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(stage1 blendtexturealpha missing texture)")) {
+    return false;
+  }
+
+  Shader* ps = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    ps = dev->ps;
+  }
+  if (!Check(ps != nullptr, "PS bound")) {
+    return false;
+  }
+  if (!Check(ShaderCountToken(ps, kPsOpTexld) == 1, "stage1 missing => exactly 1 texld")) {
+    return false;
+  }
+  if (!Check(ShaderContainsToken(ps, kPsSampler0), "stage1 missing => PS references s0")) {
+    return false;
+  }
+  if (!Check(!ShaderContainsToken(ps, kPsSampler1), "stage1 missing => PS does not reference s1")) {
+    return false;
+  }
+  return Check(!ShaderContainsToken(ps, kPsSampler2), "stage1 missing => PS does not reference s2");
+}
+
 bool TestStage3SamplingUsesSampler3EvenIfStage1AndStage2DoNotSample() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -12570,6 +12699,9 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestStage1MissingTextureDisablesStage2Sampling()) {
+    return 1;
+  }
+  if (!aerogpu::TestStage1BlendTextureAlphaRequiresTextureEvenWithoutTextureArgs()) {
     return 1;
   }
   if (!aerogpu::TestStage3SamplingUsesSampler3EvenIfStage1AndStage2DoNotSample()) {
