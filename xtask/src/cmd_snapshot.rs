@@ -25,7 +25,8 @@ Subcommands:
   validate   Structural validation without decompressing RAM.
             Use --deep to fully restore/decompress into a dummy target (small files only).
   diff       Compare two snapshots and print meaningful differences (header/META/sections,
-            DEVICES blobs, and RAM header fields).
+            CPU/MMU/DISKS summaries, DEVICES blob digests, RAM header fields, and a few
+            sampled RAM chunk/page headers).
             Use --deep to restore/decompress (small files only) and compare RAM page hashes.
 "
     );
@@ -2204,6 +2205,12 @@ fn cmd_diff(args: Vec<String>) -> Result<()> {
     // Section list (id/version/flags/len).
     diff_section_table(&mut out, &index_a.sections, &index_b.sections);
 
+    // Optional best-effort diffs for small sections (fast; no deep restore).
+    diff_cpu_section(&mut out, &mut file_a, &index_a.sections, &mut file_b, &index_b.sections)?;
+    diff_cpus_section(&mut out, &mut file_a, &index_a.sections, &mut file_b, &index_b.sections)?;
+    diff_mmu_section(&mut out, &mut file_a, &index_a.sections, &mut file_b, &index_b.sections)?;
+    diff_disks_section(&mut out, &mut file_a, &index_a.sections, &mut file_b, &index_b.sections)?;
+
     // DEVICES section (device ids/versions/blob lengths + hash).
     diff_devices_section(
         &mut out,
@@ -2215,6 +2222,7 @@ fn cmd_diff(args: Vec<String>) -> Result<()> {
 
     // RAM header summary (mode/compression/page_size/chunk_size/dirty_count).
     diff_ram_header(&mut out, index_a.ram.as_ref(), index_b.ram.as_ref());
+    diff_ram_samples(&mut out, &mut file_a, &index_a, &mut file_b, &index_b)?;
 
     if deep {
         deep_diff_ram(&mut out, path_a, &index_a, path_b, &index_b)?;
@@ -2332,6 +2340,494 @@ fn diff_section_table(out: &mut DiffOutput, a: &[SnapshotSectionInfo], b: &[Snap
     for (idx, s) in b.iter().enumerate() {
         println!("  [{idx}] {s}");
     }
+}
+
+fn diff_cpu_section(
+    out: &mut DiffOutput,
+    file_a: &mut fs::File,
+    sections_a: &[SnapshotSectionInfo],
+    file_b: &mut fs::File,
+    sections_b: &[SnapshotSectionInfo],
+) -> Result<()> {
+    let sec_a = sections_a.iter().find(|s| s.id == SectionId::CPU);
+    let sec_b = sections_b.iter().find(|s| s.id == SectionId::CPU);
+
+    match (sec_a, sec_b) {
+        (None, None) => Ok(()),
+        (Some(_), None) => {
+            out.diff_msg("CPU", "A=present B=<missing>");
+            Ok(())
+        }
+        (None, Some(_)) => {
+            out.diff_msg("CPU", "A=<missing> B=present");
+            Ok(())
+        }
+        (Some(sec_a), Some(sec_b)) => {
+            let cpu_a = read_cpu_state(file_a, sec_a, "A")?;
+            let cpu_b = read_cpu_state(file_b, sec_b, "B")?;
+
+            if cpu_a.mode != cpu_b.mode {
+                out.diff("CPU.mode", format!("{:?}", cpu_a.mode), format!("{:?}", cpu_b.mode));
+            }
+            if cpu_a.halted != cpu_b.halted {
+                out.diff("CPU.halted", cpu_a.halted, cpu_b.halted);
+            }
+            if cpu_a.rip != cpu_b.rip {
+                out.diff(
+                    "CPU.rip",
+                    format!("0x{:x}", cpu_a.rip),
+                    format!("0x{:x}", cpu_b.rip),
+                );
+            }
+            if cpu_a.rflags != cpu_b.rflags {
+                out.diff(
+                    "CPU.rflags",
+                    format!("0x{:x}", cpu_a.rflags),
+                    format!("0x{:x}", cpu_b.rflags),
+                );
+            }
+            if cpu_a.a20_enabled != cpu_b.a20_enabled {
+                out.diff("CPU.a20_enabled", cpu_a.a20_enabled, cpu_b.a20_enabled);
+            }
+            if cpu_a.pending_bios_int_valid != cpu_b.pending_bios_int_valid {
+                out.diff(
+                    "CPU.pending_bios_int_valid",
+                    cpu_a.pending_bios_int_valid,
+                    cpu_b.pending_bios_int_valid,
+                );
+            }
+            if cpu_a.pending_bios_int != cpu_b.pending_bios_int {
+                // Only meaningful when `pending_bios_int_valid` is true, but diff the raw value for
+                // debugging.
+                out.diff(
+                    "CPU.pending_bios_int",
+                    format!("0x{:02x}", cpu_a.pending_bios_int),
+                    format!("0x{:02x}", cpu_b.pending_bios_int),
+                );
+            }
+            if cpu_a.irq13_pending != cpu_b.irq13_pending {
+                out.diff("CPU.irq13_pending", cpu_a.irq13_pending, cpu_b.irq13_pending);
+            }
+
+            Ok(())
+        }
+    }
+}
+
+fn read_cpu_state(file: &mut fs::File, section: &SnapshotSectionInfo, tag: &str) -> Result<CpuState> {
+    file.seek(SeekFrom::Start(section.offset))
+        .map_err(|e| XtaskError::Message(format!("seek CPU {tag}: {e}")))?;
+    let mut limited = file.take(section.len);
+    let cpu = if section.version == 1 {
+        CpuState::decode_v1(&mut limited)
+    } else if section.version >= 2 {
+        CpuState::decode_v2(&mut limited)
+    } else {
+        return Err(XtaskError::Message(format!(
+            "CPU {tag}: unsupported section version {}",
+            section.version
+        )));
+    };
+    cpu.map_err(|e| XtaskError::Message(format!("CPU {tag}: decode failed: {e}")))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct VcpuDigestSummary {
+    rip: u64,
+    halted: bool,
+    internal_len: u64,
+    internal_preview: Vec<u8>,
+}
+
+fn diff_cpus_section(
+    out: &mut DiffOutput,
+    file_a: &mut fs::File,
+    sections_a: &[SnapshotSectionInfo],
+    file_b: &mut fs::File,
+    sections_b: &[SnapshotSectionInfo],
+) -> Result<()> {
+    let sec_a = sections_a.iter().find(|s| s.id == SectionId::CPUS);
+    let sec_b = sections_b.iter().find(|s| s.id == SectionId::CPUS);
+
+    match (sec_a, sec_b) {
+        (None, None) => Ok(()),
+        (Some(_), None) => {
+            out.diff_msg("CPUS", "A=present B=<missing>");
+            Ok(())
+        }
+        (None, Some(_)) => {
+            out.diff_msg("CPUS", "A=<missing> B=present");
+            Ok(())
+        }
+        (Some(sec_a), Some(sec_b)) => {
+            if sec_a.version != sec_b.version {
+                out.diff("CPUS.version", sec_a.version, sec_b.version);
+                return Ok(());
+            }
+            if sec_a.version == 0 {
+                out.diff_msg("CPUS", "unsupported CPUS section version 0");
+                return Ok(());
+            }
+
+            let digests_a = read_cpus_digests(file_a, sec_a, "A")?;
+            let digests_b = read_cpus_digests(file_b, sec_b, "B")?;
+
+            if digests_a.len() != digests_b.len() {
+                out.diff("CPUS.count", digests_a.len(), digests_b.len());
+            }
+
+            let mut map_a: BTreeMap<u32, VcpuDigestSummary> = BTreeMap::new();
+            let mut map_b: BTreeMap<u32, VcpuDigestSummary> = BTreeMap::new();
+
+            for (apic_id, v) in digests_a {
+                if map_a.insert(apic_id, v).is_some() {
+                    return Err(XtaskError::Message(format!(
+                        "CPUS A: duplicate apic_id {apic_id}"
+                    )));
+                }
+            }
+            for (apic_id, v) in digests_b {
+                if map_b.insert(apic_id, v).is_some() {
+                    return Err(XtaskError::Message(format!(
+                        "CPUS B: duplicate apic_id {apic_id}"
+                    )));
+                }
+            }
+
+            let all_keys: BTreeMap<u32, ()> =
+                map_a.keys().chain(map_b.keys()).map(|&k| (k, ())).collect();
+
+            for (apic_id, ()) in all_keys {
+                match (map_a.get(&apic_id), map_b.get(&apic_id)) {
+                    (Some(a), Some(b)) => {
+                        if a.rip != b.rip {
+                            out.diff(
+                                &format!("CPUS[apic_id={apic_id}].rip"),
+                                format!("0x{:x}", a.rip),
+                                format!("0x{:x}", b.rip),
+                            );
+                        }
+                        if a.halted != b.halted {
+                            out.diff(
+                                &format!("CPUS[apic_id={apic_id}].halted"),
+                                a.halted,
+                                b.halted,
+                            );
+                        }
+                        if a.internal_len != b.internal_len {
+                            out.diff(
+                                &format!("CPUS[apic_id={apic_id}].internal_len"),
+                                a.internal_len,
+                                b.internal_len,
+                            );
+                        }
+                        if a.internal_preview != b.internal_preview {
+                            out.diff(
+                                &format!("CPUS[apic_id={apic_id}].internal_preview"),
+                                fmt_preview_bytes(&a.internal_preview),
+                                fmt_preview_bytes(&b.internal_preview),
+                            );
+                        }
+                    }
+                    (Some(_), None) => out.diff_msg(
+                        &format!("CPUS[apic_id={apic_id}]"),
+                        "present in A, missing in B",
+                    ),
+                    (None, Some(_)) => out.diff_msg(
+                        &format!("CPUS[apic_id={apic_id}]"),
+                        "missing in A, present in B",
+                    ),
+                    (None, None) => {}
+                }
+            }
+
+            Ok(())
+        }
+    }
+}
+
+fn read_cpus_digests(
+    file: &mut fs::File,
+    section: &SnapshotSectionInfo,
+    tag: &str,
+) -> Result<Vec<(u32, VcpuDigestSummary)>> {
+    let section_end = section
+        .offset
+        .checked_add(section.len)
+        .ok_or_else(|| XtaskError::Message("section length overflow".to_string()))?;
+    file.seek(SeekFrom::Start(section.offset))
+        .map_err(|e| XtaskError::Message(format!("seek CPUS {tag}: {e}")))?;
+
+    ensure_section_remaining(file, section_end, 4, "cpu count")?;
+    let count = read_u32_le(file)?;
+    if count > limits::MAX_CPU_COUNT {
+        return Err(XtaskError::Message(format!(
+            "CPUS {tag}: too many CPUs ({count})"
+        )));
+    }
+
+    let mut out = Vec::with_capacity(count as usize);
+    for idx in 0..count {
+        ensure_section_remaining(file, section_end, 8, "cpu entry_len")?;
+        let entry_len = read_u64_le(file)?;
+        let entry_start = file
+            .stream_position()
+            .map_err(|e| XtaskError::Message(format!("tell CPUS {tag} entry {idx}: {e}")))?;
+        let entry_end = entry_start
+            .checked_add(entry_len)
+            .ok_or_else(|| XtaskError::Message("cpu entry length overflow".to_string()))?;
+        if entry_end > section_end {
+            return Err(XtaskError::Message(format!("CPUS {tag}: truncated section")));
+        }
+
+        let mut entry_reader = file.take(entry_len);
+        let apic_id = read_u32_le(&mut entry_reader)
+            .map_err(|e| XtaskError::Message(format!("CPUS {tag}: apic_id: {e}")))?;
+
+        let cpu = if section.version == 1 {
+            CpuState::decode_v1(&mut entry_reader)
+        } else {
+            CpuState::decode_v2(&mut entry_reader)
+        }
+        .map_err(|e| XtaskError::Message(format!("CPUS {tag} apic_id={apic_id}: cpu: {e}")))?;
+
+        let internal_len = read_u64_le(&mut entry_reader).map_err(|e| {
+            XtaskError::Message(format!("CPUS {tag} apic_id={apic_id}: internal_len: {e}"))
+        })?;
+
+        // Preview a few bytes without reading the full internal blob.
+        let preview_len = (internal_len as usize).min(8);
+        let mut preview = vec![0u8; preview_len];
+        if preview_len != 0 {
+            entry_reader.read_exact(&mut preview).map_err(|e| {
+                XtaskError::Message(format!(
+                    "CPUS {tag} apic_id={apic_id}: internal_preview: {e}"
+                ))
+            })?;
+        }
+
+        out.push((
+            apic_id,
+            VcpuDigestSummary {
+                rip: cpu.rip,
+                halted: cpu.halted,
+                internal_len,
+                internal_preview: preview,
+            },
+        ));
+
+        // Skip any remaining bytes in this entry.
+        file.seek(SeekFrom::Start(entry_end))
+            .map_err(|e| XtaskError::Message(format!("skip CPUS {tag} entry: {e}")))?;
+    }
+
+    Ok(out)
+}
+
+fn fmt_preview_bytes(bytes: &[u8]) -> String {
+    let mut out = String::new();
+    out.push('[');
+    for (idx, b) in bytes.iter().copied().enumerate() {
+        if idx != 0 {
+            out.push_str(", ");
+        }
+        out.push_str(&format!("0x{b:02x}"));
+    }
+    out.push(']');
+    out
+}
+
+fn diff_mmu_section(
+    out: &mut DiffOutput,
+    file_a: &mut fs::File,
+    sections_a: &[SnapshotSectionInfo],
+    file_b: &mut fs::File,
+    sections_b: &[SnapshotSectionInfo],
+) -> Result<()> {
+    let sec_a = sections_a.iter().find(|s| s.id == SectionId::MMU);
+    let sec_b = sections_b.iter().find(|s| s.id == SectionId::MMU);
+
+    match (sec_a, sec_b) {
+        (None, None) => Ok(()),
+        (Some(_), None) => {
+            out.diff_msg("MMU", "A=present B=<missing>");
+            Ok(())
+        }
+        (None, Some(_)) => {
+            out.diff_msg("MMU", "A=<missing> B=present");
+            Ok(())
+        }
+        (Some(sec_a), Some(sec_b)) => {
+            let mmu_a = read_mmu_state(file_a, sec_a, "A")?;
+            let mmu_b = read_mmu_state(file_b, sec_b, "B")?;
+
+            macro_rules! diff_hex_u64 {
+                ($field:literal, $a:expr, $b:expr) => {
+                    if $a != $b {
+                        out.diff(
+                            concat!("MMU.", $field),
+                            format!("0x{:x}", $a),
+                            format!("0x{:x}", $b),
+                        );
+                    }
+                };
+            }
+
+            diff_hex_u64!("cr0", mmu_a.cr0, mmu_b.cr0);
+            diff_hex_u64!("cr3", mmu_a.cr3, mmu_b.cr3);
+            diff_hex_u64!("cr4", mmu_a.cr4, mmu_b.cr4);
+            diff_hex_u64!("efer", mmu_a.efer, mmu_b.efer);
+            diff_hex_u64!("apic_base", mmu_a.apic_base, mmu_b.apic_base);
+            diff_hex_u64!("tsc", mmu_a.tsc, mmu_b.tsc);
+            diff_hex_u64!("gdtr_base", mmu_a.gdtr_base, mmu_b.gdtr_base);
+            if mmu_a.gdtr_limit != mmu_b.gdtr_limit {
+                out.diff("MMU.gdtr_limit", mmu_a.gdtr_limit, mmu_b.gdtr_limit);
+            }
+            diff_hex_u64!("idtr_base", mmu_a.idtr_base, mmu_b.idtr_base);
+            if mmu_a.idtr_limit != mmu_b.idtr_limit {
+                out.diff("MMU.idtr_limit", mmu_a.idtr_limit, mmu_b.idtr_limit);
+            }
+
+            Ok(())
+        }
+    }
+}
+
+fn read_mmu_state(file: &mut fs::File, section: &SnapshotSectionInfo, tag: &str) -> Result<MmuState> {
+    file.seek(SeekFrom::Start(section.offset))
+        .map_err(|e| XtaskError::Message(format!("seek MMU {tag}: {e}")))?;
+    let mut limited = file.take(section.len);
+    let mmu = if section.version == 1 {
+        MmuState::decode_v1(&mut limited)
+    } else if section.version >= 2 {
+        MmuState::decode_v2(&mut limited)
+    } else {
+        return Err(XtaskError::Message(format!(
+            "MMU {tag}: unsupported section version {}",
+            section.version
+        )));
+    };
+    mmu.map_err(|e| XtaskError::Message(format!("MMU {tag}: decode failed: {e}")))
+}
+
+fn diff_disks_section(
+    out: &mut DiffOutput,
+    file_a: &mut fs::File,
+    sections_a: &[SnapshotSectionInfo],
+    file_b: &mut fs::File,
+    sections_b: &[SnapshotSectionInfo],
+) -> Result<()> {
+    let sec_a = sections_a.iter().find(|s| s.id == SectionId::DISKS);
+    let sec_b = sections_b.iter().find(|s| s.id == SectionId::DISKS);
+
+    match (sec_a, sec_b) {
+        (None, None) => return Ok(()),
+        (Some(_), None) => {
+            out.diff_msg("DISKS", "A=present B=<missing>");
+            return Ok(());
+        }
+        (None, Some(_)) => {
+            out.diff_msg("DISKS", "A=<missing> B=present");
+            return Ok(());
+        }
+        (Some(sec_a), Some(sec_b)) => {
+            if sec_a.version != sec_b.version {
+                out.diff("DISKS.version", sec_a.version, sec_b.version);
+                return Ok(());
+            }
+            if sec_a.version != 1 {
+                out.diff_msg(
+                    "DISKS",
+                    format!("unsupported DISKS section version {}", sec_a.version),
+                );
+                return Ok(());
+            }
+
+            let disks_a = read_disks_refs(file_a, sec_a, "A")?;
+            let disks_b = read_disks_refs(file_b, sec_b, "B")?;
+
+            if disks_a.disks.len() != disks_b.disks.len() {
+                out.diff("DISKS.count", disks_a.disks.len(), disks_b.disks.len());
+            }
+
+            let order_a: Vec<u32> = disks_a.disks.iter().map(|d| d.disk_id).collect();
+            let order_b: Vec<u32> = disks_b.disks.iter().map(|d| d.disk_id).collect();
+
+            let mut map_a: BTreeMap<u32, &aero_snapshot::DiskOverlayRef> = BTreeMap::new();
+            let mut map_b: BTreeMap<u32, &aero_snapshot::DiskOverlayRef> = BTreeMap::new();
+            for d in &disks_a.disks {
+                map_a.insert(d.disk_id, d);
+            }
+            for d in &disks_b.disks {
+                map_b.insert(d.disk_id, d);
+            }
+
+            if order_a != order_b && map_a.keys().copied().collect::<Vec<_>>() == map_b.keys().copied().collect::<Vec<_>>() {
+                out.diff_msg("DISKS.order", "same entries, different on-disk ordering");
+            }
+
+            let all_keys: BTreeMap<u32, ()> =
+                map_a.keys().chain(map_b.keys()).map(|&k| (k, ())).collect();
+
+            for (disk_id, ()) in all_keys {
+                match (map_a.get(&disk_id), map_b.get(&disk_id)) {
+                    (Some(a), Some(b)) => {
+                        if a.base_image != b.base_image {
+                            out.diff(
+                                &format!("DISKS[disk_id={disk_id}].base_image"),
+                                fmt_disk_ref(&a.base_image),
+                                fmt_disk_ref(&b.base_image),
+                            );
+                        }
+                        if a.overlay_image != b.overlay_image {
+                            out.diff(
+                                &format!("DISKS[disk_id={disk_id}].overlay_image"),
+                                fmt_disk_ref(&a.overlay_image),
+                                fmt_disk_ref(&b.overlay_image),
+                            );
+                        }
+                    }
+                    (Some(_), None) => out.diff_msg(
+                        &format!("DISKS[disk_id={disk_id}]"),
+                        "present in A, missing in B",
+                    ),
+                    (None, Some(_)) => out.diff_msg(
+                        &format!("DISKS[disk_id={disk_id}]"),
+                        "missing in A, present in B",
+                    ),
+                    (None, None) => {}
+                }
+            }
+
+            Ok(())
+        }
+    }
+}
+
+fn read_disks_refs(
+    file: &mut fs::File,
+    section: &SnapshotSectionInfo,
+    tag: &str,
+) -> Result<DiskOverlayRefs> {
+    file.seek(SeekFrom::Start(section.offset))
+        .map_err(|e| XtaskError::Message(format!("seek DISKS {tag}: {e}")))?;
+    let mut limited = file.take(section.len);
+    DiskOverlayRefs::decode(&mut limited)
+        .map_err(|e| XtaskError::Message(format!("DISKS {tag}: decode failed: {e}")))
+}
+
+fn fmt_disk_ref(path: &str) -> String {
+    const MAX_CHARS: usize = 200;
+    if path.is_empty() {
+        return "<unset>".to_string();
+    }
+    let truncated: String = path.chars().take(MAX_CHARS + 1).collect();
+    if truncated.chars().count() <= MAX_CHARS {
+        return format!("{path:?}");
+    }
+    let mut s: String = path.chars().take(MAX_CHARS).collect();
+    s.push('…');
+    format!("{s:?}")
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2548,6 +3044,204 @@ fn diff_ram_header(
             }
         }
     }
+}
+
+fn diff_ram_samples(
+    out: &mut DiffOutput,
+    file_a: &mut fs::File,
+    index_a: &SnapshotIndex,
+    file_b: &mut fs::File,
+    index_b: &SnapshotIndex,
+) -> Result<()> {
+    const MAX_SAMPLES: usize = 3;
+
+    let Some(sec_a) = index_a.sections.iter().find(|s| s.id == SectionId::RAM) else {
+        return Ok(());
+    };
+    let Some(sec_b) = index_b.sections.iter().find(|s| s.id == SectionId::RAM) else {
+        return Ok(());
+    };
+
+    // Only sample when both snapshots have readable RAM headers and use the same mode. Header field
+    // diffs are already reported by `diff_ram_header`; this is just extra context.
+    let (Some(ram_a), Some(ram_b)) = (index_a.ram.as_ref(), index_b.ram.as_ref()) else {
+        return Ok(());
+    };
+    if ram_a.mode != ram_b.mode {
+        return Ok(());
+    }
+    if ram_a.mode == RamMode::Full && ram_a.chunk_size != ram_b.chunk_size {
+        return Ok(());
+    }
+    if ram_a.mode == RamMode::Dirty && ram_a.page_size != ram_b.page_size {
+        return Ok(());
+    }
+
+    let samp_a = read_ram_samples(file_a, sec_a, MAX_SAMPLES, "A")?;
+    let samp_b = read_ram_samples(file_b, sec_b, MAX_SAMPLES, "B")?;
+
+    match (samp_a, samp_b) {
+        (RamSamples::Full(a), RamSamples::Full(b)) => {
+            for idx in 0..MAX_SAMPLES.min(a.chunks.len()).min(b.chunks.len()) {
+                let (ua, ca) = a.chunks[idx];
+                let (ub, cb) = b.chunks[idx];
+                if ua != ub {
+                    out.diff(
+                        &format!("RAM.sample.chunk[{idx}].uncompressed_len"),
+                        ua,
+                        ub,
+                    );
+                }
+                if ca != cb {
+                    out.diff(
+                        &format!("RAM.sample.chunk[{idx}].compressed_len"),
+                        ca,
+                        cb,
+                    );
+                }
+            }
+        }
+        (RamSamples::Dirty(a), RamSamples::Dirty(b)) => {
+            for idx in 0..MAX_SAMPLES.min(a.pages.len()).min(b.pages.len()) {
+                let (pia, ua, ca) = a.pages[idx];
+                let (pib, ub, cb) = b.pages[idx];
+                if pia != pib {
+                    out.diff(&format!("RAM.sample.page[{idx}].page_idx"), pia, pib);
+                }
+                if ua != ub {
+                    out.diff(
+                        &format!("RAM.sample.page[{idx}].uncompressed_len"),
+                        ua,
+                        ub,
+                    );
+                }
+                if ca != cb {
+                    out.diff(
+                        &format!("RAM.sample.page[{idx}].compressed_len"),
+                        ca,
+                        cb,
+                    );
+                }
+            }
+        }
+        // Mode differs or decoding mismatch; header already reports mode differences.
+        _ => {}
+    }
+
+    Ok(())
+}
+
+#[derive(Debug, Clone)]
+struct FullRamSamples {
+    chunks: Vec<(u32, u32)>,
+}
+
+#[derive(Debug, Clone)]
+struct DirtyRamSamples {
+    pages: Vec<(u64, u32, u32)>,
+}
+
+#[derive(Debug, Clone)]
+enum RamSamples {
+    Full(FullRamSamples),
+    Dirty(DirtyRamSamples),
+}
+
+fn read_ram_samples(
+    file: &mut fs::File,
+    section: &SnapshotSectionInfo,
+    max_samples: usize,
+    tag: &str,
+) -> Result<RamSamples> {
+    let section_end = section
+        .offset
+        .checked_add(section.len)
+        .ok_or_else(|| XtaskError::Message("section length overflow".to_string()))?;
+    file.seek(SeekFrom::Start(section.offset))
+        .map_err(|e| XtaskError::Message(format!("seek RAM {tag}: {e}")))?;
+
+    ensure_section_remaining(file, section_end, 8 + 4 + 1 + 1 + 2, "RAM header")?;
+    let _total_len = read_u64_le(file)?;
+    let page_size = read_u32_le(file)?;
+    let mode = read_u8(file)?;
+    let _compression = read_u8(file)?;
+    let _reserved = read_u16_le(file)?;
+
+    match mode {
+        0 => {
+            // Full snapshot (chunked).
+            ensure_section_remaining(file, section_end, 4, "RAM chunk_size")?;
+            let chunk_size = read_u32_le(file)?;
+            if chunk_size == 0 {
+                return Err(XtaskError::Message(format!("RAM {tag}: invalid chunk_size")));
+            }
+
+            let mut chunks: Vec<(u32, u32)> = Vec::new();
+            for _ in 0..max_samples {
+                // Each entry is: u32 uncompressed_len + u32 compressed_len + payload[compressed_len].
+                if file.stream_position().map_err(|e| {
+                    XtaskError::Message(format!("tell RAM {tag} chunk: {e}"))
+                })? >= section_end
+                {
+                    break;
+                }
+                ensure_section_remaining(file, section_end, 8, "RAM chunk header")?;
+                let uncompressed_len = read_u32_le(file)?;
+                let compressed_len = read_u32_le(file)?;
+                chunks.push((uncompressed_len, compressed_len));
+
+                let payload_start = file
+                    .stream_position()
+                    .map_err(|e| XtaskError::Message(format!("tell RAM {tag} chunk: {e}")))?;
+                let payload_end = payload_start
+                    .checked_add(u64::from(compressed_len))
+                    .ok_or_else(|| XtaskError::Message("RAM chunk length overflow".to_string()))?;
+                if payload_end > section_end {
+                    return Err(XtaskError::Message(format!("RAM {tag}: truncated chunk payload")));
+                }
+                file.seek(SeekFrom::Start(payload_end))
+                    .map_err(|e| XtaskError::Message(format!("skip RAM {tag} chunk: {e}")))?;
+            }
+            Ok(RamSamples::Full(FullRamSamples { chunks }))
+        }
+        1 => {
+            // Dirty snapshot: u64 dirty_count + repeated (u64 page_idx + u32 uncompressed_len +
+            // u32 compressed_len + payload).
+            ensure_section_remaining(file, section_end, 8, "RAM dirty_count")?;
+            let dirty_count = read_u64_le(file)?;
+            let sample_count = (dirty_count as usize).min(max_samples);
+            let mut pages: Vec<(u64, u32, u32)> = Vec::new();
+            for _ in 0..sample_count {
+                ensure_section_remaining(file, section_end, 8 + 4 + 4, "RAM dirty entry header")?;
+                let page_idx = read_u64_le(file)?;
+                let uncompressed_len = read_u32_le(file)?;
+                let compressed_len = read_u32_le(file)?;
+                pages.push((page_idx, uncompressed_len, compressed_len));
+
+                let payload_start = file
+                    .stream_position()
+                    .map_err(|e| XtaskError::Message(format!("tell RAM {tag} page: {e}")))?;
+                let payload_end = payload_start
+                    .checked_add(u64::from(compressed_len))
+                    .ok_or_else(|| XtaskError::Message("RAM dirty length overflow".to_string()))?;
+                if payload_end > section_end {
+                    return Err(XtaskError::Message(format!("RAM {tag}: truncated dirty payload")));
+                }
+                file.seek(SeekFrom::Start(payload_end))
+                    .map_err(|e| XtaskError::Message(format!("skip RAM {tag} page: {e}")))?;
+            }
+            let _ = page_size; // currently unused; `inspect_snapshot` validates it.
+            Ok(RamSamples::Dirty(DirtyRamSamples { pages }))
+        }
+        other => Err(XtaskError::Message(format!("RAM {tag}: unknown mode {other}"))),
+    }
+}
+
+fn read_u8(r: &mut impl Read) -> Result<u8> {
+    let mut buf = [0u8; 1];
+    r.read_exact(&mut buf)
+        .map_err(|e| XtaskError::Message(format!("read u8: {e}")))?;
+    Ok(buf[0])
 }
 
 fn deep_diff_ram(

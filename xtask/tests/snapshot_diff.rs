@@ -3,8 +3,8 @@
 use std::io::Cursor;
 
 use aero_snapshot::{
-    save_snapshot, CpuState, DeviceState, DiskOverlayRefs, MmuState, SaveOptions, SnapshotMeta,
-    SnapshotSource,
+    save_snapshot, Compression, CpuState, DeviceId, DeviceState, DiskOverlayRef, DiskOverlayRefs,
+    MmuState, SaveOptions, SnapshotMeta, SnapshotSource,
 };
 use assert_cmd::Command;
 use predicates::prelude::*;
@@ -111,3 +111,159 @@ fn snapshot_diff_detects_meta_and_section_difference() {
         .stdout(predicate::str::contains("SectionId(3735928559)"));
 }
 
+struct CustomSource {
+    meta: SnapshotMeta,
+    cpu: CpuState,
+    mmu: MmuState,
+    disks: DiskOverlayRefs,
+    ram: Vec<u8>,
+}
+
+impl CustomSource {
+    fn new(meta: SnapshotMeta, cpu: CpuState, mmu: MmuState, disks: DiskOverlayRefs) -> Self {
+        let mut ram = Vec::with_capacity(4096);
+        ram.extend((0..4096).map(|i| (i as u8).wrapping_mul(23)));
+        Self {
+            meta,
+            cpu,
+            mmu,
+            disks,
+            ram,
+        }
+    }
+}
+
+impl SnapshotSource for CustomSource {
+    fn snapshot_meta(&mut self) -> SnapshotMeta {
+        self.meta.clone()
+    }
+
+    fn cpu_state(&self) -> CpuState {
+        self.cpu.clone()
+    }
+
+    fn mmu_state(&self) -> MmuState {
+        self.mmu.clone()
+    }
+
+    fn device_states(&self) -> Vec<DeviceState> {
+        vec![DeviceState {
+            id: DeviceId::SERIAL,
+            version: 1,
+            flags: 0,
+            data: vec![1, 2, 3, 4],
+        }]
+    }
+
+    fn disk_overlays(&self) -> DiskOverlayRefs {
+        self.disks.clone()
+    }
+
+    fn ram_len(&self) -> usize {
+        self.ram.len()
+    }
+
+    fn read_ram(&self, offset: u64, buf: &mut [u8]) -> aero_snapshot::Result<()> {
+        let offset: usize = offset
+            .try_into()
+            .map_err(|_| aero_snapshot::SnapshotError::Corrupt("ram offset overflow"))?;
+        let end = offset
+            .checked_add(buf.len())
+            .ok_or(aero_snapshot::SnapshotError::Corrupt("ram read overflow"))?;
+        buf.copy_from_slice(&self.ram[offset..end]);
+        Ok(())
+    }
+
+    fn take_dirty_pages(&mut self) -> Option<Vec<u64>> {
+        None
+    }
+}
+
+#[test]
+fn snapshot_diff_detects_cpu_mmu_disks_and_ram_header_changes() {
+    let tmp = tempfile::tempdir().unwrap();
+    let snap_a = tmp.path().join("cpu_a.aerosnap");
+    let snap_b = tmp.path().join("cpu_b.aerosnap");
+
+    let mut cursor = Cursor::new(Vec::new());
+    let mut source_a = CustomSource::new(
+        SnapshotMeta {
+            snapshot_id: 10,
+            parent_snapshot_id: None,
+            created_unix_ms: 0,
+            label: Some("a".to_string()),
+        },
+        CpuState {
+            rip: 0x1111,
+            ..Default::default()
+        },
+        MmuState {
+            cr3: 0x1000,
+            ..Default::default()
+        },
+        DiskOverlayRefs {
+            disks: vec![DiskOverlayRef {
+                disk_id: 0,
+                base_image: "base.img".to_string(),
+                overlay_image: "overlay.img".to_string(),
+            }],
+        },
+    );
+    let mut opts_a = SaveOptions::default();
+    opts_a.ram.compression = Compression::None;
+    opts_a.ram.chunk_size = 1024;
+    save_snapshot(&mut cursor, &mut source_a, opts_a).unwrap();
+    std::fs::write(&snap_a, cursor.into_inner()).unwrap();
+
+    let mut cursor = Cursor::new(Vec::new());
+    let mut source_b = CustomSource::new(
+        SnapshotMeta {
+            snapshot_id: 11,
+            parent_snapshot_id: None,
+            created_unix_ms: 0,
+            label: Some("b".to_string()),
+        },
+        CpuState {
+            rip: 0x2222,
+            ..Default::default()
+        },
+        MmuState {
+            cr3: 0x2000,
+            ..Default::default()
+        },
+        DiskOverlayRefs {
+            disks: vec![DiskOverlayRef {
+                disk_id: 0,
+                base_image: "base2.img".to_string(),
+                overlay_image: "overlay.img".to_string(),
+            }],
+        },
+    );
+    let mut opts_b = SaveOptions::default();
+    opts_b.ram.compression = Compression::Lz4;
+    opts_b.ram.chunk_size = 2048;
+    save_snapshot(&mut cursor, &mut source_b, opts_b).unwrap();
+    std::fs::write(&snap_b, cursor.into_inner()).unwrap();
+
+    Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args([
+            "snapshot",
+            "diff",
+            snap_a.to_str().unwrap(),
+            snap_b.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("diff CPU.rip"))
+        .stdout(predicate::str::contains("0x1111"))
+        .stdout(predicate::str::contains("0x2222"))
+        .stdout(predicate::str::contains("diff MMU.cr3"))
+        .stdout(predicate::str::contains("0x1000"))
+        .stdout(predicate::str::contains("0x2000"))
+        .stdout(predicate::str::contains("diff DISKS[disk_id=0].base_image"))
+        .stdout(predicate::str::contains("base2.img"))
+        .stdout(predicate::str::contains("diff RAM.compression: A=none B=lz4"))
+        .stdout(predicate::str::contains("diff RAM.chunk_size"))
+        .stdout(predicate::str::contains("A=1024"))
+        .stdout(predicate::str::contains("B=2048"));
+}
