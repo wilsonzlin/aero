@@ -1143,6 +1143,44 @@ HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MSISupported, 0
 HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MessageNumberLimit, 0x00010001, 8
 """
 
+    too_small_limit = r"""
+[Version]
+Signature="$WINDOWS NT$"
+
+[Manufacturer]
+%Mfg% = Mfg,NTx86
+
+[Mfg.NTx86]
+%Dev% = Install, PCI\VEN_1AF4&DEV_1041&REV_01
+
+[Install.NT.HW]
+AddReg = MsiReg
+
+[MsiReg]
+HKR, "Interrupt Management",,0x00000010
+HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MSISupported, 0x00010001, 1
+HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MessageNumberLimit, 0x00010001, 2
+"""
+
+    multi_value_limit = r"""
+[Version]
+Signature="$WINDOWS NT$"
+
+[Manufacturer]
+%Mfg% = Mfg,NTx86
+
+[Mfg.NTx86]
+%Dev% = Install, PCI\VEN_1AF4&DEV_1041&REV_01
+
+[Install.NT.HW]
+AddReg = MsiReg
+
+[MsiReg]
+HKR, "Interrupt Management",,0x00000010
+HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MSISupported, 0x00010001, 1
+HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MessageNumberLimit, 0x00010001, 8, 9
+"""
+
     with tempfile.TemporaryDirectory() as td:
         bad_path = Path(td) / "bad.inf"
         bad_path.write_text(bad, encoding="utf-8")
@@ -1182,6 +1220,21 @@ HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MessageNumberLi
                 )
             )
 
+        too_small_path = Path(td) / "too-small.inf"
+        too_small_path.write_text(too_small_limit, encoding="utf-8")
+        too_small_errors = validate_win7_virtio_inf_msi_settings("virtio-net", too_small_path)
+        if not too_small_errors:
+            fail(
+                "internal unit-test failed: validate_win7_virtio_inf_msi_settings unexpectedly passed for an INF with MessageNumberLimit below the per-device minimum"
+            )
+
+        multi_value_path = Path(td) / "multi-value.inf"
+        multi_value_path.write_text(multi_value_limit, encoding="utf-8")
+        multi_value_errors = validate_win7_virtio_inf_msi_settings("virtio-net", multi_value_path)
+        if not multi_value_errors:
+            fail(
+                "internal unit-test failed: validate_win7_virtio_inf_msi_settings unexpectedly passed for an INF with multiple MessageNumberLimit values"
+            )
 
 def validate_win7_virtio_inf_msi_settings(device_name: str, inf_path: Path) -> list[str]:
     """
