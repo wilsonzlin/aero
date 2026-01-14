@@ -362,6 +362,96 @@ fn error_mmio_registers_are_populated_on_decode_error_irq() {
 }
 
 #[test]
+fn error_mmio_payload_is_sticky_across_irq_ack_and_overwritten_by_next_error() {
+    let mut mem = VecMemory::new(0x20_000);
+    let mut dev = new_test_device(AeroGpuDeviceConfig::default());
+
+    // Ring layout in guest memory.
+    let ring_gpa = 0x1000u64;
+    let ring_size = 0x1000u32;
+    let entry_count = 8u32;
+    let entry_stride = AeroGpuSubmitDesc::SIZE_BYTES;
+
+    // Ring header.
+    mem.write_u32(ring_gpa + RING_MAGIC_OFFSET, AEROGPU_RING_MAGIC);
+    mem.write_u32(ring_gpa + RING_ABI_VERSION_OFFSET, dev.regs.abi_version);
+    mem.write_u32(ring_gpa + RING_SIZE_BYTES_OFFSET, ring_size);
+    mem.write_u32(ring_gpa + RING_ENTRY_COUNT_OFFSET, entry_count);
+    mem.write_u32(ring_gpa + RING_ENTRY_STRIDE_BYTES_OFFSET, entry_stride);
+    mem.write_u32(ring_gpa + RING_FLAGS_OFFSET, 0);
+    mem.write_u32(ring_gpa + RING_HEAD_OFFSET, 0); // head
+    mem.write_u32(ring_gpa + RING_TAIL_OFFSET, 1); // tail
+
+    dev.mmio_write(&mut mem, mmio::RING_GPA_LO, 4, ring_gpa as u32);
+    dev.mmio_write(&mut mem, mmio::RING_GPA_HI, 4, (ring_gpa >> 32) as u32);
+    dev.mmio_write(&mut mem, mmio::RING_SIZE_BYTES, 4, ring_size);
+    dev.mmio_write(&mut mem, mmio::RING_CONTROL, 4, ring_control::ENABLE);
+    dev.mmio_write(&mut mem, mmio::IRQ_ENABLE, 4, irq_bits::ERROR);
+
+    // Submit descriptor at slot 0: inconsistent cmd stream (cmd_size != 0 but cmd_gpa == 0)
+    // triggers a decode error.
+    let fence0 = 42u64;
+    let desc0_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
+    mem.write_u32(
+        desc0_gpa + SUBMIT_DESC_SIZE_BYTES_OFFSET,
+        AeroGpuSubmitDesc::SIZE_BYTES,
+    );
+    mem.write_u64(desc0_gpa + SUBMIT_DESC_CMD_GPA_OFFSET, 0); // cmd_gpa
+    mem.write_u32(desc0_gpa + SUBMIT_DESC_CMD_SIZE_BYTES_OFFSET, 4); // cmd_size_bytes (inconsistent)
+    mem.write_u64(desc0_gpa + SUBMIT_DESC_SIGNAL_FENCE_OFFSET, fence0); // signal_fence
+
+    dev.mmio_write(&mut mem, mmio::DOORBELL, 4, 1);
+
+    assert_ne!(dev.regs.irq_status & irq_bits::ERROR, 0);
+    assert!(dev.irq_level());
+
+    let code0 = dev.mmio_read(&mut mem, mmio::ERROR_CODE, 4);
+    let fence0_read = (dev.mmio_read(&mut mem, mmio::ERROR_FENCE_LO, 4) as u64)
+        | ((dev.mmio_read(&mut mem, mmio::ERROR_FENCE_HI, 4) as u64) << 32);
+    let count0 = dev.mmio_read(&mut mem, mmio::ERROR_COUNT, 4);
+    assert_eq!(code0, AerogpuErrorCode::CmdDecode as u32);
+    assert_eq!(fence0_read, fence0);
+    assert_eq!(count0, 1);
+
+    // IRQ_ACK clears IRQ_STATUS but must not clear the latched payload.
+    dev.mmio_write(&mut mem, mmio::IRQ_ACK, 4, irq_bits::ERROR);
+    assert_eq!(dev.regs.irq_status & irq_bits::ERROR, 0);
+    assert!(!dev.irq_level());
+
+    assert_eq!(dev.mmio_read(&mut mem, mmio::ERROR_CODE, 4), code0);
+    let fence0_after_ack = (dev.mmio_read(&mut mem, mmio::ERROR_FENCE_LO, 4) as u64)
+        | ((dev.mmio_read(&mut mem, mmio::ERROR_FENCE_HI, 4) as u64) << 32);
+    assert_eq!(fence0_after_ack, fence0_read);
+    assert_eq!(dev.mmio_read(&mut mem, mmio::ERROR_COUNT, 4), count0);
+
+    // Submit descriptor at slot 1: cmd_gpa + cmd_size overflows u64 to trigger an OOB-style decode error.
+    let fence1 = 43u64;
+    let desc1_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES + u64::from(entry_stride);
+    mem.write_u32(
+        desc1_gpa + SUBMIT_DESC_SIZE_BYTES_OFFSET,
+        AeroGpuSubmitDesc::SIZE_BYTES,
+    );
+    mem.write_u64(desc1_gpa + SUBMIT_DESC_CMD_GPA_OFFSET, u64::MAX - 3);
+    mem.write_u32(desc1_gpa + SUBMIT_DESC_CMD_SIZE_BYTES_OFFSET, 4);
+    mem.write_u64(desc1_gpa + SUBMIT_DESC_SIGNAL_FENCE_OFFSET, fence1);
+
+    // Queue the second submission.
+    mem.write_u32(ring_gpa + RING_TAIL_OFFSET, 2);
+    dev.mmio_write(&mut mem, mmio::DOORBELL, 4, 1);
+
+    assert_ne!(dev.regs.irq_status & irq_bits::ERROR, 0);
+    assert!(dev.irq_level());
+
+    let code1 = dev.mmio_read(&mut mem, mmio::ERROR_CODE, 4);
+    let fence1_read = (dev.mmio_read(&mut mem, mmio::ERROR_FENCE_LO, 4) as u64)
+        | ((dev.mmio_read(&mut mem, mmio::ERROR_FENCE_HI, 4) as u64) << 32);
+    let count1 = dev.mmio_read(&mut mem, mmio::ERROR_COUNT, 4);
+    assert_eq!(code1, AerogpuErrorCode::Oob as u32);
+    assert_eq!(fence1_read, fence1);
+    assert_eq!(count1, 2);
+}
+
+#[test]
 fn mmio_reports_transfer_feature_for_abi_1_1_plus() {
     let mut mem = VecMemory::new(0x20_000);
     let mut dev = new_test_device(AeroGpuDeviceConfig::default());
