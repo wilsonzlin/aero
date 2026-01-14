@@ -1139,6 +1139,21 @@ impl AeroGpuMmioDevice {
     }
 
     pub fn tick_vblank(&mut self, now_ns: u64) {
+        // Prefer the shared deterministic platform clock when available.
+        //
+        // `Machine::tick_platform` advances both the platform `ManualClock` and this device's
+        // internal `now_ns`, but tests and some integrations may advance the shared clock directly
+        // (e.g. `Machine::platform_clock().advance_ns(...)`) and then call `process_aerogpu()`
+        // without going through `tick_platform`.
+        //
+        // Using the clock as the source of truth ensures vblank scheduling and vsync-paced fence
+        // completion keep making forward progress in those cases as well.
+        let now_ns = self
+            .clock
+            .as_ref()
+            .map(aero_interrupts::clock::Clock::now_ns)
+            .unwrap_or(now_ns);
+
         if now_ns < self.now_ns {
             return;
         }
