@@ -109,4 +109,28 @@ mod tests {
         ];
         assert_eq!(parse_vm_snapshot_device_version_flags(&bytes), Some((2, 9)));
     }
+
+    #[test]
+    fn parses_gpu_vram_chunk_header_as_legacy_aero() {
+        // `gpu.vram` chunk payloads begin with an 8-byte legacy `AERO` header so the snapshot builder
+        // can derive distinct `(version, flags)` tuples for each chunk (flags = chunk_index).
+        //
+        // The payload is larger than 16 bytes and includes non-ASCII bytes in the io-snapshot
+        // device-id slot (`bytes[8..12]`), so this should *not* be interpreted as an
+        // `aero-io-snapshot` TLV header.
+        let mut bytes = [0u8; 24];
+        bytes[0..4].copy_from_slice(b"AERO");
+        // version = 1, flags = 7
+        bytes[4..6].copy_from_slice(&1u16.to_le_bytes());
+        bytes[6..8].copy_from_slice(&7u16.to_le_bytes());
+        // Non-ASCII marker in the would-be device_id slot (matches `gpu.vram` chunk magic: 0x01415256).
+        bytes[8..12].copy_from_slice(&[0x56, 0x52, 0x41, 0x01]);
+        // Would be interpreted as device_version by the io-snapshot parser; ensure we don't use it.
+        bytes[12..16].copy_from_slice(&[0xaa, 0xbb, 0xcc, 0xdd]);
+
+        assert_eq!(
+            parse_vm_snapshot_device_version_flags(&bytes),
+            Some((1, 7))
+        );
+    }
 }
