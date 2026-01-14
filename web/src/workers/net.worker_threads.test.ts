@@ -195,7 +195,7 @@ function makeInit(segments: SharedMemorySegments): WorkerInitMessage {
 
 describe("workers/net.worker (worker_threads)", () => {
   it("supports L2 token auth via Sec-WebSocket-Protocol (subprotocol)", async () => {
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 1 });
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: TEST_VRAM_MIB });
     const token = "sekrit";
 
     const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
@@ -237,7 +237,7 @@ describe("workers/net.worker (worker_threads)", () => {
   }, 20000);
 
   it("supports L2 token auth via query param (tokenTransport=query)", async () => {
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 1 });
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: TEST_VRAM_MIB });
     const token = "sekrit";
 
     const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
@@ -628,7 +628,7 @@ describe("workers/net.worker (worker_threads)", () => {
   }, 40000);
 
   it("does not forward NET_TX frames queued while the tunnel is closed after reconnect", async () => {
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 1 });
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: TEST_VRAM_MIB });
 
     const netTxRing = openRingByKind(segments.ioIpc, IO_IPC_NET_TX_QUEUE_KIND);
 

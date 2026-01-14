@@ -92,7 +92,6 @@ import {
   estimateFullFrameUploadBytes,
   estimateTextureUploadBytes,
 } from "../gpu/dirty-rect-policy";
-import { readScanoutRgba8FromGuestRam } from "../runtime/scanout_readback";
 import type { AeroConfig } from '../config/aero_config';
 import { VRAM_BASE_PADDR } from '../arch/guest_phys.ts';
 import {
@@ -579,15 +578,8 @@ const tryReadHwCursorImageRgba8 = (
   pitchBytes: number,
   format: number,
 ): Uint8Array | null => {
-  const guest = guestU8;
-  const layout = guestLayout;
-  if (!guest || !layout) return null;
-
   if (basePaddr === 0n) return null;
   if (basePaddr > BigInt(Number.MAX_SAFE_INTEGER)) return null;
-
-  const base = Number(basePaddr);
-  if (!Number.isFinite(base) || base < 0) return null;
 
   const w = Math.max(0, width | 0);
   const h = Math.max(0, height | 0);
@@ -600,6 +592,57 @@ const tryReadHwCursorImageRgba8 = (
   const requiredBytesBig = BigInt(pitch) * BigInt(h);
   if (requiredBytesBig > BigInt(Number.MAX_SAFE_INTEGER)) return null;
   const requiredBytes = Number(requiredBytesBig);
+
+  // VRAM aperture fast path (BAR1 backing).
+  //
+  // Hardware cursor surfaces are frequently allocated in VRAM by WDDM drivers. When the cursor
+  // state descriptor points into the shared VRAM aperture, read directly from `vramU8` instead of
+  // guest RAM.
+  const vram = vramU8;
+  if (vram && vramSizeBytes > 0) {
+    const vramBase = BigInt(vramBasePaddr >>> 0);
+    const vramEnd = vramBase + BigInt(vramSizeBytes >>> 0);
+    const endPaddr = basePaddr + requiredBytesBig;
+    if (basePaddr >= vramBase && endPaddr <= vramEnd) {
+      const startBig = basePaddr - vramBase;
+      if (startBig <= BigInt(Number.MAX_SAFE_INTEGER)) {
+        const start = Number(startBig);
+        const end = start + requiredBytes;
+        if (end >= start && end <= vram.byteLength) {
+          const src = vram.subarray(start, end);
+          const out = new Uint8Array(rowBytes * h);
+
+          const isBgra = (format >>> 0) === CURSOR_FORMAT_B8G8R8A8;
+          const isBgrx = (format >>> 0) === CURSOR_FORMAT_B8G8R8X8;
+          if (!isBgra && !isBgrx) return null;
+
+          for (let y = 0; y < h; y += 1) {
+            const srcRow = y * pitch;
+            const dstRow = y * rowBytes;
+            for (let x = 0; x < w; x += 1) {
+              const s = srcRow + x * 4;
+              const d = dstRow + x * 4;
+              // BGR(A/X) -> RGBA.
+              out[d + 0] = src[s + 2]!;
+              out[d + 1] = src[s + 1]!;
+              out[d + 2] = src[s + 0]!;
+              out[d + 3] = isBgra ? src[s + 3]! : 255;
+            }
+          }
+
+          return out;
+        }
+      }
+      return null;
+    }
+  }
+
+  const guest = guestU8;
+  const layout = guestLayout;
+  if (!guest || !layout) return null;
+
+  const base = Number(basePaddr);
+  if (!Number.isFinite(base) || base < 0) return null;
 
   if (!guestRangeInBounds(layout, base, requiredBytes)) return null;
   const start = guestPaddrToRamOffset(layout, base);
@@ -1816,10 +1859,6 @@ const tryReadWddmScanoutFrame = (snap: ScanoutStateSnapshot): WddmScanoutFrameIn
     return null;
   }
 
-  const layout = guestLayout;
-  const ram = guestU8;
-  if (!layout || !ram) return null;
-
   const width = snap.width >>> 0;
   const height = snap.height >>> 0;
   if (width === 0 || height === 0) return null;
@@ -1853,9 +1892,46 @@ const tryReadWddmScanoutFrame = (snap: ScanoutStateSnapshot): WddmScanoutFrameIn
   }
   const out = wddmScanoutRgba;
 
-  const ramBytes = ram.byteLength;
   const requiredSrcBytes = pitchBytes * height;
   if (!Number.isSafeInteger(requiredSrcBytes) || requiredSrcBytes <= 0) return null;
+
+  // Fast path: scanout surface points into the shared VRAM aperture (BAR1 backing).
+  //
+  // When WDDM claims scanout it typically programs base_paddr to a VRAM allocation; in the web
+  // runtime VRAM is represented by a standalone SharedArrayBuffer (`vramU8`).
+  const vram = vramU8;
+  if (vram && vramSizeBytes > 0) {
+    const requiredSrcBytesBig = BigInt(requiredSrcBytes);
+    const vramBase = BigInt(vramBasePaddr >>> 0);
+    const vramEnd = vramBase + BigInt(vramSizeBytes >>> 0);
+    const endPaddr = basePaddr + requiredSrcBytesBig;
+    if (basePaddr >= vramBase && endPaddr <= vramEnd) {
+      const startBig = basePaddr - vramBase;
+      if (startBig <= BigInt(Number.MAX_SAFE_INTEGER)) {
+        const start = Number(startBig);
+        const end = start + requiredSrcBytes;
+        if (end >= start && end <= vram.byteLength) {
+          const src = vram.subarray(start, end);
+          convertScanoutToRgba8({
+            src,
+            srcStrideBytes: pitchBytes,
+            dst: out,
+            dstStrideBytes: rowBytes,
+            width,
+            height,
+            kind,
+          });
+          return { width, height, strideBytes: rowBytes, pixels: out };
+        }
+      }
+      return null;
+    }
+  }
+
+  const layout = guestLayout;
+  const ram = guestU8;
+  if (!layout || !ram) return null;
+  const ramBytes = ram.byteLength;
 
   // Fast path: scanout surface is backed by contiguous guest RAM (i.e. does not cross PCI holes).
   try {
@@ -3490,7 +3566,12 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
               ) {
                 out = cached.subarray(0, outBytes).slice();
               } else {
-                out = readScanoutRgba8FromGuestRam(guest, { basePaddr, width, height, pitchBytes, format }).rgba8;
+                const frame = tryReadWddmScanoutFrame(snap);
+                if (!frame || frame.width !== width || frame.height !== height || frame.pixels.byteLength < outBytes) {
+                  postStub(typeof seq === "number" ? seq : undefined);
+                  return true;
+                }
+                out = frame.pixels.subarray(0, outBytes).slice();
               }
 
               if (includeCursor) {
