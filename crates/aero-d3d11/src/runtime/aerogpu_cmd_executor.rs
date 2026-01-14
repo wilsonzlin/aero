@@ -16268,16 +16268,17 @@ fn cs_main() {
             );
 
             // Compute shader layout: group(0)=VS, group(3)=GS.
-            let bindings = vec![
-                crate::Binding {
-                    group: 0,
-                    binding: crate::binding_model::BINDING_BASE_CBUFFER,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    kind: crate::BindingKind::ConstantBuffer {
-                        slot: 0,
-                        reg_count: 4,
-                    },
+            let vs_bindings = vec![crate::Binding {
+                group: 0,
+                binding: crate::binding_model::BINDING_BASE_CBUFFER,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                kind: crate::BindingKind::ConstantBuffer {
+                    slot: 0,
+                    reg_count: 4,
                 },
+            }];
+
+            let gs_bindings = vec![
                 crate::Binding {
                     group: 3,
                     binding: crate::binding_model::BINDING_BASE_CBUFFER,
@@ -16304,10 +16305,14 @@ fn cs_main() {
             let info = reflection_bindings::build_pipeline_bindings_info(
                 &exec.device,
                 &mut exec.bind_group_layout_cache,
-                [reflection_bindings::ShaderBindingSet::Guest(
-                    bindings.as_slice(),
-                )],
-                reflection_bindings::BindGroupIndexValidation::GuestShaders,
+                [
+                    reflection_bindings::ShaderBindingSet::Guest(vs_bindings.as_slice()),
+                    reflection_bindings::ShaderBindingSet::Internal(gs_bindings.as_slice()),
+                ],
+                reflection_bindings::BindGroupIndexValidation::GuestAndInternal {
+                    max_internal_bind_group_index:
+                        crate::binding_model::BIND_GROUP_INTERNAL_EMULATION,
+                },
             )
             .expect("should build pipeline bindings info for groups 0..3");
             assert_eq!(

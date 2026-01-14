@@ -709,8 +709,10 @@ mod tests {
             let info = build_pipeline_bindings_info(
                 device,
                 &mut layout_cache,
-                [ShaderBindingSet::Guest(gs.as_slice())],
-                BindGroupIndexValidation::GuestShaders,
+                [ShaderBindingSet::Internal(gs.as_slice())],
+                BindGroupIndexValidation::GuestAndInternal {
+                    max_internal_bind_group_index: BIND_GROUP_INTERNAL_EMULATION,
+                },
             )
             .unwrap();
 
