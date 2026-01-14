@@ -59,7 +59,10 @@ use super::bindings::{BindingState, BoundBuffer, BoundConstantBuffer, BoundSampl
 use super::expansion_scratch::{
     ExpansionScratchAlloc, ExpansionScratchAllocator, ExpansionScratchDescriptor,
 };
-use super::gs_translate::GsOutputTopologyKind;
+use super::gs_translate::{
+    GsOutputTopologyKind, GS_PREPASS_BINDING_GS_INPUTS, GS_PREPASS_BINDING_OUT_INDICES,
+    GS_PREPASS_BINDING_OUT_STATE, GS_PREPASS_BINDING_OUT_VERTICES, GS_PREPASS_BINDING_PARAMS,
+};
 use super::index_pulling::{
     IndexPullingParams, INDEX_PULLING_BUFFER_BINDING, INDEX_PULLING_PARAMS_BINDING,
 };
@@ -4918,7 +4921,7 @@ impl AerogpuD3d11Executor {
         // - @binding(5):     flattened GS input payload
         let gs_bgl_entries = [
             wgpu::BindGroupLayoutEntry {
-                binding: 0,
+                binding: GS_PREPASS_BINDING_OUT_VERTICES,
                 visibility: wgpu::ShaderStages::COMPUTE,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Storage { read_only: false },
@@ -4930,7 +4933,7 @@ impl AerogpuD3d11Executor {
                 count: None,
             },
             wgpu::BindGroupLayoutEntry {
-                binding: 1,
+                binding: GS_PREPASS_BINDING_OUT_INDICES,
                 visibility: wgpu::ShaderStages::COMPUTE,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Storage { read_only: false },
@@ -4940,7 +4943,7 @@ impl AerogpuD3d11Executor {
                 count: None,
             },
             wgpu::BindGroupLayoutEntry {
-                binding: 2,
+                binding: GS_PREPASS_BINDING_OUT_STATE,
                 visibility: wgpu::ShaderStages::COMPUTE,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Storage { read_only: false },
@@ -4950,7 +4953,7 @@ impl AerogpuD3d11Executor {
                 count: None,
             },
             wgpu::BindGroupLayoutEntry {
-                binding: 4,
+                binding: GS_PREPASS_BINDING_PARAMS,
                 visibility: wgpu::ShaderStages::COMPUTE,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
@@ -4960,7 +4963,7 @@ impl AerogpuD3d11Executor {
                 count: None,
             },
             wgpu::BindGroupLayoutEntry {
-                binding: 5,
+                binding: GS_PREPASS_BINDING_GS_INPUTS,
                 visibility: wgpu::ShaderStages::COMPUTE,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Storage { read_only: false },
@@ -5008,7 +5011,7 @@ impl AerogpuD3d11Executor {
             layout: gs_bgl.layout.as_ref(),
             entries: &[
                 wgpu::BindGroupEntry {
-                    binding: 0,
+                    binding: GS_PREPASS_BINDING_OUT_VERTICES,
                     resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                         buffer: expanded_vertex_alloc.buffer.as_ref(),
                         offset: expanded_vertex_alloc.offset,
@@ -5016,7 +5019,7 @@ impl AerogpuD3d11Executor {
                     }),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 1,
+                    binding: GS_PREPASS_BINDING_OUT_INDICES,
                     resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                         buffer: expanded_index_alloc.buffer.as_ref(),
                         offset: expanded_index_alloc.offset,
@@ -5024,7 +5027,7 @@ impl AerogpuD3d11Executor {
                     }),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 2,
+                    binding: GS_PREPASS_BINDING_OUT_STATE,
                     resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                         buffer: state_alloc.buffer.as_ref(),
                         offset: state_alloc.offset,
@@ -5032,7 +5035,7 @@ impl AerogpuD3d11Executor {
                     }),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 4,
+                    binding: GS_PREPASS_BINDING_PARAMS,
                     resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                         buffer: params_alloc.buffer.as_ref(),
                         offset: params_alloc.offset,
@@ -5040,7 +5043,7 @@ impl AerogpuD3d11Executor {
                     }),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 5,
+                    binding: GS_PREPASS_BINDING_GS_INPUTS,
                     resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                         buffer: gs_inputs_alloc.buffer.as_ref(),
                         offset: gs_inputs_alloc.offset,
@@ -6311,7 +6314,7 @@ impl AerogpuD3d11Executor {
         // - gs_inputs:    @binding(5) storage
         let gs_bgl_entries = [
             wgpu::BindGroupLayoutEntry {
-                binding: 0,
+                binding: GS_PREPASS_BINDING_OUT_VERTICES,
                 visibility: wgpu::ShaderStages::COMPUTE,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Storage { read_only: false },
@@ -6323,7 +6326,7 @@ impl AerogpuD3d11Executor {
                 count: None,
             },
             wgpu::BindGroupLayoutEntry {
-                binding: 1,
+                binding: GS_PREPASS_BINDING_OUT_INDICES,
                 visibility: wgpu::ShaderStages::COMPUTE,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Storage { read_only: false },
@@ -6333,7 +6336,7 @@ impl AerogpuD3d11Executor {
                 count: None,
             },
             wgpu::BindGroupLayoutEntry {
-                binding: 2,
+                binding: GS_PREPASS_BINDING_OUT_STATE,
                 visibility: wgpu::ShaderStages::COMPUTE,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Storage { read_only: false },
@@ -6349,7 +6352,7 @@ impl AerogpuD3d11Executor {
                 //
                 // Keep these stable so translated GS WGSL can be reused across draw calls and so
                 // point-list and triangle-list prepass paths share the same bind group layout.
-                binding: 4,
+                binding: GS_PREPASS_BINDING_PARAMS,
                 visibility: wgpu::ShaderStages::COMPUTE,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
@@ -6359,7 +6362,7 @@ impl AerogpuD3d11Executor {
                 count: None,
             },
             wgpu::BindGroupLayoutEntry {
-                binding: 5,
+                binding: GS_PREPASS_BINDING_GS_INPUTS,
                 visibility: wgpu::ShaderStages::COMPUTE,
                 ty: wgpu::BindingType::Buffer {
                     // Bound as `read_write` even though the prepass only reads it: vertex pulling
@@ -6410,7 +6413,7 @@ impl AerogpuD3d11Executor {
             layout: gs_bgl.layout.as_ref(),
             entries: &[
                 wgpu::BindGroupEntry {
-                    binding: 0,
+                    binding: GS_PREPASS_BINDING_OUT_VERTICES,
                     resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                         buffer: expanded_vertex_alloc.buffer.as_ref(),
                         offset: expanded_vertex_alloc.offset,
@@ -6418,7 +6421,7 @@ impl AerogpuD3d11Executor {
                     }),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 1,
+                    binding: GS_PREPASS_BINDING_OUT_INDICES,
                     resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                         buffer: expanded_index_alloc.buffer.as_ref(),
                         offset: expanded_index_alloc.offset,
@@ -6426,7 +6429,7 @@ impl AerogpuD3d11Executor {
                     }),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 2,
+                    binding: GS_PREPASS_BINDING_OUT_STATE,
                     resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                         buffer: state_alloc.buffer.as_ref(),
                         offset: state_alloc.offset,
@@ -6434,7 +6437,7 @@ impl AerogpuD3d11Executor {
                     }),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 4,
+                    binding: GS_PREPASS_BINDING_PARAMS,
                     resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                         buffer: params_alloc.buffer.as_ref(),
                         offset: params_alloc.offset,
@@ -6442,7 +6445,7 @@ impl AerogpuD3d11Executor {
                     }),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 5,
+                    binding: GS_PREPASS_BINDING_GS_INPUTS,
                     resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                         buffer: gs_inputs_alloc.buffer.as_ref(),
                         offset: gs_inputs_alloc.offset,

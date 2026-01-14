@@ -30,6 +30,10 @@ use super::aerogpu_state::{
     AerogpuHandle, BlendState, D3D11ShadowState, DepthStencilState, IndexBufferBinding,
     PrimitiveTopology, RasterizerState, ScissorRect, VertexBufferBinding, Viewport,
 };
+use super::gs_translate::{
+    GS_PREPASS_BINDING_GS_INPUTS, GS_PREPASS_BINDING_OUT_INDICES, GS_PREPASS_BINDING_OUT_STATE,
+    GS_PREPASS_BINDING_OUT_VERTICES, GS_PREPASS_BINDING_PARAMS,
+};
 use super::pipeline_layout_cache::PipelineLayoutCache;
 use super::reflection_bindings;
 
@@ -2018,15 +2022,10 @@ impl AerogpuCmdRuntime {
         // - @group(0) @binding(2) out_state (indirect args + counters)
         // - @group(0) @binding(4) params
         // - @group(0) @binding(5) gs_inputs
-        const GS_BINDING_OUT_VERTICES: u32 = 0;
-        const GS_BINDING_OUT_INDICES: u32 = 1;
-        const GS_BINDING_OUT_STATE: u32 = 2;
-        const GS_BINDING_PARAMS: u32 = 4;
-        const GS_BINDING_INPUTS: u32 = 5;
 
         let gs_internal_bgl_entries = [
             wgpu::BindGroupLayoutEntry {
-                binding: GS_BINDING_OUT_VERTICES,
+                binding: GS_PREPASS_BINDING_OUT_VERTICES,
                 visibility: wgpu::ShaderStages::COMPUTE,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Storage { read_only: false },
@@ -2036,7 +2035,7 @@ impl AerogpuCmdRuntime {
                 count: None,
             },
             wgpu::BindGroupLayoutEntry {
-                binding: GS_BINDING_OUT_INDICES,
+                binding: GS_PREPASS_BINDING_OUT_INDICES,
                 visibility: wgpu::ShaderStages::COMPUTE,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Storage { read_only: false },
@@ -2046,7 +2045,7 @@ impl AerogpuCmdRuntime {
                 count: None,
             },
             wgpu::BindGroupLayoutEntry {
-                binding: GS_BINDING_OUT_STATE,
+                binding: GS_PREPASS_BINDING_OUT_STATE,
                 visibility: wgpu::ShaderStages::COMPUTE,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Storage { read_only: false },
@@ -2058,7 +2057,7 @@ impl AerogpuCmdRuntime {
                 count: None,
             },
             wgpu::BindGroupLayoutEntry {
-                binding: GS_BINDING_PARAMS,
+                binding: GS_PREPASS_BINDING_PARAMS,
                 visibility: wgpu::ShaderStages::COMPUTE,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
@@ -2068,7 +2067,7 @@ impl AerogpuCmdRuntime {
                 count: None,
             },
             wgpu::BindGroupLayoutEntry {
-                binding: GS_BINDING_INPUTS,
+                binding: GS_PREPASS_BINDING_GS_INPUTS,
                 visibility: wgpu::ShaderStages::COMPUTE,
                 ty: wgpu::BindingType::Buffer {
                     // `runtime::gs_translate` declares `gs_inputs` as `var<storage, read_write>` so
@@ -2090,23 +2089,23 @@ impl AerogpuCmdRuntime {
             layout: gs_internal_bgl.layout.as_ref(),
             entries: &[
                 wgpu::BindGroupEntry {
-                    binding: GS_BINDING_OUT_VERTICES,
+                    binding: GS_PREPASS_BINDING_OUT_VERTICES,
                     resource: expanded_vertices.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
-                    binding: GS_BINDING_OUT_INDICES,
+                    binding: GS_PREPASS_BINDING_OUT_INDICES,
                     resource: expanded_indices.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
-                    binding: GS_BINDING_OUT_STATE,
+                    binding: GS_PREPASS_BINDING_OUT_STATE,
                     resource: indirect_args.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
-                    binding: GS_BINDING_PARAMS,
+                    binding: GS_PREPASS_BINDING_PARAMS,
                     resource: gs_params.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
-                    binding: GS_BINDING_INPUTS,
+                    binding: GS_PREPASS_BINDING_GS_INPUTS,
                     resource: gs_inputs.as_entire_binding(),
                 },
             ],

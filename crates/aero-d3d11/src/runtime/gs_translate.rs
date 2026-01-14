@@ -60,6 +60,17 @@ use crate::sm4_ir::{
     Sm4Module, Sm4TestBool, SrcKind, Swizzle, WriteMask,
 };
 
+/// `@group(0)` binding numbers used by the translated GS compute prepass.
+///
+/// The WGSL emitted by this module and the executor-side bind group layouts must agree on these
+/// values; keeping them centralized avoids accidental divergence (which would surface as wgpu
+/// pipeline layout validation errors).
+pub const GS_PREPASS_BINDING_OUT_VERTICES: u32 = 0;
+pub const GS_PREPASS_BINDING_OUT_INDICES: u32 = 1;
+pub const GS_PREPASS_BINDING_OUT_STATE: u32 = 2;
+pub const GS_PREPASS_BINDING_PARAMS: u32 = 4;
+pub const GS_PREPASS_BINDING_GS_INPUTS: u32 = 5;
+
 // D3D system-value IDs used by `Sm4Decl::InputSiv`.
 // Values match the tokenized shader format (`d3d10tokenizedprogramformat.h` / `d3d11tokenizedprogramformat.h`)
 // and Aero's own signature-driven translator (`shader_translate.rs`).
@@ -1866,15 +1877,30 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_impl(
         w.line("");
     }
 
-    w.line("@group(0) @binding(0) var<storage, read_write> out_vertices: ExpandedVertexBuffer;");
-    w.line("@group(0) @binding(1) var<storage, read_write> out_indices: U32Buffer;");
-    w.line("@group(0) @binding(2) var<storage, read_write> out_state: GsPrepassState;");
-    w.line("@group(0) @binding(4) var<uniform> params: GsPrepassParams;");
+    w.line(&format!(
+        "@group(0) @binding({}) var<storage, read_write> out_vertices: ExpandedVertexBuffer;",
+        GS_PREPASS_BINDING_OUT_VERTICES
+    ));
+    w.line(&format!(
+        "@group(0) @binding({}) var<storage, read_write> out_indices: U32Buffer;",
+        GS_PREPASS_BINDING_OUT_INDICES
+    ));
+    w.line(&format!(
+        "@group(0) @binding({}) var<storage, read_write> out_state: GsPrepassState;",
+        GS_PREPASS_BINDING_OUT_STATE
+    ));
+    w.line(&format!(
+        "@group(0) @binding({}) var<uniform> params: GsPrepassParams;",
+        GS_PREPASS_BINDING_PARAMS
+    ));
     // Note: The executor packs multiple storage allocations into the same backing buffer via
     // `ExpansionScratchAllocator`. WebGPU treats STORAGE_READ_WRITE as an exclusive usage at the
     // *buffer* granularity within a dispatch, so if any slice of the backing buffer is bound
     // read/write (our outputs/counters), any other slice must also be bound read/write.
-    w.line("@group(0) @binding(5) var<storage, read_write> gs_inputs: Vec4F32Buffer;");
+    w.line(&format!(
+        "@group(0) @binding({}) var<storage, read_write> gs_inputs: Vec4F32Buffer;",
+        GS_PREPASS_BINDING_GS_INPUTS
+    ));
     w.line("");
 
     // D3D stage-ex resources (GS/HS/DS) live in group 3 so we can stay within WebGPU's baseline
