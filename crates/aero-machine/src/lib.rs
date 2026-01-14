@@ -8644,7 +8644,7 @@ impl snapshot::SnapshotSource for Machine {
         snapshot::cpu_state_from_cpu_core(&self.cpu)
     }
 
-    fn cpu_states(&self) -> Vec<snapshot::VcpuSnapshot> {
+        fn cpu_states(&self) -> Vec<snapshot::VcpuSnapshot> {
         let cpu_count = self.cfg.cpu_count as usize;
         let mut cpus = Vec::with_capacity(cpu_count);
 

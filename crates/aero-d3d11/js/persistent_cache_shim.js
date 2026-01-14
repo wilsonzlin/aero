@@ -1,4 +1,4 @@
-// WASM bindings for the browser-side persistent GPU cache.
+// WASM bindings for the browser-side persistent GPU cache (D3D11).
 //
 // The canonical implementation lives in `web/gpu-cache/persistent_cache.ts` and
 // installs itself as `globalThis.AeroPersistentGpuCache` when imported.
@@ -95,4 +95,3 @@ export class PersistentGpuCache {
 // (`PersistentGpuCache`) and the Rust type name (`JsPersistentGpuCache`) when the
 // two differ. Export an alias so bundlers (Vite/Rollup) can satisfy the import.
 export { PersistentGpuCache as JsPersistentGpuCache };
-
