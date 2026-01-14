@@ -498,6 +498,7 @@ For the canonical, up-to-date command list and global options, see:
 |---|---|---|
 | `--status` / `--query-version` (alias: `--query-device`) | combined snapshot: device/ABI + UMDRIVERPRIVATE summary + fences + ring0 + scanout0 + cursor (when supported) + vblank + CreateAllocation trace summary | first command in any bug report |
 | `--query-umd-private` | KMD-provided `UMDRIVERPRIVATE` blob (ABI + feature discovery used by UMDs) | diagnosing ABI/feature mismatches |
+| `--query-segments` | WDDM segment list + segment group budgets (Local/NonLocal) via `D3DKMTQueryAdapterInfo`. Useful for diagnosing allocation budget failures (`E_OUTOFMEMORY` / `D3DERR_OUTOFVIDEOMEMORY`). | diagnosing segment budget / residency issues |
 | `--query-fence` | last submitted + last completed fence, plus sticky error counters (`error_irq_count` / `last_error_fence`) | “fence stuck” / device-hung diagnosis |
 | `--watch-fence --samples N --interval-ms M [--timeout-ms T]` | polls `--query-fence` in a loop and prints one line per sample (deltas + estimated rate + stall warnings) | quickly confirm whether fences are progressing |
 | `--query-perf` (alias: `--perf`) | KMD-provided perf/health counter snapshot (fence/ring progress, submit/IRQ/reset counts, vblank counters) | baseline collection and regression triage |
