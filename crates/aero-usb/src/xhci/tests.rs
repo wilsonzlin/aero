@@ -241,7 +241,7 @@ fn write_endpoint_state_to_context_updates_controller_shadow_context() {
     mem.write_u64(dcbaa + 8, dev_ctx);
 
     // Seed endpoint context state.
-    mem.write_u32(ep_ctx_addr + 0, context::EndpointState::Running.raw().into());
+    mem.write_u32(ep_ctx_addr, context::EndpointState::Running.raw().into());
 
     assert!(
         ctrl.write_endpoint_state_to_context(
@@ -253,7 +253,7 @@ fn write_endpoint_state_to_context_updates_controller_shadow_context() {
         "expected endpoint context state write to succeed"
     );
     assert_eq!(
-        read_u32(&mut mem, ep_ctx_addr + 0) & 0x7,
+        read_u32(&mut mem, ep_ctx_addr) & 0x7,
         u32::from(context::EndpointState::Halted.raw())
     );
 

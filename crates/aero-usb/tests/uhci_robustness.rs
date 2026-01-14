@@ -561,7 +561,7 @@ fn uhci_td_chain_exact_budget_limit_null_termination_does_not_fault() {
     const TD_CHAIN_BUDGET: usize = 1024;
 
     ctrl.hub_mut()
-        .attach(0, Box::new(AlwaysAckDevice::default()));
+        .attach(0, Box::new(AlwaysAckDevice));
     ctrl.hub_mut().force_enable_for_tests(0);
 
     ctrl.io_write(regs::REG_FLBASEADD, 4, FRAME_LIST_BASE);

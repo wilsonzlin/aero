@@ -197,7 +197,7 @@ fn ep0_transfer_engine_link_loop_is_bounded_and_faults() {
 
     let mut xhci = Ep0TransferEngine::new_with_ports(1);
     xhci.set_event_ring(event_ring, 8);
-    xhci.hub_mut().attach(0, Box::new(DummyDevice::default()));
+    xhci.hub_mut().attach(0, Box::new(DummyDevice));
 
     let slot_id = xhci.enable_slot(0).expect("slot allocation");
     assert!(xhci.configure_ep0(slot_id, tr_ring, true, 64));
