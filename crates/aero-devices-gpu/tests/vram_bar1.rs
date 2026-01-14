@@ -28,9 +28,9 @@ fn legacy_vga_alias_maps_text_buffer_to_expected_offset() {
 
 #[test]
 fn vbe_lfb_offset_matches_machine_vga_vram_layout_contract() {
-    // `aero_machine` reserves 256KiB for legacy VGA planar storage (4 × 64KiB planes) and starts
-    // the VBE linear framebuffer after that region.
-    assert_eq!(VBE_LFB_OFFSET, 0x40_000);
+    // `aero_machine` reserves 128KiB for the legacy VGA window backing (`0xA0000..0xBFFFF`) and
+    // starts the VBE linear framebuffer (LFB) immediately after that region.
+    assert_eq!(VBE_LFB_OFFSET, 0x20_000);
 }
 
 #[test]

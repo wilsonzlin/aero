@@ -190,9 +190,9 @@ async function main(): Promise<void> {
     const pitchBytes = width * 4 + 16;
     // Place the scanout surface inside the shared VRAM aperture (BAR1 backing).
     //
-    // Use the canonical VBE LFB offset (0x40000; after the 256KiB legacy VGA planar backing
+    // Use the canonical VBE LFB offset (0x20000; after the 128KiB legacy VGA window backing
     // region) as a convenient non-zero location within VRAM.
-    const baseVramOffset = 0x40_000;
+    const baseVramOffset = 0x20_000;
     const basePaddr = (VRAM_BASE_PADDR + baseVramOffset) >>> 0;
 
     canvas.width = width;
