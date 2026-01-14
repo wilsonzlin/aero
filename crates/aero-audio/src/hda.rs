@@ -2774,11 +2774,13 @@ mod tests {
         mem.write(bdl_base + 8, &8u32.to_le_bytes());
         mem.write(bdl_base + 12, &0u32.to_le_bytes());
 
-        let mut sd = StreamDescriptor::default();
-        sd.cbl = 1;
-        sd.lvi = 0;
-        sd.bdpl = bdl_base as u32;
-        sd.bdpu = 0;
+        let mut sd = StreamDescriptor {
+            cbl: 1,
+            lvi: 0,
+            bdpl: bdl_base as u32,
+            bdpu: 0,
+            ..Default::default()
+        };
 
         let mut bdl_index = 0u16;
         let mut bdl_offset = 0u32;
@@ -2803,11 +2805,13 @@ mod tests {
         mem.write(bdl_base + 8, &8u32.to_le_bytes());
         mem.write(bdl_base + 12, &0u32.to_le_bytes());
 
-        let mut sd = StreamDescriptor::default();
-        sd.cbl = 1;
-        sd.lvi = 0;
-        sd.bdpl = bdl_base as u32;
-        sd.bdpu = 0;
+        let mut sd = StreamDescriptor {
+            cbl: 1,
+            lvi: 0,
+            bdpl: bdl_base as u32,
+            bdpu: 0,
+            ..Default::default()
+        };
 
         let mut bdl_index = 0u16;
         let mut bdl_offset = 0u32;

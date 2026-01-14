@@ -55,7 +55,7 @@ fn capture_pin_ctl_zero_writes_silence_without_consuming() {
     let (pcm_base, pcm_len_bytes) = setup_basic_capture(&mut hda, &mut mem, frames);
 
     // Disable the mic pin via pin widget control (NID 5).
-    hda.codec_mut().execute_verb(5, (0x707u32 << 8) | 0x00);
+    hda.codec_mut().execute_verb(5, 0x707u32 << 8);
 
     // Fill guest buffer with non-zero bytes so we can observe the DMA overwrite.
     mem.write_physical(pcm_base, &vec![0xAA; pcm_len_bytes]);
