@@ -39,9 +39,11 @@ fi
 # been removed to avoid contract drift (the Windows 7 driver depends on exact device semantics).
 #
 # Fail CI if `emulator::io::virtio` is reintroduced.
-if [[ -e "crates/emulator/src/io/virtio" || -e "crates/emulator/src/io/virtio.rs" ]]; then
-  die "legacy emulator-local VirtIO module found (crates/emulator/src/io/virtio*); VirtIO devices must be implemented in crates/aero-virtio"
+mapfile -t tracked_emulator_virtio < <(git ls-files | grep -E '^crates/emulator/src/io/virtio(\.rs|/)' || true)
+if (( ${#tracked_emulator_virtio[@]} > 0 )); then
+  die "legacy emulator-local VirtIO module file(s) are tracked; VirtIO devices must be implemented in crates/aero-virtio: ${tracked_emulator_virtio[*]}"
 fi
+unset tracked_emulator_virtio
 
 # Local-only agent notes should never be checked in. They're ignored by default, but
 # `git add -f` would still stage them. Keep the repo clean by failing CI if they

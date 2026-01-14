@@ -80,6 +80,12 @@ pub struct AeroGpuPciDevice {
     scanout0_fb_gpa_lo_pending: bool,
 
     boot_time_ns: Option<u64>,
+    /// Last `now_ns` value observed by [`AeroGpuPciDevice::tick`].
+    ///
+    /// MMIO writes do not carry a timebase in the legacy `MmioDevice` shim, so whenever we need to
+    /// approximate "the current time" for state transitions (e.g. starting a vblank schedule on a
+    /// `SCANOUT0_ENABLE` 0→1 transition) we anchor it to the last tick.
+    last_tick_ns: u64,
     vblank_interval_ns: Option<u64>,
     next_vblank_ns: Option<u64>,
     suppress_vblank_irq: bool,
@@ -163,7 +169,11 @@ impl AeroGpuPciDevice {
             scanout_state: None,
             last_published_scanout0: None,
             scanout0_fb_gpa_lo_pending: false,
-            boot_time_ns: None,
+            // The `now_ns` timebase used by `tick()` is defined as "nanoseconds since device boot"
+            // (see `drivers/aerogpu/protocol/vblank.md`). Use 0 as the stable epoch so vblank
+            // timestamps remain meaningful even if the first `tick()` is delayed.
+            boot_time_ns: Some(0),
+            last_tick_ns: 0,
             vblank_interval_ns,
             next_vblank_ns: None,
             suppress_vblank_irq: false,
@@ -386,7 +396,8 @@ impl AeroGpuPciDevice {
 
         self.executor.reset();
         self.irq_level = false;
-        self.boot_time_ns = None;
+        self.boot_time_ns = Some(0);
+        self.last_tick_ns = 0;
         self.next_vblank_ns = None;
         self.suppress_vblank_irq = false;
         self.ring_reset_pending = false;
@@ -396,6 +407,10 @@ impl AeroGpuPciDevice {
     pub fn tick(&mut self, mem: &mut dyn MemoryBus, now_ns: u64) {
         // Coalesce any deferred scanout register updates (page flips / dynamic reprogramming).
         self.maybe_publish_wddm_scanout0_state();
+
+        // Record time first so MMIO writes that occur after this `tick()` can anchor their state
+        // transitions to a sensible "current time" approximation.
+        self.last_tick_ns = now_ns;
 
         let boot_time_ns = *self.boot_time_ns.get_or_insert(now_ns);
 
@@ -742,6 +757,17 @@ impl AeroGpuPciDevice {
                 let prev_enable = self.regs.scanout0.enable;
                 let new_enable = value != 0;
                 self.regs.scanout0.enable = new_enable;
+                if !prev_enable && new_enable {
+                    // Start vblank scheduling relative to the time of the enable transition.
+                    //
+                    // The legacy MMIO shim does not provide a `now_ns` parameter, so we approximate
+                    // the enable timestamp using the last `tick()` time. This is sufficient to
+                    // model catch-up behavior in tests and keeps the vblank clock "free-running"
+                    // while scanout is enabled.
+                    if let Some(interval_ns) = self.vblank_interval_ns {
+                        self.next_vblank_ns = Some(self.last_tick_ns.saturating_add(interval_ns));
+                    }
+                }
                 if prev_enable && !new_enable {
                     // When scanout is disabled, stop vblank scheduling and drop any pending vblank IRQ.
                     self.next_vblank_ns = None;
