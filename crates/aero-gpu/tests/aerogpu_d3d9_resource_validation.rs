@@ -627,6 +627,39 @@ fn d3d9_create_texture2d_rejects_zero_mip_levels() {
 }
 
 #[test]
+fn d3d9_create_texture2d_rejects_array_layers_not_one() {
+    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
+        Ok(exec) => exec,
+        Err(AerogpuD3d9Error::AdapterNotFound) => {
+            common::skip_or_panic(module_path!(), "wgpu adapter not found");
+            return;
+        }
+        Err(err) => panic!("failed to create executor: {err}"),
+    };
+
+    let mut writer = AerogpuCmdWriter::new();
+    writer.create_texture2d(
+        1,                                   // texture_handle
+        0,                                   // usage_flags
+        AerogpuFormat::R8G8B8A8Unorm as u32, // format
+        1,                                   // width
+        1,                                   // height
+        1,                                   // mip_levels
+        2,                                   // array_layers (unsupported)
+        0,                                   // row_pitch_bytes
+        0,                                   // backing_alloc_id
+        0,                                   // backing_offset_bytes
+    );
+
+    let stream = writer.finish();
+    match exec.execute_cmd_stream(&stream) {
+        Ok(_) => panic!("expected CREATE_TEXTURE2D with array_layers!=1 to be rejected"),
+        Err(AerogpuD3d9Error::Validation(msg)) => assert!(msg.contains("array_layers != 1"), "{msg}"),
+        Err(other) => panic!("unexpected error: {other:?}"),
+    }
+}
+
+#[test]
 fn d3d9_create_texture2d_rejects_mip_levels_beyond_chain_length() {
     let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
         Ok(exec) => exec,
