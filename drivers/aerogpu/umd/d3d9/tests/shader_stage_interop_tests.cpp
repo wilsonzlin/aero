@@ -765,13 +765,23 @@ bool TestVsOnlyUnsupportedStage0StateSetShaderSucceedsDrawFails() {
     return false;
   }
 
+  // Restore a supported stage0 op and ensure draws recover.
+  hr = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, /*stage=*/0, kD3dTssColorOp, kD3dTopDisable);
+  if (!Check(hr == S_OK, "SetTextureStageState(COLOROP=DISABLE) succeeds")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(cleanup.hDevice, D3DDDIPT_TRIANGLELIST, 1, tri, sizeof(VertexXyzrhwDiffuse));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(VS-only, stage0 DISABLE) succeeds")) {
+    return false;
+  }
+
   dev->cmd.finalize();
   const uint8_t* buf = dev->cmd.data();
   const size_t len = dev->cmd.bytes_used();
-  if (!Check(ValidateStream(buf, len), "ValidateStream(VS-only, unsupported stage0)")) {
+  if (!Check(ValidateStream(buf, len), "ValidateStream(VS-only: unsupported stage0 then DISABLE)")) {
     return false;
   }
-  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_DRAW) == 0, "no DRAW opcodes emitted")) {
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_DRAW) == 1, "exactly one DRAW opcode emitted")) {
     return false;
   }
   if (!Check(CountOpcode(buf, len, AEROGPU_CMD_DRAW_INDEXED) == 0, "no DRAW_INDEXED opcodes emitted")) {
