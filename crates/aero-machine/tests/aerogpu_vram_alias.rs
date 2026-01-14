@@ -1,4 +1,3 @@
-use aero_devices::pci::profile::AEROGPU;
 use aero_machine::{Machine, MachineConfig};
 
 #[test]
@@ -19,17 +18,10 @@ fn aerogpu_bar1_and_legacy_vga_window_alias_the_same_vram() {
 
     let mut m = Machine::new(cfg).unwrap();
 
-    let bar1_base = {
-        let pci_cfg = m
-            .pci_config_ports()
-            .expect("pc platform should expose pci_cfg");
-        let mut pci_cfg = pci_cfg.borrow_mut();
-        let cfg = pci_cfg
-            .bus_mut()
-            .device_config(AEROGPU.bdf)
-            .expect("AeroGPU PCI function should exist");
-        cfg.bar_range(1).map(|range| range.base).unwrap_or(0)
-    };
+    let bdf = m.aerogpu().expect("AeroGPU should be present when enable_aerogpu=true");
+    let bar1_base = m
+        .pci_bar_base(bdf, aero_devices::pci::profile::AEROGPU_BAR1_VRAM_INDEX)
+        .unwrap_or(0);
     assert_ne!(
         bar1_base, 0,
         "AeroGPU BAR1 base should be assigned by BIOS POST"

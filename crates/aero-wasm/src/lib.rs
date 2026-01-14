@@ -3831,6 +3831,35 @@ impl Machine {
     }
 
     // -------------------------------------------------------------------------
+    // AeroGPU + VBE discovery helpers (tests / JS glue)
+    // -------------------------------------------------------------------------
+
+    /// Return the BIOS-reported VBE linear framebuffer (LFB) base address.
+    ///
+    /// This is the value reported via `INT 10h AX=4F01h` (`VBE ModeInfoBlock.PhysBasePtr`).
+    pub fn vbe_lfb_base(&self) -> u32 {
+        self.inner.vbe_lfb_base()
+    }
+
+    /// Returns whether the canonical AeroGPU PCI function (`00:07.0`, `A3A0:0001`) is present.
+    pub fn aerogpu_present(&self) -> bool {
+        self.inner.aerogpu().is_some()
+    }
+
+    /// Return the base address assigned to an AeroGPU PCI BAR.
+    ///
+    /// Returns `0` when AeroGPU is not present or when the BAR is missing/unassigned.
+    pub fn aerogpu_bar_base(&self, bar: u8) -> u32 {
+        let Some(bdf) = self.inner.aerogpu() else {
+            return 0;
+        };
+        let Some(base) = self.inner.pci_bar_base(bdf, bar) else {
+            return 0;
+        };
+        u32::try_from(base).unwrap_or(0)
+    }
+
+    // -------------------------------------------------------------------------
     // Legacy VGA/SVGA scanout (BIOS text mode + VBE graphics)
     // -------------------------------------------------------------------------
 

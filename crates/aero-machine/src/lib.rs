@@ -11753,7 +11753,7 @@ mod tests {
             "headless restore should not create a VGA device"
         );
         assert_eq!(
-            dst.bios.video.vbe.lfb_base,
+            dst.vbe_lfb_base(),
             firmware::video::vbe::VbeDevice::LFB_BASE_DEFAULT
         );
     }

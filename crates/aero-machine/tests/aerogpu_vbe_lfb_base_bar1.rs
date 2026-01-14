@@ -1,5 +1,5 @@
 use aero_devices::pci::profile;
-use aero_machine::{Machine, MachineConfig, RunExit};
+use aero_machine::{Machine, MachineConfig, RunExit, VBE_LFB_OFFSET};
 use pretty_assertions::assert_eq;
 
 fn build_vbe_mode_info_boot_sector(mode: u16) -> [u8; 512] {
@@ -81,22 +81,18 @@ fn aerogpu_bios_vbe_reports_lfb_base_inside_bar1_for_0x115_and_0x160() {
         run_until_halt(&mut m);
 
         // Resolve the AeroGPU BAR1 base assigned by PCI BIOS POST.
-        let bar1_base = {
-            let pci_cfg = m.pci_config_ports().expect("pc platform enabled");
-            let mut pci_cfg = pci_cfg.borrow_mut();
-            pci_cfg
-                .bus_mut()
-                .device_config(profile::AEROGPU.bdf)
-                .expect("AeroGPU should be present when enable_aerogpu=true")
-                .bar_range(profile::AEROGPU_BAR1_VRAM_INDEX)
-                .expect("AeroGPU BAR1 should be assigned by BIOS POST")
-                .base
-        };
+        let bdf = m.aerogpu().expect("AeroGPU should be present when enable_aerogpu=true");
+        let bar1_base = m
+            .pci_bar_base(bdf, profile::AEROGPU_BAR1_VRAM_INDEX)
+            .filter(|&base| base != 0)
+            .expect("AeroGPU BAR1 should be assigned by BIOS POST");
 
         // VBE mode info block was written to 0x0000:0x0500 by INT 10h AX=4F01.
         let phys_base_ptr = m.read_physical_u32(0x0500 + 40);
-        let expected = u32::try_from(bar1_base + 0x20000).expect("BAR1 base should fit in u32");
+        let expected = u32::try_from(bar1_base + VBE_LFB_OFFSET as u64)
+            .expect("BAR1 base + VBE_LFB_OFFSET should fit in u32");
         assert_eq!(phys_base_ptr, expected);
+        assert_eq!(phys_base_ptr, m.vbe_lfb_base());
 
         // Also sanity-check reported resolution matches the requested mode.
         let got_w = m.read_physical_u16(0x0500 + 18);
@@ -104,4 +100,3 @@ fn aerogpu_bios_vbe_reports_lfb_base_inside_bar1_for_0x115_and_0x160() {
         assert_eq!((got_w, got_h), (w, h));
     }
 }
-

@@ -1,7 +1,5 @@
-use aero_machine::{Machine, MachineConfig, RunExit};
+use aero_machine::{Machine, MachineConfig, RunExit, VBE_LFB_OFFSET};
 use pretty_assertions::assert_eq;
-
-const VBE_LFB_OFFSET: u64 = 0x20000;
 
 fn build_int10_vbe_bank_switch_boot_sector() -> [u8; 512] {
     let mut sector = [0u8; 512];
@@ -109,19 +107,10 @@ fn boot_int10_aerogpu_vbe_bank_switch_maps_a0000_window_beyond_64k() {
     m.set_disk_image(boot.to_vec()).unwrap();
     m.reset();
 
-    let bar1_base = {
-        let pci_cfg = m
-            .pci_config_ports()
-            .expect("pc platform should expose pci_cfg");
-        let mut pci_cfg = pci_cfg.borrow_mut();
-        let cfg = pci_cfg
-            .bus_mut()
-            .device_config(aero_devices::pci::profile::AEROGPU.bdf)
-            .expect("AeroGPU PCI function should exist");
-        cfg.bar_range(aero_devices::pci::profile::AEROGPU_BAR1_VRAM_INDEX)
-            .map(|range| range.base)
-            .unwrap_or(0)
-    };
+    let bdf = m.aerogpu().expect("AeroGPU should be present when enable_aerogpu=true");
+    let bar1_base = m
+        .pci_bar_base(bdf, aero_devices::pci::profile::AEROGPU_BAR1_VRAM_INDEX)
+        .unwrap_or(0);
     assert_ne!(bar1_base, 0, "AeroGPU BAR1 base should be assigned by BIOS POST");
 
     run_until_halt(&mut m);
@@ -131,7 +120,8 @@ fn boot_int10_aerogpu_vbe_bank_switch_maps_a0000_window_beyond_64k() {
     //   (x, y) = (0, 16) since stride is 1024 pixels.
     //
     // The banked window at A0000 is 64KiB, so bank 1 maps to LFB offset 0x1_0000.
-    let lfb_base = bar1_base + VBE_LFB_OFFSET;
+    let lfb_base = u64::from(m.vbe_lfb_base());
+    assert_eq!(lfb_base, bar1_base + VBE_LFB_OFFSET as u64);
     assert_eq!(
         m.read_physical_u32(lfb_base + 0x1_0000),
         0x00FF_0000,
@@ -142,4 +132,3 @@ fn boot_int10_aerogpu_vbe_bank_switch_maps_a0000_window_beyond_64k() {
     assert_eq!(m.display_resolution(), (1024, 768));
     assert_eq!(m.display_framebuffer()[16 * 1024], 0xFF00_00FF);
 }
-
