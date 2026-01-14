@@ -6,14 +6,15 @@
 //! - expand patch lists into a flat vertex + index buffer,
 //! - and write an indirect draw argument buffer for the final render pass.
 //!
-//! This module currently contains allocation plumbing and worst-case size helpers. Shader logic
-//! (actual expansion compute pipelines) is intentionally out of scope for now.
+//! This module contains allocation plumbing + sizing helpers (CPU-side), along with WGSL templates
+//! for the compute passes used by tessellation emulation.
 //!
 //! Note: low-level tessellator math helpers (currently triangle-domain integer partitioning) live
 //! in [`crate::runtime::tessellator`]. This module owns per-draw scratch allocations and (future)
 //! compute pipeline state for HS/DS emulation.
 
 pub mod buffers;
+pub mod layout_pass;
 pub mod pipeline;
 pub mod tessellator;
 pub mod vs_as_compute;
@@ -22,8 +23,73 @@ use super::expansion_scratch::{ExpansionScratchAllocator, ExpansionScratchError}
 
 /// Maximum tessellation factor supported by D3D11.
 ///
-/// The runtime uses this value when computing conservative scratch buffer sizes.
+/// The runtime uses this value when computing conservative scratch buffer sizes and when deriving
+/// per-patch tess levels in the GPU layout pass.
 pub const MAX_TESS_FACTOR: u32 = super::tessellator::MAX_TESS_FACTOR;
+
+/// Uniform payload for the GPU tessellation *layout pass*.
+///
+/// Layout matches the WGSL `LayoutParams` struct in [`layout_pass`], and is padded to 16 bytes so
+/// it can be bound as a WebGPU uniform buffer.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TessellationLayoutParams {
+    /// Number of patches to process.
+    pub patch_count: u32,
+    /// Capacity of the downstream expanded-vertex buffer, in vertices.
+    pub max_vertices: u32,
+    /// Capacity of the downstream expanded-index buffer, in indices.
+    pub max_indices: u32,
+    pub _pad0: u32,
+}
+
+impl TessellationLayoutParams {
+    pub const fn layout() -> (u64, u64) {
+        (
+            core::mem::size_of::<Self>() as u64,
+            core::mem::align_of::<Self>() as u64,
+        )
+    }
+
+    /// Serializes this struct into little-endian bytes suitable for `Queue::write_buffer`.
+    pub fn to_le_bytes(self) -> [u8; 16] {
+        let mut out = [0u8; 16];
+        out[0..4].copy_from_slice(&self.patch_count.to_le_bytes());
+        out[4..8].copy_from_slice(&self.max_vertices.to_le_bytes());
+        out[8..12].copy_from_slice(&self.max_indices.to_le_bytes());
+        out[12..16].copy_from_slice(&self._pad0.to_le_bytes());
+        out
+    }
+}
+
+/// Per-patch metadata produced by the GPU tessellation *layout pass*.
+///
+/// This is the layout written by [`layout_pass::wgsl_tessellation_layout_pass`]. Offsets are in
+/// elements (vertices/indices), not bytes.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TessellationLayoutPatchMeta {
+    pub tess_level: u32,
+    pub vertex_base: u32,
+    pub index_base: u32,
+    pub vertex_count: u32,
+    pub index_count: u32,
+}
+
+impl TessellationLayoutPatchMeta {
+    pub const fn layout() -> (u64, u64) {
+        (
+            core::mem::size_of::<Self>() as u64,
+            core::mem::align_of::<Self>() as u64,
+        )
+    }
+}
+
+// Compile-time layout validation (matches WGSL).
+const _: [(); 16] = [(); core::mem::size_of::<TessellationLayoutParams>()];
+const _: [(); 4] = [(); core::mem::align_of::<TessellationLayoutParams>()];
+const _: [(); 20] = [(); core::mem::size_of::<TessellationLayoutPatchMeta>()];
+const _: [(); 4] = [(); core::mem::align_of::<TessellationLayoutPatchMeta>()];
 
 #[derive(Debug, Default)]
 pub struct TessellationRuntime {
@@ -154,3 +220,4 @@ mod tests {
         });
     }
 }
+
