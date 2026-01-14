@@ -6,6 +6,7 @@ build/
 *.exp
 *.lib
 *.cso
+*.dxbc
 *.bmp
 *.png
 *.bin
