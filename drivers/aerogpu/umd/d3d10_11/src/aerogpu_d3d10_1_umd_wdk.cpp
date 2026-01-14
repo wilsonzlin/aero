@@ -5149,6 +5149,10 @@ static bool D3dViewDimensionIsTexture2DArray(uint32_t view_dimension) {
   __if_exists(D3D11DDIRESOURCE_VIEW_DIMENSION_TEXTURE2DARRAY) {
     ok = ok || (view_dimension == static_cast<uint32_t>(D3D11DDIRESOURCE_VIEW_DIMENSION_TEXTURE2DARRAY));
   }
+  // Conservative fallback: D3D10/11 use 4 for Texture2DArray.
+  if (!ok) {
+    ok = (view_dimension == 4u);
+  }
   return ok;
 }
 
@@ -5261,15 +5265,18 @@ static HRESULT ValidateFullResourceRtvDesc(const AeroGpuResource* res,
     return E_NOTIMPL;
   }
 
-  // If the resource is an array, require the view to span the entire array.
-  if (res->array_size > 1) {
-    if (!view_is_array) {
-      if (reason_out) {
-        *reason_out = "view is not Texture2DArray";
-      }
-      return E_NOTIMPL;
+  // If the resource is an array, require the view to span the entire array. If
+  // the runtime explicitly requests an array view for a single-slice resource,
+  // validate the array slice range as well so out-of-bounds descriptors fail
+  // cleanly instead of silently aliasing slice 0.
+  if (res->array_size > 1 && !view_is_array) {
+    if (reason_out) {
+      *reason_out = "view is not Texture2DArray";
     }
+    return E_NOTIMPL;
+  }
 
+  if (view_is_array) {
     uint32_t first_slice = 0;
     uint32_t array_size = 0;
     bool have_slice_range = false;
@@ -5300,11 +5307,18 @@ static HRESULT ValidateFullResourceRtvDesc(const AeroGpuResource* res,
       return E_NOTIMPL;
     }
 
+    if (first_slice >= res->array_size) {
+      return E_INVALIDARG;
+    }
     if (first_slice != 0) {
       if (reason_out) {
         *reason_out = "FirstArraySlice != 0";
       }
       return E_NOTIMPL;
+    }
+
+    if (array_size != 0 && array_size != 0xFFFFFFFFu && array_size > (res->array_size - first_slice)) {
+      return E_INVALIDARG;
     }
 
     const uint32_t requested_slices =
@@ -5486,15 +5500,18 @@ static HRESULT ValidateFullResourceDsvDesc(const AeroGpuResource* res,
     return E_NOTIMPL;
   }
 
-  // If the resource is an array, require the view to span the entire array.
-  if (res->array_size > 1) {
-    if (!view_is_array) {
-      if (reason_out) {
-        *reason_out = "view is not Texture2DArray";
-      }
-      return E_NOTIMPL;
+  // If the resource is an array, require the view to span the entire array. If
+  // the runtime explicitly requests an array view for a single-slice resource,
+  // validate the array slice range as well so out-of-bounds descriptors fail
+  // cleanly instead of silently aliasing slice 0.
+  if (res->array_size > 1 && !view_is_array) {
+    if (reason_out) {
+      *reason_out = "view is not Texture2DArray";
     }
+    return E_NOTIMPL;
+  }
 
+  if (view_is_array) {
     uint32_t first_slice = 0;
     uint32_t array_size = 0;
     bool have_slice_range = false;
@@ -5525,11 +5542,18 @@ static HRESULT ValidateFullResourceDsvDesc(const AeroGpuResource* res,
       return E_NOTIMPL;
     }
 
+    if (first_slice >= res->array_size) {
+      return E_INVALIDARG;
+    }
     if (first_slice != 0) {
       if (reason_out) {
         *reason_out = "FirstArraySlice != 0";
       }
       return E_NOTIMPL;
+    }
+
+    if (array_size != 0 && array_size != 0xFFFFFFFFu && array_size > (res->array_size - first_slice)) {
+      return E_INVALIDARG;
     }
 
     const uint32_t requested_slices =
@@ -5770,15 +5794,18 @@ static HRESULT ValidateFullResourceSrvDesc(const AeroGpuResource* res,
     return E_INVALIDARG;
   }
 
-  // If the resource is an array, require the view to span the entire array.
-  if (res->array_size > 1) {
-    if (!view_is_array) {
-      if (reason_out) {
-        *reason_out = "view is not Texture2DArray";
-      }
-      return E_NOTIMPL;
+  // If the resource is an array, require the view to span the entire array. If
+  // the runtime explicitly requests an array view for a single-slice resource,
+  // validate the array slice range as well so out-of-bounds descriptors fail
+  // cleanly instead of silently aliasing slice 0.
+  if (res->array_size > 1 && !view_is_array) {
+    if (reason_out) {
+      *reason_out = "view is not Texture2DArray";
     }
+    return E_NOTIMPL;
+  }
 
+  if (view_is_array) {
     uint32_t first_slice = 0;
     uint32_t array_size = 0;
     bool have_slice_range = false;
@@ -5809,11 +5836,18 @@ static HRESULT ValidateFullResourceSrvDesc(const AeroGpuResource* res,
       return E_NOTIMPL;
     }
 
+    if (first_slice >= res->array_size) {
+      return E_INVALIDARG;
+    }
     if (first_slice != 0) {
       if (reason_out) {
         *reason_out = "FirstArraySlice != 0";
       }
       return E_NOTIMPL;
+    }
+
+    if (array_size != 0 && array_size != 0xFFFFFFFFu && array_size > (res->array_size - first_slice)) {
+      return E_INVALIDARG;
     }
 
     const uint32_t requested_slices =
@@ -5825,9 +5859,6 @@ static HRESULT ValidateFullResourceSrvDesc(const AeroGpuResource* res,
       return E_NOTIMPL;
     }
 
-    if (array_size != 0 && array_size != 0xFFFFFFFFu && array_size > res->array_size) {
-      return E_INVALIDARG;
-    }
   }
 
   return S_OK;
