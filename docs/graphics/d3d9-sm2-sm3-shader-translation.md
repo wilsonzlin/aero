@@ -5,6 +5,9 @@ translator (`crates/aero-d3d9/src/sm3/`).
 
 It tracks task-level status for shader bytecode → IR → WGSL lowering work.
 
+For the broader “scratchpad task ID → implementation/test” audit doc, see:
+- `docs/graphics/task-489-sm3-dxbc-sharedsurface-audit.md`
+
 ## Task status
 
 | Task | Status | What | Where | Tests |

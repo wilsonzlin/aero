@@ -188,6 +188,8 @@ Ops/features referenced by the scratchpad tasks:
 
 **Status:** ✅ Done
 
+**See also:** `docs/graphics/d3d9-sm2-sm3-shader-translation.md` (short “don’t duplicate work” status note for SM2/SM3 shader translation).
+
 **Implemented:**
 - WGSL lowering for `texld`/`texldp`/`texldd`/`texldl` (`textureSample*` variants) and bind group layout mapping for samplers/textures.
 - `texkill` lowers to D3D9 semantics: `discard` when **any component** of the operand is `< 0`, and preserves predication nesting.
