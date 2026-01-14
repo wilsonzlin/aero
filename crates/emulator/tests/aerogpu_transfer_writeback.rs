@@ -4,6 +4,7 @@ const NS_PER_MS: u64 = 1_000_000;
 
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AEROGPU_CMD_STREAM_MAGIC, AEROGPU_COPY_FLAG_WRITEBACK_DST,
+    AEROGPU_RESOURCE_USAGE_RENDER_TARGET, AEROGPU_RESOURCE_USAGE_TEXTURE,
 };
 use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
 use aero_protocol::aerogpu::aerogpu_ring::AEROGPU_ALLOC_TABLE_MAGIC;
@@ -150,7 +151,10 @@ fn aerogpu_copy_texture2d_writeback_updates_guest_memory() {
             // CREATE_TEXTURE2D src (56 bytes)
             emit_packet(out, 0x101, |out| {
                 push_u32(out, 1); // texture_handle
-                push_u32(out, 0); // usage_flags
+                push_u32(
+                    out,
+                    AEROGPU_RESOURCE_USAGE_TEXTURE | AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
+                ); // usage_flags
                 push_u32(out, AerogpuFormat::R8G8B8A8Unorm as u32); // format
                 push_u32(out, width);
                 push_u32(out, height);
