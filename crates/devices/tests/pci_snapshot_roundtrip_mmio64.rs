@@ -4,6 +4,24 @@ use aero_devices::pci::{
 };
 use aero_io_snapshot::io::state::IoSnapshot;
 
+const BAR0_SIZE: u64 = 0x4000;
+const BAR0_FLAGS: u32 = 0x4; // 64-bit MMIO BAR type bits (bits 2:1 = 0b10).
+
+fn mmio64_probe_masks(size: u64) -> (u32, u32) {
+    assert!(size.is_power_of_two());
+    let mask = !(size - 1);
+    ((mask as u32) | BAR0_FLAGS, (mask >> 32) as u32)
+}
+
+fn mmio64_programmed_lo(size: u64, requested: u32) -> u32 {
+    let size = u32::try_from(size).expect("BAR0 size should fit in u32 for this test");
+    (requested & !(size - 1)) | BAR0_FLAGS
+}
+
+fn mmio64_base(programmed_lo: u32, programmed_hi: u32) -> u64 {
+    (u64::from(programmed_hi) << 32) | u64::from(programmed_lo & 0xffff_fff0)
+}
+
 fn cfg_addr(bdf: PciBdf, offset: u16) -> u32 {
     0x8000_0000
         | (u32::from(bdf.bus) << 16)
@@ -45,7 +63,7 @@ impl Mmio64Device {
         cfg.set_bar_definition(
             0,
             PciBarDefinition::Mmio64 {
-                size: 0x4000,
+                size: BAR0_SIZE,
                 prefetchable: false,
             },
         );
@@ -79,14 +97,18 @@ fn pci_snapshot_roundtrip_preserves_mmio64_bar_programming() {
     // Probe BAR0 (64-bit).
     cfg_write(&mut cfg, &mut bus, bdf, 0x10, 4, 0xFFFF_FFFF);
     cfg_write(&mut cfg, &mut bus, bdf, 0x14, 4, 0xFFFF_FFFF);
-    assert_eq!(cfg_read(&mut cfg, &mut bus, bdf, 0x10, 4), 0xFFFF_C004);
-    assert_eq!(cfg_read(&mut cfg, &mut bus, bdf, 0x14, 4), 0xFFFF_FFFF);
+    let (expected_probe_lo, expected_probe_hi) = mmio64_probe_masks(BAR0_SIZE);
+    assert_eq!(cfg_read(&mut cfg, &mut bus, bdf, 0x10, 4), expected_probe_lo);
+    assert_eq!(cfg_read(&mut cfg, &mut bus, bdf, 0x14, 4), expected_probe_hi);
 
     // Program BAR0 above 4GiB.
-    cfg_write(&mut cfg, &mut bus, bdf, 0x10, 4, 0x2345_6000);
-    cfg_write(&mut cfg, &mut bus, bdf, 0x14, 4, 0x0000_0001);
-    assert_eq!(cfg_read(&mut cfg, &mut bus, bdf, 0x10, 4), 0x2345_4004);
-    assert_eq!(cfg_read(&mut cfg, &mut bus, bdf, 0x14, 4), 0x0000_0001);
+    let requested_lo = 0x2345_6000;
+    let requested_hi = 0x0000_0001;
+    let expected_lo = mmio64_programmed_lo(BAR0_SIZE, requested_lo);
+    cfg_write(&mut cfg, &mut bus, bdf, 0x10, 4, requested_lo);
+    cfg_write(&mut cfg, &mut bus, bdf, 0x14, 4, requested_hi);
+    assert_eq!(cfg_read(&mut cfg, &mut bus, bdf, 0x10, 4), expected_lo);
+    assert_eq!(cfg_read(&mut cfg, &mut bus, bdf, 0x14, 4), requested_hi);
 
     // Enable memory decoding and verify the BAR is mapped.
     cfg_write(&mut cfg, &mut bus, bdf, 0x04, 2, 0x0002);
@@ -94,8 +116,8 @@ fn pci_snapshot_roundtrip_preserves_mmio64_bar_programming() {
     assert_eq!(mapped.len(), 1);
     assert_eq!(mapped[0].bdf, bdf);
     assert_eq!(mapped[0].bar, 0);
-    assert_eq!(mapped[0].range.base, 0x1_2345_4000);
-    assert_eq!(mapped[0].range.size, 0x4000);
+    assert_eq!(mapped[0].range.base, mmio64_base(expected_lo, requested_hi));
+    assert_eq!(mapped[0].range.size, BAR0_SIZE);
 
     // Snapshot and restore.
     let bus_snapshot = PciBusSnapshot::save_from(&bus);
@@ -111,8 +133,8 @@ fn pci_snapshot_roundtrip_preserves_mmio64_bar_programming() {
     restored.restore_into(&mut bus2).unwrap();
 
     // Verify BAR reads and mapping survived restore.
-    assert_eq!(cfg_read(&mut cfg2, &mut bus2, bdf, 0x10, 4), 0x2345_4004);
-    assert_eq!(cfg_read(&mut cfg2, &mut bus2, bdf, 0x14, 4), 0x0000_0001);
+    assert_eq!(cfg_read(&mut cfg2, &mut bus2, bdf, 0x10, 4), expected_lo);
+    assert_eq!(cfg_read(&mut cfg2, &mut bus2, bdf, 0x14, 4), requested_hi);
     assert_eq!(bus.mapped_bars(), bus2.mapped_bars());
 }
 
@@ -124,8 +146,9 @@ fn pci_snapshot_roundtrip_preserves_mmio64_bar_probe_state() {
     // Leave the BAR in probed state (write all 1s but do not program a base yet).
     cfg_write(&mut cfg, &mut bus, bdf, 0x10, 4, 0xFFFF_FFFF);
     cfg_write(&mut cfg, &mut bus, bdf, 0x14, 4, 0xFFFF_FFFF);
-    assert_eq!(cfg_read(&mut cfg, &mut bus, bdf, 0x10, 4), 0xFFFF_C004);
-    assert_eq!(cfg_read(&mut cfg, &mut bus, bdf, 0x14, 4), 0xFFFF_FFFF);
+    let (expected_probe_lo, expected_probe_hi) = mmio64_probe_masks(BAR0_SIZE);
+    assert_eq!(cfg_read(&mut cfg, &mut bus, bdf, 0x10, 4), expected_probe_lo);
+    assert_eq!(cfg_read(&mut cfg, &mut bus, bdf, 0x14, 4), expected_probe_hi);
 
     let bus_snapshot = PciBusSnapshot::save_from(&bus);
     let bus_bytes = bus_snapshot.save_state();
@@ -140,18 +163,21 @@ fn pci_snapshot_roundtrip_preserves_mmio64_bar_probe_state() {
     restored.restore_into(&mut bus2).unwrap();
 
     // Probe state should survive restore.
-    assert_eq!(cfg_read(&mut cfg2, &mut bus2, bdf, 0x10, 4), 0xFFFF_C004);
-    assert_eq!(cfg_read(&mut cfg2, &mut bus2, bdf, 0x14, 4), 0xFFFF_FFFF);
+    assert_eq!(cfg_read(&mut cfg2, &mut bus2, bdf, 0x10, 4), expected_probe_lo);
+    assert_eq!(cfg_read(&mut cfg2, &mut bus2, bdf, 0x14, 4), expected_probe_hi);
     assert!(bus2.mapped_bars().is_empty());
 
     // And programming the BAR should clear probe state and behave normally after restore.
-    cfg_write(&mut cfg2, &mut bus2, bdf, 0x10, 4, 0x2345_6000);
-    cfg_write(&mut cfg2, &mut bus2, bdf, 0x14, 4, 0x0000_0001);
-    assert_eq!(cfg_read(&mut cfg2, &mut bus2, bdf, 0x10, 4), 0x2345_4004);
-    assert_eq!(cfg_read(&mut cfg2, &mut bus2, bdf, 0x14, 4), 0x0000_0001);
+    let requested_lo = 0x2345_6000;
+    let requested_hi = 0x0000_0001;
+    let expected_lo = mmio64_programmed_lo(BAR0_SIZE, requested_lo);
+    cfg_write(&mut cfg2, &mut bus2, bdf, 0x10, 4, requested_lo);
+    cfg_write(&mut cfg2, &mut bus2, bdf, 0x14, 4, requested_hi);
+    assert_eq!(cfg_read(&mut cfg2, &mut bus2, bdf, 0x10, 4), expected_lo);
+    assert_eq!(cfg_read(&mut cfg2, &mut bus2, bdf, 0x14, 4), requested_hi);
 
     cfg_write(&mut cfg2, &mut bus2, bdf, 0x04, 2, 0x0002);
     let mapped = bus2.mapped_mmio_bars();
     assert_eq!(mapped.len(), 1);
-    assert_eq!(mapped[0].range.base, 0x1_2345_4000);
+    assert_eq!(mapped[0].range.base, mmio64_base(expected_lo, requested_hi));
 }

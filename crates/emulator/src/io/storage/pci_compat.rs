@@ -252,6 +252,33 @@ mod tests {
     use super::PciConfigSpaceCompat;
     use aero_devices::pci::{PciBarDefinition, PciConfigSpace};
 
+    fn mmio32_probe_mask(size: u32, prefetchable: bool) -> u32 {
+        assert!(size.is_power_of_two());
+        let flags = if prefetchable { 0x8 } else { 0 };
+        !(size - 1) | flags
+    }
+
+    fn mmio64_probe_masks(size: u64, prefetchable: bool) -> (u32, u32) {
+        assert!(size.is_power_of_two());
+        let mask = !(size - 1);
+        let mut flags = 0x4; // 64-bit MMIO BAR type bits (bits 2:1 = 0b10).
+        if prefetchable {
+            flags |= 0x8;
+        }
+        ((mask as u32) | flags, (mask >> 32) as u32)
+    }
+
+    fn mmio64_programmed_lo(size: u64, prefetchable: bool, requested: u32) -> u32 {
+        let size = u32::try_from(size).expect("MMIO64 BAR size should fit in u32 for this test");
+        let flags = mmio64_probe_masks(u64::from(size), prefetchable).0 & 0xF;
+        (requested & !(size - 1)) | flags
+    }
+
+    fn io_probe_mask(size: u32) -> u32 {
+        assert!(size.is_power_of_two());
+        (!(size - 1) & 0xffff_fffc) | 0x1
+    }
+
     #[test]
     fn subword_bar_write_is_read_modify_write() {
         let mut cfg = PciConfigSpace::new(0x1234, 0x5678);
@@ -279,10 +306,11 @@ mod tests {
     #[test]
     fn bar_size_probe_works_for_full_dword_writes() {
         let mut cfg = PciConfigSpace::new(0x1234, 0x5678);
+        let bar_size = 0x1000;
         cfg.set_bar_definition(
             0,
             PciBarDefinition::Mmio32 {
-                size: 0x1000,
+                size: bar_size,
                 prefetchable: false,
             },
         );
@@ -291,16 +319,17 @@ mod tests {
 
         // Standard BAR size probe: write all-ones dword and read back the size mask.
         compat.write_u32(0x10, 4, 0xFFFF_FFFF);
-        assert_eq!(compat.read_u32(0x10, 4), 0xFFFF_F000);
+        assert_eq!(compat.read_u32(0x10, 4), mmio32_probe_mask(bar_size, false));
     }
 
     #[test]
     fn bar_subword_writes_after_probe_use_programmed_base_not_probe_mask() {
         let mut cfg = PciConfigSpace::new(0x1234, 0x5678);
+        let bar_size = 0x1000;
         cfg.set_bar_definition(
             0,
             PciBarDefinition::Mmio32 {
-                size: 0x1000,
+                size: bar_size,
                 prefetchable: false,
             },
         );
@@ -309,10 +338,11 @@ mod tests {
 
         // BAR size probe returns the size mask, but does not overwrite the programmed base.
         compat.write_u32(0x10, 4, 0xFFFF_FFFF);
-        assert_eq!(compat.read_u32(0x10, 4), 0xFFFF_F000);
+        let probe_mask = mmio32_probe_mask(bar_size, false);
+        assert_eq!(compat.read_u32(0x10, 4), probe_mask);
 
         // Program only the high 16 bits via a subword write. The low 16 bits must remain from the
-        // programmed base (0), not from the probe response (0xFFFF_F000).
+        // programmed base (0), not from the probe response (size mask).
         compat.write_u32(0x12, 2, 0xE000);
         assert_eq!(compat.read_u32(0x10, 4), 0xE000_0000);
     }
@@ -360,10 +390,11 @@ mod tests {
     #[test]
     fn config_read_that_starts_before_bar_and_spills_into_bar_uses_bar_semantics() {
         let mut cfg = PciConfigSpace::new(0x1234, 0x5678);
+        let bar_size = 0x1000;
         cfg.set_bar_definition(
             0,
             PciBarDefinition::Mmio32 {
-                size: 0x1000,
+                size: bar_size,
                 prefetchable: false,
             },
         );
@@ -372,14 +403,13 @@ mod tests {
 
         // BAR probe: config bytes at 0x10..0x13 remain zero, but BAR reads return the size mask.
         compat.write_u32(0x10, 4, 0xFFFF_FFFF);
-        assert_eq!(compat.read_u32(0x10, 4), 0xFFFF_F000);
+        let probe_mask = mmio32_probe_mask(bar_size, false);
+        assert_eq!(compat.read_u32(0x10, 4), probe_mask);
 
         // Unaligned dword read starting at 0x0E overlaps BAR0 bytes 0x10..0x11. The helper must
         // source those bytes via BAR semantics, not the raw config bytes (which are still zero).
-        //
-        // Bytes at 0x10..0x13 for the size mask 0xFFFF_F000 are [00, F0, FF, FF].
-        // Reading 4 bytes starting at 0x0E includes byte 0x11 as the top byte of the result.
-        assert_eq!(compat.read_u32(0x0E, 4), 0xF000_0000);
+        let expected = (probe_mask & 0xFF00) << 16;
+        assert_eq!(compat.read_u32(0x0E, 4), expected);
     }
 
     #[test]
@@ -412,10 +442,11 @@ mod tests {
     #[test]
     fn mmio64_bar_high_dword_subword_write_updates_base_without_panic() {
         let mut cfg = PciConfigSpace::new(0x1234, 0x5678);
+        let bar_size = 0x4000u64;
         cfg.set_bar_definition(
             0,
             PciBarDefinition::Mmio64 {
-                size: 0x4000,
+                size: bar_size,
                 prefetchable: false,
             },
         );
@@ -425,22 +456,24 @@ mod tests {
         // Program a low 32-bit base (flags are ignored by the canonical implementation and will
         // be reinserted on reads).
         compat.write_u32(0x10, 4, 0x2345_6000);
-        assert_eq!(compat.read_u32(0x10, 4), 0x2345_4004);
+        let expected_lo = mmio64_programmed_lo(bar_size, false, 0x2345_6000);
+        assert_eq!(compat.read_u32(0x10, 4), expected_lo);
 
         // Subword write into the high dword (BAR1). This must not panic and must update the high
         // dword as observed through config reads.
         compat.write_u32(0x15, 1, 0x01);
         assert_eq!(compat.read_u32(0x14, 4), 0x0000_0100);
-        assert_eq!(compat.read_u32(0x10, 4), 0x2345_4004);
+        assert_eq!(compat.read_u32(0x10, 4), expected_lo);
     }
 
     #[test]
     fn mmio64_bar_probe_then_subword_write_uses_programmed_base_not_probe_mask() {
         let mut cfg = PciConfigSpace::new(0x1234, 0x5678);
+        let bar_size = 0x4000u64;
         cfg.set_bar_definition(
             0,
             PciBarDefinition::Mmio64 {
-                size: 0x4000,
+                size: bar_size,
                 prefetchable: false,
             },
         );
@@ -450,29 +483,33 @@ mod tests {
         // Standard BAR size probe: write all-ones dword and read back the size mask (including the
         // "64-bit BAR" type bits 2:1 = 0b10).
         compat.write_u32(0x10, 4, 0xFFFF_FFFF);
-        assert_eq!(compat.read_u32(0x10, 4), 0xFFFF_C004);
+        let (probe_mask_lo, _probe_mask_hi) = mmio64_probe_masks(bar_size, false);
+        assert_eq!(compat.read_u32(0x10, 4), probe_mask_lo);
 
         // After probing, subword writes must merge against the programmed base (0), not the probe
-        // response (0xFFFF_C004). Program only the high 16 bits of the low dword.
+        // response (size mask). Program only the high 16 bits of the low dword.
         compat.write_u32(0x12, 2, 0xE000);
-        assert_eq!(compat.read_u32(0x10, 4), 0xE000_0004);
+        let expected_lo = mmio64_programmed_lo(bar_size, false, 0xE000_0000);
+        assert_eq!(compat.read_u32(0x10, 4), expected_lo);
         assert_eq!(compat.read_u32(0x14, 4), 0x0000_0000);
     }
 
     #[test]
     fn io_bar_probe_and_subword_write_use_programmed_base_not_probe_mask() {
         let mut cfg = PciConfigSpace::new(0x1234, 0x5678);
-        cfg.set_bar_definition(0, PciBarDefinition::Io { size: 0x20 });
+        let bar_size = 0x20;
+        cfg.set_bar_definition(0, PciBarDefinition::Io { size: bar_size });
 
         let compat = PciConfigSpaceCompat::new(cfg);
 
         compat.write_u32(0x10, 4, 0xFFFF_FFFF);
-        assert_eq!(compat.read_u32(0x10, 4), 0xFFFF_FFE1);
+        assert_eq!(compat.read_u32(0x10, 4), io_probe_mask(bar_size));
 
         // Program only the high 16 bits via a subword write. Low bits must come from the
         // programmed base (0) + IO bit (bit0=1), not from the probe response (0xFFE1).
         compat.write_u32(0x12, 2, 0xE000);
-        assert_eq!(compat.read_u32(0x10, 4), 0xE000_0001);
+        let expected = (0xE000_0000 & !(bar_size - 1)) | 0x1;
+        assert_eq!(compat.read_u32(0x10, 4), expected);
     }
 
     #[test]
