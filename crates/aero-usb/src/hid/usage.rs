@@ -144,6 +144,15 @@ pub fn keyboard_code_to_consumer_usage(code: &str) -> Option<u16> {
         "MediaTrackNext" => Some(0x00B5),
         "MediaTrackPrevious" => Some(0x00B6),
 
+        // Browser / application control keys (Consumer Page, "Application Control" collection).
+        "BrowserBack" => Some(0x0224),       // AC Back
+        "BrowserForward" => Some(0x0225),    // AC Forward
+        "BrowserStop" => Some(0x0226),       // AC Stop
+        "BrowserRefresh" => Some(0x0227),    // AC Refresh
+        "BrowserSearch" => Some(0x0221),     // AC Search
+        "BrowserFavorites" => Some(0x022A),  // AC Bookmarks
+        "BrowserHome" => Some(0x0223),       // AC Home
+
         _ => None,
     }
 }

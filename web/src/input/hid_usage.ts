@@ -210,6 +210,25 @@ export function keyboardCodeToConsumerUsage(code: string): number | null {
       return 0x00b5;
     case "MediaTrackPrevious":
       return 0x00b6;
+
+    // Browser / application control keys (Consumer Page, "Application Control" collection).
+    //
+    // These keys are common on extended keyboards and should be forwarded to the guest as Consumer
+    // Control usages so Windows can surface them as standard media/navigation hotkeys.
+    case "BrowserBack":
+      return 0x0224; // AC Back
+    case "BrowserForward":
+      return 0x0225; // AC Forward
+    case "BrowserStop":
+      return 0x0226; // AC Stop
+    case "BrowserRefresh":
+      return 0x0227; // AC Refresh
+    case "BrowserSearch":
+      return 0x0221; // AC Search
+    case "BrowserFavorites":
+      return 0x022a; // AC Bookmarks
+    case "BrowserHome":
+      return 0x0223; // AC Home
   }
   return null;
 }

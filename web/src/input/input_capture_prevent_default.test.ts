@@ -4,7 +4,7 @@ import { InputCapture } from "./input_capture";
 import { makeCanvasStub, withStubbedDocument } from "./test_utils";
 
 describe("InputCapture preventDefault policy", () => {
-  it("prevents default for browser navigation keys even though they are not mapped to guest input", () => {
+  it("prevents default for browser navigation keys", () => {
     withStubbedDocument(() => {
       const canvas = makeCanvasStub();
       const ioWorker = { postMessage: () => {} };

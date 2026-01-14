@@ -5,5 +5,12 @@
   { "code": "MediaPlayPause", "usage": "0x00CD" },
   { "code": "MediaStop", "usage": "0x00B7" },
   { "code": "MediaTrackNext", "usage": "0x00B5" },
-  { "code": "MediaTrackPrevious", "usage": "0x00B6" }
+  { "code": "MediaTrackPrevious", "usage": "0x00B6" },
+  { "code": "BrowserBack", "usage": "0x0224" },
+  { "code": "BrowserForward", "usage": "0x0225" },
+  { "code": "BrowserStop", "usage": "0x0226" },
+  { "code": "BrowserRefresh", "usage": "0x0227" },
+  { "code": "BrowserSearch", "usage": "0x0221" },
+  { "code": "BrowserFavorites", "usage": "0x022A" },
+  { "code": "BrowserHome", "usage": "0x0223" }
 ]
