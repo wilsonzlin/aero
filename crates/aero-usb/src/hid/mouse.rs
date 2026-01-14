@@ -381,8 +381,10 @@ impl UsbHidMouse {
     }
 
     pub fn movement(&mut self, dx: i32, dy: i32) {
-        self.dx += dx;
-        self.dy += dy;
+        // Host input is untrusted; use saturating math so extreme values cannot overflow before we
+        // clamp/split them into HID reports.
+        self.dx = self.dx.saturating_add(dx);
+        self.dy = self.dy.saturating_add(dy);
         self.flush_motion();
     }
 
@@ -395,8 +397,8 @@ impl UsbHidMouse {
     }
 
     pub fn wheel2(&mut self, wheel: i32, hwheel: i32) {
-        self.wheel += wheel;
-        self.hwheel += hwheel;
+        self.wheel = self.wheel.saturating_add(wheel);
+        self.hwheel = self.hwheel.saturating_add(hwheel);
         self.flush_motion();
     }
 
@@ -1016,6 +1018,34 @@ mod tests {
 
         let r2 = poll_interrupt_in(&mut mouse).unwrap();
         assert_eq!(r2, vec![0x00, 73u8, 0u8, 0u8, 0u8]);
+    }
+
+    #[test]
+    fn motion_saturates_accumulator_without_overflow() {
+        let mut mouse = UsbHidMouse::new();
+        configure_mouse(&mut mouse);
+
+        // Simulate a hostile/corrupt snapshot restore that leaves a huge accumulated delta in the
+        // device state. Adding any further motion must not overflow and panic in debug builds.
+        mouse.dx = i32::MAX;
+        mouse.movement(1, 0);
+
+        assert_eq!(mouse.pending_reports.len(), MAX_PENDING_REPORTS);
+
+        let mut first = None;
+        let mut last = None;
+        let mut count = 0usize;
+        while let Some(report) = poll_interrupt_in(&mut mouse) {
+            if first.is_none() {
+                first = Some(report.clone());
+            }
+            last = Some(report);
+            count += 1;
+        }
+
+        assert_eq!(count, MAX_PENDING_REPORTS);
+        assert_eq!(first.unwrap(), vec![0x00, 127u8, 0u8, 0u8, 0u8]);
+        assert_eq!(last.unwrap(), vec![0x00, 127u8, 0u8, 0u8, 0u8]);
     }
 
     #[test]

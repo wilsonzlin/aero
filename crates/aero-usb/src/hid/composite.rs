@@ -200,18 +200,20 @@ impl MouseInterface {
     }
 
     fn movement(&mut self, dx: i32, dy: i32, configured: bool) {
-        self.dx += dx;
-        self.dy += dy;
+        // Host input is untrusted; use saturating arithmetic so extreme values cannot overflow
+        // before we clamp/split them into HID reports.
+        self.dx = self.dx.saturating_add(dx);
+        self.dy = self.dy.saturating_add(dy);
         self.flush_motion(configured);
     }
 
     fn wheel(&mut self, delta: i32, configured: bool) {
-        self.wheel += delta;
+        self.wheel = self.wheel.saturating_add(delta);
         self.flush_motion(configured);
     }
 
     fn hwheel(&mut self, delta: i32, configured: bool) {
-        self.hwheel += delta;
+        self.hwheel = self.hwheel.saturating_add(delta);
         self.flush_motion(configured);
     }
 
@@ -1875,6 +1877,44 @@ mod tests {
             dev.handle_in_transfer(MOUSE_INTERRUPT_IN_EP, 5),
             UsbInResult::Data(vec![0x01, 0x00, 0x00, 0x00, 0x00])
         );
+    }
+
+    #[test]
+    fn configured_mouse_motion_saturates_without_overflow() {
+        let mut dev = UsbCompositeHidInputHandle::new();
+        configure(&mut dev);
+
+        // Simulate a corrupt snapshot that restores a huge accumulated delta, then ensure further
+        // host-side motion injection can't overflow and panic in debug builds.
+        dev.0.borrow_mut().mouse.dx = i32::MAX;
+        dev.mouse_movement(1, 0);
+
+        assert_eq!(
+            dev.0.borrow().mouse.pending_reports.len(),
+            MAX_PENDING_MOUSE_REPORTS
+        );
+
+        let mut first = None;
+        let mut last = None;
+        let mut count = 0usize;
+        loop {
+            match dev.handle_in_transfer(MOUSE_INTERRUPT_IN_EP, 5) {
+                UsbInResult::Data(data) => {
+                    if first.is_none() {
+                        first = Some(data.clone());
+                    }
+                    last = Some(data);
+                    count += 1;
+                }
+                UsbInResult::Nak => break,
+                UsbInResult::Stall => panic!("unexpected STALL on mouse interrupt IN"),
+                UsbInResult::Timeout => panic!("unexpected TIMEOUT on mouse interrupt IN"),
+            }
+        }
+
+        assert_eq!(count, MAX_PENDING_MOUSE_REPORTS);
+        assert_eq!(first.unwrap(), vec![0x00, 127u8, 0, 0, 0]);
+        assert_eq!(last.unwrap(), vec![0x00, 127u8, 0, 0, 0]);
     }
 
     #[test]
