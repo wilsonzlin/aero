@@ -213,7 +213,7 @@ contents (and `SOURCE_DATE_EPOCH`, if set) are identical.
 
 Notes:
 
-- `ci/package-drivers.ps1 -DeterminismSelfTest` checks that repeated runs produce identical `*-bundle.zip` artifacts, and identical `*.iso` artifacts when ISO creation is enabled.
+- `ci/package-drivers.ps1 -DeterminismSelfTest` checks that repeated runs produce identical `*-x86.zip`, `*-x64.zip`, and `*-bundle.zip` artifacts (and their `*.manifest.json` files), and identical `*.iso` artifacts (and its manifest) when ISO creation is enabled.
 - The legacy helper `ci/lib/New-IsoFile.ps1` also prefers `cargo`/`aero_iso` when available, falling back to IMAPI2 on Windows.
 
 ### Signing policy

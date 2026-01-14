@@ -1262,17 +1262,31 @@ function New-IsoFromFolder {
 }
 
 function Get-BuildIdString {
+    # For reproducible manifests, avoid CI run identifiers (which change on every run). Prefer a
+    # source identifier that remains stable for the same inputs, such as the git commit SHA.
+    try {
+        $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+        $sha = (& git -C $repoRoot rev-parse --short=12 HEAD 2>$null).Trim()
+        if (-not [string]::IsNullOrWhiteSpace($sha)) {
+            return $sha
+        }
+    } catch {
+        # fall through
+    }
+
     $candidates = @(
-        $env:GITHUB_RUN_ID,
-        $env:GITHUB_RUN_NUMBER,
-        $env:BUILD_BUILDID,
-        $env:CI_PIPELINE_ID
+        $env:GITHUB_SHA,
+        $env:CI_COMMIT_SHA,
+        $env:BUILD_SOURCEVERSION
     )
     foreach ($c in $candidates) {
         if (-not [string]::IsNullOrWhiteSpace($c)) {
-            return ([string]$c).Trim()
+            $s = ([string]$c).Trim()
+            if ($s.Length -gt 12) { $s = $s.Substring(0, 12) }
+            return $s
         }
     }
+
     return $null
 }
 
@@ -1655,23 +1669,41 @@ function Invoke-DeterminismSelfTest {
     $noIso = -not $canTestIso
 
     $oldFatEnv = $env:AERO_MAKE_FAT_IMAGE
+    $oldGhRunId = $env:GITHUB_RUN_ID
+    $oldGhRunNumber = $env:GITHUB_RUN_NUMBER
+    $oldBuildBuildId = $env:BUILD_BUILDID
+    $oldCiPipelineId = $env:CI_PIPELINE_ID
     try {
         # Ensure the env-var toggle doesn't accidentally make the self-test depend on
         # external FAT image tooling.
         $env:AERO_MAKE_FAT_IMAGE = "0"
 
-        $r1 = Invoke-PackageDrivers -InputRoot $inputCandidate -SigningPolicy $SigningPolicy -CertPath $certCandidate -OutDir $out1 -RepoRoot $repoRootResolved -Version $Version -NoIso:$noIso -MakeFatImage:$false -NoManifest -AllowUnsafeOutDir
-        $r2 = Invoke-PackageDrivers -InputRoot $inputCandidate -SigningPolicy $SigningPolicy -CertPath $certCandidate -OutDir $out2 -RepoRoot $repoRootResolved -Version $Version -NoIso:$noIso -MakeFatImage:$false -NoManifest -AllowUnsafeOutDir
+        # Simulate different CI build numbers between runs (these must NOT affect output).
+        $env:GITHUB_RUN_ID = "111"
+        $env:GITHUB_RUN_NUMBER = "111"
+        $env:BUILD_BUILDID = "111"
+        $env:CI_PIPELINE_ID = "111"
+        $r1 = Invoke-PackageDrivers -InputRoot $inputCandidate -SigningPolicy $SigningPolicy -CertPath $certCandidate -OutDir $out1 -RepoRoot $repoRootResolved -Version $Version -NoIso:$noIso -MakeFatImage:$false -AllowUnsafeOutDir
 
+        $env:GITHUB_RUN_ID = "222"
+        $env:GITHUB_RUN_NUMBER = "222"
+        $env:BUILD_BUILDID = "222"
+        $env:CI_PIPELINE_ID = "222"
+        $r2 = Invoke-PackageDrivers -InputRoot $inputCandidate -SigningPolicy $SigningPolicy -CertPath $certCandidate -OutDir $out2 -RepoRoot $repoRootResolved -Version $Version -NoIso:$noIso -MakeFatImage:$false -AllowUnsafeOutDir
+ 
         $checks = @(
             @{ Name = "x86 ZIP"; Path1 = $r1.ZipX86; Path2 = $r2.ZipX86 },
             @{ Name = "x64 ZIP"; Path1 = $r1.ZipX64; Path2 = $r2.ZipX64 },
-            @{ Name = "bundle ZIP"; Path1 = $r1.ZipBundle; Path2 = $r2.ZipBundle }
+            @{ Name = "bundle ZIP"; Path1 = $r1.ZipBundle; Path2 = $r2.ZipBundle },
+            @{ Name = "x86 manifest"; Path1 = $r1.ManifestX86; Path2 = $r2.ManifestX86 },
+            @{ Name = "x64 manifest"; Path1 = $r1.ManifestX64; Path2 = $r2.ManifestX64 },
+            @{ Name = "bundle manifest"; Path1 = $r1.ManifestBundle; Path2 = $r2.ManifestBundle }
         )
         if ($canTestIso) {
             $checks += @{ Name = "bundle ISO"; Path1 = $r1.IsoBundle; Path2 = $r2.IsoBundle }
+            $checks += @{ Name = "bundle ISO manifest"; Path1 = $r1.ManifestIso; Path2 = $r2.ManifestIso }
         }
-
+ 
         $results = New-Object System.Collections.Generic.List[object]
         foreach ($c in $checks) {
             $p1 = [string]$c.Path1
@@ -1702,6 +1734,10 @@ function Invoke-DeterminismSelfTest {
         } else {
             $env:AERO_MAKE_FAT_IMAGE = $oldFatEnv
         }
+        if ($null -eq $oldGhRunId) { Remove-Item env:GITHUB_RUN_ID -ErrorAction SilentlyContinue } else { $env:GITHUB_RUN_ID = $oldGhRunId }
+        if ($null -eq $oldGhRunNumber) { Remove-Item env:GITHUB_RUN_NUMBER -ErrorAction SilentlyContinue } else { $env:GITHUB_RUN_NUMBER = $oldGhRunNumber }
+        if ($null -eq $oldBuildBuildId) { Remove-Item env:BUILD_BUILDID -ErrorAction SilentlyContinue } else { $env:BUILD_BUILDID = $oldBuildBuildId }
+        if ($null -eq $oldCiPipelineId) { Remove-Item env:CI_PIPELINE_ID -ErrorAction SilentlyContinue } else { $env:CI_PIPELINE_ID = $oldCiPipelineId }
     }
 }
 
