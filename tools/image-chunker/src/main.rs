@@ -2335,6 +2335,11 @@ async fn head_object_with_retry(
             Err(err) if is_no_such_key_error(&err) => {
                 return Err(anyhow!("object not found (404) for s3://{bucket}/{key}"));
             }
+            Err(err) if is_access_denied_error(&err) => {
+                return Err(anyhow!(
+                    "access denied (403) for s3://{bucket}/{key}: {err}"
+                ));
+            }
             Err(err) if attempt < retries => {
                 let sleep_for = retry_backoff(attempt);
                 eprintln!(
@@ -2418,6 +2423,11 @@ async fn download_object_bytes_with_retry(
             Err(err) if is_no_such_key_error(&err) => {
                 return Err(anyhow!("object not found (404) for s3://{bucket}/{key}"));
             }
+            Err(err) if is_access_denied_error(&err) => {
+                return Err(anyhow!(
+                    "access denied (403) for s3://{bucket}/{key}: {err}"
+                ));
+            }
             Err(err) if attempt < retries => {
                 let sleep_for = retry_backoff(attempt);
                 eprintln!(
@@ -2473,6 +2483,11 @@ async fn download_object_bytes_optional_with_retry(
                 return Ok(Some(bytes));
             }
             Err(err) if is_no_such_key_error(&err) => return Ok(None),
+            Err(err) if is_access_denied_error(&err) => {
+                return Err(anyhow!(
+                    "access denied (403) for s3://{bucket}/{key}: {err}"
+                ));
+            }
             Err(err) if attempt < retries => {
                 let sleep_for = retry_backoff(attempt);
                 eprintln!(
