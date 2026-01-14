@@ -5696,7 +5696,12 @@ function renderMicrophonePanel(): HTMLElement {
           return out && typeof out === "object" && !Array.isArray(out) ? (out as Record<string, unknown>) : null;
         };
         const dbg = mic.getDebugInfo();
-        const deviceIdHash = deviceSelect.value ? fnv1a32Hex(deviceIdEncoder.encode(deviceSelect.value)) : null;
+        // Prefer the user-selected deviceId for stable repro. If "default" was selected, fall back
+        // to the deviceId reported by the active track settings (if any).
+        const selectedDeviceIdHash = deviceSelect.value ? fnv1a32Hex(deviceIdEncoder.encode(deviceSelect.value)) : null;
+        const trackDeviceId = (dbg.trackSettings as Record<string, unknown> | null)?.["deviceId"];
+        const trackDeviceIdHash = typeof trackDeviceId === "string" && trackDeviceId.length ? fnv1a32Hex(deviceIdEncoder.encode(trackDeviceId)) : null;
+        const deviceIdHash = selectedDeviceIdHash ?? trackDeviceIdHash;
         micAttachment = {
           ringBuffer: mic.ringBuffer.sab,
           sampleRate: mic.actualSampleRate,
