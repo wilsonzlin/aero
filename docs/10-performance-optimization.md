@@ -884,6 +884,11 @@ pub struct JitMetricsTotals {
     // Cache behavior.
     pub cache_lookup_hit_total: u64,
     pub cache_lookup_miss_total: u64,
+    pub cache_install_total: u64,
+    pub cache_evict_total: u64,
+    pub cache_invalidate_total: u64,
+    pub cache_stale_install_reject_total: u64,
+    pub compile_request_total: u64,
 
     // Tier distribution.
     pub tier1_blocks_compiled_total: u64,

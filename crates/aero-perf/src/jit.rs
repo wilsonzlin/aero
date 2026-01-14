@@ -362,6 +362,11 @@ pub struct JitTier2PassesExport {
 pub struct JitCacheExport {
     pub lookup_hit: u64,
     pub lookup_miss: u64,
+    pub install: u64,
+    pub evict: u64,
+    pub invalidate: u64,
+    pub stale_install_reject: u64,
+    pub compile_request: u64,
     pub capacity_bytes: u64,
     pub used_bytes: u64,
 }
@@ -400,6 +405,11 @@ pub fn totals_to_export(enabled: bool, totals: JitMetricsTotals, rolling: JitRol
             cache: JitCacheExport {
                 lookup_hit: totals.cache_lookup_hit_total,
                 lookup_miss: totals.cache_lookup_miss_total,
+                install: totals.cache_install_total,
+                evict: totals.cache_evict_total,
+                invalidate: totals.cache_invalidate_total,
+                stale_install_reject: totals.cache_stale_install_reject_total,
+                compile_request: totals.compile_request_total,
                 capacity_bytes: totals.code_cache_capacity_bytes,
                 used_bytes: totals.code_cache_used_bytes,
             },

@@ -42,6 +42,11 @@ fn jit_metrics_disabled_stays_zero() {
     assert_eq!(snapshot.jit.totals.tier2.blocks_compiled, 0);
     assert_eq!(snapshot.jit.totals.cache.lookup_hit, 0);
     assert_eq!(snapshot.jit.totals.cache.lookup_miss, 0);
+    assert_eq!(snapshot.jit.totals.cache.install, 0);
+    assert_eq!(snapshot.jit.totals.cache.evict, 0);
+    assert_eq!(snapshot.jit.totals.cache.invalidate, 0);
+    assert_eq!(snapshot.jit.totals.cache.stale_install_reject, 0);
+    assert_eq!(snapshot.jit.totals.cache.compile_request, 0);
     assert_eq!(snapshot.jit.totals.cache.capacity_bytes, 0);
     assert_eq!(snapshot.jit.totals.cache.used_bytes, 0);
     assert_eq!(snapshot.jit.totals.tier1.compile_ms, 0.0);
@@ -90,6 +95,11 @@ fn jit_metrics_enabled_exports_nonzero_totals() {
     assert_eq!(snapshot.jit.totals.cache.used_bytes, 128);
     assert_eq!(snapshot.jit.totals.cache.lookup_miss, 1);
     assert_eq!(snapshot.jit.totals.cache.lookup_hit, 1);
+    assert_eq!(snapshot.jit.totals.cache.install, 1);
+    assert_eq!(snapshot.jit.totals.cache.evict, 2);
+    assert_eq!(snapshot.jit.totals.cache.invalidate, 1);
+    assert_eq!(snapshot.jit.totals.cache.stale_install_reject, 1);
+    assert_eq!(snapshot.jit.totals.cache.compile_request, 1);
     assert_eq!(snapshot.jit.totals.tier1.blocks_compiled, 1);
     assert_eq!(snapshot.jit.totals.tier2.blocks_compiled, 1);
     assert!(snapshot.jit.totals.tier1.compile_ms > 0.0);
