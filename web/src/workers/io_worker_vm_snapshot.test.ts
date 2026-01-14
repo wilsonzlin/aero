@@ -275,8 +275,10 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
       guestBase: 0,
       guestSize: 0x1000,
       runtimes: {
+        usbXhciControllerBridge: null,
         usbUhciRuntime: null,
         usbUhciControllerBridge: null,
+        usbEhciControllerBridge: null,
         netE1000: null,
         netStack: null,
       },
@@ -367,8 +369,10 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
       guestBase: 0,
       guestSize: 0x1000,
       runtimes: {
+        usbXhciControllerBridge: null,
         usbUhciRuntime: null,
         usbUhciControllerBridge: null,
+        usbEhciControllerBridge: null,
         netE1000: null,
         netStack: null,
       },
@@ -397,8 +401,10 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
       guestBase: 0,
       guestSize: 0x1000,
       runtimes: {
+        usbXhciControllerBridge: null,
         usbUhciRuntime: null,
         usbUhciControllerBridge: null,
+        usbEhciControllerBridge: null,
         netE1000: null,
         netStack: null,
       },
