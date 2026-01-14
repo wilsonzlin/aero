@@ -3656,6 +3656,175 @@ bool TestApplyStateBlockRenderTargetEmitsSetRenderTargets() {
   return true;
 }
 
+bool TestApplyStateBlockDepthStencilEmitsSetRenderTargets() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnCreateResource != nullptr, "pfnCreateResource is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetRenderTarget != nullptr, "pfnSetRenderTarget is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetDepthStencil != nullptr, "pfnSetDepthStencil is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnBeginStateBlock != nullptr, "pfnBeginStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnEndStateBlock != nullptr, "pfnEndStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnApplyStateBlock != nullptr, "pfnApplyStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDeleteStateBlock != nullptr, "pfnDeleteStateBlock is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  auto CreateSurface = [&](uint32_t format, uint32_t usage, const char* what, D3DDDI_HRESOURCE* out_res) -> bool {
+    if (!out_res) {
+      return false;
+    }
+    D3D9DDIARG_CREATERESOURCE create{};
+    create.type = 1u; // D3DRTYPE_SURFACE
+    create.format = format;
+    create.width = 64;
+    create.height = 64;
+    create.depth = 1;
+    create.mip_levels = 1;
+    create.usage = usage;
+    create.pool = 0;
+    create.size = 0;
+    create.hResource.pDrvPrivate = nullptr;
+    create.pSharedHandle = nullptr;
+    create.pPrivateDriverData = nullptr;
+    create.PrivateDriverDataSize = 0;
+    create.wddm_hAllocation = 0;
+    const HRESULT hr = cleanup.device_funcs.pfnCreateResource(cleanup.hDevice, &create);
+    if (!Check(hr == S_OK, what)) {
+      return false;
+    }
+    if (!Check(create.hResource.pDrvPrivate != nullptr, "CreateResource returned handle")) {
+      return false;
+    }
+    cleanup.resources.push_back(create.hResource);
+    *out_res = create.hResource;
+    return true;
+  };
+
+  // Create RT0 (color) and two depth-stencil surfaces.
+  D3DDDI_HRESOURCE rt{};
+  D3DDDI_HRESOURCE ds_a{};
+  D3DDDI_HRESOURCE ds_b{};
+  // RT: X8R8G8B8 (22), usage=RENDERTARGET (1).
+  if (!CreateSurface(/*format=*/22u, /*usage=*/0x00000001u, "CreateResource(RT)", &rt)) {
+    return false;
+  }
+  // DS: D24S8 (75), usage=DEPTHSTENCIL (2).
+  if (!CreateSurface(/*format=*/75u, /*usage=*/0x00000002u, "CreateResource(DS A)", &ds_a)) {
+    return false;
+  }
+  if (!CreateSurface(/*format=*/75u, /*usage=*/0x00000002u, "CreateResource(DS B)", &ds_b)) {
+    return false;
+  }
+
+  auto* rt_res = reinterpret_cast<Resource*>(rt.pDrvPrivate);
+  auto* ds_a_res = reinterpret_cast<Resource*>(ds_a.pDrvPrivate);
+  auto* ds_b_res = reinterpret_cast<Resource*>(ds_b.pDrvPrivate);
+  if (!Check(rt_res && ds_a_res && ds_b_res, "surface resource pointers")) {
+    return false;
+  }
+
+  // Start from RT0 + DS A.
+  HRESULT hr = cleanup.device_funcs.pfnSetRenderTarget(cleanup.hDevice, /*slot=*/0, rt);
+  if (!Check(hr == S_OK, "SetRenderTarget(RT0)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetDepthStencil(cleanup.hDevice, ds_a);
+  if (!Check(hr == S_OK, "SetDepthStencil(DS A)")) {
+    return false;
+  }
+
+  // Record DS B in a state block.
+  D3D9DDI_HSTATEBLOCK hSb{};
+  hr = cleanup.device_funcs.pfnBeginStateBlock(cleanup.hDevice);
+  if (!Check(hr == S_OK, "BeginStateBlock(SetDepthStencil B)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetDepthStencil(cleanup.hDevice, ds_b);
+  if (!Check(hr == S_OK, "SetDepthStencil(DS B) recorded")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnEndStateBlock(cleanup.hDevice, &hSb);
+  if (!Check(hr == S_OK, "EndStateBlock(SetDepthStencil B)")) {
+    return false;
+  }
+  if (!Check(hSb.pDrvPrivate != nullptr, "EndStateBlock returned handle")) {
+    return false;
+  }
+
+  // Restore DS A before applying the state block.
+  hr = cleanup.device_funcs.pfnSetDepthStencil(cleanup.hDevice, ds_a);
+  if (!Check(hr == S_OK, "SetDepthStencil(DS A) restore before apply")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  // Isolate ApplyStateBlock's command emission.
+  dev->cmd.reset();
+  hr = cleanup.device_funcs.pfnApplyStateBlock(cleanup.hDevice, hSb);
+  if (!Check(hr == S_OK, "ApplyStateBlock(SetDepthStencil B)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->depth_stencil == ds_b_res, "ApplyStateBlock updates depth-stencil")) {
+      cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+      return false;
+    }
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(ApplyStateBlock depth-stencil)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_CREATE_SHADER_DXBC) == 0, "ApplyStateBlock emits no CREATE_SHADER_DXBC")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  bool saw_ds = false;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_RENDER_TARGETS)) {
+    if (hdr->size_bytes < sizeof(aerogpu_cmd_set_render_targets)) {
+      continue;
+    }
+    const auto* pkt = reinterpret_cast<const aerogpu_cmd_set_render_targets*>(hdr);
+    if (pkt->depth_stencil == ds_b_res->handle && pkt->color_count >= 1 && pkt->colors[0] == rt_res->handle) {
+      saw_ds = true;
+      break;
+    }
+  }
+  if (!Check(saw_ds, "ApplyStateBlock emits SET_RENDER_TARGETS with expected depth-stencil")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+  return true;
+}
+
 bool TestApplyStateBlockToleratesUnsupportedTextureStageState() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -20967,6 +21136,9 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestApplyStateBlockRenderTargetEmitsSetRenderTargets()) {
+    return 1;
+  }
+  if (!aerogpu::TestApplyStateBlockDepthStencilEmitsSetRenderTargets()) {
     return 1;
   }
   if (!aerogpu::TestApplyStateBlockToleratesUnsupportedTextureStageState()) {
