@@ -78,8 +78,11 @@ use aero_protocol::aerogpu::{aerogpu_pci as pci, aerogpu_ring as ring};
 #[derive(Debug, Default)]
 struct AbiDump {
     sizes: HashMap<String, usize>,
+    size_lines: HashMap<String, usize>,
     offsets: HashMap<String, usize>,
+    offset_lines: HashMap<String, usize>,
     consts: HashMap<String, u64>,
+    const_lines: HashMap<String, usize>,
 }
 
 impl AbiDump {
@@ -162,6 +165,7 @@ fn parse_c_abi_dump_output(text: String) -> AbiDump {
     let mut dump = AbiDump::default();
 
     for (line_no, raw_line) in text.lines().enumerate() {
+        let line_no = line_no + 1;
         let line = raw_line.trim();
         if line.is_empty() {
             continue;
@@ -171,41 +175,43 @@ fn parse_c_abi_dump_output(text: String) -> AbiDump {
         let tag = parts[0];
         match tag {
             "SIZE" => {
-                assert_eq!(parts.len(), 3, "bad SIZE line @{}: {line}", line_no + 1);
+                assert_eq!(parts.len(), 3, "bad SIZE line @{line_no}: {line}");
                 let name = parts[1].to_string();
                 let value = parts[2].parse().unwrap();
-                let prev = dump.sizes.insert(name.clone(), value);
-                assert!(
-                    prev.is_none(),
-                    "duplicate SIZE for {name} in line @{}: {line}",
-                    line_no + 1
-                );
+                if let Some(prev_value) = dump.sizes.insert(name.clone(), value) {
+                    let prev_line = dump.size_lines.get(&name).copied().unwrap_or(0);
+                    panic!(
+                        "duplicate SIZE for {name}: first @{prev_line} = {prev_value}, again @{line_no} = {value}: {line}"
+                    );
+                }
+                dump.size_lines.insert(name, line_no);
             }
             "OFF" => {
-                assert_eq!(parts.len(), 4, "bad OFF line @{}: {line}", line_no + 1);
+                assert_eq!(parts.len(), 4, "bad OFF line @{line_no}: {line}");
                 let key = format!("{}.{}", parts[1], parts[2]);
                 let value = parts[3].parse().unwrap();
-                let prev = dump.offsets.insert(key.clone(), value);
-                assert!(
-                    prev.is_none(),
-                    "duplicate OFF for {key} in line @{}: {line}",
-                    line_no + 1
-                );
+                if let Some(prev_value) = dump.offsets.insert(key.clone(), value) {
+                    let prev_line = dump.offset_lines.get(&key).copied().unwrap_or(0);
+                    panic!(
+                        "duplicate OFF for {key}: first @{prev_line} = {prev_value}, again @{line_no} = {value}: {line}"
+                    );
+                }
+                dump.offset_lines.insert(key, line_no);
             }
             "CONST" => {
-                assert_eq!(parts.len(), 3, "bad CONST line @{}: {line}", line_no + 1);
+                assert_eq!(parts.len(), 3, "bad CONST line @{line_no}: {line}");
                 let name = parts[1].to_string();
                 let value = parts[2].parse().unwrap();
-                let prev = dump.consts.insert(name.clone(), value);
-                assert!(
-                    prev.is_none(),
-                    "duplicate CONST for {name} in line @{}: {line}",
-                    line_no + 1
-                );
+                if let Some(prev_value) = dump.consts.insert(name.clone(), value) {
+                    let prev_line = dump.const_lines.get(&name).copied().unwrap_or(0);
+                    panic!(
+                        "duplicate CONST for {name}: first @{prev_line} = {prev_value}, again @{line_no} = {value}: {line}"
+                    );
+                }
+                dump.const_lines.insert(name, line_no);
             }
             other => panic!(
-                "unknown ABI dump tag {other} in line @{}: {line}",
-                line_no + 1
+                "unknown ABI dump tag {other} in line @{line_no}: {line}",
             ),
         }
     }
