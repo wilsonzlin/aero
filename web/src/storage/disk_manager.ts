@@ -453,12 +453,13 @@ export class DiskManager {
       start(controller) {
         channel.port2.onmessage = (event: MessageEvent<unknown>) => {
           const data = event.data;
-          if (!data || typeof data !== "object") return;
+          if (!isRecord(data)) return;
           const msg = data as Record<string, unknown>;
 
-          const type = msg["type"];
+          // Treat port messages as untrusted; ignore inherited fields (prototype pollution).
+          const type = hasOwn(msg, "type") ? msg["type"] : undefined;
           if (type === "chunk") {
-            const chunk = msg["chunk"];
+            const chunk = hasOwn(msg, "chunk") ? msg["chunk"] : undefined;
             if (chunk instanceof Uint8Array) {
               controller.enqueue(chunk);
             }
@@ -467,25 +468,22 @@ export class DiskManager {
 
           if (type === "done") {
             controller.close();
-            const checksumRaw = msg["checksumCrc32"];
+            const checksumRaw = hasOwn(msg, "checksumCrc32") ? msg["checksumCrc32"] : undefined;
             doneResolve({ checksumCrc32: typeof checksumRaw === "string" ? checksumRaw : String(checksumRaw ?? "") });
             channel.port2.close();
             return;
           }
           if (type === "error") {
-            const raw = msg["error"];
+            const raw = hasOwn(msg, "error") ? msg["error"] : undefined;
             const message =
-              raw &&
-              typeof raw === "object" &&
-              typeof (raw as { message?: unknown }).message === "string" &&
-              (raw as { message: string }).message
+              isRecord(raw) && hasOwn(raw, "message") && typeof (raw as { message?: unknown }).message === "string" && (raw as { message: string }).message
                 ? (raw as { message: string }).message
                 : "Export failed";
             const err = new Error(message);
-            if (raw && typeof raw === "object") {
+            if (isRecord(raw)) {
               const details = raw as { name?: unknown; stack?: unknown };
-              if (typeof details.name === "string" && details.name) err.name = details.name;
-              if (typeof details.stack === "string" && details.stack) err.stack = details.stack;
+              if (hasOwn(details, "name") && typeof details.name === "string" && details.name) err.name = details.name;
+              if (hasOwn(details, "stack") && typeof details.stack === "string" && details.stack) err.stack = details.stack;
             }
             controller.error(err);
             doneReject(err);
