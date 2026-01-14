@@ -6976,17 +6976,15 @@ impl AerogpuD3d9Executor {
             }
         }
 
-        for tex_handle in textures_vs
-            .iter()
-            .copied()
-            .chain(textures_ps.iter().copied())
-        {
-            if tex_handle == 0 {
-                continue;
-            }
-            self.flush_texture_binding_if_dirty(Some(encoder), tex_handle, ctx)?;
-        }
-        let (vs_key, ps_key, vs_uses_semantic_locations, vs_cube_mask, ps_cube_mask) = {
+        let (
+            vs_key,
+            ps_key,
+            vs_uses_semantic_locations,
+            vs_used_mask,
+            ps_used_mask,
+            vs_cube_mask,
+            ps_cube_mask,
+        ) = {
             let vs = self
                 .shaders
                 .get(&vs_handle)
@@ -7013,10 +7011,27 @@ impl AerogpuD3d9Executor {
                 vs.key,
                 ps.key,
                 vs.uses_semantic_locations,
+                vs.used_samplers_mask,
+                ps.used_samplers_mask,
                 vs.cube_samplers_mask,
                 ps.cube_samplers_mask,
             )
         };
+        for slot in 0..MAX_SAMPLERS {
+            let bit = 1u16 << (slot as u32);
+            if (vs_used_mask & bit) != 0 {
+                let tex_handle = textures_vs[slot];
+                if tex_handle != 0 {
+                    self.flush_texture_binding_if_dirty(Some(encoder), tex_handle, ctx)?;
+                }
+            }
+            if (ps_used_mask & bit) != 0 {
+                let tex_handle = textures_ps[slot];
+                if tex_handle != 0 {
+                    self.flush_texture_binding_if_dirty(Some(encoder), tex_handle, ctx)?;
+                }
+            }
+        }
         self.ensure_sampler_bind_groups(vs_cube_mask, ps_cube_mask);
         let (color_formats, color_is_x8, depth_format) = self.render_target_formats()?;
         let depth_has_stencil =
