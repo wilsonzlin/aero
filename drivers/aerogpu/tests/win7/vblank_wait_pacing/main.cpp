@@ -1,5 +1,6 @@
 #include "..\\common\\aerogpu_test_common.h"
 #include "..\\common\\aerogpu_test_report.h"
+#include "..\\common\\aerogpu_test_scanout_diag.h"
 
 // This test directly exercises the WDDM kernel vblank wait path by calling
 // D3DKMTWaitForVerticalBlankEvent in a tight loop and measuring the pacing.
@@ -195,6 +196,38 @@ static int RunVblankWaitPacing(int argc, char **argv) {
     return reporter.Fail("D3DKMTOpenAdapterFromHdc failed with %s", NtStatusToString(&f, st).c_str());
   }
 
+  aerogpu_test::AerogpuScanoutDiag scanout_diag;
+  const bool have_scanout_diag = aerogpu_test::TryQueryAerogpuScanoutDiag((uint32_t)open.hAdapter,
+                                                                          (uint32_t)open.VidPnSourceId,
+                                                                          &scanout_diag);
+  if (have_scanout_diag) {
+    aerogpu_test::PrintfStdout("INFO: %s: scanout: flags=0x%08lX%s%s cached_enable=%lu mmio_enable=%lu",
+                               kTestName,
+                               (unsigned long)scanout_diag.flags_u32,
+                               scanout_diag.flags_valid ? "" : " (flags_invalid)",
+                               scanout_diag.post_display_ownership_released ? " (post_display_ownership_released)" : "",
+                               (unsigned long)scanout_diag.cached_enable,
+                               (unsigned long)scanout_diag.mmio_enable);
+    if (scanout_diag.flags_valid && scanout_diag.post_display_ownership_released) {
+      D3DKMT_CLOSEADAPTER close;
+      ZeroMemory(&close, sizeof(close));
+      close.hAdapter = open.hAdapter;
+      f.CloseAdapter(&close);
+      return reporter.Fail("post_display_ownership_released flag is set in QUERY_SCANOUT (flags=0x%08lX)",
+                           (unsigned long)scanout_diag.flags_u32);
+    }
+    if (scanout_diag.cached_enable == 0 || scanout_diag.mmio_enable == 0) {
+      D3DKMT_CLOSEADAPTER close;
+      ZeroMemory(&close, sizeof(close));
+      close.hAdapter = open.hAdapter;
+      f.CloseAdapter(&close);
+      return reporter.Fail("scanout enable appears off (cached_enable=%lu mmio_enable=%lu flags=0x%08lX)",
+                           (unsigned long)scanout_diag.cached_enable,
+                           (unsigned long)scanout_diag.mmio_enable,
+                           (unsigned long)scanout_diag.flags_u32);
+    }
+  }
+
   std::vector<double> deltas_ms;
   deltas_ms.reserve(samples);
 
@@ -210,6 +243,10 @@ static int RunVblankWaitPacing(int argc, char **argv) {
     st = f.WaitForVerticalBlankEvent(&wait);
     if (!NtSuccess(st)) {
       fail_msg = "D3DKMTWaitForVerticalBlankEvent failed with " + NtStatusToString(&f, st);
+      if (have_scanout_diag && scanout_diag.flags_valid && scanout_diag.post_display_ownership_released) {
+        fail_msg += aerogpu_test::FormatString(" (post_display_ownership_released=1 scanout.flags=0x%08lX)",
+                                               (unsigned long)scanout_diag.flags_u32);
+      }
       break;
     }
 

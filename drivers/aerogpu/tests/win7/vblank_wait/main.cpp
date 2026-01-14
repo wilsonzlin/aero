@@ -1,5 +1,6 @@
 #include "..\\common\\aerogpu_test_common.h"
 #include "..\\common\\aerogpu_test_report.h"
+#include "..\\common\\aerogpu_test_scanout_diag.h"
 
 // This test validates the WDDM vblank wait path directly via D3DKMTWaitForVerticalBlankEvent.
 //
@@ -276,6 +277,38 @@ static int RunVblankWait(int argc, char** argv) {
       aerogpu_test::PrintfStdout("INFO: %s: D3DKMTGetScanLine failed with %s",
                                  kTestName,
                                  NtStatusToString(&f, scan_st).c_str());
+    }
+  }
+
+  aerogpu_test::AerogpuScanoutDiag scanout_diag;
+  const bool have_scanout_diag = aerogpu_test::TryQueryAerogpuScanoutDiag((uint32_t)open.hAdapter,
+                                                                          (uint32_t)open.VidPnSourceId,
+                                                                          &scanout_diag);
+  if (have_scanout_diag) {
+    aerogpu_test::PrintfStdout("INFO: %s: scanout: flags=0x%08lX%s%s cached_enable=%lu mmio_enable=%lu",
+                               kTestName,
+                               (unsigned long)scanout_diag.flags_u32,
+                               scanout_diag.flags_valid ? "" : " (flags_invalid)",
+                               scanout_diag.post_display_ownership_released ? " (post_display_ownership_released)" : "",
+                               (unsigned long)scanout_diag.cached_enable,
+                               (unsigned long)scanout_diag.mmio_enable);
+    if (scanout_diag.flags_valid && scanout_diag.post_display_ownership_released) {
+      D3DKMT_CLOSEADAPTER close;
+      ZeroMemory(&close, sizeof(close));
+      close.hAdapter = open.hAdapter;
+      f.CloseAdapter(&close);
+      return reporter.Fail("post_display_ownership_released flag is set in QUERY_SCANOUT (flags=0x%08lX)",
+                           (unsigned long)scanout_diag.flags_u32);
+    }
+    if (scanout_diag.cached_enable == 0 || scanout_diag.mmio_enable == 0) {
+      D3DKMT_CLOSEADAPTER close;
+      ZeroMemory(&close, sizeof(close));
+      close.hAdapter = open.hAdapter;
+      f.CloseAdapter(&close);
+      return reporter.Fail("scanout enable appears off (cached_enable=%lu mmio_enable=%lu flags=0x%08lX)",
+                           (unsigned long)scanout_diag.cached_enable,
+                           (unsigned long)scanout_diag.mmio_enable,
+                           (unsigned long)scanout_diag.flags_u32);
     }
   }
 

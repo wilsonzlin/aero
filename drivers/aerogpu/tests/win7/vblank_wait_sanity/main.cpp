@@ -1,5 +1,6 @@
 #include "..\\common\\aerogpu_test_common.h"
 #include "..\\common\\aerogpu_test_report.h"
+#include "..\\common\\aerogpu_test_scanout_diag.h"
 
 #include <d3d9.h>
 
@@ -360,6 +361,19 @@ static int RunVblankWaitSanity(int argc, char** argv) {
                              (unsigned long)open.AdapterLuid.HighPart,
                              (unsigned long)open.AdapterLuid.LowPart);
 
+  aerogpu_test::AerogpuScanoutDiag scanout_diag;
+  const bool have_scanout_diag =
+      aerogpu_test::TryQueryAerogpuScanoutDiag((uint32_t)open.hAdapter, (uint32_t)open.VidPnSourceId, &scanout_diag);
+  if (have_scanout_diag) {
+    aerogpu_test::PrintfStdout("INFO: %s: scanout: flags=0x%08lX%s%s cached_enable=%lu mmio_enable=%lu",
+                               kTestName,
+                               (unsigned long)scanout_diag.flags_u32,
+                               scanout_diag.flags_valid ? "" : " (flags_invalid)",
+                               scanout_diag.post_display_ownership_released ? " (post_display_ownership_released)" : "",
+                               (unsigned long)scanout_diag.cached_enable,
+                               (unsigned long)scanout_diag.mmio_enable);
+  }
+
   LARGE_INTEGER qpc_freq_li;
   if (!QueryPerformanceFrequency(&qpc_freq_li) || qpc_freq_li.QuadPart <= 0) {
     return reporter.Fail("QueryPerformanceFrequency failed");
@@ -384,6 +398,24 @@ static int RunVblankWaitSanity(int argc, char** argv) {
     if (w == WAIT_TIMEOUT) {
       // Avoid trying to clean up the wait thread: it may be blocked in the kernel thunk. Exiting
       // the process is sufficient for test automation, and avoids deadlock-prone teardown paths.
+      if (have_scanout_diag) {
+        if (scanout_diag.flags_valid && scanout_diag.post_display_ownership_released) {
+          return reporter.Fail("vblank wait timed out after %lu ms (sample %lu/%lu); post_display_ownership_released=1 (scanout.flags=0x%08lX)",
+                               (unsigned long)timeout_ms,
+                               (unsigned long)(i + 1),
+                               (unsigned long)samples,
+                               (unsigned long)scanout_diag.flags_u32);
+        }
+        if (scanout_diag.cached_enable == 0 || scanout_diag.mmio_enable == 0) {
+          return reporter.Fail("vblank wait timed out after %lu ms (sample %lu/%lu); scanout enable may be off (cached_enable=%lu mmio_enable=%lu flags=0x%08lX)",
+                               (unsigned long)timeout_ms,
+                               (unsigned long)(i + 1),
+                               (unsigned long)samples,
+                               (unsigned long)scanout_diag.cached_enable,
+                               (unsigned long)scanout_diag.mmio_enable,
+                               (unsigned long)scanout_diag.flags_u32);
+        }
+      }
       return reporter.Fail("vblank wait timed out after %lu ms (sample %lu/%lu)",
                            (unsigned long)timeout_ms,
                            (unsigned long)(i + 1),

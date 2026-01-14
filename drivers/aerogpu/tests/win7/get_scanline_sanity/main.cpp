@@ -1,5 +1,6 @@
 #include "..\\common\\aerogpu_test_common.h"
 #include "..\\common\\aerogpu_test_report.h"
+#include "..\\common\\aerogpu_test_scanout_diag.h"
 
 #include <algorithm>
 
@@ -192,6 +193,19 @@ static int RunGetScanlineSanity(int argc, char** argv) {
                          NtStatusToString(st, f.RtlNtStatusToDosError).c_str());
   }
 
+  aerogpu_test::AerogpuScanoutDiag scanout_diag;
+  const bool have_scanout_diag =
+      aerogpu_test::TryQueryAerogpuScanoutDiag((uint32_t)open.hAdapter, 0 /* vidpn_source_id */, &scanout_diag);
+  if (have_scanout_diag) {
+    aerogpu_test::PrintfStdout("INFO: %s: scanout: flags=0x%08lX%s%s cached_enable=%lu mmio_enable=%lu",
+                               kTestName,
+                               (unsigned long)scanout_diag.flags_u32,
+                               scanout_diag.flags_valid ? "" : " (flags_invalid)",
+                               scanout_diag.post_display_ownership_released ? " (post_display_ownership_released)" : "",
+                               (unsigned long)scanout_diag.cached_enable,
+                               (unsigned long)scanout_diag.mmio_enable);
+  }
+
   uint32_t in_vblank = 0;
   uint32_t out_vblank = 0;
   uint32_t min_scanline = 0xFFFFFFFFu;
@@ -276,10 +290,39 @@ static int RunGetScanlineSanity(int argc, char** argv) {
   }
 
   if (out_vblank == 0) {
+    if (have_scanout_diag) {
+      if (scanout_diag.flags_valid && scanout_diag.post_display_ownership_released) {
+        return reporter.Fail(
+            "never observed InVerticalBlank=FALSE; post_display_ownership_released=1 (scanout.flags=0x%08lX)",
+            (unsigned long)scanout_diag.flags_u32);
+      }
+      if (scanout_diag.cached_enable == 0 || scanout_diag.mmio_enable == 0) {
+        return reporter.Fail(
+            "never observed InVerticalBlank=FALSE; scanout enable may be off "
+            "(cached_enable=%lu mmio_enable=%lu flags=0x%08lX)",
+            (unsigned long)scanout_diag.cached_enable,
+            (unsigned long)scanout_diag.mmio_enable,
+            (unsigned long)scanout_diag.flags_u32);
+      }
+    }
     return reporter.Fail("never observed InVerticalBlank=FALSE");
   }
 
   if (distinct.size() <= 1) {
+    if (have_scanout_diag) {
+      if (scanout_diag.flags_valid && scanout_diag.post_display_ownership_released) {
+        return reporter.Fail("ScanLine appears static (distinct out-of-vblank scanlines=%u); post_display_ownership_released=1 (scanout.flags=0x%08lX)",
+                             (unsigned)distinct.size(),
+                             (unsigned long)scanout_diag.flags_u32);
+      }
+      if (scanout_diag.cached_enable == 0 || scanout_diag.mmio_enable == 0) {
+        return reporter.Fail("ScanLine appears static (distinct out-of-vblank scanlines=%u); scanout enable may be off (cached_enable=%lu mmio_enable=%lu flags=0x%08lX)",
+                             (unsigned)distinct.size(),
+                             (unsigned long)scanout_diag.cached_enable,
+                             (unsigned long)scanout_diag.mmio_enable,
+                             (unsigned long)scanout_diag.flags_u32);
+      }
+    }
     return reporter.Fail("ScanLine appears static (distinct out-of-vblank scanlines=%u)", (unsigned)distinct.size());
   }
 
