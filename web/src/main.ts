@@ -5297,11 +5297,14 @@ function renderAudioPanel(): HTMLElement {
           let capturedAny = false;
           for (const item of outputsToCapture) {
             const res = snapshotAudioOutputWav(item.out, { maxSeconds: captureSeconds });
+            const wavFile = `audio-output-${item.name}.wav`;
             if (!res.ok) {
               summaryLines.push(`audio-output-${item.name}: ${res.error}`);
               entries.push({
                 path: `${dir}/audio-output-${item.name}.json`,
-                data: encoder.encode(JSON.stringify({ timeIso, build: getBuildInfoForExport(), ok: false, error: res.error }, null, 2)),
+                data: encoder.encode(
+                  JSON.stringify({ timeIso, build: getBuildInfoForExport(), ok: false, file: wavFile, error: res.error }, null, 2),
+                ),
               });
               entries.push({
                 path: `${dir}/audio-output-${item.name}-error.txt`,
@@ -5310,10 +5313,16 @@ function renderAudioPanel(): HTMLElement {
               continue;
             }
             capturedAny = true;
-            entries.push({ path: `${dir}/audio-output-${item.name}.wav`, data: res.wav });
+            entries.push({ path: `${dir}/${wavFile}`, data: res.wav });
             entries.push({
               path: `${dir}/audio-output-${item.name}.json`,
-              data: encoder.encode(JSON.stringify({ timeIso, build: getBuildInfoForExport(), ok: true, ...res.meta }, null, 2)),
+              data: encoder.encode(
+                JSON.stringify(
+                  { timeIso, build: getBuildInfoForExport(), ok: true, file: wavFile, bytes: res.wav.byteLength, ...res.meta },
+                  null,
+                  2,
+                ),
+              ),
             });
             summaryLines.push(
               `audio-output-${item.name}.wav: frames=${res.meta.framesCaptured} avail=${res.meta.availableFrames} sr=${res.meta.sampleRate} cc=${res.meta.channelCount} ctx=${res.meta.audioContextState ?? "n/a"} baseLatMs=${formatMsOrNa(res.meta.baseLatencySeconds)} outputLatMs=${formatMsOrNa(res.meta.outputLatencySeconds)} underruns=${res.meta.underrunCount} overruns=${res.meta.overrunCount} rms=${formatDbfsFromLinear(res.meta.signal.rms)}dBFS peak=${formatDbfsFromLinear(res.meta.signal.peakAbs)}dBFS`,
@@ -5321,11 +5330,18 @@ function renderAudioPanel(): HTMLElement {
           }
 
           const micRes = snapshotMicAttachmentWav({ maxSeconds: captureSeconds });
+          const micWavFile = "microphone-buffered.wav";
           if (micRes.ok) {
-            entries.push({ path: `${dir}/microphone-buffered.wav`, data: micRes.wav });
+            entries.push({ path: `${dir}/${micWavFile}`, data: micRes.wav });
             entries.push({
               path: `${dir}/microphone-buffered.json`,
-              data: encoder.encode(JSON.stringify({ timeIso, build: getBuildInfoForExport(), ok: true, ...micRes.meta }, null, 2)),
+              data: encoder.encode(
+                JSON.stringify(
+                  { timeIso, build: getBuildInfoForExport(), ok: true, file: micWavFile, bytes: micRes.wav.byteLength, ...micRes.meta },
+                  null,
+                  2,
+                ),
+              ),
             });
             summaryLines.push(
               `microphone-buffered.wav: samples=${micRes.meta.samplesCaptured} avail=${micRes.meta.availableSamples} dropped=${micRes.meta.droppedSamples} sr=${micRes.meta.sampleRate} ctx=${micRes.meta.audioContextState ?? "n/a"} backend=${micRes.meta.backend ?? "n/a"} muted=${micRes.meta.muted ?? "n/a"} trackMuted=${micRes.meta.trackMuted ?? "n/a"} trackReadyState=${micRes.meta.trackReadyState ?? "n/a"} deviceIdHash=${micRes.meta.deviceIdHash ?? "n/a"} rms=${formatDbfsFromLinear(micRes.meta.signal.rms)}dBFS peak=${formatDbfsFromLinear(micRes.meta.signal.peakAbs)}dBFS`,
@@ -5334,7 +5350,9 @@ function renderAudioPanel(): HTMLElement {
             summaryLines.push(`microphone-buffered: ${micRes.error}`);
             entries.push({
               path: `${dir}/microphone-buffered.json`,
-              data: encoder.encode(JSON.stringify({ timeIso, build: getBuildInfoForExport(), ok: false, error: micRes.error }, null, 2)),
+              data: encoder.encode(
+                JSON.stringify({ timeIso, build: getBuildInfoForExport(), ok: false, file: micWavFile, error: micRes.error }, null, 2),
+              ),
             });
             entries.push({ path: `${dir}/microphone-buffered-error.txt`, data: encoder.encode(micRes.error + "\n") });
           }
