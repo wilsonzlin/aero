@@ -463,7 +463,7 @@ bring up correctness incrementally:
     expansion) without any compute passes. This is optional and can be added later.
   - **P1b (baseline):** general GS emulation via compute expansion as specified below.
   - Initial P1b limitations (explicit):
-    - no stream-out / transform feedback (`CreateGeometryShaderWithStreamOutput`),
+    - no stream-out / transform feedback (SO targets are unsupported),
     - only stream 0 (no `EmitStream` / `CutStream` / `SV_StreamID`),
     - adjacency input primitives (`*_ADJ` topologies / `lineadj`/`triadj`) are initially unsupported
       for real GS bytecode execution; the runtime MUST NOT silently treat them as non-adjacency
