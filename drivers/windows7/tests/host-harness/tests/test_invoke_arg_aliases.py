@@ -189,6 +189,20 @@ class HarnessArgAliasTests(unittest.TestCase):
                 )
                 self.assertTrue(args.qemu_preflight_pci)
 
+    def test_print_qemu_cmd_alias_sets_dry_run(self) -> None:
+        for flag in ("--dry-run", "--print-qemu-cmd"):
+            with self.subTest(flag=flag):
+                args = self._parse(
+                    [
+                        "--qemu-system",
+                        "qemu-system-x86_64",
+                        "--disk-image",
+                        "disk.img",
+                        flag,
+                    ]
+                )
+                self.assertTrue(args.dry_run)
+
     def test_vectors_override_flags_parse(self) -> None:
         args = self._parse(
             [
