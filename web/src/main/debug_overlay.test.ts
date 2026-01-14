@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { DebugOverlay } from "../../ui/debug_overlay";
+import { SCANOUT_FORMAT_B8G8R8X8 } from "../ipc/scanout_state";
 
 describe("DebugOverlay hotkey handling", () => {
   const originalWindow = (globalThis as any).window;
@@ -146,7 +147,7 @@ describe("DebugOverlay hotkey handling", () => {
         width: 800,
         height: 600,
         pitchBytes: 3200,
-        format: 2, // AerogpuFormat.B8G8R8X8Unorm
+        format: SCANOUT_FORMAT_B8G8R8X8,
       },
       gpuEvents: [{ severity: "warn", category: "CursorReadback", backend_kind: "webgpu", message: "vram missing" }],
       gpuStats: {
