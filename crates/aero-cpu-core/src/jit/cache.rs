@@ -259,6 +259,11 @@ impl CodeCache {
     #[cfg(debug_assertions)]
     #[inline]
     fn debug_assert_invariants(&self) {
+        // Avoid turning debug builds into O(n) per access at production cache sizes. The full
+        // invariant scan is still exercised by unit tests (which typically use small caches), and
+        // can be enabled by temporarily lowering this threshold while debugging.
+        const MAX_VALIDATE_ENTRIES: usize = 256;
+
         // Empty cache must have no LRU pointers and no accounting, and all nodes should be free.
         if self.map.is_empty() {
             debug_assert_eq!(self.head, None);
@@ -272,6 +277,10 @@ impl CodeCache {
             for node in &self.nodes {
                 debug_assert!(node.is_none(), "node slot should be free when cache is empty");
             }
+            return;
+        }
+
+        if self.map.len() > MAX_VALIDATE_ENTRIES {
             return;
         }
 
