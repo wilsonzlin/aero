@@ -6,8 +6,9 @@ use aero_machine::{Machine, MachineConfig};
 use aero_platform::interrupts::InterruptController;
 use aero_virtio::devices::input::{
     VirtioInput, VirtioInputEvent, BTN_BACK, BTN_FORWARD, BTN_LEFT, BTN_TASK, EV_KEY, EV_LED,
-    EV_REL, EV_SYN, KEY_A, KEY_B, LED_CAPSL, REL_HWHEEL, REL_WHEEL, REL_X, REL_Y, SYN_REPORT,
-    VIRTIO_INPUT_CFG_EV_BITS, VIRTIO_INPUT_CFG_ID_DEVIDS, VIRTIO_INPUT_CFG_ID_NAME,
+    EV_REL, EV_SYN, KEY_A, KEY_B, KEY_VOLUMEUP, LED_CAPSL, REL_HWHEEL, REL_WHEEL, REL_X, REL_Y,
+    SYN_REPORT, VIRTIO_INPUT_CFG_EV_BITS, VIRTIO_INPUT_CFG_ID_DEVIDS, VIRTIO_INPUT_CFG_ID_NAME,
+    VIRTIO_INPUT_CFG_ID_SERIAL,
 };
 use aero_virtio::pci::{
     VIRTIO_STATUS_ACKNOWLEDGE, VIRTIO_STATUS_DRIVER, VIRTIO_STATUS_DRIVER_OK,
@@ -294,6 +295,16 @@ fn virtio_input_device_cfg_mmio_exposes_expected_name_devids_and_ev_bits() {
         assert_eq!(name, expected_name, "{bdf:?} name mismatch");
 
         // --------------------------------
+        // VIRTIO_INPUT_CFG_ID_SERIAL (str)
+        // --------------------------------
+        m.write_physical_u8(dev_cfg, VIRTIO_INPUT_CFG_ID_SERIAL);
+        m.write_physical_u8(dev_cfg + 1, 0);
+        let size = m.read_physical_u8(dev_cfg + 2);
+        assert_eq!(size, 2, "{bdf:?} expected serial size=2");
+        let serial = m.read_physical_bytes(dev_cfg + 8, 2);
+        assert_eq!(serial, &[b'0', 0], "{bdf:?} serial mismatch");
+
+        // --------------------------------
         // VIRTIO_INPUT_CFG_ID_DEVIDS (8B)
         // --------------------------------
         m.write_physical_u8(dev_cfg, VIRTIO_INPUT_CFG_ID_DEVIDS);
@@ -352,6 +363,11 @@ fn virtio_input_device_cfg_mmio_exposes_expected_name_devids_and_ev_bits() {
         if bdf == profile::VIRTIO_INPUT_KEYBOARD.bdf {
             let has_key_a = (key_bits[(KEY_A / 8) as usize] & (1u8 << (KEY_A % 8))) != 0;
             assert!(has_key_a, "{bdf:?} must advertise KEY_A");
+            // Ensure media keys used by the browser runtime's Consumer Control routing are also
+            // advertised.
+            let has_volume_up =
+                (key_bits[(KEY_VOLUMEUP / 8) as usize] & (1u8 << (KEY_VOLUMEUP % 8))) != 0;
+            assert!(has_volume_up, "{bdf:?} must advertise KEY_VOLUMEUP");
         } else {
             let has_btn_left = (key_bits[(BTN_LEFT / 8) as usize] & (1u8 << (BTN_LEFT % 8))) != 0;
             assert!(has_btn_left, "{bdf:?} must advertise BTN_LEFT");
