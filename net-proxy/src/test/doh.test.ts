@@ -1,8 +1,25 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { startProxyServer } from "../server";
+import type { ProxyConfig } from "../config";
 
-function encodeDnsQuery(name: string, type: number, id: number): Buffer {
+async function withProxyServer<T>(
+  overrides: Partial<ProxyConfig>,
+  fn: (baseUrl: string) => Promise<T>
+): Promise<T> {
+  const proxy = await startProxyServer({ listenHost: "127.0.0.1", listenPort: 0, ...overrides });
+  const proxyAddr = proxy.server.address();
+  assert.ok(proxyAddr && typeof proxyAddr !== "string");
+  const baseUrl = `http://127.0.0.1:${proxyAddr.port}`;
+
+  try {
+    return await fn(baseUrl);
+  } finally {
+    await proxy.close();
+  }
+}
+
+function encodeDnsQuery(name: string, type: number, id: number, cls = 1): Buffer {
   const labels = name.split(".").filter(Boolean);
   const nameParts: Buffer[] = [];
   let nameBytes = 1; // trailing 0
@@ -28,7 +45,7 @@ function encodeDnsQuery(name: string, type: number, id: number): Buffer {
     offset += part.length;
   }
   out.writeUInt16BE(type & 0xffff, offset);
-  out.writeUInt16BE(1, offset + 2); // IN
+  out.writeUInt16BE(cls & 0xffff, offset + 2);
   return out;
 }
 
@@ -108,15 +125,11 @@ function findAAnswers(response: Buffer): string[] {
 }
 
 test("GET /dns-query returns a DNS response with at least one A record", async () => {
-  const proxy = await startProxyServer({ listenHost: "127.0.0.1", listenPort: 0, open: true });
-  const proxyAddr = proxy.server.address();
-  assert.ok(proxyAddr && typeof proxyAddr !== "string");
-
-  try {
+  await withProxyServer({ open: true }, async (baseUrl) => {
     const id = 0x1234;
     const query = encodeDnsQuery("localhost", 1, id);
     const dnsParam = query.toString("base64url");
-    const resp = await fetch(`http://127.0.0.1:${proxyAddr.port}/dns-query?dns=${dnsParam}`, {
+    const resp = await fetch(`${baseUrl}/dns-query?dns=${dnsParam}`, {
       headers: { accept: "application/dns-message" }
     });
     assert.equal(resp.status, 200);
@@ -133,26 +146,195 @@ test("GET /dns-query returns a DNS response with at least one A record", async (
 
     const addrs = findAAnswers(responseBuf);
     assert.ok(addrs.length >= 1);
-  } finally {
-    await proxy.close();
-  }
+  });
 });
 
 test("GET /dns-query rejects malformed base64url input", async () => {
-  const proxy = await startProxyServer({ listenHost: "127.0.0.1", listenPort: 0, open: true });
-  const proxyAddr = proxy.server.address();
-  assert.ok(proxyAddr && typeof proxyAddr !== "string");
-
-  try {
-    const resp = await fetch(`http://127.0.0.1:${proxyAddr.port}/dns-query?dns=not!base64`);
+  await withProxyServer({ open: true }, async (baseUrl) => {
+    const resp = await fetch(`${baseUrl}/dns-query?dns=not!base64`);
     assert.equal(resp.status, 400);
     assert.equal(resp.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase(), "application/dns-message");
     const body = Buffer.from(await resp.arrayBuffer());
     assert.ok(body.length >= 12);
     // FORMERR (1)
     assert.equal(body.readUInt16BE(2) & 0x000f, 1);
-  } finally {
-    await proxy.close();
-  }
+  });
 });
 
+test("POST /dns-query returns a DNS response with echoed question", async () => {
+  await withProxyServer({ open: true }, async (baseUrl) => {
+    const id = 0x2222;
+    const query = encodeDnsQuery("localhost", 1, id);
+    const resp = await fetch(`${baseUrl}/dns-query`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/dns-message",
+        accept: "application/dns-message"
+      },
+      body: query
+    });
+    assert.equal(resp.status, 200);
+    assert.equal(resp.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase(), "application/dns-message");
+
+    const responseBuf = Buffer.from(await resp.arrayBuffer());
+    assert.equal(responseBuf.readUInt16BE(0), id);
+    // Ensure the question section bytes are echoed verbatim.
+    assert.deepEqual(responseBuf.subarray(12, query.length), query.subarray(12));
+
+    const addrs = findAAnswers(responseBuf);
+    assert.ok(addrs.length >= 1);
+  });
+});
+
+test("POST /dns-query rejects non-application/dns-message content-type", async () => {
+  await withProxyServer({ open: true }, async (baseUrl) => {
+    const query = encodeDnsQuery("localhost", 1, 0x3333);
+    const resp = await fetch(`${baseUrl}/dns-query`, {
+      method: "POST",
+      headers: {
+        "content-type": "text/plain",
+        accept: "application/dns-message"
+      },
+      body: query
+    });
+    assert.equal(resp.status, 415);
+    assert.equal(resp.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase(), "application/dns-message");
+    const body = Buffer.from(await resp.arrayBuffer());
+    assert.ok(body.length >= 12);
+    // FORMERR (1)
+    assert.equal(body.readUInt16BE(2) & 0x000f, 1);
+  });
+});
+
+test("GET /dns-query returns NOERROR with empty answers for unsupported QTYPE", async () => {
+  await withProxyServer({ open: true }, async (baseUrl) => {
+    const id = 0x4444;
+    const query = encodeDnsQuery("localhost", 15 /* MX */, id);
+    const dnsParam = query.toString("base64url");
+    const resp = await fetch(`${baseUrl}/dns-query?dns=${dnsParam}`, {
+      headers: { accept: "application/dns-message" }
+    });
+    assert.equal(resp.status, 200);
+    const responseBuf = Buffer.from(await resp.arrayBuffer());
+    assert.equal(responseBuf.readUInt16BE(0), id);
+    // RCODE=0
+    assert.equal(responseBuf.readUInt16BE(2) & 0x000f, 0);
+    assert.equal(responseBuf.readUInt16BE(6), 0); // ANCOUNT
+    // Ensure the question section bytes are echoed verbatim.
+    assert.deepEqual(responseBuf.subarray(12, query.length), query.subarray(12));
+  });
+});
+
+test("GET /dns-query enforces dohMaxQueryBytes (413)", async () => {
+  await withProxyServer({ open: true, dohMaxQueryBytes: 20 }, async (baseUrl) => {
+    const id = 0x5555;
+    const query = encodeDnsQuery("localhost", 1, id);
+    assert.ok(query.length > 20);
+    const dnsParam = query.toString("base64url");
+    const resp = await fetch(`${baseUrl}/dns-query?dns=${dnsParam}`);
+    assert.equal(resp.status, 413);
+    const responseBuf = Buffer.from(await resp.arrayBuffer());
+    assert.equal(responseBuf.readUInt16BE(0), id);
+    // FORMERR (1)
+    assert.equal(responseBuf.readUInt16BE(2) & 0x000f, 1);
+  });
+});
+
+test("POST /dns-query enforces dohMaxQueryBytes (413)", async () => {
+  await withProxyServer({ open: true, dohMaxQueryBytes: 20 }, async (baseUrl) => {
+    const id = 0x6666;
+    const query = encodeDnsQuery("localhost", 1, id);
+    assert.ok(query.length > 20);
+    const resp = await fetch(`${baseUrl}/dns-query`, {
+      method: "POST",
+      headers: { "content-type": "application/dns-message" },
+      body: query
+    });
+    assert.equal(resp.status, 413);
+    const responseBuf = Buffer.from(await resp.arrayBuffer());
+    assert.equal(responseBuf.readUInt16BE(0), id);
+    // FORMERR (1)
+    assert.equal(responseBuf.readUInt16BE(2) & 0x000f, 1);
+  });
+});
+
+test("GET /dns-query enforces dohMaxQnameLength (400)", async () => {
+  await withProxyServer({ open: true, dohMaxQnameLength: 5 }, async (baseUrl) => {
+    const id = 0x7777;
+    const query = encodeDnsQuery("localhost", 1, id);
+    const dnsParam = query.toString("base64url");
+    const resp = await fetch(`${baseUrl}/dns-query?dns=${dnsParam}`);
+    assert.equal(resp.status, 400);
+    const responseBuf = Buffer.from(await resp.arrayBuffer());
+    assert.equal(responseBuf.readUInt16BE(0), id);
+    // FORMERR (1)
+    assert.equal(responseBuf.readUInt16BE(2) & 0x000f, 1);
+  });
+});
+
+test("GET /dns-query returns NOERROR with empty answers for non-IN QCLASS", async () => {
+  await withProxyServer({ open: true }, async (baseUrl) => {
+    const id = 0x8888;
+    const query = encodeDnsQuery("localhost", 1, id, 2 /* CS */);
+    const dnsParam = query.toString("base64url");
+    const resp = await fetch(`${baseUrl}/dns-query?dns=${dnsParam}`);
+    assert.equal(resp.status, 200);
+    const responseBuf = Buffer.from(await resp.arrayBuffer());
+    assert.equal(responseBuf.readUInt16BE(0), id);
+    assert.equal(responseBuf.readUInt16BE(2) & 0x000f, 0);
+    assert.equal(responseBuf.readUInt16BE(6), 0); // ANCOUNT
+  });
+});
+
+test("GET /dns-json returns application/dns-json and at least one A answer for localhost", async () => {
+  await withProxyServer({ open: true }, async (baseUrl) => {
+    const resp = await fetch(`${baseUrl}/dns-json?name=localhost&type=A`, {
+      headers: { accept: "application/dns-json" }
+    });
+    assert.equal(resp.status, 200);
+    assert.equal(resp.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase(), "application/dns-json");
+    const body: any = await resp.json();
+    assert.equal(body.Status, 0);
+    assert.deepEqual(body.Question, [{ name: "localhost", type: 1 }]);
+    assert.ok(Array.isArray(body.Answer));
+    assert.ok(body.Answer.length >= 1);
+    assert.ok(body.Answer.some((a: any) => a.type === 1 && typeof a.data === "string" && /^\d+\.\d+\.\d+\.\d+$/.test(a.data)));
+  });
+});
+
+test("GET /dns-json supports CNAME queries (Status may be SERVFAIL if no CNAME exists)", async () => {
+  await withProxyServer({ open: true }, async (baseUrl) => {
+    const resp = await fetch(`${baseUrl}/dns-json?name=localhost&type=CNAME`);
+    assert.equal(resp.status, 200);
+    assert.equal(resp.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase(), "application/dns-json");
+    const body: any = await resp.json();
+    assert.deepEqual(body.Question, [{ name: "localhost", type: 5 }]);
+    assert.ok(body.Status === 0 || body.Status === 2);
+  });
+});
+
+test("GET /dns-json rejects unsupported types", async () => {
+  await withProxyServer({ open: true }, async (baseUrl) => {
+    const resp = await fetch(`${baseUrl}/dns-json?name=localhost&type=TXT`);
+    assert.equal(resp.status, 400);
+    assert.equal(resp.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase(), "application/json");
+    const body: any = await resp.json();
+    assert.equal(body.error, "unsupported type");
+  });
+});
+
+test("GET /dns-json rejects missing/too-long names", async () => {
+  await withProxyServer({ open: true }, async (baseUrl) => {
+    const missing = await fetch(`${baseUrl}/dns-json?type=A`);
+    assert.equal(missing.status, 400);
+    const missingBody: any = await missing.json();
+    assert.equal(missingBody.error, "missing name");
+  });
+
+  await withProxyServer({ open: true, dohMaxQnameLength: 5 }, async (baseUrl) => {
+    const tooLong = await fetch(`${baseUrl}/dns-json?name=localhost&type=A`);
+    assert.equal(tooLong.status, 400);
+    const tooLongBody: any = await tooLong.json();
+    assert.equal(tooLongBody.error, "name too long");
+  });
+});
