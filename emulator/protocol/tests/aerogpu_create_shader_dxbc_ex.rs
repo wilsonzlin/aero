@@ -47,8 +47,9 @@ fn create_shader_dxbc_legacy_reserved0_remains_zero() {
     }
 }
 
-// Note: Pixel shaders must use the legacy `stage = PIXEL` encoding; `stage_ex` is intentionally
-// non-zero-only and cannot represent the DXBC program-type 0 value.
+// Note: Pixel shaders must use the legacy `stage = PIXEL` encoding; the `stage_ex` mechanism cannot
+// represent the DXBC program-type 0 value because `reserved0 == 0` is reserved for the legacy
+// "no override" / Compute encoding.
 #[test]
 #[should_panic(expected = "stage_ex (Geometry) may only be encoded when shader_stage==COMPUTE")]
 fn create_shader_dxbc_with_stage_ex_panics_for_non_compute_stages() {
