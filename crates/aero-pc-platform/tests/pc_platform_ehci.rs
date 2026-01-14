@@ -1,5 +1,6 @@
 use aero_devices::pci::profile::USB_EHCI_ICH9;
 use aero_devices::pci::{PciBdf, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
+use aero_devices::usb::ehci::{USBCMD_ASE, USBCMD_PSE, USBCMD_RS, USBCMD_WRITE_MASK};
 use aero_pc_platform::{PcPlatform, PcPlatformConfig};
 use memory::MemoryBus as _;
 
@@ -85,8 +86,11 @@ fn pc_platform_gates_ehci_mmio_on_pci_command_mem_bit() {
 
     // USBCMD is at offset 0x20 (operational register block starts at CAPLENGTH=0x20).
     let usbcmd_addr = bar0_base + 0x20;
-    pc.memory.write_u32(usbcmd_addr, 0xA5A5_5A5A);
-    assert_eq!(pc.memory.read_u32(usbcmd_addr), 0xA5A5_5A5A);
+    // Note: USBCMD has reserved bits and a reset bit (bit 1). Use only bits that are defined as
+    // writable by the controller model.
+    let usbcmd_val = (USBCMD_RS | USBCMD_PSE | USBCMD_ASE) & USBCMD_WRITE_MASK;
+    pc.memory.write_u32(usbcmd_addr, usbcmd_val);
+    assert_eq!(pc.memory.read_u32(usbcmd_addr), usbcmd_val);
 
     // Disable memory decoding: reads float high and writes are ignored.
     write_cfg_u16(&mut pc, bdf, 0x04, cmd & !0x0002);
@@ -95,7 +99,7 @@ fn pc_platform_gates_ehci_mmio_on_pci_command_mem_bit() {
 
     // Re-enable decoding: the write above must not have reached the device.
     write_cfg_u16(&mut pc, bdf, 0x04, cmd);
-    assert_eq!(pc.memory.read_u32(usbcmd_addr), 0xA5A5_5A5A);
+    assert_eq!(pc.memory.read_u32(usbcmd_addr), usbcmd_val);
 }
 
 #[test]
@@ -120,9 +124,9 @@ fn pc_platform_routes_ehci_mmio_after_bar0_reprogramming() {
     assert_ne!(bar0_base, 0, "EHCI BAR0 should be allocated during BIOS POST");
 
     let usbcmd_off = 0x20;
-    pc.memory
-        .write_u32(bar0_base + usbcmd_off, 0x1234_5678);
-    assert_eq!(pc.memory.read_u32(bar0_base + usbcmd_off), 0x1234_5678);
+    let initial = USBCMD_PSE & USBCMD_WRITE_MASK;
+    pc.memory.write_u32(bar0_base + usbcmd_off, initial);
+    assert_eq!(pc.memory.read_u32(bar0_base + usbcmd_off), initial);
 
     // Move BAR0 within the PCI MMIO window.
     let new_base = if bar0_base == EHCI_BAR0_RELOC_BASE {
@@ -136,8 +140,8 @@ fn pc_platform_routes_ehci_mmio_after_bar0_reprogramming() {
     assert_eq!(pc.memory.read_u32(bar0_base + usbcmd_off), 0xffff_ffff);
 
     // New base should decode and preserve register state.
-    assert_eq!(pc.memory.read_u32(new_base + usbcmd_off), 0x1234_5678);
-    pc.memory.write_u32(new_base + usbcmd_off, 0xDEAD_BEEF);
-    assert_eq!(pc.memory.read_u32(new_base + usbcmd_off), 0xDEAD_BEEF);
+    assert_eq!(pc.memory.read_u32(new_base + usbcmd_off), initial);
+    let next = (USBCMD_RS | USBCMD_ASE) & USBCMD_WRITE_MASK;
+    pc.memory.write_u32(new_base + usbcmd_off, next);
+    assert_eq!(pc.memory.read_u32(new_base + usbcmd_off), next);
 }
-
