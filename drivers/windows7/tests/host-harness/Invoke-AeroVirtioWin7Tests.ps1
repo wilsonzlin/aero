@@ -8459,7 +8459,80 @@ try {
       $scriptExitCode = 1
     }
     "VIRTIO_INPUT_EVENTS_EXTENDED_FAILED" {
-      Write-Host "FAIL: VIRTIO_INPUT_EVENTS_EXTENDED_FAILED: one or more virtio-input-events-* extended tests reported FAIL while -WithInputEventsExtended/-WithInputEventsExtra was enabled"
+      $subtest = ""
+      $line = $null
+      $line = Try-ExtractLastAeroMarkerLine `
+        -Tail $result.Tail `
+        -Prefix "AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-modifiers|FAIL|" `
+        -SerialLogPath $SerialLogPath
+      if ($null -ne $line) {
+        $subtest = "virtio-input-events-modifiers"
+      } else {
+        $line = Try-ExtractLastAeroMarkerLine `
+          -Tail $result.Tail `
+          -Prefix "AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-buttons|FAIL|" `
+          -SerialLogPath $SerialLogPath
+        if ($null -ne $line) {
+          $subtest = "virtio-input-events-buttons"
+        } else {
+          $line = Try-ExtractLastAeroMarkerLine `
+            -Tail $result.Tail `
+            -Prefix "AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-wheel|FAIL|" `
+            -SerialLogPath $SerialLogPath
+          if ($null -ne $line) {
+            $subtest = "virtio-input-events-wheel"
+          }
+        }
+      }
+
+      $reason = ""
+      $err = ""
+      $kbdReports = ""
+      $kbdBadReports = ""
+      $mouseReports = ""
+      $mouseBadReports = ""
+      $wheelTotal = ""
+      $hwheelTotal = ""
+      $expectedWheel = ""
+      $expectedHwheel = ""
+      $sawWheel = ""
+      $sawHwheel = ""
+
+      if ($null -ne $line) {
+        if ($line -match "(?:^|\|)reason=([^|\r\n]+)") { $reason = $Matches[1] }
+        if ($line -match "(?:^|\|)err=([^|\r\n]+)") { $err = $Matches[1] }
+        if ($line -match "(?:^|\|)kbd_reports=([^|\r\n]+)") { $kbdReports = $Matches[1] }
+        if ($line -match "(?:^|\|)kbd_bad_reports=([^|\r\n]+)") { $kbdBadReports = $Matches[1] }
+        if ($line -match "(?:^|\|)mouse_reports=([^|\r\n]+)") { $mouseReports = $Matches[1] }
+        if ($line -match "(?:^|\|)mouse_bad_reports=([^|\r\n]+)") { $mouseBadReports = $Matches[1] }
+        if ($line -match "(?:^|\|)wheel_total=([^|\r\n]+)") { $wheelTotal = $Matches[1] }
+        if ($line -match "(?:^|\|)hwheel_total=([^|\r\n]+)") { $hwheelTotal = $Matches[1] }
+        if ($line -match "(?:^|\|)expected_wheel=([^|\r\n]+)") { $expectedWheel = $Matches[1] }
+        if ($line -match "(?:^|\|)expected_hwheel=([^|\r\n]+)") { $expectedHwheel = $Matches[1] }
+        if ($line -match "(?:^|\|)saw_wheel=([^|\r\n]+)") { $sawWheel = $Matches[1] }
+        if ($line -match "(?:^|\|)saw_hwheel=([^|\r\n]+)") { $sawHwheel = $Matches[1] }
+      }
+
+      $detailsParts = @()
+      if (-not [string]::IsNullOrEmpty($reason)) { $detailsParts += "reason=$reason" }
+      if (-not [string]::IsNullOrEmpty($err)) { $detailsParts += "err=$err" }
+      if (-not [string]::IsNullOrEmpty($kbdReports)) { $detailsParts += "kbd_reports=$kbdReports" }
+      if (-not [string]::IsNullOrEmpty($kbdBadReports)) { $detailsParts += "kbd_bad_reports=$kbdBadReports" }
+      if (-not [string]::IsNullOrEmpty($mouseReports)) { $detailsParts += "mouse_reports=$mouseReports" }
+      if (-not [string]::IsNullOrEmpty($mouseBadReports)) { $detailsParts += "mouse_bad_reports=$mouseBadReports" }
+      if (-not [string]::IsNullOrEmpty($wheelTotal)) { $detailsParts += "wheel_total=$wheelTotal" }
+      if (-not [string]::IsNullOrEmpty($hwheelTotal)) { $detailsParts += "hwheel_total=$hwheelTotal" }
+      if (-not [string]::IsNullOrEmpty($expectedWheel)) { $detailsParts += "expected_wheel=$expectedWheel" }
+      if (-not [string]::IsNullOrEmpty($expectedHwheel)) { $detailsParts += "expected_hwheel=$expectedHwheel" }
+      if (-not [string]::IsNullOrEmpty($sawWheel)) { $detailsParts += "saw_wheel=$sawWheel" }
+      if (-not [string]::IsNullOrEmpty($sawHwheel)) { $detailsParts += "saw_hwheel=$sawHwheel" }
+      $details = ""
+      if ($detailsParts.Count -gt 0) { $details = " (" + ($detailsParts -join " ") + ")" }
+
+      $subtestDesc = $subtest
+      if ([string]::IsNullOrEmpty($subtestDesc)) { $subtestDesc = "virtio-input-events-*" }
+
+      Write-Host "FAIL: VIRTIO_INPUT_EVENTS_EXTENDED_FAILED: $subtestDesc reported FAIL while -WithInputEventsExtended/-WithInputEventsExtra was enabled$details"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue

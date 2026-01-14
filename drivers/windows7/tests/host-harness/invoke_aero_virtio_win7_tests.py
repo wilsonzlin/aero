@@ -3130,6 +3130,115 @@ def _virtio_input_events_fail_failure_message(
     )
 
 
+def _virtio_input_events_extended_fail_failure_message(
+    tail: bytes,
+    *,
+    modifiers_marker_line: Optional[str] = None,
+    buttons_marker_line: Optional[str] = None,
+    wheel_marker_line: Optional[str] = None,
+) -> str:
+    # Guest markers:
+    #   AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-modifiers|FAIL|reason=...|err=...|kbd_reports=...
+    #   AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-buttons|FAIL|reason=...|err=...|mouse_reports=...
+    #   AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-wheel|FAIL|reason=...|err=...|wheel_total=...|...
+    candidates: list[tuple[str, Optional[str], bytes, str]] = [
+        (
+            "virtio-input-events-modifiers",
+            modifiers_marker_line,
+            b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-modifiers|FAIL|",
+            "AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-modifiers|FAIL|",
+        ),
+        (
+            "virtio-input-events-buttons",
+            buttons_marker_line,
+            b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-buttons|FAIL|",
+            "AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-buttons|FAIL|",
+        ),
+        (
+            "virtio-input-events-wheel",
+            wheel_marker_line,
+            b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-wheel|FAIL|",
+            "AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-wheel|FAIL|",
+        ),
+    ]
+
+    marker: Optional[str] = None
+    subtest = "virtio-input-events-*"
+    for name, ml, _prefix, prefix_str in candidates:
+        if ml is not None and ml.startswith(prefix_str):
+            marker = ml
+            subtest = name
+            break
+
+    if marker is None:
+        for name, _ml, prefix, _prefix_str in candidates:
+            m = _try_extract_last_marker_line(tail, prefix)
+            if m is not None:
+                marker = m
+                subtest = name
+                break
+
+    details = ""
+    if marker is not None:
+        fields = _parse_marker_kv_fields(marker)
+        reason = (fields.get("reason") or "").strip()
+        if not reason:
+            reason = _try_extract_plain_marker_token(marker, "FAIL") or ""
+        err = (fields.get("err") or "").strip()
+        parts: list[str] = []
+        if reason:
+            parts.append(f"reason={_sanitize_marker_value(reason)}")
+        if err:
+            parts.append(f"err={_sanitize_marker_value(err)}")
+
+        keys: tuple[str, ...] = ()
+        if subtest == "virtio-input-events-modifiers":
+            keys = (
+                "kbd_reports",
+                "kbd_bad_reports",
+                "shift_b",
+                "ctrl_down",
+                "ctrl_up",
+                "alt_down",
+                "alt_up",
+                "f1_down",
+                "f1_up",
+            )
+        elif subtest == "virtio-input-events-buttons":
+            keys = (
+                "mouse_reports",
+                "mouse_bad_reports",
+                "side_down",
+                "side_up",
+                "extra_down",
+                "extra_up",
+            )
+        elif subtest == "virtio-input-events-wheel":
+            keys = (
+                "mouse_reports",
+                "mouse_bad_reports",
+                "wheel_total",
+                "hwheel_total",
+                "expected_wheel",
+                "expected_hwheel",
+                "saw_wheel",
+                "saw_hwheel",
+            )
+
+        for k in keys:
+            v = (fields.get(k) or "").strip()
+            if v:
+                parts.append(f"{k}={_sanitize_marker_value(v)}")
+
+        if parts:
+            details = " (" + " ".join(parts) + ")"
+
+    return (
+        "FAIL: VIRTIO_INPUT_EVENTS_EXTENDED_FAILED: "
+        f"{subtest} reported FAIL while --with-input-events-extended was enabled{details}"
+    )
+
+
 def _virtio_input_media_keys_fail_failure_message(tail: bytes, *, marker_line: Optional[str] = None) -> str:
     # Guest marker:
     #   AERO_VIRTIO_SELFTEST|TEST|virtio-input-media-keys|FAIL|reason=<...>|err=<win32>|reports=<n>|volume_up_down=<0/1>|volume_up_up=<0/1>
@@ -6599,8 +6708,12 @@ def main() -> int:
                             or saw_virtio_input_events_wheel_fail
                         ):
                             print(
-                                "FAIL: VIRTIO_INPUT_EVENTS_EXTENDED_FAILED: one or more virtio-input-events-* markers reported FAIL "
-                                "while --with-input-events-extended was enabled",
+                                _virtio_input_events_extended_fail_failure_message(
+                                    tail,
+                                    modifiers_marker_line=virtio_input_events_modifiers_marker_line,
+                                    buttons_marker_line=virtio_input_events_buttons_marker_line,
+                                    wheel_marker_line=virtio_input_events_wheel_marker_line,
+                                ),
                                 file=sys.stderr,
                             )
                             _print_tail(serial_log)
@@ -7139,8 +7252,12 @@ def main() -> int:
                                     or saw_virtio_input_events_wheel_fail
                                 ):
                                     print(
-                                        "FAIL: VIRTIO_INPUT_EVENTS_EXTENDED_FAILED: selftest RESULT=PASS but a virtio-input-events-* marker reported FAIL "
-                                        "while --with-input-events-extended was enabled",
+                                        _virtio_input_events_extended_fail_failure_message(
+                                            tail,
+                                            modifiers_marker_line=virtio_input_events_modifiers_marker_line,
+                                            buttons_marker_line=virtio_input_events_buttons_marker_line,
+                                            wheel_marker_line=virtio_input_events_wheel_marker_line,
+                                        ),
                                         file=sys.stderr,
                                     )
                                     _print_tail(serial_log)
@@ -7672,8 +7789,12 @@ def main() -> int:
                                 or saw_virtio_input_events_wheel_fail
                             ):
                                 print(
-                                    "FAIL: VIRTIO_INPUT_EVENTS_EXTENDED_FAILED: a virtio-input-events-* marker reported FAIL while "
-                                    "--with-input-events-extended was enabled",
+                                    _virtio_input_events_extended_fail_failure_message(
+                                        tail,
+                                        modifiers_marker_line=virtio_input_events_modifiers_marker_line,
+                                        buttons_marker_line=virtio_input_events_buttons_marker_line,
+                                        wheel_marker_line=virtio_input_events_wheel_marker_line,
+                                    ),
                                     file=sys.stderr,
                                 )
                                 _print_tail(serial_log)
@@ -9795,13 +9916,18 @@ def main() -> int:
                                     or saw_virtio_input_events_wheel_fail
                                 ):
                                     print(
-                                        "FAIL: VIRTIO_INPUT_EVENTS_EXTENDED_FAILED: a virtio-input-events-* marker reported FAIL while "
-                                        "--with-input-events-extended was enabled",
+                                        _virtio_input_events_extended_fail_failure_message(
+                                            tail,
+                                            modifiers_marker_line=virtio_input_events_modifiers_marker_line,
+                                            buttons_marker_line=virtio_input_events_buttons_marker_line,
+                                            wheel_marker_line=virtio_input_events_wheel_marker_line,
+                                        ),
                                         file=sys.stderr,
                                     )
                                     _print_tail(serial_log)
                                     result_code = 1
                                     break
+                                # Each sub-marker must PASS (not SKIP/missing).
                                 for name, saw_pass, saw_skip in (
                                     (
                                         "virtio-input-events-modifiers",

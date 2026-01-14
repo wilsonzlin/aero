@@ -150,6 +150,22 @@ class FailureTokenTests(unittest.TestCase):
         self.assertIn("actual=other_service", msg)
         self.assertIn("pnp_id=PCI\\\\VEN_1AF4&DEV_1052", msg)
 
+    def test_virtio_input_events_extended_failed_token_includes_subtest_and_reason(self) -> None:
+        h = self.harness
+
+        tail = (
+            b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-wheel|FAIL|reason=missing_axis|err=5|"
+            b"mouse_reports=10|mouse_bad_reports=0|wheel_total=0|hwheel_total=0|expected_wheel=1|"
+            b"expected_hwheel=1|saw_wheel=0|saw_hwheel=0\n"
+        )
+        msg = h._virtio_input_events_extended_fail_failure_message(tail)
+        self.assertRegex(msg, _TOKEN_RE)
+        self.assertTrue(msg.startswith("FAIL: VIRTIO_INPUT_EVENTS_EXTENDED_FAILED:"))
+        self.assertIn("virtio-input-events-wheel", msg)
+        self.assertIn("reason=missing_axis", msg)
+        self.assertIn("err=5", msg)
+        self.assertIn("wheel_total=0", msg)
+
     def test_virtio_snd_force_null_backend_token(self) -> None:
         h = self.harness
 
