@@ -23,16 +23,18 @@ It also attempts to attach virtio-input keyboard/mouse devices when QEMU adverti
 warns that the guest virtio-input selftest will likely fail.
 
 It:
-- starts a tiny HTTP server on 127.0.0.1:<port> (guest reaches it as 10.0.2.2:<port> via slirp)
-  - use `--http-log <path>` to record per-request logs (useful for CI artifacts)
-  - serves a deterministic large payload at `<http_path>-large`:
-    - HTTP 200
-    - 1 MiB body of bytes 0..255 repeating
-    - correct Content-Length
-    - also accepts a deterministic 1 MiB upload via HTTP POST to the same `...-large` path (validates SHA-256)
+ - starts a tiny HTTP server on 127.0.0.1:<port> (guest reaches it as 10.0.2.2:<port> via slirp)
+   - use `--http-log <path>` to record per-request logs (useful for CI artifacts)
+   - serves a deterministic large payload at `<http_path>-large`:
+     - HTTP 200
+     - 1 MiB body of bytes 0..255 repeating
+     - correct Content-Length
+     - also accepts a deterministic 1 MiB upload via HTTP POST to the same `...-large` path (validates SHA-256)
+- starts a tiny UDP echo server on 127.0.0.1:<udp_port> (guest reaches it as 10.0.2.2:<udp_port> via slirp)
+  - echoes exactly what was received (bounded max datagram size)
 - launches QEMU with virtio-blk + virtio-net + virtio-input (and optionally virtio-snd and/or virtio-tablet) and COM1 redirected to a log file
   - in transitional mode virtio-input is skipped (with a warning) if QEMU does not advertise virtio-keyboard-pci/virtio-mouse-pci
-- captures QEMU stderr to `<serial-base>.qemu.stderr.log` (next to the serial log) for debugging early exits
+ - captures QEMU stderr to `<serial-base>.qemu.stderr.log` (next to the serial log) for debugging early exits
 - optionally enables a QMP monitor to:
   - request a graceful QEMU shutdown so side-effectful devices (notably the `wav` audiodev backend) can flush/finalize
     their output files before verification
@@ -40,12 +42,12 @@ It:
   - inject deterministic virtio-input events via `input-send-event` (when `--with-input-events` /
     `--with-virtio-input-events` or `--with-input-tablet-events`/`--with-tablet-events` is enabled)
   (unix socket on POSIX; TCP loopback fallback on Windows)
-- tails the serial log until it sees AERO_VIRTIO_SELFTEST|RESULT|PASS/FAIL
-  - in default (non-transitional) mode, a PASS result also requires per-test markers for virtio-blk, virtio-input,
-     virtio-snd (PASS or SKIP), virtio-snd-capture (PASS or SKIP), virtio-snd-duplex (PASS or SKIP), and virtio-net
-      so older selftest binaries cannot accidentally pass
-  - when --with-virtio-snd is enabled, virtio-snd, virtio-snd-capture, and virtio-snd-duplex must PASS (not SKIP)
-  - when --with-input-events (alias: --with-virtio-input-events) is enabled, virtio-input-events must PASS (not FAIL/missing)
+ - tails the serial log until it sees AERO_VIRTIO_SELFTEST|RESULT|PASS/FAIL
+   - in default (non-transitional) mode, a PASS result also requires per-test markers for virtio-blk, virtio-input,
+      virtio-snd (PASS or SKIP), virtio-snd-capture (PASS or SKIP), virtio-snd-duplex (PASS or SKIP), and virtio-net
+     and virtio-net-udp so older selftest binaries cannot accidentally pass
+   - when --with-virtio-snd is enabled, virtio-snd, virtio-snd-capture, and virtio-snd-duplex must PASS (not SKIP)
+   - when --with-input-events (alias: --with-virtio-input-events) is enabled, virtio-input-events must PASS (not FAIL/missing)
   - when --with-input-tablet-events/--with-tablet-events is enabled, virtio-input-tablet-events must PASS (not FAIL/missing)
   - when --with-blk-resize is enabled, virtio-blk-resize must PASS (not SKIP/FAIL/missing)
 
@@ -91,7 +93,7 @@ from array import array
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from threading import Thread
+from threading import Event, Thread
 from typing import Optional
 
 
@@ -284,6 +286,103 @@ class _ReusableTcpServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
     # Do not wait for handler threads on server_close(). The harness sets per-connection
     # socket timeouts so threads should exit promptly, but this avoids pathological hangs.
     block_on_close = False
+
+
+class _UdpEchoServer:
+    """
+    Deterministic UDP echo server for virtio-net selftests.
+
+    The guest (via QEMU slirp) reaches the host loopback address 127.0.0.1 as 10.0.2.2.
+    """
+
+    def __init__(
+        self,
+        host: str,
+        port: int,
+        *,
+        max_datagram_size: int = 2048,
+        socket_timeout_seconds: float = 0.5,
+    ) -> None:
+        self._host = host
+        self._port = int(port)
+        self._max_datagram_size = int(max_datagram_size)
+        self._socket_timeout_seconds = float(socket_timeout_seconds)
+        self._stop = Event()
+        self._sock: Optional[socket.socket] = None
+        self._thread: Optional[Thread] = None
+
+    @property
+    def port(self) -> int:
+        if self._sock is None:
+            return self._port
+        return int(self._sock.getsockname()[1])
+
+    def __enter__(self) -> "_UdpEchoServer":
+        self.start()
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:  # type: ignore[override]
+        self.close()
+
+    def start(self) -> None:
+        if self._sock is not None:
+            return
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            sock.bind((self._host, self._port))
+            sock.settimeout(self._socket_timeout_seconds)
+        except Exception:
+            try:
+                sock.close()
+            except Exception:
+                pass
+            raise
+
+        self._sock = sock
+        self._thread = Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def close(self) -> None:
+        self._stop.set()
+        if self._sock is not None:
+            try:
+                self._sock.close()
+            except Exception:
+                pass
+        if self._thread is not None:
+            self._thread.join(timeout=2.0)
+        self._sock = None
+        self._thread = None
+
+    def _run(self) -> None:
+        sock = self._sock
+        if sock is None:
+            return
+
+        # Read up to max_datagram_size + 1 to detect oversize datagrams (drop them).
+        recv_size = max(1, self._max_datagram_size + 1)
+
+        while not self._stop.is_set():
+            try:
+                data, addr = sock.recvfrom(recv_size)
+            except socket.timeout:
+                continue
+            except OSError:
+                # Socket closed or other fatal error.
+                return
+            except Exception:
+                return
+
+            if not data:
+                continue
+            if len(data) > self._max_datagram_size:
+                # Drop oversize datagrams (bounded/deterministic).
+                continue
+            try:
+                sock.sendto(data, addr)
+            except Exception:
+                # Best-effort echo; never fail the harness due to send errors.
+                continue
 
 
 @dataclass(frozen=True)
@@ -1863,6 +1962,20 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         default=None,
         help="Optional path to write HTTP request logs (one line per request)",
     )
+    parser.add_argument(
+        "--udp-port",
+        type=int,
+        default=18081,
+        help="Host UDP echo server port (guest reaches it via slirp at 10.0.2.2:<port>)",
+    )
+    parser.add_argument(
+        "--disable-udp",
+        action="store_true",
+        help=(
+            "Disable the host UDP echo server and do not require the guest virtio-net-udp marker. "
+            "Useful when running against older guest selftest binaries that do not yet implement the UDP test."
+        ),
+    )
     parser.add_argument("--snapshot", action="store_true", help="Discard disk writes (snapshot=on)")
     parser.add_argument(
         "--virtio-transitional",
@@ -2195,6 +2308,8 @@ def main() -> int:
 
     if args.require_virtio_snd_msix and not args.enable_virtio_snd:
         parser.error("--require-virtio-snd-msix requires --with-virtio-snd/--enable-virtio-snd")
+    if args.udp_port <= 0 or args.udp_port > 65535:
+        parser.error("--udp-port must be in the range 1..65535")
 
     if not args.enable_virtio_snd:
         if args.with_snd_buffer_limits:
@@ -2440,6 +2555,26 @@ def main() -> int:
             f"  Guest URLs: http://10.0.2.2:{args.http_port}{args.http_path} "
             f"and http://10.0.2.2:{args.http_port}{large_path}"
         )
+
+        udp_server: Optional[_UdpEchoServer] = None
+        if args.disable_udp:
+            print("UDP echo server disabled (--disable-udp)")
+        else:
+            try:
+                udp_server = _UdpEchoServer("127.0.0.1", args.udp_port)
+                udp_server.start()
+            except OSError as e:
+                print(
+                    f"ERROR: failed to bind UDP echo server on 127.0.0.1:{args.udp_port} (port in use?): {e}",
+                    file=sys.stderr,
+                )
+                httpd.shutdown()
+                return 2
+
+            print(
+                f"Starting UDP echo server on 127.0.0.1:{udp_server.port} "
+                f"(guest: 10.0.2.2:{udp_server.port})"
+            )
 
         wav_path: Optional[Path] = None
         if args.virtio_transitional:
@@ -2779,6 +2914,9 @@ def main() -> int:
             saw_virtio_net_pass = False
             saw_virtio_net_fail = False
             msix_checked = False
+            saw_virtio_net_udp_pass = False
+            saw_virtio_net_udp_fail = False
+            saw_virtio_net_udp_skip = False
             require_per_test_markers = not args.virtio_transitional
             deadline = time.monotonic() + args.timeout_seconds
 
@@ -3156,6 +3294,21 @@ def main() -> int:
                         saw_virtio_net_pass = True
                     if not saw_virtio_net_fail and b"AERO_VIRTIO_SELFTEST|TEST|virtio-net|FAIL" in tail:
                         saw_virtio_net_fail = True
+                    if (
+                        not saw_virtio_net_udp_pass
+                        and b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-udp|PASS" in tail
+                    ):
+                        saw_virtio_net_udp_pass = True
+                    if (
+                        not saw_virtio_net_udp_fail
+                        and b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-udp|FAIL" in tail
+                    ):
+                        saw_virtio_net_udp_fail = True
+                    if (
+                        not saw_virtio_net_udp_skip
+                        and b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-udp|SKIP" in tail
+                    ):
+                        saw_virtio_net_udp_skip = True
 
                     # If requested, verify MSI-X enablement once we're confident the relevant drivers
                     # have loaded (i.e. after the corresponding guest test marker has appeared).
@@ -3532,6 +3685,29 @@ def main() -> int:
                                 _print_tail(serial_log)
                                 result_code = 1
                                 break
+                            if not args.disable_udp:
+                                if saw_virtio_net_udp_fail:
+                                    print(
+                                        "FAIL: VIRTIO_NET_UDP_FAILED: selftest RESULT=PASS but virtio-net-udp test reported FAIL",
+                                        file=sys.stderr,
+                                    )
+                                    _print_tail(serial_log)
+                                    result_code = 1
+                                    break
+                                if not saw_virtio_net_udp_pass:
+                                    if saw_virtio_net_udp_skip:
+                                        print(
+                                            "FAIL: VIRTIO_NET_UDP_SKIPPED: virtio-net-udp test was skipped but UDP testing is enabled (update/provision the guest selftest)",
+                                            file=sys.stderr,
+                                        )
+                                    else:
+                                        print(
+                                            "FAIL: MISSING_VIRTIO_NET_UDP: selftest RESULT=PASS but did not emit virtio-net-udp test marker",
+                                            file=sys.stderr,
+                                        )
+                                    _print_tail(serial_log)
+                                    result_code = 1
+                                    break
                         elif args.enable_virtio_snd:
                             # Transitional mode: don't require virtio-input markers, but if the caller
                             # explicitly attached virtio-snd, require the virtio-snd marker to avoid
@@ -4305,6 +4481,21 @@ def main() -> int:
                             saw_virtio_net_pass = True
                         if not saw_virtio_net_fail and b"AERO_VIRTIO_SELFTEST|TEST|virtio-net|FAIL" in tail:
                             saw_virtio_net_fail = True
+                        if (
+                            not saw_virtio_net_udp_pass
+                            and b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-udp|PASS" in tail
+                        ):
+                            saw_virtio_net_udp_pass = True
+                        if (
+                            not saw_virtio_net_udp_fail
+                            and b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-udp|FAIL" in tail
+                        ):
+                            saw_virtio_net_udp_fail = True
+                        if (
+                            not saw_virtio_net_udp_skip
+                            and b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-udp|SKIP" in tail
+                        ):
+                            saw_virtio_net_udp_skip = True
                         if b"AERO_VIRTIO_SELFTEST|RESULT|PASS" in tail:
                             if require_per_test_markers:
                                 if saw_virtio_blk_fail:
@@ -4485,6 +4676,29 @@ def main() -> int:
                                     _print_tail(serial_log)
                                     result_code = 1
                                     break
+                                if not args.disable_udp:
+                                    if saw_virtio_net_udp_fail:
+                                        print(
+                                            "FAIL: VIRTIO_NET_UDP_FAILED: selftest RESULT=PASS but virtio-net-udp test reported FAIL",
+                                            file=sys.stderr,
+                                        )
+                                        _print_tail(serial_log)
+                                        result_code = 1
+                                        break
+                                    if not saw_virtio_net_udp_pass:
+                                        if saw_virtio_net_udp_skip:
+                                            print(
+                                                "FAIL: VIRTIO_NET_UDP_SKIPPED: virtio-net-udp test was skipped but UDP testing is enabled (update/provision the guest selftest)",
+                                                file=sys.stderr,
+                                            )
+                                        else:
+                                            print(
+                                                "FAIL: MISSING_VIRTIO_NET_UDP: selftest RESULT=PASS but did not emit virtio-net-udp test marker",
+                                                file=sys.stderr,
+                                            )
+                                        _print_tail(serial_log)
+                                        result_code = 1
+                                        break
                             elif args.enable_virtio_snd:
                                 if saw_virtio_snd_fail:
                                     print(
@@ -4823,6 +5037,8 @@ def main() -> int:
                         _stop_process(proc)
                 else:
                     _stop_process(proc)
+            if udp_server is not None:
+                udp_server.close()
             httpd.shutdown()
             try:
                 stderr_f.close()

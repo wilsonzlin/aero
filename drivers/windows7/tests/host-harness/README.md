@@ -762,6 +762,9 @@ only if you explicitly want the base image to be mutated.
     - used by the guest virtio-net selftest to stress sustained RX and validate data integrity (size + hash)
     - the same `...-large` endpoint also accepts a deterministic 1 MiB HTTP POST upload and validates integrity
       (stresses sustained TX)
+- Starts a tiny UDP echo server on `127.0.0.1:<UdpPort>`
+  - QEMU slirp/user networking exposes host as `10.0.2.2` inside the guest, so the guest can send a UDP datagram to
+    `10.0.2.2:<UdpPort>` and expect an identical echo reply.
 - Launches QEMU with:
   - `-chardev file,...` + `-serial chardev:...` (guest COM1 → host log)
   - `virtio-net-pci,disable-legacy=on,x-pci-revision=0x01` with `-netdev user` (modern-only; enumerates as `PCI\VEN_1AF4&DEV_1041&REV_01`)
@@ -786,6 +789,7 @@ only if you explicitly want the base image to be mutated.
     - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|PASS` or `...|SKIP` (if `-WithVirtioSnd` / `--with-virtio-snd` is set, it must be `PASS`)
     - (only when `-WithSndBufferLimits` / `--with-snd-buffer-limits` is enabled) `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-buffer-limits|PASS`
     - `AERO_VIRTIO_SELFTEST|TEST|virtio-net|PASS`
+    - `AERO_VIRTIO_SELFTEST|TEST|virtio-net-udp|PASS`
 
 The Python/PowerShell harnesses also emit an additional host-side marker after the run for log scraping:
 

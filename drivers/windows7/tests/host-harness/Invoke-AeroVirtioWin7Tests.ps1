@@ -193,6 +193,18 @@ param(
   # Base HTTP path. The harness also serves a deterministic 1 MiB payload at "${HttpPath}-large".
   [string]$HttpPath = "/aero-virtio-selftest",
 
+  # UDP echo server port on the host (loopback).
+  # Guest reaches it at:
+  #   10.0.2.2:<port>
+  [Parameter(Mandatory = $false)]
+  [int]$UdpPort = 18081,
+
+  # If set, do not start the host UDP echo server and do not require the guest virtio-net-udp marker.
+  # This is useful when running the harness against older guest selftest binaries that do not yet
+  # implement the UDP test.
+  [Parameter(Mandatory = $false)]
+  [switch]$DisableUdp,
+
   # If set, attach a virtio-snd device (virtio-sound-pci / virtio-snd-pci).
   # Note: the guest selftest always emits virtio-snd markers (playback + capture + duplex), but will report SKIP if the
   # virtio-snd PCI device is missing or the test was disabled. When -WithVirtioSnd is enabled, the harness
@@ -324,6 +336,12 @@ function Resolve-AeroWin7QemuMsixVectors {
   return $Vectors
 }
 
+if (-not $DisableUdp) {
+  if ($UdpPort -le 0 -or $UdpPort -gt 65535) {
+    throw "-UdpPort must be in the range 1..65535."
+  }
+}
+
 function Start-AeroSelftestHttpServer {
   param(
     [Parameter(Mandatory = $true)] [int]$Port,
@@ -333,6 +351,59 @@ function Start-AeroSelftestHttpServer {
   $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, $Port)
   $listener.Start()
   return $listener
+}
+
+function Start-AeroSelftestUdpEchoServer {
+  param(
+    [Parameter(Mandatory = $true)] [int]$Port
+  )
+
+  $sock = [System.Net.Sockets.Socket]::new(
+    [System.Net.Sockets.AddressFamily]::InterNetwork,
+    [System.Net.Sockets.SocketType]::Dgram,
+    [System.Net.Sockets.ProtocolType]::Udp
+  )
+  try {
+    $sock.Bind([System.Net.IPEndPoint]::new([System.Net.IPAddress]::Loopback, $Port))
+    return $sock
+  } catch {
+    try { $sock.Close() } catch { }
+    throw
+  }
+}
+
+function Try-HandleAeroUdpEchoRequest {
+  param(
+    [Parameter(Mandatory = $true)] $Socket,
+    [Parameter(Mandatory = $false)] [int]$MaxDatagramSize = 2048
+  )
+
+  if ($null -eq $Socket) { return $false }
+
+  # Handle a small bounded number of datagrams per call so we never starve the main wait loop.
+  $handledAny = $false
+  $buf = New-Object byte[] ([Math]::Max(1, $MaxDatagramSize + 1))
+  $remote = [System.Net.EndPoint]([System.Net.IPEndPoint]::new([System.Net.IPAddress]::Any, 0))
+
+  for ($i = 0; $i -lt 16; $i++) {
+    try {
+      # Non-blocking poll (0 microseconds).
+      if (-not $Socket.Poll(0, [System.Net.Sockets.SelectMode]::SelectRead)) { break }
+      $n = $Socket.ReceiveFrom($buf, 0, $buf.Length, [System.Net.Sockets.SocketFlags]::None, [ref]$remote)
+      if ($n -le 0) { break }
+      $handledAny = $true
+
+      # Drop oversize datagrams (bounded/deterministic).
+      if ($n -gt $MaxDatagramSize) { continue }
+
+      $null = $Socket.SendTo($buf, 0, $n, [System.Net.Sockets.SocketFlags]::None, $remote)
+    } catch {
+      # Best-effort: never fail the harness due to UDP socket errors.
+      break
+    }
+  }
+
+  return $handledAny
 }
 
 $script:AeroSelftestLargePayload = $null
@@ -607,9 +678,12 @@ function Wait-AeroSelftestResult {
     [Parameter(Mandatory = $true)] [int]$TimeoutSeconds,
     [Parameter(Mandatory = $true)] $HttpListener,
     [Parameter(Mandatory = $true)] [string]$HttpPath,
+    [Parameter(Mandatory = $false)] $UdpSocket = $null,
     [Parameter(Mandatory = $true)] [bool]$FollowSerial,
     # When $true, require per-test markers so older selftest binaries cannot accidentally pass.
     [Parameter(Mandatory = $false)] [bool]$RequirePerTestMarkers = $true,
+    # When true, require the guest virtio-net-udp marker to PASS.
+    [Parameter(Mandatory = $false)] [bool]$RequireVirtioNetUdpPass = $true,
     # If true, a virtio-snd device was attached, so the virtio-snd selftest must actually run and pass
     # (not be skipped via --disable-snd).
     [Parameter(Mandatory = $true)] [bool]$RequireVirtioSndPass,
@@ -700,6 +774,9 @@ function Wait-AeroSelftestResult {
   $sawVirtioSndBufferLimitsFail = $false
   $sawVirtioNetPass = $false
   $sawVirtioNetFail = $false
+  $sawVirtioNetUdpPass = $false
+  $sawVirtioNetUdpFail = $false
+  $sawVirtioNetUdpSkip = $false
 
   function Test-VirtioInputMsixRequirement {
     param(
@@ -731,6 +808,9 @@ function Wait-AeroSelftestResult {
 
   while ((Get-Date) -lt $deadline) {
     $null = Try-HandleAeroHttpRequest -Listener $HttpListener -Path $HttpPath
+    if ($null -ne $UdpSocket) {
+      $null = Try-HandleAeroUdpEchoRequest -Socket $UdpSocket
+    }
 
     $chunk = Read-NewText -Path $SerialLogPath -Position ([ref]$pos)
     if ($chunk.Length -gt 0) {
@@ -900,6 +980,15 @@ function Wait-AeroSelftestResult {
       if (-not $sawVirtioNetFail -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-net\|FAIL") {
         $sawVirtioNetFail = $true
       }
+      if (-not $sawVirtioNetUdpPass -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-net-udp\|PASS") {
+        $sawVirtioNetUdpPass = $true
+      }
+      if (-not $sawVirtioNetUdpFail -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-net-udp\|FAIL") {
+        $sawVirtioNetUdpFail = $true
+      }
+      if (-not $sawVirtioNetUdpSkip -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-net-udp\|SKIP") {
+        $sawVirtioNetUdpSkip = $true
+      }
 
       if ($RequireVirtioSndBufferLimitsPass) {
         if ($sawVirtioSndBufferLimitsSkip) { return @{ Result = "VIRTIO_SND_BUFFER_LIMITS_SKIPPED"; Tail = $tail } }
@@ -971,6 +1060,15 @@ function Wait-AeroSelftestResult {
           }
           if (-not $sawVirtioNetPass) {
             return @{ Result = "MISSING_VIRTIO_NET"; Tail = $tail }
+          }
+          if ($RequireVirtioNetUdpPass) {
+            if ($sawVirtioNetUdpFail) {
+              return @{ Result = "VIRTIO_NET_UDP_FAILED"; Tail = $tail }
+            }
+            if (-not $sawVirtioNetUdpPass) {
+              if ($sawVirtioNetUdpSkip) { return @{ Result = "VIRTIO_NET_UDP_SKIPPED"; Tail = $tail } }
+              return @{ Result = "MISSING_VIRTIO_NET_UDP"; Tail = $tail }
+            }
           }
 
           if ($RequireVirtioInputEventsPass) {
@@ -3354,6 +3452,18 @@ Write-Host "  (large payload at 127.0.0.1:$HttpPort$httpLargePath, 1 MiB determi
 Write-Host "  (guest: http://10.0.2.2:$HttpPort$HttpPath and http://10.0.2.2:$HttpPort$httpLargePath)"
 $httpListener = Start-AeroSelftestHttpServer -Port $HttpPort -Path $HttpPath
 
+$udpSocket = $null
+if ($DisableUdp) {
+  Write-Host "UDP echo server disabled (-DisableUdp)"
+} else {
+  Write-Host "Starting UDP echo server on 127.0.0.1:$UdpPort (guest: 10.0.2.2:$UdpPort) ..."
+  try {
+    $udpSocket = Start-AeroSelftestUdpEchoServer -Port $UdpPort
+  } catch {
+    throw "Failed to bind UDP echo server on 127.0.0.1:$UdpPort (port in use?): $_"
+  }
+}
+
 try {
   $qmpPort = $null
   $qmpArgs = @()
@@ -3662,8 +3772,10 @@ try {
         -TimeoutSeconds $TimeoutSeconds `
         -HttpListener $httpListener `
         -HttpPath $HttpPath `
+        -UdpSocket $udpSocket `
         -FollowSerial ([bool]$FollowSerial) `
         -RequirePerTestMarkers (-not $VirtioTransitional) `
+        -RequireVirtioNetUdpPass (-not $DisableUdp) `
         -RequireVirtioSndPass ([bool]$WithVirtioSnd) `
         -RequireVirtioSndBufferLimitsPass ([bool]$WithSndBufferLimits) `
         -RequireVirtioInputEventsPass ([bool]$needInputEvents) `
@@ -4071,8 +4183,32 @@ try {
       }
       $scriptExitCode = 1
     }
+    "MISSING_VIRTIO_NET_UDP" {
+      Write-Host "FAIL: MISSING_VIRTIO_NET_UDP: selftest RESULT=PASS but did not emit virtio-net-udp test marker"
+      if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
+        Write-Host "`n--- Serial tail ---"
+        Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
+      }
+      $scriptExitCode = 1
+    }
     "VIRTIO_NET_FAILED" {
       Write-Host "FAIL: VIRTIO_NET_FAILED: selftest RESULT=PASS but virtio-net test reported FAIL"
+      if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
+        Write-Host "`n--- Serial tail ---"
+        Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
+      }
+      $scriptExitCode = 1
+    }
+    "VIRTIO_NET_UDP_FAILED" {
+      Write-Host "FAIL: VIRTIO_NET_UDP_FAILED: selftest RESULT=PASS but virtio-net-udp test reported FAIL"
+      if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
+        Write-Host "`n--- Serial tail ---"
+        Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
+      }
+      $scriptExitCode = 1
+    }
+    "VIRTIO_NET_UDP_SKIPPED" {
+      Write-Host "FAIL: VIRTIO_NET_UDP_SKIPPED: virtio-net-udp test was skipped but UDP testing is enabled (update/provision the guest selftest)"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -4236,6 +4372,10 @@ try {
 } finally {
   if ($httpListener) {
     try { $httpListener.Stop() } catch { }
+  }
+  if ($udpSocket) {
+    try { $udpSocket.Close() } catch { }
+    try { $udpSocket.Dispose() } catch { }
   }
 }
 

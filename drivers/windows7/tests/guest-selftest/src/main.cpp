@@ -62,6 +62,8 @@ namespace {
 
 struct Options {
   std::wstring http_url = L"http://10.0.2.2:18080/aero-virtio-selftest";
+  // UDP echo server port for the virtio-net UDP smoke test (guest reaches host loopback as 10.0.2.2 via slirp).
+  USHORT udp_port = 18081;
   // Prefer a hostname that (on many QEMU versions) resolves without relying on external internet.
   // If unavailable, the selftest will fall back to "example.com".
   std::wstring dns_host = L"host.lan";
@@ -5706,10 +5708,128 @@ static bool HttpPostLargeDeterministic(Logger& log, const std::wstring& url, uin
   return status >= 200 && status < 300;
 }
 
+struct VirtioNetUdpTestResult {
+  bool ok = false;
+  // Bytes in the datagram for the last attempted roundtrip (or 0 if not attempted).
+  uint32_t bytes = 0;
+  // Diagnostic: configured payload sizes.
+  uint32_t small_bytes = 0;
+  uint32_t mtu_bytes = 0;
+  std::string fail_reason;
+  int wsa_error = 0;
+};
+
+static VirtioNetUdpTestResult VirtioNetUdpEchoTest(Logger& log, USHORT port) {
+  VirtioNetUdpTestResult out{};
+  out.small_bytes = 32;
+  out.mtu_bytes = 1400;
+
+  // Keep bounded and deterministic: fixed destination, fixed payload(s), fixed timeouts.
+  const DWORD timeout_ms = 2000;
+
+  SOCKET s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+  if (s == INVALID_SOCKET) {
+    out.fail_reason = "socket_failed";
+    out.wsa_error = WSAGetLastError();
+    log.Logf("virtio-net: UDP echo socket() failed wsa=%d", out.wsa_error);
+    return out;
+  }
+
+  auto close_sock = [&]() {
+    if (s != INVALID_SOCKET) {
+      closesocket(s);
+      s = INVALID_SOCKET;
+    }
+  };
+
+  (void)setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&timeout_ms), sizeof(timeout_ms));
+  (void)setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<const char*>(&timeout_ms), sizeof(timeout_ms));
+
+  sockaddr_in dst{};
+  dst.sin_family = AF_INET;
+  dst.sin_port = htons(port);
+  dst.sin_addr.S_un.S_addr = inet_addr("10.0.2.2");
+  if (dst.sin_addr.S_un.S_addr == INADDR_NONE) {
+    out.fail_reason = "bad_dst_addr";
+    close_sock();
+    return out;
+  }
+
+  if (connect(s, reinterpret_cast<const sockaddr*>(&dst), sizeof(dst)) == SOCKET_ERROR) {
+    out.fail_reason = "connect_failed";
+    out.wsa_error = WSAGetLastError();
+    log.Logf("virtio-net: UDP echo connect(10.0.2.2:%u) failed wsa=%d", static_cast<unsigned>(port),
+             out.wsa_error);
+    close_sock();
+    return out;
+  }
+
+  auto roundtrip = [&](uint32_t len) -> bool {
+    out.bytes = len;
+    std::vector<uint8_t> sendbuf(len);
+    for (uint32_t i = 0; i < len; i++) {
+      sendbuf[i] = static_cast<uint8_t>(i & 0xFFu);
+    }
+
+    const int sent =
+        send(s, reinterpret_cast<const char*>(sendbuf.data()), static_cast<int>(sendbuf.size()), 0);
+    if (sent != static_cast<int>(sendbuf.size())) {
+      out.fail_reason = "send_failed";
+      out.wsa_error = WSAGetLastError();
+      log.Logf("virtio-net: UDP echo send(bytes=%lu) failed sent=%d wsa=%d", static_cast<unsigned long>(len),
+               sent, out.wsa_error);
+      return false;
+    }
+
+    std::vector<uint8_t> recvbuf(len + 16);
+    const int recvd =
+        recv(s, reinterpret_cast<char*>(recvbuf.data()), static_cast<int>(recvbuf.size()), 0);
+    if (recvd != static_cast<int>(len)) {
+      const int err = WSAGetLastError();
+      out.wsa_error = err;
+      out.fail_reason = (err == WSAETIMEDOUT || err == WSAEWOULDBLOCK) ? "timeout" : "recv_failed";
+      log.Logf("virtio-net: UDP echo recv(bytes=%lu) failed recvd=%d wsa=%d", static_cast<unsigned long>(len),
+               recvd, err);
+      return false;
+    }
+
+    if (memcmp(recvbuf.data(), sendbuf.data(), len) != 0) {
+      out.fail_reason = "mismatch";
+      out.wsa_error = 0;
+      // Log a small prefix of both buffers for debugging.
+      const size_t prefix = std::min<size_t>(32, len);
+      log.Logf("virtio-net: UDP echo mismatch bytes=%lu prefix_sent=%s prefix_recv=%s",
+               static_cast<unsigned long>(len), HexDump(sendbuf.data(), prefix).c_str(),
+               HexDump(recvbuf.data(), prefix).c_str());
+      return false;
+    }
+
+    return true;
+  };
+
+  if (!roundtrip(out.small_bytes)) {
+    close_sock();
+    return out;
+  }
+  if (!roundtrip(out.mtu_bytes)) {
+    close_sock();
+    return out;
+  }
+
+  close_sock();
+  out.ok = true;
+  out.fail_reason.clear();
+  out.wsa_error = 0;
+  log.Logf("virtio-net: UDP echo ok port=%u bytes_small=%lu bytes_mtu=%lu", static_cast<unsigned>(port),
+           static_cast<unsigned long>(out.small_bytes), static_cast<unsigned long>(out.mtu_bytes));
+  return out;
+}
+
 struct VirtioNetTestResult {
   bool ok = false;
   // Best-effort devnode for the selected adapter (if any).
   DEVINST devinst = 0;
+  VirtioNetUdpTestResult udp;
   bool large_ok = false;
   uint64_t large_bytes = 0;
   uint64_t large_hash = 0;
@@ -5844,6 +5964,9 @@ static VirtioNetTestResult VirtioNetTest(Logger& log, const Options& opt) {
   log.Logf("virtio-net: adapter up name=%s guid=%s ipv4=%u.%u.%u.%u",
            WideToUtf8(chosen_friendly).c_str(), WideToUtf8(chosen->instance_id).c_str(), a, b, c,
            d);
+
+  out.udp = VirtioNetUdpEchoTest(log, opt.udp_port);
+  if (!out.udp.ok) return out;
 
   if (!DnsResolveWithFallback(log, opt.dns_host)) return out;
   if (!HttpGet(log, opt.http_url)) return out;
@@ -8678,6 +8801,7 @@ static void PrintUsage() {
       "  --test-blk-resize         Run virtio-blk runtime resize test (optional)\n"
       "                           (or set env var AERO_VIRTIO_SELFTEST_TEST_BLK_RESIZE=1)\n"
       "  --http-url <url>          HTTP URL for TCP connectivity test (also expects <url>-large)\n"
+      "  --udp-port <port>         UDP echo server port for virtio-net UDP smoke test (host is 10.0.2.2)\n"
       "  --dns-host <hostname>     Hostname for DNS resolution test\n"
       "  --log-file <path>         Log file path (default C:\\\\aero-virtio-selftest.log)\n"
       "  --disable-snd             Skip virtio-snd test (emit SKIP)\n"
@@ -8755,6 +8879,14 @@ int wmain(int argc, wchar_t** argv) {
         return 2;
       }
       opt.http_url = v;
+    } else if (arg == L"--udp-port") {
+      const wchar_t* v = next();
+      const auto parsed = ParseU32(v);
+      if (!parsed || *parsed == 0 || *parsed > 65535u) {
+        PrintUsage();
+        return 2;
+      }
+      opt.udp_port = static_cast<USHORT>(*parsed);
     } else if (arg == L"--blk-root") {
       const wchar_t* v = next();
       if (!v) {
@@ -8913,10 +9045,12 @@ int wmain(int argc, wchar_t** argv) {
   Logger log(opt.log_file);
 
   log.LogLine("AERO_VIRTIO_SELFTEST|START|version=1");
-  log.Logf("AERO_VIRTIO_SELFTEST|CONFIG|http_url=%s|http_url_large=%s|dns_host=%s|blk_root=%s|expect_blk_msi=%d",
-           WideToUtf8(opt.http_url).c_str(),
-           WideToUtf8(UrlAppendSuffix(opt.http_url, L"-large")).c_str(),
-           WideToUtf8(opt.dns_host).c_str(), WideToUtf8(opt.blk_root).c_str(), opt.expect_blk_msi ? 1 : 0);
+  log.Logf(
+      "AERO_VIRTIO_SELFTEST|CONFIG|http_url=%s|http_url_large=%s|udp_port=%lu|dns_host=%s|blk_root=%s|expect_blk_msi=%d",
+      WideToUtf8(opt.http_url).c_str(),
+      WideToUtf8(UrlAppendSuffix(opt.http_url, L"-large")).c_str(),
+      static_cast<unsigned long>(opt.udp_port), WideToUtf8(opt.dns_host).c_str(), WideToUtf8(opt.blk_root).c_str(),
+      opt.expect_blk_msi ? 1 : 0);
 
   bool all_ok = true;
 
@@ -9778,15 +9912,20 @@ int wmain(int argc, wchar_t** argv) {
     log.Logf("virtio-net: WSAStartup failed rc=%d", wsa_rc);
     log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-net|FAIL%s", net_irq_fields_fallback.c_str());
     all_ok = false;
-  } else {
-    const auto net = VirtioNetTest(log, opt);
-    net_devinst = net.devinst;
-    const std::string net_irq_fields =
-        (net_devinst != 0) ? IrqFieldsForTestMarkerFromDevInst(net_devinst) : net_irq_fields_fallback;
-    log.Logf(
-        "AERO_VIRTIO_SELFTEST|TEST|virtio-net|%s|large_ok=%d|large_bytes=%llu|large_fnv1a64=0x%016I64x|large_mbps=%.2f|"
-        "upload_ok=%d|upload_bytes=%llu|upload_mbps=%.2f|msi=%d|msi_messages=%d%s",
-        net.ok ? "PASS" : "FAIL", net.large_ok ? 1 : 0,
+    } else {
+      const auto net = VirtioNetTest(log, opt);
+      net_devinst = net.devinst;
+      const std::string net_irq_fields =
+          (net_devinst != 0) ? IrqFieldsForTestMarkerFromDevInst(net_devinst) : net_irq_fields_fallback;
+      log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-net-udp|%s|bytes=%lu|small_bytes=%lu|mtu_bytes=%lu|reason=%s|wsa=%d",
+               net.udp.ok ? "PASS" : "FAIL", static_cast<unsigned long>(net.udp.bytes),
+               static_cast<unsigned long>(net.udp.small_bytes), static_cast<unsigned long>(net.udp.mtu_bytes),
+               net.udp.ok ? "-" : (net.udp.fail_reason.empty() ? "unknown" : net.udp.fail_reason.c_str()),
+               net.udp.wsa_error);
+      log.Logf(
+          "AERO_VIRTIO_SELFTEST|TEST|virtio-net|%s|large_ok=%d|large_bytes=%llu|large_fnv1a64=0x%016I64x|large_mbps=%.2f|"
+          "upload_ok=%d|upload_bytes=%llu|upload_mbps=%.2f|msi=%d|msi_messages=%d%s",
+          net.ok ? "PASS" : "FAIL", net.large_ok ? 1 : 0,
         static_cast<unsigned long long>(net.large_bytes), static_cast<unsigned long long>(net.large_hash),
         net.large_mbps, net.upload_ok ? 1 : 0, static_cast<unsigned long long>(net.upload_bytes), net.upload_mbps,
         (net.msi_messages < 0) ? -1 : (net.msi_messages > 0 ? 1 : 0), net.msi_messages, net_irq_fields.c_str());
