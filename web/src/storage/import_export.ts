@@ -35,6 +35,14 @@ export type ImportProgress = {
   totalBytes?: number;
 };
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hasOwn(obj: object, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(obj, key);
+}
+
 function report(
   onProgress: ((p: ImportProgress) => void) | undefined,
   payload: ImportProgress,
@@ -329,6 +337,29 @@ async function idbPutChunks(db: IDBDatabase, diskId: string, entries: Array<[num
   await done;
 }
 
+function safeDataFromIdbChunkRecord(rec: unknown, diskId: string, index: number): ArrayBuffer | undefined {
+  if (!isRecord(rec)) return undefined;
+  const id = hasOwn(rec, "id") ? rec.id : undefined;
+  const idx = hasOwn(rec, "index") ? rec.index : undefined;
+  if (id !== diskId || idx !== index) return undefined;
+  if (!hasOwn(rec, "data")) return undefined;
+  const dataRaw = rec.data;
+  const dataAny = dataRaw as any;
+  if (dataAny instanceof ArrayBuffer) return dataAny;
+  // Legacy/foreign implementations may store Uint8Array instead of ArrayBuffer.
+  if (dataAny instanceof Uint8Array) {
+    if (
+      dataAny.buffer instanceof ArrayBuffer &&
+      dataAny.byteOffset === 0 &&
+      dataAny.byteLength === dataAny.buffer.byteLength
+    ) {
+      return dataAny.buffer;
+    }
+    return dataAny.slice().buffer;
+  }
+  return undefined;
+}
+
 /**
  * @param {IDBDatabase} db
  * @param {string} diskId
@@ -339,10 +370,9 @@ async function idbGetChunk(db: IDBDatabase, diskId: string, index: number): Prom
   const tx = db.transaction(["chunks"], "readonly");
   const store = tx.objectStore("chunks");
   const done = idbTxDone(tx);
-  type ChunkRecord = { id: string; index: number; data: ArrayBuffer };
-  const rec = (await idbReq(store.get([diskId, index]))) as ChunkRecord | undefined;
+  const rec = (await idbReq(store.get([diskId, index]))) as unknown;
   await done;
-  return rec?.data;
+  return safeDataFromIdbChunkRecord(rec, diskId, index);
 }
 
 /**
@@ -561,9 +591,8 @@ export async function idbExportToPort(
 
     const totalChunks = Math.ceil(sizeBytes / IDB_CHUNK_SIZE);
     for (let index = 0; index < totalChunks; index++) {
-      type ChunkRecord = { id: string; index: number; data: ArrayBuffer };
-      const rec = (await idbReq(store.get([diskId, index]))) as ChunkRecord | undefined;
-      const buf = rec?.data;
+      const rec = (await idbReq(store.get([diskId, index]))) as unknown;
+      const buf = safeDataFromIdbChunkRecord(rec, diskId, index);
       const remaining = sizeBytes - index * IDB_CHUNK_SIZE;
       const outLen = Math.min(IDB_CHUNK_SIZE, remaining);
 

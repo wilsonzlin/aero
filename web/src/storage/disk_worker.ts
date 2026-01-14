@@ -74,7 +74,20 @@ function alignUpBigInt(value: bigint, alignment: bigint): bigint {
 async function sniffAerosparseDiskSizeBytesFromFile(file: File): Promise<number | null> {
   // Best-effort: avoid reading whole files; we only need the fixed-size header.
   const prefixLen = Math.min(file.size, AEROSPARSE_HEADER_SIZE_BYTES);
-  const buf = await file.slice(0, prefixLen).arrayBuffer();
+  let buf: ArrayBuffer;
+  // Some test environments provide a lightweight File-like object without `slice()`.
+  // Fall back to reading the full buffer and slicing in-memory.
+  const sliceFn = (file as unknown as { slice?: unknown }).slice;
+  if (typeof sliceFn === "function") {
+    buf = await (sliceFn as (start?: number, end?: number) => Blob).call(file, 0, prefixLen).arrayBuffer();
+  } else {
+    const arrayBufferFn = (file as unknown as { arrayBuffer?: unknown }).arrayBuffer;
+    if (typeof arrayBufferFn !== "function") {
+      throw new Error("aerospar file does not support slice() or arrayBuffer()");
+    }
+    const full = await (arrayBufferFn as () => Promise<ArrayBuffer>).call(file);
+    buf = full.slice(0, prefixLen);
+  }
   const bytes = new Uint8Array(buf);
 
   if (bytes.byteLength < AEROSPARSE_MAGIC.length) return null;
