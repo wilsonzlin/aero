@@ -13,6 +13,8 @@ export function negateI32Saturating(v: number): number {
   // Callers are expected to pass an i32 (e.g. `x | 0`). We still keep the fast-path branch-only
   // implementation here to avoid additional coercions on hot paths.
   if (v === I32_MIN) return I32_MAX;
-  return -v;
+  const neg = -v;
+  // Negating 0 yields -0, which is observable under `Object.is` and can leak into tests/serialization
+  // even though it compares equal under `===`. Normalize to +0 for determinism.
+  return neg === 0 ? 0 : neg;
 }
-
