@@ -44,9 +44,13 @@ describe("runtime/coordinator", () => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const originalWorker = (globalThis as any).Worker as unknown;
   const TEST_VRAM_MIB = 1;
+  const TEST_GUEST_MIB = 1;
   const allocateTestSegments = () =>
     allocateHarnessSharedMemorySegments({
-      guestRamBytes: 64 * 1024,
+      // Keep guest RAM aligned with the `guestMemoryMiB: 1` configs used throughout this test
+      // suite so `WorkerCoordinator.updateConfig` doesn't spuriously request a restart due to
+      // mismatched `guest_size`.
+      guestRamBytes: TEST_GUEST_MIB * 1024 * 1024,
       sharedFramebuffer: new SharedArrayBuffer(8),
       sharedFramebufferOffsetBytes: 0,
       ioIpcBytes: 0,
