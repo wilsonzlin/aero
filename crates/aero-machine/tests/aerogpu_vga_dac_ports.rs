@@ -43,7 +43,7 @@ fn vga_dac_ports_program_palette_entry_and_read_back() {
         ..Default::default()
     };
     let mut m = Machine::new(cfg).unwrap();
-    run_dac_port_roundtrip(&mut m, /*expect_display_palette*/ false);
+    run_dac_port_roundtrip(&mut m, /*expect_display_palette*/ true);
 }
 
 fn run_dac_port_roundtrip(m: &mut Machine, expect_display_palette: bool) {

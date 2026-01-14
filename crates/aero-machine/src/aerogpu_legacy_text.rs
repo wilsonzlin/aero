@@ -11,29 +11,20 @@ const TEXT_CHAR_HEIGHT: usize = 16;
 const MAX_TEXT_COLS: u16 = 80;
 const MAX_TEXT_ROWS: u8 = 25;
 
-// Standard EGA 16-color palette, encoded as RGBA8888 in native-endian `u32` where the least
-// significant byte is R (matching Canvas `ImageData` byte order).
-const EGA_PALETTE_RGBA: [u32; 16] = [
-    0xFF00_0000, // 0 black
-    0xFFAA_0000, // 1 blue
-    0xFF00_AA00, // 2 green
-    0xFFAA_AA00, // 3 cyan
-    0xFF00_00AA, // 4 red
-    0xFFAA_00AA, // 5 magenta
-    0xFF00_55AA, // 6 brown
-    0xFFAA_AAAA, // 7 light grey
-    0xFF55_5555, // 8 dark grey
-    0xFFFF_5555, // 9 bright blue
-    0xFF55_FF55, // 10 bright green
-    0xFFFF_FF55, // 11 bright cyan
-    0xFF55_55FF, // 12 bright red
-    0xFFFF_55FF, // 13 bright magenta
-    0xFF55_FFFF, // 14 yellow
-    0xFFFF_FFFF, // 15 white
-];
+fn vga_color(dac_palette: &[[u8; 3]; 256], pel_mask: u8, attr_4bit: u8) -> u32 {
+    // VGA applies `PEL_MASK` before palette lookup.
+    let idx = (attr_4bit & 0x0F) & pel_mask;
+    let [r6, g6, b6] = dac_palette[idx as usize];
+    let r = vga_6bit_to_8bit(r6);
+    let g = vga_6bit_to_8bit(g6);
+    let b = vga_6bit_to_8bit(b6);
+    u32::from_le_bytes([r, g, b, 0xFF])
+}
 
-fn ega_color(attr_4bit: u8) -> u32 {
-    EGA_PALETTE_RGBA[(attr_4bit & 0x0F) as usize]
+fn vga_6bit_to_8bit(v: u8) -> u8 {
+    let v = v & 0x3F;
+    // Expand 6-bit DAC component to 8-bit (matches the VGA model's `palette::vga_6bit_to_8bit`).
+    (v << 2) | (v >> 4)
 }
 
 fn glyph8x16_row(ch: u8, row: usize) -> u8 {
@@ -47,7 +38,12 @@ fn glyph8x16_row(ch: u8, row: usize) -> u8 {
 /// CRTC ports. Instead of mirroring BDA state into VGA registers, we render directly from BDA:
 /// - Visible text page base = `0xB8000 + BDA.video_page_offset`
 /// - Cursor position/shape = `BDA.active_page`, `BDA.cursor_pos[page]`, `BDA.cursor_shape`
-pub fn render_into(fb: &mut Vec<u32>, mem: &mut impl MemoryBus) -> (u32, u32) {
+pub fn render_into(
+    fb: &mut Vec<u32>,
+    mem: &mut impl MemoryBus,
+    dac_palette: &[[u8; 3]; 256],
+    pel_mask: u8,
+) -> (u32, u32) {
     let cols = BiosDataArea::read_screen_cols(mem).clamp(1, MAX_TEXT_COLS) as usize;
     let rows = BiosDataArea::read_text_rows(mem).clamp(1, MAX_TEXT_ROWS) as usize;
 
@@ -67,8 +63,8 @@ pub fn render_into(fb: &mut Vec<u32>, mem: &mut impl MemoryBus) -> (u32, u32) {
             let ch = mem.read_u8(addr);
             let attr = mem.read_u8(addr + 1);
 
-            let fg = ega_color(attr & 0x0F);
-            let bg = ega_color((attr >> 4) & 0x0F);
+            let fg = vga_color(dac_palette, pel_mask, attr & 0x0F);
+            let bg = vga_color(dac_palette, pel_mask, (attr >> 4) & 0x0F);
 
             let px_x0 = col * TEXT_CHAR_WIDTH;
             let px_y0 = row * TEXT_CHAR_HEIGHT;
@@ -106,8 +102,8 @@ pub fn render_into(fb: &mut Vec<u32>, mem: &mut impl MemoryBus) -> (u32, u32) {
             let cell = row * cols + col;
             let addr = base + (cell as u64) * 2;
             let attr = mem.read_u8(addr + 1);
-            let fg = ega_color(attr & 0x0F);
-            let bg = ega_color((attr >> 4) & 0x0F);
+            let fg = vga_color(dac_palette, pel_mask, attr & 0x0F);
+            let bg = vga_color(dac_palette, pel_mask, (attr >> 4) & 0x0F);
 
             let start = (cursor_start & 0x1F).min((TEXT_CHAR_HEIGHT - 1) as u8) as usize;
             let end = (cursor_end & 0x1F).min((TEXT_CHAR_HEIGHT - 1) as u8) as usize;

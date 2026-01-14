@@ -2248,6 +2248,33 @@ struct AeroGpuDevice {
 }
 
 impl AeroGpuDevice {
+    fn default_dac_palette() -> [[u8; 3]; 256] {
+        let mut out = [[0u8; 3]; 256];
+        // Standard EGA 16-color palette encoded as VGA DAC 6-bit components.
+        //
+        // This matches the VGA device model's default palette for indices 0..15.
+        const EGA_6BIT: [[u8; 3]; 16] = [
+            [0, 0, 0],    // 0 black
+            [0, 0, 42],   // 1 blue
+            [0, 42, 0],   // 2 green
+            [0, 42, 42],  // 3 cyan
+            [42, 0, 0],   // 4 red
+            [42, 0, 42],  // 5 magenta
+            [42, 21, 0],  // 6 brown
+            [42, 42, 42], // 7 light grey
+            [21, 21, 21], // 8 dark grey
+            [21, 21, 63], // 9 bright blue
+            [21, 63, 21], // 10 bright green
+            [21, 63, 63], // 11 bright cyan
+            [63, 21, 21], // 12 bright red
+            [63, 21, 63], // 13 bright magenta
+            [63, 63, 21], // 14 yellow
+            [63, 63, 63], // 15 white
+        ];
+        out[..16].copy_from_slice(&EGA_6BIT);
+        out
+    }
+
     fn new() -> Self {
         Self {
             vram: vec![0u8; AEROGPU_VRAM_ALLOC_SIZE],
@@ -2269,7 +2296,7 @@ impl AeroGpuDevice {
             dac_write_latch: [0; 3],
             dac_read_index: 0,
             dac_read_subindex: 0,
-            dac_palette: [[0; 3]; 256],
+            dac_palette: Self::default_dac_palette(),
         }
     }
 
@@ -2293,7 +2320,7 @@ impl AeroGpuDevice {
         self.dac_write_latch = [0; 3];
         self.dac_read_index = 0;
         self.dac_read_subindex = 0;
-        self.dac_palette.fill([0; 3]);
+        self.dac_palette = Self::default_dac_palette();
     }
 
     fn write_dac_data(&mut self, value: u8) {
@@ -4187,7 +4214,21 @@ impl Machine {
     }
 
     fn display_present_aerogpu_text_mode(&mut self) {
-        let (w, h) = aerogpu_legacy_text::render_into(&mut self.display_fb, &mut self.mem);
+        // Avoid holding a `RefCell` borrow of the AeroGPU device while reading from guest memory:
+        // legacy VRAM is MMIO-routed back into the same device and may borrow it again.
+        let (pel_mask, dac_palette) = if let Some(aerogpu) = &self.aerogpu {
+            let dev = aerogpu.borrow();
+            (dev.pel_mask, dev.dac_palette)
+        } else {
+            (0xFF, AeroGpuDevice::default_dac_palette())
+        };
+
+        let (w, h) = aerogpu_legacy_text::render_into(
+            &mut self.display_fb,
+            &mut self.mem,
+            &dac_palette,
+            pel_mask,
+        );
         self.display_width = w;
         self.display_height = h;
     }
