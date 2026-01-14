@@ -1,6 +1,6 @@
 use aero_gpu_trace::{
     AerogpuSubmissionCapture, BlobKind, TraceMeta, TraceReadError, TraceReader, TraceRecord,
-    TraceWriter, CONTAINER_VERSION, TRACE_FOOTER_SIZE,
+    TraceWriteError, TraceWriter, CONTAINER_VERSION, TRACE_FOOTER_SIZE,
 };
 use std::io::Cursor;
 
@@ -46,6 +46,25 @@ fn read_u32_le(bytes: &[u8], off: usize) -> u32 {
 
 fn read_u64_le(bytes: &[u8], off: usize) -> u64 {
     u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap())
+}
+
+#[test]
+fn writer_rejects_aerogpu_submission_in_container_v1() {
+    let meta = TraceMeta::new("test", 0);
+    let mut writer = TraceWriter::new(Vec::<u8>::new(), &meta).expect("TraceWriter::new");
+    writer.begin_frame(0).unwrap();
+    let err = writer
+        .write_aerogpu_submission(AerogpuSubmissionCapture {
+            submit_flags: 0,
+            context_id: 0,
+            engine_id: 0,
+            signal_fence: 0,
+            cmd_stream_bytes: b"dummy cmd stream bytes",
+            alloc_table_bytes: None,
+            memory_ranges: &[],
+        })
+        .unwrap_err();
+    assert!(matches!(err, TraceWriteError::UnsupportedContainerVersion(1)));
 }
 
 #[test]
