@@ -47,6 +47,16 @@ All code that wants to *construct and run the Aero VM/machine* (including `crate
     - Mouse: `Machine::inject_mouse_motion(dx, dy, wheel)`
     - Mouse buttons: `Machine::inject_mouse_button(button: Ps2MouseButton, pressed)`
       - Convenience wrappers: `inject_mouse_left/right/middle`
+  - Input injection (virtio-input, when enabled):
+    - Keyboard: `Machine::inject_virtio_key(linux_key, pressed)`
+    - Mouse movement: `Machine::inject_virtio_rel(dx, dy)`
+    - Mouse buttons: `Machine::inject_virtio_button(btn, pressed)`
+    - Mouse wheel: `Machine::inject_virtio_wheel(delta)`
+    - Driver readiness probes (useful for host-side routing): `Machine::virtio_input_keyboard_driver_ok()` / `Machine::virtio_input_mouse_driver_ok()`
+  - USB attachment hooks (UHCI, when enabled):
+    - Attach/detach at UHCI root ports: `Machine::usb_attach_root(port, model)` / `Machine::usb_detach_root(port)`
+    - Attach/detach at a full USB topology path: `Machine::usb_attach_path(path, model)` / `Machine::usb_detach_path(path)`
+      - `path[0]` is the UHCI root port (0-based); downstream hub ports are 1-based per the USB hub spec.
 - **Debug/testing helpers**
   - Read guest physical memory: `Machine::read_physical_u8/u16/bytes(...)`
 - **Snapshots (via `aero-snapshot`)**
