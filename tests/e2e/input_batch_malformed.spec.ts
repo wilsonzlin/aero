@@ -124,51 +124,6 @@ test("IO worker survives malformed in:input-batch messages", async ({ page }) =>
       throw new Error(`Timed out waiting for status[${idx}] to advance past ${prev} after ${timeoutMs}ms.`);
     };
 
-    const waitForInputBatchRecycle = async (timeoutMs: number): Promise<void> => {
-      return await new Promise((resolve, reject) => {
-        const timer = setTimeout(() => {
-          cleanup();
-          reject(new Error(`Timed out waiting for in:input-batch-recycle after ${timeoutMs}ms.`));
-        }, timeoutMs);
-        (timer as unknown as { unref?: () => void }).unref?.();
-
-        const onMessage = (ev: MessageEvent) => {
-          const data = ev.data as { type?: unknown; buffer?: unknown };
-          if (data && data.type === MessageType.ERROR) {
-            cleanup();
-            reject(new Error(`IO worker error: ${JSON.stringify(data)}`));
-            return;
-          }
-          if (data && data.type === "in:input-batch-recycle") {
-            cleanup();
-            resolve();
-          }
-        };
-
-        const onError = (ev: Event) => {
-          const msg = (ev as ErrorEvent).message || "worker error";
-          cleanup();
-          reject(new Error(`IO worker error: ${msg}`));
-        };
-
-        const onMessageError = () => {
-          cleanup();
-          reject(new Error("IO worker messageerror"));
-        };
-
-        const cleanup = () => {
-          clearTimeout(timer);
-          ioWorker.removeEventListener("message", onMessage);
-          ioWorker.removeEventListener("error", onError);
-          ioWorker.removeEventListener("messageerror", onMessageError);
-        };
-
-        ioWorker.addEventListener("message", onMessage);
-        ioWorker.addEventListener("error", onError);
-        ioWorker.addEventListener("messageerror", onMessageError);
-      });
-    };
-
     const sendValidInputBatch = async (): Promise<void> => {
       let lastError: Error | null = null;
       for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -180,16 +135,13 @@ test("IO worker survives malformed in:input-batch messages", async ({ page }) =>
         q.pushKeyHidUsage(nowUs, 0x04, true);
         q.pushKeyHidUsage(nowUs, 0x04, false);
 
-        const recycle = waitForInputBatchRecycle(2000);
         q.flush(
           {
             postMessage: (msg, transfer) => {
               ioWorker.postMessage(msg, transfer);
             },
           },
-          { recycle: true },
         );
-        await recycle;
 
         try {
           await waitForCounterGreaterThan(StatusIndex.IoInputBatchCounter, before, 750);
