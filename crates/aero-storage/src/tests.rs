@@ -90,6 +90,13 @@ fn open_sparse_err(backend: MemBackend) -> DiskError {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn qcow2_disk_is_send_when_backend_is_send() {
+    fn assert_send<T: Send>() {}
+    assert_send::<crate::Qcow2Disk<crate::MemBackend>>();
+}
+
 #[test]
 fn sector_helpers_validate_alignment_and_bounds() {
     let backend = MemBackend::with_len((SECTOR_SIZE * 8) as u64).unwrap();
