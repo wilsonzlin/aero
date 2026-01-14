@@ -1,6 +1,8 @@
 import type { Page } from "@playwright/test";
 import { fileURLToPath } from "node:url";
 
+const threadedWasmBundleCache = new Map<string, Promise<boolean>>();
+
 const THREADED_WASM_BINARY_RELEASE = fileURLToPath(
   new URL("../../../web/src/wasm/pkg-threaded/aero_wasm_bg.wasm", import.meta.url),
 );
@@ -35,28 +37,42 @@ function resolvePageOrigin(page: Page): string {
 
 export async function hasThreadedWasmBundle(page: Page): Promise<boolean> {
   const baseUrl = resolvePageOrigin(page);
-  // `wasm_loader.ts` fetches these paths when instantiating the threaded build.
-  const check = async (wasmPath: string, jsPath: string): Promise<boolean> => {
-    const wasm = await page.request.get(new URL(wasmPath, baseUrl).toString());
-    if (!wasm.ok()) return false;
-    // Vite's dev server can return `index.html` for missing assets (200 + text/html). Treat that as missing.
-    const wasmContentType = wasm.headers()["content-type"] ?? "";
-    if (wasmContentType.includes("text/html")) return false;
-    const js = await page.request.get(new URL(jsPath, baseUrl).toString());
-    if (!js.ok()) return false;
-    const jsContentType = js.headers()["content-type"] ?? "";
-    if (jsContentType.includes("text/html")) return false;
-    return true;
-  };
+  const cached = threadedWasmBundleCache.get(baseUrl);
+  if (cached) return await cached;
 
-  if (await check("/web/src/wasm/pkg-threaded/aero_wasm_bg.wasm", "/web/src/wasm/pkg-threaded/aero_wasm.js")) {
-    return true;
-  }
-  return await check("/web/src/wasm/pkg-threaded-dev/aero_wasm_bg.wasm", "/web/src/wasm/pkg-threaded-dev/aero_wasm.js");
+  const checkPromise = (async (): Promise<boolean> => {
+    // `wasm_loader.ts` fetches these paths when instantiating the threaded build.
+    const check = async (wasmPath: string, jsPath: string): Promise<boolean> => {
+      try {
+        const wasm = await page.request.get(new URL(wasmPath, baseUrl).toString());
+        if (!wasm.ok()) return false;
+        // Vite's dev server can return `index.html` for missing assets (200 + text/html). Treat that as missing.
+        const wasmContentType = wasm.headers()["content-type"] ?? "";
+        if (wasmContentType.includes("text/html")) return false;
+        const js = await page.request.get(new URL(jsPath, baseUrl).toString());
+        if (!js.ok()) return false;
+        const jsContentType = js.headers()["content-type"] ?? "";
+        if (jsContentType.includes("text/html")) return false;
+        return true;
+      } catch {
+        return false;
+      }
+    };
+
+    if (await check("/web/src/wasm/pkg-threaded/aero_wasm_bg.wasm", "/web/src/wasm/pkg-threaded/aero_wasm.js")) {
+      return true;
+    }
+    return await check("/web/src/wasm/pkg-threaded-dev/aero_wasm_bg.wasm", "/web/src/wasm/pkg-threaded-dev/aero_wasm.js");
+  })();
+
+  // Cache success. If the bundle is missing (or the dev server isn't ready), allow later tests to retry.
+  threadedWasmBundleCache.set(baseUrl, checkPromise);
+  const ok = await checkPromise;
+  if (!ok) threadedWasmBundleCache.delete(baseUrl);
+  return ok;
 }
 
 export async function checkThreadedWasmBundle(page: Page): Promise<{ ok: boolean; message: string }> {
   const ok = await hasThreadedWasmBundle(page);
   return { ok, message: ok ? "" : threadedWasmMissingMessage() };
 }
-
