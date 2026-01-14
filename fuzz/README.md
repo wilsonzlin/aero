@@ -136,6 +136,12 @@ To build *everything* (including GPU/shader fuzzers), enable all Cargo features:
 cd fuzz && cargo +"$nightly" fuzz build --all-features
 ```
 
+To build a single feature-gated target, enable its feature and name the fuzz target:
+
+```bash
+cd fuzz && cargo +"$nightly" fuzz build --features d3d9-shader fuzz_d3d9_shader_parse
+```
+
 The `fuzz/` directory includes its own `rust-toolchain.toml` (nightly), so you can also run these
 from inside `fuzz/` without specifying a `+toolchain`:
 
