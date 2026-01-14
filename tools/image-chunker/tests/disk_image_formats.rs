@@ -424,3 +424,48 @@ fn chunking_raw_uses_file_bytes() {
         assert_eq!(actual, expected, "sha256 mismatch for raw chunk {i}");
     }
 }
+
+#[test]
+fn chunking_rejects_non_sector_aligned_raw_disk_size() {
+    let disk_size_bytes = 1000u64;
+    let chunk_size = SECTOR_SIZE as u64;
+
+    let backend = MemBackend::with_len(disk_size_bytes).unwrap();
+    let tmp = persist_mem_backend(backend);
+
+    let err = chunk_disk_to_vecs(
+        tmp.path(),
+        ImageFormat::Raw,
+        chunk_size,
+        ChecksumAlgorithm::Sha256,
+    )
+    .unwrap_err();
+
+    assert!(
+        err.to_string().contains("virtual disk size") && err.to_string().contains("not a multiple"),
+        "unexpected error: {err:?}"
+    );
+}
+
+#[test]
+fn chunking_rejects_non_sector_aligned_chunk_size() {
+    let disk_size_bytes = SECTOR_SIZE as u64;
+    let chunk_size = (SECTOR_SIZE - 1) as u64;
+
+    let backend = MemBackend::with_len(disk_size_bytes).unwrap();
+    let tmp = persist_mem_backend(backend);
+
+    let err = chunk_disk_to_vecs(
+        tmp.path(),
+        ImageFormat::Raw,
+        chunk_size,
+        ChecksumAlgorithm::Sha256,
+    )
+    .unwrap_err();
+
+    assert!(
+        err.to_string()
+            .contains("chunk_size must be a non-zero multiple"),
+        "unexpected error: {err:?}"
+    );
+}
