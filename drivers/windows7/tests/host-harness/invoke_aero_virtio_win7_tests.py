@@ -5510,24 +5510,16 @@ def main() -> int:
                                 break
 
                         if bool(args.require_virtio_input_msix):
-                            if virtio_input_msix_marker is None:
-                                print(
-                                    "FAIL: MISSING_VIRTIO_INPUT_MSIX: did not observe virtio-input-msix marker while "
-                                    "--require-virtio-input-msix was enabled (guest selftest too old?)",
-                                    file=sys.stderr,
-                                )
-                                _print_tail(serial_log)
-                                result_code = 1
-                                break
-                            status = virtio_input_msix_marker.status or ""
-                            mode = virtio_input_msix_marker.fields.get("mode", "")
-                            if status != "PASS" or mode != "msix":
-                                print(
-                                    "FAIL: VIRTIO_INPUT_MSIX_REQUIRED: virtio-input-msix marker did not report "
-                                    f"PASS|mode=msix while --require-virtio-input-msix was enabled "
-                                    f"(status={status or 'missing'} mode={mode or 'missing'})",
-                                    file=sys.stderr,
-                                )
+                            ok, reason = _require_virtio_input_msix_marker(tail)
+                            if not ok:
+                                if reason.startswith("missing virtio-input-msix marker"):
+                                    print(
+                                        "FAIL: MISSING_VIRTIO_INPUT_MSIX: did not observe virtio-input-msix marker while "
+                                        "--require-virtio-input-msix was enabled (guest selftest too old?)",
+                                        file=sys.stderr,
+                                    )
+                                else:
+                                    print(f"FAIL: VIRTIO_INPUT_MSIX_REQUIRED: {reason}", file=sys.stderr)
                                 _print_tail(serial_log)
                                 result_code = 1
                                 break
@@ -6851,24 +6843,16 @@ def main() -> int:
                                     break
 
                             if bool(args.require_virtio_input_msix):
-                                if virtio_input_msix_marker is None:
-                                    print(
-                                        "FAIL: MISSING_VIRTIO_INPUT_MSIX: did not observe virtio-input-msix marker while "
-                                        "--require-virtio-input-msix was enabled (guest selftest too old?)",
-                                        file=sys.stderr,
-                                    )
-                                    _print_tail(serial_log)
-                                    result_code = 1
-                                    break
-                                status = virtio_input_msix_marker.status or ""
-                                mode = virtio_input_msix_marker.fields.get("mode", "")
-                                if status != "PASS" or mode != "msix":
-                                    print(
-                                        "FAIL: VIRTIO_INPUT_MSIX_REQUIRED: virtio-input-msix marker did not report "
-                                        f"PASS|mode=msix while --require-virtio-input-msix was enabled "
-                                        f"(status={status or 'missing'} mode={mode or 'missing'})",
-                                        file=sys.stderr,
-                                    )
+                                ok, reason = _require_virtio_input_msix_marker(tail)
+                                if not ok:
+                                    if reason.startswith("missing virtio-input-msix marker"):
+                                        print(
+                                            "FAIL: MISSING_VIRTIO_INPUT_MSIX: did not observe virtio-input-msix marker while "
+                                            "--require-virtio-input-msix was enabled (guest selftest too old?)",
+                                            file=sys.stderr,
+                                        )
+                                    else:
+                                        print(f"FAIL: VIRTIO_INPUT_MSIX_REQUIRED: {reason}", file=sys.stderr)
                                     _print_tail(serial_log)
                                     result_code = 1
                                     break
@@ -8711,6 +8695,30 @@ def _require_virtio_snd_msix_marker(tail: bytes) -> tuple[bool, str]:
     mode = fields.get("mode")
     if mode is None:
         return False, "virtio-snd-msix marker missing mode=... field"
+    if mode != "msix":
+        msgs = fields.get("messages", "?")
+        return False, f"mode={mode} (expected msix) messages={msgs}"
+    return True, "ok"
+
+def _require_virtio_input_msix_marker(tail: bytes) -> tuple[bool, str]:
+    """
+    Return (ok, reason). `ok` is True iff the guest reported virtio-input running in MSI-X mode
+    via the marker: AERO_VIRTIO_SELFTEST|TEST|virtio-input-msix|PASS|mode=msix|...
+    """
+    marker_line = _try_extract_last_marker_line(tail, b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-msix|")
+    if marker_line is None:
+        return False, "missing virtio-input-msix marker (guest selftest too old?)"
+
+    parts = marker_line.split("|")
+    if "FAIL" in parts:
+        return False, "virtio-input-msix marker reported FAIL"
+    if "SKIP" in parts:
+        return False, "virtio-input-msix marker reported SKIP"
+
+    fields = _parse_marker_kv_fields(marker_line)
+    mode = fields.get("mode")
+    if mode is None:
+        return False, "virtio-input-msix marker missing mode=... field"
     if mode != "msix":
         msgs = fields.get("messages", "?")
         return False, f"mode={mode} (expected msix) messages={msgs}"
