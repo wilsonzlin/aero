@@ -201,9 +201,9 @@ pub trait UsbDevice {
 The canonical browser capture implementation lives in `web/src/input/`:
 
 - `web/src/input/input_capture.ts`: installs listeners (focus/blur, Pointer Lock, keyboard/mouse/wheel, optional Gamepad polling) and flushes input at a fixed rate (default 125Hz).
-- `web/src/input/event_queue.ts`: packs events into an `Int32Array`-compatible `ArrayBuffer` and sends batches to the I/O worker.
+- `web/src/input/event_queue.ts`: packs events into an `Int32Array`-compatible `ArrayBuffer` and sends batches to the active input injector worker (`vmRuntime=legacy`: I/O worker; `vmRuntime=machine`: machine CPU worker).
 
-The I/O worker consumes the batches in `web/src/workers/io.worker.ts` (`type: "in:input-batch"`), decodes `InputEventType`, and injects into the active backend (PS/2, USB HID, or virtio-input).
+The input injector worker (`io.worker.ts` in `vmRuntime=legacy`, `machine_cpu.worker.ts` in `vmRuntime=machine`) consumes the batches (`type: "in:input-batch"`), decodes `InputEventType`, and injects into the active backend (PS/2, USB HID, or virtio-input).
 
 ---
 
