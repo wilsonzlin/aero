@@ -2,7 +2,7 @@ mod common;
 
 use aero_dxbc::{test_utils as dxbc_test_utils, FourCC as DxbcFourCC};
 use aero_d3d9::sm3::ShaderStage;
-use aero_gpu::aerogpu_d3d9::{D3d9ShaderCache, ShaderPayloadFormat};
+use aero_gpu::aerogpu_d3d9::{D3d9ShaderCache, D3d9ShaderCacheError, ShaderPayloadFormat};
 use aero_gpu::{readback_rgba8, TextureRegion};
 
 fn create_test_device() -> Option<(wgpu::Device, wgpu::Queue)> {
@@ -133,6 +133,28 @@ fn assemble_ps_tex_mad() -> Vec<u8> {
     out.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)]));
     out.push(0x0000FFFF);
     to_bytes(&out)
+}
+
+#[test]
+fn d3d9_shader_cache_rejects_oversized_payloads() {
+    let Some((device, _queue)) = create_test_device() else {
+        common::skip_or_panic(module_path!(), "no wgpu adapter available");
+        return;
+    };
+
+    let mut cache = D3d9ShaderCache::new();
+    let bytes = vec![0u8; aero_gpu::aerogpu_d3d9::MAX_D3D9_SHADER_BLOB_BYTES + 1];
+
+    let err = cache
+        .create_shader(&device, 1, ShaderStage::Vertex, &bytes)
+        .unwrap_err();
+    match err {
+        D3d9ShaderCacheError::PayloadTooLarge { len, max } => {
+            assert_eq!(len, aero_gpu::aerogpu_d3d9::MAX_D3D9_SHADER_BLOB_BYTES + 1);
+            assert_eq!(max, aero_gpu::aerogpu_d3d9::MAX_D3D9_SHADER_BLOB_BYTES);
+        }
+        other => panic!("unexpected error: {other:?}"),
+    }
 }
 
 #[test]

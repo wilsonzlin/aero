@@ -20,6 +20,15 @@ use aero_d3d9::sm3::{ShaderStage, ShaderVersion};
 use aero_dxbc::{DxbcError, DxbcFile};
 use tracing::debug;
 
+/// Maximum accepted D3D9 shader payload size in bytes.
+///
+/// D3D9 shader blobs are treated as untrusted input. Bounding the maximum size avoids excessive
+/// hashing/parsing work and prevents pathological payloads from triggering large host allocations.
+///
+/// Note: This is intentionally generous compared to real-world SM2/SM3 shaders and is primarily
+/// meant as a guardrail for the experimental shader cache.
+pub const MAX_D3D9_SHADER_BLOB_BYTES: usize = 512 * 1024; // 512 KiB
+
 /// On-the-wire shader blob format carried by `CREATE_SHADER_DXBC`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ShaderPayloadFormat {
@@ -43,6 +52,8 @@ impl ShaderPayloadFormat {
 pub enum D3d9ShaderCacheError {
     #[error("DXBC container missing SHDR/SHEX shader chunk")]
     DxbcMissingShaderChunk,
+    #[error("shader payload length {len} exceeds maximum {max} bytes")]
+    PayloadTooLarge { len: usize, max: usize },
     #[error("dxbc error: {0}")]
     Dxbc(#[from] DxbcError),
     #[error("sm3 translation error: {0}")]
@@ -104,6 +115,12 @@ impl D3d9ShaderCache {
     ) -> Result<(), D3d9ShaderCacheError> {
         if self.by_handle.contains_key(&handle) {
             return Err(D3d9ShaderCacheError::HandleAlreadyExists(handle));
+        }
+        if bytes.len() > MAX_D3D9_SHADER_BLOB_BYTES {
+            return Err(D3d9ShaderCacheError::PayloadTooLarge {
+                len: bytes.len(),
+                max: MAX_D3D9_SHADER_BLOB_BYTES,
+            });
         }
 
         let hash = blake3::hash(bytes);
