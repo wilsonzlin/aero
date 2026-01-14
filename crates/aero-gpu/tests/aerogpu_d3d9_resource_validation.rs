@@ -73,6 +73,15 @@ fn assemble_ps3_dcl_volume_s0() -> Vec<u8> {
     to_bytes(&words)
 }
 
+fn assemble_ps3_dcl_unknown_sampler_s0() -> Vec<u8> {
+    // ps_3_0 with a `dcl` sampler declaration that uses an unknown texture type encoding.
+    let mut words = vec![0xFFFF_0300];
+    // sampler texture type = unknown
+    words.extend(enc_dcl(5, 0, enc_dst(10, 0, 0xF)));
+    words.push(0x0000_FFFF);
+    to_bytes(&words)
+}
+
 fn vertex_decl_position0_stream0() -> Vec<u8> {
     // D3DVERTEXELEMENT9 array (little-endian).
     // Element 0: POSITION0 float4 at stream 0 offset 0.
@@ -232,7 +241,7 @@ fn d3d9_create_shader_dxbc_accepts_cube_sampler_declaration() {
 }
 
 #[test]
-fn d3d9_create_shader_dxbc_rejects_volume_sampler_declaration() {
+fn d3d9_create_shader_dxbc_accepts_volume_sampler_declaration() {
     let mut exec = match common::d3d9_executor(module_path!()) {
         Some(exec) => exec,
         None => return,
@@ -244,9 +253,30 @@ fn d3d9_create_shader_dxbc_rejects_volume_sampler_declaration() {
     let stream = writer.finish();
 
     match exec.execute_cmd_stream(&stream) {
-        Ok(_) => panic!("expected Texture3D sampler declaration to be rejected"),
+        Ok(_) => {}
+        Err(other) => panic!("unexpected error: {other:?}"),
+    }
+}
+
+#[test]
+fn d3d9_create_shader_dxbc_rejects_unknown_sampler_texture_type() {
+    let mut exec = match common::d3d9_executor(module_path!()) {
+        Some(exec) => exec,
+        None => return,
+    };
+
+    let ps_bytes = assemble_ps3_dcl_unknown_sampler_s0();
+    let mut writer = AerogpuCmdWriter::new();
+    writer.create_shader_dxbc(1, AerogpuShaderStage::Pixel, &ps_bytes);
+    let stream = writer.finish();
+
+    match exec.execute_cmd_stream(&stream) {
+        Ok(_) => panic!("expected unknown sampler texture type to be rejected"),
         Err(AerogpuD3d9Error::ShaderTranslation(msg)) => {
-            assert!(msg.contains("unsupported sampler texture type"));
+            assert!(
+                msg.contains("sampler texture type"),
+                "unexpected translation error: {msg}"
+            );
         }
         Err(other) => panic!("unexpected error: {other:?}"),
     }
