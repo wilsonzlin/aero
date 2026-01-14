@@ -159,6 +159,26 @@ static void test_parse_unknown_event_is_tolerated(void)
     TEST_ASSERT(out.Kind == VIRTIO_SND_EVENT_KIND_UNKNOWN);
     TEST_ASSERT_EQ_U32(out.Type, 0xDEADBEEFu);
     TEST_ASSERT_EQ_U32(out.Data, 0x04030201u);
+    /* Unknown events must not leak stale data into the typed union. */
+    TEST_ASSERT_EQ_U32(out.u.JackId, 0u);
+}
+
+static void test_parse_rejects_invalid_parameters(void)
+{
+    VIRTIO_SND_EVENT_PARSED out;
+    NTSTATUS status;
+
+    {
+        const uint8_t buf[] = {
+            0x00, 0x11, 0x00, 0x00, /* type */
+            0x00, 0x00, 0x00, 0x00, /* data */
+        };
+        status = VirtioSndParseEvent(NULL, (ULONG)sizeof(buf), &out);
+        TEST_ASSERT(status == STATUS_INVALID_PARAMETER);
+
+        status = VirtioSndParseEvent(buf, (ULONG)sizeof(buf), NULL);
+        TEST_ASSERT(status == STATUS_INVALID_PARAMETER);
+    }
 }
 
 static void test_parse_unaligned_buffer(void)
@@ -194,6 +214,7 @@ int main(void)
     test_parse_trailing_bytes_are_ignored();
     test_parse_short_buffers_are_rejected_safely();
     test_parse_unknown_event_is_tolerated();
+    test_parse_rejects_invalid_parameters();
     test_parse_unaligned_buffer();
 
     printf("virtiosnd_event_proto_tests: PASS\n");
