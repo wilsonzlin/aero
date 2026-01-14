@@ -855,22 +855,19 @@ impl Mmu {
         let is_user = cpl == 3;
         let mode = self.paging_mode();
 
-        if mode == PagingMode::Disabled {
-            // With paging disabled, x86 uses a 32-bit linear address space (long
-            // mode cannot be active without paging).
-            return Ok(vaddr & 0xffff_ffff);
-        }
-
-        // In non-long paging modes, the linear address is 32-bit.
+        // With paging disabled, x86 uses a 32-bit linear address space (long
+        // mode cannot be active without paging). In non-long paging modes, the
+        // linear address is also 32-bit. In long mode, enforce canonical form.
         let vaddr = match mode {
+            PagingMode::Disabled => return Ok(vaddr & 0xffff_ffff),
             PagingMode::Legacy32 | PagingMode::Pae => vaddr as u32 as u64,
-            PagingMode::Long4 => vaddr,
-            PagingMode::Disabled => unreachable!(),
+            PagingMode::Long4 => {
+                if !is_canonical_48(vaddr) {
+                    return Err(TranslateFault::NonCanonical(vaddr));
+                }
+                vaddr
+            }
         };
-
-        if mode == PagingMode::Long4 && !is_canonical_48(vaddr) {
-            return Err(TranslateFault::NonCanonical(vaddr));
-        }
 
         let is_exec = access.is_execute();
         let pcid_enabled = self.pcid_enabled();
@@ -1015,22 +1012,19 @@ impl Mmu {
         let is_user = cpl == 3;
         let mode = self.paging_mode();
 
-        if mode == PagingMode::Disabled {
-            // With paging disabled, x86 uses a 32-bit linear address space (long
-            // mode cannot be active without paging).
-            return Ok(vaddr & 0xffff_ffff);
-        }
-
-        // In non-long paging modes, the linear address is 32-bit.
+        // With paging disabled, x86 uses a 32-bit linear address space (long
+        // mode cannot be active without paging). In non-long paging modes, the
+        // linear address is also 32-bit. In long mode, enforce canonical form.
         let vaddr = match mode {
+            PagingMode::Disabled => return Ok(vaddr & 0xffff_ffff),
             PagingMode::Legacy32 | PagingMode::Pae => vaddr as u32 as u64,
-            PagingMode::Long4 => vaddr,
-            PagingMode::Disabled => unreachable!(),
+            PagingMode::Long4 => {
+                if !is_canonical_48(vaddr) {
+                    return Err(TranslateFault::NonCanonical(vaddr));
+                }
+                vaddr
+            }
         };
-
-        if mode == PagingMode::Long4 && !is_canonical_48(vaddr) {
-            return Err(TranslateFault::NonCanonical(vaddr));
-        }
 
         let is_exec = access.is_execute();
         let pcid_enabled = self.pcid_enabled();
