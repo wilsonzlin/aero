@@ -5,8 +5,8 @@ use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
 use aero_io_snapshot::io::state::{IoSnapshot, SnapshotError, SnapshotResult};
 
 use super::regs::{
-    PORTSC_CCS, PORTSC_CSC, PORTSC_PEC, PORTSC_PED, PORTSC_PLS_MASK, PORTSC_PLS_SHIFT, PORTSC_PP,
-    PORTSC_PR, PORTSC_PRC, PORTSC_PS_MASK, PORTSC_PS_SHIFT,
+    PORTSC_CCS, PORTSC_CSC, PORTSC_LWS, PORTSC_PEC, PORTSC_PED, PORTSC_PLC, PORTSC_PLS_MASK,
+    PORTSC_PLS_SHIFT, PORTSC_PP, PORTSC_PR, PORTSC_PRC, PORTSC_PS_MASK, PORTSC_PS_SHIFT,
 };
 use crate::device::AttachedUsbDevice;
 use crate::{UsbDeviceModel, UsbSpeed};
@@ -81,6 +81,7 @@ pub(crate) struct XhciPort {
     port_reset_change: bool,
 
     link_state: XhciUsb2LinkState,
+    port_link_state_change: bool,
     speed: Option<UsbSpeed>,
 }
 
@@ -96,6 +97,7 @@ impl XhciPort {
             reset_timer_ms: 0,
             port_reset_change: false,
             link_state: XhciUsb2LinkState::U3,
+            port_link_state_change: false,
             speed: None,
         }
     }
@@ -115,12 +117,14 @@ impl XhciPort {
         self.connect_status_change = false;
         self.port_enabled_change = false;
         self.port_reset_change = false;
+        self.port_link_state_change = false;
 
         self.link_state = if self.connected {
             XhciUsb2LinkState::U0
         } else {
             XhciUsb2LinkState::U3
         };
+        self.sync_device_suspended_state();
     }
 
     pub(crate) fn has_device(&self) -> bool {
@@ -156,6 +160,7 @@ impl XhciPort {
             rec = rec.u32(dev_state.len() as u32).bytes(&dev_state);
         }
 
+        rec = rec.bool(self.port_link_state_change);
         rec.finish()
     }
 
@@ -192,7 +197,16 @@ impl XhciPort {
         } else {
             None
         };
+
+        // v1.1+: optional Port Link State Change (PLC) bit snapshot. Older snapshots did not encode
+        // it; treat missing bytes as "false" so restores remain forward compatible.
+        let port_link_state_change = match d.bool() {
+            Ok(v) => v,
+            Err(SnapshotError::UnexpectedEof) => false,
+            Err(e) => return Err(e),
+        };
         d.finish()?;
+        self.port_link_state_change = port_link_state_change;
 
         if let Some(device_state) = device_state {
             if self.device.is_none() {
@@ -208,6 +222,8 @@ impl XhciPort {
             self.device = None;
         }
 
+        self.sync_device_suspended_state();
+
         Ok(())
     }
 
@@ -215,6 +231,7 @@ impl XhciPort {
         self.device = Some(AttachedUsbDevice::new(model));
         self.speed = self.device.as_ref().map(|d| d.speed());
         self.link_state = XhciUsb2LinkState::U0;
+        self.sync_device_suspended_state();
 
         let mut changed = false;
 
@@ -244,6 +261,7 @@ impl XhciPort {
         self.device = None;
         self.speed = None;
         self.link_state = XhciUsb2LinkState::U3;
+        self.port_link_state_change = false;
 
         if self.connected {
             self.connected = false;
@@ -299,6 +317,9 @@ impl XhciPort {
         if self.port_reset_change {
             v |= PORTSC_PRC;
         }
+        if self.port_link_state_change {
+            v |= PORTSC_PLC;
+        }
 
         v
     }
@@ -317,6 +338,9 @@ impl XhciPort {
         if value & PORTSC_PRC != 0 {
             self.port_reset_change = false;
         }
+        if value & PORTSC_PLC != 0 {
+            self.port_link_state_change = false;
+        }
 
         // Port Reset (PR): writing 1 starts a reset. Hardware clears PR when complete.
         if value & PORTSC_PR != 0 && !self.reset && self.connected {
@@ -326,11 +350,35 @@ impl XhciPort {
             if let Some(dev) = self.device.as_mut() {
                 dev.reset();
             }
+            // Reset exits suspend.
+            self.link_state = XhciUsb2LinkState::U0;
+            self.sync_device_suspended_state();
 
             // Per spec, the port is disabled during reset. If that changes PED, surface PEC.
             if self.enabled {
                 self.enabled = false;
                 changed |= self.set_port_enabled_change();
+            }
+        }
+
+        if self.reset {
+            // Ignore link-state writes while reset is active.
+            return changed;
+        }
+
+        // Port Link State changes are requested by writing PLS alongside the LWS strobe.
+        if (value & PORTSC_LWS) != 0 {
+            let pls = ((value & PORTSC_PLS_MASK) >> PORTSC_PLS_SHIFT) as u8;
+            let target = match pls {
+                0 => Some(XhciUsb2LinkState::U0),
+                3 => Some(XhciUsb2LinkState::U3),
+                _ => None,
+            };
+
+            if let Some(target) = target {
+                if self.connected && self.enabled {
+                    changed |= self.set_link_state(target);
+                }
             }
         }
 
@@ -352,12 +400,24 @@ impl XhciPort {
                 if self.connected && !self.enabled {
                     self.enabled = true;
                     self.link_state = XhciUsb2LinkState::U0;
+                    self.sync_device_suspended_state();
                     changed |= self.set_port_enabled_change();
                 }
             }
         }
 
-        if self.enabled {
+        // Remote wakeup for suspended (U3) ports.
+        if self.enabled && self.link_state == XhciUsb2LinkState::U3 {
+            let wake = match self.device.as_mut() {
+                Some(dev) => dev.model_mut().poll_remote_wakeup(),
+                None => false,
+            };
+            if wake {
+                changed |= self.set_link_state(XhciUsb2LinkState::U0);
+            }
+        }
+
+        if self.enabled && self.link_state == XhciUsb2LinkState::U0 {
             if let Some(dev) = self.device.as_mut() {
                 dev.tick_1ms();
             }
@@ -390,6 +450,31 @@ impl XhciPort {
         }
         self.port_reset_change = true;
         true
+    }
+
+    fn set_link_state(&mut self, state: XhciUsb2LinkState) -> bool {
+        if self.link_state == state {
+            // Even if the link state doesn't change, keep the downstream device's suspended state
+            // in sync so snapshot restores and host-side changes cannot leave it stale.
+            self.sync_device_suspended_state();
+            return false;
+        }
+
+        self.link_state = state;
+        self.sync_device_suspended_state();
+
+        if self.port_link_state_change {
+            return false;
+        }
+        self.port_link_state_change = true;
+        true
+    }
+
+    fn sync_device_suspended_state(&mut self) {
+        if let Some(dev) = self.device.as_mut() {
+            dev.model_mut()
+                .set_suspended(self.link_state == XhciUsb2LinkState::U3);
+        }
     }
 
     pub(crate) fn save_snapshot(&self) -> Vec<u8> {

@@ -70,7 +70,9 @@ pub mod trb;
 mod port;
 mod snapshot;
 
-pub use regs::{PORTSC_CCS, PORTSC_CSC, PORTSC_PEC, PORTSC_PED, PORTSC_PR, PORTSC_PRC};
+pub use regs::{
+    PORTSC_CCS, PORTSC_CSC, PORTSC_LWS, PORTSC_PEC, PORTSC_PED, PORTSC_PLC, PORTSC_PR, PORTSC_PRC,
+};
 
 use alloc::boxed::Box;
 use alloc::collections::VecDeque;

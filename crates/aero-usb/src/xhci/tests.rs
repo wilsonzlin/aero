@@ -2,8 +2,8 @@ use super::command_ring::{CommandRing, CommandRingProcessor, EventRing};
 use super::context;
 use super::trb::{CompletionCode, Trb, TrbType, TRB_LEN};
 use super::{
-    regs, RingCursor, XhciController, PORTSC_CCS, PORTSC_CSC, PORTSC_PEC, PORTSC_PED, PORTSC_PR,
-    PORTSC_PRC,
+    regs, RingCursor, XhciController, PORTSC_CCS, PORTSC_CSC, PORTSC_PEC, PORTSC_PED, PORTSC_PLC,
+    PORTSC_PR, PORTSC_PRC,
 };
 use crate::hub::UsbHubDevice;
 use crate::{ControlResponse, MemoryBus, SetupPacket, UsbDeviceModel};
@@ -1774,4 +1774,82 @@ fn endpoint_doorbell_dedupes_active_queue_entries() {
     xhci.ring_doorbell(slot_id, 1);
     xhci.ring_doorbell(slot_id, 1);
     assert_eq!(xhci.active_endpoints.len(), 1);
+}
+
+#[test]
+fn port_remote_wakeup_resumes_u3_link_and_latches_plc() {
+    use crate::hid::UsbHidKeyboardHandle;
+
+    let kb = UsbHidKeyboardHandle::new();
+    let mut ctrl = XhciController::new();
+    ctrl.attach_device(0, Box::new(kb.clone()));
+
+    // Reset the port so it becomes enabled (PED=1) and the keyboard can be configured.
+    ctrl.write_portsc(0, PORTSC_PR);
+    for _ in 0..50 {
+        ctrl.tick_1ms_no_dma();
+    }
+
+    // Drain initial port-change events (attach + reset completion).
+    while ctrl.pop_pending_event().is_some() {}
+
+    // Configure the keyboard and enable DEVICE_REMOTE_WAKEUP so it will signal wake events while
+    // suspended.
+    let dev = ctrl
+        .find_device_by_topology(1, &[])
+        .expect("expected keyboard behind root port 1");
+    control_no_data(
+        dev,
+        SetupPacket {
+            bm_request_type: 0x00,
+            b_request: 0x09, // SET_CONFIGURATION
+            w_value: 1,
+            w_index: 0,
+            w_length: 0,
+        },
+    );
+    control_no_data(
+        dev,
+        SetupPacket {
+            bm_request_type: 0x00,
+            b_request: 0x03, // SET_FEATURE
+            w_value: 1,      // DEVICE_REMOTE_WAKEUP
+            w_index: 0,
+            w_length: 0,
+        },
+    );
+
+    // Suspend the port (U3) via Port Link State write strobe.
+    ctrl.write_portsc(0, regs::PORTSC_LWS | (3u32 << regs::PORTSC_PLS_SHIFT));
+    let portsc = ctrl.read_portsc(0);
+    assert_eq!(
+        (portsc & regs::PORTSC_PLS_MASK) >> regs::PORTSC_PLS_SHIFT,
+        3,
+        "expected port to enter U3"
+    );
+    assert_ne!(portsc & PORTSC_PLC, 0, "expected PLC to latch on suspend");
+
+    // Clear PLC so the subsequent remote wake can latch it again.
+    ctrl.write_portsc(0, PORTSC_PLC);
+    assert_eq!(ctrl.read_portsc(0) & PORTSC_PLC, 0);
+    while ctrl.pop_pending_event().is_some() {}
+
+    // While suspended, a keypress should request remote wake and the controller should resume the
+    // port back to U0, latching PLC and queueing a Port Status Change Event TRB.
+    kb.key_event(0x04, true);
+    ctrl.tick_1ms_no_dma();
+
+    let portsc = ctrl.read_portsc(0);
+    assert_eq!(
+        (portsc & regs::PORTSC_PLS_MASK) >> regs::PORTSC_PLS_SHIFT,
+        0,
+        "expected port to resume to U0"
+    );
+    assert_ne!(portsc & PORTSC_PLC, 0, "expected PLC to latch on resume");
+
+    let ev = ctrl
+        .pop_pending_event()
+        .expect("expected Port Status Change Event TRB");
+    assert_eq!(ev.trb_type(), TrbType::PortStatusChangeEvent);
+    assert_eq!(((ev.parameter >> 24) & 0xff) as u8, 1);
 }

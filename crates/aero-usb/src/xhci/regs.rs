@@ -361,12 +361,20 @@ pub const PORTSC_PP: u32 = 1 << 9;
 pub const PORTSC_PS_SHIFT: u32 = 10;
 pub const PORTSC_PS_MASK: u32 = 0x0f << PORTSC_PS_SHIFT;
 
+/// Port Link State Write Strobe (LWS), bit 16.
+///
+/// xHCI uses this as a write-only "strobe" bit: when set alongside a PORTSC.PLS value, the host
+/// controller should attempt the requested link-state transition.
+pub const PORTSC_LWS: u32 = 1 << 16;
+
 /// Connect Status Change (CSC), bit 17 (RW1C).
 pub const PORTSC_CSC: u32 = 1 << 17;
 /// Port Enabled/Disabled Change (PEC), bit 18 (RW1C).
 pub const PORTSC_PEC: u32 = 1 << 18;
 /// Port Reset Change (PRC), bit 21 (RW1C).
 pub const PORTSC_PRC: u32 = 1 << 21;
+/// Port Link State Change (PLC), bit 22 (RW1C).
+pub const PORTSC_PLC: u32 = 1 << 22;
 
 // ---- Port Status Change Event TRB encoding helpers ----
 
