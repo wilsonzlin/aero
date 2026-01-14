@@ -2,7 +2,9 @@
 
 use aero_devices::a20_gate::A20_GATE_PORT;
 use aero_devices::pci::msi::PCI_CAP_ID_MSI;
-use aero_devices::pci::{profile, MsiCapability, PciBdf, PciDevice, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
+use aero_devices::pci::{
+    profile, MsiCapability, PciBdf, PciDevice, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT,
+};
 use aero_machine::{Machine, MachineConfig};
 use aero_platform::interrupts::{
     InterruptController as PlatformInterruptController, PlatformInterruptMode,
