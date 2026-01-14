@@ -478,6 +478,108 @@ describe("workers/machine_cpu.worker (worker_threads)", () => {
     }
   }, 20_000);
 
+  it("does not drain AeroGPU submissions (or apply fence completions) until GPU is READY when the bridge is disabled", async () => {
+    const segments = allocateTestSegments();
+    const status = new Int32Array(segments.control, STATUS_OFFSET_BYTES, STATUS_INTS);
+    Atomics.store(status, StatusIndex.GpuReady, 0);
+
+    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
+    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
+    const worker = new Worker(new URL("./machine_cpu.worker.ts", import.meta.url), {
+      type: "module",
+      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+    } as unknown as WorkerOptions);
+
+    try {
+      const workerReady = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as Partial<ProtocolMessage>)?.type === MessageType.READY && (msg as { role?: unknown }).role === "cpu",
+        10_000,
+      );
+
+      worker.postMessage({
+        kind: "config.update",
+        version: 1,
+        config: makeConfig(),
+      });
+      worker.postMessage(makeInit(segments));
+      await workerReady;
+
+      const dummyReady = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as { kind?: unknown }).kind === "__test.machine_cpu.dummyMachineEnabled",
+        10_000,
+      );
+      worker.postMessage({ kind: "__test.machine_cpu.enableDummyMachine", enableAerogpuBridge: false });
+      await dummyReady;
+
+      // Start the run loop so `run_slice()` + `drainAerogpuSubmissions()` execute.
+      const regions = ringRegionsForWorker("cpu");
+      const commandRing = new RingBuffer(segments.control, regions.command.byteOffset);
+      if (!commandRing.tryPush(encodeCommand({ kind: "nop", seq: 1 }))) {
+        throw new Error("Failed to push nop command into command ring.");
+      }
+
+      // With the bridge disabled, fence completion messages should be ignored (to avoid
+      // accidentally enabling bridge semantics before we can deliver GPU executor completions).
+      const earlyFence = 111n;
+      worker.postMessage({ kind: "aerogpu.complete_fence", fence: earlyFence });
+      await expect(
+        waitForWorkerMessage(
+          worker,
+          (msg) => (msg as { type?: unknown }).type === "__test.machine_cpu.aerogpu_complete_fence" && (msg as any).fence === earlyFence,
+          200,
+        ),
+      ).rejects.toThrow(/timed out/i);
+
+      // Enqueue a synthetic submission but keep the shared GPU READY flag at 0.
+      worker.postMessage({
+        kind: "__test.machine_cpu.enqueueDummyAerogpuSubmission",
+        cmdStream: new Uint8Array([1, 2, 3]),
+        allocTable: new Uint8Array([9, 8, 7]),
+        signalFence: 5n,
+        contextId: 1,
+      });
+
+      // While GPU is not ready, draining should not occur.
+      await expect(
+        waitForWorkerMessage(
+          worker,
+          (msg) => (msg as { kind?: unknown }).kind === "aerogpu.submit",
+          200,
+        ),
+      ).rejects.toThrow(/timed out/i);
+
+      // Flip the shared GPU READY flag; the next drain should forward the submission.
+      Atomics.store(status, StatusIndex.GpuReady, 1);
+      // Wake the ring wait (best-effort) to keep the test snappy under heavy load.
+      void commandRing.tryPush(encodeCommand({ kind: "nop", seq: 2 }));
+
+      const submit = (await waitForWorkerMessage(
+        worker,
+        (msg) => (msg as { kind?: unknown }).kind === "aerogpu.submit",
+        10_000,
+      )) as { cmdStream?: unknown; allocTable?: unknown; signalFence?: unknown; contextId?: unknown };
+
+      expect(submit.contextId).toBe(1);
+      expect(submit.signalFence).toBe(5n);
+      expect(submit.cmdStream).toBeInstanceOf(ArrayBuffer);
+      expect(submit.allocTable).toBeInstanceOf(ArrayBuffer);
+
+      // Once draining has enabled bridge semantics, completions should be applied to the Machine.
+      const lateFence = 222n;
+      const completion = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as { type?: unknown }).type === "__test.machine_cpu.aerogpu_complete_fence" && (msg as any).fence === lateFence,
+        10_000,
+      );
+      worker.postMessage({ kind: "aerogpu.complete_fence", fence: lateFence });
+      await completion;
+    } finally {
+      await worker.terminate();
+    }
+  }, 20_000);
+
   it("recycles input batch buffers when requested (even without WASM)", async () => {
     const segments = allocateTestSegments();
     const status = new Int32Array(segments.control, STATUS_OFFSET_BYTES, STATUS_INTS);

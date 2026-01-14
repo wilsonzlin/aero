@@ -2668,11 +2668,13 @@ ctx.onmessage = (ev) => {
       virtioMouseOk: unknown;
       enableBootDriveSpy?: unknown;
       enableNetworkSpy?: unknown;
+      enableAerogpuBridge?: unknown;
     }>;
     const virtioKeyboardOk = payload.virtioKeyboardOk === true;
     const virtioMouseOk = payload.virtioMouseOk === true;
     const enableBootDriveSpy = payload.enableBootDriveSpy === true;
     const enableNetworkSpy = payload.enableNetworkSpy === true;
+    const enableAerogpuBridge = payload.enableAerogpuBridge !== false;
 
     // Keep some minimal internal state so we can exercise boot-device reporting without loading WASM.
     //
@@ -2822,7 +2824,10 @@ ctx.onmessage = (ev) => {
     // The dummy machine is only used in Node `worker_threads` integration tests (WASM is disabled),
     // so enable AeroGPU submission-bridge semantics up-front to allow tests to validate the
     // fence-completion forwarding path without requiring a full guest/GPU worker setup.
-    aerogpuBridgeEnabled = true;
+    //
+    // Some tests opt out of this default to validate the "don't drain submissions until GPU READY"
+    // gating logic used by the real wasm Machine integration.
+    aerogpuBridgeEnabled = enableAerogpuBridge;
     try {
       ctx.postMessage({ kind: "__test.machine_cpu.dummyMachineEnabled" });
     } catch {
