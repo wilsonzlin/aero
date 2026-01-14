@@ -10902,7 +10902,7 @@ def _try_parse_virtio_blk_recovery_counters_from_blk_counters_marker(
     Best-effort: extract virtio-blk recovery counters from the dedicated `virtio-blk-counters` guest marker.
 
     Guest marker:
-      AERO_VIRTIO_SELFTEST|TEST|virtio-blk-counters|INFO|abort=...|reset_device=...|reset_bus=...|pnp=...|ioctl_reset=...
+      AERO_VIRTIO_SELFTEST|TEST|virtio-blk-counters|INFO|abort=...|reset_device=...|reset_bus=...|pnp=...|ioctl_reset=...|capacity_change_events=<n|not_supported>
     """
     marker_line = blk_counters_line
     if marker_line is None:
@@ -11017,7 +11017,7 @@ def _check_fail_on_blk_recovery_requirement(
     Enforce that virtio-blk did not trigger StorPort recovery activity.
 
     This uses the dedicated guest marker:
-      AERO_VIRTIO_SELFTEST|TEST|virtio-blk-counters|INFO|abort=...|reset_device=...|reset_bus=...|...
+      AERO_VIRTIO_SELFTEST|TEST|virtio-blk-counters|INFO|abort=...|reset_device=...|reset_bus=...|pnp=...|ioctl_reset=...|capacity_change_events=<n|not_supported>
       AERO_VIRTIO_SELFTEST|TEST|virtio-blk-counters|SKIP|reason=...|returned_len=...
 
     Behavior:
