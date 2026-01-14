@@ -146,6 +146,14 @@ In **Device Manager** (`devmgmt.msc`) → the virtio-snd PCI device → **Proper
 - **INTx** typically shows a single small IRQ number (often shared).
 - **MSI/MSI-X** typically shows one or more interrupt entries with larger values (often shown in hex) and they are usually not shared.
 
+The driver also prints an always-on `START_DEVICE` diagnostic line indicating which interrupt mode it actually selected:
+
+- `virtiosnd: interrupt mode: MSI/MSI-X ...`
+- `virtiosnd: interrupt mode: INTx`
+- `virtiosnd: interrupt mode: polling-only`
+
+You can view this output with a kernel debugger or Sysinternals **DebugView** (Capture Kernel).
+
 You can also use `aero-virtio-selftest.exe`:
 
 - The selftest logs to `C:\\aero-virtio-selftest.log` and emits `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|...` markers on stdout/COM1.
