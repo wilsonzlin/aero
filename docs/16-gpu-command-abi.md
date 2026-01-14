@@ -494,4 +494,6 @@ Implementation note: the repository provides convenience helpers that emit the e
 layout directly:
 
 - Rust: `aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter::bind_shaders_ex(vs, ps, cs, gs, hs, ds)`
+- Rust (HS/DS-only convenience): `aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter::bind_shaders_hs_ds(hs, ds)`
 - TypeScript: `AerogpuCmdWriter.bindShadersEx(vs, ps, cs, gs, hs, ds)`
+- TypeScript (HS/DS-only convenience): `AerogpuCmdWriter.bindShadersHsDs(hs, ds)`
