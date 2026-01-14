@@ -3602,8 +3602,6 @@ void APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hReso
     }
   }
 
-  bool oom = false;
-
   // Unbind any IA vertex buffer slots that reference this resource.
   for (uint32_t slot = 0; slot < kMaxVertexBufferSlots; ++slot) {
     if (dev->current_vb_resources[slot] != res) {
@@ -3641,10 +3639,10 @@ void APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hReso
     if (!cmd) {
       SetError(hDevice, E_OUTOFMEMORY);
     } else {
-    cmd->buffer = 0;
-    cmd->format = AEROGPU_INDEX_FORMAT_UINT16;
-    cmd->offset_bytes = 0;
-    cmd->reserved0 = 0;
+      cmd->buffer = 0;
+      cmd->format = AEROGPU_INDEX_FORMAT_UINT16;
+      cmd->offset_bytes = 0;
+      cmd->reserved0 = 0;
     }
   }
 
