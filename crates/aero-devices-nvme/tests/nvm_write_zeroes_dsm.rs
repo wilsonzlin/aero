@@ -279,6 +279,44 @@ fn identify_controller_advertises_write_zeroes_and_dsm() {
 }
 
 #[test]
+fn identify_namespace_advertises_thin_provisioning_for_dsm() {
+    let disk = MemDisk::new(1024);
+    let mut ctrl = NvmeController::new(Box::new(disk));
+    let mut mem = TestMem::new(2 * 1024 * 1024);
+
+    let asq = 0x10000;
+    let acq = 0x20000;
+    let id_buf = 0x30000;
+
+    // Enable controller with a small admin queue pair.
+    ctrl.mmio_write(0x0024, 4, 0x000f_000f);
+    ctrl.mmio_write(0x0028, 8, asq);
+    ctrl.mmio_write(0x0030, 8, acq);
+    ctrl.mmio_write(0x0014, 4, 1);
+
+    // IDENTIFY (CNS=0 = namespace).
+    let mut cmd = build_command(0x06);
+    set_cid(&mut cmd, 0x1235);
+    set_nsid(&mut cmd, 1);
+    set_prp1(&mut cmd, id_buf);
+    set_cdw10(&mut cmd, 0);
+    mem.write_physical(asq, &cmd);
+    ctrl.mmio_write(0x1000, 4, 1);
+    ctrl.process(&mut mem);
+
+    let (cid, status) = read_cqe(&mut mem, acq, 0);
+    assert_eq!(cid, 0x1235);
+    assert_eq!(status & !0x1, NVME_STATUS_SUCCESS);
+
+    let mut id = [0u8; 4096];
+    mem.read_physical(id_buf, &mut id);
+
+    // Identify Namespace NSFEAT bit0 advertises thin provisioning, which in turn signals to guests
+    // that DSM/TRIM (deallocate) is supported.
+    assert_ne!(id[24] & 0x1, 0, "expected NSFEAT.THINP to be set");
+}
+
+#[test]
 fn write_zeroes_zero_fills_disk() {
     let disk = MemDisk::new(1024);
     let disk_state = disk.clone();

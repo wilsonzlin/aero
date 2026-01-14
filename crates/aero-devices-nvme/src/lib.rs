@@ -1717,6 +1717,12 @@ impl NvmeController {
         data[8..16].copy_from_slice(&nsze.to_le_bytes()); // NCAP
         data[16..24].copy_from_slice(&nsze.to_le_bytes()); // NUSE
 
+        // NSFEAT at offset 24 (0x18).
+        //
+        // Advertise thin provisioning so guests can issue DSM/TRIM (deallocate) commands. Reads
+        // after deallocate are not required to return deterministic zeros (DLFEAT remains 0).
+        data[24] = 1 << 0;
+
         // FLBAS at offset 26 (0x1a): format 0, metadata 0
         data[26] = 0;
 
