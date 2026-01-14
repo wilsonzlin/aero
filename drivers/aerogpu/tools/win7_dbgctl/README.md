@@ -163,10 +163,21 @@ Minimum supported commands:
   Dumps the current cursor framebuffer contents to an **uncompressed 32bpp BMP** using:
   - `AEROGPU_ESCAPE_OP_QUERY_CURSOR` to discover width/height/format/pitch/fb_gpa
   - `AEROGPU_ESCAPE_OP_READ_GPA` to read cursor bytes from guest physical memory
-   
+    
   Useful for diagnosing cursor image/pitch/fb_gpa bugs without relying on host-side captures.
   Note: this requires the installed KMD to support `AEROGPU_ESCAPE_OP_READ_GPA` and have it enabled (see “Escape gating / security gating” below);
   if disabled/unsupported, dbgctl will fail with `STATUS_NOT_SUPPORTED` (`0xC00000BB`).
+
+  Supported formats include:
+  - `B8G8R8X8_UNORM` / `B8G8R8A8_UNORM`
+  - `R8G8B8X8_UNORM` / `R8G8B8A8_UNORM`
+  - `*_SRGB` variants of the above
+
+  Format semantics (same as scanout dumps):
+  - `*X8*` formats do not carry alpha. When converting to RGBA for BMP/PNG output,
+    dbgctl treats the unused "X" byte as fully opaque (`A=0xFF`).
+  - `*_SRGB` variants have identical byte layout to their UNORM counterparts; dbgctl
+    does not apply any sRGB↔linear conversion when dumping (bytes are copied as-is).
 
 - `aerogpu_dbgctl --dump-cursor-png C:\cursor.png`  
   Same as `--dump-cursor-bmp`, but writes a PNG (RGBA8; preserves alpha).
