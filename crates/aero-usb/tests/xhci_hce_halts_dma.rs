@@ -194,6 +194,50 @@ fn xhci_reset_clears_host_controller_error_and_allows_dma_again() {
 }
 
 #[test]
+fn xhci_service_event_ring_does_not_dma_after_host_controller_error() {
+    let mut mem = CountingMem::new(0x20_000);
+    let mut xhci = XhciController::new();
+
+    // Configure a valid Event Ring, enqueue a dummy event, and ensure delivery performs DMA.
+    let erstba = 0x1000u64;
+    let ring_base = 0x2000u64;
+    write_erst_entry(&mut mem, erstba, ring_base, 4);
+
+    xhci.mmio_write(regs::REG_INTR0_ERSTSZ, 4, 1);
+    xhci.mmio_write(regs::REG_INTR0_ERSTBA_LO, 4, erstba);
+    xhci.mmio_write(regs::REG_INTR0_ERSTBA_HI, 4, erstba >> 32);
+    xhci.mmio_write(regs::REG_INTR0_ERDP_LO, 4, ring_base);
+    xhci.mmio_write(regs::REG_INTR0_ERDP_HI, 4, ring_base >> 32);
+
+    let mut evt = Trb::default();
+    evt.set_trb_type(TrbType::PortStatusChangeEvent);
+    xhci.post_event(evt);
+
+    mem.reset_counts();
+    xhci.service_event_ring(&mut mem);
+    assert!(
+        mem.writes > 0,
+        "expected event ring delivery to DMA-write guest memory before HCE is latched"
+    );
+    assert_eq!(xhci.pending_event_count(), 0, "event should be consumed");
+
+    // Latch Host Controller Error and ensure `service_event_ring` does not touch guest memory or
+    // consume pending events.
+    force_hce(&mut xhci, &mut mem);
+    assert_eq!(xhci.pending_event_count(), 1);
+
+    mem.reset_counts();
+    xhci.service_event_ring(&mut mem);
+    assert_eq!(mem.reads, 0, "unexpected DMA reads while in HCE state");
+    assert_eq!(mem.writes, 0, "unexpected DMA writes while in HCE state");
+    assert_eq!(
+        xhci.pending_event_count(),
+        1,
+        "events must remain queued while in HCE state"
+    );
+}
+
+#[test]
 fn xhci_tick_does_not_dma_after_host_controller_error_even_with_active_endpoint() {
     #[derive(Default)]
     struct NakDevice;
