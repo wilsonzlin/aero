@@ -53,6 +53,31 @@ if (( ${#tracked_agent_notes[@]} > 0 )); then
   die "local-only agent note file(s) are tracked; remove them from git: ${tracked_agent_notes[*]}"
 fi
 
+# D3D9 shader wrapper crate guardrail:
+# The only `aero-d3d9-shader` crate in this repo is the legacy/reference parser at
+# `crates/legacy/aero-d3d9-shader/`.
+#
+# A former wrapper crate at `crates/aero-d3d9-shader/` (same package name, just re-exporting
+# `aero-dxbc`) was deleted to avoid duplicate package name confusion. Fail CI if it is
+# reintroduced or referenced by path.
+mapfile -t tracked_d3d9_shader_wrapper < <(git ls-files | grep -E '^crates/aero-d3d9-shader(/|$)' || true)
+if (( ${#tracked_d3d9_shader_wrapper[@]} > 0 )); then
+  die "unexpected wrapper crate path 'crates/aero-d3d9-shader' is tracked; use crates/aero-dxbc and/or crates/legacy/aero-d3d9-shader instead: ${tracked_d3d9_shader_wrapper[*]}"
+fi
+unset tracked_d3d9_shader_wrapper
+
+if git grep -n -F "crates/aero-d3d9-shader" -- \
+  ':(exclude)Cargo.lock' \
+  ':(exclude)scripts/ci/check-repo-layout.sh' \
+  >/dev/null; then
+  echo "error: repo should not reference the deleted wrapper crate path 'crates/aero-d3d9-shader' (use crates/aero-dxbc and/or crates/legacy/aero-d3d9-shader instead):" >&2
+  git grep -n -F "crates/aero-d3d9-shader" -- \
+    ':(exclude)Cargo.lock' \
+    ':(exclude)scripts/ci/check-repo-layout.sh' \
+    >&2
+  exit 1
+fi
+
 # QEMU boot test docs guardrail:
 # The QEMU boot integration tests live under the workspace root `tests/` directory, but are
 # explicitly registered as `[[test]]` targets in `crates/aero-boot-tests/Cargo.toml` (paths like
