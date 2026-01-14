@@ -407,6 +407,14 @@ fn error_mmio_regs_latch_and_survive_irq_ack() {
         | ((dev.read(mmio::ERROR_FENCE_HI, 4) as u64) << 32);
     assert_eq!(error_fence_after_ack, fence);
     assert_eq!(dev.read(mmio::ERROR_COUNT, 4) as u32, 1);
+
+    // Ring reset is a recovery point: it clears any previously latched error payload.
+    dev.write(mmio::RING_CONTROL, 4, ring_control::RESET as u64);
+    dev.tick(&mut mem, 0);
+    assert_eq!(dev.read(mmio::ERROR_CODE, 4) as u32, AerogpuErrorCode::None as u32);
+    assert_eq!(dev.read(mmio::ERROR_FENCE_LO, 4), 0);
+    assert_eq!(dev.read(mmio::ERROR_FENCE_HI, 4), 0);
+    assert_eq!(dev.read(mmio::ERROR_COUNT, 4), 0);
 }
 
 #[test]

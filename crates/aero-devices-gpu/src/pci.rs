@@ -8,7 +8,9 @@ use memory::{MemoryBus, MmioHandler};
 
 use crate::backend::{AeroGpuBackendSubmission, AeroGpuCommandBackend};
 use crate::executor::{AeroGpuExecutor, AeroGpuExecutorConfig};
-use crate::regs::{irq_bits, mmio, ring_control, AeroGpuRegs, AEROGPU_MMIO_MAGIC, FEATURE_VBLANK};
+use crate::regs::{
+    irq_bits, mmio, ring_control, AeroGpuRegs, AerogpuErrorCode, AEROGPU_MMIO_MAGIC, FEATURE_VBLANK,
+};
 use crate::ring::{write_fence_page, AeroGpuRingHeader, RING_TAIL_OFFSET};
 use crate::scanout::AeroGpuFormat;
 
@@ -338,6 +340,12 @@ impl AeroGpuPciDevice {
         self.executor.reset();
         self.regs.completed_fence = 0;
         self.regs.irq_status = 0;
+        // Treat ring reset as a device-local recovery point: clear any previously latched error
+        // payload so guests do not observe stale `ERROR_*` values after resetting the ring.
+        self.regs.error_code = AerogpuErrorCode::None as u32;
+        self.regs.error_fence = 0;
+        self.regs.error_count = 0;
+        self.regs.current_submission_fence = 0;
         self.update_irq_level();
         // A ring reset discards any pending doorbell notification. The guest is expected to
         // reinitialize the ring state (including head/tail) before submitting more work.
