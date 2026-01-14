@@ -114,6 +114,135 @@ impl fmt::Display for Sm4DecodeError {
 impl std::error::Error for Sm4DecodeError {}
 
 const DECLARATION_OPCODE_MIN: u32 = 0x100;
+const OFFICIAL_DXBC_OPCODE_CUSTOMDATA: u32 = 53;
+
+/// Returns `true` if the token stream looks like it uses the official Windows SDK DXBC SM4/SM5
+/// token encoding (length in bits 24..=30).
+///
+/// This is a best-effort heuristic intended to improve diagnostics when a real DXBC `SHDR`/`SHEX`
+/// chunk is accidentally fed into Aero's current legacy SM4 decoder.
+fn looks_like_windows_sdk_dxbc_token_encoding(toks: &[u32]) -> bool {
+    // Must have at least: version, declared length, one opcode token.
+    if toks.len() < 3 {
+        return false;
+    }
+
+    let mut i = 2usize;
+    while i < toks.len() {
+        let opcode_token = toks[i];
+        let opcode = opcode_token & OPCODE_MASK;
+
+        // Official DXBC SM4/SM5 encodes declarations in the same opcode space as instructions,
+        // which keeps opcodes in the 0..=0xFF range. Aero's internal encoding uses a separate
+        // declaration opcode range (>= 0x100), so this is a strong signal that we are *not*
+        // looking at the Windows SDK encoding.
+        if opcode >= DECLARATION_OPCODE_MIN {
+            return false;
+        }
+
+        let Some(len) = official_dxbc_instruction_len(toks, i, opcode_token, opcode) else {
+            return false;
+        };
+
+        i += len;
+    }
+
+    // Only treat it as "official" if:
+    // - The official length field partitions the token stream successfully, and
+    // - Aero's legacy length field does *not* partition the token stream.
+    //
+    // This prevents false positives when Aero-internal programs happen to have opcode control bits
+    // that look like plausible official lengths (e.g. `sync` uses bits 24..=30 for flags).
+    i == toks.len() && !legacy_token_stream_is_self_consistent(toks)
+}
+
+fn official_dxbc_instruction_len(
+    toks: &[u32],
+    at: usize,
+    opcode_token: u32,
+    opcode: u32,
+) -> Option<usize> {
+    if opcode == OFFICIAL_DXBC_OPCODE_CUSTOMDATA {
+        official_dxbc_customdata_len(toks, at)
+    } else {
+        let len = ((opcode_token >> 24) & 0x7f) as usize;
+        if len == 0 {
+            return None;
+        }
+        if at.checked_add(len)? > toks.len() {
+            return None;
+        }
+        Some(len)
+    }
+}
+
+fn official_dxbc_customdata_len(toks: &[u32], at: usize) -> Option<usize> {
+    // DXBC `customdata` uses a special length encoding: the next DWORD stores the block length.
+    // The exact conventions for whether that length includes the header vary across sources, so we
+    // accept a small set of common interpretations and pick the first one that yields a plausible
+    // next opcode boundary.
+    let raw = *toks.get(at.checked_add(1)?)? as usize;
+    let remaining = toks.len().checked_sub(at)?;
+
+    let mut candidates = Vec::with_capacity(6);
+    for add in 0..=2usize {
+        if let Some(v) = raw.checked_add(add) {
+            candidates.push(v);
+        }
+    }
+    if raw % 4 == 0 {
+        let raw_dwords = raw / 4;
+        for add in 0..=2usize {
+            if let Some(v) = raw_dwords.checked_add(add) {
+                candidates.push(v);
+            }
+        }
+    }
+    candidates.sort_unstable();
+    candidates.dedup();
+
+    for len in candidates {
+        if len < 2 || len > remaining {
+            continue;
+        }
+
+        let next = at.checked_add(len)?;
+        if next == toks.len() {
+            return Some(len);
+        }
+
+        let next_token = *toks.get(next)?;
+        let next_opcode = next_token & OPCODE_MASK;
+        if next_opcode >= DECLARATION_OPCODE_MIN {
+            continue;
+        }
+
+        // Ensure the next opcode token has a valid official length encoding.
+        if official_dxbc_instruction_len(toks, next, next_token, next_opcode).is_none() {
+            continue;
+        }
+
+        return Some(len);
+    }
+
+    None
+}
+
+fn legacy_token_stream_is_self_consistent(toks: &[u32]) -> bool {
+    let mut i = 2usize;
+    while i < toks.len() {
+        let opcode_token = toks[i];
+        let len = ((opcode_token >> OPCODE_LEN_SHIFT) & OPCODE_LEN_MASK) as usize;
+        if len == 0 {
+            return false;
+        }
+        if i.saturating_add(len) > toks.len() {
+            return false;
+        }
+        i += len;
+    }
+    i == toks.len()
+}
 
 pub fn decode_program(program: &Sm4Program) -> Result<Sm4Module, Sm4DecodeError> {
     let declared_len = *program.tokens.get(1).unwrap_or(&0) as usize;
@@ -128,6 +257,15 @@ pub fn decode_program(program: &Sm4Program) -> Result<Sm4Module, Sm4DecodeError>
     }
 
     let toks = &program.tokens[..declared_len];
+
+    if looks_like_windows_sdk_dxbc_token_encoding(toks) {
+        return Err(Sm4DecodeError {
+            at_dword: 2,
+            kind: Sm4DecodeErrorKind::UnsupportedTokenEncoding {
+                encoding: "Windows SDK DXBC (length in bits 24..30)",
+            },
+        });
+    }
 
     let mut decls = Vec::new();
     let mut instructions = Vec::new();
@@ -400,6 +538,15 @@ pub fn decode_program_decls(program: &Sm4Program) -> Result<Vec<Sm4Decl>, Sm4Dec
     }
 
     let toks = &program.tokens[..declared_len];
+
+    if looks_like_windows_sdk_dxbc_token_encoding(toks) {
+        return Err(Sm4DecodeError {
+            at_dword: 2,
+            kind: Sm4DecodeErrorKind::UnsupportedTokenEncoding {
+                encoding: "Windows SDK DXBC (length in bits 24..30)",
+            },
+        });
+    }
 
     let mut decls = Vec::new();
 

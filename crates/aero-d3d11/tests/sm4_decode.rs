@@ -3235,6 +3235,34 @@ fn rejects_windows_sdk_dxbc_token_encoding_when_length_bits_overflow_internal_le
 }
 
 #[test]
+fn rejects_windows_sdk_dxbc_token_encoding_when_legacy_len_is_nonzero_and_in_bounds() {
+    // Real DXBC SM4/SM5 uses length in bits 24..=30. Aero's legacy encoding expects length in
+    // bits 11..=23.
+    //
+    // Construct a DXBC-looking opcode token where the legacy length field is non-zero (so the
+    // decoder would otherwise try to make progress), but the official length field is still
+    // self-consistent for the overall token stream.
+    //
+    // - opcode = 54 (`mov` in the Windows SDK enum)
+    // - official length = 5 DWORDs
+    // - legacy length bits set to 4 (arbitrary but in-bounds)
+    let mov_like = 0x0500_2036u32;
+    let ret = 0x0100_003eu32;
+    let body = [mov_like, 0, 0, 0, 0, ret];
+
+    let tokens = make_sm5_program_tokens(0, &body);
+    let program =
+        Sm4Program::parse_program_tokens(&tokens_to_bytes(&tokens)).expect("parse_program_tokens");
+
+    let err = decode_program(&program).expect_err("decode should fail");
+    assert_eq!(err.at_dword, 2);
+    assert!(matches!(
+        err.kind,
+        Sm4DecodeErrorKind::UnsupportedTokenEncoding { .. }
+    ));
+}
+
+#[test]
 fn decodes_atomic_add_via_structural_fallback() {
     // Pick an opcode that is not otherwise recognized by the decoder and rely on the structural
     // decoding path.
