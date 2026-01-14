@@ -77,6 +77,40 @@ describe("runtime/scanout_readback", () => {
     ]);
   });
 
+  it("converts padded pitch without requiring last-row padding bytes", () => {
+    const width = 2;
+    const height = 2;
+    const rowBytes = width * 4;
+    const pitchBytes = rowBytes + 4; // 4 bytes padding at end of each row
+
+    // Only allocate the bytes actually required for the scanout surface:
+    // (height-1)*pitchBytes + rowBytes. The unused pitch padding after the last row is omitted.
+    const requiredSrcBytes = pitchBytes * (height - 1) + rowBytes;
+    const guest = new Uint8Array(requiredSrcBytes);
+    guest.fill(0xee);
+
+    // Row0 pixels.
+    guest.set([1, 2, 3, 0, 4, 5, 6, 0], 0);
+    // Row1 pixels (at offset pitchBytes).
+    guest.set([7, 8, 9, 0, 10, 11, 12, 0], pitchBytes);
+
+    const out = readScanoutRgba8FromGuestRam(guest, {
+      basePaddr: 0,
+      width,
+      height,
+      pitchBytes,
+      format: SCANOUT_FORMAT_B8G8R8X8,
+    });
+
+    expect(out.rgba8.byteLength).toBe(rowBytes * height);
+    expect(Array.from(out.rgba8)).toEqual([
+      // row0
+      3, 2, 1, 255, 6, 5, 4, 255,
+      // row1
+      9, 8, 7, 255, 12, 11, 10, 255,
+    ]);
+  });
+
   it("converts BGRA->RGBA and preserves alpha", () => {
     const width = 2;
     const height = 1;
