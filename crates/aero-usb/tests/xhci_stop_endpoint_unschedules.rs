@@ -45,11 +45,7 @@ fn stop_endpoint_command_unschedules_active_endpoint() {
     xhci.attach_device(0, Box::new(AlwaysInDevice));
     while xhci.pop_pending_event().is_some() {}
     // Transfer execution is gated on USBCMD.RUN.
-    xhci.mmio_write(
-        regs::REG_USBCMD,
-        4,
-        u64::from(regs::USBCMD_RUN),
-    );
+    xhci.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
 
     let completion = xhci.enable_slot(&mut mem);
     assert_eq!(completion.completion_code, CommandCompletionCode::Success);
