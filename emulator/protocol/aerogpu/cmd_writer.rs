@@ -497,6 +497,8 @@ impl AerogpuCmdWriter {
         stage_ex: AerogpuShaderStageEx,
         dxbc_bytes: &[u8],
     ) {
+        // `AerogpuShaderStageEx` intentionally cannot represent DXBC program type 0 (Pixel);
+        // `reserved0 == 0` is reserved for legacy compute packets.
         let (stage, reserved0) = encode_stage_ex(stage_ex);
         assert!(dxbc_bytes.len() <= u32::MAX as usize);
         let unpadded_size = size_of::<AerogpuCmdCreateShaderDxbc>()
