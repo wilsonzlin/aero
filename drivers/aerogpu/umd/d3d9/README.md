@@ -419,6 +419,8 @@ Implementation notes (bring-up):
 - For `POSITIONT`/`XYZRHW` vertices, the fallback path converts screen-space `XYZRHW` to clip-space on the CPU
   (`convert_xyzrhw_to_clipspace_locked()` in `src/aerogpu_d3d9_driver.cpp`) and then draws using a tiny built-in
   `vs_2_0`/`ps_2_0` pair.
+  - The conversion uses the current D3D9 viewport (`X/Y/Width/Height`) and inverts the D3D9 `-0.5` pixel center
+    convention so typical pre-transformed vertices line up with pixel centers.
 - When `D3DFVF_DIFFUSE` is omitted (supported `*TEX1` subsets), the fixed-function fallback uses internal vertex shaders
   that supply a constant **opaque white** diffuse color.
 - Supported FVFs can be selected via either `SetFVF` (internal declaration synthesized) or `SetVertexDecl` (UMD infers an
@@ -441,6 +443,8 @@ Limitations (bring-up):
 
 - The fixed-function fallback supports only the FVFs listed above (see `ensure_fixedfunc_pipeline_locked()` in `src/aerogpu_d3d9_driver.cpp`). Other FVFs may be accepted for `SetFVF`/`GetFVF`/state-block round-tripping, but fixed-function draws will fail with `D3DERR_INVALIDCALL` if the active FVF is unsupported.
 - For `D3DFVF_XYZRHW*` FVFs, the UMD converts `POSITIONT` (screen-space `XYZRHW`) vertices to clip-space on the CPU (`convert_xyzrhw_to_clipspace_locked()`).
+  - The conversion uses the current viewport (`X/Y/Width/Height`) and treats `w = 1/rhw` (with a safe fallback when
+    `rhw==0`); `z` is passed through as D3D9 NDC depth.
 - For `D3DFVF_XYZ*` fixed-function FVFs, the fixed-function VS applies the combined world/view/projection matrix (built
   from cached `SetTransform` state and uploaded into a reserved VS constant range by the UMD via
   `ensure_fixedfunc_wvp_constants_locked()`). Fixed-function lighting/material is still not implemented.

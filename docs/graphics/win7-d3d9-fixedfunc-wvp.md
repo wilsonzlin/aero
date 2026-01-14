@@ -29,6 +29,12 @@ This is used by the fixed-function FVFs:
 For pre-transformed screen-space vertices (`D3DFVF_XYZRHW*` / `POSITIONT`), the UMD does **not** use WVP transforms.
 Instead, it converts `XYZRHW` to clip-space on the CPU via `convert_xyzrhw_to_clipspace_locked()` before emitting the draw.
 
+Conversion details (bring-up):
+
+- Uses the current D3D9 viewport (`X`, `Y`, `Width`, `Height`) and inverts the D3D9 `-0.5` pixel center convention
+  (`x/y` are treated as pixel-center coordinates).
+- Uses `w = 1/rhw` (with a safe fallback when `rhw==0`) and writes `clip.xyzw = {ndc.x*w, ndc.y*w, z*w, w}`.
+
 This is used by the fixed-function FVFs:
 
 - `D3DFVF_XYZRHW | D3DFVF_DIFFUSE{ | D3DFVF_TEX1}`
