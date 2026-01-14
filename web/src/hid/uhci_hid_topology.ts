@@ -110,7 +110,7 @@ export class UhciHidTopologyManager {
       this.#maybeDetachPath(prev.path);
     }
     this.#devices.set(deviceId, { path: normalizedPath, kind, device });
-    this.#maybeAttachDevice(deviceId);
+    this.#maybeAttachDevice(deviceId, { throwOnFailure: true });
   }
 
   detachDevice(deviceId: number): void {
@@ -128,7 +128,7 @@ export class UhciHidTopologyManager {
     }
   }
 
-  #maybeAttachHub(rootPort: number, options: { minPortCount?: number } = {}): boolean {
+  #maybeAttachHub(rootPort: number, options: { minPortCount?: number; throwOnFailure?: boolean } = {}): boolean {
     const uhci = this.#uhci;
     if (!uhci) return false;
 
@@ -152,7 +152,11 @@ export class UhciHidTopologyManager {
     try {
       uhci.attach_hub(rootPort >>> 0, portCount >>> 0);
       this.#hubAttachedPortCountByRoot.set(rootPort, portCount);
-    } catch {
+    } catch (err) {
+      if (options.throwOnFailure) {
+        const message = err instanceof Error ? err.message : String(err);
+        throw new Error(`UHCI attach_hub failed (rootPort=${rootPort} ports=${portCount}): ${message}`);
+      }
       // Best-effort: hub attachment failures should not crash the worker.
       return false;
     }
@@ -169,14 +173,14 @@ export class UhciHidTopologyManager {
     }
   }
 
-  #maybeAttachDevice(deviceId: number): void {
+  #maybeAttachDevice(deviceId: number, options: { throwOnFailure?: boolean } = {}): void {
     const rec = this.#devices.get(deviceId) ?? null;
     const uhci = this.#uhci;
     if (!rec || !uhci) return;
 
     const rootPort = rec.path[0] ?? 0;
     if (rec.path.length > 1) {
-      const resized = this.#maybeAttachHub(rootPort);
+      const resized = this.#maybeAttachHub(rootPort, { throwOnFailure: options.throwOnFailure });
       if (resized) {
         // Replacing the hub disconnects all downstream devices. Reattach everything
         // behind this root port so the guest USB topology returns to the expected state.
@@ -195,7 +199,11 @@ export class UhciHidTopologyManager {
       } else {
         uhci.attach_usb_hid_passthrough_device(rec.path, rec.device);
       }
-    } catch {
+    } catch (err) {
+      if (options.throwOnFailure) {
+        const message = err instanceof Error ? err.message : String(err);
+        throw new Error(`UHCI attach device failed (path=${rec.path.join(".")} kind=${rec.kind}): ${message}`);
+      }
       // ignore
     }
   }

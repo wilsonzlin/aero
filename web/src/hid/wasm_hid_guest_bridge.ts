@@ -127,7 +127,7 @@ export class WasmHidGuestBridge implements HidGuestBridge {
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      this.host.error(`Failed to construct WebHID passthrough bridge: ${message}`, msg.deviceId);
+      this.host.error(`hid.attach failed: ${message}`, msg.deviceId);
       return;
     }
   }

@@ -190,4 +190,15 @@ describe("hid/UhciHidTopologyManager", () => {
     expect(dev1Calls).toHaveLength(2);
     expect(uhci.attach_webhid_device).toHaveBeenCalledWith([0, 20], dev2);
   });
-}); 
+
+  it("surfaces UHCI attach failures when attaching with an active bridge", () => {
+    const mgr = new UhciHidTopologyManager({ defaultHubPortCount: 16 });
+    const uhci = createFakeUhci();
+    uhci.attach_webhid_device.mockImplementationOnce(() => {
+      throw new Error("boom");
+    });
+    mgr.setUhciBridge(uhci);
+
+    expect(() => mgr.attachDevice(1, [0, firstDynamicPort], "webhid", { kind: "device" })).toThrow(/UHCI attach device failed/i);
+  });
+});
