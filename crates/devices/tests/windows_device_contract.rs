@@ -409,20 +409,30 @@ fn windows_device_contract_virtio_input_inf_uses_distinct_keyboard_mouse_device_
         let (mouse_desc, mouse_install) =
             inf_model_entry_for_hwid(&inf_contents, section, hwid_mouse)
                 .unwrap_or_else(|| panic!("missing {hwid_mouse} model entry in [{section}]"));
+        let (fallback_desc, fallback_install) =
+            inf_model_entry_for_hwid(&inf_contents, section, hwid_fallback)
+                .unwrap_or_else(|| panic!("missing {hwid_fallback} model entry in [{section}]"));
 
         assert_eq!(
             kbd_install, mouse_install,
             "{section}: install section mismatch"
         );
+        assert_eq!(
+            fallback_install, kbd_install,
+            "{section}: generic fallback install section mismatch"
+        );
 
-        assert_ne!(
-            kbd_desc.to_ascii_lowercase(),
-            mouse_desc.to_ascii_lowercase(),
+        assert!(
+            !kbd_desc.eq_ignore_ascii_case(&mouse_desc),
             "{section}: keyboard/mouse DeviceDesc tokens must be distinct"
         );
         assert!(
-            inf_model_entry_for_hwid(&inf_contents, section, hwid_fallback).is_none(),
-            "{section}: canonical INF must not contain generic fallback model entry {hwid_fallback}"
+            !fallback_desc.eq_ignore_ascii_case(&kbd_desc),
+            "{section}: fallback DeviceDesc token must be generic (not keyboard)"
+        );
+        assert!(
+            !fallback_desc.eq_ignore_ascii_case(&mouse_desc),
+            "{section}: fallback DeviceDesc token must be generic (not mouse)"
         );
         assert!(
             inf_model_entry_for_hwid(&inf_contents, section, hwid_fallback_revisionless).is_none(),
@@ -432,6 +442,7 @@ fn windows_device_contract_virtio_input_inf_uses_distinct_keyboard_mouse_device_
         // The canonical INF is expected to use these tokens (kept in sync with docs/tests).
         assert_eq!(kbd_desc, "%AeroVirtioKeyboard.DeviceDesc%");
         assert_eq!(mouse_desc, "%AeroVirtioMouse.DeviceDesc%");
+        assert_eq!(fallback_desc, "%AeroVirtioInput.DeviceDesc%");
     }
 
     let strings = inf_strings(&inf_contents);
@@ -445,19 +456,16 @@ fn windows_device_contract_virtio_input_inf_uses_distinct_keyboard_mouse_device_
         .get("aerovirtioinput.devicedesc")
         .expect("missing AeroVirtioInput.DeviceDesc in [Strings]");
 
-    assert_ne!(
-        kbd_name.to_ascii_lowercase(),
-        mouse_name.to_ascii_lowercase(),
+    assert!(
+        !kbd_name.eq_ignore_ascii_case(mouse_name),
         "keyboard and mouse DeviceDesc strings must be distinct"
     );
-    assert_ne!(
-        generic_name.to_ascii_lowercase(),
-        kbd_name.to_ascii_lowercase(),
+    assert!(
+        !generic_name.eq_ignore_ascii_case(kbd_name),
         "generic fallback DeviceDesc string must not equal keyboard DeviceDesc string"
     );
-    assert_ne!(
-        generic_name.to_ascii_lowercase(),
-        mouse_name.to_ascii_lowercase(),
+    assert!(
+        !generic_name.eq_ignore_ascii_case(mouse_name),
         "generic fallback DeviceDesc string must not equal mouse DeviceDesc string"
     );
 }

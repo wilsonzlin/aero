@@ -61,7 +61,7 @@ fn aerogpu_vram_bar_does_not_exhaust_default_pci_mmio_window() {
     bus.add_device(VIRTIO_BLK.bdf, config_only(VIRTIO_BLK));
 
     let mut allocator = PciResourceAllocator::new(alloc_cfg.clone());
-    bios_post_with_extra_reservations(&mut bus, &mut allocator, [legacy_lfb].into_iter())
+    bios_post_with_extra_reservations(&mut bus, &mut allocator, [legacy_lfb])
         .expect("bios_post should succeed under default MMIO window");
 
     let reserved_end = legacy_lfb.end_exclusive();
