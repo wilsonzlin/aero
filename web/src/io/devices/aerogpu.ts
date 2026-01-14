@@ -508,6 +508,7 @@ export class AeroGpuPciDevice implements PciDevice, TickableDevice {
       }
       if (baseOffset === null) return null;
     }
+    if (source === null) return null;
 
     const key = `${fbGpa64.toString(16)}:${pitchBytes}:${width}x${height}:${this.#cursorFormat >>> 0}`;
     return { width, height, pitchBytes, rowBytes, format: this.#cursorFormat >>> 0, baseOffset, source, key };
