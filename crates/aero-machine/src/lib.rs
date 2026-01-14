@@ -10031,9 +10031,13 @@ impl Machine {
                         self.inject_ps2_mouse_buttons(next & 0x1f);
                     } else if use_virtio_mouse {
                         let prev = self.ps2_mouse_buttons;
-                        let changed = prev ^ next;
+                        // `ps2_mouse_buttons` is a host-side cache of the last observed button
+                        // bitmask. Snapshot restore invalidates it to `0xFF`; treat that as an
+                        // "unknown previous state" marker and force a one-time full resync so the
+                        // first post-restore click is not dropped.
+                        let changed = if prev == 0xFF { 0xFF } else { prev ^ next };
                         if changed == 0 {
-                            // Clear any invalid marker (e.g. post snapshot restore).
+                            // No change.
                             self.ps2_mouse_buttons = next;
                             continue;
                         }

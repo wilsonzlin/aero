@@ -46,6 +46,139 @@ fn write_desc(m: &mut Machine, table: u64, index: u16, addr: u64, len: u32, flag
 }
 
 #[test]
+fn inject_input_batch_mouse_buttons_after_snapshot_restore_still_delivers_press_to_virtio() {
+    let cfg = MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_virtio_input: true,
+        // Keep deterministic and focused.
+        enable_serial: false,
+        enable_i8042: false,
+        enable_vga: false,
+        enable_reset_ctrl: false,
+        ..Default::default()
+    };
+
+    let mut src = Machine::new(cfg.clone()).unwrap();
+
+    let bdf = profile::VIRTIO_INPUT_MOUSE.bdf;
+    let bar0 = bar0_base(&mut src, bdf);
+    assert_ne!(bar0, 0, "virtio-input BAR0 must be assigned by BIOS POST");
+
+    // Enable PCI BAR0 MMIO decoding + bus mastering (virtio DMA).
+    let mut cmd = cfg_read(&mut src, bdf, 0x04, 2) as u16;
+    cmd |= 0x0006; // MEM + BUSMASTER
+    cfg_write(&mut src, bdf, 0x04, 2, u32::from(cmd));
+
+    let common = bar0;
+    let notify = bar0 + 0x1000;
+
+    // Feature negotiation (modern virtio-pci).
+    src.write_physical_u8(common + 0x14, VIRTIO_STATUS_ACKNOWLEDGE);
+    src.write_physical_u8(
+        common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER,
+    );
+
+    // Read offered features (low/high dwords) and accept them as-is.
+    src.write_physical_u32(common, 0);
+    let f0 = src.read_physical_u32(common + 0x04);
+    src.write_physical_u32(common + 0x08, 0);
+    src.write_physical_u32(common + 0x0c, f0);
+
+    src.write_physical_u32(common, 1);
+    let f1 = src.read_physical_u32(common + 0x04);
+    src.write_physical_u32(common + 0x08, 1);
+    src.write_physical_u32(common + 0x0c, f1);
+
+    src.write_physical_u8(
+        common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK,
+    );
+    assert_ne!(
+        src.read_physical_u8(common + 0x14) & VIRTIO_STATUS_FEATURES_OK,
+        0
+    );
+    src.write_physical_u8(
+        common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE
+            | VIRTIO_STATUS_DRIVER
+            | VIRTIO_STATUS_FEATURES_OK
+            | VIRTIO_STATUS_DRIVER_OK,
+    );
+    assert!(src.virtio_input_mouse_driver_ok());
+
+    // Configure virtqueue 0 (eventq).
+    let desc = 0x10000u64;
+    let avail = 0x11000u64;
+    let used = 0x12000u64;
+
+    src.write_physical_u16(common + 0x16, 0); // queue_select
+    src.write_physical_u64(common + 0x20, desc);
+    src.write_physical_u64(common + 0x28, avail);
+    src.write_physical_u64(common + 0x30, used);
+    src.write_physical_u16(common + 0x1c, 1); // queue_enable
+
+    // Post enough event buffers to cover the worst-case "unknown previous state" resync behavior.
+    let mut bufs = Vec::new();
+    for i in 0..32u64 {
+        let buf = 0x13000u64 + i * 0x20;
+        src.write_physical(buf, &[0u8; 8]);
+        write_desc(&mut src, desc, i as u16, buf, 8, VIRTQ_DESC_F_WRITE);
+        bufs.push(buf);
+    }
+
+    // avail ring: flags=0, idx=bufs.len(), ring=[0..N-1].
+    src.write_physical_u16(avail, 0);
+    src.write_physical_u16(avail + 2, bufs.len() as u16);
+    for (i, _buf) in bufs.iter().enumerate() {
+        src.write_physical_u16(avail + 4 + (i as u64) * 2, i as u16);
+    }
+
+    // used ring: flags=0, idx=0.
+    src.write_physical_u16(used, 0);
+    src.write_physical_u16(used + 2, 0);
+
+    // Notify queue 0 (virtio-pci modern notify region) so the device caches the buffers.
+    src.write_physical_u16(notify, 0);
+    src.process_virtio_input();
+    assert_eq!(src.read_physical_u16(used + 2), 0);
+
+    let snap = src.take_snapshot_full().unwrap();
+
+    let mut restored = Machine::new(cfg).unwrap();
+    restored.restore_snapshot_bytes(&snap).unwrap();
+    assert!(
+        restored.virtio_input_mouse_driver_ok(),
+        "virtio-input mouse should remain DRIVER_OK after restore"
+    );
+
+    // MouseButtons: press left button (DOM bit0). This should still deliver a BTN_LEFT press event
+    // to virtio-input even though snapshot restore invalidates host-side previous-button caches.
+    let words: [u32; 6] = [1, 0, 3, 0, 0x01, 0];
+    restored.inject_input_batch(&words);
+
+    let used_idx = restored.read_physical_u16(used + 2) as usize;
+    assert!(used_idx > 0, "expected at least one virtio input event");
+
+    let mut saw_left_down = false;
+    for i in 0..used_idx.min(bufs.len()) {
+        let got = restored.read_physical_bytes(bufs[i], 8);
+        let type_ = u16::from_le_bytes([got[0], got[1]]);
+        let code_ = u16::from_le_bytes([got[2], got[3]]);
+        let value_ = i32::from_le_bytes([got[4], got[5], got[6], got[7]]);
+        if (type_, code_, value_) == (EV_KEY, BTN_LEFT, 1) {
+            saw_left_down = true;
+            break;
+        }
+    }
+    assert!(
+        saw_left_down,
+        "expected virtio-input mouse to receive BTN_LEFT=1 after snapshot restore"
+    );
+}
+
+#[test]
 fn inject_input_batch_routes_consumer_usage_to_virtio_keyboard_when_driver_ok() {
     let mut m = Machine::new(MachineConfig {
         ram_size_bytes: 2 * 1024 * 1024,
