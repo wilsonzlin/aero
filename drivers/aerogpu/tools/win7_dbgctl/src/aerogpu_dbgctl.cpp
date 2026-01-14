@@ -6128,8 +6128,14 @@ static wchar_t *HeapBuildIndexedBinPath(const wchar_t *base, uint32_t index) {
 }
 
 static int DumpGpaRangeToFile(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint64_t gpa, uint64_t sizeBytes,
-                              const wchar_t *outPath, uint32_t *outFirstDword) {
+                              const wchar_t *outPath, uint32_t *outFirstDword, NTSTATUS *outStatus) {
+  if (outStatus) {
+    *outStatus = 0;
+  }
   if (!f || !outPath) {
+    if (outStatus) {
+      *outStatus = STATUS_INVALID_PARAMETER;
+    }
     return 1;
   }
 
@@ -6137,6 +6143,9 @@ static int DumpGpaRangeToFile(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uin
   errno_t ferr = _wfopen_s(&fp, outPath, L"wb");
   if (ferr != 0 || !fp) {
     fwprintf(stderr, L"Failed to open output file: %s (errno=%d)\n", outPath, (int)ferr);
+    if (outStatus) {
+      *outStatus = STATUS_UNSUCCESSFUL;
+    }
     return 2;
   }
 
@@ -6169,6 +6178,9 @@ static int DumpGpaRangeToFile(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uin
       if (st == STATUS_NOT_SUPPORTED) {
         PrintReadGpaNotSupportedHint(NULL);
       }
+      if (outStatus) {
+        *outStatus = st;
+      }
       rc = 2;
       goto cleanup;
     }
@@ -6187,12 +6199,18 @@ static int DumpGpaRangeToFile(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uin
       if (op == STATUS_NOT_SUPPORTED) {
         PrintReadGpaNotSupportedHint(NULL);
       }
+      if (outStatus) {
+        *outStatus = op;
+      }
       rc = 2;
       goto cleanup;
     }
     if (bytesRead == 0) {
       fwprintf(stderr, L"read-gpa returned 0 bytes at gpa=0x%I64x (status=0x%08lx)\n",
                (unsigned long long)curGpa, (unsigned long)op);
+      if (outStatus) {
+        *outStatus = (op != 0) ? op : STATUS_UNSUCCESSFUL;
+      }
       rc = 2;
       goto cleanup;
     }
@@ -6205,6 +6223,9 @@ static int DumpGpaRangeToFile(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uin
                (unsigned long)chunk,
                (unsigned long)bytesRead,
                (unsigned long)op);
+      if (outStatus) {
+        *outStatus = (op != 0) ? op : STATUS_UNSUCCESSFUL;
+      }
       rc = 2;
       goto cleanup;
     }
@@ -6217,6 +6238,9 @@ static int DumpGpaRangeToFile(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uin
     const size_t wrote = fwrite(q.data, 1, bytesRead, fp);
     if (wrote != (size_t)bytesRead) {
       fwprintf(stderr, L"Failed to write to output file: %s\n", outPath);
+      if (outStatus) {
+        *outStatus = STATUS_UNSUCCESSFUL;
+      }
       rc = 2;
       goto cleanup;
     }
@@ -6226,6 +6250,9 @@ static int DumpGpaRangeToFile(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uin
                L"read-gpa address overflow: gpa=0x%I64x bytes_read=%lu\n",
                (unsigned long long)curGpa,
                (unsigned long)bytesRead);
+      if (outStatus) {
+        *outStatus = STATUS_INVALID_PARAMETER;
+      }
       rc = 2;
       goto cleanup;
     }
@@ -6236,6 +6263,9 @@ static int DumpGpaRangeToFile(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uin
       // We made some progress but did not satisfy the request; treat as failure so callers
       // don't mistakenly interpret the output as complete.
       PrintNtStatus(L"read-gpa partial copy", f, op);
+      if (outStatus) {
+        *outStatus = op;
+      }
       rc = 3;
       goto cleanup;
     }
@@ -6249,6 +6279,9 @@ static int DumpGpaRangeToFile(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uin
 cleanup:
   if (fclose(fp) != 0 && rc == 0) {
     fwprintf(stderr, L"Failed to close output file: %s\n", outPath);
+    if (outStatus) {
+      *outStatus = STATUS_UNSUCCESSFUL;
+    }
     rc = 2;
   }
   if (rc != 0) {
@@ -6474,7 +6507,7 @@ static int DoDumpLastCmd(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t
       }
 
       uint32_t firstDword = 0;
-      const int dumpRc = DumpGpaRangeToFile(f, hAdapter, cmdGpa, cmdSizeBytes, curOutPath, &firstDword);
+      const int dumpRc = DumpGpaRangeToFile(f, hAdapter, cmdGpa, cmdSizeBytes, curOutPath, &firstDword, NULL);
       if (dumpRc != 0) {
         if (curOutPathOwned) {
           HeapFree(GetProcessHeap(), 0, curOutPathOwned);
@@ -6584,7 +6617,7 @@ static int DoDumpLastCmd(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t
           allocPath = allocPathOwned;
         }
 
-        const int dumpAllocRc = DumpGpaRangeToFile(f, hAdapter, allocGpa, allocSizeBytes, allocPath, NULL);
+        const int dumpAllocRc = DumpGpaRangeToFile(f, hAdapter, allocGpa, allocSizeBytes, allocPath, NULL, NULL);
         if (dumpAllocRc == 0) {
           wprintf(L"  alloc table dumped: %s\n", allocPath);
         }
@@ -7425,7 +7458,7 @@ static int DoReadGpa(const D3DKMT_FUNCS *f,
                      const wchar_t *outPath,
                      bool force) {
   if (outPath && *outPath) {
-    const int dumpRc = DumpGpaRangeToFile(f, hAdapter, gpa, (uint64_t)sizeBytes, outPath, NULL);
+    const int dumpRc = DumpGpaRangeToFile(f, hAdapter, gpa, (uint64_t)sizeBytes, outPath, NULL, NULL);
     if (dumpRc != 0) {
       return dumpRc;
     }
@@ -7561,11 +7594,11 @@ static int DoReadGpaJson(const D3DKMT_FUNCS *f,
   // Large reads with `--out`: dump the full range to a file in bounded chunks, then include only
   // a small prefix in JSON for quick inspection.
   if (outFile && *outFile && sizeBytes > AEROGPU_DBGCTL_READ_GPA_MAX_BYTES) {
-    const int dumpRc = DumpGpaRangeToFile(f, hAdapter, gpa, (uint64_t)sizeBytes, outFile, NULL);
+    NTSTATUS dumpStatus = 0;
+    const int dumpRc = DumpGpaRangeToFile(f, hAdapter, gpa, (uint64_t)sizeBytes, outFile, NULL, &dumpStatus);
     if (dumpRc != 0) {
-      NTSTATUS dumpStatus = STATUS_UNSUCCESSFUL;
-      if (dumpRc == 3) {
-        dumpStatus = STATUS_PARTIAL_COPY;
+      if (dumpStatus == 0) {
+        dumpStatus = STATUS_UNSUCCESSFUL;
       }
       JsonWriteTopLevelError(out, "read-gpa", f, "Failed to dump GPA range to --out file", dumpStatus);
       return dumpRc;
@@ -10285,7 +10318,8 @@ static int DoDumpLastCmdJson(const D3DKMT_FUNCS *f,
       }
 
       cmdMagic = 0;
-      const int dumpRc = DumpGpaRangeToFile(f, hAdapter, cmdGpa, cmdSizeBytes, curOutPath, &cmdMagic);
+      NTSTATUS dumpStatus = 0;
+      const int dumpRc = DumpGpaRangeToFile(f, hAdapter, cmdGpa, cmdSizeBytes, curOutPath, &cmdMagic, &dumpStatus);
       if (dumpRc != 0) {
         if (curOutPathOwned) {
           HeapFree(GetProcessHeap(), 0, curOutPathOwned);
@@ -10298,7 +10332,7 @@ static int DoDumpLastCmdJson(const D3DKMT_FUNCS *f,
         w.Key("message");
         w.String("Failed to dump cmd stream bytes");
         w.Key("status");
-        JsonWriteNtStatusError(w, f, (dumpRc == 3) ? STATUS_PARTIAL_COPY : STATUS_UNSUCCESSFUL);
+        JsonWriteNtStatusError(w, f, (dumpStatus != 0) ? dumpStatus : STATUS_UNSUCCESSFUL);
         w.EndObject();
         w.EndObject();
         out->push_back('\n');
@@ -10446,7 +10480,8 @@ static int DoDumpLastCmdJson(const D3DKMT_FUNCS *f,
           allocPath = allocPathOwned;
         }
 
-        const int dumpAllocRc = DumpGpaRangeToFile(f, hAdapter, allocGpa, allocSizeBytes, allocPath, NULL);
+        NTSTATUS dumpAllocStatus = 0;
+        const int dumpAllocRc = DumpGpaRangeToFile(f, hAdapter, allocGpa, allocSizeBytes, allocPath, NULL, &dumpAllocStatus);
         if (dumpAllocRc != 0) {
           allocPathUtf8 = WideToUtf8(allocPath);
           if (allocPathOwned) {
@@ -10463,7 +10498,7 @@ static int DoDumpLastCmdJson(const D3DKMT_FUNCS *f,
           w.Key("message");
           w.String("Failed to dump alloc table bytes");
           w.Key("status");
-          JsonWriteNtStatusError(w, f, (dumpAllocRc == 3) ? STATUS_PARTIAL_COPY : STATUS_UNSUCCESSFUL);
+          JsonWriteNtStatusError(w, f, (dumpAllocStatus != 0) ? dumpAllocStatus : STATUS_UNSUCCESSFUL);
           w.EndObject();
           w.EndObject();
           out->push_back('\n');
