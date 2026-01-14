@@ -23,10 +23,16 @@ use aero_io_snapshot::io::state::{IoSnapshot, SnapshotReader, SnapshotVersion, S
 use aero_usb::device::AttachedUsbDevice;
 use aero_usb::ehci::EhciController;
 use aero_usb::hub::UsbHubDevice;
-use aero_usb::{MemoryBus, UsbDeviceModel, UsbHubAttachError, UsbWebUsbPassthroughDevice};
+use aero_usb::passthrough::{UsbHostAction, UsbHostCompletion};
+use aero_usb::{MemoryBus, UsbDeviceModel, UsbHubAttachError, UsbSpeed, UsbWebUsbPassthroughDevice};
 
 const EHCI_BRIDGE_DEVICE_ID: [u8; 4] = *b"EHCB";
 const EHCI_BRIDGE_DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
+
+/// Reserve EHCI root port 0 for the WebUSB passthrough device.
+///
+/// Keep this stable so host-side code can treat the port index as part of the public ABI.
+const WEBUSB_ROOT_PORT: u8 = 0;
 
 fn js_error(message: impl core::fmt::Display) -> JsValue {
     js_sys::Error::new(&message.to_string()).into()
@@ -126,6 +132,52 @@ fn reset_webusb_host_state_for_restore(dev: &mut AttachedUsbDevice) {
     }
 }
 
+fn find_webusb_passthrough_device(dev: &mut AttachedUsbDevice) -> Option<UsbWebUsbPassthroughDevice> {
+    let model_any = dev.model() as &dyn core::any::Any;
+    if let Some(webusb) = model_any.downcast_ref::<UsbWebUsbPassthroughDevice>() {
+        return Some(webusb.clone());
+    }
+
+    if let Some(hub) = dev.as_hub_mut() {
+        for port in 0..hub.num_ports() {
+            if let Some(child) = hub.downstream_device_mut(port) {
+                if let Some(found) = find_webusb_passthrough_device(child) {
+                    return Some(found);
+                }
+            }
+        }
+    }
+
+    None
+}
+
+fn recover_webusb_passthrough_device(ctrl: &mut EhciController) -> Option<UsbWebUsbPassthroughDevice> {
+    // Prefer the reserved root port.
+    let hub = ctrl.hub_mut();
+    let preferred = WEBUSB_ROOT_PORT as usize;
+    if preferred < hub.num_ports() {
+        if let Some(mut dev) = hub.port_device_mut(preferred) {
+            if let Some(found) = find_webusb_passthrough_device(&mut dev) {
+                return Some(found);
+            }
+        }
+    }
+
+    // Fall back to scanning the full topology in case older snapshots attached the device elsewhere.
+    for port in 0..hub.num_ports() {
+        if port == preferred {
+            continue;
+        }
+        if let Some(mut dev) = hub.port_device_mut(port) {
+            if let Some(found) = find_webusb_passthrough_device(&mut dev) {
+                return Some(found);
+            }
+        }
+    }
+
+    None
+}
+
 /// WASM export: reusable EHCI controller model for the browser I/O worker.
 ///
 /// The controller reads/writes guest RAM directly from the module's linear memory (shared across
@@ -136,6 +188,8 @@ pub struct EhciControllerBridge {
     ctrl: EhciController,
     guest_base: u32,
     guest_size: u64,
+    webusb: Option<UsbWebUsbPassthroughDevice>,
+    webusb_connected: bool,
     pci_command: u16,
 }
 
@@ -186,6 +240,8 @@ impl EhciControllerBridge {
             ctrl: EhciController::new(),
             guest_base,
             guest_size: guest_size_u64,
+            webusb: None,
+            webusb_connected: false,
             pci_command: 0,
         })
     }
@@ -271,6 +327,92 @@ impl EhciControllerBridge {
         self.ctrl.irq_level()
     }
 
+    /// Connect or disconnect the WebUSB passthrough device on a reserved EHCI root port.
+    ///
+    /// The passthrough device is implemented by `aero_usb::UsbWebUsbPassthroughDevice` and emits
+    /// host actions that must be executed by the browser `UsbBroker` (see `web/src/usb`).
+    pub fn set_connected(&mut self, connected: bool) {
+        let was_connected = self.webusb_connected;
+
+        match (was_connected, connected) {
+            (true, true) | (false, false) => {}
+            (false, true) => {
+                let dev = self.webusb.get_or_insert_with(|| {
+                    UsbWebUsbPassthroughDevice::new_with_speed(UsbSpeed::High)
+                });
+                // Ensure the device advertises a high-speed view when attached behind EHCI.
+                dev.set_speed(UsbSpeed::High);
+                let attached = attach_device_at_path(
+                    &mut self.ctrl,
+                    &[WEBUSB_ROOT_PORT],
+                    Box::new(dev.clone()),
+                )
+                .is_ok();
+                self.webusb_connected = attached;
+            }
+            (true, false) => {
+                let _ = detach_device_at_path(&mut self.ctrl, &[WEBUSB_ROOT_PORT]);
+                self.webusb_connected = false;
+                // Preserve pre-existing semantics: disconnecting the device drops any queued actions
+                // and in-flight state, but we keep the handle alive so `UsbPassthroughDevice.next_id`
+                // remains monotonic across reconnects.
+                if let Some(dev) = self.webusb.as_ref() {
+                    dev.reset();
+                }
+            }
+        }
+    }
+
+    /// Drain queued WebUSB passthrough host actions as plain JS objects.
+    pub fn drain_actions(&mut self) -> Result<JsValue, JsValue> {
+        if !self.webusb_connected {
+            return Ok(JsValue::NULL);
+        };
+        let Some(dev) = self.webusb.as_ref() else {
+            return Ok(JsValue::NULL);
+        };
+
+        let actions: Vec<UsbHostAction> = dev.drain_actions();
+        if actions.is_empty() {
+            return Ok(JsValue::NULL);
+        }
+        serde_wasm_bindgen::to_value(&actions).map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// Push a host completion into the WebUSB passthrough device.
+    pub fn push_completion(&mut self, completion: JsValue) -> Result<(), JsValue> {
+        let completion: UsbHostCompletion = serde_wasm_bindgen::from_value(completion)
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+        if self.webusb_connected {
+            if let Some(dev) = self.webusb.as_ref() {
+                dev.push_completion(completion);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Reset the WebUSB passthrough device without disturbing the rest of the USB topology.
+    pub fn reset(&mut self) {
+        if self.webusb_connected {
+            if let Some(dev) = self.webusb.as_ref() {
+                dev.reset();
+            }
+        }
+    }
+
+    /// Return a debug summary of queued actions/completions for the WebUSB passthrough device.
+    pub fn pending_summary(&self) -> Result<JsValue, JsValue> {
+        if !self.webusb_connected {
+            return Ok(JsValue::NULL);
+        };
+        let Some(summary) = self.webusb.as_ref().map(|d| d.pending_summary()) else {
+            return Ok(JsValue::NULL);
+        };
+        serde_wasm_bindgen::to_value(&summary).map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
     /// Attach a USB hub device to a root port.
     ///
     /// `port_count` is the number of downstream ports on the hub (1..=255).
@@ -350,6 +492,15 @@ impl EhciControllerBridge {
             if let Some(mut dev) = hub.port_device_mut(port) {
                 reset_webusb_host_state_for_restore(&mut dev);
             }
+        }
+
+        // Recover an owned handle to a restored WebUSB passthrough device so the bridge can continue
+        // draining actions / pushing completions after snapshot restore.
+        self.webusb = recover_webusb_passthrough_device(&mut self.ctrl);
+        self.webusb_connected = self.webusb.is_some();
+        if let Some(dev) = self.webusb.as_ref() {
+            // Ensure the recovered handle also has its host-side promise bookkeeping cleared.
+            dev.reset_host_state_for_restore();
         }
 
         Ok(())
