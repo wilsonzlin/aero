@@ -1,5 +1,6 @@
 export function withStubbedDocument<T>(run: (doc: any) => T): T {
-  const original = (globalThis as any).document;
+  const g = globalThis as unknown as { document?: unknown };
+  const original = g.document;
   const doc = {
     pointerLockElement: null,
     visibilityState: "visible",
@@ -9,13 +10,13 @@ export function withStubbedDocument<T>(run: (doc: any) => T): T {
     removeEventListener: () => {},
     exitPointerLock: () => {},
   };
-  (globalThis as any).document = doc;
+  (g as { document?: unknown }).document = doc;
   const restore = () => {
-    (globalThis as any).document = original;
+    (g as { document?: unknown }).document = original;
   };
   try {
     const result = run(doc);
-    const then = (result as any)?.then as unknown;
+    const then = (result as { then?: unknown } | null | undefined)?.then;
     if (typeof then === "function") {
       return Promise.resolve(result).finally(restore) as unknown as T;
     }
@@ -28,20 +29,21 @@ export function withStubbedDocument<T>(run: (doc: any) => T): T {
 }
 
 export function withStubbedWindow<T>(run: (win: any) => T): T {
-  const original = (globalThis as any).window;
+  const g = globalThis as unknown as { window?: unknown };
+  const original = g.window;
   const win = {
     addEventListener: () => {},
     removeEventListener: () => {},
     setInterval: () => 1,
     clearInterval: () => {},
   };
-  (globalThis as any).window = win;
+  (g as { window?: unknown }).window = win;
   const restore = () => {
-    (globalThis as any).window = original;
+    (g as { window?: unknown }).window = original;
   };
   try {
     const result = run(win);
-    const then = (result as any)?.then as unknown;
+    const then = (result as { then?: unknown } | null | undefined)?.then;
     if (typeof then === "function") {
       return Promise.resolve(result).finally(restore) as unknown as T;
     }
