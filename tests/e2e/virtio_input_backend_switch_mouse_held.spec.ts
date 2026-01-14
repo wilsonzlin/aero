@@ -535,7 +535,7 @@ test("IO worker does not switch mouse backend while a button is held (prevents s
     const drainI8042UntilNonEmpty = async (timeoutMs: number): Promise<{ bytes: number[]; statuses: number[] }> => {
       const start = typeof performance?.now === "function" ? performance.now() : Date.now();
       while ((typeof performance?.now === "function" ? performance.now() : Date.now()) - start < timeoutMs) {
-        const drained = (await cpuCall("drainI8042")) as { bytes: number[]; statuses: number[] };
+        const drained = (await cpuCall("drainI8042", undefined, 2000)) as { bytes: number[]; statuses: number[] };
         if (drained.bytes.length > 0) return drained;
         await sleep(10);
       }
