@@ -3048,6 +3048,18 @@ static ULONG AeroGpuShareTokenRefIncrementLocked(_Inout_ AEROGPU_ADAPTER* Adapte
         (AEROGPU_SHARE_TOKEN_REF*)ExAllocatePoolWithTag(NonPagedPool, sizeof(*node), AEROGPU_POOL_TAG);
     if (!node) {
         KeAcquireSpinLock(&Adapter->AllocationsLock, OldIrqlInOut);
+        /*
+         * Re-check under the lock: another thread may have inserted this token
+         * while we were allocating. In that case, we can still bump the refcount
+         * without needing to allocate a new node.
+         */
+        for (PLIST_ENTRY it = Adapter->ShareTokenRefs.Flink; it != &Adapter->ShareTokenRefs; it = it->Flink) {
+            AEROGPU_SHARE_TOKEN_REF* existing = CONTAINING_RECORD(it, AEROGPU_SHARE_TOKEN_REF, ListEntry);
+            if (existing->ShareToken == ShareToken) {
+                existing->OpenCount += 1;
+                return existing->OpenCount;
+            }
+        }
         return 0;
     }
     RtlZeroMemory(node, sizeof(*node));
