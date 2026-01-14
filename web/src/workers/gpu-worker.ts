@@ -1961,8 +1961,22 @@ const presentOnce = async (): Promise<boolean> => {
     }
     if (isDeviceLost) return false;
 
+    const sharedFramebufferSeqForClear = (() => {
+      if (!sharedFramebufferViews) return null;
+      // If the current frame comes from the legacy shared framebuffer, use the
+      // frame's published sequence number.
+      if (frame?.sharedLayout) return frame.frameSeq;
+      // Otherwise (e.g. WDDM scanout), we still clear the legacy `FRAME_DIRTY`
+      // flag under WDDM ownership so that stale legacy frames cannot "flash back"
+      // later (docs/16-aerogpu-vga-vesa-compat.md §5). Capture the shared
+      // framebuffer sequence number now and only clear if it stays stable.
+      return Atomics.load(sharedFramebufferViews.header, SharedFramebufferHeaderIndex.FRAME_SEQ);
+    })();
+
     const clearSharedFramebufferDirty = () => {
-      if (!frame?.sharedLayout || !sharedFramebufferViews) return;
+      const expectedSeq = sharedFramebufferSeqForClear;
+      if (expectedSeq === null) return;
+      if (!sharedFramebufferViews) return;
       // `frame_dirty` is a producer->consumer "new frame" flag. Clearing it is
       // optional, but doing so allows producers to detect consumer liveness (and
       // some implementations may wait for it).
@@ -1971,7 +1985,7 @@ const presentOnce = async (): Promise<boolean> => {
       // published sequence number after the upload/present work completes.
       const header = sharedFramebufferViews.header;
       const seqNow = Atomics.load(header, SharedFramebufferHeaderIndex.FRAME_SEQ);
-      if (seqNow !== frame.frameSeq) return;
+      if (seqNow !== expectedSeq) return;
       Atomics.store(header, SharedFramebufferHeaderIndex.FRAME_DIRTY, 0);
       Atomics.notify(header, SharedFramebufferHeaderIndex.FRAME_DIRTY);
     };
