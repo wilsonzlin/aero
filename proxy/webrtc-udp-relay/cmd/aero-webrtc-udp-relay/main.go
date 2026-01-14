@@ -84,9 +84,8 @@ func main() {
 
 	commit, buildTime := resolveBuildInfo(buildCommit, buildTime)
 
-	srv := httpserver.New(cfg, logger, commit, buildTime)
 	sessionMgr := relay.NewSessionManager(cfg, nil, nil)
-	srv.SetMetrics(sessionMgr.Metrics())
+	srv := httpserver.New(cfg, logger, commit, buildTime, sessionMgr.Metrics())
 	authz, err := signaling.NewAuthAuthorizer(cfg)
 	if err != nil {
 		logger.Error("failed to configure signaling auth", "err", err)

@@ -24,11 +24,11 @@ import (
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/metrics"
 )
 
-func startTestServer(t *testing.T, cfg config.Config, register func(*server)) string {
+func startTestServer(t *testing.T, cfg config.Config, m *metrics.Metrics, register func(*server)) string {
 	t.Helper()
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := New(cfg, log, "abc", "time")
+	srv := New(cfg, log, "abc", "time", m)
 	if register != nil {
 		register(srv)
 	}
@@ -84,7 +84,7 @@ func TestHealthzReadyzVersion(t *testing.T) {
 		AuthMode:        config.AuthModeNone,
 	}
 
-	baseURL := startTestServer(t, cfg, nil)
+	baseURL := startTestServer(t, cfg, nil, nil)
 
 	t.Run("healthz", func(t *testing.T) {
 		resp, err := http.Get(baseURL + "/healthz")
@@ -149,7 +149,7 @@ func TestICEEndpointSchema(t *testing.T) {
 		},
 	}
 
-	baseURL := startTestServer(t, cfg, nil)
+	baseURL := startTestServer(t, cfg, nil, nil)
 
 	resp, err := http.Get(baseURL + "/webrtc/ice")
 	if err != nil {
@@ -204,7 +204,7 @@ func TestICEEndpoint_EmptyListNotNull(t *testing.T) {
 		ICEServers:      nil,
 	}
 
-	baseURL := startTestServer(t, cfg, nil)
+	baseURL := startTestServer(t, cfg, nil, nil)
 
 	resp, err := http.Get(baseURL + "/webrtc/ice")
 	if err != nil {
@@ -243,7 +243,7 @@ func TestICEEndpoint_NoStoreHeaders_HEAD(t *testing.T) {
 		ICEServers:      []webrtc.ICEServer{{URLs: []string{"stun:stun.example.com:3478"}}},
 	}
 
-	baseURL := startTestServer(t, cfg, nil)
+	baseURL := startTestServer(t, cfg, nil, nil)
 
 	req, err := http.NewRequest(http.MethodHead, baseURL+"/webrtc/ice", nil)
 	if err != nil {
@@ -297,7 +297,7 @@ func TestICEEndpoint_AuthAPIKey(t *testing.T) {
 		ICEServers:      []webrtc.ICEServer{{URLs: []string{"stun:stun.example.com:3478"}}},
 	}
 	m := &metrics.Metrics{}
-	baseURL := startTestServer(t, cfg, func(srv *server) { srv.SetMetrics(m) })
+	baseURL := startTestServer(t, cfg, m, nil)
 
 	t.Run("missing", func(t *testing.T) {
 		resp, err := http.Get(baseURL + "/webrtc/ice")
@@ -405,7 +405,7 @@ func TestICEEndpoint_AuthJWT(t *testing.T) {
 		ICEServers:      []webrtc.ICEServer{{URLs: []string{"stun:stun.example.com:3478"}}},
 	}
 	m := &metrics.Metrics{}
-	baseURL := startTestServer(t, cfg, func(srv *server) { srv.SetMetrics(m) })
+	baseURL := startTestServer(t, cfg, m, nil)
 
 	t.Run("missing", func(t *testing.T) {
 		resp, err := http.Get(baseURL + "/webrtc/ice")
@@ -502,7 +502,7 @@ func TestICEEndpoint_TURNRESTInjectsCredentials(t *testing.T) {
 		t.Fatalf("config.Load: %v", err)
 	}
 
-	baseURL := startTestServer(t, cfg, nil)
+	baseURL := startTestServer(t, cfg, nil, nil)
 
 	startUnix := time.Now().Unix()
 	req, err := http.NewRequest(http.MethodGet, baseURL+"/webrtc/ice", nil)
@@ -596,7 +596,7 @@ func TestICEEndpoint_NoStoreOnInternalError(t *testing.T) {
 	cfg.TURNREST.TTLSeconds = 0 // invalid: must be >0
 	cfg.TURNREST.UsernamePrefix = "aero"
 
-	baseURL := startTestServer(t, cfg, nil)
+	baseURL := startTestServer(t, cfg, nil, nil)
 
 	resp, err := http.Get(baseURL + "/webrtc/ice")
 	if err != nil {
@@ -621,7 +621,7 @@ func TestICEEndpoint_RejectsCrossOrigin(t *testing.T) {
 		ICEServers:      []webrtc.ICEServer{{URLs: []string{"stun:stun.example.com:3478"}}},
 	}
 
-	baseURL := startTestServer(t, cfg, nil)
+	baseURL := startTestServer(t, cfg, nil, nil)
 
 	req, err := http.NewRequest(http.MethodGet, baseURL+"/webrtc/ice", nil)
 	if err != nil {
@@ -654,7 +654,7 @@ func TestOriginMiddleware_RejectsInvalidOrigin(t *testing.T) {
 		ICEServers:      []webrtc.ICEServer{{URLs: []string{"stun:stun.example.com:3478"}}},
 	}
 
-	baseURL := startTestServer(t, cfg, nil)
+	baseURL := startTestServer(t, cfg, nil, nil)
 
 	req, err := http.NewRequest(http.MethodGet, baseURL+"/webrtc/ice", nil)
 	if err != nil {
@@ -687,7 +687,7 @@ func TestOriginMiddleware_RejectsNonHTTPOrigin(t *testing.T) {
 		ICEServers:      []webrtc.ICEServer{{URLs: []string{"stun:stun.example.com:3478"}}},
 	}
 
-	baseURL := startTestServer(t, cfg, nil)
+	baseURL := startTestServer(t, cfg, nil, nil)
 
 	req, err := http.NewRequest(http.MethodGet, baseURL+"/webrtc/ice", nil)
 	if err != nil {
@@ -721,7 +721,7 @@ func TestICEEndpoint_AllowsConfiguredOrigin(t *testing.T) {
 		ICEServers:      []webrtc.ICEServer{{URLs: []string{"stun:stun.example.com:3478"}}},
 	}
 
-	baseURL := startTestServer(t, cfg, nil)
+	baseURL := startTestServer(t, cfg, nil, nil)
 
 	req, err := http.NewRequest(http.MethodGet, baseURL+"/webrtc/ice", nil)
 	if err != nil {
@@ -763,7 +763,7 @@ func TestOriginMiddleware_Preflight(t *testing.T) {
 		ICEServers:      []webrtc.ICEServer{{URLs: []string{"stun:stun.example.com:3478"}}},
 	}
 
-	baseURL := startTestServer(t, cfg, nil)
+	baseURL := startTestServer(t, cfg, nil, nil)
 
 	req, err := http.NewRequest(http.MethodOptions, baseURL+"/webrtc/ice", nil)
 	if err != nil {
@@ -806,7 +806,7 @@ func TestReadyzFailsOnInvalidICEConfig(t *testing.T) {
 		t.Fatalf("expected ICE config error to be captured for readiness")
 	}
 
-	baseURL := startTestServer(t, cfg, nil)
+	baseURL := startTestServer(t, cfg, nil, nil)
 
 	resp, err := http.Get(baseURL + "/readyz")
 	if err != nil {
@@ -839,7 +839,7 @@ func TestRequestIDMiddleware(t *testing.T) {
 		Mode:            config.ModeDev,
 	}
 
-	baseURL := startTestServer(t, cfg, func(srv *server) {
+	baseURL := startTestServer(t, cfg, nil, func(srv *server) {
 		srv.Mux().HandleFunc("GET /echo-request-id", func(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusOK, map[string]any{"requestId": r.Header.Get("X-Request-ID")})
 		})
@@ -904,7 +904,7 @@ func TestRecoverMiddleware(t *testing.T) {
 		Mode:            config.ModeDev,
 	}
 
-	baseURL := startTestServer(t, cfg, func(srv *server) {
+	baseURL := startTestServer(t, cfg, nil, func(srv *server) {
 		srv.Mux().HandleFunc("GET /panic", func(w http.ResponseWriter, r *http.Request) {
 			panic("boom")
 		})
@@ -941,7 +941,7 @@ func TestRequestLoggerMiddleware_AllowsWebSocketHijack(t *testing.T) {
 		AuthMode:        config.AuthModeNone,
 	}
 
-	baseURL := startTestServer(t, cfg, func(srv *server) {
+	baseURL := startTestServer(t, cfg, nil, func(srv *server) {
 		upgrader := websocket.Upgrader{
 			CheckOrigin: func(*http.Request) bool { return true },
 		}

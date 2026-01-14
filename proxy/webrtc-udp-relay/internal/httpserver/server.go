@@ -40,12 +40,13 @@ type server struct {
 	srv *http.Server
 }
 
-func New(cfg config.Config, logger *slog.Logger, buildCommit, buildTime string) *server {
+func New(cfg config.Config, logger *slog.Logger, buildCommit, buildTime string, m *metrics.Metrics) *server {
 	s := &server{
-		log:   logger,
-		cfg:   cfg,
-		build: buildInfo{Commit: buildCommit, BuildTime: buildTime},
-		mux:   http.NewServeMux(),
+		log:     logger,
+		cfg:     cfg,
+		build:   buildInfo{Commit: buildCommit, BuildTime: buildTime},
+		metrics: m,
+		mux:     http.NewServeMux(),
 	}
 
 	s.registerRoutes()
@@ -89,14 +90,6 @@ func noStoreICEHeadersMiddleware() middleware {
 			next.ServeHTTP(w, r)
 		})
 	}
-}
-
-// SetMetrics wires a shared metrics registry into the server. When set, certain
-// endpoints (e.g. auth failures) will increment counters.
-//
-// It should only be called during startup before Serve is called.
-func (s *server) SetMetrics(m *metrics.Metrics) {
-	s.metrics = m
 }
 
 // Mux returns the underlying ServeMux for registering additional routes.

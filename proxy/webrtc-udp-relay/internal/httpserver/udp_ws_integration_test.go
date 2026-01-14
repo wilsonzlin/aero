@@ -124,7 +124,7 @@ func TestUDPWebSocket_RoundTripV1AndV2(t *testing.T) {
 		PreferV2:                 true,
 	}
 
-	baseURL := startTestServer(t, cfg, func(srv *server) {
+	baseURL := startTestServer(t, cfg, nil, func(srv *server) {
 		registerUDPWS(t, cfg, srv)
 	})
 
@@ -206,7 +206,7 @@ func TestUDPWebSocket_APIKeyAuth(t *testing.T) {
 		MaxSignalingMessageBytes: 64 * 1024,
 	}
 
-	baseURL := startTestServer(t, cfg, func(srv *server) {
+	baseURL := startTestServer(t, cfg, nil, func(srv *server) {
 		registerUDPWS(t, cfg, srv)
 	})
 
@@ -284,7 +284,7 @@ func TestUDPWebSocket_JWTAuth_QueryParam(t *testing.T) {
 		MaxSignalingMessageBytes: 64 * 1024,
 	}
 
-	baseURL := startTestServer(t, cfg, func(srv *server) {
+	baseURL := startTestServer(t, cfg, nil, func(srv *server) {
 		registerUDPWS(t, cfg, srv)
 	})
 
@@ -365,7 +365,7 @@ func TestUDPWebSocket_ShutdownClosesConnections(t *testing.T) {
 	}
 
 	log := newTestLogger(t)
-	srv := New(cfg, log, "abc", "time")
+	srv := New(cfg, log, "abc", "time", nil)
 	registerUDPWS(t, cfg, srv)
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
