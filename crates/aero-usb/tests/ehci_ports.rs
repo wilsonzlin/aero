@@ -754,4 +754,8 @@ fn ehci_keyboard_remote_wakeup_does_not_propagate_through_external_hub_without_h
         0b10 << 10,
         "expected J-state while suspended"
     );
+    assert!(
+        ehci.hub_mut().device_mut_for_address(2).is_none(),
+        "device should not be reachable while the root port remains suspended"
+    );
 }

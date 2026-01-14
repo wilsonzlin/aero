@@ -736,6 +736,8 @@ fn ehci_remote_wakeup_does_not_propagate_through_external_hub_without_hub_remote
         0,
         "port should remain suspended when hub remote wake is disabled"
     );
+    assert_eq!(portsc & PORTSC_LS_MASK, 0b10 << 10, "expected J-state");
+    assert!(ehci.hub_mut().device_mut_for_address(2).is_none());
 }
 
 #[test]
@@ -1173,4 +1175,6 @@ fn ehci_remote_wakeup_does_not_propagate_through_nested_hubs_without_inner_hub_r
         0,
         "port should remain suspended when inner-hub remote wake is disabled"
     );
+    assert_eq!(portsc & PORTSC_LS_MASK, 0b10 << 10, "expected J-state");
+    assert!(ehci.hub_mut().device_mut_for_address(3).is_none());
 }
