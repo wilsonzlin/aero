@@ -109,6 +109,9 @@
 /*
  * VIOINPUT_COUNTERS is a user-mode visible struct (queried via
  * IOCTL_VIOINPUT_QUERY_COUNTERS). It must be append-only to preserve ABI.
+ *
+ * CI guardrail: scripts/ci/check-win7-virtio-input-diagnostics-abi-sync.py
+ * (keeps the duplicated copies in tools/hidtest/main.c in sync with this header).
  */
 #define VIOINPUT_COUNTERS_VERSION 3
 #define VIOINPUT_STATE_VERSION 2

@@ -138,6 +138,10 @@
  *
  * These are not standard HID IOCTLs; they are regular DeviceIoControl IOCTLs
  * (not IOCTL_HID_*) forwarded by HIDCLASS to the underlying minidriver.
+ *
+ * Keep the IOCTL definitions + VIOINPUT_* structs below in sync with `src/log.h`.
+ * CI guardrail:
+ *   - scripts/ci/check-win7-virtio-input-diagnostics-abi-sync.py
  */
 #ifndef IOCTL_VIOINPUT_QUERY_COUNTERS
 #define IOCTL_VIOINPUT_QUERY_COUNTERS \
