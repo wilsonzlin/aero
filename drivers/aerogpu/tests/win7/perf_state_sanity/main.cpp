@@ -78,6 +78,10 @@ static int RunPerfStateSanity(int argc, char** argv) {
   }
 
   bool saw_nonzero_fence = false;
+  bool have_contig_pool = false;
+  uint64_t last_contig_pool_hit = 0;
+  uint64_t last_contig_pool_miss = 0;
+  uint64_t last_contig_pool_bytes_saved = 0;
 
   for (uint32_t i = 0; i < samples; ++i) {
     aerogpu_escape_query_perf_out q;
@@ -130,6 +134,43 @@ static int RunPerfStateSanity(int argc, char** argv) {
       return reporter.Fail("Invalid fence state in QUERY_PERF: completed > submitted (%I64u > %I64u)",
                            (unsigned long long)q.last_completed_fence,
                            (unsigned long long)q.last_submitted_fence);
+    }
+
+    const bool have_contig =
+        (q.hdr.size >= offsetof(aerogpu_escape_query_perf_out, contig_pool_bytes_saved) + sizeof(q.contig_pool_bytes_saved));
+    if (i == 0) {
+      have_contig_pool = have_contig;
+    }
+    if (have_contig) {
+      // Counters are monotonic for the lifetime of the adapter; validate basic invariants.
+      const uint64_t hit = (uint64_t)q.contig_pool_hit;
+      const uint64_t miss = (uint64_t)q.contig_pool_miss;
+      const uint64_t bytes_saved = (uint64_t)q.contig_pool_bytes_saved;
+
+      if (i != 0) {
+        if (hit < last_contig_pool_hit || miss < last_contig_pool_miss || bytes_saved < last_contig_pool_bytes_saved) {
+          aerogpu_test::kmt::CloseAdapter(&kmt, adapter);
+          aerogpu_test::kmt::UnloadD3DKMT(&kmt);
+          return reporter.Fail("Contig pool counters went backwards (hit=%I64u->%I64u miss=%I64u->%I64u bytes_saved=%I64u->%I64u)",
+                               (unsigned long long)last_contig_pool_hit,
+                               (unsigned long long)hit,
+                               (unsigned long long)last_contig_pool_miss,
+                               (unsigned long long)miss,
+                               (unsigned long long)last_contig_pool_bytes_saved,
+                               (unsigned long long)bytes_saved);
+        }
+      }
+      if (bytes_saved != 0 && hit == 0) {
+        aerogpu_test::kmt::CloseAdapter(&kmt, adapter);
+        aerogpu_test::kmt::UnloadD3DKMT(&kmt);
+        return reporter.Fail("Contig pool bytes_saved is non-zero but hit==0 (hit=%I64u bytes_saved=%I64u)",
+                             (unsigned long long)hit,
+                             (unsigned long long)bytes_saved);
+      }
+
+      last_contig_pool_hit = hit;
+      last_contig_pool_miss = miss;
+      last_contig_pool_bytes_saved = bytes_saved;
     }
 
     // Flags are appended; require a VALID bit when present.
@@ -185,6 +226,15 @@ static int RunPerfStateSanity(int argc, char** argv) {
         (unsigned long long)q.irq_vblank_delivered,
         (unsigned long long)q.irq_spurious,
         (unsigned long)q.flags);
+
+    if (have_contig) {
+      aerogpu_test::PrintfStdout("INFO: %s: [%lu] contig_pool(hit=%I64u miss=%I64u bytes_saved=%I64u)",
+                                 kTestName,
+                                 (unsigned long)i,
+                                 (unsigned long long)q.contig_pool_hit,
+                                 (unsigned long long)q.contig_pool_miss,
+                                 (unsigned long long)q.contig_pool_bytes_saved);
+    }
 
     if (i + 1 < samples) {
       Sleep(interval_ms);
