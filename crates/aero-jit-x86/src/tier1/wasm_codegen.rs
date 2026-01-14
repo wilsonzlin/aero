@@ -816,7 +816,12 @@ impl Tier1WasmCodegen {
                 break;
             }
         }
-        emitter.emit_terminator(&block.terminator);
+        // If the block contains a `CallHelper`, Tier-1 treats it as an unconditional runtime exit
+        // (see `Emitter::emit_inst`). In that case the IR terminator is unreachable and can be
+        // omitted to keep the emitted WASM smaller.
+        if !needs_jit_exit {
+            emitter.emit_terminator(&block.terminator);
+        }
 
         emitter.func.instruction(&Instruction::End); // end exit block
 
