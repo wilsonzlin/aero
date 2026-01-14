@@ -5896,6 +5896,38 @@ bool TestSetVertexDeclDerivesFixedFunctionFvf() {
       {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0}, // D3DDECL_END
   };
 
+  // Some runtimes include additional bytes/elements beyond the first D3DDECL_END.
+  // The fixed-function decl detector should ignore this trailing padding.
+  const D3DVERTEXELEMENT9_COMPAT decl_xyzrhw_diffuse_trailing[] = {
+      {0, 0, kD3dDeclTypeFloat4, kD3dDeclMethodDefault, /*Usage=*/0, 0},
+      {0, 16, kD3dDeclTypeD3dColor, kD3dDeclMethodDefault, kD3dDeclUsageColor, 0},
+      {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0}, // D3DDECL_END
+      {},                                     // ignored padding
+  };
+
+  const D3DVERTEXELEMENT9_COMPAT decl_xyzrhw_diffuse_tex1_trailing[] = {
+      {0, 0, kD3dDeclTypeFloat4, kD3dDeclMethodDefault, kD3dDeclUsagePositionT, 0},
+      {0, 16, kD3dDeclTypeD3dColor, kD3dDeclMethodDefault, kD3dDeclUsageColor, 0},
+      {0, 20, kD3dDeclTypeFloat2, kD3dDeclMethodDefault, kD3dDeclUsageTexcoord, 0},
+      {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0}, // D3DDECL_END
+      {},                                     // ignored padding
+  };
+
+  const D3DVERTEXELEMENT9_COMPAT decl_xyz_diffuse_trailing[] = {
+      {0, 0, kD3dDeclTypeFloat3, kD3dDeclMethodDefault, /*Usage=*/0, 0},
+      {0, 12, kD3dDeclTypeD3dColor, kD3dDeclMethodDefault, kD3dDeclUsageColor, 0},
+      {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0}, // D3DDECL_END
+      {},                                     // ignored padding
+  };
+
+  const D3DVERTEXELEMENT9_COMPAT decl_xyz_diffuse_tex1_trailing[] = {
+      {0, 0, kD3dDeclTypeFloat3, kD3dDeclMethodDefault, /*Usage=*/0, 0},
+      {0, 12, kD3dDeclTypeD3dColor, kD3dDeclMethodDefault, kD3dDeclUsageColor, 0},
+      {0, 16, kD3dDeclTypeFloat2, kD3dDeclMethodDefault, kD3dDeclUsageTexcoord, 0},
+      {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0}, // D3DDECL_END
+      {},                                     // ignored padding
+  };
+
   if (!run_case(decl_xyzrhw_diffuse,
                 sizeof(decl_xyzrhw_diffuse) / sizeof(decl_xyzrhw_diffuse[0]),
                 kD3dFvfXyzRhw | kD3dFvfDiffuse,
@@ -5926,10 +5958,35 @@ bool TestSetVertexDeclDerivesFixedFunctionFvf() {
                 "CreateVertexDecl(XYZ|DIFFUSE|TEX1)")) {
     return false;
   }
-  return run_case(decl_xyz_diffuse_tex1_usage0,
-                  sizeof(decl_xyz_diffuse_tex1_usage0) / sizeof(decl_xyz_diffuse_tex1_usage0[0]),
+  if (!run_case(decl_xyz_diffuse_tex1_usage0,
+                sizeof(decl_xyz_diffuse_tex1_usage0) / sizeof(decl_xyz_diffuse_tex1_usage0[0]),
+                kD3dFvfXyz | kD3dFvfDiffuse | kD3dFvfTex1,
+                "CreateVertexDecl(XYZ|DIFFUSE|TEX1, tex Usage=0)")) {
+    return false;
+  }
+
+  if (!run_case(decl_xyzrhw_diffuse_trailing,
+                sizeof(decl_xyzrhw_diffuse_trailing) / sizeof(decl_xyzrhw_diffuse_trailing[0]),
+                kD3dFvfXyzRhw | kD3dFvfDiffuse,
+                "CreateVertexDecl(XYZRHW|DIFFUSE, trailing padding)")) {
+    return false;
+  }
+  if (!run_case(decl_xyzrhw_diffuse_tex1_trailing,
+                sizeof(decl_xyzrhw_diffuse_tex1_trailing) / sizeof(decl_xyzrhw_diffuse_tex1_trailing[0]),
+                kD3dFvfXyzRhw | kD3dFvfDiffuse | kD3dFvfTex1,
+                "CreateVertexDecl(XYZRHW|DIFFUSE|TEX1, trailing padding)")) {
+    return false;
+  }
+  if (!run_case(decl_xyz_diffuse_trailing,
+                sizeof(decl_xyz_diffuse_trailing) / sizeof(decl_xyz_diffuse_trailing[0]),
+                kD3dFvfXyz | kD3dFvfDiffuse,
+                "CreateVertexDecl(XYZ|DIFFUSE, trailing padding)")) {
+    return false;
+  }
+  return run_case(decl_xyz_diffuse_tex1_trailing,
+                  sizeof(decl_xyz_diffuse_tex1_trailing) / sizeof(decl_xyz_diffuse_tex1_trailing[0]),
                   kD3dFvfXyz | kD3dFvfDiffuse | kD3dFvfTex1,
-                  "CreateVertexDecl(XYZ|DIFFUSE|TEX1, tex Usage=0)");
+                  "CreateVertexDecl(XYZ|DIFFUSE|TEX1, trailing padding)");
 }
 
 bool TestFvfXyzrhwDiffuseDrawPrimitiveUpEmitsFixedfuncCommands() {
