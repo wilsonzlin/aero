@@ -231,6 +231,8 @@ The input injector worker (`io.worker.ts` in `vmRuntime=legacy`, `machine_cpu.wo
 ```bash
 # Run the USB/input-focused test suite (Rust + targeted web unit tests).
 # (Assumes Node deps are installed; run `npm ci` from repo root if needed.)
+# If your Node workspace entrypoint is `web/` (instead of the repo root), use:
+#   cargo xtask input --node-dir web
 # Note: by default this runs a focused subset of `aero-usb` tests (UHCI + external hub + EHCI +
 # EHCI snapshot roundtrip + USB2 companion routing + WebUSB passthrough (UHCI + xHCI) + key HID
 # snapshot compatibility/clamping tests + shared HID usage fixtures + xHCI bring-up smoke/reg-gating).
