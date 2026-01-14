@@ -3045,25 +3045,12 @@ impl Machine {
         &mut self,
         path: String,
     ) -> Result<(), JsValue> {
-        #[cfg(target_feature = "atomics")]
-        {
-            let _ = path;
-            return Err(JsValue::from_str(
-                "OPFS-backed install media ISO is unavailable in wasm-threaded (atomics) builds",
-            ));
-        }
-
-        #[cfg(not(target_feature = "atomics"))]
-        {
-            let backend = aero_opfs::OpfsBackend::open_existing(&path)
-                .await
-                .map_err(|e| {
-                    opfs_disk_error_to_js("Machine.attach_install_media_iso_opfs_existing", &path, e)
-                })?;
-            self.inner
-                .attach_install_media_iso(Box::new(backend))
-                .map_err(js_error)
-        }
+        let disk = aero_opfs::OpfsSendDisk::open_existing(&path).await.map_err(|e| {
+            opfs_disk_error_to_js("Machine.attach_install_media_iso_opfs_existing", &path, e)
+        })?;
+        self.inner
+            .attach_install_media_iso(Box::new(disk))
+            .map_err(js_error)
     }
 
     /// Open (or create) an OPFS-backed disk image and attach it as the machine's canonical disk.
