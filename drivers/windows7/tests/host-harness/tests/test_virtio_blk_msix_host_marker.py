@@ -50,6 +50,19 @@ class VirtioBlkMsixHostMarkerTests(unittest.TestCase):
             "AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_MSIX|SKIP|returned_len=8|reason=ioctl_payload_v1_or_truncated",
         )
 
+    def test_emits_extra_fields_sorted(self) -> None:
+        tail = (
+            b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk-msix|PASS|mode=msix|messages=2|config_vector=0|queue_vector=1|"
+            b"flags=0x20|dpcs=5\n"
+        )
+        out = self._emit(tail)
+        # Extra fields are appended in sorted order after the stable base fields.
+        self.assertEqual(
+            out,
+            "AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_MSIX|PASS|mode=msix|messages=2|config_vector=0|queue_vector=1|"
+            "dpcs=5|flags=0x20",
+        )
+
     def test_no_output_when_missing(self) -> None:
         tail = b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS\n"
         out = self._emit(tail)
@@ -58,4 +71,3 @@ class VirtioBlkMsixHostMarkerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

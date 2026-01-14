@@ -54,6 +54,20 @@ class VirtioSndMsixHostMarkerTests(unittest.TestCase):
             "AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_MSIX|SKIP|reason=diag_unavailable|err=2",
         )
 
+    def test_emits_extra_fields_sorted(self) -> None:
+        tail = (
+            b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-msix|PASS|mode=msix|messages=5|config_vector=0|queue0_vector=1|"
+            b"queue1_vector=2|queue2_vector=3|queue3_vector=4|interrupts=10|dpcs=10|drain0=1|drain1=2|drain2=3|drain3=4|"
+            b"z_key=1|a_key=2\n"
+        )
+        out = self._emit(tail)
+        self.assertEqual(
+            out,
+            "AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_MSIX|PASS|mode=msix|messages=5|config_vector=0|queue0_vector=1|"
+            "queue1_vector=2|queue2_vector=3|queue3_vector=4|interrupts=10|dpcs=10|drain0=1|drain1=2|drain2=3|drain3=4|"
+            "a_key=2|z_key=1",
+        )
+
     def test_no_output_when_missing(self) -> None:
         tail = b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS\n"
         out = self._emit(tail)
@@ -62,4 +76,3 @@ class VirtioSndMsixHostMarkerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

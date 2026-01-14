@@ -56,6 +56,22 @@ class VirtioInputMsixHostMarkerTests(unittest.TestCase):
             "AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_MSIX|SKIP|reason=ioctl_not_supported|err=1",
         )
 
+    def test_emits_extra_fields_sorted(self) -> None:
+        tail = (
+            b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-msix|PASS|mode=msix|messages=3|mapping=per-queue|used_vectors=3|"
+            b"config_vector=0|queue0_vector=1|queue1_vector=2|msix_devices=2|intx_devices=0|unknown_devices=0|"
+            b"intx_spurious=0|total_interrupts=10|total_dpcs=10|config_irqs=1|queue0_irqs=2|queue1_irqs=3|"
+            b"z_key=1|a_key=2\n"
+        )
+        out = self._emit(tail)
+        self.assertEqual(
+            out,
+            "AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_MSIX|PASS|mode=msix|messages=3|mapping=per-queue|used_vectors=3|"
+            "config_vector=0|queue0_vector=1|queue1_vector=2|msix_devices=2|intx_devices=0|unknown_devices=0|"
+            "intx_spurious=0|total_interrupts=10|total_dpcs=10|config_irqs=1|queue0_irqs=2|queue1_irqs=3|"
+            "a_key=2|z_key=1",
+        )
+
     def test_no_output_when_missing(self) -> None:
         tail = b"AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS\n"
         out = self._emit(tail)
@@ -64,4 +80,3 @@ class VirtioInputMsixHostMarkerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
