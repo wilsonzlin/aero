@@ -3,7 +3,11 @@ mod tier1_common;
 use aero_jit_x86::tier2::interp::{run_function, RunExit, RuntimeEnv, T2State};
 use aero_jit_x86::tier2::{build_function_from_x86, CfgBuildConfig};
 use aero_types::Gpr;
-use tier1_common::SimpleBus;
+use tier1_common::{pick_invalid_opcode, SimpleBus};
+
+fn invalid() -> u8 {
+    pick_invalid_opcode(64)
+}
 
 #[test]
 fn tier2_does_not_silently_drop_shift_flags_used_by_jcc() {
@@ -11,24 +15,24 @@ fn tier2_does_not_silently_drop_shift_flags_used_by_jcc() {
     // shl al, 1
     // jc taken
     // mov al, 0
-    // int3
+    // <invalid>
     // taken:
     // mov al, 1
-    // int3
+    // <invalid>
     //
     // For the given input, SHL sets CF=1, so JC must be taken.
-    const CODE: &[u8] = &[
+    let code = [
         0xB0, 0x81, // mov al, 0x81
         0xC0, 0xE0, 0x01, // shl al, 1
         0x72, 0x03, // jc +3 (to mov al, 1)
         0xB0, 0x00, // mov al, 0
-        0xCC, // int3
+        invalid(), // <invalid>
         0xB0, 0x01, // mov al, 1
-        0xCC, // int3
+        invalid(), // <invalid>
     ];
 
     let mut bus = SimpleBus::new(64);
-    bus.load(0, CODE);
+    bus.load(0, &code);
     let func = build_function_from_x86(&bus, 0, 64, CfgBuildConfig::default());
 
     let env = RuntimeEnv::default();

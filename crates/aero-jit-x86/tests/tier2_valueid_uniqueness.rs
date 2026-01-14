@@ -9,7 +9,7 @@ use aero_jit_x86::tier2::profile::{ProfileData, TraceConfig};
 use aero_jit_x86::tier2::trace::TraceBuilder;
 use aero_jit_x86::tier2::wasm_codegen::Tier2WasmCodegen;
 use aero_jit_x86::tier2::{build_function_from_x86, CfgBuildConfig};
-use tier1_common::SimpleBus;
+use tier1_common::{pick_invalid_opcode, SimpleBus};
 
 use wasmparser::Validator;
 
@@ -19,21 +19,22 @@ fn tier2_traces_have_globally_unique_value_ids_across_blocks() {
     //
     //   b0: mov eax, 1; jmp b1
     //   b1: add eax, 2; jmp b2
-    //   b2: add eax, 3; int3  (=> side exit)
+    //   b2: add eax, 3; <invalid>  (=> side exit)
     //
     // The trace builder concatenates block instruction streams without renaming ValueIds, so the
     // CFG builder must ensure global uniqueness across blocks.
-    let code: &[u8] = &[
+    let invalid = pick_invalid_opcode(64);
+    let code = [
         0xb8, 0x01, 0x00, 0x00, 0x00, // mov eax, 1
         0xeb, 0x00, // jmp +0 (to 0x7)
         0x83, 0xc0, 0x02, // add eax, 2
         0xeb, 0x00, // jmp +0 (to 0xc)
         0x83, 0xc0, 0x03, // add eax, 3
-        0xcc, // int3
+        invalid, // <invalid>
     ];
 
     let mut bus = SimpleBus::new(64);
-    bus.load(0, code);
+    bus.load(0, &code);
 
     let func = build_function_from_x86(&bus, 0, 64, CfgBuildConfig::default());
     assert!(

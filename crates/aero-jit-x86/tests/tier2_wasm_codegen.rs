@@ -3,7 +3,7 @@ use aero_cpu_core::state::RFLAGS_DF;
 use aero_types::{Flag, FlagSet, Gpr, Width};
 mod tier1_common;
 
-use tier1_common::SimpleBus;
+use tier1_common::{pick_invalid_opcode, SimpleBus};
 
 use aero_jit_x86::abi;
 use aero_jit_x86::jit_ctx;
@@ -983,24 +983,25 @@ fn tier2_trace_wasm_matches_interpreter_on_shift_flags_used_by_guard() {
     // shl al, 1
     // jc taken
     // mov al, 0
-    // int3
+    // <invalid>
     // taken:
     // mov al, 1
-    // int3
+    // <invalid>
     //
     // For the given input, SHL sets CF=1, so JC must be taken.
-    const CODE: &[u8] = &[
+    let invalid = pick_invalid_opcode(64);
+    let code = [
         0xB0, 0x81, // mov al, 0x81
         0xC0, 0xE0, 0x01, // shl al, 1
         0x72, 0x03, // jc +3 (to mov al, 1)
         0xB0, 0x00, // mov al, 0
-        0xCC, // int3
+        invalid, // <invalid>
         0xB0, 0x01, // mov al, 1
-        0xCC, // int3
+        invalid, // <invalid>
     ];
 
     let mut bus = SimpleBus::new(64);
-    bus.load(0, CODE);
+    bus.load(0, &code);
     let func = build_function_from_x86(&bus, 0, 64, CfgBuildConfig::default());
 
     let entry = func.entry;
