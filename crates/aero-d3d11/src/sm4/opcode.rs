@@ -760,6 +760,30 @@ mod tests {
     }
 
     #[test]
+    fn opcode_name_includes_geometry_shader_ops() {
+        assert_eq!(opcode_name(OPCODE_EMIT), Some("emit"));
+        assert_eq!(opcode_name(OPCODE_CUT), Some("cut"));
+        assert_eq!(opcode_name(OPCODE_EMIT_STREAM), Some("emit_stream"));
+        assert_eq!(opcode_name(OPCODE_CUT_STREAM), Some("cut_stream"));
+        assert_eq!(
+            opcode_name(OPCODE_DCL_GS_INPUT_PRIMITIVE),
+            Some("dcl_gs_input_primitive")
+        );
+        assert_eq!(
+            opcode_name(OPCODE_DCL_GS_OUTPUT_TOPOLOGY),
+            Some("dcl_gs_output_topology")
+        );
+        assert_eq!(
+            opcode_name(OPCODE_DCL_GS_MAX_OUTPUT_VERTEX_COUNT),
+            Some("dcl_gs_max_output_vertex_count")
+        );
+        assert_eq!(
+            opcode_name(OPCODE_DCL_GS_INSTANCE_COUNT),
+            Some("dcl_gs_instance_count")
+        );
+    }
+
+    #[test]
     fn opcode_constants_do_not_collide_between_integer_ops_and_compares() {
         let opcodes: &[(&'static str, u32)] = &[
             ("iadd", OPCODE_IADD),
