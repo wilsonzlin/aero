@@ -4500,6 +4500,8 @@ def main() -> int:
             virtio_net_udp_marker_carry = b""
             virtio_net_udp_dns_marker_line: Optional[str] = None
             virtio_net_udp_dns_marker_carry = b""
+            virtio_net_link_flap_marker_line: Optional[str] = None
+            virtio_net_link_flap_marker_carry = b""
             virtio_net_offload_csum_marker_line: Optional[str] = None
             virtio_net_offload_csum_marker_carry = b""
             virtio_net_diag_marker_line: Optional[str] = None
@@ -4669,6 +4671,12 @@ def main() -> int:
                         chunk,
                         prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-udp-dns|",
                         carry=virtio_net_udp_dns_marker_carry,
+                    )
+                    virtio_net_link_flap_marker_line, virtio_net_link_flap_marker_carry = _update_last_marker_line_from_chunk(
+                        virtio_net_link_flap_marker_line,
+                        chunk,
+                        prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|",
+                        carry=virtio_net_link_flap_marker_carry,
                     )
                     virtio_net_offload_csum_marker_line, virtio_net_offload_csum_marker_carry = _update_last_marker_line_from_chunk(
                         virtio_net_offload_csum_marker_line,
@@ -5304,6 +5312,41 @@ def main() -> int:
                         and b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-buffer-limits|FAIL" in tail
                     ):
                         saw_virtio_snd_buffer_limits_fail = True
+
+                    # Prefer incrementally captured virtio-net markers so we don't miss PASS/FAIL when
+                    # the rolling tail buffer truncates earlier output (or when a large read chunk
+                    # exceeds the tail cap).
+                    if virtio_net_marker_line is not None:
+                        status_tok = _try_extract_marker_status(virtio_net_marker_line)
+                        if not saw_virtio_net_pass and status_tok == "PASS":
+                            saw_virtio_net_pass = True
+                            if virtio_net_marker_time is None:
+                                virtio_net_marker_time = time.monotonic()
+                        if not saw_virtio_net_fail and status_tok == "FAIL":
+                            saw_virtio_net_fail = True
+                            if virtio_net_marker_time is None:
+                                virtio_net_marker_time = time.monotonic()
+
+                    if virtio_net_udp_marker_line is not None:
+                        status_tok = _try_extract_marker_status(virtio_net_udp_marker_line)
+                        if not saw_virtio_net_udp_pass and status_tok == "PASS":
+                            saw_virtio_net_udp_pass = True
+                        if not saw_virtio_net_udp_fail and status_tok == "FAIL":
+                            saw_virtio_net_udp_fail = True
+                        if not saw_virtio_net_udp_skip and status_tok == "SKIP":
+                            saw_virtio_net_udp_skip = True
+
+                    if virtio_net_link_flap_marker_line is not None:
+                        toks = virtio_net_link_flap_marker_line.split("|")
+                        status_tok = toks[3] if len(toks) >= 4 else ""
+                        if not saw_virtio_net_link_flap_ready and status_tok == "READY":
+                            saw_virtio_net_link_flap_ready = True
+                        if not saw_virtio_net_link_flap_pass and status_tok == "PASS":
+                            saw_virtio_net_link_flap_pass = True
+                        if not saw_virtio_net_link_flap_fail and status_tok == "FAIL":
+                            saw_virtio_net_link_flap_fail = True
+                        if not saw_virtio_net_link_flap_skip and status_tok == "SKIP":
+                            saw_virtio_net_link_flap_skip = True
                     if not saw_virtio_net_pass and b"AERO_VIRTIO_SELFTEST|TEST|virtio-net|PASS" in tail:
                         saw_virtio_net_pass = True
                         if virtio_net_marker_time is None:
@@ -5325,8 +5368,8 @@ def main() -> int:
                     if (
                         not saw_virtio_net_udp_skip
                         and b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-udp|SKIP" in tail
-                    ):
-                        saw_virtio_net_udp_skip = True
+                        ):
+                            saw_virtio_net_udp_skip = True
                     if (
                         not saw_virtio_net_link_flap_ready
                         and b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|READY" in tail
@@ -6783,6 +6826,12 @@ def main() -> int:
                             prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-udp-dns|",
                             carry=virtio_net_udp_dns_marker_carry,
                         )
+                        virtio_net_link_flap_marker_line, virtio_net_link_flap_marker_carry = _update_last_marker_line_from_chunk(
+                            virtio_net_link_flap_marker_line,
+                            chunk2,
+                            prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|",
+                            carry=virtio_net_link_flap_marker_carry,
+                        )
                         virtio_net_offload_csum_marker_line, virtio_net_offload_csum_marker_carry = _update_last_marker_line_from_chunk(
                             virtio_net_offload_csum_marker_line,
                             chunk2,
@@ -7180,6 +7229,34 @@ def main() -> int:
                             and b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-buffer-limits|FAIL" in tail
                         ):
                             saw_virtio_snd_buffer_limits_fail = True
+
+                        if virtio_net_marker_line is not None:
+                            status_tok = _try_extract_marker_status(virtio_net_marker_line)
+                            if not saw_virtio_net_pass and status_tok == "PASS":
+                                saw_virtio_net_pass = True
+                            if not saw_virtio_net_fail and status_tok == "FAIL":
+                                saw_virtio_net_fail = True
+
+                        if virtio_net_udp_marker_line is not None:
+                            status_tok = _try_extract_marker_status(virtio_net_udp_marker_line)
+                            if not saw_virtio_net_udp_pass and status_tok == "PASS":
+                                saw_virtio_net_udp_pass = True
+                            if not saw_virtio_net_udp_fail and status_tok == "FAIL":
+                                saw_virtio_net_udp_fail = True
+                            if not saw_virtio_net_udp_skip and status_tok == "SKIP":
+                                saw_virtio_net_udp_skip = True
+
+                        if virtio_net_link_flap_marker_line is not None:
+                            toks = virtio_net_link_flap_marker_line.split("|")
+                            status_tok = toks[3] if len(toks) >= 4 else ""
+                            if not saw_virtio_net_link_flap_ready and status_tok == "READY":
+                                saw_virtio_net_link_flap_ready = True
+                            if not saw_virtio_net_link_flap_pass and status_tok == "PASS":
+                                saw_virtio_net_link_flap_pass = True
+                            if not saw_virtio_net_link_flap_fail and status_tok == "FAIL":
+                                saw_virtio_net_link_flap_fail = True
+                            if not saw_virtio_net_link_flap_skip and status_tok == "SKIP":
+                                saw_virtio_net_link_flap_skip = True
                         if not saw_virtio_net_pass and b"AERO_VIRTIO_SELFTEST|TEST|virtio-net|PASS" in tail:
                             saw_virtio_net_pass = True
                         if not saw_virtio_net_fail and b"AERO_VIRTIO_SELFTEST|TEST|virtio-net|FAIL" in tail:
@@ -8152,6 +8229,14 @@ def main() -> int:
             if raw2.startswith(b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-udp-dns|"):
                 try:
                     virtio_net_udp_dns_marker_line = raw2.decode("utf-8", errors="replace").strip()
+                except Exception:
+                    pass
+        if virtio_net_link_flap_marker_carry:
+            raw = virtio_net_link_flap_marker_carry.rstrip(b"\r")
+            raw2 = raw.lstrip()
+            if raw2.startswith(b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|"):
+                try:
+                    virtio_net_link_flap_marker_line = raw2.decode("utf-8", errors="replace").strip()
                 except Exception:
                     pass
         if virtio_net_offload_csum_marker_carry:
