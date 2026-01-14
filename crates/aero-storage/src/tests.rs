@@ -4,40 +4,52 @@ use crate::{
     SECTOR_SIZE,
 };
 
-struct ReadCountingDisk<D> {
+#[derive(Debug)]
+struct CountingDisk<D> {
     inner: D,
-    read_at_calls: u64,
+    reads: u64,
+    writes: u64,
 }
 
-impl<D> ReadCountingDisk<D> {
+impl<D> CountingDisk<D> {
     fn new(inner: D) -> Self {
         Self {
             inner,
-            read_at_calls: 0,
+            reads: 0,
+            writes: 0,
         }
     }
 
-    fn read_at_calls(&self) -> u64 {
-        self.read_at_calls
+    fn reads(&self) -> u64 {
+        self.reads
+    }
+
+    fn writes(&self) -> u64 {
+        self.writes
     }
 }
 
-impl<D: VirtualDisk> VirtualDisk for ReadCountingDisk<D> {
+impl<D: VirtualDisk> VirtualDisk for CountingDisk<D> {
     fn capacity_bytes(&self) -> u64 {
         self.inner.capacity_bytes()
     }
 
     fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> crate::Result<()> {
-        self.read_at_calls += 1;
+        self.reads += 1;
         self.inner.read_at(offset, buf)
     }
 
     fn write_at(&mut self, offset: u64, buf: &[u8]) -> crate::Result<()> {
+        self.writes += 1;
         self.inner.write_at(offset, buf)
     }
 
     fn flush(&mut self) -> crate::Result<()> {
         self.inner.flush()
+    }
+
+    fn discard_range(&mut self, offset: u64, len: u64) -> crate::Result<()> {
+        self.inner.discard_range(offset, len)
     }
 }
 
@@ -391,6 +403,42 @@ fn block_cache_eviction_writeback_failure_keeps_dirty_block_resident() {
 }
 
 #[test]
+fn block_cache_full_block_write_skips_underlying_read() {
+    let raw = RawDisk::create(MemBackend::new(), 64).unwrap();
+    let counted = CountingDisk::new(raw);
+    let mut cached = BlockCachedDisk::new(counted, 16, 2).unwrap();
+
+    let data = [0xABu8; 16];
+    cached.write_at(0, &data).unwrap();
+
+    // A full-block write to a cold cache should not need to read/merge existing data.
+    assert_eq!(cached.inner().reads(), 0);
+    assert_eq!(cached.inner().writes(), 0);
+
+    // Reads should come from the cache, not the underlying disk.
+    let mut buf = [0u8; 16];
+    cached.read_at(0, &mut buf).unwrap();
+    assert_eq!(buf, data);
+    assert_eq!(cached.inner().reads(), 0);
+
+    cached.flush().unwrap();
+    assert_eq!(cached.inner().reads(), 0);
+    assert_eq!(cached.inner().writes(), 1);
+}
+
+#[test]
+fn block_cache_partial_write_reads_underlying_for_merge() {
+    let raw = RawDisk::create(MemBackend::new(), 64).unwrap();
+    let counted = CountingDisk::new(raw);
+    let mut cached = BlockCachedDisk::new(counted, 16, 2).unwrap();
+
+    cached.write_at(1, &[1, 2, 3]).unwrap();
+
+    // A partial write needs the existing block contents to merge.
+    assert_eq!(cached.inner().reads(), 1);
+}
+
+#[test]
 fn block_cache_reports_allocation_failure_as_quota_exceeded() {
     // Use an absurd block size that should fail `try_reserve_exact` deterministically (capacity
     // overflow) without actually attempting to allocate.
@@ -406,13 +454,13 @@ fn block_cache_reports_allocation_failure_as_quota_exceeded() {
 fn block_cache_full_block_write_skips_inner_read() {
     let block_size = 16usize;
     let raw = RawDisk::create(MemBackend::new(), 64).unwrap();
-    let inner = ReadCountingDisk::new(raw);
-    let mut cached = BlockCachedDisk::new(inner, block_size, 2).unwrap();
+    let counted = CountingDisk::new(raw);
+    let mut cached = BlockCachedDisk::new(counted, block_size, 2).unwrap();
 
-    let before = cached.inner().read_at_calls();
+    let before = cached.inner().reads();
     let buf = [0xABu8; 16];
     cached.write_at(16, &buf).unwrap();
-    assert_eq!(cached.inner().read_at_calls(), before);
+    assert_eq!(cached.inner().reads(), before);
 }
 
 #[test]
