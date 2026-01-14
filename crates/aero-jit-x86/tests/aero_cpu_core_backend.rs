@@ -788,6 +788,175 @@ fn wasmtime_backend_cross_page_inline_store_bumps_both_pages() {
 
 #[test]
 #[cfg(feature = "tier1-inline-tlb")]
+fn wasmtime_backend_cross_page_inline_store_rolls_back_code_version_bumps_on_mmio_exit() {
+    fn read_u32_le(backend: &WasmtimeBackend<CpuState>, addr: u64) -> u32 {
+        let bytes = [
+            backend.read_u8(addr),
+            backend.read_u8(addr + 1),
+            backend.read_u8(addr + 2),
+            backend.read_u8(addr + 3),
+        ];
+        u32::from_le_bytes(bytes)
+    }
+
+    let entry = 0x1000u64;
+    let mmio_addr = (WasmtimeBackend::<CpuState>::DEFAULT_CPU_PTR as u64).saturating_add(0x1000);
+
+    // Cross-page store at 0xFFF (spans pages 0 and 1), then trigger an MMIO load to force the
+    // backend to roll back.
+    let addr_u64 = (aero_jit_x86::PAGE_SIZE - 1) as u64;
+    let value_u64 = 0x1122_3344_5566_7788u64;
+
+    let mut builder = IrBuilder::new(entry);
+    let addr = builder.const_int(Width::W64, addr_u64);
+    let value = builder.const_int(Width::W64, value_u64);
+    builder.store(Width::W64, addr, value);
+    let mmio_addr = builder.const_int(Width::W64, mmio_addr);
+    let loaded = builder.load(Width::W8, mmio_addr);
+    builder.write_reg(
+        GuestReg::Gpr {
+            reg: Gpr::Rax,
+            width: Width::W8,
+            high8: false,
+        },
+        loaded,
+    );
+    let block = builder.finish(IrTerminator::Jump { target: 0x2000 });
+
+    let wasm = Tier1WasmCodegen::new().compile_block_with_options(
+        &block,
+        Tier1WasmOptions {
+            inline_tlb: true,
+            inline_tlb_cross_page_fastpath: true,
+            ..Default::default()
+        },
+    );
+
+    let mut backend: WasmtimeBackend<CpuState> = WasmtimeBackend::new();
+    let idx = backend.add_compiled_block(&wasm);
+
+    let cpu_ptr = WasmtimeBackend::<CpuState>::DEFAULT_CPU_PTR as u64;
+    let table_ptr = read_u32_le(
+        &backend,
+        cpu_ptr + jit_ctx::CODE_VERSION_TABLE_PTR_OFFSET as u64,
+    ) as u64;
+    let table_len = read_u32_le(
+        &backend,
+        cpu_ptr + jit_ctx::CODE_VERSION_TABLE_LEN_OFFSET as u64,
+    ) as u64;
+    assert!(table_len >= 2);
+    let entry0_off = table_ptr + 0 * 4;
+    let entry1_off = table_ptr + 1 * 4;
+    assert_eq!(read_u32_le(&backend, entry0_off), 0);
+    assert_eq!(read_u32_le(&backend, entry1_off), 0);
+
+    // Memory starts zeroed.
+    assert_eq!(backend.read_u8(addr_u64), 0);
+    assert_eq!(backend.read_u8(addr_u64 + 1), 0);
+
+    let mut cpu = CpuState {
+        rip: entry,
+        ..Default::default()
+    };
+    let exit = backend.execute(idx, &mut cpu);
+    assert!(exit.exit_to_interpreter);
+    assert_eq!(exit.next_rip, entry);
+    assert!(!exit.committed);
+
+    // Both the cross-page store and the page-version bumps must be rolled back.
+    for i in 0..8u64 {
+        assert_eq!(backend.read_u8(addr_u64 + i), 0);
+    }
+    assert_eq!(read_u32_le(&backend, entry0_off), 0);
+    assert_eq!(read_u32_le(&backend, entry1_off), 0);
+}
+
+#[test]
+#[cfg(feature = "tier1-inline-tlb")]
+fn wasmtime_backend_cross_page_slow_path_store_rolls_back_code_version_bumps_on_mmio_exit() {
+    fn read_u32_le(backend: &WasmtimeBackend<CpuState>, addr: u64) -> u32 {
+        let bytes = [
+            backend.read_u8(addr),
+            backend.read_u8(addr + 1),
+            backend.read_u8(addr + 2),
+            backend.read_u8(addr + 3),
+        ];
+        u32::from_le_bytes(bytes)
+    }
+
+    let entry = 0x1000u64;
+    let mmio_addr = (WasmtimeBackend::<CpuState>::DEFAULT_CPU_PTR as u64).saturating_add(0x1000);
+
+    // Cross-page slow-path store at 0xFFF (spans pages 0 and 1), then trigger an MMIO load to
+    // force rollback.
+    let addr_u64 = (aero_jit_x86::PAGE_SIZE - 1) as u64;
+    let value_u64 = 0x1122_3344_5566_7788u64;
+
+    let mut builder = IrBuilder::new(entry);
+    let addr = builder.const_int(Width::W64, addr_u64);
+    let value = builder.const_int(Width::W64, value_u64);
+    builder.store(Width::W64, addr, value);
+    let mmio_addr = builder.const_int(Width::W64, mmio_addr);
+    let loaded = builder.load(Width::W8, mmio_addr);
+    builder.write_reg(
+        GuestReg::Gpr {
+            reg: Gpr::Rax,
+            width: Width::W8,
+            high8: false,
+        },
+        loaded,
+    );
+    let block = builder.finish(IrTerminator::Jump { target: 0x2000 });
+
+    let wasm = Tier1WasmCodegen::new().compile_block_with_options(
+        &block,
+        Tier1WasmOptions {
+            inline_tlb: true,
+            inline_tlb_stores: false,
+            ..Default::default()
+        },
+    );
+
+    let mut backend: WasmtimeBackend<CpuState> = WasmtimeBackend::new();
+    let idx = backend.add_compiled_block(&wasm);
+
+    let cpu_ptr = WasmtimeBackend::<CpuState>::DEFAULT_CPU_PTR as u64;
+    let table_ptr = read_u32_le(
+        &backend,
+        cpu_ptr + jit_ctx::CODE_VERSION_TABLE_PTR_OFFSET as u64,
+    ) as u64;
+    let table_len = read_u32_le(
+        &backend,
+        cpu_ptr + jit_ctx::CODE_VERSION_TABLE_LEN_OFFSET as u64,
+    ) as u64;
+    assert!(table_len >= 2);
+    let entry0_off = table_ptr + 0 * 4;
+    let entry1_off = table_ptr + 1 * 4;
+    assert_eq!(read_u32_le(&backend, entry0_off), 0);
+    assert_eq!(read_u32_le(&backend, entry1_off), 0);
+
+    // Memory starts zeroed.
+    assert_eq!(backend.read_u8(addr_u64), 0);
+
+    let mut cpu = CpuState {
+        rip: entry,
+        ..Default::default()
+    };
+    let exit = backend.execute(idx, &mut cpu);
+    assert!(exit.exit_to_interpreter);
+    assert_eq!(exit.next_rip, entry);
+    assert!(!exit.committed);
+
+    // Both pages and both version bumps must be rolled back.
+    for i in 0..8u64 {
+        assert_eq!(backend.read_u8(addr_u64 + i), 0);
+    }
+    assert_eq!(read_u32_le(&backend, entry0_off), 0);
+    assert_eq!(read_u32_le(&backend, entry1_off), 0);
+}
+
+#[test]
+#[cfg(feature = "tier1-inline-tlb")]
 fn wasmtime_backend_inline_tlb_mmio_exit_sets_next_rip() {
     let entry = 0x1000u64;
 
