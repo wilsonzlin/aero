@@ -32,6 +32,8 @@ fn vga_pci_stub_does_not_collide_with_canonical_aerogpu_bdf() {
     // Canonical AeroGPU BDF.
     let aerogpu_bdf = PciBdf::new(0, 0x07, 0);
     let aerogpu_vendor = bus.read_config(aerogpu_bdf, 0x00, 2) as u16;
+    // `00:07.0` is a *reserved* BDF: if any device is present there, it must be the canonical
+    // AeroGPU identity (`A3A0:0001`).
     if aerogpu_vendor != 0xFFFF {
         let aerogpu_device = bus.read_config(aerogpu_bdf, 0x02, 2) as u16;
         assert_eq!(aerogpu_vendor, 0xA3A0);
@@ -40,26 +42,33 @@ fn vga_pci_stub_does_not_collide_with_canonical_aerogpu_bdf() {
 
     // Transitional VGA/VBE PCI stub used by `aero_gpu_vga` for LFB routing.
     let vga_bdf = PciBdf::new(0, 0x0c, 0);
-    // Guardrail: this slot is used by the canonical machine today. Ensure we don't accidentally
-    // assign a different canonical paravirtual device profile to the same BDF.
-    for profile in CANONICAL_IO_DEVICES {
-        assert!(
-            profile.bdf != vga_bdf,
-            "VGA PCI stub BDF {vga_bdf:?} collides with canonical device profile `{}` at {:?}",
-            profile.name,
-            profile.bdf
-        );
-    }
-
     let vga_vendor = bus.read_config(vga_bdf, 0x00, 2) as u16;
-    if vga_vendor == 0xFFFF {
-        panic!(
-            "expected VGA PCI stub at {vga_bdf:?} when enable_vga=true and enable_pc_platform=true"
+    if vga_vendor != 0xFFFF {
+        // Phase 1: the canonical machine may expose a transitional VGA/VBE PCI stub at `00:0c.0`.
+        //
+        // Guardrail: while this stub exists, ensure we don't accidentally assign a different
+        // canonical paravirtual device profile to the same BDF.
+        for profile in CANONICAL_IO_DEVICES {
+            assert!(
+                profile.bdf != vga_bdf,
+                "VGA PCI stub BDF {vga_bdf:?} collides with canonical device profile `{}` at {:?}",
+                profile.name,
+                profile.bdf
+            );
+        }
+
+        let vga_device = bus.read_config(vga_bdf, 0x02, 2) as u16;
+        assert_eq!(vga_vendor, 0x1234);
+        assert_eq!(vga_device, 0x1111);
+    } else {
+        // Phase 2: the transitional VGA stub may be removed once AeroGPU owns the legacy VGA/VBE
+        // path. When the stub is absent, the canonical AeroGPU identity should be present so the
+        // Windows driver binding contract is still satisfied.
+        assert_ne!(
+            aerogpu_vendor, 0xFFFF,
+            "expected AeroGPU at {aerogpu_bdf:?} when VGA PCI stub at {vga_bdf:?} is absent"
         );
     }
-    let vga_device = bus.read_config(vga_bdf, 0x02, 2) as u16;
-    assert_eq!(vga_vendor, 0x1234);
-    assert_eq!(vga_device, 0x1111);
 }
 
 #[test]

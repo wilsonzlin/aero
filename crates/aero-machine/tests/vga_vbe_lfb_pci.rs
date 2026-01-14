@@ -1,4 +1,3 @@
-use aero_gpu_vga::{DisplayOutput, SVGA_LFB_BASE};
 use aero_machine::{Machine, MachineConfig};
 
 #[test]
@@ -9,7 +8,6 @@ fn vga_vbe_lfb_is_reachable_via_pci_mmio_router() {
         ..Default::default()
     };
     let mut m = Machine::new(cfg).unwrap();
-    let vga = m.vga().unwrap();
 
     // Match the programming sequence used by `aero-gpu-vga`'s
     // `vbe_linear_framebuffer_write_shows_up_in_output` test.
@@ -22,15 +20,16 @@ fn vga_vbe_lfb_is_reachable_via_pci_mmio_router() {
     m.io_write(0x01CE, 2, 0x0004);
     m.io_write(0x01CF, 2, 0x0041);
 
-    let base = u64::from(SVGA_LFB_BASE);
-    // Write a red pixel at (0,0) in BGRX format via *machine memory*.
-    m.write_physical_u8(base, 0x00); // B
-    m.write_physical_u8(base + 1, 0x00); // G
-    m.write_physical_u8(base + 2, 0xFF); // R
-    m.write_physical_u8(base + 3, 0x00); // X
+    // The VBE LFB base may either be:
+    // - the legacy VGA stub BAR (Phase 1), or
+    // - an offset into AeroGPU VRAM BAR1 (Phase 2, legacy VGA/VBE integrated into AeroGPU).
+    //
+    // Always use the firmware-reported VBE PhysBasePtr so this test stays robust across both.
+    let base = m.vbe_lfb_base();
+    // Write a red pixel at (0,0) in packed 32bpp BGRX via *machine memory*.
+    m.write_physical_u32(base, 0x00FF_0000);
 
-    let mut vga = vga.borrow_mut();
-    vga.present();
-    assert_eq!(vga.get_resolution(), (64, 64));
-    assert_eq!(vga.get_framebuffer()[0], 0xFF00_00FF);
+    m.display_present();
+    assert_eq!(m.display_resolution(), (64, 64));
+    assert_eq!(m.display_framebuffer()[0], 0xFF00_00FF);
 }
