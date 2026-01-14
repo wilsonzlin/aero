@@ -7,8 +7,8 @@ license = "MIT OR Apache-2.0"
 [dependencies]
 aero-cpu-core = { path = "../aero-cpu-core" }
 aero-devices = { path = "../devices" }
-aero-devices-gpu = { path = "../aero-devices-gpu" }
 aero-devices-input = { path = "../aero-devices-input" }
+aero-devices-gpu = { path = "../aero-devices-gpu" }
 aero-devices-storage = { path = "../aero-devices-storage" }
 aero-devices-nvme = { path = "../aero-devices-nvme" }
 aero-io-snapshot = { path = "../aero-io-snapshot" }
