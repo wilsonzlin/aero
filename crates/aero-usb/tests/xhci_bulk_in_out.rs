@@ -236,6 +236,42 @@ fn xhci_bulk_out_nak_leaves_trb_pending_until_ack() {
 }
 
 #[test]
+fn xhci_bulk_out_success_without_ioc_advances_ring_without_event() {
+    let mut mem = TestMemory::new(0x10000);
+    let mut alloc = Alloc::new(0x2000);
+
+    let ring_base = alloc.alloc((TRB_LEN * 2) as u32, 0x10) as u64;
+    let normal_trb_addr = ring_base;
+    let link_trb_addr = ring_base + TRB_LEN;
+
+    let payload = [0x11u8, 0x22, 0x33, 0x44];
+    let buf = alloc.alloc(payload.len() as u32, 0x10) as u64;
+    mem.write(buf as u32, &payload);
+
+    write_trb(
+        &mut mem,
+        normal_trb_addr,
+        make_normal_trb(buf, payload.len() as u32, true, false, false),
+    );
+    write_trb(&mut mem, link_trb_addr, make_link_trb(ring_base, true, true));
+
+    let in_queue = Rc::new(RefCell::new(VecDeque::new()));
+    let out_received = Rc::new(RefCell::new(Vec::new()));
+    let dev = BulkEndpointDevice::new(in_queue, out_received.clone());
+    let mut xhci = XhciTransferExecutor::new(Box::new(dev));
+
+    xhci.add_endpoint(0x01, ring_base);
+    xhci.tick_1ms(&mut mem);
+
+    assert_eq!(out_received.borrow().as_slice(), &[payload.to_vec()]);
+    assert!(xhci.take_events().is_empty(), "IOC=0 should suppress event on success");
+    assert_eq!(
+        xhci.endpoint_state(0x01).unwrap().ring.dequeue_ptr,
+        link_trb_addr
+    );
+}
+
+#[test]
 fn xhci_bulk_in_normal_trb_writes_guest_memory() {
     let mut mem = TestMemory::new(0x10000);
     let mut alloc = Alloc::new(0x2000);
@@ -266,6 +302,45 @@ fn xhci_bulk_in_normal_trb_writes_guest_memory() {
 
     let events = xhci.take_events();
     assert_single_success_event(&events, 0x81, normal_trb_addr, 0);
+}
+
+#[test]
+fn xhci_bulk_in_success_without_ioc_advances_ring_without_event() {
+    let mut mem = TestMemory::new(0x10000);
+    let mut alloc = Alloc::new(0x2000);
+
+    let ring_base = alloc.alloc((TRB_LEN * 2) as u32, 0x10) as u64;
+    let normal_trb_addr = ring_base;
+    let link_trb_addr = ring_base + TRB_LEN;
+
+    let buf = alloc.alloc(4, 0x10) as u64;
+    let sentinel = [0xa5u8; 4];
+    mem.write(buf as u32, &sentinel);
+
+    write_trb(&mut mem, normal_trb_addr, make_normal_trb(buf, 4, true, false, false));
+    write_trb(&mut mem, link_trb_addr, make_link_trb(ring_base, true, true));
+
+    let in_queue = Rc::new(RefCell::new(VecDeque::new()));
+    in_queue.borrow_mut().push_back(vec![1, 2, 3, 4]);
+    let out_received = Rc::new(RefCell::new(Vec::new()));
+    let dev = BulkEndpointDevice::new(in_queue, out_received);
+    let mut xhci = XhciTransferExecutor::new(Box::new(dev));
+
+    xhci.add_endpoint(0x81, ring_base);
+    xhci.tick_1ms(&mut mem);
+
+    let mut got = [0u8; 4];
+    mem.read(buf as u32, &mut got);
+    assert_eq!(got, [1, 2, 3, 4]);
+
+    assert!(
+        xhci.take_events().is_empty(),
+        "IOC=0 should suppress event on success"
+    );
+    assert_eq!(
+        xhci.endpoint_state(0x81).unwrap().ring.dequeue_ptr,
+        link_trb_addr
+    );
 }
 
 #[test]
