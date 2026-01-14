@@ -125,6 +125,7 @@ The key MMIO responsibilities are:
    - Scanout0 configuration (width/height/format/pitch/framebuffer GPA).
    - Optional vblank timing registers + vblank IRQ (required for Win7 DWM pacing when `AEROGPU_FEATURE_VBLANK` is set; see `vblank.md`).
    - Cursor configuration is reserved and feature-gated.
+   - Format semantics: `*X8*` formats are fully opaque (alpha must be treated as `0xFF` when converting to RGBA), and `*_SRGB` variants are layout-identical to UNORM but differ in interpretation (avoid double-applying gamma). See `aerogpu_pci.h` and `docs/16-gpu-command-abi.md` §2.5.1.
 
 See `aerogpu_pci.h` for exact offsets and bit definitions.
 
