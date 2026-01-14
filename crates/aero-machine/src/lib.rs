@@ -8109,8 +8109,64 @@ impl Machine {
 
             // Keep the AeroGPU legacy window coherent with BIOS VBE state so the A0000 banked window
             // behaves like the VBE window advertised by `VbeDevice::write_mode_info`.
+            //
+            // Additionally, mirror VBE palette updates (INT 10h AX=4F09 "Set Palette Data") into the
+            // AeroGPU-emulated VGA DAC ports so software that uses BIOS palette services observes
+            // coherent state via both paths.
             if let Some(aerogpu) = &self.aerogpu {
+                let bl = (bx_before & 0x00FF) as u8;
+
+                // Palette updates: INT 10h AX=4F09 "Set Palette Data".
+                //
+                // The HLE BIOS stores palette entries internally as B,G,R,0 but does not perform
+                // port I/O. For 8bpp VBE modes, mirror the updated palette into the device's DAC.
+                //
+                // Note: The AeroGPU DAC (like the VGA model) stores 6-bit components. When the BIOS
+                // is configured for an 8-bit DAC, downscale (>>2) so palette reads via ports return
+                // the expected 6-bit values.
+                let sync_range = if ax_before == 0x4F09
+                    && ax_after == 0x004F
+                    && (bl & 0x7F) == 0
+                    && self
+                        .bios
+                        .video
+                        .vbe
+                        .current_mode
+                        .and_then(|mode| self.bios.video.vbe.find_mode(mode))
+                        .is_some_and(|mode| mode.bpp == 8)
+                {
+                    let start = (dx_before as usize).min(255);
+                    let count = (cx_before as usize).min(256 - start);
+                    (count != 0).then_some((start, count))
+                } else {
+                    None
+                };
+
                 let mut dev = aerogpu.borrow_mut();
+                if let Some((start, count)) = sync_range {
+                    // Set DAC write index to `start`.
+                    dev.vga_port_write_u8(0x3C8, start as u8);
+
+                    let bits = self.bios.video.vbe.dac_width_bits;
+                    for idx in start..start + count {
+                        let base = idx * 4;
+                        let b = self.bios.video.vbe.palette[base];
+                        let g = self.bios.video.vbe.palette[base + 1];
+                        let r = self.bios.video.vbe.palette[base + 2];
+
+                        let (r, g, b) = if bits >= 8 {
+                            (r >> 2, g >> 2, b >> 2)
+                        } else {
+                            (r & 0x3F, g & 0x3F, b & 0x3F)
+                        };
+
+                        // VGA DAC write order is R, G, B.
+                        dev.vga_port_write_u8(0x3C9, r);
+                        dev.vga_port_write_u8(0x3C9, g);
+                        dev.vga_port_write_u8(0x3C9, b);
+                    }
+                }
+
                 dev.vbe_mode_active = self.bios.video.vbe.current_mode.is_some();
                 dev.vbe_bank = self.bios.video.vbe.bank;
             }
