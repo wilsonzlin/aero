@@ -341,4 +341,23 @@ mod tests {
             "{err:?}"
         );
     }
+
+    #[test]
+    fn adaptive_allocates_uncommon_semantics_to_lowest_free_locations() {
+        // Depth and Sample are valid D3D9 declaration usages, but they are uncommon and not part of
+        // the StandardLocationMap. Ensure AdaptiveLocationMap allocates them deterministically to
+        // the lowest free locations after reserving the standard assignments.
+        let semantics = vec![
+            (DeclUsage::Position, 0), // pinned -> 0
+            (DeclUsage::TexCoord, 0), // pinned -> 8
+            (DeclUsage::Depth, 0),    // allocated -> 1
+            (DeclUsage::Sample, 0),   // allocated -> 2
+        ];
+
+        let adaptive = AdaptiveLocationMap::new(semantics).unwrap();
+        assert_eq!(adaptive.location_for(DeclUsage::Position, 0).unwrap(), 0);
+        assert_eq!(adaptive.location_for(DeclUsage::TexCoord, 0).unwrap(), 8);
+        assert_eq!(adaptive.location_for(DeclUsage::Depth, 0).unwrap(), 1);
+        assert_eq!(adaptive.location_for(DeclUsage::Sample, 0).unwrap(), 2);
+    }
 }
