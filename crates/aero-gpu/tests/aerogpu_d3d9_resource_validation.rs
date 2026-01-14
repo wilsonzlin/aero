@@ -44,6 +44,16 @@ fn assemble_vs_passthrough_pos() -> Vec<u8> {
     to_bytes(&words)
 }
 
+fn assemble_ps3_dcl_cube_s0() -> Vec<u8> {
+    // ps_3_0 with a `dcl_cube s0` declaration. The executor/translator currently only supports 2D
+    // sampler textures, so translation should fail deterministically.
+    let mut words = vec![0xFFFF_0300];
+    let decl_token = 3u32 << 27; // texture type = cube
+    words.extend(enc_inst(0x001F, &[decl_token, enc_dst(10, 0, 0xF)]));
+    words.push(0x0000_FFFF);
+    to_bytes(&words)
+}
+
 fn vertex_decl_position0_stream0() -> Vec<u8> {
     // D3DVERTEXELEMENT9 array (little-endian).
     // Element 0: POSITION0 float4 at stream 0 offset 0.
@@ -199,6 +209,35 @@ fn d3d9_create_shader_dxbc_rejects_stage_mismatch() {
             assert_eq!(shader_handle, 1);
             assert_eq!(expected, D3d9ShaderStage::Pixel);
             assert_eq!(actual, D3d9ShaderStage::Vertex);
+        }
+        Err(other) => panic!("unexpected error: {other:?}"),
+    }
+}
+
+#[test]
+fn d3d9_create_shader_dxbc_rejects_cube_sampler_declaration() {
+    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
+        Ok(exec) => exec,
+        Err(AerogpuD3d9Error::AdapterNotFound) => {
+            common::skip_or_panic(module_path!(), "wgpu adapter not found");
+            return;
+        }
+        Err(err) => panic!("failed to create executor: {err}"),
+    };
+
+    let ps_bytes = assemble_ps3_dcl_cube_s0();
+    let mut writer = AerogpuCmdWriter::new();
+    writer.create_shader_dxbc(1, AerogpuShaderStage::Pixel, &ps_bytes);
+    let stream = writer.finish();
+
+    match exec.execute_cmd_stream(&stream) {
+        Ok(_) => panic!("expected CREATE_SHADER_DXBC with dcl_cube to be rejected"),
+        Err(AerogpuD3d9Error::ShaderTranslation(msg)) => {
+            assert!(
+                msg.contains("unsupported sampler texture type"),
+                "unexpected error message: {msg}"
+            );
+            assert!(msg.contains("TextureCube"), "unexpected error message: {msg}");
         }
         Err(other) => panic!("unexpected error: {other:?}"),
     }
