@@ -902,6 +902,7 @@ fn controller_snapshot_roundtrip_is_deterministic() {
     xhci.set_dcbaap(0x8000);
     xhci.config = 0x210;
     xhci.mfindex = 0x1234;
+    xhci.dnctrl = 0x0a0b_0c0d;
 
     // Configure interrupter 0 (this bumps generation counters which are part of the snapshot).
     xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTSZ, 4, 1);
@@ -982,6 +983,7 @@ fn controller_snapshot_roundtrip_is_deterministic() {
     assert_eq!(restored.dcbaap, xhci.dcbaap);
     assert_eq!(restored.config, xhci.config);
     assert_eq!(restored.mfindex, xhci.mfindex);
+    assert_eq!(restored.dnctrl, xhci.dnctrl);
     assert_eq!(restored.command_ring, xhci.command_ring);
     assert_eq!(restored.cmd_kick, xhci.cmd_kick);
     assert_eq!(restored.active_endpoints, xhci.active_endpoints);

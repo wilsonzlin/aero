@@ -41,6 +41,7 @@ const TAG_COMMAND_RING: u16 = 21;
 const TAG_ACTIVE_ENDPOINTS: u16 = 22;
 const TAG_EP0_CONTROL_TD: u16 = 23;
 const TAG_CMD_KICK: u16 = 24;
+const TAG_DNCTRL: u16 = 25;
 
 const SLOT_CONTEXT_DWORDS: usize = 8;
 const ENDPOINT_CONTEXT_DWORDS: usize = 8;
@@ -326,7 +327,7 @@ fn decode_pending_events(buf: &[u8]) -> SnapshotResult<VecDeque<Trb>> {
 
 impl IoSnapshot for XhciController {
     const DEVICE_ID: [u8; 4] = *b"XHCI";
-    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(0, 5);
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(0, 6);
 
     fn save_state(&self) -> Vec<u8> {
         let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
@@ -341,6 +342,7 @@ impl IoSnapshot for XhciController {
         w.field_u64(TAG_DCBAAP, self.dcbaap);
         w.field_u32(TAG_CONFIG, self.config);
         w.field_u32(TAG_MFINDEX, self.mfindex);
+        w.field_u32(TAG_DNCTRL, self.dnctrl);
 
         // Interrupter 0 registers + internal generation counters.
         w.field_u32(TAG_INTR0_IMAN, self.interrupter0.iman_raw());
@@ -471,6 +473,7 @@ impl IoSnapshot for XhciController {
         let max_slots_en = (self.config & 0xff) as u8;
         self.config = (self.config & !0xff) | u32::from(max_slots_en.min(regs::MAX_SLOTS));
         self.mfindex = r.u32(TAG_MFINDEX)?.unwrap_or(0) & 0x3fff;
+        self.dnctrl = r.u32(TAG_DNCTRL)?.unwrap_or(0);
 
         if let Some(v) = r.u32(TAG_INTR0_IMAN)? {
             self.interrupter0.restore_iman(v);
