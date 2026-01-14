@@ -53,6 +53,49 @@ describe("runtime/machine_snapshot_disks", () => {
     warn.mockRestore();
   });
 
+  it("uses attach_install_media_iso_opfs_existing when available (back-compat)", async () => {
+    const events: string[] = [];
+    const restore_snapshot_from_opfs = vi.fn(async (_path: string) => {
+      events.push("restore");
+    });
+
+    const take_restored_disk_overlays = vi.fn(() => {
+      events.push("take");
+      return [
+        { disk_id: 1, base_image: "aero/disks/win7.base", overlay_image: "aero/disks/win7.overlay" },
+        { disk_id: 2, base_image: "aero/isos/win7.iso", overlay_image: "" },
+      ];
+    });
+
+    const set_primary_hdd_opfs_cow = vi.fn(async (_base: string, _overlay: string) => {
+      events.push("primary");
+    });
+    const attach_install_media_iso_opfs_existing = vi.fn(async (_path: string) => {
+      events.push("iso");
+    });
+
+    const machine = {
+      restore_snapshot_from_opfs,
+      take_restored_disk_overlays,
+      set_primary_hdd_opfs_cow,
+      attach_install_media_iso_opfs_existing,
+    } as unknown as InstanceType<WasmApi["Machine"]>;
+
+    const api = {
+      Machine: {
+        disk_id_primary_hdd: () => 1,
+        disk_id_install_media: () => 2,
+      },
+    } as unknown as WasmApi;
+
+    await restoreMachineSnapshotFromOpfsAndReattachDisks({ api, machine, path: "state/test.snap", logPrefix: "test" });
+
+    expect(restore_snapshot_from_opfs).toHaveBeenCalledWith("state/test.snap");
+    expect(set_primary_hdd_opfs_cow).toHaveBeenCalledWith("aero/disks/win7.base", "aero/disks/win7.overlay");
+    expect(attach_install_media_iso_opfs_existing).toHaveBeenCalledWith("aero/isos/win7.iso");
+    expect(events).toEqual(["restore", "take", "primary", "iso"]);
+  });
+
   it("reattaches disk overlay refs after Machine.restore_snapshot(bytes)", async () => {
     const events: string[] = [];
     const bytes = new Uint8Array([0x01, 0x02]);
