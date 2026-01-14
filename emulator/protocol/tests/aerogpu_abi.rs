@@ -73,8 +73,8 @@ use aero_protocol::aerogpu::aerogpu_wddm_alloc::{
     AEROGPU_WDDM_ALLOC_PRIV_DESC_MAX_WIDTH, AEROGPU_WDDM_ALLOC_PRIV_FLAG_CPU_VISIBLE,
     AEROGPU_WDDM_ALLOC_PRIV_FLAG_IS_SHARED, AEROGPU_WDDM_ALLOC_PRIV_FLAG_NONE,
     AEROGPU_WDDM_ALLOC_PRIV_FLAG_SHARED, AEROGPU_WDDM_ALLOC_PRIV_FLAG_STAGING,
-    AEROGPU_WDDM_ALLOC_PRIV_MAGIC,
-    AEROGPU_WDDM_ALLOC_PRIV_VERSION, AEROGPU_WDDM_ALLOC_PRIV_VERSION_2,
+    AEROGPU_WDDM_ALLOC_PRIV_MAGIC, AEROGPU_WDDM_ALLOC_PRIV_VERSION,
+    AEROGPU_WDDM_ALLOC_PRIV_VERSION_2,
 };
 use aero_protocol::aerogpu::{aerogpu_pci as pci, aerogpu_ring as ring};
 
@@ -3561,8 +3561,7 @@ fn rust_layout_matches_c_headers() {
     let cmd_header_path = repo_root().join("drivers/aerogpu/protocol/aerogpu_cmd.h");
     let umd_private_header_path =
         repo_root().join("drivers/aerogpu/protocol/aerogpu_umd_private.h");
-    let wddm_alloc_header_path =
-        repo_root().join("drivers/aerogpu/protocol/aerogpu_wddm_alloc.h");
+    let wddm_alloc_header_path = repo_root().join("drivers/aerogpu/protocol/aerogpu_wddm_alloc.h");
 
     let expected_pci_consts = {
         let mut names = parse_c_define_const_names(&pci_header_path);

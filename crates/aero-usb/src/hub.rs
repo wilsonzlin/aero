@@ -2318,7 +2318,10 @@ mod tests {
             w_index: 1,
             w_length: 0,
         };
-        assert_eq!(hub.handle_control_request(suspend, None), ControlResponse::Ack);
+        assert_eq!(
+            hub.handle_control_request(suspend, None),
+            ControlResponse::Ack
+        );
         assert!(hub.ports[0].suspended);
         assert!(dev.0.borrow().suspended);
 
