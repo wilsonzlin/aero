@@ -151,6 +151,7 @@ typedef struct _AEROVNET_TX_REQUEST {
 
   AEROVNET_TX_STATE State;
   BOOLEAN Cancelled;
+  BOOLEAN HeaderBuilt;
   struct _AEROVNET_ADAPTER* Adapter;
 
   // Snapshot of NDIS-requested TX offload enablement at the time this request

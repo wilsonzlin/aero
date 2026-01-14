@@ -783,6 +783,7 @@ static BOOLEAN AerovNetComputeAndWriteL4ChecksumNetBuffer(_In_ PNET_BUFFER Nb, _
 static VOID AerovNetFreeTxRequestNoLock(_Inout_ AEROVNET_ADAPTER* Adapter, _Inout_ AEROVNET_TX_REQUEST* TxReq) {
   TxReq->State = AerovNetTxFree;
   TxReq->Cancelled = FALSE;
+  TxReq->HeaderBuilt = FALSE;
   TxReq->Nbl = NULL;
   TxReq->Nb = NULL;
   TxReq->SgList = NULL;
@@ -2179,12 +2180,15 @@ static VOID AerovNetFlushTxPendingLocked(_Inout_ AEROVNET_ADAPTER* Adapter, _Ino
     }
 
     {
-      NDIS_STATUS TxStatus = AerovNetBuildTxHeader(Adapter, TxReq);
-      if (TxStatus != NDIS_STATUS_SUCCESS) {
-        RemoveEntryList(&TxReq->Link);
-        InsertTailList(CompleteTxReqs, &TxReq->Link);
-        AerovNetCompleteTxRequest(Adapter, TxReq, TxStatus, CompleteNblHead, CompleteNblTail);
-        continue;
+      if (!TxReq->HeaderBuilt) {
+        NDIS_STATUS TxStatus = AerovNetBuildTxHeader(Adapter, TxReq);
+        if (TxStatus != NDIS_STATUS_SUCCESS) {
+          RemoveEntryList(&TxReq->Link);
+          InsertTailList(CompleteTxReqs, &TxReq->Link);
+          AerovNetCompleteTxRequest(Adapter, TxReq, TxStatus, CompleteNblHead, CompleteNblTail);
+          continue;
+        }
+        TxReq->HeaderBuilt = TRUE;
       }
     }
 
@@ -4280,11 +4284,14 @@ static VOID AerovNetProcessSgList(_In_ PDEVICE_OBJECT DeviceObject, _In_opt_ PVO
     InsertTailList(&Adapter->TxPendingList, &TxReq->Link);
   } else {
     {
-      NDIS_STATUS TxStatus = AerovNetBuildTxHeader(Adapter, TxReq);
-      if (TxStatus != NDIS_STATUS_SUCCESS) {
-        AerovNetCompleteTxRequest(Adapter, TxReq, TxStatus, &CompleteHead, &CompleteTail);
-        CompleteNow = TRUE;
-        goto ReleaseAndExit;
+      if (!TxReq->HeaderBuilt) {
+        NDIS_STATUS TxStatus = AerovNetBuildTxHeader(Adapter, TxReq);
+        if (TxStatus != NDIS_STATUS_SUCCESS) {
+          AerovNetCompleteTxRequest(Adapter, TxReq, TxStatus, &CompleteHead, &CompleteTail);
+          CompleteNow = TRUE;
+          goto ReleaseAndExit;
+        }
+        TxReq->HeaderBuilt = TRUE;
       }
     }
 
@@ -5248,6 +5255,7 @@ static VOID AerovNetMiniportSendNetBufferLists(_In_ NDIS_HANDLE MiniportAdapterC
 
       TxReq->State = AerovNetTxAwaitingSg;
       TxReq->Cancelled = FALSE;
+      TxReq->HeaderBuilt = FALSE;
       TxReq->Adapter = Adapter;
       // Snapshot offload enablement at accept time so queued/pending sends do not
       // consult live adapter config (which can change via OID).
