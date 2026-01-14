@@ -1202,6 +1202,51 @@ function Sanitize-AeroMarkerValue {
   return $Value.Replace("|", "/").Replace("`r", " ").Replace("`n", " ").Trim()
 }
 
+function Try-ExtractLastAeroMarkerLine {
+  param(
+    [Parameter(Mandatory = $true)] [string]$Tail,
+    [Parameter(Mandatory = $true)] [string]$Prefix,
+    # Optional: if provided, fall back to parsing the full serial log when the rolling tail buffer does not
+    # contain the marker (e.g. because the tail was truncated).
+    [Parameter(Mandatory = $false)] [string]$SerialLogPath = ""
+  )
+
+  $matches = [regex]::Matches($Tail, [regex]::Escape($Prefix) + "[^`r`n]*")
+  if ($matches.Count -gt 0) {
+    return $matches[$matches.Count - 1].Value
+  }
+
+  if ((-not [string]::IsNullOrEmpty($SerialLogPath)) -and (Test-Path -LiteralPath $SerialLogPath)) {
+    # Tail truncation fallback: scan the full serial log line-by-line.
+    $last = $null
+    try {
+      $fs = [System.IO.File]::Open($SerialLogPath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+      try {
+        $sr = [System.IO.StreamReader]::new($fs, [System.Text.Encoding]::UTF8, $true, 4096, $true)
+        try {
+          while ($true) {
+            $l = $sr.ReadLine()
+            if ($null -eq $l) { break }
+            $t = $l.Trim()
+            if ($t.StartsWith($Prefix)) {
+              $last = $t
+            }
+          }
+        } finally {
+          $sr.Dispose()
+        }
+      } finally {
+        $fs.Dispose()
+      }
+    } catch { }
+    if ($null -ne $last) {
+      return $last
+    }
+  }
+
+  return $null
+}
+
 function Try-EmitAeroVirtioBlkIrqMarker {
   param(
     [Parameter(Mandatory = $true)] [string]$Tail,
@@ -1530,14 +1575,15 @@ function Test-AeroVirtioSndMsixMarker {
 
 function Try-EmitAeroVirtioNetLargeMarker {
   param(
-    [Parameter(Mandatory = $true)] [string]$Tail
+    [Parameter(Mandatory = $true)] [string]$Tail,
+    # Optional: if provided, fall back to parsing the full serial log when the rolling tail buffer does not
+    # contain the virtio-net marker (e.g. because the tail was truncated).
+    [Parameter(Mandatory = $false)] [string]$SerialLogPath = ""
   )
 
   $prefix = "AERO_VIRTIO_SELFTEST|TEST|virtio-net|"
-  $matches = [regex]::Matches($Tail, [regex]::Escape($prefix) + "[^`r`n]*")
-  if ($matches.Count -eq 0) { return }
-
-  $line = $matches[$matches.Count - 1].Value
+  $line = Try-ExtractLastAeroMarkerLine -Tail $Tail -Prefix $prefix -SerialLogPath $SerialLogPath
+  if ($null -eq $line) { return }
   $fields = @{}
   foreach ($tok in $line.Split("|")) {
     $idx = $tok.IndexOf("=")
@@ -1587,14 +1633,15 @@ function Try-EmitAeroVirtioIrqMarkerFromTestMarker {
     # Guest per-test marker name (e.g. virtio-net, virtio-snd, virtio-input).
     [Parameter(Mandatory = $true)] [string]$Device,
     # Host marker token (e.g. VIRTIO_NET_IRQ).
-    [Parameter(Mandatory = $true)] [string]$HostMarker
+    [Parameter(Mandatory = $true)] [string]$HostMarker,
+    # Optional: if provided, fall back to parsing the full serial log when the rolling tail buffer does not
+    # contain the marker (e.g. because the tail was truncated).
+    [Parameter(Mandatory = $false)] [string]$SerialLogPath = ""
   )
 
   $prefix = "AERO_VIRTIO_SELFTEST|TEST|$Device|"
-  $matches = [regex]::Matches($Tail, [regex]::Escape($prefix) + "[^`r`n]*")
-  if ($matches.Count -eq 0) { return }
-
-  $line = $matches[$matches.Count - 1].Value
+  $line = Try-ExtractLastAeroMarkerLine -Tail $Tail -Prefix $prefix -SerialLogPath $SerialLogPath
+  if ($null -eq $line) { return }
 
   $fields = @{}
   foreach ($tok in $line.Split("|")) {
@@ -1632,14 +1679,15 @@ function Try-EmitAeroVirtioIrqMarkerFromTestMarker {
 
 function Try-EmitAeroVirtioSndEventqMarker {
   param(
-    [Parameter(Mandatory = $true)] [string]$Tail
+    [Parameter(Mandatory = $true)] [string]$Tail,
+    # Optional: if provided, fall back to parsing the full serial log when the rolling tail buffer does not
+    # contain the virtio-snd-eventq marker (e.g. because the tail was truncated).
+    [Parameter(Mandatory = $false)] [string]$SerialLogPath = ""
   )
 
   $prefix = "AERO_VIRTIO_SELFTEST|TEST|virtio-snd-eventq|"
-  $matches = [regex]::Matches($Tail, [regex]::Escape($prefix) + "[^`r`n]*")
-  if ($matches.Count -eq 0) { return }
-
-  $line = $matches[$matches.Count - 1].Value
+  $line = Try-ExtractLastAeroMarkerLine -Tail $Tail -Prefix $prefix -SerialLogPath $SerialLogPath
+  if ($null -eq $line) { return }
   $toks = $line.Split("|")
 
   # The guest marker is informational and typically uses INFO or SKIP, but accept PASS/FAIL
@@ -3209,11 +3257,11 @@ try {
   }
 
   Try-EmitAeroVirtioBlkIrqMarker -Tail $result.Tail -SerialLogPath $SerialLogPath
-  Try-EmitAeroVirtioNetLargeMarker -Tail $result.Tail
-  Try-EmitAeroVirtioIrqMarkerFromTestMarker -Tail $result.Tail -Device "virtio-net" -HostMarker "VIRTIO_NET_IRQ"
-  Try-EmitAeroVirtioIrqMarkerFromTestMarker -Tail $result.Tail -Device "virtio-snd" -HostMarker "VIRTIO_SND_IRQ"
-  Try-EmitAeroVirtioIrqMarkerFromTestMarker -Tail $result.Tail -Device "virtio-input" -HostMarker "VIRTIO_INPUT_IRQ"
-  Try-EmitAeroVirtioSndEventqMarker -Tail $result.Tail
+  Try-EmitAeroVirtioNetLargeMarker -Tail $result.Tail -SerialLogPath $SerialLogPath
+  Try-EmitAeroVirtioIrqMarkerFromTestMarker -Tail $result.Tail -Device "virtio-net" -HostMarker "VIRTIO_NET_IRQ" -SerialLogPath $SerialLogPath
+  Try-EmitAeroVirtioIrqMarkerFromTestMarker -Tail $result.Tail -Device "virtio-snd" -HostMarker "VIRTIO_SND_IRQ" -SerialLogPath $SerialLogPath
+  Try-EmitAeroVirtioIrqMarkerFromTestMarker -Tail $result.Tail -Device "virtio-input" -HostMarker "VIRTIO_INPUT_IRQ" -SerialLogPath $SerialLogPath
+  Try-EmitAeroVirtioSndEventqMarker -Tail $result.Tail -SerialLogPath $SerialLogPath
   Try-EmitAeroVirtioIrqDiagnosticsMarkers -Tail $result.Tail -SerialLogPath $SerialLogPath
 
   switch ($result.Result) {
