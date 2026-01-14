@@ -477,8 +477,12 @@ bring up correctness incrementally:
         that use indexed `LINESTRIP`/`TRIANGLESTRIP` with restart indices.
     - output strip topologies are expanded into lists (`line_strip` → `line_list`, `triangle_strip` → `triangle_list`),
     - no layered rendering system values (`SV_RenderTargetArrayIndex`, `SV_ViewportArrayIndex`),
-    - output ordering is implementation-defined unless we add a deterministic prefix-sum mode (affects
-      strict `SV_PrimitiveID` expectations).
+    - output ordering:
+      - in a fully-parallel append/emit implementation, ordering is implementation-defined unless we
+        add a deterministic prefix-sum/compaction mode (affects strict `SV_PrimitiveID`
+        expectations), but
+      - initial bring-up can choose a deterministic single-thread GS execution mode (looping over
+        primitives in-order) at the cost of performance.
 
 - **P2 (tessellation: HS/DS)**
   - Tessellation is staged by supported **domain / partitioning**:
@@ -1543,10 +1547,19 @@ with an implementation-defined workgroup size chosen by the translator/runtime.
       otherwise `tess_out_vertices` + `tess_out_indices`).
     - If the draw ran a tessellation phase, the runtime should reset `counters` + `indirect_args`
       before starting GS allocation (since GS writes a new output stream into `gs_out_*`).
-    - Dispatch shape (for `SV_PrimitiveID` / `SV_GSInstanceID`):
-      - Use a 2D grid where:
+    - Dispatch shape / ordering:
+      - **Deterministic bring-up (recommended):** dispatch a single thread
+        (`@workgroup_size(1)` and `global_invocation_id.x == 0`) and run nested loops:
+        - for `primitive_id` in `0..input_prim_count`:
+        - for `gs_instance_id` in `0..gs_instance_count`:
+        - execute the GS and append to local output counts, with capacity checks.
+        - This produces deterministic output ordering without atomics, and matches the in-tree
+          `gs_translate` WGSL strategy.
+      - **Parallel (future optimization):** use a 2D grid where:
         - `global_invocation_id.x` = input `primitive_id` in `0..input_prim_count`
         - `global_invocation_id.y` = `gs_instance_id` in `0..gs_instance_count`
+        - Requires atomic allocation (or a prefix-sum compaction pass) to produce a packed output
+          stream.
     - Emits vertices/indices to `gs_out_*`, updates counters, then writes final `indirect_args`.
 
 4. **Final render**
