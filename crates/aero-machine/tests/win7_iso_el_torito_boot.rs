@@ -4,7 +4,7 @@ use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
-use aero_cpu_core::state::gpr;
+use aero_cpu_core::state::{gpr, RFLAGS_CF};
 use aero_machine::{Machine, MachineConfig};
 use aero_storage::{DiskError, MemBackend, RawDisk, Result as DiskResult, VirtualDisk, SECTOR_SIZE};
 
@@ -70,6 +70,8 @@ impl VirtualDisk for ReadOnlyFileDisk {
 
 #[derive(Debug, Clone, Copy)]
 struct ElToritoBootInfo {
+    /// Boot catalog LBA in 2048-byte ISO sectors.
+    boot_catalog_lba: u32,
     /// Boot image LBA in 2048-byte ISO sectors.
     boot_image_lba: u32,
     /// Number of 512-byte sectors to load (after applying El Torito defaulting rules).
@@ -224,6 +226,7 @@ fn parse_el_torito_boot_info(iso_path: &Path) -> std::io::Result<ElToritoBootInf
                 let boot_image_lba = u32::from_le_bytes([entry[8], entry[9], entry[10], entry[11]]);
 
                 return Ok(ElToritoBootInfo {
+                    boot_catalog_lba,
                     boot_image_lba,
                     boot_image_sector_count_512,
                     load_segment,
@@ -361,6 +364,77 @@ fn win7_iso_el_torito_boot_smoke() {
     // El Torito no-emulation boot images still carry the standard boot signature at offset 0x1FE.
     assert_eq!(loaded[510], 0x55);
     assert_eq!(loaded[511], 0xAA);
+
+    // Smoke-test INT 13h AH=4Bh ("El Torito disk emulation services"): some boot images query this
+    // to locate the boot catalog and/or confirm the BIOS boot drive mapping. This also validates
+    // that the BIOS cached boot metadata during POST (and uses the same defaulting rules we
+    // applied above).
+    {
+        const PACKET_ADDR: u64 = 0x0500;
+        const CODE_ADDR: u64 = 0x9000;
+
+        let cpu_entry = m.cpu().clone();
+
+        // Caller-supplied status packet buffer (0x13 bytes). Use a larger clear window so stale
+        // bytes can't mask partial writes.
+        m.write_physical(PACKET_ADDR, &[0u8; 0x20]);
+
+        // Tiny real-mode stub:
+        //   mov es, 0
+        //   mov di, PACKET_ADDR
+        //   mov ax, 0x4B01
+        //   mov dx, 0x00E0
+        //   int 0x13
+        //   cli
+        //   hlt
+        let code: [u8; 17] = [
+            0x31, 0xC0, // xor ax, ax
+            0x8E, 0xC0, // mov es, ax
+            0xBF, 0x00, 0x05, // mov di, 0x0500
+            0xB8, 0x01, 0x4B, // mov ax, 0x4B01
+            0xBA, EL_TORITO_CD_BOOT_DRIVE, 0x00, // mov dx, 0x00E0
+            0xCD, 0x13, // int 0x13
+            0xFA, // cli
+            0xF4, // hlt
+        ];
+        m.write_physical(CODE_ADDR, &code);
+
+        // Jump to the stub.
+        {
+            let cpu = m.cpu_mut();
+            cpu.halted = false;
+            cpu.clear_pending_bios_int();
+            cpu.segments.cs.selector = 0;
+            cpu.segments.cs.base = 0;
+            cpu.segments.cs.limit = 0xFFFF;
+            cpu.segments.cs.access = 0;
+            cpu.set_rip(CODE_ADDR);
+        }
+
+        let _ = m.run_slice(10_000);
+
+        assert_eq!(
+            m.cpu().rflags() & RFLAGS_CF,
+            0,
+            "INT 13h AH=4Bh AL=01h reported failure (CF=1)"
+        );
+
+        assert_eq!(m.read_physical_u8(PACKET_ADDR), 0x13);
+        assert_eq!(m.read_physical_u8(PACKET_ADDR + 1), 0x00); // no-emulation
+        assert_eq!(m.read_physical_u8(PACKET_ADDR + 2), EL_TORITO_CD_BOOT_DRIVE);
+        assert_eq!(m.read_physical_u8(PACKET_ADDR + 3), 0); // controller index
+        assert_eq!(m.read_physical_u32(PACKET_ADDR + 4), boot_info.boot_image_lba);
+        assert_eq!(m.read_physical_u32(PACKET_ADDR + 8), boot_info.boot_catalog_lba);
+        assert_eq!(m.read_physical_u16(PACKET_ADDR + 12), boot_info.load_segment);
+        assert_eq!(
+            m.read_physical_u16(PACKET_ADDR + 14),
+            boot_info.boot_image_sector_count_512
+        );
+
+        // Restore CPU state at the El Torito boot entrypoint so we can execute a bounded slice of
+        // the real boot image below.
+        *m.cpu_mut() = cpu_entry;
+    }
 
     // Keep runtime bounded: run a small instruction slice to ensure we can execute a bit of the
     // boot image without immediately halting at the BIOS reset vector.
