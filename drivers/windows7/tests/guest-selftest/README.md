@@ -323,6 +323,7 @@ Notes:
 - Dedicated MSI-X **TEST markers** are also emitted for some devices (used by the host harness when `--require-virtio-*-msix` is enabled):
   - `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-msix|PASS|mode=intx/msix|messages=<n>|config_vector=<v>|queue_vector=<v>`
     (emitted when the virtio-blk miniport IOCTL includes interrupt diagnostics; the harness can require `mode=msix`)
+  - `AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|PASS/SKIP|mode=intx/msi/msix/unknown|messages=<n>|config_vector=<v>|rx_vector=<v>|tx_vector=<v>`
   - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-msix|PASS/SKIP|mode=intx/msix/none/unknown|messages=<n>|config_vector=<v>|queue0_vector=<v>|...`
   - `AERO_VIRTIO_SELFTEST|TEST|virtio-input-msix|PASS/FAIL/SKIP|mode=intx/msix/unknown|messages=<n>|mapping=...|...`
     (the marker is always emitted; `--require-input-msix` makes non-`mode=msix` fail the overall selftest)

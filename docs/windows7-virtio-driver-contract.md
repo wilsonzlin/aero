@@ -1026,7 +1026,7 @@ Harness validation (non-normative, QEMU):
         - `-RequireVirtioBlkMsix` / `--require-virtio-blk-msix`
         - `-RequireVirtioNetMsix` / `--require-virtio-net-msix`
         - `-RequireVirtioSndMsix` / `--require-virtio-snd-msix`
-        - For virtio-blk and virtio-snd, the harness also requires the guest `virtio-*-msix` marker to report
+        - For virtio-blk, virtio-net, and virtio-snd, the harness also requires the guest `virtio-*-msix` marker to report
           `mode=msix` (end-to-end validation).
       - Guest marker check (virtio-input): `-RequireVirtioInputMsix` / `--require-virtio-input-msix`
   - Guest selftest (virtio-blk only): `--expect-blk-msi` (or `AERO_VIRTIO_SELFTEST_EXPECT_BLK_MSI=1`)

@@ -263,12 +263,12 @@ By default, the harness will still PASS when Windows falls back to INTx (MSI/MSI
 MSI-X as disabled on the corresponding PCI function (best-effort introspection via QMP `query-pci` or HMP `info pci`).
 
 - PowerShell:
-  - `-RequireVirtioNetMsix`
+  - `-RequireVirtioNetMsix` *(also requires the guest `virtio-net-msix` marker to report `mode=msix`)*
   - `-RequireVirtioBlkMsix`
   - `-RequireVirtioSndMsix` *(requires `-WithVirtioSnd`; also requires the guest `virtio-snd-msix` marker to report `mode=msix`)*
   - `-RequireVirtioInputMsix` *(guest marker check: requires `AERO_VIRTIO_SELFTEST|TEST|virtio-input-msix|...` to report `mode=msix`)*
 - Python:
-  - `--require-virtio-net-msix`
+  - `--require-virtio-net-msix` *(also requires the guest `virtio-net-msix` marker to report `mode=msix`)*
   - `--require-virtio-blk-msix`
   - `--require-virtio-snd-msix` *(requires `--with-virtio-snd`; also requires the guest `virtio-snd-msix` marker to report `mode=msix`)*
   - `--require-virtio-input-msix` *(guest marker check: requires `AERO_VIRTIO_SELFTEST|TEST|virtio-input-msix|...` to report `mode=msix`)*
@@ -282,6 +282,8 @@ Notes:
   host markers (`AERO_VIRTIO_WIN7_HOST|VIRTIO_*_IRQ|...` / `...|VIRTIO_*_IRQ_DIAG|...`).
   - Exception: for virtio-blk, `-RequireVirtioBlkMsix` / `--require-virtio-blk-msix` also requires the guest marker
     `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-msix|PASS|mode=msix|...` so the harness validates the **effective** interrupt mode.
+  - Exception: for virtio-net, `-RequireVirtioNetMsix` / `--require-virtio-net-msix` also requires the guest marker
+    `AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|PASS|mode=msix|...` so the harness validates the **effective** interrupt mode.
   - Exception: for virtio-snd, `-RequireVirtioSndMsix` / `--require-virtio-snd-msix` requires the guest marker
     `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-msix|PASS|mode=msix|...` so the harness validates the **effective** interrupt mode.
   - Exception: for virtio-input, `-RequireVirtioInputMsix` / `--require-virtio-input-msix` requires the guest marker
@@ -358,6 +360,15 @@ If any counter is non-zero, the harness fails with a deterministic token:
 
 Note: this is best-effort and only runs when the guest marker includes the counter fields (older guest binaries or
 drivers may omit them).
+
+### virtio-net MSI/MSI-X interrupt mode (guest-observed, optional)
+
+Newer `aero-virtio-selftest.exe` binaries emit a dedicated marker describing the virtio-net interrupt mode/vectors:
+`AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|PASS|mode=intx/msi/msix/unknown|messages=<n>|config_vector=<n\|none>|rx_vector=<n\|none>|tx_vector=<n\|none>`.
+If the virtio-net diag interface is unavailable, the marker is emitted as `SKIP|reason=diag_unavailable|...`.
+
+When `--require-virtio-net-msix` is used, the **Python** harness additionally requires `mode=msix` from this marker.
+The **PowerShell** harness does the same when `-RequireVirtioNetMsix` is set.
 
 ### virtio-snd MSI/MSI-X interrupt mode (guest-observed, optional)
 

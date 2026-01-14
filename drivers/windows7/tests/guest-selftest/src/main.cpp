@@ -1459,6 +1459,62 @@ static void EmitVirtioNetDiagMarker(Logger& log) {
       static_cast<unsigned long long>(info.StatRxErrors), static_cast<unsigned long long>(info.StatRxNoBuffers));
 }
 
+static void EmitVirtioNetMsixMarker(Logger& log) {
+  HANDLE h = CreateFileW(AEROVNET_DIAG_DEVICE_PATH, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                         OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+  if (h == INVALID_HANDLE_VALUE) {
+    const DWORD err = GetLastError();
+    if (err == ERROR_FILE_NOT_FOUND || err == ERROR_PATH_NOT_FOUND) {
+      log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|SKIP|reason=diag_unavailable");
+    } else {
+      log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|SKIP|reason=open_failed|err=%lu",
+               static_cast<unsigned long>(err));
+    }
+    return;
+  }
+
+  AEROVNET_DIAG_INFO info{};
+  DWORD bytes = 0;
+  const BOOL ok = DeviceIoControl(h, AEROVNET_DIAG_IOCTL_QUERY, nullptr, 0, &info, sizeof(info), &bytes, nullptr);
+  const DWORD err = ok ? 0 : GetLastError();
+  CloseHandle(h);
+
+  constexpr size_t kRequiredEnd = offsetof(AEROVNET_DIAG_INFO, MsixTxVector) + sizeof(uint16_t);
+  if (!ok) {
+    log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|SKIP|reason=ioctl_failed|err=%lu",
+             static_cast<unsigned long>(err));
+    return;
+  }
+  if (bytes < kRequiredEnd) {
+    log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|SKIP|reason=diag_truncated|bytes=%lu",
+             static_cast<unsigned long>(bytes));
+    return;
+  }
+
+  const char* mode = "unknown";
+  if (info.InterruptMode == AEROVNET_INTERRUPT_MODE_INTX) {
+    mode = "intx";
+  } else if (info.InterruptMode == AEROVNET_INTERRUPT_MODE_MSI) {
+    // For virtio-net modern, message-signaled interrupts imply MSI-X routing.
+    // Infer `msix` if any virtio MSI-X vector is assigned.
+    if (info.MsixConfigVector != kVirtioPciMsiNoVector || info.MsixRxVector != kVirtioPciMsiNoVector ||
+        info.MsixTxVector != kVirtioPciMsiNoVector) {
+      mode = "msix";
+    } else {
+      mode = "msi";
+    }
+  }
+
+  auto vec_to_string = [](USHORT v) -> std::string {
+    if (v == kVirtioPciMsiNoVector) return "none";
+    return std::to_string(static_cast<unsigned int>(v));
+  };
+
+  log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|PASS|mode=%s|messages=%lu|config_vector=%s|rx_vector=%s|tx_vector=%s",
+           mode, static_cast<unsigned long>(info.MessageCount), vec_to_string(info.MsixConfigVector).c_str(),
+           vec_to_string(info.MsixRxVector).c_str(), vec_to_string(info.MsixTxVector).c_str());
+}
+
 static std::optional<AERO_VIRTIO_SND_DIAG_INFO> QueryVirtioSndDiag(Logger& log,
                                                                    DWORD* out_err = nullptr) {
   // Best-effort: the virtio-snd diag device is optional and may not exist on older drivers/images.
@@ -10842,6 +10898,7 @@ int wmain(int argc, wchar_t** argv) {
     WSACleanup();
   }
 
+  EmitVirtioNetMsixMarker(log);
   EmitVirtioNetDiagMarker(log);
   if (net_devinst != 0) {
     EmitVirtioIrqMarkerForDevInst(log, "virtio-net", net_devinst);
