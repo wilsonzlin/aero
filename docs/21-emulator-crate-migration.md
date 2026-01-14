@@ -278,16 +278,21 @@ quietly accreting more responsibilities.
 
 ### 3) SMP (multi-vCPU) model
 
-**Current owner (in `crates/emulator`)**
+**Current owner**
 
-- `crates/emulator/src/smp/*` (`smp::Machine`, vCPU scheduler, local APIC IPI delivery)
+- `crates/aero-smp-model/*` (`SmpMachine`, vCPU scheduler, local APIC IPI delivery)
+  - This crate was extracted out of `crates/emulator` to avoid collisions/confusion with the
+    canonical `aero_machine::Machine`.
+  - `crates/emulator` retains a feature-gated legacy re-export (`emulator::smp` behind
+    `--features legacy-smp-model`) for compatibility, but it is intentionally not built/exposed by
+    default.
 
 **Intended canonical home**
 
 - Target: `crates/aero-machine` grows beyond BSP-only execution by adopting (or re-implementing) the
   SMP scheduling and APIC-delivery logic behind a stable API.
-- If the SMP code needs to be reusable independently of `aero-machine`, consider extracting a
-  dedicated `crates/aero-smp` crate and using it from `aero-machine`.
+- If the SMP code needs to be reusable independently of `aero-machine`, `crates/aero-smp-model`
+  already provides a minimal deterministic model suitable for unit tests and snapshot validation.
 
 ---
 
@@ -334,10 +339,10 @@ This is intentionally a sequence of small PRs (mirrors the style of the storage 
       execution + scanout + vblank pacing) behind `MachineConfig::enable_aerogpu`.
 
 8. **SMP integration decision**
-   - Define a canonical SMP story for `aero-machine` (multi-vCPU API, scheduling model, snapshot
-     story).
-   - Either integrate the existing `crates/emulator/src/smp/*` code or replace it with a new
-     implementation in the canonical stack.
+    - Define a canonical SMP story for `aero-machine` (multi-vCPU API, scheduling model, snapshot
+      story).
+    - Either integrate/adapt the existing `crates/aero-smp-model` code or replace it with a new
+      implementation in the canonical stack.
 
 9. **End state: remove `crates/emulator` (optional)**
    - Once the only remaining code is compatibility glue, either:
