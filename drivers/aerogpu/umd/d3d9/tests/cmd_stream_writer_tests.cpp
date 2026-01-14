@@ -37,6 +37,12 @@ HRESULT AEROGPU_D3D9_CALL device_set_material(D3DDDI_HDEVICE hDevice, const D3DM
 HRESULT AEROGPU_D3D9_CALL device_set_light(D3DDDI_HDEVICE hDevice, uint32_t index, const D3DLIGHT9* pLight);
 HRESULT AEROGPU_D3D9_CALL device_light_enable(D3DDDI_HDEVICE hDevice, uint32_t index, BOOL enabled);
 HRESULT AEROGPU_D3D9_CALL device_test_enable_wddm_context(D3DDDI_HDEVICE hDevice);
+HRESULT AEROGPU_D3D9_CALL device_test_rebind_alloc_list_tracker(
+    D3DDDI_HDEVICE hDevice,
+    D3DDDI_ALLOCATIONLIST* pAllocationList,
+    uint32_t allocation_list_capacity,
+    uint32_t max_allocation_list_slot_id);
+HRESULT AEROGPU_D3D9_CALL device_test_reset_alloc_list_tracker(D3DDDI_HDEVICE hDevice);
 HRESULT AEROGPU_D3D9_CALL device_test_force_umd_private_features(D3DDDI_HDEVICE hDevice, uint64_t device_features);
 HRESULT AEROGPU_D3D9_CALL device_test_alias_fixedfunc_stage0_ps_variant(
     D3DDDI_HDEVICE hDevice,
@@ -9172,7 +9178,10 @@ bool TestGenerateMipSubLevelsAllocBackedEmitsDirtyRange() {
     return false;
   }
   D3DDDI_ALLOCATIONLIST list[4] = {};
-  dev->alloc_list_tracker.rebind(list, 4, 0xFFFFu);
+  hr = device_test_rebind_alloc_list_tracker(create_dev.hDevice, list, 4, 0xFFFFu);
+  if (!Check(hr == S_OK, "device_test_rebind_alloc_list_tracker")) {
+    return false;
+  }
 
   // Create an alloc-backed texture by providing a WDDM allocation handle and a
   // private-driver-data buffer for the alloc_id contract. (Portable builds don't
@@ -9241,7 +9250,10 @@ bool TestGenerateMipSubLevelsAllocBackedEmitsDirtyRange() {
   // Clear command buffer/allocation list so we only observe visibility packets
   // from mip generation.
   dev->cmd.reset();
-  dev->alloc_list_tracker.reset();
+  hr = device_test_reset_alloc_list_tracker(create_dev.hDevice);
+  if (!Check(hr == S_OK, "device_test_reset_alloc_list_tracker")) {
+    return false;
+  }
 
   hr = cleanup.device_funcs.pfnGenerateMipSubLevels(create_dev.hDevice, create_res.hResource);
   if (!Check(hr == S_OK, "GenerateMipSubLevels")) {
@@ -9502,7 +9514,10 @@ bool TestCreateResourceAllowsNullPrivateDataWhenNotAllocBacked() {
     return false;
   }
   D3DDDI_ALLOCATIONLIST list[4] = {};
-  dev->alloc_list_tracker.rebind(list, 4, 0xFFFFu);
+  hr = device_test_rebind_alloc_list_tracker(create_dev.hDevice, list, 4, 0xFFFFu);
+  if (!Check(hr == S_OK, "device_test_rebind_alloc_list_tracker")) {
+    return false;
+  }
 
   D3D9DDIARG_CREATERESOURCE create_res{};
   create_res.type = kD3dRTypeSurface;
@@ -9835,7 +9850,10 @@ bool TestAllocBackedUnlockEmitsDirtyRange() {
     return false;
   }
   D3DDDI_ALLOCATIONLIST list[4] = {};
-  dev->alloc_list_tracker.rebind(list, 4, 0xFFFFu);
+  hr = device_test_rebind_alloc_list_tracker(create_dev.hDevice, list, 4, 0xFFFFu);
+  if (!Check(hr == S_OK, "device_test_rebind_alloc_list_tracker")) {
+    return false;
+  }
 
   aerogpu_wddm_alloc_priv priv{};
   std::memset(&priv, 0, sizeof(priv));
@@ -10542,10 +10560,13 @@ bool TestCopyRects16BitToGuestBackedResourceEmitsDirtyRange() {
   if (!Check(hr == S_OK, "device_test_enable_wddm_context")) {
     return false;
   }
-  {
-    std::lock_guard<std::mutex> lock(dev->mutex);
-    dev->alloc_list_tracker.rebind(alloc_list, 8, 0xFFFFu);
-    dev->alloc_list_tracker.reset();
+  hr = device_test_rebind_alloc_list_tracker(create_dev.hDevice, alloc_list, 8, 0xFFFFu);
+  if (!Check(hr == S_OK, "device_test_rebind_alloc_list_tracker")) {
+    return false;
+  }
+  hr = device_test_reset_alloc_list_tracker(create_dev.hDevice);
+  if (!Check(hr == S_OK, "device_test_reset_alloc_list_tracker")) {
+    return false;
   }
 
   // Fill src with a deterministic non-zero pattern and zero the destination.
@@ -12395,7 +12416,10 @@ bool TestAllocationListSplitResetsOnEmptySubmit() {
   }
 
   D3DDDI_ALLOCATIONLIST list[1] = {};
-  dev.alloc_list_tracker.rebind(list, 1, 0xFFFFu);
+  hr = device_test_rebind_alloc_list_tracker(hDevice, list, 1, 0xFFFFu);
+  if (!Check(hr == S_OK, "device_test_rebind_alloc_list_tracker")) {
+    return false;
+  }
 
   auto r0 = dev.alloc_list_tracker.track_buffer_read(/*hAllocation=*/1, /*alloc_id=*/1, /*share_token=*/0);
   if (!Check(r0.status == AllocRefStatus::kOk, "track_buffer_read first")) {
@@ -12517,8 +12541,14 @@ bool TestDrawStateTrackingPreSplitRetainsAllocs() {
     return false;
   }
   D3DDDI_ALLOCATIONLIST alloc_list[2] = {};
-  dev->alloc_list_tracker.rebind(alloc_list, 2, 0xFFFFu);
-  dev->alloc_list_tracker.reset();
+  hr = device_test_rebind_alloc_list_tracker(create_dev.hDevice, alloc_list, 2, 0xFFFFu);
+  if (!Check(hr == S_OK, "device_test_rebind_alloc_list_tracker")) {
+    return false;
+  }
+  hr = device_test_reset_alloc_list_tracker(create_dev.hDevice);
+  if (!Check(hr == S_OK, "device_test_reset_alloc_list_tracker")) {
+    return false;
+  }
 
   aerogpu_wddm_alloc_priv priv{};
   std::memset(&priv, 0, sizeof(priv));
@@ -12665,8 +12695,14 @@ bool TestBlitStateTrackingPreSplitRetainsAllocs() {
     return false;
   }
   D3DDDI_ALLOCATIONLIST alloc_list[2] = {};
-  dev.alloc_list_tracker.rebind(alloc_list, 2, 0xFFFFu);
-  dev.alloc_list_tracker.reset();
+  HRESULT hr = device_test_rebind_alloc_list_tracker(hDevice, alloc_list, 2, 0xFFFFu);
+  if (!Check(hr == S_OK, "device_test_rebind_alloc_list_tracker")) {
+    return false;
+  }
+  hr = device_test_reset_alloc_list_tracker(hDevice);
+  if (!Check(hr == S_OK, "device_test_reset_alloc_list_tracker")) {
+    return false;
+  }
 
   // Seed with a dummy allocation so the blit must split to fit dst+src.
   const auto dummy = dev.alloc_list_tracker.track_buffer_read(/*hAllocation=*/0x1111u, /*alloc_id=*/99, /*share_token=*/0);
@@ -12700,7 +12736,7 @@ bool TestBlitStateTrackingPreSplitRetainsAllocs() {
   RECT dst_rect{0, 0, 32, 32};
   RECT src_rect{0, 0, 32, 32};
 
-  HRESULT hr = S_OK;
+  hr = S_OK;
   {
     std::lock_guard<std::mutex> lock(dev.mutex);
     hr = blit_alpha_locked(&dev, &dst, &dst_rect, &src, &src_rect, /*filter=*/1u);
@@ -12800,8 +12836,14 @@ bool TestRenderTargetTrackingPreSplitRetainsAllocs() {
     return false;
   }
   D3DDDI_ALLOCATIONLIST alloc_list[2] = {};
-  dev->alloc_list_tracker.rebind(alloc_list, 2, 0xFFFFu);
-  dev->alloc_list_tracker.reset();
+  hr = device_test_rebind_alloc_list_tracker(create_dev.hDevice, alloc_list, 2, 0xFFFFu);
+  if (!Check(hr == S_OK, "device_test_rebind_alloc_list_tracker")) {
+    return false;
+  }
+  hr = device_test_reset_alloc_list_tracker(create_dev.hDevice);
+  if (!Check(hr == S_OK, "device_test_reset_alloc_list_tracker")) {
+    return false;
+  }
 
   aerogpu_wddm_alloc_priv priv{};
   std::memset(&priv, 0, sizeof(priv));
@@ -12969,7 +13011,10 @@ bool TestDrawStateTrackingDedupsSharedAllocIds() {
     return false;
   }
   D3DDDI_ALLOCATIONLIST alloc_list[1] = {};
-  dev->alloc_list_tracker.rebind(alloc_list, 1, 0xFFFFu);
+  hr = device_test_rebind_alloc_list_tracker(create_dev.hDevice, alloc_list, 1, 0xFFFFu);
+  if (!Check(hr == S_OK, "device_test_rebind_alloc_list_tracker")) {
+    return false;
+  }
 
   Resource rt{};
   rt.kind = ResourceKind::Texture2D;
@@ -13120,8 +13165,14 @@ bool TestRotateResourceIdentitiesTrackingPreSplitRetainsAllocs() {
     return false;
   }
   D3DDDI_ALLOCATIONLIST alloc_list[2] = {};
-  dev->alloc_list_tracker.rebind(alloc_list, 2, 0xFFFFu);
-  dev->alloc_list_tracker.reset();
+  hr = device_test_rebind_alloc_list_tracker(create_dev.hDevice, alloc_list, 2, 0xFFFFu);
+  if (!Check(hr == S_OK, "device_test_rebind_alloc_list_tracker")) {
+    return false;
+  }
+  hr = device_test_reset_alloc_list_tracker(create_dev.hDevice);
+  if (!Check(hr == S_OK, "device_test_reset_alloc_list_tracker")) {
+    return false;
+  }
 
   // Pre-fill the allocation list to simulate other work already tracked in the
   // submission. This should force RotateResourceIdentities to split before it
@@ -13289,8 +13340,14 @@ bool TestOpenResourceCapturesWddmAllocationForTracking() {
     return false;
   }
   D3DDDI_ALLOCATIONLIST alloc_list[4] = {};
-  dev->alloc_list_tracker.rebind(alloc_list, 4, 0xFFFFu);
-  dev->alloc_list_tracker.reset();
+  hr = device_test_rebind_alloc_list_tracker(create_dev.hDevice, alloc_list, 4, 0xFFFFu);
+  if (!Check(hr == S_OK, "device_test_rebind_alloc_list_tracker")) {
+    return false;
+  }
+  hr = device_test_reset_alloc_list_tracker(create_dev.hDevice);
+  if (!Check(hr == S_OK, "device_test_reset_alloc_list_tracker")) {
+    return false;
+  }
 
   aerogpu_wddm_alloc_priv priv{};
   priv.magic = AEROGPU_WDDM_ALLOC_PRIV_MAGIC;
@@ -36185,8 +36242,14 @@ bool TestPresentBackbufferRotationUndoOnSmallAllocList() {
     return false;
   }
   D3DDDI_ALLOCATIONLIST alloc_list[1] = {};
-  dev->alloc_list_tracker.rebind(alloc_list, 1, 0xFFFFu);
-  dev->alloc_list_tracker.reset();
+  hr = device_test_rebind_alloc_list_tracker(create_dev.hDevice, alloc_list, 1, 0xFFFFu);
+  if (!Check(hr == S_OK, "device_test_rebind_alloc_list_tracker")) {
+    return false;
+  }
+  hr = device_test_reset_alloc_list_tracker(create_dev.hDevice);
+  if (!Check(hr == S_OK, "device_test_reset_alloc_list_tracker")) {
+    return false;
+  }
 
   if (!Check(cleanup.device_funcs.pfnSetRenderTarget != nullptr, "SetRenderTarget must be available")) {
     return false;
@@ -36880,7 +36943,10 @@ bool TestOpenResourceTracksWddmAllocationHandle() {
     return false;
   }
   D3DDDI_ALLOCATIONLIST list[4] = {};
-  dev->alloc_list_tracker.rebind(list, 4, 0xFFFFu);
+  hr = device_test_rebind_alloc_list_tracker(create_dev.hDevice, list, 4, 0xFFFFu);
+  if (!Check(hr == S_OK, "device_test_rebind_alloc_list_tracker")) {
+    return false;
+  }
 
   aerogpu_wddm_alloc_priv priv{};
   priv.magic = AEROGPU_WDDM_ALLOC_PRIV_MAGIC;
@@ -37019,7 +37085,10 @@ bool TestOpenResourceAcceptsAllocPrivV2() {
     return false;
   }
   D3DDDI_ALLOCATIONLIST list[4] = {};
-  dev->alloc_list_tracker.rebind(list, 4, 0xFFFFu);
+  hr = device_test_rebind_alloc_list_tracker(create_dev.hDevice, list, 4, 0xFFFFu);
+  if (!Check(hr == S_OK, "device_test_rebind_alloc_list_tracker")) {
+    return false;
+  }
 
   aerogpu_wddm_alloc_priv_v2 priv{};
   std::memset(&priv, 0, sizeof(priv));
@@ -37162,7 +37231,10 @@ bool TestOpenResourceReconstructsDxgiSharedSurfaceFromAllocPrivV2() {
     return false;
   }
   D3DDDI_ALLOCATIONLIST list[4] = {};
-  dev->alloc_list_tracker.rebind(list, 4, 0xFFFFu);
+  hr = device_test_rebind_alloc_list_tracker(create_dev.hDevice, list, 4, 0xFFFFu);
+  if (!Check(hr == S_OK, "device_test_rebind_alloc_list_tracker")) {
+    return false;
+  }
 
   auto run_case = [&](uint32_t dxgi_format, uint32_t expected_d3d9_format, const char* label) -> bool {
     // Simulate a DXGI/D3D10/11 shared surface opened via D3D9Ex (DWM-style).
@@ -38951,10 +39023,13 @@ bool TestGuestBackedUpdateSurfaceEmitsDirtyRangeNotUpload() {
   if (!Check(hr == S_OK, "device_test_enable_wddm_context")) {
     return false;
   }
-  {
-    std::lock_guard<std::mutex> lock(dev->mutex);
-    dev->alloc_list_tracker.rebind(alloc_list, 8, 0xFFFFu);
-    dev->alloc_list_tracker.reset();
+  hr = device_test_rebind_alloc_list_tracker(create_dev.hDevice, alloc_list, 8, 0xFFFFu);
+  if (!Check(hr == S_OK, "device_test_rebind_alloc_list_tracker")) {
+    return false;
+  }
+  hr = device_test_reset_alloc_list_tracker(create_dev.hDevice);
+  if (!Check(hr == S_OK, "device_test_reset_alloc_list_tracker")) {
+    return false;
   }
 
   // Fill the source surface with some bytes.
@@ -39203,10 +39278,13 @@ bool TestGuestBackedUpdateSurface16BitEmitsDirtyRangeNotUpload() {
   if (!Check(hr == S_OK, "device_test_enable_wddm_context")) {
     return false;
   }
-  {
-    std::lock_guard<std::mutex> lock(dev->mutex);
-    dev->alloc_list_tracker.rebind(alloc_list, 8, 0xFFFFu);
-    dev->alloc_list_tracker.reset();
+  hr = device_test_rebind_alloc_list_tracker(create_dev.hDevice, alloc_list, 8, 0xFFFFu);
+  if (!Check(hr == S_OK, "device_test_rebind_alloc_list_tracker")) {
+    return false;
+  }
+  hr = device_test_reset_alloc_list_tracker(create_dev.hDevice);
+  if (!Check(hr == S_OK, "device_test_reset_alloc_list_tracker")) {
+    return false;
   }
 
   // Fill the source surface with some bytes.
@@ -39716,10 +39794,13 @@ bool TestGuestBackedUpdateTextureEmitsDirtyRangeNotUpload() {
   if (!Check(hr == S_OK, "device_test_enable_wddm_context")) {
     return false;
   }
-  {
-    std::lock_guard<std::mutex> lock(dev->mutex);
-    dev->alloc_list_tracker.rebind(alloc_list, 8, 0xFFFFu);
-    dev->alloc_list_tracker.reset();
+  hr = device_test_rebind_alloc_list_tracker(create_dev.hDevice, alloc_list, 8, 0xFFFFu);
+  if (!Check(hr == S_OK, "device_test_rebind_alloc_list_tracker")) {
+    return false;
+  }
+  hr = device_test_reset_alloc_list_tracker(create_dev.hDevice);
+  if (!Check(hr == S_OK, "device_test_reset_alloc_list_tracker")) {
+    return false;
   }
 
   auto* src_res = reinterpret_cast<Resource*>(create_src.hResource.pDrvPrivate);
@@ -39944,10 +40025,13 @@ bool TestGuestBackedUpdateTexture16BitEmitsDirtyRangeNotUpload() {
   if (!Check(hr == S_OK, "device_test_enable_wddm_context")) {
     return false;
   }
-  {
-    std::lock_guard<std::mutex> lock(dev->mutex);
-    dev->alloc_list_tracker.rebind(alloc_list, 8, 0xFFFFu);
-    dev->alloc_list_tracker.reset();
+  hr = device_test_rebind_alloc_list_tracker(create_dev.hDevice, alloc_list, 8, 0xFFFFu);
+  if (!Check(hr == S_OK, "device_test_rebind_alloc_list_tracker")) {
+    return false;
+  }
+  hr = device_test_reset_alloc_list_tracker(create_dev.hDevice);
+  if (!Check(hr == S_OK, "device_test_reset_alloc_list_tracker")) {
+    return false;
   }
 
   auto* src_res = reinterpret_cast<Resource*>(create_src.hResource.pDrvPrivate);
@@ -40554,13 +40638,19 @@ bool TestGetRenderTargetDataTransferRetracksAllocationsAfterFlush() {
   if (!Check(hr == S_OK, "device_test_enable_wddm_context")) {
     return false;
   }
+  hr = device_test_rebind_alloc_list_tracker(create_dev.hDevice, alloc_list, 2, 0xFFFFu);
+  if (!Check(hr == S_OK, "device_test_rebind_alloc_list_tracker")) {
+    return false;
+  }
+  hr = device_test_reset_alloc_list_tracker(create_dev.hDevice);
+  if (!Check(hr == S_OK, "device_test_reset_alloc_list_tracker")) {
+    return false;
+  }
   {
     std::lock_guard<std::mutex> lock(dev->mutex);
-    dev->alloc_list_tracker.rebind(alloc_list, 2, 0xFFFFu);
-    dev->alloc_list_tracker.reset();
-
     // Pre-fill one entry so tracking the two copy resources requires a flush.
-    const auto pre = dev->alloc_list_tracker.track_texture_read(/*hAllocation=*/0xAAAAu, /*alloc_id=*/0xAAAAu, /*share_token=*/0);
+    const auto pre =
+        dev->alloc_list_tracker.track_texture_read(/*hAllocation=*/0xAAAAu, /*alloc_id=*/0xAAAAu, /*share_token=*/0);
     if (!Check(pre.status == AllocRefStatus::kOk, "pre-fill allocation list")) {
       return false;
     }

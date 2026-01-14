@@ -27458,6 +27458,36 @@ HRESULT AEROGPU_D3D9_CALL device_test_enable_wddm_context(D3DDDI_HDEVICE hDevice
   return S_OK;
 }
 
+HRESULT AEROGPU_D3D9_CALL device_test_rebind_alloc_list_tracker(
+    D3DDDI_HDEVICE hDevice,
+    D3DDDI_ALLOCATIONLIST* pAllocationList,
+    uint32_t allocation_list_capacity,
+    uint32_t max_allocation_list_slot_id) {
+  if (!hDevice.pDrvPrivate) {
+    return E_INVALIDARG;
+  }
+  if (allocation_list_capacity != 0 && !pAllocationList) {
+    return E_INVALIDARG;
+  }
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  dev->alloc_list_tracker.rebind(
+      pAllocationList,
+      static_cast<UINT>(allocation_list_capacity),
+      static_cast<UINT>(max_allocation_list_slot_id));
+  return S_OK;
+}
+
+HRESULT AEROGPU_D3D9_CALL device_test_reset_alloc_list_tracker(D3DDDI_HDEVICE hDevice) {
+  if (!hDevice.pDrvPrivate) {
+    return E_INVALIDARG;
+  }
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  dev->alloc_list_tracker.reset();
+  return S_OK;
+}
+
 HRESULT AEROGPU_D3D9_CALL device_test_force_umd_private_features(D3DDDI_HDEVICE hDevice, uint64_t device_features) {
   if (!hDevice.pDrvPrivate) {
     return E_INVALIDARG;
