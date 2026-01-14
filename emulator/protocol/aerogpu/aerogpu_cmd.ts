@@ -1524,7 +1524,9 @@ export class AerogpuCmdWriter {
       throw new Error(`command stream too large for u32 sizeBytes: ${this.len}`);
     }
     this.view.setUint32(AEROGPU_CMD_STREAM_HEADER_OFF_SIZE_BYTES, this.len, true);
-    return new Uint8Array(this.buf, 0, this.len).slice();
+    // The command writer always produces a fresh `ArrayBuffer`-backed byte array so callers can
+    // transfer the `.buffer` directly across worker boundaries.
+    return new Uint8Array(this.buf, 0, this.len).slice() as Uint8Array<ArrayBuffer>;
   }
 
   private ensureCapacity(capacity: number): void {
