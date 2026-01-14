@@ -19,7 +19,8 @@ fn init_ipi_resets_target_ap_lapic_and_enters_wait_for_sipi() {
 
     // Dirty the AP's LAPIC state so we can verify INIT resets it.
     const LAPIC_SVR_OFF: u64 = 0xF0;
-    let dirty_svr = (1u32 << 8) | 0x80;
+    // Non-default spurious vector (0xE0) + software-enable.
+    let dirty_svr = (1u32 << 8) | 0xE0;
     m.write_lapic_u32(1, LAPIC_SVR_OFF, dirty_svr);
     assert_eq!(m.read_lapic_u32(1, LAPIC_SVR_OFF), dirty_svr);
 
@@ -36,8 +37,7 @@ fn init_ipi_resets_target_ap_lapic_and_enters_wait_for_sipi() {
     // LAPIC SVR should reset to the default spurious vector (0xFF). The platform keeps the LAPIC
     // software-enable bit set so IOAPIC/MSI delivery remains deterministic across INIT/SIPI bring-up.
     let svr = m.read_lapic_u32(1, LAPIC_SVR_OFF);
-    assert_eq!(svr & 0xFF, 0xFF);
-    assert_ne!(svr & (1 << 8), 0);
+    assert_eq!(svr & 0x1FF, 0x1FF);
 
     // vCPU architectural state should be reset to a real-mode baseline and halted (wait-for-SIPI).
     let ap = m.vcpu_state(1).unwrap();
