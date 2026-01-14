@@ -129,5 +129,36 @@ describe("DebugOverlay hotkey handling", () => {
     });
     expect(root.style.display).toBe("none");
   });
-});
 
+  it("renders scanout format names and last GPU event when present in telemetry", () => {
+    const parent = { appendChild: vi.fn() } as unknown as HTMLElement;
+    const snapshot = {
+      framesReceived: 1,
+      framesPresented: 2,
+      framesDropped: 3,
+      droppedFrames: 3,
+      outputSource: "wddm_scanout",
+      presentUpload: { kind: "none" },
+      scanout: {
+        source: 2,
+        generation: 7,
+        base_paddr: "0x0000000000001000",
+        width: 800,
+        height: 600,
+        pitchBytes: 3200,
+        format: 2, // AerogpuFormat.B8G8R8X8Unorm
+      },
+      gpuEvents: [{ severity: "warn", category: "CursorReadback", message: "vram missing" }],
+    };
+
+    const overlay = new DebugOverlay(() => snapshot, { parent, toggleKey: "F3", updateIntervalMs: 10 });
+    overlay.show();
+
+    const root = (overlay as any)._root as FakeDiv;
+    expect(root.textContent).toContain("Scanout:");
+    expect(root.textContent).toContain("fmt=B8G8R8X8Unorm (2)");
+    expect(root.textContent).toContain("Last event: warn/CursorReadback: vram missing");
+
+    overlay.detach();
+  });
+});
