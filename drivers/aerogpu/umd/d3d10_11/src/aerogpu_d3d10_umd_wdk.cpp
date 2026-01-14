@@ -5150,34 +5150,9 @@ void APIENTRY CopySubresourceRegion(D3D10DDI_HDEVICE hDevice,
         SetError(hDevice, E_INVALIDARG);
         return;
       }
-      const uint64_t upload_offset = dst_off & ~3ull;
-      const uint64_t upload_end = AlignUpU64(end, 4);
-      const uint64_t upload_size = upload_end - upload_offset;
-      if (upload_size > static_cast<uint64_t>(SIZE_MAX)) {
-        SetError(hDevice, E_OUTOFMEMORY);
-        return;
-      }
-      if (upload_offset > static_cast<uint64_t>(dst->storage.size())) {
-        SetError(hDevice, E_INVALIDARG);
-        return;
-      }
-      const size_t remaining = dst->storage.size() - static_cast<size_t>(upload_offset);
-      if (upload_size > static_cast<uint64_t>(remaining)) {
-        SetError(hDevice, E_INVALIDARG);
-        return;
-      }
-
-      const uint8_t* payload = dst->storage.data() + static_cast<size_t>(upload_offset);
-      auto* upload = dev->cmd.append_with_payload<aerogpu_cmd_upload_resource>(
-          AEROGPU_CMD_UPLOAD_RESOURCE, payload, static_cast<size_t>(upload_size));
-      if (!upload) {
-        SetError(hDevice, E_FAIL);
-        return;
-      }
-      upload->resource_handle = dst->handle;
-      upload->reserved0 = 0;
-      upload->offset_bytes = upload_offset;
-      upload->size_bytes = upload_size;
+      // Ensure guest-backed buffers are updated via the backing allocation +
+      // RESOURCE_DIRTY_RANGE (UPLOAD_RESOURCE does not write guest memory).
+      EmitUploadLocked(hDevice, dev, dst, dst_off, bytes);
     }
 
     const bool transfer_aligned = (((dst_off | src_left | bytes) & 3ull) == 0);
@@ -5417,21 +5392,28 @@ void APIENTRY CopySubresourceRegion(D3D10DDI_HDEVICE hDevice,
 
     // Keep guest-backed staging allocations coherent for CPU readback when the
     // transfer backend is unavailable or stubbed out.
+    bool did_staging_upload = false;
     if (copy_width && copy_height &&
         dst->backing_alloc_id != 0 &&
         dst->usage == kD3D10UsageStaging &&
         (dst->cpu_access_flags == 0 ||
          (dst->cpu_access_flags & kD3D10CpuAccessRead) != 0)) {
       EmitUploadLocked(hDevice, dev, dst, dst_sub.offset_bytes, dst_sub.size_bytes);
+      did_staging_upload = true;
     }
 
     if (!aerogpu::d3d10_11::SupportsTransfer(dev)) {
       return;
     }
 
-    if (!TryTrackWddmAllocForSubmitLocked(dev, src, /*write=*/false) ||
-        !TryTrackWddmAllocForSubmitLocked(dev, dst, /*write=*/true)) {
-      return;
+    if (did_staging_upload) {
+      if (!TryTrackWddmAllocForSubmitLocked(dev, src, /*write=*/false) ||
+          !TryTrackWddmAllocForSubmitLocked(dev, dst, /*write=*/true)) {
+        return;
+      }
+    } else {
+      TrackWddmAllocForSubmitLocked(dev, src, /*write=*/false);
+      TrackWddmAllocForSubmitLocked(dev, dst, /*write=*/true);
     }
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_copy_texture2d>(AEROGPU_CMD_COPY_TEXTURE2D);
     if (!cmd) {
