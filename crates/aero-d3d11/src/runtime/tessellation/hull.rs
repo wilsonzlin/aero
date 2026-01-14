@@ -15,7 +15,7 @@ pub(in crate::runtime) struct HullKernel<'a> {
     pub label: &'a str,
     pub wgsl: &'a str,
     pub bindings: &'a [crate::Binding],
-    pub entry_point: &'a str,
+    pub entry_point: &'static str,
     /// X dimension of `@workgroup_size`.
     pub workgroup_size_x: u32,
 }
@@ -175,6 +175,7 @@ fn compute_dispatch_x(
             let key = ComputePipelineKey {
                 shader: cs_hash,
                 layout: layout_key.clone(),
+                entry_point: kernel.entry_point,
             };
             let pipeline = pipeline_cache
                 .get_or_create_compute_pipeline(device, key, move |device, cs| {
