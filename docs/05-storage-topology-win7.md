@@ -94,7 +94,13 @@ present to INT 13h; other drive numbers are treated as not present.
 1. Select **CD0** as the BIOS boot drive (**`DL=0xE0`**) *before* reset. In `aero_machine`, this is
    `Machine::set_boot_drive(0xE0)` followed by `Machine::reset()`. BIOS transfers control to the CD
    boot image with that CD drive number in `DL`.
-2. The boot ISO is presented as an **ATAPI CD-ROM** on **PIIX3 IDE secondary master**.
+2. The boot ISO must be attached and presented as an **ATAPI CD-ROM** on **PIIX3 IDE secondary
+   master** (`disk_id=1`) before BIOS POST/boot:
+   - Rust: `Machine::attach_install_media_iso_bytes(...)` (in-memory ISO) or
+     `Machine::attach_install_media_iso(...)` (file/stream-backed ISO).
+   - Browser/wasm: `machine.attach_install_media_iso_bytes(...)` (copies bytes into WASM memory; OK
+     for small ISOs) or `await machine.attach_install_media_iso_opfs(path)` (preferred for large
+     ISOs; OPFS-backed, worker-only).
 3. BIOS performs an **El Torito no-emulation** boot from that CD drive (see
    [`docs/09b-eltorito-cd-boot.md`](./09b-eltorito-cd-boot.md) for the detailed El Torito + INT 13h
    expectations).
