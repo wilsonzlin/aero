@@ -166,6 +166,24 @@ set_target_properties(aerogpu_d3d10_11_dxgi_format_tests PROPERTIES
 
 add_test(NAME aerogpu_d3d10_11_dxgi_format_tests COMMAND aerogpu_d3d10_11_dxgi_format_tests)
 
+add_executable(aerogpu_d3d10_11_texture_view_tests
+    texture_view_tests.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/../src/aerogpu_d3d10_11_umd.cpp
+)
+
+target_include_directories(aerogpu_d3d10_11_texture_view_tests PRIVATE
+    ${CMAKE_CURRENT_LIST_DIR}/../include
+    ${CMAKE_CURRENT_LIST_DIR}/../src
+    ${CMAKE_CURRENT_LIST_DIR}/../../../protocol
+)
+
+set_target_properties(aerogpu_d3d10_11_texture_view_tests PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED YES
+)
+
+add_test(NAME aerogpu_d3d10_11_texture_view_tests COMMAND aerogpu_d3d10_11_texture_view_tests)
+
 add_executable(aerogpu_d3d10_11_gs_shader_packets_tests
     gs_shader_packets_tests.cpp
 )

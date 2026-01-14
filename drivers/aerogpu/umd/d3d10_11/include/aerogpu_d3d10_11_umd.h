@@ -347,15 +347,33 @@ typedef struct AEROGPU_DDIARG_CREATEINPUTLAYOUT {
 
 typedef struct AEROGPU_DDIARG_CREATERENDERTARGETVIEW {
   D3D10DDI_HRESOURCE hResource;
+  // Optional view description fields (portable ABI extension).
+  //
+  // These mirror the D3D10/11 view descriptor concepts (format reinterpretation,
+  // mip/array slicing) but are intentionally a minimal, WDK-free subset.
+  //
+  // When zero-initialized, the view is treated as a default full view of the
+  // underlying resource (legacy behavior).
+  uint32_t Format; // DXGI_FORMAT numeric value (0 = use resource format)
+  uint32_t ViewDimension; // 3 = Texture2D, 4 = Texture2DArray
+  uint32_t MipSlice;
+  uint32_t FirstArraySlice;
+  uint32_t ArraySize; // 0 = all remaining slices (from FirstArraySlice)
 } AEROGPU_DDIARG_CREATERENDERTARGETVIEW;
 
 typedef struct AEROGPU_DDIARG_CREATEDEPTHSTENCILVIEW {
   D3D10DDI_HRESOURCE hResource;
+  uint32_t Format; // DXGI_FORMAT numeric value (0 = use resource format)
+  uint32_t ViewDimension; // 3 = Texture2D, 4 = Texture2DArray
+  uint32_t MipSlice;
+  uint32_t FirstArraySlice;
+  uint32_t ArraySize; // 0 = all remaining slices (from FirstArraySlice)
 } AEROGPU_DDIARG_CREATEDEPTHSTENCILVIEW;
 
 typedef enum AEROGPU_DDI_SRV_DIMENSION {
   AEROGPU_DDI_SRV_DIMENSION_UNKNOWN = 0,
   AEROGPU_DDI_SRV_DIMENSION_TEXTURE2D = 3,
+  AEROGPU_DDI_SRV_DIMENSION_TEXTURE2DARRAY = 4,
 } AEROGPU_DDI_SRV_DIMENSION;
 
 typedef struct AEROGPU_DDIARG_CREATESHADERRESOURCEVIEW {
@@ -364,6 +382,8 @@ typedef struct AEROGPU_DDIARG_CREATESHADERRESOURCEVIEW {
   uint32_t ViewDimension; // AEROGPU_DDI_SRV_DIMENSION
   uint32_t MostDetailedMip;
   uint32_t MipLevels;
+  uint32_t FirstArraySlice;
+  uint32_t ArraySize; // 0 = all remaining slices (from FirstArraySlice)
 } AEROGPU_DDIARG_CREATESHADERRESOURCEVIEW;
 
 typedef struct AEROGPU_DDIARG_CREATESAMPLER {

@@ -55,6 +55,8 @@ pub enum AerogpuCmdOpcode {
     UploadResource = 0x104,
     CopyBuffer = 0x105,
     CopyTexture2d = 0x106,
+    CreateTextureView = 0x107,
+    DestroyTextureView = 0x108,
 
     CreateShaderDxbc = 0x200,
     DestroyShader = 0x201,
@@ -114,6 +116,8 @@ impl AerogpuCmdOpcode {
             0x104 => Some(Self::UploadResource),
             0x105 => Some(Self::CopyBuffer),
             0x106 => Some(Self::CopyTexture2d),
+            0x107 => Some(Self::CreateTextureView),
+            0x108 => Some(Self::DestroyTextureView),
             0x200 => Some(Self::CreateShaderDxbc),
             0x201 => Some(Self::DestroyShader),
             0x202 => Some(Self::BindShaders),
@@ -525,6 +529,24 @@ impl AerogpuCmdCreateTexture2d {
 
 #[repr(C, packed)]
 #[derive(Clone, Copy)]
+pub struct AerogpuCmdCreateTextureView {
+    pub hdr: AerogpuCmdHdr,
+    pub view_handle: AerogpuHandle,
+    pub texture_handle: AerogpuHandle,
+    pub format: u32, // aerogpu_format
+    pub base_mip_level: u32,
+    pub mip_level_count: u32,
+    pub base_array_layer: u32,
+    pub array_layer_count: u32,
+    pub reserved0: u64,
+}
+
+impl AerogpuCmdCreateTextureView {
+    pub const SIZE_BYTES: usize = 44;
+}
+
+#[repr(C, packed)]
+#[derive(Clone, Copy)]
 pub struct AerogpuCmdDestroyResource {
     pub hdr: AerogpuCmdHdr,
     pub resource_handle: AerogpuHandle,
@@ -532,6 +554,18 @@ pub struct AerogpuCmdDestroyResource {
 }
 
 impl AerogpuCmdDestroyResource {
+    pub const SIZE_BYTES: usize = 16;
+}
+
+#[repr(C, packed)]
+#[derive(Clone, Copy)]
+pub struct AerogpuCmdDestroyTextureView {
+    pub hdr: AerogpuCmdHdr,
+    pub view_handle: AerogpuHandle,
+    pub reserved0: u32,
+}
+
+impl AerogpuCmdDestroyTextureView {
     pub const SIZE_BYTES: usize = 16;
 }
 

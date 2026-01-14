@@ -1117,12 +1117,15 @@ inline void SetRenderTargetsStateLocked(Device* dev,
     const RenderTargetView* view = (rtvs != nullptr) ? rtvs[i] : nullptr;
     Resource* res = view ? view->resource : nullptr;
     dev->current_rtv_resources[i] = res;
-    dev->current_rtvs[i] = res ? res->handle : (view ? view->texture : 0);
+    // `view->texture` is a protocol view handle when non-zero. When it is 0,
+    // this view is "trivial" (full-resource) and should bind the underlying
+    // resource handle, which can change via RotateResourceIdentities.
+    dev->current_rtvs[i] = view ? (view->texture ? view->texture : (res ? res->handle : 0)) : 0;
   }
 
   if (dsv) {
     dev->current_dsv_resource = dsv->resource;
-    dev->current_dsv = dev->current_dsv_resource ? dev->current_dsv_resource->handle : dsv->texture;
+    dev->current_dsv = dsv->texture ? dsv->texture : (dsv->resource ? dsv->resource->handle : 0);
   } else {
     dev->current_dsv = 0;
     dev->current_dsv_resource = nullptr;

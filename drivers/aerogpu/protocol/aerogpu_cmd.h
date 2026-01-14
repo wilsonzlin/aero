@@ -86,6 +86,14 @@ enum aerogpu_cmd_opcode {
   AEROGPU_CMD_COPY_BUFFER = 0x105,
   /* Requires AEROGPU_FEATURE_TRANSFER (introduced in ABI 1.1). */
   AEROGPU_CMD_COPY_TEXTURE2D = 0x106,
+  /*
+   * Creates a texture view (subresource selection / format reinterpretation).
+   *
+   * This is optional and may not be supported by all hosts. When unsupported,
+   * guest drivers should bind base texture handles directly (legacy behavior).
+   */
+  AEROGPU_CMD_CREATE_TEXTURE_VIEW = 0x107,
+  AEROGPU_CMD_DESTROY_TEXTURE_VIEW = 0x108,
 
   /* Shaders */
   AEROGPU_CMD_CREATE_SHADER_DXBC = 0x200,
@@ -369,6 +377,32 @@ struct aerogpu_cmd_create_texture2d {
 
 AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_create_texture2d) == 56);
 
+/*
+ * CREATE_TEXTURE_VIEW
+ * - Creates a view `view_handle` into an existing `texture_handle`.
+ * - Views select a subresource range:
+ *   - mip range: [base_mip_level, base_mip_level + mip_level_count)
+ *   - array range: [base_array_layer, base_array_layer + array_layer_count)
+ * - `format` allows format reinterpretation (must be compatible with the base texture).
+ * - The view handle lives in the same global handle namespace as other resources.
+ * - The host may treat the view as usable for both sampling and render-target binding.
+ */
+#pragma pack(push, 1)
+struct aerogpu_cmd_create_texture_view {
+  struct aerogpu_cmd_hdr hdr; /* opcode = AEROGPU_CMD_CREATE_TEXTURE_VIEW */
+  aerogpu_handle_t view_handle;
+  aerogpu_handle_t texture_handle;
+  uint32_t format; /* enum aerogpu_format */
+  uint32_t base_mip_level;
+  uint32_t mip_level_count;
+  uint32_t base_array_layer;
+  uint32_t array_layer_count;
+  uint64_t reserved0;
+};
+#pragma pack(pop)
+
+AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_create_texture_view) == 44);
+
 #pragma pack(push, 1)
 struct aerogpu_cmd_destroy_resource {
   struct aerogpu_cmd_hdr hdr; /* opcode = AEROGPU_CMD_DESTROY_RESOURCE */
@@ -378,6 +412,21 @@ struct aerogpu_cmd_destroy_resource {
 #pragma pack(pop)
 
 AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_destroy_resource) == 16);
+
+/*
+ * DESTROY_TEXTURE_VIEW
+ * - Destroys a previously created texture view.
+ * - Must be idempotent: destroying an already-destroyed/unknown handle is a no-op.
+ */
+#pragma pack(push, 1)
+struct aerogpu_cmd_destroy_texture_view {
+  struct aerogpu_cmd_hdr hdr; /* opcode = AEROGPU_CMD_DESTROY_TEXTURE_VIEW */
+  aerogpu_handle_t view_handle;
+  uint32_t reserved0;
+};
+#pragma pack(pop)
+
+AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_destroy_texture_view) == 16);
 
 /*
  * RESOURCE_DIRTY_RANGE:

@@ -174,6 +174,18 @@ inline bool SupportsBcFormats(const T* dev_or_adapter) {
 }
 
 template <typename T>
+inline bool SupportsTextureViews(const T* dev_or_adapter) {
+  // Texture views (subresource selection / format reinterpretation) are an ABI
+  // extension introduced after the initial D3D10/11 milestone. Gate emission so
+  // newer UMDs can run on older hosts without producing unknown opcodes.
+  const auto* adapter = detail::GetCapsAdapter(dev_or_adapter);
+  if (!adapter || !adapter->umd_private_valid) {
+    return false;
+  }
+  return detail::AbiMajorMinorAtLeast(adapter->umd_private, AEROGPU_ABI_MAJOR, /*want_minor=*/4);
+}
+
+template <typename T>
 inline uint32_t DxgiFormatToCompatDxgiFormat(const T* dev_or_adapter, uint32_t dxgi_format) {
   if (!SupportsSrgbFormats(dev_or_adapter)) {
     switch (dxgi_format) {

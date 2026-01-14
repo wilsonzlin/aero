@@ -199,6 +199,8 @@ export const AerogpuCmdOpcode = {
   UploadResource: 0x104,
   CopyBuffer: 0x105,
   CopyTexture2d: 0x106,
+  CreateTextureView: 0x107,
+  DestroyTextureView: 0x108,
 
   CreateShaderDxbc: 0x200,
   DestroyShader: 0x201,
@@ -697,7 +699,9 @@ export const AEROGPU_PRESENT_FLAG_VSYNC = 1 << 0;
 // Packet/struct sizes (in bytes) from the C header for ABI conformance tests.
 export const AEROGPU_CMD_CREATE_BUFFER_SIZE = 40;
 export const AEROGPU_CMD_CREATE_TEXTURE2D_SIZE = 56;
+export const AEROGPU_CMD_CREATE_TEXTURE_VIEW_SIZE = 44;
 export const AEROGPU_CMD_DESTROY_RESOURCE_SIZE = 16;
+export const AEROGPU_CMD_DESTROY_TEXTURE_VIEW_SIZE = 16;
 export const AEROGPU_CMD_RESOURCE_DIRTY_RANGE_SIZE = 32;
 // Payload: aerogpu_cmd_upload_resource + data[size_bytes] + 4-byte alignment padding.
 export const AEROGPU_CMD_UPLOAD_RESOURCE_SIZE = 32;

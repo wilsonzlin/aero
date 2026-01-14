@@ -8,20 +8,20 @@ use aero_protocol::aerogpu::aerogpu_cmd::{
     decode_cmd_hdr_le, AerogpuBlendFactor, AerogpuBlendOp, AerogpuBlendState,
     AerogpuCmdBindShaders, AerogpuCmdClear, AerogpuCmdCopyBuffer, AerogpuCmdCopyTexture2d,
     AerogpuCmdCreateBuffer, AerogpuCmdCreateInputLayout, AerogpuCmdCreateSampler,
-    AerogpuCmdCreateShaderDxbc, AerogpuCmdCreateTexture2d, AerogpuCmdDestroyInputLayout,
-    AerogpuCmdDestroyResource, AerogpuCmdDestroySampler, AerogpuCmdDestroyShader,
-    AerogpuCmdDispatch, AerogpuCmdDraw, AerogpuCmdDrawIndexed, AerogpuCmdExportSharedSurface,
-    AerogpuCmdFlush, AerogpuCmdHdr, AerogpuCmdImportSharedSurface, AerogpuCmdOpcode,
-    AerogpuCmdPresent, AerogpuCmdPresentEx, AerogpuCmdReleaseSharedSurface,
-    AerogpuCmdResourceDirtyRange, AerogpuCmdSetBlendState, AerogpuCmdSetConstantBuffers,
-    AerogpuCmdSetDepthStencilState, AerogpuCmdSetIndexBuffer, AerogpuCmdSetInputLayout,
-    AerogpuCmdSetPrimitiveTopology, AerogpuCmdSetRasterizerState, AerogpuCmdSetRenderState,
-    AerogpuCmdSetRenderTargets, AerogpuCmdSetSamplerState, AerogpuCmdSetSamplers,
-    AerogpuCmdSetScissor, AerogpuCmdSetShaderConstantsF, AerogpuCmdSetShaderResourceBuffers,
-    AerogpuCmdSetTexture, AerogpuCmdSetUnorderedAccessBuffers, AerogpuCmdSetVertexBuffers,
-    AerogpuCmdSetViewport, AerogpuCmdStreamFlags, AerogpuCmdStreamHeader, AerogpuCmdUploadResource,
-    AerogpuCompareFunc, AerogpuConstantBufferBinding, AerogpuCullMode, AerogpuDepthStencilState,
-    AerogpuFillMode, AerogpuIndexFormat, AerogpuInputLayoutBlobHeader,
+    AerogpuCmdCreateShaderDxbc, AerogpuCmdCreateTexture2d, AerogpuCmdCreateTextureView,
+    AerogpuCmdDestroyInputLayout, AerogpuCmdDestroyResource, AerogpuCmdDestroySampler,
+    AerogpuCmdDestroyShader, AerogpuCmdDestroyTextureView, AerogpuCmdDispatch, AerogpuCmdDraw,
+    AerogpuCmdDrawIndexed, AerogpuCmdExportSharedSurface, AerogpuCmdFlush, AerogpuCmdHdr,
+    AerogpuCmdImportSharedSurface, AerogpuCmdOpcode, AerogpuCmdPresent, AerogpuCmdPresentEx,
+    AerogpuCmdReleaseSharedSurface, AerogpuCmdResourceDirtyRange, AerogpuCmdSetBlendState,
+    AerogpuCmdSetConstantBuffers, AerogpuCmdSetDepthStencilState, AerogpuCmdSetIndexBuffer,
+    AerogpuCmdSetInputLayout, AerogpuCmdSetPrimitiveTopology, AerogpuCmdSetRasterizerState,
+    AerogpuCmdSetRenderState, AerogpuCmdSetRenderTargets, AerogpuCmdSetSamplerState,
+    AerogpuCmdSetSamplers, AerogpuCmdSetScissor, AerogpuCmdSetShaderConstantsF,
+    AerogpuCmdSetShaderResourceBuffers, AerogpuCmdSetTexture, AerogpuCmdSetUnorderedAccessBuffers,
+    AerogpuCmdSetVertexBuffers, AerogpuCmdSetViewport, AerogpuCmdStreamFlags, AerogpuCmdStreamHeader,
+    AerogpuCmdUploadResource, AerogpuCompareFunc, AerogpuConstantBufferBinding, AerogpuCullMode,
+    AerogpuDepthStencilState, AerogpuFillMode, AerogpuIndexFormat, AerogpuInputLayoutBlobHeader,
     AerogpuInputLayoutElementDxgi, AerogpuPrimitiveTopology, AerogpuRasterizerState,
     AerogpuShaderResourceBufferBinding, AerogpuShaderStage, AerogpuShaderStageEx,
     AerogpuUnorderedAccessBufferBinding, AerogpuVertexBufferBinding, AEROGPU_CLEAR_COLOR,
@@ -619,7 +619,15 @@ fn rust_layout_matches_c_headers() {
 
     assert_cmd_size!(AerogpuCmdCreateBuffer, "aerogpu_cmd_create_buffer");
     assert_cmd_size!(AerogpuCmdCreateTexture2d, "aerogpu_cmd_create_texture2d");
+    assert_cmd_size!(
+        AerogpuCmdCreateTextureView,
+        "aerogpu_cmd_create_texture_view"
+    );
     assert_cmd_size!(AerogpuCmdDestroyResource, "aerogpu_cmd_destroy_resource");
+    assert_cmd_size!(
+        AerogpuCmdDestroyTextureView,
+        "aerogpu_cmd_destroy_texture_view"
+    );
     assert_cmd_size!(
         AerogpuCmdResourceDirtyRange,
         "aerogpu_cmd_resource_dirty_range"
@@ -1162,6 +1170,59 @@ fn rust_layout_matches_c_headers() {
         "reserved0"
     );
 
+    assert_cmd_hdr_off!(
+        AerogpuCmdCreateTextureView,
+        "aerogpu_cmd_create_texture_view"
+    );
+    assert_off!(
+        AerogpuCmdCreateTextureView,
+        view_handle,
+        "aerogpu_cmd_create_texture_view",
+        "view_handle"
+    );
+    assert_off!(
+        AerogpuCmdCreateTextureView,
+        texture_handle,
+        "aerogpu_cmd_create_texture_view",
+        "texture_handle"
+    );
+    assert_off!(
+        AerogpuCmdCreateTextureView,
+        format,
+        "aerogpu_cmd_create_texture_view",
+        "format"
+    );
+    assert_off!(
+        AerogpuCmdCreateTextureView,
+        base_mip_level,
+        "aerogpu_cmd_create_texture_view",
+        "base_mip_level"
+    );
+    assert_off!(
+        AerogpuCmdCreateTextureView,
+        mip_level_count,
+        "aerogpu_cmd_create_texture_view",
+        "mip_level_count"
+    );
+    assert_off!(
+        AerogpuCmdCreateTextureView,
+        base_array_layer,
+        "aerogpu_cmd_create_texture_view",
+        "base_array_layer"
+    );
+    assert_off!(
+        AerogpuCmdCreateTextureView,
+        array_layer_count,
+        "aerogpu_cmd_create_texture_view",
+        "array_layer_count"
+    );
+    assert_off!(
+        AerogpuCmdCreateTextureView,
+        reserved0,
+        "aerogpu_cmd_create_texture_view",
+        "reserved0"
+    );
+
     assert_cmd_hdr_off!(AerogpuCmdDestroyResource, "aerogpu_cmd_destroy_resource");
     assert_off!(
         AerogpuCmdDestroyResource,
@@ -1173,6 +1234,23 @@ fn rust_layout_matches_c_headers() {
         AerogpuCmdDestroyResource,
         reserved0,
         "aerogpu_cmd_destroy_resource",
+        "reserved0"
+    );
+
+    assert_cmd_hdr_off!(
+        AerogpuCmdDestroyTextureView,
+        "aerogpu_cmd_destroy_texture_view"
+    );
+    assert_off!(
+        AerogpuCmdDestroyTextureView,
+        view_handle,
+        "aerogpu_cmd_destroy_texture_view",
+        "view_handle"
+    );
+    assert_off!(
+        AerogpuCmdDestroyTextureView,
+        reserved0,
+        "aerogpu_cmd_destroy_texture_view",
         "reserved0"
     );
 

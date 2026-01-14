@@ -2213,6 +2213,10 @@ static void UnbindResourceFromSrvsLocked(AeroGpuDevice* dev, aerogpu_handle_t ha
   }
 }
 
+static void UnbindResourceFromSrvsLocked(AeroGpuDevice* dev, const AeroGpuResource* resource) {
+  UnbindResourceFromSrvsLocked(dev, /*handle=*/0, resource);
+}
+
 static void UnbindResourceFromSrvsLocked(AeroGpuDevice* dev, aerogpu_handle_t resource) {
   if (!dev || !resource) {
     return;
@@ -2290,6 +2294,10 @@ static void UnbindResourceFromOutputsLocked(AeroGpuDevice* dev, aerogpu_handle_t
   if (changed) {
     EmitSetRenderTargetsLocked(dev);
   }
+}
+
+static void UnbindResourceFromOutputsLocked(AeroGpuDevice* dev, const AeroGpuResource* resource) {
+  UnbindResourceFromOutputsLocked(dev, /*handle=*/0, resource);
 }
 
 static void UnbindResourceFromOutputsLocked(AeroGpuDevice* dev, aerogpu_handle_t resource) {
@@ -3555,8 +3563,8 @@ void APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hReso
   }
 
   if (res->handle != kInvalidHandle) {
-    UnbindResourceFromOutputsLocked(dev, res->handle);
-    UnbindResourceFromSrvsLocked(dev, res->handle);
+    UnbindResourceFromOutputsLocked(dev, res);
+    UnbindResourceFromSrvsLocked(dev, res);
   }
   // Unbind any IA vertex buffer slots that reference this resource.
   for (uint32_t slot = 0; slot < kMaxVertexBufferSlots; ++slot) {
@@ -5572,6 +5580,34 @@ static bool D3dViewDimensionIsTexture2D(uint32_t view_dimension) {
   return ok;
 }
 
+static bool D3dViewDimensionIsTexture2DArray(uint32_t view_dimension) {
+  bool ok = false;
+  __if_exists(D3D10DDIRESOURCE_VIEW_DIMENSION_TEXTURE2DARRAY) {
+    ok = ok || (view_dimension == static_cast<uint32_t>(D3D10DDIRESOURCE_VIEW_DIMENSION_TEXTURE2DARRAY));
+  }
+  __if_exists(D3D10DDIRENDERTARGETVIEW_DIMENSION_TEXTURE2DARRAY) {
+    ok = ok || (view_dimension == static_cast<uint32_t>(D3D10DDIRENDERTARGETVIEW_DIMENSION_TEXTURE2DARRAY));
+  }
+  __if_exists(D3D10DDIDEPTHSTENCILVIEW_DIMENSION_TEXTURE2DARRAY) {
+    ok = ok || (view_dimension == static_cast<uint32_t>(D3D10DDIDEPTHSTENCILVIEW_DIMENSION_TEXTURE2DARRAY));
+  }
+  __if_exists(D3D11DDIRESOURCE_VIEW_DIMENSION_TEXTURE2DARRAY) {
+    ok = ok || (view_dimension == static_cast<uint32_t>(D3D11DDIRESOURCE_VIEW_DIMENSION_TEXTURE2DARRAY));
+  }
+  __if_exists(D3D11DDIRENDERTARGETVIEW_DIMENSION_TEXTURE2DARRAY) {
+    ok = ok || (view_dimension == static_cast<uint32_t>(D3D11DDIRENDERTARGETVIEW_DIMENSION_TEXTURE2DARRAY));
+  }
+  __if_exists(D3D11DDIDEPTHSTENCILVIEW_DIMENSION_TEXTURE2DARRAY) {
+    ok = ok || (view_dimension == static_cast<uint32_t>(D3D11DDIDEPTHSTENCILVIEW_DIMENSION_TEXTURE2DARRAY));
+  }
+
+  // Conservative fallback: D3D10/11 use 4 for Texture2DArray.
+  if (!ok) {
+    ok = (view_dimension == 4u);
+  }
+  return ok;
+}
+
 HRESULT APIENTRY CreateRenderTargetView(D3D10DDI_HDEVICE hDevice,
                                         const D3D10DDIARG_CREATERENDERTARGETVIEW* pDesc,
                                         D3D10DDI_HRENDERTARGETVIEW hView,
@@ -5619,6 +5655,9 @@ HRESULT APIENTRY CreateRenderTargetView(D3D10DDI_HDEVICE hDevice,
                          static_cast<unsigned>(res->handle));
     return E_NOTIMPL;
   }
+
+  std::lock_guard<std::mutex> lock(dev->mutex);
+
   if ((res->bind_flags & kD3D10BindRenderTarget) == 0) {
     // D3D requires the resource to be created with the appropriate bind flag
     // for the view type. Failing here avoids later host-side validation errors.
@@ -5627,15 +5666,6 @@ HRESULT APIENTRY CreateRenderTargetView(D3D10DDI_HDEVICE hDevice,
         static_cast<unsigned>(res->bind_flags),
         static_cast<unsigned>(res->handle));
     return E_INVALIDARG;
-  }
-
-  // Reject array resources / array-slice RTVs for now; the command stream does
-  // not encode subresource view selection.
-  if (res->array_size != 1) {
-    AEROGPU_D3D10_11_LOG("D3D10 CreateRenderTargetView: rejecting array RTV resource array_size=%u (handle=%u)",
-                         static_cast<unsigned>(res->array_size),
-                         static_cast<unsigned>(res->handle));
-    return E_NOTIMPL;
   }
 
   // Validate view format (allow only trivial compatible cases).
@@ -5685,17 +5715,19 @@ HRESULT APIENTRY CreateRenderTargetView(D3D10DDI_HDEVICE hDevice,
     }
   }
 
-  if (have_view_dim && !D3dViewDimensionIsTexture2D(view_dim)) {
-    AEROGPU_D3D10_11_LOG("D3D10 CreateRenderTargetView: rejecting RTV dimension=%u (only Texture2D supported handle=%u)",
-                         static_cast<unsigned>(view_dim),
-                         static_cast<unsigned>(res->handle));
-    return E_NOTIMPL;
-  }
-  // If the header exposes MSAA RTV union variants but does not expose a view
-  // dimension discriminator, we cannot safely determine which union member is
-  // active. Reject to avoid accidentally accepting an MSAA view and silently
-  // binding it as a non-MSAA Texture2D.
-  if (!have_view_dim) {
+  if (have_view_dim) {
+    if (!D3dViewDimensionIsTexture2D(view_dim) && !D3dViewDimensionIsTexture2DArray(view_dim)) {
+      AEROGPU_D3D10_11_LOG(
+          "D3D10 CreateRenderTargetView: rejecting RTV dimension=%u (only Texture2D/Texture2DArray supported handle=%u)",
+          static_cast<unsigned>(view_dim),
+          static_cast<unsigned>(res->handle));
+      return E_NOTIMPL;
+    }
+  } else {
+    // If the header exposes array/MSAA RTV union variants but does not expose a
+    // view dimension discriminator, we cannot safely determine which union
+    // member is active. Reject to avoid accidentally accepting a subresource or
+    // MSAA view and silently binding the whole resource.
     bool has_ambiguous_union = false;
     __if_exists(D3D10DDIARG_CREATERENDERTARGETVIEW::Tex2DArray) { has_ambiguous_union = true; }
     __if_exists(D3D10DDIARG_CREATERENDERTARGETVIEW::Texture2DArray) { has_ambiguous_union = true; }
@@ -5704,11 +5736,14 @@ HRESULT APIENTRY CreateRenderTargetView(D3D10DDI_HDEVICE hDevice,
     __if_exists(D3D10DDIARG_CREATERENDERTARGETVIEW::Texture2DMS) { has_ambiguous_union = true; }
     __if_exists(D3D10DDIARG_CREATERENDERTARGETVIEW::Texture2DMSArray) { has_ambiguous_union = true; }
     if (has_ambiguous_union) {
-      AEROGPU_D3D10_11_LOG("D3D10 CreateRenderTargetView: rejecting RTV (missing view dimension discriminator handle=%u)",
-                           static_cast<unsigned>(res->handle));
+      AEROGPU_D3D10_11_LOG(
+          "D3D10 CreateRenderTargetView: rejecting RTV (missing view dimension discriminator handle=%u)",
+          static_cast<unsigned>(res->handle));
       return E_NOTIMPL;
     }
   }
+
+  const bool view_is_array = have_view_dim && D3dViewDimensionIsTexture2DArray(view_dim);
 
   uint32_t mip_slice = 0;
   bool have_mip_slice = false;
@@ -5718,50 +5753,136 @@ HRESULT APIENTRY CreateRenderTargetView(D3D10DDI_HDEVICE hDevice,
     have_mip_slice = true;
   }
   __if_not_exists(D3D10DDIARG_CREATERENDERTARGETVIEW::MipSlice) {
-    __if_exists(D3D10DDIARG_CREATERENDERTARGETVIEW::Tex2D) {
-      mip_slice = static_cast<uint32_t>(pDesc->Tex2D.MipSlice);
-      have_mip_slice = true;
-    }
-    __if_not_exists(D3D10DDIARG_CREATERENDERTARGETVIEW::Tex2D) {
-      __if_exists(D3D10DDIARG_CREATERENDERTARGETVIEW::Texture2D) {
-        mip_slice = static_cast<uint32_t>(pDesc->Texture2D.MipSlice);
+    if (view_is_array) {
+      __if_exists(D3D10DDIARG_CREATERENDERTARGETVIEW::Tex2DArray) {
+        mip_slice = static_cast<uint32_t>(pDesc->Tex2DArray.MipSlice);
         have_mip_slice = true;
+      }
+      __if_not_exists(D3D10DDIARG_CREATERENDERTARGETVIEW::Tex2DArray) {
+        __if_exists(D3D10DDIARG_CREATERENDERTARGETVIEW::Texture2DArray) {
+          mip_slice = static_cast<uint32_t>(pDesc->Texture2DArray.MipSlice);
+          have_mip_slice = true;
+        }
+      }
+    } else {
+      __if_exists(D3D10DDIARG_CREATERENDERTARGETVIEW::Tex2D) {
+        mip_slice = static_cast<uint32_t>(pDesc->Tex2D.MipSlice);
+        have_mip_slice = true;
+      }
+      __if_not_exists(D3D10DDIARG_CREATERENDERTARGETVIEW::Tex2D) {
+        __if_exists(D3D10DDIARG_CREATERENDERTARGETVIEW::Texture2D) {
+          mip_slice = static_cast<uint32_t>(pDesc->Texture2D.MipSlice);
+          have_mip_slice = true;
+        }
       }
     }
   }
 
-  if (have_mip_slice) {
-    if (mip_slice >= res->mip_levels) {
-      AEROGPU_D3D10_11_LOG("D3D10 CreateRenderTargetView: rejecting invalid mip_slice=%u (res mips=%u handle=%u)",
-                           static_cast<unsigned>(mip_slice),
-                           static_cast<unsigned>(res->mip_levels),
-                           static_cast<unsigned>(res->handle));
-      return E_INVALIDARG;
-    }
-    if (mip_slice != 0) {
-      AEROGPU_D3D10_11_LOG("D3D10 CreateRenderTargetView: rejecting unsupported mip_slice=%u (only 0 supported handle=%u)",
-                           static_cast<unsigned>(mip_slice),
-                           static_cast<unsigned>(res->handle));
-      return E_NOTIMPL;
-    }
-  } else {
-    // WDK struct layout drift: if we cannot determine the mip slice, we cannot
-    // safely assume this is a subresource-0 view.
-    AEROGPU_D3D10_11_LOG("D3D10 CreateRenderTargetView: rejecting RTV (missing mip slice fields handle=%u)",
-                         static_cast<unsigned>(res->handle));
+  if (!have_mip_slice) {
     return E_NOTIMPL;
   }
 
-  rtv->texture = res->handle;
+  if (mip_slice >= res->mip_levels) {
+    AEROGPU_D3D10_11_LOG("D3D10 CreateRenderTargetView: rejecting invalid mip_slice=%u (res mips=%u)",
+                         static_cast<unsigned>(mip_slice),
+                         static_cast<unsigned>(res->mip_levels));
+    return E_INVALIDARG;
+  }
+
+  uint32_t first_slice = 0;
+  uint32_t slice_count = res->array_size;
+  bool have_slice_range = !view_is_array;
+  if (view_is_array) {
+    __if_exists(D3D10DDIARG_CREATERENDERTARGETVIEW::FirstArraySlice) {
+      first_slice = static_cast<uint32_t>(pDesc->FirstArraySlice);
+      slice_count = static_cast<uint32_t>(pDesc->ArraySize);
+      have_slice_range = true;
+    }
+    __if_not_exists(D3D10DDIARG_CREATERENDERTARGETVIEW::FirstArraySlice) {
+      __if_exists(D3D10DDIARG_CREATERENDERTARGETVIEW::Tex2DArray) {
+        first_slice = static_cast<uint32_t>(pDesc->Tex2DArray.FirstArraySlice);
+        slice_count = static_cast<uint32_t>(pDesc->Tex2DArray.ArraySize);
+        have_slice_range = true;
+      }
+      __if_not_exists(D3D10DDIARG_CREATERENDERTARGETVIEW::Tex2DArray) {
+        __if_exists(D3D10DDIARG_CREATERENDERTARGETVIEW::Texture2DArray) {
+          first_slice = static_cast<uint32_t>(pDesc->Texture2DArray.FirstArraySlice);
+          slice_count = static_cast<uint32_t>(pDesc->Texture2DArray.ArraySize);
+          have_slice_range = true;
+        }
+      }
+    }
+  }
+
+  if (!have_slice_range) {
+    return E_NOTIMPL;
+  }
+
+  if (slice_count == 0 || slice_count == 0xFFFFFFFFu) {
+    slice_count = (res->array_size > first_slice) ? (res->array_size - first_slice) : 0;
+  }
+
+  if (first_slice >= res->array_size || slice_count == 0 || first_slice + slice_count > res->array_size) {
+    return E_INVALIDARG;
+  }
+
+  const uint32_t view_dxgi_format = view_format ? view_format : res->dxgi_format;
+  const bool format_reinterpret = (view_format != 0) && (view_format != res->dxgi_format);
+  const bool non_trivial =
+      format_reinterpret || mip_slice != 0 || first_slice != 0 || slice_count != res->array_size;
+  const bool supports_views = aerogpu::d3d10_11::SupportsTextureViews(dev->adapter);
+  if (non_trivial && !supports_views) {
+    return E_NOTIMPL;
+  }
+
   rtv->resource = res;
+
+  if (non_trivial && supports_views) {
+    const uint32_t aer_fmt = aerogpu::d3d10_11::dxgi_format_to_aerogpu_compat(dev, view_dxgi_format);
+    if (aer_fmt == AEROGPU_FORMAT_INVALID) {
+      rtv->~AeroGpuRenderTargetView();
+      return E_NOTIMPL;
+    }
+
+    const aerogpu_handle_t view_handle = aerogpu::d3d10_11::AllocateGlobalHandle(dev->adapter);
+    auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_create_texture_view>(AEROGPU_CMD_CREATE_TEXTURE_VIEW);
+    if (!cmd) {
+      rtv->~AeroGpuRenderTargetView();
+      return E_OUTOFMEMORY;
+    }
+    cmd->view_handle = view_handle;
+    cmd->texture_handle = res->handle;
+    cmd->format = aer_fmt;
+    cmd->base_mip_level = mip_slice;
+    cmd->mip_level_count = 1;
+    cmd->base_array_layer = first_slice;
+    cmd->array_layer_count = slice_count;
+    cmd->reserved0 = 0;
+
+    rtv->texture = view_handle;
+  }
+
   return S_OK;
 }
 
-void APIENTRY DestroyRenderTargetView(D3D10DDI_HDEVICE, D3D10DDI_HRENDERTARGETVIEW hView) {
+void APIENTRY DestroyRenderTargetView(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRENDERTARGETVIEW hView) {
   if (!hView.pDrvPrivate) {
     return;
   }
   auto* view = FromHandle<D3D10DDI_HRENDERTARGETVIEW, AeroGpuRenderTargetView>(hView);
+  auto* dev = hDevice.pDrvPrivate ? FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice) : nullptr;
+  if (dev && view) {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (aerogpu::d3d10_11::SupportsTextureViews(dev->adapter) && view->texture) {
+      auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_destroy_texture_view>(AEROGPU_CMD_DESTROY_TEXTURE_VIEW);
+      if (!cmd) {
+        SetError(hDevice, E_OUTOFMEMORY);
+      } else {
+        cmd->view_handle = view->texture;
+        cmd->reserved0 = 0;
+      }
+    }
+  }
   view->~AeroGpuRenderTargetView();
   new (view) AeroGpuRenderTargetView();
 }
@@ -5817,18 +5938,15 @@ HRESULT APIENTRY CreateDepthStencilView(D3D10DDI_HDEVICE hDevice,
                          static_cast<unsigned>(res->handle));
     return E_NOTIMPL;
   }
+
+  std::lock_guard<std::mutex> lock(dev->mutex);
+
   if ((res->bind_flags & kD3D10BindDepthStencil) == 0) {
     AEROGPU_D3D10_11_LOG(
         "D3D10 CreateDepthStencilView: rejecting DSV for resource missing BIND_DEPTH_STENCIL (bind=0x%08X handle=%u)",
         static_cast<unsigned>(res->bind_flags),
         static_cast<unsigned>(res->handle));
     return E_INVALIDARG;
-  }
-  if (res->array_size != 1) {
-    AEROGPU_D3D10_11_LOG("D3D10 CreateDepthStencilView: rejecting array DSV resource array_size=%u (handle=%u)",
-                         static_cast<unsigned>(res->array_size),
-                         static_cast<unsigned>(res->handle));
-    return E_NOTIMPL;
   }
 
   // Validate view format (allow only trivial compatible cases).
@@ -5877,13 +5995,19 @@ HRESULT APIENTRY CreateDepthStencilView(D3D10DDI_HDEVICE hDevice,
       have_view_dim = true;
     }
   }
-  if (have_view_dim && !D3dViewDimensionIsTexture2D(view_dim)) {
-    AEROGPU_D3D10_11_LOG("D3D10 CreateDepthStencilView: rejecting DSV dimension=%u (only Texture2D supported handle=%u)",
-                         static_cast<unsigned>(view_dim),
-                         static_cast<unsigned>(res->handle));
-    return E_NOTIMPL;
-  }
-  if (!have_view_dim) {
+  if (have_view_dim) {
+    if (!D3dViewDimensionIsTexture2D(view_dim) && !D3dViewDimensionIsTexture2DArray(view_dim)) {
+      AEROGPU_D3D10_11_LOG(
+          "D3D10 CreateDepthStencilView: rejecting DSV dimension=%u (only Texture2D/Texture2DArray supported handle=%u)",
+          static_cast<unsigned>(view_dim),
+          static_cast<unsigned>(res->handle));
+      return E_NOTIMPL;
+    }
+  } else {
+    // If the header exposes array/MSAA DSV union variants but does not expose a
+    // view dimension discriminator, we cannot safely determine which union
+    // member is active. Reject to avoid accidentally accepting a subresource or
+    // MSAA view and silently binding the whole resource.
     bool has_ambiguous_union = false;
     __if_exists(D3D10DDIARG_CREATEDEPTHSTENCILVIEW::Tex2DArray) { has_ambiguous_union = true; }
     __if_exists(D3D10DDIARG_CREATEDEPTHSTENCILVIEW::Texture2DArray) { has_ambiguous_union = true; }
@@ -5892,11 +6016,14 @@ HRESULT APIENTRY CreateDepthStencilView(D3D10DDI_HDEVICE hDevice,
     __if_exists(D3D10DDIARG_CREATEDEPTHSTENCILVIEW::Texture2DMS) { has_ambiguous_union = true; }
     __if_exists(D3D10DDIARG_CREATEDEPTHSTENCILVIEW::Texture2DMSArray) { has_ambiguous_union = true; }
     if (has_ambiguous_union) {
-      AEROGPU_D3D10_11_LOG("D3D10 CreateDepthStencilView: rejecting DSV (missing view dimension discriminator handle=%u)",
-                           static_cast<unsigned>(res->handle));
+      AEROGPU_D3D10_11_LOG(
+          "D3D10 CreateDepthStencilView: rejecting DSV (missing view dimension discriminator handle=%u)",
+          static_cast<unsigned>(res->handle));
       return E_NOTIMPL;
     }
   }
+
+  const bool view_is_array = have_view_dim && D3dViewDimensionIsTexture2DArray(view_dim);
 
   // Some newer headers expose depth-stencil view flags (read-only depth/stencil).
   // The current command stream has no way to encode this; reject if requested.
@@ -5927,47 +6054,135 @@ HRESULT APIENTRY CreateDepthStencilView(D3D10DDI_HDEVICE hDevice,
     have_mip_slice = true;
   }
   __if_not_exists(D3D10DDIARG_CREATEDEPTHSTENCILVIEW::MipSlice) {
-    __if_exists(D3D10DDIARG_CREATEDEPTHSTENCILVIEW::Tex2D) {
-      mip_slice = static_cast<uint32_t>(pDesc->Tex2D.MipSlice);
-      have_mip_slice = true;
-    }
-    __if_not_exists(D3D10DDIARG_CREATEDEPTHSTENCILVIEW::Tex2D) {
-      __if_exists(D3D10DDIARG_CREATEDEPTHSTENCILVIEW::Texture2D) {
-        mip_slice = static_cast<uint32_t>(pDesc->Texture2D.MipSlice);
+    if (view_is_array) {
+      __if_exists(D3D10DDIARG_CREATEDEPTHSTENCILVIEW::Tex2DArray) {
+        mip_slice = static_cast<uint32_t>(pDesc->Tex2DArray.MipSlice);
         have_mip_slice = true;
+      }
+      __if_not_exists(D3D10DDIARG_CREATEDEPTHSTENCILVIEW::Tex2DArray) {
+        __if_exists(D3D10DDIARG_CREATEDEPTHSTENCILVIEW::Texture2DArray) {
+          mip_slice = static_cast<uint32_t>(pDesc->Texture2DArray.MipSlice);
+          have_mip_slice = true;
+        }
+      }
+    } else {
+      __if_exists(D3D10DDIARG_CREATEDEPTHSTENCILVIEW::Tex2D) {
+        mip_slice = static_cast<uint32_t>(pDesc->Tex2D.MipSlice);
+        have_mip_slice = true;
+      }
+      __if_not_exists(D3D10DDIARG_CREATEDEPTHSTENCILVIEW::Tex2D) {
+        __if_exists(D3D10DDIARG_CREATEDEPTHSTENCILVIEW::Texture2D) {
+          mip_slice = static_cast<uint32_t>(pDesc->Texture2D.MipSlice);
+          have_mip_slice = true;
+        }
       }
     }
   }
-  if (have_mip_slice) {
-    if (mip_slice >= res->mip_levels) {
-      AEROGPU_D3D10_11_LOG("D3D10 CreateDepthStencilView: rejecting invalid mip_slice=%u (res mips=%u handle=%u)",
-                           static_cast<unsigned>(mip_slice),
-                           static_cast<unsigned>(res->mip_levels),
-                           static_cast<unsigned>(res->handle));
-      return E_INVALIDARG;
-    }
-    if (mip_slice != 0) {
-      AEROGPU_D3D10_11_LOG("D3D10 CreateDepthStencilView: rejecting unsupported mip_slice=%u (only 0 supported handle=%u)",
-                           static_cast<unsigned>(mip_slice),
-                           static_cast<unsigned>(res->handle));
-      return E_NOTIMPL;
-    }
-  } else {
-    AEROGPU_D3D10_11_LOG("D3D10 CreateDepthStencilView: rejecting DSV (missing mip slice fields handle=%u)",
-                         static_cast<unsigned>(res->handle));
+  if (!have_mip_slice) {
     return E_NOTIMPL;
   }
 
-  dsv->texture = res->handle;
+  if (mip_slice >= res->mip_levels) {
+    AEROGPU_D3D10_11_LOG("D3D10 CreateDepthStencilView: rejecting invalid mip_slice=%u (res mips=%u)",
+                         static_cast<unsigned>(mip_slice),
+                         static_cast<unsigned>(res->mip_levels));
+    return E_INVALIDARG;
+  }
+
+  uint32_t first_slice = 0;
+  uint32_t slice_count = res->array_size;
+  bool have_slice_range = !view_is_array;
+  if (view_is_array) {
+    __if_exists(D3D10DDIARG_CREATEDEPTHSTENCILVIEW::FirstArraySlice) {
+      first_slice = static_cast<uint32_t>(pDesc->FirstArraySlice);
+      slice_count = static_cast<uint32_t>(pDesc->ArraySize);
+      have_slice_range = true;
+    }
+    __if_not_exists(D3D10DDIARG_CREATEDEPTHSTENCILVIEW::FirstArraySlice) {
+      __if_exists(D3D10DDIARG_CREATEDEPTHSTENCILVIEW::Tex2DArray) {
+        first_slice = static_cast<uint32_t>(pDesc->Tex2DArray.FirstArraySlice);
+        slice_count = static_cast<uint32_t>(pDesc->Tex2DArray.ArraySize);
+        have_slice_range = true;
+      }
+      __if_not_exists(D3D10DDIARG_CREATEDEPTHSTENCILVIEW::Tex2DArray) {
+        __if_exists(D3D10DDIARG_CREATEDEPTHSTENCILVIEW::Texture2DArray) {
+          first_slice = static_cast<uint32_t>(pDesc->Texture2DArray.FirstArraySlice);
+          slice_count = static_cast<uint32_t>(pDesc->Texture2DArray.ArraySize);
+          have_slice_range = true;
+        }
+      }
+    }
+  }
+
+  if (!have_slice_range) {
+    return E_NOTIMPL;
+  }
+
+  if (slice_count == 0 || slice_count == 0xFFFFFFFFu) {
+    slice_count = (res->array_size > first_slice) ? (res->array_size - first_slice) : 0;
+  }
+
+  if (first_slice >= res->array_size || slice_count == 0 || first_slice + slice_count > res->array_size) {
+    return E_INVALIDARG;
+  }
+
+  const uint32_t view_dxgi_format = view_format ? view_format : res->dxgi_format;
+  const bool format_reinterpret = (view_format != 0) && (view_format != res->dxgi_format);
+  const bool non_trivial =
+      format_reinterpret || mip_slice != 0 || first_slice != 0 || slice_count != res->array_size;
+  const bool supports_views = aerogpu::d3d10_11::SupportsTextureViews(dev->adapter);
+  if (non_trivial && !supports_views) {
+    return E_NOTIMPL;
+  }
+
   dsv->resource = res;
+
+  if (non_trivial && supports_views) {
+    const uint32_t aer_fmt = aerogpu::d3d10_11::dxgi_format_to_aerogpu_compat(dev, view_dxgi_format);
+    if (aer_fmt == AEROGPU_FORMAT_INVALID) {
+      dsv->~AeroGpuDepthStencilView();
+      return E_NOTIMPL;
+    }
+
+    const aerogpu_handle_t view_handle = aerogpu::d3d10_11::AllocateGlobalHandle(dev->adapter);
+    auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_create_texture_view>(AEROGPU_CMD_CREATE_TEXTURE_VIEW);
+    if (!cmd) {
+      dsv->~AeroGpuDepthStencilView();
+      return E_OUTOFMEMORY;
+    }
+    cmd->view_handle = view_handle;
+    cmd->texture_handle = res->handle;
+    cmd->format = aer_fmt;
+    cmd->base_mip_level = mip_slice;
+    cmd->mip_level_count = 1;
+    cmd->base_array_layer = first_slice;
+    cmd->array_layer_count = slice_count;
+    cmd->reserved0 = 0;
+
+    dsv->texture = view_handle;
+  }
+
   return S_OK;
 }
 
-void APIENTRY DestroyDepthStencilView(D3D10DDI_HDEVICE, D3D10DDI_HDEPTHSTENCILVIEW hView) {
+void APIENTRY DestroyDepthStencilView(D3D10DDI_HDEVICE hDevice, D3D10DDI_HDEPTHSTENCILVIEW hView) {
   if (!hView.pDrvPrivate) {
     return;
   }
   auto* view = FromHandle<D3D10DDI_HDEPTHSTENCILVIEW, AeroGpuDepthStencilView>(hView);
+  auto* dev = hDevice.pDrvPrivate ? FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice) : nullptr;
+  if (dev && view) {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (aerogpu::d3d10_11::SupportsTextureViews(dev->adapter) && view->texture) {
+      auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_destroy_texture_view>(AEROGPU_CMD_DESTROY_TEXTURE_VIEW);
+      if (!cmd) {
+        SetError(hDevice, E_OUTOFMEMORY);
+      } else {
+        cmd->view_handle = view->texture;
+        cmd->reserved0 = 0;
+      }
+    }
+  }
   view->~AeroGpuDepthStencilView();
   new (view) AeroGpuDepthStencilView();
 }
@@ -6017,27 +6232,21 @@ HRESULT APIENTRY CreateShaderResourceView(D3D10DDI_HDEVICE hDevice,
     return E_INVALIDARG;
   }
 
-  // SRV support is intentionally minimal for bring-up: Texture2D only, full
-  // mip range, no subresource/array slicing. Anything else must fail cleanly
-  // so apps don't silently misbind.
   if (res->kind != ResourceKind::Texture2D) {
     AEROGPU_D3D10_11_LOG("D3D10 CreateShaderResourceView: rejecting non-texture2d SRV resource kind=%u (handle=%u)",
                          static_cast<unsigned>(res->kind),
                          static_cast<unsigned>(res->handle));
     return E_NOTIMPL;
   }
+
+  std::lock_guard<std::mutex> lock(dev->mutex);
+
   if ((res->bind_flags & kD3D10BindShaderResource) == 0) {
     AEROGPU_D3D10_11_LOG(
         "D3D10 CreateShaderResourceView: rejecting SRV for resource missing BIND_SHADER_RESOURCE (bind=0x%08X handle=%u)",
         static_cast<unsigned>(res->bind_flags),
         static_cast<unsigned>(res->handle));
     return E_INVALIDARG;
-  }
-  if (res->array_size != 1) {
-    AEROGPU_D3D10_11_LOG("D3D10 CreateShaderResourceView: rejecting array SRV resource array_size=%u (handle=%u)",
-                         static_cast<unsigned>(res->array_size),
-                         static_cast<unsigned>(res->handle));
-    return E_NOTIMPL;
   }
 
   uint32_t view_format = 0;
@@ -6065,13 +6274,18 @@ HRESULT APIENTRY CreateShaderResourceView(D3D10DDI_HDEVICE hDevice,
     }
   }
 
-  if (have_view_dim && !D3dViewDimensionIsTexture2D(view_dim)) {
-    AEROGPU_D3D10_11_LOG("D3D10 CreateShaderResourceView: rejecting SRV dimension=%u (only Texture2D supported handle=%u)",
-                         static_cast<unsigned>(view_dim),
-                         static_cast<unsigned>(res->handle));
-    return E_NOTIMPL;
-  }
-  if (!have_view_dim) {
+  if (have_view_dim) {
+    if (!D3dViewDimensionIsTexture2D(view_dim) && !D3dViewDimensionIsTexture2DArray(view_dim)) {
+      AEROGPU_D3D10_11_LOG(
+          "D3D10 CreateShaderResourceView: rejecting SRV dimension=%u (only Texture2D/Texture2DArray supported handle=%u)",
+          static_cast<unsigned>(view_dim),
+          static_cast<unsigned>(res->handle));
+      return E_NOTIMPL;
+    }
+  } else {
+    // If the header exposes array/MSAA SRV union variants but does not expose a
+    // view dimension discriminator, we cannot safely determine which union
+    // member is active.
     bool has_ambiguous_union = false;
     __if_exists(D3D10DDIARG_CREATESHADERRESOURCEVIEW::Tex2DArray) { has_ambiguous_union = true; }
     __if_exists(D3D10DDIARG_CREATESHADERRESOURCEVIEW::Texture2DArray) { has_ambiguous_union = true; }
@@ -6080,11 +6294,14 @@ HRESULT APIENTRY CreateShaderResourceView(D3D10DDI_HDEVICE hDevice,
     __if_exists(D3D10DDIARG_CREATESHADERRESOURCEVIEW::Texture2DMS) { has_ambiguous_union = true; }
     __if_exists(D3D10DDIARG_CREATESHADERRESOURCEVIEW::Texture2DMSArray) { has_ambiguous_union = true; }
     if (has_ambiguous_union) {
-      AEROGPU_D3D10_11_LOG("D3D10 CreateShaderResourceView: rejecting SRV (missing view dimension discriminator handle=%u)",
-                           static_cast<unsigned>(res->handle));
+      AEROGPU_D3D10_11_LOG(
+          "D3D10 CreateShaderResourceView: rejecting SRV (missing view dimension discriminator handle=%u)",
+          static_cast<unsigned>(res->handle));
       return E_NOTIMPL;
     }
   }
+
+  const bool view_is_array = have_view_dim && D3dViewDimensionIsTexture2DArray(view_dim);
 
   // Some WDK versions expose SRV flags (e.g. RAW buffer views). The current
   // AeroGPU D3D10 path has no way to encode SRV flags in the command stream;
@@ -6113,6 +6330,7 @@ HRESULT APIENTRY CreateShaderResourceView(D3D10DDI_HDEVICE hDevice,
   uint32_t mip_levels = 0;
   bool have_most_detailed_mip = false;
   bool have_mip_levels = false;
+
   __if_exists(D3D10DDIARG_CREATESHADERRESOURCEVIEW::MostDetailedMip) {
     most_detailed_mip = static_cast<uint32_t>(pDesc->MostDetailedMip);
     have_most_detailed_mip = true;
@@ -6121,75 +6339,159 @@ HRESULT APIENTRY CreateShaderResourceView(D3D10DDI_HDEVICE hDevice,
     mip_levels = static_cast<uint32_t>(pDesc->MipLevels);
     have_mip_levels = true;
   }
+
   if (!have_most_detailed_mip || !have_mip_levels) {
-    // Prefer reading from the dimension-specific union member when the top-level
-    // fields are not both available (WDK layout drift across versions).
-    __if_exists(D3D10DDIARG_CREATESHADERRESOURCEVIEW::Tex2D) {
-      most_detailed_mip = static_cast<uint32_t>(pDesc->Tex2D.MostDetailedMip);
-      mip_levels = static_cast<uint32_t>(pDesc->Tex2D.MipLevels);
-      have_most_detailed_mip = true;
-      have_mip_levels = true;
-    }
-    __if_not_exists(D3D10DDIARG_CREATESHADERRESOURCEVIEW::Tex2D) {
-      __if_exists(D3D10DDIARG_CREATESHADERRESOURCEVIEW::Texture2D) {
-        most_detailed_mip = static_cast<uint32_t>(pDesc->Texture2D.MostDetailedMip);
-        mip_levels = static_cast<uint32_t>(pDesc->Texture2D.MipLevels);
+    if (view_is_array) {
+      __if_exists(D3D10DDIARG_CREATESHADERRESOURCEVIEW::Tex2DArray) {
+        most_detailed_mip = static_cast<uint32_t>(pDesc->Tex2DArray.MostDetailedMip);
+        mip_levels = static_cast<uint32_t>(pDesc->Tex2DArray.MipLevels);
         have_most_detailed_mip = true;
         have_mip_levels = true;
+      }
+      __if_not_exists(D3D10DDIARG_CREATESHADERRESOURCEVIEW::Tex2DArray) {
+        __if_exists(D3D10DDIARG_CREATESHADERRESOURCEVIEW::Texture2DArray) {
+          most_detailed_mip = static_cast<uint32_t>(pDesc->Texture2DArray.MostDetailedMip);
+          mip_levels = static_cast<uint32_t>(pDesc->Texture2DArray.MipLevels);
+          have_most_detailed_mip = true;
+          have_mip_levels = true;
+        }
+      }
+    } else {
+      __if_exists(D3D10DDIARG_CREATESHADERRESOURCEVIEW::Tex2D) {
+        most_detailed_mip = static_cast<uint32_t>(pDesc->Tex2D.MostDetailedMip);
+        mip_levels = static_cast<uint32_t>(pDesc->Tex2D.MipLevels);
+        have_most_detailed_mip = true;
+        have_mip_levels = true;
+      }
+      __if_not_exists(D3D10DDIARG_CREATESHADERRESOURCEVIEW::Tex2D) {
+        __if_exists(D3D10DDIARG_CREATESHADERRESOURCEVIEW::Texture2D) {
+          most_detailed_mip = static_cast<uint32_t>(pDesc->Texture2D.MostDetailedMip);
+          mip_levels = static_cast<uint32_t>(pDesc->Texture2D.MipLevels);
+          have_most_detailed_mip = true;
+          have_mip_levels = true;
+        }
       }
     }
   }
 
-  if (have_most_detailed_mip && have_mip_levels) {
-    if (most_detailed_mip >= res->mip_levels) {
-      AEROGPU_D3D10_11_LOG("D3D10 CreateShaderResourceView: rejecting invalid MostDetailedMip=%u (res mips=%u handle=%u)",
-                           static_cast<unsigned>(most_detailed_mip),
-                           static_cast<unsigned>(res->mip_levels),
-                           static_cast<unsigned>(res->handle));
-      return E_INVALIDARG;
-    }
-    if (most_detailed_mip != 0) {
-      AEROGPU_D3D10_11_LOG("D3D10 CreateShaderResourceView: rejecting unsupported MostDetailedMip=%u (only 0 supported handle=%u)",
-                           static_cast<unsigned>(most_detailed_mip),
-                           static_cast<unsigned>(res->handle));
-      return E_NOTIMPL;
-    }
-
-    // Treat 0 / UINT(-1) as "all mips" (varies across D3D versions/headers).
-    const uint32_t effective_levels =
-        (mip_levels == 0 || mip_levels == 0xFFFFFFFFu) ? res->mip_levels : mip_levels;
-    if (effective_levels > res->mip_levels) {
-      AEROGPU_D3D10_11_LOG("D3D10 CreateShaderResourceView: rejecting invalid MipLevels=%u (res mips=%u handle=%u)",
-                           static_cast<unsigned>(mip_levels),
-                           static_cast<unsigned>(res->mip_levels),
-                           static_cast<unsigned>(res->handle));
-      return E_INVALIDARG;
-    }
-    if (effective_levels != res->mip_levels) {
-      AEROGPU_D3D10_11_LOG(
-          "D3D10 CreateShaderResourceView: rejecting unsupported mip range (MostDetailedMip=%u MipLevels=%u, res mips=%u handle=%u)",
-                           static_cast<unsigned>(most_detailed_mip),
-                           static_cast<unsigned>(mip_levels),
-                           static_cast<unsigned>(res->mip_levels),
-                           static_cast<unsigned>(res->handle));
-      return E_NOTIMPL;
-    }
-  } else {
+  if (!have_most_detailed_mip || !have_mip_levels) {
     AEROGPU_D3D10_11_LOG("D3D10 CreateShaderResourceView: rejecting SRV (missing mip range fields handle=%u)",
                          static_cast<unsigned>(res->handle));
     return E_NOTIMPL;
   }
 
-  srv->texture = res->handle;
+  uint32_t mip_count = mip_levels;
+  if (mip_count == 0 || mip_count == 0xFFFFFFFFu) {
+    mip_count = (res->mip_levels > most_detailed_mip) ? (res->mip_levels - most_detailed_mip) : 0;
+  }
+
+  if (res->mip_levels == 0 ||
+      most_detailed_mip >= res->mip_levels ||
+      mip_count == 0 ||
+      most_detailed_mip + mip_count > res->mip_levels) {
+    return E_INVALIDARG;
+  }
+
+  uint32_t first_slice = 0;
+  uint32_t slice_count = res->array_size;
+  bool have_slice_range = !view_is_array;
+  if (view_is_array) {
+    __if_exists(D3D10DDIARG_CREATESHADERRESOURCEVIEW::FirstArraySlice) {
+      first_slice = static_cast<uint32_t>(pDesc->FirstArraySlice);
+      slice_count = static_cast<uint32_t>(pDesc->ArraySize);
+      have_slice_range = true;
+    }
+    __if_not_exists(D3D10DDIARG_CREATESHADERRESOURCEVIEW::FirstArraySlice) {
+      __if_exists(D3D10DDIARG_CREATESHADERRESOURCEVIEW::Tex2DArray) {
+        first_slice = static_cast<uint32_t>(pDesc->Tex2DArray.FirstArraySlice);
+        slice_count = static_cast<uint32_t>(pDesc->Tex2DArray.ArraySize);
+        have_slice_range = true;
+      }
+      __if_not_exists(D3D10DDIARG_CREATESHADERRESOURCEVIEW::Tex2DArray) {
+        __if_exists(D3D10DDIARG_CREATESHADERRESOURCEVIEW::Texture2DArray) {
+          first_slice = static_cast<uint32_t>(pDesc->Texture2DArray.FirstArraySlice);
+          slice_count = static_cast<uint32_t>(pDesc->Texture2DArray.ArraySize);
+          have_slice_range = true;
+        }
+      }
+    }
+  }
+
+  if (!have_slice_range) {
+    return E_NOTIMPL;
+  }
+
+  if (slice_count == 0 || slice_count == 0xFFFFFFFFu) {
+    slice_count = (res->array_size > first_slice) ? (res->array_size - first_slice) : 0;
+  }
+
+  if (res->array_size == 0 ||
+      first_slice >= res->array_size ||
+      slice_count == 0 ||
+      first_slice + slice_count > res->array_size) {
+    return E_INVALIDARG;
+  }
+
+  const uint32_t view_dxgi_format = view_format ? view_format : res->dxgi_format;
+  const bool format_reinterpret = (view_format != 0) && (view_format != res->dxgi_format);
+  const bool non_trivial =
+      format_reinterpret ||
+      most_detailed_mip != 0 ||
+      mip_count != res->mip_levels ||
+      first_slice != 0 ||
+      slice_count != res->array_size;
+  const bool supports_views = aerogpu::d3d10_11::SupportsTextureViews(dev->adapter);
+  if (non_trivial && !supports_views) {
+    return E_NOTIMPL;
+  }
   srv->resource = res;
+
+  if (non_trivial && supports_views) {
+    const uint32_t aer_fmt = aerogpu::d3d10_11::dxgi_format_to_aerogpu_compat(dev, view_dxgi_format);
+    if (aer_fmt == AEROGPU_FORMAT_INVALID) {
+      srv->~AeroGpuShaderResourceView();
+      return E_NOTIMPL;
+    }
+
+    const aerogpu_handle_t view_handle = aerogpu::d3d10_11::AllocateGlobalHandle(dev->adapter);
+    auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_create_texture_view>(AEROGPU_CMD_CREATE_TEXTURE_VIEW);
+    if (!cmd) {
+      srv->~AeroGpuShaderResourceView();
+      return E_OUTOFMEMORY;
+    }
+    cmd->view_handle = view_handle;
+    cmd->texture_handle = res->handle;
+    cmd->format = aer_fmt;
+    cmd->base_mip_level = most_detailed_mip;
+    cmd->mip_level_count = mip_count;
+    cmd->base_array_layer = first_slice;
+    cmd->array_layer_count = slice_count;
+    cmd->reserved0 = 0;
+
+    srv->texture = view_handle;
+  }
+
   return S_OK;
 }
 
-void APIENTRY DestroyShaderResourceView(D3D10DDI_HDEVICE, D3D10DDI_HSHADERRESOURCEVIEW hView) {
+void APIENTRY DestroyShaderResourceView(D3D10DDI_HDEVICE hDevice, D3D10DDI_HSHADERRESOURCEVIEW hView) {
   if (!hView.pDrvPrivate) {
     return;
   }
   auto* view = FromHandle<D3D10DDI_HSHADERRESOURCEVIEW, AeroGpuShaderResourceView>(hView);
+  auto* dev = hDevice.pDrvPrivate ? FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice) : nullptr;
+  if (dev && view) {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (aerogpu::d3d10_11::SupportsTextureViews(dev->adapter) && view->texture) {
+      auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_destroy_texture_view>(AEROGPU_CMD_DESTROY_TEXTURE_VIEW);
+      if (!cmd) {
+        SetError(hDevice, E_OUTOFMEMORY);
+      } else {
+        cmd->view_handle = view->texture;
+        cmd->reserved0 = 0;
+      }
+    }
+  }
   view->~AeroGpuShaderResourceView();
   new (view) AeroGpuShaderResourceView();
 }
@@ -7223,7 +7525,7 @@ void SetShaderResourcesCommon(D3D10DDI_HDEVICE hDevice,
     if (phViews && phViews[i].pDrvPrivate) {
       auto* view = FromHandle<D3D10DDI_HSHADERRESOURCEVIEW, AeroGpuShaderResourceView>(phViews[i]);
       srv_res = view ? view->resource : nullptr;
-      tex = srv_res ? srv_res->handle : (view ? view->texture : 0);
+      tex = view ? (view->texture ? view->texture : (srv_res ? srv_res->handle : 0)) : 0;
     }
     if (tex != 0 || srv_res) {
       UnbindResourceFromOutputsLocked(dev, tex, srv_res);
@@ -7948,7 +8250,7 @@ void APIENTRY SetRenderTargets(D3D10DDI_HDEVICE hDevice,
     if (phViews && phViews[i].pDrvPrivate) {
       auto* view = FromHandle<D3D10DDI_HRENDERTARGETVIEW, AeroGpuRenderTargetView>(phViews[i]);
       rtv_res = view ? view->resource : nullptr;
-      rtv_handle = rtv_res ? rtv_res->handle : (view ? view->texture : 0);
+      rtv_handle = view ? (view->texture ? view->texture : (rtv_res ? rtv_res->handle : 0)) : 0;
     }
     dev->current_rtvs[i] = rtv_handle;
     dev->current_rtv_resources[i] = rtv_res;
@@ -7964,7 +8266,7 @@ void APIENTRY SetRenderTargets(D3D10DDI_HDEVICE hDevice,
   if (hDsv.pDrvPrivate) {
     auto* view = FromHandle<D3D10DDI_HDEPTHSTENCILVIEW, AeroGpuDepthStencilView>(hDsv);
     dsv_res = view ? view->resource : nullptr;
-    dsv_handle = dsv_res ? dsv_res->handle : (view ? view->texture : 0);
+    dsv_handle = view ? (view->texture ? view->texture : (dsv_res ? dsv_res->handle : 0)) : 0;
   }
 
   dev->current_dsv = dsv_handle;
@@ -8737,14 +9039,37 @@ void APIENTRY RotateResourceIdentities(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOU
   }
   put_identity(resources[numResources - 1], std::move(saved));
 
-  bool needs_rebind = false;
-  for (uint32_t slot = 0; slot < dev->current_rtv_count && slot < AEROGPU_MAX_RENDER_TARGETS; ++slot) {
-    AeroGpuResource* rt = dev->current_rtv_resources[slot];
-    if (rt && (std::find(resources.begin(), resources.end(), rt) != resources.end())) {
-      needs_rebind = true;
-      break;
+  auto remap_handle = [&](aerogpu_handle_t handle) -> aerogpu_handle_t {
+    if (!handle) {
+      return handle;
     }
+    for (size_t i = 0; i < old_handles.size(); ++i) {
+      if (old_handles[i] == handle) {
+        return resources[i] ? resources[i]->handle : 0;
+      }
+    }
+    return handle;
+  };
+
+  bool needs_rebind = false;
+  const uint32_t bound_rtv_count = std::min<uint32_t>(dev->current_rtv_count, AEROGPU_MAX_RENDER_TARGETS);
+  std::array<aerogpu_handle_t, AEROGPU_MAX_RENDER_TARGETS> new_rtvs{};
+  for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
+    new_rtvs[i] = dev->current_rtvs[i];
   }
+  for (uint32_t i = 0; i < bound_rtv_count; ++i) {
+    if (dev->current_rtv_resources[i] &&
+        std::find(resources.begin(), resources.end(), dev->current_rtv_resources[i]) != resources.end()) {
+      needs_rebind = true;
+    }
+    new_rtvs[i] = remap_handle(new_rtvs[i]);
+  }
+  const aerogpu_handle_t new_dsv = remap_handle(dev->current_dsv);
+  if (dev->current_dsv_res &&
+      std::find(resources.begin(), resources.end(), dev->current_dsv_res) != resources.end()) {
+    needs_rebind = true;
+  }
+
   if (needs_rebind) {
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_render_targets>(AEROGPU_CMD_SET_RENDER_TARGETS);
     if (!cmd) {
@@ -8758,18 +9083,17 @@ void APIENTRY RotateResourceIdentities(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOU
       return;
     }
 
-    // Refresh cached handles (RotateResourceIdentities swaps handle identity).
-    for (uint32_t i = 0; i < dev->current_rtv_count && i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
-      dev->current_rtvs[i] = dev->current_rtv_resources[i] ? dev->current_rtv_resources[i]->handle : 0;
+    // Update cached handles only after we successfully appended the rebind packet. If we fail to
+    // append (OOM), we roll back the rotation and must keep the previous handles intact.
+    for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
+      dev->current_rtvs[i] = new_rtvs[i];
     }
+    dev->current_dsv = new_dsv;
 
-    cmd->color_count = dev->current_rtv_count;
-    cmd->depth_stencil = dev->current_dsv;
-    for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; i++) {
-      cmd->colors[i] = 0;
-    }
-    for (uint32_t i = 0; i < dev->current_rtv_count && i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
-      cmd->colors[i] = dev->current_rtvs[i];
+    cmd->color_count = bound_rtv_count;
+    cmd->depth_stencil = new_dsv;
+    for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
+      cmd->colors[i] = (i < bound_rtv_count) ? new_rtvs[i] : 0;
     }
 
     // Bring-up logging: swapchains may rebind RT state via RotateResourceIdentities.
@@ -8785,15 +9109,6 @@ void APIENTRY RotateResourceIdentities(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOU
                          static_cast<unsigned>(cmd->colors[6]),
                          static_cast<unsigned>(cmd->colors[7]));
   }
-
-  auto remap_handle = [&](aerogpu_handle_t handle) -> aerogpu_handle_t {
-    for (size_t i = 0; i < old_handles.size(); ++i) {
-      if (old_handles[i] == handle) {
-        return resources[i] ? resources[i]->handle : 0;
-      }
-    }
-    return handle;
-  };
 
   for (uint32_t slot = 0; slot < kMaxShaderResourceSlots; ++slot) {
     const aerogpu_handle_t new_vs = remap_handle(dev->vs_srvs[slot]);

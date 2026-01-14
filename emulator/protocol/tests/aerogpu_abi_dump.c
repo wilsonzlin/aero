@@ -20,7 +20,9 @@ int main(void) {
 
   PRINT_SIZE("aerogpu_cmd_create_buffer", struct aerogpu_cmd_create_buffer);
   PRINT_SIZE("aerogpu_cmd_create_texture2d", struct aerogpu_cmd_create_texture2d);
+  PRINT_SIZE("aerogpu_cmd_create_texture_view", struct aerogpu_cmd_create_texture_view);
   PRINT_SIZE("aerogpu_cmd_destroy_resource", struct aerogpu_cmd_destroy_resource);
+  PRINT_SIZE("aerogpu_cmd_destroy_texture_view", struct aerogpu_cmd_destroy_texture_view);
   PRINT_SIZE("aerogpu_cmd_resource_dirty_range", struct aerogpu_cmd_resource_dirty_range);
   PRINT_SIZE("aerogpu_cmd_upload_resource", struct aerogpu_cmd_upload_resource);
   PRINT_SIZE("aerogpu_cmd_copy_buffer", struct aerogpu_cmd_copy_buffer);
@@ -95,6 +97,9 @@ int main(void) {
   PRINT_SIZE("aerogpu_escape_query_scanout_out", aerogpu_escape_query_scanout_out);
   PRINT_SIZE("aerogpu_escape_query_scanout_out_v2", aerogpu_escape_query_scanout_out_v2);
   PRINT_SIZE("aerogpu_escape_query_cursor_out", aerogpu_escape_query_cursor_out);
+  PRINT_SIZE("aerogpu_escape_set_cursor_position_in", aerogpu_escape_set_cursor_position_in);
+  PRINT_SIZE("aerogpu_escape_set_cursor_visibility_in", aerogpu_escape_set_cursor_visibility_in);
+  PRINT_SIZE("aerogpu_escape_set_cursor_shape_in", aerogpu_escape_set_cursor_shape_in);
   PRINT_SIZE("aerogpu_escape_query_error_out", aerogpu_escape_query_error_out);
   PRINT_SIZE("aerogpu_escape_map_shared_handle_inout", aerogpu_escape_map_shared_handle_inout);
   PRINT_SIZE("aerogpu_escape_read_gpa_inout", aerogpu_escape_read_gpa_inout);
@@ -147,9 +152,23 @@ int main(void) {
   PRINT_OFF("aerogpu_cmd_create_texture2d", struct aerogpu_cmd_create_texture2d, backing_offset_bytes);
   PRINT_OFF("aerogpu_cmd_create_texture2d", struct aerogpu_cmd_create_texture2d, reserved0);
 
+  PRINT_OFF("aerogpu_cmd_create_texture_view", struct aerogpu_cmd_create_texture_view, hdr);
+  PRINT_OFF("aerogpu_cmd_create_texture_view", struct aerogpu_cmd_create_texture_view, view_handle);
+  PRINT_OFF("aerogpu_cmd_create_texture_view", struct aerogpu_cmd_create_texture_view, texture_handle);
+  PRINT_OFF("aerogpu_cmd_create_texture_view", struct aerogpu_cmd_create_texture_view, format);
+  PRINT_OFF("aerogpu_cmd_create_texture_view", struct aerogpu_cmd_create_texture_view, base_mip_level);
+  PRINT_OFF("aerogpu_cmd_create_texture_view", struct aerogpu_cmd_create_texture_view, mip_level_count);
+  PRINT_OFF("aerogpu_cmd_create_texture_view", struct aerogpu_cmd_create_texture_view, base_array_layer);
+  PRINT_OFF("aerogpu_cmd_create_texture_view", struct aerogpu_cmd_create_texture_view, array_layer_count);
+  PRINT_OFF("aerogpu_cmd_create_texture_view", struct aerogpu_cmd_create_texture_view, reserved0);
+
   PRINT_OFF("aerogpu_cmd_destroy_resource", struct aerogpu_cmd_destroy_resource, hdr);
   PRINT_OFF("aerogpu_cmd_destroy_resource", struct aerogpu_cmd_destroy_resource, resource_handle);
   PRINT_OFF("aerogpu_cmd_destroy_resource", struct aerogpu_cmd_destroy_resource, reserved0);
+
+  PRINT_OFF("aerogpu_cmd_destroy_texture_view", struct aerogpu_cmd_destroy_texture_view, hdr);
+  PRINT_OFF("aerogpu_cmd_destroy_texture_view", struct aerogpu_cmd_destroy_texture_view, view_handle);
+  PRINT_OFF("aerogpu_cmd_destroy_texture_view", struct aerogpu_cmd_destroy_texture_view, reserved0);
 
   PRINT_OFF("aerogpu_cmd_resource_dirty_range", struct aerogpu_cmd_resource_dirty_range, hdr);
   PRINT_OFF("aerogpu_cmd_resource_dirty_range", struct aerogpu_cmd_resource_dirty_range, resource_handle);
@@ -765,6 +784,8 @@ int main(void) {
   PRINT_CONST(AEROGPU_CMD_UPLOAD_RESOURCE);
   PRINT_CONST(AEROGPU_CMD_COPY_BUFFER);
   PRINT_CONST(AEROGPU_CMD_COPY_TEXTURE2D);
+  PRINT_CONST(AEROGPU_CMD_CREATE_TEXTURE_VIEW);
+  PRINT_CONST(AEROGPU_CMD_DESTROY_TEXTURE_VIEW);
   PRINT_CONST(AEROGPU_CMD_CREATE_SHADER_DXBC);
   PRINT_CONST(AEROGPU_CMD_DESTROY_SHADER);
   PRINT_CONST(AEROGPU_CMD_BIND_SHADERS);
@@ -983,6 +1004,9 @@ int main(void) {
   PRINT_CONST(AEROGPU_ESCAPE_OP_DUMP_CREATEALLOCATION);
   PRINT_CONST(AEROGPU_ESCAPE_OP_QUERY_SCANOUT);
   PRINT_CONST(AEROGPU_ESCAPE_OP_QUERY_CURSOR);
+  PRINT_CONST(AEROGPU_ESCAPE_OP_SET_CURSOR_SHAPE);
+  PRINT_CONST(AEROGPU_ESCAPE_OP_SET_CURSOR_POSITION);
+  PRINT_CONST(AEROGPU_ESCAPE_OP_SET_CURSOR_VISIBILITY);
   PRINT_CONST(AEROGPU_ESCAPE_OP_QUERY_PERF);
   PRINT_CONST(AEROGPU_ESCAPE_OP_READ_GPA);
   PRINT_CONST(AEROGPU_ESCAPE_OP_QUERY_ERROR);
