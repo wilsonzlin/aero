@@ -82,11 +82,13 @@ This is the **coordination hub**. You wire together the work from all other work
   - Coverage: `crates/aero-machine/tests/virtio_blk_msix.rs`,
     `crates/aero-machine/tests/virtio_input_msix.rs`,
     `crates/aero-machine/tests/machine_snapshot_preserves_msix_enable.rs`,
+    `crates/aero-pc-platform/tests/pc_platform_virtio_blk_msix.rs`,
     `crates/aero-pc-platform/tests/pc_platform_virtio_blk_msix_snapshot.rs`.
 - **NVMe MSI/MSI-X is implemented (but Win7 support is opt-in/experimental)**:
   `aero-devices-nvme` exposes MSI + MSI-X capabilities (currently single-vector MSI-X) and delivers
   message-signaled interrupts when enabled (see `crates/aero-devices-nvme/README.md`,
-  `crates/aero-devices-nvme/tests/interrupts.rs`, and `pc_platform_nvme` tests).
+  `crates/aero-devices-nvme/tests/interrupts.rs`, `crates/aero-machine/tests/nvme_msix.rs`, and
+  `pc_platform_nvme` tests).
   Note: Windows 7 has no in-box NVMe driver.
 - **MSI/MSI-X delivery is LAPIC-based; in legacy PIC mode MSI vectors are not surfaced to the CPU**:
   `PlatformInterrupts::trigger_msi` decodes the MSI address/data and injects a fixed interrupt into
