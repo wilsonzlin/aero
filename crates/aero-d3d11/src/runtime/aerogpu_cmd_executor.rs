@@ -9066,14 +9066,92 @@ impl AerogpuD3d11Executor {
         let (cmd, dxbc_bytes) = decode_cmd_create_shader_dxbc_payload_le(cmd_bytes)
             .map_err(|e| anyhow!("CREATE_SHADER_DXBC: invalid payload: {e:?}"))?;
         let shader_handle = cmd.shader_handle;
-        let stage_u32 = cmd.stage;
+        let stage_raw = cmd.stage;
+        let stage_ex = cmd.reserved0;
 
-        let stage = match stage_u32 {
-            0 => ShaderStage::Vertex,
-            1 => ShaderStage::Pixel,
-            2 => ShaderStage::Compute,
-            _ => bail!("CREATE_SHADER_DXBC: unknown shader stage {stage_u32}"),
-        };
+        // Geometry/tessellation shaders are carried through the `stage_ex` ABI extension on the
+        // WebGPU-backed executor. Keep the persistent cache focused on VS/PS/CS translation; GS/HS/DS
+        // are currently accepted-but-not-translated and compile as placeholder compute shaders.
+        //
+        // Also accept the legacy `stage=Geometry` encoding for robustness, but ignore it (it cannot
+        // be executed by the WebGPU backend).
+        if stage_raw == AerogpuShaderStage::Geometry as u32 {
+            let dxbc = DxbcFile::parse(dxbc_bytes).context("DXBC parse failed")?;
+            let program = Sm4Program::parse_from_dxbc(&dxbc).context("DXBC decode failed")?;
+            validate_sm5_gs_streams(&program)?;
+            let parsed_stage = match program.stage {
+                crate::ShaderStage::Geometry => ShaderStage::Geometry,
+                crate::ShaderStage::Vertex => ShaderStage::Vertex,
+                crate::ShaderStage::Pixel => ShaderStage::Pixel,
+                crate::ShaderStage::Compute => ShaderStage::Compute,
+                crate::ShaderStage::Hull => ShaderStage::Hull,
+                crate::ShaderStage::Domain => ShaderStage::Domain,
+                other => bail!("CREATE_SHADER_DXBC: unsupported DXBC shader stage {other:?}"),
+            };
+            if parsed_stage != ShaderStage::Geometry {
+                bail!(
+                    "CREATE_SHADER_DXBC: stage mismatch (cmd=Geometry, dxbc={parsed_stage:?})"
+                );
+            }
+            return Ok(());
+        }
+
+        let stage =
+            ShaderStage::from_aerogpu_u32_with_stage_ex(stage_raw, stage_ex).ok_or_else(|| {
+                anyhow!("CREATE_SHADER_DXBC: unknown shader stage {stage_raw} (stage_ex={stage_ex})")
+            })?;
+
+        if matches!(stage, ShaderStage::Geometry | ShaderStage::Hull | ShaderStage::Domain) {
+            let dxbc = DxbcFile::parse(dxbc_bytes).context("DXBC parse failed")?;
+            let program = Sm4Program::parse_from_dxbc(&dxbc).context("DXBC decode failed")?;
+            validate_sm5_gs_streams(&program)?;
+            let parsed_stage = match program.stage {
+                crate::ShaderStage::Vertex => ShaderStage::Vertex,
+                crate::ShaderStage::Pixel => ShaderStage::Pixel,
+                crate::ShaderStage::Compute => ShaderStage::Compute,
+                crate::ShaderStage::Geometry => ShaderStage::Geometry,
+                crate::ShaderStage::Hull => ShaderStage::Hull,
+                crate::ShaderStage::Domain => ShaderStage::Domain,
+                other => bail!("CREATE_SHADER_DXBC: unsupported DXBC shader stage {other:?}"),
+            };
+            if parsed_stage != stage {
+                bail!("CREATE_SHADER_DXBC: stage mismatch (cmd={stage:?}, dxbc={parsed_stage:?})");
+            }
+
+            if stage == ShaderStage::Geometry {
+                let instance_count = sm5_gs_instance_count(&program).unwrap_or(1).max(1);
+                self.resources
+                    .gs_shaders
+                    .insert(shader_handle, GsShaderMetadata { instance_count });
+            }
+
+            let dxbc_hash_fnv1a64 = fnv1a64(dxbc_bytes);
+            let entry_point = match stage {
+                ShaderStage::Geometry => "gs_main",
+                ShaderStage::Hull => "hs_main",
+                ShaderStage::Domain => "ds_main",
+                _ => unreachable!(),
+            };
+            let wgsl = format!("@compute @workgroup_size(1)\nfn {entry_point}() {{}}\n");
+            let (hash, _module) = self.pipeline_cache.get_or_create_shader_module(
+                &self.device,
+                map_pipeline_cache_stage(stage),
+                &wgsl,
+                Some("aerogpu_cmd shader"),
+            );
+            let shader = ShaderResource {
+                stage,
+                wgsl_hash: hash,
+                depth_clamp_wgsl_hash: None,
+                dxbc_hash_fnv1a64,
+                entry_point,
+                vs_input_signature: Vec::new(),
+                reflection: ShaderReflection::default(),
+                wgsl_source: wgsl,
+            };
+            self.resources.shaders.insert(shader_handle, shader);
+            return Ok(());
+        }
 
         let dxbc_hash_fnv1a64 = fnv1a64(dxbc_bytes);
 
