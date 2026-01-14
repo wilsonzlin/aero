@@ -457,7 +457,7 @@ Optional but common for real apps:
 | `pfnCreatePixelShader` | REQUIRED | `HRESULT`: must accept SM4.x DXBC. |
 | `pfnDestroyPixelShader` | REQUIRED | `void`. |
 | `pfnCalcPrivateGeometryShaderSize` | REQUIRED-BUT-STUBBABLE | Return `sizeof(GS)`. Required to pass `d3d11_geometry_shader_smoke`. |
-| `pfnCreateGeometryShader` | REQUIRED-BUT-STUBBABLE | `HRESULT`: `E_NOTIMPL` allowed for bring-up, but breaks FL10_0 apps using GS and the `d3d11_geometry_shader_smoke` test. |
+| `pfnCreateGeometryShader` | REQUIRED | `HRESULT`: must accept SM4.x DXBC if advertising FL10_0. Returning `E_NOTIMPL` breaks FL10_0 apps using GS and the `d3d11_geometry_shader_smoke` test (advertise only FL9_x if you are not ready). |
 | `pfnDestroyGeometryShader` | REQUIRED-BUT-STUBBABLE | `void`. |
 | `pfnCalcPrivateGeometryShaderWithStreamOutputSize` | OPTIONAL | Return `sizeof(GS+SO)`; `Create*` may return `E_NOTIMPL` until SO is implemented. |
 | `pfnCreateGeometryShaderWithStreamOutput` | OPTIONAL | `HRESULT`: `E_NOTIMPL` is acceptable until SO is implemented. AeroGPU currently accepts this entrypoint but ignores the stream-output declaration (behaves like `pfnCreateGeometryShader`); binding real SO targets via `SoSetTargets` still reports `E_NOTIMPL`. |
@@ -538,7 +538,7 @@ If a field exists in your `d3d11umddi.h` but is not explicitly mentioned in this
 | `pfnIaSetTopology` | REQUIRED | Required for `IASetPrimitiveTopology`. |
 | `pfnVsSetShader` | REQUIRED | Must accept NULL to unbind. |
 | `pfnPsSetShader` | REQUIRED | Must accept NULL to unbind. |
-| `pfnGsSetShader` | REQUIRED-BUT-STUBBABLE | Required to pass `d3d11_geometry_shader_smoke`. For bring-up you can accept NULL only (and `SetErrorCb` if a non-NULL GS is bound). |
+| `pfnGsSetShader` | REQUIRED | Required to pass `d3d11_geometry_shader_smoke`. Must accept non-NULL GS bindings if advertising FL10_0 (forward the GS handle/state into your command stream even if host-side GS execution is still bring-up work). |
 
 Resource/CB/sampler binding for FL10_0 pipeline:
 
