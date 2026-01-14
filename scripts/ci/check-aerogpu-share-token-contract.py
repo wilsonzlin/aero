@@ -250,6 +250,7 @@ def main() -> int:
 
     check_no_pool_alloc_under_allocations_lock(errors)
     check_track_allocation_share_token_order(errors)
+    check_track_allocation_return_value_checked(errors)
 
     if errors:
         print("ERROR: AeroGPU shared-surface ShareToken contract regression detected.", file=sys.stderr)
@@ -309,6 +310,30 @@ def check_track_allocation_share_token_order(errors: list[str]) -> None:
         errors.append(
             f"{kmd_path.relative_to(ROOT)}:{file_line}: AeroGpuTrackAllocation inserts into Adapter->Allocations before incrementing ShareTokenRefs; keep increment before insertion (increment helper may drop AllocationsLock)"
         )
+
+
+def check_track_allocation_return_value_checked(errors: list[str]) -> None:
+    """
+    Guardrail: `AeroGpuTrackAllocation` returns `BOOLEAN` and must not be called
+    as a standalone statement (ignored return value).
+
+    If callers ignore the return value, a shared allocation can be exposed to
+    dxgkrnl/user-mode without being inserted into `Adapter->Allocations` (tracking
+    failed due to OOM), which breaks teardown/untrack logic and can leak
+    resources.
+    """
+
+    kmd_path = ROOT / "drivers" / "aerogpu" / "kmd" / "src" / "aerogpu_kmd.c"
+    if not kmd_path.exists():
+        errors.append(f"{kmd_path.relative_to(ROOT)}: missing (cannot validate AeroGpuTrackAllocation call sites)")
+        return
+
+    text = read_text(kmd_path)
+    for idx, line in enumerate(text.splitlines(), start=1):
+        if re.match(r"^\s*AeroGpuTrackAllocation\s*\(", line):
+            errors.append(
+                f"{kmd_path.relative_to(ROOT)}:{idx}: AeroGpuTrackAllocation return value must be checked (do not ignore it)"
+            )
 
 
 if __name__ == "__main__":
