@@ -693,7 +693,7 @@ fn translate_hs(
     let mut split_at: Option<usize> = None;
     for (i, inst) in module.instructions.iter().enumerate() {
         match inst {
-            Sm4Inst::If { .. } => depth += 1,
+            Sm4Inst::If { .. } | Sm4Inst::IfC { .. } => depth += 1,
             Sm4Inst::EndIf => depth = depth.saturating_sub(1),
             _ => {}
         }
@@ -4328,21 +4328,15 @@ fn emit_instructions(
                 expr
             }
         };
-
+        // Helper for SM4/SM5 compare-based control-flow (`ifc`/`breakc`/`continuec`).
+        //
+        // DXBC registers are untyped 32-bit lanes. We interpret the non-`*_U` forms as `f32`
+        // comparisons and the `*_U` forms as unsigned integer comparisons over the raw lane bits.
         let emit_cmp = |op: Sm4CmpOp,
                         a: &crate::sm4_ir::SrcOperand,
                         b: &crate::sm4_ir::SrcOperand,
                         opcode: &'static str|
          -> Result<String, ShaderTranslateError> {
-            // SM4/SM5 compare-based flow control (`ifc`/`breakc`/`continuec`) compares operands as
-            // floats. The operand register file is untyped in DXBC, but these instructions are
-            // specified as floating-point comparisons in the D3D10/11 tokenized-program format.
-            //
-            // Note: integer comparisons in real DXBC are typically expressed via integer compare
-            // ops (`ieq`/`ilt`/...) + `if_nz`; this translator does not implement those yet.
-            //
-            // `Sm4CmpOp` is shared with `setp`, which has unsigned variants. Those are not expected
-            // to appear for `ifc`/`breakc`/`continuec`, but we still handle them for robustness.
             let unsigned = matches!(
                 op,
                 Sm4CmpOp::EqU
@@ -4352,19 +4346,20 @@ fn emit_instructions(
                     | Sm4CmpOp::LeU
                     | Sm4CmpOp::GtU
             );
-            let a = if unsigned {
+            let a_expr = if unsigned {
                 emit_src_vec4_u32(a, inst_index, opcode, ctx)?
             } else {
                 emit_src_vec4(a, inst_index, opcode, ctx)?
             };
-            let b = if unsigned {
+            let b_expr = if unsigned {
                 emit_src_vec4_u32(b, inst_index, opcode, ctx)?
             } else {
                 emit_src_vec4(b, inst_index, opcode, ctx)?
             };
-            let a = format!("({a}).x");
-            let b = format!("({b}).x");
-            let op_str = match op {
+
+            let a_scalar = format!("({a_expr}).x");
+            let b_scalar = format!("({b_expr}).x");
+            let cmp = match op {
                 Sm4CmpOp::Eq | Sm4CmpOp::EqU => "==",
                 Sm4CmpOp::Ne | Sm4CmpOp::NeU => "!=",
                 Sm4CmpOp::Lt | Sm4CmpOp::LtU => "<",
@@ -4372,7 +4367,7 @@ fn emit_instructions(
                 Sm4CmpOp::Gt | Sm4CmpOp::GtU => ">",
                 Sm4CmpOp::Ge | Sm4CmpOp::GeU => ">=",
             };
-            Ok(format!("{a} {op_str} {b}"))
+            Ok(format!("({a_scalar}) {cmp} ({b_scalar})"))
         };
 
         match inst {
@@ -4400,6 +4395,26 @@ fn emit_instructions(
                 }
                 w.line("break;");
             }
+            Sm4Inst::BreakC { op, a, b } => {
+                let inside_case = matches!(cf_stack.last(), Some(CfFrame::Case));
+                let inside_loop = blocks.iter().any(|b| matches!(b, BlockKind::Loop));
+                if !inside_case && !inside_loop {
+                    return Err(ShaderTranslateError::MalformedControlFlow {
+                        inst_index,
+                        expected: "loop or switch case".to_owned(),
+                        found: blocks
+                            .last()
+                            .map(|b| b.describe())
+                            .unwrap_or_else(|| "none".to_owned()),
+                    });
+                }
+                let expr = emit_cmp(*op, a, b, "breakc")?;
+                w.line(&format!("if ({expr}) {{"));
+                w.indent();
+                w.line("break;");
+                w.dedent();
+                w.line("}");
+            }
             Sm4Inst::Continue => {
                 let inside_loop = blocks.iter().any(|b| matches!(b, BlockKind::Loop));
                 if !inside_loop {
@@ -4414,7 +4429,25 @@ fn emit_instructions(
                 }
                 w.line("continue;");
             }
-            // ---- Structured control flow ----
+            Sm4Inst::ContinueC { op, a, b } => {
+                let inside_loop = blocks.iter().any(|b| matches!(b, BlockKind::Loop));
+                if !inside_loop {
+                    return Err(ShaderTranslateError::MalformedControlFlow {
+                        inst_index,
+                        expected: "loop".to_owned(),
+                        found: blocks
+                            .last()
+                            .map(|b| b.describe())
+                            .unwrap_or_else(|| "none".to_owned()),
+                    });
+                }
+                let expr = emit_cmp(*op, a, b, "continuec")?;
+                w.line(&format!("if ({expr}) {{"));
+                w.indent();
+                w.line("continue;");
+                w.dedent();
+                w.line("}");
+            }
             Sm4Inst::If { cond, test } => {
                 let cond_vec = emit_src_vec4(cond, inst_index, "if", ctx)?;
                 let cond_scalar = format!("({cond_vec}).x");
@@ -4432,8 +4465,8 @@ fn emit_instructions(
                 blocks.push(BlockKind::If { has_else: false });
             }
             Sm4Inst::IfC { op, a, b } => {
-                let cond = emit_cmp(*op, a, b, "ifc")?;
-                w.line(&format!("if ({cond}) {{"));
+                let expr = emit_cmp(*op, a, b, "ifc")?;
+                w.line(&format!("if ({expr}) {{"));
                 w.indent();
                 blocks.push(BlockKind::If { has_else: false });
             }
@@ -4517,50 +4550,18 @@ fn emit_instructions(
                     });
                 }
             },
-            Sm4Inst::BreakC { op, a, b } => {
-                let inside_loop = blocks.iter().any(|b| matches!(b, BlockKind::Loop));
-                if !inside_loop {
-                    return Err(ShaderTranslateError::MalformedControlFlow {
-                        inst_index,
-                        expected: "loop".to_owned(),
-                        found: blocks
-                            .last()
-                            .map(|b| b.describe())
-                            .unwrap_or_else(|| "none".to_owned()),
-                    });
-                }
-                let cond = emit_cmp(*op, a, b, "breakc")?;
-                w.line(&format!("if ({cond}) {{"));
-                w.indent();
-                w.line("break;");
-                w.dedent();
-                w.line("}");
-            }
-            Sm4Inst::ContinueC { op, a, b } => {
-                let inside_loop = blocks.iter().any(|b| matches!(b, BlockKind::Loop));
-                if !inside_loop {
-                    return Err(ShaderTranslateError::MalformedControlFlow {
-                        inst_index,
-                        expected: "loop".to_owned(),
-                        found: blocks
-                            .last()
-                            .map(|b| b.describe())
-                            .unwrap_or_else(|| "none".to_owned()),
-                    });
-                }
-                let cond = emit_cmp(*op, a, b, "continuec")?;
-                w.line(&format!("if ({cond}) {{"));
-                w.indent();
-                w.line("continue;");
-                w.dedent();
-                w.line("}");
-            }
             Sm4Inst::Predicated { pred, inner } => {
                 match inner.as_ref() {
                     Sm4Inst::If { .. } => {
                         return Err(ShaderTranslateError::UnsupportedInstruction {
                             inst_index,
                             opcode: "predicated_if".to_owned(),
+                        })
+                    }
+                    Sm4Inst::IfC { .. } => {
+                        return Err(ShaderTranslateError::UnsupportedInstruction {
+                            inst_index,
+                            opcode: "predicated_ifc".to_owned(),
                         })
                     }
                     Sm4Inst::Else => {

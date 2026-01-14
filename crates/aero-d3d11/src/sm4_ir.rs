@@ -301,18 +301,6 @@ pub enum Sm4Inst {
     Loop,
     /// `endloop` token for the innermost open `loop`.
     EndLoop,
-    /// `breakc <op> a, b` (break if comparison is true).
-    BreakC {
-        op: Sm4CmpOp,
-        a: SrcOperand,
-        b: SrcOperand,
-    },
-    /// `continuec <op> a, b` (continue if comparison is true).
-    ContinueC {
-        op: Sm4CmpOp,
-        a: SrcOperand,
-        b: SrcOperand,
-    },
     Mov {
         dst: DstOperand,
         src: SrcOperand,
@@ -874,8 +862,20 @@ pub enum Sm4Inst {
     EndSwitch,
     /// Structured `break` instruction (break out of `loop`/`switch`).
     Break,
+    /// Structured `breakc` instruction (conditional `break` with an embedded comparison operator).
+    BreakC {
+        op: Sm4CmpOp,
+        a: SrcOperand,
+        b: SrcOperand,
+    },
     /// Structured `continue` instruction (continue the innermost `loop`).
     Continue,
+    /// Structured `continuec` instruction (conditional `continue` with an embedded comparison operator).
+    ContinueC {
+        op: Sm4CmpOp,
+        a: SrcOperand,
+        b: SrcOperand,
+    },
     /// `bufinfo` on a raw SRV buffer (e.g. `ByteAddressBuffer.GetDimensions`).
     ///
     /// Output packing:

@@ -694,7 +694,7 @@ pub fn decode_instruction(
                 predication = Some(predicate_operand_from_raw(first, first_at)?);
                 // Destination follows.
                 let dst = decode_predicate_dst(&mut r)?;
-                let Some(op) = decode_setp_cmp(opcode_token) else {
+                let Some(op) = decode_setp_cmp_op(opcode_token) else {
                     return Ok(Sm4Inst::Unknown { opcode });
                 };
                 let a = decode_src(&mut r)?;
@@ -712,7 +712,7 @@ pub fn decode_instruction(
 
             // First predicate operand is destination.
             let dst = predicate_dst_from_raw(first, first_at)?;
-            let Some(op) = decode_setp_cmp(opcode_token) else {
+            let Some(op) = decode_setp_cmp_op(opcode_token) else {
                 return Ok(Sm4Inst::Unknown { opcode });
             };
             let a = decode_src(&mut r)?;
@@ -771,7 +771,7 @@ pub fn decode_instruction(
                     })
                 }
                 2..=7 => {
-                    if let Some(op) = decode_cmp_op(opcode_token) {
+                    if let Some(op) = decode_flow_cmp_op(opcode_token) {
                         let a = decode_src(&mut r)?;
                         let b = decode_src(&mut r)?;
                         r.expect_eof()?;
@@ -1240,7 +1240,7 @@ pub fn decode_instruction(
             Ok(Sm4Inst::Break)
         }
         OPCODE_BREAKC => {
-            if let Some(op) = decode_cmp_op(opcode_token) {
+            if let Some(op) = decode_flow_cmp_op(opcode_token) {
                 let a = decode_src(&mut r)?;
                 let b = decode_src(&mut r)?;
                 r.expect_eof()?;
@@ -1262,7 +1262,7 @@ pub fn decode_instruction(
             Ok(Sm4Inst::Continue)
         }
         OPCODE_CONTINUEC => {
-            if let Some(op) = decode_cmp_op(opcode_token) {
+            if let Some(op) = decode_flow_cmp_op(opcode_token) {
                 let a = decode_src(&mut r)?;
                 let b = decode_src(&mut r)?;
                 r.expect_eof()?;
@@ -1422,7 +1422,7 @@ pub fn decode_instruction(
     }
 }
 
-fn decode_setp_cmp(opcode_token: u32) -> Option<Sm4CmpOp> {
+fn decode_setp_cmp_op(opcode_token: u32) -> Option<Sm4CmpOp> {
     let raw = (opcode_token >> SETP_CMP_SHIFT) & SETP_CMP_MASK;
     match raw {
         0 => Some(Sm4CmpOp::Eq),
@@ -1619,7 +1619,7 @@ fn decode_int_mad_single(signed: bool, r: &mut InstrReader<'_>) -> Result<Sm4Ins
     })
 }
 
-fn decode_cmp_op(opcode_token: u32) -> Option<Sm4CmpOp> {
+fn decode_flow_cmp_op(opcode_token: u32) -> Option<Sm4CmpOp> {
     // SM4/SM5 compare-based flow-control opcodes encode the comparison operator in the opcode
     // token's "instruction test" field.
     //
