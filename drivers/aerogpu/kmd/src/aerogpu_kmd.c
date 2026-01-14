@@ -2010,9 +2010,16 @@ static NTSTATUS AeroGpuBuildAllocTable(_Inout_ AEROGPU_ADAPTER* Adapter,
      * total allocation-list length. Many allocation list entries may have alloc_id == 0 (never
      * referenced via alloc_id in the command stream), and we only need scratch space for the
      * subset that can actually be inserted into the table.
+     *
+     * Round tmp-entry capacity up to the hash-table load target so the scratch cache grows in
+     * larger steps (reducing realloc churn) while keeping memory bounded.
      */
-    const UINT tmpEntriesCap = nonZeroAllocIdCount;
     const UINT cap = AeroGpuAllocTableComputeHashCap(nonZeroAllocIdCount);
+    UINT tmpEntriesCap = nonZeroAllocIdCount;
+    const UINT targetTmpCap = cap / 2; /* hash cap is >= 2*N */
+    if (tmpEntriesCap < targetTmpCap) {
+        tmpEntriesCap = targetTmpCap;
+    }
 
     /*
      * Use the adapter-owned scratch block when possible; this avoids per-submit
@@ -5147,8 +5154,22 @@ static NTSTATUS APIENTRY AeroGpuDdiRemoveDevice(_In_ const PVOID MiniportDeviceC
     /* Free cached scratch buffers (BuildAllocTable). */
     {
         PVOID block = NULL;
+        SIZE_T blockBytes = 0;
+        UINT tmpCap = 0;
+        UINT hashCap = 0;
+#if DBG
+        LONG hitCount = 0;
+        LONG growCount = 0;
+#endif
         ExAcquireFastMutex(&adapter->AllocTableScratch.Mutex);
         block = adapter->AllocTableScratch.Block;
+        blockBytes = adapter->AllocTableScratch.BlockBytes;
+        tmpCap = adapter->AllocTableScratch.TmpEntriesCapacity;
+        hashCap = adapter->AllocTableScratch.HashCapacity;
+#if DBG
+        hitCount = adapter->AllocTableScratch.HitCount;
+        growCount = adapter->AllocTableScratch.GrowCount;
+#endif
         adapter->AllocTableScratch.Block = NULL;
         adapter->AllocTableScratch.BlockBytes = 0;
         adapter->AllocTableScratch.TmpEntriesCapacity = 0;
@@ -5159,6 +5180,16 @@ static NTSTATUS APIENTRY AeroGpuDdiRemoveDevice(_In_ const PVOID MiniportDeviceC
         adapter->AllocTableScratch.SeenGpa = NULL;
         adapter->AllocTableScratch.SeenSize = NULL;
         ExReleaseFastMutex(&adapter->AllocTableScratch.Mutex);
+#if DBG
+        if (hitCount != 0 || growCount != 0 || blockBytes != 0) {
+            AEROGPU_LOG("BuildAllocTable scratch stats: hits=%ld grows=%ld tmp_cap=%u hash_cap=%u bytes=%Iu",
+                        hitCount,
+                        growCount,
+                        tmpCap,
+                        hashCap,
+                        blockBytes);
+        }
+#endif
         if (block) {
             ExFreePoolWithTag(block, AEROGPU_POOL_TAG);
         }
