@@ -226,6 +226,8 @@ configuration.
   - virtio-net:
     - Guest marker: `AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|PASS/FAIL/SKIP|mode=...|messages=...|config_vector=...|rx_vector=...|tx_vector=...`
     - Host marker: `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_MSIX|PASS/FAIL/SKIP|mode=...|messages=...|config_vector=...|rx_vector=...|tx_vector=...`
+    - Additional diagnostic fields may be appended by newer driver/selftest builds (best-effort), for example:
+      `flags=0x...|intr0=...|dpc0=...|rx_drained=...|...`
   - virtio-snd:
     - Guest marker: `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-msix|PASS/SKIP|mode=...|messages=...|config_vector=...|queue0_vector=...|...`
     - Host marker: `AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_MSIX|PASS/SKIP|mode=...|messages=...|config_vector=...|queue0_vector=...|...`

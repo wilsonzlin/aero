@@ -87,6 +87,8 @@ For the consolidated virtio-input end-to-end validation plan (device model + dri
   - Optional interrupt-mode diagnostics (`virtio-net-msix`):
     - The selftest queries the virtio-net diagnostics device (`\\.\AeroVirtioNetDiag`) and emits:
       `AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|PASS/FAIL/SKIP|mode=<intx|msi|msix>|messages=<n>|config_vector=...|rx_vector=...|tx_vector=...`.
+      - Newer driver builds may append additional diagnostic fields (best-effort), for example:
+        `flags=0x...|intr0=...|intr1=...|intr2=...|dpc0=...|dpc1=...|dpc2=...|rx_drained=...|tx_drained=...`.
     - This marker is informational by default (so older configurations that fall back to INTx can still PASS overall).
     - Use `--require-net-msix` (or env var `AERO_VIRTIO_SELFTEST_REQUIRE_NET_MSIX=1`) to make the selftest **FAIL**
       when virtio-net is not using MSI-X (mode != `msix`).
