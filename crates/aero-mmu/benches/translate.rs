@@ -2,11 +2,31 @@
 fn main() {}
 
 #[cfg(not(target_arch = "wasm32"))]
+use std::time::Duration;
+
+#[cfg(not(target_arch = "wasm32"))]
 use aero_mmu::{AccessType, MemoryBus, Mmu};
 #[cfg(not(target_arch = "wasm32"))]
 use criterion::{black_box, criterion_group, criterion_main, BatchSize, Criterion};
 #[cfg(not(target_arch = "wasm32"))]
 use std::convert::TryInto;
+
+#[cfg(not(target_arch = "wasm32"))]
+fn criterion_config() -> Criterion {
+    match std::env::var("AERO_BENCH_PROFILE").as_deref() {
+        Ok("ci") => Criterion::default()
+            // Keep PR/runtime low.
+            .warm_up_time(Duration::from_millis(200))
+            .measurement_time(Duration::from_secs(1))
+            .sample_size(10)
+            .noise_threshold(0.05),
+        _ => Criterion::default()
+            .warm_up_time(Duration::from_secs(1))
+            .measurement_time(Duration::from_secs(2))
+            .sample_size(30)
+            .noise_threshold(0.03),
+    }
+}
 
 // Control register bits (x86).
 #[cfg(not(target_arch = "wasm32"))]
@@ -185,6 +205,10 @@ fn bench_translate(c: &mut Criterion) {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-criterion_group!(benches, bench_translate);
+criterion_group! {
+    name = benches;
+    config = criterion_config();
+    targets = bench_translate
+}
 #[cfg(not(target_arch = "wasm32"))]
 criterion_main!(benches);
