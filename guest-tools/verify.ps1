@@ -4132,6 +4132,8 @@ try {
     $data = @{
         enabled = $RunDbgctl
         aerogpu_detected = $false
+        aerogpu_healthy = $false
+        aerogpu_config_manager_error_codes = @()
         expected_path_template = $dbgctlRelTemplate
         expected_path = $null
         found = $false
@@ -4162,7 +4164,15 @@ try {
     if ($matched) {
         foreach ($d in $matched) {
             $pnpid = "" + $d.pnp_device_id
-            if ($pnpid -and ($pnpid -match $aeroOnlyRx)) { $data.aerogpu_detected = $true; break }
+            if ($pnpid -and ($pnpid -match $aeroOnlyRx)) {
+                $data.aerogpu_detected = $true
+                $err = $d.config_manager_error_code
+                if ($err -ne $null) { $data.aerogpu_config_manager_error_codes += $err }
+                if ($err -eq 0) {
+                    $data.aerogpu_healthy = $true
+                    break
+                }
+            }
         }
     }
 
@@ -4170,6 +4180,10 @@ try {
         $summary = "Skipped: -RunDbgctl not set."
     } elseif (-not $data.aerogpu_detected) {
         $summary = "Skipped: no AeroGPU device detected."
+    } elseif (-not $data.aerogpu_healthy) {
+        $codes = @($data.aerogpu_config_manager_error_codes | Sort-Object -Unique)
+        $summary = "Skipped: AeroGPU device detected but not healthy (ConfigManagerErrorCode != 0)."
+        if ($codes -and $codes.Count -gt 0) { $summary += " CM=" + ($codes -join ",") }
     } else {
         $is64 = $false
         if ($report.checks.ContainsKey("os") -and $report.checks.os.data -and $report.checks.os.data.architecture) {
