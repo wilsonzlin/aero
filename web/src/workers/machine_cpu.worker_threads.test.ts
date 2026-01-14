@@ -2447,12 +2447,25 @@ describe("workers/machine_cpu.worker (snapshot restore boot device reporting)", 
           (msg as { type?: unknown; bootDevice?: unknown }).bootDevice === "cdrom",
         10_000,
       ) as Promise<{ type: string; bootDevice: string }>;
+      const bootConfigPromise = waitForWorkerMessage(
+        worker,
+        (msg) =>
+          (msg as { type?: unknown; bootDrive?: unknown; cdBootDrive?: unknown; bootFromCdIfPresent?: unknown }).type ===
+            "machineCpu.bootConfig" &&
+          (msg as { bootDrive?: unknown }).bootDrive === 0x80 &&
+          (msg as { cdBootDrive?: unknown }).cdBootDrive === 0xe0 &&
+          (msg as { bootFromCdIfPresent?: unknown }).bootFromCdIfPresent === false,
+        10_000,
+      ) as Promise<{ type: string; bootDrive: number; cdBootDrive: number; bootFromCdIfPresent: boolean }>;
 
       worker.postMessage({ kind: "machine.snapshot.restoreFromOpfs", requestId: 1, path: "state/test.snap" });
 
-      const [restored, active] = await Promise.all([restoredPromise, activePromise]);
+      const [restored, active, bootConfig] = await Promise.all([restoredPromise, activePromise, bootConfigPromise]);
       expect(restored.ok).toBe(true);
       expect(active.bootDevice).toBe("cdrom");
+      expect(bootConfig.bootDrive).toBe(0x80);
+      expect(bootConfig.cdBootDrive).toBe(0xe0);
+      expect(bootConfig.bootFromCdIfPresent).toBe(false);
     } finally {
       await worker.terminate();
     }
