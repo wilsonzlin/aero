@@ -3835,10 +3835,15 @@ impl AerogpuD3d11Executor {
             },
         ];
 
-        // The GS prepass bind group uses 5 storage buffers (expanded verts/indices/indirect/counters
-        // + the flattened GS input payload). Some downlevel backends request very small limits via
-        // `wgpu::Limits::downlevel_defaults()` (e.g. max_storage_buffers_per_shader_stage=4),
-        // which would otherwise cause a wgpu validation panic during bind group layout creation.
+        // The GS prepass bind group uses 4 storage buffers:
+        // - expanded vertices
+        // - expanded indices
+        // - indirect args + counters (`GsPrepassState`)
+        // - flattened GS input payload
+        //
+        // Some downlevel backends request very small limits via `wgpu::Limits::downlevel_defaults()`
+        // (e.g. max_storage_buffers_per_shader_stage=4), which would otherwise cause a wgpu
+        // validation panic during bind group layout creation.
         let max_storage = self.device.limits().max_storage_buffers_per_shader_stage;
         let storage_bindings = gs_bgl_entries
             .iter()
