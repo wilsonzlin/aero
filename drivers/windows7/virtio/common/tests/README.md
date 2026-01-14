@@ -49,3 +49,15 @@ This repository contains multiple `ntddk.h` stubs for different test suites, so
 each CMake test target must ensure its intended stub directory is first on the
 include path (the test targets in this directory use
 `target_include_directories(... BEFORE ...)`).
+
+In addition to minimal WDK surface area, the stub layer exposes a few **test-only**
+helpers used by these unit tests:
+
+- `WdkTestTriggerInterrupt` / `WdkTestTriggerMessageInterrupt`: simulate an INTx or message interrupt firing.
+- `WdkTestRunQueuedDpc`: execute a queued `KDPC` deterministically in the single-threaded harness.
+- `WdkTestAutoCompleteDpcInFlightAfterDelayCalls`: makes `KeDelayExecutionThread` automatically clear a
+  `DpcInFlight` counter after N delay calls (used to test disconnect wait loops).
+- `WdkTestSetKeInsertQueueDpcHook`: observes each `KeInsertQueueDpc` call (used to validate ordering such as
+  `DpcInFlight` increment-before-queueing).
+- `WdkTestSetIoConnectInterruptExHook`: invoked after the `IoConnectInterruptEx(CONNECT_MESSAGE_BASED)` stub sets up
+  `MessageInfo`/`ConnectionContext` (used to simulate an interrupt arriving during connect).
