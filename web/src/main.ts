@@ -4960,9 +4960,9 @@ function renderAudioPanel(): HTMLElement {
             __aeroAudioOutput: snapshotAudioOutput(g.__aeroAudioOutput),
             __aeroAudioOutputWorker: snapshotAudioOutput(g.__aeroAudioOutputWorker),
             __aeroAudioOutputHdaDemo: snapshotAudioOutput(g.__aeroAudioOutputHdaDemo),
-             __aeroAudioOutputVirtioSndDemo: snapshotAudioOutput(g.__aeroAudioOutputVirtioSndDemo),
-             __aeroAudioOutputLoopback: snapshotAudioOutput(g.__aeroAudioOutputLoopback),
-           },
+            __aeroAudioOutputVirtioSndDemo: snapshotAudioOutput(g.__aeroAudioOutputVirtioSndDemo),
+            __aeroAudioOutputLoopback: snapshotAudioOutput(g.__aeroAudioOutputLoopback),
+          },
           workerProducer: {
             bufferLevelFrames: workerCoordinator.getAudioProducerBufferLevelFrames(),
             underrunCount: workerCoordinator.getAudioProducerUnderrunCount(),
