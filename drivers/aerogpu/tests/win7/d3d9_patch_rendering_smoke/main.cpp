@@ -665,6 +665,38 @@ static int RunD3D9PatchRenderingSmoke(int argc, char** argv) {
 
   int stage_rc = 0;
   if (have_rect_info) {
+    // Stage 0: DrawRectPatch with handle 0 (no caching).
+    hr = dev->Clear(0, NULL, D3DCLEAR_TARGET, kClearRed, 1.0f, 0);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("Clear", hr);
+    }
+    hr = dev->BeginScene();
+    if (FAILED(hr)) {
+      return reporter.FailHresult("BeginScene", hr);
+    }
+    hr = dev->DrawRectPatch(0, rect_segs, &rect_info);
+    if (FAILED(hr)) {
+      dev->EndScene();
+      return reporter.FailHresult("DrawRectPatch(handle0)", hr);
+    }
+    hr = dev->EndScene();
+    if (FAILED(hr)) {
+      return reporter.FailHresult("EndScene", hr);
+    }
+    stage_rc = ValidateBackbufferStage(kTestName,
+                                       &reporter,
+                                       "rect_handle0",
+                                       dev.get(),
+                                       backbuffer.get(),
+                                       sysmem.get(),
+                                       desc,
+                                       dump,
+                                       kClearRed,
+                                       kRectBlue);
+    if (stage_rc != 0) {
+      return stage_rc;
+    }
+
     // Stage 1: DrawRectPatch twice (cache hit path).
     hr = dev->Clear(0, NULL, D3DCLEAR_TARGET, kClearRed, 1.0f, 0);
     if (FAILED(hr)) {
@@ -741,7 +773,39 @@ static int RunD3D9PatchRenderingSmoke(int argc, char** argv) {
     }
   }
 
-  // Stage 3: DrawTriPatch twice (cache hit path).
+  // Stage 3: DrawTriPatch with handle 0 (no caching).
+  hr = dev->Clear(0, NULL, D3DCLEAR_TARGET, kClearRed, 1.0f, 0);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("Clear", hr);
+  }
+  hr = dev->BeginScene();
+  if (FAILED(hr)) {
+    return reporter.FailHresult("BeginScene", hr);
+  }
+  hr = dev->DrawTriPatch(0, tri_segs, &tri_info);
+  if (FAILED(hr)) {
+    dev->EndScene();
+    return reporter.FailHresult("DrawTriPatch(handle0)", hr);
+  }
+  hr = dev->EndScene();
+  if (FAILED(hr)) {
+    return reporter.FailHresult("EndScene", hr);
+  }
+  stage_rc = ValidateBackbufferStage(kTestName,
+                                     &reporter,
+                                     "tri_handle0",
+                                     dev.get(),
+                                     backbuffer.get(),
+                                     sysmem.get(),
+                                     desc,
+                                     dump,
+                                     kClearRed,
+                                     kTriYellow);
+  if (stage_rc != 0) {
+    return stage_rc;
+  }
+
+  // Stage 4: DrawTriPatch twice (cache hit path).
   hr = dev->Clear(0, NULL, D3DCLEAR_TARGET, kClearRed, 1.0f, 0);
   if (FAILED(hr)) {
     return reporter.FailHresult("Clear", hr);
@@ -784,7 +848,7 @@ static int RunD3D9PatchRenderingSmoke(int argc, char** argv) {
     return reporter.FailHresult("DeletePatch(tri)", hr);
   }
 
-  // Stage 4: DrawTriPatch after DeletePatch.
+  // Stage 5: DrawTriPatch after DeletePatch.
   hr = dev->Clear(0, NULL, D3DCLEAR_TARGET, kClearRed, 1.0f, 0);
   if (FAILED(hr)) {
     return reporter.FailHresult("Clear(tri after delete)", hr);
