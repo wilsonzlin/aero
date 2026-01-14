@@ -465,8 +465,14 @@ pub fn decode_program_decls(program: &Sm4Program) -> Result<Vec<Sm4Decl>, Sm4Dec
             continue;
         }
 
+        // Declarations typically appear at the start of the token stream, but some shader stages
+        // (notably HS) can interleave metadata declarations with phase markers/instructions.
+        //
+        // Continue scanning the full stream and collect any declaration opcodes we encounter
+        // instead of stopping at the first non-declaration.
         if opcode < DECLARATION_OPCODE_MIN {
-            break;
+            i += len;
+            continue;
         }
 
         let decl = decode_decl(opcode, inst_toks, i).unwrap_or(Sm4Decl::Unknown { opcode });
