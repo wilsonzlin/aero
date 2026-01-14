@@ -723,10 +723,23 @@ fn snapshot_restore_rejects_duplicate_field_tags_and_is_atomic() {
     let tmr_before = pm.read(cfg.pm_tmr_blk, 4);
 
     // Construct a snapshot with duplicate field tags.
-    let mut w = SnapshotWriter::new(*b"ACPM", SnapshotVersion::new(1, 0));
-    w.field_u16(TAG_PM1_STS, 0x1111);
-    w.field_u16(TAG_PM1_STS, 0x2222);
-    let bytes = w.finish();
+    //
+    // Note: `SnapshotWriter` intentionally debug-asserts on duplicates to catch bugs in device
+    // snapshot implementations. Build the raw TLV bytes manually here so we can validate that
+    // `SnapshotReader` rejects duplicates and that `load_state()` is atomic on failure.
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(b"AERO"); // magic
+    bytes.extend_from_slice(&1u16.to_le_bytes()); // format_version.major
+    bytes.extend_from_slice(&0u16.to_le_bytes()); // format_version.minor
+    bytes.extend_from_slice(b"ACPM"); // device_id
+    bytes.extend_from_slice(&1u16.to_le_bytes()); // device_version.major
+    bytes.extend_from_slice(&0u16.to_le_bytes()); // device_version.minor
+
+    for val in [0x1111u16, 0x2222u16] {
+        bytes.extend_from_slice(&TAG_PM1_STS.to_le_bytes());
+        bytes.extend_from_slice(&(2u32).to_le_bytes()); // length
+        bytes.extend_from_slice(&val.to_le_bytes());
+    }
 
     assert!(
         matches!(

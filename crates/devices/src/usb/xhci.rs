@@ -812,10 +812,25 @@ mod tests {
 
     #[test]
     fn intx_disable_gates_irq_level() {
+        struct DummyBus;
+
+        impl memory::MemoryBus for DummyBus {
+            fn read_physical(&mut self, _paddr: u64, buf: &mut [u8]) {
+                buf.fill(0);
+            }
+
+            fn write_physical(&mut self, _paddr: u64, _buf: &[u8]) {}
+        }
+
+        let bus: Rc<RefCell<dyn memory::MemoryBus>> = Rc::new(RefCell::new(DummyBus));
+
         let mut dev = XhciPciDevice::default();
-        dev.config_mut().set_command(1 << 1); // MEM
+        dev.set_dma_memory_bus(Some(bus));
+        dev.config_mut().set_command((1 << 1) | (1 << 2)); // MEM | BME
 
         // Trigger the controller's interrupt condition.
+        MmioHandler::write(&mut dev, regs::REG_CRCR_LO, 4, 0x1000);
+        MmioHandler::write(&mut dev, regs::REG_CRCR_HI, 4, 0);
         MmioHandler::write(&mut dev, regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
         assert!(dev.irq_level());
 
@@ -827,8 +842,21 @@ mod tests {
 
     #[test]
     fn snapshot_roundtrip_includes_controller_state() {
+        struct DummyBus;
+
+        impl memory::MemoryBus for DummyBus {
+            fn read_physical(&mut self, _paddr: u64, buf: &mut [u8]) {
+                buf.fill(0);
+            }
+
+            fn write_physical(&mut self, _paddr: u64, _buf: &[u8]) {}
+        }
+
+        let bus: Rc<RefCell<dyn memory::MemoryBus>> = Rc::new(RefCell::new(DummyBus));
+
         let mut dev = XhciPciDevice::default();
-        dev.config_mut().set_command(1 << 1); // MEM
+        dev.set_dma_memory_bus(Some(bus));
+        dev.config_mut().set_command((1 << 1) | (1 << 2)); // MEM | BME
 
         MmioHandler::write(&mut dev, regs::REG_CRCR_LO, 4, 0x1234);
         MmioHandler::write(&mut dev, regs::REG_CRCR_HI, 4, 0);
