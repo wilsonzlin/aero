@@ -2385,6 +2385,16 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
                 );
                 return;
             }
+            if !device
+                .features()
+                .contains(wgpu::Features::VERTEX_WRITABLE_STORAGE)
+            {
+                skip_or_panic(
+                    module_path!(),
+                    "storage buffers are not supported in the vertex stage on this adapter",
+                );
+                return;
+            }
 
             let dummy_uniform = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("reflection_bindings test dummy uniform"),
@@ -2571,6 +2581,16 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
                 skip_or_panic(
                     module_path!(),
                     "storage buffers are not supported by this adapter",
+                );
+                return;
+            }
+            if !device
+                .features()
+                .contains(wgpu::Features::VERTEX_WRITABLE_STORAGE)
+            {
+                skip_or_panic(
+                    module_path!(),
+                    "storage buffers are not supported in the vertex stage on this adapter",
                 );
                 return;
             }

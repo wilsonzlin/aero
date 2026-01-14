@@ -39,17 +39,21 @@ pub const OPCODE_DP4: u32 = 0x09;
 pub const OPCODE_MIN: u32 = 0x0a;
 pub const OPCODE_MAX: u32 = 0x0b;
 
-// ---- Float comparisons ----
+// ---- Float comparison opcodes (SM4/SM5) ----
 //
-// SM4/SM5 float compares (`lt/ge/eq/ne`) produce per-component predicate masks in the
-// untyped register file: 0xffffffff for true, 0x00000000 for false.
+// These produce per-component predicate masks in the untyped register file:
+// `0xffffffff` for true, `0x00000000` for false.
 //
-// The translator bitcasts these masks to `f32` lanes so subsequent `movc`/`if_nz` style
-// control flow can treat the register file as untyped like real DXBC.
+// Note: These are *float* compares (unlike `ieq`/`ilt`/etc) and write to the general register file
+// (unlike `setp`, which writes predicate registers).
+//
+// These opcode IDs match the D3D10/11 tokenized program format.
 pub const OPCODE_LT: u32 = 0x0c;
 pub const OPCODE_GE: u32 = 0x0d;
 pub const OPCODE_EQ: u32 = 0x0e;
 pub const OPCODE_NE: u32 = 0x0f;
+pub const OPCODE_GT: u32 = 0x10;
+pub const OPCODE_LE: u32 = 0x11;
 
 /// Unsigned integer add with carry: `uaddc dst_sum, dst_carry, a, b`.
 pub const OPCODE_UADDC: u32 = 0x6a;
@@ -512,6 +516,8 @@ pub fn opcode_name(opcode: u32) -> Option<&'static str> {
         OPCODE_GE => Some("ge"),
         OPCODE_EQ => Some("eq"),
         OPCODE_NE => Some("ne"),
+        OPCODE_LE => Some("le"),
+        OPCODE_GT => Some("gt"),
         OPCODE_IADD => Some("iadd"),
         OPCODE_ISUB => Some("isub"),
         OPCODE_IMUL => Some("imul"),
@@ -747,6 +753,16 @@ mod tests {
             opcode_name(OPCODE_DCL_RESOURCE_STRUCTURED),
             Some("dcl_resource_structured")
         );
+    }
+
+    #[test]
+    fn opcode_name_includes_float_compare_ops() {
+        assert_eq!(opcode_name(OPCODE_EQ), Some("eq"));
+        assert_eq!(opcode_name(OPCODE_NE), Some("ne"));
+        assert_eq!(opcode_name(OPCODE_LT), Some("lt"));
+        assert_eq!(opcode_name(OPCODE_LE), Some("le"));
+        assert_eq!(opcode_name(OPCODE_GT), Some("gt"));
+        assert_eq!(opcode_name(OPCODE_GE), Some("ge"));
     }
 
     #[test]

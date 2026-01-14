@@ -2020,6 +2020,107 @@ fn decodes_integer_compare_ops() {
 }
 
 #[test]
+fn decodes_float_compare_ops() {
+    let mut body = Vec::<u32>::new();
+
+    // eq r0, r1, r2
+    let a = reg_src(
+        OPERAND_TYPE_TEMP,
+        &[1],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    );
+    let b = reg_src(
+        OPERAND_TYPE_TEMP,
+        &[2],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    );
+    let mut eq = vec![opcode_token(OPCODE_EQ, (1 + 2 + a.len() + b.len()) as u32)];
+    eq.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 0, WriteMask::XYZW));
+    eq.extend_from_slice(&a);
+    eq.extend_from_slice(&b);
+    body.extend_from_slice(&eq);
+
+    // le r3, r4, r5
+    let a = reg_src(
+        OPERAND_TYPE_TEMP,
+        &[4],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    );
+    let b = reg_src(
+        OPERAND_TYPE_TEMP,
+        &[5],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    );
+    let mut le = vec![opcode_token(OPCODE_LE, (1 + 2 + a.len() + b.len()) as u32)];
+    le.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 3, WriteMask::XYZW));
+    le.extend_from_slice(&a);
+    le.extend_from_slice(&b);
+    body.extend_from_slice(&le);
+
+    // gt r6, r7, r8
+    let a = reg_src(
+        OPERAND_TYPE_TEMP,
+        &[7],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    );
+    let b = reg_src(
+        OPERAND_TYPE_TEMP,
+        &[8],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    );
+    let mut gt = vec![opcode_token(OPCODE_GT, (1 + 2 + a.len() + b.len()) as u32)];
+    gt.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 6, WriteMask::XYZW));
+    gt.extend_from_slice(&a);
+    gt.extend_from_slice(&b);
+    body.extend_from_slice(&gt);
+
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    // Stage type 0 is pixel shader.
+    let tokens = make_sm5_program_tokens(0, &body);
+    let program =
+        Sm4Program::parse_program_tokens(&tokens_to_bytes(&tokens)).expect("parse_program_tokens");
+    let module = decode_program(&program).expect("decode");
+
+    assert_eq!(
+        module.instructions[0],
+        Sm4Inst::Cmp {
+            dst: dst(RegFile::Temp, 0, WriteMask::XYZW),
+            a: src_reg(RegFile::Temp, 1),
+            b: src_reg(RegFile::Temp, 2),
+            op: aero_d3d11::CmpOp::Eq,
+            ty: aero_d3d11::CmpType::F32,
+        }
+    );
+    assert_eq!(
+        module.instructions[1],
+        Sm4Inst::Cmp {
+            dst: dst(RegFile::Temp, 3, WriteMask::XYZW),
+            a: src_reg(RegFile::Temp, 4),
+            b: src_reg(RegFile::Temp, 5),
+            op: aero_d3d11::CmpOp::Le,
+            ty: aero_d3d11::CmpType::F32,
+        }
+    );
+    assert_eq!(
+        module.instructions[2],
+        Sm4Inst::Cmp {
+            dst: dst(RegFile::Temp, 6, WriteMask::XYZW),
+            a: src_reg(RegFile::Temp, 7),
+            b: src_reg(RegFile::Temp, 8),
+            op: aero_d3d11::CmpOp::Gt,
+            ty: aero_d3d11::CmpType::F32,
+        }
+    );
+}
+
+#[test]
 fn decodes_sync_with_thread_group_sync() {
     let mut body = Vec::<u32>::new();
 
@@ -2547,7 +2648,18 @@ fn sm5_uav_and_raw_buffer_opcode_constants_are_stable() {
     // fixtures/tests, and are *not* the Windows SDK `D3D11_SB_OPCODE_TYPE` values.
     assert_eq!(OPERAND_TYPE_NULL, 13);
     assert_eq!(OPERAND_TYPE_UNORDERED_ACCESS_VIEW, 30);
+
+    // Predicate ops.
     assert_eq!(OPCODE_SETP, 0x2c);
+
+    // Float compare opcodes.
+    assert_eq!(OPCODE_LT, 0x0c);
+    assert_eq!(OPCODE_GE, 0x0d);
+    assert_eq!(OPCODE_EQ, 0x0e);
+    assert_eq!(OPCODE_NE, 0x0f);
+    assert_eq!(OPCODE_GT, 0x10);
+    assert_eq!(OPCODE_LE, 0x11);
+
     // Numeric conversion opcodes.
     assert_eq!(OPCODE_FTOI, 0x18);
     assert_eq!(OPCODE_FTOU, 0x19);

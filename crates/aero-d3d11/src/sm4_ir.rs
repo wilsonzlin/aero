@@ -1013,6 +1013,7 @@ pub enum CmpOp {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CmpType {
+    /// Compare operands as IEEE 754 floats (`f32`).
     F32,
     I32,
     U32,

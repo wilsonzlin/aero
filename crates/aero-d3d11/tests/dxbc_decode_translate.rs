@@ -3260,6 +3260,96 @@ fn decodes_integer_compare_ignores_saturate_flag() {
         &module.instructions[0],
         Sm4Inst::Cmp { dst, .. } if !dst.saturate
     ));
+
+    // Note: no translation check required here; this is a decoder-level invariant.
+}
+
+#[test]
+fn decodes_and_translates_float_cmp_mask_and_movc() {
+    // Minimal ps_5_0:
+    //   lt r0, l(0.0), l(1.0)
+    //   movc o0, r0, l(1,0,0,1), l(0,0,0,1)
+    //   ret
+    //
+    // This exercises the SM4/SM5 float-compare opcodes that write D3D-style predicate masks
+    // (0xffffffff/0) into the general register file, and the `movc` lowering which treats the
+    // condition as "raw bits != 0".
+    let mut body = Vec::<u32>::new();
+
+    // lt r0, l(0.0), l(1.0)
+    body.push(opcode_token(OPCODE_LT, 1 + 2 + 2 + 2));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 0, WriteMask::XYZW));
+    body.extend_from_slice(&imm32_scalar(0.0f32.to_bits()));
+    body.extend_from_slice(&imm32_scalar(1.0f32.to_bits()));
+
+    // movc o0, r0, l(1,0,0,1), l(0,0,0,1)
+    let red = imm32_vec4([
+        1.0f32.to_bits(),
+        0.0f32.to_bits(),
+        0.0f32.to_bits(),
+        1.0f32.to_bits(),
+    ]);
+    let black = imm32_vec4([
+        0.0f32.to_bits(),
+        0.0f32.to_bits(),
+        0.0f32.to_bits(),
+        1.0f32.to_bits(),
+    ]);
+    body.push(opcode_token(
+        OPCODE_MOVC,
+        1 + 2 + 2 + red.len() as u32 + black.len() as u32,
+    ));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+    body.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, &[0], Swizzle::XYZW));
+    body.extend_from_slice(&red);
+    body.extend_from_slice(&black);
+
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    // Stage type 0 = pixel shader.
+    let tokens = make_sm5_program_tokens(0, &body);
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, tokens_to_bytes(&tokens)),
+        (FOURCC_ISGN, build_signature_chunk(&[])),
+        (
+            FOURCC_OSGN,
+            build_signature_chunk(&[sig_param("SV_Target", 0, 0, 0b1111)]),
+        ),
+    ]);
+
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
+    assert_eq!(program.stage, aero_d3d11::ShaderStage::Pixel);
+
+    let module = decode_program(&program).expect("SM4 decode");
+    assert!(
+        matches!(
+            module.instructions.get(0),
+            Some(Sm4Inst::Cmp { ty: CmpType::F32, op: CmpOp::Lt, .. })
+        ),
+        "expected first instruction to decode as float compare: {:#?}",
+        module.instructions
+    );
+    assert!(matches!(module.instructions.get(1), Some(Sm4Inst::Movc { .. })));
+
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+
+    // Compare lowering should materialize D3D-style mask bits.
+    assert!(
+        translated
+            .wgsl
+            .contains("select(vec4<u32>(0u), vec4<u32>(0xffffffffu)"),
+        "expected float compare to lower to u32 mask select:\n{}",
+        translated.wgsl
+    );
+    // `movc` lowering should treat the condition as raw bits != 0 (bitcast through u32).
+    assert!(
+        translated.wgsl.contains("bitcast<vec4<u32>>"),
+        "expected movc lowering to bitcast condition through u32:\n{}",
+        translated.wgsl
+    );
 }
 
 #[test]

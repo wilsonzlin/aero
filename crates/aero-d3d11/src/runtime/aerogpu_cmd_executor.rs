@@ -26080,7 +26080,7 @@ fn cs_main() {
     let b: u32 = gs_cb0.regs[0].x;
     let c: vec4<f32> = textureSampleLevel(gs_tex0, gs_samp0, vec2<f32>(0.0, 0.0), 0.0);
     // Keep values alive to ensure naga/wgpu considers the bindings used.
-    if (a + b) == 0xffffffffu && c.x < -1000.0 {
+    if ((a + b) == 0xffffffffu && c.x < -1000.0) {
         // unreachable
     }
 }

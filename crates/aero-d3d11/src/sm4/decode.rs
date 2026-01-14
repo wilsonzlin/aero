@@ -1227,10 +1227,6 @@ pub fn decode_instruction(
             r.expect_eof()?;
             Ok(Sm4Inst::Max { dst, a, b })
         }
-        OPCODE_LT => decode_cmp(CmpOp::Lt, saturate, &mut r),
-        OPCODE_GE => decode_cmp(CmpOp::Ge, saturate, &mut r),
-        OPCODE_EQ => decode_cmp(CmpOp::Eq, saturate, &mut r),
-        OPCODE_NE => decode_cmp(CmpOp::Ne, saturate, &mut r),
         OPCODE_UDIV => {
             // `udiv dst_quot, dst_rem, a, b`
             // Note: integer division does not support saturate; ignore the opcode modifier if
@@ -1457,6 +1453,52 @@ pub fn decode_instruction(
                 width,
                 offset,
                 src,
+            })
+        }
+        OPCODE_EQ | OPCODE_NE | OPCODE_LT | OPCODE_LE | OPCODE_GT | OPCODE_GE => {
+            // Float compare (`eq/ne/lt/le/gt/ge`).
+            //
+            // These opcodes write D3D-style boolean mask bits (0xffffffff/0) into the untyped
+            // register file (modeled as `vec4<f32>` in the IR).
+            //
+            // Saturate modifiers are only meaningful for float *numeric* results. Applying saturate
+            // here would treat predicate mask bits as floats and corrupt the value, so ignore it.
+            //
+            // Note: If the operand encoding doesn't match the expected `dst, a, b` pattern, fall
+            // back to `Unknown` instead of failing the decode. This keeps the decoder resilient in
+            // the presence of future/unknown instructions that might share numeric opcode values
+            // with our small bring-up subset.
+            let dst = match decode_dst(&mut r) {
+                Ok(v) => v,
+                Err(_) => return Ok(Sm4Inst::Unknown { opcode }),
+            };
+            let a = match decode_src(&mut r) {
+                Ok(v) => v,
+                Err(_) => return Ok(Sm4Inst::Unknown { opcode }),
+            };
+            let b = match decode_src(&mut r) {
+                Ok(v) => v,
+                Err(_) => return Ok(Sm4Inst::Unknown { opcode }),
+            };
+            if r.expect_eof().is_err() {
+                return Ok(Sm4Inst::Unknown { opcode });
+            }
+
+            let op = match opcode {
+                OPCODE_EQ => CmpOp::Eq,
+                OPCODE_NE => CmpOp::Ne,
+                OPCODE_LT => CmpOp::Lt,
+                OPCODE_LE => CmpOp::Le,
+                OPCODE_GT => CmpOp::Gt,
+                OPCODE_GE => CmpOp::Ge,
+                _ => unreachable!("opcode match ensures exhaustive"),
+            };
+            Ok(Sm4Inst::Cmp {
+                dst,
+                a,
+                b,
+                op,
+                ty: CmpType::F32,
             })
         }
         OPCODE_IEQ | OPCODE_INE | OPCODE_ILT | OPCODE_IGE | OPCODE_ULT | OPCODE_UGE => {
@@ -1799,28 +1841,6 @@ fn decode_bufinfo(saturate: bool, r: &mut InstrReader<'_>) -> Result<Sm4Inst, Sm
         }),
     }
 }
-
-fn decode_cmp(
-    op: CmpOp,
-    _saturate: bool,
-    r: &mut InstrReader<'_>,
-) -> Result<Sm4Inst, Sm4DecodeError> {
-    // SM4/SM5 float compares (`lt/ge/eq/ne`) write predicate masks (0xffffffff/0) into the untyped
-    // register file. Saturate modifiers are only meaningful for float *numeric* results, so ignore
-    // it here (while still consuming any extended opcode tokens above).
-    let dst = decode_dst(r)?;
-    let a = decode_src(r)?;
-    let b = decode_src(r)?;
-    r.expect_eof()?;
-    Ok(Sm4Inst::Cmp {
-        dst,
-        a,
-        b,
-        op,
-        ty: CmpType::F32,
-    })
-}
-
 fn decode_int_mul(signed: bool, r: &mut InstrReader<'_>) -> Result<Sm4Inst, Sm4DecodeError> {
     let dst_lo = decode_dst(r)?;
     let dst_hi = decode_dst(r)?;

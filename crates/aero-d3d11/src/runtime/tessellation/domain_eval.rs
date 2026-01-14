@@ -123,6 +123,7 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {{
 
     let domain = tri_vertex_domain_location(patch_meta.tess_level, local_vertex);
     let out = ds_eval(patch_id, domain, local_vertex);
+ 
     let out_base = (patch_meta.vertex_base + local_vertex) * AERO_DS_OUT_REG_COUNT;
 {store_out_regs}
 }}
