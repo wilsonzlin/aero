@@ -140,17 +140,21 @@ impl PciConfigSpaceCompat {
         };
 
         // Canonical config-space reads only apply BAR special handling when the access begins
-        // inside the BAR window. If a hostile guest performs a cross-dword read that partially
-        // overlaps the BAR registers, read byte-by-byte so BAR bytes are still sourced from the
-        // BAR state machine rather than the raw config bytes.
-        if access_overlaps_pci_bar(offset, size) && !is_pci_bar_offset(offset) {
-            let mut out = 0u32;
-            for i in 0..size {
-                let byte_off = offset + i as u16;
-                let byte = cfg.read(byte_off, 1) & 0xFF;
-                out |= byte << (8 * i);
+        // inside the BAR window and does not cross a dword boundary. If a hostile guest performs
+        // an unaligned/cross-dword access that overlaps BAR registers, read byte-by-byte so:
+        // - BAR bytes are still sourced from the BAR state machine (incl. probe masks), and
+        // - reads that span two BAR dwords return bytes from both dwords, rather than truncating.
+        if access_overlaps_pci_bar(offset, size) {
+            let crosses_dword = (offset & 0x3) as usize + size > 4;
+            if crosses_dword || !is_pci_bar_offset(offset) {
+                let mut out = 0u32;
+                for i in 0..size {
+                    let byte_off = offset + i as u16;
+                    let byte = cfg.read(byte_off, 1) & 0xFF;
+                    out |= byte << (8 * i);
+                }
+                return out;
             }
-            return out;
         }
 
         cfg.read(offset, size)
@@ -361,6 +365,33 @@ mod tests {
         // Bytes at 0x10..0x13 for the size mask 0xFFFF_F000 are [00, F0, FF, FF].
         // Reading 4 bytes starting at 0x0E includes byte 0x11 as the top byte of the result.
         assert_eq!(compat.read_u32(0x0E, 4), 0xF000_0000);
+    }
+
+    #[test]
+    fn bar_read_that_crosses_dword_boundary_reads_both_dwords() {
+        let mut cfg = PciConfigSpace::new(0x1234, 0x5678);
+        cfg.set_bar_definition(
+            0,
+            PciBarDefinition::Mmio32 {
+                size: 0x10,
+                prefetchable: false,
+            },
+        );
+        cfg.set_bar_definition(
+            1,
+            PciBarDefinition::Mmio32 {
+                size: 0x10,
+                prefetchable: false,
+            },
+        );
+
+        let compat = PciConfigSpaceCompat::new(cfg);
+
+        compat.write_u32(0x10, 4, 0x1122_3340);
+        compat.write_u32(0x14, 4, 0x5566_7780);
+
+        // 16-bit read at 0x13 spans BAR0 byte3 (0x11) and BAR1 byte0 (0x80).
+        assert_eq!(compat.read_u32(0x13, 2), 0x8011);
     }
 
     #[test]
