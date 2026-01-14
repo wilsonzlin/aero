@@ -4183,13 +4183,7 @@ impl Machine {
 
     /// Returns the effective boot device used for the current boot session.
     pub fn active_boot_device(&self) -> BootDevice {
-        let boot_drive = self.bios.config().boot_drive;
-        let install_media_present = self
-            .install_media
-            .as_ref()
-            .and_then(InstallMedia::upgrade)
-            .is_some();
-        if (0xE0..=0xEF).contains(&boot_drive) && install_media_present {
+        if self.bios.booted_from_cdrom() {
             BootDevice::Cdrom
         } else {
             BootDevice::Hdd

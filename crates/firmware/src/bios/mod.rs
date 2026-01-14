@@ -585,6 +585,14 @@ impl Bios {
         &self.config
     }
 
+    /// Returns `true` if the most recent boot path was an El Torito CD-ROM boot.
+    ///
+    /// This is intended for host-level integrations that want to report which device firmware
+    /// actually booted from (for example when using the "CD-first when present" policy).
+    pub fn booted_from_cdrom(&self) -> bool {
+        self.el_torito_boot_info.is_some()
+    }
+
     /// Set the BIOS boot drive number exposed in `DL` when transferring control to the boot
     /// sector.
     ///

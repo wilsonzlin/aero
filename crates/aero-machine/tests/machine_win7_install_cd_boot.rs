@@ -164,6 +164,7 @@ fn machine_win7_install_helper_boots_eltorito_iso_and_falls_back_to_hdd_after_ej
 
     // Firmware should enter the ISO boot image with DL=0xE0 (first CD-ROM drive number).
     assert_eq!(m.cpu().gpr[gpr::RDX] as u8, 0xE0);
+    assert_eq!(m.active_boot_device(), aero_machine::BootDevice::Cdrom);
 
     run_until_halt(&mut m);
     assert_eq!(m.take_serial_output(), vec![b'I']);
@@ -173,6 +174,7 @@ fn machine_win7_install_helper_boots_eltorito_iso_and_falls_back_to_hdd_after_ej
     m.eject_install_media();
     m.reset();
     assert_eq!(m.cpu().gpr[gpr::RDX] as u8, 0x80);
+    assert_eq!(m.active_boot_device(), aero_machine::BootDevice::Hdd);
 
     run_until_halt(&mut m);
     assert_eq!(m.take_serial_output(), vec![b'D']);
