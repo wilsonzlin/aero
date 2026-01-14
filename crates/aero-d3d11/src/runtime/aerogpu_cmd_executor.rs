@@ -13,6 +13,7 @@ use aero_gpu::pipeline_cache::{PipelineCache, PipelineCacheConfig};
 use aero_gpu::pipeline_key::{
     ColorTargetKey, ComputePipelineKey, PipelineLayoutKey, RenderPipelineKey, ShaderHash,
 };
+use aero_gpu::shared_surface::{SharedSurfaceError, SharedSurfaceTable as GpuSharedSurfaceTable};
 use aero_gpu::wgpu_bc_texture_dimensions_compatible;
 use aero_gpu::GpuCapabilities;
 use aero_gpu::{
@@ -481,52 +482,24 @@ pub struct BoundShaderHandles {
 ///   final handle (original or alias) is released.
 #[derive(Debug, Default)]
 struct SharedSurfaceTable {
-    /// `share_token -> underlying resource handle`.
-    by_token: HashMap<u64, u32>,
-    /// Tokens that were released (or otherwise removed) and must not be reused.
-    retired_tokens: HashSet<u64>,
-    /// `handle -> underlying resource handle`.
-    ///
-    /// - Original resources are stored as `handle -> handle`
-    /// - Imported aliases are stored as `alias_handle -> underlying_handle`
-    handles: HashMap<u32, u32>,
-    /// `underlying handle -> refcount`.
-    refcounts: HashMap<u32, u32>,
+    inner: GpuSharedSurfaceTable,
 }
 
 impl SharedSurfaceTable {
-    fn retire_tokens_for_underlying(&mut self, underlying: u32) {
-        let to_retire: Vec<u64> = self
-            .by_token
-            .iter()
-            .filter_map(|(k, v)| (*v == underlying).then_some(*k))
-            .collect();
-        for token in to_retire {
-            self.by_token.remove(&token);
-            self.retired_tokens.insert(token);
-        }
-    }
-
     fn clear(&mut self) {
-        self.by_token.clear();
-        self.retired_tokens.clear();
-        self.handles.clear();
-        self.refcounts.clear();
+        self.inner.clear();
     }
 
-    fn register_handle(&mut self, handle: u32) {
-        if handle == 0 {
-            return;
-        }
-        if self.handles.contains_key(&handle) {
-            return;
-        }
-        self.handles.insert(handle, handle);
-        *self.refcounts.entry(handle).or_insert(0) += 1;
+    fn contains_handle(&self, handle: u32) -> bool {
+        self.inner.contains_handle(handle)
+    }
+
+    fn register_handle(&mut self, handle: u32) -> Result<(), SharedSurfaceError> {
+        self.inner.register_handle(handle)
     }
 
     fn resolve_handle(&self, handle: u32) -> u32 {
-        self.handles.get(&handle).copied().unwrap_or(handle)
+        self.inner.resolve_handle(handle)
     }
 
     /// Resolves a handle coming from an AeroGPU command stream.
@@ -536,21 +509,9 @@ impl SharedSurfaceTable {
     /// underlying numeric ID is kept alive in `refcounts` to prevent handle reuse/collision, but
     /// the original handle value must not be used for subsequent commands.
     fn resolve_cmd_handle(&self, handle: u32, op: &str) -> Result<u32> {
-        if handle == 0 {
-            return Ok(0);
-        }
-
-        if self.handles.contains_key(&handle) {
-            return Ok(self.resolve_handle(handle));
-        }
-
-        if self.refcounts.contains_key(&handle) {
-            bail!(
-                "{op}: resource handle {handle} was destroyed (underlying id kept alive by shared surface aliases)"
-            );
-        }
-
-        Ok(handle)
+        self.inner
+            .resolve_cmd_handle(handle)
+            .map_err(|e| anyhow!("{op}: {e}"))
     }
 
     fn export(&mut self, resource_handle: u32, share_token: u64) -> Result<()> {
@@ -560,26 +521,9 @@ impl SharedSurfaceTable {
         if share_token == 0 {
             bail!("EXPORT_SHARED_SURFACE: invalid share_token 0");
         }
-        if self.retired_tokens.contains(&share_token) {
-            bail!(
-                "EXPORT_SHARED_SURFACE: share_token 0x{share_token:016X} was previously released"
-            );
-        }
-        let underlying = self.handles.get(&resource_handle).copied().ok_or_else(|| {
-            anyhow!("EXPORT_SHARED_SURFACE: unknown resource handle {resource_handle}")
-        })?;
-
-        if let Some(&existing) = self.by_token.get(&share_token) {
-            if existing != underlying {
-                bail!(
-                    "EXPORT_SHARED_SURFACE: share_token 0x{share_token:016X} already exported (existing={existing} new={underlying})"
-                );
-            }
-            return Ok(());
-        }
-
-        self.by_token.insert(share_token, underlying);
-        Ok(())
+        self.inner
+            .export(resource_handle, share_token)
+            .map_err(|e| anyhow!("EXPORT_SHARED_SURFACE: {e}"))
     }
 
     fn import(&mut self, out_handle: u32, share_token: u64) -> Result<()> {
@@ -589,72 +533,21 @@ impl SharedSurfaceTable {
         if share_token == 0 {
             bail!("IMPORT_SHARED_SURFACE: invalid share_token 0");
         }
-        let Some(&underlying) = self.by_token.get(&share_token) else {
-            bail!("IMPORT_SHARED_SURFACE: unknown share_token 0x{share_token:016X} (not exported)");
-        };
-
-        if !self.refcounts.contains_key(&underlying) {
-            bail!(
-                "IMPORT_SHARED_SURFACE: share_token 0x{share_token:016X} refers to destroyed handle {underlying}"
-            );
-        }
-
-        if let Some(&existing) = self.handles.get(&out_handle) {
-            if existing != underlying {
-                bail!(
-                    "IMPORT_SHARED_SURFACE: out_resource_handle {out_handle} already bound (existing={existing} new={underlying})"
-                );
-            }
-            return Ok(());
-        } else if self.refcounts.contains_key(&out_handle) {
-            // Underlying handles remain reserved as long as any aliases still reference them.
-            // If an original handle was destroyed, it must not be reused as a new alias handle
-            // until the underlying resource is fully released.
-            bail!(
-                "IMPORT_SHARED_SURFACE: out_resource_handle {out_handle} is still in use (underlying id kept alive by shared surface aliases)"
-            );
-        }
-
-        self.handles.insert(out_handle, underlying);
-        *self.refcounts.entry(underlying).or_insert(0) += 1;
-        Ok(())
+        self.inner.import(out_handle, share_token).map_err(|e| match e {
+            SharedSurfaceError::UnknownToken(share_token) => anyhow!(
+                "IMPORT_SHARED_SURFACE: unknown share_token 0x{share_token:016X} (not exported)"
+            ),
+            other => anyhow!("IMPORT_SHARED_SURFACE: {other}"),
+        })
     }
 
     fn release_token(&mut self, share_token: u64) {
-        if share_token == 0 {
-            return;
-        }
-        // Idempotent: unknown tokens are a no-op (see `aerogpu_cmd.h` contract).
-        //
-        // Only retire tokens that were actually exported at some point (present in `by_token`),
-        // or that are already retired.
-        if self.by_token.remove(&share_token).is_some() {
-            self.retired_tokens.insert(share_token);
-        }
+        self.inner.release_token(share_token);
     }
 
     /// Releases a handle (original or alias). Returns `(underlying_handle, last_ref)` if tracked.
     fn destroy_handle(&mut self, handle: u32) -> Option<(u32, bool)> {
-        if handle == 0 {
-            return None;
-        }
-
-        let underlying = self.handles.remove(&handle)?;
-        let Some(count) = self.refcounts.get_mut(&underlying) else {
-            // Table invariant broken (handle tracked but no refcount entry). Treat as last-ref so
-            // callers can clean up the underlying resource instead of leaking it.
-            self.retire_tokens_for_underlying(underlying);
-            return Some((underlying, true));
-        };
-
-        *count = count.saturating_sub(1);
-        if *count != 0 {
-            return Some((underlying, false));
-        }
-
-        self.refcounts.remove(&underlying);
-        self.retire_tokens_for_underlying(underlying);
-        Some((underlying, true))
+        self.inner.destroy_handle(handle)
     }
 }
 
@@ -7808,30 +7701,18 @@ impl AerogpuD3d11Executor {
             bail!("CREATE_BUFFER: size_bytes must be > 0");
         }
 
-        if let Some(&existing) = self.shared_surfaces.handles.get(&buffer_handle) {
+        if self.shared_surfaces.contains_handle(buffer_handle) {
+            let existing = self.shared_surfaces.resolve_handle(buffer_handle);
             if existing != buffer_handle {
                 bail!(
                     "CREATE_BUFFER: buffer_handle {buffer_handle} is already an alias (underlying={existing})"
                 );
             }
             bail!("CREATE_BUFFER: buffer_handle {buffer_handle} is still in use");
-        } else if self.shared_surfaces.refcounts.contains_key(&buffer_handle) {
-            // Underlying handles remain reserved as long as any aliases still reference them.
-            // If the original handle was destroyed, reject reusing it until the underlying resource
-            // is fully released.
-            bail!(
-                "CREATE_BUFFER: buffer_handle {buffer_handle} is still in use (underlying id kept alive by shared surface aliases)"
-            );
         }
 
         let usage = map_buffer_usage_flags(usage_flags, self.caps.supports_compute);
         let gpu_size = align_copy_buffer_size(size_bytes)?;
-        let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("aerogpu buffer"),
-            size: gpu_size,
-            usage,
-            mapped_at_creation: false,
-        });
 
         let backing = if backing_alloc_id != 0 {
             allocs.validate_range(backing_alloc_id, backing_offset_bytes as u64, size_bytes)?;
@@ -7842,6 +7723,25 @@ impl AerogpuD3d11Executor {
         } else {
             None
         };
+
+        self.shared_surfaces
+            .register_handle(buffer_handle)
+            .map_err(|e| match e {
+                SharedSurfaceError::HandleStillInUse(_) => anyhow!(
+                    "CREATE_BUFFER: buffer_handle {buffer_handle} is still in use (underlying id kept alive by shared surface aliases)"
+                ),
+                SharedSurfaceError::HandleIsAlias { underlying, .. } => anyhow!(
+                    "CREATE_BUFFER: buffer_handle {buffer_handle} is already an alias (underlying={underlying})"
+                ),
+                other => anyhow!("CREATE_BUFFER: {other}"),
+            })?;
+
+        let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("aerogpu buffer"),
+            size: gpu_size,
+            usage,
+            mapped_at_creation: false,
+        });
 
         let mut res = BufferResource {
             buffer,
@@ -7857,7 +7757,6 @@ impl AerogpuD3d11Executor {
         }
 
         self.resources.buffers.insert(buffer_handle, res);
-        self.shared_surfaces.register_handle(buffer_handle);
         Ok(())
     }
 
@@ -7899,20 +7798,14 @@ impl AerogpuD3d11Executor {
                 "CREATE_TEXTURE2D: mip_levels too large for dimensions (width={width}, height={height}, mip_levels={mip_levels}, max_mip_levels={max_mip_levels})"
             );
         }
-        if let Some(&existing) = self.shared_surfaces.handles.get(&texture_handle) {
+        if self.shared_surfaces.contains_handle(texture_handle) {
+            let existing = self.shared_surfaces.resolve_handle(texture_handle);
             if existing != texture_handle {
                 bail!(
                     "CREATE_TEXTURE2D: texture_handle {texture_handle} is already an alias (underlying={existing})"
                 );
             }
             bail!("CREATE_TEXTURE2D: texture_handle {texture_handle} is still in use");
-        } else if self.shared_surfaces.refcounts.contains_key(&texture_handle) {
-            // Underlying handles remain reserved as long as any aliases still reference them.
-            // If the original handle was destroyed, reject reusing it until the underlying resource
-            // is fully released.
-            bail!(
-                "CREATE_TEXTURE2D: texture_handle {texture_handle} is still in use (underlying id kept alive by shared surface aliases)"
-            );
         }
 
         let format_layout = aerogpu_texture_format_layout(format_u32)?;
@@ -7943,22 +7836,6 @@ impl AerogpuD3d11Executor {
             bail!("CREATE_TEXTURE2D: row_pitch_bytes is required for allocation-backed textures");
         }
 
-        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("aerogpu texture2d"),
-            size: wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: array_layers,
-            },
-            mip_level_count: mip_levels,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format,
-            usage,
-            view_formats: &[],
-        });
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-
         let backing = if backing_alloc_id != 0 {
             // Validate that the allocation can hold all mips/layers using the guest UMD's canonical
             // packing:
@@ -7988,6 +7865,34 @@ impl AerogpuD3d11Executor {
             None
         };
 
+        self.shared_surfaces
+            .register_handle(texture_handle)
+            .map_err(|e| match e {
+                SharedSurfaceError::HandleStillInUse(_) => anyhow!(
+                    "CREATE_TEXTURE2D: texture_handle {texture_handle} is still in use (underlying id kept alive by shared surface aliases)"
+                ),
+                SharedSurfaceError::HandleIsAlias { underlying, .. } => anyhow!(
+                    "CREATE_TEXTURE2D: texture_handle {texture_handle} is already an alias (underlying={underlying})"
+                ),
+                other => anyhow!("CREATE_TEXTURE2D: {other}"),
+            })?;
+
+        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("aerogpu texture2d"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: array_layers,
+            },
+            mip_level_count: mip_levels,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+
         self.resources.textures.insert(
             texture_handle,
             Texture2dResource {
@@ -8009,7 +7914,6 @@ impl AerogpuD3d11Executor {
                 host_shadow_valid: Vec::new(),
             },
         );
-        self.shared_surfaces.register_handle(texture_handle);
         Ok(())
     }
 
@@ -8097,15 +8001,6 @@ impl AerogpuD3d11Executor {
                 }
             }
         } else {
-            if self.shared_surfaces.refcounts.contains_key(&handle) {
-                // This handle is no longer a live handle (it was already destroyed), but it is
-                // still reserved as an underlying shared-surface ID because aliases remain alive.
-                //
-                // Avoid removing the underlying resource (which is keyed by this numeric handle)
-                // on duplicate destroys.
-                return Ok(());
-            }
-
             // Untracked handle; treat as a best-effort destroy (robustness).
             if keep_alive {
                 if let Some(buf) = self.resources.buffers.remove(&handle) {

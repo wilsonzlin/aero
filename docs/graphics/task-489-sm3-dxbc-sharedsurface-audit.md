@@ -157,10 +157,9 @@ bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --features dxbc-robust --test
 - `crates/aero-gpu/tests/aerogpu_d3d9_cmd_stream_shared_surface.rs` (end-to-end cmd-stream coverage)
 
 **Notes:**
-- `crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs` currently contains a *separate* local
-  `SharedSurfaceTable` implementation (duplicate bookkeeping). The tasks above were satisfied for
-  the D3D9 executor/command-processor path, but unifying the D3D11 executor on the canonical
-  `aero-gpu` implementation would reduce drift/maintenance.
+- `crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs` now reuses the canonical
+  `aero-gpu` shared-surface bookkeeping (via `aero_gpu::shared_surface::SharedSurfaceTable`),
+  so D3D9 + D3D11 executors share the same alias/refcount/token retirement semantics.
 
 **How to run (focused):**
 ```bash

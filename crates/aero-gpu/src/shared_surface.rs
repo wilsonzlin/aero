@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use thiserror::Error;
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
-pub(crate) enum SharedSurfaceError {
+pub enum SharedSurfaceError {
     #[error("invalid shared surface handle 0x{0:08X} (0 is reserved)")]
     InvalidHandle(u32),
     #[error("unknown shared surface handle 0x{0:08X}")]
@@ -51,7 +51,7 @@ pub(crate) enum SharedSurfaceError {
 /// - `DESTROY_RESOURCE` decrements the reference count for the underlying resource and
 ///   destroys it only once the last reference is released.
 #[derive(Debug, Default)]
-pub(crate) struct SharedSurfaceTable {
+pub struct SharedSurfaceTable {
     /// `share_token -> underlying resource handle`.
     by_token: HashMap<u64, u32>,
     /// `share_token` values that were previously valid but were released (or otherwise removed).
@@ -81,14 +81,14 @@ impl SharedSurfaceTable {
         });
     }
 
-    pub(crate) fn clear(&mut self) {
+    pub fn clear(&mut self) {
         self.by_token.clear();
         self.retired_tokens.clear();
         self.handles.clear();
         self.refcounts.clear();
     }
 
-    pub(crate) fn register_handle(&mut self, handle: u32) -> Result<(), SharedSurfaceError> {
+    pub fn register_handle(&mut self, handle: u32) -> Result<(), SharedSurfaceError> {
         if handle == 0 {
             return Err(SharedSurfaceError::InvalidHandle(handle));
         }
@@ -112,15 +112,15 @@ impl SharedSurfaceTable {
         Ok(())
     }
 
-    pub(crate) fn contains_handle(&self, handle: u32) -> bool {
+    pub fn contains_handle(&self, handle: u32) -> bool {
         self.handles.contains_key(&handle)
     }
 
-    pub(crate) fn resolve_handle(&self, handle: u32) -> u32 {
+    pub fn resolve_handle(&self, handle: u32) -> u32 {
         self.handles.get(&handle).copied().unwrap_or(handle)
     }
 
-    pub(crate) fn lookup_token(&self, share_token: u64) -> Option<u32> {
+    pub fn lookup_token(&self, share_token: u64) -> Option<u32> {
         if share_token == 0 {
             return None;
         }
@@ -133,7 +133,7 @@ impl SharedSurfaceTable {
     /// invalid: if an original handle has been destroyed while shared-surface aliases still exist,
     /// the underlying numeric ID is kept alive in `refcounts` to prevent handle reuse/collision,
     /// but the original handle value must not be used for subsequent commands.
-    pub(crate) fn resolve_cmd_handle(&self, handle: u32) -> Result<u32, SharedSurfaceError> {
+    pub fn resolve_cmd_handle(&self, handle: u32) -> Result<u32, SharedSurfaceError> {
         if handle == 0 {
             return Ok(0);
         }
@@ -146,7 +146,7 @@ impl SharedSurfaceTable {
         Ok(handle)
     }
 
-    pub(crate) fn export(
+    pub fn export(
         &mut self,
         resource_handle: u32,
         share_token: u64,
@@ -181,7 +181,7 @@ impl SharedSurfaceTable {
         Ok(())
     }
 
-    pub(crate) fn import(
+    pub fn import(
         &mut self,
         out_resource_handle: u32,
         share_token: u64,
@@ -225,7 +225,7 @@ impl SharedSurfaceTable {
         Ok(())
     }
 
-    pub(crate) fn release_token(&mut self, share_token: u64) -> bool {
+    pub fn release_token(&mut self, share_token: u64) -> bool {
         if share_token == 0 {
             return false;
         }
@@ -242,7 +242,7 @@ impl SharedSurfaceTable {
 
     /// Releases a handle (original or alias). Returns `(underlying_handle, last_ref)` if the
     /// handle was tracked.
-    pub(crate) fn destroy_handle(&mut self, handle: u32) -> Option<(u32, bool)> {
+    pub fn destroy_handle(&mut self, handle: u32) -> Option<(u32, bool)> {
         if handle == 0 {
             return None;
         }
