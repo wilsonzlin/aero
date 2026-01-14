@@ -8431,7 +8431,32 @@ try {
       $scriptExitCode = 1
     }
     "VIRTIO_SND_FAILED" {
-      Write-Host "FAIL: VIRTIO_SND_FAILED: selftest RESULT=PASS but virtio-snd test reported FAIL"
+      $reason = ""
+      $irqMode = ""
+      $irqMessageCount = ""
+      $irqReason = ""
+      $line = Try-ExtractLastAeroMarkerLine `
+        -Tail $result.Tail `
+        -Prefix "AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL|" `
+        -SerialLogPath $SerialLogPath
+      if ($null -ne $line) {
+        if ($line -match "(?:^|\|)reason=([^|\r\n]+)") { $reason = $Matches[1] }
+        elseif ($line -match "\|FAIL\|([^|\r\n]+)(?:\||$)") {
+          $tok = $Matches[1]
+          if (-not [string]::IsNullOrEmpty($tok) -and (-not ($tok -match "="))) { $reason = $tok }
+        }
+        if ($line -match "(?:^|\|)irq_mode=([^|\r\n]+)") { $irqMode = $Matches[1] }
+        if ($line -match "(?:^|\|)irq_message_count=([^|\r\n]+)") { $irqMessageCount = $Matches[1] }
+        if ($line -match "(?:^|\|)irq_reason=([^|\r\n]+)") { $irqReason = $Matches[1] }
+      }
+      $detailsParts = @()
+      if (-not [string]::IsNullOrEmpty($reason)) { $detailsParts += "reason=$reason" }
+      if (-not [string]::IsNullOrEmpty($irqMode)) { $detailsParts += "irq_mode=$irqMode" }
+      if (-not [string]::IsNullOrEmpty($irqMessageCount)) { $detailsParts += "irq_message_count=$irqMessageCount" }
+      if (-not [string]::IsNullOrEmpty($irqReason)) { $detailsParts += "irq_reason=$irqReason" }
+      $details = ""
+      if ($detailsParts.Count -gt 0) { $details = " (" + ($detailsParts -join " ") + ")" }
+      Write-Host "FAIL: VIRTIO_SND_FAILED: selftest RESULT=PASS but virtio-snd test reported FAIL$details"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -8439,7 +8464,26 @@ try {
       $scriptExitCode = 1
     }
     "VIRTIO_SND_CAPTURE_FAILED" {
-      Write-Host "FAIL: VIRTIO_SND_CAPTURE_FAILED: selftest RESULT=PASS but virtio-snd-capture test reported FAIL"
+      $reason = ""
+      $hr = ""
+      $line = Try-ExtractLastAeroMarkerLine `
+        -Tail $result.Tail `
+        -Prefix "AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|FAIL|" `
+        -SerialLogPath $SerialLogPath
+      if ($null -ne $line) {
+        if ($line -match "(?:^|\|)reason=([^|\r\n]+)") { $reason = $Matches[1] }
+        elseif ($line -match "\|FAIL\|([^|\r\n]+)(?:\||$)") {
+          $tok = $Matches[1]
+          if (-not [string]::IsNullOrEmpty($tok) -and (-not ($tok -match "="))) { $reason = $tok }
+        }
+        if ($line -match "(?:^|\|)hr=([^|\r\n]+)") { $hr = $Matches[1] }
+      }
+      $detailsParts = @()
+      if (-not [string]::IsNullOrEmpty($reason)) { $detailsParts += "reason=$reason" }
+      if (-not [string]::IsNullOrEmpty($hr)) { $detailsParts += "hr=$hr" }
+      $details = ""
+      if ($detailsParts.Count -gt 0) { $details = " (" + ($detailsParts -join " ") + ")" }
+      Write-Host "FAIL: VIRTIO_SND_CAPTURE_FAILED: selftest RESULT=PASS but virtio-snd-capture test reported FAIL$details"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -8447,7 +8491,26 @@ try {
       $scriptExitCode = 1
     }
     "VIRTIO_SND_DUPLEX_FAILED" {
-      Write-Host "FAIL: VIRTIO_SND_DUPLEX_FAILED: selftest RESULT=PASS but virtio-snd-duplex test reported FAIL"
+      $reason = ""
+      $hr = ""
+      $line = Try-ExtractLastAeroMarkerLine `
+        -Tail $result.Tail `
+        -Prefix "AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|FAIL|" `
+        -SerialLogPath $SerialLogPath
+      if ($null -ne $line) {
+        if ($line -match "(?:^|\|)reason=([^|\r\n]+)") { $reason = $Matches[1] }
+        elseif ($line -match "\|FAIL\|([^|\r\n]+)(?:\||$)") {
+          $tok = $Matches[1]
+          if (-not [string]::IsNullOrEmpty($tok) -and (-not ($tok -match "="))) { $reason = $tok }
+        }
+        if ($line -match "(?:^|\|)hr=([^|\r\n]+)") { $hr = $Matches[1] }
+      }
+      $detailsParts = @()
+      if (-not [string]::IsNullOrEmpty($reason)) { $detailsParts += "reason=$reason" }
+      if (-not [string]::IsNullOrEmpty($hr)) { $detailsParts += "hr=$hr" }
+      $details = ""
+      if ($detailsParts.Count -gt 0) { $details = " (" + ($detailsParts -join " ") + ")" }
+      Write-Host "FAIL: VIRTIO_SND_DUPLEX_FAILED: selftest RESULT=PASS but virtio-snd-duplex test reported FAIL$details"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -8479,7 +8542,26 @@ try {
       $scriptExitCode = 1
     }
     "VIRTIO_SND_BUFFER_LIMITS_FAILED" {
-      Write-Host "FAIL: VIRTIO_SND_BUFFER_LIMITS_FAILED: selftest RESULT=PASS but virtio-snd-buffer-limits test reported FAIL"
+      $reason = ""
+      $hr = ""
+      $line = Try-ExtractLastAeroMarkerLine `
+        -Tail $result.Tail `
+        -Prefix "AERO_VIRTIO_SELFTEST|TEST|virtio-snd-buffer-limits|FAIL|" `
+        -SerialLogPath $SerialLogPath
+      if ($null -ne $line) {
+        if ($line -match "(?:^|\|)reason=([^|\r\n]+)") { $reason = $Matches[1] }
+        elseif ($line -match "\|FAIL\|([^|\r\n]+)(?:\||$)") {
+          $tok = $Matches[1]
+          if (-not [string]::IsNullOrEmpty($tok) -and (-not ($tok -match "="))) { $reason = $tok }
+        }
+        if ($line -match "(?:^|\|)hr=([^|\r\n]+)") { $hr = $Matches[1] }
+      }
+      $detailsParts = @()
+      if (-not [string]::IsNullOrEmpty($reason)) { $detailsParts += "reason=$reason" }
+      if (-not [string]::IsNullOrEmpty($hr)) { $detailsParts += "hr=$hr" }
+      $details = ""
+      if ($detailsParts.Count -gt 0) { $details = " (" + ($detailsParts -join " ") + ")" }
+      Write-Host "FAIL: VIRTIO_SND_BUFFER_LIMITS_FAILED: selftest RESULT=PASS but virtio-snd-buffer-limits test reported FAIL$details"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue

@@ -2174,6 +2174,176 @@ def _virtio_snd_skip_failure_message(tail: bytes) -> str:
     return "FAIL: VIRTIO_SND_SKIPPED: virtio-snd test was skipped but --with-virtio-snd was enabled"
 
 
+def _try_extract_plain_marker_token(marker_line: str, status: str) -> Optional[str]:
+    """
+    Extract a plain (non key=value) token immediately following a marker status.
+
+    Many guest markers use a compact format:
+      AERO_VIRTIO_SELFTEST|TEST|<name>|FAIL|<reason>|key=value|...
+
+    Returns:
+      The token (e.g. "wrong_service") or None when unavailable.
+    """
+    try:
+        toks = marker_line.split("|")
+        if status not in toks:
+            return None
+        idx = toks.index(status)
+        if idx + 1 >= len(toks):
+            return None
+        tok = toks[idx + 1].strip()
+        if not tok or "=" in tok:
+            return None
+        return tok
+    except Exception:
+        return None
+
+
+def _virtio_snd_fail_failure_message(tail: bytes, *, marker_line: Optional[str] = None) -> str:
+    # virtio-snd playback marker:
+    #   AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL|irq_mode=...|irq_message_count=...
+    #   AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL|wrong_service|irq_mode=...|...
+    marker = marker_line
+    if marker is not None:
+        if not marker.startswith("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|") or _try_extract_marker_status(marker) != "FAIL":
+            marker = None
+    if marker is None:
+        marker = _try_extract_last_marker_line(tail, b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL")
+
+    details = ""
+    if marker is not None:
+        fields = _parse_marker_kv_fields(marker)
+        reason = fields.get("reason", "").strip()
+        if not reason:
+            reason = _try_extract_plain_marker_token(marker, "FAIL") or ""
+        parts: list[str] = []
+        if reason:
+            parts.append(f"reason={reason}")
+        # Include a small, stable subset of IRQ diagnostics to aid debugging.
+        for k in ("irq_mode", "irq_message_count", "irq_reason"):
+            v = fields.get(k, "").strip()
+            if v:
+                parts.append(f"{k}={v}")
+        if parts:
+            details = " (" + " ".join(parts) + ")"
+
+    return (
+        "FAIL: VIRTIO_SND_FAILED: selftest RESULT=PASS but virtio-snd test reported FAIL"
+        + details
+    )
+
+
+def _virtio_snd_capture_fail_failure_message(tail: bytes, *, marker_line: Optional[str] = None) -> str:
+    # virtio-snd capture marker:
+    #   AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|FAIL|endpoint_missing
+    #   AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|FAIL|force_null_backend
+    marker = marker_line
+    if marker is not None:
+        if (
+            not marker.startswith("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|")
+            or _try_extract_marker_status(marker) != "FAIL"
+        ):
+            marker = None
+    if marker is None:
+        marker = _try_extract_last_marker_line(
+            tail, b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|FAIL"
+        )
+
+    details = ""
+    if marker is not None:
+        fields = _parse_marker_kv_fields(marker)
+        reason = fields.get("reason", "").strip()
+        if not reason:
+            reason = _try_extract_plain_marker_token(marker, "FAIL") or ""
+        hr = fields.get("hr", "").strip()
+        parts: list[str] = []
+        if reason:
+            parts.append(f"reason={reason}")
+        if hr:
+            parts.append(f"hr={hr}")
+        if parts:
+            details = " (" + " ".join(parts) + ")"
+
+    return (
+        "FAIL: VIRTIO_SND_CAPTURE_FAILED: selftest RESULT=PASS but virtio-snd-capture test reported FAIL"
+        + details
+    )
+
+
+def _virtio_snd_duplex_fail_failure_message(tail: bytes, *, marker_line: Optional[str] = None) -> str:
+    # virtio-snd duplex marker:
+    #   AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|FAIL|reason=<...>|hr=0x...
+    #   AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|FAIL|force_null_backend
+    marker = marker_line
+    if marker is not None:
+        if (
+            not marker.startswith("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|")
+            or _try_extract_marker_status(marker) != "FAIL"
+        ):
+            marker = None
+    if marker is None:
+        marker = _try_extract_last_marker_line(
+            tail, b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|FAIL"
+        )
+
+    details = ""
+    if marker is not None:
+        fields = _parse_marker_kv_fields(marker)
+        reason = fields.get("reason", "").strip()
+        if not reason:
+            reason = _try_extract_plain_marker_token(marker, "FAIL") or ""
+        hr = fields.get("hr", "").strip()
+        parts: list[str] = []
+        if reason:
+            parts.append(f"reason={reason}")
+        if hr:
+            parts.append(f"hr={hr}")
+        if parts:
+            details = " (" + " ".join(parts) + ")"
+
+    return (
+        "FAIL: VIRTIO_SND_DUPLEX_FAILED: selftest RESULT=PASS but virtio-snd-duplex test reported FAIL"
+        + details
+    )
+
+
+def _virtio_snd_buffer_limits_fail_failure_message(tail: bytes, *, marker_line: Optional[str] = None) -> str:
+    # virtio-snd-buffer-limits marker:
+    #   AERO_VIRTIO_SELFTEST|TEST|virtio-snd-buffer-limits|FAIL|reason=<...>|hr=0x...
+    marker = marker_line
+    if marker is not None:
+        if (
+            not marker.startswith("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-buffer-limits|")
+            or _try_extract_marker_status(marker) != "FAIL"
+        ):
+            marker = None
+    if marker is None:
+        marker = _try_extract_last_marker_line(
+            tail, b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-buffer-limits|FAIL"
+        )
+
+    details = ""
+    if marker is not None:
+        fields = _parse_marker_kv_fields(marker)
+        reason = fields.get("reason", "").strip()
+        if not reason:
+            reason = _try_extract_plain_marker_token(marker, "FAIL") or ""
+        hr = fields.get("hr", "").strip()
+        parts: list[str] = []
+        if reason:
+            parts.append(f"reason={reason}")
+        if hr:
+            parts.append(f"hr={hr}")
+        if parts:
+            details = " (" + " ".join(parts) + ")"
+
+    return (
+        "FAIL: VIRTIO_SND_BUFFER_LIMITS_FAILED: virtio-snd-buffer-limits test reported FAIL while "
+        "--with-snd-buffer-limits was enabled"
+        + details
+    )
+
+
 _VIRTIO_SND_FORCE_NULL_BACKEND_REG_PATH = (
     r"HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Device Parameters\Parameters\ForceNullBackend"
 )
@@ -2228,99 +2398,125 @@ def _try_virtio_snd_force_null_backend_failure_message(tail: bytes) -> Optional[
     )
 
 
-def _virtio_snd_capture_skip_failure_message(tail: bytes) -> str:
+def _virtio_snd_capture_skip_failure_message(tail: bytes, *, marker_line: Optional[str] = None) -> str:
     # The capture marker is separate from the playback marker:
     #   AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|PASS/FAIL/SKIP|...
-    prefix = b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|"
-    if b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|endpoint_missing" in tail:
+    marker = marker_line
+    if marker is not None:
+        if (
+            not marker.startswith("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|")
+            or _try_extract_marker_status(marker) != "SKIP"
+        ):
+            marker = None
+    if marker is None:
+        marker = _try_extract_last_marker_line(
+            tail, b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP"
+        )
+
+    reason = ""
+    if marker is not None:
+        fields = _parse_marker_kv_fields(marker)
+        reason = fields.get("reason", "").strip()
+        if not reason:
+            reason = _try_extract_plain_marker_token(marker, "SKIP") or ""
+
+    if reason == "endpoint_missing":
         return "FAIL: VIRTIO_SND_CAPTURE_SKIPPED: virtio-snd capture endpoint missing but --with-virtio-snd was enabled"
-    if b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|flag_not_set" in tail:
+    if reason == "flag_not_set":
         return (
             "FAIL: VIRTIO_SND_CAPTURE_SKIPPED: virtio-snd capture test was skipped (flag_not_set) but --with-virtio-snd was enabled "
             "(ensure the guest is configured with --test-snd-capture or AERO_VIRTIO_SELFTEST_TEST_SND_CAPTURE=1)"
         )
-    if b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|disabled" in tail:
+    if reason == "disabled":
         return (
             "FAIL: VIRTIO_SND_CAPTURE_SKIPPED: virtio-snd capture test was skipped (disabled via --disable-snd or --disable-snd-capture) "
             "but --with-virtio-snd was enabled"
         )
-    if b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|device_missing" in tail:
+    if reason == "device_missing":
         return "FAIL: VIRTIO_SND_CAPTURE_SKIPPED: virtio-snd capture test was skipped (device missing) but --with-virtio-snd was enabled"
-
-    # Fallback: extract the skip reason token from the marker itself so callers get something actionable
-    # (e.g. wrong_service/driver_not_bound/device_error/topology_interface_missing).
-    idx = tail.rfind(prefix)
-    if idx != -1:
-        end = tail.find(b"\n", idx)
-        if end == -1:
-            end = len(tail)
-        reason = tail[idx + len(prefix) : end].strip()
-        if reason:
-            reason_str = reason.decode("utf-8", errors="replace").strip()
-            return (
-                f"FAIL: VIRTIO_SND_CAPTURE_SKIPPED: virtio-snd capture test was skipped ({reason_str}) "
-                "but --with-virtio-snd was enabled"
-            )
+    if reason:
+        return (
+            f"FAIL: VIRTIO_SND_CAPTURE_SKIPPED: virtio-snd capture test was skipped ({reason}) "
+            "but --with-virtio-snd was enabled"
+        )
     return "FAIL: VIRTIO_SND_CAPTURE_SKIPPED: virtio-snd capture test was skipped but --with-virtio-snd was enabled"
 
 
-def _virtio_snd_duplex_skip_failure_message(tail: bytes) -> str:
+def _virtio_snd_duplex_skip_failure_message(tail: bytes, *, marker_line: Optional[str] = None) -> str:
     # Full-duplex marker (render + capture concurrently):
     #   AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|PASS/FAIL/SKIP|...
-    prefix = b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|SKIP|"
-    if b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|SKIP|endpoint_missing" in tail:
+    marker = marker_line
+    if marker is not None:
+        if (
+            not marker.startswith("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|")
+            or _try_extract_marker_status(marker) != "SKIP"
+        ):
+            marker = None
+    if marker is None:
+        marker = _try_extract_last_marker_line(
+            tail, b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|SKIP"
+        )
+
+    reason = ""
+    if marker is not None:
+        fields = _parse_marker_kv_fields(marker)
+        reason = fields.get("reason", "").strip()
+        if not reason:
+            reason = _try_extract_plain_marker_token(marker, "SKIP") or ""
+
+    if reason == "endpoint_missing":
         return "FAIL: VIRTIO_SND_DUPLEX_SKIPPED: virtio-snd duplex test was skipped (endpoint_missing) but --with-virtio-snd was enabled"
-    if b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|SKIP|flag_not_set" in tail:
+    if reason == "flag_not_set":
         return (
             "FAIL: VIRTIO_SND_DUPLEX_SKIPPED: virtio-snd duplex test was skipped (flag_not_set) but --with-virtio-snd was enabled "
             "(ensure the guest is configured with --test-snd-capture or AERO_VIRTIO_SELFTEST_TEST_SND_CAPTURE=1)"
         )
-    if b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|SKIP|disabled" in tail:
+    if reason == "disabled":
         return (
             "FAIL: VIRTIO_SND_DUPLEX_SKIPPED: virtio-snd duplex test was skipped (disabled via --disable-snd or --disable-snd-capture) "
             "but --with-virtio-snd was enabled"
         )
-    if b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|SKIP|device_missing" in tail:
+    if reason == "device_missing":
         return "FAIL: VIRTIO_SND_DUPLEX_SKIPPED: virtio-snd duplex test was skipped (device missing) but --with-virtio-snd was enabled"
-
-    # Fallback: extract the skip reason token from the marker itself.
-    idx = tail.rfind(prefix)
-    if idx != -1:
-        end = tail.find(b"\n", idx)
-        if end == -1:
-            end = len(tail)
-        reason = tail[idx + len(prefix) : end].strip()
-        if reason:
-            reason_str = reason.decode("utf-8", errors="replace").strip()
-            return f"FAIL: VIRTIO_SND_DUPLEX_SKIPPED: virtio-snd duplex test was skipped ({reason_str}) but --with-virtio-snd was enabled"
+    if reason:
+        return f"FAIL: VIRTIO_SND_DUPLEX_SKIPPED: virtio-snd duplex test was skipped ({reason}) but --with-virtio-snd was enabled"
     return "FAIL: VIRTIO_SND_DUPLEX_SKIPPED: virtio-snd duplex test was skipped but --with-virtio-snd was enabled"
 
 
-def _virtio_snd_buffer_limits_skip_failure_message(tail: bytes) -> str:
+def _virtio_snd_buffer_limits_skip_failure_message(tail: bytes, *, marker_line: Optional[str] = None) -> str:
     # Buffer limits stress test marker:
     #   AERO_VIRTIO_SELFTEST|TEST|virtio-snd-buffer-limits|PASS/FAIL/SKIP|...
-    prefix = b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-buffer-limits|SKIP|"
+    marker = marker_line
+    if marker is not None:
+        if (
+            not marker.startswith("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-buffer-limits|")
+            or _try_extract_marker_status(marker) != "SKIP"
+        ):
+            marker = None
+    if marker is None:
+        marker = _try_extract_last_marker_line(
+            tail, b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-buffer-limits|SKIP"
+        )
 
-    if b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-buffer-limits|SKIP|flag_not_set" in tail:
+    reason = ""
+    if marker is not None:
+        fields = _parse_marker_kv_fields(marker)
+        reason = fields.get("reason", "").strip()
+        if not reason:
+            reason = _try_extract_plain_marker_token(marker, "SKIP") or ""
+
+    if reason == "flag_not_set":
         return (
             "FAIL: VIRTIO_SND_BUFFER_LIMITS_SKIPPED: virtio-snd-buffer-limits test was skipped (flag_not_set) but "
             "--with-snd-buffer-limits was enabled (provision the guest with --test-snd-buffer-limits or set "
             "AERO_VIRTIO_SELFTEST_TEST_SND_BUFFER_LIMITS=1)"
         )
 
-    # Fallback: extract the skip reason token from the marker itself.
-    idx = tail.rfind(prefix)
-    if idx != -1:
-        end = tail.find(b"\n", idx)
-        if end == -1:
-            end = len(tail)
-        reason = tail[idx + len(prefix) : end].strip()
-        if reason:
-            reason_str = reason.decode("utf-8", errors="replace").strip()
-            return (
-                f"FAIL: VIRTIO_SND_BUFFER_LIMITS_SKIPPED: virtio-snd-buffer-limits test was skipped ({reason_str}) "
-                "but --with-snd-buffer-limits was enabled"
-            )
+    if reason:
+        return (
+            f"FAIL: VIRTIO_SND_BUFFER_LIMITS_SKIPPED: virtio-snd-buffer-limits test was skipped ({reason}) "
+            "but --with-snd-buffer-limits was enabled"
+        )
     return "FAIL: VIRTIO_SND_BUFFER_LIMITS_SKIPPED: virtio-snd-buffer-limits test was skipped but --with-snd-buffer-limits was enabled"
 
 
@@ -2330,6 +2526,7 @@ def _virtio_snd_buffer_limits_required_failure_message(
     saw_pass: bool = False,
     saw_fail: bool = False,
     saw_skip: bool = False,
+    marker_line: Optional[str] = None,
 ) -> Optional[str]:
     """
     Enforce that virtio-snd-buffer-limits ran and PASSed.
@@ -2342,12 +2539,9 @@ def _virtio_snd_buffer_limits_required_failure_message(
     if saw_pass or b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-buffer-limits|PASS" in tail:
         return None
     if saw_fail or b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-buffer-limits|FAIL" in tail:
-        return (
-            "FAIL: VIRTIO_SND_BUFFER_LIMITS_FAILED: virtio-snd-buffer-limits test reported FAIL while "
-            "--with-snd-buffer-limits was enabled"
-        )
+        return _virtio_snd_buffer_limits_fail_failure_message(tail, marker_line=marker_line)
     if saw_skip or b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-buffer-limits|SKIP" in tail:
-        return _virtio_snd_buffer_limits_skip_failure_message(tail)
+        return _virtio_snd_buffer_limits_skip_failure_message(tail, marker_line=marker_line)
     return (
         "FAIL: MISSING_VIRTIO_SND_BUFFER_LIMITS: did not observe virtio-snd-buffer-limits PASS marker while "
         "--with-snd-buffer-limits was enabled (provision the guest with --test-snd-buffer-limits or set "
@@ -6858,7 +7052,10 @@ def main() -> int:
                                     break
                             if saw_virtio_snd_fail:
                                 print(
-                                    "FAIL: VIRTIO_SND_FAILED: selftest RESULT=PASS but virtio-snd test reported FAIL",
+                                    _virtio_snd_fail_failure_message(
+                                        tail,
+                                        marker_line=virtio_snd_marker_line,
+                                    ),
                                     file=sys.stderr,
                                 )
                                 _print_tail(serial_log)
@@ -6878,7 +7075,10 @@ def main() -> int:
                                     break
                                 if saw_virtio_snd_capture_fail:
                                     print(
-                                        "FAIL: VIRTIO_SND_CAPTURE_FAILED: selftest RESULT=PASS but virtio-snd-capture test reported FAIL",
+                                        _virtio_snd_capture_fail_failure_message(
+                                            tail,
+                                            marker_line=virtio_snd_capture_marker_line,
+                                        ),
                                         file=sys.stderr,
                                     )
                                     _print_tail(serial_log)
@@ -6887,14 +7087,20 @@ def main() -> int:
                                 if not saw_virtio_snd_capture_pass:
                                     msg = "FAIL: MISSING_VIRTIO_SND_CAPTURE: virtio-snd capture test did not PASS while --with-virtio-snd was enabled"
                                     if saw_virtio_snd_capture_skip:
-                                        msg = _virtio_snd_capture_skip_failure_message(tail)
+                                        msg = _virtio_snd_capture_skip_failure_message(
+                                            tail,
+                                            marker_line=virtio_snd_capture_marker_line,
+                                        )
                                     print(msg, file=sys.stderr)
                                     _print_tail(serial_log)
                                     result_code = 1
                                     break
                                 if saw_virtio_snd_duplex_fail:
                                     print(
-                                        "FAIL: VIRTIO_SND_DUPLEX_FAILED: selftest RESULT=PASS but virtio-snd-duplex test reported FAIL",
+                                        _virtio_snd_duplex_fail_failure_message(
+                                            tail,
+                                            marker_line=virtio_snd_duplex_marker_line,
+                                        ),
                                         file=sys.stderr,
                                     )
                                     _print_tail(serial_log)
@@ -6902,7 +7108,10 @@ def main() -> int:
                                     break
                                 if not saw_virtio_snd_duplex_pass:
                                     if saw_virtio_snd_duplex_skip:
-                                        msg = _virtio_snd_duplex_skip_failure_message(tail)
+                                        msg = _virtio_snd_duplex_skip_failure_message(
+                                            tail,
+                                            marker_line=virtio_snd_duplex_marker_line,
+                                        )
                                     else:
                                         msg = (
                                             "FAIL: MISSING_VIRTIO_SND_DUPLEX: selftest RESULT=PASS but did not emit virtio-snd-duplex test marker "
@@ -6919,6 +7128,7 @@ def main() -> int:
                                         saw_pass=saw_virtio_snd_buffer_limits_pass,
                                         saw_fail=saw_virtio_snd_buffer_limits_fail,
                                         saw_skip=saw_virtio_snd_buffer_limits_skip,
+                                        marker_line=virtio_snd_buffer_limits_marker_line,
                                     )
                                     if msg is not None:
                                         print(msg, file=sys.stderr)
@@ -6938,7 +7148,10 @@ def main() -> int:
                                     break
                                 if saw_virtio_snd_capture_fail:
                                     print(
-                                        "FAIL: VIRTIO_SND_CAPTURE_FAILED: selftest RESULT=PASS but virtio-snd-capture test reported FAIL",
+                                        _virtio_snd_capture_fail_failure_message(
+                                            tail,
+                                            marker_line=virtio_snd_capture_marker_line,
+                                        ),
                                         file=sys.stderr,
                                     )
                                     _print_tail(serial_log)
@@ -6956,7 +7169,10 @@ def main() -> int:
                                     break
                                 if saw_virtio_snd_duplex_fail:
                                     print(
-                                        "FAIL: VIRTIO_SND_DUPLEX_FAILED: selftest RESULT=PASS but virtio-snd-duplex test reported FAIL",
+                                        _virtio_snd_duplex_fail_failure_message(
+                                            tail,
+                                            marker_line=virtio_snd_duplex_marker_line,
+                                        ),
                                         file=sys.stderr,
                                     )
                                     _print_tail(serial_log)
@@ -7031,7 +7247,10 @@ def main() -> int:
                             # false positives.
                             if saw_virtio_snd_fail:
                                 print(
-                                    "FAIL: VIRTIO_SND_FAILED: selftest RESULT=PASS but virtio-snd test reported FAIL",
+                                    _virtio_snd_fail_failure_message(
+                                        tail,
+                                        marker_line=virtio_snd_marker_line,
+                                    ),
                                     file=sys.stderr,
                                 )
                                 _print_tail(serial_log)
@@ -7047,7 +7266,10 @@ def main() -> int:
                                 break
                             if saw_virtio_snd_capture_fail:
                                 print(
-                                    "FAIL: VIRTIO_SND_CAPTURE_FAILED: selftest RESULT=PASS but virtio-snd-capture test reported FAIL",
+                                    _virtio_snd_capture_fail_failure_message(
+                                        tail,
+                                        marker_line=virtio_snd_capture_marker_line,
+                                    ),
                                     file=sys.stderr,
                                 )
                                 _print_tail(serial_log)
@@ -7056,14 +7278,20 @@ def main() -> int:
                             if not saw_virtio_snd_capture_pass:
                                 msg = "FAIL: MISSING_VIRTIO_SND_CAPTURE: virtio-snd capture test did not PASS while --with-virtio-snd was enabled"
                                 if saw_virtio_snd_capture_skip:
-                                    msg = _virtio_snd_capture_skip_failure_message(tail)
+                                    msg = _virtio_snd_capture_skip_failure_message(
+                                        tail,
+                                        marker_line=virtio_snd_capture_marker_line,
+                                    )
                                 print(msg, file=sys.stderr)
                                 _print_tail(serial_log)
                                 result_code = 1
                                 break
                             if saw_virtio_snd_duplex_fail:
                                 print(
-                                    "FAIL: VIRTIO_SND_DUPLEX_FAILED: selftest RESULT=PASS but virtio-snd-duplex test reported FAIL",
+                                    _virtio_snd_duplex_fail_failure_message(
+                                        tail,
+                                        marker_line=virtio_snd_duplex_marker_line,
+                                    ),
                                     file=sys.stderr,
                                 )
                                 _print_tail(serial_log)
@@ -7071,7 +7299,10 @@ def main() -> int:
                                 break
                             if not saw_virtio_snd_duplex_pass:
                                 if saw_virtio_snd_duplex_skip:
-                                    msg = _virtio_snd_duplex_skip_failure_message(tail)
+                                    msg = _virtio_snd_duplex_skip_failure_message(
+                                        tail,
+                                        marker_line=virtio_snd_duplex_marker_line,
+                                    )
                                 else:
                                     msg = (
                                         "FAIL: MISSING_VIRTIO_SND_DUPLEX: selftest RESULT=PASS but did not emit virtio-snd-duplex test marker "
@@ -7088,6 +7319,7 @@ def main() -> int:
                                     saw_pass=saw_virtio_snd_buffer_limits_pass,
                                     saw_fail=saw_virtio_snd_buffer_limits_fail,
                                     saw_skip=saw_virtio_snd_buffer_limits_skip,
+                                    marker_line=virtio_snd_buffer_limits_marker_line,
                                 )
                                 if msg is not None:
                                     print(msg, file=sys.stderr)
@@ -8934,7 +9166,10 @@ def main() -> int:
                                     break
                                 if saw_virtio_snd_fail:
                                     print(
-                                        "FAIL: VIRTIO_SND_FAILED: selftest RESULT=PASS but virtio-snd test reported FAIL",
+                                        _virtio_snd_fail_failure_message(
+                                            tail,
+                                            marker_line=virtio_snd_marker_line,
+                                        ),
                                         file=sys.stderr,
                                     )
                                     _print_tail(serial_log)
@@ -8952,7 +9187,10 @@ def main() -> int:
                                         break
                                     if saw_virtio_snd_capture_fail:
                                         print(
-                                            "FAIL: VIRTIO_SND_CAPTURE_FAILED: selftest RESULT=PASS but virtio-snd-capture test reported FAIL",
+                                            _virtio_snd_capture_fail_failure_message(
+                                                tail,
+                                                marker_line=virtio_snd_capture_marker_line,
+                                            ),
                                             file=sys.stderr,
                                         )
                                         _print_tail(serial_log)
@@ -8963,14 +9201,20 @@ def main() -> int:
                                             "FAIL: MISSING_VIRTIO_SND_CAPTURE: virtio-snd capture test did not PASS while --with-virtio-snd was enabled"
                                         )
                                         if saw_virtio_snd_capture_skip:
-                                            msg = _virtio_snd_capture_skip_failure_message(tail)
+                                            msg = _virtio_snd_capture_skip_failure_message(
+                                                tail,
+                                                marker_line=virtio_snd_capture_marker_line,
+                                            )
                                         print(msg, file=sys.stderr)
                                         _print_tail(serial_log)
                                         result_code = 1
                                         break
                                     if saw_virtio_snd_duplex_fail:
                                         print(
-                                            "FAIL: VIRTIO_SND_DUPLEX_FAILED: selftest RESULT=PASS but virtio-snd-duplex test reported FAIL",
+                                            _virtio_snd_duplex_fail_failure_message(
+                                                tail,
+                                                marker_line=virtio_snd_duplex_marker_line,
+                                            ),
                                             file=sys.stderr,
                                         )
                                         _print_tail(serial_log)
@@ -8978,7 +9222,10 @@ def main() -> int:
                                         break
                                     if not saw_virtio_snd_duplex_pass:
                                         if saw_virtio_snd_duplex_skip:
-                                            msg = _virtio_snd_duplex_skip_failure_message(tail)
+                                            msg = _virtio_snd_duplex_skip_failure_message(
+                                                tail,
+                                                marker_line=virtio_snd_duplex_marker_line,
+                                            )
                                         else:
                                             msg = (
                                                 "FAIL: MISSING_VIRTIO_SND_DUPLEX: selftest RESULT=PASS but did not emit virtio-snd-duplex test marker "
@@ -8995,6 +9242,7 @@ def main() -> int:
                                             saw_pass=saw_virtio_snd_buffer_limits_pass,
                                             saw_fail=saw_virtio_snd_buffer_limits_fail,
                                             saw_skip=saw_virtio_snd_buffer_limits_skip,
+                                            marker_line=virtio_snd_buffer_limits_marker_line,
                                         )
                                         if msg is not None:
                                             print(msg, file=sys.stderr)
@@ -9012,7 +9260,10 @@ def main() -> int:
                                         break
                                     if saw_virtio_snd_capture_fail:
                                         print(
-                                            "FAIL: VIRTIO_SND_CAPTURE_FAILED: selftest RESULT=PASS but virtio-snd-capture test reported FAIL",
+                                            _virtio_snd_capture_fail_failure_message(
+                                                tail,
+                                                marker_line=virtio_snd_capture_marker_line,
+                                            ),
                                             file=sys.stderr,
                                         )
                                         _print_tail(serial_log)
@@ -9028,7 +9279,10 @@ def main() -> int:
                                         break
                                     if saw_virtio_snd_duplex_fail:
                                         print(
-                                            "FAIL: VIRTIO_SND_DUPLEX_FAILED: selftest RESULT=PASS but virtio-snd-duplex test reported FAIL",
+                                            _virtio_snd_duplex_fail_failure_message(
+                                                tail,
+                                                marker_line=virtio_snd_duplex_marker_line,
+                                            ),
                                             file=sys.stderr,
                                         )
                                         _print_tail(serial_log)
@@ -9101,7 +9355,10 @@ def main() -> int:
                             elif args.enable_virtio_snd:
                                 if saw_virtio_snd_fail:
                                     print(
-                                        "FAIL: VIRTIO_SND_FAILED: selftest RESULT=PASS but virtio-snd test reported FAIL",
+                                        _virtio_snd_fail_failure_message(
+                                            tail,
+                                            marker_line=virtio_snd_marker_line,
+                                        ),
                                         file=sys.stderr,
                                     )
                                     _print_tail(serial_log)
@@ -9118,7 +9375,10 @@ def main() -> int:
                                     break
                                 if saw_virtio_snd_capture_fail:
                                     print(
-                                        "FAIL: VIRTIO_SND_CAPTURE_FAILED: selftest RESULT=PASS but virtio-snd-capture test reported FAIL",
+                                        _virtio_snd_capture_fail_failure_message(
+                                            tail,
+                                            marker_line=virtio_snd_capture_marker_line,
+                                        ),
                                         file=sys.stderr,
                                     )
                                     _print_tail(serial_log)
@@ -9127,14 +9387,20 @@ def main() -> int:
                                 if not saw_virtio_snd_capture_pass:
                                     msg = "FAIL: MISSING_VIRTIO_SND_CAPTURE: virtio-snd capture test did not PASS while --with-virtio-snd was enabled"
                                     if saw_virtio_snd_capture_skip:
-                                        msg = _virtio_snd_capture_skip_failure_message(tail)
+                                        msg = _virtio_snd_capture_skip_failure_message(
+                                            tail,
+                                            marker_line=virtio_snd_capture_marker_line,
+                                        )
                                     print(msg, file=sys.stderr)
                                     _print_tail(serial_log)
                                     result_code = 1
                                     break
                                 if saw_virtio_snd_duplex_fail:
                                     print(
-                                        "FAIL: VIRTIO_SND_DUPLEX_FAILED: selftest RESULT=PASS but virtio-snd-duplex test reported FAIL",
+                                        _virtio_snd_duplex_fail_failure_message(
+                                            tail,
+                                            marker_line=virtio_snd_duplex_marker_line,
+                                        ),
                                         file=sys.stderr,
                                     )
                                     _print_tail(serial_log)
@@ -9142,7 +9408,10 @@ def main() -> int:
                                     break
                                 if not saw_virtio_snd_duplex_pass:
                                     if saw_virtio_snd_duplex_skip:
-                                        msg = _virtio_snd_duplex_skip_failure_message(tail)
+                                        msg = _virtio_snd_duplex_skip_failure_message(
+                                            tail,
+                                            marker_line=virtio_snd_duplex_marker_line,
+                                        )
                                     else:
                                         msg = (
                                             "FAIL: MISSING_VIRTIO_SND_DUPLEX: selftest RESULT=PASS but did not emit virtio-snd-duplex test marker "
@@ -9159,6 +9428,7 @@ def main() -> int:
                                         saw_pass=saw_virtio_snd_buffer_limits_pass,
                                         saw_fail=saw_virtio_snd_buffer_limits_fail,
                                         saw_skip=saw_virtio_snd_buffer_limits_skip,
+                                        marker_line=virtio_snd_buffer_limits_marker_line,
                                     )
                                     if msg is not None:
                                         print(msg, file=sys.stderr)

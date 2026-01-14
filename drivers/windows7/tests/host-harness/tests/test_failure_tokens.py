@@ -45,6 +45,48 @@ class FailureTokenTests(unittest.TestCase):
         self.assertRegex(msg, _TOKEN_RE)
         self.assertTrue(msg.startswith("FAIL: VIRTIO_SND_SKIPPED:"))
 
+    def test_virtio_snd_failed_token_includes_reason_and_irq_fields_when_present(self) -> None:
+        h = self.harness
+
+        tail = b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL|wrong_service|irq_mode=msix|irq_message_count=3\n"
+        msg = h._virtio_snd_fail_failure_message(tail)
+        self.assertRegex(msg, _TOKEN_RE)
+        self.assertTrue(msg.startswith("FAIL: VIRTIO_SND_FAILED:"))
+        self.assertIn("reason=wrong_service", msg)
+        self.assertIn("irq_mode=msix", msg)
+        self.assertIn("irq_message_count=3", msg)
+
+    def test_virtio_snd_capture_failed_token_includes_reason_when_present(self) -> None:
+        h = self.harness
+
+        tail = b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|FAIL|endpoint_missing\n"
+        msg = h._virtio_snd_capture_fail_failure_message(tail)
+        self.assertRegex(msg, _TOKEN_RE)
+        self.assertTrue(msg.startswith("FAIL: VIRTIO_SND_CAPTURE_FAILED:"))
+        self.assertIn("reason=endpoint_missing", msg)
+
+    def test_virtio_snd_duplex_failed_token_includes_reason_and_hr_when_present(self) -> None:
+        h = self.harness
+
+        tail = b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|FAIL|reason=no_matching_endpoint|hr=0x80004005\n"
+        msg = h._virtio_snd_duplex_fail_failure_message(tail)
+        self.assertRegex(msg, _TOKEN_RE)
+        self.assertTrue(msg.startswith("FAIL: VIRTIO_SND_DUPLEX_FAILED:"))
+        self.assertIn("reason=no_matching_endpoint", msg)
+        self.assertIn("hr=0x80004005", msg)
+
+    def test_virtio_snd_buffer_limits_failed_token_includes_reason_and_hr_when_present(self) -> None:
+        h = self.harness
+
+        tail = b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-buffer-limits|FAIL|reason=wasapi_failed|hr=0x8007000e\n"
+        msg = h._virtio_snd_buffer_limits_required_failure_message(tail)
+        self.assertIsNotNone(msg)
+        assert msg is not None
+        self.assertRegex(msg, _TOKEN_RE)
+        self.assertTrue(msg.startswith("FAIL: VIRTIO_SND_BUFFER_LIMITS_FAILED:"))
+        self.assertIn("reason=wasapi_failed", msg)
+        self.assertIn("hr=0x8007000e", msg)
+
     def test_virtio_snd_force_null_backend_token(self) -> None:
         h = self.harness
 
