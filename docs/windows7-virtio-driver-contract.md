@@ -1006,8 +1006,8 @@ Harness validation (non-normative, QEMU):
   - Additional optional fields may also appear (e.g. `irq_vectors`, `msi_vector`) depending on what the guest reports.
 - The harness also mirrors dedicated `virtio-*-msix` markers into stable host-side markers (when present):
   - virtio-blk:
-    - Guest: `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-msix|PASS/FAIL/SKIP|mode=...|messages=...|config_vector=...|queue_vector=...`
-    - Host: `AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_MSIX|PASS/FAIL/SKIP|mode=...|messages=...|config_vector=...|queue_vector=...`
+    - Guest: `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-msix|PASS/SKIP|mode=...|messages=...|config_vector=...|queue_vector=...`
+    - Host: `AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_MSIX|PASS/SKIP|mode=...|messages=...|config_vector=...|queue_vector=...`
   - virtio-net:
     - Guest: `AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|PASS/FAIL/SKIP|mode=...|messages=...|config_vector=<n\|none>|rx_vector=<n\|none>|tx_vector=<n\|none>|...`
     - Host: `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_MSIX|PASS/FAIL/SKIP|mode=...|messages=...|config_vector=<n\|none>|rx_vector=<n\|none>|tx_vector=<n\|none>|...`

@@ -243,8 +243,8 @@ configuration.
 - This host marker is **diagnostic only** (it does not currently affect overall PASS/FAIL).
 - Newer guest selftest binaries also emit dedicated MSI-X routing markers; the harness mirrors them into stable host markers:
   - virtio-blk:
-    - Guest marker: `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-msix|PASS/FAIL/SKIP|mode=...|messages=...|config_vector=...|queue_vector=...`
-    - Host marker: `AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_MSIX|PASS/FAIL/SKIP|mode=...|messages=...|config_vector=...|queue_vector=...`
+    - Guest marker: `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-msix|PASS/SKIP|mode=...|messages=...|config_vector=...|queue_vector=...`
+    - Host marker: `AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_MSIX|PASS/SKIP|mode=...|messages=...|config_vector=...|queue_vector=...`
   - virtio-net:
     - Guest marker: `AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|PASS/FAIL/SKIP|mode=...|messages=...|config_vector=<n\|none>|rx_vector=<n\|none>|tx_vector=<n\|none>|...`
     - Host marker: `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_MSIX|PASS/FAIL/SKIP|mode=...|messages=...|config_vector=<n\|none>|rx_vector=<n\|none>|tx_vector=<n\|none>|...`
