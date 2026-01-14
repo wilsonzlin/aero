@@ -4581,7 +4581,8 @@ mod tests {
         let err = validate_manifest_v1(&manifest, MAX_CHUNKS)
             .expect_err("expected imageId validation failure");
         assert!(
-            err.to_string().contains("manifest imageId must be non-empty"),
+            err.to_string()
+                .contains("manifest imageId must be non-empty"),
             "unexpected error: {err}"
         );
     }
@@ -4602,7 +4603,8 @@ mod tests {
         let err =
             validate_manifest_v1(&manifest, MAX_CHUNKS).expect_err("expected version validation");
         assert!(
-            err.to_string().contains("manifest version must be non-empty"),
+            err.to_string()
+                .contains("manifest version must be non-empty"),
             "unexpected error: {err}"
         );
     }
@@ -4623,7 +4625,8 @@ mod tests {
         let err = validate_manifest_v1(&manifest, MAX_CHUNKS)
             .expect_err("expected mimeType validation failure");
         assert!(
-            err.to_string().contains("manifest mimeType must be non-empty"),
+            err.to_string()
+                .contains("manifest mimeType must be non-empty"),
             "unexpected error: {err}"
         );
     }
@@ -4665,7 +4668,8 @@ mod tests {
         let err = validate_manifest_v1(&manifest, MAX_CHUNKS)
             .expect_err("expected chunkIndexWidth validation failure");
         assert!(
-            err.to_string().contains("manifest chunkIndexWidth must be > 0"),
+            err.to_string()
+                .contains("manifest chunkIndexWidth must be > 0"),
             "unexpected error: {err}"
         );
     }
@@ -5628,7 +5632,8 @@ mod tests {
         };
         let err = validate_verify_args(&args).expect_err("expected validation failure");
         assert!(
-            err.to_string().contains("--header is only valid with --manifest-url"),
+            err.to_string()
+                .contains("--header is only valid with --manifest-url"),
             "unexpected error: {err}"
         );
     }
