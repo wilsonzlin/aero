@@ -6662,11 +6662,17 @@ static NTSTATUS APIENTRY AeroGpuDdiDestroyContext(_In_ const HANDLE hContext)
     return STATUS_SUCCESS;
 }
 
-static NTSTATUS APIENTRY AeroGpuBuildAndAttachMeta(_In_ UINT AllocationCount,
-                                                  _In_reads_opt_(AllocationCount) const DXGK_ALLOCATIONLIST* AllocationList,
-                                                  _Out_ AEROGPU_SUBMISSION_META** MetaOut)
+static NTSTATUS APIENTRY AeroGpuBuildAndAttachMeta(_In_ const AEROGPU_ADAPTER* Adapter,
+                                                   _In_ UINT AllocationCount,
+                                                   _In_reads_opt_(AllocationCount) const DXGK_ALLOCATIONLIST* AllocationList,
+                                                   _In_ BOOLEAN SkipAllocTable,
+                                                   _Out_ AEROGPU_SUBMISSION_META** MetaOut)
 {
     *MetaOut = NULL;
+
+    if (!Adapter) {
+        return STATUS_INVALID_PARAMETER;
+    }
 
     if (!AllocationCount || !AllocationList) {
         return STATUS_SUCCESS;
@@ -6684,11 +6690,16 @@ static NTSTATUS APIENTRY AeroGpuBuildAndAttachMeta(_In_ UINT AllocationCount,
 
     meta->AllocationCount = AllocationCount;
 
-    NTSTATUS st =
-        AeroGpuBuildAllocTable(AllocationList, AllocationCount, &meta->AllocTableVa, &meta->AllocTablePa, &meta->AllocTableSizeBytes);
-    if (!NT_SUCCESS(st)) {
-        ExFreePoolWithTag(meta, AEROGPU_POOL_TAG);
-        return st;
+    if (Adapter->AbiKind == AEROGPU_ABI_KIND_V1 && !SkipAllocTable) {
+        NTSTATUS st = AeroGpuBuildAllocTable(AllocationList,
+                                             AllocationCount,
+                                             &meta->AllocTableVa,
+                                             &meta->AllocTablePa,
+                                             &meta->AllocTableSizeBytes);
+        if (!NT_SUCCESS(st)) {
+            ExFreePoolWithTag(meta, AEROGPU_POOL_TAG);
+            return st;
+        }
     }
 
     for (UINT i = 0; i < AllocationCount; ++i) {
@@ -6822,7 +6833,11 @@ static NTSTATUS APIENTRY AeroGpuDdiRender(_In_ const HANDLE hContext, _Inout_ DX
 
     if (pRender->AllocationListSize && pRender->pAllocationList) {
         AEROGPU_SUBMISSION_META* meta = NULL;
-        NTSTATUS st = AeroGpuBuildAndAttachMeta(pRender->AllocationListSize, pRender->pAllocationList, &meta);
+        NTSTATUS st = AeroGpuBuildAndAttachMeta(adapter,
+                                                pRender->AllocationListSize,
+                                                pRender->pAllocationList,
+                                                /*SkipAllocTable*/ FALSE,
+                                                &meta);
         if (!NT_SUCCESS(st)) {
             return st;
         }
@@ -6857,7 +6872,11 @@ static NTSTATUS APIENTRY AeroGpuDdiPresent(_In_ const HANDLE hContext, _Inout_ D
 
     if (pPresent->AllocationListSize && pPresent->pAllocationList) {
         AEROGPU_SUBMISSION_META* meta = NULL;
-        NTSTATUS st = AeroGpuBuildAndAttachMeta(pPresent->AllocationListSize, pPresent->pAllocationList, &meta);
+        NTSTATUS st = AeroGpuBuildAndAttachMeta(adapter,
+                                                pPresent->AllocationListSize,
+                                                pPresent->pAllocationList,
+                                                /*SkipAllocTable*/ FALSE,
+                                                &meta);
         if (!NT_SUCCESS(st)) {
             return st;
         }
@@ -6963,7 +6982,11 @@ static NTSTATUS APIENTRY AeroGpuDdiSubmitCommand(_In_ const HANDLE hAdapter,
      * remain resolvable by alloc_id.
      */
     if (!meta && dmaSizeBytes != 0 && pSubmitCommand->AllocationListSize && pSubmitCommand->pAllocationList) {
-        NTSTATUS st = AeroGpuBuildAndAttachMeta(pSubmitCommand->AllocationListSize, pSubmitCommand->pAllocationList, &meta);
+        NTSTATUS st = AeroGpuBuildAndAttachMeta(adapter,
+                                                pSubmitCommand->AllocationListSize,
+                                                pSubmitCommand->pAllocationList,
+                                                /*SkipAllocTable*/ FALSE,
+                                                &meta);
         if (!NT_SUCCESS(st)) {
             return st;
         }
