@@ -898,6 +898,139 @@ void test_xyz_tex1_defaults_white_diffuse() {
   assert(std::fabs(v - 0.75f) < 1e-4f);
 }
 
+void test_xyz_defaults_white_diffuse() {
+  Adapter adapter;
+  Device dev(&adapter);
+
+  dev.fvf = kFvfXyz;
+  dev.viewport = {0.0f, 0.0f, 100.0f, 100.0f, 0.0f, 1.0f};
+  dev.transform_matrices[256][12] = 1.0f;
+
+  // Source VB: XYZ = float3 = 12 bytes.
+  Resource src;
+  src.kind = ResourceKind::Buffer;
+  src.size_bytes = 12;
+  src.storage.resize(12);
+  write_f32(src.storage, 0, 0.0f);
+  write_f32(src.storage, 4, 0.0f);
+  write_f32(src.storage, 8, 0.0f);
+
+  Resource dst;
+  dst.kind = ResourceKind::Buffer;
+  dst.size_bytes = 20;
+  dst.storage.resize(20);
+  std::memset(dst.storage.data(), 0xCD, dst.storage.size());
+
+  // Destination vertex decl: positionT float4 at 0, color at 16.
+  const D3DVERTEXELEMENT9_COMPAT elems[] = {
+      {0, 0, kDeclTypeFloat4, kDeclMethodDefault, kDeclUsagePositionT, 0},
+      {0, 16, kDeclTypeD3dColor, kDeclMethodDefault, kDeclUsageColor, 0},
+      {0xFF, 0, kDeclTypeUnused, 0, 0, 0},
+  };
+  VertexDecl decl;
+  decl.blob.resize(sizeof(elems));
+  std::memcpy(decl.blob.data(), elems, sizeof(elems));
+
+  dev.streams[0].vb = &src;
+  dev.streams[0].offset_bytes = 0;
+  dev.streams[0].stride_bytes = 12;
+
+  D3DDDIARG_PROCESSVERTICES pv{};
+  pv.SrcStartIndex = 0;
+  pv.DestIndex = 0;
+  pv.VertexCount = 1;
+  pv.hDestBuffer.pDrvPrivate = &dst;
+  pv.hVertexDecl.pDrvPrivate = &decl;
+  pv.Flags = 0;
+  pv.DestStride = 0;
+
+  D3DDDI_HDEVICE hDevice{};
+  hDevice.pDrvPrivate = &dev;
+
+  const HRESULT hr = device_process_vertices(hDevice, &pv);
+  assert(SUCCEEDED(hr));
+
+  const float x = read_f32(dst.storage, 0);
+  const float y = read_f32(dst.storage, 4);
+  const float z = read_f32(dst.storage, 8);
+  const float rhw = read_f32(dst.storage, 12);
+  assert(std::fabs(x - 99.5f) < 1e-4f);
+  assert(std::fabs(y - 49.5f) < 1e-4f);
+  assert(std::fabs(z - 0.0f) < 1e-4f);
+  assert(std::fabs(rhw - 1.0f) < 1e-4f);
+
+  uint32_t diffuse = 0;
+  std::memcpy(&diffuse, dst.storage.data() + 16, 4);
+  assert(diffuse == 0xFFFFFFFFu);
+}
+
+void test_xyzrhw_defaults_white_diffuse() {
+  Adapter adapter;
+  Device dev(&adapter);
+
+  dev.fvf = kFvfXyzrhw;
+  // XYZRHW vertices should be passed through; transforms/viewport must not affect output.
+  dev.viewport = {0.0f, 0.0f, 100.0f, 100.0f, 0.0f, 1.0f};
+  dev.transform_matrices[256][12] = 123.0f;
+
+  // Source VB: XYZRHW = float4 = 16 bytes.
+  Resource src;
+  src.kind = ResourceKind::Buffer;
+  src.size_bytes = 16;
+  src.storage.resize(16);
+  write_f32(src.storage, 0, 10.0f);
+  write_f32(src.storage, 4, 20.0f);
+  write_f32(src.storage, 8, 0.5f);
+  write_f32(src.storage, 12, 2.0f);
+
+  Resource dst;
+  dst.kind = ResourceKind::Buffer;
+  dst.size_bytes = 20;
+  dst.storage.resize(20);
+  std::memset(dst.storage.data(), 0xCD, dst.storage.size());
+
+  const D3DVERTEXELEMENT9_COMPAT elems[] = {
+      {0, 0, kDeclTypeFloat4, kDeclMethodDefault, kDeclUsagePositionT, 0},
+      {0, 16, kDeclTypeD3dColor, kDeclMethodDefault, kDeclUsageColor, 0},
+      {0xFF, 0, kDeclTypeUnused, 0, 0, 0},
+  };
+  VertexDecl decl;
+  decl.blob.resize(sizeof(elems));
+  std::memcpy(decl.blob.data(), elems, sizeof(elems));
+
+  dev.streams[0].vb = &src;
+  dev.streams[0].offset_bytes = 0;
+  dev.streams[0].stride_bytes = 16;
+
+  D3DDDIARG_PROCESSVERTICES pv{};
+  pv.SrcStartIndex = 0;
+  pv.DestIndex = 0;
+  pv.VertexCount = 1;
+  pv.hDestBuffer.pDrvPrivate = &dst;
+  pv.hVertexDecl.pDrvPrivate = &decl;
+  pv.Flags = 0;
+  pv.DestStride = 0;
+
+  D3DDDI_HDEVICE hDevice{};
+  hDevice.pDrvPrivate = &dev;
+
+  const HRESULT hr = device_process_vertices(hDevice, &pv);
+  assert(SUCCEEDED(hr));
+
+  const float x = read_f32(dst.storage, 0);
+  const float y = read_f32(dst.storage, 4);
+  const float z = read_f32(dst.storage, 8);
+  const float rhw = read_f32(dst.storage, 12);
+  assert(std::fabs(x - 10.0f) < 1e-4f);
+  assert(std::fabs(y - 20.0f) < 1e-4f);
+  assert(std::fabs(z - 0.5f) < 1e-4f);
+  assert(std::fabs(rhw - 2.0f) < 1e-4f);
+
+  uint32_t diffuse = 0;
+  std::memcpy(&diffuse, dst.storage.data() + 16, 4);
+  assert(diffuse == 0xFFFFFFFFu);
+}
+
 void test_xyzrhw_tex1_defaults_white_diffuse() {
   Adapter adapter;
   Device dev(&adapter);
@@ -1902,6 +2035,8 @@ int main() {
   aerogpu::test_xyz_diffuse_tex1_do_not_copy_data_preserves_dest();
   aerogpu::test_xyz_tex1();
   aerogpu::test_xyz_tex1_defaults_white_diffuse();
+  aerogpu::test_xyz_defaults_white_diffuse();
+  aerogpu::test_xyzrhw_defaults_white_diffuse();
   aerogpu::test_xyzrhw_tex1_defaults_white_diffuse();
   aerogpu::test_xyzrhw_tex1_do_not_copy_data_preserves_dest();
   aerogpu::test_process_vertices_dest_decl_ignores_other_streams();

@@ -6275,13 +6275,15 @@ HRESULT AEROGPU_D3D9_CALL device_process_vertices_internal(
   // the output, so treat the call as fixed-function as long as no user vertex
   // shader is bound (even if a pixel shader is set for later draws).
   const bool fixedfunc = (!dev->user_vs);
+  const bool src_xyz_plain = (dev->fvf == kD3dFvfXyz);
+  const bool src_xyzrhw_plain = (dev->fvf == kD3dFvfXyzRhw);
   const bool src_xyz_diffuse = (dev->fvf == kSupportedFvfXyzDiffuse);
   const bool src_xyz_diffuse_tex1 = (dev->fvf == kSupportedFvfXyzDiffuseTex1);
   const bool src_xyz_tex1 = (dev->fvf == kSupportedFvfXyzTex1);
   const bool src_xyzrhw_diffuse = (dev->fvf == kSupportedFvfXyzrhwDiffuse);
   const bool src_xyzrhw_diffuse_tex1 = (dev->fvf == kSupportedFvfXyzrhwDiffuseTex1);
   const bool src_xyzrhw_tex1 = (dev->fvf == kSupportedFvfXyzrhwTex1);
-  const bool src_xyzrhw = (src_xyzrhw_diffuse || src_xyzrhw_diffuse_tex1 || src_xyzrhw_tex1);
+  const bool src_xyzrhw = (src_xyzrhw_plain || src_xyzrhw_diffuse || src_xyzrhw_diffuse_tex1 || src_xyzrhw_tex1);
   // Note: XYZRHW inputs are already pre-transformed. We still handle a minimal
   // subset here to support fixed-function default values (e.g. diffuse=white
   // when requested by the destination decl) and basic TEX0 relocation.
@@ -6293,7 +6295,8 @@ HRESULT AEROGPU_D3D9_CALL device_process_vertices_internal(
   //
   // When D3DPV_DONOTCOPYDATA is set, the UMD writes only POSITIONT and preserves
   // all other destination bytes.
-  if (!(fixedfunc && (src_xyzrhw || src_xyz_diffuse || src_xyz_diffuse_tex1 || src_xyz_tex1))) {
+  if (!(fixedfunc &&
+        (src_xyzrhw || src_xyz_plain || src_xyz_diffuse || src_xyz_diffuse_tex1 || src_xyz_tex1))) {
     return D3DERR_NOTAVAILABLE;
   }
 
@@ -6499,14 +6502,17 @@ HRESULT AEROGPU_D3D9_CALL device_process_vertices_internal(
 
   // Fixed-function fallback: implement a minimal CPU vertex transform for common
   // FVF paths when no user shaders are bound.
-  if (fixedfunc && (src_xyzrhw || src_xyz_diffuse || src_xyz_diffuse_tex1 || src_xyz_tex1)) {
+  if (fixedfunc &&
+      (src_xyzrhw || src_xyz_plain || src_xyz_diffuse || src_xyz_diffuse_tex1 || src_xyz_tex1)) {
     uint32_t src_min_stride = 0;
     bool src_has_diffuse = false;
     uint32_t src_diffuse_offset = 0;
     bool src_has_tex0 = false;
     uint32_t src_tex0_offset = 0;
     bool src_is_xyzrhw = false;
-    if (src_xyz_diffuse) {
+    if (src_xyz_plain) {
+      src_min_stride = 12u;
+    } else if (src_xyz_diffuse) {
       src_min_stride = 16u;
       src_has_diffuse = true;
       src_diffuse_offset = 12u;
@@ -6520,6 +6526,9 @@ HRESULT AEROGPU_D3D9_CALL device_process_vertices_internal(
       src_min_stride = 20u;
       src_has_tex0 = true;
       src_tex0_offset = 12u;
+    } else if (src_xyzrhw_plain) {
+      src_is_xyzrhw = true;
+      src_min_stride = 16u;
     } else if (src_xyzrhw_diffuse) {
       src_is_xyzrhw = true;
       src_min_stride = 20u;

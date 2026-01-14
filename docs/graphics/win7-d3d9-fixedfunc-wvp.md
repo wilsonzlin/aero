@@ -47,8 +47,8 @@ Independently of draw-time WVP, `pfnProcessVertices` has a bring-up fixed-functi
 
 - Condition: no user **vertex** shader is bound (pixel shader binding does not affect `ProcessVertices`).
 - Supported source `dev->fvf` values:
-  - `D3DFVF_XYZRHW | D3DFVF_DIFFUSE{ | D3DFVF_TEX1}` and `D3DFVF_XYZRHW | D3DFVF_TEX1`
-  - `D3DFVF_XYZ | D3DFVF_DIFFUSE{ | D3DFVF_TEX1}` and `D3DFVF_XYZ | D3DFVF_TEX1`
+  - `D3DFVF_XYZRHW` (+ optional `D3DFVF_DIFFUSE`, + optional `D3DFVF_TEX1`)
+  - `D3DFVF_XYZ` (+ optional `D3DFVF_DIFFUSE`, + optional `D3DFVF_TEX1`)
 - It writes screen-space `XYZRHW` into **stream 0** of the destination layout described by `hVertexDecl`. Declaration
   elements in other streams are ignored when inferring destination stride/offsets.
   - For `D3DFVF_XYZ*` inputs, it computes `WORLD0 * VIEW * PROJECTION`, applies the D3D9 viewport transform, and writes

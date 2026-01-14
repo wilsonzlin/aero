@@ -569,9 +569,11 @@ Current behavior is intentionally bring-up level, with two paths:
 - **Fixed-function CPU transform (small subset):** when **no user vertex shader** is bound (pixel shader binding does not
   affect `ProcessVertices`) and the current fixed-function hint
   (`dev->fvf`, set via `SetFVF` or inferred from `SetVertexDecl`) is one of:
+  - `D3DFVF_XYZRHW`
   - `D3DFVF_XYZRHW | D3DFVF_DIFFUSE`
   - `D3DFVF_XYZRHW | D3DFVF_DIFFUSE | D3DFVF_TEX1`
   - `D3DFVF_XYZRHW | D3DFVF_TEX1`
+  - `D3DFVF_XYZ`
   - `D3DFVF_XYZ | D3DFVF_DIFFUSE`
   - `D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1`
   - `D3DFVF_XYZ | D3DFVF_TEX1`
