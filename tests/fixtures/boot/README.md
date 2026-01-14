@@ -35,3 +35,10 @@ The `boot_vga_serial` boot sector:
 - writes `AERO!` (attribute `0x1F`) to the start of the VGA text buffer at
   physical address `0xB8000`
 - writes `AERO!\r\n` to COM1 (`0x3F8`) using `out dx, al`
+
+## Fixture: `int_sanity`
+
+The `int_sanity` boot sector is a tiny BIOS interrupt smoke test used by
+unit/integration tests. The human-readable source lives in `int_sanity.asm`, but
+the committed `int_sanity.bin` is generated/validated by `cargo xtask fixtures`
+so CI does not require an assembler.
