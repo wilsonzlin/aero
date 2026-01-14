@@ -6217,6 +6217,36 @@ void AEROGPU_APIENTRY IaSetIndexBuffer11(D3D11DDI_HDEVICECONTEXT hCtx, D3D11DDI_
 
   std::lock_guard<std::mutex> lock(dev->mutex);
   Resource* ib = hBuffer.pDrvPrivate ? FromHandle<D3D11DDI_HRESOURCE, Resource>(hBuffer) : nullptr;
+  if (ib && ib->kind != ResourceKind::Buffer) {
+    SetError(dev, E_INVALIDARG);
+    return;
+  }
+
+  uint32_t offset_bytes = offset;
+  const uint32_t dxgi_format = static_cast<uint32_t>(format);
+  uint32_t stored_dxgi_format = kDxgiFormatUnknown;
+  uint32_t aerogpu_format = AEROGPU_INDEX_FORMAT_UINT16;
+  if (ib) {
+    if (dxgi_format != kDxgiFormatR16Uint && dxgi_format != kDxgiFormatR32Uint) {
+      SetError(dev, E_INVALIDARG);
+      return;
+    }
+    const uint32_t alignment = (dxgi_format == kDxgiFormatR32Uint) ? 4u : 2u;
+    if ((offset_bytes % alignment) != 0) {
+      SetError(dev, E_INVALIDARG);
+      return;
+    }
+    stored_dxgi_format = dxgi_format;
+    aerogpu_format = dxgi_index_format_to_aerogpu(dxgi_format);
+  } else {
+    // D3D11 requires Format=UNKNOWN and Offset=0 when unbinding the index buffer.
+    // Be permissive and treat all NULL-buffer bindings as an unbind regardless of
+    // the format/offset values the runtime passes.
+    offset_bytes = 0;
+    stored_dxgi_format = kDxgiFormatUnknown;
+    aerogpu_format = AEROGPU_INDEX_FORMAT_UINT16;
+  }
+
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_index_buffer>(AEROGPU_CMD_SET_INDEX_BUFFER);
   if (!cmd) {
     SetError(dev, E_OUTOFMEMORY);
@@ -6224,12 +6254,12 @@ void AEROGPU_APIENTRY IaSetIndexBuffer11(D3D11DDI_HDEVICECONTEXT hCtx, D3D11DDI_
   }
 
   dev->current_ib = ib;
-  dev->current_ib_format = static_cast<uint32_t>(format);
-  dev->current_ib_offset_bytes = offset;
+  dev->current_ib_format = stored_dxgi_format;
+  dev->current_ib_offset_bytes = offset_bytes;
 
   cmd->buffer = ib ? ib->handle : 0;
-  cmd->format = dxgi_index_format_to_aerogpu(static_cast<uint32_t>(format));
-  cmd->offset_bytes = offset;
+  cmd->format = aerogpu_format;
+  cmd->offset_bytes = offset_bytes;
   cmd->reserved0 = 0;
 }
 
