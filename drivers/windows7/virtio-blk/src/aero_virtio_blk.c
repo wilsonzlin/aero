@@ -1571,6 +1571,15 @@ static __forceinline BOOLEAN AerovblkServiceInterrupt(_Inout_ PAEROVBLK_DEVICE_E
   STOR_LOCK_HANDLE lock;
 
   StorPortAcquireSpinLock(devExt, InterruptLock, &lock);
+  if (devExt->ResetInProgress != 0) {
+    /*
+     * Avoid draining the virtqueue or triggering new request dispatch while the
+     * device/queue is being reset. The reset path will issue NextRequest once
+     * reinitialization is complete.
+     */
+    StorPortReleaseSpinLock(devExt, &lock);
+    return TRUE;
+  }
   AerovblkDrainCompletionsLocked(devExt);
   StorPortReleaseSpinLock(devExt, &lock);
 
