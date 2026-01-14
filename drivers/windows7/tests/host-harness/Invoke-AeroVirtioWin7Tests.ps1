@@ -291,6 +291,12 @@ param(
   #   AERO_VIRTIO_SELFTEST|TEST|virtio-net-offload-csum|PASS|tx_csum=...
   [Parameter(Mandatory = $false)]
   [switch]$RequireNetCsumOffload,
+ 
+  # If set, require at least one UDP checksum-offloaded TX packet in the virtio-net driver.
+  # This checks the guest marker:
+  #   AERO_VIRTIO_SELFTEST|TEST|virtio-net-offload-csum|PASS|tx_udp=... (or tx_udp4/tx_udp6)
+  [Parameter(Mandatory = $false)]
+  [switch]$RequireNetUdpCsumOffload,
 
   # If set, stream newly captured COM1 serial output to stdout while waiting.
   [Parameter(Mandatory = $false)]
@@ -899,6 +905,8 @@ function Wait-AeroSelftestResult {
     [Parameter(Mandatory = $false)] [int]$VirtioBlkResizeDeltaMiB = 64,
     # If true, require at least one checksum-offloaded TX packet from virtio-net.
     [Parameter(Mandatory = $false)] [bool]$RequireNetCsumOffload = $false,
+    # If true, require at least one UDP checksum-offloaded TX packet from virtio-net.
+    [Parameter(Mandatory = $false)] [bool]$RequireNetUdpCsumOffload = $false,
     # If true, require the optional virtio-input-events marker to PASS (host will inject events via QMP).
     [Parameter(Mandatory = $false)]
     [Alias("EnableVirtioInputEvents")]
@@ -1667,12 +1675,37 @@ function Wait-AeroSelftestResult {
           $msixCheck = Test-VirtioInputMsixRequirement -Tail $tail -SerialLogPath $SerialLogPath
           if ($null -ne $msixCheck) { return $msixCheck }
 
-          if ($RequireNetCsumOffload) {
+          if ($RequireNetCsumOffload -or $RequireNetUdpCsumOffload) {
             $csum = Get-AeroVirtioNetOffloadCsumStatsFromTail -Tail $tail -SerialLogPath $SerialLogPath
-            if ($null -eq $csum) { return @{ Result = "MISSING_VIRTIO_NET_CSUM_OFFLOAD"; Tail = $tail } }
-            if ($csum.Status -ne "PASS") { return @{ Result = "VIRTIO_NET_CSUM_OFFLOAD_FAILED"; Tail = $tail } }
-            if ($null -eq $csum.TxCsum) { return @{ Result = "VIRTIO_NET_CSUM_OFFLOAD_MISSING_FIELDS"; Tail = $tail } }
-            if ($csum.TxCsum -le 0) { return @{ Result = "VIRTIO_NET_CSUM_OFFLOAD_ZERO"; Tail = $tail } }
+            if ($null -eq $csum) {
+              if ($RequireNetCsumOffload) { return @{ Result = "MISSING_VIRTIO_NET_CSUM_OFFLOAD"; Tail = $tail } }
+              return @{ Result = "MISSING_VIRTIO_NET_UDP_CSUM_OFFLOAD"; Tail = $tail }
+            }
+            if ($csum.Status -ne "PASS") {
+              if ($RequireNetCsumOffload) { return @{ Result = "VIRTIO_NET_CSUM_OFFLOAD_FAILED"; Tail = $tail } }
+              return @{ Result = "VIRTIO_NET_UDP_CSUM_OFFLOAD_FAILED"; Tail = $tail }
+            }
+ 
+            if ($RequireNetCsumOffload) {
+              if ($null -eq $csum.TxCsum) { return @{ Result = "VIRTIO_NET_CSUM_OFFLOAD_MISSING_FIELDS"; Tail = $tail } }
+              if ($csum.TxCsum -le 0) { return @{ Result = "VIRTIO_NET_CSUM_OFFLOAD_ZERO"; Tail = $tail } }
+            }
+ 
+            if ($RequireNetUdpCsumOffload) {
+              $txUdp = $csum.TxUdp
+              $txUdp4 = $csum.TxUdp4
+              $txUdp6 = $csum.TxUdp6
+              if ($null -eq $txUdp) {
+                if (($null -eq $txUdp4) -and ($null -eq $txUdp6)) {
+                  return @{ Result = "VIRTIO_NET_UDP_CSUM_OFFLOAD_MISSING_FIELDS"; Tail = $tail }
+                }
+                $txUdp = [UInt64]0
+                if ($null -ne $txUdp4) { $txUdp += $txUdp4 }
+                if ($null -ne $txUdp6) { $txUdp += $txUdp6 }
+              }
+ 
+              if ($txUdp -le 0) { return @{ Result = "VIRTIO_NET_UDP_CSUM_OFFLOAD_ZERO"; Tail = $tail } }
+            }
           }
           return @{ Result = "PASS"; Tail = $tail }
         }
@@ -1762,12 +1795,37 @@ function Wait-AeroSelftestResult {
                 $msixCheck = Test-VirtioInputMsixRequirement -Tail $tail -SerialLogPath $SerialLogPath
                 if ($null -ne $msixCheck) { return $msixCheck }
 
-                if ($RequireNetCsumOffload) {
+                if ($RequireNetCsumOffload -or $RequireNetUdpCsumOffload) {
                   $csum = Get-AeroVirtioNetOffloadCsumStatsFromTail -Tail $tail -SerialLogPath $SerialLogPath
-                  if ($null -eq $csum) { return @{ Result = "MISSING_VIRTIO_NET_CSUM_OFFLOAD"; Tail = $tail } }
-                  if ($csum.Status -ne "PASS") { return @{ Result = "VIRTIO_NET_CSUM_OFFLOAD_FAILED"; Tail = $tail } }
-                  if ($null -eq $csum.TxCsum) { return @{ Result = "VIRTIO_NET_CSUM_OFFLOAD_MISSING_FIELDS"; Tail = $tail } }
-                  if ($csum.TxCsum -le 0) { return @{ Result = "VIRTIO_NET_CSUM_OFFLOAD_ZERO"; Tail = $tail } }
+                  if ($null -eq $csum) {
+                    if ($RequireNetCsumOffload) { return @{ Result = "MISSING_VIRTIO_NET_CSUM_OFFLOAD"; Tail = $tail } }
+                    return @{ Result = "MISSING_VIRTIO_NET_UDP_CSUM_OFFLOAD"; Tail = $tail }
+                  }
+                  if ($csum.Status -ne "PASS") {
+                    if ($RequireNetCsumOffload) { return @{ Result = "VIRTIO_NET_CSUM_OFFLOAD_FAILED"; Tail = $tail } }
+                    return @{ Result = "VIRTIO_NET_UDP_CSUM_OFFLOAD_FAILED"; Tail = $tail }
+                  }
+ 
+                  if ($RequireNetCsumOffload) {
+                    if ($null -eq $csum.TxCsum) { return @{ Result = "VIRTIO_NET_CSUM_OFFLOAD_MISSING_FIELDS"; Tail = $tail } }
+                    if ($csum.TxCsum -le 0) { return @{ Result = "VIRTIO_NET_CSUM_OFFLOAD_ZERO"; Tail = $tail } }
+                  }
+ 
+                  if ($RequireNetUdpCsumOffload) {
+                    $txUdp = $csum.TxUdp
+                    $txUdp4 = $csum.TxUdp4
+                    $txUdp6 = $csum.TxUdp6
+                    if ($null -eq $txUdp) {
+                      if (($null -eq $txUdp4) -and ($null -eq $txUdp6)) {
+                        return @{ Result = "VIRTIO_NET_UDP_CSUM_OFFLOAD_MISSING_FIELDS"; Tail = $tail }
+                      }
+                      $txUdp = [UInt64]0
+                      if ($null -ne $txUdp4) { $txUdp += $txUdp4 }
+                      if ($null -ne $txUdp6) { $txUdp += $txUdp6 }
+                    }
+ 
+                    if ($txUdp -le 0) { return @{ Result = "VIRTIO_NET_UDP_CSUM_OFFLOAD_ZERO"; Tail = $tail } }
+                  }
                 }
                 return @{ Result = "PASS"; Tail = $tail }
               }
@@ -1874,12 +1932,37 @@ function Wait-AeroSelftestResult {
         $msixCheck = Test-VirtioInputMsixRequirement -Tail $tail -SerialLogPath $SerialLogPath
         if ($null -ne $msixCheck) { return $msixCheck }
 
-        if ($RequireNetCsumOffload) {
+        if ($RequireNetCsumOffload -or $RequireNetUdpCsumOffload) {
           $csum = Get-AeroVirtioNetOffloadCsumStatsFromTail -Tail $tail -SerialLogPath $SerialLogPath
-          if ($null -eq $csum) { return @{ Result = "MISSING_VIRTIO_NET_CSUM_OFFLOAD"; Tail = $tail } }
-          if ($csum.Status -ne "PASS") { return @{ Result = "VIRTIO_NET_CSUM_OFFLOAD_FAILED"; Tail = $tail } }
-          if ($null -eq $csum.TxCsum) { return @{ Result = "VIRTIO_NET_CSUM_OFFLOAD_MISSING_FIELDS"; Tail = $tail } }
-          if ($csum.TxCsum -le 0) { return @{ Result = "VIRTIO_NET_CSUM_OFFLOAD_ZERO"; Tail = $tail } }
+          if ($null -eq $csum) {
+            if ($RequireNetCsumOffload) { return @{ Result = "MISSING_VIRTIO_NET_CSUM_OFFLOAD"; Tail = $tail } }
+            return @{ Result = "MISSING_VIRTIO_NET_UDP_CSUM_OFFLOAD"; Tail = $tail }
+          }
+          if ($csum.Status -ne "PASS") {
+            if ($RequireNetCsumOffload) { return @{ Result = "VIRTIO_NET_CSUM_OFFLOAD_FAILED"; Tail = $tail } }
+            return @{ Result = "VIRTIO_NET_UDP_CSUM_OFFLOAD_FAILED"; Tail = $tail }
+          }
+ 
+          if ($RequireNetCsumOffload) {
+            if ($null -eq $csum.TxCsum) { return @{ Result = "VIRTIO_NET_CSUM_OFFLOAD_MISSING_FIELDS"; Tail = $tail } }
+            if ($csum.TxCsum -le 0) { return @{ Result = "VIRTIO_NET_CSUM_OFFLOAD_ZERO"; Tail = $tail } }
+          }
+ 
+          if ($RequireNetUdpCsumOffload) {
+            $txUdp = $csum.TxUdp
+            $txUdp4 = $csum.TxUdp4
+            $txUdp6 = $csum.TxUdp6
+            if ($null -eq $txUdp) {
+              if (($null -eq $txUdp4) -and ($null -eq $txUdp6)) {
+                return @{ Result = "VIRTIO_NET_UDP_CSUM_OFFLOAD_MISSING_FIELDS"; Tail = $tail }
+              }
+              $txUdp = [UInt64]0
+              if ($null -ne $txUdp4) { $txUdp += $txUdp4 }
+              if ($null -ne $txUdp6) { $txUdp += $txUdp6 }
+            }
+ 
+            if ($txUdp -le 0) { return @{ Result = "VIRTIO_NET_UDP_CSUM_OFFLOAD_ZERO"; Tail = $tail } }
+          }
         }
         return @{ Result = "PASS"; Tail = $tail }
       }
@@ -4468,6 +4551,33 @@ function Get-AeroVirtioNetOffloadCsumStatsFromTail {
   if ($fields.ContainsKey("tx_csum")) { $tx = Try-ParseU64 $fields["tx_csum"] }
   if ($fields.ContainsKey("rx_csum")) { $rx = Try-ParseU64 $fields["rx_csum"] }
   if ($fields.ContainsKey("fallback")) { $fallback = Try-ParseU64 $fields["fallback"] }
+ 
+  # Best-effort protocol breakdown fields (newer guest drivers/selftest builds).
+  $txTcp = $null
+  $txUdp = $null
+  $rxTcp = $null
+  $rxUdp = $null
+  $txTcp4 = $null
+  $txTcp6 = $null
+  $txUdp4 = $null
+  $txUdp6 = $null
+  $rxTcp4 = $null
+  $rxTcp6 = $null
+  $rxUdp4 = $null
+  $rxUdp6 = $null
+ 
+  if ($fields.ContainsKey("tx_tcp")) { $txTcp = Try-ParseU64 $fields["tx_tcp"] }
+  if ($fields.ContainsKey("tx_udp")) { $txUdp = Try-ParseU64 $fields["tx_udp"] }
+  if ($fields.ContainsKey("rx_tcp")) { $rxTcp = Try-ParseU64 $fields["rx_tcp"] }
+  if ($fields.ContainsKey("rx_udp")) { $rxUdp = Try-ParseU64 $fields["rx_udp"] }
+  if ($fields.ContainsKey("tx_tcp4")) { $txTcp4 = Try-ParseU64 $fields["tx_tcp4"] }
+  if ($fields.ContainsKey("tx_tcp6")) { $txTcp6 = Try-ParseU64 $fields["tx_tcp6"] }
+  if ($fields.ContainsKey("tx_udp4")) { $txUdp4 = Try-ParseU64 $fields["tx_udp4"] }
+  if ($fields.ContainsKey("tx_udp6")) { $txUdp6 = Try-ParseU64 $fields["tx_udp6"] }
+  if ($fields.ContainsKey("rx_tcp4")) { $rxTcp4 = Try-ParseU64 $fields["rx_tcp4"] }
+  if ($fields.ContainsKey("rx_tcp6")) { $rxTcp6 = Try-ParseU64 $fields["rx_tcp6"] }
+  if ($fields.ContainsKey("rx_udp4")) { $rxUdp4 = Try-ParseU64 $fields["rx_udp4"] }
+  if ($fields.ContainsKey("rx_udp6")) { $rxUdp6 = Try-ParseU64 $fields["rx_udp6"] }
 
   return [PSCustomObject]@{
     Line     = $line
@@ -4475,6 +4585,18 @@ function Get-AeroVirtioNetOffloadCsumStatsFromTail {
     TxCsum   = $tx
     RxCsum   = $rx
     Fallback = $fallback
+    TxTcp    = $txTcp
+    TxUdp    = $txUdp
+    RxTcp    = $rxTcp
+    RxUdp    = $rxUdp
+    TxTcp4   = $txTcp4
+    TxTcp6   = $txTcp6
+    TxUdp4   = $txUdp4
+    TxUdp6   = $txUdp6
+    RxTcp4   = $rxTcp4
+    RxTcp6   = $rxTcp6
+    RxUdp4   = $rxUdp4
+    RxUdp6   = $rxUdp6
     Fields   = $fields
   }
 }
@@ -6913,6 +7035,7 @@ try {
         -RequireVirtioBlkResizePass ([bool]$needBlkResize) `
         -VirtioBlkResizeDeltaMiB ([int]$BlkResizeDeltaMiB) `
         -RequireNetCsumOffload ([bool]$RequireNetCsumOffload) `
+        -RequireNetUdpCsumOffload ([bool]$RequireNetUdpCsumOffload) `
         -RequireVirtioInputLedsPass ([bool]$WithInputLeds) `
         -RequireVirtioInputEventsPass ([bool]$needInputEvents) `
         -RequireVirtioInputMediaKeysPass ([bool]$needInputMediaKeys) `
@@ -8006,6 +8129,38 @@ try {
     }
     "VIRTIO_NET_CSUM_OFFLOAD_ZERO" {
       Write-Host "FAIL: VIRTIO_NET_CSUM_OFFLOAD_ZERO: checksum offload requirement not met (tx_csum=0)"
+      if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
+        Write-Host "`n--- Serial tail ---"
+        Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
+      }
+      $scriptExitCode = 1
+    }
+    "MISSING_VIRTIO_NET_UDP_CSUM_OFFLOAD" {
+      Write-Host "FAIL: MISSING_VIRTIO_NET_UDP_CSUM_OFFLOAD: missing virtio-net-offload-csum marker while -RequireNetUdpCsumOffload was enabled"
+      if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
+        Write-Host "`n--- Serial tail ---"
+        Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
+      }
+      $scriptExitCode = 1
+    }
+    "VIRTIO_NET_UDP_CSUM_OFFLOAD_FAILED" {
+      Write-Host "FAIL: VIRTIO_NET_UDP_CSUM_OFFLOAD_FAILED: virtio-net-offload-csum marker did not PASS while -RequireNetUdpCsumOffload was enabled"
+      if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
+        Write-Host "`n--- Serial tail ---"
+        Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
+      }
+      $scriptExitCode = 1
+    }
+    "VIRTIO_NET_UDP_CSUM_OFFLOAD_MISSING_FIELDS" {
+      Write-Host "FAIL: VIRTIO_NET_UDP_CSUM_OFFLOAD_MISSING_FIELDS: virtio-net-offload-csum marker missing tx_udp/tx_udp4/tx_udp6 fields"
+      if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
+        Write-Host "`n--- Serial tail ---"
+        Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
+      }
+      $scriptExitCode = 1
+    }
+    "VIRTIO_NET_UDP_CSUM_OFFLOAD_ZERO" {
+      Write-Host "FAIL: VIRTIO_NET_UDP_CSUM_OFFLOAD_ZERO: UDP checksum offload requirement not met (tx_udp=0)"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue

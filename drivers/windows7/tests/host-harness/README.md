@@ -1413,7 +1413,7 @@ only if you explicitly want the base image to be mutated.
     - `AERO_VIRTIO_SELFTEST|TEST|virtio-net|PASS`
     - (only when net checksum offload is required via `-RequireNetCsumOffload` / `--require-net-csum-offload`)
       `AERO_VIRTIO_SELFTEST|TEST|virtio-net-offload-csum|PASS|tx_csum=...` (and `tx_csum > 0`)
-    - (only when UDP checksum offload is required via `--require-net-udp-csum-offload` (Python harness))
+    - (only when UDP checksum offload is required via `-RequireNetUdpCsumOffload` / `--require-net-udp-csum-offload`)
       `AERO_VIRTIO_SELFTEST|TEST|virtio-net-offload-csum|PASS|tx_udp=...` (and `tx_udp > 0`)
     - (only when link flap is enabled via `-WithNetLinkFlap` / `--with-net-link-flap`) `AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|PASS`
     - `AERO_VIRTIO_SELFTEST|TEST|virtio-net-udp|PASS`
@@ -1463,7 +1463,7 @@ The harness may also mirror the guest's `virtio-net-offload-csum` checksum offlo
 AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_OFFLOAD_CSUM|PASS/FAIL/INFO|tx_csum=...|rx_csum=...|fallback=...|...
 ```
 
-This is informational only and does not affect overall PASS/FAIL unless `-RequireNetCsumOffload` / `--require-net-csum-offload` (or `--require-net-udp-csum-offload`) is enabled.
+This is informational only and does not affect overall PASS/FAIL unless `-RequireNetCsumOffload` / `--require-net-csum-offload` or `-RequireNetUdpCsumOffload` / `--require-net-udp-csum-offload` is enabled.
 
 ## Optional/Compatibility Features
 
@@ -1553,14 +1553,15 @@ By default this marker is informational and does not affect PASS/FAIL. This mark
 offload is not actually exercised (for example `tx_csum=0`).
 
 - PowerShell: `-RequireNetCsumOffload`
+- PowerShell: `-RequireNetUdpCsumOffload` (UDP TX only)
 - Python: `--require-net-csum-offload`
 - Python: `--require-net-udp-csum-offload` (UDP TX only)
-
-When enabled, the harness fails if the marker is missing/FAIL, missing the `tx_csum` field, or reports `tx_csum=0`
+ 
+When `-RequireNetCsumOffload` / `--require-net-csum-offload` is enabled, the harness fails if the marker is missing/FAIL, missing the `tx_csum` field, or reports `tx_csum=0`
 (deterministic tokens: `MISSING_VIRTIO_NET_CSUM_OFFLOAD`, `VIRTIO_NET_CSUM_OFFLOAD_FAILED`,
 `VIRTIO_NET_CSUM_OFFLOAD_MISSING_FIELDS`, `VIRTIO_NET_CSUM_OFFLOAD_ZERO`).
-
-When `--require-net-udp-csum-offload` is enabled, the harness fails if the marker is missing/FAIL, missing `tx_udp`
+ 
+When `-RequireNetUdpCsumOffload` / `--require-net-udp-csum-offload` is enabled, the harness fails if the marker is missing/FAIL, missing `tx_udp`
 (and no `tx_udp4`/`tx_udp6` fallback fields are present), or reports `tx_udp=0`
 (deterministic tokens: `MISSING_VIRTIO_NET_UDP_CSUM_OFFLOAD`, `VIRTIO_NET_UDP_CSUM_OFFLOAD_FAILED`,
 `VIRTIO_NET_UDP_CSUM_OFFLOAD_MISSING_FIELDS`, `VIRTIO_NET_UDP_CSUM_OFFLOAD_ZERO`).
