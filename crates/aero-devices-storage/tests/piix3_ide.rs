@@ -1120,6 +1120,78 @@ fn ata_dma_write_out_of_bounds_sets_bus_master_and_ata_error() {
 }
 
 #[test]
+fn ata_dma_read_out_of_bounds_aborts_without_setting_bus_master_error() {
+    let capacity = SECTOR_SIZE as u64; // 1 sector
+    let disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
+
+    let ide = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
+    ide.borrow_mut()
+        .controller
+        .attach_primary_master_ata(AtaDrive::new(Box::new(disk)).unwrap());
+    ide.borrow_mut().config_mut().set_command(0x0005); // IO decode + Bus Master
+
+    let mut ioports = IoPortBus::new();
+    register_piix3_ide_ports(&mut ioports, ide.clone());
+
+    let mut mem = Bus::new(0x20_000);
+
+    let prd_addr = 0x1000u64;
+    let dma_buf = 0x3000u64;
+    let bm_base = ide.borrow().bus_master_base();
+
+    // Seed destination buffer so we can detect unintended DMA.
+    mem.write_physical(dma_buf, &vec![0xFFu8; SECTOR_SIZE]);
+
+    // PRD entry: one 512-byte segment, EOT.
+    mem.write_u32(prd_addr, dma_buf as u32);
+    mem.write_u16(prd_addr + 4, SECTOR_SIZE as u16);
+    mem.write_u16(prd_addr + 6, 0x8000);
+    ioports.write(bm_base + 4, 4, prd_addr as u32);
+
+    // Start bus master (direction = to memory). Even though BMIDE is started, the command below
+    // will fail before a DMA request is queued.
+    ioports.write(bm_base, 1, 0x09);
+
+    // READ DMA for out-of-bounds LBA 10.
+    ioports.write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 2, 1, 1);
+    ioports.write(PRIMARY_PORTS.cmd_base + 3, 1, 10);
+    ioports.write(PRIMARY_PORTS.cmd_base + 4, 1, 0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 5, 1, 0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 7, 1, 0xC8); // READ DMA
+
+    assert!(
+        ide.borrow().controller.primary_irq_pending(),
+        "out-of-bounds DMA read should abort and raise an IRQ immediately"
+    );
+
+    // Because the read failed before a DMA request could be queued, BMIDE should not report an
+    // error/interrupt.
+    let bm_status = ioports.read(bm_base + 2, 1) as u8;
+    assert_eq!(bm_status & 0x07, 0);
+
+    // Even if we tick, there is no pending DMA request to service.
+    ide.borrow_mut().tick(&mut mem);
+    let bm_status = ioports.read(bm_base + 2, 1) as u8;
+    assert_eq!(bm_status & 0x07, 0);
+
+    // ATA status should reflect an error completion.
+    let st = ioports.read(PRIMARY_PORTS.ctrl_base, 1) as u8;
+    assert_eq!(st & 0x80, 0, "BSY should be clear");
+    assert_eq!(st & 0x08, 0, "DRQ should be clear");
+    assert_ne!(st & 0x01, 0, "ERR should be set");
+    assert_eq!(ioports.read(PRIMARY_PORTS.cmd_base + 1, 1) as u8, 0x04);
+
+    let mut out = vec![0u8; SECTOR_SIZE];
+    mem.read_physical(dma_buf, &mut out);
+    assert!(out.iter().all(|&b| b == 0xFF));
+
+    // STATUS acknowledges and clears the IRQ.
+    let _ = ioports.read(PRIMARY_PORTS.cmd_base + 7, 1);
+    assert!(!ide.borrow().controller.primary_irq_pending());
+}
+
+#[test]
 fn ata_bus_master_dma_read_write_roundtrip() {
     let capacity = 16 * SECTOR_SIZE as u64;
     let disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
