@@ -4082,11 +4082,6 @@ impl AerogpuD3d11Executor {
             }
         }
 
-        // Scratch allocations that are bound as uniform buffers must respect WebGPU's uniform buffer
-        // offset alignment.
-        let uniform_align =
-            (self.device.limits().min_uniform_buffer_offset_alignment as u64).max(1);
-
         // Prepare compute prepass output buffers.
         let patchlist_only_emulation = matches!(
             self.state.primitive_topology,
