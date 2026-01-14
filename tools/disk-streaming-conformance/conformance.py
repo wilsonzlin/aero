@@ -908,9 +908,10 @@ def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser.add_argument("--timeout", type=float, default=30.0, help="Request timeout in seconds (default: 30)")
 
     # In range mode, reads are capped at 1MiB by default because a bug can trigger a full-disk
-    # download (20–40GB). In chunked mode we intentionally fetch whole chunks, so default higher.
+    # download (20–40GB). In chunked mode we intentionally fetch whole chunks and full manifests,
+    # so default high enough to cover Aero's reference client safety bounds.
     default_max_body_bytes_range = 1024 * 1024
-    default_max_body_bytes_chunked = 8 * 1024 * 1024
+    default_max_body_bytes_chunked = 64 * 1024 * 1024
     default_max_body_bytes_env: int | None = None
     if env_max_body_bytes is not None and env_max_body_bytes.strip() != "":
         try:
@@ -928,7 +929,7 @@ def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
             "The tool caps reads to avoid accidentally downloading full disk images."
         ),
     )
-    default_max_bytes_per_chunk = 8 * 1024 * 1024
+    default_max_bytes_per_chunk = 64 * 1024 * 1024
     if env_max_bytes_per_chunk is not None and env_max_bytes_per_chunk.strip() != "":
         try:
             default_max_bytes_per_chunk = int(env_max_bytes_per_chunk)
