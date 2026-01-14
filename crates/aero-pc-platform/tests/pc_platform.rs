@@ -1,6 +1,6 @@
 use aero_devices::a20_gate::A20_GATE_PORT;
 use aero_devices::acpi_pm::{
-    DEFAULT_ACPI_ENABLE, DEFAULT_PM1A_CNT_BLK, DEFAULT_SMI_CMD_PORT, PM1_CNT_SCI_EN,
+    DEFAULT_ACPI_ENABLE, DEFAULT_PM1A_CNT_BLK, DEFAULT_SMI_CMD_PORT, PM1_CNT_SCI_EN, SLP_TYP_S5,
 };
 use aero_devices::clock::Clock;
 use aero_devices::hpet::HPET_MMIO_BASE;
@@ -58,6 +58,17 @@ fn pc_platform_wires_canonical_ports_mmio_and_reset_a20() {
     // i8042 reset command (0xFE) also surfaces as a platform reset event.
     pc.io.write_u8(I8042_STATUS_PORT, 0xFE);
     assert_eq!(pc.take_reset_events(), vec![ResetEvent::System]);
+}
+
+#[test]
+fn pc_platform_surfaces_acpi_poweroff_requests() {
+    let mut pc = PcPlatform::new(2 * 1024 * 1024);
+
+    // ACPI fixed-feature sleep request: PM1a_CNT.SLP_TYP=S5, PM1a_CNT.SLP_EN=1.
+    let s5_request = (u16::from(SLP_TYP_S5) << 10) | (1 << 13);
+    pc.io.write(DEFAULT_PM1A_CNT_BLK, 2, u32::from(s5_request));
+
+    assert_eq!(pc.take_reset_events(), vec![ResetEvent::PowerOff]);
 }
 
 #[test]
