@@ -4,12 +4,12 @@ use crate::{
 
 use iced_x86::{Decoder, DecoderOptions, Instruction, Mnemonic, OpKind, Register};
 
-/// Offset into `TestCase::memory` where instruction bytes may be placed.
+/// Size of the "data prefix" in `TestCase::memory`.
 ///
 /// The Tier-0 conformance backend fetches instruction bytes from a separate "code" region mapped
-/// at vaddr 0, but we still reserve a small `CODE_OFF` prefix in the testcase memory and keep
-/// memory operands inside it. This prevents data accesses from overlapping any embedded code bytes
-/// (used by the optional QEMU/real-mode harness).
+/// at vaddr 0. To keep testcase generation deterministic (and avoid touching any reserved regions
+/// used by optional reference backends), memory operands and string operations are constrained to
+/// the first `CODE_OFF` bytes of the testcase memory buffer.
 pub const CODE_OFF: usize = 32;
 
 pub(crate) const MAX_TEST_MEMORY_LEN: usize = 64 * 1024;
@@ -1560,25 +1560,6 @@ impl TestCase {
         if let Some(required) = template.init.required_memory_len() {
             memory_len = memory_len.max(required);
         }
-        let code_off = {
-            #[cfg(feature = "qemu-reference")]
-            if matches!(template.kind, TemplateKind::RealModeFarJump) {
-                0x0700usize
-                    .checked_sub(mem_base as usize)
-                    .expect("qemu code base must be >= mem_base")
-            } else {
-                CODE_OFF
-            }
-            #[cfg(not(feature = "qemu-reference"))]
-            {
-                CODE_OFF
-            }
-        };
-        let min_len = code_off
-            .checked_add(template.bytes.len())
-            .and_then(|v| v.checked_add(1))
-            .expect("memory length overflow");
-        memory_len = memory_len.max(min_len);
 
         #[cfg(feature = "qemu-reference")]
         if matches!(template.kind, TemplateKind::RealModeFarJump) {
@@ -1599,7 +1580,6 @@ impl TestCase {
         for byte in &mut memory {
             *byte = rng.next_u8();
         }
-        memory[code_off..code_off + template.bytes.len()].copy_from_slice(template.bytes);
 
         template.init.apply(&mut init, mem_base);
         apply_auto_fixups(case_idx, template, &mut init, &mut memory, mem_base, rng);
