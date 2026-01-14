@@ -11868,7 +11868,7 @@ def _emit_virtio_blk_counters_host_marker(
     Best-effort: emit a host-side marker mirroring the guest's virtio-blk recovery/reset/abort counters.
 
     Guest marker:
-      AERO_VIRTIO_SELFTEST|TEST|virtio-blk-counters|INFO|abort=...|reset_device=...|reset_bus=...|pnp=...|ioctl_reset=...|capacity_change_events=<n>
+      AERO_VIRTIO_SELFTEST|TEST|virtio-blk-counters|INFO|abort=...|reset_device=...|reset_bus=...|pnp=...|ioctl_reset=...|capacity_change_events=<n|not_supported>
       AERO_VIRTIO_SELFTEST|TEST|virtio-blk-counters|SKIP|reason=...|returned_len=...
 
     Host marker:
