@@ -1274,14 +1274,20 @@ impl D3D11Runtime {
             RenderPipelineVariants::NonStrip(create_pipeline(topology, None))
         };
 
-        let strip_to_list_pipeline = match topology {
-            wgpu::PrimitiveTopology::TriangleStrip => {
-                Some(create_pipeline(wgpu::PrimitiveTopology::TriangleList, None))
+        // The list-topology variant is only needed when we are going to emulate strip primitive
+        // restart (currently on the wgpu GL backend).
+        let strip_to_list_pipeline = if self.emulate_strip_restart {
+            match topology {
+                wgpu::PrimitiveTopology::TriangleStrip => {
+                    Some(create_pipeline(wgpu::PrimitiveTopology::TriangleList, None))
+                }
+                wgpu::PrimitiveTopology::LineStrip => {
+                    Some(create_pipeline(wgpu::PrimitiveTopology::LineList, None))
+                }
+                _ => None,
             }
-            wgpu::PrimitiveTopology::LineStrip => {
-                Some(create_pipeline(wgpu::PrimitiveTopology::LineList, None))
-            }
-            _ => None,
+        } else {
+            None
         };
 
         self.resources.render_pipelines.insert(
