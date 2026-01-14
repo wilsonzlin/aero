@@ -701,13 +701,6 @@ fn emit_src_vec4(
         SrcKind::Register(reg) => match reg.file {
             RegFile::Temp => format!("r{}", reg.index),
             RegFile::Output => format!("o{}", reg.index),
-            RegFile::OutputDepth => {
-                return Err(GsTranslateError::UnsupportedOperand {
-                    inst_index,
-                    opcode,
-                    msg: "RegFile::OutputDepth is not supported in GS prepass".to_owned(),
-                })
-            }
             RegFile::Input => {
                 return Err(GsTranslateError::UnsupportedOperand {
                     inst_index,
@@ -718,24 +711,16 @@ fn emit_src_vec4(
             other => {
                 // Keep this non-exhaustive: new `RegFile` variants should not break GS translation
                 // compilation; instead they should yield a descriptive runtime error.
-                let msg = match other {
-                    RegFile::OutputDepth => {
-                        "RegFile::OutputDepth is not supported in GS prepass".to_owned()
-                    }
-                    _ => format!("unsupported source register file {other:?}"),
+                let msg = if other == RegFile::OutputDepth {
+                    "RegFile::OutputDepth is not supported in GS prepass".to_owned()
+                } else {
+                    format!("unsupported source register file {other:?}")
                 };
                 return Err(GsTranslateError::UnsupportedOperand {
                     inst_index,
                     opcode,
                     msg,
                 });
-            }
-            RegFile::OutputDepth => {
-                return Err(GsTranslateError::UnsupportedOperand {
-                    inst_index,
-                    opcode,
-                    msg: "RegFile::OutputDepth is not supported in GS prepass".to_owned(),
-                })
             }
         },
         SrcKind::GsInput { reg, vertex } => format!("gs_load_input(prim_id, {reg}u, {vertex}u)"),
