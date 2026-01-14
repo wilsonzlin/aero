@@ -911,6 +911,25 @@ def scan_inf_msi_interrupt_settings(text: str, *, file: Path) -> tuple[InfMsiInt
             )
             continue
 
+        flags = _try_parse_inf_int(parts[3])
+        if flags is None:
+            errors.append(
+                format_error(
+                    f"{file.as_posix()}:{line_no}: MSI AddReg entry has a non-integer flags field:",
+                    [line],
+                )
+            )
+            continue
+        # MSI opt-in keys must be written as REG_DWORD.
+        if (flags & 0x00010001) != 0x00010001:
+            errors.append(
+                format_error(
+                    f"{file.as_posix()}:{line_no}: MSI AddReg entry must specify a REG_DWORD type (0x00010001) in flags:",
+                    [line],
+                )
+            )
+            continue
+
         value = _try_parse_inf_int(parts[4])
         if value is None:
             errors.append(
@@ -1084,6 +1103,25 @@ HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MSISupported, 0
 HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MessageNumberLimit, 0x00010001, 8
 """
 
+    wrong_flags = r"""
+[Version]
+Signature="$WINDOWS NT$"
+
+[Manufacturer]
+%Mfg% = Mfg,NTx86
+
+[Mfg.NTx86]
+%Dev% = Install, PCI\VEN_1AF4&DEV_1041&REV_01
+
+[Install.NT.HW]
+AddReg = MsiReg
+
+[MsiReg]
+HKR, "Interrupt Management",,0x00000010
+HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MSISupported, 0, 1
+HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MessageNumberLimit, 0x00010001, 8
+"""
+
     with tempfile.TemporaryDirectory() as td:
         bad_path = Path(td) / "bad.inf"
         bad_path.write_text(bad, encoding="utf-8")
@@ -1102,6 +1140,14 @@ HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MessageNumberLi
                     "internal unit-test failed: validate_win7_virtio_inf_msi_settings unexpectedly failed for a well-formed sample INF:",
                     good_errors,
                 )
+            )
+
+        wrong_flags_path = Path(td) / "wrong-flags.inf"
+        wrong_flags_path.write_text(wrong_flags, encoding="utf-8")
+        wrong_flags_errors = validate_win7_virtio_inf_msi_settings("virtio-net", wrong_flags_path)
+        if not wrong_flags_errors:
+            fail(
+                "internal unit-test failed: validate_win7_virtio_inf_msi_settings unexpectedly passed for an INF with non-DWORD MSISupported flags"
             )
 
 
