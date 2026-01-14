@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use aero_io_snapshot::io::state::IoSnapshot;
 use aero_usb::ehci::regs::{
     reg_portsc, CONFIGFLAG_CF, PORTSC_PED, PORTSC_PO, PORTSC_PR as EHCI_PORTSC_PR, REG_CONFIGFLAG,
 };
@@ -171,5 +172,91 @@ fn usb2_companion_routing_swaps_reachability_between_uhci_and_ehci() {
         ehci_reset_port(&mut ehci, &mut mem, 0);
         let desc = ehci_get_device_descriptor(&mut ehci).expect("EHCI descriptor after toggle");
         assert_eq!(desc, expected, "EHCI descriptor mismatch after toggle {i}");
+    }
+}
+
+#[test]
+fn usb2_companion_routing_snapshot_roundtrip_is_order_independent() {
+    let mux = Rc::new(RefCell::new(Usb2PortMux::new(1)));
+
+    let mut uhci = UhciController::new();
+    uhci.hub_mut().attach_usb2_port_mux(0, mux.clone(), 0);
+
+    let mut ehci = EhciController::new_with_port_count(1);
+    ehci.hub_mut().attach_usb2_port_mux(0, mux.clone(), 0);
+
+    let keyboard = UsbHidKeyboardHandle::new();
+    mux.borrow_mut().attach(0, Box::new(keyboard));
+
+    let mut mem = TestMemory::new(0x20_000);
+    uhci_reset_root_port(&mut uhci, &mut mem);
+
+    // Claim the port for EHCI and complete the reset sequence so the device is routable.
+    ehci.mmio_write(REG_CONFIGFLAG, 4, CONFIGFLAG_CF);
+    ehci_reset_port(&mut ehci, &mut mem, 0);
+
+    // Mutate the shared device state (address assignment) so snapshot/restore has something
+    // meaningful to preserve.
+    {
+        let mut dev = ehci
+            .hub_mut()
+            .device_mut_for_address(0)
+            .expect("device should be reachable after EHCI reset");
+        let setup = SetupPacket {
+            bm_request_type: 0x00,
+            b_request: 0x05, // SET_ADDRESS
+            w_value: 1,
+            w_index: 0,
+            w_length: 0,
+        };
+        assert_eq!(dev.handle_setup(setup), UsbOutResult::Ack);
+        assert!(
+            matches!(dev.handle_in(0, 0), UsbInResult::Data(data) if data.is_empty()),
+            "expected ACK for status stage"
+        );
+    }
+
+    assert!(ehci.hub_mut().device_mut_for_address(1).is_some());
+    assert!(uhci.hub_mut().device_mut_for_address(1).is_none());
+
+    let ehci_snapshot = ehci.save_state();
+    let uhci_snapshot = uhci.save_state();
+
+    // Restore order: EHCI first, then UHCI.
+    {
+        let mux = Rc::new(RefCell::new(Usb2PortMux::new(1)));
+        let mut uhci = UhciController::new();
+        uhci.hub_mut().attach_usb2_port_mux(0, mux.clone(), 0);
+        let mut ehci = EhciController::new_with_port_count(1);
+        ehci.hub_mut().attach_usb2_port_mux(0, mux.clone(), 0);
+
+        ehci.load_state(&ehci_snapshot)
+            .expect("EHCI snapshot restore should succeed");
+        uhci.load_state(&uhci_snapshot)
+            .expect("UHCI snapshot restore should succeed");
+
+        assert!(mux.borrow().configflag(), "mux CONFIGFLAG should be restored");
+        assert_eq!(mux.borrow().port_device(0).unwrap().address(), 1);
+        assert!(ehci.hub_mut().device_mut_for_address(1).is_some());
+        assert!(uhci.hub_mut().device_mut_for_address(1).is_none());
+    }
+
+    // Restore order: UHCI first, then EHCI.
+    {
+        let mux = Rc::new(RefCell::new(Usb2PortMux::new(1)));
+        let mut uhci = UhciController::new();
+        uhci.hub_mut().attach_usb2_port_mux(0, mux.clone(), 0);
+        let mut ehci = EhciController::new_with_port_count(1);
+        ehci.hub_mut().attach_usb2_port_mux(0, mux.clone(), 0);
+
+        uhci.load_state(&uhci_snapshot)
+            .expect("UHCI snapshot restore should succeed");
+        ehci.load_state(&ehci_snapshot)
+            .expect("EHCI snapshot restore should succeed");
+
+        assert!(mux.borrow().configflag(), "mux CONFIGFLAG should be restored");
+        assert_eq!(mux.borrow().port_device(0).unwrap().address(), 1);
+        assert!(ehci.hub_mut().device_mut_for_address(1).is_some());
+        assert!(uhci.hub_mut().device_mut_for_address(1).is_none());
     }
 }
