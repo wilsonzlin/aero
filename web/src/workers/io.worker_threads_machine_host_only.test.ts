@@ -5,7 +5,7 @@ import { Worker, type WorkerOptions } from "node:worker_threads";
 import type { AeroConfig } from "../config/aero_config";
 import { VRAM_BASE_PADDR } from "../arch/guest_phys.ts";
 import { allocateHarnessSharedMemorySegments } from "../runtime/harness_shared_memory";
-import { createIoIpcSab, createSharedMemoryViews, StatusIndex, type SharedMemorySegments } from "../runtime/shared_layout";
+import { createSharedMemoryViews, StatusIndex, type SharedMemorySegments } from "../runtime/shared_layout";
 import { MessageType, type ProtocolMessage, type WorkerInitMessage } from "../runtime/protocol";
 import { emptySetBootDisksMessage, type SetBootDisksMessage } from "../runtime/boot_disks_protocol";
 
@@ -103,7 +103,7 @@ describe("workers/io.worker (worker_threads)", () => {
       guestRamBytes: 1 * 1024 * 1024,
       sharedFramebuffer: new SharedArrayBuffer(8),
       sharedFramebufferOffsetBytes: 0,
-      ioIpc: createIoIpcSab(),
+      ioIpcBytes: 0,
       vramBytes: 0,
     });
     const views = createSharedMemoryViews(segments);

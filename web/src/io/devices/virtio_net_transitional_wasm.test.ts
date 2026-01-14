@@ -29,7 +29,7 @@ describe("io/devices/virtio_net (wasm transitional)", () => {
     const Bridge = api.VirtioNetPciBridge;
     if (!Bridge) return;
 
-    const ioIpcSab = createIoIpcSab();
+    const ioIpcSab = createIoIpcSab({ includeHidIn: false });
 
     // Instantiate a transitional bridge. Older builds may not accept the 4th arg; fall back.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

@@ -1,5 +1,5 @@
 import { RECORD_ALIGN, queueKind, ringCtrl } from "../ipc/layout";
-import { createIpcBuffer } from "../ipc/ipc";
+import { createIpcBuffer, type IpcQueueSpec } from "../ipc/ipc";
 import { PCI_MMIO_BASE, VRAM_BASE_PADDR } from "../arch/guest_phys.ts";
 import { guestPaddrToRamOffset as guestPaddrToRamOffsetRaw, guestRangeInBounds as guestRangeInBoundsRaw } from "../arch/guest_ram_translate.ts";
 import {
@@ -160,14 +160,23 @@ export const IO_IPC_NET_RING_CAPACITY_BYTES = 512 * 1024;
 export const IO_IPC_HID_IN_QUEUE_KIND = queueKind.HID_IN;
 export const IO_IPC_HID_IN_RING_CAPACITY_BYTES = 1024 * 1024;
 
-export function createIoIpcSab(): SharedArrayBuffer {
-  return createIpcBuffer([
+export function createIoIpcSab(opts: { includeNet?: boolean; includeHidIn?: boolean } = {}): SharedArrayBuffer {
+  const includeNet = opts.includeNet ?? true;
+  const includeHidIn = opts.includeHidIn ?? true;
+  const specs: IpcQueueSpec[] = [
     { kind: IO_IPC_CMD_QUEUE_KIND, capacityBytes: IO_IPC_RING_CAPACITY_BYTES },
     { kind: IO_IPC_EVT_QUEUE_KIND, capacityBytes: IO_IPC_RING_CAPACITY_BYTES },
-    { kind: IO_IPC_NET_TX_QUEUE_KIND, capacityBytes: IO_IPC_NET_RING_CAPACITY_BYTES },
-    { kind: IO_IPC_NET_RX_QUEUE_KIND, capacityBytes: IO_IPC_NET_RING_CAPACITY_BYTES },
-    { kind: IO_IPC_HID_IN_QUEUE_KIND, capacityBytes: IO_IPC_HID_IN_RING_CAPACITY_BYTES },
-  ]).buffer;
+  ];
+  if (includeNet) {
+    specs.push(
+      { kind: IO_IPC_NET_TX_QUEUE_KIND, capacityBytes: IO_IPC_NET_RING_CAPACITY_BYTES },
+      { kind: IO_IPC_NET_RX_QUEUE_KIND, capacityBytes: IO_IPC_NET_RING_CAPACITY_BYTES },
+    );
+  }
+  if (includeHidIn) {
+    specs.push({ kind: IO_IPC_HID_IN_QUEUE_KIND, capacityBytes: IO_IPC_HID_IN_RING_CAPACITY_BYTES });
+  }
+  return createIpcBuffer(specs).buffer;
 }
 
 /**

@@ -62,7 +62,7 @@ function installReadyWorkers(
   workers: { cpu: StubWorker; io?: StubWorker; gpu?: StubWorker; net?: StubWorker },
   opts?: { gpuState?: "starting" | "ready" | "failed" | "stopped"; netState?: "starting" | "ready" | "failed" | "stopped" },
 ): void {
-  const ioIpc = createIoIpcSab();
+  const ioIpc = createIoIpcSab({ includeHidIn: false });
   const map: Record<string, unknown> = {
     cpu: { role: "cpu", instanceId: 1, worker: workers.cpu as unknown as Worker, status: { state: "ready" } },
   };

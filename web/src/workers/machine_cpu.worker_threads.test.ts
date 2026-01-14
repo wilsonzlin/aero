@@ -10,7 +10,6 @@ import {
   STATUS_INTS,
   STATUS_OFFSET_BYTES,
   StatusIndex,
-  createIoIpcSab,
   type SharedMemorySegments,
 } from "../runtime/shared_layout";
 import { MessageType, type ProtocolMessage, type WorkerInitMessage } from "../runtime/protocol";
@@ -112,7 +111,7 @@ function allocateTestSegments(): SharedMemorySegments {
     guestRamBytes: 1 * 1024 * 1024,
     sharedFramebuffer: new SharedArrayBuffer(8),
     sharedFramebufferOffsetBytes: 0,
-    ioIpc: createIoIpcSab(),
+    ioIpcBytes: 0,
     vramBytes: 0,
   });
 }

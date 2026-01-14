@@ -42,7 +42,7 @@ test("IO worker survives malformed in:input-batch messages", async ({ page }) =>
       guestRamBytes: 1 * 1024 * 1024,
       sharedFramebuffer: new SharedArrayBuffer(8),
       sharedFramebufferOffsetBytes: 0,
-      ioIpc: createIoIpcSab(),
+      ioIpc: createIoIpcSab({ includeNet: false, includeHidIn: false }),
       vramBytes: 0,
     });
     const views = createSharedMemoryViews(segments);

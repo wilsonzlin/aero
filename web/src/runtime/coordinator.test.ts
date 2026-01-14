@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { perf } from "../perf/perf";
 import { WorkerCoordinator } from "./coordinator";
 import { MessageType } from "./protocol";
-import { createIoIpcSab, createSharedMemoryViews } from "./shared_layout";
+import { createSharedMemoryViews } from "./shared_layout";
 import { allocateHarnessSharedMemorySegments } from "./harness_shared_memory";
 import type { DiskImageMetadata } from "../storage/metadata";
 import {
@@ -49,7 +49,7 @@ describe("runtime/coordinator", () => {
       guestRamBytes: 1 * 1024 * 1024,
       sharedFramebuffer: new SharedArrayBuffer(8),
       sharedFramebufferOffsetBytes: 0,
-      ioIpc: createIoIpcSab(),
+      ioIpcBytes: 0,
       vramBytes: TEST_VRAM_MIB * 1024 * 1024,
     });
   const dummyHdd = (): DiskImageMetadata => ({

@@ -2546,8 +2546,14 @@ async function initAndRun(init: WorkerInitMessage): Promise<void> {
       eventRing = new RingBuffer(segments.control, regions.event.byteOffset);
       const ioCmd = openRingByKind(segments.ioIpc, IO_IPC_CMD_QUEUE_KIND);
       const ioEvt = openRingByKind(segments.ioIpc, IO_IPC_EVT_QUEUE_KIND);
-      ioNetTxRing = openRingByKind(segments.ioIpc, IO_IPC_NET_TX_QUEUE_KIND);
-      ioNetRxRing = openRingByKind(segments.ioIpc, IO_IPC_NET_RX_QUEUE_KIND);
+      // NET_TX/NET_RX rings are optional in some test harnesses; tolerate missing queues.
+      try {
+        ioNetTxRing = openRingByKind(segments.ioIpc, IO_IPC_NET_TX_QUEUE_KIND);
+        ioNetRxRing = openRingByKind(segments.ioIpc, IO_IPC_NET_RX_QUEUE_KIND);
+      } catch {
+        ioNetTxRing = null;
+        ioNetRxRing = null;
+      }
       irqBitmapLo = 0;
       irqBitmapHi = 0;
       a20Enabled = false;

@@ -72,7 +72,7 @@ describe("io/devices/virtio-net (pci bridge integration)", () => {
     const Bridge = api.VirtioNetPciBridge;
     if (!Bridge) return;
 
-    const ioIpcSab = createIoIpcSab();
+    const ioIpcSab = createIoIpcSab({ includeHidIn: false });
     const netTxRing = openRingByKind(ioIpcSab, IO_IPC_NET_TX_QUEUE_KIND, 0);
     const netRxRing = openRingByKind(ioIpcSab, IO_IPC_NET_RX_QUEUE_KIND, 0);
     netTxRing.reset();

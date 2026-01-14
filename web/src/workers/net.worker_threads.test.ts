@@ -201,7 +201,7 @@ function allocateTestSegments(): SharedMemorySegments {
     guestRamBytes: 1 * 1024 * 1024,
     sharedFramebuffer: new SharedArrayBuffer(8),
     sharedFramebufferOffsetBytes: 0,
-    ioIpc: createIoIpcSab(),
+    ioIpc: createIoIpcSab({ includeHidIn: false }),
     // Net worker doesn't use VRAM today, but keep a small segment allocated to match the
     // previous test setup (and to catch accidental dependencies).
     vramBytes: TEST_VRAM_MIB * 1024 * 1024,

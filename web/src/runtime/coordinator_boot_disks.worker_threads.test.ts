@@ -4,7 +4,7 @@ import { perf } from "../perf/perf";
 import type { DiskImageMetadata } from "../storage/metadata";
 import { WorkerCoordinator } from "./coordinator";
 import { emptySetBootDisksMessage, type SetBootDisksMessage } from "./boot_disks_protocol";
-import { createIoIpcSab, createSharedMemoryViews } from "./shared_layout";
+import { createSharedMemoryViews } from "./shared_layout";
 import { allocateHarnessSharedMemorySegments } from "./harness_shared_memory";
 import { ErrorCode, MessageType } from "./protocol";
 
@@ -54,7 +54,7 @@ describe("runtime/coordinator (boot disks forwarding)", () => {
       guestRamBytes: 1 * 1024 * 1024,
       sharedFramebuffer: new SharedArrayBuffer(8),
       sharedFramebufferOffsetBytes: 0,
-      ioIpc: createIoIpcSab(),
+      ioIpcBytes: 0,
       vramBytes: 0,
     });
   }

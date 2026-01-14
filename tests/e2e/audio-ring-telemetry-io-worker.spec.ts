@@ -70,7 +70,7 @@ test("IO worker publishes AudioWorklet ring telemetry into StatusIndex.Audio*", 
     initRing(regions.command.byteOffset, regions.command.byteLength);
     initRing(regions.event.byteOffset, regions.event.byteLength);
 
-    const ioIpcSab = createIoIpcSab();
+    const ioIpcSab = createIoIpcSab({ includeNet: false, includeHidIn: false });
     const sharedFramebuffer = new SharedArrayBuffer(64);
 
     // WebKit can fail to load large module workers directly via `new Worker(httpUrl, { type: "module" })`

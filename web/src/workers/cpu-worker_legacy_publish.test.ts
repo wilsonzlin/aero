@@ -102,7 +102,7 @@ describe("workers/cpu.worker legacy framebuffer publishing", () => {
       guestRamBytes: 1 * 1024 * 1024,
       sharedFramebuffer: createMinimalSharedFramebuffer(),
       sharedFramebufferOffsetBytes: 0,
-      ioIpc: createIoIpcSab(),
+      ioIpc: createIoIpcSab({ includeNet: false, includeHidIn: false }),
       vramBytes: 0,
     });
 
