@@ -62,6 +62,7 @@ export class MicCapture extends EventTarget {
   private deviceChangeListener: (() => void) | null = null;
 
   private backend: "worklet" | "script" | null = null;
+  private workletInitError: string | null = null;
   private trackLabel: string | null = null;
   private trackEnabled: boolean | null = null;
   private trackMuted: boolean | null = null;
@@ -163,6 +164,7 @@ export class MicCapture extends EventTarget {
       if (preferWorklet) {
         try {
           this.backend = "worklet";
+          this.workletInitError = null;
           await audioContext.audioWorklet.addModule(micWorkletProcessorUrl);
           const node = new AudioWorkletNode(audioContext, "aero-mic-capture", {
             numberOfInputs: 1,
@@ -178,6 +180,7 @@ export class MicCapture extends EventTarget {
           this.workletNode = node;
         } catch (err) {
           workletErr = err;
+          this.workletInitError = err instanceof Error ? err.message : String(err);
           // Fall back to ScriptProcessorNode when possible. This keeps microphone capture working
           // in environments where AudioWorklet is present but fails to initialize (e.g. older
           // browsers or restrictive CSP).
@@ -289,6 +292,7 @@ export class MicCapture extends EventTarget {
     }
 
     this.backend = null;
+    this.workletInitError = null;
     this.trackLabel = null;
     this.trackEnabled = null;
     this.trackMuted = null;
@@ -314,6 +318,7 @@ export class MicCapture extends EventTarget {
 
   getDebugInfo(): {
     backend: "worklet" | "script" | null;
+    workletInitError: string | null;
     trackLabel: string | null;
     trackEnabled: boolean | null;
     trackMuted: boolean | null;
@@ -324,6 +329,7 @@ export class MicCapture extends EventTarget {
   } {
     return {
       backend: this.backend,
+      workletInitError: this.workletInitError,
       trackLabel: this.trackLabel,
       trackEnabled: this.trackEnabled,
       trackMuted: this.trackMuted,

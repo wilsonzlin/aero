@@ -167,6 +167,7 @@ test("MicCapture captures track debug info and clears it on stop", async () => {
 
   const dbg = mic.getDebugInfo();
   expect(dbg.backend).toBe("worklet");
+  expect(dbg.workletInitError).toBe(null);
   expect(dbg.trackLabel).toBe("Test Mic");
   expect(dbg.trackEnabled).toBe(true);
   expect(dbg.trackMuted).toBe(false);
@@ -178,6 +179,7 @@ test("MicCapture captures track debug info and clears it on stop", async () => {
   await mic.stop();
   expect(mic.getDebugInfo()).toEqual({
     backend: null,
+    workletInitError: null,
     trackLabel: null,
     trackEnabled: null,
     trackMuted: null,
@@ -250,6 +252,7 @@ test("MicCapture falls back to ScriptProcessorNode when AudioWorklet initializat
   const mic = new MicCapture({ sampleRate: 48_000, bufferMs: 50, preferWorklet: true });
   await mic.start();
   expect(mic.getDebugInfo().backend).toBe("script");
+  expect(mic.getDebugInfo().workletInitError).toBe("worklet load failed");
   await mic.stop();
 });
 
@@ -311,6 +314,7 @@ test("MicCapture script backend emits periodic stats messages", async () => {
   await mic.start();
 
   expect(mic.getDebugInfo().backend).toBe("script");
+  expect(mic.getDebugInfo().workletInitError).toBe(null);
 
   const node = (mic as any).scriptNode as FakeScriptProcessorNode;
   expect(node).toBeTruthy();
