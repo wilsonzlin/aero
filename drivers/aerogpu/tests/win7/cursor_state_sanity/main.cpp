@@ -262,12 +262,16 @@ static HCURSOR CreateTestCursor(const TestCursorSpec& spec, std::string* err) {
 static void PrintCursorQuery(const char* test_name, const aerogpu_escape_query_cursor_out& q) {
   const bool flags_valid = (q.flags & AEROGPU_DBGCTL_QUERY_CURSOR_FLAGS_VALID) != 0;
   const bool supported = flags_valid ? ((q.flags & AEROGPU_DBGCTL_QUERY_CURSOR_FLAG_CURSOR_SUPPORTED) != 0) : true;
+  const bool post_display_released = flags_valid &&
+                                     ((q.flags & AEROGPU_DBGCTL_QUERY_CURSOR_FLAG_POST_DISPLAY_OWNERSHIP_RELEASED) != 0);
+  const char* post_display_suffix = post_display_released ? " (post_display_ownership_released)" : "";
   aerogpu_test::PrintfStdout(
-      "INFO: %s: cursor: flags=0x%08lX%s%s enable=%lu pos=(%ld,%ld) hot=(%lu,%lu) size=%lux%lu format=%lu pitch=%lu fb_gpa=0x%I64X",
+      "INFO: %s: cursor: flags=0x%08lX%s%s%s enable=%lu pos=(%ld,%ld) hot=(%lu,%lu) size=%lux%lu format=%lu pitch=%lu fb_gpa=0x%I64X",
       test_name,
       (unsigned long)q.flags,
       flags_valid ? " (valid)" : " (legacy)",
       supported ? "" : " (unsupported)",
+      post_display_suffix,
       (unsigned long)q.enable,
       (long)ToS32((uint32_t)q.x),
       (long)ToS32((uint32_t)q.y),
@@ -286,12 +290,16 @@ static void DiagAppendCursorQuery(std::string* diag, const char* label, const ae
   }
   const bool flags_valid = (q.flags & AEROGPU_DBGCTL_QUERY_CURSOR_FLAGS_VALID) != 0;
   const bool supported = flags_valid ? ((q.flags & AEROGPU_DBGCTL_QUERY_CURSOR_FLAG_CURSOR_SUPPORTED) != 0) : true;
+  const bool post_display_released = flags_valid &&
+                                     ((q.flags & AEROGPU_DBGCTL_QUERY_CURSOR_FLAG_POST_DISPLAY_OWNERSHIP_RELEASED) != 0);
+  const char* post_display_suffix = post_display_released ? " (post_display_ownership_released)" : "";
   DiagAppend(diag,
-             "%s: flags=0x%08lX%s%s enable=%lu pos=(%ld,%ld) hot=(%lu,%lu) size=%lux%lu format=%lu pitch=%lu fb_gpa=0x%I64X",
+             "%s: flags=0x%08lX%s%s%s enable=%lu pos=(%ld,%ld) hot=(%lu,%lu) size=%lux%lu format=%lu pitch=%lu fb_gpa=0x%I64X",
              label,
              (unsigned long)q.flags,
              flags_valid ? " (valid)" : " (legacy)",
              supported ? "" : " (unsupported)",
+             post_display_suffix,
              (unsigned long)q.enable,
              (long)ToS32((uint32_t)q.x),
              (long)ToS32((uint32_t)q.y),
@@ -509,6 +517,14 @@ static int RunCursorStateSanity(int argc, char** argv) {
     result = reporter.Pass();
     goto cleanup;
   }
+  if (flags_valid && (q0.flags & AEROGPU_DBGCTL_QUERY_CURSOR_FLAG_POST_DISPLAY_OWNERSHIP_RELEASED) != 0) {
+    PrintCursorQuery(kTestName, q0);
+    if (want_diag) {
+      DiagAppendCursorQuery(&diag, "q0", q0);
+    }
+    reporter.Fail("post_display_ownership_released flag is set (flags=0x%08lX)", (unsigned long)q0.flags);
+    goto cleanup;
+  }
 
   const int tol = 2;
   bool pos_ok = false;
@@ -673,6 +689,11 @@ static int RunCursorStateSanity(int argc, char** argv) {
   if (want_diag) {
     DiagAppendCursorQuery(&diag, "q1", q1);
   }
+  if ((q1.flags & AEROGPU_DBGCTL_QUERY_CURSOR_FLAGS_VALID) != 0 &&
+      (q1.flags & AEROGPU_DBGCTL_QUERY_CURSOR_FLAG_POST_DISPLAY_OWNERSHIP_RELEASED) != 0) {
+    reporter.Fail("post_display_ownership_released flag is set after SetCursor (flags=0x%08lX)", (unsigned long)q1.flags);
+    goto cleanup;
+  }
 
   if (!shape_ok) {
     reporter.Fail("cursor state did not reflect custom cursor within retry window");
@@ -722,6 +743,13 @@ static int RunCursorStateSanity(int argc, char** argv) {
   if (want_diag) {
     DiagAppendCursorQuery(&diag, "q_hidden", q_hidden);
   }
+  if ((q_hidden.flags & AEROGPU_DBGCTL_QUERY_CURSOR_FLAGS_VALID) != 0 &&
+      (q_hidden.flags & AEROGPU_DBGCTL_QUERY_CURSOR_FLAG_POST_DISPLAY_OWNERSHIP_RELEASED) != 0) {
+    RestoreCursorShowing(show_calls, hide_calls);
+    reporter.Fail("post_display_ownership_released flag is set after hide (flags=0x%08lX)",
+                  (unsigned long)q_hidden.flags);
+    goto cleanup;
+  }
   if (!hidden_ok) {
     RestoreCursorShowing(show_calls, hide_calls);
     reporter.Fail("cursor enable did not clear after hide (enable=%lu)", (unsigned long)q_hidden.enable);
@@ -753,6 +781,12 @@ static int RunCursorStateSanity(int argc, char** argv) {
   PrintCursorQuery(kTestName, q_shown);
   if (want_diag) {
     DiagAppendCursorQuery(&diag, "q_shown", q_shown);
+  }
+  if ((q_shown.flags & AEROGPU_DBGCTL_QUERY_CURSOR_FLAGS_VALID) != 0 &&
+      (q_shown.flags & AEROGPU_DBGCTL_QUERY_CURSOR_FLAG_POST_DISPLAY_OWNERSHIP_RELEASED) != 0) {
+    reporter.Fail("post_display_ownership_released flag is set after show restore (flags=0x%08lX)",
+                  (unsigned long)q_shown.flags);
+    goto cleanup;
   }
   if (!shown_ok) {
     reporter.Fail("cursor enable did not restore after show (enable=%lu)", (unsigned long)q_shown.enable);

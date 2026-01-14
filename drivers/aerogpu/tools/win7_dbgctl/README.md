@@ -159,6 +159,7 @@ Minimum supported commands:
   Dumps cursor MMIO state (`CURSOR_*` registers), including:
   - enable, position, hot spot
   - size, format, pitch, framebuffer GPA
+  - flags (when supported), including `post_display_ownership_released` (cursor is gated off)
   
   Useful for diagnosing Win7 hardware cursor bring-up (e.g. cursor enabled but off-screen, wrong hot spot, wrong pitch).
 
@@ -417,6 +418,8 @@ this can happen during post-display ownership transitions (the KMD disables scan
 
 Note: the installed KMD may disable hardware cursor support depending on the device feature bits; in that case
 `--query-cursor` will report `(not supported)` or a zero GPA.
+If `--query-cursor` reports `post_display_ownership_released=1`, the KMD is intentionally gating scanout/cursor DMA
+for a post-display ownership transition and `enable` may be forced off until ownership is reacquired.
 
 ## JSON output (`--json[=PATH]`)
 
