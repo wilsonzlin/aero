@@ -20,7 +20,8 @@ If a test fails, treat the contract as the source of truth; fix code or bump the
 
 > Note: virtio-input is also available in the canonical full-system VM (`aero_machine::Machine`,
 > either native or via `crates/aero-wasm::Machine`). You can do early bring-up there:
-> configure the machine with `MachineConfig.enable_virtio_input = true` and boot a Win7 image with
+> configure the machine with `MachineConfig.enable_virtio_input = true` (native), or in JS/WASM:
+> `api.Machine.new_with_options(..., { enable_virtio_input: true })`, and boot a Win7 image with
 > the Aero virtio-input driver installed. This is complementary to the QEMU flows below (QEMU is
 > still the fastest way to compare against a reference virtio implementation).
 >
