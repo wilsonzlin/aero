@@ -200,11 +200,13 @@ fn boot_sector_int10_vbe_sets_scanout_state_to_legacy_vbe_lfb() {
     let boot = build_int10_vbe_set_mode_boot_sector();
 
     let scanout_state = Arc::new(ScanoutState::new());
+    let lfb_base: u32 = 0xD000_0000;
 
     let mut m = Machine::new(MachineConfig {
         enable_pc_platform: true,
         enable_vga: true,
         enable_aerogpu: false,
+        vga_lfb_base: Some(lfb_base),
         // Keep the test output deterministic.
         enable_serial: false,
         enable_i8042: false,
@@ -218,6 +220,8 @@ fn boot_sector_int10_vbe_sets_scanout_state_to_legacy_vbe_lfb() {
     m.reset();
 
     run_until_halt(&mut m);
+
+    assert_eq!(m.vbe_lfb_base(), u64::from(lfb_base));
 
     let snap = scanout_state.snapshot();
     assert_eq!(snap.source, SCANOUT_SOURCE_LEGACY_VBE_LFB);
