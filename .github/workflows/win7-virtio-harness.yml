@@ -364,14 +364,22 @@ jobs:
             udp_port="${{ inputs.udp_port }}"
 
             if [[ -z "${disk_image_path}" ]]; then
-              echo "ERROR: workflow input 'disk_image_path' is empty."
-              echo "Provide a path on the self-hosted runner to a prepared Windows 7 image (qcow2/vhdx)."
-              exit 1
+              if [[ "${dry_run}" == "true" ]]; then
+                disk_image_path="disk.img"
+                disk_image_path_was_empty="true"
+                echo "NOTE: workflow input 'disk_image_path' is empty; using placeholder for dry_run: ${disk_image_path}"
+              else
+                echo "ERROR: workflow input 'disk_image_path' is empty."
+                echo "Provide a path on the self-hosted runner to a prepared Windows 7 image (qcow2/vhdx)."
+                exit 1
+              fi
             fi
 
             if [[ ! -e "${disk_image_path}" ]]; then
               if [[ "${dry_run}" == "true" ]]; then
-                echo "WARNING: disk image path does not exist on the runner: ${disk_image_path}"
+                if [[ "${disk_image_path_was_empty:-false}" != "true" ]]; then
+                  echo "WARNING: disk image path does not exist on the runner: ${disk_image_path}"
+                fi
               else
                 echo "ERROR: disk image path does not exist on the runner: ${disk_image_path}"
                 exit 1

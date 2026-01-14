@@ -25,6 +25,13 @@ class Win7VirtioHarnessWorkflowDryRunInputTests(unittest.TestCase):
         # When dry_run is enabled, the workflow should not fail fast if the disk image path is missing.
         self.assertIn("WARNING: disk image path does not exist on the runner:", self.text)
         self.assertIn('if [[ "${dry_run}" == "true" ]]; then', self.text)
+        # It should also tolerate an empty disk_image_path input by substituting a placeholder.
+        self.assertIn(
+            "NOTE: workflow input 'disk_image_path' is empty; using placeholder for dry_run:",
+            self.text,
+        )
+        self.assertIn('disk_image_path="disk.img"', self.text)
+        self.assertIn('disk_image_path_was_empty="true"', self.text)
 
 
 if __name__ == "__main__":
