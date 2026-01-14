@@ -35,11 +35,13 @@ mov al, 'A'
 out 0xE9, al
 ```
 
-In `aero_machine::Machine`, port `0xE9` is always available and bytes written to it are captured in
-a host-visible buffer:
+In `aero_machine::Machine`, port `0xE9` is available when `MachineConfig::enable_debugcon=true`
+(default) and bytes written to it are captured in a host-visible buffer:
 
 - `Machine::take_debugcon_output() -> Vec<u8>`
 - `Machine::debugcon_output_len() -> u64`
+
+To disable the device (and leave the port unmapped), set `MachineConfig::enable_debugcon=false`.
 
 In the browser runtime (`crates/aero-wasm`), the JS-facing `Machine` wrapper exposes the same log:
 

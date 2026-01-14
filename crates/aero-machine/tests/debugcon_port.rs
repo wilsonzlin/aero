@@ -44,6 +44,7 @@ fn debugcon_port_0xe9_captures_output_bytes() {
         // platform is enabled.
         ram_size_bytes: 16 * 1024 * 1024,
         enable_pc_platform: true,
+        enable_debugcon: true,
         ..Default::default()
     })
     .unwrap();
@@ -57,4 +58,3 @@ fn debugcon_port_0xe9_captures_output_bytes() {
     assert_eq!(m.take_debugcon_output(), b"OK\n");
     assert_eq!(m.debugcon_output_len(), 0);
 }
-
