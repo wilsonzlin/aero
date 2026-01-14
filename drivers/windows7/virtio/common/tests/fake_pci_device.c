@@ -33,6 +33,7 @@ static void fake_update_ring_ptrs(fake_pci_device_t *dev, uint16_t q)
         qs->avail = NULL;
         qs->used = NULL;
         qs->used_event = NULL;
+        qs->avail_event = NULL;
         qs->last_avail_idx = 0;
         return;
     }
@@ -55,9 +56,16 @@ static void fake_update_ring_ptrs(fake_pci_device_t *dev, uint16_t q)
 
     if (event_idx != VIRTIO_FALSE) {
         qs->used_event = &qs->avail->ring[qs->queue_size];
-        *qs->used_event = (uint16_t)(qs->last_avail_idx + (dev->notify_batch ? (dev->notify_batch - 1u) : 0u));
+        qs->avail_event = (uint16_t *)(void *)((uint8_t *)&qs->used->ring[qs->queue_size]);
+
+        /*
+         * Prime the device->driver notification threshold. The simulated device
+         * requests a notify (kick) every N new avail entries.
+         */
+        *qs->avail_event = (uint16_t)(qs->last_avail_idx + (dev->notify_batch - 1u));
     } else {
         qs->used_event = NULL;
+        qs->avail_event = NULL;
     }
 }
 
@@ -252,10 +260,18 @@ static uint32_t fake_sum_desc_len(fake_pci_device_t *dev, fake_pci_queue_state_t
     return sum;
 }
 
+static virtio_bool_t fake_need_event(uint16_t event, uint16_t new_idx, uint16_t old_idx)
+{
+    /* vring_need_event() from the virtio spec / Linux: */
+    return ((uint16_t)(new_idx - event - 1u) < (uint16_t)(new_idx - old_idx)) ? VIRTIO_TRUE : VIRTIO_FALSE;
+}
+
 void fake_pci_process_queue(fake_pci_device_t *dev, uint16_t queue_index)
 {
     fake_pci_queue_state_t *qs;
     uint16_t avail_idx;
+    uint16_t old_used_idx;
+    uint16_t new_used_idx;
 
     if (dev == NULL || queue_index >= VIRTIO_ARRAY_SIZE(dev->queues)) {
         return;
@@ -265,6 +281,8 @@ void fake_pci_process_queue(fake_pci_device_t *dev, uint16_t queue_index)
     if (qs->avail == NULL || qs->used == NULL) {
         return;
     }
+
+    old_used_idx = qs->used->idx;
 
     avail_idx = qs->avail->idx;
     while (qs->last_avail_idx != avail_idx) {
@@ -286,10 +304,27 @@ void fake_pci_process_queue(fake_pci_device_t *dev, uint16_t queue_index)
         qs->last_avail_idx++;
     }
 
-    if ((dev->guest_features & VIRTIO_RING_F_EVENT_IDX) != 0 && qs->used_event != NULL) {
-        *qs->used_event = (uint16_t)(qs->last_avail_idx + (dev->notify_batch - 1u));
+    if ((dev->guest_features & VIRTIO_RING_F_EVENT_IDX) != 0 && qs->avail_event != NULL) {
+        *qs->avail_event = (uint16_t)(qs->last_avail_idx + (dev->notify_batch - 1u));
     }
 
-    /* Signal an interrupt (queue update). */
-    dev->isr |= 0x1u;
+    new_used_idx = qs->used->idx;
+
+    /*
+     * Signal an interrupt (queue update), respecting split-ring suppression
+     * semantics.
+     */
+    if (new_used_idx != old_used_idx) {
+        if ((dev->guest_features & VIRTIO_RING_F_EVENT_IDX) != 0 && qs->used_event != NULL) {
+            uint16_t event;
+            event = *qs->used_event;
+            if (fake_need_event(event, new_used_idx, old_used_idx) != VIRTIO_FALSE) {
+                dev->isr |= 0x1u;
+            }
+        } else {
+            if ((qs->avail->flags & VRING_AVAIL_F_NO_INTERRUPT) == 0) {
+                dev->isr |= 0x1u;
+            }
+        }
+    }
 }

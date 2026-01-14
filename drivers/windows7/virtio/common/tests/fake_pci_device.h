@@ -18,7 +18,13 @@ typedef struct fake_pci_queue_state {
     vring_desc_t *desc;
     vring_avail_t *avail;
     vring_used_t *used;
+    /*
+     * EVENT_IDX fields:
+     *  - used_event is driver-written (device reads it for interrupt suppression)
+     *  - avail_event is device-written (driver reads it for kick suppression)
+     */
     uint16_t *used_event;
+    uint16_t *avail_event;
 
     uint16_t last_avail_idx;
 } fake_pci_queue_state_t;

@@ -1557,8 +1557,12 @@ static void test_pci_legacy_integration(void)
 
     assert(virtio_pci_legacy_set_queue_pfn(&dev, 0, ring.paddr) == VIRTIO_OK);
 
-    /* Submit one request. */
-    {
+    /*
+     * Submit a few requests while exercising:
+     *  - EVENT_IDX kick suppression integration (avail_event must be device-written)
+     *  - EVENT_IDX interrupt suppression integration (used_event must be driver-written)
+     */
+    for (uint32_t iter = 0; iter < 3; iter++) {
         virtio_sg_entry_t sg[2];
         uint16_t head;
         void *cookie_in;
@@ -1573,19 +1577,29 @@ static void test_pci_legacy_integration(void)
         sg[1].len = 1;
         sg[1].device_writes = VIRTIO_TRUE;
 
-        cookie_in = (void *)(uintptr_t)0x1111u;
+        cookie_in = (void *)(uintptr_t)(0x1111u + iter);
         assert(virtqueue_split_add_sg(&vq, sg, 2, cookie_in, VIRTIO_FALSE, &head) == VIRTIO_OK);
 
-        if (virtqueue_split_kick_prepare(&vq) != VIRTIO_FALSE) {
-            virtio_pci_legacy_notify_queue(&dev, 0);
-        }
+        assert(virtqueue_split_kick_prepare(&vq) == VIRTIO_TRUE);
+        virtio_pci_legacy_notify_queue(&dev, 0);
 
         isr = virtio_pci_legacy_read_isr_status(&dev);
-        assert((isr & 0x1u) != 0);
+        if (iter == 1) {
+            /* Interrupts were disabled after the first completion. */
+            assert((isr & 0x1u) == 0);
+        } else {
+            assert((isr & 0x1u) != 0);
+        }
 
         assert(virtqueue_split_pop_used(&vq, &cookie_out, &used_len) == VIRTIO_TRUE);
         assert(cookie_out == cookie_in);
         assert(used_len == (sg[0].len + sg[1].len));
+
+        if (iter == 0) {
+            virtqueue_split_disable_interrupts(&vq);
+        } else if (iter == 1) {
+            assert(virtqueue_split_enable_interrupts(&vq) == VIRTIO_FALSE);
+        }
     }
 
     virtqueue_split_destroy(&vq);
