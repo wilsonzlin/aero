@@ -586,9 +586,7 @@ fn validate_args(args: &PublishArgs) -> Result<()> {
         bail!("--chunk-size must be a multiple of {sector} bytes");
     }
     if args.chunk_size > MAX_CHUNK_SIZE_BYTES {
-        bail!(
-            "--chunk-size too large: max {MAX_CHUNK_SIZE_BYTES} bytes (64 MiB)"
-        );
+        bail!("--chunk-size too large: max {MAX_CHUNK_SIZE_BYTES} bytes (64 MiB)");
     }
     if args.concurrency == 0 {
         bail!("--concurrency must be > 0");
