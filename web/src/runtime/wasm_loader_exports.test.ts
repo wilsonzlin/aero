@@ -236,7 +236,10 @@ describe("runtime/wasm_loader (optional exports)", () => {
         return 0;
       }
       mmio_write(_offset: number, _size: number, _value: number): void {}
-      tick(): void {}
+      step_frames(_frames: number): void {}
+      step_frame(): void {}
+      tick(_frames: number): void {}
+      poll(): void {}
       irq_asserted(): boolean {
         return false;
       }
