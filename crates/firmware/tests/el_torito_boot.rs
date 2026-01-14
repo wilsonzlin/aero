@@ -1,7 +1,9 @@
 use std::sync::Arc;
 
 use aero_cpu_core::state::{gpr, CpuMode, CpuState};
-use firmware::bios::{A20Gate, Bios, BiosBus, BiosConfig, FirmwareMemory, InMemoryDisk, BDA_BASE};
+use firmware::bios::{
+    A20Gate, Bios, BiosBus, BiosConfig, FirmwareMemory, InMemoryCdrom, InMemoryDisk, BDA_BASE,
+};
 use memory::{DenseMemory, MapError, MemoryBus, PhysicalMemoryBus};
 
 const ISO_SECTOR_SIZE: usize = 2048;
@@ -340,9 +342,89 @@ fn bios_post_boots_from_cd_eltorito_no_emulation() {
     assert_eq!(cpu.rip(), 0);
     assert_eq!(cpu.gpr[gpr::RDX] as u8, 0xE0);
 
-    // This BIOS currently models only the boot device, so CD boot should not advertise any fixed
-    // disks in the BDA hard disk count field (0x40:0x75).
+    // CD boot drive numbers (`0xE0..=0xEF`) must not inflate the BIOS Data Area hard disk count
+    // field (0x40:0x75). With only a CD/ISO backend, there are no fixed disks to advertise.
     assert_eq!(bus.read_u8(BDA_BASE + 0x75), 0);
+}
+
+#[test]
+fn bios_post_cd_first_policy_boots_cd_but_restores_hdd_boot_drive() {
+    let iso = TestIso::build();
+    let mut cdrom = InMemoryCdrom::new(iso.bytes.clone());
+
+    // Provide a valid HDD MBR boot sector as the fallback (not used in this test because CD boot succeeds).
+    let mut hdd_sector = [0u8; 512];
+    hdd_sector[510] = 0x55;
+    hdd_sector[511] = 0xAA;
+    let mut hdd = InMemoryDisk::from_boot_sector(hdd_sector);
+
+    let mut bios = Bios::new(BiosConfig {
+        memory_size_bytes: 16 * 1024 * 1024,
+        // Keep HDD0 as the configured fallback boot drive.
+        boot_drive: 0x80,
+        // Enable CD-first policy (boot CD0 if present).
+        boot_from_cd_if_present: true,
+        cd_boot_drive: 0xE0,
+        enable_acpi: false,
+        ..BiosConfig::default()
+    });
+    let mut cpu = CpuState::new(CpuMode::Real);
+    let mut bus = TestBus::new(16 * 1024 * 1024);
+
+    bios.post_with_cdrom(&mut cpu, &mut bus, &mut hdd, &mut cdrom);
+
+    // Booted from CD.
+    assert_eq!(cpu.gpr[gpr::RDX] as u8, 0xE0);
+    assert_eq!(cpu.segments.cs.selector, 0x07C0);
+    assert_eq!(cpu.rip(), 0);
+    assert!(bios.booted_from_cdrom());
+
+    // But keep the configured fallback boot drive intact.
+    assert_eq!(bios.config().boot_drive, 0x80);
+    assert!(bios.config().boot_from_cd_if_present);
+
+    // HDD0 should still be advertised via the BDA fixed-disk count (0x40:0x75).
+    assert_eq!(bus.read_u8(BDA_BASE + 0x75), 1);
+}
+
+#[test]
+fn bios_post_cd_first_policy_falls_back_to_hdd_when_cd_is_unbootable() {
+    // An unbootable ISO: no ISO9660/El Torito descriptors. CD boot should fail and fall back to HDD.
+    let mut cdrom = InMemoryCdrom::new(vec![0u8; 32 * ISO_SECTOR_SIZE]);
+
+    // Valid MBR boot sector.
+    let mut hdd_sector = [0u8; 512];
+    hdd_sector[0..8].copy_from_slice(b"AEROHDD!");
+    hdd_sector[510] = 0x55;
+    hdd_sector[511] = 0xAA;
+    let mut hdd = InMemoryDisk::from_boot_sector(hdd_sector);
+
+    let mut bios = Bios::new(BiosConfig {
+        memory_size_bytes: 16 * 1024 * 1024,
+        boot_drive: 0x80,
+        boot_from_cd_if_present: true,
+        cd_boot_drive: 0xE0,
+        enable_acpi: false,
+        ..BiosConfig::default()
+    });
+    let mut cpu = CpuState::new(CpuMode::Real);
+    let mut bus = TestBus::new(16 * 1024 * 1024);
+
+    bios.post_with_cdrom(&mut cpu, &mut bus, &mut hdd, &mut cdrom);
+
+    // Fell back to HDD.
+    assert_eq!(cpu.gpr[gpr::RDX] as u8, 0x80);
+    assert_eq!(cpu.segments.cs.selector, 0x0000);
+    assert_eq!(cpu.rip(), 0x7C00);
+    assert!(!bios.booted_from_cdrom());
+
+    // Boot sector should be loaded into 0000:7C00.
+    let loaded = bus.read_bytes(0x7C00, 512);
+    assert_eq!(loaded.as_slice(), &hdd_sector[..]);
+
+    // Configured fallback boot drive is still intact.
+    assert_eq!(bios.config().boot_drive, 0x80);
+    assert!(bios.config().boot_from_cd_if_present);
 }
 
 #[test]
