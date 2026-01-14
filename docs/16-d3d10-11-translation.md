@@ -549,7 +549,12 @@ emit zero primitives. Recommended debug workflow:
 
 These changes are designed to be **minor-version, forward-compatible**:
 packets grow only by appending new fields, and existing `reserved*` fields are repurposed in a way
-that keeps old drivers valid (they still write zeros).
+that keeps old drivers valid (old drivers typically write zeros into reserved fields).
+
+For the `stage_ex` extension specifically, hosts must additionally gate interpretation by the
+command stream ABI minor (introduced in ABI 1.3 / minor=3): command streams older than that may not
+reliably zero `reserved0`, so `reserved0` must be treated as reserved/ignored even when
+`shader_stage == COMPUTE`.
 
 #### 1.1) `stage_ex` in resource-binding opcodes
 
@@ -581,7 +586,8 @@ as “compute-like” stages but route their bindings into a reserved extended-s
 - a small `stage_ex` tag carried in the trailing reserved field (required for HS/DS).
 
 This is implemented in the emulator-side protocol mirror as `AerogpuShaderStageEx` + helpers
-`encode_stage_ex`/`decode_stage_ex` (see `emulator/protocol/aerogpu/aerogpu_cmd.rs`).
+`encode_stage_ex`/`decode_stage_ex` (plus ABI-minor-gated variants `decode_stage_ex_gated` /
+`resolve_shader_stage_with_ex_gated`; see `emulator/protocol/aerogpu/aerogpu_cmd.rs`).
 
 **CREATE_SHADER_DXBC encoding:**
 
@@ -602,7 +608,8 @@ For all of the following packets:
 - the struct is `#pragma pack(push, 1)` packed,
 - `hdr.size_bytes` must include the header + any trailing payload arrays, and
 - `reserved0` is interpreted as `stage_ex` **only** when the legacy `shader_stage`/`stage` field
-  equals `COMPUTE` (`reserved0 == 0` means "no stage_ex override"/legacy compute).
+  equals `COMPUTE` **and** the command stream ABI minor is >= 3 (ABI 1.3+) (`reserved0 == 0` means
+  "no stage_ex override"/legacy compute).
 
 | Packet | Packed struct header | Trailing payload |
 |---|---|---|

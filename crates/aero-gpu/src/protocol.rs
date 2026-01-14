@@ -267,8 +267,13 @@ pub enum AeroGpuCmd<'a> {
         /// Extended shader stage selector encoded in the packet's `reserved0` field.
         ///
         /// This is a raw ABI field used to disambiguate GS/HS/DS encoded with `stage=COMPUTE`.
-        /// Higher layers may interpret it with `aero_protocol::aerogpu::aerogpu_cmd::decode_stage_ex`
-        /// / `resolve_shader_stage_with_ex`.
+        ///
+        /// Higher layers should interpret it using the command stream header ABI minor:
+        ///
+        /// - Use `aero_protocol::aerogpu::aerogpu_cmd::decode_stage_ex_gated` /
+        ///   `resolve_shader_stage_with_ex_gated` (stage_ex was introduced in ABI 1.3 / minor=3).
+        /// - Extract `abi_minor` from `AeroGpuCmdStreamHeader.abi_version` using
+        ///   `aero_protocol::aerogpu::aerogpu_pci::abi_minor`.
         stage_ex: u32,
         dxbc_size_bytes: u32,
         dxbc_bytes: &'a [u8],
