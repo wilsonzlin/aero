@@ -935,6 +935,38 @@ async fn chunked_endpoints_ignore_range_headers() {
     assert_eq!(resp.status(), StatusCode::OK);
     let body = resp.into_body().collect().await.unwrap().to_bytes();
     assert_eq!(&body[..], b"ab");
+
+    // Repeat for versioned endpoints.
+    let (app, _dir, expected_manifest) = setup_versioned_app().await;
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/v1/images/disk/chunked/v1/manifest.json")
+                .header(header::RANGE, "bytes=0-0")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(std::str::from_utf8(&body).unwrap(), expected_manifest);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/images/disk/chunked/v1/chunks/00000000.bin")
+                .header(header::RANGE, "bytes=0-0")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(&body[..], b"ab");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1282,6 +1314,22 @@ async fn invalid_chunked_version_is_rejected_without_traversal() {
         .unwrap();
 
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    assert_eq!(
+        resp.headers()[header::CACHE_CONTROL].to_str().unwrap(),
+        "no-store, no-transform"
+    );
+    assert_eq!(
+        resp.headers()["access-control-allow-origin"]
+            .to_str()
+            .unwrap(),
+        "*"
+    );
+    assert_eq!(
+        resp.headers()["cross-origin-resource-policy"]
+            .to_str()
+            .unwrap(),
+        "same-site"
+    );
     let body = resp.into_body().collect().await.unwrap().to_bytes();
     assert!(body.is_empty());
 }
@@ -1305,6 +1353,18 @@ async fn overly_long_raw_chunked_version_segment_is_rejected_early() {
             .unwrap(),
         "*"
     );
+    assert_eq!(
+        resp.headers()[header::CACHE_CONTROL].to_str().unwrap(),
+        "no-store, no-transform"
+    );
+    assert_eq!(
+        resp.headers()["cross-origin-resource-policy"]
+            .to_str()
+            .unwrap(),
+        "same-site"
+    );
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    assert!(body.is_empty());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1326,6 +1386,16 @@ async fn overly_long_raw_chunk_name_segment_is_rejected_early() {
             .to_str()
             .unwrap(),
         "*"
+    );
+    assert_eq!(
+        resp.headers()[header::CACHE_CONTROL].to_str().unwrap(),
+        "no-store, no-transform"
+    );
+    assert_eq!(
+        resp.headers()["cross-origin-resource-policy"]
+            .to_str()
+            .unwrap(),
+        "same-site"
     );
     let body = resp.into_body().collect().await.unwrap().to_bytes();
     assert!(body.is_empty());
@@ -1349,6 +1419,16 @@ async fn overly_long_raw_chunk_name_segment_is_rejected_early_for_versioned_rout
             .to_str()
             .unwrap(),
         "*"
+    );
+    assert_eq!(
+        resp.headers()[header::CACHE_CONTROL].to_str().unwrap(),
+        "no-store, no-transform"
+    );
+    assert_eq!(
+        resp.headers()["cross-origin-resource-policy"]
+            .to_str()
+            .unwrap(),
+        "same-site"
     );
     let body = resp.into_body().collect().await.unwrap().to_bytes();
     assert!(body.is_empty());
