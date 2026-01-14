@@ -9884,7 +9884,9 @@ static BOOLEAN APIENTRY AeroGpuDdiInterruptRoutine(_In_ const PVOID MiniportDevi
              * update the cached mask atomically and write the new value directly.
              */
             if (adapter->Bar0Length >= (AEROGPU_MMIO_REG_IRQ_ENABLE + sizeof(ULONG))) {
-                const ULONG newEnable = (ULONG)InterlockedAnd((volatile LONG*)&adapter->IrqEnableMask, ~(LONG)AEROGPU_IRQ_ERROR);
+                const ULONG oldEnable =
+                    (ULONG)InterlockedAnd((volatile LONG*)&adapter->IrqEnableMask, ~(LONG)AEROGPU_IRQ_ERROR);
+                const ULONG newEnable = oldEnable & ~AEROGPU_IRQ_ERROR;
                 AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE, newEnable);
             }
 
@@ -10222,8 +10224,9 @@ static BOOLEAN APIENTRY AeroGpuDdiInterruptRoutine(_In_ const PVOID MiniportDevi
                      * versioned IRQ_STATUS/ENABLE/ACK registers.
                      */
                     if (adapter->Bar0Length >= (AEROGPU_MMIO_REG_IRQ_ENABLE + sizeof(ULONG))) {
-                        const ULONG newEnable =
+                        const ULONG oldEnable =
                             (ULONG)InterlockedAnd((volatile LONG*)&adapter->IrqEnableMask, ~(LONG)AEROGPU_IRQ_ERROR);
+                        const ULONG newEnable = oldEnable & ~AEROGPU_IRQ_ERROR;
                         AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE, newEnable);
                     }
                     const ULONGLONG completedFence64 = AeroGpuReadCompletedFence(adapter);
