@@ -333,7 +333,9 @@ fn aerogpu_scanout_disable_reverts_to_legacy_vbe_scanout_with_panning_stride() {
         1,
     );
     m.process_aerogpu();
-    assert_eq!(scanout_state.snapshot().source, SCANOUT_SOURCE_WDDM);
+    let snap_wddm = scanout_state.snapshot();
+    assert_eq!(snap_wddm.source, SCANOUT_SOURCE_WDDM);
+    let gen_wddm = snap_wddm.generation;
 
     m.write_physical_u32(
         bar0_base + aerogpu_pci::AEROGPU_MMIO_REG_SCANOUT0_ENABLE as u64,
@@ -342,6 +344,7 @@ fn aerogpu_scanout_disable_reverts_to_legacy_vbe_scanout_with_panning_stride() {
     m.process_aerogpu();
 
     let snap1 = scanout_state.snapshot();
+    assert_ne!(snap1.generation, gen_wddm);
     assert_eq!(snap1.source, SCANOUT_SOURCE_LEGACY_VBE_LFB);
     assert_eq!(snap1.base_paddr(), expected_base);
     assert_eq!(snap1.width, 1024);
