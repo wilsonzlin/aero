@@ -2163,6 +2163,7 @@ impl PciDevice for VgaPciConfigDevice {
         &mut self.cfg
     }
 }
+
 // -----------------------------------------------------------------------------
 // AeroGPU legacy VGA compatibility (VRAM backing store + aliasing)
 // -----------------------------------------------------------------------------
@@ -6037,6 +6038,44 @@ impl Machine {
                 return;
             };
             input.inject_wheel(delta);
+        }
+        self.poll_virtio_input();
+    }
+
+    /// Inject a Linux mouse horizontal wheel event (`EV_REL` + `REL_HWHEEL`) into the virtio-input
+    /// mouse device.
+    ///
+    /// This is a no-op when virtio-input is disabled.
+    pub fn inject_virtio_hwheel(&mut self, delta: i32) {
+        let Some(mouse) = &self.virtio_input_mouse else {
+            return;
+        };
+        {
+            let mut dev = mouse.borrow_mut();
+            let Some(input) = dev.device_mut::<VirtioInput>() else {
+                return;
+            };
+            input.inject_hwheel(delta);
+        }
+        self.poll_virtio_input();
+    }
+
+    /// Inject a Linux mouse vertical + horizontal wheel update into the virtio-input mouse device.
+    ///
+    /// This uses a single `SYN_REPORT`, matching how physical devices may report both axes within
+    /// one frame.
+    ///
+    /// This is a no-op when virtio-input is disabled.
+    pub fn inject_virtio_wheel2(&mut self, wheel: i32, hwheel: i32) {
+        let Some(mouse) = &self.virtio_input_mouse else {
+            return;
+        };
+        {
+            let mut dev = mouse.borrow_mut();
+            let Some(input) = dev.device_mut::<VirtioInput>() else {
+                return;
+            };
+            input.inject_wheel2(wheel, hwheel);
         }
         self.poll_virtio_input();
     }

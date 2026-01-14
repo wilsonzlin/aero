@@ -52,6 +52,8 @@ All code that wants to *construct and run the Aero VM/machine* (including `crate
     - Mouse movement: `Machine::inject_virtio_rel(dx, dy)`
     - Mouse buttons: `Machine::inject_virtio_button(btn, pressed)`
     - Mouse wheel: `Machine::inject_virtio_wheel(delta)`
+    - Mouse horizontal wheel: `Machine::inject_virtio_hwheel(delta)`
+    - Mouse wheel (combined): `Machine::inject_virtio_wheel2(wheel, hwheel)`
     - Driver readiness probes (useful for host-side routing): `Machine::virtio_input_keyboard_driver_ok()` / `Machine::virtio_input_mouse_driver_ok()`
   - USB attachment hooks (UHCI, when enabled):
     - Attach/detach at UHCI root ports: `Machine::usb_attach_root(port, model)` / `Machine::usb_detach_root(port)`

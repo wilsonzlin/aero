@@ -71,6 +71,8 @@ Virtio-input is disabled by default for backwards compatibility. Enable it at co
   - motion: `Machine.inject_virtio_rel(dx, dy)`
   - buttons: `Machine.inject_virtio_button(btn, pressed)` (Linux `BTN_*` codes)
   - wheel: `Machine.inject_virtio_wheel(delta)` (`delta > 0` = wheel up)
+  - horizontal wheel: `Machine.inject_virtio_hwheel(delta)` (`delta > 0` = wheel right)
+  - combined: `Machine.inject_virtio_wheel2(wheel, hwheel)` (single `SYN_REPORT`)
 
 Driver status helpers exist for routing decisions:
 
@@ -154,6 +156,8 @@ Once enabled, JS callers can inject Linux `evdev`-style event codes directly:
 - Mouse movement: `Machine.inject_virtio_rel(dx, dy)` (`REL_X`/`REL_Y`)
 - Mouse buttons: `Machine.inject_virtio_button(btn, pressed)` (e.g. `BTN_LEFT`)
 - Mouse wheel: `Machine.inject_virtio_wheel(delta)` (`REL_WHEEL`)
+- Mouse horizontal wheel: `Machine.inject_virtio_hwheel(delta)` (`REL_HWHEEL`)
+- Mouse wheel (combined): `Machine.inject_virtio_wheel2(wheel, hwheel)` (`REL_WHEEL` + `REL_HWHEEL`)
 
 Driver status is exposed for routing decisions:
 

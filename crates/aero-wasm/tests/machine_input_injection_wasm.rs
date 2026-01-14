@@ -64,4 +64,6 @@ fn machine_mouse_injection_exports_forward_without_panicking() {
     m.inject_virtio_button(0, true);
     m.inject_virtio_button(0, false);
     m.inject_virtio_wheel(1);
+    m.inject_virtio_hwheel(-1);
+    m.inject_virtio_wheel2(1, -1);
 }

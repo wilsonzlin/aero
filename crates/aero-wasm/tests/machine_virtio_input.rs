@@ -33,7 +33,26 @@ fn virtio_input_injection_advances_device_state_when_enabled() {
     // Mouse events should enqueue on the mouse function.
     m.inject_virtio_rel(10, -5);
     m.inject_virtio_button(u32::from(BTN_LEFT), true);
+    let before = m.virtio_input_mouse_pending_events();
     m.inject_virtio_wheel(1);
+    assert!(
+        m.virtio_input_mouse_pending_events() > before,
+        "inject_virtio_wheel should enqueue events when virtio-input is enabled"
+    );
+
+    let before = m.virtio_input_mouse_pending_events();
+    m.inject_virtio_hwheel(-2);
+    assert!(
+        m.virtio_input_mouse_pending_events() > before,
+        "inject_virtio_hwheel should enqueue events when virtio-input is enabled"
+    );
+
+    let before = m.virtio_input_mouse_pending_events();
+    m.inject_virtio_wheel2(3, -3);
+    assert!(
+        m.virtio_input_mouse_pending_events() > before,
+        "inject_virtio_wheel2 should enqueue events when virtio-input is enabled"
+    );
     assert!(
         m.virtio_input_mouse_pending_events() > 0,
         "mouse injections should enqueue events when virtio-input is enabled"

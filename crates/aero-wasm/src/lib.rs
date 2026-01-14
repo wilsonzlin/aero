@@ -5213,6 +5213,21 @@ impl Machine {
         self.inner.inject_virtio_wheel(delta);
     }
 
+    /// Inject a mouse horizontal wheel delta into the virtio-input mouse device (if present).
+    ///
+    /// This is safe to call even when virtio-input is disabled; it will no-op.
+    pub fn inject_virtio_hwheel(&mut self, delta: i32) {
+        self.inner.inject_virtio_hwheel(delta);
+    }
+
+    /// Inject vertical + horizontal wheel deltas into the virtio-input mouse device (if present),
+    /// using a single `SYN_REPORT`.
+    ///
+    /// This is safe to call even when virtio-input is disabled; it will no-op.
+    pub fn inject_virtio_wheel2(&mut self, wheel: i32, hwheel: i32) {
+        self.inner.inject_virtio_wheel2(wheel, hwheel);
+    }
+
     /// Whether the guest virtio-input keyboard driver has reached `DRIVER_OK`.
     pub fn virtio_input_keyboard_driver_ok(&self) -> bool {
         self.inner.virtio_input_keyboard_driver_ok()
