@@ -3051,6 +3051,22 @@ static VOID AeroGpuCleanupInternalSubmissions(_Inout_ AEROGPU_ADAPTER* Adapter)
         KIRQL oldIrql;
         KeAcquireSpinLock(&Adapter->PendingLock, &oldIrql);
 
+        /*
+         * Avoid touching ring state while the adapter is not in D0 or submissions are blocked
+         * (resume/teardown windows). In these states:
+         *  - Legacy devices can hang on MMIO reads, and
+         *  - Ring memory can be in the process of being torn down.
+         *
+         * Internal submissions are drained during StopDevice/ResetFromTimeout or via the
+         * SetPowerState(D0) "virtual reset" path.
+         */
+        if ((DXGK_DEVICE_POWER_STATE)InterlockedCompareExchange((volatile LONG*)&Adapter->DevicePowerState, 0, 0) !=
+                DxgkDevicePowerStateD0 ||
+            InterlockedCompareExchange((volatile LONG*)&Adapter->AcceptingSubmissions, 0, 0) == 0) {
+            KeReleaseSpinLock(&Adapter->PendingLock, oldIrql);
+            return;
+        }
+
         ULONG head = 0;
         if (Adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
             if (!Adapter->RingHeader) {
