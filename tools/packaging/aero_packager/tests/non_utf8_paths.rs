@@ -228,6 +228,86 @@ fn packaging_fails_on_non_utf8_guest_tools_dir_component() -> anyhow::Result<()>
     Ok(())
 }
 
+#[test]
+fn packaging_fails_on_non_utf8_spec_path() -> anyhow::Result<()> {
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let testdata = repo_root.join("testdata");
+
+    let drivers_dir = testdata.join("drivers");
+    let guest_tools_dir = testdata.join("guest-tools");
+
+    let spec_bytes = fs::read(testdata.join("spec.json"))?;
+    let spec_tmp = tempfile::tempdir()?;
+    let invalid_name = OsString::from_vec(vec![b's', b'p', b'e', b'c', 0xFF, b'.', b'j', b's', b'o', b'n']);
+    let spec_path = spec_tmp.path().join(invalid_name);
+    fs::write(&spec_path, spec_bytes)?;
+
+    let out = tempfile::tempdir()?;
+    let config = aero_packager::PackageConfig {
+        drivers_dir,
+        guest_tools_dir,
+        windows_device_contract_path: device_contract_path(),
+        out_dir: out.path().to_path_buf(),
+        spec_path,
+        version: "0.0.0".to_string(),
+        build_id: "test".to_string(),
+        volume_id: "AERO_GUEST_TOOLS".to_string(),
+        signing_policy: aero_packager::SigningPolicy::Test,
+        source_date_epoch: 0,
+    };
+
+    let err = aero_packager::package_guest_tools(&config).unwrap_err();
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("manifest input path is not valid UTF-8") && msg.contains("\\xFF"),
+        "unexpected error: {msg}"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn packaging_fails_on_non_utf8_contract_path() -> anyhow::Result<()> {
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let testdata = repo_root.join("testdata");
+
+    let drivers_dir = testdata.join("drivers");
+    let guest_tools_dir = testdata.join("guest-tools");
+    let spec_path = testdata.join("spec.json");
+
+    let contract_bytes = fs::read(device_contract_path())?;
+    let contract_tmp = tempfile::tempdir()?;
+    let invalid_name = OsString::from_vec(vec![
+        b'w', b'i', b'n', b'-', b'c', b'o', b'n', b't', b'r', b'a', b'c', b't', 0xFF, b'.', b'j',
+        b's', b'o', b'n',
+    ]);
+    let contract_path = contract_tmp.path().join(invalid_name);
+    fs::write(&contract_path, contract_bytes)?;
+
+    let out = tempfile::tempdir()?;
+    let config = aero_packager::PackageConfig {
+        drivers_dir,
+        guest_tools_dir,
+        windows_device_contract_path: contract_path,
+        out_dir: out.path().to_path_buf(),
+        spec_path,
+        version: "0.0.0".to_string(),
+        build_id: "test".to_string(),
+        volume_id: "AERO_GUEST_TOOLS".to_string(),
+        signing_policy: aero_packager::SigningPolicy::Test,
+        source_date_epoch: 0,
+    };
+
+    let err = aero_packager::package_guest_tools(&config).unwrap_err();
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("manifest input path is not valid UTF-8") && msg.contains("\\xFF"),
+        "unexpected error: {msg}"
+    );
+
+    Ok(())
+}
+
 fn write_stub_pci_driver(dir: &Path, base_name: &str, hwid: &str) -> anyhow::Result<()> {
     fs::create_dir_all(dir)?;
     fs::write(
