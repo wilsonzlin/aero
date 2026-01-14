@@ -67,6 +67,12 @@ Regenerate or verify all in-repo fixtures with:
 cargo xtask fixtures [--check]
 ```
 
+To regenerate/check just the BIOS ROM fixture:
+
+```bash
+cargo xtask bios-rom [--check]
+```
+
 ---
 
 ## BIOS dispatch contract (HLT-in-ROM-stub “hypercall”)
