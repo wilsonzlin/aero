@@ -92,10 +92,12 @@ To prevent drift between them, we keep a shared fixture of report field values
 and their expected packed bytes at:
 
 - `docs/fixtures/hid_gamepad_report_vectors.json`
+- `docs/fixtures/hid_gamepad_report_clamping_vectors.json` (includes out-of-range inputs to pin down clamping/masking semantics)
 
 Both sides validate their packing logic against this fixture:
 
 - Rust: `crates/aero-usb/tests/hid_gamepad_report_fixture.rs`
+- Rust (clamping): `crates/aero-usb/tests/hid_gamepad_report_clamping_fixture.rs`
 - TypeScript: `web/src/input/gamepad.test.ts`
 
 ### Button bitfield mapping (browser host)

@@ -23,7 +23,8 @@ The browser-side `KeyboardEvent.code -> HID usage` mapping lives in `web/src/inp
 
 For USB HID **gamepad** details (composite device layout, Windows 7 driver binding expectations, and the exact gamepad report descriptor/report bytes), see
 [`docs/usb-hid-gamepad.md`](./usb-hid-gamepad.md). The Rust↔TypeScript report packing contract is pinned by
-`docs/fixtures/hid_gamepad_report_vectors.json` and validated by tests on both sides.
+`docs/fixtures/hid_gamepad_report_vectors.json` (plus the clamping-focused
+`docs/fixtures/hid_gamepad_report_clamping_vectors.json`) and validated by tests on both sides.
 
 For WebHID passthrough (synthesizing HID report descriptors from WebHID metadata
 because browsers do not expose raw report descriptor bytes), see
