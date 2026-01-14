@@ -4430,15 +4430,7 @@ impl Machine {
             return;
         };
 
-        // Keep these constants in sync with:
-        // - `docs/08-input-devices.md`
-        // - `web/src/usb/uhci_external_hub.ts`
-        const EXTERNAL_HUB_ROOT_PORT: usize = 0;
-        const EXTERNAL_HUB_PORT_COUNT: u8 = 16;
-        const KEYBOARD_HUB_PORT: u8 = 1;
-        const MOUSE_HUB_PORT: u8 = 2;
-        const GAMEPAD_HUB_PORT: u8 = 3;
-        const CONSUMER_CONTROL_HUB_PORT: u8 = 4;
+        let external_hub_root_port = usize::from(Self::UHCI_EXTERNAL_HUB_ROOT_PORT);
 
         let mut uhci = uhci.borrow_mut();
         let root_hub = uhci.controller_mut().hub_mut();
@@ -4454,14 +4446,16 @@ impl Machine {
         // `RootHub::load_snapshot_ports` so the loader can reuse the existing instances (handle
         // stability). In the canonical case, machines that enable this feature also boot with this
         // topology, so this helper is sufficient.
-        if root_hub.port_device(EXTERNAL_HUB_ROOT_PORT).is_none() {
+        if root_hub.port_device(external_hub_root_port).is_none() {
             root_hub.attach(
-                EXTERNAL_HUB_ROOT_PORT,
-                Box::new(UsbHubDevice::with_port_count(EXTERNAL_HUB_PORT_COUNT)),
+                external_hub_root_port,
+                Box::new(UsbHubDevice::with_port_count(
+                    Self::UHCI_EXTERNAL_HUB_PORT_COUNT,
+                )),
             );
         }
 
-        let Some(mut root_port0) = root_hub.port_device_mut(EXTERNAL_HUB_ROOT_PORT) else {
+        let Some(mut root_port0) = root_hub.port_device_mut(external_hub_root_port) else {
             return;
         };
         let Some(port_count) = root_port0.model().hub_port_count() else {
@@ -4471,35 +4465,61 @@ impl Machine {
 
         let hub = root_port0.model_mut();
 
-        if port_count >= KEYBOARD_HUB_PORT && hub.hub_port_device_mut(KEYBOARD_HUB_PORT).is_err() {
+        if port_count >= Self::UHCI_SYNTHETIC_HID_KEYBOARD_HUB_PORT
+            && hub
+                .hub_port_device_mut(Self::UHCI_SYNTHETIC_HID_KEYBOARD_HUB_PORT)
+                .is_err()
+        {
             let keyboard = self
                 .usb_hid_keyboard
                 .get_or_insert_with(UsbHidKeyboardHandle::new)
                 .clone();
-            let _ = hub.hub_attach_device(KEYBOARD_HUB_PORT, Box::new(keyboard));
+            let _ = hub.hub_attach_device(
+                Self::UHCI_SYNTHETIC_HID_KEYBOARD_HUB_PORT,
+                Box::new(keyboard),
+            );
         }
-        if port_count >= MOUSE_HUB_PORT && hub.hub_port_device_mut(MOUSE_HUB_PORT).is_err() {
+        if port_count >= Self::UHCI_SYNTHETIC_HID_MOUSE_HUB_PORT
+            && hub
+                .hub_port_device_mut(Self::UHCI_SYNTHETIC_HID_MOUSE_HUB_PORT)
+                .is_err()
+        {
             let mouse = self
                 .usb_hid_mouse
                 .get_or_insert_with(UsbHidMouseHandle::new)
                 .clone();
-            let _ = hub.hub_attach_device(MOUSE_HUB_PORT, Box::new(mouse));
+            let _ = hub.hub_attach_device(
+                Self::UHCI_SYNTHETIC_HID_MOUSE_HUB_PORT,
+                Box::new(mouse),
+            );
         }
-        if port_count >= GAMEPAD_HUB_PORT && hub.hub_port_device_mut(GAMEPAD_HUB_PORT).is_err() {
+        if port_count >= Self::UHCI_SYNTHETIC_HID_GAMEPAD_HUB_PORT
+            && hub
+                .hub_port_device_mut(Self::UHCI_SYNTHETIC_HID_GAMEPAD_HUB_PORT)
+                .is_err()
+        {
             let gamepad = self
                 .usb_hid_gamepad
                 .get_or_insert_with(UsbHidGamepadHandle::new)
                 .clone();
-            let _ = hub.hub_attach_device(GAMEPAD_HUB_PORT, Box::new(gamepad));
+            let _ = hub.hub_attach_device(
+                Self::UHCI_SYNTHETIC_HID_GAMEPAD_HUB_PORT,
+                Box::new(gamepad),
+            );
         }
-        if port_count >= CONSUMER_CONTROL_HUB_PORT
-            && hub.hub_port_device_mut(CONSUMER_CONTROL_HUB_PORT).is_err()
+        if port_count >= Self::UHCI_SYNTHETIC_HID_CONSUMER_CONTROL_HUB_PORT
+            && hub
+                .hub_port_device_mut(Self::UHCI_SYNTHETIC_HID_CONSUMER_CONTROL_HUB_PORT)
+                .is_err()
         {
             let consumer = self
                 .usb_hid_consumer_control
                 .get_or_insert_with(UsbHidConsumerControlHandle::new)
                 .clone();
-            let _ = hub.hub_attach_device(CONSUMER_CONTROL_HUB_PORT, Box::new(consumer));
+            let _ = hub.hub_attach_device(
+                Self::UHCI_SYNTHETIC_HID_CONSUMER_CONTROL_HUB_PORT,
+                Box::new(consumer),
+            );
         }
     }
 
@@ -6161,9 +6181,23 @@ impl Machine {
         self.usb_hid_keyboard.clone()
     }
 
+    /// Whether the synthetic USB HID keyboard is present *and configured* (`SET_CONFIGURATION != 0`).
+    pub fn usb_hid_keyboard_configured(&self) -> bool {
+        self.usb_hid_keyboard
+            .as_ref()
+            .map_or(false, |kbd| kbd.configured())
+    }
+
     /// Returns the synthetic USB HID mouse handle, if present.
     pub fn usb_hid_mouse_handle(&self) -> Option<aero_usb::hid::UsbHidMouseHandle> {
         self.usb_hid_mouse.clone()
+    }
+
+    /// Whether the synthetic USB HID mouse is present *and configured* (`SET_CONFIGURATION != 0`).
+    pub fn usb_hid_mouse_configured(&self) -> bool {
+        self.usb_hid_mouse
+            .as_ref()
+            .map_or(false, |mouse| mouse.configured())
     }
 
     /// Returns the synthetic USB HID gamepad handle, if present.
@@ -6171,11 +6205,26 @@ impl Machine {
         self.usb_hid_gamepad.clone()
     }
 
+    /// Whether the synthetic USB HID gamepad is present *and configured* (`SET_CONFIGURATION != 0`).
+    pub fn usb_hid_gamepad_configured(&self) -> bool {
+        self.usb_hid_gamepad
+            .as_ref()
+            .map_or(false, |gamepad| gamepad.configured())
+    }
+
     /// Returns the synthetic USB HID consumer-control handle, if present.
     pub fn usb_hid_consumer_control_handle(
         &self,
     ) -> Option<aero_usb::hid::UsbHidConsumerControlHandle> {
         self.usb_hid_consumer_control.clone()
+    }
+
+    /// Whether the synthetic USB HID consumer-control device is present *and configured*
+    /// (`SET_CONFIGURATION != 0`).
+    pub fn usb_hid_consumer_control_configured(&self) -> bool {
+        self.usb_hid_consumer_control
+            .as_ref()
+            .map_or(false, |consumer| consumer.configured())
     }
 
     /// Attach a USB device model to an EHCI root hub port.

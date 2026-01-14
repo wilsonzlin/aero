@@ -1,6 +1,7 @@
 #![cfg(not(target_arch = "wasm32"))]
 
 use aero_io_snapshot::io::state::IoSnapshot as _;
+use aero_usb::{ControlResponse, SetupPacket, UsbDeviceModel};
 use aero_virtio::devices::input::{BTN_LEFT, KEY_A, VirtioInput};
 
 #[test]
@@ -10,10 +11,17 @@ fn machine_can_inject_virtio_input_and_synthetic_usb_hid() {
     let mut m = aero_wasm::Machine::new_with_input_backends(16 * 1024 * 1024, true, true)
         .expect("Machine::new_with_input_backends should succeed");
 
+    // Synthetic USB HID devices are attached at reset, but are not "configured" until the guest
+    // completes USB enumeration (`SET_CONFIGURATION`).
+    assert!(!m.usb_hid_keyboard_configured());
+    assert!(!m.usb_hid_mouse_configured());
+    assert!(!m.usb_hid_gamepad_configured());
+    assert!(!m.usb_hid_consumer_control_configured());
+
     // -----------------
     // Synthetic USB HID
     // -----------------
-    let usb_kbd = m
+    let mut usb_kbd = m
         .debug_inner()
         .usb_hid_keyboard_handle()
         .expect("keyboard handle should exist when synthetic USB HID is enabled");
@@ -24,6 +32,18 @@ fn machine_can_inject_virtio_input_and_synthetic_usb_hid() {
         before, after,
         "USB keyboard state should change after injection"
     );
+
+    // Mark the device configured and validate the public configured helper.
+    let setup = SetupPacket {
+        bm_request_type: 0x00, // HostToDevice | Standard | Device
+        b_request: 0x09,       // SET_CONFIGURATION
+        w_value: 1,
+        w_index: 0,
+        w_length: 0,
+    };
+    let resp = usb_kbd.handle_control_request(setup, None);
+    assert!(matches!(resp, ControlResponse::Ack));
+    assert!(m.usb_hid_keyboard_configured());
 
     let usb_mouse = m
         .debug_inner()
@@ -53,7 +73,7 @@ fn machine_can_inject_virtio_input_and_synthetic_usb_hid() {
         "USB gamepad state should change after injection"
     );
 
-    let usb_consumer = m
+    let mut usb_consumer = m
         .debug_inner()
         .usb_hid_consumer_control_handle()
         .expect("consumer-control handle should exist when synthetic USB HID is enabled");
@@ -64,6 +84,17 @@ fn machine_can_inject_virtio_input_and_synthetic_usb_hid() {
         before, after,
         "USB consumer-control state should change after injection"
     );
+
+    let setup = SetupPacket {
+        bm_request_type: 0x00, // HostToDevice | Standard | Device
+        b_request: 0x09,       // SET_CONFIGURATION
+        w_value: 1,
+        w_index: 0,
+        w_length: 0,
+    };
+    let resp = usb_consumer.handle_control_request(setup, None);
+    assert!(matches!(resp, ControlResponse::Ack));
+    assert!(m.usb_hid_consumer_control_configured());
 
     // -----------------
     // virtio-input

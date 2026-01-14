@@ -6090,39 +6090,28 @@ impl Machine {
     }
 
     // -------------------------------------------------------------------------
-    // Synthetic USB HID injection (UHCI external hub)
+    // Synthetic USB HID (UHCI external hub)
     // -------------------------------------------------------------------------
 
-    /// Whether the guest has configured the synthetic USB HID keyboard device (`SET_CONFIGURATION != 0`).
+    /// Whether the guest has configured the synthetic USB HID keyboard (`SET_CONFIGURATION != 0`).
     pub fn usb_hid_keyboard_configured(&self) -> bool {
-        self.inner
-            .usb_hid_keyboard_handle()
-            .map(|h| h.configured())
-            .unwrap_or(false)
+        self.inner.usb_hid_keyboard_configured()
     }
 
-    /// Whether the guest has configured the synthetic USB HID mouse device (`SET_CONFIGURATION != 0`).
+    /// Whether the guest has configured the synthetic USB HID mouse (`SET_CONFIGURATION != 0`).
     pub fn usb_hid_mouse_configured(&self) -> bool {
-        self.inner
-            .usb_hid_mouse_handle()
-            .map(|h| h.configured())
-            .unwrap_or(false)
+        self.inner.usb_hid_mouse_configured()
     }
 
-    /// Whether the guest has configured the synthetic USB HID gamepad device (`SET_CONFIGURATION != 0`).
+    /// Whether the guest has configured the synthetic USB HID gamepad (`SET_CONFIGURATION != 0`).
     pub fn usb_hid_gamepad_configured(&self) -> bool {
-        self.inner
-            .usb_hid_gamepad_handle()
-            .map(|h| h.configured())
-            .unwrap_or(false)
+        self.inner.usb_hid_gamepad_configured()
     }
 
-    /// Whether the guest has configured the synthetic USB HID consumer-control device (`SET_CONFIGURATION != 0`).
+    /// Whether the guest has configured the synthetic USB HID consumer-control device
+    /// (`SET_CONFIGURATION != 0`).
     pub fn usb_hid_consumer_control_configured(&self) -> bool {
-        self.inner
-            .usb_hid_consumer_control_handle()
-            .map(|h| h.configured())
-            .unwrap_or(false)
+        self.inner.usb_hid_consumer_control_configured()
     }
 
     /// Inject a USB HID keyboard usage into the synthetic USB HID keyboard device (if enabled).
