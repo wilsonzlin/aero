@@ -104,6 +104,14 @@ function isSafeNonNegativeInt(v: number): boolean {
   return Number.isSafeInteger(v) && v >= 0;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hasOwn(obj: object, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(obj, key);
+}
+
 function toArrayBufferUint8(data: Uint8Array): Uint8Array<ArrayBuffer> {
   // Newer TS libdefs model typed arrays as `Uint8Array<ArrayBufferLike>`, while
   // OPFS `FileSystemWritableFileStream.write()` is still typed to accept only
@@ -137,32 +145,41 @@ function signatureMatches(a: RemoteChunkCacheSignature | undefined, b: RemoteChu
 
 function validateSignature(signature: unknown): RemoteChunkCacheSignature | undefined {
   if (signature === undefined) return undefined;
-  if (!signature || typeof signature !== "object") return undefined;
-  const s = signature as Partial<RemoteChunkCacheSignature>;
-  if (typeof s.imageId !== "string" || !s.imageId.trim()) return undefined;
-  if (typeof s.version !== "string" || !s.version.trim()) return undefined;
-  if (s.etag !== null && s.etag !== undefined && typeof s.etag !== "string") return undefined;
-  if (typeof s.sizeBytes !== "number" || !Number.isSafeInteger(s.sizeBytes) || s.sizeBytes <= 0) return undefined;
-  if (typeof s.chunkSize !== "number" || !Number.isSafeInteger(s.chunkSize) || s.chunkSize <= 0) return undefined;
-  return {
-    imageId: s.imageId,
-    version: s.version,
-    etag: s.etag ?? null,
-    sizeBytes: s.sizeBytes,
-    chunkSize: s.chunkSize,
-  };
+  if (!isRecord(signature)) return undefined;
+  const s = signature as Record<string, unknown>;
+  const imageId = hasOwn(s, "imageId") ? s.imageId : undefined;
+  if (typeof imageId !== "string" || !imageId.trim()) return undefined;
+  const version = hasOwn(s, "version") ? s.version : undefined;
+  if (typeof version !== "string" || !version.trim()) return undefined;
+  const etag = hasOwn(s, "etag") ? s.etag : undefined;
+  if (etag !== null && etag !== undefined && typeof etag !== "string") return undefined;
+  const sizeBytes = hasOwn(s, "sizeBytes") ? s.sizeBytes : undefined;
+  if (typeof sizeBytes !== "number" || !Number.isSafeInteger(sizeBytes) || sizeBytes <= 0) return undefined;
+  const chunkSize = hasOwn(s, "chunkSize") ? s.chunkSize : undefined;
+  if (typeof chunkSize !== "number" || !Number.isSafeInteger(chunkSize) || chunkSize <= 0) return undefined;
+  const out = Object.create(null) as RemoteChunkCacheSignature;
+  out.imageId = imageId;
+  out.version = version;
+  out.etag = etag ?? null;
+  out.sizeBytes = sizeBytes;
+  out.chunkSize = chunkSize;
+  return out;
 }
 
 function validateIndex(parsed: unknown, expectedChunkSize: number): ChunkIndexV1 | null {
-  if (!parsed || typeof parsed !== "object") return null;
-  const obj = parsed as Partial<ChunkIndexV1>;
-  if (obj.version !== 1) return null;
-  if (typeof obj.chunkSize !== "number" || !Number.isSafeInteger(obj.chunkSize) || obj.chunkSize <= 0) return null;
-  if (obj.chunkSize !== expectedChunkSize) return null;
-  if (typeof obj.accessCounter !== "number" || !Number.isSafeInteger(obj.accessCounter) || obj.accessCounter < 0) return null;
-  if (!obj.chunks || typeof obj.chunks !== "object" || Array.isArray(obj.chunks)) return null;
+  if (!isRecord(parsed)) return null;
+  const obj = parsed as Record<string, unknown>;
+  const version = hasOwn(obj, "version") ? obj.version : undefined;
+  if (version !== 1) return null;
+  const chunkSize = hasOwn(obj, "chunkSize") ? obj.chunkSize : undefined;
+  if (typeof chunkSize !== "number" || !Number.isSafeInteger(chunkSize) || chunkSize <= 0) return null;
+  if (chunkSize !== expectedChunkSize) return null;
+  const accessCounter = hasOwn(obj, "accessCounter") ? obj.accessCounter : undefined;
+  if (typeof accessCounter !== "number" || !Number.isSafeInteger(accessCounter) || accessCounter < 0) return null;
+  const chunksRaw = hasOwn(obj, "chunks") ? obj.chunks : undefined;
+  if (!isRecord(chunksRaw)) return null;
 
-  const chunks = obj.chunks as Record<string, unknown>;
+  const chunks = chunksRaw as Record<string, unknown>;
   const outChunks = emptyChunkIndexMap();
   let count = 0;
   for (const key in chunks) {
@@ -183,22 +200,27 @@ function validateIndex(parsed: unknown, expectedChunkSize: number): ChunkIndexV1
     if (!Number.isSafeInteger(idx) || idx < 0) return null;
 
     const meta = chunks[key];
-    if (!meta || typeof meta !== "object") return null;
-    const byteLength = (meta as { byteLength?: unknown }).byteLength;
-    const lastAccess = (meta as { lastAccess?: unknown }).lastAccess;
+    if (!isRecord(meta)) return null;
+    const metaRec = meta as Record<string, unknown>;
+    const byteLength = hasOwn(metaRec, "byteLength") ? metaRec.byteLength : undefined;
+    const lastAccess = hasOwn(metaRec, "lastAccess") ? metaRec.lastAccess : undefined;
     if (typeof byteLength !== "number" || !Number.isSafeInteger(byteLength) || byteLength < 0) return null;
     if (typeof lastAccess !== "number" || !Number.isSafeInteger(lastAccess) || lastAccess < 0) return null;
-    outChunks[key] = { byteLength, lastAccess };
+    const entry = Object.create(null) as { byteLength: number; lastAccess: number };
+    entry.byteLength = byteLength;
+    entry.lastAccess = lastAccess;
+    outChunks[key] = entry;
   }
 
-  const signature = validateSignature(obj.signature);
-  if (obj.signature !== undefined && !signature) return null;
+  const signatureRaw = hasOwn(obj, "signature") ? obj.signature : undefined;
+  const signature = validateSignature(signatureRaw);
+  if (signatureRaw !== undefined && !signature) return null;
 
   const out: ChunkIndexV1 = Object.create(null) as ChunkIndexV1;
   out.version = 1;
   if (signature !== undefined) out.signature = signature;
-  out.chunkSize = obj.chunkSize;
-  out.accessCounter = obj.accessCounter;
+  out.chunkSize = chunkSize;
+  out.accessCounter = accessCounter;
   out.chunks = outChunks;
   return out;
 }
