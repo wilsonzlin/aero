@@ -150,7 +150,7 @@ import {
 } from "../hid/hid_proxy_protocol";
 import { InMemoryHidGuestBridge } from "../hid/in_memory_hid_guest_bridge";
 import { createEhciTopologyBridgeShim } from "../hid/ehci_hid_topology_shim";
-import { UhciHidTopologyManager } from "../hid/uhci_hid_topology";
+import { UhciHidTopologyManager, type UhciTopologyBridge } from "../hid/uhci_hid_topology";
 import { XhciHidTopologyManager, type XhciTopologyBridge } from "../hid/xhci_hid_topology";
 import { WasmHidGuestBridge, type HidGuestBridge, type HidHostSink } from "../hid/wasm_hid_guest_bridge";
 import { WasmUhciHidGuestBridge } from "../hid/wasm_uhci_hid_guest_bridge";
@@ -1396,7 +1396,7 @@ const xhciHidTopology = new XhciHidTopologyManager();
 // Source object currently wired into {@link uhciHidTopology}. This is typically the WASM
 // `UhciControllerBridge`, but in builds that omit UHCI we may reuse the same topology manager with
 // `EhciControllerBridge` since the attachment API is identical (attach_hub/detach_at_path/...).
-let uhciHidTopologyBridgeSource: unknown | null = null;
+let uhciHidTopologyBridgeSource: UhciTopologyBridge | null = null;
 let xhciHidTopologyBridge: XhciTopologyBridge | null = null;
 let xhciHidTopologyBridgeSource: unknown | null = null;
 const hidTopologyMux = new IoWorkerHidTopologyMux({
@@ -1423,6 +1423,17 @@ function maybeSendWasmReady(): void {
   }
   ctx.postMessage({ type: MessageType.WASM_READY, role, variant: init.variant, value } satisfies ProtocolMessage);
   wasmReadySent = true;
+}
+
+function isUhciTopologyBridge(value: unknown): value is UhciTopologyBridge {
+  if (!value || typeof value !== "object") return false;
+  const rec = value as Record<string, unknown>;
+  return (
+    typeof rec.attach_hub === "function" &&
+    typeof rec.detach_at_path === "function" &&
+    typeof rec.attach_webhid_device === "function" &&
+    typeof rec.attach_usb_hid_passthrough_device === "function"
+  );
 }
 
 function maybeInitUhciRuntime(): void {
@@ -1774,8 +1785,17 @@ function maybeInitUhciDevice(): void {
         uhciDevice = dev;
         mgr.registerPciDevice(dev);
         mgr.addTickable(dev);
-        uhciHidTopology.setUhciBridge(bridge as unknown as any);
-        uhciHidTopologyBridgeSource = bridge as unknown;
+        const maybeTopo: unknown = bridge;
+        // Prefer attaching topology devices behind UHCI when the bridge provides the required
+        // helpers, but do not clobber an existing EHCI-backed topology bridge if this UHCI build
+        // lacks them.
+        if (isUhciTopologyBridge(maybeTopo)) {
+          uhciHidTopology.setUhciBridge(maybeTopo);
+          uhciHidTopologyBridgeSource = maybeTopo;
+        } else if (uhciHidTopologyBridgeSource === null) {
+          uhciHidTopology.setUhciBridge(null);
+          uhciHidTopologyBridgeSource = null;
+        }
       } catch (err) {
         console.warn("[io.worker] Failed to initialize UHCI controller bridge", err);
       }
@@ -2096,22 +2116,12 @@ function maybeInitEhciDevice(): void {
     //
     // This allows WebHID passthrough + synthetic USB HID devices to function in EHCI-only builds.
     if (!uhciRuntime && !uhciControllerBridge && uhciHidTopologyBridgeSource === null) {
-      const topo = bridge as unknown as {
-        attach_hub?: unknown;
-        detach_at_path?: unknown;
-        attach_webhid_device?: unknown;
-        attach_usb_hid_passthrough_device?: unknown;
-      };
-      if (
-        typeof topo.attach_hub === "function" &&
-        typeof topo.detach_at_path === "function" &&
-        typeof topo.attach_webhid_device === "function" &&
-        typeof topo.attach_usb_hid_passthrough_device === "function"
-      ) {
+      const maybeTopo: unknown = bridge;
+      if (isUhciTopologyBridge(maybeTopo)) {
         // EHCI reserves root port 1 for WebUSB passthrough, matching the UHCI topology convention.
         // Keep a shim layer so future EHCI-only topology quirks can be handled without rewriting
         // the UHCI topology manager.
-        const shim = createEhciTopologyBridgeShim(bridge as unknown as any);
+        const shim = createEhciTopologyBridgeShim(maybeTopo);
         uhciHidTopology.setUhciBridge(shim);
         uhciHidTopologyBridgeSource = shim;
       }
