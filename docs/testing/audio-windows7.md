@@ -297,6 +297,8 @@ Alternative (if the web UI exposes it):
   - `audio-samples.txt` (best-effort; one-line summary of any captured WAV snapshots)
   - `hda-codec-state.json` (best-effort; requires the I/O worker)
   - `hda-controller-state.bin` (best-effort; deterministic snapshot bytes of the HDA controller+codec state; no guest RAM)
+  - `hda-tick-stats.json` (best-effort; IO-worker tick clamp counters for the HDA wrapper; useful even when tracing is disabled)
+  - `virtio-snd-state.bin` (best-effort; deterministic snapshot bytes of the virtio-snd PCI function state, when present)
   - `screenshot-*.png` (best-effort; requires the GPU worker)
   - `trace.json` (best-effort; Chrome trace export; includes worker thread metadata and any recorded spans/counters if tracing was enabled)
   - `perf-hud.json` (best-effort; on-page perf HUD capture export, if available)

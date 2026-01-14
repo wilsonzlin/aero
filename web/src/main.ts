@@ -4432,8 +4432,26 @@ function renderAudioPanel(): HTMLElement {
     error?: string;
   };
 
+  type HdaTickStatsResultMessage = {
+    type: "hda.tickStatsResult";
+    requestId: number;
+    ok: boolean;
+    stats?: { tickClampEvents: number; tickClampedFramesTotal: number; tickDroppedFramesTotal: number };
+    error?: string;
+  };
+
+  type VirtioSndSnapshotStateResultMessage = {
+    type: "virtioSnd.snapshotStateResult";
+    requestId: number;
+    ok: boolean;
+    bytes?: Uint8Array;
+    error?: string;
+  };
+
   let hdaCodecDebugRequestId = 1;
   let hdaSnapshotStateRequestId = 1;
+  let hdaTickStatsRequestId = 1;
+  let virtioSndSnapshotStateRequestId = 1;
   let qaBundleScreenshotRequestId = 1;
   const exportHdaCodecStateButton = el("button", {
     text: "Export HDA codec state (json)",
@@ -4783,6 +4801,101 @@ function renderAudioPanel(): HTMLElement {
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           entries.push({ path: `${dir}/hda-controller-state-error.txt`, data: encoder.encode(message) });
+        }
+
+        // HDA tick clamp stats (best-effort). These are useful even when tracing is disabled,
+        // because they surface whether the IO worker has been clamping large host time deltas.
+        try {
+          const ioWorker = workerCoordinator.getIoWorker();
+          if (!ioWorker) throw new Error("I/O worker is not running.");
+          const requestId = hdaTickStatsRequestId++;
+          const response = await new Promise<HdaTickStatsResultMessage>((resolve, reject) => {
+            const timeout = window.setTimeout(() => {
+              cleanup();
+              reject(new Error("Timed out waiting for IO worker HDA tick stats response."));
+            }, 3000);
+            (timeout as unknown as { unref?: () => void }).unref?.();
+
+            const onMessage = (ev: MessageEvent<unknown>) => {
+              const msg = ev.data as Partial<HdaTickStatsResultMessage> | null;
+              if (!msg || msg.type !== "hda.tickStatsResult") return;
+              if (msg.requestId !== requestId) return;
+              cleanup();
+              resolve(msg as HdaTickStatsResultMessage);
+            };
+
+            const cleanup = () => {
+              window.clearTimeout(timeout);
+              ioWorker.removeEventListener("message", onMessage);
+            };
+
+            ioWorker.addEventListener("message", onMessage);
+            ioWorker.postMessage({ type: "hda.tickStats", requestId });
+          });
+
+          entries.push({
+            path: `${dir}/hda-tick-stats.json`,
+            data: encoder.encode(
+              JSON.stringify(
+                {
+                  timeIso,
+                  build: getBuildInfoForExport(),
+                  ok: response.ok,
+                  ...(response.ok ? { stats: response.stats ?? null } : { error: response.error || "unknown" }),
+                },
+                null,
+                2,
+              ),
+            ),
+          });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          entries.push({
+            path: `${dir}/hda-tick-stats.json`,
+            data: encoder.encode(JSON.stringify({ timeIso, build: getBuildInfoForExport(), ok: false, error: message }, null, 2)),
+          });
+        }
+
+        // virtio-snd PCI function snapshot bytes (best-effort). Useful when the runtime is using
+        // virtio-snd (e.g. HDA omitted) or when debugging the virtio driver stack.
+        try {
+          const ioWorker = workerCoordinator.getIoWorker();
+          if (!ioWorker) throw new Error("I/O worker is not running.");
+          const requestId = virtioSndSnapshotStateRequestId++;
+          const response = await new Promise<VirtioSndSnapshotStateResultMessage>((resolve, reject) => {
+            const timeout = window.setTimeout(() => {
+              cleanup();
+              reject(new Error("Timed out waiting for IO worker virtio-snd snapshot state response."));
+            }, 3000);
+            (timeout as unknown as { unref?: () => void }).unref?.();
+
+            const onMessage = (ev: MessageEvent<unknown>) => {
+              const msg = ev.data as Partial<VirtioSndSnapshotStateResultMessage> | null;
+              if (!msg || msg.type !== "virtioSnd.snapshotStateResult") return;
+              if (msg.requestId !== requestId) return;
+              cleanup();
+              resolve(msg as VirtioSndSnapshotStateResultMessage);
+            };
+
+            const cleanup = () => {
+              window.clearTimeout(timeout);
+              ioWorker.removeEventListener("message", onMessage);
+            };
+
+            ioWorker.addEventListener("message", onMessage);
+            ioWorker.postMessage({ type: "virtioSnd.snapshotState", requestId });
+          });
+
+          if (!response.ok) {
+            throw new Error(response.error || "Failed to fetch virtio-snd snapshot state.");
+          }
+          if (!(response.bytes instanceof Uint8Array)) {
+            throw new Error("Invalid virtio-snd snapshot state response.");
+          }
+          entries.push({ path: `${dir}/virtio-snd-state.bin`, data: response.bytes });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          entries.push({ path: `${dir}/virtio-snd-state-error.txt`, data: encoder.encode(message) });
         }
 
         // Guest screenshot (best-effort).

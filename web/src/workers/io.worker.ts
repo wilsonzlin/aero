@@ -3046,6 +3046,44 @@ type HdaSnapshotStateResultMessage =
       ok: false;
       error: string;
     };
+
+type HdaTickStatsRequestMessage = {
+  type: "hda.tickStats";
+  requestId: number;
+};
+
+type HdaTickStatsResultMessage =
+  | {
+      type: "hda.tickStatsResult";
+      requestId: number;
+      ok: true;
+      stats: { tickClampEvents: number; tickClampedFramesTotal: number; tickDroppedFramesTotal: number };
+    }
+  | {
+      type: "hda.tickStatsResult";
+      requestId: number;
+      ok: false;
+      error: string;
+    };
+
+type VirtioSndSnapshotStateRequestMessage = {
+  type: "virtioSnd.snapshotState";
+  requestId: number;
+};
+
+type VirtioSndSnapshotStateResultMessage =
+  | {
+      type: "virtioSnd.snapshotStateResult";
+      requestId: number;
+      ok: true;
+      bytes: Uint8Array;
+    }
+  | {
+      type: "virtioSnd.snapshotStateResult";
+      requestId: number;
+      ok: false;
+      error: string;
+    };
 type ActiveDisk = { handle: number; sectorSize: number; capacityBytes: number; readOnly: boolean };
 let diskClient: RuntimeDiskClient | null = null;
 let activeDisk: ActiveDisk | null = null;
@@ -4685,6 +4723,82 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         const res: HdaSnapshotStateResultMessage = { type: "hda.snapshotStateResult", requestId, ok: false, error: message };
+        ctx.postMessage(res);
+      }
+      return;
+    }
+
+    if ((data as Partial<HdaTickStatsRequestMessage>).type === "hda.tickStats") {
+      const msg = data as Partial<HdaTickStatsRequestMessage>;
+      const requestId = msg.requestId;
+      if (typeof requestId !== "number") return;
+
+      const hda = hdaDevice;
+      if (!hda) {
+        const res: HdaTickStatsResultMessage = {
+          type: "hda.tickStatsResult",
+          requestId,
+          ok: false,
+          error: "HDA device is not initialized.",
+        };
+        ctx.postMessage(res);
+        return;
+      }
+
+      try {
+        const stats = hda.getTickStats();
+        const res: HdaTickStatsResultMessage = { type: "hda.tickStatsResult", requestId, ok: true, stats };
+        ctx.postMessage(res);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        const res: HdaTickStatsResultMessage = { type: "hda.tickStatsResult", requestId, ok: false, error: message };
+        ctx.postMessage(res);
+      }
+      return;
+    }
+
+    if ((data as Partial<VirtioSndSnapshotStateRequestMessage>).type === "virtioSnd.snapshotState") {
+      const msg = data as Partial<VirtioSndSnapshotStateRequestMessage>;
+      const requestId = msg.requestId;
+      if (typeof requestId !== "number") return;
+
+      const dev = virtioSndDevice;
+      if (!dev) {
+        const res: VirtioSndSnapshotStateResultMessage = {
+          type: "virtioSnd.snapshotStateResult",
+          requestId,
+          ok: false,
+          error: "virtio-snd device is not initialized.",
+        };
+        ctx.postMessage(res);
+        return;
+      }
+
+      try {
+        const bytes = dev.saveState();
+        if (!(bytes instanceof Uint8Array)) {
+          const res: VirtioSndSnapshotStateResultMessage = {
+            type: "virtioSnd.snapshotStateResult",
+            requestId,
+            ok: false,
+            error: "virtio-snd snapshot export unavailable.",
+          };
+          ctx.postMessage(res);
+          return;
+        }
+        // Copy so callers always receive a standalone ArrayBuffer-backed view (not a WASM memory view).
+        const copy = new Uint8Array(bytes.byteLength);
+        copy.set(bytes);
+        const res: VirtioSndSnapshotStateResultMessage = { type: "virtioSnd.snapshotStateResult", requestId, ok: true, bytes: copy };
+        ctx.postMessage(res);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        const res: VirtioSndSnapshotStateResultMessage = {
+          type: "virtioSnd.snapshotStateResult",
+          requestId,
+          ok: false,
+          error: message,
+        };
         ctx.postMessage(res);
       }
       return;
