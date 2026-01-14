@@ -379,7 +379,8 @@ static bool ValidateTexture2DRowSpan(uint32_t aerogpu_format,
   return true;
 }
 
-static bool ValidateWddmTexturePitch(const struct AeroGpuResource* res, uint32_t wddm_pitch);
+struct AeroGpuDevice;
+static bool ValidateWddmTexturePitch(const AeroGpuDevice* dev, const struct AeroGpuResource* res, uint32_t wddm_pitch);
 
 static uint32_t aerogpu_mip_dim(uint32_t base, uint32_t mip_level) {
   return aerogpu::d3d10_11::aerogpu_mip_dim(base, mip_level);
@@ -686,12 +687,9 @@ struct AeroGpuResource {
 };
 
 // Some WDK/runtime combinations omit `D3DDDICB_LOCK::Pitch` or report it as 0 for
-// non-surface allocations. For AeroGPU-packed Texture2D resources, the host-side
-// executor interprets guest memory using `res->row_pitch_bytes` for mip0. When
-// the runtime returns a non-zero pitch that does not match this value, treating
-// the allocation as a packed linear blob is unsafe and can corrupt subresource
-// packing.
-static bool ValidateWddmTexturePitch(const AeroGpuResource* res, uint32_t wddm_pitch) {
+// non-surface allocations. When a non-zero pitch is reported, validate only that
+// it is large enough to contain a texel row for the resource's mip0.
+static bool ValidateWddmTexturePitch(const AeroGpuDevice* dev, const AeroGpuResource* res, uint32_t wddm_pitch) {
   if (!res || res->kind != ResourceKind::Texture2D) {
     return true;
   }
@@ -700,7 +698,19 @@ static bool ValidateWddmTexturePitch(const AeroGpuResource* res, uint32_t wddm_p
   if (wddm_pitch == 0) {
     return true;
   }
-  return res->row_pitch_bytes != 0 && wddm_pitch == res->row_pitch_bytes;
+  if (!dev || res->width == 0) {
+    return false;
+  }
+
+  const uint32_t aer_fmt = aerogpu::d3d10_11::dxgi_format_to_aerogpu_compat(dev, res->dxgi_format);
+  if (aer_fmt == AEROGPU_FORMAT_INVALID) {
+    return false;
+  }
+  const uint32_t min_row_bytes = aerogpu_texture_min_row_pitch_bytes(aer_fmt, res->width);
+  if (min_row_bytes == 0) {
+    return false;
+  }
+  return wddm_pitch >= min_row_bytes;
 }
 
 static bool ConsumeWddmAllocPrivV2(const void* priv_data, UINT priv_data_size, aerogpu_wddm_alloc_priv_v2* out) {
@@ -4796,8 +4806,8 @@ void APIENTRY UpdateSubresourceUP(D3D10DDI_HDEVICE hDevice, const D3D10DDIARG_UP
       }
 
       HRESULT copy_hr = S_OK;
-      if (!ValidateWddmTexturePitch(res, wddm_pitch)) {
-        copy_hr = E_FAIL;
+      if (!ValidateWddmTexturePitch(dev, res, wddm_pitch)) {
+        copy_hr = E_INVALIDARG;
       } else if (dst_pitch < row_bytes) {
         copy_hr = E_INVALIDARG;
       } else {
