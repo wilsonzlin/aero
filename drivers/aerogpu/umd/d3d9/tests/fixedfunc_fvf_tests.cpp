@@ -186,6 +186,52 @@ size_t ShaderCountToken(const Shader* shader, uint32_t token) {
   return count;
 }
 
+uint32_t ShaderTexldSamplerMask(const Shader* shader) {
+  if (!shader) {
+    return 0;
+  }
+  const size_t size = shader->bytecode.size();
+  if (size < sizeof(uint32_t) || (size % sizeof(uint32_t)) != 0) {
+    return 0;
+  }
+
+  const uint8_t* bytes = shader->bytecode.data();
+  const size_t word_count = size / sizeof(uint32_t);
+  if (word_count < 2) {
+    return 0;
+  }
+
+  auto ReadWord = [&](size_t idx) -> uint32_t {
+    uint32_t w = 0;
+    std::memcpy(&w, bytes + idx * sizeof(uint32_t), sizeof(uint32_t));
+    return w;
+  };
+
+  uint32_t mask = 0;
+  // Skip version token at word 0.
+  for (size_t i = 1; i < word_count;) {
+    const uint32_t inst = ReadWord(i);
+    if (inst == 0x0000FFFFu) { // end
+      break;
+    }
+    const uint32_t len = inst >> 24;
+    if (len == 0 || i + len > word_count) {
+      break;
+    }
+    if (inst == kPsOpTexld && len >= 4) {
+      const uint32_t sampler = ReadWord(i + 3);
+      if (sampler >= kPsSampler0) {
+        const uint32_t reg = sampler - kPsSampler0;
+        if (reg < 16) {
+          mask |= (1u << reg);
+        }
+      }
+    }
+    i += len;
+  }
+  return mask;
+}
+
 bool ShaderReferencesConstRegister(const Shader* shader, uint32_t reg_index) {
   if (!shader) {
     return false;
@@ -8697,10 +8743,7 @@ bool TestStage1TextureEnableAddsSecondTexld() {
   if (!Check(ShaderCountToken(ps_no_tex1, kPsOpTexld) == 1, "stage1 disabled => exactly 1 texld")) {
     return false;
   }
-  if (!Check(ShaderContainsToken(ps_no_tex1, kPsSampler0), "stage1 disabled => PS references s0")) {
-    return false;
-  }
-  if (!Check(!ShaderContainsToken(ps_no_tex1, kPsSampler1), "stage1 disabled => PS does not reference s1")) {
+  if (!Check(ShaderTexldSamplerMask(ps_no_tex1) == 0x1u, "stage1 disabled => texld uses only sampler s0")) {
     return false;
   }
 
@@ -8730,10 +8773,7 @@ bool TestStage1TextureEnableAddsSecondTexld() {
   if (!Check(ShaderCountToken(ps_with_tex1, kPsOpTexld) == 2, "stage1 enabled => exactly 2 texld")) {
     return false;
   }
-  if (!Check(ShaderContainsToken(ps_with_tex1, kPsSampler0), "stage1 enabled => PS references s0")) {
-    return false;
-  }
-  return Check(ShaderContainsToken(ps_with_tex1, kPsSampler1), "stage1 enabled => PS references s1");
+  return Check(ShaderTexldSamplerMask(ps_with_tex1) == 0x3u, "stage1 enabled => texld uses samplers s0 and s1");
 }
 
 bool TestStage1ColorDisableIgnoresUnsupportedAlphaAndDoesNotSampleTexture1() {
@@ -8840,10 +8880,7 @@ bool TestStage1ColorDisableIgnoresUnsupportedAlphaAndDoesNotSampleTexture1() {
   if (!Check(ShaderCountToken(ps, kPsOpTexld) == 1, "stage1 disabled => exactly 1 texld")) {
     return false;
   }
-  if (!Check(ShaderContainsToken(ps, kPsSampler0), "stage1 disabled => PS references s0")) {
-    return false;
-  }
-  return Check(!ShaderContainsToken(ps, kPsSampler1), "stage1 disabled => PS does not reference s1");
+  return Check(ShaderTexldSamplerMask(ps) == 0x1u, "stage1 disabled => texld uses only sampler s0");
 }
 
 bool TestStage0NoTextureAllowsStage1ToSampleTexture1WithSampler1() {
@@ -8929,10 +8966,7 @@ bool TestStage0NoTextureAllowsStage1ToSampleTexture1WithSampler1() {
   if (!Check(ShaderCountToken(ps, kPsOpTexld) == 1, "exactly 1 texld")) {
     return false;
   }
-  if (!Check(!ShaderContainsToken(ps, kPsSampler0), "PS does not reference s0")) {
-    return false;
-  }
-  return Check(ShaderContainsToken(ps, kPsSampler1), "PS references s1");
+  return Check(ShaderTexldSamplerMask(ps) == 0x2u, "texld uses only sampler s1");
 }
 
 bool TestStage2SamplingUsesSampler2EvenIfStage1DoesNotSample() {
@@ -9043,14 +9077,7 @@ bool TestStage2SamplingUsesSampler2EvenIfStage1DoesNotSample() {
   if (!Check(ShaderCountToken(ps, kPsOpTexld) == 2, "exactly 2 texld")) {
     return false;
   }
-
-  if (!Check(ShaderContainsToken(ps, kPsSampler0), "PS references s0")) {
-    return false;
-  }
-  if (!Check(!ShaderContainsToken(ps, kPsSampler1), "PS does not reference s1")) {
-    return false;
-  }
-  return Check(ShaderContainsToken(ps, kPsSampler2), "PS references s2");
+  return Check(ShaderTexldSamplerMask(ps) == 0x5u, "texld uses samplers s0 and s2");
 }
 
 bool TestStage1MissingTextureDisablesStage2Sampling() {
@@ -9171,13 +9198,7 @@ bool TestStage1MissingTextureDisablesStage2Sampling() {
   if (!Check(ShaderCountToken(ps, kPsOpTexld) == 1, "stage1 missing => exactly 1 texld")) {
     return false;
   }
-  if (!Check(ShaderContainsToken(ps, kPsSampler0), "stage1 missing => PS references s0")) {
-    return false;
-  }
-  if (!Check(!ShaderContainsToken(ps, kPsSampler1), "stage1 missing => PS does not reference s1")) {
-    return false;
-  }
-  return Check(!ShaderContainsToken(ps, kPsSampler2), "stage1 missing => PS does not reference s2");
+  return Check(ShaderTexldSamplerMask(ps) == 0x1u, "stage1 missing => texld uses only sampler s0");
 }
 
 bool TestStage1BlendTextureAlphaRequiresTextureEvenWithoutTextureArgs() {
@@ -9300,13 +9321,7 @@ bool TestStage1BlendTextureAlphaRequiresTextureEvenWithoutTextureArgs() {
   if (!Check(ShaderCountToken(ps, kPsOpTexld) == 1, "stage1 missing => exactly 1 texld")) {
     return false;
   }
-  if (!Check(ShaderContainsToken(ps, kPsSampler0), "stage1 missing => PS references s0")) {
-    return false;
-  }
-  if (!Check(!ShaderContainsToken(ps, kPsSampler1), "stage1 missing => PS does not reference s1")) {
-    return false;
-  }
-  return Check(!ShaderContainsToken(ps, kPsSampler2), "stage1 missing => PS does not reference s2");
+  return Check(ShaderTexldSamplerMask(ps) == 0x1u, "stage1 missing => texld uses only sampler s0");
 }
 
 bool TestStage3SamplingUsesSampler3EvenIfStage1AndStage2DoNotSample() {
@@ -9429,17 +9444,7 @@ bool TestStage3SamplingUsesSampler3EvenIfStage1AndStage2DoNotSample() {
   if (!Check(ShaderCountToken(ps, kPsOpTexld) == 2, "exactly 2 texld")) {
     return false;
   }
-
-  if (!Check(ShaderContainsToken(ps, kPsSampler0), "PS references s0")) {
-    return false;
-  }
-  if (!Check(!ShaderContainsToken(ps, kPsSampler1), "PS does not reference s1")) {
-    return false;
-  }
-  if (!Check(!ShaderContainsToken(ps, kPsSampler2), "PS does not reference s2")) {
-    return false;
-  }
-  return Check(ShaderContainsToken(ps, kPsSampler3), "PS references s3");
+  return Check(ShaderTexldSamplerMask(ps) == 0x9u, "texld uses samplers s0 and s3");
 }
 
 bool TestStage0UnsupportedArgFailsAtDraw() {
