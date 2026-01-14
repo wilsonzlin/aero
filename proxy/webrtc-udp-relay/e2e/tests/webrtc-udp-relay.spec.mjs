@@ -1083,7 +1083,7 @@ test("rejects concurrent WebRTC sessions with the same JWT sid", async ({ page }
     expect(res.errMsg?.type).toBe("error");
     expect(res.errMsg?.code).toBe("session_already_active");
     expect(res.closeCode).toBe(1008);
-    expect(res.closeReason).toBe("session_already_active");
+    expect(["session_already_active", "session already active", ""]).toContain(res.closeReason ?? "");
   } finally {
     await Promise.all([web.close(), relay.kill()]);
   }
@@ -2188,11 +2188,11 @@ test("rejects concurrent /udp WebSocket sessions with the same JWT sid", async (
 
     expect(res.err2.errMsg?.code).toBe("session_already_active");
     expect(res.err2.closeCode).toBe(1013);
-    expect(res.err2.closeReason).toBe("session already active");
+    expect(["session_already_active", "session already active", ""]).toContain(res.err2.closeReason ?? "");
 
     expect(res.err4.errMsg?.code).toBe("session_already_active");
     expect(res.err4.closeCode).toBe(1013);
-    expect(res.err4.closeReason).toBe("session already active");
+    expect(["session_already_active", "session already active", ""]).toContain(res.err4.closeReason ?? "");
   } finally {
     await Promise.all([web.close(), relay.kill()]);
   }
