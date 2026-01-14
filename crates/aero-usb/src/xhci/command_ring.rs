@@ -27,12 +27,14 @@ const INPUT_EP0_CTX_OFFSET: u64 = INPUT_CONTROL_CTX_SIZE + CONTEXT_SIZE;
 const DEVICE_SLOT_CTX_OFFSET: u64 = 0;
 const DEVICE_EP0_CTX_OFFSET: u64 = CONTEXT_SIZE;
 
-// Slot Context DW3 contains:
-// - bits 0..=7: USB Device Address (xHC-owned after Address Device)
-// - bits 27..=31: Slot State (xHC-owned)
+// Slot Context contains controller-owned fields:
+// - DW0 bits 20..=23: Speed (xHC-owned)
+// - DW3 bits 0..=7: USB Device Address (xHC-owned after Address Device)
+// - DW3 bits 27..=31: Slot State (xHC-owned)
 //
 // When copying Slot Contexts from guest-provided Input Contexts into the output Device Context we
 // must preserve controller-owned fields.
+const SLOT_SPEED_MASK_DWORD0: u32 = 0x00F0_0000;
 const SLOT_STATE_MASK_DWORD3: u32 = 0xF800_00FF;
 
 const ICC_DROP_FLAGS_OFFSET: u64 = 0;
@@ -1345,13 +1347,20 @@ impl CommandRingProcessor {
                 .read_u32(mem, in_slot + i * 4)
                 .map_err(|_| CompletionCode::ParameterError)?;
             let out_addr = out_slot + i * 4;
-            let value = if i == 3 {
-                let out_dw = self
-                    .read_u32(mem, out_addr)
-                    .map_err(|_| CompletionCode::ParameterError)?;
-                (in_dw & !SLOT_STATE_MASK_DWORD3) | (out_dw & SLOT_STATE_MASK_DWORD3)
-            } else {
-                in_dw
+            let value = match i {
+                0 => {
+                    let out_dw = self
+                        .read_u32(mem, out_addr)
+                        .map_err(|_| CompletionCode::ParameterError)?;
+                    (in_dw & !SLOT_SPEED_MASK_DWORD0) | (out_dw & SLOT_SPEED_MASK_DWORD0)
+                }
+                3 => {
+                    let out_dw = self
+                        .read_u32(mem, out_addr)
+                        .map_err(|_| CompletionCode::ParameterError)?;
+                    (in_dw & !SLOT_STATE_MASK_DWORD3) | (out_dw & SLOT_STATE_MASK_DWORD3)
+                }
+                _ => in_dw,
             };
             self.write_u32(mem, out_addr, value)
                 .map_err(|_| CompletionCode::ParameterError)?;
@@ -1763,5 +1772,68 @@ mod tests {
                 "expected internal endpoint state for dci={dci} to be cleared"
             );
         }
+    }
+
+    #[test]
+    fn copy_slot_context_preserve_state_preserves_speed_address_and_slot_state() {
+        let mut mem = TestMem::new(0x1000);
+        let mem_size = mem.data.len() as u64;
+
+        let in_slot = 0x100u64;
+        let out_slot = 0x200u64;
+
+        let mut processor = CommandRingProcessor::new(
+            mem_size,
+            1,
+            0,
+            CommandRing::new(0),
+            EventRing::new(0, 0),
+        );
+
+        // Seed an output Slot Context with controller-owned fields set.
+        let out_address = 7u32;
+        let out_slot_state = 0b1_0101u32;
+        let out_dw3_other = 0x0123_4500u32;
+        let out_dw3 = out_dw3_other | (out_slot_state << 27) | out_address;
+
+        let mut out_ctx = SlotContext::default();
+        out_ctx.set_route_string(0x11111);
+        out_ctx.set_speed(3);
+        out_ctx.set_context_entries(5);
+        out_ctx.set_root_hub_port_number(9);
+        out_ctx.set_dword(3, out_dw3);
+        out_ctx.write_to(&mut mem, out_slot);
+
+        // Input Slot Context attempts to overwrite Speed / USB Device Address / Slot State.
+        let in_dw3_other = 0x0456_7800u32;
+        let in_dw3 = in_dw3_other | (0b0_0011u32 << 27) | 0x22;
+
+        let mut in_ctx = SlotContext::default();
+        in_ctx.set_route_string(0x22222);
+        in_ctx.set_speed(1);
+        in_ctx.set_context_entries(3);
+        in_ctx.set_root_hub_port_number(1);
+        in_ctx.set_dword(3, in_dw3);
+        in_ctx.write_to(&mut mem, in_slot);
+
+        processor
+            .copy_slot_context_preserve_state(&mut mem, in_slot, out_slot)
+            .expect("slot context copy should succeed");
+
+        let merged = SlotContext::read_from(&mut mem, out_slot);
+        assert_eq!(merged.route_string(), 0x22222);
+        assert_eq!(merged.context_entries(), 3);
+        assert_eq!(merged.root_hub_port_number(), 1);
+
+        // Controller-owned fields should be preserved from the existing output Slot Context.
+        assert_eq!(merged.speed(), 3);
+        let merged_dw3 = merged.dword(3);
+        assert_eq!(merged_dw3 & 0xff, out_address);
+        assert_eq!(merged_dw3 >> 27, out_slot_state);
+        // Remaining DW3 bits should come from the input context.
+        assert_eq!(
+            merged_dw3 & !SLOT_STATE_MASK_DWORD3,
+            in_dw3 & !SLOT_STATE_MASK_DWORD3
+        );
     }
 }
