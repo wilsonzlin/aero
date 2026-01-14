@@ -248,6 +248,7 @@ impl Bios {
         Ok((entry.load_segment, 0x0000))
     }
 
+    #[allow(dead_code)]
     pub(super) fn boot_eltorito_int19(
         &mut self,
         cpu: &mut CpuState,
