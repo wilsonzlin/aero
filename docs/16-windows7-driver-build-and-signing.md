@@ -189,6 +189,9 @@ When these signed packages are packaged into Guest Tools, dbgctl is shipped insi
 
 - `drivers/amd64/aerogpu/tools/win7_dbgctl/bin/aerogpu_dbgctl.exe`
 - `drivers/x86/aerogpu/tools/win7_dbgctl/bin/aerogpu_dbgctl.exe`
+  - Some Guest Tools builds also include a convenience copy in the optional top-level `tools/` payload (when present):
+    - `tools/aerogpu_dbgctl.exe`
+    - `tools/<arch>/aerogpu_dbgctl.exe`
 
 Bitness policy:
 
