@@ -4614,11 +4614,14 @@ def main() -> None:
             f"{virtio_input_inf_dir.as_posix()}: both virtio-input.inf and virtio-input.inf.disabled exist; keep only one to avoid multiple matching INFs."
         )
 
-    # Policy: `virtio-input.inf.disabled` is a legacy basename alias kept for compatibility.
-    # It is allowed to diverge from the canonical INF only in the models sections
-    # (`[Aero.NTx86]` / `[Aero.NTamd64]`) where it adds an opt-in strict generic
-    # fallback model entry (no SUBSYS). Outside those sections it must remain in sync.
-    if not virtio_input_alias_disabled.exists():
+    if virtio_input_alias_enabled.exists():
+        virtio_input_alias = virtio_input_alias_enabled
+    elif virtio_input_alias_disabled.exists():
+        virtio_input_alias = virtio_input_alias_disabled
+    else:
+        virtio_input_alias = None
+
+    if virtio_input_alias is None:
         errors.append(
             f"missing required legacy filename alias INF: {virtio_input_alias_disabled.as_posix()} (keep it checked in disabled-by-default; developers may locally enable it by renaming to virtio-input.inf)"
         )
@@ -4627,17 +4630,25 @@ def main() -> None:
         base_hwid = f"PCI\\VEN_{virtio_input_contract_any.vendor_id:04X}&DEV_{virtio_input_contract_any.device_id:04X}"
         strict_hwid = f"{base_hwid}&REV_{contract_rev:02X}"
 
+        # The legacy alias INF is kept for compatibility with workflows/tools that reference the
+        # legacy `virtio-input.inf` name.
+        #
+        # Policy: it is allowed to diverge from the canonical INF only in the models sections
+        # (`[Aero.NTx86]` / `[Aero.NTamd64]`) where it adds the opt-in strict, revision-gated
+        # generic fallback HWID (no SUBSYS). Outside those models sections it should stay in
+        # sync with the canonical INF.
         validate_virtio_input_model_lines(
-            inf_path=virtio_input_alias_disabled,
+            inf_path=virtio_input_alias,
             strict_hwid=strict_hwid,
             contract_rev=contract_rev,
             require_fallback=True,
             errors=errors,
         )
-
+        # The alias INF may differ in the models sections (it adds the generic fallback),
+        # but should otherwise stay in sync with the canonical INF.
         drift = check_inf_alias_drift_excluding_sections(
             canonical=virtio_input_canonical,
-            alias=virtio_input_alias_disabled,
+            alias=virtio_input_alias,
             repo_root=REPO_ROOT,
             label="virtio-input",
             drop_sections={"Aero.NTx86", "Aero.NTamd64"},
