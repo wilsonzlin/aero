@@ -4284,10 +4284,20 @@ FixedfuncStage0Src fixedfunc_decode_op_src(uint32_t op, uint32_t arg1, uint32_t 
     case kD3dTopModulate: {
       const FixedfuncStage0Src a1 = fixedfunc_decode_arg_src(arg1);
       const FixedfuncStage0Src a2 = fixedfunc_decode_arg_src(arg2);
-      // Minimal: only the common TEXTURE * DIFFUSE case.
+      // Common fixed-function cases:
+      // - TEXTURE * DIFFUSE
+      // - DIFFUSE * TEXTURE
+      // - DIFFUSE * DIFFUSE (no texture involvement)
+      // - TEXTURE * TEXTURE (approximate as texture-only)
       if ((a1 == FixedfuncStage0Src::Texture && a2 == FixedfuncStage0Src::Diffuse) ||
           (a1 == FixedfuncStage0Src::Diffuse && a2 == FixedfuncStage0Src::Texture)) {
         return FixedfuncStage0Src::Modulate;
+      }
+      if (a1 == FixedfuncStage0Src::Diffuse && a2 == FixedfuncStage0Src::Diffuse) {
+        return FixedfuncStage0Src::Diffuse;
+      }
+      if (a1 == FixedfuncStage0Src::Texture && a2 == FixedfuncStage0Src::Texture) {
+        return FixedfuncStage0Src::Texture;
       }
       // Unknown modulate source combination: best-effort fall back to texturing
       // when a texture is bound (fixed-function apps often assume stage0 texturing
