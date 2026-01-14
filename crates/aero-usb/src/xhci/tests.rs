@@ -1392,8 +1392,16 @@ fn snapshot_roundtrip_preserves_regs_ports_slots_and_device_tree() {
 
     assert_eq!(restored.port_count, 2);
     assert_eq!(restored.usbcmd, regs::USBCMD_RUN);
-    assert_eq!(restored.usbsts, ctrl.usbsts);
-    assert_eq!(restored.usbsts_read(), ctrl.usbsts_read());
+    // Snapshot/restore persists the software-visible USBSTS view (masked) and reconstructs derived
+    // bits (EINT/HCH/HCE) from the saved interrupter + error latches. The internal `usbsts` field
+    // therefore contains only the non-derived subset of USBSTS bits that are snapshotted.
+    let expected_usbsts = (ctrl.usbsts_read() & regs::USBSTS_SNAPSHOT_MASK)
+        & !(regs::USBSTS_EINT | regs::USBSTS_HCH | regs::USBSTS_HCE);
+    assert_eq!(restored.usbsts, expected_usbsts);
+    assert_eq!(
+        restored.usbsts_read() & regs::USBSTS_SNAPSHOT_MASK,
+        ctrl.usbsts_read() & regs::USBSTS_SNAPSHOT_MASK
+    );
     assert_eq!(restored.crcr, ctrl.crcr);
     assert_eq!(restored.dcbaap, 0xdead_beef_1000);
     assert_eq!(restored.config, ctrl.config);

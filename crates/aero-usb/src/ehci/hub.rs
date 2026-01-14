@@ -357,6 +357,24 @@ impl Port {
                 self.set_suspended(false);
             }
         }
+
+        // Device-initiated remote wakeup: if a suspended device requests wakeup, begin the EHCI
+        // resume signaling window. EHCI does not expose a dedicated "resume detect" status bit like
+        // UHCI, so we model remote wake as the port entering the same resume state software would
+        // request by setting PORTSC.FPR.
+        if self.enabled
+            && self.powered
+            && self.suspended
+            && !self.resuming
+            && !self.port_owner
+        {
+            if let Some(dev) = self.device.as_mut() {
+                if dev.model_mut().poll_remote_wakeup() {
+                    self.resuming = true;
+                    self.resume_countdown_ms = 20;
+                }
+            }
+        }
     }
 }
 
