@@ -596,6 +596,29 @@ test("AerogpuCmdWriter emits BIND_SHADERS extended packet with trailing gs/hs/ds
   assert.deepEqual(decoded.ex, { gs: 4, hs: 5, ds: 6 });
 });
 
+test("AerogpuCmdWriter.bindShadersHsDs emits an extended packet and leaves VS/PS/CS/GS unbound", () => {
+  const w = new AerogpuCmdWriter();
+  w.bindShadersHsDs(55, 66);
+
+  const bytes = w.finish();
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const pkt0 = AEROGPU_CMD_STREAM_HEADER_SIZE;
+
+  assert.equal(view.getUint32(pkt0 + AEROGPU_CMD_HDR_OFF_OPCODE, true), AerogpuCmdOpcode.BindShaders);
+  assert.equal(view.getUint32(pkt0 + AEROGPU_CMD_HDR_OFF_SIZE_BYTES, true), AEROGPU_CMD_BIND_SHADERS_EX_SIZE);
+
+  const decoded = decodeCmdBindShadersPayloadFromPacket({
+    opcode: AerogpuCmdOpcode.BindShaders,
+    sizeBytes: view.getUint32(pkt0 + AEROGPU_CMD_HDR_OFF_SIZE_BYTES, true),
+    payload: bytes.subarray(pkt0 + AEROGPU_CMD_HDR_SIZE, pkt0 + AEROGPU_CMD_BIND_SHADERS_EX_SIZE),
+  });
+  assert.equal(decoded.vs, 0);
+  assert.equal(decoded.ps, 0);
+  assert.equal(decoded.cs, 0);
+  assert.equal(decoded.reserved0, 0);
+  assert.deepEqual(decoded.ex, { gs: 0, hs: 55, ds: 66 });
+});
+
 test("AerogpuCmdWriter emits stage_ex binding packets (SET_CONSTANT_BUFFERS)", () => {
   const w = new AerogpuCmdWriter();
   w.setConstantBuffersEx(AerogpuShaderStageEx.Geometry, 0, [{ buffer: 99, offsetBytes: 16, sizeBytes: 64 }]);
