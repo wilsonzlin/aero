@@ -153,8 +153,10 @@ numbers are treated as not present. The host selects which medium firmware sees 
 `Machine::set_boot_drive(...)` + `Machine::reset()`).
 
 Boot selection note: `Machine` defaults to `boot_drive=0x80`. For install-media boot, callers
-should attach an ISO and set `Machine::set_boot_drive(0xE0)` **before** invoking
-`Machine::reset()`.
+should attach an ISO and select CD boot (`boot_drive=0xE0`) either:
+
+- at construction time via `MachineConfig::boot_drive` / `MachineConfig::win7_install_defaults(...)`, or
+- at runtime via `Machine::set_boot_drive(0xE0)` **before** invoking `Machine::reset()`.
 
 Relevant code:
 
