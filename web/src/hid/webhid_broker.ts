@@ -1108,10 +1108,9 @@ export class WebHidBroker {
     const ring = this.#outputRing;
     if (ring) {
       const stopAtTail = (() => {
-        const fallback = ring.debugState().tail;
+        const { head, tail, used } = ring.debugState();
         const stop = msg.outputRingTail;
-        if (stop === undefined) return fallback;
-        const { head, used } = ring.debugState();
+        if (stop === undefined) return tail;
         const dist = ((stop >>> 0) - head) >>> 0;
         // Only drain towards `stop` when it lies within the current [head, tail] window.
         // If the periodic drain loop has already consumed past this tail snapshot, draining further
@@ -1174,10 +1173,9 @@ export class WebHidBroker {
     const ring = this.#outputRing;
     if (ring) {
       const stopAtTail = (() => {
-        const fallback = ring.debugState().tail;
+        const { head, tail, used } = ring.debugState();
         const stop = msg.outputRingTail;
-        if (stop === undefined) return fallback;
-        const { head, used } = ring.debugState();
+        if (stop === undefined) return tail;
         const dist = ((stop >>> 0) - head) >>> 0;
         if (dist <= used) return stop >>> 0;
         return head;
