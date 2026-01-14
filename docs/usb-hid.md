@@ -149,6 +149,40 @@ Notes:
 
 ---
 
+## Consumer control (media keys): `KeyboardEvent.code` → HID Usage (Consumer page 0x0C)
+
+Some “media keys” are not part of the Keyboard/Keypad usage page (`0x07`). They live on the HID
+**Consumer** usage page (`0x0C`) and are exposed by browsers as `KeyboardEvent.code` values like:
+
+- `AudioVolumeUp`
+- `AudioVolumeDown`
+- `AudioVolumeMute`
+- `MediaPlayPause`
+- `MediaStop`
+- `MediaTrackNext`
+- `MediaTrackPrevious`
+
+Aero models these inputs using a dedicated USB HID **consumer-control** device model:
+
+- Rust: `crates/aero-usb/src/hid/consumer_control.rs` (`UsbHidConsumerControl`)
+  - Interrupt IN report format: **2 bytes**, little-endian `u16` usage ID (`0` = none pressed)
+
+Mapping helpers (keep in sync):
+
+- Rust: `crates/aero-usb/src/hid/usage.rs::keyboard_code_to_consumer_usage`
+- TypeScript: `web/src/input/hid_usage.ts::keyboardCodeToConsumerUsage`
+
+To prevent drift, the supported mapping set is pinned by:
+
+- `docs/fixtures/hid_usage_consumer.json`
+
+…and validated by tests on both sides:
+
+- Rust: `crates/aero-usb/tests/hid_usage_consumer_fixture.rs`
+- TypeScript: `web/src/input/hid_usage.test.ts`
+
+---
+
 ## Mouse: browser mouse events → HID usages and reports
 
 ### Buttons (`MouseEvent.buttons`)
