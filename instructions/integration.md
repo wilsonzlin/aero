@@ -53,16 +53,21 @@ This is the **coordination hub**. You wire together the work from all other work
 
 ### Known major gaps / limitations (please don’t rediscover these)
 
-- **No SMP scheduler yet (BSP-only execution)**:
-  The canonical integration loops (`aero_machine::Machine` / `aero_machine::pc::PcMachine`) still
-  execute only the BSP, and the underlying PC platform wiring (`aero_pc_platform::PcPlatform`) is
-  still BSP-centric (no AP bring-up/scheduling), so “enable SMP” is more than a config change.
-  `cpu_count` is **not** forced to 1 anymore: the BIOS will publish CPU topology via **ACPI MADT +
-  SMBIOS** for `cpu_count >= 1`, which is useful for SMP bring-up contract testing and topology
-  validation even before AP bring-up (INIT/SIPI/IPIs) + multi-vCPU execution land.
+- **SMP is still in bring-up (BSP-driven + partial AP execution; not a full SMP scheduler)**:
+  `cpu_count` is **not** forced to 1: firmware publishes CPU topology via **ACPI MADT + SMBIOS**
+  for `cpu_count >= 1`.
+  - `aero_machine::Machine` includes basic SMP plumbing (per-vCPU LAPIC MMIO + INIT/SIPI bring-up +
+    a bounded cooperative AP run loop inside `Machine::run_slice`; see
+    `crates/aero-machine/tests/ap_tsc_sipi_sync.rs`, `lapic_mmio_per_vcpu.rs`,
+    `ioapic_routes_to_apic1.rs`).
+  - `aero_machine::pc::PcMachine` / `aero_pc_platform::PcPlatform` remain **BSP-only execution**
+    today; `cpu_count > 1` there is still primarily for firmware-table enumeration tests.
+  Full SMP work remains substantial (stable multi-vCPU scheduling, per-vCPU interrupt injection, AP→BSP
+  IPI paths, and determinism/snapshot/time integration).
   - **Workaround (for real guest boots today):** keep `cpu_count = 1` and use snapshots for fast
     boot/dev workflows (see [`docs/16-snapshots.md`](../docs/16-snapshots.md)).
   - **Progress tracker / plan:** [`docs/21-smp.md`](../docs/21-smp.md)
+  See [`docs/09-bios-firmware.md#smp-boot-bsp--aps`](../docs/09-bios-firmware.md#smp-boot-bsp--aps).
 - **Virtio MSI-X is implemented in the transport and wired in `aero-pc-platform`, but still incomplete in `aero-machine`**:
   - Transport MSI-X support (table/PBA + vector programming): `crates/aero-virtio/src/pci.rs`.
   - `aero_pc_platform` wires MSI-X delivery via `PcPlatformConfig::enable_virtio_msix`,
@@ -204,7 +209,7 @@ relevant crates/tests.
 
 | ID | Task | Priority | Complexity | Notes / entry points |
 |----|------|----------|------------|----------------------|
-| MP-001 | SMP: run multiple vCPUs (scheduler + AP bring-up) | P0 | Very High | `cpu_count > 1` is already accepted and published for guest enumeration via **ACPI MADT + SMBIOS**, but the canonical machine loops still execute only the BSP. Remaining work is AP startup (INIT/SIPI), multi-vCPU scheduling/execution, per-vCPU interrupt delivery/IPI plumbing, and snapshot/time integration. |
+| MP-001 | SMP: run multiple vCPUs (make bring-up usable for real SMP guests) | P0 | Very High | `cpu_count > 1` is accepted and published via **ACPI MADT + SMBIOS**. `aero_machine::Machine` has basic SMP scaffolding (per-vCPU LAPIC MMIO, INIT/SIPI bring-up, and a cooperative AP run loop), but it is not yet a full SMP scheduler. Remaining work is robust multi-vCPU scheduling/execution (fairness/parallelism), AP↔AP/BSP IPI delivery from guest code, per-vCPU external interrupt injection, and snapshot/time determinism across multiple cores. |
 | MP-002 | MSI/MSI-X: unify config-state mirroring in canonical PCI integrations | P1 | High | Message delivery exists (`PlatformInterrupts::trigger_msi`) and is used by AHCI (MSI) + NVMe (MSI/MSI-X). The remaining integration pain is **keeping device-internal capability state coherent** with the canonical PCI config space (`PciConfigPorts`), especially for virtio MSI-X in `aero-machine` (VTP-009). |
 
 If you are looking for impactful integration/boot work today, focus on:

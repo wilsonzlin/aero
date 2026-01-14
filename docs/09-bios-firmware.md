@@ -196,13 +196,33 @@ cargo run -p firmware --bin gen_dsdt --locked
 
 ## Current limitations / known gaps
 
-- **SMP / multi-vCPU execution:** `MachineConfig::cpu_count` accepts values `>= 1`. When
-  `cpu_count > 1`, firmware will publish the configured CPU topology for **guest enumeration** via
-  **ACPI MADT + SMBIOS**. However, the canonical `aero_machine::Machine` execution loop is still
-  BSP-only today: AP bring-up (INIT/SIPI/IPIs), APIC IPI delivery, and the scheduler/vCPU threading
-  needed for true SMP are not wired end-to-end yet. See [`docs/21-smp.md`](./21-smp.md).
+- **SMP / multi-vCPU execution is still bring-up only (not a full SMP guest yet):**
+  `MachineConfig::cpu_count` accepts values `>= 1`. When `cpu_count > 1`, firmware publishes the
+  configured CPU topology for **guest enumeration** via **ACPI MADT + SMBIOS**.
+  `aero_machine::Machine` includes basic SMP plumbing (per-vCPU LAPIC state/MMIO + INIT/SIPI AP
+  bring-up + a cooperative AP run loop inside `Machine::run_slice`), but it is still **not** a full
+  SMP scheduler (no parallel execution, limited AP scheduling, many OS-level SMP paths untested).
+  See [`docs/21-smp.md`](./21-smp.md).
 
 ---
+
+## SMP boot (BSP + APs)
+
+On x86, application processors (APs) start in a reset/halted state and are brought online by the
+bootstrap processor (BSP) using **INIT + SIPI** (via the local APIC ICR).
+
+In Aero today:
+
+- Firmware publishes the CPU topology (MADT + SMBIOS) for `cpu_count >= 1`.
+- `aero_machine::Machine` instantiates a BSP (vCPU0) and AP `CpuCore`s and routes LAPIC MMIO
+  per-vCPU. The BSP can start APs by writing INIT/SIPI to the LAPIC ICR, and `Machine::run_slice`
+  will execute runnable APs in a simple bounded cooperative loop.
+
+Useful references/tests:
+
+- AP INIT/SIPI bring-up smoke test: `crates/aero-machine/tests/ap_tsc_sipi_sync.rs`
+- Per-vCPU LAPIC MMIO routing: `crates/aero-machine/tests/lapic_mmio_per_vcpu.rs`
+- IOAPIC destination routing to a non-BSP LAPIC: `crates/aero-machine/tests/ioapic_routes_to_apic1.rs`
 
 ## Tests to run while iterating on firmware/integration
 

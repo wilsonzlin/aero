@@ -132,10 +132,11 @@
 
 #### Multi-vCPU execution
 
-> **Current status:** the canonical in-tree machine/platform integrations are still **BSP-only
-> execution** (no SMP scheduler / AP bring-up yet). `cpu_count` may be configured `>= 1` so firmware
-> can publish SMP topology (ACPI/SMBIOS) for contract testing, but only vCPU0 executes today. The
-> multi-vCPU notes below are forward-looking; for the up-to-date bring-up plan and gap list see
+> **Current status:** `aero_machine::Machine` supports `cpu_count > 1` and includes basic SMP bring-up
+> plumbing (per-vCPU LAPIC state/MMIO, INIT/SIPI, and bounded cooperative AP execution inside
+> `Machine::run_slice`). This is sufficient for SMP contract/bring-up tests, but it is **not** a full
+> SMP scheduler or parallel vCPU execution environment yet. Other integrations (e.g. `PcMachine`)
+> still execute only the BSP. For the up-to-date bring-up plan and gap list see
 > [`docs/21-smp.md`](./21-smp.md) (and [`instructions/integration.md`](../instructions/integration.md)).
 
 To support SMP guests, the CPU emulation worker hosts **2+ vCPUs**:
