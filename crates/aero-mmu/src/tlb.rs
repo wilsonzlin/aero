@@ -39,7 +39,9 @@ pub(crate) enum TlbLookupPageSizes {
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct TlbEntry {
     vbase: u64,
-    pbase: u64,
+    /// Cached `pbase - vbase` (wrapping) so translation can use `vaddr + delta`
+    /// (wrapping) instead of `pbase + (vaddr - vbase)`.
+    paddr_delta: u64,
     page_size: PageSize,
     pub(crate) user: bool,
     pub(crate) writable: bool,
@@ -73,7 +75,7 @@ impl Default for TlbEntry {
     fn default() -> Self {
         Self {
             vbase: 0,
-            pbase: 0,
+            paddr_delta: 0,
             page_size: PageSize::Size4K,
             user: false,
             writable: false,
@@ -108,7 +110,7 @@ impl TlbEntry {
         } = attrs;
         Self {
             vbase,
-            pbase,
+            paddr_delta: pbase.wrapping_sub(vbase),
             page_size,
             user,
             writable,
@@ -125,8 +127,7 @@ impl TlbEntry {
     #[inline]
     pub(crate) fn translate(&self, vaddr: u64) -> u64 {
         debug_assert!(vaddr >= self.vbase);
-        let offset = vaddr - self.vbase;
-        self.pbase + offset
+        vaddr.wrapping_add(self.paddr_delta)
     }
 
     #[inline]
