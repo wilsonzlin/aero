@@ -682,6 +682,8 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
   private lastFetchAtMs: number | null = null;
   private lastFetchRange: ByteRange | null = null;
 
+  private activeReads = 0;
+
   private flushTimer: ReturnType<typeof setTimeout> | null = null;
   private flushPending = false;
   private readonly leaseRefresher: DiskAccessLeaseRefresher;
@@ -1059,6 +1061,8 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
   }
 
   async readSectors(lba: number, buffer: Uint8Array): Promise<void> {
+    this.activeReads += 1;
+    try {
     if (this.closed) throw new Error("RemoteRangeDisk is closed");
     if (this.invalidationPromise) {
       await this.invalidationPromise;
@@ -1159,6 +1163,16 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
     }
     this.touchMetaAfterRead(generation);
     this.scheduleReadAhead(offset, buffer.byteLength, endChunk);
+    } finally {
+      this.activeReads -= 1;
+      if (this.activeReads < 0) this.activeReads = 0;
+      // Once persistence is disabled, cached bytes are kept only for the duration of an active read
+      // (to satisfy multi-chunk reads + safe restarts). Do not retain an unbounded in-memory cache
+      // across the disk lifetime.
+      if (this.activeReads === 0 && this.persistentCacheWritesDisabled) {
+        this.inMemoryChunks.clear();
+      }
+    }
   }
 
   async writeSectors(_lba: number, _data: Uint8Array): Promise<void> {

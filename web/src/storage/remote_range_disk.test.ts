@@ -2014,12 +2014,13 @@ describe("RemoteRangeDisk", () => {
     expect(rangeGets).toBe(4);
     expect(disk.getTelemetrySnapshot().cacheLimitBytes).toBe(0);
 
-    // Once in memory mode, subsequent reads should not touch the sparse cache or re-download.
+    // Once in quota-disabled mode, subsequent reads should not touch the sparse cache and should
+    // re-download (network-only) instead of retaining an unbounded in-memory cache.
     const before = rangeGets;
     const again = new Uint8Array(chunkSize * 2);
     await disk.readSectors(0, again);
     expect(again).toEqual(data.subarray(0, again.byteLength));
-    expect(rangeGets).toBe(before);
+    expect(rangeGets).toBe(before + 2);
     expect(factory.lastCreated?.readCalls).toBe(1);
 
     await disk.close();
