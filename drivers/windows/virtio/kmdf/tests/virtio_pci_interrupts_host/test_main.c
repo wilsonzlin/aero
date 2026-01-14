@@ -971,6 +971,37 @@ static void TestMsixProgramConfigVectorReadbackFailure(void)
     UninstallCommonCfgQueueVectorWindowHooks();
 }
 
+static void TestMsixProgramVectorsInvalidParameters(void)
+{
+    volatile VIRTIO_PCI_COMMON_CFG commonCfg;
+    NTSTATUS st;
+
+    memset((void*)&commonCfg, 0, sizeof(commonCfg));
+
+    st = VirtioPciProgramMsixVectors(NULL, NULL, 0, 0, NULL);
+    assert(st == STATUS_INVALID_PARAMETER);
+
+    st = VirtioPciProgramMsixVectors(&commonCfg, NULL, 1 /* queueCount */, 0 /* configVector */, NULL /* queueVectors */);
+    assert(st == STATUS_INVALID_PARAMETER);
+}
+
+static void TestInterruptsProgramMsixVectorsNonMsixIsNoop(void)
+{
+    VIRTIO_PCI_INTERRUPTS interrupts;
+    WDFDEVICE dev;
+    TEST_CALLBACKS cb;
+    volatile UCHAR isrStatus;
+    NTSTATUS st;
+
+    isrStatus = 0;
+    PrepareIntx(&interrupts, &dev, &cb, 2, &isrStatus);
+
+    st = VirtioPciInterruptsProgramMsixVectors(&interrupts, NULL);
+    assert(st == STATUS_SUCCESS);
+
+    Cleanup(&interrupts, dev);
+}
+
 static void TestResetInProgressGating(void)
 {
     VIRTIO_PCI_INTERRUPTS interrupts;
@@ -1519,6 +1550,8 @@ int main(void)
     TestMsixSingleVectorQuiesceResumeVectors();
     TestMsixProgramQueueVectorReadbackFailure();
     TestMsixProgramConfigVectorReadbackFailure();
+    TestMsixProgramVectorsInvalidParameters();
+    TestInterruptsProgramMsixVectorsNonMsixIsNoop();
     TestResetInProgressGating();
     TestMsixQuiesceResumeVectors();
     TestMsixQuiesceWithoutCommonCfgReturnsError();
