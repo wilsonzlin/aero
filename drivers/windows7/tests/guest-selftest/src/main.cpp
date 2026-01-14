@@ -9559,11 +9559,13 @@ static VirtioSndBufferLimitsTestResult VirtioSndBufferLimitsTest(Logger& log,
   DWORD thread_id = 0;
   HANDLE thread = CreateThread(nullptr, 0, VirtioSndBufferLimitsThreadProc, &ctx, 0, &thread_id);
   if (!thread) {
+    // Preserve the CreateThread() failure code before closing handles (CloseHandle may clobber LastError).
+    const DWORD err = GetLastError();
     CloseHandle(ctx.done_event);
     VirtioSndBufferLimitsTestResult out{};
     out.ok = false;
     out.fail_reason = "create_thread_failed";
-    out.hr = HRESULT_FROM_WIN32(GetLastError());
+    out.hr = HRESULT_FROM_WIN32(err);
     out.init_hr = out.hr;
     return out;
   }
