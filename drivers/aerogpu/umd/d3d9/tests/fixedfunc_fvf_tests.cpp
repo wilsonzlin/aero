@@ -6618,6 +6618,227 @@ bool TestStage0CurrentCanonicalizesToDiffuse() {
   return Check(ps_current == ps_diffuse, "CURRENT canonicalizes to DIFFUSE (reuse cached PS)");
 }
 
+bool TestStage0NoTextureCanonicalizesAndReusesShader() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  dev->cmd.reset();
+
+  // Use a TEX1 FVF so stage0 state changes are expected to influence PS selection
+  // when fixed-function is active.
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzrhwDiffuseTex1);
+  if (!Check(hr == S_OK, "SetFVF(XYZRHW|DIFFUSE|TEX1)")) {
+    return false;
+  }
+
+  // Explicitly clear texture0 so any stage0 state that references TEXTURE is
+  // canonicalized to DISABLE at draw time.
+  {
+    D3DDDI_HRESOURCE null_tex{};
+    hr = cleanup.device_funcs.pfnSetTexture(cleanup.hDevice, /*stage=*/0, null_tex);
+    if (!Check(hr == S_OK, "SetTexture(stage0=null)")) {
+      return false;
+    }
+  }
+
+  const auto SetTextureStageState = [&](uint32_t stage, uint32_t state, uint32_t value, const char* msg) -> bool {
+    HRESULT hr2 = S_OK;
+    if (cleanup.device_funcs.pfnSetTextureStageState) {
+      hr2 = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, stage, state, value);
+    } else {
+      hr2 = aerogpu::device_set_texture_stage_state(cleanup.hDevice, stage, state, value);
+    }
+    return Check(hr2 == S_OK, msg);
+  };
+
+  // Start from a supported stage0 state that would normally require sampling texture0.
+  if (!SetTextureStageState(0, kD3dTssColorOp, kD3dTopModulate, "SetTextureStageState(COLOROP=MODULATE)")) {
+    return false;
+  }
+  if (!SetTextureStageState(0, kD3dTssColorArg1, kD3dTaTexture, "SetTextureStageState(COLORARG1=TEXTURE)")) {
+    return false;
+  }
+  if (!SetTextureStageState(0, kD3dTssColorArg2, kD3dTaDiffuse, "SetTextureStageState(COLORARG2=DIFFUSE)")) {
+    return false;
+  }
+  if (!SetTextureStageState(0, kD3dTssAlphaOp, kD3dTopSelectArg1, "SetTextureStageState(ALPHAOP=SELECTARG1)")) {
+    return false;
+  }
+  if (!SetTextureStageState(0, kD3dTssAlphaArg1, kD3dTaTexture, "SetTextureStageState(ALPHAARG1=TEXTURE)")) {
+    return false;
+  }
+
+  const VertexXyzrhwDiffuseTex1 tri[3] = {
+      {0.0f, 0.0f, 0.0f, 1.0f, 0xFFFFFFFFu, 0.0f, 0.0f},
+      {1.0f, 0.0f, 0.0f, 1.0f, 0xFFFFFFFFu, 1.0f, 0.0f},
+      {0.0f, 1.0f, 0.0f, 1.0f, 0xFFFFFFFFu, 0.0f, 1.0f},
+  };
+
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzrhwDiffuseTex1));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(stage0 no texture; initial)")) {
+    return false;
+  }
+
+  Shader* initial_ps = nullptr;
+  size_t initial_sig_cache_size = 0;
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    initial_ps = dev->ps;
+    initial_sig_cache_size = dev->fixedfunc_stage0_ps_variant_cache.size();
+    if (!Check(initial_ps != nullptr, "PS bound after initial no-texture draw")) {
+      return false;
+    }
+    if (!Check(!ShaderContainsToken(initial_ps, kPsOpTexld), "no-texture stage0 canonicalizes (no texld)")) {
+      return false;
+    }
+  }
+
+  // Isolate stage-state-driven changes. With texture0 still null, changing stage0
+  // state should *not* create a new PS variant (canonicalized to DISABLE).
+  dev->cmd.reset();
+
+  if (!SetTextureStageState(0, kD3dTssColorOp, kD3dTopAdd, "SetTextureStageState(COLOROP=ADD)")) {
+    return false;
+  }
+  if (!SetTextureStageState(0, kD3dTssAlphaOp, kD3dTopDisable, "SetTextureStageState(ALPHAOP=DISABLE)")) {
+    return false;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->ps == initial_ps, "PS unchanged after stage0 state change (texture0 null)")) {
+      return false;
+    }
+    if (!Check(dev->fixedfunc_stage0_ps_variant_cache.size() == initial_sig_cache_size,
+               "stage0 signature cache size unchanged (texture0 null)")) {
+      return false;
+    }
+  }
+
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzrhwDiffuseTex1));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(stage0 no texture; after state change)")) {
+    return false;
+  }
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->ps == initial_ps, "PS unchanged after draw (texture0 null)")) {
+      return false;
+    }
+    if (!Check(!ShaderContainsToken(dev->ps, kPsOpTexld), "still no texld after stage0 state change")) {
+      return false;
+    }
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(stage0 no-texture canonicalization)")) {
+    return false;
+  }
+  // With shaders already created by the initial draw, changing stage state (while
+  // texture0 is still null) must not trigger shader creation.
+  return Check(CountOpcode(buf, len, AEROGPU_CMD_CREATE_SHADER_DXBC) == 0,
+               "no CREATE_SHADER_DXBC emitted for stage0 changes with texture0 null");
+}
+
+bool TestStage0UnsupportedArgFailsAtDraw() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  dev->cmd.reset();
+
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzrhwDiffuseTex1);
+  if (!Check(hr == S_OK, "SetFVF(XYZRHW|DIFFUSE|TEX1)")) {
+    return false;
+  }
+
+  D3DDDI_HRESOURCE hTex{};
+  if (!CreateDummyTexture(&cleanup, &hTex)) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTexture(cleanup.hDevice, /*stage=*/0, hTex);
+  if (!Check(hr == S_OK, "SetTexture(stage0)")) {
+    return false;
+  }
+
+  const auto SetTextureStageState = [&](uint32_t stage, uint32_t state, uint32_t value, const char* msg) -> bool {
+    HRESULT hr2 = S_OK;
+    if (cleanup.device_funcs.pfnSetTextureStageState) {
+      hr2 = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, stage, state, value);
+    } else {
+      hr2 = aerogpu::device_set_texture_stage_state(cleanup.hDevice, stage, state, value);
+    }
+    return Check(hr2 == S_OK, msg);
+  };
+
+  // First, draw once with a supported stage0 state to establish a baseline and
+  // ensure shaders are created.
+  if (!SetTextureStageState(0, kD3dTssColorOp, kD3dTopModulate, "SetTextureStageState(COLOROP=MODULATE)")) {
+    return false;
+  }
+  if (!SetTextureStageState(0, kD3dTssColorArg1, kD3dTaTexture, "SetTextureStageState(COLORARG1=TEXTURE)")) {
+    return false;
+  }
+  if (!SetTextureStageState(0, kD3dTssColorArg2, kD3dTaDiffuse, "SetTextureStageState(COLORARG2=DIFFUSE)")) {
+    return false;
+  }
+  if (!SetTextureStageState(0, kD3dTssAlphaOp, kD3dTopSelectArg1, "SetTextureStageState(ALPHAOP=SELECTARG1)")) {
+    return false;
+  }
+  if (!SetTextureStageState(0, kD3dTssAlphaArg1, kD3dTaTexture, "SetTextureStageState(ALPHAARG1=TEXTURE)")) {
+    return false;
+  }
+
+  const VertexXyzrhwDiffuseTex1 tri[3] = {
+      {0.0f, 0.0f, 0.0f, 1.0f, 0xFFFFFFFFu, 0.0f, 0.0f},
+      {1.0f, 0.0f, 0.0f, 1.0f, 0xFFFFFFFFu, 1.0f, 0.0f},
+      {0.0f, 1.0f, 0.0f, 1.0f, 0xFFFFFFFFu, 0.0f, 1.0f},
+  };
+
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzrhwDiffuseTex1));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(baseline stage0 supported)")) {
+    return false;
+  }
+
+  // Now set an unsupported stage0 argument. State setting must succeed (cached
+  // for Get*/state blocks), but draws must fail cleanly with INVALIDCALL and must
+  // not emit commands.
+  if (!SetTextureStageState(0, kD3dTssColorOp, kD3dTopSelectArg1, "SetTextureStageState(COLOROP=SELECTARG1)")) {
+    return false;
+  }
+  if (!SetTextureStageState(0, kD3dTssColorArg1, kD3dTaSpecular, "SetTextureStageState(COLORARG1=SPECULAR) succeeds")) {
+    return false;
+  }
+  if (!SetTextureStageState(0, kD3dTssAlphaOp, kD3dTopDisable, "SetTextureStageState(ALPHAOP=DISABLE)")) {
+    return false;
+  }
+
+  const size_t before_bad_draw = dev->cmd.bytes_used();
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzrhwDiffuseTex1));
+  if (!Check(hr == D3DERR_INVALIDCALL, "DrawPrimitiveUP(unsupported stage0 arg) => D3DERR_INVALIDCALL")) {
+    return false;
+  }
+  return Check(dev->cmd.bytes_used() == before_bad_draw, "unsupported stage0 arg draw emits no new commands");
+}
+
 bool TestTextureFactorRenderStateUpdatesPsConstantWhenUsed() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -7171,6 +7392,12 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestStage0CurrentCanonicalizesToDiffuse()) {
+    return 1;
+  }
+  if (!aerogpu::TestStage0NoTextureCanonicalizesAndReusesShader()) {
+    return 1;
+  }
+  if (!aerogpu::TestStage0UnsupportedArgFailsAtDraw()) {
     return 1;
   }
   if (!aerogpu::TestTextureFactorRenderStateUpdatesPsConstantWhenUsed()) {
