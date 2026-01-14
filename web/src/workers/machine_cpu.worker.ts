@@ -771,13 +771,22 @@ async function applyBootDisks(msg: SetBootDisksMessage): Promise<void> {
   }
 
   if (changed) {
-    const setBootDrive = (m as unknown as { set_boot_drive?: unknown }).set_boot_drive;
-    if (typeof setBootDrive !== "function") {
-      if (msg.cd) {
-        throw new Error("Machine.set_boot_drive is unavailable in this WASM build; cannot boot from install media.");
+    const setBootDevice = (m as unknown as { set_boot_device?: unknown }).set_boot_device;
+    const enumObj = wasmApi?.MachineBootDevice;
+    if (typeof setBootDevice === "function" && enumObj) {
+      const value = msg.cd ? enumObj.Cdrom : enumObj.Hdd;
+      if (typeof value === "number") {
+        (setBootDevice as (device: number) => void).call(m, value);
       }
     } else {
-      (setBootDrive as (drive: number) => void).call(m, desiredBootDrive);
+      const setBootDrive = (m as unknown as { set_boot_drive?: unknown }).set_boot_drive;
+      if (typeof setBootDrive !== "function") {
+        if (msg.cd) {
+          throw new Error("Machine.set_boot_drive is unavailable in this WASM build; cannot boot from install media.");
+        }
+      } else {
+        (setBootDrive as (drive: number) => void).call(m, desiredBootDrive);
+      }
     }
 
     try {

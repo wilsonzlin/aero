@@ -3767,7 +3767,17 @@ impl Machine {
         }
     }
 
-    pub fn new(cfg: MachineConfig) -> Result<Self, MachineError> {
+    pub fn new(mut cfg: MachineConfig) -> Result<Self, MachineError> {
+        // Keep the high-level `boot_device` field consistent with the raw BIOS boot drive number.
+        //
+        // `boot_drive` remains the canonical input for backward compatibility, but `boot_device` is
+        // exposed for runtimes that want a simple HDD-vs-CD query without dealing with drive numbers.
+        cfg.boot_device = if (0xE0..=0xEF).contains(&cfg.boot_drive) {
+            BootDevice::Cdrom
+        } else {
+            BootDevice::Hdd
+        };
+
         Self::validate_cfg(&cfg)?;
 
         let chipset = ChipsetState::new(false);
@@ -3788,6 +3798,11 @@ impl Machine {
         backing: Box<dyn memory::GuestMemory>,
     ) -> Result<Self, MachineError> {
         cfg.ram_size_bytes = backing.size();
+        cfg.boot_device = if (0xE0..=0xEF).contains(&cfg.boot_drive) {
+            BootDevice::Cdrom
+        } else {
+            BootDevice::Hdd
+        };
         Self::validate_cfg(&cfg)?;
 
         let chipset = ChipsetState::new(false);
