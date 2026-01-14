@@ -76,4 +76,36 @@ describe("runtime/wasm_loader (Machine constructor typings)", () => {
 
     expect(true).toBe(true);
   });
+
+  it("requires feature detection for optional Machine.new_with_options", () => {
+    type Machine = InstanceType<WasmApi["Machine"]>;
+    type MachineCtor = WasmApi["Machine"];
+
+    const machine = {
+      free: () => {},
+    } as unknown as Machine;
+
+    const machineCtor = {
+      new_with_options: (_ramSizeBytes: number, _options?: unknown) => machine,
+    } as unknown as MachineCtor;
+
+    function assertStrictNullChecksEnforced() {
+      // @ts-expect-error new_with_options may be undefined
+      machineCtor.new_with_options(2 * 1024 * 1024);
+      // @ts-expect-error ramSizeBytes must be a number
+      machineCtor.new_with_options?.("2");
+      // @ts-expect-error options must be an object/null/undefined
+      machineCtor.new_with_options?.(2 * 1024 * 1024, 1);
+      // @ts-expect-error enable_aerogpu must be boolean
+      machineCtor.new_with_options?.(2 * 1024 * 1024, { enable_aerogpu: 1 });
+    }
+    void assertStrictNullChecksEnforced;
+
+    if (machineCtor.new_with_options) {
+      const m = machineCtor.new_with_options(2 * 1024 * 1024, { enable_aerogpu: true });
+      m.free();
+    }
+
+    expect(true).toBe(true);
+  });
 });

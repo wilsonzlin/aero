@@ -1070,6 +1070,37 @@ export type VirtioSndPciBridgeHandle = {
     free(): void;
 };
 
+/**
+ * Options object accepted by `api.Machine.new_with_options(...)`.
+ *
+ * Keys use the wasm-bindgen/Rust snake_case naming (matching `MachineConfig` field names).
+ *
+ * Note: this type includes an index signature so callers can pass forward-compatible keys without
+ * TypeScript rejecting them. Known keys are typed precisely.
+ */
+export interface MachineOptions {
+    [key: string]: unknown;
+    enable_pc_platform?: boolean;
+    enable_acpi?: boolean;
+    enable_e1000?: boolean;
+    enable_virtio_net?: boolean;
+    enable_virtio_blk?: boolean;
+    enable_virtio_input?: boolean;
+    enable_ahci?: boolean;
+    enable_nvme?: boolean;
+    enable_ide?: boolean;
+    enable_uhci?: boolean;
+    enable_ehci?: boolean;
+    enable_xhci?: boolean;
+    enable_synthetic_usb_hid?: boolean;
+    enable_vga?: boolean;
+    enable_aerogpu?: boolean;
+    enable_serial?: boolean;
+    enable_i8042?: boolean;
+    enable_a20_gate?: boolean;
+    enable_reset_ctrl?: boolean;
+}
+
 export interface WasmApi {
     greet(name: string): string;
     add(a: number, b: number): number;
@@ -2039,7 +2070,7 @@ export interface WasmApi {
          *
          * Optional for older WASM builds.
          */
-        new_with_options?: (ramSizeBytes: number, options?: unknown) => MachineHandle;
+        new_with_options?: (ramSizeBytes: number, options?: MachineOptions | null) => MachineHandle;
         /**
          * Construct a machine backed by shared guest RAM (see {@link guest_ram_layout}).
          *
