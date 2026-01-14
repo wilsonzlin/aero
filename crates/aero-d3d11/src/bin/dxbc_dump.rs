@@ -106,6 +106,7 @@ fn real_main() -> anyhow::Result<()> {
         shader_chunk.fourcc,
         shader_chunk.data.len()
     );
+    let mut shader_bytes = shader_chunk.data;
     println!("first {head_dwords} dwords:");
     for (idx, dword_bytes) in shader_chunk
         .data
@@ -121,15 +122,18 @@ fn real_main() -> anyhow::Result<()> {
         ]);
         println!("  [{idx:04}] 0x{v:08x}");
     }
-    if !shader_chunk.data.len().is_multiple_of(4) {
+    if !shader_bytes.len().is_multiple_of(4) {
+        let truncated_len = shader_bytes.len() & !3;
         println!(
-            "  (note: shader chunk length {} is not a multiple of 4; trailing bytes ignored)",
-            shader_chunk.data.len()
+            "  (warning: shader chunk length {} is not a multiple of 4; truncating to {} bytes)",
+            shader_chunk.data.len(),
+            truncated_len
         );
+        shader_bytes = &shader_bytes[..truncated_len];
     }
 
     println!();
-    let program = Sm4Program::parse_program_tokens(shader_chunk.data).with_context(|| {
+    let program = Sm4Program::parse_program_tokens(shader_bytes).with_context(|| {
         format!(
             "failed to parse SM4/SM5 token stream from {}",
             shader_chunk.fourcc
@@ -142,7 +146,7 @@ fn real_main() -> anyhow::Result<()> {
     println!(
         "declared length: {} dwords (available {})",
         program.tokens.len(),
-        shader_chunk.data.len() / 4
+        shader_bytes.len() / 4
     );
 
     println!();

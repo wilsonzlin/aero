@@ -355,7 +355,9 @@ fn translate_cs(
                     reg: decl_reg,
                     mask,
                     sys_value,
-                } if decl_reg == reg && compute_sys_value_from_d3d_name(*sys_value) == Some(*siv) => {
+                } if decl_reg == reg
+                    && compute_sys_value_from_d3d_name(*sys_value) == Some(*siv) =>
+                {
                     Some(mask.0)
                 }
                 _ => None,
@@ -524,7 +526,9 @@ fn translate_ps(
     w.indent();
     for p in &ps_targets {
         let location = p.param.semantic_index;
-        w.line(&format!("@location({location}) target{location}: vec4<f32>,"));
+        w.line(&format!(
+            "@location({location}) target{location}: vec4<f32>,"
+        ));
     }
     if ps_has_depth_output {
         w.line("@builtin(frag_depth) depth: f32,");
@@ -986,16 +990,10 @@ fn scan_used_input_registers(module: &Sm4Module) -> BTreeSet<u32> {
                 scan_src_regs(base, &mut scan_reg);
             }
             Sm4Inst::Ubfe {
-                width,
-                offset,
-                src,
-                ..
+                width, offset, src, ..
             }
             | Sm4Inst::Ibfe {
-                width,
-                offset,
-                src,
-                ..
+                width, offset, src, ..
             } => {
                 scan_src_regs(width, &mut scan_reg);
                 scan_src_regs(offset, &mut scan_reg);
@@ -1009,9 +1007,7 @@ fn scan_used_input_registers(module: &Sm4Module) -> BTreeSet<u32> {
             | Sm4Inst::FirstbitHi { dst: _, src }
             | Sm4Inst::FirstbitLo { dst: _, src }
             | Sm4Inst::FirstbitShi { dst: _, src }
-            | Sm4Inst::INeg { dst: _, src } => {
-                scan_src_regs(src, &mut scan_reg)
-            }
+            | Sm4Inst::INeg { dst: _, src } => scan_src_regs(src, &mut scan_reg),
             Sm4Inst::Cmp { a, b, .. } => {
                 scan_src_regs(a, &mut scan_reg);
                 scan_src_regs(b, &mut scan_reg);
@@ -1392,7 +1388,8 @@ impl IoMaps {
                     register: depth_reg,
                 },
             )?;
-            let depth_expr = apply_sig_mask_to_scalar(&format!("o{depth_reg}"), depth_param.param.mask);
+            let depth_expr =
+                apply_sig_mask_to_scalar(&format!("o{depth_reg}"), depth_param.param.mask);
             w.line(&format!("out.depth = {depth_expr};"));
         }
         w.line("return out;");
@@ -1743,7 +1740,8 @@ fn is_sv_depth(name: &str) -> bool {
 }
 
 fn is_sv_depth_greater_equal(name: &str) -> bool {
-    name.eq_ignore_ascii_case("SV_DepthGreaterEqual") || name.eq_ignore_ascii_case("SV_DEPTHGREATEREQUAL")
+    name.eq_ignore_ascii_case("SV_DepthGreaterEqual")
+        || name.eq_ignore_ascii_case("SV_DEPTHGREATEREQUAL")
 }
 
 fn is_sv_depth_less_equal(name: &str) -> bool {
@@ -2744,72 +2742,74 @@ fn emit_instructions(
         Ok(())
     };
 
-    let flush_pending_labels =
-        |w: &mut WgslWriter, cf_stack: &mut Vec<CfFrame>, inst_index: usize| -> Result<(), ShaderTranslateError> {
-            let pending_labels = match cf_stack.last_mut() {
-                Some(CfFrame::Switch(sw)) => {
-                    if sw.pending_labels.is_empty() {
-                        // Inside a switch but not in a case block. Non-label instructions here are
-                        // invalid.
-                        return Err(ShaderTranslateError::UnsupportedInstruction {
-                            inst_index,
-                            opcode: "switch_body_without_case".to_owned(),
-                        });
-                    }
-                    std::mem::take(&mut sw.pending_labels)
+    let flush_pending_labels = |w: &mut WgslWriter,
+                                cf_stack: &mut Vec<CfFrame>,
+                                inst_index: usize|
+     -> Result<(), ShaderTranslateError> {
+        let pending_labels = match cf_stack.last_mut() {
+            Some(CfFrame::Switch(sw)) => {
+                if sw.pending_labels.is_empty() {
+                    // Inside a switch but not in a case block. Non-label instructions here are
+                    // invalid.
+                    return Err(ShaderTranslateError::UnsupportedInstruction {
+                        inst_index,
+                        opcode: "switch_body_without_case".to_owned(),
+                    });
                 }
-                _ => return Ok(()),
-            };
-
-            let mut case_values = Vec::<i32>::new();
-            let mut has_default = false;
-            for lbl in &pending_labels {
-                match *lbl {
-                    SwitchLabel::Case(v) => case_values.push(v),
-                    SwitchLabel::Default => has_default = true,
-                }
+                std::mem::take(&mut sw.pending_labels)
             }
+            _ => return Ok(()),
+        };
 
-            let last_label = *pending_labels.last().expect("pending_labels non-empty");
+        let mut case_values = Vec::<i32>::new();
+        let mut has_default = false;
+        for lbl in &pending_labels {
+            match *lbl {
+                SwitchLabel::Case(v) => case_values.push(v),
+                SwitchLabel::Default => has_default = true,
+            }
+        }
 
-            // If the label set contains a default label, we may need an extra fallthrough stub, since
-            // WGSL can't combine `default` with `case` selectors in a single clause.
-            match (has_default, last_label) {
-                (false, _) => {
+        let last_label = *pending_labels.last().expect("pending_labels non-empty");
+
+        // If the label set contains a default label, we may need an extra fallthrough stub, since
+        // WGSL can't combine `default` with `case` selectors in a single clause.
+        match (has_default, last_label) {
+            (false, _) => {
+                let selectors = fmt_case_values(&case_values);
+                w.line(&format!("case {selectors}: {{"));
+                w.indent();
+                cf_stack.push(CfFrame::Case(CaseFrame::default()));
+            }
+            (true, SwitchLabel::Default) => {
+                if !case_values.is_empty() {
                     let selectors = fmt_case_values(&case_values);
                     w.line(&format!("case {selectors}: {{"));
-                    w.indent();
-                    cf_stack.push(CfFrame::Case(CaseFrame::default()));
-                }
-                (true, SwitchLabel::Default) => {
-                    if !case_values.is_empty() {
-                        let selectors = fmt_case_values(&case_values);
-                        w.line(&format!("case {selectors}: {{"));
-                        w.indent();
-                        w.line("fallthrough;");
-                        w.dedent();
-                        w.line("}");
-                    }
-                    w.line("default: {");
-                    w.indent();
-                    cf_stack.push(CfFrame::Case(CaseFrame::default()));
-                }
-                (true, SwitchLabel::Case(_)) => {
-                    // Emit the default fallthrough stub first so it can reach the case body.
-                    w.line("default: {");
                     w.indent();
                     w.line("fallthrough;");
                     w.dedent();
                     w.line("}");
-                    let selectors = fmt_case_values(&case_values);
-                    w.line(&format!("case {selectors}: {{"));
-                    w.indent();
-                    cf_stack.push(CfFrame::Case(CaseFrame::default()));
                 }
+                w.line("default: {");
+                w.indent();
+                cf_stack.push(CfFrame::Case(CaseFrame::default()));
             }
+            (true, SwitchLabel::Case(_)) => {
+                // Emit the default fallthrough stub first so it can reach the case body.
+                w.line("default: {");
+                w.indent();
+                w.line("fallthrough;");
+                w.dedent();
+                w.line("}");
+                let selectors = fmt_case_values(&case_values);
+                w.line(&format!("case {selectors}: {{"));
+                w.indent();
+                cf_stack.push(CfFrame::Case(CaseFrame::default()));
+            }
+        }
 
-            Ok(())
-        };
+        Ok(())
+    };
 
     // Structured buffer access (`*_structured`) requires the element stride in bytes, which is
     // provided via `dcl_resource_structured` / `dcl_uav_structured`. Collect those declarations so
@@ -3311,10 +3311,7 @@ fn emit_instructions(
                         "bitcast<f32>(insertBits({base_u}, {insert_u}, {offset_u}, {count_u}))"
                     ));
                 }
-                let expr = format!(
-                    "vec4<f32>({}, {}, {}, {})",
-                    out[0], out[1], out[2], out[3]
-                );
+                let expr = format!("vec4<f32>({}, {}, {}, {})", out[0], out[1], out[2], out[3]);
                 emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "bfi", ctx)?;
             }
             Sm4Inst::Ubfe {
@@ -3337,10 +3334,7 @@ fn emit_instructions(
                         "bitcast<f32>(extractBits({src_u}, {offset_u}, {count_u}))"
                     ));
                 }
-                let expr = format!(
-                    "vec4<f32>({}, {}, {}, {})",
-                    out[0], out[1], out[2], out[3]
-                );
+                let expr = format!("vec4<f32>({}, {}, {}, {})", out[0], out[1], out[2], out[3]);
                 emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "ubfe", ctx)?;
             }
             Sm4Inst::Ibfe {
@@ -3364,10 +3358,7 @@ fn emit_instructions(
                         "bitcast<f32>(extractBits({src_s}, {offset_u}, {count_u}))"
                     ));
                 }
-                let expr = format!(
-                    "vec4<f32>({}, {}, {}, {})",
-                    out[0], out[1], out[2], out[3]
-                );
+                let expr = format!("vec4<f32>({}, {}, {}, {})", out[0], out[1], out[2], out[3]);
                 emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "ibfe", ctx)?;
             }
             Sm4Inst::Cmp { dst, a, b, op, ty } => {
@@ -3516,7 +3507,9 @@ fn emit_instructions(
                     load_lane(8, 3),
                 ));
                 let f_name = format!("ld_raw_f{inst_index}");
-                w.line(&format!("let {f_name}: vec4<f32> = bitcast<vec4<f32>>({u_name});"));
+                w.line(&format!(
+                    "let {f_name}: vec4<f32> = bitcast<vec4<f32>>({u_name});"
+                ));
 
                 let expr = maybe_saturate(dst, f_name);
                 emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "ld_raw", ctx)?;
@@ -3544,7 +3537,12 @@ fn emit_instructions(
                 let value_name = format!("store_raw_val{inst_index}");
                 w.line(&format!("let {value_name}: vec4<u32> = {value_u};"));
 
-                let comps = [('x', 1u8, 0u32), ('y', 2u8, 1), ('z', 4u8, 2), ('w', 8u8, 3)];
+                let comps = [
+                    ('x', 1u8, 0u32),
+                    ('y', 2u8, 1),
+                    ('z', 4u8, 2),
+                    ('w', 8u8, 3),
+                ];
                 for (c, bit, offset) in comps {
                     if (mask_bits & bit) != 0 {
                         w.line(&format!(
@@ -3598,18 +3596,12 @@ fn emit_instructions(
                     load_lane(8, 3),
                 ));
                 let f_name = format!("ld_struct_f{inst_index}");
-                w.line(&format!("let {f_name}: vec4<f32> = bitcast<vec4<f32>>({u_name});"));
+                w.line(&format!(
+                    "let {f_name}: vec4<f32> = bitcast<vec4<f32>>({u_name});"
+                ));
 
                 let expr = maybe_saturate(dst, f_name);
-                emit_write_masked(
-                    w,
-                    dst.reg,
-                    dst.mask,
-                    expr,
-                    inst_index,
-                    "ld_structured",
-                    ctx,
-                )?;
+                emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "ld_structured", ctx)?;
             }
             Sm4Inst::StoreStructured {
                 uav,
@@ -3650,7 +3642,12 @@ fn emit_instructions(
                 let value_name = format!("store_struct_val{inst_index}");
                 w.line(&format!("let {value_name}: vec4<u32> = {value_u};"));
 
-                let comps = [('x', 1u8, 0u32), ('y', 2u8, 1), ('z', 4u8, 2), ('w', 8u8, 3)];
+                let comps = [
+                    ('x', 1u8, 0u32),
+                    ('y', 2u8, 1),
+                    ('z', 4u8, 2),
+                    ('w', 8u8, 3),
+                ];
                 for (c, bit, offset) in comps {
                     if (mask_bits & bit) != 0 {
                         w.line(&format!(
@@ -3762,9 +3759,9 @@ fn emit_instructions(
                     }
                 }
             }
-            Sm4Inst::Case { .. } | Sm4Inst::Default | Sm4Inst::EndSwitch => unreachable!(
-                "switch label instructions handled at top of loop"
-            ),
+            Sm4Inst::Case { .. } | Sm4Inst::Default | Sm4Inst::EndSwitch => {
+                unreachable!("switch label instructions handled at top of loop")
+            }
         }
     }
 
@@ -4478,7 +4475,11 @@ mod tests {
         }
     }
 
-    fn sig_param(semantic_name: &str, semantic_index: u32, register: u32) -> DxbcSignatureParameter {
+    fn sig_param(
+        semantic_name: &str,
+        semantic_index: u32,
+        register: u32,
+    ) -> DxbcSignatureParameter {
         DxbcSignatureParameter {
             semantic_name: semantic_name.to_owned(),
             semantic_index,
