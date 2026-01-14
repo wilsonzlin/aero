@@ -2664,22 +2664,17 @@ impl VsInputField {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 enum DsTranslationMode {
     /// Legacy DS translation mode: emits a full compute entry point (`ds_main`) including a
     /// fixed-stride tessellation scan and writes vertices to `out_index = patch_id * verts_per_patch + vert_in_patch`.
     ///
     /// This is kept for backward compatibility with existing tests and runtime plumbing.
+    #[default]
     LegacyCompute,
     /// DS "evaluation" translation mode: emits a pure `ds_eval(...) -> AeroDsOut` helper suitable
     /// for the runtime's layout-pass + patch-meta tessellation pipeline.
     Eval,
-}
-
-impl Default for DsTranslationMode {
-    fn default() -> Self {
-        Self::LegacyCompute
-    }
 }
 
 #[derive(Debug, Clone, Default)]
