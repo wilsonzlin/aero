@@ -758,7 +758,7 @@ mod wasm {
         static OPFS_SEND_DISK_MAP: RefCell<HashMap<u32, OpfsBackend>> = RefCell::new(HashMap::new());
 
         #[cfg(not(target_feature = "atomics"))]
-        static OPFS_SEND_DISK_NEXT_ID: Cell<u32> = Cell::new(1);
+        static OPFS_SEND_DISK_NEXT_ID: Cell<u32> = const { Cell::new(1) };
     }
 
     #[cfg(target_feature = "atomics")]

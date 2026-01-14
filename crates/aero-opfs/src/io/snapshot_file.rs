@@ -142,12 +142,9 @@ mod platform_handle {
                 .read(buf, self.rw_opts.as_ref())
                 .map_err(js_error_to_io)? as usize;
             if read > cap {
-                return Err(io::Error::new(
-                    io::ErrorKind::Other,
-                    format!(
-                        "OPFS SyncAccessHandle.read returned {read} bytes for buffer len {cap}"
-                    ),
-                ));
+                return Err(io::Error::other(format!(
+                    "OPFS SyncAccessHandle.read returned {read} bytes for buffer len {cap}"
+                )));
             }
             Ok(read)
         }
@@ -160,12 +157,9 @@ mod platform_handle {
                 .write(buf, self.rw_opts.as_ref())
                 .map_err(js_error_to_io)? as usize;
             if wrote > cap {
-                return Err(io::Error::new(
-                    io::ErrorKind::Other,
-                    format!(
-                        "OPFS SyncAccessHandle.write returned {wrote} bytes for buffer len {cap}"
-                    ),
-                ));
+                return Err(io::Error::other(format!(
+                    "OPFS SyncAccessHandle.write returned {wrote} bytes for buffer len {cap}"
+                )));
             }
             Ok(wrote)
         }

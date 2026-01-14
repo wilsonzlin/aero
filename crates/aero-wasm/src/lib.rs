@@ -4042,19 +4042,38 @@ impl Machine {
                 "Machine.new_win7_storage_shared: failed to init shared guest RAM backend: {e}"
             ))
         })?;
-        let inner = aero_machine::Machine::new_with_guest_memory(cfg, Box::new(mem))
+        #[allow(unused_mut)]
+        let mut inner = aero_machine::Machine::new_with_guest_memory(cfg, Box::new(mem))
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
-        #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
-        let scanout_state = Self::scanout_state_ref();
+        #[cfg(all(
+            target_arch = "wasm32",
+            feature = "wasm-threaded",
+            target_feature = "atomics"
+        ))]
+        let scanout_state = {
+            let scanout_state = Self::scanout_state_ref();
+            let cursor_state = Self::cursor_state_ref();
+            inner.set_scanout_state_static(Some(scanout_state));
+            inner.set_cursor_state_static(Some(cursor_state));
+            scanout_state
+        };
         Ok(Self {
             inner,
             mouse_buttons: 0,
             mouse_buttons_known: true,
 
-            #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
+            #[cfg(all(
+                target_arch = "wasm32",
+                feature = "wasm-threaded",
+                target_feature = "atomics"
+            ))]
             scanout_state,
-            #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
+            #[cfg(all(
+                target_arch = "wasm32",
+                feature = "wasm-threaded",
+                target_feature = "atomics"
+            ))]
             last_published_scanout: None,
         })
     }
