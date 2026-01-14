@@ -2011,7 +2011,6 @@ impl AeroGpuDevice {
             attr_index: 0,
             attr_regs: [0; 256],
             attr_flip_flop: false,
-
             pel_mask: 0xFF,
             dac_write_index: 0,
             dac_write_subindex: 0,
@@ -2250,6 +2249,11 @@ impl AeroGpuDevice {
         match port {
             // Attribute controller: reads happen via 0x3C1.
             0x03C1 => self.attr_regs[usize::from(self.attr_index)],
+            // VGA DAC.
+            0x03C6 => self.pel_mask,
+            0x03C7 => self.dac_read_index,
+            0x03C8 => self.dac_write_index,
+            0x03C9 => self.read_dac_data(),
             // Misc Output readback (0x3CC).
             //
             // Real hardware reads Misc Output at 0x3CC (and 0x3C2 is Input Status 0). Accept reads
@@ -2269,11 +2273,6 @@ impl AeroGpuDevice {
                 self.attr_flip_flop = false;
                 0xFF
             }
-            // DAC.
-            0x03C6 => self.pel_mask,
-            0x03C7 => self.dac_read_index,
-            0x03C8 => self.dac_write_index,
-            0x03C9 => self.read_dac_data(),
             _ => 0xFF,
         }
     }
@@ -2296,6 +2295,18 @@ impl AeroGpuDevice {
             // Misc Output.
             0x03C2 => self.misc_output = value,
 
+            // VGA DAC.
+            0x03C6 => self.pel_mask = value,
+            0x03C7 => {
+                self.dac_read_index = value;
+                self.dac_read_subindex = 0;
+            }
+            0x03C8 => {
+                self.dac_write_index = value;
+                self.dac_write_subindex = 0;
+            }
+            0x03C9 => self.write_dac_data(value),
+
             // Sequencer.
             0x03C4 => self.seq_index = value,
             0x03C5 => self.seq_regs[usize::from(self.seq_index)] = value,
@@ -2307,18 +2318,6 @@ impl AeroGpuDevice {
             // CRTC (color and mono aliases).
             0x03B4 | 0x03D4 => self.crtc_index = value,
             0x03B5 | 0x03D5 => self.crtc_regs[usize::from(self.crtc_index)] = value,
-
-            // DAC.
-            0x03C6 => self.pel_mask = value,
-            0x03C7 => {
-                self.dac_read_index = value;
-                self.dac_read_subindex = 0;
-            }
-            0x03C8 => {
-                self.dac_write_index = value;
-                self.dac_write_subindex = 0;
-            }
-            0x03C9 => self.write_dac_data(value),
 
             _ => {}
         }
