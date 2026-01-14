@@ -387,7 +387,8 @@ param(
   # If set, require the guest virtio-snd-buffer-limits marker to PASS.
   #
   # Note: this requires:
-  # - a guest image provisioned with `--test-snd-buffer-limits` (for example via New-AeroWin7TestImage.ps1 -TestSndBufferLimits), and
+  # - a guest image provisioned with `--test-snd-buffer-limits` (or env var AERO_VIRTIO_SELFTEST_TEST_SND_BUFFER_LIMITS=1)
+  #   (for example via New-AeroWin7TestImage.ps1 -TestSndBufferLimits), and
   # - -WithVirtioSnd (so a virtio-snd device is attached).
   [Parameter(Mandatory = $false)]
   [switch]$WithSndBufferLimits,

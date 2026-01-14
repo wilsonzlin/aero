@@ -54,10 +54,12 @@ This directory contains the host-side scripts used to run the Windows 7 guest se
   - has virtio-snd installed if you intend to test audio
     - the guest selftest will exercise virtio-snd playback automatically when a virtio-snd device is present and confirm
       a capture endpoint is registered
-    - when the guest is provisioned with `--test-snd-capture`, the selftest also runs a full-duplex regression test
+    - when the guest is provisioned with `--test-snd-capture` (or env var `AERO_VIRTIO_SELFTEST_TEST_SND_CAPTURE=1`),
+      the selftest also runs a full-duplex regression test
       (`virtio-snd-duplex`) that runs render + capture concurrently
     - the guest selftest also includes an optional WASAPI buffer sizing stress test (`virtio-snd-buffer-limits`) that can be
-      enabled via `--test-snd-buffer-limits` (and required by the host harness with `-WithSndBufferLimits` / `--with-snd-buffer-limits`)
+      enabled via `--test-snd-buffer-limits` (or env var `AERO_VIRTIO_SELFTEST_TEST_SND_BUFFER_LIMITS=1`) and required by the
+      host harness with `-WithSndBufferLimits` / `--with-snd-buffer-limits`
     - use `--disable-snd` to skip virtio-snd testing, or `--test-snd` / `--require-snd` to fail if the device is missing
     - use `--disable-snd-capture` to skip capture-only checks (playback still runs when the device is present);
       do not use this when running the harness with `-WithVirtioSnd` / `--with-virtio-snd` (capture is required)
@@ -1059,7 +1061,8 @@ Note: When `-WithVirtioSnd` / `--with-virtio-snd` is enabled, the host harness e
 - virtio-snd capture endpoint checks (`...|virtio-snd-capture|PASS`)
 - virtio-snd full-duplex regression (`...|virtio-snd-duplex|PASS`)
 
-The duplex test runs only when the guest selftest is provisioned with `--test-snd-capture` (or equivalent).
+The duplex test runs only when the guest selftest is provisioned with `--test-snd-capture`
+(or env var `AERO_VIRTIO_SELFTEST_TEST_SND_CAPTURE=1`).
 If your image was provisioned without capture smoke testing enabled, the guest will emit
 `virtio-snd-duplex|SKIP|flag_not_set` and the host harness will fail with a `...DUPLEX_SKIPPED` reason.
 
@@ -1070,7 +1073,8 @@ This is disabled by default and must be enabled in the guest command line.
 
 To enable it end-to-end:
 
-1. Provision the guest scheduled task with `--test-snd-buffer-limits` (for example via `New-AeroWin7TestImage.ps1 -TestSndBufferLimits`).
+1. Provision the guest scheduled task with `--test-snd-buffer-limits` (or env var `AERO_VIRTIO_SELFTEST_TEST_SND_BUFFER_LIMITS=1`,
+   for example via `New-AeroWin7TestImage.ps1 -TestSndBufferLimits`).
 2. Run the host harness with:
    - PowerShell: `-WithVirtioSnd -WithSndBufferLimits`
    - Python: `--with-virtio-snd --with-snd-buffer-limits`
@@ -1432,7 +1436,8 @@ To override the non-silence thresholds used by wav verification, set either (non
 - `virtio_snd_wav_rms_threshold=<N>`
 
 To require the virtio-snd buffer limits stress test (`virtio-snd-buffer-limits`), set the workflow input
-`with_snd_buffer_limits=true` (requires `with_virtio_snd=true` and a guest image provisioned with `--test-snd-buffer-limits`,
+`with_snd_buffer_limits=true` (requires `with_virtio_snd=true` and a guest image provisioned with `--test-snd-buffer-limits`
+or env var `AERO_VIRTIO_SELFTEST_TEST_SND_BUFFER_LIMITS=1`,
 for example via `New-AeroWin7TestImage.ps1 -TestSndBufferLimits`).
 
 To exercise the end-to-end virtio-net link flap regression test (QMP `set_link`), set the workflow input
