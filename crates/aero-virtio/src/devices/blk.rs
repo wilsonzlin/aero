@@ -81,8 +81,8 @@ impl VirtioBlkConfig {
         cfg[44..48].copy_from_slice(&align_sectors_u32.to_le_bytes()); // discard_sector_alignment
         cfg[48..52].copy_from_slice(&max_sectors.to_le_bytes()); // max_write_zeroes_sectors
         cfg[52..56].copy_from_slice(&self.seg_max.to_le_bytes()); // max_write_zeroes_seg
-                                                                  // write_zeroes_may_unmap: allow `WRITE_ZEROES` to deallocate underlying storage ("unmap")
-                                                                  // as long as the guest-visible read-after-write semantics remain zero.
+        // write_zeroes_may_unmap: allow `WRITE_ZEROES` to deallocate underlying storage ("unmap")
+        // while preserving guest-visible read-after-write semantics (reads must return zero).
         cfg[56] = 1;
 
         // Avoid truncating on 32-bit targets: guest MMIO offsets are `u64` but config space is a

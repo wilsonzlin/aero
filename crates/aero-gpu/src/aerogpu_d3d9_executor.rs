@@ -11450,6 +11450,8 @@ mod tests {
     #[test]
     #[cfg(all(not(target_arch = "wasm32"), not(target_os = "linux")))]
     fn d3d9_sampler_maxanisotropy_affects_sampler_only_when_anisotropic_supported() {
+        use super::D3d9SamplerState;
+
         // This logic is purely about sampler canonicalization + caching keys; avoid creating a real
         // wgpu device here so we don't depend on system GPU backends during unit tests.
         let device_features = wgpu::Features::empty();
