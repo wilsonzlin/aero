@@ -90,6 +90,20 @@ class VirtioNetDiagMarkerTests(unittest.TestCase):
             "tx_tso_v4=1|tx_tso_v6=0|tx_tso_max_size=65536",
         )
 
+    def test_emits_ctrl_vq_fields(self) -> None:
+        tail = (
+            b"virtio-net-diag|INFO|irq_mode=msix|irq_message_count=3|ctrl_vq=1|ctrl_rx=1|ctrl_vlan=0|"
+            b"ctrl_mac_addr=1|ctrl_queue_index=2|ctrl_queue_size=64|ctrl_error_flags=0x00000000|"
+            b"ctrl_cmd_sent=10|ctrl_cmd_ok=9|ctrl_cmd_err=1|ctrl_cmd_timeout=0\n"
+        )
+        out = self._emit(tail)
+        self.assertEqual(
+            out,
+            "AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_DIAG|INFO|irq_mode=msix|irq_message_count=3|"
+            "ctrl_vq=1|ctrl_rx=1|ctrl_vlan=0|ctrl_mac_addr=1|ctrl_queue_index=2|ctrl_queue_size=64|"
+            "ctrl_error_flags=0x00000000|ctrl_cmd_sent=10|ctrl_cmd_ok=9|ctrl_cmd_err=1|ctrl_cmd_timeout=0",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

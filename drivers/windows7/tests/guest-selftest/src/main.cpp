@@ -587,6 +587,20 @@ struct AEROVNET_DIAG_INFO {
   UCHAR TxUdpChecksumV6Enabled;
   UCHAR Reserved1;
   UCHAR Reserved2;
+
+  UCHAR CtrlVqNegotiated;
+  UCHAR CtrlRxNegotiated;
+  UCHAR CtrlVlanNegotiated;
+  UCHAR CtrlMacAddrNegotiated;
+
+  USHORT CtrlVqQueueIndex;
+  USHORT CtrlVqQueueSize;
+  ULONG CtrlVqErrorFlags;
+
+  ULONGLONG CtrlCmdSent;
+  ULONGLONG CtrlCmdOk;
+  ULONGLONG CtrlCmdErr;
+  ULONGLONG CtrlCmdTimeout;
 };
 #pragma pack(pop)
 
@@ -1302,6 +1316,77 @@ static void EmitVirtioNetDiagMarker(Logger& log) {
     tso_max_s = tso_max_buf;
   }
 
+  const char* ctrl_vq_s = "unknown";
+  const char* ctrl_rx_s = "unknown";
+  const char* ctrl_vlan_s = "unknown";
+  const char* ctrl_mac_s = "unknown";
+  char ctrl_vq_buf[8];
+  char ctrl_rx_buf[8];
+  char ctrl_vlan_buf[8];
+  char ctrl_mac_buf[8];
+  if (bytes >= offsetof(AEROVNET_DIAG_INFO, CtrlVqNegotiated) + sizeof(UCHAR)) {
+    snprintf(ctrl_vq_buf, sizeof(ctrl_vq_buf), "%u", static_cast<unsigned>(info.CtrlVqNegotiated));
+    ctrl_vq_s = ctrl_vq_buf;
+  }
+  if (bytes >= offsetof(AEROVNET_DIAG_INFO, CtrlRxNegotiated) + sizeof(UCHAR)) {
+    snprintf(ctrl_rx_buf, sizeof(ctrl_rx_buf), "%u", static_cast<unsigned>(info.CtrlRxNegotiated));
+    ctrl_rx_s = ctrl_rx_buf;
+  }
+  if (bytes >= offsetof(AEROVNET_DIAG_INFO, CtrlVlanNegotiated) + sizeof(UCHAR)) {
+    snprintf(ctrl_vlan_buf, sizeof(ctrl_vlan_buf), "%u", static_cast<unsigned>(info.CtrlVlanNegotiated));
+    ctrl_vlan_s = ctrl_vlan_buf;
+  }
+  if (bytes >= offsetof(AEROVNET_DIAG_INFO, CtrlMacAddrNegotiated) + sizeof(UCHAR)) {
+    snprintf(ctrl_mac_buf, sizeof(ctrl_mac_buf), "%u", static_cast<unsigned>(info.CtrlMacAddrNegotiated));
+    ctrl_mac_s = ctrl_mac_buf;
+  }
+
+  const char* ctrl_q_index_s = "unknown";
+  const char* ctrl_q_size_s = "unknown";
+  char ctrl_q_index_buf[16];
+  char ctrl_q_size_buf[16];
+  if (bytes >= offsetof(AEROVNET_DIAG_INFO, CtrlVqQueueIndex) + sizeof(USHORT)) {
+    snprintf(ctrl_q_index_buf, sizeof(ctrl_q_index_buf), "%u", static_cast<unsigned>(info.CtrlVqQueueIndex));
+    ctrl_q_index_s = ctrl_q_index_buf;
+  }
+  if (bytes >= offsetof(AEROVNET_DIAG_INFO, CtrlVqQueueSize) + sizeof(USHORT)) {
+    snprintf(ctrl_q_size_buf, sizeof(ctrl_q_size_buf), "%u", static_cast<unsigned>(info.CtrlVqQueueSize));
+    ctrl_q_size_s = ctrl_q_size_buf;
+  }
+
+  const char* ctrl_err_flags_s = "unknown";
+  char ctrl_err_buf[16];
+  if (bytes >= offsetof(AEROVNET_DIAG_INFO, CtrlVqErrorFlags) + sizeof(ULONG)) {
+    snprintf(ctrl_err_buf, sizeof(ctrl_err_buf), "0x%08lx", static_cast<unsigned long>(info.CtrlVqErrorFlags));
+    ctrl_err_flags_s = ctrl_err_buf;
+  }
+
+  const char* ctrl_cmd_sent_s = "unknown";
+  const char* ctrl_cmd_ok_s = "unknown";
+  const char* ctrl_cmd_err_s = "unknown";
+  const char* ctrl_cmd_timeout_s = "unknown";
+  char ctrl_cmd_sent_buf[32];
+  char ctrl_cmd_ok_buf[32];
+  char ctrl_cmd_err_buf[32];
+  char ctrl_cmd_timeout_buf[32];
+  if (bytes >= offsetof(AEROVNET_DIAG_INFO, CtrlCmdSent) + sizeof(ULONGLONG)) {
+    snprintf(ctrl_cmd_sent_buf, sizeof(ctrl_cmd_sent_buf), "%llu", static_cast<unsigned long long>(info.CtrlCmdSent));
+    ctrl_cmd_sent_s = ctrl_cmd_sent_buf;
+  }
+  if (bytes >= offsetof(AEROVNET_DIAG_INFO, CtrlCmdOk) + sizeof(ULONGLONG)) {
+    snprintf(ctrl_cmd_ok_buf, sizeof(ctrl_cmd_ok_buf), "%llu", static_cast<unsigned long long>(info.CtrlCmdOk));
+    ctrl_cmd_ok_s = ctrl_cmd_ok_buf;
+  }
+  if (bytes >= offsetof(AEROVNET_DIAG_INFO, CtrlCmdErr) + sizeof(ULONGLONG)) {
+    snprintf(ctrl_cmd_err_buf, sizeof(ctrl_cmd_err_buf), "%llu", static_cast<unsigned long long>(info.CtrlCmdErr));
+    ctrl_cmd_err_s = ctrl_cmd_err_buf;
+  }
+  if (bytes >= offsetof(AEROVNET_DIAG_INFO, CtrlCmdTimeout) + sizeof(ULONGLONG)) {
+    snprintf(ctrl_cmd_timeout_buf, sizeof(ctrl_cmd_timeout_buf), "%llu",
+             static_cast<unsigned long long>(info.CtrlCmdTimeout));
+    ctrl_cmd_timeout_s = ctrl_cmd_timeout_buf;
+  }
+
   log.Logf(
       "virtio-net-diag|INFO|host_features=%s|guest_features=%s|irq_mode=%s|irq_message_count=%lu|"
       "msix_config_vector=0x%04x|msix_rx_vector=0x%04x|msix_tx_vector=0x%04x|"
@@ -1310,13 +1395,16 @@ static void EmitVirtioNetDiagMarker(Logger& log) {
       "rx_vq_error_flags=%s|tx_vq_error_flags=%s|"
       "tx_csum_v4=%u|tx_csum_v6=%u|tx_udp_csum_v4=%s|tx_udp_csum_v6=%s|"
       "tx_tso_v4=%u|tx_tso_v6=%u|tx_tso_max_size=%s|"
+      "ctrl_vq=%s|ctrl_rx=%s|ctrl_vlan=%s|ctrl_mac_addr=%s|ctrl_queue_index=%s|ctrl_queue_size=%s|"
+      "ctrl_error_flags=%s|ctrl_cmd_sent=%s|ctrl_cmd_ok=%s|ctrl_cmd_err=%s|ctrl_cmd_timeout=%s|"
       "stat_tx_err=%llu|stat_rx_err=%llu|stat_rx_no_buf=%llu",
       VirtioFeaturesToString(info.HostFeatures).c_str(), VirtioFeaturesToString(info.GuestFeatures).c_str(), mode,
       static_cast<unsigned long>(info.MessageCount), static_cast<unsigned>(info.MsixConfigVector),
       static_cast<unsigned>(info.MsixRxVector), static_cast<unsigned>(info.MsixTxVector), info.RxQueueSize,
       info.TxQueueSize, info.RxAvailIdx, info.RxUsedIdx, info.TxAvailIdx, info.TxUsedIdx, rx_err_flags_s,
       tx_err_flags_s, info.TxChecksumV4Enabled, info.TxChecksumV6Enabled, udp4_s, udp6_s, info.TxTsoV4Enabled,
-      info.TxTsoV6Enabled, tso_max_s,
+      info.TxTsoV6Enabled, tso_max_s, ctrl_vq_s, ctrl_rx_s, ctrl_vlan_s, ctrl_mac_s, ctrl_q_index_s, ctrl_q_size_s,
+      ctrl_err_flags_s, ctrl_cmd_sent_s, ctrl_cmd_ok_s, ctrl_cmd_err_s, ctrl_cmd_timeout_s,
       static_cast<unsigned long long>(info.StatTxErrors), static_cast<unsigned long long>(info.StatRxErrors),
       static_cast<unsigned long long>(info.StatRxNoBuffers));
 }

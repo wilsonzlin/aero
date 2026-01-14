@@ -91,6 +91,21 @@ typedef struct _AEROVNET_DIAG_INFO {
   UCHAR TxUdpChecksumV6Enabled;
   UCHAR Reserved1;
   UCHAR Reserved2;
+
+  // Optional virtio-net control virtqueue (when VIRTIO_NET_F_CTRL_VQ is negotiated).
+  UCHAR CtrlVqNegotiated;
+  UCHAR CtrlRxNegotiated;
+  UCHAR CtrlVlanNegotiated;
+  UCHAR CtrlMacAddrNegotiated;
+
+  USHORT CtrlVqQueueIndex;
+  USHORT CtrlVqQueueSize;
+  ULONG CtrlVqErrorFlags;
+
+  ULONGLONG CtrlCmdSent;
+  ULONGLONG CtrlCmdOk;
+  ULONGLONG CtrlCmdErr;
+  ULONGLONG CtrlCmdTimeout;
 } AEROVNET_DIAG_INFO;
 #pragma pack(pop)
 
@@ -4994,6 +5009,20 @@ static NTSTATUS AerovNetDiagDispatchDeviceControl(_In_ PDEVICE_OBJECT DeviceObje
   Info.TxTsoMaxOffloadSize = Adapter->TxTsoMaxOffloadSize;
   Info.TxUdpChecksumV4Enabled = Adapter->TxUdpChecksumV4Enabled ? 1 : 0;
   Info.TxUdpChecksumV6Enabled = Adapter->TxUdpChecksumV6Enabled ? 1 : 0;
+
+  Info.CtrlVqNegotiated = (Adapter->GuestFeatures & VIRTIO_NET_F_CTRL_VQ) ? 1 : 0;
+  Info.CtrlRxNegotiated = (Adapter->GuestFeatures & VIRTIO_NET_F_CTRL_RX) ? 1 : 0;
+  Info.CtrlVlanNegotiated = (Adapter->GuestFeatures & VIRTIO_NET_F_CTRL_VLAN) ? 1 : 0;
+  Info.CtrlMacAddrNegotiated = (Adapter->GuestFeatures & VIRTIO_NET_F_CTRL_MAC_ADDR) ? 1 : 0;
+
+  Info.CtrlVqQueueIndex = Adapter->CtrlVq.QueueIndex;
+  Info.CtrlVqQueueSize = Adapter->CtrlVq.QueueSize;
+  Info.CtrlVqErrorFlags = (ULONG)virtqueue_split_get_error_flags(&Adapter->CtrlVq.Vq);
+
+  Info.CtrlCmdSent = Adapter->StatCtrlVqCmdSent;
+  Info.CtrlCmdOk = Adapter->StatCtrlVqCmdOk;
+  Info.CtrlCmdErr = Adapter->StatCtrlVqCmdErr;
+  Info.CtrlCmdTimeout = Adapter->StatCtrlVqCmdTimeout;
   NdisReleaseSpinLock(&Adapter->Lock);
 
   // Read back the currently programmed MSI-X vectors from virtio common config.
