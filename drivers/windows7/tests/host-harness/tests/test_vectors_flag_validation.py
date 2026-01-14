@@ -178,7 +178,12 @@ class HarnessVectorsFlagValidationTests(unittest.TestCase):
     def test_virtio_disable_msix_incompatible_with_require_msix(self) -> None:
         h = self.harness
 
-        for require_flag in ("--require-virtio-net-msix", "--require-virtio-blk-msix", "--require-virtio-snd-msix"):
+        for require_flag in (
+            "--require-virtio-net-msix",
+            "--require-virtio-blk-msix",
+            "--require-virtio-snd-msix",
+            "--require-virtio-input-msix",
+        ):
             with self.subTest(require_flag=require_flag):
                 old_argv = sys.argv
                 try:

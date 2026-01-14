@@ -2982,6 +2982,8 @@ def main() -> int:
 
     if virtio_disable_msix and need_msix_check:
         parser.error("--virtio-disable-msix is incompatible with --require-virtio-*-msix (MSI-X is disabled).")
+    if virtio_disable_msix and bool(getattr(args, "require_virtio_input_msix", False)):
+        parser.error("--virtio-disable-msix is incompatible with --require-virtio-*-msix (MSI-X is disabled).")
 
     if args.require_intx and args.require_msi:
         parser.error("--require-intx and --require-msi are mutually exclusive")
