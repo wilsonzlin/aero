@@ -95,4 +95,3 @@ fn aerogpu_cmd_geometry_shader_compute_prepass_dummy_gs_handle() {
         assert_eq!(center, &[255, 0, 0, 255]);
     });
 }
-

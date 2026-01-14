@@ -135,7 +135,9 @@ fn input_help_mentions_flags_and_steps() {
         .stdout(predicate::str::contains(
             "src/workers/uhci_runtime_hub_config.test.ts",
         ))
-        .stdout(predicate::str::contains("src/usb/usb_guest_controller.test.ts"))
+        .stdout(predicate::str::contains(
+            "src/usb/usb_guest_controller.test.ts",
+        ))
         .stdout(predicate::str::contains(
             "src/usb/webusb_passthrough_runtime.test.ts",
         ))
