@@ -414,6 +414,7 @@ All JSON outputs include:
 
 This tool currently supports JSON output for snapshot-style commands and other bounded-output commands:
 
+- `--help` (also `-h`, `/?`)
 - `--status` (aliases: `--query-version`, `--query-device`)
 - `--query-fence`
 - `--watch-fence`
