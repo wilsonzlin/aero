@@ -210,7 +210,14 @@ impl EhciController {
         if value & USBCMD_HCRESET != 0 {
             // Host Controller Reset. We reset operational state but preserve attached devices and
             // port connection state.
+            //
+            // Reset also clears CONFIGFLAG, which on real hardware routes ports back to companion
+            // controllers until the guest re-claims them. Propagate this default routing decision
+            // to any mux-backed ports so machine-level resets don't leave the mux stuck in the
+            // previous CONFIGFLAG state.
             self.reset_regs();
+            self.hub.set_configflag(false);
+            self.hub.set_all_port_owner(true);
             return;
         }
 
