@@ -205,6 +205,7 @@ Expected sequence:
 2. **Open shared resource → import (token)**
    - Consumer process opens the resource via the OS shared handle mechanism.
      - If the shared handle is a real NT handle, it must already be valid in the consumer process via `DuplicateHandle`/inheritance.
+     - If the shared handle is token-style (not a real NT handle), it cannot be duplicated; pass the raw numeric value to the consumer (do not call `CloseHandle`).
    - The KMD resolves the shared allocation and returns the same `{alloc_id, share_token}` (allocation private driver data).
    - The UMD submits `IMPORT_SHARED_SURFACE { share_token=ShareToken } -> resource_handle` to obtain a host resource alias.
 
