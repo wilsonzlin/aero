@@ -1033,44 +1033,40 @@ jobs:
             if [[ -n "${qemu_version_line}" ]]; then
               echo "- ${qemu_version_line}"
             fi
-            if [[ "${{ inputs.force_intx }}" == "true" && -n "${force_intx_host_marker}" ]]; then
+            if [[ -n "${force_intx_host_marker}" ]]; then
               echo "- Host force INTx marker: \`${force_intx_host_marker}\`"
             fi
-            if [[ "${{ inputs.require_expect_blk_msi }}" == "true" && -n "${config_marker}" ]]; then
+            if [[ -n "${config_marker}" ]]; then
               echo "- Guest CONFIG marker: \`${config_marker}\`"
             fi
-            if [[ "${{ inputs.require_intx }}" == "true" || "${{ inputs.require_msi }}" == "true" ]]; then
-              if [[ -n "${blk_irq_host_marker}" ]]; then
-                echo "- Host virtio-blk IRQ marker: \`${blk_irq_host_marker}\`"
-              fi
-              if [[ -n "${net_irq_host_marker}" ]]; then
-                echo "- Host virtio-net IRQ marker: \`${net_irq_host_marker}\`"
-              fi
-              if [[ -n "${snd_irq_host_marker}" ]]; then
-                echo "- Host virtio-snd IRQ marker: \`${snd_irq_host_marker}\`"
-              fi
-              if [[ -n "${input_irq_host_marker}" ]]; then
-                echo "- Host virtio-input IRQ marker: \`${input_irq_host_marker}\`"
-              fi
+            if [[ -n "${blk_irq_host_marker}" ]]; then
+              echo "- Host virtio-blk IRQ marker: \`${blk_irq_host_marker}\`"
             fi
-            if [[ "${{ inputs.require_no_blk_recovery }}" == "true" || "${{ inputs.fail_on_blk_recovery }}" == "true" ]]; then
-              if [[ -n "${blk_recovery_host_marker}" ]]; then
-                echo "- Host virtio-blk recovery marker: \`${blk_recovery_host_marker}\`"
-              fi
-              if [[ -n "${blk_counters_host_marker}" ]]; then
-                echo "- Host virtio-blk counters marker: \`${blk_counters_host_marker}\`"
-              fi
+            if [[ -n "${net_irq_host_marker}" ]]; then
+              echo "- Host virtio-net IRQ marker: \`${net_irq_host_marker}\`"
             fi
-            if [[ "${{ inputs.require_virtio_net_msix }}" == "true" && -n "${net_msix_host_marker}" ]]; then
+            if [[ -n "${snd_irq_host_marker}" ]]; then
+              echo "- Host virtio-snd IRQ marker: \`${snd_irq_host_marker}\`"
+            fi
+            if [[ -n "${input_irq_host_marker}" ]]; then
+              echo "- Host virtio-input IRQ marker: \`${input_irq_host_marker}\`"
+            fi
+            if [[ -n "${blk_recovery_host_marker}" ]]; then
+              echo "- Host virtio-blk recovery marker: \`${blk_recovery_host_marker}\`"
+            fi
+            if [[ -n "${blk_counters_host_marker}" ]]; then
+              echo "- Host virtio-blk counters marker: \`${blk_counters_host_marker}\`"
+            fi
+            if [[ -n "${net_msix_host_marker}" ]]; then
               echo "- Host virtio-net MSI-X marker: \`${net_msix_host_marker}\`"
             fi
-            if [[ "${{ inputs.require_virtio_blk_msix }}" == "true" && -n "${blk_msix_host_marker}" ]]; then
+            if [[ -n "${blk_msix_host_marker}" ]]; then
               echo "- Host virtio-blk MSI-X marker: \`${blk_msix_host_marker}\`"
             fi
-            if [[ "${{ inputs.require_virtio_snd_msix }}" == "true" && -n "${snd_msix_host_marker}" ]]; then
+            if [[ -n "${snd_msix_host_marker}" ]]; then
               echo "- Host virtio-snd MSI-X marker: \`${snd_msix_host_marker}\`"
             fi
-            if [[ "${{ inputs.require_virtio_input_msix }}" == "true" && -n "${input_msix_host_marker}" ]]; then
+            if [[ -n "${input_msix_host_marker}" ]]; then
               echo "- Host virtio-input MSI-X marker: \`${input_msix_host_marker}\`"
             fi
             if [[ -n "${failure_token}" ]]; then
