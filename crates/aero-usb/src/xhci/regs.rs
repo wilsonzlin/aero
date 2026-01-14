@@ -15,13 +15,13 @@ pub const REG_HCSPARAMS1: u64 = 0x04;
 pub const REG_HCCPARAMS1: u64 = 0x10;
 pub const REG_DBOFF: u64 = 0x14;
 pub const REG_RTSOFF: u64 = 0x18;
-pub const REG_USBCMD: u64 = 0x40;
-pub const REG_USBSTS: u64 = 0x44;
+pub const REG_USBCMD: u64 = (CAPLENGTH_BYTES as u64) + (op::USBCMD as u64);
+pub const REG_USBSTS: u64 = (CAPLENGTH_BYTES as u64) + (op::USBSTS as u64);
 /// Command Ring Control Register (CRCR), 64-bit (low/high dwords).
-pub const REG_CRCR_LO: u64 = 0x58;
-pub const REG_CRCR_HI: u64 = 0x5c;
-pub const REG_DCBAAP_LO: u64 = 0x70;
-pub const REG_DCBAAP_HI: u64 = 0x74;
+pub const REG_CRCR_LO: u64 = (CAPLENGTH_BYTES as u64) + (op::CRCR as u64);
+pub const REG_CRCR_HI: u64 = REG_CRCR_LO + 4;
+pub const REG_DCBAAP_LO: u64 = (CAPLENGTH_BYTES as u64) + (op::DCBAAP as u64);
+pub const REG_DCBAAP_HI: u64 = REG_DCBAAP_LO + 4;
 
 /// USBCMD bit 0 (Run/Stop).
 pub const USBCMD_RUN: u32 = 1 << 0;
