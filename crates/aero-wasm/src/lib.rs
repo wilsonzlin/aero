@@ -157,19 +157,13 @@ use aero_shared::shared_framebuffer::{
     SharedFramebuffer, SharedFramebufferLayout, SharedFramebufferWriter,
 };
 
-#[cfg(all(
-    target_arch = "wasm32",
-    feature = "wasm-threaded"
-))]
+#[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
 use aero_shared::scanout_state::{
     SCANOUT_FORMAT_B8G8R8X8, SCANOUT_SOURCE_LEGACY_TEXT, SCANOUT_SOURCE_LEGACY_VBE_LFB,
     SCANOUT_SOURCE_WDDM, SCANOUT_STATE_BYTE_LEN, ScanoutState, ScanoutStateUpdate,
 };
 
-#[cfg(all(
-    target_arch = "wasm32",
-    feature = "wasm-threaded"
-))]
+#[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
 use aero_shared::cursor_state::{CURSOR_STATE_BYTE_LEN, CursorState};
 
 #[cfg(target_arch = "wasm32")]
@@ -3557,17 +3551,11 @@ pub struct Machine {
     /// - WASM device models (this VM), and
     /// - JS workers (GPU presenter / frame scheduler)
     /// can read/write it using atomics without additional SharedArrayBuffer allocations.
-    #[cfg(all(
-        target_arch = "wasm32",
-        feature = "wasm-threaded"
-    ))]
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
     scanout_state: &'static ScanoutState,
 
     /// Last legacy scanout state this VM published (used to avoid bumping generation every slice).
-    #[cfg(all(
-        target_arch = "wasm32",
-        feature = "wasm-threaded"
-    ))]
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
     last_published_scanout: Option<ScanoutStateUpdate>,
 }
 
@@ -3728,10 +3716,7 @@ impl Machine {
         let mut inner =
             aero_machine::Machine::new(cfg).map_err(|e| JsValue::from_str(&e.to_string()))?;
 
-        #[cfg(all(
-            target_arch = "wasm32",
-            feature = "wasm-threaded"
-        ))]
+        #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
         let scanout_state = {
             let scanout_state = Self::scanout_state_ref();
             let cursor_state = Self::cursor_state_ref();
@@ -3747,15 +3732,9 @@ impl Machine {
             mouse_buttons: 0,
             mouse_buttons_known: true,
 
-            #[cfg(all(
-                target_arch = "wasm32",
-                feature = "wasm-threaded"
-            ))]
+            #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
             scanout_state,
-            #[cfg(all(
-                target_arch = "wasm32",
-                feature = "wasm-threaded"
-            ))]
+            #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
             last_published_scanout: None,
         })
     }
@@ -4038,10 +4017,7 @@ impl Machine {
         #[allow(unused_mut)]
         let mut inner = aero_machine::Machine::new_with_guest_memory(cfg, Box::new(mem))
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
-        #[cfg(all(
-            target_arch = "wasm32",
-            feature = "wasm-threaded"
-        ))]
+        #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
         let scanout_state = {
             let scanout_state = Self::scanout_state_ref();
             let cursor_state = Self::cursor_state_ref();
@@ -4054,15 +4030,9 @@ impl Machine {
             mouse_buttons: 0,
             mouse_buttons_known: true,
 
-            #[cfg(all(
-                target_arch = "wasm32",
-                feature = "wasm-threaded"
-            ))]
+            #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
             scanout_state,
-            #[cfg(all(
-                target_arch = "wasm32",
-                feature = "wasm-threaded"
-            ))]
+            #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
             last_published_scanout: None,
         })
     }
@@ -4114,10 +4084,7 @@ impl Machine {
         #[allow(unused_mut)]
         let mut inner = aero_machine::Machine::new_with_guest_memory(cfg, Box::new(mem))
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
-        #[cfg(all(
-            target_arch = "wasm32",
-            feature = "wasm-threaded"
-        ))]
+        #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
         let scanout_state = {
             let scanout_state = Self::scanout_state_ref();
             let cursor_state = Self::cursor_state_ref();
@@ -4130,15 +4097,9 @@ impl Machine {
             mouse_buttons: 0,
             mouse_buttons_known: true,
 
-            #[cfg(all(
-                target_arch = "wasm32",
-                feature = "wasm-threaded"
-            ))]
+            #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
             scanout_state,
-            #[cfg(all(
-                target_arch = "wasm32",
-                feature = "wasm-threaded"
-            ))]
+            #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
             last_published_scanout: None,
         })
     }
@@ -4173,10 +4134,7 @@ impl Machine {
         let mut inner = aero_machine::Machine::new_with_guest_memory(cfg, Box::new(mem))
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
-        #[cfg(all(
-            target_arch = "wasm32",
-            feature = "wasm-threaded"
-        ))]
+        #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
         let scanout_state = {
             let scanout_state = Self::scanout_state_ref();
             let cursor_state = Self::cursor_state_ref();
@@ -4189,15 +4147,9 @@ impl Machine {
             mouse_buttons: 0,
             mouse_buttons_known: true,
 
-            #[cfg(all(
-                target_arch = "wasm32",
-                feature = "wasm-threaded"
-            ))]
+            #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
             scanout_state,
-            #[cfg(all(
-                target_arch = "wasm32",
-                feature = "wasm-threaded"
-            ))]
+            #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
             last_published_scanout: None,
         })
     }
@@ -4221,10 +4173,7 @@ impl Machine {
         self.mouse_buttons = 0;
         self.mouse_buttons_known = true;
 
-        #[cfg(all(
-            target_arch = "wasm32",
-            feature = "wasm-threaded"
-        ))]
+        #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
         {
             // Reset returns the canonical VM to legacy VGA text mode. Publish this so the browser
             // presenter can switch scanout sources without heuristics.
@@ -5250,10 +5199,7 @@ impl Machine {
     pub fn run_slice(&mut self, max_insts: u32) -> RunExit {
         let exit = self.inner.run_slice(max_insts as u64);
 
-        #[cfg(all(
-            target_arch = "wasm32",
-            feature = "wasm-threaded"
-        ))]
+        #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
         {
             // Poll for legacy VGA/VBE mode transitions and publish scanout state updates.
             // (WDDM scanout updates are published by the AeroGPU path.)
@@ -5272,17 +5218,11 @@ impl Machine {
     /// Returns 0 when the build does not support a shared scanout state (e.g. non-threaded WASM
     /// variant or non-wasm host builds).
     pub fn scanout_state_ptr(&self) -> u32 {
-        #[cfg(all(
-            target_arch = "wasm32",
-            feature = "wasm-threaded"
-        ))]
+        #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
         {
             Self::scanout_state_offset_bytes()
         }
-        #[cfg(not(all(
-            target_arch = "wasm32",
-            feature = "wasm-threaded"
-        )))]
+        #[cfg(not(all(target_arch = "wasm32", feature = "wasm-threaded")))]
         {
             0
         }
@@ -5290,26 +5230,17 @@ impl Machine {
 
     /// Length in bytes of the shared scanout state header.
     pub fn scanout_state_len_bytes(&self) -> u32 {
-        #[cfg(all(
-            target_arch = "wasm32",
-            feature = "wasm-threaded"
-        ))]
+        #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
         {
             SCANOUT_STATE_BYTE_LEN as u32
         }
-        #[cfg(not(all(
-            target_arch = "wasm32",
-            feature = "wasm-threaded"
-        )))]
+        #[cfg(not(all(target_arch = "wasm32", feature = "wasm-threaded")))]
         {
             0
         }
     }
 
-    #[cfg(all(
-        target_arch = "wasm32",
-        feature = "wasm-threaded"
-    ))]
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
     fn scanout_state_offset_bytes() -> u32 {
         // Keep this in sync with:
         // - `crates/aero-wasm/src/runtime_alloc.rs` (`HEAP_TAIL_GUARD_BYTES`)
@@ -5321,10 +5252,7 @@ impl Machine {
         (crate::guest_layout::RUNTIME_RESERVED_BYTES as u32).saturating_sub(tail_guard)
     }
 
-    #[cfg(all(
-        target_arch = "wasm32",
-        feature = "wasm-threaded"
-    ))]
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
     fn ensure_runtime_reserved_floor_for_scanout_state() {
         // The browser runtime always instantiates this module with a `WebAssembly.Memory` that is
         // at least `RUNTIME_RESERVED_BYTES` large.
@@ -5360,10 +5288,7 @@ impl Machine {
         }
     }
 
-    #[cfg(all(
-        target_arch = "wasm32",
-        feature = "wasm-threaded"
-    ))]
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
     fn scanout_state_ref() -> &'static ScanoutState {
         Self::ensure_runtime_reserved_floor_for_scanout_state();
         let offset = Self::scanout_state_offset_bytes();
@@ -5389,17 +5314,11 @@ impl Machine {
     /// Returns 0 when the build does not support a shared cursor state (e.g. non-threaded WASM
     /// variant or non-wasm host builds).
     pub fn cursor_state_ptr(&self) -> u32 {
-        #[cfg(all(
-            target_arch = "wasm32",
-            feature = "wasm-threaded"
-        ))]
+        #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
         {
             Self::cursor_state_offset_bytes()
         }
-        #[cfg(not(all(
-            target_arch = "wasm32",
-            feature = "wasm-threaded"
-        )))]
+        #[cfg(not(all(target_arch = "wasm32", feature = "wasm-threaded")))]
         {
             0
         }
@@ -5407,34 +5326,22 @@ impl Machine {
 
     /// Length in bytes of the shared cursor state header.
     pub fn cursor_state_len_bytes(&self) -> u32 {
-        #[cfg(all(
-            target_arch = "wasm32",
-            feature = "wasm-threaded"
-        ))]
+        #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
         {
             CURSOR_STATE_BYTE_LEN as u32
         }
-        #[cfg(not(all(
-            target_arch = "wasm32",
-            feature = "wasm-threaded"
-        )))]
+        #[cfg(not(all(target_arch = "wasm32", feature = "wasm-threaded")))]
         {
             0
         }
     }
 
-    #[cfg(all(
-        target_arch = "wasm32",
-        feature = "wasm-threaded"
-    ))]
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
     fn cursor_state_offset_bytes() -> u32 {
         Self::scanout_state_offset_bytes().saturating_add(SCANOUT_STATE_BYTE_LEN as u32)
     }
 
-    #[cfg(all(
-        target_arch = "wasm32",
-        feature = "wasm-threaded"
-    ))]
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
     fn cursor_state_ref() -> &'static CursorState {
         Self::ensure_runtime_reserved_floor_for_scanout_state();
         let offset = Self::cursor_state_offset_bytes();
@@ -5444,10 +5351,7 @@ impl Machine {
         unsafe { &*ptr }
     }
 
-    #[cfg(all(
-        target_arch = "wasm32",
-        feature = "wasm-threaded"
-    ))]
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
     fn publish_scanout(&mut self, update: ScanoutStateUpdate) {
         if self.last_published_scanout == Some(update) {
             return;
@@ -5474,10 +5378,7 @@ impl Machine {
         }
     }
 
-    #[cfg(all(
-        target_arch = "wasm32",
-        feature = "wasm-threaded"
-    ))]
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
     fn publish_legacy_text_scanout(&mut self) {
         self.publish_scanout(ScanoutStateUpdate {
             source: SCANOUT_SOURCE_LEGACY_TEXT,
@@ -5490,10 +5391,7 @@ impl Machine {
         });
     }
 
-    #[cfg(all(
-        target_arch = "wasm32",
-        feature = "wasm-threaded"
-    ))]
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-threaded"))]
     fn maybe_publish_legacy_scanout_from_vga(&mut self) {
         // Do not override WDDM ownership (see `docs/16-aerogpu-vga-vesa-compat.md`).
         match self.scanout_state.try_snapshot() {

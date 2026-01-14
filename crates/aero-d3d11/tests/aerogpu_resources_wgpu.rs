@@ -287,17 +287,16 @@ async fn create_device_queue_with_features(
 #[test]
 fn upload_resource_buffer_and_texture_roundtrip() -> Result<()> {
     pollster::block_on(async {
-        let (device, queue, _supports_compute) = match common::wgpu::create_device_queue(
-            "aero-d3d11 aerogpu_resources test device",
-        )
-        .await
-        {
-            Ok(v) => v,
-            Err(err) => {
-                common::skip_or_panic(module_path!(), &format!("{err:#}"));
-                return Ok(());
-            }
-        };
+        let (device, queue, _supports_compute) =
+            match common::wgpu::create_device_queue("aero-d3d11 aerogpu_resources test device")
+                .await
+            {
+                Ok(v) => v,
+                Err(err) => {
+                    common::skip_or_panic(module_path!(), &format!("{err:#}"));
+                    return Ok(());
+                }
+            };
         let mut resources = AerogpuResourceManager::new(device, queue);
 
         // Buffer upload.
@@ -368,17 +367,16 @@ fn upload_resource_buffer_and_texture_roundtrip() -> Result<()> {
 #[test]
 fn upload_resource_bc1_texture_roundtrip_cpu_fallback() -> Result<()> {
     pollster::block_on(async {
-        let (device, queue, _supports_compute) = match common::wgpu::create_device_queue(
-            "aero-d3d11 aerogpu_resources test device",
-        )
-        .await
-        {
-            Ok(v) => v,
-            Err(err) => {
-                common::skip_or_panic(module_path!(), &format!("{err:#}"));
-                return Ok(());
-            }
-        };
+        let (device, queue, _supports_compute) =
+            match common::wgpu::create_device_queue("aero-d3d11 aerogpu_resources test device")
+                .await
+            {
+                Ok(v) => v,
+                Err(err) => {
+                    common::skip_or_panic(module_path!(), &format!("{err:#}"));
+                    return Ok(());
+                }
+            };
         let mut resources = AerogpuResourceManager::new(device, queue);
 
         let tex_handle = 3;
@@ -440,17 +438,16 @@ fn upload_resource_bc1_texture_roundtrip_cpu_fallback() -> Result<()> {
 #[test]
 fn upload_resource_bc1_srgb_texture_roundtrip_cpu_fallback() -> Result<()> {
     pollster::block_on(async {
-        let (device, queue, _supports_compute) = match common::wgpu::create_device_queue(
-            "aero-d3d11 aerogpu_resources test device",
-        )
-        .await
-        {
-            Ok(v) => v,
-            Err(err) => {
-                common::skip_or_panic(module_path!(), &format!("{err:#}"));
-                return Ok(());
-            }
-        };
+        let (device, queue, _supports_compute) =
+            match common::wgpu::create_device_queue("aero-d3d11 aerogpu_resources test device")
+                .await
+            {
+                Ok(v) => v,
+                Err(err) => {
+                    common::skip_or_panic(module_path!(), &format!("{err:#}"));
+                    return Ok(());
+                }
+            };
         let mut resources = AerogpuResourceManager::new(device, queue);
 
         let tex_handle = 8;
@@ -724,17 +721,16 @@ fn upload_resource_bc_srgb_direct_roundtrip_when_bc_feature_enabled() -> Result<
 #[test]
 fn upload_resource_bc1_small_mip_reaches_edge_ok() -> Result<()> {
     pollster::block_on(async {
-        let (device, queue, _supports_compute) = match common::wgpu::create_device_queue(
-            "aero-d3d11 aerogpu_resources test device",
-        )
-        .await
-        {
-            Ok(v) => v,
-            Err(err) => {
-                common::skip_or_panic(module_path!(), &format!("{err:#}"));
-                return Ok(());
-            }
-        };
+        let (device, queue, _supports_compute) =
+            match common::wgpu::create_device_queue("aero-d3d11 aerogpu_resources test device")
+                .await
+            {
+                Ok(v) => v,
+                Err(err) => {
+                    common::skip_or_panic(module_path!(), &format!("{err:#}"));
+                    return Ok(());
+                }
+            };
         let mut resources = AerogpuResourceManager::new(device, queue);
 
         // A 2x2 BC1 mip still occupies a single 4x4 block in memory. WebGPU allows this as a
@@ -785,17 +781,16 @@ fn upload_resource_bc1_small_mip_reaches_edge_ok() -> Result<()> {
 #[test]
 fn upload_resource_bc3_texture_roundtrip_cpu_fallback() -> Result<()> {
     pollster::block_on(async {
-        let (device, queue, _supports_compute) = match common::wgpu::create_device_queue(
-            "aero-d3d11 aerogpu_resources test device",
-        )
-        .await
-        {
-            Ok(v) => v,
-            Err(err) => {
-                common::skip_or_panic(module_path!(), &format!("{err:#}"));
-                return Ok(());
-            }
-        };
+        let (device, queue, _supports_compute) =
+            match common::wgpu::create_device_queue("aero-d3d11 aerogpu_resources test device")
+                .await
+            {
+                Ok(v) => v,
+                Err(err) => {
+                    common::skip_or_panic(module_path!(), &format!("{err:#}"));
+                    return Ok(());
+                }
+            };
         let mut resources = AerogpuResourceManager::new(device, queue);
 
         let tex_handle = 5;
@@ -852,17 +847,16 @@ fn upload_resource_bc3_texture_roundtrip_cpu_fallback() -> Result<()> {
 #[test]
 fn upload_resource_bc3_srgb_texture_roundtrip_cpu_fallback() -> Result<()> {
     pollster::block_on(async {
-        let (device, queue, _supports_compute) = match common::wgpu::create_device_queue(
-            "aero-d3d11 aerogpu_resources test device",
-        )
-        .await
-        {
-            Ok(v) => v,
-            Err(err) => {
-                common::skip_or_panic(module_path!(), &format!("{err:#}"));
-                return Ok(());
-            }
-        };
+        let (device, queue, _supports_compute) =
+            match common::wgpu::create_device_queue("aero-d3d11 aerogpu_resources test device")
+                .await
+            {
+                Ok(v) => v,
+                Err(err) => {
+                    common::skip_or_panic(module_path!(), &format!("{err:#}"));
+                    return Ok(());
+                }
+            };
         let mut resources = AerogpuResourceManager::new(device, queue);
 
         let tex_handle = 10;
@@ -919,17 +913,16 @@ fn upload_resource_bc3_srgb_texture_roundtrip_cpu_fallback() -> Result<()> {
 #[test]
 fn upload_resource_bc2_texture_roundtrip_cpu_fallback() -> Result<()> {
     pollster::block_on(async {
-        let (device, queue, _supports_compute) = match common::wgpu::create_device_queue(
-            "aero-d3d11 aerogpu_resources test device",
-        )
-        .await
-        {
-            Ok(v) => v,
-            Err(err) => {
-                common::skip_or_panic(module_path!(), &format!("{err:#}"));
-                return Ok(());
-            }
-        };
+        let (device, queue, _supports_compute) =
+            match common::wgpu::create_device_queue("aero-d3d11 aerogpu_resources test device")
+                .await
+            {
+                Ok(v) => v,
+                Err(err) => {
+                    common::skip_or_panic(module_path!(), &format!("{err:#}"));
+                    return Ok(());
+                }
+            };
         let mut resources = AerogpuResourceManager::new(device, queue);
 
         let tex_handle = 6;
@@ -985,17 +978,16 @@ fn upload_resource_bc2_texture_roundtrip_cpu_fallback() -> Result<()> {
 #[test]
 fn upload_resource_bc2_srgb_texture_roundtrip_cpu_fallback() -> Result<()> {
     pollster::block_on(async {
-        let (device, queue, _supports_compute) = match common::wgpu::create_device_queue(
-            "aero-d3d11 aerogpu_resources test device",
-        )
-        .await
-        {
-            Ok(v) => v,
-            Err(err) => {
-                common::skip_or_panic(module_path!(), &format!("{err:#}"));
-                return Ok(());
-            }
-        };
+        let (device, queue, _supports_compute) =
+            match common::wgpu::create_device_queue("aero-d3d11 aerogpu_resources test device")
+                .await
+            {
+                Ok(v) => v,
+                Err(err) => {
+                    common::skip_or_panic(module_path!(), &format!("{err:#}"));
+                    return Ok(());
+                }
+            };
         let mut resources = AerogpuResourceManager::new(device, queue);
 
         let tex_handle = 11;
@@ -1051,17 +1043,16 @@ fn upload_resource_bc2_srgb_texture_roundtrip_cpu_fallback() -> Result<()> {
 #[test]
 fn upload_resource_bc7_texture_roundtrip_cpu_fallback() -> Result<()> {
     pollster::block_on(async {
-        let (device, queue, _supports_compute) = match common::wgpu::create_device_queue(
-            "aero-d3d11 aerogpu_resources test device",
-        )
-        .await
-        {
-            Ok(v) => v,
-            Err(err) => {
-                common::skip_or_panic(module_path!(), &format!("{err:#}"));
-                return Ok(());
-            }
-        };
+        let (device, queue, _supports_compute) =
+            match common::wgpu::create_device_queue("aero-d3d11 aerogpu_resources test device")
+                .await
+            {
+                Ok(v) => v,
+                Err(err) => {
+                    common::skip_or_panic(module_path!(), &format!("{err:#}"));
+                    return Ok(());
+                }
+            };
         let mut resources = AerogpuResourceManager::new(device, queue);
 
         let tex_handle = 7;
@@ -1113,17 +1104,16 @@ fn upload_resource_bc7_texture_roundtrip_cpu_fallback() -> Result<()> {
 #[test]
 fn upload_resource_bc7_srgb_texture_roundtrip_cpu_fallback() -> Result<()> {
     pollster::block_on(async {
-        let (device, queue, _supports_compute) = match common::wgpu::create_device_queue(
-            "aero-d3d11 aerogpu_resources test device",
-        )
-        .await
-        {
-            Ok(v) => v,
-            Err(err) => {
-                common::skip_or_panic(module_path!(), &format!("{err:#}"));
-                return Ok(());
-            }
-        };
+        let (device, queue, _supports_compute) =
+            match common::wgpu::create_device_queue("aero-d3d11 aerogpu_resources test device")
+                .await
+            {
+                Ok(v) => v,
+                Err(err) => {
+                    common::skip_or_panic(module_path!(), &format!("{err:#}"));
+                    return Ok(());
+                }
+            };
         let mut resources = AerogpuResourceManager::new(device, queue);
 
         let tex_handle = 12;
@@ -1175,17 +1165,16 @@ fn upload_resource_bc7_srgb_texture_roundtrip_cpu_fallback() -> Result<()> {
 #[test]
 fn create_texture2d_requires_row_pitch_for_backed_textures() -> Result<()> {
     pollster::block_on(async {
-        let (device, queue, _supports_compute) = match common::wgpu::create_device_queue(
-            "aero-d3d11 aerogpu_resources test device",
-        )
-        .await
-        {
-            Ok(v) => v,
-            Err(err) => {
-                common::skip_or_panic(module_path!(), &format!("{err:#}"));
-                return Ok(());
-            }
-        };
+        let (device, queue, _supports_compute) =
+            match common::wgpu::create_device_queue("aero-d3d11 aerogpu_resources test device")
+                .await
+            {
+                Ok(v) => v,
+                Err(err) => {
+                    common::skip_or_panic(module_path!(), &format!("{err:#}"));
+                    return Ok(());
+                }
+            };
         let mut resources = AerogpuResourceManager::new(device, queue);
 
         let res = resources.create_texture2d(
@@ -1213,17 +1202,16 @@ fn create_texture2d_requires_row_pitch_for_backed_textures() -> Result<()> {
 #[test]
 fn handles_are_namespaced_per_object_type() -> Result<()> {
     pollster::block_on(async {
-        let (device, queue, _supports_compute) = match common::wgpu::create_device_queue(
-            "aero-d3d11 aerogpu_resources test device",
-        )
-        .await
-        {
-            Ok(v) => v,
-            Err(err) => {
-                common::skip_or_panic(module_path!(), &format!("{err:#}"));
-                return Ok(());
-            }
-        };
+        let (device, queue, _supports_compute) =
+            match common::wgpu::create_device_queue("aero-d3d11 aerogpu_resources test device")
+                .await
+            {
+                Ok(v) => v,
+                Err(err) => {
+                    common::skip_or_panic(module_path!(), &format!("{err:#}"));
+                    return Ok(());
+                }
+            };
         let mut resources = AerogpuResourceManager::new(device, queue);
 
         // The protocol uses separate handle namespaces for resources, shaders, and input layouts.
