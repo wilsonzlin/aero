@@ -107,6 +107,26 @@ describe("usb/UsbProxyRing", () => {
     expect(roundTripped[3]).toEqual(completions[3]);
   });
 
+  it("truncates oversized error messages to fit the ring", () => {
+    // dataCapacityBytes=64 => fixed error record header is 12 bytes, leaving 52 bytes for message.
+    // The truncation marker is 12 bytes, so we expect 40 bytes of payload + marker.
+    const sab = createUsbProxyRingBuffer(64);
+    const ring = new UsbProxyRing(sab);
+
+    const completion: UsbHostCompletion = {
+      kind: "controlOut",
+      id: 1,
+      status: "error",
+      message: "a".repeat(100),
+    };
+    expect(ring.pushCompletion(completion)).toBe(true);
+
+    const popped = ring.popCompletion();
+    if (!popped || popped.status !== "error") throw new Error("unreachable");
+    expect(popped.message).toBe("a".repeat(40) + " [truncated]");
+    expect(ring.popCompletion()).toBeNull();
+  });
+
   it("handles wraparound and preserves ordering", () => {
     const sab = createUsbProxyRingBuffer(64);
     const ring = new UsbProxyRing(sab);

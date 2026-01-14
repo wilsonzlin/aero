@@ -100,14 +100,29 @@ function decodeSetupPacket(view: DataView, offset: number): SetupPacket {
 const TRUNCATION_MARKER = " [truncated]";
 const TRUNCATION_MARKER_BYTES = textEncoder.encode(TRUNCATION_MARKER);
 
-function truncateUtf8(bytes: Uint8Array, maxBytes: number): Uint8Array {
-  if (bytes.byteLength <= maxBytes) return bytes;
+const MAX_USB_PROXY_ERROR_MESSAGE_BYTES = 16 * 1024;
+
+function encodeUtf8TruncatedString(input: string, maxBytes: number): Uint8Array {
   if (maxBytes <= 0) return new Uint8Array();
+
+  // Avoid allocating a giant temporary `Uint8Array` when `input` is huge by using
+  // `TextEncoder.encodeInto` with a bounded destination buffer.
+  const buf = new Uint8Array(maxBytes);
+  const { read, written } = textEncoder.encodeInto(input, buf);
+
+  // Fast path: the string fully fit in `maxBytes`.
+  if (read === input.length) return buf.subarray(0, written);
+
   if (maxBytes <= TRUNCATION_MARKER_BYTES.byteLength) return TRUNCATION_MARKER_BYTES.slice(0, maxBytes);
-  const head = bytes.slice(0, maxBytes - TRUNCATION_MARKER_BYTES.byteLength);
-  const out = new Uint8Array(maxBytes);
-  out.set(head, 0);
-  out.set(TRUNCATION_MARKER_BYTES, head.byteLength);
+
+  // Truncate and append a marker so callers can distinguish "truncated due to limit" vs
+  // "message naturally ended here". Preserve the previous `truncateUtf8` semantics (byte-based
+  // truncation; may cut through UTF-8 sequences).
+  const headMax = maxBytes - TRUNCATION_MARKER_BYTES.byteLength;
+  const headLen = Math.min(headMax, written);
+  const out = new Uint8Array(headLen + TRUNCATION_MARKER_BYTES.byteLength);
+  out.set(buf.subarray(0, headLen), 0);
+  out.set(TRUNCATION_MARKER_BYTES, headLen);
   return out;
 }
 
@@ -387,23 +402,17 @@ export class UsbProxyRing {
         recordSize += 4;
       }
     } else if (completion.status === "error") {
-      payload = textEncoder.encode(completion.message);
+      const fixed = USB_PROXY_COMPLETION_HEADER_BYTES + 4;
+      const ringMax = this.#cap > fixed ? this.#cap - fixed : 0;
+      const maxBytes = Math.min(ringMax, MAX_USB_PROXY_ERROR_MESSAGE_BYTES);
+      payload = encodeUtf8TruncatedString(completion.message, maxBytes);
       recordSize += 4 + payload.byteLength;
     }
 
     recordSize = alignUp(recordSize, USB_PROXY_RING_ALIGN);
 
-    // Error messages are diagnostic only; truncate to fit rather than forcing
-    // correctness-critical fallbacks.
-    if (recordSize > this.#cap) {
-      if (completion.status === "error") {
-        const fixed = USB_PROXY_COMPLETION_HEADER_BYTES + 4;
-        const maxTotal = this.#cap - (this.#cap % USB_PROXY_RING_ALIGN);
-        const maxPayload = maxTotal > fixed ? maxTotal - fixed : 0;
-        payload = truncateUtf8(payload ?? new Uint8Array(), maxPayload);
-        recordSize = alignUp(fixed + payload.byteLength, USB_PROXY_RING_ALIGN);
-      }
-    }
+    // Error messages are diagnostic only; truncate to fit (see `encodeUtf8TruncatedString`) rather
+    // than forcing correctness-critical fallbacks.
 
     if (recordSize > this.#cap) {
       Atomics.add(this.#ctrl, CtrlIndex.Dropped, 1);
