@@ -39,7 +39,10 @@ This covers the fixed-function FVFs:
 - `D3DFVF_XYZ | D3DFVF_NORMAL | D3DFVF_DIFFUSE` (VS WVP constants; optional fixed-function lighting)
 - `D3DFVF_XYZ | D3DFVF_NORMAL | D3DFVF_DIFFUSE | D3DFVF_TEX1` (VS WVP constants; optional fixed-function lighting)
 
-When `D3DRS_LIGHTING` is enabled for the `NORMAL` variants, the UMD additionally uploads a reserved fixed-function lighting constant block (`c244..c253`; `kFixedfuncLightingStartRegister = 244`) via `ensure_fixedfunc_lighting_constants_locked()` (normal transform, light 0, material, global ambient). Uploads are gated by `Device::fixedfunc_lighting_dirty` and occur at draw time when a lit fixed-function VS variant is active.
+When `D3DRS_LIGHTING` is enabled for the `NORMAL` variants, the UMD additionally uploads a reserved fixed-function lighting constant block (`c244..c253`; `kFixedfuncLightingStartRegister = 244`) via `ensure_fixedfunc_lighting_constants_locked()` (normal transform, light 0, material, global ambient).
+
+- Uploads are gated by `Device::fixedfunc_lighting_dirty` and occur at draw time when a lit fixed-function VS variant is active.
+- Like the WVP constants, this uses a high constant range to reduce collisions with app/user VS constants. Even so, the UMD will mark `fixedfunc_lighting_dirty` when user shaders or `SetShaderConstF` write overlapping registers so the constants are refreshed when switching back to the lit fixed-function path.
 
 Note: the fixed-function fallback supports only `TEXCOORD0=float2` for `TEX1` FVFs (default `D3DFVF_TEXCOORDSIZE2(0)`). Other `D3DFVF_TEXCOORDSIZE*` encodings for texcoord set 0 are accepted for input-layout translation (user shaders), but fixed-function draws will fail with `D3DERR_INVALIDCALL` when the fixed-function path is active.
 
