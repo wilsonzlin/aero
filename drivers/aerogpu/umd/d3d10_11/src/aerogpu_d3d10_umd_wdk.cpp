@@ -1575,17 +1575,24 @@ Unlock:
   // "last row span" in the guest allocation can exceed `res->storage.size()`;
   // clamp so the dirty range is always within protocol bounds.
   const uint64_t protocol_size = static_cast<uint64_t>(res->storage.size());
-  if (dirty_offset > protocol_size) {
+  uint64_t clamped_offset = dirty_offset;
+  uint64_t clamped_end = dirty_end;
+  if (clamped_offset > protocol_size) {
     SetError(hDevice, E_INVALIDARG);
-    return;
+    // Still emit a well-formed no-op packet to keep the command stream valid.
+    clamped_offset = 0;
+    clamped_end = 0;
+  } else {
+    clamped_end = std::min(clamped_end, protocol_size);
+    if (clamped_end < clamped_offset) {
+      SetError(hDevice, E_FAIL);
+      // Still emit a well-formed no-op packet to keep the command stream valid.
+      clamped_offset = 0;
+      clamped_end = 0;
+    }
   }
-  dirty_end = std::min(dirty_end, protocol_size);
-  if (dirty_end < dirty_offset) {
-    SetError(hDevice, E_FAIL);
-    return;
-  }
-  dirty->offset_bytes = dirty_offset;
-  dirty->size_bytes = dirty_end - dirty_offset;
+  dirty->offset_bytes = clamped_offset;
+  dirty->size_bytes = clamped_end - clamped_offset;
 }
 
 // -----------------------------------------------------------------------------
