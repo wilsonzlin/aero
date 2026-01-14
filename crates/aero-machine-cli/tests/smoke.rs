@@ -5,7 +5,7 @@ use std::process::Command;
 
 use aero_storage::{AeroSparseConfig, AeroSparseDisk, FileBackend, VirtualDisk, SECTOR_SIZE};
 
-fn resolve_cli_exe(repo_root: &PathBuf) -> PathBuf {
+fn resolve_cli_exe(repo_root: &std::path::Path) -> PathBuf {
     // Avoid relying on `CARGO_BIN_EXE_*` (Cargo does not guarantee it is set for all test
     // invocation modes). Use the workspace `target/` dir path instead.
     let target_dir = std::env::var_os("CARGO_TARGET_DIR")
