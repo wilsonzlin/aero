@@ -1,4 +1,5 @@
 use aero_d3d11::sm4::{decode_program, opcode::*};
+use aero_d3d11::sm4::decode::Sm4DecodeErrorKind;
 use aero_d3d11::{
     BufferKind, BufferRef, OperandModifier, RegFile, RegisterRef, ShaderModel, Sm4Decl, Sm4Inst,
     Sm4Module, Sm4Program, SrcKind, SrcOperand, Swizzle, TextureRef, UavRef, WriteMask,
@@ -210,6 +211,48 @@ fn decodes_geometry_shader_input_with_vertex_index() {
                 modifier: OperandModifier::None,
             }
         }
+    );
+}
+
+#[test]
+fn rejects_geometry_shader_input_with_non_immediate_vertex_index_representation() {
+    // Create `mov r0, v0[?]` where the vertex index uses a non-immediate index representation.
+    //
+    // Our decoder only supports immediate indices for 2D-indexed GS inputs, and must surface a
+    // precise `UnsupportedIndexRepresentation` error.
+    let mut body = Vec::<u32>::new();
+
+    // mov r0, v0[0] (but with invalid index1 representation)
+    let mut mov = vec![opcode_token(OPCODE_MOV, 1 + 2 + 1 + 1)];
+    mov.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 0, WriteMask::XYZW));
+
+    let mut src_tok = operand_token(
+        OPERAND_TYPE_INPUT,
+        2,
+        OPERAND_SEL_SWIZZLE,
+        swizzle_bits(Swizzle::XYZW.0),
+        2,
+        false,
+    );
+    // Force index1 representation to a non-immediate encoding (value 1).
+    src_tok |= 1 << OPERAND_INDEX1_REP_SHIFT;
+    mov.push(src_tok);
+    // Provide only the first index (register index). The decode should fail before attempting to
+    // read the second index.
+    mov.push(0);
+
+    body.extend_from_slice(&mov);
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    // Stage type 2 is geometry shader.
+    let tokens = make_sm5_program_tokens(2, &body);
+    let program =
+        Sm4Program::parse_program_tokens(&tokens_to_bytes(&tokens)).expect("parse_program_tokens");
+    let err = decode_program(&program).expect_err("expected decode to fail");
+
+    assert!(
+        matches!(err.kind, Sm4DecodeErrorKind::UnsupportedIndexRepresentation { rep: 1 }),
+        "unexpected error kind: {err:?}"
     );
 }
 
