@@ -668,6 +668,8 @@ async fn verify_http_or_file(args: &VerifyArgs) -> Result<()> {
         manifest.total_size
     );
 
+    verify_optional_meta_http_or_file(&source, &manifest).await?;
+
     let manifest = Arc::new(manifest);
     let chunk_count = manifest.chunk_count;
 
@@ -803,6 +805,52 @@ async fn verify_http_or_file(args: &VerifyArgs) -> Result<()> {
     Ok(())
 }
 
+async fn verify_optional_meta_http_or_file(
+    source: &VerifyHttpSource,
+    manifest: &ManifestV1,
+) -> Result<()> {
+    match source {
+        VerifyHttpSource::File { base_dir } => {
+            let meta_path = base_dir.join("meta.json");
+            match tokio::fs::read(&meta_path).await {
+                Ok(bytes) => {
+                    let meta: Meta = serde_json::from_slice(&bytes)
+                        .with_context(|| format!("parse meta.json at {}", meta_path.display()))?;
+                    validate_meta_matches_manifest(&meta, manifest)?;
+                }
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                    eprintln!(
+                        "Note: {} not found; skipping meta.json validation.",
+                        meta_path.display()
+                    );
+                }
+                Err(err) => {
+                    return Err(err).with_context(|| format!("read {}", meta_path.display()));
+                }
+            }
+        }
+        VerifyHttpSource::Url {
+            manifest_url,
+            client,
+        } => {
+            let meta_url = manifest_url
+                .join("meta.json")
+                .with_context(|| format!("resolve meta.json relative to {manifest_url}"))?;
+            match download_http_bytes_optional(client, meta_url.clone()).await? {
+                None => {
+                    eprintln!("Note: {meta_url} not found; skipping meta.json validation.");
+                }
+                Some(bytes) => {
+                    let meta: Meta =
+                        serde_json::from_slice(&bytes).context("parse meta.json from HTTP")?;
+                    validate_meta_matches_manifest(&meta, manifest)?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 fn validate_manifest_identity(manifest: &ManifestV1, args: &VerifyArgs) -> Result<()> {
     if let Some(expected) = &args.image_id {
         if manifest.image_id != *expected {
@@ -925,6 +973,30 @@ async fn download_http_bytes_with_retry(
             }
         }
     }
+}
+
+async fn download_http_bytes_optional(
+    client: &reqwest::Client,
+    url: reqwest::Url,
+) -> Result<Option<Vec<u8>>> {
+    let resp = client
+        .get(url.clone())
+        .send()
+        .await
+        .with_context(|| format!("GET {url}"))?;
+    let status = resp.status();
+    if status == reqwest::StatusCode::NOT_FOUND {
+        return Ok(None);
+    }
+    if !status.is_success() {
+        bail!("GET {url} failed with HTTP {status}");
+    }
+    Ok(Some(
+        resp.bytes()
+            .await
+            .with_context(|| format!("read body for GET {url}"))?
+            .to_vec(),
+    ))
 }
 
 async fn verify_http_chunk(
@@ -1244,27 +1316,7 @@ async fn verify_s3(args: &VerifyArgs) -> Result<()> {
             );
         }
         Some(meta) => {
-            if meta.total_size != manifest.total_size {
-                bail!(
-                    "meta.json totalSize mismatch: expected {}, got {}",
-                    manifest.total_size,
-                    meta.total_size
-                );
-            }
-            if meta.chunk_size != manifest.chunk_size {
-                bail!(
-                    "meta.json chunkSize mismatch: expected {}, got {}",
-                    manifest.chunk_size,
-                    meta.chunk_size
-                );
-            }
-            if meta.chunk_count != manifest.chunk_count {
-                bail!(
-                    "meta.json chunkCount mismatch: expected {}, got {}",
-                    manifest.chunk_count,
-                    meta.chunk_count
-                );
-            }
+            validate_meta_matches_manifest(&meta, manifest.as_ref())?;
         }
     }
 
@@ -1507,6 +1559,31 @@ fn validate_latest_v1(
             "latest.json manifestKey mismatch for version '{}': expected '{verified_manifest_key}', got '{}'",
             manifest.version,
             latest.manifest_key
+        );
+    }
+    Ok(())
+}
+
+fn validate_meta_matches_manifest(meta: &Meta, manifest: &ManifestV1) -> Result<()> {
+    if meta.total_size != manifest.total_size {
+        bail!(
+            "meta.json totalSize mismatch: expected {}, got {}",
+            manifest.total_size,
+            meta.total_size
+        );
+    }
+    if meta.chunk_size != manifest.chunk_size {
+        bail!(
+            "meta.json chunkSize mismatch: expected {}, got {}",
+            manifest.chunk_size,
+            meta.chunk_size
+        );
+    }
+    if meta.chunk_count != manifest.chunk_count {
+        bail!(
+            "meta.json chunkCount mismatch: expected {}, got {}",
+            manifest.chunk_count,
+            meta.chunk_count
         );
     }
     Ok(())
