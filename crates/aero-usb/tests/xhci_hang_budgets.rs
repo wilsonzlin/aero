@@ -248,3 +248,31 @@ fn ep0_transfer_engine_data_stage_work_is_bounded_per_doorbell() {
     // But we should not have completed the entire DATA stage in one call.
     assert_eq!(mem.data[start + setup.w_length as usize - 1], 0);
 }
+
+#[test]
+fn ep0_transfer_engine_all_ones_trb_fetch_faults_and_emits_event() {
+    // Open-bus/all-ones reads can happen if the guest misprograms ring pointers or if a host
+    // integration gates DMA. Ensure we treat the TRB as invalid and fault the endpoint rather than
+    // interpreting garbage.
+    let mut mem = CountingMem::new(0x20_000, 64, 64);
+
+    let tr_ring = 0x1000u64;
+    let event_ring = 0x2000u64;
+
+    // Simulate an unmapped/open-bus TRB fetch by filling the would-be TRB bytes with 0xFF.
+    mem.data[tr_ring as usize..tr_ring as usize + TRB_LEN].fill(0xFF);
+
+    let mut xhci = Ep0TransferEngine::new_with_ports(1);
+    xhci.set_event_ring(event_ring, 8);
+    xhci.hub_mut().attach(0, Box::new(DummyDevice::default()));
+
+    let slot_id = xhci.enable_slot(0).expect("slot allocation");
+    assert!(xhci.configure_ep0(slot_id, tr_ring, true, 64));
+
+    xhci.ring_doorbell(&mut mem, slot_id, 1);
+
+    let ev = Trb::read_from(&mut mem, event_ring);
+    assert_eq!(ev.trb_type(), TrbType::TransferEvent);
+    assert_eq!(ev.completion_code_raw(), CompletionCode::TrbError.as_u8());
+    assert_eq!(ev.parameter, tr_ring);
+}

@@ -645,10 +645,16 @@ impl Direction {
     }
 }
 
-fn read_xhci_trb<M: MemoryBus + ?Sized>(mem: &mut M, addr: u64) -> XhciTrb {
+fn read_xhci_trb_checked<M: MemoryBus + ?Sized>(mem: &mut M, addr: u64) -> Result<XhciTrb, ()> {
     let mut bytes = [0u8; TRB_LEN];
     mem.read_bytes(addr, &mut bytes);
-    XhciTrb::from_bytes(bytes)
+    // Treat an all-ones fetch as an invalid DMA read (commonly produced by open-bus/unmapped reads).
+    // This avoids interpreting garbage TRBs when the guest misprograms the ring pointer or DMA is
+    // gated off by the host integration layer.
+    if bytes.iter().all(|&b| b == 0xFF) {
+        return Err(());
+    }
+    Ok(XhciTrb::from_bytes(bytes))
 }
 
 fn write_xhci_trb<M: MemoryBus + ?Sized>(mem: &mut M, addr: u64, trb: &XhciTrb) {
@@ -736,9 +742,9 @@ enum Ep0RingError {
 }
 
 impl Ep0RingState {
-    fn peek<M: MemoryBus + ?Sized>(&self, mem: &mut M) -> Option<XhciTrb> {
-        let trb = read_xhci_trb(mem, self.dequeue);
-        (trb.cycle() == self.cycle).then_some(trb)
+    fn peek<M: MemoryBus + ?Sized>(&self, mem: &mut M) -> Result<Option<XhciTrb>, ()> {
+        let trb = read_xhci_trb_checked(mem, self.dequeue)?;
+        Ok((trb.cycle() == self.cycle).then_some(trb))
     }
 
     fn consume(&mut self, trb: &XhciTrb) -> Result<(), Ep0RingError> {
@@ -880,7 +886,11 @@ impl ControlEndpoint {
         let mut iterations = 0usize;
         while iterations < 32 {
             iterations += 1;
-            let Some(trb) = self.ring.peek(mem) else {
+            let Some(trb) = (match self.ring.peek(mem) {
+                Ok(Some(trb)) => Some(trb),
+                Ok(None) => None,
+                Err(()) => break,
+            }) else {
                 break;
             };
             let ty = trb.trb_type();
@@ -916,10 +926,17 @@ impl ControlEndpoint {
                 break;
             }
 
-            let Some(trb) = self.ring.peek(mem) else {
+            let trb_addr = self.ring.dequeue;
+            let Some(trb) = (match self.ring.peek(mem) {
+                Ok(Some(trb)) => Some(trb),
+                Ok(None) => None,
+                Err(()) => {
+                    self.fault_ring(mem, events, trb_addr, endpoint_id, slot_id);
+                    break;
+                }
+            }) else {
                 break;
             };
-            let trb_addr = self.ring.dequeue;
 
             // Link TRBs are transparent to the endpoint state machine.
             if matches!(trb.trb_type(), XhciTrbType::Link) {
@@ -1394,7 +1411,7 @@ impl ControlEndpoint {
 
         if processed_any && matches!(self.state, ControlEp0State::ExpectSetup) {
             // If we've drained the ring and are idle, clear the doorbell latch.
-            if self.ring.peek(mem).is_none() {
+            if matches!(self.ring.peek(mem), Ok(None)) {
                 self.doorbell_pending = false;
             }
         }
