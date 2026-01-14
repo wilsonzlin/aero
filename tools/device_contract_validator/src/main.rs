@@ -1244,9 +1244,12 @@ fn validate_virtio_input_device_desc_split(
                 ms.iter().map(|e| e.raw_line.as_str()).collect::<Vec<_>>()
             );
         }
-        if fb.len() != 1 {
+        // aero_virtio_input.inf is intentionally SUBSYS-only so it does not overlap with the
+        // tablet INF (aero_virtio_tablet.inf). The generic (no SUBSYS) fallback HWID lives only
+        // in the opt-in legacy alias INF (virtio-input.inf.disabled).
+        if !fb.is_empty() {
             bail!(
-                "virtio-input INF {}: expected exactly one fallback model entry in [{}] for HWID {} (found {}): {:?}",
+                "virtio-input INF {}: unexpected fallback model entry in [{}] for HWID {} (found {}): {:?}",
                 inf_path.display(),
                 models_section,
                 fb_hwid,
@@ -1257,24 +1260,19 @@ fn validate_virtio_input_device_desc_split(
 
         let kb = kb[0];
         let ms = ms[0];
-        let fb = fb[0];
 
-        if !kb.install_section.eq_ignore_ascii_case(&ms.install_section)
-            || !kb.install_section.eq_ignore_ascii_case(&fb.install_section)
-        {
+        if !kb.install_section.eq_ignore_ascii_case(&ms.install_section) {
             bail!(
-                "virtio-input INF {}: model entries in [{}] must share the same install section.\nkeyboard: {}\nmouse:    {}\nfallback: {}",
+                "virtio-input INF {}: model entries in [{}] must share the same install section.\nkeyboard: {}\nmouse:    {}",
                 inf_path.display(),
                 models_section,
                 kb.raw_line,
                 ms.raw_line,
-                fb.raw_line,
             );
         }
 
         let kb_desc = resolve_inf_device_desc(&kb.device_desc, &strings)?;
         let ms_desc = resolve_inf_device_desc(&ms.device_desc, &strings)?;
-        let fb_desc = resolve_inf_device_desc(&fb.device_desc, &strings)?;
 
         if kb_desc.eq_ignore_ascii_case(&ms_desc) {
             bail!(
@@ -1284,16 +1282,6 @@ fn validate_virtio_input_device_desc_split(
                 kb_desc,
                 kb.raw_line,
                 ms.raw_line,
-            );
-        }
-        if fb_desc.eq_ignore_ascii_case(&kb_desc) || fb_desc.eq_ignore_ascii_case(&ms_desc) {
-            bail!(
-                "virtio-input INF {}: fallback model entry in [{}] must use a generic DeviceDesc string (not the keyboard/mouse string).\nkeyboard: {}\nmouse:    {}\nfallback: {}",
-                inf_path.display(),
-                models_section,
-                kb.raw_line,
-                ms.raw_line,
-                fb.raw_line,
             );
         }
     }
@@ -1505,7 +1493,12 @@ fn validate_in_tree_infs(repo_root: &Path, devices: &BTreeMap<String, DeviceEntr
                     .with_context(|| format!("{name}: parse contract PCI revision for {base}"))?;
                 let strict = format!("{base}&REV_{expected_rev:02X}");
 
-                if !active_hwids.iter().any(|h| h.eq_ignore_ascii_case(&strict)) {
+                // Most in-tree virtio INFs include a less-specific `PCI\\VEN_...&DEV_...&REV_..` model
+                // entry. virtio-input is intentionally SUBSYS-only so it doesn't overlap with the
+                // tablet (EV_ABS) INF; accept the absence of the base+REV HWID there.
+                if dev.device != "virtio-input"
+                    && !active_hwids.iter().any(|h| h.eq_ignore_ascii_case(&strict))
+                {
                     bail!(
                         "{name}: INF {} missing strict revision-gated HWID {strict}.\nActive HWIDs found in INF:\n{}",
                         inf_path.display(),

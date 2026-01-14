@@ -710,6 +710,253 @@ def parse_pci_vendor_device_from_hwid(hwid: str) -> tuple[int, int] | None:
     return int(m.group("ven"), 16), int(m.group("dev"), 16)
 
 
+def validate_virtio_input_model_lines(
+    *,
+    inf_path: Path,
+    strict_hwid: str,
+    contract_rev: int,
+    require_fallback: bool,
+    errors: list[str],
+) -> None:
+    """
+    Validate the virtio-input model line policy for the given INF.
+
+    - Canonical `aero_virtio_input.inf` is SUBSYS-only (keyboard + mouse) so it
+      does not overlap with the tablet INF.
+    - The optional legacy filename alias INF (`virtio-input.inf.disabled`) is
+      allowed/expected to include the strict (no SUBSYS) fallback binding.
+    """
+
+    model_entries = parse_inf_model_entries(inf_path)
+    string_keys = parse_inf_string_keys(inf_path)
+    string_map = parse_inf_strings_map(inf_path)
+    by_section: dict[str, list[InfModelEntry]] = {}
+    for e in model_entries:
+        by_section.setdefault(e.section.lower(), []).append(e)
+
+    contract_rev_tag = f"&REV_{contract_rev:02X}"
+
+    for section in ("Aero.NTx86", "Aero.NTamd64"):
+        sect_entries = by_section.get(section.lower(), [])
+        if not sect_entries:
+            errors.append(
+                f"{inf_path.as_posix()}: missing required models section [{section}] (expected virtio-input HWID bindings)."
+            )
+            continue
+
+        kb = [
+            e
+            for e in sect_entries
+            if "SUBSYS_00101AF4" in e.hardware_id.upper() and contract_rev_tag in e.hardware_id.upper()
+        ]
+        ms = [
+            e
+            for e in sect_entries
+            if "SUBSYS_00111AF4" in e.hardware_id.upper() and contract_rev_tag in e.hardware_id.upper()
+        ]
+        fb = [e for e in sect_entries if e.hardware_id.upper() == strict_hwid.upper()]
+        tablet = [e for e in sect_entries if "SUBSYS_00121AF4" in e.hardware_id.upper()]
+
+        if tablet:
+            errors.append(
+                format_error(
+                    f"{inf_path.as_posix()}: unexpected tablet subsystem model line(s) in [{section}] (SUBSYS_00121AF4); tablet devices must bind via aero_virtio_tablet.inf:",
+                    [e.raw_line for e in tablet],
+                )
+            )
+
+        if len(kb) != 1:
+            errors.append(
+                format_error(
+                    f"{inf_path.as_posix()}: expected exactly one keyboard model line in [{section}] (SUBSYS_00101AF4 + REV):",
+                    [e.raw_line for e in kb] if kb else ["(missing)"],
+                )
+            )
+            continue
+        if len(ms) != 1:
+            errors.append(
+                format_error(
+                    f"{inf_path.as_posix()}: expected exactly one mouse model line in [{section}] (SUBSYS_00111AF4 + REV):",
+                    [e.raw_line for e in ms] if ms else ["(missing)"],
+                )
+            )
+            continue
+
+        if require_fallback:
+            if len(fb) != 1:
+                errors.append(
+                    format_error(
+                        f"{inf_path.as_posix()}: expected exactly one fallback model line in [{section}] ({strict_hwid}):",
+                        [e.raw_line for e in fb] if fb else ["(missing)"],
+                    )
+                )
+                continue
+        else:
+            if fb:
+                errors.append(
+                    format_error(
+                        f"{inf_path.as_posix()}: unexpected fallback model line(s) in [{section}] ({strict_hwid}); canonical INF must be SUBSYS-only:",
+                        [e.raw_line for e in fb],
+                    )
+                )
+
+        kb_entry, ms_entry = kb[0], ms[0]
+        fb_entry = fb[0] if fb else None
+
+        # Model lines should share the same install section so behavior doesn't drift.
+        expected_install = kb_entry.install_section
+        if ms_entry.install_section != expected_install or (
+            fb_entry is not None and fb_entry.install_section != expected_install
+        ):
+            lines = [
+                f"keyboard install: {kb_entry.install_section} ({kb_entry.raw_line})",
+                f"mouse install: {ms_entry.install_section} ({ms_entry.raw_line})",
+            ]
+            if fb_entry is not None:
+                lines.append(f"fallback install: {fb_entry.install_section} ({fb_entry.raw_line})")
+            errors.append(
+                format_error(
+                    f"{inf_path.as_posix()}: virtio-input model lines in [{section}] must share the same install section:",
+                    lines,
+                )
+            )
+
+        # Keyboard vs mouse must have distinct DeviceDesc strings so they appear distinctly in Device Manager.
+        if kb_entry.device_desc == ms_entry.device_desc:
+            errors.append(
+                format_error(
+                    f"{inf_path.as_posix()}: virtio-input keyboard and mouse model lines in [{section}] must use distinct DeviceDesc strings:",
+                    [kb_entry.raw_line, ms_entry.raw_line],
+                )
+            )
+
+        # The fallback (no SUBSYS) should remain generic and not reuse the keyboard/mouse DeviceDesc.
+        if fb_entry is not None and fb_entry.device_desc in (kb_entry.device_desc, ms_entry.device_desc):
+            errors.append(
+                format_error(
+                    f"{inf_path.as_posix()}: virtio-input fallback model line in [{section}] must use a generic DeviceDesc (not the keyboard/mouse DeviceDesc):",
+                    [kb_entry.raw_line, ms_entry.raw_line, fb_entry.raw_line],
+                )
+            )
+
+        entries_to_check = (kb_entry, ms_entry) if fb_entry is None else (kb_entry, ms_entry, fb_entry)
+        for entry in entries_to_check:
+            desc = entry.device_desc.strip()
+            if desc.startswith("%") and desc.endswith("%") and len(desc) > 2:
+                token = desc[1:-1].strip()
+                if token and token.lower() not in string_keys:
+                    errors.append(
+                        format_error(
+                            f"{inf_path.as_posix()}: model entry references undefined [Strings] token {desc!r}:",
+                            [entry.raw_line],
+                        )
+                    )
+
+        def _resolve(desc: str) -> str:
+            d = desc.strip()
+            if d.startswith("%") and d.endswith("%") and len(d) > 2:
+                key = d[1:-1].strip().lower()
+                return string_map.get(key, d)
+            return d
+
+        kb_name = _resolve(kb_entry.device_desc).strip()
+        ms_name = _resolve(ms_entry.device_desc).strip()
+        fb_name = _resolve(fb_entry.device_desc).strip() if fb_entry is not None else ""
+
+        if kb_name.lower() == ms_name.lower():
+            errors.append(
+                format_error(
+                    f"{inf_path.as_posix()}: virtio-input keyboard and mouse DeviceDesc strings are identical in [{section}] (must differ):",
+                    [kb_entry.raw_line, ms_entry.raw_line],
+                )
+            )
+        if fb_entry is not None and fb_name.lower() in {kb_name.lower(), ms_name.lower()}:
+            errors.append(
+                format_error(
+                    f"{inf_path.as_posix()}: virtio-input fallback DeviceDesc string in [{section}] must be generic (must not equal keyboard/mouse):",
+                    [kb_entry.raw_line, ms_entry.raw_line, fb_entry.raw_line],
+                )
+            )
+
+
+def _normalized_inf_lines_without_sections(path: Path, *, drop_sections: set[str]) -> list[str]:
+    """
+    Normalized INF representation for drift checks:
+    - strips full-line and inline comments
+    - drops empty lines
+    - optionally removes entire sections (by name, case-insensitive)
+    """
+
+    drop = {s.lower() for s in drop_sections}
+    out: list[str] = []
+    current_section: str | None = None
+    dropping = False
+
+    for raw in read_text(path).splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if line.startswith(";"):
+            continue
+        if ";" in line:
+            line = line.split(";", 1)[0].rstrip()
+            if not line:
+                continue
+
+        m = re.match(r"^\[(?P<section>[^\]]+)\]\s*$", line)
+        if m:
+            current_section = m.group("section").strip()
+            dropping = current_section.lower() in drop
+            if not dropping:
+                out.append(f"[{current_section}]")
+            continue
+
+        if current_section is None or dropping:
+            continue
+        out.append(line)
+
+    return out
+
+
+def check_inf_alias_drift_excluding_sections(
+    *,
+    canonical: Path,
+    alias: Path,
+    repo_root: Path,
+    label: str,
+    drop_sections: set[str],
+) -> str | None:
+    """
+    Compare two INFs while ignoring specific sections + comments.
+
+    This is used for virtio-input where the legacy alias INF is allowed to differ
+    in the models sections (it provides an opt-in generic fallback HWID), but
+    should otherwise stay in sync with the canonical INF.
+    """
+
+    canonical_lines = _normalized_inf_lines_without_sections(canonical, drop_sections=drop_sections)
+    alias_lines = _normalized_inf_lines_without_sections(alias, drop_sections=drop_sections)
+    if canonical_lines == alias_lines:
+        return None
+
+    canonical_label = str(canonical.relative_to(repo_root))
+    alias_label = str(alias.relative_to(repo_root))
+
+    diff = difflib.unified_diff(
+        [l + "\n" for l in canonical_lines],
+        [l + "\n" for l in alias_lines],
+        fromfile=canonical_label,
+        tofile=alias_label,
+        lineterm="\n",
+    )
+
+    return (
+        f"{label}: INF alias drift detected outside ignored sections.\n"
+        + f"Ignored sections: {sorted(drop_sections)}\n\n"
+        + "".join(diff)
+    )
+
+
 def windows_contract_marks_transitional_ids_out_of_scope(md: str) -> bool:
     return re.search(r"Transitional virtio-pci IDs.*out of scope", md, flags=re.I | re.S) is not None
 
@@ -2729,7 +2976,10 @@ def main() -> None:
         base_hwid = f"PCI\\VEN_{contract_any.vendor_id:04X}&DEV_{contract_any.device_id:04X}"
         strict_hwid = f"{base_hwid}&REV_{contract_rev:02X}"
         hwids_upper = {h.upper() for h in hwids}
-        if strict_hwid.upper() not in hwids_upper:
+        # Most in-tree virtio INFs include a less-specific `PCI\\VEN_...&DEV_...&REV_..` model entry.
+        # virtio-input is intentionally SUBSYS-only (keyboard/mouse only) so it doesn't overlap with
+        # the tablet INF; allow absence of the base+REV fallback there.
+        if device_name != "virtio-input" and strict_hwid.upper() not in hwids_upper:
             errors.append(
                 format_error(
                     f"{inf_path.as_posix()}: missing strict REV-qualified hardware ID (required for contract major safety):",
@@ -2774,129 +3024,13 @@ def main() -> None:
         # through the same INF + service. For debuggability, the INF should use distinct
         # DeviceDesc strings for each function so they appear separately in Device Manager.
         if device_name == "virtio-input":
-            model_entries = parse_inf_model_entries(inf_path)
-            string_keys = parse_inf_string_keys(inf_path)
-            string_map = parse_inf_strings_map(inf_path)
-            by_section: dict[str, list[InfModelEntry]] = {}
-            for e in model_entries:
-                by_section.setdefault(e.section.lower(), []).append(e)
-
-            for section in ("Aero.NTx86", "Aero.NTamd64"):
-                sect_entries = by_section.get(section.lower(), [])
-                if not sect_entries:
-                    errors.append(f"{inf_path.as_posix()}: missing required models section [{section}] (expected virtio-input HWID bindings).")
-                    continue
-
-                contract_rev_tag = f"&REV_{contract_rev:02X}"
-
-                kb = [
-                    e
-                    for e in sect_entries
-                    if "SUBSYS_00101AF4" in e.hardware_id.upper() and contract_rev_tag in e.hardware_id.upper()
-                ]
-                ms = [
-                    e
-                    for e in sect_entries
-                    if "SUBSYS_00111AF4" in e.hardware_id.upper() and contract_rev_tag in e.hardware_id.upper()
-                ]
-                fb = [e for e in sect_entries if e.hardware_id.upper() == strict_hwid.upper()]
-
-                if len(kb) != 1:
-                    errors.append(
-                        format_error(
-                            f"{inf_path.as_posix()}: expected exactly one keyboard model line in [{section}] (SUBSYS_00101AF4 + REV):",
-                            [e.raw_line for e in kb] if kb else ["(missing)"],
-                        )
-                    )
-                    continue
-                if len(ms) != 1:
-                    errors.append(
-                        format_error(
-                            f"{inf_path.as_posix()}: expected exactly one mouse model line in [{section}] (SUBSYS_00111AF4 + REV):",
-                            [e.raw_line for e in ms] if ms else ["(missing)"],
-                        )
-                    )
-                    continue
-                if len(fb) != 1:
-                    errors.append(
-                        format_error(
-                            f"{inf_path.as_posix()}: expected exactly one fallback model line in [{section}] ({strict_hwid}):",
-                            [e.raw_line for e in fb] if fb else ["(missing)"],
-                        )
-                    )
-                    continue
-
-                kb_entry, ms_entry, fb_entry = kb[0], ms[0], fb[0]
-
-                # All three should use the same install section so functionality doesn't change.
-                expected_install = kb_entry.install_section
-                if ms_entry.install_section != expected_install or fb_entry.install_section != expected_install:
-                    errors.append(
-                        format_error(
-                            f"{inf_path.as_posix()}: virtio-input model lines in [{section}] must share the same install section:",
-                            [
-                                f"keyboard install: {kb_entry.install_section} ({kb_entry.raw_line})",
-                                f"mouse install: {ms_entry.install_section} ({ms_entry.raw_line})",
-                                f"fallback install: {fb_entry.install_section} ({fb_entry.raw_line})",
-                            ],
-                        )
-                    )
-
-                # Keyboard vs mouse must have distinct DeviceDesc strings so they appear distinctly in Device Manager.
-                if kb_entry.device_desc == ms_entry.device_desc:
-                    errors.append(
-                        format_error(
-                            f"{inf_path.as_posix()}: virtio-input keyboard and mouse model lines in [{section}] must use distinct DeviceDesc strings:",
-                            [kb_entry.raw_line, ms_entry.raw_line],
-                        )
-                    )
-
-                # The fallback (no SUBSYS) should remain generic and not reuse the keyboard/mouse DeviceDesc.
-                if fb_entry.device_desc in (kb_entry.device_desc, ms_entry.device_desc):
-                    errors.append(
-                        format_error(
-                            f"{inf_path.as_posix()}: virtio-input fallback model line in [{section}] must use a generic DeviceDesc (not the keyboard/mouse DeviceDesc):",
-                            [kb_entry.raw_line, ms_entry.raw_line, fb_entry.raw_line],
-                        )
-                    )
-
-                for entry in (kb_entry, ms_entry, fb_entry):
-                    desc = entry.device_desc.strip()
-                    if desc.startswith("%") and desc.endswith("%") and len(desc) > 2:
-                        token = desc[1:-1].strip()
-                        if token and token.lower() not in string_keys:
-                            errors.append(
-                                format_error(
-                                    f"{inf_path.as_posix()}: model entry references undefined [Strings] token {desc!r}:",
-                                    [entry.raw_line],
-                                )
-                            )
-
-                def _resolve(desc: str) -> str:
-                    d = desc.strip()
-                    if d.startswith("%") and d.endswith("%") and len(d) > 2:
-                        key = d[1:-1].strip().lower()
-                        return string_map.get(key, d)
-                    return d
-
-                kb_name = _resolve(kb_entry.device_desc)
-                ms_name = _resolve(ms_entry.device_desc)
-                fb_name = _resolve(fb_entry.device_desc)
-
-                if kb_name.strip().lower() == ms_name.strip().lower():
-                    errors.append(
-                        format_error(
-                            f"{inf_path.as_posix()}: virtio-input keyboard and mouse DeviceDesc strings are identical in [{section}] (must differ):",
-                            [kb_entry.raw_line, ms_entry.raw_line],
-                        )
-                    )
-                if fb_name.strip().lower() in {kb_name.strip().lower(), ms_name.strip().lower()}:
-                    errors.append(
-                        format_error(
-                            f"{inf_path.as_posix()}: virtio-input fallback DeviceDesc string in [{section}] must be generic (must not equal keyboard/mouse):",
-                            [kb_entry.raw_line, ms_entry.raw_line, fb_entry.raw_line],
-                        )
-                    )
+            validate_virtio_input_model_lines(
+                inf_path=inf_path,
+                strict_hwid=strict_hwid,
+                contract_rev=contract_rev,
+                require_fallback=False,
+                errors=errors,
+            )
 
     # ---------------------------------------------------------------------
     # 6) INF alias drift guardrails (legacy filename aliases must stay in sync).
@@ -2913,11 +3047,26 @@ def main() -> None:
         virtio_input_alias = None
 
     if virtio_input_alias is not None:
-        drift = check_inf_alias_drift(
+        virtio_input_contract_any = contract_ids["virtio-input (keyboard)"]
+        base_hwid = f"PCI\\VEN_{virtio_input_contract_any.vendor_id:04X}&DEV_{virtio_input_contract_any.device_id:04X}"
+        strict_hwid = f"{base_hwid}&REV_{contract_rev:02X}"
+
+        # The legacy alias INF is allowed/expected to include the generic fallback HWID.
+        validate_virtio_input_model_lines(
+            inf_path=virtio_input_alias,
+            strict_hwid=strict_hwid,
+            contract_rev=contract_rev,
+            require_fallback=True,
+            errors=errors,
+        )
+
+        # Keep the alias file behavior in sync with the canonical INF everywhere else.
+        drift = check_inf_alias_drift_excluding_sections(
             canonical=virtio_input_canonical,
             alias=virtio_input_alias,
             repo_root=REPO_ROOT,
             label="virtio-input",
+            drop_sections={"Aero.NTx86", "Aero.NTamd64"},
         )
         if drift:
             errors.append(drift)

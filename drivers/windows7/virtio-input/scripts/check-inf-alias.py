@@ -10,9 +10,15 @@ For compatibility with older tooling/workflows, the repo also keeps a legacy
 filename alias INF (checked in disabled-by-default):
   - drivers/windows7/virtio-input/inf/virtio-input.inf.disabled
 
-To prevent behavior drift, the two files must be identical in all *functional*
-content (everything from the first section header, usually `[Version]`, onward).
-Only the leading comment/header block may differ.
+To prevent behavior drift, the alias INF should stay in sync with the canonical
+INF for all *functional* content, except for the models sections:
+  - [Aero.NTx86]
+  - [Aero.NTamd64]
+
+The canonical INF is intentionally SUBSYS-only (keyboard + mouse) so it does not
+overlap with the tablet INF. The legacy alias INF is allowed to include an
+opt-in generic fallback model line (no SUBSYS), but it must otherwise mirror the
+canonical INF.
 
 Run from the repo root:
   python3 drivers/windows7/virtio-input/scripts/check-inf-alias.py
@@ -21,38 +27,53 @@ Run from the repo root:
 from __future__ import annotations
 
 import difflib
+import re
 import sys
 from pathlib import Path
 
 
-def _functional_bytes(path: Path) -> bytes:
+_DROP_SECTIONS = {"aero.ntx86", "aero.ntamd64"}
+
+
+def _normalized_lines(path: Path) -> list[str]:
     """
-    Return the file content starting from the first section header line.
+    Return a normalized representation of the INF for drift checks.
 
-    We intentionally ignore the leading comment/header block so the alias INF can
-    have a different filename banner, while still enforcing byte-for-byte
-    equality for all sections/keys.
+    - Full-line and inline comments are stripped.
+    - Empty lines are dropped.
+    - The models sections are excluded, since the alias INF is allowed to differ
+      there (it provides an opt-in generic fallback HWID).
     """
 
-    data = path.read_bytes()
-    lines = data.splitlines(keepends=True)
+    out: list[str] = []
+    current_section: str | None = None
+    dropping = False
 
-    for i, line in enumerate(lines):
-        stripped = line.lstrip(b" \t")
+    for raw in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if line.startswith(";"):
+            continue
+        if ";" in line:
+            line = line.split(";", 1)[0].rstrip()
+            if not line:
+                continue
 
-        # First section header (e.g. "[Version]") starts the functional region.
-        if stripped.startswith(b"["):
-            return b"".join(lines[i:])
-
-        # Ignore leading comments and blank lines.
-        if stripped.startswith(b";") or stripped in (b"\n", b"\r\n", b"\r"):
+        m = re.match(r"^\[(?P<section>[^\]]+)\]\s*$", line)
+        if m:
+            current_section = m.group("section").strip()
+            dropping = current_section.lower() in _DROP_SECTIONS
+            if not dropping:
+                out.append(f"[{current_section}]")
             continue
 
-        # Unexpected preamble content (not comment, not blank, not section):
-        # treat it as functional to avoid masking drift.
-        return b"".join(lines[i:])
+        if current_section is None or dropping:
+            continue
 
-    raise RuntimeError(f"{path}: could not find a section header (e.g. [Version])")
+        out.append(line)
+
+    return out
 
 
 def main() -> int:
@@ -77,17 +98,16 @@ def main() -> int:
         )
         return 0
 
-    canonical_body = _functional_bytes(canonical)
-    alias_body = _functional_bytes(alias)
-
-    if canonical_body == alias_body:
+    canonical_lines = _normalized_lines(canonical)
+    alias_lines = _normalized_lines(alias)
+    if canonical_lines == alias_lines:
         return 0
 
     sys.stderr.write("virtio-input INF alias drift detected.\n")
-    sys.stderr.write("The alias INF must match the canonical INF from [Version] onward.\n\n")
-
-    canonical_lines = canonical_body.decode("utf-8", errors="replace").splitlines(keepends=True)
-    alias_lines = alias_body.decode("utf-8", errors="replace").splitlines(keepends=True)
+    sys.stderr.write(
+        "The alias INF must match the canonical INF outside the models sections "
+        f"{sorted(_DROP_SECTIONS)}.\n\n"
+    )
 
     # Use repo-relative paths in the diff output to keep it readable and stable
     # across machines/CI environments.
@@ -95,8 +115,8 @@ def main() -> int:
     alias_label = str(alias.relative_to(repo_root))
 
     diff = difflib.unified_diff(
-        canonical_lines,
-        alias_lines,
+        [l + "\n" for l in canonical_lines],
+        [l + "\n" for l in alias_lines],
         fromfile=canonical_label,
         tofile=alias_label,
         lineterm="\n",
@@ -109,4 +129,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
