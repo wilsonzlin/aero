@@ -87,7 +87,14 @@
             <span>Source</span>
             <select id="source">
               <option value="legacy">Legacy (shared framebuffer)</option>
-              <option value="wddm" selected>WDDM (scanoutState + guest RAM)</option>
+              <option value="wddm" selected>WDDM (scanoutState)</option>
+            </select>
+          </label>
+          <label>
+            <span>Backing</span>
+            <select id="backing">
+              <option value="ram" selected>Guest RAM</option>
+              <option value="vram">BAR1 VRAM</option>
             </select>
           </label>
           <label>

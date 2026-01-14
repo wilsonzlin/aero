@@ -34,6 +34,7 @@ import {
   guestPaddrToRamOffset,
   type GuestRamLayout,
 } from "./src/runtime/shared_layout";
+import { VRAM_BASE_PADDR } from "./src/arch/guest_phys";
 import type { WorkerInitMessage } from "./src/runtime/protocol";
 
 function $(id: string): HTMLElement {
@@ -171,6 +172,77 @@ function writeBgrxQuadrantsIntoGuest(opts: {
   }
 }
 
+function writeBgrxQuadrantsIntoLinear(opts: {
+  dstU8: Uint8Array;
+  baseOffset: number;
+  width: number;
+  height: number;
+  pitchBytes: number;
+  xByte: number;
+  marker: { x: number; y: number; size: number; bgrx: [number, number, number, number] };
+}) {
+  const { dstU8, baseOffset, width, height, pitchBytes, xByte } = opts;
+  const rowBytes = width * 4;
+  if (pitchBytes < rowBytes) throw new Error(`pitchBytes (${pitchBytes}) must be >= width*4 (${rowBytes})`);
+  if (baseOffset < 0 || baseOffset + (pitchBytes * (height - 1) + rowBytes) > dstU8.byteLength) {
+    throw new Error(
+      `scanout buffer out of bounds (baseOffset=0x${baseOffset.toString(16)} required=0x${(
+        pitchBytes * (height - 1) +
+        rowBytes
+      ).toString(16)} dstLen=0x${dstU8.byteLength.toString(16)})`,
+    );
+  }
+
+  const halfW = Math.floor(width / 2);
+  const halfH = Math.floor(height / 2);
+  for (let y = 0; y < height; y += 1) {
+    const rowBase = baseOffset + y * pitchBytes;
+    // Fill padding with a pattern so pitch bugs are visually obvious (white streaks).
+    dstU8.fill(0xff, rowBase + rowBytes, rowBase + pitchBytes);
+    for (let x = 0; x < width; x += 1) {
+      const top = y < halfH;
+      const left = x < halfW;
+      let b = 0;
+      let g = 0;
+      let r = 0;
+      if (top && left) {
+        r = 255;
+      } else if (top && !left) {
+        g = 255;
+      } else if (!top && left) {
+        b = 255;
+      } else {
+        r = 255;
+        g = 255;
+        b = 255;
+      }
+
+      const i = rowBase + x * 4;
+      dstU8[i + 0] = b;
+      dstU8[i + 1] = g;
+      dstU8[i + 2] = r;
+      dstU8[i + 3] = xByte & 0xff;
+    }
+  }
+
+  // Marker (in BGRX).
+  const marker = opts.marker;
+  for (let dy = 0; dy < marker.size; dy += 1) {
+    const y = marker.y + dy;
+    if (y < 0 || y >= height) continue;
+    const rowBase = baseOffset + y * pitchBytes;
+    for (let dx = 0; dx < marker.size; dx += 1) {
+      const x = marker.x + dx;
+      if (x < 0 || x >= width) continue;
+      const i = rowBase + x * 4;
+      dstU8[i + 0] = marker.bgrx[0];
+      dstU8[i + 1] = marker.bgrx[1];
+      dstU8[i + 2] = marker.bgrx[2];
+      dstU8[i + 3] = marker.bgrx[3];
+    }
+  }
+}
+
 async function main() {
   const logEl = $("log");
   const log = (line: string) => {
@@ -206,9 +278,9 @@ async function main() {
   // Keep the allocation small so the page loads quickly (the wasm32 runtime always
   // reserves a fixed 128MiB region, so allocating a huge guest_size here is wasted).
   //
-  // We also disable VRAM for this diagnostic page: the goal is to validate scanout
-  // state + pitch + BGRX->RGBA alpha semantics without needing BAR1-backed surfaces.
-  const baseSegments = allocateSharedMemorySegments({ guestRamMiB: 2, vramMiB: 0 });
+  // Allocate a small VRAM aperture so this diagnostic page can validate both guest-RAM-backed and
+  // BAR1/VRAM-backed scanout surfaces.
+  const baseSegments = allocateSharedMemorySegments({ guestRamMiB: 2, vramMiB: 2 });
 
   // Small shared framebuffer used only for the legacy path in this diagnostic page.
   const strideBytes = WIDTH * 4;
@@ -284,6 +356,12 @@ async function main() {
   const BUF0_PADDR = 0x0010_0000;
   const BUF1_PADDR = BUF0_PADDR + alignUp(requiredMaxBytes, 0x1000) + 0x1000;
 
+  // Equivalent buffers in the BAR1/VRAM aperture (start at the canonical VBE LFB offset, 0x20000).
+  const VRAM_BUF0_OFFSET = 0x20_000;
+  const VRAM_BUF1_OFFSET = VRAM_BUF0_OFFSET + alignUp(requiredMaxBytes, 0x1000) + 0x1000;
+  const VRAM_BUF0_PADDR = (VRAM_BASE_PADDR + VRAM_BUF0_OFFSET) >>> 0;
+  const VRAM_BUF1_PADDR = (VRAM_BASE_PADDR + VRAM_BUF1_OFFSET) >>> 0;
+
   const applyWddmBuffers = (pitchBytes: number, xByte: number) => {
     writeBgrxQuadrantsIntoGuest({
       guestU8: views.guestU8,
@@ -305,25 +383,51 @@ async function main() {
       xByte,
       marker: { x: 0, y: 0, size: 12, bgrx: [255, 255, 0, xByte & 0xff] }, // cyan marker
     });
+
+    const vram = views.vramU8;
+    if (vram.byteLength > 0) {
+      writeBgrxQuadrantsIntoLinear({
+        dstU8: vram,
+        baseOffset: VRAM_BUF0_OFFSET,
+        width: WIDTH,
+        height: HEIGHT,
+        pitchBytes,
+        xByte,
+        marker: { x: 0, y: 0, size: 12, bgrx: [255, 0, 255, xByte & 0xff] }, // magenta marker
+      });
+      writeBgrxQuadrantsIntoLinear({
+        dstU8: vram,
+        baseOffset: VRAM_BUF1_OFFSET,
+        width: WIDTH,
+        height: HEIGHT,
+        pitchBytes,
+        xByte,
+        marker: { x: 0, y: 0, size: 12, bgrx: [255, 255, 0, xByte & 0xff] }, // cyan marker
+      });
+    }
   };
 
   // UI state.
   type SourceMode = "legacy" | "wddm";
+  type BackingMode = "ram" | "vram";
   type PitchMode = "tight" | "padded";
   const ui = {
     source: $("source") as HTMLSelectElement,
+    backing: $("backing") as HTMLSelectElement,
     buffer: $("buffer") as HTMLSelectElement,
     pitch: $("pitch") as HTMLSelectElement,
     xbyte: $("xbyte") as HTMLSelectElement,
   };
 
   const parseSource = (): SourceMode => (ui.source.value === "legacy" ? "legacy" : "wddm");
+  const parseBacking = (): BackingMode => (ui.backing.value === "vram" ? "vram" : "ram");
   const parseBufferIndex = (): number => (ui.buffer.value === "1" ? 1 : 0);
   const parsePitchMode = (): PitchMode => (ui.pitch.value === "tight" ? "tight" : "padded");
   const parseXByte = (): number => (ui.xbyte.value === "255" ? 0xff : 0x00);
 
   const publishScanoutForUi = () => {
     const source = parseSource();
+    const backing = parseBacking();
     const bufferIndex = parseBufferIndex();
     const pitchMode = parsePitchMode();
     const xByte = parseXByte();
@@ -346,7 +450,14 @@ async function main() {
       return;
     }
 
-    const basePaddr = bufferIndex === 0 ? BUF0_PADDR : BUF1_PADDR;
+    const basePaddr =
+      backing === "vram"
+        ? bufferIndex === 0
+          ? VRAM_BUF0_PADDR
+          : VRAM_BUF1_PADDR
+        : bufferIndex === 0
+          ? BUF0_PADDR
+          : BUF1_PADDR;
     const base = BigInt(basePaddr >>> 0);
     publishScanoutState(scanoutWords, {
       source: SCANOUT_SOURCE_WDDM,
@@ -359,7 +470,7 @@ async function main() {
     });
   };
 
-  for (const el of [ui.source, ui.buffer, ui.pitch, ui.xbyte]) {
+  for (const el of [ui.source, ui.backing, ui.buffer, ui.pitch, ui.xbyte]) {
     el.addEventListener("change", () => {
       try {
         publishScanoutForUi();
@@ -480,6 +591,7 @@ async function main() {
     role: "gpu",
     controlSab: segments.control,
     guestMemory: segments.guestMemory,
+    ...(segments.vram ? { vram: segments.vram, vramBasePaddr: VRAM_BASE_PADDR, vramSizeBytes: segments.vram.byteLength } : {}),
     scanoutState: segments.scanoutState,
     scanoutStateOffsetBytes: segments.scanoutStateOffsetBytes,
     ioIpcSab: segments.ioIpc,
