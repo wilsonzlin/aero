@@ -131,6 +131,8 @@ paths:
 
 Important: WebRTC uses a **UDP port range** for ICE candidates and relay traffic; this cannot be reverse-proxied by an HTTP Ingress. You must publish/open the relay's UDP port range separately (e.g. a `LoadBalancer`/`NodePort` `Service` with UDP ports, or host networking) and configure the relay to match (see the relay README).
 
+Inbound UDP filtering note: the relay defaults to `UDP_INBOUND_FILTER_MODE=address_and_port` (only accept inbound UDP from remote address+port tuples the guest previously sent to). This is safer for public deployments. You can switch to full-cone behavior with `UDP_INBOUND_FILTER_MODE=any` (**less safe**; accepts inbound UDP from any remote endpoint). See `proxy/webrtc-udp-relay/README.md` for details.
+
 Security note: `GET /webrtc/ice` responses may include sensitive TURN credentials (especially TURN REST ephemeral creds) and are explicitly **non-cacheable** (`Cache-Control: no-store`, `Pragma: no-cache`, `Expires: 0`). Ensure your Ingress/proxy preserves these headers and does not inject caching headers for `/webrtc/ice`.
 
 ## Prerequisites

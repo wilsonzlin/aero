@@ -200,6 +200,8 @@ To have the gateway return `udpRelay` connection metadata in `POST /session`, co
 
 These can be provided via `config.data`, `gateway.extraEnv`, or an existing Secret referenced by the chart.
 
+Inbound UDP filtering note: `proxy/webrtc-udp-relay` defaults to `UDP_INBOUND_FILTER_MODE=address_and_port` (only accept inbound UDP from remote address+port tuples the guest previously sent to). You can switch to full-cone behavior with `UDP_INBOUND_FILTER_MODE=any` (**less safe**) if required by your workload.
+
 Security note: `GET /webrtc/ice` responses may include sensitive TURN credentials (especially TURN REST ephemeral creds) and are explicitly **non-cacheable** (`Cache-Control: no-store`, `Pragma: no-cache`, `Expires: 0`). Ensure your Ingress/proxy preserves these headers and does not inject caching headers for `/webrtc/ice`.
 
 See also:
