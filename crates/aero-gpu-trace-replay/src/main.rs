@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use clap::{CommandFactory, Parser, Subcommand};
 use std::fs;
 use std::io::{BufReader, BufWriter};
@@ -116,11 +116,29 @@ fn ensure_no_replay_flags(frame: Option<u32>, dump_png: &Option<PathBuf>) -> Res
 fn decode_cmd_stream_cmd(path: PathBuf, strict: bool, json: bool) -> Result<()> {
     let bytes = fs::read(&path).with_context(|| format!("read cmd stream {}", path.display()))?;
     if json {
-        let listing = aero_gpu_trace_replay::cmd_stream_decode::render_cmd_stream_listing(
-            &bytes,
-            aero_gpu_trace_replay::cmd_stream_decode::CmdStreamListingFormat::Json,
-        )
-        .with_context(|| format!("decode cmd stream {}", path.display()))?;
+        let report = aero_gpu_trace_replay::cmd_stream_decode::decode_cmd_stream(&bytes)
+            .map_err(|err| anyhow!("decode cmd stream {}: {err:?}", path.display()))?;
+
+        if strict {
+            for rec in &report.records {
+                if let aero_gpu_trace_replay::cmd_stream_decode::CmdStreamListingRecord::Packet(
+                    pkt,
+                ) = rec
+                {
+                    if pkt.opcode.is_none() {
+                        bail!(
+                            "unknown opcode_id=0x{:08X} at offset 0x{:08X}",
+                            pkt.opcode_u32,
+                            pkt.offset
+                        );
+                    }
+                }
+            }
+        }
+
+        let listing = report
+            .to_json_pretty()
+            .with_context(|| format!("encode cmd stream json {}", path.display()))?;
         print!("{listing}");
         return Ok(());
     }
