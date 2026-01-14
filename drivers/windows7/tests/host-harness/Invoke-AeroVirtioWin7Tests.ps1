@@ -6355,6 +6355,7 @@ if (-not [string]::IsNullOrEmpty($HttpLogPath)) {
     Write-Warning "Failed to prepare HTTP request log at '$HttpLogPath' (disabling HTTP log): $_"
     $HttpLogPath = ""
   }
+}
 
 $httpListener = $null
 $udpSocket = $null
