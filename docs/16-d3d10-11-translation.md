@@ -1869,8 +1869,7 @@ struct TessPatchConstants {
   // - isoline:      unused (all zero)
   inside_factors_bits: vec4<u32>;
 }
-// Bind group index is `3` in the baseline design (shared with GS/HS/DS resources). Implementations
-// using a dedicated internal group instead use `@group(4)`.
+// Bind group index is `3` in the baseline design (shared with GS/HS/DS resources).
 @group(3) @binding(275) var<storage, read_write> tess_patch_constants: array<TessPatchConstants>;
 ```
 
