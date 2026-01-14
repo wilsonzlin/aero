@@ -28,7 +28,8 @@ The Aero emulator’s Windows 7 virtio contract v1 uses the **modern** virtio-pc
 ID space (so virtio-input is `0x1052`) and the modern virtio-pci transport.
 
 The in-tree Aero virtio-input INFs intentionally match only **contract v1**
-hardware IDs (revision-gated `REV_01`):
+hardware IDs (revision-gated `REV_01`). Subsystem-qualified IDs provide distinct
+Device Manager names:
 
 - Keyboard: `PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01` → `inf/aero_virtio_input.inf`
 - Mouse: `PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01` → `inf/aero_virtio_input.inf`
@@ -36,6 +37,10 @@ hardware IDs (revision-gated `REV_01`):
 - Tablet (absolute pointer / EV_ABS): `PCI\VEN_1AF4&DEV_1052&SUBSYS_00121AF4&REV_01` → `inf/aero_virtio_tablet.inf`
 
 The `...&SUBSYS_...&REV_01` variants use distinct `DeviceDesc` strings so the keyboard and mouse PCI functions show up as separate named devices in Device Manager (**Aero VirtIO Keyboard** / **Aero VirtIO Mouse**).
+
+If your environment does not expose the Aero subsystem IDs (for example stock QEMU), Windows will bind via the generic
+fallback entry in `inf/aero_virtio_input.inf`. When binding via the fallback entry, Device Manager will show
+**Aero VirtIO Input Device**.
 
 This avoids “driver installs but won’t start” confusion: the driver enforces the
 contract major version at runtime, so binding to a non-contract `REV_00` device
@@ -79,7 +84,7 @@ The in-tree Windows 7 virtio-input driver is **strict by default** (Aero contrac
   when it advertises `EV_ABS` with `ABS_X`/`ABS_Y` in `EV_BITS`.
   - When this fallback is used, the device is treated as **non-contract**:
     - PCI subsystem kind cross-check is skipped.
-    - `ID_DEVIDS.Product` mismatch is tolerated (but bustype/vendor/version are still validated).
+    - Strict `ID_DEVIDS` validation is disabled (best-effort; mismatches tolerated).
     - `ABS_INFO` is best-effort; if unavailable, the driver falls back to the translation layer’s default coordinate scaling range (`0..32767`).
 - If the PCI **Subsystem Device ID** indicates a contract kind (`0x0010` keyboard, `0x0011` mouse, `0x0012` tablet),
   it is cross-checked against `ID_NAME` **for strict ID_NAME matches** and mismatches fail start (Code 10). Unknown subsystem IDs

@@ -41,6 +41,9 @@ and expects the following contract-v1 HWIDs to be present in both `[Aero.NTx86]`
 - `PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01` (mouse)
 - `PCI\VEN_1AF4&DEV_1052&REV_01` (generic fallback when subsystem IDs are not exposed)
 
+It also enforces that `aero_virtio_input.inf` does not include the tablet subsystem ID (`SUBSYS_00121AF4`), so tablet
+devices bind via `aero_virtio_tablet.inf` when that INF is installed.
+
 Run it from any PowerShell prompt:
 
 ```powershell
