@@ -5659,7 +5659,7 @@ impl Machine {
 
     /// Returns whether the canonical AeroGPU PCI function (`00:07.0`, `A3A0:0001`) is present.
     pub fn aerogpu_present(&self) -> bool {
-        self.inner.aerogpu().is_some()
+        self.inner.aerogpu_bdf().is_some()
     }
 
     /// Return the base address assigned to an AeroGPU PCI BAR.
