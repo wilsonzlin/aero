@@ -1728,6 +1728,121 @@ bool TestSrvBindingUnbindsAllAliasedRtvSlots() {
   return true;
 }
 
+bool TestSrvBindingUnbindsAllAllocAliasedRtvSlots() {
+  TestDevice dev{};
+  if (!CreateDevice(&dev)) {
+    return false;
+  }
+
+  dev.callbacks.pfnAllocateBacking = &Harness::AllocateBacking;
+  dev.callbacks.pfnMapAllocation = &Harness::MapAllocation;
+  dev.callbacks.pfnUnmapAllocation = &Harness::UnmapAllocation;
+  dev.harness.alloc_sequence = {100, 100}; // both RTVs share the same allocation
+
+  TestResource tex0{};
+  TestResource tex1{};
+  TestRtv rtv0{};
+  TestRtv rtv1{};
+  TestSrv srv0{};
+
+  if (!CreateRenderTargetTexture2D(&dev, /*width=*/4, /*height=*/4, &tex0) ||
+      !CreateRenderTargetTexture2D(&dev, /*width=*/4, /*height=*/4, &tex1)) {
+    return false;
+  }
+  if (!CreateRTV(&dev, &tex0, &rtv0) || !CreateRTV(&dev, &tex1, &rtv1)) {
+    return false;
+  }
+  if (!CreateSRV(&dev, &tex0, &srv0)) {
+    return false;
+  }
+
+  // Bind two RTVs that alias the same backing allocation.
+  D3D10DDI_HRENDERTARGETVIEW rtvs[2] = {rtv0.hRtv, rtv1.hRtv};
+  D3D10DDI_HDEPTHSTENCILVIEW null_dsv{};
+  dev.device_funcs.pfnSetRenderTargets(dev.hDevice, /*num_views=*/2, rtvs, null_dsv);
+  if (!Check(dev.device_funcs.pfnFlush(dev.hDevice) == S_OK, "Flush (after SetRenderTargets alloc-aliased RTVs)")) {
+    return false;
+  }
+
+  if (!Check(!dev.harness.last_stream.empty(), "submission captured (after SetRenderTargets alloc-aliased RTVs)")) {
+    return false;
+  }
+  if (!ValidateStream(dev.harness.last_stream.data(), dev.harness.last_stream.size())) {
+    return false;
+  }
+  const std::vector<aerogpu_handle_t> created =
+      CollectCreateTexture2DHandles(dev.harness.last_stream.data(), dev.harness.last_stream.size());
+  if (!Check(created.size() >= 2, "captured CREATE_TEXTURE2D handles (2 alloc-aliased RTVs)")) {
+    return false;
+  }
+  const aerogpu_handle_t handle0 = created[0];
+
+  // Binding an SRV that aliases the backing allocation must unbind *both* RTV slots.
+  D3D10DDI_HSHADERRESOURCEVIEW srvs[1] = {srv0.hSrv};
+  dev.device_funcs.pfnPsSetShaderResources(dev.hDevice, /*start_slot=*/0, /*num_views=*/1, srvs);
+  if (!Check(dev.device_funcs.pfnFlush(dev.hDevice) == S_OK, "Flush (after PSSetShaderResources alloc-aliased RTVs)")) {
+    return false;
+  }
+
+  if (!Check(!dev.harness.last_stream.empty(), "submission captured (after PSSetShaderResources alloc-aliased RTVs)")) {
+    return false;
+  }
+  if (!ValidateStream(dev.harness.last_stream.data(), dev.harness.last_stream.size())) {
+    return false;
+  }
+
+  const CmdLoc rt_loc =
+      FindLastOpcode(dev.harness.last_stream.data(), dev.harness.last_stream.size(), AEROGPU_CMD_SET_RENDER_TARGETS);
+  if (!Check(rt_loc.hdr != nullptr, "SET_RENDER_TARGETS present (after alloc-aliased RTV unbind)")) {
+    return false;
+  }
+  const auto* set_rt = reinterpret_cast<const aerogpu_cmd_set_render_targets*>(rt_loc.hdr);
+  if (!Check(set_rt->color_count == 2, "color_count preserved when unbinding alloc-aliased RTV slots")) {
+    return false;
+  }
+  if (!Check(set_rt->colors[0] == 0, "colors[0]==0 after unbinding alloc-aliased RTV slots")) {
+    return false;
+  }
+  if (!Check(set_rt->colors[1] == 0, "colors[1]==0 after unbinding alloc-aliased RTV slots")) {
+    return false;
+  }
+  for (uint32_t i = 2; i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
+    if (!Check(set_rt->colors[i] == 0, "colors[i]==0 after unbinding alloc-aliased RTV slots")) {
+      return false;
+    }
+  }
+
+  const CmdLoc ps_tex_loc =
+      FindLastSetTexture(dev.harness.last_stream.data(), dev.harness.last_stream.size(), AEROGPU_SHADER_STAGE_PIXEL, /*slot=*/0);
+  if (!Check(ps_tex_loc.hdr != nullptr, "SET_TEXTURE present (PS slot0) after alloc-aliased RTV hazard unbind")) {
+    return false;
+  }
+  const auto* set_ps = reinterpret_cast<const aerogpu_cmd_set_texture*>(ps_tex_loc.hdr);
+  if (!Check(set_ps->texture == handle0, "PS slot0 bound to SRV texture handle (alloc-aliased)")) {
+    return false;
+  }
+  if (!Check(rt_loc.offset < ps_tex_loc.offset, "alloc-aliased RTV unbind happens before PS SRV bind")) {
+    return false;
+  }
+
+  const auto* alloc100 = FindSubmitAlloc(dev.harness.last_allocs, 100);
+  if (!Check(alloc100 != nullptr, "alloc list contains handle 100 (alloc-aliased RTVs)")) {
+    return false;
+  }
+  if (!Check(alloc100->write == 0, "alloc 100 marked read-only after unbinding alloc-aliased RTVs")) {
+    return false;
+  }
+
+  dev.device_funcs.pfnDestroyShaderResourceView(dev.hDevice, srv0.hSrv);
+  dev.device_funcs.pfnDestroyRTV(dev.hDevice, rtv0.hRtv);
+  dev.device_funcs.pfnDestroyRTV(dev.hDevice, rtv1.hRtv);
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, tex1.hResource);
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, tex0.hResource);
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
 bool TestRotateResourceIdentitiesRemapsSrvsAndViews() {
   TestDevice dev{};
   if (!CreateDevice(&dev)) {
@@ -2491,6 +2606,7 @@ int main() {
   ok &= TestSrvBindingUnbindsOnlyAliasedRtvVs();
   ok &= TestSrvBindingUnbindsOnlyAllocAliasedRtvVs();
   ok &= TestSrvBindingUnbindsAllAliasedRtvSlots();
+  ok &= TestSrvBindingUnbindsAllAllocAliasedRtvSlots();
   ok &= TestRotateResourceIdentitiesRemapsSrvsAndViews();
   ok &= TestSrvBindingUnbindsAliasedDsv();
   ok &= TestSrvBindingUnbindsAllocAliasedDsv();
