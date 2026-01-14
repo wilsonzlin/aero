@@ -376,7 +376,7 @@ The service supports configuration via environment variables and equivalent flag
 - `MAX_ALLOWED_REMOTES_PER_BINDING` / `--max-allowed-remotes-per-binding` (default `1024`) — cap the number of remote endpoints tracked in the per-binding allowlist (one allowlist per guest UDP port binding)
   - When the cap is exceeded, the relay evicts the **least recently seen** remote (oldest by last-seen timestamp).
   - DoS-hardening: bounds memory usage if a client "sprays" many destinations/remotes from a single UDP socket.
-  - Observability: allowlist evictions increment the `/metrics` event counter `udp_remote_allowlist_evictions_total`.
+  - Observability: cap-based allowlist evictions increment the `/metrics` event counter `udp_remote_allowlist_evictions_total` (expired entries pruned by `UDP_REMOTE_ALLOWLIST_IDLE_TIMEOUT` do **not** count as evictions).
   - Observability: inbound packets dropped by allowlist filtering increment `udp_remote_allowlist_overflow_drops_total` (e.g. when the remote is not on the allowlist due to eviction or TTL expiry).
   - Warning: setting this too low can break legitimate UDP patterns that talk to many peers from one local port; replies from evicted remotes will be dropped until the guest sends to them again.
 - `UDP_READ_BUFFER_BYTES` / `--udp-read-buffer-bytes` (default: `MAX_DATAGRAM_PAYLOAD_BYTES+1`, e.g. `1201`)
