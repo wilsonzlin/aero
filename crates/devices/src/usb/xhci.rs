@@ -388,11 +388,7 @@ impl MmioHandler for XhciPciDevice {
                 if offset >= base && offset < end {
                     let mut data = [0u8; 8];
                     msix.table_read(offset - base, &mut data[..size]);
-                    let mut out = 0u64;
-                    for i in 0..size {
-                        out |= u64::from(data[i]) << (i * 8);
-                    }
-                    return out;
+                    return u64::from_le_bytes(data) & all_ones(size);
                 }
             }
             if msix.pba_bir() == Self::MMIO_BAR_INDEX {
@@ -401,11 +397,7 @@ impl MmioHandler for XhciPciDevice {
                 if offset >= base && offset < end {
                     let mut data = [0u8; 8];
                     msix.pba_read(offset - base, &mut data[..size]);
-                    let mut out = 0u64;
-                    for i in 0..size {
-                        out |= u64::from(data[i]) << (i * 8);
-                    }
-                    return out;
+                    return u64::from_le_bytes(data) & all_ones(size);
                 }
             }
         }
@@ -443,10 +435,7 @@ impl MmioHandler for XhciPciDevice {
                 let base = u64::from(msix.table_offset());
                 let end = base.saturating_add(msix.table_len_bytes() as u64);
                 if offset >= base && offset < end {
-                    let mut data = [0u8; 8];
-                    for i in 0..size {
-                        data[i] = ((value >> (i * 8)) & 0xff) as u8;
-                    }
+                    let data = value.to_le_bytes();
                     msix.table_write(offset - base, &data[..size]);
                     self.service_interrupts();
                     return;
@@ -456,10 +445,7 @@ impl MmioHandler for XhciPciDevice {
                 let base = u64::from(msix.pba_offset());
                 let end = base.saturating_add(msix.pba_len_bytes() as u64);
                 if offset >= base && offset < end {
-                    let mut data = [0u8; 8];
-                    for i in 0..size {
-                        data[i] = ((value >> (i * 8)) & 0xff) as u8;
-                    }
+                    let data = value.to_le_bytes();
                     msix.pba_write(offset - base, &data[..size]);
                     self.service_interrupts();
                     return;

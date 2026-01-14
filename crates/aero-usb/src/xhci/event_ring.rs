@@ -117,20 +117,16 @@ impl EventRingProducer {
 
         // Defensive validation: if the restored positions don't make sense for the configured ERST
         // size, mark the ring as not ready so it will be re-initialised from ERDP on first use.
-        if self.erstsz == 0 || self.erstba == 0 {
+        if self.erstsz == 0
+            || self.erstba == 0
+            || self.prod_pos.seg >= self.erstsz
+            || self.cons_pos.seg >= self.erstsz
+        {
             self.ready = false;
             self.prod_pos = RingPos { seg: 0, off: 0 };
             self.cons_pos = RingPos { seg: 0, off: 0 };
             self.prod_cycle = true;
             self.cons_cycle = true;
-        } else {
-            if self.prod_pos.seg >= self.erstsz || self.cons_pos.seg >= self.erstsz {
-                self.ready = false;
-                self.prod_pos = RingPos { seg: 0, off: 0 };
-                self.cons_pos = RingPos { seg: 0, off: 0 };
-                self.prod_cycle = true;
-                self.cons_cycle = true;
-            }
         }
         Ok(())
     }

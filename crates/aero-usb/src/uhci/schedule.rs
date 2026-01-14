@@ -83,7 +83,7 @@ fn walk_link<M: MemoryBus + ?Sized>(
             return;
         }
 
-        if visited.iter().any(|&a| a == addr) {
+        if visited.contains(&addr) {
             // Cycle detected in guest schedule memory.
             *ctx.usbsts |= USBSTS_USBERRINT | USBSTS_HSE;
             return;

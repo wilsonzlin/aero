@@ -9,7 +9,7 @@ const A20_BIT: u64 = 1 << 20;
 fn bench_a20_disabled_large_read(c: &mut Criterion) {
     // Read a 1MiB span starting near the top of the first MiB so that (with A20 disabled) the
     // access crosses the 1MiB boundary and wraps back to address 0.
-    let start = 0x0F00_00u64;
+    let start = 0x000F_0000u64;
     let len = 1024 * 1024usize;
 
     // Optimized path: `aero_platform::memory::MemoryBus` with A20 disabled uses bulk reads with
@@ -50,4 +50,3 @@ fn bench_a20_disabled_large_read(c: &mut Criterion) {
 
 criterion_group!(benches, bench_a20_disabled_large_read);
 criterion_main!(benches);
-

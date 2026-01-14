@@ -267,7 +267,7 @@ fn a20_disabled_reads_use_bulk_ram_backend_ops_not_per_byte_loop() {
     let ram = CountingRam::new(2 * 1024 * 1024, reads.clone(), writes.clone());
     let mut bus = MemoryBus::with_ram(filter, Box::new(ram));
 
-    let start = 0x0FFF_00u64;
+    let start = 0x000F_FF00u64;
     let len = 0x3000usize;
     let mut buf = vec![0u8; len];
     bus.read_physical(start, &mut buf);
@@ -290,7 +290,7 @@ fn a20_disabled_writes_use_bulk_ram_backend_ops_not_per_byte_loop() {
     let ram = CountingRam::new(2 * 1024 * 1024, reads.clone(), writes.clone());
     let mut bus = MemoryBus::with_ram(filter, Box::new(ram));
 
-    let start = 0x0FFF_00u64;
+    let start = 0x000F_FF00u64;
     let data = vec![0xAAu8; 0x3000];
     bus.write_physical(start, &data);
 
@@ -318,8 +318,8 @@ fn a20_disabled_crossing_1mib_boundary_within_mmio_wraps_offsets() {
         mem[0x0F_FFF0 + i] = 0xA0u8.wrapping_add(i as u8);
     }
     // Bytes at the start of the region (where the wrapped portion should land).
-    for i in 0..0x30usize {
-        mem[i] = 0xB0u8.wrapping_add(i as u8);
+    for (i, byte) in mem.iter_mut().take(0x30usize).enumerate() {
+        *byte = 0xB0u8.wrapping_add(i as u8);
     }
 
     // Use IOAPIC MMIO base (bit 20 clear) so crossing +1MiB flips bit 20.
@@ -332,11 +332,11 @@ fn a20_disabled_crossing_1mib_boundary_within_mmio_wraps_offsets() {
     bus.read_physical(start, &mut buf);
 
     let mut expected = [0u8; 0x40];
-    for i in 0..0x10usize {
-        expected[i] = 0xA0u8.wrapping_add(i as u8);
+    for (i, byte) in expected.iter_mut().take(0x10usize).enumerate() {
+        *byte = 0xA0u8.wrapping_add(i as u8);
     }
-    for i in 0..0x30usize {
-        expected[0x10 + i] = 0xB0u8.wrapping_add(i as u8);
+    for (i, byte) in expected.iter_mut().skip(0x10usize).enumerate() {
+        *byte = 0xB0u8.wrapping_add(i as u8);
     }
     assert_eq!(buf, expected);
 
@@ -397,8 +397,8 @@ fn a20_disabled_crossing_1mib_boundary_within_rom_wraps_reads() {
         rom[0x0F_FFF0 + i] = 0xA0u8.wrapping_add(i as u8);
     }
     // Bytes at the start of the ROM (where the wrapped portion should land).
-    for i in 0..0x30usize {
-        rom[i] = 0xB0u8.wrapping_add(i as u8);
+    for (i, byte) in rom.iter_mut().take(0x30usize).enumerate() {
+        *byte = 0xB0u8.wrapping_add(i as u8);
     }
     // Bytes immediately after the boundary that would be read if the implementation incorrectly
     // performed a linear read past the 1MiB boundary.
@@ -414,11 +414,11 @@ fn a20_disabled_crossing_1mib_boundary_within_rom_wraps_reads() {
     bus.read_physical(start, &mut buf);
 
     let mut expected = [0u8; 0x40];
-    for i in 0..0x10usize {
-        expected[i] = 0xA0u8.wrapping_add(i as u8);
+    for (i, byte) in expected.iter_mut().take(0x10usize).enumerate() {
+        *byte = 0xA0u8.wrapping_add(i as u8);
     }
-    for i in 0..0x30usize {
-        expected[0x10 + i] = 0xB0u8.wrapping_add(i as u8);
+    for (i, byte) in expected.iter_mut().skip(0x10usize).enumerate() {
+        *byte = 0xB0u8.wrapping_add(i as u8);
     }
     assert_eq!(buf, expected);
 }
@@ -463,7 +463,7 @@ fn a20_disabled_bulk_reads_match_byte_wise_across_1mib_boundary() {
     bus.ram_mut().write_from(1 << 20, &vec![0xEEu8; 1 << 20]).unwrap();
 
     // Start just below the 1MiB boundary so the access wraps when A20 is disabled.
-    let start = 0x0FFF_00u64;
+    let start = 0x000F_FF00u64;
     let len = 0x3000usize;
 
     let mut bulk = vec![0u8; len];
@@ -471,8 +471,8 @@ fn a20_disabled_bulk_reads_match_byte_wise_across_1mib_boundary() {
 
     // Reference behaviour: byte-wise reads with per-address A20 masking.
     let mut expected = vec![0u8; len];
-    for i in 0..len {
-        expected[i] = bus.read_u8(start + i as u64);
+    for (i, byte) in expected.iter_mut().enumerate() {
+        *byte = bus.read_u8(start + i as u64);
     }
 
     assert_eq!(bulk, expected);
@@ -480,7 +480,7 @@ fn a20_disabled_bulk_reads_match_byte_wise_across_1mib_boundary() {
 
 #[test]
 fn a20_disabled_bulk_writes_match_byte_wise_across_1mib_boundary() {
-    let start = 0x0FFF_00u64;
+    let start = 0x000F_FF00u64;
     let len = 0x3000usize;
     let data: Vec<u8> = (0..len)
         .map(|i| (i as u8).wrapping_mul(7).wrapping_add(3))
@@ -532,15 +532,15 @@ fn a20_disabled_wraparound_preserves_mmio_and_rom_priority() {
     bus.map_mmio(0x18, 4, Box::new(mmio)).unwrap();
 
     // Bulk read across the 1MiB boundary (wrap-around in the A20-disabled case).
-    let start = 0x0FFF_F0u64;
+    let start = 0x000F_FFF0u64;
     let len = 0x40usize;
     let mut bulk = vec![0u8; len];
     bus.read_physical(start, &mut bulk);
 
     // Verify against byte-granular reads, which naturally apply A20 masking per address.
     let mut expected = vec![0u8; len];
-    for i in 0..len {
-        expected[i] = bus.read_u8(start + i as u64);
+    for (i, byte) in expected.iter_mut().enumerate() {
+        *byte = bus.read_u8(start + i as u64);
     }
     assert_eq!(bulk, expected);
 
@@ -555,7 +555,7 @@ fn a20_disabled_wraparound_preserves_mmio_and_rom_priority() {
     // when the write wraps at 1MiB.
     let write_len = 0x100usize;
     let data: Vec<u8> = (0..write_len).map(|v| v as u8).collect();
-    let write_start = 0x0FFF_F0u64;
+    let write_start = 0x000F_FFF0u64;
     bus.write_physical(write_start, &data);
 
     // Wrapped portion lands at 0.. in the A20-masked address space.

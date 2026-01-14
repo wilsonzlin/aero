@@ -743,7 +743,7 @@ fn build_dsdt(cfg: &AcpiConfig) -> Vec<u8> {
 
 fn build_dsdt_aml(cfg: &AcpiConfig) -> Vec<u8> {
     // AML is emitted manually (minimal subset).
-    vec![
+    [
         // Name (PICM, Zero)
         aml_name_integer(*b"PICM", 0),
         aml_imcr_region_and_field(),
@@ -775,7 +775,7 @@ fn build_dsdt_aml(cfg: &AcpiConfig) -> Vec<u8> {
 }
 
 fn aml_imcr_region_and_field() -> Vec<u8> {
-    vec![
+    [
         // OperationRegion (IMCR, SystemIO, 0x22, 0x02)
         aml_op_region(
             *b"IMCR", 0x01, // SystemIO
@@ -795,7 +795,7 @@ fn aml_imcr_region_and_field() -> Vec<u8> {
 }
 
 fn aml_scope_sb(cfg: &AcpiConfig) -> Vec<u8> {
-    let sb_devices = vec![
+    let sb_devices = [
         aml_device_sys0(cfg),
         aml_device_pwrb(),
         aml_device_slpb(),

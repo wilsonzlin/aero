@@ -339,7 +339,7 @@ mod tests {
         let rb = InterleavedRingBuffer::new(0, 2);
         assert_eq!(rb.capacity_frames, 1);
         assert_eq!(rb.channel_count, 2);
-        assert_eq!(rb.storage.len(), 1 * 2);
+        assert_eq!(rb.storage.len(), 2);
     }
 
     #[test]
