@@ -132,6 +132,10 @@ fn said_runs_wasm_pack_without_node_modules() -> Result<(), Box<dyn std::error::
         "expected wasm-pack to include xhci_webusb_snapshot, argv={wasm_pack:?}"
     );
     assert!(
+        wasm_pack.iter().any(|arg| arg == "usb_bridge_snapshot_roundtrip"),
+        "expected wasm-pack to include usb_bridge_snapshot_roundtrip, argv={wasm_pack:?}"
+    );
+    assert!(
         wasm_pack.iter().any(|arg| arg == "usb_snapshot"),
         "expected wasm-pack to include usb_snapshot, argv={wasm_pack:?}"
     );
