@@ -6737,6 +6737,7 @@ impl AerogpuD3d11Executor {
                 dummy_storage: &self.dummy_storage,
                 dummy_texture_view_2d: &self.dummy_texture_view_2d,
                 dummy_texture_view_2d_array: &self.dummy_texture_view_2d_array,
+                dummy_storage_texture_views: &self.dummy_storage_texture_views,
                 default_sampler: &self.default_sampler,
                 stage: ShaderStage::Geometry,
                 stage_state: stage_bindings,
