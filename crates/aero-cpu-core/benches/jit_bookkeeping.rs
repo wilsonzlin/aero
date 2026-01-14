@@ -381,8 +381,8 @@ fn bench_code_cache(c: &mut Criterion) {
             }
 
             // Fill the cache to its steady-state occupancy (no evictions yet).
-            for i in 0..MAX_BLOCKS {
-                cache.insert(dummy_handle(rips[i], i as u32, 32));
+            for (i, &rip) in rips.iter().enumerate().take(MAX_BLOCKS) {
+                cache.insert(dummy_handle(rip, i as u32, 32));
             }
 
             let mut pos = MAX_BLOCKS;
@@ -647,8 +647,8 @@ fn bench_hotness_profile(c: &mut Criterion) {
                     let _ = profile.record_hit(rip, false);
                 }
             }
-            for i in 0..(CAPACITY.saturating_sub(HOT_SET)) {
-                let _ = profile.record_hit(cold_rips[i], false);
+            for &rip in cold_rips.iter().take(CAPACITY.saturating_sub(HOT_SET)) {
+                let _ = profile.record_hit(rip, false);
             }
 
             // Pre-generate a deterministic hot/cold access pattern.
@@ -764,7 +764,6 @@ fn bench_jit_runtime_prepare_block(c: &mut Criterion) {
 
     group.bench_function("prepare_block_miss_already_requested", |b| {
         let config = JitConfig {
-            enabled: true,
             // Trigger hotness on the first call, but keep it from retriggering while requested.
             hot_threshold: 1,
             cache_max_blocks: 1024,
@@ -789,7 +788,6 @@ fn bench_jit_runtime_prepare_block(c: &mut Criterion) {
 
     group.bench_function("prepare_block_hit_metrics_sink", |b| {
         let config = JitConfig {
-            enabled: true,
             hot_threshold: 1_000_000,
             cache_max_blocks: 1024,
             cache_max_bytes: 0,
@@ -815,7 +813,6 @@ fn bench_jit_runtime_prepare_block(c: &mut Criterion) {
 
     group.bench_function("prepare_block_miss_metrics_sink", |b| {
         let config = JitConfig {
-            enabled: true,
             hot_threshold: u32::MAX,
             cache_max_blocks: 1024,
             cache_max_bytes: 0,
@@ -929,7 +926,6 @@ fn bench_jit_runtime_install_handle(c: &mut Criterion) {
 
     group.bench_function("install_handle_replace", |b| {
         let config = JitConfig {
-            enabled: true,
             hot_threshold: 1_000_000,
             cache_max_blocks: 1024,
             cache_max_bytes: 0,
@@ -957,7 +953,6 @@ fn bench_jit_runtime_install_handle(c: &mut Criterion) {
     group.bench_function("install_handle_evict", |b| {
         const CACHE_SIZE: usize = 64;
         let config = JitConfig {
-            enabled: true,
             hot_threshold: 1_000_000,
             cache_max_blocks: CACHE_SIZE,
             cache_max_bytes: 0,
@@ -988,7 +983,6 @@ fn bench_jit_runtime_install_handle(c: &mut Criterion) {
 
     group.bench_function("install_handle_replace_metrics_sink", |b| {
         let config = JitConfig {
-            enabled: true,
             hot_threshold: 1_000_000,
             cache_max_blocks: 1024,
             cache_max_bytes: 0,
@@ -1018,7 +1012,6 @@ fn bench_jit_runtime_install_handle(c: &mut Criterion) {
     group.bench_function("install_handle_evict_metrics_sink", |b| {
         const CACHE_SIZE: usize = 64;
         let config = JitConfig {
-            enabled: true,
             hot_threshold: 1_000_000,
             cache_max_blocks: CACHE_SIZE,
             cache_max_bytes: 0,
