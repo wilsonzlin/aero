@@ -387,14 +387,14 @@ function Resolve-DisplayAdapterRegistryKey([string]$pnpDeviceId) {
     # 1) Enum -> Driver -> Control\Class\{GUID}\XXXX (best-effort)
     $enumKey = "HKLM:\SYSTEM\CurrentControlSet\Enum\" + $pnp
     $out.enum_key_path = $enumKey
-    $out.enum_key_exists = (Test-Path $enumKey)
+    $out.enum_key_exists = (Test-Path -LiteralPath $enumKey -ErrorAction SilentlyContinue)
     if ($out.enum_key_exists) {
         $drv = Get-RegistryString $enumKey "Driver"
         if ($drv -and $drv.Trim().Length -gt 0) {
             $out.driver_value = $drv
             $classKey = "HKLM:\SYSTEM\CurrentControlSet\Control\Class\" + $drv
             $out.display_class_key_path = $classKey
-            $out.display_class_key_exists = (Test-Path $classKey)
+            $out.display_class_key_exists = (Test-Path -LiteralPath $classKey -ErrorAction SilentlyContinue)
             if ($out.display_class_key_exists) {
                 $out.resolved_key_path = $classKey
                 $out.resolved_key_kind = "display_class"
@@ -405,12 +405,12 @@ function Resolve-DisplayAdapterRegistryKey([string]$pnpDeviceId) {
                     $out.video_id = $vid
                     $videoBase = "HKLM:\SYSTEM\CurrentControlSet\Control\Video\" + $vid
                     $out.control_video_base_path = $videoBase
-                    if (Test-Path $videoBase) {
+                    if (Test-Path -LiteralPath $videoBase -ErrorAction SilentlyContinue) {
                         $candidate = Join-Path $videoBase "0000"
-                        if (-not (Test-Path $candidate)) {
+                        if (-not (Test-Path -LiteralPath $candidate -ErrorAction SilentlyContinue)) {
                             # Fall back to the first numeric subkey (0000, 0001, ...).
                             $children = $null
-                            try { $children = Get-ChildItem -Path $videoBase -ErrorAction Stop } catch { $children = $null }
+                            try { $children = Get-ChildItem -LiteralPath $videoBase -ErrorAction Stop } catch { $children = $null }
                             if ($children) {
                                 $names = @()
                                 foreach ($ch in $children) {
@@ -424,7 +424,7 @@ function Resolve-DisplayAdapterRegistryKey([string]$pnpDeviceId) {
                             }
                         }
                         $out.control_video_key_path = $candidate
-                        $out.control_video_key_exists = (Test-Path $candidate)
+                        $out.control_video_key_exists = (Test-Path -LiteralPath $candidate -ErrorAction SilentlyContinue)
                     }
                 }
             }
@@ -435,16 +435,16 @@ function Resolve-DisplayAdapterRegistryKey([string]$pnpDeviceId) {
     # If we already found a Control\Video key via VideoID, skip the scan.
     if (-not $out.control_video_key_path) {
         $videoRoot = "HKLM:\SYSTEM\CurrentControlSet\Control\Video"
-        if (Test-Path $videoRoot) {
+        if (Test-Path -LiteralPath $videoRoot -ErrorAction SilentlyContinue) {
             $guidKeys = $null
-            try { $guidKeys = Get-ChildItem -Path $videoRoot -ErrorAction Stop } catch { $guidKeys = $null }
+            try { $guidKeys = Get-ChildItem -LiteralPath $videoRoot -ErrorAction Stop } catch { $guidKeys = $null }
             if ($guidKeys) {
                 foreach ($g in $guidKeys) {
                     $guidName = "" + $g.PSChildName
                     if (-not $guidName -or $guidName.Length -eq 0) { continue }
                     $gPath = Join-Path $videoRoot $guidName
                     $sub = $null
-                    try { $sub = Get-ChildItem -Path $gPath -ErrorAction Stop } catch { $sub = $null }
+                    try { $sub = Get-ChildItem -LiteralPath $gPath -ErrorAction Stop } catch { $sub = $null }
                     if (-not $sub) { continue }
                     foreach ($s in $sub) {
                         $childName = "" + $s.PSChildName
@@ -1261,7 +1261,7 @@ $report = @{
     schema_version = 1
     tool = @{
           name = "Aero Guest Tools Verify"
-         version = "2.5.27"
+         version = "2.5.28"
          started_utc = $started.ToUniversalTime().ToString("o")
          ended_utc = $null
          duration_ms = $null
@@ -1314,7 +1314,7 @@ function Add-Check([string]$key, [string]$title, [string]$status, [string]$summa
 
 # Ensure output directory exists early so we can always write the report.
 try {
-    if (-not (Test-Path $outDir)) {
+    if (-not (Test-Path -LiteralPath $outDir -PathType Container -ErrorAction SilentlyContinue)) {
         New-Item -ItemType Directory -Path $outDir -Force | Out-Null
     }
 } catch {
@@ -3568,7 +3568,7 @@ try {
 
             $missing = @()
             foreach ($p in $expected) {
-                if (-not (Test-Path $p)) { $missing += $p }
+                if (-not (Test-Path -LiteralPath $p -PathType Leaf -ErrorAction SilentlyContinue)) { $missing += $p }
             }
             $umdData.missing_files = $missing
 
@@ -3634,7 +3634,7 @@ try {
             $present = @()
             $missing = @()
             foreach ($p in $expected) {
-                if (Test-Path $p) { $present += $p } else { $missing += $p }
+                if (Test-Path -LiteralPath $p -PathType Leaf -ErrorAction SilentlyContinue) { $present += $p } else { $missing += $p }
             }
             $dxData.present_files = $present
             $dxData.missing_files = $missing
@@ -4314,7 +4314,7 @@ try {
         if (-not $expectedSys) { $expectedSys = $found.name + ".sys" }
         $driversDir = Join-Path (Join-Path $env:SystemRoot "System32") "drivers"
         $expectedSysPath = Join-Path $driversDir $expectedSys
-        $expectedSysExists = Test-Path $expectedSysPath
+        $expectedSysExists = Test-Path -LiteralPath $expectedSysPath -PathType Leaf -ErrorAction SilentlyContinue
 
         $resolvedImagePath = $null
         $resolvedImageExists = $null
@@ -4337,7 +4337,7 @@ try {
             }
 
             $resolvedImagePath = $p
-            $resolvedImageExists = Test-Path $resolvedImagePath
+            $resolvedImageExists = Test-Path -LiteralPath $resolvedImagePath -PathType Leaf -ErrorAction SilentlyContinue
         }
 
         $found.expected_sys = $expectedSys
@@ -4475,7 +4475,7 @@ try {
                 $keyName = $baseKey + $v.suffix
                 $path = Join-Path $basePath $keyName
 
-                $exists = Test-Path $path
+                $exists = Test-Path -LiteralPath $path -ErrorAction SilentlyContinue
                 $svc = $null
                 $cls = $null
                 $clsGuid = $null
@@ -5142,8 +5142,8 @@ try {
     if ($PlayTestSound) {
         $mediaDir = Join-Path $env:WINDIR "Media"
         $wav = $null
-        if (Test-Path $mediaDir) {
-            $wav = Get-ChildItem -Path $mediaDir -Filter *.wav -ErrorAction SilentlyContinue | Select-Object -First 1 -ErrorAction SilentlyContinue
+        if (Test-Path -LiteralPath $mediaDir -PathType Container -ErrorAction SilentlyContinue) {
+            $wav = Get-ChildItem -LiteralPath $mediaDir -Filter *.wav -ErrorAction SilentlyContinue | Select-Object -First 1 -ErrorAction SilentlyContinue
         }
 
         if ($wav) {
