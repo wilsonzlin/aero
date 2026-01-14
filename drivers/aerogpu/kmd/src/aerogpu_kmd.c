@@ -3655,6 +3655,11 @@ static NTSTATUS APIENTRY AeroGpuDdiQueryAdapterInfo(_In_ const HANDLE hAdapter,
         if (pQueryAdapterInfo->OutputDataSize < sizeof(ULONG)) {
             return STATUS_BUFFER_TOO_SMALL;
         }
+
+        const BOOLEAN poweredOn =
+            (adapter->Bar0 != NULL) &&
+            ((DXGK_DEVICE_POWER_STATE)InterlockedCompareExchange(&adapter->DevicePowerState, 0, 0) == DxgkDevicePowerStateD0);
+
         /*
          * v0 legacy query: return only the device ABI version.
          * - Legacy device: MMIO VERSION register (BAR0[0x0004]).
@@ -3663,7 +3668,12 @@ static NTSTATUS APIENTRY AeroGpuDdiQueryAdapterInfo(_In_ const HANDLE hAdapter,
         if (pQueryAdapterInfo->OutputDataSize == sizeof(ULONG)) {
             ULONG abiVersion = 0;
             if (adapter->Bar0) {
-                abiVersion = AeroGpuReadRegU32(adapter, AEROGPU_UMDPRIV_MMIO_REG_ABI_VERSION);
+                /*
+                 * Avoid touching MMIO while powered down; return the last-known
+                 * ABI version discovered during StartDevice.
+                 */
+                abiVersion = poweredOn ? AeroGpuReadRegU32(adapter, AEROGPU_UMDPRIV_MMIO_REG_ABI_VERSION)
+                                       : adapter->DeviceAbiVersion;
             }
             *(ULONG*)pQueryAdapterInfo->pOutputData = abiVersion;
             return STATUS_SUCCESS;
@@ -3692,22 +3702,36 @@ static NTSTATUS APIENTRY AeroGpuDdiQueryAdapterInfo(_In_ const HANDLE hAdapter,
         ULONGLONG fencePageGpa = 0;
 
         if (adapter->Bar0) {
-            magic = AeroGpuReadRegU32(adapter, AEROGPU_UMDPRIV_MMIO_REG_MAGIC);
-            abiVersion = AeroGpuReadRegU32(adapter, AEROGPU_UMDPRIV_MMIO_REG_ABI_VERSION);
-            if (magic == AEROGPU_UMDPRIV_MMIO_MAGIC_NEW_AGPU) {
-                const ULONG lo = AeroGpuReadRegU32(adapter, AEROGPU_UMDPRIV_MMIO_REG_FEATURES_LO);
-                const ULONG hi = AeroGpuReadRegU32(adapter, AEROGPU_UMDPRIV_MMIO_REG_FEATURES_HI);
-                features = ((ULONGLONG)hi << 32) | (ULONGLONG)lo;
+            if (poweredOn) {
+                magic = AeroGpuReadRegU32(adapter, AEROGPU_UMDPRIV_MMIO_REG_MAGIC);
+                abiVersion = AeroGpuReadRegU32(adapter, AEROGPU_UMDPRIV_MMIO_REG_ABI_VERSION);
+                if (magic == AEROGPU_UMDPRIV_MMIO_MAGIC_NEW_AGPU) {
+                    const ULONG lo = AeroGpuReadRegU32(adapter, AEROGPU_UMDPRIV_MMIO_REG_FEATURES_LO);
+                    const ULONG hi = AeroGpuReadRegU32(adapter, AEROGPU_UMDPRIV_MMIO_REG_FEATURES_HI);
+                    features = ((ULONGLONG)hi << 32) | (ULONGLONG)lo;
 
-                /*
-                 * The UMD-private blob exposes a convenience flag indicating
-                 * whether a shared fence page is configured/usable. Distinguish
-                 * this from the raw feature bit (which only indicates support).
-                 */
-                if (features & AEROGPU_UMDPRIV_FEATURE_FENCE_PAGE) {
-                    const ULONG fenceLo = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_FENCE_GPA_LO);
-                    const ULONG fenceHi = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_FENCE_GPA_HI);
-                    fencePageGpa = ((ULONGLONG)fenceHi << 32) | (ULONGLONG)fenceLo;
+                    /*
+                     * The UMD-private blob exposes a convenience flag indicating
+                     * whether a shared fence page is configured/usable. Distinguish
+                     * this from the raw feature bit (which only indicates support).
+                     */
+                    if (features & AEROGPU_UMDPRIV_FEATURE_FENCE_PAGE) {
+                        const ULONG fenceLo = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_FENCE_GPA_LO);
+                        const ULONG fenceHi = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_FENCE_GPA_HI);
+                        fencePageGpa = ((ULONGLONG)fenceHi << 32) | (ULONGLONG)fenceLo;
+                    }
+                }
+            } else {
+                /* Return last-known discovery fields without touching MMIO while powered down. */
+                magic = adapter->DeviceMmioMagic;
+                abiVersion = adapter->DeviceAbiVersion;
+                if (magic == AEROGPU_UMDPRIV_MMIO_MAGIC_NEW_AGPU) {
+                    features = adapter->DeviceFeatures;
+                    if ((features & AEROGPU_UMDPRIV_FEATURE_FENCE_PAGE) != 0 &&
+                        adapter->FencePageVa &&
+                        ((adapter->DeviceFeatures & (ULONGLONG)AEROGPU_FEATURE_FENCE_PAGE) != 0)) {
+                        fencePageGpa = (ULONGLONG)adapter->FencePagePa.QuadPart;
+                    }
                 }
             }
         }
