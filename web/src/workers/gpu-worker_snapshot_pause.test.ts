@@ -132,6 +132,8 @@ describe("workers/gpu-worker snapshot pause", () => {
         ioIpcSab: segments.ioIpc,
         sharedFramebuffer: segments.sharedFramebuffer,
         sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,
+        // WorkerInitMessage requires a VGA framebuffer SAB even though this test never uses it.
+        // Reuse the shared framebuffer region to keep the init minimal.
         vgaFramebuffer: segments.sharedFramebuffer,
         scanoutState: segments.scanoutState,
         scanoutStateOffsetBytes: segments.scanoutStateOffsetBytes,

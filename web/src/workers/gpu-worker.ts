@@ -711,6 +711,7 @@ const syncCursorToPresenter = (): void => {
 };
 
 const redrawCursor = (): void => {
+  if (snapshotPaused) return;
   try {
     const p = getCursorPresenter();
     if (!p) return;
@@ -2450,6 +2451,9 @@ async function attemptRecovery(reason: string): Promise<void> {
 
     // Re-init presenter backend (if we are using the built-in presenter path).
     if (runtimeCanvas && !presentFn) {
+      // Snapshot pause is a guest-memory access barrier. Defer recovery until resume so we can
+      // safely inspect scanout/framebuffer state (which may require guest RAM/VRAM readback).
+      await waitUntilSnapshotResumed();
       const frame = getCurrentFrameInfo();
       if (!frame) {
         throw new PresenterError("not_initialized", "GPU recovery requested before framebuffer init");
@@ -3700,6 +3704,7 @@ async function maybeSendReady(): Promise<void> {
   if (runtimeReadySent) return;
   if (!runtimeInit) return;
   if (isDeviceLost) return;
+  if (snapshotPaused) return;
 
   // Headless mode: still run frame pacing/metrics.
   if (!runtimeCanvas) {
@@ -5013,6 +5018,14 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
               new Promise((resolve) => setTimeout(resolve, 750)),
             ]);
             await maybeSendReady();
+          }
+
+          if (snapshotPaused) {
+            // Snapshot pause must not touch guest RAM/VRAM. Respond with a stub screenshot (the
+            // caller can retry after resume if desired).
+            const seqNow = frameState ? lastPresentedSeq : undefined;
+            postStub(typeof seqNow === "number" ? seqNow : undefined);
+            return;
           }
 
           const includeCursor = req.includeCursor === true;
