@@ -3,10 +3,17 @@ import type { HidTopologyManager } from "../hid/wasm_hid_guest_bridge";
 import type { XhciTopologyBridge } from "../hid/xhci_hid_topology";
 
 type XhciTopologyBridgeLike = {
-  attach_hub: (rootPort: number, portCount: number) => void;
-  detach_at_path: (path: number[]) => void;
-  attach_webhid_device: (path: number[], device: unknown) => void;
-  attach_usb_hid_passthrough_device: (path: number[], device: unknown) => void;
+  // wasm-bindgen export surfaces can vary between snake_case and camelCase depending on build
+  // tooling/version. Prefer snake_case, but accept camelCase fallbacks.
+  attach_hub?: (rootPort: number, portCount: number) => void;
+  attachHub?: (rootPort: number, portCount: number) => void;
+  detach_at_path?: (path: number[]) => void;
+  detachAtPath?: (path: number[]) => void;
+  attach_webhid_device?: (path: number[], device: unknown) => void;
+  attachWebhidDevice?: (path: number[], device: unknown) => void;
+  attachWebHidDevice?: (path: number[], device: unknown) => void;
+  attach_usb_hid_passthrough_device?: (path: number[], device: unknown) => void;
+  attachUsbHidPassthroughDevice?: (path: number[], device: unknown) => void;
   // wasm-bindgen bridges expose `free()`, but unit tests and alternate shims may not.
   free?: () => void;
 };
@@ -20,11 +27,16 @@ export function isXhciTopologyBridgeLike(value: unknown): value is XhciTopologyB
   const obj = value as Record<string, unknown>;
   const free = obj.free;
   if (free !== undefined && typeof free !== "function") return false;
+
+  const attachHub = obj.attach_hub ?? obj.attachHub;
+  const detachAtPath = obj.detach_at_path ?? obj.detachAtPath;
+  const attachWebhid = obj.attach_webhid_device ?? obj.attachWebhidDevice ?? obj.attachWebHidDevice;
+  const attachUsbHid = obj.attach_usb_hid_passthrough_device ?? obj.attachUsbHidPassthroughDevice;
   return (
-    typeof obj.attach_hub === "function" &&
-    typeof obj.detach_at_path === "function" &&
-    typeof obj.attach_webhid_device === "function" &&
-    typeof obj.attach_usb_hid_passthrough_device === "function"
+    typeof attachHub === "function" &&
+    typeof detachAtPath === "function" &&
+    typeof attachWebhid === "function" &&
+    typeof attachUsbHid === "function"
   );
 }
 
@@ -40,6 +52,16 @@ export function isXhciTopologyBridgeLike(value: unknown): value is XhciTopologyB
 export function createXhciTopologyBridgeShim(bridge: unknown): XhciTopologyBridge | null {
   if (!isXhciTopologyBridgeLike(bridge)) return null;
   const obj = bridge as XhciTopologyBridgeLike;
+  const attachHub = (obj.attach_hub ?? obj.attachHub) as (rootPort: number, portCount: number) => void;
+  const detachAtPath = (obj.detach_at_path ?? obj.detachAtPath) as (path: number[]) => void;
+  const attachWebhid = (obj.attach_webhid_device ?? obj.attachWebhidDevice ?? obj.attachWebHidDevice) as (
+    path: number[],
+    device: unknown,
+  ) => void;
+  const attachUsbHid = (obj.attach_usb_hid_passthrough_device ?? obj.attachUsbHidPassthroughDevice) as (
+    path: number[],
+    device: unknown,
+  ) => void;
   const rawFree = (bridge as { free?: unknown }).free;
   const freeFn = typeof rawFree === "function" ? rawFree : () => {};
   return {
@@ -50,10 +72,10 @@ export function createXhciTopologyBridgeShim(bridge: unknown): XhciTopologyBridg
         // ignore
       }
     },
-    attach_hub: (rootPort, portCount) => obj.attach_hub.call(bridge, rootPort, portCount),
-    detach_at_path: (path) => obj.detach_at_path.call(bridge, path),
-    attach_webhid_device: (path, device) => obj.attach_webhid_device.call(bridge, path, device),
-    attach_usb_hid_passthrough_device: (path, device) => obj.attach_usb_hid_passthrough_device.call(bridge, path, device),
+    attach_hub: (rootPort, portCount) => attachHub.call(bridge, rootPort, portCount),
+    detach_at_path: (path) => detachAtPath.call(bridge, path),
+    attach_webhid_device: (path, device) => attachWebhid.call(bridge, path, device),
+    attach_usb_hid_passthrough_device: (path, device) => attachUsbHid.call(bridge, path, device),
   };
 }
 

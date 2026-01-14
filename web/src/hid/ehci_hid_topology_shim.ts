@@ -29,11 +29,31 @@ function mapEhciPathFromUhci(path: number[]): number[] {
  * with {@link UhciHidTopologyManager} without clobbering EHCI's reserved WebUSB root port.
  */
 export function createEhciTopologyBridgeShim(bridge: UhciTopologyBridge): UhciTopologyBridge {
+  // wasm-bindgen export surfaces can vary between snake_case and camelCase depending on build
+  // tooling/version. Prefer snake_case, but accept camelCase fallbacks. Always invoke through
+  // `.call(bridge, ...)` to preserve `this` binding for wasm-bindgen methods.
+  const bridgeAny = bridge as unknown as Record<string, unknown>;
+  const attachHub = bridgeAny.attach_hub ?? bridgeAny.attachHub;
+  const detachAtPath = bridgeAny.detach_at_path ?? bridgeAny.detachAtPath;
+  const attachWebhid = bridgeAny.attach_webhid_device ?? bridgeAny.attachWebhidDevice ?? bridgeAny.attachWebHidDevice;
+  const attachUsbHid = bridgeAny.attach_usb_hid_passthrough_device ?? bridgeAny.attachUsbHidPassthroughDevice;
+
   return {
-    attach_hub: (rootPort, portCount) => bridge.attach_hub(mapEhciRootPortFromUhci(rootPort), portCount),
-    detach_at_path: (path) => bridge.detach_at_path(mapEhciPathFromUhci(path)),
-    attach_webhid_device: (path, device) => bridge.attach_webhid_device(mapEhciPathFromUhci(path), device),
-    attach_usb_hid_passthrough_device: (path, device) =>
-      bridge.attach_usb_hid_passthrough_device(mapEhciPathFromUhci(path), device),
+    attach_hub: (rootPort, portCount) => {
+      if (typeof attachHub !== "function") return;
+      attachHub.call(bridge, mapEhciRootPortFromUhci(rootPort), portCount);
+    },
+    detach_at_path: (path) => {
+      if (typeof detachAtPath !== "function") return;
+      detachAtPath.call(bridge, mapEhciPathFromUhci(path));
+    },
+    attach_webhid_device: (path, device) => {
+      if (typeof attachWebhid !== "function") return;
+      attachWebhid.call(bridge, mapEhciPathFromUhci(path), device);
+    },
+    attach_usb_hid_passthrough_device: (path, device) => {
+      if (typeof attachUsbHid !== "function") return;
+      attachUsbHid.call(bridge, mapEhciPathFromUhci(path), device);
+    },
   };
 }

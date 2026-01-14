@@ -150,6 +150,9 @@ export class UhciHidTopologyManager {
     if (rootPort === WEBUSB_GUEST_ROOT_PORT) return false;
     const uhci = this.#uhci;
     if (!uhci) return false;
+    const uhciAny = uhci as unknown as Record<string, unknown>;
+    const attachHub = uhciAny.attach_hub ?? uhciAny.attachHub;
+    const detachAtPath = uhciAny.detach_at_path ?? uhciAny.detachAtPath;
 
     let portCount = this.#requiredHubPortCount(rootPort);
     const minPortCount = options.minPortCount;
@@ -162,14 +165,22 @@ export class UhciHidTopologyManager {
       // Replacing the hub without a disconnect would not toggle the UHCI connection-status-change
       // (CSC) bit, so the guest OS could keep using a cached hub descriptor (port count, etc).
       // Detach first so this behaves like a real hotplug event.
-      try {
-        uhci.detach_at_path([rootPort]);
-      } catch {
-        // ignore
+      if (typeof detachAtPath === "function") {
+        try {
+          detachAtPath.call(uhci, [rootPort]);
+        } catch {
+          // ignore
+        }
       }
     }
+    if (typeof attachHub !== "function") {
+      if (options.throwOnFailure) {
+        throw new Error("UHCI attach hub export unavailable");
+      }
+      return false;
+    }
     try {
-      uhci.attach_hub(rootPort >>> 0, portCount >>> 0);
+      attachHub.call(uhci, rootPort >>> 0, portCount >>> 0);
       this.#hubAttachedPortCountByRoot.set(rootPort, portCount);
     } catch (err) {
       if (options.throwOnFailure) {
@@ -185,8 +196,11 @@ export class UhciHidTopologyManager {
   #maybeDetachPath(path: GuestUsbPath): void {
     const uhci = this.#uhci;
     if (!uhci) return;
+    const uhciAny = uhci as unknown as Record<string, unknown>;
+    const detachAtPath = uhciAny.detach_at_path ?? uhciAny.detachAtPath;
+    if (typeof detachAtPath !== "function") return;
     try {
-      uhci.detach_at_path(path);
+      detachAtPath.call(uhci, path);
     } catch {
       // ignore
     }
@@ -196,6 +210,7 @@ export class UhciHidTopologyManager {
     const rec = this.#devices.get(deviceId) ?? null;
     const uhci = this.#uhci;
     if (!rec || !uhci) return;
+    const uhciAny = uhci as unknown as Record<string, unknown>;
 
     const rootPort = rec.path[0] ?? EXTERNAL_HUB_ROOT_PORT;
     if (rec.path.length > 1) {
@@ -214,9 +229,13 @@ export class UhciHidTopologyManager {
 
     try {
       if (rec.kind === "webhid") {
-        uhci.attach_webhid_device(rec.path, rec.device);
+        const attachWebhid = uhciAny.attach_webhid_device ?? uhciAny.attachWebhidDevice ?? uhciAny.attachWebHidDevice;
+        if (typeof attachWebhid !== "function") return;
+        attachWebhid.call(uhci, rec.path, rec.device);
       } else {
-        uhci.attach_usb_hid_passthrough_device(rec.path, rec.device);
+        const attachUsbHid = uhciAny.attach_usb_hid_passthrough_device ?? uhciAny.attachUsbHidPassthroughDevice;
+        if (typeof attachUsbHid !== "function") return;
+        attachUsbHid.call(uhci, rec.path, rec.device);
       }
     } catch (err) {
       if (options.throwOnFailure) {

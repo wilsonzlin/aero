@@ -1465,11 +1465,15 @@ function maybeSendWasmReady(): void {
 function isUhciTopologyBridge(value: unknown): value is UhciTopologyBridge {
   if (!value || typeof value !== "object") return false;
   const rec = value as Record<string, unknown>;
+  const attachHub = rec.attach_hub ?? rec.attachHub;
+  const detachAtPath = rec.detach_at_path ?? rec.detachAtPath;
+  const attachWebhid = rec.attach_webhid_device ?? rec.attachWebhidDevice ?? rec.attachWebHidDevice;
+  const attachUsbHid = rec.attach_usb_hid_passthrough_device ?? rec.attachUsbHidPassthroughDevice;
   return (
-    typeof rec.attach_hub === "function" &&
-    typeof rec.detach_at_path === "function" &&
-    typeof rec.attach_webhid_device === "function" &&
-    typeof rec.attach_usb_hid_passthrough_device === "function"
+    typeof attachHub === "function" &&
+    typeof detachAtPath === "function" &&
+    typeof attachWebhid === "function" &&
+    typeof attachUsbHid === "function"
   );
 }
 

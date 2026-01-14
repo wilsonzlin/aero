@@ -132,6 +132,27 @@ describe("hid/UhciHidTopologyManager", () => {
     );
   });
 
+  it("accepts camelCase UHCI topology helper names (backwards compatibility)", () => {
+    const mgr = new UhciHidTopologyManager({ defaultHubPortCount: 16 });
+
+    const uhci = {
+      attachHub: vi.fn(),
+      detachAtPath: vi.fn(),
+      attachWebHidDevice: vi.fn(),
+      attachUsbHidPassthroughDevice: vi.fn(),
+    };
+
+    mgr.setUhciBridge(uhci as unknown as UhciTopologyBridge);
+
+    expect(uhci.attachHub).toHaveBeenCalledTimes(1);
+    expect(uhci.attachHub).toHaveBeenCalledWith(EXTERNAL_HUB_ROOT_PORT, 16);
+
+    const dev = { kind: "device" };
+    mgr.attachDevice(1, [EXTERNAL_HUB_ROOT_PORT, firstDynamicPort], "webhid", dev);
+    expect(uhci.detachAtPath).toHaveBeenCalledWith([EXTERNAL_HUB_ROOT_PORT, firstDynamicPort]);
+    expect(uhci.attachWebHidDevice).toHaveBeenCalledWith([EXTERNAL_HUB_ROOT_PORT, firstDynamicPort], dev);
+  });
+
   it("defers device attachment until the UHCI bridge is available", () => {
     const mgr = new UhciHidTopologyManager({ defaultHubPortCount: 16 });
     const uhci = createFakeUhci();
