@@ -1178,7 +1178,14 @@ pub fn decode_instruction(
             Ok(Sm4Inst::EmitThenCut { stream: 0 })
         }
         OPCODE_EMITTHENCUT_STREAM => {
-            let stream = decode_stream_index(&mut r)?;
+            // Some SM4 blobs (including those produced by the legacy HLSL compiler) encode
+            // `emitthen_cut_stream` with *no* operand tokens when the stream index is 0.
+            // Accept that form by defaulting to stream 0 when the instruction has no payload.
+            let stream = if r.is_eof() {
+                0
+            } else {
+                decode_stream_index(&mut r)?
+            };
             r.expect_eof()?;
             Ok(Sm4Inst::EmitThenCut { stream })
         }
@@ -1211,12 +1218,22 @@ pub fn decode_instruction(
             Ok(Sm4Inst::Cut { stream: 0 })
         }
         OPCODE_EMIT_STREAM => {
-            let stream = decode_stream_index(&mut r)?;
+            // Some SM4 blobs omit the immediate operand for stream 0.
+            let stream = if r.is_eof() {
+                0
+            } else {
+                decode_stream_index(&mut r)?
+            };
             r.expect_eof()?;
             Ok(Sm4Inst::Emit { stream })
         }
         OPCODE_CUT_STREAM => {
-            let stream = decode_stream_index(&mut r)?;
+            // Some SM4 blobs omit the immediate operand for stream 0.
+            let stream = if r.is_eof() {
+                0
+            } else {
+                decode_stream_index(&mut r)?
+            };
             r.expect_eof()?;
             Ok(Sm4Inst::Cut { stream })
         }

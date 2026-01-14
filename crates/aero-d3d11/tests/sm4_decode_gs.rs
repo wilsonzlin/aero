@@ -350,6 +350,34 @@ fn decodes_emitthen_cut_variants() {
 }
 
 #[test]
+fn decodes_stream_ops_without_operand_default_to_stream0() {
+    // Some real-world SM4 blobs omit the immediate operand for stream 0 on the `_stream`
+    // instruction forms. Ensure the decoder accepts that encoding and defaults to stream 0.
+    let body = [
+        opcode_token(OPCODE_EMIT_STREAM, 1),
+        opcode_token(OPCODE_CUT_STREAM, 1),
+        opcode_token(OPCODE_EMITTHENCUT_STREAM, 1),
+        opcode_token(OPCODE_RET, 1),
+    ];
+
+    let tokens = make_sm4_program_tokens(2, &body);
+    let program =
+        Sm4Program::parse_program_tokens(&tokens_to_bytes(&tokens)).expect("parse_program_tokens");
+    let module = aero_d3d11::sm4::decode_program(&program).expect("decode");
+
+    assert_eq!(module.stage, ShaderStage::Geometry);
+    assert!(matches!(
+        module.instructions.as_slice(),
+        [
+            Sm4Inst::Emit { stream: 0 },
+            Sm4Inst::Cut { stream: 0 },
+            Sm4Inst::EmitThenCut { stream: 0 },
+            Sm4Inst::Ret
+        ]
+    ));
+}
+
+#[test]
 fn decodes_geometry_shader_instance_count_decl_sm5() {
     const INSTANCE_COUNT: u32 = 4;
     // `SV_GSInstanceID` D3D name token (see `shader_translate.rs`).
