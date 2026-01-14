@@ -45,8 +45,8 @@ Usage:
 
 Steps:
   1. cargo test -p aero-devices-input --locked
-  2. cargo test -p aero-usb --locked --test uhci --test uhci_external_hub --test ehci --test hid_builtin_snapshot
-     --test ehci_snapshot_roundtrip --test usb2_companion_routing --test webusb_passthrough_uhci
+  2. cargo test -p aero-usb --locked --test uhci --test uhci_external_hub --test ehci --test ehci_snapshot_roundtrip
+     --test usb2_companion_routing --test webusb_passthrough_uhci --test hid_builtin_snapshot
      --test hid_composite_mouse_snapshot_compat --test hid_configuration_snapshot_clamping
      --test hid_consumer_control_snapshot_clamping --test hid_gamepad_snapshot_clamping
      --test hid_keyboard_snapshot_sanitization --test hid_mouse_snapshot_clamping
