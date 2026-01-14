@@ -8891,7 +8891,7 @@ static NTSTATUS APIENTRY AeroGpuDdiSetPointerPosition(_In_ const HANDLE hAdapter
     AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_Y, (ULONG)cursorY);
     AeroGpuWriteRegU32(adapter,
                        AEROGPU_MMIO_REG_CURSOR_ENABLE,
-                       (cursorVisible && cursorShapeValid) ? 1u : 0u);
+                       (cursorVisible && cursorShapeValid && !adapter->PostDisplayOwnershipReleased) ? 1u : 0u);
 
     return STATUS_SUCCESS;
 }
@@ -9472,7 +9472,7 @@ static NTSTATUS APIENTRY AeroGpuDdiSetPointerShape(_In_ const HANDLE hAdapter,
 
         AeroGpuWriteRegU32(adapter,
                            AEROGPU_MMIO_REG_CURSOR_ENABLE,
-                           (cursorVisible && cursorShapeValid) ? 1u : 0u);
+                           (cursorVisible && cursorShapeValid && !adapter->PostDisplayOwnershipReleased) ? 1u : 0u);
     }
 
     return STATUS_SUCCESS;
