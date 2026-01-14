@@ -718,10 +718,8 @@ impl VirtioInput {
                     break;
                 }
                 let take = (d.len as usize).min(bytes.len() - written);
-                let dst = mem
-                    .get_slice_mut(d.addr, take)
+                mem.write(d.addr, &bytes[written..written + take])
                     .map_err(|_| VirtioDeviceError::IoError)?;
-                dst.copy_from_slice(&bytes[written..written + take]);
                 written += take;
             }
 
@@ -799,37 +797,52 @@ impl VirtioInput {
         let mut pending = [0u8; 8];
         let mut pending_len = 0usize;
 
-        for desc in chain.descriptors() {
+        'descs: for desc in chain.descriptors() {
             // Statusq buffers are guest→device, but some guests might accidentally set the WRITE
             // flag. We treat the descriptor flags as advisory and always attempt to parse the
             // payload.
-            let Ok(mut slice) = mem.get_slice(desc.addr, desc.len as usize) else {
-                break;
-            };
+            let mut addr = desc.addr;
+            let mut remaining = desc.len as usize;
+            let mut scratch = [0u8; 256];
 
-            if pending_len != 0 {
-                let take = (8 - pending_len).min(slice.len());
-                pending[pending_len..pending_len + take].copy_from_slice(&slice[..take]);
-                pending_len += take;
-                slice = &slice[take..];
-
-                if pending_len == 8 {
-                    let event = VirtioInputEvent::from_le_bytes(pending);
-                    self.process_statusq_event(event, &mut staged_mask);
-                    pending_len = 0;
+            while remaining != 0 {
+                let take = remaining.min(scratch.len());
+                if mem.read(addr, &mut scratch[..take]).is_err() {
+                    break 'descs;
                 }
-            }
 
-            while slice.len() >= 8 {
-                let (evt, rest) = slice.split_at(8);
-                let event = VirtioInputEvent::from_le_bytes(evt.try_into().unwrap());
-                self.process_statusq_event(event, &mut staged_mask);
-                slice = rest;
-            }
+                let mut slice = &scratch[..take];
 
-            if !slice.is_empty() {
-                pending[..slice.len()].copy_from_slice(slice);
-                pending_len = slice.len();
+                if pending_len != 0 {
+                    let take = (8 - pending_len).min(slice.len());
+                    pending[pending_len..pending_len + take].copy_from_slice(&slice[..take]);
+                    pending_len += take;
+                    slice = &slice[take..];
+
+                    if pending_len == 8 {
+                        let event = VirtioInputEvent::from_le_bytes(pending);
+                        self.process_statusq_event(event, &mut staged_mask);
+                        pending_len = 0;
+                    }
+                }
+
+                while slice.len() >= 8 {
+                    let (evt, rest) = slice.split_at(8);
+                    let event = VirtioInputEvent::from_le_bytes(evt.try_into().unwrap());
+                    self.process_statusq_event(event, &mut staged_mask);
+                    slice = rest;
+                }
+
+                if !slice.is_empty() {
+                    pending[..slice.len()].copy_from_slice(slice);
+                    pending_len = slice.len();
+                }
+
+                addr = match addr.checked_add(take as u64) {
+                    Some(v) => v,
+                    None => break 'descs,
+                };
+                remaining -= take;
             }
         }
 

@@ -47,36 +47,21 @@ fn wasm_memory_byte_len() -> u64 {
     pages.saturating_mul(64 * 1024)
 }
 
-// Cap open-bus slices so a malicious guest cannot force unbounded allocations.
-const OPEN_BUS_SLICE_MAX: usize = 64 * 1024;
-static OPEN_BUS_BYTES: [u8; OPEN_BUS_SLICE_MAX] = [0xFF; OPEN_BUS_SLICE_MAX];
+// Cap open-bus reads/writes so a malicious guest cannot force unbounded work.
+const OPEN_BUS_MAX_LEN: usize = 64 * 1024;
 
 struct WasmGuestMemory {
     guest_base: u32,
     ram_bytes: u64,
-    open_bus_write: Vec<u8>,
 }
 
 impl WasmGuestMemory {
     #[inline]
-    fn open_bus_slice(&self, addr: u64, len: usize) -> Result<&'static [u8], GuestMemoryError> {
-        if len > OPEN_BUS_SLICE_MAX {
+    fn check_open_bus(addr: u64, len: usize) -> Result<(), GuestMemoryError> {
+        if len > OPEN_BUS_MAX_LEN {
             return Err(GuestMemoryError::OutOfBounds { addr, len });
         }
-        Ok(&OPEN_BUS_BYTES[..len])
-    }
-
-    #[inline]
-    fn open_bus_slice_mut(&mut self, addr: u64, len: usize) -> Result<&mut [u8], GuestMemoryError> {
-        if len > OPEN_BUS_SLICE_MAX {
-            return Err(GuestMemoryError::OutOfBounds { addr, len });
-        }
-        if self.open_bus_write.len() < len {
-            self.open_bus_write.resize(len, 0xFF);
-        } else {
-            self.open_bus_write[..len].fill(0xFF);
-        }
-        Ok(&mut self.open_bus_write[..len])
+        Ok(())
     }
 
     #[inline]
@@ -106,58 +91,88 @@ impl GuestMemory for WasmGuestMemory {
     }
 
     fn read(&self, addr: u64, dst: &mut [u8]) -> Result<(), GuestMemoryError> {
-        dst.copy_from_slice(self.get_slice(addr, dst.len())?);
-        Ok(())
+        let len = dst.len();
+        if len == 0 {
+            if addr > self.len() {
+                return Err(GuestMemoryError::OutOfBounds { addr, len });
+            }
+            return Ok(());
+        }
+
+        match crate::guest_phys::translate_guest_paddr_range(self.ram_bytes, addr, len) {
+            crate::guest_phys::GuestRamRange::Ram { ram_offset } => {
+                let linear = self.linear_offset(addr, ram_offset, len)?;
+                let ptr = linear as *const u8;
+
+                // Shared-memory (`+atomics`) build: atomic byte loads to avoid Rust data-race UB.
+                #[cfg(target_feature = "atomics")]
+                {
+                    use core::sync::atomic::{AtomicU8, Ordering};
+                    let src = ptr as *const AtomicU8;
+                    for (i, slot) in dst.iter_mut().enumerate() {
+                        // Safety: we bounds-check the range and `AtomicU8` has alignment 1.
+                        *slot = unsafe { (&*src.add(i)).load(Ordering::Relaxed) };
+                    }
+                }
+
+                #[cfg(not(target_feature = "atomics"))]
+                unsafe {
+                    core::ptr::copy_nonoverlapping(ptr, dst.as_mut_ptr(), len);
+                }
+
+                Ok(())
+            }
+            crate::guest_phys::GuestRamRange::Hole => {
+                Self::check_open_bus(addr, len)?;
+                dst.fill(0xFF);
+                Ok(())
+            }
+            crate::guest_phys::GuestRamRange::OutOfBounds => Err(GuestMemoryError::OutOfBounds {
+                addr,
+                len,
+            }),
+        }
     }
 
     fn write(&mut self, addr: u64, src: &[u8]) -> Result<(), GuestMemoryError> {
-        self.get_slice_mut(addr, src.len())?.copy_from_slice(src);
-        Ok(())
-    }
-
-    fn get_slice(&self, addr: u64, len: usize) -> Result<&[u8], GuestMemoryError> {
+        let len = src.len();
         if len == 0 {
             if addr > self.len() {
                 return Err(GuestMemoryError::OutOfBounds { addr, len });
             }
-            return Ok(&[]);
+            return Ok(());
         }
 
         match crate::guest_phys::translate_guest_paddr_range(self.ram_bytes, addr, len) {
             crate::guest_phys::GuestRamRange::Ram { ram_offset } => {
                 let linear = self.linear_offset(addr, ram_offset, len)?;
-                // Safety: `linear_offset` bounds-checks against the configured guest region, and wasm
-                // linear memory does not relocate when it grows.
-                Ok(unsafe { core::slice::from_raw_parts(linear as *const u8, len) })
-            }
-            crate::guest_phys::GuestRamRange::Hole => self.open_bus_slice(addr, len),
-            crate::guest_phys::GuestRamRange::OutOfBounds => {
-                Err(GuestMemoryError::OutOfBounds { addr, len })
-            }
-        }
-    }
+                let ptr = linear as *mut u8;
 
-    fn get_slice_mut(&mut self, addr: u64, len: usize) -> Result<&mut [u8], GuestMemoryError> {
-        if len == 0 {
-            if addr > self.len() {
-                return Err(GuestMemoryError::OutOfBounds { addr, len });
-            }
-            // Safety: a 0-length slice may use a dangling pointer.
-            return Ok(unsafe {
-                core::slice::from_raw_parts_mut(core::ptr::NonNull::<u8>::dangling().as_ptr(), 0)
-            });
-        }
+                #[cfg(target_feature = "atomics")]
+                {
+                    use core::sync::atomic::{AtomicU8, Ordering};
+                    let dst = ptr as *mut AtomicU8;
+                    for (i, byte) in src.iter().copied().enumerate() {
+                        // Safety: we bounds-check the range and `AtomicU8` has alignment 1.
+                        unsafe { (&*dst.add(i)).store(byte, Ordering::Relaxed) };
+                    }
+                }
 
-        match crate::guest_phys::translate_guest_paddr_range(self.ram_bytes, addr, len) {
-            crate::guest_phys::GuestRamRange::Ram { ram_offset } => {
-                let linear = self.linear_offset(addr, ram_offset, len)?;
-                // Safety: `linear_offset` bounds-checks against the configured guest region.
-                Ok(unsafe { core::slice::from_raw_parts_mut(linear as *mut u8, len) })
+                #[cfg(not(target_feature = "atomics"))]
+                unsafe {
+                    core::ptr::copy_nonoverlapping(src.as_ptr(), ptr, len);
+                }
+
+                Ok(())
             }
-            crate::guest_phys::GuestRamRange::Hole => self.open_bus_slice_mut(addr, len),
-            crate::guest_phys::GuestRamRange::OutOfBounds => {
-                Err(GuestMemoryError::OutOfBounds { addr, len })
+            crate::guest_phys::GuestRamRange::Hole => {
+                Self::check_open_bus(addr, len)?;
+                Ok(())
             }
+            crate::guest_phys::GuestRamRange::OutOfBounds => Err(GuestMemoryError::OutOfBounds {
+                addr,
+                len,
+            }),
         }
     }
 }
@@ -327,7 +342,6 @@ impl VirtioNetPciBridge {
             mem: WasmGuestMemory {
                 guest_base,
                 ram_bytes: guest_size_u64,
-                open_bus_write: Vec::new(),
             },
             dev,
             irq_asserted: asserted,

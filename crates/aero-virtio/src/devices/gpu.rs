@@ -95,10 +95,10 @@ impl<S: ScanoutSink> VirtioGpu2d<S> {
             if len > remaining {
                 return Err(VirtioDeviceError::BadDescriptorChain);
             }
-            let chunk = mem
-                .get_slice(d.addr, len)
+            let start = req.len();
+            req.resize(start + len, 0);
+            mem.read(d.addr, &mut req[start..start + len])
                 .map_err(|_| VirtioDeviceError::IoError)?;
-            req.extend_from_slice(chunk);
         }
 
         if resp_descs.is_empty() {
@@ -131,10 +131,8 @@ impl<S: ScanoutSink> VirtioGpu2d<S> {
                 break;
             }
             let take = (d.len as usize).min(resp_len - written);
-            let dst = mem
-                .get_slice_mut(d.addr, take)
+            mem.write(d.addr, &resp[written..written + take])
                 .map_err(|_| VirtioDeviceError::IoError)?;
-            dst.copy_from_slice(&resp[written..written + take]);
             written += take;
         }
 

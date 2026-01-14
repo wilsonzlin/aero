@@ -62,14 +62,12 @@ fn validate_mmio_size(size: u8) -> usize {
     }
 }
 
-// Cap open-bus slices so a malicious guest cannot force unbounded allocations.
-const OPEN_BUS_SLICE_MAX: usize = 64 * 1024;
-static OPEN_BUS_BYTES: [u8; OPEN_BUS_SLICE_MAX] = [0xFF; OPEN_BUS_SLICE_MAX];
+// Cap open-bus reads/writes so a malicious guest cannot force unbounded work.
+const OPEN_BUS_MAX_LEN: usize = 64 * 1024;
 
 struct WasmGuestMemory {
     ram_ptr: *mut u8,
     ram_bytes: u64,
-    open_bus_write: Vec<u8>,
 }
 
 impl WasmGuestMemory {
@@ -111,17 +109,16 @@ impl WasmGuestMemory {
         Ok(Self {
             ram_ptr: guest_base as *mut u8,
             ram_bytes: guest_size_u64,
-            open_bus_write: Vec::new(),
         })
     }
 
     #[inline]
-    fn ram_slice<'a>(
-        &'a self,
+    fn ram_ptr_for_range(
+        &self,
         paddr: u64,
         ram_offset: u64,
         len: usize,
-    ) -> Result<&'a [u8], GuestMemoryError> {
+    ) -> Result<*mut u8, GuestMemoryError> {
         let end = ram_offset
             .checked_add(len as u64)
             .ok_or(GuestMemoryError::OutOfBounds { addr: paddr, len })?;
@@ -130,52 +127,16 @@ impl WasmGuestMemory {
         }
         let off = usize::try_from(ram_offset)
             .map_err(|_| GuestMemoryError::OutOfBounds { addr: paddr, len })?;
-        // Safety: `ram_offset..ram_offset+len` lies within the configured guest RAM backing store.
-        unsafe { Ok(core::slice::from_raw_parts(self.ram_ptr.add(off), len)) }
+        // Safety: callers ensure `ram_offset..ram_offset+len` lies within the guest RAM backing store.
+        Ok(unsafe { self.ram_ptr.add(off) })
     }
 
     #[inline]
-    fn ram_slice_mut<'a>(
-        &'a mut self,
-        paddr: u64,
-        ram_offset: u64,
-        len: usize,
-    ) -> Result<&'a mut [u8], GuestMemoryError> {
-        let end = ram_offset
-            .checked_add(len as u64)
-            .ok_or(GuestMemoryError::OutOfBounds { addr: paddr, len })?;
-        if end > self.ram_bytes {
+    fn check_open_bus(paddr: u64, len: usize) -> Result<(), GuestMemoryError> {
+        if len > OPEN_BUS_MAX_LEN {
             return Err(GuestMemoryError::OutOfBounds { addr: paddr, len });
         }
-        let off = usize::try_from(ram_offset)
-            .map_err(|_| GuestMemoryError::OutOfBounds { addr: paddr, len })?;
-        // Safety: `ram_offset..ram_offset+len` lies within the configured guest RAM backing store.
-        unsafe { Ok(core::slice::from_raw_parts_mut(self.ram_ptr.add(off), len)) }
-    }
-
-    #[inline]
-    fn open_bus_slice(&self, paddr: u64, len: usize) -> Result<&'static [u8], GuestMemoryError> {
-        if len > OPEN_BUS_SLICE_MAX {
-            return Err(GuestMemoryError::OutOfBounds { addr: paddr, len });
-        }
-        Ok(&OPEN_BUS_BYTES[..len])
-    }
-
-    #[inline]
-    fn open_bus_slice_mut(
-        &mut self,
-        paddr: u64,
-        len: usize,
-    ) -> Result<&mut [u8], GuestMemoryError> {
-        if len > OPEN_BUS_SLICE_MAX {
-            return Err(GuestMemoryError::OutOfBounds { addr: paddr, len });
-        }
-        if self.open_bus_write.len() < len {
-            self.open_bus_write.resize(len, 0xFF);
-        } else {
-            self.open_bus_write[..len].fill(0xFF);
-        }
-        Ok(&mut self.open_bus_write[..len])
+        Ok(())
     }
 }
 
@@ -185,44 +146,79 @@ impl GuestMemory for WasmGuestMemory {
     }
 
     fn read(&self, addr: u64, dst: &mut [u8]) -> Result<(), GuestMemoryError> {
-        dst.copy_from_slice(self.get_slice(addr, dst.len())?);
-        Ok(())
-    }
-
-    fn write(&mut self, addr: u64, src: &[u8]) -> Result<(), GuestMemoryError> {
-        self.get_slice_mut(addr, src.len())?.copy_from_slice(src);
-        Ok(())
-    }
-
-    fn get_slice(&self, addr: u64, len: usize) -> Result<&[u8], GuestMemoryError> {
+        let len = dst.len();
         if len == 0 {
             if addr > self.len() {
                 return Err(GuestMemoryError::OutOfBounds { addr, len });
             }
-            return Ok(&[]);
+            return Ok(());
         }
 
         match translate_guest_paddr_range(self.ram_bytes, addr, len) {
-            GuestRamRange::Ram { ram_offset } => self.ram_slice(addr, ram_offset, len),
-            GuestRamRange::Hole => self.open_bus_slice(addr, len),
+            GuestRamRange::Ram { ram_offset } => {
+                let ptr = self.ram_ptr_for_range(addr, ram_offset, len)? as *const u8;
+
+                // Shared-memory (`+atomics`) build: atomic byte loads to avoid Rust data-race UB.
+                #[cfg(target_feature = "atomics")]
+                {
+                    use core::sync::atomic::{AtomicU8, Ordering};
+                    let src = ptr as *const AtomicU8;
+                    for (i, slot) in dst.iter_mut().enumerate() {
+                        // Safety: we bounds-check the range and `AtomicU8` has alignment 1.
+                        *slot = unsafe { (&*src.add(i)).load(Ordering::Relaxed) };
+                    }
+                }
+
+                #[cfg(not(target_feature = "atomics"))]
+                unsafe {
+                    core::ptr::copy_nonoverlapping(ptr, dst.as_mut_ptr(), len);
+                }
+
+                Ok(())
+            }
+            GuestRamRange::Hole => {
+                Self::check_open_bus(addr, len)?;
+                dst.fill(0xFF);
+                Ok(())
+            }
             GuestRamRange::OutOfBounds => Err(GuestMemoryError::OutOfBounds { addr, len }),
         }
     }
 
-    fn get_slice_mut(&mut self, addr: u64, len: usize) -> Result<&mut [u8], GuestMemoryError> {
+    fn write(&mut self, addr: u64, src: &[u8]) -> Result<(), GuestMemoryError> {
+        let len = src.len();
         if len == 0 {
             if addr > self.len() {
                 return Err(GuestMemoryError::OutOfBounds { addr, len });
             }
-            // Safety: a zero-length slice may be created from a dangling pointer.
-            return Ok(unsafe {
-                core::slice::from_raw_parts_mut(core::ptr::NonNull::<u8>::dangling().as_ptr(), 0)
-            });
+            return Ok(());
         }
 
         match translate_guest_paddr_range(self.ram_bytes, addr, len) {
-            GuestRamRange::Ram { ram_offset } => self.ram_slice_mut(addr, ram_offset, len),
-            GuestRamRange::Hole => self.open_bus_slice_mut(addr, len),
+            GuestRamRange::Ram { ram_offset } => {
+                let ptr = self.ram_ptr_for_range(addr, ram_offset, len)?;
+
+                #[cfg(target_feature = "atomics")]
+                {
+                    use core::sync::atomic::{AtomicU8, Ordering};
+                    let dst = ptr as *mut AtomicU8;
+                    for (i, byte) in src.iter().copied().enumerate() {
+                        // Safety: we bounds-check the range and `AtomicU8` has alignment 1.
+                        unsafe { (&*dst.add(i)).store(byte, Ordering::Relaxed) };
+                    }
+                }
+
+                #[cfg(not(target_feature = "atomics"))]
+                unsafe {
+                    core::ptr::copy_nonoverlapping(src.as_ptr(), ptr, len);
+                }
+
+                Ok(())
+            }
+            GuestRamRange::Hole => {
+                Self::check_open_bus(addr, len)?;
+                Ok(())
+            }
             GuestRamRange::OutOfBounds => Err(GuestMemoryError::OutOfBounds { addr, len }),
         }
     }

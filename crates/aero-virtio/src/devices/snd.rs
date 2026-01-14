@@ -528,7 +528,15 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
                 if take == 0 {
                     continue;
                 }
-                if mem.get_slice(d.addr, take).is_err() {
+                let mut sink = [0u8; 64];
+                let mut heap = Vec::new();
+                let dst: &mut [u8] = if take <= sink.len() {
+                    &mut sink[..take]
+                } else {
+                    heap.resize(take, 0);
+                    heap.as_mut_slice()
+                };
+                if mem.read(d.addr, dst).is_err() {
                     guest_ok = false;
                     break;
                 }
@@ -559,11 +567,13 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
                     if take == 0 {
                         continue;
                     }
-                    let Ok(dst) = mem.get_slice_mut(d.addr, take) else {
+                    if mem
+                        .write(d.addr, &event[written..written + take])
+                        .is_err()
+                    {
                         wrote_all = false;
                         break;
                     };
-                    dst.copy_from_slice(&event[written..written + take]);
                     written += take;
                 }
             }
@@ -820,46 +830,66 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
         let mut pending_left: Option<f32> = None;
         self.decoded_frames_scratch.clear();
 
+        let mut scratch = [0u8; 4096];
         for desc in chain.descriptors().iter().filter(|d| !d.is_write_only()) {
-            let mut slice = match mem.get_slice(desc.addr, desc.len as usize) {
-                Ok(slice) => slice,
-                Err(_) => return VIRTIO_SND_S_BAD_MSG,
-            };
+            let mut addr = desc.addr;
+            let mut remaining = desc.len as usize;
 
-            if hdr_len < hdr.len() {
-                let take = (hdr.len() - hdr_len).min(slice.len());
-                hdr[hdr_len..hdr_len + take].copy_from_slice(&slice[..take]);
-                hdr_len += take;
-                slice = &slice[take..];
-
-                if hdr_len < hdr.len() {
-                    continue;
-                }
-
-                let stream_id = u32::from_le_bytes(hdr[0..4].try_into().unwrap());
-                if stream_id != PLAYBACK_STREAM_ID {
+            while remaining != 0 {
+                let take = remaining.min(scratch.len());
+                if mem.read(addr, &mut scratch[..take]).is_err() {
                     return VIRTIO_SND_S_BAD_MSG;
                 }
+                let mut slice = &scratch[..take];
 
-                if self.playback.state != StreamState::Running {
-                    return VIRTIO_SND_S_IO_ERR;
-                }
+                if hdr_len < hdr.len() {
+                    let take_hdr = (hdr.len() - hdr_len).min(slice.len());
+                    hdr[hdr_len..hdr_len + take_hdr].copy_from_slice(&slice[..take_hdr]);
+                    hdr_len += take_hdr;
+                    slice = &slice[take_hdr..];
 
-                parsed_stream = true;
-            }
+                    if hdr_len == hdr.len() && !parsed_stream {
+                        let stream_id = u32::from_le_bytes(hdr[0..4].try_into().unwrap());
+                        if stream_id != PLAYBACK_STREAM_ID {
+                            return VIRTIO_SND_S_BAD_MSG;
+                        }
 
-            for &b in slice {
-                if let Some(lo) = pending_lo.take() {
-                    let sample = i16::from_le_bytes([lo, b]);
-                    let sample = sample as f32 / 32768.0;
-                    if let Some(left) = pending_left.take() {
-                        self.decoded_frames_scratch.push([left, sample]);
-                    } else {
-                        pending_left = Some(sample);
+                        if self.playback.state != StreamState::Running {
+                            return VIRTIO_SND_S_IO_ERR;
+                        }
+
+                        parsed_stream = true;
                     }
-                } else {
-                    pending_lo = Some(b);
+
+                    if hdr_len < hdr.len() {
+                        addr = match addr.checked_add(take as u64) {
+                            Some(v) => v,
+                            None => return VIRTIO_SND_S_BAD_MSG,
+                        };
+                        remaining -= take;
+                        continue;
+                    }
                 }
+
+                for &b in slice {
+                    if let Some(lo) = pending_lo.take() {
+                        let sample = i16::from_le_bytes([lo, b]);
+                        let sample = sample as f32 / 32768.0;
+                        if let Some(left) = pending_left.take() {
+                            self.decoded_frames_scratch.push([left, sample]);
+                        } else {
+                            pending_left = Some(sample);
+                        }
+                    } else {
+                        pending_lo = Some(b);
+                    }
+                }
+
+                addr = match addr.checked_add(take as u64) {
+                    Some(v) => v,
+                    None => return VIRTIO_SND_S_BAD_MSG,
+                };
+                remaining -= take;
             }
         }
 
@@ -949,11 +979,12 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
             if take == 0 {
                 continue;
             }
-            let slice = match mem.get_slice(desc.addr, take) {
-                Ok(slice) => slice,
-                Err(_) => break,
-            };
-            hdr[hdr_len..hdr_len + take].copy_from_slice(slice);
+            if mem
+                .read(desc.addr, &mut hdr[hdr_len..hdr_len + take])
+                .is_err()
+            {
+                break;
+            }
             hdr_len += take;
         }
 
@@ -1103,8 +1134,7 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
         let resp_len = (resp_desc.len as usize).min(resp.len());
         let mut resp_written = 0usize;
         if resp_len != 0 {
-            if let Ok(out) = mem.get_slice_mut(resp_desc.addr, resp_len) {
-                out.copy_from_slice(&resp[..resp_len]);
+            if mem.write(resp_desc.addr, &resp[..resp_len]).is_ok() {
                 resp_written = resp_len;
             }
         }
@@ -1163,11 +1193,12 @@ fn read_all_out(mem: &dyn GuestMemory, chain: &DescriptorChain) -> Vec<u8> {
         if take == 0 {
             continue;
         }
-        let slice = match mem.get_slice(d.addr, take) {
-            Ok(slice) => slice,
-            Err(_) => break,
-        };
-        out.extend_from_slice(slice);
+        let start = out.len();
+        out.resize(start + take, 0);
+        if mem.read(d.addr, &mut out[start..start + take]).is_err() {
+            out.truncate(start);
+            break;
+        }
     }
     out
 }
@@ -1183,10 +1214,9 @@ fn write_all_in(mem: &mut dyn GuestMemory, chain: &DescriptorChain, data: &[u8])
         if take == 0 {
             continue;
         }
-        let Ok(dst) = mem.get_slice_mut(d.addr, take) else {
+        if mem.write(d.addr, &remaining[..take]).is_err() {
             break;
         };
-        dst.copy_from_slice(&remaining[..take]);
         written += take;
         remaining = &remaining[take..];
     }
@@ -1200,6 +1230,7 @@ fn write_payload_silence(
     max_bytes: usize,
 ) -> usize {
     let mut written = 0usize;
+    let zero = [0u8; 1024];
     for d in descs {
         if written >= max_bytes {
             break;
@@ -1212,11 +1243,20 @@ fn write_payload_silence(
         if take == 0 {
             continue;
         }
-        let Ok(slice) = mem.get_slice_mut(d.addr, take) else {
-            break;
-        };
-        slice.fill(0);
-        written += take;
+        let mut addr = d.addr;
+        let mut remaining = take;
+        while remaining != 0 {
+            let chunk = remaining.min(zero.len());
+            if mem.write(addr, &zero[..chunk]).is_err() {
+                return written;
+            }
+            written += chunk;
+            remaining -= chunk;
+            addr = match addr.checked_add(chunk as u64) {
+                Some(v) => v,
+                None => return written,
+            };
+        }
     }
     written
 }
@@ -1237,24 +1277,34 @@ fn write_pcm_payload_s16le(
     let mut cur_bytes = [0u8; 2];
     let mut cur_pos = 2usize;
     let mut written = 0usize;
+    let mut scratch = [0u8; 4096];
 
     for d in descs {
         if d.len == 0 {
             continue;
         }
-        let Ok(slice) = mem.get_slice_mut(d.addr, d.len as usize) else {
-            break;
-        };
-
-        for b in slice {
-            if cur_pos >= 2 {
-                let sample = *sample_iter.next().unwrap_or(&0.0);
-                cur_bytes = f32_to_i16(sample).to_le_bytes();
-                cur_pos = 0;
+        let mut addr = d.addr;
+        let mut remaining = d.len as usize;
+        while remaining != 0 {
+            let take = remaining.min(scratch.len());
+            for slot in &mut scratch[..take] {
+                if cur_pos >= 2 {
+                    let sample = *sample_iter.next().unwrap_or(&0.0);
+                    cur_bytes = f32_to_i16(sample).to_le_bytes();
+                    cur_pos = 0;
+                }
+                *slot = cur_bytes[cur_pos];
+                cur_pos += 1;
             }
-            *b = cur_bytes[cur_pos];
-            cur_pos += 1;
-            written += 1;
+            if mem.write(addr, &scratch[..take]).is_err() {
+                return written;
+            }
+            written += take;
+            remaining -= take;
+            addr = match addr.checked_add(take as u64) {
+                Some(v) => v,
+                None => return written,
+            };
         }
     }
 
@@ -1460,22 +1510,6 @@ mod tests {
             _src: &[u8],
         ) -> Result<(), crate::memory::GuestMemoryError> {
             panic!("unexpected GuestMemory::write")
-        }
-
-        fn get_slice(
-            &self,
-            _addr: u64,
-            _len: usize,
-        ) -> Result<&[u8], crate::memory::GuestMemoryError> {
-            panic!("unexpected GuestMemory::get_slice")
-        }
-
-        fn get_slice_mut(
-            &mut self,
-            _addr: u64,
-            _len: usize,
-        ) -> Result<&mut [u8], crate::memory::GuestMemoryError> {
-            panic!("unexpected GuestMemory::get_slice_mut")
         }
     }
 

@@ -214,25 +214,34 @@ impl<B: NetBackend> VirtioNet<B> {
                 valid_chain = false;
                 break;
             }
-            let mut slice = mem
-                .get_slice(d.addr, d.len as usize)
-                .map_err(|_| VirtioDeviceError::IoError)?;
+            let mut addr = d.addr;
+            let mut remaining_desc = d.len as usize;
 
             if hdr_written < hdr_len {
-                let take = (hdr_len - hdr_written).min(slice.len());
-                hdr_bytes[hdr_written..hdr_written + take].copy_from_slice(&slice[..take]);
+                let take = (hdr_len - hdr_written).min(remaining_desc);
+                mem.read(
+                    addr,
+                    &mut hdr_bytes[hdr_written..hdr_written + take],
+                )
+                .map_err(|_| VirtioDeviceError::IoError)?;
                 hdr_written += take;
-                slice = &slice[take..];
+                addr = addr
+                    .checked_add(take as u64)
+                    .ok_or(VirtioDeviceError::IoError)?;
+                remaining_desc -= take;
             }
 
-            if !slice.is_empty() {
+            if remaining_desc != 0 {
                 let remaining = max_packet_bytes.saturating_sub(packet.len());
                 if remaining == 0 {
                     packet_truncated = true;
                 } else {
-                    let take = remaining.min(slice.len());
-                    packet.extend_from_slice(&slice[..take]);
-                    if take < slice.len() {
+                    let take = remaining.min(remaining_desc);
+                    let start = packet.len();
+                    packet.resize(start + take, 0);
+                    mem.read(addr, &mut packet[start..start + take])
+                        .map_err(|_| VirtioDeviceError::IoError)?;
+                    if take < remaining_desc {
                         packet_truncated = true;
                     }
                 }
@@ -388,19 +397,26 @@ impl<B: NetBackend> VirtioNet<B> {
             let mut remaining_pkt = pkt.as_slice();
 
             for d in descs {
-                let dst = mem
-                    .get_slice_mut(d.addr, d.len as usize)
-                    .map_err(|_| VirtioDeviceError::IoError)?;
                 let mut off = 0usize;
+                let d_len = d.len as usize;
                 if header_off < hdr_len {
-                    let take = (hdr_len - header_off).min(dst.len());
-                    dst[..take].copy_from_slice(&header_bytes[header_off..header_off + take]);
+                    let take = (hdr_len - header_off).min(d_len);
+                    mem.write(
+                        d.addr,
+                        &header_bytes[header_off..header_off + take],
+                    )
+                    .map_err(|_| VirtioDeviceError::IoError)?;
                     header_off += take;
                     off += take;
                 }
-                if off < dst.len() && !remaining_pkt.is_empty() {
-                    let take = remaining_pkt.len().min(dst.len() - off);
-                    dst[off..off + take].copy_from_slice(&remaining_pkt[..take]);
+                if off < d_len && !remaining_pkt.is_empty() {
+                    let take = remaining_pkt.len().min(d_len - off);
+                    let addr = d
+                        .addr
+                        .checked_add(off as u64)
+                        .ok_or(VirtioDeviceError::IoError)?;
+                    mem.write(addr, &remaining_pkt[..take])
+                        .map_err(|_| VirtioDeviceError::IoError)?;
                     remaining_pkt = &remaining_pkt[take..];
                 }
                 if header_off == hdr_len && remaining_pkt.is_empty() {

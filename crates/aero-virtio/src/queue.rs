@@ -63,7 +63,8 @@ impl RawDescriptor {
                 addr: table_addr,
                 len: 16,
             }))?;
-        let bytes = mem.get_slice(base, 16)?;
+        let mut bytes = [0u8; 16];
+        mem.read(base, &mut bytes)?;
 
         let addr = u64::from_le_bytes(bytes[0..8].try_into().unwrap());
         let len = u32::from_le_bytes(bytes[8..12].try_into().unwrap());

@@ -574,10 +574,9 @@ fn parse_discard_write_zeroes_segments(
             let Some(addr) = d.addr.checked_add((seg_off + d_off) as u64) else {
                 return Err(());
             };
-            let Ok(src) = mem.get_slice(addr, take) else {
+            let Ok(()) = mem.read(addr, &mut buf[written..written + take]) else {
                 return Err(());
             };
-            buf[written..written + take].copy_from_slice(src);
             written += take;
             d_off += take;
             if d_off == seg_len {
@@ -740,11 +739,10 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
                 header_ok = false;
                 break;
             };
-            let Ok(src) = mem.get_slice(addr, take) else {
+            let Ok(()) = mem.read(addr, &mut hdr[hdr_written..hdr_written + take]) else {
                 header_ok = false;
                 break;
             };
-            hdr[hdr_written..hdr_written + take].copy_from_slice(src);
             hdr_written += take;
             d_off += take;
             if d_off == d.len as usize {
@@ -820,6 +818,9 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
                                 status = VIRTIO_BLK_S_IOERR;
                             } else {
                                 let mut offset = sector_off;
+                                // Chunked I/O buffer so we don't need to borrow a `&mut [u8]`
+                                // directly into guest memory.
+                                let mut scratch = vec![0u8; 64 * 1024];
                                 for (d, seg_off, seg_len) in &data_segs {
                                     if !d.is_write_only() {
                                         status = VIRTIO_BLK_S_IOERR;
@@ -829,22 +830,35 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
                                         status = VIRTIO_BLK_S_IOERR;
                                         break;
                                     };
-                                    let Ok(dst) = mem.get_slice_mut(addr, *seg_len) else {
-                                        status = VIRTIO_BLK_S_IOERR;
-                                        break;
-                                    };
-                                    if self.backend.read_at(offset, dst).is_err() {
-                                        status = VIRTIO_BLK_S_IOERR;
-                                        break;
-                                    }
-                                    let seg_len_u64 = u64::try_from(*seg_len).unwrap_or(u64::MAX);
-                                    offset = match offset.checked_add(seg_len_u64) {
-                                        Some(v) => v,
-                                        None => {
+                                    let mut remaining = *seg_len;
+                                    let mut cur_addr = addr;
+                                    while remaining != 0 {
+                                        let take = remaining.min(scratch.len());
+                                        if self.backend.read_at(offset, &mut scratch[..take]).is_err()
+                                            || mem.write(cur_addr, &scratch[..take]).is_err()
+                                        {
                                             status = VIRTIO_BLK_S_IOERR;
                                             break;
                                         }
-                                    };
+                                        offset = match offset.checked_add(take as u64) {
+                                            Some(v) => v,
+                                            None => {
+                                                status = VIRTIO_BLK_S_IOERR;
+                                                break;
+                                            }
+                                        };
+                                        cur_addr = match cur_addr.checked_add(take as u64) {
+                                            Some(v) => v,
+                                            None => {
+                                                status = VIRTIO_BLK_S_IOERR;
+                                                break;
+                                            }
+                                        };
+                                        remaining = remaining.saturating_sub(take);
+                                    }
+                                    if status != VIRTIO_BLK_S_OK {
+                                        break;
+                                    }
                                 }
                             }
                         } else {
@@ -865,6 +879,7 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
                                 status = VIRTIO_BLK_S_IOERR;
                             } else {
                                 let mut offset = sector_off;
+                                let mut scratch = vec![0u8; 64 * 1024];
                                 for (d, seg_off, seg_len) in &data_segs {
                                     if d.is_write_only() {
                                         status = VIRTIO_BLK_S_IOERR;
@@ -874,22 +889,35 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
                                         status = VIRTIO_BLK_S_IOERR;
                                         break;
                                     };
-                                    let Ok(src) = mem.get_slice(addr, *seg_len) else {
-                                        status = VIRTIO_BLK_S_IOERR;
-                                        break;
-                                    };
-                                    if self.backend.write_at(offset, src).is_err() {
-                                        status = VIRTIO_BLK_S_IOERR;
-                                        break;
-                                    }
-                                    let seg_len_u64 = u64::try_from(*seg_len).unwrap_or(u64::MAX);
-                                    offset = match offset.checked_add(seg_len_u64) {
-                                        Some(v) => v,
-                                        None => {
+                                    let mut remaining = *seg_len;
+                                    let mut cur_addr = addr;
+                                    while remaining != 0 {
+                                        let take = remaining.min(scratch.len());
+                                        if mem.read(cur_addr, &mut scratch[..take]).is_err()
+                                            || self.backend.write_at(offset, &scratch[..take]).is_err()
+                                        {
                                             status = VIRTIO_BLK_S_IOERR;
                                             break;
                                         }
-                                    };
+                                        offset = match offset.checked_add(take as u64) {
+                                            Some(v) => v,
+                                            None => {
+                                                status = VIRTIO_BLK_S_IOERR;
+                                                break;
+                                            }
+                                        };
+                                        cur_addr = match cur_addr.checked_add(take as u64) {
+                                            Some(v) => v,
+                                            None => {
+                                                status = VIRTIO_BLK_S_IOERR;
+                                                break;
+                                            }
+                                        };
+                                        remaining = remaining.saturating_sub(take);
+                                    }
+                                    if status != VIRTIO_BLK_S_OK {
+                                        break;
+                                    }
                                 }
                             }
                         } else {
@@ -931,11 +959,10 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
                                 status = VIRTIO_BLK_S_IOERR;
                                 break;
                             };
-                            let Ok(dst) = mem.get_slice_mut(addr, write_len) else {
+                            if mem.write(addr, &remaining[..write_len]).is_err() {
                                 status = VIRTIO_BLK_S_IOERR;
                                 break;
                             };
-                            dst.copy_from_slice(&remaining[..write_len]);
                             remaining = &remaining[write_len..];
                         }
                     }

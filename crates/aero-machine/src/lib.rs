@@ -2081,17 +2081,6 @@ impl<'a> VirtioDmaMemory<'a> {
             addr & !(1u64 << 20)
         }
     }
-
-    fn a20_range_is_contiguous(&self, addr: u64, len: usize) -> bool {
-        if self.a20_enabled || len <= 1 {
-            return true;
-        }
-        let len_u64 = u64::try_from(len).unwrap_or(u64::MAX);
-        let last = addr.wrapping_add(len_u64.saturating_sub(1));
-        // If bit 20 differs anywhere in the range, translation would produce a wrap and the region
-        // cannot be represented as a single contiguous slice.
-        ((addr ^ last) & (1u64 << 20)) == 0
-    }
 }
 
 impl VirtioGuestMemory for VirtioDmaMemory<'_> {
@@ -2150,35 +2139,6 @@ impl VirtioGuestMemory for VirtioDmaMemory<'_> {
                 .map_err(|_| VirtioGuestMemoryError::OutOfBounds { addr: a, len: 1 })?;
         }
         Ok(())
-    }
-
-    fn get_slice(&self, addr: u64, len: usize) -> Result<&[u8], VirtioGuestMemoryError> {
-        if len == 0 {
-            return Ok(&[]);
-        }
-        if !self.a20_range_is_contiguous(addr, len) {
-            return Err(VirtioGuestMemoryError::OutOfBounds { addr, len });
-        }
-        let translated = self.translate_a20(addr);
-        self.bus
-            .ram()
-            .get_slice(translated, len)
-            .ok_or(VirtioGuestMemoryError::OutOfBounds { addr, len })
-    }
-
-    fn get_slice_mut(
-        &mut self,
-        addr: u64,
-        len: usize,
-    ) -> Result<&mut [u8], VirtioGuestMemoryError> {
-        if !self.a20_range_is_contiguous(addr, len) {
-            return Err(VirtioGuestMemoryError::OutOfBounds { addr, len });
-        }
-        let translated = self.translate_a20(addr);
-        self.bus
-            .ram_mut()
-            .get_slice_mut(translated, len)
-            .ok_or(VirtioGuestMemoryError::OutOfBounds { addr, len })
     }
 }
 struct Piix3IsaPciConfigDevice {

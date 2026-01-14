@@ -982,24 +982,6 @@ impl VirtioGuestMemory for VirtioDmaMemory<'_> {
                 len: src.len(),
             })
     }
-
-    fn get_slice(&self, addr: u64, len: usize) -> Result<&[u8], VirtioGuestMemoryError> {
-        self.mem
-            .ram()
-            .get_slice(addr, len)
-            .ok_or(VirtioGuestMemoryError::OutOfBounds { addr, len })
-    }
-
-    fn get_slice_mut(
-        &mut self,
-        addr: u64,
-        len: usize,
-    ) -> Result<&mut [u8], VirtioGuestMemoryError> {
-        self.mem
-            .ram_mut()
-            .get_slice_mut(addr, len)
-            .ok_or(VirtioGuestMemoryError::OutOfBounds { addr, len })
-    }
 }
 
 struct HpetMmio {

@@ -25,12 +25,6 @@ pub trait GuestMemory {
 
     /// Copy bytes from `src` into guest memory.
     fn write(&mut self, addr: u64, src: &[u8]) -> Result<(), GuestMemoryError>;
-
-    /// Borrow a slice of guest memory.
-    fn get_slice(&self, addr: u64, len: usize) -> Result<&[u8], GuestMemoryError>;
-
-    /// Borrow a mutable slice of guest memory.
-    fn get_slice_mut(&mut self, addr: u64, len: usize) -> Result<&mut [u8], GuestMemoryError>;
 }
 
 /// Contiguous guest RAM backed by a `Vec<u8>`.
@@ -56,6 +50,28 @@ impl GuestRam {
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
         &mut self.data
     }
+
+    /// Borrow a slice of guest RAM.
+    ///
+    /// This helper is intentionally implemented on [`GuestRam`] directly (rather than
+    /// [`GuestMemory`]) so callers can inspect test memory without requiring the virtio memory
+    /// abstraction to expose borrowed slices (which is not sound for shared-memory WASM guests).
+    pub fn get_slice(&self, addr: u64, len: usize) -> Result<&[u8], GuestMemoryError> {
+        check_range(self.len(), addr, len)?;
+        let start = addr as usize;
+        let end = start + len;
+        Ok(&self.data[start..end])
+    }
+
+    /// Borrow a mutable slice of guest RAM.
+    ///
+    /// See [`get_slice`] for why this is an inherent method on [`GuestRam`].
+    pub fn get_slice_mut(&mut self, addr: u64, len: usize) -> Result<&mut [u8], GuestMemoryError> {
+        check_range(self.len(), addr, len)?;
+        let start = addr as usize;
+        let end = start + len;
+        Ok(&mut self.data[start..end])
+    }
 }
 
 impl GuestMemory for GuestRam {
@@ -64,34 +80,36 @@ impl GuestMemory for GuestRam {
     }
 
     fn read(&self, addr: u64, dst: &mut [u8]) -> Result<(), GuestMemoryError> {
-        dst.copy_from_slice(self.get_slice(addr, dst.len())?);
+        check_range(self.len(), addr, dst.len())?;
+        if dst.is_empty() {
+            return Ok(());
+        }
+        let start = addr as usize;
+        let end = start + dst.len();
+        dst.copy_from_slice(&self.data[start..end]);
         Ok(())
     }
 
     fn write(&mut self, addr: u64, src: &[u8]) -> Result<(), GuestMemoryError> {
-        self.get_slice_mut(addr, src.len())?.copy_from_slice(src);
+        check_range(self.len(), addr, src.len())?;
+        if src.is_empty() {
+            return Ok(());
+        }
+        let start = addr as usize;
+        let end = start + src.len();
+        self.data[start..end].copy_from_slice(src);
         Ok(())
     }
+}
 
-    fn get_slice(&self, addr: u64, len: usize) -> Result<&[u8], GuestMemoryError> {
-        let end = addr
-            .checked_add(len as u64)
-            .ok_or(GuestMemoryError::OutOfBounds { addr, len })?;
-        if end > self.len() {
-            return Err(GuestMemoryError::OutOfBounds { addr, len });
-        }
-        Ok(&self.data[addr as usize..end as usize])
+fn check_range(size: u64, addr: u64, len: usize) -> Result<(), GuestMemoryError> {
+    let end = addr
+        .checked_add(len as u64)
+        .ok_or(GuestMemoryError::OutOfBounds { addr, len })?;
+    if end > size {
+        return Err(GuestMemoryError::OutOfBounds { addr, len });
     }
-
-    fn get_slice_mut(&mut self, addr: u64, len: usize) -> Result<&mut [u8], GuestMemoryError> {
-        let end = addr
-            .checked_add(len as u64)
-            .ok_or(GuestMemoryError::OutOfBounds { addr, len })?;
-        if end > self.len() {
-            return Err(GuestMemoryError::OutOfBounds { addr, len });
-        }
-        Ok(&mut self.data[addr as usize..end as usize])
-    }
+    Ok(())
 }
 
 /// A helper newtype for reading little-endian integers from guest memory.
@@ -115,7 +133,9 @@ impl<T> DerefMut for Le<T> {
 }
 
 pub fn read_u8<M: GuestMemory + ?Sized>(mem: &M, addr: u64) -> Result<u8, GuestMemoryError> {
-    Ok(mem.get_slice(addr, 1)?[0])
+    let mut buf = [0u8; 1];
+    mem.read(addr, &mut buf)?;
+    Ok(buf[0])
 }
 
 pub fn write_u8<M: GuestMemory + ?Sized>(
@@ -123,13 +143,13 @@ pub fn write_u8<M: GuestMemory + ?Sized>(
     addr: u64,
     value: u8,
 ) -> Result<(), GuestMemoryError> {
-    mem.get_slice_mut(addr, 1)?[0] = value;
-    Ok(())
+    mem.write(addr, &[value])
 }
 
 pub fn read_u16_le<M: GuestMemory + ?Sized>(mem: &M, addr: u64) -> Result<u16, GuestMemoryError> {
-    let bytes = mem.get_slice(addr, 2)?;
-    Ok(u16::from_le_bytes([bytes[0], bytes[1]]))
+    let mut buf = [0u8; 2];
+    mem.read(addr, &mut buf)?;
+    Ok(u16::from_le_bytes(buf))
 }
 
 pub fn write_u16_le<M: GuestMemory + ?Sized>(
@@ -138,13 +158,13 @@ pub fn write_u16_le<M: GuestMemory + ?Sized>(
     value: u16,
 ) -> Result<(), GuestMemoryError> {
     let bytes = value.to_le_bytes();
-    mem.write(addr, &bytes)?;
-    Ok(())
+    mem.write(addr, &bytes)
 }
 
 pub fn read_u32_le<M: GuestMemory + ?Sized>(mem: &M, addr: u64) -> Result<u32, GuestMemoryError> {
-    let bytes = mem.get_slice(addr, 4)?;
-    Ok(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+    let mut buf = [0u8; 4];
+    mem.read(addr, &mut buf)?;
+    Ok(u32::from_le_bytes(buf))
 }
 
 pub fn write_u32_le<M: GuestMemory + ?Sized>(
@@ -153,15 +173,13 @@ pub fn write_u32_le<M: GuestMemory + ?Sized>(
     value: u32,
 ) -> Result<(), GuestMemoryError> {
     let bytes = value.to_le_bytes();
-    mem.write(addr, &bytes)?;
-    Ok(())
+    mem.write(addr, &bytes)
 }
 
 pub fn read_u64_le<M: GuestMemory + ?Sized>(mem: &M, addr: u64) -> Result<u64, GuestMemoryError> {
-    let bytes = mem.get_slice(addr, 8)?;
-    Ok(u64::from_le_bytes([
-        bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
-    ]))
+    let mut buf = [0u8; 8];
+    mem.read(addr, &mut buf)?;
+    Ok(u64::from_le_bytes(buf))
 }
 
 pub fn write_u64_le<M: GuestMemory + ?Sized>(
@@ -170,6 +188,5 @@ pub fn write_u64_le<M: GuestMemory + ?Sized>(
     value: u64,
 ) -> Result<(), GuestMemoryError> {
     let bytes = value.to_le_bytes();
-    mem.write(addr, &bytes)?;
-    Ok(())
+    mem.write(addr, &bytes)
 }

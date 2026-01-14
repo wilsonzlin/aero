@@ -46,23 +46,15 @@ impl GuestMemory for WindowedGuestMemory {
     }
 
     fn read(&self, addr: u64, dst: &mut [u8]) -> Result<(), GuestMemoryError> {
-        dst.copy_from_slice(self.get_slice(addr, dst.len())?);
+        let (start, end) = self.translate(addr, dst.len())?;
+        dst.copy_from_slice(&self.data[start..end]);
         Ok(())
     }
 
     fn write(&mut self, addr: u64, src: &[u8]) -> Result<(), GuestMemoryError> {
-        self.get_slice_mut(addr, src.len())?.copy_from_slice(src);
+        let (start, end) = self.translate(addr, src.len())?;
+        self.data[start..end].copy_from_slice(src);
         Ok(())
-    }
-
-    fn get_slice(&self, addr: u64, len: usize) -> Result<&[u8], GuestMemoryError> {
-        let (start, end) = self.translate(addr, len)?;
-        Ok(&self.data[start..end])
-    }
-
-    fn get_slice_mut(&mut self, addr: u64, len: usize) -> Result<&mut [u8], GuestMemoryError> {
-        let (start, end) = self.translate(addr, len)?;
-        Ok(&mut self.data[start..end])
     }
 }
 
@@ -216,7 +208,8 @@ fn win7_contract_accepts_dma_addresses_above_4gib() {
     assert_eq!(read_u32_le(&mem, used + 4).unwrap(), 0);
     assert_eq!(read_u32_le(&mem, used + 8).unwrap(), 8);
 
-    let bytes = mem.get_slice(event_buf, 8).unwrap();
+    let mut bytes = [0u8; 8];
+    mem.read(event_buf, &mut bytes).unwrap();
     let got = VirtioInputEvent {
         type_: u16::from_le_bytes(bytes[0..2].try_into().unwrap()),
         code: u16::from_le_bytes(bytes[2..4].try_into().unwrap()),
