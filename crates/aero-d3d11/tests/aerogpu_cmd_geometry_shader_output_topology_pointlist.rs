@@ -236,16 +236,6 @@ fn aerogpu_cmd_geometry_shader_output_topology_pointlist_renders_points_not_tria
         if !common::require_gs_prepass_or_skip(&exec, test_name) {
             return;
         }
-        // The translator-backed GS prepass uses 4 storage buffers in the compute shader bind group
-        // (expanded vertices, expanded indices, indirect args+counters, gs_inputs). Some
-        // downlevel/embedded backends only support fewer.
-        if exec.device().limits().max_storage_buffers_per_shader_stage < 4 {
-            common::skip_or_panic(
-                test_name,
-                "backend limit max_storage_buffers_per_shader_stage < 4 (GS translate prepass requires 4 storage buffers)",
-            );
-            return;
-        }
 
         // Use an odd render target size so NDC (0,0) maps exactly to the center pixel.
         let w = 65u32;
@@ -318,13 +308,6 @@ fn aerogpu_cmd_geometry_shader_output_topology_pointlist_maxvertexcount2_renders
             }
         };
         if !common::require_gs_prepass_or_skip(&exec, test_name) {
-            return;
-        }
-        if exec.device().limits().max_storage_buffers_per_shader_stage < 4 {
-            common::skip_or_panic(
-                test_name,
-                "backend limit max_storage_buffers_per_shader_stage < 4 (GS translate prepass requires 4 storage buffers)",
-            );
             return;
         }
 
