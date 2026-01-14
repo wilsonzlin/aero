@@ -830,9 +830,21 @@ impl IoSnapshot for UsbCompositeHidInput {
                 return Err(SnapshotError::InvalidFieldEncoding("keyboard pressed keys"));
             }
             self.keyboard.pressed_keys = d.bytes_vec(count)?;
-            self.keyboard
-                .pressed_keys
-                .retain(|&k| k != 0 && k <= super::keyboard::KEY_USAGE_MAX);
+            // Snapshot bytes are untrusted; filter out of range usages and dedupe so a corrupt
+            // snapshot cannot force the keyboard into ErrorRollOver mode by repeating the same key
+            // >6 times.
+            let mut seen = [false; 256];
+            self.keyboard.pressed_keys.retain(|&k| {
+                if k == 0 || k > super::keyboard::KEY_USAGE_MAX {
+                    return false;
+                }
+                let idx = k as usize;
+                if seen[idx] {
+                    return false;
+                }
+                seen[idx] = true;
+                true
+            });
             d.finish()?;
         }
         if let Some(buf) = r.bytes(TAG_KBD_LAST_REPORT) {

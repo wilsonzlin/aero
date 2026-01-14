@@ -36,6 +36,40 @@ fn hid_keyboard_snapshot_load_filters_out_of_range_pressed_keys() {
 }
 
 #[test]
+fn hid_keyboard_snapshot_load_dedups_pressed_keys_to_avoid_rollover() {
+    // Snapshot tag numbers are part of the stable snapshot format.
+    const TAG_CONFIGURATION: u16 = 2;
+    const TAG_PRESSED_KEYS: u16 = 11;
+
+    // Malicious snapshot: repeat the same key >6 times to try to force ErrorRollOver (used when
+    // too many keys are pressed). Snapshot restore should dedupe.
+    let pressed = vec![0x04; 7];
+
+    let mut w = SnapshotWriter::new(
+        <UsbHidKeyboardHandle as IoSnapshot>::DEVICE_ID,
+        <UsbHidKeyboardHandle as IoSnapshot>::DEVICE_VERSION,
+    );
+    w.field_u8(TAG_CONFIGURATION, 1);
+    w.field_bytes(TAG_PRESSED_KEYS, Encoder::new().vec_u8(&pressed).finish());
+    let snap = w.finish();
+
+    let mut kb = UsbHidKeyboardHandle::new();
+    kb.load_state(&snap).unwrap();
+
+    let resp = kb.handle_control_request(
+        SetupPacket {
+            bm_request_type: 0xa1,
+            b_request: 0x01,    // HID_REQUEST_GET_REPORT
+            w_value: 1u16 << 8, // Input report
+            w_index: 0,
+            w_length: 8,
+        },
+        None,
+    );
+    assert_eq!(resp, ControlResponse::Data(vec![0, 0, 0x04, 0, 0, 0, 0, 0]));
+}
+
+#[test]
 fn hid_keyboard_snapshot_load_sanitizes_pending_reports() {
     const TAG_CONFIGURATION: u16 = 2;
     const TAG_PENDING_REPORTS: u16 = 13;
@@ -70,6 +104,40 @@ fn hid_composite_keyboard_snapshot_load_filters_out_of_range_pressed_keys() {
     const TAG_KBD_PRESSED_KEYS: u16 = 14;
 
     let pressed = vec![0x04, 0x90];
+
+    let mut w = SnapshotWriter::new(
+        <UsbCompositeHidInputHandle as IoSnapshot>::DEVICE_ID,
+        <UsbCompositeHidInputHandle as IoSnapshot>::DEVICE_VERSION,
+    );
+    w.field_u8(TAG_CONFIGURATION, 1);
+    w.field_bytes(
+        TAG_KBD_PRESSED_KEYS,
+        Encoder::new().vec_u8(&pressed).finish(),
+    );
+    let snap = w.finish();
+
+    let mut hid = UsbCompositeHidInputHandle::new();
+    hid.load_state(&snap).unwrap();
+
+    let resp = hid.handle_control_request(
+        SetupPacket {
+            bm_request_type: 0xa1,
+            b_request: 0x01,
+            w_value: 1u16 << 8, // Input report
+            w_index: 0,         // keyboard interface
+            w_length: 8,
+        },
+        None,
+    );
+    assert_eq!(resp, ControlResponse::Data(vec![0, 0, 0x04, 0, 0, 0, 0, 0]));
+}
+
+#[test]
+fn hid_composite_keyboard_snapshot_load_dedups_pressed_keys_to_avoid_rollover() {
+    const TAG_CONFIGURATION: u16 = 2;
+    const TAG_KBD_PRESSED_KEYS: u16 = 14;
+
+    let pressed = vec![0x04; 7];
 
     let mut w = SnapshotWriter::new(
         <UsbCompositeHidInputHandle as IoSnapshot>::DEVICE_ID,
