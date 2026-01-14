@@ -600,6 +600,7 @@ int main(void) {
   PRINT_OFF("aerogpu_escape_query_scanout_out", aerogpu_escape_query_scanout_out, mmio_format);
   PRINT_OFF("aerogpu_escape_query_scanout_out", aerogpu_escape_query_scanout_out, mmio_pitch_bytes);
   PRINT_OFF("aerogpu_escape_query_scanout_out", aerogpu_escape_query_scanout_out, mmio_fb_gpa);
+  PRINT_OFF("aerogpu_escape_query_scanout_out_v2", aerogpu_escape_query_scanout_out_v2, cached_fb_gpa);
   PRINT_OFF("aerogpu_escape_query_cursor_out", aerogpu_escape_query_cursor_out, flags);
   PRINT_OFF("aerogpu_escape_query_cursor_out", aerogpu_escape_query_cursor_out, reserved0);
   PRINT_OFF("aerogpu_escape_query_cursor_out", aerogpu_escape_query_cursor_out, enable);
@@ -1008,6 +1009,9 @@ int main(void) {
   PRINT_CONST(AEROGPU_DBGCTL_QUERY_PERF_FLAG_RING_VALID);
   PRINT_CONST(AEROGPU_DBGCTL_QUERY_PERF_FLAG_VBLANK_VALID);
   PRINT_CONST(AEROGPU_DBGCTL_QUERY_PERF_FLAG_GETSCANLINE_COUNTERS_VALID);
+
+  PRINT_CONST(AEROGPU_DBGCTL_QUERY_SCANOUT_FLAGS_VALID);
+  PRINT_CONST(AEROGPU_DBGCTL_QUERY_SCANOUT_FLAG_CACHED_FB_GPA_VALID);
 
   PRINT_CONST(AEROGPU_DBGCTL_QUERY_VBLANK_FLAGS_VALID);
   PRINT_CONST(AEROGPU_DBGCTL_QUERY_VBLANK_FLAG_VBLANK_SUPPORTED);
