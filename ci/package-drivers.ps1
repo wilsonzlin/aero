@@ -372,6 +372,47 @@ function Test-IsReparsePoint {
     }
 }
 
+function Assert-NoReparsePointsInTree {
+    param(
+        [Parameter(Mandatory = $true)][string] $Root,
+        [string] $Context
+    )
+
+    $rootItem = Get-Item -LiteralPath $Root -ErrorAction SilentlyContinue
+    if (-not $rootItem) {
+        return
+    }
+    if (Test-IsReparsePoint -Item $rootItem) {
+        $msg = "Refusing to package reparse-point/symlink directory (nondeterministic/unsafe): $($rootItem.FullName)"
+        if (-not [string]::IsNullOrWhiteSpace($Context)) {
+            $msg = "$Context: $msg"
+        }
+        throw $msg
+    }
+
+    # Walk without relying on `Get-ChildItem -Recurse` so we never traverse a reparse-point
+    # directory before detecting it.
+    $stack = New-Object "System.Collections.Generic.Stack[string]"
+    $stack.Push($rootItem.FullName)
+
+    while ($stack.Count -gt 0) {
+        $dir = $stack.Pop()
+        $items = @(Get-ChildItem -LiteralPath $dir -Force -ErrorAction Stop)
+        foreach ($it in $items) {
+            if (Test-IsReparsePoint -Item $it) {
+                $msg = "Refusing to package reparse-point/symlink item (nondeterministic/unsafe): $($it.FullName)"
+                if (-not [string]::IsNullOrWhiteSpace($Context)) {
+                    $msg = "$Context: $msg"
+                }
+                throw $msg
+            }
+            if ($it.PSIsContainer) {
+                $stack.Push($it.FullName)
+            }
+        }
+    }
+}
+
 function Test-IsExcludedArtifactRelPath {
     param(
         [Parameter(Mandatory = $true)][string] $RelPath,
@@ -861,6 +902,8 @@ function Copy-DriversForArch {
             continue
         }
         $null = $seen.Add($key)
+
+        Assert-NoReparsePointsInTree -Root $srcDir -Context ("Driver package '" + $driverRelNorm.Replace("\", "/") + "' arch=" + $arch)
 
         New-Item -ItemType Directory -Force -Path $destDir | Out-Null
         Copy-Item -Path (Join-Path $srcDir "*") -Destination $destDir -Recurse -Force
