@@ -958,6 +958,109 @@ fn switch_falls_through_when_break_is_omitted() {
 }
 
 #[test]
+fn decodes_and_translates_breakc_in_switch_case() {
+    const DCL_INPUT: u32 = 0x100;
+    const DCL_OUTPUT: u32 = 0x101;
+
+    let mut body = Vec::<u32>::new();
+
+    // dcl_input v0.x
+    body.push(opcode_token(DCL_INPUT, 3));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_INPUT, 0, WriteMask::X));
+    // dcl_output o0.xyzw
+    body.push(opcode_token(DCL_OUTPUT, 3));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+
+    // switch v0.x
+    let selector = reg_src(OPERAND_TYPE_INPUT, &[0], Swizzle::XXXX);
+    body.push(opcode_token(OPCODE_SWITCH, 1 + selector.len() as u32));
+    body.extend_from_slice(&selector);
+
+    // case 0:
+    let case0 = imm32_scalar(0);
+    body.push(opcode_token(OPCODE_CASE, 1 + case0.len() as u32));
+    body.extend_from_slice(&case0);
+
+    // mov o0, vec4(1,0,0,1)
+    let red = imm32_vec4([
+        1.0f32.to_bits(),
+        0.0f32.to_bits(),
+        0.0f32.to_bits(),
+        1.0f32.to_bits(),
+    ]);
+    body.push(opcode_token(OPCODE_MOV, 1 + 2 + red.len() as u32));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+    body.extend_from_slice(&red);
+
+    // breakc eq, l(0.0), l(0.0)
+    let a = imm32_scalar(0.0f32.to_bits());
+    let b = imm32_scalar(0.0f32.to_bits());
+    body.push(opcode_token_with_test(
+        OPCODE_BREAKC,
+        (1 + a.len() as u32 + b.len() as u32) as u32,
+        2, // `eq` in D3D10_SB_INSTRUCTION_TEST encoding.
+    ));
+    body.extend_from_slice(&a);
+    body.extend_from_slice(&b);
+
+    // default:
+    body.push(opcode_token(OPCODE_DEFAULT, 1));
+    // mov o0, vec4(0,0,1,1)
+    let blue = imm32_vec4([
+        0.0f32.to_bits(),
+        0.0f32.to_bits(),
+        1.0f32.to_bits(),
+        1.0f32.to_bits(),
+    ]);
+    body.push(opcode_token(OPCODE_MOV, 1 + 2 + blue.len() as u32));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+    body.extend_from_slice(&blue);
+
+    body.push(opcode_token(OPCODE_ENDSWITCH, 1));
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    let tokens = make_sm5_program_tokens(0, &body);
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, tokens_to_bytes(&tokens)),
+        (
+            FOURCC_ISGN,
+            build_signature_chunk(&[sig_param("TEXCOORD", 0, 0, 0b0001)]),
+        ),
+        (
+            FOURCC_OSGN,
+            build_signature_chunk(&[sig_param("SV_Target", 0, 0, 0b1111)]),
+        ),
+    ]);
+
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
+    let module = decode_program(&program).expect("SM4 decode");
+    assert!(module
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Sm4Inst::BreakC { .. })));
+
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+
+    let wgsl = &translated.wgsl;
+    assert_eq!(
+        wgsl.matches("break;").count(),
+        1,
+        "expected exactly one WGSL break statement from breakc:\n{wgsl}"
+    );
+
+    let idx_case0 = wgsl.find("case 0i").expect("case 0");
+    let idx_default = wgsl.find("default:").expect("default");
+    let case0_body = &wgsl[idx_case0..idx_default];
+    assert!(
+        case0_body.contains("if (") && case0_body.contains("break;"),
+        "expected conditional break inside switch case:\n{wgsl}"
+    );
+}
+
+#[test]
 fn decodes_and_translates_if_else_endif() {
     let mut body = Vec::<u32>::new();
 
