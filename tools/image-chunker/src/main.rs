@@ -1046,20 +1046,39 @@ fn select_sampled_chunk_indices(chunk_count: u64, sample: u64) -> Result<Vec<u64
     if chunk_count == 0 {
         return Ok(Vec::new());
     }
-    let desired_random = std::cmp::min(sample, chunk_count);
-    if desired_random >= chunk_count {
-        // Caller should have treated this as `verify_all`, but keep it safe.
+    let last = chunk_count - 1;
+    if chunk_count == 1 {
+        return Ok(vec![last]);
+    }
+
+    // Always include the final chunk, and then sample N additional chunks from `[0, last)` without
+    // replacement.
+    let population = last;
+    let k = std::cmp::min(sample, population);
+    if k == 0 {
+        return Ok(vec![last]);
+    }
+    if k >= population {
+        // All chunks were selected.
         return Ok((0..chunk_count).collect());
     }
 
-    let last = chunk_count - 1;
+    // Floyd's algorithm for uniform sampling without replacement in O(k) space/time (relative to
+    // the sample size).
     let mut selected = BTreeSet::new();
-    selected.insert(last);
-
-    // Add N random chunk indexes (de-duplicated) plus the final chunk.
-    while selected.len() < (desired_random as usize + 1) && selected.len() < chunk_count as usize {
-        selected.insert(fastrand::u64(0..chunk_count));
+    let start = population - k;
+    for j in start..population {
+        let upper = j
+            .checked_add(1)
+            .ok_or_else(|| anyhow!("random sampling upper bound overflows u64"))?;
+        let t = fastrand::u64(0..upper);
+        if selected.contains(&t) {
+            selected.insert(j);
+        } else {
+            selected.insert(t);
+        }
     }
+    selected.insert(last);
 
     Ok(selected.into_iter().collect())
 }
@@ -2120,5 +2139,23 @@ mod tests {
             "expected missing chunk to be non-retryable; error chain was: {}",
             error_chain_summary(&err)
         );
+    }
+
+    #[test]
+    fn sampled_chunk_indices_include_last_and_are_unique() -> Result<()> {
+        let chunk_count = 100;
+        let sample = 5;
+        let indices = select_sampled_chunk_indices(chunk_count, sample)?;
+        assert_eq!(indices.len(), (sample + 1) as usize);
+        assert_eq!(indices.last().copied(), Some(chunk_count - 1));
+        assert!(
+            indices.windows(2).all(|w| w[0] < w[1]),
+            "indices not sorted/unique"
+        );
+        assert!(
+            indices.iter().all(|&idx| idx < chunk_count),
+            "index out of range"
+        );
+        Ok(())
     }
 }
