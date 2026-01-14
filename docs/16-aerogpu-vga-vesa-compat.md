@@ -390,6 +390,122 @@ Presentation pipeline requirements:
 
 ---
 
+## 7) Web runtime implementation notes (wasm32 browser runtime)
+
+This section documents the **current** implementation used by the web/wasm32 runtime. It exists to
+explain the somewhat non-obvious contract between:
+
+- guest physical addresses (including the PCI/MMIO hole),
+- the browser runtime’s `SharedArrayBuffer` layout, and
+- scanout readback in the GPU worker.
+
+### VRAM (BAR1 backing) as a SharedArrayBuffer
+
+In the web runtime, BAR1/VRAM is represented as a dedicated `SharedArrayBuffer` (separate from the
+`WebAssembly.Memory` guest RAM buffer) so that:
+
+- VRAM does not consume wasm32 linear memory budget (wasm32 is limited to 4 GiB without `memory64`),
+- the I/O worker can service MMIO writes into BAR1, and
+- the GPU worker can read back scanout/cursor pixels from the same bytes without copying.
+
+Allocation and wiring:
+
+- VRAM is allocated by the coordinator in
+  [`web/src/runtime/shared_layout.ts`](../web/src/runtime/shared_layout.ts)
+  `allocateSharedMemorySegments(...)`.
+  - Default size is `DEFAULT_VRAM_MIB = 64`.
+  - `vramMiB=0` disables the segment (primarily for tests).
+- Shared memory contract: when present, `segments.vram` backs the guest physical address range:
+  `[VRAM_BASE_PADDR, VRAM_BASE_PADDR + vram.byteLength)`.
+  (See `SharedMemorySegments.vram` in the same file.)
+
+### VRAM base paddr contract and why `base_paddr` can live in the PCI/MMIO hole
+
+The web runtime uses fixed constants for BAR placement:
+
+- `PCI_MMIO_BASE = 0xE000_0000` in
+  [`web/src/arch/guest_phys.ts`](../web/src/arch/guest_phys.ts) and
+  [`crates/aero-wasm/src/guest_layout.rs`](../crates/aero-wasm/src/guest_layout.rs).
+- `VRAM_BASE_PADDR = PCI_MMIO_BASE` (i.e. VRAM lives inside the canonical PC/Q35 PCI/MMIO hole).
+
+To avoid overlapping the contiguous wasm linear-memory guest RAM buffer with the PCI BAR window,
+the web runtime clamps `guest_size <= PCI_MMIO_BASE` (see `computeGuestRamLayout(...)` in
+`web/src/runtime/shared_layout.ts`).
+
+Combined with the Q35-style physical map used by the web runtime (`LOW_RAM_END = 0xB000_0000`,
+`HIGH_RAM_START = 0x1_0000_0000`), guest RAM is backed by `WebAssembly.Memory` but guest *physical*
+addresses are not always identity-mapped:
+
+- If `guest_size <= LOW_RAM_END`, RAM is contiguous and identity-mapped: `[0, guest_size)` is RAM.
+- If `guest_size > LOW_RAM_END`, RAM is split:
+  - Low RAM:  `[0, LOW_RAM_END)` (backed by wasm memory at offset 0)
+  - Hole:     `[LOW_RAM_END, HIGH_RAM_START)` (ECAM + PCI/MMIO; **not** backed by RAM)
+  - High RAM: `[HIGH_RAM_START, HIGH_RAM_START + (guest_size - LOW_RAM_END))` (backed by the
+    “high” portion of the contiguous wasm buffer)
+
+BAR1/VRAM is mapped into the hole at `VRAM_BASE_PADDR = 0xE000_0000`, so scanout/cursor pointers
+can legitimately live in the PCI/MMIO region.
+
+This is why `ScanoutState.base_paddr` can point into the PCI/MMIO hole while still being valid: it
+is a **guest physical address**, not a “RAM offset”.
+
+### RAM translation helpers (Q35 hole + high-RAM remap)
+
+Because the PC/Q35 guest physical map includes an ECAM/MMIO hole and can remap “high RAM” above
+4 GiB, the web runtime cannot treat `guestU8[paddr]` as valid once those features are in play.
+
+Any code that needs to read guest RAM from a guest physical address must use the shared translation
+helpers:
+
+- JS: [`web/src/arch/guest_ram_translate.ts`](../web/src/arch/guest_ram_translate.ts)
+  - `guestPaddrToRamOffset(ramBytes, paddr)` → `number | null`
+  - `guestRangeInBounds(ramBytes, paddr, len)` → `boolean`
+- Rust mirror (used by wasm-side DMA bridges): [`crates/aero-wasm/src/guest_phys.rs`](../crates/aero-wasm/src/guest_phys.rs)
+  (`translate_guest_paddr_range`, `translate_guest_paddr_chunk`, etc.)
+
+### How the GPU worker resolves scanout `base_paddr` (RAM vs VRAM)
+
+In the browser runtime, scanout presentation happens in
+[`web/src/workers/gpu-worker.ts`](../web/src/workers/gpu-worker.ts).
+
+For `ScanoutState.source = Wddm` (`SCANOUT_SOURCE_WDDM`), the worker:
+
+1. Snapshots the shared scanout descriptor (`scanoutState` SAB).
+2. Computes the required byte range:
+   `requiredReadBytes = (height-1)*pitchBytes + width*4`.
+3. Resolves `base_paddr` to a backing store:
+   - If `base_paddr ∈ [vramBasePaddr, vramBasePaddr + vramSizeBytes)`, read from the VRAM SAB
+     (`vramU8`) at offset `base_paddr - vramBasePaddr`.
+   - Otherwise treat it as guest RAM and use `guestRangeInBounds` + `guestPaddrToRamOffset` to
+     translate it into an offset into `guestU8`.
+4. Converts the scanout surface to packed RGBA8 for the canvas (currently treating scanout as
+   opaque; alpha is forced to `0xFF` for presentation).
+
+This same “VRAM aperture fast-path” idea is also used for WDDM hardware cursor surfaces (which are
+often allocated in VRAM).
+
+### Worker init / shared-memory fields (web runtime contract)
+
+The coordinator hands these buffers to workers via the `postMessage` init message
+[`WorkerInitMessage`](../web/src/runtime/protocol.ts):
+
+- `vram`, `vramBasePaddr`, `vramSizeBytes`: describe the shared VRAM aperture (BAR1 backing).
+- `scanoutState`, `scanoutStateOffsetBytes`: shared scanout descriptor
+  (layout in [`web/src/ipc/scanout_state.ts`](../web/src/ipc/scanout_state.ts)).
+- `cursorState`, `cursorStateOffsetBytes`: shared hardware cursor descriptor.
+
+Workers should treat these as immutable for the lifetime of a VM instance.
+
+### Current limitations
+
+- WDDM scanout readback currently supports only `B8G8R8X8` / `B8G8R8A8` (plus their sRGB variants).
+- Readback paths require `base_paddr` and derived byte ranges to fit within JS safe integer range
+  (`<= 2^53-1`).
+- Some unit tests/harnesses set `vramMiB=0`, in which case VRAM-backed scanout/cursor surfaces are
+  unavailable.
+
+---
+
 ## Acceptance checklist (manual)
 
 In the emulator UI:
