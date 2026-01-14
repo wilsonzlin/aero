@@ -11430,7 +11430,8 @@ impl Machine {
                         }
                         let base = u64::from(self.bios.video.vbe.lfb_base)
                             .saturating_add(
-                                u64::from(self.bios.video.vbe.display_start_y).saturating_mul(pitch),
+                                u64::from(self.bios.video.vbe.display_start_y)
+                                    .saturating_mul(pitch),
                             )
                             .saturating_add(
                                 u64::from(self.bios.video.vbe.display_start_x)
@@ -11485,7 +11486,9 @@ impl Machine {
 
                 let base = u64::from(self.bios.video.vbe.lfb_base)
                     .saturating_add(u64::from(dev.vbe_dispi_y_offset).saturating_mul(pitch))
-                    .saturating_add(u64::from(dev.vbe_dispi_x_offset).saturating_mul(bytes_per_pixel));
+                    .saturating_add(
+                        u64::from(dev.vbe_dispi_x_offset).saturating_mul(bytes_per_pixel),
+                    );
                 ScanoutStateUpdate {
                     source: SCANOUT_SOURCE_LEGACY_VBE_LFB,
                     base_paddr_lo: base as u32,
@@ -11499,17 +11502,15 @@ impl Machine {
 
             let maybe_publish_legacy_descriptor =
                 |scanout_state: &ScanoutState, update: ScanoutStateUpdate| {
-                    let matches_current = scanout_state
-                        .try_snapshot()
-                        .is_some_and(|snap| {
-                            snap.source == update.source
-                                && snap.base_paddr_lo == update.base_paddr_lo
-                                && snap.base_paddr_hi == update.base_paddr_hi
-                                && snap.width == update.width
-                                && snap.height == update.height
-                                && snap.pitch_bytes == update.pitch_bytes
-                                && snap.format == update.format
-                        });
+                    let matches_current = scanout_state.try_snapshot().is_some_and(|snap| {
+                        snap.source == update.source
+                            && snap.base_paddr_lo == update.base_paddr_lo
+                            && snap.base_paddr_hi == update.base_paddr_hi
+                            && snap.width == update.width
+                            && snap.height == update.height
+                            && snap.pitch_bytes == update.pitch_bytes
+                            && snap.format == update.format
+                    });
                     if matches_current {
                         return;
                     }

@@ -1880,8 +1880,8 @@ fn assemble_ps3_predicated_mova_relative_const() -> Vec<u32> {
         0x002E,
         0x1000_0000, // predicated flag
         &[
-            enc_dst(3, 0, 0x1),  // a0.x (regtype 3)
-            enc_src(2, 3, 0x00), // c3.x
+            enc_dst(3, 0, 0x1),   // a0.x (regtype 3)
+            enc_src(2, 3, 0x00),  // c3.x
             enc_src(19, 0, 0x00), // p0.x predicate token
         ],
     ));

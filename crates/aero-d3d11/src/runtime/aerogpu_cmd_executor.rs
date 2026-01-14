@@ -22294,7 +22294,9 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {{
             let mut guest_mem = VecGuestMemory::new(0);
             let err = exec
                 .execute_cmd_stream(&stream, None, &mut guest_mem)
-                .expect_err("draw should fail when passthrough VS is active but compute is unsupported");
+                .expect_err(
+                    "draw should fail when passthrough VS is active but compute is unsupported",
+                );
             let msg = err.to_string();
             assert!(
                 msg.contains("expanded-geometry passthrough"),

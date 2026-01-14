@@ -52,4 +52,3 @@ fn aerogpu_bochs_vbe_dispi_mode_publishes_legacy_vbe_scanout_state() {
     assert_eq!(snap.format, SCANOUT_FORMAT_B8G8R8X8);
     assert_eq!(snap.base_paddr(), m.vbe_lfb_base());
 }
-
