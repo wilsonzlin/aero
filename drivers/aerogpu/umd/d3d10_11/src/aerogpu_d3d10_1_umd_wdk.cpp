@@ -1279,43 +1279,10 @@ static void TrackBoundTargetsForSubmitLocked(AeroGpuDevice* dev) {
   TrackWddmAllocForSubmitLocked(dev, dev->current_dsv_res, /*write=*/true);
 }
 
-static void NormalizeRenderTargetsNoGapsLocked(AeroGpuDevice* dev) {
-  if (!dev) {
-    return;
-  }
-
-  // The current AeroGPU host executors only support render target bindings that
-  // are a contiguous prefix starting at slot 0. Any "gap" (a non-zero RTV handle
-  // after a zero) is normalized away by truncating the RTV list at the first
-  // null slot.
-  const uint32_t count = std::min<uint32_t>(dev->current_rtv_count, AEROGPU_MAX_RENDER_TARGETS);
-  uint32_t new_count = 0;
-  bool seen_gap = false;
-  for (uint32_t i = 0; i < count; ++i) {
-    const aerogpu_handle_t h = dev->current_rtvs[i];
-    if (h == 0) {
-      seen_gap = true;
-      continue;
-    }
-    if (seen_gap) {
-      dev->current_rtvs[i] = 0;
-      dev->current_rtv_resources[i] = nullptr;
-    } else {
-      new_count = i + 1;
-    }
-  }
-  for (uint32_t i = new_count; i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
-    dev->current_rtvs[i] = 0;
-    dev->current_rtv_resources[i] = nullptr;
-  }
-  dev->current_rtv_count = new_count;
-}
-
 static void EmitSetRenderTargetsLocked(AeroGpuDevice* dev) {
   if (!dev) {
     return;
   }
-  NormalizeRenderTargetsNoGapsLocked(dev);
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_render_targets>(AEROGPU_CMD_SET_RENDER_TARGETS);
   if (!cmd) {
     set_error(dev, E_OUTOFMEMORY);
@@ -7361,8 +7328,6 @@ void AEROGPU_APIENTRY SetRenderTargets(D3D10DDI_HDEVICE hDevice,
   dev->current_dsv = dsv_handle;
   dev->current_dsv_res = dsv_res;
 
-  NormalizeRenderTargetsNoGapsLocked(dev);
-
   // Auto-unbind SRVs that alias any newly bound RTV/DSV.
   auto unbind_srvs_for_resource = [&](AeroGpuResource* res) {
     if (!res) {
@@ -8335,7 +8300,6 @@ void AEROGPU_APIENTRY RotateResourceIdentities(D3D10DDI_HDEVICE hDevice,
     for (uint32_t i = 0; i < dev->current_rtv_count && i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
       dev->current_rtvs[i] = dev->current_rtv_resources[i] ? dev->current_rtv_resources[i]->handle : 0;
     }
-    NormalizeRenderTargetsNoGapsLocked(dev);
 
     cmd->color_count = dev->current_rtv_count;
     cmd->depth_stencil = dev->current_dsv;

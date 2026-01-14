@@ -88,7 +88,7 @@ bool TestBindTwoRtvsEmitsTwoColorHandles() {
   return true;
 }
 
-bool TestGapNormalizationDropsLaterRtvs() {
+bool TestGappedRtvBindingIsEncoded() {
   Device dev{};
 
   Resource res0{};
@@ -107,10 +107,9 @@ bool TestGapNormalizationDropsLaterRtvs() {
   SetRenderTargetsStateLocked(&dev, /*num_rtvs=*/2, rtvs, /*dsv=*/nullptr);
 
   // Simulate SRV aliasing unbinding slot 0 while slot 1 is still bound, which
-  // would produce an unsupported SET_RENDER_TARGETS gap without normalization.
+  // produces a gapped RTV binding (`[NULL, RT1]`).
   dev.current_rtvs[0] = 0;
   dev.current_rtv_resources[0] = nullptr;
-  NormalizeRenderTargetsNoGapsLocked(&dev);
 
   if (!Check(EmitSetRenderTargetsCmdFromStateLocked(&dev), "EmitSetRenderTargetsCmdFromStateLocked(gap)")) {
     return false;
@@ -124,10 +123,13 @@ bool TestGapNormalizationDropsLaterRtvs() {
     return false;
   }
 
-  if (!Check(cmd->color_count == 0, "gap normalization should drop all RTVs (color_count==0)")) {
+  if (!Check(cmd->color_count == 2, "gapped RTV binding preserves color_count==2")) {
     return false;
   }
-  if (!Check(cmd->colors[0] == 0 && cmd->colors[1] == 0, "gap normalization clears colors[]")) {
+  if (!Check(cmd->colors[0] == 0, "gapped RTV binding clears colors[0]")) {
+    return false;
+  }
+  if (!Check(cmd->colors[1] == res1.handle, "gapped RTV binding keeps colors[1]")) {
     return false;
   }
   return true;
@@ -139,7 +141,7 @@ int main() {
   if (!TestBindTwoRtvsEmitsTwoColorHandles()) {
     return 1;
   }
-  if (!TestGapNormalizationDropsLaterRtvs()) {
+  if (!TestGappedRtvBindingIsEncoded()) {
     return 1;
   }
   return 0;
