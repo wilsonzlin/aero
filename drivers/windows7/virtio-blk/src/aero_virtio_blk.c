@@ -1656,13 +1656,29 @@ SCSI_ADAPTER_CONTROL_STATUS AerovblkHwAdapterControl(_In_ PVOID deviceExtension,
   case ScsiStopAdapter:
   case ScsiRemoveAdapter: {
     STOR_LOCK_HANDLE lock;
+    BOOLEAN treatAsSurprise;
 
     /*
      * Mark removed/stopped under the interrupt lock so we don't race with the
      * I/O submission path and interrupt handler.
      */
     StorPortAcquireSpinLock(devExt, InterruptLock, &lock);
+    /*
+     * Treat ScsiRemoveAdapter without a preceding stop as potential surprise
+     * removal: the device may already be gone, so BAR0 MMIO could fault.
+     */
+    treatAsSurprise = (controlType == ScsiRemoveAdapter && !devExt->Removed) ? TRUE : FALSE;
     devExt->Removed = TRUE;
+    if (treatAsSurprise) {
+      devExt->SurpriseRemoved = TRUE;
+      devExt->Vdev.CommonCfg = NULL;
+      devExt->Vdev.NotifyBase = NULL;
+      devExt->Vdev.IsrStatus = NULL;
+      devExt->Vdev.DeviceCfg = NULL;
+      devExt->Vdev.QueueNotifyAddrCache = NULL;
+      devExt->Vdev.QueueNotifyAddrCacheCount = 0;
+      RtlZeroMemory(devExt->QueueNotifyAddrCache, sizeof(devExt->QueueNotifyAddrCache));
+    }
     StorPortReleaseSpinLock(devExt, &lock);
 
     /*
