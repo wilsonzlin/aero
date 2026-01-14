@@ -82,7 +82,12 @@ const AERO_MACHINE_FOCUSED_TESTS: &[&str] = &[
     "usb_snapshot_host_state",
 ];
 
-const WASM_PACK_TESTS: &[&str] = &["webusb_uhci_bridge", "xhci_webusb_bridge"];
+const WASM_PACK_TESTS: &[&str] = &[
+    "webusb_uhci_bridge",
+    "xhci_webusb_bridge",
+    "machine_input_injection_wasm",
+    "usb_hid_bridge_mouse_reports_wasm",
+];
 
 const AERO_WASM_INPUT_TESTS: &[&str] = &[
     "machine_input_injection",
@@ -236,10 +241,11 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
             cmd.args(["--test", test]);
         }
         cmd.arg("--locked");
-        runner.run_step(
-            "WASM: wasm-pack test --node crates/aero-wasm --test webusb_uhci_bridge --test xhci_webusb_bridge --locked",
-            &mut cmd,
-        )
+        let wasm_pack_focused_flags = format_test_flags(WASM_PACK_TESTS);
+        let step_desc = format!(
+            "WASM: wasm-pack test --node crates/aero-wasm {wasm_pack_focused_flags} --locked"
+        );
+        runner.run_step(&step_desc, &mut cmd)
         .map_err(|err| match err {
             XtaskError::Message(msg) if msg == "missing required command: wasm-pack" => {
                 XtaskError::Message(
