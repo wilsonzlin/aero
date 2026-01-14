@@ -15,6 +15,13 @@ pub fn keyboard_code_to_hid_usage(code: &str) -> Option<u8> {
     crate::hid::usage::keyboard_code_to_usage(code)
 }
 
+/// Map a JavaScript `KeyboardEvent.code` string to a USB HID consumer-page usage (Usage Page 0x0C).
+///
+/// This is used for media keys such as volume/mute/playback controls.
+pub fn keyboard_code_to_consumer_usage(code: &str) -> Option<u16> {
+    crate::hid::usage::keyboard_code_to_consumer_usage(code)
+}
+
 /// Convert browser mouse button indices (as used by DOM `MouseEvent.button`) to a HID mask.
 pub fn mouse_button_to_hid_mask(button: i16) -> Option<u8> {
     crate::hid::usage::mouse_button_index_to_bit(button)
