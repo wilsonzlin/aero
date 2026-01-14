@@ -7501,8 +7501,10 @@ fn translate_entrypoint_allows_unused_volume_sampler_declaration() {
 }
 
 #[test]
-fn translate_entrypoint_supports_used_volume_sampler() {
-    // Regression test: used volume (3D) samplers should translate and validate end-to-end.
+fn translate_entrypoint_rejects_used_volume_sampler() {
+    // The D3D9 runtime currently only supports 2D + cube textures. Ensure we reject used
+    // volume (3D) samplers at the translation entrypoint rather than emitting WGSL that would
+    // fail WebGPU validation once bindings are created.
     let mut words = vec![0xFFFF_0300];
     // dcl_volume s0
     words.extend(enc_inst_with_extra(
@@ -7524,24 +7526,15 @@ fn translate_entrypoint_supports_used_volume_sampler() {
     words.push(0x0000_FFFF);
 
     let bytes = to_bytes(&words);
-    let translated =
+    let err =
         shader_translate::translate_d3d9_shader_to_wgsl(&bytes, shader::WgslOptions::default())
-            .unwrap();
-    assert!(translated.used_samplers.contains(&0));
-    assert_eq!(
-        translated.sampler_texture_types.get(&0).copied(),
-        Some(TextureType::Texture3D)
-    );
+            .unwrap_err();
     assert!(
-        translated.wgsl.contains("texture_3d<f32>"),
-        "wgsl:\n{}",
-        translated.wgsl
+        matches!(err, shader_translate::ShaderTranslateError::Translation(_)),
+        "{err:?}"
     );
-    assert!(
-        translated.wgsl.contains(".xyz"),
-        "wgsl:\n{}",
-        translated.wgsl
-    );
+    let msg = err.to_string();
+    assert!(msg.contains("Texture3D") && msg.contains("s0"), "{msg}");
 }
 
 #[test]

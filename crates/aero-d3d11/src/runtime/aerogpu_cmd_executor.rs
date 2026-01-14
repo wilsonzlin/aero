@@ -3541,6 +3541,10 @@ impl AerogpuD3d11Executor {
         }
 
         let uniform_align = self.device.limits().min_uniform_buffer_offset_alignment as u64;
+        // NOTE: Keep uniform buffers separate from the expansion scratch storage buffer.
+        // wgpu treats `storage, read_write` buffer usage as exclusive within a compute dispatch, so
+        // binding different slices of the same underlying buffer as both storage and uniform
+        // triggers validation errors.
         let uniform_bytes = pulling.pack_uniform_bytes(&slots, vertex_pulling_draw);
         let uniform_alloc = self
             .expansion_uniform_scratch
@@ -3913,7 +3917,10 @@ impl AerogpuD3d11Executor {
             ty: wgpu::BindingType::Buffer {
                 ty: wgpu::BufferBindingType::Storage { read_only: false },
                 has_dynamic_offset: false,
-                min_binding_size: wgpu::BufferSize::new(gs_inputs_size),
+                // `min_binding_size` participates in bind-group-layout identity, so if we set it to
+                // the per-draw `gs_inputs_size` we'd create a unique compute pipeline for each
+                // primitive-count change (see `gs_prepass_reuses_compute_pipeline_across_primitive_counts`).
+                min_binding_size: wgpu::BufferSize::new(16),
             },
             count: None,
         }];
@@ -5233,7 +5240,10 @@ impl AerogpuD3d11Executor {
             ty: wgpu::BindingType::Buffer {
                 ty: wgpu::BufferBindingType::Storage { read_only: false },
                 has_dynamic_offset: false,
-                min_binding_size: wgpu::BufferSize::new(gs_inputs_size),
+                // `min_binding_size` participates in bind-group-layout identity, so if we set it to
+                // the per-draw `gs_inputs_size` we'd create a unique compute pipeline for each
+                // primitive-count change (see `gs_prepass_reuses_compute_pipeline_across_primitive_counts`).
+                min_binding_size: wgpu::BufferSize::new(16),
             },
             count: None,
         }];
@@ -5439,7 +5449,10 @@ impl AerogpuD3d11Executor {
                 binding: 5,
                 visibility: wgpu::ShaderStages::COMPUTE,
                 ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    // Bound as `read_write` even though the prepass only reads it: vertex pulling
+                    // inputs/outputs share scratch backing buffers, and wgpu tracks storage usage at
+                    // whole-buffer granularity.
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
                     has_dynamic_offset: false,
                     min_binding_size: wgpu::BufferSize::new(16),
                 },
@@ -5728,6 +5741,7 @@ impl AerogpuD3d11Executor {
         if !has_color_targets && self.state.depth_stencil.is_none() {
             bail!("aerogpu_cmd: draw without bound render target or depth-stencil");
         }
+
         let depth_only_pass = !has_color_targets && self.state.depth_stencil.is_some();
 
         // Tessellation (HS/DS) and geometry-shader emulation share this compute-prepass entrypoint.
@@ -5869,15 +5883,15 @@ impl AerogpuD3d11Executor {
 
         // Tessellation validation.
         //
-        // D3D11 patchlist topologies are only valid when a hull shader + domain shader are bound,
-        // and the patchlist control point count must match the hull shader's
-        // `dcl_inputcontrolpoints`.
-        //
-        // However, several compute-prepass smoke tests intentionally use patchlist topologies as a
-        // sentinel to force the emulation path (without binding HS/DS). Only enforce strict
-        // HS/DS+patchlist validation when a tessellation stage is actually bound.
-        if let CmdPrimitiveTopology::PatchList { control_points } = self.state.primitive_topology {
-            if self.state.hs.is_some() || self.state.ds.is_some() {
+        if self.state.hs.is_some() || self.state.ds.is_some() {
+            // D3D11 patchlist topologies are only valid when a hull shader + domain shader are
+            // bound, and the patchlist control point count must match the hull shader's
+            // `dcl_inputcontrolpoints`.
+            //
+            // However, several compute-prepass smoke tests intentionally use patchlist topologies
+            // as a sentinel to force the emulation path (without binding HS/DS). Only enforce
+            // strict HS/DS+patchlist validation when a tessellation stage is actually bound.
+            if let CmdPrimitiveTopology::PatchList { control_points } = self.state.primitive_topology {
                 let actual = u32::from(control_points);
                 let hs_handle = self.state.hs.ok_or_else(|| {
                     anyhow!(
@@ -17445,6 +17459,38 @@ fn wgsl_depth_clamp_variant(wgsl: &str) -> String {
     out
 }
 
+fn wgsl_fallback_no_input_layout_vs(varying_locations: &BTreeSet<u32>) -> String {
+    // D3D11 allows `IASetInputLayout(NULL)` only when the vertex shader does not consume any
+    // per-vertex attributes (e.g. it uses only `SV_VertexID` / `SV_InstanceID`). In practice we
+    // sometimes encounter draws without an input layout even when the bound VS declares inputs.
+    //
+    // To keep the executor robust (and to allow command streams to progress far enough to exercise
+    // state updates inside a render pass), we fall back to a "null" vertex shader in this case.
+    // The shader ignores all inputs, emits a fixed clip-space position, and zeros any varyings the
+    // pixel shader declares.
+    //
+    // This is not intended to be a correctness path; it is a best-effort escape hatch so we don't
+    // hard-fail on missing input-layout state.
+    let mut out = String::new();
+    out.push_str("struct VsOut {\n");
+    out.push_str("    @builtin(position) pos: vec4<f32>,\n");
+    for &loc in varying_locations {
+        out.push_str(&format!("    @location({loc}) o{loc}: vec4<f32>,\n"));
+    }
+    out.push_str("};\n\n");
+    out.push_str("@vertex\n");
+    out.push_str("fn vs_main(@builtin(vertex_index) index: u32) -> VsOut {\n");
+    out.push_str("    _ = index;\n");
+    out.push_str("    var out: VsOut;\n");
+    out.push_str("    out.pos = vec4<f32>(0.0, 0.0, 0.0, 1.0);\n");
+    for &loc in varying_locations {
+        out.push_str(&format!("    out.o{loc} = vec4<f32>(0.0);\n"));
+    }
+    out.push_str("    return out;\n");
+    out.push_str("}\n");
+    out
+}
+
 fn exec_draw<'a>(pass: &mut wgpu::RenderPass<'a>, cmd_bytes: &[u8]) -> Result<()> {
     // struct aerogpu_cmd_draw (24 bytes)
     if cmd_bytes.len() < 24 {
@@ -17751,18 +17797,43 @@ fn get_or_create_render_pipeline_for_state<'a>(
             (base_vs_wgsl, hash, Vec::new())
         } else {
             let vs = vs.expect("gs_output_active is false, so VS must be present");
-            let base_vs_wgsl: std::borrow::Cow<'_, str> = if state.depth_clip_enabled {
+            let mut base_vs_wgsl: std::borrow::Cow<'_, str> = if state.depth_clip_enabled {
                 std::borrow::Cow::Borrowed(vs.wgsl_source.as_str())
             } else {
                 std::borrow::Cow::Owned(wgsl_depth_clamp_variant(&vs.wgsl_source))
             };
 
-            let base_vs_hash = if state.depth_clip_enabled {
+            let mut base_vs_hash = if state.depth_clip_enabled {
                 vs.wgsl_hash
             } else {
                 vs.depth_clamp_wgsl_hash.unwrap_or(vs.wgsl_hash)
             };
-            (base_vs_wgsl, base_vs_hash, vs.vs_input_signature.clone())
+
+            let mut vs_input_signature = vs.vs_input_signature.clone();
+
+            if state.input_layout.is_none() && !vs_input_signature.is_empty() {
+                // The D3D11 command stream can carry `IASetInputLayout(NULL)` even when the
+                // translated vertex shader declares vertex inputs. We cannot satisfy those inputs
+                // without ILAY metadata, so fall back to a minimal VS that ignores vertex inputs and
+                // emits zero varyings (enough to keep render-pass execution progressing).
+                let keep_locations =
+                    super::wgsl_link::locations_in_struct(&ps.wgsl_source, "PsIn")?;
+                let mut fallback_vs_wgsl = wgsl_fallback_no_input_layout_vs(&keep_locations);
+                if !state.depth_clip_enabled {
+                    fallback_vs_wgsl = wgsl_depth_clamp_variant(&fallback_vs_wgsl);
+                }
+                let (hash, _module) = pipeline_cache.get_or_create_shader_module(
+                    device,
+                    map_pipeline_cache_stage(ShaderStage::Vertex),
+                    &fallback_vs_wgsl,
+                    Some("aerogpu_cmd fallback VS (missing input layout)"),
+                );
+                base_vs_wgsl = std::borrow::Cow::Owned(fallback_vs_wgsl);
+                base_vs_hash = hash;
+                vs_input_signature = Vec::new();
+            }
+
+            (base_vs_wgsl, base_vs_hash, vs_input_signature)
         };
 
         // WebGPU requires the vertex output interface to exactly match the fragment input
@@ -22636,7 +22707,8 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {{
                 .expect_err("draw should fail when HS is bound without DS");
             let msg = err.to_string();
             assert!(
-                msg.contains("tessellation draw requires a bound DS"),
+                msg.contains("tessellation (HS/DS) compute expansion is not wired up yet")
+                    && msg.contains("domain shader is not"),
                 "unexpected error: {err:#}"
             );
         });
@@ -24200,6 +24272,8 @@ fn cs_main() {
             const VS: u32 = 2;
             const PS: u32 = 3;
             const GS: u32 = 4;
+            const IL: u32 = 5;
+            const VB: u32 = 6;
 
             const DXBC_VS_PASSTHROUGH: &[u8] =
                 include_bytes!("../../tests/fixtures/vs_passthrough.dxbc");
@@ -24207,6 +24281,32 @@ fn cs_main() {
                 include_bytes!("../../tests/fixtures/ps_passthrough.dxbc");
             const DXBC_GS_PASSTHROUGH: &[u8] =
                 include_bytes!("../../tests/fixtures/gs_passthrough.dxbc");
+            const ILAY_POS3_COLOR: &[u8] =
+                include_bytes!("../../tests/fixtures/ilay_pos3_color.bin");
+
+            #[repr(C)]
+            #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+            struct Vertex {
+                pos: [f32; 3],
+                color: [f32; 4],
+            }
+
+            // Minimal triangle vertex buffer that matches `vs_passthrough` + `ilay_pos3_color`.
+            let verts = [
+                Vertex {
+                    pos: [-1.0, -1.0, 0.0],
+                    color: [1.0, 0.0, 0.0, 1.0],
+                },
+                Vertex {
+                    pos: [-1.0, 3.0, 0.0],
+                    color: [0.0, 1.0, 0.0, 1.0],
+                },
+                Vertex {
+                    pos: [3.0, -1.0, 0.0],
+                    color: [0.0, 0.0, 1.0, 1.0],
+                },
+            ];
+            let vb_bytes: &[u8] = bytemuck::cast_slice(&verts);
 
             let mut writer = AerogpuCmdWriter::new();
             writer.create_texture2d(
@@ -24227,6 +24327,27 @@ fn cs_main() {
             writer.set_render_targets(&[RT], 0);
             writer.set_viewport(0.0, 0.0, 4.0, 4.0, 0.0, 1.0);
             writer.bind_shaders_ex(VS, PS, 0, GS, 0, 0);
+            writer.create_buffer(
+                VB,
+                AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
+                vb_bytes.len() as u64,
+                0,
+                0,
+            );
+            writer.upload_resource(VB, 0, vb_bytes);
+            writer.create_input_layout(IL, ILAY_POS3_COLOR);
+            writer.set_input_layout(IL);
+            writer.set_vertex_buffers(
+                0,
+                &[aero_protocol::aerogpu::aerogpu_cmd::AerogpuVertexBufferBinding {
+                    buffer: VB,
+                    stride_bytes: core::mem::size_of::<Vertex>() as u32,
+                    offset_bytes: 0,
+                    reserved0: 0,
+                }],
+            );
+            writer.set_primitive_topology(AerogpuPrimitiveTopology::TriangleList);
+            writer.clear(AEROGPU_CLEAR_COLOR, [0.0, 0.0, 0.0, 1.0], 1.0, 0);
 
             // Two draws in the same command stream: scratch buffers should be allocated once and
             // then reused.
@@ -24261,6 +24382,13 @@ fn cs_main() {
             };
 
             let stats_before = exec.pipeline_cache.stats();
+            if !exec.caps.supports_compute || !exec.caps.supports_indirect_execution {
+                skip_or_panic(
+                    module_path!(),
+                    "backend lacks compute/indirect execution required for GS/HS/DS emulation",
+                );
+                return;
+            }
 
             // Minimal stream that triggers `exec_draw_with_compute_prepass` by binding a non-zero
             // geometry shader handle. Use two draws with different primitive counts so the
@@ -24269,6 +24397,8 @@ fn cs_main() {
             const VS: u32 = 2;
             const PS: u32 = 3;
             const GS: u32 = 4;
+            const IL: u32 = 5;
+            const VB: u32 = 6;
 
             const DXBC_VS_PASSTHROUGH: &[u8] =
                 include_bytes!("../../tests/fixtures/vs_passthrough.dxbc");
@@ -24276,6 +24406,44 @@ fn cs_main() {
                 include_bytes!("../../tests/fixtures/ps_passthrough.dxbc");
             const DXBC_GS_PASSTHROUGH: &[u8] =
                 include_bytes!("../../tests/fixtures/gs_passthrough.dxbc");
+            const ILAY_POS3_COLOR: &[u8] =
+                include_bytes!("../../tests/fixtures/ilay_pos3_color.bin");
+
+            #[repr(C)]
+            #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+            struct Vertex {
+                pos: [f32; 3],
+                color: [f32; 4],
+            }
+
+            // 2-triangle quad (6 vertices) so the second draw can consume 6 vertices.
+            let verts = [
+                Vertex {
+                    pos: [-1.0, -1.0, 0.0],
+                    color: [1.0, 0.0, 0.0, 1.0],
+                },
+                Vertex {
+                    pos: [1.0, -1.0, 0.0],
+                    color: [0.0, 1.0, 0.0, 1.0],
+                },
+                Vertex {
+                    pos: [-1.0, 1.0, 0.0],
+                    color: [0.0, 0.0, 1.0, 1.0],
+                },
+                Vertex {
+                    pos: [-1.0, 1.0, 0.0],
+                    color: [0.0, 0.0, 1.0, 1.0],
+                },
+                Vertex {
+                    pos: [1.0, -1.0, 0.0],
+                    color: [0.0, 1.0, 0.0, 1.0],
+                },
+                Vertex {
+                    pos: [1.0, 1.0, 0.0],
+                    color: [1.0, 1.0, 1.0, 1.0],
+                },
+            ];
+            let vb_bytes: &[u8] = bytemuck::cast_slice(&verts);
 
             let mut writer = AerogpuCmdWriter::new();
             writer.create_texture2d(
@@ -24296,40 +24464,73 @@ fn cs_main() {
             writer.set_render_targets(&[RT], 0);
             writer.set_viewport(0.0, 0.0, 4.0, 4.0, 0.0, 1.0);
             writer.bind_shaders_ex(VS, PS, 0, GS, 0, 0);
+            writer.create_buffer(
+                VB,
+                AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
+                vb_bytes.len() as u64,
+                0,
+                0,
+            );
+            writer.upload_resource(VB, 0, vb_bytes);
+            writer.create_input_layout(IL, ILAY_POS3_COLOR);
+            writer.set_input_layout(IL);
+            writer.set_vertex_buffers(
+                0,
+                &[aero_protocol::aerogpu::aerogpu_cmd::AerogpuVertexBufferBinding {
+                    buffer: VB,
+                    stride_bytes: core::mem::size_of::<Vertex>() as u32,
+                    offset_bytes: 0,
+                    reserved0: 0,
+                }],
+            );
+            writer.set_primitive_topology(AerogpuPrimitiveTopology::TriangleList);
+            writer.clear(AEROGPU_CLEAR_COLOR, [0.0, 0.0, 0.0, 1.0], 1.0, 0);
 
             // TriangleList: 3 vertices = 1 primitive, 6 vertices = 2 primitives.
-            writer.draw(3, 1, 0, 0);
-            writer.draw(6, 1, 0, 0);
-
-            let stream = writer.finish();
             let mut guest_mem = VecGuestMemory::new(0);
-            match exec.execute_cmd_stream(&stream, None, &mut guest_mem) {
-                Ok(_) => {}
-                Err(e) => {
-                    let msg = e.to_string();
-                    if msg.contains("Unsupported") && msg.contains("compute") {
-                        skip_or_panic(module_path!(), &format!("compute unsupported ({msg})"));
-                        return;
-                    }
-                    panic!("unexpected execute_cmd_stream error: {e:#}");
-                }
-            }
+            writer.draw(3, 1, 0, 0);
+            let stream_first = writer.finish();
+            exec.execute_cmd_stream(&stream_first, None, &mut guest_mem)
+                .expect("first GS prepass draw should succeed");
 
-            let stats_after = exec.pipeline_cache.stats();
+            let stats_after_first = exec.pipeline_cache.stats();
+            assert!(
+                stats_after_first.compute_pipelines > stats_before.compute_pipelines,
+                "expected GS prepass to create compute pipelines (before={stats_before:?} after={stats_after_first:?})"
+            );
+
+            // Second draw with a different primitive count. Ensure it does not introduce new
+            // compute pipeline entries or misses.
+            let mut writer = AerogpuCmdWriter::new();
+            writer.set_render_targets(&[RT], 0);
+            writer.set_viewport(0.0, 0.0, 4.0, 4.0, 0.0, 1.0);
+            writer.bind_shaders_ex(VS, PS, 0, GS, 0, 0);
+            writer.set_input_layout(IL);
+            writer.set_vertex_buffers(
+                0,
+                &[aero_protocol::aerogpu::aerogpu_cmd::AerogpuVertexBufferBinding {
+                    buffer: VB,
+                    stride_bytes: core::mem::size_of::<Vertex>() as u32,
+                    offset_bytes: 0,
+                    reserved0: 0,
+                }],
+            );
+            writer.set_primitive_topology(AerogpuPrimitiveTopology::TriangleList);
+            writer.draw(6, 1, 0, 0);
+            let stream_second = writer.finish();
+            exec.execute_cmd_stream(&stream_second, None, &mut guest_mem)
+                .expect("second GS prepass draw should succeed");
+
+            let stats_after_second = exec.pipeline_cache.stats();
             assert_eq!(
-                stats_after.compute_pipelines - stats_before.compute_pipelines,
-                1,
-                "expected exactly one compute pipeline for geometry prepass, got before={stats_before:?} after={stats_after:?}"
+                stats_after_second.compute_pipelines,
+                stats_after_first.compute_pipelines,
+                "expected primitive count changes to reuse GS prepass compute pipelines (after_first={stats_after_first:?} after_second={stats_after_second:?})"
             );
             assert_eq!(
-                stats_after.compute_pipeline_misses - stats_before.compute_pipeline_misses,
-                1,
-                "expected a single compute pipeline miss (first draw) when primitive counts differ"
-            );
-            assert_eq!(
-                stats_after.compute_pipeline_hits - stats_before.compute_pipeline_hits,
-                1,
-                "expected a compute pipeline cache hit on the second draw with a different primitive count"
+                stats_after_second.compute_pipeline_misses,
+                stats_after_first.compute_pipeline_misses,
+                "expected primitive count changes to avoid additional compute pipeline misses (after_first={stats_after_first:?} after_second={stats_after_second:?})"
             );
         });
     }

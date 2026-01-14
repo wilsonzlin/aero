@@ -2909,6 +2909,64 @@ mod tests {
             #[cfg(debug_assertions)]
             let expected_trimmed_hash = aero_gpu::pipeline_key::hash_wgsl(&expected_trimmed_wgsl);
 
+            // Baseline: strict WebGPU implementations reject pipelines that write to unbound MRT
+            // locations. Some wgpu backends are permissive and accept the untrimmed shader anyway,
+            // so tolerate either outcome here.
+            let vs = rt
+                .device
+                .create_shader_module(wgpu::ShaderModuleDescriptor {
+                    label: Some("d3d11 runtime mrt baseline vs"),
+                    source: wgpu::ShaderSource::Wgsl(vs_wgsl.into()),
+                });
+            let fs = rt
+                .device
+                .create_shader_module(wgpu::ShaderModuleDescriptor {
+                    label: Some("d3d11 runtime mrt baseline fs"),
+                    source: wgpu::ShaderSource::Wgsl(fs_wgsl.into()),
+                });
+            let layout = rt
+                .device
+                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("d3d11 runtime mrt baseline layout"),
+                    bind_group_layouts: &[],
+                    push_constant_ranges: &[],
+                });
+
+            rt.device.push_error_scope(wgpu::ErrorFilter::Validation);
+            let _ = rt
+                .device
+                .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some("d3d11 runtime mrt baseline pipeline"),
+                    layout: Some(&layout),
+                    vertex: wgpu::VertexState {
+                        module: &vs,
+                        entry_point: "vs_main",
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                        buffers: &[],
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: &fs,
+                        entry_point: "fs_main",
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format: wgpu::TextureFormat::Rgba8Unorm,
+                            blend: None,
+                            write_mask: wgpu::ColorWrites::ALL,
+                        })],
+                    }),
+                    primitive: wgpu::PrimitiveState::default(),
+                    depth_stencil: None,
+                    multisample: wgpu::MultisampleState::default(),
+                    multiview: None,
+                });
+            rt.device.poll(wgpu::Maintain::Wait);
+            let err = rt.device.pop_error_scope().await;
+            if err.is_none() {
+                eprintln!(
+                    "note: wgpu accepted an untrimmed MRT shader with a single color target; continuing"
+                );
+            }
+
             // Now go through the D3D11 runtime command path; the runtime should trim outputs and
             // pipeline creation should succeed without validation errors.
             let mut writer = CmdWriter::new();

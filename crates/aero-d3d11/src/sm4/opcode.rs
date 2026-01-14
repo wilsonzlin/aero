@@ -601,9 +601,11 @@ pub fn opcode_name(opcode: u32) -> Option<&'static str> {
         OPCODE_DCL_GS_MAX_OUTPUT_VERTEX_COUNT => Some("dcl_gs_max_output_vertex_count"),
         OPCODE_DCL_GS_INSTANCE_COUNT => Some("dcl_gs_instance_count"),
         OPCODE_DCL_HS_MAX_TESSFACTOR => Some("dcl_hs_max_tessfactor"),
-        OPCODE_DCL_HS_DOMAIN => Some("dcl_hs_domain"),
-        OPCODE_DCL_HS_PARTITIONING => Some("dcl_hs_partitioning"),
-        OPCODE_DCL_HS_OUTPUT_TOPOLOGY => Some("dcl_hs_output_topology"),
+        // These opcodes are historically aliased between `dcl_hs_*` and `dcl_tessellator_*`.
+        // Prefer the `dcl_tessellator_*` names so `opcode_name(OPCODE_DCL_TESS_*)` stays stable.
+        OPCODE_DCL_HS_DOMAIN => Some("dcl_tessellator_domain"),
+        OPCODE_DCL_HS_PARTITIONING => Some("dcl_tessellator_partitioning"),
+        OPCODE_DCL_HS_OUTPUT_TOPOLOGY => Some("dcl_tessellator_output_primitive"),
         OPCODE_DCL_HS_OUTPUT_CONTROL_POINT_COUNT => Some("dcl_hs_output_control_point_count"),
         OPCODE_DCL_DS_DOMAIN => Some("dcl_ds_domain"),
         OPCODE_DCL_INPUT_CONTROL_POINT_COUNT => Some("dcl_inputcontrolpoints"),
@@ -716,14 +718,17 @@ mod tests {
             opcode_name(OPCODE_DCL_HS_MAX_TESSFACTOR),
             Some("dcl_hs_max_tessfactor")
         );
-        assert_eq!(opcode_name(OPCODE_DCL_HS_DOMAIN), Some("dcl_hs_domain"));
         assert_eq!(
-            opcode_name(OPCODE_DCL_HS_PARTITIONING),
-            Some("dcl_hs_partitioning")
+            opcode_name(OPCODE_DCL_TESS_DOMAIN),
+            Some("dcl_tessellator_domain")
         );
         assert_eq!(
-            opcode_name(OPCODE_DCL_HS_OUTPUT_TOPOLOGY),
-            Some("dcl_hs_output_topology")
+            opcode_name(OPCODE_DCL_TESS_PARTITIONING),
+            Some("dcl_tessellator_partitioning")
+        );
+        assert_eq!(
+            opcode_name(OPCODE_DCL_TESS_OUTPUT_PRIMITIVE),
+            Some("dcl_tessellator_output_primitive")
         );
         assert_eq!(
             opcode_name(OPCODE_DCL_HS_OUTPUT_CONTROL_POINT_COUNT),

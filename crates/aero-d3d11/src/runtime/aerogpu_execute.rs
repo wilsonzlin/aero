@@ -4030,8 +4030,10 @@ mod tests {
                 fn vs_main(@builtin(vertex_index) index: u32) -> @builtin(position) vec4<f32> {
                     var pos = array<vec2<f32>, 3>(
                         vec2<f32>(-1.0, -1.0),
-                        vec2<f32>( 3.0, -1.0),
+                        // Emit a clockwise fullscreen triangle so it is front-facing under the
+                        // D3D11 default rasterizer state (front_face = CW, cull = back).
                         vec2<f32>(-1.0,  3.0),
+                        vec2<f32>( 3.0, -1.0),
                     );
                     let p = pos[index];
                     return vec4<f32>(p, 0.0, 1.0);
@@ -4080,7 +4082,6 @@ mod tests {
                 blend: None,
                 write_mask: wgpu::ColorWrites::ALL,
             };
-
             // Now go through the AeroGPU runtime path: the runtime should trim `@location(2)` at
             // pipeline-creation time and the draw should succeed with only RT0 bound.
             const VS: AerogpuHandle = 10;
@@ -4181,7 +4182,11 @@ mod tests {
                         targets: &targets_gap,
                         compilation_options: wgpu::PipelineCompilationOptions::default(),
                     }),
-                    primitive: wgpu::PrimitiveState::default(),
+                    primitive: wgpu::PrimitiveState {
+                        front_face: wgpu::FrontFace::Cw,
+                        cull_mode: Some(wgpu::Face::Back),
+                        ..Default::default()
+                    },
                     depth_stencil: None,
                     multisample: wgpu::MultisampleState::default(),
                     multiview: None,

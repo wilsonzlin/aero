@@ -3,8 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::binding_model::{
     BINDING_BASE_CBUFFER, BINDING_BASE_SAMPLER, BINDING_BASE_TEXTURE, BINDING_BASE_UAV,
-    D3D11_MAX_CONSTANT_BUFFER_SLOTS, MAX_CBUFFER_SLOTS, MAX_SAMPLER_SLOTS, MAX_TEXTURE_SLOTS,
-    MAX_UAV_SLOTS,
+    D3D11_MAX_CONSTANT_BUFFER_SLOTS, MAX_SAMPLER_SLOTS, MAX_TEXTURE_SLOTS, MAX_UAV_SLOTS,
 };
 use crate::signature::{DxbcSignature, DxbcSignatureParameter, ShaderSignatures};
 use crate::sm4::opcode::opcode_name;
@@ -3855,7 +3854,7 @@ fn scan_resources(
             if !intersects {
                 continue;
             }
-            let end = end.min(MAX_CBUFFER_SLOTS);
+            let end = end.min(D3D11_MAX_CONSTANT_BUFFER_SLOTS);
             for s in slot..end {
                 let entry = cbuffers.entry(s).or_insert(0);
                 *entry = (*entry).max(reg_count);
