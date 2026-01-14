@@ -53,6 +53,16 @@ function formatHex32(value: number): string {
   return `0x${(value >>> 0).toString(16).padStart(8, "0")}`;
 }
 
+function formatMouseButtonsHeld(mask: number): string {
+  const names: string[] = [];
+  if ((mask & 0x01) !== 0) names.push("left");
+  if ((mask & 0x02) !== 0) names.push("right");
+  if ((mask & 0x04) !== 0) names.push("middle");
+  if ((mask & 0x08) !== 0) names.push("back");
+  if ((mask & 0x10) !== 0) names.push("forward");
+  return names.length ? names.join(",") : "(none)";
+}
+
 export function mountInputDiagnosticsPanel(container: HTMLElement, opts?: { initial?: InputDiagnosticsSnapshot | null }): InputDiagnosticsPanelApi {
   const fieldset = document.createElement("fieldset");
   const legend = document.createElement("legend");
@@ -85,6 +95,7 @@ export function mountInputDiagnosticsPanel(container: HTMLElement, opts?: { init
       `synthetic_usb_keyboard.configured=${formatYesNo(snapshot.syntheticUsbKeyboardConfigured)}`,
       `synthetic_usb_mouse.configured=${formatYesNo(snapshot.syntheticUsbMouseConfigured)}`,
       `mouse_buttons_mask=${formatHex32(snapshot.mouseButtonsMask)}`,
+      `mouse_buttons_held=${formatMouseButtonsHeld(snapshot.mouseButtonsMask)}`,
       `pressed_hid_usage_count=${snapshot.pressedKeyboardHidUsageCount >>> 0}`,
       `io.batches_received=${snapshot.batchesReceived >>> 0}`,
       `io.batches_processed=${snapshot.batchesProcessed >>> 0}`,
