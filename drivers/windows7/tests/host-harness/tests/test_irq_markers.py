@@ -146,6 +146,28 @@ class VirtioIrqMarkerTests(unittest.TestCase):
         self.assertEqual(markers["virtio-net"]["mode"], "msix")
         self.assertEqual(markers["virtio-net"]["vectors"], "4")
 
+    def test_incremental_parser_handles_split_lines_for_blk_miniport(self) -> None:
+        markers: dict[str, dict[str, str]] = {}
+        carry = b""
+        carry = self.harness._update_virtio_irq_markers_from_chunk(
+            markers,
+            b"virtio-blk-miniport-irq|INFO|mode=msix|message_count=2|msix_config_vector=0x0000|msix_queue0_",
+            carry=carry,
+        )
+        self.assertTrue(carry.startswith(b"virtio-blk-miniport-irq|INFO|mode=msix"))
+        self.assertEqual(markers, {})
+
+        carry = self.harness._update_virtio_irq_markers_from_chunk(
+            markers,
+            b"vector=0x0001\n",
+            carry=carry,
+        )
+        self.assertEqual(carry, b"")
+        self.assertEqual(markers["virtio-blk-miniport"]["mode"], "msix")
+        self.assertEqual(markers["virtio-blk-miniport"]["message_count"], "2")
+        self.assertEqual(markers["virtio-blk-miniport"]["msix_config_vector"], "0x0000")
+        self.assertEqual(markers["virtio-blk-miniport"]["msix_queue0_vector"], "0x0001")
+
     def test_incremental_parser_handles_crlf(self) -> None:
         markers: dict[str, dict[str, str]] = {}
         carry = b""
