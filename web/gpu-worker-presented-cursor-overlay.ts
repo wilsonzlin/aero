@@ -86,7 +86,7 @@ async function main() {
       },
       onEvents: (msg) => {
         for (const ev of msg.events) {
-          log(`gpu_event ${ev.severity} ${ev.category}: ${ev.message}`);
+          log(`gpu_event ${ev.severity} ${ev.category}${ev.backend_kind ? ` (${ev.backend_kind})` : ""}: ${ev.message}`);
         }
       },
     });

@@ -112,7 +112,7 @@ async function main() {
           } catch {
             // Ignore: best-effort formatting only.
           }
-          status.textContent += `gpu_event ${ev.severity} ${ev.category}: ${ev.message}${details}\n`;
+          status.textContent += `gpu_event ${ev.severity} ${ev.category}${ev.backend_kind ? ` (${ev.backend_kind})` : ""}: ${ev.message}${details}\n`;
         }
       },
     });

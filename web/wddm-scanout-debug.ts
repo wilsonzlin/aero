@@ -542,7 +542,7 @@ async function main() {
         break;
       case "events":
         for (const ev of typed.events) {
-          log(`gpu_event ${ev.severity} ${ev.category}: ${ev.message}`);
+          log(`gpu_event ${ev.severity} ${ev.category}${ev.backend_kind ? ` (${ev.backend_kind})` : ""}: ${ev.message}`);
         }
         break;
       case "error":
