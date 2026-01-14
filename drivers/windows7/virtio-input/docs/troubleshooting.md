@@ -150,7 +150,6 @@ If you are iterating on a device model, fixing `ID_NAME` and implementing `EV_BI
 
 Stock QEMU virtio-input devices typically report `ID_NAME` strings like `QEMU Virtio Keyboard` and may not use the Aero
 contract subsystem IDs. In **strict mode** (compat disabled), the keyboard/mouse devices will refuse to start (Code 10 /
-contract subsystem IDs. In **strict mode** (compat disabled), the keyboard/mouse devices will refuse to start (Code 10 /
 `STATUS_NOT_SUPPORTED`). Tablets may still be identified via `EV_BITS` if they advertise `EV_ABS` with `ABS_X`/`ABS_Y` (with
 best-effort `ID_DEVIDS` / `ABS_INFO` handling).
 
