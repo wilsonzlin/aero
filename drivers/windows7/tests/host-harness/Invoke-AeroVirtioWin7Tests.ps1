@@ -2442,6 +2442,21 @@ function Try-EmitAeroVirtioBlkIrqMarker {
   if ($msiVector) { $out += "|msi_vector=$(Sanitize-AeroMarkerValue $msiVector)" }
   if ($msixConfigVector) { $out += "|msix_config_vector=$(Sanitize-AeroMarkerValue $msixConfigVector)" }
   if ($msixQueueVector) { $out += "|msix_queue_vector=$(Sanitize-AeroMarkerValue $msixQueueVector)" }
+
+  # Preserve any additional interrupt-related fields so the marker stays useful for debugging
+  # and remains forward-compatible when the guest appends new `irq_*` / `msi_*` / `msix_*` keys.
+  #
+  # Keep ordering stable: base keys above, then extra `irq_*` keys sorted, then extra `msi_*`/`msix_*` keys sorted.
+  $ordered = @("irq_mode", "irq_message_count", "irq_vectors", "msi_vector", "msix_config_vector", "msix_queue_vector")
+  $orderedSet = @{}
+  foreach ($k in $ordered) { $orderedSet[$k] = $true }
+
+  foreach ($k in ($fields.Keys | Where-Object { $_.StartsWith("irq_") -and (-not $orderedSet.ContainsKey($_)) } | Sort-Object)) {
+    $out += "|$k=$(Sanitize-AeroMarkerValue $fields[$k])"
+  }
+  foreach ($k in ($fields.Keys | Where-Object { ($_.StartsWith("msi_") -or $_.StartsWith("msix_")) -and (-not $orderedSet.ContainsKey($_)) } | Sort-Object)) {
+    $out += "|$k=$(Sanitize-AeroMarkerValue $fields[$k])"
+  }
   Write-Host $out
 }
 
