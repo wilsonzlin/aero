@@ -384,6 +384,25 @@ if [ -f "$INF_TRANSITIONAL" ]; then
     'AeroVirtioSndLegacy.AddReg' \
     'hkr,parameters,allowpollingonly,0x00010001,0' \
     "inf/aero-virtio-snd-legacy.inf must set HKR\\Parameters\\AllowPollingOnly default to 0"
+
+  note "checking transitional INF MSI interrupt management registrations..."
+  section_contains_norm \
+    "$INF_TRANSITIONAL" \
+    'AeroVirtioSndLegacy_Install.NT.HW' \
+    'addreg=aerovirtiosndlegacy_interruptmanagement_addreg' \
+    "inf/aero-virtio-snd-legacy.inf must configure interrupt management via [AeroVirtioSndLegacy_Install.NT.HW]"
+
+  section_contains_norm \
+    "$INF_TRANSITIONAL" \
+    'AeroVirtioSndLegacy_InterruptManagement_AddReg' \
+    'msisupported,0x00010001,1' \
+    "inf/aero-virtio-snd-legacy.inf must set MSISupported=1 under Interrupt Management"
+
+  section_contains_norm \
+    "$INF_TRANSITIONAL" \
+    'AeroVirtioSndLegacy_InterruptManagement_AddReg' \
+    'messagenumberlimit,0x00010001,8' \
+    "inf/aero-virtio-snd-legacy.inf must set MessageNumberLimit=8 under Interrupt Management"
 fi
 
 if [ -f "$INF_IOPORT" ]; then
