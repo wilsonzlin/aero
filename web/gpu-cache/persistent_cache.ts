@@ -357,6 +357,7 @@ async function readOpfsTextFile(dir, name) {
 async function writeOpfsTextFile(dir, name, contents) {
   /** @type {any} */
   let writable = null;
+  let truncateFallback = false;
   try {
     const handle = await dir.getFileHandle(name, { create: true });
     // Truncate by default so rewriting an existing key does not append and
@@ -366,14 +367,24 @@ async function writeOpfsTextFile(dir, name, contents) {
     } catch {
       // Some implementations may not accept options; fall back to default.
       writable = await handle.createWritable();
+      truncateFallback = true;
+    }
+    if (truncateFallback) {
+      // Defensive: some implementations behave like `keepExistingData=true` when the options bag is
+      // unsupported. Truncate explicitly so overwriting a shorter file doesn't leave trailing bytes.
+      try {
+        if (writable && typeof writable.truncate === "function") await writable.truncate(0);
+      } catch {
+        // Ignore.
+      }
     }
     await writable.write(contents);
     await writable.close();
     return true;
-  } catch {
+  } catch (err) {
     // Best-effort cleanup: abort any in-progress write and delete any partial file.
     try {
-      if (writable && typeof writable.abort === "function") await writable.abort();
+      if (writable && typeof writable.abort === "function") await writable.abort(err);
     } catch {
       // Ignore.
     }

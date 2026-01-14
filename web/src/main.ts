@@ -694,7 +694,24 @@ function ensureArrayBufferBacked(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
 
 async function writeBytesToOpfs(path: string, bytes: Uint8Array): Promise<void> {
   const handle = await openFileHandle(path, { create: true });
-  const writable = await handle.createWritable({ keepExistingData: false });
+  let writable: FileSystemWritableFileStream;
+  let truncateFallback = false;
+  try {
+    writable = await handle.createWritable({ keepExistingData: false });
+  } catch {
+    // Some implementations may not accept options; fall back to default.
+    writable = await handle.createWritable();
+    truncateFallback = true;
+  }
+  if (truncateFallback) {
+    // Defensive: some implementations behave like `keepExistingData=true` when the options bag is
+    // unsupported. Truncate explicitly so overwriting a shorter file doesn't leave trailing bytes.
+    try {
+      await writable.truncate(0);
+    } catch {
+      // ignore
+    }
+  }
   // `FileSystemWritableFileStream.write()` only accepts ArrayBuffer-backed views in the
   // lib.dom typings. Snapshot buffers coming from threaded WASM builds can be backed by
   // SharedArrayBuffer, so clone into an ArrayBuffer-backed Uint8Array before writing.
@@ -705,7 +722,7 @@ async function writeBytesToOpfs(path: string, bytes: Uint8Array): Promise<void> 
     await writable.close();
   } catch (err) {
     try {
-      await writable.abort();
+      await writable.abort(err);
     } catch {
       // ignore
     }

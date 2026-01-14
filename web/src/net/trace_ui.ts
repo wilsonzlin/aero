@@ -174,7 +174,24 @@ export function installNetTraceUI(container: HTMLElement, backend: NetTraceBacke
           ? (bytes as Uint8Array<ArrayBuffer>)
           : (new Uint8Array(bytes) as Uint8Array<ArrayBuffer>);
       const handle = await openFileHandle(path, { create: true });
-      const writable = await handle.createWritable();
+      let writable: FileSystemWritableFileStream;
+      let truncateFallback = false;
+      try {
+        writable = await handle.createWritable({ keepExistingData: false });
+      } catch {
+        // Some implementations may not accept options; fall back to default.
+        writable = await handle.createWritable();
+        truncateFallback = true;
+      }
+      if (truncateFallback) {
+        // Defensive: some implementations behave like `keepExistingData=true` when the options bag is
+        // unsupported. Truncate explicitly so overwriting a shorter file doesn't leave trailing bytes.
+        try {
+          await writable.truncate(0);
+        } catch {
+          // ignore
+        }
+      }
       try {
         await writable.write(bytesForIo);
         await writable.close();
@@ -210,7 +227,24 @@ export function installNetTraceUI(container: HTMLElement, backend: NetTraceBacke
             ? (bytes as Uint8Array<ArrayBuffer>)
             : (new Uint8Array(bytes) as Uint8Array<ArrayBuffer>);
         const handle = await openFileHandle(path, { create: true });
-        const writable = await handle.createWritable();
+        let writable: FileSystemWritableFileStream;
+        let truncateFallback = false;
+        try {
+          writable = await handle.createWritable({ keepExistingData: false });
+        } catch {
+          // Some implementations may not accept options; fall back to default.
+          writable = await handle.createWritable();
+          truncateFallback = true;
+        }
+        if (truncateFallback) {
+          // Defensive: some implementations behave like `keepExistingData=true` when the options bag is
+          // unsupported. Truncate explicitly so overwriting a shorter file doesn't leave trailing bytes.
+          try {
+            await writable.truncate(0);
+          } catch {
+            // ignore
+          }
+        }
         try {
           await writable.write(bytesForIo);
           await writable.close();
