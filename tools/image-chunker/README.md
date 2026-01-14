@@ -184,6 +184,19 @@ Verify 8 random chunks plus the final chunk:
   --chunk-sample 8
 ```
 
+For deterministic sampling (useful in CI), provide a seed:
+
+```bash
+./tools/image-chunker/target/release/aero-image-chunker verify \
+  --bucket disk-images \
+  --prefix images/<imageId>/<version>/ \
+  --endpoint http://localhost:9000 \
+  --force-path-style \
+  --region us-east-1 \
+  --chunk-sample 8 \
+  --chunk-sample-seed 123
+```
+
 ### Example: verify by image root + explicit version
 
 If you prefer to point at an image root prefix (`images/<imageId>/`), provide `--image-version`:

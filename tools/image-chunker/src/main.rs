@@ -228,6 +228,10 @@ struct VerifyArgs {
     /// Only verify N random chunks plus the final chunk (useful for quick smoke tests).
     #[arg(long, value_parser = clap::value_parser!(u64).range(1..))]
     chunk_sample: Option<u64>,
+
+    /// Seed for `--chunk-sample` randomization (enables deterministic sampling for CI).
+    #[arg(long)]
+    chunk_sample_seed: Option<u64>,
 }
 
 #[derive(Debug, Copy, Clone, ValueEnum)]
@@ -752,6 +756,7 @@ async fn verify(args: VerifyArgs) -> Result<()> {
         args.concurrency,
         args.retries,
         args.chunk_sample,
+        args.chunk_sample_seed,
     )
     .await?;
 
@@ -932,6 +937,7 @@ fn validate_sha256_hex(value: &str) -> Result<()> {
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn verify_chunks(
     s3: &S3Client,
     bucket: &str,
@@ -940,6 +946,7 @@ async fn verify_chunks(
     concurrency: usize,
     retries: usize,
     chunk_sample: Option<u64>,
+    chunk_sample_seed: Option<u64>,
 ) -> Result<()> {
     let chunk_count = manifest.chunk_count;
 
@@ -953,9 +960,14 @@ async fn verify_chunks(
     let indices: Option<Vec<u64>> = if verify_all {
         None
     } else {
+        let mut rng = match chunk_sample_seed {
+            Some(seed) => fastrand::Rng::with_seed(seed),
+            None => fastrand::Rng::new(),
+        };
         Some(select_sampled_chunk_indices(
             chunk_count,
             chunk_sample.unwrap(),
+            &mut rng,
         )?)
     };
 
@@ -1122,7 +1134,11 @@ async fn verify_chunks(
     Ok(())
 }
 
-fn select_sampled_chunk_indices(chunk_count: u64, sample: u64) -> Result<Vec<u64>> {
+fn select_sampled_chunk_indices(
+    chunk_count: u64,
+    sample: u64,
+    rng: &mut fastrand::Rng,
+) -> Result<Vec<u64>> {
     if chunk_count == 0 {
         return Ok(Vec::new());
     }
@@ -1151,7 +1167,7 @@ fn select_sampled_chunk_indices(chunk_count: u64, sample: u64) -> Result<Vec<u64
         let upper = j
             .checked_add(1)
             .ok_or_else(|| anyhow!("random sampling upper bound overflows u64"))?;
-        let t = fastrand::u64(0..upper);
+        let t = rng.u64(0..upper);
         if selected.contains(&t) {
             selected.insert(j);
         } else {
@@ -2296,7 +2312,8 @@ mod tests {
     fn sampled_chunk_indices_include_last_and_are_unique() -> Result<()> {
         let chunk_count = 100;
         let sample = 5;
-        let indices = select_sampled_chunk_indices(chunk_count, sample)?;
+        let mut rng = fastrand::Rng::with_seed(123);
+        let indices = select_sampled_chunk_indices(chunk_count, sample, &mut rng)?;
         assert_eq!(indices.len(), (sample + 1) as usize);
         assert_eq!(indices.last().copied(), Some(chunk_count - 1));
         assert!(
@@ -2307,6 +2324,19 @@ mod tests {
             indices.iter().all(|&idx| idx < chunk_count),
             "index out of range"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn sampled_chunk_indices_can_be_deterministic_with_seed() -> Result<()> {
+        let chunk_count = 123;
+        let sample = 8;
+
+        let mut rng1 = fastrand::Rng::with_seed(42);
+        let mut rng2 = fastrand::Rng::with_seed(42);
+        let a = select_sampled_chunk_indices(chunk_count, sample, &mut rng1)?;
+        let b = select_sampled_chunk_indices(chunk_count, sample, &mut rng2)?;
+        assert_eq!(a, b);
         Ok(())
     }
 }
