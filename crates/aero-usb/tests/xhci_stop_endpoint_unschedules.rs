@@ -1,7 +1,6 @@
 mod util;
 
 use aero_usb::xhci::context::{SlotContext, CONTEXT_SIZE};
-use aero_usb::xhci::regs;
 use aero_usb::xhci::trb::{CompletionCode, Trb, TrbType, TRB_LEN};
 use aero_usb::xhci::{regs, CommandCompletionCode, XhciController};
 use aero_usb::{ControlResponse, MemoryBus, SetupPacket, UsbDeviceModel, UsbInResult};
