@@ -8288,7 +8288,7 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
     }
   }
 #endif
- 
+
   auto res = std::make_unique<Resource>();
   res->handle = allocate_global_handle(dev->adapter);
   res->type = create_type_u32;

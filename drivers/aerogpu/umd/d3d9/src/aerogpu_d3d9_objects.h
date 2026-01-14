@@ -228,17 +228,20 @@ inline bool calc_texture2d_layout(
       const uint32_t blocks_h = std::max(1u, (h + 3u) / 4u);
 
       row_pitch = static_cast<uint64_t>(blocks_w) * block_bytes;
+      if (row_pitch == 0 || row_pitch > 0xFFFFFFFFull) {
+        return false;
+      }
       slice_pitch = row_pitch * blocks_h;
     } else {
       const uint32_t bpp = bytes_per_pixel(format);
       row_pitch = static_cast<uint64_t>(w) * bpp;
+      if (row_pitch == 0 || row_pitch > 0xFFFFFFFFull) {
+        return false;
+      }
       slice_pitch = row_pitch * h;
     }
 
-    if (row_pitch == 0 || slice_pitch == 0) {
-      return false;
-    }
-    if (row_pitch > 0xFFFFFFFFull || slice_pitch > 0xFFFFFFFFull) {
+    if (slice_pitch == 0 || slice_pitch > 0xFFFFFFFFull) {
       return false;
     }
 
@@ -316,17 +319,20 @@ inline bool calc_texture2d_mip_level_layout(
       const uint32_t blocks_h = std::max(1u, (h + 3u) / 4u);
 
       row_pitch = static_cast<uint64_t>(blocks_w) * block_bytes;
+      if (row_pitch == 0 || row_pitch > 0xFFFFFFFFull) {
+        return false;
+      }
       slice_pitch = row_pitch * blocks_h;
     } else {
       const uint32_t bpp = bytes_per_pixel(format);
       row_pitch = static_cast<uint64_t>(w) * bpp;
+      if (row_pitch == 0 || row_pitch > 0xFFFFFFFFull) {
+        return false;
+      }
       slice_pitch = row_pitch * h;
     }
 
-    if (row_pitch == 0 || slice_pitch == 0) {
-      return false;
-    }
-    if (row_pitch > 0xFFFFFFFFull || slice_pitch > 0xFFFFFFFFull) {
+    if (slice_pitch == 0 || slice_pitch > 0xFFFFFFFFull) {
       return false;
     }
 
