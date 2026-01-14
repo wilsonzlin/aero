@@ -104,6 +104,23 @@ describe("ipc/ring_buffer", () => {
     expect(ring.tryPop()).toBeNull();
   });
 
+  it("rejects negative payload lengths (defensive against caller bugs)", () => {
+    const ring = makeRing(16);
+    expect(
+      ring.tryPushWithWriterSpsc(-1, (dest) => {
+        dest.fill(0xaa);
+      }),
+    ).toBe(false);
+    expect(ring.tryPop()).toBeNull();
+
+    expect(
+      ring.tryPushWithWriter(-1, (dest) => {
+        dest.fill(0xbb);
+      }),
+    ).toBe(false);
+    expect(ring.tryPop()).toBeNull();
+  });
+
   it("can consume records without allocating a new payload buffer", () => {
     const ring = makeRing(64);
     expect(ring.tryPush(Uint8Array.of(1, 2, 3))).toBe(true);

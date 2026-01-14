@@ -192,7 +192,8 @@ export class RingBuffer {
    */
   tryPushWithWriter(payloadLen: number, writer: (dest: Uint8Array) => void): boolean {
     if (!Number.isFinite(payloadLen)) return false;
-    const lenRaw = Math.max(0, Math.floor(payloadLen));
+    const lenRaw = Math.floor(payloadLen);
+    if (lenRaw < 0) return false;
     if (lenRaw > MAX_PAYLOAD_LEN) return false;
     const len = lenRaw >>> 0;
     const recordSize = alignUp(4 + len, RECORD_ALIGN);
@@ -292,7 +293,8 @@ export class RingBuffer {
    */
   tryPushWithWriterSpsc(payloadLen: number, writer: (dest: Uint8Array) => void): boolean {
     if (!Number.isFinite(payloadLen)) return false;
-    const lenRaw = Math.max(0, Math.floor(payloadLen));
+    const lenRaw = Math.floor(payloadLen);
+    if (lenRaw < 0) return false;
     if (lenRaw > MAX_PAYLOAD_LEN) return false;
     const len = lenRaw >>> 0;
     const recordSize = alignUp(4 + len, RECORD_ALIGN);
