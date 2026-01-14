@@ -418,6 +418,10 @@ async function applyBootDisks(msg: SetBootDisksMessage): Promise<void> {
       (m as unknown as { attach_ide_secondary_master_iso_opfs_existing_and_set_overlay_ref?: unknown })
         .attach_ide_secondary_master_iso_opfs_existing_and_set_overlay_ref ??
       (m as unknown as { attach_ide_secondary_master_iso_opfs_existing?: unknown }).attach_ide_secondary_master_iso_opfs_existing ??
+      // Back-compat: some wasm builds expose install-media naming with an `_existing` suffix.
+      (m as unknown as { attach_install_media_iso_opfs_existing_and_set_overlay_ref?: unknown })
+        .attach_install_media_iso_opfs_existing_and_set_overlay_ref ??
+      (m as unknown as { attach_install_media_iso_opfs_existing?: unknown }).attach_install_media_iso_opfs_existing ??
       (m as unknown as { attach_install_media_iso_opfs_and_set_overlay_ref?: unknown }).attach_install_media_iso_opfs_and_set_overlay_ref ??
       (m as unknown as { attach_install_media_iso_opfs?: unknown }).attach_install_media_iso_opfs ??
       (m as unknown as { attach_install_media_opfs_iso?: unknown }).attach_install_media_opfs_iso;
