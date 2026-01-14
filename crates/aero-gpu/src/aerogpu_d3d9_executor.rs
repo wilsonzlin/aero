@@ -2972,6 +2972,39 @@ impl AerogpuD3d9Executor {
             };
 
             if source == aero_d3d9::runtime::ShaderCacheSource::Persistent {
+                let expected_stage_attr = match bytecode_stage {
+                    shader::ShaderStage::Vertex => "@vertex",
+                    shader::ShaderStage::Pixel => "@fragment",
+                };
+                let expected_fn_sig = match bytecode_stage {
+                    shader::ShaderStage::Vertex => "fn vs_main(",
+                    shader::ShaderStage::Pixel => "fn fs_main(",
+                };
+                if !wgsl.contains(expected_stage_attr) || !wgsl.contains(expected_fn_sig) {
+                    debug!(
+                        shader_handle,
+                        expected_stage_attr,
+                        expected_fn_sig,
+                        "cached WGSL is missing expected shader entry point; invalidating and retranslating"
+                    );
+                    if !invalidated_once {
+                        invalidated_once = true;
+                        let _ = self
+                            .persistent_shader_cache
+                            .invalidate(dxbc_bytes, flags.clone())
+                            .await;
+                        self.stats.set_d3d9_shader_cache_disabled(
+                            self.persistent_shader_cache.is_persistent_disabled(),
+                        );
+                        continue;
+                    }
+                    return self.create_shader_dxbc_in_memory(
+                        shader_handle,
+                        expected_stage,
+                        dxbc_bytes,
+                    );
+                }
+
                 let (wgsl_used_samplers_mask, wgsl_sampler_dim_key) =
                     derive_sampler_masks_from_wgsl(wgsl.as_str());
                 if wgsl_used_samplers_mask != reflection.used_samplers_mask
