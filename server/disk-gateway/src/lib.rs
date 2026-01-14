@@ -13,8 +13,8 @@ use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::header::{
     ACCEPT_RANGES, ACCESS_CONTROL_ALLOW_HEADERS, ACCESS_CONTROL_ALLOW_METHODS,
     ACCESS_CONTROL_ALLOW_ORIGIN, ACCESS_CONTROL_EXPOSE_HEADERS, ACCESS_CONTROL_MAX_AGE,
-    AUTHORIZATION, CACHE_CONTROL, CONTENT_LENGTH, CONTENT_RANGE, CONTENT_TYPE, ETAG, IF_NONE_MATCH,
-    IF_MODIFIED_SINCE, IF_RANGE, LAST_MODIFIED, ORIGIN, RANGE, VARY,
+    AUTHORIZATION, CACHE_CONTROL, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_RANGE, CONTENT_TYPE,
+    ETAG, IF_NONE_MATCH, IF_MODIFIED_SINCE, IF_RANGE, LAST_MODIFIED, ORIGIN, RANGE, VARY,
 };
 use axum::http::{HeaderMap, HeaderName, HeaderValue, Request, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -541,6 +541,11 @@ async fn disk_headers_middleware(
             HeaderValue::from_static("no-transform")
         },
     );
+    // Disk bytes are served as raw, deterministic offsets; never allow compression transforms.
+    if !resp.headers().contains_key(CONTENT_ENCODING) {
+        resp.headers_mut()
+            .insert(CONTENT_ENCODING, HeaderValue::from_static("identity"));
+    }
     resp.headers_mut().insert(
         HeaderName::from_static("cross-origin-resource-policy"),
         state.cfg.corp_policy.as_header_value(),
@@ -1435,6 +1440,14 @@ mod tests {
                 .to_str()
                 .unwrap(),
             "same-site"
+        );
+        assert_eq!(
+            resp.headers()
+                .get(CONTENT_ENCODING)
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "identity"
         );
         assert_eq!(
             resp.headers().get(CONTENT_RANGE).unwrap().to_str().unwrap(),
