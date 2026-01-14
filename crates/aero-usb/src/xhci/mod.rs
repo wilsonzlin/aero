@@ -368,6 +368,8 @@ impl XhciController {
                 let xecp_dwords = (regs::EXT_CAPS_OFFSET_BYTES / 4) & 0xffff;
                 xecp_dwords << 16
             }
+            regs::REG_DBOFF => regs::DBOFF_VALUE,
+            regs::REG_RTSOFF => regs::RTSOFF_VALUE,
             off if off >= regs::EXT_CAPS_OFFSET_BYTES as u64
                 && off < regs::CAPLENGTH_BYTES as u64 =>
             {

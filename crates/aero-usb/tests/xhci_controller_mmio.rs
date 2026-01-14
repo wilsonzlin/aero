@@ -71,6 +71,40 @@ fn xhci_controller_caplength_hciversion_reads() {
 }
 
 #[test]
+fn xhci_controller_dboff_rtsoff_are_plausible() {
+    let mut ctrl = XhciController::new();
+    let mut mem = PanicMem;
+
+    let dboff = ctrl.mmio_read(&mut mem, regs::REG_DBOFF, 4);
+    assert_ne!(dboff, 0, "DBOFF should be non-zero");
+    assert_eq!(dboff & 0x3, 0, "DBOFF must be 4-byte aligned (bits 1:0 reserved)");
+    assert!(
+        dboff < XhciController::MMIO_SIZE,
+        "DBOFF must point within the MMIO window"
+    );
+    assert!(
+        dboff as u64 >= u64::from(regs::CAPLENGTH_BYTES),
+        "DBOFF should not overlap the capability register block"
+    );
+
+    let rtsoff = ctrl.mmio_read(&mut mem, regs::REG_RTSOFF, 4);
+    assert_ne!(rtsoff, 0, "RTSOFF should be non-zero");
+    assert_eq!(
+        rtsoff & 0x1f,
+        0,
+        "RTSOFF must be 32-byte aligned (bits 4:0 reserved)"
+    );
+    assert!(
+        rtsoff < XhciController::MMIO_SIZE,
+        "RTSOFF must point within the MMIO window"
+    );
+    assert!(
+        rtsoff as u64 >= u64::from(regs::CAPLENGTH_BYTES),
+        "RTSOFF should not overlap the capability register block"
+    );
+}
+
+#[test]
 fn xhci_controller_run_triggers_dma_and_w1c_clears_irq() {
     let mut ctrl = XhciController::new();
     let mut mem = CountingMem::new(0x4000);
@@ -127,4 +161,3 @@ fn xhci_controller_snapshot_roundtrip_preserves_regs() {
     assert_eq!(restored.mmio_read(&mut mem, regs::REG_CRCR_LO, 4), 0x1234);
     assert!(restored.irq_level());
 }
-

@@ -13,6 +13,8 @@ pub const XHCI_MMIO_SIZE: u32 = 0x1000;
 pub const REG_CAPLENGTH_HCIVERSION: u64 = 0x00;
 pub const REG_HCSPARAMS1: u64 = 0x04;
 pub const REG_HCCPARAMS1: u64 = 0x10;
+pub const REG_DBOFF: u64 = 0x14;
+pub const REG_RTSOFF: u64 = 0x18;
 pub const REG_USBCMD: u64 = 0x40;
 pub const REG_USBSTS: u64 = 0x44;
 /// Command Ring Control Register (CRCR), 64-bit (low/high dwords).
@@ -97,6 +99,21 @@ pub const HCIVERSION_VALUE: u16 = 0x0100;
 
 /// DWORD0 value at offset 0x00 (CAPLENGTH + HCIVERSION).
 pub const CAPLENGTH_HCIVERSION: u32 = (HCIVERSION_VALUE as u32) << 16 | (CAPLENGTH_BYTES as u32);
+
+/// DBOFF register value (doorbell array base offset).
+///
+/// Real xHCI controllers place the doorbell array well after the operational registers; guests use
+/// this value to locate the doorbell MMIO region. The skeleton controller does not implement the
+/// doorbell array yet, but still exposes a realistic offset so guest drivers do not alias doorbell
+/// accesses onto capability registers.
+pub const DBOFF_VALUE: u32 = 0x2000;
+
+/// RTSOFF register value (runtime register base offset).
+///
+/// Guests use this value to locate the runtime registers (MFINDEX + interrupter blocks). The
+/// skeleton currently models only a subset of the architecture, but providing a stable runtime
+/// base avoids overlapping reads with capability registers.
+pub const RTSOFF_VALUE: u32 = 0x3000;
 
 // ---- Extended capabilities (xECP) ----
 
