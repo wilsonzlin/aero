@@ -1548,7 +1548,9 @@ async function applyBootDisks(msg: SetBootDisksMessage): Promise<void> {
           }
 
           const expectedSizeBytes =
-            typeof msg.hdd.sizeBytes === "number" && Number.isFinite(msg.hdd.sizeBytes) && msg.hdd.sizeBytes > 0
+            typeof msg.hdd.sizeBytes === "number" &&
+            Number.isSafeInteger(msg.hdd.sizeBytes) &&
+            msg.hdd.sizeBytes > 0
               ? BigInt(msg.hdd.sizeBytes)
               : undefined;
           try {

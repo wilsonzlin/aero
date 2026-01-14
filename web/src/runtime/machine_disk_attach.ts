@@ -159,7 +159,7 @@ export function planMachineBootDiskAttachment(meta: DiskImageMetadata, role: Mac
 async function attachHdd(machine: MachineHandle, plan: MachineBootDiskPlan, meta: DiskImageMetadata): Promise<void> {
   if (plan.format === "aerospar") {
     const expectedSizeBytes =
-      typeof meta.sizeBytes === "number" && Number.isFinite(meta.sizeBytes) && meta.sizeBytes > 0
+      typeof meta.sizeBytes === "number" && Number.isSafeInteger(meta.sizeBytes) && meta.sizeBytes > 0
         ? BigInt(meta.sizeBytes)
         : undefined;
     const aerosparOpenAndSetRef =
@@ -207,7 +207,7 @@ async function attachHdd(machine: MachineHandle, plan: MachineBootDiskPlan, meta
   }
 
   const expectedSizeBytes =
-    typeof meta.sizeBytes === "number" && Number.isFinite(meta.sizeBytes) && meta.sizeBytes > 0 ? BigInt(meta.sizeBytes) : undefined;
+    typeof meta.sizeBytes === "number" && Number.isSafeInteger(meta.sizeBytes) && meta.sizeBytes > 0 ? BigInt(meta.sizeBytes) : undefined;
   const setPrimaryCow =
     machine.set_primary_hdd_opfs_cow ??
     (machine as unknown as { setPrimaryHddOpfsCow?: unknown }).setPrimaryHddOpfsCow;
