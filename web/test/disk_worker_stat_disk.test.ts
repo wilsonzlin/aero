@@ -22,6 +22,20 @@ type Pending = { resolve: (v: unknown) => void; reject: (e: unknown) => void };
 const pending = new Map<number, Pending>();
 let nextRequestId = 1;
 
+function rehydrateWorkerError(raw: unknown, fallback: string): Error {
+  const message =
+    raw && typeof raw === "object" && typeof (raw as { message?: unknown }).message === "string" && (raw as { message: string }).message
+      ? (raw as { message: string }).message
+      : fallback;
+  const err = new Error(message);
+  if (raw && typeof raw === "object") {
+    const details = raw as { name?: unknown; stack?: unknown };
+    if (typeof details.name === "string" && details.name) err.name = details.name;
+    if (typeof details.stack === "string" && details.stack) err.stack = details.stack;
+  }
+  return err;
+}
+
 // Capture messages posted by the worker.
 (globalThis as unknown as { postMessage?: (msg: any) => void }).postMessage = (msg: any) => {
   if (!msg || msg.type !== "response" || typeof msg.requestId !== "number") return;
@@ -29,7 +43,7 @@ let nextRequestId = 1;
   if (!entry) return;
   pending.delete(msg.requestId);
   if (msg.ok) entry.resolve(msg.result);
-  else entry.reject(Object.assign(new Error(msg.error?.message || "disk_worker error"), msg.error));
+  else entry.reject(rehydrateWorkerError(msg.error, "disk_worker error"));
 };
 
 // Load the worker module after globals are in place.

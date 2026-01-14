@@ -134,7 +134,23 @@ test.describe("web import_convert pipeline (OPFS aerosparse)", () => {
           const msg = event.data as any;
           if (msg?.type === "result" && msg.requestId === requestId) {
             if (msg.ok) resolve(msg.manifest);
-            else reject(Object.assign(new Error(msg.error?.message || "convert failed"), msg.error));
+            else {
+              const raw = msg.error;
+              const message =
+                raw &&
+                typeof raw === "object" &&
+                typeof (raw as { message?: unknown }).message === "string" &&
+                (raw as { message: string }).message
+                  ? (raw as { message: string }).message
+                  : "convert failed";
+              const err = new Error(message);
+              if (raw && typeof raw === "object") {
+                const details = raw as { name?: unknown; stack?: unknown };
+                if (typeof details.name === "string" && details.name) err.name = details.name;
+                if (typeof details.stack === "string" && details.stack) err.stack = details.stack;
+              }
+              reject(err);
+            }
           }
         };
         worker.onerror = (ev) => reject(ev.error ?? new Error(ev.message));
@@ -297,7 +313,23 @@ test.describe("web import_convert pipeline (OPFS aerosparse)", () => {
           const msg = event.data as any;
           if (msg?.type === "result" && msg.requestId === requestId) {
             if (msg.ok) resolve(msg.manifest);
-            else reject(Object.assign(new Error(msg.error?.message || "convert failed"), msg.error));
+            else {
+              const raw = msg.error;
+              const message =
+                raw &&
+                typeof raw === "object" &&
+                typeof (raw as { message?: unknown }).message === "string" &&
+                (raw as { message: string }).message
+                  ? (raw as { message: string }).message
+                  : "convert failed";
+              const err = new Error(message);
+              if (raw && typeof raw === "object") {
+                const details = raw as { name?: unknown; stack?: unknown };
+                if (typeof details.name === "string" && details.name) err.name = details.name;
+                if (typeof details.stack === "string" && details.stack) err.stack = details.stack;
+              }
+              reject(err);
+            }
           }
         };
         worker.onerror = (ev) => reject(ev.error ?? new Error(ev.message));
