@@ -2918,6 +2918,13 @@ impl AerogpuD3d11Executor {
 
         self.validate_gs_hs_ds_emulation_capabilities()?;
 
+        // Tessellation emulation will eventually use a VS-as-compute prepass to populate HS control
+        // point inputs (see `runtime::tessellation::vs_as_compute`). The full HS/DS pipeline is not
+        // wired up yet, so keep this as an explicit marker.
+        if self.state.hs.is_some() || self.state.ds.is_some() {
+            todo!("tessellation (HS/DS) compute expansion is not implemented yet");
+        }
+
         let Some(next) = stream.iter.peek() else {
             return Ok(());
         };
