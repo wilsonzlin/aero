@@ -565,7 +565,7 @@ impl AerogpuCmdWriter {
         hs: AerogpuHandle,
         ds: AerogpuHandle,
     ) {
-        self.bind_shaders_ex_inner(vs, ps, cs, gs, hs, ds, /*reserved0=*/ 0);
+        self.bind_shaders_ex_inner([vs, ps, cs, gs, hs, ds], /*reserved0=*/ 0);
     }
 
     /// Bind shaders using the canonical append-only BIND_SHADERS ABI extension, while also
@@ -583,19 +583,14 @@ impl AerogpuCmdWriter {
         hs: AerogpuHandle,
         ds: AerogpuHandle,
     ) {
-        self.bind_shaders_ex_inner(vs, ps, cs, gs, hs, ds, /*reserved0=*/ gs);
+        self.bind_shaders_ex_inner([vs, ps, cs, gs, hs, ds], /*reserved0=*/ gs);
     }
 
     // Explicit argument list matches the on-wire shader handle fields.
     #[allow(clippy::too_many_arguments)]
     fn bind_shaders_ex_inner(
         &mut self,
-        vs: AerogpuHandle,
-        ps: AerogpuHandle,
-        cs: AerogpuHandle,
-        gs: AerogpuHandle,
-        hs: AerogpuHandle,
-        ds: AerogpuHandle,
+        [vs, ps, cs, gs, hs, ds]: [AerogpuHandle; 6],
         reserved0: u32,
     ) {
         use super::aerogpu_cmd::AerogpuCmdBindShaders;

@@ -24888,9 +24888,9 @@ fn cs_main() {
                 dummy_texture_view_2d: &exec.dummy_texture_view_2d,
                 dummy_texture_view_2d_array: &exec.dummy_texture_view_2d_array,
                 default_sampler: &exec.default_sampler,
+                internal_buffers: &[],
                 stage: ShaderStage::Hull,
                 stage_state: exec.bindings.stage(ShaderStage::Hull),
-                internal_buffers: &[],
             };
             let bound = provider
                 .srv_buffer(0)
