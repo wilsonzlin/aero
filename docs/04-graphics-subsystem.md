@@ -353,7 +353,7 @@ Canonical machine note:
 - `MachineConfig::enable_aerogpu` wires BAR1 VRAM (plus legacy VGA window aliasing / VBE compatibility mapping) and an MVP BAR0 register block (ABI/features, ring/fence + IRQ transport, scanout0/cursor + vblank registers) that is sufficient for detection/bring-up and basic pacing.
   Full AeroGPU command execution is not implemented in `aero-machine` yet (see the `MachineConfig::enable_aerogpu` docs in `crates/aero-machine/src/lib.rs`).
 - The MVP BAR0 MMIO surface + ring/fence/vblank/scanout implementation in the canonical machine lives in: `crates/aero-machine/src/aerogpu.rs`.
-- A more complete AeroGPU PCI device model + ring executor exists in `crates/aero-devices-gpu/` (with a legacy sandbox integration surface in `crates/emulator/src/devices/pci/aerogpu.rs`) and is not the canonical browser machine today.
+- A more complete AeroGPU PCI device model + ring executor exists in `crates/aero-devices-gpu/` (with a legacy sandbox integration surface in `crates/emulator/src/devices/pci/aerogpu.rs`), but it is not yet wired into the canonical browser machine (`crates/aero-machine`).
 
 ## How to validate (tests)
 
