@@ -122,7 +122,7 @@ fn generate_edid_preferred_mode_is_sane() {
     assert!((refresh - 60.0).abs() < 0.75, "refresh={refresh}");
 
     let range = parse_range_limits(&edid[90..108]).expect("missing range limits descriptor");
-    let required_pclk_10mhz = ((dtd.pixel_clock_hz + 9_999_999) / 10_000_000) as u8;
+    let required_pclk_10mhz = dtd.pixel_clock_hz.div_ceil(10_000_000) as u8;
     assert!(range.max_pixel_clock_10mhz >= required_pclk_10mhz);
     let h_khz = dtd.h_freq_khz();
     assert!(
@@ -154,7 +154,7 @@ fn generate_edid_synthesized_mode_is_sane() {
     assert!((refresh - 60.0).abs() < 1.0, "refresh={refresh}");
 
     let range = parse_range_limits(&edid[90..108]).expect("missing range limits descriptor");
-    let required_pclk_10mhz = ((dtd.pixel_clock_hz + 9_999_999) / 10_000_000) as u8;
+    let required_pclk_10mhz = dtd.pixel_clock_hz.div_ceil(10_000_000) as u8;
     assert!(range.max_pixel_clock_10mhz >= required_pclk_10mhz);
     let h_khz = dtd.h_freq_khz();
     assert!(
@@ -187,7 +187,7 @@ fn generate_edid_high_resolution_mode_is_sane() {
     assert!((refresh - 60.0).abs() < 0.75, "refresh={refresh}");
 
     let range = parse_range_limits(&edid[90..108]).expect("missing range limits descriptor");
-    let required_pclk_10mhz = ((dtd.pixel_clock_hz + 9_999_999) / 10_000_000) as u8;
+    let required_pclk_10mhz = dtd.pixel_clock_hz.div_ceil(10_000_000) as u8;
     assert!(range.max_pixel_clock_10mhz >= required_pclk_10mhz);
     let h_khz = dtd.h_freq_khz();
     assert!(

@@ -339,7 +339,7 @@ fn synthesize_dtd_bytes(timing: Timing) -> [u8; 18] {
     let v_sync_width: u32 = 6;
     let v_back_porch_min: u32 = 6;
     let min_v_blank = v_front_porch + v_sync_width + v_back_porch_min;
-    let mut v_blank = v_active.div_ceil(20).max(min_v_blank).min(0x0FFF);
+    let mut v_blank = v_active.div_ceil(20).clamp(min_v_blank, 0x0FFF);
 
     // If the synthesized total would exceed the maximum EDID DTD pixel clock,
     // reduce blanking until it fits (or fall back).
@@ -809,7 +809,7 @@ mod tests {
 
         // Range limits should include the preferred mode's pixel clock and scan rates.
         let range = parse_range_limits_descriptor(&edid[90..108]).expect("range limits missing");
-        let required_pclk_10mhz = ((dtd.pixel_clock_hz + 9_999_999) / 10_000_000) as u8;
+        let required_pclk_10mhz = dtd.pixel_clock_hz.div_ceil(10_000_000) as u8;
         assert!(
             range.max_pixel_clock_10mhz >= required_pclk_10mhz,
             "max_pixel_clock_10mhz={} required={required_pclk_10mhz}",
@@ -870,7 +870,7 @@ mod tests {
         );
 
         let range = parse_range_limits_descriptor(&edid[90..108]).expect("range limits missing");
-        let required_pclk_10mhz = ((dtd.pixel_clock_hz + 9_999_999) / 10_000_000) as u8;
+        let required_pclk_10mhz = dtd.pixel_clock_hz.div_ceil(10_000_000) as u8;
         assert!(range.max_pixel_clock_10mhz >= required_pclk_10mhz);
     }
 
