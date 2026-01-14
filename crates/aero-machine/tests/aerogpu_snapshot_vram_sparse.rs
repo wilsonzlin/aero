@@ -86,119 +86,153 @@ fn aerogpu_snapshot_vram_sparse_page_list_tracks_only_non_zero_pages() {
         .expect("expected AeroGPU BAR1 base");
     assert_ne!(bar1_base, 0);
 
-    // Clear the legacy VRAM snapshot prefix (V2 encoding snapshots at most `DEFAULT_VRAM_SIZE`).
-    //
-    // Use a large chunk size to keep this test fast; the goal is to normalize VRAM, not stress the
-    // MMIO path.
-    let zero_chunk = vec![0u8; 1024 * 1024];
-    let vram_len = aero_gpu_vga::DEFAULT_VRAM_SIZE;
-    for offset in (0..vram_len).step_by(zero_chunk.len()) {
-        let len = (vram_len - offset).min(zero_chunk.len());
-        vm.write_physical(bar1_base + offset as u64, &zero_chunk[..len]);
-    }
+    // We want to validate that VRAM snapshots are sparse without doing a huge BAR1 MMIO clear (BAR1
+    // writes are byte/word MMIO and are intentionally slow). Instead:
+    // 1) Take an initial snapshot and record which VRAM pages are already non-zero (e.g. BIOS text
+    //    buffer init).
+    // 2) Dirty a page that was previously zero.
+    // 3) Take another snapshot and ensure:
+    //    - the page count increases by exactly 1
+    //    - the new page's payload contains our bytes
+    //    - the snapshot payload stays small (i.e. doesn't dump the full 16MiB VRAM prefix)
 
-    // Dirty a single page at a stable offset within VRAM.
-    let dirty_offset = 0x1234usize;
-    let dirty_pattern = [0xA5u8; 16];
-    vm.write_physical(bar1_base + dirty_offset as u64, &dirty_pattern);
+    fn extract_aerogpu_device_entry(snapshot: &[u8]) -> (u16, Vec<u8>) {
+        let devices_section = {
+            let mut cursor = Cursor::new(snapshot);
+            let index = inspect_snapshot(&mut cursor).unwrap();
+            index
+                .sections
+                .iter()
+                .find(|s| s.id == SectionId::DEVICES)
+                .expect("snapshot should contain DEVICES section")
+                .to_owned()
+        };
 
-    let snap = vm.take_snapshot_full().unwrap();
+        let start = devices_section.offset as usize;
+        let end = start + devices_section.len as usize;
+        let mut r = Cursor::new(&snapshot[start..end]);
+        let count = read_u32_le(&mut r) as usize;
 
-    // Find the DEVICES section so we can inspect the AeroGPU device state payload size.
-    let devices_section = {
-        let mut cursor = Cursor::new(&snap);
-        let index = inspect_snapshot(&mut cursor).unwrap();
-        index
-            .sections
-            .iter()
-            .find(|s| s.id == SectionId::DEVICES)
-            .expect("snapshot should contain DEVICES section")
-            .to_owned()
-    };
-
-    let start = devices_section.offset as usize;
-    let end = start + devices_section.len as usize;
-    let mut r = Cursor::new(&snap[start..end]);
-    let count = read_u32_le(&mut r) as usize;
-
-    let mut aerogpu_entry = None;
-    for _ in 0..count {
-        let id = DeviceId(read_u32_le(&mut r));
-        let version = read_u16_le(&mut r);
-        let _flags = read_u16_le(&mut r);
-        let len = read_u64_le(&mut r) as usize;
-        let mut data = vec![0u8; len];
-        r.read_exact(&mut data).unwrap();
-        if id == DeviceId::AEROGPU {
-            aerogpu_entry = Some((version, data));
+        let mut aerogpu_entry = None;
+        for _ in 0..count {
+            let id = DeviceId(read_u32_le(&mut r));
+            let version = read_u16_le(&mut r);
+            let _flags = read_u16_le(&mut r);
+            let len = read_u64_le(&mut r) as usize;
+            let mut data = vec![0u8; len];
+            r.read_exact(&mut data).unwrap();
+            if id == DeviceId::AEROGPU {
+                aerogpu_entry = Some((version, data));
+            }
         }
+
+        aerogpu_entry.expect("snapshot should contain an AeroGPU device entry")
     }
 
-    let (version, data) = aerogpu_entry.expect("snapshot should contain an AeroGPU device entry");
-    assert_eq!(version, 2, "expected AeroGPU snapshot version v2");
+    fn parse_v2_page_list<'a>(
+        data: &'a [u8],
+        target_idx: Option<usize>,
+    ) -> (u32, u32, u32, Vec<bool>, Option<&'a [u8]>) {
+        let mut off = 0usize;
+        // Skip BAR0 regs (same ordering as `encode_aerogpu_snapshot_v2`).
+        let _abi_version = read_u32(data, &mut off);
+        let _features = read_u64(data, &mut off);
+        let _ring_gpa = read_u64(data, &mut off);
+        let _ring_size_bytes = read_u32(data, &mut off);
+        let _ring_control = read_u32(data, &mut off);
+        let _fence_gpa = read_u64(data, &mut off);
+        let _completed_fence = read_u64(data, &mut off);
+        let _irq_status = read_u32(data, &mut off);
+        let _irq_enable = read_u32(data, &mut off);
+        let _scanout0_enable = read_u32(data, &mut off);
+        let _scanout0_width = read_u32(data, &mut off);
+        let _scanout0_height = read_u32(data, &mut off);
+        let _scanout0_format = read_u32(data, &mut off);
+        let _scanout0_pitch_bytes = read_u32(data, &mut off);
+        let _scanout0_fb_gpa = read_u64(data, &mut off);
+        let _scanout0_vblank_seq = read_u64(data, &mut off);
+        let _scanout0_vblank_time_ns = read_u64(data, &mut off);
+        let _scanout0_vblank_period_ns = read_u32(data, &mut off);
+        let _cursor_enable = read_u32(data, &mut off);
+        let _cursor_x = read_u32(data, &mut off);
+        let _cursor_y = read_u32(data, &mut off);
+        let _cursor_hot_x = read_u32(data, &mut off);
+        let _cursor_hot_y = read_u32(data, &mut off);
+        let _cursor_width = read_u32(data, &mut off);
+        let _cursor_height = read_u32(data, &mut off);
+        let _cursor_format = read_u32(data, &mut off);
+        let _cursor_fb_gpa = read_u64(data, &mut off);
+        let _cursor_pitch_bytes = read_u32(data, &mut off);
+        let _wddm_scanout_active = read_u8(data, &mut off) != 0;
 
-    // V2 snapshots use a sparse page list for VRAM. Even with a 16MiB VRAM prefix, the payload
-    // should remain small when only one page is non-zero (no full VRAM dump).
+        let vram_len = read_u32(data, &mut off);
+        let page_size = read_u32(data, &mut off);
+        let page_count = read_u32(data, &mut off);
+
+        assert_ne!(vram_len, 0);
+        assert!(
+            (vram_len as usize) <= aero_gpu_vga::DEFAULT_VRAM_SIZE,
+            "unexpected VRAM snapshot length: {vram_len}"
+        );
+        assert_eq!(page_size, 4096, "unexpected VRAM snapshot page size");
+
+        let total_pages = (vram_len as usize + page_size as usize - 1) / page_size as usize;
+        let mut present = vec![false; total_pages];
+        let mut target_payload = None;
+
+        for _ in 0..page_count {
+            let idx = read_u32(data, &mut off) as usize;
+            let len = read_u32(data, &mut off) as usize;
+            assert!(idx < total_pages, "page index out of range");
+            assert!(len > 0 && len <= page_size as usize);
+            let end = off + len;
+            let payload = data.get(off..end).unwrap();
+            if Some(idx) == target_idx {
+                target_payload = Some(payload);
+            }
+            present[idx] = true;
+            off = end;
+        }
+
+        (vram_len, page_size, page_count, present, target_payload)
+    }
+
+    let snap0 = vm.take_snapshot_full().unwrap();
+    let (version0, data0) = extract_aerogpu_device_entry(&snap0);
+    assert_eq!(version0, 2, "expected AeroGPU snapshot version v2");
+
+    let (_vram_len0, page_size0, page_count0, present0, _payload0) =
+        parse_v2_page_list(&data0, None);
+
+    // Pick a page that wasn't present in the snapshot page list (i.e. all-zero).
+    let target_page_idx = present0
+        .iter()
+        .position(|&present| !present)
+        .expect("expected at least one zero VRAM page in the snapshotted prefix");
+
+    // Dirty the chosen page with a recognizable byte pattern.
+    let dirty_pattern = [0xA5u8; 16];
+    let dirty_gpa = bar1_base + (target_page_idx * page_size0 as usize) as u64;
+    vm.write_physical(dirty_gpa, &dirty_pattern);
+
+    let snap1 = vm.take_snapshot_full().unwrap();
+    let (version1, data1) = extract_aerogpu_device_entry(&snap1);
+    assert_eq!(version1, 2, "expected AeroGPU snapshot version v2");
+
+    // Ensure the payload is small enough to rule out "dump the whole 16MiB VRAM prefix".
     assert!(
-        data.len() < 64 * 1024,
+        data1.len() < 2 * 1024 * 1024,
         "expected sparse AeroGPU snapshot payload; got {} bytes",
-        data.len()
+        data1.len()
     );
 
-    // Decode the VRAM sparse header and ensure the page list contains only our dirty page.
-    let mut off = 0usize;
-    // BAR0 regs (same ordering as `encode_aerogpu_snapshot_v2`).
-    let _abi_version = read_u32(&data, &mut off);
-    let _features = read_u64(&data, &mut off);
-    let _ring_gpa = read_u64(&data, &mut off);
-    let _ring_size_bytes = read_u32(&data, &mut off);
-    let _ring_control = read_u32(&data, &mut off);
-    let _fence_gpa = read_u64(&data, &mut off);
-    let _completed_fence = read_u64(&data, &mut off);
-    let _irq_status = read_u32(&data, &mut off);
-    let _irq_enable = read_u32(&data, &mut off);
-    let _scanout0_enable = read_u32(&data, &mut off);
-    let _scanout0_width = read_u32(&data, &mut off);
-    let _scanout0_height = read_u32(&data, &mut off);
-    let _scanout0_format = read_u32(&data, &mut off);
-    let _scanout0_pitch_bytes = read_u32(&data, &mut off);
-    let _scanout0_fb_gpa = read_u64(&data, &mut off);
-    let _scanout0_vblank_seq = read_u64(&data, &mut off);
-    let _scanout0_vblank_time_ns = read_u64(&data, &mut off);
-    let _scanout0_vblank_period_ns = read_u32(&data, &mut off);
-    let _cursor_enable = read_u32(&data, &mut off);
-    let _cursor_x = read_u32(&data, &mut off);
-    let _cursor_y = read_u32(&data, &mut off);
-    let _cursor_hot_x = read_u32(&data, &mut off);
-    let _cursor_hot_y = read_u32(&data, &mut off);
-    let _cursor_width = read_u32(&data, &mut off);
-    let _cursor_height = read_u32(&data, &mut off);
-    let _cursor_format = read_u32(&data, &mut off);
-    let _cursor_fb_gpa = read_u64(&data, &mut off);
-    let _cursor_pitch_bytes = read_u32(&data, &mut off);
-    let _wddm_scanout_active = read_u8(&data, &mut off) != 0;
-
-    let vram_len = read_u32(&data, &mut off);
-    let page_size = read_u32(&data, &mut off);
-    let page_count = read_u32(&data, &mut off);
-
-    assert_ne!(vram_len, 0);
+    let (_vram_len1, _page_size1, page_count1, _present1, payload) =
+        parse_v2_page_list(&data1, Some(target_page_idx));
+    assert_eq!(page_count1, page_count0 + 1);
+    let payload = payload.expect("expected dirty page to appear in snapshot page list");
     assert!(
-        (vram_len as usize) <= aero_gpu_vga::DEFAULT_VRAM_SIZE,
-        "unexpected VRAM snapshot length: {vram_len}"
+        payload.len() >= dirty_pattern.len(),
+        "page payload too short"
     );
-    assert_eq!(page_size, 4096, "unexpected VRAM snapshot page size");
-    assert_eq!(page_count, 1, "expected exactly one non-zero VRAM page");
-
-    // Ensure the one page entry corresponds to the bytes we dirtied.
-    let idx = read_u32(&data, &mut off) as usize;
-    let len = read_u32(&data, &mut off) as usize;
-    assert_eq!(len, 4096);
-    assert_eq!(idx, dirty_offset / 4096);
-    let page_bytes = data.get(off..off + len).unwrap();
-    let in_page_off = dirty_offset % 4096;
-    assert_eq!(
-        &page_bytes[in_page_off..in_page_off + dirty_pattern.len()],
-        dirty_pattern
-    );
+    assert_eq!(&payload[..dirty_pattern.len()], dirty_pattern);
 }
