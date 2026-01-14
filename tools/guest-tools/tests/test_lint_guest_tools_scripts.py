@@ -33,6 +33,8 @@ def _synthetic_setup_text(
     include_check_mode_validate_cert_payload: bool = True,
     check_mode_extra_line: str | None = None,
     include_skipstorage_flag: bool = True,
+    include_skipstorage_validation_gate: bool = True,
+    include_skipstorage_preseed_gate: bool = True,
     include_storage_skip_marker: bool = True,
     include_cert_policy_gating: bool = True,
     include_cert_install_skip_policy: bool = True,
@@ -85,6 +87,28 @@ def _synthetic_setup_text(
 
     if include_skipstorage_flag:
         lines.append("/skipstorage")
+
+    if include_skipstorage_validation_gate:
+        lines.extend(
+            [
+                'if "%ARG_SKIP_STORAGE%"=="1" (',
+                "  rem skip storage INF validation",
+                ") else (",
+                "  call :validate_storage_service_infs || goto :fail",
+                ")",
+            ]
+        )
+
+    if include_skipstorage_preseed_gate:
+        lines.extend(
+            [
+                'if "%ARG_SKIP_STORAGE%"=="1" (',
+                "  call :skip_storage_preseed || goto :fail",
+                ") else (",
+                "  call :preseed_storage_boot || goto :fail",
+                ")",
+            ]
+        )
 
     if include_storage_skip_marker:
         lines.extend(
@@ -233,6 +257,46 @@ class LintGuestToolsScriptsTests(unittest.TestCase):
             self.assertTrue(
                 any("/skipstorage" in e for e in errs),
                 msg="expected missing /skipstorage error. Errors:\n" + "\n".join(errs),
+            )
+
+    def test_linter_fails_when_skipstorage_does_not_gate_storage_validation(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="aero-guest-tools-lint-") as tmp:
+            tmp_path = Path(tmp)
+            setup_cmd = tmp_path / "setup.cmd"
+            uninstall_cmd = tmp_path / "uninstall.cmd"
+            verify_ps1 = tmp_path / "verify.ps1"
+
+            setup_cmd.write_text(_synthetic_setup_text(include_skipstorage_validation_gate=False), encoding="utf-8")
+            uninstall_cmd.write_text(_synthetic_uninstall_text(), encoding="utf-8")
+            verify_ps1.write_text(_synthetic_verify_text(), encoding="utf-8")
+
+            errs = lint_guest_tools_scripts.lint_files(
+                setup_cmd=setup_cmd, uninstall_cmd=uninstall_cmd, verify_ps1=verify_ps1
+            )
+            self.assertTrue(errs, msg="expected lint errors, got none")
+            self.assertTrue(
+                any("storage INF validation" in e for e in errs),
+                msg="expected missing skipstorage validation gate error. Errors:\n" + "\n".join(errs),
+            )
+
+    def test_linter_fails_when_skipstorage_does_not_gate_storage_preseed(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="aero-guest-tools-lint-") as tmp:
+            tmp_path = Path(tmp)
+            setup_cmd = tmp_path / "setup.cmd"
+            uninstall_cmd = tmp_path / "uninstall.cmd"
+            verify_ps1 = tmp_path / "verify.ps1"
+
+            setup_cmd.write_text(_synthetic_setup_text(include_skipstorage_preseed_gate=False), encoding="utf-8")
+            uninstall_cmd.write_text(_synthetic_uninstall_text(), encoding="utf-8")
+            verify_ps1.write_text(_synthetic_verify_text(), encoding="utf-8")
+
+            errs = lint_guest_tools_scripts.lint_files(
+                setup_cmd=setup_cmd, uninstall_cmd=uninstall_cmd, verify_ps1=verify_ps1
+            )
+            self.assertTrue(errs, msg="expected lint errors, got none")
+            self.assertTrue(
+                any("boot-critical storage pre-seeding" in e for e in errs),
+                msg="expected missing skipstorage preseed gate error. Errors:\n" + "\n".join(errs),
             )
 
     def test_linter_fails_when_setup_missing_check_mode(self) -> None:

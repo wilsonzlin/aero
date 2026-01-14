@@ -376,6 +376,22 @@ def lint_files(*, setup_cmd: Path, uninstall_cmd: Path, verify_ps1: Path) -> Lis
             predicate=_regex(r"/skipstorage\b"),
         ),
         Invariant(
+            description="/skipstorage gates virtio-blk storage INF validation (setup does not require packaged storage driver)",
+            expected_hint='If "%ARG_SKIP_STORAGE%"=="1" (...) else ( call :validate_storage_service_infs ... )',
+            predicate=_regex(
+                r'if\s+"%ARG_SKIP_STORAGE%"\s*==\s*"1"\s*\([\s\S]{0,2000}?else\s*\([\s\S]{0,2000}?call\s+:?validate_storage_service_infs\b',
+                flags=re.IGNORECASE | re.MULTILINE | re.DOTALL,
+            ),
+        ),
+        Invariant(
+            description="/skipstorage gates boot-critical storage pre-seeding (skips preseed_storage_boot)",
+            expected_hint='If "%ARG_SKIP_STORAGE%"=="1" ( call :skip_storage_preseed ... ) else ( call :preseed_storage_boot ... )',
+            predicate=_regex(
+                r'if\s+"%ARG_SKIP_STORAGE%"\s*==\s*"1"\s*\([\s\S]{0,2000}?call\s+:?skip_storage_preseed\b[\s\S]{0,2000}?else\s*\([\s\S]{0,2000}?call\s+:?preseed_storage_boot\b',
+                flags=re.IGNORECASE | re.MULTILINE | re.DOTALL,
+            ),
+        ),
+        Invariant(
             description="Writes storage preseed skip marker file when /skipstorage is used",
             expected_hint='storage-preseed.skipped.txt (written via > "%STATE_STORAGE_SKIPPED%" ...)',
             predicate=lambda text: (
