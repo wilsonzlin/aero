@@ -3211,8 +3211,13 @@ def main() -> int:
         )
         # First line: machine-readable JSON argv array.
         print(json.dumps(qemu_args, separators=(",", ":")))
-        # Second line: best-effort shell-escaped string (POSIX quoting).
-        print(" ".join(shlex.quote(str(a)) for a in qemu_args))
+        # Second line: best-effort single-line command for copy/paste.
+        # - POSIX: shlex.quote for a shell-safe argv reconstruction.
+        # - Windows: list2cmdline for CreateProcess/cmd.exe-style quoting.
+        if os.name == "nt":
+            print(subprocess.list2cmdline([str(a) for a in qemu_args]))
+        else:
+            print(" ".join(shlex.quote(str(a)) for a in qemu_args))
         return 0
 
     http_log_path: Optional[Path] = None
