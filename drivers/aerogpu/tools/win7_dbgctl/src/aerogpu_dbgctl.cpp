@@ -1365,8 +1365,6 @@ static NTSTATUS SendAerogpuEscape(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter,
   return SendAerogpuEscapeEx(f, hAdapter, buf, bufSize, 0);
 }
 
-static uint32_t MinU32(uint32_t a, uint32_t b) { return (a < b) ? a : b; }
-
 static bool CreateEmptyFile(const wchar_t *path) {
   if (!path || path[0] == 0) {
     return false;
@@ -1378,98 +1376,6 @@ static bool CreateEmptyFile(const wchar_t *path) {
   }
   fclose(fp);
   return true;
-}
-
-static bool DumpGpaToFile(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint64_t gpa, uint32_t sizeBytes,
-                          const wchar_t *path) {
-  if (!path || path[0] == 0) {
-    return false;
-  }
-  if (sizeBytes == 0) {
-    return CreateEmptyFile(path);
-  }
-
-  FILE *fp = _wfopen(path, L"wb");
-  if (!fp) {
-    fwprintf(stderr, L"Failed to open output file: %s (errno=%d)\n", path, errno);
-    return false;
-  }
-
-  bool ok = false;
-  uint32_t done = 0;
-  while (done < sizeBytes) {
-    const uint32_t chunk = MinU32(sizeBytes - done, (uint32_t)AEROGPU_DBGCTL_READ_GPA_MAX_BYTES);
-    const uint64_t cur = gpa + (uint64_t)done;
-    if (cur < gpa) {
-      fwprintf(stderr, L"dump-gpa: address overflow\n");
-      goto cleanup;
-    }
-
-    aerogpu_escape_read_gpa_inout io;
-    ZeroMemory(&io, sizeof(io));
-    io.hdr.version = AEROGPU_ESCAPE_VERSION;
-    io.hdr.op = AEROGPU_ESCAPE_OP_READ_GPA;
-    io.hdr.size = sizeof(io);
-    io.hdr.reserved0 = 0;
-    io.gpa = (aerogpu_escape_u64)cur;
-    io.size_bytes = (aerogpu_escape_u32)chunk;
-    io.reserved0 = 0;
-    io.status = (aerogpu_escape_u32)STATUS_INVALID_PARAMETER;
-    io.bytes_copied = 0;
-
-    NTSTATUS st = SendAerogpuEscape(f, hAdapter, &io, sizeof(io));
-    if (!NT_SUCCESS(st)) {
-      PrintNtStatus(L"D3DKMTEscape(read-gpa) failed", f, st);
-      if (st == STATUS_NOT_SUPPORTED) {
-        PrintReadGpaNotSupportedHint(NULL);
-      }
-      goto cleanup;
-    }
-
-    const NTSTATUS op = (NTSTATUS)io.status;
-    uint32_t copied = io.bytes_copied;
-    if (copied > chunk) {
-      copied = chunk;
-    }
-    if (!NT_SUCCESS(op)) {
-      if (op == STATUS_PARTIAL_COPY) {
-        PrintNtStatus(L"read-gpa partial copy", f, op);
-      } else {
-        PrintNtStatus(L"read-gpa operation failed", f, op);
-      }
-      if (op == STATUS_NOT_SUPPORTED) {
-        PrintReadGpaNotSupportedHint(NULL);
-      }
-      goto cleanup;
-    }
-    if (copied != chunk) {
-      fwprintf(stderr,
-               L"read-gpa short read: gpa=0x%I64x requested=%lu got=%lu\n",
-               (unsigned long long)cur,
-               (unsigned long)chunk,
-               (unsigned long)copied);
-      goto cleanup;
-    }
-
-    if (copied != 0 && fwrite(io.data, 1, copied, fp) != copied) {
-      fwprintf(stderr, L"Failed to write output file: %s (errno=%d)\n", path, errno);
-      goto cleanup;
-    }
-
-    done += chunk;
-  }
-
-  ok = true;
-
-cleanup:
-  if (fclose(fp) != 0 && ok) {
-    fwprintf(stderr, L"Failed to close output file: %s (errno=%d)\n", path, errno);
-    ok = false;
-  }
-  if (!ok) {
-    BestEffortDeleteOutputFile(path);
-  }
-  return ok;
 }
 
 typedef struct QueryAdapterInfoThreadCtx {
@@ -6330,7 +6236,7 @@ static int DumpGpaRangeToFile(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uin
       // We made some progress but did not satisfy the request; treat as failure so callers
       // don't mistakenly interpret the output as complete.
       PrintNtStatus(L"read-gpa partial copy", f, op);
-      rc = 2;
+      rc = 3;
       goto cleanup;
     }
   }
@@ -7519,8 +7425,9 @@ static int DoReadGpa(const D3DKMT_FUNCS *f,
                      const wchar_t *outPath,
                      bool force) {
   if (outPath && *outPath) {
-    if (!DumpGpaToFile(f, hAdapter, gpa, sizeBytes, outPath)) {
-      return 2;
+    const int dumpRc = DumpGpaRangeToFile(f, hAdapter, gpa, (uint64_t)sizeBytes, outPath, NULL);
+    if (dumpRc != 0) {
+      return dumpRc;
     }
     wprintf(L"Wrote %lu bytes from GPA 0x%I64x to %s\n", (unsigned long)sizeBytes, (unsigned long long)gpa, outPath);
     return 0;
