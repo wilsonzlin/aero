@@ -246,6 +246,8 @@ This section describes a high-level pipeline for taking an uploaded disk image a
 
 This repo includes a reference publisher CLI at [`tools/image-chunker/`](../tools/image-chunker/) (`aero-image-chunker publish`) that implements this pipeline for S3-compatible object stores (AWS S3, MinIO, etc).
 
+For CI and deployment validation, the same tool also provides `aero-image-chunker verify` to re-download a published `manifest.json` + `chunks/*.bin` and validate schema, chunk sizes, and optional per-chunk checksums end-to-end.
+
 ### 3.1 Pipeline steps
 
 1. **Ingest disk image**
