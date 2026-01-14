@@ -188,9 +188,16 @@ configuration.
   - Guest marker (example): `AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS|irq_mode=msix|irq_message_count=2|msix_config_vector=0|msix_queue_vector=1`
   - Host marker: `AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_IRQ|PASS|irq_mode=msix|irq_message_count=2|msix_config_vector=0|msix_queue_vector=1`
 - This host marker is **diagnostic only** (it does not currently affect overall PASS/FAIL).
-- Newer guest selftest binaries also emit a dedicated MSI-X routing marker for virtio-input:
-  - Guest marker: `AERO_VIRTIO_SELFTEST|TEST|virtio-input-msix|PASS/FAIL/SKIP|mode=msix|messages=...|mapping=...|...`
-  - Host marker: `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_MSIX|PASS/FAIL/SKIP|mode=...|messages=...|mapping=...|...`
+- Newer guest selftest binaries also emit dedicated MSI-X routing markers; the harness mirrors them into stable host markers:
+  - virtio-blk:
+    - Guest marker: `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-msix|PASS/FAIL/SKIP|mode=...|messages=...|config_vector=...|queue_vector=...`
+    - Host marker: `AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_MSIX|PASS/FAIL/SKIP|mode=...|messages=...|config_vector=...|queue_vector=...`
+  - virtio-snd:
+    - Guest marker: `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-msix|PASS/FAIL/SKIP|mode=...|messages=...|config_vector=...|queue0_vector=...|...`
+    - Host marker: `AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_MSIX|PASS/FAIL/SKIP|mode=...|messages=...|config_vector=...|queue0_vector=...|...`
+  - virtio-input:
+    - Guest marker: `AERO_VIRTIO_SELFTEST|TEST|virtio-input-msix|PASS/FAIL/SKIP|mode=...|messages=...|mapping=...|...`
+    - Host marker: `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_MSIX|PASS/FAIL/SKIP|mode=...|messages=...|mapping=...|...`
 
 To intentionally exercise MSI-X paths (and optionally **require** MSI-X):
 

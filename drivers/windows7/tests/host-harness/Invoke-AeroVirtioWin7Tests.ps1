@@ -2423,6 +2423,138 @@ function Try-EmitAeroVirtioInputMsixMarker {
   Write-Host $out
 }
 
+function Try-EmitAeroVirtioBlkMsixMarker {
+  param(
+    [Parameter(Mandatory = $true)] [string]$Tail,
+    # Optional: if provided, fall back to parsing the full serial log when the rolling tail buffer does not
+    # contain the marker (e.g. because the tail was truncated).
+    [Parameter(Mandatory = $false)] [string]$SerialLogPath = ""
+  )
+
+  $prefix = "AERO_VIRTIO_SELFTEST|TEST|virtio-blk-msix|"
+  $line = Try-ExtractLastAeroMarkerLine -Tail $Tail -Prefix $prefix -SerialLogPath $SerialLogPath
+  if ($null -eq $line) { return }
+
+  $toks = $line.Split("|")
+
+  $status = "INFO"
+  foreach ($t in $toks) {
+    $tt = $t.Trim()
+    if ($tt -eq "FAIL") { $status = "FAIL"; break }
+    if ($tt -eq "PASS") { $status = "PASS"; break }
+    if ($tt -eq "SKIP") { $status = "SKIP"; break }
+    if ($tt -eq "INFO") { $status = "INFO" }
+  }
+
+  $fields = @{}
+  foreach ($tok in $toks) {
+    $idx = $tok.IndexOf("=")
+    if ($idx -le 0) { continue }
+    $k = $tok.Substring(0, $idx).Trim()
+    $v = $tok.Substring($idx + 1).Trim()
+    if (-not [string]::IsNullOrEmpty($k)) {
+      $fields[$k] = $v
+    }
+  }
+
+  $out = "AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_MSIX|$status"
+
+  # Keep ordering stable for log scraping.
+  $ordered = @(
+    "mode",
+    "messages",
+    "config_vector",
+    "queue_vector",
+    "returned_len",
+    "reason",
+    "err"
+  )
+  $orderedSet = @{}
+  foreach ($k in $ordered) { $orderedSet[$k] = $true }
+
+  foreach ($k in $ordered) {
+    if ($fields.ContainsKey($k)) {
+      $out += "|$k=$(Sanitize-AeroMarkerValue $fields[$k])"
+    }
+  }
+
+  foreach ($k in ($fields.Keys | Where-Object { (-not $orderedSet.ContainsKey($_)) } | Sort-Object)) {
+    $out += "|$k=$(Sanitize-AeroMarkerValue $fields[$k])"
+  }
+
+  Write-Host $out
+}
+
+function Try-EmitAeroVirtioSndMsixMarker {
+  param(
+    [Parameter(Mandatory = $true)] [string]$Tail,
+    # Optional: if provided, fall back to parsing the full serial log when the rolling tail buffer does not
+    # contain the marker (e.g. because the tail was truncated).
+    [Parameter(Mandatory = $false)] [string]$SerialLogPath = ""
+  )
+
+  $prefix = "AERO_VIRTIO_SELFTEST|TEST|virtio-snd-msix|"
+  $line = Try-ExtractLastAeroMarkerLine -Tail $Tail -Prefix $prefix -SerialLogPath $SerialLogPath
+  if ($null -eq $line) { return }
+
+  $toks = $line.Split("|")
+
+  $status = "INFO"
+  foreach ($t in $toks) {
+    $tt = $t.Trim()
+    if ($tt -eq "FAIL") { $status = "FAIL"; break }
+    if ($tt -eq "PASS") { $status = "PASS"; break }
+    if ($tt -eq "SKIP") { $status = "SKIP"; break }
+    if ($tt -eq "INFO") { $status = "INFO" }
+  }
+
+  $fields = @{}
+  foreach ($tok in $toks) {
+    $idx = $tok.IndexOf("=")
+    if ($idx -le 0) { continue }
+    $k = $tok.Substring(0, $idx).Trim()
+    $v = $tok.Substring($idx + 1).Trim()
+    if (-not [string]::IsNullOrEmpty($k)) {
+      $fields[$k] = $v
+    }
+  }
+
+  $out = "AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_MSIX|$status"
+
+  # Keep ordering stable for log scraping.
+  $ordered = @(
+    "mode",
+    "messages",
+    "config_vector",
+    "queue0_vector",
+    "queue1_vector",
+    "queue2_vector",
+    "queue3_vector",
+    "interrupts",
+    "dpcs",
+    "drain0",
+    "drain1",
+    "drain2",
+    "drain3",
+    "reason",
+    "err"
+  )
+  $orderedSet = @{}
+  foreach ($k in $ordered) { $orderedSet[$k] = $true }
+
+  foreach ($k in $ordered) {
+    if ($fields.ContainsKey($k)) {
+      $out += "|$k=$(Sanitize-AeroMarkerValue $fields[$k])"
+    }
+  }
+
+  foreach ($k in ($fields.Keys | Where-Object { (-not $orderedSet.ContainsKey($_)) } | Sort-Object)) {
+    $out += "|$k=$(Sanitize-AeroMarkerValue $fields[$k])"
+  }
+
+  Write-Host $out
+}
+
 function Try-EmitAeroVirtioSndMarker {
   param(
     [Parameter(Mandatory = $true)] [string]$Tail,
@@ -5045,6 +5177,7 @@ try {
   }
 
   Try-EmitAeroVirtioBlkIrqMarker -Tail $result.Tail -SerialLogPath $SerialLogPath
+  Try-EmitAeroVirtioBlkMsixMarker -Tail $result.Tail -SerialLogPath $SerialLogPath
   Try-EmitAeroVirtioBlkIoMarker -Tail $result.Tail -SerialLogPath $SerialLogPath
   Try-EmitAeroVirtioBlkRecoveryMarker -Tail $result.Tail -SerialLogPath $SerialLogPath
   Try-EmitAeroVirtioNetLargeMarker -Tail $result.Tail -SerialLogPath $SerialLogPath
@@ -5054,6 +5187,7 @@ try {
   Try-EmitAeroVirtioIrqMarkerFromTestMarker -Tail $result.Tail -Device "virtio-snd" -HostMarker "VIRTIO_SND_IRQ" -SerialLogPath $SerialLogPath
   Try-EmitAeroVirtioIrqMarkerFromTestMarker -Tail $result.Tail -Device "virtio-input" -HostMarker "VIRTIO_INPUT_IRQ" -SerialLogPath $SerialLogPath
   Try-EmitAeroVirtioInputMsixMarker -Tail $result.Tail -SerialLogPath $SerialLogPath
+  Try-EmitAeroVirtioSndMsixMarker -Tail $result.Tail -SerialLogPath $SerialLogPath
   Try-EmitAeroVirtioSndMarker -Tail $result.Tail -SerialLogPath $SerialLogPath
   Try-EmitAeroVirtioSndCaptureMarker -Tail $result.Tail -SerialLogPath $SerialLogPath
   Try-EmitAeroVirtioSndEventqMarker -Tail $result.Tail -SerialLogPath $SerialLogPath

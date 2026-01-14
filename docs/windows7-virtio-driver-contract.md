@@ -997,9 +997,16 @@ Harness validation (non-normative, QEMU):
   host-side marker (for log scraping / diagnostics):
   - `AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_IRQ|PASS/FAIL/INFO|irq_mode=<intx|msi|msix>|irq_message_count=<n>|msix_config_vector=0x....|msix_queue_vector=0x....`
   - Additional optional fields may also appear (e.g. `irq_vectors`, `msi_vector`) depending on what the guest reports.
-- The harness also mirrors the dedicated virtio-input MSI-X routing marker (when present):
-  - Guest: `AERO_VIRTIO_SELFTEST|TEST|virtio-input-msix|PASS/FAIL/SKIP|mode=...|messages=...|mapping=...|...`
-  - Host: `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_MSIX|PASS/FAIL/SKIP|mode=...|messages=...|mapping=...|...`
+- The harness also mirrors dedicated `virtio-*-msix` markers into stable host-side markers (when present):
+  - virtio-blk:
+    - Guest: `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-msix|PASS/FAIL/SKIP|mode=...|messages=...|config_vector=...|queue_vector=...`
+    - Host: `AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_MSIX|PASS/FAIL/SKIP|mode=...|messages=...|config_vector=...|queue_vector=...`
+  - virtio-snd:
+    - Guest: `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-msix|PASS/FAIL/SKIP|mode=...|messages=...|config_vector=...|queue0_vector=...|...`
+    - Host: `AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_MSIX|PASS/FAIL/SKIP|mode=...|messages=...|config_vector=...|queue0_vector=...|...`
+  - virtio-input:
+    - Guest: `AERO_VIRTIO_SELFTEST|TEST|virtio-input-msix|PASS/FAIL/SKIP|mode=...|messages=...|mapping=...|...`
+    - Host: `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_MSIX|PASS/FAIL/SKIP|mode=...|messages=...|mapping=...|...`
 - It may also mirror the generic `irq_*` fields on other per-test markers into stable per-device host markers:
   - `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_IRQ|PASS/FAIL/INFO|irq_mode=...|irq_message_count=...|...`
   - `AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_IRQ|PASS/FAIL/INFO|irq_mode=...|irq_message_count=...|...`
