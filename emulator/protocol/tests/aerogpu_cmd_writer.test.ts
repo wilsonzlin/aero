@@ -38,7 +38,7 @@ import {
   AerogpuShaderStage,
   AerogpuShaderStageEx,
   alignUp,
-  decodeCmdBindShadersPayload,
+  decodeCmdBindShadersPayloadFromPacket,
   decodeCmdDispatchPayload,
   decodeCmdSetConstantBuffersPayload,
   decodeCmdSetSamplersPayload,
@@ -578,7 +578,11 @@ test("AerogpuCmdWriter emits BIND_SHADERS extended packet with trailing gs/hs/ds
   assert.equal(view.getUint32(pkt0 + AEROGPU_CMD_BIND_SHADERS_SIZE + 4, true), 5);
   assert.equal(view.getUint32(pkt0 + AEROGPU_CMD_BIND_SHADERS_SIZE + 8, true), 6);
 
-  const decoded = decodeCmdBindShadersPayload(bytes, pkt0);
+  const decoded = decodeCmdBindShadersPayloadFromPacket({
+    opcode: AerogpuCmdOpcode.BindShaders,
+    sizeBytes: view.getUint32(pkt0 + AEROGPU_CMD_HDR_OFF_SIZE_BYTES, true),
+    payload: bytes.subarray(pkt0 + AEROGPU_CMD_HDR_SIZE, pkt0 + AEROGPU_CMD_BIND_SHADERS_SIZE + 12),
+  });
   assert.equal(decoded.vs, 1);
   assert.equal(decoded.ps, 2);
   assert.equal(decoded.cs, 3);
