@@ -10,15 +10,26 @@ use aero_d3d11::runtime::expansion_scratch::{
 #[test]
 fn expansion_scratch_offsets_are_disjoint_across_frames_and_wrap() {
     pollster::block_on(async {
+        let test_name = concat!(
+            module_path!(),
+            "::expansion_scratch_offsets_are_disjoint_across_frames_and_wrap"
+        );
         let exec = match AerogpuD3d11Executor::new_for_tests().await {
             Ok(exec) => exec,
             Err(e) => {
-                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                common::skip_or_panic(test_name, &format!("wgpu unavailable ({e:#})"));
                 return;
             }
         };
 
         let device = exec.device();
+        if !exec.caps().supports_compute
+            || !exec.caps().supports_indirect_execution
+            || device.limits().max_storage_buffers_per_shader_stage == 0
+        {
+            common::skip_or_panic(test_name, "compute/storage buffers/indirect execution unsupported");
+            return;
+        }
 
         let mut scratch = ExpansionScratchAllocator::new(ExpansionScratchDescriptor {
             label: Some("expansion_scratch test"),
@@ -93,15 +104,23 @@ fn expansion_scratch_offsets_are_disjoint_across_frames_and_wrap() {
 #[test]
 fn expansion_scratch_grows_when_segment_is_full() {
     pollster::block_on(async {
+        let test_name = concat!(module_path!(), "::expansion_scratch_grows_when_segment_is_full");
         let exec = match AerogpuD3d11Executor::new_for_tests().await {
             Ok(exec) => exec,
             Err(e) => {
-                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                common::skip_or_panic(test_name, &format!("wgpu unavailable ({e:#})"));
                 return;
             }
         };
 
         let device = exec.device();
+        if !exec.caps().supports_compute
+            || !exec.caps().supports_indirect_execution
+            || device.limits().max_storage_buffers_per_shader_stage == 0
+        {
+            common::skip_or_panic(test_name, "compute/storage buffers/indirect execution unsupported");
+            return;
+        }
 
         // Keep the segment small so we can deterministically trigger growth without allocating huge
         // buffers on test adapters.
