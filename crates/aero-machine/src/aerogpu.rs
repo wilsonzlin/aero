@@ -1949,13 +1949,8 @@ fn capture_alloc_table(
     if desc.alloc_table_gpa == 0 || desc.alloc_table_size_bytes == 0 {
         return None;
     }
-    if desc
-        .alloc_table_gpa
-        .checked_add(u64::from(desc.alloc_table_size_bytes))
-        .is_none()
-    {
-        return None;
-    }
+    desc.alloc_table_gpa
+        .checked_add(u64::from(desc.alloc_table_size_bytes))?;
 
     let header_size = ring::AerogpuAllocTableHeader::SIZE_BYTES as u32;
     if desc.alloc_table_size_bytes < header_size {

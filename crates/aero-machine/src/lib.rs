@@ -5452,7 +5452,7 @@ impl Machine {
         // Detect BAR1-backed surfaces and read directly from `AeroGpuDevice.vram` instead.
         let bar1_base = self.aerogpu_bar1_base();
         let bar1_end = bar1_base.and_then(|base| {
-            base.checked_add(aero_devices::pci::profile::AEROGPU_VRAM_SIZE as u64)
+            base.checked_add(aero_devices::pci::profile::AEROGPU_VRAM_SIZE)
         });
 
         let scanout_row_bytes = || -> Option<u64> {
