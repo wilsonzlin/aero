@@ -220,6 +220,20 @@ typedef struct aerogpu_escape_query_perf_out {
    * - Bit 1: vblank snapshot fields are valid (device supports vblank).
    */
   aerogpu_escape_u32 flags;
+
+  /*
+   * Pending Render/Present meta handle bookkeeping (appended).
+   *
+   * These counters reflect the current size of the KMD's PendingMetaHandles list
+   * (meta handles produced by DxgkDdiRender/DxgkDdiPresent and consumed by
+   * DxgkDdiSubmitCommand).
+   *
+   * The KMD enforces hard caps (count + bytes) on this backlog to avoid unbounded
+   * nonpaged memory growth under pathological call patterns or failures.
+   */
+  aerogpu_escape_u32 pending_meta_handle_count;
+  aerogpu_escape_u32 pending_meta_handle_reserved0;
+  aerogpu_escape_u64 pending_meta_handle_bytes;
 } aerogpu_escape_query_perf_out;
 
 #define AEROGPU_DBGCTL_QUERY_PERF_FLAGS_VALID (1u << 31)
@@ -227,7 +241,7 @@ typedef struct aerogpu_escape_query_perf_out {
 #define AEROGPU_DBGCTL_QUERY_PERF_FLAG_VBLANK_VALID (1u << 1)
 
 /* Must remain stable across x86/x64. */
-AEROGPU_DBGCTL_STATIC_ASSERT(sizeof(aerogpu_escape_query_perf_out) == 184);
+AEROGPU_DBGCTL_STATIC_ASSERT(sizeof(aerogpu_escape_query_perf_out) == 200);
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, last_submitted_fence) == 16);
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, last_completed_fence) == 24);
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, ring0_head) == 32);
@@ -253,6 +267,9 @@ AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, ring_push_f
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, selftest_count) == 168);
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, selftest_last_error_code) == 176);
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, flags) == 180);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, pending_meta_handle_count) == 184);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, pending_meta_handle_reserved0) == 188);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_perf_out, pending_meta_handle_bytes) == 192);
 
 /*
  * Must remain stable across x86/x64.

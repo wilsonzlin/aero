@@ -529,6 +529,9 @@ int main(void) {
   PRINT_OFF("aerogpu_escape_query_perf_out", aerogpu_escape_query_perf_out, last_vblank_time_ns);
   PRINT_OFF("aerogpu_escape_query_perf_out", aerogpu_escape_query_perf_out, vblank_period_ns);
   PRINT_OFF("aerogpu_escape_query_perf_out", aerogpu_escape_query_perf_out, flags);
+  PRINT_OFF("aerogpu_escape_query_perf_out", aerogpu_escape_query_perf_out, pending_meta_handle_count);
+  PRINT_OFF("aerogpu_escape_query_perf_out", aerogpu_escape_query_perf_out, pending_meta_handle_reserved0);
+  PRINT_OFF("aerogpu_escape_query_perf_out", aerogpu_escape_query_perf_out, pending_meta_handle_bytes);
   PRINT_OFF("aerogpu_escape_query_perf_out", aerogpu_escape_query_perf_out, error_irq_count);
   PRINT_OFF("aerogpu_escape_query_perf_out", aerogpu_escape_query_perf_out, last_error_fence);
   PRINT_OFF("aerogpu_escape_query_perf_out", aerogpu_escape_query_perf_out, ring_push_failures);

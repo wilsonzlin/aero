@@ -1896,6 +1896,17 @@ static int DoQueryVersion(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
               (unsigned long)qp.selftest_last_error_code,
               SelftestErrorToString(qp.selftest_last_error_code));
     }
+
+    if (qp.hdr.size >= offsetof(aerogpu_escape_query_perf_out, pending_meta_handle_count) +
+                           sizeof(qp.pending_meta_handle_count)) {
+      wprintf(L"  pending_meta_handles: count=%lu",
+              (unsigned long)qp.pending_meta_handle_count);
+      if (qp.hdr.size >= offsetof(aerogpu_escape_query_perf_out, pending_meta_handle_bytes) +
+                             sizeof(qp.pending_meta_handle_bytes)) {
+        wprintf(L" bytes=%I64u", (unsigned long long)qp.pending_meta_handle_bytes);
+      }
+      wprintf(L"\n");
+    }
   };
 
   const auto DumpUmdPrivateSummary = [&]() {
@@ -2624,6 +2635,26 @@ static int DoStatusJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, std::stri
     } else {
       w.Key("ring_push_failures");
       w.Null();
+    }
+    w.EndObject();
+
+    w.Key("pending_meta_handles");
+    w.BeginObject();
+    const bool havePendingMeta =
+        (qp.hdr.size >= offsetof(aerogpu_escape_query_perf_out, pending_meta_handle_count) +
+                           sizeof(qp.pending_meta_handle_count));
+    w.Key("available");
+    w.Bool(havePendingMeta);
+    if (havePendingMeta) {
+      w.Key("count");
+      w.Uint32(qp.pending_meta_handle_count);
+      if (qp.hdr.size >= offsetof(aerogpu_escape_query_perf_out, pending_meta_handle_bytes) +
+                             sizeof(qp.pending_meta_handle_bytes)) {
+        JsonWriteBytesAndMiB(w, "bytes", (uint64_t)qp.pending_meta_handle_bytes);
+      } else {
+        w.Key("bytes");
+        w.Null();
+      }
     }
     w.EndObject();
 
@@ -3495,6 +3526,16 @@ static int DoQueryPerf(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
             (unsigned long)q.selftest_last_error_code,
             SelftestErrorToString(q.selftest_last_error_code));
   }
+  if (q.hdr.size >= offsetof(aerogpu_escape_query_perf_out, pending_meta_handle_count) +
+                         sizeof(q.pending_meta_handle_count)) {
+    wprintf(L"  pending_meta_handles: count=%lu",
+            (unsigned long)q.pending_meta_handle_count);
+    if (q.hdr.size >= offsetof(aerogpu_escape_query_perf_out, pending_meta_handle_bytes) +
+                           sizeof(q.pending_meta_handle_bytes)) {
+      wprintf(L" bytes=%I64u", (unsigned long long)q.pending_meta_handle_bytes);
+    }
+    wprintf(L"\n");
+  }
 
   wprintf(L"Raw:\n");
   wprintf(L"  last_submitted_fence=%I64u\n", (unsigned long long)q.last_submitted_fence);
@@ -3521,6 +3562,14 @@ static int DoQueryPerf(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
   if (q.hdr.size >= offsetof(aerogpu_escape_query_perf_out, selftest_last_error_code) + sizeof(q.selftest_last_error_code)) {
     wprintf(L"  selftest_count=%I64u\n", (unsigned long long)q.selftest_count);
     wprintf(L"  selftest_last_error_code=%lu\n", (unsigned long)q.selftest_last_error_code);
+  }
+  if (q.hdr.size >= offsetof(aerogpu_escape_query_perf_out, pending_meta_handle_count) +
+                         sizeof(q.pending_meta_handle_count)) {
+    wprintf(L"  pending_meta_handle_count=%lu\n", (unsigned long)q.pending_meta_handle_count);
+    if (q.hdr.size >= offsetof(aerogpu_escape_query_perf_out, pending_meta_handle_bytes) +
+                           sizeof(q.pending_meta_handle_bytes)) {
+      wprintf(L"  pending_meta_handle_bytes=%I64u\n", (unsigned long long)q.pending_meta_handle_bytes);
+    }
   }
   wprintf(L"  reset_from_timeout_count=%I64u\n", (unsigned long long)q.reset_from_timeout_count);
   wprintf(L"  last_reset_time_100ns=%I64u\n", (unsigned long long)q.last_reset_time_100ns);
@@ -7450,6 +7499,31 @@ static int DoQueryPerfJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, std::s
     JsonWriteU64HexDec(w, "ring_push_failures", q.ring_push_failures);
   } else {
     w.Key("ring_push_failures");
+    w.Null();
+  }
+  w.EndObject();
+
+  const bool havePendingMeta =
+      (q.hdr.size >= offsetof(aerogpu_escape_query_perf_out, pending_meta_handle_count) +
+                         sizeof(q.pending_meta_handle_count));
+  w.Key("pending_meta_handles");
+  w.BeginObject();
+  w.Key("available");
+  w.Bool(havePendingMeta);
+  if (havePendingMeta) {
+    w.Key("count");
+    w.Uint32(q.pending_meta_handle_count);
+    if (q.hdr.size >= offsetof(aerogpu_escape_query_perf_out, pending_meta_handle_bytes) +
+                           sizeof(q.pending_meta_handle_bytes)) {
+      JsonWriteBytesAndMiB(w, "bytes", (uint64_t)q.pending_meta_handle_bytes);
+    } else {
+      w.Key("bytes");
+      w.Null();
+    }
+  } else {
+    w.Key("count");
+    w.Null();
+    w.Key("bytes");
     w.Null();
   }
   w.EndObject();

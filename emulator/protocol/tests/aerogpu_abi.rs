@@ -2556,7 +2556,7 @@ fn rust_layout_matches_c_headers() {
     assert_eq!(abi.size("aerogpu_escape_query_device_out"), 24);
     assert_eq!(abi.size("aerogpu_escape_query_device_v2_out"), 48);
     assert_eq!(abi.size("aerogpu_escape_query_fence_out"), 48);
-    assert_eq!(abi.size("aerogpu_escape_query_perf_out"), 184);
+    assert_eq!(abi.size("aerogpu_escape_query_perf_out"), 200);
     assert_eq!(abi.size("aerogpu_dbgctl_ring_desc"), 24);
     assert_eq!(abi.size("aerogpu_dbgctl_ring_desc_v2"), 40);
     assert_eq!(abi.size("aerogpu_escape_query_error_out"), 40);
@@ -2724,6 +2724,27 @@ fn rust_layout_matches_c_headers() {
         176
     );
     assert_eq!(abi.offset("aerogpu_escape_query_perf_out", "flags"), 180);
+    assert_eq!(
+        abi.offset(
+            "aerogpu_escape_query_perf_out",
+            "pending_meta_handle_count"
+        ),
+        184
+    );
+    assert_eq!(
+        abi.offset(
+            "aerogpu_escape_query_perf_out",
+            "pending_meta_handle_reserved0"
+        ),
+        188
+    );
+    assert_eq!(
+        abi.offset(
+            "aerogpu_escape_query_perf_out",
+            "pending_meta_handle_bytes"
+        ),
+        192
+    );
 
     assert_eq!(abi.offset("aerogpu_escape_query_error_out", "flags"), 16);
     assert_eq!(abi.offset("aerogpu_escape_query_error_out", "error_code"), 20);

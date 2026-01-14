@@ -11375,6 +11375,29 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
             }
         }
 
+        if (pEscape->PrivateDriverDataSize >=
+            (offsetof(aerogpu_escape_query_perf_out, pending_meta_handle_count) + sizeof(aerogpu_escape_u32))) {
+            ULONG metaCount = 0;
+            ULONGLONG metaBytes = 0;
+            {
+                KIRQL metaIrql;
+                KeAcquireSpinLock(&adapter->MetaHandleLock, &metaIrql);
+                metaCount = adapter->PendingMetaHandleCount;
+                metaBytes = adapter->PendingMetaHandleBytes;
+                KeReleaseSpinLock(&adapter->MetaHandleLock, metaIrql);
+            }
+
+            out->pending_meta_handle_count = (uint32_t)metaCount;
+            if (pEscape->PrivateDriverDataSize >=
+                (offsetof(aerogpu_escape_query_perf_out, pending_meta_handle_reserved0) + sizeof(aerogpu_escape_u32))) {
+                out->pending_meta_handle_reserved0 = 0;
+            }
+            if (pEscape->PrivateDriverDataSize >=
+                (offsetof(aerogpu_escape_query_perf_out, pending_meta_handle_bytes) + sizeof(aerogpu_escape_u64))) {
+                out->pending_meta_handle_bytes = (uint64_t)metaBytes;
+            }
+        }
+
         return STATUS_SUCCESS;
     }
 
