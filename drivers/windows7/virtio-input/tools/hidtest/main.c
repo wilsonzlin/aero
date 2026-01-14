@@ -5642,11 +5642,25 @@ static void print_vioinput_log_mask_json(const SELECTED_DEVICE *dev, DWORD actua
         {VIOINPUT_LOG_VIRTQ, L"VirtQ"},
         {VIOINPUT_LOG_VERBOSE, L"Verbose"},
     };
+    DWORD known_mask = 0;
+    DWORD unknown_actual = 0;
+    DWORD unknown_requested = 0;
 
     if (dev == NULL) {
         wprintf(L"{\"DiagnosticsMask\":\"0x%08lX\",\"DiagnosticsMaskValue\":%lu}\n", (unsigned long)actual_mask,
                 (unsigned long)actual_mask);
         return;
+    }
+
+    {
+        size_t i;
+        for (i = 0; i < (sizeof(mask_bits) / sizeof(mask_bits[0])); i++) {
+            known_mask |= mask_bits[i].bit;
+        }
+        unknown_actual = actual_mask & ~known_mask;
+        if (have_requested) {
+            unknown_requested = requested_mask & ~known_mask;
+        }
     }
 
     if (dev->attr_valid) {
@@ -5825,6 +5839,20 @@ static void print_vioinput_log_mask_json(const SELECTED_DEVICE *dev, DWORD actua
         wprintf(L"null");
     }
     wprintf(L",\n");
+    wprintf(L"  \"RequestedDiagnosticsMaskUnknownBits\": ");
+    if (have_requested) {
+        wprintf(L"\"0x%08lX\"", (unsigned long)unknown_requested);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"RequestedDiagnosticsMaskUnknownBitsValue\": ");
+    if (have_requested) {
+        wprintf(L"%lu", (unsigned long)unknown_requested);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
     wprintf(L"  \"RequestedDiagnosticsMaskEnabled\": ");
     if (have_requested) {
         size_t i;
@@ -5846,6 +5874,8 @@ static void print_vioinput_log_mask_json(const SELECTED_DEVICE *dev, DWORD actua
     wprintf(L",\n");
     wprintf(L"  \"DiagnosticsMask\": \"0x%08lX\",\n", (unsigned long)actual_mask);
     wprintf(L"  \"DiagnosticsMaskValue\": %lu,\n", (unsigned long)actual_mask);
+    wprintf(L"  \"DiagnosticsMaskUnknownBits\": \"0x%08lX\",\n", (unsigned long)unknown_actual);
+    wprintf(L"  \"DiagnosticsMaskUnknownBitsValue\": %lu,\n", (unsigned long)unknown_actual);
     wprintf(L"  \"DiagnosticsMaskEnabled\": [");
     {
         size_t i;

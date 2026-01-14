@@ -258,7 +258,9 @@ hidtest.exe --set-log-mask 0x8000000F --json
 With `--json`, the tool prints a single JSON object including the selected HID interface metadata plus:
 
 - `RequestedDiagnosticsMask` / `RequestedDiagnosticsMaskValue` / `RequestedDiagnosticsMaskEnabled` (null unless `--set-log-mask` is used)
+- `RequestedDiagnosticsMaskUnknownBits` / `RequestedDiagnosticsMaskUnknownBitsValue` (null unless `--set-log-mask` is used)
 - `DiagnosticsMask` / `DiagnosticsMaskValue` / `DiagnosticsMaskEnabled` (the post-set value read back from the driver)
+- `DiagnosticsMaskUnknownBits` / `DiagnosticsMaskUnknownBitsValue` (should be `0` unless new bit categories were added)
 
 This updates the same `DiagnosticsMask` that is normally read from the registry at `DriverEntry`:
 
