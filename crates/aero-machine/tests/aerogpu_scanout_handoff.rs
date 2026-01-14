@@ -1,7 +1,8 @@
 use aero_devices::a20_gate::A20_GATE_PORT;
 use aero_devices::pci::profile;
-use aero_machine::{Machine, MachineConfig, RunExit, VBE_LFB_OFFSET};
+use aero_machine::{Machine, MachineConfig, RunExit, ScanoutSource, VBE_LFB_OFFSET};
 use aero_protocol::aerogpu::aerogpu_pci as pci;
+use firmware::bda::{BDA_CURSOR_SHAPE_ADDR, BDA_VIDEO_PAGE_OFFSET_ADDR};
 use pretty_assertions::assert_eq;
 
 const WAIT_FLAG_PADDR: u64 = 0x0500;
@@ -118,8 +119,20 @@ fn aerogpu_scanout_handoff_to_wddm_blocks_legacy_int10_steal() {
     m.set_disk_image(boot.to_vec()).unwrap();
     m.reset();
 
+    // Legacy boot text path renders via `display_present` before the guest enables AeroGPU WDDM scanout.
+    m.write_physical(0xB8000, &vec![0u8; 0x8000]);
+    m.write_physical_u16(BDA_VIDEO_PAGE_OFFSET_ADDR, 0);
+    // Disable cursor for deterministic output (cursor start CH bit5 = 1).
+    m.write_physical_u16(BDA_CURSOR_SHAPE_ADDR, 0x2000);
+    m.write_physical_u8(0xB8000, b'A');
+    m.write_physical_u8(0xB8001, 0x1F);
+    assert_eq!(m.active_scanout_source(), ScanoutSource::LegacyText);
+    m.display_present();
+    assert_ne!(m.display_resolution(), (0, 0));
+
     // Wait for the guest to reach the wait loop after setting VBE mode.
     run_until_flag(&mut m, 0x01);
+    assert_ne!(m.active_scanout_source(), ScanoutSource::Wddm);
 
     enable_a20(&mut m);
 
@@ -185,6 +198,7 @@ fn aerogpu_scanout_handoff_to_wddm_blocks_legacy_int10_steal() {
     m.write_physical_u32(bar0_base + u64::from(pci::AEROGPU_MMIO_REG_SCANOUT0_ENABLE), 1);
 
     m.display_present();
+    assert_eq!(m.active_scanout_source(), ScanoutSource::Wddm);
     assert_eq!(m.display_resolution(), (u32::from(width), u32::from(height)));
     assert_eq!(m.display_framebuffer()[0], 0xFFAA_BBCC);
 
@@ -202,6 +216,7 @@ fn aerogpu_scanout_handoff_to_wddm_blocks_legacy_int10_steal() {
     run_until_halt(&mut m);
 
     m.display_present();
+    assert_eq!(m.active_scanout_source(), ScanoutSource::Wddm);
     assert_eq!(m.display_resolution(), (u32::from(width), u32::from(height)));
     assert_eq!(m.display_framebuffer()[0], 0xFFAA_BBCC);
 }

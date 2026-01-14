@@ -2940,6 +2940,17 @@ pub struct Machine {
     guest_time: GuestTime,
 }
 
+/// Active scanout source selected by [`Machine::display_present`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScanoutSource {
+    /// Legacy VGA text mode.
+    LegacyText,
+    /// Legacy VBE linear framebuffer (VGA/VBE path).
+    LegacyVbe,
+    /// AeroGPU WDDM scanout (BAR0-programmed scanout registers).
+    Wddm,
+}
+
 impl Machine {
     /// Return the machine's immutable configuration.
     ///
@@ -3729,6 +3740,43 @@ Track progress: docs/21-smp.md\n\
     // ---------------------------------------------------------------------
     // Host-facing display API (VGA/VBE scanout)
     // ---------------------------------------------------------------------
+
+    /// Returns the currently active scanout source according to the scanout handoff policy.
+    ///
+    /// Policy summary:
+    /// - Before the guest ever enables the AeroGPU WDDM scanout, legacy VGA/VBE output is
+    ///   presented.
+    /// - Once AeroGPU scanout has ever been enabled, WDDM owns scanout until device reset and
+    ///   legacy VGA/VBE is ignored by presentation (even if legacy MMIO/PIO continues to accept
+    ///   writes for compatibility).
+    pub fn active_scanout_source(&self) -> ScanoutSource {
+        if let Some(aerogpu_mmio) = &self.aerogpu_mmio {
+            let state = aerogpu_mmio.borrow().scanout0_state();
+            if state.wddm_scanout_active {
+                return ScanoutSource::Wddm;
+            }
+        }
+
+        if let Some(vga) = &self.vga {
+            let vga = vga.borrow();
+            if (vga.vbe.enable & 0x0001) != 0 {
+                ScanoutSource::LegacyVbe
+            } else {
+                ScanoutSource::LegacyText
+            }
+        } else if self.cfg.enable_aerogpu {
+            // When AeroGPU is enabled (and standalone VGA is disabled), legacy VBE state is tracked
+            // in the BIOS HLE layer.
+            if self.bios.video.vbe.current_mode.is_some() {
+                ScanoutSource::LegacyVbe
+            } else {
+                ScanoutSource::LegacyText
+            }
+        } else {
+            // No VGA attached; still report the legacy category for lack of a better option.
+            ScanoutSource::LegacyText
+        }
+    }
 
     /// Re-render the emulated display into the machine's host-visible framebuffer cache.
     ///
