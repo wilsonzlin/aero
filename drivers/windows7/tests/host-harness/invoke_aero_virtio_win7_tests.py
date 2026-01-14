@@ -12090,8 +12090,25 @@ def _emit_virtio_snd_playback_host_marker(tail: bytes) -> None:
 
     fields = _parse_marker_kv_fields(marker_line)
     parts = [f"AERO_VIRTIO_WIN7_HOST|VIRTIO_SND|{status}"]
-    for k, v in fields.items():
-        parts.append(f"{k}={_sanitize_marker_value(v)}")
+
+    # For FAIL/SKIP markers that use a plain token (e.g. `...|FAIL|force_null_backend|...`),
+    # mirror it into reason=... so log scraping can treat it uniformly.
+    if status in ("FAIL", "SKIP") and "reason" not in fields:
+        toks = marker_line.split("|")
+        try:
+            idx = toks.index(status)
+            if idx + 1 < len(toks):
+                reason_tok = toks[idx + 1].strip()
+                if reason_tok and "=" not in reason_tok:
+                    fields["reason"] = reason_tok
+        except ValueError:
+            pass
+
+    # Keep ordering stable for log scraping: reason first, then remaining keys sorted.
+    if "reason" in fields:
+        parts.append(f"reason={_sanitize_marker_value(fields['reason'])}")
+    for k in sorted(k for k in fields if k != "reason"):
+        parts.append(f"{k}={_sanitize_marker_value(fields[k])}")
     print("|".join(parts))
 
 

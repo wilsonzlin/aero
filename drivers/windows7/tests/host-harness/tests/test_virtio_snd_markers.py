@@ -39,6 +39,16 @@ class VirtioSndMarkerTests(unittest.TestCase):
         out = self._emit("_emit_virtio_snd_playback_host_marker", tail)
         self.assertEqual(out, "AERO_VIRTIO_WIN7_HOST|VIRTIO_SND|PASS|backend=wav|frames=48000")
 
+    def test_emits_playback_marker_fail_reason_token_and_sorts_fields(self) -> None:
+        tail = b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL|force_null_backend|z=9|a=1\n"
+        out = self._emit("_emit_virtio_snd_playback_host_marker", tail)
+        self.assertEqual(out, "AERO_VIRTIO_WIN7_HOST|VIRTIO_SND|FAIL|reason=force_null_backend|a=1|z=9")
+
+    def test_emits_playback_marker_sorts_fields(self) -> None:
+        tail = b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS|z=9|a=1|frames=48000|backend=wav\n"
+        out = self._emit("_emit_virtio_snd_playback_host_marker", tail)
+        self.assertEqual(out, "AERO_VIRTIO_WIN7_HOST|VIRTIO_SND|PASS|a=1|backend=wav|frames=48000|z=9")
+
     def test_emits_capture_marker(self) -> None:
         tail = (
             b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|FAIL|method=mic|frames=123|"

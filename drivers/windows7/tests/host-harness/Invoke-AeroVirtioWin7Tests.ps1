@@ -4177,11 +4177,11 @@ function Try-EmitAeroVirtioSndMarker {
     }
   }
 
-  # For FAIL markers that use a plain token (e.g. `...|FAIL|wrong_service|...`), mirror it
-  # into reason=... so log scraping can treat it uniformly.
-  if ($status -eq "FAIL" -and (-not $fields.ContainsKey("reason"))) {
+  # For FAIL/SKIP markers that use a plain token (e.g. `...|FAIL|force_null_backend|...`),
+  # mirror it into reason=... so log scraping can treat it uniformly.
+  if (($status -eq "FAIL" -or $status -eq "SKIP") -and (-not $fields.ContainsKey("reason"))) {
     for ($i = 0; $i -lt $toks.Count; $i++) {
-      if ($toks[$i].Trim() -eq "FAIL") {
+      if ($toks[$i].Trim() -eq $status) {
         if ($i + 1 -lt $toks.Count) {
           $reasonTok = $toks[$i + 1].Trim()
           if (-not [string]::IsNullOrEmpty($reasonTok) -and ($reasonTok.IndexOf("=") -lt 0)) {
