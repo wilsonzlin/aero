@@ -939,10 +939,6 @@ impl XhciController {
                             return;
                         }
                     }
-
-                    // xHCI records the assigned device address in the Slot Context (USB Device
-                    // Address field).
-                    slot_ctx.set_usb_device_address(slot_id);
                 }
 
                 port::port_speed_id(dev.speed())
@@ -957,6 +953,11 @@ impl XhciController {
             }
         };
         slot_ctx.set_speed(expected_speed);
+        // xHCI assigns a device address (USB Device Address field) independent of whether it issues
+        // the SET_ADDRESS request (BSR=1 blocks the request but does not block the assignment).
+        //
+        // This model uses the slot ID as the assigned address.
+        slot_ctx.set_usb_device_address(slot_id);
 
         // Mirror contexts to the output Device Context.
         slot_ctx.write_to(mem, dev_ctx_ptr);
