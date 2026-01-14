@@ -85,12 +85,12 @@ fn configure_event_ring(
     mem.write_u32(erstba + 8, ring_size_trbs);
     mem.write_u32(erstba + 12, 0);
 
-    ctrl.mmio_write(mem, regs::REG_INTR0_ERSTSZ, 4, 1);
-    ctrl.mmio_write(mem, regs::REG_INTR0_ERSTBA_LO, 4, erstba as u32);
-    ctrl.mmio_write(mem, regs::REG_INTR0_ERSTBA_HI, 4, (erstba >> 32) as u32);
-    ctrl.mmio_write(mem, regs::REG_INTR0_ERDP_LO, 4, ring_base as u32);
-    ctrl.mmio_write(mem, regs::REG_INTR0_ERDP_HI, 4, (ring_base >> 32) as u32);
-    ctrl.mmio_write(mem, regs::REG_INTR0_IMAN, 4, IMAN_IE);
+    ctrl.mmio_write(regs::REG_INTR0_ERSTSZ, 4, 1);
+    ctrl.mmio_write(regs::REG_INTR0_ERSTBA_LO, 4, erstba);
+    ctrl.mmio_write(regs::REG_INTR0_ERSTBA_HI, 4, erstba >> 32);
+    ctrl.mmio_write(regs::REG_INTR0_ERDP_LO, 4, ring_base);
+    ctrl.mmio_write(regs::REG_INTR0_ERDP_HI, 4, ring_base >> 32);
+    ctrl.mmio_write(regs::REG_INTR0_IMAN, 4, u64::from(IMAN_IE));
 }
 
 #[test]
