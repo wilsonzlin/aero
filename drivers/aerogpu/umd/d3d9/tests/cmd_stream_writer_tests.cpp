@@ -227,6 +227,14 @@ CmdLoc FindLastUploadResourceBefore(const uint8_t* buf, size_t capacity, size_t 
   return loc;
 }
 
+CmdLoc FindLastUploadForHandle(const uint8_t* buf, size_t capacity, aerogpu_handle_t handle) {
+  const size_t stream_len = StreamBytesUsed(buf, capacity);
+  if (stream_len == 0) {
+    return {};
+  }
+  return FindLastUploadResourceBefore(buf, capacity, stream_len, static_cast<uint32_t>(handle));
+}
+
 size_t CountOpcode(const uint8_t* buf, size_t capacity, uint32_t opcode) {
   const size_t stream_len = StreamBytesUsed(buf, capacity);
   if (stream_len == 0) {
@@ -246,6 +254,25 @@ size_t CountOpcode(const uint8_t* buf, size_t capacity, uint32_t opcode) {
     offset += hdr->size_bytes;
   }
   return count;
+}
+
+void MulMat4RowMajor(const float a[16], const float b[16], float out[16]) {
+  for (int r = 0; r < 4; ++r) {
+    for (int c = 0; c < 4; ++c) {
+      out[r * 4 + c] =
+          a[r * 4 + 0] * b[0 * 4 + c] +
+          a[r * 4 + 1] * b[1 * 4 + c] +
+          a[r * 4 + 2] * b[2 * 4 + c] +
+          a[r * 4 + 3] * b[3 * 4 + c];
+    }
+  }
+}
+
+void MulVec4Mat4RowMajor(const float v[4], const float m[16], float out[4]) {
+  out[0] = v[0] * m[0] + v[1] * m[4] + v[2] * m[8] + v[3] * m[12];
+  out[1] = v[0] * m[1] + v[1] * m[5] + v[2] * m[9] + v[3] * m[13];
+  out[2] = v[0] * m[2] + v[1] * m[6] + v[2] * m[10] + v[3] * m[14];
+  out[3] = v[0] * m[3] + v[1] * m[7] + v[2] * m[11] + v[3] * m[15];
 }
 
 const aerogpu_cmd_create_shader_dxbc* FindCreateShaderByHandle(
@@ -12115,93 +12142,39 @@ bool TestPartialShaderStageBindingPsOnlyXyzDiffuseUploadsWvpConstants() {
     return false;
   }
 
-  // Prime the shared passthrough VS slot by drawing with XYZRHW so we can verify
-  // the XYZ|DIFFUSE PS-only fallback uses the WVP VS slot (distinct bytecode).
-  constexpr uint32_t kD3dFvfXyz = 0x00000002u;
-  constexpr uint32_t kD3dFvfXyzRhw = 0x00000004u;
-  constexpr uint32_t kD3dFvfDiffuse = 0x00000040u;
+  // Set non-identity transforms: WORLD0 * VIEW * PROJECTION.
+  float world[16] = {};
+  float view[16] = {};
+  float proj[16] = {};
+  auto set_identity = [](float m[16]) {
+    std::memset(m, 0, sizeof(float) * 16);
+    m[0] = 1.0f;
+    m[5] = 1.0f;
+    m[10] = 1.0f;
+    m[15] = 1.0f;
+  };
+  set_identity(world);
+  set_identity(view);
+  set_identity(proj);
+  // Scale + translate.
+  world[0] = 2.0f;
+  world[5] = 3.0f;
+  world[10] = 4.0f;
+  world[12] = 5.0f;
+  world[13] = 6.0f;
+  world[14] = 7.0f;
 
-  {
-    hr = cleanup.device_funcs.pfnSetFVF(create_dev.hDevice, kD3dFvfXyzRhw | kD3dFvfDiffuse);
-    if (!Check(hr == S_OK, "SetFVF(XYZRHW|DIFFUSE)")) {
-      return false;
-    }
-
-    struct VertexRhw {
-      float x;
-      float y;
-      float z;
-      float rhw;
-      uint32_t color;
-    };
-    constexpr uint32_t kGreen = 0xFF00FF00u;
-    VertexRhw tri[3]{};
-    tri[0] = {0.0f, 0.0f, 0.5f, 1.0f, kGreen};
-    tri[1] = {1.0f, 0.0f, 0.5f, 1.0f, kGreen};
-    tri[2] = {0.0f, 1.0f, 0.5f, 1.0f, kGreen};
-
-    hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
-        create_dev.hDevice, D3DDDIPT_TRIANGLELIST, 1, tri, sizeof(VertexRhw));
-    if (!Check(hr == S_OK, "DrawPrimitiveUP(XYZRHW|DIFFUSE)")) {
-      return false;
-    }
-  }
-
-  aerogpu_handle_t passthrough_vs = 0;
   {
     std::lock_guard<std::mutex> lock(dev->mutex);
-    if (!Check(dev->fixedfunc_vs != nullptr, "XYZRHW draw created fixedfunc_vs")) {
-      return false;
-    }
-    passthrough_vs = dev->fixedfunc_vs->handle;
-  }
-  if (!Check(passthrough_vs != 0, "passthrough fixedfunc_vs handle is non-zero")) {
-    return false;
+    std::memcpy(dev->transform_matrices[256], world, sizeof(world)); // WORLD0
+    std::memcpy(dev->transform_matrices[2], view, sizeof(view));     // VIEW
+    std::memcpy(dev->transform_matrices[3], proj, sizeof(proj));     // PROJECTION
+    dev->fixedfunc_matrix_dirty = true;
   }
 
-  // Clear the command stream so we only inspect the PS-only XYZ|DIFFUSE packets.
-  dev->cmd.reset();
-
-  // Install a non-identity world matrix so the uploaded WVP constants are easy to spot.
-  {
-    std::lock_guard<std::mutex> lock(dev->mutex);
-    auto set_identity = [](float m[16]) {
-      std::memset(m, 0, 16 * sizeof(float));
-      m[0] = 1.0f;
-      m[5] = 1.0f;
-      m[10] = 1.0f;
-      m[15] = 1.0f;
-    };
-    set_identity(dev->transform_matrices[256]); // D3DTS_WORLD
-    set_identity(dev->transform_matrices[2]);   // D3DTS_VIEW
-    set_identity(dev->transform_matrices[3]);   // D3DTS_PROJECTION
-
-    dev->transform_matrices[256][0] = 2.0f;
-    dev->transform_matrices[256][5] = 3.0f;
-    dev->transform_matrices[256][10] = 4.0f;
-    dev->transform_matrices[256][12] = 5.0f;
-    dev->transform_matrices[256][13] = 6.0f;
-    dev->transform_matrices[256][14] = 7.0f;
-
-    // Make sure the SetFVF transition marks the reserved WVP constant range dirty.
-    dev->fixedfunc_matrix_dirty = false;
-  }
-
-  // Configure XYZ|DIFFUSE so the driver will use the WVP fixed-function VS.
-  hr = cleanup.device_funcs.pfnSetFVF(create_dev.hDevice, kD3dFvfXyz | kD3dFvfDiffuse);
+  // D3DFVF_XYZ (0x2) | D3DFVF_DIFFUSE (0x40).
+  hr = cleanup.device_funcs.pfnSetFVF(create_dev.hDevice, 0x42u);
   if (!Check(hr == S_OK, "SetFVF(XYZ|DIFFUSE)")) {
-    return false;
-  }
-
-  aerogpu_handle_t internal_decl = 0;
-  {
-    std::lock_guard<std::mutex> lock(dev->mutex);
-    if (!Check(dev->fvf_vertex_decl_xyz_diffuse != nullptr, "FVF internal vertex decl created")) {
-      return false;
-    }
-    internal_decl = dev->fvf_vertex_decl_xyz_diffuse->handle;
-  }
-  if (!Check(internal_decl != 0, "internal FVF decl handle non-zero")) {
     return false;
   }
 
@@ -12250,18 +12223,11 @@ bool TestPartialShaderStageBindingPsOnlyXyzDiffuseUploadsWvpConstants() {
     return false;
   }
 
-  aerogpu_handle_t wvp_vs = 0;
-  {
-    std::lock_guard<std::mutex> lock(dev->mutex);
-    if (!Check(dev->fixedfunc_vs_xyz_diffuse != nullptr, "XYZ|DIFFUSE PS-only created WVP VS")) {
-      return false;
-    }
-    wvp_vs = dev->fixedfunc_vs_xyz_diffuse->handle;
-  }
-  if (!Check(wvp_vs != 0, "WVP VS handle non-zero")) {
+  if (!Check(dev->up_vertex_buffer != nullptr, "up_vertex_buffer allocated")) {
     return false;
   }
-  if (!Check(wvp_vs != passthrough_vs, "XYZ|DIFFUSE uses distinct VS handle from passthrough")) {
+  const aerogpu_handle_t up_vb_handle = dev->up_vertex_buffer->handle;
+  if (!Check(up_vb_handle != 0, "up_vertex_buffer handle non-zero")) {
     return false;
   }
 
@@ -12269,62 +12235,52 @@ bool TestPartialShaderStageBindingPsOnlyXyzDiffuseUploadsWvpConstants() {
   const uint8_t* buf = dev->cmd.data();
   const size_t len = dev->cmd.bytes_used();
 
-  const auto* vs_create = FindCreateShaderByHandle(buf, len, wvp_vs);
-  if (!Check(vs_create != nullptr, "CREATE_SHADER_DXBC emitted for WVP VS")) {
+  // Expected clip-space transform.
+  float wv[16];
+  float wvp[16];
+  MulMat4RowMajor(world, view, wv);
+  MulMat4RowMajor(wv, proj, wvp);
+  const float v0[4] = {tri[0].x, tri[0].y, tri[0].z, 1.0f};
+  float expected[4] = {};
+  MulVec4Mat4RowMajor(v0, wvp, expected);
+
+  const CmdLoc upload = FindLastUploadForHandle(buf, len, up_vb_handle);
+  if (!Check(upload.hdr != nullptr, "upload_resource(up_vertex_buffer) emitted")) {
     return false;
   }
-  if (!Check(vs_create->stage == AEROGPU_SHADER_STAGE_VERTEX, "CREATE_SHADER_DXBC stage is vertex")) {
+  const auto* upload_cmd = reinterpret_cast<const aerogpu_cmd_upload_resource*>(upload.hdr);
+  if (!Check(upload_cmd->offset_bytes == 0, "upload_resource VB offset is 0")) {
+    return false;
+  }
+  if (!Check(upload_cmd->size_bytes == 3 * 20u, "upload_resource VB size matches transformed vertex data")) {
     return false;
   }
 
-  const CmdLoc set_layout = FindLastOpcode(buf, len, AEROGPU_CMD_SET_INPUT_LAYOUT);
-  if (!Check(set_layout.hdr != nullptr, "SET_INPUT_LAYOUT emitted")) {
-    return false;
-  }
-  const auto* set_layout_cmd = reinterpret_cast<const aerogpu_cmd_set_input_layout*>(set_layout.hdr);
-  if (!Check(set_layout_cmd->input_layout_handle == internal_decl, "SET_INPUT_LAYOUT binds internal FVF decl")) {
-    return false;
-  }
+  const uint8_t* payload = reinterpret_cast<const uint8_t*>(upload_cmd) + sizeof(*upload_cmd);
+  float x0 = 0.0f;
+  float y0 = 0.0f;
+  float z0 = 0.0f;
+  float w0 = 0.0f;
+  uint32_t c0 = 0;
+  std::memcpy(&x0, payload + 0, sizeof(float));
+  std::memcpy(&y0, payload + 4, sizeof(float));
+  std::memcpy(&z0, payload + 8, sizeof(float));
+  std::memcpy(&w0, payload + 12, sizeof(float));
+  std::memcpy(&c0, payload + 16, sizeof(uint32_t));
 
-  const CmdLoc set_consts = FindLastOpcode(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_F);
-  if (!Check(set_consts.hdr != nullptr, "SET_SHADER_CONSTANTS_F emitted")) {
+  if (!Check(std::fabs(x0 - expected[0]) < 1e-6f, "PS-only XYZ UP: x0 matches WVP")) {
     return false;
   }
-  const auto* const_cmd = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(set_consts.hdr);
-  if (!Check(const_cmd->stage == AEROGPU_SHADER_STAGE_VERTEX, "WVP constants uploaded to VS stage")) {
+  if (!Check(std::fabs(y0 - expected[1]) < 1e-6f, "PS-only XYZ UP: y0 matches WVP")) {
     return false;
   }
-  if (!Check(const_cmd->start_register == 240, "WVP constants start register")) {
+  if (!Check(std::fabs(z0 - expected[2]) < 1e-6f, "PS-only XYZ UP: z0 matches WVP")) {
     return false;
   }
-  if (!Check(const_cmd->vec4_count == 4, "WVP constants upload 4 vec4 regs")) {
+  if (!Check(std::fabs(w0 - expected[3]) < 1e-6f, "PS-only XYZ UP: w0 matches WVP")) {
     return false;
   }
-
-  if (!Check(set_consts.hdr->size_bytes >= sizeof(*const_cmd) + sizeof(float) * 16u, "WVP constants packet has payload")) {
-    return false;
-  }
-  const float* m = reinterpret_cast<const float*>(reinterpret_cast<const uint8_t*>(const_cmd) + sizeof(*const_cmd));
-  if (!Check(std::fabs(m[0] - 2.0f) < 1e-6f, "WVP[0][0] = 2")) {
-    return false;
-  }
-  if (!Check(std::fabs(m[5] - 3.0f) < 1e-6f, "WVP[1][1] = 3")) {
-    return false;
-  }
-  if (!Check(std::fabs(m[10] - 4.0f) < 1e-6f, "WVP[2][2] = 4")) {
-    return false;
-  }
-  if (!Check(std::fabs(m[15] - 1.0f) < 1e-6f, "WVP[3][3] = 1")) {
-    return false;
-  }
-  // WVP is uploaded as column vectors, so translation (row-major m[3][0..2]) lands in c240.w/c241.w/c242.w.
-  if (!Check(std::fabs(m[3] - 5.0f) < 1e-6f, "WVP translate X in c240.w")) {
-    return false;
-  }
-  if (!Check(std::fabs(m[7] - 6.0f) < 1e-6f, "WVP translate Y in c241.w")) {
-    return false;
-  }
-  if (!Check(std::fabs(m[11] - 7.0f) < 1e-6f, "WVP translate Z in c242.w")) {
+  if (!Check(c0 == kWhite, "PS-only XYZ UP: diffuse color preserved")) {
     return false;
   }
 
@@ -12333,9 +12289,6 @@ bool TestPartialShaderStageBindingPsOnlyXyzDiffuseUploadsWvpConstants() {
     return false;
   }
 
-  // Draw-time interop may restore the original (NULL) shader stage after drawing,
-  // so the final BIND_SHADERS packet might occur after DRAW. Find the most recent
-  // bind before the draw packet.
   const CmdLoc bind = FindLastOpcodeBefore(buf, len, draw.offset, AEROGPU_CMD_BIND_SHADERS);
   if (!Check(bind.hdr != nullptr, "BIND_SHADERS emitted")) {
     return false;
@@ -12344,10 +12297,12 @@ bool TestPartialShaderStageBindingPsOnlyXyzDiffuseUploadsWvpConstants() {
     return false;
   }
   const auto* bind_cmd = reinterpret_cast<const aerogpu_cmd_bind_shaders*>(bind.hdr);
-  if (!Check(bind_cmd->vs == wvp_vs, "BIND_SHADERS binds WVP VS handle")) {
+  if (!Check(bind_cmd->vs != 0, "BIND_SHADERS binds non-zero VS fallback")) {
     return false;
   }
-  if (!Check(bind_cmd->ps != 0, "BIND_SHADERS binds non-zero user PS")) {
+  const auto* ps = reinterpret_cast<const Shader*>(hPs.pDrvPrivate);
+  const uint32_t expected_ps_handle = ps ? ps->handle : 0;
+  if (!Check(bind_cmd->ps == expected_ps_handle, "BIND_SHADERS binds user PS handle")) {
     return false;
   }
 
@@ -13178,9 +13133,6 @@ bool TestFvfXyzDiffuseDrawPrimitiveUpEmitsFixedfuncCommands() {
   cleanup.hDevice = create_dev.hDevice;
   cleanup.has_device = true;
 
-  if (!Check(cleanup.device_funcs.pfnSetViewport != nullptr, "SetViewport must be available")) {
-    return false;
-  }
   if (!Check(cleanup.device_funcs.pfnSetFVF != nullptr, "SetFVF must be available")) {
     return false;
   }
@@ -13191,15 +13143,9 @@ bool TestFvfXyzDiffuseDrawPrimitiveUpEmitsFixedfuncCommands() {
     return false;
   }
 
-  D3DDDIVIEWPORTINFO vp{};
-  vp.X = 0.0f;
-  vp.Y = 0.0f;
-  vp.Width = 256.0f;
-  vp.Height = 256.0f;
-  vp.MinZ = 0.0f;
-  vp.MaxZ = 1.0f;
-  hr = cleanup.device_funcs.pfnSetViewport(create_dev.hDevice, &vp);
-  if (!Check(hr == S_OK, "SetViewport")) {
+  // D3DFVF_XYZ (0x2) | D3DFVF_DIFFUSE (0x40).
+  hr = cleanup.device_funcs.pfnSetFVF(create_dev.hDevice, kD3dFvfXyz | kD3dFvfDiffuse);
+  if (!Check(hr == S_OK, "SetFVF(XYZ|DIFFUSE)")) {
     return false;
   }
 
@@ -13208,96 +13154,41 @@ bool TestFvfXyzDiffuseDrawPrimitiveUpEmitsFixedfuncCommands() {
     return false;
   }
 
-  // Prime the shared fixed-function passthrough VS slot by drawing with XYZRHW so
-  // we can verify the XYZ|DIFFUSE WVP path uses a distinct cached VS slot.
-  {
-    hr = cleanup.device_funcs.pfnSetFVF(create_dev.hDevice, kD3dFvfXyzRhw | kD3dFvfDiffuse);
-    if (!Check(hr == S_OK, "SetFVF(XYZRHW|DIFFUSE)")) {
-      return false;
-    }
+  // Set non-identity transforms: WORLD0 * VIEW * PROJECTION.
+  auto set_identity = [](float m[16]) {
+    std::memset(m, 0, sizeof(float) * 16);
+    m[0] = 1.0f;
+    m[5] = 1.0f;
+    m[10] = 1.0f;
+    m[15] = 1.0f;
+  };
 
-    struct VertexRhw {
-      float x;
-      float y;
-      float z;
-      float rhw;
-      uint32_t color;
-    };
+  float world[16];
+  float view[16];
+  float proj[16];
+  set_identity(world);
+  set_identity(view);
+  std::memset(proj, 0, sizeof(proj));
 
-    constexpr uint32_t kGreen = 0xFF00FF00u;
-    VertexRhw tri[3]{};
-    tri[0] = {256.0f * 0.25f, 256.0f * 0.25f, 0.5f, 1.0f, kGreen};
-    tri[1] = {256.0f * 0.75f, 256.0f * 0.25f, 0.5f, 1.0f, kGreen};
-    tri[2] = {256.0f * 0.50f, 256.0f * 0.75f, 0.5f, 1.0f, kGreen};
+  world[12] = 1.0f;
+  world[13] = -1.0f;
+  world[14] = 2.0f;
 
-    hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
-        create_dev.hDevice, D3DDDIPT_TRIANGLELIST, 1, tri, sizeof(VertexRhw));
-    if (!Check(hr == S_OK, "DrawPrimitiveUP(XYZRHW|DIFFUSE)")) {
-      return false;
-    }
-  }
+  view[0] = 2.0f;
+  view[5] = 3.0f;
+  view[10] = 4.0f;
 
-  aerogpu_handle_t passthrough_vs = 0;
-  {
-    std::lock_guard<std::mutex> lock(dev->mutex);
-    if (!Check(dev->fixedfunc_vs != nullptr, "XYZRHW draw created fixedfunc_vs")) {
-      return false;
-    }
-    passthrough_vs = dev->fixedfunc_vs->handle;
-  }
-  if (!Check(passthrough_vs != 0, "passthrough fixedfunc_vs handle is non-zero")) {
-    return false;
-  }
+  proj[0] = 1.0f;
+  proj[5] = 1.0f;
+  proj[10] = 1.0f;
+  proj[11] = 1.0f; // w = z
 
-  // Clear the command stream so we only inspect the XYZ|DIFFUSE WVP path packets.
-  dev->cmd.reset();
-
-  // Set a non-identity world matrix so the uploaded WVP constants are easy to spot.
   {
     std::lock_guard<std::mutex> lock(dev->mutex);
-
-    auto set_identity = [](float m[16]) {
-      std::memset(m, 0, 16 * sizeof(float));
-      m[0] = 1.0f;
-      m[5] = 1.0f;
-      m[10] = 1.0f;
-      m[15] = 1.0f;
-    };
-
-    set_identity(dev->transform_matrices[256]); // D3DTS_WORLD
-    set_identity(dev->transform_matrices[2]);   // D3DTS_VIEW
-    set_identity(dev->transform_matrices[3]);   // D3DTS_PROJECTION
-
-    // Scale on the diagonal.
-    dev->transform_matrices[256][0] = 2.0f;
-    dev->transform_matrices[256][5] = 3.0f;
-    dev->transform_matrices[256][10] = 4.0f;
-    // Add translation (D3D9 uses row-major matrices with translation in the last row).
-    dev->transform_matrices[256][12] = 5.0f;
-    dev->transform_matrices[256][13] = 6.0f;
-    dev->transform_matrices[256][14] = 7.0f;
-
-    // Ensure switching back to fixed-function WVP mode refreshes the reserved VS
-    // constant range even if transforms did not change.
-    dev->fixedfunc_matrix_dirty = false;
-  }
-
-  // D3DFVF_XYZ (0x2) | D3DFVF_DIFFUSE (0x40).
-  hr = cleanup.device_funcs.pfnSetFVF(create_dev.hDevice, kD3dFvfXyz | kD3dFvfDiffuse);
-  if (!Check(hr == S_OK, "SetFVF(XYZ|DIFFUSE)")) {
-    return false;
-  }
-
-  aerogpu_handle_t internal_decl = 0;
-  {
-    std::lock_guard<std::mutex> lock(dev->mutex);
-    if (!Check(dev->fvf_vertex_decl_xyz_diffuse != nullptr, "FVF internal vertex decl created")) {
-      return false;
-    }
-    internal_decl = dev->fvf_vertex_decl_xyz_diffuse->handle;
-  }
-  if (!Check(internal_decl != 0, "FVF internal vertex decl handle is non-zero")) {
-    return false;
+    std::memcpy(dev->transform_matrices[256], world, sizeof(world)); // WORLD0
+    std::memcpy(dev->transform_matrices[2], view, sizeof(view));     // VIEW
+    std::memcpy(dev->transform_matrices[3], proj, sizeof(proj));     // PROJECTION
+    dev->fixedfunc_matrix_dirty = true;
   }
 
   struct Vertex {
@@ -13307,117 +13198,80 @@ bool TestFvfXyzDiffuseDrawPrimitiveUpEmitsFixedfuncCommands() {
     uint32_t color;
   };
 
-  constexpr uint32_t kWhite = 0xFFFFFFFFu;
+  constexpr uint32_t kGreen = 0xFF00FF00u;
   Vertex verts[3]{};
-  verts[0] = {-1.0f, -1.0f, 0.0f, kWhite};
-  verts[1] = {1.0f, -1.0f, 0.0f, kWhite};
-  verts[2] = {0.0f, 1.0f, 0.0f, kWhite};
+  verts[0] = {-0.5f, -0.5f, 0.5f, kGreen};
+  verts[1] = {0.5f, -0.5f, 0.5f, kGreen};
+  verts[2] = {0.0f, 0.5f, 0.5f, kGreen};
 
   hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
       create_dev.hDevice, D3DDDIPT_TRIANGLELIST, 1, verts, sizeof(Vertex));
-  if (!Check(hr == S_OK, "DrawPrimitiveUP(XYZ|DIFFUSE)")) {
+  if (!Check(hr == S_OK, "DrawPrimitiveUP")) {
     return false;
   }
 
-  aerogpu_handle_t wvp_vs = 0;
-  {
-    std::lock_guard<std::mutex> lock(dev->mutex);
-    if (!Check(dev->fixedfunc_vs_xyz_diffuse != nullptr, "XYZ|DIFFUSE created fixedfunc_vs_xyz_diffuse")) {
-      return false;
-    }
-    wvp_vs = dev->fixedfunc_vs_xyz_diffuse->handle;
-    if (!Check(wvp_vs != 0, "WVP fixedfunc VS handle is non-zero")) {
-      return false;
-    }
-    if (!Check(wvp_vs != passthrough_vs, "XYZ|DIFFUSE uses a distinct VS handle")) {
-      return false;
-    }
-
-    if (!Check(dev->fixedfunc_vs_xyz_diffuse->bytecode.size() == sizeof(fixedfunc::kVsWvpPosColor),
-               "XYZ|DIFFUSE fixedfunc VS bytecode size matches")) {
-      return false;
-    }
-    if (!Check(std::memcmp(dev->fixedfunc_vs_xyz_diffuse->bytecode.data(),
-                           fixedfunc::kVsWvpPosColor,
-                           sizeof(fixedfunc::kVsWvpPosColor)) == 0,
-               "XYZ|DIFFUSE fixedfunc VS bytecode matches WVP shader")) {
-      return false;
-    }
+  if (!Check(dev->up_vertex_buffer != nullptr, "up_vertex_buffer allocated")) {
+    return false;
+  }
+  const aerogpu_handle_t up_vb_handle = dev->up_vertex_buffer->handle;
+  if (!Check(up_vb_handle != 0, "up_vertex_buffer handle non-zero")) {
+    return false;
   }
 
   dev->cmd.finalize();
   const uint8_t* buf = dev->cmd.data();
   const size_t len = dev->cmd.bytes_used();
 
-  const auto* vs_create = FindCreateShaderByHandle(buf, len, wvp_vs);
-  if (!Check(vs_create != nullptr, "CREATE_SHADER_DXBC emitted for WVP VS")) {
+  // Expected clip-space transform.
+  float wv[16];
+  float wvp[16];
+  MulMat4RowMajor(world, view, wv);
+  MulMat4RowMajor(wv, proj, wvp);
+  const float v0[4] = {verts[0].x, verts[0].y, verts[0].z, 1.0f};
+  float expected[4] = {};
+  MulVec4Mat4RowMajor(v0, wvp, expected);
+
+  const CmdLoc upload = FindLastUploadForHandle(buf, len, up_vb_handle);
+  if (!Check(upload.hdr != nullptr, "upload_resource(up_vertex_buffer) emitted")) {
     return false;
   }
-  if (!Check(vs_create->stage == AEROGPU_SHADER_STAGE_VERTEX, "CREATE_SHADER_DXBC stage is vertex")) {
+  const auto* upload_cmd = reinterpret_cast<const aerogpu_cmd_upload_resource*>(upload.hdr);
+  if (!Check(upload_cmd->offset_bytes == 0, "upload_resource VB offset is 0")) {
+    return false;
+  }
+  if (!Check(upload_cmd->size_bytes == 3 * 20u, "upload_resource VB size matches transformed vertex data")) {
     return false;
   }
 
-  const CmdLoc set_layout = FindLastOpcode(buf, len, AEROGPU_CMD_SET_INPUT_LAYOUT);
-  if (!Check(set_layout.hdr != nullptr, "set_input_layout emitted")) {
+  const uint8_t* payload = reinterpret_cast<const uint8_t*>(upload_cmd) + sizeof(*upload_cmd);
+  float x0 = 0.0f;
+  float y0 = 0.0f;
+  float z0 = 0.0f;
+  float w0 = 0.0f;
+  uint32_t c0 = 0;
+  std::memcpy(&x0, payload + 0, sizeof(float));
+  std::memcpy(&y0, payload + 4, sizeof(float));
+  std::memcpy(&z0, payload + 8, sizeof(float));
+  std::memcpy(&w0, payload + 12, sizeof(float));
+  std::memcpy(&c0, payload + 16, sizeof(uint32_t));
+
+  if (!Check(std::fabs(x0 - expected[0]) < 1e-6f, "XYZ UP: x0 matches WVP")) {
     return false;
   }
-  const auto* set_layout_cmd = reinterpret_cast<const aerogpu_cmd_set_input_layout*>(set_layout.hdr);
-  if (!Check(set_layout_cmd->input_layout_handle == internal_decl, "set_input_layout binds internal FVF decl")) {
+  if (!Check(std::fabs(y0 - expected[1]) < 1e-6f, "XYZ UP: y0 matches WVP")) {
+    return false;
+  }
+  if (!Check(std::fabs(z0 - expected[2]) < 1e-6f, "XYZ UP: z0 matches WVP")) {
+    return false;
+  }
+  if (!Check(std::fabs(w0 - expected[3]) < 1e-6f, "XYZ UP: w0 matches WVP")) {
+    return false;
+  }
+  if (!Check(c0 == kGreen, "XYZ UP: diffuse color preserved")) {
     return false;
   }
 
-  const CmdLoc set_consts = FindLastOpcode(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_F);
-  if (!Check(set_consts.hdr != nullptr, "set_shader_constants_f emitted")) {
-    return false;
-  }
-  const auto* const_cmd = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(set_consts.hdr);
-  if (!Check(const_cmd->stage == AEROGPU_SHADER_STAGE_VERTEX, "WVP constants uploaded to VS stage")) {
-    return false;
-  }
-  if (!Check(const_cmd->start_register == 240, "WVP constants start register")) {
-    return false;
-  }
-  if (!Check(const_cmd->vec4_count == 4, "WVP constants upload 4 vec4 regs")) {
-    return false;
-  }
-
-  if (!Check(set_consts.hdr->size_bytes >= sizeof(*const_cmd) + sizeof(float) * 16u, "WVP constants packet has payload")) {
-    return false;
-  }
-
-  const float* m = reinterpret_cast<const float*>(reinterpret_cast<const uint8_t*>(const_cmd) + sizeof(*const_cmd));
-  if (!Check(std::fabs(m[0] - 2.0f) < 1e-6f, "WVP[0][0] = 2")) {
-    return false;
-  }
-  if (!Check(std::fabs(m[5] - 3.0f) < 1e-6f, "WVP[1][1] = 3")) {
-    return false;
-  }
-  if (!Check(std::fabs(m[10] - 4.0f) < 1e-6f, "WVP[2][2] = 4")) {
-    return false;
-  }
-  if (!Check(std::fabs(m[15] - 1.0f) < 1e-6f, "WVP[3][3] = 1")) {
-    return false;
-  }
-  // WVP is uploaded as column vectors, so translation (row-major m[3][0..2]) lands in c240.w/c241.w/c242.w.
-  if (!Check(std::fabs(m[3] - 5.0f) < 1e-6f, "WVP translate X in c240.w")) {
-    return false;
-  }
-  if (!Check(std::fabs(m[7] - 6.0f) < 1e-6f, "WVP translate Y in c241.w")) {
-    return false;
-  }
-  if (!Check(std::fabs(m[11] - 7.0f) < 1e-6f, "WVP translate Z in c242.w")) {
-    return false;
-  }
-
-  const CmdLoc bind = FindLastOpcode(buf, len, AEROGPU_CMD_BIND_SHADERS);
-  if (!Check(bind.hdr != nullptr, "bind_shaders emitted")) {
-    return false;
-  }
-  const auto* bind_cmd = reinterpret_cast<const aerogpu_cmd_bind_shaders*>(bind.hdr);
-  if (!Check(bind_cmd->vs == wvp_vs, "bind_shaders binds WVP VS handle")) {
-    return false;
-  }
-  return Check(bind_cmd->vs != 0 && bind_cmd->ps != 0, "bind_shaders uses non-zero VS/PS handles");
+  return ValidateStream(buf, len);
 }
 
 bool TestFixedfuncStage0TextureStageStateRebindsPixelShader() {
@@ -13681,36 +13535,40 @@ bool TestFvfXyzDiffuseTex1DrawPrimitiveUpEmitsFixedfuncCommands() {
     return false;
   }
 
-  aerogpu_handle_t internal_decl = 0;
+  // Set non-identity transforms: WORLD0 * VIEW * PROJECTION.
+  auto set_identity = [](float m[16]) {
+    std::memset(m, 0, sizeof(float) * 16);
+    m[0] = 1.0f;
+    m[5] = 1.0f;
+    m[10] = 1.0f;
+    m[15] = 1.0f;
+  };
+
+  float world[16];
+  float view[16];
+  float proj[16];
+  set_identity(world);
+  set_identity(view);
+  std::memset(proj, 0, sizeof(proj));
+
+  world[12] = 1.0f;
+  world[13] = -1.0f;
+  world[14] = 2.0f;
+
+  view[0] = 2.0f;
+  view[5] = 3.0f;
+  view[10] = 4.0f;
+
+  proj[0] = 1.0f;
+  proj[5] = 1.0f;
+  proj[10] = 1.0f;
+  proj[11] = 1.0f; // w = z
+
   {
     std::lock_guard<std::mutex> lock(dev->mutex);
-    if (!Check(dev->fvf_vertex_decl_xyz_diffuse_tex1 != nullptr, "FVF internal vertex decl created")) {
-      return false;
-    }
-    internal_decl = dev->fvf_vertex_decl_xyz_diffuse_tex1->handle;
-
-    // Set a non-identity world matrix so the uploaded WVP constants are easy to spot.
-    auto set_identity = [](float m[16]) {
-      std::memset(m, 0, 16 * sizeof(float));
-      m[0] = 1.0f;
-      m[5] = 1.0f;
-      m[10] = 1.0f;
-      m[15] = 1.0f;
-    };
-
-    set_identity(dev->transform_matrices[256]); // D3DTS_WORLD
-    set_identity(dev->transform_matrices[2]);   // D3DTS_VIEW
-    set_identity(dev->transform_matrices[3]);   // D3DTS_PROJECTION
-
-    // Scale on the diagonal.
-    dev->transform_matrices[256][0] = 2.0f;
-    dev->transform_matrices[256][5] = 3.0f;
-    dev->transform_matrices[256][10] = 4.0f;
-    // Add translation (D3D9 uses row-major matrices with translation in the last row).
-    dev->transform_matrices[256][12] = 5.0f;
-    dev->transform_matrices[256][13] = 6.0f;
-    dev->transform_matrices[256][14] = 7.0f;
-
+    std::memcpy(dev->transform_matrices[256], world, sizeof(world)); // WORLD0
+    std::memcpy(dev->transform_matrices[2], view, sizeof(view));     // VIEW
+    std::memcpy(dev->transform_matrices[3], proj, sizeof(proj));     // PROJECTION
     dev->fixedfunc_matrix_dirty = true;
   }
 
@@ -13725,9 +13583,9 @@ bool TestFvfXyzDiffuseTex1DrawPrimitiveUpEmitsFixedfuncCommands() {
 
   constexpr uint32_t kWhite = 0xFFFFFFFFu;
   Vertex verts[3]{};
-  verts[0] = {-1.0f, -1.0f, 0.0f, kWhite, 0.0f, 0.0f};
-  verts[1] = {1.0f, -1.0f, 0.0f, kWhite, 1.0f, 0.0f};
-  verts[2] = {0.0f, 1.0f, 0.0f, kWhite, 0.5f, 1.0f};
+  verts[0] = {-0.5f, -0.5f, 0.5f, kWhite, 0.0f, 0.0f};
+  verts[1] = {0.5f, -0.5f, 0.5f, kWhite, 1.0f, 0.0f};
+  verts[2] = {0.0f, 0.5f, 0.5f, kWhite, 0.5f, 1.0f};
 
   hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
       create_dev.hDevice, D3DDDIPT_TRIANGLELIST, 1, verts, sizeof(Vertex));
@@ -13735,70 +13593,78 @@ bool TestFvfXyzDiffuseTex1DrawPrimitiveUpEmitsFixedfuncCommands() {
     return false;
   }
 
+  if (!Check(dev->up_vertex_buffer != nullptr, "up_vertex_buffer allocated")) {
+    return false;
+  }
+  const aerogpu_handle_t up_vb_handle = dev->up_vertex_buffer->handle;
+  if (!Check(up_vb_handle != 0, "up_vertex_buffer handle non-zero")) {
+    return false;
+  }
+
   dev->cmd.finalize();
   const uint8_t* buf = dev->cmd.data();
   const size_t len = dev->cmd.bytes_used();
 
-  // Internal fixed-function shaders should have been created.
-  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_CREATE_SHADER_DXBC) >= 2,
-             "fixed-function fallback creates shaders")) {
+  // Expected clip-space transform.
+  float wv[16];
+  float wvp[16];
+  MulMat4RowMajor(world, view, wv);
+  MulMat4RowMajor(wv, proj, wvp);
+  const float v0[4] = {verts[0].x, verts[0].y, verts[0].z, 1.0f};
+  float expected[4] = {};
+  MulVec4Mat4RowMajor(v0, wvp, expected);
+
+  const CmdLoc upload = FindLastUploadForHandle(buf, len, up_vb_handle);
+  if (!Check(upload.hdr != nullptr, "upload_resource(up_vertex_buffer) emitted")) {
+    return false;
+  }
+  const auto* upload_cmd = reinterpret_cast<const aerogpu_cmd_upload_resource*>(upload.hdr);
+  if (!Check(upload_cmd->offset_bytes == 0, "upload_resource VB offset is 0")) {
+    return false;
+  }
+  if (!Check(upload_cmd->size_bytes == 3 * 28u, "upload_resource VB size matches transformed vertex data")) {
     return false;
   }
 
-  const CmdLoc set_layout = FindLastOpcode(buf, len, AEROGPU_CMD_SET_INPUT_LAYOUT);
-  if (!Check(set_layout.hdr != nullptr, "set_input_layout emitted")) {
+  const uint8_t* payload = reinterpret_cast<const uint8_t*>(upload_cmd) + sizeof(*upload_cmd);
+  float x0 = 0.0f;
+  float y0 = 0.0f;
+  float z0 = 0.0f;
+  float w0 = 0.0f;
+  uint32_t c0 = 0;
+  float u0 = 0.0f;
+  float v0_out = 0.0f;
+  std::memcpy(&x0, payload + 0, sizeof(float));
+  std::memcpy(&y0, payload + 4, sizeof(float));
+  std::memcpy(&z0, payload + 8, sizeof(float));
+  std::memcpy(&w0, payload + 12, sizeof(float));
+  std::memcpy(&c0, payload + 16, sizeof(uint32_t));
+  std::memcpy(&u0, payload + 20, sizeof(float));
+  std::memcpy(&v0_out, payload + 24, sizeof(float));
+
+  if (!Check(std::fabs(x0 - expected[0]) < 1e-6f, "XYZ|TEX1 UP: x0 matches WVP")) {
     return false;
   }
-  const auto* set_layout_cmd = reinterpret_cast<const aerogpu_cmd_set_input_layout*>(set_layout.hdr);
-  if (!Check(set_layout_cmd->input_layout_handle == internal_decl, "set_input_layout binds internal FVF decl")) {
+  if (!Check(std::fabs(y0 - expected[1]) < 1e-6f, "XYZ|TEX1 UP: y0 matches WVP")) {
+    return false;
+  }
+  if (!Check(std::fabs(z0 - expected[2]) < 1e-6f, "XYZ|TEX1 UP: z0 matches WVP")) {
+    return false;
+  }
+  if (!Check(std::fabs(w0 - expected[3]) < 1e-6f, "XYZ|TEX1 UP: w0 matches WVP")) {
+    return false;
+  }
+  if (!Check(c0 == kWhite, "XYZ|TEX1 UP: diffuse color preserved")) {
+    return false;
+  }
+  if (!Check(std::fabs(u0 - verts[0].u) < 1e-6f, "XYZ|TEX1 UP: u preserved")) {
+    return false;
+  }
+  if (!Check(std::fabs(v0_out - verts[0].v) < 1e-6f, "XYZ|TEX1 UP: v preserved")) {
     return false;
   }
 
-  const CmdLoc set_consts = FindLastOpcode(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_F);
-  if (!Check(set_consts.hdr != nullptr, "set_shader_constants_f emitted")) {
-    return false;
-  }
-  const auto* const_cmd = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(set_consts.hdr);
-  if (!Check(const_cmd->stage == AEROGPU_SHADER_STAGE_VERTEX, "WVP constants uploaded to VS stage")) {
-    return false;
-  }
-  if (!Check(const_cmd->start_register == 240, "WVP constants start register")) {
-    return false;
-  }
-  if (!Check(const_cmd->vec4_count == 4, "WVP constants upload 4 vec4 regs")) {
-    return false;
-  }
-
-  const float* m = reinterpret_cast<const float*>(reinterpret_cast<const uint8_t*>(const_cmd) + sizeof(*const_cmd));
-  if (!Check(std::fabs(m[0] - 2.0f) < 1e-6f, "WVP[0][0] = 2")) {
-    return false;
-  }
-  if (!Check(std::fabs(m[5] - 3.0f) < 1e-6f, "WVP[1][1] = 3")) {
-    return false;
-  }
-  if (!Check(std::fabs(m[10] - 4.0f) < 1e-6f, "WVP[2][2] = 4")) {
-    return false;
-  }
-  if (!Check(std::fabs(m[15] - 1.0f) < 1e-6f, "WVP[3][3] = 1")) {
-    return false;
-  }
-  // WVP is uploaded as column vectors, so translation (row-major m[3][0..2]) lands in c240.w/c241.w/c242.w.
-  if (!Check(std::fabs(m[3] - 5.0f) < 1e-6f, "WVP translate X in c240.w")) {
-    return false;
-  }
-  if (!Check(std::fabs(m[7] - 6.0f) < 1e-6f, "WVP translate Y in c241.w")) {
-    return false;
-  }
-  if (!Check(std::fabs(m[11] - 7.0f) < 1e-6f, "WVP translate Z in c242.w")) {
-    return false;
-  }
-
-  const CmdLoc bind = FindLastOpcode(buf, len, AEROGPU_CMD_BIND_SHADERS);
-  if (!Check(bind.hdr != nullptr, "bind_shaders emitted")) {
-    return false;
-  }
-  const auto* bind_cmd = reinterpret_cast<const aerogpu_cmd_bind_shaders*>(bind.hdr);
-  return Check(bind_cmd->vs != 0 && bind_cmd->ps != 0, "bind_shaders uses non-zero VS/PS handles");
+  return ValidateStream(buf, len);
 }
 
 bool TestFvfXyzDiffuseTex1SetTransformDrawPrimitiveUpEmitsWvpConstants() {
@@ -13909,7 +13775,7 @@ bool TestFvfXyzDiffuseTex1SetTransformDrawPrimitiveUpEmitsWvpConstants() {
     return false;
   }
 
-  // Set WORLD/VIEW/PROJECTION transforms to exercise WVP constant uploads.
+  // Set WORLD/VIEW/PROJECTION transforms to exercise CPU WVP conversion.
   D3DMATRIX identity{};
   identity.m[0][0] = 1.0f;
   identity.m[1][1] = 1.0f;
@@ -13959,62 +13825,99 @@ bool TestFvfXyzDiffuseTex1SetTransformDrawPrimitiveUpEmitsWvpConstants() {
   }
 
   auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+  if (!Check(dev->up_vertex_buffer != nullptr, "up_vertex_buffer allocated")) {
+    return false;
+  }
+  const aerogpu_handle_t up_vb_handle = dev->up_vertex_buffer->handle;
+  if (!Check(up_vb_handle != 0, "up_vertex_buffer handle non-zero")) {
+    return false;
+  }
   dev->cmd.finalize();
   const uint8_t* buf = dev->cmd.data();
   const size_t len = dev->cmd.bytes_used();
 
-  const CmdLoc consts = FindLastOpcode(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_F);
-  if (!Check(consts.hdr != nullptr, "set_shader_constants_f emitted")) {
+  float world_f[16] = {
+      world.m[0][0], world.m[0][1], world.m[0][2], world.m[0][3],
+      world.m[1][0], world.m[1][1], world.m[1][2], world.m[1][3],
+      world.m[2][0], world.m[2][1], world.m[2][2], world.m[2][3],
+      world.m[3][0], world.m[3][1], world.m[3][2], world.m[3][3],
+  };
+  float view_f[16] = {
+      identity.m[0][0], identity.m[0][1], identity.m[0][2], identity.m[0][3],
+      identity.m[1][0], identity.m[1][1], identity.m[1][2], identity.m[1][3],
+      identity.m[2][0], identity.m[2][1], identity.m[2][2], identity.m[2][3],
+      identity.m[3][0], identity.m[3][1], identity.m[3][2], identity.m[3][3],
+  };
+  float proj_f[16] = {
+      identity.m[0][0], identity.m[0][1], identity.m[0][2], identity.m[0][3],
+      identity.m[1][0], identity.m[1][1], identity.m[1][2], identity.m[1][3],
+      identity.m[2][0], identity.m[2][1], identity.m[2][2], identity.m[2][3],
+      identity.m[3][0], identity.m[3][1], identity.m[3][2], identity.m[3][3],
+  };
+
+  // Expected clip-space transform.
+  float wv[16];
+  float wvp[16];
+  MulMat4RowMajor(world_f, view_f, wv);
+  MulMat4RowMajor(wv, proj_f, wvp);
+  const float v0[4] = {verts[0].x, verts[0].y, verts[0].z, 1.0f};
+  float expected[4] = {};
+  MulVec4Mat4RowMajor(v0, wvp, expected);
+
+  const CmdLoc upload = FindLastUploadForHandle(buf, len, up_vb_handle);
+  if (!Check(upload.hdr != nullptr, "upload_resource(up_vertex_buffer) emitted")) {
     return false;
   }
-  const auto* const_cmd = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(consts.hdr);
-  if (!Check(const_cmd->stage == AEROGPU_SHADER_STAGE_VERTEX, "WVP constants uploaded to VS stage")) {
+  const auto* upload_cmd = reinterpret_cast<const aerogpu_cmd_upload_resource*>(upload.hdr);
+  if (!Check(upload_cmd->offset_bytes == 0, "upload_resource VB offset is 0")) {
     return false;
   }
-  if (!Check(const_cmd->start_register == 240, "WVP constants start register")) {
-    return false;
-  }
-  if (!Check(const_cmd->vec4_count == 4, "WVP constants upload 4 vec4 regs")) {
+  if (!Check(upload_cmd->size_bytes == 3 * 28u, "upload_resource VB size matches transformed vertex data")) {
     return false;
   }
 
-  const float* m = reinterpret_cast<const float*>(reinterpret_cast<const uint8_t*>(const_cmd) + sizeof(*const_cmd));
-  if (!Check(std::fabs(m[0] - 2.0f) < 1e-6f, "WVP[0][0] = 2")) {
+  const uint8_t* payload = reinterpret_cast<const uint8_t*>(upload_cmd) + sizeof(*upload_cmd);
+  float x0 = 0.0f;
+  float y0 = 0.0f;
+  float z0 = 0.0f;
+  float w0 = 0.0f;
+  uint32_t c0 = 0;
+  float u0 = 0.0f;
+  float v0_out = 0.0f;
+  std::memcpy(&x0, payload + 0, sizeof(float));
+  std::memcpy(&y0, payload + 4, sizeof(float));
+  std::memcpy(&z0, payload + 8, sizeof(float));
+  std::memcpy(&w0, payload + 12, sizeof(float));
+  std::memcpy(&c0, payload + 16, sizeof(uint32_t));
+  std::memcpy(&u0, payload + 20, sizeof(float));
+  std::memcpy(&v0_out, payload + 24, sizeof(float));
+
+  if (!Check(std::fabs(x0 - expected[0]) < 1e-6f, "XYZ|TEX1 SetTransform: x0 matches WVP")) {
     return false;
   }
-  if (!Check(std::fabs(m[5] - 3.0f) < 1e-6f, "WVP[1][1] = 3")) {
+  if (!Check(std::fabs(y0 - expected[1]) < 1e-6f, "XYZ|TEX1 SetTransform: y0 matches WVP")) {
     return false;
   }
-  if (!Check(std::fabs(m[10] - 4.0f) < 1e-6f, "WVP[2][2] = 4")) {
+  if (!Check(std::fabs(z0 - expected[2]) < 1e-6f, "XYZ|TEX1 SetTransform: z0 matches WVP")) {
     return false;
   }
-  if (!Check(std::fabs(m[15] - 1.0f) < 1e-6f, "WVP[3][3] = 1")) {
+  if (!Check(std::fabs(w0 - expected[3]) < 1e-6f, "XYZ|TEX1 SetTransform: w0 matches WVP")) {
     return false;
   }
-  if (!Check(std::fabs(m[3] - 5.0f) < 1e-6f, "WVP translate X in c240.w")) {
+  if (!Check(c0 == kWhite, "XYZ|TEX1 SetTransform: diffuse color preserved")) {
     return false;
   }
-  if (!Check(std::fabs(m[7] - 6.0f) < 1e-6f, "WVP translate Y in c241.w")) {
+  if (!Check(std::fabs(u0 - verts[0].u) < 1e-6f, "XYZ|TEX1 SetTransform: u preserved")) {
     return false;
   }
-  if (!Check(std::fabs(m[11] - 7.0f) < 1e-6f, "WVP translate Z in c242.w")) {
+  if (!Check(std::fabs(v0_out - verts[0].v) < 1e-6f, "XYZ|TEX1 SetTransform: v preserved")) {
     return false;
   }
 
-  const CmdLoc draw = FindLastOpcode(buf, len, AEROGPU_CMD_DRAW);
-  if (!Check(draw.hdr != nullptr, "draw emitted")) {
-    return false;
-  }
-  if (!Check(consts.offset < draw.offset, "WVP constants uploaded before draw")) {
-    return false;
-  }
-
-  return CheckLastBoundPixelShaderMatches(
-      buf,
-      len,
-      reinterpret_cast<const void*>(fixedfunc::kPsStage0ModulateTexture),
-      sizeof(fixedfunc::kPsStage0ModulateTexture),
-      "bind_shaders emitted");
+  return ValidateStream(buf, len);
 }
 
 bool TestFvfXyzDiffuseTex1ReuploadsWvpAfterUserVsClobbersConstants() {
@@ -14098,30 +14001,32 @@ bool TestFvfXyzDiffuseTex1ReuploadsWvpAfterUserVsClobbersConstants() {
     return false;
   }
 
-  // Configure transforms so the expected WVP constants are deterministic.
+  float world[16] = {};
+  float view[16] = {};
+  float proj[16] = {};
+  auto set_identity = [](float m[16]) {
+    std::memset(m, 0, sizeof(float) * 16);
+    m[0] = 1.0f;
+    m[5] = 1.0f;
+    m[10] = 1.0f;
+    m[15] = 1.0f;
+  };
+  set_identity(world);
+  set_identity(view);
+  set_identity(proj);
+  // Scale + translate.
+  world[0] = 2.0f;
+  world[5] = 3.0f;
+  world[10] = 4.0f;
+  world[12] = 5.0f;
+  world[13] = 6.0f;
+  world[14] = 7.0f;
+
   {
     std::lock_guard<std::mutex> lock(dev->mutex);
-
-    auto set_identity = [](float m[16]) {
-      std::memset(m, 0, 16 * sizeof(float));
-      m[0] = 1.0f;
-      m[5] = 1.0f;
-      m[10] = 1.0f;
-      m[15] = 1.0f;
-    };
-
-    set_identity(dev->transform_matrices[256]); // D3DTS_WORLD
-    set_identity(dev->transform_matrices[2]);   // D3DTS_VIEW
-    set_identity(dev->transform_matrices[3]);   // D3DTS_PROJECTION
-
-    // Scale + translate.
-    dev->transform_matrices[256][0] = 2.0f;
-    dev->transform_matrices[256][5] = 3.0f;
-    dev->transform_matrices[256][10] = 4.0f;
-    dev->transform_matrices[256][12] = 5.0f;
-    dev->transform_matrices[256][13] = 6.0f;
-    dev->transform_matrices[256][14] = 7.0f;
-
+    std::memcpy(dev->transform_matrices[256], world, sizeof(world)); // WORLD0
+    std::memcpy(dev->transform_matrices[2], view, sizeof(view));     // VIEW
+    std::memcpy(dev->transform_matrices[3], proj, sizeof(proj));     // PROJECTION
     dev->fixedfunc_matrix_dirty = true;
   }
 
@@ -14139,13 +14044,13 @@ bool TestFvfXyzDiffuseTex1ReuploadsWvpAfterUserVsClobbersConstants() {
   verts[1] = {1.0f, -1.0f, 0.0f, kWhite, 1.0f, 0.0f};
   verts[2] = {0.0f, 1.0f, 0.0f, kWhite, 0.5f, 1.0f};
 
-  // First draw uploads the fixed-function WVP constants and clears the dirty flag.
+  // First draw in fixed-function mode.
   hr = cleanup.device_funcs.pfnDrawPrimitiveUP(create_dev.hDevice, D3DDDIPT_TRIANGLELIST, 1, verts, sizeof(Vertex));
   if (!Check(hr == S_OK, "DrawPrimitiveUP (first)")) {
     return false;
   }
 
-  // Bind a user VS and clobber the reserved fixed-function constant range.
+  // Bind a user VS and clobber constants, then return to fixed-function mode.
   const uint8_t dxbc[] = {0x44, 0x58, 0x42, 0x43, 0x00, 0x01, 0x02, 0x03};
   D3D9DDI_HSHADER hShader{};
   hr = cleanup.device_funcs.pfnCreateShader(
@@ -14170,16 +14075,23 @@ bool TestFvfXyzDiffuseTex1ReuploadsWvpAfterUserVsClobbersConstants() {
     return false;
   }
 
-  // Clear VS -> return to fixed-function path without changing FVF.
   D3D9DDI_HSHADER null_shader{};
   hr = cleanup.device_funcs.pfnSetShader(create_dev.hDevice, kD3d9ShaderStageVs, null_shader);
   if (!Check(hr == S_OK, "SetShader(VS=null)")) {
     return false;
   }
 
-  // Second draw must re-upload WVP constants (overwriting the clobber).
+  // Second draw in fixed-function mode.
   hr = cleanup.device_funcs.pfnDrawPrimitiveUP(create_dev.hDevice, D3DDDIPT_TRIANGLELIST, 1, verts, sizeof(Vertex));
   if (!Check(hr == S_OK, "DrawPrimitiveUP (second)")) {
+    return false;
+  }
+
+  if (!Check(dev->up_vertex_buffer != nullptr, "up_vertex_buffer allocated")) {
+    return false;
+  }
+  const aerogpu_handle_t up_vb_handle = dev->up_vertex_buffer->handle;
+  if (!Check(up_vb_handle != 0, "up_vertex_buffer handle non-zero")) {
     return false;
   }
 
@@ -14187,47 +14099,274 @@ bool TestFvfXyzDiffuseTex1ReuploadsWvpAfterUserVsClobbersConstants() {
   const uint8_t* buf = dev->cmd.data();
   const size_t len = dev->cmd.bytes_used();
 
-  const CmdLoc set_consts = FindLastOpcode(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_F);
-  if (!Check(set_consts.hdr != nullptr, "set_shader_constants_f emitted")) {
+  // Expected clip-space transform.
+  float wv[16];
+  float wvp[16];
+  MulMat4RowMajor(world, view, wv);
+  MulMat4RowMajor(wv, proj, wvp);
+  const float v0[4] = {verts[0].x, verts[0].y, verts[0].z, 1.0f};
+  float expected[4] = {};
+  MulVec4Mat4RowMajor(v0, wvp, expected);
+
+  const CmdLoc upload = FindLastUploadForHandle(buf, len, up_vb_handle);
+  if (!Check(upload.hdr != nullptr, "upload_resource(up_vertex_buffer) emitted")) {
     return false;
   }
-  const auto* const_cmd = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(set_consts.hdr);
-  if (!Check(const_cmd->stage == AEROGPU_SHADER_STAGE_VERTEX, "WVP constants uploaded to VS stage")) {
+  const auto* upload_cmd = reinterpret_cast<const aerogpu_cmd_upload_resource*>(upload.hdr);
+  if (!Check(upload_cmd->offset_bytes == 0, "upload_resource VB offset is 0")) {
     return false;
   }
-  if (!Check(const_cmd->start_register == 240, "WVP constants start register")) {
-    return false;
-  }
-  if (!Check(const_cmd->vec4_count == 4, "WVP constants upload 4 vec4 regs")) {
+  if (!Check(upload_cmd->size_bytes == 3 * 28u, "upload_resource VB size matches transformed vertex data")) {
     return false;
   }
 
-  const float* m = reinterpret_cast<const float*>(reinterpret_cast<const uint8_t*>(const_cmd) + sizeof(*const_cmd));
-  // WVP is uploaded as column vectors.
-  if (!Check(std::fabs(m[0] - 2.0f) < 1e-6f, "WVP[0][0] = 2")) {
+  const uint8_t* payload = reinterpret_cast<const uint8_t*>(upload_cmd) + sizeof(*upload_cmd);
+  float x0 = 0.0f;
+  float y0 = 0.0f;
+  float z0 = 0.0f;
+  float w0 = 0.0f;
+  uint32_t c0 = 0;
+  float u0 = 0.0f;
+  float v0_out = 0.0f;
+  std::memcpy(&x0, payload + 0, sizeof(float));
+  std::memcpy(&y0, payload + 4, sizeof(float));
+  std::memcpy(&z0, payload + 8, sizeof(float));
+  std::memcpy(&w0, payload + 12, sizeof(float));
+  std::memcpy(&c0, payload + 16, sizeof(uint32_t));
+  std::memcpy(&u0, payload + 20, sizeof(float));
+  std::memcpy(&v0_out, payload + 24, sizeof(float));
+
+  if (!Check(std::fabs(x0 - expected[0]) < 1e-6f, "XYZ|TEX1 clobber: x0 matches WVP")) {
     return false;
   }
-  if (!Check(std::fabs(m[5] - 3.0f) < 1e-6f, "WVP[1][1] = 3")) {
+  if (!Check(std::fabs(y0 - expected[1]) < 1e-6f, "XYZ|TEX1 clobber: y0 matches WVP")) {
     return false;
   }
-  if (!Check(std::fabs(m[10] - 4.0f) < 1e-6f, "WVP[2][2] = 4")) {
+  if (!Check(std::fabs(z0 - expected[2]) < 1e-6f, "XYZ|TEX1 clobber: z0 matches WVP")) {
     return false;
   }
-  if (!Check(std::fabs(m[15] - 1.0f) < 1e-6f, "WVP[3][3] = 1")) {
+  if (!Check(std::fabs(w0 - expected[3]) < 1e-6f, "XYZ|TEX1 clobber: w0 matches WVP")) {
     return false;
   }
-  // WVP is uploaded as column vectors, so translation (row-major m[3][0..2]) lands in c240.w/c241.w/c242.w.
-  if (!Check(std::fabs(m[3] - 5.0f) < 1e-6f, "WVP translate X in c240.w")) {
+  if (!Check(c0 == kWhite, "XYZ|TEX1 clobber: diffuse color preserved")) {
     return false;
   }
-  if (!Check(std::fabs(m[7] - 6.0f) < 1e-6f, "WVP translate Y in c241.w")) {
+  if (!Check(std::fabs(u0 - verts[0].u) < 1e-6f, "XYZ|TEX1 clobber: u preserved")) {
     return false;
   }
-  if (!Check(std::fabs(m[11] - 7.0f) < 1e-6f, "WVP translate Z in c242.w")) {
+  if (!Check(std::fabs(v0_out - verts[0].v) < 1e-6f, "XYZ|TEX1 clobber: v preserved")) {
     return false;
   }
 
-  return true;
+  return ValidateStream(buf, len);
+}
+
+bool TestFvfXyzDiffuseTex1DrawIndexedPrimitiveUpAppliesWvpTransform() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    bool has_adapter = false;
+    bool has_device = false;
+
+    ~Cleanup() {
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  if (!Check(cleanup.device_funcs.pfnSetFVF != nullptr, "SetFVF must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDrawPrimitiveUP != nullptr, "DrawPrimitiveUP must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDrawIndexedPrimitive2 != nullptr, "DrawIndexedPrimitive2 must be available")) {
+    return false;
+  }
+
+  // D3DFVF_XYZ (0x2) | D3DFVF_DIFFUSE (0x40) | D3DFVF_TEX1 (0x100).
+  hr = cleanup.device_funcs.pfnSetFVF(create_dev.hDevice, 0x142u);
+  if (!Check(hr == S_OK, "SetFVF(XYZ|DIFFUSE|TEX1)")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // Set non-identity transforms: WORLD0 * VIEW * PROJECTION.
+  auto set_identity = [](float m[16]) {
+    std::memset(m, 0, sizeof(float) * 16);
+    m[0] = 1.0f;
+    m[5] = 1.0f;
+    m[10] = 1.0f;
+    m[15] = 1.0f;
+  };
+
+  float world[16];
+  float view[16];
+  float proj[16];
+  set_identity(world);
+  set_identity(view);
+  std::memset(proj, 0, sizeof(proj));
+
+  world[12] = 1.0f;
+  world[13] = -1.0f;
+  world[14] = 2.0f;
+
+  view[0] = 2.0f;
+  view[5] = 3.0f;
+  view[10] = 4.0f;
+
+  proj[0] = 1.0f;
+  proj[5] = 1.0f;
+  proj[10] = 1.0f;
+  proj[11] = 1.0f; // w = z
+
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    std::memcpy(dev->transform_matrices[256], world, sizeof(world)); // WORLD0
+    std::memcpy(dev->transform_matrices[2], view, sizeof(view));     // VIEW
+    std::memcpy(dev->transform_matrices[3], proj, sizeof(proj));     // PROJECTION
+    dev->fixedfunc_matrix_dirty = true;
+  }
+
+  struct Vertex {
+    float x;
+    float y;
+    float z;
+    uint32_t color;
+    float u;
+    float v;
+  };
+  constexpr uint32_t kWhite = 0xFFFFFFFFu;
+  Vertex verts[3]{};
+  verts[0] = {-0.5f, -0.5f, 0.5f, kWhite, 0.0f, 0.0f};
+  verts[1] = {0.5f, -0.5f, 0.5f, kWhite, 1.0f, 0.0f};
+  verts[2] = {0.0f, 0.5f, 0.5f, kWhite, 0.5f, 1.0f};
+
+  const uint16_t indices[3] = {0, 1, 2};
+  D3DDDIARG_DRAWINDEXEDPRIMITIVE2 draw{};
+  draw.PrimitiveType = D3DDDIPT_TRIANGLELIST;
+  draw.PrimitiveCount = 1;
+  draw.MinIndex = 0;
+  draw.NumVertices = 3;
+  draw.pIndexData = indices;
+  draw.IndexDataFormat = kD3dFmtIndex16;
+  draw.pVertexStreamZeroData = verts;
+  draw.VertexStreamZeroStride = sizeof(Vertex);
+
+  hr = cleanup.device_funcs.pfnDrawIndexedPrimitive2(create_dev.hDevice, &draw);
+  if (!Check(hr == S_OK, "DrawIndexedPrimitive2")) {
+    return false;
+  }
+
+  if (!Check(dev->up_vertex_buffer != nullptr, "up_vertex_buffer allocated")) {
+    return false;
+  }
+  const aerogpu_handle_t up_vb_handle = dev->up_vertex_buffer->handle;
+  if (!Check(up_vb_handle != 0, "up_vertex_buffer handle non-zero")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+
+  // Expected clip-space transform.
+  float wv[16];
+  float wvp[16];
+  MulMat4RowMajor(world, view, wv);
+  MulMat4RowMajor(wv, proj, wvp);
+  const float v0[4] = {verts[0].x, verts[0].y, verts[0].z, 1.0f};
+  float expected[4] = {};
+  MulVec4Mat4RowMajor(v0, wvp, expected);
+
+  const CmdLoc upload = FindLastUploadForHandle(buf, len, up_vb_handle);
+  if (!Check(upload.hdr != nullptr, "upload_resource(up_vertex_buffer) emitted")) {
+    return false;
+  }
+  const auto* upload_cmd = reinterpret_cast<const aerogpu_cmd_upload_resource*>(upload.hdr);
+  if (!Check(upload_cmd->offset_bytes == 0, "upload_resource VB offset is 0")) {
+    return false;
+  }
+  if (!Check(upload_cmd->size_bytes == 3 * 28u, "upload_resource VB size matches transformed vertex data")) {
+    return false;
+  }
+
+  const uint8_t* payload = reinterpret_cast<const uint8_t*>(upload_cmd) + sizeof(*upload_cmd);
+  float x0 = 0.0f;
+  float y0 = 0.0f;
+  float z0 = 0.0f;
+  float w0 = 0.0f;
+  uint32_t c0 = 0;
+  float u0 = 0.0f;
+  float v0_out = 0.0f;
+  std::memcpy(&x0, payload + 0, sizeof(float));
+  std::memcpy(&y0, payload + 4, sizeof(float));
+  std::memcpy(&z0, payload + 8, sizeof(float));
+  std::memcpy(&w0, payload + 12, sizeof(float));
+  std::memcpy(&c0, payload + 16, sizeof(uint32_t));
+  std::memcpy(&u0, payload + 20, sizeof(float));
+  std::memcpy(&v0_out, payload + 24, sizeof(float));
+
+  if (!Check(std::fabs(x0 - expected[0]) < 1e-6f, "XYZ|TEX1 Indexed UP: x0 matches WVP")) {
+    return false;
+  }
+  if (!Check(std::fabs(y0 - expected[1]) < 1e-6f, "XYZ|TEX1 Indexed UP: y0 matches WVP")) {
+    return false;
+  }
+  if (!Check(std::fabs(z0 - expected[2]) < 1e-6f, "XYZ|TEX1 Indexed UP: z0 matches WVP")) {
+    return false;
+  }
+  if (!Check(std::fabs(w0 - expected[3]) < 1e-6f, "XYZ|TEX1 Indexed UP: w0 matches WVP")) {
+    return false;
+  }
+  if (!Check(c0 == kWhite, "XYZ|TEX1 Indexed UP: diffuse color preserved")) {
+    return false;
+  }
+  if (!Check(std::fabs(u0 - verts[0].u) < 1e-6f, "XYZ|TEX1 Indexed UP: u preserved")) {
+    return false;
+  }
+  if (!Check(std::fabs(v0_out - verts[0].v) < 1e-6f, "XYZ|TEX1 Indexed UP: v preserved")) {
+    return false;
+  }
+
+  return ValidateStream(buf, len);
 }
 
 bool TestFvfXyzDiffuseDrawPrimitiveUpEmitsWvpConstants() {
@@ -14292,9 +14431,12 @@ bool TestFvfXyzDiffuseDrawPrimitiveUpEmitsWvpConstants() {
     return false;
   }
 
-  // D3D9 fixed-function transform convention: row vectors, row-major matrices.
-  // The driver computes WVP = World * View * Proj, transposes it to columns, and
-  // uploads it to a reserved VS constant range (c240..c243).
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // Non-trivial WORLD/VIEW/PROJECTION so we cover more than simple scale/translate.
   const float world_f[16] = {
       1.0f, 2.0f, 3.0f, 4.0f,
       0.0f, 1.0f, 0.0f, 0.0f,
@@ -14334,6 +14476,13 @@ bool TestFvfXyzDiffuseDrawPrimitiveUpEmitsWvpConstants() {
     return false;
   }
 
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->fvf_vertex_decl_xyz_diffuse != nullptr, "FVF internal vertex decl created")) {
+      return false;
+    }
+  }
+
   struct Vertex {
     float x;
     float y;
@@ -14346,82 +14495,73 @@ bool TestFvfXyzDiffuseDrawPrimitiveUpEmitsWvpConstants() {
   verts[1] = {1.0f, -1.0f, 0.0f, kWhite};
   verts[2] = {0.0f, 1.0f, 0.0f, kWhite};
 
-  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
-      create_dev.hDevice, D3DDDIPT_TRIANGLELIST, 1, verts, sizeof(Vertex));
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(create_dev.hDevice, D3DDDIPT_TRIANGLELIST, 1, verts, sizeof(Vertex));
   if (!Check(hr == S_OK, "DrawPrimitiveUP")) {
     return false;
   }
 
-  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  if (!Check(dev->up_vertex_buffer != nullptr, "up_vertex_buffer allocated")) {
+    return false;
+  }
+  const aerogpu_handle_t up_vb_handle = dev->up_vertex_buffer->handle;
+  if (!Check(up_vb_handle != 0, "up_vertex_buffer handle non-zero")) {
+    return false;
+  }
+
   dev->cmd.finalize();
   const uint8_t* buf = dev->cmd.data();
   const size_t len = dev->cmd.bytes_used();
 
-  // Fixed-function shaders should have been created/bound.
-  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_CREATE_SHADER_DXBC) >= 2,
-             "fixed-function fallback creates shaders")) {
+  // Expected clip-space transform.
+  float wv[16];
+  float wvp[16];
+  MulMat4RowMajor(world_f, view_f, wv);
+  MulMat4RowMajor(wv, proj_f, wvp);
+  const float v0[4] = {verts[0].x, verts[0].y, verts[0].z, 1.0f};
+  float expected[4] = {};
+  MulVec4Mat4RowMajor(v0, wvp, expected);
+
+  const CmdLoc upload = FindLastUploadForHandle(buf, len, up_vb_handle);
+  if (!Check(upload.hdr != nullptr, "upload_resource(up_vertex_buffer) emitted")) {
     return false;
   }
-  const CmdLoc bind = FindLastOpcode(buf, len, AEROGPU_CMD_BIND_SHADERS);
-  if (!Check(bind.hdr != nullptr, "bind_shaders emitted")) {
+  const auto* upload_cmd = reinterpret_cast<const aerogpu_cmd_upload_resource*>(upload.hdr);
+  if (!Check(upload_cmd->offset_bytes == 0, "upload_resource VB offset is 0")) {
     return false;
   }
-  const auto* bind_cmd = reinterpret_cast<const aerogpu_cmd_bind_shaders*>(bind.hdr);
-  if (!Check(bind_cmd->vs != 0 && bind_cmd->ps != 0, "bind_shaders uses non-zero VS/PS handles")) {
+  if (!Check(upload_cmd->size_bytes == 3 * 20u, "upload_resource VB size matches transformed vertex data")) {
     return false;
   }
 
-  const CmdLoc set_consts = FindLastOpcode(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_F);
-  if (!Check(set_consts.hdr != nullptr, "set_shader_constants_f emitted")) {
+  const uint8_t* payload = reinterpret_cast<const uint8_t*>(upload_cmd) + sizeof(*upload_cmd);
+  float x0 = 0.0f;
+  float y0 = 0.0f;
+  float z0 = 0.0f;
+  float w0 = 0.0f;
+  uint32_t c0 = 0;
+  std::memcpy(&x0, payload + 0, sizeof(float));
+  std::memcpy(&y0, payload + 4, sizeof(float));
+  std::memcpy(&z0, payload + 8, sizeof(float));
+  std::memcpy(&w0, payload + 12, sizeof(float));
+  std::memcpy(&c0, payload + 16, sizeof(uint32_t));
+
+  if (!Check(std::fabs(x0 - expected[0]) < 1e-6f, "XYZ SetTransform: x0 matches WVP")) {
     return false;
   }
-  const auto* const_cmd = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(set_consts.hdr);
-  if (!Check(const_cmd->stage == AEROGPU_SHADER_STAGE_VERTEX, "WVP constants uploaded to VS stage")) {
+  if (!Check(std::fabs(y0 - expected[1]) < 1e-6f, "XYZ SetTransform: y0 matches WVP")) {
     return false;
   }
-  if (!Check(const_cmd->start_register == 240, "WVP constants start register")) {
+  if (!Check(std::fabs(z0 - expected[2]) < 1e-6f, "XYZ SetTransform: z0 matches WVP")) {
     return false;
   }
-  if (!Check(const_cmd->vec4_count == 4, "WVP constants upload 4 vec4 regs")) {
+  if (!Check(std::fabs(w0 - expected[3]) < 1e-6f, "XYZ SetTransform: w0 matches WVP")) {
+    return false;
+  }
+  if (!Check(c0 == kWhite, "XYZ SetTransform: diffuse color preserved")) {
     return false;
   }
 
-  float expected_wvp[16] = {};
-  float tmp[16] = {};
-  auto mul_mat4_row_major = [](const float a[16], const float b[16], float out[16]) {
-    for (int r = 0; r < 4; ++r) {
-      for (int c = 0; c < 4; ++c) {
-        out[r * 4 + c] =
-            a[r * 4 + 0] * b[0 * 4 + c] +
-            a[r * 4 + 1] * b[1 * 4 + c] +
-            a[r * 4 + 2] * b[2 * 4 + c] +
-            a[r * 4 + 3] * b[3 * 4 + c];
-      }
-    }
-  };
-  mul_mat4_row_major(world_f, view_f, tmp);
-  mul_mat4_row_major(tmp, proj_f, expected_wvp);
-
-  float expected_cols[16] = {};
-  for (int r = 0; r < 4; ++r) {
-    for (int c = 0; c < 4; ++c) {
-      expected_cols[c * 4 + r] = expected_wvp[r * 4 + c];
-    }
-  }
-
-  const float* m = reinterpret_cast<const float*>(reinterpret_cast<const uint8_t*>(const_cmd) + sizeof(*const_cmd));
-  for (int i = 0; i < 16; ++i) {
-    if (std::fabs(m[i] - expected_cols[i]) > 1e-6f) {
-      std::fprintf(stderr,
-                   "FAIL: WVP constant mismatch at %d (got %f expected %f)\n",
-                   i,
-                   static_cast<double>(m[i]),
-                   static_cast<double>(expected_cols[i]));
-      return false;
-    }
-  }
-
-  return true;
+  return ValidateStream(buf, len);
 }
 
 bool TestFixedFuncXyzStateBlockApplyReuploadsWvpConstants() {
@@ -14503,6 +14643,11 @@ bool TestFixedFuncXyzStateBlockApplyReuploadsWvpConstants() {
     return false;
   }
 
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
   // Ensure view/proj are identity so WVP == WORLD0.
   D3DMATRIX identity{};
   identity.m[0][0] = 1.0f;
@@ -14570,97 +14715,120 @@ bool TestFixedFuncXyzStateBlockApplyReuploadsWvpConstants() {
     float u;
     float v;
   };
-
   constexpr uint32_t kWhite = 0xFFFFFFFFu;
   Vertex verts[3]{};
   verts[0] = {-1.0f, -1.0f, 0.0f, kWhite, 0.0f, 0.0f};
   verts[1] = {1.0f, -1.0f, 0.0f, kWhite, 1.0f, 0.0f};
   verts[2] = {0.0f, 1.0f, 0.0f, kWhite, 0.5f, 1.0f};
 
-  // First draw uploads WVP derived from B (clears dirty flag).
+  // First draw uses WORLD=B.
   hr = cleanup.device_funcs.pfnDrawPrimitiveUP(create_dev.hDevice, D3DDDIPT_TRIANGLELIST, 1, verts, sizeof(Vertex));
   if (!Check(hr == S_OK, "DrawPrimitiveUP (first)")) {
     return false;
   }
 
-  // Apply state block: should restore WORLD=A and mark fixed-function matrix dirty.
+  // Apply state block: restores WORLD=A.
   hr = cleanup.device_funcs.pfnApplyStateBlock(create_dev.hDevice, cleanup.hStateBlock);
   if (!Check(hr == S_OK, "ApplyStateBlock")) {
     return false;
   }
 
-  // Second draw must upload WVP derived from A (not B).
+  // Second draw must use WORLD=A.
   hr = cleanup.device_funcs.pfnDrawPrimitiveUP(create_dev.hDevice, D3DDDIPT_TRIANGLELIST, 1, verts, sizeof(Vertex));
   if (!Check(hr == S_OK, "DrawPrimitiveUP (second)")) {
     return false;
   }
 
-  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
-  if (!Check(dev != nullptr, "device pointer")) {
+  if (!Check(dev->up_vertex_buffer != nullptr, "up_vertex_buffer allocated")) {
     return false;
   }
+  const aerogpu_handle_t up_vb_handle = dev->up_vertex_buffer->handle;
+  if (!Check(up_vb_handle != 0, "up_vertex_buffer handle non-zero")) {
+    return false;
+  }
+
   dev->cmd.finalize();
   const uint8_t* buf = dev->cmd.data();
   const size_t len = dev->cmd.bytes_used();
 
-  const CmdLoc draw = FindLastOpcode(buf, len, AEROGPU_CMD_DRAW);
-  if (!Check(draw.hdr != nullptr, "draw emitted")) {
+  // Expected clip-space transform for WORLD=A (view/proj identity).
+  float worldA_f[16] = {
+      A.m[0][0], A.m[0][1], A.m[0][2], A.m[0][3],
+      A.m[1][0], A.m[1][1], A.m[1][2], A.m[1][3],
+      A.m[2][0], A.m[2][1], A.m[2][2], A.m[2][3],
+      A.m[3][0], A.m[3][1], A.m[3][2], A.m[3][3],
+  };
+  float view_f[16] = {
+      identity.m[0][0], identity.m[0][1], identity.m[0][2], identity.m[0][3],
+      identity.m[1][0], identity.m[1][1], identity.m[1][2], identity.m[1][3],
+      identity.m[2][0], identity.m[2][1], identity.m[2][2], identity.m[2][3],
+      identity.m[3][0], identity.m[3][1], identity.m[3][2], identity.m[3][3],
+  };
+  float proj_f[16] = {
+      identity.m[0][0], identity.m[0][1], identity.m[0][2], identity.m[0][3],
+      identity.m[1][0], identity.m[1][1], identity.m[1][2], identity.m[1][3],
+      identity.m[2][0], identity.m[2][1], identity.m[2][2], identity.m[2][3],
+      identity.m[3][0], identity.m[3][1], identity.m[3][2], identity.m[3][3],
+  };
+  float wv[16];
+  float wvp[16];
+  MulMat4RowMajor(worldA_f, view_f, wv);
+  MulMat4RowMajor(wv, proj_f, wvp);
+  const float v0[4] = {verts[0].x, verts[0].y, verts[0].z, 1.0f};
+  float expected[4] = {};
+  MulVec4Mat4RowMajor(v0, wvp, expected);
+
+  const CmdLoc upload = FindLastUploadForHandle(buf, len, up_vb_handle);
+  if (!Check(upload.hdr != nullptr, "upload_resource(up_vertex_buffer) emitted")) {
+    return false;
+  }
+  const auto* upload_cmd = reinterpret_cast<const aerogpu_cmd_upload_resource*>(upload.hdr);
+  if (!Check(upload_cmd->offset_bytes == 0, "upload_resource VB offset is 0")) {
+    return false;
+  }
+  if (!Check(upload_cmd->size_bytes == 3 * 28u, "upload_resource VB size matches transformed vertex data")) {
     return false;
   }
 
-  // Fixed-function WVP is uploaded to a reserved constant range (c240..c243).
-  CmdLoc wvp_consts{};
-  const size_t stream_len = StreamBytesUsed(buf, len);
-  size_t offset = sizeof(aerogpu_cmd_stream_header);
-  while (offset + sizeof(aerogpu_cmd_hdr) <= stream_len && offset < draw.offset) {
-    const auto* hdr = reinterpret_cast<const aerogpu_cmd_hdr*>(buf + offset);
-    if (hdr->opcode == AEROGPU_CMD_SET_SHADER_CONSTANTS_F) {
-      const auto* cmd = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(hdr);
-      if (cmd->stage == AEROGPU_SHADER_STAGE_VERTEX && cmd->start_register == 240 && cmd->vec4_count == 4) {
-        wvp_consts.hdr = hdr;
-        wvp_consts.offset = offset;
-      }
-    }
-    if (hdr->size_bytes == 0 || hdr->size_bytes > stream_len - offset) {
-      break;
-    }
-    offset += hdr->size_bytes;
+  const uint8_t* payload = reinterpret_cast<const uint8_t*>(upload_cmd) + sizeof(*upload_cmd);
+  float x0 = 0.0f;
+  float y0 = 0.0f;
+  float z0 = 0.0f;
+  float w0 = 0.0f;
+  uint32_t c0 = 0;
+  float u0 = 0.0f;
+  float v0_out = 0.0f;
+  std::memcpy(&x0, payload + 0, sizeof(float));
+  std::memcpy(&y0, payload + 4, sizeof(float));
+  std::memcpy(&z0, payload + 8, sizeof(float));
+  std::memcpy(&w0, payload + 12, sizeof(float));
+  std::memcpy(&c0, payload + 16, sizeof(uint32_t));
+  std::memcpy(&u0, payload + 20, sizeof(float));
+  std::memcpy(&v0_out, payload + 24, sizeof(float));
+
+  if (!Check(std::fabs(x0 - expected[0]) < 1e-6f, "StateBlock XYZ|TEX1: x0 matches WORLD=A")) {
+    return false;
   }
-  if (!Check(wvp_consts.hdr != nullptr, "WVP set_shader_constants_f emitted before draw")) {
+  if (!Check(std::fabs(y0 - expected[1]) < 1e-6f, "StateBlock XYZ|TEX1: y0 matches WORLD=A")) {
+    return false;
+  }
+  if (!Check(std::fabs(z0 - expected[2]) < 1e-6f, "StateBlock XYZ|TEX1: z0 matches WORLD=A")) {
+    return false;
+  }
+  if (!Check(std::fabs(w0 - expected[3]) < 1e-6f, "StateBlock XYZ|TEX1: w0 matches WORLD=A")) {
+    return false;
+  }
+  if (!Check(c0 == kWhite, "StateBlock XYZ|TEX1: diffuse color preserved")) {
+    return false;
+  }
+  if (!Check(std::fabs(u0 - verts[0].u) < 1e-6f, "StateBlock XYZ|TEX1: u preserved")) {
+    return false;
+  }
+  if (!Check(std::fabs(v0_out - verts[0].v) < 1e-6f, "StateBlock XYZ|TEX1: v preserved")) {
     return false;
   }
 
-  const auto* const_cmd = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(wvp_consts.hdr);
-  if (!Check(const_cmd->stage == AEROGPU_SHADER_STAGE_VERTEX, "WVP constants uploaded to VS stage")) {
-    return false;
-  }
-  // Fixed-function WVP constants are uploaded to a reserved high range so apps
-  // switching between fixed-function and user vertex shaders do not observe
-  // clobbered low constant registers.
-  if (!Check(const_cmd->start_register == 240 && const_cmd->vec4_count == 4, "WVP constants cover c240..c243")) {
-    return false;
-  }
-
-  // WVP is uploaded as column vectors. With VIEW/PROJECTION identity, WVP == A.
-  float expected_cols[16] = {};
-  for (int r = 0; r < 4; ++r) {
-    for (int c = 0; c < 4; ++c) {
-      expected_cols[c * 4 + r] = A.m[r][c];
-    }
-  }
-
-  const float* m = reinterpret_cast<const float*>(reinterpret_cast<const uint8_t*>(const_cmd) + sizeof(*const_cmd));
-  for (int i = 0; i < 16; ++i) {
-    if (std::fabs(m[i] - expected_cols[i]) > 1e-6f) {
-      std::fprintf(stderr,
-                   "FAIL: WVP constant mismatch at %d (got %f expected %f)\n",
-                   i,
-                   static_cast<double>(m[i]),
-                   static_cast<double>(expected_cols[i]));
-      return false;
-    }
-  }
-  return Check(wvp_consts.offset < draw.offset, "WVP constants uploaded before draw");
+  return ValidateStream(buf, len);
 }
 
 bool TestVertexDeclXyzrhwDiffuseTex1DrawPrimitiveUpEmitsFixedfuncCommands() {
@@ -19547,6 +19715,48 @@ bool TestFvfXyzDiffuseDrawPrimitiveUpDoesNotConvertVertices() {
     return false;
   }
 
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // Set non-identity transforms: WORLD0 * VIEW * PROJECTION.
+  auto set_identity = [](float m[16]) {
+    std::memset(m, 0, sizeof(float) * 16);
+    m[0] = 1.0f;
+    m[5] = 1.0f;
+    m[10] = 1.0f;
+    m[15] = 1.0f;
+  };
+
+  float world[16];
+  float view[16];
+  float proj[16];
+  set_identity(world);
+  set_identity(view);
+  std::memset(proj, 0, sizeof(proj));
+
+  world[12] = 1.0f;
+  world[13] = -1.0f;
+  world[14] = 2.0f;
+
+  view[0] = 2.0f;
+  view[5] = 3.0f;
+  view[10] = 4.0f;
+
+  proj[0] = 1.0f;
+  proj[5] = 1.0f;
+  proj[10] = 1.0f;
+  proj[11] = 1.0f; // w = z
+
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    std::memcpy(dev->transform_matrices[256], world, sizeof(world)); // WORLD0
+    std::memcpy(dev->transform_matrices[2], view, sizeof(view));     // VIEW
+    std::memcpy(dev->transform_matrices[3], proj, sizeof(proj));     // PROJECTION
+    dev->fixedfunc_matrix_dirty = true;
+  }
+
   struct Vertex {
     float x;
     float y;
@@ -19565,10 +19775,6 @@ bool TestFvfXyzDiffuseDrawPrimitiveUpDoesNotConvertVertices() {
     return false;
   }
 
-  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
-  if (!Check(dev != nullptr, "device pointer")) {
-    return false;
-  }
   if (!Check(dev->up_vertex_buffer != nullptr, "up_vertex_buffer allocated")) {
     return false;
   }
@@ -19581,55 +19787,49 @@ bool TestFvfXyzDiffuseDrawPrimitiveUpDoesNotConvertVertices() {
   const uint8_t* buf = dev->cmd.data();
   const size_t len = dev->cmd.bytes_used();
 
-  const size_t expected_bytes = AlignUp(sizeof(verts), 4);
-  std::vector<uint8_t> vb_upload(expected_bytes, 0);
-  size_t vb_uploaded_bytes = 0;
+  // Expected clip-space transform.
+  float wv[16];
+  float wvp[16];
+  MulMat4RowMajor(world, view, wv);
+  MulMat4RowMajor(wv, proj, wvp);
+  const float v0[4] = {verts[0].x, verts[0].y, verts[0].z, 1.0f};
+  float expected[4] = {};
+  MulVec4Mat4RowMajor(v0, wvp, expected);
 
-  const size_t stream_len = StreamBytesUsed(buf, len);
-  size_t off = sizeof(aerogpu_cmd_stream_header);
-  while (off + sizeof(aerogpu_cmd_hdr) <= stream_len) {
-    const auto* hdr = reinterpret_cast<const aerogpu_cmd_hdr*>(buf + off);
-    if (hdr->opcode == AEROGPU_CMD_UPLOAD_RESOURCE) {
-      const auto* upload = reinterpret_cast<const aerogpu_cmd_upload_resource*>(hdr);
-      if (upload->resource_handle == up_vb_handle) {
-        const size_t payload_bytes = upload->size_bytes;
-        if (!Check(upload->offset_bytes + payload_bytes <= expected_bytes, "upload_resource(UP VB) bounds")) {
-          return false;
-        }
-        if (!Check(sizeof(*upload) + payload_bytes <= hdr->size_bytes, "upload_resource(UP VB) payload bounds")) {
-          return false;
-        }
-        const uint8_t* payload = reinterpret_cast<const uint8_t*>(upload) + sizeof(*upload);
-        std::memcpy(vb_upload.data() + upload->offset_bytes, payload, payload_bytes);
-        vb_uploaded_bytes += payload_bytes;
-      }
-    }
-    if (hdr->size_bytes == 0 || hdr->size_bytes > stream_len - off) {
-      break;
-    }
-    off += hdr->size_bytes;
+  const CmdLoc upload = FindLastUploadForHandle(buf, len, up_vb_handle);
+  if (!Check(upload.hdr != nullptr, "upload_resource(up_vertex_buffer) emitted")) {
+    return false;
   }
-
-  if (!Check(vb_uploaded_bytes == expected_bytes, "UP VB upload emitted")) {
+  const auto* upload_cmd = reinterpret_cast<const aerogpu_cmd_upload_resource*>(upload.hdr);
+  if (!Check(upload_cmd->offset_bytes == 0, "upload_resource VB offset is 0")) {
+    return false;
+  }
+  if (!Check(upload_cmd->size_bytes == 3 * 20u, "upload_resource VB size matches transformed vertex data")) {
     return false;
   }
 
+  const uint8_t* payload = reinterpret_cast<const uint8_t*>(upload_cmd) + sizeof(*upload_cmd);
   float x0 = 0.0f;
   float y0 = 0.0f;
   float z0 = 0.0f;
+  float w0 = 0.0f;
   uint32_t c0 = 0;
-  std::memcpy(&x0, vb_upload.data() + 0, sizeof(float));
-  std::memcpy(&y0, vb_upload.data() + 4, sizeof(float));
-  std::memcpy(&z0, vb_upload.data() + 8, sizeof(float));
-  std::memcpy(&c0, vb_upload.data() + 12, sizeof(uint32_t));
+  std::memcpy(&x0, payload + 0, sizeof(float));
+  std::memcpy(&y0, payload + 4, sizeof(float));
+  std::memcpy(&z0, payload + 8, sizeof(float));
+  std::memcpy(&w0, payload + 12, sizeof(float));
+  std::memcpy(&c0, payload + 16, sizeof(uint32_t));
 
-  if (!Check(std::fabs(x0 - verts[0].x) < 1e-6f, "XYZ UP: x0 is not converted")) {
+  if (!Check(std::fabs(x0 - expected[0]) < 1e-6f, "XYZ UP: x0 matches WVP")) {
     return false;
   }
-  if (!Check(std::fabs(y0 - verts[0].y) < 1e-6f, "XYZ UP: y0 is not converted")) {
+  if (!Check(std::fabs(y0 - expected[1]) < 1e-6f, "XYZ UP: y0 matches WVP")) {
     return false;
   }
-  if (!Check(std::fabs(z0 - verts[0].z) < 1e-6f, "XYZ UP: z preserved")) {
+  if (!Check(std::fabs(z0 - expected[2]) < 1e-6f, "XYZ UP: z0 matches WVP")) {
+    return false;
+  }
+  if (!Check(std::fabs(w0 - expected[3]) < 1e-6f, "XYZ UP: w0 matches WVP")) {
     return false;
   }
   if (!Check(c0 == kGreen, "XYZ UP: diffuse color preserved")) {
@@ -19738,6 +19938,48 @@ bool TestFvfXyzDiffuseDrawPrimitiveNoScratchVbConversion() {
     return false;
   }
 
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // Set non-identity transforms: WORLD0 * VIEW * PROJECTION.
+  auto set_identity = [](float m[16]) {
+    std::memset(m, 0, sizeof(float) * 16);
+    m[0] = 1.0f;
+    m[5] = 1.0f;
+    m[10] = 1.0f;
+    m[15] = 1.0f;
+  };
+
+  float world[16];
+  float view[16];
+  float proj[16];
+  set_identity(world);
+  set_identity(view);
+  std::memset(proj, 0, sizeof(proj));
+
+  world[12] = 1.0f;
+  world[13] = -1.0f;
+  world[14] = 2.0f;
+
+  view[0] = 2.0f;
+  view[5] = 3.0f;
+  view[10] = 4.0f;
+
+  proj[0] = 1.0f;
+  proj[5] = 1.0f;
+  proj[10] = 1.0f;
+  proj[11] = 1.0f; // w = z
+
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    std::memcpy(dev->transform_matrices[256], world, sizeof(world)); // WORLD0
+    std::memcpy(dev->transform_matrices[2], view, sizeof(view));     // VIEW
+    std::memcpy(dev->transform_matrices[3], proj, sizeof(proj));     // PROJECTION
+    dev->fixedfunc_matrix_dirty = true;
+  }
+
   struct Vertex {
     float x;
     float y;
@@ -19808,7 +20050,6 @@ bool TestFvfXyzDiffuseDrawPrimitiveNoScratchVbConversion() {
     return false;
   }
 
-  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
   dev->cmd.finalize();
   const uint8_t* buf = dev->cmd.data();
   const size_t len = dev->cmd.bytes_used();
@@ -19817,35 +20058,59 @@ bool TestFvfXyzDiffuseDrawPrimitiveNoScratchVbConversion() {
     return false;
   }
 
-  const auto* vb_res = reinterpret_cast<const Resource*>(create_res.hResource.pDrvPrivate);
-  if (!Check(vb_res != nullptr, "vb pointer")) {
+  if (!Check(dev->up_vertex_buffer != nullptr, "up_vertex_buffer allocated")) {
     return false;
   }
-  const uint32_t vb_handle = vb_res->handle;
-  if (!Check(vb_handle != 0, "vb handle")) {
+  const aerogpu_handle_t vb_handle = dev->up_vertex_buffer->handle;
+  if (!Check(vb_handle != 0, "up_vertex_buffer handle non-zero")) {
     return false;
   }
 
-  // Ensure we didn't upload to an internal scratch VB: XYZ fixed-function draws
-  // should not require CPU conversion.
-  const size_t stream_len = StreamBytesUsed(buf, len);
-  size_t off = sizeof(aerogpu_cmd_stream_header);
-  bool saw_upload = false;
-  while (off + sizeof(aerogpu_cmd_hdr) <= stream_len) {
-    const auto* hdr = reinterpret_cast<const aerogpu_cmd_hdr*>(buf + off);
-    if (hdr->opcode == AEROGPU_CMD_UPLOAD_RESOURCE) {
-      saw_upload = true;
-      const auto* u = reinterpret_cast<const aerogpu_cmd_upload_resource*>(hdr);
-      if (!Check(u->resource_handle == vb_handle, "XYZ draw emits no scratch UPLOAD_RESOURCE")) {
-        return false;
-      }
-    }
-    if (hdr->size_bytes == 0 || hdr->size_bytes > stream_len - off) {
-      break;
-    }
-    off += hdr->size_bytes;
+  // Expected clip-space transform.
+  float wv[16];
+  float wvp[16];
+  MulMat4RowMajor(world, view, wv);
+  MulMat4RowMajor(wv, proj, wvp);
+  const float v0[4] = {verts[0].x, verts[0].y, verts[0].z, 1.0f};
+  float expected[4] = {};
+  MulVec4Mat4RowMajor(v0, wvp, expected);
+
+  const CmdLoc upload = FindLastUploadForHandle(buf, len, vb_handle);
+  if (!Check(upload.hdr != nullptr, "upload_resource(up_vertex_buffer) emitted")) {
+    return false;
   }
-  return Check(saw_upload, "vertex buffer upload emitted");
+  const auto* upload_cmd = reinterpret_cast<const aerogpu_cmd_upload_resource*>(upload.hdr);
+  if (!Check(upload_cmd->offset_bytes == 0, "upload_resource VB offset is 0")) {
+    return false;
+  }
+  if (!Check(upload_cmd->size_bytes == 3 * 20u, "upload_resource VB size matches transformed vertex data")) {
+    return false;
+  }
+
+  const uint8_t* payload = reinterpret_cast<const uint8_t*>(upload_cmd) + sizeof(*upload_cmd);
+  float x0 = 0.0f;
+  float y0 = 0.0f;
+  float z0 = 0.0f;
+  float w0 = 0.0f;
+  std::memcpy(&x0, payload + 0, sizeof(float));
+  std::memcpy(&y0, payload + 4, sizeof(float));
+  std::memcpy(&z0, payload + 8, sizeof(float));
+  std::memcpy(&w0, payload + 12, sizeof(float));
+
+  if (!Check(std::fabs(x0 - expected[0]) < 1e-6f, "XYZ draw: x0 matches WVP")) {
+    return false;
+  }
+  if (!Check(std::fabs(y0 - expected[1]) < 1e-6f, "XYZ draw: y0 matches WVP")) {
+    return false;
+  }
+  if (!Check(std::fabs(z0 - expected[2]) < 1e-6f, "XYZ draw: z0 matches WVP")) {
+    return false;
+  }
+  if (!Check(std::fabs(w0 - expected[3]) < 1e-6f, "XYZ draw: w0 matches WVP")) {
+    return false;
+  }
+
+  return ValidateStream(buf, len);
 }
 
 bool TestFixedfuncStrideTooSmallFailsAndDoesNotEmitDraw() {
@@ -23022,6 +23287,48 @@ bool TestFvfXyzDiffuseTex1DrawIndexedPrimitiveNoScratchVbConversion() {
     return false;
   }
 
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // Set non-identity transforms: WORLD0 * VIEW * PROJECTION.
+  auto set_identity = [](float m[16]) {
+    std::memset(m, 0, sizeof(float) * 16);
+    m[0] = 1.0f;
+    m[5] = 1.0f;
+    m[10] = 1.0f;
+    m[15] = 1.0f;
+  };
+
+  float world[16];
+  float view[16];
+  float proj[16];
+  set_identity(world);
+  set_identity(view);
+  std::memset(proj, 0, sizeof(proj));
+
+  world[12] = 1.0f;
+  world[13] = -1.0f;
+  world[14] = 2.0f;
+
+  view[0] = 2.0f;
+  view[5] = 3.0f;
+  view[10] = 4.0f;
+
+  proj[0] = 1.0f;
+  proj[5] = 1.0f;
+  proj[10] = 1.0f;
+  proj[11] = 1.0f; // w = z
+
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    std::memcpy(dev->transform_matrices[256], world, sizeof(world)); // WORLD0
+    std::memcpy(dev->transform_matrices[2], view, sizeof(view));     // VIEW
+    std::memcpy(dev->transform_matrices[3], proj, sizeof(proj));     // PROJECTION
+    dev->fixedfunc_matrix_dirty = true;
+  }
+
   struct Vertex {
     float x;
     float y;
@@ -23148,20 +23455,20 @@ bool TestFvfXyzDiffuseTex1DrawIndexedPrimitiveNoScratchVbConversion() {
                                                     /*base_vertex=*/0,
                                                     /*min_index=*/0,
                                                     /*num_vertices=*/3,
-                                                    /*start_index=*/0,
-                                                    /*primitive_count=*/1);
+                                                     /*start_index=*/0,
+                                                     /*primitive_count=*/1);
   if (!Check(hr == S_OK, "DrawIndexedPrimitive")) {
     return false;
   }
 
-  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
-  if (!Check(dev != nullptr, "device pointer")) {
-    return false;
-  }
-  if (!Check(dev->up_vertex_buffer == nullptr, "XYZ|DIFFUSE|TEX1 indexed draw does not allocate scratch VB")) {
+  if (!Check(dev->up_vertex_buffer != nullptr, "XYZ|DIFFUSE|TEX1 indexed draw allocates scratch VB")) {
     return false;
   }
   if (!Check(dev->up_index_buffer == nullptr, "XYZ|DIFFUSE|TEX1 indexed draw does not allocate scratch IB")) {
+    return false;
+  }
+  const aerogpu_handle_t up_vb_handle = dev->up_vertex_buffer->handle;
+  if (!Check(up_vb_handle != 0, "up_vertex_buffer handle non-zero")) {
     return false;
   }
 
@@ -23176,44 +23483,65 @@ bool TestFvfXyzDiffuseTex1DrawIndexedPrimitiveNoScratchVbConversion() {
     return false;
   }
 
-  const auto* vb_res = reinterpret_cast<const Resource*>(create_vb.hResource.pDrvPrivate);
-  const auto* ib_res = reinterpret_cast<const Resource*>(create_ib.hResource.pDrvPrivate);
-  const uint32_t vb_handle = vb_res ? vb_res->handle : 0;
-  const uint32_t ib_handle = ib_res ? ib_res->handle : 0;
-  if (!Check(vb_handle != 0, "vb handle")) {
+  // Expected clip-space transform.
+  float wv[16];
+  float wvp[16];
+  MulMat4RowMajor(world, view, wv);
+  MulMat4RowMajor(wv, proj, wvp);
+  const float v0[4] = {verts[0].x, verts[0].y, verts[0].z, 1.0f};
+  float expected[4] = {};
+  MulVec4Mat4RowMajor(v0, wvp, expected);
+
+  const CmdLoc upload = FindLastUploadForHandle(buf, len, up_vb_handle);
+  if (!Check(upload.hdr != nullptr, "upload_resource(up_vertex_buffer) emitted")) {
     return false;
   }
-  if (!Check(ib_handle != 0, "ib handle")) {
+  const auto* upload_cmd = reinterpret_cast<const aerogpu_cmd_upload_resource*>(upload.hdr);
+  if (!Check(upload_cmd->offset_bytes == 0, "upload_resource VB offset is 0")) {
+    return false;
+  }
+  if (!Check(upload_cmd->size_bytes == 3 * 28u, "upload_resource VB size matches transformed vertex data")) {
     return false;
   }
 
-  bool saw_vb_upload = false;
-  bool saw_ib_upload = false;
-  const size_t stream_len = StreamBytesUsed(buf, len);
-  size_t off = sizeof(aerogpu_cmd_stream_header);
-  while (off + sizeof(aerogpu_cmd_hdr) <= stream_len) {
-    const auto* hdr = reinterpret_cast<const aerogpu_cmd_hdr*>(buf + off);
-    if (hdr->opcode == AEROGPU_CMD_UPLOAD_RESOURCE) {
-      const auto* u = reinterpret_cast<const aerogpu_cmd_upload_resource*>(hdr);
-      if (u->resource_handle == vb_handle) {
-        saw_vb_upload = true;
-      } else if (u->resource_handle == ib_handle) {
-        saw_ib_upload = true;
-      } else {
-        return Check(false, "XYZ|DIFFUSE|TEX1 indexed draw emits no scratch UPLOAD_RESOURCE");
-      }
-    }
-    if (hdr->size_bytes == 0 || hdr->size_bytes > stream_len - off) {
-      break;
-    }
-    off += hdr->size_bytes;
-  }
-  if (!Check(saw_vb_upload, "vertex buffer upload emitted")) {
+  const uint8_t* payload = reinterpret_cast<const uint8_t*>(upload_cmd) + sizeof(*upload_cmd);
+  float x0 = 0.0f;
+  float y0 = 0.0f;
+  float z0 = 0.0f;
+  float w0 = 0.0f;
+  uint32_t c0 = 0;
+  float u0 = 0.0f;
+  float v0_out = 0.0f;
+  std::memcpy(&x0, payload + 0, sizeof(float));
+  std::memcpy(&y0, payload + 4, sizeof(float));
+  std::memcpy(&z0, payload + 8, sizeof(float));
+  std::memcpy(&w0, payload + 12, sizeof(float));
+  std::memcpy(&c0, payload + 16, sizeof(uint32_t));
+  std::memcpy(&u0, payload + 20, sizeof(float));
+  std::memcpy(&v0_out, payload + 24, sizeof(float));
+
+  if (!Check(std::fabs(x0 - expected[0]) < 1e-6f, "XYZ|TEX1 indexed draw: x0 matches WVP")) {
     return false;
   }
-  if (!Check(saw_ib_upload, "index buffer upload emitted")) {
+  if (!Check(std::fabs(y0 - expected[1]) < 1e-6f, "XYZ|TEX1 indexed draw: y0 matches WVP")) {
     return false;
   }
+  if (!Check(std::fabs(z0 - expected[2]) < 1e-6f, "XYZ|TEX1 indexed draw: z0 matches WVP")) {
+    return false;
+  }
+  if (!Check(std::fabs(w0 - expected[3]) < 1e-6f, "XYZ|TEX1 indexed draw: w0 matches WVP")) {
+    return false;
+  }
+  if (!Check(c0 == kGreen, "XYZ|TEX1 indexed draw: diffuse color preserved")) {
+    return false;
+  }
+  if (!Check(std::fabs(u0 - verts[0].u) < 1e-6f, "XYZ|TEX1 indexed draw: u preserved")) {
+    return false;
+  }
+  if (!Check(std::fabs(v0_out - verts[0].v) < 1e-6f, "XYZ|TEX1 indexed draw: v preserved")) {
+    return false;
+  }
+
   return ValidateStream(buf, len);
 }
 
@@ -30453,6 +30781,7 @@ int main() {
   failures += !aerogpu::TestFvfXyzDiffuseTex1ReuploadsWvpAfterUserVsClobbersConstants();
   failures += !aerogpu::TestFvfXyzDiffuseDrawPrimitiveUpEmitsWvpConstants();
   failures += !aerogpu::TestFixedFuncXyzStateBlockApplyReuploadsWvpConstants();
+  failures += !aerogpu::TestFvfXyzDiffuseTex1DrawIndexedPrimitiveUpAppliesWvpTransform();
   failures += !aerogpu::TestVertexDeclXyzrhwDiffuseTex1DrawPrimitiveUpEmitsFixedfuncCommands();
   failures += !aerogpu::TestSetFvfIdempotentRebindsInternalXyzrhwInputLayout();
   failures += !aerogpu::TestVertexDeclXyzDiffuseDrawPrimitiveUpEmitsFixedfuncCommands();
