@@ -9636,6 +9636,11 @@ impl AerogpuD3d11Executor {
                 )
             },
         )?;
+        if stage != ShaderStage::Compute {
+            bail!(
+                "SET_UNORDERED_ACCESS_BUFFERS: only compute stage is supported right now (stage={stage:?})"
+            );
+        }
         let start_slot: u32 = start_slot_u32;
         let uav_count: usize = uav_count_u32
             .try_into()
