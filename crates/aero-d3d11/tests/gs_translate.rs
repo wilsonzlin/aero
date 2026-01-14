@@ -2380,6 +2380,10 @@ fn gs_translate_supports_setp_and_predicated_emit_cut() {
         wgsl.contains("gs_cut(&strip_len)"),
         "expected translated WGSL to still call gs_cut:\n{wgsl}"
     );
+    assert!(
+        wgsl.contains("!= ((setp_a_") || wgsl.contains("!= ((setp_b_"),
+        "expected unordered setp (`*_U`) to include NaN handling (`x != x`):\n{wgsl}"
+    );
 
     assert_wgsl_validates(&wgsl);
 }
