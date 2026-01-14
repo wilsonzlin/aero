@@ -168,6 +168,7 @@ where
     /// The returned handle embeds a snapshot of the runtime's page-version state at the time of
     /// compilation. Installing this handle after the guest modifies the underlying code bytes will
     /// cause the runtime to reject it and request recompilation.
+    #[track_caller]
     pub fn compile_handle<B, C>(
         &mut self,
         jit: &JitRuntime<B, C>,
@@ -206,6 +207,7 @@ where
         })
     }
 
+    #[track_caller]
     pub fn compile_and_install<B, C>(
         &mut self,
         jit: &mut JitRuntime<B, C>,
@@ -218,6 +220,70 @@ where
     {
         let handle = self.compile_handle(jit, entry_rip, bitness)?;
         Ok(jit.install_handle(handle))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_util::capture_panic_location;
+
+    use aero_cpu_core::jit::runtime::{JitBlockExit, JitConfig};
+
+    #[derive(Default)]
+    struct DummyCompileSink;
+
+    impl CompileRequestSink for DummyCompileSink {
+        fn request_compile(&mut self, _entry_rip: u64) {}
+    }
+
+    #[derive(Default)]
+    struct DummyBackend;
+
+    impl JitBackend for DummyBackend {
+        type Cpu = ();
+
+        fn execute(&mut self, _table_index: u32, _cpu: &mut Self::Cpu) -> JitBlockExit {
+            JitBlockExit {
+                next_rip: 0,
+                exit_to_interpreter: true,
+                committed: false,
+            }
+        }
+    }
+
+    #[derive(Default)]
+    struct DummyBus;
+
+    impl crate::Tier1Bus for DummyBus {
+        fn read_u8(&self, _addr: u64) -> u8 {
+            0
+        }
+
+        fn write_u8(&mut self, _addr: u64, _value: u8) {}
+    }
+
+    #[derive(Default)]
+    struct DummyRegistry;
+
+    impl Tier1WasmRegistry for DummyRegistry {
+        fn register_tier1_block(&mut self, _wasm: Vec<u8>, _exit_to_interpreter: bool) -> u32 {
+            0
+        }
+    }
+
+    #[test]
+    fn tier1_compiler_compile_handle_panics_at_call_site_on_invalid_bitness() {
+        let jit = JitRuntime::new(JitConfig::default(), DummyBackend::default(), DummyCompileSink);
+        let mut compiler = Tier1Compiler::new(DummyBus::default(), DummyRegistry::default());
+
+        let expected_file = file!();
+        let expected_line = line!() + 2;
+        let (file, line) = capture_panic_location(|| {
+            let _ = compiler.compile_handle(&jit, 0, 0);
+        });
+        assert_eq!(file, expected_file);
+        assert_eq!(line, expected_line);
     }
 }
 
