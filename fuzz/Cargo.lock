@@ -102,6 +102,7 @@ name = "aero-devices"
 version = "0.1.0"
 dependencies = [
  "aero-devices-input",
+ "aero-gpu-vga",
  "aero-interrupts",
  "aero-io-snapshot",
  "aero-pci-routing",
@@ -167,6 +168,13 @@ dependencies = [
 [[package]]
 name = "aero-gpu-trace"
 version = "0.1.0"
+
+[[package]]
+name = "aero-gpu-vga"
+version = "0.1.0"
+dependencies = [
+ "aero-shared",
+]
 
 [[package]]
 name = "aero-http-range"
