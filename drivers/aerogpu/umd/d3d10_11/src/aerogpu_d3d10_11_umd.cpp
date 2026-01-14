@@ -153,6 +153,7 @@ using aerogpu::d3d10_11::HashSemanticName;
 using aerogpu::d3d10_11::aerogpu_sampler_filter_from_d3d_filter;
 using aerogpu::d3d10_11::aerogpu_sampler_address_from_d3d_mode;
 using aerogpu::d3d10_11::kInvalidHandle;
+using aerogpu::d3d10_11::atomic_max_u64;
 
 constexpr HRESULT kDxgiErrorWasStillDrawing = static_cast<HRESULT>(0x887A000Au); // DXGI_ERROR_WAS_STILL_DRAWING
 constexpr HRESULT kHrPending = static_cast<HRESULT>(0x8000000Au); // E_PENDING
@@ -881,16 +882,6 @@ struct AeroGpuDevice {
     cmd.reset();
   }
 };
-
-void atomic_max_u64(std::atomic<uint64_t>* target, uint64_t value) {
-  if (!target) {
-    return;
-  }
-
-  uint64_t cur = target->load(std::memory_order_relaxed);
-  while (cur < value && !target->compare_exchange_weak(cur, value, std::memory_order_relaxed)) {
-  }
-}
 
 void TrackStagingWriteLocked(AeroGpuDevice* dev, AeroGpuResource* dst) {
   if (!dev || !dst) {

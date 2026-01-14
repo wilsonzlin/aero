@@ -580,15 +580,6 @@ static void SetError(Device* dev, HRESULT hr) {
   }
 }
 
-static void atomic_max_u64(std::atomic<uint64_t>* target, uint64_t value) {
-  if (!target) {
-    return;
-  }
-  uint64_t cur = target->load(std::memory_order_relaxed);
-  while (cur < value && !target->compare_exchange_weak(cur, value, std::memory_order_relaxed)) {
-  }
-}
-
 template <typename Fn, typename HandleA, typename HandleB, typename... Args>
 decltype(auto) CallCbMaybeHandle(Fn fn, HandleA handle_a, HandleB handle_b, Args&&... args) {
   if constexpr (std::is_invocable_v<Fn, HandleA, Args...>) {

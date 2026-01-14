@@ -226,6 +226,7 @@ using aerogpu::d3d10_11::HashSemanticName;
 using aerogpu::d3d10_11::FromHandle;
 using aerogpu::d3d10_11::aerogpu_sampler_filter_from_d3d_filter;
 using aerogpu::d3d10_11::aerogpu_sampler_address_from_d3d_mode;
+using aerogpu::d3d10_11::atomic_max_u64;
 
 static bool D3d9FormatToDxgi(uint32_t d3d9_format, uint32_t* dxgi_format_out, uint32_t* bpp_out) {
   return aerogpu::shared_surface::D3d9FormatToDxgi(d3d9_format, dxgi_format_out, bpp_out);
@@ -673,16 +674,6 @@ struct AeroGpuDevice {
     live_cookie = 0;
   }
 };
-
-void atomic_max_u64(std::atomic<uint64_t>* target, uint64_t value) {
-  if (!target) {
-    return;
-  }
-
-  uint64_t cur = target->load(std::memory_order_relaxed);
-  while (cur < value && !target->compare_exchange_weak(cur, value, std::memory_order_relaxed)) {
-  }
-}
 
 static void TrackStagingWriteLocked(AeroGpuDevice* dev, AeroGpuResource* dst) {
   if (!dev || !dst) {
