@@ -4524,9 +4524,8 @@ fn emit_instructions(
                 let base_name = format!("store_raw_base{inst_index}");
                 w.line(&format!("let {base_name}: u32 = (({addr_u}).x) / 4u;"));
 
-                // Store raw bits. Even though some integer ops use float-to-int heuristics, buffer
-                // stores must preserve the underlying 32-bit lane patterns (e.g. a `mov`-based
-                // `asuint` bitcast of `1.0` must store `0x3f800000`, not `1`).
+                // Store raw bits. Buffer stores must preserve the underlying 32-bit lane patterns
+                // (e.g. a `mov`-based `asuint` bitcast of `1.0` must store `0x3f800000`, not `1`).
                 let value_u = emit_src_vec4_u32(value, inst_index, "store_raw", ctx)?;
                 let value_name = format!("store_raw_val{inst_index}");
                 w.line(&format!("let {value_name}: vec4<u32> = {value_u};"));

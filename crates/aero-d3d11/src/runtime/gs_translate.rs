@@ -727,10 +727,11 @@ fn emit_src_vec4(
             other => {
                 // Keep this non-exhaustive: new `RegFile` variants should not break GS translation
                 // compilation; instead they should yield a descriptive runtime error.
-                let msg = if other == RegFile::OutputDepth {
-                    "RegFile::OutputDepth is not supported in GS prepass".to_owned()
-                } else {
-                    format!("unsupported source register file {other:?}")
+                let msg = match other {
+                    RegFile::OutputDepth => {
+                        "RegFile::OutputDepth is not supported in GS prepass".to_owned()
+                    }
+                    _ => format!("unsupported source register file {other:?}"),
                 };
                 return Err(GsTranslateError::UnsupportedOperand {
                     inst_index,
