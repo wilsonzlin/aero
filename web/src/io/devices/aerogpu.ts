@@ -340,8 +340,10 @@ export class AeroGpuPciDevice implements PciDevice, TickableDevice {
       // Avoid building objects/doing comparisons on the hot path.
       return;
     }
-    this.#sendCursorStateIfChanged(renderEnabled);
-    this.#stateDirty = false;
+    const sentOk = this.#sendCursorStateIfChanged(renderEnabled);
+    if (sentOk) {
+      this.#stateDirty = false;
+    }
   }
 
   debugProgramCursor(opts: {
@@ -539,14 +541,20 @@ export class AeroGpuPciDevice implements PciDevice, TickableDevice {
     if (!opts.force && !keyChanged && hash === this.#lastSentImageHash) {
       return false;
     }
+    try {
+      this.#sink.setImage(plan.width, plan.height, out.buffer);
+    } catch {
+      // Best-effort: cursor forwarding should never crash the IO worker. If posting fails (e.g. worker shutdown),
+      // keep the previous sent key/hash so we'll retry on the next poll when possible.
+      return false;
+    }
 
     this.#lastSentImageKey = plan.key;
     this.#lastSentImageHash = hash;
-    this.#sink.setImage(plan.width, plan.height, out.buffer);
     return true;
   }
 
-  #sendCursorStateIfChanged(enabled: boolean): void {
+  #sendCursorStateIfChanged(enabled: boolean): boolean {
     const x = this.#cursorX | 0;
     const y = this.#cursorY | 0;
     const hotX = this.#cursorHotX >>> 0;
@@ -559,7 +567,13 @@ export class AeroGpuPciDevice implements PciDevice, TickableDevice {
       this.#lastSentHotX === hotX &&
       this.#lastSentHotY === hotY
     ) {
-      return;
+      return true;
+    }
+    try {
+      this.#sink.setState(enabled, x, y, hotX, hotY);
+    } catch {
+      // Best-effort: do not crash the IO worker if the sink throws (e.g. during shutdown).
+      return false;
     }
 
     this.#lastSentEnabled = enabled;
@@ -567,6 +581,6 @@ export class AeroGpuPciDevice implements PciDevice, TickableDevice {
     this.#lastSentY = y;
     this.#lastSentHotX = hotX;
     this.#lastSentHotY = hotY;
-    this.#sink.setState(enabled, x, y, hotX, hotY);
+    return true;
   }
 }
