@@ -260,6 +260,9 @@ impl UsbPassthroughDevice {
             // Stale completion for an already-finished/canceled transfer.
             return;
         }
+        // Defensive: if a host integration pushes a completion before dequeuing the corresponding
+        // action, drop the queued action so it cannot be executed later.
+        self.drop_queued_action(id);
         self.completions.insert(id, result);
     }
 
@@ -1193,6 +1196,27 @@ mod tests {
             dev.pop_action().is_none(),
             "completion consumption should drop any stale queued action"
         );
+    }
+
+    #[test]
+    fn push_completion_drops_queued_action_before_guest_consumes_result() {
+        let mut dev = UsbPassthroughDevice::new();
+
+        assert_eq!(dev.handle_in_transfer(0x81, 8), UsbInResult::Nak);
+        let id = dev.ep_inflight.get(&0x81).expect("ep inflight").id;
+
+        // Push completion without popping the action.
+        dev.push_completion(UsbHostCompletion::BulkIn {
+            id,
+            result: UsbHostCompletionIn::Success { data: vec![1] },
+        });
+
+        assert!(
+            dev.pop_action().is_none(),
+            "push_completion should drop the queued action for the completed transfer"
+        );
+
+        assert_eq!(dev.handle_in_transfer(0x81, 8), UsbInResult::Data(vec![1]));
     }
 
     #[test]
