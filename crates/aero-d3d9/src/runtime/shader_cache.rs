@@ -32,7 +32,9 @@ use crate::shader_limits::MAX_D3D9_SHADER_BLOB_BYTES;
 // v6: adaptive vertex input semantic→location mapping (incl. TEXCOORD8+).
 // v7: fix SM3 semantic location reflection for declared-but-unused vertex inputs (ensures
 // executor-side vertex declaration binding stays collision-free).
-pub const D3D9_TRANSLATOR_CACHE_VERSION: u32 = 7;
+// v8: SM3 WGSL generator now supports the half-pixel-center option (emits the `half_pixel` uniform
+// and clip-space adjustment in vertex shaders).
+pub const D3D9_TRANSLATOR_CACHE_VERSION: u32 = 8;
 
 fn default_d3d9_translator_cache_version() -> u32 {
     D3D9_TRANSLATOR_CACHE_VERSION
