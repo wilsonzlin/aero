@@ -10,16 +10,15 @@ fn edid_has_valid_header_and_checksum() {
     assert_eq!(sum, 0);
 }
 
+const LEGACY_DTD_1024X768_60: [u8; 18] = [
+    0x64, 0x19, 0x00, 0x40, 0x41, 0x00, 0x26, 0x30, 0x18, 0x88, 0x36, 0x00, 0x54, 0x0E, 0x11, 0x00,
+    0x00, 0x18,
+];
+
 #[test]
 fn edid_includes_1024x768_dtd() {
     let edid = aero_edid::read_edid(0).expect("missing base EDID");
-    assert_eq!(
-        &edid[54..72],
-        &[
-            0x64, 0x19, 0x00, 0x40, 0x41, 0x00, 0x26, 0x30, 0x18, 0x88, 0x36, 0x00, 0x54, 0x0E,
-            0x11, 0x00, 0x00, 0x18
-        ]
-    );
+    assert_eq!(&edid[54..72], &LEGACY_DTD_1024X768_60);
 }
 
 #[test]
@@ -239,26 +238,14 @@ fn generate_edid_rejects_unrepresentable_preferred_mode() {
     // Even with minimal blanking, this would exceed 655.35MHz and cannot be represented in a DTD.
     let edid = aero_edid::generate_edid(aero_edid::Timing::new(4095, 4095, 60));
     // Should fall back to the legacy 1024x768@60 DTD.
-    assert_eq!(
-        &edid[54..72],
-        &[
-            0x64, 0x19, 0x00, 0x40, 0x41, 0x00, 0x26, 0x30, 0x18, 0x88, 0x36, 0x00, 0x54, 0x0E,
-            0x11, 0x00, 0x00, 0x18
-        ]
-    );
+    assert_eq!(&edid[54..72], &LEGACY_DTD_1024X768_60);
 }
 
 #[test]
 fn generate_edid_rejects_excessive_refresh_rate() {
     // EDID range limits encode rates as u8, so >255Hz cannot be represented consistently.
     let edid = aero_edid::generate_edid(aero_edid::Timing::new(640, 480, 300));
-    assert_eq!(
-        &edid[54..72],
-        &[
-            0x64, 0x19, 0x00, 0x40, 0x41, 0x00, 0x26, 0x30, 0x18, 0x88, 0x36, 0x00, 0x54, 0x0E,
-            0x11, 0x00, 0x00, 0x18
-        ]
-    );
+    assert_eq!(&edid[54..72], &LEGACY_DTD_1024X768_60);
 }
 
 #[test]
@@ -266,13 +253,7 @@ fn generate_edid_rejects_excessive_horizontal_frequency() {
     // This timing fits within the DTD pixel clock limit, but implies a horizontal scan rate above
     // what can be represented in the range limits descriptor (u8 kHz).
     let edid = aero_edid::generate_edid(aero_edid::Timing::new(640, 4095, 240));
-    assert_eq!(
-        &edid[54..72],
-        &[
-            0x64, 0x19, 0x00, 0x40, 0x41, 0x00, 0x26, 0x30, 0x18, 0x88, 0x36, 0x00, 0x54, 0x0E,
-            0x11, 0x00, 0x00, 0x18
-        ]
-    );
+    assert_eq!(&edid[54..72], &LEGACY_DTD_1024X768_60);
 }
 
 #[test]

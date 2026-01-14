@@ -603,6 +603,10 @@ mod tests {
     use super::*;
 
     const EDID_HEADER: [u8; 8] = [0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00];
+    const LEGACY_DTD_1024X768_60: [u8; 18] = [
+        0x64, 0x19, 0x00, 0x40, 0x41, 0x00, 0x26, 0x30, 0x18, 0x88, 0x36, 0x00, 0x54, 0x0E, 0x11,
+        0x00, 0x00, 0x18,
+    ];
 
     fn checksum_ok(edid: &[u8; EDID_BLOCK_SIZE]) -> bool {
         edid.iter().fold(0u8, |acc, &b| acc.wrapping_add(b)) == 0
@@ -868,13 +872,7 @@ mod tests {
     #[test]
     fn default_edid_keeps_legacy_preferred_mode_bytes() {
         let edid = generate_edid(Timing::DEFAULT);
-        assert_eq!(
-            &edid[54..72],
-            &[
-                0x64, 0x19, 0x00, 0x40, 0x41, 0x00, 0x26, 0x30, 0x18, 0x88, 0x36, 0x00, 0x54, 0x0E,
-                0x11, 0x00, 0x00, 0x18
-            ]
-        );
+        assert_eq!(&edid[54..72], &LEGACY_DTD_1024X768_60);
     }
 
     #[test]
@@ -940,13 +938,7 @@ mod tests {
     #[test]
     fn invalid_preferred_timing_falls_back_to_default() {
         let edid = generate_edid(Timing::new(0, 0, 0));
-        assert_eq!(
-            &edid[54..72],
-            &[
-                0x64, 0x19, 0x00, 0x40, 0x41, 0x00, 0x26, 0x30, 0x18, 0x88, 0x36, 0x00, 0x54, 0x0E,
-                0x11, 0x00, 0x00, 0x18
-            ]
-        );
+        assert_eq!(&edid[54..72], &LEGACY_DTD_1024X768_60);
     }
 
     #[test]
@@ -997,13 +989,7 @@ mod tests {
         // an EDID 1.4 DTD pixel clock field (16-bit in 10kHz units). We should reject it rather
         // than generating a clamped/incorrect DTD.
         let edid = generate_edid(Timing::new(4095, 4095, 60));
-        assert_eq!(
-            &edid[54..72],
-            &[
-                0x64, 0x19, 0x00, 0x40, 0x41, 0x00, 0x26, 0x30, 0x18, 0x88, 0x36, 0x00, 0x54, 0x0E,
-                0x11, 0x00, 0x00, 0x18
-            ]
-        );
+        assert_eq!(&edid[54..72], &LEGACY_DTD_1024X768_60);
     }
 
     #[test]
@@ -1011,13 +997,7 @@ mod tests {
         // EDID range limits encode vertical rate as u8, so values above 255Hz cannot be
         // represented without internal inconsistency.
         let edid = generate_edid(Timing::new(640, 480, 300));
-        assert_eq!(
-            &edid[54..72],
-            &[
-                0x64, 0x19, 0x00, 0x40, 0x41, 0x00, 0x26, 0x30, 0x18, 0x88, 0x36, 0x00, 0x54, 0x0E,
-                0x11, 0x00, 0x00, 0x18
-            ]
-        );
+        assert_eq!(&edid[54..72], &LEGACY_DTD_1024X768_60);
     }
 
     #[test]
@@ -1025,12 +1005,6 @@ mod tests {
         // This timing fits within the DTD pixel clock limit, but the implied horizontal scan rate
         // is ~986kHz and cannot be represented in the range limits descriptor (u8 kHz).
         let edid = generate_edid(Timing::new(640, 4095, 240));
-        assert_eq!(
-            &edid[54..72],
-            &[
-                0x64, 0x19, 0x00, 0x40, 0x41, 0x00, 0x26, 0x30, 0x18, 0x88, 0x36, 0x00, 0x54, 0x0E,
-                0x11, 0x00, 0x00, 0x18
-            ]
-        );
+        assert_eq!(&edid[54..72], &LEGACY_DTD_1024X768_60);
     }
 }
