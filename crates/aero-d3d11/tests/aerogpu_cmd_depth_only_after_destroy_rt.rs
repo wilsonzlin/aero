@@ -151,8 +151,6 @@ fn aerogpu_cmd_depth_only_draw_after_destroying_last_rt_still_works() {
         // can still do a depth-only draw robustly.
         writer.set_render_targets(&[C1], D);
         writer.clear(AEROGPU_CLEAR_DEPTH, [0.0, 0.0, 0.0, 0.0], 1.0, 0);
-        // Ensure the clear pass is submitted before we destroy the texture it referenced.
-        writer.flush();
         writer.destroy_resource(C1);
 
         // Depth-only draw (should still succeed).
