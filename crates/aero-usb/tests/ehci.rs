@@ -334,6 +334,30 @@ fn ehci_usbsts_schedule_status_bits_track_usbcmd() {
 }
 
 #[test]
+fn ehci_frame_list_rollover_sets_flr() {
+    let mut c = EhciController::new();
+    let mut mem = TestMemory::new(0x1000);
+
+    // Enable the FLR interrupt cause so we can observe irq_level transitions.
+    c.mmio_write(regs::REG_USBINTR, 4, regs::USBINTR_FLR);
+
+    // Put FRINDEX just before rollover and start the controller.
+    c.mmio_write(regs::REG_FRINDEX, 4, regs::FRINDEX_MASK - 7);
+    c.mmio_write(regs::REG_USBCMD, 4, regs::USBCMD_RS);
+
+    c.tick_1ms(&mut mem);
+
+    let sts = c.mmio_read(regs::REG_USBSTS, 4);
+    assert_ne!(sts & regs::USBSTS_FLR, 0);
+    assert!(c.irq_level());
+
+    // W1C should clear FLR and drop the IRQ line.
+    c.mmio_write(regs::REG_USBSTS, 4, regs::USBSTS_FLR);
+    assert_eq!(c.mmio_read(regs::REG_USBSTS, 4) & regs::USBSTS_FLR, 0);
+    assert!(!c.irq_level());
+}
+
+#[test]
 fn ehci_async_advance_doorbell_sets_iaa_and_clears_iaad() {
     let mut c = EhciController::new();
     let mut mem = TestMemory::new(0x1000);

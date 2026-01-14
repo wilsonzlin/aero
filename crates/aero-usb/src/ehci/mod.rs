@@ -95,7 +95,13 @@ impl EhciRegs {
     fn advance_1ms(&mut self) {
         // FRINDEX is a microframe counter. We tick in 1ms increments, so add 8 microframes so the
         // microframe bits (0..=2) remain 0 at tick boundaries.
-        self.frindex = self.frindex.wrapping_add(8) & FRINDEX_MASK;
+        let prev = self.frindex;
+        let next = self.frindex.wrapping_add(8) & FRINDEX_MASK;
+        if next < prev {
+            // Frame List Rollover (FLR) is a W1C status bit that latches when FRINDEX wraps.
+            self.usbsts |= USBSTS_FLR;
+        }
+        self.frindex = next;
     }
 }
 
