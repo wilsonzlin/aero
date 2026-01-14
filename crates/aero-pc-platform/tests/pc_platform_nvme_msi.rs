@@ -363,7 +363,11 @@ fn pc_platform_nvme_msi_masked_interrupt_sets_pending_and_redelivers_after_unmas
         None,
         "masked MSI should suppress delivery"
     );
-    let pending_off = if is_64bit { msi_off + 0x14 } else { msi_off + 0x10 };
+    let pending_off = if is_64bit {
+        msi_off + 0x14
+    } else {
+        msi_off + 0x10
+    };
     assert_ne!(
         read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, pending_off) & 1,
         0,

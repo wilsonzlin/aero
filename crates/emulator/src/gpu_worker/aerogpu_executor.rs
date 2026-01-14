@@ -28,8 +28,8 @@ use aero_gpu_trace::{
 
 pub use aero_devices_gpu::executor::{
     AeroGpuAllocTableDecodeError, AeroGpuCmdStreamDecodeError, AeroGpuCmdStreamHeader,
-    AeroGpuFenceCompletionMode, AeroGpuExecutorConfig, AeroGpuSubmission, AeroGpuSubmissionDecodeError,
-    AeroGpuSubmissionRecord,
+    AeroGpuExecutorConfig, AeroGpuFenceCompletionMode, AeroGpuSubmission,
+    AeroGpuSubmissionDecodeError, AeroGpuSubmissionRecord,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
