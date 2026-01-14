@@ -289,6 +289,17 @@ export type GpuRuntimeSubmitAerogpuMessage = GpuWorkerMessageBase & {
   allocTable?: ArrayBuffer;
 };
 
+/**
+ * Dev-only: best-effort hook for manually simulating a WebGL2 context loss on the
+ * raw WebGL2 presenter backend (uses WEBGL_lose_context when available).
+ *
+ * Production builds may ignore this message.
+ */
+export type GpuRuntimeDebugContextLossMessage = GpuWorkerMessageBase & {
+  type: "debug_context_loss";
+  action: "lose" | "restore";
+};
+
 export type GpuRuntimeShutdownMessage = GpuWorkerMessageBase & { type: "shutdown" };
 
 export type GpuRuntimeInMessage =
@@ -300,6 +311,7 @@ export type GpuRuntimeInMessage =
   | GpuRuntimeCursorSetImageMessage
   | GpuRuntimeCursorSetStateMessage
   | GpuRuntimeSubmitAerogpuMessage
+  | GpuRuntimeDebugContextLossMessage
   | GpuRuntimeShutdownMessage;
 
 // -----------------------------------------------------------------------------
@@ -412,6 +424,14 @@ export type GpuRuntimeStatsCountersV1 = {
   recoveries_attempted: number;
   recoveries_succeeded: number;
   surface_reconfigures: number;
+  /**
+   * Best-effort subset of the above counters, scoped to cases where the shared scanout
+   * state reported `source=WDDM` when recovery was attempted/succeeded.
+   *
+   * These counters are purely diagnostic and may be absent in older builds.
+   */
+  recoveries_attempted_wddm?: number;
+  recoveries_succeeded_wddm?: number;
 };
 
 export type GpuRuntimeStatsMessage = GpuWorkerMessageBase & {

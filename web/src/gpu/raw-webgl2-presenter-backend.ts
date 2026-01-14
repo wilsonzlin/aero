@@ -386,6 +386,34 @@ export class RawWebGl2Presenter implements Presenter {
     this.canvas = null;
   }
 
+  /**
+   * Dev-only helper: force a context loss using WEBGL_lose_context when available.
+   *
+   * Returns true when the extension was present and the request was issued.
+   */
+  public debugLoseContext(): boolean {
+    const gl = this.gl;
+    if (!gl) return false;
+    const ext = gl.getExtension('WEBGL_lose_context') as any;
+    if (!ext || typeof ext.loseContext !== 'function') return false;
+    ext.loseContext();
+    return true;
+  }
+
+  /**
+   * Dev-only helper: attempt to restore a context previously lost via {@link debugLoseContext}.
+   *
+   * Returns true when the extension was present and the request was issued.
+   */
+  public debugRestoreContext(): boolean {
+    const gl = this.gl;
+    if (!gl) return false;
+    const ext = gl.getExtension('WEBGL_lose_context') as any;
+    if (!ext || typeof ext.restoreContext !== 'function') return false;
+    ext.restoreContext();
+    return true;
+  }
+
   private resizeCanvas(outputWidth: number, outputHeight: number, dpr: number): void {
     if (!this.canvas) return;
     const w = Math.max(1, Math.round(outputWidth * dpr));

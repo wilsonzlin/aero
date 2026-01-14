@@ -214,6 +214,8 @@ let presentsAttempted = 0;
 let presentsSucceeded = 0;
 let recoveriesAttempted = 0;
 let recoveriesSucceeded = 0;
+let recoveriesAttemptedWddm = 0;
+let recoveriesSucceededWddm = 0;
 let surfaceReconfigures = 0;
 
 let canvasWithContextLossHandlers: OffscreenCanvas | null = null;
@@ -1026,6 +1028,16 @@ function backendKindForEvent(): string {
   return "headless";
 }
 
+function trySnapshotScanoutState(): ScanoutStateSnapshot | null {
+  const words = scanoutState;
+  if (!words) return null;
+  try {
+    return snapshotScanoutState(words);
+  } catch {
+    return null;
+  }
+}
+
 function sanitizeForPostMessage(value: unknown): unknown {
   if (value === undefined) return undefined;
   if (value === null) return null;
@@ -1283,6 +1295,8 @@ function getStatsCounters(): GpuRuntimeStatsCountersV1 {
     recoveries_attempted: recoveriesAttempted,
     recoveries_succeeded: recoveriesSucceeded,
     surface_reconfigures: surfaceReconfigures,
+    recoveries_attempted_wddm: recoveriesAttemptedWddm,
+    recoveries_succeeded_wddm: recoveriesSucceededWddm,
   };
 }
 
@@ -1595,13 +1609,22 @@ function handleDeviceLost(message: string, details?: unknown, startRecovery?: bo
   stopTelemetryPolling();
 
   const backend = backendKindForEvent();
+  const scanoutSnap = trySnapshotScanoutState();
+  const scanoutIsWddm = scanoutSnap?.source === SCANOUT_SOURCE_WDDM;
+  const enrichedDetails: Record<string, unknown> = {
+    ...(details === undefined ? {} : { cause: details }),
+    ...(scanoutSnap ? { scanout: scanoutSnap } : {}),
+    scanout_is_wddm: scanoutIsWddm,
+    aerogpu_last_output_source: aerogpuLastOutputSource,
+    aerogpu_has_last_presented_frame: !!aerogpuLastPresentedFrame,
+  };
   emitGpuEvent({
     time_ms: performance.now(),
     backend_kind: backend,
     severity: "error",
     category: "DeviceLost",
     message,
-    ...(details === undefined ? {} : { details }),
+    details: enrichedDetails,
   });
 
   presenter?.destroy?.();
@@ -1621,12 +1644,22 @@ async function attemptRecovery(reason: string): Promise<void> {
   if (recoveryPromise) return recoveryPromise;
 
   recoveriesAttempted += 1;
+  const scanoutAtStart = trySnapshotScanoutState();
+  const scanoutWasWddm = scanoutAtStart?.source === SCANOUT_SOURCE_WDDM;
+  if (scanoutWasWddm) recoveriesAttemptedWddm += 1;
   emitGpuEvent({
     time_ms: performance.now(),
     backend_kind: backendKindForEvent(),
     severity: "info",
     category: "DeviceLost",
     message: `Attempting GPU recovery (${reason})`,
+    details: {
+      reason,
+      ...(scanoutAtStart ? { scanout: scanoutAtStart } : {}),
+      scanout_is_wddm: scanoutWasWddm,
+      aerogpu_last_output_source: aerogpuLastOutputSource,
+      aerogpu_has_last_presented_frame: !!aerogpuLastPresentedFrame,
+    },
   });
 
   recoveryPromise = (async () => {
@@ -1669,12 +1702,22 @@ async function attemptRecovery(reason: string): Promise<void> {
     // Re-emit READY for consumers that treat recovery like a re-init.
     await maybeSendReady();
 
+    const scanoutAtEnd = trySnapshotScanoutState();
+    const scanoutIsWddm = scanoutAtEnd?.source === SCANOUT_SOURCE_WDDM;
+    if (scanoutIsWddm) recoveriesSucceededWddm += 1;
+
     emitGpuEvent({
       time_ms: performance.now(),
       backend_kind: backendKindForEvent(),
       severity: "info",
       category: "DeviceLost",
       message: "GPU recovery succeeded",
+      details: {
+        ...(scanoutAtEnd ? { scanout: scanoutAtEnd } : {}),
+        scanout_is_wddm: scanoutIsWddm,
+        aerogpu_last_output_source: aerogpuLastOutputSource,
+        aerogpu_has_last_presented_frame: !!aerogpuLastPresentedFrame,
+      },
     });
   })()
     .catch((err) => {
@@ -2996,6 +3039,8 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
         presentsSucceeded = 0;
         recoveriesAttempted = 0;
         recoveriesSucceeded = 0;
+        recoveriesAttemptedWddm = 0;
+        recoveriesSucceededWddm = 0;
         surfaceReconfigures = 0;
 
         telemetry.reset();
@@ -3134,6 +3179,38 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
       void (msg as { frameTimeMs?: unknown }).frameTimeMs;
       flushAerogpuSubmitCompleteOnTick();
       void handleTick();
+      break;
+    }
+
+    case "debug_context_loss": {
+      // Dev-only harness hook: simulate context loss/restoration for the raw WebGL2 backend.
+      // Production builds may ignore this message.
+      if (!(import.meta as any).env?.DEV) break;
+      const action = (msg as { action?: unknown }).action;
+      if (action !== "lose" && action !== "restore") break;
+      if (presenter?.backend !== "webgl2_raw") break;
+      const raw = presenter as unknown as {
+        debugLoseContext?: () => boolean;
+        debugRestoreContext?: () => boolean;
+      };
+      try {
+        const ok = action === "lose" ? raw.debugLoseContext?.() : raw.debugRestoreContext?.();
+        emitGpuEvent({
+          time_ms: performance.now(),
+          backend_kind: backendKindForEvent(),
+          severity: "info",
+          category: "Debug",
+          message: `debug_context_loss: action=${action} ok=${String(ok ?? false)}`,
+        });
+      } catch (err) {
+        emitGpuEvent({
+          time_ms: performance.now(),
+          backend_kind: backendKindForEvent(),
+          severity: "warn",
+          category: "Debug",
+          message: `debug_context_loss failed: ${err instanceof Error ? err.message : String(err)}`,
+        });
+      }
       break;
     }
 
