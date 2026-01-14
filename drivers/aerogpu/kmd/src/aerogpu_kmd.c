@@ -3957,6 +3957,17 @@ static NTSTATUS APIENTRY AeroGpuDdiSetPowerState(_In_ const HANDLE hAdapter,
     }
 
     /*
+     * If we were already in a non-D0 state before this call, avoid touching MMIO.
+     *
+     * dxgkrnl can invoke SetPowerState repeatedly for the same power state during
+     * PnP/hibernate transitions. MMIO accesses while powered down can hang, and
+     * the device should already be quiesced from the initial D0->Dx transition.
+     */
+    if (oldState != DxgkDevicePowerStateD0) {
+        return STATUS_SUCCESS;
+    }
+
+    /*
      * Stop scanout DMA while powered down.
      *
      * NOTE: AeroGpuSetScanoutEnable() is gated on DevicePowerState==D0, but this
