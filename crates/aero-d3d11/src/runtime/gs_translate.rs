@@ -1313,6 +1313,9 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_packed(
     w.line("}");
     w.line("");
     w.line("out_vertices.data[vtx_idx].pos = o0;");
+    w.line(&format!(
+        "out_vertices.data[vtx_idx].varyings = array<vec4<f32>, {EXPANDED_VERTEX_MAX_VARYINGS}>();"
+    ));
     for &loc in varyings {
         w.line(&format!(
             "out_vertices.data[vtx_idx].varyings[{loc}u] = o{loc};"
