@@ -947,6 +947,62 @@ mod tests {
     }
 
     #[test]
+    fn recovery_succeeds_on_current_backend_without_using_fallback() {
+        let stats = GpuStats::new();
+        let mut machine =
+            GpuRecoveryMachine::new(GpuBackendKind::WebGpu, BackendAvailability::both());
+
+        let mut events = Vec::new();
+        let mut attempted = Vec::new();
+        let outcome = machine.handle_device_lost(
+            50,
+            &stats,
+            |e| events.push(e),
+            |backend| {
+                attempted.push(backend);
+                Ok(())
+            },
+        );
+
+        assert_eq!(
+            outcome,
+            RecoveryOutcome::Recovered {
+                backend_kind: GpuBackendKind::WebGpu
+            }
+        );
+        assert_eq!(machine.state(), RecoveryState::Running);
+        assert_eq!(machine.backend_kind(), GpuBackendKind::WebGpu);
+
+        assert_eq!(attempted, vec![GpuBackendKind::WebGpu]);
+
+        let snap = stats.snapshot();
+        assert_eq!(snap.recoveries_attempted, 1);
+        assert_eq!(snap.recoveries_succeeded, 1);
+
+        // Event ordering should be deterministic: attempt then success.
+        assert_eq!(events.len(), 2, "{events:#?}");
+        assert!(events.iter().all(|e| e.time_ms == 50));
+
+        assert_eq!(events[0].severity, GpuErrorSeverityKind::Info);
+        assert_eq!(events[0].category, GpuErrorCategory::DeviceLost);
+        assert_eq!(events[0].backend_kind, GpuBackendKind::WebGpu);
+        assert_eq!(
+            events[0].message,
+            format!("Attempting GPU recovery on {:?}", GpuBackendKind::WebGpu)
+        );
+        assert!(events[0].details.is_none());
+
+        assert_eq!(events[1].severity, GpuErrorSeverityKind::Info);
+        assert_eq!(events[1].category, GpuErrorCategory::DeviceLost);
+        assert_eq!(events[1].backend_kind, GpuBackendKind::WebGpu);
+        assert_eq!(
+            events[1].message,
+            format!("GPU recovery succeeded on {:?}", GpuBackendKind::WebGpu)
+        );
+        assert!(events[1].details.is_none());
+    }
+
+    #[test]
     fn recovery_does_not_attempt_reinit_after_reaching_failed_state() {
         let stats = GpuStats::new();
         let mut machine =
