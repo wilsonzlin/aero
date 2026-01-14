@@ -93,5 +93,22 @@ Assert-ValidJson -ExpectedCommand "parse-args" -Args @("--status", "--cmd-out", 
 Assert-ValidJson -ExpectedCommand "parse-args" -Args @("--status", "--alloc-out", "foo.bin")
 Assert-ValidJson -ExpectedCommand "read-gpa" -Args @("--read-gpa", "0x0", "--size", "999999", "--out", "read_gpa_too_large_test.bin")
 
+# Best-effort cleanup to avoid clutter in local runs. On failure, artifacts may be left behind for debugging.
+$artifacts = @(
+  "last_cmd_test.bin",
+  "last_cmd_test.bin.txt",
+  "last_cmd_test.bin.alloc_table.bin",
+  "read_gpa_test.bin",
+  "read_gpa_too_large_test.bin",
+  "scanout_test.bmp",
+  "scanout_test.png",
+  "cursor_test.bmp",
+  "cursor_test.png",
+  "foo.bin"
+)
+foreach ($f in $artifacts) {
+  Remove-Item -ErrorAction SilentlyContinue $f
+}
+
 Write-Host "OK: dbgctl JSON output parsed successfully"
 
