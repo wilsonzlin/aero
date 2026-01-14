@@ -1076,6 +1076,7 @@ export class InputCapture {
 
   flushNow(): void {
     this.pollGamepad();
+    const hadEvents = this.queue.size > 0;
     let latencyUs: number | null;
     try {
       latencyUs = this.queue.flush(this.ioWorker, this.flushOpts);
@@ -1089,7 +1090,19 @@ export class InputCapture {
       }
       return;
     }
-    if (latencyUs === null || !this.logCaptureLatency) {
+    if (latencyUs === null) {
+      // If we had input events but could not deliver them (e.g. worker terminated and
+      // `postMessage` threw), stop capture so we don't keep swallowing host input.
+      if (hadEvents) {
+        try {
+          this.stop();
+        } catch {
+          // ignore
+        }
+      }
+      return;
+    }
+    if (!this.logCaptureLatency) {
       return;
     }
 
