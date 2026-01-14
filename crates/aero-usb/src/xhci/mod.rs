@@ -3188,6 +3188,12 @@ impl XhciController {
             if !matches!(state, context::EndpointState::Running) {
                 return EndpointOutcome::idle();
             }
+        } else if guest_ctx_present {
+            // If the guest has installed a Device Context pointer for this slot but the controller
+            // cannot read the Endpoint Context (e.g. DCBAA entry is misaligned), do not fall back to
+            // controller-local shadow state. This prevents DMA based on stale ring cursors when the
+            // guest context becomes invalid while an endpoint is already scheduled.
+            return EndpointOutcome::idle();
         }
 
         // Bulk/interrupt endpoints are delegated to `transfer::XhciTransferExecutor` and execute at
@@ -3330,6 +3336,17 @@ impl XhciController {
             } else {
                 EndpointOutcome::done(trbs_consumed)
             };
+        }
+
+        // If the guest has configured an Endpoint Context for EP0, validate its TR Dequeue Pointer
+        // before polling. This ensures we don't DMA based on controller-local ring cursors when the
+        // guest context becomes invalid (or encodes reserved TRDP bits).
+        if guest_ctx_present
+            && self
+                .read_endpoint_dequeue_from_context(mem, slot_id, endpoint_id)
+                .is_none()
+        {
+            return EndpointOutcome::idle();
         }
 
         // If an endpoint is Stopped/Halted, ignore doorbells and do not touch its transfer ring.
@@ -3867,6 +3884,8 @@ impl XhciController {
             | context::EndpointType::BulkOut
             | context::EndpointType::InterruptIn
             | context::EndpointType::InterruptOut => {}
+            context::EndpointType::Control | context::EndpointType::Invalid if endpoint_id == 1 => {
+            }
             _ => return None,
         }
         // TR Dequeue Pointer is 16-byte aligned with DCS in bit0. Bits 1..=3 are reserved; treat
