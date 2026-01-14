@@ -882,8 +882,9 @@ Rules:
       using `crates/aero-d3d11/src/runtime/strip_to_list.rs`). Other backends rely on native
       primitive restart.
     - `crates/aero-d3d11/src/runtime/execute.rs` (`D3D11Runtime`) emulates restart on wgpu GL by
-      splitting the draw into restart-free segments (`draw_indexed_strip_restart_emulated`). Other
-      backends rely on native primitive restart.
+      converting indexed strips into list indices (see `expand_indexed_strip_to_list` and
+      `crates/aero-d3d11/src/runtime/strip_to_list.rs`) and using a list-topology pipeline variant.
+      Other backends rely on native primitive restart.
   - For compute-expansion passes that need to *consume* strip topologies (GS/HS/DS), implementations
     either need a restart-aware assembly stage or must preprocess strips into list form before
     packing `gs_inputs`. This becomes especially important for `*_ADJ` strip topologies, which are
