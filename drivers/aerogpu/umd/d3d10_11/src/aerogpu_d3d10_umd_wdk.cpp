@@ -1153,14 +1153,19 @@ struct AeroGpuDevice {
 
   aerogpu_constant_buffer_binding vs_constant_buffers[kMaxConstantBufferSlots] = {};
   aerogpu_constant_buffer_binding ps_constant_buffers[kMaxConstantBufferSlots] = {};
+  aerogpu_constant_buffer_binding gs_constant_buffers[kMaxConstantBufferSlots] = {};
   aerogpu_handle_t vs_srvs[kMaxShaderResourceSlots] = {};
   aerogpu_handle_t ps_srvs[kMaxShaderResourceSlots] = {};
+  aerogpu_handle_t gs_srvs[kMaxShaderResourceSlots] = {};
   AeroGpuResource* current_vs_srv_resources[kMaxShaderResourceSlots] = {};
   AeroGpuResource* current_ps_srv_resources[kMaxShaderResourceSlots] = {};
+  AeroGpuResource* current_gs_srv_resources[kMaxShaderResourceSlots] = {};
   AeroGpuResource* current_vs_cb_resources[kMaxConstantBufferSlots] = {};
   AeroGpuResource* current_ps_cb_resources[kMaxConstantBufferSlots] = {};
+  AeroGpuResource* current_gs_cb_resources[kMaxConstantBufferSlots] = {};
   aerogpu_handle_t vs_samplers[kMaxSamplerSlots] = {};
   aerogpu_handle_t ps_samplers[kMaxSamplerSlots] = {};
+  aerogpu_handle_t gs_samplers[kMaxSamplerSlots] = {};
 
   // Minimal state required for CPU-side readback tests (`d3d10_triangle`).
   AeroGpuResource* current_rtv_resources[AEROGPU_MAX_RENDER_TARGETS] = {};
@@ -2083,10 +2088,16 @@ static void TrackDrawStateLocked(AeroGpuDevice* dev) {
   for (AeroGpuResource* res : dev->current_ps_cb_resources) {
     TrackWddmAllocForSubmitLocked(dev, res, /*write=*/false);
   }
+  for (AeroGpuResource* res : dev->current_gs_cb_resources) {
+    TrackWddmAllocForSubmitLocked(dev, res, /*write=*/false);
+  }
   for (AeroGpuResource* res : dev->current_vs_srv_resources) {
     TrackWddmAllocForSubmitLocked(dev, res, /*write=*/false);
   }
   for (AeroGpuResource* res : dev->current_ps_srv_resources) {
+    TrackWddmAllocForSubmitLocked(dev, res, /*write=*/false);
+  }
+  for (AeroGpuResource* res : dev->current_gs_srv_resources) {
     TrackWddmAllocForSubmitLocked(dev, res, /*write=*/false);
   }
 }
@@ -2111,6 +2122,8 @@ static aerogpu_handle_t* ShaderResourceTableForStage(AeroGpuDevice* dev, uint32_
       return dev->vs_srvs;
     case AEROGPU_SHADER_STAGE_PIXEL:
       return dev->ps_srvs;
+    case AEROGPU_SHADER_STAGE_GEOMETRY:
+      return dev->gs_srvs;
     default:
       return nullptr;
   }
@@ -2125,6 +2138,8 @@ static aerogpu_handle_t* SamplerTableForStage(AeroGpuDevice* dev, uint32_t shade
       return dev->vs_samplers;
     case AEROGPU_SHADER_STAGE_PIXEL:
       return dev->ps_samplers;
+    case AEROGPU_SHADER_STAGE_GEOMETRY:
+      return dev->gs_samplers;
     default:
       return nullptr;
   }
@@ -2139,6 +2154,8 @@ static aerogpu_constant_buffer_binding* ConstantBufferTableForStage(AeroGpuDevic
       return dev->vs_constant_buffers;
     case AEROGPU_SHADER_STAGE_PIXEL:
       return dev->ps_constant_buffers;
+    case AEROGPU_SHADER_STAGE_GEOMETRY:
+      return dev->gs_constant_buffers;
     default:
       return nullptr;
   }
@@ -6718,6 +6735,8 @@ static void SetConstantBuffersLocked(AeroGpuDevice* dev,
     bound_resources = dev->current_vs_cb_resources;
   } else if (shader_stage == AEROGPU_SHADER_STAGE_PIXEL) {
     bound_resources = dev->current_ps_cb_resources;
+  } else if (shader_stage == AEROGPU_SHADER_STAGE_GEOMETRY) {
+    bound_resources = dev->current_gs_cb_resources;
   }
 
   std::vector<aerogpu_constant_buffer_binding> bindings;
@@ -6779,8 +6798,19 @@ void APIENTRY PsSetConstantBuffers(D3D10DDI_HDEVICE hDevice, UINT startSlot, UIN
   std::lock_guard<std::mutex> lock(dev->mutex);
   SetConstantBuffersLocked(dev, hDevice, AEROGPU_SHADER_STAGE_PIXEL, startSlot, numBuffers, phBuffers);
 }
-void APIENTRY GsSetConstantBuffers(D3D10DDI_HDEVICE, UINT, UINT, const D3D10DDI_HRESOURCE*) {
-  // Stub.
+
+void APIENTRY GsSetConstantBuffers(D3D10DDI_HDEVICE hDevice, UINT startSlot, UINT numBuffers, const D3D10DDI_HRESOURCE* phBuffers) {
+  if (!hDevice.pDrvPrivate) {
+    SetError(hDevice, E_INVALIDARG);
+    return;
+  }
+  auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
+  if (!dev) {
+    SetError(hDevice, E_INVALIDARG);
+    return;
+  }
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  SetConstantBuffersLocked(dev, hDevice, AEROGPU_SHADER_STAGE_GEOMETRY, startSlot, numBuffers, phBuffers);
 }
 
 void SetShaderResourcesCommon(D3D10DDI_HDEVICE hDevice,
@@ -6824,6 +6854,10 @@ void SetShaderResourcesCommon(D3D10DDI_HDEVICE hDevice,
       if (dev->ps_srvs[slot] == tex) {
         dev->current_ps_srv_resources[slot] = srv_res;
       }
+    } else if (shader_stage == AEROGPU_SHADER_STAGE_GEOMETRY) {
+      if (dev->gs_srvs[slot] == tex) {
+        dev->current_gs_srv_resources[slot] = srv_res;
+      }
     }
   }
 }
@@ -6843,9 +6877,11 @@ void APIENTRY ClearState(D3D10DDI_HDEVICE hDevice) {
   for (uint32_t slot = 0; slot < kMaxShaderResourceSlots; ++slot) {
     SetShaderResourceSlotLocked(dev, AEROGPU_SHADER_STAGE_VERTEX, slot, 0);
     SetShaderResourceSlotLocked(dev, AEROGPU_SHADER_STAGE_PIXEL, slot, 0);
+    SetShaderResourceSlotLocked(dev, AEROGPU_SHADER_STAGE_GEOMETRY, slot, 0);
   }
   std::memset(dev->current_vs_srv_resources, 0, sizeof(dev->current_vs_srv_resources));
   std::memset(dev->current_ps_srv_resources, 0, sizeof(dev->current_ps_srv_resources));
+  std::memset(dev->current_gs_srv_resources, 0, sizeof(dev->current_gs_srv_resources));
 
   auto clear_constant_buffers = [&](uint32_t shader_stage, aerogpu_constant_buffer_binding* table) {
     if (!table) {
@@ -6878,8 +6914,10 @@ void APIENTRY ClearState(D3D10DDI_HDEVICE hDevice) {
 
   clear_constant_buffers(AEROGPU_SHADER_STAGE_VERTEX, dev->vs_constant_buffers);
   clear_constant_buffers(AEROGPU_SHADER_STAGE_PIXEL, dev->ps_constant_buffers);
+  clear_constant_buffers(AEROGPU_SHADER_STAGE_GEOMETRY, dev->gs_constant_buffers);
   std::memset(dev->current_vs_cb_resources, 0, sizeof(dev->current_vs_cb_resources));
   std::memset(dev->current_ps_cb_resources, 0, sizeof(dev->current_ps_cb_resources));
+  std::memset(dev->current_gs_cb_resources, 0, sizeof(dev->current_gs_cb_resources));
 
   auto clear_samplers = [&](uint32_t shader_stage, aerogpu_handle_t* table) {
     if (!table) {
@@ -6912,6 +6950,7 @@ void APIENTRY ClearState(D3D10DDI_HDEVICE hDevice) {
 
   clear_samplers(AEROGPU_SHADER_STAGE_VERTEX, dev->vs_samplers);
   clear_samplers(AEROGPU_SHADER_STAGE_PIXEL, dev->ps_samplers);
+  clear_samplers(AEROGPU_SHADER_STAGE_GEOMETRY, dev->gs_samplers);
 
   dev->current_rtv_count = 0;
   std::memset(dev->current_rtvs, 0, sizeof(dev->current_rtvs));
@@ -7058,8 +7097,8 @@ void APIENTRY VsSetShaderResources(D3D10DDI_HDEVICE hDevice, UINT startSlot, UIN
 void APIENTRY PsSetShaderResources(D3D10DDI_HDEVICE hDevice, UINT startSlot, UINT numViews, const D3D10DDI_HSHADERRESOURCEVIEW* phViews) {
   SetShaderResourcesCommon(hDevice, AEROGPU_SHADER_STAGE_PIXEL, startSlot, numViews, phViews);
 }
-void APIENTRY GsSetShaderResources(D3D10DDI_HDEVICE, UINT, UINT, const D3D10DDI_HSHADERRESOURCEVIEW*) {
-  // Stub.
+void APIENTRY GsSetShaderResources(D3D10DDI_HDEVICE hDevice, UINT startSlot, UINT numViews, const D3D10DDI_HSHADERRESOURCEVIEW* phViews) {
+  SetShaderResourcesCommon(hDevice, AEROGPU_SHADER_STAGE_GEOMETRY, startSlot, numViews, phViews);
 }
 
 static void SetSamplersLocked(AeroGpuDevice* dev,
@@ -7131,8 +7170,19 @@ void APIENTRY PsSetSamplers(D3D10DDI_HDEVICE hDevice, UINT startSlot, UINT numSa
   std::lock_guard<std::mutex> lock(dev->mutex);
   SetSamplersLocked(dev, hDevice, AEROGPU_SHADER_STAGE_PIXEL, startSlot, numSamplers, phSamplers);
 }
-void APIENTRY GsSetSamplers(D3D10DDI_HDEVICE, UINT, UINT, const D3D10DDI_HSAMPLER*) {
-  // Stub.
+
+void APIENTRY GsSetSamplers(D3D10DDI_HDEVICE hDevice, UINT startSlot, UINT numSamplers, const D3D10DDI_HSAMPLER* phSamplers) {
+  if (!hDevice.pDrvPrivate) {
+    SetError(hDevice, E_INVALIDARG);
+    return;
+  }
+  auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
+  if (!dev) {
+    SetError(hDevice, E_INVALIDARG);
+    return;
+  }
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  SetSamplersLocked(dev, hDevice, AEROGPU_SHADER_STAGE_GEOMETRY, startSlot, numSamplers, phSamplers);
 }
 
 void APIENTRY SetViewports(D3D10DDI_HDEVICE hDevice, UINT numViewports, const D3D10_DDI_VIEWPORT* pViewports) {
