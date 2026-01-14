@@ -536,9 +536,9 @@ If the OS boots far enough that you can run tools (local console preferred; RDP 
 `aerogpu_dbgctl.exe` is shipped under the AeroGPU driver directory in packaged outputs:
 
 - Guest Tools ISO/zip (often mounted as `X:`):
-  - x64: `X:\\drivers\\amd64\\aerogpu\\tools\\win7_dbgctl\\bin\\aerogpu_dbgctl.exe`
-  - x86: `X:\\drivers\\x86\\aerogpu\\tools\\win7_dbgctl\\bin\\aerogpu_dbgctl.exe`
-- CI-staged packages (host-side): `out\\packages\\aerogpu\\x64\\tools\\win7_dbgctl\\bin\\aerogpu_dbgctl.exe` (and `...\\x86\\...`)
+  - x64: `X:\\drivers\\amd64\\aerogpu\\tools\\aerogpu_dbgctl.exe`
+  - x86: `X:\\drivers\\x86\\aerogpu\\tools\\aerogpu_dbgctl.exe`
+- CI-staged packages (host-side): `out\\packages\\aerogpu\\x64\\tools\\aerogpu_dbgctl.exe` (and `...\\x86\\...`)
 
 Run it in-place from those directories (or copy it somewhere on `PATH`). In the commands below, `aerogpu_dbgctl` assumes the tool is on `PATH` (otherwise replace it with the full path above).
 

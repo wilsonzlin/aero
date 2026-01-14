@@ -238,22 +238,22 @@ snapshot after test failures/timeouts:
 Packaged locations:
 
 - Guest Tools ISO/zip:
-  - x64: `drivers\\amd64\\aerogpu\\tools\\win7_dbgctl\\bin\\aerogpu_dbgctl.exe`
-  - x86: `drivers\\x86\\aerogpu\\tools\\win7_dbgctl\\bin\\aerogpu_dbgctl.exe`
+  - x64: `drivers\\amd64\\aerogpu\\tools\\aerogpu_dbgctl.exe`
+  - x86: `drivers\\x86\\aerogpu\\tools\\aerogpu_dbgctl.exe`
 - CI-staged packages (host-side, copy into the guest):
-  - x64: `out\\packages\\aerogpu\\x64\\tools\\win7_dbgctl\\bin\\aerogpu_dbgctl.exe`
-  - x86: `out\\packages\\aerogpu\\x86\\tools\\win7_dbgctl\\bin\\aerogpu_dbgctl.exe`
+  - x64: `out\\packages\\aerogpu\\x64\\tools\\aerogpu_dbgctl.exe`
+  - x86: `out\\packages\\aerogpu\\x86\\tools\\aerogpu_dbgctl.exe`
 
 Pass the full path:
 
 ```cmd
-bin\aerogpu_test_runner.exe --log-dir=logs --dbgctl=X:\drivers\amd64\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe
+bin\aerogpu_test_runner.exe --log-dir=logs --dbgctl=X:\drivers\amd64\aerogpu\tools\aerogpu_dbgctl.exe
 ```
 
 Or (if you prefer `--dbgctl=aerogpu_dbgctl.exe`) copy it next to the runner binaries first:
 
 ```cmd
-copy X:\drivers\amd64\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe bin\
+copy X:\drivers\amd64\aerogpu\tools\aerogpu_dbgctl.exe bin\
 bin\aerogpu_test_runner.exe --log-dir=logs --dbgctl=aerogpu_dbgctl.exe
 ```
 
