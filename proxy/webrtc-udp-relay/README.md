@@ -361,6 +361,7 @@ The service supports configuration via environment variables and equivalent flag
 - `AERO_WEBRTC_UDP_RELAY_SHUTDOWN_TIMEOUT` / `--shutdown-timeout` (default `15s`)
 - `AERO_WEBRTC_UDP_RELAY_ICE_GATHERING_TIMEOUT` / `--ice-gather-timeout` (default `2s`)
   - Bounds how long the non-trickle HTTP signaling endpoints (`POST /offer`, `POST /webrtc/offer`) wait for ICE gathering to complete before returning an answer SDP. If the timeout is hit, the server returns a best-effort SDP that may be missing candidates.
+  - Observability: timeouts increment the `/metrics` event counter `ice_gathering_timeout`.
 - `AERO_WEBRTC_UDP_RELAY_MODE` / `--mode` (`dev` or `prod`)
 
 ### Relay engine limits (env + flags)
