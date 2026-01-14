@@ -708,7 +708,7 @@ $enableTestSigningCmd
 
 REM Configure auto-run on boot (runs as SYSTEM).
 schtasks /Create /F /TN "AeroVirtioSelftest" /SC ONSTART /RU SYSTEM ^
-  /TR "\"C:\AeroTests\aero-virtio-selftest.exe\" --http-url \"$HttpUrl\" --dns-host \"$DnsHost\"$udpArg$requireNetMsixArg$requireInputMsixArg$blkArg$expectBlkMsiArg$testBlkResizeArg$testBlkResetArg$testInputEventsArg$testInputEventsExtendedArg$testInputMediaKeysArg$testInputLedArg$testInputTabletEventsArg$testInputLedsArg$testNetLinkFlapArg$requireSndArg$disableSndArg$disableSndCaptureArg$testSndCaptureArg$requireSndCaptureArg$requireNonSilenceArg$testSndBufferLimitsArg$allowVirtioSndTransitionalArg" >> "%LOG%" 2>&1
+  /TR "\"C:\AeroTests\aero-virtio-selftest.exe\" --http-url \"$HttpUrl\" --dns-host \"$DnsHost\"$udpArg$requireNetMsixArg$requireInputMsixArg$blkArg$expectBlkMsiArg$testBlkResizeArg$testBlkResetArg$testInputEventsArg$testInputEventsExtendedArg$testInputMediaKeysArg$testInputLedsArg$testInputLedArg$testInputTabletEventsArg$testNetLinkFlapArg$requireSndArg$disableSndArg$disableSndCaptureArg$testSndCaptureArg$requireSndCaptureArg$requireNonSilenceArg$testSndBufferLimitsArg$allowVirtioSndTransitionalArg" >> "%LOG%" 2>&1
 
 echo [AERO] provision done >> "%LOG%"
 $autoRebootCmd

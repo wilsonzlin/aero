@@ -250,7 +250,7 @@ param(
   # This is optional so older guest selftest binaries (which don't emit the marker) can still run.
   [Parameter(Mandatory = $false)]
   [switch]$RequireVirtioInputMsix,
- 
+
   # If set, require the guest virtio-input-binding marker to PASS (ensures at least one virtio-input PCI device is
   # present and bound to the expected Aero driver service).
   #
@@ -1988,6 +1988,8 @@ function Wait-AeroSelftestResult {
       }
       $didNetLinkFlap = $true
 
+      # Prefer targeting the stable virtio-net QOM id via QMP:
+      #   name = $script:VirtioNetQmpId
       $names = @($script:VirtioNetQmpId, "net0")
       $res = Try-AeroQmpSetLink -Host $QmpHost -Port ([int]$QmpPort) -Names $names -Up:$false
       if (-not $res.Ok) {
@@ -5380,6 +5382,7 @@ function Try-AeroQmpSetLink {
             arguments = @{
               name = $name
               up   = [bool]$Up
+            }
             }
           }
         }
