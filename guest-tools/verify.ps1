@@ -3571,6 +3571,7 @@ try {
             foreach ($e in $exeFiles) {
                 $line = "" + $e.relative_path
                 if ($e.sha256) { $line += " sha256=" + $e.sha256 } else { $line += " sha256=<error>" }
+                if ($e.size_bytes -ne $null) { $line += " size=" + $e.size_bytes }
                 if ($e.file_version) { $line += " filever=" + $e.file_version }
                 $toolsDetails += $line
             }
@@ -3614,6 +3615,7 @@ try {
                         if ($hs.Length -gt 12) { $hs = $hs.Substring(0, 12) }
                         $line += " sha256=" + $hs + "..."
                     }
+                    if ($e.size_bytes -ne $null) { $line += " size=" + $e.size_bytes }
                     if ($e.file_version) { $line += " filever=" + $e.file_version }
                     $toolsDetails += $line
                     $shown++
