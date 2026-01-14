@@ -318,11 +318,11 @@ pub fn run_batch_with_assists_with_config<B: CpuBus>(
                 }
             }
         }
-        if !cpu.pending.external_interrupts.is_empty() {
-            let before = cpu.pending.external_interrupts.len();
+        if !cpu.pending.external_interrupts().is_empty() {
+            let before = cpu.pending.external_interrupts().len();
             match cpu.deliver_external_interrupt(bus) {
                 Ok(()) => {
-                    if cpu.pending.external_interrupts.len() != before {
+                    if cpu.pending.external_interrupts().len() != before {
                         continue;
                     }
                 }
@@ -553,11 +553,11 @@ pub fn run_batch_cpu_core_with_assists<B: CpuBus>(
                 }
             }
         }
-        if !cpu.pending.external_interrupts.is_empty() {
-            let before = cpu.pending.external_interrupts.len();
+        if !cpu.pending.external_interrupts().is_empty() {
+            let before = cpu.pending.external_interrupts().len();
             match cpu.deliver_external_interrupt(bus) {
                 Ok(()) => {
-                    if cpu.pending.external_interrupts.len() != before {
+                    if cpu.pending.external_interrupts().len() != before {
                         continue;
                     }
                 }

@@ -273,7 +273,7 @@ fn pc_virtio_net_intx_is_synced_but_not_acknowledged_when_if0() {
 
     let exit = m.run_slice(5);
     assert_eq!(exit, RunExit::Halted { executed: 0 });
-    assert!(m.cpu.pending.external_interrupts.is_empty());
+    assert!(m.cpu.pending.external_interrupts().is_empty());
 
     // The virtio TX chain should have completed, and the interrupt should remain pending in the
     // PIC (not acknowledged while IF=0).
@@ -320,7 +320,15 @@ fn pc_virtio_net_intx_is_synced_even_when_external_interrupt_queue_is_full() {
     m.cpu.state.halted = true;
     m.cpu.pending.inject_external_interrupt(0xF0);
 
-    assert_eq!(m.cpu.pending.external_interrupts, vec![0xF0]);
+    assert_eq!(
+        m.cpu
+            .pending
+            .external_interrupts()
+            .iter()
+            .copied()
+            .collect::<Vec<_>>(),
+        vec![0xF0]
+    );
     assert_eq!(m.read_physical_u16(tx_used + 2), 0);
     assert_eq!(
         PlatformInterruptController::get_pending(&*interrupts.borrow()),
@@ -331,7 +339,15 @@ fn pc_virtio_net_intx_is_synced_even_when_external_interrupt_queue_is_full() {
     assert_eq!(exit, RunExit::Halted { executed: 0 });
 
     // The FIFO is still full, so no new vector should have been enqueued.
-    assert_eq!(m.cpu.pending.external_interrupts, vec![0xF0]);
+    assert_eq!(
+        m.cpu
+            .pending
+            .external_interrupts()
+            .iter()
+            .copied()
+            .collect::<Vec<_>>(),
+        vec![0xF0]
+    );
 
     // But the TX chain should have completed and the PIC should now see the pending INTx vector.
     assert_eq!(m.read_physical_u16(tx_used + 2), 1);
@@ -379,7 +395,7 @@ fn pc_virtio_net_intx_is_synced_but_not_acknowledged_when_pending_event() {
         !queued,
         "poll_platform_interrupt should not enqueue/ack while a pending event exists"
     );
-    assert!(m.cpu.pending.external_interrupts.is_empty());
+    assert!(m.cpu.pending.external_interrupts().is_empty());
     assert_eq!(
         PlatformInterruptController::get_pending(&*interrupts.borrow()),
         Some(expected_vector)
@@ -414,7 +430,7 @@ fn pc_virtio_net_intx_is_synced_but_not_acknowledged_during_interrupt_shadow() {
     // line.
     let exit = m.run_slice(1);
     assert_eq!(exit, RunExit::Completed { executed: 1 });
-    assert!(m.cpu.pending.external_interrupts.is_empty());
+    assert!(m.cpu.pending.external_interrupts().is_empty());
 
     // The TX chain should have completed, and the interrupt should remain pending in the PIC.
     assert_eq!(m.read_physical_u16(tx_used + 2), 1);

@@ -401,7 +401,7 @@ impl PcMachine {
         // are inhibited, etc. Also avoids tight polling loops when a level-triggered interrupt
         // line stays asserted.
         const MAX_QUEUED_EXTERNAL_INTERRUPTS: usize = 1;
-        if self.cpu.pending.external_interrupts.len() >= MAX_QUEUED_EXTERNAL_INTERRUPTS
+        if self.cpu.pending.external_interrupts().len() >= MAX_QUEUED_EXTERNAL_INTERRUPTS
             || self.cpu.pending.has_pending_event()
             || (self.cpu.state.rflags() & RFLAGS_IF) == 0
             || self.cpu.pending.interrupt_inhibit() != 0
@@ -753,7 +753,7 @@ mod tests {
             !queued,
             "poll_and_queue_one_external_interrupt should not enqueue/ack while a pending event exists"
         );
-        assert!(pc.cpu.pending.external_interrupts.is_empty());
+        assert!(pc.cpu.pending.external_interrupts().is_empty());
         assert_eq!(
             PlatformInterruptController::get_pending(&*pc.bus.platform.interrupts.borrow()),
             Some(expected_vector)

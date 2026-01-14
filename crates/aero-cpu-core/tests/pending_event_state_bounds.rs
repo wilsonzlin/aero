@@ -27,24 +27,24 @@ fn external_interrupt_queue_is_bounded_and_counts_drops() {
         pending.inject_external_interrupt(0x20);
     }
     assert_eq!(
-        pending.external_interrupts.len(),
+        pending.external_interrupts().len(),
         PendingEventState::MAX_EXTERNAL_INTERRUPTS
     );
     assert_eq!(pending.dropped_external_interrupts(), 0);
 
     // Record the allocation size at the cap and then attempt to push far beyond it.
-    let cap_at_limit = pending.external_interrupts.capacity();
+    let cap_at_limit = pending.external_interrupts().capacity();
     let extra = 10_000usize;
     for _ in 0..extra {
         pending.inject_external_interrupt(0x21);
     }
 
     assert_eq!(
-        pending.external_interrupts.len(),
+        pending.external_interrupts().len(),
         PendingEventState::MAX_EXTERNAL_INTERRUPTS
     );
     assert_eq!(pending.dropped_external_interrupts(), extra as u64);
-    assert_eq!(pending.external_interrupts.capacity(), cap_at_limit);
+    assert_eq!(pending.external_interrupts().capacity(), cap_at_limit);
 }
 
 #[test]

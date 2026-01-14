@@ -510,16 +510,16 @@ fn tier0_mov_ss_sets_interrupt_shadow_in_real_mode() {
         !cpu.maybe_deliver_interrupt(),
         "external interrupt should be blocked by MOV SS shadow"
     );
-    assert_eq!(cpu.cpu.pending.external_interrupts.len(), 1);
+    assert_eq!(cpu.cpu.pending.external_interrupts().len(), 1);
 
     // Execute the following instruction; the interrupt should still be blocked.
     interp.exec_block(&mut cpu);
     assert_eq!(cpu.cpu.state.rip(), code_base + 3);
-    assert_eq!(cpu.cpu.pending.external_interrupts.len(), 1);
+    assert_eq!(cpu.cpu.pending.external_interrupts().len(), 1);
 
     // Shadow should now be aged out; the external interrupt should be deliverable.
     assert!(cpu.maybe_deliver_interrupt());
-    assert_eq!(cpu.cpu.pending.external_interrupts.len(), 0);
+    assert_eq!(cpu.cpu.pending.external_interrupts().len(), 0);
     assert_eq!(cpu.cpu.state.rip(), handler_off as u64);
     assert_eq!(cpu.cpu.state.read_reg(Register::SP) as u16, 0x7FFA);
 }
@@ -563,16 +563,16 @@ fn tier0_pop_ss_sets_interrupt_shadow_in_real_mode() {
         !cpu.maybe_deliver_interrupt(),
         "external interrupt should be blocked by POP SS shadow"
     );
-    assert_eq!(cpu.cpu.pending.external_interrupts.len(), 1);
+    assert_eq!(cpu.cpu.pending.external_interrupts().len(), 1);
 
     // Execute the following instruction; the interrupt should still be blocked.
     interp.exec_block(&mut cpu);
     assert_eq!(cpu.cpu.state.rip(), code_base + 2);
-    assert_eq!(cpu.cpu.pending.external_interrupts.len(), 1);
+    assert_eq!(cpu.cpu.pending.external_interrupts().len(), 1);
 
     // Shadow should now be aged out; the external interrupt should be deliverable.
     assert!(cpu.maybe_deliver_interrupt());
-    assert_eq!(cpu.cpu.pending.external_interrupts.len(), 0);
+    assert_eq!(cpu.cpu.pending.external_interrupts().len(), 0);
     assert_eq!(cpu.cpu.state.rip(), handler_off as u64);
     assert_eq!(cpu.cpu.state.read_reg(Register::SP) as u16, 0x7FFC);
 }

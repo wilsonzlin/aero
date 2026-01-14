@@ -136,7 +136,7 @@ mod tests {
         assert_ne!(cpu.state.rflags() & RFLAGS_RESERVED1, 0);
         assert!(!cpu.state.halted);
         assert_eq!(cpu.state.take_pending_bios_int(), None);
-        assert!(cpu.pending.external_interrupts.is_empty());
+        assert!(cpu.pending.external_interrupts().is_empty());
 
         assert_eq!(cpu.state.segments.cs.selector, 0);
         assert_eq!(cpu.state.segments.cs.base, 0);

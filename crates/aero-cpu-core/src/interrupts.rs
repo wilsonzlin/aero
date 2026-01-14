@@ -259,7 +259,7 @@ enum PushOutcome {
 pub struct PendingEventState {
     pending_event: Option<PendingEvent>,
     /// FIFO of externally injected interrupts (PIC/APIC).
-    pub external_interrupts: VecDeque<u8>,
+    external_interrupts: VecDeque<u8>,
     /// Number of externally injected vectors dropped due to queue overflow.
     dropped_external_interrupts: u64,
 
@@ -337,6 +337,18 @@ impl PendingEventState {
             return;
         }
         self.external_interrupts.push_back(vector);
+    }
+
+    /// Immutable access to the externally injected interrupt FIFO.
+    ///
+    /// This is intentionally read-only so callers cannot bypass the bounded
+    /// [`Self::inject_external_interrupt`] API and cause unbounded growth.
+    pub fn external_interrupts(&self) -> &VecDeque<u8> {
+        &self.external_interrupts
+    }
+
+    pub fn clear_external_interrupts(&mut self) {
+        self.external_interrupts.clear();
     }
 
     /// Number of externally injected interrupts dropped due to queue overflow.

@@ -422,11 +422,11 @@ impl<B: crate::mem::CpuBus> ExecCpu for Vcpu<B> {
             }
         }
 
-        if !self.cpu.pending.external_interrupts.is_empty() {
-            let before = self.cpu.pending.external_interrupts.len();
+        if !self.cpu.pending.external_interrupts().is_empty() {
+            let before = self.cpu.pending.external_interrupts().len();
             match self.cpu.deliver_external_interrupt(&mut self.bus) {
                 Ok(()) => {
-                    if self.cpu.pending.external_interrupts.len() != before {
+                    if self.cpu.pending.external_interrupts().len() != before {
                         return true;
                     }
                 }

@@ -7791,7 +7791,7 @@ impl Machine {
         // level-triggered lines remain accurately asserted/deasserted until delivery is possible.
         self.sync_pci_intx_sources_to_interrupts();
 
-        if self.cpu.pending.external_interrupts.len() >= max_queued {
+        if self.cpu.pending.external_interrupts().len() >= max_queued {
             return false;
         }
 
@@ -10149,7 +10149,7 @@ mod tests {
             restored
                 .cpu
                 .pending
-                .external_interrupts
+                .external_interrupts()
                 .iter()
                 .copied()
                 .collect::<Vec<_>>(),
@@ -10172,7 +10172,7 @@ mod tests {
 
         // Dirty snapshot: updated CPU_INTERNAL state, with no RAM changes required.
         src.cpu.pending.set_interrupt_inhibit(1);
-        src.cpu.pending.external_interrupts.clear();
+        src.cpu.pending.clear_external_interrupts();
         src.cpu.pending.inject_external_interrupt(0x33);
         src.cpu.pending.inject_external_interrupt(0x34);
         let diff = src.take_snapshot_dirty().unwrap();
@@ -10187,7 +10187,7 @@ mod tests {
             restored
                 .cpu
                 .pending
-                .external_interrupts
+                .external_interrupts()
                 .iter()
                 .copied()
                 .collect::<Vec<_>>(),
@@ -10307,7 +10307,7 @@ mod tests {
 
         assert!(!restored.cpu.pending.has_pending_event());
         assert_eq!(restored.cpu.pending.interrupt_inhibit(), 0);
-        assert!(restored.cpu.pending.external_interrupts.is_empty());
+        assert!(restored.cpu.pending.external_interrupts().is_empty());
         assert_eq!(restored.cpu.pending.interrupt_inhibit(), 0);
     }
 
@@ -10335,7 +10335,7 @@ mod tests {
         let restored_irqs: Vec<u8> = restored
             .cpu
             .pending
-            .external_interrupts
+            .external_interrupts()
             .iter()
             .copied()
             .collect();
@@ -10910,7 +10910,7 @@ mod tests {
         // While the interrupt shadow is active, the machine should not poll/acknowledge the PIC.
         assert_eq!(m.run_slice(1), RunExit::Completed { executed: 1 });
         assert_eq!(m.cpu.pending.interrupt_inhibit(), 0);
-        assert!(m.cpu.pending.external_interrupts.is_empty());
+        assert!(m.cpu.pending.external_interrupts().is_empty());
         assert_eq!(
             PlatformInterruptController::get_pending(&*interrupts.borrow()),
             Some(0x20)
@@ -11014,7 +11014,7 @@ mod tests {
         );
         let exit = m.run_slice(5);
         assert_eq!(exit, RunExit::Halted { executed: 0 });
-        assert!(m.cpu.pending.external_interrupts.is_empty());
+        assert!(m.cpu.pending.external_interrupts().is_empty());
         assert_eq!(
             PlatformInterruptController::get_pending(&*interrupts.borrow()),
             Some(0x20)
@@ -11094,7 +11094,7 @@ mod tests {
         m.cpu.state.halted = true;
         let exit = m.run_slice(5);
         assert_eq!(exit, RunExit::Halted { executed: 0 });
-        assert!(m.cpu.pending.external_interrupts.is_empty());
+        assert!(m.cpu.pending.external_interrupts().is_empty());
         assert_eq!(
             PlatformInterruptController::get_pending(&*interrupts.borrow()),
             Some(expected_vector)
@@ -11176,13 +11176,29 @@ mod tests {
         init_real_mode_cpu(&mut m, ENTRY_IP, 0);
         m.cpu.state.halted = true;
         m.cpu.pending.inject_external_interrupt(0xF0);
-        assert_eq!(m.cpu.pending.external_interrupts, vec![0xF0]);
+        assert_eq!(
+            m.cpu
+                .pending
+                .external_interrupts()
+                .iter()
+                .copied()
+                .collect::<Vec<_>>(),
+            vec![0xF0]
+        );
 
         let exit = m.run_slice(5);
         assert_eq!(exit, RunExit::Halted { executed: 0 });
 
         // The FIFO is still full, so no new vector should have been enqueued.
-        assert_eq!(m.cpu.pending.external_interrupts, vec![0xF0]);
+        assert_eq!(
+            m.cpu
+                .pending
+                .external_interrupts()
+                .iter()
+                .copied()
+                .collect::<Vec<_>>(),
+            vec![0xF0]
+        );
 
         // But the platform interrupt controller should now see the pending INTx vector.
         assert_eq!(
@@ -11258,7 +11274,7 @@ mod tests {
         // asserted line.
         let exit = m.run_slice(1);
         assert_eq!(exit, RunExit::Completed { executed: 1 });
-        assert!(m.cpu.pending.external_interrupts.is_empty());
+        assert!(m.cpu.pending.external_interrupts().is_empty());
         assert_eq!(
             PlatformInterruptController::get_pending(&*interrupts.borrow()),
             Some(expected_vector)
@@ -11342,7 +11358,7 @@ mod tests {
             !queued,
             "poll_platform_interrupt should not enqueue/ack while a pending event exists"
         );
-        assert!(m.cpu.pending.external_interrupts.is_empty());
+        assert!(m.cpu.pending.external_interrupts().is_empty());
         assert_eq!(
             PlatformInterruptController::get_pending(&*interrupts.borrow()),
             Some(expected_vector)
@@ -11901,7 +11917,7 @@ mod tests {
         src.cpu.pending.inject_external_interrupt(0x22);
 
         let expected_inhibit = src.cpu.pending.interrupt_inhibit();
-        let expected_external = src.cpu.pending.external_interrupts.clone();
+        let expected_external = src.cpu.pending.external_interrupts().clone();
 
         let snap = src.take_snapshot_full().unwrap();
 
@@ -11909,7 +11925,7 @@ mod tests {
         restored.restore_snapshot_bytes(&snap).unwrap();
 
         assert_eq!(restored.cpu.pending.interrupt_inhibit(), expected_inhibit);
-        assert_eq!(restored.cpu.pending.external_interrupts, expected_external);
+        assert_eq!(restored.cpu.pending.external_interrupts(), &expected_external);
     }
 
     #[test]

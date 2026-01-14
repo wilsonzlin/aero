@@ -419,14 +419,14 @@ fn sti_shadow_blocks_immediate_external_interrupt_delivery() -> Result<(), CpuEx
     cpu.deliver_external_interrupt(&mut mem)?;
     // Not delivered because of STI shadow.
     assert_eq!(cpu.state.rip(), 0x1111);
-    assert_eq!(cpu.pending.external_interrupts.len(), 1);
+    assert_eq!(cpu.pending.external_interrupts().len(), 1);
 
     // Age the STI interrupt shadow.
     cpu.pending.retire_instruction();
 
     cpu.deliver_external_interrupt(&mut mem)?;
     assert_eq!(cpu.state.rip(), 0x5555);
-    assert_eq!(cpu.pending.external_interrupts.len(), 0);
+    assert_eq!(cpu.pending.external_interrupts().len(), 0);
     Ok(())
 }
 
@@ -452,12 +452,12 @@ fn mov_ss_shadow_blocks_immediate_external_interrupt_delivery() -> Result<(), Cp
     cpu.pending.inject_external_interrupt(0x20);
     cpu.deliver_external_interrupt(&mut mem)?;
     assert_eq!(cpu.state.rip(), 0x1111);
-    assert_eq!(cpu.pending.external_interrupts.len(), 1);
+    assert_eq!(cpu.pending.external_interrupts().len(), 1);
 
     cpu.pending.retire_instruction();
     cpu.deliver_external_interrupt(&mut mem)?;
     assert_eq!(cpu.state.rip(), 0x7777);
-    assert_eq!(cpu.pending.external_interrupts.len(), 0);
+    assert_eq!(cpu.pending.external_interrupts().len(), 0);
 
     Ok(())
 }
@@ -961,7 +961,7 @@ fn poll_and_deliver_external_interrupt_does_not_poll_controller_when_if0() -> Re
     cpu.poll_and_deliver_external_interrupt(&mut mem, &mut ctrl)?;
 
     assert_eq!(ctrl.poll_count, 0);
-    assert!(cpu.pending.external_interrupts.is_empty());
+    assert!(cpu.pending.external_interrupts().is_empty());
     Ok(())
 }
 
@@ -977,7 +977,7 @@ fn poll_and_deliver_external_interrupt_does_not_poll_controller_when_interrupt_s
     cpu.poll_and_deliver_external_interrupt(&mut mem, &mut ctrl)?;
 
     assert_eq!(ctrl.poll_count, 0);
-    assert!(cpu.pending.external_interrupts.is_empty());
+    assert!(cpu.pending.external_interrupts().is_empty());
     Ok(())
 }
 
@@ -1005,7 +1005,7 @@ fn poll_and_deliver_external_interrupt_delivers_queued_vector_before_polling_con
     cpu.poll_and_deliver_external_interrupt(&mut mem, &mut ctrl)?;
 
     assert_eq!(ctrl.poll_count, 0);
-    assert!(cpu.pending.external_interrupts.is_empty());
+    assert!(cpu.pending.external_interrupts().is_empty());
     assert_eq!(cpu.state.rip(), 0x6666);
     Ok(())
 }

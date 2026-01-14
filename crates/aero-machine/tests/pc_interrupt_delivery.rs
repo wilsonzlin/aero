@@ -237,7 +237,7 @@ fn pc_machine_does_not_ack_pic_interrupt_when_if0() {
 
     // While halted with IF=0, the machine should not acknowledge or enqueue the interrupt.
     assert_eq!(pc.run_slice(16), RunExit::Halted { executed: 0 });
-    assert!(pc.cpu.pending.external_interrupts.is_empty());
+    assert!(pc.cpu.pending.external_interrupts().is_empty());
     assert_eq!(
         PlatformInterruptController::get_pending(&*pc.bus.platform.interrupts.borrow()),
         Some(vector)
@@ -308,7 +308,7 @@ fn pc_machine_e1000_intx_is_synced_but_not_acknowledged_when_if0() {
     // still sync PCI INTx sources so the PIC sees the asserted line.
     let exit = pc.run_slice(5);
     assert_eq!(exit, RunExit::Halted { executed: 0 });
-    assert!(pc.cpu.pending.external_interrupts.is_empty());
+    assert!(pc.cpu.pending.external_interrupts().is_empty());
     assert_eq!(
         PlatformInterruptController::get_pending(&*pc.bus.platform.interrupts.borrow()),
         Some(expected_vector)
@@ -380,13 +380,29 @@ fn pc_machine_e1000_intx_is_synced_even_when_external_interrupt_queue_is_full() 
     // be enqueued, the machine must still sync PCI INTx sources so the interrupt controller sees
     // the asserted line.
     pc.cpu.pending.inject_external_interrupt(0xF0);
-    assert_eq!(pc.cpu.pending.external_interrupts, vec![0xF0]);
+    assert_eq!(
+        pc.cpu
+            .pending
+            .external_interrupts()
+            .iter()
+            .copied()
+            .collect::<Vec<_>>(),
+        vec![0xF0]
+    );
 
     let exit = pc.run_slice(5);
     assert_eq!(exit, RunExit::Halted { executed: 0 });
 
     // The FIFO is still full, so no new vector should have been enqueued.
-    assert_eq!(pc.cpu.pending.external_interrupts, vec![0xF0]);
+    assert_eq!(
+        pc.cpu
+            .pending
+            .external_interrupts()
+            .iter()
+            .copied()
+            .collect::<Vec<_>>(),
+        vec![0xF0]
+    );
 
     // But the platform interrupt controller should now see the pending INTx vector.
     assert_eq!(
@@ -456,7 +472,7 @@ fn pc_machine_e1000_intx_is_synced_but_not_acknowledged_during_interrupt_shadow(
 
     let exit = pc.run_slice(1);
     assert_eq!(exit, RunExit::Completed { executed: 1 });
-    assert!(pc.cpu.pending.external_interrupts.is_empty());
+    assert!(pc.cpu.pending.external_interrupts().is_empty());
 
     // Even though the interrupt shadow blocked delivery, the machine should still have synced the
     // asserted INTx level into the PIC so it remains pending until it can be acknowledged.

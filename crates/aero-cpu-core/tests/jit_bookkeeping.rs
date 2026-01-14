@@ -344,12 +344,12 @@ fn inhibit_interrupts_after_block_creates_and_ages_shadow() {
         StepOutcome::Block { tier, .. } => assert_eq!(tier, ExecutedTier::Jit),
         other => panic!("unexpected outcome: {other:?}"),
     }
-    assert_eq!(cpu.cpu.pending.external_interrupts.len(), 1);
+    assert_eq!(cpu.cpu.pending.external_interrupts().len(), 1);
     assert_eq!(cpu.cpu.pending.interrupt_inhibit(), 0);
 
     // Step 3: shadow expired; interrupt is delivered.
     assert_eq!(dispatcher.step(&mut cpu), StepOutcome::InterruptDelivered);
-    assert!(cpu.cpu.pending.external_interrupts.is_empty());
+    assert!(cpu.cpu.pending.external_interrupts().is_empty());
     assert_eq!(cpu.cpu.state.rip(), 0x1234);
 }
 
@@ -546,12 +546,12 @@ fn interrupt_shadow_ages_across_committed_jit_blocks() {
         }
         other => panic!("unexpected outcome: {other:?}"),
     }
-    assert_eq!(cpu.cpu.pending.external_interrupts.len(), 1);
+    assert_eq!(cpu.cpu.pending.external_interrupts().len(), 1);
 
     // Shadow should now be expired, so the queued external interrupt is delivered at the next
     // instruction boundary (i.e. next dispatcher step).
     assert_eq!(dispatcher.step(&mut cpu), StepOutcome::InterruptDelivered);
-    assert!(cpu.cpu.pending.external_interrupts.is_empty());
+    assert!(cpu.cpu.pending.external_interrupts().is_empty());
 }
 
 #[test]
@@ -621,5 +621,5 @@ fn rollback_jit_exits_do_not_advance_time_or_age_interrupt_shadow() {
 
     // Interrupt shadow should still be active (so delivery is still inhibited).
     assert!(!cpu.maybe_deliver_interrupt());
-    assert_eq!(cpu.cpu.pending.external_interrupts.len(), 1);
+    assert_eq!(cpu.cpu.pending.external_interrupts().len(), 1);
 }
