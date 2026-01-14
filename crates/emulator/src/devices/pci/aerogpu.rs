@@ -43,8 +43,8 @@ impl Default for AeroGpuDeviceConfig {
 // - first 256KiB reserved for legacy VGA planes (4×64KiB)
 // - VBE packed-pixel framebuffer starts after that region.
 const AEROGPU_PCI_BAR1_LFB_OFFSET: u32 = aero_gpu_vga::VBE_FRAMEBUFFER_OFFSET as u32;
-const LEGACY_VGA_WINDOW_BASE: u32 = 0xA0000;
-const LEGACY_VGA_WINDOW_SIZE: u32 = 0x20000;
+const LEGACY_VGA_WINDOW_BASE: u32 = aero_gpu_vga::VGA_LEGACY_MEM_START;
+const LEGACY_VGA_WINDOW_SIZE: u32 = aero_gpu_vga::VGA_LEGACY_MEM_LEN;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Scanout0Descriptor {
@@ -284,7 +284,10 @@ impl AeroGpuPciDevice {
         }
 
         // VGA legacy ports + Bochs VBE ports.
-        if (0x3B0..=0x3DF).contains(&port) || port == 0x01CE || port == 0x01CF {
+        if (aero_gpu_vga::VGA_LEGACY_IO_START..=aero_gpu_vga::VGA_LEGACY_IO_END).contains(&port)
+            || port == 0x01CE
+            || port == 0x01CF
+        {
             return self.vga.port_read(port, size);
         }
         match size {
@@ -300,7 +303,10 @@ impl AeroGpuPciDevice {
         if !self.io_space_enabled() {
             return;
         }
-        if (0x3B0..=0x3DF).contains(&port) || port == 0x01CE || port == 0x01CF {
+        if (aero_gpu_vga::VGA_LEGACY_IO_START..=aero_gpu_vga::VGA_LEGACY_IO_END).contains(&port)
+            || port == 0x01CE
+            || port == 0x01CF
+        {
             self.vga.port_write(port, size, value);
             self.update_scanout_state_from_vga();
         }
