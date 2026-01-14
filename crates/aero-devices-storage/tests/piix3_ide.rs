@@ -638,6 +638,78 @@ fn reset_clears_channel_and_bus_master_state_but_preserves_attached_media() {
 }
 
 #[test]
+fn ata_software_reset_clears_pending_dma_request() {
+    let capacity = 4 * SECTOR_SIZE as u64;
+    let mut disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
+    let mut sector0 = vec![0u8; SECTOR_SIZE];
+    sector0[..4].copy_from_slice(b"OKAY");
+    disk.write_sectors(0, &sector0).unwrap();
+
+    let ide = Rc::new(RefCell::new(Piix3IdePciDevice::new()));
+    ide.borrow_mut()
+        .controller
+        .attach_primary_master_ata(AtaDrive::new(Box::new(disk)).unwrap());
+    ide.borrow_mut().config_mut().set_command(0x0005); // IO decode + Bus Master
+
+    let mut ioports = IoPortBus::new();
+    register_piix3_ide_ports(&mut ioports, ide.clone());
+
+    let mut mem = Bus::new(0x20_000);
+    let bm_base = ide.borrow().bus_master_base();
+
+    let prd_addr = 0x1000u64;
+    let dma_buf = 0x3000u64;
+
+    // PRD entry: one 512-byte segment, end-of-table.
+    mem.write_u32(prd_addr, dma_buf as u32);
+    mem.write_u16(prd_addr + 4, SECTOR_SIZE as u16);
+    mem.write_u16(prd_addr + 6, 0x8000);
+    ioports.write(bm_base + 4, 4, prd_addr as u32);
+
+    // Seed destination buffer.
+    mem.write_physical(dma_buf, &vec![0xFFu8; SECTOR_SIZE]);
+
+    // Start BMIDE engine, then queue a DMA request by issuing READ DMA (but do not tick yet).
+    ioports.write(bm_base, 1, 0x09);
+
+    ioports.write(PRIMARY_PORTS.cmd_base + 6, 1, 0xE0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 2, 1, 1);
+    ioports.write(PRIMARY_PORTS.cmd_base + 3, 1, 0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 4, 1, 0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 5, 1, 0);
+    ioports.write(PRIMARY_PORTS.cmd_base + 7, 1, 0xC8); // READ DMA
+
+    assert!(
+        !ide.borrow().controller.primary_irq_pending(),
+        "DMA command should not raise IRQ until it completes"
+    );
+
+    // Assert software reset (SRST) via Device Control; this should clear the pending DMA request.
+    ioports.write(PRIMARY_PORTS.ctrl_base, 1, 0x04);
+
+    // Even though the BMIDE engine is started, there should be no DMA request left to service.
+    ide.borrow_mut().tick(&mut mem);
+
+    assert!(
+        !ide.borrow().controller.primary_irq_pending(),
+        "SRST should clear any pending DMA completion IRQ"
+    );
+    let bm_st = ioports.read(bm_base + 2, 1) as u8;
+    assert_eq!(
+        bm_st & 0x07,
+        0,
+        "BMIDE status bits should remain clear when SRST cancels the request"
+    );
+
+    let mut out = vec![0u8; SECTOR_SIZE];
+    mem.read_physical(dma_buf, &mut out);
+    assert!(
+        out.iter().all(|&b| b == 0xFF),
+        "guest memory should not be modified after SRST clears the DMA request"
+    );
+}
+
+#[test]
 fn ata_pio_write_sector_via_byte_data_port_writes_roundtrip() {
     let capacity = 8 * SECTOR_SIZE as u64;
     let disk = RawDisk::create(MemBackend::new(), capacity).unwrap();
