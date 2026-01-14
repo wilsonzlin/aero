@@ -2119,10 +2119,12 @@ bool TestFvfXyzrhwDiffuseLightingEnabledStillDraws() {
 
   // Sanity-check that fixed-function lighting constant uploads are not emitted for
   // pre-transformed XYZRHW vertices (D3DRS_LIGHTING is ignored).
+  constexpr uint32_t kLightingStart = 208u;
+  constexpr uint32_t kLightingVec4 = 29u;
   bool saw_lighting_constants = false;
   for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_F)) {
     const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(hdr);
-    if (sc->stage == AEROGPU_SHADER_STAGE_VERTEX && sc->start_register == 244u && sc->vec4_count == 10u) {
+    if (sc->stage == AEROGPU_SHADER_STAGE_VERTEX && sc->start_register == kLightingStart && sc->vec4_count == kLightingVec4) {
       saw_lighting_constants = true;
       break;
     }
