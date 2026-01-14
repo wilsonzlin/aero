@@ -497,7 +497,7 @@ pub const AEROGPU_BARS: [PciBarProfile; 2] = [
 /// BAR0 exposes the Bochs VBE linear framebuffer (LFB) via a 32-bit MMIO window.
 ///
 /// Note: This is the historical default VRAM/LFB size used by `aero_gpu_vga::VgaDevice`.
-pub const VGA_TRANSITIONAL_STUB_BAR0_SIZE: u64 = 16 * 1024 * 1024;
+pub const VGA_TRANSITIONAL_STUB_BAR0_SIZE: u64 = aero_gpu_vga::DEFAULT_VRAM_SIZE as u64;
 pub const VGA_TRANSITIONAL_STUB_BARS: [PciBarProfile; 1] = [PciBarProfile::mem32(
     0,
     VGA_TRANSITIONAL_STUB_BAR0_SIZE,
@@ -921,13 +921,17 @@ pub const VGA_TRANSITIONAL_STUB: PciDeviceProfile = PciDeviceProfile {
     // `enable_pc_platform=true` mode (see above). When `enable_aerogpu=true`, the stub is absent.
     bdf: PciBdf::new(0, 0x0c, 0),
     // Bochs/QEMU "Standard VGA" IDs.
-    vendor_id: 0x1234,
-    device_id: 0x1111,
+    vendor_id: aero_gpu_vga::VGA_PCI_VENDOR_ID,
+    device_id: aero_gpu_vga::VGA_PCI_DEVICE_ID,
     subsystem_vendor_id: 0,
     subsystem_id: 0,
     revision_id: 0,
     // VGA-compatible display controller.
-    class: PciClassCode::new(0x03, 0x00, 0x00),
+    class: PciClassCode::new(
+        aero_gpu_vga::VGA_PCI_CLASS_CODE,
+        aero_gpu_vga::VGA_PCI_SUBCLASS,
+        aero_gpu_vga::VGA_PCI_PROG_IF,
+    ),
     header_type: 0x00,
     interrupt_pin: None,
     bars: &VGA_TRANSITIONAL_STUB_BARS,

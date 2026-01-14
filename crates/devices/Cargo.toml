@@ -20,6 +20,7 @@ aero-interrupts = { path = "../aero-interrupts" }
 aero-io-snapshot = { path = "../aero-io-snapshot" }
 aero-pci-routing = { path = "../aero-pci-routing" }
 aero-devices-input = { path = "../aero-devices-input" }
+aero-gpu-vga = { path = "../aero-gpu-vga" }
 aero-storage-adapters = { path = "../aero-storage-adapters" }
 aero-storage = { path = "../aero-storage" }
 aero-usb = { path = "../aero-usb" }
