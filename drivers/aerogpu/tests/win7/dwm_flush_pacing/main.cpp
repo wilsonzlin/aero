@@ -1,5 +1,6 @@
 #include "..\\common\\aerogpu_test_common.h"
 #include "..\\common\\aerogpu_test_report.h"
+#include "..\\common\\aerogpu_test_scanout_diag.h"
 
 #include <dwmapi.h>
 
@@ -40,6 +41,42 @@ static int RunDwmFlushPacing(int argc, char** argv) {
     }
     return reporter.Fail(
         "running in a remote session (SM_REMOTESESSION=1). Re-run with --allow-remote to skip.");
+  }
+
+  aerogpu_test::AerogpuScanoutDiag scanout_diag;
+  bool have_scanout_diag = false;
+  {
+    aerogpu_test::kmt::D3DKMT_FUNCS kmt;
+    std::string kmt_err;
+    if (aerogpu_test::kmt::LoadD3DKMT(&kmt, &kmt_err)) {
+      aerogpu_test::kmt::D3DKMT_HANDLE adapter = 0;
+      std::string open_err;
+      if (aerogpu_test::kmt::OpenPrimaryAdapter(&kmt, &adapter, &open_err)) {
+        have_scanout_diag = aerogpu_test::TryQueryAerogpuScanoutDiagWithKmt(
+            &kmt, (uint32_t)adapter, 0 /* vidpn_source_id */, &scanout_diag);
+        aerogpu_test::kmt::CloseAdapter(&kmt, adapter);
+      }
+      aerogpu_test::kmt::UnloadD3DKMT(&kmt);
+    }
+  }
+  if (have_scanout_diag) {
+    aerogpu_test::PrintfStdout("INFO: %s: scanout: flags=0x%08lX%s%s cached_enable=%lu mmio_enable=%lu",
+                               kTestName,
+                               (unsigned long)scanout_diag.flags_u32,
+                               scanout_diag.flags_valid ? "" : " (flags_invalid)",
+                               scanout_diag.post_display_ownership_released ? " (post_display_ownership_released)" : "",
+                               (unsigned long)scanout_diag.cached_enable,
+                               (unsigned long)scanout_diag.mmio_enable);
+    if (scanout_diag.flags_valid && scanout_diag.post_display_ownership_released) {
+      return reporter.Fail("post_display_ownership_released flag is set in QUERY_SCANOUT (flags=0x%08lX)",
+                           (unsigned long)scanout_diag.flags_u32);
+    }
+    if (scanout_diag.cached_enable == 0 || scanout_diag.mmio_enable == 0) {
+      return reporter.Fail("scanout enable appears off (cached_enable=%lu mmio_enable=%lu flags=0x%08lX)",
+                           (unsigned long)scanout_diag.cached_enable,
+                           (unsigned long)scanout_diag.mmio_enable,
+                           (unsigned long)scanout_diag.flags_u32);
+    }
   }
 
   // Ensure DWM composition is enabled (otherwise DwmFlush can return immediately).
@@ -131,9 +168,45 @@ static int RunDwmFlushPacing(int argc, char** argv) {
   // Keep these thresholds generous: this test is intended to detect "completely broken" pacing, not to
   // enforce perfect refresh accuracy.
   if (avg_ms < 2.0) {
+    if (have_scanout_diag) {
+      if (scanout_diag.flags_valid && scanout_diag.post_display_ownership_released) {
+        return reporter.Fail(
+            "unexpectedly fast DwmFlush pacing (avg=%.3fms); post_display_ownership_released=1 "
+            "(scanout.flags=0x%08lX)",
+            avg_ms,
+            (unsigned long)scanout_diag.flags_u32);
+      }
+      if (scanout_diag.cached_enable == 0 || scanout_diag.mmio_enable == 0) {
+        return reporter.Fail(
+            "unexpectedly fast DwmFlush pacing (avg=%.3fms); scanout enable may be off "
+            "(cached_enable=%lu mmio_enable=%lu flags=0x%08lX)",
+            avg_ms,
+            (unsigned long)scanout_diag.cached_enable,
+            (unsigned long)scanout_diag.mmio_enable,
+            (unsigned long)scanout_diag.flags_u32);
+      }
+    }
     return reporter.Fail("unexpectedly fast DwmFlush pacing (avg=%.3fms)", avg_ms);
   }
   if (max_ms > 250.0) {
+    if (have_scanout_diag) {
+      if (scanout_diag.flags_valid && scanout_diag.post_display_ownership_released) {
+        return reporter.Fail(
+            "unexpectedly large DwmFlush gap (max=%.3fms); post_display_ownership_released=1 "
+            "(scanout.flags=0x%08lX)",
+            max_ms,
+            (unsigned long)scanout_diag.flags_u32);
+      }
+      if (scanout_diag.cached_enable == 0 || scanout_diag.mmio_enable == 0) {
+        return reporter.Fail(
+            "unexpectedly large DwmFlush gap (max=%.3fms); scanout enable may be off "
+            "(cached_enable=%lu mmio_enable=%lu flags=0x%08lX)",
+            max_ms,
+            (unsigned long)scanout_diag.cached_enable,
+            (unsigned long)scanout_diag.mmio_enable,
+            (unsigned long)scanout_diag.flags_u32);
+      }
+    }
     return reporter.Fail("unexpectedly large DwmFlush gap (max=%.3fms)", max_ms);
   }
 
