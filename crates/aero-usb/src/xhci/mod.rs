@@ -3542,6 +3542,9 @@ impl XhciController {
         slot_id: u8,
         endpoint_id: u8,
     ) -> Option<(u64, bool)> {
+        if slot_id == 0 {
+            return None;
+        }
         if endpoint_id == 0 || endpoint_id > 31 {
             return None;
         }
@@ -3575,6 +3578,9 @@ impl XhciController {
         slot_id: u8,
         endpoint_id: u8,
     ) -> Option<context::EndpointState> {
+        if slot_id == 0 {
+            return None;
+        }
         if endpoint_id == 0 || endpoint_id > 31 {
             return None;
         }
@@ -3598,6 +3604,9 @@ impl XhciController {
         dequeue_ptr: u64,
         cycle: bool,
     ) {
+        if slot_id == 0 {
+            return;
+        }
         if endpoint_id == 0 || endpoint_id > 31 {
             return;
         }
