@@ -1445,7 +1445,7 @@ fn decodes_and_translates_ifc_with_else() {
     let a = imm32_scalar(0.0f32.to_bits());
     let b = imm32_scalar(1.0f32.to_bits());
     body.push(opcode_token_with_test(
-        OPCODE_IFC,
+        OPCODE_IF,
         (1 + a.len() as u32 + b.len() as u32) as u32,
         6, // `lt` in D3D10_SB_INSTRUCTION_TEST encoding.
     ));

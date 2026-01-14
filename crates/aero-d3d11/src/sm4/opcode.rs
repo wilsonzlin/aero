@@ -67,11 +67,8 @@ pub const OPCODE_IDIV: u32 = 0x3d;
 pub const OPCODE_IF: u32 = 0x28;
 pub const OPCODE_ELSE: u32 = 0x29;
 pub const OPCODE_ENDIF: u32 = 0x2a;
-///
-/// SM4/SM5 encode compare-based `ifc` via the `OPCODE_IF` opcode with a non-boolean
-/// instruction-test value in the opcode token. This alias exists for readability when
-/// constructing synthetic token streams.
-pub const OPCODE_IFC: u32 = OPCODE_IF;
+// Note: SM4/SM5 encode compare-based `ifc_*` via `OPCODE_IF` with a non-boolean instruction-test
+// value in the opcode token (see `OPCODE_TEST_SHIFT`/`OPCODE_TEST_MASK`).
 
 /// `setp` (set predicate register).
 ///
