@@ -13,9 +13,20 @@ If you are using CI-produced artifacts or Guest Tools (instead of building dbgct
 alongside the AeroGPU driver package:
 
 - Guest Tools ISO/zip:
-  - Win7 x64: `drivers\amd64\aerogpu\tools\aerogpu_dbgctl.exe`
-  - Win7 x86: `drivers\x86\aerogpu\tools\aerogpu_dbgctl.exe`
-- CI-staged packages (host-side): `out\packages\aerogpu\x64\tools\aerogpu_dbgctl.exe` (and `...\x86\...`)
+  - `<GuestToolsDrive>:\drivers\amd64\aerogpu\tools\aerogpu_dbgctl.exe`
+  - `<GuestToolsDrive>:\drivers\x86\aerogpu\tools\aerogpu_dbgctl.exe`
+- CI-staged driver packages:
+  - `out\packages\aerogpu\x64\tools\aerogpu_dbgctl.exe`
+  - `out\packages\aerogpu\x86\tools\aerogpu_dbgctl.exe`
+
+Example (run directly from a mounted Guest Tools ISO/zip; Win7 x64; replace `<GuestToolsDrive>` with your drive letter, e.g. `D`):
+
+```bat
+cd /d <GuestToolsDrive>:\drivers\amd64\aerogpu\tools
+aerogpu_dbgctl.exe --status
+```
+
+In this README, examples use `aerogpu_dbgctl ...` for brevity; if the tool is not on `PATH`, run it as `aerogpu_dbgctl.exe ...` from one of the directories above.
 
 ## Supported device models / ABIs
 
