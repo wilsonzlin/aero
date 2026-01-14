@@ -1044,6 +1044,30 @@ void SetError(D3D10DDI_HDEVICE hDevice, HRESULT hr) {
 static void TrackWddmAllocForSubmitLocked(AeroGpuDevice* dev, const AeroGpuResource* res, bool write);
 static bool AerogpuFormatIsDepth(uint32_t aerogpu_format);
 
+struct WddmAllocListCheckpoint {
+  AeroGpuDevice* dev = nullptr;
+  size_t size = 0;
+  bool oom = false;
+
+  explicit WddmAllocListCheckpoint(AeroGpuDevice* d) : dev(d) {
+    if (!dev) {
+      return;
+    }
+    size = dev->wddm_submit_allocation_handles.size();
+    oom = dev->wddm_submit_allocation_list_oom;
+  }
+
+  void rollback() const {
+    if (!dev) {
+      return;
+    }
+    if (dev->wddm_submit_allocation_handles.size() > size) {
+      dev->wddm_submit_allocation_handles.resize(size);
+    }
+    dev->wddm_submit_allocation_list_oom = oom;
+  }
+};
+
 static void EmitUploadLocked(D3D10DDI_HDEVICE hDevice,
                              AeroGpuDevice* dev,
                              AeroGpuResource* res,
@@ -1109,9 +1133,81 @@ static void EmitUploadLocked(D3D10DDI_HDEVICE hDevice,
     return;
   }
 
+  // Guest-backed resources are updated by writing directly into the backing
+  // allocation and emitting RESOURCE_DIRTY_RANGE. Ensure we can record the dirty
+  // range before committing any bytes into the guest allocation (avoid
+  // host/guest drift on OOM).
+  aerogpu_cmd_resource_dirty_range* dirty_cmd = nullptr;
+  const auto cmd_checkpoint = dev->cmd.checkpoint();
+  const WddmAllocListCheckpoint alloc_checkpoint(dev);
+  const auto restore_storage_from_allocation = [&]() {
+    if (res->storage.empty()) {
+      return;
+    }
+    uint64_t allocation_size = res->wddm_allocation_size_bytes;
+    if (allocation_size == 0) {
+      allocation_size = static_cast<uint64_t>(res->storage.size());
+    }
+    const uint64_t end = upload_offset + upload_size;
+    if (end < upload_offset) {
+      return;
+    }
+    if (end > allocation_size) {
+      return;
+    }
+    if (upload_offset > static_cast<uint64_t>(SIZE_MAX) || upload_size > static_cast<uint64_t>(SIZE_MAX)) {
+      return;
+    }
+    if (upload_offset > static_cast<uint64_t>(res->storage.size())) {
+      return;
+    }
+    const size_t remaining = res->storage.size() - static_cast<size_t>(upload_offset);
+    if (upload_size > static_cast<uint64_t>(remaining)) {
+      return;
+    }
+    const size_t off_restore = static_cast<size_t>(upload_offset);
+    const size_t sz_restore = static_cast<size_t>(upload_size);
+    std::memcpy(res->storage.data() + off_restore, static_cast<const uint8_t*>(lock_args.pData) + off_restore, sz_restore);
+  };
+
   HRESULT copy_hr = S_OK;
   uint64_t dirty_offset = upload_offset;
   uint64_t dirty_end = upload_offset + upload_size;
+
+  if (dev->wddm_submit_allocation_list_oom) {
+    restore_storage_from_allocation();
+    dev->cmd.rollback(cmd_checkpoint);
+    alloc_checkpoint.rollback();
+    SetError(hDevice, E_OUTOFMEMORY);
+    copy_hr = E_OUTOFMEMORY;
+    goto Unlock;
+  }
+
+  TrackWddmAllocForSubmitLocked(dev, res, /*write=*/false);
+  if (dev->wddm_submit_allocation_list_oom) {
+    restore_storage_from_allocation();
+    dev->cmd.rollback(cmd_checkpoint);
+    alloc_checkpoint.rollback();
+    copy_hr = E_OUTOFMEMORY;
+    goto Unlock;
+  }
+
+  dirty_cmd = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
+  if (!dirty_cmd) {
+    restore_storage_from_allocation();
+    dev->cmd.rollback(cmd_checkpoint);
+    alloc_checkpoint.rollback();
+    SetError(hDevice, E_OUTOFMEMORY);
+    copy_hr = E_OUTOFMEMORY;
+    goto Unlock;
+  }
+  dirty_cmd->resource_handle = res->handle;
+  dirty_cmd->reserved0 = 0;
+  // Initialize to the requested upload range; this is refined after the copy
+  // completes (Texture2D uploads may expand to cover row padding).
+  dirty_cmd->offset_bytes = upload_offset;
+  dirty_cmd->size_bytes = upload_size;
+
   if (dirty_end < upload_offset) {
     copy_hr = E_INVALIDARG;
     goto Unlock;
@@ -1305,6 +1401,11 @@ static void EmitUploadLocked(D3D10DDI_HDEVICE hDevice,
   }
 
 Unlock:
+  if (FAILED(copy_hr)) {
+    // Best-effort rollback for failed uploads: keep the shadow copy in sync with
+    // the guest allocation bytes we actually have.
+    restore_storage_from_allocation();
+  }
   D3DDDICB_UNLOCK unlock_args = {};
   unlock_args.hAllocation = lock_args.hAllocation;
   InitUnlockForWrite(&unlock_args);
@@ -1318,16 +1419,12 @@ Unlock:
     return;
   }
 
-  // RESOURCE_DIRTY_RANGE causes the host to read the guest allocation to update the host copy.
-  TrackWddmAllocForSubmitLocked(dev, res, /*write=*/false);
-
-  auto* dirty = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
-  if (!dirty) {
-    SetError(hDevice, E_OUTOFMEMORY);
+  if (!dirty_cmd) {
+    // Should not happen: we always emit RESOURCE_DIRTY_RANGE before writing into
+    // the guest allocation.
+    SetError(hDevice, E_FAIL);
     return;
   }
-  dirty->resource_handle = res->handle;
-  dirty->reserved0 = 0;
   // Host-side executors validate RESOURCE_DIRTY_RANGE against the protocol-visible
   // resource size (CREATE_TEXTURE2D layouts), not the raw WDDM allocation size.
   // When the Win7 runtime reports a larger Pitch than our protocol layout, the
@@ -1350,8 +1447,8 @@ Unlock:
       clamped_end = 0;
     }
   }
-  dirty->offset_bytes = clamped_offset;
-  dirty->size_bytes = clamped_end - clamped_offset;
+  dirty_cmd->offset_bytes = clamped_offset;
+  dirty_cmd->size_bytes = clamped_end - clamped_offset;
 }
 
 // -----------------------------------------------------------------------------
@@ -1775,30 +1872,6 @@ static void TrackStagingWriteLocked(AeroGpuDevice* dev, AeroGpuResource* dst, Se
     }
   }
 }
-
-struct WddmAllocListCheckpoint {
-  AeroGpuDevice* dev = nullptr;
-  size_t size = 0;
-  bool oom = false;
-
-  explicit WddmAllocListCheckpoint(AeroGpuDevice* d) : dev(d) {
-    if (!dev) {
-      return;
-    }
-    size = dev->wddm_submit_allocation_handles.size();
-    oom = dev->wddm_submit_allocation_list_oom;
-  }
-
-  void rollback() const {
-    if (!dev) {
-      return;
-    }
-    if (dev->wddm_submit_allocation_handles.size() > size) {
-      dev->wddm_submit_allocation_handles.resize(size);
-    }
-    dev->wddm_submit_allocation_list_oom = oom;
-  }
-};
 
 static void TrackWddmAllocForSubmitLocked(AeroGpuDevice* dev, const AeroGpuResource* res, bool write) {
   D3D10DDI_HDEVICE hDevice{};
@@ -4770,18 +4843,104 @@ void APIENTRY UpdateSubresourceUP(D3D10DDI_HDEVICE hDevice, const D3D10DDIARG_UP
       // expects.
       const uint32_t dst_pitch = dst_layout.row_pitch_bytes;
 
-      HRESULT copy_hr = S_OK;
-      if (dst_pitch < row_bytes) {
-        copy_hr = E_INVALIDARG;
-      } else {
-        uint8_t* dst_alloc_base = static_cast<uint8_t*>(lock_args.pData) + dst_base;
-        for (uint32_t y = 0; y < copy_height_blocks; ++y) {
-          const size_t dst_off =
-              static_cast<size_t>(block_top + y) * dst_pitch +
-              static_cast<size_t>(block_left) * fmt_layout.bytes_per_block;
-          const size_t src_off = static_cast<size_t>(y) * static_cast<size_t>(pitch);
-          std::memcpy(dst_alloc_base + dst_off, src_bytes + src_off, row_bytes);
+      const auto restore_storage_from_allocation = [&]() {
+        if (res->storage.empty() || dst_layout.size_bytes == 0) {
+          return;
         }
+        uint64_t allocation_size = res->wddm_allocation_size_bytes;
+        if (allocation_size == 0) {
+          allocation_size = static_cast<uint64_t>(res->storage.size());
+        }
+        const uint64_t off_u64 = dst_layout.offset_bytes;
+        const uint64_t size_u64 = dst_layout.size_bytes;
+        const uint64_t end_u64 = off_u64 + size_u64;
+        if (end_u64 < off_u64) {
+          return;
+        }
+        if (end_u64 > allocation_size) {
+          return;
+        }
+        if (off_u64 > static_cast<uint64_t>(SIZE_MAX) || size_u64 > static_cast<uint64_t>(SIZE_MAX)) {
+          return;
+        }
+        if (off_u64 > static_cast<uint64_t>(res->storage.size())) {
+          return;
+        }
+        const size_t remaining = res->storage.size() - static_cast<size_t>(off_u64);
+        if (size_u64 > static_cast<uint64_t>(remaining)) {
+          return;
+        }
+        const size_t off_sz = static_cast<size_t>(off_u64);
+        const size_t sz = static_cast<size_t>(size_u64);
+        std::memcpy(res->storage.data() + off_sz, static_cast<const uint8_t*>(lock_args.pData) + off_sz, sz);
+      };
+
+      if (dst_pitch < row_bytes) {
+        restore_storage_from_allocation();
+        D3DDDICB_UNLOCK unlock_args = {};
+        unlock_args.hAllocation = lock_args.hAllocation;
+        InitUnlockForWrite(&unlock_args);
+        (void)CallCbMaybeHandle(ddi->pfnUnlockCb, dev->hrt_device, &unlock_args);
+        SetError(hDevice, E_INVALIDARG);
+        return;
+      }
+
+      // Record RESOURCE_DIRTY_RANGE before writing into the guest allocation so
+      // an OOM while growing the command stream / allocation list cannot leave
+      // the host unaware of the CPU write.
+      const auto cmd_checkpoint = dev->cmd.checkpoint();
+      const WddmAllocListCheckpoint alloc_checkpoint(dev);
+      if (dev->wddm_submit_allocation_list_oom) {
+        restore_storage_from_allocation();
+        dev->cmd.rollback(cmd_checkpoint);
+        alloc_checkpoint.rollback();
+        D3DDDICB_UNLOCK unlock_args = {};
+        unlock_args.hAllocation = lock_args.hAllocation;
+        InitUnlockForWrite(&unlock_args);
+        (void)CallCbMaybeHandle(ddi->pfnUnlockCb, dev->hrt_device, &unlock_args);
+        SetError(hDevice, E_OUTOFMEMORY);
+        return;
+      }
+      TrackWddmAllocForSubmitLocked(dev, res, /*write=*/false);
+      if (dev->wddm_submit_allocation_list_oom) {
+        restore_storage_from_allocation();
+        dev->cmd.rollback(cmd_checkpoint);
+        alloc_checkpoint.rollback();
+        D3DDDICB_UNLOCK unlock_args = {};
+        unlock_args.hAllocation = lock_args.hAllocation;
+        InitUnlockForWrite(&unlock_args);
+        (void)CallCbMaybeHandle(ddi->pfnUnlockCb, dev->hrt_device, &unlock_args);
+        return;
+      }
+
+      auto* dirty = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
+      if (!dirty) {
+        restore_storage_from_allocation();
+        dev->cmd.rollback(cmd_checkpoint);
+        alloc_checkpoint.rollback();
+        D3DDDICB_UNLOCK unlock_args = {};
+        unlock_args.hAllocation = lock_args.hAllocation;
+        InitUnlockForWrite(&unlock_args);
+        (void)CallCbMaybeHandle(ddi->pfnUnlockCb, dev->hrt_device, &unlock_args);
+        SetError(hDevice, E_OUTOFMEMORY);
+        return;
+      }
+      dirty->resource_handle = res->handle;
+      dirty->reserved0 = 0;
+      dirty->offset_bytes = dst_layout.offset_bytes;
+      // Host-side executors validate dirty ranges against the protocol-visible
+      // texture size, not the raw WDDM allocation size.
+      dirty->size_bytes = dst_layout.size_bytes;
+
+      // Commit the updated bytes into the guest allocation now that the dirty
+      // range is recorded.
+      uint8_t* dst_alloc_base = static_cast<uint8_t*>(lock_args.pData) + dst_base;
+      for (uint32_t y = 0; y < copy_height_blocks; ++y) {
+        const size_t dst_off =
+            static_cast<size_t>(block_top + y) * dst_pitch +
+            static_cast<size_t>(block_left) * fmt_layout.bytes_per_block;
+        const size_t src_off = static_cast<size_t>(y) * static_cast<size_t>(pitch);
+        std::memcpy(dst_alloc_base + dst_off, src_bytes + src_off, row_bytes);
       }
 
       D3DDDICB_UNLOCK unlock_args = {};
@@ -4792,21 +4951,6 @@ void APIENTRY UpdateSubresourceUP(D3D10DDI_HDEVICE hDevice, const D3D10DDIARG_UP
         SetError(hDevice, hr);
         return;
       }
-      if (FAILED(copy_hr)) {
-        SetError(hDevice, copy_hr);
-        return;
-      }
-
-      TrackWddmAllocForSubmitLocked(dev, res, /*write=*/false);
-      auto* dirty = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
-      if (!dirty) {
-        SetError(hDevice, E_OUTOFMEMORY);
-        return;
-      }
-      dirty->resource_handle = res->handle;
-      dirty->reserved0 = 0;
-      dirty->offset_bytes = dst_layout.offset_bytes;
-      dirty->size_bytes = dst_layout.size_bytes;
       return;
     }
 
