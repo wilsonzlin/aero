@@ -1,8 +1,8 @@
 use aero_gpu_trace::{BlobKind, TraceReadError, TraceReader, TraceRecord};
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuCmdDecodeError, AerogpuCmdOpcode, AerogpuCmdStreamHeader, AerogpuCmdStreamIter,
-    AerogpuIndexFormat, AerogpuPrimitiveTopology, AerogpuVertexBufferBinding, AEROGPU_CLEAR_COLOR,
-    AEROGPU_STAGE_EX_MIN_ABI_MINOR,
+    AerogpuIndexFormat, AerogpuPrimitiveTopology, AerogpuShaderStage, AerogpuVertexBufferBinding,
+    AEROGPU_CLEAR_COLOR, AEROGPU_STAGE_EX_MIN_ABI_MINOR,
 };
 use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
 use sha2::{Digest, Sha256};
@@ -874,6 +874,10 @@ fn stage_ex_name(stage_ex: u32) -> &'static str {
     }
 }
 
+fn shader_stage_name(shader_stage: u32) -> Option<String> {
+    AerogpuShaderStage::from_u32(shader_stage).map(|s| format!("{s:?}"))
+}
+
 fn topology_name(topology: u32) -> Option<String> {
     AerogpuPrimitiveTopology::from_u32(topology).map(|t| format!("{t:?}"))
 }
@@ -1225,12 +1229,13 @@ pub fn decode_cmd_stream_listing(
                         let stage = cmd.stage;
                         let stage_ex = cmd.reserved0;
                         let dxbc_size_bytes = cmd.dxbc_size_bytes;
+                        let _ = write!(line, " shader_handle={shader_handle} stage={stage}");
+                        if let Some(name) = shader_stage_name(stage) {
+                            let _ = write!(line, " stage_name={name}");
+                        }
                         let _ = write!(
                             line,
-                            " shader_handle={} stage={} dxbc_size_bytes={} dxbc_prefix={}",
-                            shader_handle,
-                            stage,
-                            dxbc_size_bytes,
+                            " dxbc_size_bytes={dxbc_size_bytes} dxbc_prefix={}",
                             hex_prefix(dxbc, 16)
                         );
                         if abi_minor >= AEROGPU_STAGE_EX_MIN_ABI_MINOR
@@ -1550,10 +1555,11 @@ pub fn decode_cmd_stream_listing(
                         let slot = u32_le_at(pkt.payload, 4).unwrap();
                         let texture = u32_le_at(pkt.payload, 8).unwrap();
                         let stage_ex = u32_le_at(pkt.payload, 12).unwrap();
-                        let _ = write!(
-                            line,
-                            " shader_stage={shader_stage} slot={slot} texture={texture}"
-                        );
+                        let _ = write!(line, " shader_stage={shader_stage}");
+                        if let Some(name) = shader_stage_name(shader_stage) {
+                            let _ = write!(line, " shader_stage_name={name}");
+                        }
+                        let _ = write!(line, " slot={slot} texture={texture}");
                         if abi_minor >= AEROGPU_STAGE_EX_MIN_ABI_MINOR
                             && shader_stage == 2
                             && stage_ex != 0
@@ -1577,10 +1583,11 @@ pub fn decode_cmd_stream_listing(
                         let slot = u32_le_at(pkt.payload, 4).unwrap();
                         let state = u32_le_at(pkt.payload, 8).unwrap();
                         let value = u32_le_at(pkt.payload, 12).unwrap();
-                        let _ = write!(
-                            line,
-                            " shader_stage={shader_stage} slot={slot} state={state} value=0x{value:08X}"
-                        );
+                        let _ = write!(line, " shader_stage={shader_stage}");
+                        if let Some(name) = shader_stage_name(shader_stage) {
+                            let _ = write!(line, " shader_stage_name={name}");
+                        }
+                        let _ = write!(line, " slot={slot} state={state} value=0x{value:08X}");
                     }
                     AerogpuCmdOpcode::SetRenderState => {
                         if pkt.payload.len() < 8 {
@@ -1637,9 +1644,13 @@ pub fn decode_cmd_stream_listing(
                         let start_slot = cmd.start_slot;
                         let sampler_count = cmd.sampler_count;
                         let stage_ex = cmd.reserved0;
+                        let _ = write!(line, " shader_stage={shader_stage}");
+                        if let Some(name) = shader_stage_name(shader_stage) {
+                            let _ = write!(line, " shader_stage_name={name}");
+                        }
                         let _ = write!(
                             line,
-                            " shader_stage={shader_stage} start_slot={start_slot} sampler_count={sampler_count}"
+                            " start_slot={start_slot} sampler_count={sampler_count}"
                         );
                         if abi_minor >= AEROGPU_STAGE_EX_MIN_ABI_MINOR
                             && shader_stage == 2
@@ -1695,9 +1706,13 @@ pub fn decode_cmd_stream_listing(
                                 msg: "payload truncated for vec4_count",
                             });
                         }
+                        let _ = write!(line, " stage={stage}");
+                        if let Some(name) = shader_stage_name(stage) {
+                            let _ = write!(line, " stage_name={name}");
+                        }
                         let _ = write!(
                             line,
-                            " stage={stage} start_register={start_register} vec4_count={vec4_count}"
+                            " start_register={start_register} vec4_count={vec4_count}"
                         );
                         if abi_minor >= AEROGPU_STAGE_EX_MIN_ABI_MINOR
                             && stage == 2
@@ -1756,9 +1771,13 @@ pub fn decode_cmd_stream_listing(
                                 msg: "payload truncated for vec4_count",
                             });
                         }
+                        let _ = write!(line, " stage={stage}");
+                        if let Some(name) = shader_stage_name(stage) {
+                            let _ = write!(line, " stage_name={name}");
+                        }
                         let _ = write!(
                             line,
-                            " stage={stage} start_register={start_register} vec4_count={vec4_count}"
+                            " start_register={start_register} vec4_count={vec4_count}"
                         );
                         if reserved0 != 0 {
                             let _ = write!(line, " reserved0=0x{reserved0:08X}");
@@ -1803,9 +1822,13 @@ pub fn decode_cmd_stream_listing(
                                 msg: "payload truncated for bool_count",
                             });
                         }
+                        let _ = write!(line, " stage={stage}");
+                        if let Some(name) = shader_stage_name(stage) {
+                            let _ = write!(line, " stage_name={name}");
+                        }
                         let _ = write!(
                             line,
-                            " stage={stage} start_register={start_register} bool_count={bool_count}"
+                            " start_register={start_register} bool_count={bool_count}"
                         );
                         if reserved0 != 0 {
                             let _ = write!(line, " reserved0=0x{reserved0:08X}");
@@ -1832,10 +1855,12 @@ pub fn decode_cmd_stream_listing(
                         let buffer_count = cmd.buffer_count;
                         let stage_ex = cmd.reserved0;
 
-                        let _ = write!(
-                            line,
-                            " shader_stage={shader_stage} start_slot={start_slot} buffer_count={buffer_count}"
-                        );
+                        let _ = write!(line, " shader_stage={shader_stage}");
+                        if let Some(name) = shader_stage_name(shader_stage) {
+                            let _ = write!(line, " shader_stage_name={name}");
+                        }
+                        let _ =
+                            write!(line, " start_slot={start_slot} buffer_count={buffer_count}");
                         if abi_minor >= AEROGPU_STAGE_EX_MIN_ABI_MINOR
                             && shader_stage == 2
                             && stage_ex != 0
@@ -1872,10 +1897,12 @@ pub fn decode_cmd_stream_listing(
                         let buffer_count = cmd.buffer_count;
                         let stage_ex = cmd.reserved0;
 
-                        let _ = write!(
-                            line,
-                            " shader_stage={shader_stage} start_slot={start_slot} buffer_count={buffer_count}"
-                        );
+                        let _ = write!(line, " shader_stage={shader_stage}");
+                        if let Some(name) = shader_stage_name(shader_stage) {
+                            let _ = write!(line, " shader_stage_name={name}");
+                        }
+                        let _ =
+                            write!(line, " start_slot={start_slot} buffer_count={buffer_count}");
                         if abi_minor >= AEROGPU_STAGE_EX_MIN_ABI_MINOR
                             && shader_stage == 2
                             && stage_ex != 0
@@ -1912,10 +1939,11 @@ pub fn decode_cmd_stream_listing(
                         let uav_count = cmd.uav_count;
                         let stage_ex = cmd.reserved0;
 
-                        let _ = write!(
-                            line,
-                            " shader_stage={shader_stage} start_slot={start_slot} uav_count={uav_count}"
-                        );
+                        let _ = write!(line, " shader_stage={shader_stage}");
+                        if let Some(name) = shader_stage_name(shader_stage) {
+                            let _ = write!(line, " shader_stage_name={name}");
+                        }
+                        let _ = write!(line, " start_slot={start_slot} uav_count={uav_count}");
                         if abi_minor >= AEROGPU_STAGE_EX_MIN_ABI_MINOR
                             && shader_stage == 2
                             && stage_ex != 0

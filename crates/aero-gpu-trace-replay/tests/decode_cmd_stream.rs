@@ -496,6 +496,7 @@ fn decodes_cmd_stream_dump_to_stable_listing() {
     // New ABI opcodes should also decode their fields.
     assert!(listing.contains("0x000000CC SetShaderResourceBuffers size_bytes=40"));
     assert!(listing.contains("shader_stage=2"));
+    assert!(listing.contains("shader_stage_name=Compute"));
     assert!(listing.contains("buffer_count=1"));
     assert!(listing.contains("srv0_buffer=7"));
 
@@ -517,6 +518,7 @@ fn decodes_cmd_stream_dump_to_stable_listing() {
 
     // CREATE_SHADER_DXBC should surface its `stage_ex` tag when present.
     assert!(listing.contains("CreateShaderDxbc"));
+    assert!(listing.contains("stage_name=Compute"));
     assert!(listing.contains("stage_ex=3"));
     assert!(listing.contains("stage_ex_name=Hull"));
 
@@ -819,6 +821,7 @@ fn json_listing_decodes_new_opcodes() {
 
     let srv = find_packet("SetShaderResourceBuffers");
     assert_eq!(srv["decoded"]["shader_stage"], 2);
+    assert_eq!(srv["decoded"]["shader_stage_name"], "Compute");
     assert_eq!(srv["decoded"]["buffer_count"], 1);
     assert_eq!(srv["decoded"]["srv0_buffer"], 7);
 
@@ -834,6 +837,7 @@ fn json_listing_decodes_new_opcodes() {
 
     let cbs = find_packet("SetConstantBuffers");
     assert_eq!(cbs["decoded"]["shader_stage"], 2);
+    assert_eq!(cbs["decoded"]["shader_stage_name"], "Compute");
     assert_eq!(cbs["decoded"]["start_slot"], 1);
     assert_eq!(cbs["decoded"]["buffer_count"], 1);
     assert_eq!(cbs["decoded"]["cb0_buffer"], 9);
@@ -842,18 +846,21 @@ fn json_listing_decodes_new_opcodes() {
 
     let create_shader = find_packet("CreateShaderDxbc");
     assert_eq!(create_shader["decoded"]["stage"], 2);
+    assert_eq!(create_shader["decoded"]["stage_name"], "Compute");
     assert_eq!(create_shader["decoded"]["stage_ex"], 3);
     assert_eq!(create_shader["decoded"]["stage_ex_name"], "Hull");
     assert_eq!(create_shader["decoded"]["dxbc_prefix"], "44584243010203");
 
     let set_texture = find_packet("SetTexture");
     assert_eq!(set_texture["decoded"]["shader_stage"], 2);
+    assert_eq!(set_texture["decoded"]["shader_stage_name"], "Compute");
     assert_eq!(set_texture["decoded"]["texture"], 0x2222);
     assert_eq!(set_texture["decoded"]["stage_ex"], 2);
     assert_eq!(set_texture["decoded"]["stage_ex_name"], "Geometry");
 
     let set_samplers = find_packet("SetSamplers");
     assert_eq!(set_samplers["decoded"]["shader_stage"], 2);
+    assert_eq!(set_samplers["decoded"]["shader_stage_name"], "Compute");
     assert_eq!(set_samplers["decoded"]["sampler_count"], 1);
     assert_eq!(set_samplers["decoded"]["sampler0"], 0x3333);
     assert_eq!(set_samplers["decoded"]["stage_ex"], 3);
@@ -861,6 +868,7 @@ fn json_listing_decodes_new_opcodes() {
 
     let set_consts = find_packet("SetShaderConstantsF");
     assert_eq!(set_consts["decoded"]["stage"], 2);
+    assert_eq!(set_consts["decoded"]["stage_name"], "Compute");
     assert_eq!(set_consts["decoded"]["vec4_count"], 1);
     assert_eq!(set_consts["decoded"]["stage_ex"], 4);
     assert_eq!(set_consts["decoded"]["stage_ex_name"], "Domain");
@@ -872,6 +880,7 @@ fn json_listing_decodes_new_opcodes() {
 
     let set_consts_i = find_packet("SetShaderConstantsI");
     assert_eq!(set_consts_i["decoded"]["stage"], 2);
+    assert_eq!(set_consts_i["decoded"]["stage_name"], "Compute");
     assert_eq!(set_consts_i["decoded"]["vec4_count"], 1);
     assert_eq!(set_consts_i["decoded"]["data_len"], 16);
     assert_eq!(
@@ -881,6 +890,7 @@ fn json_listing_decodes_new_opcodes() {
 
     let set_consts_b = find_packet("SetShaderConstantsB");
     assert_eq!(set_consts_b["decoded"]["stage"], 2);
+    assert_eq!(set_consts_b["decoded"]["stage_name"], "Compute");
     assert_eq!(set_consts_b["decoded"]["bool_count"], 2);
     assert_eq!(set_consts_b["decoded"]["data_len"], 32);
     assert_eq!(
@@ -931,6 +941,7 @@ fn json_listing_decodes_new_opcodes() {
 
     let sampler_state = find_packet("SetSamplerState");
     assert_eq!(sampler_state["decoded"]["shader_stage"], 1);
+    assert_eq!(sampler_state["decoded"]["shader_stage_name"], "Pixel");
     assert_eq!(sampler_state["decoded"]["slot"], 0);
     assert_eq!(sampler_state["decoded"]["state"], 5);
     assert_eq!(sampler_state["decoded"]["value"], 0x7777);

@@ -1,6 +1,7 @@
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuCmdDecodeError, AerogpuCmdOpcode, AerogpuCmdStreamHeader, AerogpuCmdStreamIter,
-    AerogpuIndexFormat, AerogpuPrimitiveTopology, AEROGPU_STAGE_EX_MIN_ABI_MINOR,
+    AerogpuIndexFormat, AerogpuPrimitiveTopology, AerogpuShaderStage,
+    AEROGPU_STAGE_EX_MIN_ABI_MINOR,
 };
 use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
 use serde_json::{json, Value};
@@ -460,6 +461,9 @@ fn decode_known_fields(
                 let dxbc_size_bytes = cmd.dxbc_size_bytes;
                 out.insert("shader_handle".into(), json!(shader_handle));
                 out.insert("stage".into(), json!(stage));
+                if let Some(name) = shader_stage_name(stage) {
+                    out.insert("stage_name".into(), Value::String(name));
+                }
                 if abi_minor >= AEROGPU_STAGE_EX_MIN_ABI_MINOR && stage == 2 && stage_ex != 0 {
                     out.insert("stage_ex".into(), json!(stage_ex));
                     out.insert("stage_ex_name".into(), json!(stage_ex_name(stage_ex)));
@@ -727,6 +731,9 @@ fn decode_known_fields(
                 read_u32_le(pkt.payload, 12),
             ) {
                 out.insert("shader_stage".into(), json!(shader_stage));
+                if let Some(name) = shader_stage_name(shader_stage) {
+                    out.insert("shader_stage_name".into(), Value::String(name));
+                }
                 out.insert("slot".into(), json!(slot));
                 out.insert("texture".into(), json!(texture));
                 if abi_minor >= AEROGPU_STAGE_EX_MIN_ABI_MINOR && shader_stage == 2 && stage_ex != 0
@@ -746,6 +753,9 @@ fn decode_known_fields(
                 read_u32_le(pkt.payload, 12),
             ) {
                 out.insert("shader_stage".into(), json!(shader_stage));
+                if let Some(name) = shader_stage_name(shader_stage) {
+                    out.insert("shader_stage_name".into(), Value::String(name));
+                }
                 out.insert("slot".into(), json!(slot));
                 out.insert("state".into(), json!(state));
                 out.insert("value".into(), json!(value));
@@ -802,6 +812,9 @@ fn decode_known_fields(
                 let sampler_count = cmd.sampler_count;
                 let stage_ex = cmd.reserved0;
                 out.insert("shader_stage".into(), json!(shader_stage));
+                if let Some(name) = shader_stage_name(shader_stage) {
+                    out.insert("shader_stage_name".into(), Value::String(name));
+                }
                 out.insert("start_slot".into(), json!(start_slot));
                 out.insert("sampler_count".into(), json!(sampler_count));
                 if abi_minor >= AEROGPU_STAGE_EX_MIN_ABI_MINOR && shader_stage == 2 && stage_ex != 0
@@ -835,6 +848,9 @@ fn decode_known_fields(
                 return out;
             };
             out.insert("stage".into(), json!(stage));
+            if let Some(name) = shader_stage_name(stage) {
+                out.insert("stage_name".into(), Value::String(name));
+            }
             out.insert("start_register".into(), json!(start_register));
             out.insert("vec4_count".into(), json!(vec4_count));
             if abi_minor >= AEROGPU_STAGE_EX_MIN_ABI_MINOR && stage == 2 && stage_ex != 0 {
@@ -883,6 +899,9 @@ fn decode_known_fields(
                 return out;
             };
             out.insert("stage".into(), json!(stage));
+            if let Some(name) = shader_stage_name(stage) {
+                out.insert("stage_name".into(), Value::String(name));
+            }
             out.insert("start_register".into(), json!(start_register));
             out.insert("vec4_count".into(), json!(vec4_count));
             if reserved0 != 0 {
@@ -930,6 +949,9 @@ fn decode_known_fields(
                 return out;
             };
             out.insert("stage".into(), json!(stage));
+            if let Some(name) = shader_stage_name(stage) {
+                out.insert("stage_name".into(), Value::String(name));
+            }
             out.insert("start_register".into(), json!(start_register));
             out.insert("bool_count".into(), json!(bool_count));
             if reserved0 != 0 {
@@ -964,6 +986,9 @@ fn decode_known_fields(
                     let buffer_count = cmd.buffer_count;
                     let stage_ex = cmd.reserved0;
                     out.insert("shader_stage".into(), json!(shader_stage));
+                    if let Some(name) = shader_stage_name(shader_stage) {
+                        out.insert("shader_stage_name".into(), Value::String(name));
+                    }
                     out.insert("start_slot".into(), json!(start_slot));
                     out.insert("buffer_count".into(), json!(buffer_count));
                     if abi_minor >= AEROGPU_STAGE_EX_MIN_ABI_MINOR
@@ -995,6 +1020,9 @@ fn decode_known_fields(
                     let buffer_count = cmd.buffer_count;
                     let stage_ex = cmd.reserved0;
                     out.insert("shader_stage".into(), json!(shader_stage));
+                    if let Some(name) = shader_stage_name(shader_stage) {
+                        out.insert("shader_stage_name".into(), Value::String(name));
+                    }
                     out.insert("start_slot".into(), json!(start_slot));
                     out.insert("buffer_count".into(), json!(buffer_count));
                     if abi_minor >= AEROGPU_STAGE_EX_MIN_ABI_MINOR
@@ -1026,6 +1054,9 @@ fn decode_known_fields(
                     let uav_count = cmd.uav_count;
                     let stage_ex = cmd.reserved0;
                     out.insert("shader_stage".into(), json!(shader_stage));
+                    if let Some(name) = shader_stage_name(shader_stage) {
+                        out.insert("shader_stage_name".into(), Value::String(name));
+                    }
                     out.insert("start_slot".into(), json!(start_slot));
                     out.insert("uav_count".into(), json!(uav_count));
                     if abi_minor >= AEROGPU_STAGE_EX_MIN_ABI_MINOR
@@ -1230,6 +1261,10 @@ fn hex_prefix(bytes: &[u8], max_len: usize) -> String {
         out.push_str("..");
     }
     out
+}
+
+fn shader_stage_name(shader_stage: u32) -> Option<String> {
+    AerogpuShaderStage::from_u32(shader_stage).map(|s| format!("{s:?}"))
 }
 
 fn stage_ex_name(stage_ex: u32) -> &'static str {
