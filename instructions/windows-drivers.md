@@ -122,9 +122,10 @@ These checks exist specifically to prevent “driver installs but doesn’t bind
 - Virtio protocol crate tests: [`.github/workflows/virtio-protocol.yml`](../.github/workflows/virtio-protocol.yml)
 - Win7 virtio guest selftest build (x86 + x64 EXEs): [`.github/workflows/win7-virtio-selftest.yml`](../.github/workflows/win7-virtio-selftest.yml)
 - Win7 virtio QEMU harness (self-hosted; end-to-end guest run, incl. virtio-snd wav capture): [`.github/workflows/win7-virtio-harness.yml`](../.github/workflows/win7-virtio-harness.yml)
-  - Use workflow inputs `with_virtio_input_events=true` and/or `with_virtio_input_tablet_events=true` to enable the optional
-    QMP injection-based end-to-end virtio-input tests (requires a guest image provisioned with `--test-input-events` /
-    `--test-input-tablet-events`).
+  - Use workflow inputs `with_virtio_input_events=true`, `with_virtio_input_wheel=true`, `with_virtio_input_events_extended=true`,
+    and/or `with_virtio_input_tablet_events=true` to enable the optional QMP injection-based end-to-end virtio-input tests.
+    (Requires a guest image provisioned with `--test-input-events` for events/wheel, also `--test-input-events-extended` for the
+    extended markers, and `--test-input-tablet-events` (alias: `--test-tablet-events`) for tablet.)
 - Guest Tools packager + spec/config validation: [`.github/workflows/guest-tools-packager.yml`](../.github/workflows/guest-tools-packager.yml)
 - Guest Tools `devices.cmd` regeneration check (must match contract JSON): [`.github/workflows/guest-tools-devices-cmd.yml`](../.github/workflows/guest-tools-devices-cmd.yml)
 - Win7 toolchain smoke (WDK provisioning + `Inf2Cat /os:7_X86,7_X64`): [`.github/workflows/toolchain-win7-smoke.yml`](../.github/workflows/toolchain-win7-smoke.yml)

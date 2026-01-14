@@ -38,6 +38,16 @@ on:
         required: false
         default: false
         type: boolean
+      with_virtio_input_wheel:
+        description: Inject deterministic virtio-input wheel events via QMP and require virtio-input-wheel to PASS (implies virtio-input-events; requires a guest image provisioned with --test-input-events)
+        required: false
+        default: false
+        type: boolean
+      with_virtio_input_events_extended:
+        description: Inject extended virtio-input events via QMP (modifiers/buttons/wheel) and require virtio-input-events-* markers to PASS (requires a guest image provisioned with --test-input-events and --test-input-events-extended)
+        required: false
+        default: false
+        type: boolean
       with_virtio_input_tablet_events:
         description: Inject deterministic virtio-input tablet events via QMP (absolute pointer) and require virtio-input-tablet-events to PASS (requires a guest image provisioned with --test-input-tablet-events/--test-tablet-events)
         required: false
@@ -123,6 +133,8 @@ jobs:
             echo "  snapshot: '${{ inputs.snapshot }}'"
             echo "  follow_serial: '${{ inputs.follow_serial }}'"
             echo "  with_virtio_input_events: '${{ inputs.with_virtio_input_events }}'"
+            echo "  with_virtio_input_wheel: '${{ inputs.with_virtio_input_wheel }}'"
+            echo "  with_virtio_input_events_extended: '${{ inputs.with_virtio_input_events_extended }}'"
             echo "  with_virtio_input_tablet_events: '${{ inputs.with_virtio_input_tablet_events }}'"
             echo "  with_virtio_snd: '${{ inputs.with_virtio_snd }}'"
             echo "  virtio_snd_audio_backend: '${{ inputs.virtio_snd_audio_backend }}'"
@@ -184,6 +196,8 @@ jobs:
             virtio_snd_wav_peak_threshold="${{ inputs.virtio_snd_wav_peak_threshold }}"
             virtio_snd_wav_rms_threshold="${{ inputs.virtio_snd_wav_rms_threshold }}"
             with_virtio_input_events="${{ inputs.with_virtio_input_events }}"
+            with_virtio_input_wheel="${{ inputs.with_virtio_input_wheel }}"
+            with_virtio_input_events_extended="${{ inputs.with_virtio_input_events_extended }}"
             with_virtio_input_tablet_events="${{ inputs.with_virtio_input_tablet_events }}"
 
             # Remove stale output from previous runs (self-hosted runners persist state).
@@ -206,6 +220,12 @@ jobs:
             fi
             if [[ "${with_virtio_input_events}" == "true" ]]; then
               args+=(--with-input-events)
+            fi
+            if [[ "${with_virtio_input_wheel}" == "true" ]]; then
+              args+=(--with-input-wheel)
+            fi
+            if [[ "${with_virtio_input_events_extended}" == "true" ]]; then
+              args+=(--with-input-events-extended)
             fi
             if [[ "${with_virtio_input_tablet_events}" == "true" ]]; then
               args+=(--with-tablet-events)
@@ -290,7 +310,13 @@ jobs:
           result_marker=""
           snd_marker=""
           input_events_marker=""
+          input_wheel_marker=""
+          input_events_modifiers_marker=""
+          input_events_buttons_marker=""
+          input_events_wheel_marker=""
+          input_tablet_marker=""
           input_inject_marker=""
+          input_tablet_inject_marker=""
           snd_capture_marker=""
           snd_duplex_marker=""
           wav_marker=""
@@ -301,12 +327,18 @@ jobs:
             result_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|RESULT\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
             snd_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-snd\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
             input_events_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-input-events\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
+            input_wheel_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-input-wheel\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
+            input_events_modifiers_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-input-events-modifiers\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
+            input_events_buttons_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-input-events-buttons\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
+            input_events_wheel_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-input-events-wheel\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
+            input_tablet_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-input-tablet-events\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
             snd_capture_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-snd-capture\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
             snd_duplex_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-snd-duplex\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
           fi
           if [[ -f "${harness_log}" ]]; then
             wav_marker="$(grep -Eo 'AERO_VIRTIO_WIN7_HOST\\|VIRTIO_SND_WAV\\|[A-Z]+' "${harness_log}" | tail -n 1 || true)"
             input_inject_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|' "${harness_log}" | tail -n 1 || true)"
+            input_tablet_inject_marker="$(grep -F 'AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_TABLET_EVENTS_INJECT|' "${harness_log}" | tail -n 1 || true)"
             # Extract the last structured failure token from the harness output, if present.
             # Example: "FAIL: MISSING_VIRTIO_INPUT_EVENTS: ..."
             failure_token="$(grep -Eo 'FAIL: [A-Z0-9_]+:' "${harness_log}" | tail -n 1 | sed -e 's/^FAIL: //' -e 's/:$//' || true)"
@@ -339,8 +371,26 @@ jobs:
             if [[ -n "${input_events_marker}" ]]; then
               echo "- Guest virtio-input-events marker: ${input_events_marker}"
             fi
+            if [[ -n "${input_wheel_marker}" ]]; then
+              echo "- Guest virtio-input-wheel marker: ${input_wheel_marker}"
+            fi
+            if [[ -n "${input_events_modifiers_marker}" ]]; then
+              echo "- Guest virtio-input-events-modifiers marker: ${input_events_modifiers_marker}"
+            fi
+            if [[ -n "${input_events_buttons_marker}" ]]; then
+              echo "- Guest virtio-input-events-buttons marker: ${input_events_buttons_marker}"
+            fi
+            if [[ -n "${input_events_wheel_marker}" ]]; then
+              echo "- Guest virtio-input-events-wheel marker: ${input_events_wheel_marker}"
+            fi
             if [[ -n "${input_inject_marker}" ]]; then
               echo "- Host virtio-input injection marker: \`${input_inject_marker}\`"
+            fi
+            if [[ -n "${input_tablet_marker}" ]]; then
+              echo "- Guest virtio-input-tablet-events marker: ${input_tablet_marker}"
+            fi
+            if [[ -n "${input_tablet_inject_marker}" ]]; then
+              echo "- Host virtio-input tablet injection marker: \`${input_tablet_inject_marker}\`"
             fi
             if [[ -n "${snd_capture_marker}" ]]; then
               echo "- Guest virtio-snd-capture marker: ${snd_capture_marker}"

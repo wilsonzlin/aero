@@ -623,6 +623,13 @@ HID report verification) by setting the workflow input `with_virtio_input_events
 This requires a guest image provisioned with `--test-input-events` (for example via
 `New-AeroWin7TestImage.ps1 -TestInputEvents`) so the guest selftest enables the `virtio-input-events` read loop.
 
+To also exercise the optional virtio-input wheel marker (`virtio-input-wheel`), set the workflow input
+`with_virtio_input_wheel=true` (requires the same guest `--test-input-events` provisioning).
+
+To exercise the extended virtio-input markers (`virtio-input-events-modifiers/buttons/wheel`), set the workflow input
+`with_virtio_input_events_extended=true`. This requires a guest image provisioned with `--test-input-events` and
+`--test-input-events-extended` (or env var `AERO_VIRTIO_SELFTEST_TEST_INPUT_EVENTS_EXTENDED=1`).
+
 To also exercise the virtio-input tablet (absolute pointer) end-to-end path, set the workflow input
 `with_virtio_input_tablet_events=true`. This requires a guest image provisioned with `--test-input-tablet-events`
 (alias: `--test-tablet-events`) so the guest selftest enables the `virtio-input-tablet-events` read loop.
@@ -660,7 +667,14 @@ only if you explicitly want the base image to be mutated.
   - When `RESULT|PASS` is seen, the harness also requires that the guest emitted per-test markers for:
     - `AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS`
     - `AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS`
-    - (only when `-WithInputEvents` / `--with-input-events` is enabled) `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|PASS`
+    - (only when virtio-input event injection is enabled via `-WithInputEvents`/`--with-input-events` or implied by wheel/extended flags)
+      `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|PASS`
+    - (only when wheel injection is enabled via `-WithInputWheel` / `--with-input-wheel`) `AERO_VIRTIO_SELFTEST|TEST|virtio-input-wheel|PASS`
+    - (only when extended injection is enabled via `-WithInputEventsExtended` / `--with-input-events-extended`) `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-modifiers|PASS`
+    - (only when extended injection is enabled via `-WithInputEventsExtended` / `--with-input-events-extended`) `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-buttons|PASS`
+    - (only when extended injection is enabled via `-WithInputEventsExtended` / `--with-input-events-extended`) `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-wheel|PASS`
+    - (only when tablet injection is enabled via `-WithInputTabletEvents` / `--with-input-tablet-events`)
+      `AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|PASS`
     - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS` or `...|SKIP` (if `-WithVirtioSnd` / `--with-virtio-snd` is set, it must be `PASS`)
     - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|PASS` or `...|SKIP` (if `-WithVirtioSnd` / `--with-virtio-snd` is set, it must be `PASS`)
     - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|PASS` or `...|SKIP` (if `-WithVirtioSnd` / `--with-virtio-snd` is set, it must be `PASS`)
