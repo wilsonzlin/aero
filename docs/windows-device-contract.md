@@ -246,11 +246,11 @@ Examples (illustrative) INF model entries:
     %AeroVirtioKeyboard.DeviceDesc% = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01
     %AeroVirtioMouse.DeviceDesc%    = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01
     %AeroVirtioInput.DeviceDesc%    = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&REV_01
-  
+
   ; Optional legacy alias virtio-input.inf (checked in disabled-by-default as `virtio-input.inf.disabled`)
-  ; - Exists for compatibility with workflows/tools that still reference `virtio-input.inf`.
-  ; - From the first section header (`[Version]`) onward, expected to remain byte-for-byte identical to `aero_virtio_input.inf`
-  ;   (only the leading banner/comments may differ; see `drivers/windows7/virtio-input/scripts/check-inf-alias.py`).
+  ; Filename-only alias for workflows/tools that still reference `virtio-input.inf`.
+  ; From the first section header (`[Version]`) onward, expected to remain byte-for-byte identical to `aero_virtio_input.inf`
+  ; (only the leading banner/comments may differ; see `drivers/windows7/virtio-input/scripts/check-inf-alias.py`).
 ```
 
 ### Boot-critical storage (`CriticalDeviceDatabase`)

@@ -134,13 +134,15 @@ Contract note:
       names, and
     - it includes a strict revision-gated generic fallback match `PCI\VEN_1AF4&DEV_1052&REV_01` (no `SUBSYS`; Device Manager
       name: **Aero VirtIO Input Device**).
-  - Tablet devices bind via the separate tablet INF (`aero_virtio_tablet.inf`, `SUBSYS_00121AF4`), which is more specific
-    and will win over the generic fallback when both are installed.
-  - The repo also carries `drivers/windows7/virtio-input/inf/virtio-input.inf.disabled`, which is a **legacy filename
-    alias** (`virtio-input.inf`) for workflows/tools that still reference the old INF filename.
+    - Tablet devices bind via the separate tablet INF (`drivers/windows7/virtio-input/inf/aero_virtio_tablet.inf`,
+      `SUBSYS_00121AF4`), which is more specific and wins over the fallback when both packages are installed.
+  - The repo also carries `drivers/windows7/virtio-input/inf/virtio-input.inf.disabled`, which is a **legacy filename alias**
+    (`virtio-input.inf`) for workflows/tools that still reference the old INF filename.
+    - Rename it to `virtio-input.inf` to enable it.
     - From the first section header (`[Version]`) onward, it must remain byte-for-byte identical to `aero_virtio_input.inf`
       (only the leading banner/comments may differ; see `drivers/windows7/virtio-input/scripts/check-inf-alias.py`).
-    - It does not change HWID matching behavior (it matches the same HWIDs as `aero_virtio_input.inf`).
+    - It does not change HWID matching behavior (it matches the same HWIDs as `aero_virtio_input.inf`). CI enforces this via
+      `scripts/ci/check-windows7-virtio-contract-consistency.py`.
   - Do not ship/install both `aero_virtio_input.inf` and `virtio-input.inf` at the same time (overlapping INFs can lead to
     confusing PnP driver selection). Ship/install **only one** of the two filenames at a time.
 - The driver also validates the Revision ID at runtime.

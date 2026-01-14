@@ -79,7 +79,8 @@ drivers/windows7/tests/
     - For **stock QEMU** `virtio-tablet-pci` devices (which typically use non-Aero subsystem IDs), the device is expected
       to bind via the revision-gated fallback match (`PCI\VEN_1AF4&DEV_1052&REV_01`) in
       `drivers/windows7/virtio-input/inf/aero_virtio_input.inf`, and the driver classifies it as a tablet via `EV_BITS`
-      (`EV_ABS` + `ABS_X`/`ABS_Y`).
+      (`EV_ABS` + `ABS_X`/`ABS_Y`). When binding via the fallback entry, Device Manager will show the generic
+      **Aero VirtIO Input Device** name.
 - Optionally runs a virtio-snd test (PCI detection + endpoint enumeration + short playback) when a supported virtio-snd
   device is detected (or when `--require-snd` / `--test-snd` is set).
   - Detects the virtio-snd PCI function by hardware ID:
