@@ -166,8 +166,13 @@ impl AeroGpuScanout0State {
             return None;
         }
 
-        let mut out = vec![0u32; pixel_count];
-        let mut row = vec![0u8; row_bytes];
+        let mut out = Vec::new();
+        out.try_reserve_exact(pixel_count).ok()?;
+        out.resize(pixel_count, 0u32);
+
+        let mut row = Vec::new();
+        row.try_reserve_exact(row_bytes).ok()?;
+        row.resize(row_bytes, 0u8);
 
         for y in 0..height {
             let row_gpa = self.fb_gpa + (y as u64) * pitch_u64;
@@ -294,8 +299,13 @@ impl AeroGpuCursorConfig {
             return None;
         }
 
-        let mut out = vec![0u32; pixel_count];
-        let mut row = vec![0u8; row_bytes];
+        let mut out = Vec::new();
+        out.try_reserve_exact(pixel_count).ok()?;
+        out.resize(pixel_count, 0u32);
+
+        let mut row = Vec::new();
+        row.try_reserve_exact(row_bytes).ok()?;
+        row.resize(row_bytes, 0u8);
 
         for y in 0..height {
             let row_gpa = self.fb_gpa + (y as u64) * pitch_u64;
