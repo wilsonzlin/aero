@@ -58,6 +58,19 @@ export interface WebHidPassthroughRuntimeOptions {
    */
   pollIntervalMs?: number;
   /**
+   * Maximum number of output/feature reports to drain (total across all devices) per {@link pollOnce} call.
+   *
+   * This bounds the amount of JS work/allocations a busy guest can force in a single poll tick.
+   */
+  maxOutputReportsPerPoll?: number;
+  /**
+   * Maximum number of queued (not yet running) WebHID output/feature reports per device.
+   *
+   * WebHID requires per-device serialization. If an in-flight `sendReport` stalls and the guest keeps
+   * producing output reports, the queue can otherwise grow without bound.
+   */
+  maxPendingOutputReportsPerDevice?: number;
+  /**
    * Optional callback invoked once a device has been opened and a bridge has been created.
    *
    * This is the primary "extension point" for wiring the guest USB topology later.
@@ -75,6 +88,8 @@ type DeviceSession = {
   onInputReport: (event: HIDInputReportEvent) => void;
   outputQueue: WebHidPassthroughOutputReport[];
   outputRunnerToken: number | null;
+  outputDropped: number;
+  outputDropWarnedAtMs: number;
 };
 
 function defaultLogger(level: "debug" | "info" | "warn" | "error", message: string, err?: unknown): void {
@@ -99,6 +114,16 @@ function defaultLogger(level: "debug" | "info" | "warn" | "error", message: stri
 }
 
 const UNKNOWN_INPUT_REPORT_HARD_CAP_BYTES = 64;
+const DEFAULT_MAX_HID_OUTPUT_REPORTS_PER_POLL = 64;
+const DEFAULT_MAX_PENDING_OUTPUT_REPORTS_PER_DEVICE = 1024;
+const OUTPUT_REPORT_DROP_WARN_INTERVAL_MS = 5000;
+const MAX_HID_CONTROL_TRANSFER_BYTES = 0xffff;
+
+function maxHidControlPayloadBytes(reportId: number): number {
+  // USB control transfers have a u16 `wLength`. When `reportId != 0` the on-wire report includes a
+  // 1-byte reportId prefix, so the payload must be <= 0xfffe.
+  return (reportId >>> 0) === 0 ? MAX_HID_CONTROL_TRANSFER_BYTES : MAX_HID_CONTROL_TRANSFER_BYTES - 1;
+}
 
 function ensureArrayBufferBacked(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
   // WebHID expects `BufferSource`. Some TS libdefs model `BufferSource` as
@@ -114,6 +139,8 @@ export class WebHidPassthroughRuntime {
   readonly #sessions = new Map<HidDeviceLike, DeviceSession>();
   readonly #createBridge: BridgeFactory;
   readonly #pollIntervalMs: number;
+  readonly #maxOutputReportsPerPoll: number;
+  readonly #maxPendingOutputReportsPerDevice: number;
   readonly #onDeviceReady?: (device: HidDeviceLike, bridge: WebHidPassthroughBridgeLike) => void;
   readonly #log: WebHidPassthroughRuntimeLogger;
   #pollTimer: ReturnType<typeof setInterval> | undefined;
@@ -123,6 +150,22 @@ export class WebHidPassthroughRuntime {
   constructor(options: WebHidPassthroughRuntimeOptions) {
     this.#createBridge = options.createBridge;
     this.#pollIntervalMs = options.pollIntervalMs ?? 16;
+    this.#maxOutputReportsPerPoll = (() => {
+      const requested = options.maxOutputReportsPerPoll;
+      if (requested === undefined) return DEFAULT_MAX_HID_OUTPUT_REPORTS_PER_POLL;
+      if (!Number.isSafeInteger(requested) || requested <= 0) {
+        throw new Error(`invalid maxOutputReportsPerPoll: ${requested}`);
+      }
+      return requested;
+    })();
+    this.#maxPendingOutputReportsPerDevice = (() => {
+      const requested = options.maxPendingOutputReportsPerDevice;
+      if (requested === undefined) return DEFAULT_MAX_PENDING_OUTPUT_REPORTS_PER_DEVICE;
+      if (!Number.isSafeInteger(requested) || requested <= 0) {
+        throw new Error(`invalid maxPendingOutputReportsPerDevice: ${requested}`);
+      }
+      return requested;
+    })();
     this.#onDeviceReady = options.onDeviceReady;
     this.#log = options.logger ?? defaultLogger;
 
@@ -241,7 +284,15 @@ export class WebHidPassthroughRuntime {
       };
 
       device.addEventListener("inputreport", onInputReport);
-      this.#sessions.set(device, { device, bridge, onInputReport, outputQueue: [], outputRunnerToken: null });
+      this.#sessions.set(device, {
+        device,
+        bridge,
+        onInputReport,
+        outputQueue: [],
+        outputRunnerToken: null,
+        outputDropped: 0,
+        outputDropWarnedAtMs: 0,
+      });
       this.#onDeviceReady?.(device, bridge);
 
       this.ensurePolling();
@@ -316,11 +367,13 @@ export class WebHidPassthroughRuntime {
   }
 
   pollOnce(): void {
+    let remainingReports = this.#maxOutputReportsPerPoll;
     for (const session of this.#sessions.values()) {
+      if (remainingReports <= 0) return;
       const configured = session.bridge.configured ? session.bridge.configured() : true;
       if (!configured) continue;
 
-      while (true) {
+      while (remainingReports > 0) {
         let report: WebHidPassthroughOutputReport | null = null;
         try {
           report = session.bridge.drain_next_output_report();
@@ -329,12 +382,17 @@ export class WebHidPassthroughRuntime {
           break;
         }
         if (!report) break;
+        remainingReports -= 1;
 
         try {
+          const reportId = report.reportId >>> 0;
+          // Defensive clamp: keep payload sizes within a single USB control transfer.
+          const maxPayloadBytes = maxHidControlPayloadBytes(reportId);
+          const clamped = report.data.byteLength > maxPayloadBytes ? report.data.subarray(0, maxPayloadBytes) : report.data;
           // wasm-bindgen views may be backed by SharedArrayBuffer (threaded WASM);
-          // WebHID expects an ArrayBuffer-backed BufferSource.
-          const data = ensureArrayBufferBacked(new Uint8Array(report.data));
-          this.#enqueueOutputReport(session, { reportType: report.reportType, reportId: report.reportId, data });
+          // WebHID expects an ArrayBuffer-backed BufferSource. Also ensure we don't retain a slice into a large buffer.
+          const data = ensureArrayBufferBacked(new Uint8Array(clamped));
+          this.#enqueueOutputReport(session, { reportType: report.reportType, reportId, data });
         } catch (err) {
           this.#log("warn", "WebHID output report forwarding failed", err);
         }
@@ -343,6 +401,18 @@ export class WebHidPassthroughRuntime {
   }
 
   #enqueueOutputReport(session: DeviceSession, report: WebHidPassthroughOutputReport): void {
+    if (session.outputQueue.length >= this.#maxPendingOutputReportsPerDevice) {
+      session.outputDropped += 1;
+      const now = typeof performance !== "undefined" ? performance.now() : Date.now();
+      if (session.outputDropWarnedAtMs === 0 || now - session.outputDropWarnedAtMs >= OUTPUT_REPORT_DROP_WARN_INTERVAL_MS) {
+        session.outputDropWarnedAtMs = now;
+        this.#log(
+          "warn",
+          `[webhid] Dropping queued output reports (pending=${session.outputQueue.length} maxPendingOutputReportsPerDevice=${this.#maxPendingOutputReportsPerDevice} dropped=${session.outputDropped})`,
+        );
+      }
+      return;
+    }
     session.outputQueue.push(report);
     if (session.outputRunnerToken !== null) return;
     const token = this.#nextOutputRunnerToken++;

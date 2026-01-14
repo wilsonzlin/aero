@@ -77,6 +77,10 @@ class FakeHidDevice {
   }
 }
 
+function bufferSourceToBytes(src: BufferSource): Uint8Array {
+  return src instanceof ArrayBuffer ? new Uint8Array(src) : new Uint8Array(src.buffer, src.byteOffset, src.byteLength);
+}
+
 describe("WebHidPassthroughRuntime", () => {
   it("subscribes to WebHidPassthroughManager attachedDevices (attachments list)", async () => {
     const device = new FakeHidDevice();
@@ -346,6 +350,86 @@ describe("WebHidPassthroughRuntime", () => {
     expect(device.sendReport).toHaveBeenCalledWith(1, outputData);
     expect(device.sendFeatureReport).toHaveBeenCalledTimes(1);
     expect(device.sendFeatureReport).toHaveBeenCalledWith(2, featureData);
+  });
+
+  it("hard-caps oversized output report payloads based on the reportId prefix byte", async () => {
+    const device = new FakeHidDevice();
+
+    const huge = new Uint8Array(0xffff);
+    huge.set([1, 2, 3], 0);
+    const drain = vi.fn().mockReturnValueOnce({ reportType: "output", reportId: 9, data: huge }).mockReturnValueOnce(null);
+
+    const bridge: WebHidPassthroughBridgeLike = {
+      push_input_report: vi.fn(),
+      drain_next_output_report: drain,
+      configured: vi.fn(() => true),
+      free: vi.fn(),
+    };
+
+    const runtime = new WebHidPassthroughRuntime({
+      createBridge: () => bridge,
+      pollIntervalMs: 0,
+    });
+    await runtime.attachDevice(device as unknown as HIDDevice);
+
+    runtime.pollOnce();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(device.sendReport).toHaveBeenCalledTimes(1);
+    expect(device.sendReport.mock.calls[0]![0]).toBe(9);
+    const payload = bufferSourceToBytes(device.sendReport.mock.calls[0]![1] as BufferSource);
+    // reportId != 0 => on-wire report includes a reportId prefix byte, so clamp payload to 0xfffe.
+    expect(payload.byteLength).toBe(0xfffe);
+    expect(Array.from(payload.slice(0, 3))).toEqual([1, 2, 3]);
+  });
+
+  it("bounds per-device output report queue growth when sendReport stalls", async () => {
+    const logger = vi.fn();
+    const device = new FakeHidDevice();
+
+    const first = deferred<void>();
+    device.sendReport.mockImplementationOnce(() => first.promise);
+    device.sendReport.mockImplementation(async () => {});
+
+    const drain = vi
+      .fn()
+      .mockReturnValueOnce({ reportType: "output", reportId: 1, data: new Uint8Array([1]) })
+      .mockReturnValueOnce({ reportType: "output", reportId: 2, data: new Uint8Array([2]) })
+      .mockReturnValueOnce({ reportType: "output", reportId: 3, data: new Uint8Array([3]) })
+      .mockReturnValueOnce(null);
+
+    const bridge: WebHidPassthroughBridgeLike = {
+      push_input_report: vi.fn(),
+      drain_next_output_report: drain,
+      configured: vi.fn(() => true),
+      free: vi.fn(),
+    };
+
+    const runtime = new WebHidPassthroughRuntime({
+      createBridge: () => bridge,
+      pollIntervalMs: 0,
+      maxPendingOutputReportsPerDevice: 1,
+      maxOutputReportsPerPoll: 8,
+      logger,
+    });
+    await runtime.attachDevice(device as unknown as HIDDevice);
+
+    runtime.pollOnce();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // First report starts sending and stalls.
+    expect(device.sendReport).toHaveBeenCalledTimes(1);
+    expect(device.sendReport.mock.calls[0]![0]).toBe(1);
+
+    first.resolve(undefined);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // Second report should still run after the first finishes. Third should be dropped due to queue cap.
+    expect(device.sendReport).toHaveBeenCalledTimes(2);
+    expect(device.sendReport.mock.calls[1]![0]).toBe(2);
+
+    expect(logger.mock.calls.some((call) => call[0] === "warn" && String(call[1]).includes("Dropping queued output reports"))).toBe(true);
   });
 
   it("executes output reports sequentially per device", async () => {
