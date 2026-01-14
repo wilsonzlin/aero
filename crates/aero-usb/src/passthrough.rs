@@ -10,7 +10,7 @@
 //! While an action is in-flight, repeated attempts return NAK without emitting duplicate
 //! host actions.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
 use aero_io_snapshot::io::state::{
@@ -396,6 +396,7 @@ impl UsbPassthroughDevice {
         }
         let mut total_bytes = 0usize;
 
+        let mut action_ids = HashSet::<u32>::new();
         self.actions.clear();
         let action_count = d.u32()? as usize;
         if action_count > MAX_ACTIONS {
@@ -409,28 +410,69 @@ impl UsbPassthroughDevice {
             if id == 0 {
                 return Err(SnapshotError::InvalidFieldEncoding("action id must be non-zero"));
             }
+            if !action_ids.insert(id) {
+                return Err(SnapshotError::InvalidFieldEncoding("duplicate action id"));
+            }
             let action = match kind {
-                1 => UsbHostAction::ControlIn {
-                    id,
-                    setup: dec_setup(&mut d)?,
-                },
+                1 => {
+                    let setup = dec_setup(&mut d)?;
+                    if !setup.is_device_to_host() {
+                        return Err(SnapshotError::InvalidFieldEncoding(
+                            "controlIn setup must be device-to-host",
+                        ));
+                    }
+                    UsbHostAction::ControlIn { id, setup }
+                }
                 2 => {
                     let setup = dec_setup(&mut d)?;
+                    if setup.is_device_to_host() {
+                        return Err(SnapshotError::InvalidFieldEncoding(
+                            "controlOut setup must be host-to-device",
+                        ));
+                    }
                     let data = dec_bytes_limited(
                         &mut d,
                         MAX_DATA_BYTES,
                         &mut total_bytes,
                         MAX_TOTAL_BYTES,
                     )?;
+                    if data.len() != setup.w_length as usize {
+                        return Err(SnapshotError::InvalidFieldEncoding(
+                            "controlOut data length mismatch",
+                        ));
+                    }
                     UsbHostAction::ControlOut { id, setup, data }
                 }
-                3 => UsbHostAction::BulkIn {
-                    id,
-                    endpoint: d.u8()?,
-                    length: d.u32()?,
-                },
+                3 => {
+                    let endpoint = d.u8()?;
+                    if (endpoint & 0x80) == 0 {
+                        return Err(SnapshotError::InvalidFieldEncoding(
+                            "bulkIn endpoint must be IN",
+                        ));
+                    }
+                    if (endpoint & 0x0f) == 0 || (endpoint & 0x70) != 0 {
+                        return Err(SnapshotError::InvalidFieldEncoding("invalid endpoint address"));
+                    }
+                    let length = d.u32()?;
+                    if length as usize > MAX_DATA_BYTES {
+                        return Err(SnapshotError::InvalidFieldEncoding("bulkIn length too large"));
+                    }
+                    UsbHostAction::BulkIn {
+                        id,
+                        endpoint,
+                        length,
+                    }
+                }
                 4 => {
                     let endpoint = d.u8()?;
+                    if (endpoint & 0x80) != 0 {
+                        return Err(SnapshotError::InvalidFieldEncoding(
+                            "bulkOut endpoint must be OUT",
+                        ));
+                    }
+                    if (endpoint & 0x0f) == 0 || (endpoint & 0x70) != 0 {
+                        return Err(SnapshotError::InvalidFieldEncoding("invalid endpoint address"));
+                    }
                     let data = dec_bytes_limited(
                         &mut d,
                         MAX_DATA_BYTES,
@@ -458,6 +500,9 @@ impl UsbPassthroughDevice {
                     "completion id must be non-zero",
                 ));
             }
+            if self.completions.contains_key(&id) {
+                return Err(SnapshotError::InvalidFieldEncoding("duplicate completion id"));
+            }
             let kind = d.u8()?;
             let result = match kind {
                 1 => UsbHostResult::OkIn {
@@ -469,7 +514,15 @@ impl UsbPassthroughDevice {
                     )?,
                 },
                 2 => UsbHostResult::OkOut {
-                    bytes_written: d.u32()? as usize,
+                    bytes_written: {
+                        let bytes_written = d.u32()? as usize;
+                        if bytes_written > MAX_DATA_BYTES {
+                            return Err(SnapshotError::InvalidFieldEncoding(
+                                "bytesWritten is too large",
+                            ));
+                        }
+                        bytes_written
+                    },
                 },
                 3 => UsbHostResult::Stall,
                 4 => {
@@ -507,6 +560,36 @@ impl UsbPassthroughDevice {
                     dec_bytes_limited(&mut d, MAX_DATA_BYTES, &mut total_bytes, MAX_TOTAL_BYTES)
                 })
                 .transpose()?;
+            let expected_len = setup.w_length as usize;
+            if setup.is_device_to_host() {
+                if has_data {
+                    return Err(SnapshotError::InvalidFieldEncoding(
+                        "control inflight DATA stage must be absent for device-to-host requests",
+                    ));
+                }
+            } else {
+                match expected_len {
+                    0 => {
+                        if has_data {
+                            return Err(SnapshotError::InvalidFieldEncoding(
+                                "control inflight DATA stage must be absent when wLength=0",
+                            ));
+                        }
+                    }
+                    _ => {
+                        let Some(buf) = data.as_ref() else {
+                            return Err(SnapshotError::InvalidFieldEncoding(
+                                "control inflight DATA stage missing",
+                            ));
+                        };
+                        if buf.len() != expected_len {
+                            return Err(SnapshotError::InvalidFieldEncoding(
+                                "control inflight DATA stage length mismatch",
+                            ));
+                        }
+                    }
+                }
+            }
             Some(ControlInflight { id, setup, data })
         } else {
             None
@@ -521,6 +604,14 @@ impl UsbPassthroughDevice {
         }
         for _ in 0..ep_count {
             let endpoint = d.u8()?;
+            if (endpoint & 0x0f) == 0 || (endpoint & 0x70) != 0 {
+                return Err(SnapshotError::InvalidFieldEncoding("invalid endpoint address"));
+            }
+            if self.ep_inflight.contains_key(&endpoint) {
+                return Err(SnapshotError::InvalidFieldEncoding(
+                    "duplicate inflight endpoint",
+                ));
+            }
             let id = d.u32()?;
             if id == 0 {
                 return Err(SnapshotError::InvalidFieldEncoding(
@@ -528,7 +619,41 @@ impl UsbPassthroughDevice {
                 ));
             }
             let len = d.u32()? as usize;
+            if len > MAX_DATA_BYTES {
+                return Err(SnapshotError::InvalidFieldEncoding(
+                    "inflight endpoint length too large",
+                ));
+            }
             self.ep_inflight.insert(endpoint, EpInflight { id, len });
+        }
+
+        // Invariant validation (defensive): ensure that parsed actions/completions are consistent
+        // with the in-flight transfer IDs, and that in-flight IDs do not collide.
+        let mut inflight_ids = HashSet::<u32>::new();
+        if let Some(ctl) = self.control_inflight.as_ref() {
+            if !inflight_ids.insert(ctl.id) {
+                return Err(SnapshotError::InvalidFieldEncoding("duplicate inflight id"));
+            }
+        }
+        for inflight in self.ep_inflight.values() {
+            if !inflight_ids.insert(inflight.id) {
+                return Err(SnapshotError::InvalidFieldEncoding("duplicate inflight id"));
+            }
+        }
+
+        for action in self.actions.iter() {
+            if !inflight_ids.contains(&action.id()) {
+                return Err(SnapshotError::InvalidFieldEncoding(
+                    "queued action without inflight transfer",
+                ));
+            }
+        }
+        for id in self.completions.keys() {
+            if !inflight_ids.contains(id) {
+                return Err(SnapshotError::InvalidFieldEncoding(
+                    "queued completion without inflight transfer",
+                ));
+            }
         }
 
         d.finish()
@@ -1344,6 +1469,126 @@ mod tests {
             .u32(1) // ep_count
             .u8(1) // endpoint
             .u32(0)
+            .finish();
+        let err = snapshot_load_err(bytes);
+        assert_invalid_field_encoding(err);
+    }
+
+    #[test]
+    fn snapshot_load_rejects_queued_action_without_matching_inflight_id() {
+        // One queued action but no control/endpoint inflight entries.
+        let bytes = Encoder::new()
+            .u32(1) // next_id
+            .u32(1) // action_count
+            .u8(1) // ControlIn
+            .u32(1) // action id
+            // SetupPacket (device-to-host)
+            .u8(0x80)
+            .u8(0)
+            .u16(0)
+            .u16(0)
+            .u16(0)
+            .u32(0) // completion_count
+            .bool(false) // has_control
+            .u32(0) // ep_count
+            .finish();
+        let err = snapshot_load_err(bytes);
+        assert_invalid_field_encoding(err);
+    }
+
+    #[test]
+    fn snapshot_load_rejects_queued_completion_without_matching_inflight_id() {
+        // One queued completion but no inflight entries.
+        let bytes = Encoder::new()
+            .u32(1) // next_id
+            .u32(0) // action_count
+            .u32(1) // completion_count
+            .u32(1) // completion id
+            .u8(3) // Stall
+            .bool(false) // has_control
+            .u32(0) // ep_count
+            .finish();
+        let err = snapshot_load_err(bytes);
+        assert_invalid_field_encoding(err);
+    }
+
+    #[test]
+    fn snapshot_load_rejects_duplicate_action_id() {
+        // Second action reuses the same id (duplicate). This should be rejected before attempting to
+        // read the rest of the action fields.
+        let bytes = Encoder::new()
+            .u32(1)
+            .u32(2) // action_count
+            // BulkIn #1 (id=1)
+            .u8(3)
+            .u32(1)
+            .u8(0x81)
+            .u32(8)
+            // BulkIn #2 (duplicate id=1)
+            .u8(3)
+            .u32(1)
+            .finish();
+        let err = snapshot_load_err(bytes);
+        assert_invalid_field_encoding(err);
+    }
+
+    #[test]
+    fn snapshot_load_rejects_duplicate_completion_id() {
+        // Second completion reuses the same id (duplicate). This should be rejected before reading
+        // the completion kind/payload.
+        let bytes = Encoder::new()
+            .u32(1)
+            .u32(0) // action_count
+            .u32(2) // completion_count
+            // Completion #1 (id=1, Stall)
+            .u32(1)
+            .u8(3)
+            // Completion #2 (duplicate id=1)
+            .u32(1)
+            .finish();
+        let err = snapshot_load_err(bytes);
+        assert_invalid_field_encoding(err);
+    }
+
+    #[test]
+    fn snapshot_load_rejects_duplicate_inflight_endpoint_entry() {
+        // Two inflight endpoint entries for the same endpoint address.
+        let bytes = Encoder::new()
+            .u32(1)
+            .u32(0)
+            .u32(0)
+            .bool(false)
+            .u32(2) // ep_count
+            // endpoint 0x81, id=1
+            .u8(0x81)
+            .u32(1)
+            .u32(8)
+            // duplicate endpoint 0x81
+            .u8(0x81)
+            .finish();
+        let err = snapshot_load_err(bytes);
+        assert_invalid_field_encoding(err);
+    }
+
+    #[test]
+    fn snapshot_load_rejects_inflight_id_collision_between_control_and_endpoint() {
+        let bytes = Encoder::new()
+            .u32(1)
+            .u32(0)
+            .u32(0)
+            .bool(true)
+            .u32(1) // control inflight id
+            // SetupPacket (device-to-host, wLength=0)
+            .u8(0x80)
+            .u8(0)
+            .u16(0)
+            .u16(0)
+            .u16(0)
+            .bool(false) // has_data
+            .u32(1) // ep_count
+            .u8(0x81)
+            .u32(1) // duplicate inflight id
+            .u32(8)
             .finish();
         let err = snapshot_load_err(bytes);
         assert_invalid_field_encoding(err);
