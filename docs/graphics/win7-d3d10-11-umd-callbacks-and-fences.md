@@ -188,6 +188,7 @@ Practical implication for UMDs:
   - `AEROGPU_CMD_RESOURCE_DIRTY_RANGE` for guest-backed resources
   - `COPY_*` packets with `WRITEBACK_DST` (staging readback)
 - Do not rely solely on “currently bound” state when building the list: these packets may be emitted while the resource is not bound and still require the allocation to be listed for that submit.
+- The allocation list also carries **per-allocation write intent** via the WDDM 1.1 `WriteOperation` bit (`DXGK_ALLOCATIONLIST::Flags.Value & 0x1`), which the AeroGPU KMD propagates into `aerogpu_alloc_entry.flags` as `AEROGPU_ALLOC_FLAG_READONLY` when the allocation is not written by the submission. The host rejects any guest-memory writeback (e.g. `COPY_* WRITEBACK_DST`) into a READONLY allocation, so UMDs must ensure writeback destinations are marked writable for that submission.
 
 Then it submits via the runtime callbacks which route into:
 
