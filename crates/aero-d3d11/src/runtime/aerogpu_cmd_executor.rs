@@ -10615,7 +10615,16 @@ fn get_or_create_render_pipeline_for_state<'a>(
         }
 
         // Trim fragment shader outputs to the currently-bound render target slots.
-        let keep_output_locations: BTreeSet<u32> = (0..state.render_targets.len() as u32).collect();
+        //
+        // Note: `state.render_targets` may contain gaps (None) when the D3D app binds e.g.
+        // RTV0 + RTV2 with RTV1 unbound. WebGPU requires that an output location has a matching
+        // `ColorTargetState` entry (Some), so we only keep locations that are actually bound.
+        let keep_output_locations: BTreeSet<u32> = state
+            .render_targets
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, rt)| rt.is_some().then_some(idx as u32))
+            .collect();
         let declared_outputs =
             super::wgsl_link::declared_ps_output_locations(linked_ps_wgsl.as_ref())?;
         let missing_outputs: BTreeSet<u32> = declared_outputs
@@ -12806,6 +12815,206 @@ mod tests {
                 "unexpected wgpu validation error while creating expanded draw pipeline: {err:?}"
             );
             res.expect("expanded draw pipeline creation should succeed with trimmed PS outputs");
+        });
+    }
+
+    #[test]
+    fn pipeline_trims_pixel_shader_outputs_for_unbound_gap_targets() {
+        // Regression test: apps may bind RTV0 and RTV2 while leaving RTV1 unbound (gap).
+        //
+        // D3D discards writes to unbound targets, but WebGPU requires that every
+        // `@location(N)` output has a matching `ColorTargetState` (Some) at index N.
+        pollster::block_on(async {
+            let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+                Ok(exec) => exec,
+                Err(e) => {
+                    skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                    return;
+                }
+            };
+
+            // RT0 + RT2 bound, RT1 is an explicit gap.
+            const RT0: u32 = 1;
+            const RT2: u32 = 2;
+            for (handle, label) in [(RT0, "rt0"), (RT2, "rt2")] {
+                let tex = exec.device.create_texture(&wgpu::TextureDescriptor {
+                    label: Some(&format!("gap mrt trim {label}")),
+                    size: wgpu::Extent3d {
+                        width: 1,
+                        height: 1,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: wgpu::TextureFormat::Rgba8Unorm,
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                    view_formats: &[],
+                });
+                let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+                exec.resources.textures.insert(
+                    handle,
+                    Texture2dResource {
+                        texture: tex,
+                        view,
+                        desc: Texture2dDesc {
+                            width: 1,
+                            height: 1,
+                            mip_level_count: 1,
+                            array_layers: 1,
+                            format: wgpu::TextureFormat::Rgba8Unorm,
+                        },
+                        format_u32: aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat::R8G8B8A8Unorm
+                            as u32,
+                        backing: None,
+                        row_pitch_bytes: 0,
+                        dirty: false,
+                        guest_backing_is_current: true,
+                        host_shadow: None,
+                    },
+                );
+            }
+
+            // Dummy vertex buffer required to activate the GS passthrough vertex path (avoids
+            // needing an input layout for this unit test).
+            const VB: u32 = 3;
+            let vb = exec.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("gap mrt trim vb"),
+                size: 16,
+                usage: wgpu::BufferUsages::VERTEX,
+                mapped_at_creation: false,
+            });
+            exec.resources.buffers.insert(
+                VB,
+                BufferResource {
+                    buffer: vb,
+                    size: 16,
+                    gpu_size: 16,
+                    backing: None,
+                    dirty: None,
+                },
+            );
+
+            const VS: u32 = 10;
+            const PS: u32 = 11;
+
+            let vs_wgsl = r#"
+                struct VsOut {
+                    @builtin(position) pos: vec4<f32>,
+                };
+
+                @vertex
+                fn vs_main(@builtin(vertex_index) index: u32) -> VsOut {
+                    _ = index;
+                    var out: VsOut;
+                    out.pos = vec4<f32>(0.0, 0.0, 0.0, 1.0);
+                    return out;
+                }
+            "#;
+
+            // Pixel shader writes to @location(1), but RT1 is unbound (gap). The runtime must trim
+            // this output for WebGPU pipeline creation to succeed.
+            let fs_wgsl = r#"
+                struct PsOut {
+                    @location(0) o0: vec4<f32>,
+                    @location(1) o1: vec4<f32>,
+                    @location(2) o2: vec4<f32>,
+                };
+
+                @fragment
+                fn fs_main() -> PsOut {
+                    var out: PsOut;
+                    out.o0 = vec4<f32>(1.0, 0.0, 0.0, 1.0);
+                    out.o1 = vec4<f32>(0.0, 0.0, 1.0, 1.0);
+                    out.o2 = vec4<f32>(0.0, 1.0, 0.0, 1.0);
+                    return out;
+                }
+            "#;
+
+            let (vs_hash, _vs_module) = exec.pipeline_cache.get_or_create_shader_module(
+                &exec.device,
+                map_pipeline_cache_stage(ShaderStage::Vertex),
+                vs_wgsl,
+                Some("gap mrt trim VS"),
+            );
+            exec.resources.shaders.insert(
+                VS,
+                ShaderResource {
+                    stage: ShaderStage::Vertex,
+                    wgsl_hash: vs_hash,
+                    depth_clamp_wgsl_hash: None,
+                    dxbc_hash_fnv1a64: 0,
+                    entry_point: "vs_main",
+                    vs_input_signature: Vec::new(),
+                    reflection: ShaderReflection::default(),
+                    wgsl_source: vs_wgsl.to_owned(),
+                },
+            );
+
+            let (ps_hash, _ps_module) = exec.pipeline_cache.get_or_create_shader_module(
+                &exec.device,
+                map_pipeline_cache_stage(ShaderStage::Pixel),
+                fs_wgsl,
+                Some("gap mrt trim PS"),
+            );
+            exec.resources.shaders.insert(
+                PS,
+                ShaderResource {
+                    stage: ShaderStage::Pixel,
+                    wgsl_hash: ps_hash,
+                    depth_clamp_wgsl_hash: None,
+                    dxbc_hash_fnv1a64: 0,
+                    entry_point: "fs_main",
+                    vs_input_signature: Vec::new(),
+                    reflection: ShaderReflection::default(),
+                    wgsl_source: fs_wgsl.to_owned(),
+                },
+            );
+
+            exec.state.vs = Some(VS);
+            exec.state.ps = Some(PS);
+            // Treat a bound CS as "GS emulation active" so the pipeline builder uses the internal
+            // GS passthrough vertex path instead of requiring an input layout.
+            exec.state.cs = Some(1);
+            exec.state.vertex_buffers[0] = Some(VertexBufferBinding {
+                buffer: VB,
+                stride_bytes: 16,
+                offset_bytes: 0,
+            });
+            exec.state.render_targets = vec![Some(RT0), None, Some(RT2)];
+            exec.state.depth_stencil = None;
+
+            let layout_key = PipelineLayoutKey::empty();
+            let pipeline_layout = exec
+                .device
+                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("gap mrt trim pipeline layout"),
+                    bind_group_layouts: &[],
+                    push_constant_ranges: &[],
+                });
+
+            exec.device.push_error_scope(wgpu::ErrorFilter::Validation);
+            let res = super::get_or_create_render_pipeline_for_state(
+                &exec.device,
+                &mut exec.pipeline_cache,
+                &pipeline_layout,
+                &mut exec.resources,
+                &exec.state,
+                layout_key,
+            );
+            exec.device.poll(wgpu::Maintain::Wait);
+            let err = exec.device.pop_error_scope().await;
+
+            assert!(
+                err.is_none(),
+                "unexpected wgpu validation error while creating MRT-gap pipeline: {err:?}"
+            );
+            let (key, _pipeline, _mapping) =
+                res.expect("pipeline creation should succeed with trimmed PS outputs for gap RTs");
+            assert_ne!(
+                key.fragment_shader, ps_hash,
+                "expected the fragment shader hash to change after trimming @location(1)"
+            );
         });
     }
 
