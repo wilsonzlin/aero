@@ -4885,14 +4885,28 @@ static HANDLE OpenHidDeviceForRead(const wchar_t* path) {
   return INVALID_HANDLE_VALUE;
 }
 
+// When we cancel a pending overlapped HID read, the OVERLAPPED struct + read buffer must remain alive until the I/O is
+// completed (even if canceled). If cancellation does not complete promptly, we "abandon" the read by leaking its
+// resources so the selftest can fail fast without risking use-after-free.
+struct AbandonedHidRead {
+  HANDLE handle = INVALID_HANDLE_VALUE;
+  HANDLE event = nullptr;
+  OVERLAPPED* ov = nullptr;
+  std::vector<uint8_t> buf;
+};
+
+static std::vector<AbandonedHidRead*> g_abandoned_hid_reads;
+
 struct HidOverlappedReader {
   HANDLE h = INVALID_HANDLE_VALUE;
   HANDLE ev = nullptr;
-  OVERLAPPED ov{};
+  OVERLAPPED* ov = nullptr;
   std::vector<uint8_t> buf;
   DWORD bytes = 0;
   bool pending = false;
   DWORD last_error = 0;
+
+  ~HidOverlappedReader() { CancelAndClose(); }
 
   bool StartRead() {
     if (h == INVALID_HANDLE_VALUE) return false;
@@ -4902,15 +4916,20 @@ struct HidOverlappedReader {
         last_error = GetLastError();
         return false;
       }
-      ZeroMemory(&ov, sizeof(ov));
-      ov.hEvent = ev;
     }
+    if (!ov) {
+      ov = new OVERLAPPED();
+      ZeroMemory(ov, sizeof(*ov));
+    }
+    // Reset the OVERLAPPED state each read to avoid carrying stale Internal/InternalHigh values.
+    ZeroMemory(ov, sizeof(*ov));
+    ov->hEvent = ev;
 
     ResetEvent(ev);
     bytes = 0;
     pending = false;
 
-    BOOL ok = ReadFile(h, buf.data(), static_cast<DWORD>(buf.size()), &bytes, &ov);
+    BOOL ok = ReadFile(h, buf.data(), static_cast<DWORD>(buf.size()), &bytes, ov);
     if (ok) {
       pending = false;
       // Some drivers don't reliably signal the overlapped event for synchronous completion; ensure the wait
@@ -4936,7 +4955,7 @@ struct HidOverlappedReader {
     }
 
     DWORD n = 0;
-    if (!GetOverlappedResult(h, &ov, &n, FALSE)) {
+    if (!GetOverlappedResult(h, ov, &n, FALSE)) {
       last_error = GetLastError();
       return false;
     }
@@ -4947,14 +4966,43 @@ struct HidOverlappedReader {
 
   void CancelAndClose() {
     if (h != INVALID_HANDLE_VALUE) {
-      // Best-effort: cancel any outstanding overlapped reads so CloseHandle doesn't block.
-      CancelIo(h);
+      if (pending && ev && ov) {
+        // Best-effort: cancel any outstanding overlapped reads. If cancellation doesn't complete promptly, abandon
+        // the read so the OVERLAPPED and buffer stay alive.
+        CancelIo(h);
+        const DWORD wait = WaitForSingleObject(ev, 250);
+        if (wait != WAIT_OBJECT_0) {
+          auto* abandoned = new AbandonedHidRead();
+          abandoned->handle = h;
+          abandoned->event = ev;
+          abandoned->ov = ov;
+          abandoned->buf = std::move(buf);
+          g_abandoned_hid_reads.push_back(abandoned);
+
+          h = INVALID_HANDLE_VALUE;
+          ev = nullptr;
+          ov = nullptr;
+          pending = false;
+          bytes = 0;
+          last_error = 0;
+          return;
+        }
+
+        DWORD ignored = 0;
+        (void)GetOverlappedResult(h, ov, &ignored, FALSE);
+        pending = false;
+      }
+
       CloseHandle(h);
       h = INVALID_HANDLE_VALUE;
     }
     if (ev) {
       CloseHandle(ev);
       ev = nullptr;
+    }
+    if (ov) {
+      delete ov;
+      ov = nullptr;
     }
   }
 };
