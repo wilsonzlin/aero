@@ -381,7 +381,9 @@ static int RunCursorStateSanity(int argc, char** argv) {
     LONG ex = GetWindowLong(hwnd, GWL_EXSTYLE);
     DWORD e = GetLastError();
     if (ex != 0 || e == 0) {
-      (void)SetWindowLong(hwnd, GWL_EXSTYLE, ex | WS_EX_TOOLWINDOW);
+      ex |= WS_EX_TOOLWINDOW;
+      ex &= ~WS_EX_APPWINDOW;
+      (void)SetWindowLong(hwnd, GWL_EXSTYLE, ex);
     }
   }
 
@@ -599,7 +601,10 @@ static int RunCursorStateSanity(int argc, char** argv) {
     const int max_y = vy + vh - win_h;
     if (max_y >= vy && win_y > max_y) win_y = max_y;
   }
-  (void)SetWindowPos(hwnd, HWND_TOPMOST, win_x, win_y, 0, 0, SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_NOSIZE);
+  // Include SWP_FRAMECHANGED so any GWL_EXSTYLE adjustments (e.g. WS_EX_TOOLWINDOW) are applied
+  // before the window is shown.
+  (void)SetWindowPos(
+      hwnd, HWND_TOPMOST, win_x, win_y, 0, 0, SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_NOSIZE | SWP_FRAMECHANGED);
   ShowWindow(hwnd, SW_SHOWNOACTIVATE);
   UpdateWindow(hwnd);
 
