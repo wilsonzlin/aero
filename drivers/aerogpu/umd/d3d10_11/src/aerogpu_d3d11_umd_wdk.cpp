@@ -2456,6 +2456,15 @@ void AEROGPU_APIENTRY DestroyDevice11(D3D11DDI_HDEVICE hDevice) {
   std::memcpy(device_mem, &cookie, sizeof(cookie));
 
   auto* dev = reinterpret_cast<Device*>(device_mem);
+  // The runtime may retain the immediate context object past DestroyDevice on
+  // some interface versions. Null out the back-pointer so context entrypoints
+  // do not dereference a freed Device (and so DeviceFromContext can short-circuit
+  // without touching Device memory).
+  if (dev->immediate_context) {
+    auto* ctx = reinterpret_cast<AeroGpuDeviceContext*>(dev->immediate_context);
+    ctx->dev = nullptr;
+    dev->immediate_context = nullptr;
+  }
   DestroyWddmContext(dev);
   delete const_cast<D3D11DDI_DEVICECALLBACKS*>(reinterpret_cast<const D3D11DDI_DEVICECALLBACKS*>(dev->runtime_callbacks));
   dev->runtime_callbacks = nullptr;
