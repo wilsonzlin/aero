@@ -31,6 +31,19 @@ fn scanout_state_updates_on_fb_gpa_flips_while_enabled() {
     let scanout_state = Arc::new(ScanoutState::new());
     let mut dev = new_test_device(scanout_state.clone());
 
+    // Program a minimal valid scanout configuration. The scanout state publisher intentionally
+    // treats incomplete/invalid scanout register sets as "disabled" to avoid consumers
+    // interpreting garbage descriptors.
+    const WIDTH: u32 = 640;
+    const HEIGHT: u32 = 480;
+    const BYTES_PER_PIXEL: u32 = 4;
+    const PITCH_BYTES: u32 = WIDTH * BYTES_PER_PIXEL;
+
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_WIDTH, 4, WIDTH);
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_HEIGHT, 4, HEIGHT);
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_FORMAT, 4, AeroGpuFormat::B8G8R8X8Unorm as u32);
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_PITCH_BYTES, 4, PITCH_BYTES);
+
     // Enable scanout0 (WDDM).
     dev.mmio_write(&mut mem, mmio::SCANOUT0_ENABLE, 4, 1);
     let snap0 = scanout_state.snapshot();
