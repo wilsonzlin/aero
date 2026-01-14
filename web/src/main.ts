@@ -219,31 +219,111 @@ type BootDiskSelection = { mounts: MountConfig; hdd?: DiskImageMetadata; cd?: Di
 type OpenedDisk = { meta: DiskImageMetadata; open: OpenResult };
 type OpenedBootDisks = { client: RuntimeDiskClient; mounts: MountConfig; hdd?: OpenedDisk; cd?: OpenedDisk };
 
+let autoAdoptedLegacyOpfsImages: Promise<void> | null = null;
+// Best-effort compatibility: `AeroConfig.activeDiskImage` is deprecated but older links/harnesses
+// may still set it via `?disk=...`. Treat it as an initial mount hint (once per session) so those
+// flows keep working, without using it as a runtime mode toggle.
+let legacyActiveDiskImageApplied: string | null = null;
+
+async function ensureLegacyOpfsImagesAdopted(manager: DiskManager): Promise<void> {
+  // Auto-adopt legacy images once per session so users upgrading from the v1 disk storage flow see
+  // their existing OPFS `images/` files.
+  if (!autoAdoptedLegacyOpfsImages) {
+    autoAdoptedLegacyOpfsImages =
+      manager.backend === "opfs"
+        ? manager
+            .adoptLegacyOpfsImages()
+            .then(() => undefined)
+            .catch(() => undefined)
+        : Promise.resolve();
+  }
+  await autoAdoptedLegacyOpfsImages;
+}
+
+function resolveLegacyActiveDiskImageRef(disks: DiskImageMetadata[], ref: string): DiskImageMetadata | undefined {
+  const trimmed = ref.trim();
+  if (!trimmed) return undefined;
+  // Try to match by disk ID, name, or local filename (supports legacy OPFS `images/` adoptions).
+  const fileName = trimmed.includes("/") ? trimmed.split("/").filter(Boolean).at(-1) ?? trimmed : trimmed;
+  return (
+    disks.find((d) => d.id === trimmed) ??
+    disks.find((d) => d.name === trimmed) ??
+    disks.find((d) => d.source === "local" && d.fileName === trimmed) ??
+    (fileName && fileName !== trimmed ? disks.find((d) => d.source === "local" && d.fileName === fileName) : undefined)
+  );
+}
+
+async function maybeApplyLegacyActiveDiskImageMountHint(
+  manager: DiskManager,
+  disks: DiskImageMetadata[],
+  mounts: MountConfig,
+): Promise<MountConfig> {
+  const legacyConfigState = configManager.getState();
+  const legacyActiveDiskImage = legacyConfigState.effective.activeDiskImage;
+  const legacyActiveDiskImageLocked = legacyConfigState.lockedKeys.has("activeDiskImage");
+  const mountsEmpty = !mounts.hddId && !mounts.cdId;
+
+  // IMPORTANT: Avoid letting a stale stored/static `activeDiskImage` override user-selected mounts
+  // in DiskManager. Only apply it automatically when:
+  // - the user explicitly set it via URL query param (locked key), OR
+  // - mounts are currently empty (fresh profile / first-run migration).
+  if (
+    !legacyActiveDiskImage ||
+    legacyActiveDiskImageApplied === legacyActiveDiskImage ||
+    (!legacyActiveDiskImageLocked && !mountsEmpty)
+  ) {
+    return mounts;
+  }
+
+  const resolved = resolveLegacyActiveDiskImageRef(disks, legacyActiveDiskImage);
+  if (!resolved) return mounts;
+
+  const nextMounts: MountConfig = { ...mounts };
+  if (resolved.kind === "hdd") nextMounts.hddId = resolved.id;
+  if (resolved.kind === "cd") nextMounts.cdId = resolved.id;
+  const changed = nextMounts.hddId !== mounts.hddId || nextMounts.cdId !== mounts.cdId;
+  if (changed) {
+    try {
+      mounts = await manager.setMounts(nextMounts);
+    } catch {
+      // ignore (best-effort; invalid refs should not break the disks panel)
+      return mounts;
+    }
+  }
+
+  legacyActiveDiskImageApplied = legacyActiveDiskImage;
+  return mounts;
+}
+
 async function getBootDiskSelection(manager: DiskManager): Promise<BootDiskSelection> {
+  await ensureLegacyOpfsImagesAdopted(manager);
   const [disks, mounts] = await Promise.all([manager.listDisks(), manager.getMounts()]);
+  const nextMounts = await maybeApplyLegacyActiveDiskImageMountHint(manager, disks, mounts);
   const byId = new Map(disks.map((d) => [d.id, d]));
   return {
-    mounts,
-    hdd: mounts.hddId ? byId.get(mounts.hddId) : undefined,
-    cd: mounts.cdId ? byId.get(mounts.cdId) : undefined,
+    mounts: nextMounts,
+    hdd: nextMounts.hddId ? byId.get(nextMounts.hddId) : undefined,
+    cd: nextMounts.cdId ? byId.get(nextMounts.cdId) : undefined,
   };
 }
 
 async function openBootDisks(manager: DiskManager): Promise<OpenedBootDisks> {
+  await ensureLegacyOpfsImagesAdopted(manager);
   const [disks, mounts] = await Promise.all([manager.listDisks(), manager.getMounts()]);
+  const nextMounts = await maybeApplyLegacyActiveDiskImageMountHint(manager, disks, mounts);
   const byId = new Map(disks.map((d) => [d.id, d]));
   const client = new RuntimeDiskClient();
-  const opened: OpenedBootDisks = { client, mounts };
+  const opened: OpenedBootDisks = { client, mounts: nextMounts };
 
   try {
-    if (mounts.hddId) {
-      const meta = byId.get(mounts.hddId);
-      if (!meta) throw new Error(`Mounted HDD disk not found: ${mounts.hddId}`);
+    if (nextMounts.hddId) {
+      const meta = byId.get(nextMounts.hddId);
+      if (!meta) throw new Error(`Mounted HDD disk not found: ${nextMounts.hddId}`);
       opened.hdd = { meta, open: await client.open(meta, { mode: "cow" }) };
     }
-    if (mounts.cdId) {
-      const meta = byId.get(mounts.cdId);
-      if (!meta) throw new Error(`Mounted CD disk not found: ${mounts.cdId}`);
+    if (nextMounts.cdId) {
+      const meta = byId.get(nextMounts.cdId);
+      if (!meta) throw new Error(`Mounted CD disk not found: ${nextMounts.cdId}`);
       opened.cd = { meta, open: await client.open(meta, { mode: "direct" }) };
     }
     return opened;
@@ -2854,11 +2934,6 @@ function renderDisksPanel(): HTMLElement {
   let manager: DiskManager | null = null;
   let disks: DiskImageMetadata[] = [];
   let mounts: MountConfig = {};
-  let adoptedLegacy = false;
-  // Best-effort compatibility: `AeroConfig.activeDiskImage` is deprecated but older links/harnesses
-  // may still set it via `?disk=...`. Treat it as an initial mount hint (once per session) so those
-  // flows keep working, without using it as a runtime mode toggle.
-  let appliedActiveDiskImage: string | null = null;
 
   function setProgress(phase: string, processed: number, total?: number): void {
     progress.hidden = false;
@@ -3041,58 +3116,11 @@ function renderDisksPanel(): HTMLElement {
       headerLine.textContent = `Disk backend: ${manager.backend}`;
     }
 
-    // Auto-adopt legacy images once per session so users upgrading from the v1
-    // disk storage flow see their existing OPFS `images/` files.
-    if (!adoptedLegacy && manager.backend === "opfs") {
-      adoptedLegacy = true;
-      try {
-        await manager.adoptLegacyOpfsImages();
-      } catch {
-        // ignore
-      }
-    }
+    await ensureLegacyOpfsImagesAdopted(manager);
 
     disks = await manager.listDisks();
     mounts = await manager.getMounts();
-
-    // Legacy `activeDiskImage` compat: if present, try to resolve it to an existing disk and
-    // apply it to DiskManager mounts (once). This keeps `?disk=...` links functional even though
-    // disk selection is now driven by mounts + `setBootDisks` (not by config).
-    //
-    // IMPORTANT: Avoid letting a stale stored/static `activeDiskImage` override user-selected mounts
-    // in DiskManager. Only apply it automatically when:
-    // - the user explicitly set it via URL query param (locked key), OR
-    // - mounts are currently empty (fresh profile / first-run migration).
-    const legacyConfigState = configManager.getState();
-    const legacyActiveDiskImage = legacyConfigState.effective.activeDiskImage;
-    const legacyActiveDiskImageLocked = legacyConfigState.lockedKeys.has("activeDiskImage");
-    const mountsEmpty = !mounts.hddId && !mounts.cdId;
-    if (legacyActiveDiskImage && appliedActiveDiskImage !== legacyActiveDiskImage && (legacyActiveDiskImageLocked || mountsEmpty)) {
-      const trimmed = legacyActiveDiskImage.trim();
-      if (trimmed) {
-        // Try to match by disk ID, name, or local filename (supports legacy OPFS `images/` adoptions).
-        const fileName = trimmed.includes("/") ? trimmed.split("/").filter(Boolean).at(-1) ?? trimmed : trimmed;
-        const resolved =
-          disks.find((d) => d.id === trimmed) ??
-          disks.find((d) => d.name === trimmed) ??
-          disks.find((d) => d.source === "local" && d.fileName === trimmed) ??
-          (fileName && fileName !== trimmed ? disks.find((d) => d.source === "local" && d.fileName === fileName) : undefined);
-        if (resolved) {
-          const nextMounts: MountConfig = { ...mounts };
-          if (resolved.kind === "hdd") nextMounts.hddId = resolved.id;
-          if (resolved.kind === "cd") nextMounts.cdId = resolved.id;
-          const changed = nextMounts.hddId !== mounts.hddId || nextMounts.cdId !== mounts.cdId;
-          if (changed) {
-            try {
-              mounts = await manager.setMounts(nextMounts);
-            } catch {
-              // ignore (best-effort; invalid refs should not break the disks panel)
-            }
-          }
-          appliedActiveDiskImage = legacyActiveDiskImage;
-        }
-      }
-    }
+    mounts = await maybeApplyLegacyActiveDiskImageMountHint(manager, disks, mounts);
 
     // Propagate the current DiskManager mount selection to the runtime workers (CPU + IO) via the
     // coordinator. This is the canonical disk selection flow; `activeDiskImage` is deprecated and
@@ -6920,8 +6948,12 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
       error.textContent = "";
       booting = true;
       update();
-      const config = configManager.getState().effective;
       try {
+        // Ensure the static config (if any) has been loaded before starting workers. Otherwise,
+        // `AeroConfigManager.init()` may emit an update after we start and trigger an avoidable
+        // worker restart.
+        await configInitPromise;
+        const config = configManager.getState().effective;
         const platformFeatures = forceJitCspBlock.checked ? { ...report, jit_dynamic_wasm: false } : report;
         const diskManager = await diskManagerPromise;
         const selection = await getBootDiskSelection(diskManager);
@@ -7043,6 +7075,7 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
       schedulerFrameStateSab = null;
       schedulerSharedFramebuffer = null;
       try {
+        await configInitPromise;
         // Keep restart behavior consistent with the initial start button: use the
         // latest disk mounts from DiskManager, even if the user changed them since
         // the last boot.
