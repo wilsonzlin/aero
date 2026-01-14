@@ -11,7 +11,7 @@ test images where you want input working immediately).
 > 
 > - Keyboard/mouse (canonical; recommended): `aero_virtio_input.inf`
 >   - contract IDs: `SUBSYS_00101AF4` / `SUBSYS_00111AF4` (distinct Device Manager names when subsystem IDs are present)
->   - strict fallback (no `SUBSYS`): `PCI\VEN_1AF4&DEV_1052&REV_01` (when subsystem IDs are not exposed/recognized)
+>   - strict fallback (no `SUBSYS`): `PCI\VEN_1AF4&DEV_1052&REV_01` (when subsystem IDs are not exposed/recognized; Device Manager name: **Aero VirtIO Input Device**)
 > - Tablet/absolute pointer (`aero_virtio_tablet.inf`): `SUBSYS_00121AF4`
 > - Optional legacy filename alias: `virtio-input.inf.disabled` → rename to `virtio-input.inf` to enable (disabled by default).
 >   - Filename-only alias for workflows/tools that still reference `virtio-input.inf`.
