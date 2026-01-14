@@ -5129,6 +5129,30 @@ def main() -> int:
                             result_code = 1
                             break
 
+                    if need_blk_reset:
+                        if saw_virtio_blk_reset_skip:
+                            print(
+                                _virtio_blk_reset_skip_failure_message(
+                                    tail,
+                                    marker_line=virtio_blk_reset_marker_line,
+                                ),
+                                file=sys.stderr,
+                            )
+                            _print_tail(serial_log)
+                            result_code = 1
+                            break
+                        if saw_virtio_blk_reset_fail:
+                            print(
+                                _virtio_blk_reset_fail_failure_message(
+                                    tail,
+                                    marker_line=virtio_blk_reset_marker_line,
+                                ),
+                                file=sys.stderr,
+                            )
+                            _print_tail(serial_log)
+                            result_code = 1
+                            break
+
                     if need_blk_resize:
                         if saw_virtio_blk_resize_skip:
                             print(
