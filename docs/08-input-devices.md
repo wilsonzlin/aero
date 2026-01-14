@@ -1172,12 +1172,13 @@ Virtio-input uses two virtqueues:
 
 For Aero, we should handle LED output events even if we don’t initially surface them to the browser UI. Keeping the round-trip correct avoids subtle guest driver behavior differences (e.g., toggling Caps Lock producing output reports that must be acknowledged).
 
-### Recommended device model: multi-function PCI virtio-input (2 functions)
+### Recommended device model: multi-function PCI virtio-input (2+ functions)
 
-Contract v1 exposes virtio-input as a **single multi-function PCI device** with two virtio-input **functions**:
+Contract v1 exposes virtio-input as a **single multi-function PCI device** with two required virtio-input **functions** (and an optional third):
 
 1. Function 0: virtio-input **keyboard** (`SUBSYS 0x0010`, `header_type = 0x80` to advertise multi-function)
 2. Function 1: virtio-input **mouse** (relative pointer, `SUBSYS 0x0011`)
+3. (Optional) Function 2: virtio-input **tablet** (absolute pointer / `EV_ABS`, `SUBSYS 0x0012`)
 
 This still avoids composite HID device complexity and lets Windows naturally bind the inbox `kbdhid.sys` and `mouhid.sys` clients, while keeping the PCI topology stable for driver matching.
 
@@ -1191,6 +1192,7 @@ Virtio-input is exposed at fixed PCI BDFs (stable across runs/snapshots):
 
 - `00:0A.0` — virtio-input **keyboard** (`aero_devices::pci::profile::VIRTIO_INPUT_KEYBOARD`)
 - `00:0A.1` — virtio-input **mouse** (`aero_devices::pci::profile::VIRTIO_INPUT_MOUSE`)
+- (Optional) `00:0A.2` — virtio-input **tablet** (`aero_devices::pci::profile::VIRTIO_INPUT_TABLET`, when attached)
 
 ### Testing notes
 

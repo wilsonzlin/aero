@@ -8,6 +8,7 @@ const PCI_DEVICE_ID_VIRTIO_INPUT_MODERN: u16 = 0x1052;
 const PCI_SUBSYSTEM_VENDOR_ID_VIRTIO: u16 = 0x1af4;
 const PCI_SUBSYSTEM_DEVICE_ID_VIRTIO_INPUT_KEYBOARD: u16 = 0x0010;
 const PCI_SUBSYSTEM_DEVICE_ID_VIRTIO_INPUT_MOUSE: u16 = 0x0011;
+const PCI_SUBSYSTEM_DEVICE_ID_VIRTIO_INPUT_TABLET: u16 = 0x0012;
 const PCI_REVISION_ID_CONTRACT_V1: u8 = 0x01;
 
 fn cfg_addr(bdf: PciBdf, offset: u16) -> u32 {
@@ -157,10 +158,39 @@ fn virtio_input_is_exposed_as_multifunction_keyboard_and_mouse_pair() {
         .iter()
         .filter(|info| {
             info.matches_vendor_device(PCI_VENDOR_ID_VIRTIO, PCI_DEVICE_ID_VIRTIO_INPUT_MODERN)
+                && info.bdf.bus == keyboard.bdf.bus
+                && info.bdf.device == keyboard.bdf.device
         })
         .count();
-    assert_eq!(
-        virtio_input_functions, 2,
-        "expected exactly two virtio-input functions (keyboard + mouse)"
+    assert!(
+        virtio_input_functions == 2 || virtio_input_functions == 3,
+        "expected virtio-input to expose 2 functions (keyboard + mouse), with an optional third tablet function. Found {virtio_input_functions}"
     );
+
+    // Optional tablet (function 2). Enforce its identity if present.
+    let tablet_bdf = PciBdf::new(keyboard.bdf.bus, keyboard.bdf.device, 2);
+    let tablet = found.iter().copied().find(|info| info.bdf == tablet_bdf);
+    if virtio_input_functions == 3 {
+        let tablet = tablet.expect("virtio-input tablet must exist at the paired function 2 BDF");
+        assert!(
+            tablet.matches_vendor_device(PCI_VENDOR_ID_VIRTIO, PCI_DEVICE_ID_VIRTIO_INPUT_MODERN),
+            "virtio-input tablet must share vendor/device IDs with the keyboard"
+        );
+        assert_eq!(
+            tablet.subsystem_vendor_id, PCI_SUBSYSTEM_VENDOR_ID_VIRTIO,
+            "virtio-input tablet must use the virtio subsystem vendor ID"
+        );
+        assert_eq!(
+            tablet.subsystem_device_id, PCI_SUBSYSTEM_DEVICE_ID_VIRTIO_INPUT_TABLET,
+            "virtio-input tablet must use the tablet subsystem ID"
+        );
+        assert_eq!(
+            tablet.revision_id, PCI_REVISION_ID_CONTRACT_V1,
+            "virtio-input tablet must report REV_01"
+        );
+        assert_eq!(
+            tablet.header_type, 0x00,
+            "virtio-input tablet must not advertise itself as multifunction"
+        );
+    }
 }

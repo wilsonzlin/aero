@@ -1,4 +1,4 @@
-# Virtio Input (virtio 1.1): Keyboard + Mouse
+# Virtio Input (virtio 1.1): Keyboard + Mouse (+ Tablet)
 
 ## Why virtio-input
 
@@ -10,17 +10,19 @@ See also:
 - [`windows7-virtio-driver-contract.md`](./windows7-virtio-driver-contract.md) — Aero’s definitive virtio device/feature/transport contract.
 - [`virtio-input-test-plan.md`](./virtio-input-test-plan.md) — end-to-end validation plan (Rust device-model tests, Win7 driver tests, web runtime routing).
 
-This repo implements virtio-input as a **single multi-function PCI device** (AERO-W7-VIRTIO contract v1):
+This repo implements virtio-input as a **single multi-function PCI device** (AERO-W7-VIRTIO contract v1) with two required functions and an optional third:
 
 - Function 0: `Aero Virtio Keyboard` (`SUBSYS 0x0010`, `header_type = 0x80`)
 - Function 1: `Aero Virtio Mouse` (relative pointer, `SUBSYS 0x0011`)
+- (Optional) Function 2: `Aero Virtio Tablet` (absolute pointer / `EV_ABS`, `SUBSYS 0x0012`)
 
 Each function is a standard virtio 1.1 device (`VIRTIO_ID_INPUT`) with its own virtqueues.
 
-When installed with the in-tree Windows 7 driver (`drivers/windows7/virtio-input/inf/aero_virtio_input.inf`), these two PCI functions appear as **separate named devices** in Windows Device Manager (HIDClass):
+When installed with the in-tree Windows 7 driver(s), these PCI functions appear as **separate named devices** in Windows Device Manager (HIDClass):
 
 - **Aero VirtIO Keyboard**
 - **Aero VirtIO Mouse**
+- (Optional) **Aero VirtIO Tablet** (requires `drivers/windows7/virtio-input/inf/aero_virtio_tablet.inf`)
 
 ---
 
@@ -63,6 +65,7 @@ Virtio-input spans both the Rust device model and the browser runtime wiring. In
     - Fixed PCI BDFs:
       - `00:0A.0` — virtio-input keyboard (`aero_devices::pci::profile::VIRTIO_INPUT_KEYBOARD`)
       - `00:0A.1` — virtio-input mouse (`aero_devices::pci::profile::VIRTIO_INPUT_MOUSE`)
+      - (Optional) `00:0A.2` — virtio-input tablet (`aero_devices::pci::profile::VIRTIO_INPUT_TABLET`, when attached)
     - Interrupts: both **INTx** (baseline) and **MSI-X** are supported.
       - MSI(-X) delivery is wired through `VirtioMsixInterruptSink` → `PlatformInterrupts::trigger_msi`
         (see `crates/aero-machine/src/lib.rs::VirtioMsixInterruptSink`).
@@ -91,10 +94,12 @@ The implementation supports at least:
 - `VIRTIO_INPUT_CFG_ID_SERIAL` (string, currently `"0"`)
 - `VIRTIO_INPUT_CFG_ID_DEVIDS` (`bustype/vendor/product/version`)
 - `VIRTIO_INPUT_CFG_EV_BITS`:
-  - `subsel = 0` → event type bitmap (`EV_SYN`, `EV_KEY`, `EV_REL`, `EV_LED`)
+  - `subsel = 0` → event type bitmap (varies by device kind; includes e.g. `EV_SYN`, `EV_KEY`, `EV_REL`, `EV_ABS`, `EV_LED`)
   - `subsel = EV_KEY` → supported key/button bitmap
   - `subsel = EV_REL` → supported rel bitmap (`REL_X`, `REL_Y`, `REL_WHEEL`, `REL_HWHEEL`)
+  - `subsel = EV_ABS` → supported abs bitmap (`ABS_X`, `ABS_Y`, tablet only)
   - `subsel = EV_LED` → supported LED bitmap (`LED_*`, keyboard only)
+- `VIRTIO_INPUT_CFG_ABS_INFO` (tablet only): axis range metadata for `ABS_X`/`ABS_Y` (used for scaling)
 
 ---
 
