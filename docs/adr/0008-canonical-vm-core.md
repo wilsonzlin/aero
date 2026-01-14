@@ -55,10 +55,16 @@ All code that wants to *construct and run the Aero VM/machine* (including `crate
     - Mouse horizontal wheel: `Machine::inject_virtio_hwheel(delta)`
     - Mouse wheel (combined): `Machine::inject_virtio_wheel2(wheel, hwheel)`
     - Driver readiness probes (useful for host-side routing): `Machine::virtio_input_keyboard_driver_ok()` / `Machine::virtio_input_mouse_driver_ok()`
-  - USB attachment hooks (UHCI, when enabled):
-    - Attach/detach at UHCI root ports: `Machine::usb_attach_root(port, model)` / `Machine::usb_detach_root(port)`
-    - Attach/detach at a full USB topology path: `Machine::usb_attach_path(path, model)` / `Machine::usb_detach_path(path)`
-      - `path[0]` is the UHCI root port (0-based); downstream hub ports are 1-based per the USB hub spec.
+  - USB attachment hooks (when enabled):
+    - UHCI (USB 1.1): `Machine::usb_attach_root(port, model)` / `Machine::usb_detach_root(port)` and
+      `Machine::usb_attach_path(path, model)` / `Machine::usb_detach_path(path)`
+    - EHCI (USB 2.0): `Machine::usb_ehci_attach_root(port, model)` / `Machine::usb_ehci_detach_root(port)` and
+      `Machine::usb_ehci_attach_path(path, model)` / `Machine::usb_ehci_detach_path(path)`
+    - xHCI (USB 3.x): `Machine::usb_xhci_attach_root(port, model)` / `Machine::usb_xhci_detach_root(port)` and
+      `Machine::usb_xhci_attach_at_path(path, model)` / `Machine::usb_xhci_detach_at_path(path)`
+    - Path semantics (all controller types):
+      - `path[0]` is the root port index (0-based)
+      - `path[1..]` are downstream hub port numbers (1-based per the USB hub spec)
 - **Debug/testing helpers**
   - Read guest physical memory: `Machine::read_physical_u8/u16/bytes(...)`
 - **Snapshots (via `aero-snapshot`)**
