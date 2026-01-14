@@ -557,7 +557,7 @@ Limitations (bring-up):
   - The pixel shader bytecode is generated at runtime by a tiny “ps_2_0 token builder” in `src/aerogpu_d3d9_driver.cpp` (no offline shader generation step is required).
   - The current implementation supports up to 4 texture stages (`MaxTextureBlendStages = 4`) and uses `TEXCOORD0` for all stages (no `D3DTSS_TEXCOORDINDEX` support yet).
   - Fixed-function fog is implemented for a minimal subset (linear fog via `D3DRS_FOG*`) in the fixed-function fallback pixel shaders; EXP/EXP2 and full fog semantics are still TODO.
-    - Fog uses `TEXCOORD0.z`. For `D3DFVF_XYZRHW | D3DFVF_DIFFUSE` (RHW_COLOR), the base passthrough VS already provides this coordinate (`oT0=v0`), so fog does not require a dedicated fog VS variant.
+    - Fog uses `TEXCOORD0.z` and the fixed-function fog VS variants pack post-projection depth (`clip_z / clip_w`) into that channel.
   - More complete fixed-function lighting (specular, spot cones, more lights, etc) is still TODO.
 - **Shader int/bool constants are supported:** `DeviceSetShaderConstI/B` (`device_set_shader_const_i_impl()` / `device_set_shader_const_b_impl()` in `src/aerogpu_d3d9_driver.cpp`) update the UMD-side caches + state blocks and emit constant updates into the AeroGPU command stream (`AEROGPU_CMD_SET_SHADER_CONSTANTS_I/B`).
 - **Bring-up no-ops:** `pfnSetConvolutionMonoKernel` and `pfnSetDialogBoxMode` are wired as `S_OK` no-ops via

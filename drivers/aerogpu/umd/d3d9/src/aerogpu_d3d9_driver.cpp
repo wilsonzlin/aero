@@ -6145,18 +6145,12 @@ HRESULT ensure_fixedfunc_pipeline_locked(Device* dev) {
   // variants. In that case, disable fog in the fixed-function PS as well so we
   // don't read an invalid fog coordinate from TEXCOORD0.z.
   //
-  // Note: RHW_COLOR already outputs TEXCOORD0 sourced from position in the base
-  // VS (`fixedfunc::kVsPassthroughPosColor` writes `oT0=v0`), so it can support
-  // fog without a dedicated fog VS variant.
+  // Note: for the RHW variants, fog requires post-projection depth
+  // (`clip_z / clip_w`), so the dedicated fog VS variants must explicitly divide
+  // by w and pack the result into TEXCOORD0.z.
   if (use_fog_vs) {
     bool fog_coord_available =
         needs_lighting ? (vs_desc.lit_fog.bytes != nullptr) : (vs_desc.fog.bytes != nullptr);
-    if (!fog_coord_available) {
-      // The fixed-function fog PS reads TEXCOORD0.z. RHW_COLOR has no TEX1, so
-      // its base VS writes TEXCOORD0 from position and fog can still work without
-      // a dedicated fog VS variant.
-      fog_coord_available = (variant == FixedFuncVariant::RHW_COLOR);
-    }
     if (!fog_coord_available) {
       ps_key.fog_enabled = false;
       use_fog_vs = false;
