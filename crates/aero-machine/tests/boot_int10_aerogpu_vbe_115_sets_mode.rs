@@ -1,8 +1,6 @@
 use aero_devices::pci::profile::AEROGPU_BAR1_VRAM_INDEX;
-use aero_machine::{Machine, MachineConfig, RunExit};
+use aero_machine::{Machine, MachineConfig, RunExit, VBE_LFB_OFFSET};
 use pretty_assertions::assert_eq;
-
-const VBE_LFB_OFFSET: u64 = 0x20000;
 
 fn build_int10_vbe_115_set_mode_boot_sector() -> [u8; 512] {
     let mut sector = [0u8; 512];
@@ -71,7 +69,7 @@ fn boot_int10_aerogpu_vbe_115_sets_mode_and_lfb_is_visible_via_bar1() {
 
     // The BIOS should report the LFB base as BAR1_BASE + 0x20000.
     let lfb_base = u64::from(m.vbe_lfb_base());
-    assert_eq!(lfb_base, bar1_base + VBE_LFB_OFFSET);
+    assert_eq!(lfb_base, bar1_base + VBE_LFB_OFFSET as u64);
 
     // Write a red pixel at (0,0) in VBE packed-pixel B,G,R,X format.
     m.write_physical_u32(lfb_base, 0x00FF_0000);

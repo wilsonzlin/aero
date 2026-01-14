@@ -150,17 +150,13 @@ fn aerogpu_vbe_failed_mode_set_does_not_clear_existing_framebuffer() {
     m.reset();
 
     // Resolve the AeroGPU BAR1 base assigned by BIOS POST and compute the VBE LFB physical base.
-    let pci_cfg = m.pci_config_ports().expect("pc platform enabled");
-    let bar1_base = {
-        let mut pci_cfg = pci_cfg.borrow_mut();
-        pci_cfg
-            .bus_mut()
-            .device_config(aero_devices::pci::profile::AEROGPU.bdf)
-            .and_then(|cfg| cfg.bar_range(aero_devices::pci::profile::AEROGPU_BAR1_VRAM_INDEX))
-            .expect("missing AeroGPU BAR1")
-            .base
-    };
-    let lfb_base = bar1_base + VBE_LFB_OFFSET as u64;
+    let bdf = m.aerogpu().expect("AeroGPU should be present when enable_aerogpu=true");
+    let bar1_base = m
+        .pci_bar_base(bdf, aero_devices::pci::profile::AEROGPU_BAR1_VRAM_INDEX)
+        .unwrap_or(0);
+    assert_ne!(bar1_base, 0, "missing/zero AeroGPU BAR1 base");
+    let lfb_base = u64::from(m.vbe_lfb_base());
+    assert_eq!(lfb_base, bar1_base + VBE_LFB_OFFSET as u64);
 
     const PATTERN: [u8; 16] = [0xA5; 16];
     m.write_physical(lfb_base, &PATTERN);

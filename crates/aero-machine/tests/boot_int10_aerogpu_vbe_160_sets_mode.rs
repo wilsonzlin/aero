@@ -1,8 +1,6 @@
-use aero_devices::pci::profile::AEROGPU;
-use aero_machine::{Machine, MachineConfig, RunExit};
+use aero_devices::pci::profile::AEROGPU_BAR1_VRAM_INDEX;
+use aero_machine::{Machine, MachineConfig, RunExit, VBE_LFB_OFFSET};
 use pretty_assertions::assert_eq;
-
-const VBE_LFB_OFFSET: u64 = 0x20000;
 
 fn build_int10_vbe_160_set_mode_boot_sector() -> [u8; 512] {
     let mut sector = [0u8; 512];
@@ -63,23 +61,15 @@ fn boot_int10_aerogpu_vbe_160_sets_mode_and_lfb_is_visible_via_bar1() {
     m.set_disk_image(boot.to_vec()).unwrap();
     m.reset();
 
-    let bar1_base = {
-        let pci_cfg = m
-            .pci_config_ports()
-            .expect("pc platform should expose pci_cfg");
-        let mut pci_cfg = pci_cfg.borrow_mut();
-        let cfg = pci_cfg
-            .bus_mut()
-            .device_config(AEROGPU.bdf)
-            .expect("AeroGPU PCI function should exist");
-        cfg.bar_range(1).map(|range| range.base).unwrap_or(0)
-    };
+    let bdf = m.aerogpu().expect("AeroGPU should be present");
+    let bar1_base = m.pci_bar_base(bdf, AEROGPU_BAR1_VRAM_INDEX).unwrap_or(0);
     assert_ne!(bar1_base, 0, "AeroGPU BAR1 base should be assigned by BIOS POST");
 
     run_until_halt(&mut m);
 
-    // The AeroGPU VBE LFB should begin at BAR1_BASE + 0x20000.
-    let lfb_base = bar1_base + VBE_LFB_OFFSET;
+    // The BIOS should report the LFB base as BAR1_BASE + VBE_LFB_OFFSET.
+    let lfb_base = u64::from(m.vbe_lfb_base());
+    assert_eq!(lfb_base, bar1_base + VBE_LFB_OFFSET as u64);
 
     // Write a red pixel at (0,0) in VBE packed-pixel B,G,R,X format.
     m.write_physical_u32(lfb_base, 0x00FF_0000);
@@ -88,4 +78,3 @@ fn boot_int10_aerogpu_vbe_160_sets_mode_and_lfb_is_visible_via_bar1() {
     assert_eq!(m.display_resolution(), (1280, 720));
     assert_eq!(m.display_framebuffer()[0], 0xFF00_00FF);
 }
-
