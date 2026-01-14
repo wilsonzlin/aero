@@ -2566,7 +2566,7 @@ static void print_usage(void)
     wprintf(L"             [--counters [--json]]\n");
     wprintf(L"             [--counters-json]\n");
     wprintf(L"             [--reset-counters]\n");
-    wprintf(L"             [--get-log-mask | --set-log-mask 0xMASK]\n");
+    wprintf(L"             [--get-log-mask | --set-log-mask 0xMASK] [--json]\n");
     wprintf(L"             [--ioctl-bad-xfer-packet | --ioctl-bad-write-report |\n");
     wprintf(L"              --ioctl-bad-read-xfer-packet | --ioctl-bad-read-report |\n");
     wprintf(L"              --ioctl-bad-get-input-xfer-packet | --ioctl-bad-get-input-report]\n");
@@ -2580,7 +2580,8 @@ static void print_usage(void)
     wprintf(L"Options:\n");
     wprintf(L"  --list          List all present HID interfaces and exit\n");
     wprintf(L"  --selftest      Validate virtio-input HID descriptor contract and exit (0=pass, 1=fail)\n");
-    wprintf(L"  --json          With --list/--selftest/--state/--interrupt-info/--counters, emit machine-readable JSON on stdout\n");
+    wprintf(L"  --json          With --list/--selftest/--state/--interrupt-info/--counters/--get-log-mask/--set-log-mask,\n");
+    wprintf(L"                 emit machine-readable JSON on stdout\n");
     wprintf(L"  --quiet         Suppress enumeration / device summary output (keeps stdout clean for scraping)\n");
     wprintf(L"  --keyboard      Prefer/select the keyboard top-level collection (Usage=Keyboard)\n");
     wprintf(L"  --mouse         Prefer/select the mouse top-level collection (Usage=Mouse)\n");
@@ -5539,7 +5540,7 @@ static int ioctl_get_input_report(const SELECTED_DEVICE *dev)
     return 1;
 }
 
-static int vioinput_get_log_mask(const SELECTED_DEVICE *dev, DWORD *mask_out)
+static int vioinput_get_log_mask(const SELECTED_DEVICE *dev, DWORD *mask_out, int quiet)
 {
     DWORD bytes = 0;
     BOOL ok;
@@ -5550,16 +5551,20 @@ static int vioinput_get_log_mask(const SELECTED_DEVICE *dev, DWORD *mask_out)
 
     *mask_out = 0;
     ok = DeviceIoControl(dev->handle, IOCTL_VIOINPUT_GET_LOG_MASK, NULL, 0, mask_out, (DWORD)sizeof(*mask_out), &bytes,
-                         NULL);
+                          NULL);
     if (!ok || bytes < sizeof(*mask_out)) {
-        print_last_error_w(L"DeviceIoControl(IOCTL_VIOINPUT_GET_LOG_MASK)");
+        if (quiet) {
+            print_last_error_file_w(stderr, L"DeviceIoControl(IOCTL_VIOINPUT_GET_LOG_MASK)");
+        } else {
+            print_last_error_w(L"DeviceIoControl(IOCTL_VIOINPUT_GET_LOG_MASK)");
+        }
         return 0;
     }
 
     return 1;
 }
 
-static int vioinput_set_log_mask(const SELECTED_DEVICE *dev, DWORD mask)
+static int vioinput_set_log_mask(const SELECTED_DEVICE *dev, DWORD mask, int quiet)
 {
     DWORD bytes = 0;
     BOOL ok;
@@ -5569,17 +5574,223 @@ static int vioinput_set_log_mask(const SELECTED_DEVICE *dev, DWORD mask)
     }
 
     if ((dev->desired_access & GENERIC_WRITE) == 0) {
-        wprintf(L"Device was not opened with GENERIC_WRITE; cannot set log mask\n");
+        if (quiet) {
+            fwprintf(stderr, L"Device was not opened with GENERIC_WRITE; cannot set log mask\n");
+        } else {
+            wprintf(L"Device was not opened with GENERIC_WRITE; cannot set log mask\n");
+        }
         return 0;
     }
 
     ok = DeviceIoControl(dev->handle, IOCTL_VIOINPUT_SET_LOG_MASK, &mask, (DWORD)sizeof(mask), NULL, 0, &bytes, NULL);
     if (!ok) {
-        print_last_error_w(L"DeviceIoControl(IOCTL_VIOINPUT_SET_LOG_MASK)");
+        if (quiet) {
+            print_last_error_file_w(stderr, L"DeviceIoControl(IOCTL_VIOINPUT_SET_LOG_MASK)");
+        } else {
+            print_last_error_w(L"DeviceIoControl(IOCTL_VIOINPUT_SET_LOG_MASK)");
+        }
         return 0;
     }
 
     return 1;
+}
+
+static void print_vioinput_log_mask_json(const SELECTED_DEVICE *dev, DWORD actual_mask, int have_requested, DWORD requested_mask)
+{
+    int is_virtio = 0;
+    const WCHAR *kind = NULL;
+    WCHAR manufacturer[256];
+    WCHAR product[256];
+    WCHAR serial[256];
+    int manufacturer_valid = 0;
+    int product_valid = 0;
+    int serial_valid = 0;
+
+    if (dev == NULL) {
+        wprintf(L"{\"DiagnosticsMask\":\"0x%08lX\",\"DiagnosticsMaskValue\":%lu}\n", (unsigned long)actual_mask,
+                (unsigned long)actual_mask);
+        return;
+    }
+
+    if (dev->attr_valid) {
+        is_virtio = is_virtio_input_device(&dev->attr);
+    }
+    if (dev->caps_valid) {
+        const int is_keyboard = dev->caps.UsagePage == 0x01 && dev->caps.Usage == 0x06;
+        int is_mouse = dev->caps.UsagePage == 0x01 && dev->caps.Usage == 0x02;
+        const int is_consumer = dev->caps.UsagePage == 0x0C && dev->caps.Usage == 0x01;
+        int is_tablet = 0;
+
+        if (is_virtio && dev->attr_valid && dev->attr.ProductID == VIRTIO_INPUT_PID_TABLET) {
+            is_tablet = 1;
+        } else if (is_virtio) {
+            // Heuristic: tablet shares the mouse top-level usage, so distinguish by report descriptor length.
+            if (dev->report_desc_valid && dev->report_desc_len == VIRTIO_INPUT_EXPECTED_TABLET_REPORT_DESC_LEN) {
+                is_tablet = 1;
+            } else if (dev->hid_report_desc_valid &&
+                       dev->hid_report_desc_len == VIRTIO_INPUT_EXPECTED_TABLET_REPORT_DESC_LEN) {
+                is_tablet = 1;
+            }
+        }
+        if (is_tablet) {
+            is_mouse = 0;
+        }
+
+        if (is_tablet) {
+            kind = L"tablet";
+        } else if (is_keyboard) {
+            kind = L"keyboard";
+        } else if (is_mouse) {
+            kind = L"mouse";
+        } else if (is_consumer) {
+            kind = L"consumer";
+        } else {
+            kind = L"other";
+        }
+    }
+
+    if (HidD_GetManufacturerString(dev->handle, manufacturer, sizeof(manufacturer))) {
+        manufacturer[(sizeof(manufacturer) / sizeof(manufacturer[0])) - 1] = L'\0';
+        manufacturer_valid = 1;
+    }
+    if (HidD_GetProductString(dev->handle, product, sizeof(product))) {
+        product[(sizeof(product) / sizeof(product[0])) - 1] = L'\0';
+        product_valid = 1;
+    }
+    if (HidD_GetSerialNumberString(dev->handle, serial, sizeof(serial))) {
+        serial[(sizeof(serial) / sizeof(serial[0])) - 1] = L'\0';
+        serial_valid = 1;
+    }
+
+    wprintf(L"{\n");
+    wprintf(L"  \"index\": %lu,\n", (unsigned long)dev->index);
+    wprintf(L"  \"path\": ");
+    json_print_string_w(dev->path);
+    wprintf(L",\n");
+    wprintf(L"  \"vid\": ");
+    if (dev->attr_valid) {
+        wprintf(L"%u", (unsigned)dev->attr.VendorID);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"pid\": ");
+    if (dev->attr_valid) {
+        wprintf(L"%u", (unsigned)dev->attr.ProductID);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"isVirtio\": ");
+    if (dev->attr_valid) {
+        wprintf(is_virtio ? L"true" : L"false");
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"kind\": ");
+    if (kind != NULL) {
+        json_print_string_w(kind);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"ver\": ");
+    if (dev->attr_valid) {
+        wprintf(L"%u", (unsigned)dev->attr.VersionNumber);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"manufacturer\": ");
+    if (manufacturer_valid) {
+        json_print_string_w(manufacturer);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"product\": ");
+    if (product_valid) {
+        json_print_string_w(product);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"serial\": ");
+    if (serial_valid) {
+        json_print_string_w(serial);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"usagePage\": ");
+    if (dev->caps_valid) {
+        wprintf(L"%u", (unsigned)dev->caps.UsagePage);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"usage\": ");
+    if (dev->caps_valid) {
+        wprintf(L"%u", (unsigned)dev->caps.Usage);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"inputLen\": ");
+    if (dev->caps_valid) {
+        wprintf(L"%u", (unsigned)dev->caps.InputReportByteLength);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"outputLen\": ");
+    if (dev->caps_valid) {
+        wprintf(L"%u", (unsigned)dev->caps.OutputReportByteLength);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"featureLen\": ");
+    if (dev->caps_valid) {
+        wprintf(L"%u", (unsigned)dev->caps.FeatureReportByteLength);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"reportDescLen\": ");
+    if (dev->report_desc_valid) {
+        wprintf(L"%lu", dev->report_desc_len);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"hidReportDescLen\": ");
+    if (dev->hid_report_desc_valid) {
+        wprintf(L"%lu", dev->hid_report_desc_len);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"desiredAccess\": %lu,\n", (unsigned long)dev->desired_access);
+    wprintf(L"  \"writeAccess\": %ls,\n", ((dev->desired_access & GENERIC_WRITE) != 0) ? L"true" : L"false");
+    wprintf(L"  \"RequestedDiagnosticsMask\": ");
+    if (have_requested) {
+        wprintf(L"\"0x%08lX\"", (unsigned long)requested_mask);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"RequestedDiagnosticsMaskValue\": ");
+    if (have_requested) {
+        wprintf(L"%lu", (unsigned long)requested_mask);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"DiagnosticsMask\": \"0x%08lX\",\n", (unsigned long)actual_mask);
+    wprintf(L"  \"DiagnosticsMaskValue\": %lu\n", (unsigned long)actual_mask);
+    wprintf(L"}\n");
 }
 
 static int hidd_get_input_report(const SELECTED_DEVICE *dev)
@@ -6697,6 +6908,9 @@ int wmain(int argc, wchar_t **argv)
             opt.query_counters_json = 1;
             opt.quiet = 1;
         }
+        if (opt.get_log_mask || opt.have_set_log_mask) {
+            opt.quiet = 1;
+        }
     }
 
     if ((opt.want_keyboard + opt.want_mouse + opt.want_consumer + opt.want_tablet) > 1) {
@@ -6711,8 +6925,10 @@ int wmain(int argc, wchar_t **argv)
         return 2;
     }
     if (opt.json &&
-        !(opt.list_only || opt.selftest || opt.query_state || opt.query_interrupt_info || opt.query_counters)) {
-        wprintf(L"--json is only supported with --list, --selftest, --state, --interrupt-info, or --counters.\n");
+        !(opt.list_only || opt.selftest || opt.query_state || opt.query_interrupt_info || opt.query_counters ||
+          opt.get_log_mask || opt.have_set_log_mask)) {
+        wprintf(L"--json is only supported with --list, --selftest, --state, --interrupt-info, --counters,\n");
+        wprintf(L"or --get-log-mask/--set-log-mask.\n");
         return 2;
     }
     if (opt.selftest &&
@@ -7097,19 +7313,25 @@ int wmain(int argc, wchar_t **argv)
 
     if (opt.have_set_log_mask) {
         DWORD mask = opt.set_log_mask;
-        wprintf(L"\nSetting virtio-input DiagnosticsMask to 0x%08lX...\n", mask);
-        if (!vioinput_set_log_mask(&dev, mask)) {
+        if (!opt.json) {
+            wprintf(L"\nSetting virtio-input DiagnosticsMask to 0x%08lX...\n", mask);
+        }
+        if (!vioinput_set_log_mask(&dev, mask, opt.quiet)) {
             free_selected_device(&dev);
             return 1;
         }
     }
     if (opt.get_log_mask || opt.have_set_log_mask) {
         DWORD mask = 0;
-        if (!vioinput_get_log_mask(&dev, &mask)) {
+        if (!vioinput_get_log_mask(&dev, &mask, opt.quiet)) {
             free_selected_device(&dev);
             return 1;
         }
-        wprintf(L"virtio-input DiagnosticsMask: 0x%08lX\n", mask);
+        if (opt.json) {
+            print_vioinput_log_mask_json(&dev, mask, opt.have_set_log_mask, opt.set_log_mask);
+        } else {
+            wprintf(L"virtio-input DiagnosticsMask: 0x%08lX\n", mask);
+        }
         free_selected_device(&dev);
         return 0;
     }

@@ -33,7 +33,7 @@ For the consolidated end-to-end virtio-input validation plan (device model + dri
 - Can query a virtio-input interrupt diagnostics snapshot (MSI-X vs INTx, vector routing) via:
   - `DeviceIoControl(IOCTL_VIOINPUT_QUERY_INTERRUPT_INFO)`
   - `hidtest.exe --interrupt-info` / `hidtest.exe --interrupt-info --json` / `hidtest.exe --interrupt-info-json`
-- Can get/set the virtio-input driver's diagnostics log mask at runtime (`--get-log-mask`, `--set-log-mask`) when using a DBG/diagnostics build of the driver.
+- Can get/set the virtio-input driver's diagnostics log mask at runtime (`--get-log-mask`, `--set-log-mask`, optional `--json`) when using a DBG/diagnostics build of the driver.
 - Optionally writes a keyboard LED output report (`ReportID=1`) via:
   - `WriteFile` (exercises `IOCTL_HID_WRITE_REPORT`)
   - `HidD_SetOutputReport` (exercises `IOCTL_HID_SET_OUTPUT_REPORT`)
@@ -235,6 +235,7 @@ Tip: combine with `--counters` / `--counters-json` to verify reset immediately (
 
 ```bat
 hidtest.exe --reset-counters --counters
+hidtest.exe --reset-counters --counters --json
 hidtest.exe --reset-counters --counters-json
 ```
 
@@ -242,10 +243,17 @@ Toggle the virtio-input driver diagnostics log mask at runtime (**DBG/diagnostic
 
 ```bat
 hidtest.exe --get-log-mask
+hidtest.exe --get-log-mask --json
 hidtest.exe --set-log-mask 0x8000000F
+hidtest.exe --set-log-mask 0x8000000F --json
 ```
 
 `--get-log-mask` / `--set-log-mask` are intended as standalone actions (similar to `--state` / `--interrupt-info` / `--counters`); they are mutually exclusive with other report/IOCTL test modes.
+
+With `--json`, the tool prints a single JSON object including the selected HID interface metadata plus:
+
+- `RequestedDiagnosticsMask` / `RequestedDiagnosticsMaskValue` (null unless `--set-log-mask` is used)
+- `DiagnosticsMask` / `DiagnosticsMaskValue` (the post-set value read back from the driver)
 
 This updates the same `DiagnosticsMask` that is normally read from the registry at `DriverEntry`:
 
@@ -276,8 +284,8 @@ machine-readable JSON object on stdout:
 - `KeyboardLedSupportedMask` — EV_BITS(EV_LED) support mask (0 means EV_LED not advertised / LED output disabled)
 - `StatusQActive` — whether the driver is currently sending LED events on statusq
 
-The JSON output (for `--state-json`, `--interrupt-info-json`, and `--counters-json`) also includes the selected HID
-interface metadata:
+The JSON output (for `--state-json`, `--interrupt-info-json`, `--counters-json`, and `--get-log-mask --json` /
+`--set-log-mask --json`) also includes the selected HID interface metadata:
 
 - `index`, `path`
 - `vid`/`pid`/`ver`, `isVirtio`
