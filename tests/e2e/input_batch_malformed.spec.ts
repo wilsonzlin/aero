@@ -162,7 +162,9 @@ test("IO worker survives malformed in:input-batch messages", async ({ page }) =>
 
       const caseA = await runCase(() => {
         // byteLength not divisible by 4.
-        const buffer = new ArrayBuffer(6);
+        // Use >= header size so a regression that checks "too small" first but still constructs an
+        // Int32Array could still crash (RangeError) without an explicit alignment guard.
+        const buffer = new ArrayBuffer(10);
         ioWorker.postMessage({ type: "in:input-batch", buffer }, [buffer]);
       });
 
