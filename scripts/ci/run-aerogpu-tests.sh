@@ -39,6 +39,9 @@ run cargo test -p aero-protocol --locked
 run cargo test -p aero-devices-gpu --locked
 
 run cargo test -p aero-machine --locked \
+  --test aerogpu_pci_enumeration \
+  --test aerogpu_immediate_backend_completes_fence \
+  --test aerogpu_features \
   --test aerogpu_submission_bridge \
   --test aerogpu_deferred_fence_completion \
   --test aerogpu_complete_fence_gating \
