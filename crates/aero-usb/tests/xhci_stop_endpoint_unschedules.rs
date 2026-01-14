@@ -41,8 +41,6 @@ fn stop_endpoint_command_unschedules_active_endpoint() {
 
     let mut xhci = XhciController::with_port_count(1);
     xhci.set_dcbaap(dcbaa);
-    // The controller only executes transfers while RUN is set.
-    xhci.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
     xhci.attach_device(0, Box::new(AlwaysInDevice));
     while xhci.pop_pending_event().is_some() {}
     // Transfers only execute while the controller is running (USBCMD.RUN=1).
