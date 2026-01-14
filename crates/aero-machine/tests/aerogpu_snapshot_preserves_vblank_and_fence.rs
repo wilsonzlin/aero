@@ -27,7 +27,9 @@ fn aerogpu_snapshot_preserves_vblank_seq_and_completed_fence() {
     };
 
     let mut vm = Machine::new(cfg.clone()).unwrap();
-    let bdf = vm.aerogpu().expect("AeroGPU device should be present");
+    let bdf = vm
+        .aerogpu_bdf()
+        .expect("AeroGPU device should be present");
     let bar0 = vm
         .pci_bar_base(bdf, AEROGPU_BAR0_INDEX)
         .expect("AeroGPU BAR0 should be mapped");
@@ -161,7 +163,7 @@ fn aerogpu_snapshot_preserves_vblank_seq_and_completed_fence() {
     restored.restore_snapshot_bytes(&snap).unwrap();
 
     let bdf = restored
-        .aerogpu()
+        .aerogpu_bdf()
         .expect("AeroGPU device should be present");
     let bar0 = restored
         .pci_bar_base(bdf, AEROGPU_BAR0_INDEX)

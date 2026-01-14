@@ -20,7 +20,9 @@ fn aerogpu_legacy_vbe_lfb_banked_window_maps_into_vram() {
     };
     let mut m = Machine::new(cfg).unwrap();
 
-    let bdf = m.aerogpu().expect("expected AeroGPU device to be present");
+    let bdf = m
+        .aerogpu_bdf()
+        .expect("expected AeroGPU device to be present");
     let bar1_base = m
         .pci_bar_base(bdf, aero_devices::pci::profile::AEROGPU_BAR1_VRAM_INDEX)
         .expect("expected AeroGPU BAR1 to be present");

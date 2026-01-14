@@ -24,7 +24,9 @@ fn new_minimal_aerogpu_machine() -> Machine {
 }
 
 fn enable_bus_mastering(m: &mut Machine) {
-    let bdf = m.aerogpu().expect("expected AeroGPU device to be present");
+    let bdf = m
+        .aerogpu_bdf()
+        .expect("expected AeroGPU device to be present");
     let pci_cfg = m.pci_config_ports().expect("pc platform enabled");
     let mut pci_cfg = pci_cfg.borrow_mut();
     let cfg = pci_cfg
@@ -54,7 +56,9 @@ fn aerogpu_submission_queue_overflow_completes_dropped_fence() {
     m.aerogpu_enable_submission_bridge();
     enable_bus_mastering(&mut m);
 
-    let bdf = m.aerogpu().expect("expected AeroGPU device to be present");
+    let bdf = m
+        .aerogpu_bdf()
+        .expect("expected AeroGPU device to be present");
     let bar0 = m
         .pci_bar_base(bdf, AEROGPU_BAR0_INDEX)
         .expect("expected AeroGPU BAR0 to be assigned by BIOS");

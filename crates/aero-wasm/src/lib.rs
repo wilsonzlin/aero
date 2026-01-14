@@ -5666,7 +5666,7 @@ impl Machine {
     ///
     /// Returns `0` when AeroGPU is not present or when the BAR is missing/unassigned.
     pub fn aerogpu_bar_base(&self, bar: u8) -> u32 {
-        let Some(bdf) = self.inner.aerogpu() else {
+        let Some(bdf) = self.inner.aerogpu_bdf() else {
             return 0;
         };
         let Some(base) = self.inner.pci_bar_base(bdf, bar) else {

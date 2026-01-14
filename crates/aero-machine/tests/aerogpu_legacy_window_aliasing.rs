@@ -20,7 +20,7 @@ fn aerogpu_legacy_window_is_aliased_into_vram_aperture() {
     };
     let mut m = Machine::new(cfg).unwrap();
     let bdf = m
-        .aerogpu()
+        .aerogpu_bdf()
         .expect("AeroGPU should be present when enable_aerogpu=true");
     let bar1_base = m
         .pci_bar_base(bdf, aero_devices::pci::profile::AEROGPU_BAR1_VRAM_INDEX)

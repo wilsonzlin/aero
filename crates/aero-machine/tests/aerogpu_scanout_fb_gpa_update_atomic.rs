@@ -21,7 +21,7 @@ fn aerogpu_scanout_fb_gpa_update_is_atomic_at_hi_commit() {
     })
     .unwrap();
 
-    let bdf = m.aerogpu().expect("AeroGPU device should be present");
+    let bdf = m.aerogpu_bdf().expect("AeroGPU device should be present");
     let bar0 = m
         .pci_bar_base(bdf, AEROGPU_BAR0_INDEX)
         .expect("AeroGPU BAR0 should be mapped");

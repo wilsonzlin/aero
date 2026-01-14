@@ -25,7 +25,7 @@ fn aerogpu_scanout0_enable_publishes_wddm_scanout_state() {
     m.set_scanout_state(Some(scanout_state.clone()));
     m.reset();
 
-    let bdf = m.aerogpu().expect("AeroGPU device missing");
+    let bdf = m.aerogpu_bdf().expect("AeroGPU device missing");
 
     // Enable PCI MMIO decode for BAR0.
     let pci_cfg = m.pci_config_ports().expect("PCI config ports missing");

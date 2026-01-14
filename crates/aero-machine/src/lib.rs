@@ -140,7 +140,7 @@ use memory::{
     MmioHandler, SparseMemory,
 };
 
-use crate::aerogpu::AeroGpuMmioDevice;
+pub use crate::aerogpu::AeroGpuMmioDevice;
 
 mod pci_firmware;
 use pci_firmware::SharedPciConfigPortsBiosAdapter;
@@ -6910,7 +6910,7 @@ impl Machine {
     /// `VID:DID = A3A0:0001` (see `docs/abi/aerogpu-pci-identity.md`). This helper allows
     /// integration tests and wasm glue code to detect whether an AeroGPU device model is attached
     /// without reaching into machine internals.
-    pub fn aerogpu(&self) -> Option<PciBdf> {
+    pub fn aerogpu_bdf(&self) -> Option<PciBdf> {
         let pci_cfg = self.pci_config_ports()?;
         let mut pci_cfg = pci_cfg.borrow_mut();
         let bus = pci_cfg.bus_mut();
@@ -7063,8 +7063,15 @@ impl Machine {
     }
 
     /// Returns the AeroGPU BAR0 MMIO device model (register block), if present.
-    pub fn aerogpu_mmio(&self) -> Option<Rc<RefCell<AeroGpuMmioDevice>>> {
+    pub fn aerogpu(&self) -> Option<Rc<RefCell<AeroGpuMmioDevice>>> {
         self.aerogpu_mmio.clone()
+    }
+
+    /// Returns the AeroGPU BAR0 MMIO device model (register block), if present.
+    ///
+    /// Deprecated alias for [`Machine::aerogpu`].
+    pub fn aerogpu_mmio(&self) -> Option<Rc<RefCell<AeroGpuMmioDevice>>> {
+        self.aerogpu()
     }
 
     /// Returns the AeroGPU BAR0 MMIO base (register block), if present.
@@ -7072,7 +7079,7 @@ impl Machine {
     /// This consults the machine's canonical PCI config space (the same one exposed to the guest)
     /// and therefore reflects BIOS POST / resource allocation.
     pub fn aerogpu_bar0_base(&self) -> Option<u64> {
-        let bdf = self.aerogpu()?;
+        let bdf = self.aerogpu_bdf()?;
         let base = self.pci_bar_base(bdf, aero_devices::pci::profile::AEROGPU_BAR0_INDEX)?;
         (base != 0).then_some(base)
     }
@@ -7085,7 +7092,7 @@ impl Machine {
     /// BAR1 is backed by the machine's VRAM buffer and is used for legacy VGA/VBE compatibility
     /// (including the BIOS VBE linear framebuffer at `BAR1_BASE + VBE_LFB_OFFSET`).
     pub fn aerogpu_vram_bar_base(&self) -> Option<u64> {
-        let bdf = self.aerogpu()?;
+        let bdf = self.aerogpu_bdf()?;
         let base = self.pci_bar_base(bdf, aero_devices::pci::profile::AEROGPU_BAR1_VRAM_INDEX)?;
         (base != 0).then_some(base)
     }
@@ -18965,7 +18972,7 @@ mod tests {
         })
         .unwrap();
 
-        let bdf = m.aerogpu().expect("AeroGPU should be present");
+        let bdf = m.aerogpu_bdf().expect("AeroGPU should be present");
         let bar1_base = m
             .pci_bar_base(bdf, aero_devices::pci::profile::AEROGPU_BAR1_VRAM_INDEX)
             .unwrap_or(0);

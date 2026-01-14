@@ -1,5 +1,4 @@
 use aero_devices::a20_gate::A20_GATE_PORT;
-use aero_devices::pci::profile;
 use aero_gpu_vga::{VBE_DISPI_DATA_PORT, VBE_DISPI_INDEX_PORT};
 use aero_machine::{Machine, MachineConfig, RunExit, VBE_LFB_OFFSET};
 use pretty_assertions::assert_eq;
@@ -174,8 +173,7 @@ fn aerogpu_vbe_lfb_is_reachable_via_pci_mmio_router() {
     // changes (e.g. config-driven legacy VGA LFB vs AeroGPU BAR1-backed legacy VBE).
     let base = m.vbe_lfb_base();
     let bar1_base = m
-        .aerogpu()
-        .and_then(|bdf| m.pci_bar_base(bdf, profile::AEROGPU_BAR1_VRAM_INDEX))
+        .aerogpu_vram_bar_base()
         .expect("expected AeroGPU BAR1 to be present");
     assert_eq!(base, bar1_base + VBE_LFB_OFFSET as u64);
     m.write_physical_u32(base, 0x00FF_0000);

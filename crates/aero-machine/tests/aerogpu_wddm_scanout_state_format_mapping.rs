@@ -43,7 +43,9 @@ fn wddm_scanout_state_format_mapping_rejects_unsupported_formats_deterministical
     assert_eq!(snap.source, SCANOUT_SOURCE_LEGACY_TEXT);
     assert_eq!(snap.format, SCANOUT_FORMAT_B8G8R8X8);
 
-    let bdf = m.aerogpu().expect("expected AeroGPU device to be present");
+    let bdf = m
+        .aerogpu_bdf()
+        .expect("expected AeroGPU device to be present");
     let bar0 = m
         .pci_bar_base(bdf, AEROGPU_BAR0_INDEX)
         .expect("expected AeroGPU BAR0 to be mapped");
@@ -207,7 +209,9 @@ fn wddm_scanout_state_defers_fb_gpa_updates_until_hi_written() {
     m.set_scanout_state(Some(scanout_state.clone()));
     m.reset();
 
-    let bdf = m.aerogpu().expect("expected AeroGPU device to be present");
+    let bdf = m
+        .aerogpu_bdf()
+        .expect("expected AeroGPU device to be present");
     let bar0 = m
         .pci_bar_base(bdf, AEROGPU_BAR0_INDEX)
         .expect("expected AeroGPU BAR0 to be mapped");

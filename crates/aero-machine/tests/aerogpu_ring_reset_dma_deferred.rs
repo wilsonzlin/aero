@@ -20,7 +20,9 @@ fn aerogpu_ring_reset_dma_is_deferred_until_bus_mastering_is_enabled() {
 
     let mut vm = Machine::new(cfg).unwrap();
 
-    let bdf = vm.aerogpu().expect("AeroGPU device should be present");
+    let bdf = vm
+        .aerogpu_bdf()
+        .expect("AeroGPU device should be present");
     let bar0 = vm
         .pci_bar_base(bdf, AEROGPU_BAR0_INDEX)
         .expect("AeroGPU BAR0 should be mapped");

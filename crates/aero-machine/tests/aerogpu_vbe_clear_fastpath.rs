@@ -115,7 +115,7 @@ fn aerogpu_vbe_mode_set_with_clear_fast_clears_vram_backing() {
 
     // Resolve the AeroGPU BAR1 base assigned by BIOS POST and compute the VBE LFB physical base.
     let bdf = m
-        .aerogpu()
+        .aerogpu_bdf()
         .expect("AeroGPU should be present when enable_aerogpu=true");
     let bar1_base = m
         .pci_bar_base(bdf, aero_devices::pci::profile::AEROGPU_BAR1_VRAM_INDEX)
@@ -185,7 +185,7 @@ fn aerogpu_vbe_failed_mode_set_does_not_clear_existing_framebuffer() {
 
     // Resolve the AeroGPU BAR1 base assigned by BIOS POST and compute the VBE LFB physical base.
     let bdf = m
-        .aerogpu()
+        .aerogpu_bdf()
         .expect("AeroGPU should be present when enable_aerogpu=true");
     let bar1_base = m
         .pci_bar_base(bdf, aero_devices::pci::profile::AEROGPU_BAR1_VRAM_INDEX)
@@ -226,7 +226,7 @@ fn aerogpu_vbe_mode_set_with_no_clear_preserves_existing_framebuffer() {
 
     // Resolve the AeroGPU BAR1 base assigned by BIOS POST and compute the VBE LFB physical base.
     let bdf = m
-        .aerogpu()
+        .aerogpu_bdf()
         .expect("AeroGPU should be present when enable_aerogpu=true");
     let bar1_base = m
         .pci_bar_base(bdf, aero_devices::pci::profile::AEROGPU_BAR1_VRAM_INDEX)

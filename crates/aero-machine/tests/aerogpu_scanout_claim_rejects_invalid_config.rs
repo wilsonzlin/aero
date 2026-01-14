@@ -23,7 +23,7 @@ fn aerogpu_scanout_claim_rejects_pitch_not_multiple_of_pixel_size() {
     })
     .expect("machine should build");
 
-    let bdf = m.aerogpu().expect("AeroGPU device should be present");
+    let bdf = m.aerogpu_bdf().expect("AeroGPU device should be present");
     let bar0 = m
         .pci_bar_base(bdf, AEROGPU_BAR0_INDEX)
         .expect("AeroGPU BAR0 should be assigned by BIOS");
@@ -77,7 +77,7 @@ fn aerogpu_scanout_claim_rejects_fb_gpa_overflow() {
     })
     .expect("machine should build");
 
-    let bdf = m.aerogpu().expect("AeroGPU device should be present");
+    let bdf = m.aerogpu_bdf().expect("AeroGPU device should be present");
     let bar0 = m
         .pci_bar_base(bdf, AEROGPU_BAR0_INDEX)
         .expect("AeroGPU BAR0 should be assigned by BIOS");
