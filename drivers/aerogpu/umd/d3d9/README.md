@@ -512,6 +512,8 @@ This subset is validated via:
   `d3d9ex_draw_indexed_primitive_up`, `d3d9ex_scissor_sanity`, `d3d9ex_query_latency`, `d3d9ex_event_query`, `d3d9ex_submit_fence_stress`,
   `d3d9ex_stretchrect`, `d3d9_raster_status_sanity`, `d3d9ex_multiframe_triangle`, `d3d9ex_vb_dirty_range`,
   `d3d9ex_shared_surface`, `d3d9ex_shared_surface_ipc`, and the DWM-focused `d3d9ex_dwm_ddi_sanity` / `d3d9ex_dwm_probe`).
+  - On Win7 x64, `d3d9ex_shared_surface_wow64` validates cross-bitness shared-surface interop (WOW64 producer → native consumer; DWM scenario).
+  - For DWM-like multi-producer batching / alloc_id collision coverage, also run `d3d9ex_shared_surface_many_producers` and `d3d9ex_alloc_id_persistence`.
 
 #### Running host-side unit tests (portable)
 
