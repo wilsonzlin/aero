@@ -6082,7 +6082,7 @@ HRESULT ensure_fixedfunc_pipeline_locked(Device* dev) {
   //
   // Important: keep PS-only interop stable. If a user PS is bound, we must not
   // change the fixed-function VS output layout by injecting fog coordinates.
-  const bool use_fog_vs = need_fixedfunc_ps && ps_key.fog_enabled;
+  bool use_fog_vs = need_fixedfunc_ps && ps_key.fog_enabled;
 
   auto& pipe = dev->fixedfunc_pipelines[static_cast<size_t>(variant)];
   const bool needs_matrix = fixedfunc_fvf_needs_matrix(dev->fvf);
@@ -6106,6 +6106,17 @@ HRESULT ensure_fixedfunc_pipeline_locked(Device* dev) {
     return D3DERR_INVALIDCALL;
   }
   const FixedFuncVsTableEntry& vs_desc = kFixedFuncVsTable[variant_index];
+
+  // Some fixed-function vertex formats do not yet have fog-capable VS variants.
+  // In that case, disable fog in the fixed-function PS as well so we don't read
+  // an undefined fog coordinate from TEXCOORD0.z.
+  if (use_fog_vs) {
+    const bool fog_vs_available = needs_lighting ? (vs_desc.lit_fog.bytes != nullptr) : (vs_desc.fog.bytes != nullptr);
+    if (!fog_vs_available) {
+      ps_key.fog_enabled = false;
+      use_fog_vs = false;
+    }
+  }
 
   // Select a VS variant (priority: lit+fog > lit > fog > base).
   Shader** vs_slot = &pipe.vs;
