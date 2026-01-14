@@ -2395,6 +2395,10 @@ impl PcPlatform {
         Ok(())
     }
 
+    /// wasm32 variant of [`PcPlatform::attach_ide_secondary_master_iso`].
+    ///
+    /// The browser build supports non-`Send` disk backends (e.g. OPFS handles) that cannot safely
+    /// cross threads, so we avoid imposing a `Send` bound on the trait object in wasm builds.
     #[cfg(target_arch = "wasm32")]
     pub fn attach_ide_secondary_master_iso(
         &mut self,
