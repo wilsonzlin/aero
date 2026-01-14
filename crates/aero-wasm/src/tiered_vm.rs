@@ -1915,6 +1915,54 @@ export function installAeroTieredMmioTestShims() {
         (guest_base, guest_size)
     }
 
+    #[derive(Clone, Copy, Debug)]
+    struct GuestRegion {
+        base: u32,
+        size: u32,
+    }
+
+    impl GuestRegion {
+        #[inline]
+        fn abs(&self, paddr: u32, len: u32) -> u32 {
+            let end = paddr
+                .checked_add(len)
+                .expect("guest address overflow (paddr+len)");
+            assert!(
+                end <= self.size,
+                "guest access out of bounds: paddr=0x{paddr:x} len=0x{len:x} guest_size=0x{size:x}",
+                size = self.size
+            );
+            self.base
+                .checked_add(paddr)
+                .expect("guest linear address overflow (guest_base+paddr)")
+        }
+
+        fn write_u8(&self, paddr: u32, value: u8) {
+            let addr = self.abs(paddr, 1);
+            // Safety: `abs` bounds-checks and `alloc_guest_region_bytes` guarantees the region
+            // exists in wasm linear memory.
+            unsafe {
+                (addr as *mut u8).write(value);
+            }
+        }
+
+        fn read_u8(&self, paddr: u32) -> u8 {
+            let addr = self.abs(paddr, 1);
+            // Safety: `abs` bounds-checks and `alloc_guest_region_bytes` guarantees the region
+            // exists in wasm linear memory.
+            unsafe { (addr as *const u8).read() }
+        }
+
+        fn write_bytes(&self, paddr: u32, bytes: &[u8]) {
+            let addr = self.abs(paddr, bytes.len() as u32);
+            // Safety: `abs` bounds-checks and `alloc_guest_region_bytes` guarantees the region
+            // exists in wasm linear memory.
+            unsafe {
+                core::ptr::copy_nonoverlapping(bytes.as_ptr(), addr as *mut u8, bytes.len());
+            }
+        }
+    }
+
     fn js_err_message(err: JsValue) -> String {
         if let Some(e) = err.dyn_ref::<js_sys::Error>() {
             return e.message().into();
@@ -2226,9 +2274,10 @@ export function installAeroTieredMmioTestShims() {
         );
 
         // Verify the exposed table entry was updated in-place.
-        let version_from_table = unsafe {
-            core::slice::from_raw_parts(table_ptr_after_write as *const u32, table_len)[page]
-        };
+        // Safety: `page < table_len` is checked above and the JIT ABI contract guarantees the
+        // table is stored in wasm linear memory.
+        let version_from_table =
+            unsafe { core::ptr::read_unaligned((table_ptr_after_write as *const u32).add(page)) };
         assert_eq!(
             version_from_table, 1,
             "expected page version table entry to be incremented"
@@ -2285,20 +2334,18 @@ export function installAeroTieredMmioTestShims() {
         // The test should not require any I/O/MMIO shims since we only access in-RAM bytes.
 
         let (guest_base, guest_size) = alloc_guest_region_bytes(0x2000);
-        {
-            // Safety: test-owned guest region inside wasm linear memory.
-            let guest = unsafe {
-                core::slice::from_raw_parts_mut(guest_base as *mut u8, guest_size as usize)
-            };
+        let guest = GuestRegion {
+            base: guest_base,
+            size: guest_size,
+        };
 
-            // Guest code at paddr 0x1000:
-            //   0x40       inc ax        (in 16-bit mode)
-            //   0xeb 0xfe  jmp short -2  (back to the jmp itself)
-            //
-            // In 64-bit decode mode, 0x40 is a REX prefix, so the same bytes decode as a single JMP
-            // instruction (len=3). In 16-bit mode, they decode as two instructions.
-            guest[0x1000..0x1003].copy_from_slice(&[0x40, 0xeb, 0xfe]);
-        }
+        // Guest code at paddr 0x1000:
+        //   0x40       inc ax        (in 16-bit mode)
+        //   0xeb 0xfe  jmp short -2  (back to the jmp itself)
+        //
+        // In 64-bit decode mode, 0x40 is a REX prefix, so the same bytes decode as a single JMP
+        // instruction (len=3). In 16-bit mode, they decode as two instructions.
+        guest.write_bytes(0x1000, &[0x40, 0xeb, 0xfe]);
 
         let mut vm = WasmTieredVm::new(guest_base, guest_size).expect("new WasmTieredVm");
         vm.reset_real_mode(0x1000);
@@ -2337,13 +2384,11 @@ export function installAeroTieredMmioTestShims() {
         // Use the same tiny real-mode loop as `wasm_tiered_vm_instruction_count_respects_cpu_bitness`
         // (INC AX; JMP -2).
         let (guest_base, guest_size) = alloc_guest_region_bytes(0x2000);
-        {
-            // Safety: test-owned guest region inside wasm linear memory.
-            let guest = unsafe {
-                core::slice::from_raw_parts_mut(guest_base as *mut u8, guest_size as usize)
-            };
-            guest[0x1000..0x1003].copy_from_slice(&[0x40, 0xeb, 0xfe]);
-        }
+        let guest = GuestRegion {
+            base: guest_base,
+            size: guest_size,
+        };
+        guest.write_bytes(0x1000, &[0x40, 0xeb, 0xfe]);
 
         let mut vm = WasmTieredVm::new(guest_base, guest_size).expect("new WasmTieredVm");
         vm.reset_real_mode(0x1000);
@@ -2571,41 +2616,33 @@ export function installAeroTieredMmioTestShims() {
 
         // Allocate enough guest RAM to include the 1MiB alias boundary.
         let (guest_base, guest_size) = alloc_guest_region_bytes(2 * 1024 * 1024);
+        let guest = GuestRegion {
+            base: guest_base,
+            size: guest_size,
+        };
         const ENTRY_IP: u32 = 0x0100;
-        {
-            // Safety: test-owned guest region inside wasm linear memory.
-            let guest = unsafe {
-                core::slice::from_raw_parts_mut(guest_base as *mut u8, guest_size as usize)
-            };
 
-            // Place distinct bytes at physical 0x0 and 0x1_00000.
-            guest[0x0000_0000] = 0x11;
-            guest[0x0010_0000] = 0x22;
+        // Place distinct bytes at physical 0x0 and 0x1_00000.
+        guest.write_u8(0x0000_0000, 0x11);
+        guest.write_u8(0x0010_0000, 0x22);
 
-            // Write a tiny real-mode program at 0x0100:
-            //   mov al, [0x0010_0000]   (addr-size override, moffs32)
-            //   mov [0x0000_0200], al   (addr-size override, moffs32)
-            //   hlt
-            let code = [
-                0x67, 0xA0, 0x00, 0x00, 0x10, 0x00, // mov al, [0x0010_0000]
-                0x67, 0xA2, 0x00, 0x02, 0x00, 0x00, // mov [0x0000_0200], al
-                0xF4, // hlt
-            ];
-            guest[ENTRY_IP as usize..ENTRY_IP as usize + code.len()].copy_from_slice(&code);
-        }
+        // Write a tiny real-mode program at 0x0100:
+        //   mov al, [0x0010_0000]   (addr-size override, moffs32)
+        //   mov [0x0000_0200], al   (addr-size override, moffs32)
+        //   hlt
+        let code = [
+            0x67, 0xA0, 0x00, 0x00, 0x10, 0x00, // mov al, [0x0010_0000]
+            0x67, 0xA2, 0x00, 0x02, 0x00, 0x00, // mov [0x0000_0200], al
+            0xF4, // hlt
+        ];
+        guest.write_bytes(ENTRY_IP, &code);
 
         let mut vm = WasmTieredVm::new(guest_base, guest_size).expect("new WasmTieredVm");
 
         // ---------------------------------------------------------------------
         // A20 enabled: reading 0x1_00000 should see 0x22.
         // ---------------------------------------------------------------------
-        {
-            // Safety: test-owned guest region inside wasm linear memory.
-            let guest = unsafe {
-                core::slice::from_raw_parts_mut(guest_base as *mut u8, guest_size as usize)
-            };
-            guest[0x0000_0200] = 0;
-        }
+        guest.write_u8(0x0000_0200, 0);
         vm.reset_real_mode(ENTRY_IP);
         let a20_ptr = vm.a20_enabled_ptr();
         assert_ne!(a20_ptr, 0, "a20_enabled_ptr must return a non-zero address");
@@ -2621,27 +2658,16 @@ export function installAeroTieredMmioTestShims() {
             call_prop_u32(&exit, "kind"),
             crate::RunExitKind::Halted as u32
         );
-        {
-            // Safety: test-owned guest region inside wasm linear memory.
-            let guest = unsafe {
-                core::slice::from_raw_parts(guest_base as *const u8, guest_size as usize)
-            };
-            assert_eq!(
-                guest[0x0000_0200], 0x22,
-                "A20 enabled: 0x1_00000 should be distinct from 0x0"
-            );
-        }
+        assert_eq!(
+            guest.read_u8(0x0000_0200),
+            0x22,
+            "A20 enabled: 0x1_00000 should be distinct from 0x0"
+        );
 
         // ---------------------------------------------------------------------
         // A20 disabled: reading 0x1_00000 should alias to 0x0 (0x11).
         // ---------------------------------------------------------------------
-        {
-            // Safety: test-owned guest region inside wasm linear memory.
-            let guest = unsafe {
-                core::slice::from_raw_parts_mut(guest_base as *mut u8, guest_size as usize)
-            };
-            guest[0x0000_0200] = 0;
-        }
+        guest.write_u8(0x0000_0200, 0);
         vm.reset_real_mode(ENTRY_IP);
         let a20_ptr2 = vm.a20_enabled_ptr();
         assert_eq!(
@@ -2657,16 +2683,11 @@ export function installAeroTieredMmioTestShims() {
             call_prop_u32(&exit, "kind"),
             crate::RunExitKind::Halted as u32
         );
-        {
-            // Safety: test-owned guest region inside wasm linear memory.
-            let guest = unsafe {
-                core::slice::from_raw_parts(guest_base as *const u8, guest_size as usize)
-            };
-            assert_eq!(
-                guest[0x0000_0200], 0x11,
-                "A20 disabled: 0x1_00000 should alias to 0x0"
-            );
-        }
+        assert_eq!(
+            guest.read_u8(0x0000_0200),
+            0x11,
+            "A20 disabled: 0x1_00000 should alias to 0x0"
+        );
     }
 
     #[wasm_bindgen_test]

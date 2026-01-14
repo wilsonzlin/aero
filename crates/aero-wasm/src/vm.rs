@@ -695,6 +695,54 @@ export function installAeroMmioTestShims() {
         (guest_base, guest_size)
     }
 
+    #[derive(Clone, Copy, Debug)]
+    struct GuestRegion {
+        base: u32,
+        size: u32,
+    }
+
+    impl GuestRegion {
+        #[inline]
+        fn abs(&self, paddr: u32, len: u32) -> u32 {
+            let end = paddr
+                .checked_add(len)
+                .expect("guest address overflow (paddr+len)");
+            assert!(
+                end <= self.size,
+                "guest access out of bounds: paddr=0x{paddr:x} len=0x{len:x} guest_size=0x{size:x}",
+                size = self.size
+            );
+            self.base
+                .checked_add(paddr)
+                .expect("guest linear address overflow (guest_base+paddr)")
+        }
+
+        fn write_u8(&self, paddr: u32, value: u8) {
+            let addr = self.abs(paddr, 1);
+            // Safety: `abs` bounds-checks and `alloc_guest_region_bytes` guarantees the region
+            // exists in wasm linear memory.
+            unsafe {
+                (addr as *mut u8).write(value);
+            }
+        }
+
+        fn read_u8(&self, paddr: u32) -> u8 {
+            let addr = self.abs(paddr, 1);
+            // Safety: `abs` bounds-checks and `alloc_guest_region_bytes` guarantees the region
+            // exists in wasm linear memory.
+            unsafe { (addr as *const u8).read() }
+        }
+
+        fn write_bytes(&self, paddr: u32, bytes: &[u8]) {
+            let addr = self.abs(paddr, bytes.len() as u32);
+            // Safety: `abs` bounds-checks and `alloc_guest_region_bytes` guarantees the region
+            // exists in wasm linear memory.
+            unsafe {
+                core::ptr::copy_nonoverlapping(bytes.as_ptr(), addr as *mut u8, bytes.len());
+            }
+        }
+    }
+
     #[wasm_bindgen_test]
     fn wasm_phys_bus_routes_out_of_ram_accesses_to_mmio() {
         installAeroMmioTestShims();
@@ -868,41 +916,32 @@ export function installAeroMmioTestShims() {
 
         // Allocate enough guest RAM to include the 1MiB alias boundary.
         let (guest_base, guest_size) = alloc_guest_region_bytes(2 * 1024 * 1024);
+        let guest = GuestRegion {
+            base: guest_base,
+            size: guest_size,
+        };
         const ENTRY_IP: u32 = 0x0100;
-        {
-            // Safety: test-owned guest region inside wasm linear memory.
-            let guest = unsafe {
-                core::slice::from_raw_parts_mut(guest_base as *mut u8, guest_size as usize)
-            };
+        // Place distinct bytes at physical 0x0 and 0x1_00000.
+        guest.write_u8(0x0000_0000, 0x11);
+        guest.write_u8(0x0010_0000, 0x22);
 
-            // Place distinct bytes at physical 0x0 and 0x1_00000.
-            guest[0x0000_0000] = 0x11;
-            guest[0x0010_0000] = 0x22;
-
-            // Write a tiny real-mode program at 0x0100:
-            //   mov al, [0x0010_0000]   (addr-size override, moffs32)
-            //   mov [0x0000_0200], al   (addr-size override, moffs32)
-            //   hlt
-            let code = [
-                0x67, 0xA0, 0x00, 0x00, 0x10, 0x00, // mov al, [0x0010_0000]
-                0x67, 0xA2, 0x00, 0x02, 0x00, 0x00, // mov [0x0000_0200], al
-                0xF4, // hlt
-            ];
-            guest[ENTRY_IP as usize..ENTRY_IP as usize + code.len()].copy_from_slice(&code);
-        }
+        // Write a tiny real-mode program at 0x0100:
+        //   mov al, [0x0010_0000]   (addr-size override, moffs32)
+        //   mov [0x0000_0200], al   (addr-size override, moffs32)
+        //   hlt
+        let code = [
+            0x67, 0xA0, 0x00, 0x00, 0x10, 0x00, // mov al, [0x0010_0000]
+            0x67, 0xA2, 0x00, 0x02, 0x00, 0x00, // mov [0x0000_0200], al
+            0xF4, // hlt
+        ];
+        guest.write_bytes(ENTRY_IP, &code);
 
         let mut vm = WasmVm::new(guest_base, guest_size).expect("WasmVm::new should succeed");
 
         // ---------------------------------------------------------------------
         // A20 enabled: reading 0x1_00000 should see 0x22.
         // ---------------------------------------------------------------------
-        {
-            // Safety: test-owned guest region inside wasm linear memory.
-            let guest = unsafe {
-                core::slice::from_raw_parts_mut(guest_base as *mut u8, guest_size as usize)
-            };
-            guest[0x0000_0200] = 0;
-        }
+        guest.write_u8(0x0000_0200, 0);
         vm.reset_real_mode(ENTRY_IP);
         let a20_ptr = vm.a20_enabled_ptr();
         assert_ne!(a20_ptr, 0, "a20_enabled_ptr must return a non-zero address");
@@ -915,27 +954,16 @@ export function installAeroMmioTestShims() {
 
         let exit = vm.run_slice(128);
         assert_eq!(exit.kind(), crate::RunExitKind::Halted);
-        {
-            // Safety: test-owned guest region inside wasm linear memory.
-            let guest = unsafe {
-                core::slice::from_raw_parts(guest_base as *const u8, guest_size as usize)
-            };
-            assert_eq!(
-                guest[0x0000_0200], 0x22,
-                "A20 enabled: 0x1_00000 should be distinct from 0x0"
-            );
-        }
+        assert_eq!(
+            guest.read_u8(0x0000_0200),
+            0x22,
+            "A20 enabled: 0x1_00000 should be distinct from 0x0"
+        );
 
         // ---------------------------------------------------------------------
         // A20 disabled: reading 0x1_00000 should alias to 0x0 (0x11).
         // ---------------------------------------------------------------------
-        {
-            // Safety: test-owned guest region inside wasm linear memory.
-            let guest = unsafe {
-                core::slice::from_raw_parts_mut(guest_base as *mut u8, guest_size as usize)
-            };
-            guest[0x0000_0200] = 0;
-        }
+        guest.write_u8(0x0000_0200, 0);
         vm.reset_real_mode(ENTRY_IP);
         let a20_ptr2 = vm.a20_enabled_ptr();
         assert_eq!(
@@ -948,16 +976,11 @@ export function installAeroMmioTestShims() {
 
         let exit = vm.run_slice(128);
         assert_eq!(exit.kind(), crate::RunExitKind::Halted);
-        {
-            // Safety: test-owned guest region inside wasm linear memory.
-            let guest = unsafe {
-                core::slice::from_raw_parts(guest_base as *const u8, guest_size as usize)
-            };
-            assert_eq!(
-                guest[0x0000_0200], 0x11,
-                "A20 disabled: 0x1_00000 should alias to 0x0"
-            );
-        }
+        assert_eq!(
+            guest.read_u8(0x0000_0200),
+            0x11,
+            "A20 disabled: 0x1_00000 should alias to 0x0"
+        );
     }
 
     #[wasm_bindgen_test]

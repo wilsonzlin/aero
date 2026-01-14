@@ -738,9 +738,8 @@ fn wasm_machine_vbe_present_accounts_for_stride_and_panning_in_scanout_state() {
     assert!(ptr != 0, "expected non-zero vga_framebuffer_ptr");
     assert_eq!(len, 64 * 64 * 4);
 
-    // Safety: ptr/len is a view into the module's own linear memory.
-    let fb = unsafe { core::slice::from_raw_parts(ptr as *const u8, len as usize) };
-    assert_eq!(&fb[0..4], &[0xFF, 0x00, 0x00, 0xFF]);
+    let pixel = read_linear_prefix::<4>(ptr);
+    assert_eq!(&pixel, &[0xFF, 0x00, 0x00, 0xFF]);
 }
 
 #[wasm_bindgen_test]
