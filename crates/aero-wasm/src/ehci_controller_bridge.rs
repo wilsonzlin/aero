@@ -464,6 +464,19 @@ impl EhciControllerBridge {
         // draining actions / pushing completions after snapshot restore.
         self.webusb = recover_webusb_passthrough_device(&mut self.ctrl);
         self.webusb_connected = self.webusb.is_some();
+        if self.webusb_connected {
+            // Normalize legacy snapshots that may have attached the passthrough device at a
+            // different root port.
+            //
+            // Root port 0 is now reserved for the external hub topology manager (synthetic HID +
+            // WebHID). Ensuring the restored device lives on the reserved WebUSB port avoids
+            // clobbering the external hub after restore.
+            self.webusb_connected = crate::ehci_webusb_topology::set_ehci_webusb_connected(
+                &mut self.ctrl,
+                &mut self.webusb,
+                true,
+            );
+        }
         if let Some(dev) = self.webusb.as_ref() {
             // Ensure the recovered handle also has its host-side promise bookkeeping cleared.
             dev.reset_host_state_for_restore();
