@@ -2130,6 +2130,63 @@ fn wgsl_predicated_texldp_avoids_non_uniform_control_flow() {
 }
 
 #[test]
+fn wgsl_nonuniform_if_texld_avoids_invalid_control_flow() {
+    // ps_3_0:
+    //   dcl_texcoord0 v0
+    //   if v0.x
+    //     texld r0, v0, s0
+    //   endif
+    //   mov oC0, r0
+    //   end
+    //
+    // In WGSL/WebGPU, `textureSample()` uses implicit derivatives and must be executed in uniform
+    // control flow. This test ensures we don't emit it behind a potentially non-uniform SM3 `if`
+    // when the `if` guards a single `texld`.
+    let tokens = vec![
+        version_token(ShaderStage::Pixel, 3, 0),
+        // dcl_texcoord0 v0  (usage 5 = texcoord)
+        opcode_token(31, 1) | (5u32 << 16),
+        dst_token(1, 0, 0xF),
+        // if v0
+        opcode_token(40, 1),
+        src_token(1, 0, 0xE4, 0),
+        // texld r0, v0, s0
+        opcode_token(66, 3),
+        dst_token(0, 0, 0xF),
+        src_token(1, 0, 0xE4, 0),
+        src_token(10, 0, 0xE4, 0),
+        // endif
+        opcode_token(43, 0),
+        // mov oC0, r0
+        opcode_token(1, 2),
+        dst_token(8, 0, 0xF),
+        src_token(0, 0, 0xE4, 0),
+        // end
+        0x0000_FFFF,
+    ];
+
+    let decoded = decode_u32_tokens(&tokens).unwrap();
+    let ir = build_ir(&decoded).unwrap();
+    verify_ir(&ir).unwrap();
+
+    let wgsl = generate_wgsl(&ir).unwrap().wgsl;
+    assert!(wgsl.contains("textureSample("), "{wgsl}");
+    assert!(wgsl.contains("select("), "{wgsl}");
+    assert!(
+        !wgsl.contains("if ("),
+        "non-uniform if guarding a single texld should lower to select; got:\n{wgsl}"
+    );
+
+    let module = naga::front::wgsl::parse_str(&wgsl).expect("wgsl parse");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
+}
+
+#[test]
 fn wgsl_predicated_texldd_is_valid_with_non_uniform_predicate() {
     // ps_3_0:
     //   dcl_texcoord0 v0

@@ -925,6 +925,151 @@ fn apply_float_result_modifiers(expr: String, mods: &InstModifiers) -> Result<St
     Ok(out)
 }
 
+fn emit_branchless_predicated_op_line(
+    op: &IrOp,
+    cond: &str,
+    stage: ShaderStage,
+    f32_defs: &BTreeMap<u32, [f32; 4]>,
+    sampler_types: &HashMap<u32, TextureType>,
+) -> Result<Option<String>, WgslError> {
+    Ok(match op {
+        IrOp::Ddx {
+            dst,
+            src,
+            modifiers,
+        } => {
+            if stage != ShaderStage::Pixel {
+                return Err(err("dsx is only supported in pixel shaders"));
+            }
+            let (s, ty) = src_expr(src, f32_defs)?;
+            if ty != ScalarTy::F32 {
+                return Err(err("dsx only supports float sources in WGSL lowering"));
+            }
+            let dst_ty = reg_scalar_ty(dst.reg.file).ok_or_else(|| err("unsupported dst file"))?;
+            if dst_ty != ScalarTy::F32 {
+                return Err(err("dsx destination must be float"));
+            }
+            let e = apply_float_result_modifiers(format!("dpdx({s})"), modifiers)?;
+            let dst_name = reg_var_name(&dst.reg)?;
+            Some(emit_assign(
+                dst,
+                format!("select({dst_name}, {e}, {cond})"),
+            )?)
+        }
+        IrOp::Ddy {
+            dst,
+            src,
+            modifiers,
+        } => {
+            if stage != ShaderStage::Pixel {
+                return Err(err("dsy is only supported in pixel shaders"));
+            }
+            let (s, ty) = src_expr(src, f32_defs)?;
+            if ty != ScalarTy::F32 {
+                return Err(err("dsy only supports float sources in WGSL lowering"));
+            }
+            let dst_ty = reg_scalar_ty(dst.reg.file).ok_or_else(|| err("unsupported dst file"))?;
+            if dst_ty != ScalarTy::F32 {
+                return Err(err("dsy destination must be float"));
+            }
+            let e = apply_float_result_modifiers(format!("dpdy({s})"), modifiers)?;
+            let dst_name = reg_var_name(&dst.reg)?;
+            Some(emit_assign(
+                dst,
+                format!("select({dst_name}, {e}, {cond})"),
+            )?)
+        }
+        IrOp::TexSample {
+            kind: crate::sm3::ir::TexSampleKind::ImplicitLod { project },
+            dst,
+            coord,
+            sampler,
+            modifiers,
+            ..
+        } if stage == ShaderStage::Pixel => {
+            let (coord_e, coord_ty) = src_expr(coord, f32_defs)?;
+            if coord_ty != ScalarTy::F32 {
+                return Err(err("texsample coordinate must be float"));
+            }
+
+            let dst_ty = reg_scalar_ty(dst.reg.file).ok_or_else(|| err("unsupported dst file"))?;
+            if dst_ty != ScalarTy::F32 {
+                return Err(err("texsample destination must be float"));
+            }
+
+            let tex_ty = sampler_types
+                .get(sampler)
+                .copied()
+                .unwrap_or(TextureType::Texture2D);
+            let swz = tex_coord_swizzle(tex_ty)?;
+
+            let tex = format!("tex{sampler}");
+            let samp = format!("samp{sampler}");
+            let coord = if *project {
+                format!("(({coord_e}).{swz} / ({coord_e}).w)")
+            } else {
+                format!("({coord_e}).{swz}")
+            };
+            let sample = format!("textureSample({tex}, {samp}, {coord})");
+            let sample = apply_float_result_modifiers(sample, modifiers)?;
+
+            let dst_name = reg_var_name(&dst.reg)?;
+            Some(emit_assign(
+                dst,
+                format!("select({dst_name}, {sample}, {cond})"),
+            )?)
+        }
+        IrOp::TexSample {
+            kind: crate::sm3::ir::TexSampleKind::Bias,
+            dst,
+            coord,
+            sampler,
+            modifiers,
+            ..
+        } if stage == ShaderStage::Pixel => {
+            let (coord_e, coord_ty) = src_expr(coord, f32_defs)?;
+            if coord_ty != ScalarTy::F32 {
+                return Err(err("texsample coordinate must be float"));
+            }
+
+            let dst_ty = reg_scalar_ty(dst.reg.file).ok_or_else(|| err("unsupported dst file"))?;
+            if dst_ty != ScalarTy::F32 {
+                return Err(err("texsample destination must be float"));
+            }
+
+            let tex_ty = sampler_types
+                .get(sampler)
+                .copied()
+                .unwrap_or(TextureType::Texture2D);
+            let swz = tex_coord_swizzle(tex_ty)?;
+
+            let tex = format!("tex{sampler}");
+            let samp = format!("samp{sampler}");
+            let coord = format!("({coord_e}).{swz}");
+            let bias = format!("({coord_e}).w");
+            let sample = if tex_ty == TextureType::Texture1D {
+                // WGSL does not support `textureSampleBias` for 1D textures.
+                // Approximate bias by scaling the implicit derivatives and using
+                // `textureSampleGrad`, which accepts explicit gradients for 1D.
+                let scale = format!("exp2({bias})");
+                let ddx = format!("(dpdx({coord}) * {scale})");
+                let ddy = format!("(dpdy({coord}) * {scale})");
+                format!("textureSampleGrad({tex}, {samp}, {coord}, {ddx}, {ddy})")
+            } else {
+                format!("textureSampleBias({tex}, {samp}, {coord}, {bias})")
+            };
+            let sample = apply_float_result_modifiers(sample, modifiers)?;
+
+            let dst_name = reg_var_name(&dst.reg)?;
+            Some(emit_assign(
+                dst,
+                format!("select({dst_name}, {sample}, {cond})"),
+            )?)
+        }
+        _ => None,
+    })
+}
+
 fn emit_op_line(
     op: &IrOp,
     stage: ShaderStage,
@@ -1773,155 +1918,28 @@ fn emit_stmt(
     match stmt {
         Stmt::Op(op) => {
             if let Some(pred) = &op_modifiers(op).predicate {
-                // WGSL derivative ops must be in *uniform control flow*; wrapping them in an `if`
-                // for SM3 predicate modifiers can cause naga uniformity validation errors when the
-                // predicate is non-uniform.
+                // WGSL derivative ops (`dpdx`/`dpdy`) and implicit-derivative texture sampling
+                // (`textureSample`/`textureSampleBias`) must be in *uniform control flow*. Wrapping
+                // them in an `if` for SM3 predicate modifiers can cause naga uniformity validation
+                // errors when the predicate is non-uniform.
                 //
-                // Lower predicated derivatives to unconditional evaluation + conditional assignment
-                // via `select`, which does not introduce control flow.
-                match op {
-                    IrOp::Ddx {
-                        dst,
-                        src,
-                        modifiers,
-                    } => {
-                        if stage != ShaderStage::Pixel {
-                            return Err(err("dsx is only supported in pixel shaders"));
-                        }
-                        let pred_cond = predicate_expr(pred)?;
-                        let (s, ty) = src_expr(src, f32_defs)?;
-                        if ty != ScalarTy::F32 {
-                            return Err(err("dsx only supports float sources in WGSL lowering"));
-                        }
-                        let dst_ty = reg_scalar_ty(dst.reg.file)
-                            .ok_or_else(|| err("unsupported dst file"))?;
-                        if dst_ty != ScalarTy::F32 {
-                            return Err(err("dsx destination must be float"));
-                        }
-                        let e = apply_float_result_modifiers(format!("dpdx({s})"), modifiers)?;
-                        let dst_name = reg_var_name(&dst.reg)?;
-                        let line =
-                            emit_assign(dst, format!("select({dst_name}, {e}, {pred_cond})"))?;
-                        let _ = writeln!(wgsl, "{pad}{line}");
-                    }
-                    IrOp::Ddy {
-                        dst,
-                        src,
-                        modifiers,
-                    } => {
-                        if stage != ShaderStage::Pixel {
-                            return Err(err("dsy is only supported in pixel shaders"));
-                        }
-                        let pred_cond = predicate_expr(pred)?;
-                        let (s, ty) = src_expr(src, f32_defs)?;
-                        if ty != ScalarTy::F32 {
-                            return Err(err("dsy only supports float sources in WGSL lowering"));
-                        }
-                        let dst_ty = reg_scalar_ty(dst.reg.file)
-                            .ok_or_else(|| err("unsupported dst file"))?;
-                        if dst_ty != ScalarTy::F32 {
-                            return Err(err("dsy destination must be float"));
-                        }
-                        let e = apply_float_result_modifiers(format!("dpdy({s})"), modifiers)?;
-                        let dst_name = reg_var_name(&dst.reg)?;
-                        let line =
-                            emit_assign(dst, format!("select({dst_name}, {e}, {pred_cond})"))?;
-                        let _ = writeln!(wgsl, "{pad}{line}");
-                    }
-                    IrOp::TexSample {
-                        kind: crate::sm3::ir::TexSampleKind::ImplicitLod { project },
-                        dst,
-                        coord,
-                        sampler,
-                        modifiers,
-                        ..
-                    } if stage == ShaderStage::Pixel => {
-                        let pred_cond = predicate_expr(pred)?;
-                        let (coord_e, coord_ty) = src_expr(coord, f32_defs)?;
-                        if coord_ty != ScalarTy::F32 {
-                            return Err(err("texsample coordinate must be float"));
-                        }
-
-                        let dst_ty = reg_scalar_ty(dst.reg.file)
-                            .ok_or_else(|| err("unsupported dst file"))?;
-                        if dst_ty != ScalarTy::F32 {
-                            return Err(err("texsample destination must be float"));
-                        }
-
-                        let tex_ty = sampler_types
-                            .get(sampler)
-                            .copied()
-                            .unwrap_or(TextureType::Texture2D);
-                        let swz = tex_coord_swizzle(tex_ty)?;
-
-                        let tex = format!("tex{sampler}");
-                        let samp = format!("samp{sampler}");
-                        let coord = if *project {
-                            format!("(({coord_e}).{swz} / ({coord_e}).w)")
-                        } else {
-                            format!("({coord_e}).{swz}")
-                        };
-                        let sample = format!("textureSample({tex}, {samp}, {coord})");
-                        let sample = apply_float_result_modifiers(sample, modifiers)?;
-
-                        let dst_name = reg_var_name(&dst.reg)?;
-                        let line =
-                            emit_assign(dst, format!("select({dst_name}, {sample}, {pred_cond})"))?;
-                        let _ = writeln!(wgsl, "{pad}{line}");
-                    }
-                    IrOp::TexSample {
-                        kind: crate::sm3::ir::TexSampleKind::Bias,
-                        dst,
-                        coord,
-                        sampler,
-                        modifiers,
-                        ..
-                    } if stage == ShaderStage::Pixel => {
-                        let pred_cond = predicate_expr(pred)?;
-                        let (coord_e, coord_ty) = src_expr(coord, f32_defs)?;
-                        if coord_ty != ScalarTy::F32 {
-                            return Err(err("texsample coordinate must be float"));
-                        }
-
-                        let dst_ty =
-                            reg_scalar_ty(dst.reg.file).ok_or_else(|| err("unsupported dst file"))?;
-                        if dst_ty != ScalarTy::F32 {
-                            return Err(err("texsample destination must be float"));
-                        }
-
-                        let tex_ty = sampler_types
-                            .get(sampler)
-                            .copied()
-                            .unwrap_or(TextureType::Texture2D);
-                        let swz = tex_coord_swizzle(tex_ty)?;
-
-                        let tex = format!("tex{sampler}");
-                        let samp = format!("samp{sampler}");
-                        let coord = format!("({coord_e}).{swz}");
-                        let bias = format!("({coord_e}).w");
-                        let sample = if tex_ty == TextureType::Texture1D {
-                            let scale = format!("exp2({bias})");
-                            let ddx = format!("(dpdx({coord}) * {scale})");
-                            let ddy = format!("(dpdy({coord}) * {scale})");
-                            format!("textureSampleGrad({tex}, {samp}, {coord}, {ddx}, {ddy})")
-                        } else {
-                            format!("textureSampleBias({tex}, {samp}, {coord}, {bias})")
-                        };
-                        let sample = apply_float_result_modifiers(sample, modifiers)?;
-
-                        let dst_name = reg_var_name(&dst.reg)?;
-                        let line =
-                            emit_assign(dst, format!("select({dst_name}, {sample}, {pred_cond})"))?;
-                        let _ = writeln!(wgsl, "{pad}{line}");
-                    }
-                    _ => {
-                        let pred_cond = predicate_expr(pred)?;
-                        let _ = writeln!(wgsl, "{pad}if ({pred_cond}) {{");
-                        let line = emit_op_line(op, stage, f32_defs, sampler_types)?;
-                        let inner_pad = "  ".repeat(indent + 1);
-                        let _ = writeln!(wgsl, "{inner_pad}{line}");
-                        let _ = writeln!(wgsl, "{pad}}}");
-                    }
+                // For these ops, lower predication to unconditional evaluation + conditional
+                // assignment via `select`, which does not introduce control flow.
+                let pred_cond = predicate_expr(pred)?;
+                if let Some(line) = emit_branchless_predicated_op_line(
+                    op,
+                    &pred_cond,
+                    stage,
+                    f32_defs,
+                    sampler_types,
+                )? {
+                    let _ = writeln!(wgsl, "{pad}{line}");
+                } else {
+                    let _ = writeln!(wgsl, "{pad}if ({pred_cond}) {{");
+                    let line = emit_op_line(op, stage, f32_defs, sampler_types)?;
+                    let inner_pad = "  ".repeat(indent + 1);
+                    let _ = writeln!(wgsl, "{inner_pad}{line}");
+                    let _ = writeln!(wgsl, "{pad}}}");
                 }
             } else {
                 let line = emit_op_line(op, stage, f32_defs, sampler_types)?;
@@ -1933,6 +1951,30 @@ fn emit_stmt(
             then_block,
             else_block,
         } => {
+            // Apply the same uniform-control-flow workaround as predicate modifiers for the common
+            // pattern:
+            //
+            //   if (cond) { <single op>; }
+            //
+            // This avoids generating WGSL that places `dpdx`/`dpdy`/`textureSample` behind a
+            // potentially non-uniform branch.
+            if else_block.is_none() && then_block.stmts.len() == 1 {
+                if let Stmt::Op(op) = &then_block.stmts[0] {
+                    if op_modifiers(op).predicate.is_none() {
+                        let cond_e = cond_expr(cond, f32_defs)?;
+                        if let Some(line) = emit_branchless_predicated_op_line(
+                            op,
+                            &cond_e,
+                            stage,
+                            f32_defs,
+                            sampler_types,
+                        )? {
+                            let _ = writeln!(wgsl, "{pad}{line}");
+                            return Ok(());
+                        }
+                    }
+                }
+            }
             let cond = cond_expr(cond, f32_defs)?;
             let _ = writeln!(wgsl, "{pad}if ({cond}) {{");
             emit_block(
