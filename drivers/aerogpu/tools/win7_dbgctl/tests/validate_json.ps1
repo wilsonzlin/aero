@@ -33,6 +33,15 @@ function Assert-ByteSizeObject {
   Assert-HasProps -Obj $Obj -Context $Context -Props @("bytes", "mib")
 }
 
+function Assert-U64HexDecObject {
+  param(
+    [Parameter(Mandatory = $true)] [object]$Obj,
+    [Parameter(Mandatory = $true)] [string]$Context
+  )
+  # 64-bit counters in dbgctl JSON are encoded as an object: { \"hex\": \"...\", \"dec\": \"...\" }.
+  Assert-HasProps -Obj $Obj -Context $Context -Props @("hex", "dec")
+}
+
 function Assert-ValidJson {
   param(
     [string]$ExpectedCommand,
@@ -79,8 +88,16 @@ function Assert-ValidJson {
     if (-not $obj.perf.contig_pool) {
       throw "Missing perf.contig_pool section in status JSON for: $invocation`n$stdout"
     }
+    if (-not $obj.perf.alloc_table) {
+      throw "Missing perf.alloc_table section in status JSON for: $invocation`n$stdout"
+    }
     if ($obj.perf.contig_pool.available) {
       Assert-ByteSizeObject -Obj $obj.perf.contig_pool.bytes_saved -Context "perf.contig_pool.bytes_saved"
+    }
+    if ($obj.perf.alloc_table.available) {
+      Assert-U64HexDecObject -Obj $obj.perf.alloc_table.count -Context "perf.alloc_table.count"
+      Assert-U64HexDecObject -Obj $obj.perf.alloc_table.entries -Context "perf.alloc_table.entries"
+      Assert-U64HexDecObject -Obj $obj.perf.alloc_table.readonly_entries -Context "perf.alloc_table.readonly_entries"
     }
   }
 
@@ -91,8 +108,16 @@ function Assert-ValidJson {
     if (-not $obj.contig_pool) {
       throw "Missing contig_pool section in query-perf JSON for: $invocation`n$stdout"
     }
+    if (-not $obj.alloc_table) {
+      throw "Missing alloc_table section in query-perf JSON for: $invocation`n$stdout"
+    }
     if ($obj.contig_pool.available) {
       Assert-ByteSizeObject -Obj $obj.contig_pool.bytes_saved -Context "contig_pool.bytes_saved"
+    }
+    if ($obj.alloc_table.available) {
+      Assert-U64HexDecObject -Obj $obj.alloc_table.count -Context "alloc_table.count"
+      Assert-U64HexDecObject -Obj $obj.alloc_table.entries -Context "alloc_table.entries"
+      Assert-U64HexDecObject -Obj $obj.alloc_table.readonly_entries -Context "alloc_table.readonly_entries"
     }
   }
 }
@@ -156,8 +181,16 @@ function Assert-ValidJsonFile {
     if (-not $obj.perf.contig_pool) {
       throw "Missing perf.contig_pool section in status JSON file: $JsonPath`n$jsonText"
     }
+    if (-not $obj.perf.alloc_table) {
+      throw "Missing perf.alloc_table section in status JSON file: $JsonPath`n$jsonText"
+    }
     if ($obj.perf.contig_pool.available) {
       Assert-ByteSizeObject -Obj $obj.perf.contig_pool.bytes_saved -Context "perf.contig_pool.bytes_saved"
+    }
+    if ($obj.perf.alloc_table.available) {
+      Assert-U64HexDecObject -Obj $obj.perf.alloc_table.count -Context "perf.alloc_table.count"
+      Assert-U64HexDecObject -Obj $obj.perf.alloc_table.entries -Context "perf.alloc_table.entries"
+      Assert-U64HexDecObject -Obj $obj.perf.alloc_table.readonly_entries -Context "perf.alloc_table.readonly_entries"
     }
   }
 
