@@ -335,8 +335,12 @@ void fill_d3d9_caps(D3DCAPS9* out) {
                      D3DSTENCILCAPS_TWOSIDED;
 
   // Fixed-function vertex formats (FVF) are supported via the UMD's minimal
-  // fixed-function fallback pipeline. Only a small subset of FVFs is implemented
-  // (up to TEX1), so cap the texcoord count to 1.
+  // fixed-function fallback pipeline, which consumes only a bring-up subset
+  // (up to TEX1).
+  //
+  // The UMD can translate additional FVFs into input layouts for user shaders,
+  // but keep FVF caps conservative so apps don't assume full fixed-function/FVF
+  // coverage.
   out->FVFCaps = 1;
 
   out->ShadeCaps = D3DPSHADECAPS_COLORGOURAUDRGB;
@@ -368,9 +372,12 @@ void fill_d3d9_caps(D3DCAPS9* out) {
   out->TextureCaps = D3DPTEXTURECAPS_ALPHA | D3DPTEXTURECAPS_MIPMAP | D3DPTEXTURECAPS_CUBEMAP;
 
   // Fixed-function texture stage operation caps (TextureOpCaps) are used by apps
-  // and some runtimes to validate stage-state combiner operations. The UMD only
-  // implements a minimal stage0 subset; advertise just the operations we handle
-  // end-to-end.
+  // and some runtimes to validate stage-state combiner operations.
+  //
+  // The stage0 fixed-function fallback can recognize a few additional bring-up
+  // patterns, but keep caps intentionally conservative so apps don't assume full
+  // fixed-function combiner coverage (unsupported op/source combinations fall
+  // back deterministically).
   out->TextureOpCaps = D3DTEXOPCAPS_DISABLE |
                        D3DTEXOPCAPS_SELECTARG1 |
                        D3DTEXOPCAPS_SELECTARG2 |
