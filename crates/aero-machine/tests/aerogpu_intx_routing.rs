@@ -54,9 +54,7 @@ fn aerogpu_intx_level_routes_into_platform_interrupts_and_deasserts_on_ack() {
     m.write_physical_u32(bar0_base + mmio::SCANOUT0_ENABLE, 1);
     m.write_physical_u32(bar0_base + mmio::IRQ_ENABLE, irq_bits::SCANOUT_VBLANK);
 
-    let period_ns = u64::from(m.read_physical_u32(
-        bar0_base + mmio::SCANOUT0_VBLANK_PERIOD_NS,
-    ));
+    let period_ns = u64::from(m.read_physical_u32(bar0_base + mmio::SCANOUT0_VBLANK_PERIOD_NS));
     assert_ne!(period_ns, 0, "test requires vblank pacing to be active");
 
     // Advance to the next vblank edge so the device latches the vblank IRQ, then synchronize INTx

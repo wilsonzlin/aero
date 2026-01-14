@@ -1041,9 +1041,11 @@ fn virtio_blk_write_zeroes_unmap_prefers_discard_range_when_possible() {
         0,
         "discard_range() returned zeros; device should not re-write zeros"
     );
-    assert!(backing.lock().unwrap()[SECTOR_SIZE_BYTES..SECTOR_SIZE_BYTES * 2]
-        .iter()
-        .all(|b| *b == 0));
+    assert!(
+        backing.lock().unwrap()[SECTOR_SIZE_BYTES..SECTOR_SIZE_BYTES * 2]
+            .iter()
+            .all(|b| *b == 0)
+    );
 }
 
 #[test]
