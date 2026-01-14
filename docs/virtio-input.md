@@ -129,20 +129,21 @@ Contract note:
 - `AERO-W7-VIRTIO` v1 encodes the contract major version in the PCI Revision ID (`REV_01`).
 - The in-tree Win7 virtio-input INFs are intentionally **revision-gated** (match only `...&REV_01` HWIDs), so QEMU-style
   `REV_00` virtio-input devices will not bind unless you override the revision (for example `x-pci-revision=0x01`).
-  - The canonical keyboard/mouse INF (`drivers/windows7/virtio-input/inf/aero_virtio_input.inf`) is intentionally strict:
+  - The canonical keyboard/mouse INF (`drivers/windows7/virtio-input/inf/aero_virtio_input.inf`) is intentionally
+    **SUBSYS-only**:
     - it matches the subsystem-qualified keyboard/mouse IDs (`SUBSYS_0010` / `SUBSYS_0011`) for distinct Device Manager
       names, and
-    - it includes a strict revision-gated generic fallback match `PCI\VEN_1AF4&DEV_1052&REV_01` (no `SUBSYS`; Device Manager
-      name: **Aero VirtIO Input Device**).
+    - it intentionally does **not** include a generic (no `SUBSYS`) fallback match like `PCI\VEN_1AF4&DEV_1052&REV_01`.
+  - The repo also carries `drivers/windows7/virtio-input/inf/virtio-input.inf.disabled` (rename it to `virtio-input.inf`
+    to enable), which is a **legacy filename alias** for workflows/tools that still reference the old INF filename and for an
+    opt-in strict fallback match:
+    - It adds the strict, revision-gated generic fallback HWID `PCI\VEN_1AF4&DEV_1052&REV_01` (Device Manager name:
+      **Aero VirtIO Input Device**) for environments that do not expose the Aero subsystem IDs (e.g. stock QEMU).
     - Tablet devices bind via the separate tablet INF (`drivers/windows7/virtio-input/inf/aero_virtio_tablet.inf`,
-      `SUBSYS_00121AF4`), which is more specific and wins over the fallback when both packages are installed.
-  - The repo also carries `drivers/windows7/virtio-input/inf/virtio-input.inf.disabled`, which is a **legacy filename alias**
-    (`virtio-input.inf`) for workflows/tools that still reference the old INF filename.
-    - Rename it to `virtio-input.inf` to enable it.
-    - From the first section header (`[Version]`) onward, it must remain byte-for-byte identical to `aero_virtio_input.inf`
-      (only the leading banner/comments may differ; see `drivers/windows7/virtio-input/scripts/check-inf-alias.py`).
-    - It does not change HWID matching behavior (it matches the same HWIDs as `aero_virtio_input.inf`). CI enforces this via
-      `scripts/ci/check-windows7-virtio-contract-consistency.py`.
+      `SUBSYS_0012`), which is more specific and wins over the fallback when both packages are installed.
+    - It is allowed to differ from `aero_virtio_input.inf` in the models sections (`[Aero.NTx86]` / `[Aero.NTamd64]`) to
+      provide the fallback entry, but should otherwise stay in sync from the first section header (`[Version]`) onward (see
+      `drivers/windows7/virtio-input/scripts/check-inf-alias.py`).
   - Do not ship/install both `aero_virtio_input.inf` and `virtio-input.inf` at the same time (overlapping INFs can lead to
     confusing PnP driver selection). Ship/install **only one** of the two filenames at a time.
 - The driver also validates the Revision ID at runtime.
