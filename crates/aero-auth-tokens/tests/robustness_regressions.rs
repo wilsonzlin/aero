@@ -268,7 +268,7 @@ fn session_token_rejects_non_base64url_payload_even_if_signature_matches() {
 
     // Base64url segment with an invalid character ('!'), but provide a matching signature for the
     // raw bytes to ensure we exercise the pre-validation path.
-    let payload_b64 = "ab!cd";
+    let payload_b64 = "ab!d";
     let sig = hmac_sha256(secret, payload_b64.as_bytes());
     let sig_b64 = general_purpose::URL_SAFE_NO_PAD.encode(sig);
     let token = format!("{payload_b64}.{sig_b64}");
@@ -282,7 +282,24 @@ fn jwt_rejects_non_base64url_payload_even_if_signature_matches() {
 
     let header = br#"{"alg":"HS256"}"#;
     let header_b64 = general_purpose::URL_SAFE_NO_PAD.encode(header);
-    let payload_b64 = "ab!cd";
+    let payload_b64 = "ab!d";
+    let signing_input = format!("{header_b64}.{payload_b64}");
+    let sig = hmac_sha256(secret, signing_input.as_bytes());
+    let sig_b64 = general_purpose::URL_SAFE_NO_PAD.encode(sig);
+    let token = format!("{signing_input}.{sig_b64}");
+
+    assert!(verify_hs256_jwt(&token, secret, 0).is_none());
+}
+
+#[test]
+fn jwt_rejects_non_base64url_header_even_if_signature_matches() {
+    let secret = b"unit-test-secret";
+
+    // Invalid base64url header (contains '!'), but provide a matching signature for the raw token
+    // string so the verifier must reject via the header validation path.
+    let header_b64 = "ab!d";
+    let payload = br#"{"sid":"abc","exp":1,"iat":0}"#;
+    let payload_b64 = general_purpose::URL_SAFE_NO_PAD.encode(payload);
     let signing_input = format!("{header_b64}.{payload_b64}");
     let sig = hmac_sha256(secret, signing_input.as_bytes());
     let sig_b64 = general_purpose::URL_SAFE_NO_PAD.encode(sig);
