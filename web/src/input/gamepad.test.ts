@@ -81,14 +81,16 @@ describe("packGamepadReport", () => {
       hat: 99,
       x: 200,
       y: -200,
-      rx: 0,
-      ry: 0,
+      rx: 200,
+      ry: -200,
     });
 
     const bytes = Array.from(unpackGamepadReport(packedLo, packedHi));
     expect(bytes[2]).toBe(GAMEPAD_HAT_NEUTRAL);
     expect(bytes[3]).toBe(0x7f);
     expect(bytes[4]).toBe(0x81);
+    expect(bytes[5]).toBe(0x7f);
+    expect(bytes[6]).toBe(0x81);
   });
 });
 
