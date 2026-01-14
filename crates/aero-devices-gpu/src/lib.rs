@@ -20,6 +20,14 @@
 //! alias `wgpu-backend`) to execute command streams in-process via a WGPU/WebGPU-backed executor
 //! (intended for native tests).
 
+// The `aerogpu-native`/`wgpu-backend` feature enables a native in-process executor wrapper used by
+// host-side tests. It is not intended to be enabled for `wasm32` builds; the browser runtime uses
+// dedicated WASM/JS execution paths instead (e.g. `aero-gpu-wasm` + web workers).
+#[cfg(all(feature = "aerogpu-native", target_arch = "wasm32"))]
+compile_error!(
+    "`aero-devices-gpu` feature `aerogpu-native`/`wgpu-backend` is not supported on wasm32; enable it only for native host builds/tests"
+);
+
 pub mod backend;
 pub mod cmd;
 pub mod device;
