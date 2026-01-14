@@ -552,6 +552,41 @@ bool TestCreateRasterizerStateRejectsUnsupportedFillMode() {
   return true;
 }
 
+bool TestCreateRasterizerStateRejectsUnsupportedCullMode() {
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev), "InitTestDevice(rs cull mode)")) {
+    return false;
+  }
+
+  AEROGPU_DDIARG_CREATERASTERIZERSTATE desc = {};
+  desc.FillMode = kD3D10FillWireframe;
+  desc.CullMode = 4; // invalid (D3D10_CULL_MODE valid values are 1..3)
+  desc.FrontCounterClockwise = 0;
+  desc.DepthBias = 0;
+  desc.DepthClipEnable = 1;
+  desc.ScissorEnable = 0;
+
+  D3D10DDI_HRASTERIZERSTATE hState = {};
+  const SIZE_T size = dev.device_funcs.pfnCalcPrivateRasterizerStateSize(dev.hDevice, &desc);
+  if (!Check(size >= sizeof(void*), "CalcPrivateRasterizerStateSize returned non-trivial size (invalid CullMode)")) {
+    return false;
+  }
+  std::vector<uint8_t> storage(static_cast<size_t>(size), 0);
+  hState.pDrvPrivate = storage.data();
+
+  const HRESULT hr = dev.device_funcs.pfnCreateRasterizerState(dev.hDevice, &desc, hState);
+  if (!Check(hr == E_NOTIMPL, "CreateRasterizerState should return E_NOTIMPL for invalid CullMode")) {
+    return false;
+  }
+
+  // Destroy should be safe even after a failed create.
+  dev.device_funcs.pfnDestroyRasterizerState(dev.hDevice, hState);
+
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
 bool TestSetRasterizerStateEmitsPacket() {
   TestDevice dev{};
   if (!Check(InitTestDevice(&dev), "InitTestDevice(rasterizer)")) {
@@ -836,6 +871,7 @@ int main() {
   ok &= TestSetNullBlendStateUsesProvidedBlendFactor();
   ok &= TestSetBlendStateNullBlendFactorDefaultsToOnes();
   ok &= TestCreateRasterizerStateRejectsUnsupportedFillMode();
+  ok &= TestCreateRasterizerStateRejectsUnsupportedCullMode();
   ok &= TestSetRasterizerStateEmitsPacket();
   ok &= TestSetNullRasterizerStateEmitsDefaultPacket();
   ok &= TestDepthDisableDisablesDepthWrites();

@@ -4261,6 +4261,18 @@ HRESULT AEROGPU_APIENTRY CreateRasterizerState(D3D10DDI_HDEVICE hDevice,
     s->state = state;
   }
 
+  // Validate CullMode: only NONE/FRONT/BACK are supported.
+  //
+  // Like FillMode, treat CullMode==0 as "unspecified" for compatibility with
+  // callers that pass a zero-initialized descriptor.
+  constexpr uint32_t kD3D11CullNone = 1;
+  constexpr uint32_t kD3D11CullFront = 2;
+  constexpr uint32_t kD3D11CullBack = 3;
+  if (s->cull_mode != 0 && s->cull_mode != kD3D11CullNone && s->cull_mode != kD3D11CullFront && s->cull_mode != kD3D11CullBack) {
+    s->cull_mode = kD3D11CullBack;
+    AEROGPU_D3D10_RET_HR(E_NOTIMPL);
+  }
+
   AEROGPU_D3D10_RET_HR(S_OK);
 }
 
