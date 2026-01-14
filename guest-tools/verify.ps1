@@ -844,8 +844,10 @@ function Read-TextFileWithEncodingDetection([string]$path) {
         }
 
         if (-not $enc) {
-            # Match legacy Get-Content behavior for BOM-less files.
-            $enc = [System.Text.Encoding]::Default
+            # Default to UTF-8/ASCII for BOM-less non-UTF16 text.
+            # (ASCII is a subset of UTF-8; for legacy ANSI INFs this still preserves all ASCII tokens
+            # like [Version]/AddService/HWIDs which are what we parse.)
+            $enc = [System.Text.Encoding]::UTF8
         }
     }
 
@@ -864,6 +866,21 @@ function Read-TextFileWithEncodingDetection([string]$path) {
     } catch { }
 
     return $text
+}
+
+function Strip-InfComment([string]$line) {
+    # Strip `;` comments while preserving semicolons inside quotes (best-effort).
+    if ($line -eq $null) { return $null }
+    $s = "" + $line
+    $inQuote = $false
+    for ($i = 0; $i -lt $s.Length; $i++) {
+        $ch = $s[$i]
+        if ($ch -eq '"') { $inQuote = -not $inQuote; continue }
+        if (($ch -eq ';') -and (-not $inQuote)) {
+            return $s.Substring(0, $i)
+        }
+    }
+    return $s
 }
 
 function Resolve-InfStringValue([string]$value, [hashtable]$strings) {
@@ -919,20 +936,15 @@ function Parse-InfMetadata([string]$path) {
 
     foreach ($line in $lines) {
         if ($line -eq $null) { continue }
-        $t = ("" + $line).Trim()
+        $t = ("" + (Strip-InfComment ("" + $line))).Trim()
         if ($t.Length -eq 0) { continue }
-
-        # Strip `;` comments (INF comment syntax). Best-effort (won't handle semicolons in quotes).
-        $semi = $t.IndexOf(';')
-        if ($semi -ge 0) {
-            $t = $t.Substring(0, $semi).Trim()
-            if ($t.Length -eq 0) { continue }
-        }
 
         # Some INFs list HWIDs as bare lines (e.g. in a [HardwareIds] section) without commas.
         $bare = $t.Trim('"')
-        if ($bare -match '^(?i)(PCI|USB|HID|ACPI|ROOT|SW)\\') {
-            $hwids[$bare.ToUpper()] = $bare
+        $mBare = [regex]::Match($bare, '^(?i)((?:PCI|USB|HID|ACPI|ROOT|SW)\\[^\s,;"=]+)')
+        if ($mBare.Success) {
+            $hw = $mBare.Groups[1].Value
+            $hwids[$hw.ToUpper()] = $hw
         }
 
         if ($t -match '^\[(.+)\]$') {
