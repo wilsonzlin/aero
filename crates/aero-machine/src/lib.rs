@@ -11733,9 +11733,10 @@ impl snapshot::SnapshotTarget for Machine {
             // controller snapshots (UHCI/EHCI/xHCI) plus the machine's host-side sub-ms tick
             // remainders.
             //
-            // Note: older snapshots stored the UHCI PCI device snapshot (`UHCP`) directly under
-            // `DeviceId::USB` and did not include sub-ms tick remainder state. Default to 0 unless
-            // we successfully decode a `USBC` wrapper containing remainder values.
+            // Note: older snapshots stored a single controller PCI device snapshot (`UHCP` / `EHCP`
+            // / `XHCP`) directly under `DeviceId::USB` and did not include sub-ms tick remainder
+            // state. Default to 0 unless we successfully decode a `USBC` wrapper containing
+            // remainder values.
             self.uhci_ns_remainder = 0;
             self.ehci_ns_remainder = 0;
             self.xhci_ns_remainder = 0;
@@ -11772,19 +11773,54 @@ impl snapshot::SnapshotTarget for Machine {
                         }
                     }
                 }
-            } else if let Some(uhci) = &self.uhci {
-                // Backward compatibility: older snapshots stored the UHCI PCI device snapshot
-                // (`UHCP`) directly under `DeviceId::USB`.
-                let _ = snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
-                    &state,
-                    &mut *uhci.borrow_mut(),
-                );
             } else {
-                // Legacy USB payload but no UHCI device to apply it to.
-                #[cfg(not(target_arch = "wasm32"))]
-                eprintln!(
-                    "warning: snapshot contains legacy UHCI USB payload but machine has UHCI disabled; ignoring"
-                );
+                // Backward compatibility: older snapshots stored a single USB controller PCI device
+                // snapshot (`UHCP` / `EHCP` / `XHCP`) directly under `DeviceId::USB`, without a
+                // `USBC` wrapper. Best-effort apply the blob to any matching controller present in
+                // the target machine.
+                match state.data.get(8..12) {
+                    Some(id) if id == b"UHCP" => {
+                        if let Some(uhci) = &self.uhci {
+                            let _ = uhci.borrow_mut().load_state(&state.data);
+                        } else {
+                            #[cfg(not(target_arch = "wasm32"))]
+                            eprintln!(
+                                "warning: snapshot contains legacy UHCI USB payload but machine has UHCI disabled; ignoring"
+                            );
+                        }
+                    }
+                    Some(id) if id == b"EHCP" => {
+                        if let Some(ehci) = &self.ehci {
+                            let _ = ehci.borrow_mut().load_state(&state.data);
+                        } else {
+                            #[cfg(not(target_arch = "wasm32"))]
+                            eprintln!(
+                                "warning: snapshot contains legacy EHCI USB payload but machine has EHCI disabled; ignoring"
+                            );
+                        }
+                    }
+                    Some(id) if id == b"XHCP" => {
+                        if let Some(xhci) = &self.xhci {
+                            let _ = xhci.borrow_mut().load_state(&state.data);
+                        } else {
+                            #[cfg(not(target_arch = "wasm32"))]
+                            eprintln!(
+                                "warning: snapshot contains legacy xHCI USB payload but machine has xHCI disabled; ignoring"
+                            );
+                        }
+                    }
+                    _ => {
+                        if let Some(uhci) = &self.uhci {
+                            let _ = uhci.borrow_mut().load_state(&state.data);
+                        }
+                        if let Some(ehci) = &self.ehci {
+                            let _ = ehci.borrow_mut().load_state(&state.data);
+                        }
+                        if let Some(xhci) = &self.xhci {
+                            let _ = xhci.borrow_mut().load_state(&state.data);
+                        }
+                    }
+                }
             }
         }
 

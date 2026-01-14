@@ -5,11 +5,13 @@ use aero_devices::pci::msi::PCI_CAP_ID_MSI;
 use aero_devices::pci::msix::PCI_CAP_ID_MSIX;
 use aero_devices::pci::profile::USB_XHCI_QEMU;
 use aero_devices::pci::{PciBdf, PciInterruptPin, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
-use aero_devices::usb::xhci::regs;
+use aero_devices::usb::xhci::{regs, XhciPciDevice};
+use aero_io_snapshot::io::state::IoSnapshot;
 use aero_machine::{Machine, MachineConfig};
 use aero_platform::interrupts::{
     InterruptController as PlatformInterruptController, PlatformInterruptMode,
 };
+use aero_snapshot as snapshot;
 use aero_usb::xhci::trb::{CompletionCode, Trb, TrbType, TRB_LEN};
 use pretty_assertions::{assert_eq, assert_ne};
 
@@ -522,4 +524,141 @@ fn xhci_intx_level_is_routed_and_gated_by_command_intx_disable() {
 
     m.poll_pci_intx_lines();
     assert_eq!(interrupts.borrow().gsi_level(gsi), false);
+}
+
+struct LegacyXhciUsbSnapshotSource {
+    machine: Machine,
+}
+
+impl snapshot::SnapshotSource for LegacyXhciUsbSnapshotSource {
+    fn snapshot_meta(&mut self) -> snapshot::SnapshotMeta {
+        snapshot::SnapshotSource::snapshot_meta(&mut self.machine)
+    }
+
+    fn cpu_state(&self) -> snapshot::CpuState {
+        snapshot::SnapshotSource::cpu_state(&self.machine)
+    }
+
+    fn mmu_state(&self) -> snapshot::MmuState {
+        snapshot::SnapshotSource::mmu_state(&self.machine)
+    }
+
+    fn device_states(&self) -> Vec<snapshot::DeviceState> {
+        let mut devices = snapshot::SnapshotSource::device_states(&self.machine);
+        let Some(pos) = devices
+            .iter()
+            .position(|device| device.id == snapshot::DeviceId::USB)
+        else {
+            return devices;
+        };
+        let Some(xhci) = self.machine.xhci() else {
+            return devices;
+        };
+
+        let version = <XhciPciDevice as IoSnapshot>::DEVICE_VERSION;
+        devices[pos] = snapshot::DeviceState {
+            id: snapshot::DeviceId::USB,
+            version: version.major,
+            flags: version.minor,
+            data: xhci.borrow().save_state(),
+        };
+        devices
+    }
+
+    fn disk_overlays(&self) -> snapshot::DiskOverlayRefs {
+        snapshot::SnapshotSource::disk_overlays(&self.machine)
+    }
+
+    fn ram_len(&self) -> usize {
+        snapshot::SnapshotSource::ram_len(&self.machine)
+    }
+
+    fn read_ram(&self, offset: u64, buf: &mut [u8]) -> snapshot::Result<()> {
+        snapshot::SnapshotSource::read_ram(&self.machine, offset, buf)
+    }
+
+    fn take_dirty_pages(&mut self) -> Option<Vec<u64>> {
+        snapshot::SnapshotSource::take_dirty_pages(&mut self.machine)
+    }
+}
+
+#[test]
+fn xhci_restore_accepts_legacy_deviceid_usb_payload_without_machine_remainder() {
+    let cfg = MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_xhci: true,
+        // Keep the machine minimal/deterministic for this snapshot test.
+        enable_vga: false,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_reset_ctrl: false,
+        enable_e1000: false,
+        ..Default::default()
+    };
+
+    let mut src = LegacyXhciUsbSnapshotSource {
+        machine: Machine::new(cfg.clone()).unwrap(),
+    };
+    // Ensure high MMIO addresses decode correctly (avoid A20 aliasing).
+    src.machine.io_write(A20_GATE_PORT, 1, 0x02);
+
+    let bdf = USB_XHCI_QEMU.bdf;
+    let bar0_base = src.machine.pci_bar_base(bdf, 0).expect("xHCI BAR0 should exist");
+    assert_ne!(bar0_base, 0);
+
+    // Ensure MMIO decode is enabled so MFINDEX reads are valid.
+    let cmd = cfg_read(&mut src.machine, bdf, 0x04, 2) as u16;
+    cfg_write(
+        &mut src.machine,
+        bdf,
+        0x04,
+        2,
+        u32::from(cmd | (1 << 1) | (1 << 2)),
+    );
+
+    let mfindex_before = src.machine.read_physical_u32(bar0_base + regs::REG_MFINDEX) & 0x3fff;
+    // Advance by 1.5ms so the xHCI device ticks once and the machine accumulates a sub-ms remainder.
+    src.machine.tick_platform(1_500_000);
+    let mfindex_snapshot = src.machine.read_physical_u32(bar0_base + regs::REG_MFINDEX) & 0x3fff;
+    assert_eq!(mfindex_snapshot, mfindex_before.wrapping_add(8) & 0x3fff);
+
+    // Ensure our snapshot source really emitted the legacy payload (XHCP), not the canonical `USBC`
+    // wrapper.
+    let usb_state = snapshot::SnapshotSource::device_states(&src)
+        .into_iter()
+        .find(|d| d.id == snapshot::DeviceId::USB)
+        .expect("USB device state should exist");
+    assert_eq!(
+        usb_state.data.get(8..12),
+        Some(b"XHCP".as_slice()),
+        "legacy snapshot should store xHCI PCI snapshot directly under DeviceId::USB"
+    );
+
+    let mut bytes = std::io::Cursor::new(Vec::new());
+    snapshot::save_snapshot(&mut bytes, &mut src, snapshot::SaveOptions::default()).unwrap();
+    let bytes = bytes.into_inner();
+
+    let mut restored = Machine::new(cfg).unwrap();
+    restored.restore_snapshot_bytes(&bytes).unwrap();
+    restored.io_write(A20_GATE_PORT, 1, 0x02);
+
+    let bar0_base_restored = restored.pci_bar_base(bdf, 0).expect("xHCI BAR0 should exist");
+    assert_ne!(bar0_base_restored, 0);
+
+    let mfindex_after_restore =
+        restored.read_physical_u32(bar0_base_restored + regs::REG_MFINDEX) & 0x3fff;
+    assert_eq!(mfindex_after_restore, mfindex_snapshot);
+
+    // Legacy snapshots did not include the machine's sub-ms tick remainder; we should start from a
+    // deterministic default of 0 on restore.
+    restored.tick_platform(500_000);
+    let mfindex_after_half_ms =
+        restored.read_physical_u32(bar0_base_restored + regs::REG_MFINDEX) & 0x3fff;
+    assert_eq!(mfindex_after_half_ms, mfindex_snapshot);
+
+    restored.tick_platform(500_000);
+    let mfindex_after_full_ms =
+        restored.read_physical_u32(bar0_base_restored + regs::REG_MFINDEX) & 0x3fff;
+    assert_eq!(mfindex_after_full_ms, mfindex_snapshot.wrapping_add(8) & 0x3fff);
 }
