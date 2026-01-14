@@ -1984,7 +1984,14 @@ def _try_qmp_net_link_flap(
     """
     name_used = _try_qmp_set_link_any(endpoint, names=names, up=False)
     time.sleep(float(down_delay_seconds))
-    _try_qmp_set_link(endpoint, name=name_used, up=True)
+    try:
+        _try_qmp_set_link(endpoint, name=name_used, up=True)
+    except Exception as e:
+        # Preserve the name that was accepted for the DOWN phase so callers can report it in
+        # host-side markers even if the UP phase fails.
+        err = RuntimeError(f"QMP set_link failed while bringing link UP (name={name_used}): {e}")
+        setattr(err, "name_used", name_used)
+        raise err from e
     return name_used
 
 
@@ -6394,12 +6401,19 @@ def main() -> int:
                             down_delay_seconds=2.0,
                         )
                         print(
-                            f"AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_LINK_FLAP|PASS|name={name_used}|down_delay_sec=2"
+                            "AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_LINK_FLAP|PASS|"
+                            f"name={_sanitize_marker_value(name_used)}|down_delay_sec=2"
                         )
                     except Exception as e:
+                        name_used = getattr(e, "name_used", None)
+                        if not name_used:
+                            # If we failed before determining which name QMP accepts (or before toggling
+                            # the link down), include the attempted names list for debugging.
+                            name_used = ",".join([_VIRTIO_NET_QMP_ID, "net0"])
+                        name_tok = _sanitize_marker_value(str(name_used))
                         reason = _sanitize_marker_value(str(e) or type(e).__name__)
                         print(
-                            f"AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_LINK_FLAP|FAIL|name={_VIRTIO_NET_QMP_ID}|reason={reason}",
+                            f"AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_LINK_FLAP|FAIL|name={name_tok}|reason={reason}",
                             file=sys.stderr,
                         )
                         print(
