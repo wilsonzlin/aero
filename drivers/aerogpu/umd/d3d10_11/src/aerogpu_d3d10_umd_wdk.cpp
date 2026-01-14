@@ -2767,7 +2767,7 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     res->width = pDesc->Width;
     res->height = pDesc->Height;
     res->mip_levels = pDesc->MipLevels ? pDesc->MipLevels : aerogpu::d3d10_11::CalcFullMipLevels(res->width, res->height);
-    res->array_size = pDesc->ArraySize ? pDesc->ArraySize : 1;
+    res->array_size = pDesc->ArraySize;
     __if_exists(D3D10DDIARG_CREATERESOURCE::SampleDesc) {
       res->sample_count = static_cast<uint32_t>(pDesc->SampleDesc.Count);
       res->sample_quality = static_cast<uint32_t>(pDesc->SampleDesc.Quality);
@@ -2778,6 +2778,12 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
       AEROGPU_D3D10_11_LOG("D3D10 CreateResource: rejecting Texture2D with invalid dimensions %ux%u",
                            static_cast<unsigned>(res->width),
                            static_cast<unsigned>(res->height));
+      res->~AeroGpuResource();
+      return E_INVALIDARG;
+    }
+
+    if (res->array_size == 0) {
+      AEROGPU_D3D10_11_LOG("D3D10 CreateResource: rejecting Texture2D with invalid ArraySize=0");
       res->~AeroGpuResource();
       return E_INVALIDARG;
     }
