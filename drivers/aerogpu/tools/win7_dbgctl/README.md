@@ -436,6 +436,7 @@ All JSON outputs include:
 - `schema_version` is incremented only for **breaking schema changes**.
 - New fields may be added over time; existing fields keep their meaning.
 - 64-bit counters are emitted as strings or `{ "hex": "...", "dec": "..." }` objects to avoid precision loss in JS runtimes.
+- 64-bit byte sizes are typically emitted as `{ "bytes": "...", "mib": "..." }` objects.
 - On failure, `ok` is `false`. For parse/transport failures, an `error` object is present. Some commands also expose a command-specific status field (for example `read-gpa.response.status`).
 - If argument parsing/usage fails and `--json`/`--pretty` is present anywhere on the command line, dbgctl still emits a JSON error object (so automation does not need to scrape usage text). When no specific command is selected yet, it uses `command: "parse-args"`; otherwise it may use a command-specific value like `command: "read-gpa"` or `command: "watch-ring"`.
 - For bounded “watch” commands, JSON output is capped to 10,000 samples to avoid excessive memory usage (dbgctl builds the full JSON payload in memory).

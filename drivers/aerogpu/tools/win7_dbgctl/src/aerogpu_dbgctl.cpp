@@ -3094,7 +3094,7 @@ static int DoStatusJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, std::stri
     if (haveContigPool) {
       JsonWriteU64HexDec(w, "hit", qp.contig_pool_hit);
       JsonWriteU64HexDec(w, "miss", qp.contig_pool_miss);
-      JsonWriteU64HexDec(w, "bytes_saved", qp.contig_pool_bytes_saved);
+      JsonWriteBytesAndMiB(w, "bytes_saved", (uint64_t)qp.contig_pool_bytes_saved);
     }
     w.EndObject();
 
