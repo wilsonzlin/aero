@@ -478,6 +478,36 @@ class LintGuestToolsScriptsTests(unittest.TestCase):
                 msg="expected missing skipstorage validation gate error. Errors:\n" + "\n".join(errs),
             )
 
+    def test_linter_fails_when_skipstorage_gate_is_only_in_comments(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="aero-guest-tools-lint-") as tmp:
+            tmp_path = Path(tmp)
+            setup_cmd = tmp_path / "setup.cmd"
+            uninstall_cmd = tmp_path / "uninstall.cmd"
+            verify_ps1 = tmp_path / "verify.ps1"
+
+            lines = _synthetic_setup_text(include_skipstorage_validation_gate=False).splitlines()
+            # Insert a commented-out version of the gate; linter should not accept it.
+            idx = lines.index(":check_mode")
+            lines[idx:idx] = [
+                'rem if "%ARG_SKIP_STORAGE%"=="1" (',
+                "rem   rem skip storage INF validation",
+                "rem ) else (",
+                "rem   call :validate_storage_service_infs || goto :fail",
+                "rem )",
+            ]
+            setup_cmd.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            uninstall_cmd.write_text(_synthetic_uninstall_text(), encoding="utf-8")
+            verify_ps1.write_text(_synthetic_verify_text(), encoding="utf-8")
+
+            errs = lint_guest_tools_scripts.lint_files(
+                setup_cmd=setup_cmd, uninstall_cmd=uninstall_cmd, verify_ps1=verify_ps1
+            )
+            self.assertTrue(errs, msg="expected lint errors, got none")
+            self.assertTrue(
+                any("storage INF validation" in e for e in errs),
+                msg="expected missing skipstorage validation gate error. Errors:\n" + "\n".join(errs),
+            )
+
     def test_linter_fails_when_skipstorage_does_not_gate_storage_preseed(self) -> None:
         with tempfile.TemporaryDirectory(prefix="aero-guest-tools-lint-") as tmp:
             tmp_path = Path(tmp)
@@ -709,6 +739,31 @@ class LintGuestToolsScriptsTests(unittest.TestCase):
             self.assertTrue(
                 any("verify-media" in e for e in errs),
                 msg="expected missing /verify-media error. Errors:\n" + "\n".join(errs),
+            )
+
+    def test_linter_fails_when_verify_media_wiring_is_only_in_comments(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="aero-guest-tools-lint-") as tmp:
+            tmp_path = Path(tmp)
+            setup_cmd = tmp_path / "setup.cmd"
+            uninstall_cmd = tmp_path / "uninstall.cmd"
+            verify_ps1 = tmp_path / "verify.ps1"
+
+            lines = _synthetic_setup_text().splitlines()
+            # Comment out the actual wiring while leaving the flag + labels present.
+            for i, line in enumerate(lines):
+                if line.strip() == 'if "%ARG_VERIFY_MEDIA%"=="1" (' or line.strip() == "call :verify_media_preflight":
+                    lines[i] = "rem " + line
+            setup_cmd.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            uninstall_cmd.write_text(_synthetic_uninstall_text(), encoding="utf-8")
+            verify_ps1.write_text(_synthetic_verify_text(), encoding="utf-8")
+
+            errs = lint_guest_tools_scripts.lint_files(
+                setup_cmd=setup_cmd, uninstall_cmd=uninstall_cmd, verify_ps1=verify_ps1
+            )
+            self.assertTrue(errs, msg="expected lint errors, got none")
+            self.assertTrue(
+                any("Wires /verify-media flag" in e for e in errs),
+                msg="expected missing verify-media wiring error. Errors:\n" + "\n".join(errs),
             )
 
     def test_linter_fails_when_setup_missing_verify_media_parse(self) -> None:
