@@ -13,12 +13,13 @@ import fs from "node:fs";
 import path from "node:path";
 
 function parseArgs(argv) {
-  const args = { dir: process.cwd(), port: 8080, coopCoep: false };
+  const args = { dir: process.cwd(), port: 8080, coopCoep: false, authToken: null };
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--dir") args.dir = argv[++i];
     else if (a === "--port") args.port = Number(argv[++i]);
     else if (a === "--coop-coep") args.coopCoep = true;
+    else if (a === "--auth-token") args.authToken = argv[++i];
     else if (a === "--help") args.help = true;
   }
   return args;
@@ -26,7 +27,9 @@ function parseArgs(argv) {
 
 const args = parseArgs(process.argv);
 if (args.help) {
-  console.log("Usage: node server/range_server.js --dir <root> --port <port> [--coop-coep]");
+  console.log(
+    "Usage: node server/range_server.js --dir <root> --port <port> [--coop-coep] [--auth-token <Authorization-value>]"
+  );
   process.exit(0);
 }
 
@@ -184,9 +187,55 @@ function sendHeaders(res, stat, { contentLength, contentRange, statusCode }) {
   res.setHeader("Content-Type", "application/octet-stream");
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("Content-Encoding", "identity");
-  res.setHeader("Cache-Control", "no-transform");
+  res.setHeader(
+    "Cache-Control",
+    args.authToken ? "private, no-store, no-transform" : "no-transform"
+  );
   res.setHeader("Last-Modified", stat.mtime.toUTCString());
   res.setHeader("ETag", computeEtag(stat));
+}
+
+function requireAuth(req) {
+  if (typeof args.authToken !== "string" || !args.authToken) return null;
+  const auth = req.headers["authorization"];
+  if (typeof auth !== "string" || auth.trim() !== args.authToken.trim()) {
+    return { expected: args.authToken, actual: typeof auth === "string" ? auth : null };
+  }
+  return null;
+}
+
+function sendAuthError(req, res, { statusCode }) {
+  const body = req.method === "HEAD" ? Buffer.alloc(0) : Buffer.from("Unauthorized");
+  res.statusCode = statusCode;
+  res.setHeader("Accept-Ranges", "bytes");
+  res.setHeader("Content-Type", "text/plain; charset=utf-8");
+  res.setHeader("Content-Length", String(body.length));
+  res.setHeader("Content-Encoding", "identity");
+  res.setHeader("Cache-Control", "private, no-store, no-transform");
+
+  res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader(
+    "Access-Control-Allow-Headers",
+    "Range, If-Range, If-None-Match, If-Modified-Since, Authorization"
+  );
+  res.setHeader("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
+  res.setHeader(
+    "Access-Control-Expose-Headers",
+    "Accept-Ranges, Content-Range, Content-Length, Content-Encoding, ETag, Last-Modified"
+  );
+  res.setHeader("Access-Control-Max-Age", "86400");
+  res.setHeader(
+    "Vary",
+    "Origin, Access-Control-Request-Method, Access-Control-Request-Headers"
+  );
+
+  if (args.coopCoep) {
+    res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
+    res.setHeader("Cross-Origin-Embedder-Policy", "require-corp");
+  }
+
+  res.end(body);
 }
 
 function parseRange(rangeHeader, size) {
@@ -240,7 +289,7 @@ const server = http.createServer((req, res) => {
     res.setHeader("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
     res.setHeader(
       "Access-Control-Allow-Headers",
-      "Range, If-Range, If-None-Match, If-Modified-Since"
+      "Range, If-Range, If-None-Match, If-Modified-Since, Authorization"
     );
     res.setHeader(
       "Access-Control-Expose-Headers",
@@ -256,6 +305,12 @@ const server = http.createServer((req, res) => {
       res.setHeader("Cross-Origin-Embedder-Policy", "require-corp");
     }
     res.end();
+    return;
+  }
+
+  const authError = requireAuth(req);
+  if (authError) {
+    sendAuthError(req, res, { statusCode: 401 });
     return;
   }
 
