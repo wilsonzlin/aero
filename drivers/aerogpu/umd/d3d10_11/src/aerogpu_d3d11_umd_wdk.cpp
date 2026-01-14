@@ -1490,6 +1490,107 @@ static void UnbindResourceFromOutputsLocked(Device* dev, aerogpu_handle_t resour
   UnbindResourceFromOutputsLocked(dev, resource, nullptr);
 }
 
+static void UnbindResourceFromConstantBuffersLocked(Device* dev, const Resource* res) {
+  if (!dev || !res) {
+    return;
+  }
+
+  bool oom = false;
+  const aerogpu_constant_buffer_binding null_cb{};
+  const aerogpu_handle_t handle = res->handle;
+
+  auto unbind_stage = [&](uint32_t shader_stage,
+                          aerogpu_constant_buffer_binding* table,
+                          std::array<Resource*, kMaxConstantBufferSlots>& bound_resources) {
+    if (!table) {
+      return;
+    }
+    for (uint32_t slot = 0; slot < kMaxConstantBufferSlots; ++slot) {
+      if ((handle != 0 && table[slot].buffer == handle) ||
+          ResourcesAlias(bound_resources[slot], res)) {
+        if (!oom && (table[slot].buffer != 0 ||
+                     table[slot].offset_bytes != 0 ||
+                     table[slot].size_bytes != 0 ||
+                     table[slot].reserved0 != 0)) {
+          auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_constant_buffers>(
+              AEROGPU_CMD_SET_CONSTANT_BUFFERS, &null_cb, sizeof(null_cb));
+          if (!cmd) {
+            SetError(dev, E_OUTOFMEMORY);
+            oom = true;
+          } else {
+            cmd->shader_stage = shader_stage;
+            cmd->start_slot = slot;
+            cmd->buffer_count = 1;
+            cmd->reserved0 = 0;
+          }
+        }
+        table[slot] = null_cb;
+        bound_resources[slot] = nullptr;
+
+        // Keep the software-rasterizer CB0 caches consistent with the slot 0
+        // bindings (even when the runtime relies on implicit refcounting rather
+        // than explicit unbinds).
+        if (slot == 0 && shader_stage == AEROGPU_SHADER_STAGE_VERTEX) {
+          dev->current_vs_cb0 = nullptr;
+          dev->current_vs_cb0_first_constant = 0;
+          dev->current_vs_cb0_num_constants = 0;
+        } else if (slot == 0 && shader_stage == AEROGPU_SHADER_STAGE_PIXEL) {
+          dev->current_ps_cb0 = nullptr;
+          dev->current_ps_cb0_first_constant = 0;
+          dev->current_ps_cb0_num_constants = 0;
+        }
+      }
+    }
+  };
+
+  unbind_stage(AEROGPU_SHADER_STAGE_VERTEX, dev->vs_constant_buffers, dev->current_vs_cbs);
+  unbind_stage(AEROGPU_SHADER_STAGE_PIXEL, dev->ps_constant_buffers, dev->current_ps_cbs);
+  unbind_stage(AEROGPU_SHADER_STAGE_GEOMETRY, dev->gs_constant_buffers, dev->current_gs_cbs);
+  unbind_stage(AEROGPU_SHADER_STAGE_COMPUTE, dev->cs_constant_buffers, dev->current_cs_cbs);
+}
+
+static void UnbindResourceFromInputAssemblerLocked(Device* dev, const Resource* res) {
+  if (!dev || !res) {
+    return;
+  }
+
+  if (ResourcesAlias(dev->current_vb, res)) {
+    dev->current_vb = nullptr;
+    dev->current_vb_stride_bytes = 0;
+    dev->current_vb_offset_bytes = 0;
+
+    aerogpu_vertex_buffer_binding vb{};
+    vb.buffer = 0;
+    vb.stride_bytes = 0;
+    vb.offset_bytes = 0;
+    vb.reserved0 = 0;
+    auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_vertex_buffers>(
+        AEROGPU_CMD_SET_VERTEX_BUFFERS, &vb, sizeof(vb));
+    if (!cmd) {
+      SetError(dev, E_OUTOFMEMORY);
+    } else {
+      cmd->start_slot = 0;
+      cmd->buffer_count = 1;
+    }
+  }
+
+  if (ResourcesAlias(dev->current_ib, res)) {
+    dev->current_ib = nullptr;
+    dev->current_ib_format = kDxgiFormatUnknown;
+    dev->current_ib_offset_bytes = 0;
+
+    auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_index_buffer>(AEROGPU_CMD_SET_INDEX_BUFFER);
+    if (!cmd) {
+      SetError(dev, E_OUTOFMEMORY);
+    } else {
+      cmd->buffer = 0;
+      cmd->format = AEROGPU_INDEX_FORMAT_UINT16;
+      cmd->offset_bytes = 0;
+      cmd->reserved0 = 0;
+    }
+  }
+}
+
 template <typename TFnPtr>
 struct DdiStub;
 
@@ -3638,13 +3739,17 @@ void AEROGPU_APIENTRY DestroyResource11(D3D11DDI_HDEVICE hDevice, D3D11DDI_HRESO
     (void)UnmapLocked(dev, res);
   }
 
-  if (res->handle) {
-    // Be conservative and scrub bindings before emitting the host-side destroy.
-    // The runtime generally unbinds resources prior to destruction, but stale
-    // bindings can occur during error paths.
-    UnbindResourceFromSrvsLocked(dev, res->handle, res);
-    UnbindResourceFromOutputsLocked(dev, res->handle, res);
+  // Be conservative and scrub bindings before emitting the host-side destroy.
+  // The runtime generally unbinds resources prior to destruction, but stale
+  // bindings can occur during error paths. Additionally, shared/aliased resources
+  // may appear as distinct Resource objects while referring to the same backing
+  // allocation; treat those as aliasing for the purposes of cleanup.
+  UnbindResourceFromSrvsLocked(dev, res->handle, res);
+  UnbindResourceFromOutputsLocked(dev, res->handle, res);
+  UnbindResourceFromConstantBuffersLocked(dev, res);
+  UnbindResourceFromInputAssemblerLocked(dev, res);
 
+  if (res->handle) {
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_destroy_resource>(AEROGPU_CMD_DESTROY_RESOURCE);
     cmd->resource_handle = res->handle;
     cmd->reserved0 = 0;
