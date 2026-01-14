@@ -92,3 +92,171 @@ fn machine_snapshot_preserves_virtio_blk_msix_enable_and_mask() {
         "expected restored virtio-blk MSI-X function mask bit to be preserved"
     );
 }
+
+#[test]
+fn machine_snapshot_preserves_virtio_net_msix_enable_and_mask() {
+    let cfg = MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_virtio_net: true,
+        // Keep the machine minimal and deterministic for a focused snapshot regression test.
+        enable_ahci: false,
+        enable_nvme: false,
+        enable_ide: false,
+        enable_uhci: false,
+        enable_vga: false,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        enable_e1000: false,
+        enable_virtio_blk: false,
+        enable_virtio_input: false,
+        ..Default::default()
+    };
+
+    let mut src = Machine::new(cfg.clone()).unwrap();
+
+    // Sanity: runtime virtio-net MSI-X starts disabled.
+    let src_virtio_net = src.virtio_net().expect("virtio-net should be enabled");
+    assert!(
+        !src_virtio_net
+            .borrow()
+            .config()
+            .capability::<MsixCapability>()
+            .expect("virtio-net should have MSI-X capability")
+            .enabled(),
+        "test setup: expected runtime virtio-net MSI-X to be disabled before programming canonical config"
+    );
+
+    // Enable MSI-X (and function mask) in the *canonical* PCI config space owned by the machine.
+    let bdf = profile::VIRTIO_NET.bdf;
+    let pci_cfg = src
+        .pci_config_ports()
+        .expect("pc platform should provide PCI config ports");
+    {
+        let mut pci_cfg = pci_cfg.borrow_mut();
+        let cfg = pci_cfg
+            .bus_mut()
+            .device_config_mut(bdf)
+            .expect("virtio-net should exist on PCI bus");
+        let msix_offset = cfg
+            .find_capability(PCI_CAP_ID_MSIX)
+            .expect("virtio-net should expose MSI-X capability");
+        let ctrl_off = u16::from(msix_offset) + 0x02;
+        let ctrl = cfg.read(ctrl_off, 2) as u16;
+        cfg.write(ctrl_off, 2, u32::from(ctrl | (1 << 15) | (1 << 14)));
+    }
+
+    let snapshot = src.take_snapshot_full().unwrap();
+
+    let mut restored = Machine::new(cfg).unwrap();
+    restored.restore_snapshot_bytes(&snapshot).unwrap();
+
+    let virtio_net = restored.virtio_net().expect("virtio-net should be enabled");
+    let (enabled, function_masked) = {
+        let dev = virtio_net.borrow();
+        let msix = dev
+            .config()
+            .capability::<MsixCapability>()
+            .expect("restored runtime virtio-net should have MSI-X capability");
+        (msix.enabled(), msix.function_masked())
+    };
+
+    assert!(enabled, "expected restored virtio-net MSI-X to be enabled");
+    assert!(
+        function_masked,
+        "expected restored virtio-net MSI-X function mask bit to be preserved"
+    );
+}
+
+#[test]
+fn machine_snapshot_preserves_virtio_input_msix_enable_and_mask() {
+    let cfg = MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_virtio_input: true,
+        // Keep the machine minimal and deterministic for a focused snapshot regression test.
+        enable_ahci: false,
+        enable_nvme: false,
+        enable_ide: false,
+        enable_uhci: false,
+        enable_vga: false,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        enable_e1000: false,
+        enable_virtio_net: false,
+        enable_virtio_blk: false,
+        ..Default::default()
+    };
+
+    let mut src = Machine::new(cfg.clone()).unwrap();
+
+    let src_kb = src
+        .virtio_input_keyboard()
+        .expect("virtio-input keyboard should be enabled");
+    let src_mouse = src
+        .virtio_input_mouse()
+        .expect("virtio-input mouse should be enabled");
+
+    // Sanity: runtime virtio-input MSI-X starts disabled for both functions.
+    for dev in [&src_kb, &src_mouse] {
+        assert!(
+            !dev.borrow()
+                .config()
+                .capability::<MsixCapability>()
+                .expect("virtio-input should have MSI-X capability")
+                .enabled(),
+            "test setup: expected runtime virtio-input MSI-X to be disabled before programming canonical config"
+        );
+    }
+
+    let pci_cfg = src
+        .pci_config_ports()
+        .expect("pc platform should provide PCI config ports");
+    {
+        let mut pci_cfg = pci_cfg.borrow_mut();
+        for bdf in [profile::VIRTIO_INPUT_KEYBOARD.bdf, profile::VIRTIO_INPUT_MOUSE.bdf] {
+            let cfg = pci_cfg
+                .bus_mut()
+                .device_config_mut(bdf)
+                .expect("virtio-input should exist on PCI bus");
+            let msix_offset = cfg
+                .find_capability(PCI_CAP_ID_MSIX)
+                .expect("virtio-input should expose MSI-X capability");
+            let ctrl_off = u16::from(msix_offset) + 0x02;
+            let ctrl = cfg.read(ctrl_off, 2) as u16;
+            cfg.write(ctrl_off, 2, u32::from(ctrl | (1 << 15) | (1 << 14)));
+        }
+    }
+
+    let snapshot = src.take_snapshot_full().unwrap();
+
+    let mut restored = Machine::new(cfg).unwrap();
+    restored.restore_snapshot_bytes(&snapshot).unwrap();
+
+    let kb = restored
+        .virtio_input_keyboard()
+        .expect("virtio-input keyboard should be enabled");
+    let mouse = restored
+        .virtio_input_mouse()
+        .expect("virtio-input mouse should be enabled");
+
+    for dev in [&kb, &mouse] {
+        let (enabled, function_masked) = {
+            let dev = dev.borrow();
+            let msix = dev
+                .config()
+                .capability::<MsixCapability>()
+                .expect("restored runtime virtio-input should have MSI-X capability");
+            (msix.enabled(), msix.function_masked())
+        };
+        assert!(enabled, "expected restored virtio-input MSI-X to be enabled");
+        assert!(
+            function_masked,
+            "expected restored virtio-input MSI-X function mask bit to be preserved"
+        );
+    }
+}
