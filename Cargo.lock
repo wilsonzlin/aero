@@ -260,6 +260,10 @@ name = "aero-edid"
 version = "0.1.0"
 
 [[package]]
+name = "aero-fuzz"
+version = "0.1.0"
+
+[[package]]
 name = "aero-gpu"
 version = "0.1.0"
 dependencies = [
