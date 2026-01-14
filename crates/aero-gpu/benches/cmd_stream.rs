@@ -311,7 +311,10 @@ fn translate_to_internal(cmds: &[AeroGpuCmd<'_>]) -> Vec<GpuCmd> {
                 ..
             } => {
                 // `bindings_bytes` is a raw `aerogpu_vertex_buffer_binding[]` array.
-                for (i, binding) in bindings_bytes.chunks_exact(16).enumerate() {
+                for (i, binding) in bindings_bytes
+                    .chunks_exact(AerogpuVertexBufferBinding::SIZE_BYTES)
+                    .enumerate()
+                {
                     let buffer = u32::from_le_bytes(binding[0..4].try_into().unwrap());
                     let offset_bytes = u32::from_le_bytes(binding[8..12].try_into().unwrap());
                     out.push(GpuCmd::SetVertexBuffer {
@@ -479,9 +482,8 @@ fn bench_cmd_optimize(c: &mut Criterion) {
 
     // "Default" optimizer is conservative (no draw coalescing).
     let opt_default = CommandOptimizer::new();
-    let opt_coalesce = CommandOptimizer {
-        enable_draw_coalescing: true,
-    };
+    let mut opt_coalesce = CommandOptimizer::new();
+    opt_coalesce.enable_draw_coalescing = true;
 
     let mut group = c.benchmark_group("cmd_optimize");
     for (name, cmds) in [
