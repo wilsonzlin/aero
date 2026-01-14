@@ -1624,6 +1624,61 @@ describe("hid/WebHidBroker", () => {
     broker.destroy();
   });
 
+  it("hard-caps unknown output ring report payload sizes based on the reportId prefix byte", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    Object.defineProperty(globalThis, "crossOriginIsolated", { value: true, configurable: true });
+    try {
+      const manager = new WebHidPassthroughManager({ hid: null });
+      const broker = new WebHidBroker({ manager });
+      const port = new FakePort();
+      broker.attachWorkerPort(port as unknown as MessagePort);
+
+      const ringAttach = port.posted.find((p) => (p.msg as { type?: unknown }).type === "hid.ringAttach")?.msg as
+        | { inputRing: SharedArrayBuffer; outputRing: SharedArrayBuffer }
+        | undefined;
+      expect(ringAttach).toBeTruthy();
+      const outputRing = new HidReportRing(ringAttach!.outputRing);
+
+      const device = new FakeHidDevice();
+      // No output report metadata -> report size will be treated as unknown.
+      device.collections = [
+        {
+          usagePage: 1,
+          usage: 2,
+          type: "application",
+          children: [],
+          inputReports: [],
+          outputReports: [],
+          featureReports: [],
+        },
+      ] as unknown as HIDCollectionInfo[];
+      const id = await broker.attachDevice(device as unknown as HIDDevice);
+
+      const huge = new Uint8Array(0xffff);
+      huge.set([1, 2, 3], 0);
+      expect(outputRing.push(id, HidReportType.Output, 9, huge)).toBe(true);
+
+      await new Promise((r) => setTimeout(r, 30));
+
+      expect(device.sendReport).toHaveBeenCalledTimes(1);
+      expect(device.sendReport.mock.calls[0]![0]).toBe(9);
+      const outputData = device.sendReport.mock.calls[0]![1] as BufferSource;
+      const outputBytes =
+        outputData instanceof ArrayBuffer
+          ? new Uint8Array(outputData)
+          : new Uint8Array(outputData.buffer, outputData.byteOffset, outputData.byteLength);
+      // reportId != 0 => on-wire report includes a reportId prefix byte, so clamp payload to 0xfffe.
+      expect(outputBytes.byteLength).toBe(0xfffe);
+      expect(Array.from(outputBytes.slice(0, 3))).toEqual([1, 2, 3]);
+
+      expect(warn).toHaveBeenCalledTimes(1);
+
+      broker.destroy();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("queues hid.sendReport behind output ring sends for the same device", async () => {
     Object.defineProperty(globalThis, "crossOriginIsolated", { value: true, configurable: true });
 

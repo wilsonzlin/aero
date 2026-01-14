@@ -714,7 +714,19 @@ export class WebHidBroker {
                 );
               }
             } else {
-              destLen = srcLen;
+              const hardCap = maxHidControlPayloadBytes(reportId);
+              if (srcLen > hardCap) {
+                destLen = hardCap;
+                this.#warnSendReportSizeOnce(
+                  deviceId,
+                  reportType,
+                  reportId,
+                  "hardCap",
+                  `[webhid] ${reportType === "feature" ? "sendFeatureReport" : "sendReport"} reportId=${reportId} for deviceId=${deviceId} has unknown expected size; capping ${srcLen} bytes to ${hardCap}`,
+                );
+              } else {
+                destLen = srcLen;
+              }
             }
 
             // Copy the report payload out of the ring immediately so it can't be overwritten by
