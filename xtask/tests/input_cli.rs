@@ -88,6 +88,7 @@ fn input_help_mentions_flags_and_steps() {
         .stdout(predicate::str::contains(
             "webhid_report_descriptor_synthesis_wasm",
         ))
+        .stdout(predicate::str::contains("src/hid"))
         .stdout(predicate::str::contains("usb_guest_controller"))
         .stdout(predicate::str::contains("webusb_passthrough_runtime"))
         .stdout(predicate::str::contains(
