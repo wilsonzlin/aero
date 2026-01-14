@@ -52,6 +52,31 @@ static int RunPerfStateSanity(int argc, char** argv) {
     return reporter.Fail("%s", open_err.c_str());
   }
 
+  // Best-effort: also sanity-check QUERY_ERROR doesn't hang. This is particularly important around
+  // power-transition windows where MMIO reads can be unsafe.
+  {
+    aerogpu_escape_query_error_out qe;
+    NTSTATUS stErr = 0;
+    const bool okErr = aerogpu_test::kmt::AerogpuQueryError(&kmt, adapter, &qe, &stErr);
+    if (!okErr) {
+      if (stErr == aerogpu_test::kmt::kStatusNotSupported || stErr == aerogpu_test::kmt::kStatusInvalidParameter) {
+        aerogpu_test::PrintfStdout("INFO: %s: QUERY_ERROR escape not supported; skipping", kTestName);
+      } else {
+        aerogpu_test::kmt::CloseAdapter(&kmt, adapter);
+        aerogpu_test::kmt::UnloadD3DKMT(&kmt);
+        return reporter.Fail("D3DKMTEscape(query-error) failed (NTSTATUS=0x%08lX)", (unsigned long)stErr);
+      }
+    } else if (qe.hdr.version != AEROGPU_ESCAPE_VERSION || qe.hdr.op != AEROGPU_ESCAPE_OP_QUERY_ERROR ||
+               qe.hdr.size != sizeof(qe)) {
+      aerogpu_test::kmt::CloseAdapter(&kmt, adapter);
+      aerogpu_test::kmt::UnloadD3DKMT(&kmt);
+      return reporter.Fail("invalid QUERY_ERROR header (version=%lu op=%lu size=%lu)",
+                           (unsigned long)qe.hdr.version,
+                           (unsigned long)qe.hdr.op,
+                           (unsigned long)qe.hdr.size);
+    }
+  }
+
   bool saw_nonzero_fence = false;
 
   for (uint32_t i = 0; i < samples; ++i) {
