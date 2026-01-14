@@ -179,11 +179,13 @@ fn pc_platform_enumerates_e1000_and_assigns_bars() {
 
     let bar0_base = read_e1000_bar0_base(&mut pc);
     assert_ne!(bar0_base, 0, "BAR0 should be assigned during BIOS POST");
-    assert_eq!(bar0_base % 0x20_000u64, 0);
+    assert_eq!(bar0_base % NIC_E1000_82540EM.bars[0].size, 0);
 
     let bar1_base = read_e1000_bar1_base(&mut pc);
     assert_ne!(bar1_base, 0, "BAR1 should be assigned during BIOS POST");
-    assert_eq!(bar1_base % 0x40, 0);
+    let bar1_size =
+        u32::try_from(NIC_E1000_82540EM.bars[1].size).expect("e1000 BAR1 size should fit in u32");
+    assert_eq!(bar1_base % bar1_size, 0);
 }
 
 #[test]
@@ -208,7 +210,12 @@ fn pc_platform_e1000_bar_probes_return_size_masks() {
     let mut pc = PcPlatform::new_with_e1000(2 * 1024 * 1024);
     let bdf = NIC_E1000_82540EM.bdf;
 
-    // BAR0: 0x20_000-byte MMIO.
+    let bar0_size =
+        u32::try_from(NIC_E1000_82540EM.bars[0].size).expect("e1000 BAR0 size should fit in u32");
+    let bar1_size =
+        u32::try_from(NIC_E1000_82540EM.bars[1].size).expect("e1000 BAR1 size should fit in u32");
+
+    // BAR0: MMIO.
     let bar0_orig = read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x10);
     write_cfg_u32(
         &mut pc,
@@ -219,9 +226,11 @@ fn pc_platform_e1000_bar_probes_return_size_masks() {
         0xFFFF_FFFF,
     );
     let bar0_probe = read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x10);
+    let bar0_flags = bar0_orig & 0xF;
+    let expected_bar0_probe = !(bar0_size - 1) | bar0_flags;
     assert_eq!(
-        bar0_probe, 0xFFFE_0000,
-        "BAR0 probe should return size mask for 0x20_000-byte MMIO BAR"
+        bar0_probe, expected_bar0_probe,
+        "BAR0 probe should return size mask for {bar0_size:#x}-byte MMIO BAR"
     );
     write_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x10, bar0_orig);
     assert_eq!(
@@ -229,7 +238,7 @@ fn pc_platform_e1000_bar_probes_return_size_masks() {
         bar0_orig
     );
 
-    // BAR1: 0x40-byte I/O (IOADDR/IODATA) window.
+    // BAR1: I/O (IOADDR/IODATA) window.
     let bar1_orig = read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x14);
     write_cfg_u32(
         &mut pc,
@@ -240,9 +249,11 @@ fn pc_platform_e1000_bar_probes_return_size_masks() {
         0xFFFF_FFFF,
     );
     let bar1_probe = read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x14);
+    let bar1_flags = bar1_orig & 0x3;
+    let expected_bar1_probe = !(bar1_size - 1) | bar1_flags;
     assert_eq!(
-        bar1_probe, 0xFFFF_FFC1,
-        "BAR1 probe should return size mask for 0x40-byte I/O BAR"
+        bar1_probe, expected_bar1_probe,
+        "BAR1 probe should return size mask for {bar1_size:#x}-byte I/O BAR"
     );
     write_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x14, bar1_orig);
     assert_eq!(
@@ -360,8 +371,9 @@ fn pc_platform_routes_e1000_mmio_after_bar0_reprogramming() {
     let bdf = NIC_E1000_82540EM.bdf;
 
     let bar0_base = read_e1000_bar0_base(&mut pc);
-    let new_base = bar0_base + 0x20_000;
-    assert_eq!(new_base % 0x20_000, 0);
+    let bar0_size = NIC_E1000_82540EM.bars[0].size;
+    let new_base = bar0_base + bar0_size;
+    assert_eq!(new_base % bar0_size, 0);
 
     pc.memory.write_u32(bar0_base + 0x00D0, 0xABCD_EF01);
     assert_eq!(pc.memory.read_u32(bar0_base + 0x00D0), 0xABCD_EF01);
@@ -445,8 +457,10 @@ fn pc_platform_routes_e1000_io_after_bar1_reprogramming() {
 
     let bdf = NIC_E1000_82540EM.bdf;
     let bar1_base = read_e1000_bar1_base(&mut bus.platform);
-    let new_base = bar1_base + 0x40;
-    assert_eq!(new_base % 0x40, 0);
+    let bar1_size =
+        u32::try_from(NIC_E1000_82540EM.bars[1].size).expect("e1000 BAR1 size should fit in u32");
+    let new_base = bar1_base + bar1_size;
+    assert_eq!(new_base % bar1_size, 0);
 
     write_cfg_u32(
         &mut bus.platform,
@@ -694,7 +708,9 @@ fn pc_platform_routes_e1000_io_bar() {
     let mut pc = PcPlatform::new_with_e1000(2 * 1024 * 1024);
     let io_base = read_e1000_bar1_base(&mut pc);
     assert_ne!(io_base, 0);
-    assert_eq!(io_base % 0x40, 0);
+    let bar1_size =
+        u32::try_from(NIC_E1000_82540EM.bars[1].size).expect("e1000 BAR1 size should fit in u32");
+    assert_eq!(io_base % bar1_size, 0);
     let io_base = u16::try_from(io_base).expect("BAR1 base should fit in u16 for IoPortBus");
 
     let bar0_base = read_e1000_bar0_base(&mut pc);
@@ -716,8 +732,10 @@ fn pc_platform_routes_e1000_io_bar_after_bar1_reprogramming() {
 
     let old_base = read_e1000_bar1_base(&mut pc);
     assert_ne!(old_base, 0);
-    let new_base = old_base + 0x40;
-    assert_eq!(new_base % 0x40, 0);
+    let bar1_size =
+        u32::try_from(NIC_E1000_82540EM.bars[1].size).expect("e1000 BAR1 size should fit in u32");
+    let new_base = old_base + bar1_size;
+    assert_eq!(new_base % bar1_size, 0);
 
     // Relocate BAR1.
     write_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x14, new_base);

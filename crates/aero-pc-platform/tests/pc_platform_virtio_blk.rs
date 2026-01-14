@@ -148,9 +148,11 @@ fn pc_platform_virtio_blk_bar0_is_mmio64_and_probes_return_size_mask() {
 
     let bar0_probe_lo = read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x10);
     let bar0_probe_hi = read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x14);
+    let bar0_size = u32::try_from(VIRTIO_BAR0_SIZE).expect("virtio BAR0 size should fit in u32");
+    let expected_probe_lo = !(bar0_size - 1) | (bar0_orig_lo & 0xF);
     assert_eq!(
-        bar0_probe_lo, 0xFFFF_C004,
-        "BAR0 probe should return size mask for 0x4000-byte MMIO64 BAR"
+        bar0_probe_lo, expected_probe_lo,
+        "BAR0 probe should return size mask for {bar0_size:#x}-byte MMIO64 BAR"
     );
     assert_eq!(bar0_probe_hi, 0xFFFF_FFFF);
 
@@ -1343,7 +1345,9 @@ fn pc_platform_virtio_blk_processes_queue_and_raises_intx() {
     assert_eq!(irq, expected_irq);
 
     // Reading the ISR register should clear the interrupt level.
-    let isr = pc.memory.read_u8(bar0_base + 0x2000);
+    let isr = pc
+        .memory
+        .read_u8(bar0_base + u64::from(VIRTIO_ISR_CFG_BAR0_OFFSET));
     assert_ne!(isr, 0);
     assert!(!pc
         .virtio_blk
@@ -1446,7 +1450,9 @@ fn pc_platform_routes_virtio_blk_intx_via_ioapic_in_apic_mode() {
     pc.interrupts.borrow_mut().acknowledge(vector as u8);
 
     // Clear the device interrupt cause (ISR is read-to-clear).
-    let _isr = pc.memory.read_u8(bar0_base + 0x2000);
+    let _isr = pc
+        .memory
+        .read_u8(bar0_base + u64::from(VIRTIO_ISR_CFG_BAR0_OFFSET));
     assert!(!pc.virtio_blk.as_ref().unwrap().borrow().irq_level());
 
     // Propagate the deasserted INTx level to the IOAPIC.

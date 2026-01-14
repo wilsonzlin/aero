@@ -38,6 +38,8 @@ fn pc_cpu_bus_routes_pci_io_bar_and_tracks_bar_reprogramming() {
     let mut bus = PcCpuBus::new(platform);
 
     let bdf = NIC_E1000_82540EM.bdf;
+    let bar1_size =
+        u16::try_from(NIC_E1000_82540EM.bars[1].size).expect("e1000 BAR1 size should fit in u16");
 
     let bar0_base = read_cfg_u32(&mut bus, bdf, 0x10) as u64 & 0xffff_fff0;
     assert_ne!(bar0_base, 0);
@@ -45,7 +47,7 @@ fn pc_cpu_bus_routes_pci_io_bar_and_tracks_bar_reprogramming() {
     let bar1 = read_cfg_u32(&mut bus, bdf, 0x14);
     let bar1_base = (bar1 & 0xffff_fffc) as u16;
     assert_ne!(bar1_base, 0);
-    assert_eq!(bar1_base % 0x40, 0);
+    assert_eq!(bar1_base % bar1_size, 0);
 
     let status_mmio = bus.platform.memory.read_u32(bar0_base + 0x08);
     assert_ne!(status_mmio, 0xffff_ffff);
@@ -69,8 +71,8 @@ fn pc_cpu_bus_routes_pci_io_bar_and_tracks_bar_reprogramming() {
     assert_eq!(status_io, status_mmio);
 
     // Move BAR1 within the platform's PCI I/O window and ensure the CPU bus routing follows.
-    let new_base = bar1_base.wrapping_add(0x80);
-    assert_eq!(new_base % 0x40, 0);
+    let new_base = bar1_base.wrapping_add(bar1_size.wrapping_mul(2));
+    assert_eq!(new_base % bar1_size, 0);
     write_cfg_u32(&mut bus, bdf, 0x14, u32::from(new_base));
 
     let bar1_after = read_cfg_u32(&mut bus, bdf, 0x14);
