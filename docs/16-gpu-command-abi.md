@@ -24,19 +24,18 @@ The canonical machine (`aero_machine::Machine`) supports **two mutually-exclusiv
   `docs/16-aerogpu-vga-vesa-compat.md`). Note: the in-tree Win7 AeroGPU driver treats the adapter
   as system-memory-backed (no dedicated WDDM VRAM segment); BAR1 is outside the WDDM memory model.
   BAR0 implements a minimal MMIO surface:
-  - ring/fence transport (submission decode + fence-page/IRQ plumbing). Default bring-up behavior
-    can complete fences without executing the command stream; browser/WASM runtimes can enable an
-    out-of-process “submission bridge” (`Machine::aerogpu_drain_submissions` +
+  - ring/fence transport (submission decode/capture + fence-page/IRQ plumbing). Default bring-up
+    behavior can complete fences without executing the command stream; browser/WASM runtimes can
+    enable an out-of-process “submission bridge” (`Machine::aerogpu_drain_submissions` +
     `Machine::aerogpu_complete_fence`) so the GPU worker can execute submissions and report fence
-    completion, and
+    completion, and native builds can optionally install a feature-gated in-process headless wgpu
+    backend (`Machine::aerogpu_set_backend_wgpu`), and
   - scanout0/vblank register storage so the host can present a guest-programmed scanout framebuffer
     and the Win7 stack can use vblank pacing primitives (see `drivers/aerogpu/protocol/vblank.md`).
 
   Shared device-side building blocks (regs/ring/executor + reusable PCI wrapper) live in
-  `crates/aero-devices-gpu`. A richer ring executor + command-execution backends (e.g. `crates/aero-gpu`,
-  `crates/aero-d3d11`) are still not wired into `aero_machine::Machine` today (see:
-  [`21-emulator-crate-migration.md`](./21-emulator-crate-migration.md)); the canonical browser runtime
-  instead uses the machine’s submission bridge + the JS/WASM GPU worker executor.
+  `crates/aero-devices-gpu`. Command execution is provided by host-side executors/backends (GPU
+  worker execution via the submission bridge, or an optional native wgpu backend).
 - `MachineConfig::enable_vga=true` (and `enable_aerogpu=false`): boot display is provided by
   `aero_gpu_vga` (VGA + Bochs VBE). When the PC platform is enabled, the VBE LFB MMIO aperture is
   mapped directly at the configured LFB base inside the PCI MMIO window (no dedicated PCI VGA stub).

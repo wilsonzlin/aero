@@ -258,15 +258,17 @@ Note on boot display vs AeroGPU:
   compatibility and is outside the WDDM memory model. BAR0 implements a minimal MMIO surface
   (ring/fence transport + scanout0/vblank register storage/pacing and host-facing scanout
   presentation). Default bring-up behavior can complete fences without executing the command
-  stream; browser/WASM runtimes can enable an out-of-process “submission bridge”
-  (`Machine::aerogpu_drain_submissions` + `Machine::aerogpu_complete_fence`) so the GPU worker can
-  execute submissions and report fence completion.
+  stream.
+
+  Command execution is pluggable:
+  - browser/WASM runtimes can enable an out-of-process “submission bridge”
+    (`Machine::aerogpu_drain_submissions` + `Machine::aerogpu_complete_fence`) so the GPU worker can
+    execute submissions and report fence completion, and
+  - native builds can optionally install an in-process headless wgpu backend (feature-gated;
+    `Machine::aerogpu_set_backend_wgpu`).
 
   Shared device-side building blocks (regs/ring/executor + reusable PCI wrapper) live in
-  `crates/aero-devices-gpu`. A legacy sandbox integration surface remains in `crates/emulator`. A
-  richer ring executor + command-execution backends are still not wired into `aero_machine::Machine`
-  today (see also: [`21-emulator-crate-migration.md`](./21-emulator-crate-migration.md)); the canonical
-  browser runtime instead uses the machine’s submission bridge + the JS/WASM GPU worker executor.
+  `crates/aero-devices-gpu`. A legacy sandbox integration surface remains in `crates/emulator`.
 - Long-term direction: the AeroGPU WDDM device (`PCI\\VEN_A3A0&DEV_0001`) should be the sole display
   adapter and also own VGA/VBE compatibility. This is already implemented in `aero_machine` when
   `MachineConfig::enable_aerogpu=true`; see:

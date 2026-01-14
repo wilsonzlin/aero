@@ -22,8 +22,9 @@ The canonical `aero_machine::Machine` supports **two mutually-exclusive** displa
   VRAM aperture). In `aero_machine` today this wires the **BAR1 VRAM aperture** to a dedicated
   host-backed VRAM buffer and implements minimal **legacy VGA decode** (permissive VGA port I/O +
   a VRAM-backed `0xA0000..0xBFFFF` window). An MVP BAR0 device model is also present (ring/fence
-  transport + scanout/cursor regs + vblank pacing; default bring-up behavior can complete fences
-  without executing ACMD, while browser/WASM runtimes can enable an out-of-process submission bridge),
+  transport + submission capture + scanout/cursor regs + vblank pacing; default bring-up behavior
+  can complete fences without executing ACMD, while browser/WASM runtimes can enable an
+  out-of-process submission bridge),
   and `Machine::display_present()`
   will prefer the WDDM-programmed scanout framebuffer once scanout0 has been **claimed** (valid config +
   `SCANOUT0_ENABLE=1`). After claim, WDDM scanout remains authoritative until the guest disables
@@ -44,13 +45,19 @@ The canonical `aero_machine::Machine` supports **two mutually-exclusive** displa
   BAR1-backed VRAM (leaving the first 256KiB reserved for legacy VGA planar/text backing:
   4 × 64KiB planes).
 
-  Full 3D command execution is not performed in-process by `aero_machine` yet. Shared device-side
-  building blocks (ring executor + backend boundary) live in `crates/aero-devices-gpu`, with legacy
-  sandbox integration in `crates/emulator` (see:
-  [`21-emulator-crate-migration.md`](./21-emulator-crate-migration.md)). The canonical browser runtime
-  can enable the submission bridge (`Machine::aerogpu_drain_submissions` / `Machine::aerogpu_complete_fence`)
-  and execute drained submissions in the GPU worker; when the bridge is disabled, BAR0 uses a no-op
-  executor with fence completion so the Win7 KMD doesn't deadlock.
+  Full 3D command execution is not performed in-process by `aero_machine` by default. Shared
+  device-side building blocks (ring executor + backend boundary) live in `crates/aero-devices-gpu`,
+  with legacy sandbox integration in `crates/emulator` (see:
+  [`21-emulator-crate-migration.md`](./21-emulator-crate-migration.md)).
+
+  Execution can be supplied by host-side executors/backends:
+  - browser runtime: enable the submission bridge (`Machine::aerogpu_drain_submissions` /
+    `Machine::aerogpu_complete_fence`) and execute drained submissions in the GPU worker, and
+  - native builds: optionally install an in-process headless wgpu backend (feature-gated;
+    `Machine::aerogpu_set_backend_wgpu`).
+
+  When no backend/bridge is installed, BAR0 completes fences without executing ACMD so the Win7 KMD
+  doesn't deadlock.
 - **Legacy VGA/VBE (transitional):** `MachineConfig::enable_vga=true` uses the standalone
   `aero_gpu_vga` VGA/VBE device model for boot display. When the PC platform is enabled, the VBE
   linear framebuffer (LFB) MMIO aperture is mapped directly at the configured LFB base inside the

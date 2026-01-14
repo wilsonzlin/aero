@@ -22,21 +22,20 @@ Note on the canonical machine (`aero_machine::Machine`):
   see `docs/16-aerogpu-vga-vesa-compat.md`). Note: the in-tree Win7 AeroGPU driver treats the
   adapter as system-memory-backed (no dedicated WDDM VRAM segment); BAR1 is outside the WDDM memory
   model. BAR0 is implemented as a minimal MMIO surface:
-  - ring/fence transport (submission decode + fence-page/IRQ plumbing). Default bring-up behavior
-    can complete fences without executing the command stream; browser/WASM runtimes can enable an
-    out-of-process “submission bridge” (`Machine::aerogpu_drain_submissions` +
+  - ring/fence transport (submission decode/capture + fence-page/IRQ plumbing). Default bring-up
+    behavior can complete fences without executing the command stream; browser/WASM runtimes can
+    enable an out-of-process “submission bridge” (`Machine::aerogpu_drain_submissions` +
     `Machine::aerogpu_complete_fence`) so the GPU worker can execute submissions and report fence
-    completion, and
+    completion, and native builds can optionally install a feature-gated in-process headless wgpu
+    backend (`Machine::aerogpu_set_backend_wgpu`), and
   - scanout0/vblank register storage so the host can present a guest-programmed scanout framebuffer
     and the Win7 stack can use vblank pacing primitives (see `drivers/aerogpu/protocol/vblank.md`).
 
   A shared device-side library (`crates/aero-devices-gpu`) contains the canonical register/ring
   definitions plus a ring executor (doorbell processing, fence tracking, vsync/vblank pacing) and
-  a reusable PCI wrapper. Real **command execution** is provided by host-side backends (e.g. the
-  wgpu-backed `NativeAeroGpuBackend` behind `aero-devices-gpu/wgpu-backend`, plus legacy sandbox
-  wiring in `crates/emulator`), but it is not yet wired into `aero_machine::Machine` (see:
-  [`docs/21-emulator-crate-migration.md`](../21-emulator-crate-migration.md)). The canonical browser
-  runtime instead uses the machine’s submission bridge + the JS/WASM GPU worker executor.
+  a reusable PCI wrapper. Command execution is provided by host-side executors/backends (GPU worker
+  execution via the submission bridge, or an optional native wgpu backend). When no backend/bridge
+  is installed, `aero-machine` completes fences without executing ACMD so guests can boot.
 - Boot display in the canonical machine is provided by `aero_gpu_vga` (legacy VGA ports + Bochs VBE)
   when `MachineConfig::enable_vga=true`. When the PC platform is enabled, the VBE LFB MMIO aperture
   is mapped directly at the configured LFB base inside the PCI MMIO window (no dedicated PCI VGA stub).
