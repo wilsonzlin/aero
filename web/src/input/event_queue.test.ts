@@ -98,7 +98,7 @@ describe("InputEventQueue", () => {
 
   it("sanitizes invalid capacityEvents values so pushed events are not dropped", () => {
     for (const cap of [0, Number.NaN, Number.POSITIVE_INFINITY, -1]) {
-      const queue = new InputEventQueue(cap as any);
+      const queue = new InputEventQueue(cap);
       queue.pushMouseButtons(10, 5);
 
       const state: { posted: InputBatchMessage | null } = { posted: null };

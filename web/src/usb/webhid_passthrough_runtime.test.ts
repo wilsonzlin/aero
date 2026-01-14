@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { WebHidPassthroughRuntime, type WebHidPassthroughBridgeLike } from "./webhid_passthrough_runtime";
+import type { WebHidPassthroughManager, WebHidPassthroughState } from "../platform/webhid_passthrough";
 
 type Listener = (event: unknown) => void;
 
@@ -94,12 +95,12 @@ describe("WebHidPassthroughRuntime", () => {
     };
 
     // Minimal manager stub: the real manager exposes attachments, not raw devices.
-    const state = {
+    const state: WebHidPassthroughState = {
       supported: true,
       knownDevices: [],
-      attachedDevices: [{ device: device as unknown as HIDDevice, deviceId: "dev-1", guestPort: 0 }],
+      attachedDevices: [{ device: device as unknown as HIDDevice, deviceId: "dev-1", guestPath: [0] }],
     };
-    const manager = {
+    const manager: Pick<WebHidPassthroughManager, "subscribe" | "getState"> = {
       getState: () => state,
       subscribe: (listener: (s: typeof state) => void) => {
         listener(state);
@@ -109,8 +110,7 @@ describe("WebHidPassthroughRuntime", () => {
 
     // eslint-disable-next-line no-new
     new WebHidPassthroughRuntime({
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      manager: manager as any,
+      manager,
       createBridge: () => bridge,
       pollIntervalMs: 0,
     });

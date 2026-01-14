@@ -54,7 +54,7 @@ describe("runtime disk open (metadata) url validation", () => {
         requestId: 1,
         op: "open",
         payload: { spec: { kind: "local", meta }, mode: "direct" },
-      } as any);
+      });
 
       const resp = posted[0];
       expect(resp?.ok).toBe(false);
@@ -63,7 +63,7 @@ describe("runtime disk open (metadata) url validation", () => {
     } finally {
       openSpy.mockRestore();
       if (urlExisting) Object.defineProperty(Object.prototype, "url", urlExisting);
-      else delete (Object.prototype as any).url;
+      else Reflect.deleteProperty(Object.prototype, "url");
     }
   });
 });

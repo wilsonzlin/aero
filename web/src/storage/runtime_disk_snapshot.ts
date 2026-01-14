@@ -270,9 +270,15 @@ function validateRemoteValidator(v: unknown, path: string): RemoteDiskValidator 
   }
   const valueRaw = hasOwn(obj, "value") ? obj.value : undefined;
   const value = requireBoundedString(valueRaw, `${path}.value`, { nonEmpty: true });
-  const out = nullProto<RemoteDiskValidator>();
-  (out as any).kind = kind;
-  (out as any).value = value;
+  if (kind === "etag") {
+    const out = nullProto<{ kind: "etag"; value: string }>();
+    out.kind = "etag";
+    out.value = value;
+    return out;
+  }
+  const out = nullProto<{ kind: "lastModified"; value: string }>();
+  out.kind = "lastModified";
+  out.value = value;
   return out;
 }
 

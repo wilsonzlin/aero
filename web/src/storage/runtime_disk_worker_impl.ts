@@ -1026,7 +1026,7 @@ async function openDiskFromMetadata(
           remoteRec && hasOwn(remoteRec, "prefetchSequentialBlocks") ? remoteRec.prefetchSequentialBlocks : undefined;
         return await RemoteStreamingDisk.open(url, {
           blockSize: typeof blockSizeBytes === "number" ? blockSizeBytes : undefined,
-          cacheLimitBytes: typeof cacheLimitBytes === "number" || cacheLimitBytes === null ? (cacheLimitBytes as any) : undefined,
+          cacheLimitBytes: typeof cacheLimitBytes === "number" || cacheLimitBytes === null ? cacheLimitBytes : undefined,
           prefetchSequentialBlocks: typeof prefetchSequentialBlocks === "number" ? prefetchSequentialBlocks : undefined,
           cacheBackend: "opfs",
           expectedSizeBytes: sizeBytes,

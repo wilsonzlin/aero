@@ -1,10 +1,23 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { HidAttachMessage, HidInputReportMessage, HidSendReportMessage } from "../hid/hid_proxy_protocol";
+import type { NormalizedHidCollectionInfo } from "../hid/webhid_normalize";
 import type { WasmApi } from "../runtime/wasm_context";
 import { IoWorkerHidPassthrough } from "./io_hid_passthrough";
 
 describe("workers/IoWorkerHidPassthrough", () => {
+  const collections: NormalizedHidCollectionInfo[] = [
+    {
+      usagePage: 1,
+      usage: 2,
+      collectionType: 1, // application
+      children: [],
+      inputReports: [],
+      outputReports: [],
+      featureReports: [],
+    },
+  ];
+
   it("hid.attach constructs a bridge; hid.inputReport forwards; tick drains output reports", () => {
     const ctorSpy = vi.fn();
     const synthesizeSpy = vi.fn(() => new Uint8Array([1, 2, 3]));
@@ -38,7 +51,7 @@ describe("workers/IoWorkerHidPassthrough", () => {
       vendorId: 0x1234,
       productId: 0x5678,
       productName: "Demo",
-      collections: [{ some: "collection" }] as any,
+      collections,
       hasInterruptOut: true,
     };
     mgr.attach(attach);
@@ -117,7 +130,7 @@ describe("workers/IoWorkerHidPassthrough", () => {
       vendorId: 0x1234,
       productId: 0x5678,
       productName: "Demo",
-      collections: [{ some: "collection" }] as any,
+      collections,
       hasInterruptOut: true,
     };
     mgr.attach(attach);

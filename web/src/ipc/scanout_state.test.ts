@@ -62,8 +62,7 @@ describe("ipc/scanout_state", () => {
   });
 
   it("wrapScanoutState validates bounds and 4-byte alignment", () => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    expect(() => wrapScanoutState(new ArrayBuffer(SCANOUT_STATE_BYTE_LEN) as any)).toThrow(TypeError);
+    expect(() => wrapScanoutState(new ArrayBuffer(SCANOUT_STATE_BYTE_LEN) as unknown as SharedArrayBuffer)).toThrow(TypeError);
 
     const scanoutSab = new SharedArrayBuffer(SCANOUT_STATE_BYTE_LEN);
     expect(() => wrapScanoutState(scanoutSab, NaN)).toThrow(RangeError);

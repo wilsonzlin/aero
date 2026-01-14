@@ -46,11 +46,11 @@ describe("runtime disk worker protocol", () => {
 
     try {
       Object.defineProperty(Object.prototype, "kind", { value: "remote", configurable: true, writable: true });
-      const normalized = normalizeDiskOpenSpec({} as any);
+      const normalized = normalizeDiskOpenSpec({} as unknown as DiskOpenSpec);
       expect(normalized.kind).toBe("local");
     } finally {
       if (kindExisting) Object.defineProperty(Object.prototype, "kind", kindExisting);
-      else delete (Object.prototype as any).kind;
+      else Reflect.deleteProperty(Object.prototype, "kind");
     }
   });
 

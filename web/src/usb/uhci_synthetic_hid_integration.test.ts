@@ -260,8 +260,7 @@ describe("usb/UHCI synthetic HID passthrough integration (WASM)", () => {
     expect(guestBase).toBeGreaterThan(0);
     expect(guestSize).toBeGreaterThan(0x20000);
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const UhciCtor = api.UhciControllerBridge as any;
+    const UhciCtor = api.UhciControllerBridge as unknown as { new (...args: number[]): any; length: number };
     let uhci: any;
     try {
       uhci = UhciCtor.length >= 2 ? new UhciCtor(guestBase, guestSize) : new UhciCtor(guestBase);

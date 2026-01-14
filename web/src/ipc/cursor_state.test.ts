@@ -61,8 +61,7 @@ describe("ipc/cursor_state", () => {
   });
 
   it("wrapCursorState validates bounds and 4-byte alignment", () => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    expect(() => wrapCursorState(new ArrayBuffer(CURSOR_STATE_BYTE_LEN) as any)).toThrow(TypeError);
+    expect(() => wrapCursorState(new ArrayBuffer(CURSOR_STATE_BYTE_LEN) as unknown as SharedArrayBuffer)).toThrow(TypeError);
 
     const cursorSab = new SharedArrayBuffer(CURSOR_STATE_BYTE_LEN);
     expect(() => wrapCursorState(cursorSab, NaN)).toThrow(RangeError);
