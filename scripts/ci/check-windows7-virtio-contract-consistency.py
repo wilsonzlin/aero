@@ -1579,7 +1579,12 @@ HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MessageNumberLi
                 "internal unit-test failed: validate_win7_virtio_inf_msi_settings unexpectedly passed for an INF missing the Interrupt Management key creation line"
             )
 
-def validate_win7_virtio_inf_msi_settings(device_name: str, inf_path: Path) -> list[str]:
+def validate_win7_virtio_inf_msi_settings(
+    device_name: str,
+    inf_path: Path,
+    *,
+    min_message_number_limit: int | None = None,
+) -> list[str]:
     """
     Ensure a canonical Win7 virtio INF keeps MSI/MSI-X opt-in settings.
 
@@ -1756,7 +1761,11 @@ def validate_win7_virtio_inf_msi_settings(device_name: str, inf_path: Path) -> l
                 )
             )
 
-    min_limit = WIN7_VIRTIO_INF_MIN_MESSAGE_NUMBER_LIMIT.get(device_name)
+    min_limit = (
+        min_message_number_limit
+        if min_message_number_limit is not None
+        else WIN7_VIRTIO_INF_MIN_MESSAGE_NUMBER_LIMIT.get(device_name)
+    )
 
     if not msg_limit_entries:
         errors.append(
@@ -4239,7 +4248,22 @@ def main() -> None:
 
         # Guardrail: keep MSI/MSI-X opt-in registry keys present so message-signaled
         # interrupt paths remain exercised by default (when supported by the platform).
-        errors.extend(validate_win7_virtio_inf_msi_settings(device_name, inf_path))
+        # Also require that the INF requests at least 1 + num_queues interrupt messages
+        # (config interrupt + one per virtqueue) based on the contract queue table.
+        #
+        # This is a conservative minimum: Windows may grant fewer messages at runtime,
+        # and the driver must still handle that via vector sharing/fallback paths.
+        derived_min_limit: int | None = None
+        contract_q = contract_queues.get(device_name)
+        if contract_q:
+            derived_min_limit = max(contract_q.keys()) + 2
+        errors.extend(
+            validate_win7_virtio_inf_msi_settings(
+                device_name,
+                inf_path,
+                min_message_number_limit=derived_min_limit,
+            )
+        )
 
         hwids = parse_inf_hardware_ids(inf_path)
         if not hwids:
