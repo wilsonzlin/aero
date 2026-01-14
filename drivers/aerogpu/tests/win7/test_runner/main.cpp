@@ -661,30 +661,55 @@ static bool DumpDbgctlStatusSnapshotBestEffort(const std::wstring& dbgctl_path,
   out_files.stdout_path = snapshot_path;
   out_files.stderr_path = snapshot_path;  // combined
 
-  std::vector<std::wstring> args;
-  args.push_back(L"--status");
-  args.push_back(L"--timeout-ms");
-  args.push_back(aerogpu_test::Utf8ToWideFallbackAcp(
-      aerogpu_test::FormatString("%lu", (unsigned long)dbgctl_timeout_ms)));
-
-  RunResult rr = RunProcessWithTimeoutW(dbgctl_path, args, dbgctl_timeout_ms, true, &out_files);
-  if (!rr.started) {
-    if (err) {
-      *err = rr.err;
-    }
-    return false;
-  }
-
   if (out_path) {
     *out_path = snapshot_path;
   }
-  if (rr.timed_out) {
-    if (err) {
-      *err = aerogpu_test::FormatString("dbgctl timed out after %lu ms", (unsigned long)dbgctl_timeout_ms);
+  const std::wstring timeout_arg = aerogpu_test::Utf8ToWideFallbackAcp(
+      aerogpu_test::FormatString("%lu", (unsigned long)dbgctl_timeout_ms));
+
+  // Best-effort compatibility: older dbgctl builds may not support newer flags like --timeout-ms or
+  // may use older command spellings. Retry on exit_code==1, which dbgctl uses for parse errors.
+  std::vector<std::vector<std::wstring> > attempts;
+  attempts.push_back(std::vector<std::wstring>());
+  attempts.back().push_back(L"--status");
+  attempts.back().push_back(L"--timeout-ms");
+  attempts.back().push_back(timeout_arg);
+  attempts.push_back(std::vector<std::wstring>());
+  attempts.back().push_back(L"--status");
+  attempts.push_back(std::vector<std::wstring>());
+  attempts.back().push_back(L"--query-version");
+  attempts.back().push_back(L"--timeout-ms");
+  attempts.back().push_back(timeout_arg);
+  attempts.push_back(std::vector<std::wstring>());
+  attempts.back().push_back(L"--query-version");
+  attempts.push_back(std::vector<std::wstring>());
+  attempts.back().push_back(L"--query-device");
+  attempts.back().push_back(L"--timeout-ms");
+  attempts.back().push_back(timeout_arg);
+  attempts.push_back(std::vector<std::wstring>());
+  attempts.back().push_back(L"--query-device");
+
+  for (size_t attempt = 0; attempt < attempts.size(); ++attempt) {
+    RunResult rr = RunProcessWithTimeoutW(dbgctl_path, attempts[attempt], dbgctl_timeout_ms, true, &out_files);
+    if (!rr.started) {
+      if (err) {
+        *err = rr.err;
+      }
+      return false;
     }
-    return false;
-  }
-  if (rr.exit_code != 0) {
+    if (rr.timed_out) {
+      if (err) {
+        *err = aerogpu_test::FormatString("dbgctl timed out after %lu ms", (unsigned long)dbgctl_timeout_ms);
+      }
+      return false;
+    }
+    if (rr.exit_code == 0) {
+      return true;
+    }
+    if (rr.exit_code == 1 && rr.err.empty() && attempt + 1 < attempts.size()) {
+      // Parse error / unsupported flag; try a more compatible invocation.
+      continue;
+    }
     if (err) {
       if (!rr.err.empty()) {
         *err = rr.err;
@@ -694,7 +719,7 @@ static bool DumpDbgctlStatusSnapshotBestEffort(const std::wstring& dbgctl_path,
     }
     return false;
   }
-  return true;
+  return false;
 }
 
 static bool DumpDbgctlQueryErrorSnapshotBestEffort(const std::wstring& dbgctl_path,
@@ -728,30 +753,42 @@ static bool DumpDbgctlQueryErrorSnapshotBestEffort(const std::wstring& dbgctl_pa
   out_files.stdout_path = snapshot_path;
   out_files.stderr_path = snapshot_path;  // combined
 
-  std::vector<std::wstring> args;
-  args.push_back(L"--query-error");
-  args.push_back(L"--timeout-ms");
-  args.push_back(aerogpu_test::Utf8ToWideFallbackAcp(
-      aerogpu_test::FormatString("%lu", (unsigned long)dbgctl_timeout_ms)));
-
-  RunResult rr = RunProcessWithTimeoutW(dbgctl_path, args, dbgctl_timeout_ms, true, &out_files);
-  if (!rr.started) {
-    if (err) {
-      *err = rr.err;
-    }
-    return false;
-  }
-
   if (out_path) {
     *out_path = snapshot_path;
   }
-  if (rr.timed_out) {
-    if (err) {
-      *err = aerogpu_test::FormatString("dbgctl timed out after %lu ms", (unsigned long)dbgctl_timeout_ms);
+  const std::wstring timeout_arg = aerogpu_test::Utf8ToWideFallbackAcp(
+      aerogpu_test::FormatString("%lu", (unsigned long)dbgctl_timeout_ms));
+
+  // Best-effort compatibility: older dbgctl builds may not support --timeout-ms. Retry on parse-style
+  // exit_code==1.
+  std::vector<std::vector<std::wstring> > attempts;
+  attempts.push_back(std::vector<std::wstring>());
+  attempts.back().push_back(L"--query-error");
+  attempts.back().push_back(L"--timeout-ms");
+  attempts.back().push_back(timeout_arg);
+  attempts.push_back(std::vector<std::wstring>());
+  attempts.back().push_back(L"--query-error");
+
+  for (size_t attempt = 0; attempt < attempts.size(); ++attempt) {
+    RunResult rr = RunProcessWithTimeoutW(dbgctl_path, attempts[attempt], dbgctl_timeout_ms, true, &out_files);
+    if (!rr.started) {
+      if (err) {
+        *err = rr.err;
+      }
+      return false;
     }
-    return false;
-  }
-  if (rr.exit_code != 0) {
+    if (rr.timed_out) {
+      if (err) {
+        *err = aerogpu_test::FormatString("dbgctl timed out after %lu ms", (unsigned long)dbgctl_timeout_ms);
+      }
+      return false;
+    }
+    if (rr.exit_code == 0) {
+      return true;
+    }
+    if (rr.exit_code == 1 && rr.err.empty() && attempt + 1 < attempts.size()) {
+      continue;
+    }
     if (err) {
       if (!rr.err.empty()) {
         *err = rr.err;
@@ -761,7 +798,7 @@ static bool DumpDbgctlQueryErrorSnapshotBestEffort(const std::wstring& dbgctl_pa
     }
     return false;
   }
-  return true;
+  return false;
 }
 
 static bool DumpDbgctlLastCmdDumpBestEffort(const std::wstring& dbgctl_path,
@@ -805,6 +842,13 @@ static bool DumpDbgctlLastCmdDumpBestEffort(const std::wstring& dbgctl_path,
   out_files.stdout_path = log_path;
   out_files.stderr_path = log_path;  // combined
 
+  if (out_cmd_base_path) {
+    *out_cmd_base_path = cmd_base_path;
+  }
+  if (out_log_path) {
+    *out_log_path = log_path;
+  }
+
   // Best-effort: dump a small window of the most recent submissions (newest is index 0).
   // This improves hang triage without forcing the user to re-run dbgctl multiple times.
   // Avoid attaching stale artifacts from a previous run if dbgctl fails before writing new outputs.
@@ -818,39 +862,106 @@ static bool DumpDbgctlLastCmdDumpBestEffort(const std::wstring& dbgctl_path,
     DeleteFileW((indexed + L".alloc_table.bin").c_str());
   }
 
-  std::vector<std::wstring> args;
-  // Prefer the older spelling for maximum compatibility with older dbgctl builds.
-  args.push_back(L"--dump-last-cmd");  // alias: --dump-last-submit
-  args.push_back(L"--count");
-  args.push_back(aerogpu_test::Utf8ToWideFallbackAcp(
-      aerogpu_test::FormatString("%lu", (unsigned long)kDbgctlDumpLastSubmitCount)));
-  args.push_back(L"--out");  // alias: --cmd-out
-  args.push_back(cmd_base_path);
-  args.push_back(L"--timeout-ms");
-  args.push_back(aerogpu_test::Utf8ToWideFallbackAcp(
-      aerogpu_test::FormatString("%lu", (unsigned long)dbgctl_timeout_ms)));
+  const std::wstring timeout_arg = aerogpu_test::Utf8ToWideFallbackAcp(
+      aerogpu_test::FormatString("%lu", (unsigned long)dbgctl_timeout_ms));
+  const std::wstring count_arg = aerogpu_test::Utf8ToWideFallbackAcp(
+      aerogpu_test::FormatString("%lu", (unsigned long)kDbgctlDumpLastSubmitCount));
 
-  RunResult rr = RunProcessWithTimeoutW(dbgctl_path, args, dbgctl_timeout_ms, true, &out_files);
-  if (!rr.started) {
-    if (err) {
-      *err = rr.err;
-    }
-    return false;
-  }
+  // Best-effort compatibility: older dbgctl builds may not support newer flags like --count or
+  // --timeout-ms. Retry on exit_code==1, which dbgctl uses for parse errors.
+  std::vector<std::vector<std::wstring> > attempts;
+  // Preferred: modern args with multi-dump window and explicit dbgctl timeout.
+  attempts.push_back(std::vector<std::wstring>());
+  attempts.back().push_back(L"--dump-last-cmd");  // alias: --dump-last-submit
+  attempts.back().push_back(L"--count");
+  attempts.back().push_back(count_arg);
+  attempts.back().push_back(L"--out");  // alias: --cmd-out
+  attempts.back().push_back(cmd_base_path);
+  attempts.back().push_back(L"--timeout-ms");
+  attempts.back().push_back(timeout_arg);
 
-  if (out_cmd_base_path) {
-    *out_cmd_base_path = cmd_base_path;
-  }
-  if (out_log_path) {
-    *out_log_path = log_path;
-  }
-  if (rr.timed_out) {
-    if (err) {
-      *err = aerogpu_test::FormatString("dbgctl timed out after %lu ms", (unsigned long)dbgctl_timeout_ms);
+  // Fallback: no --timeout-ms.
+  attempts.push_back(std::vector<std::wstring>());
+  attempts.back().push_back(L"--dump-last-cmd");
+  attempts.back().push_back(L"--count");
+  attempts.back().push_back(count_arg);
+  attempts.back().push_back(L"--out");
+  attempts.back().push_back(cmd_base_path);
+
+  // Fallback: no --count.
+  attempts.push_back(std::vector<std::wstring>());
+  attempts.back().push_back(L"--dump-last-cmd");
+  attempts.back().push_back(L"--out");
+  attempts.back().push_back(cmd_base_path);
+  attempts.back().push_back(L"--timeout-ms");
+  attempts.back().push_back(timeout_arg);
+
+  // Fallback: single dump, no --timeout-ms.
+  attempts.push_back(std::vector<std::wstring>());
+  attempts.back().push_back(L"--dump-last-cmd");
+  attempts.back().push_back(L"--out");
+  attempts.back().push_back(cmd_base_path);
+
+  // Some older builds used the `--dump-last-submit` spelling.
+  attempts.push_back(std::vector<std::wstring>());
+  attempts.back().push_back(L"--dump-last-submit");
+  attempts.back().push_back(L"--count");
+  attempts.back().push_back(count_arg);
+  attempts.back().push_back(L"--out");
+  attempts.back().push_back(cmd_base_path);
+  attempts.back().push_back(L"--timeout-ms");
+  attempts.back().push_back(timeout_arg);
+
+  attempts.push_back(std::vector<std::wstring>());
+  attempts.back().push_back(L"--dump-last-submit");
+  attempts.back().push_back(L"--count");
+  attempts.back().push_back(count_arg);
+  attempts.back().push_back(L"--out");
+  attempts.back().push_back(cmd_base_path);
+
+  attempts.push_back(std::vector<std::wstring>());
+  attempts.back().push_back(L"--dump-last-submit");
+  attempts.back().push_back(L"--out");
+  attempts.back().push_back(cmd_base_path);
+  attempts.back().push_back(L"--timeout-ms");
+  attempts.back().push_back(timeout_arg);
+
+  attempts.push_back(std::vector<std::wstring>());
+  attempts.back().push_back(L"--dump-last-submit");
+  attempts.back().push_back(L"--out");
+  attempts.back().push_back(cmd_base_path);
+
+  // Extra compatibility: some old builds may only accept the older --cmd-out spelling.
+  attempts.push_back(std::vector<std::wstring>());
+  attempts.back().push_back(L"--dump-last-cmd");
+  attempts.back().push_back(L"--cmd-out");
+  attempts.back().push_back(cmd_base_path);
+
+  attempts.push_back(std::vector<std::wstring>());
+  attempts.back().push_back(L"--dump-last-submit");
+  attempts.back().push_back(L"--cmd-out");
+  attempts.back().push_back(cmd_base_path);
+
+  for (size_t attempt = 0; attempt < attempts.size(); ++attempt) {
+    RunResult rr = RunProcessWithTimeoutW(dbgctl_path, attempts[attempt], dbgctl_timeout_ms, true, &out_files);
+    if (!rr.started) {
+      if (err) {
+        *err = rr.err;
+      }
+      return false;
     }
-    return false;
-  }
-  if (rr.exit_code != 0) {
+    if (rr.timed_out) {
+      if (err) {
+        *err = aerogpu_test::FormatString("dbgctl timed out after %lu ms", (unsigned long)dbgctl_timeout_ms);
+      }
+      return false;
+    }
+    if (rr.exit_code == 0) {
+      return true;
+    }
+    if (rr.exit_code == 1 && rr.err.empty() && attempt + 1 < attempts.size()) {
+      continue;
+    }
     if (err) {
       if (!rr.err.empty()) {
         *err = rr.err;
@@ -860,7 +971,7 @@ static bool DumpDbgctlLastCmdDumpBestEffort(const std::wstring& dbgctl_path,
     }
     return false;
   }
-  return true;
+  return false;
 }
 
 static bool ParseRunnerArgs(int argc,
