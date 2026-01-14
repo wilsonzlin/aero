@@ -1,7 +1,6 @@
 import { expect, test } from "@playwright/test";
 
 import { checkThreadedWasmBundle } from "./util/wasm_bundle";
-import type { SetBootDisksMessage } from "../../web/src/runtime/boot_disks_protocol";
 
 test("IO worker switches keyboard input from i8042 scancodes to virtio-input after DRIVER_OK (no duplicates)", async ({ page }) => {
   test.setTimeout(60_000);

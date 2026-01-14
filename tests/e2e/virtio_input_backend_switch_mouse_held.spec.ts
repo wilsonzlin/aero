@@ -1,7 +1,6 @@
 import { expect, test } from "@playwright/test";
 
 import { checkThreadedWasmBundle } from "./util/wasm_bundle";
-import type { SetBootDisksMessage } from "../../web/src/runtime/boot_disks_protocol";
 
 test("IO worker does not switch mouse backend while a button is held (prevents stuck drag)", async ({ page }) => {
   test.setTimeout(60_000);

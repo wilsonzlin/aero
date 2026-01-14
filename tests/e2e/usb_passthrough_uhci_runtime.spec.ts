@@ -1,7 +1,6 @@
 import { expect, test } from "@playwright/test";
 
 import { checkThreadedWasmBundle } from "./util/wasm_bundle";
-import type { SetBootDisksMessage } from "../../web/src/runtime/boot_disks_protocol";
 import { DEFAULT_EXTERNAL_HUB_PORT_COUNT, UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT } from "../../web/src/usb/uhci_external_hub";
 
 test("runtime UHCI: WebHID + WebUSB passthrough are guest-visible (NAK while pending)", async ({ page }) => {

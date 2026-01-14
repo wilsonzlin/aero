@@ -1,7 +1,6 @@
 import { expect, test } from "@playwright/test";
 
 import { checkThreadedWasmBundle } from "./util/wasm_bundle";
-import type { SetBootDisksMessage } from "../../web/src/runtime/boot_disks_protocol";
 
 test("IO worker does not switch keyboard input backend while a key is held (prevents stuck keys)", async ({ page }) => {
   test.setTimeout(60_000);

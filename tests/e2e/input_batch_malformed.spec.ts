@@ -1,5 +1,4 @@
 import { expect, test } from "@playwright/test";
-import type { SetBootDisksMessage } from "../../web/src/runtime/boot_disks_protocol";
 
 test("IO worker survives malformed in:input-batch messages", async ({ page }) => {
   test.setTimeout(30_000);
