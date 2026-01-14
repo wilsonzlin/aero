@@ -519,7 +519,7 @@ impl UhciRuntime {
     pub fn webhid_drain_feature_report_requests(&mut self) -> JsValue {
         let out = Array::new();
         for (&device_id, state) in self.webhid_devices.iter_mut() {
-            for req in state.dev.drain_feature_report_requests() {
+            while let Some(req) = state.dev.pop_feature_report_request() {
                 out.push(&webhid_feature_report_request_to_js(device_id, req));
             }
         }
@@ -585,9 +585,14 @@ impl UhciRuntime {
             None
         };
 
-        state
-            .dev
-            .push_feature_report_result(request_id, report_id, ok, bytes);
+        if ok {
+            let data = bytes.as_deref().unwrap_or(&[]);
+            state
+                .dev
+                .complete_feature_report_request(request_id, report_id, data);
+        } else {
+            state.dev.fail_feature_report_request(request_id, report_id);
+        }
         Ok(())
     }
 

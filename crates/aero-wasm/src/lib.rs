@@ -243,6 +243,9 @@ pub fn storage_capabilities() -> JsValue {
     let opfs_supported = aero_opfs::platform::storage::opfs::is_opfs_supported();
     let opfs_sync_supported = aero_opfs::platform::storage::opfs::opfs_sync_access_supported();
     let is_worker_scope = aero_opfs::platform::storage::opfs::is_worker_scope();
+    let cross_origin_isolated = opfs_cross_origin_isolated().unwrap_or(false);
+    let shared_array_buffer_supported =
+        Reflect::has(&js_sys::global(), &JsValue::from_str("SharedArrayBuffer")).unwrap_or(false);
 
     let _ = Reflect::set(
         &obj,
@@ -258,6 +261,16 @@ pub fn storage_capabilities() -> JsValue {
         &obj,
         &JsValue::from_str("isWorkerScope"),
         &JsValue::from_bool(is_worker_scope),
+    );
+    let _ = Reflect::set(
+        &obj,
+        &JsValue::from_str("crossOriginIsolated"),
+        &JsValue::from_bool(cross_origin_isolated),
+    );
+    let _ = Reflect::set(
+        &obj,
+        &JsValue::from_str("sharedArrayBufferSupported"),
+        &JsValue::from_bool(shared_array_buffer_supported),
     );
 
     obj.into()
@@ -2786,7 +2799,7 @@ fn opfs_disk_error_to_js(operation: &str, path: &str, err: aero_opfs::DiskError)
             };
 
             let worker_hint = opfs_worker_hint();
-            let probe_tip = "Tip: Call storage_capabilities() to probe { opfsSupported, opfsSyncAccessSupported, isWorkerScope }.";
+            let probe_tip = "Tip: Call storage_capabilities() to probe { opfsSupported, opfsSyncAccessSupported, isWorkerScope, crossOriginIsolated, sharedArrayBufferSupported }.";
             Error::new(&format!(
                 "{operation} failed for OPFS path \"{path}\": {err_str}\n{extra}\n{worker_hint}\n{probe_tip}"
             ))
@@ -2796,7 +2809,7 @@ fn opfs_disk_error_to_js(operation: &str, path: &str, err: aero_opfs::DiskError)
             let extra =
                 "Storage APIs may be blocked by browser/privacy settings or iframe restrictions.";
             let worker_hint = opfs_worker_hint();
-            let probe_tip = "Tip: Call storage_capabilities() to probe availability.";
+            let probe_tip = "Tip: Call storage_capabilities() to probe { opfsSupported, opfsSyncAccessSupported, isWorkerScope, crossOriginIsolated, sharedArrayBufferSupported }.";
             Error::new(&format!(
                 "{operation} failed for OPFS path \"{path}\": {err_str}\n{extra}\n{worker_hint}\n{probe_tip}"
             ))

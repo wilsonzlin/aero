@@ -10,7 +10,13 @@ fn storage_capabilities_exports_boolean_fields() {
     let caps = aero_wasm::storage_capabilities();
     assert!(caps.is_object(), "storage_capabilities must return an object");
 
-    for key in ["opfsSupported", "opfsSyncAccessSupported", "isWorkerScope"] {
+    for key in [
+        "opfsSupported",
+        "opfsSyncAccessSupported",
+        "isWorkerScope",
+        "crossOriginIsolated",
+        "sharedArrayBufferSupported",
+    ] {
         let v = Reflect::get(&caps, &JsValue::from_str(key))
             .unwrap_or_else(|_| panic!("missing storage_capabilities field: {key}"));
         assert!(

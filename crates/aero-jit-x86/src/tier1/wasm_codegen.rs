@@ -1031,14 +1031,14 @@ impl Emitter<'_> {
                             // part0 | part1
                             this.func
                                 .instruction(&Instruction::LocalGet(this.layout.value_local(*dst)));
-                             this.func.instruction(&Instruction::I64Or);
-                             this.emit_trunc(*width);
-                             this.func
-                                 .instruction(&Instruction::LocalSet(this.layout.value_local(*dst)));
+                            this.func.instruction(&Instruction::I64Or);
+                            this.emit_trunc(*width);
+                            this.func
+                                .instruction(&Instruction::LocalSet(this.layout.value_local(*dst)));
                         };
- 
-                         // Page 0: translate.
-                         self.emit_translate_and_cache(MMU_ACCESS_READ, crate::TLB_FLAG_READ);
+
+                        // Page 0: translate.
+                        self.emit_translate_and_cache(MMU_ACCESS_READ, crate::TLB_FLAG_READ);
 
                         if self.options.inline_tlb_mmio_exit {
                             self.emit_mmio_exit(size_bytes, 0, None);
@@ -1394,24 +1394,24 @@ impl Emitter<'_> {
                                             .instruction(&Instruction::I64Const(shift_bits as i64));
                                         this.func.instruction(&Instruction::I64ShrU);
                                     }
-                                     match nbytes {
-                                         1 => this
-                                             .func
-                                             .instruction(&Instruction::I64Store8(memarg(0, 0))),
-                                         2 => this
-                                             .func
-                                             .instruction(&Instruction::I64Store16(memarg(0, 1))),
-                                         4 => this
-                                             .func
-                                             .instruction(&Instruction::I64Store32(memarg(0, 2))),
-                                         _ => unreachable!("invalid store chunk size: {nbytes}"),
-                                     };
+                                    match nbytes {
+                                        1 => this
+                                            .func
+                                            .instruction(&Instruction::I64Store8(memarg(0, 0))),
+                                        2 => this
+                                            .func
+                                            .instruction(&Instruction::I64Store16(memarg(0, 1))),
+                                        4 => this
+                                            .func
+                                            .instruction(&Instruction::I64Store32(memarg(0, 2))),
+                                        _ => unreachable!("invalid store chunk size: {nbytes}"),
+                                    };
                                 };
- 
-                             let emit_store_page1_chunk =
-                                 |this: &mut Self, mem_off: u32, nbytes: u32, shift_bits: u32| {
-                                     // scratch_vaddr = vaddr + size_bytes - shift_bytes + mem_off
-                                     this.func.instruction(&Instruction::LocalGet(addr_local));
+
+                            let emit_store_page1_chunk =
+                                |this: &mut Self, mem_off: u32, nbytes: u32, shift_bits: u32| {
+                                    // scratch_vaddr = vaddr + size_bytes - shift_bytes + mem_off
+                                    this.func.instruction(&Instruction::LocalGet(addr_local));
                                     this.func
                                         .instruction(&Instruction::I64Const(size_bytes as i64));
                                     this.func.instruction(&Instruction::I64Add);
