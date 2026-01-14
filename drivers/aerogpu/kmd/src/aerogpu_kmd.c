@@ -2778,9 +2778,18 @@ static NTSTATUS APIENTRY AeroGpuDdiStopDevice(_In_ const PVOID MiniportDeviceCon
 
     AEROGPU_LOG0("StopDevice");
     InterlockedExchange(&adapter->AcceptingSubmissions, 0);
-    InterlockedExchange(&adapter->DevicePowerState, (LONG)DxgkDevicePowerStateD3);
+    const DXGK_DEVICE_POWER_STATE prevPowerState =
+        (DXGK_DEVICE_POWER_STATE)InterlockedExchange(&adapter->DevicePowerState, (LONG)DxgkDevicePowerStateD3);
+    /*
+     * StopDevice can be called after the adapter has already been transitioned
+     * to a non-D0 power state (e.g. after DxgkDdiSetPowerState(D3)).
+     *
+     * MMIO accesses while the device is powered down can hang; only touch MMIO
+     * here if we believe the adapter was still in D0 at entry.
+     */
+    const BOOLEAN poweredOn = (prevPowerState == DxgkDevicePowerStateD0) ? TRUE : FALSE;
 
-    if (adapter->Bar0) {
+    if (adapter->Bar0 && poweredOn) {
         /*
          * Disable the hardware cursor early so the device will not DMA from freed
          * cursor memory during teardown.
