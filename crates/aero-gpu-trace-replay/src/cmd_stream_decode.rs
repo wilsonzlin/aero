@@ -317,6 +317,36 @@ fn decode_known_fields(
                 out.insert("backing_offset_bytes".into(), json!(v));
             }
         }
+        AerogpuCmdOpcode::CreateTextureView => {
+            // u32 view_handle; u32 texture_handle; u32 format; u32 base_mip_level; u32 mip_level_count;
+            // u32 base_array_layer; u32 array_layer_count; ...
+            if let Some(v) = read_u32_le(pkt.payload, 0) {
+                out.insert("view_handle".into(), json!(v));
+            }
+            if let Some(v) = read_u32_le(pkt.payload, 4) {
+                out.insert("texture_handle".into(), json!(v));
+            }
+            if let Some(v) = read_u32_le(pkt.payload, 8) {
+                out.insert("format".into(), json!(v));
+            }
+            if let Some(v) = read_u32_le(pkt.payload, 12) {
+                out.insert("base_mip_level".into(), json!(v));
+            }
+            if let Some(v) = read_u32_le(pkt.payload, 16) {
+                out.insert("mip_level_count".into(), json!(v));
+            }
+            if let Some(v) = read_u32_le(pkt.payload, 20) {
+                out.insert("base_array_layer".into(), json!(v));
+            }
+            if let Some(v) = read_u32_le(pkt.payload, 24) {
+                out.insert("array_layer_count".into(), json!(v));
+            }
+        }
+        AerogpuCmdOpcode::DestroyTextureView => {
+            if let Some(v) = read_u32_le(pkt.payload, 0) {
+                out.insert("view_handle".into(), json!(v));
+            }
+        }
         AerogpuCmdOpcode::DestroyResource => {
             if let Some(v) = read_u32_le(pkt.payload, 0) {
                 out.insert("resource_handle".into(), json!(v));

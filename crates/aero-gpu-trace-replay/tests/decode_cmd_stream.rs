@@ -1,7 +1,7 @@
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuCmdOpcode, AEROGPU_CLEAR_COLOR, AEROGPU_CMD_STREAM_MAGIC, AEROGPU_PRESENT_FLAG_VSYNC,
 };
-use aero_protocol::aerogpu::aerogpu_pci::AEROGPU_ABI_VERSION_U32;
+use aero_protocol::aerogpu::aerogpu_pci::{AerogpuFormat, AEROGPU_ABI_VERSION_U32};
 use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
 
 fn push_u32_le(out: &mut Vec<u8>, v: u32) {
@@ -203,6 +203,26 @@ fn build_fixture_cmd_stream() -> Vec<u8> {
         &payload,
     );
 
+    // CREATE_TEXTURE_VIEW(view_handle=0x1000, texture_handle=0x2000, format=R8G8B8A8_UNORM, mip 0..1, layer 0..1).
+    let mut payload = Vec::new();
+    push_u32_le(&mut payload, 0x1000);
+    push_u32_le(&mut payload, 0x2000);
+    push_u32_le(&mut payload, AerogpuFormat::R8G8B8A8Unorm as u32);
+    push_u32_le(&mut payload, 0); // base_mip_level
+    push_u32_le(&mut payload, 1); // mip_level_count
+    push_u32_le(&mut payload, 0); // base_array_layer
+    push_u32_le(&mut payload, 1); // array_layer_count
+    push_u64_le(&mut payload, 0); // reserved0
+    assert_eq!(payload.len(), 36);
+    push_packet(&mut out, AerogpuCmdOpcode::CreateTextureView as u32, &payload);
+
+    // DESTROY_TEXTURE_VIEW(view_handle=0x1000).
+    let mut payload = Vec::new();
+    push_u32_le(&mut payload, 0x1000);
+    push_u32_le(&mut payload, 0); // reserved0
+    assert_eq!(payload.len(), 8);
+    push_packet(&mut out, AerogpuCmdOpcode::DestroyTextureView as u32, &payload);
+
     // Patch header.size_bytes.
     let size_bytes = out.len() as u32;
     out[8..12].copy_from_slice(&size_bytes.to_le_bytes());
@@ -279,6 +299,15 @@ fn decodes_cmd_stream_dump_to_stable_listing() {
     assert!(listing.contains("stage_ex=4")); // Domain
     assert!(listing.contains("data_len=16"));
     assert!(listing.contains("data_prefix=0000803f000000400000404000008040"));
+
+    // Texture view packets should decode their payload fields.
+    let format = AerogpuFormat::R8G8B8A8Unorm as u32;
+    let format_hex = format!("format=0x{format:08X}");
+    assert!(listing.contains("CreateTextureView"), "{listing}");
+    assert!(listing.contains("view_handle=4096"), "{listing}");
+    assert!(listing.contains("texture_handle=8192"), "{listing}");
+    assert!(listing.contains(&format_hex), "{listing}");
+    assert!(listing.contains("DestroyTextureView"), "{listing}");
 }
 
 #[test]
@@ -374,4 +403,19 @@ fn json_listing_decodes_new_opcodes() {
         set_consts["decoded"]["data_prefix"],
         "0000803f000000400000404000008040"
     );
+
+    let create_view = find_packet("CreateTextureView");
+    assert_eq!(create_view["decoded"]["view_handle"], 0x1000);
+    assert_eq!(create_view["decoded"]["texture_handle"], 0x2000);
+    assert_eq!(
+        create_view["decoded"]["format"],
+        AerogpuFormat::R8G8B8A8Unorm as u32
+    );
+    assert_eq!(create_view["decoded"]["base_mip_level"], 0);
+    assert_eq!(create_view["decoded"]["mip_level_count"], 1);
+    assert_eq!(create_view["decoded"]["base_array_layer"], 0);
+    assert_eq!(create_view["decoded"]["array_layer_count"], 1);
+
+    let destroy_view = find_packet("DestroyTextureView");
+    assert_eq!(destroy_view["decoded"]["view_handle"], 0x1000);
 }
