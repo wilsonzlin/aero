@@ -153,6 +153,11 @@ function sendHeaders(res, stat, { contentLength, contentRange, statusCode }) {
   res.setHeader("Content-Length", String(contentLength));
   if (contentRange) res.setHeader("Content-Range", contentRange);
 
+  // Defence-in-depth for COEP compatibility: allow the resource to be embedded/fetched cross-origin
+  // by default. This is a dev helper; production deployments should choose an appropriate CORP
+  // policy (same-site vs cross-origin).
+  res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+
   // CORS for Range reads.
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader(
@@ -230,6 +235,7 @@ const server = http.createServer((req, res) => {
   if (req.method === "OPTIONS") {
     // CORS preflight for cross-origin Range requests.
     res.statusCode = 204;
+    res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
     res.setHeader(

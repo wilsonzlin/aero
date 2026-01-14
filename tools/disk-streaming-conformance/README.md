@@ -72,6 +72,16 @@ Defaults:
 
 ## Usage
 
+### Self-test against the repo dev server (`server/range_server.js`)
+
+For a quick local sanity check (no MinIO/S3 required), run:
+
+```bash
+python3 tools/disk-streaming-conformance/selftest_range_server.py
+```
+
+This starts `server/range_server.js` on a random local port with a temporary test file, then runs the conformance suite in `--strict` mode against it.
+
 ### Public image
 
 ```bash
