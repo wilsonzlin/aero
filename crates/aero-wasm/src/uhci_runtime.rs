@@ -494,19 +494,19 @@ impl UhciRuntime {
     ) -> Result<(), JsValue> {
         let path = crate::uhci_controller_bridge::parse_usb_path(path)?;
         if path.len() < 2 {
-            return Err(js_error(
-                "USB HID passthrough devices must attach behind the external hub (expected path like [0, <hubPort>])",
-            ));
+            return Err(js_error(&format!(
+                "USB HID passthrough devices must attach behind the external hub (expected path like [{EXTERNAL_HUB_ROOT_PORT}, <hubPort>])"
+            )));
         }
         if path.len() != 2 {
-            return Err(js_error(
-                "Nested USB topology paths are not supported by UhciRuntime yet (expected [0, <hubPort>])",
-            ));
+            return Err(js_error(&format!(
+                "Nested USB topology paths are not supported by UhciRuntime yet (expected [{EXTERNAL_HUB_ROOT_PORT}, <hubPort>])"
+            )));
         }
         if path[0] as usize != EXTERNAL_HUB_ROOT_PORT {
-            return Err(js_error(
-                "USB HID passthrough devices must attach behind the external hub on root port 0",
-            ));
+            return Err(js_error(&format!(
+                "USB HID passthrough devices must attach behind the external hub on root port {EXTERNAL_HUB_ROOT_PORT}",
+            )));
         }
 
         let hub_port = path[1];
