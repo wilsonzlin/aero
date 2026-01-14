@@ -418,4 +418,20 @@ mod tests {
         assert_eq!(compat.read_u32(0x14, 4), 0x0000_0100);
         assert_eq!(compat.read_u32(0x10, 4), 0x2345_4004);
     }
+
+    #[test]
+    fn io_bar_probe_and_subword_write_use_programmed_base_not_probe_mask() {
+        let mut cfg = PciConfigSpace::new(0x1234, 0x5678);
+        cfg.set_bar_definition(0, PciBarDefinition::Io { size: 0x20 });
+
+        let compat = PciConfigSpaceCompat::new(cfg);
+
+        compat.write_u32(0x10, 4, 0xFFFF_FFFF);
+        assert_eq!(compat.read_u32(0x10, 4), 0xFFFF_FFE1);
+
+        // Program only the high 16 bits via a subword write. Low bits must come from the
+        // programmed base (0) + IO bit (bit0=1), not from the probe response (0xFFE1).
+        compat.write_u32(0x12, 2, 0xE000);
+        assert_eq!(compat.read_u32(0x10, 4), 0xE000_0001);
+    }
 }
