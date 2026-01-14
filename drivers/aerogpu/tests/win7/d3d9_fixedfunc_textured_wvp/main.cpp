@@ -271,15 +271,18 @@ static int RunD3D9FixedFuncTexturedWvp(int argc, char** argv) {
   dev->SetTransform(D3DTS_VIEW, &view);
   dev->SetTransform(D3DTS_PROJECTION, &proj);
 
-  const DWORD kWhite = D3DCOLOR_XRGB(255, 255, 255);
+  // Use a non-white vertex color so the test also validates stage0 MODULATE
+  // (TEXTURE * DIFFUSE), not just texture sampling.
+  const DWORD kDiffuse = D3DCOLOR_XRGB(128, 64, 192);
   Vertex v[4];
-  v[0].x = -0.9f; v[0].y = 0.1f;  v[0].z = 0.5f; v[0].color = kWhite; v[0].u = 0.5f; v[0].v = 0.5f; // top-left
-  v[1].x = -0.7f; v[1].y = 0.1f;  v[1].z = 0.5f; v[1].color = kWhite; v[1].u = 1.0f; v[1].v = 0.5f; // top-right
-  v[2].x = -0.9f; v[2].y = -0.1f; v[2].z = 0.5f; v[2].color = kWhite; v[2].u = 0.5f; v[2].v = 1.0f; // bottom-left
-  v[3].x = -0.7f; v[3].y = -0.1f; v[3].z = 0.5f; v[3].color = kWhite; v[3].u = 1.0f; v[3].v = 1.0f; // bottom-right
+  v[0].x = -0.9f; v[0].y = 0.1f;  v[0].z = 0.5f; v[0].color = kDiffuse; v[0].u = 0.5f; v[0].v = 0.5f; // top-left
+  v[1].x = -0.7f; v[1].y = 0.1f;  v[1].z = 0.5f; v[1].color = kDiffuse; v[1].u = 1.0f; v[1].v = 0.5f; // top-right
+  v[2].x = -0.9f; v[2].y = -0.1f; v[2].z = 0.5f; v[2].color = kDiffuse; v[2].u = 0.5f; v[2].v = 1.0f; // bottom-left
+  v[3].x = -0.7f; v[3].y = -0.1f; v[3].z = 0.5f; v[3].color = kDiffuse; v[3].u = 1.0f; v[3].v = 1.0f; // bottom-right
 
   const DWORD kClear = D3DCOLOR_XRGB(0, 0, 0);
-  const uint32_t kExpectedYellow = D3DCOLOR_XRGB(255, 255, 0); // yellow (bottom-right texel)
+  // Bottom-right texel is yellow (255,255,0); MODULATE with vertex diffuse yields (128,64,0).
+  const uint32_t kExpectedCenter = D3DCOLOR_XRGB(128, 64, 0);
 
   auto DrawAndValidateCenterPixel =
       [&](const char* label, const wchar_t* dump_leaf, uint32_t expected_center) -> int {
@@ -416,7 +419,7 @@ static int RunD3D9FixedFuncTexturedWvp(int argc, char** argv) {
   }
   int rc = DrawAndValidateCenterPixel("vertex_decl",
                                       L"d3d9_fixedfunc_textured_wvp_vdecl.bmp",
-                                      kExpectedYellow);
+                                      kExpectedCenter);
   if (rc != 0) {
     return rc;
   }
@@ -454,7 +457,7 @@ static int RunD3D9FixedFuncTexturedWvp(int argc, char** argv) {
   if (FAILED(hr)) {
     return reporter.FailHresult("IDirect3DDevice9Ex::SetFVF", hr);
   }
-  rc = DrawAndValidateCenterPixel("fvf", L"d3d9_fixedfunc_textured_wvp_fvf.bmp", kExpectedYellow);
+  rc = DrawAndValidateCenterPixel("fvf", L"d3d9_fixedfunc_textured_wvp_fvf.bmp", kExpectedCenter);
   if (rc != 0) {
     return rc;
   }
