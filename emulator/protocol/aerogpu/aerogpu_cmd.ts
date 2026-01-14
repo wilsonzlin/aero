@@ -1634,6 +1634,10 @@ export class AerogpuCmdWriter {
     this.view.setUint32(base + 8, vs, true);
     this.view.setUint32(base + 12, ps, true);
     this.view.setUint32(base + 16, cs, true);
+    // Legacy compatibility: keep writing the GS handle into the base struct's `reserved0` so
+    // decoders that only understand the original 24-byte `aerogpu_cmd_bind_shaders` layout can
+    // still bind a geometry shader.
+    this.view.setUint32(base + 20, gs, true);
     this.view.setUint32(base + AEROGPU_CMD_BIND_SHADERS_SIZE + 0, gs, true);
     this.view.setUint32(base + AEROGPU_CMD_BIND_SHADERS_SIZE + 4, hs, true);
     this.view.setUint32(base + AEROGPU_CMD_BIND_SHADERS_SIZE + 8, ds, true);

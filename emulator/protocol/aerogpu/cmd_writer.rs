@@ -557,6 +557,10 @@ impl AerogpuCmdWriter {
         self.write_u32_at(base + offset_of!(AerogpuCmdBindShaders, vs), vs);
         self.write_u32_at(base + offset_of!(AerogpuCmdBindShaders, ps), ps);
         self.write_u32_at(base + offset_of!(AerogpuCmdBindShaders, cs), cs);
+        // Legacy compatibility: keep writing the GS handle into the base struct's `reserved0` so
+        // decoders that only understand the original 24-byte `aerogpu_cmd_bind_shaders` layout can
+        // still bind a geometry shader.
+        self.write_u32_at(base + offset_of!(AerogpuCmdBindShaders, reserved0), gs);
 
         let ext_base = base + size_of::<AerogpuCmdBindShaders>();
         self.write_u32_at(ext_base + 0 * size_of::<AerogpuHandle>(), gs);

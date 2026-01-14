@@ -1541,6 +1541,17 @@ fn cmd_writer_emits_bind_shaders_ex_with_trailing_gs_hs_ds_handles() {
         ),
         3
     );
+    // `bind_shaders_ex` keeps writing GS into the legacy `reserved0` field so older decoders can
+    // still bind a geometry shader even if they ignore the appended `{gs,hs,ds}` table.
+    assert_eq!(
+        u32::from_le_bytes(
+            buf[pkt_base + offset_of!(AerogpuCmdBindShaders, reserved0)
+                ..pkt_base + offset_of!(AerogpuCmdBindShaders, reserved0) + 4]
+                .try_into()
+                .unwrap()
+        ),
+        4
+    );
 
     let ext_base = pkt_base + size_of::<AerogpuCmdBindShaders>();
     assert_eq!(

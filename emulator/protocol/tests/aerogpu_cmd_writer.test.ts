@@ -463,6 +463,8 @@ test("AerogpuCmdWriter emits BIND_SHADERS extended packet with trailing gs/hs/ds
   assert.equal(view.getUint32(pkt0 + 8, true), 1);
   assert.equal(view.getUint32(pkt0 + 12, true), 2);
   assert.equal(view.getUint32(pkt0 + 16, true), 3);
+  // Legacy compatibility: keep GS in `reserved0` so older decoders can still bind it.
+  assert.equal(view.getUint32(pkt0 + 20, true), 4);
 
   // Trailing handles: gs/hs/ds.
   assert.equal(view.getUint32(pkt0 + AEROGPU_CMD_BIND_SHADERS_SIZE + 0, true), 4);
@@ -696,6 +698,8 @@ test("AerogpuCmdWriter emits stage_ex packets and extended BindShaders encoding"
   assert.equal(view.getUint32(cursor + 8, true), 1);
   assert.equal(view.getUint32(cursor + 12, true), 2);
   assert.equal(view.getUint32(cursor + 16, true), 3);
+  // Legacy compatibility: keep GS in `reserved0` so older decoders can still bind it.
+  assert.equal(view.getUint32(cursor + 20, true), 4);
   // Trailing GS/HS/DS u32s.
   assert.equal(view.getUint32(cursor + 24, true), 4);
   assert.equal(view.getUint32(cursor + 28, true), 5);
