@@ -101,6 +101,28 @@ On success, the harness emits a CI-scrapable host marker:
 
 On mismatch, the harness fails fast and includes a compact dump of the `query-pci` results.
 
+Example (PowerShell):
+
+```powershell
+pwsh ./drivers/windows7/tests/host-harness/Invoke-AeroVirtioWin7Tests.ps1 `
+  -QemuSystem qemu-system-x86_64 `
+  -DiskImagePath ./win7-aero-tests.qcow2 `
+  -Snapshot `
+  -QemuPreflightPci `
+  -TimeoutSeconds 600
+```
+
+Example (Python):
+
+```bash
+python3 drivers/windows7/tests/host-harness/invoke_aero_virtio_win7_tests.py \
+  --qemu-system qemu-system-x86_64 \
+  --disk-image ./win7-aero-tests.qcow2 \
+  --snapshot \
+  --qemu-preflight-pci \
+  --timeout-seconds 600
+```
+
 For repeatable runs without mutating the base image, use snapshot mode:
 
 ```powershell
