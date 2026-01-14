@@ -3481,6 +3481,12 @@ static NDIS_STATUS AerovNetVirtioStart(_Inout_ AEROVNET_ADAPTER* Adapter) {
     // device->driver interrupts for this queue to avoid spurious DPC work when
     // the underlying transport routes all queues onto a shared interrupt.
     virtqueue_split_disable_interrupts(&Adapter->CtrlVq.Vq);
+    if (Adapter->UseMsix) {
+      // Also disable MSI-X routing for the control queue. Even though we set
+      // VIRTQ_AVAIL_F_NO_INTERRUPT, being explicit avoids spurious interrupts on
+      // devices/transports that ignore the suppression flag.
+      (VOID)VirtioPciSetQueueMsixVector(&Adapter->Vdev, Adapter->CtrlVq.QueueIndex, VIRTIO_PCI_MSI_NO_VECTOR);
+    }
 
     DbgPrint("virtio-net-ctrl-vq|INFO|init|queue_index=%hu|queue_size=%hu|features=0x%I64x\n", Adapter->CtrlVq.QueueIndex,
              Adapter->CtrlVq.QueueSize, (ULONGLONG)Adapter->GuestFeatures);
