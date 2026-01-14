@@ -43,7 +43,7 @@ export function tryInitXhciDevice(opts: {
 
   try {
     const dev = new XhciPciDevice({ bridge, irqSink: mgr.irqSink });
-    // Prefer the canonical BDF requested by the device (00:02.0). If that slot is occupied,
+    // Prefer the canonical BDF requested by the device (00:0d.0). If that slot is occupied,
     // fall back to auto allocation so xHCI can still attach in test/experimental setups.
     const anyDev = dev as unknown as { bdf?: { bus: number; device: number; function: number } };
     try {

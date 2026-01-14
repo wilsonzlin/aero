@@ -87,10 +87,10 @@ Native integration (not yet wired into the canonical `Machine` by default):
 - Native PCI wrapper (IRQ/MSI plumbing): `crates/devices/src/usb/xhci.rs` (`XhciPciDevice`)
 - Emulator crate glue (module path): `emulator::io::usb::xhci` (thin wrapper around `aero_usb::xhci`)
 
-### PCI identity (native runtime)
+### PCI identity (canonical)
 
-The repo defines a stable PCI identity for xHCI in `crates/devices` so native integrations can bind
-class drivers predictably.
+The repo defines a stable PCI identity for xHCI in `crates/devices`, and both native + web runtimes
+mirror it so guests enumerate the same PCI function shape across environments.
 
 | Field | Value |
 |---|---|
@@ -98,7 +98,7 @@ class drivers predictably.
 | Vendor ID | `0x1b36` (Red Hat / QEMU) |
 | Device ID | `0x000d` |
 | Class code | `0x0c/0x03/0x30` (Serial bus / USB / xHCI) |
-| Interrupt | PCI INTx (INTA#) |
+| Interrupt | PCI INTx (INTA#, level-triggered) |
 | BARs | BAR0 = MMIO32 (`0x10000` bytes) |
 
 Notes:
@@ -110,35 +110,19 @@ Notes:
   - Web runtime: INTx only.
   - Native integrations may choose INTx or MSI (the native PCI wrapper exposes an MSI capability),
     but MSI-X is not implemented yet.
+- Web runtime wiring:
+  - Guest-visible PCI wrapper: `web/src/io/devices/xhci.ts` (`XhciPciDevice`).
+  - Worker wiring: `web/src/workers/io_xhci_init.ts` (`tryInitXhciDevice`). Prefers registering at
+    `00:0d.0`, but falls back to auto-allocation if the slot is occupied.
+  - WASM bridge export: `crates/aero-wasm/src/xhci_controller_bridge.rs` (`XhciControllerBridge`),
+    which wraps the Rust controller model (`aero_usb::xhci::XhciController`) and exposes:
+    - MMIO reads/writes,
+    - PCI command gating (e.g. DMA is gated on Bus Master Enable),
+    - INTx IRQ level (`irq_asserted()`), and
+    - deterministic snapshot/restore (controller state + a tick counter).
 - The IRQ line observed by the guest depends on platform routing (PIRQ swizzle); see [`docs/pci-device-compatibility.md`](./pci-device-compatibility.md) and [`docs/irq-semantics.md`](./irq-semantics.md).
 - `aero_machine::Machine` does not yet expose an xHCI controller by default (today it wires UHCI for
   USB). Treat the native PCI profile as an intended contract for future wiring.
-
-### PCI identity (web runtime)
-
-The browser/WASM runtime currently uses a different (Intel-ish) identity and BDF than the native
-profile. This keeps the web runtime’s PCI layout stable for its own integration tests and allows
-xHCI to be enabled independently of the native canonical PCI profiles.
-
-| Field | Value |
-|---|---|
-| BDF | `00:02.0` |
-| Vendor ID | `0x8086` (Intel) |
-| Device ID | `0x1e31` |
-| Class code | `0x0c/0x03/0x30` |
-| Interrupt | PCI INTx (level-triggered) |
-| BARs | BAR0 = MMIO32 (`0x10000` bytes) |
-
-Notes:
-
-- Web implementation: `web/src/io/devices/xhci.ts` (`XhciPciDevice`).
-- Web init wiring: `web/src/workers/io_xhci_init.ts` (attempts to initialize `XhciControllerBridge` if present in the WASM build).
-- WASM export: `crates/aero-wasm/src/xhci_controller_bridge.rs` (`XhciControllerBridge`). Today this
-  wraps the Rust controller model (`aero_usb::xhci::XhciController`) and exposes:
-  - MMIO reads/writes,
-  - PCI command gating (e.g. DMA is gated on Bus Master Enable),
-  - INTx IRQ level (`irq_asserted()`), and
-  - deterministic snapshot/restore (controller state + a tick counter).
 - WebHID attachment behind xHCI is planned via `XhciHidTopologyManager` (`web/src/hid/xhci_hid_topology.ts`),
   but `XhciControllerBridge` does not yet expose the required topology mutation APIs
   (`attach_hub`, `attach_webhid_device`, etc). As a result, WebHID passthrough devices are still
