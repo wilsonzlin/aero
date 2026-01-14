@@ -53,46 +53,18 @@ fn wrapped_segment_len(state: &CpuState, raw_addr: u64, remaining: usize) -> usi
 
 #[inline]
 pub(crate) fn contiguous_masked_start(state: &CpuState, addr: u64, len: usize) -> Option<u64> {
-    if len <= 1 {
+    if len == 0 {
         return Some(state.apply_a20(addr));
     }
 
-    // Long mode: no architectural linear masking, so any non-overflowing range
-    // is contiguous.
-    if state.mode == CpuMode::Long {
-        // Avoid using bus bulk helpers when the range wraps the u64 address
-        // space; split slow-path per-byte instead.
-        let span = len.checked_sub(1)? as u64;
-        addr.checked_add(span)?;
-        return Some(addr);
+    // A wrapped range is safe to use bus bulk helpers for iff it is contiguous in
+    // masked linear address space. `wrapped_segment_len` gives the maximal
+    // contiguous prefix; use it as a single source of truth for contiguity.
+    if wrapped_segment_len(state, addr, len) == len {
+        Some(state.apply_a20(addr))
+    } else {
+        None
     }
-
-    let start = state.apply_a20(addr);
-    let span = len.checked_sub(1)? as u64;
-
-    // A20 masking is only applied in real/v8086 mode when disabled.
-    if !state.a20_enabled && matches!(state.mode, CpuMode::Real | CpuMode::Vm86) {
-        // Conservative contiguity check: require the range to stay within a
-        // single "1MiB window" (bit-20 does not change) *and* not overflow the
-        // 32-bit linear address space.
-        let addr32 = addr & 0xFFFF_FFFF;
-        let low20 = addr32 & 0x000F_FFFF;
-        if low20.checked_add(span)? > 0x000F_FFFF {
-            return None;
-        }
-        if addr32.checked_add(span)? > 0xFFFF_FFFF {
-            return None;
-        }
-        return Some(start);
-    }
-
-    // Non-long modes always truncate linear addresses to 32 bits. Bulk accesses
-    // are only safe when the full range stays within one 32-bit window.
-    let start32 = start as u32 as u64;
-    if start32.checked_add(span)? > 0xFFFF_FFFF {
-        return None;
-    }
-    Some(start)
 }
 
 pub fn read_bytes_wrapped<B: CpuBus>(
