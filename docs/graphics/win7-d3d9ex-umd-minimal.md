@@ -25,7 +25,7 @@ Non-goals for a first pass:
 
 * Full D3D9 game compatibility.
 * Complex fixed-function pipeline quirks.
-* Advanced queries (occlusion, pipeline stats), multi-sampling, cubemaps/volume textures, D3D9Ex video decode, etc.
+* Advanced queries (occlusion, pipeline stats), multi-sampling, volume textures, D3D9Ex video decode, etc.
 
 ---
 
