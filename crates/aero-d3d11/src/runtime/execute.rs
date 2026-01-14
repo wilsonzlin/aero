@@ -438,7 +438,7 @@ impl D3D11Runtime {
             size,
             // `wgpu::Queue::write_buffer` requires COPY_DST; to keep the runtime robust against
             // callers that forget to set the bit, always include both COPY_{SRC,DST}.
-            usage: map_buffer_usage(usage)
+            usage: map_buffer_usage(usage, self.supports_compute)
                 | wgpu::BufferUsages::COPY_SRC
                 | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
@@ -1947,8 +1947,9 @@ fn sync_index_buffer<'a>(
     Ok(())
 }
 
-fn map_buffer_usage(usage: BufferUsage) -> wgpu::BufferUsages {
+fn map_buffer_usage(usage: BufferUsage, supports_compute: bool) -> wgpu::BufferUsages {
     let mut out = wgpu::BufferUsages::empty();
+    let mut needs_storage = false;
     if usage.contains(BufferUsage::MAP_READ) {
         out |= wgpu::BufferUsages::MAP_READ;
     }
@@ -1963,16 +1964,21 @@ fn map_buffer_usage(usage: BufferUsage) -> wgpu::BufferUsages {
     }
     if usage.contains(BufferUsage::INDEX) {
         out |= wgpu::BufferUsages::INDEX;
-        // IA index buffers are also consumed by internal compute prepasses (vertex pulling).
-        out |= wgpu::BufferUsages::STORAGE;
+        needs_storage = true;
     }
     if usage.contains(BufferUsage::VERTEX) {
         out |= wgpu::BufferUsages::VERTEX;
-        // IA vertex buffers are also consumed by internal compute prepasses (vertex pulling).
-        out |= wgpu::BufferUsages::STORAGE;
+        needs_storage = true;
     }
     if usage.contains(BufferUsage::UNIFORM) {
         out |= wgpu::BufferUsages::UNIFORM;
+    }
+    // D3D11 IA buffers may also be consumed by compute prepasses (vertex/index pulling) when
+    // emulating GS/HS/DS. WebGPU requires such buffers to be created with `STORAGE` in order to
+    // bind them as `var<storage>`. Gate this on compute support so downlevel backends (e.g. WebGL2)
+    // don't hit validation errors.
+    if supports_compute && needs_storage {
+        out |= wgpu::BufferUsages::STORAGE;
     }
     if usage.contains(BufferUsage::STORAGE) {
         out |= wgpu::BufferUsages::STORAGE;
