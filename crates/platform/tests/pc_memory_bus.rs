@@ -4,6 +4,7 @@ use aero_platform::dirty_memory::DEFAULT_DIRTY_PAGE_SIZE;
 use aero_platform::memory::{MemoryBus, BIOS_RESET_VECTOR_PHYS, BIOS_ROM_BASE, BIOS_ROM_SIZE};
 use aero_platform::ChipsetState;
 use memory::MapError;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 #[derive(Default)]
@@ -222,6 +223,83 @@ fn a20_disabled_crossing_2mib_boundary_splits_correctly() {
     assert_eq!(bus.ram().read_u8_le(0x0F_FFFF).unwrap(), 0xBB);
     assert_eq!(bus.ram().read_u8_le(0x2_00000).unwrap(), 0xCC);
     assert_eq!(bus.ram().read_u8_le(0x2_00001).unwrap(), 0xDD);
+}
+
+struct CountingRam {
+    inner: memory::DenseMemory,
+    reads: Arc<AtomicUsize>,
+    writes: Arc<AtomicUsize>,
+}
+
+impl CountingRam {
+    fn new(size: u64, reads: Arc<AtomicUsize>, writes: Arc<AtomicUsize>) -> Self {
+        Self {
+            inner: memory::DenseMemory::new(size).unwrap(),
+            reads,
+            writes,
+        }
+    }
+}
+
+impl memory::GuestMemory for CountingRam {
+    fn size(&self) -> u64 {
+        self.inner.size()
+    }
+
+    fn read_into(&self, paddr: u64, dst: &mut [u8]) -> memory::GuestMemoryResult<()> {
+        self.reads.fetch_add(1, Ordering::Relaxed);
+        self.inner.read_into(paddr, dst)
+    }
+
+    fn write_from(&mut self, paddr: u64, src: &[u8]) -> memory::GuestMemoryResult<()> {
+        self.writes.fetch_add(1, Ordering::Relaxed);
+        self.inner.write_from(paddr, src)
+    }
+}
+
+#[test]
+fn a20_disabled_reads_use_bulk_ram_backend_ops_not_per_byte_loop() {
+    let reads = Arc::new(AtomicUsize::new(0));
+    let writes = Arc::new(AtomicUsize::new(0));
+
+    let chipset = ChipsetState::new(false);
+    let filter = AddressFilter::new(chipset.a20());
+    let ram = CountingRam::new(2 * 1024 * 1024, reads.clone(), writes.clone());
+    let mut bus = MemoryBus::with_ram(filter, Box::new(ram));
+
+    let start = 0x0FFF_00u64;
+    let len = 0x3000usize;
+    let mut buf = vec![0u8; len];
+    bus.read_physical(start, &mut buf);
+
+    assert_eq!(writes.load(Ordering::Relaxed), 0);
+    assert_eq!(
+        reads.load(Ordering::Relaxed),
+        2,
+        "expected one RAM read per 1MiB chunk when A20 is disabled"
+    );
+}
+
+#[test]
+fn a20_disabled_writes_use_bulk_ram_backend_ops_not_per_byte_loop() {
+    let reads = Arc::new(AtomicUsize::new(0));
+    let writes = Arc::new(AtomicUsize::new(0));
+
+    let chipset = ChipsetState::new(false);
+    let filter = AddressFilter::new(chipset.a20());
+    let ram = CountingRam::new(2 * 1024 * 1024, reads.clone(), writes.clone());
+    let mut bus = MemoryBus::with_ram(filter, Box::new(ram));
+
+    let start = 0x0FFF_00u64;
+    let data = vec![0xAAu8; 0x3000];
+    bus.write_physical(start, &data);
+
+    assert_eq!(reads.load(Ordering::Relaxed), 0);
+    assert_eq!(
+        writes.load(Ordering::Relaxed),
+        2,
+        "expected one RAM write per 1MiB chunk when A20 is disabled"
+    );
 }
 
 #[test]
