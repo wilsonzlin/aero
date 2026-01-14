@@ -86,7 +86,22 @@ inline void LogModulePathOnce() {
 }
 
 constexpr aerogpu_handle_t kInvalidHandle = 0;
-constexpr uint32_t kDeviceDestroyLiveCookie = 0xA3E0D311u;
+// Driver-private "live cookie" values stamped into the first 4 bytes of device
+// objects so we can quickly validate handle->pDrvPrivate pointers.
+constexpr uint32_t kD3D10DeviceLiveCookie = 0xA3E0D310u;
+constexpr uint32_t kD3D10_1DeviceLiveCookie = 0xA3E0D301u;
+constexpr uint32_t kD3D11DeviceLiveCookie = 0xA3E0D311u;
+// Back-compat alias used by existing D3D11/portable codepaths.
+constexpr uint32_t kDeviceDestroyLiveCookie = kD3D11DeviceLiveCookie;
+
+inline bool HasLiveCookie(const void* pDrvPrivate, uint32_t expected_cookie) {
+  if (!pDrvPrivate) {
+    return false;
+  }
+  uint32_t cookie = 0;
+  std::memcpy(&cookie, pDrvPrivate, sizeof(cookie));
+  return cookie == expected_cookie;
+}
 constexpr uint32_t kMaxConstantBufferSlots = 14;
 constexpr uint32_t kMaxShaderResourceSlots = 128;
 constexpr uint32_t kMaxSamplerSlots = 16;
@@ -135,6 +150,7 @@ constexpr uint32_t kD3D11MapFlagDoNotWait = kD3DMapFlagDoNotWait;
 
 // Sentinel timeout values used by AeroGPU fence wait helpers.
 constexpr uint32_t kAeroGpuTimeoutMsInfinite = ~0u;
+constexpr uint64_t kAeroGpuTimeoutU64Infinite = ~0ull;
 
 // Common HRESULT values used by D3D10/11 map/unmap + WDDM waits.
 constexpr HRESULT kDxgiErrorWasStillDrawing = static_cast<HRESULT>(0x887A000Au); // DXGI_ERROR_WAS_STILL_DRAWING

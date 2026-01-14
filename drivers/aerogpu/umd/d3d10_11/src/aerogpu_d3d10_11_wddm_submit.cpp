@@ -1781,7 +1781,8 @@ HRESULT WddmSubmit::WaitForFenceWithTimeout(uint64_t fence, uint32_t timeout_ms)
 
   const UINT64 timeout =
       (timeout_ms == 0) ? 0ull
-                        : (timeout_ms == kAeroGpuTimeoutMsInfinite ? ~0ull : static_cast<UINT64>(timeout_ms));
+                        : (timeout_ms == kAeroGpuTimeoutMsInfinite ? kAeroGpuTimeoutU64Infinite
+                                                                   : static_cast<UINT64>(timeout_ms));
 
   // Prefer the runtime callback (it handles WOW64 thunking correctly).
   if constexpr (has_pfnWaitForSynchronizationObjectCb<D3DDDI_DEVICECALLBACKS>::value) {

@@ -135,6 +135,7 @@ using aerogpu::d3d10_11::AllocateGlobalHandle;
 using aerogpu::d3d10_11::kAeroGpuTimeoutMsInfinite;
 using aerogpu::d3d10_11::kInvalidHandle;
 using aerogpu::d3d10_11::kDeviceDestroyLiveCookie;
+using aerogpu::d3d10_11::HasLiveCookie;
 using aerogpu::d3d10_11::atomic_max_u64;
 using aerogpu::d3d10_11::kDxgiErrorWasStillDrawing;
 using aerogpu::d3d10_11::kHrPending;
@@ -144,12 +145,7 @@ using aerogpu::d3d10_11::kHrNtStatusTimeout;
 using aerogpu::d3d10_11::kHrNtStatusGraphicsGpuBusy;
 
 bool IsDeviceLive(D3D10DDI_HDEVICE hDevice) {
-  if (!hDevice.pDrvPrivate) {
-    return false;
-  }
-  uint32_t cookie = 0;
-  std::memcpy(&cookie, hDevice.pDrvPrivate, sizeof(cookie));
-  return cookie == kDeviceDestroyLiveCookie;
+  return HasLiveCookie(hDevice.pDrvPrivate, kDeviceDestroyLiveCookie);
 }
 
 
@@ -1367,15 +1363,9 @@ bool emit_set_render_targets_locked(AeroGpuDevice* dev) {
 void AEROGPU_APIENTRY DestroyDevice(D3D10DDI_HDEVICE hDevice) {
   AEROGPU_D3D10_11_LOG_CALL();
   AEROGPU_D3D10_TRACEF("DestroyDevice hDevice=%p", hDevice.pDrvPrivate);
-  if (!hDevice.pDrvPrivate) {
-    return;
-  }
-
   // Be robust to runtimes that destroy a device handle even when CreateDevice
   // failed or DestroyDevice is called twice.
-  uint32_t cookie = 0;
-  std::memcpy(&cookie, hDevice.pDrvPrivate, sizeof(cookie));
-  if (cookie != kDeviceDestroyLiveCookie) {
+  if (!HasLiveCookie(hDevice.pDrvPrivate, kDeviceDestroyLiveCookie)) {
     return;
   }
   const uint32_t cleared = 0;

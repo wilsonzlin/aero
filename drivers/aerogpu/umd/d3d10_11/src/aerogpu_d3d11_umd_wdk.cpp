@@ -41,6 +41,8 @@
 namespace {
 
 using namespace aerogpu::d3d10_11;
+using aerogpu::shared_surface::D3d9FormatToDxgi;
+using aerogpu::shared_surface::FixupLegacyPrivForOpenResource;
 
 static void LogTexture2DPitchMismatchRateLimited(const char* label,
                                                  const Resource* res,
@@ -72,13 +74,7 @@ static void LogTexture2DPitchMismatchRateLimited(const char* label,
 }
 
 static bool IsDeviceLive(D3D11DDI_HDEVICE hDevice) {
-  void* device_mem = hDevice.pDrvPrivate;
-  if (!device_mem) {
-    return false;
-  }
-  uint32_t cookie = 0;
-  std::memcpy(&cookie, device_mem, sizeof(cookie));
-  return cookie == kDeviceDestroyLiveCookie;
+  return HasLiveCookie(hDevice.pDrvPrivate, kDeviceDestroyLiveCookie);
 }
 
 // Compile-time sanity: keep local checks to "member exists" only.
@@ -620,7 +616,7 @@ static HRESULT WaitForFence(Device* dev, uint64_t fence_value, UINT64 timeout) {
   uint32_t timeout_ms = 0;
   if (timeout == 0ull) {
     timeout_ms = 0u;
-  } else if (timeout == ~0ull) {
+  } else if (timeout == kAeroGpuTimeoutU64Infinite) {
     timeout_ms = kAeroGpuTimeoutMsInfinite;
   } else if (timeout >= static_cast<UINT64>(kAeroGpuTimeoutMsInfinite)) {
     timeout_ms = kAeroGpuTimeoutMsInfinite;
@@ -725,14 +721,6 @@ static bool ConsumeWddmAllocPrivV2(const void* priv_data, UINT priv_data_size, a
   }
 
   return false;
-}
-
-static bool D3d9FormatToDxgi(uint32_t d3d9_format, uint32_t* dxgi_format_out, uint32_t* bpp_out) {
-  return aerogpu::shared_surface::D3d9FormatToDxgi(d3d9_format, dxgi_format_out, bpp_out);
-}
-
-static bool FixupLegacyPrivForOpenResource(aerogpu_wddm_alloc_priv_v2* priv) {
-  return aerogpu::shared_surface::FixupLegacyPrivForOpenResource(priv);
 }
 
 static void TrackWddmAllocForSubmitLocked(Device* dev, const Resource* res, bool write = false) {
@@ -844,9 +832,7 @@ static Device* DeviceFromContext(D3D11DDI_HDEVICECONTEXT hCtx) {
   // run. DestroyDevice intentionally zeros the cookie before invoking the
   // destructor, so reading the first 4 bytes is a safe liveness check even
   // during teardown races.
-  uint32_t cookie = 0;
-  std::memcpy(&cookie, dev, sizeof(cookie));
-  if (cookie != kDeviceDestroyLiveCookie) {
+  if (!HasLiveCookie(dev, kDeviceDestroyLiveCookie)) {
     return nullptr;
   }
   return dev;
@@ -2452,16 +2438,10 @@ void AEROGPU_APIENTRY CloseAdapter11(D3D10DDI_HADAPTER hAdapter) {
 
 void AEROGPU_APIENTRY DestroyDevice11(D3D11DDI_HDEVICE hDevice) {
   void* device_mem = hDevice.pDrvPrivate;
-  if (!device_mem) {
+  if (!HasLiveCookie(device_mem, kDeviceDestroyLiveCookie)) {
     return;
   }
-
   uint32_t cookie = 0;
-  std::memcpy(&cookie, device_mem, sizeof(cookie));
-  if (cookie != kDeviceDestroyLiveCookie) {
-    return;
-  }
-  cookie = 0;
   std::memcpy(device_mem, &cookie, sizeof(cookie));
 
   auto* dev = reinterpret_cast<Device*>(device_mem);
@@ -9909,7 +9889,7 @@ static HRESULT MapLocked11(Device* dev,
     const uint64_t fence = res->last_gpu_write_fence;
     if (fence != 0) {
       const bool do_not_wait = (map_flags & kD3D11MapFlagDoNotWait) != 0;
-      const UINT64 timeout = do_not_wait ? 0ull : ~0ull;
+      const UINT64 timeout = do_not_wait ? 0ull : kAeroGpuTimeoutU64Infinite;
       const HRESULT wait_hr = WaitForFence(dev, fence, timeout);
       if (wait_hr == kDxgiErrorWasStillDrawing || (do_not_wait && wait_hr == kHrPending)) {
         return kDxgiErrorWasStillDrawing;

@@ -69,16 +69,11 @@ using aerogpu::d3d10_11::kD3D10CpuAccessRead;
 using aerogpu::d3d10_11::kD3D10CpuAccessWrite;
 using aerogpu::d3d10_11::kD3D10ResourceMiscShared;
 using aerogpu::d3d10_11::ResetObject;
-constexpr uint32_t kAeroGpuDeviceLiveCookie = 0xA3E0D310u;
+using aerogpu::d3d10_11::kD3D10DeviceLiveCookie;
+using aerogpu::d3d10_11::HasLiveCookie;
 
 static bool IsDeviceLive(D3D10DDI_HDEVICE hDevice) {
-  void* device_mem = hDevice.pDrvPrivate;
-  if (!device_mem) {
-    return false;
-  }
-  uint32_t cookie = 0;
-  std::memcpy(&cookie, device_mem, sizeof(cookie));
-  return cookie == kAeroGpuDeviceLiveCookie;
+  return HasLiveCookie(hDevice.pDrvPrivate, kD3D10DeviceLiveCookie);
 }
 
 // -----------------------------------------------------------------------------
@@ -246,37 +241,21 @@ using aerogpu::d3d10_11::FromHandle;
 using aerogpu::d3d10_11::aerogpu_sampler_filter_from_d3d_filter;
 using aerogpu::d3d10_11::aerogpu_sampler_address_from_d3d_mode;
 using aerogpu::d3d10_11::bind_flags_to_buffer_usage_flags;
-
-static bool D3d9FormatToDxgi(uint32_t d3d9_format, uint32_t* dxgi_format_out, uint32_t* bpp_out) {
-  return aerogpu::shared_surface::D3d9FormatToDxgi(d3d9_format, dxgi_format_out, bpp_out);
-}
-
-static bool FixupLegacyPrivForOpenResource(aerogpu_wddm_alloc_priv_v2* priv) {
-  return aerogpu::shared_surface::FixupLegacyPrivForOpenResource(priv);
-}
+using aerogpu::d3d10_11::aerogpu_div_round_up_u32;
+using aerogpu::d3d10_11::aerogpu_format_is_block_compressed;
+using aerogpu::d3d10_11::aerogpu_mip_dim;
+using aerogpu::d3d10_11::aerogpu_texture_min_row_pitch_bytes;
+using aerogpu::d3d10_11::aerogpu_texture_num_rows;
+using aerogpu::d3d10_11::aerogpu_texture_required_size_bytes;
+using aerogpu::d3d10_11::bind_flags_to_usage_flags;
+using aerogpu::d3d10_11::build_texture2d_subresource_layouts;
+using aerogpu::d3d10_11::bytes_per_pixel_aerogpu;
+using aerogpu::d3d10_11::dxgi_index_format_to_aerogpu;
+using aerogpu::shared_surface::D3d9FormatToDxgi;
+using aerogpu::shared_surface::FixupLegacyPrivForOpenResource;
 
 using AerogpuTextureFormatLayout = aerogpu::d3d10_11::AerogpuTextureFormatLayout;
 using aerogpu::d3d10_11::aerogpu_texture_format_layout;
-
-static bool aerogpu_format_is_block_compressed(uint32_t aerogpu_format) {
-  return aerogpu::d3d10_11::aerogpu_format_is_block_compressed(aerogpu_format);
-}
-
-static uint32_t aerogpu_div_round_up_u32(uint32_t value, uint32_t divisor) {
-  return aerogpu::d3d10_11::aerogpu_div_round_up_u32(value, divisor);
-}
-
-static uint32_t aerogpu_texture_min_row_pitch_bytes(uint32_t aerogpu_format, uint32_t width) {
-  return aerogpu::d3d10_11::aerogpu_texture_min_row_pitch_bytes(aerogpu_format, width);
-}
-
-static uint32_t aerogpu_texture_num_rows(uint32_t aerogpu_format, uint32_t height) {
-  return aerogpu::d3d10_11::aerogpu_texture_num_rows(aerogpu_format, height);
-}
-
-static uint64_t aerogpu_texture_required_size_bytes(uint32_t aerogpu_format, uint32_t row_pitch_bytes, uint32_t height) {
-  return aerogpu::d3d10_11::aerogpu_texture_required_size_bytes(aerogpu_format, row_pitch_bytes, height);
-}
 
 static uint32_t aerogpu_lock_pitch_bytes(const D3DDDICB_LOCK& lock) {
   uint32_t pitch = 0;
@@ -294,14 +273,6 @@ static uint32_t aerogpu_lock_slice_pitch_bytes(const D3DDDICB_LOCK& lock) {
   return pitch;
 }
 
-uint32_t bytes_per_pixel_aerogpu(uint32_t aerogpu_format) {
-  return aerogpu::d3d10_11::bytes_per_pixel_aerogpu(aerogpu_format);
-}
-
-uint32_t dxgi_index_format_to_aerogpu(uint32_t dxgi_format) {
-  return aerogpu::d3d10_11::dxgi_index_format_to_aerogpu(dxgi_format);
-}
-
 // D3D10_BIND_* and D3D11_BIND_* share values for the common subset we care about.
 using aerogpu::d3d10_11::kD3D10BindVertexBuffer;
 using aerogpu::d3d10_11::kD3D10BindIndexBuffer;
@@ -309,11 +280,6 @@ using aerogpu::d3d10_11::kD3D10BindConstantBuffer;
 using aerogpu::d3d10_11::kD3D10BindShaderResource;
 using aerogpu::d3d10_11::kD3D10BindRenderTarget;
 using aerogpu::d3d10_11::kD3D10BindDepthStencil;
-
-uint32_t bind_flags_to_usage_flags(uint32_t bind_flags) {
-  // D3D10 and D3D11 bind flags share numeric values for the subset we care about.
-  return aerogpu::d3d10_11::bind_flags_to_usage_flags(bind_flags);
-}
 
 enum class ResourceKind : uint32_t {
   Unknown = 0,
@@ -400,28 +366,6 @@ static bool ValidateTexture2DRowSpan(uint32_t aerogpu_format,
 
 struct AeroGpuDevice;
 static bool ValidateWddmTexturePitch(const AeroGpuDevice* dev, const struct AeroGpuResource* res, uint32_t wddm_pitch);
-
-static uint32_t aerogpu_mip_dim(uint32_t base, uint32_t mip_level) {
-  return aerogpu::d3d10_11::aerogpu_mip_dim(base, mip_level);
-}
-
-static bool build_texture2d_subresource_layouts(uint32_t aerogpu_format,
-                                                uint32_t width,
-                                                uint32_t height,
-                                                uint32_t mip_levels,
-                                                uint32_t array_layers,
-                                                uint32_t mip0_row_pitch_bytes,
-                                                std::vector<Texture2DSubresourceLayout>* out_layouts,
-                                                uint64_t* out_total_bytes) {
-  return aerogpu::d3d10_11::build_texture2d_subresource_layouts(aerogpu_format,
-                                                                width,
-                                                                height,
-                                                                mip_levels,
-                                                                array_layers,
-                                                                mip0_row_pitch_bytes,
-                                                                out_layouts,
-                                                                out_total_bytes);
-}
 
 struct AeroGpuAdapter {
   const D3D10DDI_ADAPTERCALLBACKS* callbacks = nullptr;
@@ -1028,7 +972,7 @@ static void InitSamplerFromDesc(AeroGpuSampler* sampler, const DescT& desc) {
 }
 
 struct AeroGpuDevice {
-  uint32_t live_cookie = kAeroGpuDeviceLiveCookie;
+  uint32_t live_cookie = kD3D10DeviceLiveCookie;
   AeroGpuAdapter* adapter = nullptr;
   D3D10DDI_HRTDEVICE hrt_device = {};
   D3D10DDI_DEVICECALLBACKS callbacks = {};
@@ -2356,15 +2300,10 @@ static bool UnbindResourceFromOutputsLocked(AeroGpuDevice* dev, aerogpu_handle_t
 
 void APIENTRY DestroyDevice(D3D10DDI_HDEVICE hDevice) {
   void* device_mem = hDevice.pDrvPrivate;
-  if (!device_mem) {
+  if (!HasLiveCookie(device_mem, kD3D10DeviceLiveCookie)) {
     return;
   }
   uint32_t cookie = 0;
-  std::memcpy(&cookie, device_mem, sizeof(cookie));
-  if (cookie != kAeroGpuDeviceLiveCookie) {
-    return;
-  }
-  cookie = 0;
   std::memcpy(device_mem, &cookie, sizeof(cookie));
 
   auto* dev = reinterpret_cast<AeroGpuDevice*>(device_mem);
