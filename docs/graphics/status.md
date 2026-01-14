@@ -194,8 +194,10 @@ Test pointers (ABI conformance / drift detection):
     - default (no backend, submission bridge disabled): fences complete automatically (bring-up / no-op execution),
       with optional vblank pacing when vblank is active and the submission contains a vsync present.
     - submission bridge enabled (`Machine::aerogpu_enable_submission_bridge`): fences are deferred until the host reports completion (`Machine::aerogpu_complete_fence`).
-      - The device model does not apply its own vblank pacing in this mode; the external executor (e.g. browser GPU worker)
-        is responsible for any vsync completion policy before reporting fence completion.
+      - The device model **still applies vblank pacing** for vsync PRESENT submissions in this mode: once the host reports a fence as completed,
+        the fence becomes eligible to complete on the **next vblank** (and blocks later immediate fences until then, mirroring the emulator device model).
+      - The external executor (e.g. browser GPU worker) should generally report completion as soon as execution finishes, rather than trying to “fake vsync”
+        by delaying `submit_complete` based on host tick cadence.
     - in-process backend installed: fences complete when the backend reports completions (see below).
   - Error-info latches are implemented (ABI 1.3+) behind `AEROGPU_FEATURE_ERROR_INFO` (`AEROGPU_MMIO_REG_ERROR_*` + `AEROGPU_IRQ_ERROR`).
 
