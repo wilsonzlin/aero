@@ -550,8 +550,10 @@ layered:
 Current bring-up tests cover basic register/port behavior, schedule traversal, and snapshot/restore:
 
 - `crates/aero-usb/tests/ehci.rs` (capability regs stability, port reset timer, `HCHALTED` tracking)
+- `crates/aero-usb/tests/ehci_ports.rs` (PORTSC behavior: `CONFIGFLAG`/`PORT_OWNER`, high-speed indicator, line status)
 - `crates/aero-usb/tests/ehci_async.rs` (async schedule QH/qTD traversal)
 - `crates/aero-usb/tests/ehci_periodic.rs` (periodic frame list + interrupt QH/qTD polling)
+- `crates/aero-usb/tests/ehci_snapshot.rs` (small snapshot roundtrip smoke test)
 - `crates/aero-usb/tests/ehci_snapshot_roundtrip.rs` (snapshot/restore)
 - `crates/aero-usb/tests/ehci_legacy_handoff.rs` (legacy BIOS handoff)
 
