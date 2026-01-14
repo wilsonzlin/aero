@@ -180,10 +180,17 @@ export class XhciPciDevice implements PciDevice, TickableDevice {
     // guest memory (TRBs/rings/event updates, transfer buffers, etc).
     //
     // Unlike DMA, internal controller time (e.g. port timers) continues to advance even when BME
-    // is disabled. DMA-heavy work is instead gated on BME via:
-    // - the WASM bridge's `set_pci_command`-backed memory bus selection, and
-    // - suppressing `poll()` calls below when BME is off (older WASM builds may not gate DMA).
+    // is disabled. When the underlying bridge supports `set_pci_command`, it can enforce DMA
+    // gating internally and we can keep advancing time while BME=0.
+    //
+    // For backwards compatibility with older WASM builds that may not implement BME gating, we
+    // conservatively freeze time until BME is enabled *unless* `set_pci_command` is available.
     const busMasterEnabled = (this.#pciCommand & (1 << 2)) !== 0;
+    if (!busMasterEnabled && typeof this.#bridge.set_pci_command !== "function") {
+      this.#accumulatedMs = 0;
+      this.#syncIrq();
+      return;
+    }
 
     // Clamp catch-up work so long pauses (e.g. tab backgrounded) do not stall the worker.
     deltaMs = Math.min(deltaMs, XHCI_MAX_FRAMES_PER_TICK * XHCI_FRAME_MS);

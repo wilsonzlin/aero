@@ -227,7 +227,7 @@ describe("io/devices/xhci", () => {
     expect(bridge.poll).toHaveBeenCalledTimes(1);
   });
 
-  it("advances time while gating poll() on PCI Bus Master Enable (command bit 2)", () => {
+  it("gates DMA stepping on PCI Bus Master Enable (command bit 2) when set_pci_command is unavailable", () => {
     const bridge: XhciControllerBridgeLike = {
       mmio_read: vi.fn(() => 0),
       mmio_write: vi.fn(),
@@ -241,11 +241,36 @@ describe("io/devices/xhci", () => {
 
     dev.tick(0);
     dev.tick(8);
-    // Controller time continues to advance even when bus mastering is disabled (no DMA).
+    expect(bridge.step_frame).not.toHaveBeenCalled();
+    expect(bridge.poll).not.toHaveBeenCalled();
+
+    // Enable bus mastering; the device should start stepping from "now" without catching up.
+    dev.onPciCommandWrite(1 << 2);
+    dev.tick(9);
+    expect(bridge.step_frame).toHaveBeenCalledTimes(1);
+    expect(bridge.poll).toHaveBeenCalledTimes(1);
+  });
+
+  it("advances time while BME is off when the bridge supports set_pci_command", () => {
+    const bridge: XhciControllerBridgeLike = {
+      mmio_read: vi.fn(() => 0),
+      mmio_write: vi.fn(),
+      step_frame: vi.fn(),
+      poll: vi.fn(),
+      irq_asserted: vi.fn(() => false),
+      set_pci_command: vi.fn(),
+      free: vi.fn(),
+    };
+    const irqSink: IrqSink = { raiseIrq: vi.fn(), lowerIrq: vi.fn() };
+    const dev = new XhciPciDevice({ bridge, irqSink });
+
+    dev.tick(0);
+    dev.tick(8);
+    // Even with bus mastering disabled, internal controller time should advance. `poll()` is
+    // suppressed because it may perform DMA.
     expect(bridge.step_frame).toHaveBeenCalledTimes(8);
     expect(bridge.poll).not.toHaveBeenCalled();
 
-    // Enable bus mastering; poll should now run (DMA work allowed).
     dev.onPciCommandWrite(1 << 2);
     dev.tick(9);
     expect(bridge.step_frame).toHaveBeenCalledTimes(9);
