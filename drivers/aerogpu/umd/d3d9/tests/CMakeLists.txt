@@ -194,6 +194,33 @@ set_target_properties(aerogpu_d3d9_patch_process_vtable_tests PROPERTIES
 
 add_test(NAME aerogpu_d3d9_patch_process_vtable_tests COMMAND aerogpu_d3d9_patch_process_vtable_tests)
 
+add_executable(aerogpu_d3d9_cursor_present_overlay_tests
+    cursor_present_overlay_tests.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/../src/aerogpu_d3d9_blit.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/../src/aerogpu_d3d9_caps.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/../src/aerogpu_d3d9_driver.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/../src/aerogpu_kmd_query.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/../src/aerogpu_log.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/../src/aerogpu_trace.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/../src/aerogpu_wddm_alloc.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/../src/aerogpu_wddm_alloc_list.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/../src/aerogpu_wddm_context.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/../src/dllmain.cpp
+)
+
+target_include_directories(aerogpu_d3d9_cursor_present_overlay_tests PRIVATE
+    ${CMAKE_CURRENT_LIST_DIR}/../src
+    ${CMAKE_CURRENT_LIST_DIR}/../include
+    ${CMAKE_CURRENT_LIST_DIR}/../../../protocol
+)
+
+set_target_properties(aerogpu_d3d9_cursor_present_overlay_tests PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED YES
+)
+
+add_test(NAME aerogpu_d3d9_cursor_present_overlay_tests COMMAND aerogpu_d3d9_cursor_present_overlay_tests)
+
 add_executable(aerogpu_alloc_list_tracker_tests
     alloc_list_tracker_tests.cpp
     ${CMAKE_CURRENT_LIST_DIR}/../src/aerogpu_wddm_alloc_list.cpp

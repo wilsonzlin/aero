@@ -1418,6 +1418,17 @@ typedef HRESULT(AEROGPU_D3D9_CALL* PFND3D9DDI_COLORFILL)(D3DDDI_HDEVICE hDevice,
 typedef HRESULT(AEROGPU_D3D9_CALL* PFND3D9DDI_UPDATESURFACE)(D3DDDI_HDEVICE hDevice, const D3D9DDIARG_UPDATESURFACE* pUpdateSurface);
 typedef HRESULT(AEROGPU_D3D9_CALL* PFND3D9DDI_UPDATETEXTURE)(D3DDDI_HDEVICE hDevice, const D3D9DDIARG_UPDATETEXTURE* pUpdateTexture);
 
+// D3D9 device cursor DDIs (subset).
+typedef HRESULT(AEROGPU_D3D9_CALL* PFND3D9DDI_SETCURSORPROPERTIES)(D3DDDI_HDEVICE hDevice,
+                                                                  uint32_t x_hotspot,
+                                                                  uint32_t y_hotspot,
+                                                                  D3DDDI_HRESOURCE hCursorBitmap);
+typedef HRESULT(AEROGPU_D3D9_CALL* PFND3D9DDI_SETCURSORPOSITION)(D3DDDI_HDEVICE hDevice,
+                                                                int32_t x,
+                                                                int32_t y,
+                                                                uint32_t flags);
+typedef HRESULT(AEROGPU_D3D9_CALL* PFND3D9DDI_SHOWCURSOR)(D3DDDI_HDEVICE hDevice, BOOL bShow);
+
 typedef struct _D3DDDIARG_DRAWRECTPATCH {
   UINT Handle;
   const float* pNumSegs; // float[4]
@@ -1529,6 +1540,12 @@ struct _D3D9DDI_DEVICEFUNCS {
   PFND3D9DDI_SETTRANSFORM pfnSetTransform;
   PFND3D9DDI_MULTIPLYTRANSFORM pfnMultiplyTransform;
   PFND3D9DDI_GETTRANSFORM pfnGetTransform;
+
+  // Cursor DDIs are appended to the tail in the portable ABI subset so existing
+  // anchor offsets remain stable.
+  PFND3D9DDI_SETCURSORPROPERTIES pfnSetCursorProperties;
+  PFND3D9DDI_SETCURSORPOSITION pfnSetCursorPosition;
+  PFND3D9DDI_SHOWCURSOR pfnShowCursor;
 };
 
 // -----------------------------------------------------------------------------

@@ -18,8 +18,10 @@ HRESULT blit_locked(Device* dev,
                     const RECT* src_rect,
                     uint32_t filter);
 
-// Like blit_locked, but enables alpha blending (SRCALPHA/INVSRCALPHA) so the
-// source is composited over the destination instead of overwriting it.
+// Like blit_locked, but alpha-blends the source over the destination using
+// SrcBlend=SRCALPHA, DstBlend=INVSRCALPHA, BlendOp=ADD.
+//
+// Intended for D3D9 software cursor overlay during Present/PresentEx.
 HRESULT blit_alpha_locked(Device* dev,
                           Resource* dst,
                           const RECT* dst_rect,
