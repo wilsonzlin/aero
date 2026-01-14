@@ -27225,6 +27225,9 @@ HRESULT AEROGPU_D3D9_CALL device_set_texture_stage_state(
 }
 
 HRESULT AEROGPU_D3D9_CALL device_set_material(D3DDDI_HDEVICE hDevice, const D3DMATERIAL9* pMaterial) {
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+  return device_set_material_dispatch(hDevice, pMaterial);
+#else
   if (!hDevice.pDrvPrivate || !pMaterial) {
     return E_INVALIDARG;
   }
@@ -27235,9 +27238,13 @@ HRESULT AEROGPU_D3D9_CALL device_set_material(D3DDDI_HDEVICE hDevice, const D3DM
   dev->fixedfunc_lighting_dirty = true;
   stateblock_record_material_locked(dev, dev->material, dev->material_valid);
   return S_OK;
+#endif
 }
 
 HRESULT AEROGPU_D3D9_CALL device_set_light(D3DDDI_HDEVICE hDevice, uint32_t index, const D3DLIGHT9* pLight) {
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+  return device_set_light_dispatch(hDevice, index, pLight);
+#else
   if (!hDevice.pDrvPrivate || !pLight) {
     return E_INVALIDARG;
   }
@@ -27251,9 +27258,13 @@ HRESULT AEROGPU_D3D9_CALL device_set_light(D3DDDI_HDEVICE hDevice, uint32_t inde
   dev->fixedfunc_lighting_dirty = true;
   stateblock_record_light_locked(dev, index, dev->lights[index], dev->light_valid[index]);
   return S_OK;
+#endif
 }
 
 HRESULT AEROGPU_D3D9_CALL device_light_enable(D3DDDI_HDEVICE hDevice, uint32_t index, BOOL enabled) {
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+  return device_light_enable_dispatch(hDevice, index, enabled);
+#else
   if (!hDevice.pDrvPrivate) {
     return E_INVALIDARG;
   }
@@ -27266,6 +27277,7 @@ HRESULT AEROGPU_D3D9_CALL device_light_enable(D3DDDI_HDEVICE hDevice, uint32_t i
   dev->fixedfunc_lighting_dirty = true;
   stateblock_record_light_enable_locked(dev, index, dev->light_enabled[index]);
   return S_OK;
+#endif
 }
 
 HRESULT AEROGPU_D3D9_CALL device_test_set_cursor_hw_active(D3DDDI_HDEVICE hDevice, BOOL active) {
