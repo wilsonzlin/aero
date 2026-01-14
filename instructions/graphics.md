@@ -290,15 +290,18 @@ Key considerations:
 ## Testing
 
 ```bash
- # Run graphics tests
- bash ./scripts/safe-run.sh cargo test -p aero-gpu-vga --locked
- bash ./scripts/safe-run.sh cargo test -p aero-protocol --locked
- bash ./scripts/safe-run.sh cargo test -p aero-devices-gpu --locked
- bash ./scripts/safe-run.sh cargo test -p aero-gpu --locked
- bash ./scripts/safe-run.sh cargo test -p aero-webgpu --locked
- bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --locked
- bash ./scripts/safe-run.sh cargo test -p aero-d3d11 --locked
- bash ./scripts/safe-run.sh cargo test -p aero-dxbc --locked
+# Fast sanity: AeroGPU protocol + device model + aero-machine ring/fence plumbing
+bash ./scripts/ci/run-aerogpu-tests.sh
+
+# Run graphics tests
+bash ./scripts/safe-run.sh cargo test -p aero-gpu-vga --locked
+bash ./scripts/safe-run.sh cargo test -p aero-protocol --locked
+bash ./scripts/safe-run.sh cargo test -p aero-devices-gpu --locked
+bash ./scripts/safe-run.sh cargo test -p aero-gpu --locked
+bash ./scripts/safe-run.sh cargo test -p aero-webgpu --locked
+bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --locked
+bash ./scripts/safe-run.sh cargo test -p aero-d3d11 --locked
+bash ./scripts/safe-run.sh cargo test -p aero-dxbc --locked
 
 # WASM compatibility checks (browser runtime)
 bash ./scripts/safe-run.sh cargo xtask wasm-check

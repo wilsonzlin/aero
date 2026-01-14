@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+#
+# CI helper: run the AeroGPU regression suite.
+#
+# This is a fast(-ish) sanity check for the canonical AeroGPU ABI + device model wiring:
+# - TypeScript protocol mirrors (ABI drift): `npm run test:protocol`
+# - Rust protocol mirrors: `cargo test -p aero-protocol`
+# - Shared device-side model: `cargo test -p aero-devices-gpu`
+# - Canonical machine ring/fence/bridge plumbing: `cargo test -p aero-machine --test aerogpu_*`
+#
+# Usage:
+#   bash ./scripts/ci/run-aerogpu-tests.sh
+#
+# Notes:
+# - Uses `scripts/safe-run.sh` for timeout/memory protection (override via env):
+#     AERO_TIMEOUT=1800 AERO_MEM_LIMIT=16G bash ./scripts/ci/run-aerogpu-tests.sh
+#
+# Keep this suite focused: it should catch common regressions without pulling in heavy end-to-end
+# rendering tests (those live in `aero-d3d9`, `aero-d3d11`, and wgpu-backed e2e harnesses).
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+
+cd "${REPO_ROOT}"
+
+# Cold builds for the graphics stack can exceed `safe-run`'s default 10 minute timeout. Use a
+# larger default for this suite so it is robust in fresh CI sandboxes.
+: "${AERO_TIMEOUT:=1800}"
+export AERO_TIMEOUT
+
+run() {
+  bash ./scripts/safe-run.sh "$@"
+}
+
+run npm run test:protocol
+run cargo test -p aero-protocol --locked
+run cargo test -p aero-devices-gpu --locked
+
+run cargo test -p aero-machine --locked --test aerogpu_submission_bridge
+run cargo test -p aero-machine --locked --test aerogpu_vsync_fence_pacing
+run cargo test -p aero-machine --locked --test aerogpu_ring_noop_fence
+
