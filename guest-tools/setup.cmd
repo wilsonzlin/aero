@@ -803,6 +803,7 @@ set "IM_VERSION="
 set "IM_BUILD_ID="
 set "IM_SIGNING_POLICY="
 set "IM_MANIFEST_SHA256="
+set "CUR_MANIFEST_SHA256="
 for /f "tokens=1,* delims==" %%A in ('type "%STATE_INSTALLED_MEDIA%" 2^>nul') do (
   if /i "%%A"=="GT_VERSION" set "IM_VERSION=%%B"
   if /i "%%A"=="GT_BUILD_ID" set "IM_BUILD_ID=%%B"
@@ -832,11 +833,52 @@ if defined IM_SIGNING_POLICY if defined GT_SIGNING_POLICY (
   )
 )
 
+rem Optional: compare manifest SHA-256 when available (useful when version/build_id are missing or reused).
+if defined IM_MANIFEST_SHA256 if defined GT_MANIFEST if exist "!GT_MANIFEST!" (
+  if "%ARG_CHECK%"=="1" (
+    rem /check must not use certutil; use PowerShell hashing when available.
+    set "PWSH=%SYS32%\WindowsPowerShell\v1.0\powershell.exe"
+    if not exist "!PWSH!" set "PWSH=powershell.exe"
+    set "AEROGT_HASH_FILE=!GT_MANIFEST!"
+    for /f "usebackq delims=" %%H in (`"!PWSH!" -NoProfile -ExecutionPolicy Bypass -Command "$p=$env:AEROGT_HASH_FILE; try{ $stream=[System.IO.File]::OpenRead($p); try{ $sha=New-Object System.Security.Cryptography.SHA256Managed; try{ $hash=$sha.ComputeHash($stream) } finally { try{ $sha.Dispose() } catch {} } } finally { try{ $stream.Dispose() } catch {} }; $sb=New-Object System.Text.StringBuilder; foreach($b in $hash){ [void]$sb.AppendFormat('{0:x2}',$b) }; $sb.ToString() } catch { }"`) do (
+      if not defined CUR_MANIFEST_SHA256 set "CUR_MANIFEST_SHA256=%%H"
+    )
+    if defined CUR_MANIFEST_SHA256 (
+      echo(!CUR_MANIFEST_SHA256!| "%SYS32%\findstr.exe" /i /r /c:"^[0-9a-f][0-9a-f]*$" >nul 2>&1
+      if errorlevel 1 set "CUR_MANIFEST_SHA256="
+      rem SHA-256 should be exactly 64 hex chars; reject anything else (including error output).
+      if defined CUR_MANIFEST_SHA256 if "!CUR_MANIFEST_SHA256:~63,1!"=="" set "CUR_MANIFEST_SHA256="
+      if defined CUR_MANIFEST_SHA256 if not "!CUR_MANIFEST_SHA256:~64,1!"=="" set "CUR_MANIFEST_SHA256="
+    )
+  ) else (
+    if exist "%SYS32%\certutil.exe" (
+      for /f "usebackq delims=" %%H in (`"%SYS32%\certutil.exe" -hashfile "!GT_MANIFEST!" SHA256 ^| "%SYS32%\findstr.exe" /r /i "^[ ]*[0-9a-f][0-9a-f ]*$"`) do (
+        if not defined CUR_MANIFEST_SHA256 set "CUR_MANIFEST_SHA256=%%H"
+      )
+      set "CUR_MANIFEST_SHA256=!CUR_MANIFEST_SHA256: =!"
+    )
+  )
+  if defined CUR_MANIFEST_SHA256 (
+    if /i not "!CUR_MANIFEST_SHA256!"=="!IM_MANIFEST_SHA256!" (
+      set "MISMATCH=1"
+      if defined REASON (set "REASON=!REASON!, manifest_sha256 mismatch") else set "REASON=manifest_sha256 mismatch"
+    )
+  )
+)
+
 if "%MISMATCH%"=="1" (
   call :log ""
   call :log "WARNING: Installed media differs from the current Guest Tools media (!REASON!)."
   call :log "         This can indicate mixed/corrupted media (merged ISO/zip versions)."
   call :log "         Installed media record: %STATE_INSTALLED_MEDIA%"
+  if defined IM_VERSION call :log "         installed-media GT_VERSION=!IM_VERSION!"
+  if defined IM_BUILD_ID call :log "         installed-media GT_BUILD_ID=!IM_BUILD_ID!"
+  if defined IM_SIGNING_POLICY call :log "         installed-media GT_SIGNING_POLICY=!IM_SIGNING_POLICY!"
+  if defined IM_MANIFEST_SHA256 call :log "         installed-media manifest_sha256=!IM_MANIFEST_SHA256!"
+  if defined GT_VERSION call :log "         current media  GT_VERSION=!GT_VERSION!"
+  if defined GT_BUILD_ID call :log "         current media  GT_BUILD_ID=!GT_BUILD_ID!"
+  if defined GT_SIGNING_POLICY call :log "         current media  GT_SIGNING_POLICY=!GT_SIGNING_POLICY!"
+  if defined CUR_MANIFEST_SHA256 call :log "         current media  manifest_sha256=!CUR_MANIFEST_SHA256!"
 )
 
 endlocal & exit /b 0
