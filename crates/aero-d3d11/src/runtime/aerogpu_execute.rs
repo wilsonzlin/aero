@@ -171,14 +171,13 @@ impl AerogpuCmdRuntime {
             .map_err(|e| anyhow!("wgpu: request_device failed: {e:?}"))?;
 
         let caps = GpuCapabilities::from_device(&device).with_downlevel_flags(downlevel.flags);
+        let supports_compute = caps.supports_compute;
         let pipelines = PipelineCache::new(PipelineCacheConfig::default(), caps);
 
         let dummy_uniform = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("aero-d3d11 aerogpu dummy uniform"),
             size: DUMMY_UNIFORM_SIZE_BYTES,
-            usage: wgpu::BufferUsages::UNIFORM
-                | wgpu::BufferUsages::STORAGE
-                | wgpu::BufferUsages::COPY_DST,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         queue.write_buffer(
@@ -187,10 +186,15 @@ impl AerogpuCmdRuntime {
             &vec![0u8; DUMMY_UNIFORM_SIZE_BYTES as usize],
         );
 
+        let dummy_storage_usage = if supports_compute {
+            wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST
+        } else {
+            wgpu::BufferUsages::COPY_DST
+        };
         let dummy_storage = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("aero-d3d11 aerogpu dummy storage"),
             size: 4096,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            usage: dummy_storage_usage,
             mapped_at_creation: false,
         });
         queue.write_buffer(&dummy_storage, 0, &vec![0u8; 4096]);
@@ -1277,8 +1281,7 @@ impl AerogpuCmdRuntime {
                                 label: Some("aero-d3d11 aerogpu draw_indirect args"),
                                 size: DrawIndirectArgs::SIZE_BYTES,
                                 usage: wgpu::BufferUsages::INDIRECT
-                                    | wgpu::BufferUsages::COPY_DST
-                                    | wgpu::BufferUsages::STORAGE,
+                                    | wgpu::BufferUsages::COPY_DST,
                                 mapped_at_creation: false,
                             }));
                         let args_buffer = indirect_args_buffer
@@ -1352,8 +1355,7 @@ impl AerogpuCmdRuntime {
                                 label: Some("aero-d3d11 aerogpu draw_indexed_indirect args"),
                                 size: DrawIndexedIndirectArgs::SIZE_BYTES,
                                 usage: wgpu::BufferUsages::INDIRECT
-                                    | wgpu::BufferUsages::COPY_DST
-                                    | wgpu::BufferUsages::STORAGE,
+                                    | wgpu::BufferUsages::COPY_DST,
                                 mapped_at_creation: false,
                             }));
                         let args_buffer = indirect_args_buffer

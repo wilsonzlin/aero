@@ -1381,12 +1381,11 @@ impl AerogpuD3d11Executor {
             },
         );
 
+        // Keep this buffer usable on downlevel backends without storage buffers (e.g. WebGL2).
         let dummy_uniform = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("aerogpu_cmd dummy uniform buffer"),
             size: LEGACY_CONSTANTS_SIZE_BYTES,
-            usage: wgpu::BufferUsages::UNIFORM
-                | wgpu::BufferUsages::STORAGE
-                | wgpu::BufferUsages::COPY_DST,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
         {
@@ -1395,10 +1394,16 @@ impl AerogpuD3d11Executor {
         }
         dummy_uniform.unmap();
 
+        // Storage buffers are only valid on compute-capable backends.
+        let dummy_storage_usage = if caps.supports_compute {
+            wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST
+        } else {
+            wgpu::BufferUsages::COPY_DST
+        };
         let dummy_storage = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("aerogpu_cmd dummy storage buffer"),
             size: 4096,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            usage: dummy_storage_usage,
             mapped_at_creation: true,
         });
         {
@@ -1435,9 +1440,7 @@ impl AerogpuD3d11Executor {
             let buf = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("aerogpu_cmd legacy constants buffer"),
                 size: LEGACY_CONSTANTS_SIZE_BYTES,
-                usage: wgpu::BufferUsages::UNIFORM
-                    | wgpu::BufferUsages::STORAGE
-                    | wgpu::BufferUsages::COPY_DST,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: true,
             });
             {
@@ -10488,6 +10491,13 @@ impl AerogpuD3d11Executor {
         allocs: &AllocTable,
         guest_mem: &mut dyn GuestMemory,
     ) -> Result<()> {
+        if !self.caps.supports_compute {
+            bail!(
+                "DISPATCH requires compute shaders; backend {:?} missing wgpu::DownlevelFlags::COMPUTE_SHADERS",
+                self.backend
+            );
+        }
+
         // struct aerogpu_cmd_dispatch (24 bytes)
         if cmd_bytes.len() < 24 {
             bail!(
@@ -16043,6 +16053,11 @@ mod tests {
                     return;
                 }
             };
+
+            if !exec.caps.supports_compute {
+                skip_or_panic(module_path!(), "backend does not support compute");
+                return;
+            }
 
             // Inject a trivial compute shader directly (avoids needing to hand-author DXBC).
             const CS: u32 = 1;
