@@ -14,7 +14,7 @@ struct Vertex {
 };
 
 static const UINT kSrcVertexCount = 4;
-static const UINT kDestVertexCount = 6;
+static const UINT kDestVertexCount = 9;
 static const UINT kSrcStartIndex = 1;
 static const UINT kDestIndex = 3;
 static const UINT kProcessVertexCount = 3;
@@ -223,6 +223,7 @@ static int RunD3D9ProcessVerticesSmoke(int argc, char** argv) {
   const DWORD kRed = D3DCOLOR_XRGB(255, 0, 0);
   const DWORD kBlue = D3DCOLOR_XRGB(0, 0, 255);
   const DWORD kGreen = D3DCOLOR_XRGB(0, 255, 0);
+  const DWORD kYellow = D3DCOLOR_XRGB(255, 255, 0);
 
   // Source VB includes a dummy vertex at index 0 so that ignoring SrcStartIndex produces a triangle
   // entirely outside the viewport (center pixel remains the clear color).
@@ -310,13 +311,33 @@ static int RunD3D9ProcessVerticesSmoke(int argc, char** argv) {
 
   // Indices [3..5] are off-screen sentinels; a no-op ProcessVertices should leave these untouched
   // so the "processed" draw renders nothing (center stays red).
-  for (UINT i = 3; i < kDestVertexCount; ++i) {
+  for (UINT i = 3; i < 6; ++i) {
     dst_init[i].x = 0.0f;
     dst_init[i].y = -1000.0f;
     dst_init[i].z = 0.5f;
     dst_init[i].rhw = 1.0f;
     dst_init[i].color = kGreen;
   }
+
+  // Indices [6..8] form another on-screen sentinel triangle (yellow). This catches buffer overrun
+  // bugs where ProcessVertices writes beyond VertexCount and clobbers subsequent vertices.
+  dst_init[6].x = (float)kWidth - 20.0f;
+  dst_init[6].y = 20.0f;
+  dst_init[6].z = 0.5f;
+  dst_init[6].rhw = 1.0f;
+  dst_init[6].color = kYellow;
+
+  dst_init[7].x = (float)kWidth - 60.0f;
+  dst_init[7].y = 20.0f;
+  dst_init[7].z = 0.5f;
+  dst_init[7].rhw = 1.0f;
+  dst_init[7].color = kYellow;
+
+  dst_init[8].x = (float)kWidth - 20.0f;
+  dst_init[8].y = 60.0f;
+  dst_init[8].z = 0.5f;
+  dst_init[8].rhw = 1.0f;
+  dst_init[8].color = kYellow;
   vb_ptr = NULL;
   hr = vb_dst->Lock(0, sizeof(dst_init), &vb_ptr, 0);
   if (FAILED(hr) || !vb_ptr) {
@@ -387,6 +408,14 @@ static int RunD3D9ProcessVerticesSmoke(int argc, char** argv) {
     return reporter.FailHresult("IDirect3DDevice9Ex::DrawPrimitive(sentinel)", hr);
   }
 
+  // Draw a second sentinel triangle (should remain yellow if ProcessVertices doesn't overwrite out
+  // of bounds).
+  hr = dev->DrawPrimitive(D3DPT_TRIANGLELIST, 6, 1);
+  if (FAILED(hr)) {
+    dev->EndScene();
+    return reporter.FailHresult("IDirect3DDevice9Ex::DrawPrimitive(sentinel2)", hr);
+  }
+
   // Draw the processed vertices from DestIndex (non-zero).
   hr = dev->DrawPrimitive(D3DPT_TRIANGLELIST, kDestIndex, 1);
   if (FAILED(hr)) {
@@ -442,6 +471,7 @@ static int RunD3D9ProcessVerticesSmoke(int argc, char** argv) {
   const uint32_t center = aerogpu_test::ReadPixelBGRA(lr.pBits, (int)lr.Pitch, cx, cy);
   const uint32_t corner = aerogpu_test::ReadPixelBGRA(lr.pBits, (int)lr.Pitch, 5, 5);
   const uint32_t sentinel = aerogpu_test::ReadPixelBGRA(lr.pBits, (int)lr.Pitch, 30, 30);
+  const uint32_t sentinel2 = aerogpu_test::ReadPixelBGRA(lr.pBits, (int)lr.Pitch, kWidth - 30, 30);
 
   if (dump) {
     std::string err;
@@ -459,17 +489,22 @@ static int RunD3D9ProcessVerticesSmoke(int argc, char** argv) {
   const uint32_t expected_center = 0xFF0000FFu;  // BGRA = blue.
   const uint32_t expected_corner = 0xFFFF0000u;  // BGRA = red clear.
   const uint32_t expected_sentinel = 0xFF00FF00u;  // BGRA = green sentinel.
+  const uint32_t expected_sentinel2 = 0xFFFFFF00u;  // BGRA = yellow sentinel.
   if ((center & 0x00FFFFFFu) != (expected_center & 0x00FFFFFFu) ||
       (corner & 0x00FFFFFFu) != (expected_corner & 0x00FFFFFFu) ||
-      (sentinel & 0x00FFFFFFu) != (expected_sentinel & 0x00FFFFFFu)) {
+      (sentinel & 0x00FFFFFFu) != (expected_sentinel & 0x00FFFFFFu) ||
+      (sentinel2 & 0x00FFFFFFu) != (expected_sentinel2 & 0x00FFFFFFu)) {
     return reporter.Fail(
-        "pixel mismatch: center=0x%08lX expected 0x%08lX; corner(5,5)=0x%08lX expected 0x%08lX; sentinel(30,30)=0x%08lX expected 0x%08lX",
-                         (unsigned long)center,
-                         (unsigned long)expected_center,
-                         (unsigned long)corner,
-                         (unsigned long)expected_corner,
-                         (unsigned long)sentinel,
-                         (unsigned long)expected_sentinel);
+        "pixel mismatch: center=0x%08lX expected 0x%08lX; corner(5,5)=0x%08lX expected 0x%08lX; sentinel(30,30)=0x%08lX expected 0x%08lX; sentinel2(%d,30)=0x%08lX expected 0x%08lX",
+        (unsigned long)center,
+        (unsigned long)expected_center,
+        (unsigned long)corner,
+        (unsigned long)expected_corner,
+        (unsigned long)sentinel,
+        (unsigned long)expected_sentinel,
+        (int)kWidth - 30,
+        (unsigned long)sentinel2,
+        (unsigned long)expected_sentinel2);
   }
 
   hr = dev->PresentEx(NULL, NULL, NULL, NULL, 0);
