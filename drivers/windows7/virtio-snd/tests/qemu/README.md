@@ -266,6 +266,12 @@ The automated Win7 host harness uses the same contract-v1 settings (`disable-leg
 The harness configures **modern-only** virtio devices (it enables `disable-legacy=on` and forces
 `x-pci-revision=0x01` when supported), which matches the default virtio-snd driver + INF contract.
 
+To catch QEMU/device-arg misconfiguration early (for example, missing `x-pci-revision=0x01` resulting in `REV_00`),
+the host harness also includes an optional host-side PCI ID preflight via QMP `query-pci`:
+
+- PowerShell: `Invoke-AeroVirtioWin7Tests.ps1 -QemuPreflightPci` (alias: `-QmpPreflightPci`)
+- Python: `invoke_aero_virtio_win7_tests.py --qemu-preflight-pci` (alias: `--qmp-preflight-pci`)
+
 ## Guest-side validation (Windows 7)
 
 ### 1) Enable test signing (if needed)

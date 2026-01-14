@@ -57,6 +57,9 @@ For the consolidated virtio-input end-to-end validation plan (device model + dri
   - Aero contract note:
     - `AERO-W7-VIRTIO` v1 expects the modern virtio-input PCI ID (`DEV_1052`) with `REV_01`.
     - The in-tree Aero Win7 virtio-input INF is revision-gated, so QEMU-style `REV_00` virtio-input devices will not bind unless you override the revision (for example `x-pci-revision=0x01`).
+    - The host harness can optionally validate the QEMU-emitted PCI Vendor/Device/Revision IDs via QMP (`query-pci`) before waiting for guest results:
+      - PowerShell: `Invoke-AeroVirtioWin7Tests.ps1 -QemuPreflightPci` (alias: `-QmpPreflightPci`)
+      - Python: `invoke_aero_virtio_win7_tests.py --qemu-preflight-pci` (alias: `--qmp-preflight-pci`)
   - Read the HID report descriptor (`IOCTL_HID_GET_REPORT_DESCRIPTOR`) and sanity-check that:
     - at least one **keyboard-only** HID device exists
     - at least one **relative-mouse-only** HID device exists (X/Y reported as *Relative*)
