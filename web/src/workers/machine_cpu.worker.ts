@@ -201,6 +201,18 @@ let machine: InstanceType<WasmApi["Machine"]> | null = null;
 const pendingAerogpuFenceCompletions: bigint[] = [];
 let aerogpuBridgeEnabled = false;
 
+// Test-only (Node `worker_threads`): allow integration tests to exercise the AeroGPU submission
+// drain/forwarding path without loading WASM by queuing synthetic submissions on the dummy Machine.
+type TestDummyAerogpuSubmission = {
+  cmdStream: Uint8Array;
+  allocTable?: Uint8Array | null;
+  signalFence: bigint;
+  contextId: number;
+  flags?: number;
+  engineId?: number;
+};
+let testDummyAerogpuSubmissions: TestDummyAerogpuSubmission[] | null = null;
+
 function verifyWasmSharedStateLayout(
   m: InstanceType<WasmApi["Machine"]>,
   init: WorkerInitMessage,
@@ -2602,6 +2614,8 @@ ctx.onmessage = (ev) => {
     let dummyCdAttached = false;
     let dummyActiveBootDevice = 0; // MachineBootDevice::Hdd
 
+    testDummyAerogpuSubmissions = [];
+
     const recomputeDummyActiveBootDevice = (): void => {
       const cdBoot =
         (dummyBootFromCdIfPresent && dummyCdAttached) || (dummyBootDrive >= BIOS_DRIVE_CD0 && dummyBootDrive <= BIOS_DRIVE_CD_LAST);
@@ -2646,6 +2660,19 @@ ctx.onmessage = (ev) => {
           void 0;
         }
       },
+      aerogpu_drain_submissions: (): unknown[] => {
+        const subs = testDummyAerogpuSubmissions;
+        if (!subs || subs.length === 0) return [];
+        const drained = subs.splice(0, subs.length);
+        return drained.map((sub) => ({
+          cmdStream: sub.cmdStream,
+          signalFence: sub.signalFence,
+          contextId: sub.contextId,
+          ...(sub.flags !== undefined ? { flags: sub.flags } : {}),
+          ...(sub.engineId !== undefined ? { engineId: sub.engineId } : {}),
+          allocTable: sub.allocTable ?? null,
+        }));
+      },
       reset: () => {
         void dummyCdBootDrive; // keep lint quiet; drive number influences boot device only in real firmware.
         recomputeDummyActiveBootDevice();
@@ -2689,6 +2716,44 @@ ctx.onmessage = (ev) => {
     } catch {
       void 0;
     }
+    return;
+  }
+
+  // Test-only hook (Node worker_threads): enqueue synthetic AeroGPU submissions to be returned from
+  // the dummy machine's `aerogpu_drain_submissions()` hook.
+  if (isNodeWorkerThreads() && (msg as { kind?: unknown }).kind === "__test.machine_cpu.enqueueDummyAerogpuSubmission") {
+    const queue = testDummyAerogpuSubmissions;
+    if (!queue) return;
+
+    const payload = msg as Partial<{
+      cmdStream: unknown;
+      allocTable: unknown;
+      signalFence: unknown;
+      contextId: unknown;
+      flags: unknown;
+      engineId: unknown;
+    }>;
+
+    const cmdStream = payload.cmdStream;
+    if (!(cmdStream instanceof Uint8Array) || cmdStream.byteLength === 0) return;
+    const signalFence = payload.signalFence;
+    if (typeof signalFence !== "bigint") return;
+    const contextIdRaw = payload.contextId;
+    if (typeof contextIdRaw !== "number" || !Number.isFinite(contextIdRaw)) return;
+
+    const allocTable = payload.allocTable instanceof Uint8Array ? payload.allocTable : null;
+    const flags = typeof payload.flags === "number" && Number.isFinite(payload.flags) ? payload.flags >>> 0 : undefined;
+    const engineId = typeof payload.engineId === "number" && Number.isFinite(payload.engineId) ? payload.engineId >>> 0 : undefined;
+
+    queue.push({
+      cmdStream,
+      allocTable,
+      signalFence,
+      contextId: contextIdRaw >>> 0,
+      ...(flags !== undefined ? { flags } : {}),
+      ...(engineId !== undefined ? { engineId } : {}),
+    });
+    wakeRunLoop();
     return;
   }
 

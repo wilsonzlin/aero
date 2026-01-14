@@ -388,6 +388,91 @@ describe("workers/machine_cpu.worker (worker_threads)", () => {
     }
   }, 20_000);
 
+  it("drains dummy AeroGPU submissions and posts aerogpu.submit messages", async () => {
+    const segments = allocateTestSegments();
+    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
+    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
+    const worker = new Worker(new URL("./machine_cpu.worker.ts", import.meta.url), {
+      type: "module",
+      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+    } as unknown as WorkerOptions);
+
+    try {
+      const workerReady = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as Partial<ProtocolMessage>)?.type === MessageType.READY && (msg as { role?: unknown }).role === "cpu",
+        10_000,
+      );
+
+      worker.postMessage({
+        kind: "config.update",
+        version: 1,
+        config: makeConfig(),
+      });
+      worker.postMessage(makeInit(segments));
+      await workerReady;
+
+      const dummyReady = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as { kind?: unknown }).kind === "__test.machine_cpu.dummyMachineEnabled",
+        10_000,
+      );
+      worker.postMessage({ kind: "__test.machine_cpu.enableDummyMachine" });
+      await dummyReady;
+
+      const cmdBytes = new Uint8Array([1, 2, 3]);
+      const allocBytes = new Uint8Array([9, 8, 7, 6]);
+      const signalFence = 5n;
+      const contextId = 42;
+      const flags = 3;
+      const engineId = 7;
+
+      const submit = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as { kind?: unknown }).kind === "aerogpu.submit",
+        10_000,
+      );
+      worker.postMessage({
+        kind: "__test.machine_cpu.enqueueDummyAerogpuSubmission",
+        cmdStream: cmdBytes,
+        allocTable: allocBytes,
+        signalFence,
+        contextId,
+        flags,
+        engineId,
+      });
+
+      const regions = ringRegionsForWorker("cpu");
+      const commandRing = new RingBuffer(segments.control, regions.command.byteOffset);
+      if (!commandRing.tryPush(encodeCommand({ kind: "nop", seq: 1 }))) {
+        throw new Error("Failed to push nop command into command ring.");
+      }
+
+      const msg = (await submit) as {
+        kind: string;
+        contextId?: number;
+        flags?: number;
+        engineId?: number;
+        signalFence?: bigint;
+        cmdStream?: ArrayBuffer;
+        allocTable?: ArrayBuffer;
+      };
+
+      expect(msg.kind).toBe("aerogpu.submit");
+      expect(msg.contextId).toBe(contextId);
+      expect(msg.signalFence).toBe(signalFence);
+      expect(msg.flags).toBe(flags);
+      expect(msg.engineId).toBe(engineId);
+
+      expect(msg.cmdStream).toBeInstanceOf(ArrayBuffer);
+      expect(Array.from(new Uint8Array(msg.cmdStream!))).toEqual(Array.from(cmdBytes));
+      expect(msg.allocTable).toBeInstanceOf(ArrayBuffer);
+      expect(Array.from(new Uint8Array(msg.allocTable!))).toEqual(Array.from(allocBytes));
+    } finally {
+      await worker.terminate();
+    }
+  }, 20_000);
+
   it("recycles input batch buffers when requested (even without WASM)", async () => {
     const segments = allocateTestSegments();
     const status = new Int32Array(segments.control, STATUS_OFFSET_BYTES, STATUS_INTS);
