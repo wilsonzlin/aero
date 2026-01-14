@@ -258,7 +258,8 @@ fn build_stream_two_ib_two_draws(
     ib_u16_bytes: &[u8],
     ib_u32_bytes: &[u8],
     topology: AerogpuPrimitiveTopology,
-    index_count: u32,
+    index_count_u16: u32,
+    index_count_u32: u32,
 ) -> Vec<u8> {
     const VB: u32 = 1;
     const IB16: u32 = 2;
@@ -476,7 +477,7 @@ fn build_stream_two_ib_two_draws(
 
     // DRAW_INDEXED (IB16)
     let start = begin_cmd(&mut stream, AerogpuCmdOpcode::DrawIndexed as u32);
-    stream.extend_from_slice(&index_count.to_le_bytes()); // index_count
+    stream.extend_from_slice(&index_count_u16.to_le_bytes()); // index_count
     stream.extend_from_slice(&1u32.to_le_bytes()); // instance_count
     stream.extend_from_slice(&0u32.to_le_bytes()); // first_index
     stream.extend_from_slice(&0i32.to_le_bytes()); // base_vertex
@@ -493,7 +494,7 @@ fn build_stream_two_ib_two_draws(
 
     // DRAW_INDEXED (IB32)
     let start = begin_cmd(&mut stream, AerogpuCmdOpcode::DrawIndexed as u32);
-    stream.extend_from_slice(&index_count.to_le_bytes()); // index_count
+    stream.extend_from_slice(&index_count_u32.to_le_bytes()); // index_count
     stream.extend_from_slice(&1u32.to_le_bytes()); // instance_count
     stream.extend_from_slice(&0u32.to_le_bytes()); // first_index
     stream.extend_from_slice(&0i32.to_le_bytes()); // base_vertex
@@ -781,57 +782,80 @@ fn aerogpu_cmd_rebuilds_strip_pipeline_when_index_format_changes() {
         const HEIGHT: u32 = 64;
         const RT: u32 = 3;
 
-        // Draw two triangle-strip quads. The first uses a u16 index buffer; the second uses a u32
-        // index buffer. For strip topologies, WebGPU bakes the restart-index type into the render
-        // pipeline (`PrimitiveState.strip_index_format`), so the executor must rebuild the pipeline
-        // when the index format changes.
+        // First draw: a simple top quad using a u16 index buffer.
+        //
+        // Second draw: uses a u32 index buffer containing the value `0xFFFF` (vertex 65535). This
+        // *must not* be treated as a strip-restart marker when the index format is u32 (restart
+        // marker is `0xFFFF_FFFF`). If the executor fails to rebuild the strip pipeline after
+        // switching formats, the stale `strip_index_format=Uint16` would treat `0xFFFF` as a
+        // restart and the gap would not be filled.
         let white = [1.0, 1.0, 1.0, 1.0];
-        let vertices = [
-            // Top quad.
+        let mut vertices = vec![
             Vertex {
-                pos: [-0.9, 0.2, 0.0],
-                color: white,
-            },
-            Vertex {
-                pos: [-0.9, 0.9, 0.0],
-                color: white,
-            },
-            Vertex {
-                pos: [0.9, 0.2, 0.0],
-                color: white,
-            },
-            Vertex {
-                pos: [0.9, 0.9, 0.0],
-                color: white,
-            },
-            // Bottom quad.
-            Vertex {
-                pos: [-0.9, -0.9, 0.0],
-                color: white,
-            },
-            Vertex {
-                pos: [-0.9, -0.2, 0.0],
-                color: white,
-            },
-            Vertex {
-                pos: [0.9, -0.9, 0.0],
-                color: white,
-            },
-            Vertex {
-                pos: [0.9, -0.2, 0.0],
-                color: white,
-            },
+                pos: [0.0, 0.0, 0.0],
+                color: [0.0, 0.0, 0.0, 0.0],
+            };
+            65536
         ];
-        let vb_bytes = bytemuck::bytes_of(&vertices);
+        // Top quad (indices 0..4).
+        vertices[0] = Vertex {
+            pos: [-0.9, 0.2, 0.0],
+            color: white,
+        };
+        vertices[1] = Vertex {
+            pos: [-0.9, 0.9, 0.0],
+            color: white,
+        };
+        vertices[2] = Vertex {
+            pos: [0.9, 0.2, 0.0],
+            color: white,
+        };
+        vertices[3] = Vertex {
+            pos: [0.9, 0.9, 0.0],
+            color: white,
+        };
+
+        // Bottom geometry: two triangles with a gap around x=0.
+        vertices[4] = Vertex {
+            pos: [-1.0, -1.0, 0.0],
+            color: white,
+        };
+        vertices[5] = Vertex {
+            pos: [-1.0, -0.2, 0.0],
+            color: white,
+        };
+        vertices[6] = Vertex {
+            pos: [-0.2, -0.6, 0.0],
+            color: white,
+        };
+        vertices[7] = Vertex {
+            pos: [0.2, -1.0, 0.0],
+            color: white,
+        };
+        vertices[8] = Vertex {
+            pos: [1.0, -0.2, 0.0],
+            color: white,
+        };
+        vertices[9] = Vertex {
+            pos: [1.0, -1.0, 0.0],
+            color: white,
+        };
+        // Bridge vertex for the u32 draw (index 65535 / 0xFFFF).
+        vertices[65535] = Vertex {
+            pos: [0.0, -0.6, 0.0],
+            color: white,
+        };
+        let vb_bytes = bytemuck::cast_slice(vertices.as_slice());
 
         let indices_u16: [u16; 4] = [0, 1, 2, 3];
-        let indices_u32: [u32; 4] = [4, 5, 6, 7];
+        let indices_u32: [u32; 7] = [4, 5, 6, 0xFFFF, 7, 8, 9];
         let stream = build_stream_two_ib_two_draws(
             vb_bytes,
             bytemuck::bytes_of(&indices_u16),
             bytemuck::bytes_of(&indices_u32),
             AerogpuPrimitiveTopology::TriangleStrip,
-            4,
+            indices_u16.len() as u32,
+            indices_u32.len() as u32,
         );
 
         let mut guest_mem = VecGuestMemory::new(0);
@@ -847,7 +871,21 @@ fn aerogpu_cmd_rebuilds_strip_pipeline_when_index_format_changes() {
             &pixels[idx..idx + 4]
         };
         assert_eq!(px(32, 16), &[255, 255, 255, 255], "top quad missing");
-        assert_eq!(px(32, 48), &[255, 255, 255, 255], "bottom quad missing");
+        assert_eq!(
+            px(8, 56),
+            &[255, 255, 255, 255],
+            "expected bottom-left triangle coverage"
+        );
+        assert_eq!(
+            px(60, 56),
+            &[255, 255, 255, 255],
+            "expected bottom-right triangle coverage"
+        );
+        assert_eq!(
+            px(32, 56),
+            &[255, 255, 255, 255],
+            "expected the u32 draw to treat 0xFFFF as a vertex (not restart) and fill the gap"
+        );
         assert_eq!(px(32, 32), &[0, 0, 0, 255], "expected a gap between draws");
     });
 }
