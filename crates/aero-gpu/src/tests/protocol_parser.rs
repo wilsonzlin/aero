@@ -730,12 +730,14 @@ fn protocol_parses_all_opcodes() {
     match cmds.next().unwrap() {
         AeroGpuCmd::SetShaderConstantsI {
             stage,
+            reserved0,
             start_register,
             vec4_count,
             stage_ex,
             data,
         } => {
             assert_eq!(stage, 1);
+            assert_eq!(reserved0, 0);
             assert_eq!(start_register, 9);
             assert_eq!(vec4_count, 2);
             assert_eq!(stage_ex, 0);
@@ -747,12 +749,14 @@ fn protocol_parses_all_opcodes() {
     match cmds.next().unwrap() {
         AeroGpuCmd::SetShaderConstantsB {
             stage,
+            reserved0,
             start_register,
             bool_count,
             stage_ex,
             data,
         } => {
             assert_eq!(stage, 0);
+            assert_eq!(reserved0, 0);
             assert_eq!(start_register, 12);
             assert_eq!(bool_count as usize, constants_b.len());
             assert_eq!(stage_ex, 0);

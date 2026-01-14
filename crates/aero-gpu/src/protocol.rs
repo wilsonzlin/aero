@@ -306,6 +306,11 @@ pub enum AeroGpuCmd<'a> {
     },
     SetShaderConstantsI {
         stage: u32,
+        /// Reserved for ABI extension.
+        ///
+        /// When `stage == AEROGPU_SHADER_STAGE_COMPUTE`, this is interpreted as `stage_ex`
+        /// (`AEROGPU_SHADER_STAGE_EX_*` / [`protocol::AerogpuShaderStageEx`]).
+        reserved0: u32,
         start_register: u32,
         vec4_count: u32,
         /// Extended shader stage selector encoded in the packet's `reserved0` field.
@@ -316,6 +321,11 @@ pub enum AeroGpuCmd<'a> {
     },
     SetShaderConstantsB {
         stage: u32,
+        /// Reserved for ABI extension.
+        ///
+        /// When `stage == AEROGPU_SHADER_STAGE_COMPUTE`, this is interpreted as `stage_ex`
+        /// (`AEROGPU_SHADER_STAGE_EX_*` / [`protocol::AerogpuShaderStageEx`]).
+        reserved0: u32,
         start_register: u32,
         bool_count: u32,
         /// Extended shader stage selector encoded in the packet's `reserved0` field.
@@ -818,6 +828,7 @@ pub fn parse_cmd_stream(
                     .ok_or(AeroGpuCmdStreamParseError::BufferTooSmall)?;
                 AeroGpuCmd::SetShaderConstantsI {
                     stage: u32::from_le(cmd.stage),
+                    reserved0: u32::from_le(cmd.reserved0),
                     start_register: u32::from_le(cmd.start_register),
                     vec4_count,
                     stage_ex,
@@ -840,6 +851,7 @@ pub fn parse_cmd_stream(
                     .ok_or(AeroGpuCmdStreamParseError::BufferTooSmall)?;
                 AeroGpuCmd::SetShaderConstantsB {
                     stage: u32::from_le(cmd.stage),
+                    reserved0: u32::from_le(cmd.reserved0),
                     start_register: u32::from_le(cmd.start_register),
                     bool_count,
                     stage_ex,
