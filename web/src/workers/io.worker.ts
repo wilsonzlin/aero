@@ -1415,6 +1415,10 @@ function maybeInitUhciRuntime(): void {
 }
 
 function maybeInitE1000Device(): void {
+  // In the canonical `api.Machine` runtime, the guest PCI topology (including any NIC) is owned by
+  // the Machine itself and may attach directly to the shared NET_TX/NET_RX rings. Avoid
+  // instantiating a redundant NIC model in the IO worker, which would contend for those rings.
+  if (currentConfig?.vmRuntime === "machine") return;
   if (e1000Device) return;
   // Only one NIC can be attached to the shared NET_TX/NET_RX rings at a time.
   // If virtio-net is available, prefer it and keep E1000 as a fallback.
@@ -2338,6 +2342,10 @@ function maybeInitSyntheticUsbHidDevices(): void {
 }
 
 function maybeInitVirtioNetDevice(): void {
+  // In the canonical `api.Machine` runtime, the guest PCI topology (including any NIC) is owned by
+  // the Machine itself and may attach directly to the shared NET_TX/NET_RX rings. Avoid
+  // instantiating a redundant NIC model in the IO worker, which would contend for those rings.
+  if (currentConfig?.vmRuntime === "machine") return;
   // Only one NIC can be attached to the shared NET_TX/NET_RX rings at a time.
   // If we already registered the E1000 fallback, don't attempt to add virtio-net.
   if (e1000Device) return;
@@ -2353,6 +2361,23 @@ function maybeInitVirtioNetDevice(): void {
   if (dev) {
     virtioNetDevice = dev;
   }
+}
+
+function teardownGuestNicDevices(): void {
+  try {
+    virtioNetDevice?.destroy();
+  } catch {
+    // ignore
+  }
+  virtioNetDevice = null;
+
+  try {
+    e1000Device?.destroy();
+  } catch {
+    // ignore
+  }
+  e1000Device = null;
+  e1000Bridge = null;
 }
 
 function maybeInitVirtioSndDevice(): void {
@@ -3900,8 +3925,10 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
         usbHid = new api.UsbHidBridge();
         maybeInitUhciDevice();
         maybeInitXhciDevice();
-        maybeInitVirtioNetDevice();
-        if (!virtioNetDevice) maybeInitE1000Device();
+        if (currentConfig?.vmRuntime !== "machine") {
+          maybeInitVirtioNetDevice();
+          if (!virtioNetDevice) maybeInitE1000Device();
+        }
         maybeInitVirtioInput();
         maybeInitHdaDevice();
         maybeInitVirtioSndDevice();
@@ -4255,8 +4282,10 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
       maybeInitUhciDevice();
       maybeInitEhciDevice();
       maybeInitXhciDevice();
-      maybeInitVirtioNetDevice();
-      if (!virtioNetDevice) maybeInitE1000Device();
+      if (currentConfig?.vmRuntime !== "machine") {
+        maybeInitVirtioNetDevice();
+        if (!virtioNetDevice) maybeInitE1000Device();
+      }
       maybeInitVirtioInput();
       maybeInitHdaDevice();
       maybeInitVirtioSndDevice();
@@ -4457,11 +4486,24 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
 
     if ((data as Partial<ConfigUpdateMessage>).kind === "config.update") {
       const update = data as ConfigUpdateMessage;
+      const prevVmRuntime = (currentConfig?.vmRuntime ?? "legacy") === "machine" ? "machine" : "legacy";
       currentConfig = update.config;
+      const nextVmRuntime = (currentConfig?.vmRuntime ?? "legacy") === "machine" ? "machine" : "legacy";
       currentConfigVersion = update.version;
       setVmRuntimeFromConfigUpdate(update);
       maybeAnnounceMachineHostOnlyMode();
       ctx.postMessage({ kind: "config.ack", version: currentConfigVersion } satisfies ConfigAckMessage);
+      if (prevVmRuntime !== nextVmRuntime) {
+        if (nextVmRuntime === "machine") {
+          teardownGuestNicDevices();
+        } else if (started) {
+          // If the VM runtime switches back to the legacy runtime, best-effort re-create the
+          // guest NIC models (only supported when the PCI topology has not already been populated
+          // with a conflicting NIC).
+          maybeInitVirtioNetDevice();
+          if (!virtioNetDevice) maybeInitE1000Device();
+        }
+      }
       return;
     }
 

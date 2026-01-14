@@ -2338,11 +2338,10 @@ function aeroConfigsEqual(a: AeroConfig, b: AeroConfig): boolean {
     a.enableWebGPU === b.enableWebGPU &&
     a.proxyUrl === b.proxyUrl &&
     a.activeDiskImage === b.activeDiskImage &&
-    a.vmRuntime === b.vmRuntime &&
+    (a.vmRuntime ?? "legacy") === (b.vmRuntime ?? "legacy") &&
     a.logLevel === b.logLevel &&
     a.vmRuntime === b.vmRuntime &&
     a.uiScale === b.uiScale &&
-    (a.vmRuntime ?? "legacy") === (b.vmRuntime ?? "legacy") &&
     a.virtioNetMode === b.virtioNetMode &&
     a.virtioInputMode === b.virtioInputMode &&
     a.virtioSndMode === b.virtioSndMode
