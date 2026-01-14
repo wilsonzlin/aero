@@ -147,6 +147,12 @@ static VOID AerovNetTxNblCompleteOneNetBufferLocked(_Inout_ AEROVNET_ADAPTER* Ad
   }
 
   Pending = AEROVNET_NBL_GET_PENDING(Nbl);
+  if (Pending <= 0) {
+#if DBG
+    DbgPrint("aero_virtio_net: tx: NBL pending underflow/double completion (pending=%ld)\n", Pending);
+#endif
+    return;
+  }
   Pending--;
   AEROVNET_NBL_SET_PENDING(Nbl, Pending);
 
@@ -3776,6 +3782,10 @@ static VOID AerovNetMiniportCancelSend(_In_ NDIS_HANDLE MiniportAdapterContext, 
   CompleteTail = NULL;
 
   NdisAcquireSpinLock(&Adapter->Lock);
+  if (Adapter->State == AerovNetAdapterStopped) {
+    NdisReleaseSpinLock(&Adapter->Lock);
+    return;
+  }
 
   // Mark any requests still awaiting SG mapping as cancelled; they will be
   // completed in the SG callback once the mapping finishes.
