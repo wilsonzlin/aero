@@ -233,7 +233,36 @@ impl PciBus {
                         }
                     };
                     let merged = (cur & !(mask << shift)) | ((value & mask) << shift);
-                    cfg.write_with_effects(aligned, 4, merged)
+
+                    // Canonical `PciConfigSpace` treats any aligned 32-bit write of `0xFFFF_FFFF`
+                    // to a BAR register as a size probe. For subword BAR writes we emulate byte
+                    // enables via a read-modify-write, which can accidentally synthesize an
+                    // all-ones dword for the high dword of a 64-bit BAR. Real hardware does not
+                    // treat that as a probe because not all byte lanes were written.
+                    if merged == 0xFFFF_FFFF
+                        && bar > 0
+                        && cfg.bar_definition(bar).is_none()
+                        && matches!(cfg.bar_definition(bar - 1), Some(PciBarDefinition::Mmio64 { .. }))
+                    {
+                        let Some(old) = cfg.bar_range(bar - 1) else {
+                            return;
+                        };
+                        let new_base =
+                            (old.base & 0x0000_0000_FFFF_FFFF) | (u64::from(merged) << 32);
+                        cfg.set_bar_base(bar - 1, new_base);
+                        let new = cfg.bar_range(bar - 1).unwrap_or(old);
+
+                        if old == new {
+                            PciConfigWriteEffects::default()
+                        } else {
+                            PciConfigWriteEffects {
+                                bar: Some((bar - 1, PciBarChange::Changed { old, new })),
+                                ..Default::default()
+                            }
+                        }
+                    } else {
+                        cfg.write_with_effects(aligned, 4, merged)
+                    }
                 } else {
                     // Invalid access that crosses the DWORD window; ignore it.
                     return;
@@ -870,5 +899,36 @@ mod tests {
         // Dword writes that cover the command register should also refresh decoding.
         bus.write_config(bdf, 0x04, 4, 0x0000_0002);
         assert_eq!(bus.mapped_mmio_bars().len(), 1);
+    }
+
+    #[test]
+    fn mmio64_high_dword_subword_write_that_would_form_all_ones_does_not_trigger_probe() {
+        let mut bus = PciBus::new();
+        let bdf = PciBdf::new(0, 1, 0);
+
+        let mut dev = Stub::new(0x1234, 0x0003);
+        dev.cfg.set_bar_definition(
+            0,
+            PciBarDefinition::Mmio64 {
+                size: 0x1000,
+                prefetchable: false,
+            },
+        );
+
+        // Program BAR0 to a base whose high dword is all ones so a subsequent subword write that
+        // touches only one byte of BAR1 can synthesize an all-ones dword.
+        dev.cfg.set_bar_base(0, 0xffff_ffff_8000_0000);
+        bus.add_device(bdf, Box::new(dev));
+
+        // Sanity: read back the programmed base.
+        assert_eq!(bus.read_config(bdf, 0x10, 4), 0x8000_0004);
+        assert_eq!(bus.read_config(bdf, 0x14, 4), 0xffff_ffff);
+
+        // Write one byte of the high dword; read-modify-write would yield 0xFFFF_FFFF. This must
+        // be treated as a normal BAR write (not a size probe).
+        bus.write_config(bdf, 0x14, 1, 0xff);
+
+        assert_eq!(bus.read_config(bdf, 0x10, 4), 0x8000_0004);
+        assert_eq!(bus.read_config(bdf, 0x14, 4), 0xffff_ffff);
     }
 }
