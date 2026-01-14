@@ -16,6 +16,10 @@ const __dirname = path.dirname(__filename);
 // v2 UDP relay framing overhead for an IPv6 destination (worst case).
 // Keep this in sync with `proxy/webrtc-udp-relay/internal/udpproto.MaxFrameOverheadBytes`.
 const UDP_RELAY_V2_IPV6_HEADER_BYTES = 24;
+const UDP_RELAY_V2_GUEST_PORT_OFFSET = 4;
+const UDP_RELAY_V2_REMOTE_IP_OFFSET = 6;
+const UDP_RELAY_V2_IPV6_ADDR_BYTES = 16;
+const UDP_RELAY_V2_REMOTE_PORT_OFFSET_IPV6 = UDP_RELAY_V2_REMOTE_IP_OFFSET + UDP_RELAY_V2_IPV6_ADDR_BYTES;
 
 function base64urlEncode(data) {
   const buf = typeof data === "string" ? Buffer.from(data, "utf8") : Buffer.from(data);
@@ -2553,12 +2557,12 @@ test("relays a UDP datagram to an IPv6 destination via v2 framing", async ({ pag
         frame[1] = 0x02;
         frame[2] = 0x06;
         frame[3] = 0x00;
-        frame[4] = (guestPort >> 8) & 0xff;
-        frame[5] = guestPort & 0xff;
+        frame[UDP_RELAY_V2_GUEST_PORT_OFFSET] = (guestPort >> 8) & 0xff;
+        frame[UDP_RELAY_V2_GUEST_PORT_OFFSET + 1] = guestPort & 0xff;
         // ::1
-        frame[21] = 1;
-        frame[22] = (echoPort >> 8) & 0xff;
-        frame[23] = echoPort & 0xff;
+        frame[UDP_RELAY_V2_REMOTE_IP_OFFSET + UDP_RELAY_V2_IPV6_ADDR_BYTES - 1] = 1;
+        frame[UDP_RELAY_V2_REMOTE_PORT_OFFSET_IPV6] = (echoPort >> 8) & 0xff;
+        frame[UDP_RELAY_V2_REMOTE_PORT_OFFSET_IPV6 + 1] = echoPort & 0xff;
         frame.set(payload, UDP_RELAY_V2_IPV6_HEADER_BYTES);
         dc.send(frame);
 
@@ -2579,14 +2583,18 @@ test("relays a UDP datagram to an IPv6 destination via v2 framing", async ({ pag
           throw new Error("v2 header mismatch");
         }
 
-        const echoedGuestPort = (echoedFrame[4] << 8) | echoedFrame[5];
+        const echoedGuestPort =
+          (echoedFrame[UDP_RELAY_V2_GUEST_PORT_OFFSET] << 8) | echoedFrame[UDP_RELAY_V2_GUEST_PORT_OFFSET + 1];
         if (echoedGuestPort !== guestPort) throw new Error("guest port mismatch");
-        for (let i = 6; i < 21; i++) {
+        for (let i = UDP_RELAY_V2_REMOTE_IP_OFFSET; i < UDP_RELAY_V2_REMOTE_PORT_OFFSET_IPV6 - 1; i++) {
           if (echoedFrame[i] !== 0) throw new Error("remote ip mismatch");
         }
-        if (echoedFrame[21] !== 1) throw new Error("remote ip mismatch");
+        if (echoedFrame[UDP_RELAY_V2_REMOTE_IP_OFFSET + UDP_RELAY_V2_IPV6_ADDR_BYTES - 1] !== 1)
+          throw new Error("remote ip mismatch");
 
-        const echoedRemotePort = (echoedFrame[22] << 8) | echoedFrame[23];
+        const echoedRemotePort =
+          (echoedFrame[UDP_RELAY_V2_REMOTE_PORT_OFFSET_IPV6] << 8) |
+          echoedFrame[UDP_RELAY_V2_REMOTE_PORT_OFFSET_IPV6 + 1];
         if (echoedRemotePort !== echoPort) throw new Error("remote port mismatch");
 
         const echoedPayload = echoedFrame.slice(UDP_RELAY_V2_IPV6_HEADER_BYTES);
@@ -3585,12 +3593,12 @@ test("relays UDP datagrams to an IPv6 destination via the /udp WebSocket fallbac
         frame[1] = 0x02;
         frame[2] = 0x06;
         frame[3] = 0x00;
-        frame[4] = (guestPort >> 8) & 0xff;
-        frame[5] = guestPort & 0xff;
+        frame[UDP_RELAY_V2_GUEST_PORT_OFFSET] = (guestPort >> 8) & 0xff;
+        frame[UDP_RELAY_V2_GUEST_PORT_OFFSET + 1] = guestPort & 0xff;
         // ::1
-        frame[21] = 1;
-        frame[22] = (echoPort >> 8) & 0xff;
-        frame[23] = echoPort & 0xff;
+        frame[UDP_RELAY_V2_REMOTE_IP_OFFSET + UDP_RELAY_V2_IPV6_ADDR_BYTES - 1] = 1;
+        frame[UDP_RELAY_V2_REMOTE_PORT_OFFSET_IPV6] = (echoPort >> 8) & 0xff;
+        frame[UDP_RELAY_V2_REMOTE_PORT_OFFSET_IPV6 + 1] = echoPort & 0xff;
         frame.set(payload, UDP_RELAY_V2_IPV6_HEADER_BYTES);
 
         const sendAndRecv = async (frame) =>
