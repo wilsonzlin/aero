@@ -21095,6 +21095,110 @@ struct aerogpu_d3d9_impl_pfnGetRasterStatus<Ret(*)(Args...)> {
 } // namespace
 #endif
 
+// -----------------------------------------------------------------------------
+// Portable ABI: fixed-function transform DDIs (SetTransform/MultiplyTransform/GetTransform)
+// -----------------------------------------------------------------------------
+// The full Win7 D3D9 UMD exposes these entrypoints even for fixed-function apps.
+// Our host-side portable ABI historically omitted them (tests didn't need them),
+// but fixed-function XYZ pipelines require transform updates to validate WVP
+// constant uploads.
+//
+// Keep these outside the WDK-only DDI block so they are available in portable
+// builds (Linux/CI) and in Windows portable builds that do not use WDK headers.
+static HRESULT AEROGPU_D3D9_CALL device_set_transform_portable(
+    D3DDDI_HDEVICE hDevice,
+    D3DTRANSFORMSTATETYPE state,
+    const D3DMATRIX* pMatrix) {
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceSetTransform,
+                      d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                      static_cast<uint64_t>(state),
+                      d3d9_trace_arg_ptr(pMatrix),
+                      0);
+  if (!hDevice.pDrvPrivate || !pMatrix) {
+    return trace.ret(E_INVALIDARG);
+  }
+
+  const uint32_t idx = static_cast<uint32_t>(state);
+  if (idx >= Device::kTransformCacheCount) {
+    return trace.ret(kD3DErrInvalidCall);
+  }
+
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  std::memcpy(dev->transform_matrices[idx], pMatrix, 16 * sizeof(float));
+  if (idx == kD3dTransformWorld0 || idx == kD3dTransformView || idx == kD3dTransformProjection) {
+    dev->fixedfunc_matrix_dirty = true;
+  }
+  stateblock_record_transform_locked(dev, idx, dev->transform_matrices[idx]);
+  return trace.ret(S_OK);
+}
+
+static HRESULT AEROGPU_D3D9_CALL device_multiply_transform_portable(
+    D3DDDI_HDEVICE hDevice,
+    D3DTRANSFORMSTATETYPE state,
+    const D3DMATRIX* pMatrix) {
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceMultiplyTransform,
+                      d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                      static_cast<uint64_t>(state),
+                      d3d9_trace_arg_ptr(pMatrix),
+                      0);
+  if (!hDevice.pDrvPrivate || !pMatrix) {
+    return trace.ret(E_INVALIDARG);
+  }
+
+  const uint32_t idx = static_cast<uint32_t>(state);
+  if (idx >= Device::kTransformCacheCount) {
+    return trace.ret(kD3DErrInvalidCall);
+  }
+
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+
+  float tmp[16];
+  float rhs[16];
+  std::memcpy(rhs, pMatrix, sizeof(rhs));
+  d3d9_mul_mat4_row_major(dev->transform_matrices[idx], rhs, tmp);
+  std::memcpy(dev->transform_matrices[idx], tmp, sizeof(tmp));
+  if (idx == kD3dTransformWorld0 || idx == kD3dTransformView || idx == kD3dTransformProjection) {
+    dev->fixedfunc_matrix_dirty = true;
+  }
+  stateblock_record_transform_locked(dev, idx, dev->transform_matrices[idx]);
+  return trace.ret(S_OK);
+}
+
+static HRESULT AEROGPU_D3D9_CALL device_get_transform_portable(
+    D3DDDI_HDEVICE hDevice,
+    D3DTRANSFORMSTATETYPE state,
+    D3DMATRIX* pMatrix) {
+  // Default to identity so callers never observe uninitialized output.
+  if (pMatrix) {
+    std::memset(pMatrix, 0, 16 * sizeof(float));
+    float* f = reinterpret_cast<float*>(pMatrix);
+    f[0] = 1.0f;
+    f[5] = 1.0f;
+    f[10] = 1.0f;
+    f[15] = 1.0f;
+  }
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceGetTransform,
+                      d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                      static_cast<uint64_t>(state),
+                      d3d9_trace_arg_ptr(pMatrix),
+                      0);
+  if (!hDevice.pDrvPrivate || !pMatrix) {
+    return trace.ret(E_INVALIDARG);
+  }
+
+  const uint32_t idx = static_cast<uint32_t>(state);
+  if (idx >= Device::kTransformCacheCount) {
+    return trace.ret(kD3DErrInvalidCall);
+  }
+
+  auto* dev = as_device(hDevice);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  std::memcpy(pMatrix, dev->transform_matrices[idx], 16 * sizeof(float));
+  return trace.ret(S_OK);
+}
+
 HRESULT AEROGPU_D3D9_CALL adapter_create_device(
     D3D9DDIARG_CREATEDEVICE* pCreateDevice,
     D3D9DDI_DEVICEFUNCS* pDeviceFuncs) {
@@ -22062,6 +22166,15 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
   pDeviceFuncs->pfnSetTexture = device_set_texture;
   pDeviceFuncs->pfnSetSamplerState = device_set_sampler_state;
   pDeviceFuncs->pfnSetRenderState = device_set_render_state;
+  if constexpr (aerogpu_has_member_pfnSetTransform<D3D9DDI_DEVICEFUNCS>::value) {
+    pDeviceFuncs->pfnSetTransform = device_set_transform_portable;
+  }
+  if constexpr (aerogpu_has_member_pfnMultiplyTransform<D3D9DDI_DEVICEFUNCS>::value) {
+    pDeviceFuncs->pfnMultiplyTransform = device_multiply_transform_portable;
+  }
+  if constexpr (aerogpu_has_member_pfnGetTransform<D3D9DDI_DEVICEFUNCS>::value) {
+    pDeviceFuncs->pfnGetTransform = device_get_transform_portable;
+  }
 
   pDeviceFuncs->pfnCreateVertexDecl = device_create_vertex_decl;
   pDeviceFuncs->pfnSetVertexDecl = device_set_vertex_decl;

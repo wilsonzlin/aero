@@ -174,6 +174,13 @@ typedef struct _LUID {
   #include <d3d9umddi.h>
 #else
 
+#if defined(_WIN32)
+  // Portable mode on Windows: rely on the Windows SDK for the classic D3D9 type
+  // definitions (e.g. D3DMATRIX/D3DTRANSFORMSTATETYPE) so host-side tests can
+  // compile without the WDK.
+  #include <d3d9types.h>
+#endif
+
 #if !defined(_WIN32)
 // ---- D3D9 public types/constants (subset) ------------------------------------
 // Repository builds do not include the Windows SDK/WDK, but the UMD still needs
@@ -502,6 +509,27 @@ typedef struct _D3DADAPTER_IDENTIFIER9 {
   GUID DeviceIdentifier;
   DWORD WHQLLevel;
 } D3DADAPTER_IDENTIFIER9;
+
+// ---- Fixed-function transforms (subset) ---------------------------------------
+// The Win7 D3D9 runtime frequently uses the SetTransform DDIs even when no user
+// shaders are bound (fixed-function vertex processing). Provide the minimal
+// public ABI needed by the UMD's state cache and host-side tests.
+typedef uint32_t D3DTRANSFORMSTATETYPE;
+typedef struct _D3DMATRIX {
+  float m[4][4];
+} D3DMATRIX;
+
+// Common D3DTRANSFORMSTATETYPE numeric values (from d3d9types.h).
+// Keep these optional: code can still use raw numeric values if needed.
+#ifndef D3DTS_VIEW
+  #define D3DTS_VIEW 2u
+#endif
+#ifndef D3DTS_PROJECTION
+  #define D3DTS_PROJECTION 3u
+#endif
+#ifndef D3DTS_WORLD
+  #define D3DTS_WORLD 256u
+#endif
 
 typedef enum _D3DDDICAPS_TYPE {
   D3DDDICAPS_GETD3D9CAPS = 1,
@@ -1298,6 +1326,10 @@ typedef HRESULT(AEROGPU_D3D9_CALL* PFND3D9DDI_SETSCISSORRECT)(D3DDDI_HDEVICE hDe
 typedef HRESULT(AEROGPU_D3D9_CALL* PFND3D9DDI_SETTEXTURE)(D3DDDI_HDEVICE hDevice, uint32_t stage, D3DDDI_HRESOURCE hTexture);
 typedef HRESULT(AEROGPU_D3D9_CALL* PFND3D9DDI_SETSAMPLERSTATE)(D3DDDI_HDEVICE hDevice, uint32_t stage, uint32_t state, uint32_t value);
 typedef HRESULT(AEROGPU_D3D9_CALL* PFND3D9DDI_SETRENDERSTATE)(D3DDDI_HDEVICE hDevice, uint32_t state, uint32_t value);
+// Fixed-function transform state (WORLD/VIEW/PROJECTION).
+typedef HRESULT(AEROGPU_D3D9_CALL* PFND3D9DDI_SETTRANSFORM)(D3DDDI_HDEVICE hDevice, D3DTRANSFORMSTATETYPE state, const D3DMATRIX* pMatrix);
+typedef HRESULT(AEROGPU_D3D9_CALL* PFND3D9DDI_MULTIPLYTRANSFORM)(D3DDDI_HDEVICE hDevice, D3DTRANSFORMSTATETYPE state, const D3DMATRIX* pMatrix);
+typedef HRESULT(AEROGPU_D3D9_CALL* PFND3D9DDI_GETTRANSFORM)(D3DDDI_HDEVICE hDevice, D3DTRANSFORMSTATETYPE state, D3DMATRIX* pMatrix);
 typedef HRESULT(AEROGPU_D3D9_CALL* PFND3D9DDI_CREATEVERTEXDECL)(D3DDDI_HDEVICE hDevice, const void* pDecl, uint32_t decl_size, D3D9DDI_HVERTEXDECL* phDecl);
 typedef HRESULT(AEROGPU_D3D9_CALL* PFND3D9DDI_SETVERTEXDECL)(D3DDDI_HDEVICE hDevice, D3D9DDI_HVERTEXDECL hDecl);
 typedef HRESULT(AEROGPU_D3D9_CALL* PFND3D9DDI_DESTROYVERTEXDECL)(D3DDDI_HDEVICE hDevice, D3D9DDI_HVERTEXDECL hDecl);
@@ -1450,6 +1482,13 @@ struct _D3D9DDI_DEVICEFUNCS {
   // Optional D3D9Ex/DDI helper entrypoints (present in some WDK vintages and
   // relied on by apps that use D3DUSAGE_AUTOGENMIPMAP).
   PFND3D9DDI_GENERATEMIPSUBLEVELS pfnGenerateMipSubLevels;
+
+  // Legacy fixed-function transform entrypoints. These are part of the Win7 D3D9
+  // UMD DDI, but are only included in the portable ABI when needed by host-side
+  // tests.
+  PFND3D9DDI_SETTRANSFORM pfnSetTransform;
+  PFND3D9DDI_MULTIPLYTRANSFORM pfnMultiplyTransform;
+  PFND3D9DDI_GETTRANSFORM pfnGetTransform;
 };
 
 // -----------------------------------------------------------------------------
