@@ -101,6 +101,13 @@ typedef struct virtqueue_split {
     /* Shadow indices. */
     uint16_t avail_idx;
     uint16_t last_used_idx;
+    /*
+     * Last observed avail index used for kick suppression.
+     *
+     * Note: virtqueue_split_kick_prepare() updates this to the current avail
+     * index regardless of whether it returns TRUE (kick) or FALSE (suppressed),
+     * matching the virtio spec / Linux behaviour for EVENT_IDX.
+     */
     uint16_t last_kick_avail;
 
     /* Descriptor free list. */
@@ -200,6 +207,9 @@ int virtqueue_split_add_sg(virtqueue_split_t *vq,
 /*
  * Decide whether a notify (kick) is required based on negotiated ring
  * features (event idx or VRING_USED_F_NO_NOTIFY).
+ *
+ * Note: this updates vq->last_kick_avail to vq->avail_idx regardless of the
+ * return value (TRUE=kick, FALSE=suppressed).
  */
 virtio_bool_t virtqueue_split_kick_prepare(virtqueue_split_t *vq);
 
