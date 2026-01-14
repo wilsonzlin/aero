@@ -356,3 +356,84 @@ fn tiered_vm_commit_flag_rollback_does_not_touch_interrupt_shadow_node() {
         "rollback must not age interrupt shadow state"
     );
 }
+
+#[wasm_bindgen_test]
+fn tiered_vm_commit_flag_rollback_exit_forces_one_interpreter_step_node() {
+    installAeroTieredCommitFlagTestShims();
+
+    let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x2000);
+    let guest = common::GuestRegion {
+        base: guest_base,
+        size: guest_size,
+    };
+    // Single-instruction branch (`JMP -2`) so Tier0Interpreter terminates the block quickly.
+    guest.write_bytes(0x1000, &[0xEB, 0xFE]);
+
+    let mut vm = WasmTieredVm::new(guest_base, guest_size).expect("new WasmTieredVm");
+    vm.reset_real_mode(0x1000);
+
+    const ENTRY_RIP: u64 = 0x1000;
+    vm.install_test_tier1_handle(ENTRY_RIP, 0, 5, false);
+
+    let commit_flag_offset = jit_commit_flag_offset();
+
+    // Backend always rolls back and forces an interpreter exit. It should be invoked exactly once:
+    // the *next* dispatcher step must run Tier-0 even though a compiled handle is present.
+    let mut called = false;
+    let hook = Closure::wrap(Box::new(
+        move |_table_index: u32, cpu_ptr: u32, _jit_ctx_ptr: u32| -> i64 {
+            assert!(
+                !called,
+                "__aero_jit_call should only be invoked once; exit_to_interpreter must force Tier-0"
+            );
+            called = true;
+
+            let commit_flag_ptr = cpu_ptr + commit_flag_offset;
+            let before = unsafe {
+                core::ptr::read_unaligned(core::ptr::with_exposed_provenance::<u32>(
+                    commit_flag_ptr as usize,
+                ))
+            };
+            assert_eq!(
+                before, 1,
+                "commit flag should be set to 1 before host hook runs"
+            );
+            unsafe {
+                core::ptr::write_unaligned(
+                    core::ptr::with_exposed_provenance_mut::<u32>(commit_flag_ptr as usize),
+                    0,
+                );
+            }
+
+            // Exit to interpreter (Tier-0).
+            -1
+        },
+    ) as Box<dyn FnMut(u32, u32, u32) -> i64>);
+    let _guard = GlobalThisValueGuard::set("__aero_jit_call", hook.as_ref());
+
+    // Step 1: JIT executes and rolls back.
+    match vm.step_raw() {
+        StepOutcome::Block {
+            tier: ExecutedTier::Jit,
+            instructions_retired,
+            ..
+        } => assert_eq!(instructions_retired, 0),
+        other => panic!("expected JIT block outcome, got {other:?}"),
+    }
+
+    // Step 2: forced interpreter step, must not re-enter JIT (hook would panic).
+    match vm.step_raw() {
+        StepOutcome::Block {
+            tier: ExecutedTier::Interpreter,
+            instructions_retired,
+            ..
+        } => {
+            assert!(
+                instructions_retired > 0,
+                "sanity check: Tier-0 should execute at least one instruction"
+            );
+        }
+        StepOutcome::InterruptDelivered => panic!("unexpected interrupt delivery"),
+        other => panic!("expected Tier-0 block outcome, got {other:?}"),
+    }
+}
