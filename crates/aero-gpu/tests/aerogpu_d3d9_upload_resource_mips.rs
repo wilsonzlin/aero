@@ -282,3 +282,67 @@ fn d3d9_upload_resource_uses_padded_mip0_row_pitch_for_mip_offsets() {
     assert_eq!((out_w, out_h), (mip1_w, mip1_h));
     assert_eq!(rgba, mip1_rgba);
 }
+
+#[test]
+fn d3d9_upload_resource_supports_row_crossing_ranges() {
+    common::ensure_xdg_runtime_dir();
+
+    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
+        Ok(exec) => exec,
+        Err(AerogpuD3d9Error::AdapterNotFound) => {
+            common::skip_or_panic(module_path!(), "wgpu adapter not found");
+            return;
+        }
+        Err(err) => panic!("failed to create executor: {err}"),
+    };
+
+    const TEX_HANDLE: u32 = 1;
+
+    let w = 4u32;
+    let h = 4u32;
+    let bpp = 4u32;
+    let row_pitch = w * bpp;
+
+    let mut initial = Vec::new();
+    for y in 0..h {
+        for x in 0..w {
+            initial.extend_from_slice(&[x as u8, y as u8, 0x80, 0xFF]);
+        }
+    }
+
+    let mut expected = initial.clone();
+
+    let update_offset = 20usize; // row=1 x=1
+    let update_size = 24usize; // spans rows 1 and 2
+    for chunk in expected[update_offset..update_offset + update_size].chunks_exact_mut(4) {
+        chunk.copy_from_slice(&[0, 0xFF, 0, 0xFF]); // green
+    }
+
+    let mut writer = AerogpuCmdWriter::new();
+    writer.create_texture2d(
+        TEX_HANDLE,
+        AEROGPU_RESOURCE_USAGE_TEXTURE,
+        AerogpuFormat::R8G8B8A8Unorm as u32,
+        w,
+        h,
+        1,
+        1,
+        row_pitch,
+        0,
+        0,
+    );
+    writer.upload_resource(TEX_HANDLE, 0, &initial);
+    writer.upload_resource(
+        TEX_HANDLE,
+        update_offset as u64,
+        &expected[update_offset..update_offset + update_size],
+    );
+
+    exec.execute_cmd_stream(&writer.finish())
+        .expect("row-crossing upload should succeed");
+
+    let (out_w, out_h, rgba) = pollster::block_on(exec.readback_texture_rgba8(TEX_HANDLE))
+        .expect("readback should succeed");
+    assert_eq!((out_w, out_h), (w, h));
+    assert_eq!(rgba, expected);
+}
