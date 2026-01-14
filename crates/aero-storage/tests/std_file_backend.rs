@@ -159,3 +159,20 @@ fn std_file_backend_open_missing_file_reports_path_in_error() {
         other => panic!("expected DiskError::Io, got {other:?}"),
     }
 }
+
+#[test]
+fn std_file_backend_create_missing_parent_reports_path_and_size() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("missing-parent").join("disk.img");
+    let size = 1234u64;
+
+    let err = StdFileBackend::create(&path, size).unwrap_err();
+    match err {
+        DiskError::Io(msg) => {
+            assert!(msg.contains("failed to create file"));
+            assert!(msg.contains(&format!("path={}", path.display())));
+            assert!(msg.contains(&format!("size={size}")));
+        }
+        other => panic!("expected DiskError::Io, got {other:?}"),
+    }
+}
