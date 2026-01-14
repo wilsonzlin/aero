@@ -4416,19 +4416,17 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
       };
 
       const hasVram = !!vramU8 && vramSizeBytes > 0;
-      const pciMmioBase = hasVram
-        ? (() => {
-            const base = BigInt(vramBasePaddr >>> 0);
-            const size = BigInt(vramSizeBytes >>> 0);
-            const align = 0x1000n;
-            const alignedSize = (size + (align - 1n)) & ~(align - 1n);
-            return base + alignedSize;
-          })()
-        : undefined;
-      const mgr = new DeviceManager(irqSink, { pciMmioBase });
+      const mgr = new DeviceManager(irqSink);
       deviceManager = mgr;
 
       if (hasVram) {
+        try {
+          // Reserve a dedicated VRAM aperture at the front of the PCI MMIO BAR window so future PCI
+          // BAR allocations cannot overlap guest-visible VRAM.
+          mgr.pciBus.reserveMmio(BigInt(vramSizeBytes >>> 0));
+        } catch (err) {
+          console.warn("[io.worker] Failed to reserve VRAM aperture in PCI MMIO window", err);
+        }
         const base = BigInt(vramBasePaddr >>> 0);
         const sizeBytes = BigInt(vramSizeBytes >>> 0);
         const vram = vramU8!.subarray(0, vramSizeBytes);
