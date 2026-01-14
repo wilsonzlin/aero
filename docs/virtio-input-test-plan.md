@@ -410,8 +410,8 @@ intentionally exercising MSI-X code paths under QEMU), the guest selftest may em
 
 To make MSI-X a **hard harness requirement** (end-to-end, guest-reported effective mode):
 
-- PowerShell: `-RequireVirtioInputMsix`
-- Python: `--require-virtio-input-msix`
+- PowerShell: `-RequireVirtioInputMsix` *(alias: `-RequireInputMsix`)*
+- Python: `--require-virtio-input-msix` *(alias: `--require-input-msix`)*
 
 Optional guest-side hard requirement (fail-fast; makes the guest selftest RESULT fail when `virtio-input-msix` reports `mode!=msix`):
 

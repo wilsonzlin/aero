@@ -161,11 +161,11 @@ You can also use `aero-virtio-selftest.exe`:
   - Host marker (mirrored by the QEMU harness): `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_MSIX|PASS/FAIL/SKIP|mode=...|messages=...|config_vector=<n\|none>|rx_vector=<n\|none>|tx_vector=<n\|none>|...`
   - Newer builds may append additional diagnostic fields (best-effort), for example:
     `flags=0x...|intr0=...|intr1=...|intr2=...|dpc0=...|dpc1=...|dpc2=...|rx_drained=...|tx_drained=...`.
-- To increase the chance of MSI-X in the in-tree QEMU harness (and optionally fail if MSI-X is not enabled):
+  - To increase the chance of MSI-X in the in-tree QEMU harness (and optionally fail if MSI-X is not enabled):
   - Host (MSI-X table sizing; requires QEMU virtio `vectors` property):
     - global: `-VirtioMsixVectors N` / `--virtio-msix-vectors N`
     - virtio-net only: `-VirtioNetVectors N` / `--virtio-net-vectors N`
-  - Host (hard requirement): `-RequireVirtioNetMsix` / `--require-virtio-net-msix`
+  - Host (hard requirement): `-RequireVirtioNetMsix` / `--require-virtio-net-msix` *(aliases: `-RequireNetMsix` / `--require-net-msix`)*
   - Guest (hard requirement / fail-fast): `aero-virtio-selftest.exe --require-net-msix` (or env var `AERO_VIRTIO_SELFTEST_REQUIRE_NET_MSIX=1`)
     - If provisioning the guest via `drivers/windows7/tests/host-harness/New-AeroWin7TestImage.ps1`, bake this into the
       scheduled task with `-RequireNetMsix`.

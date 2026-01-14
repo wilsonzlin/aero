@@ -91,7 +91,7 @@ You can also use `aero-virtio-selftest.exe`:
     - request a larger MSI-X table size (requires QEMU virtio `vectors` property):
       - global: `-VirtioMsixVectors N` / `--virtio-msix-vectors N`
       - virtio-blk only: `-VirtioBlkVectors N` / `--virtio-blk-vectors N`
-    - require MSI-X enabled (host-side check): `-RequireVirtioBlkMsix` / `--require-virtio-blk-msix`
+    - require MSI-X enabled (host-side check): `-RequireVirtioBlkMsix` / `--require-virtio-blk-msix` *(aliases: `-RequireBlkMsix` / `--require-blk-msix`)*
   - Guest selftest: `--expect-blk-msi` (or `AERO_VIRTIO_SELFTEST_EXPECT_BLK_MSI=1`)
     - If provisioning via `drivers/windows7/tests/host-harness/New-AeroWin7TestImage.ps1`, bake this into the scheduled task with `-ExpectBlkMsi`.
 - See `../tests/guest-selftest/README.md` for how to build/run the tool.

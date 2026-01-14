@@ -1036,13 +1036,21 @@ Harness validation (non-normative, QEMU):
       - per device: `-Virtio{Net,Blk,Input,Snd}Vectors N` / `--virtio-{net,blk,input,snd}-vectors N`
     - require MSI-X (harness checks):
       - QMP MSI-X-enabled check (virtio-blk/net/snd):
-        - `-RequireVirtioBlkMsix` / `--require-virtio-blk-msix`
-        - `-RequireVirtioNetMsix` / `--require-virtio-net-msix`
-        - `-RequireVirtioSndMsix` / `--require-virtio-snd-msix`
+        - virtio-blk:
+          - PowerShell: `-RequireVirtioBlkMsix` *(alias: `-RequireBlkMsix`)*
+          - Python: `--require-virtio-blk-msix` *(alias: `--require-blk-msix`)*
+        - virtio-net:
+          - PowerShell: `-RequireVirtioNetMsix` *(alias: `-RequireNetMsix`)*
+          - Python: `--require-virtio-net-msix` *(alias: `--require-net-msix`)*
+        - virtio-snd:
+          - PowerShell: `-RequireVirtioSndMsix` *(alias: `-RequireSndMsix`)*
+          - Python: `--require-virtio-snd-msix` *(alias: `--require-snd-msix`)*
         - For virtio-blk, virtio-net, and virtio-snd, the harness also requires the guest `virtio-*-msix` marker to report
           `mode=msix` (end-to-end validation).
-      - Guest marker check (virtio-input): `-RequireVirtioInputMsix` / `--require-virtio-input-msix`
-   - Guest selftest (optional hard requirement):
+      - Guest marker check (virtio-input):
+        - PowerShell: `-RequireVirtioInputMsix` *(alias: `-RequireInputMsix`)*
+        - Python: `--require-virtio-input-msix` *(alias: `--require-input-msix`)*
+    - Guest selftest (optional hard requirement):
       - virtio-blk: `--expect-blk-msi` (or `AERO_VIRTIO_SELFTEST_EXPECT_BLK_MSI=1`)
         - If you provision the guest via `New-AeroWin7TestImage.ps1`, bake this into the scheduled task with `-ExpectBlkMsi`.
       - virtio-net: `--require-net-msix` (or `AERO_VIRTIO_SELFTEST_REQUIRE_NET_MSIX=1`)

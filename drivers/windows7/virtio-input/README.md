@@ -208,7 +208,8 @@ If Windows grants fewer than `1 + numQueues` messages, the driver falls back to:
       - Guest-side (fail-fast): `aero-virtio-selftest.exe --require-input-msix` (or env var `AERO_VIRTIO_SELFTEST_REQUIRE_INPUT_MSIX=1`)
         - If provisioning the guest via `drivers/windows7/tests/host-harness/New-AeroWin7TestImage.ps1`, bake this into the
           scheduled task with `-RequireInputMsix`.
-      - Host-side: `Invoke-AeroVirtioWin7Tests.ps1 -RequireVirtioInputMsix` / `invoke_aero_virtio_win7_tests.py --require-virtio-input-msix`
+      - Host-side: `Invoke-AeroVirtioWin7Tests.ps1 -RequireVirtioInputMsix` *(alias: `-RequireInputMsix`)* /
+        `invoke_aero_virtio_win7_tests.py --require-virtio-input-msix` *(alias: `--require-input-msix`)*
   - To request a larger MSI-X table size under QEMU in the in-tree harness (requires QEMU virtio `vectors` property),
     run the host harness with:
     `-VirtioMsixVectors N` / `--virtio-msix-vectors N` (global) or `-VirtioInputVectors N` / `--virtio-input-vectors N`
