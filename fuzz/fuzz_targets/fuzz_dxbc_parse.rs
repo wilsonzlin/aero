@@ -409,17 +409,29 @@ fn build_patched_ctab_chunk(seed: &[u8]) -> Vec<u8> {
     } else {
         b"vs_3_0"
     };
+    let include_creator = u.arbitrary::<u8>().unwrap_or(0) & 1 != 0;
+    let creator_len = (u.arbitrary::<u8>().unwrap_or(0) % 16) as usize + 1;
     let name_len = (u.arbitrary::<u8>().unwrap_or(0) % 16) as usize + 1;
     let header_len = 28usize;
     let entry_len = 20usize;
     let target_off = header_len + entry_len;
     let name_off = target_off + target_str.len() + 1;
-    let total_len = name_off + name_len + 1;
+    let creator_off = name_off + name_len + 1;
+    let total_len = if include_creator {
+        creator_off + creator_len + 1
+    } else {
+        creator_off
+    };
     let mut out = vec![0u8; total_len];
 
     // Header.
     out[0..4].copy_from_slice(&0u32.to_le_bytes()); // size (ignored)
-    out[4..8].copy_from_slice(&0u32.to_le_bytes()); // creator_offset
+    let creator_offset = if include_creator {
+        creator_off as u32
+    } else {
+        0u32
+    };
+    out[4..8].copy_from_slice(&creator_offset.to_le_bytes());
     out[8..12].copy_from_slice(&0u32.to_le_bytes()); // version
     out[12..16].copy_from_slice(&1u32.to_le_bytes()); // constant_count
     out[16..20].copy_from_slice(&(header_len as u32).to_le_bytes()); // constant_offset
@@ -444,6 +456,15 @@ fn build_patched_ctab_chunk(seed: &[u8]) -> Vec<u8> {
         out[name_off + i] = b'A' + (b % 26);
     }
     out[name_off + name_len] = 0;
+
+    // Optional creator string + NUL.
+    if include_creator {
+        for i in 0..creator_len {
+            let b = u.arbitrary::<u8>().unwrap_or(0);
+            out[creator_off + i] = b'A' + (b % 26);
+        }
+        out[creator_off + creator_len] = 0;
+    }
 
     out
 }
