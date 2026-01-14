@@ -2968,10 +2968,20 @@ impl AerogpuD3d11Executor {
         let (compute_layout_key, compute_pipeline_layout) = if let Some(vp_bgl) = &vertex_pulling_bgl
         {
             let key = PipelineLayoutKey {
-                bind_group_layout_hashes: vec![compute_bgl.hash, empty_bgl.hash, empty_bgl.hash, vp_bgl.hash],
+                // Vertex pulling uses a dedicated group so it can coexist with the D3D binding-model
+                // groups (VS/PS/CS/GS = groups 0..=3). Keep the unused intermediate groups as
+                // empty layouts so `@group(VERTEX_PULLING_GROUP)` matches the pipeline layout.
+                bind_group_layout_hashes: vec![
+                    compute_bgl.hash,
+                    empty_bgl.hash,
+                    empty_bgl.hash,
+                    empty_bgl.hash,
+                    vp_bgl.hash,
+                ],
             };
             let layouts = [
                 compute_bgl.layout.as_ref(),
+                empty_bgl.layout.as_ref(),
                 empty_bgl.layout.as_ref(),
                 empty_bgl.layout.as_ref(),
                 vp_bgl.layout.as_ref(),

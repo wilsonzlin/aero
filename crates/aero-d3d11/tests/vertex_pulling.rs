@@ -117,6 +117,7 @@ async fn read_buffer(
 
 #[test]
 fn compute_vertex_pulling_reads_pos3_color4() {
+    assert_eq!(VERTEX_PULLING_GROUP, 4);
     pollster::block_on(async {
         let (device, queue, supports_compute) = match create_device_queue().await {
             Ok(v) => v,
@@ -287,8 +288,8 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {{
         let ia_bg = pulling.create_bind_group(&device, &ia_bgl, &[&vb], &ia_uniform);
 
         // Pipeline layout must include group layouts for groups 0..VERTEX_PULLING_GROUP.
-        let layouts: [&wgpu::BindGroupLayout; 4] = [&out_bgl, &empty_bgl, &empty_bgl, &ia_bgl];
-        assert_eq!(VERTEX_PULLING_GROUP, 3);
+        let layouts: [&wgpu::BindGroupLayout; 5] =
+            [&out_bgl, &empty_bgl, &empty_bgl, &empty_bgl, &ia_bgl];
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("vertex pulling pipeline layout"),
@@ -339,6 +340,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {{
 
 #[test]
 fn compute_vertex_pulling_reads_unorm8x4() {
+    assert_eq!(VERTEX_PULLING_GROUP, 4);
     fn push_u32(buf: &mut Vec<u8>, v: u32) {
         buf.extend_from_slice(&v.to_le_bytes());
     }
@@ -486,7 +488,8 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {{
         let ia_bgl = pulling.create_bind_group_layout(&device);
         let ia_bg = pulling.create_bind_group(&device, &ia_bgl, &[&vb], &ia_uniform);
 
-        let layouts: [&wgpu::BindGroupLayout; 4] = [&out_bgl, &empty_bgl, &empty_bgl, &ia_bgl];
+        let layouts: [&wgpu::BindGroupLayout; 5] =
+            [&out_bgl, &empty_bgl, &empty_bgl, &empty_bgl, &ia_bgl];
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("vertex pulling unorm pipeline layout"),
             bind_group_layouts: &layouts,
