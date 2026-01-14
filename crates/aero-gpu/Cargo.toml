@@ -4,6 +4,12 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 
+[lib]
+# `cargo bench -p aero-gpu` is used for Criterion microbenches; avoid also compiling/running the
+# library test harness as a benchmark target (which can pull in unit tests and slow down bench
+# runs).
+bench = false
+
 [features]
 # Optional tile-based diffing when the caller doesn't supply dirty rectangles.
 # Kept off by default until validated for correctness/perf across browsers.
