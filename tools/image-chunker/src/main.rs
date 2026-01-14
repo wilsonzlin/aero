@@ -1386,15 +1386,10 @@ async fn verify_chunk_http(
                 match client.head(url.clone()).send().await {
                     Ok(resp) => {
                         let status = resp.status();
-                        // Some servers/CDNs do not support HEAD (501/405), or signed URLs may be
-                        // method-specific (403/401). Disable the optimization after the first
-                        // clear signal and fall back to GET for subsequent chunks.
-                        if status == reqwest::StatusCode::METHOD_NOT_ALLOWED
-                            || status == reqwest::StatusCode::NOT_IMPLEMENTED
-                            || status == reqwest::StatusCode::FORBIDDEN
-                            || status == reqwest::StatusCode::UNAUTHORIZED
-                            || status == reqwest::StatusCode::NOT_FOUND
-                        {
+                        // Treat `HEAD` as a best-effort optimization. If it fails once for any
+                        // reason, assume it is not supported (or not supported for this auth
+                        // scheme) and fall back to GET for subsequent chunks.
+                        if !status.is_success() {
                             head_supported.store(false, Ordering::SeqCst);
                         }
 
@@ -1446,6 +1441,7 @@ async fn verify_chunk_http(
                         // Content-Length.
                     }
                     Err(_) => {
+                        head_supported.store(false, Ordering::SeqCst);
                         // Fall back to GET on HEAD errors; GET verification will handle retries.
                     }
                 }
