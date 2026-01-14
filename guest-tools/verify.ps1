@@ -1330,7 +1330,26 @@ $gtCertsRequired = $null
 
 # --- Guest Tools manifest (media integrity + provenance) ---
 try {
-    $manifestPath = Join-Path $scriptDir "manifest.json"
+    # Guest Tools media layouts:
+    # - Packager output: verify.ps1 + manifest.json live at the media root.
+    # - Some manual/legacy layouts place scripts under a subdirectory (e.g. guest-tools\verify.ps1)
+    #   with manifest.json at the media root one directory above. Match setup.cmd/uninstall.cmd:
+    #   prefer manifest.json at the parent directory, then fall back to next to verify.ps1.
+    $mediaRoot = $scriptDir
+    $localManifest = Join-Path $scriptDir "manifest.json"
+    $parentRoot = $null
+    try { $parentRoot = [System.IO.Path]::GetFullPath((Join-Path $scriptDir "..")) } catch { $parentRoot = $null }
+    $parentManifest = $null
+    if ($parentRoot) { $parentManifest = Join-Path $parentRoot "manifest.json" }
+
+    $manifestPath = $localManifest
+    if ($parentManifest -and (Test-Path $parentManifest)) {
+        $manifestPath = $parentManifest
+        $mediaRoot = $parentRoot
+    } elseif (Test-Path $localManifest) {
+        $manifestPath = $localManifest
+        $mediaRoot = $scriptDir
+    }
     $mStatus = "PASS"
     $mSummary = ""
     $mDetails = @()
@@ -1338,6 +1357,7 @@ try {
     $mediaIntegrity = @{
         manifest_present = $false
         manifest_path = $manifestPath
+        media_root = $mediaRoot
         manifest_sha256 = $null
         manifest_encoding = $null
         parse_ok = $false
@@ -1362,7 +1382,7 @@ try {
 
     if (-not (Test-Path $manifestPath)) {
         $mStatus = "WARN"
-        $mSummary = "manifest.json not found next to verify.ps1; cannot verify Guest Tools media integrity."
+        $mSummary = "manifest.json not found (expected next to verify.ps1 or at the media root); cannot verify Guest Tools media integrity."
         $mDetails += "Tip: If you obtained the media as a .zip/.iso, ensure the full directory contents were copied intact."
     } else {
         $mediaIntegrity.manifest_present = $true
@@ -1562,7 +1582,7 @@ try {
                     }
 
                     $relFs = $rel.Replace("/", "\")
-                    $full = Join-Path $scriptDir $relFs
+                    $full = Join-Path $mediaRoot $relFs
                     $exists = Test-Path $full
 
                     $actualSha = $null
@@ -1694,7 +1714,7 @@ try {
                     # manifest's files[] list does not include it.
                     $expected["manifest.json"] = $true
 
-                    $rootItem = Get-Item -LiteralPath $scriptDir -ErrorAction Stop
+                    $rootItem = Get-Item -LiteralPath $mediaRoot -ErrorAction Stop
                     $rootFull = "" + $rootItem.FullName
                     $prefix = $rootFull
                     if (-not ($prefix.EndsWith("\") -or $prefix.EndsWith("/"))) { $prefix += "\" }
