@@ -209,6 +209,21 @@ End-to-end input report delivery is validated by the Win7 harness when enabled:
   - `AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS|...`
   - `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|PASS|...`
 
+Optional: also validate scroll wheel + horizontal wheel end-to-end:
+
+- Run the host harness with `-WithInputWheel` / `--with-input-wheel`.
+- Expected guest marker:
+  - `AERO_VIRTIO_SELFTEST|TEST|virtio-input-wheel|PASS|...`
+
+Optional: extended input event shapes (modifiers/buttons/wheel) end-to-end:
+
+- Provision the guest selftest with `--test-input-events-extended` (or env var `AERO_VIRTIO_SELFTEST_TEST_INPUT_EVENTS_EXTENDED=1`).
+- Run the host harness with `-WithInputEventsExtended` / `--with-input-events-extended`.
+- Expected guest markers:
+  - `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-modifiers|PASS|...`
+  - `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-buttons|PASS|...`
+  - `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-wheel|PASS|...`
+
 Tablet (absolute pointer) report delivery can also be validated end-to-end:
 
 - Install the tablet INF (`inf/aero_virtio_tablet.inf`) so `virtio-tablet-pci` binds to the driver.

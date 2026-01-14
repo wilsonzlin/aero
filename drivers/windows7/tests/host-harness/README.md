@@ -365,7 +365,29 @@ This:
   - the harness fails if the base `virtio-input-events` marker is skipped/missing
 
 Note: This is separate from `-WithInputWheel` / `--with-input-wheel`, which instead requires the aggregate marker
-`AERO_VIRTIO_SELFTEST|TEST|virtio-input-wheel|PASS|...`.
+`AERO_VIRTIO_SELFTEST|TEST|virtio-input-wheel|PASS|...`. The extended wheel marker (`virtio-input-events-wheel`) covers
+wheel + horizontal wheel as part of the extended flow.
+
+PowerShell:
+
+```powershell
+pwsh ./drivers/windows7/tests/host-harness/Invoke-AeroVirtioWin7Tests.ps1 `
+  -QemuSystem qemu-system-x86_64 `
+  -DiskImagePath ./win7-aero-tests.qcow2 `
+  -WithInputEventsExtended `
+  -TimeoutSeconds 600
+```
+
+Python:
+
+```bash
+python3 drivers/windows7/tests/host-harness/invoke_aero_virtio_win7_tests.py \
+  --qemu-system qemu-system-x86_64 \
+  --disk-image ./win7-aero-tests.qcow2 \
+  --with-input-events-extended \
+  --timeout-seconds 600 \
+  --snapshot
+```
 
 PowerShell:
 
