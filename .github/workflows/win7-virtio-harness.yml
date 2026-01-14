@@ -896,6 +896,9 @@ jobs:
           blk_reset_recovery_host_marker=""
           qemu_stderr_line=""
           qemu_cmdline=""
+          runner_line=""
+          python_version_line=""
+          qemu_version_line=""
           if [[ -f "${serial_log}" ]]; then
             config_marker="$(grep -F 'AERO_VIRTIO_SELFTEST|CONFIG|' "${serial_log}" | tail -n 1 | tr -d '\r' || true)"
             result_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|RESULT\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
@@ -972,11 +975,14 @@ jobs:
               # Example: "FAIL: MISSING_VIRTIO_INPUT_EVENTS: ..."
               failure_token="$(grep -Eo 'FAIL: [A-Z0-9_]+:' "${harness_log}" | tail -n 1 | sed -e 's/^FAIL: //' -e 's/:$//' || true)"
              # Fallback: the full last failure line (useful when no structured token is present).
-            failure_line="$(grep -F 'FAIL:' "${harness_log}" | tail -n 1 || true)"
-             # Fallback: last explicit "ERROR:" line.
-             error_line="$(grep -F 'ERROR:' "${harness_log}" | tail -n 1 || true)"
-             qemu_cmdline="$(awk '/Launching QEMU:/{getline; sub(/^[[:space:]]+/, ""); print}' "${harness_log}" | tail -n 1 | tr -d '\r' || true)"
-           fi
+              failure_line="$(grep -F 'FAIL:' "${harness_log}" | tail -n 1 || true)"
+              # Fallback: last explicit "ERROR:" line.
+              error_line="$(grep -F 'ERROR:' "${harness_log}" | tail -n 1 || true)"
+              qemu_cmdline="$(awk '/Launching QEMU:/{getline; sub(/^[[:space:]]+/, ""); print}' "${harness_log}" | tail -n 1 | tr -d '\r' || true)"
+              runner_line="$(grep -m1 -F 'Runner:' "${harness_log}" | tr -d '\r' || true)"
+              python_version_line="$(grep -m1 -F 'python3:' "${harness_log}" | tr -d '\r' || true)"
+              qemu_version_line="$(grep -m1 -F 'qemu:' "${harness_log}" | tr -d '\r' || true)"
+            fi
           if [[ -f "${qemu_stderr_log}" ]]; then
             qemu_stderr_line="$(tail -n 1 "${qemu_stderr_log}" | tr -d '\r' || true)"
           fi
@@ -986,6 +992,15 @@ jobs:
             echo ""
             echo "- Harness step: ${{ steps.harness.outcome }}"
             echo "- Harness exit code: ${{ steps.harness.outputs.exit_code || 'unknown' }}"
+            if [[ -n "${runner_line}" ]]; then
+              echo "- ${runner_line}"
+            fi
+            if [[ -n "${python_version_line}" ]]; then
+              echo "- ${python_version_line}"
+            fi
+            if [[ -n "${qemu_version_line}" ]]; then
+              echo "- ${qemu_version_line}"
+            fi
             if [[ "${{ inputs.force_intx }}" == "true" && -n "${force_intx_host_marker}" ]]; then
               echo "- Host force INTx marker: \`${force_intx_host_marker}\`"
             fi
