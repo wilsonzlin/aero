@@ -161,6 +161,14 @@ Inbound filtering note: `proxy/webrtc-udp-relay` defaults to `UDP_INBOUND_FILTER
 (only accept inbound UDP from remote address+port tuples the guest previously sent to). You can switch
 to full-cone behavior with `UDP_INBOUND_FILTER_MODE=any` (**less safe**; see the relay README).
 
+WebRTC DataChannel DoS hardening note: the relay configures pion/SCTP limits to prevent malicious peers
+from sending extremely large WebRTC DataChannel messages that would otherwise be buffered/allocated
+before `DataChannel.OnMessage` runs. Relevant knobs:
+
+- `WEBRTC_DATACHANNEL_MAX_MESSAGE_BYTES` (SDP `a=max-message-size` hint; 0 = auto)
+- `WEBRTC_SCTP_MAX_RECEIVE_BUFFER_BYTES` (hard receive-side cap; 0 = auto; must be ≥ `WEBRTC_DATACHANNEL_MAX_MESSAGE_BYTES` and ≥ `1500`)
+- `WEBRTC_SESSION_CONNECT_TIMEOUT` (close sessions that never reach a connected state; prevents PeerConnection leaks; default `30s`)
+
 ---
 
 ## Aero Gateway
