@@ -4459,7 +4459,10 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
               const scanoutIsInVram = (() => {
                 if (!vram || vramSizeBytes === 0) return false;
 
-                const requiredSrcBytesBig = BigInt(pitchBytes) * BigInt(height);
+                // The scanout surface occupies `rowBytes` bytes on the last row, not the full `pitchBytes`.
+                // This matches `tryReadScanoutRgba8` (and typical linear framebuffer semantics): the
+                // framebuffer byte length is `(height-1)*pitchBytes + rowBytes`.
+                const requiredSrcBytesBig = (BigInt(height) - 1n) * BigInt(pitchBytes) + BigInt(rowBytes);
                 if (requiredSrcBytesBig > BigInt(Number.MAX_SAFE_INTEGER)) return false;
                 const requiredSrcBytes = Number(requiredSrcBytesBig);
 
