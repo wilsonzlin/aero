@@ -286,9 +286,9 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {
 // Variant of `GEOMETRY_PREPASS_CS_WGSL` that additionally performs one IA vertex-buffer load via the
 // vertex-pulling bind group (when present).
 //
-// This is a placeholder for the eventual VS-as-compute implementation: we keep the output triangle
-// identical to the non-vertex-pulling prepass, but force at least one read from the IA buffers so
-// the vertex pulling binding scheme is exercised end-to-end.
+// This is a placeholder for the eventual VS-as-compute implementation: keep the output identical
+// to the non-vertex-pulling prepass, but force at least one read from the IA buffers so the vertex
+// pulling binding scheme is exercised end-to-end.
 //
 // NOTE: This WGSL is only valid when `runtime::vertex_pulling::VertexPullingLayout::wgsl_prelude()`
 // is prepended to the shader source.
@@ -300,6 +300,11 @@ struct ExpandedVertex {
 
 struct Params {
     color: vec4<f32>,
+    counts: vec4<u32>,
+};
+
+struct DepthParams {
+    data: vec4<f32>,
 };
 
 @group(0) @binding(0) var<storage, read_write> out_vertices: array<ExpandedVertex>;
@@ -307,49 +312,92 @@ struct Params {
 @group(0) @binding(2) var<storage, read_write> out_indirect: array<u32>;
 @group(0) @binding(3) var<storage, read_write> out_counter: array<u32>;
 @group(0) @binding(4) var<uniform> params: Params;
+@group(0) @binding(5) var<uniform> depth_params: DepthParams;
 
 @compute @workgroup_size(1)
 fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {
-    if (id.x != 0u) {
+    // Compute-based GS emulation system values.
+    let primitive_id: u32 = id.x;
+    let gs_instance_id: u32 = id.y;
+
+    let primitive_count: u32 = params.counts.x;
+    if (primitive_id >= primitive_count) {
         return;
     }
 
-    // Exercise the vertex pulling bind group by reading a single dword from the first
-    // vertex buffer slot.
-    //
-    // This is intentionally minimal: the placeholder prepass still emits a fixed fullscreen-ish
-    // triangle, but the load ensures that IA buffers can be bound as storage and accessed.
-    let base: u32 = aero_vp_ia.slots[0].base_offset_bytes
-        + aero_vp_ia.first_vertex * aero_vp_ia.slots[0].stride_bytes;
-    let _word: u32 = aero_vp_load_u32(0u, base);
+    let z = depth_params.data.x;
 
-    let c = params.color;
+    // Default placeholder color:
+    // - primitive 0: `params.color` (red in tests)
+    // - primitive 1+: green, to make primitive_id-dependent output easy to validate
+    var c = params.color;
+    if (primitive_id != 0u) {
+        c = vec4<f32>(0.0, 1.0, 0.0, 1.0);
+    }
 
-    // Clockwise full-screen-ish triangle (matches default `FrontFace::Cw` + back-face culling).
-    out_vertices[0].pos = vec4<f32>(-1.0, -1.0, 0.0, 1.0);
-    out_vertices[1].pos = vec4<f32>(-1.0, 3.0, 0.0, 1.0);
-    out_vertices[2].pos = vec4<f32>(3.0, -1.0, 0.0, 1.0);
+    if (primitive_count == 1u) {
+        // Clockwise full-screen-ish triangle (matches default `FrontFace::Cw` + back-face culling).
+        out_vertices[0].pos = vec4<f32>(-1.0, -1.0, z, 1.0);
+        out_vertices[1].pos = vec4<f32>(-1.0, 3.0, z, 1.0);
+        out_vertices[2].pos = vec4<f32>(3.0, -1.0, z, 1.0);
 
-    out_vertices[0].o1 = c;
-    out_vertices[1].o1 = c;
-    out_vertices[2].o1 = c;
+        out_vertices[0].o1 = c;
+        out_vertices[1].o1 = c;
+        out_vertices[2].o1 = c;
 
-    // Indices for indexed draws.
-    out_indices[0] = 0u;
-    out_indices[1] = 1u;
-    out_indices[2] = 2u;
+        // Indices for indexed draws.
+        out_indices[0] = 0u;
+        out_indices[1] = 1u;
+        out_indices[2] = 2u;
+    } else {
+        // Side-by-side triangles (used for primitive-id tests).
+        let base: u32 = primitive_id * 3u;
 
-    // Placeholder counter (for eventual GS-style append/emit emulation).
-    out_counter[0] = 3u;
+        var x0: f32 = -2.0;
+        var x1: f32 = -2.0;
+        if (primitive_id == 0u) {
+            x0 = -1.0;
+            x1 = 0.0;
+        } else if (primitive_id == 1u) {
+            x0 = 0.0;
+            x1 = 3.0;
+        }
+
+        out_vertices[base + 0u].pos = vec4<f32>(x0, -1.0, z, 1.0);
+        out_vertices[base + 1u].pos = vec4<f32>(x0, 3.0, z, 1.0);
+        out_vertices[base + 2u].pos = vec4<f32>(x1, -1.0, z, 1.0);
+
+        out_vertices[base + 0u].o1 = c;
+        out_vertices[base + 1u].o1 = c;
+        out_vertices[base + 2u].o1 = c;
+
+        out_indices[base + 0u] = base + 0u;
+        out_indices[base + 1u] = base + 1u;
+        out_indices[base + 2u] = base + 2u;
+    }
 
     // Write 5 u32s so the same buffer works for both:
     // - draw_indirect:           vertex_count, instance_count, first_vertex, first_instance
     // - draw_indexed_indirect:   index_count, instance_count, first_index, base_vertex, first_instance
-    out_indirect[0] = 3u;
-    out_indirect[1] = 1u;
-    out_indirect[2] = 0u;
-    out_indirect[3] = 0u;
-    out_indirect[4] = 0u;
+    //
+    // Only the first GS instance writes indirect args (so future GS instancing does not race).
+    if (primitive_id == 0u && gs_instance_id == 0u) {
+        // Exercise the vertex pulling bind group by reading a single dword from the first vertex
+        // buffer slot. This is intentionally minimal: the placeholder prepass output stays the same,
+        // but the load ensures that IA buffers can be bound as storage and accessed.
+        let vb_base: u32 = aero_vp_ia.slots[0].base_offset_bytes
+            + aero_vp_ia.first_vertex * aero_vp_ia.slots[0].stride_bytes;
+        let _word: u32 = aero_vp_load_u32(0u, vb_base);
+
+        let count: u32 = primitive_count * 3u;
+        // Placeholder counter (for eventual GS-style append/emit emulation).
+        out_counter[0] = count;
+        out_indirect[0] = count;
+        out_indirect[1] = params.counts.y;
+        out_indirect[2] = 0u;
+        out_indirect[3] = 0u;
+        out_indirect[4] = 0u;
+    }
 }
 "#;
 
