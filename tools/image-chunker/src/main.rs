@@ -4802,6 +4802,39 @@ mod tests {
     }
 
     #[test]
+    fn validate_latest_v1_allows_pointing_at_different_version() -> Result<()> {
+        // This corresponds to verifying an older versioned manifest while `latest.json` has moved
+        // on to a newer version. That should be valid as long as latest.json is internally
+        // consistent.
+        let manifest = ManifestV1 {
+            schema: MANIFEST_SCHEMA.to_string(),
+            image_id: "demo".to_string(),
+            version: "sha256-old".to_string(),
+            mime_type: CHUNK_MIME_TYPE.to_string(),
+            total_size: SECTOR_SIZE as u64,
+            chunk_size: SECTOR_SIZE as u64,
+            chunk_count: 1,
+            chunk_index_width: CHUNK_INDEX_WIDTH as u32,
+            chunks: None,
+        };
+        let image_root_prefix = "images/demo/";
+        let verified_manifest_key = "images/demo/sha256-old/manifest.json";
+        let latest = LatestV1 {
+            schema: LATEST_SCHEMA.to_string(),
+            image_id: manifest.image_id.clone(),
+            version: "sha256-new".to_string(),
+            manifest_key: "images/demo/sha256-new/manifest.json".to_string(),
+        };
+        validate_latest_v1(
+            &latest,
+            image_root_prefix,
+            verified_manifest_key,
+            &manifest,
+        )?;
+        Ok(())
+    }
+
+    #[test]
     fn missing_chunk_is_non_retryable_even_with_context_wrapping() {
         let err = anyhow!("object not found (404)");
         let err = Err::<(), _>(err)
@@ -4838,6 +4871,53 @@ mod tests {
             "expected sha256 mismatch to be non-retryable; error chain was: {}",
             error_chain_summary(&err)
         );
+    }
+
+    #[test]
+    fn http_404_is_non_retryable() -> Result<()> {
+        let url: reqwest::Url = "http://127.0.0.1/manifest.json".parse()?;
+        let err = anyhow!(HttpStatusFailure {
+            url,
+            status: reqwest::StatusCode::NOT_FOUND,
+        })
+        .context("GET http://127.0.0.1/manifest.json");
+        assert!(!is_retryable_http_error(&err));
+        Ok(())
+    }
+
+    #[test]
+    fn http_500_is_retryable() -> Result<()> {
+        let url: reqwest::Url = "http://127.0.0.1/manifest.json".parse()?;
+        let err = anyhow!(HttpStatusFailure {
+            url,
+            status: reqwest::StatusCode::INTERNAL_SERVER_ERROR,
+        })
+        .context("GET http://127.0.0.1/manifest.json");
+        assert!(is_retryable_http_error(&err));
+        Ok(())
+    }
+
+    #[test]
+    fn http_429_is_retryable() -> Result<()> {
+        let url: reqwest::Url = "http://127.0.0.1/manifest.json".parse()?;
+        let err = anyhow!(HttpStatusFailure {
+            url,
+            status: reqwest::StatusCode::TOO_MANY_REQUESTS,
+        })
+        .context("GET http://127.0.0.1/manifest.json");
+        assert!(is_retryable_http_error(&err));
+        Ok(())
+    }
+
+    #[test]
+    fn http_size_mismatch_is_non_retryable_even_when_wrapped() {
+        let err = anyhow!(
+            "size mismatch for chunk 0 (http://127.0.0.1/chunks/00000000.bin): expected 512 bytes, got 511 bytes"
+        );
+        let err = Err::<(), _>(err)
+            .context("chunk verify failed")
+            .unwrap_err();
+        assert!(!is_retryable_http_error(&err));
     }
 
     #[test]
@@ -4906,6 +4986,24 @@ mod tests {
         let mut rng = fastrand::Rng::with_seed(1);
         let indices = select_sampled_chunk_indices(chunk_count, sample, &mut rng)?;
         assert_eq!(indices, vec![chunk_count - 1]);
+        Ok(())
+    }
+
+    #[test]
+    fn sampled_chunk_indices_handle_empty_and_singleton_images() -> Result<()> {
+        let mut rng = fastrand::Rng::with_seed(1);
+        assert_eq!(select_sampled_chunk_indices(0, 5, &mut rng)?, Vec::<u64>::new());
+        assert_eq!(select_sampled_chunk_indices(1, 5, &mut rng)?, vec![0]);
+        Ok(())
+    }
+
+    #[test]
+    fn sampled_chunk_indices_return_all_when_sample_covers_population() -> Result<()> {
+        let chunk_count = 10;
+        let sample = 100;
+        let mut rng = fastrand::Rng::with_seed(1);
+        let indices = select_sampled_chunk_indices(chunk_count, sample, &mut rng)?;
+        assert_eq!(indices, (0..chunk_count).collect::<Vec<_>>());
         Ok(())
     }
 
