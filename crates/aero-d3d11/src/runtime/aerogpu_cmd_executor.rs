@@ -12898,6 +12898,12 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
 
 fn map_buffer_usage_flags(flags: u32, supports_compute: bool) -> wgpu::BufferUsages {
     let mut usage = wgpu::BufferUsages::COPY_DST;
+    // `STORAGE` usage is required both for:
+    // - guest buffers explicitly used as SRV/UAV storage buffers, and
+    // - internal compute-based emulation paths (vertex/index pulling).
+    //
+    // Some downlevel backends (notably WebGL2) do not support compute or storage buffers at all, so
+    // gate STORAGE usage on `supports_compute` to avoid wgpu validation panics.
     let mut needs_storage = flags & AEROGPU_RESOURCE_USAGE_STORAGE != 0;
     if flags & AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER != 0 {
         usage |= wgpu::BufferUsages::VERTEX;
@@ -15181,6 +15187,52 @@ mod tests {
                     "AEROGPU_RESOURCE_USAGE_STORAGE must be ignored when compute/storage buffers are unsupported"
                 );
             }
+        });
+    }
+
+    #[test]
+    fn storage_usage_flag_is_ignored_when_supports_compute_forced_off() {
+        pollster::block_on(async {
+            let exec = match AerogpuD3d11Executor::new_for_tests().await {
+                Ok(exec) => exec,
+                Err(e) => {
+                    skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                    return;
+                }
+            };
+
+            // Force compute off even if the underlying adapter supports it, so the test validates
+            // the usage-flag mapping deterministically.
+            let AerogpuD3d11Executor {
+                device,
+                queue,
+                backend,
+                ..
+            } = exec;
+            let mut exec = AerogpuD3d11Executor::new_with_supports_compute(device, queue, backend, false);
+
+            const BUF: u32 = 1;
+            let allocs = AllocTable::new(None).unwrap();
+
+            let mut cmd_bytes = Vec::new();
+            cmd_bytes.extend_from_slice(&(AerogpuCmdOpcode::CreateBuffer as u32).to_le_bytes());
+            cmd_bytes.extend_from_slice(&40u32.to_le_bytes()); // size_bytes
+            cmd_bytes.extend_from_slice(&BUF.to_le_bytes());
+            cmd_bytes.extend_from_slice(&AEROGPU_RESOURCE_USAGE_STORAGE.to_le_bytes());
+            cmd_bytes.extend_from_slice(&16u64.to_le_bytes()); // size_bytes
+            cmd_bytes.extend_from_slice(&0u32.to_le_bytes()); // backing_alloc_id
+            cmd_bytes.extend_from_slice(&0u32.to_le_bytes()); // backing_offset_bytes
+            cmd_bytes.extend_from_slice(&0u64.to_le_bytes()); // reserved0
+            assert_eq!(cmd_bytes.len(), 40);
+
+            exec.exec_create_buffer(&cmd_bytes, &allocs)
+                .expect("CREATE_BUFFER should succeed");
+
+            let buf = exec.resources.buffers.get(&BUF).expect("buffer exists");
+            assert!(
+                !buf.usage.contains(wgpu::BufferUsages::STORAGE),
+                "AEROGPU_RESOURCE_USAGE_STORAGE must be ignored when supports_compute=false"
+            );
         });
     }
 
