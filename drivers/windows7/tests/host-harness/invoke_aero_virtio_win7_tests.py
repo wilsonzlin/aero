@@ -1409,6 +1409,7 @@ def _qemu_device_list_help_text(qemu_system: str) -> str:
     return proc.stdout or ""
 
 
+@lru_cache(maxsize=None)
 def _qemu_has_device(qemu_system: str, device_name: str) -> bool:
     try:
         _qemu_device_help_text(qemu_system, device_name)
