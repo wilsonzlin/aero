@@ -557,7 +557,9 @@ export type MachineHandle = {
     /**
      * Virtio-input injection helpers.
      *
-     * Requires constructing the machine with `enableVirtioInput=true` (see `Machine.new_with_input_backends`).
+     * Requires constructing the machine with virtio-input enabled (e.g.
+     * `Machine.new_with_input_backends(..., enableVirtioInput=true, ...)` or
+     * `Machine.new_with_options(..., { enable_virtio_input: true })`).
      *
      * These are safe to call even when virtio-input is disabled; they will no-op.
      *
@@ -580,8 +582,10 @@ export type MachineHandle = {
     /**
      * Synthetic USB HID injection helpers (devices behind the external hub).
      *
-     * Requires constructing the machine with `enableSyntheticUsbHid=true`
-     * (see `Machine.new_with_input_backends`).
+     * Synthetic USB HID devices are enabled by default for `new Machine(ramSizeBytes)`.
+     * To explicitly enable/disable them, use:
+     * - `Machine.new_with_input_backends(..., enableSyntheticUsbHid=...)`, or
+     * - `Machine.new_with_options(..., { enable_synthetic_usb_hid: ... })`.
      *
      * Optional for older WASM builds.
      */
@@ -607,7 +611,7 @@ export type MachineHandle = {
     inject_usb_hid_mouse_buttons?(mask: number): void;
     /** Set vertical mouse wheel delta (`delta > 0` = wheel up). */
     inject_usb_hid_mouse_wheel?(delta: number): void;
-    /** Set horizontal mouse wheel delta (`delta > 0` = wheel right). */
+    /** Set horizontal mouse wheel delta (`delta > 0` = wheel right / AC Pan). */
     inject_usb_hid_mouse_hwheel?(delta: number): void;
     /**
      * Inject both vertical and horizontal wheel deltas in a single USB HID report.
