@@ -128,28 +128,17 @@ The driver uses virtio-input config space to validate and classify the device:
 - `ID_NAME` must be exactly one of:
   - `Aero Virtio Keyboard`
   - `Aero Virtio Mouse`
-  - `Aero Virtio Tablet`
-  - (Compat mode) prefixes like `QEMU Virtio Keyboard*` / `QEMU Virtio Mouse*` / `QEMU Virtio Tablet*` (see below)
 - If the PCI **Subsystem Device ID** indicates a specific kind, it must match `ID_NAME`:
   - `SUBSYS_00101AF4` (`0x0010`, keyboard) → `ID_NAME` must be `Aero Virtio Keyboard`
   - `SUBSYS_00111AF4` (`0x0011`, mouse) → `ID_NAME` must be `Aero Virtio Mouse`
 - `EV_BITS` must be implemented and must advertise the minimum required event types/codes.
   - If `EV_BITS` is missing or empty, the driver will refuse to start.
-  - Tablet devices (`EV_ABS`) additionally require:
-    - `ABS_X` + `ABS_Y` in `EV_BITS(EV_ABS)`
-    - `ABS_INFO` ranges for `ABS_X` + `ABS_Y` (used to scale into the HID logical range)
 
 If you are iterating on a device model, fixing `ID_NAME` and implementing `EV_BITS` is usually the fastest path to getting past Code 10.
 
-### QEMU/non-Aero virtio-input devices: `CompatDeviceKind`
+### QEMU/non-Aero virtio-input devices
 
-Stock QEMU virtio-input devices typically report `ID_NAME` strings like `QEMU Virtio Keyboard`, which do not match the strict Aero contract strings above.
-To use these devices for development, enable compatibility mode on the device instance:
-
-- `HKLM\\SYSTEM\\CurrentControlSet\\Enum\\<device instance>\\Device Parameters\\CompatDeviceKind = 1` (DWORD)
-
-Compat mode relaxes device-kind identification (keyboard vs mouse vs tablet) while keeping the underlying Aero virtio-pci contract checks intact.
-See [`docs/virtio-input-notes.md`](./virtio-input-notes.md) for details and the exact classification rules.
+Stock QEMU virtio-input devices typically report `ID_NAME` strings like `QEMU Virtio Keyboard`, which do not match the strict Aero contract strings above. In this case, the driver will refuse to start (Code 10 / `STATUS_NOT_SUPPORTED`).
 
 ## `hidtest` can’t open the device
 
