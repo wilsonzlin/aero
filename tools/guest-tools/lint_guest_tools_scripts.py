@@ -146,6 +146,29 @@ def _strip_batch_comment_lines(text: str) -> str:
     return "\n".join(out_lines)
 
 
+def _strip_powershell_comment_lines(text: str) -> str:
+    """
+    Best-effort removal of PowerShell comment-only lines and block comments.
+
+    This is deliberately lightweight (PowerShell parsing is complex), but is good
+    enough for our linter invariants: prevent commented-out critical logic from
+    satisfying checks via substring/regex matches.
+    """
+
+    # Remove block comments: <# ... #>
+    text = re.sub(r"(?is)<#.*?#>", "", text)
+
+    out_lines: list[str] = []
+    for line in text.splitlines():
+        stripped = line.lstrip()
+        if not stripped:
+            continue
+        if stripped.startswith("#"):
+            continue
+        out_lines.append(line)
+    return "\n".join(out_lines)
+
+
 def _has_install_certs_policy_gate(text: str) -> bool:
     """
     Guardrail for production/none certificate policy.
@@ -315,9 +338,9 @@ def lint_text(*, path: Path, text: str, invariants: Sequence[Invariant]) -> List
 def lint_files(*, setup_cmd: Path, uninstall_cmd: Path, verify_ps1: Path) -> List[str]:
     errors: List[str] = []
 
-    setup_text = _read_text(setup_cmd)
-    uninstall_text = _read_text(uninstall_cmd)
-    verify_text = _read_text(verify_ps1)
+    setup_text = _strip_batch_comment_lines(_read_text(setup_cmd))
+    uninstall_text = _strip_batch_comment_lines(_read_text(uninstall_cmd))
+    verify_text = _strip_powershell_comment_lines(_read_text(verify_ps1))
 
     setup_invariants = [
         Invariant(
