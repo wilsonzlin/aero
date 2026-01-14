@@ -791,8 +791,9 @@ This deliberately ignores per-edge variation and crack-free edge rules (P2d work
 deterministic and implementable with minimal fixed-function emulation.
 
 Implementation note: in the compute-emulation pipeline, the HS patch-constant pass writes the raw
-tess factors into `tess_patch_constants[patch_id]`. The tessellator/DS pass then derives `T` from
-those stored factors.
+tess factors into `tess_patch_constants[patch_instance_id]` (where
+`patch_instance_id = instance_id * patch_count + patch_id`). The tessellator/DS pass then derives
+`T` from those stored factors.
 
 For a tri-domain patch tessellated at level `T`:
 
@@ -851,6 +852,14 @@ Total sizes for a draw (pre-GS) are:
 
 - `V_total = patch_count * instance_count * V_patch`
 - `I_total = patch_count * instance_count * I_patch`
+
+Final output topology (when no GS is bound):
+
+- tri/quad domains → triangle list (`wgpu::PrimitiveTopology::TriangleList`)
+- isoline domain → line list (`wgpu::PrimitiveTopology::LineList`)
+
+For P2a tri-domain, the render pass therefore uses `drawIndexedIndirect` with triangle-list
+topology.
 
 The runtime may:
 
@@ -1148,10 +1157,19 @@ with an implementation-defined workgroup size chosen by the translator/runtime.
     - Trigger: `hs != 0 || ds != 0 || topology is patchlist`.
     - HS patch-constant pass (per patch):
       - Reads control points from `vs_out`.
-      - Computes tessellation level(s) and writes them to `tess_patch_state[patch_id]`:
-        - P2a tri-domain: `tess_level_u = T`, `tess_level_v = 0`
-      - Writes tess factors to `tess_patch_constants[patch_id]` (`SV_TessFactor` /
+      - Let `patch_instance_id = instance_id * patch_count + patch_id` (see `tess_patch_state`
+        indexing rule).
+      - Writes tess factors to `tess_patch_constants[patch_instance_id]` (`SV_TessFactor` /
         `SV_InsideTessFactor`).
+      - Computes tessellation level(s) and stores them in `tess_patch_state[patch_instance_id]`:
+        - P2a tri-domain: `tess_level_u = T`, `tess_level_v = 0`
+      - Computes per-patch output sizes and allocates output ranges (recommended; uses atomics):
+        - `vertex_count = V_patch(T)`, `index_count = I_patch(T)` (see tess sizing formulas)
+        - `base_vertex = atomicAdd(&counters.out_vertex_count, vertex_count)`
+        - `base_index  = atomicAdd(&counters.out_index_count, index_count)`
+        - Store `{base_vertex, vertex_count, base_index, index_count}` into
+          `tess_patch_state[patch_instance_id]`
+        - If the ranges exceed `params.out_max_*`, set `counters.overflow = 1` and do not write.
       - Writes any additional patch constants needed by DS to scratch (per patch; P2 follow-up).
       - Dispatch mapping (recommended):
         - `global_invocation_id.x` = `patch_id` (`0..patch_count`)
@@ -1167,12 +1185,17 @@ with an implementation-defined workgroup size chosen by the translator/runtime.
       - Generates tessellated domain points and evaluates DS.
       - For P2a tri-domain, the doc specifies a concrete uniform grid enumeration and triangle-list
         index generation (see “Tri-domain grid enumeration” above).
-      - Uses `tess_patch_state` to coordinate per-patch output ranges (`base_vertex/base_index`) when
-        emitting into the shared `tess_out_*` buffers.
+      - Uses `tess_patch_state[patch_instance_id]` to coordinate per-patch output ranges
+        (`base_vertex/base_index`) when emitting into the shared `tess_out_*` buffers.
       - DS consumes the HS patch-constant outputs (at minimum tess factors) via
-        `tess_patch_constants[patch_id]`.
-      - Writes `tess_out_vertices` + `tess_out_indices`, updates counters, then writes final
-        `indirect_args`.
+        `tess_patch_constants[patch_instance_id]`.
+      - Dispatch mapping (recommended; conservative bounds):
+        - `global_invocation_id.x` = `patch_id`
+        - `global_invocation_id.y` = `instance_id`
+        - `global_invocation_id.z` = `domain_vertex_id` (`0..V_patch_max`)
+        - Early-return if `domain_vertex_id >= tess_patch_state[patch_instance_id].vertex_count`.
+      - Writes `tess_out_vertices` + `tess_out_indices` (index generation may be a separate pass),
+        then writes final `indirect_args` via the standard finalize step.
 
 3. **GS (optional): geometry shader emulation**
     - Trigger: `gs != 0` or adjacency topology.
@@ -1433,6 +1456,11 @@ struct TessPatchState {
 
 Entry count: `patch_count * instance_count` (one patch-state entry per patch per instance).
 
+Indexing rule (normative):
+
+- `patch_instance_id = instance_id * patch_count + patch_id`
+- `tess_patch_state[patch_instance_id]` corresponds to `(patch_id, instance_id)`.
+
 **`tess_patch_constants` layout (concrete; `@binding(274)`)**
 
 The HS patch-constant function produces tessellation factors and (optionally) other patch-constant
@@ -1472,6 +1500,11 @@ HS writes `f32` tess factors by storing their bit patterns:
 - `inside_factors_bits[i] = bitcast<u32>(inside_factor_i)`
 
 Unused lanes MUST be written as 0 so tools and debug readbacks are deterministic.
+
+Indexing rule (same as `tess_patch_state`):
+
+- `patch_instance_id = instance_id * patch_count + patch_id`
+- `tess_patch_constants[patch_instance_id]` corresponds to `(patch_id, instance_id)`.
 
 **Initialization requirements**
 
