@@ -241,9 +241,7 @@ fn aerogpu_snapshot_preserves_deferred_backend_completion_queued_while_bme_disab
     };
 
     let mut m = Machine::new(cfg.clone()).unwrap();
-    let bdf = m
-        .aerogpu_bdf()
-        .expect("expected AeroGPU device present");
+    let bdf = m.aerogpu_bdf().expect("expected AeroGPU device present");
     enable_pci_command_bits(&mut m, bdf, (1 << 1) | (1 << 2)); // COMMAND.MEM + COMMAND.BME
     let bar0 = m
         .pci_bar_base(bdf, profile::AEROGPU_BAR0_INDEX)

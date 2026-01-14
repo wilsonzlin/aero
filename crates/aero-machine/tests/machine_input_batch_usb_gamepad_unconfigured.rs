@@ -64,4 +64,3 @@ fn inject_input_batch_tracks_usb_gamepad_state_before_configuration() {
         "expected held gamepad report to be visible immediately after SET_CONFIGURATION"
     );
 }
-

@@ -1,7 +1,11 @@
 use aero_d3d9::software::{Texture1D, Texture3D, Vec4};
 use aero_d3d9::state::{AddressMode, FilterMode, SamplerState};
 
-fn sampler_point(address_u: AddressMode, address_v: AddressMode, address_w: AddressMode) -> SamplerState {
+fn sampler_point(
+    address_u: AddressMode,
+    address_v: AddressMode,
+    address_w: AddressMode,
+) -> SamplerState {
     SamplerState {
         min_filter: FilterMode::Point,
         mag_filter: FilterMode::Point,
@@ -29,9 +33,7 @@ fn sampler_linear(
 fn texture1d_addressing_clamp_vs_wrap() {
     let tex = Texture1D {
         width: 4,
-        texels: (0..4)
-            .map(|i| Vec4::new(i as f32, 0.0, 0.0, 1.0))
-            .collect(),
+        texels: (0..4).map(|i| Vec4::new(i as f32, 0.0, 0.0, 1.0)).collect(),
     };
 
     let clamp = sampler_point(AddressMode::Clamp, AddressMode::Clamp, AddressMode::Clamp);
@@ -50,9 +52,7 @@ fn texture1d_addressing_clamp_vs_wrap() {
 fn texture1d_point_vs_linear_filtering() {
     let tex = Texture1D {
         width: 4,
-        texels: (0..4)
-            .map(|i| Vec4::new(i as f32, 0.0, 0.0, 1.0))
-            .collect(),
+        texels: (0..4).map(|i| Vec4::new(i as f32, 0.0, 0.0, 1.0)).collect(),
     };
 
     let point = sampler_point(AddressMode::Clamp, AddressMode::Clamp, AddressMode::Clamp);
@@ -115,4 +115,3 @@ fn texture3d_point_vs_linear_filtering() {
     assert_eq!(tex.sample(point, (0.5, 0.5, 0.5)).x, 7.0);
     assert_eq!(tex.sample(linear, (0.5, 0.5, 0.5)).x, 3.5);
 }
-

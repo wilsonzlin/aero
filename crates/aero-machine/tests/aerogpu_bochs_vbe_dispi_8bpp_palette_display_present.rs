@@ -50,4 +50,3 @@ fn aerogpu_bochs_vbe_dispi_8bpp_display_present_uses_dac_palette() {
     // RGBA8888 little-endian u32: [R, G, B, A].
     assert_eq!(m.display_framebuffer()[0], 0xFF00_00FF);
 }
-

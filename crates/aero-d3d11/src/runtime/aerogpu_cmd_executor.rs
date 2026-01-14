@@ -16865,19 +16865,18 @@ fn ds_eval(patch_id: u32, domain: vec3<f32>, _local_vertex: u32) -> AeroDsOut {
             .get(24..data_end)
             .ok_or_else(|| anyhow!("SET_SHADER_CONSTANTS_F: missing payload data"))?;
 
-        let stage_ex = if self.cmd_stream_abi_minor < AEROGPU_STAGE_EX_MIN_ABI_MINOR && stage_raw == 2
-        {
-            0
-        } else {
-            stage_ex
-        };
-        let stage = ShaderStage::from_aerogpu_u32_with_stage_ex(stage_raw, stage_ex).ok_or_else(
-            || {
+        let stage_ex =
+            if self.cmd_stream_abi_minor < AEROGPU_STAGE_EX_MIN_ABI_MINOR && stage_raw == 2 {
+                0
+            } else {
+                stage_ex
+            };
+        let stage =
+            ShaderStage::from_aerogpu_u32_with_stage_ex(stage_raw, stage_ex).ok_or_else(|| {
                 anyhow!(
                     "SET_SHADER_CONSTANTS_F: unknown shader stage {stage_raw} (stage_ex={stage_ex})"
                 )
-            },
-        )?;
+            })?;
         let dst = self.legacy_constants.get(&stage).ok_or_else(|| {
             anyhow!("SET_SHADER_CONSTANTS_F: missing legacy constants buffer for stage {stage}")
         })?;

@@ -408,7 +408,10 @@ async fn d3d9_executor_uses_persistent_shader_cache_for_legacy_fallback_shaders(
 
     assert_eq!(get_calls, 2, "expected one miss + one persistent hit");
     assert_eq!(put_calls, 1, "expected only the first run to persist");
-    assert_eq!(delete_calls, 0, "expected no invalidation on persistent hit");
+    assert_eq!(
+        delete_calls, 0,
+        "expected no invalidation on persistent hit"
+    );
 }
 
 #[wasm_bindgen_test(async)]

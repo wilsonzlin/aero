@@ -1,12 +1,12 @@
 mod common;
 
 use aero_d3d11::runtime::aerogpu_cmd_executor::AerogpuD3d11Executor;
+use aero_d3d11::sm4::decode_program;
 use aero_d3d11::sm4::opcode::{
     OPCODE_CUT, OPCODE_DCL_GS_INPUT_PRIMITIVE, OPCODE_DCL_GS_MAX_OUTPUT_VERTEX_COUNT,
     OPCODE_DCL_GS_OUTPUT_TOPOLOGY, OPCODE_DCL_OUTPUT, OPCODE_DCL_RESOURCE, OPCODE_DCL_SAMPLER,
     OPCODE_EMIT, OPCODE_LEN_SHIFT, OPCODE_MOV, OPCODE_RET, OPCODE_SAMPLE_L,
 };
-use aero_d3d11::sm4::decode_program;
 use aero_d3d11::{
     DxbcFile, GsInputPrimitive, GsOutputTopology, ShaderStage as Sm4ShaderStage, Sm4Decl, Sm4Inst,
     Sm4Program,
@@ -158,15 +158,12 @@ fn assert_gs_dxbc_decodes_and_uses_t0_s0(dxbc_bytes: &[u8]) {
         "GS should declare point input primitive"
     );
     assert!(
-        module
-            .decls
-            .iter()
-            .any(|d| matches!(
-                d,
-                Sm4Decl::GsOutputTopology {
-                    topology: GsOutputTopology::TriangleStrip(_)
-                }
-            )),
+        module.decls.iter().any(|d| matches!(
+            d,
+            Sm4Decl::GsOutputTopology {
+                topology: GsOutputTopology::TriangleStrip(_)
+            }
+        )),
         "GS should declare triangle strip output topology"
     );
     assert!(
@@ -191,18 +188,24 @@ fn assert_gs_dxbc_decodes_and_uses_t0_s0(dxbc_bytes: &[u8]) {
         "GS should declare Sampler s0"
     );
     assert!(
-        module.instructions.iter().any(|inst| matches!(
-            inst,
-            Sm4Inst::Sample { .. } | Sm4Inst::SampleL { .. }
-        )),
+        module
+            .instructions
+            .iter()
+            .any(|inst| matches!(inst, Sm4Inst::Sample { .. } | Sm4Inst::SampleL { .. })),
         "GS should contain a sample/sample_l instruction"
     );
     assert!(
-        module.instructions.iter().any(|inst| matches!(inst, Sm4Inst::Emit { .. })),
+        module
+            .instructions
+            .iter()
+            .any(|inst| matches!(inst, Sm4Inst::Emit { .. })),
         "GS should emit vertices"
     );
     assert!(
-        module.instructions.iter().any(|inst| matches!(inst, Sm4Inst::Cut { .. })),
+        module
+            .instructions
+            .iter()
+            .any(|inst| matches!(inst, Sm4Inst::Cut { .. })),
         "GS should contain a cut"
     );
 }
