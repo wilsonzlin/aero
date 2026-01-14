@@ -668,6 +668,20 @@ int main(void) {
   PRINT_OFF("aerogpu_escape_read_gpa_inout", aerogpu_escape_read_gpa_inout, bytes_copied);
   PRINT_OFF("aerogpu_escape_read_gpa_inout", aerogpu_escape_read_gpa_inout, data);
 
+  PRINT_OFF("aerogpu_escape_set_cursor_position_in", aerogpu_escape_set_cursor_position_in, x);
+  PRINT_OFF("aerogpu_escape_set_cursor_position_in", aerogpu_escape_set_cursor_position_in, y);
+  PRINT_OFF("aerogpu_escape_set_cursor_visibility_in", aerogpu_escape_set_cursor_visibility_in, visible);
+  PRINT_OFF("aerogpu_escape_set_cursor_visibility_in", aerogpu_escape_set_cursor_visibility_in, reserved0);
+  PRINT_OFF("aerogpu_escape_set_cursor_shape_in", aerogpu_escape_set_cursor_shape_in, width);
+  PRINT_OFF("aerogpu_escape_set_cursor_shape_in", aerogpu_escape_set_cursor_shape_in, height);
+  PRINT_OFF("aerogpu_escape_set_cursor_shape_in", aerogpu_escape_set_cursor_shape_in, hot_x);
+  PRINT_OFF("aerogpu_escape_set_cursor_shape_in", aerogpu_escape_set_cursor_shape_in, hot_y);
+  PRINT_OFF("aerogpu_escape_set_cursor_shape_in", aerogpu_escape_set_cursor_shape_in, pitch_bytes);
+  PRINT_OFF("aerogpu_escape_set_cursor_shape_in", aerogpu_escape_set_cursor_shape_in, format);
+  PRINT_OFF("aerogpu_escape_set_cursor_shape_in", aerogpu_escape_set_cursor_shape_in, reserved0);
+  PRINT_OFF("aerogpu_escape_set_cursor_shape_in", aerogpu_escape_set_cursor_shape_in, reserved1);
+  PRINT_OFF("aerogpu_escape_set_cursor_shape_in", aerogpu_escape_set_cursor_shape_in, pixels);
+
   PRINT_OFF("aerogpu_dbgctl_createallocation_desc", aerogpu_dbgctl_createallocation_desc, seq);
   PRINT_OFF("aerogpu_dbgctl_createallocation_desc", aerogpu_dbgctl_createallocation_desc, call_seq);
   PRINT_OFF("aerogpu_dbgctl_createallocation_desc", aerogpu_dbgctl_createallocation_desc, alloc_index);
