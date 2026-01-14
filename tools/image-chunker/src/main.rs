@@ -2889,7 +2889,7 @@ mod tests {
 
         let chunk_size: u64 = 1024;
         let chunk0 = vec![b'a'; chunk_size as usize];
-        let chunk1 = vec![b'b'; 512];
+        let chunk1 = vec![b'b'; SECTOR_SIZE];
         let total_size = (chunk0.len() + chunk1.len()) as u64;
 
         let chunk0_path = dir.path().join(chunk_object_key(0)?);
@@ -2949,7 +2949,7 @@ mod tests {
 
         let chunk_size: u64 = 1024;
         let chunk0 = vec![b'a'; chunk_size as usize];
-        let chunk1 = vec![b'b'; 512];
+        let chunk1 = vec![b'b'; SECTOR_SIZE];
         let total_size = (chunk0.len() + chunk1.len()) as u64;
 
         let chunk0_path = dir.path().join(chunk_object_key(0)?);
