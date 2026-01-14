@@ -197,6 +197,7 @@ After publishing, you can re-download and validate the published artifacts end-t
 - chunk object existence
 - chunk sizes (`Content-Length` and streamed length)
 - optional per-chunk `sha256` (streamed hashing)
+- for chunks without `sha256`, size-only verification is optimized (best-effort) to avoid downloading chunk bodies (via `HEAD`/metadata + `Content-Length` checks)
 - optional `latest.json` pointer (if present under `images/<imageId>/latest.json`)
 - safety guard for absurd manifests: reject `chunkCount` above `--max-chunks` (default: 500,000; matches Aero reference client bounds)
 - fails fast: stops on the first mismatch and reports it (use `--chunk-sample` for quick smoke checks)
@@ -208,6 +209,7 @@ After publishing, you can re-download and validate the published artifacts end-t
 - **HTTP/CDN**: `--manifest-url https://.../manifest.json` (fetches `chunks/*.bin` relative to the manifest URL)
   - Optional repeatable `--header "Name: value"` can be used for auth (cookies, bearer tokens, etc)
   - Chunk and `meta.json` URLs are resolved relative to the manifest URL and preserve the manifest query string (useful for signed URLs)
+  - For chunks without `sha256`, the verifier may send `HEAD` requests to validate `Content-Length` without downloading bodies (it falls back to `GET` if `HEAD` is unsupported/blocked)
   - The verifier sends a browser-like `Accept-Encoding` (e.g. `gzip, deflate, br, zstd`) and requires `Content-Encoding` to be absent/`identity` for compatibility with Aero’s reference clients (i.e. no CDN/object-store compression transforms).
 
 ### Example: verify a versioned prefix
