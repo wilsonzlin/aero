@@ -487,17 +487,17 @@ impl AerogpuCmdRuntime {
         // non-zero stream index with a clear diagnostic.
         //
         // Validate before stage dispatch so the policy is enforced even for GS/HS/DS shaders that
-        // are currently accepted-but-ignored by the WebGPU backend.
+        // are accepted-but-ignored by this runtime.
         validate_sm5_gs_streams(&program)?;
 
         let stage = match program.stage {
             crate::ShaderStage::Vertex => ShaderStage::Vertex,
             crate::ShaderStage::Pixel => ShaderStage::Fragment,
-            // Geometry/hull/domain stages are not supported by the AeroGPU/WebGPU pipeline.
+            // Geometry/hull/domain stages are not supported by this `AerogpuCmdRuntime` render-only
+            // executor yet.
             //
-            // The command stream includes a geometry stage slot for ABI compatibility, but the
-            // stage is ignored by the host today. Accept the create call (so guests can
-            // compile/pass these shaders around) but ignore the resulting shader.
+            // Note: GS emulation via compute exists elsewhere (see `runtime/aerogpu_cmd_executor.rs`),
+            // but it is not wired through this runtime.
             crate::ShaderStage::Geometry
             | crate::ShaderStage::Hull
             | crate::ShaderStage::Domain => {

@@ -397,16 +397,19 @@ impl AerogpuResourceManager {
         // non-zero stream index with a clear diagnostic.
         //
         // Validate before stage dispatch so the policy is enforced even for GS/HS/DS shaders that
-        // are currently accepted-but-ignored by the WebGPU backend.
+        // are accepted-but-ignored by this resource-manager/runtime path.
         validate_sm5_gs_streams(&program)?;
 
         let parsed_stage = match program.stage {
             ShaderStage::Vertex => Some(AerogpuShaderStage::Vertex),
             ShaderStage::Pixel => Some(AerogpuShaderStage::Pixel),
             ShaderStage::Compute => Some(AerogpuShaderStage::Compute),
-            // WebGPU has no geometry/hull/domain shader stage. Some Win7-era D3D11 apps still
-            // create these shaders; accept the create to keep the runtime robust, but ignore the
-            // shader since there is no way to execute it in the current backends.
+            // WebGPU has no *native* geometry/hull/domain shader stage. Some Win7-era D3D11 apps
+            // still create these shaders; accept the create to keep this resource-manager path
+            // robust.
+            //
+            // Note: GS emulation via compute exists elsewhere (see `runtime/aerogpu_cmd_executor.rs`),
+            // but it is not wired through this `AerogpuResourceManager` stack yet.
             ShaderStage::Geometry | ShaderStage::Hull | ShaderStage::Domain => {
                 return Ok(());
             }
