@@ -2,8 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import type { DiskImageMetadata } from "../storage/metadata";
 import { OPFS_DISKS_PATH } from "../storage/metadata";
-import type { SetBootDisksMessage } from "./boot_disks_protocol";
-import { DEFAULT_PRIMARY_HDD_OVERLAY_BLOCK_SIZE_BYTES, machineBootDisksToOpfsSpec } from "./boot_disks_protocol";
+import {
+  DEFAULT_PRIMARY_HDD_OVERLAY_BLOCK_SIZE_BYTES,
+  emptySetBootDisksMessage,
+  machineBootDisksToOpfsSpec,
+  type SetBootDisksMessage,
+} from "./boot_disks_protocol";
 
 describe("runtime/boot_disks_protocol (machineBootDisksToOpfsSpec)", () => {
   it("derives OPFS paths and bootDrive for local OPFS HDD + no CD", () => {
@@ -19,7 +23,7 @@ describe("runtime/boot_disks_protocol (machineBootDisksToOpfsSpec)", () => {
       createdAtMs: 0,
     } satisfies DiskImageMetadata;
 
-    const msg: SetBootDisksMessage = { type: "setBootDisks", mounts: {}, hdd, cd: null };
+    const msg: SetBootDisksMessage = { ...emptySetBootDisksMessage(), hdd, cd: null };
     const spec = machineBootDisksToOpfsSpec(msg);
 
     expect(spec.hdd?.basePath).toBe(`${OPFS_DISKS_PATH}/${hdd.fileName}`);
@@ -42,7 +46,7 @@ describe("runtime/boot_disks_protocol (machineBootDisksToOpfsSpec)", () => {
       createdAtMs: 0,
     } satisfies DiskImageMetadata;
 
-    const msg: SetBootDisksMessage = { type: "setBootDisks", mounts: {}, hdd: null, cd };
+    const msg: SetBootDisksMessage = { ...emptySetBootDisksMessage(), hdd: null, cd };
     const spec = machineBootDisksToOpfsSpec(msg);
 
     expect(spec.hdd).toBeNull();
@@ -74,7 +78,7 @@ describe("runtime/boot_disks_protocol (machineBootDisksToOpfsSpec)", () => {
       },
     } satisfies DiskImageMetadata;
 
-    const msg: SetBootDisksMessage = { type: "setBootDisks", mounts: {}, hdd: remote, cd: null };
+    const msg: SetBootDisksMessage = { ...emptySetBootDisksMessage(), hdd: remote, cd: null };
     expect(() => machineBootDisksToOpfsSpec(msg)).toThrow(/remote disks are not supported/i);
   });
 
@@ -91,7 +95,7 @@ describe("runtime/boot_disks_protocol (machineBootDisksToOpfsSpec)", () => {
       createdAtMs: 0,
     } satisfies DiskImageMetadata;
 
-    const msg: SetBootDisksMessage = { type: "setBootDisks", mounts: {}, hdd, cd: null };
+    const msg: SetBootDisksMessage = { ...emptySetBootDisksMessage(), hdd, cd: null };
     expect(() => machineBootDisksToOpfsSpec(msg)).toThrow(/only OPFS-backed disks are supported/i);
   });
 
@@ -108,7 +112,7 @@ describe("runtime/boot_disks_protocol (machineBootDisksToOpfsSpec)", () => {
       createdAtMs: 0,
     } satisfies DiskImageMetadata;
 
-    const msg: SetBootDisksMessage = { type: "setBootDisks", mounts: {}, hdd, cd: null };
+    const msg: SetBootDisksMessage = { ...emptySetBootDisksMessage(), hdd, cd: null };
     expect(() => machineBootDisksToOpfsSpec(msg)).toThrow(/unsupported format/i);
   });
 
@@ -125,7 +129,7 @@ describe("runtime/boot_disks_protocol (machineBootDisksToOpfsSpec)", () => {
       createdAtMs: 0,
     } satisfies DiskImageMetadata;
 
-    const msg: SetBootDisksMessage = { type: "setBootDisks", mounts: {}, hdd: null, cd };
+    const msg: SetBootDisksMessage = { ...emptySetBootDisksMessage(), hdd: null, cd };
     expect(() => machineBootDisksToOpfsSpec(msg)).toThrow(/expected \"iso\"/i);
   });
 
@@ -143,8 +147,7 @@ describe("runtime/boot_disks_protocol (machineBootDisksToOpfsSpec)", () => {
       remote: { url: "https://example.com/disk.img" },
     } satisfies DiskImageMetadata;
 
-    const msg: SetBootDisksMessage = { type: "setBootDisks", mounts: {}, hdd, cd: null };
+    const msg: SetBootDisksMessage = { ...emptySetBootDisksMessage(), hdd, cd: null };
     expect(() => machineBootDisksToOpfsSpec(msg)).toThrow(/remote-streaming disks are not supported/i);
   });
 });
-
