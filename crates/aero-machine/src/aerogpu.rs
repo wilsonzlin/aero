@@ -2250,7 +2250,17 @@ impl AeroGpuMmioDevice {
                 }
                 if !self.scanout0_enable && new_enable {
                     if let Some(interval_ns) = self.vblank_interval_ns {
-                        self.next_vblank_ns = Some(self.now_ns.saturating_add(interval_ns));
+                        // Anchor the first vblank after the enable transition to the *current*
+                        // deterministic time base. This prevents retroactively "catching up" vblank
+                        // ticks if the shared platform clock has advanced but this device hasn't
+                        // been ticked yet (e.g. a unit test advances `Machine::platform_clock()`
+                        // directly without calling `tick_platform`).
+                        let now_ns = self
+                            .clock
+                            .as_ref()
+                            .map(|clock| clock.now_ns())
+                            .unwrap_or(self.now_ns);
+                        self.next_vblank_ns = Some(now_ns.saturating_add(interval_ns));
                     }
                 }
                 self.scanout0_enable = new_enable;
