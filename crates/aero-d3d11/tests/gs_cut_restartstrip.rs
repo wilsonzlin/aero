@@ -6,7 +6,9 @@ use anyhow::{anyhow, Context, Result};
 const WIDTH: u32 = 64;
 const HEIGHT: u32 = 64;
 
-const GS_CUT_DXBC: &[u8] = include_bytes!("fixtures/gs_cut.dxbc");
+// This fixture is also used by `sm4_geometry_decode.rs` to validate that the SM4 decoder
+// recognizes `emit` + `cut` instructions.
+const GS_CUT_DXBC: &[u8] = include_bytes!("fixtures/gs_emit_cut.dxbc");
 
 fn pixel_rgba8(buf: &[u8], x: u32, y: u32) -> [u8; 4] {
     let idx = ((y * WIDTH + x) * 4) as usize;
@@ -165,21 +167,19 @@ fn gs_cut_restartstrip_resets_triangle_strip_assembly_semantics() -> Result<()> 
         // Ensure our checked-in fixture is at least a valid geometry shader DXBC container and
         // actually contains the `cut` opcode token. This helps catch accidental fixture
         // corruption, even though the test below uses WGSL to emulate the expected behavior.
-        let dxbc = DxbcFile::parse(GS_CUT_DXBC).context("parse gs_cut.dxbc as DXBC")?;
-        let program = Sm4Program::parse_from_dxbc(&dxbc).context("parse gs_cut.dxbc as SM4")?;
+        let dxbc = DxbcFile::parse(GS_CUT_DXBC).context("parse gs_emit_cut.dxbc as DXBC")?;
+        let program = Sm4Program::parse_from_dxbc(&dxbc).context("parse gs_emit_cut.dxbc as SM4")?;
         assert_eq!(
             program.stage,
             ShaderStage::Geometry,
-            "gs_cut.dxbc must be a geometry shader"
+            "gs_emit_cut.dxbc must be a geometry shader"
         );
-        const OPCODE_MASK: u32 = 0x7ff;
-        const OPCODE_CUT: u32 = 0x40;
         assert!(
             program
                 .tokens
                 .iter()
-                .any(|t| (*t & OPCODE_MASK) == OPCODE_CUT),
-            "gs_cut.dxbc must contain a cut opcode (RestartStrip)"
+                .any(|t| (*t & aero_d3d11::sm4::opcode::OPCODE_MASK) == aero_d3d11::sm4::opcode::OPCODE_CUT),
+            "gs_emit_cut.dxbc must contain a cut opcode (RestartStrip)"
         );
 
         let test_name =
@@ -468,4 +468,3 @@ fn fs_main() -> @location(0) vec4<f32> {
         Ok(())
     })
 }
-
