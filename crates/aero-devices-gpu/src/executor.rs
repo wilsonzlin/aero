@@ -2,8 +2,8 @@ use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::collections::btree_map::Entry;
 
 use aero_protocol::aerogpu::aerogpu_cmd::{
-    decode_cmd_hdr_le, decode_cmd_stream_header_le, AerogpuCmdHdr, AerogpuCmdOpcode,
-    AerogpuCmdStreamHeader as ProtocolCmdStreamHeader, AerogpuCmdStreamIter,
+    cmd_stream_has_vsync_present_bytes, decode_cmd_hdr_le, decode_cmd_stream_header_le,
+    AerogpuCmdHdr, AerogpuCmdOpcode, AerogpuCmdStreamHeader as ProtocolCmdStreamHeader,
     AEROGPU_PRESENT_FLAG_VSYNC,
 };
 use memory::MemoryBus;
@@ -522,7 +522,7 @@ impl AeroGpuExecutor {
                         let scan_result = if cmd_stream.is_empty() {
                             cmd_stream_has_vsync_present(mem, desc.cmd_gpa, desc.cmd_size_bytes)
                         } else {
-                            cmd_stream_has_vsync_present_bytes(&cmd_stream)
+                            cmd_stream_has_vsync_present_bytes(&cmd_stream).map_err(|_| ())
                         };
 
                         match scan_result {
@@ -1246,28 +1246,6 @@ fn decode_cmd_stream(
     mem.read_physical(desc.cmd_gpa, &mut cmd_stream);
 
     (Some(header), cmd_stream)
-}
-
-fn cmd_stream_has_vsync_present_bytes(bytes: &[u8]) -> Result<bool, ()> {
-    let iter = AerogpuCmdStreamIter::new(bytes).map_err(|_| ())?;
-    for packet in iter {
-        let packet = packet.map_err(|_| ())?;
-        if matches!(
-            packet.opcode,
-            Some(AerogpuCmdOpcode::Present) | Some(AerogpuCmdOpcode::PresentEx)
-        ) {
-            // flags is always after the scanout_id field.
-            if packet.payload.len() < 8 {
-                return Err(());
-            }
-            let flags = u32::from_le_bytes(packet.payload[4..8].try_into().unwrap());
-            if (flags & AEROGPU_PRESENT_FLAG_VSYNC) != 0 {
-                return Ok(true);
-            }
-        }
-    }
-
-    Ok(false)
 }
 
 fn cmd_stream_has_vsync_present(

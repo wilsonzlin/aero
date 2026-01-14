@@ -1817,6 +1817,39 @@ impl<'a> Iterator for AerogpuCmdStreamIter<'a> {
     }
 }
 
+/// Returns whether the command stream contains a vsync'd PRESENT.
+///
+/// This is used by AeroGPU device models to implement the Win7 timing contract:
+/// a vsync'd present fence must not complete before the *next* vblank edge.
+///
+/// The submit-level hint bit (`AEROGPU_SUBMIT_FLAG_PRESENT`) is not sufficient on its own; device
+/// models must inspect the command stream contents (PRESENT/PRESENT_EX packets with the VSYNC
+/// flag set).
+pub fn cmd_stream_has_vsync_present_bytes(bytes: &[u8]) -> Result<bool, AerogpuCmdDecodeError> {
+    let iter = AerogpuCmdStreamIter::new(bytes)?;
+    for packet in iter {
+        let packet = packet?;
+        if matches!(
+            packet.opcode,
+            Some(AerogpuCmdOpcode::Present) | Some(AerogpuCmdOpcode::PresentEx)
+        ) {
+            // flags is always after the scanout_id field.
+            if packet.payload.len() < 8 {
+                return Err(AerogpuCmdDecodeError::PayloadSizeMismatch {
+                    expected: 8,
+                    found: packet.payload.len(),
+                });
+            }
+            let flags = u32::from_le_bytes(packet.payload[4..8].try_into().unwrap());
+            if (flags & AEROGPU_PRESENT_FLAG_VSYNC) != 0 {
+                return Ok(true);
+            }
+        }
+    }
+
+    Ok(false)
+}
+
 pub struct AerogpuCmdStreamView<'a> {
     pub header: AerogpuCmdStreamHeader,
     pub packets: Vec<AerogpuCmdPacket<'a>>,
