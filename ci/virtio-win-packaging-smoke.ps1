@@ -1149,80 +1149,109 @@ Assert-DevicesCmdVarEquals -DevicesCmdText $utf16DevicesCmd -VarName "AERO_VIRTI
 
 $specDriverNames = Get-SpecDriverNames -SpecPath $GuestToolsSpecPath
 
-# Regression test: if an optional driver exists for only one architecture in the virtio-win
-# source tree (e.g. vioinput x86-only), `make-driver-pack.ps1` must omit it from *both* arches
-# so `aero_packager` never sees a one-arch-only optional driver directory
+# Regression test: upstream virtio-win optional drivers may be present for only one architecture.
+# `make-driver-pack.ps1` must omit any such *partial* optional drivers from *both* arches
+# (best-effort), so `aero_packager` never sees a one-arch-only optional driver directory
 # (require_optional_drivers_on_all_arches=true).
-if ($specDriverNames -contains "vioinput") {
-  Write-Host "Running partial optional-driver normalization smoke test (vioinput x86-only)..."
+Write-Host "Running partial optional-driver normalization smoke test (optional drivers x86-only)..."
 
-  $syntheticPartialRoot = Join-Path $OutRoot "virtio-win-partial-optional"
-  Ensure-EmptyDirectory -Path $syntheticPartialRoot
+$syntheticPartialRoot = Join-Path $OutRoot "virtio-win-partial-optional"
+Ensure-EmptyDirectory -Path $syntheticPartialRoot
 
-  # Root-level license/notice files (best-effort copy). Use lowercase filenames to ensure
-  # packaging is robust on case-sensitive filesystems.
-  "license placeholder" | Out-File -FilePath (Join-Path $syntheticPartialRoot "license.txt") -Encoding ascii
-  "notice placeholder" | Out-File -FilePath (Join-Path $syntheticPartialRoot "notice.txt") -Encoding ascii
-  $fakeVirtioWinVersionPartial = "0.0.0-synthetic-partial-optional"
-  $fakeVirtioWinVersionPartial | Out-File -FilePath (Join-Path $syntheticPartialRoot "VERSION") -Encoding ascii
+# Root-level license/notice files (best-effort copy). Use lowercase filenames to ensure
+# packaging is robust on case-sensitive filesystems.
+"license placeholder" | Out-File -FilePath (Join-Path $syntheticPartialRoot "license.txt") -Encoding ascii
+"notice placeholder" | Out-File -FilePath (Join-Path $syntheticPartialRoot "notice.txt") -Encoding ascii
+$fakeVirtioWinVersionPartial = "0.0.0-synthetic-partial-optional"
+$fakeVirtioWinVersionPartial | Out-File -FilePath (Join-Path $syntheticPartialRoot "VERSION") -Encoding ascii
 
-  # Root-mode provenance: simulate the JSON emitted by tools/virtio-win/extract.py so
-  # make-driver-pack.ps1 can record ISO hash/path even when -VirtioWinRoot is used.
-  $fakeIsoPathPartial = "synthetic-virtio-win-partial.iso"
-  $fakeIsoShaPartial = ("abcdef0123456789" * 4)
-  $fakeIsoVolumeIdPartial = "SYNTH_VIRTIO_PARTIAL"
-  @{
-    schema_version = 1
-    virtio_win_iso = @{
-      path = $fakeIsoPathPartial
-      sha256 = $fakeIsoShaPartial
-      volume_id = $fakeIsoVolumeIdPartial
+# Root-mode provenance: simulate the JSON emitted by tools/virtio-win/extract.py so
+# make-driver-pack.ps1 can record ISO hash/path even when -VirtioWinRoot is used.
+$fakeIsoPathPartial = "synthetic-virtio-win-partial.iso"
+$fakeIsoShaPartial = ("abcdef0123456789" * 4)
+$fakeIsoVolumeIdPartial = "SYNTH_VIRTIO_PARTIAL"
+@{
+  schema_version = 1
+  virtio_win_iso = @{
+    path = $fakeIsoPathPartial
+    sha256 = $fakeIsoShaPartial
+    volume_id = $fakeIsoVolumeIdPartial
+  }
+} | ConvertTo-Json -Depth 4 | Out-File -FilePath (Join-Path $syntheticPartialRoot "virtio-win-provenance.json") -Encoding UTF8
+
+# Required drivers.
+New-SyntheticDriverFiles -VirtioRoot $syntheticPartialRoot -UpstreamDirName "viostor" -InfBaseName "viostor" -OsDirName $osDir -ArchDirName "x86" -HardwareId "PCI\VEN_1AF4&DEV_1042"
+New-SyntheticDriverFiles -VirtioRoot $syntheticPartialRoot -UpstreamDirName "viostor" -InfBaseName "viostor" -OsDirName $osDir -ArchDirName "amd64" -HardwareId "PCI\VEN_1AF4&DEV_1042"
+New-SyntheticDriverFiles -VirtioRoot $syntheticPartialRoot -UpstreamDirName "NetKVM" -InfBaseName "netkvm" -OsDirName $osDir -ArchDirName "x86" -HardwareId "PCI\VEN_1AF4&DEV_1041"
+New-SyntheticDriverFiles -VirtioRoot $syntheticPartialRoot -UpstreamDirName "NetKVM" -InfBaseName "netkvm" -OsDirName $osDir -ArchDirName "amd64" -HardwareId "PCI\VEN_1AF4&DEV_1041"
+
+# Optional drivers: x86-only (partial) -> should be omitted entirely by make-driver-pack.ps1.
+New-SyntheticDriverFiles -VirtioRoot $syntheticPartialRoot -UpstreamDirName "viosnd" -InfBaseName "viosnd" -OsDirName $osDir -ArchDirName "x86" -HardwareId "PCI\VEN_1AF4&DEV_1059"
+New-SyntheticDriverFiles -VirtioRoot $syntheticPartialRoot -UpstreamDirName "vioinput" -InfBaseName "vioinput" -OsDirName $osDir -ArchDirName "x86" -HardwareId "PCI\VEN_1AF4&DEV_1052"
+
+$guestToolsPartialOutDir = Join-Path $OutRoot "guest-tools-partial-optional"
+Ensure-EmptyDirectory -Path $guestToolsPartialOutDir
+$guestToolsPartialLog = Join-Path $logsDir "make-guest-tools-from-virtio-win-partial-optional.log"
+
+$guestToolsFullSpecPath = Join-Path $repoRoot "tools\\packaging\\specs\\win7-virtio-full.json"
+if (-not (Test-Path -LiteralPath $guestToolsFullSpecPath -PathType Leaf)) {
+  throw "Expected packaging spec not found for partial optional-driver smoke test: $guestToolsFullSpecPath"
+}
+
+$guestToolsPartialArgs = @(
+  "-OutDir", $guestToolsPartialOutDir,
+  "-Profile", "full",
+  "-SpecPath", $guestToolsFullSpecPath,
+  "-Version", "0.0.0",
+  "-BuildId", "ci-partial-optional",
+  "-CleanStage",
+  "-VirtioWinRoot", $syntheticPartialRoot
+)
+
+& pwsh -NoProfile -ExecutionPolicy Bypass -File $guestToolsScript @guestToolsPartialArgs *>&1 | Tee-Object -FilePath $guestToolsPartialLog
+if ($LASTEXITCODE -ne 0) {
+  throw "make-guest-tools-from-virtio-win.ps1 failed for partial optional-driver smoke test (exit $LASTEXITCODE). See $guestToolsPartialLog"
+}
+
+$guestToolsPartialZip = Join-Path $guestToolsPartialOutDir "aero-guest-tools.zip"
+if (-not (Test-Path -LiteralPath $guestToolsPartialZip -PathType Leaf)) {
+  throw "Expected Guest Tools ZIP missing for partial optional-driver smoke test: $guestToolsPartialZip"
+}
+
+foreach ($p in @(
+  "drivers/x86/viosnd/viosnd.inf",
+  "drivers/amd64/viosnd/viosnd.inf",
+  "drivers/x86/vioinput/vioinput.inf",
+  "drivers/amd64/vioinput/vioinput.inf"
+)) {
+  Assert-ZipNotContainsEntry -ZipPath $guestToolsPartialZip -EntryPath $p
+}
+
+# Validate the embedded driver-pack manifest reflects the post-normalization result:
+# - optional drivers recorded missing for BOTH arches
+# - not listed as included
+$partialDriverPackManifestText = ReadZipEntryText -ZipPath $guestToolsPartialZip -EntryPath "licenses/virtio-win/driver-pack-manifest.json"
+$partialDriverPackManifest = $partialDriverPackManifestText | ConvertFrom-Json
+if (-not $partialDriverPackManifest.optional_drivers_missing_any) {
+  throw "Expected driver-pack manifest to report missing optional drivers for the partial-optional scenario (optional_drivers_missing_any=false)."
+}
+$partialMissing = @($partialDriverPackManifest.optional_drivers_missing)
+foreach ($want in @("viosnd", "vioinput")) {
+  $entry = $partialMissing | Where-Object { $_.name -and (($_.name).ToLowerInvariant() -eq $want) } | Select-Object -First 1
+  if (-not $entry) {
+    throw "Expected driver-pack manifest to report missing optional driver '$want' for the partial-optional scenario."
+  }
+  $targets = @($entry.missing_targets | ForEach-Object { $_.ToString().ToLowerInvariant() })
+  foreach ($t in @("win7-x86", "win7-amd64")) {
+    if (-not ($targets -contains $t)) {
+      throw "Expected driver-pack manifest optional_drivers_missing entry for '$want' to include missing target '$t'. Got: $($targets -join ', ')"
     }
-  } | ConvertTo-Json -Depth 4 | Out-File -FilePath (Join-Path $syntheticPartialRoot "virtio-win-provenance.json") -Encoding UTF8
-
-  # Required drivers.
-  New-SyntheticDriverFiles -VirtioRoot $syntheticPartialRoot -UpstreamDirName "viostor" -InfBaseName "viostor" -OsDirName $osDir -ArchDirName "x86" -HardwareId "PCI\VEN_1AF4&DEV_1042"
-  New-SyntheticDriverFiles -VirtioRoot $syntheticPartialRoot -UpstreamDirName "viostor" -InfBaseName "viostor" -OsDirName $osDir -ArchDirName "amd64" -HardwareId "PCI\VEN_1AF4&DEV_1042"
-  New-SyntheticDriverFiles -VirtioRoot $syntheticPartialRoot -UpstreamDirName "NetKVM" -InfBaseName "netkvm" -OsDirName $osDir -ArchDirName "x86" -HardwareId "PCI\VEN_1AF4&DEV_1041"
-  New-SyntheticDriverFiles -VirtioRoot $syntheticPartialRoot -UpstreamDirName "NetKVM" -InfBaseName "netkvm" -OsDirName $osDir -ArchDirName "amd64" -HardwareId "PCI\VEN_1AF4&DEV_1041"
-
-  # Optional drivers:
-  # - viosnd present for both arches
-  # - vioinput present for x86 only (partial) -> should be omitted entirely by make-driver-pack.ps1
-  New-SyntheticDriverFiles -VirtioRoot $syntheticPartialRoot -UpstreamDirName "viosnd" -InfBaseName "viosnd" -OsDirName $osDir -ArchDirName "x86" -HardwareId "PCI\VEN_1AF4&DEV_1059"
-  New-SyntheticDriverFiles -VirtioRoot $syntheticPartialRoot -UpstreamDirName "viosnd" -InfBaseName "viosnd" -OsDirName $osDir -ArchDirName "amd64" -HardwareId "PCI\VEN_1AF4&DEV_1059"
-  New-SyntheticDriverFiles -VirtioRoot $syntheticPartialRoot -UpstreamDirName "vioinput" -InfBaseName "vioinput" -OsDirName $osDir -ArchDirName "x86" -HardwareId "PCI\VEN_1AF4&DEV_1052"
-
-  $guestToolsPartialOutDir = Join-Path $OutRoot "guest-tools-partial-optional"
-  Ensure-EmptyDirectory -Path $guestToolsPartialOutDir
-  $guestToolsPartialLog = Join-Path $logsDir "make-guest-tools-from-virtio-win-partial-optional.log"
-
-  $guestToolsPartialArgs = @(
-    "-OutDir", $guestToolsPartialOutDir,
-    "-Profile", "full",
-    "-SpecPath", $GuestToolsSpecPath,
-    "-Version", "0.0.0",
-    "-BuildId", "ci-partial-optional",
-    "-CleanStage",
-    "-VirtioWinRoot", $syntheticPartialRoot
-  )
-
-  & pwsh -NoProfile -ExecutionPolicy Bypass -File $guestToolsScript @guestToolsPartialArgs *>&1 | Tee-Object -FilePath $guestToolsPartialLog
-  if ($LASTEXITCODE -ne 0) {
-    throw "make-guest-tools-from-virtio-win.ps1 failed for partial optional-driver smoke test (exit $LASTEXITCODE). See $guestToolsPartialLog"
   }
-
-  $guestToolsPartialZip = Join-Path $guestToolsPartialOutDir "aero-guest-tools.zip"
-  if (-not (Test-Path -LiteralPath $guestToolsPartialZip -PathType Leaf)) {
-    throw "Expected Guest Tools ZIP missing for partial optional-driver smoke test: $guestToolsPartialZip"
-  }
-
-  Assert-ZipNotContainsEntry -ZipPath $guestToolsPartialZip -EntryPath "drivers/x86/vioinput/vioinput.inf"
-  Assert-ZipNotContainsEntry -ZipPath $guestToolsPartialZip -EntryPath "drivers/amd64/vioinput/vioinput.inf"
-
-  $partialLogText = Get-Content -LiteralPath $guestToolsPartialLog -Raw
-  if ($partialLogText -notmatch '(?is)optional driver.*vioinput.*present only.*omitting it from all targets') {
-    throw "Expected partial optional-driver smoke test log to contain an omission warning for vioinput. See $guestToolsPartialLog"
+}
+$partialIncludedDrivers = @($partialDriverPackManifest.drivers | ForEach-Object { $_.ToString().ToLowerInvariant() })
+foreach ($notWant in @("viosnd", "vioinput")) {
+  if ($partialIncludedDrivers -contains $notWant) {
+    throw "Did not expect driver-pack manifest to list '$notWant' as included for the partial-optional scenario. Included: $($partialIncludedDrivers -join ', ')"
   }
 }
 
