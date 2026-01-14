@@ -158,9 +158,13 @@ The canonical wire contract uses **`u32` ids** (`0..=0xFFFF_FFFF`). The worker-s
 will reject and reset the bridge if an action id is missing or out of the `u32` range (to avoid
 deadlocking the Rust-side action queue on an action we can never complete).
 
-⚠️ **WASM note:** the wasm-bindgen export `UsbPassthroughBridge.drain_actions()` returns `null`
-when there are no queued actions (to keep the poll path allocation-free). Treat `null`/`undefined`
-as “no work”.
+⚠️ **WASM note:** the USB passthrough drain APIs return `null` when there are no queued actions
+(to keep the poll path allocation-free). Treat `null`/`undefined` as “no work”.
+This applies to:
+- `UsbPassthroughBridge.drain_actions()`
+- `UhciControllerBridge.drain_actions()`
+- `WebUsbUhciBridge.drain_actions()`
+- `UhciRuntime.webusb_drain_actions()`
 
 Cancellation behavior:
 
