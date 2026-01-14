@@ -36,24 +36,22 @@ async function createBridge(): Promise<I8042Bridge | null> {
   return new api.I8042Bridge();
 }
 
-function drainTsOutput(dev: I8042Controller): number[] {
+function drainAndAssertParity(ts: I8042Controller, bridge: I8042Bridge, label: string): number[] {
   const out: number[] = [];
   // i8042 queues are bounded; keep a hard stop to avoid an infinite loop in tests.
   for (let i = 0; i < 4096; i++) {
-    const status = dev.portRead(0x0064, 1) & 0xff;
-    if ((status & 0x01) === 0) break;
-    out.push(dev.portRead(0x0060, 1) & 0xff);
-  }
-  return out;
-}
+    const stTs = ts.portRead(0x0064, 1) & 0xff;
+    const stWasm = bridge.port_read(0x64) & 0xff;
+    // Check output-buffer + AUX status parity. These bits are guest-observable and must stay
+    // consistent when deciding whether a byte belongs to the keyboard or the auxiliary (mouse).
+    expect(stTs & 0x21, `${label}: status OBF/AUX parity`).toBe(stWasm & 0x21);
 
-function drainWasmOutput(bridge: I8042Bridge): number[] {
-  const out: number[] = [];
-  // i8042 queues are bounded; keep a hard stop to avoid an infinite loop in tests.
-  for (let i = 0; i < 4096; i++) {
-    const status = bridge.port_read(0x64) & 0xff;
-    if ((status & 0x01) === 0) break;
-    out.push(bridge.port_read(0x60) & 0xff);
+    if ((stTs & 0x01) === 0) break;
+
+    const bTs = ts.portRead(0x0060, 1) & 0xff;
+    const bWasm = bridge.port_read(0x60) & 0xff;
+    expect(bTs, `${label}: byte[${out.length}]`).toBe(bWasm);
+    out.push(bTs);
   }
   return out;
 }
@@ -95,14 +93,10 @@ describe("io/devices/i8042 TS <-> WASM parity", () => {
     const ts = new I8042Controller(irqSink);
 
     try {
-      const assertDrainParity = (label: string): void => {
-        const outTs = drainTsOutput(ts);
-        const outWasm = drainWasmOutput(bridge);
-        expect(outTs, label).toEqual(outWasm);
-      };
+      const assertDrainParity = (label: string): number[] => drainAndAssertParity(ts, bridge, label);
 
       // Sanity: nothing buffered at start.
-      assertDrainParity("initial output parity");
+      expect(assertDrainParity("initial output parity")).toEqual([]);
 
       const codes: string[] = [
         // Letters.
@@ -137,18 +131,25 @@ describe("io/devices/i8042 TS <-> WASM parity", () => {
 
         ts.injectKeyboardBytes(Uint8Array.from(press));
         injectWasmKeyboardBytes(bridge, press);
-        assertDrainParity(`keyboard press parity for ${code}`);
+        const pressOut = assertDrainParity(`keyboard press parity for ${code}`);
+        expect(pressOut.length, `keyboard press produced output for ${code}`).toBeGreaterThan(0);
 
         ts.injectKeyboardBytes(Uint8Array.from(release));
         injectWasmKeyboardBytes(bridge, release);
-        assertDrainParity(`keyboard release parity for ${code}`);
+        const releaseOut = assertDrainParity(`keyboard release parity for ${code}`);
+        if (code === "Pause") {
+          // Pause is make-only (no break sequence).
+          expect(releaseOut).toEqual([]);
+        } else {
+          expect(releaseOut.length, `keyboard release produced output for ${code}`).toBeGreaterThan(0);
+        }
       }
 
       // --- Mouse parity ---
       // Enable mouse reporting via the real command path (0xD4 routes the next data byte to the mouse).
       writeToMouseTs(ts, 0xf4);
       writeToMouseWasm(bridge, 0xf4);
-      assertDrainParity("mouse enable reporting ACK parity");
+      expect(assertDrainParity("mouse enable reporting ACK parity")).toEqual([0xfa]);
 
       const buttonMasks = [
         0x01, // left
@@ -158,7 +159,7 @@ describe("io/devices/i8042 TS <-> WASM parity", () => {
       for (const mask of buttonMasks) {
         ts.injectMouseButtons(mask);
         bridge.inject_mouse_buttons(mask);
-        assertDrainParity(`mouse buttons parity mask=${mask.toString(16)}`);
+        expect(assertDrainParity(`mouse buttons parity mask=${mask.toString(16)}`).length).toBeGreaterThan(0);
       }
 
       const motions: Array<{ dx: number; dy: number }> = [
@@ -172,7 +173,7 @@ describe("io/devices/i8042 TS <-> WASM parity", () => {
       for (const { dx, dy } of motions) {
         ts.injectMouseMove(dx, dy);
         bridge.inject_mouse_move(dx, dy);
-        assertDrainParity(`mouse motion parity dx=${dx} dy=${dy}`);
+        expect(assertDrainParity(`mouse motion parity dx=${dx} dy=${dy}`).length).toBeGreaterThan(0);
       }
 
       // Enable IntelliMouse wheel mode (200,100,80 sample rate sequence) so wheel injections
@@ -181,18 +182,23 @@ describe("io/devices/i8042 TS <-> WASM parity", () => {
       for (const b of wheelEnableSeq) {
         writeToMouseTs(ts, b);
         writeToMouseWasm(bridge, b);
-        assertDrainParity(`mouse wheel-enable parity byte=0x${b.toString(16)}`);
+        expect(assertDrainParity(`mouse wheel-enable parity byte=0x${b.toString(16)}`)).toEqual([0xfa]);
       }
 
       // Confirm device ID now reports the wheel mouse (0x03). (Parity-only; we don't care about the exact value here.)
       writeToMouseTs(ts, 0xf2);
       writeToMouseWasm(bridge, 0xf2);
-      assertDrainParity("mouse device id parity (wheel enabled)");
+      expect(assertDrainParity("mouse device id parity (wheel enabled)").length).toBeGreaterThan(0);
 
       // Motion packets should now include a 4th (wheel) byte of 0.
       ts.injectMouseMove(5, 3);
       bridge.inject_mouse_move(5, 3);
-      assertDrainParity("mouse motion parity (wheel mode)");
+      expect(assertDrainParity("mouse motion parity (wheel mode)")).toHaveLength(4);
+
+      // Button-only packets should also include a 4th (wheel) byte in wheel mode.
+      ts.injectMouseButtons(0x01);
+      bridge.inject_mouse_buttons(0x01);
+      expect(assertDrainParity("mouse buttons parity (wheel mode)")).toHaveLength(4);
 
       const wheels = [
         1,
@@ -203,8 +209,25 @@ describe("io/devices/i8042 TS <-> WASM parity", () => {
       for (const dz of wheels) {
         ts.injectMouseWheel(dz);
         bridge.inject_mouse_wheel(dz);
-        assertDrainParity(`mouse wheel parity dz=${dz}`);
+        expect(assertDrainParity(`mouse wheel parity dz=${dz}`).length).toBeGreaterThan(0);
       }
+
+      // Disable Set-2 -> Set-1 translation (command byte bit 6) and ensure raw Set-2 output stays in parity.
+      ts.portWrite(0x0064, 1, 0x60);
+      ts.portWrite(0x0060, 1, 0x05);
+      bridge.port_write(0x64, 0x60);
+      bridge.port_write(0x60, 0x05);
+      expect(assertDrainParity("disable translation command parity")).toEqual([]);
+
+      const rawCode = "ArrowUp";
+      const rawPress = ps2Set2BytesForKeyEvent(rawCode, true)!;
+      const rawRelease = ps2Set2BytesForKeyEvent(rawCode, false)!;
+      ts.injectKeyboardBytes(Uint8Array.from(rawPress));
+      injectWasmKeyboardBytes(bridge, rawPress);
+      expect(assertDrainParity(`keyboard raw press parity for ${rawCode}`)).toEqual(rawPress.map((b) => b & 0xff));
+      ts.injectKeyboardBytes(Uint8Array.from(rawRelease));
+      injectWasmKeyboardBytes(bridge, rawRelease);
+      expect(assertDrainParity(`keyboard raw release parity for ${rawCode}`)).toEqual(rawRelease.map((b) => b & 0xff));
     } finally {
       bridge.free();
     }
