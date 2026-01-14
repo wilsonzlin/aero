@@ -317,4 +317,157 @@ describe("GamepadCapture", () => {
     expect(words[ev2 + 2] >>> 0).toBe(expected3.packedLo >>> 0);
     expect(words[ev2 + 3] >>> 0).toBe(expected3.packedHi >>> 0);
   });
+
+  it("selects a single active pad when multiple gamepads are present", () => {
+    type Btn = { pressed: boolean };
+    const makeButtons = (pressed: number[]): Btn[] => {
+      const buttons = Array.from({ length: 20 }, () => ({ pressed: false }));
+      for (const idx of pressed) buttons[idx]!.pressed = true;
+      return buttons;
+    };
+
+    type StubGamepad = {
+      buttons: Btn[];
+      axes: number[];
+      index: number;
+      connected: boolean;
+    };
+
+    let pad0: StubGamepad = { buttons: makeButtons([0]), axes: [0, 0, 0, 0], index: 0, connected: false };
+    let pad1: StubGamepad = { buttons: makeButtons([1]), axes: [0, 0, 0, 0], index: 1, connected: true };
+
+    const capture = new GamepadCapture({
+      deadzone: 0,
+      getGamepads: () => [pad0 as unknown as Gamepad, pad1 as unknown as Gamepad],
+    });
+    const queue = new InputEventQueue(16);
+
+    // First poll should choose the first connected pad (pad1) and emit its state.
+    capture.poll(queue, 1, { active: true });
+    expect(queue.size).toBe(1);
+
+    // If another pad becomes connected later, the capture should keep using the
+    // existing active pad (no flip-flop).
+    pad0 = { ...pad0, connected: true };
+    capture.poll(queue, 2, { active: true });
+    expect(queue.size).toBe(1);
+
+    // Changes to the active pad should be emitted...
+    pad1 = { ...pad1, axes: [1, 0, 0, 0] };
+    capture.poll(queue, 3, { active: true });
+    expect(queue.size).toBe(2);
+
+    // ...but changes to the inactive pad should be ignored.
+    pad0 = { ...pad0, axes: [1, 0, 0, 0] };
+    capture.poll(queue, 4, { active: true });
+    expect(queue.size).toBe(2);
+
+    const state: { posted: InputBatchMessage | null } = { posted: null };
+    const target: InputBatchTarget = {
+      postMessage: (msg, _transfer) => {
+        state.posted = msg;
+      },
+    };
+    queue.flush(target);
+    if (!state.posted) throw new Error("expected flush to post a batch");
+
+    const words = new Int32Array(state.posted.buffer);
+    expect(words[0]).toBe(2);
+
+    const expected1 = packGamepadReport({ buttons: 1 << 1, hat: GAMEPAD_HAT_NEUTRAL, x: 0, y: 0, rx: 0, ry: 0 });
+    const expected2 = packGamepadReport({ buttons: 1 << 1, hat: GAMEPAD_HAT_NEUTRAL, x: 127, y: 0, rx: 0, ry: 0 });
+
+    const base = 2;
+    const ev0 = base + 0 * 4;
+    expect(words[ev0]).toBe(InputEventType.GamepadReport);
+    expect(words[ev0 + 1]).toBe(1);
+    expect(words[ev0 + 2] >>> 0).toBe(expected1.packedLo >>> 0);
+    expect(words[ev0 + 3] >>> 0).toBe(expected1.packedHi >>> 0);
+
+    const ev1 = base + 1 * 4;
+    expect(words[ev1]).toBe(InputEventType.GamepadReport);
+    expect(words[ev1 + 1]).toBe(3);
+    expect(words[ev1 + 2] >>> 0).toBe(expected2.packedLo >>> 0);
+    expect(words[ev1 + 3] >>> 0).toBe(expected2.packedHi >>> 0);
+  });
+
+  it("switches active pads on disconnect and emits neutral exactly once", () => {
+    type Btn = { pressed: boolean };
+    const makeButtons = (pressed: number[]): Btn[] => {
+      const buttons = Array.from({ length: 20 }, () => ({ pressed: false }));
+      for (const idx of pressed) buttons[idx]!.pressed = true;
+      return buttons;
+    };
+
+    type StubGamepad = {
+      buttons: Btn[];
+      axes: number[];
+      index: number;
+      connected: boolean;
+    };
+
+    let pad0: StubGamepad = { buttons: makeButtons([0]), axes: [0, 0, 0, 0], index: 0, connected: true };
+    let pad1: StubGamepad = { buttons: makeButtons([]), axes: [0, 0, 0, 0], index: 1, connected: true };
+
+    const capture = new GamepadCapture({
+      deadzone: 0,
+      getGamepads: () => [pad0 as unknown as Gamepad, pad1 as unknown as Gamepad],
+    });
+    const queue = new InputEventQueue(16);
+
+    // Initial poll should select pad0 and emit a non-neutral report.
+    capture.poll(queue, 1, { active: true });
+    expect(queue.size).toBe(1);
+
+    // Disconnect pad0 while pad1 remains connected; poll should switch to pad1.
+    // Pad1 is neutral, so this should emit a neutral report once.
+    pad0 = { ...pad0, connected: false };
+    capture.poll(queue, 2, { active: true });
+    expect(queue.size).toBe(2);
+
+    // Still neutral: no additional report (de-duped).
+    capture.poll(queue, 3, { active: true });
+    expect(queue.size).toBe(2);
+
+    // Now make pad1 non-neutral; subsequent polls should emit from pad1.
+    pad1 = { ...pad1, buttons: makeButtons([1]) };
+    capture.poll(queue, 4, { active: true });
+    expect(queue.size).toBe(3);
+
+    const state: { posted: InputBatchMessage | null } = { posted: null };
+    const target: InputBatchTarget = {
+      postMessage: (msg, _transfer) => {
+        state.posted = msg;
+      },
+    };
+    queue.flush(target);
+    if (!state.posted) throw new Error("expected flush to post a batch");
+
+    const words = new Int32Array(state.posted.buffer);
+    expect(words[0]).toBe(3);
+
+    const expectedPad0 = packGamepadReport({ buttons: 1 << 0, hat: GAMEPAD_HAT_NEUTRAL, x: 0, y: 0, rx: 0, ry: 0 });
+    const expectedNeutral = packGamepadReport({ buttons: 0, hat: GAMEPAD_HAT_NEUTRAL, x: 0, y: 0, rx: 0, ry: 0 });
+    const expectedPad1 = packGamepadReport({ buttons: 1 << 1, hat: GAMEPAD_HAT_NEUTRAL, x: 0, y: 0, rx: 0, ry: 0 });
+
+    const base = 2;
+
+    const ev0 = base + 0 * 4;
+    expect(words[ev0]).toBe(InputEventType.GamepadReport);
+    expect(words[ev0 + 1]).toBe(1);
+    expect(words[ev0 + 2] >>> 0).toBe(expectedPad0.packedLo >>> 0);
+    expect(words[ev0 + 3] >>> 0).toBe(expectedPad0.packedHi >>> 0);
+
+    const ev1 = base + 1 * 4;
+    expect(words[ev1]).toBe(InputEventType.GamepadReport);
+    expect(words[ev1 + 1]).toBe(2);
+    expect(words[ev1 + 2] >>> 0).toBe(expectedNeutral.packedLo >>> 0);
+    expect(words[ev1 + 3] >>> 0).toBe(expectedNeutral.packedHi >>> 0);
+
+    const ev2 = base + 2 * 4;
+    expect(words[ev2]).toBe(InputEventType.GamepadReport);
+    expect(words[ev2 + 1]).toBe(4);
+    expect(words[ev2 + 2] >>> 0).toBe(expectedPad1.packedLo >>> 0);
+    expect(words[ev2 + 3] >>> 0).toBe(expectedPad1.packedHi >>> 0);
+  });
 });
