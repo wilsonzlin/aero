@@ -6712,7 +6712,11 @@ impl Machine {
 
                 if let Some(cursor_fb) = cursor_fb {
                     aerogpu::composite_cursor_rgba8888_over_scanout(
-                        &mut fb, width, height, &cursor, &cursor_fb,
+                        &mut fb,
+                        width,
+                        height,
+                        &cursor,
+                        &cursor_fb,
                     );
                 }
             }
