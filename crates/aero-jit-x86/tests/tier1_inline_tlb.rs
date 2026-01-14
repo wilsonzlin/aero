@@ -6022,6 +6022,98 @@ fn tier1_inline_tlb_high_ram_remap_store_bumps_physical_code_page_version() {
 }
 
 #[test]
+fn tier1_inline_tlb_high_ram_remap_uses_physical_address_not_vaddr() {
+    // Like `tier1_inline_tlb_high_ram_remap_load_uses_contiguous_ram_offset`, but ensure the Q35
+    // remap logic is driven by the *physical* address (from the cached TLB entry), not the virtual
+    // address. This matters when guest paging maps a low virtual address to high RAM.
+    //
+    // We map vaddr=0x10 (page 0) to phys_base=4GiB via a prefilled TLB entry, and expect the load
+    // to use the Q35 remap path and wrap into a small in-bounds offset.
+    const HIGH_RAM_BASE: u64 = 0x1_0000_0000;
+
+    let desired_offset: usize = 0x10000;
+    let ram_base: u64 = 0x5000_0000 + desired_offset as u64;
+
+    let mut b = IrBuilder::new(0x1000);
+    let addr = b.const_int(Width::W64, 0x10);
+    let v0 = b.load(Width::W8, addr);
+    b.write_reg(
+        GuestReg::Gpr {
+            reg: Gpr::Rax,
+            width: Width::W8,
+            high8: false,
+        },
+        v0,
+    );
+    let block = b.finish(IrTerminator::Jump { target: 0x3000 });
+    block.validate().unwrap();
+
+    let cpu = CpuState {
+        rip: 0x1000,
+        ..Default::default()
+    };
+
+    let wasm = Tier1WasmCodegen::new().compile_block_with_options(
+        &block,
+        Tier1WasmOptions {
+            inline_tlb: true,
+            ..Default::default()
+        },
+    );
+    validate_wasm(&wasm);
+
+    // Keep RAM small (no multi-GiB allocations). The translated wasm address should wrap into this
+    // slice at `desired_offset + 0x10`.
+    let mut mem = vec![0u8; desired_offset + 0x2000];
+    mem[desired_offset + 0x10] = 0x7f;
+
+    let mut cpu_bytes = vec![0u8; abi::CPU_STATE_SIZE as usize];
+    write_cpu_to_wasm_bytes(&cpu, &mut cpu_bytes);
+    mem[CPU_PTR as usize..CPU_PTR as usize + cpu_bytes.len()].copy_from_slice(&cpu_bytes);
+
+    let ctx = JitContext {
+        ram_base,
+        tlb_salt: TLB_SALT,
+    };
+    ctx.write_header_to_mem(&mut mem, JIT_CTX_PTR as usize);
+
+    // Prefill a TLB entry for vaddr page 0 that maps to phys_base=4GiB.
+    let vaddr = 0x10u64;
+    let vpn = vaddr >> PAGE_SHIFT;
+    let idx = (vpn & JIT_TLB_INDEX_MASK) as usize;
+    let entry_addr = (JIT_CTX_PTR as usize)
+        + (JitContext::TLB_OFFSET as usize)
+        + idx * (JIT_TLB_ENTRY_SIZE as usize);
+    let tag = (vpn ^ TLB_SALT) | 1;
+    let data = (HIGH_RAM_BASE & PAGE_BASE_MASK)
+        | (TLB_FLAG_READ | TLB_FLAG_WRITE | TLB_FLAG_EXEC | TLB_FLAG_IS_RAM);
+    mem[entry_addr..entry_addr + 8].copy_from_slice(&tag.to_le_bytes());
+    mem[entry_addr + 8..entry_addr + 16].copy_from_slice(&data.to_le_bytes());
+
+    let pages = mem.len().div_ceil(65_536) as u32;
+    // Mark vaddr=0x10 as RAM if `mmu_translate` is accidentally called; we expect the prefilled
+    // entry to hit and avoid translation entirely.
+    let (mut store, memory, func) = instantiate(&wasm, pages, 0x1000);
+    memory.write(&mut store, 0, &mem).unwrap();
+
+    let ret = func.call(&mut store, (CPU_PTR, JIT_CTX_PTR)).unwrap();
+    assert_eq!(ret, 0x3000);
+
+    let mut got_mem = vec![0u8; mem.len()];
+    memory.read(&store, 0, &mut got_mem).unwrap();
+
+    let snap = CpuSnapshot::from_wasm_bytes(&got_mem[0..abi::CPU_STATE_SIZE as usize]);
+    assert_eq!(snap.rip, 0x3000);
+    assert_eq!(snap.gpr[Gpr::Rax.as_u8() as usize] & 0xff, 0x7f);
+
+    let host_state = *store.data();
+    assert_eq!(host_state.mmu_translate_calls, 0);
+    assert_eq!(host_state.mmio_exit_calls, 0);
+    assert_eq!(host_state.slow_mem_reads, 0);
+    assert_eq!(host_state.slow_mem_writes, 0);
+}
+
+#[test]
 fn tier1_inline_tlb_high_ram_remap_cross_page_load_uses_contiguous_ram_offset() {
     const HIGH_RAM_BASE: u64 = 0x1_0000_0000;
     let addr_u64 = HIGH_RAM_BASE + 0xFFF;

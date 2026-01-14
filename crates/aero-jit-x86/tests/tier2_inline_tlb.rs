@@ -1494,6 +1494,107 @@ fn tier2_inline_tlb_high_ram_remap_load_uses_contiguous_ram_offset() {
 }
 
 #[test]
+fn tier2_inline_tlb_high_ram_remap_uses_physical_address_not_vaddr() {
+    // Like `tier2_inline_tlb_high_ram_remap_load_uses_contiguous_ram_offset`, but ensure the Q35
+    // remap logic is driven by the *physical* address (from the cached TLB entry), not the virtual
+    // address. This matters when page tables map a low virtual address to high RAM.
+    //
+    // We map vaddr=0x10 (page 0) to phys_base=4GiB via a prefilled TLB entry, and expect the load
+    // to use the Q35 remap path and wrap into a small in-bounds offset.
+    const HIGH_RAM_BASE: u64 = 0x1_0000_0000;
+
+    let desired_offset: usize = 0x10000;
+    let ram_base: u64 = 0x5000_0000 + desired_offset as u64;
+
+    let trace = TraceIr {
+        prologue: Vec::new(),
+        body: vec![
+            Instr::LoadMem {
+                dst: ValueId(0),
+                addr: Operand::Const(0x10),
+                width: Width::W8,
+            },
+            Instr::StoreReg {
+                reg: Gpr::Rax,
+                src: Operand::Value(ValueId(0)),
+            },
+        ],
+        kind: TraceKind::Linear,
+    };
+
+    let plan = RegAllocPlan::default();
+    let wasm = Tier2WasmCodegen::new().compile_trace_with_options(
+        &trace,
+        &plan,
+        Tier2WasmOptions {
+            inline_tlb: true,
+            // No code-version guards in this trace, but preserve the existing default ABI.
+            code_version_guard_import: true,
+            ..Default::default()
+        },
+    );
+    validate_wasm(&wasm);
+
+    // Keep RAM small (no multi-GiB allocations). The translated wasm address should wrap into this
+    // slice at `desired_offset + 0x10`.
+    let mut ram = vec![0u8; 0x20_000];
+    ram[desired_offset + 0x10] = 0x7f;
+
+    let cpu_ptr = ram.len() as u64;
+    let cpu_ptr_usize = cpu_ptr as usize;
+    let jit_ctx_ptr_usize = cpu_ptr_usize + (abi::CPU_STATE_SIZE as usize);
+    let total_len =
+        jit_ctx_ptr_usize + JitContext::TOTAL_BYTE_SIZE + (jit_ctx::TIER2_CTX_SIZE as usize);
+    let mut mem = vec![0u8; total_len];
+
+    mem[..ram.len()].copy_from_slice(&ram);
+    write_cpu_rip(&mut mem, cpu_ptr_usize, 0x1000);
+    write_cpu_rflags(&mut mem, cpu_ptr_usize, 0x2);
+
+    let tlb_salt = 0x1234_5678_9abc_def0u64;
+    let ctx = JitContext { ram_base, tlb_salt };
+    ctx.write_header_to_mem(&mut mem, jit_ctx_ptr_usize);
+
+    // Prefill a TLB entry for vaddr page 0 that maps to phys_base=4GiB.
+    let vaddr = 0x10u64;
+    let vpn = vaddr >> PAGE_SHIFT;
+    let idx = (vpn & JIT_TLB_INDEX_MASK) as usize;
+    let entry_addr = jit_ctx_ptr_usize
+        + (JitContext::TLB_OFFSET as usize)
+        + idx * (JIT_TLB_ENTRY_SIZE as usize);
+    let tag = (vpn ^ tlb_salt) | 1;
+    let data = (HIGH_RAM_BASE & PAGE_BASE_MASK)
+        | (TLB_FLAG_READ | TLB_FLAG_WRITE | TLB_FLAG_EXEC | TLB_FLAG_IS_RAM);
+    mem[entry_addr..entry_addr + 8].copy_from_slice(&tag.to_le_bytes());
+    mem[entry_addr + 8..entry_addr + 16].copy_from_slice(&data.to_le_bytes());
+
+    let pages = total_len.div_ceil(65_536) as u32;
+    // Mark all pages as non-RAM for `mmu_translate`; the test relies on the prefilled TLB entry and
+    // should not call `mmu_translate` at all.
+    let (mut store, memory, func) = instantiate(&wasm, pages, 0);
+    memory.write(&mut store, 0, &mem).unwrap();
+
+    let ret = func
+        .call(&mut store, (cpu_ptr as i32, jit_ctx_ptr_usize as i32))
+        .unwrap() as u64;
+    assert_eq!(ret, 0x1000);
+
+    let mut got_mem = vec![0u8; total_len];
+    memory.read(&store, 0, &mut got_mem).unwrap();
+
+    let rax = read_u64_le(
+        &got_mem,
+        cpu_ptr_usize + abi::gpr_offset(Gpr::Rax.as_u8() as usize) as usize,
+    );
+    assert_eq!(rax & 0xff, 0x7f);
+
+    let host = *store.data();
+    assert_eq!(host.mmu_translate_calls, 0);
+    assert_eq!(host.slow_mem_reads, 0);
+    assert_eq!(host.slow_mem_writes, 0);
+}
+
+#[test]
 fn tier2_inline_tlb_high_ram_remap_store_uses_contiguous_ram_offset() {
     const HIGH_RAM_BASE: u64 = 0x1_0000_0000;
 
