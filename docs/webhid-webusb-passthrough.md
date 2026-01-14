@@ -290,6 +290,11 @@ Semantics / guarantees:
 - **Unified FIFO across transports:** both the SAB output ring (`hid.ringAttach`) and the fallback
   `postMessage` path (`hid.sendReport`) enqueue into the same per-device FIFO, so reports do not run
   concurrently even if the runtime temporarily mixes forwarding mechanisms.
+- **Bounded send queue:** WebHID report I/O is serialized through a bounded per-device queue. If the
+  guest produces reports faster than the host can execute them (or a `sendReport()` Promise never
+  resolves), the broker drops new output/feature sends once the cap is reached (drop newest, keep
+  already-queued FIFO order). Feature report reads may return an immediate
+  `hid.featureReportResult { ok: false }` when the per-device queue is saturated.
 - **Fallback on ring overflow/corruption:** the SAB rings are an optimization, not a correctness
   requirement. If a report cannot be enqueued (ring full, record too large), the I/O worker falls
   back to `postMessage` (`hid.sendReport`) for that report so guest→device reports are not silently
