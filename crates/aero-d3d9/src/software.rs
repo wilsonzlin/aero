@@ -627,6 +627,22 @@ fn run_vertex_shader(
                             v,
                         );
                     }
+                    Op::Lrp => {
+                        let dst = inst.dst.unwrap();
+                        let t = exec_src(inst.src[0], &temps, inputs, &empty_t, &constants);
+                        let a = exec_src(inst.src[1], &temps, inputs, &empty_t, &constants);
+                        let b = exec_src(inst.src[2], &temps, inputs, &empty_t, &constants);
+                        let v = apply_result_modifier(t * a + (Vec4::splat(1.0) - t) * b, inst.result_modifier);
+                        exec_dst(
+                            dst,
+                            &mut temps,
+                            &mut o_pos,
+                            &mut o_attr,
+                            &mut o_tex,
+                            &mut dummy_color,
+                            v,
+                        );
+                    }
                     Op::Dp3 => {
                         let dst = inst.dst.unwrap();
                         let a = exec_src(inst.src[0], &temps, inputs, &empty_t, &constants);
@@ -989,6 +1005,22 @@ fn run_pixel_shader(
                         let b = exec_src(inst.src[1], &temps, inputs_v, inputs_t, &constants);
                         let c = exec_src(inst.src[2], &temps, inputs_v, inputs_t, &constants);
                         let v = apply_result_modifier(a * b + c, inst.result_modifier);
+                        exec_dst(
+                            dst,
+                            &mut temps,
+                            &mut dummy_pos,
+                            &mut dummy_attr,
+                            &mut dummy_tex,
+                            &mut o_color,
+                            v,
+                        );
+                    }
+                    Op::Lrp => {
+                        let dst = inst.dst.unwrap();
+                        let t = exec_src(inst.src[0], &temps, inputs_v, inputs_t, &constants);
+                        let a = exec_src(inst.src[1], &temps, inputs_v, inputs_t, &constants);
+                        let b = exec_src(inst.src[2], &temps, inputs_v, inputs_t, &constants);
+                        let v = apply_result_modifier(t * a + (Vec4::splat(1.0) - t) * b, inst.result_modifier);
                         exec_dst(
                             dst,
                             &mut temps,

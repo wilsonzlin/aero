@@ -126,6 +126,7 @@ pub enum Op {
     Sub,
     Mul,
     Mad,
+    Lrp,
     Dp3,
     Dp4,
     Exp,
@@ -425,6 +426,7 @@ fn opcode_to_op(opcode: u16) -> Option<Op> {
         0x000D => Some(Op::Sge),
         0x000E => Some(Op::Exp),
         0x000F => Some(Op::Log),
+        0x0012 => Some(Op::Lrp),
         0x0013 => Some(Op::Frc),
         0x0020 => Some(Op::Pow),
         0x0028 => Some(Op::If),
@@ -719,6 +721,7 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
             | Op::Sub
             | Op::Mul
             | Op::Mad
+            | Op::Lrp
             | Op::Dp3
             | Op::Dp4
             | Op::Exp
@@ -1433,6 +1436,23 @@ fn emit_inst(
             let b = src_expr(&inst.src[1], const_defs_f32, const_base);
             let c = src_expr(&inst.src[2], const_defs_f32, const_base);
             let mut expr = format!("fma({}, {}, {})", a, b, c);
+            expr = apply_result_modifier(expr, inst.result_modifier);
+            let dst_name = reg_var_name(dst.reg);
+            if let Some(mask) = mask_suffix(dst.mask) {
+                push_indent(wgsl, *indent);
+                wgsl.push_str(&format!("{}{} = {}{};\n", dst_name, mask, expr, mask));
+            } else {
+                push_indent(wgsl, *indent);
+                wgsl.push_str(&format!("{} = {};\n", dst_name, expr));
+            }
+        }
+        Op::Lrp => {
+            let dst = inst.dst.unwrap();
+            let t = src_expr(&inst.src[0], const_defs_f32, const_base);
+            let a = src_expr(&inst.src[1], const_defs_f32, const_base);
+            let b = src_expr(&inst.src[2], const_defs_f32, const_base);
+            // D3D9 `lrp`: dst = t * a + (1 - t) * b = mix(b, a, t).
+            let mut expr = format!("mix({}, {}, {})", b, a, t);
             expr = apply_result_modifier(expr, inst.result_modifier);
             let dst_name = reg_var_name(dst.reg);
             if let Some(mask) = mask_suffix(dst.mask) {

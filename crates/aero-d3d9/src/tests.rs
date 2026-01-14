@@ -373,6 +373,61 @@ fn assemble_ps3_predicated_lrp() -> Vec<u32> {
     out
 }
 
+fn assemble_ps3_lrp() -> Vec<u32> {
+    // ps_3_0
+    let mut out = vec![0xFFFF0300];
+
+    // def c0, 0.25, 0.25, 0.25, 0.25
+    out.extend(enc_inst(
+        0x0051,
+        &[
+            enc_dst(2, 0, 0xF),
+            0x3E80_0000,
+            0x3E80_0000,
+            0x3E80_0000,
+            0x3E80_0000,
+        ],
+    ));
+    // def c1, 1.0, 0.0, 0.0, 1.0
+    out.extend(enc_inst(
+        0x0051,
+        &[
+            enc_dst(2, 1, 0xF),
+            0x3F80_0000,
+            0x0000_0000,
+            0x0000_0000,
+            0x3F80_0000,
+        ],
+    ));
+    // def c2, 0.0, 1.0, 0.0, 1.0
+    out.extend(enc_inst(
+        0x0051,
+        &[
+            enc_dst(2, 2, 0xF),
+            0x0000_0000,
+            0x3F80_0000,
+            0x0000_0000,
+            0x3F80_0000,
+        ],
+    ));
+
+    // lrp r0, c0, c1, c2
+    out.extend(enc_inst(
+        0x0012,
+        &[
+            enc_dst(0, 0, 0xF),  // r0
+            enc_src(2, 0, 0xE4), // c0 (t)
+            enc_src(2, 1, 0xE4), // c1 (a)
+            enc_src(2, 2, 0xE4), // c2 (b)
+        ],
+    ));
+
+    // mov oC0, r0
+    out.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)]));
+    out.push(0x0000FFFF);
+    out
+}
+
 fn assemble_ps3_predicated_mov() -> Vec<u32> {
     // ps_3_0
     let mut out = vec![0xFFFF0300];
@@ -813,6 +868,24 @@ fn translates_ps3_ifc_def_to_wgsl() {
 }
 
 #[test]
+fn translates_ps3_lrp_to_wgsl() {
+    let ps_bytes = to_bytes(&assemble_ps3_lrp());
+    let program = shader::parse(&ps_bytes).unwrap();
+    let ir = shader::to_ir(&program);
+    let wgsl = shader::generate_wgsl(&ir).unwrap();
+
+    let module = naga::front::wgsl::parse_str(&wgsl.wgsl).expect("wgsl parse");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
+
+    assert!(wgsl.wgsl.contains("mix("), "wgsl:\n{}", wgsl.wgsl);
+}
+
+#[test]
 fn sm3_translates_predicated_lrp_to_wgsl() {
     let ps_tokens = assemble_ps3_predicated_lrp();
     let decoded = crate::sm3::decode_u32_tokens(&ps_tokens).unwrap();
@@ -1092,6 +1165,48 @@ fn micro_ps3_ifc_def_pixel_compare() {
         hash.to_hex().as_str(),
         "fa291c33b86c387331d23b7163e6622bb9553e866980db89570ac967770c0ee3"
     );
+}
+
+#[test]
+fn micro_ps3_lrp_pixel_compare() {
+    let vs = shader::to_ir(&shader::parse(&to_bytes(&assemble_vs_passthrough())).unwrap());
+    let ps = shader::to_ir(&shader::parse(&to_bytes(&assemble_ps3_lrp())).unwrap());
+
+    let decl = build_vertex_decl_pos_tex_color();
+
+    let mut vb = Vec::new();
+    let white = software::Vec4::new(1.0, 1.0, 1.0, 1.0);
+    for (pos_x, pos_y) in [(-0.5, -0.5), (0.5, -0.5), (0.0, 0.5)] {
+        push_vec4(&mut vb, software::Vec4::new(pos_x, pos_y, 0.0, 1.0));
+        push_vec2(&mut vb, 0.0, 0.0);
+        push_vec4(&mut vb, white);
+    }
+
+    let mut rt = software::RenderTarget::new(16, 16, software::Vec4::ZERO);
+    let constants = zero_constants();
+    let textures = HashMap::new();
+    let sampler_states = HashMap::new();
+    software::draw(
+        &mut rt,
+        software::DrawParams {
+            vs: &vs,
+            ps: &ps,
+            vertex_decl: &decl,
+            vertex_buffer: &vb,
+            indices: None,
+            constants: &constants,
+            textures: &textures,
+            sampler_states: &sampler_states,
+            blend_state: state::BlendState::default(),
+        },
+    );
+
+    // Expected value:
+    //   c0 = 0.25
+    //   c1 = (1,0,0,1)
+    //   c2 = (0,1,0,1)
+    //   lrp = c0*c1 + (1-c0)*c2 = (0.25, 0.75, 0.0, 1.0)
+    assert_eq!(rt.get(8, 8).to_rgba8(), [64, 191, 0, 255]);
 }
 
 #[test]
