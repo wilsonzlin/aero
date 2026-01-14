@@ -2911,6 +2911,19 @@ fn decode_dst(r: &mut InstrReader<'_>) -> Result<DstOperand, Sm4DecodeError> {
     let (file, index) = match op.ty {
         OPERAND_TYPE_TEMP => (RegFile::Temp, one_index(op.ty, &op.indices, r.base_at)?),
         OPERAND_TYPE_OUTPUT => (RegFile::Output, one_index(op.ty, &op.indices, r.base_at)?),
+        OPERAND_TYPE_NULL => {
+            // `null` destinations discard results. DXBC encodes this without any register index.
+            if !op.indices.is_empty() {
+                return Err(Sm4DecodeError {
+                    at_dword: r.base_at + r.pos.saturating_sub(1),
+                    kind: Sm4DecodeErrorKind::InvalidRegisterIndices {
+                        ty: op.ty,
+                        indices: op.indices,
+                    },
+                });
+            }
+            (RegFile::Null, 0)
+        }
         OPERAND_TYPE_OUTPUT_DEPTH
         | OPERAND_TYPE_OUTPUT_DEPTH_GREATER_EQUAL
         | OPERAND_TYPE_OUTPUT_DEPTH_LESS_EQUAL => {

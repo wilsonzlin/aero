@@ -3783,6 +3783,14 @@ fn scan_src_operand(
             bump_reg_max(*reg, max_temp_reg, max_output_reg);
             match reg.file {
                 RegFile::Temp | RegFile::Output => {}
+                RegFile::Null => {
+                    return Err(GsTranslateError::UnsupportedOperand {
+                        inst_index,
+                        opcode,
+                        msg: "RegFile::Null is write-only and cannot be used as a source operand"
+                            .to_owned(),
+                    });
+                }
                 RegFile::Input => {
                     let info = input_sivs.get(&reg.index).ok_or_else(|| {
                         GsTranslateError::UnsupportedOperand {
@@ -3869,6 +3877,10 @@ fn emit_write_masked(
     rhs: String,
 ) -> Result<(), GsTranslateError> {
     let dst_expr = match dst.file {
+        RegFile::Null => {
+            // Discarded result (DXBC `null` destination).
+            return Ok(());
+        }
         RegFile::Temp => format!("r{}", dst.index),
         RegFile::Output => format!("o{}", dst.index),
         RegFile::OutputDepth => {
@@ -3984,6 +3996,14 @@ fn emit_src_vec4(
         SrcKind::Register(reg) => match reg.file {
             RegFile::Temp => format!("r{}", reg.index),
             RegFile::Output => format!("o{}", reg.index),
+            RegFile::Null => {
+                return Err(GsTranslateError::UnsupportedOperand {
+                    inst_index,
+                    opcode,
+                    msg: "RegFile::Null is write-only and cannot be used as a source operand"
+                        .to_owned(),
+                })
+            }
             RegFile::OutputDepth => {
                 return Err(GsTranslateError::UnsupportedOperand {
                     inst_index,
@@ -4061,6 +4081,14 @@ fn emit_src_vec4_u32(
         SrcKind::Register(reg) => match reg.file {
             RegFile::Temp => format!("bitcast<vec4<u32>>(r{})", reg.index),
             RegFile::Output => format!("bitcast<vec4<u32>>(o{})", reg.index),
+            RegFile::Null => {
+                return Err(GsTranslateError::UnsupportedOperand {
+                    inst_index,
+                    opcode,
+                    msg: "RegFile::Null is write-only and cannot be used as a source operand"
+                        .to_owned(),
+                })
+            }
             RegFile::Input => {
                 let info = input_sivs.get(&reg.index).ok_or_else(|| {
                     GsTranslateError::UnsupportedOperand {
@@ -4148,6 +4176,14 @@ fn emit_src_vec4_i32(
         SrcKind::Register(reg) => match reg.file {
             RegFile::Temp => format!("bitcast<vec4<i32>>(r{})", reg.index),
             RegFile::Output => format!("bitcast<vec4<i32>>(o{})", reg.index),
+            RegFile::Null => {
+                return Err(GsTranslateError::UnsupportedOperand {
+                    inst_index,
+                    opcode,
+                    msg: "RegFile::Null is write-only and cannot be used as a source operand"
+                        .to_owned(),
+                })
+            }
             RegFile::Input => {
                 let info = input_sivs.get(&reg.index).ok_or_else(|| {
                     GsTranslateError::UnsupportedOperand {

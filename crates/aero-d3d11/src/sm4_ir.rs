@@ -1030,6 +1030,14 @@ pub enum RegFile {
     /// register file in the IR so the WGSL backend can map it to the correct `SV_Depth` output
     /// register declared by the signature.
     OutputDepth,
+    /// Null destination register (`null` / `D3D*_SB_OPERAND_TYPE_NULL`).
+    ///
+    /// DXBC allows discarding instruction results by writing to a special `null` operand, most
+    /// commonly as the secondary destination of multi-destination integer ops (e.g. `udiv`,
+    /// `uaddc`) when the remainder/carry is unused.
+    ///
+    /// This register file is **write-only**: it can never appear as a source operand.
+    Null,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

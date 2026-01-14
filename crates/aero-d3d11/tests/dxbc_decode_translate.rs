@@ -1631,6 +1631,94 @@ fn decodes_and_translates_uaddc_shader_from_dxbc() {
 }
 
 #[test]
+fn decodes_and_translates_uaddc_with_null_carry_destination_from_dxbc() {
+    let mut body = Vec::<u32>::new();
+
+    // uaddc r0, null, r2, r3
+    // (null dest has no register index, so the instruction is 1 dword shorter than the normal
+    // two-destination form).
+    body.push(opcode_token(OPCODE_UADDC, 1 + 2 + 1 + 2 + 2));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 0, WriteMask::XYZW));
+    body.push(operand_token(
+        OPERAND_TYPE_NULL,
+        2,
+        OPERAND_SEL_MASK,
+        WriteMask::XYZW.0 as u32,
+        0,
+        false,
+    ));
+    body.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, &[2], Swizzle::XYZW));
+    body.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, &[3], Swizzle::XYZW));
+
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    // Stage type 0 = pixel shader.
+    let tokens = make_sm5_program_tokens(0, &body);
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, tokens_to_bytes(&tokens)),
+        (FOURCC_ISGN, build_signature_chunk(&[])),
+        (
+            FOURCC_OSGN,
+            build_signature_chunk(&[sig_param("SV_Target", 0, 0, 0b1111)]),
+        ),
+    ]);
+
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
+    assert_eq!(program.stage, aero_d3d11::ShaderStage::Pixel);
+
+    let module = decode_program(&program).expect("SM4 decode");
+    assert_eq!(module.instructions.len(), 2);
+
+    assert_eq!(
+        module.instructions[0],
+        Sm4Inst::UAddC {
+            dst_sum: aero_d3d11::DstOperand {
+                reg: RegisterRef {
+                    file: RegFile::Temp,
+                    index: 0
+                },
+                mask: WriteMask::XYZW,
+                saturate: false,
+            },
+            dst_carry: aero_d3d11::DstOperand {
+                reg: RegisterRef {
+                    file: RegFile::Null,
+                    index: 0
+                },
+                mask: WriteMask::XYZW,
+                saturate: false,
+            },
+            a: SrcOperand {
+                kind: SrcKind::Register(RegisterRef {
+                    file: RegFile::Temp,
+                    index: 2
+                }),
+                swizzle: Swizzle::XYZW,
+                modifier: OperandModifier::None,
+            },
+            b: SrcOperand {
+                kind: SrcKind::Register(RegisterRef {
+                    file: RegFile::Temp,
+                    index: 3
+                }),
+                swizzle: Swizzle::XYZW,
+                modifier: OperandModifier::None,
+            },
+        }
+    );
+
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_parses(&translated.wgsl);
+    assert!(
+        !translated.wgsl.contains("var<private> r1"),
+        "expected null carry destination to avoid declaring r1:\n{}",
+        translated.wgsl
+    );
+}
+
+#[test]
 fn decodes_and_translates_iaddc_shader_from_dxbc() {
     let mut body = Vec::<u32>::new();
 

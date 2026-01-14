@@ -4544,6 +4544,7 @@ fn emit_temp_and_output_decls(
                 }
             }
             RegFile::Input => {}
+            RegFile::Null => {}
         };
 
         let mut inst = inst;
@@ -7023,6 +7024,12 @@ fn emit_src_vec4(
             RegFile::Output => format!("o{}", reg.index),
             RegFile::OutputDepth => ctx.io.ps_depth_var()?,
             RegFile::Input => ctx.io.read_input_vec4(ctx.stage, reg.index)?,
+            RegFile::Null => {
+                return Err(ShaderTranslateError::UnsupportedInstruction {
+                    inst_index: _inst_index,
+                    opcode: _opcode.to_owned(),
+                });
+            }
         },
         SrcKind::GsInput { reg, vertex } => match ctx.stage {
             ShaderStage::Domain => match ctx.io.ds_mode {
@@ -7150,6 +7157,12 @@ fn emit_src_vec4_u32(
                 RegFile::Output => format!("o{}", reg.index),
                 RegFile::OutputDepth => ctx.io.ps_depth_var()?,
                 RegFile::Input => ctx.io.read_input_vec4(ctx.stage, reg.index)?,
+                RegFile::Null => {
+                    return Err(ShaderTranslateError::UnsupportedInstruction {
+                        inst_index: _inst_index,
+                        opcode: _opcode.to_owned(),
+                    });
+                }
             };
             format!("bitcast<vec4<u32>>({expr})")
         }
@@ -7262,6 +7275,12 @@ fn emit_src_vec4_i32(
                 RegFile::Output => format!("o{}", reg.index),
                 RegFile::OutputDepth => ctx.io.ps_depth_var()?,
                 RegFile::Input => ctx.io.read_input_vec4(ctx.stage, reg.index)?,
+                RegFile::Null => {
+                    return Err(ShaderTranslateError::UnsupportedInstruction {
+                        inst_index: _inst_index,
+                        opcode: _opcode.to_owned(),
+                    });
+                }
             };
             format!("bitcast<vec4<i32>>({expr})")
         }
@@ -7542,6 +7561,11 @@ fn emit_write_masked(
     ctx: &EmitCtx<'_>,
 ) -> Result<(), ShaderTranslateError> {
     let dst_expr = match dst.file {
+        RegFile::Null => {
+            // DXBC allows discarding results by writing to a `null` destination.
+            // Treat this as a no-op regardless of the write mask.
+            return Ok(());
+        }
         RegFile::Temp => format!("r{}", dst.index),
         RegFile::Output => format!("o{}", dst.index),
         RegFile::OutputDepth => ctx.io.ps_depth_var()?,

@@ -4672,14 +4672,22 @@ impl AerogpuD3d11Executor {
                         }
                         let tmp_name = format!("inst{idx}_val");
                         out.push_str(&format!("  let {tmp_name}: vec4<f32> = {val};\n"));
-                        let dst_expr = match dst.reg.file {
-                            RegFile::Temp => format!("r[{}u]", dst.reg.index),
-                            RegFile::Output => format!("o[{}u]", dst.reg.index),
+                        match dst.reg.file {
+                            RegFile::Temp => {
+                                let dst_expr = format!("r[{}u]", dst.reg.index);
+                                emit_write_masked(&mut out, &dst_expr, dst.mask, &tmp_name);
+                            }
+                            RegFile::Output => {
+                                let dst_expr = format!("o[{}u]", dst.reg.index);
+                                emit_write_masked(&mut out, &dst_expr, dst.mask, &tmp_name);
+                            }
+                            RegFile::Null => {
+                                // Discarded result (`null` destination).
+                            }
                             other => {
                                 bail!("VS-as-compute: unsupported mov dst reg file {:?}", other)
                             }
-                        };
-                        emit_write_masked(&mut out, &dst_expr, dst.mask, &tmp_name);
+                        }
                     }
                     Sm4Inst::Add { dst, a, b } => {
                         let a_expr = eval_src(a, "vertex_index", gs_input_reg_count)?;
@@ -4690,14 +4698,22 @@ impl AerogpuD3d11Executor {
                         }
                         let tmp_name = format!("inst{idx}_val");
                         out.push_str(&format!("  let {tmp_name}: vec4<f32> = {val};\n"));
-                        let dst_expr = match dst.reg.file {
-                            RegFile::Temp => format!("r[{}u]", dst.reg.index),
-                            RegFile::Output => format!("o[{}u]", dst.reg.index),
+                        match dst.reg.file {
+                            RegFile::Temp => {
+                                let dst_expr = format!("r[{}u]", dst.reg.index);
+                                emit_write_masked(&mut out, &dst_expr, dst.mask, &tmp_name);
+                            }
+                            RegFile::Output => {
+                                let dst_expr = format!("o[{}u]", dst.reg.index);
+                                emit_write_masked(&mut out, &dst_expr, dst.mask, &tmp_name);
+                            }
+                            RegFile::Null => {
+                                // Discarded result (`null` destination).
+                            }
                             other => {
                                 bail!("VS-as-compute: unsupported add dst reg file {:?}", other)
                             }
-                        };
-                        emit_write_masked(&mut out, &dst_expr, dst.mask, &tmp_name);
+                        }
                     }
                     Sm4Inst::Ret => {}
                     other => bail!("VS-as-compute: unsupported VS instruction {:?}", other),
@@ -7387,14 +7403,22 @@ impl AerogpuD3d11Executor {
                         }
                         let tmp_name = format!("inst{idx}_val");
                         out.push_str(&format!("  let {tmp_name}: vec4<f32> = {val};\n"));
-                        let dst_expr = match dst.reg.file {
-                            RegFile::Temp => format!("r[{}u]", dst.reg.index),
-                            RegFile::Output => format!("o[{}u]", dst.reg.index),
+                        match dst.reg.file {
+                            RegFile::Temp => {
+                                let dst_expr = format!("r[{}u]", dst.reg.index);
+                                emit_write_masked(&mut out, &dst_expr, dst.mask, &tmp_name);
+                            }
+                            RegFile::Output => {
+                                let dst_expr = format!("o[{}u]", dst.reg.index);
+                                emit_write_masked(&mut out, &dst_expr, dst.mask, &tmp_name);
+                            }
+                            RegFile::Null => {
+                                // Discarded result (`null` destination).
+                            }
                             other => {
                                 bail!("VS-as-compute: unsupported mov dst reg file {:?}", other)
                             }
-                        };
-                        emit_write_masked(&mut out, &dst_expr, dst.mask, &tmp_name);
+                        }
                     }
                     Sm4Inst::Add { dst, a, b } => {
                         let a_expr = eval_src(a, "vertex_index", gs_input_reg_count)?;
@@ -7405,14 +7429,22 @@ impl AerogpuD3d11Executor {
                         }
                         let tmp_name = format!("inst{idx}_val");
                         out.push_str(&format!("  let {tmp_name}: vec4<f32> = {val};\n"));
-                        let dst_expr = match dst.reg.file {
-                            RegFile::Temp => format!("r[{}u]", dst.reg.index),
-                            RegFile::Output => format!("o[{}u]", dst.reg.index),
+                        match dst.reg.file {
+                            RegFile::Temp => {
+                                let dst_expr = format!("r[{}u]", dst.reg.index);
+                                emit_write_masked(&mut out, &dst_expr, dst.mask, &tmp_name);
+                            }
+                            RegFile::Output => {
+                                let dst_expr = format!("o[{}u]", dst.reg.index);
+                                emit_write_masked(&mut out, &dst_expr, dst.mask, &tmp_name);
+                            }
+                            RegFile::Null => {
+                                // Discarded result (`null` destination).
+                            }
                             other => {
                                 bail!("VS-as-compute: unsupported add dst reg file {:?}", other)
                             }
-                        };
-                        emit_write_masked(&mut out, &dst_expr, dst.mask, &tmp_name);
+                        }
                     }
                     Sm4Inst::Ret => {}
                     other => bail!("VS-as-compute: unsupported VS instruction {:?}", other),
