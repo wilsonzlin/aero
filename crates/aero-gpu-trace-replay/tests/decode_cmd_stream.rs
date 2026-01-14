@@ -145,6 +145,21 @@ fn build_fixture_cmd_stream() -> Vec<u8> {
     assert_eq!(payload.len(), 32);
     push_packet(&mut out, AerogpuCmdOpcode::SetConstantBuffers as u32, &payload);
 
+    // CREATE_SHADER_DXBC(shader_handle=0x1234, stage=Compute, stage_ex=Hull, dxbc="DXBC"+3 bytes + padding).
+    //
+    // `stage_ex` is encoded via `reserved0` when `stage == Compute`.
+    let dxbc: [u8; 7] = [0x44, 0x58, 0x42, 0x43, 0x01, 0x02, 0x03]; // "DXBC" + payload bytes
+    let mut payload = Vec::new();
+    push_u32_le(&mut payload, 0x1234); // shader_handle
+    push_u32_le(&mut payload, 2); // stage=Compute
+    push_u32_le(&mut payload, dxbc.len() as u32);
+    push_u32_le(&mut payload, 3); // reserved0 / stage_ex = Hull (DXBC program type)
+    payload.extend_from_slice(&dxbc);
+    while payload.len() % 4 != 0 {
+        payload.push(0);
+    }
+    push_packet(&mut out, AerogpuCmdOpcode::CreateShaderDxbc as u32, &payload);
+
     // Patch header.size_bytes.
     let size_bytes = out.len() as u32;
     out[8..12].copy_from_slice(&size_bytes.to_le_bytes());
@@ -202,6 +217,10 @@ fn decodes_cmd_stream_dump_to_stable_listing() {
     assert!(listing.contains("cb0_buffer=9"));
     assert!(listing.contains("cb0_offset_bytes=64"));
     assert!(listing.contains("cb0_size_bytes=256"));
+
+    // CREATE_SHADER_DXBC should surface its `stage_ex` tag when present.
+    assert!(listing.contains("CreateShaderDxbc"));
+    assert!(listing.contains("stage_ex=3"));
 }
 
 #[test]
@@ -272,4 +291,8 @@ fn json_listing_decodes_new_opcodes() {
     assert_eq!(cbs["decoded"]["cb0_buffer"], 9);
     assert_eq!(cbs["decoded"]["cb0_offset_bytes"], 64);
     assert_eq!(cbs["decoded"]["cb0_size_bytes"], 256);
+
+    let create_shader = find_packet("CreateShaderDxbc");
+    assert_eq!(create_shader["decoded"]["stage"], 2);
+    assert_eq!(create_shader["decoded"]["stage_ex"], 3);
 }

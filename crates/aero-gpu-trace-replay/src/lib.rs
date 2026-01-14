@@ -1116,6 +1116,7 @@ pub fn decode_cmd_stream_listing(
                         // Avoid taking references to packed fields.
                         let shader_handle = cmd.shader_handle;
                         let stage = cmd.stage;
+                        let stage_ex = cmd.reserved0;
                         let dxbc_size_bytes = cmd.dxbc_size_bytes;
                         let _ = write!(
                             line,
@@ -1125,6 +1126,11 @@ pub fn decode_cmd_stream_listing(
                             dxbc_size_bytes,
                             hex_prefix(dxbc, 16)
                         );
+                        if stage == 2 && stage_ex != 0 {
+                            // `CREATE_SHADER_DXBC` uses `reserved0` as a `stage_ex` tag when
+                            // `stage == COMPUTE` (see `docs/16-gpu-command-abi.md`).
+                            let _ = write!(line, " stage_ex={stage_ex}");
+                        }
                     }
                     AerogpuCmdOpcode::CreateInputLayout => {
                         let (cmd, blob) =

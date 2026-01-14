@@ -371,9 +371,13 @@ fn decode_known_fields(
             Ok((cmd, dxbc)) => {
                 let shader_handle = cmd.shader_handle;
                 let stage = cmd.stage;
+                let stage_ex = cmd.reserved0;
                 let dxbc_size_bytes = cmd.dxbc_size_bytes;
                 out.insert("shader_handle".into(), json!(shader_handle));
                 out.insert("stage".into(), json!(stage));
+                if stage == 2 && stage_ex != 0 {
+                    out.insert("stage_ex".into(), json!(stage_ex));
+                }
                 out.insert("dxbc_size_bytes".into(), json!(dxbc_size_bytes));
                 out.insert("dxbc_len".into(), json!(dxbc.len()));
             }
