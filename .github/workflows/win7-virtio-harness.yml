@@ -874,11 +874,17 @@ jobs:
 
           config_marker=""
           result_marker=""
+          blk_marker=""
+          blk_marker_line=""
           blk_resize_marker=""
           blk_resize_marker_line=""
           blk_reset_marker=""
           blk_reset_marker_line=""
           blk_reset_recovery_marker=""
+          net_marker=""
+          net_marker_line=""
+          net_udp_marker=""
+          net_udp_marker_line=""
           net_link_flap_marker=""
           net_link_flap_marker_line=""
           net_link_flap_host_marker=""
@@ -956,6 +962,10 @@ jobs:
           if [[ -f "${serial_log}" ]]; then
             config_marker="$(grep -F 'AERO_VIRTIO_SELFTEST|CONFIG|' "${serial_log}" | tail -n 1 | tr -d '\r' || true)"
             result_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|RESULT\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
+            blk_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-blk\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
+            blk_marker_line="$(
+              grep -F 'AERO_VIRTIO_SELFTEST|TEST|virtio-blk|' "${serial_log}" | tail -n 1 | tr -d '\r' || true
+            )"
             blk_resize_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-blk-resize\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
             blk_resize_marker_line="$(
               grep -F 'AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|' "${serial_log}" | tail -n 1 | tr -d '\r' || true
@@ -966,6 +976,14 @@ jobs:
             )"
             blk_reset_recovery_marker="$(
               grep -F 'AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset-recovery|' "${serial_log}" | tail -n 1 | tr -d '\r' || true
+            )"
+            net_udp_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-net-udp\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
+            net_udp_marker_line="$(
+              grep -F 'AERO_VIRTIO_SELFTEST|TEST|virtio-net-udp|' "${serial_log}" | tail -n 1 | tr -d '\r' || true
+            )"
+            net_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-net\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
+            net_marker_line="$(
+              grep -F 'AERO_VIRTIO_SELFTEST|TEST|virtio-net|' "${serial_log}" | tail -n 1 | tr -d '\r' || true
             )"
             net_link_flap_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-net-link-flap\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
             net_link_flap_marker_line="$(
@@ -1158,6 +1176,12 @@ jobs:
             if [[ -n "${result_marker}" ]]; then
               echo "- Guest result marker: \`${result_marker}\`"
             fi
+            if [[ -n "${blk_marker}" ]]; then
+              echo "- Guest virtio-blk marker: \`${blk_marker}\`"
+            fi
+            if [[ -n "${blk_marker_line}" ]]; then
+              echo "- Guest virtio-blk marker line: \`${blk_marker_line}\`"
+            fi
             if [[ -n "${blk_resize_marker}" ]]; then
               echo "- Guest virtio-blk-resize marker: \`${blk_resize_marker}\`"
             fi
@@ -1191,6 +1215,18 @@ jobs:
               if [[ -n "${net_link_flap_marker_line}" ]]; then
                 echo "- Guest virtio-net-link-flap marker line: \`${net_link_flap_marker_line}\`"
               fi
+            if [[ -n "${net_udp_marker}" ]]; then
+              echo "- Guest virtio-net-udp marker: \`${net_udp_marker}\`"
+            fi
+            if [[ -n "${net_udp_marker_line}" ]]; then
+              echo "- Guest virtio-net-udp marker line: \`${net_udp_marker_line}\`"
+            fi
+            if [[ -n "${net_marker}" ]]; then
+              echo "- Guest virtio-net marker: \`${net_marker}\`"
+            fi
+            if [[ -n "${net_marker_line}" ]]; then
+              echo "- Guest virtio-net marker line: \`${net_marker_line}\`"
+            fi
             if [[ -n "${net_offload_csum_marker}" ]]; then
               echo "- Guest virtio-net-offload-csum marker: \`${net_offload_csum_marker}\`"
             fi
