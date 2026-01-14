@@ -268,6 +268,17 @@ Artifacts (typical):
 - `AeroVirtIO-Win7-<version>.iso` (unless `-NoIso`; requires `cargo` for deterministic builds; legacy Windows IMAPI2 via `-LegacyIso`)
 - `AeroVirtIO-Win7-<version>-fat.vhd` (when `-MakeFatImage` or `AERO_MAKE_FAT_IMAGE=1`; requires Windows + admin; skipped unless `-FatImageStrict`)
 
+Integrity manifests (default):
+
+- `AeroVirtIO-Win7-<version>-x86.manifest.json`
+- `AeroVirtIO-Win7-<version>-x64.manifest.json`
+- `AeroVirtIO-Win7-<version>-bundle.manifest.json`
+- `AeroVirtIO-Win7-<version>.manifest.json` (when ISO is produced)
+- `AeroVirtIO-Win7-<version>-fat.manifest.json` (when FAT VHD is produced)
+
+Each `*.manifest.json` includes the produced artifact's `sha256` and `size`, the `version` and
+`signing_policy`, and a stable list of packaged file hashes (`files[]`) for mixed-media detection.
+
 If `-Version` is not provided, the script derives a deterministic version string from git:
 
 - date: HEAD commit date (formatted `yyyyMMdd`)

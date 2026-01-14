@@ -1347,6 +1347,15 @@ function Invoke-PackageDrivers {
     $fatVhd = Join-Path $outDirResolved "$artifactBase-fat.vhd"
 
     $stagingBase = Join-Path $outDirResolved "_staging"
+    # Safety guard: `Remove-Item -Recurse -Force $stagingBase` must never be able to delete
+    # arbitrary directories if OutDir is misconfigured.
+    $outFull = [System.IO.Path]::GetFullPath($outDirResolved).TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar)
+    $stagingFull = [System.IO.Path]::GetFullPath($stagingBase).TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar)
+    $comparison = if (Get-IsWindows) { [System.StringComparison]::OrdinalIgnoreCase } else { [System.StringComparison]::Ordinal }
+    $sep = [System.IO.Path]::DirectorySeparatorChar
+    if (-not $stagingFull.StartsWith($outFull + $sep, $comparison)) {
+        throw "Internal error: staging directory is not a subdirectory of OutDir. OutDir='$outFull' staging='$stagingFull'"
+    }
     if (Test-Path $stagingBase) {
         Remove-Item -Recurse -Force $stagingBase
     }
