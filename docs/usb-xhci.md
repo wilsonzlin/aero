@@ -398,7 +398,8 @@ Dedicated EP0 unit tests also exist:
   `tick_1ms` (alias `tick_1ms_and_service_event_ring`) or equivalent so port timers, transfer
   execution, command ring work, and event delivery make forward progress, with DMA gated on PCI BME.
 - Making xHCI enabled-by-default in the canonical machine/topology (native + web). Today it remains
-  opt-in/experimental (`MachineConfig.enable_xhci`, `PcPlatformConfig.enable_xhci`).
+  opt-in/experimental (`MachineConfig.enable_xhci` requires `MachineConfig.enable_pc_platform`,
+  and `PcPlatformConfig.enable_xhci`).
 
 ---
 
