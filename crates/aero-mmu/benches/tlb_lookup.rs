@@ -136,15 +136,28 @@ fn bench_tlb_lookup_hit_long4_4k(c: &mut Criterion) {
     let vaddr = 0x234u64;
 
     // Populate the TLB once via a page walk.
-    let warm = mmu.translate(&mut mem, vaddr, AccessType::Read, 0).unwrap();
-    black_box(warm);
+    let warm_read = mmu.translate(&mut mem, vaddr, AccessType::Read, 0).unwrap();
+    black_box(warm_read);
+    // Warm the ITLB too so execute hits don't page-walk inside the benchmark.
+    let warm_exec = mmu
+        .translate(&mut mem, vaddr, AccessType::Execute, 0)
+        .unwrap();
+    black_box(warm_exec);
 
     let mut group = c.benchmark_group("tlb_lookup");
     group.throughput(Throughput::Elements(1));
-    group.bench_function("hit_long4_4k", |b| {
+    group.bench_function("hit_long4_4k_read", |b| {
         b.iter(|| {
             let paddr = mmu
                 .translate(&mut mem, black_box(vaddr), AccessType::Read, 0)
+                .unwrap();
+            black_box(paddr)
+        })
+    });
+    group.bench_function("hit_long4_4k_exec", |b| {
+        b.iter(|| {
+            let paddr = mmu
+                .translate(&mut mem, black_box(vaddr), AccessType::Execute, 0)
                 .unwrap();
             black_box(paddr)
         })
