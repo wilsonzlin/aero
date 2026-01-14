@@ -5825,7 +5825,7 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
             mounts: selection.mounts,
             hdd: selection.hdd ?? null,
             cd: selection.cd ?? null,
-          });
+          } satisfies SetBootDisksMessage);
         }
         const ioWorker = workerCoordinator.getIoWorker();
         if (ioWorker) {
@@ -6174,7 +6174,7 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
           mounts: selection?.mounts ?? {},
           hdd: selection?.hdd ?? null,
           cd: selection?.cd ?? null,
-        });
+        } satisfies SetBootDisksMessage);
       }
       attachedCpuWorker = cpuWorker;
     }
