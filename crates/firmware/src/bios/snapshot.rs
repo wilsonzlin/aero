@@ -237,7 +237,7 @@ impl BiosSnapshot {
             None => w.write_all(&[0])?,
         }
 
-        // v5 extension block: BIOS boot order / boot device selection policy.
+        // v5 extension block: BIOS boot-selection policy config (boot order + CD policy).
         w.write_all(&[4])?;
         let boot_order_len: u8 = self
             .config

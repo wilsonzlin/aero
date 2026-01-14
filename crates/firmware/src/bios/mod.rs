@@ -298,7 +298,11 @@ impl FirmwareMemoryBus for BiosMemoryBus<'_> {
     }
 }
 
-/// BIOS boot device class used by the host-configurable boot order.
+/// BIOS boot device class used by the (optional) host-configured boot-order policy.
+///
+/// Note: Aero’s BIOS boot selection is currently driven solely by [`BiosConfig::boot_drive`]
+/// (i.e. an explicit `DL` value). This enum and the related config fields exist primarily for
+/// snapshot forward-compatibility with a future multi-device boot-selection implementation.
 ///
 /// This is intentionally a small, stable enum so it can be snapshotted as a compact `u8` list.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -339,21 +343,25 @@ pub struct BiosConfig {
     /// ([`crate::video::vbe::VbeDevice::LFB_BASE_DEFAULT`]).
     pub vbe_lfb_base: Option<u32>,
 
-    /// Host-configurable boot order used by BIOS boot-device selection logic.
+    /// Optional host-configurable boot-order policy (currently unused by the BIOS boot path).
     ///
-    /// Note: the classic BIOS boot drive number passed in `DL` is still stored separately in
-    /// [`BiosConfig::boot_drive`]. This list is intended to represent user/host policy (e.g. "try
-    /// CD first, then HDD") in a way that can be snapshotted and restored deterministically.
+    /// The classic BIOS boot drive number passed in `DL` is stored separately in
+    /// [`BiosConfig::boot_drive`], and **that value is what Aero BIOS currently uses** to select the
+    /// boot path during POST (HDD/floppy boot sector vs El Torito CD boot).
+    ///
+    /// This list is snapshotted/restored to keep the BIOS snapshot format forward-compatible with a
+    /// future “try devices in order” selection algorithm.
     pub boot_order: Vec<BiosBootDevice>,
-    /// BIOS drive number to use when booting from a CD-ROM device class.
+    /// BIOS drive number to use when booting from a CD-ROM device class (boot-order policy).
     ///
     /// The conventional range for El Torito CD-ROM boot devices is `0xE0..=0xEF`.
-    pub cd_boot_drive: u8,
-    /// Whether the BIOS should prefer booting from a CD-ROM when present.
     ///
-    /// This is a host-facing convenience policy flag. When unset, callers are expected to select
-    /// an explicit [`BiosConfig::boot_drive`] or provide an explicit [`BiosConfig::boot_order`]
-    /// depending on the higher-level machine wiring.
+    /// Currently unused: Aero BIOS boot selection uses [`BiosConfig::boot_drive`] directly, rather
+    /// than selecting a device class then mapping it to a drive number.
+    pub cd_boot_drive: u8,
+    /// Host convenience policy flag for a future “CD-first when present” boot selection.
+    ///
+    /// Currently unused: callers must select an explicit [`BiosConfig::boot_drive`].
     pub boot_from_cd_if_present: bool,
 }
 
