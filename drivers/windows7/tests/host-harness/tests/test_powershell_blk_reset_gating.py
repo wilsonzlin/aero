@@ -19,10 +19,11 @@ class PowerShellBlkResetGatingTests(unittest.TestCase):
 
     def test_with_blk_reset_aliases_exist(self) -> None:
         # Keep parity with the Python harness: accept WithVirtioBlkReset/EnableVirtioBlkReset/RequireVirtioBlkReset.
+        # The alias list may evolve, so avoid brittle exact-string matching.
         self.assertRegex(
             self.text,
             re.compile(
-                r'\[Alias\("WithVirtioBlkReset",\s*"EnableVirtioBlkReset",\s*"RequireVirtioBlkReset"\)\]\s*\r?\n\s*\[switch\]\s*\$WithBlkReset\b',
+                r'\[Alias\s*\((?=[^)]*"WithVirtioBlkReset")(?=[^)]*"EnableVirtioBlkReset")(?=[^)]*"RequireVirtioBlkReset")[^)]*\)\]\s*\r?\n\s*\[switch\]\s*\$WithBlkReset\b',
                 re.IGNORECASE,
             ),
         )
