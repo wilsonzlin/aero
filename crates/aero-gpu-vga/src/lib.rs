@@ -1065,6 +1065,29 @@ impl VgaDevice {
         (width, height)
     }
 
+    fn crtc_start_address(&self) -> u16 {
+        let hi = self.crtc.get(0x0C).copied().unwrap_or(0);
+        let lo = self.crtc.get(0x0D).copied().unwrap_or(0);
+        (u16::from(hi) << 8) | u16::from(lo)
+    }
+
+    fn crtc_byte_mode(&self) -> bool {
+        // VGA CRTC Mode Control (index 0x17) bit 6: Byte mode.
+        //
+        // When set, the start address and scanline offset registers address memory in bytes rather
+        // than words (legacy CGA-compatible behavior uses word addressing).
+        (self.crtc.get(0x17).copied().unwrap_or(0) & 0x40) != 0
+    }
+
+    fn crtc_start_address_bytes(&self) -> usize {
+        let start = usize::from(self.crtc_start_address());
+        if self.crtc_byte_mode() {
+            start
+        } else {
+            start << 1
+        }
+    }
+
     fn ensure_buffers(&mut self, width: u32, height: u32) {
         if self.width == width && self.height == height && !self.front.is_empty() {
             return;
@@ -1233,11 +1256,13 @@ impl VgaDevice {
         let width = 320usize;
         let height = 200usize;
         self.back.fill(0);
+        let start = self.crtc_start_address_bytes() & 0xFFFF;
         for y in 0..height {
             for x in 0..width {
                 let linear = y * width + x;
-                let plane = linear & 3;
-                let off = linear >> 2;
+                let addr = start.wrapping_add(linear) & 0xFFFF;
+                let plane = addr & 3;
+                let off = addr >> 2;
                 let idx = if plane < self.config.legacy_plane_count {
                     self.vram[plane * VGA_PLANE_SIZE + off]
                 } else {
@@ -1254,10 +1279,11 @@ impl VgaDevice {
         let width_usize = width as usize;
         let height_usize = height as usize;
         let bytes_per_line = width_usize.div_ceil(8);
+        let start = self.crtc_start_address_bytes();
 
         for y in 0..height_usize {
             for x in 0..width_usize {
-                let byte_index = y * bytes_per_line + (x / 8);
+                let byte_index = self.plane_offset(start.wrapping_add(y * bytes_per_line + (x / 8)));
                 let bit = 7 - (x & 7);
                 let mut color = 0u8;
                 for plane in 0..4 {
@@ -2365,6 +2391,31 @@ mod tests {
     }
 
     #[test]
+    fn mode13h_respects_crtc_start_address_and_byte_mode() {
+        let mut dev = VgaDevice::new();
+        dev.set_mode_13h();
+
+        let base = 0xA0000u32;
+        for i in 0..32u32 {
+            dev.mem_write_u8(base + i, i as u8);
+        }
+
+        // Default CRTC byte mode is off; start address is interpreted as a word offset, so
+        // start=1 shifts by 2 bytes (2 pixels).
+        dev.crtc[0x0C] = 0;
+        dev.crtc[0x0D] = 1;
+        dev.dirty = true;
+        dev.present();
+        assert_eq!(dev.get_framebuffer()[0], rgb_to_rgba_u32(dev.dac[2]));
+
+        // Enable CRTC byte mode (0x17 bit6); now start=1 shifts by 1 byte (1 pixel).
+        dev.crtc[0x17] = dev.crtc[0x17] | 0x40;
+        dev.dirty = true;
+        dev.present();
+        assert_eq!(dev.get_framebuffer()[0], rgb_to_rgba_u32(dev.dac[1]));
+    }
+
+    #[test]
     fn register_writes_switch_to_mode13h() {
         let mut dev = VgaDevice::new();
 
@@ -2383,6 +2434,44 @@ mod tests {
 
         dev.present();
         assert_eq!(dev.get_resolution(), (320, 200));
+    }
+
+    #[test]
+    fn planar_render_respects_crtc_start_address_and_byte_mode() {
+        let mut dev = VgaDevice::new();
+
+        // Enable graphics mode while keeping chain-4 disabled so the renderer chooses the planar
+        // 4bpp path.
+        dev.attribute[0x10] |= 0x01;
+        dev.sequencer[4] = 0x00;
+
+        // Force a small resolution: 8x1.
+        dev.crtc[1] = 0;
+        dev.crtc[0x07] = 0;
+        dev.crtc[0x12] = 0;
+
+        // Populate three bytes of planar memory with distinct colors at the leftmost pixel (bit7):
+        // - byte0 => color 1 (plane0)
+        // - byte1 => color 2 (plane1)
+        // - byte2 => color 4 (plane2)
+        dev.vram[0] = 0x80;
+        dev.vram[VGA_PLANE_SIZE + 1] = 0x80;
+        dev.vram[2 * VGA_PLANE_SIZE + 2] = 0x80;
+
+        // Byte mode enabled: start=1 selects byte1.
+        dev.crtc[0x17] |= 0x40;
+        dev.crtc[0x0C] = 0;
+        dev.crtc[0x0D] = 1;
+        dev.dirty = true;
+        dev.present();
+        assert_eq!(dev.get_resolution(), (8, 1));
+        assert_eq!(dev.get_framebuffer()[0], rgb_to_rgba_u32(dev.dac[2]));
+
+        // Byte mode disabled: start=1 is a word offset => start_byte=2 selects byte2.
+        dev.crtc[0x17] &= !0x40;
+        dev.dirty = true;
+        dev.present();
+        assert_eq!(dev.get_framebuffer()[0], rgb_to_rgba_u32(dev.dac[4]));
     }
 
     #[test]
