@@ -57,24 +57,22 @@ fi
 # The only `aero-d3d9-shader` crate in this repo is the legacy/reference parser at
 # `crates/legacy/aero-d3d9-shader/`.
 #
-# A former wrapper crate at `crates/aero-d3d9-shader/` (same package name, just re-exporting
-# `aero-dxbc`) was deleted to avoid duplicate package name confusion. Fail CI if it is
-# reintroduced or referenced by path.
-mapfile -t tracked_d3d9_shader_wrapper < <(git ls-files | grep -E '^crates/aero-d3d9-shader(/|$)' || true)
+# A former wrapper crate under `crates/` (same package name, just re-exporting `aero-dxbc`) was
+# deleted to avoid duplicate package name confusion. Fail CI if it is reintroduced or referenced by
+# path.
+#
+# Note: keep this check free of the literal removed wrapper path string so repo-wide searches stay
+# clean (we construct the path at runtime).
+d3d9_shader_wrapper_path="crates/aero-d3d9-"shader
+mapfile -t tracked_d3d9_shader_wrapper < <(git ls-files | grep -E "^${d3d9_shader_wrapper_path}(/|$)" || true)
 if (( ${#tracked_d3d9_shader_wrapper[@]} > 0 )); then
-  die "unexpected wrapper crate path 'crates/aero-d3d9-shader' is tracked; use crates/aero-dxbc and/or crates/legacy/aero-d3d9-shader instead: ${tracked_d3d9_shader_wrapper[*]}"
+  die "unexpected wrapper crate path '${d3d9_shader_wrapper_path}' is tracked; use crates/aero-dxbc and/or crates/legacy/aero-d3d9-shader instead: ${tracked_d3d9_shader_wrapper[*]}"
 fi
 unset tracked_d3d9_shader_wrapper
 
-if git grep -n -F "crates/aero-d3d9-shader" -- \
-  ':(exclude)Cargo.lock' \
-  ':(exclude)scripts/ci/check-repo-layout.sh' \
-  >/dev/null; then
-  echo "error: repo should not reference the deleted wrapper crate path 'crates/aero-d3d9-shader' (use crates/aero-dxbc and/or crates/legacy/aero-d3d9-shader instead):" >&2
-  git grep -n -F "crates/aero-d3d9-shader" -- \
-    ':(exclude)Cargo.lock' \
-    ':(exclude)scripts/ci/check-repo-layout.sh' \
-    >&2
+if git grep -n -F "${d3d9_shader_wrapper_path}" -- ':(exclude)Cargo.lock' >/dev/null; then
+  echo "error: repo should not reference the deleted wrapper crate path '${d3d9_shader_wrapper_path}' (use crates/aero-dxbc and/or crates/legacy/aero-d3d9-shader instead):" >&2
+  git grep -n -F "${d3d9_shader_wrapper_path}" -- ':(exclude)Cargo.lock' >&2
   exit 1
 fi
 
