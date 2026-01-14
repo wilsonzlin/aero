@@ -15,7 +15,7 @@ produced by D3D10/D3D11 apps; AeroGPU therefore treats “shared surfaces” as 
 That `HANDLE` is typically an **NT handle** (notably for DXGI shared handles), which means:
 
 - It is only meaningful in the process that owns it (each process has its own handle table).
-- When transferred to another process it must be **duplicated** (`DuplicateHandle`) or inherited.
+- When transferred to another process it must be **duplicated** (`DuplicateHandle`) or inherited (for real NT handles).
 - The numeric `HANDLE` value is **not stable** cross-process; the consumer’s handle value commonly differs from the producer’s.
 
 Therefore: **AeroGPU must not use the numeric D3D shared `HANDLE` value as a protocol share identifier.**
@@ -116,7 +116,7 @@ Use one of the cross-process shared-surface IPC tests:
 It should:
 
 1. Create a shareable render target/texture in a parent process.
-2. Duplicate the D3D shared `HANDLE` into a child process.
+2. If the shared handle is a real NT handle, duplicate it into a child process (`DuplicateHandle`); otherwise pass the raw numeric value (token-style handles).
 3. Child opens the resource and validates content via readback.
 
 This test catches the common bug where `share_token` is (incorrectly) derived from the process-local shared `HANDLE` value: producer and consumer handle values commonly differ, so `IMPORT_SHARED_SURFACE` would fail to resolve the previously-exported surface.
