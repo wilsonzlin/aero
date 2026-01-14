@@ -88,7 +88,11 @@ pub const MAX_UAV_SLOTS: u32 = 8;
 /// Reserved bind group index for internal emulation buffers (expanded geometry, indirect args,
 /// counters, etc).
 ///
-/// This is intentionally outside the stage-scoped groups used for D3D shader resources so internal
-/// pipelines (vertex pulling, expanded draws, etc) can bind their own buffers without colliding
-/// with app-declared bindings.
-pub const BIND_GROUP_INTERNAL_EMULATION: u32 = 4;
+/// WebGPU guarantees `maxBindGroups >= 4`, so AeroGPU's D3D11 executor reserves `@group(0..=2)` for
+/// VS/PS/CS resources and uses `@group(3)` for both:
+/// - Extended D3D11 stage resources (GS/HS/DS)
+/// - Internal emulation helpers (vertex pulling, expanded draws, etc)
+///
+/// Internal-only bindings within this group must use `@binding >= BINDING_BASE_INTERNAL` to avoid
+/// colliding with the D3D11 register-space mappings (`b#`/`t#`/`s#`/`u#`).
+pub const BIND_GROUP_INTERNAL_EMULATION: u32 = 3;

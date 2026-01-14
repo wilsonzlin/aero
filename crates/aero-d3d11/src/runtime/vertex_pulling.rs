@@ -21,11 +21,13 @@ use crate::input_layout::{
 
 /// Reserved bind-group index for IA vertex pulling resources.
 ///
-/// Group indices `0..=3` are used by the D3D binding model (`binding_model.rs`) for VS/PS/CS and
-/// extended D3D11 stage (GS/HS/DS) resources.
+/// Group indices `0..=2` are used by the D3D binding model (`binding_model.rs`) for VS/PS/CS
+/// resources. WebGPU guarantees `maxBindGroups >= 4`, so AeroGPU uses `@group(3)` for both:
+/// - Extended D3D11 stage (GS/HS/DS) resources
+/// - Internal emulation helpers like vertex pulling
 ///
-/// Vertex pulling is an internal/emulation-only mechanism, so it uses a dedicated bind group index
-/// (`@group(4)`) reserved for internal emulation pipelines.
+/// Internal bindings within this group must use `@binding >= BINDING_BASE_INTERNAL` to avoid
+/// colliding with the D3D11 register-space binding ranges.
 pub const VERTEX_PULLING_GROUP: u32 = BIND_GROUP_INTERNAL_EMULATION;
 
 /// First `@binding` number reserved for vertex pulling + compute-expansion internal resources
