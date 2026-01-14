@@ -1677,9 +1677,15 @@ test("rejects concurrent HTTP session allocations with the same JWT sid", async 
 test("releases JWT sid after /session preallocation TTL expires", async ({ page }) => {
   const jwtSecret = "e2e-jwt-secret";
   const now = Math.floor(Date.now() / 1000);
-  const token = mintHS256JWT({
+  const tokenA = mintHS256JWT({
     sid: "sess_e2e_prealloc_ttl",
-    iat: now,
+    iat: now - 10,
+    exp: now + 5 * 60,
+    secret: jwtSecret,
+  });
+  const tokenB = mintHS256JWT({
+    sid: "sess_e2e_prealloc_ttl",
+    iat: now - 9,
     exp: now + 5 * 60,
     secret: jwtSecret,
   });
@@ -1695,9 +1701,9 @@ test("releases JWT sid after /session preallocation TTL expires", async ({ page 
     await page.goto(web.url);
 
     const res = await page.evaluate(
-      async ({ relayPort, token }) => {
+      async ({ relayPort, tokenA, tokenB }) => {
         const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-        const postSession = async () => {
+        const postSession = async (token) => {
           const resp = await fetch(`http://127.0.0.1:${relayPort}/session`, {
             method: "POST",
             headers: {
@@ -1714,21 +1720,21 @@ test("releases JWT sid after /session preallocation TTL expires", async ({ page 
           return { status: resp.status, text, json };
         };
 
-        const first = await postSession();
-        const second = await postSession();
+        const first = await postSession(tokenA);
+        const second = await postSession(tokenB);
 
         // Wait until the preallocated session expires and the stable sid key is released.
         let third = null;
         const deadline = Date.now() + 5_000;
         while (Date.now() < deadline) {
           await sleep(100);
-          third = await postSession();
+          third = await postSession(tokenB);
           if (third.status === 201) break;
         }
 
         return { first, second, third };
       },
-      { relayPort: relay.port, token },
+      { relayPort: relay.port, tokenA, tokenB },
     );
 
     expect(res.first.status).toBe(201);
