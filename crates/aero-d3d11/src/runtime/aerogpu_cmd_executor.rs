@@ -3767,6 +3767,7 @@ impl AerogpuD3d11Executor {
         // Ensure any guest-backed resources referenced by the current binding state are uploaded
         // before entering the render pass.
         self.ensure_bound_resources_uploaded(encoder, &pipeline_bindings, allocs, guest_mem)?;
+        let uniform_align = (self.device.limits().min_uniform_buffer_offset_alignment as u64).max(1);
 
         // If sample_mask disables all samples, treat the draw as a no-op (mirrors the normal draw
         // path behavior).
