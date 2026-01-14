@@ -254,6 +254,9 @@ Notes:
 - The `virtio-net` marker includes large transfer diagnostics:
   - `large_ok`, `large_bytes`, `large_fnv1a64`, `large_mbps`
   - `upload_ok`, `upload_bytes`, `upload_mbps`
+- The virtio-net section also emits an optional ctrl virtqueue diagnostic line (not parsed by the harness):
+  - `virtio-net-ctrl-vq|INFO|...`
+  - This is best-effort and may emit `...|diag_unavailable` if the in-guest driver did not expose the registry-backed diagnostics.
 - The duplex marker (`virtio-snd-duplex`) is emitted whenever the virtio-snd section runs:
   - `SKIP|flag_not_set` when virtio-snd is skipped (and capture smoke testing is not forced).
   - `PASS|frames=...|non_silence=...` when the duplex test runs successfully.
