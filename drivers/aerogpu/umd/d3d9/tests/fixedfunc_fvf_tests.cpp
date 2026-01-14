@@ -6052,6 +6052,13 @@ bool TestPsOnlyInteropXyzNormalIgnoresLightingAndDoesNotUploadLightingConstants(
     return false;
   }
 
+  // The synthesized fixed-function VS for `XYZ | NORMAL` uses the WVP constant
+  // range (c240..c243) even when lighting is enabled but ignored under interop.
+  if (!Check(CountVsConstantUploads(buf, len, /*start_register=*/240u, /*vec4_count=*/4u) >= 1,
+             "PS-only interop: uploaded WVP constants")) {
+    return false;
+  }
+
   if (!Check(CountVsConstantUploads(buf,
                                     len,
                                     kFixedfuncLightingStartRegister,
@@ -6138,6 +6145,14 @@ bool TestPsOnlyInteropXyzNormalTex1IgnoresLightingAndDoesNotUploadLightingConsta
     return false;
   }
   if (!Check(CountOpcode(buf, len, AEROGPU_CMD_DRAW) >= 1, "PS-only interop: DRAW emitted")) {
+    return false;
+  }
+
+  // The synthesized fixed-function VS for `XYZ | NORMAL | TEX1` uses the WVP
+  // constant range (c240..c243) even when lighting is enabled but ignored under
+  // interop.
+  if (!Check(CountVsConstantUploads(buf, len, /*start_register=*/240u, /*vec4_count=*/4u) >= 1,
+             "PS-only interop: uploaded WVP constants")) {
     return false;
   }
 
