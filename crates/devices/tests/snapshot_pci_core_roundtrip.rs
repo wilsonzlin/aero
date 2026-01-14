@@ -6,6 +6,13 @@ use aero_devices::pci::{
 use aero_io_snapshot::io::state::IoSnapshot;
 use std::collections::BTreeSet;
 
+mod bar_probe_masks;
+
+use bar_probe_masks::{io_probe_mask, mmio32_probe_mask};
+
+const BAR0_SIZE: u32 = 0x1000;
+const BAR1_SIZE: u32 = 0x20;
+
 fn cfg_addr(bdf: PciBdf, offset: u16) -> u32 {
     0x8000_0000
         | (u32::from(bdf.bus) << 16)
@@ -46,11 +53,11 @@ fn make_cfg_ports() -> (PciConfigPorts, PciBdf) {
     cfg.set_bar_definition(
         0,
         PciBarDefinition::Mmio32 {
-            size: 0x1000,
+            size: BAR0_SIZE,
             prefetchable: false,
         },
     );
-    cfg.set_bar_definition(1, PciBarDefinition::Io { size: 0x20 });
+    cfg.set_bar_definition(1, PciBarDefinition::Io { size: BAR1_SIZE });
 
     bus.add_device(bdf, Box::new(TestDev { cfg }));
     (PciConfigPorts::with_bus(bus), bdf)
@@ -78,19 +85,25 @@ fn pci_core_snapshot_roundtrip_restores_cfg_and_intx_state() {
 
     // BAR0 probe/program.
     cfg_write(&mut ports, bdf, 0x10, 4, 0xFFFF_FFFF);
-    assert_eq!(cfg_read(&mut ports, bdf, 0x10, 4), 0xFFFF_F000);
+    assert_eq!(
+        cfg_read(&mut ports, bdf, 0x10, 4),
+        mmio32_probe_mask(BAR0_SIZE, false)
+    );
     cfg_write(&mut ports, bdf, 0x10, 4, 0x1234_5000);
     assert_eq!(cfg_read(&mut ports, bdf, 0x10, 4), 0x1234_5000);
 
     // BAR1 IO probe/program.
     cfg_write(&mut ports, bdf, 0x14, 4, 0xFFFF_FFFF);
-    assert_eq!(cfg_read(&mut ports, bdf, 0x14, 4), 0xFFFF_FFE1);
+    assert_eq!(cfg_read(&mut ports, bdf, 0x14, 4), io_probe_mask(BAR1_SIZE));
     cfg_write(&mut ports, bdf, 0x14, 4, 0x0000_C200);
     assert_eq!(cfg_read(&mut ports, bdf, 0x14, 4), 0x0000_C201);
 
     // Leave BAR0 in the probed state so probe flags are exercised, but keep the programmed base.
     cfg_write(&mut ports, bdf, 0x10, 4, 0xFFFF_FFFF);
-    assert_eq!(cfg_read(&mut ports, bdf, 0x10, 4), 0xFFFF_F000);
+    assert_eq!(
+        cfg_read(&mut ports, bdf, 0x10, 4),
+        mmio32_probe_mask(BAR0_SIZE, false)
+    );
 
     // Leave the config address latch at a recognizable value.
     ports.io_write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bdf, 0x3c));
@@ -140,7 +153,10 @@ fn pci_core_snapshot_roundtrip_restores_cfg_and_intx_state() {
     assert_eq!(id2, id);
 
     // BAR probe mask should be restored (BAR0 is left probed).
-    assert_eq!(cfg_read(&mut ports2, bdf, 0x10, 4), 0xFFFF_F000);
+    assert_eq!(
+        cfg_read(&mut ports2, bdf, 0x10, 4),
+        mmio32_probe_mask(BAR0_SIZE, false)
+    );
 
     // BAR base should also be restored even when the BAR is in probe mode.
     let bar0_base = ports2

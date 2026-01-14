@@ -6,6 +6,12 @@ use memory::Bus;
 use std::cell::RefCell;
 use std::rc::Rc;
 
+mod bar_probe_masks;
+
+use bar_probe_masks::mmio32_probe_mask;
+
+const BAR0_SIZE: u32 = 0x1000;
+
 fn cfg_addr(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
     0x8000_0000
         | ((bus as u32) << 16)
@@ -48,7 +54,7 @@ fn pci_config_space_is_coherent_between_mech1_ports_and_ecam_mmio() {
                 cfg.set_bar_definition(
                     0,
                     PciBarDefinition::Mmio32 {
-                        size: 0x1000,
+                        size: BAR0_SIZE,
                         prefetchable: false,
                     },
                 );
@@ -116,8 +122,9 @@ fn pci_config_space_is_coherent_between_mech1_ports_and_ecam_mmio() {
         .io_write(PCI_CFG_DATA_PORT, 4, 0xFFFF_FFFF);
     let bar0_probe_ports = cfg_ports.borrow_mut().io_read(PCI_CFG_DATA_PORT, 4);
     let bar0_probe_ecam = mem.read(ecam_addr(ecam_base, 0, 2, 0, 0x10), 4) as u32;
-    assert_eq!(bar0_probe_ports, 0xFFFF_F000);
-    assert_eq!(bar0_probe_ecam, 0xFFFF_F000);
+    let expected_probe = mmio32_probe_mask(BAR0_SIZE, false);
+    assert_eq!(bar0_probe_ports, expected_probe);
+    assert_eq!(bar0_probe_ecam, expected_probe);
 
     // Program BAR0 using a single ECAM byte write to the highest byte (after probe). This should
     // not "inherit" the probe mask's low bits.

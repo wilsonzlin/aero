@@ -18,6 +18,12 @@ use aero_platform::chipset::ChipsetState;
 use aero_platform::interrupts::{PlatformInterruptMode, PlatformInterrupts};
 use aero_platform::io::PortIoDevice;
 
+mod bar_probe_masks;
+
+use bar_probe_masks::mmio32_probe_mask;
+
+const PCI_TEST_BAR0_SIZE: u32 = 0x1000;
+
 const RTC_PORT_INDEX: u16 = 0x70;
 const RTC_PORT_DATA: u16 = 0x71;
 const RTC_REG_STATUS_B: u8 = 0x0B;
@@ -332,7 +338,7 @@ fn pci_snapshot_restore_preserves_config_space_and_mappings() {
     dev.cfg.set_bar_definition(
         0,
         PciBarDefinition::Mmio32 {
-            size: 0x1000,
+            size: PCI_TEST_BAR0_SIZE,
             prefetchable: false,
         },
     );
@@ -345,7 +351,10 @@ fn pci_snapshot_restore_preserves_config_space_and_mappings() {
 
     // Put BAR0 into probe mode and ensure the read-back depends on the probe flag.
     bus.write_config(bdf, 0x10, 4, 0xFFFF_FFFF);
-    assert_eq!(bus.read_config(bdf, 0x10, 4), 0xFFFF_F000);
+    assert_eq!(
+        bus.read_config(bdf, 0x10, 4),
+        mmio32_probe_mask(PCI_TEST_BAR0_SIZE, false)
+    );
 
     let baseline_mapped = bus.mapped_bars();
     let snap = PciBusSnapshot::save_from(&bus).save_state();
@@ -357,7 +366,7 @@ fn pci_snapshot_restore_preserves_config_space_and_mappings() {
     dev2.cfg.set_bar_definition(
         0,
         PciBarDefinition::Mmio32 {
-            size: 0x1000,
+            size: PCI_TEST_BAR0_SIZE,
             prefetchable: false,
         },
     );
@@ -365,7 +374,10 @@ fn pci_snapshot_restore_preserves_config_space_and_mappings() {
     decoded.restore_into(&mut bus2).unwrap();
 
     assert_eq!(bus2.mapped_bars(), baseline_mapped);
-    assert_eq!(bus2.read_config(bdf, 0x10, 4), 0xFFFF_F000);
+    assert_eq!(
+        bus2.read_config(bdf, 0x10, 4),
+        mmio32_probe_mask(PCI_TEST_BAR0_SIZE, false)
+    );
 }
 
 #[test]

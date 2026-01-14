@@ -14,6 +14,13 @@ use aero_snapshot::{
     MmuState, Result, SaveOptions, SnapshotMeta, SnapshotSource, SnapshotTarget,
 };
 
+mod bar_probe_masks;
+
+use bar_probe_masks::mmio32_probe_mask;
+
+const BAR0_SIZE: u32 = 0x1000;
+const BAR1_SIZE: u32 = 0x20;
+
 fn cfg_addr(bdf: PciBdf, offset: u16) -> u32 {
     0x8000_0000
         | (u32::from(bdf.bus) << 16)
@@ -42,11 +49,11 @@ impl TestDevice {
         cfg.set_bar_definition(
             0,
             PciBarDefinition::Mmio32 {
-                size: 0x1000,
+                size: BAR0_SIZE,
                 prefetchable: false,
             },
         );
-        cfg.set_bar_definition(1, PciBarDefinition::Io { size: 0x20 });
+        cfg.set_bar_definition(1, PciBarDefinition::Io { size: BAR1_SIZE });
         cfg.add_capability(Box::new(MsiCapability::new()));
         Self { cfg }
     }
@@ -270,7 +277,10 @@ fn pci_io_snapshot_roundtrips_through_aero_snapshot_file() {
 
     // BAR probe/program + decode enable.
     cfg_write(&mut pci_cfg, bdf, 0x10, 4, 0xFFFF_FFFF);
-    assert_eq!(cfg_read(&mut pci_cfg, bdf, 0x10, 4), 0xFFFF_F000);
+    assert_eq!(
+        cfg_read(&mut pci_cfg, bdf, 0x10, 4),
+        mmio32_probe_mask(BAR0_SIZE, false)
+    );
     cfg_write(&mut pci_cfg, bdf, 0x10, 4, 0x1234_5000);
     cfg_write(&mut pci_cfg, bdf, 0x14, 4, 0x0000_C200);
     cfg_write(&mut pci_cfg, bdf, 0x04, 2, 0x0003);
@@ -352,7 +362,10 @@ fn split_roundtrip(cfg_id: DeviceId) {
 
     // BAR probe/program + decode enable.
     cfg_write(&mut pci_cfg, bdf, 0x10, 4, 0xFFFF_FFFF);
-    assert_eq!(cfg_read(&mut pci_cfg, bdf, 0x10, 4), 0xFFFF_F000);
+    assert_eq!(
+        cfg_read(&mut pci_cfg, bdf, 0x10, 4),
+        mmio32_probe_mask(BAR0_SIZE, false)
+    );
     cfg_write(&mut pci_cfg, bdf, 0x10, 4, 0x1234_5000);
     cfg_write(&mut pci_cfg, bdf, 0x14, 4, 0x0000_C200);
     cfg_write(&mut pci_cfg, bdf, 0x04, 2, 0x0003);

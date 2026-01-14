@@ -267,7 +267,8 @@ fn uhci_pci_snapshot_roundtrip_restores_pci_and_controller_state() {
 
     // Reading the BAR should still return the size mask because BAR probing was active.
     let bar_read = restored.config_mut().read(bar_offset, 4);
-    assert_eq!(bar_read, 0xFFFF_FFE1);
+    let expected_mask = (!(u32::from(UhciPciDevice::IO_BAR_SIZE) - 1) & 0xffff_fffc) | 0x1;
+    assert_eq!(bar_read, expected_mask);
 
     // Controller register state should restore.
     let before = dev.controller().regs();

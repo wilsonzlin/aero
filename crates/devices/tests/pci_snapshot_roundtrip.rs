@@ -5,6 +5,13 @@ use aero_devices::pci::{
 use aero_io_snapshot::io::state::IoSnapshot;
 use aero_platform::interrupts::msi::{MsiMessage, MsiTrigger};
 
+mod bar_probe_masks;
+
+use bar_probe_masks::mmio32_probe_mask;
+
+const BAR0_SIZE: u32 = 0x1000;
+const BAR1_SIZE: u32 = 0x20;
+
 fn cfg_addr(bdf: PciBdf, offset: u16) -> u32 {
     0x8000_0000
         | (u32::from(bdf.bus) << 16)
@@ -59,11 +66,11 @@ impl TestDevice {
         cfg.set_bar_definition(
             0,
             PciBarDefinition::Mmio32 {
-                size: 0x1000,
+                size: BAR0_SIZE,
                 prefetchable: false,
             },
         );
-        cfg.set_bar_definition(1, PciBarDefinition::Io { size: 0x20 });
+        cfg.set_bar_definition(1, PciBarDefinition::Io { size: BAR1_SIZE });
         cfg.add_capability(Box::new(MsiCapability::new()));
         Self { cfg }
     }
@@ -93,7 +100,10 @@ fn pci_snapshot_roundtrip_preserves_config_bars_and_msi_state() {
 
     // BAR0 probe.
     cfg_write(&mut cfg, &mut bus, bdf, 0x10, 4, 0xFFFF_FFFF);
-    assert_eq!(cfg_read(&mut cfg, &mut bus, bdf, 0x10, 4), 0xFFFF_F000);
+    assert_eq!(
+        cfg_read(&mut cfg, &mut bus, bdf, 0x10, 4),
+        mmio32_probe_mask(BAR0_SIZE, false)
+    );
 
     // Program BAR0 and BAR1.
     cfg_write(&mut cfg, &mut bus, bdf, 0x10, 4, 0x1234_5000);
@@ -141,7 +151,10 @@ fn pci_snapshot_roundtrip_preserves_config_bars_and_msi_state() {
     // Leave BAR0 in the probed state: this is guest-visible via config reads, but not via the
     // raw config bytes, so it must be snapshotted explicitly.
     cfg_write(&mut cfg, &mut bus, bdf, 0x10, 4, 0xFFFF_FFFF);
-    assert_eq!(cfg_read(&mut cfg, &mut bus, bdf, 0x10, 4), 0xFFFF_F000);
+    assert_eq!(
+        cfg_read(&mut cfg, &mut bus, bdf, 0x10, 4),
+        mmio32_probe_mask(BAR0_SIZE, false)
+    );
 
     // Snapshot both the bus state and the 0xCF8 address latch.
     let bus_snapshot = PciBusSnapshot::save_from(&bus);

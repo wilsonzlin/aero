@@ -5,6 +5,13 @@ use aero_devices::pci::{
 use aero_io_snapshot::io::state::IoSnapshot;
 use aero_platform::interrupts::msi::{MsiMessage, MsiTrigger};
 
+mod bar_probe_masks;
+
+use bar_probe_masks::{io_probe_mask, mmio32_probe_mask};
+
+const BAR0_SIZE: u32 = 0x1000;
+const BAR1_SIZE: u32 = 0x20;
+
 fn cfg_addr(bdf: PciBdf, offset: u16) -> u32 {
     0x8000_0000
         | (u32::from(bdf.bus) << 16)
@@ -44,11 +51,11 @@ impl TestDevice {
         cfg.set_bar_definition(
             0,
             PciBarDefinition::Mmio32 {
-                size: 0x1000,
+                size: BAR0_SIZE,
                 prefetchable: false,
             },
         );
-        cfg.set_bar_definition(1, PciBarDefinition::Io { size: 0x20 });
+        cfg.set_bar_definition(1, PciBarDefinition::Io { size: BAR1_SIZE });
         cfg.add_capability(Box::new(MsiCapability::new()));
         Self { cfg }
     }
@@ -78,12 +85,15 @@ fn pci_config_ports_snapshot_roundtrip_preserves_state() {
 
     // BAR0 probe and program.
     cfg_write(&mut ports, bdf, 0x10, 4, 0xFFFF_FFFF);
-    assert_eq!(cfg_read(&mut ports, bdf, 0x10, 4), 0xFFFF_F000);
+    assert_eq!(
+        cfg_read(&mut ports, bdf, 0x10, 4),
+        mmio32_probe_mask(BAR0_SIZE, false)
+    );
     cfg_write(&mut ports, bdf, 0x10, 4, 0x1234_5000);
 
     // BAR1 probe and program.
     cfg_write(&mut ports, bdf, 0x14, 4, 0xFFFF_FFFF);
-    assert_eq!(cfg_read(&mut ports, bdf, 0x14, 4), 0xFFFF_FFE1);
+    assert_eq!(cfg_read(&mut ports, bdf, 0x14, 4), io_probe_mask(BAR1_SIZE));
     cfg_write(&mut ports, bdf, 0x14, 4, 0x0000_C200);
     assert_eq!(cfg_read(&mut ports, bdf, 0x14, 4), 0x0000_C201);
 
@@ -128,7 +138,10 @@ fn pci_config_ports_snapshot_roundtrip_preserves_state() {
 
     // Leave BAR0 in the probed state so BAR probe flags are exercised.
     cfg_write(&mut ports, bdf, 0x10, 4, 0xFFFF_FFFF);
-    assert_eq!(cfg_read(&mut ports, bdf, 0x10, 4), 0xFFFF_F000);
+    assert_eq!(
+        cfg_read(&mut ports, bdf, 0x10, 4),
+        mmio32_probe_mask(BAR0_SIZE, false)
+    );
 
     // Ensure the 0xCF8 address latch is restored.
     ports.io_write(PCI_CFG_ADDR_PORT, 4, cfg_addr(bdf, 0x3c));
