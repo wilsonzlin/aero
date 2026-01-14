@@ -85,14 +85,7 @@ fn compute_has_interrupt_out(collections: &[webhid::HidCollectionInfo]) -> bool 
 fn parse_webhid_collections(
     collections_json: &JsValue,
 ) -> Result<Vec<webhid::HidCollectionInfo>, JsValue> {
-    // Improve deserialization errors with a precise path into the collections metadata.
-    //
-    // Note: Avoid a JSON stringify/parse roundtrip here; complex WebHID devices can produce large
-    // normalized collection trees and `JSON.stringify` would allocate a large intermediate string.
-    serde_path_to_error::deserialize(serde_wasm_bindgen::Deserializer::from(
-        collections_json.clone(),
-    ))
-    .map_err(|err| js_error(&format!("Invalid WebHID collection schema: {err}")))
+    crate::webhid_parse::parse_webhid_collections(collections_json)
 }
 
 fn hidp_snapshot_interface_fields(bytes: &[u8]) -> (Option<u8>, Option<u8>) {

@@ -278,8 +278,9 @@ test("IO worker survives malformed in:input-batch messages", async ({ page }) =>
   expect(receivedDelta).toBeGreaterThanOrEqual(4);
   expect(processedDelta).toBeGreaterThanOrEqual(2);
   expect(droppedDelta).toBeGreaterThanOrEqual(2);
-  // `IoInputBatchDropCounter` can increment for batches that are still processed
-  // (e.g. when a claimed event count is clamped), so do not assert strict partitioning.
+  // `IoInputBatchDropCounter` increments for malformed batches *and* for batches where the claimed
+  // event count is clamped. A single received batch can therefore contribute to both "processed"
+  // and "dropped", so we avoid assuming `processed + dropped <= received`.
   expect(receivedDelta).toBeGreaterThanOrEqual(processedDelta);
   expect(receivedDelta).toBeGreaterThanOrEqual(droppedDelta);
 });

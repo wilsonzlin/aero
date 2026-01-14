@@ -85,7 +85,25 @@ export class UhciPciDevice implements PciDevice, TickableDevice {
     try {
       const value = this.#bridge.io_read(offset >>> 0, size >>> 0) >>> 0;
       return maskToSize(value, size);
-    } catch {
+    } catch (err) {
+      if (import.meta.env.DEV) {
+        try {
+          const message = err instanceof Error ? err.message : String(err);
+          const post = (globalThis as unknown as { postMessage?: unknown }).postMessage;
+          if (typeof post === "function") {
+            post.call(globalThis, {
+              type: "uhci.io.error",
+              op: "read",
+              barIndex,
+              offset: offset >>> 0,
+              size: size >>> 0,
+              message,
+            });
+          }
+        } catch {
+          // ignore
+        }
+      }
       return defaultReadValue(size);
     }
   }
@@ -96,8 +114,26 @@ export class UhciPciDevice implements PciDevice, TickableDevice {
     if (size !== 1 && size !== 2 && size !== 4) return;
     try {
       this.#bridge.io_write(offset >>> 0, size >>> 0, maskToSize(value >>> 0, size));
-    } catch {
-      // ignore device errors during guest IO
+    } catch (err) {
+      if (import.meta.env.DEV) {
+        try {
+          const message = err instanceof Error ? err.message : String(err);
+          const post = (globalThis as unknown as { postMessage?: unknown }).postMessage;
+          if (typeof post === "function") {
+            post.call(globalThis, {
+              type: "uhci.io.error",
+              op: "write",
+              barIndex,
+              offset: offset >>> 0,
+              size: size >>> 0,
+              value: value >>> 0,
+              message,
+            });
+          }
+        } catch {
+          // ignore
+        }
+      }
     }
     this.#syncIrq();
   }

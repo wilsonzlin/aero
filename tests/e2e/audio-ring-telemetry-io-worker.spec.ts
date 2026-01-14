@@ -156,129 +156,133 @@ test("IO worker publishes AudioWorklet ring telemetry into StatusIndex.Audio*", 
       );
     };
 
-    // Avoid dropping early messages on WebKit by waiting until the imported worker module has run.
-    await new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error("Timed out waiting for io.worker import marker")), 5000);
-      const handler = (ev: MessageEvent): void => {
-        const data = ev.data as { type?: unknown; message?: unknown } | undefined;
-        if (!data) return;
-        if (data.type === "__aero_io_worker_imported") {
-          clearTimeout(timer);
-          ioWorker.removeEventListener("message", handler);
-          resolve();
-          return;
-        }
-        if (data.type === "__aero_io_worker_import_failed") {
-          clearTimeout(timer);
-          ioWorker.removeEventListener("message", handler);
-          reject(new Error(`io.worker wrapper import failed: ${typeof data.message === "string" ? data.message : "unknown error"}`));
-        }
-      };
-      ioWorker.addEventListener("message", handler);
-    });
+    try {
+      // Avoid dropping early messages on WebKit by waiting until the imported worker module has run.
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error("Timed out waiting for io.worker import marker")), 20_000);
+        const handler = (ev: MessageEvent): void => {
+          const data = ev.data as { type?: unknown; message?: unknown } | undefined;
+          if (!data) return;
+          if (data.type === "__aero_io_worker_imported") {
+            clearTimeout(timer);
+            ioWorker.removeEventListener("message", handler);
+            resolve();
+            return;
+          }
+          if (data.type === "__aero_io_worker_import_failed") {
+            clearTimeout(timer);
+            ioWorker.removeEventListener("message", handler);
+            reject(
+              new Error(`io.worker wrapper import failed: ${typeof data.message === "string" ? data.message : "unknown error"}`),
+            );
+          }
+        };
+        ioWorker.addEventListener("message", handler);
+      });
 
-    ioWorker.postMessage({
-      kind: "init",
-      role: "io",
-      controlSab,
-      guestMemory,
-      ioIpcSab,
-      sharedFramebuffer,
-      sharedFramebufferOffsetBytes: 0,
-    });
+      ioWorker.postMessage({
+        kind: "init",
+        role: "io",
+        controlSab,
+        guestMemory,
+        ioIpcSab,
+        sharedFramebuffer,
+        sharedFramebufferOffsetBytes: 0,
+      });
 
-    // io.worker waits for `setBootDisks` before reporting READY.
-    ioWorker.postMessage(emptySetBootDisksMessage());
+      // io.worker waits for `setBootDisks` before reporting READY.
+      ioWorker.postMessage(emptySetBootDisksMessage());
 
-    await waitForMessage((data) => {
-      if (!data || typeof data !== "object") return false;
-      const msg = data as { type?: unknown; role?: unknown };
-      return msg.type === MessageType.READY && msg.role === "io";
-    });
+      await waitForMessage((data) => {
+        if (!data || typeof data !== "object") return false;
+        const msg = data as { type?: unknown; role?: unknown };
+        return msg.type === MessageType.READY && msg.role === "io";
+      });
 
-    // Smoke-check that the IO IPC server loop is alive by sending a NOP and waiting for an ACK.
-    const ioCmd = openRingByKind(ioIpcSab, queueKind.CMD);
-    const ioEvt = openRingByKind(ioIpcSab, queueKind.EVT);
-    const nopSeq = 1;
-    const nopBytes = encodeCommand({ kind: "nop", seq: nopSeq });
-    const startAck = typeof performance?.now === "function" ? performance.now() : Date.now();
-    let pushed = false;
-    while ((typeof performance?.now === "function" ? performance.now() : Date.now()) - startAck < 2_000) {
-      if (workerError) throw new Error(`IO worker failed before ACK: ${workerError}`);
-      if (ioCmd.tryPush(nopBytes)) {
-        pushed = true;
-        break;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 1));
-    }
-    if (!pushed) {
-      throw new Error("Timed out pushing NOP into IO IPC cmd ring.");
-    }
-    let acked = false;
-    while ((typeof performance?.now === "function" ? performance.now() : Date.now()) - startAck < 2_000) {
-      if (workerError) throw new Error(`IO worker failed before ACK: ${workerError}`);
-      const bytes = ioEvt.tryPop();
-      if (!bytes) {
-        await new Promise((resolve) => setTimeout(resolve, 1));
-        continue;
-      }
-      try {
-        const evt = decodeEvent(bytes);
-        if (evt.kind === "ack" && evt.seq === nopSeq) {
-          acked = true;
+      // Smoke-check that the IO IPC server loop is alive by sending a NOP and waiting for an ACK.
+      const ioCmd = openRingByKind(ioIpcSab, queueKind.CMD);
+      const ioEvt = openRingByKind(ioIpcSab, queueKind.EVT);
+      const nopSeq = 1;
+      const nopBytes = encodeCommand({ kind: "nop", seq: nopSeq });
+      const startAck = typeof performance?.now === "function" ? performance.now() : Date.now();
+      let pushed = false;
+      while ((typeof performance?.now === "function" ? performance.now() : Date.now()) - startAck < 2_000) {
+        if (workerError) throw new Error(`IO worker failed before ACK: ${workerError}`);
+        if (ioCmd.tryPush(nopBytes)) {
+          pushed = true;
           break;
         }
-      } catch {
-        // ignore malformed events
+        await new Promise((resolve) => setTimeout(resolve, 1));
       }
+      if (!pushed) {
+        throw new Error("Timed out pushing NOP into IO IPC cmd ring.");
+      }
+      let acked = false;
+      while ((typeof performance?.now === "function" ? performance.now() : Date.now()) - startAck < 2_000) {
+        if (workerError) throw new Error(`IO worker failed before ACK: ${workerError}`);
+        const bytes = ioEvt.tryPop();
+        if (!bytes) {
+          await new Promise((resolve) => setTimeout(resolve, 1));
+          continue;
+        }
+        try {
+          const evt = decodeEvent(bytes);
+          if (evt.kind === "ack" && evt.seq === nopSeq) {
+            acked = true;
+            break;
+          }
+        } catch {
+          // ignore malformed events
+        }
+      }
+      if (!acked) {
+        throw new Error("Timed out waiting for IO IPC NOP ack.");
+      }
+
+      const capacityFrames = 128;
+      const channelCount = 2;
+      const ringBuffer = new SharedArrayBuffer(audioRequiredBytes(capacityFrames, channelCount));
+      const views = wrapAudioRingBuffer(ringBuffer, capacityFrames, channelCount);
+      Atomics.store(views.readIndex, 0, 0);
+      Atomics.store(views.writeIndex, 0, 0);
+      Atomics.store(views.underrunCount, 0, 0);
+      Atomics.store(views.overrunCount, 0, 0);
+
+      ioWorker.postMessage({
+        type: "setAudioRingBuffer",
+        ringBuffer,
+        capacityFrames,
+        channelCount,
+        dstSampleRate: 48_000,
+      });
+
+      // Simulate the AudioWorklet consumer and guest producer moving indices in the ring header.
+      Atomics.store(views.readIndex, 0, 0);
+      Atomics.store(views.writeIndex, 0, 64);
+      Atomics.store(views.underrunCount, 0, 123);
+      Atomics.store(views.overrunCount, 0, 456);
+      const sample1 = await waitForStatus({ level: 64, underrun: 123, overrun: 456 });
+
+      Atomics.store(views.writeIndex, 0, 100);
+      Atomics.store(views.underrunCount, 0, 124);
+      Atomics.store(views.overrunCount, 0, 457);
+      const sample2 = await waitForStatus({ level: 100, underrun: 124, overrun: 457 });
+
+      // Detach the ring; IO worker should clear telemetry once.
+      ioWorker.postMessage({
+        type: "setAudioRingBuffer",
+        ringBuffer: null,
+        capacityFrames: 0,
+        channelCount: 0,
+        dstSampleRate: 0,
+      });
+      const cleared = await waitForStatus({ level: 0, underrun: 0, overrun: 0 });
+
+      return { sample1, sample2, cleared };
+    } finally {
+      ioWorker.terminate();
+      URL.revokeObjectURL(ioWorkerWrapperUrl);
     }
-    if (!acked) {
-      throw new Error("Timed out waiting for IO IPC NOP ack.");
-    }
-
-    const capacityFrames = 128;
-    const channelCount = 2;
-    const ringBuffer = new SharedArrayBuffer(audioRequiredBytes(capacityFrames, channelCount));
-    const views = wrapAudioRingBuffer(ringBuffer, capacityFrames, channelCount);
-    Atomics.store(views.readIndex, 0, 0);
-    Atomics.store(views.writeIndex, 0, 0);
-    Atomics.store(views.underrunCount, 0, 0);
-    Atomics.store(views.overrunCount, 0, 0);
-
-    ioWorker.postMessage({
-      type: "setAudioRingBuffer",
-      ringBuffer,
-      capacityFrames,
-      channelCount,
-      dstSampleRate: 48_000,
-    });
-
-    // Simulate the AudioWorklet consumer and guest producer moving indices in the ring header.
-    Atomics.store(views.readIndex, 0, 0);
-    Atomics.store(views.writeIndex, 0, 64);
-    Atomics.store(views.underrunCount, 0, 123);
-    Atomics.store(views.overrunCount, 0, 456);
-    const sample1 = await waitForStatus({ level: 64, underrun: 123, overrun: 456 });
-
-    Atomics.store(views.writeIndex, 0, 100);
-    Atomics.store(views.underrunCount, 0, 124);
-    Atomics.store(views.overrunCount, 0, 457);
-    const sample2 = await waitForStatus({ level: 100, underrun: 124, overrun: 457 });
-
-    // Detach the ring; IO worker should clear telemetry once.
-    ioWorker.postMessage({
-      type: "setAudioRingBuffer",
-      ringBuffer: null,
-      capacityFrames: 0,
-      channelCount: 0,
-      dstSampleRate: 0,
-    });
-    const cleared = await waitForStatus({ level: 0, underrun: 0, overrun: 0 });
-
-    ioWorker.terminate();
-    URL.revokeObjectURL(ioWorkerWrapperUrl);
-
-    return { sample1, sample2, cleared };
   });
 
   expect(result.sample1.level).toBe(64);

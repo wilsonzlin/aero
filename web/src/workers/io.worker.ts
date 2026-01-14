@@ -3330,11 +3330,18 @@ function maybeInitWasmHidGuestBridge(): void {
   }
 
   try {
-    if (hasXhciTopology) {
-      wasmHidGuest = new WasmHidGuestBridge(api, hidHostSink, hidTopologyMux);
-    } else if (uhciRuntime) {
+    // Prefer the UHCI runtime WebHID backend when it is available. Guest USB paths (`GuestUsbPath`)
+    // are defined in terms of the UHCI root hub ports, and the runtime implements Aero's external
+    // hub + synthetic HID contract on top of that topology.
+    //
+    // xHCI topology management is primarily used in WASM builds that omit UHCI; avoid routing
+    // WebHID passthrough to xHCI in runtime builds so browser E2E tests (and legacy guest stacks)
+    // can deterministically enumerate the devices via the UHCI controller model.
+    if (uhciRuntime) {
       uhciRuntimeHidGuest = new WasmUhciHidGuestBridge({ uhci: uhciRuntime, host: hidHostSink });
       wasmHidGuest = uhciRuntimeHidGuest;
+    } else if (hasXhciTopology) {
+      wasmHidGuest = new WasmHidGuestBridge(api, hidHostSink, hidTopologyMux);
     } else {
       wasmHidGuest = new WasmHidGuestBridge(api, hidHostSink, hidTopologyMux);
     }

@@ -28,6 +28,9 @@ mod guest_layout;
 mod runtime_alloc;
 
 #[cfg(target_arch = "wasm32")]
+mod webhid_parse;
+
+#[cfg(target_arch = "wasm32")]
 mod vm;
 
 #[cfg(target_arch = "wasm32")]
@@ -934,15 +937,13 @@ fn js_error(message: impl core::fmt::Display) -> JsValue {
 pub fn synthesize_webhid_report_descriptor(
     collections_json: JsValue,
 ) -> Result<Uint8Array, JsValue> {
-    // Improve deserialization errors with a precise path into the collections metadata.
-    // Example: `at [0].inputReports[0].items[0].reportSize: invalid type ...`.
+    // NOTE: Avoid serde_wasm_bindgen (and JSON stringify/parse roundtrips) here.
     //
-    // Note: We intentionally avoid a JSON stringify/parse roundtrip here. Complex devices can
-    // produce very large normalized collection trees, and `JSON.stringify` would allocate a
-    // similarly large intermediate string.
-    let collections: Vec<aero_usb::hid::webhid::HidCollectionInfo> =
-        serde_path_to_error::deserialize(serde_wasm_bindgen::Deserializer::from(collections_json))
-            .map_err(|err| js_error(format!("Invalid WebHID collection schema: {err}")))?;
+    // Aero's threaded WASM runtime runs with a fixed-size imported memory (maximum == initial) so
+    // `WebAssembly.Memory.grow()` is never invoked (to preserve a stable SharedArrayBuffer across
+    // workers). Some serde_wasm_bindgen code paths can trigger `std::alloc::System` allocations
+    // which attempt to grow memory and fail under this constraint.
+    let collections = crate::webhid_parse::parse_webhid_collections(&collections_json)?;
 
     let bytes = synthesize_webhid_report_descriptor_bytes(&collections)
         .map_err(|err| js_error(format!("Failed to synthesize HID report descriptor: {err}")))?;
@@ -1446,9 +1447,7 @@ impl WebHidPassthroughBridge {
         serial: Option<String>,
         collections: JsValue,
     ) -> Result<Self, JsValue> {
-        let collections: Vec<webhid::HidCollectionInfo> =
-            serde_path_to_error::deserialize(serde_wasm_bindgen::Deserializer::from(collections))
-                .map_err(|err| js_error(format!("Invalid WebHID collection schema: {err}")))?;
+        let collections = crate::webhid_parse::parse_webhid_collections(&collections)?;
 
         let report_descriptor = webhid::synthesize_report_descriptor(&collections)
             .map_err(|e| js_error(format!("failed to synthesize HID report descriptor: {e}")))?;
