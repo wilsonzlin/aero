@@ -1003,7 +1003,7 @@ Expansion compute pipelines require additional buffers that are not part of the 
 Implementation note: the layout described below is the **target** binding scheme. The current
 executor’s placeholder compute-prepass still uses a separate bind group layout for its output
 buffers, but vertex pulling already uses the reserved expansion-internal binding range (starting at
-`BINDING_BASE_EXPANSION_INTERNAL = 256`), so it does not collide with the D3D register binding
+`BINDING_BASE_INTERNAL = 256`), so it does not collide with the D3D register binding
 ranges. Future work is to unify all emulation kernels on the shared internal layout.
 
 These are not part of the D3D binding model, so they use a reserved binding-number range within the
@@ -1016,7 +1016,7 @@ Let:
   - `@binding(BINDING_BASE_TEXTURE..BINDING_BASE_SAMPLER)` for SRVs
   - `@binding(BINDING_BASE_SAMPLER..BINDING_BASE_UAV)` for samplers
   - `@binding(BINDING_BASE_UAV..BINDING_BASE_UAV + MAX_UAV_SLOTS)` for UAVs
-- Expansion-internal bindings start at `BINDING_BASE_EXPANSION_INTERNAL = 256`.
+- Expansion-internal bindings start at `BINDING_BASE_INTERNAL = 256`.
 
 Within `@group(3)`, the expansion-internal bindings are reserved and stable so the runtime can share
 common helper WGSL across VS/GS/HS/DS compute variants:
