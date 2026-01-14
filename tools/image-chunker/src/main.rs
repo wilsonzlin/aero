@@ -16,7 +16,9 @@ use bytes::Bytes;
 use chrono::{DateTime, Utc};
 use clap::{Parser, Subcommand, ValueEnum};
 use indicatif::{ProgressBar, ProgressStyle};
-use reqwest::header::{HeaderMap, HeaderName, HeaderValue, ACCEPT_ENCODING, CONTENT_ENCODING};
+use reqwest::header::{
+    HeaderMap, HeaderName, HeaderValue, ACCEPT_ENCODING, CONTENT_ENCODING, CONTENT_LENGTH,
+};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -1406,7 +1408,16 @@ async fn verify_chunk_http(
                                 }
                             }
 
-                            if let Some(len) = resp.content_length() {
+                            // reqwest's `Response::content_length()` can return `None`/`0` for HEAD
+                            // requests even when the server sets a `Content-Length` header.
+                            // Parse the header directly so we can validate the representation size
+                            // without downloading the body.
+                            let len = resp
+                                .headers()
+                                .get(CONTENT_LENGTH)
+                                .and_then(|v| v.to_str().ok())
+                                .and_then(|v| v.trim().parse::<u64>().ok());
+                            if let Some(len) = len {
                                 if len == expected_size {
                                     return Ok(len);
                                 }
@@ -3385,6 +3396,7 @@ mod tests {
 
     #[derive(Debug, Clone)]
     struct TestHttpRequest {
+        method: String,
         path: String,
         headers: Vec<(String, String)>,
     }
@@ -3438,12 +3450,18 @@ mod tests {
                             }
 
                             let raw = String::from_utf8_lossy(&buf).to_string();
-                            let path = raw
+                            let (method, path) = raw
                                 .lines()
                                 .next()
-                                .and_then(|line| line.split_whitespace().nth(1))
-                                .unwrap_or("/")
-                                .to_string();
+                                .and_then(|line| {
+                                    let mut parts = line.split_whitespace();
+                                    Some((
+                                        parts.next()?.to_string(),
+                                        parts.next()?.to_string(),
+                                    ))
+                                })
+                                .unwrap_or_else(|| ("GET".to_string(), "/".to_string()));
+                            let is_head = method.eq_ignore_ascii_case("HEAD");
                             let mut headers = Vec::new();
                             for line in raw.lines().skip(1) {
                                 let line = line.trim();
@@ -3456,19 +3474,25 @@ mod tests {
                             }
 
                             let (status, extra_headers, body) =
-                                (responder)(TestHttpRequest { path, headers });
+                                (responder)(TestHttpRequest { method, path, headers });
                             let status_line = match status {
                                 200 => "200 OK",
                                 401 => "401 Unauthorized",
+                                403 => "403 Forbidden",
                                 404 => "404 Not Found",
+                                405 => "405 Method Not Allowed",
                                 408 => "408 Request Timeout",
                                 429 => "429 Too Many Requests",
                                 500 => "500 Internal Server Error",
                                 _ => "500 Internal Server Error",
                             };
+                            let content_length = extra_headers
+                                .iter()
+                                .find(|(name, _)| name.eq_ignore_ascii_case("content-length"))
+                                .map(|(_, v)| v.trim().to_string())
+                                .unwrap_or_else(|| body.len().to_string());
                             let mut headers = format!(
-                                "HTTP/1.1 {status_line}\r\nContent-Length: {}\r\n",
-                                body.len()
+                                "HTTP/1.1 {status_line}\r\nContent-Length: {content_length}\r\n"
                             );
                             for (name, value) in extra_headers {
                                 if name.eq_ignore_ascii_case("content-length")
@@ -3484,7 +3508,12 @@ mod tests {
                             headers.push_str("Connection: close\r\n\r\n");
 
                             let _ = socket.write_all(headers.as_bytes()).await;
-                            let _ = socket.write_all(&body).await;
+                            // Match real HTTP semantics: HEAD responses should not include a body,
+                            // but typically still include a Content-Length describing the
+                            // corresponding GET representation size.
+                            if !is_head {
+                                let _ = socket.write_all(&body).await;
+                            }
                             let _ = socket.shutdown().await;
                         });
                     }
@@ -4115,7 +4144,10 @@ mod tests {
             DEFAULT_CACHE_CONTROL_MANIFEST,
             "public, max-age=31536000, immutable, no-transform"
         );
-        assert_eq!(DEFAULT_CACHE_CONTROL_LATEST, "public, max-age=60, no-transform");
+        assert_eq!(
+            DEFAULT_CACHE_CONTROL_LATEST,
+            "public, max-age=60, no-transform"
+        );
     }
 
     #[test]
@@ -7883,6 +7915,211 @@ mod tests {
         let _ = server_handle.await;
 
         result
+    }
+
+    #[tokio::test]
+    async fn verify_http_uses_head_for_chunks_without_sha256() -> Result<()> {
+        let chunk_size: u64 = 1024;
+        let chunk0 = vec![b'a'; chunk_size as usize];
+        let chunk1 = vec![b'b'; 512];
+        let total_size = (chunk0.len() + chunk1.len()) as u64;
+
+        let manifest = ManifestV1 {
+            schema: MANIFEST_SCHEMA.to_string(),
+            image_id: "demo".to_string(),
+            version: "v1".to_string(),
+            mime_type: CHUNK_MIME_TYPE.to_string(),
+            total_size,
+            chunk_size,
+            chunk_count: chunk_count(total_size, chunk_size),
+            chunk_index_width: CHUNK_INDEX_WIDTH as u32,
+            chunks: None,
+        };
+        let manifest_bytes = serde_json::to_vec_pretty(&manifest).context("serialize manifest")?;
+
+        let chunk_head_requests = Arc::new(AtomicU64::new(0));
+        let chunk_get_requests = Arc::new(AtomicU64::new(0));
+
+        let responder: Arc<
+            dyn Fn(TestHttpRequest) -> (u16, Vec<(String, String)>, Vec<u8>)
+                + Send
+                + Sync
+                + 'static,
+        > = {
+            let chunk_head_requests = Arc::clone(&chunk_head_requests);
+            let chunk_get_requests = Arc::clone(&chunk_get_requests);
+            Arc::new(move |req: TestHttpRequest| match req.path.as_str() {
+                "/manifest.json" => (200, Vec::new(), manifest_bytes.clone()),
+                "/meta.json" => (404, Vec::new(), b"not found".to_vec()),
+                "/chunks/00000000.bin" => {
+                    if req.method.eq_ignore_ascii_case("HEAD") {
+                        chunk_head_requests.fetch_add(1, Ordering::SeqCst);
+                        (
+                            200,
+                            vec![("Content-Length".to_string(), chunk0.len().to_string())],
+                            Vec::new(),
+                        )
+                    } else {
+                        chunk_get_requests.fetch_add(1, Ordering::SeqCst);
+                        (200, Vec::new(), chunk0.clone())
+                    }
+                }
+                "/chunks/00000001.bin" => {
+                    if req.method.eq_ignore_ascii_case("HEAD") {
+                        chunk_head_requests.fetch_add(1, Ordering::SeqCst);
+                        (
+                            200,
+                            vec![("Content-Length".to_string(), chunk1.len().to_string())],
+                            Vec::new(),
+                        )
+                    } else {
+                        chunk_get_requests.fetch_add(1, Ordering::SeqCst);
+                        (200, Vec::new(), chunk1.clone())
+                    }
+                }
+                _ => (404, Vec::new(), b"not found".to_vec()),
+            })
+        };
+
+        let (base_url, shutdown_tx, server_handle) = start_test_http_server(responder).await?;
+
+        let result = verify(VerifyArgs {
+            manifest_url: Some(format!("{base_url}/manifest.json")),
+            manifest_file: None,
+            header: Vec::new(),
+            bucket: None,
+            prefix: None,
+            manifest_key: None,
+            image_id: None,
+            image_version: None,
+            endpoint: None,
+            force_path_style: false,
+            region: "us-east-1".to_string(),
+            concurrency: 2,
+            retries: 1,
+            max_chunks: MAX_CHUNKS,
+            chunk_sample: None,
+            chunk_sample_seed: None,
+        })
+        .await;
+
+        let _ = shutdown_tx.send(());
+        let _ = server_handle.await;
+
+        result?;
+        assert_eq!(
+            chunk_get_requests.load(Ordering::SeqCst),
+            0,
+            "expected chunk bodies to not be downloaded when sha256 is missing and HEAD supplies Content-Length"
+        );
+        assert_eq!(chunk_head_requests.load(Ordering::SeqCst), 2);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn verify_http_disables_head_on_content_length_mismatch() -> Result<()> {
+        let chunk_size: u64 = 1024;
+        let chunk0 = vec![b'a'; chunk_size as usize];
+        let chunk1 = vec![b'b'; 512];
+        let total_size = (chunk0.len() + chunk1.len()) as u64;
+
+        let manifest = ManifestV1 {
+            schema: MANIFEST_SCHEMA.to_string(),
+            image_id: "demo".to_string(),
+            version: "v1".to_string(),
+            mime_type: CHUNK_MIME_TYPE.to_string(),
+            total_size,
+            chunk_size,
+            chunk_count: chunk_count(total_size, chunk_size),
+            chunk_index_width: CHUNK_INDEX_WIDTH as u32,
+            chunks: None,
+        };
+        let manifest_bytes = serde_json::to_vec_pretty(&manifest).context("serialize manifest")?;
+
+        let chunk_head_requests = Arc::new(AtomicU64::new(0));
+        let chunk_get_requests = Arc::new(AtomicU64::new(0));
+
+        let responder: Arc<
+            dyn Fn(TestHttpRequest) -> (u16, Vec<(String, String)>, Vec<u8>)
+                + Send
+                + Sync
+                + 'static,
+        > = {
+            let chunk_head_requests = Arc::clone(&chunk_head_requests);
+            let chunk_get_requests = Arc::clone(&chunk_get_requests);
+            Arc::new(move |req: TestHttpRequest| match req.path.as_str() {
+                "/manifest.json" => (200, Vec::new(), manifest_bytes.clone()),
+                "/meta.json" => (404, Vec::new(), b"not found".to_vec()),
+                "/chunks/00000000.bin" => {
+                    if req.method.eq_ignore_ascii_case("HEAD") {
+                        chunk_head_requests.fetch_add(1, Ordering::SeqCst);
+                        // Deliberately incorrect Content-Length to force a fallback to GET.
+                        (
+                            200,
+                            vec![("Content-Length".to_string(), "0".to_string())],
+                            Vec::new(),
+                        )
+                    } else {
+                        chunk_get_requests.fetch_add(1, Ordering::SeqCst);
+                        (200, Vec::new(), chunk0.clone())
+                    }
+                }
+                "/chunks/00000001.bin" => {
+                    if req.method.eq_ignore_ascii_case("HEAD") {
+                        chunk_head_requests.fetch_add(1, Ordering::SeqCst);
+                        (
+                            200,
+                            vec![("Content-Length".to_string(), chunk1.len().to_string())],
+                            Vec::new(),
+                        )
+                    } else {
+                        chunk_get_requests.fetch_add(1, Ordering::SeqCst);
+                        (200, Vec::new(), chunk1.clone())
+                    }
+                }
+                _ => (404, Vec::new(), b"not found".to_vec()),
+            })
+        };
+
+        let (base_url, shutdown_tx, server_handle) = start_test_http_server(responder).await?;
+
+        let result = verify(VerifyArgs {
+            manifest_url: Some(format!("{base_url}/manifest.json")),
+            manifest_file: None,
+            header: Vec::new(),
+            bucket: None,
+            prefix: None,
+            manifest_key: None,
+            image_id: None,
+            image_version: None,
+            endpoint: None,
+            force_path_style: false,
+            region: "us-east-1".to_string(),
+            // Use concurrency=1 so head_supported can be deterministically disabled after the
+            // first chunk's HEAD mismatch.
+            concurrency: 1,
+            retries: 1,
+            max_chunks: MAX_CHUNKS,
+            chunk_sample: None,
+            chunk_sample_seed: None,
+        })
+        .await;
+
+        let _ = shutdown_tx.send(());
+        let _ = server_handle.await;
+
+        result?;
+        assert_eq!(
+            chunk_head_requests.load(Ordering::SeqCst),
+            1,
+            "expected HEAD optimization to be disabled after the first mismatch"
+        );
+        assert_eq!(
+            chunk_get_requests.load(Ordering::SeqCst),
+            2,
+            "expected verifier to fall back to GET for both chunks after disabling HEAD"
+        );
+        Ok(())
     }
 
     #[tokio::test]

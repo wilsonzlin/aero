@@ -1308,7 +1308,10 @@ mod tests {
             DEFAULT_CACHE_CONTROL_MANIFEST,
             "public, max-age=31536000, immutable, no-transform"
         );
-        assert_eq!(DEFAULT_CACHE_CONTROL_LATEST, "public, max-age=60, no-transform");
+        assert_eq!(
+            DEFAULT_CACHE_CONTROL_LATEST,
+            "public, max-age=60, no-transform"
+        );
     }
 
     #[test]
