@@ -687,7 +687,7 @@ fn cmd_writer_emits_pipeline_and_binding_packets() {
         ),
         (
             AerogpuCmdOpcode::SetShaderConstantsB as u32,
-            // Bool constants are encoded as scalar u32 values (0/1) per register.
+            // Bool constants are encoded as scalar u32 values (payload is `u32[bool_count]`).
             size_of::<AerogpuCmdSetShaderConstantsB>() + 8,
         ),
         (
@@ -798,7 +798,7 @@ fn cmd_writer_emits_pipeline_and_binding_packets() {
         ),
         2
     );
-    // Payload is scalar u32 values (0/1), one per bool register.
+    // Payload is `u32[bool_count]` (one scalar per bool register).
     let payload_base = pkt2_base + size_of::<AerogpuCmdSetShaderConstantsB>();
     let expected_payload: [u32; 2] = [0, 1];
     for (i, expected) in expected_payload.iter().copied().enumerate() {
@@ -2090,6 +2090,23 @@ fn cmd_writer_emits_set_shader_constants_i_with_vec4_aligned_i32_payload() {
 }
 
 #[test]
+fn cmd_writer_emits_set_shader_constants_b_as_scalar_u32_values() {
+    let data: [u32; 2] = [0, 1];
+
+    let mut w = AerogpuCmdWriter::new();
+    w.set_shader_constants_b(AerogpuShaderStage::Vertex, 7, &data);
+}
+
+#[test]
+#[should_panic]
+fn cmd_writer_set_shader_constants_b_rejects_non_boolean_values() {
+    let data: [u32; 2] = [0, 2];
+
+    let mut w = AerogpuCmdWriter::new();
+    w.set_shader_constants_b(AerogpuShaderStage::Vertex, 7, &data);
+}
+
+#[test]
 fn cmd_writer_emits_set_shader_constants_b_as_scalar_u32_per_register() {
     let data: [u32; 2] = [0, 1];
 
@@ -2144,7 +2161,7 @@ fn cmd_writer_emits_set_shader_constants_b_as_scalar_u32_per_register() {
         0
     );
 
-    // Payload is scalar u32 values (0/1), one per bool register.
+    // Payload is `u32[bool_count]` (one scalar per bool register).
     let payload_base = pkt_base + size_of::<AerogpuCmdSetShaderConstantsB>();
     for (i, expected) in data.iter().copied().enumerate() {
         let off = payload_base + i * 4;

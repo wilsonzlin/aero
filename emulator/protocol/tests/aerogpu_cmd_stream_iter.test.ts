@@ -119,6 +119,7 @@ test("iterCmdStream yields packets and variable-payload decoders round-trip", ()
     assert.equal(decoded.stage, AerogpuShaderStage.Pixel);
     assert.equal(decoded.startRegister, 2);
     assert.equal(decoded.boolCount, shaderConstantsB.length);
+    // Bool constants are encoded as `u32[bool_count]` (one scalar per register).
     assert.deepEqual(Array.from(decoded.data), Array.from(shaderConstantsB));
     offset += packets[3]!.sizeBytes;
   }
@@ -374,6 +375,7 @@ test("variable-payload decoders accept AerogpuCmdPacket from iterCmdStream", () 
     Array.from(decodeCmdSetShaderConstantsIPayloadFromPacket(packets[2]!).data),
     Array.from(shaderConstantsI),
   );
+  // Bool constants are encoded as `u32[bool_count]` (one scalar per register).
   assert.deepEqual(
     Array.from(decodeCmdSetShaderConstantsBPayloadFromPacket(packets[3]!).data),
     Array.from(shaderConstantsB),
