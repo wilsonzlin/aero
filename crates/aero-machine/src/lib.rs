@@ -7585,33 +7585,6 @@ impl Machine {
                 pci_intx.set_intx_level(bdf, pin, level, &mut *interrupts);
             }
 
-            // AeroGPU legacy INTx (level-triggered).
-            if let Some(aerogpu) = &self.aerogpu_mmio {
-                let bdf: PciBdf = aero_devices::pci::profile::AEROGPU.bdf;
-                let pin = PciInterruptPin::IntA;
-
-                let command = self
-                    .pci_cfg
-                    .as_ref()
-                    .and_then(|pci_cfg| {
-                        let mut pci_cfg = pci_cfg.borrow_mut();
-                        pci_cfg
-                            .bus_mut()
-                            .device_config(bdf)
-                            .map(|cfg| cfg.command())
-                    })
-                    .unwrap_or(0);
-
-                let mut level = aerogpu.borrow().irq_level();
-
-                // Gate on COMMAND.INTX_DISABLE (bit 10).
-                if (command & (1 << 10)) != 0 {
-                    level = false;
-                }
-
-                pci_intx.set_intx_level(bdf, pin, level, &mut *interrupts);
-            }
-
             // ICH9 AHCI legacy INTx (level-triggered).
             if let Some(ahci) = &self.ahci {
                 let bdf: PciBdf = aero_devices::pci::profile::SATA_AHCI_ICH9.bdf;
