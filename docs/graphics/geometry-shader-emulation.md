@@ -224,7 +224,7 @@ Supported operand surface (initial):
 - temp regs (`r#`) and output regs (`o#`) (note: only `o0` and `o1` are currently consumed by `emit`)
 - GS inputs via `v#[]` (no vertex index out of range for the declared input primitive)
 - immediate32 `vec4` constants (treated as raw 32-bit lane values; typically `f32` bit patterns)
-- swizzles, write masks, and basic operand modifiers (`abs` / `-` / `-abs`)
+- swizzles, write masks, destination saturate (`_sat`), and basic operand modifiers (`abs` / `-` / `-abs`)
 - system values:
   - `SV_PrimitiveID`
   - `SV_GSInstanceID` (GS instancing is not supported yet, so this currently always evaluates to 0)
