@@ -159,6 +159,14 @@ Legend:
 
 ### Boot display: VGA/VBE (`crates/aero-gpu-vga`)
 
+Recommended end-to-end regression suite (device model + BIOS INT 10h + canonical machine wiring):
+
+```bash
+# Runs: cargo test -p aero-gpu-vga, cargo test -p firmware,
+# and all aero-machine boot_int10_* + vga_* integration tests (with safe-run isolation).
+bash ./scripts/ci/run-vga-vbe-tests.sh
+```
+
 | ID | Status | Task | Where | How to test |
 |----|--------|------|-------|-------------|
 | VG-001 | Implemented | VGA register + legacy VRAM emulation (sequencer/CRTC/attribute/graphics + 0xA0000..0xBFFFF windows) | `crates/aero-gpu-vga/src/lib.rs` | `bash ./scripts/safe-run.sh cargo test -p aero-gpu-vga --locked` |
