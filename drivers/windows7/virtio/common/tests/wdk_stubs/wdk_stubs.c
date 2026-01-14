@@ -836,16 +836,29 @@ VOID WdkTestResetKeRemoveQueueDpcCounts(VOID)
 
 BOOLEAN WdkTestTriggerInterrupt(_In_ PKINTERRUPT InterruptObject)
 {
+    KIRQL old_irql;
+
     if (InterruptObject == NULL || InterruptObject->ServiceRoutine == NULL) {
         return FALSE;
     }
 
-    return InterruptObject->ServiceRoutine(InterruptObject, InterruptObject->ServiceContext);
+    /*
+     * In Windows, the ISR runs at DIRQL (approximated here by the interrupt's
+     * configured IRQL). Many code paths change behaviour based on KeGetCurrentIrql(),
+     * so model that for host tests.
+     */
+    old_irql = g_current_irql;
+    g_current_irql = InterruptObject->Irql;
+    BOOLEAN claimed = InterruptObject->ServiceRoutine(InterruptObject, InterruptObject->ServiceContext);
+    g_current_irql = old_irql;
+    return claimed;
 }
 
 BOOLEAN WdkTestTriggerMessageInterrupt(_In_ PIO_INTERRUPT_MESSAGE_INFO MessageInfo, _In_ ULONG MessageId)
 {
     PKINTERRUPT intr;
+    KIRQL old_irql;
+    BOOLEAN claimed;
 
     if (MessageInfo == NULL) {
         return FALSE;
@@ -860,7 +873,15 @@ BOOLEAN WdkTestTriggerMessageInterrupt(_In_ PIO_INTERRUPT_MESSAGE_INFO MessageIn
         return FALSE;
     }
 
-    return intr->MessageServiceRoutine(intr, intr->ServiceContext, MessageId);
+    /*
+     * In Windows, the message-based ISR runs at DIRQL. Model this by temporarily
+     * raising KeGetCurrentIrql() to the interrupt's IRQL while calling the ISR.
+     */
+    old_irql = g_current_irql;
+    g_current_irql = intr->Irql;
+    claimed = intr->MessageServiceRoutine(intr, intr->ServiceContext, MessageId);
+    g_current_irql = old_irql;
+    return claimed;
 }
 
 BOOLEAN WdkTestRunQueuedDpc(_Inout_ PKDPC Dpc)
@@ -869,6 +890,7 @@ BOOLEAN WdkTestRunQueuedDpc(_Inout_ PKDPC Dpc)
     PVOID context;
     PVOID arg1;
     PVOID arg2;
+    KIRQL old_irql;
 
     if (Dpc == NULL) {
         return FALSE;
@@ -891,6 +913,14 @@ BOOLEAN WdkTestRunQueuedDpc(_Inout_ PKDPC Dpc)
         return FALSE;
     }
 
+    /*
+     * DPCs run at DISPATCH_LEVEL. Some production code uses KeGetCurrentIrql()
+     * checks to select safe wait/synchronization primitives, so emulate that for
+     * host tests.
+     */
+    old_irql = g_current_irql;
+    g_current_irql = DISPATCH_LEVEL;
     routine(Dpc, context, arg1, arg2);
+    g_current_irql = old_irql;
     return TRUE;
 }
