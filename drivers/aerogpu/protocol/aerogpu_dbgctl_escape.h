@@ -268,6 +268,10 @@ typedef struct aerogpu_dbgctl_ring_desc {
 } aerogpu_dbgctl_ring_desc;
 
 AEROGPU_DBGCTL_STATIC_ASSERT(sizeof(aerogpu_dbgctl_ring_desc) == 24);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_dbgctl_ring_desc, signal_fence) == 0);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_dbgctl_ring_desc, cmd_gpa) == 8);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_dbgctl_ring_desc, cmd_size_bytes) == 16);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_dbgctl_ring_desc, flags) == 20);
 
 typedef struct aerogpu_escape_dump_ring_inout {
   aerogpu_escape_header hdr;
@@ -287,6 +291,13 @@ typedef struct aerogpu_escape_dump_ring_inout {
 } aerogpu_escape_dump_ring_inout;
 
 AEROGPU_DBGCTL_STATIC_ASSERT(sizeof(aerogpu_escape_dump_ring_inout) == (40 + (AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS * 24)));
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_dump_ring_inout, ring_id) == 16);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_dump_ring_inout, ring_size_bytes) == 20);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_dump_ring_inout, head) == 24);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_dump_ring_inout, tail) == 28);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_dump_ring_inout, desc_count) == 32);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_dump_ring_inout, desc_capacity) == 36);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_dump_ring_inout, desc) == 40);
 
 enum aerogpu_dbgctl_ring_format {
   AEROGPU_DBGCTL_RING_FORMAT_UNKNOWN = 0,
@@ -305,6 +316,13 @@ typedef struct aerogpu_dbgctl_ring_desc_v2 {
 } aerogpu_dbgctl_ring_desc_v2;
 
 AEROGPU_DBGCTL_STATIC_ASSERT(sizeof(aerogpu_dbgctl_ring_desc_v2) == 40);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_dbgctl_ring_desc_v2, fence) == 0);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_dbgctl_ring_desc_v2, cmd_gpa) == 8);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_dbgctl_ring_desc_v2, cmd_size_bytes) == 16);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_dbgctl_ring_desc_v2, flags) == 20);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_dbgctl_ring_desc_v2, alloc_table_gpa) == 24);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_dbgctl_ring_desc_v2, alloc_table_size_bytes) == 32);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_dbgctl_ring_desc_v2, reserved0) == 36);
 
 typedef struct aerogpu_escape_dump_ring_v2_inout {
   aerogpu_escape_header hdr;
@@ -332,6 +350,16 @@ typedef struct aerogpu_escape_dump_ring_v2_inout {
 } aerogpu_escape_dump_ring_v2_inout;
 
 AEROGPU_DBGCTL_STATIC_ASSERT(sizeof(aerogpu_escape_dump_ring_v2_inout) == (52 + (AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS * 40)));
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_dump_ring_v2_inout, ring_id) == 16);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_dump_ring_v2_inout, ring_format) == 20);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_dump_ring_v2_inout, ring_size_bytes) == 24);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_dump_ring_v2_inout, head) == 28);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_dump_ring_v2_inout, tail) == 32);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_dump_ring_v2_inout, desc_count) == 36);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_dump_ring_v2_inout, desc_capacity) == 40);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_dump_ring_v2_inout, reserved0) == 44);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_dump_ring_v2_inout, reserved1) == 48);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_dump_ring_v2_inout, desc) == 52);
 
 typedef struct aerogpu_escape_selftest_inout {
   aerogpu_escape_header hdr;
@@ -342,6 +370,10 @@ typedef struct aerogpu_escape_selftest_inout {
 } aerogpu_escape_selftest_inout;
 
 AEROGPU_DBGCTL_STATIC_ASSERT(sizeof(aerogpu_escape_selftest_inout) == 32);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_selftest_inout, timeout_ms) == 16);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_selftest_inout, passed) == 20);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_selftest_inout, error_code) == 24);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_selftest_inout, reserved0) == 28);
 
 typedef struct aerogpu_escape_query_vblank_out {
   aerogpu_escape_header hdr;
@@ -416,6 +448,7 @@ typedef struct aerogpu_escape_query_scanout_out {
 /* Must remain stable across x86/x64. */
 AEROGPU_DBGCTL_STATIC_ASSERT(sizeof(aerogpu_escape_query_scanout_out) == 72);
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_scanout_out, vidpn_source_id) == 16);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_scanout_out, reserved0) == 20);
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_scanout_out, cached_enable) == 24);
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_scanout_out, cached_width) == 28);
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_scanout_out, cached_height) == 32);
@@ -460,6 +493,7 @@ typedef struct aerogpu_escape_query_cursor_out {
 /* Must remain stable across x86/x64. */
 AEROGPU_DBGCTL_STATIC_ASSERT(sizeof(aerogpu_escape_query_cursor_out) == 72);
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_cursor_out, flags) == 16);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_cursor_out, reserved0) == 20);
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_cursor_out, enable) == 24);
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_cursor_out, x) == 28);
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_cursor_out, y) == 32);
@@ -545,6 +579,18 @@ typedef struct aerogpu_dbgctl_createallocation_desc {
 } aerogpu_dbgctl_createallocation_desc;
 
 AEROGPU_DBGCTL_STATIC_ASSERT(sizeof(aerogpu_dbgctl_createallocation_desc) == 56);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_dbgctl_createallocation_desc, seq) == 0);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_dbgctl_createallocation_desc, call_seq) == 4);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_dbgctl_createallocation_desc, alloc_index) == 8);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_dbgctl_createallocation_desc, num_allocations) == 12);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_dbgctl_createallocation_desc, create_flags) == 16);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_dbgctl_createallocation_desc, alloc_id) == 20);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_dbgctl_createallocation_desc, priv_flags) == 24);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_dbgctl_createallocation_desc, pitch_bytes) == 28);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_dbgctl_createallocation_desc, share_token) == 32);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_dbgctl_createallocation_desc, size_bytes) == 40);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_dbgctl_createallocation_desc, flags_in) == 48);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_dbgctl_createallocation_desc, flags_out) == 52);
 
 typedef struct aerogpu_escape_dump_createallocation_inout {
   aerogpu_escape_header hdr;
@@ -562,6 +608,11 @@ typedef struct aerogpu_escape_dump_createallocation_inout {
 
 AEROGPU_DBGCTL_STATIC_ASSERT(sizeof(aerogpu_escape_dump_createallocation_inout) ==
                              (32 + (AEROGPU_DBGCTL_MAX_RECENT_ALLOCATIONS * 56)));
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_dump_createallocation_inout, write_index) == 16);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_dump_createallocation_inout, entry_count) == 20);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_dump_createallocation_inout, entry_capacity) == 24);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_dump_createallocation_inout, reserved0) == 28);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_dump_createallocation_inout, entries) == 32);
 
 typedef struct aerogpu_escape_map_shared_handle_inout {
   aerogpu_escape_header hdr;
