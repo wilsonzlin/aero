@@ -58,20 +58,37 @@ SCAN_MD_DIRS = [
 ]
 
 
+def extract_md_section(text: str, patterns: list[str]) -> tuple[str, int] | None:
+    """
+    Returns (section_text, start_line_number) for the first matching section
+    regex in `patterns`.
+
+    Each pattern must capture the desired section content in group(1).
+    """
+    for pattern in patterns:
+        m = re.search(pattern, text, flags=re.MULTILINE | re.DOTALL)
+        if not m:
+            continue
+        start_line = text[: m.start(1)].count("\n") + 1
+        return (m.group(1), start_line)
+    return None
+
+
 def extract_validation_dbgctl_section(text: str) -> tuple[str, int] | None:
     """
     Returns (section_text, start_line_number) for the validation doc's dbgctl
-    section (5.2), or None if the section cannot be found.
+    section (currently 5.2), or None if the section cannot be found.
+
+    We primarily key off section numbers (stable today), but also include a
+    title-based fallback so minor renumbering doesn't break CI.
     """
-    m = re.search(
-        r"^### 5\.2\b.*?\n(.*?)(?=^### 5\.3\b)",
+    return extract_md_section(
         text,
-        flags=re.MULTILINE | re.DOTALL,
+        patterns=[
+            r"^### 5\.2\b.*?\n(.*?)(?=^### 5\.3\b)",
+            r"^### .*\bTypical workflow\b.*?\n(.*?)(?=^### .*\bSuggested\s+`?aerogpu_dbgctl`?\s+commands\b)",
+        ],
     )
-    if not m:
-        return None
-    start_line = text[: m.start(1)].count("\n") + 1
-    return (m.group(1), start_line)
 
 
 def extract_validation_dbgctl_table_section(text: str) -> tuple[str, int] | None:
@@ -83,15 +100,30 @@ def extract_validation_dbgctl_table_section(text: str) -> tuple[str, int] | None
     are listed without the `aerogpu_dbgctl` prefix, so it is not covered by the
     line-based `aerogpu_dbgctl` invocation heuristic.
     """
-    m = re.search(
-        r"^### 5\.3\b.*?\n(.*?)(?=^### 5\.4\b)",
+    return extract_md_section(
         text,
-        flags=re.MULTILINE | re.DOTALL,
+        patterns=[
+            r"^### 5\.3\b.*?\n(.*?)(?=^### 5\.4\b)",
+            r"^### .*\bSuggested\s+`?aerogpu_dbgctl`?\s+commands\b.*?\n(.*?)(?=^### .*\bCommon error codes\b)",
+        ],
     )
-    if not m:
-        return None
-    start_line = text[: m.start(1)].count("\n") + 1
-    return (m.group(1), start_line)
+
+
+def extract_validation_dbgctl_error_section(text: str) -> tuple[str, int] | None:
+    """
+    Returns (section_text, start_line_number) for the validation doc's error
+    code table section (currently 5.4), or None if the section cannot be found.
+
+    This section occasionally references dbgctl flags without the `aerogpu_dbgctl`
+    prefix (for example in the "First checks" column), so validate it explicitly.
+    """
+    return extract_md_section(
+        text,
+        patterns=[
+            r"^### 5\.4\b.*?\n(.*?)(?=^### 5\.5\b)",
+            r"^### .*\bCommon error codes and likely causes\b.*?\n(.*?)(?=^### .*\bBackend/submission failure\b)",
+        ],
+    )
 
 
 def iter_dbgctl_flag_refs(path: pathlib.Path) -> list[tuple[int, str]]:
@@ -179,6 +211,7 @@ def main() -> int:
 
     extracted = extract_validation_dbgctl_section(validation_text)
     extracted_table = extract_validation_dbgctl_table_section(validation_text)
+    extracted_error = extract_validation_dbgctl_error_section(validation_text)
     rel = WIN7_VALIDATION_DOC.relative_to(ROOT)
 
     if not extracted:
@@ -186,6 +219,9 @@ def main() -> int:
         return 1
     if not extracted_table:
         print(f"ERROR: failed to locate dbgctl table section (### 5.3 .. ### 5.4) in {rel}", file=sys.stderr)
+        return 1
+    if not extracted_error:
+        print(f"ERROR: failed to locate dbgctl error table section (### 5.4 .. ### 5.5) in {rel}", file=sys.stderr)
         return 1
 
     section_text, section_start_line = extracted
@@ -217,6 +253,24 @@ def main() -> int:
         print(f"ERROR: {rel} dbgctl command table references unknown flags:", file=sys.stderr)
         for unknown_flag in unknown_table:
             for line_no, f in table_refs:
+                if f == unknown_flag:
+                    print(f"  - {rel}:{line_no}: {unknown_flag}", file=sys.stderr)
+        print("\nAllowed flags (extracted from aerogpu_dbgctl.cpp):", file=sys.stderr)
+        for f in sorted(allowed_flags):
+            print(f"  - {f}", file=sys.stderr)
+        return 1
+
+    error_text, error_start_line = extracted_error
+    error_refs: list[tuple[int, str]] = []
+    for idx, line in enumerate(error_text.splitlines(), start=0):
+        for flag in MD_FLAG_RE.findall(line):
+            error_refs.append((error_start_line + idx, flag))
+
+    unknown_error = sorted({f for _, f in error_refs} - allowed_flags)
+    if unknown_error:
+        print(f"ERROR: {rel} dbgctl error table section references unknown flags:", file=sys.stderr)
+        for unknown_flag in unknown_error:
+            for line_no, f in error_refs:
                 if f == unknown_flag:
                     print(f"  - {rel}:{line_no}: {unknown_flag}", file=sys.stderr)
         print("\nAllowed flags (extracted from aerogpu_dbgctl.cpp):", file=sys.stderr)
