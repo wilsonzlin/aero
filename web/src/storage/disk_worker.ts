@@ -61,6 +61,101 @@ function isPowerOfTwo(n: number): boolean {
   return (b & (b - 1n)) === 0n;
 }
 
+const AEROSPARSE_HEADER_SIZE_BYTES = 64;
+const AEROSPARSE_MAGIC = [0x41, 0x45, 0x52, 0x4f, 0x53, 0x50, 0x41, 0x52] as const; // "AEROSPAR"
+const AEROSPARSE_MAX_BLOCK_SIZE_BYTES = 64 * 1024 * 1024;
+
+function alignUpBigInt(value: bigint, alignment: bigint): bigint {
+  if (alignment <= 0n) return value;
+  return ((value + alignment - 1n) / alignment) * alignment;
+}
+
+async function sniffAerosparseDiskSizeBytesFromFile(file: File): Promise<number | null> {
+  // Best-effort: avoid reading whole files; we only need the fixed-size header.
+  const prefixLen = Math.min(file.size, AEROSPARSE_HEADER_SIZE_BYTES);
+  const buf = await file.slice(0, prefixLen).arrayBuffer();
+  const bytes = new Uint8Array(buf);
+
+  if (bytes.byteLength < AEROSPARSE_MAGIC.length) return null;
+  for (let i = 0; i < AEROSPARSE_MAGIC.length; i += 1) {
+    if (bytes[i] !== AEROSPARSE_MAGIC[i]) return null;
+  }
+
+  // Magic matched. Treat truncated headers as aerosparse so we surface corruption errors rather
+  // than silently importing as raw (which would expose the header bytes to the guest).
+  if (bytes.byteLength < 12) {
+    throw new Error("aerospar header too small");
+  }
+
+  const viewPrefix = new DataView(buf);
+  const version = viewPrefix.getUint32(8, true);
+  // Mirror `machine_snapshot_disks.ts` detection: only treat the file as aerosparse if version is v1.
+  if (version !== 1) return null;
+
+  if (bytes.byteLength < AEROSPARSE_HEADER_SIZE_BYTES) {
+    throw new Error("aerospar header too small");
+  }
+
+  const view = new DataView(buf, 0, AEROSPARSE_HEADER_SIZE_BYTES);
+  const headerSize = view.getUint32(12, true);
+  const blockSizeBytes = view.getUint32(16, true);
+  const diskSizeBytes = view.getBigUint64(24, true);
+  const tableOffset = view.getBigUint64(32, true);
+  const tableEntries = view.getBigUint64(40, true);
+  const dataOffset = view.getBigUint64(48, true);
+  const allocatedBlocks = view.getBigUint64(56, true);
+
+  if (headerSize !== AEROSPARSE_HEADER_SIZE_BYTES) {
+    throw new Error(`unexpected aerospar header size ${headerSize}`);
+  }
+
+  if (diskSizeBytes === 0n || diskSizeBytes % 512n !== 0n) {
+    throw new Error("aerospar disk size must be a non-zero multiple of 512");
+  }
+
+  if (
+    blockSizeBytes === 0 ||
+    blockSizeBytes % 512 !== 0 ||
+    !isPowerOfTwo(blockSizeBytes) ||
+    blockSizeBytes > AEROSPARSE_MAX_BLOCK_SIZE_BYTES
+  ) {
+    throw new Error("aerospar block size must be a power of two, multiple of 512, and <= 64 MiB");
+  }
+
+  if (tableOffset !== BigInt(AEROSPARSE_HEADER_SIZE_BYTES)) {
+    throw new Error("unsupported aerospar table offset");
+  }
+
+  const blockSizeBig = BigInt(blockSizeBytes);
+  const expectedTableEntries = (diskSizeBytes + blockSizeBig - 1n) / blockSizeBig;
+  if (tableEntries !== expectedTableEntries) {
+    throw new Error("unexpected aerospar table entries");
+  }
+
+  const expectedDataOffset = alignUpBigInt(BigInt(AEROSPARSE_HEADER_SIZE_BYTES) + tableEntries * 8n, blockSizeBig);
+  if (dataOffset !== expectedDataOffset) {
+    throw new Error("unexpected aerospar data offset");
+  }
+
+  if (allocatedBlocks > tableEntries) {
+    throw new Error("aerospar allocated blocks out of range");
+  }
+
+  // If the file size is trustworthy, ensure the file is large enough to hold the advertised data region.
+  if (Number.isSafeInteger(file.size) && file.size >= 0) {
+    const expectedMinLen = expectedDataOffset + allocatedBlocks * blockSizeBig;
+    if (BigInt(file.size) < expectedMinLen) {
+      throw new Error("aerospar file is truncated");
+    }
+  }
+
+  const out = Number(diskSizeBytes);
+  if (!Number.isSafeInteger(out)) {
+    throw new Error("aerospar disk size is too large for JS");
+  }
+  return out;
+}
+
 function assertValidDiskBackend(backend: unknown): asserts backend is DiskBackend {
   if (backend !== "opfs" && backend !== "idb") {
     throw new Error("cacheBackend must be 'opfs' or 'idb'");
@@ -701,8 +796,26 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
       const fileNameOverride = msg.payload.name;
       const name = (fileNameOverride && String(fileNameOverride)) || file.name;
 
-      const kind = (msg.payload.kind || inferKindFromFileName(file.name)) as DiskKind;
-      const format = (msg.payload.format || inferFormatFromFileName(file.name)) as DiskFormat;
+      let kind = (msg.payload.kind || inferKindFromFileName(file.name)) as DiskKind;
+      let format = (msg.payload.format || inferFormatFromFileName(file.name)) as DiskFormat;
+
+      // Content-based aerosparse sniffing:
+      // - If the input file looks like an aerosparse disk, import it as `format="aerospar"` and
+      //   set `meta.sizeBytes` to the *logical* disk size from the header (not the file length).
+      // - If the user explicitly selected `format="aerospar"` but the file doesn't have the header,
+      //   fail early instead of writing broken metadata.
+      let aerosparDiskSizeBytes: number | null = null;
+      const sniffedAerosparDiskSizeBytes = await sniffAerosparseDiskSizeBytesFromFile(file);
+      if (typeof sniffedAerosparDiskSizeBytes === "number") {
+        if (backend !== "opfs") {
+          throw new Error("aerospar disk images can only be imported with the OPFS backend");
+        }
+        kind = "hdd";
+        format = "aerospar";
+        aerosparDiskSizeBytes = sniffedAerosparDiskSizeBytes;
+      } else if (format === "aerospar") {
+        throw new Error("selected format aerospar but the file does not have an aerospar header");
+      }
 
       const id = newDiskId();
       const fileName = buildDiskFileName(id, format);
@@ -730,7 +843,7 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
         kind,
         format,
         fileName,
-        sizeBytes,
+        sizeBytes: format === "aerospar" && aerosparDiskSizeBytes !== null ? aerosparDiskSizeBytes : sizeBytes,
         createdAtMs: Date.now(),
         lastUsedAtMs: undefined,
         checksum: checksumCrc32 ? { algorithm: "crc32", value: checksumCrc32 } : undefined,
