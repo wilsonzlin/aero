@@ -744,3 +744,71 @@ fn boot_int10_aerogpu_set_active_page_uses_that_pages_cursor_pos_for_crtc() {
     assert_eq!(end, 0x07);
     assert_eq!(pos & 0x3FFF, expected_cursor);
 }
+
+#[test]
+fn boot_int10_aerogpu_cursor_sync_includes_crtc_start_address_offset() {
+    let mut m = Machine::new(MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_aerogpu: true,
+        enable_vga: false,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        enable_e1000: false,
+        enable_virtio_net: false,
+        ..Default::default()
+    })
+    .unwrap();
+
+    let start_addr = 0x0800u16;
+    let row = 5u8;
+    let col = 10u8;
+    let boot = build_set_start_address_and_set_cursor_pos_boot_sector(start_addr, row, col);
+    m.set_disk_image(boot.to_vec()).unwrap();
+    m.reset();
+    run_until_halt(&mut m);
+
+    let got_start = read_crtc_start_addr(&mut m);
+    assert_eq!(got_start, start_addr);
+
+    let cols = m.read_physical_u16(BDA_SCREEN_COLS_ADDR).max(1);
+    let cell_index = u16::from(row)
+        .saturating_mul(cols)
+        .saturating_add(u16::from(col));
+    let expected_pos = start_addr.wrapping_add(cell_index) & 0x3FFF;
+
+    let (start, end, pos) = read_crtc_cursor_regs(&mut m);
+    assert_eq!(start, 0x06);
+    assert_eq!(end, 0x07);
+    assert_eq!(pos, expected_pos);
+}
+
+#[test]
+fn boot_int10_aerogpu_set_mode_resets_crtc_start_address() {
+    let mut m = Machine::new(MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_aerogpu: true,
+        enable_vga: false,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        enable_e1000: false,
+        enable_virtio_net: false,
+        ..Default::default()
+    })
+    .unwrap();
+
+    let start_addr = 0x0800u16;
+    let boot = build_set_start_address_and_set_mode_03h_boot_sector(start_addr);
+    m.set_disk_image(boot.to_vec()).unwrap();
+    m.reset();
+    run_until_halt(&mut m);
+
+    // Mode set 03h should reinitialize text state, including resetting the CRTC start address.
+    let got_start = read_crtc_start_addr(&mut m);
+    assert_eq!(got_start, 0);
+}
