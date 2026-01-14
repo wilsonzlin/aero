@@ -469,7 +469,8 @@ impl VgaDevice {
             }
 
             // Only support the canonical boot pixel format for now:
-            // little-endian packed pixels B8G8R8X8.
+            // little-endian packed pixels B8G8R8X8 (the high X byte is unused/undefined; presenters
+            // treat it as opaque alpha (`0xFF`) when converting to RGBA).
             let bytes_per_pixel: u32 = 4;
 
             // Derive the pitch from the Bochs "virtual width" (stride) unless a BIOS VBE call has

@@ -50,7 +50,7 @@ fn int10_vbe_32bpp_write_and_read_pixel_roundtrip() {
 
     let x = 10u16;
     let y = 20u16;
-    // BGRX bytes: [0x11, 0x22, 0x33, 0x44] in memory.
+    // BGRX bytes: [0x11, 0x22, 0x33, 0x44] in memory. The high X byte is unused/undefined.
     let color: u32 = 0x4433_2211;
 
     for (mode, (w, h)) in [
@@ -65,7 +65,7 @@ fn int10_vbe_32bpp_write_and_read_pixel_roundtrip() {
         assert_eq!(cpu.ax(), 0x004F);
         assert_eq!(bios.video.vbe.current_mode, Some(mode));
 
-        // AH=0Ch write pixel. For 32bpp VBE modes we use EBX as the pixel value (BGRX).
+        // AH=0Ch write pixel. For 32bpp VBE modes we use EBX as the pixel value (BGRX; X byte unused).
         cpu.set_ax(0x0C00);
         cpu.rbx = u64::from(color);
         cpu.set_cx(x);

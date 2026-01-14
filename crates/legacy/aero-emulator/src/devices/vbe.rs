@@ -2,6 +2,10 @@
 //!
 //! Supported VBE mode numbers (direct color, 32bpp X8R8G8B8):
 //!
+//! The in-memory byte layout is little-endian **B8G8R8X8** (`[B, G, R, X]`). The high `X` byte is
+//! unused/undefined; when converting to RGBA for host presentation, alpha is treated as fully
+//! opaque (`0xFF`) and the stored `X` value is ignored.
+//!
 //! | Mode | Resolution | BPP |
 //! |------|------------|-----|
 //! | 0x112| 640x480    | 32  |
@@ -91,6 +95,9 @@ struct VbeState {
     stride_bytes: u16,
 
     /// Raw pixel memory in VBE format (B, G, R, X).
+    ///
+    /// The `X` byte is unused; the host-side presentation conversion treats it as opaque alpha
+    /// (`0xFF`).
     lfb: Vec<u8>,
 
     /// 4KiB dirty page tracking for the raw LFB buffer.
@@ -343,7 +350,7 @@ impl VbeState {
             let page_start = page_idx * 4096;
             let page_end = (page_start + 4096).min(self.lfb.len());
 
-            // Convert BGRX -> RGBA.
+            // Convert BGRX (X8) -> RGBA, treating the unused X byte as opaque alpha (`0xFF`).
             for src_idx in (page_start..page_end).step_by(4) {
                 if src_idx + 3 >= self.lfb.len() {
                     break;

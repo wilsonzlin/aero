@@ -167,7 +167,7 @@ impl Bios {
                 // Write Graphics Pixel
                 //
                 // VGA: AL = pixel value, CX = x, DX = y, BH = page (ignored for now).
-                // VBE 32bpp direct-color: EBX = BGRX pixel value, CX = x, DX = y.
+                // VBE 32bpp direct-color: EBX = BGRX pixel value (X byte unused), CX = x, DX = y.
                 let x = cpu.cx();
                 let y = cpu.dx();
 
@@ -213,7 +213,7 @@ impl Bios {
                 // Read Graphics Pixel
                 //
                 // VGA: returns AL = pixel value.
-                // VBE 32bpp direct-color: returns EBX = BGRX pixel value.
+                // VBE 32bpp direct-color: returns EBX = BGRX pixel value (X byte unused).
                 let x = cpu.cx();
                 let y = cpu.dx();
 
