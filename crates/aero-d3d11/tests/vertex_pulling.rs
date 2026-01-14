@@ -170,9 +170,30 @@ async fn read_buffer(
     Ok(data)
 }
 
+fn create_vertex_pulling_pipeline_layout(
+    device: &wgpu::Device,
+    label: &str,
+    out_bgl: &wgpu::BindGroupLayout,
+    ia_bgl: &wgpu::BindGroupLayout,
+    empty_bgl: &wgpu::BindGroupLayout,
+) -> wgpu::PipelineLayout {
+    // The vertex pulling bind group lives at `VERTEX_PULLING_GROUP`; pad intermediate groups with
+    // empty layouts so the pipeline layout is valid regardless of which group index we choose for
+    // the pulling bindings.
+    let mut layouts =
+        vec![empty_bgl; (VERTEX_PULLING_GROUP as usize).saturating_add(1).max(1)];
+    layouts[0] = out_bgl;
+    layouts[VERTEX_PULLING_GROUP as usize] = ia_bgl;
+
+    device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some(label),
+        bind_group_layouts: &layouts,
+        push_constant_ranges: &[],
+    })
+}
+
 #[test]
 fn compute_vertex_pulling_reads_pos3_color4() {
-    assert_eq!(VERTEX_PULLING_GROUP, 3);
     pollster::block_on(async {
         let (device, queue, supports_compute) = match create_device_queue().await {
             Ok(v) => v,
@@ -342,14 +363,13 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {{
         let ia_bgl = pulling.create_bind_group_layout(&device);
         let ia_bg = pulling.create_bind_group(&device, &ia_bgl, &[&vb], &ia_uniform);
 
-        // Pipeline layout must include group layouts for groups 0..=VERTEX_PULLING_GROUP.
-        let layouts: [&wgpu::BindGroupLayout; 4] = [&out_bgl, &empty_bgl, &empty_bgl, &ia_bgl];
-
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("vertex pulling pipeline layout"),
-            bind_group_layouts: &layouts,
-            push_constant_ranges: &[],
-        });
+        let pipeline_layout = create_vertex_pulling_pipeline_layout(
+            &device,
+            "vertex pulling pipeline layout",
+            &out_bgl,
+            &ia_bgl,
+            &empty_bgl,
+        );
 
         let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("vertex pulling pipeline"),
@@ -394,7 +414,6 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {{
 
 #[test]
 fn compute_vertex_pulling_reads_unorm8x4() {
-    assert_eq!(VERTEX_PULLING_GROUP, 3);
     fn push_u32(buf: &mut Vec<u8>, v: u32) {
         buf.extend_from_slice(&v.to_le_bytes());
     }
@@ -542,12 +561,13 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {{
         let ia_bgl = pulling.create_bind_group_layout(&device);
         let ia_bg = pulling.create_bind_group(&device, &ia_bgl, &[&vb], &ia_uniform);
 
-        let layouts: [&wgpu::BindGroupLayout; 4] = [&out_bgl, &empty_bgl, &empty_bgl, &ia_bgl];
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("vertex pulling unorm pipeline layout"),
-            bind_group_layouts: &layouts,
-            push_constant_ranges: &[],
-        });
+        let pipeline_layout = create_vertex_pulling_pipeline_layout(
+            &device,
+            "vertex pulling unorm pipeline layout",
+            &out_bgl,
+            &ia_bgl,
+            &empty_bgl,
+        );
 
         let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("vertex pulling unorm pipeline"),
@@ -733,12 +753,13 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {{
         let ia_bgl = pulling.create_bind_group_layout(&device);
         let ia_bg = pulling.create_bind_group(&device, &ia_bgl, &[&vb], &ia_uniform);
 
-        let layouts: [&wgpu::BindGroupLayout; 4] = [&out_bgl, &empty_bgl, &empty_bgl, &ia_bgl];
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("vertex pulling unaligned pipeline layout"),
-            bind_group_layouts: &layouts,
-            push_constant_ranges: &[],
-        });
+        let pipeline_layout = create_vertex_pulling_pipeline_layout(
+            &device,
+            "vertex pulling unaligned pipeline layout",
+            &out_bgl,
+            &ia_bgl,
+            &empty_bgl,
+        );
 
         let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("vertex pulling unaligned pipeline"),
@@ -907,12 +928,13 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {{
         let ia_bgl = pulling.create_bind_group_layout(&device);
         let ia_bg = pulling.create_bind_group(&device, &ia_bgl, &[&vb], &ia_uniform);
 
-        let layouts: [&wgpu::BindGroupLayout; 4] = [&out_bgl, &empty_bgl, &empty_bgl, &ia_bgl];
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("vertex pulling oob pipeline layout"),
-            bind_group_layouts: &layouts,
-            push_constant_ranges: &[],
-        });
+        let pipeline_layout = create_vertex_pulling_pipeline_layout(
+            &device,
+            "vertex pulling oob pipeline layout",
+            &out_bgl,
+            &ia_bgl,
+            &empty_bgl,
+        );
 
         let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("vertex pulling oob pipeline"),
