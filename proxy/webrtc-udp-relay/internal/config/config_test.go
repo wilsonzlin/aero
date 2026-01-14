@@ -351,6 +351,22 @@ func TestUDPRemoteAllowlistIdleTimeout_DefaultsToBindingIdleTimeoutWhenBindingOv
 	}
 }
 
+func TestUDPRemoteAllowlistIdleTimeout_DefaultsToBindingIdleTimeoutWhenBindingOverriddenByEnv(t *testing.T) {
+	cfg, err := load(lookupMap(map[string]string{
+		EnvAPIKey:                "secret",
+		EnvUDPBindingIdleTimeout: "10s",
+	}), nil)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.UDPBindingIdleTimeout != 10*time.Second {
+		t.Fatalf("UDPBindingIdleTimeout=%v, want %v", cfg.UDPBindingIdleTimeout, 10*time.Second)
+	}
+	if cfg.UDPRemoteAllowlistIdleTimeout != cfg.UDPBindingIdleTimeout {
+		t.Fatalf("UDPRemoteAllowlistIdleTimeout=%v, want %v", cfg.UDPRemoteAllowlistIdleTimeout, cfg.UDPBindingIdleTimeout)
+	}
+}
+
 func TestUDPRemoteAllowlistIdleTimeout_EnvOverride(t *testing.T) {
 	cfg, err := load(lookupMap(map[string]string{
 		EnvAPIKey:                        "secret",
