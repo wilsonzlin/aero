@@ -183,6 +183,7 @@ impl Config {
             .log_level
             .or_else(|| env::var("AERO_STORAGE_SERVER_LOG_LEVEL").ok())
             .unwrap_or_else(|| "info".to_string());
+        let log_level = normalize_log_level(log_level);
 
         let require_range = args.require_range || parse_env_bool("AERO_STORAGE_REQUIRE_RANGE");
         let disable_metrics =
@@ -245,6 +246,15 @@ fn parse_env_path(var: &str) -> Option<PathBuf> {
     Some(PathBuf::from(value))
 }
 
+fn normalize_log_level(raw: String) -> String {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        "info".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
 fn parse_origin_list(value: &str) -> Vec<String> {
     value
         .split(',')
@@ -278,7 +288,7 @@ fn parse_env_bool(var: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_env, parse_env_bool, parse_env_path};
+    use super::{normalize_log_level, parse_env, parse_env_bool, parse_env_path};
     use std::path::PathBuf;
 
     static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -319,6 +329,14 @@ mod tests {
             Some(v) => std::env::set_var(VAR, v),
             None => std::env::remove_var(VAR),
         }
+    }
+
+    #[test]
+    fn normalize_log_level_trims_and_defaults() {
+        assert_eq!(normalize_log_level("".to_string()), "info");
+        assert_eq!(normalize_log_level("   ".to_string()), "info");
+        assert_eq!(normalize_log_level("warn".to_string()), "warn");
+        assert_eq!(normalize_log_level(" warn ".to_string()), "warn");
     }
 
     #[cfg(unix)]
