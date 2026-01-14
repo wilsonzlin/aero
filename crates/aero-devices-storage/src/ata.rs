@@ -459,19 +459,27 @@ mod tests {
             u16::from_le_bytes([id[off], id[off + 1]])
         }
 
+        let mut id_enabled = [0u8; SECTOR_SIZE];
+        id_enabled.copy_from_slice(drive.identify_sector());
         // Word 82 reports support; it should remain stable.
-        let id = drive.identify_sector();
-        assert_ne!(word(id, 82) & (1 << 5), 0);
-        assert_ne!(word(id, 85) & (1 << 5), 0);
+        assert_ne!(word(&id_enabled, 82) & (1 << 5), 0);
+        assert_ne!(word(&id_enabled, 85) & (1 << 5), 0);
 
         drive.set_write_cache_enabled(false);
-        let id = drive.identify_sector();
-        assert_ne!(word(id, 82) & (1 << 5), 0);
-        assert_eq!(word(id, 85) & (1 << 5), 0);
+        let mut id_disabled = [0u8; SECTOR_SIZE];
+        id_disabled.copy_from_slice(drive.identify_sector());
+        assert_ne!(word(&id_disabled, 82) & (1 << 5), 0);
+        assert_eq!(word(&id_disabled, 85) & (1 << 5), 0);
+        assert_ne!(id_enabled, id_disabled, "IDENTIFY data should change when cache toggles");
 
         drive.set_write_cache_enabled(true);
-        let id = drive.identify_sector();
-        assert_ne!(word(id, 82) & (1 << 5), 0);
-        assert_ne!(word(id, 85) & (1 << 5), 0);
+        let mut id_enabled_again = [0u8; SECTOR_SIZE];
+        id_enabled_again.copy_from_slice(drive.identify_sector());
+        assert_ne!(word(&id_enabled_again, 82) & (1 << 5), 0);
+        assert_ne!(word(&id_enabled_again, 85) & (1 << 5), 0);
+        assert_eq!(
+            id_enabled, id_enabled_again,
+            "IDENTIFY data should return to its original value after toggling back"
+        );
     }
 }
