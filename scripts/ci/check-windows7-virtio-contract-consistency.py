@@ -1346,9 +1346,35 @@ def validate_win7_virtio_inf_msi_settings(device_name: str, inf_path: Path) -> l
         sect = line_sections.get(line_no)
         return sect is not None and sect in referenced_addreg_sections
 
-    interrupt_key_lines = scan.interrupt_management_key_lines
-    msi_supported_entries = scan.msi_supported
-    msg_limit_entries = scan.message_number_limit
+    def _format_unreferenced_occurrences(what: str, occs: Iterable[object]) -> list[str]:
+        lines: list[str] = []
+        for occ in occs:
+            # Support both InfRegLineOccurrence and InfRegDwordOccurrence.
+            line_no = getattr(occ, "line_no", None)
+            raw_line = getattr(occ, "raw_line", None)
+            if not isinstance(line_no, int) or not isinstance(raw_line, str):
+                continue
+            if _is_in_referenced_addreg_section(line_no):
+                continue
+            sect = line_sections.get(line_no)
+            if sect:
+                lines.append(f"{raw_line}  (section [{_section_label(sect)}])")
+            else:
+                lines.append(raw_line)
+        if not lines:
+            return []
+        return [
+            f"found {what} entry/entries, but they are not in any install-referenced AddReg section:",
+            *[f"- {l}" for l in lines],
+        ]
+
+    all_interrupt_key_lines = scan.interrupt_management_key_lines
+    all_msi_supported_entries = scan.msi_supported
+    all_msg_limit_entries = scan.message_number_limit
+
+    interrupt_key_lines = all_interrupt_key_lines
+    msi_supported_entries = all_msi_supported_entries
+    msg_limit_entries = all_msg_limit_entries
     interrupt_key_lines = tuple(o for o in interrupt_key_lines if _is_in_referenced_addreg_section(o.line_no))
     msi_supported_entries = tuple(o for o in msi_supported_entries if _is_in_referenced_addreg_section(o.line_no))
     msg_limit_entries = tuple(o for o in msg_limit_entries if _is_in_referenced_addreg_section(o.line_no))
@@ -1360,6 +1386,7 @@ def validate_win7_virtio_inf_msi_settings(device_name: str, inf_path: Path) -> l
                 [
                     'expected something like: HKR, "Interrupt Management",,0x00000010',
                     "hint: required for MSI/MSI-X opt-in on Windows 7",
+                    *_format_unreferenced_occurrences("Interrupt Management key creation", all_interrupt_key_lines),
                     *reachability_context,
                 ],
             )
@@ -1371,6 +1398,7 @@ def validate_win7_virtio_inf_msi_settings(device_name: str, inf_path: Path) -> l
                 f"{inf_path.as_posix()}: missing MSISupported AddReg entry:",
                 [
                     'expected: HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MSISupported, ..., 1',
+                    *_format_unreferenced_occurrences("MSISupported", all_msi_supported_entries),
                     *reachability_context,
                 ],
             )
@@ -1397,6 +1425,7 @@ def validate_win7_virtio_inf_msi_settings(device_name: str, inf_path: Path) -> l
                 f"{inf_path.as_posix()}: missing MessageNumberLimit AddReg entry:",
                 [
                     'expected: HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MessageNumberLimit, ..., <n>',
+                    *_format_unreferenced_occurrences("MessageNumberLimit", all_msg_limit_entries),
                     *reachability_context,
                 ],
             )
