@@ -164,6 +164,9 @@ using aerogpu::d3d10_11::AnyNonNullHandles;
 using aerogpu::d3d10_11::D3dSrvMipLevelsIsAll;
 using aerogpu::d3d10_11::D3dViewDimensionIsTexture2D;
 using aerogpu::d3d10_11::D3dViewDimensionIsTexture2DArray;
+using aerogpu::d3d10_11::D3dViewCountToRemaining;
+using aerogpu::d3d10_11::ClampU64ToU32;
+using aerogpu::d3d10_11::kD3DUintAll;
 
 using AerogpuTextureFormatLayout = aerogpu::d3d10_11::AerogpuTextureFormatLayout;
 using aerogpu::d3d10_11::aerogpu_texture_format_layout;
@@ -5506,12 +5509,12 @@ static HRESULT ValidateFullResourceRtvDesc(const AeroGpuResource* res,
       return E_NOTIMPL;
     }
 
-    if (array_size != 0 && array_size != 0xFFFFFFFFu && array_size > (res->array_size - first_slice)) {
+    if (array_size != 0 && array_size != kD3DUintAll && array_size > (res->array_size - first_slice)) {
       return E_INVALIDARG;
     }
 
     const uint32_t requested_slices =
-        (array_size == 0 || array_size == 0xFFFFFFFFu) ? res->array_size : array_size;
+        (array_size == 0 || array_size == kD3DUintAll) ? res->array_size : array_size;
     if (requested_slices != res->array_size) {
       if (reason_out) {
         *reason_out = "ArraySize does not span full resource";
@@ -5686,9 +5689,7 @@ HRESULT AEROGPU_APIENTRY CreateRenderTargetView(D3D10DDI_HDEVICE hDevice,
       AEROGPU_D3D10_RET_HR(E_INVALIDARG);
     }
     base_array_layer = first_slice;
-    array_layer_count = (array_size == 0 || array_size == 0xFFFFFFFFu)
-                            ? (res->array_size - base_array_layer)
-                            : array_size;
+    array_layer_count = D3dViewCountToRemaining(base_array_layer, array_size, res->array_size);
     if (array_layer_count == 0 || base_array_layer + array_layer_count > res->array_size) {
       AEROGPU_D3D10_RET_HR(E_INVALIDARG);
     }
@@ -5955,12 +5956,12 @@ static HRESULT ValidateFullResourceDsvDesc(const AeroGpuResource* res,
       return E_NOTIMPL;
     }
 
-    if (array_size != 0 && array_size != 0xFFFFFFFFu && array_size > (res->array_size - first_slice)) {
+    if (array_size != 0 && array_size != kD3DUintAll && array_size > (res->array_size - first_slice)) {
       return E_INVALIDARG;
     }
 
     const uint32_t requested_slices =
-        (array_size == 0 || array_size == 0xFFFFFFFFu) ? res->array_size : array_size;
+        (array_size == 0 || array_size == kD3DUintAll) ? res->array_size : array_size;
     if (requested_slices != res->array_size) {
       if (reason_out) {
         *reason_out = "ArraySize does not span full resource";
@@ -6144,9 +6145,7 @@ HRESULT AEROGPU_APIENTRY CreateDepthStencilView(D3D10DDI_HDEVICE hDevice,
       AEROGPU_D3D10_RET_HR(E_INVALIDARG);
     }
     base_array_layer = first_slice;
-    array_layer_count = (array_size == 0 || array_size == 0xFFFFFFFFu)
-                            ? (res->array_size - base_array_layer)
-                            : array_size;
+    array_layer_count = D3dViewCountToRemaining(base_array_layer, array_size, res->array_size);
     if (array_layer_count == 0 || base_array_layer + array_layer_count > res->array_size) {
       AEROGPU_D3D10_RET_HR(E_INVALIDARG);
     }
@@ -6413,7 +6412,7 @@ static HRESULT ValidateFullResourceSrvDesc(const AeroGpuResource* res,
     return E_NOTIMPL;
   }
 
-  if (mip_levels != 0 && mip_levels != 0xFFFFFFFFu && mip_levels > res->mip_levels) {
+  if (mip_levels != 0 && mip_levels != kD3DUintAll && mip_levels > res->mip_levels) {
     return E_INVALIDARG;
   }
 
@@ -6469,12 +6468,12 @@ static HRESULT ValidateFullResourceSrvDesc(const AeroGpuResource* res,
       return E_NOTIMPL;
     }
 
-    if (array_size != 0 && array_size != 0xFFFFFFFFu && array_size > (res->array_size - first_slice)) {
+    if (array_size != 0 && array_size != kD3DUintAll && array_size > (res->array_size - first_slice)) {
       return E_INVALIDARG;
     }
 
     const uint32_t requested_slices =
-        (array_size == 0 || array_size == 0xFFFFFFFFu) ? res->array_size : array_size;
+        (array_size == 0 || array_size == kD3DUintAll) ? res->array_size : array_size;
     if (requested_slices != res->array_size) {
       if (reason_out) {
         *reason_out = "ArraySize does not span full resource";
@@ -6609,10 +6608,7 @@ HRESULT AEROGPU_APIENTRY CreateShaderResourceView(D3D10DDI_HDEVICE hDevice,
   if (most_detailed_mip >= res->mip_levels) {
     return E_INVALIDARG;
   }
-  uint32_t mip_level_count = mip_levels;
-  if (mip_level_count == 0 || mip_level_count == 0xFFFFFFFFu) {
-    mip_level_count = (res->mip_levels > most_detailed_mip) ? (res->mip_levels - most_detailed_mip) : 0;
-  }
+  uint32_t mip_level_count = D3dViewCountToRemaining(most_detailed_mip, mip_levels, res->mip_levels);
   if (mip_level_count == 0 || most_detailed_mip + mip_level_count > res->mip_levels) {
     return E_INVALIDARG;
   }
@@ -6653,9 +6649,7 @@ HRESULT AEROGPU_APIENTRY CreateShaderResourceView(D3D10DDI_HDEVICE hDevice,
       return E_INVALIDARG;
     }
     base_array_layer = first_slice;
-    array_layer_count = (array_size == 0 || array_size == 0xFFFFFFFFu)
-                            ? (res->array_size - base_array_layer)
-                            : array_size;
+    array_layer_count = D3dViewCountToRemaining(base_array_layer, array_size, res->array_size);
     if (array_layer_count == 0 || base_array_layer + array_layer_count > res->array_size) {
       return E_INVALIDARG;
     }
@@ -7638,7 +7632,7 @@ static void SetConstantBuffersCommon(D3D10DDI_HDEVICE hDevice,
     if (buf_res) {
       b.buffer = buf_res->handle;
       b.offset_bytes = 0;
-      b.size_bytes = buf_res->size_bytes > 0xFFFFFFFFull ? 0xFFFFFFFFu : static_cast<uint32_t>(buf_res->size_bytes);
+      b.size_bytes = ClampU64ToU32(buf_res->size_bytes);
     }
 
     bindings[i] = b;

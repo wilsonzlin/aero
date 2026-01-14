@@ -76,6 +76,8 @@ using aerogpu::d3d10_11::ValidateNoNullDdiTable;
 using aerogpu::d3d10_11::AnyNonNullHandles;
 using aerogpu::d3d10_11::D3dViewDimensionIsTexture2D;
 using aerogpu::d3d10_11::D3dViewDimensionIsTexture2DArray;
+using aerogpu::d3d10_11::D3dViewCountToRemaining;
+using aerogpu::d3d10_11::ClampU64ToU32;
 
 static bool IsDeviceLive(D3D10DDI_HDEVICE hDevice) {
   return HasLiveCookie(hDevice.pDrvPrivate, kD3D10DeviceLiveCookie);
@@ -5695,9 +5697,7 @@ HRESULT APIENTRY CreateRenderTargetView(D3D10DDI_HDEVICE hDevice,
     return E_NOTIMPL;
   }
 
-  if (slice_count == 0 || slice_count == 0xFFFFFFFFu) {
-    slice_count = (res->array_size > first_slice) ? (res->array_size - first_slice) : 0;
-  }
+  slice_count = D3dViewCountToRemaining(first_slice, slice_count, res->array_size);
 
   if (first_slice >= res->array_size || slice_count == 0 || first_slice + slice_count > res->array_size) {
     return E_INVALIDARG;
@@ -5995,9 +5995,7 @@ HRESULT APIENTRY CreateDepthStencilView(D3D10DDI_HDEVICE hDevice,
     return E_NOTIMPL;
   }
 
-  if (slice_count == 0 || slice_count == 0xFFFFFFFFu) {
-    slice_count = (res->array_size > first_slice) ? (res->array_size - first_slice) : 0;
-  }
+  slice_count = D3dViewCountToRemaining(first_slice, slice_count, res->array_size);
 
   if (first_slice >= res->array_size || slice_count == 0 || first_slice + slice_count > res->array_size) {
     return E_INVALIDARG;
@@ -6257,10 +6255,7 @@ HRESULT APIENTRY CreateShaderResourceView(D3D10DDI_HDEVICE hDevice,
     return E_NOTIMPL;
   }
 
-  uint32_t mip_count = mip_levels;
-  if (mip_count == 0 || mip_count == 0xFFFFFFFFu) {
-    mip_count = (res->mip_levels > most_detailed_mip) ? (res->mip_levels - most_detailed_mip) : 0;
-  }
+  uint32_t mip_count = D3dViewCountToRemaining(most_detailed_mip, mip_levels, res->mip_levels);
 
   if (res->mip_levels == 0 ||
       most_detailed_mip >= res->mip_levels ||
@@ -6298,9 +6293,7 @@ HRESULT APIENTRY CreateShaderResourceView(D3D10DDI_HDEVICE hDevice,
     return E_NOTIMPL;
   }
 
-  if (slice_count == 0 || slice_count == 0xFFFFFFFFu) {
-    slice_count = (res->array_size > first_slice) ? (res->array_size - first_slice) : 0;
-  }
+  slice_count = D3dViewCountToRemaining(first_slice, slice_count, res->array_size);
 
   if (res->array_size == 0 ||
       first_slice >= res->array_size ||
@@ -7345,7 +7338,7 @@ static void SetConstantBuffersLocked(AeroGpuDevice* dev,
     if (res && res->kind == ResourceKind::Buffer) {
       b.buffer = res->handle;
       b.offset_bytes = 0;
-      b.size_bytes = res->size_bytes > 0xFFFFFFFFull ? 0xFFFFFFFFu : static_cast<uint32_t>(res->size_bytes);
+      b.size_bytes = ClampU64ToU32(res->size_bytes);
     }
 
     bindings[i] = b;

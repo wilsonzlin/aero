@@ -4067,12 +4067,10 @@ HRESULT AEROGPU_APIENTRY CreateRTV(D3D10DDI_HDEVICE hDevice,
 
   uint32_t base_array_layer = 0;
   uint32_t array_layer_count = res->array_size;
-  if (pDesc->ViewDimension == 4u /*Texture2DArray*/) {
+  if (aerogpu::d3d10_11::D3dViewDimensionIsTexture2DArray(pDesc->ViewDimension)) {
     base_array_layer = pDesc->FirstArraySlice;
-    array_layer_count = pDesc->ArraySize;
-    if (array_layer_count == 0 || array_layer_count == 0xFFFFFFFFu) {
-      array_layer_count = (res->array_size > base_array_layer) ? (res->array_size - base_array_layer) : 0;
-    }
+    array_layer_count =
+        aerogpu::d3d10_11::D3dViewCountToRemaining(base_array_layer, pDesc->ArraySize, res->array_size);
   }
 
   const bool format_reinterpret = (pDesc->Format != 0) && (pDesc->Format != res->dxgi_format);
@@ -4197,12 +4195,10 @@ HRESULT AEROGPU_APIENTRY CreateDSV(D3D10DDI_HDEVICE hDevice,
 
   uint32_t base_array_layer = 0;
   uint32_t array_layer_count = res->array_size;
-  if (pDesc->ViewDimension == 4u /*Texture2DArray*/) {
+  if (aerogpu::d3d10_11::D3dViewDimensionIsTexture2DArray(pDesc->ViewDimension)) {
     base_array_layer = pDesc->FirstArraySlice;
-    array_layer_count = pDesc->ArraySize;
-    if (array_layer_count == 0 || array_layer_count == 0xFFFFFFFFu) {
-      array_layer_count = (res->array_size > base_array_layer) ? (res->array_size - base_array_layer) : 0;
-    }
+    array_layer_count =
+        aerogpu::d3d10_11::D3dViewCountToRemaining(base_array_layer, pDesc->ArraySize, res->array_size);
   }
 
   const bool format_reinterpret = (pDesc->Format != 0) && (pDesc->Format != res->dxgi_format);
@@ -4307,19 +4303,15 @@ HRESULT AEROGPU_APIENTRY CreateShaderResourceView(D3D10DDI_HDEVICE hDevice,
 
   const uint32_t view_dxgi_format = pDesc->Format ? pDesc->Format : res->dxgi_format;
   const uint32_t base_mip_level = pDesc->MostDetailedMip;
-  uint32_t mip_level_count = pDesc->MipLevels;
-  if (mip_level_count == 0 || mip_level_count == 0xFFFFFFFFu) {
-    mip_level_count = (res->mip_levels > base_mip_level) ? (res->mip_levels - base_mip_level) : 0;
-  }
+  uint32_t mip_level_count =
+      aerogpu::d3d10_11::D3dViewCountToRemaining(base_mip_level, pDesc->MipLevels, res->mip_levels);
 
   uint32_t base_array_layer = 0;
   uint32_t array_layer_count = res->array_size;
-  if (pDesc->ViewDimension == AEROGPU_DDI_SRV_DIMENSION_TEXTURE2DARRAY) {
+  if (aerogpu::d3d10_11::D3dViewDimensionIsTexture2DArray(pDesc->ViewDimension)) {
     base_array_layer = pDesc->FirstArraySlice;
-    array_layer_count = pDesc->ArraySize;
-    if (array_layer_count == 0 || array_layer_count == 0xFFFFFFFFu) {
-      array_layer_count = (res->array_size > base_array_layer) ? (res->array_size - base_array_layer) : 0;
-    }
+    array_layer_count =
+        aerogpu::d3d10_11::D3dViewCountToRemaining(base_array_layer, pDesc->ArraySize, res->array_size);
   }
 
   const bool format_reinterpret =
@@ -5528,7 +5520,7 @@ void AEROGPU_APIENTRY VsSetConstantBuffers(D3D10DDI_HDEVICE hDevice,
       if (res && res->kind == ResourceKind::Buffer) {
         b.buffer = res->handle;
         b.offset_bytes = 0;
-        b.size_bytes = (res->size_bytes > 0xFFFFFFFFull) ? 0xFFFFFFFFu : static_cast<uint32_t>(res->size_bytes);
+        b.size_bytes = aerogpu::d3d10_11::ClampU64ToU32(res->size_bytes);
       }
     }
 
@@ -5588,7 +5580,7 @@ void AEROGPU_APIENTRY PsSetConstantBuffers(D3D10DDI_HDEVICE hDevice,
       if (res && res->kind == ResourceKind::Buffer) {
         b.buffer = res->handle;
         b.offset_bytes = 0;
-        b.size_bytes = (res->size_bytes > 0xFFFFFFFFull) ? 0xFFFFFFFFu : static_cast<uint32_t>(res->size_bytes);
+        b.size_bytes = aerogpu::d3d10_11::ClampU64ToU32(res->size_bytes);
       }
     }
 

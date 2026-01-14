@@ -226,8 +226,17 @@ inline bool AnyNonNullHandles(const THandle* handles, size_t count) {
 }
 
 // D3D view descriptor sentinel values.
-// D3D10/11 use UINT(-1) for "all mip levels"; some headers/paths use 0.
-constexpr uint32_t kD3DMipLevelsAll = 0xFFFFFFFFu;
+//
+// D3D10/11 commonly use UINT(-1) for "all / keep existing" sentinel values. Some
+// codepaths (including our portable ABI subset) also use 0 to mean "all
+// remaining".
+constexpr uint32_t kD3DUintAll = 0xFFFFFFFFu;
+// Back-compat alias used by existing code when interpreting SRV MipLevels.
+constexpr uint32_t kD3DMipLevelsAll = kD3DUintAll;
+// D3D10/D3D11 append-aligned-element sentinel (AlignedByteOffset).
+constexpr uint32_t kD3DAppendAlignedElement = kD3DUintAll;
+// D3D11 UAV initial-count sentinel (keep existing counter value).
+constexpr uint32_t kD3DUavInitialCountNoChange = kD3DUintAll;
 
 // View dimension values for the portable AeroGPU ABI (and common WDDM/DDI view
 // enums) used by our minimal view validation helpers.
@@ -239,6 +248,15 @@ inline bool D3dSrvMipLevelsIsAll(uint32_t view_mip_levels, uint32_t resource_mip
     return true;
   }
   return view_mip_levels == resource_mip_levels;
+}
+
+// Normalizes a view descriptor count field (MipLevels/ArraySize) that uses
+// 0/UINT(-1) to indicate "all remaining" into an explicit count value.
+inline uint32_t D3dViewCountToRemaining(uint32_t base, uint32_t count, uint32_t total) {
+  if (count == 0 || count == kD3DUintAll) {
+    return (total > base) ? (total - base) : 0;
+  }
+  return count;
 }
 
 inline bool D3dViewDimensionIsTexture2D(uint32_t view_dimension) {
@@ -666,6 +684,13 @@ constexpr uint32_t AlignDownU32(uint32_t value, uint32_t alignment) {
     return value;
   }
   return static_cast<uint32_t>(value & ~(alignment - 1));
+}
+
+constexpr uint32_t ClampU64ToU32(uint64_t value) {
+  if (value > static_cast<uint64_t>(std::numeric_limits<uint32_t>::max())) {
+    return std::numeric_limits<uint32_t>::max();
+  }
+  return static_cast<uint32_t>(value);
 }
 
 struct AerogpuTextureFormatLayout {

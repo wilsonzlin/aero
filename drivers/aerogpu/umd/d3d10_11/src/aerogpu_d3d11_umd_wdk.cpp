@@ -1358,7 +1358,7 @@ static void UnbindResourceFromUavsLocked(Device* dev,
       continue;
     }
     aerogpu_unordered_access_buffer_binding null_uav{};
-    null_uav.initial_count = 0xFFFFFFFFu;
+    null_uav.initial_count = kD3DUavInitialCountNoChange;
     if (BindUnorderedAccessBuffersRangeLocked(dev, AEROGPU_SHADER_STAGE_COMPUTE, slot, 1, &null_uav)) {
       dev->cs_uavs[slot] = null_uav;
       if (slot < dev->current_cs_uavs.size()) {
@@ -3736,7 +3736,7 @@ void AEROGPU_APIENTRY DestroyResource11(D3D11DDI_HDEVICE hDevice, D3D11DDI_HRESO
     if (slot < dev->current_cs_uavs.size() && dev->current_cs_uavs[slot] == res) {
       dev->current_cs_uavs[slot] = nullptr;
       aerogpu_unordered_access_buffer_binding null_uav{};
-      null_uav.initial_count = 0xFFFFFFFFu;
+      null_uav.initial_count = kD3DUavInitialCountNoChange;
       dev->cs_uavs[slot] = null_uav;
     }
   }
@@ -3995,9 +3995,7 @@ HRESULT AEROGPU_APIENTRY CreateRenderTargetView11(D3D11DDI_HDEVICE hDevice,
     return E_NOTIMPL;
   }
 
-  if (slice_count == 0 || slice_count == 0xFFFFFFFFu) {
-    slice_count = (res->array_size > first_slice) ? (res->array_size - first_slice) : 0;
-  }
+  slice_count = D3dViewCountToRemaining(first_slice, slice_count, res->array_size);
 
   if (first_slice >= res->array_size || slice_count == 0 || first_slice + slice_count > res->array_size) {
     return E_INVALIDARG;
@@ -4236,9 +4234,7 @@ HRESULT AEROGPU_APIENTRY CreateDepthStencilView11(D3D11DDI_HDEVICE hDevice,
     return E_NOTIMPL;
   }
 
-  if (slice_count == 0 || slice_count == 0xFFFFFFFFu) {
-    slice_count = (res->array_size > first_slice) ? (res->array_size - first_slice) : 0;
-  }
+  slice_count = D3dViewCountToRemaining(first_slice, slice_count, res->array_size);
 
   if (first_slice >= res->array_size || slice_count == 0 || first_slice + slice_count > res->array_size) {
     return E_INVALIDARG;
@@ -4562,7 +4558,7 @@ HRESULT AEROGPU_APIENTRY CreateShaderResourceView11(D3D11DDI_HDEVICE hDevice,
         } else if (dim == static_cast<uint32_t>(D3D11_SRV_DIMENSION_TEXTURE2DARRAY)) {
           // Full-array view only.
           uint32_t effective_array_size = array_size;
-          if (effective_array_size == 0 || effective_array_size == 0xFFFFFFFFu) {
+          if (effective_array_size == 0 || effective_array_size == kD3DUintAll) {
             effective_array_size = res->array_size;
           }
           if (have_array_range) {
@@ -4666,10 +4662,7 @@ HRESULT AEROGPU_APIENTRY CreateShaderResourceView11(D3D11DDI_HDEVICE hDevice,
       return E_NOTIMPL;
     }
 
-    uint32_t mip_count = mip_levels;
-    if (mip_count == 0 || mip_count == 0xFFFFFFFFu) {
-      mip_count = (res->mip_levels > most_detailed_mip) ? (res->mip_levels - most_detailed_mip) : 0;
-    }
+    uint32_t mip_count = D3dViewCountToRemaining(most_detailed_mip, mip_levels, res->mip_levels);
 
     if (most_detailed_mip >= res->mip_levels ||
         mip_count == 0 ||
@@ -4706,9 +4699,7 @@ HRESULT AEROGPU_APIENTRY CreateShaderResourceView11(D3D11DDI_HDEVICE hDevice,
       return E_NOTIMPL;
     }
 
-    if (slice_count == 0 || slice_count == 0xFFFFFFFFu) {
-      slice_count = (res->array_size > first_slice) ? (res->array_size - first_slice) : 0;
-    }
+    slice_count = D3dViewCountToRemaining(first_slice, slice_count, res->array_size);
 
     if (first_slice >= res->array_size ||
         slice_count == 0 ||
@@ -4827,8 +4818,8 @@ HRESULT AEROGPU_APIENTRY CreateShaderResourceView11(D3D11DDI_HDEVICE hDevice,
       clamped_sz = res->size_bytes - clamped_off;
     }
 
-    binding.offset_bytes = clamped_off > 0xFFFFFFFFull ? 0xFFFFFFFFu : static_cast<uint32_t>(clamped_off);
-    binding.size_bytes = clamped_sz > 0xFFFFFFFFull ? 0xFFFFFFFFu : static_cast<uint32_t>(clamped_sz);
+    binding.offset_bytes = ClampU64ToU32(clamped_off);
+    binding.size_bytes = ClampU64ToU32(clamped_sz);
 
     srv->resource = res;
     srv->kind = ShaderResourceView::Kind::Buffer;
@@ -4917,7 +4908,7 @@ HRESULT AEROGPU_APIENTRY CreateUnorderedAccessView11(D3D11DDI_HDEVICE hDevice,
   uav->buffer.buffer = res->handle;
   uav->buffer.offset_bytes = 0;
   uav->buffer.size_bytes = 0;
-  uav->buffer.initial_count = 0xFFFFFFFFu;
+  uav->buffer.initial_count = kD3DUavInitialCountNoChange;
 
   uint64_t first_element = 0;
   uint64_t num_elements = 0;
@@ -4968,8 +4959,8 @@ HRESULT AEROGPU_APIENTRY CreateUnorderedAccessView11(D3D11DDI_HDEVICE hDevice,
     clamped_sz = res->size_bytes - clamped_off;
   }
 
-  uav->buffer.offset_bytes = clamped_off > 0xFFFFFFFFull ? 0xFFFFFFFFu : static_cast<uint32_t>(clamped_off);
-  uav->buffer.size_bytes = clamped_sz > 0xFFFFFFFFull ? 0xFFFFFFFFu : static_cast<uint32_t>(clamped_sz);
+  uav->buffer.offset_bytes = ClampU64ToU32(clamped_off);
+  uav->buffer.size_bytes = ClampU64ToU32(clamped_sz);
 
   return S_OK;
 }
@@ -6333,8 +6324,8 @@ static void SetConstantBuffers11Locked(Device* dev,
       }
 
       b.buffer = buf->handle;
-      b.offset_bytes = offset_bytes > 0xFFFFFFFFull ? 0xFFFFFFFFu : static_cast<uint32_t>(offset_bytes);
-      b.size_bytes = size_bytes > 0xFFFFFFFFull ? 0xFFFFFFFFu : static_cast<uint32_t>(size_bytes);
+      b.offset_bytes = ClampU64ToU32(offset_bytes);
+      b.size_bytes = ClampU64ToU32(size_bytes);
     }
 
     bindings[i] = b;
@@ -6669,7 +6660,7 @@ void AEROGPU_APIENTRY CsSetUnorderedAccessViews11(D3D11DDI_HDEVICECONTEXT hCtx,
     b.buffer = 0;
     b.offset_bytes = 0;
     b.size_bytes = 0;
-    b.initial_count = 0xFFFFFFFFu;
+    b.initial_count = kD3DUavInitialCountNoChange;
 
     Resource* res = nullptr;
     if (phUavs && phUavs[i].pDrvPrivate) {
@@ -6681,7 +6672,7 @@ void AEROGPU_APIENTRY CsSetUnorderedAccessViews11(D3D11DDI_HDEVICECONTEXT hCtx,
       }
     }
     // D3D11 ignores initial counts for null UAV bindings. Preserve the sentinel
-    // `0xFFFFFFFFu` in that case so the command stream does not carry a
+    // kD3DUavInitialCountNoChange in that case so the command stream does not carry a
     // potentially uninitialized app-provided value.
     if (pUAVInitialCounts && b.buffer) {
       b.initial_count = pUAVInitialCounts[i];
@@ -7385,7 +7376,7 @@ void AEROGPU_APIENTRY ClearState11(D3D11DDI_HDEVICECONTEXT hCtx) {
 
   std::array<aerogpu_unordered_access_buffer_binding, kMaxUavSlots> null_uavs{};
   for (auto& b : null_uavs) {
-    b.initial_count = 0xFFFFFFFFu;
+    b.initial_count = kD3DUavInitialCountNoChange;
   }
   auto* uav_cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_unordered_access_buffers>(
       AEROGPU_CMD_SET_UNORDERED_ACCESS_BUFFERS, null_uavs.data(), null_uavs.size() * sizeof(null_uavs[0]));
@@ -7886,7 +7877,7 @@ static bool DecodeInputLayout(const InputLayout* layout, ValidationInputLayout* 
     }
 
     uint32_t offset = e.aligned_byte_offset;
-    if (offset == 0xFFFFFFFFu) {
+    if (offset == kD3DAppendAlignedElement) {
       offset = running_offset[e.input_slot];
     }
     const uint32_t size_bytes = DxgiFormatSizeBytes(e.dxgi_format);
@@ -9290,7 +9281,7 @@ void AEROGPU_APIENTRY CopyStructureCount11(D3D11DDI_HDEVICECONTEXT hCtx,
       continue;
     }
     const uint32_t init = dev->cs_uavs[slot].initial_count;
-    if (init != 0xFFFFFFFFu) {
+    if (init != kD3DUavInitialCountNoChange) {
       count = init;
     }
     break;
