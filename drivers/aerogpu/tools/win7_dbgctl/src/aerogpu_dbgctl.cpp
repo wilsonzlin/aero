@@ -3314,11 +3314,22 @@ static int DoQueryPerf(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
     }
   }
   if (haveError) {
-    wprintf(L"  error: code=%lu (%s) fence=0x%I64x count=%lu\n",
-            (unsigned long)qe.error_code,
-            AerogpuErrorCodeName(qe.error_code),
-            (unsigned long long)qe.error_fence,
-            (unsigned long)qe.error_count);
+    const bool latchedValid = ((qe.flags & AEROGPU_DBGCTL_QUERY_ERROR_FLAGS_VALID) != 0);
+    const bool latched = latchedValid && ((qe.flags & AEROGPU_DBGCTL_QUERY_ERROR_FLAG_ERROR_LATCHED) != 0);
+    if (latchedValid) {
+      wprintf(L"  error: latched=%s code=%lu (%s) fence=0x%I64x count=%lu\n",
+              latched ? L"true" : L"false",
+              (unsigned long)qe.error_code,
+              AerogpuErrorCodeName(qe.error_code),
+              (unsigned long long)qe.error_fence,
+              (unsigned long)qe.error_count);
+    } else {
+      wprintf(L"  error: code=%lu (%s) fence=0x%I64x count=%lu\n",
+              (unsigned long)qe.error_code,
+              AerogpuErrorCodeName(qe.error_code),
+              (unsigned long long)qe.error_fence,
+              (unsigned long)qe.error_count);
+    }
   }
   wprintf(L"  resets: ResetFromTimeout=%I64u last_reset_time_100ns=%I64u\n",
           (unsigned long long)q.reset_from_timeout_count,
