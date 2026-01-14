@@ -5011,7 +5011,10 @@ static HRESULT ensure_fixedfunc_vs_fallback_locked(Device* dev, Shader** out_vs)
   }
 
   if (!vs) {
-    return E_FAIL;
+    // If we created the fixed-function pipeline successfully but do not have a
+    // matching internal VS, treat it as unsupported rather than leaking E_FAIL to
+    // D3D9 callers.
+    return kD3DErrInvalidCall;
   }
   *out_vs = vs;
   return S_OK;

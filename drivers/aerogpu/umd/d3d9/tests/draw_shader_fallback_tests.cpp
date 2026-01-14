@@ -22,12 +22,20 @@ constexpr uint32_t kD3dFvfXyz = 0x00000002u;
 constexpr uint32_t kD3dFvfXyzRhw = 0x00000004u;
 constexpr uint32_t kD3dFvfDiffuse = 0x00000040u;
 constexpr uint32_t kFvfXyzrhwDiffuse = kD3dFvfXyzRhw | kD3dFvfDiffuse;
+constexpr uint32_t kFvfXyzDiffuse = kD3dFvfXyz | kD3dFvfDiffuse;
 
 struct VertexXyzrhwDiffuse {
   float x;
   float y;
   float z;
   float rhw;
+  uint32_t color;
+};
+
+struct VertexXyzDiffuse {
+  float x;
+  float y;
+  float z;
   uint32_t color;
 };
 
@@ -251,6 +259,74 @@ bool TestPsOnlyDrawBindsFallbackVs() {
   }
   return ValidateNoDrawWithNullShaders(buf, cap);
 }
+
+bool TestPsOnlyDrawBindsFallbackVsXyzDiffuse() {
+  D3d9Context ctx;
+  if (!InitD3d9(&ctx)) {
+    return false;
+  }
+  aerogpu::Device* dev = GetDevice(ctx);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // XYZ|DIFFUSE is supported by the fixed-function fallback and requires the internal
+  // WVP VS variant when the app leaves VS NULL.
+  if (!Check(ctx.device_funcs.pfnSetFVF != nullptr, "pfnSetFVF")) {
+    return false;
+  }
+  HRESULT hr = ctx.device_funcs.pfnSetFVF(ctx.hDevice, kFvfXyzDiffuse);
+  if (!Check(SUCCEEDED(hr), "SetFVF(XYZ|DIFFUSE)")) {
+    return false;
+  }
+
+  if (!Check(ctx.device_funcs.pfnCreateShader != nullptr, "pfnCreateShader")) {
+    return false;
+  }
+  D3D9DDI_HSHADER hPs{};
+  hr = ctx.device_funcs.pfnCreateShader(ctx.hDevice,
+                                        kD3d9ShaderStagePs,
+                                        kPsPassthroughColor,
+                                        static_cast<uint32_t>(sizeof(kPsPassthroughColor)),
+                                        &hPs);
+  if (!Check(SUCCEEDED(hr) && hPs.pDrvPrivate != nullptr, "CreateShader(PS)")) {
+    return false;
+  }
+
+  if (!Check(ctx.device_funcs.pfnSetShader != nullptr, "pfnSetShader")) {
+    return false;
+  }
+  hr = ctx.device_funcs.pfnSetShader(ctx.hDevice, kD3d9ShaderStagePs, hPs);
+  if (!Check(SUCCEEDED(hr), "SetShader(PS)")) {
+    return false;
+  }
+
+  const VertexXyzDiffuse verts[3] = {
+      {-0.5f, -0.5f, 0.0f, 0xFFFFFFFFu},
+      {0.5f, -0.5f, 0.0f, 0xFFFFFFFFu},
+      {0.0f, 0.5f, 0.0f, 0xFFFFFFFFu},
+  };
+
+  if (!Check(ctx.device_funcs.pfnDrawPrimitiveUP != nullptr, "pfnDrawPrimitiveUP")) {
+    return false;
+  }
+  hr = ctx.device_funcs.pfnDrawPrimitiveUP(ctx.hDevice,
+                                           D3DDDIPT_TRIANGLELIST,
+                                           /*primitive_count=*/1,
+                                           verts,
+                                           static_cast<uint32_t>(sizeof(VertexXyzDiffuse)));
+  if (!Check(SUCCEEDED(hr), "device_draw_primitive_up (ps only, xyz|diffuse)")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t cap = dev->cmd.bytes_used();
+  if (!Check(CountOpcode(buf, cap, AEROGPU_CMD_DRAW) == 1, "expected exactly one DRAW packet")) {
+    return false;
+  }
+  return ValidateNoDrawWithNullShaders(buf, cap);
+}
 bool TestVsOnlyDrawBindsFallbackPs() {
   D3d9Context ctx;
   if (!InitD3d9(&ctx)) {
@@ -369,6 +445,7 @@ bool TestPsOnlyUnsupportedFvfFailsWithoutDraw() {
 int main() {
   bool ok = true;
   ok = ok && TestPsOnlyDrawBindsFallbackVs();
+  ok = ok && TestPsOnlyDrawBindsFallbackVsXyzDiffuse();
   ok = ok && TestVsOnlyDrawBindsFallbackPs();
   ok = ok && TestPsOnlyUnsupportedFvfFailsWithoutDraw();
   if (ok) {
