@@ -116,6 +116,7 @@ fn uhci_synthetic_usb_hid_topology_is_attached_on_boot() {
     assert!(m.usb_hid_keyboard_handle().is_some());
     assert!(m.usb_hid_mouse_handle().is_some());
     assert!(m.usb_hid_gamepad_handle().is_some());
+    assert!(m.usb_hid_consumer_control_handle().is_some());
 }
 
 #[test]

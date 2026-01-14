@@ -129,7 +129,8 @@ fn aerogpu_scanout_handoff_to_wddm_blocks_legacy_int10_steal() {
     m.write_physical_u8(0xB8001, 0x1F);
     assert_eq!(m.active_scanout_source(), ScanoutSource::LegacyText);
     m.display_present();
-    assert_ne!(m.display_resolution(), (0, 0));
+    let legacy_text_res = m.display_resolution();
+    assert_ne!(legacy_text_res, (0, 0));
 
     // Wait for the guest to reach the wait loop after setting VBE mode.
     run_until_flag(&mut m, 0x01);
@@ -259,16 +260,17 @@ fn aerogpu_scanout_handoff_to_wddm_blocks_legacy_int10_steal() {
     );
     m.display_present();
     assert_eq!(m.active_scanout_source(), ScanoutSource::LegacyText);
-    assert_ne!(m.display_resolution(), (0, 0));
+    assert_eq!(m.display_resolution(), legacy_text_res);
     assert!(!m.display_framebuffer().is_empty());
+    let legacy_fb_before = m.display_framebuffer().to_vec();
 
     // Legacy text memory changes should now become visible again.
     m.write_physical_u8(0xB8000, b'Z');
     m.write_physical_u8(0xB8001, 0x1F);
     m.display_present();
     assert_eq!(m.active_scanout_source(), ScanoutSource::LegacyText);
-    assert_ne!(m.display_resolution(), (0, 0));
-    assert!(!m.display_framebuffer().is_empty());
+    assert_eq!(m.display_resolution(), legacy_text_res);
+    assert_ne!(m.display_framebuffer(), legacy_fb_before.as_slice());
 
     // Reset returns scanout ownership to legacy.
     m.reset();

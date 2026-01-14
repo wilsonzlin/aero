@@ -95,6 +95,7 @@ fn aerogpu_scanout_readback_is_capped_to_avoid_unbounded_allocations() {
     m.display_present();
     assert_eq!(m.active_scanout_source(), ScanoutSource::LegacyText);
     assert_eq!(m.display_resolution(), legacy_res);
+    assert!(!m.display_framebuffer().is_empty());
 
     // Reset returns scanout ownership to legacy.
     m.reset();
