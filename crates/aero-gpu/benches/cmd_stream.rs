@@ -8,7 +8,7 @@ use std::time::Duration;
 
 #[cfg(not(target_arch = "wasm32"))]
 use aero_gpu::cmd::{
-    BufferId, CommandOptimizer, GpuCmd, IndexFormat, LoadOp, Operations, PipelineId,
+    BindGroupId, BufferId, CommandOptimizer, GpuCmd, IndexFormat, LoadOp, Operations, PipelineId,
     RenderPassColorAttachmentDesc, RenderPassDesc, StoreOp, TextureViewId,
 };
 #[cfg(not(target_arch = "wasm32"))]
@@ -292,6 +292,37 @@ fn translate_to_internal(cmds: &[AeroGpuCmd<'_>]) -> Vec<GpuCmd> {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+fn build_internal_bind_group_draw_stream(draws: u32) -> Vec<GpuCmd> {
+    let mut out = Vec::with_capacity(draws as usize * 4 + 2);
+    out.push(GpuCmd::BeginRenderPass(dummy_render_pass_desc()));
+
+    for i in 0..draws {
+        // These are intentionally redundant across draws; the optimizer should collapse them.
+        out.push(GpuCmd::SetPipeline(PipelineId(1)));
+        out.push(GpuCmd::SetBindGroup {
+            slot: 0,
+            bind_group: BindGroupId(1),
+            dynamic_offsets: vec![0],
+        });
+        out.push(GpuCmd::SetVertexBuffer {
+            slot: 0,
+            buffer: BufferId(1),
+            offset: 0,
+            size: None,
+        });
+        out.push(GpuCmd::Draw {
+            vertex_count: 3,
+            instance_count: 1,
+            first_vertex: i.saturating_mul(3),
+            first_instance: 0,
+        });
+    }
+
+    out.push(GpuCmd::EndRenderPass);
+    out
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn bench_cmd_stream_parse(c: &mut Criterion) {
     let clear_red = extract_cmd_stream_from_trace(TRACE_CLEAR_RED);
     let triangle = extract_cmd_stream_from_trace(TRACE_TRIANGLE);
@@ -326,6 +357,7 @@ fn bench_cmd_optimize(c: &mut Criterion) {
     let bytes = build_synthetic_triangle_stream(1024);
     let parsed = parse_cmd_stream(&bytes).unwrap();
     let cmds = translate_to_internal(&parsed.cmds);
+    let bind_group_cmds = build_internal_bind_group_draw_stream(1024);
 
     // "Default" optimizer is conservative (no draw coalescing).
     let opt_default = CommandOptimizer::new();
@@ -334,31 +366,35 @@ fn bench_cmd_optimize(c: &mut Criterion) {
     };
 
     let mut group = c.benchmark_group("cmd_optimize");
-    group.throughput(criterion::Throughput::Elements(cmds.len() as u64));
+    for (name, cmds) in [
+        ("from_parsed_synthetic_triangle_1024", cmds),
+        ("synthetic_internal_bind_groups_1024", bind_group_cmds),
+    ] {
+        group.throughput(criterion::Throughput::Elements(cmds.len() as u64));
+        group.bench_with_input(
+            BenchmarkId::new(name, "state_only"),
+            &cmds,
+            |b, cmds| {
+                b.iter_batched(
+                    || cmds.clone(),
+                    |cmds| black_box(opt_default.optimize(cmds)),
+                    BatchSize::LargeInput,
+                );
+            },
+        );
 
-    group.bench_with_input(
-        BenchmarkId::new("synthetic_triangle_1024", "state_only"),
-        &cmds,
-        |b, cmds| {
-            b.iter_batched(
-                || cmds.clone(),
-                |cmds| black_box(opt_default.optimize(cmds)),
-                BatchSize::LargeInput,
-            );
-        },
-    );
-
-    group.bench_with_input(
-        BenchmarkId::new("synthetic_triangle_1024", "with_draw_coalescing"),
-        &cmds,
-        |b, cmds| {
-            b.iter_batched(
-                || cmds.clone(),
-                |cmds| black_box(opt_coalesce.optimize(cmds)),
-                BatchSize::LargeInput,
-            );
-        },
-    );
+        group.bench_with_input(
+            BenchmarkId::new(name, "with_draw_coalescing"),
+            &cmds,
+            |b, cmds| {
+                b.iter_batched(
+                    || cmds.clone(),
+                    |cmds| black_box(opt_coalesce.optimize(cmds)),
+                    BatchSize::LargeInput,
+                );
+            },
+        );
+    }
 
     group.finish();
 }
