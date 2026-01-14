@@ -81,10 +81,13 @@ def inf_functional_lines(path: Path) -> list[str]:
         stripped = line.lstrip(" \t")
         if stripped.startswith("[") and "]" in stripped:
             sect_name = stripped[1 : stripped.index("]")].strip()
-            skip_section = sect_name.lower() in MODELS_SECTIONS
+            # INF section names are case-insensitive. Normalize them so we don't
+            # flag drift due to casing-only differences.
+            sect_name_norm = sect_name.lower()
+            skip_section = sect_name_norm in MODELS_SECTIONS
             if skip_section:
                 continue
-            out.append(f"[{sect_name}]")
+            out.append(f"[{sect_name_norm}]")
             continue
 
         if skip_section:
