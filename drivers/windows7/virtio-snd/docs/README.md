@@ -134,13 +134,14 @@ HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MessageNumberLi
 ; Per-device bring-up toggles (defaults):
 [AeroVirtioSnd_Parameters_AddReg]
 HKR,Parameters,,0x00000010
-HKR,Parameters,ForceNullBackend,0x00010001,0
-HKR,Parameters,AllowPollingOnly,0x00010001,0
+HKR,Parameters,ForceNullBackend,0x00010003,0
+HKR,Parameters,AllowPollingOnly,0x00010003,0
 ```
 
 Notes:
 
 - `0x00010001` = `REG_DWORD`
+- `0x00010003` = `REG_DWORD` + `FLG_ADDREG_NOCLOBBER` (do not overwrite an existing value)
 - `MessageNumberLimit` is a request; Windows may grant fewer messages.
 
 #### Expected vector mapping
