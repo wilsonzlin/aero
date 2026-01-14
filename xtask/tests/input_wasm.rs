@@ -7,15 +7,32 @@ use std::path::Path;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
-/// Verify `cargo xtask input --wasm --rust-only` runs the wasm-pack bridge tests without requiring
-/// `node_modules` (and therefore does not invoke `npm`).
+/// Verify `cargo xtask input` wiring for sandbox-friendly modes.
 ///
-/// This test stubs out `cargo`, `node`, `npm`, and `wasm-pack` via PATH so we can validate argv
+/// These tests stub out `cargo`, `node`, `npm`, and `wasm-pack` via PATH so we can validate argv
 /// wiring without running heavyweight suites.
+///
+/// Each test writes an argv log to `AERO_XTASK_TEST_LOG`, then inspects which tools were invoked.
+///
 #[test]
 #[cfg(unix)]
 fn input_wasm_runs_wasm_pack_without_node_modules() {
     said_runs_wasm_pack_without_node_modules().expect("test should succeed");
+}
+
+/// Verify `cargo xtask input --rust-only` does not invoke Node/npm/wasm-pack (so it can run on a
+/// pure-Rust machine without `node_modules`).
+#[test]
+#[cfg(unix)]
+fn input_rust_only_skips_node_and_npm() {
+    said_rust_only_skips_node_and_npm().expect("test should succeed");
+}
+
+/// Verify `--usb-all` removes `--test` filters for the `aero-usb` invocation.
+#[test]
+#[cfg(unix)]
+fn input_usb_all_runs_full_aero_usb_suite() {
+    said_usb_all_runs_full_aero_usb_suite().expect("test should succeed");
 }
 
 #[cfg(unix)]
@@ -85,6 +102,105 @@ fn said_runs_wasm_pack_without_node_modules() -> Result<(), Box<dyn std::error::
     assert!(
         wasm_pack.iter().any(|arg| arg == "xhci_webusb_bridge"),
         "expected wasm-pack to include xhci_webusb_bridge, argv={wasm_pack:?}"
+    );
+
+    Ok(())
+}
+
+#[cfg(unix)]
+fn said_rust_only_skips_node_and_npm() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let bin_dir = tmp.path().join("bin");
+    fs::create_dir(&bin_dir)?;
+    let log_path = tmp.path().join("argv.log");
+
+    write_fake_argv_logger(&bin_dir.join("cargo"), "cargo")?;
+    write_fake_argv_logger(&bin_dir.join("node"), "node")?;
+    write_fake_argv_logger(&bin_dir.join("npm"), "npm")?;
+    write_fake_argv_logger(&bin_dir.join("wasm-pack"), "wasm-pack")?;
+
+    let orig_path = std::env::var("PATH").unwrap_or_default();
+    let path = format!("{}:{}", bin_dir.display(), orig_path);
+
+    Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["input", "--rust-only"])
+        .env("AERO_XTASK_TEST_LOG", &log_path)
+        .env("PATH", path)
+        .assert()
+        .success();
+
+    let log = fs::read_to_string(&log_path)?;
+    let invocations = parse_invocations(&log);
+
+    assert!(
+        invocations
+            .iter()
+            .any(|argv| argv.first().map(|s| s.as_str()) == Some("cargo")),
+        "expected cargo to be invoked; invocations={invocations:?}"
+    );
+    assert!(
+        !invocations
+            .iter()
+            .any(|argv| argv.first().map(|s| s.as_str()) == Some("node")),
+        "expected node not to be invoked when --rust-only is set; invocations={invocations:?}"
+    );
+    assert!(
+        !invocations
+            .iter()
+            .any(|argv| argv.first().map(|s| s.as_str()) == Some("npm")),
+        "expected npm not to be invoked when --rust-only is set; invocations={invocations:?}"
+    );
+    assert!(
+        !invocations
+            .iter()
+            .any(|argv| argv.first().map(|s| s.as_str()) == Some("wasm-pack")),
+        "expected wasm-pack not to be invoked without --wasm; invocations={invocations:?}"
+    );
+
+    let cargo_usb = invocations.iter().find(|argv| argv.iter().any(|arg| arg == "aero-usb"));
+    let Some(cargo_usb) = cargo_usb else {
+        return Err("missing cargo invocation for aero-usb".into());
+    };
+    assert!(
+        cargo_usb.iter().any(|arg| arg == "--test"),
+        "expected default input run to filter aero-usb tests (use --usb-all to remove); argv={cargo_usb:?}"
+    );
+
+    Ok(())
+}
+
+#[cfg(unix)]
+fn said_usb_all_runs_full_aero_usb_suite() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let bin_dir = tmp.path().join("bin");
+    fs::create_dir(&bin_dir)?;
+    let log_path = tmp.path().join("argv.log");
+
+    write_fake_argv_logger(&bin_dir.join("cargo"), "cargo")?;
+    write_fake_argv_logger(&bin_dir.join("node"), "node")?;
+    write_fake_argv_logger(&bin_dir.join("npm"), "npm")?;
+    write_fake_argv_logger(&bin_dir.join("wasm-pack"), "wasm-pack")?;
+
+    let orig_path = std::env::var("PATH").unwrap_or_default();
+    let path = format!("{}:{}", bin_dir.display(), orig_path);
+
+    Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["input", "--rust-only", "--usb-all"])
+        .env("AERO_XTASK_TEST_LOG", &log_path)
+        .env("PATH", path)
+        .assert()
+        .success();
+
+    let log = fs::read_to_string(&log_path)?;
+    let invocations = parse_invocations(&log);
+
+    let cargo_usb = invocations.iter().find(|argv| argv.iter().any(|arg| arg == "aero-usb"));
+    let Some(cargo_usb) = cargo_usb else {
+        return Err("missing cargo invocation for aero-usb".into());
+    };
+    assert!(
+        !cargo_usb.iter().any(|arg| arg == "--test"),
+        "expected --usb-all to run the full aero-usb suite (no --test filters), argv={cargo_usb:?}"
     );
 
     Ok(())
