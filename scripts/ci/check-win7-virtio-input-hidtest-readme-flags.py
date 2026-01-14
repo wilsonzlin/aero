@@ -25,7 +25,7 @@ Heuristics:
     a dedicated doc for the tool).
   - For other markdown files, we only consider lines that mention `hidtest.exe`
     to avoid false positives from unrelated tools (QEMU flags, test runners,
-    etc).
+    etc). On those lines we only extract flags *after* the `hidtest.exe` token.
 """
 
 from __future__ import annotations
@@ -57,6 +57,10 @@ SCAN_MD_DIRS = [
 CPP_FLAG_RE = re.compile(r'wcscmp\(\s*argv\[i\]\s*,\s*L"(--[A-Za-z0-9][A-Za-z0-9-]*)"\s*\)\s*==\s*0')
 
 MD_FLAG_RE = re.compile(r"--[A-Za-z0-9][A-Za-z0-9-]*")
+# Catch wildcard-style mentions like `--ioctl-bad-*` early and emit a more helpful
+# error than the generic "unknown flag" result (since `MD_FLAG_RE` would otherwise
+# extract a truncated prefix).
+MD_FLAG_WILDCARD_RE = re.compile(r"--[A-Za-z0-9][A-Za-z0-9-]*\*")
 
 
 def read_text(path: pathlib.Path) -> str:
@@ -84,9 +88,21 @@ def iter_flag_refs_hidtest_lines_only(path: pathlib.Path) -> list[tuple[int, str
     text = read_text(path)
     out: list[tuple[int, str]] = []
     for line_no, line in enumerate(text.splitlines(), start=1):
-        if "hidtest.exe" not in line:
+        lower = line.lower()
+        idx = lower.find("hidtest.exe")
+        if idx < 0:
             continue
-        for flag in MD_FLAG_RE.findall(line):
+        scan = line[idx:]
+        for flag in MD_FLAG_RE.findall(scan):
+            out.append((line_no, flag))
+    return out
+
+
+def iter_wildcard_flag_refs_full_file(path: pathlib.Path) -> list[tuple[int, str]]:
+    text = read_text(path)
+    out: list[tuple[int, str]] = []
+    for line_no, line in enumerate(text.splitlines(), start=1):
+        for flag in MD_FLAG_WILDCARD_RE.findall(line):
             out.append((line_no, flag))
     return out
 
@@ -113,6 +129,14 @@ def main() -> int:
         return 1
 
     # 1) Validate hidtest README itself (full-file scan).
+    wildcard_readme = iter_wildcard_flag_refs_full_file(HIDTEST_README)
+    if wildcard_readme:
+        rel = HIDTEST_README.relative_to(ROOT)
+        print(f"ERROR: {rel} references wildcard-style flags; list explicit flags instead:", file=sys.stderr)
+        for line_no, flag in wildcard_readme:
+            print(f"  - {rel}:{line_no}: {flag}", file=sys.stderr)
+        return 1
+
     readme_refs = iter_flag_refs_full_file(HIDTEST_README)
     unknown_readme = sorted({f for _, f in readme_refs} - allowed_flags)
     if unknown_readme:
@@ -133,6 +157,25 @@ def main() -> int:
         for path in iter_md_files(base):
             if path == HIDTEST_README:
                 continue
+            wildcard_refs: list[tuple[int, str]] = []
+            text = read_text(path)
+            for line_no, line in enumerate(text.splitlines(), start=1):
+                lower = line.lower()
+                idx = lower.find("hidtest.exe")
+                if idx < 0:
+                    continue
+                scan = line[idx:]
+                for flag in MD_FLAG_WILDCARD_RE.findall(scan):
+                    wildcard_refs.append((line_no, flag))
+            if wildcard_refs:
+                rel = path.relative_to(ROOT)
+                print(
+                    f"ERROR: {rel} references wildcard-style hidtest flags; list explicit flags instead:",
+                    file=sys.stderr,
+                )
+                for line_no, flag in wildcard_refs:
+                    print(f"  - {rel}:{line_no}: {flag}", file=sys.stderr)
+                return 1
             refs = iter_flag_refs_hidtest_lines_only(path)
             if not refs:
                 continue
@@ -155,4 +198,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
