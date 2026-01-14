@@ -498,6 +498,7 @@ static int RunD3D101RSOMStateSanity(int argc, char** argv) {
 
   // Rasterizer states.
   ComPtr<ID3D10RasterizerState> rs_scissor;
+  ComPtr<ID3D10RasterizerState> rs_scissor_no_depth_clip;
   ComPtr<ID3D10RasterizerState> rs_no_cull;
   ComPtr<ID3D10RasterizerState> rs_cull_back_cw;
   ComPtr<ID3D10RasterizerState> rs_cull_back_ccw;
@@ -518,6 +519,13 @@ static int RunD3D101RSOMStateSanity(int argc, char** argv) {
     hr = device->CreateRasterizerState(&desc, rs_scissor.put());
     if (FAILED(hr)) {
       return reporter.FailHresult("CreateRasterizerState(scissor)", hr);
+    }
+
+    D3D10_RASTERIZER_DESC scissor_no_depth = desc;
+    scissor_no_depth.DepthClipEnable = FALSE;
+    hr = device->CreateRasterizerState(&scissor_no_depth, rs_scissor_no_depth_clip.put());
+    if (FAILED(hr)) {
+      return reporter.FailHresult("CreateRasterizerState(scissor no depth clip)", hr);
     }
 
     desc.ScissorEnable = FALSE;
@@ -1139,17 +1147,21 @@ static int RunD3D101RSOMStateSanity(int argc, char** argv) {
   // ClearState call, causing clipped/incorrect rendering.
   {
     // Deliberately set a non-default scissor-enabled rasterizer state and enable
-    // alpha blending.
+    // alpha blending. Also disable depth clipping so we can verify ClearState
+    // restores the default DepthClipEnable=TRUE behavior.
     device->OMSetRenderTargets(1, rtvs, NULL);
-    device->RSSetState(rs_scissor.get());
+    device->RSSetState(rs_scissor_no_depth_clip.get());
     const D3D10_RECT small_scissor = {16, 16, 48, 48};
     device->RSSetScissorRects(1, &small_scissor);
-    // Also dirty the sample mask by setting it to 0 (discard all samples) so we can validate
-    // ClearState restores it to the default (0xFFFFFFFF).
-    device->OMSetBlendState(alpha_blend.get(), blend_factor, 0u);
+    device->OMSetBlendState(alpha_blend.get(), blend_factor, 0xFFFFFFFFu);
     SetVb(vb_fs.get());
 
     device->ClearRenderTargetView(rtv.get(), clear_red);
+    device->Draw(3, 0);
+
+    // Also dirty the sample mask by setting it to 0 (discard all samples) so we can validate
+    // ClearState restores it to the default (0xFFFFFFFF).
+    device->OMSetBlendState(alpha_blend.get(), blend_factor, 0u);
     device->Draw(3, 0);
 
     // ClearState unbinds most pipeline state; rebind only the minimum needed to
