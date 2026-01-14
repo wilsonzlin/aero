@@ -819,6 +819,63 @@ fn virtio_blk_write_zeroes_writes_zeroes_and_returns_ok() {
 }
 
 #[test]
+fn virtio_blk_write_zeroes_multi_segment_spans_multiple_data_descriptors() {
+    let (mut dev, caps, mut mem, backing, _flushes) = setup();
+
+    // Fill the whole disk with non-zero bytes, then WRITE_ZEROES two disjoint sectors using a
+    // segment table that crosses descriptor boundaries mid-segment.
+    backing.borrow_mut().fill(0xa5);
+
+    let header = 0x7000;
+    let seg_a = 0x8000;
+    let seg_b = 0x9000;
+    let status = 0xA000;
+
+    write_u32_le(&mut mem, header, VIRTIO_BLK_T_WRITE_ZEROES).unwrap();
+    write_u32_le(&mut mem, header + 4, 0).unwrap();
+    write_u64_le(&mut mem, header + 8, 0).unwrap();
+
+    // Two write-zeroes segments:
+    // - sector 1, 1 sector
+    // - sector 4, 1 sector
+    let mut table = [0u8; 32];
+    table[0..8].copy_from_slice(&1u64.to_le_bytes());
+    table[8..12].copy_from_slice(&1u32.to_le_bytes());
+    table[12..16].copy_from_slice(&0u32.to_le_bytes());
+    table[16..24].copy_from_slice(&4u64.to_le_bytes());
+    table[24..28].copy_from_slice(&1u32.to_le_bytes());
+    table[28..32].copy_from_slice(&0u32.to_le_bytes());
+
+    // Split the segment table at 20 bytes: 16 bytes for segment 0 plus 4 bytes of segment 1.
+    mem.write(seg_a, &table[..20]).unwrap();
+    mem.write(seg_b, &table[20..]).unwrap();
+
+    mem.write(status, &[0xff]).unwrap();
+
+    write_desc(&mut mem, DESC_TABLE, 0, header, 16, 0x0001, 1);
+    write_desc(&mut mem, DESC_TABLE, 1, seg_a, 20, 0x0001, 2);
+    write_desc(&mut mem, DESC_TABLE, 2, seg_b, 12, 0x0001, 3);
+    write_desc(&mut mem, DESC_TABLE, 3, status, 1, 0x0002, 0);
+
+    write_u16_le(&mut mem, AVAIL_RING, 0).unwrap();
+    write_u16_le(&mut mem, AVAIL_RING + 2, 1).unwrap();
+    write_u16_le(&mut mem, AVAIL_RING + 4, 0).unwrap();
+    write_u16_le(&mut mem, USED_RING, 0).unwrap();
+    write_u16_le(&mut mem, USED_RING + 2, 0).unwrap();
+
+    kick_queue0(&mut dev, &caps, &mut mem);
+
+    assert_eq!(mem.get_slice(status, 1).unwrap()[0], 0);
+
+    // Confirm only the requested sectors were zeroed.
+    assert!(backing.borrow()[0..512].iter().all(|b| *b == 0xa5));
+    assert!(backing.borrow()[512..1024].iter().all(|b| *b == 0));
+    assert!(backing.borrow()[1024..2048].iter().all(|b| *b == 0xa5));
+    assert!(backing.borrow()[2048..2560].iter().all(|b| *b == 0));
+    assert!(backing.borrow()[2560..4096].iter().all(|b| *b == 0xa5));
+}
+
+#[test]
 fn virtio_blk_write_zeroes_rejects_out_of_bounds_requests() {
     let (mut dev, caps, mut mem, backing, _flushes) = setup();
 
