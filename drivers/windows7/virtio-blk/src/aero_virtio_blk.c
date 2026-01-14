@@ -1632,7 +1632,13 @@ SCSI_ADAPTER_CONTROL_STATUS AerovblkHwAdapterControl(_In_ PVOID deviceExtension,
   case ScsiRemoveAdapter: {
     STOR_LOCK_HANDLE lock;
 
+    /*
+     * Mark removed/stopped under the interrupt lock so we don't race with the
+     * I/O submission path and interrupt handler.
+     */
+    StorPortAcquireSpinLock(devExt, InterruptLock, &lock);
     devExt->Removed = TRUE;
+    StorPortReleaseSpinLock(devExt, &lock);
 
     /*
      * Stop the device before aborting in-flight requests to prevent the device
@@ -1663,8 +1669,13 @@ SCSI_ADAPTER_CONTROL_STATUS AerovblkHwAdapterControl(_In_ PVOID deviceExtension,
   }
 
   case ScsiRestartAdapter:
+  {
+    STOR_LOCK_HANDLE lock;
+    StorPortAcquireSpinLock(devExt, InterruptLock, &lock);
     devExt->Removed = FALSE;
+    StorPortReleaseSpinLock(devExt, &lock);
     return AerovblkDeviceBringUp(devExt, FALSE) ? ScsiAdapterControlSuccess : ScsiAdapterControlUnsuccessful;
+  }
 
   default:
     return ScsiAdapterControlUnsuccessful;
