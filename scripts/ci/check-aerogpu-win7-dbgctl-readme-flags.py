@@ -97,6 +97,8 @@ SCAN_DBGCTL_SCRIPT_FILES = [
 # rely on the conservative `iter_dbgctl_*` heuristics to avoid false positives.
 SCAN_DBGCTL_TEXT_FILES = [
     ROOT / "scripts" / "parse_win7_dxgi_swapchain_trace.py",
+    # The Win7 test runner references dbgctl flags in user-facing usage text. Validate these too.
+    WIN7_TEST_RUNNER_SRC,
 ]
 
 # Source files that *invoke* dbgctl by composing argv arrays. Keep these in sync too so test tooling
