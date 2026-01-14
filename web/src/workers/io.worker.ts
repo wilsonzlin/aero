@@ -1309,11 +1309,17 @@ function formatWebUsbGuestError(err: unknown): string {
 }
 
 function emitWebUsbGuestStatus(): void {
+  const controllerKind = webUsbGuestControllerKind;
+  // WebUSB root port numbering is controller-specific:
+  // - UHCI/xHCI reserve root port 1 (root port 0 hosts the external hub for WebHID/synthetic HID).
+  // - EHCI currently reserves root port 0.
+  const rootPort = controllerKind === "ehci" ? 0 : WEBUSB_GUEST_ROOT_PORT;
   const snapshot: UsbGuestWebUsbSnapshot = {
     available: webUsbGuestBridge !== null,
     attached: webUsbGuestAttached,
     blocked: !usbAvailable,
-    rootPort: WEBUSB_GUEST_ROOT_PORT,
+    controllerKind: controllerKind ?? undefined,
+    rootPort,
     lastError: webUsbGuestLastError,
   };
 
@@ -1323,6 +1329,7 @@ function emitWebUsbGuestStatus(): void {
     prev.available === snapshot.available &&
     prev.attached === snapshot.attached &&
     prev.blocked === snapshot.blocked &&
+    prev.controllerKind === snapshot.controllerKind &&
     prev.rootPort === snapshot.rootPort &&
     prev.lastError === snapshot.lastError
   ) {

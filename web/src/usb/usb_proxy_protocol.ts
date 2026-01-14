@@ -55,14 +55,22 @@ export type UsbSelectedMessage =
   | { type: "usb.selected"; ok: true; info: { vendorId: number; productId: number; productName?: string } }
   | { type: "usb.selected"; ok: false; error?: string };
 
+export type UsbGuestWebUsbControllerKind = "xhci" | "ehci" | "uhci";
+
 export type UsbGuestWebUsbSnapshot = {
   /** WASM exports are present and the guest-visible passthrough device can be attached. */
   available: boolean;
-  /** Whether the guest-visible WebUSB proxy device is currently attached to the emulated UHCI bus. */
+  /** Whether the guest-visible WebUSB proxy device is currently attached to the active guest controller. */
   attached: boolean;
   /** `true` when `usb.selected ok:false` is active (no physical device selected). */
   blocked: boolean;
-  /** UHCI root port index the device attaches to (0-based). */
+  /**
+   * Which guest-visible controller backend is being used for WebUSB passthrough.
+   *
+   * Optional for back-compat with older workers/brokers.
+   */
+  controllerKind?: UsbGuestWebUsbControllerKind;
+  /** Root port index the passthrough device attaches to (controller-specific, 0-based). */
   rootPort: number;
   /** Optional error text (e.g. attach failure). */
   lastError: string | null;
@@ -286,6 +294,9 @@ export function isUsbGuestWebUsbStatusMessage(value: unknown): value is UsbGuest
   if (typeof snap.available !== "boolean") return false;
   if (typeof snap.attached !== "boolean") return false;
   if (typeof snap.blocked !== "boolean") return false;
+  if (snap.controllerKind !== undefined) {
+    if (snap.controllerKind !== "xhci" && snap.controllerKind !== "ehci" && snap.controllerKind !== "uhci") return false;
+  }
   if (!isUint32(snap.rootPort)) return false;
   if (snap.lastError !== null && typeof snap.lastError !== "string") return false;
   return true;

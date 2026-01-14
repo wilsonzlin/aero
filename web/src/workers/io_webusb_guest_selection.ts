@@ -1,9 +1,9 @@
-import type { UsbSelectedMessage } from "../usb/usb_proxy_protocol";
+import type { UsbGuestWebUsbControllerKind, UsbSelectedMessage } from "../usb/usb_proxy_protocol";
 import type { UsbPassthroughBridgeLike } from "../usb/webusb_passthrough_runtime";
 import { applyUsbSelectedToWebUsbUhciBridge } from "../usb/uhci_webusb_bridge";
 import { applyUsbSelectedToWebUsbXhciBridge } from "../usb/xhci_webusb_bridge";
 
-export type WebUsbGuestControllerKind = "xhci" | "ehci" | "uhci";
+export type WebUsbGuestControllerKind = UsbGuestWebUsbControllerKind;
 
 export type WebUsbGuestBridgeLike = UsbPassthroughBridgeLike & {
   set_connected(connected: boolean): void;

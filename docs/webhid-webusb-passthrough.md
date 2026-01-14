@@ -58,9 +58,12 @@ Compared to WebHID, WebUSB passthrough has a larger surface area and is more sen
 quirks (interface claiming, protected interface classes, full-speed UHCI constraints). WebHID remains the
 recommended path for HID peripherals.
 
-Note: the current production passthrough controller path is **UHCI** (full-speed). For devices that are
-high-speed-only (or that behave poorly when forced into a UHCI/full-speed view), Aero plans to support
-high-speed passthrough via **EHCI/xHCI**; see:
+Note: the default passthrough controller path is **UHCI** (full-speed). The web runtime can also
+route guest-visible WebUSB passthrough via **EHCI/xHCI** (high-speed view) when the deployed WASM
+build exports the required passthrough hooks on those controller bridges.
+
+For devices that are high-speed-only (or that behave poorly when forced into a UHCI/full-speed
+view), prefer EHCI/xHCI; see:
 
 - [`docs/webusb-passthrough.md`](./webusb-passthrough.md#speed-and-descriptor-handling-uhci-vs-ehcixhci)
 - [`docs/usb-ehci.md`](./usb-ehci.md) / [`docs/usb-xhci.md`](./usb-xhci.md)
@@ -113,7 +116,7 @@ The repo has the core building blocks for passthrough, and the “main thread ow
 I/O worker owns the USB device model” split is wired end-to-end in the web runtime for:
 
 - **WebHID:** main↔worker report forwarding (`hid.*`)
-- **WebUSB:** main↔worker host action/completion forwarding (`usb.*`) for guest-visible UHCI passthrough
+- **WebUSB:** main↔worker host action/completion forwarding (`usb.*`) for guest-visible passthrough (UHCI by default; EHCI/xHCI when available)
 
 Already implemented:
 
@@ -125,6 +128,7 @@ Already implemented:
   - `WebHidPassthroughBridge` (wraps `UsbHidPassthrough` for JS/WASM interop)
   - `UsbPassthroughBridge` (wraps `UsbPassthroughDevice` for WebUSB host action/completion RPC)
   - `UhciControllerBridge` (guest-visible UHCI controller; also exposes the WebUSB passthrough device on root port 1)
+  - `EhciControllerBridge` / `XhciControllerBridge` (guest-visible high-speed controllers; optionally expose the WebUSB passthrough device via a reserved root port when the WASM build includes the passthrough hooks)
 - **Main-thread WebHID UX / bookkeeping (TypeScript)**
   - `WebHidPassthroughManager` + the debug panel UI
 - **Main-thread ↔ I/O worker WebHID broker (TypeScript)**

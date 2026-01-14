@@ -171,7 +171,7 @@ describe("usb/usb_proxy_protocol", () => {
     expect(
       isUsbProxyMessage({
         type: "usb.guest.status",
-        snapshot: { available: true, attached: false, blocked: true, rootPort: 0, lastError: null },
+        snapshot: { available: true, attached: false, blocked: true, controllerKind: "xhci", rootPort: 1, lastError: null },
       }),
     ).toBe(true);
 

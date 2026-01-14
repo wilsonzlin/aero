@@ -105,7 +105,7 @@ export function renderWebUsbBrokerPanel(broker: UsbBroker): HTMLElement {
       return;
     }
 
-    const root = `rootPort=${snap.rootPort}`;
+    const root = snap.controllerKind ? `${snap.controllerKind} rootPort=${snap.rootPort}` : `rootPort=${snap.rootPort}`;
     const state = !snap.available
       ? "unavailable"
       : snap.attached
