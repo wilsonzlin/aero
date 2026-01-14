@@ -53,6 +53,7 @@ use aero_devices::pci::{
     PciEcamMmio, PciInterruptPin, PciIntxRouter, PciIntxRouterConfig, PciResourceAllocator,
     PciResourceAllocatorConfig, SharedPciConfigPorts,
 };
+use aero_devices::pci::msix::PCI_CAP_ID_MSIX;
 use aero_devices::pic8259::register_pic8259_on_platform_interrupts;
 use aero_devices::pit8254::{register_pit8254, Pit8254, SharedPit8254};
 use aero_devices::reset_ctrl::{ResetCtrl, RESET_CTRL_PORT};
@@ -7986,6 +7987,12 @@ impl snapshot::SnapshotSource for Machine {
     fn device_states(&self) -> Vec<snapshot::DeviceState> {
         const V1: u16 = 1;
         let mut devices = Vec::new();
+        const MSIX_MESSAGE_CONTROL_OFFSET: u16 = 0x02;
+        // MSI-X capability Message Control bits we mirror from canonical PCI config space into
+        // runtime device models:
+        // - bit 15: MSI-X Enable
+        // - bit 14: Function Mask
+        const MSIX_MESSAGE_CONTROL_MIRROR_MASK: u16 = (1 << 15) | (1 << 14);
 
         // Firmware snapshot: required for deterministic BIOS interrupt behavior.
         let bios_snapshot = self.bios.snapshot();
@@ -8084,15 +8091,37 @@ impl snapshot::SnapshotSource for Machine {
             // configuration.
             let bdf = aero_devices::pci::profile::VIRTIO_NET.bdf;
             if let Some(pci_cfg) = &self.pci_cfg {
-                let command = {
+                let (command, msix_ctrl_bits) = {
                     let mut pci_cfg = pci_cfg.borrow_mut();
-                    pci_cfg
-                        .bus_mut()
-                        .device_config(bdf)
-                        .map(|cfg| cfg.command())
-                        .unwrap_or(0)
+                    let mut command = 0;
+                    let mut msix_ctrl_bits = None;
+                    if let Some(cfg) = pci_cfg.bus_mut().device_config_mut(bdf) {
+                        command = cfg.command();
+                        if let Some(msix_off) = cfg.find_capability(PCI_CAP_ID_MSIX) {
+                            let ctrl = cfg.read(u16::from(msix_off) + MSIX_MESSAGE_CONTROL_OFFSET, 2)
+                                as u16;
+                            msix_ctrl_bits = Some(ctrl & MSIX_MESSAGE_CONTROL_MIRROR_MASK);
+                        }
+                    }
+                    (command, msix_ctrl_bits)
                 };
-                virtio_net.borrow_mut().set_pci_command(command);
+                let mut virtio_net = virtio_net.borrow_mut();
+                virtio_net.set_pci_command(command);
+
+                if let Some(msix_ctrl_bits) = msix_ctrl_bits {
+                    if let Some(msix_off) =
+                        virtio_net.config_mut().find_capability(PCI_CAP_ID_MSIX)
+                    {
+                        let ctrl_off = u16::from(msix_off) + MSIX_MESSAGE_CONTROL_OFFSET;
+                        let runtime_ctrl =
+                            virtio_net.config_mut().read(ctrl_off, 2) as u16;
+                        let new_ctrl = (runtime_ctrl & !MSIX_MESSAGE_CONTROL_MIRROR_MASK)
+                            | msix_ctrl_bits;
+                        virtio_net
+                            .config_mut()
+                            .write(ctrl_off, 2, u32::from(new_ctrl));
+                    }
+                }
             }
 
             devices.push(snapshot::io_snapshot_bridge::device_state_from_io_snapshot(
@@ -8216,20 +8245,35 @@ impl snapshot::SnapshotSource for Machine {
         if let Some(nvme) = &self.nvme {
             let bdf = aero_devices::pci::profile::NVME_CONTROLLER.bdf;
             if let Some(pci_cfg) = &self.pci_cfg {
-                let (command, bar0_base) = {
+                let (command, bar0_base, msix_ctrl_bits) = {
                     let mut pci_cfg = pci_cfg.borrow_mut();
-                    let cfg = pci_cfg.bus_mut().device_config(bdf);
-                    let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
-                    let bar0_base = cfg
-                        .and_then(|cfg| cfg.bar_range(0))
-                        .map(|range| range.base)
-                        .unwrap_or(0);
-                    (command, bar0_base)
+                    let mut command = 0;
+                    let mut bar0_base = 0;
+                    let mut msix_ctrl_bits = None;
+                    if let Some(cfg) = pci_cfg.bus_mut().device_config_mut(bdf) {
+                        command = cfg.command();
+                        bar0_base = cfg.bar_range(0).map(|range| range.base).unwrap_or(0);
+                        if let Some(msix_off) = cfg.find_capability(PCI_CAP_ID_MSIX) {
+                            let ctrl = cfg.read(u16::from(msix_off) + MSIX_MESSAGE_CONTROL_OFFSET, 2)
+                                as u16;
+                            msix_ctrl_bits = Some(ctrl & MSIX_MESSAGE_CONTROL_MIRROR_MASK);
+                        }
+                    }
+                    (command, bar0_base, msix_ctrl_bits)
                 };
                 let mut nvme = nvme.borrow_mut();
                 nvme.config_mut().set_command(command);
                 if bar0_base != 0 {
                     nvme.config_mut().set_bar_base(0, bar0_base);
+                }
+                if let Some(msix_ctrl_bits) = msix_ctrl_bits {
+                    if let Some(msix_off) = nvme.config_mut().find_capability(PCI_CAP_ID_MSIX) {
+                        let ctrl_off = u16::from(msix_off) + MSIX_MESSAGE_CONTROL_OFFSET;
+                        let runtime_ctrl = nvme.config_mut().read(ctrl_off, 2) as u16;
+                        let new_ctrl = (runtime_ctrl & !MSIX_MESSAGE_CONTROL_MIRROR_MASK)
+                            | msix_ctrl_bits;
+                        nvme.config_mut().write(ctrl_off, 2, u32::from(new_ctrl));
+                    }
                 }
             }
             disk_controllers.insert(bdf.pack_u16(), nvme.borrow().save_state());
@@ -8258,21 +8302,40 @@ impl snapshot::SnapshotSource for Machine {
         if let Some(virtio_blk) = &self.virtio_blk {
             let bdf = aero_devices::pci::profile::VIRTIO_BLK.bdf;
             if let Some(pci_cfg) = &self.pci_cfg {
-                let (command, bar0_base) = {
+                let (command, bar0_base, msix_ctrl_bits) = {
                     let mut pci_cfg = pci_cfg.borrow_mut();
-                    let cfg = pci_cfg.bus_mut().device_config(bdf);
-                    let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
-                    let bar0_base = cfg
-                        .and_then(|cfg| cfg.bar_range(0))
-                        .map(|range| range.base)
-                        .unwrap_or(0);
-                    (command, bar0_base)
+                    let mut command = 0;
+                    let mut bar0_base = 0;
+                    let mut msix_ctrl_bits = None;
+                    if let Some(cfg) = pci_cfg.bus_mut().device_config_mut(bdf) {
+                        command = cfg.command();
+                        bar0_base = cfg.bar_range(0).map(|range| range.base).unwrap_or(0);
+                        if let Some(msix_off) = cfg.find_capability(PCI_CAP_ID_MSIX) {
+                            let ctrl = cfg.read(u16::from(msix_off) + MSIX_MESSAGE_CONTROL_OFFSET, 2)
+                                as u16;
+                            msix_ctrl_bits = Some(ctrl & MSIX_MESSAGE_CONTROL_MIRROR_MASK);
+                        }
+                    }
+                    (command, bar0_base, msix_ctrl_bits)
                 };
 
                 let mut virtio_blk = virtio_blk.borrow_mut();
                 virtio_blk.set_pci_command(command);
                 if bar0_base != 0 {
                     virtio_blk.config_mut().set_bar_base(0, bar0_base);
+                }
+                if let Some(msix_ctrl_bits) = msix_ctrl_bits {
+                    if let Some(msix_off) =
+                        virtio_blk.config_mut().find_capability(PCI_CAP_ID_MSIX)
+                    {
+                        let ctrl_off = u16::from(msix_off) + MSIX_MESSAGE_CONTROL_OFFSET;
+                        let runtime_ctrl = virtio_blk.config_mut().read(ctrl_off, 2) as u16;
+                        let new_ctrl = (runtime_ctrl & !MSIX_MESSAGE_CONTROL_MIRROR_MASK)
+                            | msix_ctrl_bits;
+                        virtio_blk
+                            .config_mut()
+                            .write(ctrl_off, 2, u32::from(new_ctrl));
+                    }
                 }
             }
             disk_controllers.insert(bdf.pack_u16(), virtio_blk.borrow().save_state());
