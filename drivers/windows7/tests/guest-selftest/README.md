@@ -351,6 +351,10 @@ Notes:
 - The virtio-net section also emits an optional ctrl virtqueue diagnostic line (not parsed by the harness):
   - `virtio-net-ctrl-vq|INFO|...`
   - This is best-effort and may emit `...|diag_unavailable` if the in-guest driver did not expose the registry-backed diagnostics.
+- The virtio-net section also emits an optional driver diagnostics line (parsed and mirrored by the host harness):
+  - `virtio-net-diag|INFO|host_features=...|guest_features=...|irq_mode=...|irq_message_count=...|msix_config_vector=...|msix_rx_vector=...|msix_tx_vector=...|...`
+  - `virtio-net-diag|WARN|reason=not_supported|...` (for example when the driver does not expose `\\.\aero_virtio_net_diag`)
+  - The host harness mirrors this into `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_DIAG|INFO/WARN|...` for log scraping/CI.
 - The `virtio-blk` marker includes basic file I/O diagnostics:
   - `write_ok`, `write_bytes`, `write_mbps`
   - `flush_ok`
@@ -363,6 +367,10 @@ Notes:
 - The buffer sizing stress marker (`virtio-snd-buffer-limits`) is emitted when `--test-snd-buffer-limits` is set:
   - `PASS|...` when the large-buffer Initialize attempt completes without hanging (success or expected failure).
   - `FAIL|reason=...|hr=...` when the attempt times out or returns inconsistent results.
+- The virtio-snd section also emits an informational mix-format marker (`virtio-snd-format`) describing the shared-mode
+  endpoint formats Windows selected (useful for debugging non-contract devices and audio routing issues):
+  - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-format|INFO|render=<...>|capture=<...>`
+  - The host harness mirrors this into `AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_FORMAT|INFO|...` for log scraping/CI.
 
 ## Building
 

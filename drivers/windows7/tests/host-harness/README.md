@@ -559,6 +559,9 @@ When `-WithSndBufferLimits` / `--with-snd-buffer-limits` is enabled, the harness
 If the guest reports `SKIP|flag_not_set` (or does not emit the marker at all), the harness treats it as a hard failure
 so older selftest binaries or mis-provisioned images cannot accidentally pass.
 
+The harness also emits a stable host-side marker for log scraping:
+`AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_BUFFER_LIMITS|PASS/FAIL/SKIP|...`.
+
 On success, the script returns exit code `0` and prints:
 
 ```
@@ -841,6 +844,32 @@ Notes:
 
 - The harness prefers the standalone guest lines `virtio-<dev>-irq|INFO/WARN|mode=...` when present.
 - For virtio-blk, it also understands dedicated `virtio-blk-irq` markers and falls back to `irq_mode=...` on `AERO_VIRTIO_SELFTEST|TEST|virtio-blk|...`.
+### virtio-net driver diagnostics (`virtio-net-diag`)
+
+Newer guest selftest binaries emit a best-effort virtio-net driver diagnostic line (feature bits, offload toggles, IRQ
+mode, queue sizes/indices, and MSI-X vector mapping) when the in-guest driver exposes the optional diagnostics device:
+
+- `virtio-net-diag|INFO|host_features=...|guest_features=...|irq_mode=...|irq_message_count=...|msix_config_vector=...|msix_rx_vector=...|msix_tx_vector=...|...`
+- `virtio-net-diag|WARN|reason=not_supported|...` (when unavailable)
+
+The host harness mirrors the last observed line into a stable host-side marker for log scraping:
+
+- `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_DIAG|INFO/WARN|...`
+
+This is informational only and does not affect overall PASS/FAIL.
+
+### virtio-snd negotiated mix format (`virtio-snd-format`)
+
+The guest selftest emits an informational marker surfacing the negotiated virtio-snd endpoint formats as visible via
+Windows shared-mode mix format strings:
+
+- `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-format|INFO|render=<...>|capture=<...>`
+
+The host harness mirrors this into a stable host-side marker for log scraping:
+
+- `AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_FORMAT|INFO|render=<...>|capture=<...>`
+
+This is informational only and does not affect overall PASS/FAIL.
 
 ### virtio-snd `eventq`
 
