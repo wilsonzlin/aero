@@ -4323,8 +4323,9 @@ mod tests {
     fn shared_executor_bc_off() -> Option<&'static Mutex<AeroGpuExecutor>> {
         static EXEC: OnceLock<Option<&'static Mutex<AeroGpuExecutor>>> = OnceLock::new();
         EXEC.get_or_init(|| {
-            let ctx =
-                pollster::block_on(crate::test_wgpu::create_device_exact(wgpu::Features::empty()))?;
+            let ctx = pollster::block_on(crate::test_wgpu::create_device_exact(
+                wgpu::Features::empty(),
+            ))?;
             let exec = AeroGpuExecutor::new(ctx.device, ctx.queue).expect("executor init");
             Some(Box::leak(Box::new(Mutex::new(exec))))
         })

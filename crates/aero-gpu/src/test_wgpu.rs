@@ -84,7 +84,9 @@ async fn select_adapter() -> Option<wgpu::Adapter> {
     }
 }
 
-pub(crate) async fn create_device_exact(required_features: wgpu::Features) -> Option<TestWgpuDevice> {
+pub(crate) async fn create_device_exact(
+    required_features: wgpu::Features,
+) -> Option<TestWgpuDevice> {
     let adapter = select_adapter().await?;
 
     if !adapter.features().contains(required_features) {

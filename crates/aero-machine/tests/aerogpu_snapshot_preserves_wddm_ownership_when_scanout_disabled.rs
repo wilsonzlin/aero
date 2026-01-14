@@ -147,4 +147,3 @@ fn aerogpu_snapshot_preserves_wddm_ownership_when_scanout_disabled() {
     assert_ne!(m2.display_resolution(), (0, 0));
     assert!(!m2.display_framebuffer().is_empty());
 }
-
