@@ -145,6 +145,7 @@ def parse_hid_report_descriptor(data: list[int]) -> HidReportDescriptorParsed:
     report_size_bits = 0
     report_count = 0
     current_report_id = 0
+    global_stack: list[tuple[int, int, int]] = []
 
     i = 0
     while i < len(data):
@@ -187,6 +188,14 @@ def parse_hid_report_descriptor(data: list[int]) -> HidReportDescriptorParsed:
             report_id_used = True
             current_report_id = value
             report_ids.add(current_report_id)
+            continue
+        if type_code == 1 and tag == 10:  # Push
+            global_stack.append((report_size_bits, report_count, current_report_id))
+            continue
+        if type_code == 1 and tag == 11:  # Pop
+            if not global_stack:
+                raise ValueError("HID report descriptor: POP with empty global stack")
+            report_size_bits, report_count, current_report_id = global_stack.pop()
             continue
 
         # Main items (type=0).
@@ -282,6 +291,10 @@ def main() -> int:
     hidtest_text = hidtest_c.read_text(encoding="utf-8", errors="replace")
     translate_text = hid_translate_h.read_text(encoding="utf-8", errors="replace")
 
+    # Strip comments once up-front to make braced-initializer parsing robust against
+    # braces inside comments.
+    descriptor_text_no_comments = strip_c_comments(descriptor_text)
+
     failures: list[str] = []
 
     print("Win7 virtio-input HID descriptor sync check:")
@@ -289,11 +302,10 @@ def main() -> int:
     desc_bytes_by_kind: dict[str, list[int]] = {}
 
     for spec in SPECS:
-        init = extract_braced_initializer(descriptor_text, spec.array_name)
-        init = strip_c_comments(init)
+        init = extract_braced_initializer(descriptor_text_no_comments, spec.array_name)
         desc_bytes_by_kind[spec.kind] = extract_hex_bytes(init)
         computed = count_hex_byte_literals(init)
-        asserted = extract_c_assert_sizeof(descriptor_text, spec.array_name)
+        asserted = extract_c_assert_sizeof(descriptor_text_no_comments, spec.array_name)
         expected = extract_c_define_int(hidtest_text, spec.hidtest_len_macro)
 
         print(f"  {spec.kind}: computed={computed} C_ASSERT={asserted} hidtest={expected}")
