@@ -380,6 +380,12 @@ assign any other device to `00:02.0`.
 
 ### Canonical bus 0 device numbers (when enabled)
 
+This is the canonical BDF reservation map from `aero_devices::pci::profile` (used by tests and the
+Windows driver/device contract). **Not every entry is currently wired into `aero_machine::Machine`**
+yet; for the authoritative “what can the canonical machine expose today”, see
+`crates/aero-machine/src/lib.rs::MachineConfig` (feature flags like `enable_ahci`, `enable_nvme`,
+`enable_virtio_*`, `enable_ehci`, etc).
+
 ```
 00:00.0  - Host bridge (Q35)
 00:1f.0  - ISA/LPC bridge (ICH9)
