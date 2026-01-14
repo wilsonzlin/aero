@@ -8441,6 +8441,108 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn verify_http_preserves_manifest_query_for_head_chunks() -> Result<()> {
+        let chunk_size: u64 = 1024;
+        let chunk0 = vec![b'a'; chunk_size as usize];
+        let chunk1 = vec![b'b'; 512];
+        let total_size = (chunk0.len() + chunk1.len()) as u64;
+
+        let manifest = ManifestV1 {
+            schema: MANIFEST_SCHEMA.to_string(),
+            image_id: "demo".to_string(),
+            version: "v1".to_string(),
+            mime_type: CHUNK_MIME_TYPE.to_string(),
+            total_size,
+            chunk_size,
+            chunk_count: chunk_count(total_size, chunk_size),
+            chunk_index_width: CHUNK_INDEX_WIDTH as u32,
+            chunks: None,
+        };
+        let manifest_bytes = serde_json::to_vec_pretty(&manifest).context("serialize manifest")?;
+
+        let token = "token=abc";
+
+        let head_requests = Arc::new(AtomicU64::new(0));
+        let get_requests = Arc::new(AtomicU64::new(0));
+
+        let responder: Arc<
+            dyn Fn(TestHttpRequest) -> (u16, Vec<(String, String)>, Vec<u8>)
+                + Send
+                + Sync
+                + 'static,
+        > = {
+            let head_requests = Arc::clone(&head_requests);
+            let get_requests = Arc::clone(&get_requests);
+            Arc::new(move |req: TestHttpRequest| match req.path.as_str() {
+                "/manifest.json?token=abc" => (200, Vec::new(), manifest_bytes.clone()),
+                // Fail hard if the verifier drops the query.
+                "/manifest.json" => (401, Vec::new(), b"missing token".to_vec()),
+                "/meta.json?token=abc" => (404, Vec::new(), b"not found".to_vec()),
+                "/meta.json" => (401, Vec::new(), b"missing token".to_vec()),
+                "/chunks/00000000.bin?token=abc" => {
+                    if req.method.eq_ignore_ascii_case("HEAD") {
+                        head_requests.fetch_add(1, Ordering::SeqCst);
+                        (
+                            200,
+                            vec![("Content-Length".to_string(), chunk0.len().to_string())],
+                            Vec::new(),
+                        )
+                    } else {
+                        get_requests.fetch_add(1, Ordering::SeqCst);
+                        (200, Vec::new(), chunk0.clone())
+                    }
+                }
+                "/chunks/00000001.bin?token=abc" => {
+                    if req.method.eq_ignore_ascii_case("HEAD") {
+                        head_requests.fetch_add(1, Ordering::SeqCst);
+                        (
+                            200,
+                            vec![("Content-Length".to_string(), chunk1.len().to_string())],
+                            Vec::new(),
+                        )
+                    } else {
+                        get_requests.fetch_add(1, Ordering::SeqCst);
+                        (200, Vec::new(), chunk1.clone())
+                    }
+                }
+                "/chunks/00000000.bin" | "/chunks/00000001.bin" => {
+                    (401, Vec::new(), b"missing token".to_vec())
+                }
+                _ => (404, Vec::new(), b"not found".to_vec()),
+            })
+        };
+
+        let (base_url, shutdown_tx, server_handle) = start_test_http_server(responder).await?;
+
+        verify(VerifyArgs {
+            manifest_url: Some(format!("{base_url}/manifest.json?{token}")),
+            manifest_file: None,
+            header: Vec::new(),
+            bucket: None,
+            prefix: None,
+            manifest_key: None,
+            image_id: None,
+            image_version: None,
+            endpoint: None,
+            force_path_style: false,
+            region: "us-east-1".to_string(),
+            concurrency: 2,
+            retries: 1,
+            max_chunks: MAX_CHUNKS,
+            chunk_sample: None,
+            chunk_sample_seed: None,
+        })
+        .await?;
+
+        let _ = shutdown_tx.send(());
+        let _ = server_handle.await;
+
+        assert_eq!(get_requests.load(Ordering::SeqCst), 0);
+        assert_eq!(head_requests.load(Ordering::SeqCst), 2);
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn verify_http_preserves_manifest_query_for_meta_json() -> Result<()> {
         let chunk_size: u64 = 1024;
         let chunk0 = vec![b'a'; chunk_size as usize];
@@ -8715,6 +8817,154 @@ mod tests {
         assert_eq!(unauthorized_requests.load(Ordering::SeqCst), 1);
         assert_eq!(manifest_requests.load(Ordering::SeqCst), 1);
         assert_eq!(chunk_requests.load(Ordering::SeqCst), 2);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn verify_http_sends_custom_headers_on_head_chunks() -> Result<()> {
+        let chunk_size: u64 = 1024;
+        let chunk0 = vec![b'a'; chunk_size as usize];
+        let chunk1 = vec![b'b'; 512];
+        let total_size = (chunk0.len() + chunk1.len()) as u64;
+
+        let manifest = ManifestV1 {
+            schema: MANIFEST_SCHEMA.to_string(),
+            image_id: "demo".to_string(),
+            version: "v1".to_string(),
+            mime_type: CHUNK_MIME_TYPE.to_string(),
+            total_size,
+            chunk_size,
+            chunk_count: chunk_count(total_size, chunk_size),
+            chunk_index_width: CHUNK_INDEX_WIDTH as u32,
+            chunks: None,
+        };
+        let manifest_bytes = serde_json::to_vec_pretty(&manifest).context("serialize manifest")?;
+
+        let unauthorized_requests = Arc::new(AtomicU64::new(0));
+        let manifest_requests = Arc::new(AtomicU64::new(0));
+        let chunk_head_requests = Arc::new(AtomicU64::new(0));
+        let chunk_get_requests = Arc::new(AtomicU64::new(0));
+
+        let responder: Arc<
+            dyn Fn(TestHttpRequest) -> (u16, Vec<(String, String)>, Vec<u8>)
+                + Send
+                + Sync
+                + 'static,
+        > = {
+            let unauthorized_requests = Arc::clone(&unauthorized_requests);
+            let manifest_requests = Arc::clone(&manifest_requests);
+            let chunk_head_requests = Arc::clone(&chunk_head_requests);
+            let chunk_get_requests = Arc::clone(&chunk_get_requests);
+            Arc::new(move |req: TestHttpRequest| {
+                let expected = "Bearer test";
+                let auth_ok = req
+                    .headers
+                    .iter()
+                    .any(|(k, v)| k.eq_ignore_ascii_case("authorization") && v == expected);
+                if !auth_ok {
+                    unauthorized_requests.fetch_add(1, Ordering::SeqCst);
+                    return (401, Vec::new(), b"unauthorized".to_vec());
+                }
+
+                match req.path.as_str() {
+                    "/manifest.json" => {
+                        manifest_requests.fetch_add(1, Ordering::SeqCst);
+                        (200, Vec::new(), manifest_bytes.clone())
+                    }
+                    "/meta.json" => (404, Vec::new(), b"not found".to_vec()),
+                    "/chunks/00000000.bin" => {
+                        if req.method.eq_ignore_ascii_case("HEAD") {
+                            chunk_head_requests.fetch_add(1, Ordering::SeqCst);
+                            (
+                                200,
+                                vec![("Content-Length".to_string(), chunk0.len().to_string())],
+                                Vec::new(),
+                            )
+                        } else {
+                            chunk_get_requests.fetch_add(1, Ordering::SeqCst);
+                            (200, Vec::new(), chunk0.clone())
+                        }
+                    }
+                    "/chunks/00000001.bin" => {
+                        if req.method.eq_ignore_ascii_case("HEAD") {
+                            chunk_head_requests.fetch_add(1, Ordering::SeqCst);
+                            (
+                                200,
+                                vec![("Content-Length".to_string(), chunk1.len().to_string())],
+                                Vec::new(),
+                            )
+                        } else {
+                            chunk_get_requests.fetch_add(1, Ordering::SeqCst);
+                            (200, Vec::new(), chunk1.clone())
+                        }
+                    }
+                    _ => (404, Vec::new(), b"not found".to_vec()),
+                }
+            })
+        };
+
+        let (base_url, shutdown_tx, server_handle) = start_test_http_server(responder).await?;
+        let manifest_url = format!("{base_url}/manifest.json");
+
+        // Without headers, the server should reject with 401.
+        let err = verify(VerifyArgs {
+            manifest_url: Some(manifest_url.clone()),
+            manifest_file: None,
+            header: Vec::new(),
+            bucket: None,
+            prefix: None,
+            manifest_key: None,
+            image_id: None,
+            image_version: None,
+            endpoint: None,
+            force_path_style: false,
+            region: "us-east-1".to_string(),
+            concurrency: 1,
+            retries: 1,
+            max_chunks: MAX_CHUNKS,
+            chunk_sample: None,
+            chunk_sample_seed: None,
+        })
+        .await
+        .unwrap_err();
+        assert!(
+            error_chain_summary(&err).contains("HTTP 401"),
+            "unexpected error chain: {}",
+            error_chain_summary(&err)
+        );
+        assert_eq!(unauthorized_requests.load(Ordering::SeqCst), 1);
+        assert_eq!(manifest_requests.load(Ordering::SeqCst), 0);
+        assert_eq!(chunk_head_requests.load(Ordering::SeqCst), 0);
+        assert_eq!(chunk_get_requests.load(Ordering::SeqCst), 0);
+
+        // With headers, verify should succeed and use HEAD for chunk size validation.
+        verify(VerifyArgs {
+            manifest_url: Some(manifest_url),
+            manifest_file: None,
+            header: vec!["Authorization: Bearer test".to_string()],
+            bucket: None,
+            prefix: None,
+            manifest_key: None,
+            image_id: None,
+            image_version: None,
+            endpoint: None,
+            force_path_style: false,
+            region: "us-east-1".to_string(),
+            concurrency: 2,
+            retries: 1,
+            max_chunks: MAX_CHUNKS,
+            chunk_sample: None,
+            chunk_sample_seed: None,
+        })
+        .await?;
+
+        let _ = shutdown_tx.send(());
+        let _ = server_handle.await;
+
+        assert_eq!(unauthorized_requests.load(Ordering::SeqCst), 1);
+        assert_eq!(manifest_requests.load(Ordering::SeqCst), 1);
+        assert_eq!(chunk_head_requests.load(Ordering::SeqCst), 2);
+        assert_eq!(chunk_get_requests.load(Ordering::SeqCst), 0);
         Ok(())
     }
 
