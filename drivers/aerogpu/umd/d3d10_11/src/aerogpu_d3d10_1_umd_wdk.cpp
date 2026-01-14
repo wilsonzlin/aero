@@ -1369,6 +1369,50 @@ struct DdiStub<Ret(AEROGPU_APIENTRY*)(Args...)> {
 };
 
 template <typename T, typename = void>
+struct has_member_pDrvPrivate : std::false_type {};
+template <typename T>
+struct has_member_pDrvPrivate<T, std::void_t<decltype(std::declval<T>().pDrvPrivate)>> : std::true_type {};
+
+template <typename THandle>
+static bool AnyNonNullHandles(const THandle* handles, UINT count) {
+  if (!handles || count == 0) {
+    return false;
+  }
+  if constexpr (!has_member_pDrvPrivate<THandle>::value) {
+    return false;
+  }
+  for (UINT i = 0; i < count; ++i) {
+    if (handles[i].pDrvPrivate) {
+      return true;
+    }
+  }
+  return false;
+}
+
+template <typename FnPtr>
+struct SoSetTargetsImpl;
+
+template <typename... Args>
+struct SoSetTargetsImpl<void(AEROGPU_APIENTRY*)(Args...)> {
+  static void AEROGPU_APIENTRY Call(Args... args) {
+    ((void)args, ...);
+  }
+};
+
+// Stream-output is unsupported for bring-up. Treat unbind (all-null handles) as a no-op but report
+// E_NOTIMPL if an app attempts to bind real targets.
+template <typename TargetsPtr, typename... Tail>
+struct SoSetTargetsImpl<void(AEROGPU_APIENTRY*)(D3D10DDI_HDEVICE, UINT, TargetsPtr, Tail...)> {
+  static void AEROGPU_APIENTRY Call(D3D10DDI_HDEVICE hDevice, UINT num_targets, TargetsPtr phTargets, Tail... tail) {
+    ((void)tail, ...);
+    if (!hDevice.pDrvPrivate || !AnyNonNullHandles(phTargets, num_targets)) {
+      return;
+    }
+    set_error(DeviceFromHandle(hDevice), E_NOTIMPL);
+  }
+};
+
+template <typename T, typename = void>
 struct HasGenMips : std::false_type {};
 template <typename T>
 struct HasGenMips<T, std::void_t<decltype(((T*)nullptr)->pfnGenMips)>> : std::true_type {};
@@ -9240,6 +9284,10 @@ HRESULT AEROGPU_APIENTRY CreateDevice(D3D10DDI_HADAPTER hAdapter, D3D10_1DDIARG_
   pCreateDevice->pDeviceFuncs->pfnSetViewports = &SetViewports;
   pCreateDevice->pDeviceFuncs->pfnSetScissorRects = &SetScissorRects;
   pCreateDevice->pDeviceFuncs->pfnSetRenderTargets = &SetRenderTargets;
+  __if_exists(D3D10_1DDI_DEVICEFUNCS::pfnSoSetTargets) {
+    pCreateDevice->pDeviceFuncs->pfnSoSetTargets =
+        &SoSetTargetsImpl<decltype(pCreateDevice->pDeviceFuncs->pfnSoSetTargets)>::Call;
+  }
 
   pCreateDevice->pDeviceFuncs->pfnDraw = &Draw;
   pCreateDevice->pDeviceFuncs->pfnDrawIndexed = &DrawIndexed;
@@ -9432,6 +9480,10 @@ HRESULT AEROGPU_APIENTRY CreateDevice10(D3D10DDI_HADAPTER hAdapter, D3D10DDIARG_
   pCreateDevice->pDeviceFuncs->pfnSetViewports = &SetViewports;
   pCreateDevice->pDeviceFuncs->pfnSetScissorRects = &SetScissorRects;
   pCreateDevice->pDeviceFuncs->pfnSetRenderTargets = &SetRenderTargets;
+  __if_exists(D3D10DDI_DEVICEFUNCS::pfnSoSetTargets) {
+    pCreateDevice->pDeviceFuncs->pfnSoSetTargets =
+        &SoSetTargetsImpl<decltype(pCreateDevice->pDeviceFuncs->pfnSoSetTargets)>::Call;
+  }
 
   pCreateDevice->pDeviceFuncs->pfnDraw = &Draw;
   pCreateDevice->pDeviceFuncs->pfnDrawIndexed = &DrawIndexed;

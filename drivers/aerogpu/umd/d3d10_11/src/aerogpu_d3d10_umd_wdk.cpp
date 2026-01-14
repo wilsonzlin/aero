@@ -1616,6 +1616,50 @@ struct DdiNoopStub<Ret(AEROGPU_APIENTRY*)(Args...)> {
   }
 };
 
+template <typename T, typename = void>
+struct has_member_pDrvPrivate : std::false_type {};
+template <typename T>
+struct has_member_pDrvPrivate<T, std::void_t<decltype(std::declval<T>().pDrvPrivate)>> : std::true_type {};
+
+template <typename THandle>
+static bool AnyNonNullHandles(const THandle* handles, UINT count) {
+  if (!handles || count == 0) {
+    return false;
+  }
+  if constexpr (!has_member_pDrvPrivate<THandle>::value) {
+    return false;
+  }
+  for (UINT i = 0; i < count; ++i) {
+    if (handles[i].pDrvPrivate) {
+      return true;
+    }
+  }
+  return false;
+}
+
+template <typename FnPtr>
+struct SoSetTargetsImpl;
+
+template <typename... Args>
+struct SoSetTargetsImpl<void(AEROGPU_APIENTRY*)(Args...)> {
+  static void AEROGPU_APIENTRY Call(Args... args) {
+    ((void)args, ...);
+  }
+};
+
+// Stream-output is unsupported for bring-up. Treat unbind (all-null handles) as a no-op but report
+// E_NOTIMPL if an app attempts to bind real targets.
+template <typename TargetsPtr, typename... Tail>
+struct SoSetTargetsImpl<void(AEROGPU_APIENTRY*)(D3D10DDI_HDEVICE, UINT, TargetsPtr, Tail...)> {
+  static void AEROGPU_APIENTRY Call(D3D10DDI_HDEVICE hDevice, UINT num_targets, TargetsPtr phTargets, Tail... tail) {
+    ((void)tail, ...);
+    if (!hDevice.pDrvPrivate || !AnyNonNullHandles(phTargets, num_targets)) {
+      return;
+    }
+    SetError(hDevice, E_NOTIMPL);
+  }
+};
+
 // Validates that the runtime will never see a NULL DDI function pointer.
 //
 // This is intentionally enabled in release builds. If our stub-fill lists ever
@@ -8863,6 +8907,9 @@ HRESULT APIENTRY CreateDevice(D3D10DDI_HADAPTER hAdapter, const D3D10DDIARG_CREA
   funcs.pfnSetBlendState = &SetBlendState;
   funcs.pfnSetDepthStencilState = &SetDepthStencilState;
   funcs.pfnSetRenderTargets = &SetRenderTargets;
+  __if_exists(D3D10DDI_DEVICEFUNCS::pfnSoSetTargets) {
+    funcs.pfnSoSetTargets = &SoSetTargetsImpl<decltype(funcs.pfnSoSetTargets)>::Call;
+  }
 
   // Clears/draw.
   funcs.pfnClearRenderTargetView = &ClearRenderTargetView;
