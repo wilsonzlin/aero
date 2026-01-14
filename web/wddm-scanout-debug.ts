@@ -7,6 +7,7 @@ import {
   GPU_PROTOCOL_NAME,
   GPU_PROTOCOL_VERSION,
   isGpuWorkerMessageBase,
+  type GpuRuntimeInMessage,
   type GpuRuntimeOutMessage,
   type GpuRuntimeStatsMessage,
 } from "./src/ipc/gpu-protocol";
@@ -377,6 +378,26 @@ async function main() {
   const offscreen = canvasEl.transferControlToOffscreen();
   const GPU_MESSAGE_BASE = { protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION } as const;
 
+  // Dev-only context loss buttons.
+  const debugUi = {
+    lose: $("loseContextBtn") as HTMLButtonElement,
+    restore: $("restoreContextBtn") as HTMLButtonElement,
+  };
+  const isDev = (import.meta as any).env?.DEV === true;
+  debugUi.lose.disabled = true;
+  debugUi.restore.disabled = true;
+  if (!isDev) {
+    debugUi.lose.title = "DEV-only (ignored in production builds)";
+    debugUi.restore.title = "DEV-only (ignored in production builds)";
+  }
+
+  const postContextLoss = (action: "lose" | "restore") => {
+    worker.postMessage({ ...GPU_MESSAGE_BASE, type: "debug_context_loss", action } satisfies GpuRuntimeInMessage);
+    log(`debug_context_loss requested: ${action}`);
+  };
+  debugUi.lose.addEventListener("click", () => postContextLoss("lose"));
+  debugUi.restore.addEventListener("click", () => postContextLoss("restore"));
+
   let readyResolve: (() => void) | null = null;
   let readyReject: ((err: unknown) => void) | null = null;
   const ready = new Promise<void>((resolve, reject) => {
@@ -393,6 +414,10 @@ async function main() {
     switch (typed.type) {
       case "ready":
         log(`gpu-worker ready backend=${typed.backendKind}`);
+        if (isDev) {
+          debugUi.lose.disabled = false;
+          debugUi.restore.disabled = false;
+        }
         readyResolve?.();
         readyResolve = null;
         readyReject = null;

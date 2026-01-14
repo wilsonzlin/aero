@@ -33,6 +33,12 @@
         gap: 8px;
         margin: 8px 0;
       }
+      #debugControls {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin: 8px 0;
+      }
       label {
         display: grid;
         grid-template-columns: 140px 1fr;
@@ -105,6 +111,18 @@
               <option value="255">0xFF (XRGB)</option>
             </select>
           </label>
+        </div>
+
+        <h2>Debug</h2>
+        <p>
+          <small>
+            Dev-only: simulate WebGL context loss/restoration via the GPU worker's
+            <code>debug_context_loss</code> message (requires <code>WEBGL_lose_context</code>).
+          </small>
+        </p>
+        <div id="debugControls">
+          <button id="loseContextBtn" type="button">Lose context</button>
+          <button id="restoreContextBtn" type="button">Restore context</button>
         </div>
 
         <h2>ScanoutState snapshot</h2>
