@@ -106,11 +106,11 @@ fn base_gs_tokens() -> Vec<u32> {
     // Declare outputs so the decoder produces `Sm4Decl::Output` entries (not strictly required by
     // the GS prepass translator, but keeps the token streams realistic).
     // dcl_output o0.xyzw
-    tokens.push(opcode_token(0x100, 3));
+    tokens.push(opcode_token(OPCODE_DCL_OUTPUT, 3));
     tokens.push(0x10F022); // o0.xyzw
     tokens.push(0);
     // dcl_output o1.xyzw
-    tokens.push(opcode_token(0x100, 3));
+    tokens.push(opcode_token(OPCODE_DCL_OUTPUT, 3));
     tokens.push(0x10F022); // o1.xyzw
     tokens.push(1);
 
@@ -418,18 +418,18 @@ fn sm4_gs_emit_cut_translates_to_wgsl_compute_prepass() {
     tokens.push(opcode_token(OPCODE_DCL_GS_MAX_OUTPUT_VERTEX_COUNT, 2));
     tokens.push(3);
 
-    // dcl_input v0.xyzw (opcode value is irrelevant as long as it's treated as a declaration).
-    tokens.push(opcode_token(0x100, 3));
+    // dcl_input v0.xyzw
+    tokens.push(opcode_token(OPCODE_DCL_INPUT, 3));
     tokens.push(0x10F012); // v0.xyzw (1D indexing)
     tokens.push(0); // v0
 
     // dcl_output o0.xyzw
-    tokens.push(opcode_token(0x100, 3));
+    tokens.push(opcode_token(OPCODE_DCL_OUTPUT, 3));
     tokens.push(0x10F022); // o0.xyzw
     tokens.push(0);
 
     // dcl_output o1.xyzw
-    tokens.push(opcode_token(0x100, 3));
+    tokens.push(opcode_token(OPCODE_DCL_OUTPUT, 3));
     tokens.push(0x10F022); // o#.xyzw
     tokens.push(1);
 
@@ -685,17 +685,17 @@ fn sm4_gs_pointlist_output_topology_translates_to_wgsl_compute_prepass() {
     tokens.push(1);
 
     // dcl_input v0.xyzw
-    tokens.push(opcode_token(0x100, 3));
+    tokens.push(opcode_token(OPCODE_DCL_INPUT, 3));
     tokens.push(0x10F012); // v0.xyzw (1D indexing)
     tokens.push(0); // v0
 
     // dcl_output o0.xyzw
-    tokens.push(opcode_token(0x100, 3));
+    tokens.push(opcode_token(OPCODE_DCL_OUTPUT, 3));
     tokens.push(0x10F022); // o0.xyzw
     tokens.push(0);
 
     // dcl_output o1.xyzw
-    tokens.push(opcode_token(0x100, 3));
+    tokens.push(opcode_token(OPCODE_DCL_OUTPUT, 3));
     tokens.push(0x10F022); // o1.xyzw
     tokens.push(1);
 
@@ -754,17 +754,17 @@ fn sm4_gs_linestrip_output_topology_translates_to_wgsl_compute_prepass() {
     tokens.push(4);
 
     // dcl_input v0.xyzw
-    tokens.push(opcode_token(0x100, 3));
+    tokens.push(opcode_token(OPCODE_DCL_INPUT, 3));
     tokens.push(0x10F012); // v0.xyzw (1D indexing)
     tokens.push(0); // v0
 
     // dcl_output o0.xyzw
-    tokens.push(opcode_token(0x100, 3));
+    tokens.push(opcode_token(OPCODE_DCL_OUTPUT, 3));
     tokens.push(0x10F022); // o0.xyzw
     tokens.push(0);
 
     // dcl_output o1.xyzw
-    tokens.push(opcode_token(0x100, 3));
+    tokens.push(opcode_token(OPCODE_DCL_OUTPUT, 3));
     tokens.push(0x10F022); // o1.xyzw
     tokens.push(1);
 
@@ -867,17 +867,17 @@ fn sm4_gs_linestrip_output_topology_d3d_encoding_translates() {
     tokens.push(2);
 
     // dcl_input v0.xyzw
-    tokens.push(opcode_token(0x100, 3));
+    tokens.push(opcode_token(OPCODE_DCL_INPUT, 3));
     tokens.push(0x10F012); // v0.xyzw (1D indexing)
     tokens.push(0); // v0
 
     // dcl_output o0.xyzw
-    tokens.push(opcode_token(0x100, 3));
+    tokens.push(opcode_token(OPCODE_DCL_OUTPUT, 3));
     tokens.push(0x10F022); // o0.xyzw
     tokens.push(0);
 
     // dcl_output o1.xyzw
-    tokens.push(opcode_token(0x100, 3));
+    tokens.push(opcode_token(OPCODE_DCL_OUTPUT, 3));
     tokens.push(0x10F022); // o1.xyzw
     tokens.push(1);
 
@@ -1021,12 +1021,12 @@ fn sm4_gs_emitthen_cut_translates_to_wgsl_compute_prepass() {
     tokens.push(1);
 
     // dcl_input v0.xyzw
-    tokens.push(opcode_token(0x100, 3));
+    tokens.push(opcode_token(OPCODE_DCL_INPUT, 3));
     tokens.push(0x10F012); // v0.xyzw (1D indexing)
     tokens.push(0); // v0
 
     // dcl_output o0.xyzw
-    tokens.push(opcode_token(0x100, 3));
+    tokens.push(opcode_token(OPCODE_DCL_OUTPUT, 3));
     tokens.push(0x10F022); // o0.xyzw
     tokens.push(0);
 
