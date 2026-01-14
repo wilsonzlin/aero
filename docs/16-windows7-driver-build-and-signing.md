@@ -262,17 +262,40 @@ Compatibility note: for maximum compatibility with unpatched Windows 7 when usin
 .\ci\package-drivers.ps1 -InputRoot .\out\packages -CertPath .\out\certs\aero-test.cer -OutDir .\out\artifacts
 ```
 
+Signing policy:
+
+- Default: `-SigningPolicy test`
+  - Requires `-CertPath` (defaults to `out/certs/aero-test.cer`).
+  - Bundles `aero-test.cer` into the ZIP/ISO roots.
+  - `INSTALL.txt` includes **test signing** and **certificate import** steps.
+- For production/WHQL-signed drivers, use `-SigningPolicy production` (or `none`):
+  - Does **not** require `-CertPath`.
+  - Does **not** bundle any certificate files.
+  - `INSTALL.txt` omits test-signing/certificate import steps.
+
 Outputs:
 
 - `out/artifacts/AeroVirtIO-Win7-<version>-x86.zip`
 - `out/artifacts/AeroVirtIO-Win7-<version>-x64.zip`
 - `out/artifacts/AeroVirtIO-Win7-<version>-bundle.zip`
-- `out/artifacts/AeroVirtIO-Win7-<version>.iso` (unless `-NoIso` is used)
+- `out/artifacts/AeroVirtIO-Win7-<version>.iso` (unless `-NoIso` is used; requires Rust/cargo for deterministic builds, or `-LegacyIso` for Windows IMAPI2 which is **not** deterministic)
+- `out/artifacts/AeroVirtIO-Win7-<version>-fat.vhd` (optional; when `-MakeFatImage` or `AERO_MAKE_FAT_IMAGE=1`; requires Windows + Administrator privileges; skipped unless `-FatImageStrict`)
+
+Integrity manifests (default; disable with `-NoManifest`):
+
+- `out/artifacts/AeroVirtIO-Win7-<version>-x86.manifest.json`
+- `out/artifacts/AeroVirtIO-Win7-<version>-x64.manifest.json`
+- `out/artifacts/AeroVirtIO-Win7-<version>-bundle.manifest.json`
+- `out/artifacts/AeroVirtIO-Win7-<version>.manifest.json` (when ISO is produced)
+- `out/artifacts/AeroVirtIO-Win7-<version>-fat.manifest.json` (when FAT VHD is produced)
+
+Each `*.manifest.json` includes the artifact's `sha256`/`size`, the packaging `version` and
+`signing_policy`, and a stable per-file hash list for mixed-media detection.
 
 The packaged artifacts include:
 
-- `aero-test.cer`
-- `INSTALL.txt` with the exact commands for test signing + certificate import + `pnputil`
+- `INSTALL.txt` with the exact commands for `pnputil` installs (and, for `-SigningPolicy test`, test signing + certificate import)
+- `aero-test.cer` *(SigningPolicy=test only)*
 
 These driver bundle artifacts include **all** staged CI-packaged drivers under `out/packages/`. If you opt a dev/test driver into CI packaging, it will appear in the bundle artifacts; ensure its INF does not bind production HWIDs so it cannot steal device binding when multiple driver packages are present.
 
