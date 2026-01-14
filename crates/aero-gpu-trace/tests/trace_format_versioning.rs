@@ -20,6 +20,22 @@ fn read_u64_le(bytes: &[u8], off: usize) -> u64 {
 }
 
 #[test]
+fn reject_trace_with_unsupported_header_size() {
+    let mut bytes = minimal_trace_bytes(0);
+
+    // TraceHeader layout (little-endian):
+    // [0..8]   magic
+    // [8..12]  header_size
+    bytes[8..12].copy_from_slice(&0u32.to_le_bytes());
+
+    let err = match TraceReader::open(Cursor::new(bytes)) {
+        Ok(_) => panic!("expected trace open to fail"),
+        Err(err) => err,
+    };
+    assert!(matches!(err, TraceReadError::UnsupportedHeaderSize(0)));
+}
+
+#[test]
 fn reject_trace_with_wrong_magic() {
     let mut bytes = minimal_trace_bytes(0);
 
@@ -70,6 +86,25 @@ fn reject_trace_with_wrong_footer_magic() {
 }
 
 #[test]
+fn reject_trace_with_unsupported_footer_size() {
+    let mut bytes = minimal_trace_bytes(0);
+
+    let footer_size = TRACE_FOOTER_SIZE as usize;
+    let footer_start = bytes.len() - footer_size;
+
+    // TraceFooter layout (little-endian):
+    // [0..8]   magic
+    // [8..12]  footer_size
+    bytes[footer_start + 8..footer_start + 12].copy_from_slice(&0u32.to_le_bytes());
+
+    let err = match TraceReader::open(Cursor::new(bytes)) {
+        Ok(_) => panic!("expected trace open to fail"),
+        Err(err) => err,
+    };
+    assert!(matches!(err, TraceReadError::UnsupportedFooterSize(0)));
+}
+
+#[test]
 fn reject_trace_with_wrong_toc_magic() {
     let mut bytes = minimal_trace_bytes(0);
 
@@ -86,6 +121,26 @@ fn reject_trace_with_wrong_toc_magic() {
         Err(err) => err,
     };
     assert!(matches!(err, TraceReadError::InvalidMagic));
+}
+
+#[test]
+fn reject_trace_with_unsupported_toc_version() {
+    let mut bytes = minimal_trace_bytes(0);
+
+    let footer_size = TRACE_FOOTER_SIZE as usize;
+    let footer_start = bytes.len() - footer_size;
+    let toc_offset = read_u64_le(&bytes, footer_start + 16) as usize;
+
+    // TOC layout:
+    // [0..8]  magic
+    // [8..12] toc_version
+    bytes[toc_offset + 8..toc_offset + 12].copy_from_slice(&999u32.to_le_bytes());
+
+    let err = match TraceReader::open(Cursor::new(bytes)) {
+        Ok(_) => panic!("expected trace open to fail"),
+        Err(err) => err,
+    };
+    assert!(matches!(err, TraceReadError::UnsupportedTocVersion(999)));
 }
 
 #[test]
