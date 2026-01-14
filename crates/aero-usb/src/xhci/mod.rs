@@ -3029,8 +3029,11 @@ impl XhciController {
                         after_cycle,
                     );
                     // Keep controller-local ring cursor state in sync.
-                    self.slots[slot_idx].transfer_rings[usize::from(endpoint_id - 1)] =
+                    let endpoint_idx = usize::from(endpoint_id - 1);
+                    self.slots[slot_idx].transfer_rings[endpoint_idx] =
                         Some(RingCursor::new(after_ptr, after_cycle));
+                    self.slots[slot_idx].endpoint_contexts[endpoint_idx]
+                        .set_tr_dequeue_pointer(after_ptr, after_cycle);
                 }
             }
 
@@ -3702,14 +3705,13 @@ impl XhciController {
             None => return false,
         };
 
-        let mut ep_ctx = EndpointContext::read_from(mem, ctx_base);
-        ep_ctx.set_endpoint_state(state.raw());
-        ep_ctx.write_to(mem, ctx_base);
+        // Endpoint state bits live in DW0 bits 2:0. Update just that dword in guest memory so we do
+        // not clobber TR Dequeue Pointer writes performed by the transfer engine.
+        let dw0 = mem.read_u32(ctx_base);
+        let new_dw0 = (dw0 & !0x7) | (u32::from(state.raw()) & 0x7);
+        mem.write_u32(ctx_base, new_dw0);
 
-        // If the guest Device Context exists, keep the controller-local shadow context in sync so
-        // snapshot/restore preserves the halted state even if the guest doesn't re-run Configure
-        // Endpoint.
-        slot.endpoint_contexts[usize::from(endpoint_id - 1)] = ep_ctx;
+        // Record the Device Context pointer for snapshot/restore.
         slot.device_context_ptr = dev_ctx_ptr;
         true
     }
