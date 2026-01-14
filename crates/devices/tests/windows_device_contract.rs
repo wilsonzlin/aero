@@ -141,11 +141,11 @@ fn inf_functional_text(contents: &str) -> &str {
     // This intentionally ignores the leading comment/banner block so legacy alias INFs can use a
     // different filename banner while still enforcing byte-for-byte equality of all functional
     // sections/keys.
+    const TRIM_LEADING: &[char] = &['\0', ' ', '\t', '\u{feff}'];
     let mut offset = 0usize;
     for line in contents.split_inclusive('\n') {
         let logical = line.trim_end_matches(['\r', '\n']);
-        let trimmed =
-            logical.trim_start_matches(|c: char| matches!(c, '\0' | ' ' | '\t' | '\u{feff}'));
+        let trimmed = logical.trim_start_matches(TRIM_LEADING);
         if trimmed.is_empty() {
             offset += line.len();
             continue;
