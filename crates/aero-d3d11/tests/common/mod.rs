@@ -55,7 +55,10 @@ pub fn skip_if_compute_or_indirect_unsupported(test_name: &str, err: &anyhow::Er
         || msg.contains("Too many bindings of type StorageBuffers")
         || msg.contains("too many storage buffers")
     {
-        skip_or_panic(test_name, "storage buffer limit too low for compute prepass");
+        skip_or_panic(
+            test_name,
+            "storage buffer limit too low for compute prepass",
+        );
         return true;
     }
 
