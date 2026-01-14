@@ -65,10 +65,19 @@
   let AEROGPU_CMD_CREATE_BUFFER = 0x0100;
   let AEROGPU_CMD_CREATE_TEXTURE2D = 0x0101;
   let AEROGPU_CMD_DESTROY_RESOURCE = 0x0102;
+  let AEROGPU_CMD_RESOURCE_DIRTY_RANGE = 0x0103;
+  let AEROGPU_CMD_UPLOAD_RESOURCE = 0x0104;
+  let AEROGPU_CMD_SET_BLEND_STATE = 0x0300;
+  let AEROGPU_CMD_SET_DEPTH_STENCIL_STATE = 0x0301;
+  let AEROGPU_CMD_SET_RASTERIZER_STATE = 0x0302;
   let AEROGPU_CMD_SET_RENDER_TARGETS = 0x0400;
   let AEROGPU_CMD_SET_VIEWPORT = 0x0401;
+  let AEROGPU_CMD_SET_SCISSOR = 0x0402;
   let AEROGPU_CMD_SET_VERTEX_BUFFERS = 0x0500;
   let AEROGPU_CMD_SET_PRIMITIVE_TOPOLOGY = 0x0502;
+  let AEROGPU_CMD_SET_TEXTURE = 0x0510;
+  let AEROGPU_CMD_SET_SAMPLER_STATE = 0x0511;
+  let AEROGPU_CMD_SET_RENDER_STATE = 0x0512;
   let AEROGPU_CMD_CREATE_SAMPLER = 0x0520;
   let AEROGPU_CMD_DESTROY_SAMPLER = 0x0521;
   let AEROGPU_CMD_SET_SAMPLERS = 0x0522;
@@ -85,10 +94,19 @@
   let AEROGPU_CMD_CREATE_BUFFER_SIZE_BYTES = 40;
   let AEROGPU_CMD_CREATE_TEXTURE2D_SIZE_BYTES = 56;
   let AEROGPU_CMD_DESTROY_RESOURCE_SIZE_BYTES = 16;
+  let AEROGPU_CMD_RESOURCE_DIRTY_RANGE_SIZE_BYTES = 32;
+  let AEROGPU_CMD_UPLOAD_RESOURCE_SIZE_BYTES = 32;
+  let AEROGPU_CMD_SET_BLEND_STATE_SIZE_BYTES = 60;
+  let AEROGPU_CMD_SET_DEPTH_STENCIL_STATE_SIZE_BYTES = 28;
+  let AEROGPU_CMD_SET_RASTERIZER_STATE_SIZE_BYTES = 32;
   let AEROGPU_CMD_SET_RENDER_TARGETS_SIZE_BYTES = 48;
   let AEROGPU_CMD_SET_VIEWPORT_SIZE_BYTES = 32;
+  let AEROGPU_CMD_SET_SCISSOR_SIZE_BYTES = 24;
   let AEROGPU_CMD_SET_VERTEX_BUFFERS_SIZE_BYTES = 16;
   let AEROGPU_CMD_SET_PRIMITIVE_TOPOLOGY_SIZE_BYTES = 16;
+  let AEROGPU_CMD_SET_TEXTURE_SIZE_BYTES = 24;
+  let AEROGPU_CMD_SET_SAMPLER_STATE_SIZE_BYTES = 24;
+  let AEROGPU_CMD_SET_RENDER_STATE_SIZE_BYTES = 16;
   let AEROGPU_CMD_CREATE_SAMPLER_SIZE_BYTES = 28;
   let AEROGPU_CMD_DESTROY_SAMPLER_SIZE_BYTES = 16;
   let AEROGPU_CMD_SET_SAMPLERS_SIZE_BYTES = 24;
@@ -144,10 +162,27 @@
           if (typeof cmd.AerogpuCmdOpcode.CreateBuffer === "number") AEROGPU_CMD_CREATE_BUFFER = cmd.AerogpuCmdOpcode.CreateBuffer >>> 0;
           if (typeof cmd.AerogpuCmdOpcode.CreateTexture2d === "number") AEROGPU_CMD_CREATE_TEXTURE2D = cmd.AerogpuCmdOpcode.CreateTexture2d >>> 0;
           if (typeof cmd.AerogpuCmdOpcode.DestroyResource === "number") AEROGPU_CMD_DESTROY_RESOURCE = cmd.AerogpuCmdOpcode.DestroyResource >>> 0;
+          if (typeof cmd.AerogpuCmdOpcode.ResourceDirtyRange === "number") {
+            AEROGPU_CMD_RESOURCE_DIRTY_RANGE = cmd.AerogpuCmdOpcode.ResourceDirtyRange >>> 0;
+          }
+          if (typeof cmd.AerogpuCmdOpcode.UploadResource === "number") AEROGPU_CMD_UPLOAD_RESOURCE = cmd.AerogpuCmdOpcode.UploadResource >>> 0;
+          if (typeof cmd.AerogpuCmdOpcode.SetBlendState === "number") AEROGPU_CMD_SET_BLEND_STATE = cmd.AerogpuCmdOpcode.SetBlendState >>> 0;
+          if (typeof cmd.AerogpuCmdOpcode.SetDepthStencilState === "number") {
+            AEROGPU_CMD_SET_DEPTH_STENCIL_STATE = cmd.AerogpuCmdOpcode.SetDepthStencilState >>> 0;
+          }
+          if (typeof cmd.AerogpuCmdOpcode.SetRasterizerState === "number") {
+            AEROGPU_CMD_SET_RASTERIZER_STATE = cmd.AerogpuCmdOpcode.SetRasterizerState >>> 0;
+          }
           if (typeof cmd.AerogpuCmdOpcode.SetRenderTargets === "number") AEROGPU_CMD_SET_RENDER_TARGETS = cmd.AerogpuCmdOpcode.SetRenderTargets >>> 0;
           if (typeof cmd.AerogpuCmdOpcode.SetViewport === "number") AEROGPU_CMD_SET_VIEWPORT = cmd.AerogpuCmdOpcode.SetViewport >>> 0;
+          if (typeof cmd.AerogpuCmdOpcode.SetScissor === "number") AEROGPU_CMD_SET_SCISSOR = cmd.AerogpuCmdOpcode.SetScissor >>> 0;
           if (typeof cmd.AerogpuCmdOpcode.SetVertexBuffers === "number") AEROGPU_CMD_SET_VERTEX_BUFFERS = cmd.AerogpuCmdOpcode.SetVertexBuffers >>> 0;
           if (typeof cmd.AerogpuCmdOpcode.SetPrimitiveTopology === "number") AEROGPU_CMD_SET_PRIMITIVE_TOPOLOGY = cmd.AerogpuCmdOpcode.SetPrimitiveTopology >>> 0;
+          if (typeof cmd.AerogpuCmdOpcode.SetTexture === "number") AEROGPU_CMD_SET_TEXTURE = cmd.AerogpuCmdOpcode.SetTexture >>> 0;
+          if (typeof cmd.AerogpuCmdOpcode.SetSamplerState === "number") {
+            AEROGPU_CMD_SET_SAMPLER_STATE = cmd.AerogpuCmdOpcode.SetSamplerState >>> 0;
+          }
+          if (typeof cmd.AerogpuCmdOpcode.SetRenderState === "number") AEROGPU_CMD_SET_RENDER_STATE = cmd.AerogpuCmdOpcode.SetRenderState >>> 0;
           if (typeof cmd.AerogpuCmdOpcode.CreateSampler === "number") AEROGPU_CMD_CREATE_SAMPLER = cmd.AerogpuCmdOpcode.CreateSampler >>> 0;
           if (typeof cmd.AerogpuCmdOpcode.DestroySampler === "number") AEROGPU_CMD_DESTROY_SAMPLER = cmd.AerogpuCmdOpcode.DestroySampler >>> 0;
           if (typeof cmd.AerogpuCmdOpcode.SetSamplers === "number") AEROGPU_CMD_SET_SAMPLERS = cmd.AerogpuCmdOpcode.SetSamplers >>> 0;
@@ -172,10 +207,27 @@
         if (typeof cmd.AEROGPU_CMD_DESTROY_RESOURCE_SIZE === "number") {
           AEROGPU_CMD_DESTROY_RESOURCE_SIZE_BYTES = cmd.AEROGPU_CMD_DESTROY_RESOURCE_SIZE >>> 0;
         }
+        if (typeof cmd.AEROGPU_CMD_RESOURCE_DIRTY_RANGE_SIZE === "number") {
+          AEROGPU_CMD_RESOURCE_DIRTY_RANGE_SIZE_BYTES = cmd.AEROGPU_CMD_RESOURCE_DIRTY_RANGE_SIZE >>> 0;
+        }
+        if (typeof cmd.AEROGPU_CMD_UPLOAD_RESOURCE_SIZE === "number") AEROGPU_CMD_UPLOAD_RESOURCE_SIZE_BYTES = cmd.AEROGPU_CMD_UPLOAD_RESOURCE_SIZE >>> 0;
+        if (typeof cmd.AEROGPU_CMD_SET_BLEND_STATE_SIZE === "number") AEROGPU_CMD_SET_BLEND_STATE_SIZE_BYTES = cmd.AEROGPU_CMD_SET_BLEND_STATE_SIZE >>> 0;
+        if (typeof cmd.AEROGPU_CMD_SET_DEPTH_STENCIL_STATE_SIZE === "number") {
+          AEROGPU_CMD_SET_DEPTH_STENCIL_STATE_SIZE_BYTES = cmd.AEROGPU_CMD_SET_DEPTH_STENCIL_STATE_SIZE >>> 0;
+        }
+        if (typeof cmd.AEROGPU_CMD_SET_RASTERIZER_STATE_SIZE === "number") {
+          AEROGPU_CMD_SET_RASTERIZER_STATE_SIZE_BYTES = cmd.AEROGPU_CMD_SET_RASTERIZER_STATE_SIZE >>> 0;
+        }
         if (typeof cmd.AEROGPU_CMD_SET_RENDER_TARGETS_SIZE === "number") AEROGPU_CMD_SET_RENDER_TARGETS_SIZE_BYTES = cmd.AEROGPU_CMD_SET_RENDER_TARGETS_SIZE >>> 0;
         if (typeof cmd.AEROGPU_CMD_SET_VIEWPORT_SIZE === "number") AEROGPU_CMD_SET_VIEWPORT_SIZE_BYTES = cmd.AEROGPU_CMD_SET_VIEWPORT_SIZE >>> 0;
+        if (typeof cmd.AEROGPU_CMD_SET_SCISSOR_SIZE === "number") AEROGPU_CMD_SET_SCISSOR_SIZE_BYTES = cmd.AEROGPU_CMD_SET_SCISSOR_SIZE >>> 0;
         if (typeof cmd.AEROGPU_CMD_SET_VERTEX_BUFFERS_SIZE === "number") AEROGPU_CMD_SET_VERTEX_BUFFERS_SIZE_BYTES = cmd.AEROGPU_CMD_SET_VERTEX_BUFFERS_SIZE >>> 0;
         if (typeof cmd.AEROGPU_CMD_SET_PRIMITIVE_TOPOLOGY_SIZE === "number") AEROGPU_CMD_SET_PRIMITIVE_TOPOLOGY_SIZE_BYTES = cmd.AEROGPU_CMD_SET_PRIMITIVE_TOPOLOGY_SIZE >>> 0;
+        if (typeof cmd.AEROGPU_CMD_SET_TEXTURE_SIZE === "number") AEROGPU_CMD_SET_TEXTURE_SIZE_BYTES = cmd.AEROGPU_CMD_SET_TEXTURE_SIZE >>> 0;
+        if (typeof cmd.AEROGPU_CMD_SET_SAMPLER_STATE_SIZE === "number") {
+          AEROGPU_CMD_SET_SAMPLER_STATE_SIZE_BYTES = cmd.AEROGPU_CMD_SET_SAMPLER_STATE_SIZE >>> 0;
+        }
+        if (typeof cmd.AEROGPU_CMD_SET_RENDER_STATE_SIZE === "number") AEROGPU_CMD_SET_RENDER_STATE_SIZE_BYTES = cmd.AEROGPU_CMD_SET_RENDER_STATE_SIZE >>> 0;
         if (typeof cmd.AEROGPU_CMD_CREATE_SAMPLER_SIZE === "number") AEROGPU_CMD_CREATE_SAMPLER_SIZE_BYTES = cmd.AEROGPU_CMD_CREATE_SAMPLER_SIZE >>> 0;
         if (typeof cmd.AEROGPU_CMD_DESTROY_SAMPLER_SIZE === "number") AEROGPU_CMD_DESTROY_SAMPLER_SIZE_BYTES = cmd.AEROGPU_CMD_DESTROY_SAMPLER_SIZE >>> 0;
         if (typeof cmd.AEROGPU_CMD_SET_SAMPLERS_SIZE === "number") AEROGPU_CMD_SET_SAMPLERS_SIZE_BYTES = cmd.AEROGPU_CMD_SET_SAMPLERS_SIZE >>> 0;
@@ -233,6 +285,10 @@
 
   function readU16(view, off) {
     return view.getUint16(off, true);
+  }
+
+  function readI32(view, off) {
+    return view.getInt32(off, true);
   }
 
   function readU64Big(view, off) {
@@ -1081,18 +1137,23 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
     let acmdFramebuffer = null; // currently bound draw framebuffer (WebGLFramebuffer | null)
     let acmdColor0 = null; // { framebuffer, width, height } | null
     let acmdPrimitiveMode = gl.TRIANGLES;
+    let acmdPsTexture0 = null; // WebGLTexture | null
+    let acmdPsTexture0Target = gl.TEXTURE_2D;
 
     const ACMD_GLSL_VS = `#version 300 es
 precision highp float;
 layout(location=0) in vec2 a_position;
 layout(location=1) in vec4 a_color;
+layout(location=2) in float a_depth;
 out vec4 v_color;
+out vec2 v_uv;
 void main() {
   v_color = a_color;
-  gl_Position = vec4(a_position, 0.0, 1.0);
+  v_uv = a_color.xy;
+  gl_Position = vec4(a_position, a_depth, 1.0);
 }
 `;
-    const ACMD_GLSL_FS = `#version 300 es
+    const ACMD_GLSL_FS_COLOR = `#version 300 es
 precision highp float;
 in vec4 v_color;
 out vec4 o_color;
@@ -1100,8 +1161,20 @@ void main() {
   o_color = v_color;
 }
 `;
+    const ACMD_GLSL_FS_TEX = `#version 300 es
+precision highp float;
+in vec2 v_uv;
+uniform sampler2D u_tex0;
+out vec4 o_color;
+void main() {
+  o_color = texture(u_tex0, v_uv);
+}
+`;
 
-    const acmdProgram = linkProgram(ACMD_GLSL_VS, ACMD_GLSL_FS);
+    const acmdColorProgram = linkProgram(ACMD_GLSL_VS, ACMD_GLSL_FS_COLOR);
+    const acmdTexProgram = linkProgram(ACMD_GLSL_VS, ACMD_GLSL_FS_TEX);
+    const acmdTex0Loc = gl.getUniformLocation(acmdTexProgram, "u_tex0");
+    if (!acmdTex0Loc) fail("ACMD gl.getUniformLocation(u_tex0) failed");
     const acmdVao = gl.createVertexArray();
     if (!acmdVao) fail("gl.createVertexArray failed");
 
@@ -1176,6 +1249,80 @@ void main() {
             return gl.TRIANGLE_FAN;
           default:
             fail("ACMD unsupported primitive topology=" + topology);
+        }
+      }
+
+      function currentDrawSize() {
+        if (acmdColor0 && acmdFramebuffer !== null) return { w: acmdColor0.width, h: acmdColor0.height };
+        return { w: canvas.width, h: canvas.height };
+      }
+
+      function clamp01(v) {
+        v = Number(v);
+        if (!Number.isFinite(v)) return 0;
+        return Math.min(1, Math.max(0, v));
+      }
+
+      function getGlCompareFunc(func) {
+        switch (func >>> 0) {
+          case 0:
+            return gl.NEVER;
+          case 1:
+            return gl.LESS;
+          case 2:
+            return gl.EQUAL;
+          case 3:
+            return gl.LEQUAL;
+          case 4:
+            return gl.GREATER;
+          case 5:
+            return gl.NOTEQUAL;
+          case 6:
+            return gl.GEQUAL;
+          case 7:
+            return gl.ALWAYS;
+          default:
+            fail("ACMD unsupported compare func=" + func);
+        }
+      }
+
+      function getGlBlendFactor(f) {
+        switch (f >>> 0) {
+          case 0:
+            return gl.ZERO;
+          case 1:
+            return gl.ONE;
+          case 2:
+            return gl.SRC_ALPHA;
+          case 3:
+            return gl.ONE_MINUS_SRC_ALPHA;
+          case 4:
+            return gl.DST_ALPHA;
+          case 5:
+            return gl.ONE_MINUS_DST_ALPHA;
+          case 6:
+            return gl.CONSTANT_COLOR;
+          case 7:
+            return gl.ONE_MINUS_CONSTANT_COLOR;
+          default:
+            fail("ACMD unsupported blend factor=" + f);
+        }
+      }
+
+      function getGlBlendOp(op) {
+        switch (op >>> 0) {
+          case 0:
+            return gl.FUNC_ADD;
+          case 1:
+            return gl.FUNC_SUBTRACT;
+          case 2:
+            return gl.FUNC_REVERSE_SUBTRACT;
+          case 3:
+            return gl.MIN;
+          case 4:
+            return gl.MAX;
+          default:
+            fail("ACMD unsupported blend op=" + op);
         }
       }
 
@@ -1321,6 +1468,8 @@ void main() {
 
             const fb = gl.createFramebuffer();
             if (!fb) fail("gl.createFramebuffer failed");
+            const depthStencilRb = gl.createRenderbuffer();
+            if (!depthStencilRb) fail("gl.createRenderbuffer failed");
             const prevFb = acmdFramebuffer;
             gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
             if (target === gl.TEXTURE_2D_ARRAY) {
@@ -1329,6 +1478,9 @@ void main() {
             } else {
               gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
             }
+            gl.bindRenderbuffer(gl.RENDERBUFFER, depthStencilRb);
+            gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH24_STENCIL8, width, height);
+            gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_STENCIL_ATTACHMENT, gl.RENDERBUFFER, depthStencilRb);
             gl.drawBuffers([gl.COLOR_ATTACHMENT0]);
             const status = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
             if (status !== gl.FRAMEBUFFER_COMPLETE) {
@@ -1336,7 +1488,7 @@ void main() {
             }
             gl.bindFramebuffer(gl.FRAMEBUFFER, prevFb);
 
-            acmdTextures.set(textureHandle, { texture: tex, framebuffer: fb, width, height, format, target, mipLevels, arrayLayers });
+            acmdTextures.set(textureHandle, { texture: tex, framebuffer: fb, depthStencilRb, width, height, format, target, mipLevels, arrayLayers });
             registerSharedHandle(textureHandle);
             break;
           }
@@ -1358,6 +1510,7 @@ void main() {
               }
               if (acmdColor0 && acmdColor0.framebuffer === texObj.framebuffer) acmdColor0 = null;
               gl.deleteFramebuffer(texObj.framebuffer);
+              if (texObj.depthStencilRb) gl.deleteRenderbuffer(texObj.depthStencilRb);
               gl.deleteTexture(texObj.texture);
               acmdTextures.delete(underlying);
             }
@@ -1396,6 +1549,8 @@ void main() {
             const y = readF32(pv, off + 12);
             const wf = readF32(pv, off + 16);
             const hf = readF32(pv, off + 20);
+            const minDepth = readF32(pv, off + 24);
+            const maxDepth = readF32(pv, off + 28);
 
             // Treat a 0/0 viewport as "use canvas size" (like the minimal ABI).
             let w = wf;
@@ -1404,8 +1559,30 @@ void main() {
               w = canvas.width;
               h = canvas.height;
             }
-
-            gl.viewport(clampI32(x), clampI32(y), clampU31(w), clampU31(h));
+            const vw = clampU31(w);
+            const vh = clampU31(h);
+            const drawH = currentDrawSize().h;
+            // D3D-style viewport uses y=0 at top; WebGL uses y=0 at bottom.
+            const vyTop = clampI32(y);
+            const vy = drawH - (vyTop + vh);
+            gl.viewport(clampI32(x), vy, vw, vh);
+            gl.depthRange(clamp01(minDepth), clamp01(maxDepth));
+            break;
+          }
+          case AEROGPU_CMD_SET_SCISSOR: {
+            // struct aerogpu_cmd_set_scissor (24 bytes)
+            if (cmdSize < AEROGPU_CMD_SET_SCISSOR_SIZE_BYTES) fail("ACMD SET_SCISSOR size_bytes too small: " + cmdSize);
+            const x = readI32(pv, off + 8);
+            const y = readI32(pv, off + 12);
+            const w = readI32(pv, off + 16);
+            const h = readI32(pv, off + 20);
+            const drawH = currentDrawSize().h | 0;
+            const sw = Math.max(0, w | 0);
+            const sh = Math.max(0, h | 0);
+            const sx = x | 0;
+            // D3D-style scissor uses y=0 at top; WebGL uses y=0 at bottom.
+            const sy = drawH - ((y | 0) + sh);
+            gl.scissor(sx, sy, sw, sh);
             break;
           }
           case AEROGPU_CMD_SET_VERTEX_BUFFERS: {
@@ -1437,6 +1614,14 @@ void main() {
                 gl.vertexAttribPointer(0, 2, gl.FLOAT, false, strideBytes, offsetBytes + 0);
                 gl.enableVertexAttribArray(1);
                 gl.vertexAttribPointer(1, 4, gl.FLOAT, false, strideBytes, offsetBytes + 8);
+                // Optional depth: float at offset 24 (if present).
+                if (strideBytes >= 28) {
+                  gl.enableVertexAttribArray(2);
+                  gl.vertexAttribPointer(2, 1, gl.FLOAT, false, strideBytes, offsetBytes + 24);
+                } else {
+                  gl.disableVertexAttribArray(2);
+                  gl.vertexAttrib1f(2, 0.0);
+                }
                 gl.bindVertexArray(null);
               }
             }
@@ -1475,6 +1660,176 @@ void main() {
             if (cmdSize < requiredLen) fail("ACMD SET_CONSTANT_BUFFERS packet too small for buffer_count=" + bufferCount);
             break;
           }
+          case AEROGPU_CMD_SET_TEXTURE: {
+            // struct aerogpu_cmd_set_texture (24 bytes)
+            if (cmdSize < AEROGPU_CMD_SET_TEXTURE_SIZE_BYTES) fail("ACMD SET_TEXTURE size_bytes too small: " + cmdSize);
+            const shaderStage = readU32(pv, off + 8);
+            const slot = readU32(pv, off + 12);
+            const textureRaw = readU32(pv, off + 16);
+            if (shaderStage === 1 && slot === 0) {
+              if (textureRaw === 0) {
+                acmdPsTexture0 = null;
+              } else {
+                const textureHandle = resolveSharedHandle(textureRaw);
+                const texObj = acmdTextures.get(textureHandle);
+                if (!texObj) fail("ACMD SET_TEXTURE unknown texture_handle=" + textureRaw + " (resolved=" + textureHandle + ")");
+                if (texObj.target !== gl.TEXTURE_2D) {
+                  fail("ACMD SET_TEXTURE only supports TEXTURE_2D (got target=0x" + texObj.target.toString(16) + ")");
+                }
+                acmdPsTexture0 = texObj.texture;
+                acmdPsTexture0Target = texObj.target;
+              }
+            }
+            break;
+          }
+          case AEROGPU_CMD_SET_SAMPLER_STATE: {
+            // struct aerogpu_cmd_set_sampler_state (24 bytes)
+            if (cmdSize < AEROGPU_CMD_SET_SAMPLER_STATE_SIZE_BYTES) {
+              fail("ACMD SET_SAMPLER_STATE size_bytes too small: " + cmdSize);
+            }
+            break;
+          }
+          case AEROGPU_CMD_SET_RENDER_STATE: {
+            // struct aerogpu_cmd_set_render_state (16 bytes)
+            if (cmdSize < AEROGPU_CMD_SET_RENDER_STATE_SIZE_BYTES) fail("ACMD SET_RENDER_STATE size_bytes too small: " + cmdSize);
+            break;
+          }
+          case AEROGPU_CMD_SET_BLEND_STATE: {
+            // struct aerogpu_cmd_set_blend_state (60 bytes)
+            if (cmdSize < AEROGPU_CMD_SET_BLEND_STATE_SIZE_BYTES) fail("ACMD SET_BLEND_STATE size_bytes too small: " + cmdSize);
+            const enable = readU32(pv, off + 8) !== 0;
+            const srcFactor = readU32(pv, off + 12);
+            const dstFactor = readU32(pv, off + 16);
+            const blendOp = readU32(pv, off + 20);
+            const colorWriteMask = packetBytes[off + 24] & 0xff;
+            const srcFactorA = readU32(pv, off + 28);
+            const dstFactorA = readU32(pv, off + 32);
+            const blendOpA = readU32(pv, off + 36);
+            const blendConstR = readF32(pv, off + 40);
+            const blendConstG = readF32(pv, off + 44);
+            const blendConstB = readF32(pv, off + 48);
+            const blendConstA = readF32(pv, off + 52);
+
+            gl.colorMask(
+              (colorWriteMask & 0x01) !== 0,
+              (colorWriteMask & 0x02) !== 0,
+              (colorWriteMask & 0x04) !== 0,
+              (colorWriteMask & 0x08) !== 0,
+            );
+            if (enable) gl.enable(gl.BLEND);
+            else gl.disable(gl.BLEND);
+            gl.blendColor(blendConstR, blendConstG, blendConstB, blendConstA);
+            gl.blendFuncSeparate(
+              getGlBlendFactor(srcFactor),
+              getGlBlendFactor(dstFactor),
+              getGlBlendFactor(srcFactorA),
+              getGlBlendFactor(dstFactorA),
+            );
+            gl.blendEquationSeparate(getGlBlendOp(blendOp), getGlBlendOp(blendOpA));
+            break;
+          }
+          case AEROGPU_CMD_SET_DEPTH_STENCIL_STATE: {
+            // struct aerogpu_cmd_set_depth_stencil_state (28 bytes)
+            if (cmdSize < AEROGPU_CMD_SET_DEPTH_STENCIL_STATE_SIZE_BYTES) {
+              fail("ACMD SET_DEPTH_STENCIL_STATE size_bytes too small: " + cmdSize);
+            }
+            const depthEnable = readU32(pv, off + 8) !== 0;
+            const depthWrite = readU32(pv, off + 12) !== 0;
+            const depthFunc = readU32(pv, off + 16);
+            const stencilEnable = readU32(pv, off + 20) !== 0;
+            const stencilReadMask = packetBytes[off + 24] & 0xff;
+            const stencilWriteMask = packetBytes[off + 25] & 0xff;
+            if (depthEnable) gl.enable(gl.DEPTH_TEST);
+            else gl.disable(gl.DEPTH_TEST);
+            gl.depthMask(depthWrite);
+            gl.depthFunc(getGlCompareFunc(depthFunc));
+            if (stencilEnable) gl.enable(gl.STENCIL_TEST);
+            else gl.disable(gl.STENCIL_TEST);
+            gl.stencilMask(stencilWriteMask);
+            gl.stencilFunc(gl.ALWAYS, 0, stencilReadMask);
+            break;
+          }
+          case AEROGPU_CMD_SET_RASTERIZER_STATE: {
+            // struct aerogpu_cmd_set_rasterizer_state (32 bytes)
+            if (cmdSize < AEROGPU_CMD_SET_RASTERIZER_STATE_SIZE_BYTES) {
+              fail("ACMD SET_RASTERIZER_STATE size_bytes too small: " + cmdSize);
+            }
+            const fillMode = readU32(pv, off + 8);
+            const cullMode = readU32(pv, off + 12);
+            const frontCcw = readU32(pv, off + 16) !== 0;
+            const scissorEnable = readU32(pv, off + 20) !== 0;
+            const depthBias = readI32(pv, off + 24);
+            // flags at +28 (ignored)
+
+            if (fillMode !== 0 && fillMode !== 1) {
+              // Forward-compat: unknown fill_mode values are ignored.
+            }
+
+            if (cullMode === 0) gl.disable(gl.CULL_FACE);
+            else {
+              gl.enable(gl.CULL_FACE);
+              gl.cullFace(cullMode === 1 ? gl.FRONT : gl.BACK);
+            }
+            gl.frontFace(frontCcw ? gl.CCW : gl.CW);
+
+            if (scissorEnable) gl.enable(gl.SCISSOR_TEST);
+            else gl.disable(gl.SCISSOR_TEST);
+
+            if (depthBias !== 0) {
+              gl.enable(gl.POLYGON_OFFSET_FILL);
+              gl.polygonOffset(depthBias, 0.0);
+            } else {
+              gl.disable(gl.POLYGON_OFFSET_FILL);
+            }
+            break;
+          }
+          case AEROGPU_CMD_UPLOAD_RESOURCE: {
+            // struct aerogpu_cmd_upload_resource (32 bytes) + data
+            if (cmdSize < AEROGPU_CMD_UPLOAD_RESOURCE_SIZE_BYTES) fail("ACMD UPLOAD_RESOURCE size_bytes too small: " + cmdSize);
+            const resourceRaw = readU32(pv, off + 8);
+            const resourceHandle = resolveSharedHandle(resourceRaw);
+            const offsetBytesU64 = readU64Big(pv, off + 16);
+            const sizeBytesU64 = readU64Big(pv, off + 24);
+            const offsetBytes = u64BigToSafeNumber(offsetBytesU64, "ACMD UPLOAD_RESOURCE offset_bytes");
+            const sizeBytes = u64BigToSafeNumber(sizeBytesU64, "ACMD UPLOAD_RESOURCE size_bytes");
+            const dataOff = off + AEROGPU_CMD_UPLOAD_RESOURCE_SIZE_BYTES;
+            const dataEnd = dataOff + sizeBytes;
+            if (dataEnd > off + cmdSize) fail("ACMD UPLOAD_RESOURCE data out of bounds");
+            const data = packetBytes.subarray(dataOff, dataEnd);
+
+            const glBuf = acmdBuffers.get(resourceHandle);
+            if (glBuf) {
+              gl.bindBuffer(gl.ARRAY_BUFFER, glBuf);
+              gl.bufferSubData(gl.ARRAY_BUFFER, offsetBytes, data);
+              break;
+            }
+
+            const texObj = acmdTextures.get(resourceHandle);
+            if (texObj) {
+              if (offsetBytes !== 0) fail("ACMD UPLOAD_RESOURCE texture offset_bytes not supported: " + offsetBytes);
+              if (texObj.target !== gl.TEXTURE_2D || texObj.arrayLayers !== 1 || texObj.mipLevels < 1) {
+                fail("ACMD UPLOAD_RESOURCE only supports TEXTURE_2D array_layers=1");
+              }
+              const expected = texObj.width * texObj.height * 4;
+              if (sizeBytes !== expected) {
+                fail("ACMD UPLOAD_RESOURCE texture size_bytes mismatch: got " + sizeBytes + " expected " + expected);
+              }
+              gl.bindTexture(gl.TEXTURE_2D, texObj.texture);
+              gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, texObj.width, texObj.height, gl.RGBA, gl.UNSIGNED_BYTE, data);
+              break;
+            }
+
+            fail("ACMD UPLOAD_RESOURCE unknown resource_handle=" + resourceRaw + " (resolved=" + resourceHandle + ")");
+          }
+          case AEROGPU_CMD_RESOURCE_DIRTY_RANGE: {
+            // struct aerogpu_cmd_resource_dirty_range (32 bytes)
+            if (cmdSize < AEROGPU_CMD_RESOURCE_DIRTY_RANGE_SIZE_BYTES) {
+              fail("ACMD RESOURCE_DIRTY_RANGE size_bytes too small: " + cmdSize);
+            }
+            // Replay tool currently does not model CPU writes; recorded traces should use
+            // either guest-backed CREATE_* or inline UPLOAD_RESOURCE.
+            break;
+          }
           case AEROGPU_CMD_CLEAR: {
             // struct aerogpu_cmd_clear
             if (cmdSize < AEROGPU_CMD_CLEAR_SIZE_BYTES) fail("ACMD CLEAR size_bytes too small: " + cmdSize);
@@ -1510,7 +1865,14 @@ void main() {
             const firstInstance = readU32(pv, off + 20);
             if (firstInstance !== 0) fail("ACMD DRAW first_instance not supported: " + firstInstance);
 
-            gl.useProgram(acmdProgram);
+            if (acmdPsTexture0) {
+              gl.useProgram(acmdTexProgram);
+              gl.activeTexture(gl.TEXTURE0);
+              gl.bindTexture(acmdPsTexture0Target, acmdPsTexture0);
+              gl.uniform1i(acmdTex0Loc, 0);
+            } else {
+              gl.useProgram(acmdColorProgram);
+            }
             gl.bindVertexArray(acmdVao);
             if (instanceCount <= 1) {
               gl.drawArrays(acmdPrimitiveMode, firstVertex, vertexCount);
