@@ -4578,27 +4578,24 @@ void APIENTRY UpdateSubresourceUP(D3D10DDI_HDEVICE hDevice, const D3D10DDIARG_UP
         return;
       }
       std::memcpy(res->storage.data() + dst_off, src_bytes + src_off, row_bytes);
-      // Only clear per-row padding when the update covers the full row width; if
-      // we clear beyond the box width we can clobber unrelated texels.
-      if (full_row_update && dst_layout.row_pitch_bytes > row_bytes) {
+      // For boxed updates, preserve any per-row padding outside the updated
+      // rectangle. Only clear padding for full-subresource uploads.
+      if (!pUpdate->pDstBox && full_row_update && dst_layout.row_pitch_bytes > row_bytes) {
         const size_t dst_row_start = dst_base + static_cast<size_t>(block_top + y) * dst_layout.row_pitch_bytes;
         std::memset(res->storage.data() + dst_row_start + row_bytes, 0, dst_layout.row_pitch_bytes - row_bytes);
       }
     }
 
     if (res->backing_alloc_id == 0 && pUpdate->pDstBox) {
-      // Host-owned resources are updated via UPLOAD_RESOURCE payloads. For boxed
-      // updates, upload one contiguous range per updated row so we do not
-      // overwrite unrelated regions of the subresource with any stale CPU-side
-      // mirror data.
+      // Host-owned boxed texture uploads must be row-aligned for the host-side
+      // executor. Upload the affected row range (full rows) rather than
+      // attempting to upload per-row subranges.
       const uint64_t row_pitch_u64 = static_cast<uint64_t>(dst_layout.row_pitch_bytes);
-      const uint64_t x_off_u64 =
-          static_cast<uint64_t>(block_left) * static_cast<uint64_t>(fmt_layout.bytes_per_block);
-      for (uint32_t y = 0; y < copy_height_blocks; ++y) {
-        const uint64_t upload_offset =
-            dst_layout.offset_bytes + static_cast<uint64_t>(block_top + y) * row_pitch_u64 + x_off_u64;
-        EmitUploadLocked(hDevice, dev, res, upload_offset, static_cast<uint64_t>(row_bytes));
-      }
+      const uint64_t upload_offset =
+          dst_layout.offset_bytes + static_cast<uint64_t>(block_top) * row_pitch_u64;
+      const uint64_t upload_size =
+          static_cast<uint64_t>(copy_height_blocks) * row_pitch_u64;
+      EmitUploadLocked(hDevice, dev, res, upload_offset, upload_size);
       return;
     }
 
