@@ -3,7 +3,7 @@ use std::boxed::Box;
 use aero_usb::xhci::context::{InputControlContext, SlotContext, CONTEXT_SIZE};
 use aero_usb::xhci::regs;
 use aero_usb::xhci::trb::{CompletionCode, Trb, TrbType, TRB_LEN};
-use aero_usb::xhci::{regs, CommandCompletionCode, XhciController};
+use aero_usb::xhci::{CommandCompletionCode, XhciController};
 use aero_usb::{ControlResponse, MemoryBus, SetupPacket, UsbDeviceModel, UsbInResult};
 
 mod util;
@@ -109,6 +109,7 @@ fn xhci_configure_endpoint_drop_clears_pending_doorbells() {
     make_normal_trb(buf_ptr, 8, true, true).write_to(&mut mem, ring_base);
 
     let mut ctrl = XhciController::new();
+    ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
     ctrl.attach_device(0, Box::new(InterruptInDevice));
     while ctrl.pop_pending_event().is_some() {}
 
@@ -122,6 +123,14 @@ fn xhci_configure_endpoint_drop_clears_pending_doorbells() {
     slot_ctx.set_root_hub_port_number(1);
     let addr = ctrl.address_device(slot_id, slot_ctx);
     assert_eq!(addr.completion_code, CommandCompletionCode::Success);
+
+    // Ensure the output Slot Context in guest memory is populated. Configure Endpoint reads the
+    // Slot Context from the output Device Context and mirrors it back into controller-local state;
+    // if we leave it zeroed, the slot would no longer resolve to an attached device after dropping
+    // endpoints.
+    let mut out_slot_ctx = SlotContext::default();
+    out_slot_ctx.set_root_hub_port_number(1);
+    out_slot_ctx.write_to(&mut mem, dev_ctx);
 
     // Transfer-ring execution is gated on USBCMD.RUN.
     ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
@@ -171,6 +180,7 @@ fn xhci_configure_endpoint_deconfigure_clears_pending_doorbells() {
     make_normal_trb(buf_ptr, 8, true, true).write_to(&mut mem, ring_base);
 
     let mut ctrl = XhciController::new();
+    ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
     ctrl.attach_device(0, Box::new(InterruptInDevice));
     while ctrl.pop_pending_event().is_some() {}
 
