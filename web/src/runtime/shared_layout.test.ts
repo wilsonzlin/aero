@@ -10,11 +10,16 @@ import {
   SCANOUT_STATE_U32_LEN,
   snapshotScanoutState,
 } from "../ipc/scanout_state";
+import { computeSharedFramebufferLayout, FramebufferFormat } from "../ipc/shared-layout";
 import { AerogpuFormat } from "../../../emulator/protocol/aerogpu/aerogpu_pci.ts";
+import { allocateHarnessSharedMemorySegments } from "./harness_shared_memory";
 import {
   COMMAND_RING_CAPACITY_BYTES,
   CONTROL_BYTES,
   CPU_WORKER_DEMO_FRAMEBUFFER_OFFSET_BYTES,
+  CPU_WORKER_DEMO_FRAMEBUFFER_HEIGHT,
+  CPU_WORKER_DEMO_FRAMEBUFFER_TILE_SIZE,
+  CPU_WORKER_DEMO_FRAMEBUFFER_WIDTH,
   EVENT_RING_CAPACITY_BYTES,
   HIGH_RAM_START,
   IO_IPC_CMD_QUEUE_KIND,
@@ -49,6 +54,17 @@ describe("runtime/shared_layout", () => {
   // standalone SharedArrayBuffer for the framebuffer.
   const TEST_GUEST_RAM_MIB = 1;
   const TEST_VRAM_MIB = 1;
+  // `allocateSharedMemorySegments` always allocates the full wasm32 runtime-reserved region
+  // (~128MiB) in addition to guest RAM. Cache the result so we only pay that cost once for
+  // this suite (these SharedArrayBuffer/WebAssembly.Memory allocations are not guaranteed to
+  // be promptly released by the JS runtime).
+  let baseSegments: ReturnType<typeof allocateSharedMemorySegments> | null = null;
+  const getBaseSegments = (): ReturnType<typeof allocateSharedMemorySegments> => {
+    if (!baseSegments) {
+      baseSegments = allocateSharedMemorySegments({ guestRamMiB: TEST_GUEST_RAM_MIB, vramMiB: TEST_VRAM_MIB });
+    }
+    return baseSegments;
+  };
 
   it("places status + rings without overlap", () => {
     const regions: Array<{ name: string; start: number; end: number }> = [
@@ -94,7 +110,7 @@ describe("runtime/shared_layout", () => {
     expect(COMMAND_RING_CAPACITY_BYTES % RECORD_ALIGN).toBe(0);
     expect(EVENT_RING_CAPACITY_BYTES % RECORD_ALIGN).toBe(0);
 
-    const segments = allocateSharedMemorySegments({ guestRamMiB: TEST_GUEST_RAM_MIB, vramMiB: TEST_VRAM_MIB });
+    const segments = getBaseSegments();
     for (const role of WORKER_ROLES) {
       const regions = ringRegionsForWorker(role);
 
@@ -109,7 +125,16 @@ describe("runtime/shared_layout", () => {
   it(
     "transfers messages across threads using a shared_layout ring",
     async () => {
-      const segments = allocateSharedMemorySegments({ guestRamMiB: TEST_GUEST_RAM_MIB, vramMiB: TEST_VRAM_MIB });
+      // This test exercises the shared ring buffer logic; it does not require the full runtime
+      // allocator (which reserves a large wasm32 runtime region). Use the harness allocator to
+      // keep memory usage low.
+      const segments = allocateHarnessSharedMemorySegments({
+        guestRamBytes: 1 * 1024 * 1024,
+        sharedFramebuffer: new SharedArrayBuffer(8),
+        sharedFramebufferOffsetBytes: 0,
+        ioIpcBytes: 0,
+        vramBytes: 0,
+      });
       const regions = ringRegionsForWorker("cpu");
       const ring = new RingBuffer(segments.control, regions.command.byteOffset);
 
@@ -148,7 +173,7 @@ describe("runtime/shared_layout", () => {
   );
 
   it("creates shared views for control + guest memory", () => {
-    const segments = allocateSharedMemorySegments({ guestRamMiB: TEST_GUEST_RAM_MIB, vramMiB: TEST_VRAM_MIB });
+    const segments = getBaseSegments();
     const views = createSharedMemoryViews(segments);
 
     expect(views.status.byteOffset).toBe(0);
@@ -168,13 +193,13 @@ describe("runtime/shared_layout", () => {
   });
 
   it("does not allocate a separate vgaFramebuffer segment (legacy scanout uses sharedFramebuffer)", () => {
-    const segments = allocateSharedMemorySegments({ guestRamMiB: TEST_GUEST_RAM_MIB, vramMiB: TEST_VRAM_MIB });
+    const segments = getBaseSegments();
     // Historical field; should be absent so workers can't dead-write into an unused region.
     expect((segments as unknown as { vgaFramebuffer?: unknown }).vgaFramebuffer).toBeUndefined();
   });
 
   it("allocates and initializes scanoutState", () => {
-    const segments = allocateSharedMemorySegments({ guestRamMiB: TEST_GUEST_RAM_MIB, vramMiB: TEST_VRAM_MIB });
+    const segments = getBaseSegments();
     expect(segments.scanoutState).toBeInstanceOf(SharedArrayBuffer);
 
     // ScanoutState is embedded inside the shared WebAssembly.Memory so WASM can update it directly.
@@ -207,19 +232,28 @@ describe("runtime/shared_layout", () => {
   });
 
   it("falls back to standalone shared framebuffer when guest RAM is too small to embed it", () => {
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: TEST_VRAM_MIB });
+    const segments = getBaseSegments();
     expect(segments.sharedFramebuffer).not.toBe(segments.guestMemory.buffer);
     expect(segments.sharedFramebufferOffsetBytes).toBe(0);
   });
 
   it("embeds shared framebuffer in guest memory when there is enough guest RAM", () => {
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 16, vramMiB: TEST_VRAM_MIB });
+    const demoLayout = computeSharedFramebufferLayout(
+      CPU_WORKER_DEMO_FRAMEBUFFER_WIDTH,
+      CPU_WORKER_DEMO_FRAMEBUFFER_HEIGHT,
+      CPU_WORKER_DEMO_FRAMEBUFFER_WIDTH * 4,
+      FramebufferFormat.RGBA8,
+      CPU_WORKER_DEMO_FRAMEBUFFER_TILE_SIZE,
+    );
+    const requiredGuestBytes = CPU_WORKER_DEMO_FRAMEBUFFER_OFFSET_BYTES + demoLayout.totalBytes;
+    const guestRamMiB = Math.ceil(requiredGuestBytes / (1024 * 1024));
+    const segments = allocateSharedMemorySegments({ guestRamMiB, vramMiB: 0 });
     expect(segments.sharedFramebuffer).toBe(segments.guestMemory.buffer);
     expect(segments.sharedFramebufferOffsetBytes).toBe(RUNTIME_RESERVED_BYTES + CPU_WORKER_DEMO_FRAMEBUFFER_OFFSET_BYTES);
   });
 
   it("allocates ioIpc AIPC queues for device I/O + raw Ethernet frames", () => {
-    const segments = allocateSharedMemorySegments({ guestRamMiB: TEST_GUEST_RAM_MIB, vramMiB: TEST_VRAM_MIB });
+    const segments = getBaseSegments();
     const { queues } = parseIpcBuffer(segments.ioIpc);
 
     expect(queues.map((q) => q.kind).sort((a, b) => a - b)).toEqual([
