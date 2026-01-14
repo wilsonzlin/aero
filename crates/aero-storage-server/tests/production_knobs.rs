@@ -24,6 +24,10 @@ async fn cors_preflight_max_age_is_configurable_for_bytes_and_metadata() {
     for (name, uri) in [
         ("bytes", "/v1/images/test.img"),
         ("meta", "/v1/images/test.img/meta"),
+        ("chunked-manifest", "/v1/images/test.img/chunked/manifest.json"),
+        ("chunked-chunk", "/v1/images/test.img/chunked/chunks/00000000.bin"),
+        ("chunked-manifest-v1", "/v1/images/test.img/chunked/v1/manifest.json"),
+        ("chunked-chunk-v1", "/v1/images/test.img/chunked/v1/chunks/00000000.bin"),
     ] {
         let res = app
             .clone()
@@ -56,6 +60,36 @@ async fn cors_multi_origin_allowlist_echoes_allowed_origin_and_omits_disallowed(
         .await
         .expect("write test file");
 
+    // Chunked artifacts for the chunked endpoints.
+    let chunk_root = dir.path().join("chunked").join("test.img");
+    tokio::fs::create_dir_all(chunk_root.join("chunks"))
+        .await
+        .expect("create chunk dirs");
+    tokio::fs::write(
+        chunk_root.join("manifest.json"),
+        b"{\"schema\":\"aero.chunked-disk-image.v1\"}",
+    )
+    .await
+    .expect("write chunked manifest");
+    tokio::fs::write(chunk_root.join("chunks/00000000.bin"), b"x")
+        .await
+        .expect("write chunk");
+
+    // Versioned chunked artifacts for explicit `/chunked/:version/...` routes.
+    let chunk_root_v1 = dir.path().join("chunked").join("test.img").join("v1");
+    tokio::fs::create_dir_all(chunk_root_v1.join("chunks"))
+        .await
+        .expect("create chunk dirs (v1)");
+    tokio::fs::write(
+        chunk_root_v1.join("manifest.json"),
+        b"{\"schema\":\"aero.chunked-disk-image.v1\"}",
+    )
+    .await
+    .expect("write chunked manifest (v1)");
+    tokio::fs::write(chunk_root_v1.join("chunks/00000000.bin"), b"x")
+        .await
+        .expect("write chunk (v1)");
+
     let store = Arc::new(LocalFsImageStore::new(dir.path()));
     let state = AppState::new(store)
         .with_cors_allowed_origins(["https://a.example", "https://b.example"])
@@ -65,6 +99,10 @@ async fn cors_multi_origin_allowlist_echoes_allowed_origin_and_omits_disallowed(
     for (name, uri) in [
         ("bytes", "/v1/images/test.img"),
         ("meta", "/v1/images/test.img/meta"),
+        ("chunked-manifest", "/v1/images/test.img/chunked/manifest.json"),
+        ("chunked-chunk", "/v1/images/test.img/chunked/chunks/00000000.bin"),
+        ("chunked-manifest-v1", "/v1/images/test.img/chunked/v1/manifest.json"),
+        ("chunked-chunk-v1", "/v1/images/test.img/chunked/v1/chunks/00000000.bin"),
         ("metrics", "/metrics"),
     ] {
         let res = app
@@ -92,6 +130,10 @@ async fn cors_multi_origin_allowlist_echoes_allowed_origin_and_omits_disallowed(
     for (name, uri) in [
         ("bytes", "/v1/images/test.img"),
         ("meta", "/v1/images/test.img/meta"),
+        ("chunked-manifest", "/v1/images/test.img/chunked/manifest.json"),
+        ("chunked-chunk", "/v1/images/test.img/chunked/chunks/00000000.bin"),
+        ("chunked-manifest-v1", "/v1/images/test.img/chunked/v1/manifest.json"),
+        ("chunked-chunk-v1", "/v1/images/test.img/chunked/v1/chunks/00000000.bin"),
         ("metrics", "/metrics"),
     ] {
         let res = app
