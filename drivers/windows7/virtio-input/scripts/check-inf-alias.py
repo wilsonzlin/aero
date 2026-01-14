@@ -35,9 +35,7 @@ MODELS_SECTIONS = {"aero.ntx86", "aero.ntamd64"}
 
 
 def strip_inf_comments(line: str) -> str:
-    """
-    Remove INF comments (starting with ';') outside of quoted strings.
-    """
+    """Remove INF comments (starting with ';') outside of quoted strings."""
 
     out: list[str] = []
     in_quote = False
@@ -62,7 +60,7 @@ def inf_functional_lines(path: Path) -> list[str]:
 
     raw_lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
 
-    start = None
+    start: int | None = None
     for i, line in enumerate(raw_lines):
         stripped = line.lstrip(" \t")
         if stripped.startswith("["):
@@ -73,6 +71,7 @@ def inf_functional_lines(path: Path) -> list[str]:
         # Unexpected functional content before the first section header: keep it.
         start = i
         break
+
     if start is None:
         raise RuntimeError(f"{path}: could not find a section header (e.g. [Version])")
 
@@ -128,7 +127,8 @@ def main() -> int:
 
     sys.stderr.write("virtio-input INF alias drift detected.\n")
     sys.stderr.write(
-        "The alias INF must match the canonical INF from [Version] onward (excluding models sections Aero.NTx86/Aero.NTamd64).\n\n"
+        "The alias INF must match the canonical INF from [Version] onward "
+        "(excluding models sections Aero.NTx86/Aero.NTamd64).\n\n"
     )
 
     # Use repo-relative paths in the diff output to keep it readable and stable
@@ -151,3 +151,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
