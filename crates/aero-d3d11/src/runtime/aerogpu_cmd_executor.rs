@@ -12186,9 +12186,14 @@ impl AerogpuD3d11Executor {
                 ShaderStage::Vertex => "vs_main",
                 ShaderStage::Pixel => "fs_main",
                 ShaderStage::Compute => "cs_main",
-                ShaderStage::Geometry | ShaderStage::Hull | ShaderStage::Domain => {
-                    unreachable!("ignored shader stage should have returned earlier: {stage:?}")
-                }
+                // Geometry/tessellation stages are lowered/emulated via compute.
+                //
+                // Note: the persistent shader cache path currently bypasses GS/HS/DS shaders (it
+                // falls back to the non-persistent create path), but keep the match exhaustive for
+                // forward compatibility.
+                ShaderStage::Geometry => "gs_main",
+                ShaderStage::Hull => "hs_main",
+                ShaderStage::Domain => "ds_main",
             };
 
             let (hash, _module) = self.pipeline_cache.get_or_create_shader_module(
