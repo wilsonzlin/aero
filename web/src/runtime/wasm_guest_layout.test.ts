@@ -93,10 +93,10 @@ describe("runtime/wasm_guest_layout", () => {
       // In browsers, `crossOriginIsolated` must be true for SharedArrayBuffer/WASM
       // threads. Spoof it here so the test exercises the same (web-like) path
       // under Node/Vitest.
-      const hadCrossOriginIsolated = Object.prototype.hasOwnProperty.call(globalThis, "crossOriginIsolated");
-      const originalCrossOriginIsolated = (globalThis as any).crossOriginIsolated;
+      const originalCrossOriginIsolatedDescriptor =
+        variant === "threaded" ? Object.getOwnPropertyDescriptor(globalThis, "crossOriginIsolated") : undefined;
       if (variant === "threaded") {
-        (globalThis as any).crossOriginIsolated = true;
+        Object.defineProperty(globalThis, "crossOriginIsolated", { value: true, configurable: true });
       }
 
       try {
@@ -148,10 +148,10 @@ describe("runtime/wasm_guest_layout", () => {
         throw err;
       } finally {
         if (variant === "threaded") {
-          if (hadCrossOriginIsolated) {
-            (globalThis as any).crossOriginIsolated = originalCrossOriginIsolated;
+          if (originalCrossOriginIsolatedDescriptor) {
+            Object.defineProperty(globalThis, "crossOriginIsolated", originalCrossOriginIsolatedDescriptor);
           } else {
-            delete (globalThis as any).crossOriginIsolated;
+            Reflect.deleteProperty(globalThis, "crossOriginIsolated");
           }
         }
       }

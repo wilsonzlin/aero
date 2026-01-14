@@ -127,13 +127,14 @@ describe("runtime/boot_disks_protocol", () => {
         Object.defineProperty(Object.prototype, "cdId", { value: "evil2", configurable: true });
         const msg = normalizeSetBootDisksMessage({ type: "setBootDisks" });
         expect(msg).not.toBeNull();
-        expect((msg as any).mounts.hddId).toBeUndefined();
-        expect((msg as any).mounts.cdId).toBeUndefined();
+        if (!msg) throw new Error("expected normalized message");
+        expect(msg.mounts.hddId).toBeUndefined();
+        expect(msg.mounts.cdId).toBeUndefined();
       } finally {
         if (hddExisting) Object.defineProperty(Object.prototype, "hddId", hddExisting);
-        else delete (Object.prototype as any).hddId;
+        else Reflect.deleteProperty(Object.prototype, "hddId");
         if (cdExisting) Object.defineProperty(Object.prototype, "cdId", cdExisting);
-        else delete (Object.prototype as any).cdId;
+        else Reflect.deleteProperty(Object.prototype, "cdId");
       }
     });
 

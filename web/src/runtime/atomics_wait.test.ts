@@ -36,8 +36,9 @@ describe('waitUntilNotEqual', () => {
   });
 
   it('falls back to polling when Atomics.waitAsync is unavailable', async () => {
-    const original = (Atomics as any).waitAsync as unknown;
-    (Atomics as any).waitAsync = undefined;
+    const mutableAtomics = Atomics as unknown as { waitAsync?: unknown };
+    const original = mutableAtomics.waitAsync;
+    mutableAtomics.waitAsync = undefined;
 
     vi.useFakeTimers();
     try {
@@ -55,13 +56,14 @@ describe('waitUntilNotEqual', () => {
       await expect(promise).resolves.toBe('ok');
     } finally {
       vi.useRealTimers();
-      (Atomics as any).waitAsync = original as any;
+      mutableAtomics.waitAsync = original;
     }
   });
 
   it('times out', async () => {
-    const original = (Atomics as any).waitAsync as unknown;
-    (Atomics as any).waitAsync = undefined;
+    const mutableAtomics = Atomics as unknown as { waitAsync?: unknown };
+    const original = mutableAtomics.waitAsync;
+    mutableAtomics.waitAsync = undefined;
 
     vi.useFakeTimers();
     try {
@@ -75,7 +77,7 @@ describe('waitUntilNotEqual', () => {
       await expect(promise).resolves.toBe('timed-out');
     } finally {
       vi.useRealTimers();
-      (Atomics as any).waitAsync = original as any;
+      mutableAtomics.waitAsync = original;
     }
   });
 

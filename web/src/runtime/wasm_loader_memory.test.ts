@@ -23,9 +23,8 @@ describe("runtime/wasm_loader (memory injection)", () => {
     // In browsers, `crossOriginIsolated` must be true for SharedArrayBuffer/WASM
     // threads. Spoof it here so the test exercises the same (web-like) path
     // under Node/Vitest.
-    const hadCrossOriginIsolated = Object.prototype.hasOwnProperty.call(globalThis, "crossOriginIsolated");
-    const originalCrossOriginIsolated = (globalThis as any).crossOriginIsolated;
-    (globalThis as any).crossOriginIsolated = true;
+    const originalCrossOriginIsolatedDescriptor = Object.getOwnPropertyDescriptor(globalThis, "crossOriginIsolated");
+    Object.defineProperty(globalThis, "crossOriginIsolated", { value: true, configurable: true });
 
     try {
       // Avoid poking at the low addresses reserved for the Rust/WASM runtime by
@@ -50,10 +49,10 @@ describe("runtime/wasm_loader (memory injection)", () => {
         throw err;
       }
     } finally {
-      if (hadCrossOriginIsolated) {
-        (globalThis as any).crossOriginIsolated = originalCrossOriginIsolated;
+      if (originalCrossOriginIsolatedDescriptor) {
+        Object.defineProperty(globalThis, "crossOriginIsolated", originalCrossOriginIsolatedDescriptor);
       } else {
-        delete (globalThis as any).crossOriginIsolated;
+        Reflect.deleteProperty(globalThis, "crossOriginIsolated");
       }
     }
   });

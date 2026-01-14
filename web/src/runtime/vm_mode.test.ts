@@ -20,9 +20,12 @@ describe("runtime/vm_mode", () => {
   });
 
   it("vmRuntime=legacy + no boot disks enters legacy demo mode", () => {
+    // Include the legacy `activeDiskImage` field to ensure it does not influence the decision.
+    // (Boot disk mounts are the canonical signal.)
+    const legacyConfig = { vmRuntime: "legacy" as const, activeDiskImage: "ignored.img" };
     expect(
       shouldRunLegacyDemoMode({
-        config: { vmRuntime: "legacy", activeDiskImage: "ignored.img" } as any,
+        config: legacyConfig,
         bootDisks: { mounts: {}, hdd: null, cd: null },
       }),
     ).toBe(true);
@@ -78,9 +81,9 @@ describe("runtime/vm_mode", () => {
       ).toBe(false);
     } finally {
       if (hddExisting) Object.defineProperty(Object.prototype, "hddId", hddExisting);
-      else delete (Object.prototype as any).hddId;
+      else Reflect.deleteProperty(Object.prototype, "hddId");
       if (cdExisting) Object.defineProperty(Object.prototype, "cdId", cdExisting);
-      else delete (Object.prototype as any).cdId;
+      else Reflect.deleteProperty(Object.prototype, "cdId");
     }
   });
 });

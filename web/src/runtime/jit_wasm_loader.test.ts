@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 // Empty (but valid) WASM module: just the header.
 const WASM_EMPTY_MODULE_BYTES = new Uint8Array([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]);
 
-const originalJsOverride = (globalThis as any).__aeroJitWasmJsImporterOverride;
+const originalJsOverride = globalThis.__aeroJitWasmJsImporterOverride;
 const originalCrossOriginIsolatedDescriptor = Object.getOwnPropertyDescriptor(globalThis, "crossOriginIsolated");
 const originalWasmMemory = WebAssembly.Memory;
 
@@ -24,8 +24,7 @@ function restoreWasmMemory(): void {
 }
 
 afterEach(() => {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (globalThis as any).__aeroJitWasmJsImporterOverride = originalJsOverride;
+  globalThis.__aeroJitWasmJsImporterOverride = originalJsOverride;
   restoreCrossOriginIsolated();
   restoreWasmMemory();
   vi.resetModules();
@@ -49,8 +48,7 @@ describe("runtime/jit_wasm_loader", () => {
       }),
     };
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (globalThis as any).__aeroJitWasmJsImporterOverride = {
+    globalThis.__aeroJitWasmJsImporterOverride = {
       single: async () => fakeModule,
       threaded: async () => fakeModule,
     };
@@ -125,8 +123,7 @@ describe("runtime/jit_wasm_loader", () => {
       }),
     };
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (globalThis as any).__aeroJitWasmJsImporterOverride = {
+    globalThis.__aeroJitWasmJsImporterOverride = {
       single: async () => fakeSingleModule,
       threaded: async () => {
         threadedImporterCalls += 1;
@@ -165,8 +162,7 @@ describe("runtime/jit_wasm_loader", () => {
         }),
       };
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (globalThis as any).__aeroJitWasmJsImporterOverride = {
+      globalThis.__aeroJitWasmJsImporterOverride = {
         single: async () => {
           importerCalls += 1;
           return fakeModule;

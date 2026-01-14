@@ -11,23 +11,19 @@ import { precompileWasm } from "./wasm_preload";
 // Empty (but valid) WASM module: just the header.
 const WASM_EMPTY_MODULE_BYTES = new Uint8Array([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]);
 
-const originalFetch = globalThis.fetch;
-const originalBinaryOverride = (globalThis as any).__aeroWasmBinaryUrlOverride;
-const originalJsOverride = (globalThis as any).__aeroWasmJsImporterOverride;
+const originalFetchDescriptor = Object.getOwnPropertyDescriptor(globalThis, "fetch");
+const originalBinaryOverride = globalThis.__aeroWasmBinaryUrlOverride;
+const originalJsOverride = globalThis.__aeroWasmJsImporterOverride;
 
 afterEach(() => {
-  if (originalFetch) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (globalThis as any).fetch = originalFetch;
+  if (originalFetchDescriptor) {
+    Object.defineProperty(globalThis, "fetch", originalFetchDescriptor);
   } else {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    delete (globalThis as any).fetch;
+    Reflect.deleteProperty(globalThis, "fetch");
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (globalThis as any).__aeroWasmBinaryUrlOverride = originalBinaryOverride;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (globalThis as any).__aeroWasmJsImporterOverride = originalJsOverride;
+  globalThis.__aeroWasmBinaryUrlOverride = originalBinaryOverride;
+  globalThis.__aeroWasmJsImporterOverride = originalJsOverride;
 
   vi.restoreAllMocks();
 });
@@ -36,21 +32,19 @@ describe("runtime/wasm_preload", () => {
   it("precompiles a module and allows initWasm({ module }) to instantiate", async () => {
     const url = "https://example.invalid/aero_wasm_bg.wasm";
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (globalThis as any).__aeroWasmBinaryUrlOverride = { single: url };
+    globalThis.__aeroWasmBinaryUrlOverride = { single: url };
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (globalThis as any).fetch = vi.fn(async (requested: unknown) => {
+    const fetchMock = vi.fn(async (requested: RequestInfo | URL) => {
       expect(String(requested)).toBe(url);
       return new Response(WASM_EMPTY_MODULE_BYTES, {
         status: 200,
         headers: { "Content-Type": "application/wasm" },
       });
     });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
 
     let initInput: unknown;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (globalThis as any).__aeroWasmJsImporterOverride = {
+    globalThis.__aeroWasmJsImporterOverride = {
       single: async () => ({
         default: async (input?: unknown) => {
           initInput = input;
@@ -91,20 +85,18 @@ describe("runtime/wasm_preload", () => {
 
       const url = pathToFileURL(wasmPath).toString();
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (globalThis as any).__aeroWasmBinaryUrlOverride = { threaded: url };
+      globalThis.__aeroWasmBinaryUrlOverride = { threaded: url };
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (globalThis as any).fetch = vi.fn(async () => {
+      const fetchMock = vi.fn(async () => {
         throw new Error("fetch() should not be called for file: URLs in Node");
       });
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
 
       const compiled = await precompileWasm("threaded");
       expect(compiled.url).toBe(url);
       expect(compiled.module).toBeInstanceOf(WebAssembly.Module);
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      expect((globalThis as any).fetch).not.toHaveBeenCalled();
+      expect(fetchMock).not.toHaveBeenCalled();
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -119,13 +111,12 @@ describe("runtime/wasm_preload", () => {
       // Vite can represent filesystem assets as `/@fs/<absolute-path>?url`.
       const url = `/@fs/${wasmPath.slice(1)}?url`;
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (globalThis as any).__aeroWasmBinaryUrlOverride = { threaded: url };
+      globalThis.__aeroWasmBinaryUrlOverride = { threaded: url };
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (globalThis as any).fetch = vi.fn(async () => {
+      const fetchMock = vi.fn(async () => {
         throw new Error("fetch() should not be called for /@fs/ URLs in Node");
       });
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
 
       // `precompileWasm()` caches per variant, so load a fresh module instance.
       vi.resetModules();
@@ -135,8 +126,7 @@ describe("runtime/wasm_preload", () => {
       expect(compiled.url).toBe(url);
       expect(compiled.module).toBeInstanceOf(WebAssembly.Module);
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      expect((globalThis as any).fetch).not.toHaveBeenCalled();
+      expect(fetchMock).not.toHaveBeenCalled();
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

@@ -5,11 +5,10 @@ import { initWasm } from "./wasm_loader";
 // Empty (but valid) WASM module: just the header.
 const WASM_EMPTY_MODULE_BYTES = new Uint8Array([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]);
 
-const originalJsOverride = (globalThis as any).__aeroWasmJsImporterOverride;
+const originalJsOverride = globalThis.__aeroWasmJsImporterOverride;
 
 afterEach(() => {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (globalThis as any).__aeroWasmJsImporterOverride = originalJsOverride;
+  globalThis.__aeroWasmJsImporterOverride = originalJsOverride;
 });
 
 function sharedMemorySupported(): boolean {
@@ -31,8 +30,7 @@ describe("runtime/wasm_loader (optional exports)", () => {
     const MouseButton = { Left: 0, Middle: 1, Right: 2, Back: 3, Forward: 4 } as const;
     const MouseButtons = { Left: 1, Right: 2, Middle: 4, Back: 8, Forward: 16 } as const;
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (globalThis as any).__aeroWasmJsImporterOverride = {
+    globalThis.__aeroWasmJsImporterOverride = {
       single: async () => ({
         default: async (_input?: unknown) => {},
         greet: (name: string) => `hello ${name}`,
@@ -68,8 +66,7 @@ describe("runtime/wasm_loader (optional exports)", () => {
 
     const storage_capabilities = () => caps;
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (globalThis as any).__aeroWasmJsImporterOverride = {
+    globalThis.__aeroWasmJsImporterOverride = {
       single: async () => ({
         default: async (_input?: unknown) => {},
         greet: (name: string) => `hello ${name}`,
@@ -120,8 +117,7 @@ describe("runtime/wasm_loader (optional exports)", () => {
     const open_ring_by_kind = (_buffer: SharedArrayBuffer, _kind: number, _nth: number) =>
       new FakeSharedRingBuffer(_buffer, 0);
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (globalThis as any).__aeroWasmJsImporterOverride = {
+    globalThis.__aeroWasmJsImporterOverride = {
       single: async () => ({
         default: async (_input?: unknown) => {},
         greet: (name: string) => `hello ${name}`,
@@ -269,8 +265,7 @@ describe("runtime/wasm_loader (optional exports)", () => {
       free(): void {}
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (globalThis as any).__aeroWasmJsImporterOverride = {
+    globalThis.__aeroWasmJsImporterOverride = {
       single: async () => ({
         default: async (_input?: unknown) => {},
         greet: (name: string) => `hello ${name}`,
@@ -305,8 +300,7 @@ describe("runtime/wasm_loader (optional exports)", () => {
       free(): void {}
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (globalThis as any).__aeroWasmJsImporterOverride = {
+    globalThis.__aeroWasmJsImporterOverride = {
       single: async () => ({
         default: async (_input?: unknown) => {},
         greet: (name: string) => `hello ${name}`,
@@ -341,8 +335,7 @@ describe("runtime/wasm_loader (optional exports)", () => {
       free(): void {}
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (globalThis as any).__aeroWasmJsImporterOverride = {
+    globalThis.__aeroWasmJsImporterOverride = {
       single: async () => ({
         default: async (_input?: unknown) => {},
         greet: (name: string) => `hello ${name}`,
@@ -380,8 +373,7 @@ describe("runtime/wasm_loader (optional exports)", () => {
       free(): void {}
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (globalThis as any).__aeroWasmJsImporterOverride = {
+    globalThis.__aeroWasmJsImporterOverride = {
       single: async () => ({
         default: async (_input?: unknown) => {},
         greet: (name: string) => `hello ${name}`,
@@ -424,8 +416,7 @@ describe("runtime/wasm_loader (optional exports)", () => {
       free(): void {}
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (globalThis as any).__aeroWasmJsImporterOverride = {
+    globalThis.__aeroWasmJsImporterOverride = {
       single: async () => ({
         default: async (_input?: unknown) => {},
         greet: (name: string) => `hello ${name}`,
@@ -460,8 +451,7 @@ describe("runtime/wasm_loader (optional exports)", () => {
       free(): void {}
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (globalThis as any).__aeroWasmJsImporterOverride = {
+    globalThis.__aeroWasmJsImporterOverride = {
       single: async () => ({
         default: async (_input?: unknown) => {},
         greet: (name: string) => `hello ${name}`,
@@ -505,8 +495,7 @@ describe("runtime/wasm_loader (optional exports)", () => {
       free(): void {}
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (globalThis as any).__aeroWasmJsImporterOverride = {
+    globalThis.__aeroWasmJsImporterOverride = {
       single: async () => ({
         default: async (_input?: unknown) => {},
         greet: (name: string) => `hello ${name}`,
@@ -541,8 +530,7 @@ describe("runtime/wasm_loader (optional exports)", () => {
       free(): void {}
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (globalThis as any).__aeroWasmJsImporterOverride = {
+    globalThis.__aeroWasmJsImporterOverride = {
       single: async () => ({
         default: async (_input?: unknown) => {},
         greet: (name: string) => `hello ${name}`,
@@ -589,8 +577,7 @@ describe("runtime/wasm_loader (optional exports)", () => {
       free(): void {}
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (globalThis as any).__aeroWasmJsImporterOverride = {
+    globalThis.__aeroWasmJsImporterOverride = {
       single: async () => ({
         default: async (_input?: unknown) => {},
         greet: (name: string) => `hello ${name}`,
@@ -623,8 +610,7 @@ describe("runtime/wasm_loader (optional exports)", () => {
       free(): void {}
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (globalThis as any).__aeroWasmJsImporterOverride = {
+    globalThis.__aeroWasmJsImporterOverride = {
       single: async () => ({
         default: async (_input?: unknown) => {},
         greet: (name: string) => `hello ${name}`,
@@ -649,17 +635,15 @@ describe("runtime/wasm_loader (optional exports)", () => {
     // This test exercises the "non-web" path where `crossOriginIsolated` is not
     // a defined global. In browsers, the property exists and is not writable, so
     // we skip when the runtime provides it.
-    const hadCrossOriginIsolated = Object.prototype.hasOwnProperty.call(globalThis, "crossOriginIsolated");
-    const originalCrossOriginIsolated = (globalThis as any).crossOriginIsolated;
-    if (hadCrossOriginIsolated) delete (globalThis as any).crossOriginIsolated;
+    const originalCrossOriginIsolatedDescriptor = Object.getOwnPropertyDescriptor(globalThis, "crossOriginIsolated");
+    if (originalCrossOriginIsolatedDescriptor) Reflect.deleteProperty(globalThis, "crossOriginIsolated");
 
     try {
       if ("crossOriginIsolated" in globalThis) return;
 
       const module = await WebAssembly.compile(WASM_EMPTY_MODULE_BYTES);
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (globalThis as any).__aeroWasmJsImporterOverride = {
+      globalThis.__aeroWasmJsImporterOverride = {
         threaded: async () => ({
           default: async (_input?: unknown) => {},
           greet: (name: string) => `hello ${name}`,
@@ -675,10 +659,10 @@ describe("runtime/wasm_loader (optional exports)", () => {
       const { variant } = await initWasm({ variant: "threaded", module });
       expect(variant).toBe("threaded");
     } finally {
-      if (hadCrossOriginIsolated) {
-        (globalThis as any).crossOriginIsolated = originalCrossOriginIsolated;
+      if (originalCrossOriginIsolatedDescriptor) {
+        Object.defineProperty(globalThis, "crossOriginIsolated", originalCrossOriginIsolatedDescriptor);
       } else {
-        delete (globalThis as any).crossOriginIsolated;
+        Reflect.deleteProperty(globalThis, "crossOriginIsolated");
       }
     }
   });
@@ -712,13 +696,11 @@ describe("runtime/wasm_loader (optional exports)", () => {
     // In browsers, `crossOriginIsolated` is present and must be true for
     // SharedArrayBuffer/WASM threads. Spoof it here so the test exercises the
     // same (web-like) path under Node/Vitest.
-    const hadCrossOriginIsolated = Object.prototype.hasOwnProperty.call(globalThis, "crossOriginIsolated");
-    const originalCrossOriginIsolated = (globalThis as any).crossOriginIsolated;
-    (globalThis as any).crossOriginIsolated = true;
+    const originalCrossOriginIsolatedDescriptor = Object.getOwnPropertyDescriptor(globalThis, "crossOriginIsolated");
+    Object.defineProperty(globalThis, "crossOriginIsolated", { value: true, configurable: true });
 
     try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (globalThis as any).__aeroWasmJsImporterOverride = {
+      globalThis.__aeroWasmJsImporterOverride = {
         threaded: async () => ({
           default: async (_input?: unknown) => {},
           greet: (name: string) => `hello ${name}`,
@@ -738,10 +720,10 @@ describe("runtime/wasm_loader (optional exports)", () => {
       expect(api.SharedRingBuffer).toBe(FakeSharedRingBuffer);
       expect(api.open_ring_by_kind).toBe(open_ring_by_kind);
     } finally {
-      if (hadCrossOriginIsolated) {
-        (globalThis as any).crossOriginIsolated = originalCrossOriginIsolated;
+      if (originalCrossOriginIsolatedDescriptor) {
+        Object.defineProperty(globalThis, "crossOriginIsolated", originalCrossOriginIsolatedDescriptor);
       } else {
-        delete (globalThis as any).crossOriginIsolated;
+        Reflect.deleteProperty(globalThis, "crossOriginIsolated");
       }
     }
   });
