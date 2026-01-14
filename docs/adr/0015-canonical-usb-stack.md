@@ -5,7 +5,7 @@
 The repository historically accumulated multiple overlapping USB/UHCI implementations:
 
 - **Browser/WASM path (active):**
-  - Rust USB device models + UHCI: `crates/aero-usb`
+  - Rust USB device models + host controllers (UHCI/EHCI/xHCI): `crates/aero-usb`
   - WASM exports: `crates/aero-wasm`
   - Host integration (WebHID/WebUSB broker/executor, worker proxying): `web/`
 - **Repo-root WebUSB demo RPC (parallel TypeScript surface):**
@@ -163,7 +163,8 @@ alive and call `reset()` on disconnect instead of recreating it. See `docs/webus
     - Deletion target (once demos migrate or become redundant): `src/platform/legacy/webusb_{broker,client,protocol}.ts`.
 
 4. **Converge native on shared code**
-   - The native emulator consumes `aero-usb` for USB device models + UHCI behavior.
+   - The native emulator consumes `aero-usb` for USB device models + host controller behavior
+     (UHCI/EHCI/xHCI), with `emulator::io::usb` remaining a thin integration/re-export layer.
    - Keep `emulator::io::usb` as a thin integration/re-export layer; do not add new standalone USB
      implementations under `crates/emulator`.
 

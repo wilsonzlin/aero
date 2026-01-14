@@ -5,7 +5,7 @@ This document defines the **single, unambiguous contract** for interrupt request
 It exists to remove ambiguity between:
 
 - **Edge-triggered** interrupt sources (e.g. the legacy i8042 PS/2 controller on ISA IRQ1/IRQ12)
-- **Level-triggered** interrupt sources (e.g. PCI INTx devices like UHCI)
+- **Level-triggered** interrupt sources (e.g. PCI INTx devices like UHCI/EHCI/xHCI)
 
 ## What `raiseIrq()` / `lowerIrq()` mean
 

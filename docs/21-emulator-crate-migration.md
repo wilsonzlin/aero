@@ -142,7 +142,7 @@ This section exists to make the **emulator deletion targets** explicit.
 - Emulator-only legacy traits once unused (see storage doc Phase 3):
   - `src/io/storage/disk.rs` (legacy `ByteStorage` / `DiskBackend`)
 
-### USB (device models + UHCI integration)
+### USB (device models + host controller integration)
 
 USB selection is governed by [ADR 0015](./adr/0015-canonical-usb-stack.md).
 
@@ -153,7 +153,7 @@ USB selection is governed by [ADR 0015](./adr/0015-canonical-usb-stack.md).
 
 **Canonical replacement**
 
-- USB device models + UHCI controller behavior: `crates/aero-usb` ([`src/lib.rs`](../crates/aero-usb/src/lib.rs))
+- USB device models + host controllers (UHCI/EHCI/xHCI): `crates/aero-usb` ([`src/lib.rs`](../crates/aero-usb/src/lib.rs))
 - UHCI PCI device wrapper (canonical PCI stack): `crates/devices/src/usb/uhci.rs` ([`uhci.rs`](../crates/devices/src/usb/uhci.rs))
 
 **Deprecation/deletion targets (in `crates/emulator`)**
