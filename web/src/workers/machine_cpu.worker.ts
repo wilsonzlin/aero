@@ -1621,6 +1621,19 @@ async function applyBootDisks(msg: SetBootDisksMessage): Promise<void> {
             `base=${cow.basePath} overlay=${cow.overlayPath}: ${message}`,
         );
       }
+
+      // Best-effort overlay ref: ensure machine snapshots record the base/overlay paths even if
+      // `set_primary_hdd_opfs_cow` does not populate the `DISKS` overlay refs in this WASM build.
+      try {
+        const setRef =
+          (m as unknown as { set_ahci_port0_disk_overlay_ref?: unknown }).set_ahci_port0_disk_overlay_ref ??
+          (m as unknown as { setAhciPort0DiskOverlayRef?: unknown }).setAhciPort0DiskOverlayRef;
+        if (typeof setRef === "function") {
+          (setRef as (base: string, overlay: string) => void).call(m, cow.basePath, cow.overlayPath);
+        }
+      } catch {
+        // ignore
+      }
       changed = true;
     }
   } else {

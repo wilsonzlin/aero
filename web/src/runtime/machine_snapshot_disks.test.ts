@@ -726,4 +726,33 @@ describe("runtime/machine_snapshot_disks", () => {
 
     expect(calls).toEqual([["aero/disks/win7.base", "aero/disks/win7.overlay", 0]]);
   });
+
+  it("sets the AHCI port0 overlay ref after reattaching via set_primary_hdd_opfs_cow", async () => {
+    const restore_snapshot_from_opfs = vi.fn(async (_path: string) => {});
+    const take_restored_disk_overlays = vi.fn(() => [
+      { disk_id: 1, base_image: "aero/disks/win7.base", overlay_image: "aero/disks/win7.overlay" },
+    ]);
+
+    const set_primary_hdd_opfs_cow = vi.fn(async (_base: string, _overlay: string, _blockSize: number) => {});
+    const set_ahci_port0_disk_overlay_ref = vi.fn((_base: string, _overlay: string) => {});
+
+    const machine = {
+      restore_snapshot_from_opfs,
+      take_restored_disk_overlays,
+      set_primary_hdd_opfs_cow,
+      set_ahci_port0_disk_overlay_ref,
+    } as unknown as InstanceType<WasmApi["Machine"]>;
+
+    const api = {
+      Machine: {
+        disk_id_primary_hdd: () => 1,
+        disk_id_install_media: () => 2,
+      },
+    } as unknown as WasmApi;
+
+    await restoreMachineSnapshotFromOpfsAndReattachDisks({ api, machine, path: "state/test.snap", logPrefix: "test" });
+
+    expect(set_primary_hdd_opfs_cow).toHaveBeenCalledWith("aero/disks/win7.base", "aero/disks/win7.overlay", 0);
+    expect(set_ahci_port0_disk_overlay_ref).toHaveBeenCalledWith("aero/disks/win7.base", "aero/disks/win7.overlay");
+  });
 });

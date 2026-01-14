@@ -307,6 +307,9 @@ export async function reattachMachineSnapshotDisks(opts: {
       }
       // Pass `0` for the block size to indicate "infer from the existing overlay header".
       await callMaybeAsync(setPrimary as (...args: unknown[]) => unknown, machine, [base, overlay, 0]);
+      if (typeof setAhciPort0OverlayRef === "function") {
+        (setAhciPort0OverlayRef as (base: string, overlay: string) => void).call(machine, base, overlay);
+      }
       continue;
     }
 
