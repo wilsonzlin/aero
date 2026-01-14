@@ -1062,7 +1062,7 @@ static void print_vioinput_state(const VIOINPUT_STATE *st, DWORD bytes)
     }
 }
 
-static void print_vioinput_state_json(const VIOINPUT_STATE *st, DWORD bytes)
+static void print_vioinput_state_json(const SELECTED_DEVICE *dev, const VIOINPUT_STATE *st, DWORD bytes)
 {
     DWORD avail;
     int have_size;
@@ -1096,6 +1096,75 @@ static void print_vioinput_state_json(const VIOINPUT_STATE *st, DWORD bytes)
     have_version = (avail >= sizeof(ULONG) * 2);
 
     wprintf(L"{\n");
+
+    /* Selected HID interface metadata (helps correlate output when multiple devices are present). */
+    wprintf(L"  \"path\": ");
+    json_print_string_w(dev ? dev->path : NULL);
+    wprintf(L",\n");
+    wprintf(L"  \"vid\": ");
+    if (dev && dev->attr_valid) {
+        wprintf(L"%u", (unsigned)dev->attr.VendorID);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"pid\": ");
+    if (dev && dev->attr_valid) {
+        wprintf(L"%u", (unsigned)dev->attr.ProductID);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"usagePage\": ");
+    if (dev && dev->caps_valid) {
+        wprintf(L"%u", (unsigned)dev->caps.UsagePage);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"usage\": ");
+    if (dev && dev->caps_valid) {
+        wprintf(L"%u", (unsigned)dev->caps.Usage);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"inputLen\": ");
+    if (dev && dev->caps_valid) {
+        wprintf(L"%u", (unsigned)dev->caps.InputReportByteLength);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"outputLen\": ");
+    if (dev && dev->caps_valid) {
+        wprintf(L"%u", (unsigned)dev->caps.OutputReportByteLength);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"featureLen\": ");
+    if (dev && dev->caps_valid) {
+        wprintf(L"%u", (unsigned)dev->caps.FeatureReportByteLength);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"reportDescLen\": ");
+    if (dev && dev->report_desc_valid) {
+        wprintf(L"%lu", dev->report_desc_len);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+    wprintf(L"  \"hidReportDescLen\": ");
+    if (dev && dev->hid_report_desc_valid) {
+        wprintf(L"%lu", dev->hid_report_desc_len);
+    } else {
+        wprintf(L"null");
+    }
+    wprintf(L",\n");
+
     wprintf(L"  \"BytesReturned\": %lu,\n", bytes);
     if (have_size && st->Size != 0) {
         wprintf(L"  \"Size\": %lu,\n", st->Size);
@@ -6243,7 +6312,7 @@ int wmain(int argc, wchar_t **argv)
 
         st = (const VIOINPUT_STATE*)buf;
         if (opt.query_state_json) {
-            print_vioinput_state_json(st, bytes);
+            print_vioinput_state_json(&dev, st, bytes);
         } else {
             print_vioinput_state(st, bytes);
         }
