@@ -884,8 +884,11 @@ jobs:
           net_offload_csum_marker=""
           snd_marker=""
           input_events_marker=""
+          input_events_marker_line=""
           input_wheel_marker=""
+          input_wheel_marker_line=""
           input_media_keys_marker=""
+          input_media_keys_marker_line=""
           input_led_marker=""
           input_leds_marker=""
           input_binding_host_marker=""
@@ -894,10 +897,11 @@ jobs:
           input_events_buttons_marker=""
           input_events_wheel_marker=""
           input_tablet_marker=""
+          input_tablet_marker_line=""
            input_inject_marker=""
            input_media_keys_inject_marker=""
            input_tablet_inject_marker=""
-           pci_preflight_marker=""
+            pci_preflight_marker=""
           blk_resize_request_marker=""
           blk_resize_fail_marker=""
           blk_resize_host_marker=""
@@ -961,8 +965,17 @@ jobs:
             )"
             snd_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-snd\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
             input_events_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-input-events\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
+            input_events_marker_line="$(
+              grep -F 'AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|' "${serial_log}" | tail -n 1 | tr -d '\r' || true
+            )"
             input_wheel_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-input-wheel\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
+            input_wheel_marker_line="$(
+              grep -F 'AERO_VIRTIO_SELFTEST|TEST|virtio-input-wheel|' "${serial_log}" | tail -n 1 | tr -d '\r' || true
+            )"
             input_media_keys_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-input-media-keys\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
+            input_media_keys_marker_line="$(
+              grep -F 'AERO_VIRTIO_SELFTEST|TEST|virtio-input-media-keys|' "${serial_log}" | tail -n 1 | tr -d '\r' || true
+            )"
             input_led_marker="$(
               grep -F 'AERO_VIRTIO_SELFTEST|TEST|virtio-input-led|' "${serial_log}" | tail -n 1 | tr -d '\r' || true
             )"
@@ -973,6 +986,9 @@ jobs:
             input_events_buttons_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-input-events-buttons\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
             input_events_wheel_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-input-events-wheel\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
             input_tablet_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-input-tablet-events\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
+            input_tablet_marker_line="$(
+              grep -F 'AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|' "${serial_log}" | tail -n 1 | tr -d '\r' || true
+            )"
             snd_capture_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-snd-capture\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
            snd_duplex_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-snd-duplex\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
            snd_buffer_limits_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-snd-buffer-limits\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
@@ -1197,11 +1213,20 @@ jobs:
             if [[ -n "${input_events_marker}" ]]; then
               echo "- Guest virtio-input-events marker: \`${input_events_marker}\`"
             fi
+            if [[ -n "${input_events_marker_line}" ]]; then
+              echo "- Guest virtio-input-events marker line: \`${input_events_marker_line}\`"
+            fi
             if [[ -n "${input_wheel_marker}" ]]; then
               echo "- Guest virtio-input-wheel marker: \`${input_wheel_marker}\`"
             fi
+            if [[ -n "${input_wheel_marker_line}" ]]; then
+              echo "- Guest virtio-input-wheel marker line: \`${input_wheel_marker_line}\`"
+            fi
             if [[ -n "${input_media_keys_marker}" ]]; then
               echo "- Guest virtio-input-media-keys marker: \`${input_media_keys_marker}\`"
+            fi
+            if [[ -n "${input_media_keys_marker_line}" ]]; then
+              echo "- Guest virtio-input-media-keys marker line: \`${input_media_keys_marker_line}\`"
             fi
             if [[ -n "${input_binding_host_marker}" ]]; then
               echo "- Host virtio-input binding marker: \`${input_binding_host_marker}\`"
@@ -1233,9 +1258,12 @@ jobs:
             if [[ -n "${input_tablet_marker}" ]]; then
               echo "- Guest virtio-input-tablet-events marker: \`${input_tablet_marker}\`"
             fi
-             if [[ -n "${input_tablet_inject_marker}" ]]; then
-               echo "- Host virtio-input tablet injection marker: \`${input_tablet_inject_marker}\`"
-             fi
+            if [[ -n "${input_tablet_marker_line}" ]]; then
+              echo "- Guest virtio-input-tablet-events marker line: \`${input_tablet_marker_line}\`"
+            fi
+            if [[ -n "${input_tablet_inject_marker}" ]]; then
+              echo "- Host virtio-input tablet injection marker: \`${input_tablet_inject_marker}\`"
+            fi
              if [[ -n "${pci_preflight_marker}" ]]; then
                echo "- Host QEMU PCI preflight marker: \`${pci_preflight_marker}\`"
              fi
