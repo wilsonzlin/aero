@@ -273,6 +273,12 @@ struct BlockLowerer<'a> {
     next_value: &'a mut u32,
     instrs: Vec<Instr>,
     unsupported: bool,
+    /// Best-effort tracking of the current RIP when Tier-1 IR writes `GuestReg::Rip`.
+    ///
+    /// Tier-2 does not need per-instruction RIP updates to be correct (it does not currently
+    /// support mid-block deopts), but tolerating `write.rip` keeps Tier-2 compatible with Tier-1 IR
+    /// streams that update RIP for precise runtime exits.
+    current_rip: Option<u64>,
     /// Per-block Tier-1 `Const` values keyed by the Tier-1 `ValueId`.
     const_values: HashMap<T1ValueId, u64>,
 }
@@ -285,6 +291,7 @@ impl<'a> BlockLowerer<'a> {
             next_value,
             instrs: Vec::new(),
             unsupported: false,
+            current_rip: Some(entry_rip),
             const_values: HashMap::new(),
         }
     }
@@ -383,7 +390,7 @@ impl<'a> BlockLowerer<'a> {
             GuestReg::Rip => {
                 self.instrs.push(Instr::Const {
                     dst,
-                    value: self.entry_rip,
+                    value: self.current_rip.unwrap_or(self.entry_rip),
                 });
             }
             GuestReg::Gpr { reg, width, high8 } => {
@@ -436,6 +443,7 @@ impl<'a> BlockLowerer<'a> {
                 // Tier-1 may emit `write.rip` as per-instruction metadata (e.g. to report the
                 // current guest RIP on runtime exits). Tier-2 treats those writes as non-semantic
                 // and ignores them so they don't force CFG-level deopts.
+                self.current_rip = self.const_values.get(&src).copied();
             }
             GuestReg::Flag(_) => {
                 // Tier-2 IR does not currently model direct flag writes; they should be expressed

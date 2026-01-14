@@ -1815,6 +1815,49 @@ fn tier1_inline_tlb_mmio_store_exit_does_not_clobber_unreached_written_gpr() {
 }
 
 #[test]
+fn tier1_inline_tlb_mmio_exit_reports_precise_rip_mid_block() {
+    // x86:
+    //   0x1000: mov ecx, 0x12345678
+    //   0x1005: mov eax, dword ptr [rax]   (MMIO -> runtime exit)
+    //   0x1007: int3                      (unreached)
+    let entry = 0x1000u64;
+    let code = [
+        0xb9, 0x78, 0x56, 0x34, 0x12, // mov ecx, 0x12345678
+        0x8b, 0x00, // mov eax, dword ptr [rax]
+        0xcc, // int3
+    ];
+
+    let mut bus = SimpleBus::new(0x2000);
+    bus.load(entry, &code);
+
+    let bb = discover_block_mode(&bus, entry, BlockLimits::default(), 64);
+    let block = translate_block(&bb);
+
+    let mut cpu = CpuState {
+        rip: entry,
+        ..Default::default()
+    };
+    // Make the second instruction load from MMIO.
+    cpu.gpr[Gpr::Rax.as_u8() as usize] = 0xF000;
+
+    let ram = vec![0u8; 0x10000];
+    let (next_rip, got_cpu, _got_ram, host_state) = run_wasm(&block, cpu, ram, 0x8000);
+
+    // The MMIO exit should report the RIP of the instruction that faulted, not the block entry.
+    assert_eq!(next_rip, entry + 5);
+    assert_eq!(got_cpu.rip, entry + 5);
+
+    // The first instruction's effects should be committed (no backend rollback in this harness).
+    assert_eq!(
+        got_cpu.gpr[Gpr::Rcx.as_u8() as usize],
+        0x1234_5678,
+        "expected first instruction to commit before MMIO exit"
+    );
+
+    assert_eq!(host_state.mmio_exit_calls, 1);
+}
+
+#[test]
 fn tier1_inline_tlb_mmio_load_uses_slow_helper_when_configured() {
     let mut b = IrBuilder::new(0x1000);
     let addr = b.const_int(Width::W64, 0xF000);
