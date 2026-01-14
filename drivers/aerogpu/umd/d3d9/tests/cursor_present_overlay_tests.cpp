@@ -450,6 +450,25 @@ bool TestCursorOverlayPresentEx() {
     return false;
   }
 
+  // If the cursor path is handled via the KMD hardware cursor registers, the UMD
+  // should not also draw a software cursor overlay during PresentEx. (Double
+  // cursor bugs are extremely user-visible; keep this behavior locked in.)
+  dev->cursor_hw_active = true;
+  Debug("before PresentEx (cursor_hw_active=true)");
+  hr = cleanup.device_funcs.pfnPresentEx(cleanup.hDevice, &present);
+  if (!Check(hr == S_OK, "PresentEx with cursor_hw_active=true")) {
+    return false;
+  }
+  Debug("after PresentEx (cursor_hw_active=true)");
+
+  const CursorOverlayRenderStateObservations rs_hw = ObserveCursorOverlayRenderStates(submit_buf.data(), submit_buf.size());
+  if (!Check(rs_hw.saw_present, "hardware cursor path must still emit PRESENT_EX")) {
+    return false;
+  }
+  if (!Check(!rs_hw.saw_draw, "hardware cursor path must not emit DRAW overlay before PRESENT_EX")) {
+    return false;
+  }
+
   Debug("before return true");
   return true;
 }
