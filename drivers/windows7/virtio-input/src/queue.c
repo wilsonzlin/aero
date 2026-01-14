@@ -218,6 +218,8 @@ VOID VirtioInputEvtIoDeviceControl(
         if (copyBytes > sizeof(snapshot)) {
             copyBytes = sizeof(snapshot);
         }
+        // Only copy complete 32-bit fields (Size/Version + LONG counters).
+        copyBytes &= ~(sizeof(ULONG) - 1u);
 
         /*
          * Allow version negotiation: if the caller's buffer is too small for the
@@ -276,6 +278,13 @@ VOID VirtioInputEvtIoDeviceControl(
         copyBytes = availBytes;
         if (copyBytes > sizeof(snapshot)) {
             copyBytes = sizeof(snapshot);
+        }
+        // Only copy complete 32-bit fields (Size/Version + state ULONGs).
+        copyBytes &= ~(sizeof(ULONG) - 1u);
+        // Avoid returning a partially-copied 64-bit NegotiatedFeatures field.
+        if (copyBytes > offsetof(VIOINPUT_STATE, NegotiatedFeatures) &&
+            copyBytes < offsetof(VIOINPUT_STATE, NegotiatedFeatures) + sizeof(snapshot.NegotiatedFeatures)) {
+            copyBytes = offsetof(VIOINPUT_STATE, NegotiatedFeatures);
         }
 
         if (copyBytes != 0) {
