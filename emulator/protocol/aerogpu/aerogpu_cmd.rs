@@ -866,13 +866,18 @@ impl AerogpuCmdBindShaders {
     /// Geometry shader handle (GS).
     ///
     /// ABI note:
-    /// - Legacy encoding: `aerogpu_cmd_bind_shaders.reserved0` is treated as the GS handle when
-    ///   non-zero.
+    /// - Legacy encoding (`hdr.size_bytes == 24`): `aerogpu_cmd_bind_shaders.reserved0` is treated as
+    ///   the GS handle.
     /// - Extended encoding (`hdr.size_bytes >= 36`): `{gs, hs, ds}` are appended after the base
-    ///   struct, and those appended fields are authoritative (this helper only exposes the legacy
-    ///   `reserved0` field; if used as a compatibility mirror, it should match the appended `gs`).
+    ///   struct, and those appended fields are authoritative.
+    /// - Forward-compat (`24 < hdr.size_bytes < 36`): `reserved0` must be treated as
+    ///   reserved/unknown extension space (i.e. ignore it and behave as if `gs = hs = ds = 0`).
     pub const fn gs(&self) -> AerogpuHandle {
-        self.reserved0
+        if self.hdr.size_bytes as usize == Self::SIZE_BYTES {
+            self.reserved0
+        } else {
+            0
+        }
     }
 
     /// Set the geometry shader handle (GS).

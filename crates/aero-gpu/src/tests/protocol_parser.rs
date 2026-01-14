@@ -1693,6 +1693,37 @@ fn protocol_preserves_legacy_bind_shaders_reserved0_as_gs() {
 }
 
 #[test]
+fn protocol_ignores_bind_shaders_reserved0_when_size_bytes_between_24_and_36() {
+    let stream = build_stream(|out| {
+        // Base BIND_SHADERS struct (24 bytes) + unknown trailing u32 (size_bytes == 28).
+        emit_packet(out, AeroGpuOpcode::BindShaders as u32, |out| {
+            push_u32(out, 1); // vs
+            push_u32(out, 2); // ps
+            push_u32(out, 3); // cs
+            push_u32(out, 4); // reserved0 (must be ignored when size_bytes != 24)
+            push_u32(out, 0xDEAD_BEEF); // reserved/unknown extension word
+        });
+    });
+
+    let parsed = parse_cmd_stream(&stream).expect("parse should succeed");
+    assert_eq!(parsed.cmds.len(), 1);
+    match &parsed.cmds[0] {
+        AeroGpuCmd::BindShaders {
+            vs,
+            ps,
+            cs,
+            gs,
+            hs,
+            ds,
+        } => {
+            assert_eq!((*vs, *ps, *cs), (1, 2, 3));
+            assert_eq!((*gs, *hs, *ds), (0, 0, 0));
+        }
+        other => panic!("expected BindShaders cmd, got {other:?}"),
+    }
+}
+
+#[test]
 fn protocol_accepts_extended_bind_shaders_packet() {
     let stream = build_stream(|out| {
         // BIND_SHADERS with append-only extension and trailing bytes.

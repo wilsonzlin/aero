@@ -4690,6 +4690,12 @@ fn rust_layout_matches_c_headers() {
 
     check_const(
         &mut cmd_consts_seen,
+        "AEROGPU_STAGE_EX_MIN_ABI_MINOR",
+        AEROGPU_STAGE_EX_MIN_ABI_MINOR as u64,
+    );
+
+    check_const(
+        &mut cmd_consts_seen,
         "AEROGPU_INDEX_FORMAT_UINT16",
         AerogpuIndexFormat::Uint16 as u64,
     );

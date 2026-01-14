@@ -11,7 +11,11 @@ fn push_u32(buf: &mut Vec<u8>, v: u32) {
     buf.extend_from_slice(&v.to_le_bytes());
 }
 
-fn build_bind_shaders_stream(extended: bool, with_extra_trailing: bool) -> Vec<u8> {
+fn build_bind_shaders_stream_with_reserved0(
+    extended: bool,
+    with_extra_trailing: bool,
+    reserved0: u32,
+) -> Vec<u8> {
     let mut bytes = Vec::new();
 
     // Stream header.
@@ -27,7 +31,7 @@ fn build_bind_shaders_stream(extended: bool, with_extra_trailing: bool) -> Vec<u
     push_u32(&mut payload, 1); // vs
     push_u32(&mut payload, 2); // ps
     push_u32(&mut payload, 3); // cs
-    push_u32(&mut payload, 0); // reserved0 (legacy GS handle)
+    push_u32(&mut payload, reserved0); // reserved0 (legacy GS handle)
     if extended {
         // Append-only extension: gs/hs/ds handles.
         push_u32(&mut payload, 4); // gs
@@ -51,6 +55,10 @@ fn build_bind_shaders_stream(extended: bool, with_extra_trailing: bool) -> Vec<u
         .copy_from_slice(&stream_size_bytes.to_le_bytes());
 
     bytes
+}
+
+fn build_bind_shaders_stream(extended: bool, with_extra_trailing: bool) -> Vec<u8> {
+    build_bind_shaders_stream_with_reserved0(extended, with_extra_trailing, 0)
 }
 
 #[test]
@@ -142,4 +150,37 @@ fn cmd_stream_accepts_extended_bind_shaders_packet() {
         (base_vs, base_ps, base_cs),
         (base_trailing_vs, base_trailing_ps, base_trailing_cs),
     );
+}
+
+#[test]
+fn bind_shaders_gs_legacy_decoding_is_size_gated() {
+    let gs_mirror = 0x1234_5678;
+    let legacy = build_bind_shaders_stream_with_reserved0(false, false, gs_mirror);
+    let legacy_with_trailing = build_bind_shaders_stream_with_reserved0(false, true, gs_mirror);
+
+    let decode = |stream: &[u8]| {
+        let iter = AerogpuCmdStreamIter::new(stream).unwrap();
+        let packets = iter.collect::<Result<Vec<_>, _>>().unwrap();
+        assert_eq!(packets.len(), 1);
+        packets[0].decode_bind_shaders_payload_le().unwrap()
+    };
+
+    // Legacy 24-byte packet: reserved0 is GS.
+    let (cmd, ex) = decode(&legacy);
+    assert_eq!(cmd.hdr.size_bytes as usize, AerogpuCmdBindShaders::SIZE_BYTES);
+    assert_eq!(ex, None);
+    assert_eq!(cmd.gs(), gs_mirror);
+
+    // Forward-compat: base packet with unknown trailing bytes (24 < size_bytes < 36).
+    // reserved0 must be ignored.
+    let (cmd, ex) = decode(&legacy_with_trailing);
+    assert_eq!(
+        cmd.hdr.size_bytes as usize,
+        AerogpuCmdBindShaders::SIZE_BYTES + 4
+    );
+    assert_eq!(ex, None);
+    // Avoid taking references to packed fields.
+    let reserved0 = cmd.reserved0;
+    assert_eq!(reserved0, gs_mirror);
+    assert_eq!(cmd.gs(), 0);
 }

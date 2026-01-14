@@ -772,8 +772,9 @@ struct aerogpu_cmd_bind_shaders {
 
 **Host decoding rule:**
 
-- If the extension fields are present (`hdr.size_bytes >= 36`), use the appended `gs/hs/ds`.
-- Otherwise, treat `gs = reserved0` and `hs = ds = 0`.
+- If `hdr.size_bytes >= 36`, use the appended `{gs, hs, ds}`.
+- Else if `hdr.size_bytes == 24`, use `gs = reserved0` and `hs = ds = 0`.
+- Else (`24 < hdr.size_bytes < 36`), treat `gs = hs = ds = 0` (reserved/unknown extension).
 
 #### 1.3) Primitive topology extensions: adjacency + patchlists
 
