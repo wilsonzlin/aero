@@ -1504,6 +1504,40 @@ static void test_tablet_abs_range_swaps_min_max(void) {
   expect_report(&cap, 0, expect1, sizeof(expect1));
 }
 
+static void test_tablet_partial_axis_updates_use_last_value(void) {
+  struct captured_reports cap;
+  struct hid_translate t;
+
+  cap_clear(&cap);
+  hid_translate_init(&t, capture_emit, &cap);
+  hid_translate_set_enabled_reports(&t, HID_TRANSLATE_REPORT_MASK_TABLET);
+
+  /* Establish an initial position. */
+  send_abs(&t, VIRTIO_INPUT_ABS_X, 100);
+  send_abs(&t, VIRTIO_INPUT_ABS_Y, 200);
+  send_syn(&t);
+
+  assert(cap.count == 1);
+  uint8_t expect1[HID_TRANSLATE_TABLET_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_TABLET, 0x00, 0x64, 0x00, 0xC8, 0x00};
+  expect_report(&cap, 0, expect1, sizeof(expect1));
+
+  /* Update X only; Y should retain the previous value. */
+  send_abs(&t, VIRTIO_INPUT_ABS_X, 300);
+  send_syn(&t);
+
+  assert(cap.count == 2);
+  uint8_t expect2[HID_TRANSLATE_TABLET_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_TABLET, 0x00, 0x2C, 0x01, 0xC8, 0x00};
+  expect_report(&cap, 1, expect2, sizeof(expect2));
+
+  /* Update Y only; X should retain the previous value. */
+  send_abs(&t, VIRTIO_INPUT_ABS_Y, 400);
+  send_syn(&t);
+
+  assert(cap.count == 3);
+  uint8_t expect3[HID_TRANSLATE_TABLET_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_TABLET, 0x00, 0x2C, 0x01, 0x90, 0x01};
+  expect_report(&cap, 2, expect3, sizeof(expect3));
+}
+
 static void test_tablet_reset_without_xy_does_not_emit(void) {
   struct captured_reports cap;
   struct hid_translate t;
@@ -1537,6 +1571,30 @@ static void test_tablet_reset_emits_release_without_xy_when_button_pressed(void)
 
   uint8_t expect1[HID_TRANSLATE_TABLET_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_TABLET, 0x00, 0x00, 0x00, 0x00, 0x00};
   expect_report(&cap, 0, expect1, sizeof(expect1));
+}
+
+static void test_tablet_reset_emits_release_with_xy_when_button_pressed(void) {
+  struct captured_reports cap;
+  struct hid_translate t;
+
+  cap_clear(&cap);
+  hid_translate_init(&t, capture_emit, &cap);
+  hid_translate_set_enabled_reports(&t, HID_TRANSLATE_REPORT_MASK_TABLET);
+
+  send_abs(&t, VIRTIO_INPUT_ABS_X, 10);
+  send_abs(&t, VIRTIO_INPUT_ABS_Y, 20);
+  send_key(&t, VIRTIO_INPUT_BTN_TOUCH, 1);
+  send_syn(&t);
+
+  assert(cap.count == 1);
+  uint8_t expect_down[HID_TRANSLATE_TABLET_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_TABLET, 0x01, 0x0A, 0x00, 0x14, 0x00};
+  expect_report(&cap, 0, expect_down, sizeof(expect_down));
+
+  hid_translate_reset(&t, true);
+
+  assert(cap.count == 2);
+  uint8_t expect_up[HID_TRANSLATE_TABLET_REPORT_SIZE] = {HID_TRANSLATE_REPORT_ID_TABLET, 0x00, 0x0A, 0x00, 0x14, 0x00};
+  expect_report(&cap, 1, expect_up, sizeof(expect_up));
 }
 
 int main(void) {
@@ -1574,8 +1632,10 @@ int main(void) {
   test_tablet_scaling_reports();
   test_tablet_abs_no_change_does_not_emit();
   test_tablet_abs_range_swaps_min_max();
+  test_tablet_partial_axis_updates_use_last_value();
   test_tablet_reset_without_xy_does_not_emit();
   test_tablet_reset_emits_release_without_xy_when_button_pressed();
+  test_tablet_reset_emits_release_with_xy_when_button_pressed();
   printf("hid_translate_test: ok\n");
   return 0;
 }
