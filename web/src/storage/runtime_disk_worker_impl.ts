@@ -1226,13 +1226,33 @@ export class RuntimeDiskWorker {
     this.postMessage(msg);
   }
 
-  handleMessage(msg: RuntimeDiskRequestMessage): Promise<void> {
-    if (!msg || msg.type !== "request") return Promise.resolve();
+  handleMessage(msg: unknown): Promise<void> {
+    if (!isRecord(msg)) return Promise.resolve();
+    // Treat postMessage payloads as untrusted; ignore inherited fields (prototype pollution).
+    const type = hasOwn(msg, "type") ? msg.type : undefined;
+    if (type !== "request") return Promise.resolve();
+    const requestId = hasOwn(msg, "requestId") ? msg.requestId : undefined;
+    if (typeof requestId !== "number" || !Number.isSafeInteger(requestId) || requestId < 0) {
+      return Promise.resolve();
+    }
+    const op = hasOwn(msg, "op") ? msg.op : undefined;
+    if (typeof op !== "string" || !op.trim()) {
+      this.postErr(requestId, new Error(`invalid runtime disk op ${String(op)}`));
+      return Promise.resolve();
+    }
+    const payload = hasOwn(msg, "payload") ? msg.payload : undefined;
+
+    const req = Object.create(null) as RuntimeDiskRequestMessage;
+    (req as any).type = "request";
+    (req as any).requestId = requestId;
+    (req as any).op = op;
+    (req as any).payload = payload;
+
     this.requestChain = this.requestChain.then(async () => {
       try {
-        await this.handleRequest(msg);
+        await this.handleRequest(req);
       } catch (err) {
-        this.postErr(msg.requestId, err);
+        this.postErr(requestId, err);
       }
     });
     return this.requestChain;

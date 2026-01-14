@@ -9,5 +9,5 @@ const impl = new RuntimeDiskWorker((msg, transfer) => {
 });
 
 scope.onmessage = (ev: MessageEvent<RuntimeDiskRequestMessage>) => {
-  void impl.handleMessage(ev.data as RuntimeDiskRequestMessage);
+  void impl.handleMessage(ev.data);
 };

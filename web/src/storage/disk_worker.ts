@@ -381,6 +381,10 @@ function hasOwnProp(obj: object, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(obj, key);
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 function normalizeMountConfig(raw: unknown): MountConfig {
   // Use a null prototype so `Object.prototype.hddId`/`cdId` pollution cannot affect mount selection.
   const mounts: MountConfig = Object.create(null) as MountConfig;
@@ -428,9 +432,33 @@ type DiskWorkerRequest = {
 
 (self as DedicatedWorkerGlobalScope).onmessage = (event: MessageEvent<DiskWorkerRequest>) => {
   const msg = event.data;
-  if (!msg || msg.type !== "request") return;
-  const { requestId } = msg;
-  handleRequest(msg).catch((err) => postErr(requestId, err));
+  if (!isRecord(msg)) return;
+  // Treat postMessage payloads as untrusted; ignore inherited fields (prototype pollution).
+  const type = hasOwnProp(msg, "type") ? msg.type : undefined;
+  if (type !== "request") return;
+  const requestId = hasOwnProp(msg, "requestId") ? msg.requestId : undefined;
+  if (typeof requestId !== "number" || !Number.isSafeInteger(requestId) || requestId < 0) return;
+
+  const backend = hasOwnProp(msg, "backend") ? msg.backend : undefined;
+  if (backend !== "opfs" && backend !== "idb") {
+    postErr(requestId, new Error(`unsupported disk worker backend ${String(backend)}`));
+    return;
+  }
+  const op = hasOwnProp(msg, "op") ? msg.op : undefined;
+  if (typeof op !== "string" || !op.trim()) {
+    postErr(requestId, new Error(`invalid disk worker op ${String(op)}`));
+    return;
+  }
+
+  const req = Object.create(null) as DiskWorkerRequest;
+  req.type = "request";
+  req.requestId = requestId;
+  req.backend = backend;
+  req.op = op;
+  if (hasOwnProp(msg, "payload")) req.payload = (msg as { payload?: unknown }).payload;
+  if (hasOwnProp(msg, "port")) req.port = (msg as { port?: unknown }).port as MessagePort;
+
+  handleRequest(req).catch((err) => postErr(requestId, err));
 };
 
 async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
