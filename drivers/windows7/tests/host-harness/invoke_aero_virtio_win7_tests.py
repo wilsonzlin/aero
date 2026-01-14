@@ -1427,7 +1427,7 @@ def _qmp_blockdev_resize_command(*, node_name: str, size: int) -> dict[str, obje
 
 def _qmp_block_resize_command(*, device: str, size: int) -> dict[str, object]:
     """
-    Build a legacy QMP `block_resize` command (drive/BlockBackend id based).
+    Build a legacy QMP `block_resize` command (drive / block-backend id based).
 
     This helper exists primarily so host-harness unit tests can sanity-check command structure.
     """
@@ -1966,7 +1966,7 @@ def _try_qmp_virtio_blk_resize(endpoint: _QmpEndpoint, *, drive_id: str, new_byt
 
     Compatibility cascade:
     - Try `blockdev-resize` (node-name based).
-    - Fall back to legacy `block_resize` (device/BlockBackend id based).
+    - Fall back to legacy `block_resize` (device / block-backend id based).
     """
     with _qmp_connect(endpoint, timeout_seconds=5.0) as s:
         try:
