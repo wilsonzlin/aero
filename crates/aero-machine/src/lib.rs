@@ -12513,7 +12513,10 @@ mod tests {
             ..Default::default()
         })
         .unwrap();
-        assert_eq!(vga.vbe_lfb_base(), u64::from(aero_gpu_vga::SVGA_LFB_BASE));
+        assert_eq!(
+            vga.vbe_lfb_base(),
+            u64::from(aero_gpu_vga::SVGA_LFB_BASE)
+        );
     }
 
     #[test]
