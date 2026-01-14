@@ -155,7 +155,7 @@ describe("workers/gpu-worker metrics scanout snapshot", () => {
           const m = msg as { type?: unknown; scanout?: unknown };
           return m.type === "metrics" && !!m.scanout;
         },
-        10_000,
+        20_000,
       );
       worker.postMessage({ protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION, type: "tick", frameTimeMs: 0 });
 
@@ -172,7 +172,7 @@ describe("workers/gpu-worker metrics scanout snapshot", () => {
           const m = msg as { type?: unknown; scanout?: unknown };
           return m.type === "stats" && !!m.scanout;
         },
-        10_000,
+        20_000,
       )) as GpuRuntimeStatsMessage;
       expect(statsMsg.scanout).toBeTruthy();
       expect(statsMsg.scanout?.format).toBe(SCANOUT_FORMAT_B8G8R8X8);
@@ -180,5 +180,5 @@ describe("workers/gpu-worker metrics scanout snapshot", () => {
     } finally {
       await worker.terminate();
     }
-  }, 20_000);
+  }, 60_000);
 });

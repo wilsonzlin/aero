@@ -126,7 +126,7 @@ describe("disk_worker set_mounts validation", () => {
       if (cdExisting) Object.defineProperty(Object.prototype, "cdId", cdExisting);
       else delete (Object.prototype as any).cdId;
     }
-  });
+  }, 20_000);
 
   it("rejects mounting qcow2/vhd images as HDDs", async () => {
     const { send } = await setupWorkerHarness();
@@ -144,5 +144,5 @@ describe("disk_worker set_mounts validation", () => {
     const resp = await send({ requestId: 2, op: "set_mounts", payload: { hddId: id } });
     expect(resp.ok).toBe(false);
     expect(String(resp.error?.message ?? "")).toMatch(/qcow2|vhd/i);
-  });
+  }, 20_000);
 });

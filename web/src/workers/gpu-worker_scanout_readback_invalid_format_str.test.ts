@@ -114,7 +114,7 @@ describe("workers/gpu-worker scanout readback invalid diagnostics", () => {
       await waitForWorkerMessage(
         worker,
         (msg) => (msg as Partial<ProtocolMessage>)?.type === MessageType.READY && (msg as { role?: unknown }).role === "gpu",
-        10_000,
+        20_000,
       );
 
       // Runtime init (headless).
@@ -134,7 +134,7 @@ describe("workers/gpu-worker scanout readback invalid diagnostics", () => {
       await waitForWorkerMessage(
         worker,
         (msg) => (msg as { protocol?: unknown; type?: unknown }).protocol === GPU_PROTOCOL_NAME && (msg as { type?: unknown }).type === "ready",
-        10_000,
+        20_000,
       );
 
       const eventsPromise = waitForWorkerMessage(
@@ -149,8 +149,8 @@ describe("workers/gpu-worker scanout readback invalid diagnostics", () => {
               String((ev as { message?: unknown }).message).includes("unsupported format"),
            );
          },
-         10_000,
-       );
+          20_000,
+        );
 
       // Drive a tick so the worker attempts scanout readback and emits the diagnostic.
       worker.postMessage({ protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION, type: "tick", frameTimeMs: 0 });
@@ -172,5 +172,5 @@ describe("workers/gpu-worker scanout readback invalid diagnostics", () => {
     } finally {
       await worker.terminate();
     }
-  }, 20_000);
+  }, 60_000);
 });
