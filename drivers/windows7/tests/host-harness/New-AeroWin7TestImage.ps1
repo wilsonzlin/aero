@@ -366,12 +366,6 @@ $defaultInfAllowList = @(
   "aero_virtio_snd.inf"
 )
 
-if ($TestInputTabletEvents) {
-  # Tablet (`virtio-tablet-pci`) binds via a separate INF so keyboard/mouse remain strict and use distinct
-  # DeviceDesc strings. Only include it by default when tablet selftests are enabled.
-  $defaultInfAllowList += "aero_virtio_tablet.inf"
-}
-
 if ($AllowVirtioSndTransitional) {
   # When we allow the transitional virtio-snd PCI ID in the guest selftest, also stage the optional
   # transitional driver package by default (if present in the provided drivers directory).
