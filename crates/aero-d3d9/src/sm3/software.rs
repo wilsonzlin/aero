@@ -2152,9 +2152,15 @@ mod tests {
                 continue;
             }
             if b == b'\'' {
-                in_char = true;
-                i += 1;
-                continue;
+                // Distinguish char literals (`'x'`, `'\n'`) from lifetimes (`'a`, `'static`).
+                // We only need enough accuracy to avoid treating lifetimes as unterminated char
+                // literals, which would cause the brace scan to skip most of the function.
+                let is_char_lit = next == Some(b'\\') || bytes.get(i + 2) == Some(&b'\'');
+                if is_char_lit {
+                    in_char = true;
+                    i += 1;
+                    continue;
+                }
             }
 
             // Brace matching.
