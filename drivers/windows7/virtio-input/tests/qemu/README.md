@@ -259,8 +259,8 @@ If the device reports `REV_00`, Windows will not bind (the INFs are revision-gat
 If you want tablet devices to bind with the tablet Device Manager name, ensure `aero_virtio_tablet.inf` is installed as well
 (it is more specific than the fallback match, so it wins when both are present).
 
-Avoid shipping both `aero_virtio_input.inf` and `virtio-input.inf` at the same time: they match the same HWIDs, which can
-lead to confusing PnP driver selection.
+Avoid shipping both `aero_virtio_input.inf` and `virtio-input.inf` at the same time: they overlap on the keyboard/mouse HWIDs, which
+can lead to confusing PnP driver selection.
 
 ## Cross-checking with QEMU monitor (no guest required)
 
