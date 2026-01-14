@@ -197,3 +197,81 @@ fn pci_bar_probe_via_ecam_dword_write_sets_probe_flag() {
     };
     assert!(probe, "ECAM dword write should enter BAR probe mode");
 }
+
+#[test]
+fn pci_mmio64_bar_probe_via_ecam_qword_write_is_observed() {
+    struct Stub {
+        cfg: PciConfigSpace,
+    }
+
+    impl PciDevice for Stub {
+        fn config(&self) -> &PciConfigSpace {
+            &self.cfg
+        }
+
+        fn config_mut(&mut self) -> &mut PciConfigSpace {
+            &mut self.cfg
+        }
+    }
+
+    let cfg_ports = Rc::new(RefCell::new(PciConfigPorts::new()));
+    let bdf = PciBdf::new(0, 2, 0);
+
+    // Pick a BAR size >4GiB so the probe mask's high dword is not trivially all ones.
+    let bar0_size = 0x2_0000_0000u64; // 8GiB
+
+    cfg_ports.borrow_mut().bus_mut().add_device(
+        bdf,
+        Box::new(Stub {
+            cfg: {
+                let mut cfg = PciConfigSpace::new(0x1234, 0x5678);
+                cfg.set_bar_definition(
+                    0,
+                    PciBarDefinition::Mmio64 {
+                        size: bar0_size,
+                        prefetchable: false,
+                    },
+                );
+                cfg
+            },
+        }),
+    );
+
+    let ecam_base = 0xC000_0000;
+    let ecam_cfg = PciEcamConfig {
+        segment: 0,
+        start_bus: 0,
+        end_bus: 0,
+    };
+
+    let mut mem = Bus::new(0);
+    mem.map_mmio(
+        ecam_base,
+        ecam_cfg.window_size_bytes(),
+        Box::new(PciEcamMmio::new(cfg_ports.clone(), ecam_cfg)),
+    );
+
+    // Probe the 64-bit BAR using a single 64-bit ECAM store of all ones.
+    mem.write(ecam_addr(ecam_base, 0, 2, 0, 0x10), 8, u64::MAX);
+
+    let expected_mask_lo = {
+        let mut mask = (!(bar0_size.saturating_sub(1)) as u32) & 0xFFFF_FFF0;
+        // bits 2:1 = 0b10 indicate 64-bit BAR.
+        mask |= 0b10 << 1;
+        mask
+    };
+    let expected_mask_hi = (!(bar0_size.saturating_sub(1)) >> 32) as u32;
+
+    let lo = mem.read(ecam_addr(ecam_base, 0, 2, 0, 0x10), 4) as u32;
+    let hi = mem.read(ecam_addr(ecam_base, 0, 2, 0, 0x14), 4) as u32;
+    assert_eq!(lo, expected_mask_lo);
+    assert_eq!(hi, expected_mask_hi);
+
+    // Assert that the internal probe flag is set, not just a particular register value.
+    let probe = {
+        let mut ports = cfg_ports.borrow_mut();
+        let cfg = ports.bus_mut().device_config(bdf).expect("device missing");
+        cfg.snapshot_state().bar_probe[0]
+    };
+    assert!(probe, "ECAM qword write should enter BAR probe mode");
+}
