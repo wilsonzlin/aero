@@ -104,6 +104,7 @@ typedef struct _VIRTIO_NET_HDR_MRG_RXBUF {
 } VIRTIO_NET_HDR_MRG_RXBUF;
 
 C_ASSERT(sizeof(VIRTIO_NET_HDR_MRG_RXBUF) == 12);
+C_ASSERT(FIELD_OFFSET(VIRTIO_NET_HDR_MRG_RXBUF, NumBuffers) == sizeof(VIRTIO_NET_HDR));
 // virtio-net per-packet header flags (virtio spec `virtio_net_hdr.flags`).
 // These are used on both TX and RX when checksum/GSO features are negotiated.
 #define VIRTIO_NET_HDR_F_NEEDS_CSUM 0x01u
