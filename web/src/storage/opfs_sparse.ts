@@ -167,8 +167,13 @@ function decodeHeader(bytes: Uint8Array): SparseHeader {
     throw new Error(`tableEntries mismatch: expected=${expectedEntries} actual=${tableEntries}`);
   }
 
+  const tableBytes = BigInt(tableEntries) * 8n;
+  if (tableBytes > BigInt(MAX_TABLE_BYTES)) {
+    throw new Error(`sparse table too large: ${tableBytes} bytes (max ${MAX_TABLE_BYTES})`);
+  }
+
   const expectedDataOffset = alignUpBigInt(
-    BigInt(HEADER_SIZE) + BigInt(tableEntries) * 8n,
+    BigInt(HEADER_SIZE) + tableBytes,
     BigInt(blockSizeBytes),
   );
   if (BigInt(dataOffset) !== expectedDataOffset) {
