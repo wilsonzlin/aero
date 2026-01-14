@@ -247,7 +247,7 @@ enum InputFormat {
     /// Interpret the input file bytes directly as the guest-visible disk bytes.
     Raw,
     /// Interpret the input as an Aero sparse disk image (`AEROSPAR`).
-    #[value(name = "aerosparse")]
+    #[value(name = "aerosparse", alias = "aerospar")]
     AeroSparse,
     /// Interpret the input as a QCOW2 v2/v3 disk image.
     Qcow2,

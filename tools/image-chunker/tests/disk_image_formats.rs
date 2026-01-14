@@ -7,6 +7,7 @@ use aero_storage::{
 use tempfile::NamedTempFile;
 
 const QCOW2_OFLAG_COPIED: u64 = 1 << 63;
+const VHD_DISK_TYPE_FIXED: u32 = 2;
 
 fn write_be_u32(buf: &mut [u8], offset: usize, val: u32) {
     buf[offset..offset + 4].copy_from_slice(&val.to_be_bytes());
@@ -95,6 +96,45 @@ fn make_qcow2_with_pattern(virtual_size: u64) -> MemBackend {
     backend
 }
 
+fn vhd_footer_checksum(raw: &[u8; SECTOR_SIZE]) -> u32 {
+    let mut sum: u32 = 0;
+    for (i, b) in raw.iter().enumerate() {
+        if (64..68).contains(&i) {
+            continue;
+        }
+        sum = sum.wrapping_add(*b as u32);
+    }
+    !sum
+}
+
+fn make_vhd_footer(virtual_size: u64, disk_type: u32, data_offset: u64) -> [u8; SECTOR_SIZE] {
+    let mut footer = [0u8; SECTOR_SIZE];
+    footer[0..8].copy_from_slice(b"conectix");
+    write_be_u32(&mut footer, 8, 2); // features
+    write_be_u32(&mut footer, 12, 0x0001_0000); // file_format_version
+    write_be_u64(&mut footer, 16, data_offset);
+    write_be_u64(&mut footer, 40, virtual_size); // original_size
+    write_be_u64(&mut footer, 48, virtual_size); // current_size
+    write_be_u32(&mut footer, 60, disk_type);
+    let checksum = vhd_footer_checksum(&footer);
+    write_be_u32(&mut footer, 64, checksum);
+    footer
+}
+
+fn make_vhd_fixed_with_pattern(virtual_size: u64) -> MemBackend {
+    assert_eq!(virtual_size % SECTOR_SIZE as u64, 0);
+
+    let mut data = vec![0u8; virtual_size as usize];
+    data[0..10].copy_from_slice(b"hello vhd!");
+
+    let footer = make_vhd_footer(virtual_size, VHD_DISK_TYPE_FIXED, u64::MAX);
+
+    let mut backend = MemBackend::default();
+    backend.write_at(0, &data).unwrap();
+    backend.write_at(virtual_size, &footer).unwrap();
+    backend
+}
+
 #[test]
 fn chunking_aerosparse_uses_virtual_disk_bytes() {
     let disk_size_bytes = 8 * 1024u64;
@@ -162,6 +202,34 @@ fn chunking_qcow2_uses_virtual_disk_bytes() {
 
     let mut expected = vec![0u8; disk_size_bytes as usize];
     expected[0..12].copy_from_slice(b"hello qcow2!");
+
+    let actual: Vec<u8> = chunks.into_iter().flatten().collect();
+    assert_eq!(actual, expected);
+}
+
+#[test]
+fn chunking_vhd_uses_virtual_disk_bytes() {
+    let disk_size_bytes = 64 * 1024u64;
+    let chunk_size = 4096u64;
+
+    let backend = make_vhd_fixed_with_pattern(disk_size_bytes);
+    let tmp = persist_mem_backend(backend);
+
+    let (manifest, chunks) = chunk_disk_to_vecs(
+        tmp.path(),
+        ImageFormat::Auto,
+        chunk_size,
+        ChecksumAlgorithm::None,
+    )
+    .unwrap();
+
+    assert_eq!(manifest.total_size, disk_size_bytes);
+    assert_eq!(manifest.chunk_size, chunk_size);
+    assert_eq!(manifest.chunk_count, disk_size_bytes / chunk_size);
+    assert_eq!(chunks.len() as u64, manifest.chunk_count);
+
+    let mut expected = vec![0u8; disk_size_bytes as usize];
+    expected[0..10].copy_from_slice(b"hello vhd!");
 
     let actual: Vec<u8> = chunks.into_iter().flatten().collect();
     assert_eq!(actual, expected);
