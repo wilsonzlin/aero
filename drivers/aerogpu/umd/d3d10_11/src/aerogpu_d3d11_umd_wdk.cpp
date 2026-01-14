@@ -684,6 +684,67 @@ static void TrackWddmAllocForSubmitLocked(Device* dev, const Resource* res, bool
   }
 }
 
+struct WddmAllocListCheckpoint {
+  Device* dev = nullptr;
+  size_t size = 0;
+  bool oom = false;
+
+  explicit WddmAllocListCheckpoint(Device* d) : dev(d) {
+    if (!dev) {
+      return;
+    }
+    size = dev->wddm_submit_allocation_handles.size();
+    oom = dev->wddm_submit_allocation_list_oom;
+  }
+
+  void rollback() const {
+    if (!dev) {
+      return;
+    }
+    if (dev->wddm_submit_allocation_handles.size() > size) {
+      dev->wddm_submit_allocation_handles.resize(size);
+    }
+    dev->wddm_submit_allocation_list_oom = oom;
+  }
+};
+
+// Best-effort allocation-list tracking used by optional "fast path" packets.
+//
+// Unlike `TrackWddmAllocForSubmitLocked`, this does not set the global
+// `wddm_submit_allocation_list_oom` poison flag or call SetError on OOM: callers
+// must skip emitting any packet that would reference `res` if this returns false.
+static bool TryTrackWddmAllocForSubmitLocked(Device* dev, const Resource* res, bool write = false) {
+  if (!dev || !res) {
+    return false;
+  }
+  if (dev->wddm_submit_allocation_list_oom) {
+    return false;
+  }
+  if (res->backing_alloc_id == 0 || res->wddm_allocation_handle == 0) {
+    return true;
+  }
+
+  const uint32_t handle = res->wddm_allocation_handle;
+  for (auto& entry : dev->wddm_submit_allocation_handles) {
+    if (entry.allocation_handle == handle) {
+      if (write) {
+        entry.write = 1;
+      }
+      return true;
+    }
+  }
+
+  WddmSubmitAllocation entry{};
+  entry.allocation_handle = handle;
+  entry.write = write ? 1 : 0;
+  try {
+    dev->wddm_submit_allocation_handles.push_back(entry);
+  } catch (...) {
+    return false;
+  }
+  return true;
+}
+
 static void TrackBoundTargetsForSubmitLocked(Device* dev) {
   if (!dev) {
     return;
@@ -758,6 +819,35 @@ static void TrackComputeStateLocked(Device* dev) {
     // allocation list can reflect write hazards correctly.
     TrackWddmAllocForSubmitLocked(dev, res, /*write=*/true);
   }
+}
+
+static bool TrackDrawStateForSubmitOrRollbackLocked(Device* dev) {
+  if (!dev) {
+    return false;
+  }
+  const WddmAllocListCheckpoint alloc_checkpoint(dev);
+  TrackDrawStateLocked(dev);
+  if (dev->wddm_submit_allocation_list_oom) {
+    // TrackWddmAllocForSubmitLocked already reported OOM via SetErrorCb. Roll
+    // back the allocation list poison flag so unrelated commands already
+    // recorded in `dev->cmd` can still be submitted safely.
+    alloc_checkpoint.rollback();
+    return false;
+  }
+  return true;
+}
+
+static bool TrackComputeStateForSubmitOrRollbackLocked(Device* dev) {
+  if (!dev) {
+    return false;
+  }
+  const WddmAllocListCheckpoint alloc_checkpoint(dev);
+  TrackComputeStateLocked(dev);
+  if (dev->wddm_submit_allocation_list_oom) {
+    alloc_checkpoint.rollback();
+    return false;
+  }
+  return true;
 }
 
 static Device* DeviceFromContext(D3D11DDI_HDEVICECONTEXT hCtx) {
@@ -863,8 +953,9 @@ static HRESULT EmitUploadLocked(Device* dev, Resource* res, uint64_t offset_byte
     return S_OK;
   }
 
-  // Guest-backed resources: write into the WDDM allocation, then notify the host
-  // that the resource's backing memory changed.
+  // Guest-backed resources: append RESOURCE_DIRTY_RANGE before writing into the
+  // runtime allocation so OOM while recording the packet cannot desynchronize
+  // the guest allocation from the host's copy.
   const auto* ddi = reinterpret_cast<const D3DDDI_DEVICECALLBACKS*>(dev->runtime_ddi_callbacks);
   if (!ddi || !ddi->pfnLockCb || !ddi->pfnUnlockCb || !dev->runtime_device || res->wddm_allocation_handle == 0) {
     SetError(dev, E_FAIL);
@@ -884,49 +975,97 @@ static HRESULT EmitUploadLocked(Device* dev, Resource* res, uint64_t offset_byte
     return lock_hr;
   }
 
-  HRESULT copy_hr = S_OK;
+  auto unlock_allocation = [&]() -> HRESULT {
+    D3DDDICB_UNLOCK unlock_args = {};
+    unlock_args.hAllocation = lock_args.hAllocation;
+    __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) { unlock_args.SubresourceIndex = 0; }
+    __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) { unlock_args.SubResourceIndex = 0; }
+    return CallCbMaybeHandle(ddi->pfnUnlockCb, MakeRtDeviceHandle(dev), MakeRtDeviceHandle10(dev), &unlock_args);
+  };
+
+  // Validate the copy plan while we hold the lock, but do not write until after
+  // RESOURCE_DIRTY_RANGE is recorded successfully.
+  const bool row_copy_texture2d = (res->kind == ResourceKind::Texture2D &&
+                                   upload_offset == 0 &&
+                                   upload_size == res->storage.size() &&
+                                   res->mip_levels == 1 &&
+                                   res->array_size == 1);
   uint32_t lock_pitch = 0;
   if (res->kind == ResourceKind::Texture2D) {
     __if_exists(D3DDDICB_LOCK::Pitch) {
       lock_pitch = lock_args.Pitch;
     }
   }
-  if (res->kind == ResourceKind::Texture2D &&
-      upload_offset == 0 &&
-      upload_size == res->storage.size() &&
-      res->mip_levels == 1 &&
-      res->array_size == 1) {
+
+  uint32_t row_bytes = 0;
+  uint32_t rows = 0;
+  uint32_t dst_pitch = 0;
+  if (row_copy_texture2d) {
     // Single-subresource Texture2D: copy row-by-row so we can use the runtime's
     // returned pitch (when present) for correct row stepping.
     const uint32_t aer_fmt = dxgi_format_to_aerogpu_compat(dev, res->dxgi_format);
-    const uint32_t row_bytes = aerogpu_texture_min_row_pitch_bytes(aer_fmt, res->width);
-    const uint32_t rows = aerogpu_texture_num_rows(aer_fmt, res->height);
+    row_bytes = aerogpu_texture_min_row_pitch_bytes(aer_fmt, res->width);
+    rows = aerogpu_texture_num_rows(aer_fmt, res->height);
     if (row_bytes == 0 || rows == 0) {
-      copy_hr = E_INVALIDARG;
-      goto Unlock;
+      (void)unlock_allocation();
+      SetError(dev, E_INVALIDARG);
+      return E_INVALIDARG;
     }
 
     // Guest-backed textures are interpreted by the host using the protocol pitch
     // (`CREATE_TEXTURE2D.row_pitch_bytes`). Do not honor a runtime-reported pitch
     // here, otherwise we'd write rows with a stride the host does not expect.
-    const uint32_t dst_pitch = res->row_pitch_bytes;
+    dst_pitch = res->row_pitch_bytes;
     if (dst_pitch < row_bytes) {
-      copy_hr = E_INVALIDARG;
-      goto Unlock;
+      (void)unlock_allocation();
+      SetError(dev, E_INVALIDARG);
+      return E_INVALIDARG;
+    }
+    const uint64_t needed =
+        (rows == 0) ? 0ull
+                    : (static_cast<uint64_t>(rows - 1) * static_cast<uint64_t>(res->row_pitch_bytes) +
+                       static_cast<uint64_t>(row_bytes));
+    if (needed == 0 || needed > res->storage.size()) {
+      (void)unlock_allocation();
+      SetError(dev, E_FAIL);
+      return E_FAIL;
     }
     if (lock_pitch != 0) {
       LogTexture2DPitchMismatchRateLimited("EmitUploadLocked", res, /*subresource=*/0, res->row_pitch_bytes, lock_pitch);
     }
+  }
 
+  const WddmAllocListCheckpoint alloc_checkpoint(dev);
+  TrackWddmAllocForSubmitLocked(dev, res, /*write=*/false);
+  if (dev->wddm_submit_allocation_list_oom) {
+    (void)unlock_allocation();
+    alloc_checkpoint.rollback();
+    return E_OUTOFMEMORY;
+  }
+
+  auto* dirty = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
+  if (!dirty) {
+    (void)unlock_allocation();
+    SetError(dev, E_OUTOFMEMORY);
+    alloc_checkpoint.rollback();
+    return E_OUTOFMEMORY;
+  }
+  // Note: the host validates RESOURCE_DIRTY_RANGE against the protocol-visible
+  // required bytes (CREATE_TEXTURE2D layouts). Do not use the runtime's
+  // SlicePitch here, which can include extra padding and exceed the protocol
+  // size.
+  dirty->resource_handle = res->handle;
+  dirty->reserved0 = 0;
+  dirty->offset_bytes = upload_offset;
+  dirty->size_bytes = upload_size;
+
+  // Only write after successfully recording the dirty-range command.
+  if (row_copy_texture2d) {
     uint8_t* dst_base = static_cast<uint8_t*>(lock_args.pData);
     const uint8_t* src_base = res->storage.data();
     for (uint32_t y = 0; y < rows; ++y) {
       const size_t src_off_row = static_cast<size_t>(y) * res->row_pitch_bytes;
       const size_t dst_off_row = static_cast<size_t>(y) * dst_pitch;
-      if (src_off_row + row_bytes > res->storage.size()) {
-        copy_hr = E_FAIL;
-        break;
-      }
       std::memcpy(dst_base + dst_off_row, src_base + src_off_row, row_bytes);
       if (dst_pitch > row_bytes) {
         std::memset(dst_base + dst_off_row + row_bytes, 0, dst_pitch - row_bytes);
@@ -939,37 +1078,11 @@ static HRESULT EmitUploadLocked(Device* dev, Resource* res, uint64_t offset_byte
     std::memcpy(static_cast<uint8_t*>(lock_args.pData) + off, res->storage.data() + off, sz);
   }
 
-Unlock:
-  D3DDDICB_UNLOCK unlock_args = {};
-  unlock_args.hAllocation = lock_args.hAllocation;
-  __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) { unlock_args.SubresourceIndex = 0; }
-  __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) { unlock_args.SubResourceIndex = 0; }
-  hr = CallCbMaybeHandle(ddi->pfnUnlockCb, MakeRtDeviceHandle(dev), MakeRtDeviceHandle10(dev), &unlock_args);
+  hr = unlock_allocation();
   if (FAILED(hr)) {
     SetError(dev, hr);
     return hr;
   }
-  if (FAILED(copy_hr)) {
-    SetError(dev, copy_hr);
-    return copy_hr;
-  }
-
-  // RESOURCE_DIRTY_RANGE causes the host to read the guest allocation to update the host copy.
-  TrackWddmAllocForSubmitLocked(dev, res, /*write=*/false);
-
-  auto* dirty = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
-  if (!dirty) {
-    SetError(dev, E_OUTOFMEMORY);
-    return E_OUTOFMEMORY;
-  }
-  // Note: the host validates RESOURCE_DIRTY_RANGE against the protocol-visible
-  // required bytes (CREATE_TEXTURE2D layouts). Do not use the runtime's
-  // SlicePitch here, which can include extra padding and exceed the protocol
-  // size.
-  dirty->resource_handle = res->handle;
-  dirty->reserved0 = 0;
-  dirty->offset_bytes = upload_offset;
-  dirty->size_bytes = upload_size;
   return S_OK;
 }
 
@@ -979,11 +1092,17 @@ static void EmitDirtyRangeLocked(Device* dev, Resource* res, uint64_t offset_byt
   }
 
   // RESOURCE_DIRTY_RANGE causes the host to read the guest allocation to update the host copy.
+  const WddmAllocListCheckpoint alloc_checkpoint(dev);
   TrackWddmAllocForSubmitLocked(dev, res, /*write=*/false);
+  if (dev->wddm_submit_allocation_list_oom) {
+    alloc_checkpoint.rollback();
+    return;
+  }
 
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
   if (!cmd) {
     SetError(dev, E_OUTOFMEMORY);
+    alloc_checkpoint.rollback();
     return;
   }
   cmd->resource_handle = res->handle;
@@ -8815,7 +8934,12 @@ void AEROGPU_APIENTRY ClearRenderTargetView11(D3D11DDI_HDEVICECONTEXT hCtx,
   if (!rt) {
     rt = (dev->current_rtv_count != 0) ? dev->current_rtv_resources[0] : nullptr;
   }
+  const WddmAllocListCheckpoint alloc_checkpoint(dev);
   TrackBoundTargetsForSubmitLocked(dev);
+  if (dev->wddm_submit_allocation_list_oom) {
+    alloc_checkpoint.rollback();
+    return;
+  }
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_clear>(AEROGPU_CMD_CLEAR);
   if (!cmd) {
     SetError(dev, E_OUTOFMEMORY);
@@ -8859,7 +8983,12 @@ void AEROGPU_APIENTRY ClearDepthStencilView11(D3D11DDI_HDEVICECONTEXT hCtx,
     aer_flags |= AEROGPU_CLEAR_STENCIL;
   }
 
+  const WddmAllocListCheckpoint alloc_checkpoint(dev);
   TrackBoundTargetsForSubmitLocked(dev);
+  if (dev->wddm_submit_allocation_list_oom) {
+    alloc_checkpoint.rollback();
+    return;
+  }
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_clear>(AEROGPU_CMD_CLEAR);
   if (!cmd) {
     SetError(dev, E_OUTOFMEMORY);
@@ -9042,7 +9171,21 @@ static void ClearUavBufferLocked(Device* dev, const UnorderedAccessView* uav, co
 
   // RESOURCE_DIRTY_RANGE causes the host to read the guest allocation to update
   // the host copy.
+  const WddmAllocListCheckpoint alloc_checkpoint(dev);
   TrackWddmAllocForSubmitLocked(dev, res, /*write=*/false);
+  if (dev->wddm_submit_allocation_list_oom) {
+    D3DDDICB_UNLOCK unlock_args = {};
+    unlock_args.hAllocation = lock_args.hAllocation;
+    __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) {
+      unlock_args.SubresourceIndex = 0;
+    }
+    __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) {
+      unlock_args.SubResourceIndex = 0;
+    }
+    (void)unlock(&unlock_args);
+    alloc_checkpoint.rollback();
+    return;
+  }
   auto* dirty = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
   if (!dirty) {
     D3DDDICB_UNLOCK unlock_args = {};
@@ -9055,6 +9198,7 @@ static void ClearUavBufferLocked(Device* dev, const UnorderedAccessView* uav, co
     }
     (void)unlock(&unlock_args);
     SetError(dev, E_OUTOFMEMORY);
+    alloc_checkpoint.rollback();
     return;
   }
   dirty->resource_handle = res->handle;
@@ -9158,7 +9302,9 @@ void AEROGPU_APIENTRY Draw11(D3D11DDI_HDEVICECONTEXT hCtx, UINT VertexCount, UIN
   }
 
   std::lock_guard<std::mutex> lock(dev->mutex);
-  TrackDrawStateLocked(dev);
+  if (!TrackDrawStateForSubmitOrRollbackLocked(dev)) {
+    return;
+  }
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_draw>(AEROGPU_CMD_DRAW);
   if (!cmd) {
     SetError(dev, E_OUTOFMEMORY);
@@ -9185,7 +9331,9 @@ void AEROGPU_APIENTRY DrawInstanced11(D3D11DDI_HDEVICECONTEXT hCtx,
   }
 
   std::lock_guard<std::mutex> lock(dev->mutex);
-  TrackDrawStateLocked(dev);
+  if (!TrackDrawStateForSubmitOrRollbackLocked(dev)) {
+    return;
+  }
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_draw>(AEROGPU_CMD_DRAW);
   if (!cmd) {
     SetError(dev, E_OUTOFMEMORY);
@@ -9210,7 +9358,9 @@ void AEROGPU_APIENTRY DrawIndexed11(D3D11DDI_HDEVICECONTEXT hCtx, UINT IndexCoun
   }
 
   std::lock_guard<std::mutex> lock(dev->mutex);
-  TrackDrawStateLocked(dev);
+  if (!TrackDrawStateForSubmitOrRollbackLocked(dev)) {
+    return;
+  }
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_draw_indexed>(AEROGPU_CMD_DRAW_INDEXED);
   if (!cmd) {
     SetError(dev, E_OUTOFMEMORY);
@@ -9239,7 +9389,9 @@ void AEROGPU_APIENTRY DrawIndexedInstanced11(D3D11DDI_HDEVICECONTEXT hCtx,
   }
 
   std::lock_guard<std::mutex> lock(dev->mutex);
-  TrackDrawStateLocked(dev);
+  if (!TrackDrawStateForSubmitOrRollbackLocked(dev)) {
+    return;
+  }
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_draw_indexed>(AEROGPU_CMD_DRAW_INDEXED);
   if (!cmd) {
     SetError(dev, E_OUTOFMEMORY);
@@ -9300,7 +9452,9 @@ void AEROGPU_APIENTRY DrawInstancedIndirect11(D3D11DDI_HDEVICECONTEXT hCtx,
     return;
   }
 
-  TrackDrawStateLocked(dev);
+  if (!TrackDrawStateForSubmitOrRollbackLocked(dev)) {
+    return;
+  }
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_draw>(AEROGPU_CMD_DRAW);
   if (!cmd) {
     SetError(dev, E_OUTOFMEMORY);
@@ -9362,7 +9516,9 @@ void AEROGPU_APIENTRY DrawIndexedInstancedIndirect11(D3D11DDI_HDEVICECONTEXT hCt
     return;
   }
 
-  TrackDrawStateLocked(dev);
+  if (!TrackDrawStateForSubmitOrRollbackLocked(dev)) {
+    return;
+  }
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_draw_indexed>(AEROGPU_CMD_DRAW_INDEXED);
   if (!cmd) {
     SetError(dev, E_OUTOFMEMORY);
@@ -9391,7 +9547,9 @@ void AEROGPU_APIENTRY Dispatch11(D3D11DDI_HDEVICECONTEXT hCtx,
   }
 
   std::lock_guard<std::mutex> lock(dev->mutex);
-  TrackComputeStateLocked(dev);
+  if (!TrackComputeStateForSubmitOrRollbackLocked(dev)) {
+    return;
+  }
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_dispatch>(AEROGPU_CMD_DISPATCH);
   if (!cmd) {
     SetError(dev, E_OUTOFMEMORY);
@@ -9447,7 +9605,9 @@ void AEROGPU_APIENTRY DispatchIndirect11(D3D11DDI_HDEVICECONTEXT hCtx,
     return;
   }
 
-  TrackComputeStateLocked(dev);
+  if (!TrackComputeStateForSubmitOrRollbackLocked(dev)) {
+    return;
+  }
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_dispatch>(AEROGPU_CMD_DISPATCH);
   if (!cmd) {
     SetError(dev, E_OUTOFMEMORY);
@@ -9615,7 +9775,21 @@ void AEROGPU_APIENTRY CopyStructureCount11(D3D11DDI_HDEVICECONTEXT hCtx,
     return;
   }
 
+  const WddmAllocListCheckpoint alloc_checkpoint(dev);
   TrackWddmAllocForSubmitLocked(dev, dst, /*write=*/false);
+  if (dev->wddm_submit_allocation_list_oom) {
+    D3DDDICB_UNLOCK unlock_args = {};
+    unlock_args.hAllocation = lock_args.hAllocation;
+    __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) {
+      unlock_args.SubresourceIndex = 0;
+    }
+    __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) {
+      unlock_args.SubResourceIndex = 0;
+    }
+    (void)unlock(&unlock_args);
+    alloc_checkpoint.rollback();
+    return;
+  }
   auto* dirty_cmd = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
   if (!dirty_cmd) {
     D3DDDICB_UNLOCK unlock_args = {};
@@ -9628,6 +9802,7 @@ void AEROGPU_APIENTRY CopyStructureCount11(D3D11DDI_HDEVICECONTEXT hCtx,
     }
     (void)unlock(&unlock_args);
     SetError(dev, E_OUTOFMEMORY);
+    alloc_checkpoint.rollback();
     return;
   }
   dirty_cmd->resource_handle = dst->handle;
@@ -9851,7 +10026,21 @@ void AEROGPU_APIENTRY CopySubresourceRegion11(D3D11DDI_HDEVICECONTEXT hCtx,
           return;
         }
 
+        const WddmAllocListCheckpoint alloc_checkpoint(dev);
         TrackWddmAllocForSubmitLocked(dev, dst, /*write=*/false);
+        if (dev->wddm_submit_allocation_list_oom) {
+          D3DDDICB_UNLOCK unlock_args = {};
+          unlock_args.hAllocation = lock_args.hAllocation;
+          __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) {
+            unlock_args.SubresourceIndex = 0;
+          }
+          __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) {
+            unlock_args.SubResourceIndex = 0;
+          }
+          (void)unlock(&unlock_args);
+          alloc_checkpoint.rollback();
+          return;
+        }
         auto* dirty_cmd = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
         if (!dirty_cmd) {
           D3DDDICB_UNLOCK unlock_args = {};
@@ -9864,6 +10053,7 @@ void AEROGPU_APIENTRY CopySubresourceRegion11(D3D11DDI_HDEVICECONTEXT hCtx,
           }
           (void)unlock(&unlock_args);
           SetError(dev, E_OUTOFMEMORY);
+          alloc_checkpoint.rollback();
           return;
         }
         dirty_cmd->resource_handle = dst->handle;
@@ -9920,8 +10110,12 @@ void AEROGPU_APIENTRY CopySubresourceRegion11(D3D11DDI_HDEVICECONTEXT hCtx,
       return;
     }
 
-    TrackWddmAllocForSubmitLocked(dev, src, /*write=*/false);
-    TrackWddmAllocForSubmitLocked(dev, dst, /*write=*/true);
+    // COPY_BUFFER is a best-effort optimization; if we cannot track allocations
+    // for submission (OOM), skip it without poisoning the current command buffer.
+    if (!TryTrackWddmAllocForSubmitLocked(dev, src, /*write=*/false) ||
+        !TryTrackWddmAllocForSubmitLocked(dev, dst, /*write=*/true)) {
+      return;
+    }
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_copy_buffer>(AEROGPU_CMD_COPY_BUFFER);
     if (!cmd) {
       // The COPY_BUFFER packet is an optimization; CPU copy + upload already ran.
@@ -10081,8 +10275,13 @@ void AEROGPU_APIENTRY CopySubresourceRegion11(D3D11DDI_HDEVICECONTEXT hCtx,
     // the CPU shadow after the command has been successfully appended. This avoids UMD/host drift if we
     // hit OOM while recording the packet.
     if (SupportsTransfer(dev)) {
+      const WddmAllocListCheckpoint alloc_checkpoint(dev);
       TrackWddmAllocForSubmitLocked(dev, src, /*write=*/false);
       TrackWddmAllocForSubmitLocked(dev, dst, /*write=*/true);
+      if (dev->wddm_submit_allocation_list_oom) {
+        alloc_checkpoint.rollback();
+        return;
+      }
       auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_copy_texture2d>(AEROGPU_CMD_COPY_TEXTURE2D);
       if (!cmd) {
         // Preserve old behavior: COPY_TEXTURE2D is best-effort. Avoid mutating the shadow copy
@@ -10235,7 +10434,21 @@ void AEROGPU_APIENTRY CopySubresourceRegion11(D3D11DDI_HDEVICECONTEXT hCtx,
       return;
     }
 
+    const WddmAllocListCheckpoint alloc_checkpoint(dev);
     TrackWddmAllocForSubmitLocked(dev, dst, /*write=*/false);
+    if (dev->wddm_submit_allocation_list_oom) {
+      D3DDDICB_UNLOCK unlock_args = {};
+      unlock_args.hAllocation = lock_args.hAllocation;
+      __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) {
+        unlock_args.SubresourceIndex = 0;
+      }
+      __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) {
+        unlock_args.SubResourceIndex = 0;
+      }
+      (void)unlock(&unlock_args);
+      alloc_checkpoint.rollback();
+      return;
+    }
 
     uint8_t* dst_wddm_bytes = static_cast<uint8_t*>(lock_args.pData);
     for (uint32_t y = 0; y < copy_height_blocks; y++) {
@@ -11279,7 +11492,21 @@ void AEROGPU_APIENTRY UpdateSubresourceUP11(D3D11DDI_HDEVICECONTEXT hCtx,
 
     // Only commit the write to both the runtime allocation and the shadow copy
     // if we can successfully append the corresponding dirty-range command.
+    const WddmAllocListCheckpoint alloc_checkpoint(dev);
     TrackWddmAllocForSubmitLocked(dev, res, /*write=*/false);
+    if (dev->wddm_submit_allocation_list_oom) {
+      D3DDDICB_UNLOCK unlock_args = {};
+      unlock_args.hAllocation = lock_args.hAllocation;
+      __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) {
+        unlock_args.SubresourceIndex = dst_subresource;
+      }
+      __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) {
+        unlock_args.SubResourceIndex = dst_subresource;
+      }
+      (void)unlock(&unlock_args);
+      alloc_checkpoint.rollback();
+      return;
+    }
     auto* dirty_cmd = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
     if (!dirty_cmd) {
       D3DDDICB_UNLOCK unlock_args = {};
@@ -11292,6 +11519,7 @@ void AEROGPU_APIENTRY UpdateSubresourceUP11(D3D11DDI_HDEVICECONTEXT hCtx,
       }
       (void)unlock(&unlock_args);
       SetError(dev, E_OUTOFMEMORY);
+      alloc_checkpoint.rollback();
       return;
     }
     dirty_cmd->resource_handle = res->handle;
@@ -11541,7 +11769,21 @@ void AEROGPU_APIENTRY UpdateSubresourceUP11(D3D11DDI_HDEVICECONTEXT hCtx,
                                            lock_pitch);
     }
 
+    const WddmAllocListCheckpoint alloc_checkpoint(dev);
     TrackWddmAllocForSubmitLocked(dev, res, /*write=*/false);
+    if (dev->wddm_submit_allocation_list_oom) {
+      D3DDDICB_UNLOCK unlock_args = {};
+      unlock_args.hAllocation = lock_args.hAllocation;
+      __if_exists(D3DDDICB_UNLOCK::SubresourceIndex) {
+        unlock_args.SubresourceIndex = 0;
+      }
+      __if_exists(D3DDDICB_UNLOCK::SubResourceIndex) {
+        unlock_args.SubResourceIndex = 0;
+      }
+      (void)unlock(&unlock_args);
+      alloc_checkpoint.rollback();
+      return;
+    }
     auto* dirty = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
     if (!dirty) {
       D3DDDICB_UNLOCK unlock_args = {};
@@ -11554,6 +11796,7 @@ void AEROGPU_APIENTRY UpdateSubresourceUP11(D3D11DDI_HDEVICECONTEXT hCtx,
       }
       (void)unlock(&unlock_args);
       SetError(dev, E_OUTOFMEMORY);
+      alloc_checkpoint.rollback();
       return;
     }
     dirty->resource_handle = res->handle;
