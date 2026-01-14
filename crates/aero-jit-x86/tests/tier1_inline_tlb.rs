@@ -2947,6 +2947,111 @@ fn tier1_inline_tlb_store_bumps_code_page_version() {
 }
 
 #[test]
+fn tier1_inline_tlb_store_with_zero_length_code_version_table_does_not_trap() {
+    // If the runtime hasn't configured a code-version table (`len == 0`), the inline bump
+    // fast-path should be disabled and stores should still succeed even if the pointer is junk.
+    let addr = 0x1000u64;
+
+    let mut b = IrBuilder::new(0x1000);
+    let a0 = b.const_int(Width::W64, addr);
+    let v0 = b.const_int(Width::W8, 0xAB);
+    b.store(Width::W8, a0, v0);
+    let block = b.finish(IrTerminator::Jump { target: 0x3000 });
+    block.validate().unwrap();
+
+    let cpu = CpuState {
+        rip: 0x1000,
+        ..Default::default()
+    };
+
+    let wasm = Tier1WasmCodegen::new().compile_block_with_options(
+        &block,
+        Tier1WasmOptions {
+            inline_tlb: true,
+            ..Default::default()
+        },
+    );
+    validate_wasm(&wasm);
+
+    // Match the real runtime layout: reserve the Tier-2 ctx region between the Tier-1 `JitContext`
+    // and the guest RAM backing store.
+    let ram_base = (JIT_CTX_PTR as u64)
+        + (JitContext::TOTAL_BYTE_SIZE as u64)
+        + u64::from(jit_ctx::TIER2_CTX_SIZE);
+
+    let ram = vec![0u8; 0x2000];
+    let total_len = ram_base as usize + ram.len();
+    let mut mem = vec![0u8; total_len];
+
+    // CPU state at `cpu_ptr=0`.
+    let mut cpu_bytes = vec![0u8; abi::CPU_STATE_SIZE as usize];
+    write_cpu_to_wasm_bytes(&cpu, &mut cpu_bytes);
+    mem[CPU_PTR as usize..CPU_PTR as usize + cpu_bytes.len()].copy_from_slice(&cpu_bytes);
+
+    // JIT context at `jit_ctx_ptr`.
+    let ctx = JitContext {
+        ram_base,
+        tlb_salt: TLB_SALT,
+    };
+    ctx.write_header_to_mem(&mut mem, JIT_CTX_PTR as usize);
+
+    // Configure an invalid pointer but a zero length.
+    let invalid_ptr = 0xffff_f000u32;
+    mem[jit_ctx::CODE_VERSION_TABLE_PTR_OFFSET as usize
+        ..jit_ctx::CODE_VERSION_TABLE_PTR_OFFSET as usize + 4]
+        .copy_from_slice(&invalid_ptr.to_le_bytes());
+    mem[jit_ctx::CODE_VERSION_TABLE_LEN_OFFSET as usize
+        ..jit_ctx::CODE_VERSION_TABLE_LEN_OFFSET as usize + 4]
+        .copy_from_slice(&0u32.to_le_bytes());
+
+    // RAM backing store.
+    mem[ram_base as usize..ram_base as usize + ram.len()].copy_from_slice(&ram);
+
+    let pages = total_len.div_ceil(65_536) as u32;
+    let (mut store, memory, func) = instantiate(&wasm, pages, 0x2000);
+    memory.write(&mut store, 0, &mem).unwrap();
+
+    let ret = func.call(&mut store, (CPU_PTR, JIT_CTX_PTR)).unwrap();
+    assert_eq!(ret, 0x3000);
+
+    let mut got_mem = vec![0u8; total_len];
+    memory.read(&store, 0, &mut got_mem).unwrap();
+
+    let snap = CpuSnapshot::from_wasm_bytes(&got_mem[0..abi::CPU_STATE_SIZE as usize]);
+    assert_eq!(snap.rip, 0x3000);
+
+    // Store should still succeed.
+    let got_ram = &got_mem[ram_base as usize..ram_base as usize + ram.len()];
+    assert_eq!(got_ram[addr as usize], 0xAB);
+
+    // Ensure the invalid pointer isn't touched.
+    assert_eq!(
+        u32::from_le_bytes(
+            got_mem[jit_ctx::CODE_VERSION_TABLE_PTR_OFFSET as usize
+                ..jit_ctx::CODE_VERSION_TABLE_PTR_OFFSET as usize + 4]
+                .try_into()
+                .unwrap()
+        ),
+        invalid_ptr
+    );
+    assert_eq!(
+        u32::from_le_bytes(
+            got_mem[jit_ctx::CODE_VERSION_TABLE_LEN_OFFSET as usize
+                ..jit_ctx::CODE_VERSION_TABLE_LEN_OFFSET as usize + 4]
+                .try_into()
+                .unwrap()
+        ),
+        0
+    );
+
+    let host_state = *store.data();
+    assert_eq!(host_state.mmio_exit_calls, 0);
+    assert_eq!(host_state.mmu_translate_calls, 1);
+    assert_eq!(host_state.slow_mem_reads, 0);
+    assert_eq!(host_state.slow_mem_writes, 0);
+}
+
+#[test]
 fn tier1_inline_tlb_store_code_version_bump_wraps_u32() {
     // Version bumps are wrapping arithmetic: u32::MAX + 1 == 0.
     let addr = 0x0u64;
