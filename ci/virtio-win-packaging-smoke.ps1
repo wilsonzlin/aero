@@ -1186,13 +1186,9 @@ if ($resolvedGuestToolsProfile -eq "full") {
   New-SyntheticDriverFiles -VirtioRoot $syntheticPartialRoot -UpstreamDirName "NetKVM" -InfBaseName "netkvm" -OsDirName $osDir -ArchDirName "x86" -HardwareId "PCI\VEN_1AF4&DEV_1041"
   New-SyntheticDriverFiles -VirtioRoot $syntheticPartialRoot -UpstreamDirName "NetKVM" -InfBaseName "netkvm" -OsDirName $osDir -ArchDirName "amd64" -HardwareId "PCI\VEN_1AF4&DEV_1041"
 
-  # Optional drivers: partial (one-arch-only) -> should be omitted entirely by make-driver-pack.ps1.
-  #
-  # Cover both directions:
-  # - viosnd present only for x86
-  # - vioinput present only for amd64
+  # Optional drivers: x86-only (partial) -> should be omitted entirely by make-driver-pack.ps1.
   New-SyntheticDriverFiles -VirtioRoot $syntheticPartialRoot -UpstreamDirName "viosnd" -InfBaseName "viosnd" -OsDirName $osDir -ArchDirName "x86" -HardwareId "PCI\VEN_1AF4&DEV_1059"
-  New-SyntheticDriverFiles -VirtioRoot $syntheticPartialRoot -UpstreamDirName "vioinput" -InfBaseName "vioinput" -OsDirName $osDir -ArchDirName "amd64" -HardwareId "PCI\VEN_1AF4&DEV_1052"
+  New-SyntheticDriverFiles -VirtioRoot $syntheticPartialRoot -UpstreamDirName "vioinput" -InfBaseName "vioinput" -OsDirName $osDir -ArchDirName "x86" -HardwareId "PCI\VEN_1AF4&DEV_1052"
 
   $guestToolsPartialOutDir = Join-Path $OutRoot "guest-tools-partial-optional"
   Ensure-EmptyDirectory -Path $guestToolsPartialOutDir
@@ -1286,6 +1282,104 @@ if ($resolvedGuestToolsProfile -eq "full") {
     -NoZip *>&1 | Tee-Object -FilePath $partialStrictLog
   if ($LASTEXITCODE -eq 0) {
     throw "Expected make-driver-pack.ps1 -StrictOptional to fail for partial optional drivers. See $partialStrictLog"
+  }
+
+  # Also validate best-effort normalization when optional drivers are amd64-only.
+  Write-Host "Running partial optional-driver normalization smoke test (optional drivers amd64-only)..."
+
+  $syntheticPartialAmd64Root = Join-Path $OutRoot "virtio-win-partial-optional-amd64"
+  Ensure-EmptyDirectory -Path $syntheticPartialAmd64Root
+
+  "license placeholder" | Out-File -FilePath (Join-Path $syntheticPartialAmd64Root "license.txt") -Encoding ascii
+  "notice placeholder" | Out-File -FilePath (Join-Path $syntheticPartialAmd64Root "notice.txt") -Encoding ascii
+  $fakeVirtioWinVersionPartialAmd64 = "0.0.0-synthetic-partial-optional-amd64"
+  $fakeVirtioWinVersionPartialAmd64 | Out-File -FilePath (Join-Path $syntheticPartialAmd64Root "VERSION") -Encoding ascii
+
+  $fakeIsoPathPartialAmd64 = "synthetic-virtio-win-partial-amd64.iso"
+  $fakeIsoShaPartialAmd64 = ("fedcba9876543210" * 4)
+  $fakeIsoVolumeIdPartialAmd64 = "SYNTH_VIRTIO_PARTIAL_AMD64"
+  @{
+    schema_version = 1
+    virtio_win_iso = @{
+      path = $fakeIsoPathPartialAmd64
+      sha256 = $fakeIsoShaPartialAmd64
+      volume_id = $fakeIsoVolumeIdPartialAmd64
+    }
+  } | ConvertTo-Json -Depth 4 | Out-File -FilePath (Join-Path $syntheticPartialAmd64Root "virtio-win-provenance.json") -Encoding UTF8
+
+  # Required drivers.
+  New-SyntheticDriverFiles -VirtioRoot $syntheticPartialAmd64Root -UpstreamDirName "viostor" -InfBaseName "viostor" -OsDirName $osDir -ArchDirName "x86" -HardwareId "PCI\VEN_1AF4&DEV_1042"
+  New-SyntheticDriverFiles -VirtioRoot $syntheticPartialAmd64Root -UpstreamDirName "viostor" -InfBaseName "viostor" -OsDirName $osDir -ArchDirName "amd64" -HardwareId "PCI\VEN_1AF4&DEV_1042"
+  New-SyntheticDriverFiles -VirtioRoot $syntheticPartialAmd64Root -UpstreamDirName "NetKVM" -InfBaseName "netkvm" -OsDirName $osDir -ArchDirName "x86" -HardwareId "PCI\VEN_1AF4&DEV_1041"
+  New-SyntheticDriverFiles -VirtioRoot $syntheticPartialAmd64Root -UpstreamDirName "NetKVM" -InfBaseName "netkvm" -OsDirName $osDir -ArchDirName "amd64" -HardwareId "PCI\VEN_1AF4&DEV_1041"
+
+  # Optional drivers: amd64-only (partial) -> should be omitted entirely by make-driver-pack.ps1.
+  New-SyntheticDriverFiles -VirtioRoot $syntheticPartialAmd64Root -UpstreamDirName "viosnd" -InfBaseName "viosnd" -OsDirName $osDir -ArchDirName "amd64" -HardwareId "PCI\VEN_1AF4&DEV_1059"
+  New-SyntheticDriverFiles -VirtioRoot $syntheticPartialAmd64Root -UpstreamDirName "vioinput" -InfBaseName "vioinput" -OsDirName $osDir -ArchDirName "amd64" -HardwareId "PCI\VEN_1AF4&DEV_1052"
+
+  $partialAmd64PackOutDir = Join-Path $OutRoot "driver-pack-partial-optional-amd64"
+  Ensure-EmptyDirectory -Path $partialAmd64PackOutDir
+  $partialAmd64PackLog = Join-Path $logsDir "make-driver-pack-partial-optional-amd64.log"
+
+  & pwsh -NoProfile -ExecutionPolicy Bypass -File $driverPackScript `
+    -VirtioWinRoot $syntheticPartialAmd64Root `
+    -OutDir $partialAmd64PackOutDir `
+    -NoZip *>&1 | Tee-Object -FilePath $partialAmd64PackLog
+  if ($LASTEXITCODE -ne 0) {
+    throw "make-driver-pack.ps1 failed for partial optional-driver smoke test (amd64-only) (exit $LASTEXITCODE). See $partialAmd64PackLog"
+  }
+
+  $partialAmd64PackRoot = Join-Path $partialAmd64PackOutDir "aero-win7-driver-pack"
+  if (-not (Test-Path -LiteralPath $partialAmd64PackRoot -PathType Container)) {
+    throw "Expected driver pack staging directory not found for partial optional-driver smoke test (amd64-only): $partialAmd64PackRoot"
+  }
+
+  $partialAmd64ManifestPath = Join-Path $partialAmd64PackRoot "manifest.json"
+  if (-not (Test-Path -LiteralPath $partialAmd64ManifestPath -PathType Leaf)) {
+    throw "Expected driver pack manifest not found for partial optional-driver smoke test (amd64-only): $partialAmd64ManifestPath"
+  }
+  $partialAmd64Manifest = Get-Content -LiteralPath $partialAmd64ManifestPath -Raw | ConvertFrom-Json
+  if (-not $partialAmd64Manifest.optional_drivers_missing_any) {
+    throw "Expected amd64-only partial driver pack manifest to report missing optional drivers (optional_drivers_missing_any=false)."
+  }
+
+  foreach ($p in @(
+    (Join-Path $partialAmd64PackRoot "win7\\x86\\viosnd"),
+    (Join-Path $partialAmd64PackRoot "win7\\amd64\\viosnd"),
+    (Join-Path $partialAmd64PackRoot "win7\\x86\\vioinput"),
+    (Join-Path $partialAmd64PackRoot "win7\\amd64\\vioinput")
+  )) {
+    if (Test-Path -LiteralPath $p -PathType Container) {
+      throw "Did not expect optional driver directory to be present after normalization (amd64-only): $p"
+    }
+  }
+
+  $partialAmd64Warnings = @($partialAmd64Manifest.warnings | ForEach-Object { $_.ToString().ToLowerInvariant() })
+  $partialAmd64Missing = @($partialAmd64Manifest.optional_drivers_missing)
+  foreach ($want in @("viosnd", "vioinput")) {
+    $entry = $partialAmd64Missing | Where-Object { $_.name -and (($_.name).ToLowerInvariant() -eq $want) } | Select-Object -First 1
+    if (-not $entry) {
+      throw "Expected amd64-only partial driver pack manifest to report missing optional driver '$want'."
+    }
+    $targets = @($entry.missing_targets | ForEach-Object { $_.ToString().ToLowerInvariant() })
+    foreach ($t in @("win7-x86", "win7-amd64")) {
+      if (-not ($targets -contains $t)) {
+        throw "Expected amd64-only partial driver pack manifest optional_drivers_missing entry for '$want' to include missing target '$t'. Got: $($targets -join ', ')"
+      }
+    }
+    $warnHit = $partialAmd64Warnings |
+      Where-Object { $_.Contains("optional driver '$want'") -and $_.Contains("present only") -and $_.Contains("omitting it from all targets") } |
+      Select-Object -First 1
+    if (-not $warnHit) {
+      throw "Expected amd64-only partial driver pack manifest warnings to include a partial-driver omission warning for '$want'."
+    }
+  }
+
+  $partialAmd64IncludedDrivers = @($partialAmd64Manifest.drivers | ForEach-Object { $_.ToString().ToLowerInvariant() })
+  foreach ($notWant in @("viosnd", "vioinput")) {
+    if ($partialAmd64IncludedDrivers -contains $notWant) {
+      throw "Did not expect amd64-only partial driver pack manifest to list '$notWant' as included. Included: $($partialAmd64IncludedDrivers -join ', ')"
+    }
   }
 }
 
