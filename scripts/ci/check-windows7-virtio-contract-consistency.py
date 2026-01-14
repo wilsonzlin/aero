@@ -194,7 +194,8 @@ def read_text(path: Path) -> str:
     else:
         # Fast-path: no NULs means we almost certainly decoded correctly.
         if "\x00" not in utf8_text:
-            return utf8_text
+            # Be tolerant of UTF-8 BOMs produced by some editors/tools.
+            return utf8_text.lstrip("\ufeff")
 
     # Heuristic detection for UTF-16 without BOM.
     # Plain ASCII UTF-16LE will have many 0x00 bytes at odd indices; UTF-16BE will
