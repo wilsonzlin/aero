@@ -57,8 +57,13 @@ Notes:
 
 - The `crates/aero-wasm` exports (`aerogpu_drain_submissions` / `aerogpu_complete_fence`) enable the
   submission bridge automatically to keep the contract explicit for browser code.
-- With the submission bridge enabled, **fence completion timing is host-controlled**. The host is
-  responsible for any present/vsync pacing policy before reporting completion.
+- With the submission bridge enabled, the host controls **when work is executed**, but the device
+  model still owns the **guest-facing fence pacing contract**:
+  - once the host reports `signal_fence` completion via `Machine::aerogpu_complete_fence`, fences
+    corresponding to vsync `PRESENT` packets complete on the **next vblank** (and block later
+    immediate fences until then).
+  - hosts should generally report completion as soon as execution finishes, rather than trying to
+    “fake vsync” by delaying `submit_complete` based on host tick cadence.
 
 ### 3) In-process backend: native/headless executor mode
 
