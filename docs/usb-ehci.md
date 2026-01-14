@@ -53,6 +53,12 @@ What exists today (bring-up stage):
   `crates/aero-usb/src/usb2_port.rs`).
   - Current limitation: only the first two EHCI ports are muxed today; EHCI still exposes additional
     standalone root ports by default, and no TT/split transactions are implemented.
+  - Browser/WASM integration convention (important for host passthrough):
+    - EHCI root port **0** is used as the attachment point for the worker-managed “external hub”
+      (WebHID passthrough + synthetic HID devices) in EHCI-only WASM builds.
+    - EHCI root port **1** is reserved for the guest-visible WebUSB passthrough device
+      (`EhciControllerBridge.set_connected`).
+    - Treat this as ABI: host-side code assumes these root port indices are stable.
 
 What is *not* implemented yet (still MVP-relevant):
 

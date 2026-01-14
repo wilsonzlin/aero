@@ -546,6 +546,12 @@ Recommended guardrails:
 - **Guest-visible WebUSB passthrough is experimental**
   - The canonical UHCI controller (`UhciControllerBridge`) exposes a guest-visible WebUSB passthrough
     device on root port 1.
+  - When available in a given WASM build, the guest-visible high-speed controllers
+    (`EhciControllerBridge` / `XhciControllerBridge`) expose the same passthrough device lifecycle via
+    a reserved root port too:
+    - EHCI: root port 1
+    - xHCI: typically root port 1 (falls back to root port 0 if the controller only exposes a single
+      root port)
   - The I/O worker runs `WebUsbPassthroughRuntime` to proxy host actions/completions between the
     WASM device model and the main-thread WebUSB broker (`UsbBroker`).
     - Optional SharedArrayBuffer ring fast path (`usb.ringAttach`) when `crossOriginIsolated`,

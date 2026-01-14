@@ -24,8 +24,8 @@ Implementation references (current repo):
 - Rust guest-visible UHCI controller + TD handshake mapping: `crates/aero-usb/src/uhci/mod.rs`
 - WASM export bridge (`UsbPassthroughBridge`): `crates/aero-wasm/src/lib.rs`
 - WASM guest-visible UHCI controller (`UhciControllerBridge`) + WebUSB passthrough device lifecycle (`set_connected`, `drain_actions`, `push_completion`, `reset` on root port 1): `crates/aero-wasm/src/uhci_controller_bridge.rs` (re-exported from `crates/aero-wasm/src/lib.rs`)
-- WASM guest-visible EHCI controller (`EhciControllerBridge`) + WebUSB passthrough device lifecycle (root port 1 reserved for WebUSB; root port 0 remains available for an external hub / HID passthrough): `crates/aero-wasm/src/ehci_controller_bridge.rs`
-- WASM guest-visible xHCI controller (`XhciControllerBridge`) + WebUSB passthrough device lifecycle (root port 1 reserved for WebUSB): `crates/aero-wasm/src/xhci_controller_bridge.rs`
+- WASM guest-visible EHCI controller (`EhciControllerBridge`) + WebUSB passthrough device lifecycle (`set_connected`, `drain_actions`, `push_completion`, `reset` on root port 1; root port 0 remains available for an external hub / HID passthrough): `crates/aero-wasm/src/ehci_controller_bridge.rs` (re-exported from `crates/aero-wasm/src/lib.rs`)
+- WASM guest-visible xHCI controller (`XhciControllerBridge`) + WebUSB passthrough device lifecycle (`set_connected`, `drain_actions`, `push_completion`, `reset` on a reserved root port; typically root port 1): `crates/aero-wasm/src/xhci_controller_bridge.rs` (re-exported from `crates/aero-wasm/src/lib.rs`)
 - (Dev/harness) WASM standalone WebUSB UHCI bridge (`WebUsbUhciBridge`): `crates/aero-wasm/src/webusb_uhci_bridge.rs` (re-exported from `crates/aero-wasm/src/lib.rs`)
 - WASM demo driver (`UsbPassthroughDemo`; queues GET_DESCRIPTOR requests to validate the action↔completion contract end-to-end): `crates/aero-wasm/src/lib.rs`
 - WASM UHCI enumeration harness (dev smoke; `WebUsbUhciPassthroughHarness`): `crates/aero-wasm/src/webusb_uhci_passthrough_harness.rs`
@@ -167,6 +167,8 @@ deadlocking the Rust-side action queue on an action we can never complete).
 This applies to:
 - `UsbPassthroughBridge.drain_actions()`
 - `UhciControllerBridge.drain_actions()`
+- `EhciControllerBridge.drain_actions()`
+- `XhciControllerBridge.drain_actions()`
 - `WebUsbUhciBridge.drain_actions()`
 - `UhciRuntime.webusb_drain_actions()`
 
