@@ -22,7 +22,7 @@ use super::images::ImagesState;
 
 // Keep defaults aligned with `docs/18-chunked-disk-image-format.md`.
 const PUBLIC_CACHE_CONTROL_CHUNKS: &str = "public, max-age=31536000, immutable, no-transform";
-const PUBLIC_CACHE_CONTROL_MANIFEST: &str = "public, max-age=31536000, immutable";
+const PUBLIC_CACHE_CONTROL_MANIFEST: &str = "public, max-age=31536000, immutable, no-transform";
 
 // Chunk filenames are `chunkIndex` formatted as zero-padded decimal, followed by `.bin`.
 //

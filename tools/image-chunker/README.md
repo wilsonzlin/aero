@@ -80,10 +80,14 @@ this tool because it currently opens a single input file. Flatten/merge to a sta
   - `Content-Type: application/octet-stream`
   - `Content-Encoding: identity`
   - `Cache-Control: public, max-age=31536000, immutable, no-transform`
-- JSON (`manifest.json`, `meta.json`, `latest.json`):
+- JSON (`manifest.json`, `meta.json`):
   - `Content-Type: application/json`
   - `Content-Encoding: identity` (recommended for compatibility; avoid transparent compression)
-  - `Cache-Control: public, max-age=31536000, immutable`
+  - `Cache-Control: public, max-age=31536000, immutable, no-transform`
+- Latest pointer (`latest.json`, when `--publish-latest`):
+  - `Content-Type: application/json`
+  - `Content-Encoding: identity` (recommended for compatibility; avoid transparent compression)
+  - `Cache-Control: public, max-age=60, no-transform` (default; configurable via `--cache-control-latest`)
 
 These defaults match [`docs/18-chunked-disk-image-format.md`](../../docs/18-chunked-disk-image-format.md) and can be overridden with:
 
@@ -150,7 +154,7 @@ For public/demo images, you can publish a short-lived pointer file:
 
 This uploads `images/<imageId>/latest.json` with:
 
-- `Cache-Control: public, max-age=60` (default; configurable via `--cache-control-latest`)
+- `Cache-Control: public, max-age=60, no-transform` (default; configurable via `--cache-control-latest`)
 - `Content-Type: application/json`
 
 The JSON contains the version and the object key of the versioned `manifest.json`.

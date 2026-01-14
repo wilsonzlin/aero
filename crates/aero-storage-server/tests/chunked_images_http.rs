@@ -234,7 +234,7 @@ async fn chunked_manifest_endpoint_has_expected_headers() {
     );
     assert_eq!(
         resp.headers()[header::CACHE_CONTROL].to_str().unwrap(),
-        "public, max-age=31536000, immutable"
+        "public, max-age=31536000, immutable, no-transform"
     );
     assert_eq!(
         resp.headers()["access-control-expose-headers"]
@@ -333,7 +333,7 @@ async fn chunked_manifest_head_has_expected_headers_and_empty_body() {
     );
     assert_eq!(
         resp.headers()[header::CACHE_CONTROL].to_str().unwrap(),
-        "public, max-age=31536000, immutable"
+        "public, max-age=31536000, immutable, no-transform"
     );
     assert_eq!(
         resp.headers()["x-content-type-options"].to_str().unwrap(),
@@ -400,7 +400,7 @@ async fn chunked_manifest_with_matching_if_none_match_returns_304() {
     assert_eq!(resp.status(), StatusCode::NOT_MODIFIED);
     assert_eq!(
         resp.headers()[header::CACHE_CONTROL].to_str().unwrap(),
-        "public, max-age=31536000, immutable"
+        "public, max-age=31536000, immutable, no-transform"
     );
     assert_eq!(resp.headers()[header::ETAG].to_str().unwrap(), etag);
     assert!(resp.headers().contains_key(header::LAST_MODIFIED));
@@ -461,7 +461,7 @@ async fn chunked_manifest_with_matching_if_modified_since_returns_304() {
     assert_eq!(resp.status(), StatusCode::NOT_MODIFIED);
     assert_eq!(
         resp.headers()[header::CACHE_CONTROL].to_str().unwrap(),
-        "public, max-age=31536000, immutable"
+        "public, max-age=31536000, immutable, no-transform"
     );
     assert!(resp.headers().contains_key(header::ETAG));
     assert_eq!(
@@ -516,7 +516,7 @@ async fn versioned_chunked_manifest_head_has_expected_headers_and_empty_body() {
     );
     assert_eq!(
         resp.headers()[header::CACHE_CONTROL].to_str().unwrap(),
-        "public, max-age=31536000, immutable"
+        "public, max-age=31536000, immutable, no-transform"
     );
     assert_eq!(
         resp.headers()["access-control-expose-headers"]
@@ -621,7 +621,7 @@ async fn versioned_chunked_manifest_with_matching_if_none_match_returns_304() {
     assert_eq!(resp.status(), StatusCode::NOT_MODIFIED);
     assert_eq!(
         resp.headers()[header::CACHE_CONTROL].to_str().unwrap(),
-        "public, max-age=31536000, immutable"
+        "public, max-age=31536000, immutable, no-transform"
     );
     assert_eq!(resp.headers()[header::ETAG].to_str().unwrap(), etag);
     assert!(resp.headers().contains_key(header::LAST_MODIFIED));
@@ -682,7 +682,7 @@ async fn versioned_chunked_manifest_with_matching_if_modified_since_returns_304(
     assert_eq!(resp.status(), StatusCode::NOT_MODIFIED);
     assert_eq!(
         resp.headers()[header::CACHE_CONTROL].to_str().unwrap(),
-        "public, max-age=31536000, immutable"
+        "public, max-age=31536000, immutable, no-transform"
     );
     assert!(resp.headers().contains_key(header::ETAG));
     assert_eq!(
@@ -935,7 +935,7 @@ async fn versioned_chunked_endpoints_have_expected_headers() {
     );
     assert_eq!(
         resp.headers()[header::CACHE_CONTROL].to_str().unwrap(),
-        "public, max-age=31536000, immutable"
+        "public, max-age=31536000, immutable, no-transform"
     );
     assert_eq!(
         resp.headers()["access-control-expose-headers"]

@@ -2120,7 +2120,7 @@ def _main_chunked(args: argparse.Namespace) -> int:
             name=cache_control_name,
             resp=manifest_resp,
             strict=strict,
-            require_no_transform=False,
+            require_no_transform=True,
             authorization=authorization,
         )
     )

@@ -27,8 +27,8 @@ const CHUNK_MIME_TYPE: &str = "application/octet-stream";
 const JSON_MIME_TYPE: &str = "application/json";
 const LATEST_SCHEMA: &str = "aero.chunked-disk-image.latest.v1";
 const DEFAULT_CACHE_CONTROL_CHUNKS: &str = "public, max-age=31536000, immutable, no-transform";
-const DEFAULT_CACHE_CONTROL_MANIFEST: &str = "public, max-age=31536000, immutable";
-const DEFAULT_CACHE_CONTROL_LATEST: &str = "public, max-age=60";
+const DEFAULT_CACHE_CONTROL_MANIFEST: &str = "public, max-age=31536000, immutable, no-transform";
+const DEFAULT_CACHE_CONTROL_LATEST: &str = "public, max-age=60, no-transform";
 // For compatibility with Aero's clients and tooling (and to prevent CDNs from applying transparent
 // compression), publish all chunked artifacts with `Content-Encoding: identity`.
 const IDENTITY_CONTENT_ENCODING: &str = "identity";
@@ -4035,9 +4035,9 @@ mod tests {
         );
         assert_eq!(
             DEFAULT_CACHE_CONTROL_MANIFEST,
-            "public, max-age=31536000, immutable"
+            "public, max-age=31536000, immutable, no-transform"
         );
-        assert_eq!(DEFAULT_CACHE_CONTROL_LATEST, "public, max-age=60");
+        assert_eq!(DEFAULT_CACHE_CONTROL_LATEST, "public, max-age=60, no-transform");
     }
 
     #[test]

@@ -257,7 +257,7 @@ Because chunk URLs are versioned and immutable, they should be cached very aggre
 
 - `Content-Type: application/json`
 - `Content-Encoding: identity` (or omit the header; required for compatibility with Aero’s reference clients + tooling)
-- `Cache-Control: public, max-age=31536000, immutable` (when versioned/immutable as described above)
+- `Cache-Control: public, max-age=31536000, immutable, no-transform` (when versioned/immutable as described above)
 - `ETag: "<strong etag>"` (optional; quoted entity-tag, visible ASCII)
 - `Access-Control-Allow-Origin: *` (same policy as chunks)
 
@@ -318,7 +318,7 @@ Note on input formats:
 
 6. **(Optional) Publish “latest” pointer**
    - Upload/update `images/<imageId>/latest.json` containing the new versioned manifest URL.
-   - Give this pointer a short TTL (e.g., `Cache-Control: public, max-age=60`).
+    - Give this pointer a short TTL (e.g., `Cache-Control: public, max-age=60, no-transform`).
 
 ### 3.2 Failure handling / atomicity
 
