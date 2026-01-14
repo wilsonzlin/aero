@@ -1431,9 +1431,17 @@ static void EmitSetRenderTargetsLocked(Device* dev) {
 
   // Optional bring-up logging for Win7 tracing.
   const uint32_t count = std::min<uint32_t>(dev->current_rtv_count, AEROGPU_MAX_RENDER_TARGETS);
-  AEROGPU_D3D10_11_LOG("SET_RENDER_TARGETS: color_count=%u depth=%u",
+  AEROGPU_D3D10_11_LOG("SET_RENDER_TARGETS: color_count=%u depth=%u colors=[%u,%u,%u,%u,%u,%u,%u,%u]",
                        static_cast<unsigned>(count),
-                       static_cast<unsigned>(dev->current_dsv));
+                       static_cast<unsigned>(dev->current_dsv),
+                       static_cast<unsigned>(dev->current_rtvs[0]),
+                       static_cast<unsigned>(dev->current_rtvs[1]),
+                       static_cast<unsigned>(dev->current_rtvs[2]),
+                       static_cast<unsigned>(dev->current_rtvs[3]),
+                       static_cast<unsigned>(dev->current_rtvs[4]),
+                       static_cast<unsigned>(dev->current_rtvs[5]),
+                       static_cast<unsigned>(dev->current_rtvs[6]),
+                       static_cast<unsigned>(dev->current_rtvs[7]));
 }
 
 static void UnbindResourceFromOutputsLocked(Device* dev, aerogpu_handle_t resource, const Resource* res) {

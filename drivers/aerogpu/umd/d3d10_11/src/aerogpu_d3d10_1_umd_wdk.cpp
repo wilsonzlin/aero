@@ -1115,6 +1115,20 @@ static void EmitSetRenderTargetsLocked(AeroGpuDevice* dev) {
   for (uint32_t i = 0; i < count; ++i) {
     cmd->colors[i] = dev->current_rtvs[i];
   }
+
+  // Bring-up logging: helps confirm MRT bindings (color_count + colors[]) reach
+  // the host intact.
+  AEROGPU_D3D10_11_LOG("SET_RENDER_TARGETS: color_count=%u depth=%u colors=[%u,%u,%u,%u,%u,%u,%u,%u]",
+                       static_cast<unsigned>(count),
+                       static_cast<unsigned>(dev->current_dsv),
+                       static_cast<unsigned>(cmd->colors[0]),
+                       static_cast<unsigned>(cmd->colors[1]),
+                       static_cast<unsigned>(cmd->colors[2]),
+                       static_cast<unsigned>(cmd->colors[3]),
+                       static_cast<unsigned>(cmd->colors[4]),
+                       static_cast<unsigned>(cmd->colors[5]),
+                       static_cast<unsigned>(cmd->colors[6]),
+                       static_cast<unsigned>(cmd->colors[7]));
 }
 
 static bool ResourcesAlias(const AeroGpuResource* a, const AeroGpuResource* b) {
