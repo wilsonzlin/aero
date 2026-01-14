@@ -273,30 +273,98 @@ fn build_patched_rdef_chunk(seed: &[u8]) -> Vec<u8> {
     // Minimal, self-consistent RDEF chunk payload (not including the DXBC chunk header).
     //
     // Keep it small but structurally valid so fuzzing reaches deeper reflection parsing paths.
+    //
+    // This includes:
+    // - 1 constant buffer with 1 variable and a simple type descriptor.
+    // - 1 resource binding entry whose name matches the constant buffer name, so `parse_rdef_chunk`
+    //   exercises the "link cbuffer -> bind slot" logic.
     let mut u = Unstructured::new(seed);
-    let name_len = (u.arbitrary::<u8>().unwrap_or(0) % 16) as usize + 1;
     let header_len = 28usize;
-    let entry_len = 32usize;
-    let name_off = header_len + entry_len;
-    let total_len = name_off + name_len + 1;
+    let cb_desc_len = 24usize;
+    let var_desc_len = 24usize;
+    let type_desc_len = 16usize;
+    let resource_desc_len = 32usize;
+
+    let cb_name_len = (u.arbitrary::<u8>().unwrap_or(0) % 16) as usize + 1;
+    let var_name_len = (u.arbitrary::<u8>().unwrap_or(0) % 16) as usize + 1;
+
+    let include_creator = u.arbitrary::<u8>().unwrap_or(0) & 1 != 0;
+    let creator_len = (u.arbitrary::<u8>().unwrap_or(0) % 16) as usize + 1;
+
+    let cb_off = header_len;
+    let var_off = cb_off + cb_desc_len;
+    let type_off = var_off + var_desc_len;
+    let resource_off = type_off + type_desc_len;
+    let cb_name_off = resource_off + resource_desc_len;
+    let var_name_off = cb_name_off + cb_name_len + 1;
+    let creator_off = var_name_off + var_name_len + 1;
+
+    let total_len = if include_creator {
+        creator_off + creator_len + 1
+    } else {
+        creator_off
+    };
     let mut out = vec![0u8; total_len];
 
     // Header fields (u32):
-    // cb_count, cb_offset
-    out[0..4].copy_from_slice(&0u32.to_le_bytes());
-    out[4..8].copy_from_slice(&0u32.to_le_bytes());
-    // resource_count=1, resource_offset=header_len
+    // cb_count=1, cb_offset=cb_off
+    out[0..4].copy_from_slice(&1u32.to_le_bytes());
+    out[4..8].copy_from_slice(&(cb_off as u32).to_le_bytes());
+    // resource_count=1, resource_offset=resource_off
     out[8..12].copy_from_slice(&1u32.to_le_bytes());
-    out[12..16].copy_from_slice(&(header_len as u32).to_le_bytes());
+    out[12..16].copy_from_slice(&(resource_off as u32).to_le_bytes());
     // target, flags, creator_offset
     out[16..20].copy_from_slice(&u.arbitrary::<u32>().unwrap_or(0).to_le_bytes());
     out[20..24].copy_from_slice(&u.arbitrary::<u32>().unwrap_or(0).to_le_bytes());
-    out[24..28].copy_from_slice(&0u32.to_le_bytes());
+    let creator_offset = if include_creator {
+        creator_off as u32
+    } else {
+        0u32
+    };
+    out[24..28].copy_from_slice(&creator_offset.to_le_bytes());
+
+    // Constant buffer desc.
+    // name_offset, var_count=1, var_offset, size, flags, cb_type
+    out[cb_off..cb_off + 4].copy_from_slice(&(cb_name_off as u32).to_le_bytes());
+    out[cb_off + 4..cb_off + 8].copy_from_slice(&1u32.to_le_bytes());
+    out[cb_off + 8..cb_off + 12].copy_from_slice(&(var_off as u32).to_le_bytes());
+    out[cb_off + 12..cb_off + 16]
+        .copy_from_slice(&u32::from(u.arbitrary::<u8>().unwrap_or(16)).to_le_bytes());
+    out[cb_off + 16..cb_off + 20].copy_from_slice(&u.arbitrary::<u32>().unwrap_or(0).to_le_bytes());
+    out[cb_off + 20..cb_off + 24].copy_from_slice(&u.arbitrary::<u32>().unwrap_or(0).to_le_bytes());
+
+    // Variable desc.
+    // name_offset, start_offset, size, flags, type_offset, default_value_offset
+    out[var_off..var_off + 4].copy_from_slice(&(var_name_off as u32).to_le_bytes());
+    out[var_off + 4..var_off + 8]
+        .copy_from_slice(&u32::from(u.arbitrary::<u8>().unwrap_or(0)).to_le_bytes());
+    out[var_off + 8..var_off + 12]
+        .copy_from_slice(&u32::from(u.arbitrary::<u8>().unwrap_or(4)).to_le_bytes());
+    out[var_off + 12..var_off + 16]
+        .copy_from_slice(&u.arbitrary::<u32>().unwrap_or(0).to_le_bytes());
+    out[var_off + 16..var_off + 20].copy_from_slice(&(type_off as u32).to_le_bytes());
+    out[var_off + 20..var_off + 24].copy_from_slice(&0u32.to_le_bytes());
+
+    // Type desc (very simple: no struct members).
+    let class = u.arbitrary::<u16>().unwrap_or(0);
+    let ty = u.arbitrary::<u16>().unwrap_or(0);
+    let rows = u16::from(u.arbitrary::<u8>().unwrap_or(1) % 4) + 1;
+    let cols = u16::from(u.arbitrary::<u8>().unwrap_or(1) % 4) + 1;
+    let elements = u16::from(u.arbitrary::<u8>().unwrap_or(0) % 4);
+    out[type_off..type_off + 2].copy_from_slice(&class.to_le_bytes());
+    out[type_off + 2..type_off + 4].copy_from_slice(&ty.to_le_bytes());
+    out[type_off + 4..type_off + 6].copy_from_slice(&rows.to_le_bytes());
+    out[type_off + 6..type_off + 8].copy_from_slice(&cols.to_le_bytes());
+    out[type_off + 8..type_off + 10].copy_from_slice(&elements.to_le_bytes());
+    out[type_off + 10..type_off + 12].copy_from_slice(&0u16.to_le_bytes()); // member_count
+    out[type_off + 12..type_off + 16].copy_from_slice(&0u32.to_le_bytes()); // member_offset
 
     // Single resource binding entry.
-    let entry = header_len;
-    out[entry..entry + 4].copy_from_slice(&(name_off as u32).to_le_bytes()); // name_offset
-    out[entry + 4..entry + 8].copy_from_slice(&u.arbitrary::<u32>().unwrap_or(0).to_le_bytes()); // input_type
+    //
+    // Use input_type=0 so `parse_rdef_chunk` considers it a cbuffer entry when linking.
+    let entry = resource_off;
+    out[entry..entry + 4].copy_from_slice(&(cb_name_off as u32).to_le_bytes()); // name_offset
+    out[entry + 4..entry + 8].copy_from_slice(&0u32.to_le_bytes()); // input_type (cbuffer)
     out[entry + 8..entry + 12].copy_from_slice(&u.arbitrary::<u32>().unwrap_or(0).to_le_bytes()); // return_type
     out[entry + 12..entry + 16].copy_from_slice(&u.arbitrary::<u32>().unwrap_or(0).to_le_bytes()); // dimension
     out[entry + 16..entry + 20].copy_from_slice(&u.arbitrary::<u32>().unwrap_or(0).to_le_bytes()); // sample_count
@@ -306,12 +374,27 @@ fn build_patched_rdef_chunk(seed: &[u8]) -> Vec<u8> {
     out[entry + 24..entry + 28].copy_from_slice(&bind_count.to_le_bytes());
     out[entry + 28..entry + 32].copy_from_slice(&u.arbitrary::<u32>().unwrap_or(0).to_le_bytes()); // flags
 
-    // Name string (must be valid UTF-8).
-    for i in 0..name_len {
+    // CBuffer/resource name string (must be valid UTF-8).
+    for i in 0..cb_name_len {
         let b = u.arbitrary::<u8>().unwrap_or(0);
-        out[name_off + i] = b'A' + (b % 26);
+        out[cb_name_off + i] = b'A' + (b % 26);
     }
-    out[name_off + name_len] = 0;
+    out[cb_name_off + cb_name_len] = 0;
+
+    // Variable name string (ASCII).
+    for i in 0..var_name_len {
+        let b = u.arbitrary::<u8>().unwrap_or(0);
+        out[var_name_off + i] = b'a' + (b % 26);
+    }
+    out[var_name_off + var_name_len] = 0;
+
+    if include_creator {
+        for i in 0..creator_len {
+            let b = u.arbitrary::<u8>().unwrap_or(0);
+            out[creator_off + i] = b'A' + (b % 26);
+        }
+        out[creator_off + creator_len] = 0;
+    }
 
     out
 }
