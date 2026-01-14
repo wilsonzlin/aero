@@ -4914,7 +4914,8 @@ def main() -> int:
     ):
         parser.error(
             "--virtio-disable-msix is mutually exclusive with --virtio-msix-vectors/--virtio-*-vectors "
-            "(INTx-only mode disables MSI-X by forcing vectors=0)."
+            "(INTx-only mode disables MSI-X by forcing vectors=0). "
+            "Aliases: --force-intx/--intx-only."
         )
 
     # `--require-virtio-{net,blk,snd}-msix` uses a host-side QMP MSI-X-enabled check, while
@@ -4928,7 +4929,8 @@ def main() -> int:
         parser.error(
             "--virtio-disable-msix is incompatible with --require-virtio-*-msix "
             "(aliases: --require-net-msix/--require-blk-msix/--require-snd-msix/--require-input-msix) "
-            "(MSI-X is disabled)."
+            "(MSI-X is disabled). "
+            "Aliases: --force-intx/--intx-only."
         )
 
     if args.require_intx and args.require_msi:
@@ -5235,7 +5237,7 @@ def main() -> int:
             print(
                 "ERROR: --virtio-disable-msix requested, but this QEMU build rejected 'vectors=0' "
                 "(needed to disable MSI-X and force INTx). "
-                "Upgrade QEMU or omit --virtio-disable-msix.",
+                "Upgrade QEMU or omit --virtio-disable-msix (aliases: --force-intx/--intx-only).",
                 file=sys.stderr,
             )
             print(f"  Wrote QEMU output to: {qemu_stderr_log}", file=sys.stderr)
@@ -5437,7 +5439,7 @@ def main() -> int:
             if name == "snd" and not args.enable_virtio_snd:
                 return f"{name}=disabled"
             if virtio_disable_msix:
-                return f"{name}=0 (forced by --virtio-disable-msix)"
+                return f"{name}=0 (forced by --virtio-disable-msix/--force-intx/--intx-only)"
             if value is None:
                 return f"{name}=default"
             return f"{name}={value} (from {flag})"
