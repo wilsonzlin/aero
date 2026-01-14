@@ -797,6 +797,34 @@ impl VirtioDevice for VirtioInput {
         self.leds_mask = 0;
     }
 
+    fn snapshot_device_state(&self) -> Option<Vec<u8>> {
+        // Keep this encoding small and forward-compatible:
+        // - byte0: version
+        // - byte1: config_select
+        // - byte2: config_subsel
+        // - byte3: leds_mask (HID-style bit layout; masked on restore)
+        Some(vec![
+            1,
+            self.config_select,
+            self.config_subsel,
+            self.leds_mask,
+        ])
+    }
+
+    fn restore_device_state(&mut self, bytes: &[u8]) {
+        // Snapshots may be untrusted/corrupt. Best-effort restore and clamp fields so we don't
+        // permanently break virtio-input config reads.
+        if bytes.len() < 4 {
+            return;
+        }
+        if bytes[0] != 1 {
+            return;
+        }
+        self.config_select = bytes[1];
+        self.config_subsel = bytes[2];
+        self.leds_mask = bytes[3] & 0x1F;
+    }
+
     fn as_any(&self) -> &dyn core::any::Any {
         self
     }

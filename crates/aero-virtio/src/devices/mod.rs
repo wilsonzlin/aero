@@ -96,6 +96,26 @@ pub trait VirtioDevice: Any {
     /// Reset to power-on state.
     fn reset(&mut self);
 
+    /// Optional device-specific snapshot payload.
+    ///
+    /// The virtio-pci transport (`crate::pci`) snapshots negotiated features, virtqueue state, and
+    /// interrupt latches. Some virtio devices also maintain additional state that is not described
+    /// by the transport (for example, virtio-input keyboard LED state as last set by the guest via
+    /// `statusq`).
+    ///
+    /// When provided, this byte blob is stored inside the virtio-pci snapshot and passed back to
+    /// [`VirtioDevice::restore_device_state`] on restore.
+    fn snapshot_device_state(&self) -> Option<Vec<u8>> {
+        None
+    }
+
+    /// Restore a device-specific snapshot payload produced by [`VirtioDevice::snapshot_device_state`].
+    ///
+    /// Implementations should treat `bytes` as untrusted (it may come from a corrupted/malicious
+    /// snapshot). Best-effort restore is preferred: invalid payloads should not panic or allocate
+    /// unbounded memory.
+    fn restore_device_state(&mut self, _bytes: &[u8]) {}
+
     fn as_any(&self) -> &dyn Any;
 
     fn as_any_mut(&mut self) -> &mut dyn Any;
