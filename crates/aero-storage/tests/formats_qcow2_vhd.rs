@@ -1367,8 +1367,8 @@ fn qcow2_rejects_absurd_l1_table_size() {
     write_be_u32(&mut header, 20, cluster_bits);
     write_be_u64(&mut header, 24, virtual_size);
     write_be_u32(&mut header, 36, 0x0200_0000); // l1_size must be >= required_l1 (33,554,432)
-    write_be_u64(&mut header, 40, 512); // l1_table_offset (won't be read on failure)
-    write_be_u64(&mut header, 48, 512); // refcount_table_offset (won't be read on failure)
+    write_be_u64(&mut header, 40, SECTOR_SIZE as u64); // l1_table_offset (won't be read on failure)
+    write_be_u64(&mut header, 48, SECTOR_SIZE as u64); // refcount_table_offset (won't be read on failure)
     write_be_u32(&mut header, 56, 1); // refcount_table_clusters
     write_be_u64(&mut header, 72, 0); // incompatible_features
     write_be_u32(&mut header, 96, 4); // refcount_order
@@ -2887,7 +2887,7 @@ fn vhd_dynamic_rejects_invalid_block_size() {
 fn vhd_dynamic_rejects_block_size_too_large() {
     let virtual_size = 64 * 1024u64;
     // 64MiB is the maximum supported dynamic VHD block size; request something larger.
-    let block_size = 64 * 1024 * 1024 + 512;
+    let block_size = 64 * 1024 * 1024 + SECTOR_SIZE as u32;
     let backend = make_vhd_dynamic_empty(virtual_size, block_size);
 
     let err = VhdDisk::open(backend).err().expect("expected error");

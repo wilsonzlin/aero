@@ -26,6 +26,9 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
+const SECTOR_SIZE_BYTES: usize = VIRTIO_BLK_SECTOR_SIZE as usize;
+const SECTOR_SIZE_U32: u32 = VIRTIO_BLK_SECTOR_SIZE as u32;
+
 #[derive(Clone)]
 struct SharedDisk {
     data: Arc<Mutex<Vec<u8>>>,
@@ -500,7 +503,7 @@ fn virtio_blk_config_exposes_capacity_and_block_size() {
 
     assert_eq!(size_max, 0);
     assert_eq!(seg_max, 126);
-    assert_eq!(blk_size, 512);
+    assert_eq!(blk_size, SECTOR_SIZE_U32);
 }
 
 #[test]
@@ -517,7 +520,7 @@ fn virtio_blk_config_read_out_of_range_offsets_return_zeroes() {
         capacity: 8,
         size_max: 0,
         seg_max: 126,
-        blk_size: 512,
+        blk_size: SECTOR_SIZE_U32,
     };
 
     let mut buf = [0xa5u8; 16];
@@ -532,7 +535,7 @@ fn virtio_blk_config_read_does_not_truncate_large_offsets_on_32bit() {
         capacity: 8,
         size_max: 0,
         seg_max: 126,
-        blk_size: 512,
+        blk_size: SECTOR_SIZE_U32,
     };
 
     // On 32-bit targets, `u64 as usize` truncates. Ensure out-of-range offsets never alias within
@@ -558,15 +561,17 @@ fn virtio_blk_processes_multi_segment_write_then_read() {
     write_u32_le(&mut mem, header + 4, 0).unwrap();
     write_u64_le(&mut mem, header + 8, sector).unwrap();
 
-    let payload: Vec<u8> = (0..512u16).flat_map(|v| v.to_le_bytes()).collect();
-    let (a, b) = payload.split_at(512);
+    let payload: Vec<u8> = (0..(SECTOR_SIZE_BYTES as u16))
+        .flat_map(|v| v.to_le_bytes())
+        .collect();
+    let (a, b) = payload.split_at(SECTOR_SIZE_BYTES);
     mem.write(data, a).unwrap();
     mem.write(data_b, b).unwrap();
     mem.write(status, &[0xff]).unwrap();
 
     write_desc(&mut mem, DESC_TABLE, 0, header, 16, 0x0001, 1);
-    write_desc(&mut mem, DESC_TABLE, 1, data, 512, 0x0001, 2);
-    write_desc(&mut mem, DESC_TABLE, 2, data_b, 512, 0x0001, 3);
+    write_desc(&mut mem, DESC_TABLE, 1, data, SECTOR_SIZE_U32, 0x0001, 2);
+    write_desc(&mut mem, DESC_TABLE, 2, data_b, SECTOR_SIZE_U32, 0x0001, 3);
     write_desc(&mut mem, DESC_TABLE, 3, status, 1, 0x0002, 0);
 
     write_u16_le(&mut mem, AVAIL_RING, 0).unwrap();
@@ -581,7 +586,8 @@ fn virtio_blk_processes_multi_segment_write_then_read() {
     {
         let backing = backing.lock().unwrap();
         assert_eq!(
-            &backing[(sector * 512) as usize..(sector * 512) as usize + payload.len()],
+            &backing[(sector * VIRTIO_BLK_SECTOR_SIZE) as usize
+                ..(sector * VIRTIO_BLK_SECTOR_SIZE) as usize + payload.len()],
             payload.as_slice()
         );
     }
@@ -599,8 +605,24 @@ fn virtio_blk_processes_multi_segment_write_then_read() {
     write_u64_le(&mut mem, header + 8, sector).unwrap();
 
     write_desc(&mut mem, DESC_TABLE, 0, header, 16, 0x0001, 1);
-    write_desc(&mut mem, DESC_TABLE, 1, data2, 512, 0x0001 | 0x0002, 2);
-    write_desc(&mut mem, DESC_TABLE, 2, data2_b, 512, 0x0001 | 0x0002, 3);
+    write_desc(
+        &mut mem,
+        DESC_TABLE,
+        1,
+        data2,
+        SECTOR_SIZE_U32,
+        0x0001 | 0x0002,
+        2,
+    );
+    write_desc(
+        &mut mem,
+        DESC_TABLE,
+        2,
+        data2_b,
+        SECTOR_SIZE_U32,
+        0x0001 | 0x0002,
+        3,
+    );
     write_desc(&mut mem, DESC_TABLE, 3, status, 1, 0x0002, 0);
 
     // Add to avail ring at index 1.
@@ -731,7 +753,9 @@ fn virtio_blk_discard_returns_ok() {
     assert_eq!(mem.get_slice(status, 1).unwrap()[0], 0);
     {
         let backing = backing.lock().unwrap();
-        assert!(backing[512..1536].iter().all(|b| *b == 0));
+        assert!(backing[SECTOR_SIZE_BYTES..SECTOR_SIZE_BYTES * 3]
+            .iter()
+            .all(|b| *b == 0));
     }
 }
 
@@ -779,8 +803,10 @@ fn virtio_blk_discard_multi_segment_zeroes_ranges_best_effort() {
     // Confirm only the discarded ranges were zeroed.
     {
         let backing = backing.lock().unwrap();
-        assert!(backing[0..512].iter().all(|b| *b == 0xa5));
-        assert!(backing[512..1024].iter().all(|b| *b == 0));
+        assert!(backing[0..SECTOR_SIZE_BYTES].iter().all(|b| *b == 0xa5));
+        assert!(backing[SECTOR_SIZE_BYTES..SECTOR_SIZE_BYTES * 2]
+            .iter()
+            .all(|b| *b == 0));
         assert!(backing[1024..1536].iter().all(|b| *b == 0xa5));
         assert!(backing[1536..2560].iter().all(|b| *b == 0));
         assert!(backing[2560..4096].iter().all(|b| *b == 0xa5));
@@ -855,12 +881,12 @@ fn virtio_blk_discard_reclaims_sparse_blocks_and_reads_zero() {
     write_u32_le(&mut mem, header + 4, 0).unwrap();
     write_u64_le(&mut mem, header + 8, 0).unwrap();
 
-    let payload = vec![0x5A; 512];
+    let payload = vec![0x5A; SECTOR_SIZE_BYTES];
     mem.write(data, &payload).unwrap();
     mem.write(status, &[0xff]).unwrap();
 
     write_desc(&mut mem, DESC_TABLE, 0, header, 16, 0x0001, 1);
-    write_desc(&mut mem, DESC_TABLE, 1, data, 512, 0x0001, 2);
+    write_desc(&mut mem, DESC_TABLE, 1, data, SECTOR_SIZE_U32, 0x0001, 2);
     write_desc(&mut mem, DESC_TABLE, 2, status, 1, 0x0002, 0);
 
     write_u16_le(&mut mem, AVAIL_RING, 0).unwrap();
@@ -894,14 +920,22 @@ fn virtio_blk_discard_reclaims_sparse_blocks_and_reads_zero() {
     assert_eq!(mem.get_slice(status, 1).unwrap()[0], 0);
 
     // IN: read sector 0 and ensure it is now zero-filled.
-    mem.write(read_buf, &[0xccu8; 512]).unwrap();
+    mem.write(read_buf, &[0xccu8; SECTOR_SIZE_BYTES]).unwrap();
     mem.write(status, &[0xff]).unwrap();
     write_u32_le(&mut mem, header, VIRTIO_BLK_T_IN).unwrap();
     write_u32_le(&mut mem, header + 4, 0).unwrap();
     write_u64_le(&mut mem, header + 8, 0).unwrap();
 
     write_desc(&mut mem, DESC_TABLE, 0, header, 16, 0x0001, 1);
-    write_desc(&mut mem, DESC_TABLE, 1, read_buf, 512, 0x0001 | 0x0002, 2);
+    write_desc(
+        &mut mem,
+        DESC_TABLE,
+        1,
+        read_buf,
+        SECTOR_SIZE_U32,
+        0x0001 | 0x0002,
+        2,
+    );
     write_desc(&mut mem, DESC_TABLE, 2, status, 1, 0x0002, 0);
 
     // Add to avail ring at index 2.
@@ -911,7 +945,7 @@ fn virtio_blk_discard_reclaims_sparse_blocks_and_reads_zero() {
     kick_queue0(&mut dev, &caps, &mut mem);
     assert_eq!(mem.get_slice(status, 1).unwrap()[0], 0);
 
-    let out = mem.get_slice(read_buf, 512).unwrap();
+    let out = mem.get_slice(read_buf, SECTOR_SIZE_BYTES).unwrap();
     assert!(out.iter().all(|b| *b == 0));
 }
 
@@ -926,8 +960,8 @@ fn virtio_blk_write_zeroes_writes_zeroes_and_returns_ok() {
     // Fill sectors 2..4 with non-zero data, then request WRITE_ZEROES for the same range.
     let sector = 2u64;
     let num_sectors = 2u32;
-    let off = (sector * 512) as usize;
-    let len = (u64::from(num_sectors) * 512) as usize;
+    let off = (sector * VIRTIO_BLK_SECTOR_SIZE) as usize;
+    let len = (u64::from(num_sectors) * VIRTIO_BLK_SECTOR_SIZE) as usize;
     {
         let mut backing = backing.lock().unwrap();
         backing[off..off + len].fill(0xa5);
@@ -968,7 +1002,7 @@ fn virtio_blk_write_zeroes_unmap_prefers_discard_range_when_possible() {
     let (mut dev, caps, mut mem, backing, discards, writes) = setup_tracking_discard_disk(4096);
 
     // Pre-fill sector 1 with non-zero bytes, then request WRITE_ZEROES with the UNMAP flag.
-    backing.lock().unwrap()[512..1024].fill(0xa5);
+    backing.lock().unwrap()[SECTOR_SIZE_BYTES..SECTOR_SIZE_BYTES * 2].fill(0xa5);
 
     let header = 0x7000;
     let seg = 0x8000;
@@ -1007,7 +1041,9 @@ fn virtio_blk_write_zeroes_unmap_prefers_discard_range_when_possible() {
         0,
         "discard_range() returned zeros; device should not re-write zeros"
     );
-    assert!(backing.lock().unwrap()[512..1024].iter().all(|b| *b == 0));
+    assert!(backing.lock().unwrap()[SECTOR_SIZE_BYTES..SECTOR_SIZE_BYTES * 2]
+        .iter()
+        .all(|b| *b == 0));
 }
 
 #[test]
@@ -1062,8 +1098,10 @@ fn virtio_blk_write_zeroes_multi_segment_spans_multiple_data_descriptors() {
     // Confirm only the requested sectors were zeroed.
     {
         let backing = backing.lock().unwrap();
-        assert!(backing[0..512].iter().all(|b| *b == 0xa5));
-        assert!(backing[512..1024].iter().all(|b| *b == 0));
+        assert!(backing[0..SECTOR_SIZE_BYTES].iter().all(|b| *b == 0xa5));
+        assert!(backing[SECTOR_SIZE_BYTES..SECTOR_SIZE_BYTES * 2]
+            .iter()
+            .all(|b| *b == 0));
         assert!(backing[1024..2048].iter().all(|b| *b == 0xa5));
         assert!(backing[2048..2560].iter().all(|b| *b == 0));
         assert!(backing[2560..4096].iter().all(|b| *b == 0xa5));
@@ -1985,11 +2023,19 @@ fn malformed_chains_return_ioerr_without_panicking() {
     write_u32_le(&mut mem, header, VIRTIO_BLK_T_OUT).unwrap();
     write_u32_le(&mut mem, header + 4, 0).unwrap();
     write_u64_le(&mut mem, header + 8, 1).unwrap();
-    mem.write(data, &vec![0xa5u8; 512]).unwrap();
+    mem.write(data, &vec![0xa5u8; SECTOR_SIZE_BYTES]).unwrap();
     mem.write(status, &[0xff]).unwrap();
 
     write_desc(&mut mem, DESC_TABLE, 0, header, 16, 0x0001, 1);
-    write_desc(&mut mem, DESC_TABLE, 1, data, 512, 0x0001 | 0x0002, 2);
+    write_desc(
+        &mut mem,
+        DESC_TABLE,
+        1,
+        data,
+        SECTOR_SIZE_U32,
+        0x0001 | 0x0002,
+        2,
+    );
     write_desc(&mut mem, DESC_TABLE, 2, status, 1, 0x0002, 0);
 
     write_u16_le(&mut mem, AVAIL_RING, 0).unwrap();
@@ -2018,11 +2064,11 @@ fn invalid_status_descriptor_is_consumed_without_touching_disk() {
     write_u32_le(&mut mem, header, VIRTIO_BLK_T_OUT).unwrap();
     write_u32_le(&mut mem, header + 4, 0).unwrap();
     write_u64_le(&mut mem, header + 8, 0).unwrap();
-    mem.write(data, &vec![0xa5u8; 512]).unwrap();
+    mem.write(data, &vec![0xa5u8; SECTOR_SIZE_BYTES]).unwrap();
     mem.write(status, &[0xff]).unwrap();
 
     write_desc(&mut mem, DESC_TABLE, 0, header, 16, 0x0001, 1);
-    write_desc(&mut mem, DESC_TABLE, 1, data, 512, 0x0001, 2);
+    write_desc(&mut mem, DESC_TABLE, 1, data, SECTOR_SIZE_U32, 0x0001, 2);
     // Invalid status descriptor: read-only.
     write_desc(&mut mem, DESC_TABLE, 2, status, 1, 0x0000, 0);
 
@@ -2085,11 +2131,19 @@ fn virtio_blk_rejects_requests_beyond_capacity() {
     write_u32_le(&mut mem, header + 4, 0).unwrap();
     write_u64_le(&mut mem, header + 8, sector).unwrap();
 
-    mem.write(data, &[0u8; 512]).unwrap();
+    mem.write(data, &[0u8; SECTOR_SIZE_BYTES]).unwrap();
     mem.write(status, &[0xff]).unwrap();
 
     write_desc(&mut mem, DESC_TABLE, 0, header, 16, 0x0001, 1);
-    write_desc(&mut mem, DESC_TABLE, 1, data, 512, 0x0001 | 0x0002, 2);
+    write_desc(
+        &mut mem,
+        DESC_TABLE,
+        1,
+        data,
+        SECTOR_SIZE_U32,
+        0x0001 | 0x0002,
+        2,
+    );
     write_desc(&mut mem, DESC_TABLE, 2, status, 1, 0x0002, 0);
 
     write_u16_le(&mut mem, AVAIL_RING, 0).unwrap();
@@ -2119,7 +2173,9 @@ fn virtio_blk_accepts_aero_storage_virtual_disk_backend() {
     write_u32_le(&mut mem, header + 4, 0).unwrap();
     write_u64_le(&mut mem, header + 8, sector).unwrap();
 
-    let payload: Vec<u8> = (0..512u16).flat_map(|v| v.to_le_bytes()).collect();
+    let payload: Vec<u8> = (0..(SECTOR_SIZE_BYTES as u16))
+        .flat_map(|v| v.to_le_bytes())
+        .collect();
     mem.write(data, &payload).unwrap();
     mem.write(status, &[0xff]).unwrap();
 
@@ -2170,7 +2226,7 @@ fn virtio_blk_disk_errors_surface_as_ioerr() {
 
     impl VirtualDisk for ErrorDisk {
         fn capacity_bytes(&self) -> u64 {
-            512
+            VIRTIO_BLK_SECTOR_SIZE
         }
 
         fn read_at(&mut self, _offset: u64, _buf: &mut [u8]) -> aero_storage::Result<()> {
@@ -2214,10 +2270,18 @@ fn virtio_blk_disk_errors_surface_as_ioerr() {
     write_u32_le(&mut mem, header, VIRTIO_BLK_T_IN).unwrap();
     write_u32_le(&mut mem, header + 4, 0).unwrap();
     write_u64_le(&mut mem, header + 8, 0).unwrap();
-    mem.write(data, &[0u8; 512]).unwrap();
+    mem.write(data, &[0u8; SECTOR_SIZE_BYTES]).unwrap();
     mem.write(status, &[0xff]).unwrap();
     write_desc(&mut mem, DESC_TABLE, 0, header, 16, 0x0001, 1);
-    write_desc(&mut mem, DESC_TABLE, 1, data, 512, 0x0001 | 0x0002, 2);
+    write_desc(
+        &mut mem,
+        DESC_TABLE,
+        1,
+        data,
+        SECTOR_SIZE_U32,
+        0x0001 | 0x0002,
+        2,
+    );
     write_desc(&mut mem, DESC_TABLE, 2, status, 1, 0x0002, 0);
     write_u16_le(&mut mem, AVAIL_RING + 4, 0).unwrap();
     write_u16_le(&mut mem, AVAIL_RING + 2, 1).unwrap();
@@ -2228,10 +2292,10 @@ fn virtio_blk_disk_errors_surface_as_ioerr() {
     write_u32_le(&mut mem, header, VIRTIO_BLK_T_OUT).unwrap();
     write_u32_le(&mut mem, header + 4, 0).unwrap();
     write_u64_le(&mut mem, header + 8, 0).unwrap();
-    mem.write(data, &[0xa5u8; 512]).unwrap();
+    mem.write(data, &[0xa5u8; SECTOR_SIZE_BYTES]).unwrap();
     mem.write(status, &[0xff]).unwrap();
     write_desc(&mut mem, DESC_TABLE, 0, header, 16, 0x0001, 1);
-    write_desc(&mut mem, DESC_TABLE, 1, data, 512, 0x0001, 2);
+    write_desc(&mut mem, DESC_TABLE, 1, data, SECTOR_SIZE_U32, 0x0001, 2);
     write_desc(&mut mem, DESC_TABLE, 2, status, 1, 0x0002, 0);
     write_u16_le(&mut mem, AVAIL_RING + 4 + 2, 0).unwrap();
     write_u16_le(&mut mem, AVAIL_RING + 2, 2).unwrap();
@@ -2285,7 +2349,7 @@ fn virtio_blk_disk_errors_surface_as_ioerr_for_browser_storage_failures() {
 
     impl VirtualDisk for ErrorDisk {
         fn capacity_bytes(&self) -> u64 {
-            512
+            VIRTIO_BLK_SECTOR_SIZE
         }
 
         fn read_at(&mut self, _offset: u64, _buf: &mut [u8]) -> aero_storage::Result<()> {
@@ -2476,7 +2540,7 @@ fn virtio_blk_rejects_excessive_total_data_bytes() {
     write_u64_le(&mut mem, header + 8, 0).unwrap();
 
     // Non-zero payload so we'd observe a write if the request were incorrectly processed.
-    mem.write(data, &[0xa5u8; 512]).unwrap();
+    mem.write(data, &[0xa5u8; SECTOR_SIZE_BYTES]).unwrap();
     mem.write(status, &[0xff]).unwrap();
 
     write_desc(&mut mem, DESC_TABLE, 0, header, 16, VIRTQ_DESC_F_NEXT, 1);
@@ -2501,7 +2565,9 @@ fn virtio_blk_rejects_excessive_total_data_bytes() {
 
     assert_eq!(mem.get_slice(status, 1).unwrap()[0], VIRTIO_BLK_S_IOERR);
     assert_eq!(dev.debug_queue_used_idx(&mem, 0), Some(1));
-    assert!(backing.lock().unwrap()[..512].iter().all(|b| *b == 0));
+    assert!(backing.lock().unwrap()[..SECTOR_SIZE_BYTES]
+        .iter()
+        .all(|b| *b == 0));
 }
 
 #[test]
@@ -2519,11 +2585,19 @@ fn virtio_blk_rejects_sector_offset_overflow() {
     write_u32_le(&mut mem, header + 4, 0).unwrap();
     write_u64_le(&mut mem, header + 8, sector).unwrap();
 
-    mem.write(data, &[0xa5u8; 512]).unwrap();
+    mem.write(data, &[0xa5u8; SECTOR_SIZE_BYTES]).unwrap();
     mem.write(status, &[0xff]).unwrap();
 
     write_desc(&mut mem, DESC_TABLE, 0, header, 16, VIRTQ_DESC_F_NEXT, 1);
-    write_desc(&mut mem, DESC_TABLE, 1, data, 512, VIRTQ_DESC_F_NEXT, 2);
+    write_desc(
+        &mut mem,
+        DESC_TABLE,
+        1,
+        data,
+        SECTOR_SIZE_U32,
+        VIRTQ_DESC_F_NEXT,
+        2,
+    );
     write_desc(&mut mem, DESC_TABLE, 2, status, 1, VIRTQ_DESC_F_WRITE, 0);
 
     write_u16_le(&mut mem, AVAIL_RING, 0).unwrap();
