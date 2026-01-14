@@ -73,6 +73,33 @@ pwsh ./drivers/windows7/tests/host-harness/Invoke-AeroVirtioWin7Tests.ps1 `
   -TimeoutSeconds 600
 ```
 
+### QEMU virtio PCI ID preflight (host-side QMP `query-pci`)
+
+To catch QEMU/device-arg misconfiguration early, the harness can optionally query QEMU's PCI topology via QMP
+(`query-pci`) and validate that the expected virtio devices are actually present with the expected IDs/revision
+(notably the `REV_01` contract major version gate used by the Aero Win7 driver INFs).
+
+Flags:
+
+- PowerShell: `-QemuPreflightPci` (alias: `-QmpPreflightPci`)
+- Python: `--qemu-preflight-pci` (alias: `--qmp-preflight-pci`)
+
+Behavior:
+
+- Default (contract-v1) mode:
+  - Requires `VEN_1AF4`
+  - Requires `DEV_1041` (virtio-net), `DEV_1042` (virtio-blk), `DEV_1052` (virtio-input)
+  - Requires `DEV_1059` when virtio-snd is enabled
+  - Requires `REV_01` for those devices
+- Transitional mode (`--virtio-transitional` / `-VirtioTransitional`): permissive (only asserts that at least one `VEN_1AF4`
+  device exists)
+
+On success, the harness emits a CI-scrapable host marker:
+
+- `AERO_VIRTIO_WIN7_HOST|QEMU_PCI_PREFLIGHT|PASS|mode=...|vendor=1af4|devices=...`
+
+On mismatch, the harness fails fast and includes a compact dump of the `query-pci` results.
+
 For repeatable runs without mutating the base image, use snapshot mode:
 
 ```powershell

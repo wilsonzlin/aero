@@ -38,9 +38,11 @@ It:
 - optionally enables a QMP monitor to:
   - request a graceful QEMU shutdown so side-effectful devices (notably the `wav` audiodev backend) can flush/finalize
     their output files before verification
+  - verify QEMU-emitted virtio PCI Vendor/Device/Revision IDs via `query-pci` (when `--qemu-preflight-pci` is enabled)
   - trigger a virtio-blk runtime resize via `blockdev-resize` / legacy `block_resize` (when `--with-blk-resize` is enabled)
   - inject deterministic virtio-input events via `input-send-event` (when `--with-input-events` /
     `--with-virtio-input-events` or `--with-input-tablet-events`/`--with-tablet-events` is enabled)
+  - verify host-side MSI-X enablement on virtio PCI functions via QMP/QEMU introspection (when `--require-virtio-*-msix` is enabled)
   (unix socket on POSIX; TCP loopback fallback on Windows)
  - tails the serial log until it sees AERO_VIRTIO_SELFTEST|RESULT|PASS/FAIL
    - in default (non-transitional) mode, a PASS result also requires per-test markers for virtio-blk, virtio-input,
@@ -66,6 +68,7 @@ It may also mirror guest-side IRQ diagnostics (when present) into per-device hos
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_IRQ|PASS/FAIL/INFO|irq_mode=...|irq_message_count=...`
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_EVENTQ|INFO/SKIP|completions=...|pcm_period=...|xrun=...|...`
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_FORMAT|INFO|render=...|capture=...`
+- `AERO_VIRTIO_WIN7_HOST|QEMU_PCI_PREFLIGHT|PASS|mode=contract-v1/transitional|vendor=1af4|devices=...`
 
 It also mirrors the standalone guest IRQ diagnostic lines (when present):
 
