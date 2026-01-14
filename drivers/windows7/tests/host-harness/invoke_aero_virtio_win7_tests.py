@@ -1807,21 +1807,29 @@ def _virtio_snd_buffer_limits_skip_failure_message(tail: bytes) -> str:
     return "FAIL: VIRTIO_SND_BUFFER_LIMITS_SKIPPED: virtio-snd-buffer-limits test was skipped but --with-snd-buffer-limits was enabled"
 
 
-def _virtio_snd_buffer_limits_required_failure_message(tail: bytes) -> Optional[str]:
+def _virtio_snd_buffer_limits_required_failure_message(
+    tail: bytes,
+    *,
+    saw_pass: bool = False,
+    saw_fail: bool = False,
+    saw_skip: bool = False,
+) -> Optional[str]:
     """
     Enforce that virtio-snd-buffer-limits ran and PASSed.
 
     Returns:
         A "FAIL: ..." message on failure, or None when the marker requirements are satisfied.
     """
-    if b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-buffer-limits|PASS" in tail:
+    # Prefer explicit "saw_*" flags tracked by the main harness loop (these survive tail truncation),
+    # but keep a tail scan fallback to support direct unit tests (and any legacy call sites).
+    if saw_pass or b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-buffer-limits|PASS" in tail:
         return None
-    if b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-buffer-limits|FAIL" in tail:
+    if saw_fail or b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-buffer-limits|FAIL" in tail:
         return (
             "FAIL: VIRTIO_SND_BUFFER_LIMITS_FAILED: virtio-snd-buffer-limits test reported FAIL while "
             "--with-snd-buffer-limits was enabled"
         )
-    if b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-buffer-limits|SKIP" in tail:
+    if saw_skip or b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-buffer-limits|SKIP" in tail:
         return _virtio_snd_buffer_limits_skip_failure_message(tail)
     return (
         "FAIL: MISSING_VIRTIO_SND_BUFFER_LIMITS: did not observe virtio-snd-buffer-limits PASS marker while "
@@ -3780,7 +3788,12 @@ def main() -> int:
                                     break
 
                                 if args.with_snd_buffer_limits:
-                                    msg = _virtio_snd_buffer_limits_required_failure_message(tail)
+                                    msg = _virtio_snd_buffer_limits_required_failure_message(
+                                        tail,
+                                        saw_pass=saw_virtio_snd_buffer_limits_pass,
+                                        saw_fail=saw_virtio_snd_buffer_limits_fail,
+                                        saw_skip=saw_virtio_snd_buffer_limits_skip,
+                                    )
                                     if msg is not None:
                                         print(msg, file=sys.stderr)
                                         _print_tail(serial_log)
@@ -3928,7 +3941,12 @@ def main() -> int:
                                     break
 
                             if args.with_snd_buffer_limits:
-                                msg = _virtio_snd_buffer_limits_required_failure_message(tail)
+                                msg = _virtio_snd_buffer_limits_required_failure_message(
+                                    tail,
+                                    saw_pass=saw_virtio_snd_buffer_limits_pass,
+                                    saw_fail=saw_virtio_snd_buffer_limits_fail,
+                                    saw_skip=saw_virtio_snd_buffer_limits_skip,
+                                )
                                 if msg is not None:
                                     print(msg, file=sys.stderr)
                                     _print_tail(serial_log)
@@ -4798,7 +4816,12 @@ def main() -> int:
                                         break
 
                                     if args.with_snd_buffer_limits:
-                                        msg = _virtio_snd_buffer_limits_required_failure_message(tail)
+                                        msg = _virtio_snd_buffer_limits_required_failure_message(
+                                            tail,
+                                            saw_pass=saw_virtio_snd_buffer_limits_pass,
+                                            saw_fail=saw_virtio_snd_buffer_limits_fail,
+                                            saw_skip=saw_virtio_snd_buffer_limits_skip,
+                                        )
                                         if msg is not None:
                                             print(msg, file=sys.stderr)
                                             _print_tail(serial_log)
@@ -4940,7 +4963,12 @@ def main() -> int:
                                     break
 
                                 if args.with_snd_buffer_limits:
-                                    msg = _virtio_snd_buffer_limits_required_failure_message(tail)
+                                    msg = _virtio_snd_buffer_limits_required_failure_message(
+                                        tail,
+                                        saw_pass=saw_virtio_snd_buffer_limits_pass,
+                                        saw_fail=saw_virtio_snd_buffer_limits_fail,
+                                        saw_skip=saw_virtio_snd_buffer_limits_skip,
+                                    )
                                     if msg is not None:
                                         print(msg, file=sys.stderr)
                                         _print_tail(serial_log)
