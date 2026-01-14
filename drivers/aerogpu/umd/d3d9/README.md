@@ -513,6 +513,20 @@ This subset is validated via:
   `d3d9ex_stretchrect`, `d3d9_raster_status_sanity`, `d3d9ex_multiframe_triangle`, `d3d9ex_vb_dirty_range`,
   `d3d9ex_shared_surface`, `d3d9ex_shared_surface_ipc`, and the DWM-focused `d3d9ex_dwm_ddi_sanity` / `d3d9ex_dwm_probe`).
 
+#### Running host-side unit tests (portable)
+
+These tests build and run on non-Windows hosts (no WDK required).
+
+From repo root:
+
+```bash
+cmake -S drivers/aerogpu/umd/d3d9/tests -B build-d3d9-tests -G "Unix Makefiles"
+cmake --build build-d3d9-tests -j
+ctest --test-dir build-d3d9-tests --output-on-failure
+```
+
+Note: remember to re-run the build step after pulling new commits; `ctest` runs the previously-built binaries in the build directory.
+
 ## Call tracing (bring-up / debugging)
 
 The D3D9 UMD contains a lightweight **in-process call trace** facility that can record D3D9UMDDI entrypoints (including stubs) and dump them via `OutputDebugStringA`/stderr.
