@@ -371,9 +371,20 @@ impl Tier1WasmCodegen {
         let mut may_cross_page_store_u16 = false;
         let mut may_cross_page_store_u32 = false;
         let mut may_cross_page_store_u64 = false;
+
+        // When MMIO exits are enabled and cross-page fast-paths are disabled, cross-page accesses
+        // fall back to the slow helpers. We can elide these helper imports if we can prove an
+        // access will never cross a page boundary, which requires a small constant-propagation
+        // pass over the IR. Avoid paying that cost for blocks that never perform a multi-byte
+        // memory access via the inline-TLB fast-path.
+        let needs_cross_page_analysis = uses_load_u16
+            || uses_load_u32
+            || uses_load_u64
+            || (options.inline_tlb_stores && (uses_store_u16 || uses_store_u32 || uses_store_u64));
         if options.inline_tlb
             && options.inline_tlb_mmio_exit
             && !options.inline_tlb_cross_page_fastpath
+            && needs_cross_page_analysis
         {
             let mut const_values: Vec<Option<u64>> = vec![None; block.value_types.len()];
             for inst in &block.insts {
