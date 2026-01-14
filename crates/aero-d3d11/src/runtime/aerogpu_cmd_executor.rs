@@ -21354,15 +21354,18 @@ fn cs_main() {
             exec.resources.buffers.insert(
                 BUF,
                 BufferResource {
+                    id: BufferId(BUF as u64),
                     buffer: src,
                     size: buf_size,
                     gpu_size: buf_size,
+                    aerogpu_usage_flags: 0,
                     #[cfg(test)]
                     usage: wgpu::BufferUsages::STORAGE
                         | wgpu::BufferUsages::COPY_SRC
                         | wgpu::BufferUsages::COPY_DST,
                     backing: None,
                     dirty: None,
+                    host_shadow: None,
                 },
             );
 
@@ -21460,6 +21463,7 @@ fn cs_main() {
                 default_sampler: &exec.default_sampler,
                 stage: ShaderStage::Hull,
                 stage_state: exec.bindings.stage(ShaderStage::Hull),
+                internal_buffers: &[],
             };
             let bound = provider
                 .srv_buffer(0)
