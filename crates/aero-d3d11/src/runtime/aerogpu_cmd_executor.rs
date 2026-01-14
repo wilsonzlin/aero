@@ -19849,13 +19849,16 @@ fn main() {{
 
 @compute @workgroup_size(1)
 fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {{
-    let i = id.x;
+    let cp = id.x;
+    let patch_id = id.y;
+    let i = patch_id * {output_control_points}u + cp;
     hs_out_regs[i] = vs_out_regs[i] + params.value;
 }}
 "#,
                 cb0 = crate::binding_model::BINDING_BASE_CBUFFER,
                 vs_out = crate::runtime::tessellation::BINDING_VS_OUT_REGS,
                 hs_out = crate::runtime::tessellation::BINDING_HS_OUT_REGS,
+                output_control_points = output_control_points,
             );
 
             let pc_wgsl = format!(

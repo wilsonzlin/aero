@@ -107,35 +107,12 @@ pub(in crate::runtime) struct HullDispatchParams {
     pub hs_output_control_points: u8,
 }
 
-fn compute_dispatch_x(
-    device: &wgpu::Device,
-    thread_count: u64,
-    workgroup_size_x: u32,
-    label: &str,
-) -> Result<u32> {
-    if thread_count == 0 {
-        return Ok(0);
-    }
-    if workgroup_size_x == 0 {
-        bail!("{label}: workgroup_size_x must be > 0");
-    }
-
-    let wgx = workgroup_size_x as u64;
-    let workgroups = thread_count
-        .checked_add(wgx - 1)
-        .ok_or_else(|| anyhow!("{label}: dispatch thread count overflow"))?
-        / wgx;
-
-    let workgroups_u32: u32 = workgroups
-        .try_into()
-        .map_err(|_| anyhow!("{label}: workgroup count out of u32 range"))?;
-
+fn validate_workgroups_dim(device: &wgpu::Device, workgroups: u32, label: &str) -> Result<()> {
     let max = device.limits().max_compute_workgroups_per_dimension;
-    if workgroups_u32 > max {
-        bail!("{label}: dispatch would exceed max_compute_workgroups_per_dimension (requested={workgroups_u32} max={max})");
+    if workgroups > max {
+        bail!("{label}: dispatch would exceed max_compute_workgroups_per_dimension (requested={workgroups} max={max})");
     }
-
-    Ok(workgroups_u32)
+    Ok(())
 }
 
 /// Dispatch HS control-point + patch-constant compute passes.
@@ -175,25 +152,35 @@ pub(in crate::runtime) fn dispatch_hull_phases(
         }
     }
 
-    // HS control point: one thread per output control point per patch.
-    let cp_threads_u64 = (params.patch_count_total as u64)
-        .checked_mul(params.hs_output_control_points as u64)
-        .ok_or_else(|| anyhow!("HS control point dispatch thread count overflow"))?;
-    let cp_workgroups_x = compute_dispatch_x(
-        device,
-        cp_threads_u64,
-        control_point.workgroup_size_x,
-        "HS control point",
-    )?;
+    // HS phase dispatch semantics:
+    // - Control point phase: 2D dispatch
+    //     global_invocation_id.x = output_control_point_id
+    //     global_invocation_id.y = patch_id
+    // - Patch constant phase: 1D dispatch
+    //     global_invocation_id.x = patch_id
+    //
+    // This matches the SM5 hull shader translation path (see `translate_hs`), and keeps the kernel
+    // code simple (no need to decode a linear index into `(patch_id, cp_id)`).
+    if control_point.workgroup_size_x != 1 {
+        bail!(
+            "HS control point: workgroup_size_x must be 1 (got {})",
+            control_point.workgroup_size_x
+        );
+    }
+    if patch_constant.workgroup_size_x != 1 {
+        bail!(
+            "HS patch constant: workgroup_size_x must be 1 (got {})",
+            patch_constant.workgroup_size_x
+        );
+    }
 
-    // HS patch constant: one thread per patch.
-    let pc_threads_u64 = params.patch_count_total as u64;
-    let pc_workgroups_x = compute_dispatch_x(
-        device,
-        pc_threads_u64,
-        patch_constant.workgroup_size_x,
-        "HS patch constant",
-    )?;
+    let cp_workgroups_x = params.hs_output_control_points as u32;
+    let cp_workgroups_y = params.patch_count_total;
+    validate_workgroups_dim(device, cp_workgroups_x, "HS control point")?;
+    validate_workgroups_dim(device, cp_workgroups_y, "HS control point")?;
+
+    let pc_workgroups_x = params.patch_count_total;
+    validate_workgroups_dim(device, pc_workgroups_x, "HS patch constant")?;
 
     if cp_workgroups_x == 0 && pc_workgroups_x == 0 {
         return Ok(());
@@ -381,7 +368,7 @@ pub(in crate::runtime) fn dispatch_hull_phases(
     let pc_pipeline = unsafe { &*pc_pipeline_ptr };
 
     // Dispatch phases. Use separate compute passes to keep debugging labels clear.
-    if cp_workgroups_x != 0 {
+    if cp_workgroups_x != 0 && cp_workgroups_y != 0 {
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("aero-d3d11 tessellation HS control point pass"),
             timestamp_writes: None,
@@ -390,7 +377,7 @@ pub(in crate::runtime) fn dispatch_hull_phases(
         for (group_index, bg) in cp_bind_groups.iter().enumerate() {
             pass.set_bind_group(group_index as u32, bg.as_ref(), &[]);
         }
-        pass.dispatch_workgroups(cp_workgroups_x, 1, 1);
+        pass.dispatch_workgroups(cp_workgroups_x, cp_workgroups_y, 1);
     }
 
     if pc_workgroups_x != 0 {
