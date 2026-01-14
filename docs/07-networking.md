@@ -1341,12 +1341,12 @@ queries, internal IPs, etc). Treat captures like secrets.
 Both the Rust and web tracing implementations buffer captured packets **in-memory** and enforce a
 hard size cap to prevent unbounded growth:
 
-- **Rust (`crates/emulator/src/io/net/trace/NetTracer`):**
+- **Rust (`crates/aero-net-trace/NetTracer`):**
   - `NetTraceConfig.max_bytes` defaults to **16 MiB** of captured payload bytes (not including PCAPNG overhead).
   - Once the cap is reached, new records are **dropped**; counters are available via `NetTracer.stats()`
     (`dropped_records` / `dropped_bytes`).
   - For sensitive environments, configure `NetTraceConfig.redactor` to reduce payload capture (e.g.
-    `TruncateRedactor` or `HeadersOnlyRedactor` in `emulator::io::net::trace`).
+    `TruncateRedactor` or `HeadersOnlyRedactor` in `aero_net_trace`).
 - **Web (`web/src/net/net_tracer.ts`):**
   - Defaults to **16 MiB** of captured payload bytes (`maxBytes`) per net worker.
   - When the cap is reached, new frames are **dropped**; counters are available via `NetTracer.stats()`
