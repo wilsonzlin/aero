@@ -11840,12 +11840,19 @@ fn get_or_create_render_pipeline_for_state<'a>(
             wgpu::PrimitiveTopology::TriangleStrip
         }
     };
+    let strip_index_format = match topology {
+        wgpu::PrimitiveTopology::LineStrip | wgpu::PrimitiveTopology::TriangleStrip => {
+            state.index_buffer.map(|ib| ib.format)
+        }
+        _ => None,
+    };
     let key = RenderPipelineKey {
         vertex_shader,
         fragment_shader: ps_wgsl_hash,
         color_targets,
         depth_stencil: depth_stencil_key,
         primitive_topology: topology,
+        strip_index_format,
         cull_mode: state.cull_mode,
         front_face: state.front_face,
         vertex_buffers: vertex_buffer_keys,
@@ -11881,7 +11888,7 @@ fn get_or_create_render_pipeline_for_state<'a>(
                 }),
                 primitive: wgpu::PrimitiveState {
                     topology,
-                    strip_index_format: None,
+                    strip_index_format,
                     front_face,
                     cull_mode,
                     polygon_mode: wgpu::PolygonMode::Fill,
@@ -12159,6 +12166,7 @@ fn get_or_create_render_pipeline_for_expanded_draw<'a>(
         color_targets,
         depth_stencil: depth_stencil_key,
         primitive_topology: topology,
+        strip_index_format: None,
         cull_mode: state.cull_mode,
         front_face: state.front_face,
         vertex_buffers: vec![vb_key],

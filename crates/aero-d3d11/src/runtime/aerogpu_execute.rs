@@ -935,6 +935,12 @@ impl AerogpuCmdRuntime {
             .ok_or_else(|| anyhow!("draw without bound render targets"))?;
 
         let primitive_topology = map_topology(self.state.primitive_topology)?;
+        let strip_index_format = match primitive_topology {
+            wgpu::PrimitiveTopology::LineStrip | wgpu::PrimitiveTopology::TriangleStrip => {
+                self.state.index_buffer.map(|ib| ib.format)
+            }
+            _ => None,
+        };
         let cull_mode = self.state.rasterizer_state.cull_mode;
         let front_face = self.state.rasterizer_state.front_face;
         let scissor_enabled = self.state.rasterizer_state.scissor_enable;
@@ -990,6 +996,7 @@ impl AerogpuCmdRuntime {
             color_targets: color_target_keys,
             depth_stencil: depth_target_key,
             primitive_topology,
+            strip_index_format,
             cull_mode,
             front_face,
             vertex_buffers: vertex_buffer_keys,
@@ -1046,6 +1053,7 @@ impl AerogpuCmdRuntime {
                     }),
                     primitive: wgpu::PrimitiveState {
                         topology: primitive_topology,
+                        strip_index_format,
                         front_face,
                         cull_mode,
                         ..Default::default()
@@ -1396,6 +1404,12 @@ impl AerogpuCmdRuntime {
             .ok_or_else(|| anyhow!("draw without bound render targets"))?;
 
         let primitive_topology = map_topology(self.state.primitive_topology)?;
+        let strip_index_format = match primitive_topology {
+            wgpu::PrimitiveTopology::LineStrip | wgpu::PrimitiveTopology::TriangleStrip => {
+                self.state.index_buffer.map(|ib| ib.format)
+            }
+            _ => None,
+        };
         let cull_mode = self.state.rasterizer_state.cull_mode;
         let front_face = self.state.rasterizer_state.front_face;
         let scissor_enabled = self.state.rasterizer_state.scissor_enable;
@@ -1474,6 +1488,7 @@ impl AerogpuCmdRuntime {
             color_targets: color_target_keys,
             depth_stencil: depth_target_key,
             primitive_topology,
+            strip_index_format,
             cull_mode,
             front_face,
             vertex_buffers: vertex_buffer_keys,
@@ -1523,6 +1538,7 @@ impl AerogpuCmdRuntime {
                     }),
                     primitive: wgpu::PrimitiveState {
                         topology: primitive_topology,
+                        strip_index_format,
                         front_face,
                         cull_mode,
                         ..Default::default()

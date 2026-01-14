@@ -227,6 +227,7 @@ mod tests {
             })],
             depth_stencil: None,
             primitive_topology: wgpu::PrimitiveTopology::TriangleList,
+            strip_index_format: None,
             cull_mode: None,
             front_face: wgpu::FrontFace::Ccw,
             vertex_buffers: vec![],

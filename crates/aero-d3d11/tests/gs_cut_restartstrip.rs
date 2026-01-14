@@ -1,164 +1,39 @@
 mod common;
 
+use aero_d3d11::runtime::aerogpu_cmd_executor::AerogpuD3d11Executor;
 use aero_d3d11::{DxbcFile, ShaderStage, Sm4Program};
-use anyhow::{anyhow, Context, Result};
+use aero_gpu::guest_memory::VecGuestMemory;
+use aero_protocol::aerogpu::aerogpu_cmd::{
+    AerogpuCullMode, AerogpuFillMode, AerogpuIndexFormat, AerogpuPrimitiveTopology,
+    AerogpuShaderStage, AerogpuVertexBufferBinding, AEROGPU_CLEAR_COLOR,
+    AEROGPU_RESOURCE_USAGE_INDEX_BUFFER, AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
+    AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
+};
+use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
+use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
+use anyhow::{Context, Result};
 
 const WIDTH: u32 = 64;
 const HEIGHT: u32 = 64;
+
+const VS_PASSTHROUGH: &[u8] = include_bytes!("fixtures/vs_passthrough.dxbc");
+const PS_PASSTHROUGH: &[u8] = include_bytes!("fixtures/ps_passthrough.dxbc");
+const ILAY_POS3_COLOR: &[u8] = include_bytes!("fixtures/ilay_pos3_color.bin");
 
 // This fixture is also used by `sm4_geometry_decode.rs` to validate that the SM4 decoder
 // recognizes `emit` + `cut` instructions.
 const GS_CUT_DXBC: &[u8] = include_bytes!("fixtures/gs_emit_cut.dxbc");
 
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct VertexPos3Color4 {
+    pos: [f32; 3],
+    color: [f32; 4],
+}
+
 fn pixel_rgba8(buf: &[u8], x: u32, y: u32) -> [u8; 4] {
     let idx = ((y * WIDTH + x) * 4) as usize;
     buf[idx..idx + 4].try_into().expect("pixel slice")
-}
-
-async fn create_device_queue() -> Result<(wgpu::Device, wgpu::Queue, wgpu::AdapterInfo)> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-
-        let needs_runtime_dir = std::env::var("XDG_RUNTIME_DIR")
-            .ok()
-            .map(|v| v.is_empty())
-            .unwrap_or(true);
-
-        if needs_runtime_dir {
-            let dir =
-                std::env::temp_dir().join(format!("aero-d3d11-xdg-runtime-{}", std::process::id()));
-            let _ = std::fs::create_dir_all(&dir);
-            let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
-            std::env::set_var("XDG_RUNTIME_DIR", &dir);
-        }
-    }
-
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-        // Prefer GL on Linux CI to avoid crashes in some Vulkan software adapters.
-        backends: if cfg!(target_os = "linux") {
-            wgpu::Backends::GL
-        } else {
-            // Prefer "native" backends; this avoids noisy platform warnings from
-            // initializing GL/WAYLAND stacks in headless CI environments.
-            wgpu::Backends::PRIMARY
-        },
-        ..Default::default()
-    });
-
-    let adapter = match instance
-        .request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::LowPower,
-            compatible_surface: None,
-            force_fallback_adapter: true,
-        })
-        .await
-    {
-        Some(adapter) => Some(adapter),
-        None => {
-            instance
-                .request_adapter(&wgpu::RequestAdapterOptions {
-                    power_preference: wgpu::PowerPreference::LowPower,
-                    compatible_surface: None,
-                    force_fallback_adapter: false,
-                })
-                .await
-        }
-    }
-    .ok_or_else(|| anyhow!("wgpu: no suitable adapter found"))?;
-
-    let downlevel = adapter.get_downlevel_capabilities();
-    if !downlevel
-        .flags
-        .contains(wgpu::DownlevelFlags::COMPUTE_SHADERS | wgpu::DownlevelFlags::INDIRECT_EXECUTION)
-    {
-        return Err(anyhow!(
-            "wgpu: adapter lacks required downlevel flags for GS emulation: {:?}",
-            downlevel.flags
-        ));
-    }
-
-    let info = adapter.get_info();
-    let (device, queue) = adapter
-        .request_device(
-            &wgpu::DeviceDescriptor {
-                label: Some("aero-d3d11 gs_cut test device"),
-                required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::downlevel_defaults(),
-            },
-            None,
-        )
-        .await
-        .map_err(|e| anyhow!("wgpu: request_device failed: {e:?}"))?;
-
-    Ok((device, queue, info))
-}
-
-async fn read_texture_rgba8(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    texture: &wgpu::Texture,
-) -> Result<Vec<u8>> {
-    let bytes_per_pixel = 4u32;
-    let unpadded_bytes_per_row = WIDTH * bytes_per_pixel;
-    let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
-    let padded_bytes_per_row = unpadded_bytes_per_row.div_ceil(align) * align;
-    let buffer_size = padded_bytes_per_row as u64 * HEIGHT as u64;
-
-    let staging = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("gs_cut readback staging"),
-        size: buffer_size,
-        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
-
-    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-        label: Some("gs_cut readback encoder"),
-    });
-    encoder.copy_texture_to_buffer(
-        wgpu::ImageCopyTexture {
-            texture,
-            mip_level: 0,
-            origin: wgpu::Origin3d::ZERO,
-            aspect: wgpu::TextureAspect::All,
-        },
-        wgpu::ImageCopyBuffer {
-            buffer: &staging,
-            layout: wgpu::ImageDataLayout {
-                offset: 0,
-                bytes_per_row: Some(padded_bytes_per_row),
-                rows_per_image: Some(HEIGHT),
-            },
-        },
-        wgpu::Extent3d {
-            width: WIDTH,
-            height: HEIGHT,
-            depth_or_array_layers: 1,
-        },
-    );
-    queue.submit([encoder.finish()]);
-
-    let slice = staging.slice(..);
-    let (sender, receiver) = futures_intrusive::channel::shared::oneshot_channel();
-    slice.map_async(wgpu::MapMode::Read, move |v| {
-        sender.send(v).ok();
-    });
-    device.poll(wgpu::Maintain::Wait);
-    receiver
-        .receive()
-        .await
-        .ok_or_else(|| anyhow!("wgpu: map_async dropped"))?
-        .context("wgpu: map_async failed")?;
-
-    let mapped = slice.get_mapped_range();
-    let mut out = Vec::with_capacity((unpadded_bytes_per_row * HEIGHT) as usize);
-    for row in 0..HEIGHT as usize {
-        let start = row * padded_bytes_per_row as usize;
-        out.extend_from_slice(&mapped[start..start + unpadded_bytes_per_row as usize]);
-    }
-    drop(mapped);
-    staging.unmap();
-    Ok(out)
 }
 
 #[test]
@@ -184,276 +59,144 @@ fn gs_cut_restartstrip_resets_triangle_strip_assembly_semantics() -> Result<()> 
 
         let test_name =
             concat!(module_path!(), "::gs_cut_restartstrip_resets_triangle_strip_assembly_semantics");
-        let (device, queue, info) = match create_device_queue().await {
-            Ok(v) => v,
-            Err(err) => {
-                common::skip_or_panic(test_name, &format!("{err:#}"));
+        let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+            Ok(exec) => exec,
+            Err(e) => {
+                common::skip_or_panic(test_name, &format!("wgpu unavailable ({e:#})"));
                 return Ok(());
             }
         };
 
-        eprintln!("running {test_name} on wgpu backend {:?}", info.backend);
+        const RT: u32 = 1;
+        const VB: u32 = 2;
+        const IB: u32 = 3;
+        const VS: u32 = 4;
+        const PS: u32 = 5;
+        const IL: u32 = 6;
 
-        let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("gs_cut vertices"),
-            size: 6 * 16,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::STORAGE,
-            mapped_at_creation: false,
-        });
-        let index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("gs_cut indices"),
-            size: 7 * 4,
-            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::STORAGE,
-            mapped_at_creation: false,
-        });
-        let indirect_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("gs_cut indirect args"),
-            // wgpu requires 4-byte alignment; use a little extra to avoid edge cases.
-            size: 64,
-            usage: wgpu::BufferUsages::INDIRECT | wgpu::BufferUsages::STORAGE,
-            mapped_at_creation: false,
-        });
+        // Build a vertex buffer large enough that the primitive-restart index (0xFFFF for Uint16)
+        // is in-bounds if primitive restart is *not* enabled. This makes the test deterministic:
+        // without primitive restart, the strip will stitch through vertex 65535 and cover the
+        // center pixel.
+        let mut vertices = vec![
+            VertexPos3Color4 {
+                pos: [0.0; 3],
+                color: [0.0; 4],
+            };
+            65_536
+        ];
+        let white = [1.0, 1.0, 1.0, 1.0];
+        vertices[0] = VertexPos3Color4 {
+            pos: [-0.9, -0.5, 0.0],
+            color: white,
+        };
+        vertices[1] = VertexPos3Color4 {
+            pos: [-0.1, -0.5, 0.0],
+            color: white,
+        };
+        vertices[2] = VertexPos3Color4 {
+            pos: [-0.5, 0.5, 0.0],
+            color: white,
+        };
+        vertices[3] = VertexPos3Color4 {
+            pos: [0.1, -0.5, 0.0],
+            color: white,
+        };
+        vertices[4] = VertexPos3Color4 {
+            pos: [0.9, -0.5, 0.0],
+            color: white,
+        };
+        vertices[5] = VertexPos3Color4 {
+            pos: [0.5, 0.5, 0.0],
+            color: white,
+        };
+        // Vertex referenced by the restart index value when restart is disabled.
+        vertices[65_535] = VertexPos3Color4 {
+            pos: [0.0, 0.0, 0.0],
+            color: white,
+        };
 
-        let cs_wgsl = r#"
-struct DrawIndexedIndirect {
-    index_count: u32,
-    instance_count: u32,
-    first_index: u32,
-    base_vertex: i32,
-    first_instance: u32,
-}
+        // Triangle strip indices with a primitive-restart value between strips.
+        // Include one extra u16 so the upload size is 4-byte aligned.
+        let indices: [u16; 8] = [0, 1, 2, 0xFFFF, 3, 4, 5, 0];
 
-@group(0) @binding(0) var<storage, read_write> vertices: array<vec4<f32>>;
-@group(0) @binding(1) var<storage, read_write> indices: array<u32>;
-@group(0) @binding(2) var<storage, read_write> indirect: DrawIndexedIndirect;
+        let mut writer = AerogpuCmdWriter::new();
+        writer.create_texture2d(
+            RT,
+            AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
+            AerogpuFormat::R8G8B8A8Unorm as u32,
+            WIDTH,
+            HEIGHT,
+            1,
+            1,
+            0,
+            0,
+            0,
+        );
 
-// This compute shader stands in for the project’s GS emulation compute pass:
-// it emits two triangle-strip segments and inserts a primitive-restart index
-// between them (equivalent to HLSL `RestartStrip()` / DXBC `cut`).
-@compute @workgroup_size(1)
-fn cs_main() {
-    // Left triangle.
-    vertices[0] = vec4<f32>(-0.9, -0.5, 0.0, 1.0);
-    vertices[1] = vec4<f32>(-0.1, -0.5, 0.0, 1.0);
-    vertices[2] = vec4<f32>(-0.5,  0.5, 0.0, 1.0);
+        writer.create_buffer(
+            VB,
+            AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
+            core::mem::size_of_val(vertices.as_slice()) as u64,
+            0,
+            0,
+        );
+        writer.upload_resource(VB, 0, bytemuck::cast_slice(vertices.as_slice()));
 
-    // Right triangle.
-    vertices[3] = vec4<f32>( 0.1, -0.5, 0.0, 1.0);
-    vertices[4] = vec4<f32>( 0.9, -0.5, 0.0, 1.0);
-    vertices[5] = vec4<f32>( 0.5,  0.5, 0.0, 1.0);
+        writer.create_buffer(
+            IB,
+            AEROGPU_RESOURCE_USAGE_INDEX_BUFFER,
+            core::mem::size_of_val(&indices) as u64,
+            0,
+            0,
+        );
+        writer.upload_resource(IB, 0, bytemuck::cast_slice(&indices));
 
-    // Triangle strip indices with a primitive-restart value between strips.
-    indices[0] = 0u;
-    indices[1] = 1u;
-    indices[2] = 2u;
-    indices[3] = 0xffff_ffffu; // primitive restart (Uint32)
-    indices[4] = 3u;
-    indices[5] = 4u;
-    indices[6] = 5u;
+        writer.set_render_targets(&[RT], 0);
+        writer.clear(AEROGPU_CLEAR_COLOR, [0.0, 0.0, 0.0, 1.0], 1.0, 0);
 
-    indirect.index_count = 7u;
-    indirect.instance_count = 1u;
-    indirect.first_index = 0u;
-    indirect.base_vertex = 0;
-    indirect.first_instance = 0u;
-}
-"#;
-        let cs_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("gs_cut compute"),
-            source: wgpu::ShaderSource::Wgsl(cs_wgsl.into()),
-        });
+        // Disable culling so the test isn't sensitive to strip winding.
+        writer.set_rasterizer_state(
+            AerogpuFillMode::Solid,
+            AerogpuCullMode::None,
+            false,
+            false,
+            0,
+            0,
+        );
 
-        let cs_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("gs_cut compute bgl"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-            ],
-        });
+        writer.create_shader_dxbc(VS, AerogpuShaderStage::Vertex, VS_PASSTHROUGH);
+        writer.create_shader_dxbc(PS, AerogpuShaderStage::Pixel, PS_PASSTHROUGH);
+        writer.bind_shaders(VS, PS, 0);
 
-        let cs_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("gs_cut compute layout"),
-            bind_group_layouts: &[&cs_bind_group_layout],
-            push_constant_ranges: &[],
-        });
-        let cs_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("gs_cut compute pipeline"),
-            layout: Some(&cs_pipeline_layout),
-            module: &cs_module,
-            entry_point: "cs_main",
-            compilation_options: Default::default(),
-        });
-        let cs_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("gs_cut compute bg"),
-            layout: &cs_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: vertex_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: index_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: indirect_buffer.as_entire_binding(),
-                },
-            ],
-        });
+        writer.create_input_layout(IL, ILAY_POS3_COLOR);
+        writer.set_input_layout(IL);
+        writer.set_vertex_buffers(
+            0,
+            &[AerogpuVertexBufferBinding {
+                buffer: VB,
+                stride_bytes: core::mem::size_of::<VertexPos3Color4>() as u32,
+                offset_bytes: 0,
+                reserved0: 0,
+            }],
+        );
+        writer.set_index_buffer(IB, AerogpuIndexFormat::Uint16, 0);
+        writer.set_primitive_topology(AerogpuPrimitiveTopology::TriangleStrip);
 
-        let rt = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("gs_cut render target"),
-            size: wgpu::Extent3d {
-                width: WIDTH,
-                height: HEIGHT,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8Unorm,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
-            view_formats: &[],
-        });
-        let rt_view = rt.create_view(&wgpu::TextureViewDescriptor::default());
+        writer.draw_indexed(7, 1, 0, 0, 0);
 
-        let rs_wgsl = r#"
-@vertex
-fn vs_main(@location(0) pos: vec4<f32>) -> @builtin(position) vec4<f32> {
-    return pos;
-}
+        let stream = writer.finish();
+        let mut guest_mem = VecGuestMemory::new(0);
+        exec.execute_cmd_stream(&stream, None, &mut guest_mem)
+            .context("execute_cmd_stream")?;
+        exec.poll_wait();
 
-@fragment
-fn fs_main() -> @location(0) vec4<f32> {
-    return vec4<f32>(1.0, 1.0, 1.0, 1.0);
-}
-"#;
-        let rs_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("gs_cut render shaders"),
-            source: wgpu::ShaderSource::Wgsl(rs_wgsl.into()),
-        });
-
-        let rs_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("gs_cut render layout"),
-            bind_group_layouts: &[],
-            push_constant_ranges: &[],
-        });
-        let rs_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("gs_cut render pipeline"),
-            layout: Some(&rs_pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &rs_module,
-                entry_point: "vs_main",
-                compilation_options: Default::default(),
-                buffers: &[wgpu::VertexBufferLayout {
-                    array_stride: 16,
-                    step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &[wgpu::VertexAttribute {
-                        shader_location: 0,
-                        offset: 0,
-                        format: wgpu::VertexFormat::Float32x4,
-                    }],
-                }],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &rs_module,
-                entry_point: "fs_main",
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: wgpu::TextureFormat::Rgba8Unorm,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleStrip,
-                strip_index_format: Some(wgpu::IndexFormat::Uint32),
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: None,
-                polygon_mode: wgpu::PolygonMode::Fill,
-                unclipped_depth: false,
-                conservative: false,
-            },
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-        });
-
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("gs_cut encoder"),
-        });
-
-        // Compute pass: generate vertices/indices/indirect args.
-        {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("gs_cut compute pass"),
-                timestamp_writes: None,
-            });
-            pass.set_pipeline(&cs_pipeline);
-            pass.set_bind_group(0, &cs_bind_group, &[]);
-            pass.dispatch_workgroups(1, 1, 1);
-        }
-
-        // Render pass: draw the indexed triangle strip using indirect args.
-        {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("gs_cut render pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &rt_view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
-            pass.set_pipeline(&rs_pipeline);
-            pass.set_vertex_buffer(0, vertex_buffer.slice(..));
-            pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-            pass.draw_indexed_indirect(&indirect_buffer, 0);
-        }
-
-        queue.submit([encoder.finish()]);
-        device.poll(wgpu::Maintain::Wait);
-
-        let pixels = read_texture_rgba8(&device, &queue, &rt).await?;
+        let pixels = exec
+            .read_texture_rgba8(RT)
+            .await
+            .context("readback render target")?;
         assert_eq!(pixels.len(), (WIDTH * HEIGHT * 4) as usize);
 
-        // Verify both triangles rendered (left/right), and the would-be “bridge” region between
-        // strips remains background. Without a RestartStrip/cut, the triangle strip would include
-        // additional connecting triangles that cover the center pixel.
         let bg = [0u8, 0u8, 0u8, 255u8];
         let fg = [255u8, 255u8, 255u8, 255u8];
 
@@ -462,7 +205,7 @@ fn fs_main() -> @location(0) vec4<f32> {
         assert_eq!(
             pixel_rgba8(&pixels, 32, 32),
             bg,
-            "gap pixel should remain background (RestartStrip/cut must reset strip assembly)"
+            "gap pixel should remain background (primitive restart / RestartStrip must reset strip assembly)"
         );
 
         Ok(())
