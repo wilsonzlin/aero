@@ -1798,6 +1798,32 @@ def _test_chunked_manifest_fetch(
         return TestResult(name=name, status="FAIL", details=str(e)), None, None
 
 
+def _test_chunked_private_requires_auth(
+    *,
+    name: str,
+    url: str,
+    origin: str | None,
+    timeout_s: float,
+    max_body_bytes: int,
+) -> TestResult:
+    try:
+        headers: dict[str, str] = {"Accept-Encoding": "identity"}
+        if origin is not None:
+            headers["Origin"] = origin
+        resp = _request(
+            url=url,
+            method="GET",
+            headers=headers,
+            timeout_s=timeout_s,
+            max_body_bytes=max_body_bytes,
+        )
+        _require_cors(resp, origin)
+        _require(resp.status in (401, 403), f"expected 401/403, got {resp.status}")
+        return TestResult(name=name, status="PASS", details=f"status={resp.status}")
+    except TestFailure as e:
+        return TestResult(name=name, status="FAIL", details=str(e))
+
+
 def _test_chunked_manifest_schema(*, raw: object | None) -> tuple[TestResult, ChunkedDiskManifest | None]:
     name = "manifest: schema aero.chunked-disk-image.v1 and size/count consistency"
     if raw is None:
@@ -1858,17 +1884,29 @@ def _test_cache_control_immutable(
     resp: HttpResponse | None,
     strict: bool,
     require_no_transform: bool,
+    authorization: str | None,
 ) -> TestResult:
     if resp is None:
         return TestResult(name=name, status="SKIP", details="skipped (no response)")
     cache_control = _header(resp, "Cache-Control")
     if cache_control is None:
-        msg = "missing Cache-Control (recommended: include immutable)"
+        if authorization is None:
+            msg = "missing Cache-Control (recommended: include immutable)"
+        else:
+            msg = "missing Cache-Control (private responses should avoid public caching; no-store recommended)"
         return TestResult(name=name, status="FAIL" if strict else "WARN", details=msg)
     tokens = _csv_tokens(cache_control)
     issues: list[str] = []
-    if "immutable" not in tokens:
-        issues.append(f"Cache-Control missing immutable: {cache_control!r}")
+    if authorization is None:
+        if "immutable" not in tokens:
+            issues.append(f"Cache-Control missing immutable: {cache_control!r}")
+    else:
+        # Authorization-triggered fetches are not safe to cache publicly unless you very carefully
+        # vary caches by Authorization. Treat Cache-Control: public as a conformance failure.
+        if "public" in tokens:
+            return TestResult(name=name, status="FAIL", details=f"private response must not be Cache-Control: public; got {cache_control!r}")
+        if "no-store" not in tokens:
+            issues.append(f"private response Cache-Control missing no-store: {cache_control!r}")
     if require_no_transform and "no-transform" not in tokens:
         issues.append(f"Cache-Control missing no-transform: {cache_control!r}")
     if issues:
@@ -1987,6 +2025,17 @@ def _main_chunked(args: argparse.Namespace) -> int:
 
     results: list[TestResult] = []
 
+    if authorization is not None:
+        results.append(
+            _test_chunked_private_requires_auth(
+                name="private: unauthenticated manifest request is denied (401/403)",
+                url=manifest_url,
+                origin=origin,
+                timeout_s=timeout_s,
+                max_body_bytes=min(max_body_bytes, 1024),
+            )
+        )
+
     manifest_get, manifest_resp, manifest_json = _test_chunked_manifest_fetch(
         manifest_url=manifest_url,
         origin=origin,
@@ -2007,12 +2056,18 @@ def _main_chunked(args: argparse.Namespace) -> int:
             expected="application/json",
         )
     )
+    cache_control_name = (
+        "manifest: Cache-Control includes immutable"
+        if authorization is None
+        else "manifest: Cache-Control is safe for private content (no-store recommended)"
+    )
     results.append(
         _test_cache_control_immutable(
-            name="manifest: Cache-Control includes immutable",
+            name=cache_control_name,
             resp=manifest_resp,
             strict=strict,
             require_no_transform=False,
+            authorization=authorization,
         )
     )
     results.append(
@@ -2062,6 +2117,24 @@ def _main_chunked(args: argparse.Namespace) -> int:
     if manifest is None:
         results.append(TestResult(name="chunks: fetch sample chunks", status="SKIP", details="skipped (no valid manifest)"))
     else:
+        if authorization is not None and manifest.chunk_count > 0:
+            # Best-effort: ensure chunk objects are protected when the caller indicates the image is private.
+            # Use a tiny read cap so we don't accidentally download a full chunk if the server is misconfigured.
+            first_chunk_url = _derive_chunk_url(
+                manifest_url=manifest_url,
+                chunk_index=0,
+                chunk_index_width=manifest.chunk_index_width,
+            )
+            results.append(
+                _test_chunked_private_requires_auth(
+                    name="private: unauthenticated chunk request is denied (401/403)",
+                    url=first_chunk_url,
+                    origin=origin,
+                    timeout_s=timeout_s,
+                    max_body_bytes=1024,
+                )
+            )
+
         max_declared = max(manifest.chunk_sizes) if manifest.chunk_sizes else 0
         caps_ok = max_declared <= max_bytes_per_chunk and max_declared <= max_body_bytes
         if not caps_ok:
@@ -2194,10 +2267,15 @@ def _main_chunked(args: argparse.Namespace) -> int:
                 )
                 results.append(
                     _test_cache_control_immutable(
-                        name=f"chunk {label}: Cache-Control includes immutable",
+                        name=(
+                            f"chunk {label}: Cache-Control includes immutable"
+                            if authorization is None
+                            else f"chunk {label}: Cache-Control is safe for private content (no-store recommended)"
+                        ),
                         resp=chunk_resp,
                         strict=strict,
                         require_no_transform=True,
+                        authorization=authorization,
                     )
                 )
                 results.append(
