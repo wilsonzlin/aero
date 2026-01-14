@@ -4432,6 +4432,16 @@ HRESULT AEROGPU_APIENTRY CreateShaderResourceView11(D3D11DDI_HDEVICE hDevice,
               static_cast<unsigned>(res->handle));
           return E_NOTIMPL;
         }
+      } else if (res->array_size != 1) {
+        // If the runtime does not provide a view-dimension discriminator, we
+        // cannot safely determine whether the SRV is a Texture2D vs
+        // Texture2DArray view. Conservatively reject array resources to avoid
+        // silently binding the wrong subresource range.
+        AEROGPU_D3D10_11_LOG(
+            "CreateShaderResourceView11: reject SRV for array texture without view dimension (array=%u handle=%u)",
+            static_cast<unsigned>(res->array_size),
+            static_cast<unsigned>(res->handle));
+        return E_NOTIMPL;
       }
     } else {
       __if_exists(D3D11DDIARG_CREATESHADERRESOURCEVIEW::ResourceDimension) {
