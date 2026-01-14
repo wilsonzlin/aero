@@ -15570,11 +15570,24 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
       }
       const uint32_t count = (end - start + 1);
       const size_t base = static_cast<size_t>(start) * 4;
-      std::memcpy(dst + base,
-                  src + base,
-                  static_cast<size_t>(count) * 4 * sizeof(int32_t));
-      const int32_t* payload = src + base;
       const size_t payload_size = static_cast<size_t>(count) * 4 * sizeof(int32_t);
+
+      const int32_t* payload = src + base;
+
+      // Always record into the in-progress state block (if any), even if the
+      // constant data is redundant.
+      stateblock_record_shader_const_i_locked(dev, stage, start, payload, count);
+
+      if (std::memcmp(dst + base, payload, payload_size) == 0) {
+        // Skip redundant constant uploads: applying identical state again is a
+        // no-op, but still recorded above for state blocks.
+        // Leave `dst` unchanged (it already matches).
+        reg = end + 1;
+        continue;
+      }
+
+      std::memcpy(dst + base, payload, payload_size);
+
       auto* cmd = append_with_payload_locked<aerogpu_cmd_set_shader_constants_i>(
           dev, AEROGPU_CMD_SET_SHADER_CONSTANTS_I, payload, payload_size);
       if (!cmd) {
@@ -15584,11 +15597,7 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
       cmd->start_register = start;
       cmd->vec4_count = count;
       cmd->reserved0 = 0;
-      stateblock_record_shader_const_i_locked(dev,
-                                             stage,
-                                             start,
-                                             payload,
-                                             count);
+
       reg = end + 1;
     }
     return S_OK;
@@ -15610,7 +15619,20 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
         ++end;
       }
       const uint32_t count = (end - start + 1);
-      std::memcpy(dst + start, src + start, static_cast<size_t>(count) * sizeof(uint8_t));
+
+      // Always record into the in-progress state block (if any), even if the
+      // constant data is redundant.
+      stateblock_record_shader_const_b_locked(dev, stage, start, src + start, count);
+
+      if (std::memcmp(dst + start, src + start, static_cast<size_t>(count) * sizeof(uint8_t)) != 0) {
+        std::memcpy(dst + start, src + start, static_cast<size_t>(count) * sizeof(uint8_t));
+      } else {
+        // Skip redundant constant uploads: applying identical state again is a
+        // no-op, but still recorded above for state blocks.
+        // Leave `dst` unchanged (it already matches).
+        reg = end + 1;
+        continue;
+      }
 
       // AeroGPU represents each bool register as a `vec4<u32>` (16 bytes) in the
       // constants uniform buffer. Expand scalar bools into that representation.
@@ -15637,8 +15659,6 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
       cmd->start_register = start;
       cmd->bool_count = count;
       cmd->reserved0 = 0;
-
-      stateblock_record_shader_const_b_locked(dev, stage, start, src + start, count);
       reg = end + 1;
     }
     return S_OK;

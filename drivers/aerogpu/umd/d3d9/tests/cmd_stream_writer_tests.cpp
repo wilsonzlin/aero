@@ -14954,6 +14954,139 @@ bool TestApplyStateBlockSplitsShaderConstIBVs() {
       static_cast<uint32_t>(AEROGPU_SHADER_STAGE_VERTEX)>();
 }
 
+template <typename DeviceFuncsT, uint32_t D3dStage>
+bool TestApplyStateBlockSkipsRedundantShaderConstIBImpl() {
+  if constexpr (!HasPfnSetShaderConstI<DeviceFuncsT>::value ||
+                !HasPfnSetShaderConstB<DeviceFuncsT>::value) {
+    // Some D3D9 DDI header variants do not expose the I/B constant entrypoints in the device
+    // function table. In those builds we cannot exercise the DDI surface area; treat the test as a
+    // no-op.
+    return true;
+  } else {
+    struct Cleanup {
+      D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+      DeviceFuncsT device_funcs{};
+      D3DDDI_HADAPTER hAdapter{};
+      D3DDDI_HDEVICE hDevice{};
+      D3D9DDI_HSTATEBLOCK hStateBlock{};
+      bool has_adapter = false;
+      bool has_device = false;
+      bool has_stateblock = false;
+      ~Cleanup() {
+        if (has_stateblock && device_funcs.pfnDeleteStateBlock) {
+          device_funcs.pfnDeleteStateBlock(hDevice, hStateBlock);
+        }
+        if (has_device && device_funcs.pfnDestroyDevice) {
+          device_funcs.pfnDestroyDevice(hDevice);
+        }
+        if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+          adapter_funcs.pfnCloseAdapter(hAdapter);
+        }
+      }
+    } cleanup;
+
+    D3DDDIARG_OPENADAPTER2 open{};
+    open.Interface = 1;
+    open.Version = 1;
+    D3DDDI_ADAPTERCALLBACKS callbacks{};
+    D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+    open.pAdapterCallbacks = &callbacks;
+    open.pAdapterCallbacks2 = &callbacks2;
+    open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+    HRESULT hr = ::OpenAdapter2(&open);
+    if (!Check(hr == S_OK, "OpenAdapter2")) {
+      return false;
+    }
+    cleanup.hAdapter = open.hAdapter;
+    cleanup.has_adapter = true;
+
+    D3D9DDIARG_CREATEDEVICE create_dev{};
+    create_dev.hAdapter = open.hAdapter;
+    create_dev.Flags = 0;
+    hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+    if (!Check(hr == S_OK, "CreateDevice")) {
+      return false;
+    }
+    cleanup.hDevice = create_dev.hDevice;
+    cleanup.has_device = true;
+
+    if (!cleanup.device_funcs.pfnBeginStateBlock ||
+        !cleanup.device_funcs.pfnEndStateBlock ||
+        !cleanup.device_funcs.pfnApplyStateBlock ||
+        !cleanup.device_funcs.pfnDeleteStateBlock) {
+      // Some build configurations may omit state-block entrypoints.
+      return true;
+    }
+
+    auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+    if (!Check(dev != nullptr, "device pointer")) {
+      return false;
+    }
+
+    std::vector<uint8_t> dma(4096, 0);
+    dev->cmd.set_span(dma.data(), dma.size());
+    dev->cmd.reset();
+    ScopedDeviceCmdVectorReset cmd_reset(dev);
+
+    hr = cleanup.device_funcs.pfnBeginStateBlock(create_dev.hDevice);
+    if (!Check(hr == S_OK, "BeginStateBlock")) {
+      return false;
+    }
+
+    const uint32_t int_start = 5;
+    const uint32_t int_count = 2;
+    const int32_t ints[int_count * 4] = {1, 2, 3, 4, 5, 6, 7, 8};
+    hr = cleanup.device_funcs.pfnSetShaderConstI(create_dev.hDevice, D3dStage, int_start, ints, int_count);
+    if (!Check(hr == S_OK, "SetShaderConstI (record)")) {
+      return false;
+    }
+
+    const uint32_t bool_start = 7;
+    const uint32_t bool_count = 2;
+    const BOOL bools[bool_count] = {static_cast<BOOL>(1), static_cast<BOOL>(0)};
+    hr = cleanup.device_funcs.pfnSetShaderConstB(create_dev.hDevice, D3dStage, bool_start, bools, bool_count);
+    if (!Check(hr == S_OK, "SetShaderConstB (record)")) {
+      return false;
+    }
+
+    hr = cleanup.device_funcs.pfnEndStateBlock(create_dev.hDevice, &cleanup.hStateBlock);
+    if (!Check(hr == S_OK, "EndStateBlock")) {
+      return false;
+    }
+    cleanup.has_stateblock = true;
+
+    // Applying the state block immediately (without changing device state) should be a no-op for
+    // shader I/B constants.
+    dev->cmd.reset();
+    hr = cleanup.device_funcs.pfnApplyStateBlock(create_dev.hDevice, cleanup.hStateBlock);
+    if (!Check(hr == S_OK, "ApplyStateBlock")) {
+      return false;
+    }
+    dev->cmd.finalize();
+    const uint8_t* buf = dma.data();
+    const size_t len = dev->cmd.bytes_used();
+    if (!Check(ValidateStream(buf, dma.size()), "command stream validates")) {
+      return false;
+    }
+
+    if (!Check(CountOpcode(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_I) == 0,
+               "Redundant ApplyStateBlock does not emit SET_SHADER_CONSTANTS_I")) {
+      return false;
+    }
+    return Check(CountOpcode(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_B) == 0,
+                 "Redundant ApplyStateBlock does not emit SET_SHADER_CONSTANTS_B");
+  }
+}
+
+bool TestApplyStateBlockSkipsRedundantShaderConstIB() {
+  return TestApplyStateBlockSkipsRedundantShaderConstIBImpl<D3D9DDI_DEVICEFUNCS, kD3d9ShaderStagePs>();
+}
+
+bool TestApplyStateBlockSkipsRedundantShaderConstIBVs() {
+  return TestApplyStateBlockSkipsRedundantShaderConstIBImpl<D3D9DDI_DEVICEFUNCS, kD3d9ShaderStageVs>();
+}
+
 bool TestApplyStateBlockNormalizesShaderConstIBStage() {
   if constexpr (!HasPfnSetShaderConstI<D3D9DDI_DEVICEFUNCS>::value ||
                 !HasPfnSetShaderConstB<D3D9DDI_DEVICEFUNCS>::value) {
@@ -16546,7 +16679,9 @@ bool TestCaptureStateBlockSplitsShaderConstIBImpl() {
       return false;
     }
     const BOOL b7_c[1] = {static_cast<BOOL>(1)};
-    const BOOL b9_c[1] = {static_cast<BOOL>(1)};
+    // Ensure ApplyStateBlock must update *both* bool ranges so the split behavior
+    // is exercised even when the UMD skips redundant constant uploads.
+    const BOOL b9_c[1] = {static_cast<BOOL>(0)};
     hr = cleanup.device_funcs.pfnSetShaderConstB(create_dev.hDevice, D3dStage, b0, b7_c, 1);
     if (!Check(hr == S_OK, "SetShaderConstB(b7 C)")) {
       return false;
@@ -40693,6 +40828,8 @@ int main() {
   RUN_TEST(TestApplyStateBlockEmitsShaderConstIBVs);
   RUN_TEST(TestApplyStateBlockSplitsShaderConstIB);
   RUN_TEST(TestApplyStateBlockSplitsShaderConstIBVs);
+  RUN_TEST(TestApplyStateBlockSkipsRedundantShaderConstIB);
+  RUN_TEST(TestApplyStateBlockSkipsRedundantShaderConstIBVs);
   RUN_TEST(TestApplyStateBlockNormalizesShaderConstIBStage);
   RUN_TEST(TestApplyStateBlockRecordsShaderConstIB);
   RUN_TEST(TestApplyStateBlockRecordsShaderConstIBVs);
