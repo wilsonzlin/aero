@@ -41,10 +41,10 @@ and expects the following contract-v1 HWIDs to be present in both `[Aero.NTx86]`
 
 - `PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01` (keyboard)
 - `PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01` (mouse)
-- `PCI\VEN_1AF4&DEV_1052&REV_01` (generic fallback when subsystem IDs are not exposed)
+- `PCI\VEN_1AF4&DEV_1052&REV_01` (strict generic fallback when subsystem IDs are not exposed/expected)
 
 It also enforces that `aero_virtio_input.inf` does not include the tablet subsystem ID (`SUBSYS_00121AF4`), so tablet
-devices bind via `aero_virtio_tablet.inf` when that INF is installed.
+devices bind via `aero_virtio_tablet.inf` when that INF is installed (that INF is more specific and will win over the generic fallback).
 
 Run it from any PowerShell prompt:
 
