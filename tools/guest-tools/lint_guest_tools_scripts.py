@@ -126,22 +126,28 @@ def _has_install_certs_policy_gate(text: str) -> bool:
     if block is None:
         return False
 
+    sp_var = r"(?:%SIGNING_POLICY%|!SIGNING_POLICY!)"
+    ic_var = r"(?:%ARG_INSTALL_CERTS%|!ARG_INSTALL_CERTS!)"
+
     # Find non-test gating checks and ensure they lead to an early "exit /b 0"
     # soon afterwards (so it is actually a skip-by-policy, not just a warning).
-    for m in re.finditer(r"(?im)^\s*if\b[^\r\n]*%SIGNING_POLICY%[^\r\n]*$", block):
+    for m in re.finditer(rf"(?im)^\s*if\b[^\r\n]*{sp_var}[^\r\n]*$", block):
         line = m.group(0)
         is_non_test_policy_check = (
-            re.search(r'(?i)\bnot\s+"%SIGNING_POLICY%"\s*==\s*"test"', line) is not None
-            or re.search(r'(?i)"%SIGNING_POLICY%"\s*==\s*"(production|none)"', line) is not None
+            re.search(rf'(?i)\bnot\s+"{sp_var}"\s*==\s*"test"', line) is not None
+            or re.search(rf'(?i)"{sp_var}"\s*==\s*"(production|none)"', line) is not None
         )
         if not is_non_test_policy_check:
             continue
 
         # If the policy gate mentions ARG_INSTALL_CERTS, ensure it's the skip-side
         # condition (NOT the override-side warning branch).
-        if re.search(r"(?i)%ARG_INSTALL_CERTS%", line) is not None and re.search(
-            r'(?i)\bnot\s+"%ARG_INSTALL_CERTS%"\s*==\s*"1"', line
-        ) is None:
+        if re.search(rf"(?i){ic_var}", line) is not None and _any_regex(
+            [
+                rf'(?i)\bnot\s+"{ic_var}"\s*==\s*"1"',
+                rf'(?i)"{ic_var}"\s*==\s*"0"',
+            ]
+        )(line) is False:
             continue
 
         # Look for an early return close to the if line (avoid accidentally
