@@ -2037,7 +2037,7 @@ function Try-AeroQmpInjectVirtioInputEvents {
         } catch {
           $errHwheel = ""
           try { $errHwheel = [string]$_.Exception.Message } catch { }
-          throw "QMP input-send-event failed while injecting horizontal scroll for -WithInputWheel/-WithInputEventsExtended (tried axis='hscroll' then axis='hwheel'). This likely means the running QEMU build does not support horizontal scroll injection; upgrade QEMU or omit those flags. hscroll_error=$errHscroll; hwheel_error=$errHwheel"
+          throw "QMP input-send-event failed while injecting horizontal scroll for -WithInputWheel/-WithVirtioInputWheel/-EnableVirtioInputWheel or -WithInputEventsExtended/-WithInputEventsExtra (tried axis='hscroll' then axis='hwheel'). This likely means the running QEMU build does not support horizontal scroll injection; upgrade QEMU or omit those flags. hscroll_error=$errHscroll; hwheel_error=$errHwheel"
         }
       }
 
@@ -2505,7 +2505,7 @@ try {
       )
     } catch {
       if ($needInputEvents -or $needInputTabletEvents) {
-        throw "Failed to allocate QMP port required for -WithInputEvents/-WithInputWheel/-WithInputTabletEvents/-WithTabletEvents: $_"
+        throw "Failed to allocate QMP port required for input injection flags (-WithInputEvents/-WithVirtioInputEvents/-EnableVirtioInputEvents, -WithInputWheel/-WithVirtioInputWheel/-EnableVirtioInputWheel, -WithInputEventsExtended/-WithInputEventsExtra, -WithInputTabletEvents/-WithTabletEvents): $_"
       }
       Write-Warning "Failed to allocate QMP port for graceful shutdown: $_"
       $qmpPort = $null
@@ -2566,7 +2566,7 @@ try {
     } catch { }
 
     if ($needInputEvents -and (-not ($haveVirtioKbd -and $haveVirtioMouse))) {
-      throw "QEMU does not advertise virtio-keyboard-pci/virtio-mouse-pci but -WithInputEvents/-WithInputWheel was enabled. Upgrade QEMU or omit input event injection."
+      throw "QEMU does not advertise virtio-keyboard-pci/virtio-mouse-pci but input injection flags were enabled (-WithInputEvents/-WithVirtioInputEvents/-EnableVirtioInputEvents, -WithInputWheel/-WithVirtioInputWheel/-EnableVirtioInputWheel, -WithInputEventsExtended/-WithInputEventsExtra). Upgrade QEMU or omit input event injection."
     }
     if (-not ($haveVirtioKbd -and $haveVirtioMouse)) {
       Write-Warning "QEMU does not advertise virtio-keyboard-pci/virtio-mouse-pci. The guest virtio-input selftest will likely FAIL. Upgrade QEMU or adjust the guest image/selftest expectations."
@@ -2898,7 +2898,7 @@ try {
       $scriptExitCode = 1
     }
     "MISSING_VIRTIO_INPUT_EVENTS" {
-      Write-Host "FAIL: MISSING_VIRTIO_INPUT_EVENTS: did not observe virtio-input-events marker (READY/SKIP/PASS/FAIL) after virtio-input completed while -WithInputEvents was enabled (guest selftest too old or missing --test-input-events)"
+      Write-Host "FAIL: MISSING_VIRTIO_INPUT_EVENTS: did not observe virtio-input-events marker (READY/SKIP/PASS/FAIL) after virtio-input completed while -WithInputEvents/-WithVirtioInputEvents/-EnableVirtioInputEvents was enabled (guest selftest too old or missing --test-input-events)"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -2906,7 +2906,7 @@ try {
       $scriptExitCode = 1
     }
     "MISSING_VIRTIO_INPUT_EVENTS_EXTENDED" {
-      Write-Host "FAIL: MISSING_VIRTIO_INPUT_EVENTS_EXTENDED: did not observe virtio-input-events-modifiers/buttons/wheel markers while -WithInputEventsExtended was enabled (guest selftest too old or missing --test-input-events-extended)"
+      Write-Host "FAIL: MISSING_VIRTIO_INPUT_EVENTS_EXTENDED: did not observe virtio-input-events-modifiers/buttons/wheel markers while -WithInputEventsExtended/-WithInputEventsExtra was enabled (guest selftest too old or missing --test-input-events-extended)"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -2914,7 +2914,7 @@ try {
       $scriptExitCode = 1
     }
     "VIRTIO_INPUT_EVENTS_SKIPPED" {
-      Write-Host "FAIL: VIRTIO_INPUT_EVENTS_SKIPPED: virtio-input-events test was skipped (flag_not_set) but -WithInputEvents was enabled (provision the guest with --test-input-events)"
+      Write-Host "FAIL: VIRTIO_INPUT_EVENTS_SKIPPED: virtio-input-events test was skipped (flag_not_set) but -WithInputEvents/-WithVirtioInputEvents/-EnableVirtioInputEvents was enabled (provision the guest with --test-input-events)"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -2922,7 +2922,7 @@ try {
       $scriptExitCode = 1
     }
     "VIRTIO_INPUT_EVENTS_EXTENDED_SKIPPED" {
-      Write-Host "FAIL: VIRTIO_INPUT_EVENTS_EXTENDED_SKIPPED: virtio-input-events-* extended tests were skipped (flag_not_set) but -WithInputEventsExtended was enabled (provision the guest with --test-input-events-extended)"
+      Write-Host "FAIL: VIRTIO_INPUT_EVENTS_EXTENDED_SKIPPED: virtio-input-events-* extended tests were skipped (flag_not_set) but -WithInputEventsExtended/-WithInputEventsExtra was enabled (provision the guest with --test-input-events-extended)"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -2930,7 +2930,7 @@ try {
       $scriptExitCode = 1
     }
     "VIRTIO_INPUT_EVENTS_FAILED" {
-      Write-Host "FAIL: VIRTIO_INPUT_EVENTS_FAILED: virtio-input-events test reported FAIL while -WithInputEvents was enabled"
+      Write-Host "FAIL: VIRTIO_INPUT_EVENTS_FAILED: virtio-input-events test reported FAIL while -WithInputEvents/-WithVirtioInputEvents/-EnableVirtioInputEvents was enabled"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -2938,7 +2938,7 @@ try {
       $scriptExitCode = 1
     }
     "MISSING_VIRTIO_INPUT_WHEEL" {
-      Write-Host "FAIL: MISSING_VIRTIO_INPUT_WHEEL: did not observe virtio-input-wheel marker while -WithInputWheel was enabled (guest selftest too old or missing wheel coverage)"
+      Write-Host "FAIL: MISSING_VIRTIO_INPUT_WHEEL: did not observe virtio-input-wheel marker while -WithInputWheel/-WithVirtioInputWheel/-EnableVirtioInputWheel was enabled (guest selftest too old or missing wheel coverage)"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -2946,7 +2946,7 @@ try {
       $scriptExitCode = 1
     }
     "VIRTIO_INPUT_WHEEL_SKIPPED" {
-      Write-Host "FAIL: VIRTIO_INPUT_WHEEL_SKIPPED: virtio-input-wheel test was skipped but -WithInputWheel was enabled"
+      Write-Host "FAIL: VIRTIO_INPUT_WHEEL_SKIPPED: virtio-input-wheel test was skipped but -WithInputWheel/-WithVirtioInputWheel/-EnableVirtioInputWheel was enabled"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -2954,7 +2954,7 @@ try {
       $scriptExitCode = 1
     }
     "VIRTIO_INPUT_WHEEL_FAILED" {
-      Write-Host "FAIL: VIRTIO_INPUT_WHEEL_FAILED: virtio-input-wheel test reported FAIL while -WithInputWheel was enabled"
+      Write-Host "FAIL: VIRTIO_INPUT_WHEEL_FAILED: virtio-input-wheel test reported FAIL while -WithInputWheel/-WithVirtioInputWheel/-EnableVirtioInputWheel was enabled"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -2962,7 +2962,7 @@ try {
       $scriptExitCode = 1
     }
     "VIRTIO_INPUT_EVENTS_EXTENDED_FAILED" {
-      Write-Host "FAIL: VIRTIO_INPUT_EVENTS_EXTENDED_FAILED: one or more virtio-input-events-* extended tests reported FAIL while -WithInputEventsExtended was enabled"
+      Write-Host "FAIL: VIRTIO_INPUT_EVENTS_EXTENDED_FAILED: one or more virtio-input-events-* extended tests reported FAIL while -WithInputEventsExtended/-WithInputEventsExtra was enabled"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue

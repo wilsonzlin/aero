@@ -269,8 +269,8 @@ python3 drivers/windows7/tests/host-harness/invoke_aero_virtio_win7_tests.py \
 To also regression-test **mouse scrolling** end-to-end (including **horizontal scrolling** via `REL_HWHEEL` /
 HID Consumer `AC Pan`), run the harness with:
 
-- PowerShell: `-WithInputWheel`
-- Python: `--with-input-wheel`
+- PowerShell: `-WithInputWheel` (aliases: `-WithVirtioInputWheel`, `-EnableVirtioInputWheel`)
+- Python: `--with-input-wheel` (aliases: `--with-virtio-input-wheel`, `--enable-virtio-input-wheel`)
 
 This:
 
@@ -285,8 +285,8 @@ events; the wheel selftest is designed to handle this (it validates expected per
 multiples of the injected values).
 
 Note: Some QEMU builds use a different name for horizontal scroll (for example `hwheel` instead of `hscroll`).
-The harness retries with a fallback name; if neither is accepted, `-WithInputWheel` / `--with-input-wheel` fails with a
-clear error (upgrade QEMU or omit the wheel flag).
+The harness retries with a fallback name; if neither is accepted, `-WithInputWheel` / `--with-input-wheel` (or aliases)
+fails with a clear error (upgrade QEMU or omit the wheel flag).
 
 PowerShell:
 
