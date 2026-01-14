@@ -528,6 +528,31 @@ fn run_trace_with_prefilled_tlbs(
     ram_size: u64,
     prefill_tlbs: &[(u64, u64)],
 ) -> (u64, Vec<u8>, [u64; 16], HostState) {
+    let tlb_salt = 0x1234_5678_9abc_def0u64;
+    let mut raw = Vec::with_capacity(prefill_tlbs.len());
+    for &(vaddr, tlb_data) in prefill_tlbs {
+        let vpn = vaddr >> PAGE_SHIFT;
+        let tag = (vpn ^ tlb_salt) | 1;
+        raw.push((vaddr, tag, tlb_data));
+    }
+    run_trace_with_custom_tlb_salt_and_raw_prefilled_tlbs(
+        trace,
+        ram,
+        cpu_ptr,
+        ram_size,
+        tlb_salt,
+        &raw,
+    )
+}
+
+fn run_trace_with_custom_tlb_salt_and_raw_prefilled_tlbs(
+    trace: &TraceIr,
+    ram: Vec<u8>,
+    cpu_ptr: u64,
+    ram_size: u64,
+    ctx_tlb_salt: u64,
+    prefill_tlbs: &[(u64, u64, u64)],
+) -> (u64, Vec<u8>, [u64; 16], HostState) {
     let plan = RegAllocPlan::default();
     let wasm = Tier2WasmCodegen::new().compile_trace_with_options(
         trace,
@@ -554,17 +579,18 @@ fn run_trace_with_prefilled_tlbs(
     write_cpu_rip(&mut mem, cpu_ptr_usize, 0x1000);
     write_cpu_rflags(&mut mem, cpu_ptr_usize, 0x2);
 
-    let tlb_salt = 0x1234_5678_9abc_def0u64;
-    let ctx = JitContext { ram_base: 0, tlb_salt };
+    let ctx = JitContext {
+        ram_base: 0,
+        tlb_salt: ctx_tlb_salt,
+    };
     ctx.write_header_to_mem(&mut mem, jit_ctx_ptr_usize);
 
-    for &(vaddr, tlb_data) in prefill_tlbs {
+    for &(vaddr, tag, tlb_data) in prefill_tlbs {
         let vpn = vaddr >> PAGE_SHIFT;
         let idx = (vpn & JIT_TLB_INDEX_MASK) as usize;
         let entry_addr = jit_ctx_ptr_usize
             + (JitContext::TLB_OFFSET as usize)
             + idx * (JIT_TLB_ENTRY_SIZE as usize);
-        let tag = (vpn ^ tlb_salt) | 1;
         mem[entry_addr..entry_addr + 8].copy_from_slice(&tag.to_le_bytes());
         mem[entry_addr + 8..entry_addr + 16].copy_from_slice(&tlb_data.to_le_bytes());
     }
@@ -850,6 +876,165 @@ fn tier2_inline_tlb_store_on_prefilled_non_ram_tlb_entry_uses_slow_helper() {
     assert_eq!(host.mmu_translate_calls, 0);
     assert_eq!(host.slow_mem_reads, 0);
     assert_eq!(host.slow_mem_writes, 1);
+}
+
+#[test]
+fn tier2_inline_tlb_load_permission_miss_on_prefilled_entry_calls_translate() {
+    // If a cached TLB entry lacks the required permission flag, the inline-TLB permission check
+    // should call `mmu_translate` and retry using the updated entry.
+    let trace = TraceIr {
+        prologue: Vec::new(),
+        body: vec![
+            Instr::LoadMem {
+                dst: ValueId(0),
+                addr: Operand::Const(0x1000),
+                width: Width::W32,
+            },
+            Instr::StoreReg {
+                reg: Gpr::Rax,
+                src: Operand::Value(ValueId(0)),
+            },
+        ],
+        kind: TraceKind::Linear,
+    };
+
+    let mut ram = vec![0u8; 0x20_000];
+    ram[0x1000..0x1000 + 4].copy_from_slice(&0x1122_3344u32.to_le_bytes());
+    let cpu_ptr = ram.len() as u64;
+
+    // Prefill a matching entry, but omit READ permission.
+    let tlb_data = (0x1000u64 & PAGE_BASE_MASK)
+        | (TLB_FLAG_WRITE | TLB_FLAG_EXEC | TLB_FLAG_IS_RAM);
+
+    let (_ret, _got_ram, gpr, host) =
+        run_trace_with_prefilled_tlbs(&trace, ram, cpu_ptr, 0x20_000, &[(0x1000, tlb_data)]);
+
+    assert_eq!(gpr[Gpr::Rax.as_u8() as usize] as u32, 0x1122_3344);
+    assert_eq!(host.mmu_translate_calls, 1);
+    assert_eq!(host.slow_mem_reads, 0);
+    assert_eq!(host.slow_mem_writes, 0);
+}
+
+#[test]
+fn tier2_inline_tlb_store_permission_miss_on_prefilled_entry_calls_translate() {
+    // If a cached TLB entry lacks the required permission flag, the inline-TLB permission check
+    // should call `mmu_translate` and retry using the updated entry.
+    let trace = TraceIr {
+        prologue: Vec::new(),
+        body: vec![Instr::StoreMem {
+            addr: Operand::Const(0x1000),
+            src: Operand::Const(0xAB),
+            width: Width::W8,
+        }],
+        kind: TraceKind::Linear,
+    };
+
+    let ram = vec![0u8; 0x20_000];
+    let cpu_ptr = ram.len() as u64;
+
+    // Prefill a matching entry, but omit WRITE permission.
+    let tlb_data = (0x1000u64 & PAGE_BASE_MASK) | (TLB_FLAG_READ | TLB_FLAG_EXEC | TLB_FLAG_IS_RAM);
+
+    let (_ret, got_ram, _gpr, host) =
+        run_trace_with_prefilled_tlbs(&trace, ram, cpu_ptr, 0x20_000, &[(0x1000, tlb_data)]);
+
+    assert_eq!(got_ram[0x1000], 0xAB);
+    assert_eq!(host.mmu_translate_calls, 1);
+    assert_eq!(host.slow_mem_reads, 0);
+    assert_eq!(host.slow_mem_writes, 0);
+}
+
+#[test]
+fn tier2_inline_tlb_tlb_salt_mismatch_forces_retranslate() {
+    // The runtime can invalidate all cached entries by changing the TLB salt (rather than zeroing
+    // tags). Ensure Tier-2 uses the salt from `JitContext` when checking tags.
+    let trace = TraceIr {
+        prologue: Vec::new(),
+        body: vec![
+            Instr::LoadMem {
+                dst: ValueId(0),
+                addr: Operand::Const(0x1000),
+                width: Width::W32,
+            },
+            Instr::StoreReg {
+                reg: Gpr::Rax,
+                src: Operand::Value(ValueId(0)),
+            },
+        ],
+        kind: TraceKind::Linear,
+    };
+
+    let mut ram = vec![0u8; 0x20_000];
+    ram[0x1000..0x1000 + 4].copy_from_slice(&0x1122_3344u32.to_le_bytes());
+    let cpu_ptr = ram.len() as u64;
+
+    let vaddr = 0x1000u64;
+    let vpn = vaddr >> PAGE_SHIFT;
+    let old_salt = 0x1234_5678_9abc_def0u64;
+    let new_salt = old_salt ^ 0x1111_1111_1111_1111;
+    let stale_tag = (vpn ^ old_salt) | 1;
+    let data = (vaddr & PAGE_BASE_MASK) | (TLB_FLAG_READ | TLB_FLAG_WRITE | TLB_FLAG_EXEC | TLB_FLAG_IS_RAM);
+
+    let (_ret, _got_ram, gpr, host) = run_trace_with_custom_tlb_salt_and_raw_prefilled_tlbs(
+        &trace,
+        ram,
+        cpu_ptr,
+        0x20_000,
+        new_salt,
+        &[(vaddr, stale_tag, data)],
+    );
+
+    assert_eq!(gpr[Gpr::Rax.as_u8() as usize] as u32, 0x1122_3344);
+    assert_eq!(host.mmu_translate_calls, 1);
+    assert_eq!(host.slow_mem_reads, 0);
+    assert_eq!(host.slow_mem_writes, 0);
+}
+
+#[test]
+fn tier2_inline_tlb_tlb_tag_uses_or1_to_reserve_zero_for_invalidation() {
+    // Tag=0 is reserved for invalidation. Ensure Tier-2 computes expected tags as
+    // `(vpn ^ salt) | 1`, even when `vpn ^ salt == 0`.
+    let trace = TraceIr {
+        prologue: Vec::new(),
+        body: vec![
+            Instr::LoadMem {
+                dst: ValueId(0),
+                addr: Operand::Const(0x1000),
+                width: Width::W32,
+            },
+            Instr::StoreReg {
+                reg: Gpr::Rax,
+                src: Operand::Value(ValueId(0)),
+            },
+        ],
+        kind: TraceKind::Linear,
+    };
+
+    let mut ram = vec![0u8; 0x20_000];
+    ram[0x1000..0x1000 + 4].copy_from_slice(&0x1122_3344u32.to_le_bytes());
+    let cpu_ptr = ram.len() as u64;
+
+    let vaddr = 0x1000u64;
+    let vpn = vaddr >> PAGE_SHIFT;
+    let salt = vpn;
+    let tag = (vpn ^ salt) | 1;
+    assert_eq!(tag, 1, "sanity: vpn^salt should be 0, so tag must be 1");
+
+    let data = (vaddr & PAGE_BASE_MASK) | (TLB_FLAG_READ | TLB_FLAG_WRITE | TLB_FLAG_EXEC | TLB_FLAG_IS_RAM);
+
+    let (_ret, _got_ram, gpr, host) = run_trace_with_custom_tlb_salt_and_raw_prefilled_tlbs(
+        &trace,
+        ram,
+        cpu_ptr,
+        0x20_000,
+        salt,
+        &[(vaddr, tag, data)],
+    );
+
+    assert_eq!(gpr[Gpr::Rax.as_u8() as usize] as u32, 0x1122_3344);
+    assert_eq!(host.mmu_translate_calls, 0);
+    assert_eq!(host.slow_mem_reads, 0);
+    assert_eq!(host.slow_mem_writes, 0);
 }
 
 #[test]
