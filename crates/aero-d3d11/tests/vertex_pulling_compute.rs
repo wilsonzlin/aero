@@ -388,9 +388,9 @@ fn compute_can_vertex_pull_f16_u16_u32_formats() {
         const PIPELINE: u32 = 7;
 
         // Two vertices:
-        // - vb0: DXGI_FORMAT_R16G16_FLOAT (half2)
+        // - vb0: DXGI_FORMAT_R16G16_FLOAT (half2) + DXGI_FORMAT_R16_FLOAT (scalar, tested via offsets)
         // - vb1: DXGI_FORMAT_R16_UINT (u16, padded to 4 bytes per vertex)
-        // - vb2: DXGI_FORMAT_R32_UINT (u32)
+        // - vb2: DXGI_FORMAT_R32_UINT (u32) + vectors (tested via ia_load_r32g32/… helpers)
         //
         // Half float bit patterns (IEEE-754 binary16):
         // - 1.0  = 0x3C00
@@ -416,11 +416,17 @@ fn compute_can_vertex_pull_f16_u16_u32_formats() {
         assert_eq!(vb_u16.len(), 8);
 
         let mut vb_u32 = Vec::<u8>::new();
-        // v0 u32 = 42
+        // v0 u32x4 = (42, 43, 44, 45)
         push_u32(&mut vb_u32, 42);
-        // v1 u32 = 1000
+        push_u32(&mut vb_u32, 43);
+        push_u32(&mut vb_u32, 44);
+        push_u32(&mut vb_u32, 45);
+        // v1 u32x4 = (1000, 1001, 1002, 1003)
         push_u32(&mut vb_u32, 1000);
-        assert_eq!(vb_u32.len(), 8);
+        push_u32(&mut vb_u32, 1001);
+        push_u32(&mut vb_u32, 1002);
+        push_u32(&mut vb_u32, 1003);
+        assert_eq!(vb_u32.len(), 32);
 
         let mut meta = IaMeta::default();
         meta.vb[0].base_offset_bytes = 0;
@@ -428,9 +434,9 @@ fn compute_can_vertex_pull_f16_u16_u32_formats() {
         meta.vb[1].base_offset_bytes = 0;
         meta.vb[1].stride_bytes = 4;
         meta.vb[2].base_offset_bytes = 0;
-        meta.vb[2].stride_bytes = 4;
+        meta.vb[2].stride_bytes = 16;
 
-        let output_vec4s = 2u32 * 3u32; // (half2, u16, u32) per vertex
+        let output_vec4s = 2u32 * 8u32; // 8 vec4s per vertex
         let output_size = output_vec4s as u64 * 16;
 
         let wgsl = format!(
@@ -446,15 +452,25 @@ struct OutBuf {{
 @compute @workgroup_size(1)
 fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {{
   let idx = gid.x;
-  let base = idx * 3u;
+  let base = idx * 8u;
 
   let h = ia_load_r16g16_float(0u, idx, 0u);
+  let h0 = ia_load_r16_float(0u, idx, 0u);
+  let h1 = ia_load_r16_float(0u, idx, 2u);
   let u16v = ia_load_r16_uint(1u, idx, 0u);
   let u32v = ia_load_r32_uint(2u, idx, 0u);
+  let u32v2 = ia_load_r32g32_uint(2u, idx, 0u);
+  let u32v3 = ia_load_r32g32b32_uint(2u, idx, 0u);
+  let u32v4 = ia_load_r32g32b32a32_uint(2u, idx, 0u);
 
   out_buf.data[base + 0u] = vec4<f32>(h, 0.0, 1.0);
-  out_buf.data[base + 1u] = vec4<f32>(f32(u16v), 0.0, 0.0, 1.0);
-  out_buf.data[base + 2u] = vec4<f32>(f32(u32v), 0.0, 0.0, 1.0);
+  out_buf.data[base + 1u] = vec4<f32>(h0, 0.0, 0.0, 1.0);
+  out_buf.data[base + 2u] = vec4<f32>(h1, 0.0, 0.0, 1.0);
+  out_buf.data[base + 3u] = vec4<f32>(f32(u16v), 0.0, 0.0, 1.0);
+  out_buf.data[base + 4u] = vec4<f32>(f32(u32v), 0.0, 0.0, 1.0);
+  out_buf.data[base + 5u] = vec4<f32>(f32(u32v2.x), f32(u32v2.y), 0.0, 1.0);
+  out_buf.data[base + 6u] = vec4<f32>(f32(u32v3.x), f32(u32v3.y), f32(u32v3.z), 1.0);
+  out_buf.data[base + 7u] = vec4<f32>(f32(u32v4.x), f32(u32v4.y), f32(u32v4.z), f32(u32v4.w));
 }}
 "#,
             out_binding = IA_BINDING_VERTEX_BUFFER_END
@@ -548,16 +564,37 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {{
         let expected = [
             // v0 half2
             [1.0, 0.5, 0.0, 1.0],
+            // v0 r16_float @ offset 0
+            [1.0, 0.0, 0.0, 1.0],
+            // v0 r16_float @ offset 2 (unaligned)
+            [0.5, 0.0, 0.0, 1.0],
             // v0 u16
             [1234.0, 0.0, 0.0, 1.0],
             // v0 u32
             [42.0, 0.0, 0.0, 1.0],
+            // v0 u32x2
+            [42.0, 43.0, 0.0, 1.0],
+            // v0 u32x3
+            [42.0, 43.0, 44.0, 1.0],
+            // v0 u32x4
+            [42.0, 43.0, 44.0, 45.0],
+
             // v1 half2
             [2.0, -1.0, 0.0, 1.0],
+            // v1 r16_float @ offset 0
+            [2.0, 0.0, 0.0, 1.0],
+            // v1 r16_float @ offset 2 (unaligned)
+            [-1.0, 0.0, 0.0, 1.0],
             // v1 u16
             [65535.0, 0.0, 0.0, 1.0],
             // v1 u32
             [1000.0, 0.0, 0.0, 1.0],
+            // v1 u32x2
+            [1000.0, 1001.0, 0.0, 1.0],
+            // v1 u32x3
+            [1000.0, 1001.0, 1002.0, 1.0],
+            // v1 u32x4
+            [1000.0, 1001.0, 1002.0, 1003.0],
         ];
 
         for (i, exp) in expected.iter().enumerate() {
