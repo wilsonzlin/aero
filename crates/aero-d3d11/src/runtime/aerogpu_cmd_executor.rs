@@ -3866,7 +3866,6 @@ impl AerogpuD3d11Executor {
             bail!("aerogpu_cmd: draw without bound render target or depth-stencil");
         }
         let depth_only_pass = !has_color_targets && self.state.depth_stencil.is_some();
-        self.validate_gs_hs_ds_emulation_capabilities()?;
 
         // Tessellation emulation will eventually use a VS-as-compute prepass to populate HS control
         // point inputs (see `runtime::tessellation::vs_as_compute`). The full HS/DS pipeline is not
