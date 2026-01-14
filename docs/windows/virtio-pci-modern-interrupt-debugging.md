@@ -41,7 +41,30 @@ The debugging process below is about proving each link in that chain.
 
 This is not perfect, but it’s a quick “are we even in the right mode?” check that works on Windows 7 without any special tooling.
 
-### 1.2 Driver debug prints: detect `CM_RESOURCE_INTERRUPT_MESSAGE`
+### 1.2 `aero-virtio-selftest.exe` IRQ markers (Aero guest tooling)
+
+If you have access to Aero’s Windows 7 guest test tool (`aero-virtio-selftest.exe`), it can report which interrupt mode Windows actually assigned **without** WinDbg/DbgView:
+
+- `virtio-net-irq|INFO|mode=intx`
+- `virtio-net-irq|INFO|mode=msi|messages=<n>`
+- `virtio-input-irq|INFO|mode=intx`
+- `virtio-input-irq|INFO|mode=msi|messages=<n>`
+- `virtio-snd-irq|INFO|mode=intx`
+- `virtio-snd-irq|INFO|mode=msi|messages=<n>`
+
+For `virtio-blk`, the selftest emits a richer line from the miniport IOCTL query:
+
+- `virtio-blk-irq|INFO|mode=<intx|msi|msix>|message_count=<n>|msix_config_vector=0x....|msix_queue0_vector=0x....`
+
+Notes:
+
+- `mode=msi` means **message-signaled interrupts** (MSI or MSI-X). The markers do not attempt to distinguish MSI vs MSI-X except for virtio-blk (where `mode=msix` is reported if vectors are assigned).
+- `messages=<n>` / `message_count=<n>` is the number of interrupt messages Windows granted. Drivers must remain functional even when Windows grants fewer than requested (or only INTx).
+- The tool logs to `C:\aero-virtio-selftest.log` and emits markers on stdout/COM1 for host-side parsing.
+
+See: [`drivers/windows7/tests/guest-selftest/README.md`](../../drivers/windows7/tests/guest-selftest/README.md).
+
+### 1.3 Driver debug prints: detect `CM_RESOURCE_INTERRUPT_MESSAGE`
 
 In `EvtDevicePrepareHardware` (KMDF) or `IRP_MN_START_DEVICE` (WDM), dump the translated resources. The key fact to print is whether the interrupt resource has the flag:
 
@@ -83,7 +106,7 @@ What you’re looking for:
 - If you think you’re using MSI-X but `CM_RESOURCE_INTERRUPT_MESSAGE` never appears, Windows gave you INTx.
 - If `MessageCount` is 1 but you expected N queues + config, Windows only granted 1 message (often due to INF/registry policy or device capability limits).
 
-### 1.3 WinDbg: use `!irp` (PnP start IRP) and `!pci` (MSI-X enable bit)
+### 1.4 WinDbg: use `!irp` (PnP start IRP) and `!pci` (MSI-X enable bit)
 
 #### `!irp` (resources as Windows handed them to the driver)
 

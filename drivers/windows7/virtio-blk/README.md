@@ -78,6 +78,8 @@ You can also use `aero-virtio-selftest.exe`:
   - `irq_mode=<intx|msi|msix>`
   - `msix_config_vector=0x....`
   - `msix_queue_vector=0x....` (queue0)
+- The selftest may also emit an informational standalone IRQ line (useful for log scraping):
+  - `virtio-blk-irq|INFO|mode=<intx|msi>|message_count=<n>|msix_config_vector=0x....|msix_queue0_vector=0x....`
 - To make MSI/MSI-X a hard requirement in the in-tree QEMU harness:
   - Host: `-VirtioMsixVectors N` / `--virtio-msix-vectors N` and `-RequireVirtioBlkMsix` / `--require-virtio-blk-msix`
   - Guest selftest: `--expect-blk-msi` (or `AERO_VIRTIO_SELFTEST_EXPECT_BLK_MSI=1`)
