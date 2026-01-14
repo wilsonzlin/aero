@@ -437,6 +437,15 @@ mod tests {
         // exhaustive (no wildcard arm) so adding a new `D3DFormat` variant will fail to compile
         // until the expected behavior is captured in this test.
 
+        // Ensure new TextureUsageKind variants force test updates (no wildcard arm).
+        fn _assert_texture_usage_kind_is_exhaustive(u: TextureUsageKind) {
+            match u {
+                TextureUsageKind::Sampled => {}
+                TextureUsageKind::RenderTarget => {}
+                TextureUsageKind::DepthStencil => {}
+            }
+        }
+
         #[derive(Debug)]
         struct ExpectedOk {
             wgpu: wgpu::TextureFormat,
@@ -617,6 +626,8 @@ mod tests {
 
             for &format in ALL_FORMATS {
                 for &usage in ALL_USAGES {
+                    _assert_texture_usage_kind_is_exhaustive(usage);
+
                     let res = format_info(format, features, usage);
 
                     let expects_ok = matches!(
