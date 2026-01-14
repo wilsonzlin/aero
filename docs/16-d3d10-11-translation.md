@@ -511,10 +511,12 @@ bring up correctness incrementally:
       (if present) or reject with a clear error.
       - When adjacency is implemented, the required IA primitive assembly ordering is specified in
         section 2.1.1b.
-    - **primitive restart** for indexed strip topologies is initially unsupported:
+    - **primitive restart** for indexed strip topologies:
       - D3D11 encodes strip restart in the index buffer as `0xFFFF` (u16) / `0xFFFFFFFF` (u32).
-      - Until we implement restart-aware strip assembly in compute, the runtime must reject draws
-        that use indexed `LINESTRIP`/`TRIANGLESTRIP` (and adjacency variants) with restart indices.
+      - Indexed `LINESTRIP`/`TRIANGLESTRIP` draws are supported (native WebGPU primitive restart where
+        available; CPU fallback on wgpu-GL).
+      - Compute-side primitive assembly for strip topologies (including adjacency-strip) is future
+        work.
     - output strip topologies are expanded into lists (`line_strip` → `line_list`, `triangle_strip` → `triangle_list`),
     - no layered rendering system values (`SV_RenderTargetArrayIndex`, `SV_ViewportArrayIndex`),
     - output ordering:
@@ -848,10 +850,11 @@ Rules:
 - **Primitive restart (indexed strip topologies):** for indexed `LINESTRIP`/`TRIANGLESTRIP` (and
   their adjacency variants `LINESTRIP_ADJ`/`TRIANGLESTRIP_ADJ`), D3D11 uses a special index value to
   restart the strip (`0xFFFF` for u16 indices, `0xFFFFFFFF` for u32 indices). The simple formulas
-  above assume there are no restart indices. For initial bring-up, treat any draw that contains
-  restart indices as unsupported/invalid; a full implementation will need a restart-aware strip
-  assembly path (either a preprocessing pass that expands strips into lists, or per-primitive bounds
-  checks in the assembly stage).
+  above assume there are no restart indices.
+  - Indexed `LINESTRIP`/`TRIANGLESTRIP` draws support primitive restart in the native render-pass
+    path (native WebGPU primitive restart where available; CPU fallback on wgpu-GL).
+  - Compute-side primitive assembly that needs to interpret strip indices still needs a
+    restart-aware strip assembly path.
 
 For patchlist topologies:
 
@@ -989,7 +992,8 @@ odd primitives, while preserving the `triadj` adjacency-edge mapping described a
 
 Bring-up note: adjacency primitive assembly is specified here for implementability, but initial
 bring-up may still reject `*_ADJ` topologies (see limitations above) until the GS emulation path can
-consume `lineadj`/`triadj` inputs correctly (including restart handling for indexed strips).
+consume `lineadj`/`triadj` inputs correctly. Supporting strip-adjacency (`*_STRIP_ADJ`) and its
+interaction with primitive restart can be staged later if needed.
 
 #### 2.1.1c) GS input register payload layout (optional; matches in-tree `gs_translate`)
 
