@@ -1193,15 +1193,48 @@ static ULONGLONG AeroGpuReadCompletedFence(_In_ const AEROGPU_ADAPTER* Adapter)
      * page while powered down/resuming).
      */
     if (Adapter->AbiKind == AEROGPU_ABI_KIND_V1 && Adapter->FencePageVa) {
-        const volatile ULONG* parts = (const volatile ULONG*)&Adapter->FencePageVa->completed_fence;
-        ULONGLONG fence = AeroGpuReadVolatileU64HiLoHi(parts);
-        if (fence < cachedLastCompleted) {
-            fence = cachedLastCompleted;
+        /*
+         * The fence page can be detached/freed during teardown via AeroGpuRingCleanup. Hold RingLock
+         * at <= DISPATCH_LEVEL to avoid racing cleanup. At DIRQL (ISR context) we cannot take the
+         * lock; rely on the D0/AcceptingSubmissions gate above (StopDevice transitions block
+         * submissions before freeing the page).
+         */
+        struct aerogpu_fence_page* fencePage = NULL;
+        ULONGLONG fence = 0;
+
+        if (KeGetCurrentIrql() <= DISPATCH_LEVEL) {
+            KIRQL ringIrql;
+            KeAcquireSpinLock(&((AEROGPU_ADAPTER*)Adapter)->RingLock, &ringIrql);
+            fencePage = ((AEROGPU_ADAPTER*)Adapter)->FencePageVa;
+            if (fencePage) {
+                const volatile ULONG* parts = (const volatile ULONG*)&fencePage->completed_fence;
+                fence = AeroGpuReadVolatileU64HiLoHi(parts);
+            }
+            KeReleaseSpinLock(&((AEROGPU_ADAPTER*)Adapter)->RingLock, ringIrql);
+        } else {
+            fencePage = ((AEROGPU_ADAPTER*)Adapter)->FencePageVa;
+            if (fencePage) {
+                const volatile ULONG* parts = (const volatile ULONG*)&fencePage->completed_fence;
+                fence = AeroGpuReadVolatileU64HiLoHi(parts);
+            }
         }
-        return fence;
+
+        if (fencePage) {
+            if (fence < cachedLastCompleted) {
+                fence = cachedLastCompleted;
+            }
+            return fence;
+        }
     }
 
     if (!Adapter->Bar0) {
+        return cachedLastCompleted;
+    }
+
+    /* Re-check the power/submission gate before touching MMIO (teardown races). */
+    if ((DXGK_DEVICE_POWER_STATE)InterlockedCompareExchange((volatile LONG*)&Adapter->DevicePowerState, 0, 0) !=
+            DxgkDevicePowerStateD0 ||
+        InterlockedCompareExchange((volatile LONG*)&Adapter->AcceptingSubmissions, 0, 0) == 0) {
         return cachedLastCompleted;
     }
 
