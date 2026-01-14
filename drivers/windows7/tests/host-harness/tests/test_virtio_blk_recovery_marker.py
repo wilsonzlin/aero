@@ -67,6 +67,22 @@ class VirtioBlkRecoveryMarkerTests(unittest.TestCase):
         self.assertIsNotNone(msg)
         self.assertTrue(msg.startswith("FAIL: VIRTIO_BLK_RECOVERY_NONZERO:"))
 
+    def test_cli_flag_parses(self) -> None:
+        # Ensure the gating flag stays accepted by argparse (prevents accidental regressions when the
+        # harness CLI is refactored).
+        parser = self.harness._build_arg_parser()
+        args, extra = parser.parse_known_args(
+            [
+                "--qemu-system",
+                "qemu-system-x86_64",
+                "--disk-image",
+                "disk.img",
+                "--require-no-blk-recovery",
+            ]
+        )
+        self.assertEqual(extra, [])
+        self.assertTrue(args.require_no_blk_recovery)
+
     def test_gate_uses_preparsed_blk_marker_line(self) -> None:
         # Simulate the harness tail buffer not containing the virtio-blk marker (e.g. truncated),
         # but the caller still providing the last observed virtio-blk marker line.
