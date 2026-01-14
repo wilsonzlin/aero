@@ -47,11 +47,7 @@ pub struct AtaTransferModeSelectError(pub u8);
 
 impl fmt::Display for AtaTransferModeSelectError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "invalid ATA transfer mode select byte 0x{:02x}",
-            self.0
-        )
+        write!(f, "invalid ATA transfer mode select byte 0x{:02x}", self.0)
     }
 }
 
