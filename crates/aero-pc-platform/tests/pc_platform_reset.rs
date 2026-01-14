@@ -320,6 +320,36 @@ fn pc_platform_reset_restores_deterministic_power_on_state() {
 fn pc_platform_reset_restores_pci_intx_interrupt_line_and_pin_registers() {
     let mut pc = PcPlatform::new(2 * 1024 * 1024);
 
+    // First validate a built-in device from the default platform topology (AHCI at 00:02.0).
+    let pirq_to_gsi = PciIntxRouterConfig::default().pirq_to_gsi;
+    let ahci_bdf = SATA_AHCI_ICH9.bdf;
+    {
+        let pin_before =
+            read_cfg_u8(&mut pc, ahci_bdf.bus, ahci_bdf.device, ahci_bdf.function, 0x3d);
+        let line_before =
+            read_cfg_u8(&mut pc, ahci_bdf.bus, ahci_bdf.device, ahci_bdf.function, 0x3c);
+
+        let expected_pin = SATA_AHCI_ICH9
+            .interrupt_pin
+            .expect("AHCI profile should provide an interrupt pin")
+            .to_config_u8();
+        assert_eq!(pin_before, expected_pin);
+        let expected_line = pci_routing::irq_line_for_intx(pirq_to_gsi, ahci_bdf.device, pin_before);
+        assert_eq!(line_before, expected_line);
+
+        // Corrupt the fields so reset must restore them.
+        write_cfg_u8(&mut pc, ahci_bdf.bus, ahci_bdf.device, ahci_bdf.function, 0x3c, 0x5a);
+        write_cfg_u8(&mut pc, ahci_bdf.bus, ahci_bdf.device, ahci_bdf.function, 0x3d, 0x04);
+        assert_eq!(
+            read_cfg_u8(&mut pc, ahci_bdf.bus, ahci_bdf.device, ahci_bdf.function, 0x3c),
+            0x5a
+        );
+        assert_eq!(
+            read_cfg_u8(&mut pc, ahci_bdf.bus, ahci_bdf.device, ahci_bdf.function, 0x3d),
+            0x04
+        );
+    }
+
     // Add a dummy PCI endpoint that uses the *default* `PciDevice::reset` implementation (clears
     // COMMAND only). This ensures `PcPlatform::reset` must explicitly reprogram INTx metadata in
     // config space via `PciIntxRouter::configure_device_intx`.
@@ -357,8 +387,7 @@ fn pc_platform_reset_restores_pci_intx_interrupt_line_and_pin_registers() {
     );
 
     // Explicitly validate the PCI swizzle:
-    // use the canonical INTx swizzle helper to compute the expected `Interrupt Line` value.
-    let pirq_to_gsi = PciIntxRouterConfig::default().pirq_to_gsi;
+    // line == pirq_to_gsi[(device + (pin-1)) & 3]
     let expected_line = pci_routing::irq_line_for_intx(pirq_to_gsi, bdf.device, pin_before);
     assert_eq!(line_before, expected_line);
 
@@ -375,6 +404,22 @@ fn pc_platform_reset_restores_pci_intx_interrupt_line_and_pin_registers() {
     );
 
     pc.reset();
+
+    // AHCI should have been restored back to its deterministic routing.
+    {
+        let pin_after =
+            read_cfg_u8(&mut pc, ahci_bdf.bus, ahci_bdf.device, ahci_bdf.function, 0x3d);
+        let line_after =
+            read_cfg_u8(&mut pc, ahci_bdf.bus, ahci_bdf.device, ahci_bdf.function, 0x3c);
+
+        let expected_pin = SATA_AHCI_ICH9
+            .interrupt_pin
+            .expect("AHCI profile should provide an interrupt pin")
+            .to_config_u8();
+        assert_eq!(pin_after, expected_pin);
+        let expected_line = pci_routing::irq_line_for_intx(pirq_to_gsi, ahci_bdf.device, pin_after);
+        assert_eq!(line_after, expected_line);
+    }
 
     let pin_after = read_cfg_u8(&mut pc, bdf.bus, bdf.device, bdf.function, 0x3d);
     let line_after = read_cfg_u8(&mut pc, bdf.bus, bdf.device, bdf.function, 0x3c);
