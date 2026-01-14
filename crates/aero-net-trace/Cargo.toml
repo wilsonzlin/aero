@@ -13,3 +13,6 @@ net-trace = []
 aero-net-backend = { path = "../aero-net-backend" }
 aero-net-stack = { path = "../aero-net-stack" }
 aero-pcapng = { path = "../aero-pcapng" }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+web-time = "1"

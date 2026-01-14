@@ -13,3 +13,6 @@ legacy-abi = ["dep:aero-protocol", "dep:memory"]
 [dependencies]
 aero-protocol = { path = "../../emulator/protocol", optional = true }
 memory = { path = "../memory", optional = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+web-time = "1"

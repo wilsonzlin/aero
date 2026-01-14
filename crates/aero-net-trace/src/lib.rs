@@ -3,7 +3,15 @@
 use std::net::Ipv4Addr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
+
+// `std::time::SystemTime::now()` can panic on `wasm32-unknown-unknown` in some configurations.
+// Use `web-time`'s `SystemTime` for wasm targets so network tracing can run in browser/Node
+// environments.
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::{SystemTime, UNIX_EPOCH};
+#[cfg(target_arch = "wasm32")]
+use web_time::{SystemTime, UNIX_EPOCH};
 
 use aero_net_backend::NetworkBackend;
 use aero_net_stack::{

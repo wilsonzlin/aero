@@ -57,6 +57,7 @@ version = "0.1.0"
 dependencies = [
  "aero-protocol",
  "memory",
+ "web-time",
 ]
 
 [[package]]
@@ -627,6 +628,7 @@ dependencies = [
  "aero-net-backend",
  "aero-net-stack",
  "aero-pcapng",
+ "web-time",
 ]
 
 [[package]]

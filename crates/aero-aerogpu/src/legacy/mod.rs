@@ -9,7 +9,14 @@
 //! Keep the literal tokens confined to `docs/abi/aerogpu-pci-identity.md` and legacy driver trees.
 
 use memory::MemoryBus;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+// `std::time::Instant` panics at runtime on wasm32-unknown-unknown. Use `web-time` on wasm so the
+// legacy AeroGPU bring-up model remains usable in browser/Node environments.
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Instant;
+#[cfg(target_arch = "wasm32")]
+use web_time::Instant;
 
 use aero_protocol::aerogpu::aerogpu_pci as protocol_pci;
 
