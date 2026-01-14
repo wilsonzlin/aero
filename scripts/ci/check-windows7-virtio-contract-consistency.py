@@ -398,7 +398,7 @@ def parse_inf_addservice_entries(path: Path) -> list[LocatedString]:
     return out
 
 
-def parse_guest_selftest_expected_service_names(path: Path) -> Mapping[str, LocatedString]:
+def parse_guest_selftest_expected_service_names_text(*, text: str, file: Path) -> Mapping[str, LocatedString]:
     """
     Extract hardcoded expected Windows service names from the Win7 guest selftest.
 
@@ -406,7 +406,6 @@ def parse_guest_selftest_expected_service_names(path: Path) -> Mapping[str, Loca
     specific to the current source patterns so drift is caught early.
     """
 
-    text = read_text(path)
     patterns: Mapping[str, re.Pattern[str]] = {
         # virtio-net binding check inside VirtioNetTest().
         "virtio-net": re.compile(r'\bkExpectedService\s*\[\s*\]\s*=\s*L"(?P<svc>[^"]+)"'),
@@ -415,6 +414,8 @@ def parse_guest_selftest_expected_service_names(path: Path) -> Mapping[str, Loca
         "virtio-snd-transitional": re.compile(
             r'\bkVirtioSndExpectedServiceTransitional\b\s*=\s*L"(?P<svc>[^"]+)"'
         ),
+        # virtio-input PCI binding check service name expectation.
+        "virtio-input": re.compile(r'\bkVirtioInputExpectedService\s*\[\s*\]\s*=\s*L"(?P<svc>[^"]+)"'),
     }
 
     out: dict[str, LocatedString] = {}
@@ -425,8 +426,36 @@ def parse_guest_selftest_expected_service_names(path: Path) -> Mapping[str, Loca
             m = pat.search(line)
             if not m:
                 continue
-            out[key] = LocatedString(value=m.group("svc"), file=path, line_no=line_no, line=line.rstrip())
+            out[key] = LocatedString(value=m.group("svc"), file=file, line_no=line_no, line=line.rstrip())
     return out
+
+
+def parse_guest_selftest_expected_service_names(path: Path) -> Mapping[str, LocatedString]:
+    return parse_guest_selftest_expected_service_names_text(text=read_text(path), file=path)
+
+
+def _self_test_parse_guest_selftest_expected_service_names() -> None:
+    sample = r"""
+static const wchar_t kExpectedService[] = L"aero_virtio_net";
+static constexpr const wchar_t* kVirtioSndExpectedServiceModern = L"aero_virtio_snd";
+static constexpr const wchar_t* kVirtioSndExpectedServiceTransitional = L"aeroviosnd_legacy";
+static constexpr const wchar_t kVirtioInputExpectedService[] = L"aero_virtio_input";
+"""
+    parsed = parse_guest_selftest_expected_service_names_text(text=sample, file=Path("<unit-test>"))
+    expected = {
+        "virtio-net": "aero_virtio_net",
+        "virtio-snd": "aero_virtio_snd",
+        "virtio-snd-transitional": "aeroviosnd_legacy",
+        "virtio-input": "aero_virtio_input",
+    }
+    for key, value in expected.items():
+        got = parsed.get(key)
+        if got is None:
+            fail(f"internal unit-test failed: expected guest-selftest to contain {key!r} service name")
+        if got.value != value:
+            fail(
+                f"internal unit-test failed: guest-selftest service name mismatch for {key}: expected {value!r}, got {got.value!r}"
+            )
 
 
 def parse_contract_fixed_mmio_layout(md: str) -> VirtioPciModernLayout:
@@ -2392,6 +2421,7 @@ def main() -> None:
 
     _self_test_scan_inf_msi_interrupt_settings()
     _self_test_validate_win7_virtio_inf_msi_settings()
+    _self_test_parse_guest_selftest_expected_service_names()
 
     w7_md = read_text(W7_VIRTIO_CONTRACT_MD)
     windows_md = read_text(WINDOWS_DEVICE_CONTRACT_MD)
@@ -3013,7 +3043,7 @@ def main() -> None:
             # 2.1.1) Guest selftest hardcoded service-name expectations must
             #        stay aligned with the contract + shipped INFs.
             # -------------------------------------------------------------
-            if device_name in ("virtio-net", "virtio-snd"):
+            if device_name in ("virtio-net", "virtio-snd", "virtio-input"):
                 selftest = guest_selftest_services.get(device_name)
                 if selftest is None:
                     errors.append(
