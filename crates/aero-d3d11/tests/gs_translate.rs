@@ -2031,6 +2031,10 @@ fn sm4_gs_half_float_conversions_translate_via_pack_unpack() {
         wgsl.contains("unpack2x16float"),
         "expected f16tof32 lowering to use unpack2x16float:\n{wgsl}"
     );
+    assert!(
+        wgsl.contains("& 0xffffu"),
+        "expected half-float conversions to mask low 16 bits:\n{wgsl}"
+    );
 }
 
 #[test]
