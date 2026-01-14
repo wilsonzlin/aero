@@ -1748,7 +1748,7 @@ mod tests {
             if tag == 0x87 && len == 0x0017 {
                 let desc = &crs[i..i + total];
                 assert_eq!(desc[3], 0x00, "expected Memory address space descriptor");
-                assert_eq!(desc[4], 0x0D, "unexpected general flags");
+                assert_eq!(desc[4], 0x0C, "unexpected general flags");
                 assert_eq!(desc[5], 0x03, "unexpected type-specific flags");
 
                 let min = u32::from_le_bytes(desc[10..14].try_into().unwrap());
@@ -1828,7 +1828,7 @@ mod tests {
         let expected_before = dword_addr_space_descriptor(
             AddrSpaceDescriptorHeader {
                 resource_type: 0x00,
-                general_flags: 0x0D,
+                general_flags: 0x0C,
                 type_specific_flags: 0x03,
             },
             AddrSpaceDescriptorRange {
@@ -1842,7 +1842,7 @@ mod tests {
         let expected_after = dword_addr_space_descriptor(
             AddrSpaceDescriptorHeader {
                 resource_type: 0x00,
-                general_flags: 0x0D,
+                general_flags: 0x0C,
                 type_specific_flags: 0x03,
             },
             AddrSpaceDescriptorRange {
