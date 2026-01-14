@@ -1267,27 +1267,34 @@ fn drain_pending_submissions_returns_completed_fences_as_well() {
 }
 
 #[test]
-fn snapshot_restore_clears_torn_scanout_fb_gpa_update_tracking() {
+fn snapshot_restore_overwrites_torn_scanout_fb_gpa_update_tracking() {
     let cfg = AeroGpuDeviceConfig {
         vblank_hz: None,
         ..Default::default()
     };
 
-    let mut dev = new_test_device(cfg.clone());
-
     let committed_fb_gpa = 0x1111_2222_3333_4444u64;
+
+    // Snapshot source device: stable/committed scanout fb_gpa (no LO-only update in flight).
+    let mut source = new_test_device(cfg.clone());
+    source.write(mmio::SCANOUT0_FB_GPA_LO, 4, committed_fb_gpa & 0xffff_ffff);
+    source.write(mmio::SCANOUT0_FB_GPA_HI, 4, committed_fb_gpa >> 32);
+    assert_eq!(source.regs.scanout0.fb_gpa, committed_fb_gpa);
+
+    let snap = source.save_state();
+
+    // Target device: start with the same committed value, then begin a torn LO-only update that
+    // would affect MMIO reads if the pending state leaked across restore.
+    let mut dev = new_test_device(cfg);
     dev.write(mmio::SCANOUT0_FB_GPA_LO, 4, committed_fb_gpa & 0xffff_ffff);
     dev.write(mmio::SCANOUT0_FB_GPA_HI, 4, committed_fb_gpa >> 32);
-
-    // Start a torn update: write LO without a subsequent HI write.
     dev.write(mmio::SCANOUT0_FB_GPA_LO, 4, 0xDEAD_BEEF);
     assert_eq!(dev.read(mmio::SCANOUT0_FB_GPA_LO, 4) as u32, 0xDEAD_BEEF);
 
-    let snap = dev.save_state();
+    // Restoring snapshot state should overwrite any in-memory torn-update tracking so MMIO reads
+    // reflect the restored snapshot state rather than a stale LO write from before restore.
     dev.load_state(&snap).unwrap();
 
-    // Restoring snapshot state should clear the torn-update tracking state so MMIO reads reflect
-    // the committed snapshot value, not the stale LO dword from before restore.
     assert_eq!(
         dev.read(mmio::SCANOUT0_FB_GPA_LO, 4) as u32,
         committed_fb_gpa as u32
@@ -1298,6 +1305,7 @@ fn snapshot_restore_clears_torn_scanout_fb_gpa_update_tracking() {
         dev.read(mmio::SCANOUT0_FB_GPA_HI, 4) as u32,
         (committed_fb_gpa >> 32) as u32
     );
+    assert_eq!(dev.regs.scanout0.fb_gpa, committed_fb_gpa);
 }
 
 #[test]
