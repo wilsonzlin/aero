@@ -2409,6 +2409,8 @@ const handleSubmitAerogpu = async (req: GpuRuntimeSubmitAerogpuMessage): Promise
       const presentDelta = executeAerogpuCmdStream(aerogpuState, req.cmdStream, {
         allocTable,
         guestU8,
+        vramU8,
+        vramBasePaddr,
         presentTexture: presentAerogpuTexture,
       });
       if (presentDelta > 0n) {
