@@ -1888,8 +1888,10 @@ static std::optional<AEROVIRTIO_SND_EVENTQ_STATS> QueryVirtioSndEventqStats(Logg
                                                                             const std::wstring& topology_path) {
   if (topology_path.empty()) return std::nullopt;
 
-  HANDLE h = CreateFileW(topology_path.c_str(), GENERIC_READ | GENERIC_WRITE,
-                         FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
+  // IOCTL_KS_PROPERTY uses FILE_ANY_ACCESS; open with 0 desired access to avoid requiring
+  // extra permissions on some setups.
+  HANDLE h =
+      CreateFileW(topology_path.c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
   if (h == INVALID_HANDLE_VALUE) {
     log.Logf("virtio-snd-eventq: CreateFile(topology) failed: %lu", GetLastError());
     return std::nullopt;
