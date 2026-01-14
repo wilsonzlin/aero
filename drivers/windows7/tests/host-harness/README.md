@@ -201,13 +201,15 @@ Behavior:
 
 1. Wait for guest marker: `AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|READY`
 2. QMP: `set_link name=aero_virtio_net0 up=false`
+   - Some QEMU builds interpret `name` as a **netdev id** rather than a device/QOM id. The harness therefore falls back to
+     `name=net0` if the stable device id is rejected.
 3. Sleep 2 seconds
-4. QMP: `set_link name=aero_virtio_net0 up=true`
+4. QMP: `set_link name=<same> up=true`
 5. Require guest marker: `AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|PASS|...` (missing/SKIP/FAIL becomes a deterministic harness failure)
 
 The host harness also emits a CI-scrapable marker:
 
-- `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_LINK_FLAP|PASS|name=aero_virtio_net0|down_delay_sec=2`
+- `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_LINK_FLAP|PASS|name=<aero_virtio_net0|net0>|down_delay_sec=2`
 
 ### Forcing / limiting virtio MSI-X vector count (QEMU `vectors=`)
 
