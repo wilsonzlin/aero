@@ -93,6 +93,21 @@ fn xhci_step_1ms_does_not_dma_after_host_controller_error() {
     let mut mem = CountingMem::new(0x20_000);
     let mut xhci = XhciController::new();
 
+    // Program CRCR so `step_1ms` has a valid tick-driven DMA target while RUN is set.
+    let crcr_addr = 0x3000u64;
+    MemoryBus::write_u32(&mut mem, crcr_addr, 0x1122_3344);
+    xhci.mmio_write(regs::REG_CRCR_LO, 4, crcr_addr);
+    xhci.mmio_write(regs::REG_CRCR_HI, 4, crcr_addr >> 32);
+    xhci.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN));
+
+    // Sanity check: without HCE, `step_1ms` should touch guest memory via the tick-driven DMA path.
+    mem.reset_counts();
+    xhci.step_1ms(&mut mem);
+    assert!(
+        mem.reads > 0 || mem.writes > 0,
+        "expected tick-driven DMA before HCE is latched"
+    );
+
     force_hce(&mut xhci, &mut mem);
 
     // Once HCE is set, the guest must reset the controller. Further controller ticks should not
