@@ -246,7 +246,9 @@ fn decodes_cmd_stream_dump_to_stable_listing() {
 
     // Header line.
     assert!(listing.contains("header magic=0x444D4341"));
-    assert!(listing.contains("abi=1.3"));
+    let abi_major = (AEROGPU_ABI_VERSION_U32 >> 16) as u16;
+    let abi_minor = (AEROGPU_ABI_VERSION_U32 & 0xFFFF) as u16;
+    assert!(listing.contains(&format!("abi={abi_major}.{abi_minor}")));
 
     // Packet listing includes offsets, opcode names, and packet sizes.
     assert!(listing.contains("0x00000018 CreateBuffer size_bytes=40"));
@@ -466,4 +468,25 @@ fn json_listing_decodes_topology_names_for_adjacency_and_patchlists() {
 
     assert_eq!(topo_packets[1]["decoded"]["topology"], 64);
     assert_eq!(topo_packets[1]["decoded"]["topology_name"], "PatchList32");
+}
+
+#[test]
+fn stable_listing_decodes_topology_names_for_adjacency_and_patchlists() {
+    let mut w = AerogpuCmdWriter::new();
+    w.set_primitive_topology(AerogpuPrimitiveTopology::TriangleStripAdj);
+    w.set_primitive_topology(AerogpuPrimitiveTopology::PatchList32);
+    let bytes = w.finish();
+
+    let listing = aero_gpu_trace_replay::decode_cmd_stream_listing(&bytes, false)
+        .expect("decode should succeed in non-strict mode");
+
+    assert!(listing.contains("SetPrimitiveTopology"), "{listing}");
+    assert!(
+        listing.contains("topology=13 topology_name=TriangleStripAdj"),
+        "{listing}"
+    );
+    assert!(
+        listing.contains("topology=64 topology_name=PatchList32"),
+        "{listing}"
+    );
 }

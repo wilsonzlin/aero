@@ -873,6 +873,8 @@ fn opcode_name(op: AerogpuCmdOpcode) -> &'static str {
         AerogpuCmdOpcode::DestroyShader => "DestroyShader",
         AerogpuCmdOpcode::BindShaders => "BindShaders",
         AerogpuCmdOpcode::SetShaderConstantsF => "SetShaderConstantsF",
+        AerogpuCmdOpcode::SetShaderConstantsI => "SetShaderConstantsI",
+        AerogpuCmdOpcode::SetShaderConstantsB => "SetShaderConstantsB",
         AerogpuCmdOpcode::CreateInputLayout => "CreateInputLayout",
         AerogpuCmdOpcode::DestroyInputLayout => "DestroyInputLayout",
         AerogpuCmdOpcode::SetInputLayout => "SetInputLayout",
@@ -917,6 +919,25 @@ fn stage_ex_name(stage_ex: u32) -> &'static str {
         5 => "Compute",
         _ => "Unknown",
     }
+}
+
+fn topology_name(topology: u32) -> Option<String> {
+    // Match the AeroGPU protocol constants, which intentionally use the D3D11 numeric values so
+    // D3D10/11 UMDs can forward the IA topology directly.
+    Some(match topology {
+        1 => "PointList".to_string(),
+        2 => "LineList".to_string(),
+        3 => "LineStrip".to_string(),
+        4 => "TriangleList".to_string(),
+        5 => "TriangleStrip".to_string(),
+        6 => "TriangleFan".to_string(),
+        10 => "LineListAdj".to_string(),
+        11 => "LineStripAdj".to_string(),
+        12 => "TriangleListAdj".to_string(),
+        13 => "TriangleStripAdj".to_string(),
+        33..=64 => format!("PatchList{}", topology - 32),
+        _ => return None,
+    })
 }
 
 /// Decode an AeroGPU command stream (`aerogpu_cmd_stream_header` + packet sequence) and return a
@@ -1722,6 +1743,20 @@ pub fn decode_cmd_stream_listing(
                             " group_count_x={group_count_x} group_count_y={group_count_y} group_count_z={group_count_z}"
                         );
                     }
+                    AerogpuCmdOpcode::SetPrimitiveTopology => {
+                        if pkt.payload.len() < 8 {
+                            return Err(CmdStreamDecodeError::MalformedPayload {
+                                offset,
+                                opcode,
+                                msg: "expected at least 8 bytes",
+                            });
+                        }
+                        let topology = u32_le_at(pkt.payload, 0).unwrap();
+                        let _ = write!(line, " topology={topology}");
+                        if let Some(name) = topology_name(topology) {
+                            let _ = write!(line, " topology_name={name}");
+                        }
+                    }
 
                     AerogpuCmdOpcode::Flush
                     | AerogpuCmdOpcode::DestroyShader
@@ -1734,7 +1769,6 @@ pub fn decode_cmd_stream_listing(
                     | AerogpuCmdOpcode::SetRasterizerState
                     | AerogpuCmdOpcode::SetVertexBuffers
                     | AerogpuCmdOpcode::SetIndexBuffer
-                    | AerogpuCmdOpcode::SetPrimitiveTopology
                     | AerogpuCmdOpcode::SetSamplerState
                     | AerogpuCmdOpcode::SetRenderState
                     | AerogpuCmdOpcode::CreateSampler
