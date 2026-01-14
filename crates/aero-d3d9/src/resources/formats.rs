@@ -770,6 +770,12 @@ mod tests {
             (D3DFormat::Dxt3, wgpu::TextureFormat::Bc2RgbaUnorm),
             (D3DFormat::Dxt5, wgpu::TextureFormat::Bc3RgbaUnorm),
         ] {
+            let expected_d3d_bytes_per_block = match format {
+                D3DFormat::Dxt1 => 8,
+                D3DFormat::Dxt3 | D3DFormat::Dxt5 => 16,
+                _ => unreachable!(),
+            };
+
             // Cover a range of small dimensions and mip counts, including edge cases like
             // non-block-aligned sizes and mip counts beyond the possible chain length.
             for width in 1..=16 {
@@ -787,14 +793,27 @@ mod tests {
                         )
                         .unwrap();
 
+                        // DXT formats are always compressed in the D3D memory layout, regardless of
+                        // whether we fall back to uncompressed BGRA8 on the GPU.
+                        assert!(info.d3d_is_compressed);
+                        assert_eq!(info.d3d_bytes_per_block, expected_d3d_bytes_per_block);
+                        assert_eq!(info.d3d_block_width, 4);
+                        assert_eq!(info.d3d_block_height, 4);
+
                         if compatible {
                             assert_eq!(info.wgpu, expected_bc);
                             assert!(!info.cpu_convert_to_bgra8);
                             assert!(info.upload_is_compressed);
+                            assert_eq!(info.upload_bytes_per_block, expected_d3d_bytes_per_block);
+                            assert_eq!(info.upload_block_width, 4);
+                            assert_eq!(info.upload_block_height, 4);
                         } else {
                             assert_eq!(info.wgpu, wgpu::TextureFormat::Bgra8Unorm);
                             assert!(info.cpu_convert_to_bgra8);
                             assert!(!info.upload_is_compressed);
+                            assert_eq!(info.upload_bytes_per_block, 4);
+                            assert_eq!(info.upload_block_width, 1);
+                            assert_eq!(info.upload_block_height, 1);
                         }
                     }
                 }
