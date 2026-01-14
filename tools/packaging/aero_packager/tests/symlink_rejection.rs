@@ -43,8 +43,17 @@ fn packaging_fails_fast_on_symlink_in_guest_tools_licenses() -> anyhow::Result<(
     let msg = format!("{err:#}");
     assert!(msg.contains("symlink"), "unexpected error: {msg}");
     assert!(
-        msg.contains("guest_tools/licenses") && msg.contains("link.txt"),
+        msg.contains(&link.display().to_string()),
+        "expected error to include full symlink path {}; got: {msg}",
+        link.display()
+    );
+    assert!(
+        msg.contains("guest_tools/licenses"),
         "unexpected error: {msg}"
+    );
+    assert!(
+        msg.contains("replace the symlink with a real file or remove it"),
+        "unexpected error (missing remediation): {msg}"
     );
 
     Ok(())
@@ -73,4 +82,3 @@ fn device_contract_path() -> std::path::PathBuf {
         .join("docs")
         .join("windows-device-contract.json")
 }
-
