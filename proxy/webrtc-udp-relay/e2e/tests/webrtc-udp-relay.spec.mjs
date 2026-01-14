@@ -2087,6 +2087,19 @@ test("rejects concurrent /udp WebSocket sessions with the same JWT sid", async (
             ws.addEventListener("error", () => reject(new Error("ws error")), { once: true });
           });
 
+        const waitForClosed = async (ws) =>
+          await new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => reject(new Error("timed out waiting for websocket close")), 10_000);
+            ws.addEventListener(
+              "close",
+              (event) => {
+                clearTimeout(timeout);
+                resolve({ code: event.code, reason: event.reason });
+              },
+              { once: true },
+            );
+          });
+
         const waitForReady = async (ws) =>
           await new Promise((resolve, reject) => {
             const timeout = setTimeout(() => reject(new Error("timed out waiting for ready")), 10_000);
@@ -2165,6 +2178,15 @@ test("rejects concurrent /udp WebSocket sessions with the same JWT sid", async (
         const err2 = await err2Promise;
 
         ws1.close();
+        await waitForClosed(ws1);
+
+        // After the first session ends, the stable `sid` key should be reusable.
+        const ws1b = new WebSocket(`ws://127.0.0.1:${relayPort}/udp?token=${encodeURIComponent(queryToken)}`);
+        const ready1bPromise = waitForReady(ws1b);
+        await waitForOpen(ws1b);
+        await ready1bPromise;
+        ws1b.close();
+        await waitForClosed(ws1b);
 
         // First-message auth path.
         const ws3 = new WebSocket(`ws://127.0.0.1:${relayPort}/udp`);
@@ -2180,6 +2202,15 @@ test("rejects concurrent /udp WebSocket sessions with the same JWT sid", async (
         const err4 = await err4Promise;
 
         ws3.close();
+        await waitForClosed(ws3);
+
+        const ws3b = new WebSocket(`ws://127.0.0.1:${relayPort}/udp`);
+        const ready3bPromise = waitForReady(ws3b);
+        await waitForOpen(ws3b);
+        ws3b.send(JSON.stringify({ type: "auth", token: authMsgToken }));
+        await ready3bPromise;
+        ws3b.close();
+        await waitForClosed(ws3b);
 
         return { err2, err4 };
       },
