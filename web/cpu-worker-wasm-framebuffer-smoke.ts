@@ -80,6 +80,8 @@ async function main() {
 
     coordinator.start({
       guestMemoryMiB,
+      // This harness only validates the CPU worker's shared framebuffer demo; no VRAM aperture needed.
+      vramMiB: 0,
       enableWorkers: true,
       enableWebGPU: false,
       proxyUrl: null,

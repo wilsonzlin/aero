@@ -67,7 +67,7 @@ async function waitForWorkerMessage(
 describe("workers/gpu-worker scanout readback invalid diagnostics", () => {
   it("includes scanout.format_str in ScanoutReadback events for unsupported formats", async () => {
     const segments = allocateHarnessSharedMemorySegments({
-      guestRamBytes: 1 * 1024 * 1024,
+      guestRamBytes: 64 * 1024,
       sharedFramebuffer: new SharedArrayBuffer(8),
       sharedFramebufferOffsetBytes: 0,
       ioIpcBytes: 0,
@@ -170,4 +170,3 @@ describe("workers/gpu-worker scanout readback invalid diagnostics", () => {
     }
   }, 20_000);
 });
-

@@ -66,6 +66,8 @@ async function main() {
   try {
     coordinator.start({
       guestMemoryMiB: 16,
+      // This harness boots a VGA/serial-only guest; it does not require a BAR1/VRAM aperture.
+      vramMiB: 0,
       enableWorkers: true,
       enableWebGPU: false,
       proxyUrl: null,

@@ -58,7 +58,11 @@ async function main() {
 
   const coordinator = new WorkerCoordinator();
   const config = {
-    guestMemoryMiB: 256,
+    // Keep allocations small: we only need enough guest RAM to hold a 1x1 cursor surface at
+    // `cursorGpa` plus the shared framebuffer demo regions.
+    guestMemoryMiB: 16,
+    // This harness uses legacy shared-framebuffer presentation; it does not need the BAR1/VRAM aperture.
+    vramMiB: 0,
     enableWorkers: true,
     enableWebGPU: false,
     proxyUrl: null,
@@ -200,7 +204,8 @@ async function main() {
     const layout = readGuestRamLayoutFromStatus(statusView);
     const guestU8 = new Uint8Array(mem.buffer, layout.guest_base, layout.guest_size);
 
-    const cursorGpa = 0x0120_0000;
+    // Keep this well above the always-on demo framebuffer scratch regions in guest RAM.
+    const cursorGpa = 0x00c0_0000;
     const cursorRamOff = guestPaddrToRamOffset(layout, cursorGpa);
     if (cursorRamOff === null) {
       throw new Error("Cursor GPA is not backed by guest RAM.");
