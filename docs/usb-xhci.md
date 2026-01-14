@@ -126,16 +126,17 @@ for modern guests and for high-speed/superspeed passthrough, but the in-tree cod
 #### Minimal controller MMIO surfaces
 
 - Native/shared Rust: `aero_usb::xhci::XhciController`
-  - Minimal MMIO register file (CAPLENGTH/HCIVERSION, USBCMD, USBSTS, CRCR) with basic unaligned access handling.
+  - Minimal MMIO register file (CAPLENGTH/HCIVERSION, HCSPARAMS/HCCPARAMS, USBCMD, USBSTS, CRCR, DCBAAP) with basic unaligned access handling.
   - A DMA read on the first transition of `USBCMD.RUN` (primarily to validate **PCI Bus Master Enable gating** in wrappers).
   - A level-triggered interrupt condition surfaced as `irq_level()` (USBSTS.EINT), used to validate **INTx disable gating**.
+  - DCBAAP register storage and controller-local slot allocation (Enable Slot scaffolding).
 - Web/WASM: `aero_wasm::XhciControllerBridge`
   - Byte-addressed MMIO register file (bounded, currently `0x4000` bytes).
   - `tick()` counter only (no scheduling yet).
   - Deterministic snapshot/restore of the register file + tick count.
   - No IRQs yet (`irq_asserted()` always `false`).
 
-These are **not** full xHCI implementations (no doorbells, no event ring, no ports, no slots).
+These are **not** full xHCI implementations (no doorbells, no event ring, no port state machine; slot/context support is partial).
 
 #### TRB + ring building blocks
 
@@ -212,7 +213,7 @@ Snapshotting follows the repo’s general device snapshot conventions (see [`doc
 
 - **Guest RAM** holds most of the xHCI “data plane” structures (rings, contexts, transfer buffers). These are captured by the VM memory snapshot, not duplicated inside the xHCI device snapshot.
 - The xHCI device snapshot captures **guest-visible register state** and any controller bookkeeping that is not stored in guest RAM.
-  - Today, `aero_usb::xhci::XhciController` snapshots only a small subset of state (`USBCMD`, `USBSTS`, `CRCR`) under `IoSnapshot::DEVICE_ID = b\"XHCI\"`, version `0.1`.
+  - Today, `aero_usb::xhci::XhciController` snapshots a small subset of state (`USBCMD`, `USBSTS`, `CRCR`, `PORT_COUNT`, `DCBAAP`) under `IoSnapshot::DEVICE_ID = b\"XHCI\"`, version `0.2` (slot state is not snapshotted yet).
 - The web/WASM bridge (`aero_wasm::XhciControllerBridge`) snapshots as `XHCB` (version `1.0`) and currently stores:
   - its in-memory register byte array, and
   - a tick counter.
