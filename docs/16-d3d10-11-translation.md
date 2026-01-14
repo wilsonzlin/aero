@@ -1449,6 +1449,13 @@ with an implementation-defined workgroup size chosen by the translator/runtime.
 
 2. **Tessellation (optional): HS/DS emulation**
     - Trigger: `hs != 0 || ds != 0 || topology is patchlist`.
+    - Hull shader structure note:
+      - D3D11 hull shaders conceptually have two phases:
+        - **control-point** (runs per output control point), and
+        - **patch-constant** (runs once per patch to produce tess factors and patch constants).
+      - In SM5 DXBC these are commonly encoded in a single instruction stream; a practical
+        translation strategy is to split the module into two compute entry points using the first
+        top-level `ret` as a phase boundary (this is what the in-tree HS translator does).
     - HS patch-constant pass (per patch):
       - Reads control points from `vs_out_regs`.
       - Let `patch_instance_id = instance_id * patch_count + patch_id` (see `tess_patch_state`
