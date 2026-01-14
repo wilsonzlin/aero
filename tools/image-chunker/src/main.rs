@@ -1015,7 +1015,22 @@ async fn download_http_bytes_optional(
         return Ok(None);
     }
     if !status.is_success() {
-        bail!("GET {url} failed with HTTP {status}");
+        return Err(anyhow!(HttpStatusFailure {
+            url: url.clone(),
+            status
+        }))
+        .with_context(|| format!("GET {url}"));
+    }
+
+    if let Some(encoding) = resp
+        .headers()
+        .get(CONTENT_ENCODING)
+        .and_then(|v| v.to_str().ok())
+    {
+        let encoding = encoding.trim();
+        if !encoding.eq_ignore_ascii_case("identity") {
+            bail!("unexpected Content-Encoding for {url}: {encoding}");
+        }
     }
     Ok(Some(
         resp.bytes()
