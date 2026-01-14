@@ -23,6 +23,11 @@ Any arguments after `--` are passed through to `make-driver-pack.ps1` (e.g. `-No
 The produced pack includes `manifest.json`, `THIRD_PARTY_NOTICES.md`, and (best-effort)
 `licenses/virtio-win/` copied from the virtio-win ISO root when present.
 
+Note: optional drivers (viosnd/vioinput) are only included when present for BOTH x86 and amd64.
+If an optional driver is present for only one arch, it is omitted entirely by default (treated
+as missing for both) to avoid producing a partial optional driver tree. Use `-StrictOptional`
+to fail instead.
+
 Examples:
   # Default (best-effort include audio/input):
   bash ./drivers/scripts/make-driver-pack.sh --virtio-win-iso virtio-win.iso

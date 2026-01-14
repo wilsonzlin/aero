@@ -25,6 +25,11 @@ Options:
 Any arguments after `--` are passed through to `make-guest-tools-from-virtio-win.ps1`
 (e.g. `-Drivers ...`, `-StrictOptional`, `-SpecPath ...`, `-CleanStage`).
 
+Note: for `--profile full`, optional drivers (viosnd/vioinput) are only included when present
+for BOTH x86 and amd64. If an optional driver is present for only one arch, it is omitted
+entirely by default (treated as missing for both) to avoid producing a partial optional
+driver tree. Use `-StrictOptional` to fail instead.
+
 EOF
 }
 
