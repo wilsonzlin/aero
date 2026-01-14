@@ -1223,6 +1223,115 @@ fn decodes_ubfe_ibfe_bfi_bitfield_ops() {
 }
 
 #[test]
+fn decodes_bit_utils_ops() {
+    let mut body = Vec::<u32>::new();
+
+    // bfrev r0, r1
+    let src = reg_src(
+        OPERAND_TYPE_TEMP,
+        &[1],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    );
+    let mut bfrev = vec![opcode_token(OPCODE_BFREV, (1 + 2 + src.len()) as u32)];
+    bfrev.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 0, WriteMask::XYZW));
+    bfrev.extend_from_slice(&src);
+    body.extend_from_slice(&bfrev);
+
+    // countbits r2, r3
+    let src = reg_src(
+        OPERAND_TYPE_TEMP,
+        &[3],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    );
+    let mut countbits = vec![opcode_token(OPCODE_COUNTBITS, (1 + 2 + src.len()) as u32)];
+    countbits.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 2, WriteMask::XYZW));
+    countbits.extend_from_slice(&src);
+    body.extend_from_slice(&countbits);
+
+    // firstbit_hi r4, r5
+    let src = reg_src(
+        OPERAND_TYPE_TEMP,
+        &[5],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    );
+    let mut firstbit_hi = vec![opcode_token(OPCODE_FIRSTBIT_HI, (1 + 2 + src.len()) as u32)];
+    firstbit_hi.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 4, WriteMask::XYZW));
+    firstbit_hi.extend_from_slice(&src);
+    body.extend_from_slice(&firstbit_hi);
+
+    // firstbit_lo r6, r7
+    let src = reg_src(
+        OPERAND_TYPE_TEMP,
+        &[7],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    );
+    let mut firstbit_lo = vec![opcode_token(OPCODE_FIRSTBIT_LO, (1 + 2 + src.len()) as u32)];
+    firstbit_lo.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 6, WriteMask::XYZW));
+    firstbit_lo.extend_from_slice(&src);
+    body.extend_from_slice(&firstbit_lo);
+
+    // firstbit_shi r8, r9
+    let src = reg_src(
+        OPERAND_TYPE_TEMP,
+        &[9],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    );
+    let mut firstbit_shi = vec![opcode_token(OPCODE_FIRSTBIT_SHI, (1 + 2 + src.len()) as u32)];
+    firstbit_shi.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 8, WriteMask::XYZW));
+    firstbit_shi.extend_from_slice(&src);
+    body.extend_from_slice(&firstbit_shi);
+
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    // Stage type 0 is pixel shader.
+    let tokens = make_sm5_program_tokens(0, &body);
+    let program =
+        Sm4Program::parse_program_tokens(&tokens_to_bytes(&tokens)).expect("parse_program_tokens");
+    let module = decode_program(&program).expect("decode");
+
+    assert_eq!(
+        module.instructions[0],
+        Sm4Inst::Bfrev {
+            dst: dst(RegFile::Temp, 0, WriteMask::XYZW),
+            src: src_reg(RegFile::Temp, 1),
+        }
+    );
+    assert_eq!(
+        module.instructions[1],
+        Sm4Inst::CountBits {
+            dst: dst(RegFile::Temp, 2, WriteMask::XYZW),
+            src: src_reg(RegFile::Temp, 3),
+        }
+    );
+    assert_eq!(
+        module.instructions[2],
+        Sm4Inst::FirstbitHi {
+            dst: dst(RegFile::Temp, 4, WriteMask::XYZW),
+            src: src_reg(RegFile::Temp, 5),
+        }
+    );
+    assert_eq!(
+        module.instructions[3],
+        Sm4Inst::FirstbitLo {
+            dst: dst(RegFile::Temp, 6, WriteMask::XYZW),
+            src: src_reg(RegFile::Temp, 7),
+        }
+    );
+    assert_eq!(
+        module.instructions[4],
+        Sm4Inst::FirstbitShi {
+            dst: dst(RegFile::Temp, 8, WriteMask::XYZW),
+            src: src_reg(RegFile::Temp, 9),
+        }
+    );
+}
+
+#[test]
 fn decodes_udiv_and_idiv_with_two_dest_operands() {
     let mut body = Vec::<u32>::new();
 
