@@ -644,4 +644,37 @@ mod tests {
         let refresh = dtd.refresh_hz();
         assert!((refresh - preferred.refresh_hz as f64).abs() < 0.75, "refresh={refresh}");
     }
+
+    #[test]
+    fn invalid_preferred_timing_falls_back_to_default() {
+        let edid = generate_edid(Timing::new(0, 0, 0));
+        assert_eq!(
+            &edid[54..72],
+            &[
+                0x64, 0x19, 0x00, 0x40, 0x41, 0x00, 0x26, 0x30, 0x18, 0x88, 0x36, 0x00, 0x54,
+                0x0E, 0x11, 0x00, 0x00, 0x18
+            ]
+        );
+    }
+
+    #[test]
+    fn synthesized_timing_is_parsable_and_has_valid_ranges() {
+        // 1366×768 is intentionally not in `known_dtd_bytes()` so we exercise the synthesizer.
+        let preferred = Timing::new(1366, 768, 60);
+        let edid = generate_edid(preferred);
+        assert!(checksum_ok(&edid));
+
+        let dtd = parse_dtd(&edid[54..72]).expect("preferred DTD missing");
+        assert_eq!(dtd.h_active, preferred.width);
+        assert_eq!(dtd.v_active, preferred.height);
+        let refresh = dtd.refresh_hz();
+        assert!(
+            (refresh - preferred.refresh_hz as f64).abs() < 1.0,
+            "refresh={refresh}"
+        );
+
+        let range = parse_range_limits_descriptor(&edid[90..108]).expect("range limits missing");
+        let required_pclk_10mhz = ((dtd.pixel_clock_hz + 9_999_999) / 10_000_000) as u8;
+        assert!(range.max_pixel_clock_10mhz >= required_pclk_10mhz);
+    }
 }
