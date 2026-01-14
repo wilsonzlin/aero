@@ -2002,7 +2002,8 @@ pub fn cmd_stream_has_vsync_present_reader<F>(
 where
     F: FnMut(u64, &mut [u8]),
 {
-    let cmd_size = usize::try_from(cmd_size_bytes).map_err(|_| AerogpuCmdDecodeError::CountOverflow)?;
+    let cmd_size =
+        usize::try_from(cmd_size_bytes).map_err(|_| AerogpuCmdDecodeError::CountOverflow)?;
     if cmd_size < AerogpuCmdStreamHeader::SIZE_BYTES {
         return Err(AerogpuCmdDecodeError::BufferTooSmall);
     }
@@ -2053,10 +2054,11 @@ where
             || cmd_hdr.opcode == AerogpuCmdOpcode::PresentEx as u32
         {
             // flags is always at offset 12 (hdr + scanout_id).
-            if packet_size < 16 {
+            let payload_len = packet_size.saturating_sub(AerogpuCmdHdr::SIZE_BYTES);
+            if payload_len < 8 {
                 return Err(AerogpuCmdDecodeError::PayloadSizeMismatch {
-                    expected: 16,
-                    found: packet_size,
+                    expected: 8,
+                    found: payload_len,
                 });
             }
             let flags_gpa = cmd_hdr_gpa
@@ -2070,7 +2072,7 @@ where
             }
         }
 
-        offset += packet_size;
+        offset = end;
     }
 
     Ok(false)
