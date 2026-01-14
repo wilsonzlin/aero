@@ -2274,69 +2274,105 @@ bool TestCreateResourceComputesBcTexturePitchAndSize() {
   // Bind a span-backed command buffer so we can validate CREATE_TEXTURE2D output.
   std::vector<uint8_t> dma(4096, 0);
   dev->cmd.set_span(dma.data(), dma.size());
-  dev->cmd.reset();
+  struct Case {
+    uint32_t d3d9_format;
+    uint32_t agpu_format;
+    uint32_t expected_row_pitch;
+    uint32_t expected_slice_pitch;
+    uint32_t expected_size;
+    const char* name;
+  };
 
-  D3D9DDIARG_CREATERESOURCE create_res{};
-  create_res.type = kD3dRTypeTexture;
-  create_res.format = static_cast<uint32_t>(kD3dFmtDxt1); // D3DFMT_DXT1 (BC1)
-  create_res.width = 7;
-  create_res.height = 5;
-  create_res.depth = 1;
-  create_res.mip_levels = 3;
-  create_res.usage = 0;
-  create_res.pool = 0; // default pool (GPU resource)
-  create_res.size = 0;
-  create_res.hResource.pDrvPrivate = nullptr;
-  create_res.pSharedHandle = nullptr;
-  create_res.pPrivateDriverData = nullptr;
-  create_res.PrivateDriverDataSize = 0;
-  create_res.wddm_hAllocation = 0;
+  const Case cases[] = {
+      // DXT1/BC1: 4x4 blocks, 8 bytes per block.
+      // width=7,height=5 => blocks_w=2, blocks_h=2 => row_pitch=16, slice_pitch=32.
+      // mip chain:
+      //  - 7x5 => 32 bytes
+      //  - 3x2 =>  8 bytes
+      //  - 1x1 =>  8 bytes
+      // total = 48 bytes.
+      {static_cast<uint32_t>(kD3dFmtDxt1), AEROGPU_FORMAT_BC1_RGBA_UNORM, 16u, 32u, 48u, "DXT1"},
 
-  hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_res);
-  if (!Check(hr == S_OK, "CreateResource(DXT1)")) {
-    return false;
-  }
-  cleanup.resources.push_back(create_res.hResource);
+      // DXT3/BC2: 4x4 blocks, 16 bytes per block.
+      // width=7,height=5 => blocks_w=2, blocks_h=2 => row_pitch=32, slice_pitch=64.
+      // mip chain:
+      //  - 7x5 => 64 bytes
+      //  - 3x2 => 16 bytes
+      //  - 1x1 => 16 bytes
+      // total = 96 bytes.
+      {static_cast<uint32_t>(kD3dFmtDxt3), AEROGPU_FORMAT_BC2_RGBA_UNORM, 32u, 64u, 96u, "DXT3"},
 
-  auto* res = reinterpret_cast<Resource*>(create_res.hResource.pDrvPrivate);
-  if (!Check(res != nullptr, "resource pointer")) {
-    return false;
-  }
+      // DXT5/BC3: 4x4 blocks, 16 bytes per block.
+      {static_cast<uint32_t>(kD3dFmtDxt5), AEROGPU_FORMAT_BC3_RGBA_UNORM, 32u, 64u, 96u, "DXT5"},
+  };
 
-  // DXT1/BC1: 4x4 blocks, 8 bytes per block.
-  // width=7,height=5 => blocks_w=2, blocks_h=2 => row_pitch=16, slice_pitch=32.
-  // mip chain:
-  //  - 7x5 => 32 bytes
-  //  - 3x2 =>  8 bytes
-  //  - 1x1 =>  8 bytes
-  // total = 48 bytes.
-  if (!Check(res->row_pitch == 16u, "DXT1 row_pitch bytes")) {
-    return false;
-  }
-  if (!Check(res->slice_pitch == 32u, "DXT1 slice_pitch bytes")) {
-    return false;
-  }
-  if (!Check(res->size_bytes == 48u, "DXT1 mip chain size_bytes")) {
-    return false;
-  }
+  bool ok = true;
+  for (const Case& c : cases) {
+    dev->cmd.reset();
 
-  dev->cmd.finalize();
-  if (!Check(ValidateStream(dma.data(), dma.size()), "stream validates")) {
-    return false;
-  }
+    D3D9DDIARG_CREATERESOURCE create_res{};
+    create_res.type = kD3dRTypeTexture;
+    create_res.format = c.d3d9_format;
+    create_res.width = 7;
+    create_res.height = 5;
+    create_res.depth = 1;
+    create_res.mip_levels = 3;
+    create_res.usage = 0;
+    create_res.pool = 0; // default pool (GPU resource)
+    create_res.size = 0;
+    create_res.hResource.pDrvPrivate = nullptr;
+    create_res.pSharedHandle = nullptr;
+    create_res.pPrivateDriverData = nullptr;
+    create_res.PrivateDriverDataSize = 0;
+    create_res.wddm_hAllocation = 0;
 
-  const CmdLoc create_loc = FindLastOpcode(dma.data(), dma.size(), AEROGPU_CMD_CREATE_TEXTURE2D);
-  if (!Check(create_loc.hdr != nullptr, "CREATE_TEXTURE2D emitted")) {
-    return false;
+    char create_msg[64] = {};
+    std::snprintf(create_msg, sizeof(create_msg), "CreateResource(%s)", c.name);
+    hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_res);
+    if (!Check(hr == S_OK, create_msg)) {
+      return false;
+    }
+    cleanup.resources.push_back(create_res.hResource);
+
+    auto* res = reinterpret_cast<Resource*>(create_res.hResource.pDrvPrivate);
+    if (!Check(res != nullptr, "resource pointer")) {
+      return false;
+    }
+
+    char row_msg[64] = {};
+    std::snprintf(row_msg, sizeof(row_msg), "%s row_pitch bytes", c.name);
+    ok &= Check(res->row_pitch == c.expected_row_pitch, row_msg);
+
+    char slice_msg[64] = {};
+    std::snprintf(slice_msg, sizeof(slice_msg), "%s slice_pitch bytes", c.name);
+    ok &= Check(res->slice_pitch == c.expected_slice_pitch, slice_msg);
+
+    char size_msg[64] = {};
+    std::snprintf(size_msg, sizeof(size_msg), "%s mip chain size_bytes", c.name);
+    ok &= Check(res->size_bytes == c.expected_size, size_msg);
+
+    dev->cmd.finalize();
+    if (!Check(ValidateStream(dma.data(), dma.size()), "stream validates")) {
+      return false;
+    }
+
+    const CmdLoc create_loc = FindLastOpcode(dma.data(), dma.size(), AEROGPU_CMD_CREATE_TEXTURE2D);
+    if (!Check(create_loc.hdr != nullptr, "CREATE_TEXTURE2D emitted")) {
+      return false;
+    }
+
+    const auto* cmd = reinterpret_cast<const aerogpu_cmd_create_texture2d*>(create_loc.hdr);
+
+    char fmt_msg[96] = {};
+    std::snprintf(fmt_msg, sizeof(fmt_msg), "CREATE_TEXTURE2D format matches %s", c.name);
+    ok &= Check(cmd->format == c.agpu_format, fmt_msg);
+
+    char pitch_msg[96] = {};
+    std::snprintf(pitch_msg, sizeof(pitch_msg), "CREATE_TEXTURE2D row_pitch_bytes matches %s", c.name);
+    ok &= Check(cmd->row_pitch_bytes == c.expected_row_pitch, pitch_msg);
+
+    ok &= Check(cmd->mip_levels == 3u, "CREATE_TEXTURE2D mip_levels");
   }
-  const auto* cmd = reinterpret_cast<const aerogpu_cmd_create_texture2d*>(create_loc.hdr);
-  if (!Check(cmd->format == AEROGPU_FORMAT_BC1_RGBA_UNORM, "CREATE_TEXTURE2D format==BC1")) {
-    return false;
-  }
-  if (!Check(cmd->row_pitch_bytes == 16u, "CREATE_TEXTURE2D row_pitch_bytes")) {
-    return false;
-  }
-  const bool ok = Check(cmd->mip_levels == 3u, "CREATE_TEXTURE2D mip_levels");
 
   // Make cleanup safe: switch back to vector mode so subsequent destroy calls
   // don't reference the span-backed buffer after it is freed, and can't fail due
