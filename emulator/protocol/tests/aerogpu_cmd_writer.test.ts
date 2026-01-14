@@ -690,6 +690,14 @@ test("AerogpuCmdWriter.createShaderDxbc encodes stage=Pixel and keeps reserved0=
   assert.deepEqual(bytes.subarray(pkt0 + 24, pkt0 + 24 + dxbc.byteLength), dxbc);
 });
 
+test("AerogpuCmdWriter.createShaderDxbc rejects stageEx for non-compute stages without mutating the stream", () => {
+  const w = new AerogpuCmdWriter();
+  const dxbc = new Uint8Array([0xaa]);
+  assert.throws(() => w.createShaderDxbc(1, AerogpuShaderStage.Pixel, dxbc, AerogpuShaderStageEx.Geometry));
+  const bytes = w.finish();
+  assert.equal(bytes.byteLength, AEROGPU_CMD_STREAM_HEADER_SIZE);
+});
+
 test("AerogpuCmdWriter stage_ex optional parameters override stage and encode (shaderStage=COMPUTE, reserved0=stageEx)", () => {
   const w = new AerogpuCmdWriter();
   const stageEx = AerogpuShaderStageEx.Vertex;

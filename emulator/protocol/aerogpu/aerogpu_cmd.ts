@@ -1682,12 +1682,15 @@ export class AerogpuCmdWriter {
     dxbcBytes: Uint8Array,
     stageEx?: AerogpuShaderStageEx | null,
   ): void {
+    // Validate `stageEx` invariants before mutating the stream buffer so callers can safely catch
+    // encoding errors without leaving a partially-written packet in the command stream.
+    const reserved0 = encodeStageExReserved0(stage, stageEx);
     const unpadded = AEROGPU_CMD_CREATE_SHADER_DXBC_SIZE + dxbcBytes.byteLength;
     const base = this.appendRaw(AerogpuCmdOpcode.CreateShaderDxbc, unpadded);
     this.view.setUint32(base + 8, shaderHandle, true);
     this.view.setUint32(base + 12, stage, true);
     this.view.setUint32(base + 16, dxbcBytes.byteLength, true);
-    this.view.setUint32(base + 20, encodeStageExReserved0(stage, stageEx), true);
+    this.view.setUint32(base + 20, reserved0, true);
     new Uint8Array(this.buf, base + AEROGPU_CMD_CREATE_SHADER_DXBC_SIZE, dxbcBytes.byteLength).set(dxbcBytes);
   }
 
