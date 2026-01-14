@@ -3186,7 +3186,12 @@ async function runLoopInner(): Promise<void> {
 
           if (vmBootSectorLoaded && !vmBooted) {
             try {
-              wasmVm.reset_real_mode(0x7c00);
+              const vmAny = wasmVm as unknown as Record<string, unknown>;
+              const resetRealMode = vmAny.reset_real_mode ?? vmAny.resetRealMode;
+              if (typeof resetRealMode !== "function") {
+                throw new Error("Legacy VM missing reset_real_mode/resetRealMode export.");
+              }
+              (resetRealMode as (entryIp: number) => void).call(wasmVm, 0x7c00);
               // `reset_real_mode` reconstructs the CPU core (including `a20_enabled`), so
               // re-apply the current platform A20 gate state.
               writeWasmVmA20Flag(a20Enabled);
