@@ -285,6 +285,14 @@ fn tier2_inline_tlb_constant_end_of_page_u16_load_imports_mmu_translate_and_elid
         0,
         "expected constant end-of-page same-page u16 load to not emit a cross-page check"
     );
+
+    let mmu_translate = imported_func_index(&wasm, IMPORT_MODULE, IMPORT_MMU_TRANSLATE)
+        .expect("expected env.mmu_translate import");
+    assert_eq!(
+        count_calls_to(&wasm, mmu_translate),
+        2,
+        "expected end-of-page same-page u16 load to emit inline-TLB mmu_translate call sites"
+    );
 }
 
 #[test]
@@ -328,6 +336,14 @@ fn tier2_inline_tlb_constant_end_of_page_u16_store_imports_mmu_translate_and_eli
         count_i64_gt_u(&wasm),
         0,
         "expected constant end-of-page same-page u16 store to not emit a cross-page check"
+    );
+
+    let mmu_translate = imported_func_index(&wasm, IMPORT_MODULE, IMPORT_MMU_TRANSLATE)
+        .expect("expected env.mmu_translate import");
+    assert_eq!(
+        count_calls_to(&wasm, mmu_translate),
+        2,
+        "expected end-of-page same-page u16 store to emit inline-TLB mmu_translate call sites"
     );
 }
 
