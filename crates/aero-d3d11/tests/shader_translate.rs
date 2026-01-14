@@ -2450,7 +2450,7 @@ fn translates_f16tof32_via_unpack2x16float() {
 }
 
 #[test]
-fn translates_f16tof32_ignores_operand_modifier_to_preserve_half_bits() {
+fn translates_f16tof32_applies_operand_modifier_after_unpacking_half_bits() {
     let osgn_params = vec![sig_param("SV_Target", 0, 0, 0b1111)];
     let dxbc_bytes = build_dxbc(&[
         (FOURCC_SHEX, Vec::new()),
@@ -2460,8 +2460,10 @@ fn translates_f16tof32_ignores_operand_modifier_to_preserve_half_bits() {
     let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
     let signatures = parse_signatures(&dxbc).expect("parse signatures");
 
-    // Apply a source operand modifier to `f16tof32`. The translator should ignore modifiers so the
-    // raw binary16 bit pattern (in the low 16 bits) is preserved.
+    // Apply a source operand modifier to `f16tof32`.
+    //
+    // The operand is still read as raw bits from the untyped register file (so the half payload is
+    // preserved), but the modifier should be applied to the numeric f32 result of the conversion.
     let mut half_bits = src_reg(RegFile::Temp, 0);
     half_bits.modifier = OperandModifier::Neg;
 
@@ -2504,8 +2506,13 @@ fn translates_f16tof32_ignores_operand_modifier_to_preserve_half_bits() {
         translated.wgsl
     );
     assert!(
+        translated.wgsl.contains("-(vec4<f32>(unpack2x16float"),
+        "expected f16tof32 to apply operand modifier after unpacking half bits:\n{}",
+        translated.wgsl
+    );
+    assert!(
         !translated.wgsl.contains("vec4<u32>(0u) -"),
-        "expected f16tof32 to ignore source operand modifiers (preserve half bits):\n{}",
+        "expected f16tof32 operand modifier not to be applied in the u32 domain:\n{}",
         translated.wgsl
     );
 }
