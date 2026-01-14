@@ -978,6 +978,7 @@ impl D3D11Runtime {
             .difference(&keep_output_locations)
             .copied()
             .collect();
+
         // Defer creation of the trimmed shader module until after we've decoded the rest of the
         // pipeline descriptor so we don't hold a borrow of `self.pipelines` across other `&self`
         // method calls.

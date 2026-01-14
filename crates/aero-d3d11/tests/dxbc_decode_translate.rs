@@ -2852,3 +2852,81 @@ fn decodes_and_translates_umul_multi_dst_hi_lo_from_dxbc() {
         translated.wgsl
     );
 }
+
+#[test]
+fn decodes_and_translates_half_float_conversions() {
+    const DCL_OUTPUT: u32 = 0x101;
+
+    let mut body = Vec::<u32>::new();
+
+    // dcl_output o0.xyzw
+    body.push(opcode_token(DCL_OUTPUT, 3));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+
+    // mov r0, l(1, 2, 3, 4)
+    body.push(opcode_token(OPCODE_MOV, (1 + 2 + 1 + 4) as u32));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 0, WriteMask::XYZW));
+    body.extend_from_slice(&imm32_vec4([
+        1.0f32.to_bits(),
+        2.0f32.to_bits(),
+        3.0f32.to_bits(),
+        4.0f32.to_bits(),
+    ]));
+
+    // f32tof16 r1, r0
+    body.push(opcode_token(OPCODE_F32TOF16, 5));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 1, WriteMask::XYZW));
+    body.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, &[0], Swizzle::XYZW));
+
+    // f16tof32 r2, r1
+    body.push(opcode_token(OPCODE_F16TOF32, 5));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 2, WriteMask::XYZW));
+    body.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, &[1], Swizzle::XYZW));
+
+    // mov o0, r2
+    body.push(opcode_token(OPCODE_MOV, 5));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+    body.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, &[2], Swizzle::XYZW));
+
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    let tokens = make_sm5_program_tokens(0, &body);
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, tokens_to_bytes(&tokens)),
+        (FOURCC_ISGN, build_signature_chunk(&[])),
+        (
+            FOURCC_OSGN,
+            build_signature_chunk(&[sig_param("SV_Target", 0, 0, 0b1111)]),
+        ),
+    ]);
+
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
+    let module = decode_program(&program).expect("SM4 decode");
+
+    assert!(
+        matches!(module.instructions[1], Sm4Inst::F32ToF16 { .. }),
+        "expected second instruction to decode as f32tof16: {:#?}",
+        module.instructions
+    );
+    assert!(
+        matches!(module.instructions[2], Sm4Inst::F16ToF32 { .. }),
+        "expected third instruction to decode as f16tof32: {:#?}",
+        module.instructions
+    );
+
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+
+    assert!(
+        translated.wgsl.contains("pack2x16float"),
+        "expected WGSL to contain pack2x16float:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated.wgsl.contains("unpack2x16float"),
+        "expected WGSL to contain unpack2x16float:\n{}",
+        translated.wgsl
+    );
+}
