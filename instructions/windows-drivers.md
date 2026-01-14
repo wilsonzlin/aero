@@ -495,7 +495,10 @@ python3 drivers/windows7/tests/host-harness/invoke_aero_virtio_win7_tests.py \
   --timeout-seconds 600
 ```
 
-Note: `--with-virtio-snd` requires a guest image provisioned with virtio-snd capture/duplex selftests enabled (otherwise the harness will fail on `virtio-snd-duplex|SKIP|flag_not_set`). See: [`drivers/windows7/tests/host-harness/README.md`](../drivers/windows7/tests/host-harness/README.md).
+Note: `--with-virtio-snd` requires a guest image with virtio-snd capture/duplex enabled. Newer guest selftest binaries run
+capture + duplex by default when virtio-snd is present, but older binaries must be provisioned with `--test-snd-capture`
+(or env var `AERO_VIRTIO_SELFTEST_TEST_SND_CAPTURE=1`). Otherwise the harness will fail on
+`virtio-snd-duplex|SKIP|flag_not_set`. See: [`drivers/windows7/tests/host-harness/README.md`](../drivers/windows7/tests/host-harness/README.md).
 
 Example: require the virtio-snd buffer limits stress test to PASS:
 
