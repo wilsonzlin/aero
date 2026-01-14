@@ -614,13 +614,27 @@ enum VerifyHttpSource {
     },
 }
 
+#[derive(Debug)]
+struct HttpStatusFailure {
+    url: reqwest::Url,
+    status: reqwest::StatusCode,
+}
+
+impl std::fmt::Display for HttpStatusFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "GET {} failed with HTTP {}", self.url, self.status)
+    }
+}
+
+impl std::error::Error for HttpStatusFailure {}
+
 async fn verify_http_or_file(args: &VerifyArgs) -> Result<()> {
     let started_at = Instant::now();
 
     let (manifest_bytes, source) = if let Some(url) = &args.manifest_url {
         let manifest_url: reqwest::Url = url.parse().context("parse --manifest-url")?;
         let client = build_reqwest_client(&args.header)?;
-        let bytes = download_http_bytes(&client, manifest_url.clone())
+        let bytes = download_http_bytes_with_retry(&client, manifest_url.clone(), args.retries)
             .await
             .context("download manifest.json")?;
         (
@@ -687,6 +701,7 @@ async fn verify_http_or_file(args: &VerifyArgs) -> Result<()> {
     let (err_tx, mut err_rx) = tokio::sync::mpsc::unbounded_channel::<anyhow::Error>();
 
     let mut workers = Vec::with_capacity(args.concurrency);
+    let retries = args.retries;
     for _ in 0..args.concurrency {
         let work_rx = work_rx.clone();
         let err_tx = err_tx.clone();
@@ -700,7 +715,7 @@ async fn verify_http_or_file(args: &VerifyArgs) -> Result<()> {
                 if cancelled.load(Ordering::SeqCst) {
                     break;
                 }
-                match verify_http_chunk(index, &manifest, &source).await {
+                match verify_http_chunk(index, &manifest, &source, retries).await {
                     Ok(bytes) => {
                         verified_chunks.fetch_add(1, Ordering::SeqCst);
                         verified_bytes.fetch_add(bytes, Ordering::SeqCst);
@@ -831,26 +846,92 @@ fn parse_header(raw: &str) -> Result<(HeaderName, HeaderValue)> {
     Ok((name, value))
 }
 
-async fn download_http_bytes(client: &reqwest::Client, url: reqwest::Url) -> Result<Vec<u8>> {
-    let resp = client
-        .get(url.clone())
-        .send()
-        .await
-        .with_context(|| format!("GET {url}"))?;
-    let status = resp.status();
-    if !status.is_success() {
-        bail!("GET {url} failed with HTTP {status}");
+fn is_retryable_http_status(status: reqwest::StatusCode) -> bool {
+    status.is_server_error()
+        || status == reqwest::StatusCode::TOO_MANY_REQUESTS
+        || status == reqwest::StatusCode::REQUEST_TIMEOUT
+}
+
+fn is_retryable_http_error(err: &anyhow::Error) -> bool {
+    // Treat deterministic integrity failures as non-retryable.
+    for cause in err.chain() {
+        let msg = cause.to_string();
+        if msg.contains("size mismatch") || msg.contains("sha256 mismatch") {
+            return false;
+        }
+
+        if let Some(status) = cause.downcast_ref::<HttpStatusFailure>() {
+            let code = status.status;
+            if code == reqwest::StatusCode::NOT_FOUND {
+                return false;
+            }
+            if code.is_client_error()
+                && code != reqwest::StatusCode::TOO_MANY_REQUESTS
+                && code != reqwest::StatusCode::REQUEST_TIMEOUT
+            {
+                return false;
+            }
+            return is_retryable_http_status(code);
+        }
     }
-    resp.bytes()
-        .await
-        .with_context(|| format!("read body for GET {url}"))
-        .map(|b| b.to_vec())
+
+    true
+}
+
+async fn download_http_bytes_with_retry(
+    client: &reqwest::Client,
+    url: reqwest::Url,
+    retries: usize,
+) -> Result<Vec<u8>> {
+    let mut attempt = 0usize;
+    loop {
+        attempt += 1;
+
+        let resp_result = client.get(url.clone()).send().await;
+        match resp_result {
+            Ok(resp) => {
+                let status = resp.status();
+                if status.is_success() {
+                    return resp
+                        .bytes()
+                        .await
+                        .with_context(|| format!("read body for GET {url}"))
+                        .map(|b| b.to_vec());
+                }
+
+                let err = anyhow!(HttpStatusFailure { url: url.clone(), status })
+                    .context(format!("GET {url}"));
+                if attempt < retries && is_retryable_http_status(status) {
+                    let sleep_for = retry_backoff(attempt);
+                    eprintln!(
+                        "download failed (attempt {attempt}/{retries}) for {url}: HTTP {status}; retrying in {:?}",
+                        sleep_for
+                    );
+                    tokio::time::sleep(sleep_for).await;
+                    continue;
+                }
+                return Err(err);
+            }
+            Err(err) if attempt < retries => {
+                let sleep_for = retry_backoff(attempt);
+                eprintln!(
+                    "download failed (attempt {attempt}/{retries}) for {url}: {err}; retrying in {:?}",
+                    sleep_for
+                );
+                tokio::time::sleep(sleep_for).await;
+            }
+            Err(err) => {
+                return Err(err).with_context(|| format!("GET {url}"));
+            }
+        }
+    }
 }
 
 async fn verify_http_chunk(
     index: u64,
     manifest: &ManifestV1,
     source: &VerifyHttpSource,
+    retries: usize,
 ) -> Result<u64> {
     let expected_size = expected_chunk_size(manifest, index)?;
     let expected_sha256 = expected_chunk_sha256(manifest, index)?;
@@ -872,10 +953,11 @@ async fn verify_http_chunk(
             manifest_url,
             client,
         } => {
-            let url = manifest_url.join(&chunk_key).with_context(|| {
-                format!("resolve chunk url {chunk_key:?} relative to {manifest_url}")
-            })?;
-            verify_chunk_http(index, client, url, expected_size, expected_sha256).await
+            let url = manifest_url
+                .join(&chunk_key)
+                .with_context(|| format!("resolve chunk url {chunk_key:?} relative to {manifest_url}"))?;
+            verify_chunk_http_with_retry(index, client, url, expected_size, expected_sha256, retries)
+                .await
         }
     }
 }
@@ -932,7 +1014,11 @@ async fn verify_chunk_http(
         .with_context(|| format!("GET {url} (chunk {index})"))?;
     let status = resp.status();
     if !status.is_success() {
-        bail!("GET {url} failed with HTTP {status} (chunk {index})");
+        return Err(anyhow!(HttpStatusFailure {
+            url: url.clone(),
+            status
+        }))
+        .with_context(|| format!("GET {url} (chunk {index})"));
     }
 
     let mut hasher = expected_sha256.map(|_| Sha256::new());
@@ -958,6 +1044,40 @@ async fn verify_chunk_http(
         expected_sha256,
     )?;
     Ok(total)
+}
+
+async fn verify_chunk_http_with_retry(
+    index: u64,
+    client: &reqwest::Client,
+    url: reqwest::Url,
+    expected_size: u64,
+    expected_sha256: Option<&str>,
+    retries: usize,
+) -> Result<u64> {
+    let mut attempt = 0usize;
+    loop {
+        attempt += 1;
+        match verify_chunk_http(index, client, url.clone(), expected_size, expected_sha256).await {
+            Ok(bytes) => return Ok(bytes),
+            Err(err) if attempt < retries && is_retryable_http_error(&err) => {
+                let sleep_for = retry_backoff(attempt);
+                let err_summary = error_chain_summary(&err);
+                eprintln!(
+                    "chunk verify failed (attempt {attempt}/{retries}) for {url} (chunk {index}): {err_summary}; retrying in {:?}",
+                    sleep_for
+                );
+                tokio::time::sleep(sleep_for).await;
+            }
+            Err(err) => {
+                let root = err.root_cause().to_string();
+                return Err(err).with_context(|| {
+                    format!(
+                        "chunk verify failed (attempt {attempt}/{retries}) for {url} (chunk {index}) (root cause: {root})"
+                    )
+                });
+            }
+        }
+    }
 }
 
 fn verify_chunk_integrity(
@@ -2573,6 +2693,75 @@ fn retry_backoff(attempt: usize) -> Duration {
 mod tests {
     use super::*;
 
+    async fn start_test_http_server(
+        responder: Arc<dyn Fn(&str) -> (u16, Vec<u8>) + Send + Sync + 'static>,
+    ) -> Result<(String, tokio::sync::oneshot::Sender<()>, tokio::task::JoinHandle<()>)> {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .context("bind test http listener")?;
+        let addr = listener
+            .local_addr()
+            .context("get test http listener address")?;
+        let base_url = format!("http://{}", addr);
+
+        let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+
+        let handle = tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    _ = &mut shutdown_rx => break,
+                    accept = listener.accept() => {
+                        let (mut socket, _) = match accept {
+                            Ok(v) => v,
+                            Err(_) => break,
+                        };
+                        let responder = Arc::clone(&responder);
+                        tokio::spawn(async move {
+                            // Read request headers (best-effort).
+                            let mut buf = Vec::new();
+                            let mut scratch = [0u8; 1024];
+                            while !buf.windows(4).any(|w| w == b"\r\n\r\n") && buf.len() < 8 * 1024 {
+                                let n = match socket.read(&mut scratch).await {
+                                    Ok(0) => break,
+                                    Ok(n) => n,
+                                    Err(_) => return,
+                                };
+                                buf.extend_from_slice(&scratch[..n]);
+                            }
+
+                            let request = String::from_utf8_lossy(&buf);
+                            let path = request
+                                .lines()
+                                .next()
+                                .and_then(|line| line.split_whitespace().nth(1))
+                                .unwrap_or("/");
+
+                            let (status, body) = (responder)(path);
+                            let status_line = match status {
+                                200 => "200 OK",
+                                404 => "404 Not Found",
+                                500 => "500 Internal Server Error",
+                                _ => "500 Internal Server Error",
+                            };
+                            let headers = format!(
+                                "HTTP/1.1 {status_line}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                                body.len()
+                            );
+                            let _ = socket.write_all(headers.as_bytes()).await;
+                            let _ = socket.write_all(&body).await;
+                            let _ = socket.shutdown().await;
+                        });
+                    }
+                }
+            }
+        });
+
+        Ok((base_url, shutdown_tx, handle))
+    }
+
     #[test]
     fn default_cache_control_values_match_docs() {
         assert_eq!(
@@ -3022,6 +3211,144 @@ mod tests {
             msg.contains("sha256 mismatch") && msg.contains("chunk 0"),
             "unexpected error message: {msg}"
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn verify_http_manifest_url_and_chunks_succeeds() -> Result<()> {
+        let chunk_size: u64 = 1024;
+        let chunk0 = vec![b'a'; chunk_size as usize];
+        let chunk1 = vec![b'b'; 512];
+        let total_size = (chunk0.len() + chunk1.len()) as u64;
+
+        let sha256_by_index = vec![
+            Some(sha256_hex(&chunk0)),
+            Some(sha256_hex(&chunk1)),
+        ];
+        let manifest = build_manifest_v1(
+            total_size,
+            chunk_size,
+            "demo",
+            "v1",
+            ChecksumAlgorithm::Sha256,
+            &sha256_by_index,
+        )?;
+        let manifest_bytes = serde_json::to_vec_pretty(&manifest).context("serialize manifest")?;
+
+        let responder: Arc<dyn Fn(&str) -> (u16, Vec<u8>) + Send + Sync + 'static> =
+            Arc::new(move |path: &str| match path {
+                "/manifest.json" => (200, manifest_bytes.clone()),
+                "/chunks/00000000.bin" => (200, chunk0.clone()),
+                "/chunks/00000001.bin" => (200, chunk1.clone()),
+                _ => (404, b"not found".to_vec()),
+            });
+
+        let (base_url, shutdown_tx, server_handle) = start_test_http_server(responder).await?;
+
+        let result = verify(VerifyArgs {
+            manifest_url: Some(format!("{base_url}/manifest.json")),
+            manifest_file: None,
+            header: Vec::new(),
+            bucket: None,
+            prefix: None,
+            manifest_key: None,
+            image_id: None,
+            image_version: None,
+            endpoint: None,
+            force_path_style: false,
+            region: "us-east-1".to_string(),
+            concurrency: 2,
+            retries: 2,
+            max_chunks: MAX_CHUNKS,
+            chunk_sample: None,
+            chunk_sample_seed: None,
+        })
+        .await;
+
+        let _ = shutdown_tx.send(());
+        let _ = server_handle.await;
+
+        result
+    }
+
+    #[tokio::test]
+    async fn verify_http_retries_on_transient_500() -> Result<()> {
+        let chunk_size: u64 = 1024;
+        let chunk0 = vec![b'a'; chunk_size as usize];
+        let chunk1 = vec![b'b'; 512];
+        let total_size = (chunk0.len() + chunk1.len()) as u64;
+
+        let sha256_by_index = vec![
+            Some(sha256_hex(&chunk0)),
+            Some(sha256_hex(&chunk1)),
+        ];
+        let manifest = build_manifest_v1(
+            total_size,
+            chunk_size,
+            "demo",
+            "v1",
+            ChecksumAlgorithm::Sha256,
+            &sha256_by_index,
+        )?;
+        let manifest_bytes = serde_json::to_vec_pretty(&manifest).context("serialize manifest")?;
+
+        let manifest_requests = Arc::new(AtomicU64::new(0));
+        let chunk0_requests = Arc::new(AtomicU64::new(0));
+
+        let responder: Arc<dyn Fn(&str) -> (u16, Vec<u8>) + Send + Sync + 'static> = {
+            let manifest_requests = Arc::clone(&manifest_requests);
+            let chunk0_requests = Arc::clone(&chunk0_requests);
+            Arc::new(move |path: &str| match path {
+                "/manifest.json" => {
+                    let n = manifest_requests.fetch_add(1, Ordering::SeqCst);
+                    if n == 0 {
+                        (500, b"oops".to_vec())
+                    } else {
+                        (200, manifest_bytes.clone())
+                    }
+                }
+                "/chunks/00000000.bin" => {
+                    let n = chunk0_requests.fetch_add(1, Ordering::SeqCst);
+                    if n == 0 {
+                        (500, b"oops".to_vec())
+                    } else {
+                        (200, chunk0.clone())
+                    }
+                }
+                "/chunks/00000001.bin" => (200, chunk1.clone()),
+                _ => (404, b"not found".to_vec()),
+            })
+        };
+
+        let (base_url, shutdown_tx, server_handle) = start_test_http_server(responder).await?;
+
+        let result = verify(VerifyArgs {
+            manifest_url: Some(format!("{base_url}/manifest.json")),
+            manifest_file: None,
+            header: Vec::new(),
+            bucket: None,
+            prefix: None,
+            manifest_key: None,
+            image_id: None,
+            image_version: None,
+            endpoint: None,
+            force_path_style: false,
+            region: "us-east-1".to_string(),
+            concurrency: 2,
+            // Must be > 1 to allow a retry after the deliberate 500.
+            retries: 2,
+            max_chunks: MAX_CHUNKS,
+            chunk_sample: None,
+            chunk_sample_seed: None,
+        })
+        .await;
+
+        let _ = shutdown_tx.send(());
+        let _ = server_handle.await;
+
+        result?;
+        assert!(manifest_requests.load(Ordering::SeqCst) >= 2);
+        assert!(chunk0_requests.load(Ordering::SeqCst) >= 2);
         Ok(())
     }
 

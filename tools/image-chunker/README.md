@@ -174,6 +174,13 @@ After publishing, you can re-download and validate the published artifacts end-t
 - optional per-chunk `sha256` (streamed hashing)
 - optional `latest.json` pointer (if present under `images/<imageId>/latest.json`)
 
+`verify` supports three sources:
+
+- **S3-compatible object store**: `--bucket` + `--prefix`/`--manifest-key` (examples below)
+- **Local directory**: `--manifest-file ./path/to/manifest.json` (expects `./path/to/chunks/*.bin`)
+- **HTTP/CDN**: `--manifest-url https://.../manifest.json` (fetches `chunks/*.bin` relative to the manifest URL)
+  - Optional repeatable `--header "Name: value"` can be used for auth (cookies, bearer tokens, etc)
+
 ### Example: verify a versioned prefix
 
 ```bash
@@ -183,6 +190,23 @@ After publishing, you can re-download and validate the published artifacts end-t
   --endpoint http://localhost:9000 \
   --force-path-style \
   --region us-east-1 \
+  --concurrency 8
+```
+
+### Example: verify a local directory (no S3 required)
+
+```bash
+./tools/image-chunker/target/release/aero-image-chunker verify \
+  --manifest-file ./out/manifest.json \
+  --concurrency 8
+```
+
+### Example: verify over plain HTTP (CDN / object-store gateway)
+
+```bash
+./tools/image-chunker/target/release/aero-image-chunker verify \
+  --manifest-url https://cdn.example.com/images/<imageId>/<version>/manifest.json \
+  --header "Authorization: Bearer <token>" \
   --concurrency 8
 ```
 
@@ -305,7 +329,7 @@ Example (abridged):
   "imageId": "win7-sp1-x64",
   "version": "sha256-...",
   "mimeType": "application/octet-stream",
-  "totalSize": 123456789,
+  "totalSize": 125828608,
   "chunkSize": 4194304,
   "chunkCount": 30,
   "chunkIndexWidth": 8,
