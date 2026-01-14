@@ -8,7 +8,8 @@ param(
   [ValidateSet("auto", "minimal", "full")]
   [string]$GuestToolsProfile = "auto",
   # Also exercise the ISO-mounting code paths by creating a synthetic virtio-win ISO
-  # (via IMAPI) and running make-driver-pack.ps1 with -VirtioWinIso.
+  # (via ci/lib/New-IsoFile.ps1; deterministic when cargo is available, with an IMAPI2 fallback)
+  # and running make-driver-pack.ps1 with -VirtioWinIso.
   [switch]$TestIsoMode,
   # Skip the second Guest Tools packaging run that validates wrapper defaults.
   # Useful for reducing CI time when the defaults check is already covered by another job.
@@ -732,7 +733,7 @@ if ($TestIsoMode) {
     throw "powershell.exe not found; required for -TestIsoMode (New-IsoFile.ps1 + Mount-DiskImage)."
   }
 
-  $isoBuilder = Join-Path $repoRoot "ci\\lib\\New-IsoFile.ps1"
+  $isoBuilder = [System.IO.Path]::Combine($repoRoot, "ci", "lib", "New-IsoFile.ps1")
   if (-not (Test-Path -LiteralPath $isoBuilder -PathType Leaf)) {
     throw "Expected ISO builder script not found: $isoBuilder"
   }
