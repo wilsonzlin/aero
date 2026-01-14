@@ -27,6 +27,9 @@ describe("runtime/wasm_loader (Machine disk overlay typings)", () => {
       disk_id_primary_hdd: () => 0,
       disk_id_install_media: () => 1,
       disk_id_ide_primary_master: () => 2,
+      new_shared: (_guestBase: number, _guestSize: number) => machine,
+      new_win7_storage_shared: (_guestBase: number, _guestSize: number) => machine,
+      new_win7_storage: (_ramBytes: number) => machine,
     } as unknown as MachineCtor;
 
     // Optional methods should require feature detection under `strictNullChecks`.
@@ -59,6 +62,14 @@ describe("runtime/wasm_loader (Machine disk overlay typings)", () => {
       machineCtor.disk_id_install_media();
       // @ts-expect-error disk_id_ide_primary_master may be undefined
       machineCtor.disk_id_ide_primary_master();
+
+      // Static constructors are optional too.
+      // @ts-expect-error new_shared may be undefined
+      machineCtor.new_shared(0, 0);
+      // @ts-expect-error new_win7_storage_shared may be undefined
+      machineCtor.new_win7_storage_shared(0, 0);
+      // @ts-expect-error new_win7_storage may be undefined
+      machineCtor.new_win7_storage(0);
     }
     void assertStrictNullChecksEnforced;
 
@@ -101,6 +112,15 @@ describe("runtime/wasm_loader (Machine disk overlay typings)", () => {
     }
     if (machineCtor.disk_id_ide_primary_master) {
       machineCtor.disk_id_ide_primary_master();
+    }
+    if (machineCtor.new_shared) {
+      machineCtor.new_shared(0, 0);
+    }
+    if (machineCtor.new_win7_storage_shared) {
+      machineCtor.new_win7_storage_shared(0, 0);
+    }
+    if (machineCtor.new_win7_storage) {
+      machineCtor.new_win7_storage(0);
     }
 
     expect(true).toBe(true);

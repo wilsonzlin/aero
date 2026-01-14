@@ -1465,6 +1465,24 @@ export interface WasmApi {
          */
         new_with_options?: (ramSizeBytes: number, options?: unknown) => MachineHandle;
         /**
+         * Construct a machine backed by shared guest RAM (see {@link guest_ram_layout}).
+         *
+         * Optional for older WASM builds.
+         */
+        new_shared?: (guestBase: number, guestSize: number) => MachineHandle;
+        /**
+         * Construct a machine preset for the canonical Win7 storage topology backed by shared guest RAM.
+         *
+         * Optional for older WASM builds.
+         */
+        new_win7_storage_shared?: (guestBase: number, guestSize: number) => MachineHandle;
+        /**
+         * Construct a machine preset for the canonical Win7 storage topology backed by internal guest RAM.
+         *
+         * Optional for older WASM builds.
+         */
+        new_win7_storage?: (ramSizeBytes: number) => MachineHandle;
+        /**
          * Stable snapshot `disk_id` helpers for the canonical Win7 storage topology.
          *
          * Optional for older WASM builds.
