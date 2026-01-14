@@ -22,12 +22,21 @@ function createRangeFetch(
   const fetcher: typeof fetch = async (_url, init) => {
     const method = String(init?.method || "GET").toUpperCase();
     const headers = init?.headers;
-    const rangeHeader =
-      headers instanceof Headers
-        ? headers.get("Range") || undefined
-        : typeof headers === "object" && headers
-          ? ((headers as any).Range as string | undefined) ?? ((headers as any).range as string | undefined)
-          : undefined;
+    const rangeHeader = (() => {
+      if (headers instanceof Headers) {
+        return headers.get("Range") || undefined;
+      }
+      if (Array.isArray(headers)) {
+        const hit = headers.find((h) => h[0].toLowerCase() === "range");
+        return hit?.[1];
+      }
+      if (headers && typeof headers === "object") {
+        const rec = headers as Record<string, unknown>;
+        const raw = rec.Range ?? rec.range;
+        return typeof raw === "string" ? raw : undefined;
+      }
+      return undefined;
+    })();
 
     calls.push({ method, range: rangeHeader });
 
@@ -771,7 +780,7 @@ describe("RuntimeDiskWorker (remote)", () => {
     });
 
     const { RemoteCacheManager: FreshRemoteCacheManager } = await import("./remote_cache_manager");
-    const openOpfsSpy = vi.spyOn(FreshRemoteCacheManager, "openOpfs").mockResolvedValue({ clearCache } as any);
+    const openOpfsSpy = vi.spyOn(FreshRemoteCacheManager, "openOpfs").mockResolvedValue({ clearCache } as unknown as RemoteCacheManager);
     const expectedLegacyCacheKey = await FreshRemoteCacheManager.deriveCacheKey({
       imageId: "test-image",
       version: "v1",
@@ -836,7 +845,7 @@ describe("RuntimeDiskWorker (remote)", () => {
     });
 
     const { RemoteCacheManager: FreshRemoteCacheManager } = await import("./remote_cache_manager");
-    const openOpfsSpy = vi.spyOn(FreshRemoteCacheManager, "openOpfs").mockResolvedValue({ clearCache } as any);
+    const openOpfsSpy = vi.spyOn(FreshRemoteCacheManager, "openOpfs").mockResolvedValue({ clearCache } as unknown as RemoteCacheManager);
     const expectedLegacyCacheKey = await FreshRemoteCacheManager.deriveCacheKey({
       imageId: "test-image",
       version: "v1",

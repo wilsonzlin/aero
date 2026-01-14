@@ -129,8 +129,9 @@ describe("RuntimeDiskWorker (leaseEndpoint)", () => {
     baseUrl = startedBaseUrl;
     closeServer = close;
 
-    const oldLocation = (globalThis as any).location;
-    (globalThis as any).location = { href: `${baseUrl}/` };
+    const globals = globalThis as unknown as { location?: unknown };
+    const oldLocation = globals.location;
+    globals.location = { href: `${baseUrl}/` };
     try {
       const meta: DiskImageMetadata = {
         source: "remote",
@@ -226,7 +227,7 @@ describe("RuntimeDiskWorker (leaseEndpoint)", () => {
       const closeResp = posted.shift();
       expect(closeResp.ok).toBe(true);
       } finally {
-        (globalThis as any).location = oldLocation;
+        globals.location = oldLocation;
       }
     },
     // This test can be sensitive to Vitest's file-level parallelism (other suites may
