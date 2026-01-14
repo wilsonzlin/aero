@@ -844,7 +844,7 @@ func TestRequestIDMiddleware(t *testing.T) {
 
 	baseURL := startTestServer(t, cfg, func(srv *Server) {
 		srv.Mux().HandleFunc("GET /echo-request-id", func(w http.ResponseWriter, r *http.Request) {
-			WriteJSON(w, http.StatusOK, map[string]any{"requestId": r.Header.Get("X-Request-ID")})
+			writeJSON(w, http.StatusOK, map[string]any{"requestId": r.Header.Get("X-Request-ID")})
 		})
 	})
 

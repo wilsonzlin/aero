@@ -120,23 +120,23 @@ func (s *Server) Shutdown(ctx context.Context) error {
 
 func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
-		WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 	})
 
 	s.mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
 		if !s.ready.Load() {
-			WriteJSON(w, http.StatusServiceUnavailable, map[string]any{"ready": false})
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"ready": false})
 			return
 		}
 		if err := s.cfg.ICEConfigError(); err != nil {
-			WriteJSON(w, http.StatusServiceUnavailable, map[string]any{"ready": false, "error": err.Error()})
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"ready": false, "error": err.Error()})
 			return
 		}
-		WriteJSON(w, http.StatusOK, map[string]any{"ready": true})
+		writeJSON(w, http.StatusOK, map[string]any{"ready": true})
 	})
 
 	s.mux.HandleFunc("GET /version", func(w http.ResponseWriter, r *http.Request) {
-		WriteJSON(w, http.StatusOK, s.build)
+		writeJSON(w, http.StatusOK, s.build)
 	})
 
 	s.mux.HandleFunc("GET /webrtc/ice", func(w http.ResponseWriter, r *http.Request) {
@@ -151,30 +151,30 @@ func (s *Server) registerRoutes() {
 			if err != nil {
 				if errors.Is(err, auth.ErrMissingCredentials) {
 					incAuthFailure()
-					WriteJSON(w, http.StatusUnauthorized, map[string]any{"code": "unauthorized", "message": "unauthorized"})
+					writeJSON(w, http.StatusUnauthorized, map[string]any{"code": "unauthorized", "message": "unauthorized"})
 					return
 				}
-				WriteJSON(w, http.StatusInternalServerError, map[string]any{"code": "internal_error", "message": "internal error"})
+				writeJSON(w, http.StatusInternalServerError, map[string]any{"code": "internal_error", "message": "internal error"})
 				return
 			}
 			verifier, err := auth.NewVerifier(s.cfg)
 			if err != nil {
-				WriteJSON(w, http.StatusInternalServerError, map[string]any{"code": "internal_error", "message": "internal error"})
+				writeJSON(w, http.StatusInternalServerError, map[string]any{"code": "internal_error", "message": "internal error"})
 				return
 			}
 			if err := verifier.Verify(cred); err != nil {
 				if errors.Is(err, auth.ErrMissingCredentials) || errors.Is(err, auth.ErrInvalidCredentials) || errors.Is(err, auth.ErrUnsupportedJWT) {
 					incAuthFailure()
-					WriteJSON(w, http.StatusUnauthorized, map[string]any{"code": "unauthorized", "message": "unauthorized"})
+					writeJSON(w, http.StatusUnauthorized, map[string]any{"code": "unauthorized", "message": "unauthorized"})
 					return
 				}
-				WriteJSON(w, http.StatusInternalServerError, map[string]any{"code": "internal_error", "message": "internal error"})
+				writeJSON(w, http.StatusInternalServerError, map[string]any{"code": "internal_error", "message": "internal error"})
 				return
 			}
 		}
 
 		if err := s.cfg.ICEConfigError(); err != nil {
-			WriteJSON(w, http.StatusServiceUnavailable, map[string]any{"error": err.Error()})
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": err.Error()})
 			return
 		}
 		iceServers := s.cfg.ICEServers
@@ -190,17 +190,17 @@ func (s *Server) registerRoutes() {
 				SessionIDSource: turnrest.CryptoRandomSessionID,
 			})
 			if err != nil {
-				WriteJSON(w, http.StatusInternalServerError, map[string]any{"code": "internal_error", "message": "internal error"})
+				writeJSON(w, http.StatusInternalServerError, map[string]any{"code": "internal_error", "message": "internal error"})
 				return
 			}
 			creds, err := gen.GenerateRandom()
 			if err != nil {
-				WriteJSON(w, http.StatusInternalServerError, map[string]any{"code": "internal_error", "message": "internal error"})
+				writeJSON(w, http.StatusInternalServerError, map[string]any{"code": "internal_error", "message": "internal error"})
 				return
 			}
 			iceServers = withTURNRESTCredentials(iceServers, creds.Username, creds.Credential)
 		}
-		WriteJSON(w, http.StatusOK, map[string]any{"iceServers": iceServers})
+		writeJSON(w, http.StatusOK, map[string]any{"iceServers": iceServers})
 	})
 }
 
@@ -309,8 +309,8 @@ func requestLoggerMiddleware(logger *slog.Logger) Middleware {
 	}
 }
 
-// WriteJSON writes a JSON response body and sets the Content-Type header.
-func WriteJSON(w http.ResponseWriter, status int, v any) {
+// writeJSON writes a JSON response body and sets the Content-Type header.
+func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 

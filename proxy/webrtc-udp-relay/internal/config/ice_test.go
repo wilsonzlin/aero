@@ -16,7 +16,7 @@ func TestParseICEServersJSON(t *testing.T) {
 	  }
 	]`
 
-	servers, err := ParseICEServersJSON(raw, false)
+	servers, err := parseICEServersJSON(raw, false)
 	if err != nil {
 		t.Fatalf("expected success, got %v", err)
 	}
@@ -45,7 +45,7 @@ func TestParseICEServersJSON_SupportsSingleStringURLs(t *testing.T) {
 	  }
 	]`
 
-	servers, err := ParseICEServersJSON(raw, false)
+	servers, err := parseICEServersJSON(raw, false)
 	if err != nil {
 		t.Fatalf("expected success, got %v", err)
 	}
@@ -66,7 +66,7 @@ func TestParseICEServersJSON_RejectsTURNWithoutCreds(t *testing.T) {
 	  }
 	]`
 
-	_, err := ParseICEServersJSON(raw, false)
+	_, err := parseICEServersJSON(raw, false)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -81,7 +81,7 @@ func TestParseICEServersJSON_AllowsTURNWithoutCredsWhenEnabled(t *testing.T) {
 	  }
 	]`
 
-	servers, err := ParseICEServersJSON(raw, true)
+	servers, err := parseICEServersJSON(raw, true)
 	if err != nil {
 		t.Fatalf("expected success, got %v", err)
 	}
@@ -96,7 +96,7 @@ func TestParseICEServersJSON_AllowsTURNWithoutCredsWhenEnabled(t *testing.T) {
 func TestParseICEServersFromConvenienceEnv(t *testing.T) {
 	t.Parallel()
 
-	servers, err := ParseICEServersFromConvenienceEnv(
+	servers, err := parseICEServersFromConvenienceEnv(
 		"stun:stun.example.com:3478",
 		"turn:turn.example.com:3478?transport=udp",
 		"user",
@@ -123,7 +123,7 @@ func TestParseICEServersFromConvenienceEnv(t *testing.T) {
 func TestParseICEServersFromConvenienceEnv_AllowsTURNWithoutCredsWhenEnabled(t *testing.T) {
 	t.Parallel()
 
-	servers, err := ParseICEServersFromConvenienceEnv(
+	servers, err := parseICEServersFromConvenienceEnv(
 		"",
 		"turn:turn.example.com:3478?transport=udp",
 		"",

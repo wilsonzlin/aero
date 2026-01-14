@@ -20,14 +20,14 @@ const (
 
 func parseICEServersFromValues(iceServersJSON, stunURLs, turnURLs, turnUsername, turnCredential string, allowTurnWithoutCreds bool) ([]webrtc.ICEServer, error) {
 	if raw := strings.TrimSpace(iceServersJSON); raw != "" {
-		iceServers, err := ParseICEServersJSON(raw, allowTurnWithoutCreds)
+		iceServers, err := parseICEServersJSON(raw, allowTurnWithoutCreds)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", envICEServersJSON, err)
 		}
 		return iceServers, nil
 	}
 
-	iceServers, err := ParseICEServersFromConvenienceEnv(stunURLs, turnURLs, turnUsername, turnCredential, allowTurnWithoutCreds)
+	iceServers, err := parseICEServersFromConvenienceEnv(stunURLs, turnURLs, turnUsername, turnCredential, allowTurnWithoutCreds)
 	if err != nil {
 		return nil, err
 	}
@@ -56,8 +56,8 @@ func (s *stringOrStringSlice) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-// ParseICEServersJSON parses and validates AERO_ICE_SERVERS_JSON.
-func ParseICEServersJSON(raw string, allowTurnWithoutCreds bool) ([]webrtc.ICEServer, error) {
+// parseICEServersJSON parses and validates AERO_ICE_SERVERS_JSON.
+func parseICEServersJSON(raw string, allowTurnWithoutCreds bool) ([]webrtc.ICEServer, error) {
 	var servers []iceServerJSON
 	if err := json.Unmarshal([]byte(raw), &servers); err != nil {
 		return nil, err
@@ -90,10 +90,10 @@ func ParseICEServersJSON(raw string, allowTurnWithoutCreds bool) ([]webrtc.ICESe
 	return out, nil
 }
 
-// ParseICEServersFromConvenienceEnv builds an ICE server list from the convenience env vars.
+// parseICEServersFromConvenienceEnv builds an ICE server list from the convenience env vars.
 //
 // The URL lists are comma-separated.
-func ParseICEServersFromConvenienceEnv(stunURLs, turnURLs, turnUsername, turnCredential string, allowTurnWithoutCreds bool) ([]webrtc.ICEServer, error) {
+func parseICEServersFromConvenienceEnv(stunURLs, turnURLs, turnUsername, turnCredential string, allowTurnWithoutCreds bool) ([]webrtc.ICEServer, error) {
 	stunList := splitCommaSeparated(stunURLs)
 	turnList := splitCommaSeparated(turnURLs)
 
