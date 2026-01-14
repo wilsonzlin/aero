@@ -1683,24 +1683,26 @@ ctx.onmessage = (ev) => {
       return;
     }
 
-    const prevHddId =
-      typeof (currentBootDisks?.hdd as { id?: unknown } | null | undefined)?.id === "string" ? currentBootDisks!.hdd!.id : "";
-    const prevCdId =
-      typeof (currentBootDisks?.cd as { id?: unknown } | null | undefined)?.id === "string" ? currentBootDisks!.cd!.id : "";
-    const nextHddId = typeof (bootDisks.hdd as { id?: unknown } | null | undefined)?.id === "string" ? bootDisks.hdd!.id : "";
-    const nextCdId = typeof (bootDisks.cd as { id?: unknown } | null | undefined)?.id === "string" ? bootDisks.cd!.id : "";
+    // Disk selection changes are keyed off mount IDs (DiskManager selection), not disk metadata.
+    // The metadata objects can be null/late-loaded while the mount IDs still represent the user's
+    // intent. Comparing mount IDs avoids unintentionally resetting boot-device policy when only
+    // metadata changes.
+    const prevHddId = typeof currentBootDisks?.mounts?.hddId === "string" ? currentBootDisks.mounts.hddId : "";
+    const prevCdId = typeof currentBootDisks?.mounts?.cdId === "string" ? currentBootDisks.mounts.cdId : "";
+    const nextHddId = typeof bootDisks.mounts?.hddId === "string" ? bootDisks.mounts.hddId : "";
+    const nextCdId = typeof bootDisks.mounts?.cdId === "string" ? bootDisks.mounts.cdId : "";
     const disksChanged = prevHddId !== nextHddId || prevCdId !== nextCdId;
 
     const explicitBootDevice = bootDisks.bootDevice;
-    if (explicitBootDevice === "cdrom" && bootDisks.cd) {
+    if (explicitBootDevice === "cdrom" && nextCdId) {
       pendingBootDevice = "cdrom";
-    } else if (explicitBootDevice === "hdd" && bootDisks.hdd) {
+    } else if (explicitBootDevice === "hdd" && nextHddId) {
       pendingBootDevice = "hdd";
     } else if (disksChanged) {
       // Default boot-device policy for new disk selections:
       // - if install media is mounted, start with a CD boot so BIOS can El Torito boot it.
       // - otherwise boot HDD.
-      pendingBootDevice = bootDisks.cd ? "cdrom" : "hdd";
+      pendingBootDevice = nextCdId ? "cdrom" : "hdd";
     }
 
     // Publish the selected policy for tests/debug tooling.

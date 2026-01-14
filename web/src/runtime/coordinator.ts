@@ -1047,15 +1047,25 @@ export class WorkerCoordinator {
    */
   setBootDisks(mounts: MountConfig, hdd: DiskImageMetadata | null, cd: DiskImageMetadata | null): void {
     const prev = this.bootDisks;
-    const prevHddId = typeof (prev?.hdd as { id?: unknown } | null | undefined)?.id === "string" ? prev!.hdd!.id : "";
-    const prevCdId = typeof (prev?.cd as { id?: unknown } | null | undefined)?.id === "string" ? prev!.cd!.id : "";
-    const nextHddId = typeof (hdd as { id?: unknown } | null | undefined)?.id === "string" ? hdd!.id : "";
-    const nextCdId = typeof (cd as { id?: unknown } | null | undefined)?.id === "string" ? cd!.id : "";
+    // Disk selection is canonically keyed off the DiskManager mounts (IDs), not the optional disk
+    // metadata objects. The metadata can briefly be null (e.g. missing/late-loaded) while the mounts
+    // still express the user's intent. Comparing mount IDs avoids accidentally resetting boot-device
+    // policy when only metadata changes.
+    const sanitizeMountId = (value: unknown): string => (typeof value === "string" ? value.trim() : "");
+    const prevHddId = sanitizeMountId(prev?.mounts?.hddId);
+    const prevCdId = sanitizeMountId(prev?.mounts?.cdId);
+    const nextHddId = sanitizeMountId(mounts?.hddId);
+    const nextCdId = sanitizeMountId(mounts?.cdId);
     const disksChanged = prevHddId !== nextHddId || prevCdId !== nextCdId;
 
-    const bootDevice = disksChanged ? (cd ? "cdrom" : "hdd") : prev?.bootDevice ?? (cd ? "cdrom" : "hdd");
+    const canonicalMounts: MountConfig = {};
+    if (nextHddId) canonicalMounts.hddId = nextHddId;
+    if (nextCdId) canonicalMounts.cdId = nextCdId;
 
-    const msg: SetBootDisksMessage = { ...emptySetBootDisksMessage(), mounts, hdd, cd, bootDevice };
+    const defaultBootDevice = nextCdId ? "cdrom" : "hdd";
+    const bootDevice = disksChanged ? defaultBootDevice : prev?.bootDevice ?? defaultBootDevice;
+
+    const msg: SetBootDisksMessage = { ...emptySetBootDisksMessage(), mounts: canonicalMounts, hdd, cd, bootDevice };
     this.bootDisks = msg;
 
     const vmRuntime = this.activeConfig?.vmRuntime ?? "legacy";

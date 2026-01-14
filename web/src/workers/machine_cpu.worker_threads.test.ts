@@ -1110,6 +1110,36 @@ describe("workers/machine_cpu.worker (boot device selection)", () => {
     }
   }, 20_000);
 
+  it("honors explicit CD boot when mounts select a CD even if CD metadata is missing", async () => {
+    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
+    const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
+    const worker = new Worker(new URL("./machine_cpu.worker.ts", import.meta.url), {
+      type: "module",
+      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+    } as unknown as WorkerOptions);
+
+    try {
+      const msgPromise = waitForWorkerMessage(
+        worker,
+        (msg) => (msg as { type?: unknown; bootDevice?: unknown }).type === "machineCpu.bootDeviceSelected" && (msg as any).bootDevice === "cdrom",
+        10_000,
+      ) as Promise<{ type: string; bootDevice: string }>;
+
+      worker.postMessage({
+        ...emptySetBootDisksMessage(),
+        mounts: { hddId: "hdd0", cdId: "cd0" },
+        hdd: makeLocalHddMeta(),
+        cd: null,
+        bootDevice: "cdrom",
+      } satisfies SetBootDisksMessage);
+
+      const msg = await msgPromise;
+      expect(msg.bootDevice).toBe("cdrom");
+    } finally {
+      await worker.terminate();
+    }
+  }, 20_000);
+
   it("ignores explicit bootDevice values when the corresponding device is absent", async () => {
     const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
     const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
