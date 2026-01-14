@@ -103,9 +103,6 @@ int main(void) {
   PRINT_SIZE("aerogpu_escape_query_error_out", aerogpu_escape_query_error_out);
   PRINT_SIZE("aerogpu_escape_map_shared_handle_inout", aerogpu_escape_map_shared_handle_inout);
   PRINT_SIZE("aerogpu_escape_read_gpa_inout", aerogpu_escape_read_gpa_inout);
-  PRINT_SIZE("aerogpu_escape_set_cursor_position_in", aerogpu_escape_set_cursor_position_in);
-  PRINT_SIZE("aerogpu_escape_set_cursor_visibility_in", aerogpu_escape_set_cursor_visibility_in);
-  PRINT_SIZE("aerogpu_escape_set_cursor_shape_in", aerogpu_escape_set_cursor_shape_in);
   PRINT_SIZE("aerogpu_dbgctl_createallocation_desc", aerogpu_dbgctl_createallocation_desc);
   PRINT_SIZE("aerogpu_escape_dump_createallocation_inout", aerogpu_escape_dump_createallocation_inout);
 
