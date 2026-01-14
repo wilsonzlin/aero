@@ -67,9 +67,17 @@ def _require_str(value: Any, *, ctx: str) -> str:
     return value
 
 
+def _read_text_strip_utf8_bom(path: Path) -> str:
+    data = path.read_bytes()
+    # Be tolerant of UTF-8 BOMs produced by some editors/tools.
+    if data.startswith(b"\xef\xbb\xbf"):
+        data = data[3:]
+    return data.decode("utf-8")
+
+
 def _load_contract(path: Path) -> dict[str, Any]:
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(_read_text_strip_utf8_bom(path))
     except FileNotFoundError:
         _fail(f"Missing contract file: {path.as_posix()}")
     except json.JSONDecodeError as e:
@@ -193,4 +201,3 @@ if __name__ == "__main__":
     except GenerationError as e:
         print(f"error: {e}", file=sys.stderr)
         raise SystemExit(2)
-

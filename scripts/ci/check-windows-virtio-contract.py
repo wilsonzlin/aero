@@ -45,6 +45,14 @@ PCI_HWID_RE = re.compile(
 )
 
 
+def _read_text_strip_utf8_bom(path: Path) -> str:
+    data = path.read_bytes()
+    # Be tolerant of UTF-8 BOMs produced by some editors/tools.
+    if data.startswith(b"\xef\xbb\xbf"):
+        data = data[3:]
+    return data.decode("utf-8")
+
+
 def _require_dict(value: Any, ctx: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError(f"Expected object for {ctx}, got {type(value).__name__}")
@@ -828,7 +836,7 @@ class ContractDevice:
 
 
 def _load_contract(contract_path: Path) -> dict[str, ContractDevice]:
-    data = json.loads(contract_path.read_text(encoding="utf-8"))
+    data = json.loads(_read_text_strip_utf8_bom(contract_path))
     root = _require_dict(data, ctx=contract_path.as_posix())
     devices_value = _require_list(root.get("devices"), ctx=f"{contract_path.as_posix()}: devices")
 

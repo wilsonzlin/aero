@@ -61,9 +61,17 @@ def _cmd_quote(value: str) -> str:
     return f'"{value}"'
 
 
+def _read_text_strip_utf8_bom(path: Path) -> str:
+    data = path.read_bytes()
+    # Be tolerant of UTF-8 BOMs produced by some editors/tools.
+    if data.startswith(b"\xef\xbb\xbf"):
+        data = data[3:]
+    return data.decode("utf-8")
+
+
 def _load_contract(contract_path: Path) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
     try:
-        data = json.loads(contract_path.read_text(encoding="utf-8"))
+        data = json.loads(_read_text_strip_utf8_bom(contract_path))
     except FileNotFoundError:
         _fail(f"Missing contract file: {contract_path.as_posix()}")
     except json.JSONDecodeError as e:
