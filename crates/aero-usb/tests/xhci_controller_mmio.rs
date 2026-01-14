@@ -178,6 +178,29 @@ fn xhci_controller_dnctrl_is_writable_and_snapshots() {
 }
 
 #[test]
+fn xhci_controller_config_and_dnctrl_roundtrip_and_reset() {
+    let mut ctrl = XhciController::new();
+    let mut mem = PanicMem;
+
+    assert_eq!(ctrl.mmio_read(&mut mem, regs::REG_CONFIG, 4), 0);
+    assert_eq!(ctrl.mmio_read(&mut mem, regs::REG_DNCTRL, 4), 0);
+
+    ctrl.mmio_write(&mut mem, regs::REG_CONFIG, 4, 0xa5a5);
+    ctrl.mmio_write(&mut mem, regs::REG_DNCTRL, 4, 0x1234_5678);
+
+    // CONFIG has reserved bits and clamps MaxSlotsEn to HCSPARAMS1.MaxSlots.
+    let expected_config =
+        ((0xa5a5u32 & 0x3ff) & !0xff) | u32::from(regs::MAX_SLOTS);
+    assert_eq!(ctrl.mmio_read(&mut mem, regs::REG_CONFIG, 4), expected_config);
+    assert_eq!(ctrl.mmio_read(&mut mem, regs::REG_DNCTRL, 4), 0x1234_5678);
+
+    // Host controller reset should clear operational register state.
+    ctrl.mmio_write(&mut mem, regs::REG_USBCMD, 4, regs::USBCMD_HCRST);
+    assert_eq!(ctrl.mmio_read(&mut mem, regs::REG_CONFIG, 4), 0);
+    assert_eq!(ctrl.mmio_read(&mut mem, regs::REG_DNCTRL, 4), 0);
+}
+
+#[test]
 fn xhci_mfindex_advances_on_tick_1ms_and_wraps() {
     let mut ctrl = XhciController::new();
     let mut mem = PanicMem;
@@ -337,6 +360,9 @@ fn xhci_controller_snapshot_roundtrip_preserves_regs() {
     ctrl.mmio_write(&mut mem, regs::REG_CRCR_LO, 4, 0x1234);
     ctrl.mmio_write(&mut mem, regs::REG_CRCR_HI, 4, 0);
     ctrl.mmio_write(&mut mem, regs::REG_USBCMD, 4, regs::USBCMD_RUN);
+    ctrl.mmio_write(&mut mem, regs::REG_DNCTRL, 4, 0x1122_3344);
+    ctrl.mmio_write(&mut mem, regs::REG_CONFIG, 4, 0xa5a5);
+    ctrl.tick_1ms_no_dma();
 
     let bytes = ctrl.save_state();
 
@@ -352,6 +378,17 @@ fn xhci_controller_snapshot_roundtrip_preserves_regs() {
         restored.mmio_read(&mut mem, regs::REG_CRCR_LO, 4),
         (0x1234 & !0x3f) | (0x1234 & 0x0f)
     );
+    assert_eq!(
+        restored.mmio_read(&mut mem, regs::REG_DNCTRL, 4),
+        0x1122_3344
+    );
+    let expected_config =
+        ((0xa5a5u32 & 0x3ff) & !0xff) | u32::from(regs::MAX_SLOTS);
+    assert_eq!(
+        restored.mmio_read(&mut mem, regs::REG_CONFIG, 4),
+        expected_config
+    );
+    assert_eq!(restored.mmio_read(&mut mem, regs::REG_MFINDEX, 4) & 0x3fff, 8);
     assert!(restored.irq_level());
 }
 

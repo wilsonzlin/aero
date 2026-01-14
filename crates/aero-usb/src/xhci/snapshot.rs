@@ -41,6 +41,8 @@ const TAG_COMMAND_RING: u16 = 21;
 const TAG_ACTIVE_ENDPOINTS: u16 = 22;
 const TAG_EP0_CONTROL_TD: u16 = 23;
 const TAG_CMD_KICK: u16 = 24;
+
+// New in snapshot v0.6.
 const TAG_DNCTRL: u16 = 25;
 const TAG_EP0_CONTROL_TD_FULL: u16 = 26;
 
