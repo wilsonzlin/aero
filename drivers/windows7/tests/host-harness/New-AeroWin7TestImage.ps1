@@ -190,7 +190,14 @@ param(
   # When this flag is NOT set, the generated guest provisioning script leaves CompatIdName unchanged (strict mode).
   [Parameter(Mandatory = $false)]
   [Alias("VirtioInputCompatIdName", "EnableVirtioInputCompat")]
-  [switch]$EnableVirtioInputCompatIdName
+  [switch]$EnableVirtioInputCompatIdName,
+
+  # If set, enable the guest selftest's virtio-net link flap regression test
+  # (adds `--test-net-link-flap` to the scheduled task).
+  #
+  # This is required when running the host harness with `-WithNetLinkFlap` / `--with-net-link-flap`.
+  [Parameter(Mandatory = $false)]
+  [switch]$TestNetLinkFlap
 )
 
 Set-StrictMode -Version Latest
@@ -556,6 +563,11 @@ if ($TestBlkReset) {
   $testBlkResetArg = " --test-blk-reset"
 }
 
+$testNetLinkFlapArg = ""
+if ($TestNetLinkFlap) {
+  $testNetLinkFlapArg = " --test-net-link-flap"
+}
+
 $enableTestSigningCmd = ""
 if ($EnableTestSigning) {
   $enableTestSigningCmd = @"
@@ -618,7 +630,7 @@ $enableTestSigningCmd
 
 REM Configure auto-run on boot (runs as SYSTEM).
 schtasks /Create /F /TN "AeroVirtioSelftest" /SC ONSTART /RU SYSTEM ^
-  /TR "\"C:\AeroTests\aero-virtio-selftest.exe\" --http-url \"$HttpUrl\" --dns-host \"$DnsHost\"$udpArg$blkArg$expectBlkMsiArg$testBlkResizeArg$testBlkResetArg$testInputEventsArg$testInputEventsExtendedArg$testInputMediaKeysArg$testInputTabletEventsArg$requireSndArg$disableSndArg$disableSndCaptureArg$testSndCaptureArg$requireSndCaptureArg$requireNonSilenceArg$testSndBufferLimitsArg$allowVirtioSndTransitionalArg" >> "%LOG%" 2>&1
+  /TR "\"C:\AeroTests\aero-virtio-selftest.exe\" --http-url \"$HttpUrl\" --dns-host \"$DnsHost\"$udpArg$blkArg$expectBlkMsiArg$testBlkResizeArg$testBlkResetArg$testInputEventsArg$testInputEventsExtendedArg$testInputMediaKeysArg$testInputTabletEventsArg$testNetLinkFlapArg$requireSndArg$disableSndArg$disableSndCaptureArg$testSndCaptureArg$requireSndCaptureArg$requireNonSilenceArg$testSndBufferLimitsArg$allowVirtioSndTransitionalArg" >> "%LOG%" 2>&1
 
 echo [AERO] provision done >> "%LOG%"
 $autoRebootCmd
@@ -693,6 +705,9 @@ After reboot, the host harness can boot the VM and parse PASS/FAIL from COM1 ser
       `--with-input-tablet-events` / `--with-tablet-events`), generate this media with `-TestInputTabletEvents` (alias: `-TestTabletEvents`)
       (adds `--test-input-tablet-events` (alias: `--test-tablet-events`) to the scheduled task).
 $readmeVirtioInputCompatNotes
+  - The virtio-net link flap regression test is disabled by default.
+    - To enable it (required when running the host harness with `-WithNetLinkFlap` / `--with-net-link-flap`),
+      generate this media with `-TestNetLinkFlap` (adds `--test-net-link-flap` to the scheduled task).
   - By default, virtio-snd is optional (SKIP if missing). To require it, generate this media with `-RequireSnd` (adds `--require-snd`).
     - To skip the virtio-snd test entirely, generate this media with `-DisableSnd`.
       Note: if you run the host harness with `-WithVirtioSnd` / `--with-virtio-snd`, it expects virtio-snd to PASS (not SKIP).

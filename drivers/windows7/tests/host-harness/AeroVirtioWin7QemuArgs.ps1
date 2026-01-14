@@ -157,6 +157,10 @@ function New-AeroWin7VirtioNetDeviceArg {
     [Parameter(Mandatory = $false)]
     [string]$NetdevId = "net0",
 
+    # Stable QOM `id=` for the virtio-net device (used by host-side QMP `set_link`).
+    [Parameter(Mandatory = $false)]
+    [string]$QomId = "aero_virtio_net0",
+
     # Optional MSI-X vector count (`vectors=` device property).
     [Parameter(Mandatory = $false)]
     [int]$MsixVectors = 0,
@@ -166,7 +170,11 @@ function New-AeroWin7VirtioNetDeviceArg {
     [switch]$DisableMsix
   )
 
-  $arg = "virtio-net-pci,netdev=$NetdevId,disable-legacy=on,x-pci-revision=0x01"
+  if ([string]::IsNullOrEmpty($QomId)) {
+    $arg = "virtio-net-pci,netdev=$NetdevId,disable-legacy=on,x-pci-revision=0x01"
+  } else {
+    $arg = "virtio-net-pci,id=$QomId,netdev=$NetdevId,disable-legacy=on,x-pci-revision=0x01"
+  }
   if ($DisableMsix) {
     $arg += ",vectors=0"
   } elseif ($MsixVectors -gt 0) {

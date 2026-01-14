@@ -79,6 +79,12 @@ do not affect PASS/FAIL):
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_UDP_DNS|PASS/FAIL/SKIP|server=...|query=...|sent=...|recv=...|rcode=...|reason=...`
   - informational only; does not affect overall PASS/FAIL.
 
+It may also optionally flap the virtio-net link state via QMP `set_link` when `--with-net-link-flap` is enabled,
+coordinated by a guest-side READY marker:
+
+- `AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|READY` (guest)
+- `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_LINK_FLAP|PASS/FAIL|name=...|reason=...` (host)
+
 It may also mirror guest-side IRQ diagnostics (when present) into per-device host markers:
 
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_IRQ|PASS/FAIL/INFO|irq_mode=...|irq_message_count=...|msix_config_vector=...|msix_queue_vector=...`
@@ -757,6 +763,9 @@ _VIRTIO_INPUT_QMP_KEYBOARD_ID = "aero_virtio_kbd0"
 _VIRTIO_INPUT_QMP_MOUSE_ID = "aero_virtio_mouse0"
 _VIRTIO_INPUT_QMP_TABLET_ID = "aero_virtio_tablet0"
 
+# Stable QOM `id=` for the virtio-net device so host-side QMP `set_link` can target it deterministically.
+_VIRTIO_NET_QMP_ID = "aero_virtio_net0"
+
 
 def _qmp_read_response(sock: socket.socket, *, timeout_seconds: float = 2.0) -> dict[str, object]:
     """
@@ -1303,6 +1312,14 @@ def _qmp_human_monitor_command(*, command_line: str) -> dict[str, object]:
 
     return {"execute": "human-monitor-command", "arguments": {"command-line": command_line}}
 
+def _qmp_set_link_command(name: str, *, up: bool) -> dict[str, object]:
+    """
+    Build a QMP `set_link` command.
+
+    This helper exists primarily so host-harness unit tests can sanity-check command structure.
+    """
+    return {"execute": "set_link", "arguments": {"name": name, "up": bool(up)}}
+
 
 def _qmp_deterministic_keyboard_events(*, qcode: str) -> list[dict[str, object]]:
     # Press + release a single key via qcode (stable across host layouts).
@@ -1718,6 +1735,16 @@ def _try_qmp_virtio_blk_resize(endpoint: _QmpEndpoint, *, drive_id: str, new_byt
                 ) from e_legacy
 
 
+def _try_qmp_net_link_flap(endpoint: _QmpEndpoint, *, name: str, down_delay_seconds: float = 2.0) -> None:
+    """
+    Flap a virtio-net link down/up via QMP `set_link`.
+    """
+    with _qmp_connect(endpoint, timeout_seconds=5.0) as s:
+        _qmp_send_command(s, _qmp_set_link_command(name, up=False))
+        time.sleep(float(down_delay_seconds))
+        _qmp_send_command(s, _qmp_set_link_command(name, up=True))
+
+
 def _find_free_tcp_port() -> Optional[int]:
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -2009,6 +2036,17 @@ def _virtio_blk_reset_missing_failure_message() -> str:
         "FAIL: MISSING_VIRTIO_BLK_RESET: did not observe virtio-blk-reset PASS marker while --with-blk-reset was enabled "
         "(guest selftest too old or missing --test-blk-reset)"
     )
+
+def _virtio_net_link_flap_skip_failure_message(tail: bytes) -> str:
+    # The guest emits:
+    #   AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|SKIP|flag_not_set
+    # when the test is not enabled. When the host harness requires it, surface a clear failure token.
+    if b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|SKIP|flag_not_set" in tail:
+        return (
+            "FAIL: VIRTIO_NET_LINK_FLAP_SKIPPED: virtio-net-link-flap test was skipped (flag_not_set) but "
+            "--with-net-link-flap was enabled (provision the guest with --test-net-link-flap)"
+        )
+    return "FAIL: VIRTIO_NET_LINK_FLAP_SKIPPED: virtio-net-link-flap test was skipped but --with-net-link-flap was enabled"
 
 
 @lru_cache(maxsize=None)
@@ -2568,6 +2606,19 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--with-net-link-flap",
+        "--with-virtio-net-link-flap",
+        "--require-virtio-net-link-flap",
+        dest="with_net_link_flap",
+        action="store_true",
+        help=(
+            "After the guest emits AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|READY, "
+            "toggle virtio-net link down/up via QMP set_link and require the guest virtio-net-link-flap "
+            "selftest marker to PASS. This requires a guest image provisioned with --test-net-link-flap "
+            "(or env var)."
+        ),
+    )
+    parser.add_argument(
         "--with-blk-resize",
         "--with-virtio-blk-resize",
         "--require-virtio-blk-resize",
@@ -2795,6 +2846,7 @@ def main() -> int:
     need_input_tablet_events = bool(getattr(args, "with_input_tablet_events", False))
     attach_virtio_tablet = bool(args.with_virtio_tablet or need_input_tablet_events)
     need_blk_resize = bool(getattr(args, "with_blk_resize", False))
+    need_net_link_flap = bool(getattr(args, "with_net_link_flap", False))
     need_msix_check = bool(
         args.require_virtio_net_msix or args.require_virtio_blk_msix or args.require_virtio_snd_msix
     )
@@ -3116,6 +3168,7 @@ def main() -> int:
     # - --with-input-wheel
     # - --with-input-events-extended / --with-input-events-extra
     # - --with-input-tablet-events / --with-tablet-events
+    # - --with-net-link-flap
     # - --with-blk-resize
     # - --require-virtio-*-msix
     # - --qemu-preflight-pci / --qmp-preflight-pci
@@ -3124,6 +3177,7 @@ def main() -> int:
         or need_input_events
         or need_input_media_keys
         or need_input_tablet_events
+        or need_net_link_flap
         or need_blk_resize
         or need_msix_check
         or bool(args.qemu_preflight_pci)
@@ -3162,6 +3216,7 @@ def main() -> int:
                     need_input_events
                     or need_input_media_keys
                     or need_input_tablet_events
+                    or need_net_link_flap
                     or need_blk_resize
                     or need_msix_check
                     or bool(args.qemu_preflight_pci)
@@ -3179,6 +3234,8 @@ def main() -> int:
                         req_flags.append("--with-input-events-extended/--with-input-events-extra")
                     if need_input_tablet_events:
                         req_flags.append("--with-input-tablet-events/--with-tablet-events")
+                    if need_net_link_flap:
+                        req_flags.append("--with-net-link-flap")
                     if need_blk_resize:
                         req_flags.append("--with-blk-resize")
                     if need_msix_check:
@@ -3201,6 +3258,7 @@ def main() -> int:
         need_input_events
         or need_input_media_keys
         or need_input_tablet_events
+        or need_net_link_flap
         or need_blk_resize
         or need_msix_check
         or bool(args.qemu_preflight_pci)
@@ -3216,6 +3274,8 @@ def main() -> int:
             req_flags.append("--with-input-events-extended/--with-input-events-extra")
         if need_input_tablet_events:
             req_flags.append("--with-input-tablet-events/--with-tablet-events")
+        if need_net_link_flap:
+            req_flags.append("--with-net-link-flap")
         if need_blk_resize:
             req_flags.append("--with-blk-resize")
         if need_msix_check:
@@ -3490,7 +3550,7 @@ def main() -> int:
                     _qemu_device_arg_maybe_add_vectors(
                         args.qemu_system,
                         "virtio-net-pci",
-                        "virtio-net-pci,netdev=net0",
+                        f"virtio-net-pci,id={_VIRTIO_NET_QMP_ID},netdev=net0",
                         virtio_net_vectors,
                         flag_name=virtio_net_vectors_flag,
                     ),
@@ -3514,7 +3574,7 @@ def main() -> int:
             virtio_net = _qemu_device_arg_maybe_add_vectors(
                 args.qemu_system,
                 "virtio-net-pci",
-                f"virtio-net-pci,netdev=net0,disable-legacy=on,x-pci-revision={aero_pci_rev}",
+                f"virtio-net-pci,id={_VIRTIO_NET_QMP_ID},netdev=net0,disable-legacy=on,x-pci-revision={aero_pci_rev}",
                 virtio_net_vectors,
                 flag_name=virtio_net_vectors_flag,
             )
@@ -3734,6 +3794,11 @@ def main() -> int:
             saw_virtio_net_udp_pass = False
             saw_virtio_net_udp_fail = False
             saw_virtio_net_udp_skip = False
+            saw_virtio_net_link_flap_ready = False
+            saw_virtio_net_link_flap_pass = False
+            saw_virtio_net_link_flap_fail = False
+            saw_virtio_net_link_flap_skip = False
+            did_net_link_flap = False
             require_per_test_markers = not args.virtio_transitional
             deadline = time.monotonic() + args.timeout_seconds
 
@@ -4184,6 +4249,44 @@ def main() -> int:
                         and b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-udp|SKIP" in tail
                     ):
                         saw_virtio_net_udp_skip = True
+                    if (
+                        not saw_virtio_net_link_flap_ready
+                        and b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|READY" in tail
+                    ):
+                        saw_virtio_net_link_flap_ready = True
+                    if (
+                        not saw_virtio_net_link_flap_pass
+                        and b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|PASS" in tail
+                    ):
+                        saw_virtio_net_link_flap_pass = True
+                    if (
+                        not saw_virtio_net_link_flap_fail
+                        and b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|FAIL" in tail
+                    ):
+                        saw_virtio_net_link_flap_fail = True
+                    if (
+                        not saw_virtio_net_link_flap_skip
+                        and b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|SKIP" in tail
+                    ):
+                        saw_virtio_net_link_flap_skip = True
+
+                    # Fail fast when the guest reports SKIP/FAIL for virtio-net-link-flap. This saves
+                    # CI time when the guest image was provisioned without --test-net-link-flap.
+                    if need_net_link_flap:
+                        if saw_virtio_net_link_flap_skip:
+                            print(_virtio_net_link_flap_skip_failure_message(tail), file=sys.stderr)
+                            _print_tail(serial_log)
+                            result_code = 1
+                            break
+                        if saw_virtio_net_link_flap_fail:
+                            print(
+                                "FAIL: VIRTIO_NET_LINK_FLAP_FAILED: virtio-net-link-flap test reported FAIL while "
+                                "--with-net-link-flap was enabled",
+                                file=sys.stderr,
+                            )
+                            _print_tail(serial_log)
+                            result_code = 1
+                            break
 
                     # If requested, verify MSI-X enablement once we're confident the relevant drivers
                     # have loaded (i.e. after the corresponding guest test marker has appeared).
@@ -4623,7 +4726,6 @@ def main() -> int:
                                     _print_tail(serial_log)
                                     result_code = 1
                                     break
-
                             if need_virtio_net_msix:
                                 parsed = _parse_virtio_net_msix_marker(tail)
                                 if parsed is None:
@@ -4642,6 +4744,29 @@ def main() -> int:
                                         f"FAIL: VIRTIO_NET_MSIX_REQUIRED: virtio-net-msix marker did not report PASS|mode=msix (status={msix_status} mode={msix_mode or 'unknown'})",
                                         file=sys.stderr,
                                     )
+                                    _print_tail(serial_log)
+                                    result_code = 1
+                                    break
+
+                            if need_net_link_flap:
+                                if saw_virtio_net_link_flap_fail:
+                                    print(
+                                        "FAIL: VIRTIO_NET_LINK_FLAP_FAILED: selftest RESULT=PASS but virtio-net-link-flap test reported FAIL "
+                                        "while --with-net-link-flap was enabled",
+                                        file=sys.stderr,
+                                    )
+                                    _print_tail(serial_log)
+                                    result_code = 1
+                                    break
+                                if not saw_virtio_net_link_flap_pass:
+                                    if saw_virtio_net_link_flap_skip:
+                                        msg = _virtio_net_link_flap_skip_failure_message(tail)
+                                    else:
+                                        msg = (
+                                            "FAIL: MISSING_VIRTIO_NET_LINK_FLAP: selftest RESULT=PASS but did not emit virtio-net-link-flap PASS marker "
+                                            "while --with-net-link-flap was enabled"
+                                        )
+                                    print(msg, file=sys.stderr)
                                     _print_tail(serial_log)
                                     result_code = 1
                                     break
@@ -4803,6 +4928,27 @@ def main() -> int:
                                 else:
                                     print(
                                         "FAIL: MISSING_VIRTIO_BLK_RESIZE: did not observe virtio-blk-resize PASS marker while --with-blk-resize was enabled",
+                                        file=sys.stderr,
+                                    )
+                                _print_tail(serial_log)
+                                result_code = 1
+                                break
+                        if need_net_link_flap:
+                            if saw_virtio_net_link_flap_fail:
+                                print(
+                                    "FAIL: VIRTIO_NET_LINK_FLAP_FAILED: virtio-net-link-flap test reported FAIL while --with-net-link-flap was enabled",
+                                    file=sys.stderr,
+                                )
+                                _print_tail(serial_log)
+                                result_code = 1
+                                break
+                            if not saw_virtio_net_link_flap_pass:
+                                if saw_virtio_net_link_flap_skip:
+                                    print(_virtio_net_link_flap_skip_failure_message(tail), file=sys.stderr)
+                                else:
+                                    print(
+                                        "FAIL: MISSING_VIRTIO_NET_LINK_FLAP: did not observe virtio-net-link-flap PASS marker while "
+                                        "--with-net-link-flap was enabled",
                                         file=sys.stderr,
                                     )
                                 _print_tail(serial_log)
@@ -5239,6 +5385,48 @@ def main() -> int:
                         result_code = 1
                         break
 
+                # When requested, flap the virtio-net link after the guest has emitted the READY marker.
+                # This is a one-shot deterministic sequence (down for 2s, then up).
+                if (
+                    need_net_link_flap
+                    and saw_virtio_net_link_flap_ready
+                    and not did_net_link_flap
+                    and not saw_virtio_net_link_flap_pass
+                    and not saw_virtio_net_link_flap_fail
+                    and not saw_virtio_net_link_flap_skip
+                ):
+                    if qmp_endpoint is None:
+                        print(
+                            f"AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_LINK_FLAP|FAIL|name={_VIRTIO_NET_QMP_ID}|reason=no_qmp",
+                            file=sys.stderr,
+                        )
+                        print(
+                            "FAIL: QMP_NET_LINK_FLAP_FAILED: --with-net-link-flap requires QMP, but QMP was not enabled",
+                            file=sys.stderr,
+                        )
+                        _print_tail(serial_log)
+                        result_code = 1
+                        break
+                    did_net_link_flap = True
+                    try:
+                        _try_qmp_net_link_flap(qmp_endpoint, name=_VIRTIO_NET_QMP_ID, down_delay_seconds=2.0)
+                        print(
+                            f"AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_LINK_FLAP|PASS|name={_VIRTIO_NET_QMP_ID}|down_delay_sec=2"
+                        )
+                    except Exception as e:
+                        reason = _sanitize_marker_value(str(e) or type(e).__name__)
+                        print(
+                            f"AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_LINK_FLAP|FAIL|name={_VIRTIO_NET_QMP_ID}|reason={reason}",
+                            file=sys.stderr,
+                        )
+                        print(
+                            f"FAIL: QMP_NET_LINK_FLAP_FAILED: failed to flap virtio-net link via QMP: {e}",
+                            file=sys.stderr,
+                        )
+                        _print_tail(serial_log)
+                        result_code = 1
+                        break
+
                 if proc.poll() is not None:
                     # One last read after exit in case QEMU shut down immediately after writing the marker.
                     chunk2, pos = _read_new_bytes(serial_log, pos)
@@ -5517,6 +5705,26 @@ def main() -> int:
                             and b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-udp|SKIP" in tail
                         ):
                             saw_virtio_net_udp_skip = True
+                        if (
+                            not saw_virtio_net_link_flap_ready
+                            and b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|READY" in tail
+                        ):
+                            saw_virtio_net_link_flap_ready = True
+                        if (
+                            not saw_virtio_net_link_flap_pass
+                            and b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|PASS" in tail
+                        ):
+                            saw_virtio_net_link_flap_pass = True
+                        if (
+                            not saw_virtio_net_link_flap_fail
+                            and b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|FAIL" in tail
+                        ):
+                            saw_virtio_net_link_flap_fail = True
+                        if (
+                            not saw_virtio_net_link_flap_skip
+                            and b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|SKIP" in tail
+                        ):
+                            saw_virtio_net_link_flap_skip = True
                         if b"AERO_VIRTIO_SELFTEST|RESULT|PASS" in tail:
                             if args.require_expect_blk_msi and expect_blk_msi_config != "1":
                                 print(
@@ -5779,6 +5987,28 @@ def main() -> int:
                                         _print_tail(serial_log)
                                         result_code = 1
                                         break
+                                if need_net_link_flap:
+                                    if saw_virtio_net_link_flap_fail:
+                                        print(
+                                            "FAIL: VIRTIO_NET_LINK_FLAP_FAILED: selftest RESULT=PASS but virtio-net-link-flap test reported FAIL "
+                                            "while --with-net-link-flap was enabled",
+                                            file=sys.stderr,
+                                        )
+                                        _print_tail(serial_log)
+                                        result_code = 1
+                                        break
+                                    if not saw_virtio_net_link_flap_pass:
+                                        if saw_virtio_net_link_flap_skip:
+                                            msg = _virtio_net_link_flap_skip_failure_message(tail)
+                                        else:
+                                            msg = (
+                                                "FAIL: MISSING_VIRTIO_NET_LINK_FLAP: selftest RESULT=PASS but did not emit virtio-net-link-flap PASS marker "
+                                                "while --with-net-link-flap was enabled"
+                                            )
+                                        print(msg, file=sys.stderr)
+                                        _print_tail(serial_log)
+                                        result_code = 1
+                                        break
                             elif args.enable_virtio_snd:
                                 if saw_virtio_snd_fail:
                                     print(
@@ -5934,6 +6164,27 @@ def main() -> int:
                                     else:
                                         print(
                                             "FAIL: MISSING_VIRTIO_BLK_RESIZE: did not observe virtio-blk-resize PASS marker while --with-blk-resize was enabled",
+                                            file=sys.stderr,
+                                        )
+                                    _print_tail(serial_log)
+                                    result_code = 1
+                                    break
+                            if need_net_link_flap:
+                                if saw_virtio_net_link_flap_fail:
+                                    print(
+                                        "FAIL: VIRTIO_NET_LINK_FLAP_FAILED: virtio-net-link-flap test reported FAIL while --with-net-link-flap was enabled",
+                                        file=sys.stderr,
+                                    )
+                                    _print_tail(serial_log)
+                                    result_code = 1
+                                    break
+                                if not saw_virtio_net_link_flap_pass:
+                                    if saw_virtio_net_link_flap_skip:
+                                        print(_virtio_net_link_flap_skip_failure_message(tail), file=sys.stderr)
+                                    else:
+                                        print(
+                                            "FAIL: MISSING_VIRTIO_NET_LINK_FLAP: did not observe virtio-net-link-flap PASS marker while "
+                                            "--with-net-link-flap was enabled",
                                             file=sys.stderr,
                                         )
                                     _print_tail(serial_log)

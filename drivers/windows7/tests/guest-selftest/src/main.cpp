@@ -121,6 +121,9 @@ struct Options {
   // Without this flag the selftest still emits an informational virtio-input-msix marker.
   bool require_input_msix = false;
 
+  // If set, run a virtio-net link flap regression test coordinated by the host harness via QMP `set_link`.
+  bool test_net_link_flap = false;
+
   DWORD net_timeout_sec = 120;
   DWORD io_file_size_mib = 32;
   DWORD io_chunk_kib = 1024;
@@ -6645,10 +6648,96 @@ struct VirtioNetTestResult {
   // Best-effort diagnostic: number of allocated message-signaled interrupt
   // vectors (0 means INTx; -1 means query failed).
   int msi_messages = -1;
+  bool link_flap_ok = true;
 };
+
+struct VirtioNetLinkFlapTestResult {
+  bool ok = false;
+  std::string reason;
+  double down_sec = 0.0;
+  double up_sec = 0.0;
+  std::optional<IN_ADDR> ip_after;
+};
+
+static VirtioNetLinkFlapTestResult VirtioNetLinkFlapTest(Logger& log, const Options& opt,
+                                                         const VirtioNetAdapter& adapter) {
+  VirtioNetLinkFlapTestResult out{};
+  if (adapter.instance_id.empty()) {
+    out.reason = "missing_adapter_guid";
+    return out;
+  }
+
+  log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|READY");
+
+  // Wait for link to go down (host harness toggles QMP set_link down/up).
+  const DWORD down_start = GetTickCount();
+  const DWORD down_deadline = down_start + 30000;
+  bool saw_down = false;
+  while (static_cast<int32_t>(GetTickCount() - down_deadline) < 0) {
+    bool up = false;
+    std::wstring friendly;
+    (void)FindIpv4AddressForAdapterGuid(adapter.instance_id, &up, &friendly);
+    if (!up) {
+      saw_down = true;
+      break;
+    }
+    Sleep(200);
+  }
+  out.down_sec = (GetTickCount() - down_start) / 1000.0;
+  if (!saw_down) {
+    out.reason = "timeout_waiting_link_down";
+    log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|FAIL|reason=%s", out.reason.c_str());
+    return out;
+  }
+
+  // Wait for link to come back up with a valid non-APIPA IPv4.
+  const DWORD up_start = GetTickCount();
+  const DWORD up_deadline = up_start + (opt.net_timeout_sec * 1000);
+  bool saw_up = false;
+  IN_ADDR ip_after{};
+  while (static_cast<int32_t>(GetTickCount() - up_deadline) < 0) {
+    bool up = false;
+    std::wstring friendly;
+    const auto ip = FindIpv4AddressForAdapterGuid(adapter.instance_id, &up, &friendly);
+    if (up && ip.has_value()) {
+      ip_after = *ip;
+      out.ip_after = *ip;
+      saw_up = true;
+      break;
+    }
+    Sleep(500);
+  }
+  out.up_sec = (GetTickCount() - up_start) / 1000.0;
+  if (!saw_up) {
+    out.reason = "timeout_waiting_link_up";
+    log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|FAIL|reason=%s", out.reason.c_str());
+    return out;
+  }
+
+  // Confirm datapath after recovery.
+  if (!HttpGet(log, opt.http_url)) {
+    out.reason = "http_get_failed";
+    log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|FAIL|reason=%s", out.reason.c_str());
+    return out;
+  }
+
+  const uint32_t host = ntohl(ip_after.S_un.S_addr);
+  const uint8_t a = static_cast<uint8_t>((host >> 24) & 0xFF);
+  const uint8_t b = static_cast<uint8_t>((host >> 16) & 0xFF);
+  const uint8_t c = static_cast<uint8_t>((host >> 8) & 0xFF);
+  const uint8_t d = static_cast<uint8_t>(host & 0xFF);
+
+  out.ok = true;
+  out.reason.clear();
+  log.Logf(
+      "AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|PASS|down_sec=%.2f|up_sec=%.2f|ipv4=%u.%u.%u.%u",
+      out.down_sec, out.up_sec, a, b, c, d);
+  return out;
+}
 
 static VirtioNetTestResult VirtioNetTest(Logger& log, const Options& opt) {
   VirtioNetTestResult out{};
+  out.link_flap_ok = !opt.test_net_link_flap;
   const auto adapters = DetectVirtioNetAdapters(log);
   if (adapters.empty()) {
     log.LogLine("virtio-net: no virtio net adapters detected");
@@ -6821,6 +6910,11 @@ static VirtioNetTestResult VirtioNetTest(Logger& log, const Options& opt) {
   }
 
   if (!HttpGet(log, opt.http_url)) return out;
+
+  if (opt.test_net_link_flap && chosen.has_value()) {
+    const auto flap = VirtioNetLinkFlapTest(log, opt, *chosen);
+    out.link_flap_ok = flap.ok;
+  }
 
   const std::wstring large_url = UrlAppendSuffix(opt.http_url, L"-large");
   out.large_ok = HttpGetLargeDeterministic(log, large_url, &out.large_bytes, &out.large_hash, &out.large_mbps);
@@ -9686,6 +9780,8 @@ static void PrintUsage() {
       "                           (or set env var AERO_VIRTIO_SELFTEST_TEST_INPUT_TABLET_EVENTS=1 or AERO_VIRTIO_SELFTEST_TEST_TABLET_EVENTS=1)\n"
       "  --test-input-media-keys   Run virtio-input Consumer Control (media keys) HID input report test (optional)\n"
       "                           (or set env var AERO_VIRTIO_SELFTEST_TEST_INPUT_MEDIA_KEYS=1)\n"
+      "  --test-net-link-flap      Run virtio-net link flap regression test (optional)\n"
+      "                           (or set env var AERO_VIRTIO_SELFTEST_TEST_NET_LINK_FLAP=1)\n"
       "  --require-snd-capture     Fail if virtio-snd capture is missing (default: SKIP)\n"
       "  --test-snd-capture        Run virtio-snd capture smoke test if available (default: auto when virtio-snd is present)\n"
       "  --test-snd-buffer-limits  Run virtio-snd large WASAPI buffer/period stress test (optional)\n"
@@ -9804,6 +9900,8 @@ int wmain(int argc, wchar_t** argv) {
       opt.test_input_media_keys = true;
     } else if (arg == L"--require-input-msix") {
       opt.require_input_msix = true;
+    } else if (arg == L"--test-net-link-flap") {
+      opt.test_net_link_flap = true;
     } else if (arg == L"--require-snd-capture") {
       opt.require_snd_capture = true;
     } else if (arg == L"--test-snd-capture") {
@@ -9887,6 +9985,9 @@ int wmain(int argc, wchar_t** argv) {
   if (!opt.test_input_media_keys && EnvVarTruthy(L"AERO_VIRTIO_SELFTEST_TEST_INPUT_MEDIA_KEYS")) {
     opt.test_input_media_keys = true;
   }
+  if (!opt.test_net_link_flap && EnvVarTruthy(L"AERO_VIRTIO_SELFTEST_TEST_NET_LINK_FLAP")) {
+    opt.test_net_link_flap = true;
+  }
 
   if (!opt.expect_blk_msi && EnvVarTruthy(L"AERO_VIRTIO_SELFTEST_EXPECT_BLK_MSI")) {
     opt.expect_blk_msi = true;
@@ -9919,11 +10020,11 @@ int wmain(int argc, wchar_t** argv) {
 
   log.LogLine("AERO_VIRTIO_SELFTEST|START|version=1");
   log.Logf(
-      "AERO_VIRTIO_SELFTEST|CONFIG|http_url=%s|http_url_large=%s|udp_port=%lu|dns_host=%s|blk_root=%s|expect_blk_msi=%d",
+      "AERO_VIRTIO_SELFTEST|CONFIG|http_url=%s|http_url_large=%s|udp_port=%lu|dns_host=%s|blk_root=%s|expect_blk_msi=%d|test_net_link_flap=%d",
       WideToUtf8(opt.http_url).c_str(),
-      WideToUtf8(UrlAppendSuffix(opt.http_url, L"-large")).c_str(),
-      static_cast<unsigned long>(opt.udp_port), WideToUtf8(opt.dns_host).c_str(), WideToUtf8(opt.blk_root).c_str(),
-      opt.expect_blk_msi ? 1 : 0);
+      WideToUtf8(UrlAppendSuffix(opt.http_url, L"-large")).c_str(), static_cast<unsigned long>(opt.udp_port),
+      WideToUtf8(opt.dns_host).c_str(), WideToUtf8(opt.blk_root).c_str(), opt.expect_blk_msi ? 1 : 0,
+      opt.test_net_link_flap ? 1 : 0);
 
   bool all_ok = true;
 
@@ -10895,6 +10996,11 @@ int wmain(int argc, wchar_t** argv) {
         net.large_mbps, net.upload_ok ? 1 : 0, static_cast<unsigned long long>(net.upload_bytes), net.upload_mbps,
         (net.msi_messages < 0) ? -1 : (net.msi_messages > 0 ? 1 : 0), net.msi_messages, net_irq_fields.c_str());
     all_ok = all_ok && net.ok;
+    if (opt.test_net_link_flap) {
+      all_ok = all_ok && net.link_flap_ok;
+    } else {
+      log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|SKIP|flag_not_set");
+    }
     WSACleanup();
   }
 

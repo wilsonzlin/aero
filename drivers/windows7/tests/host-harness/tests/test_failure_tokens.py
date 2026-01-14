@@ -129,6 +129,15 @@ class FailureTokenTests(unittest.TestCase):
         self.assertRegex(msg, _TOKEN_RE)
         self.assertTrue(msg.startswith("FAIL: MISSING_VIRTIO_BLK_RESET:"))
 
+    def test_virtio_net_link_flap_skip_tokens(self) -> None:
+        h = self.harness
+
+        msg = h._virtio_net_link_flap_skip_failure_message(
+            b"AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|SKIP|flag_not_set\n"
+        )
+        self.assertRegex(msg, _TOKEN_RE)
+        self.assertTrue(msg.startswith("FAIL: VIRTIO_NET_LINK_FLAP_SKIPPED:"))
+
 
 if __name__ == "__main__":
     unittest.main()

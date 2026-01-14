@@ -219,6 +219,17 @@ param(
   # This is optional so older guest selftest binaries (which don't emit the marker) can still run.
   [Parameter(Mandatory = $false)]
   [switch]$RequireVirtioInputMsix,
+
+  # If set, wait for the guest marker:
+  #   AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|READY
+  # then toggle virtio-net link down/up via QMP `set_link` and require the guest marker:
+  #   AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|PASS
+  #
+  # Note: The guest image must be provisioned with `--test-net-link-flap` (or env var equivalent).
+  [Parameter(Mandatory = $false)]
+  [Alias("WithVirtioNetLinkFlap", "EnableVirtioNetLinkFlap")]
+  [switch]$WithNetLinkFlap,
+
   # If set, stream newly captured COM1 serial output to stdout while waiting.
   [Parameter(Mandatory = $false)]
   [switch]$FollowSerial,
@@ -319,6 +330,8 @@ $ErrorActionPreference = "Stop"
 $script:VirtioInputKeyboardQmpId = "aero_virtio_kbd0"
 $script:VirtioInputMouseQmpId = "aero_virtio_mouse0"
 $script:VirtioInputTabletQmpId = "aero_virtio_tablet0"
+# Stable QOM `id=` for the virtio-net device so QMP `set_link` can target it deterministically.
+$script:VirtioNetQmpId = "aero_virtio_net0"
 if ($VerifyVirtioSndWav) {
   if (-not $WithVirtioSnd) {
     throw "-VerifyVirtioSndWav requires -WithVirtioSnd."
@@ -840,6 +853,10 @@ function Wait-AeroSelftestResult {
     # i.e. `AERO_VIRTIO_SELFTEST|CONFIG|...|expect_blk_msi=1`.
     [Parameter(Mandatory = $false)]
     [bool]$RequireExpectBlkMsi = $false,
+    # If true, require the optional virtio-net-link-flap marker to PASS (host will toggle link via QMP `set_link`).
+    [Parameter(Mandatory = $false)]
+    [Alias("EnableVirtioNetLinkFlap")]
+    [bool]$RequireVirtioNetLinkFlapPass = $false,
     # Best-effort QMP channel for input injection.
     [Parameter(Mandatory = $false)] [string]$QmpHost = "127.0.0.1",
     [Parameter(Mandatory = $false)] [Nullable[int]]$QmpPort = $null
@@ -917,6 +934,11 @@ function Wait-AeroSelftestResult {
   $sawVirtioNetUdpFail = $false
   $sawVirtioNetUdpSkip = $false
   $sawVirtioNetMsixModeMsix = $false
+  $sawVirtioNetLinkFlapReady = $false
+  $sawVirtioNetLinkFlapPass = $false
+  $sawVirtioNetLinkFlapFail = $false
+  $sawVirtioNetLinkFlapSkip = $false
+  $didNetLinkFlap = $false
 
   function Test-VirtioInputMsixRequirement {
     param(
@@ -1204,10 +1226,28 @@ function Wait-AeroSelftestResult {
       if (-not $sawVirtioNetMsixModeMsix -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-net-msix\|PASS\|mode=msix") {
         $sawVirtioNetMsixModeMsix = $true
       }
+      if (-not $sawVirtioNetLinkFlapReady -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-net-link-flap\|READY") {
+        $sawVirtioNetLinkFlapReady = $true
+      }
+      if (-not $sawVirtioNetLinkFlapPass -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-net-link-flap\|PASS") {
+        $sawVirtioNetLinkFlapPass = $true
+      }
+      if (-not $sawVirtioNetLinkFlapFail -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-net-link-flap\|FAIL") {
+        $sawVirtioNetLinkFlapFail = $true
+      }
+      if (-not $sawVirtioNetLinkFlapSkip -and $tail -match "AERO_VIRTIO_SELFTEST\|TEST\|virtio-net-link-flap\|SKIP") {
+        $sawVirtioNetLinkFlapSkip = $true
+      }
 
       if ($RequireVirtioSndBufferLimitsPass) {
         if ($sawVirtioSndBufferLimitsSkip) { return @{ Result = "VIRTIO_SND_BUFFER_LIMITS_SKIPPED"; Tail = $tail } }
         if ($sawVirtioSndBufferLimitsFail) { return @{ Result = "VIRTIO_SND_BUFFER_LIMITS_FAILED"; Tail = $tail } }
+      }
+
+      # If net link flap is required, fail fast when the guest reports SKIP/FAIL.
+      if ($RequireVirtioNetLinkFlapPass) {
+        if ($sawVirtioNetLinkFlapSkip) { return @{ Result = "VIRTIO_NET_LINK_FLAP_SKIPPED"; Tail = $tail } }
+        if ($sawVirtioNetLinkFlapFail) { return @{ Result = "VIRTIO_NET_LINK_FLAP_FAILED"; Tail = $tail } }
       }
 
       if ($tail -match "AERO_VIRTIO_SELFTEST\|RESULT\|PASS") {
@@ -1304,6 +1344,14 @@ function Wait-AeroSelftestResult {
 
           if ($RequireVirtioNetMsix -and (-not $sawVirtioNetMsixModeMsix)) {
             return @{ Result = "VIRTIO_NET_MSIX_REQUIRED"; Tail = $tail }
+          }
+
+          if ($RequireVirtioNetLinkFlapPass) {
+            if ($sawVirtioNetLinkFlapFail) { return @{ Result = "VIRTIO_NET_LINK_FLAP_FAILED"; Tail = $tail } }
+            if (-not $sawVirtioNetLinkFlapPass) {
+              if ($sawVirtioNetLinkFlapSkip) { return @{ Result = "VIRTIO_NET_LINK_FLAP_SKIPPED"; Tail = $tail } }
+              return @{ Result = "MISSING_VIRTIO_NET_LINK_FLAP"; Tail = $tail }
+            }
           }
 
           if ($RequireVirtioInputEventsPass) {
@@ -1436,6 +1484,13 @@ function Wait-AeroSelftestResult {
                 if ($RequireVirtioNetMsix -and (-not $sawVirtioNetMsixModeMsix)) {
                   return @{ Result = "VIRTIO_NET_MSIX_REQUIRED"; Tail = $tail }
                 }
+                if ($RequireVirtioNetLinkFlapPass) {
+                  if ($sawVirtioNetLinkFlapFail) { return @{ Result = "VIRTIO_NET_LINK_FLAP_FAILED"; Tail = $tail } }
+                  if (-not $sawVirtioNetLinkFlapPass) {
+                    if ($sawVirtioNetLinkFlapSkip) { return @{ Result = "VIRTIO_NET_LINK_FLAP_SKIPPED"; Tail = $tail } }
+                    return @{ Result = "MISSING_VIRTIO_NET_LINK_FLAP"; Tail = $tail }
+                  }
+                }
                 $msixCheck = Test-VirtioInputMsixRequirement -Tail $tail
                 if ($null -ne $msixCheck) { return $msixCheck }
                 return @{ Result = "PASS"; Tail = $tail }
@@ -1501,6 +1556,13 @@ function Wait-AeroSelftestResult {
           if (-not $sawVirtioInputWheelPass) {
             if ($sawVirtioInputWheelSkip) { return @{ Result = "VIRTIO_INPUT_WHEEL_SKIPPED"; Tail = $tail } }
             return @{ Result = "MISSING_VIRTIO_INPUT_WHEEL"; Tail = $tail }
+          }
+        }
+        if ($RequireVirtioNetLinkFlapPass) {
+          if ($sawVirtioNetLinkFlapFail) { return @{ Result = "VIRTIO_NET_LINK_FLAP_FAILED"; Tail = $tail } }
+          if (-not $sawVirtioNetLinkFlapPass) {
+            if ($sawVirtioNetLinkFlapSkip) { return @{ Result = "VIRTIO_NET_LINK_FLAP_SKIPPED"; Tail = $tail } }
+            return @{ Result = "MISSING_VIRTIO_NET_LINK_FLAP"; Tail = $tail }
           }
         }
 
@@ -1604,6 +1666,17 @@ function Wait-AeroSelftestResult {
         if (-not $ok) {
           return @{ Result = "QMP_INPUT_TABLET_INJECT_FAILED"; Tail = $tail }
         }
+      }
+    }
+
+    if ($RequireVirtioNetLinkFlapPass -and $sawVirtioNetLinkFlapReady -and (-not $sawVirtioNetLinkFlapPass) -and (-not $sawVirtioNetLinkFlapFail) -and (-not $sawVirtioNetLinkFlapSkip) -and (-not $didNetLinkFlap)) {
+      if (($null -eq $QmpPort) -or ($QmpPort -le 0)) {
+        return @{ Result = "QMP_NET_LINK_FLAP_FAILED"; Tail = $tail }
+      }
+      $didNetLinkFlap = $true
+      $ok = Try-AeroQmpNetLinkFlap -Host $QmpHost -Port ([int]$QmpPort)
+      if (-not $ok) {
+        return @{ Result = "QMP_NET_LINK_FLAP_FAILED"; Tail = $tail }
       }
     }
 
@@ -4448,6 +4521,57 @@ function Try-AeroQmpInjectVirtioInputTabletEvents {
   return $false
 }
 
+function Try-AeroQmpNetLinkFlap {
+  param(
+    [Parameter(Mandatory = $true)] [string]$Host,
+    [Parameter(Mandatory = $true)] [int]$Port
+  )
+
+  $deadline = [DateTime]::UtcNow.AddSeconds(5)
+  $lastErr = ""
+  while ([DateTime]::UtcNow -lt $deadline) {
+    $client = $null
+    try {
+      $client = [System.Net.Sockets.TcpClient]::new()
+      $client.ReceiveTimeout = 2000
+      $client.SendTimeout = 2000
+      $client.Connect($Host, $Port)
+
+      $stream = $client.GetStream()
+      $reader = [System.IO.StreamReader]::new($stream, [System.Text.Encoding]::UTF8, $false, 4096, $true)
+      $writer = [System.IO.StreamWriter]::new($stream, [System.Text.Encoding]::UTF8, 4096, $true)
+      $writer.NewLine = "`n"
+      $writer.AutoFlush = $true
+
+      # Greeting.
+      $null = $reader.ReadLine()
+      $null = Invoke-AeroQmpCommand -Writer $writer -Reader $reader -Command @{ execute = "qmp_capabilities" }
+
+      $name = $script:VirtioNetQmpId
+      $null = Invoke-AeroQmpCommand -Writer $writer -Reader $reader -Command @{ execute = "set_link"; arguments = @{ name = $name; up = $false } }
+      Start-Sleep -Seconds 2
+      $null = Invoke-AeroQmpCommand -Writer $writer -Reader $reader -Command @{ execute = "set_link"; arguments = @{ name = $name; up = $true } }
+
+      Write-Host "AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_LINK_FLAP|PASS|name=$name|down_delay_sec=2"
+      return $true
+    } catch {
+      try { $lastErr = [string]$_.Exception.Message } catch { }
+      Start-Sleep -Milliseconds 100
+      continue
+    } finally {
+      if ($client) { $client.Close() }
+    }
+  }
+
+  $reason = "timeout"
+  if (-not [string]::IsNullOrEmpty($lastErr)) {
+    $reason = Sanitize-AeroMarkerValue $lastErr
+  }
+  $name = $script:VirtioNetQmpId
+  Write-Host "AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_LINK_FLAP|FAIL|name=$name|reason=$reason"
+  return $false
+}
+
 function Convert-AeroPciInt {
   param(
     [Parameter(Mandatory = $false)] $Value
@@ -5252,6 +5376,7 @@ try {
   $needInputEvents = ([bool]$WithInputEvents) -or $needInputWheel -or $needInputEventsExtended
   $needInputMediaKeys = [bool]$WithInputMediaKeys
   $needInputTabletEvents = [bool]$WithInputTabletEvents
+  $needNetLinkFlap = [bool]$WithNetLinkFlap
   $needVirtioTablet = [bool]$WithVirtioTablet -or $needInputTabletEvents
   $needBlkResize = [bool]$WithBlkResize
 
@@ -5282,7 +5407,7 @@ try {
     $virtioInputVectorsFlag = "-VirtioDisableMsix"
   }
   $needMsixCheck = [bool]$RequireVirtioNetMsix -or [bool]$RequireVirtioBlkMsix -or [bool]$RequireVirtioSndMsix
-  $needQmp = ($WithVirtioSnd -and $VirtioSndAudioBackend -eq "wav") -or $needInputEvents -or $needInputMediaKeys -or $needInputTabletEvents -or $needBlkResize -or $needMsixCheck -or [bool]$QemuPreflightPci
+  $needQmp = ($WithVirtioSnd -and $VirtioSndAudioBackend -eq "wav") -or $needInputEvents -or $needInputMediaKeys -or $needInputTabletEvents -or $needNetLinkFlap -or $needBlkResize -or $needMsixCheck -or [bool]$QemuPreflightPci
   if ($needQmp) {
     # QMP channel:
     # - Used for graceful shutdown when using the `wav` audiodev backend (so the RIFF header is finalized).
@@ -5297,8 +5422,8 @@ try {
         "-qmp", "tcp:127.0.0.1:$qmpPort,server,nowait"
       )
     } catch {
-      if ($needInputEvents -or $needInputMediaKeys -or $needInputTabletEvents -or $needBlkResize -or [bool]$QemuPreflightPci) {
-        throw "Failed to allocate QMP port required for QMP-dependent flags (-WithInputEvents/-WithVirtioInputEvents/-EnableVirtioInputEvents, -WithInputWheel/-WithVirtioInputWheel/-EnableVirtioInputWheel, -WithInputEventsExtended/-WithInputEventsExtra, -WithInputMediaKeys/-WithVirtioInputMediaKeys/-EnableVirtioInputMediaKeys, -WithInputTabletEvents/-WithTabletEvents, -WithBlkResize) or -QemuPreflightPci/-QmpPreflightPci: $_"
+      if ($needInputEvents -or $needInputMediaKeys -or $needInputTabletEvents -or $needNetLinkFlap -or $needBlkResize -or [bool]$QemuPreflightPci) {
+        throw "Failed to allocate QMP port required for QMP-dependent flags (-WithInputEvents/-WithVirtioInputEvents/-EnableVirtioInputEvents, -WithInputWheel/-WithVirtioInputWheel/-EnableVirtioInputWheel, -WithInputEventsExtended/-WithInputEventsExtra, -WithInputMediaKeys/-WithVirtioInputMediaKeys/-EnableVirtioInputMediaKeys, -WithInputTabletEvents/-WithTabletEvents, -WithNetLinkFlap, -WithBlkResize) or -QemuPreflightPci/-QmpPreflightPci: $_"
       }
       Write-Warning "Failed to allocate QMP port for graceful shutdown: $_"
       $qmpPort = $null
@@ -5331,7 +5456,7 @@ try {
   }
   if ($VirtioTransitional) {
     $netVectors = Resolve-AeroWin7QemuMsixVectors -QemuSystem $QemuSystem -DeviceName "virtio-net-pci" -Vectors $requestedVirtioNetVectors -ParamName $virtioNetVectorsFlag -ForceCheck:$VirtioDisableMsix
-    $nic = "virtio-net-pci,netdev=net0"
+    $nic = "virtio-net-pci,id=$($script:VirtioNetQmpId),netdev=net0"
     if ($VirtioDisableMsix) {
       $nic += ",vectors=0"
     } elseif ($netVectors -gt 0) {
@@ -5505,7 +5630,7 @@ try {
       $tabletVectors = Resolve-AeroWin7QemuMsixVectors -QemuSystem $QemuSystem -DeviceName "virtio-tablet-pci" -Vectors $requestedVirtioInputVectors -ParamName $virtioInputVectorsFlag -ForceCheck:$VirtioDisableMsix
     }
 
-    $nic = New-AeroWin7VirtioNetDeviceArg -NetdevId "net0" -MsixVectors $netVectors -DisableMsix:$VirtioDisableMsix
+    $nic = New-AeroWin7VirtioNetDeviceArg -NetdevId "net0" -QomId $($script:VirtioNetQmpId) -MsixVectors $netVectors -DisableMsix:$VirtioDisableMsix
     $driveId = "drive0"
     $drive = New-AeroWin7VirtioBlkDriveArg -DiskImagePath $DiskImagePath -DriveId $driveId -Snapshot:$Snapshot
     $blk = New-AeroWin7VirtioBlkDeviceArg -DriveId $driveId -MsixVectors $blkVectors -DisableMsix:$VirtioDisableMsix
@@ -5638,6 +5763,7 @@ try {
         -RequireVirtioInputMsixPass ([bool]$RequireVirtioInputMsix) `
         -RequireVirtioInputTabletEventsPass ([bool]$needInputTabletEvents) `
         -RequireExpectBlkMsi ([bool]$RequireExpectBlkMsi) `
+        -RequireVirtioNetLinkFlapPass ([bool]$needNetLinkFlap) `
         -QmpHost "127.0.0.1" `
         -QmpPort $qmpPort
     }
@@ -6211,6 +6337,38 @@ try {
     }
     "VIRTIO_NET_MSIX_REQUIRED" {
       Write-Host "FAIL: VIRTIO_NET_MSIX_REQUIRED: virtio-net did not report MSI-X mode while -RequireVirtioNetMsix was enabled"
+      if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
+        Write-Host "`n--- Serial tail ---"
+        Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
+      }
+      $scriptExitCode = 1
+    }
+    "MISSING_VIRTIO_NET_LINK_FLAP" {
+      Write-Host "FAIL: MISSING_VIRTIO_NET_LINK_FLAP: did not observe virtio-net-link-flap PASS marker while -WithNetLinkFlap was enabled (provision the guest with --test-net-link-flap)"
+      if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
+        Write-Host "`n--- Serial tail ---"
+        Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
+      }
+      $scriptExitCode = 1
+    }
+    "VIRTIO_NET_LINK_FLAP_SKIPPED" {
+      Write-Host "FAIL: VIRTIO_NET_LINK_FLAP_SKIPPED: virtio-net-link-flap test was skipped but -WithNetLinkFlap was enabled (provision the guest with --test-net-link-flap)"
+      if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
+        Write-Host "`n--- Serial tail ---"
+        Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
+      }
+      $scriptExitCode = 1
+    }
+    "VIRTIO_NET_LINK_FLAP_FAILED" {
+      Write-Host "FAIL: VIRTIO_NET_LINK_FLAP_FAILED: virtio-net-link-flap test reported FAIL while -WithNetLinkFlap was enabled"
+      if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
+        Write-Host "`n--- Serial tail ---"
+        Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
+      }
+      $scriptExitCode = 1
+    }
+    "QMP_NET_LINK_FLAP_FAILED" {
+      Write-Host "FAIL: QMP_NET_LINK_FLAP_FAILED: failed to flap virtio-net link via QMP (ensure QMP is reachable and QEMU supports set_link)"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
