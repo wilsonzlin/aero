@@ -416,6 +416,15 @@ fn snapshot_restore_preserves_virtio_blk_msix_pending_bit_and_delivers_after_unm
     let pba_bits = m.read_physical_u64(bar0_base + pba_offset);
     assert_ne!(pba_bits & 1, 0, "expected MSI-X pending bit 0 to be set");
 
+    // Clear the virtio interrupt cause (ISR is read-to-clear). Pending MSI-X delivery should still
+    // occur once Function Mask is cleared, even without a new interrupt edge.
+    let _isr = m.read_physical_u8(bar0_base + u64::from(profile::VIRTIO_ISR_CFG_BAR0_OFFSET));
+    assert_ne!(
+        m.read_physical_u64(bar0_base + pba_offset) & 1,
+        0,
+        "expected PBA pending bit to remain set after clearing the ISR"
+    );
+
     let snapshot = m.take_snapshot_full().unwrap();
 
     // Mutate state after snapshot so restore is an observable rewind: clear Function Mask and allow
