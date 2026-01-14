@@ -131,13 +131,37 @@ export type VmSnapshotRestoredMessage =
       devices?: VmSnapshotDeviceBlob[];
     };
 
+export type VmSnapshotMachineSaveToOpfsMessage = {
+  kind: "vm.snapshot.machine.saveToOpfs";
+  requestId: VmSnapshotRequestId;
+  path: string;
+};
+
+export type VmSnapshotMachineSavedMessage = {
+  kind: "vm.snapshot.machine.saved";
+  requestId: VmSnapshotRequestId;
+} & VmSnapshotResult;
+
+export type VmSnapshotMachineRestoreFromOpfsMessage = {
+  kind: "vm.snapshot.machine.restoreFromOpfs";
+  requestId: VmSnapshotRequestId;
+  path: string;
+};
+
+export type VmSnapshotMachineRestoredMessage = {
+  kind: "vm.snapshot.machine.restored";
+  requestId: VmSnapshotRequestId;
+} & VmSnapshotResult;
+
 export type CoordinatorToWorkerSnapshotMessage =
   | VmSnapshotPauseMessage
   | VmSnapshotResumeMessage
   | VmSnapshotGetCpuStateMessage
   | VmSnapshotSetCpuStateMessage
   | VmSnapshotSaveToOpfsMessage
-  | VmSnapshotRestoreFromOpfsMessage;
+  | VmSnapshotRestoreFromOpfsMessage
+  | VmSnapshotMachineSaveToOpfsMessage
+  | VmSnapshotMachineRestoreFromOpfsMessage;
 
 export type WorkerToCoordinatorSnapshotMessage =
   | VmSnapshotPausedMessage
@@ -145,7 +169,9 @@ export type WorkerToCoordinatorSnapshotMessage =
   | VmSnapshotCpuStateMessage
   | VmSnapshotCpuStateSetMessage
   | VmSnapshotSavedMessage
-  | VmSnapshotRestoredMessage;
+  | VmSnapshotRestoredMessage
+  | VmSnapshotMachineSavedMessage
+  | VmSnapshotMachineRestoredMessage;
 
 export function serializeVmSnapshotError(err: unknown): VmSnapshotSerializedError {
   if (err instanceof Error) {
@@ -169,6 +195,8 @@ export function isWorkerToCoordinatorSnapshotMessage(value: unknown): value is W
     msg.kind === "vm.snapshot.cpuState" ||
     msg.kind === "vm.snapshot.cpuStateSet" ||
     msg.kind === "vm.snapshot.saved" ||
-    msg.kind === "vm.snapshot.restored"
+    msg.kind === "vm.snapshot.restored" ||
+    msg.kind === "vm.snapshot.machine.saved" ||
+    msg.kind === "vm.snapshot.machine.restored"
   );
 }

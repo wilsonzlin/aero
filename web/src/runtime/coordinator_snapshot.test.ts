@@ -39,14 +39,16 @@ async function flushMicrotasks(): Promise<void> {
 
 function installReadyWorkers(
   coordinator: WorkerCoordinator,
-  workers: { cpu: StubWorker; io: StubWorker; net?: StubWorker },
+  workers: { cpu: StubWorker; io?: StubWorker; net?: StubWorker },
   opts?: { netState?: "starting" | "ready" | "failed" | "stopped" },
 ): void {
   const ioIpc = createIoIpcSab();
   const map: Record<string, unknown> = {
     cpu: { role: "cpu", instanceId: 1, worker: workers.cpu as unknown as Worker, status: { state: "ready" } },
-    io: { role: "io", instanceId: 1, worker: workers.io as unknown as Worker, status: { state: "ready" } },
   };
+  if (workers.io) {
+    map.io = { role: "io", instanceId: 1, worker: workers.io as unknown as Worker, status: { state: "ready" } };
+  }
   if (workers.net) {
     map.net = {
       role: "net",
@@ -481,6 +483,133 @@ describe("runtime/coordinator (worker VM snapshots)", () => {
     expect(net.posted.some((m) => m.message.kind === "vm.snapshot.resume")).toBe(false);
     cpu.emitMessage({ kind: "vm.snapshot.resumed", requestId: cpu.posted[2]!.message.requestId, ok: true });
     io.emitMessage({ kind: "vm.snapshot.resumed", requestId: io.posted[2]!.message.requestId, ok: true });
+    await flushMicrotasks();
+
+    const netResume = net.posted.find((m) => m.message.kind === "vm.snapshot.resume")!;
+    net.emitMessage({ kind: "vm.snapshot.resumed", requestId: netResume.message.requestId, ok: true });
+
+    await expect(promise).resolves.toBeUndefined();
+  });
+
+  it("orchestrates machine snapshotSaveToOpfs pause → machine.saveToOpfs → resume", async () => {
+    const coordinator = new WorkerCoordinator();
+    (coordinator as any).activeConfig = { vmRuntime: "machine" };
+    const cpu = new StubWorker();
+    const io = new StubWorker();
+    const net = new StubWorker();
+    installReadyWorkers(coordinator, { cpu, io, net });
+
+    const promise = coordinator.snapshotSaveToOpfs("state/test.snap");
+
+    expect(cpu.posted[0]?.message.kind).toBe("vm.snapshot.pause");
+    expect(io.posted.length).toBe(0);
+    expect(net.posted.length).toBe(0);
+
+    cpu.emitMessage({ kind: "vm.snapshot.paused", requestId: cpu.posted[0]!.message.requestId, ok: true });
+    await flushMicrotasks();
+
+    expect(io.posted[0]?.message.kind).toBe("vm.snapshot.pause");
+    io.emitMessage({ kind: "vm.snapshot.paused", requestId: io.posted[0]!.message.requestId, ok: true });
+    await flushMicrotasks();
+
+    expect(net.posted[0]?.message.kind).toBe("vm.snapshot.pause");
+    net.emitMessage({ kind: "vm.snapshot.paused", requestId: net.posted[0]!.message.requestId, ok: true });
+    await flushMicrotasks();
+
+    expect(cpu.posted[1]?.message.kind).toBe("vm.snapshot.machine.saveToOpfs");
+    expect(cpu.posted[1]?.message.path).toBe("state/test.snap");
+    expect(io.posted.some((m) => m.message.kind === "vm.snapshot.saveToOpfs")).toBe(false);
+
+    cpu.emitMessage({ kind: "vm.snapshot.machine.saved", requestId: cpu.posted[1]!.message.requestId, ok: true });
+    await flushMicrotasks();
+
+    expect(cpu.posted[2]?.message.kind).toBe("vm.snapshot.resume");
+    expect(io.posted[1]?.message.kind).toBe("vm.snapshot.resume");
+    expect(net.posted.some((m) => m.message.kind === "vm.snapshot.resume")).toBe(false);
+
+    cpu.emitMessage({ kind: "vm.snapshot.resumed", requestId: cpu.posted[2]!.message.requestId, ok: true });
+    io.emitMessage({ kind: "vm.snapshot.resumed", requestId: io.posted[1]!.message.requestId, ok: true });
+    await flushMicrotasks();
+
+    expect(net.posted[1]?.message.kind).toBe("vm.snapshot.resume");
+    net.emitMessage({ kind: "vm.snapshot.resumed", requestId: net.posted[1]!.message.requestId, ok: true });
+
+    await expect(promise).resolves.toBeUndefined();
+  });
+
+  it("orchestrates machine snapshotRestoreFromOpfs pause → machine.restoreFromOpfs → resume", async () => {
+    const coordinator = new WorkerCoordinator();
+    (coordinator as any).activeConfig = { vmRuntime: "machine" };
+    const cpu = new StubWorker();
+    const io = new StubWorker();
+    const net = new StubWorker();
+    installReadyWorkers(coordinator, { cpu, io, net });
+
+    const shared = (coordinator as any).shared;
+    const txRing = openRingByKind(shared.segments.ioIpc, IO_IPC_NET_TX_QUEUE_KIND);
+    const rxRing = openRingByKind(shared.segments.ioIpc, IO_IPC_NET_RX_QUEUE_KIND);
+    txRing.tryPush(new Uint8Array([0xaa]));
+    rxRing.tryPush(new Uint8Array([0xbb]));
+
+    const promise = coordinator.snapshotRestoreFromOpfs("state/test.snap");
+
+    expect(cpu.posted[0]?.message.kind).toBe("vm.snapshot.pause");
+    cpu.emitMessage({ kind: "vm.snapshot.paused", requestId: cpu.posted[0]!.message.requestId, ok: true });
+    await flushMicrotasks();
+
+    expect(io.posted[0]?.message.kind).toBe("vm.snapshot.pause");
+    io.emitMessage({ kind: "vm.snapshot.paused", requestId: io.posted[0]!.message.requestId, ok: true });
+    await flushMicrotasks();
+
+    expect(net.posted[0]?.message.kind).toBe("vm.snapshot.pause");
+    net.emitMessage({ kind: "vm.snapshot.paused", requestId: net.posted[0]!.message.requestId, ok: true });
+    await flushMicrotasks();
+
+    // Snapshot boundary must clear NET_TX/NET_RX rings (they are not part of the snapshot file).
+    expect(txRing.tryPop()).toBeNull();
+    expect(rxRing.tryPop()).toBeNull();
+
+    expect(cpu.posted[1]?.message.kind).toBe("vm.snapshot.machine.restoreFromOpfs");
+    expect(cpu.posted[1]?.message.path).toBe("state/test.snap");
+
+    cpu.emitMessage({ kind: "vm.snapshot.machine.restored", requestId: cpu.posted[1]!.message.requestId, ok: true });
+    await flushMicrotasks();
+
+    expect(cpu.posted[2]?.message.kind).toBe("vm.snapshot.resume");
+    expect(io.posted[1]?.message.kind).toBe("vm.snapshot.resume");
+    expect(net.posted.some((m) => m.message.kind === "vm.snapshot.resume")).toBe(false);
+
+    cpu.emitMessage({ kind: "vm.snapshot.resumed", requestId: cpu.posted[2]!.message.requestId, ok: true });
+    io.emitMessage({ kind: "vm.snapshot.resumed", requestId: io.posted[1]!.message.requestId, ok: true });
+    await flushMicrotasks();
+
+    expect(net.posted[1]?.message.kind).toBe("vm.snapshot.resume");
+    net.emitMessage({ kind: "vm.snapshot.resumed", requestId: net.posted[1]!.message.requestId, ok: true });
+
+    await expect(promise).resolves.toBeUndefined();
+  });
+
+  it("orchestrates machine snapshots without an IO worker", async () => {
+    const coordinator = new WorkerCoordinator();
+    (coordinator as any).activeConfig = { vmRuntime: "machine" };
+    const cpu = new StubWorker();
+    const net = new StubWorker();
+    installReadyWorkers(coordinator, { cpu, net });
+
+    const promise = coordinator.snapshotSaveToOpfs("state/test.snap");
+
+    cpu.emitMessage({ kind: "vm.snapshot.paused", requestId: cpu.posted[0]!.message.requestId, ok: true });
+    await flushMicrotasks();
+
+    net.emitMessage({ kind: "vm.snapshot.paused", requestId: net.posted[0]!.message.requestId, ok: true });
+    await flushMicrotasks();
+
+    expect(cpu.posted[1]?.message.kind).toBe("vm.snapshot.machine.saveToOpfs");
+    cpu.emitMessage({ kind: "vm.snapshot.machine.saved", requestId: cpu.posted[1]!.message.requestId, ok: true });
+    await flushMicrotasks();
+
+    const cpuResume = cpu.posted.find((m) => m.message.kind === "vm.snapshot.resume")!;
+    cpu.emitMessage({ kind: "vm.snapshot.resumed", requestId: cpuResume.message.requestId, ok: true });
     await flushMicrotasks();
 
     const netResume = net.posted.find((m) => m.message.kind === "vm.snapshot.resume")!;
