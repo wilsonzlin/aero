@@ -546,6 +546,8 @@ static NDIS_STATUS AerovNetParseResources(_Inout_ AEROVNET_ADAPTER* Adapter, _In
   UINT32 Bar0Low;
   UINT32 Bar0High;
   UCHAR InterruptPin;
+  USHORT MsgDescCount;
+  USHORT MsgCountMax;
 
   Adapter->Bar0Va = NULL;
   Adapter->Bar0Length = 0;
@@ -567,6 +569,8 @@ static NDIS_STATUS AerovNetParseResources(_Inout_ AEROVNET_ADAPTER* Adapter, _In
   // If Windows allocated message-signaled interrupts, the translated resource list contains a
   // CmResourceTypeInterrupt descriptor with CM_RESOURCE_INTERRUPT_MESSAGE set and a MessageCount
   // field. Prefer MSI/MSI-X when present; INTx remains the fallback.
+  MsgDescCount = 0;
+  MsgCountMax = 0;
   for (I = 0; I < Resources->Count; I++) {
     const CM_PARTIAL_RESOURCE_DESCRIPTOR* Desc = &Resources->PartialDescriptors[I];
     USHORT MessageCount;
@@ -579,7 +583,23 @@ static NDIS_STATUS AerovNetParseResources(_Inout_ AEROVNET_ADAPTER* Adapter, _In
       continue;
     }
 
+    MsgDescCount++;
     MessageCount = Desc->u.MessageInterrupt.MessageCount;
+    if (MessageCount > MsgCountMax) {
+      MsgCountMax = MessageCount;
+    }
+  }
+
+  // Windows typically reports message interrupts as a single descriptor with a MessageCount,
+  // but some stacks may represent them as multiple descriptors. Prefer the largest explicit
+  // MessageCount value, but fall back to counting message interrupt descriptors so we don't
+  // accidentally under-detect available messages.
+  {
+    USHORT MessageCount = MsgCountMax;
+    if (MsgDescCount > MessageCount) {
+      MessageCount = MsgDescCount;
+    }
+
     if (MessageCount != 0) {
       Adapter->UseMsix = TRUE;
       Adapter->MsixMessageCount = MessageCount;
@@ -597,8 +617,6 @@ static NDIS_STATUS AerovNetParseResources(_Inout_ AEROVNET_ADAPTER* Adapter, _In
         Adapter->MsixTxVector = 0;
       }
     }
-
-    break;
   }
 
   // Prefer matching the assigned memory range (CmResourceTypeMemory or
@@ -3187,7 +3205,6 @@ static BOOLEAN AerovNetMessageInterruptIsr(_In_ NDIS_HANDLE MiniportInterruptCon
                                           _Out_ PULONG TargetProcessors) {
   AEROVNET_ADAPTER* Adapter = (AEROVNET_ADAPTER*)MiniportInterruptContext;
 
-  UNREFERENCED_PARAMETER(MessageId);
   /*
    * TargetProcessors is an OUT parameter (see AerovNetInterruptIsr for details).
    * Always initialize it so NDIS never observes an uninitialized value.
@@ -3205,8 +3222,28 @@ static BOOLEAN AerovNetMessageInterruptIsr(_In_ NDIS_HANDLE MiniportInterruptCon
 
   // MSI/MSI-X: do not touch the virtio ISR status register (INTx only). The
   // message ID indicates which MSI(-X) table entry fired.
-  *QueueDefaultInterruptDpc = TRUE;
-  return TRUE;
+  if (!Adapter->UseMsix) {
+    // Defensive: if NDIS somehow calls the message ISR without MSI enabled,
+    // treat it as ours and service everything in the DPC.
+    *QueueDefaultInterruptDpc = TRUE;
+    return TRUE;
+  }
+
+  if (Adapter->MsixAllOnVector0) {
+    if (MessageId != (ULONG)Adapter->MsixConfigVector) {
+      return FALSE;
+    }
+    *QueueDefaultInterruptDpc = TRUE;
+    return TRUE;
+  }
+
+  if (MessageId == (ULONG)Adapter->MsixConfigVector || MessageId == (ULONG)Adapter->MsixRxVector ||
+      MessageId == (ULONG)Adapter->MsixTxVector) {
+    *QueueDefaultInterruptDpc = TRUE;
+    return TRUE;
+  }
+
+  return FALSE;
 }
 
 static VOID AerovNetMessageInterruptDpc(_In_ NDIS_HANDLE MiniportInterruptContext,
