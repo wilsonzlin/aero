@@ -738,7 +738,7 @@ fn build_rep_init(inst: &DecodedInstruction) -> Result<RegRef, BuildError> {
             "rep integer constant operand cannot have a source modifier",
         ));
     }
-    Ok(to_ir_reg(inst, &count_reg.reg)?)
+    to_ir_reg(inst, &count_reg.reg)
 }
 
 fn map_semantic(usage: &DclUsage, index: u8) -> Semantic {
