@@ -292,6 +292,11 @@ impl XhciControllerBridge {
             return;
         }
         self.tick_count = self.tick_count.wrapping_add(u64::from(frames));
+        // Advance controller/port timers. Without this, operations like PORTSC port reset will never
+        // complete (the xHCI model clears PR/PED after a timeout in `tick_1ms`).
+        for _ in 0..frames {
+            self.ctrl.tick_1ms();
+        }
     }
 
     /// Convenience wrapper for stepping a single frame.
