@@ -601,6 +601,31 @@ pub struct MachineConfig {
     /// Note: This is only used when the standalone legacy VGA/VBE path is active
     /// (`enable_vga=true` and `enable_aerogpu=false`).
     pub vga_lfb_base: Option<u32>,
+    /// Optional override for the legacy VGA/VBE VRAM layout: the offset within VRAM where the VBE
+    /// linear framebuffer (LFB) begins.
+    ///
+    /// This is forwarded to [`aero_gpu_vga::VgaConfig::lfb_offset`]. It controls how much VRAM is
+    /// reserved for legacy VGA planar storage at the start of `vram` before packed-pixel VBE modes
+    /// begin.
+    ///
+    /// When unset, defaults to [`aero_gpu_vga::VBE_FRAMEBUFFER_OFFSET`] (`0x40000`, 256KiB).
+    ///
+    /// Note: This is only used when the standalone legacy VGA/VBE path is active
+    /// (`enable_vga=true` and `enable_aerogpu=false`).
+    pub vga_lfb_offset: Option<u32>,
+    /// Optional override for the legacy VGA/VBE "VRAM aperture" base address.
+    ///
+    /// This exists to support BAR-layout experiments where the VBE linear framebuffer base is
+    /// derived as:
+    ///
+    /// `lfb_base = vga_vram_bar_base + vga_lfb_offset`
+    ///
+    /// When unset, the machine derives a coherent `vram_bar_base` from the configured LFB base and
+    /// LFB offset (`vram_bar_base = lfb_base - lfb_offset`).
+    ///
+    /// Note: This is only used when the standalone legacy VGA/VBE path is active
+    /// (`enable_vga=true` and `enable_aerogpu=false`).
+    pub vga_vram_bar_base: Option<u32>,
     /// Optional override for the total legacy VGA/VBE VRAM backing size in bytes.
     ///
     /// This controls the size of the emulated VRAM allocation (and the size of the legacy LFB MMIO
@@ -695,6 +720,8 @@ impl Default for MachineConfig {
             enable_aerogpu: false,
             enable_vga: true,
             vga_lfb_base: None,
+            vga_lfb_offset: None,
+            vga_vram_bar_base: None,
             vga_vram_size_bytes: None,
             enable_serial: true,
             enable_debugcon: true,
@@ -750,6 +777,8 @@ impl MachineConfig {
             enable_aerogpu: false,
             enable_vga: true,
             vga_lfb_base: None,
+            vga_lfb_offset: None,
+            vga_vram_bar_base: None,
             vga_vram_size_bytes: None,
             enable_serial: true,
             enable_debugcon: true,
@@ -11800,7 +11829,17 @@ impl Machine {
     fn legacy_vga_lfb_base(&self) -> u32 {
         // Keep the device model and PCI BAR base coherent by aligning down to the BAR size (PCI
         // config space masks BAR bases to the size's alignment).
-        let base = self.cfg.vga_lfb_base.unwrap_or(aero_gpu_vga::SVGA_LFB_BASE);
+        let lfb_offset = self
+            .cfg
+            .vga_lfb_offset
+            .unwrap_or(aero_gpu_vga::VBE_FRAMEBUFFER_OFFSET as u32);
+        let base = if let Some(base) = self.cfg.vga_lfb_base {
+            base
+        } else if let Some(vram_bar_base) = self.cfg.vga_vram_bar_base {
+            vram_bar_base.wrapping_add(lfb_offset)
+        } else {
+            aero_gpu_vga::SVGA_LFB_BASE
+        };
         let bar_size = self.legacy_vga_pci_bar_size_bytes();
         base & !(bar_size.saturating_sub(1))
     }
@@ -11808,6 +11847,12 @@ impl Machine {
     fn legacy_vga_device_config(&self) -> VgaConfig {
         let mut cfg = VgaConfig::default();
         cfg.vram_size = self.legacy_vga_vram_size_bytes();
+        if let Some(lfb_offset) = self.cfg.vga_lfb_offset {
+            // Avoid panicking on invalid configuration; clamp to the allocated VRAM size so the
+            // VGA device model's invariants hold.
+            let max_off = u32::try_from(cfg.vram_size).unwrap_or(u32::MAX);
+            cfg.lfb_offset = lfb_offset.min(max_off);
+        }
         cfg.vram_bar_base = self.legacy_vga_lfb_base().wrapping_sub(cfg.lfb_offset);
         cfg
     }
