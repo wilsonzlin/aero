@@ -925,6 +925,62 @@ fn wgsl_dsx_dsy_derivatives_compile() {
 }
 
 #[test]
+fn wgsl_predicated_derivative_avoids_non_uniform_control_flow() {
+    // ps_3_0:
+    //   dcl_texcoord0 v0
+    //   setp_gt p0, v0.x, c0.x
+    //   dsx (p0) r0, v0
+    //   mov oC0, r0
+    //   end
+    //
+    // WGSL derivative ops (`dpdx`/`dpdy`) must appear in uniform control flow. A naive predication
+    // lowering of `dsx (p0)` as `if (p0) { r0 = dpdx(v0); }` is rejected by naga when `p0` depends
+    // on a varying input (here, `v0`).
+    let tokens = vec![
+        version_token(ShaderStage::Pixel, 3, 0),
+        // dcl_texcoord0 v0  (usage 5 = texcoord)
+        opcode_token(31, 1) | (5u32 << 16),
+        dst_token(1, 0, 0xF),
+        // setp_gt p0, v0.x, c0.x  (compare op 0 = gt)
+        opcode_token(78, 3) | (0u32 << 16),
+        dst_token(19, 0, 0xF),
+        src_token(1, 0, 0x00, 0), // v0.xxxx
+        src_token(2, 0, 0x00, 0), // c0.xxxx
+        // dsx (p0) r0, v0
+        opcode_token(86, 3) | 0x1000_0000, // predicated
+        dst_token(0, 0, 0xF),
+        src_token(1, 0, 0xE4, 0), // v0
+        src_token(19, 0, 0x00, 0), // p0.x
+        // mov oC0, r0
+        opcode_token(1, 2),
+        dst_token(8, 0, 0xF),
+        src_token(0, 0, 0xE4, 0),
+        // end
+        0x0000_FFFF,
+    ];
+
+    let decoded = decode_u32_tokens(&tokens).unwrap();
+    let ir = build_ir(&decoded).unwrap();
+    verify_ir(&ir).unwrap();
+
+    let wgsl = generate_wgsl(&ir).unwrap().wgsl;
+    assert!(wgsl.contains("dpdx("), "{wgsl}");
+    assert!(wgsl.contains("select("), "{wgsl}");
+    assert!(
+        !wgsl.contains("if (p0.x)"),
+        "predicated derivatives should not lower to an if; got:\n{wgsl}"
+    );
+
+    let module = naga::front::wgsl::parse_str(&wgsl).expect("wgsl parse");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
+}
+
+#[test]
 fn wgsl_texkill_is_conditional() {
     // ps_3_0:
     //   texkill r0

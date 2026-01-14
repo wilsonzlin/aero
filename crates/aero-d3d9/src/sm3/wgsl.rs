@@ -1473,12 +1473,64 @@ fn emit_stmt(
     match stmt {
         Stmt::Op(op) => {
             if let Some(pred) = &op_modifiers(op).predicate {
-                let pred_cond = predicate_expr(pred)?;
-                let _ = writeln!(wgsl, "{pad}if ({pred_cond}) {{");
-                let line = emit_op_line(op, stage, f32_defs)?;
-                let inner_pad = "  ".repeat(indent + 1);
-                let _ = writeln!(wgsl, "{inner_pad}{line}");
-                let _ = writeln!(wgsl, "{pad}}}");
+                // WGSL derivative ops must be in *uniform control flow*; wrapping them in an `if`
+                // for SM3 predicate modifiers can cause naga uniformity validation errors when the
+                // predicate is non-uniform.
+                //
+                // Lower predicated derivatives to unconditional evaluation + conditional assignment
+                // via `select`, which does not introduce control flow.
+                match op {
+                    IrOp::Ddx {
+                        dst,
+                        src,
+                        modifiers,
+                    } => {
+                        let pred_cond = predicate_expr(pred)?;
+                        let (s, ty) = src_expr(src, f32_defs)?;
+                        if ty != ScalarTy::F32 {
+                            return Err(err("dsx only supports float sources in WGSL lowering"));
+                        }
+                        let dst_ty = reg_scalar_ty(dst.reg.file)
+                            .ok_or_else(|| err("unsupported dst file"))?;
+                        if dst_ty != ScalarTy::F32 {
+                            return Err(err("dsx destination must be float"));
+                        }
+                        let e =
+                            apply_float_result_modifiers(format!("dpdx({s})"), modifiers)?;
+                        let dst_name = reg_var_name(&dst.reg)?;
+                        let line = emit_assign(dst, format!("select({dst_name}, {e}, {pred_cond})"))?;
+                        let _ = writeln!(wgsl, "{pad}{line}");
+                    }
+                    IrOp::Ddy {
+                        dst,
+                        src,
+                        modifiers,
+                    } => {
+                        let pred_cond = predicate_expr(pred)?;
+                        let (s, ty) = src_expr(src, f32_defs)?;
+                        if ty != ScalarTy::F32 {
+                            return Err(err("dsy only supports float sources in WGSL lowering"));
+                        }
+                        let dst_ty = reg_scalar_ty(dst.reg.file)
+                            .ok_or_else(|| err("unsupported dst file"))?;
+                        if dst_ty != ScalarTy::F32 {
+                            return Err(err("dsy destination must be float"));
+                        }
+                        let e =
+                            apply_float_result_modifiers(format!("dpdy({s})"), modifiers)?;
+                        let dst_name = reg_var_name(&dst.reg)?;
+                        let line = emit_assign(dst, format!("select({dst_name}, {e}, {pred_cond})"))?;
+                        let _ = writeln!(wgsl, "{pad}{line}");
+                    }
+                    _ => {
+                        let pred_cond = predicate_expr(pred)?;
+                        let _ = writeln!(wgsl, "{pad}if ({pred_cond}) {{");
+                        let line = emit_op_line(op, stage, f32_defs)?;
+                        let inner_pad = "  ".repeat(indent + 1);
+                        let _ = writeln!(wgsl, "{inner_pad}{line}");
+                        let _ = writeln!(wgsl, "{pad}}}");
+                    }
+                }
             } else {
                 let line = emit_op_line(op, stage, f32_defs)?;
                 let _ = writeln!(wgsl, "{pad}{line}");
