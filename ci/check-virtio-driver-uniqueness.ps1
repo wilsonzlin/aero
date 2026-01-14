@@ -48,7 +48,8 @@ function Get-RepoRoot {
 # reliably detect BOM-less UTF-16, causing this guardrail to silently miss HWIDs. Read the file
 # as bytes and apply our own decoding:
 #   - BOM detection for UTF-8 / UTF-16LE / UTF-16BE
-#   - heuristic for BOM-less UTF-16 (look for NUL bytes biased to even/odd offsets)
+#   - heuristic for BOM-less UTF-16 (parity-biased NUL bytes over a few prefix windows, similar
+#     to the packager's INF scanning)
 #   - fallback to UTF-8 (ASCII-safe for the IDs we care about)
 function Read-InfText {
   [CmdletBinding()]
@@ -60,60 +61,125 @@ function Read-InfText {
   $bytes = [System.IO.File]::ReadAllBytes($Path)
   if (-not $bytes -or $bytes.Length -eq 0) { return '' }
 
+  $text = $null
+
   # UTF-8 BOM: EF BB BF
   if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) {
-    return [System.Text.Encoding]::UTF8.GetString($bytes, 3, $bytes.Length - 3)
+    $text = [System.Text.Encoding]::UTF8.GetString($bytes, 3, $bytes.Length - 3)
   }
-
   # UTF-16 LE BOM: FF FE
-  if ($bytes.Length -ge 2 -and $bytes[0] -eq 0xFF -and $bytes[1] -eq 0xFE) {
-    return [System.Text.Encoding]::Unicode.GetString($bytes, 2, $bytes.Length - 2)
+  elseif ($bytes.Length -ge 2 -and $bytes[0] -eq 0xFF -and $bytes[1] -eq 0xFE) {
+    $len = $bytes.Length - 2
+    if (($len % 2) -ne 0) { $len-- }
+    if ($len -le 0) { return '' }
+    $text = [System.Text.Encoding]::Unicode.GetString($bytes, 2, $len)
   }
-
   # UTF-16 BE BOM: FE FF
-  if ($bytes.Length -ge 2 -and $bytes[0] -eq 0xFE -and $bytes[1] -eq 0xFF) {
-    return [System.Text.Encoding]::BigEndianUnicode.GetString($bytes, 2, $bytes.Length - 2)
+  elseif ($bytes.Length -ge 2 -and $bytes[0] -eq 0xFE -and $bytes[1] -eq 0xFF) {
+    $len = $bytes.Length - 2
+    if (($len % 2) -ne 0) { $len-- }
+    if ($len -le 0) { return '' }
+    $text = [System.Text.Encoding]::BigEndianUnicode.GetString($bytes, 2, $len)
   }
+  # Heuristic for BOM-less UTF-16 (LE vs BE).
+  elseif ($bytes.Length -ge 4 -and ($bytes.Length % 2) -eq 0) {
+    # Similar to `tools/packaging/aero_packager`:
+    # vote on endianness using a few prefix windows, since large Unicode-heavy sections (e.g.
+    # string tables) can reduce the overall NUL-byte ratio even when the file is UTF-16.
+    $nulRatioThreshold = 0.30
+    $nulRatioSkew = 0.20
+    $leVotes = 0
+    $beVotes = 0
 
-  # Heuristic for BOM-less UTF-16:
-  # UTF-16 INFs that are mostly ASCII tend to contain many NUL bytes, biased to either
-  # even (UTF-16BE) or odd (UTF-16LE) byte offsets. This catches common BOM-less UTF-16 encodings
-  # without accidentally treating regular UTF-8/ANSI INFs as UTF-16.
-  if (($bytes.Length % 2) -eq 0) {
-    $nulCount = 0
-    $nulEven = 0
-    $nulOdd = 0
-    $sampleLen = $bytes.Length
-    for ($i = 0; $i -lt $sampleLen; $i++) {
-      if ($bytes[$i] -eq 0) {
-        $nulCount++
+    foreach ($prefixLen in @(128, 512, 2048)) {
+      $len = [Math]::Min($bytes.Length, $prefixLen)
+      $len -= $len % 2
+      if ($len -lt 4) { continue }
+
+      $nulEven = 0
+      $nulOdd = 0
+      for ($i = 0; $i -lt $len; $i++) {
+        if ($bytes[$i] -ne 0) { continue }
         if (($i % 2) -eq 0) { $nulEven++ } else { $nulOdd++ }
       }
-    }
-    if ($nulCount -gt 0 -and $sampleLen -gt 0) {
-      $half = [Math]::Max(1, [Math]::Floor($sampleLen / 2))
-      $oddRatio = $nulOdd / [double]$half
-      $evenRatio = $nulEven / [double]$half
 
-      # Thresholds:
-      # - In UTF-16(LE/BE), a noticeable fraction of bytes in the *high* (or low) byte position
-      #   of UTF-16 code units will be NUL (particularly for ASCII syntax like section headers).
-      # - Require a strong parity bias to avoid mis-detecting random NUL bytes.
-      $biasedLe = ($nulOdd -gt 0 -and $nulOdd -ge ($nulEven * 2))
-      $biasedBe = ($nulEven -gt 0 -and $nulEven -ge ($nulOdd * 2))
+      $half = [Math]::Max(1, [Math]::Floor($len / 2))
+      $ratioEven = $nulEven / [double]$half
+      $ratioOdd = $nulOdd / [double]$half
 
-      if (($oddRatio -ge 0.05 -and $biasedLe) -or ($evenRatio -ge 0.05 -and $biasedBe)) {
-        if ($biasedLe) {
-          return [System.Text.Encoding]::Unicode.GetString($bytes)
-        } else {
-          return [System.Text.Encoding]::BigEndianUnicode.GetString($bytes)
-        }
+      if ($ratioOdd -ge $nulRatioThreshold -and ($ratioOdd - $ratioEven) -ge $nulRatioSkew) {
+        $leVotes++
+      } elseif ($ratioEven -ge $nulRatioThreshold -and ($ratioEven - $ratioOdd) -ge $nulRatioSkew) {
+        $beVotes++
       }
     }
+
+    if ($leVotes -eq 0 -and $beVotes -eq 0) {
+      $text = [System.Text.Encoding]::UTF8.GetString($bytes)
+    } elseif ($leVotes -gt $beVotes) {
+      $text = [System.Text.Encoding]::Unicode.GetString($bytes)
+    } elseif ($beVotes -gt $leVotes) {
+      $text = [System.Text.Encoding]::BigEndianUnicode.GetString($bytes)
+    } else {
+      # Ambiguous: decode both and pick the more text-like one.
+      $le = [System.Text.Encoding]::Unicode.GetString($bytes)
+      $be = [System.Text.Encoding]::BigEndianUnicode.GetString($bytes)
+
+      function Get-DecodeScore([string]$s) {
+        $replacement = 0
+        $nul = 0
+        $ascii = 0
+        $newlines = 0
+        $total = 0
+
+        foreach ($c in $s.ToCharArray()) {
+          $total++
+          if ($c -eq [char]0xFFFD) {
+            $replacement++
+          } elseif ($c -eq [char]0x0000) {
+            $nul++
+          }
+
+          if ([int]$c -lt 128) {
+            $ascii++
+            if ($c -eq "`n") { $newlines++ }
+          }
+        }
+
+        return [pscustomobject]@{
+          Replacement = $replacement
+          Nul = $nul
+          AsciiPenalty = $total - $ascii
+          NewlinePenalty = $total - $newlines
+        }
+      }
+
+      $leScore = Get-DecodeScore $le
+      $beScore = Get-DecodeScore $be
+
+      $chooseLe = $true
+      if ($leScore.Replacement -lt $beScore.Replacement) { $chooseLe = $true }
+      elseif ($leScore.Replacement -gt $beScore.Replacement) { $chooseLe = $false }
+      elseif ($leScore.Nul -lt $beScore.Nul) { $chooseLe = $true }
+      elseif ($leScore.Nul -gt $beScore.Nul) { $chooseLe = $false }
+      elseif ($leScore.AsciiPenalty -lt $beScore.AsciiPenalty) { $chooseLe = $true }
+      elseif ($leScore.AsciiPenalty -gt $beScore.AsciiPenalty) { $chooseLe = $false }
+      elseif ($leScore.NewlinePenalty -lt $beScore.NewlinePenalty) { $chooseLe = $true }
+      elseif ($leScore.NewlinePenalty -gt $beScore.NewlinePenalty) { $chooseLe = $false }
+
+      # Prefer UTF-16LE when still tied (Windows commonly uses UTF-16LE).
+      if ($chooseLe) { $text = $le } else { $text = $be }
+    }
+  } else {
+    # Default: treat as UTF-8. Even for legacy ANSI, this is ASCII-safe for the `PCI\VEN_...` IDs.
+    $text = [System.Text.Encoding]::UTF8.GetString($bytes)
   }
 
-  # Default: treat as UTF-8. Even for legacy ANSI, this is ASCII-safe for the `PCI\VEN_...` IDs.
-  return [System.Text.Encoding]::UTF8.GetString($bytes)
+  # Strip a BOM character if the decoder left one in.
+  if ($text -and $text.Length -gt 0 -and $text[0] -eq [char]0xFEFF) {
+    $text = $text.Substring(1)
+  }
+  return $text
 }
 
 # Optional unit-like selftest:
@@ -133,6 +199,23 @@ if ($env:AERO_CHECK_VIRTIO_UNIQUENESS_SELFTEST -eq '1') {
     [System.IO.File]::WriteAllBytes($pathBe, [System.Text.Encoding]::BigEndianUnicode.GetBytes($sample))
     if ((Read-InfText $pathBe) -ne $sample) {
       throw "Read-InfText selftest failed (UTF-16BE no BOM)."
+    }
+
+    # Ensure BOM-less UTF-16 is still detected even if the overall file isn't very ASCII-heavy.
+    # (The packager uses a prefix-based heuristic for this reason.)
+    $unicodeTail = 'Ω' * 5000
+    $sampleUnicode = $sample + "ExtraDesc=`"$unicodeTail`"`r`n"
+
+    $pathLeUnicode = Join-Path $tmpDir 'utf16le_no_bom_unicode_tail.inf'
+    [System.IO.File]::WriteAllBytes($pathLeUnicode, [System.Text.Encoding]::Unicode.GetBytes($sampleUnicode))
+    if ((Read-InfText $pathLeUnicode) -ne $sampleUnicode) {
+      throw "Read-InfText selftest failed (UTF-16LE no BOM, unicode tail)."
+    }
+
+    $pathBeUnicode = Join-Path $tmpDir 'utf16be_no_bom_unicode_tail.inf'
+    [System.IO.File]::WriteAllBytes($pathBeUnicode, [System.Text.Encoding]::BigEndianUnicode.GetBytes($sampleUnicode))
+    if ((Read-InfText $pathBeUnicode) -ne $sampleUnicode) {
+      throw "Read-InfText selftest failed (UTF-16BE no BOM, unicode tail)."
     }
   } finally {
     Remove-Item -LiteralPath $tmpDir -Recurse -Force -ErrorAction SilentlyContinue
