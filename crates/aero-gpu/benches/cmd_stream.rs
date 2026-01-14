@@ -48,6 +48,16 @@ const TRACE_TEXTURED_RGBA8_SAMPLER_TRIANGLE: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../tests/fixtures/aerogpu_cmd_textured_rgba8_sampler_triangle.aerogputrace"
 ));
+#[cfg(not(target_arch = "wasm32"))]
+const TRACE_COPY_TEXTURE2D: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../tests/fixtures/aerogpu_cmd_copy_texture2d.aerogputrace"
+));
+#[cfg(not(target_arch = "wasm32"))]
+const TRACE_COPY_BUFFER: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../tests/fixtures/aerogpu_cmd_copy_buffer.aerogputrace"
+));
 
 #[cfg(not(target_arch = "wasm32"))]
 fn criterion_config() -> Criterion {
@@ -341,6 +351,8 @@ fn bench_cmd_stream_parse(c: &mut Criterion) {
     let indexed_triangle = extract_cmd_stream_from_trace(TRACE_INDEXED_TRIANGLE);
     let textured_rgba8_sampler_triangle =
         extract_cmd_stream_from_trace(TRACE_TEXTURED_RGBA8_SAMPLER_TRIANGLE);
+    let copy_texture2d = extract_cmd_stream_from_trace(TRACE_COPY_TEXTURE2D);
+    let copy_buffer = extract_cmd_stream_from_trace(TRACE_COPY_BUFFER);
     let synthetic = build_synthetic_triangle_stream(1024);
     let synthetic_payloads = build_synthetic_payload_stream();
 
@@ -353,6 +365,8 @@ fn bench_cmd_stream_parse(c: &mut Criterion) {
             "fixture_textured_rgba8_sampler_triangle",
             textured_rgba8_sampler_triangle,
         ),
+        ("fixture_copy_texture2d", copy_texture2d),
+        ("fixture_copy_buffer", copy_buffer),
         ("synthetic_triangle_1024", synthetic),
         ("synthetic_payloads", synthetic_payloads),
     ] {
