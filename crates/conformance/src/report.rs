@@ -132,7 +132,10 @@ pub fn states_equal(expected: &CpuState, actual: &CpuState, flags_mask: u64) -> 
 }
 
 pub fn memory_equal(expected: &[u8], actual: &[u8], len: usize) -> bool {
-    expected.get(..len) == actual.get(..len)
+    if expected.len() < len || actual.len() < len {
+        return false;
+    }
+    expected[..len] == actual[..len]
 }
 
 pub fn format_failure(
