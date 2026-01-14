@@ -2619,6 +2619,9 @@ let hidOutputRing: HidReportRing | null = null;
 let hidOutputRingFallback = 0;
 let hidRingDetachSent = false;
 
+const HID_INPUT_RING_MAX_RECORDS_PER_TICK = 256;
+const HID_INPUT_RING_MAX_BYTES_PER_TICK = 64 * 1024;
+
 function attachHidRings(msg: HidRingAttachMessage): void {
   // `isHidRingAttachMessage` validates SAB existence + instance checks.
   hidInputRing = new HidReportRing(msg.inputRing);
@@ -2651,9 +2654,14 @@ function drainHidInputRing(): void {
   if (!ring) return;
 
   try {
-    // eslint-disable-next-line no-constant-condition
-    while (true) {
+    let records = 0;
+    let bytes = 0;
+    while (records < HID_INPUT_RING_MAX_RECORDS_PER_TICK && bytes < HID_INPUT_RING_MAX_BYTES_PER_TICK) {
+      let payloadLen = 0;
       const consumed = ring.consumeNextOrThrow((rec) => {
+        payloadLen = rec.payload.byteLength;
+        // This ring is only used for `Input` reports, but treat other tags as no-ops so we still
+        // advance `head` and can make forward progress if a buggy producer writes them.
         if (rec.reportType !== HidRingReportType.Input) return;
         if (started) Atomics.add(status, StatusIndex.IoHidInputReportCounter, 1);
         try {
@@ -2669,6 +2677,8 @@ function drainHidInputRing(): void {
         }
       });
       if (!consumed) break;
+      records += 1;
+      bytes += payloadLen;
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
