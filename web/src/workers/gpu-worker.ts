@@ -730,62 +730,6 @@ const refreshFramebufferViews = (): void => {
 
 const BYTES_PER_PIXEL_RGBA8 = 4;
 const COPY_BYTES_PER_ROW_ALIGNMENT = 256;
-
-type WddmScanoutReadback = { width: number; height: number; rgba8: ArrayBuffer };
-
-const tryReadWddmScanoutRgba8 = (snap: ScanoutStateSnapshot, guest: Uint8Array): WddmScanoutReadback | null => {
-  if (snap.source !== SCANOUT_SOURCE_WDDM) return null;
-  if (snap.format !== SCANOUT_FORMAT_B8G8R8X8) return null;
-
-  const width = snap.width >>> 0;
-  const height = snap.height >>> 0;
-  const pitchBytes = snap.pitchBytes >>> 0;
-  if (width === 0 || height === 0) return null;
-  if (!Number.isSafeInteger(pitchBytes) || pitchBytes <= 0) return null;
-
-  const rowBytes = width * BYTES_PER_PIXEL_RGBA8;
-  if (!Number.isSafeInteger(rowBytes) || rowBytes <= 0) return null;
-  if (pitchBytes < rowBytes) return null;
-
-  const basePaddr =
-    (BigInt(snap.basePaddrHi >>> 0) << 32n) | BigInt(snap.basePaddrLo >>> 0);
-  if (basePaddr === 0n) return null;
-  if (basePaddr > BigInt(Number.MAX_SAFE_INTEGER)) return null;
-
-  const outLen = BigInt(rowBytes) * BigInt(height);
-  if (outLen <= 0n || outLen > BigInt(Number.MAX_SAFE_INTEGER)) return null;
-  const out = new Uint8Array(Number(outLen));
-
-  const ramBytes = guest.byteLength;
-
-  for (let y = 0; y < height; y += 1) {
-    const rowPaddrBig = basePaddr + BigInt(pitchBytes) * BigInt(y);
-    if (rowPaddrBig > BigInt(Number.MAX_SAFE_INTEGER)) return null;
-    const rowPaddr = Number(rowPaddrBig);
-
-    try {
-      if (!guestRangeInBoundsRaw(ramBytes, rowPaddr, rowBytes)) return null;
-    } catch {
-      return null;
-    }
-
-    const rowOff = guestPaddrToRamOffsetRaw(ramBytes, rowPaddr);
-    if (rowOff === null) return null;
-
-    const src = guest.subarray(rowOff, rowOff + rowBytes);
-    const dstBase = y * rowBytes;
-    for (let i = 0; i < rowBytes; i += BYTES_PER_PIXEL_RGBA8) {
-      // B8G8R8X8 -> RGBA8 (force alpha=255).
-      out[dstBase + i + 0] = src[i + 2];
-      out[dstBase + i + 1] = src[i + 1];
-      out[dstBase + i + 2] = src[i + 0];
-      out[dstBase + i + 3] = 255;
-    }
-  }
-
-  return { width, height, rgba8: out.buffer };
-};
-
 const maybePublishWddmScanout = (width: number, height: number): void => {
   const words = scanoutState;
   if (!words) return;
@@ -1695,10 +1639,17 @@ const tryReadWddmScanoutFrame = (snap: ScanoutStateSnapshot): WddmScanoutFrameIn
 
   // Translate each row's guest physical address into a contiguous RAM offset (handles the
   // PC/Q35 low-RAM + high-RAM remap when guest RAM exceeds the PCI hole).
+  const ramBytes = ram.byteLength;
   for (let y = 0; y < height; y += 1) {
     const rowPaddr = basePaddrNum + y * pitchBytes;
     if (!Number.isSafeInteger(rowPaddr)) return null;
-    const rowOffset = guestPaddrToRamOffset(layout, rowPaddr);
+    try {
+      if (!guestRangeInBoundsRaw(ramBytes, rowPaddr, rowBytes)) return null;
+    } catch {
+      return null;
+    }
+
+    const rowOffset = guestPaddrToRamOffsetRaw(ramBytes, rowPaddr);
     if (rowOffset === null) return null;
     const rowStart = rowOffset;
     const rowEnd = rowStart + rowBytes;
@@ -3007,14 +2958,6 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
           }
 
           const seq = frameState ? lastPresentedSeq : getCurrentFrameInfo()?.frameSeq;
-          let scanoutSnap: ScanoutStateSnapshot | null = null;
-          if (scanoutState) {
-            try {
-              scanoutSnap = snapshotScanoutState(scanoutState);
-            } catch {
-              scanoutSnap = null;
-            }
-          }
 
           const tryPostWddmScanoutScreenshot = (): boolean => {
             const words = scanoutState;
@@ -3072,39 +3015,55 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
                 postStub(typeof seq === "number" ? seq : undefined);
                 return true;
               }
-              const basePaddrNum = Number(basePaddr);
-
-              const ramOffset = guestPaddrToRamOffset(layout.guest_size, basePaddrNum);
-              if (ramOffset === null) {
-                postStub(typeof seq === "number" ? seq : undefined);
-                return true;
-              }
-
-              const srcBytes = pitchBytes * height;
               const outBytes = rowBytes * height;
-              if (!Number.isSafeInteger(srcBytes) || !Number.isSafeInteger(outBytes) || srcBytes <= 0 || outBytes <= 0) {
+              if (!Number.isSafeInteger(outBytes) || outBytes <= 0) {
                 postStub(typeof seq === "number" ? seq : undefined);
                 return true;
               }
               // Avoid attempting absurd allocations if the descriptor is corrupt.
               const MAX_SCREENSHOT_BYTES = 256 * 1024 * 1024;
-              if (srcBytes > MAX_SCREENSHOT_BYTES || outBytes > MAX_SCREENSHOT_BYTES) {
+              if (outBytes > MAX_SCREENSHOT_BYTES) {
                 postStub(typeof seq === "number" ? seq : undefined);
                 return true;
               }
-              const end = ramOffset + srcBytes;
-              if (!Number.isSafeInteger(end) || end > guest.byteLength) {
-                postStub(typeof seq === "number" ? seq : undefined);
-                return true;
-              }
-
               const out = new Uint8Array(outBytes);
+              const ramBytes = layout.guest_size >>> 0;
               // Convert little-endian B8G8R8X8 -> RGBA8 (alpha forced to 255).
+              //
+              // IMPORTANT: guest physical memory may contain holes (PC/Q35 ECAM + PCI/MMIO). Do not
+              // translate only the base and then treat the range as contiguous in backing RAM;
+              // that can incorrectly allow reads that cross the hole boundary.
               for (let y = 0; y < height; y += 1) {
-                const srcRow = ramOffset + y * pitchBytes;
+                const rowPaddrBig = basePaddr + BigInt(pitchBytes) * BigInt(y);
+                if (rowPaddrBig > BigInt(Number.MAX_SAFE_INTEGER)) {
+                  postStub(typeof seq === "number" ? seq : undefined);
+                  return true;
+                }
+                const rowPaddr = Number(rowPaddrBig);
+
+                try {
+                  if (!guestRangeInBoundsRaw(ramBytes, rowPaddr, rowBytes)) {
+                    postStub(typeof seq === "number" ? seq : undefined);
+                    return true;
+                  }
+                } catch {
+                  postStub(typeof seq === "number" ? seq : undefined);
+                  return true;
+                }
+
+                const rowOff = guestPaddrToRamOffsetRaw(ramBytes, rowPaddr);
+                if (rowOff === null) {
+                  postStub(typeof seq === "number" ? seq : undefined);
+                  return true;
+                }
+                if (rowOff + rowBytes > guest.byteLength) {
+                  postStub(typeof seq === "number" ? seq : undefined);
+                  return true;
+                }
+
                 const dstRow = y * rowBytes;
                 for (let x = 0; x < width; x += 1) {
-                  const srcPx = srcRow + x * BYTES_PER_PIXEL_RGBA8;
+                  const srcPx = rowOff + x * BYTES_PER_PIXEL_RGBA8;
                   const dstPx = dstRow + x * BYTES_PER_PIXEL_RGBA8;
                   out[dstPx + 0] = guest[srcPx + 2]; // R
                   out[dstPx + 1] = guest[srcPx + 1]; // G
@@ -3371,47 +3330,6 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
             ]);
             await maybeSendReady();
             if (await tryScreenshot(true)) return;
-          }
-
-          // If scanout is WDDM-owned and points at guest RAM, attempt a direct readback before
-          // falling back to stale buffers.
-          if (scanoutSnap?.source === SCANOUT_SOURCE_WDDM && guestU8) {
-            const shot = tryReadWddmScanoutRgba8(scanoutSnap, guestU8);
-            if (shot) {
-              const pixels = new Uint8Array(shot.rgba8);
-              if (includeCursor) {
-                try {
-                  compositeCursorOverRgba8(
-                    pixels,
-                    shot.width,
-                    shot.height,
-                    cursorEnabled,
-                    cursorImage,
-                    cursorWidth,
-                    cursorHeight,
-                    cursorX,
-                    cursorY,
-                    cursorHotX,
-                    cursorHotY,
-                  );
-                } catch {
-                  // Ignore; screenshot cursor compositing is best-effort.
-                }
-              }
-              postToMain(
-                {
-                  type: "screenshot",
-                  requestId: req.requestId,
-                  width: shot.width,
-                  height: shot.height,
-                  rgba8: pixels.buffer,
-                  origin: "top-left",
-                  ...(typeof seq === "number" ? { frameSeq: seq } : {}),
-                },
-                [pixels.buffer],
-              );
-              return;
-            }
           }
 
           const last = aerogpuLastPresentedFrame;
