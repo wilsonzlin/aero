@@ -31,25 +31,28 @@ as the EDD path works).
 See [`docs/09b-eltorito-cd-boot.md`](./09b-eltorito-cd-boot.md) for the exact structures and call
 contracts.
 
-### Canonical BIOS drive map (HDD0 + CD0)
+### Canonical BIOS drive numbers (HDD0 + CD0)
 
-In the **canonical `aero_machine::Machine`** (Win7 storage topology), the BIOS exposes **at least
-two** INT 13h drives simultaneously:
+In the canonical `aero_machine::Machine` Win7 storage topology, both an AHCI HDD and an IDE/ATAPI
+CD-ROM may be attached. However, Aero’s BIOS currently exposes only the **selected boot drive**
+(`BiosConfig::boot_drive` / `DL`) as “present” to INT 13h; other drive numbers are treated as not
+present.
+
+Drive-number conventions still follow common PC/BIOS ranges:
 
 | Device | BIOS drive number (`DL`) | Sector size exposed via INT 13h | Notes |
 |---|---:|---:|---|
 | HDD0 (primary disk) | `0x80` | 512 bytes | Traditional HDD semantics. |
 | CD0 (install ISO) | `0xE0` | 2048 bytes | Via INT 13h Extensions (EDD); `AH=48h` reports 2048. |
 
-INT 13h requests are routed to the correct backing store based on **the drive number in `DL`**
-(not the configured boot drive):
+Sector units by drive class:
 
-- For `DL` in `0x80..=0xDF` (fixed disks), EDD DAP `lba`/`count` are in **512-byte sectors**.
-- For `DL` in `0xE0..=0xEF` (CD-ROM), EDD DAP `lba`/`count` are in **2048-byte logical blocks**
+- For HDD drive numbers (`DL=0x80..=0xDF`), EDD DAP `lba`/`count` are in **512-byte sectors**.
+- For CD drive numbers (`DL=0xE0..=0xEF`), EDD DAP `lba`/`count` are in **2048-byte logical blocks**
   (ISO LBAs).
 
-This routing matters when booting install media: early Windows boot code will read from the CD via
-`DL=0xE0`, but may also probe or read from the HDD via `DL=0x80`.
+To boot install media, the host must select CD boot (`boot_drive=0xE0`) before reset (see
+[`docs/05-storage-topology-win7.md`](./05-storage-topology-win7.md)).
 
 UEFI is **not** the canonical path today. If you see older docs implying an external BIOS blob or a
 still-unimplemented firmware stack, treat those as outdated.
