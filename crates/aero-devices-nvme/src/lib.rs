@@ -1552,10 +1552,8 @@ impl NvmeController {
             | DSM_ATTR_INTEGRAL_DATASET_FOR_WRITE
             | DSM_ATTR_DEALLOCATE;
 
-        // We currently only act on Deallocate, but accept the "integral dataset" hints as they do
-        // not require any backend support (treated as no-op hints).
-        if cmd.cdw11 & !DSM_ATTR_KNOWN_MASK != 0 || cmd.cdw11 & DSM_ATTR_DEALLOCATE == 0 {
-            // Reject unknown attributes, or DSM commands that do not request deallocation.
+        if cmd.cdw11 & !DSM_ATTR_KNOWN_MASK != 0 {
+            // Reject unknown attributes.
             return (NvmeStatus::INVALID_FIELD, 0);
         }
 
@@ -1563,6 +1561,13 @@ impl NvmeController {
         if cmd.cdw10 & !0xff != 0 {
             return (NvmeStatus::INVALID_FIELD, 0);
         }
+
+        // If the command does not request Deallocate, treat it as a no-op success. This matches
+        // the intent of the "integral dataset" hint bits and improves guest compatibility.
+        if cmd.cdw11 & DSM_ATTR_DEALLOCATE == 0 {
+            return (NvmeStatus::SUCCESS, 0);
+        }
+
         let ranges = (cmd.cdw10 & 0xff) + 1;
 
         // DSM range definition entries are 16 bytes each.

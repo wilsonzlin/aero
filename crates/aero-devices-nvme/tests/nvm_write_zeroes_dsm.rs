@@ -9,6 +9,7 @@ const NVME_MAX_DMA_BYTES: usize = 4 * 1024 * 1024;
 // Completion status encodings (without phase).
 const NVME_STATUS_SUCCESS: u16 = 0x0000;
 const NVME_STATUS_INVALID_FIELD: u16 = 0x4004;
+const NVME_STATUS_LBA_OUT_OF_RANGE: u16 = 0x4300;
 
 struct TestMem {
     buf: Vec<u8>,
@@ -317,6 +318,41 @@ fn identify_namespace_advertises_thin_provisioning_for_dsm() {
 }
 
 #[test]
+fn dsm_without_deallocate_is_noop_success() {
+    let disk = MemDisk::new(1024);
+    let disk_state = disk.clone();
+    disk_state.fill(0x77);
+
+    let mut ctrl = NvmeController::new(Box::new(disk));
+    let mut mem = TestMem::new(2 * 1024 * 1024);
+
+    let asq = 0x10000;
+    let acq = 0x20000;
+    let io_cq = 0x40000;
+    let io_sq = 0x50000;
+
+    setup_admin_and_io_queue_pair(&mut ctrl, &mut mem, asq, acq, io_cq, io_sq);
+
+    // DSM with "integral dataset" hint bits only (no AD / deallocate). This should be accepted as
+    // a no-op for compatibility.
+    let mut cmd = build_command(0x09);
+    set_cid(&mut cmd, 0x40);
+    set_nsid(&mut cmd, 1);
+    set_cdw10(&mut cmd, 0); // 1 range (ignored by no-op path)
+    set_cdw11(&mut cmd, 1 << 0); // IDR hint only
+    mem.write_physical(io_sq, &cmd);
+    ctrl.mmio_write(0x1008, 4, 1);
+    ctrl.process(&mut mem);
+
+    let (cid, status) = read_cqe(&mut mem, io_cq, 0);
+    assert_eq!(cid, 0x40);
+    assert_eq!(status & !0x1, NVME_STATUS_SUCCESS);
+
+    // Ensure the disk was not modified.
+    assert_eq!(disk_state.read_bytes(0, SECTOR_SIZE), vec![0x77u8; SECTOR_SIZE]);
+}
+
+#[test]
 fn write_zeroes_zero_fills_disk() {
     let disk = MemDisk::new(1024);
     let disk_state = disk.clone();
@@ -451,6 +487,41 @@ fn write_zeroes_rejects_oversized_request() {
 }
 
 #[test]
+fn write_zeroes_out_of_range_is_rejected() {
+    let disk = MemDisk::new(16);
+    let disk_state = disk.clone();
+    disk_state.fill(0x55);
+
+    let mut ctrl = NvmeController::new(Box::new(disk));
+    let mut mem = TestMem::new(2 * 1024 * 1024);
+
+    let asq = 0x10000;
+    let acq = 0x20000;
+    let io_cq = 0x40000;
+    let io_sq = 0x50000;
+
+    setup_admin_and_io_queue_pair(&mut ctrl, &mut mem, asq, acq, io_cq, io_sq);
+
+    // Request 2 sectors starting at the final LBA (out-of-range).
+    let mut cmd = build_command(0x08);
+    set_cid(&mut cmd, 0x41);
+    set_nsid(&mut cmd, 1);
+    set_cdw10(&mut cmd, 15); // slba
+    set_cdw11(&mut cmd, 0);
+    set_cdw12(&mut cmd, 1); // nlb=1 => 2 sectors
+    mem.write_physical(io_sq, &cmd);
+    ctrl.mmio_write(0x1008, 4, 1);
+    ctrl.process(&mut mem);
+
+    let (cid, status) = read_cqe(&mut mem, io_cq, 0);
+    assert_eq!(cid, 0x41);
+    assert_eq!(status & !0x1, NVME_STATUS_LBA_OUT_OF_RANGE);
+
+    // Ensure the disk was not modified.
+    assert_eq!(disk_state.read_bytes(15 * SECTOR_SIZE, SECTOR_SIZE), vec![0x55u8; SECTOR_SIZE]);
+}
+
+#[test]
 fn dsm_deallocate_rejects_oversized_request() {
     // Use a disk large enough that the range check passes for an oversized request.
     let disk = MemDisk::new(9000);
@@ -496,4 +567,46 @@ fn dsm_deallocate_rejects_oversized_request() {
         disk_state.read_bytes(0, SECTOR_SIZE),
         vec![0x22u8; SECTOR_SIZE]
     );
+}
+
+#[test]
+fn dsm_deallocate_out_of_range_is_rejected() {
+    let disk = MemDisk::new(16);
+    let disk_state = disk.clone();
+    disk_state.fill(0x66);
+
+    let mut ctrl = NvmeController::new(Box::new(disk));
+    let mut mem = TestMem::new(2 * 1024 * 1024);
+
+    let asq = 0x10000;
+    let acq = 0x20000;
+    let io_cq = 0x40000;
+    let io_sq = 0x50000;
+    let ranges = 0x60000;
+
+    setup_admin_and_io_queue_pair(&mut ctrl, &mut mem, asq, acq, io_cq, io_sq);
+
+    // DSM range descriptor: SLBA=16 (one past end), NLB=0 => 1 sector.
+    let mut range_desc = [0u8; 16];
+    range_desc[0..4].copy_from_slice(&0u32.to_le_bytes()); // cattr
+    range_desc[4..8].copy_from_slice(&0u32.to_le_bytes()); // nlb=0 => 1 sector
+    range_desc[8..16].copy_from_slice(&16u64.to_le_bytes()); // slba
+    mem.write_physical(ranges, &range_desc);
+
+    let mut cmd = build_command(0x09);
+    set_cid(&mut cmd, 0x42);
+    set_nsid(&mut cmd, 1);
+    set_prp1(&mut cmd, ranges);
+    set_cdw10(&mut cmd, 0); // NR=0 => 1 range
+    set_cdw11(&mut cmd, 1 << 2); // deallocate
+    mem.write_physical(io_sq, &cmd);
+    ctrl.mmio_write(0x1008, 4, 1);
+    ctrl.process(&mut mem);
+
+    let (cid, status) = read_cqe(&mut mem, io_cq, 0);
+    assert_eq!(cid, 0x42);
+    assert_eq!(status & !0x1, NVME_STATUS_LBA_OUT_OF_RANGE);
+
+    // Ensure the disk was not modified.
+    assert_eq!(disk_state.read_bytes(0, SECTOR_SIZE), vec![0x66u8; SECTOR_SIZE]);
 }
