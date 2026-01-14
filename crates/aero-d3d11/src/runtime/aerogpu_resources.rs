@@ -400,9 +400,10 @@ impl AerogpuResourceManager {
         // are accepted-but-ignored by this resource-manager/runtime path.
         if let Some(v) = crate::sm4::scan_sm5_nonzero_gs_stream(&program) {
             bail!(
-                "CreateShaderDxbc: unsupported {} stream index {} (only stream 0 is supported)",
+                "CreateShaderDxbc: unsupported {} stream index {} at dword {} (only stream 0 is supported)",
                 v.op_name,
-                v.stream
+                v.stream,
+                v.at_dword
             );
         }
 

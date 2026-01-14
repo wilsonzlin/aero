@@ -12860,9 +12860,10 @@ impl AerogpuD3d11Executor {
         // execution is still partial (GS) or not wired yet (HS/DS).
         if let Some(v) = crate::sm4::scan_sm5_nonzero_gs_stream(&program) {
             bail!(
-                "CREATE_SHADER_DXBC: unsupported {} stream index {} (only stream 0 is supported)",
+                "CREATE_SHADER_DXBC: unsupported {} stream index {} at dword {} (only stream 0 is supported)",
                 v.op_name,
-                v.stream
+                v.stream,
+                v.at_dword
             );
         }
         let parsed_stage = match program.stage {
@@ -13144,8 +13145,8 @@ impl AerogpuD3d11Executor {
                     // Enforce the same SM5 GS stream-0 policy as the non-persistent path.
                     if let Some(v) = crate::sm4::scan_sm5_nonzero_gs_stream(&program) {
                         return Err(format!(
-                            "CREATE_SHADER_DXBC: unsupported {} stream index {} (only stream 0 is supported)",
-                            v.op_name, v.stream
+                            "CREATE_SHADER_DXBC: unsupported {} stream index {} at dword {} (only stream 0 is supported)",
+                            v.op_name, v.stream, v.at_dword
                         ));
                     }
                     let parsed_stage = match program.stage {

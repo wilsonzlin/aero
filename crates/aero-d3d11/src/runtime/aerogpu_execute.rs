@@ -571,9 +571,10 @@ impl AerogpuCmdRuntime {
         // are accepted-but-ignored by this runtime.
         if let Some(v) = crate::sm4::scan_sm5_nonzero_gs_stream(&program) {
             bail!(
-                "create_shader_dxbc: unsupported {} stream index {} (only stream 0 is supported)",
+                "create_shader_dxbc: unsupported {} stream index {} at dword {} (only stream 0 is supported)",
                 v.op_name,
-                v.stream
+                v.stream,
+                v.at_dword
             );
         }
 

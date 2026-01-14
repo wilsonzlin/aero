@@ -5,6 +5,8 @@ use super::Sm4Program;
 pub(crate) struct Sm5GsStreamViolation {
     pub op_name: &'static str,
     pub stream: u32,
+    /// DWORD index (token index) of the violating opcode token within the SM4/SM5 token stream.
+    pub at_dword: usize,
 }
 
 /// Scan an SM4/SM5 token stream for SM5 geometry-shader multi-stream emission opcodes
@@ -109,7 +111,11 @@ pub(crate) fn scan_sm5_nonzero_gs_stream(program: &Sm4Program) -> Option<Sm5GsSt
                 };
                 if let Some(stream) = stream {
                     if stream != 0 {
-                        return Some(Sm5GsStreamViolation { op_name, stream });
+                        return Some(Sm5GsStreamViolation {
+                            op_name,
+                            stream,
+                            at_dword: i,
+                        });
                     }
                 }
             }
@@ -168,7 +174,8 @@ mod tests {
             scan_sm5_nonzero_gs_stream(&program),
             Some(Sm5GsStreamViolation {
                 op_name: expected_op_name,
-                stream: 1
+                stream: 1,
+                at_dword: 2,
             })
         );
     }
@@ -224,7 +231,8 @@ mod tests {
             scan_sm5_nonzero_gs_stream(&program),
             Some(Sm5GsStreamViolation {
                 op_name: "emit_stream",
-                stream: 1
+                stream: 1,
+                at_dword: 3,
             })
         );
     }
@@ -243,7 +251,8 @@ mod tests {
             scan_sm5_nonzero_gs_stream(&program),
             Some(Sm5GsStreamViolation {
                 op_name: "emit_stream",
-                stream: 1
+                stream: 1,
+                at_dword: 2,
             })
         );
     }
@@ -267,7 +276,8 @@ mod tests {
             scan_sm5_nonzero_gs_stream(&program),
             Some(Sm5GsStreamViolation {
                 op_name: "emit_stream",
-                stream: 1
+                stream: 1,
+                at_dword: 2,
             })
         );
     }
