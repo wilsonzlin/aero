@@ -1481,6 +1481,11 @@ struct Device {
   // allocation table that resolves `backing_alloc_id` values in the AeroGPU
   // command stream.
   std::vector<WddmSubmitAllocation> wddm_submit_allocation_handles;
+  // True if we failed to grow `wddm_submit_allocation_handles` due to OOM while
+  // recording commands. Submitting with an incomplete allocation list is unsafe
+  // for guest-backed resources because the KMD may not be able to resolve
+  // `backing_alloc_id` references.
+  bool wddm_submit_allocation_list_oom = false;
 
   std::atomic<uint64_t> last_submitted_fence{0};
   std::atomic<uint64_t> last_completed_fence{0};
@@ -2051,8 +2056,19 @@ inline uint64_t submit_locked(Device* dev, bool want_present = false, HRESULT* o
   if (!dev) {
     return 0;
   }
+  if (dev->wddm_submit_allocation_list_oom) {
+    if (out_hr) {
+      *out_hr = E_OUTOFMEMORY;
+    }
+    dev->pending_staging_writes.clear();
+    dev->cmd.reset();
+    dev->wddm_submit_allocation_handles.clear();
+    dev->wddm_submit_allocation_list_oom = false;
+    return 0;
+  }
   if (dev->cmd.empty()) {
     dev->wddm_submit_allocation_handles.clear();
+    dev->wddm_submit_allocation_list_oom = false;
     return 0;
   }
 
@@ -2076,6 +2092,7 @@ inline uint64_t submit_locked(Device* dev, bool want_present = false, HRESULT* o
   }
   dev->cmd.reset();
   dev->wddm_submit_allocation_handles.clear();
+  dev->wddm_submit_allocation_list_oom = false;
   if (FAILED(hr)) {
     dev->pending_staging_writes.clear();
     return 0;
@@ -2109,6 +2126,7 @@ inline uint64_t submit_locked(Device* dev, bool want_present = false, HRESULT* o
     dev->pending_staging_writes.clear();
     dev->cmd.reset();
     dev->wddm_submit_allocation_handles.clear();
+    dev->wddm_submit_allocation_list_oom = false;
     return 0;
   }
 
@@ -2130,6 +2148,7 @@ inline uint64_t submit_locked(Device* dev, bool want_present = false, HRESULT* o
   dev->pending_staging_writes.clear();
   dev->cmd.reset();
   dev->wddm_submit_allocation_handles.clear();
+  dev->wddm_submit_allocation_list_oom = false;
   return fence;
 #endif
 }

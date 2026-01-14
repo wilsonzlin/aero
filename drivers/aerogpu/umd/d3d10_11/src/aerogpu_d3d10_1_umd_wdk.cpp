@@ -343,6 +343,7 @@ struct AeroGpuDevice {
   // KMD can attach an allocation table that resolves `backing_alloc_id` values in
   // the AeroGPU command stream.
   std::vector<aerogpu::d3d10_11::WddmSubmitAllocation> wddm_submit_allocation_handles;
+  bool wddm_submit_allocation_list_oom = false;
 
   // Fence tracking for WDDM-backed synchronization (used by Map READ / DO_NOT_WAIT semantics).
   std::atomic<uint64_t> last_submitted_fence{0};
@@ -407,6 +408,8 @@ struct AeroGpuDevice {
   }
 };
 
+void set_error(AeroGpuDevice* dev, HRESULT hr);
+
 static void TrackStagingWriteLocked(AeroGpuDevice* dev, AeroGpuResource* dst) {
   if (!dev || !dst) {
     return;
@@ -435,7 +438,11 @@ static void TrackStagingWriteLocked(AeroGpuDevice* dev, AeroGpuResource* dst) {
     return;
   }
 
-  dev->pending_staging_writes.push_back(dst);
+  try {
+    dev->pending_staging_writes.push_back(dst);
+  } catch (...) {
+    set_error(dev, E_OUTOFMEMORY);
+  }
 }
 template <typename Fn, typename Handle, typename... Args>
 decltype(auto) CallCbMaybeHandle(Fn fn, Handle handle, Args&&... args) {
@@ -693,9 +700,22 @@ uint64_t submit_locked(AeroGpuDevice* dev, bool want_present, HRESULT* out_hr) {
   if (!dev) {
     return 0;
   }
+  if (dev->wddm_submit_allocation_list_oom) {
+    // Submitting with an incomplete allocation list is unsafe when the command
+    // stream references guest-backed allocations (`backing_alloc_id`).
+    if (out_hr) {
+      *out_hr = E_OUTOFMEMORY;
+    }
+    dev->cmd.reset();
+    dev->wddm_submit_allocation_handles.clear();
+    dev->pending_staging_writes.clear();
+    dev->wddm_submit_allocation_list_oom = false;
+    return 0;
+  }
   if (dev->cmd.empty()) {
     dev->wddm_submit_allocation_handles.clear();
     dev->pending_staging_writes.clear();
+    dev->wddm_submit_allocation_list_oom = false;
     return 0;
   }
   if (!dev->adapter) {
@@ -705,6 +725,7 @@ uint64_t submit_locked(AeroGpuDevice* dev, bool want_present, HRESULT* out_hr) {
     dev->cmd.reset();
     dev->wddm_submit_allocation_handles.clear();
     dev->pending_staging_writes.clear();
+    dev->wddm_submit_allocation_list_oom = false;
     return 0;
   }
 
@@ -719,6 +740,7 @@ uint64_t submit_locked(AeroGpuDevice* dev, bool want_present, HRESULT* out_hr) {
       dev->wddm_submit.SubmitAeroCmdStream(dev->cmd.data(), dev->cmd.size(), want_present, allocs, alloc_count, &fence);
   dev->cmd.reset();
   dev->wddm_submit_allocation_handles.clear();
+  dev->wddm_submit_allocation_list_oom = false;
   if (FAILED(hr)) {
     dev->pending_staging_writes.clear();
     if (out_hr) {
@@ -768,6 +790,9 @@ static void TrackWddmAllocForSubmitLocked(AeroGpuDevice* dev, const AeroGpuResou
   if (!dev || !res) {
     return;
   }
+  if (dev->wddm_submit_allocation_list_oom) {
+    return;
+  }
   if (res->backing_alloc_id == 0 || res->wddm_allocation_handle == 0) {
     return;
   }
@@ -784,7 +809,12 @@ static void TrackWddmAllocForSubmitLocked(AeroGpuDevice* dev, const AeroGpuResou
   aerogpu::d3d10_11::WddmSubmitAllocation entry{};
   entry.allocation_handle = handle;
   entry.write = write ? 1 : 0;
-  dev->wddm_submit_allocation_handles.push_back(entry);
+  try {
+    dev->wddm_submit_allocation_handles.push_back(entry);
+  } catch (...) {
+    dev->wddm_submit_allocation_list_oom = true;
+    set_error(dev, E_OUTOFMEMORY);
+  }
 }
 
 static void TrackBoundTargetsForSubmitLocked(AeroGpuDevice* dev) {
@@ -2712,7 +2742,34 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     res->is_shared = is_shared;
     res->is_shared_alias = false;
     res->wddm.km_allocation_handles.clear();
-    res->wddm.km_allocation_handles.push_back(km_alloc);
+    try {
+      res->wddm.km_allocation_handles.push_back(km_alloc);
+    } catch (...) {
+      // Ensure we don't leak the just-allocated KM resource/allocation if the UMD
+      // cannot record its handles due to OOM.
+      D3DDDICB_DEALLOCATE dealloc = {};
+      D3DKMT_HANDLE h = static_cast<D3DKMT_HANDLE>(km_alloc);
+      __if_exists(D3DDDICB_DEALLOCATE::hContext) {
+        dealloc.hContext = UintPtrToD3dHandle<decltype(dealloc.hContext)>(static_cast<std::uintptr_t>(dev->kmt_context));
+      }
+      __if_exists(D3DDDICB_DEALLOCATE::hKMResource) {
+        dealloc.hKMResource = static_cast<D3DKMT_HANDLE>(km_resource);
+      }
+      __if_exists(D3DDDICB_DEALLOCATE::NumAllocations) {
+        dealloc.NumAllocations = km_alloc ? 1u : 0u;
+      }
+      __if_exists(D3DDDICB_DEALLOCATE::HandleList) {
+        dealloc.HandleList = km_alloc ? &h : nullptr;
+      }
+      __if_exists(D3DDDICB_DEALLOCATE::phAllocations) {
+        dealloc.phAllocations = km_alloc ? &h : nullptr;
+      }
+      (void)CallCbMaybeHandle(cb->pfnDeallocateCb, dev->hrt_device, &dealloc);
+      res->wddm.km_allocation_handles.clear();
+      res->wddm.km_resource_handle = 0;
+      res->wddm_allocation_handle = 0;
+      return E_OUTOFMEMORY;
+    }
     uint32_t runtime_alloc = 0;
     __if_exists(AllocationInfoT::hAllocation) {
       runtime_alloc = static_cast<uint32_t>(alloc_info[0].hAllocation);
@@ -3432,14 +3489,24 @@ HRESULT AEROGPU_APIENTRY OpenResource(D3D10DDI_HDEVICE hDevice,
     res->wddm.km_resource_handle = static_cast<uint64_t>(pOpenResource->hKMResource);
   }
   __if_exists(D3D10DDIARG_OPENRESOURCE::hKMAllocation) {
-    res->wddm.km_allocation_handles.push_back(static_cast<uint64_t>(pOpenResource->hKMAllocation));
+    try {
+      res->wddm.km_allocation_handles.push_back(static_cast<uint64_t>(pOpenResource->hKMAllocation));
+    } catch (...) {
+      ResetObject(res);
+      return E_OUTOFMEMORY;
+    }
   }
   __if_exists(D3D10DDIARG_OPENRESOURCE::hAllocation) {
     const uint64_t h = static_cast<uint64_t>(pOpenResource->hAllocation);
     if (h != 0) {
       res->wddm_allocation_handle = static_cast<uint32_t>(h);
       if (res->wddm.km_allocation_handles.empty()) {
-        res->wddm.km_allocation_handles.push_back(h);
+        try {
+          res->wddm.km_allocation_handles.push_back(h);
+        } catch (...) {
+          ResetObject(res);
+          return E_OUTOFMEMORY;
+        }
       }
     }
   }
@@ -3450,7 +3517,12 @@ HRESULT AEROGPU_APIENTRY OpenResource(D3D10DDI_HDEVICE hDevice,
         if (h != 0) {
           res->wddm_allocation_handle = static_cast<uint32_t>(h);
           if (res->wddm.km_allocation_handles.empty()) {
-            res->wddm.km_allocation_handles.push_back(h);
+            try {
+              res->wddm.km_allocation_handles.push_back(h);
+            } catch (...) {
+              ResetObject(res);
+              return E_OUTOFMEMORY;
+            }
           }
         }
       }
@@ -3480,7 +3552,12 @@ HRESULT AEROGPU_APIENTRY OpenResource(D3D10DDI_HDEVICE hDevice,
       if (km_alloc != 0 &&
           std::find(res->wddm.km_allocation_handles.begin(), res->wddm.km_allocation_handles.end(), km_alloc) ==
               res->wddm.km_allocation_handles.end()) {
-        res->wddm.km_allocation_handles.push_back(km_alloc);
+        try {
+          res->wddm.km_allocation_handles.push_back(km_alloc);
+        } catch (...) {
+          ResetObject(res);
+          return E_OUTOFMEMORY;
+        }
       }
     }
   }
@@ -3527,8 +3604,15 @@ HRESULT AEROGPU_APIENTRY OpenResource(D3D10DDI_HDEVICE hDevice,
       ResetObject(res);
       return E_INVALIDARG;
     }
-    if (total_bytes <= static_cast<uint64_t>(SIZE_MAX)) {
+    if (total_bytes == 0 || total_bytes > static_cast<uint64_t>(SIZE_MAX)) {
+      ResetObject(res);
+      return E_INVALIDARG;
+    }
+    try {
       res->storage.resize(static_cast<size_t>(total_bytes), 0);
+    } catch (...) {
+      ResetObject(res);
+      return E_OUTOFMEMORY;
     }
   } else {
     ResetObject(res);
@@ -8860,6 +8944,7 @@ HRESULT AEROGPU_APIENTRY Present(D3D10DDI_HDEVICE hDevice, const D3D10DDIARG_PRE
   if (!cmd) {
     dev->cmd.reset();
     dev->wddm_submit_allocation_handles.clear();
+    dev->wddm_submit_allocation_list_oom = false;
     dev->pending_staging_writes.clear();
     AEROGPU_D3D10_RET_HR(E_OUTOFMEMORY);
   }
