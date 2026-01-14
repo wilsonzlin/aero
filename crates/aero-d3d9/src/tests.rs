@@ -1730,6 +1730,28 @@ fn assemble_vs3_texkill() -> Vec<u32> {
     out
 }
 
+fn assemble_vs3_reads_vpos_misc_sm3_decoder() -> Vec<u32> {
+    // vs_3_0: attempts to read vPos via MiscType (misc0), which is only valid in pixel shaders.
+    let mut out = vec![0xFFFE0300];
+    // mov r0, misc0
+    out.extend(enc_inst(0x0001, &[enc_dst(0, 0, 0xF), enc_src(17, 0, 0xE4)]));
+    // mov oPos, r0
+    out.extend(enc_inst(0x0001, &[enc_dst(4, 0, 0xF), enc_src(0, 0, 0xE4)]));
+    out.push(0x0000FFFF);
+    out
+}
+
+fn assemble_ps3_reads_misc2_sm3_decoder() -> Vec<u32> {
+    // ps_3_0: attempts to read an unsupported MiscType builtin (misc2).
+    let mut out = vec![0xFFFF0300];
+    // mov r0, misc2
+    out.extend(enc_inst(0x0001, &[enc_dst(0, 0, 0xF), enc_src(17, 2, 0xE4)]));
+    // mov oC0, r0
+    out.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)]));
+    out.push(0x0000FFFF);
+    out
+}
+
 fn assemble_ps3_nrm_sm3_decoder() -> Vec<u32> {
     // ps_3_0
     let mut out = vec![0xFFFF0300];
@@ -4855,11 +4877,35 @@ fn sm3_verify_rejects_texkill_in_vertex_shader() {
 }
 
 #[test]
+fn sm3_verify_rejects_misctype_in_vertex_shader() {
+    let words = assemble_vs3_reads_vpos_misc_sm3_decoder();
+    let decoded = crate::sm3::decode_u32_tokens(&words).expect("decode");
+    let ir = crate::sm3::build_ir(&decoded).expect("build_ir");
+    let err = crate::sm3::verify_ir(&ir).unwrap_err();
+    assert_eq!(
+        err.message,
+        "MiscType (vPos/vFace) inputs are only supported in pixel shaders"
+    );
+}
+
+#[test]
 fn sm3_verify_allows_texkill_in_pixel_shader() {
     let words = assemble_ps3_texkill();
     let decoded = crate::sm3::decode_u32_tokens(&words).expect("decode");
     let ir = crate::sm3::build_ir(&decoded).expect("build_ir");
     crate::sm3::verify_ir(&ir).expect("verify_ir");
+}
+
+#[test]
+fn sm3_verify_rejects_unknown_misctype_index() {
+    let words = assemble_ps3_reads_misc2_sm3_decoder();
+    let decoded = crate::sm3::decode_u32_tokens(&words).expect("decode");
+    let ir = crate::sm3::build_ir(&decoded).expect("build_ir");
+    let err = crate::sm3::verify_ir(&ir).unwrap_err();
+    assert_eq!(
+        err.message,
+        "unsupported MiscType input misc2 (only misc0=vPos and misc1=vFace are supported)"
+    );
 }
 
 #[test]
