@@ -1041,7 +1041,7 @@ export function mountWebHidPassthroughPanel(host: HTMLElement, manager: WebHidPa
     text:
       `Guest UHCI root port 0 hosts an emulated external USB hub (${hubPortCount} ports). ` +
       (reservedPorts > 0
-        ? `Ports 1..=${reservedPorts} are reserved for synthetic HID devices (keyboard/mouse/gamepad). ` +
+        ? `Ports 1..=${reservedPorts} are reserved for synthetic HID devices (keyboard/mouse/gamepad/consumer-control). ` +
           `Passthrough devices attach behind it using paths like 0.${reservedPorts + 1}. `
         : `Passthrough devices attach behind it using paths like 0.${UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT}. `) +
       "UHCI root port 1 is reserved for the guest-visible WebUSB passthrough device.",

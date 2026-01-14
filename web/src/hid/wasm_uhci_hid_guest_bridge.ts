@@ -60,7 +60,7 @@ function normalizeExternalHubGuestPath(
   if (rootPort !== 0 && rootPort !== 1) return null;
   // Backwards-compatible mapping for root-port-only hints: translate `[0]` / `[1]` onto stable
   // hub-backed paths behind root port 0. Offset by the reserved synthetic ports so legacy callers
-  // don't clobber the built-in keyboard/mouse/gamepad devices.
+  // don't clobber the built-in synthetic HID devices.
   return [EXTERNAL_HUB_ROOT_PORT, remapLegacyRootPortToExternalHubPort(rootPort)];
 }
 

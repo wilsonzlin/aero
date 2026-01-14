@@ -1953,7 +1953,7 @@ function maybeInitXhciDevice(): void {
   // Wire HID topology management if the xHCI bridge exports the required APIs.
   wireXhciHidTopologyBridge();
 
-  // Synthetic USB HID devices (keyboard/mouse/gamepad) may be attached behind xHCI in WASM builds
+  // Synthetic USB HID devices (keyboard/mouse/gamepad/consumer-control) may be attached behind xHCI in WASM builds
   // that omit UHCI.
   maybeInitSyntheticUsbHidDevices();
 }
