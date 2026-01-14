@@ -947,6 +947,117 @@ mod tests {
     }
 
     #[test]
+    fn recovery_does_not_attempt_reinit_after_reaching_failed_state() {
+        let stats = GpuStats::new();
+        let mut machine =
+            GpuRecoveryMachine::new(GpuBackendKind::WebGpu, BackendAvailability::both());
+
+        // First device-lost event: both backends fail, transitioning the machine to Failed.
+        let _outcome = machine.handle_device_lost(
+            100,
+            &stats,
+            |_e| {},
+            |_backend| Err("nope".to_string()),
+        );
+        assert_eq!(machine.state(), RecoveryState::Failed);
+
+        let snap = stats.snapshot();
+        assert_eq!(snap.recoveries_attempted, 2);
+        assert_eq!(snap.recoveries_succeeded, 0);
+
+        // Second device-lost event: should short-circuit without attempting reinit or bumping stats.
+        let mut events = Vec::new();
+        let outcome = machine.handle_device_lost(
+            101,
+            &stats,
+            |e| events.push(e),
+            |_backend| panic!("reinit should not be called once recovery has entered Failed"),
+        );
+
+        assert_eq!(outcome, RecoveryOutcome::Failed);
+        assert_eq!(machine.state(), RecoveryState::Failed);
+
+        let snap = stats.snapshot();
+        assert_eq!(snap.recoveries_attempted, 2);
+        assert_eq!(snap.recoveries_succeeded, 0);
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].time_ms, 101);
+        assert_eq!(events[0].severity, GpuErrorSeverityKind::Fatal);
+        assert_eq!(events[0].category, GpuErrorCategory::DeviceLost);
+        assert_eq!(events[0].backend_kind, GpuBackendKind::WebGpu);
+        assert_eq!(events[0].message, "GPU recovery requested while already failed");
+    }
+
+    #[test]
+    fn recovery_stats_accumulate_across_multiple_device_lost_events() {
+        let stats = GpuStats::new();
+        let mut machine =
+            GpuRecoveryMachine::new(GpuBackendKind::WebGpu, BackendAvailability::both());
+
+        // First device-lost: fail WebGPU, recover via WebGL2.
+        let _outcome = machine.handle_device_lost(
+            200,
+            &stats,
+            |_e| {},
+            |backend| match backend {
+                GpuBackendKind::WebGpu => Err("webgpu init failed".to_string()),
+                GpuBackendKind::WebGl2 => Ok(()),
+            },
+        );
+        assert_eq!(machine.state(), RecoveryState::Running);
+        assert_eq!(machine.backend_kind(), GpuBackendKind::WebGl2);
+
+        // Second device-lost: recover on current backend (WebGL2) directly.
+        let mut events = Vec::new();
+        let mut attempted = Vec::new();
+        let outcome = machine.handle_device_lost(
+            201,
+            &stats,
+            |e| events.push(e),
+            |backend| {
+                attempted.push(backend);
+                Ok(())
+            },
+        );
+
+        assert_eq!(
+            outcome,
+            RecoveryOutcome::Recovered {
+                backend_kind: GpuBackendKind::WebGl2
+            }
+        );
+        assert_eq!(machine.state(), RecoveryState::Running);
+        assert_eq!(machine.backend_kind(), GpuBackendKind::WebGl2);
+
+        assert_eq!(attempted, vec![GpuBackendKind::WebGl2]);
+
+        // Stats should accumulate across calls: (2 attempts + 1 success) from the first device-lost,
+        // then (1 attempt + 1 success) from the second.
+        let snap = stats.snapshot();
+        assert_eq!(snap.recoveries_attempted, 3);
+        assert_eq!(snap.recoveries_succeeded, 2);
+
+        // Second-call event ordering should be deterministic: attempt then success.
+        assert_eq!(events.len(), 2, "{events:#?}");
+        assert!(events.iter().all(|e| e.time_ms == 201));
+        assert_eq!(events[0].severity, GpuErrorSeverityKind::Info);
+        assert_eq!(events[0].category, GpuErrorCategory::DeviceLost);
+        assert_eq!(events[0].backend_kind, GpuBackendKind::WebGl2);
+        assert_eq!(
+            events[0].message,
+            format!("Attempting GPU recovery on {:?}", GpuBackendKind::WebGl2)
+        );
+        assert_eq!(events[1].severity, GpuErrorSeverityKind::Info);
+        assert_eq!(events[1].category, GpuErrorCategory::DeviceLost);
+        assert_eq!(events[1].backend_kind, GpuBackendKind::WebGl2);
+        assert_eq!(
+            events[1].message,
+            format!("GPU recovery succeeded on {:?}", GpuBackendKind::WebGl2)
+        );
+    }
+
+    #[test]
     fn recovery_requested_while_already_failed_emits_fatal_without_attempting_reinit() {
         let stats = GpuStats::new();
         let mut machine =
