@@ -4563,13 +4563,14 @@ HRESULT ensure_fixedfunc_pipeline_locked(Device* dev) {
       vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsPassthroughPosColor));
       break;
     case kSupportedFvfXyzDiffuse:
-      // Bring-up: treat XYZ vertices as already in clip space (no WVP transform).
-      // Some host-side tests intentionally pass clip-space-ish coordinates here.
-      vs_slot = &dev->fixedfunc_vs;
+      // XYZ vertices require a WVP transform in the VS. When SetFVF is used, the
+      // UMD synthesizes an internal declaration so it can bind a known input layout.
+      vs_slot = &dev->fixedfunc_vs_xyz_diffuse;
       ps_slot = &dev->fixedfunc_ps;
       fvf_decl = dev->fvf_vertex_decl_xyz_diffuse;
-      vs_bytes = fixedfunc::kVsPassthroughPosColor;
-      vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsPassthroughPosColor));
+      vs_bytes = fixedfunc::kVsWvpPosColor;
+      vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsWvpPosColor));
+      needs_matrix = true;
       break;
     case kSupportedFvfXyzrhwDiffuseTex1:
       vs_slot = &dev->fixedfunc_vs_tex1;
@@ -7924,6 +7925,11 @@ HRESULT AEROGPU_D3D9_CALL device_destroy(D3DDDI_HDEVICE hDevice) {
       (void)emit_destroy_shader_locked(dev, dev->fixedfunc_vs->handle);
       delete dev->fixedfunc_vs;
       dev->fixedfunc_vs = nullptr;
+    }
+    if (dev->fixedfunc_vs_xyz_diffuse) {
+      (void)emit_destroy_shader_locked(dev, dev->fixedfunc_vs_xyz_diffuse->handle);
+      delete dev->fixedfunc_vs_xyz_diffuse;
+      dev->fixedfunc_vs_xyz_diffuse = nullptr;
     }
     if (dev->fixedfunc_vs_xyz_diffuse_tex1) {
       (void)emit_destroy_shader_locked(dev, dev->fixedfunc_vs_xyz_diffuse_tex1->handle);
@@ -12148,7 +12154,9 @@ HRESULT AEROGPU_D3D9_CALL device_set_vertex_decl(
     }
   }
   dev->fvf = implied_fvf;
-  if (implied_fvf == kSupportedFvfXyzDiffuseTex1 || implied_fvf == kSupportedFvfXyzTex1) {
+  if (implied_fvf == kSupportedFvfXyzDiffuse ||
+      implied_fvf == kSupportedFvfXyzDiffuseTex1 ||
+      implied_fvf == kSupportedFvfXyzTex1) {
     // Switching to the WVP-fixed-function path must refresh the reserved VS
     // constant range, even if transforms did not change (user shaders may have
     // written overlapping registers).
@@ -12229,8 +12237,8 @@ HRESULT AEROGPU_D3D9_CALL device_set_fvf(D3DDDI_HDEVICE hDevice, uint32_t fvf) {
 
   // The AeroGPU fixed-function fallback supports only a small FVF subset (see
   // `drivers/aerogpu/umd/d3d9/README.md`). The SetFVF path synthesizes/binds an
-  // internal vertex declaration for the supported fixed-function FVFs so the UMD
-  // can bind a known input layout.
+  // internal vertex declaration for supported fixed-function FVFs so the UMD can
+  // bind a known input layout.
   //
   // Other FVFs may be accepted and cached so GetFVF + state blocks behave
   // deterministically, but rendering is not guaranteed for unsupported formats.
@@ -12313,6 +12321,11 @@ HRESULT AEROGPU_D3D9_CALL device_set_fvf(D3DDDI_HDEVICE hDevice, uint32_t fvf) {
       return trace.ret(E_OUTOFMEMORY);
     }
     dev->fvf = fvf;
+    // Fixed-function shaders use a reserved VS constant range for the combined
+    // world/view/projection matrix; mark it dirty so we re-upload on the next draw
+    // even if transforms themselves did not change (user shaders may have written
+    // overlapping registers before switching back to FVF mode).
+    dev->fixedfunc_matrix_dirty = true;
     stateblock_record_vertex_decl_locked(dev, dev->fvf_vertex_decl_xyz_diffuse, dev->fvf);
     return trace.ret(S_OK);
   }
@@ -12442,7 +12455,9 @@ HRESULT AEROGPU_D3D9_CALL device_set_shader(
   // when the app later switches back to fixed-function (without necessarily
   // changing FVF/decl), we must re-upload the matrix constants.
   if (stage == kD3d9ShaderStageVs && sh &&
-      (dev->fvf == kSupportedFvfXyzDiffuseTex1 || dev->fvf == kSupportedFvfXyzTex1)) {
+      (dev->fvf == kSupportedFvfXyzDiffuse ||
+       dev->fvf == kSupportedFvfXyzDiffuseTex1 ||
+       dev->fvf == kSupportedFvfXyzTex1)) {
     dev->fixedfunc_matrix_dirty = true;
   }
 
@@ -12532,7 +12547,9 @@ HRESULT AEROGPU_D3D9_CALL device_set_shader_const_f(
   // If the app writes to the fixed-function reserved matrix constant range,
   // treat it as clobbered and re-upload on the next fixed-function draw.
   if (stage_norm == kD3d9ShaderStageVs &&
-      (dev->fvf == kSupportedFvfXyzDiffuseTex1 || dev->fvf == kSupportedFvfXyzTex1)) {
+      (dev->fvf == kSupportedFvfXyzDiffuse ||
+       dev->fvf == kSupportedFvfXyzDiffuseTex1 ||
+       dev->fvf == kSupportedFvfXyzTex1)) {
     const uint32_t end_reg = start_reg + vec4_count;
     const uint32_t ff_start = kFixedfuncMatrixStartRegister;
     const uint32_t ff_end = kFixedfuncMatrixStartRegister + kFixedfuncMatrixVec4Count;

@@ -559,8 +559,8 @@ bool TestCreateRasterizerStateRejectsUnsupportedCullMode() {
   }
 
   AEROGPU_DDIARG_CREATERASTERIZERSTATE desc = {};
+  // Invalid: `cull_mode` is `enum aerogpu_cull_mode` (0..2).
   desc.fill_mode = AEROGPU_FILL_WIREFRAME;
-  // Invalid: `cull_mode` is `enum aerogpu_cull_mode` (0..3).
   desc.cull_mode = AEROGPU_CULL_BACK + 1u;
   desc.front_ccw = 0;
   desc.scissor_enable = 0;
@@ -569,7 +569,7 @@ bool TestCreateRasterizerStateRejectsUnsupportedCullMode() {
 
   D3D10DDI_HRASTERIZERSTATE hState = {};
   const SIZE_T size = dev.device_funcs.pfnCalcPrivateRasterizerStateSize(dev.hDevice, &desc);
-  if (!Check(size >= sizeof(void*), "CalcPrivateRasterizerStateSize returned non-trivial size (invalid CullMode)")) {
+  if (!Check(size >= sizeof(void*), "CalcPrivateRasterizerStateSize returned non-trivial size (invalid cull_mode)")) {
     return false;
   }
   std::vector<uint8_t> storage(static_cast<size_t>(size), 0);
