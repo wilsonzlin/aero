@@ -295,6 +295,9 @@ The current implementation targets:
 
 - `ColorFill`, `UpdateSurface`, `UpdateTexture` and `StretchRect`-style copies (validated by `d3d9ex_stretchrect`).
 - `GetRenderTargetData` readback into `D3DPOOL_SYSTEMMEM` surfaces (used by most rendering tests).
+- **EVENT queries (DWM):** `CreateQuery`/`IssueQuery`/`GetQueryData` are implemented for `D3DQUERYTYPE_EVENT` only; other query
+  types return `D3DERR_NOTAVAILABLE` (see `device_create_query()` / `device_issue_query()` / `device_get_query_data()` in
+  `src/aerogpu_d3d9_driver.cpp`).
 
 Unsupported states are handled defensively; unknown state enums are accepted and forwarded as generic “set render/sampler state” commands so the emulator can decide how to interpret them.
 
@@ -458,11 +461,17 @@ Limitations:
 
 ### Bring-up no-op DDIs
 
-These DDIs are treated as benign no-ops for bring-up (returning `S_OK`). They are still traced, but are **not** tagged as `(stub)` in trace output (so they do not trigger `AEROGPU_D3D9_TRACE_DUMP_ON_STUB=1`). They are wired via `AEROGPU_D3D9_DEFINE_DDI_NOOP(...)` in the “Stubbed entrypoints” section of `src/aerogpu_d3d9_driver.cpp`.
+These DDIs are treated as benign no-ops for bring-up (returning `S_OK`). They are still traced, but are **not** tagged as
+`(stub)` in trace output (so they do not trigger `AEROGPU_D3D9_TRACE_DUMP_ON_STUB=1`).
 
 - `pfnSetConvolutionMonoKernel`
 - `pfnGenerateMipSubLevels`
 - `pfnSetDialogBoxMode`
+- `pfnComposeRects` (`device_compose_rects()` in `src/aerogpu_d3d9_driver.cpp`)
+
+Note: `pfnSetConvolutionMonoKernel` and `pfnSetDialogBoxMode` are wired via `AEROGPU_D3D9_DEFINE_DDI_NOOP(...)` in the
+“Stubbed entrypoints” section of `src/aerogpu_d3d9_driver.cpp`. `pfnComposeRects` is implemented directly as an `S_OK`
+no-op to keep D3D9Ex composition paths alive.
 
 ### Cached legacy state (Set*/Get* round-trip)
 
