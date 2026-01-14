@@ -5715,6 +5715,7 @@ def main() -> int:
         _emit_virtio_net_irq_host_marker(tail)
         _emit_virtio_snd_irq_host_marker(tail)
         _emit_virtio_input_irq_host_marker(tail)
+        _emit_virtio_input_msix_host_marker(tail)
         _emit_virtio_irq_host_markers(tail, markers=irq_diag_markers)
         _emit_virtio_snd_playback_host_marker(tail)
         _emit_virtio_snd_capture_host_marker(tail)
@@ -7113,6 +7114,67 @@ def _emit_virtio_snd_irq_host_marker(tail: bytes) -> None:
 
 def _emit_virtio_input_irq_host_marker(tail: bytes) -> None:
     _emit_virtio_irq_host_marker(tail, device="virtio-input", host_marker="VIRTIO_INPUT_IRQ")
+
+
+def _emit_virtio_input_msix_host_marker(tail: bytes) -> None:
+    """
+    Best-effort: emit a host-side marker mirroring the guest `virtio-input-msix` TEST marker.
+
+    The guest selftest emits:
+      AERO_VIRTIO_SELFTEST|TEST|virtio-input-msix|PASS/FAIL/SKIP|mode=...|messages=...|mapping=...|...
+
+    Mirror it into:
+      AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_MSIX|PASS/FAIL/SKIP|mode=...|messages=...|mapping=...|...
+
+    This does not affect harness PASS/FAIL; it's only for log scraping/diagnostics.
+    """
+    marker_line = _try_extract_last_marker_line(tail, b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-msix|")
+    if marker_line is None:
+        return
+
+    toks = marker_line.split("|")
+
+    status = "INFO"
+    if "FAIL" in toks:
+        status = "FAIL"
+    elif "PASS" in toks:
+        status = "PASS"
+    elif "SKIP" in toks:
+        status = "SKIP"
+
+    fields = _parse_marker_kv_fields(marker_line)
+    parts = [f"AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_MSIX|{status}"]
+
+    # Keep ordering stable for log scraping.
+    ordered = [
+        "mode",
+        "messages",
+        "mapping",
+        "used_vectors",
+        "config_vector",
+        "queue0_vector",
+        "queue1_vector",
+        "msix_devices",
+        "intx_devices",
+        "unknown_devices",
+        "intx_spurious",
+        "total_interrupts",
+        "total_dpcs",
+        "config_irqs",
+        "queue0_irqs",
+        "queue1_irqs",
+        "reason",
+        "err",
+    ]
+    for k in ordered:
+        if k in fields:
+            parts.append(f"{k}={_sanitize_marker_value(fields[k])}")
+
+    extra = sorted(k for k in fields if k not in ordered)
+    for k in extra:
+        parts.append(f"{k}={_sanitize_marker_value(fields[k])}")
+
+    print("|".join(parts))
 
 
 def _emit_virtio_snd_playback_host_marker(tail: bytes) -> None:
