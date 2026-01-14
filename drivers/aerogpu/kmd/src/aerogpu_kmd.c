@@ -3594,11 +3594,13 @@ static NTSTATUS APIENTRY AeroGpuDdiSetPowerState(_In_ const HANDLE hAdapter,
             }
         }
 
+        const BOOLEAN errorLatched = AeroGpuIsDeviceErrorLatched(adapter);
+
         /* Restore IRQ enable mask (if supported). */
         if (adapter->Bar0Length >= (AEROGPU_MMIO_REG_IRQ_ENABLE + sizeof(ULONG))) {
             KIRQL irqIrql;
             KeAcquireSpinLock(&adapter->IrqEnableLock, &irqIrql);
-            const ULONG enable = adapter->InterruptRegistered ? adapter->IrqEnableMask : 0;
+            const ULONG enable = (adapter->InterruptRegistered && !errorLatched) ? adapter->IrqEnableMask : 0;
             AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE, enable);
             KeReleaseSpinLock(&adapter->IrqEnableLock, irqIrql);
         }
@@ -3615,7 +3617,7 @@ static NTSTATUS APIENTRY AeroGpuDdiSetPowerState(_In_ const HANDLE hAdapter,
                             ? TRUE
                             : FALSE;
         }
-        if (canSubmit) {
+        if (!errorLatched && canSubmit) {
             InterlockedExchange(&adapter->AcceptingSubmissions, 1);
         }
 
