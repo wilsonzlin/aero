@@ -23,7 +23,10 @@ use super::bindings::ShaderStage;
 ///
 /// Note: This is separate from the JS-side `CACHE_SCHEMA_VERSION` because it is easy to forget
 /// to bump that global cache version when only the D3D11 translator changes.
-pub const D3D11_TRANSLATOR_CACHE_VERSION: u32 = 1;
+// Bump note (v2): enforce the SM5 GS stream-0 policy even when a previously persisted shader-cache
+// entry would otherwise allow an unsupported multi-stream geometry shader to be accepted as
+// "ignored" without re-parsing DXBC.
+pub const D3D11_TRANSLATOR_CACHE_VERSION: u32 = 2;
 
 fn default_d3d11_translator_cache_version() -> u32 {
     D3D11_TRANSLATOR_CACHE_VERSION
