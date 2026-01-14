@@ -207,8 +207,8 @@ For allocations that may be referenced together in a single submission (notably 
 - `alloc_id` values (for both shared and non-shared allocations) are derived from a cross-process monotonic counter (`allocate_shared_alloc_id_token()` in `src/aerogpu_d3d9_driver.cpp`, backed by a named file mapping + `InterlockedIncrement64`, masked to 31 bits with 0 skipped).
 - `share_token` is returned by the KMD via `aerogpu_wddm_alloc_priv.share_token` (filled during `DxgkDdiCreateAllocation` and preserved across cross-process opens).
 
-See `docs/graphics/win7-shared-surfaces-share-token.md` for the end-to-end contract and cross-process validation tests
-(`d3d9ex_shared_surface_ipc` and `d3d9ex_shared_surface`).
+See `docs/graphics/win7-shared-surfaces-share-token.md` for the end-to-end contract and the full Win7 cross-process
+shared-surface validation test list (under `drivers/aerogpu/tests/win7/`).
 
 #### Cross-API note: D3D9Ex consuming DXGI shared handles (DWM scenario)
 

@@ -210,8 +210,8 @@ Expected sequence:
 
 **Key invariant:** `share_token` must be stable across processes inside the guest VM. The preserved WDDM allocation private driver data blob (`aerogpu_wddm_alloc_priv.share_token`) is stable; user-mode `HANDLE` numeric values are not.
 
-See `docs/graphics/win7-shared-surfaces-share-token.md` for implementation details and cross-process validation tests
-(`d3d9ex_shared_surface` and `d3d9ex_shared_surface_ipc`).
+See `docs/graphics/win7-shared-surfaces-share-token.md` for implementation details and the full Win7 cross-process
+shared-surface validation test list (under `drivers/aerogpu/tests/win7/`).
 
 Timing-wise: **export** the mapping from the creating process (the one that created the shared handle), and **import** from the opening process (the one that opens that handle) before the resource is used.
 
