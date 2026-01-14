@@ -3482,18 +3482,55 @@ void APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hReso
     cmd->reserved0 = 0;
   }
 
+  // Unbind constant buffers that reference the resource being destroyed.
+  //
+  // Note: `DestroyResource` may flush the current command stream (for guest-backed
+  // allocations) before deallocating the WDDM handles. Ensure we also emit the
+  // corresponding SET_CONSTANT_BUFFERS updates so the host does not observe stale
+  // constant buffer bindings pointing at a destroyed resource.
+  const aerogpu_constant_buffer_binding null_cb{};
   for (uint32_t slot = 0; slot < kMaxConstantBufferSlots; ++slot) {
     if (dev->current_vs_cb_resources[slot] == res) {
       dev->current_vs_cb_resources[slot] = nullptr;
       dev->vs_constant_buffers[slot] = {};
+      auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_constant_buffers>(
+          AEROGPU_CMD_SET_CONSTANT_BUFFERS, &null_cb, sizeof(null_cb));
+      if (!cmd) {
+        SetError(hDevice, E_OUTOFMEMORY);
+        break;
+      }
+      cmd->shader_stage = AEROGPU_SHADER_STAGE_VERTEX;
+      cmd->start_slot = slot;
+      cmd->buffer_count = 1;
+      cmd->reserved0 = 0;
     }
     if (dev->current_ps_cb_resources[slot] == res) {
       dev->current_ps_cb_resources[slot] = nullptr;
       dev->ps_constant_buffers[slot] = {};
+      auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_constant_buffers>(
+          AEROGPU_CMD_SET_CONSTANT_BUFFERS, &null_cb, sizeof(null_cb));
+      if (!cmd) {
+        SetError(hDevice, E_OUTOFMEMORY);
+        break;
+      }
+      cmd->shader_stage = AEROGPU_SHADER_STAGE_PIXEL;
+      cmd->start_slot = slot;
+      cmd->buffer_count = 1;
+      cmd->reserved0 = 0;
     }
     if (dev->current_gs_cb_resources[slot] == res) {
       dev->current_gs_cb_resources[slot] = nullptr;
       dev->gs_constant_buffers[slot] = {};
+      auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_constant_buffers>(
+          AEROGPU_CMD_SET_CONSTANT_BUFFERS, &null_cb, sizeof(null_cb));
+      if (!cmd) {
+        SetError(hDevice, E_OUTOFMEMORY);
+        break;
+      }
+      cmd->shader_stage = AEROGPU_SHADER_STAGE_GEOMETRY;
+      cmd->start_slot = slot;
+      cmd->buffer_count = 1;
+      cmd->reserved0 = 0;
     }
   }
 
