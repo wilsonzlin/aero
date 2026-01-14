@@ -34,6 +34,9 @@ enum Error {
     },
     OutOfDate {
         path: PathBuf,
+        on_disk_len: Option<usize>,
+        generated_len: usize,
+        first_diff_offset: Option<usize>,
     },
 }
 
@@ -46,16 +49,46 @@ impl fmt::Display for Error {
                 path,
                 source,
             } => write!(f, "failed to {action} {}: {source}", path.display()),
-            Error::OutOfDate { path } => write!(
-                f,
-                "{} is out of date; regenerate it with: {REGEN_CMD} (or: {REGEN_CMD_ALT})",
-                path.display()
-            ),
+            Error::OutOfDate {
+                path,
+                on_disk_len,
+                generated_len,
+                first_diff_offset,
+            } => {
+                writeln!(f, "{OUTPUT_PATH_REPO_REL} is out of date.")?;
+                writeln!(f)?;
+                writeln!(f, "Path: {}", path.display())?;
+                match on_disk_len {
+                    Some(len) => writeln!(f, "On-disk length: {len}")?,
+                    None => writeln!(f, "On-disk length: missing")?,
+                }
+                writeln!(f, "Generated length: {generated_len}")?;
+                if let Some(off) = first_diff_offset {
+                    writeln!(f, "First differing byte offset: {off}")?;
+                }
+                writeln!(f)?;
+                writeln!(f, "Regenerate with:")?;
+                writeln!(f, "  {REGEN_CMD}")?;
+                write!(f, "(or: {REGEN_CMD_ALT})")
+            }
         }
     }
 }
 
 impl std::error::Error for Error {}
+
+fn first_diff_offset(a: &[u8], b: &[u8]) -> Option<usize> {
+    let n = a.len().min(b.len());
+    for i in 0..n {
+        if a[i] != b[i] {
+            return Some(i);
+        }
+    }
+    if a.len() != b.len() {
+        return Some(n);
+    }
+    None
+}
 
 fn main() {
     if let Err(e) = run() {
@@ -124,11 +157,17 @@ fn check_dsdt_fixture(path: &Path, generated: &[u8]) -> Result<(), Error> {
             } else {
                 Err(Error::OutOfDate {
                     path: path.to_path_buf(),
+                    on_disk_len: Some(on_disk.len()),
+                    generated_len: generated.len(),
+                    first_diff_offset: first_diff_offset(&on_disk, generated),
                 })
             }
         }
         Err(e) if e.kind() == io::ErrorKind::NotFound => Err(Error::OutOfDate {
             path: path.to_path_buf(),
+            on_disk_len: None,
+            generated_len: generated.len(),
+            first_diff_offset: None,
         }),
         Err(e) => Err(Error::Io {
             action: "read",
@@ -152,12 +191,11 @@ fn write_atomically(path: &Path, bytes: &[u8]) -> Result<(), Error> {
         source: e,
     })?;
 
-    let tmp_path = path.with_file_name(format!(
-        "{}.tmp",
-        path.file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("dsdt.aml")
-    ));
+    let file_name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("dsdt.aml");
+    let tmp_path = path.with_file_name(format!("{file_name}.tmp.{}", std::process::id()));
 
     {
         let mut f = fs::File::create(&tmp_path).map_err(|e| Error::Io {
@@ -186,8 +224,12 @@ fn write_atomically(path: &Path, bytes: &[u8]) -> Result<(), Error> {
     match fs::rename(&tmp_path, path) {
         Ok(()) => Ok(()),
         Err(rename_err) => {
-            let remove_res = fs::remove_file(path);
-            if remove_res.is_ok() {
+            if cfg!(windows) && path.exists() {
+                fs::remove_file(path).map_err(|e| Error::Io {
+                    action: "remove existing file before replacing",
+                    path: path.to_path_buf(),
+                    source: e,
+                })?;
                 fs::rename(&tmp_path, path).map_err(|e| Error::Io {
                     action: "rename temporary file into place",
                     path: path.to_path_buf(),
@@ -195,6 +237,8 @@ fn write_atomically(path: &Path, bytes: &[u8]) -> Result<(), Error> {
                 })?;
                 Ok(())
             } else {
+                // Best-effort cleanup if we couldn't swap into place.
+                let _ = fs::remove_file(&tmp_path);
                 Err(Error::Io {
                     action: "rename temporary file into place",
                     path: path.to_path_buf(),
