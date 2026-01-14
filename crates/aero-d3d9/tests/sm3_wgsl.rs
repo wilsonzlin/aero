@@ -1497,6 +1497,8 @@ fn wgsl_texld_cube_emits_texture_cube_sample() {
     let wgsl = generate_wgsl(&ir).unwrap();
     assert!(wgsl.wgsl.contains("texture_cube"), "{}", wgsl.wgsl);
     assert!(wgsl.wgsl.contains("textureSample("), "{}", wgsl.wgsl);
+    // Constant registers (`c#`) are accessed via the shared uniform constants buffer. We expect
+    // cube sampling to use `xyz` coordinates.
     assert!(
         wgsl.wgsl.contains("(constants.c[CONST_BASE + 0u]).xyz"),
         "{}",
