@@ -92,8 +92,11 @@ fn extract_pci0_crs_bytes(aml: &[u8]) -> Vec<u8> {
             let (pkg_len, pkg_len_bytes) =
                 parse_pkg_length(aml, i + 2).expect("DeviceOp PkgLength should parse");
             let payload_start = i + 2 + pkg_len_bytes;
+            let payload_len = pkg_len
+                .checked_sub(pkg_len_bytes)
+                .expect("DeviceOp PkgLength should include its own encoding bytes");
             let payload_end = payload_start
-                .checked_add(pkg_len)
+                .checked_add(payload_len)
                 .expect("DeviceOp payload end overflow");
             assert!(
                 payload_end <= aml.len(),
@@ -123,8 +126,11 @@ fn extract_pci0_crs_bytes(aml: &[u8]) -> Vec<u8> {
                         let (buf_pkg_len, buf_pkg_len_bytes) = parse_pkg_length(aml, buf_op + 1)
                             .expect("BufferOp PkgLength should parse");
                         let buf_payload_start = buf_op + 1 + buf_pkg_len_bytes;
+                        let buf_payload_len = buf_pkg_len
+                            .checked_sub(buf_pkg_len_bytes)
+                            .expect("BufferOp PkgLength should include its own encoding bytes");
                         let buf_payload_end = buf_payload_start
-                            .checked_add(buf_pkg_len)
+                            .checked_add(buf_payload_len)
                             .expect("BufferOp payload end overflow");
                         assert!(
                             buf_payload_end <= body_end,
