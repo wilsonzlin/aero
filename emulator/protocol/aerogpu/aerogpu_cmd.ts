@@ -2091,12 +2091,7 @@ export class AerogpuCmdWriter {
   /**
    * Stage-ex aware variant of {@link setShaderResourceBuffers}.
    *
-   * Encodes `stageEx` into `(shaderStage, reserved0)` using {@link encodeStageEx}.
-   *
-   * Encoding:
-   * - Legacy stages (Pixel/Vertex/Compute): use the legacy `shaderStage` field and keep `reserved0 = 0`.
-   * - Extended stages (Geometry/Hull/Domain): set `shaderStage = COMPUTE` and write
-   *   `reserved0 = stageEx` (DXBC program-type 2/3/4).
+   * Encodes `stageEx` via `(shaderStage = COMPUTE, reserved0 = stageEx)` (non-zero).
    */
   setShaderResourceBuffersEx(
     stageEx: AerogpuShaderStageEx,
@@ -2137,12 +2132,7 @@ export class AerogpuCmdWriter {
   /**
    * Stage-ex aware variant of {@link setUnorderedAccessBuffers}.
    *
-   * Encodes `stageEx` into `(shaderStage, reserved0)` using {@link encodeStageEx}.
-   *
-   * Encoding:
-   * - Legacy stages (Pixel/Vertex/Compute): use the legacy `shaderStage` field and keep `reserved0 = 0`.
-   * - Extended stages (Geometry/Hull/Domain): set `shaderStage = COMPUTE` and write
-   *   `reserved0 = stageEx` (DXBC program-type 2/3/4).
+   * Encodes `stageEx` via `(shaderStage = COMPUTE, reserved0 = stageEx)` (non-zero).
    */
   setUnorderedAccessBuffersEx(
     stageEx: AerogpuShaderStageEx,
