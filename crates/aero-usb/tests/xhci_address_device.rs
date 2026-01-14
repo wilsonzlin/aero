@@ -314,7 +314,7 @@ fn address_device_bsr_does_not_issue_set_address() {
     addr.set_cycle(true);
     addr.set_trb_type(TrbType::AddressDeviceCommand);
     addr.set_slot_id(slot_id);
-    addr.control |= 1 << 9; // BSR
+    addr.set_address_device_bsr(true);
     addr.write_to(&mut mem, cmd_ring + TRB_LEN as u64);
 
     stop.write_to(&mut mem, cmd_ring + (2 * TRB_LEN) as u64);

@@ -383,10 +383,12 @@ mod tests {
     }
 
     fn link_trb(target: u64, cycle: bool, toggle_cycle: bool) -> Trb {
-        let mut trb = Trb::default();
+        let mut trb = Trb {
+            parameter: target & !0x0f,
+            ..Default::default()
+        };
         trb.set_trb_type(TrbType::Link);
         trb.set_cycle(cycle);
-        trb.parameter = target & !0x0f;
         trb.set_link_toggle_cycle(toggle_cycle);
         trb
     }
@@ -408,11 +410,13 @@ mod tests {
     }
 
     fn set_tr_dequeue_ptr_cmd(slot_id: u8, endpoint_id: u8, ptr: u64, dcs: bool) -> Trb {
-        let mut trb = Trb::default();
+        let mut trb = Trb {
+            parameter: (ptr & !0x0f) | if dcs { 1 } else { 0 },
+            ..Default::default()
+        };
         trb.set_trb_type(TrbType::SetTrDequeuePointerCommand);
         trb.set_slot_id(slot_id);
         trb.set_endpoint_id(endpoint_id);
-        trb.parameter = (ptr & !0x0f) | if dcs { 1 } else { 0 };
         trb
     }
 

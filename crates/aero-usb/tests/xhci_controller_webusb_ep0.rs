@@ -111,11 +111,13 @@ fn xhci_controller_ep0_control_in_webusb_nak_keeps_td_pending_and_dequeue_pinned
     data_trb.set_dir_in(true);
     data_trb.write_to(&mut mem, transfer_ring_base + TRB_LEN as u64);
 
-    let mut status_trb = Trb::default();
+    let mut status_trb = Trb {
+        control: Trb::CONTROL_IOC,
+        ..Default::default()
+    };
     status_trb.set_cycle(true);
     status_trb.set_trb_type(TrbType::StatusStage);
-    status_trb.control |= Trb::CONTROL_IOC; // request Transfer Event
-                                            // DIR=0 (Status OUT) for a control read.
+    // request Transfer Event. DIR=0 (Status OUT) for a control read.
     status_trb.write_to(&mut mem, transfer_ring_base + 2 * TRB_LEN as u64);
 
     // Initialise guest DMA buffer to a sentinel.

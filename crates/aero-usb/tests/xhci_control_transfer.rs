@@ -71,11 +71,13 @@ fn xhci_control_get_descriptor_device_keyboard_short_packet_event() {
     data_trb.set_trb_type(TrbType::DataStage);
     data_trb.write_to(&mut mem, transfer_ring_base + TRB_LEN as u64);
 
-    let mut status_trb = Trb::default();
+    let mut status_trb = Trb {
+        control: Trb::CONTROL_IOC, // request Transfer Event
+        ..Default::default()
+    };
     status_trb.set_cycle(true);
     status_trb.set_trb_type(TrbType::StatusStage);
-    status_trb.control |= Trb::CONTROL_IOC; // request Transfer Event
-                                            // DIR=0 (Status OUT) for a control read.
+    // DIR=0 (Status OUT) for a control read.
     status_trb.write_to(&mut mem, transfer_ring_base + 2 * TRB_LEN as u64);
 
     let mut link_trb = Trb {

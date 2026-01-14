@@ -416,12 +416,10 @@ fn xhci_enum_smoke_bringup_enumerate_and_interrupt_in() {
     let mut normal = Trb {
         parameter: dma_buf,
         status: 8, // TRB Transfer Length.
-        ..Default::default()
+        control: Trb::CONTROL_IOC,
     };
     normal.set_cycle(true);
     normal.set_trb_type(TrbType::Normal);
-    // IOC bit (bit 5) in the control dword.
-    normal.control |= 1 << 5;
     normal.write_to(&mut mem, ep1_ring);
 
     let mut link = Trb {

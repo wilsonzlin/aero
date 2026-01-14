@@ -155,11 +155,12 @@ fn xhci_controller_control_out_immediate_data_stage_is_delivered() {
     data_trb.set_trb_type(TrbType::DataStage);
     data_trb.write_to(&mut mem, transfer_ring_base + TRB_LEN as u64);
 
-    let mut status_trb = Trb::default();
+    let mut status_trb = Trb {
+        control: Trb::CONTROL_DIR | Trb::CONTROL_IOC,
+        ..Default::default()
+    };
     status_trb.set_cycle(true);
     status_trb.set_trb_type(TrbType::StatusStage);
-    status_trb.control |= Trb::CONTROL_DIR; // Status IN for control-out requests.
-    status_trb.control |= Trb::CONTROL_IOC; // request event
     status_trb.write_to(&mut mem, transfer_ring_base + 2 * TRB_LEN as u64);
 
     let mut link_trb = Trb {
@@ -242,10 +243,12 @@ fn xhci_controller_control_in_immediate_data_stage_writes_trb_parameter() {
     data_trb.set_trb_type(TrbType::DataStage);
     data_trb.write_to(&mut mem, transfer_ring_base + TRB_LEN as u64);
 
-    let mut status_trb = Trb::default();
+    let mut status_trb = Trb {
+        control: Trb::CONTROL_IOC, // request event
+        ..Default::default()
+    };
     status_trb.set_cycle(true);
     status_trb.set_trb_type(TrbType::StatusStage);
-    status_trb.control |= Trb::CONTROL_IOC; // Status OUT for control-IN requests.
     status_trb.write_to(&mut mem, transfer_ring_base + 2 * TRB_LEN as u64);
 
     let mut link_trb = Trb {

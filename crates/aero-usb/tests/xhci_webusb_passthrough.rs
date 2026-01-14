@@ -400,12 +400,10 @@ fn xhci_control_in_get_descriptor_queues_action_then_completes_and_dmas_data() {
     let mut data_trb = Trb {
         parameter: dma_buf,
         status: setup.w_length as u32,
-        ..Default::default()
+        control: Trb::CONTROL_DIR,
     };
     data_trb.set_cycle(true);
     data_trb.set_trb_type(TrbType::DataStage);
-    // Data Stage TRB DIR bit (bit 16) = 1 indicates IN.
-    data_trb.control |= 1 << 16;
     data_trb.write_to(&mut mem, ep0_ring + TRB_LEN as u64);
 
     let mut status_trb = Trb::default();
