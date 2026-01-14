@@ -658,7 +658,7 @@ function publishInputBackendStatus(opts: { virtioKeyboardOk: boolean; virtioMous
     Atomics.store(st, StatusIndex.IoInputVirtioMouseDriverOk, opts.virtioMouseOk ? 1 : 0);
     Atomics.store(st, StatusIndex.IoInputUsbKeyboardOk, keyboardUsbOk ? 1 : 0);
     Atomics.store(st, StatusIndex.IoInputUsbMouseOk, mouseUsbOk ? 1 : 0);
-    Atomics.store(st, StatusIndex.IoInputKeyboardHeldCount, pressedKeyboardHidUsageCount | 0);
+    Atomics.store(st, StatusIndex.IoInputKeyboardHeldCount, (pressedKeyboardHidUsageCount + pressedConsumerUsageCount) | 0);
     Atomics.store(st, StatusIndex.IoInputMouseButtonsHeldMask, mouseButtonsMask & 0x1f);
   } catch {
     // ignore (best-effort)
