@@ -406,7 +406,16 @@ impl SnapshotTarget for WorkerVmSnapshot {
 #[cfg(all(test, target_arch = "wasm32"))]
 mod tests {
     use super::*;
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen::JsValue;
     use wasm_bindgen_test::wasm_bindgen_test;
+
+    fn js_error_message(err: JsValue) -> String {
+        if let Ok(e) = err.clone().dyn_into::<js_sys::Error>() {
+            return e.message().into();
+        }
+        err.as_string().unwrap_or_else(|| format!("{err:?}"))
+    }
 
     #[wasm_bindgen_test]
     fn add_device_state_allows_64_mib_and_rejects_larger() {
@@ -434,7 +443,7 @@ mod tests {
         let err = snapshot
             .add_device_state(2, 1, 0, &too_large)
             .expect_err("device blob larger than 64 MiB should be rejected");
-        let msg = err.as_string().unwrap_or_default();
+        let msg = js_error_message(err);
         assert!(
             msg.contains("device state too large"),
             "unexpected error message: {msg}"

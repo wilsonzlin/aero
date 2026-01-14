@@ -167,6 +167,58 @@ fn parse_devices_js(devices: JsValue) -> Result<Vec<DeviceState>, JsValue> {
     Ok(out)
 }
 
+#[cfg(all(test, target_arch = "wasm32"))]
+mod tests {
+    use super::*;
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    fn js_error_message(err: JsValue) -> String {
+        if let Ok(e) = err.clone().dyn_into::<js_sys::Error>() {
+            return e.message().into();
+        }
+        err.as_string().unwrap_or_else(|| format!("{err:?}"))
+    }
+
+    #[wasm_bindgen_test]
+    fn parse_devices_js_allows_64_mib_and_rejects_larger() {
+        let max = aero_snapshot::limits::MAX_DEVICE_ENTRY_LEN as usize;
+        assert_eq!(MAX_DEVICE_BLOB_BYTES, max);
+
+        {
+            let devices = Array::new();
+            let obj = Object::new();
+            Reflect::set(&obj, &JsValue::from_str("kind"), &JsValue::from_str("device.1"))
+                .expect("Reflect::set(kind)");
+            let bytes = Uint8Array::new_with_length(max as u32);
+            Reflect::set(&obj, &JsValue::from_str("bytes"), bytes.as_ref())
+                .expect("Reflect::set(bytes)");
+            devices.push(&obj);
+
+            let parsed = parse_devices_js(devices.into()).expect("64 MiB device blob accepted");
+            assert_eq!(parsed.len(), 1);
+            assert_eq!(parsed[0].data.len(), max);
+        }
+
+        // Too large should error before copying bytes into wasm memory.
+        let devices = Array::new();
+        let obj = Object::new();
+        Reflect::set(&obj, &JsValue::from_str("kind"), &JsValue::from_str("device.1"))
+            .expect("Reflect::set(kind)");
+        let bytes = Uint8Array::new_with_length((max + 1) as u32);
+        Reflect::set(&obj, &JsValue::from_str("bytes"), bytes.as_ref())
+            .expect("Reflect::set(bytes)");
+        devices.push(&obj);
+
+        let err = parse_devices_js(devices.into()).expect_err("expected oversize device blob error");
+        let msg = js_error_message(err);
+        assert!(
+            msg.contains("Device blob too large"),
+            "unexpected error message: {msg}"
+        );
+    }
+}
+
 fn build_devices_js(states: Vec<DeviceState>) -> Result<Option<Array>, JsValue> {
     if states.is_empty() {
         return Ok(None);
