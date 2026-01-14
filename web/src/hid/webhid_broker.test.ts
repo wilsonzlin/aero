@@ -1250,6 +1250,90 @@ describe("hid/WebHidBroker", () => {
     }
   });
 
+  it("bounds pending per-device output sends when sendReport stalls (output ring path)", async () => {
+    Object.defineProperty(globalThis, "crossOriginIsolated", { value: true, configurable: true });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const limit = 3;
+      const manager = new WebHidPassthroughManager({ hid: null });
+      const broker = new WebHidBroker({ manager, maxPendingDeviceSends: limit });
+      const port = new FakePort();
+      broker.attachWorkerPort(port as unknown as MessagePort);
+
+      const ringAttach = port.posted.find((p) => (p.msg as { type?: unknown }).type === "hid.ringAttach")?.msg as
+        | { inputRing: SharedArrayBuffer; outputRing: SharedArrayBuffer }
+        | undefined;
+      expect(ringAttach).toBeTruthy();
+      const outputRing = new HidReportRing(ringAttach!.outputRing);
+
+      const device = new FakeHidDevice();
+      const first = deferred<void>();
+      device.sendReport.mockImplementationOnce(() => first.promise);
+      const id = await broker.attachDevice(device as unknown as HIDDevice);
+
+      expect(outputRing.push(id, HidReportType.Output, 1, Uint8Array.of(1))).toBe(true);
+      for (let i = 2; i <= 10; i += 1) {
+        expect(outputRing.push(id, HidReportType.Output, i, Uint8Array.of(i))).toBe(true);
+      }
+
+      await new Promise((r) => setTimeout(r, 20));
+      expect(device.sendReport).toHaveBeenCalledTimes(1);
+
+      expect(broker.getOutputSendStats().droppedTotal).toBeGreaterThan(0);
+      expect(warn.mock.calls.some((call) => String(call[0]).includes(`deviceId=${id}`))).toBe(true);
+
+      first.resolve(undefined);
+      await new Promise((r) => setTimeout(r, 20));
+      expect(device.sendReport.mock.calls.length).toBeLessThanOrEqual(limit + 1);
+
+      broker.destroy();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("bounds pending per-device feature sends when sendFeatureReport stalls (output ring path)", async () => {
+    Object.defineProperty(globalThis, "crossOriginIsolated", { value: true, configurable: true });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const limit = 3;
+      const manager = new WebHidPassthroughManager({ hid: null });
+      const broker = new WebHidBroker({ manager, maxPendingDeviceSends: limit });
+      const port = new FakePort();
+      broker.attachWorkerPort(port as unknown as MessagePort);
+
+      const ringAttach = port.posted.find((p) => (p.msg as { type?: unknown }).type === "hid.ringAttach")?.msg as
+        | { inputRing: SharedArrayBuffer; outputRing: SharedArrayBuffer }
+        | undefined;
+      expect(ringAttach).toBeTruthy();
+      const outputRing = new HidReportRing(ringAttach!.outputRing);
+
+      const device = new FakeHidDevice();
+      const first = deferred<void>();
+      device.sendFeatureReport.mockImplementationOnce(() => first.promise);
+      const id = await broker.attachDevice(device as unknown as HIDDevice);
+
+      expect(outputRing.push(id, HidReportType.Feature, 1, Uint8Array.of(1))).toBe(true);
+      for (let i = 2; i <= 10; i += 1) {
+        expect(outputRing.push(id, HidReportType.Feature, i, Uint8Array.of(i))).toBe(true);
+      }
+
+      await new Promise((r) => setTimeout(r, 20));
+      expect(device.sendFeatureReport).toHaveBeenCalledTimes(1);
+
+      expect(broker.getOutputSendStats().droppedTotal).toBeGreaterThan(0);
+      expect(warn.mock.calls.some((call) => String(call[0]).includes(`deviceId=${id}`))).toBe(true);
+
+      first.resolve(undefined);
+      await new Promise((r) => setTimeout(r, 20));
+      expect(device.sendFeatureReport.mock.calls.length).toBeLessThanOrEqual(limit + 1);
+
+      broker.destroy();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("executes output ring reports sequentially per device", async () => {
     Object.defineProperty(globalThis, "crossOriginIsolated", { value: true, configurable: true });
 
