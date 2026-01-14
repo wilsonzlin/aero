@@ -716,24 +716,6 @@ fn uhci_remote_wakeup_propagates_through_external_hub() {
             },
         );
     }
-    // Enable DEVICE_REMOTE_WAKEUP on the hub so it can forward downstream remote wake events.
-    {
-        let mut dev = uhci
-            .controller
-            .hub_mut()
-            .device_mut_for_address(1)
-            .expect("hub should be reachable at address 1");
-        control_no_data(
-            &mut dev,
-            SetupPacket {
-                bm_request_type: 0x00,
-                b_request: 0x03, // SET_FEATURE
-                w_value: 1,      // DEVICE_REMOTE_WAKEUP
-                w_index: 0,
-                w_length: 0,
-            },
-        );
-    }
 
     // Power + reset hub downstream port 1 to make the keyboard reachable.
     {
