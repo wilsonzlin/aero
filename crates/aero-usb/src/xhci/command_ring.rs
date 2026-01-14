@@ -184,6 +184,20 @@ pub struct CommandRingProcessor {
     pub host_controller_error: bool,
 }
 
+/// Work report from a bounded [`CommandRingProcessor::process_budgeted`] call.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CommandRingWork {
+    /// Number of TRBs consumed from the command ring (including Link TRBs).
+    pub trbs_processed: usize,
+    /// Number of event TRBs successfully written to the event ring.
+    pub events_written: usize,
+    /// Whether additional work may still remain on the ring after returning.
+    ///
+    /// This is `true` when we stopped because a budget was exhausted, and `false` when we stopped
+    /// because the ring was empty (cycle mismatch) or a host controller error was detected.
+    pub more_work: bool,
+}
+
 impl CommandRingProcessor {
     pub fn new(
         mem_size: u64,
@@ -257,8 +271,25 @@ impl CommandRingProcessor {
     /// - the next TRB's cycle bit does not match `command_ring.cycle_state` (ring empty)
     /// - a fatal ring pointer error is encountered
     pub fn process(&mut self, mem: &mut dyn MemoryBus, max_trbs: usize) {
+        let _ = self.process_budgeted(mem, max_trbs, usize::MAX);
+    }
+
+    /// Budgeted variant of [`CommandRingProcessor::process`].
+    ///
+    /// In addition to `max_trbs` (command-ring consumption), callers can also bound the number of
+    /// event TRBs written via `max_events`. This is useful for controller-wide per-frame budgeting:
+    /// if we cannot enqueue a completion event for a command, we must leave the command TRB pending
+    /// and retry on a later tick.
+    pub fn process_budgeted(
+        &mut self,
+        mem: &mut dyn MemoryBus,
+        max_trbs: usize,
+        max_events: usize,
+    ) -> CommandRingWork {
+        let mut work = CommandRingWork::default();
+
         if self.host_controller_error {
-            return;
+            return work;
         }
 
         let max_trbs = max_trbs.min(MAX_COMMAND_TRBS_PER_CALL);
@@ -270,13 +301,13 @@ impl CommandRingProcessor {
                 Ok(trb) => trb,
                 Err(_) => {
                     self.host_controller_error = true;
-                    return;
+                    return work;
                 }
             };
 
             if trb.cycle() != self.command_ring.cycle_state {
                 // No more commands available.
-                return;
+                return work;
             }
 
             match trb.trb_type() {
@@ -284,113 +315,116 @@ impl CommandRingProcessor {
                     consecutive_link_trbs = consecutive_link_trbs.saturating_add(1);
                     if consecutive_link_trbs > MAX_CONSECUTIVE_LINK_TRBS {
                         self.host_controller_error = true;
-                        return;
+                        return work;
                     }
                     if !self.handle_link_trb(mem, trb_addr, trb) {
                         self.host_controller_error = true;
-                        return;
+                        return work;
                     }
+                    work.trbs_processed += 1;
+                    continue;
                 }
+                _ => {}
+            }
+
+            // All non-Link commands produce a single Command Completion Event TRB. If we cannot
+            // write another event, stop without consuming the command TRB so we can retry later.
+            if work.events_written >= max_events {
+                work.more_work = true;
+                return work;
+            }
+
+            let slot_id = trb.slot_id();
+            let completion = match trb.trb_type() {
                 TrbType::EnableSlotCommand => {
                     consecutive_link_trbs = 0;
                     let (code, slot_id) = self.handle_enable_slot(mem);
                     self.emit_command_completion(mem, trb_addr, code, slot_id);
-                    if !self.advance_cmd_dequeue() {
-                        self.host_controller_error = true;
-                        return;
-                    }
+                    // Enable Slot assigns the completion slot ID.
+                    code
                 }
                 TrbType::DisableSlotCommand => {
                     consecutive_link_trbs = 0;
                     let slot_id = trb.slot_id();
                     let code = self.handle_disable_slot(mem, slot_id);
                     self.emit_command_completion(mem, trb_addr, code, slot_id);
-                    if !self.advance_cmd_dequeue() {
-                        self.host_controller_error = true;
-                        return;
-                    }
+                    code
                 }
                 TrbType::NoOpCommand => {
                     consecutive_link_trbs = 0;
                     let slot_id = trb.slot_id();
                     self.emit_command_completion(mem, trb_addr, CompletionCode::Success, slot_id);
-                    if !self.advance_cmd_dequeue() {
-                        self.host_controller_error = true;
-                        return;
-                    }
+                    CompletionCode::Success
                 }
                 TrbType::AddressDeviceCommand => {
                     consecutive_link_trbs = 0;
                     let slot_id = trb.slot_id();
                     let code = self.handle_address_device(mem, trb);
                     self.emit_command_completion(mem, trb_addr, code, slot_id);
-                    if !self.advance_cmd_dequeue() {
-                        self.host_controller_error = true;
-                        return;
-                    }
+                    code
                 }
                 TrbType::ConfigureEndpointCommand => {
                     consecutive_link_trbs = 0;
                     let slot_id = trb.slot_id();
                     let code = self.handle_configure_endpoint(mem, trb);
                     self.emit_command_completion(mem, trb_addr, code, slot_id);
-                    if !self.advance_cmd_dequeue() {
-                        self.host_controller_error = true;
-                        return;
-                    }
+                    code
                 }
                 TrbType::EvaluateContextCommand => {
                     consecutive_link_trbs = 0;
                     let slot_id = trb.slot_id();
                     let code = self.handle_evaluate_context(mem, trb);
                     self.emit_command_completion(mem, trb_addr, code, slot_id);
-                    if !self.advance_cmd_dequeue() {
-                        self.host_controller_error = true;
-                        return;
-                    }
+                    code
                 }
                 TrbType::StopEndpointCommand => {
                     consecutive_link_trbs = 0;
                     let slot_id = trb.slot_id();
                     let code = self.handle_stop_endpoint(mem, trb);
                     self.emit_command_completion(mem, trb_addr, code, slot_id);
-                    if !self.advance_cmd_dequeue() {
-                        self.host_controller_error = true;
-                        return;
-                    }
+                    code
                 }
                 TrbType::ResetEndpointCommand => {
                     consecutive_link_trbs = 0;
                     let slot_id = trb.slot_id();
                     let code = self.handle_reset_endpoint(mem, trb);
                     self.emit_command_completion(mem, trb_addr, code, slot_id);
-                    if !self.advance_cmd_dequeue() {
-                        self.host_controller_error = true;
-                        return;
-                    }
+                    code
                 }
                 TrbType::SetTrDequeuePointerCommand => {
                     consecutive_link_trbs = 0;
                     let slot_id = trb.slot_id();
                     let code = self.handle_set_tr_dequeue_pointer(mem, trb);
                     self.emit_command_completion(mem, trb_addr, code, slot_id);
-                    if !self.advance_cmd_dequeue() {
-                        self.host_controller_error = true;
-                        return;
-                    }
+                    code
                 }
                 _ => {
                     consecutive_link_trbs = 0;
                     // Unsupported command. Spec would typically return TRB Error.
-                    let slot_id = trb.slot_id();
                     self.emit_command_completion(mem, trb_addr, CompletionCode::TrbError, slot_id);
-                    if !self.advance_cmd_dequeue() {
-                        self.host_controller_error = true;
-                        return;
-                    }
+                    CompletionCode::TrbError
                 }
+            };
+
+            if self.host_controller_error {
+                return work;
             }
+
+            if !self.advance_cmd_dequeue() {
+                self.host_controller_error = true;
+                return work;
+            }
+
+            // Bookkeeping: we successfully consumed one command TRB and enqueued one completion
+            // event.
+            let _ = completion; // completion is currently only used for readability.
+            work.trbs_processed += 1;
+            work.events_written += 1;
         }
+
+        // We exhausted the TRB budget; additional commands may still be pending.
+        work.more_work = true;
+        work
     }
 
     fn handle_enable_slot(&mut self, mem: &mut dyn MemoryBus) -> (CompletionCode, u8) {

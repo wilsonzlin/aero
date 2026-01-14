@@ -40,17 +40,21 @@ const XHCI_MAX_ROUTE_TIER_COUNT: usize = XHCI_ROUTE_STRING_MAX_DEPTH;
 // Defensive cap for host-provided snapshot payloads. This is primarily to keep the JS→WASM copy
 // bounded for `restore_state(bytes: &[u8])` parameters.
 const MAX_XHCI_SNAPSHOT_BYTES: usize = 4 * 1024 * 1024;
-/// Maximum number of 1ms frames processed per `step_frames` call.
-///
-/// `step_frames` is called from JS/TS glue code; while the guest cannot influence this directly,
-/// a host-side bug (or malicious embedder) could pass a huge value and stall the WASM worker for a
-/// long time. Clamp to a deterministic constant so `step_frames(u32::MAX)` is always bounded.
-const MAX_XHCI_STEP_FRAMES_PER_CALL: u32 = 10_000;
 // Reserve the 2nd xHCI root port for the WebUSB passthrough device.
 //
 // This keeps the port assignment stable across snapshots and matches the UHCI bridge's convention
 // of leaving root port 0 available for an external hub / HID passthrough in the future.
 const WEBUSB_ROOT_PORT: u8 = 1;
+
+/// Maximum number of 1ms frames processed per [`XhciControllerBridge::step_frames`] call.
+///
+/// `step_frames` is called from JS/TS glue code; while the guest cannot influence this directly,
+/// a host-side bug (or malicious embedder) could pass a huge value and stall the WASM worker for a
+/// long time. Clamp to a deterministic constant so `step_frames(u32::MAX)` is always bounded.
+///
+/// The JS wrapper already clamps frames-per-worker-tick, but the bridge must remain robust even if
+/// called directly.
+pub const XHCI_STEP_FRAMES_MAX_FRAMES: u32 = 10_000;
 
 fn js_error(message: impl core::fmt::Display) -> JsValue {
     js_sys::Error::new(&message.to_string()).into()
@@ -267,7 +271,7 @@ impl XhciControllerBridge {
     /// - When BME is clear, the controller still advances internal timers (e.g. port reset timers)
     ///   but does not perform any DMA.
     pub fn step_frames(&mut self, frames: u32) {
-        let frames = frames.min(MAX_XHCI_STEP_FRAMES_PER_CALL);
+        let frames = frames.min(XHCI_STEP_FRAMES_MAX_FRAMES);
         if frames == 0 {
             return;
         }
@@ -278,8 +282,6 @@ impl XhciControllerBridge {
         if dma_enabled {
             let mut mem = GuestMemoryBus::new(self.guest_base, self.guest_size);
             for _ in 0..frames {
-                // `XhciController::tick_1ms` performs DMA and drains queued events into the guest
-                // event ring, so a single call per frame is sufficient here.
                 self.ctrl.tick_1ms(&mut mem);
             }
         } else {

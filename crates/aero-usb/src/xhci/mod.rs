@@ -104,13 +104,56 @@ const TRB_CTRL_IDT: u32 = 1 << 6;
 /// Maximum number of event TRBs written into the guest event ring per controller tick.
 pub const EVENT_ENQUEUE_BUDGET_PER_TICK: usize = 64;
 
+// Bounded command ring processing budget used by `mmio_read`/`mmio_write` to prevent guest-driven
+// hangs during doorbell storms.
 const COMMAND_BUDGET_PER_MMIO: usize = 16;
-const COMMAND_RING_STEP_BUDGET: usize = 64;
+const COMMAND_RING_STEP_BUDGET: usize = RING_STEP_BUDGET;
+
+/// Deterministic per-frame work budgets for xHCI stepping.
+///
+/// xHCI is guest-driven: guests control doorbells and TRB rings. A buggy or malicious guest can
+/// craft rings that would otherwise cause unbounded work (ring walking, repeated NAK polling,
+/// doorbell storms) in a single 1ms tick.
+///
+/// Aero's controller model therefore exposes a deterministic, unit-based budget model. Budgets are
+/// expressed in guest-visible work (TRBs, doorbells, ring-walk steps), not host CPU time.
+pub mod budget {
+    /// Maximum number of endpoint doorbells/activations serviced per 1ms frame.
+    pub const MAX_DOORBELLS_PER_FRAME: usize = super::MAX_TRBS_PER_TICK;
+
+    /// Maximum number of command ring TRBs processed per 1ms frame.
+    ///
+    /// This budget counts *commands* (non-Link TRBs returned by the command ring cursor). Link TRBs
+    /// are bounded separately by [`MAX_RING_POLL_STEPS_PER_FRAME`] and the per-poll step budget
+    /// passed to [`super::RingCursor::poll`].
+    pub const MAX_COMMAND_TRBS_PER_FRAME: usize = 64;
+
+    /// Maximum number of transfer ring TRBs consumed per 1ms frame.
+    pub const MAX_TRANSFER_TRBS_PER_FRAME: usize = super::MAX_TRBS_PER_TICK;
+
+    /// Maximum number of event TRBs enqueued into the guest event ring per 1ms frame.
+    pub const MAX_EVENT_TRBS_PER_FRAME: usize = super::EVENT_ENQUEUE_BUDGET_PER_TICK;
+
+    /// Maximum number of ring-walk steps (TRB fetches from guest memory) performed per 1ms frame.
+    ///
+    /// This is a controller-wide backstop against pathological ring layouts (e.g. long link chains).
+    pub const MAX_RING_POLL_STEPS_PER_FRAME: usize = 1024;
+}
+
+/// Work counters emitted by [`XhciController::step_1ms`] (primarily for tests and instrumentation).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TickWork {
+    pub doorbells_serviced: usize,
+    pub command_trbs_processed: usize,
+    pub transfer_trbs_consumed: usize,
+    pub event_trbs_written: usize,
+    pub ring_poll_steps: usize,
+}
 
 use self::context::{
     Dcbaa, DeviceContext32, EndpointContext, InputControlContext, SlotContext, CONTEXT_SIZE,
 };
-use self::ring::{RingCursor, RingPoll};
+use self::ring::{RingCursor, RingError, RingPoll};
 
 /// A `UsbDeviceModel` proxy that forwards calls to a device model owned elsewhere.
 ///
@@ -439,7 +482,10 @@ pub struct XhciController {
     pending_dma_on_run: bool,
 
     // --- Endpoint transfer execution (subset) ---
+    /// Endpoints with pending work, scheduled in a simple round-robin queue.
     active_endpoints: VecDeque<ActiveEndpoint>,
+    /// Coalescing bitmap to avoid unbounded `active_endpoints` growth under doorbell storms.
+    active_endpoint_pending: [[bool; 32]; 256],
     ep0_control_td: Vec<ControlTdState>,
 
     /// Per-slot transfer-ring executors for bulk/interrupt endpoints.
@@ -534,6 +580,7 @@ impl XhciController {
             last_tick_dma_dword: 0,
             pending_dma_on_run: false,
             active_endpoints: VecDeque::new(),
+            active_endpoint_pending: [[false; 32]; 256],
             ep0_control_td: vec![ControlTdState::default(); slot_count],
             transfer_executors,
         };
@@ -658,7 +705,10 @@ impl XhciController {
             self.slots[slot_id].device_attached = false;
             self.transfer_executors[slot_id] = None;
             let slot_id_u8 = slot_id as u8;
-            self.active_endpoints.retain(|ep| ep.slot_id != slot_id_u8);
+            if let Some(state) = self.ep0_control_td.get_mut(slot_id) {
+                *state = ControlTdState::default();
+            }
+            self.clear_slot_pending_endpoints(slot_id_u8);
         }
 
         Ok(())
@@ -783,6 +833,7 @@ impl XhciController {
             ..SlotState::default()
         };
         self.transfer_executors[usize::from(slot_id)] = None;
+        self.clear_slot_pending_endpoints(slot_id);
 
         CommandCompletion::success(slot_id)
     }
@@ -805,7 +856,7 @@ impl XhciController {
         if let Some(state) = self.ep0_control_td.get_mut(idx) {
             *state = ControlTdState::default();
         }
-        self.active_endpoints.retain(|ep| ep.slot_id != slot_id);
+        self.clear_slot_pending_endpoints(slot_id);
         CompletionCode::Success
     }
 
@@ -843,6 +894,60 @@ impl XhciController {
                 RingPoll::Err(_) => {
                     // Malformed guest ring pointers/TRBs (e.g. Link TRB loops) should surface as a
                     // sticky host controller error so we stop processing further commands.
+                    self.host_controller_error = true;
+                    self.command_ring = Some(cursor);
+                    return true;
+                }
+            }
+        }
+
+        self.command_ring = Some(cursor);
+        false
+    }
+
+    fn process_command_ring_budgeted<M: MemoryBus + ?Sized>(
+        &mut self,
+        mem: &mut M,
+        max_trbs: usize,
+        ring_poll_budget: &mut usize,
+        work: &mut TickWork,
+    ) -> bool {
+        let Some(mut cursor) = self.command_ring else {
+            return true;
+        };
+
+        for _ in 0..max_trbs {
+            // If we cannot buffer another completion event, stop processing commands so we never
+            // consume a command TRB without being able to report completion.
+            if self.pending_events.len() >= MAX_PENDING_EVENTS {
+                break;
+            }
+            if *ring_poll_budget == 0 {
+                break;
+            }
+
+            let step_budget = (*ring_poll_budget).min(COMMAND_RING_STEP_BUDGET);
+            let (poll, steps_used) = cursor.poll_counted(mem, step_budget);
+            *ring_poll_budget = ring_poll_budget.saturating_sub(steps_used);
+            work.ring_poll_steps = work.ring_poll_steps.saturating_add(steps_used);
+
+            match poll {
+                RingPoll::Ready(item) => {
+                    self.handle_command(mem, item.paddr, item.trb);
+                    work.command_trbs_processed = work.command_trbs_processed.saturating_add(1);
+                }
+                RingPoll::NotReady => {
+                    self.command_ring = Some(cursor);
+                    return true;
+                }
+                RingPoll::Err(RingError::StepBudgetExceeded) => {
+                    // Malformed ring (or insufficient remaining ring-walk budget). Leave the ring
+                    // "active" so the guest can recover or we can retry on a future tick.
+                    break;
+                }
+                RingPoll::Err(_) => {
+                    // Fatal ring error (bad link target, address overflow). Stop processing and
+                    // surface a sticky host controller error bit.
                     self.host_controller_error = true;
                     self.command_ring = Some(cursor);
                     return true;
@@ -1900,6 +2005,14 @@ impl XhciController {
         }
     }
 
+    fn clear_slot_pending_endpoints(&mut self, slot_id: u8) {
+        let idx = usize::from(slot_id);
+        if idx < self.active_endpoint_pending.len() {
+            self.active_endpoint_pending[idx] = [false; 32];
+        }
+        self.active_endpoints.retain(|ep| ep.slot_id != slot_id);
+    }
+
     /// Handle a device endpoint doorbell write.
     ///
     /// `target` corresponds to the doorbell register index (slot id). For non-zero targets, the
@@ -1920,30 +2033,39 @@ impl XhciController {
     /// This marks the endpoint as active. [`XhciController::tick`] will process pending work.
     pub fn ring_doorbell(&mut self, slot_id: u8, endpoint_id: u8) {
         let endpoint_id = endpoint_id & 0x1f;
+        if endpoint_id == 0 {
+            return;
+        }
+
+        let slot_idx = usize::from(slot_id);
+        if slot_id == 0 || slot_idx >= self.slots.len() {
+            return;
+        }
+
+        let slot = &self.slots[slot_idx];
+        if !slot.enabled || !slot.device_attached {
+            return;
+        }
+
         // Ignore doorbells for halted/stopped endpoints so guests cannot keep re-queueing work for a
         // ring we have already faulted.
         const EP_STATE_HALTED: u8 = 2;
         const EP_STATE_STOPPED: u8 = 3;
-        if endpoint_id != 0 {
-            if let Some(slot) = self.slots.get(usize::from(slot_id)) {
-                if slot.enabled {
-                    let idx = usize::from(endpoint_id.saturating_sub(1));
-                    if let Some(ctx) = slot.endpoint_contexts.get(idx) {
-                        let state = ctx.endpoint_state();
-                        if state == EP_STATE_HALTED || state == EP_STATE_STOPPED {
-                            return;
-                        }
-                    }
-                }
+        let idx = usize::from(endpoint_id.saturating_sub(1));
+        if let Some(ctx) = slot.endpoint_contexts.get(idx) {
+            let state = ctx.endpoint_state();
+            if state == EP_STATE_HALTED || state == EP_STATE_STOPPED {
+                return;
             }
         }
-        let entry = ActiveEndpoint {
-            slot_id,
-            endpoint_id,
-        };
-        if !self.active_endpoints.iter().any(|ep| ep == &entry) {
-            self.active_endpoints.push_back(entry);
+
+        let ep_idx = endpoint_id as usize;
+        if self.active_endpoint_pending[slot_idx][ep_idx] {
+            return;
         }
+        self.active_endpoint_pending[slot_idx][ep_idx] = true;
+        self.active_endpoints
+            .push_back(ActiveEndpoint { slot_id, endpoint_id });
     }
 
     /// Process active endpoints.
@@ -1953,23 +2075,64 @@ impl XhciController {
         if !mem.dma_enabled() {
             return;
         }
-        // Bound work even when endpoints return NAK/NotReady (which consume 0 TRBs but still require
-        // host-side polling). Charge at least 1 unit per endpoint attempt so a large active endpoint
-        // list cannot stall the host.
-        let mut budget = MAX_TRBS_PER_TICK;
-        let mut remaining = self.active_endpoints.len();
-        while remaining > 0 && budget > 0 {
+
+        let mut work = TickWork::default();
+        let mut ring_poll_budget = budget::MAX_RING_POLL_STEPS_PER_FRAME;
+        self.tick_transfer_rings_budgeted(
+            mem,
+            budget::MAX_TRANSFER_TRBS_PER_FRAME,
+            budget::MAX_DOORBELLS_PER_FRAME,
+            &mut ring_poll_budget,
+            &mut work,
+        );
+    }
+
+    fn tick_transfer_rings_budgeted(
+        &mut self,
+        mem: &mut dyn MemoryBus,
+        max_trbs: usize,
+        max_doorbells: usize,
+        ring_poll_budget: &mut usize,
+        work: &mut TickWork,
+    ) {
+        let mut trb_budget = max_trbs;
+        // Process each currently-active endpoint at most once per tick. This ensures deterministic
+        // work bounds and prevents a single always-ready endpoint from consuming the entire budget
+        // (or running multiple TDs) in one frame.
+        let max_endpoints = self.active_endpoints.len().min(max_doorbells);
+
+        for _ in 0..max_endpoints {
+            if trb_budget == 0 || *ring_poll_budget == 0 {
+                break;
+            }
             let Some(ep) = self.active_endpoints.pop_front() else {
                 break;
             };
-            let outcome = self.process_endpoint(mem, ep.slot_id, ep.endpoint_id, budget);
-            let charged = outcome.trbs_consumed.max(1);
-            budget = budget.saturating_sub(charged);
+
+            work.doorbells_serviced += 1;
+
+            let slot_idx = usize::from(ep.slot_id);
+            let endpoint_idx = ep.endpoint_id as usize;
+
+            let outcome = self.process_endpoint(
+                mem,
+                ep.slot_id,
+                ep.endpoint_id,
+                trb_budget,
+                ring_poll_budget,
+                work,
+            );
+            work.transfer_trbs_consumed = work
+                .transfer_trbs_consumed
+                .saturating_add(outcome.trbs_consumed);
+            trb_budget = trb_budget.saturating_sub(outcome.trbs_consumed);
 
             if outcome.keep_active {
+                // Keep the endpoint scheduled for a future tick.
                 self.active_endpoints.push_back(ep);
+            } else if slot_idx < self.active_endpoint_pending.len() && endpoint_idx < 32 {
+                self.active_endpoint_pending[slot_idx][endpoint_idx] = false;
             }
-            remaining = remaining.saturating_sub(1);
         }
     }
 
@@ -2001,12 +2164,17 @@ impl XhciController {
 
     /// Drain queued events into the guest event ring with a bounded per-tick budget.
     pub fn service_event_ring(&mut self, mem: &mut dyn MemoryBus) {
+        let _ = self.service_event_ring_budgeted(mem, EVENT_ENQUEUE_BUDGET_PER_TICK);
+    }
+
+    fn service_event_ring_budgeted(&mut self, mem: &mut dyn MemoryBus, budget: usize) -> usize {
         if !mem.dma_enabled() {
-            return;
+            return 0;
         }
+        let mut written = 0usize;
         self.event_ring.refresh(mem, &self.interrupter0);
 
-        for _ in 0..EVENT_ENQUEUE_BUDGET_PER_TICK {
+        for _ in 0..budget {
             let Some(&trb) = self.pending_events.front() else {
                 break;
             };
@@ -2015,6 +2183,7 @@ impl XhciController {
                 Ok(()) => {
                     self.pending_events.pop_front();
                     self.interrupter0.set_interrupt_pending(true);
+                    written += 1;
                 }
                 Err(event_ring::EnqueueError::NotConfigured)
                 | Err(event_ring::EnqueueError::RingFull) => break,
@@ -2026,6 +2195,8 @@ impl XhciController {
                 }
             }
         }
+
+        written
     }
 
     pub fn dropped_event_trbs(&self) -> u64 {
@@ -2088,13 +2259,57 @@ impl XhciController {
     /// This method performs DMA into guest memory (transfer buffers + event ring). Callers should
     /// gate this on PCI Bus Master Enable.
     pub fn tick_1ms(&mut self, mem: &mut dyn MemoryBus) {
+        let _ = self.step_1ms(mem);
+    }
+
+    /// Advance the controller by one 1ms frame with deterministic internal work budgets.
+    ///
+    /// This processes (in order):
+    /// - port timers,
+    /// - the command ring (if doorbell 0 was rung),
+    /// - active transfer endpoints,
+    /// - and event ring delivery.
+    ///
+    /// All ring walking is bounded by per-frame budgets so a guest cannot force unbounded work in a
+    /// single tick.
+    pub fn step_1ms(&mut self, mem: &mut dyn MemoryBus) -> TickWork {
+        let mut work = TickWork::default();
+        let mut ring_poll_budget = budget::MAX_RING_POLL_STEPS_PER_FRAME;
+
+        // Always advance the controller time base.
         self.tick_1ms_with_dma(mem);
-        self.tick(mem);
-        // Command completion events flow through the guest event ring as well. Command ring
-        // processing is kicked via doorbell 0 and is otherwise controller-local state, so make sure
-        // it continues to make forward progress even if the guest does not perform additional MMIO.
-        self.maybe_process_command_ring(mem);
-        self.service_event_ring(mem);
+
+        if !mem.dma_enabled() {
+            return work;
+        }
+
+        // Command ring processing is gated on `USBCMD.RUN` to match `maybe_process_command_ring`.
+        if self.cmd_kick && (self.usbcmd & regs::USBCMD_RUN) != 0 && !self.host_controller_error {
+            let ring_empty = self.process_command_ring_budgeted(
+                mem,
+                budget::MAX_COMMAND_TRBS_PER_FRAME,
+                &mut ring_poll_budget,
+                &mut work,
+            );
+            self.sync_crcr_from_command_ring();
+            if ring_empty {
+                self.cmd_kick = false;
+            }
+        } else if self.host_controller_error {
+            self.cmd_kick = false;
+        }
+
+        self.tick_transfer_rings_budgeted(
+            mem,
+            budget::MAX_TRANSFER_TRBS_PER_FRAME,
+            budget::MAX_DOORBELLS_PER_FRAME,
+            &mut ring_poll_budget,
+            &mut work,
+        );
+
+        work.event_trbs_written =
+            self.service_event_ring_budgeted(mem, budget::MAX_EVENT_TRBS_PER_FRAME);
+        work
     }
 
     /// Advances controller internal time by 1ms and drains any queued event TRBs into the
@@ -2142,13 +2357,22 @@ impl XhciController {
         // reachable. Leave the slot enabled but mark the device as detached so `slot_device_mut()`
         // fails fast.
         let port_id = (port + 1) as u8;
+        let mut detached_slots: Vec<u8> = Vec::new();
         for (slot_id, slot) in self.slots.iter_mut().enumerate().skip(1) {
             if slot.enabled && slot.port_id == Some(port_id) {
                 slot.device_attached = false;
-                if let Some(exec) = self.transfer_executors.get_mut(slot_id) {
-                    *exec = None;
-                }
+                detached_slots.push(slot_id as u8);
             }
+        }
+        for slot_id in detached_slots {
+            let idx = usize::from(slot_id);
+            if idx < self.transfer_executors.len() {
+                self.transfer_executors[idx] = None;
+            }
+            if let Some(state) = self.ep0_control_td.get_mut(idx) {
+                *state = ControlTdState::default();
+            }
+            self.clear_slot_pending_endpoints(slot_id);
         }
     }
 
@@ -2561,7 +2785,6 @@ impl XhciController {
         for slot in self.slots.iter_mut() {
             *slot = SlotState::default();
         }
-        self.active_endpoints.clear();
         for td in self.ep0_control_td.iter_mut() {
             *td = ControlTdState::default();
         }
@@ -2577,6 +2800,8 @@ impl XhciController {
         self.event_ring = EventRingProducer::default();
         self.pending_events.clear();
         self.dropped_event_trbs = 0;
+        self.active_endpoints.clear();
+        self.active_endpoint_pending = [[false; 32]; 256];
     }
 
     fn queue_port_status_change_event(&mut self, port: usize) {
@@ -2590,6 +2815,8 @@ impl XhciController {
         slot_id: u8,
         endpoint_id: u8,
         trb_budget: usize,
+        ring_poll_budget: &mut usize,
+        work: &mut TickWork,
     ) -> EndpointOutcome {
         let slot_idx = usize::from(slot_id);
         let Some(slot) = self.slots.get(slot_idx) else {
@@ -2762,12 +2989,30 @@ impl XhciController {
             };
 
             while trbs_consumed < trb_budget {
-                let item = match ring.peek(mem, RING_STEP_BUDGET) {
+                if *ring_poll_budget == 0 {
+                    // Global ring-walk budget exhausted; defer remaining work to a future tick.
+                    keep_active = true;
+                    break;
+                }
+
+                let step_budget = (*ring_poll_budget).min(RING_STEP_BUDGET);
+                let (poll, steps_used) = ring.peek_counted(mem, step_budget);
+                *ring_poll_budget = ring_poll_budget.saturating_sub(steps_used);
+                work.ring_poll_steps = work.ring_poll_steps.saturating_add(steps_used);
+
+                let item = match poll {
                     RingPoll::Ready(item) => item,
                     RingPoll::NotReady => {
                         // If a TD is already in progress, keep the endpoint active so we continue
                         // polling until the guest finishes writing the remaining stage TRBs.
                         keep_active = control_td.td_start.is_some();
+                        break;
+                    }
+                    RingPoll::Err(RingError::StepBudgetExceeded) => {
+                        // Either the ring is malformed (link loop) or we hit the remaining
+                        // controller-wide ring-walk budget. In either case, keep the endpoint
+                        // active and retry on a future tick.
+                        keep_active = true;
                         break;
                     }
                     RingPoll::Err(_) => {

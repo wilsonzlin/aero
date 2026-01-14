@@ -93,7 +93,7 @@ pub use ehci_controller_bridge::EhciControllerBridge;
 #[cfg(target_arch = "wasm32")]
 mod xhci_controller_bridge;
 #[cfg(target_arch = "wasm32")]
-pub use xhci_controller_bridge::XhciControllerBridge;
+pub use xhci_controller_bridge::{XHCI_STEP_FRAMES_MAX_FRAMES, XhciControllerBridge};
 
 #[cfg(target_arch = "wasm32")]
 mod e1000_bridge;

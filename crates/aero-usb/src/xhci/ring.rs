@@ -87,29 +87,41 @@ impl RingCursor {
         self.cycle
     }
 
-    /// Poll the ring and return the next available TRB (if any).
+    /// Poll the ring and return the next available TRB (if any), along with how many ring-walk
+    /// steps were performed.
+    ///
+    /// A "ring-walk step" corresponds to a single TRB fetch from guest memory. Counting steps lets
+    /// higher-level controller code implement deterministic per-frame ring-walking budgets that are
+    /// independent of host CPU speed.
     ///
     /// `step_budget` bounds the number of TRBs read while trying to find a returnable TRB. This
     /// prevents an infinite loop on malformed rings, such as a chain of Link TRBs that never
     /// reaches a non-Link TRB.
-    pub fn poll<M: MemoryBus + ?Sized>(&mut self, mem: &mut M, step_budget: usize) -> RingPoll {
+    pub fn poll_counted<M: MemoryBus + ?Sized>(
+        &mut self,
+        mem: &mut M,
+        step_budget: usize,
+    ) -> (RingPoll, usize) {
+        let mut steps_used = 0usize;
+
         for _ in 0..step_budget {
+            steps_used += 1;
             let mut bytes = [0u8; TRB_LEN];
             mem.read_physical(self.paddr, &mut bytes);
             if bytes.iter().all(|&b| b == 0xFF) {
-                return RingPoll::Err(RingError::InvalidDmaRead);
+                return (RingPoll::Err(RingError::InvalidDmaRead), steps_used);
             }
             let trb = Trb::from_bytes(bytes);
 
             if trb.cycle() != self.cycle {
-                return RingPoll::NotReady;
+                return (RingPoll::NotReady, steps_used);
             }
 
             if matches!(trb.trb_type(), TrbType::Link) {
                 // Link TRB parameter contains the next segment pointer; low bits are reserved.
                 let next = trb.link_segment_ptr();
                 if next == 0 {
-                    return RingPoll::Err(RingError::InvalidLinkTarget);
+                    return (RingPoll::Err(RingError::InvalidLinkTarget), steps_used);
                 }
                 self.paddr = next;
                 if trb.link_toggle_cycle() {
@@ -124,13 +136,21 @@ impl RingCursor {
             };
 
             if let Err(err) = self.consume() {
-                return RingPoll::Err(err);
+                return (RingPoll::Err(err), steps_used);
             }
 
-            return RingPoll::Ready(item);
+            return (RingPoll::Ready(item), steps_used);
         }
 
-        RingPoll::Err(RingError::StepBudgetExceeded)
+        (RingPoll::Err(RingError::StepBudgetExceeded), steps_used)
+    }
+
+    /// Poll the ring and return the next available TRB (if any).
+    ///
+    /// This is a convenience wrapper around [`RingCursor::poll_counted`] for call sites that do not
+    /// need ring-walk step accounting.
+    pub fn poll<M: MemoryBus + ?Sized>(&mut self, mem: &mut M, step_budget: usize) -> RingPoll {
+        self.poll_counted(mem, step_budget).0
     }
 
     /// Peek the next available TRB without consuming it.
@@ -141,23 +161,30 @@ impl RingCursor {
     ///
     /// This is useful for modelling NAK behaviour: when a transfer TRB would NAK, the host
     /// controller must *not* advance its dequeue pointer past the TRB so it can be retried later.
-    pub fn peek<M: MemoryBus + ?Sized>(&mut self, mem: &mut M, step_budget: usize) -> RingPoll {
+    pub fn peek_counted<M: MemoryBus + ?Sized>(
+        &mut self,
+        mem: &mut M,
+        step_budget: usize,
+    ) -> (RingPoll, usize) {
+        let mut steps_used = 0usize;
+
         for _ in 0..step_budget {
+            steps_used += 1;
             let mut bytes = [0u8; TRB_LEN];
             mem.read_physical(self.paddr, &mut bytes);
             if bytes.iter().all(|&b| b == 0xFF) {
-                return RingPoll::Err(RingError::InvalidDmaRead);
+                return (RingPoll::Err(RingError::InvalidDmaRead), steps_used);
             }
             let trb = Trb::from_bytes(bytes);
 
             if trb.cycle() != self.cycle {
-                return RingPoll::NotReady;
+                return (RingPoll::NotReady, steps_used);
             }
 
             if matches!(trb.trb_type(), TrbType::Link) {
                 let next = trb.link_segment_ptr();
                 if next == 0 {
-                    return RingPoll::Err(RingError::InvalidLinkTarget);
+                    return (RingPoll::Err(RingError::InvalidLinkTarget), steps_used);
                 }
                 self.paddr = next;
                 if trb.link_toggle_cycle() {
@@ -166,13 +193,24 @@ impl RingCursor {
                 continue;
             }
 
-            return RingPoll::Ready(RingItem {
-                paddr: self.paddr,
-                trb,
-            });
+            return (
+                RingPoll::Ready(RingItem {
+                    paddr: self.paddr,
+                    trb,
+                }),
+                steps_used,
+            );
         }
 
-        RingPoll::Err(RingError::StepBudgetExceeded)
+        (RingPoll::Err(RingError::StepBudgetExceeded), steps_used)
+    }
+
+    /// Peek the next available TRB without consuming it.
+    ///
+    /// This is a convenience wrapper around [`RingCursor::peek_counted`] for call sites that do not
+    /// need ring-walk step accounting.
+    pub fn peek<M: MemoryBus + ?Sized>(&mut self, mem: &mut M, step_budget: usize) -> RingPoll {
+        self.peek_counted(mem, step_budget).0
     }
 
     /// Consume the current TRB by advancing the dequeue pointer by one TRB.

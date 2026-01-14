@@ -798,6 +798,15 @@ impl IoSnapshot for XhciController {
                 return Err(SnapshotError::InvalidFieldEncoding("xhci active endpoints"));
             }
             self.active_endpoints = decode_active_endpoints(self.slots.len(), buf)?;
+            // Reconstruct coalescing bitmap from the restored queue.
+            self.active_endpoint_pending = [[false; 32]; 256];
+            for ep in &self.active_endpoints {
+                let slot_idx = usize::from(ep.slot_id);
+                let ep_idx = ep.endpoint_id as usize;
+                if slot_idx < self.active_endpoint_pending.len() && ep_idx < 32 {
+                    self.active_endpoint_pending[slot_idx][ep_idx] = true;
+                }
+            }
         }
 
         let mut restored_ep0_td = false;
