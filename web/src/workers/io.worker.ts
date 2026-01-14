@@ -145,6 +145,7 @@ import {
   type HidRingInitMessage,
 } from "../hid/hid_proxy_protocol";
 import { InMemoryHidGuestBridge } from "../hid/in_memory_hid_guest_bridge";
+import { createEhciTopologyBridgeShim } from "../hid/ehci_hid_topology_shim";
 import { UhciHidTopologyManager } from "../hid/uhci_hid_topology";
 import { XhciHidTopologyManager, type XhciTopologyBridge } from "../hid/xhci_hid_topology";
 import { WasmHidGuestBridge, type HidGuestBridge, type HidHostSink } from "../hid/wasm_hid_guest_bridge";
@@ -2034,8 +2035,12 @@ function maybeInitEhciDevice(): void {
         typeof topo.attach_webhid_device === "function" &&
         typeof topo.attach_usb_hid_passthrough_device === "function"
       ) {
-        uhciHidTopology.setUhciBridge(bridge as unknown as any);
-        uhciHidTopologyBridgeSource = bridge as unknown;
+        // EHCI reserves root port 0 for WebUSB passthrough. When we reuse the UHCI HID topology
+        // manager on EHCI (EHCI-only WASM builds), swap root ports so the external hub lives on
+        // EHCI root port 1 while WebUSB remains on EHCI root port 0.
+        const shim = createEhciTopologyBridgeShim(bridge as unknown as any);
+        uhciHidTopology.setUhciBridge(shim);
+        uhciHidTopologyBridgeSource = shim;
       }
     }
 
