@@ -7,7 +7,7 @@ use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuCmdSetTexture, AerogpuCmdSetUnorderedAccessBuffers, AerogpuCmdStreamHeader,
     AerogpuConstantBufferBinding, AerogpuD3dShaderStage, AerogpuShaderResourceBufferBinding,
     AerogpuShaderStage, AerogpuShaderStageEx, AerogpuShaderStageResolved,
-    AerogpuUnorderedAccessBufferBinding,
+    AerogpuStageResolveError, AerogpuUnorderedAccessBufferBinding,
 };
 use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
 
@@ -106,6 +106,16 @@ fn resolve_shader_stage_with_ex_handles_legacy_and_stage_ex_encodings() {
             shader_stage: AerogpuShaderStage::Compute as u32,
             stage_ex: 42
         }
+    );
+}
+
+#[test]
+fn resolve_stage_rejects_vertex_program_type_in_stage_ex() {
+    // DXBC program type 1 is Vertex, but stage_ex values 0/1 (Pixel/Vertex) must be encoded via
+    // the legacy `shader_stage` field, not via reserved0/stage_ex.
+    assert_eq!(
+        resolve_stage(AerogpuShaderStage::Compute as u32, 1),
+        Err(AerogpuStageResolveError::InvalidStageEx { stage_ex: 1 })
     );
 }
 
