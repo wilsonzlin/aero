@@ -7651,6 +7651,25 @@ static bool SoftwareDrawTriangleListBringupLocked(AeroGpuDevice* dev, UINT verte
         }
       }
 
+      // If VS/PS CB0 are bound, use them to drive the output color. This keeps the
+      // bring-up software rasterizer useful for constant-buffer binding tests
+      // (see d3d10_triangle / d3d10_1_triangle).
+      AeroGpuResource* vs_cb0 = dev->current_vs_cb_resources[0];
+      AeroGpuResource* ps_cb0 = dev->current_ps_cb_resources[0];
+      if (vs_cb0 && ps_cb0 &&
+          vs_cb0->kind == ResourceKind::Buffer &&
+          ps_cb0->kind == ResourceKind::Buffer &&
+          vs_cb0->storage.size() >= 16 &&
+          ps_cb0->storage.size() >= 32) {
+        float vs_color[4]{};
+        float ps_mod[4]{};
+        std::memcpy(&vs_color[0], vs_cb0->storage.data(), 16);
+        std::memcpy(&ps_mod[0], ps_cb0->storage.data() + 16, 16);
+        for (int i = 0; i < 4; ++i) {
+          col[i] = vs_color[i] * ps_mod[i];
+        }
+      }
+
       auto float_to_unorm8 = [](float v) -> uint8_t {
         if (v <= 0.0f) {
           return 0;
