@@ -101,15 +101,14 @@ pub const USBSTS_HCE: u32 = 1 << 12;
 ///
 /// Includes derived bits that are part of the software-visible USBSTS register (e.g. `HCHalted`,
 /// `EINT`, `HCE`) so older snapshots that relied on them can be restored.
-pub const USBSTS_SNAPSHOT_MASK: u32 = USBSTS_HCHALTED
-    | USBSTS_HSE
-    | USBSTS_EINT
-    | USBSTS_PCD
-    | USBSTS_SSS
-    | USBSTS_RSS
-    | USBSTS_SRE
-    | USBSTS_CNR
-    | USBSTS_HCE;
+///
+/// We persist the full 32-bit register image (including currently-unused/reserved bits) so
+/// snapshot/restore remains forward-compatible as the controller model grows and so unit tests can
+/// assert exact register preservation.
+///
+/// Derived bits (`USBSTS.EINT`, `USBSTS.HCH`, `USBSTS.HCE`) are still treated as derived by the
+/// controller implementation and are re-materialized on restore.
+pub const USBSTS_SNAPSHOT_MASK: u32 = u32::MAX;
 
 /// CRCR fields (subset): preserve cycle state / control bits and the ring pointer.
 ///
