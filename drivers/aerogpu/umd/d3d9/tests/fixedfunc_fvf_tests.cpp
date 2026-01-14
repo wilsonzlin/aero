@@ -4343,6 +4343,63 @@ bool TestApplyStateBlockScissorRectEmitsSetScissor() {
   return true;
 }
 
+bool TestSetScissorRectClampsOverflowWidthHeight() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetScissorRect != nullptr, "pfnSetScissorRect is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // Ensure scissor packet emission is robust against extreme rect values.
+  // When (right-left) overflows int32, the driver should clamp rather than
+  // invoking signed overflow UB or uploading a garbage width/height.
+  RECT rect{};
+  rect.left = static_cast<LONG>(std::numeric_limits<int32_t>::min());
+  rect.top = static_cast<LONG>(std::numeric_limits<int32_t>::min());
+  rect.right = static_cast<LONG>(std::numeric_limits<int32_t>::max());
+  rect.bottom = static_cast<LONG>(std::numeric_limits<int32_t>::max());
+
+  dev->cmd.reset();
+  HRESULT hr = cleanup.device_funcs.pfnSetScissorRect(cleanup.hDevice, &rect, TRUE);
+  if (!Check(hr == S_OK, "SetScissorRect(extreme)")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(SetScissorRect extreme)")) {
+    return false;
+  }
+
+  bool saw_scissor = false;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_SCISSOR)) {
+    if (hdr->size_bytes < sizeof(aerogpu_cmd_set_scissor)) {
+      continue;
+    }
+    const auto* sc = reinterpret_cast<const aerogpu_cmd_set_scissor*>(hdr);
+    if (sc->x == std::numeric_limits<int32_t>::min() &&
+        sc->y == std::numeric_limits<int32_t>::min() &&
+        sc->width == std::numeric_limits<int32_t>::max() &&
+        sc->height == std::numeric_limits<int32_t>::max()) {
+      saw_scissor = true;
+      break;
+    }
+  }
+  if (!Check(saw_scissor, "SetScissorRect(extreme) clamps width/height")) {
+    return false;
+  }
+
+  return true;
+}
+
 bool TestApplyStateBlockViewportEmitsSetViewport() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -24003,6 +24060,9 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestApplyStateBlockScissorRectEmitsSetScissor()) {
+    return 1;
+  }
+  if (!aerogpu::TestSetScissorRectClampsOverflowWidthHeight()) {
     return 1;
   }
   if (!aerogpu::TestApplyStateBlockViewportEmitsSetViewport()) {

@@ -3675,6 +3675,18 @@ inline LONG d3d9_i64_to_long_clamp(int64_t v) {
   return static_cast<LONG>(v);
 }
 
+inline int32_t d3d9_i64_to_i32_clamp(int64_t v) {
+  const int64_t lo = static_cast<int64_t>(std::numeric_limits<int32_t>::min());
+  const int64_t hi = static_cast<int64_t>(std::numeric_limits<int32_t>::max());
+  if (v < lo) {
+    v = lo;
+  }
+  if (v > hi) {
+    v = hi;
+  }
+  return static_cast<int32_t>(v);
+}
+
 // Effective scissor rect for GetScissorRect and state blocks:
 // - If the app explicitly set a rect, preserve it (even if empty).
 // - Otherwise, if the current rect is unset/empty, fall back to the effective
@@ -14056,10 +14068,10 @@ HRESULT AEROGPU_D3D9_CALL device_set_scissor(
   int32_t h = 0x7FFFFFFF;
   if (enabled) {
     const RECT& rect = dev->scissor_rect;
-    x = static_cast<int32_t>(rect.left);
-    y = static_cast<int32_t>(rect.top);
-    w = static_cast<int32_t>(rect.right - rect.left);
-    h = static_cast<int32_t>(rect.bottom - rect.top);
+    x = d3d9_i64_to_i32_clamp(static_cast<int64_t>(rect.left));
+    y = d3d9_i64_to_i32_clamp(static_cast<int64_t>(rect.top));
+    w = d3d9_i64_to_i32_clamp(static_cast<int64_t>(rect.right) - static_cast<int64_t>(rect.left));
+    h = d3d9_i64_to_i32_clamp(static_cast<int64_t>(rect.bottom) - static_cast<int64_t>(rect.top));
   }
 
   auto* cmd = append_fixed_locked<aerogpu_cmd_set_scissor>(dev, AEROGPU_CMD_SET_SCISSOR);
@@ -14257,10 +14269,10 @@ HRESULT AEROGPU_D3D9_CALL device_set_render_state(
       int32_t h = 0x7FFFFFFF;
       if (dev->scissor_enabled) {
         const RECT& rect = dev->scissor_rect;
-        x = static_cast<int32_t>(rect.left);
-        y = static_cast<int32_t>(rect.top);
-        w = static_cast<int32_t>(rect.right - rect.left);
-        h = static_cast<int32_t>(rect.bottom - rect.top);
+        x = d3d9_i64_to_i32_clamp(static_cast<int64_t>(rect.left));
+        y = d3d9_i64_to_i32_clamp(static_cast<int64_t>(rect.top));
+        w = d3d9_i64_to_i32_clamp(static_cast<int64_t>(rect.right) - static_cast<int64_t>(rect.left));
+        h = d3d9_i64_to_i32_clamp(static_cast<int64_t>(rect.bottom) - static_cast<int64_t>(rect.top));
       }
 
       auto* sc = append_fixed_locked<aerogpu_cmd_set_scissor>(dev, AEROGPU_CMD_SET_SCISSOR);
@@ -15269,10 +15281,10 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
     int32_t w = 0x7FFFFFFF;
     int32_t h = 0x7FFFFFFF;
     if (dev->scissor_enabled) {
-      x = static_cast<int32_t>(dev->scissor_rect.left);
-      y = static_cast<int32_t>(dev->scissor_rect.top);
-      w = static_cast<int32_t>(dev->scissor_rect.right - dev->scissor_rect.left);
-      h = static_cast<int32_t>(dev->scissor_rect.bottom - dev->scissor_rect.top);
+      x = d3d9_i64_to_i32_clamp(static_cast<int64_t>(dev->scissor_rect.left));
+      y = d3d9_i64_to_i32_clamp(static_cast<int64_t>(dev->scissor_rect.top));
+      w = d3d9_i64_to_i32_clamp(static_cast<int64_t>(dev->scissor_rect.right) - static_cast<int64_t>(dev->scissor_rect.left));
+      h = d3d9_i64_to_i32_clamp(static_cast<int64_t>(dev->scissor_rect.bottom) - static_cast<int64_t>(dev->scissor_rect.top));
     }
 
     auto* cmd = append_fixed_locked<aerogpu_cmd_set_scissor>(dev, AEROGPU_CMD_SET_SCISSOR);
@@ -15317,10 +15329,10 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
         int32_t h = 0x7FFFFFFF;
         if (dev->scissor_enabled) {
           const RECT& rect = dev->scissor_rect;
-          x = static_cast<int32_t>(rect.left);
-          y = static_cast<int32_t>(rect.top);
-          w = static_cast<int32_t>(rect.right - rect.left);
-          h = static_cast<int32_t>(rect.bottom - rect.top);
+          x = d3d9_i64_to_i32_clamp(static_cast<int64_t>(rect.left));
+          y = d3d9_i64_to_i32_clamp(static_cast<int64_t>(rect.top));
+          w = d3d9_i64_to_i32_clamp(static_cast<int64_t>(rect.right) - static_cast<int64_t>(rect.left));
+          h = d3d9_i64_to_i32_clamp(static_cast<int64_t>(rect.bottom) - static_cast<int64_t>(rect.top));
         }
 
         auto* sc = append_fixed_locked<aerogpu_cmd_set_scissor>(dev, AEROGPU_CMD_SET_SCISSOR);
