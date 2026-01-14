@@ -1686,9 +1686,7 @@ fn validate_manifest_v1(manifest: &ManifestV1, max_chunks: u64) -> Result<()> {
         .len()
         .max(1);
     if width_usize < min_width {
-        bail!(
-            "manifest chunkIndexWidth too small: need>={min_width} got={width_usize}"
-        );
+        bail!("manifest chunkIndexWidth too small: need>={min_width} got={width_usize}");
     }
     if let Some(chunks) = &manifest.chunks {
         if chunks.len() as u64 != manifest.chunk_count {
@@ -3249,7 +3247,8 @@ mod tests {
     }
 
     #[test]
-    fn resolve_publish_destination_accepts_explicit_image_version_match_with_computed() -> Result<()> {
+    fn resolve_publish_destination_accepts_explicit_image_version_match_with_computed() -> Result<()>
+    {
         let args = PublishArgs {
             file: PathBuf::from("disk.img"),
             format: InputFormat::Raw,
@@ -3692,7 +3691,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn compute_image_version_sha256_rejects_qcow2_backing_file_without_parent() -> Result<()> {
+    async fn compute_image_version_sha256_rejects_qcow2_backing_file_without_parent() -> Result<()>
+    {
         use std::io::Write;
 
         // Create a minimal QCOW2 v2 header that passes structural validation but declares a backing
@@ -3710,7 +3710,7 @@ mod tests {
         header[40..48].copy_from_slice(&4096u64.to_be_bytes()); // l1_table_offset
         header[48..56].copy_from_slice(&8192u64.to_be_bytes()); // refcount_table_offset
         header[56..60].copy_from_slice(&1u32.to_be_bytes()); // refcount_table_clusters
-        // nb_snapshots (0) and snapshots_offset (0) remain zero.
+                                                             // nb_snapshots (0) and snapshots_offset (0) remain zero.
 
         let mut tmp = tempfile::NamedTempFile::new().context("create tempfile")?;
         tmp.as_file_mut()
@@ -4439,6 +4439,75 @@ mod tests {
             region: "us-east-1".to_string(),
             concurrency: 2,
             retries: 2,
+            max_chunks: MAX_CHUNKS,
+            chunk_sample: None,
+            chunk_sample_seed: None,
+        })
+        .await;
+
+        let _ = shutdown_tx.send(());
+        let _ = server_handle.await;
+
+        result
+    }
+
+    #[tokio::test]
+    async fn verify_http_manifest_url_with_chunks_list_missing_sizes_succeeds() -> Result<()> {
+        let chunk_size: u64 = 1024;
+        let chunk0 = vec![b'a'; chunk_size as usize];
+        let chunk1 = vec![b'b'; 512];
+        let total_size = (chunk0.len() + chunk1.len()) as u64;
+
+        let manifest = ManifestV1 {
+            schema: MANIFEST_SCHEMA.to_string(),
+            image_id: "demo".to_string(),
+            version: "v1".to_string(),
+            mime_type: CHUNK_MIME_TYPE.to_string(),
+            total_size,
+            chunk_size,
+            chunk_count: chunk_count(total_size, chunk_size),
+            chunk_index_width: CHUNK_INDEX_WIDTH as u32,
+            chunks: Some(vec![
+                ManifestChunkV1 {
+                    size: None,
+                    sha256: Some(sha256_hex(&chunk0)),
+                },
+                ManifestChunkV1 {
+                    size: None,
+                    sha256: Some(sha256_hex(&chunk1)),
+                },
+            ]),
+        };
+        let manifest_bytes = serde_json::to_vec_pretty(&manifest).context("serialize manifest")?;
+
+        let responder: Arc<
+            dyn Fn(TestHttpRequest) -> (u16, Vec<(String, String)>, Vec<u8>)
+                + Send
+                + Sync
+                + 'static,
+        > = Arc::new(move |req: TestHttpRequest| match req.path.as_str() {
+            "/manifest.json" => (200, Vec::new(), manifest_bytes.clone()),
+            "/chunks/00000000.bin" => (200, Vec::new(), chunk0.clone()),
+            "/chunks/00000001.bin" => (200, Vec::new(), chunk1.clone()),
+            _ => (404, Vec::new(), b"not found".to_vec()),
+        });
+
+        let (base_url, shutdown_tx, server_handle) = start_test_http_server(responder).await?;
+
+        let result = verify(VerifyArgs {
+            manifest_url: Some(format!("{base_url}/manifest.json")),
+            manifest_file: None,
+            header: Vec::new(),
+            bucket: None,
+            prefix: None,
+            manifest_key: None,
+            image_id: None,
+            image_version: None,
+            endpoint: None,
+            force_path_style: false,
+            region: "us-east-1".to_string(),
+            concurrency: 2,
+            retries: 1,
             max_chunks: MAX_CHUNKS,
             chunk_sample: None,
             chunk_sample_seed: None,
