@@ -3082,6 +3082,86 @@ fn decodes_and_translates_ige_shader_from_dxbc() {
 }
 
 #[test]
+fn decodes_and_translates_lt_float_compare_shader_from_dxbc() {
+    // Float compare opcodes (`lt/ge/eq/ne`) consume numeric f32 values but still write predicate
+    // mask bits (0xffffffff / 0) into the untyped register file.
+    let mut body = Vec::<u32>::new();
+
+    // lt o0, l(1.0), l(2.0)
+    body.push(opcode_token(OPCODE_LT, 1 + 2 + 2 + 2));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+    body.extend_from_slice(&imm32_scalar(1.0f32.to_bits()));
+    body.extend_from_slice(&imm32_scalar(2.0f32.to_bits()));
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    // Stage type 0 = pixel shader.
+    let tokens = make_sm5_program_tokens(0, &body);
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, tokens_to_bytes(&tokens)),
+        (FOURCC_ISGN, build_signature_chunk(&[])),
+        (
+            FOURCC_OSGN,
+            build_signature_chunk(&[sig_param("SV_Target", 0, 0, 0b1111)]),
+        ),
+    ]);
+
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
+    assert_eq!(program.stage, aero_d3d11::ShaderStage::Pixel);
+
+    let module = decode_program(&program).expect("SM4 decode");
+    assert_eq!(
+        module.instructions[0],
+        Sm4Inst::Cmp {
+            dst: aero_d3d11::DstOperand {
+                reg: RegisterRef {
+                    file: RegFile::Output,
+                    index: 0,
+                },
+                mask: WriteMask::XYZW,
+                saturate: false,
+            },
+            a: SrcOperand {
+                kind: SrcKind::ImmediateF32([1.0f32.to_bits(); 4]),
+                swizzle: Swizzle::XXXX,
+                modifier: OperandModifier::None,
+            },
+            b: SrcOperand {
+                kind: SrcKind::ImmediateF32([2.0f32.to_bits(); 4]),
+                swizzle: Swizzle::XXXX,
+                modifier: OperandModifier::None,
+            },
+            op: CmpOp::Lt,
+            ty: CmpType::F32,
+        }
+    );
+
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_parses(&translated.wgsl);
+    assert!(
+        translated.wgsl.contains("bitcast<f32>(0x3f800000u)"),
+        "expected 1.0 literal in WGSL:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated.wgsl.contains("bitcast<f32>(0x40000000u)"),
+        "expected 2.0 literal in WGSL:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated.wgsl.contains("0xffffffffu"),
+        "expected predicate-mask constant in WGSL:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated.wgsl.contains("bitcast<vec4<f32>>"),
+        "expected predicate-mask bitcast in WGSL:\n{}",
+        translated.wgsl
+    );
+}
+
+#[test]
 fn decodes_integer_compare_ignores_saturate_flag() {
     // Integer compare instructions write raw predicate mask bits (0xffffffff / 0) into the untyped
     // register file. Applying saturate would treat those bits as floats and corrupt the value, so
