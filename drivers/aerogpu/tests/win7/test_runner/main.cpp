@@ -26,7 +26,8 @@ static void PrintUsage() {
   aerogpu_test::PrintfStdout("                        Also writes per-test <test>.json files next to the suite report.");
   aerogpu_test::PrintfStdout(
       "  --log-dir=DIR         If set, redirect each test's stdout/stderr to <test>.stdout.txt / <test>.stderr.txt in DIR.");
-  aerogpu_test::PrintfStdout("  --dbgctl=PATH         Optional path to aerogpu_dbgctl.exe; if set, run '--status' after test failures/timeouts.");
+  aerogpu_test::PrintfStdout(
+      "  --dbgctl=PATH         Optional path to aerogpu_dbgctl.exe; if set, run '--status' and a recent cmd dump after test failures/timeouts.");
   aerogpu_test::PrintfStdout("  --dbgctl-timeout-ms=NNNN  Timeout for the dbgctl process itself (wrapper kill). Default: 5000.");
   aerogpu_test::PrintfStdout("");
   aerogpu_test::PrintfStdout("All other flags are forwarded to each test (e.g. --dump, --hidden, --require-vid=...).");
@@ -423,6 +424,78 @@ static bool DumpDbgctlStatusSnapshotBestEffort(const std::wstring& dbgctl_path,
 
   if (out_path) {
     *out_path = snapshot_path;
+  }
+  return true;
+}
+
+static bool DumpDbgctlLastCmdDumpBestEffort(const std::wstring& dbgctl_path,
+                                            const std::wstring& out_dir,
+                                            const std::string& test_name,
+                                            DWORD dbgctl_timeout_ms,
+                                            std::wstring* out_cmd_base_path,
+                                            std::wstring* out_log_path,
+                                            std::string* err) {
+  if (out_cmd_base_path) {
+    out_cmd_base_path->clear();
+  }
+  if (out_log_path) {
+    out_log_path->clear();
+  }
+  if (err) {
+    err->clear();
+  }
+  if (dbgctl_path.empty() || out_dir.empty() || test_name.empty() || dbgctl_timeout_ms == 0) {
+    return false;
+  }
+
+  std::string mk_err;
+  if (!EnsureDirExistsRecursive(out_dir, &mk_err)) {
+    if (err) {
+      *err = mk_err;
+    }
+    return false;
+  }
+
+  // Use a stable base path and let dbgctl write siblings:
+  // - single dump: <base>.bin + <base>.bin.txt + <base>.bin.alloc_table.bin (AGPU, when present)
+  // - multi dump (--count N): <base>_0.bin, <base>_1.bin, ... plus per-file siblings.
+  const std::wstring cmd_leaf = aerogpu_test::Utf8ToWideFallbackAcp("dbgctl_" + test_name + "_cmd.bin");
+  const std::wstring cmd_base_path = aerogpu_test::JoinPath(out_dir, cmd_leaf.c_str());
+
+  const std::wstring log_leaf = aerogpu_test::Utf8ToWideFallbackAcp("dbgctl_" + test_name + "_dump_last_cmd.txt");
+  const std::wstring log_path = aerogpu_test::JoinPath(out_dir, log_leaf.c_str());
+
+  ProcessOutputFiles out_files;
+  out_files.stdout_path = log_path;
+  out_files.stderr_path = log_path;  // combined
+
+  // Best-effort: dump a small window of the most recent submissions (newest is index 0).
+  // This improves hang triage without forcing the user to re-run dbgctl multiple times.
+  static const uint32_t kDumpLastCmdCount = 4;
+
+  std::vector<std::wstring> args;
+  args.push_back(L"--dump-last-submit");  // alias: --dump-last-cmd
+  args.push_back(L"--count");
+  args.push_back(aerogpu_test::Utf8ToWideFallbackAcp(aerogpu_test::FormatString("%lu", (unsigned long)kDumpLastCmdCount)));
+  args.push_back(L"--cmd-out");
+  args.push_back(cmd_base_path);
+  args.push_back(L"--timeout-ms");
+  args.push_back(aerogpu_test::Utf8ToWideFallbackAcp(
+      aerogpu_test::FormatString("%lu", (unsigned long)dbgctl_timeout_ms)));
+
+  RunResult rr = RunProcessWithTimeoutW(dbgctl_path, args, dbgctl_timeout_ms, true, &out_files);
+  if (!rr.started) {
+    if (err) {
+      *err = rr.err;
+    }
+    return false;
+  }
+
+  if (out_cmd_base_path) {
+    *out_cmd_base_path = cmd_base_path;
+  }
+  if (out_log_path) {
+    *out_log_path = log_path;
   }
   return true;
 }
@@ -1133,6 +1206,16 @@ int main(int argc, char** argv) {
         } else if (!snapshot_err.empty()) {
           aerogpu_test::PrintfStdout("INFO: dbgctl snapshot failed: %s", snapshot_err.c_str());
         }
+
+        std::wstring cmd_base_path;
+        std::wstring cmd_log_path;
+        std::string cmd_err;
+        if (DumpDbgctlLastCmdDumpBestEffort(
+                dbgctl_path, out_dir, test_name, dbgctl_timeout_ms, &cmd_base_path, &cmd_log_path, &cmd_err)) {
+          aerogpu_test::PrintfStdout("INFO: wrote dbgctl last-cmd dump: %ls (and sibling outputs)", cmd_base_path.c_str());
+        } else if (!cmd_err.empty()) {
+          aerogpu_test::PrintfStdout("INFO: dbgctl last-cmd dump failed: %s", cmd_err.c_str());
+        }
       }
 
       if (emit_json) {
@@ -1154,6 +1237,16 @@ int main(int argc, char** argv) {
           aerogpu_test::PrintfStdout("INFO: wrote dbgctl status snapshot: %ls", snapshot_path.c_str());
         } else if (!snapshot_err.empty()) {
           aerogpu_test::PrintfStdout("INFO: dbgctl snapshot failed: %s", snapshot_err.c_str());
+        }
+
+        std::wstring cmd_base_path;
+        std::wstring cmd_log_path;
+        std::string cmd_err;
+        if (DumpDbgctlLastCmdDumpBestEffort(
+                dbgctl_path, out_dir, test_name, dbgctl_timeout_ms, &cmd_base_path, &cmd_log_path, &cmd_err)) {
+          aerogpu_test::PrintfStdout("INFO: wrote dbgctl last-cmd dump: %ls (and sibling outputs)", cmd_base_path.c_str());
+        } else if (!cmd_err.empty()) {
+          aerogpu_test::PrintfStdout("INFO: dbgctl last-cmd dump failed: %s", cmd_err.c_str());
         }
       }
     } else {

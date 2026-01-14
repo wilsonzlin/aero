@@ -235,26 +235,31 @@ This writes (one pair per test) into `logs\`:
 
 ### Capturing driver status on failures (dbgctl)
 
-If you have `aerogpu_dbgctl.exe` available in the guest, the runner can automatically capture a `--status`
-snapshot after test failures/timeouts:
+If you have `aerogpu_dbgctl.exe` available in the guest, the runner can automatically capture:
+
+- a `--status` snapshot, and
+- a recent cmd-stream dump (`--dump-last-submit --count 4`)
+
+after test failures/timeouts. These artifacts are best-effort and intended to make “what did the guest last submit?”
+debugging possible without attaching WinDbg.
 
 Packaged locations:
 
 - Guest Tools ISO/zip:
-  - x64: `drivers\\amd64\\aerogpu\\tools\\win7_dbgctl\\bin\\aerogpu_dbgctl.exe`
-  - x86: `drivers\\x86\\aerogpu\\tools\\win7_dbgctl\\bin\\aerogpu_dbgctl.exe`
+  - x64: `drivers\\amd64\\aerogpu\\tools\\aerogpu_dbgctl.exe`
+  - x86: `drivers\\x86\\aerogpu\\tools\\aerogpu_dbgctl.exe`
 - CI-staged packages (host-side, copy into the guest):
-  - x64: `out\\packages\\aerogpu\\x64\\tools\\win7_dbgctl\\bin\\aerogpu_dbgctl.exe`
-  - x86: `out\\packages\\aerogpu\\x86\\tools\\win7_dbgctl\\bin\\aerogpu_dbgctl.exe`
+  - x64: `out\\packages\\aerogpu\\x64\\tools\\aerogpu_dbgctl.exe`
+  - x86: `out\\packages\\aerogpu\\x86\\tools\\aerogpu_dbgctl.exe`
 
 Pass the full path:
 
 ```cmd
 :: Point directly at the dbgctl shipped on the Guest Tools ISO/zip (replace <GuestToolsDrive>, e.g. D).
 :: Win7 x64:
-bin\aerogpu_test_runner.exe --log-dir=logs --dbgctl=<GuestToolsDrive>:\drivers\amd64\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe
+bin\aerogpu_test_runner.exe --log-dir=logs --dbgctl=<GuestToolsDrive>:\drivers\amd64\aerogpu\tools\aerogpu_dbgctl.exe
 :: Win7 x86:
-:: bin\aerogpu_test_runner.exe --log-dir=logs --dbgctl=<GuestToolsDrive>:\drivers\x86\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe
+:: bin\aerogpu_test_runner.exe --log-dir=logs --dbgctl=<GuestToolsDrive>:\drivers\x86\aerogpu\tools\aerogpu_dbgctl.exe
 ```
 
 Or copy dbgctl next to the runner and use a shorter `--dbgctl` path:
@@ -262,13 +267,18 @@ Or copy dbgctl next to the runner and use a shorter `--dbgctl` path:
 ```cmd
 :: Copy dbgctl next to the runner (into win7\bin\) and reference it with a relative path.
 :: Win7 x64 (dbgctl is still x86 and runs under WOW64):
-copy /y <GuestToolsDrive>:\drivers\amd64\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe bin\
+copy /y <GuestToolsDrive>:\drivers\amd64\aerogpu\tools\aerogpu_dbgctl.exe bin\
 :: Win7 x86:
-:: copy /y <GuestToolsDrive>:\drivers\x86\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe bin\
+:: copy /y <GuestToolsDrive>:\drivers\x86\aerogpu\tools\aerogpu_dbgctl.exe bin\
 bin\aerogpu_test_runner.exe --log-dir=logs --dbgctl=aerogpu_dbgctl.exe
 ```
 
-By default the snapshot is written next to the per-test logs (or next to `report.json` when `--json` is used).
+By default these artifacts are written next to the per-test logs (or next to `report.json` when `--json` is used):
+
+- `dbgctl_<test>_status.txt`
+- `dbgctl_<test>_dump_last_cmd.txt`
+- `dbgctl_<test>_cmd_*.bin` + siblings (`.txt` metadata, and on AGPU an optional `.alloc_table.bin`)
+
 Use `--dbgctl-timeout-ms=NNNN` to bound how long the runner will wait for `aerogpu_dbgctl.exe` itself (default: 5000ms).
 
 To also write BMP dumps next to the binaries:
@@ -299,11 +309,11 @@ Copy `C:\cmd.bin`, `C:\cmd.bin.txt`, and (if present) `C:\alloc.bin` to the host
 
 Tips:
 - To dump multiple recent submissions in one run (useful if the newest submission is a tiny no-op), use `--count N`:
-  - `aerogpu_dbgctl --dump-last-cmd --count 4 --out C:\cmd.bin`
+  - `aerogpu_dbgctl.exe --dump-last-submit --count 4 --cmd-out C:\cmd.bin`
   - This writes one output per submission (for example `C:\cmd_0.bin`, `C:\cmd_1.bin`, ...) plus per-submission `.txt`
     metadata and (on AGPU) optional `.alloc_table.bin` dumps.
 - To select an older submission explicitly, use `--index-from-tail K` (0 = newest):
-  - `aerogpu_dbgctl --dump-last-cmd --index-from-tail 1 --out C:\prev_cmd.bin`
+  - `aerogpu_dbgctl.exe --dump-last-submit --index-from-tail 1 --cmd-out C:\prev_cmd.bin`
 
 Host (repo root):
 
