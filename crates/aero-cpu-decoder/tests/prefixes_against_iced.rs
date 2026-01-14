@@ -1,7 +1,7 @@
 #![cfg(not(target_arch = "wasm32"))]
 
 use aero_cpu_decoder::{decode_one, DecodeMode, Segment, MAX_INSTRUCTION_LEN};
-use iced_x86::{EncodingKind, OpCodeInfo, OpCodeTableKind, Register};
+use iced_x86::{EncodingKind, MandatoryPrefix, OpCodeInfo, OpCodeTableKind, Register};
 
 const CASES_PER_MODE: usize = 2_000;
 
@@ -139,23 +139,34 @@ fn check_one(mode: DecodeMode, bytes: &[u8]) {
     let inst_bytes = &bytes[..iced.len()];
     let op_code = iced.op_code();
     let encoding = op_code.encoding();
+    let mandatory = op_code.mandatory_prefix();
 
     // --- Group 1 prefix semantics (LOCK/REP/REPNE) ---
-    assert_eq!(
-        ours.lock,
-        iced.has_lock_prefix(),
-        "LOCK mismatch: mode={mode:?} bytes={bytes:02X?} inst={iced:?}",
-    );
-    assert_eq!(
-        ours.rep,
-        iced.has_rep_prefix(),
-        "REP mismatch: mode={mode:?} bytes={bytes:02X?} inst={iced:?}",
-    );
-    assert_eq!(
-        ours.repne,
-        iced.has_repne_prefix(),
-        "REPNE mismatch: mode={mode:?} bytes={bytes:02X?} inst={iced:?}",
-    );
+    // `Instruction::{has_rep_prefix,has_repne_prefix}` exclude *mandatory* `F3`/`F2`
+    // prefix bytes (e.g. `PAUSE` and many SSE instructions). Since our prefix
+    // parser is byte-based, we treat those mandatory bytes as present.
+    //
+    // We also avoid comparing HLE/XACQUIRE/XRELEASE cases since iced can report
+    // multiple group1 flags simultaneously there, while our metadata enforces a
+    // single "effective" group1 prefix ("last prefix wins").
+    let expected_lock = iced.has_lock_prefix();
+    let expected_rep = iced.has_rep_prefix() || mandatory == MandatoryPrefix::PF3;
+    let expected_repne = iced.has_repne_prefix() || mandatory == MandatoryPrefix::PF2;
+    let expected_group1_count = expected_lock as u8 + expected_rep as u8 + expected_repne as u8;
+    if expected_group1_count <= 1 {
+        assert_eq!(
+            ours.lock, expected_lock,
+            "LOCK mismatch: mode={mode:?} bytes={bytes:02X?} mandatory={mandatory:?} inst={iced:?}",
+        );
+        assert_eq!(
+            ours.rep, expected_rep,
+            "REP mismatch: mode={mode:?} bytes={bytes:02X?} mandatory={mandatory:?} inst={iced:?}",
+        );
+        assert_eq!(
+            ours.repne, expected_repne,
+            "REPNE mismatch: mode={mode:?} bytes={bytes:02X?} mandatory={mandatory:?} inst={iced:?}",
+        );
+    }
     let group1_count = ours.lock as u8 + ours.rep as u8 + ours.repne as u8;
     assert!(
         group1_count <= 1,
