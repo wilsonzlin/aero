@@ -35,7 +35,19 @@ class PowerShellBlkRecoveryGatingTests(unittest.TestCase):
         )
         self.assertRegex(self.text, pat)
 
+    def test_fail_on_blk_recovery_does_not_fallback_when_dedicated_marker_skips(self) -> None:
+        # If the dedicated virtio-blk-counters marker is present but reports SKIP, the harness
+        # should treat counters as unavailable and not fall back to the legacy virtio-blk marker.
+        #
+        # This test is intentionally structural (regex-based) rather than executing PowerShell.
+        pat = re.compile(
+            r"(?is)"
+            r"if\s*\(\s*\$FailOnBlkRecovery\s*-and\s*\$result\.Result\s*-eq\s*\"PASS\"\s*\)\s*\{"
+            r".*?if\s*\(\s*\$null\s*-ne\s*\$line\s*\)\s*\{"
+            r".*?if\s*\(\s*\$status\s*-ne\s*\"SKIP\"\s*\)"
+        )
+        self.assertRegex(self.text, pat)
+
 
 if __name__ == "__main__":
     unittest.main()
-
