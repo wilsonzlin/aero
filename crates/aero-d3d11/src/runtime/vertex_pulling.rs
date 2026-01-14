@@ -20,9 +20,11 @@ use crate::input_layout::{
 
 /// Reserved bind-group index for IA vertex pulling resources.
 ///
-/// Group indices `0..=3` are used by the D3D binding model (`binding_model.rs`) for VS/PS/CS/GS
-/// resources. Vertex pulling uses a dedicated group to coexist with those bindings.
-pub const VERTEX_PULLING_GROUP: u32 = 4;
+/// Group indices `0..=2` are used by the D3D binding model (`binding_model.rs`) for VS/PS/CS
+/// resources. Extended stages (GS/HS/DS) are executed via compute emulation and share `@group(3)`
+/// due to WebGPU's fixed max bind group count (4 groups). Vertex pulling also uses `@group(3)` for
+/// compute pipelines that need IA buffers.
+pub const VERTEX_PULLING_GROUP: u32 = 3;
 
 /// First `@binding` number reserved for vertex pulling + compute-expansion internal resources within
 /// [`VERTEX_PULLING_GROUP`].
