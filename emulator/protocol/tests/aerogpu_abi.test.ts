@@ -601,12 +601,16 @@ test("TypeScript layout matches C headers", () => {
   assert.equal(size("aerogpu_escape_query_device_out"), 24);
   assert.equal(size("aerogpu_escape_query_device_v2_out"), 48);
   assert.equal(size("aerogpu_escape_query_fence_out"), 48);
+  assert.equal(size("aerogpu_escape_query_perf_out"), 160);
   assert.equal(size("aerogpu_escape_dump_ring_inout"), 40 + 32 * 24);
   assert.equal(size("aerogpu_escape_dump_ring_v2_inout"), 52 + 32 * 40);
   assert.equal(size("aerogpu_escape_selftest_inout"), 32);
   assert.equal(size("aerogpu_escape_query_vblank_out"), 56);
+  assert.equal(size("aerogpu_escape_query_scanout_out"), 72);
   assert.equal(size("aerogpu_escape_query_cursor_out"), 72);
+  assert.equal(size("aerogpu_escape_query_error_out"), 40);
   assert.equal(size("aerogpu_escape_map_shared_handle_inout"), 32);
+  assert.equal(size("aerogpu_escape_read_gpa_inout"), 40 + 4096);
 
   // Coverage guard: `aerogpu_pci.h` currently defines constants/enums only (no ABI structs).
   // If this changes, the TS mirror + ABI dump helper must be updated accordingly.
