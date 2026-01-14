@@ -277,16 +277,15 @@ the quickest view of “what did the guest last submit?”.
 Guest (Win7):
 
 ```cmd
-aerogpu_dbgctl --dump-last-cmd --out C:\cmd.bin
+aerogpu_dbgctl --dump-last-submit --cmd-out C:\cmd.bin --alloc-out C:\alloc.bin
 ```
 
-Copy `C:\cmd.bin` plus any sibling outputs that dbgctl produced (for example `C:\cmd.bin.alloc_table.bin` and `C:\cmd.bin.txt`)
-to the host.
+Copy `C:\cmd.bin`, `C:\cmd.bin.txt`, and (if present) `C:\alloc.bin` to the host.
 
 Host (repo root):
 
 ```bash
-cargo run -p aero-gpu-trace-replay -- decode-submit --cmd cmd.bin --alloc cmd.bin.alloc_table.bin
+cargo run -p aero-gpu-trace-replay -- decode-submit --cmd cmd.bin --alloc alloc.bin
 cargo run -p aero-gpu-trace-replay -- decode-cmd-stream cmd.bin
 ```
 

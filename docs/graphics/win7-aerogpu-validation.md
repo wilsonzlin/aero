@@ -57,7 +57,7 @@ Artifacts collected:
  - per-test stdout/stderr logs (dir):
  - dbgctl `--status` snapshots (dbgctl_<test>_status.txt) (dir):
  - failing test --dump outputs (BMP/bin) (dir):
- - dbgctl last-submission cmd dump (`--dump-last-cmd`) outputs (cmd.bin + cmd.bin.alloc_table.bin + cmd.bin.txt) (when available):
+ - dbgctl last-submission cmd dump (`--dump-last-submit`) outputs (cmd.bin + alloc.bin + cmd.bin.txt) (when available):
  - Event Viewer: dxgkrnl/display events around failures (exported EVTX):
  - KMD snapshots: aerogpu_dbgctl --query-fence/--dump-ring/--dump-vblank/--dump-createalloc (outputs saved):
  Notes:
@@ -455,7 +455,7 @@ On Windows 7 x64 it runs via **WOW64**. This ensures Windows 7 x86 users can alw
    aerogpu_dbgctl --query-umd-private
    aerogpu_dbgctl --query-fence
    aerogpu_dbgctl --dump-ring --ring-id 0
-   aerogpu_dbgctl --dump-last-cmd --out C:\cmd.bin
+   aerogpu_dbgctl --dump-last-submit --cmd-out C:\cmd.bin --alloc-out C:\alloc.bin
    aerogpu_dbgctl --dump-createalloc
    aerogpu_dbgctl --dump-vblank
    aerogpu_dbgctl --query-perf
@@ -502,7 +502,7 @@ For the canonical, up-to-date command list and global options, see:
 | `--watch-fence --samples N --interval-ms M [--timeout-ms T]` | polls `--query-fence` in a loop and prints one line per sample (deltas + estimated rate + stall warnings) | quickly confirm whether fences are progressing |
 | `--query-perf` (alias: `--perf`) | KMD-provided perf/health counter snapshot (fence/ring progress, submit/IRQ/reset counts, vblank counters) | baseline collection and regression triage |
 | `--dump-ring --ring-id N` | ring head/tail + recent submission descriptors (newest-at-tail window on AGPU) | hangs/TDR triage |
-| `--dump-last-cmd [--index-from-tail K] [--count N] --out <path> [--force]` | dumps the most recent cmd stream submission(s) to file(s); also writes `<cmd_path>.txt` metadata; on AGPU may also dump `<cmd_path>.alloc_table.bin` | capture bytes for offline cmd-stream/alloc-table decode |
+| `--dump-last-submit` *(alias: `--dump-last-cmd`)* `--cmd-out <cmd.bin> [--alloc-out <alloc.bin>] [--index-from-tail K] [--count N] [--force]` | dumps the most recent cmd stream submission(s) to file(s); also writes `<cmd_path>.txt` metadata; on AGPU may also dump alloc tables (either the default `<cmd_path>.alloc_table.bin` or the `--alloc-out` path when provided with `--count 1`) | capture bytes for offline cmd-stream/alloc-table decode |
 | `--watch-ring --samples N --interval-ms M [--ring-id N]` | polls ring head/tail in a loop and prints one line per sample (pending count + last fence/flags when available) | diagnose “ring not draining” / stuck submit paths |
 | `--query-scanout` | cached scanout mode/visibility vs best-effort MMIO snapshot (`SCANOUT0_*`, including framebuffer GPA) | diagnosing blank output, mode/pitch mismatches, scanline bounds issues |
 | `--dump-scanout-bmp <path>` | dumps the current scanout framebuffer to an uncompressed 32bpp BMP (requires `AEROGPU_ESCAPE_OP_READ_GPA`) | capture pixels without host-side capture (blank/corrupt display debugging) |

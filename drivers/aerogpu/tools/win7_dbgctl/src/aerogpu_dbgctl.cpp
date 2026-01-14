@@ -746,7 +746,8 @@ static void PrintUsage() {
            L"  --dump-cursor-bmp PATH\n"
            L"  --dump-cursor-png PATH\n"
            L"  --dump-ring\n"
-           L"  --dump-last-cmd [--index-from-tail K] [--count N] --out <path> [--force]\n"
+           L"  --dump-last-submit (alias: --dump-last-cmd) [--index-from-tail K] [--count N]\n"
+           L"      --cmd-out <path> [--alloc-out <path>] [--force]\n"
            L"  --watch-ring  (requires: --samples N --interval-ms M)\n"
            L"  --dump-createalloc  (DxgkDdiCreateAllocation trace)\n"
            L"      [--csv <path>]  (write CreateAllocation trace as CSV)\n"
@@ -4986,9 +4987,9 @@ static const wchar_t *RingFormatToString(uint32_t fmt) {
 }
 
 static int DoDumpLastCmd(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t ringId, uint32_t indexFromTail,
-                         uint32_t count, const wchar_t *outPath, bool force) {
+                         uint32_t count, const wchar_t *outPath, const wchar_t *allocOutPath, bool force) {
   if (!outPath || !outPath[0]) {
-    fwprintf(stderr, L"--dump-last-cmd requires --out <path>\n");
+    fwprintf(stderr, L"--dump-last-submit/--dump-last-cmd requires --cmd-out <path> (or --out <path>)\n");
     return 1;
   }
   if (count == 0) {
@@ -5088,6 +5089,12 @@ static int DoDumpLastCmd(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t
   if (actualCount > 1) {
     wprintf(L"  dumping: index_from_tail=%lu..%lu (%lu submissions)\n", (unsigned long)indexFromTail,
             (unsigned long)(indexFromTail + actualCount - 1u), (unsigned long)actualCount);
+  }
+
+  if (allocOutPath && allocOutPath[0] && actualCount > 1) {
+    fwprintf(stderr, L"--alloc-out is not supported with --count > 1\n");
+    fwprintf(stderr, L"Hint: omit --alloc-out to use the default <cmd_path>.alloc_table.bin naming.\n");
+    return 1;
   }
 
   for (uint32_t dumpIndex = 0; dumpIndex < actualCount; ++dumpIndex) {
@@ -5233,7 +5240,9 @@ static int DoDumpLastCmd(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t
       const uint64_t allocGpa = (uint64_t)d.alloc_table_gpa;
       const uint64_t allocSizeBytes = (uint64_t)d.alloc_table_size_bytes;
       if (allocGpa == 0 && allocSizeBytes == 0) {
-        // Nothing to dump.
+        if (allocOutPath && allocOutPath[0]) {
+          wprintf(L"  alloc table: not present (no file written)\n");
+        }
       } else {
         if (allocGpa == 0 || allocSizeBytes == 0) {
           fwprintf(stderr, L"Invalid alloc_table_gpa/alloc_table_size_bytes pair: gpa=0x%I64x size=%I64u\n",
@@ -5269,19 +5278,29 @@ static int DoDumpLastCmd(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t
           return 2;
         }
 
-        wchar_t *allocPath = HeapWcsCatSuffix(curOutPath, L".alloc_table.bin");
-        if (!allocPath) {
-          fwprintf(stderr, L"Out of memory building alloc table output path\n");
-          if (curOutPathOwned) {
-            HeapFree(GetProcessHeap(), 0, curOutPathOwned);
+        const wchar_t *allocPath = NULL;
+        wchar_t *allocPathOwned = NULL;
+        if (allocOutPath && allocOutPath[0]) {
+          allocPath = allocOutPath;
+        } else {
+          allocPathOwned = HeapWcsCatSuffix(curOutPath, L".alloc_table.bin");
+          if (!allocPathOwned) {
+            fwprintf(stderr, L"Out of memory building alloc table output path\n");
+            if (curOutPathOwned) {
+              HeapFree(GetProcessHeap(), 0, curOutPathOwned);
+            }
+            return 2;
           }
-          return 2;
+          allocPath = allocPathOwned;
         }
+
         const int dumpAllocRc = DumpGpaRangeToFile(f, hAdapter, allocGpa, allocSizeBytes, allocPath, NULL);
         if (dumpAllocRc == 0) {
           wprintf(L"  alloc table dumped: %s\n", allocPath);
         }
-        HeapFree(GetProcessHeap(), 0, allocPath);
+        if (allocPathOwned) {
+          HeapFree(GetProcessHeap(), 0, allocPathOwned);
+        }
         if (dumpAllocRc != 0) {
           if (curOutPathOwned) {
             HeapFree(GetProcessHeap(), 0, curOutPathOwned);
@@ -8204,6 +8223,7 @@ int wmain(int argc, wchar_t **argv) {
   const wchar_t *readGpaOutFile = NULL;
   bool readGpaForce = false;
   const wchar_t *dumpLastCmdOutPath = NULL;
+  const wchar_t *dumpLastCmdAllocOutPath = NULL;
   uint32_t dumpLastCmdIndexFromTail = 0;
   uint32_t dumpLastCmdCount = 1;
   bool dumpLastCmdForce = false;
@@ -8341,6 +8361,26 @@ int wmain(int argc, wchar_t **argv) {
       const wchar_t *out = argv[++i];
       readGpaOutFile = out;
       dumpLastCmdOutPath = out;
+      continue;
+    }
+
+    if (wcscmp(a, L"--cmd-out") == 0) {
+      if (i + 1 >= argc) {
+        fwprintf(stderr, L"--cmd-out requires an argument\n");
+        PrintUsage();
+        return 1;
+      }
+      dumpLastCmdOutPath = argv[++i];
+      continue;
+    }
+
+    if (wcscmp(a, L"--alloc-out") == 0) {
+      if (i + 1 >= argc) {
+        fwprintf(stderr, L"--alloc-out requires an argument\n");
+        PrintUsage();
+        return 1;
+      }
+      dumpLastCmdAllocOutPath = argv[++i];
       continue;
     }
 
@@ -8592,7 +8632,7 @@ int wmain(int argc, wchar_t **argv) {
       }
       continue;
     }
-    if (wcscmp(a, L"--dump-last-cmd") == 0) {
+    if (wcscmp(a, L"--dump-last-cmd") == 0 || wcscmp(a, L"--dump-last-submit") == 0) {
       if (!SetCommand(CMD_DUMP_LAST_CMD)) {
         return 1;
       }
@@ -8733,11 +8773,12 @@ int wmain(int argc, wchar_t **argv) {
   }
   if (cmd == CMD_DUMP_LAST_CMD) {
     if (!dumpLastCmdOutPath || !dumpLastCmdOutPath[0]) {
-      fwprintf(stderr, L"--dump-last-cmd requires --out <path>\n");
+      fwprintf(stderr, L"--dump-last-submit/--dump-last-cmd requires --cmd-out <path> (or --out <path>)\n");
       PrintUsage();
       if (g_json_output) {
         std::string json;
-        JsonWriteTopLevelError(&json, "dump-last-cmd", NULL, "--dump-last-cmd requires --out <path>",
+        JsonWriteTopLevelError(&json, "dump-last-cmd", NULL,
+                               "--dump-last-submit/--dump-last-cmd requires --cmd-out <path> (or --out <path>)",
                                STATUS_INVALID_PARAMETER);
         WriteJsonToDestination(json);
       }
@@ -8971,7 +9012,7 @@ int wmain(int argc, wchar_t **argv) {
       break;
     case CMD_DUMP_LAST_CMD:
       rc = DoDumpLastCmd(&f, open.hAdapter, ringId, dumpLastCmdIndexFromTail, dumpLastCmdCount, dumpLastCmdOutPath,
-                         dumpLastCmdForce);
+                         dumpLastCmdAllocOutPath, dumpLastCmdForce);
       break;
     case CMD_DUMP_CREATEALLOCATION:
       rc = DoDumpCreateAllocation(&f, open.hAdapter, createAllocCsvPath, NULL);

@@ -122,7 +122,8 @@ Minimum supported commands:
   (newest is `desc[desc_count-1]`). This is intentionally not limited to the pending `[head, tail)` region so very fast
   devices/emulators still expose the most recent submission(s) to tooling/tests.
 
-- `aerogpu_dbgctl --dump-last-cmd --out <path> [--index-from-tail K] [--count N] [--force]`
+- `aerogpu_dbgctl --dump-last-submit` *(alias: `--dump-last-cmd`)*  
+  `--cmd-out <path> [--alloc-out <path>] [--index-from-tail K] [--count N] [--force]`
   Dumps the raw bytes of the most recent command stream buffer (`cmd_gpa .. cmd_gpa+cmd_size_bytes`) from the ring
   into `<path>` (binary). Use `--index-from-tail K` to select older submissions (0 = newest).
   Use `--count N` to dump the last N submissions in one run (starting at `index_from_tail=K`).
@@ -130,7 +131,8 @@ Minimum supported commands:
   `<base>_<index_from_tail>.bin` (for example `last_cmd_0.bin`, `last_cmd_1.bin`). If `<path>` ends in `.bin`,
   the trailing `.bin` is stripped before appending `_<index_from_tail>.bin`.
   On AGPU rings, if the submission has an allocation table (`alloc_table_gpa/alloc_table_size_bytes`), it is also dumped
-  to `<cmd_path>.alloc_table.bin` (one file per dumped submission).
+  to `<cmd_path>.alloc_table.bin` (one file per dumped submission). Alternatively, for a single-submission dump
+  (`--count 1`), you can override the alloc table output path via `--alloc-out <path>`.
 
   dbgctl also writes a small metadata summary to `<cmd_path>.txt` (ring/fence/GPAs/sizes) when possible (one file per dumped submission).
   Note: this is appended to the full cmd path, so dumping `last_cmd_0.bin` produces `last_cmd_0.bin.txt`.
@@ -227,9 +229,9 @@ aerogpu_dbgctl --dump-cursor-bmp C:\cursor.bmp
 aerogpu_dbgctl --dump-cursor-png C:\cursor.png
 aerogpu_dbgctl --dump-ring --ring-id 0
 aerogpu_dbgctl --watch-ring --ring-id 0 --samples 200 --interval-ms 50
-aerogpu_dbgctl --dump-last-cmd --out last_cmd.bin
-aerogpu_dbgctl --dump-last-cmd --count 4 --out last_cmd.bin
-aerogpu_dbgctl --dump-last-cmd --index-from-tail 1 --out prev_cmd.bin
+aerogpu_dbgctl --dump-last-submit --cmd-out last_cmd.bin --alloc-out last_alloc.bin
+aerogpu_dbgctl --dump-last-submit --count 4 --cmd-out last_cmd.bin
+aerogpu_dbgctl --dump-last-submit --index-from-tail 1 --cmd-out prev_cmd.bin
 aerogpu_dbgctl --dump-createalloc
 aerogpu_dbgctl --dump-createalloc --csv C:\createalloc.csv
 aerogpu_dbgctl --dump-createalloc --json C:\createalloc.json
