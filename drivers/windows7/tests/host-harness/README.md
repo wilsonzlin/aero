@@ -994,7 +994,8 @@ Notes:
 ### virtio-net driver diagnostics (`virtio-net-diag`)
 
 Newer guest selftest binaries emit a best-effort virtio-net driver diagnostic line (feature bits, offload toggles, IRQ
-mode, queue sizes/indices, and MSI-X vector mapping) when the in-guest driver exposes the optional diagnostics device:
+mode, queue sizes/indices, MSI-X vector mapping, and optional ctrl-vq state/counters) when the in-guest driver exposes
+the optional diagnostics device:
 
 - `virtio-net-diag|INFO|host_features=...|guest_features=...|irq_mode=...|irq_message_count=...|msix_config_vector=...|msix_rx_vector=...|msix_tx_vector=...|...`
 - `virtio-net-diag|WARN|reason=not_supported|...` (when unavailable)

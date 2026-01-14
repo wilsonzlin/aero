@@ -367,7 +367,7 @@ Notes:
   - This is best-effort and may emit `...|diag_unavailable` if the in-guest driver did not expose the registry-backed diagnostics.
 - The virtio-net section also emits an optional driver diagnostics line (parsed and mirrored by the host harness):
   - `virtio-net-diag|INFO|host_features=...|guest_features=...|irq_mode=...|irq_message_count=...|msix_config_vector=...|msix_rx_vector=...|msix_tx_vector=...|...`
-  - `virtio-net-diag|WARN|reason=not_supported|...` (for example when the driver does not expose `\\.\aero_virtio_net_diag`)
+  - `virtio-net-diag|WARN|reason=not_supported|...` (for example when the driver does not expose `\\.\AeroVirtioNetDiag`)
   - The host harness mirrors this into `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_DIAG|INFO/WARN|...` for log scraping/CI.
 - The `virtio-blk` marker includes basic file I/O diagnostics:
   - `write_ok`, `write_bytes`, `write_mbps`
