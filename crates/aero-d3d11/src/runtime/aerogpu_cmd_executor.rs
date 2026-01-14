@@ -1082,6 +1082,31 @@ struct GsPrepassMetadata {
     output_topology_kind: GsOutputTopologyKind,
 }
 
+fn gs_prepass_expanded_draw_topology(kind: GsOutputTopologyKind) -> CmdPrimitiveTopology {
+    match kind {
+        GsOutputTopologyKind::PointList => CmdPrimitiveTopology::PointList,
+        // The GS prepass expands line strips into a line list index buffer.
+        GsOutputTopologyKind::LineStrip => CmdPrimitiveTopology::LineList,
+        // The GS prepass expands triangle strips into a triangle list index buffer.
+        GsOutputTopologyKind::TriangleStrip => CmdPrimitiveTopology::TriangleList,
+    }
+}
+
+fn gs_prepass_max_indices_per_primitive(
+    kind: GsOutputTopologyKind,
+    max_output_vertices: u32,
+) -> Result<u64> {
+    Ok(match kind {
+        GsOutputTopologyKind::PointList => u64::from(max_output_vertices),
+        GsOutputTopologyKind::LineStrip => u64::from(max_output_vertices.saturating_sub(1))
+            .checked_mul(2)
+            .ok_or_else(|| anyhow!("GS prepass: max indices per primitive overflow"))?,
+        GsOutputTopologyKind::TriangleStrip => u64::from(max_output_vertices.saturating_sub(2))
+            .checked_mul(3)
+            .ok_or_else(|| anyhow!("GS prepass: max indices per primitive overflow"))?,
+    })
+}
+
 #[derive(Debug, Clone)]
 struct GsShaderMetadata {
     /// Geometry-shader instance count (`dcl_gsinstancecount` / `[instance(n)]`).
@@ -4844,19 +4869,8 @@ impl AerogpuD3d11Executor {
             .checked_mul(expanded_vertex_count.max(1))
             .ok_or_else(|| anyhow!("GS prepass: expanded vertex buffer size overflow"))?;
 
-        let max_indices_per_prim: u64 = match gs_meta.output_topology_kind {
-            GsOutputTopologyKind::PointList => u64::from(gs_meta.max_output_vertices),
-            GsOutputTopologyKind::LineStrip => {
-                u64::from(gs_meta.max_output_vertices.saturating_sub(1))
-                    .checked_mul(2)
-                    .ok_or_else(|| anyhow!("GS prepass: max indices per primitive overflow"))?
-            }
-            GsOutputTopologyKind::TriangleStrip => {
-                u64::from(gs_meta.max_output_vertices.saturating_sub(2))
-                    .checked_mul(3)
-                    .ok_or_else(|| anyhow!("GS prepass: max indices per primitive overflow"))?
-            }
-        };
+        let max_indices_per_prim =
+            gs_prepass_max_indices_per_primitive(gs_meta.output_topology_kind, gs_meta.max_output_vertices)?;
         let expanded_index_count = u64::from(primitive_count)
             .checked_mul(u64::from(gs_instance_count))
             .and_then(|v| v.checked_mul(max_indices_per_prim))
@@ -6253,19 +6267,8 @@ impl AerogpuD3d11Executor {
             .checked_mul(expanded_vertex_count.max(1))
             .ok_or_else(|| anyhow!("GS prepass: expanded vertex buffer size overflow"))?;
 
-        let max_indices_per_prim: u64 = match gs_meta.output_topology_kind {
-            GsOutputTopologyKind::PointList => u64::from(gs_meta.max_output_vertices),
-            GsOutputTopologyKind::LineStrip => {
-                u64::from(gs_meta.max_output_vertices.saturating_sub(1))
-                    .checked_mul(2)
-                    .ok_or_else(|| anyhow!("GS prepass: max indices per primitive overflow"))?
-            }
-            GsOutputTopologyKind::TriangleStrip => {
-                u64::from(gs_meta.max_output_vertices.saturating_sub(2))
-                    .checked_mul(3)
-                    .ok_or_else(|| anyhow!("GS prepass: max indices per primitive overflow"))?
-            }
-        };
+        let max_indices_per_prim =
+            gs_prepass_max_indices_per_primitive(gs_meta.output_topology_kind, gs_meta.max_output_vertices)?;
         let expanded_index_count = u64::from(primitive_count)
             .checked_mul(u64::from(gs_instance_count))
             .and_then(|v| v.checked_mul(max_indices_per_prim))
@@ -7739,13 +7742,7 @@ fn ds_eval(patch_id: u32, domain: vec3<f32>, _local_vertex: u32) -> AeroDsOut {
             expanded_index_alloc = Some(tess_index_alloc);
             indirect_args_alloc = tess_indirect_args_alloc;
         } else if let Some((gs_handle, gs_meta)) = gs_prepass {
-            expanded_draw_topology = match gs_meta.output_topology_kind {
-                GsOutputTopologyKind::PointList => CmdPrimitiveTopology::PointList,
-                // The GS prepass expands line strips into a line list index buffer.
-                GsOutputTopologyKind::LineStrip => CmdPrimitiveTopology::LineList,
-                // The GS prepass expands triangle strips into a triangle list index buffer.
-                GsOutputTopologyKind::TriangleStrip => CmdPrimitiveTopology::TriangleList,
-            };
+            expanded_draw_topology = gs_prepass_expanded_draw_topology(gs_meta.output_topology_kind);
 
             // The GS translator writes `DrawIndexedIndirectArgs` + an indexed list. We
             // expand indices into a non-indexed vertex stream before the render pass so we can
@@ -21074,6 +21071,54 @@ mod tests {
             !should_use_signature_driven_translator(ShaderStage::Vertex, &signatures),
             "vertex shaders without ISGN/OSGN should fall back to the bootstrap translator"
         );
+    }
+
+    #[test]
+    fn translated_gs_prepass_output_topology_maps_to_render_topology() {
+        assert_eq!(
+            gs_prepass_expanded_draw_topology(GsOutputTopologyKind::PointList),
+            CmdPrimitiveTopology::PointList
+        );
+        assert_eq!(
+            gs_prepass_expanded_draw_topology(GsOutputTopologyKind::LineStrip),
+            CmdPrimitiveTopology::LineList
+        );
+        assert_eq!(
+            gs_prepass_expanded_draw_topology(GsOutputTopologyKind::TriangleStrip),
+            CmdPrimitiveTopology::TriangleList
+        );
+    }
+
+    #[test]
+    fn translated_gs_prepass_index_buffer_allocation_bounds_strip_to_list_expansion() {
+        fn expected(kind: GsOutputTopologyKind, max_output_vertices: u32) -> u64 {
+            match kind {
+                GsOutputTopologyKind::PointList => u64::from(max_output_vertices),
+                GsOutputTopologyKind::LineStrip => {
+                    u64::from(max_output_vertices.saturating_sub(1)).saturating_mul(2)
+                }
+                GsOutputTopologyKind::TriangleStrip => {
+                    u64::from(max_output_vertices.saturating_sub(2)).saturating_mul(3)
+                }
+            }
+        }
+
+        let max_output_vertices_cases = [0u32, 1, 2, 3, 4, 16];
+        for max_output_vertices in max_output_vertices_cases {
+            for kind in [
+                GsOutputTopologyKind::PointList,
+                GsOutputTopologyKind::LineStrip,
+                GsOutputTopologyKind::TriangleStrip,
+            ] {
+                let got = gs_prepass_max_indices_per_primitive(kind, max_output_vertices)
+                    .expect("should not overflow for realistic max_output_vertices");
+                let want = expected(kind, max_output_vertices);
+                assert_eq!(
+                    got, want,
+                    "unexpected max_indices_per_primitive for {kind:?} with max_output_vertices={max_output_vertices}"
+                );
+            }
+        }
     }
 
     #[allow(dead_code)]
