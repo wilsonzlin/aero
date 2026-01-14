@@ -1,6 +1,7 @@
 use aero_devices::pci::msix::PCI_CAP_ID_MSIX;
 use aero_devices::pci::profile::{
-    VIRTIO_BAR0_SIZE, VIRTIO_BLK, VIRTIO_COMMON_CFG_BAR0_OFFSET, VIRTIO_NOTIFY_CFG_BAR0_OFFSET,
+    VIRTIO_BAR0_SIZE, VIRTIO_BLK, VIRTIO_COMMON_CFG_BAR0_OFFSET, VIRTIO_ISR_CFG_BAR0_OFFSET,
+    VIRTIO_NOTIFY_CFG_BAR0_OFFSET,
 };
 use aero_devices::pci::{PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
 use aero_io_snapshot::io::state::IoSnapshot;
@@ -285,4 +286,215 @@ fn pc_platform_virtio_blk_msix_snapshot_restore_preserves_msix_state() {
     assert_eq!(restored.memory.read_u16(USED_RING + 2), 1);
     assert_eq!(restored.memory.read_u8(status), 0);
     assert_eq!(restored.interrupts.borrow().get_pending(), Some(0x55));
+}
+
+#[test]
+fn pc_platform_virtio_blk_msix_snapshot_restore_preserves_vector_mask_pending_and_delivers_after_unmask(
+) {
+    const RAM_SIZE: usize = 2 * 1024 * 1024;
+    let config = PcPlatformConfig {
+        enable_ahci: false,
+        enable_uhci: false,
+        enable_virtio_blk: true,
+        enable_virtio_msix: true,
+        ..Default::default()
+    };
+    let mut pc = PcPlatform::new_with_config(RAM_SIZE, config);
+    let bdf = VIRTIO_BLK.bdf;
+
+    // Switch to APIC mode so MSI delivery targets the LAPIC.
+    pc.io.write_u8(IMCR_SELECT_PORT, IMCR_INDEX);
+    pc.io.write_u8(IMCR_DATA_PORT, 0x01);
+    assert_eq!(pc.interrupts.borrow().mode(), PlatformInterruptMode::Apic);
+
+    // Enable BAR0 MMIO decode + bus mastering, and disable legacy INTx so MSI-X is required for any
+    // observable interrupts.
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0406);
+
+    let bar0_base = read_bar0_base(&mut pc);
+    assert_ne!(bar0_base, 0);
+    assert_eq!(bar0_base % VIRTIO_BAR0_SIZE, 0);
+
+    // Locate MSI-X capability and discover table/PBA offsets.
+    let msix_cap = find_capability(&mut pc, bdf.bus, bdf.device, bdf.function, PCI_CAP_ID_MSIX)
+        .expect("virtio-blk should expose MSI-X when enabled");
+    let table = read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, msix_cap + 0x04);
+    let pba = read_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, msix_cap + 0x08);
+    assert_eq!(table & 0x7, 0, "MSI-X table should live in BAR0 (BIR=0)");
+    assert_eq!(pba & 0x7, 0, "MSI-X PBA should live in BAR0 (BIR=0)");
+    let table_offset = u64::from(table & !0x7);
+    let pba_offset = u64::from(pba & !0x7);
+
+    // Enable MSI-X (bit 15) and ensure Function Mask (bit 14) is cleared.
+    let ctrl = read_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, msix_cap + 0x02);
+    write_cfg_u16(
+        &mut pc,
+        bdf.bus,
+        bdf.device,
+        bdf.function,
+        msix_cap + 0x02,
+        (ctrl & !(1 << 14)) | (1 << 15),
+    );
+
+    // Program MSI-X table entry 0, but keep the entry masked (vector control bit 0).
+    let vector: u16 = 0x57;
+    let entry0 = bar0_base + table_offset;
+    pc.memory.write_u32(entry0, 0xfee0_0000);
+    pc.memory.write_u32(entry0 + 0x4, 0);
+    pc.memory.write_u32(entry0 + 0x8, u32::from(vector));
+    pc.memory.write_u32(entry0 + 0xc, 1); // masked
+
+    // BAR0 layout for Aero's virtio-pci contract:
+    // - common cfg @ 0x0000
+    // - notify @ 0x1000
+    // - isr @ 0x2000
+    const COMMON: u64 = VIRTIO_COMMON_CFG_BAR0_OFFSET as u64;
+    const NOTIFY: u64 = VIRTIO_NOTIFY_CFG_BAR0_OFFSET as u64;
+    const ISR: u64 = VIRTIO_ISR_CFG_BAR0_OFFSET as u64;
+
+    // Basic feature negotiation (accept whatever the device offers).
+    pc.memory.write_u8(bar0_base + COMMON + 0x14, 1); // ACKNOWLEDGE
+    pc.memory.write_u8(bar0_base + COMMON + 0x14, 1 | 2); // ACKNOWLEDGE | DRIVER
+
+    pc.memory.write_u32(bar0_base + COMMON, 0);
+    let f0 = pc.memory.read_u32(bar0_base + COMMON + 0x04);
+    pc.memory.write_u32(bar0_base + COMMON + 0x08, 0);
+    pc.memory.write_u32(bar0_base + COMMON + 0x0c, f0);
+
+    pc.memory.write_u32(bar0_base + COMMON, 1);
+    let f1 = pc.memory.read_u32(bar0_base + COMMON + 0x04);
+    pc.memory.write_u32(bar0_base + COMMON + 0x08, 1);
+    pc.memory.write_u32(bar0_base + COMMON + 0x0c, f1);
+
+    pc.memory.write_u8(bar0_base + COMMON + 0x14, 1 | 2 | 8); // + FEATURES_OK
+    pc.memory.write_u8(bar0_base + COMMON + 0x14, 1 | 2 | 8 | 4); // + DRIVER_OK
+
+    // Configure queue 0 with MSI-X vector 0.
+    const DESC_TABLE: u64 = 0x4000;
+    const AVAIL_RING: u64 = 0x5000;
+    const USED_RING: u64 = 0x6000;
+    pc.memory.write_u16(bar0_base + COMMON + 0x16, 0); // queue_select
+    let qsz = pc.memory.read_u16(bar0_base + COMMON + 0x18);
+    assert!(qsz >= 2);
+
+    pc.memory.write_u16(bar0_base + COMMON + 0x1a, 0); // queue_msix_vector
+    assert_eq!(pc.memory.read_u16(bar0_base + COMMON + 0x1a), 0);
+
+    pc.memory.write_u64(bar0_base + COMMON + 0x20, DESC_TABLE);
+    pc.memory.write_u64(bar0_base + COMMON + 0x28, AVAIL_RING);
+    pc.memory.write_u64(bar0_base + COMMON + 0x30, USED_RING);
+    pc.memory.write_u16(bar0_base + COMMON + 0x1c, 1); // queue_enable
+
+    // Build a minimal FLUSH request (no data buffers needed).
+    const VIRTIO_BLK_T_FLUSH: u32 = 4;
+    const VIRTQ_DESC_F_NEXT: u16 = 0x0001;
+    const VIRTQ_DESC_F_WRITE: u16 = 0x0002;
+    let header = 0x7000;
+    let status = 0x9000;
+    pc.memory.write_u32(header, VIRTIO_BLK_T_FLUSH);
+    pc.memory.write_u32(header + 4, 0);
+    pc.memory.write_u64(header + 8, 0);
+    pc.memory.write_u8(status, 0xff);
+
+    write_desc(&mut pc, DESC_TABLE, 0, header, 16, VIRTQ_DESC_F_NEXT, 1);
+    write_desc(&mut pc, DESC_TABLE, 1, status, 1, VIRTQ_DESC_F_WRITE, 0);
+
+    pc.memory.write_u16(AVAIL_RING, 0);
+    pc.memory.write_u16(AVAIL_RING + 2, 1);
+    pc.memory.write_u16(AVAIL_RING + 4, 0);
+    pc.memory.write_u16(USED_RING, 0);
+    pc.memory.write_u16(USED_RING + 2, 0);
+
+    assert_eq!(pc.interrupts.borrow().get_pending(), None);
+
+    // Doorbell queue 0, then process the request. The interrupt should be latched as pending (PBA)
+    // rather than delivered while the table entry is masked.
+    pc.memory.write_u16(bar0_base + NOTIFY, 0);
+    pc.process_virtio_blk();
+    assert_eq!(pc.memory.read_u16(USED_RING + 2), 1);
+    assert_eq!(pc.memory.read_u8(status), 0);
+
+    assert!(
+        !pc.virtio_blk.as_ref().unwrap().borrow().irq_level(),
+        "legacy INTx should not be asserted once MSI-X is enabled (even if the entry is masked)"
+    );
+    assert_eq!(
+        pc.interrupts.borrow().get_pending(),
+        None,
+        "expected no MSI-X delivery while the MSI-X entry is masked"
+    );
+    let pba_bits = pc.memory.read_u64(bar0_base + pba_offset);
+    assert_ne!(
+        pba_bits & 1,
+        0,
+        "expected pending bit 0 to be set while the MSI-X entry is masked"
+    );
+
+    // Clear the virtio interrupt cause (ISR is read-to-clear). Pending MSI-X delivery should still
+    // occur once the entry becomes unmasked, even without a new interrupt edge.
+    let _ = pc.memory.read_u8(bar0_base + ISR);
+    let pba_bits = pc.memory.read_u64(bar0_base + pba_offset);
+    assert_ne!(
+        pba_bits & 1,
+        0,
+        "expected pending bit 0 to remain set after clearing the ISR"
+    );
+
+    // Snapshot device + PCI config + guest RAM.
+    let dev_snap = pc.virtio_blk.as_ref().unwrap().borrow().save_state();
+    let pci_snap = pc.pci_cfg.borrow().save_state();
+    let mut ram_img = vec![0u8; RAM_SIZE];
+    pc.memory.read_physical(0, &mut ram_img);
+
+    // Restore into a fresh platform.
+    let mut restored = PcPlatform::new_with_config(RAM_SIZE, config);
+    restored.memory.write_physical(0, &ram_img);
+    restored.pci_cfg.borrow_mut().load_state(&pci_snap).unwrap();
+    restored
+        .virtio_blk
+        .as_ref()
+        .unwrap()
+        .borrow_mut()
+        .load_state(&dev_snap)
+        .unwrap();
+
+    restored.io.write_u8(IMCR_SELECT_PORT, IMCR_INDEX);
+    restored.io.write_u8(IMCR_DATA_PORT, 0x01);
+    assert_eq!(
+        restored.interrupts.borrow().mode(),
+        PlatformInterruptMode::Apic
+    );
+
+    let bar0_base2 = read_bar0_base(&mut restored);
+    assert_ne!(bar0_base2, 0);
+    assert_eq!(bar0_base2 % VIRTIO_BAR0_SIZE, 0);
+
+    // Ensure the MSI-X table entry mask + PBA pending bit were restored.
+    let entry0_2 = bar0_base2 + table_offset;
+    assert_eq!(
+        restored.memory.read_u32(entry0_2 + 0xc) & 1,
+        1,
+        "expected MSI-X vector control mask bit to be restored"
+    );
+    let pba_bits = restored.memory.read_u64(bar0_base2 + pba_offset);
+    assert_ne!(
+        pba_bits & 1,
+        0,
+        "expected MSI-X pending bit 0 to survive snapshot/restore"
+    );
+    assert_eq!(restored.interrupts.borrow().get_pending(), None);
+
+    // Unmask after restore. This should immediately deliver the pending vector and clear the PBA.
+    restored.memory.write_u32(entry0_2 + 0xc, 0);
+    assert_eq!(restored.interrupts.borrow().get_pending(), Some(vector as u8));
+    restored.interrupts.borrow_mut().acknowledge(vector as u8);
+    restored.interrupts.borrow_mut().eoi(vector as u8);
+    assert_eq!(restored.interrupts.borrow().get_pending(), None);
+
+    let pba_bits = restored.memory.read_u64(bar0_base2 + pba_offset);
+    assert_eq!(
+        pba_bits & 1,
+        0,
+        "expected pending bit 0 to clear after restore + unmask + delivery"
+    );
 }
