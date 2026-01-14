@@ -1982,6 +1982,123 @@ BOOLEAN AerovblkHwStartIo(_In_ PVOID deviceExtension, _Inout_ PSCSI_REQUEST_BLOC
    * our single-LUN addressing model.
    */
   switch (srb->Function) {
+#ifdef SRB_FUNCTION_CLAIM_DEVICE
+  /*
+   * StorPort device-claim SRB. No-op for this miniport (single device).
+   */
+  case SRB_FUNCTION_CLAIM_DEVICE:
+    AerovblkCompleteSrb(devExt, srb, SRB_STATUS_SUCCESS);
+    return TRUE;
+#endif
+
+#ifdef SRB_FUNCTION_ATTACH_DEVICE
+  /*
+   * StorPort device-attach SRB. No-op for this miniport (single device).
+   */
+  case SRB_FUNCTION_ATTACH_DEVICE:
+    AerovblkCompleteSrb(devExt, srb, SRB_STATUS_SUCCESS);
+    return TRUE;
+#endif
+
+#ifdef SRB_FUNCTION_RELEASE_DEVICE
+  /*
+   * StorPort device-release SRB. No-op for this miniport (single device).
+   */
+  case SRB_FUNCTION_RELEASE_DEVICE:
+    AerovblkCompleteSrb(devExt, srb, SRB_STATUS_SUCCESS);
+    return TRUE;
+#endif
+
+#ifdef SRB_FUNCTION_RECEIVE_EVENT
+  /*
+   * Asynchronous event delivery. This miniport does not generate events; return
+   * success with zero payload.
+   */
+  case SRB_FUNCTION_RECEIVE_EVENT:
+    srb->DataTransferLength = 0;
+    AerovblkCompleteSrb(devExt, srb, SRB_STATUS_SUCCESS);
+    return TRUE;
+#endif
+
+#ifdef SRB_FUNCTION_RELEASE_RECOVERY
+  /*
+   * Error recovery coordination SRB. No-op for this miniport.
+   */
+  case SRB_FUNCTION_RELEASE_RECOVERY:
+    AerovblkCompleteSrb(devExt, srb, SRB_STATUS_SUCCESS);
+    return TRUE;
+#endif
+
+#ifdef SRB_FUNCTION_SET_LINK_TIMEOUT
+  /*
+   * Link timeout hints are not applicable to virtio-blk. No-op success.
+   */
+  case SRB_FUNCTION_SET_LINK_TIMEOUT:
+  case SRB_FUNCTION_LINK_TIMEOUT:
+    AerovblkCompleteSrb(devExt, srb, SRB_STATUS_SUCCESS);
+    return TRUE;
+#endif
+
+#ifdef SRB_FUNCTION_SET_POWER
+  /*
+   * Power management variant used by some StorPort stacks. No-op success.
+   */
+  case SRB_FUNCTION_SET_POWER:
+    AerovblkCompleteSrb(devExt, srb, SRB_STATUS_SUCCESS);
+    return TRUE;
+#endif
+
+#ifdef SRB_FUNCTION_REMOVE_DEVICE
+  /*
+   * Some StorPort stacks issue REMOVE_DEVICE rather than (or in addition to)
+   * SRB_FUNCTION_PNP. Treat it like stop/remove: stop DMA when possible, abort
+   * outstanding SRBs, and quiesce the virtqueue.
+   */
+  case SRB_FUNCTION_REMOVE_DEVICE: {
+    STOR_LOCK_HANDLE lock;
+    BOOLEAN treatAsSurprise;
+    BOOLEAN avoidMmio;
+
+    InterlockedIncrement(&devExt->PnpSrbCount);
+
+    treatAsSurprise = (devExt->Removed) ? devExt->SurpriseRemoved : TRUE;
+    devExt->Removed = TRUE;
+    if (treatAsSurprise) {
+      devExt->SurpriseRemoved = TRUE;
+    }
+
+    StorPortAcquireSpinLock(devExt, InterruptLock, &lock);
+    devExt->Removed = TRUE;
+    avoidMmio = FALSE;
+    if (treatAsSurprise) {
+      avoidMmio = TRUE;
+      devExt->Vdev.CommonCfg = NULL;
+      devExt->Vdev.NotifyBase = NULL;
+      devExt->Vdev.IsrStatus = NULL;
+      devExt->Vdev.DeviceCfg = NULL;
+      devExt->Vdev.QueueNotifyAddrCache = NULL;
+      devExt->Vdev.QueueNotifyAddrCacheCount = 0;
+      RtlZeroMemory(devExt->QueueNotifyAddrCache, sizeof(devExt->QueueNotifyAddrCache));
+    }
+    StorPortReleaseSpinLock(devExt, &lock);
+
+    if (!avoidMmio && !devExt->SurpriseRemoved && devExt->Vdev.CommonCfg != NULL) {
+      (void)VirtioPciDisableMsixVectors(&devExt->Vdev, /*QueueCount=*/1);
+      VirtioPciResetDevice(&devExt->Vdev);
+    }
+
+    StorPortAcquireSpinLock(devExt, InterruptLock, &lock);
+    AerovblkAbortOutstandingRequestsLocked(devExt);
+    if (devExt->Vq.queue_size != 0) {
+      AerovblkResetVirtqueueLocked(devExt);
+    }
+    StorPortReleaseSpinLock(devExt, &lock);
+
+    AerovblkCompleteSrb(devExt, srb, SRB_STATUS_SUCCESS);
+    return TRUE;
+  }
+#endif
+
   case SRB_FUNCTION_ABORT_COMMAND:
 #ifdef SRB_FUNCTION_TERMINATE_IO
   /*
