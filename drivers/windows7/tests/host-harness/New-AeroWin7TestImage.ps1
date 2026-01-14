@@ -123,6 +123,15 @@ param(
   [Alias("TestInputEventsExtra")]
   [switch]$TestInputEventsExtended,
 
+  # If set, enable the guest selftest's end-to-end virtio-input Consumer Control (media keys) test
+  # (adds `--test-input-media-keys` to the scheduled task).
+  #
+  # This is required when running the host harness with:
+  # - PowerShell: `-WithInputMediaKeys`
+  # - Python: `--with-input-media-keys`
+  [Parameter(Mandatory = $false)]
+  [switch]$TestInputMediaKeys,
+
   # If set, enable the guest selftest's end-to-end virtio-input tablet (absolute pointer) event delivery test
   # (adds `--test-input-tablet-events` (alias: `--test-tablet-events`) to the scheduled task).
   #
@@ -473,6 +482,11 @@ if ($TestInputEventsExtended) {
   $testInputEventsExtendedArg = " --test-input-events-extended"
 }
 
+$testInputMediaKeysArg = ""
+if ($TestInputMediaKeys) {
+  $testInputMediaKeysArg = " --test-input-media-keys"
+}
+
 $testInputTabletEventsArg = ""
 if ($TestInputTabletEvents) {
   $testInputTabletEventsArg = " --test-input-tablet-events"
@@ -540,7 +554,7 @@ $enableTestSigningCmd
 
 REM Configure auto-run on boot (runs as SYSTEM).
 schtasks /Create /F /TN "AeroVirtioSelftest" /SC ONSTART /RU SYSTEM ^
-  /TR "\"C:\AeroTests\aero-virtio-selftest.exe\" --http-url \"$HttpUrl\" --dns-host \"$DnsHost\"$blkArg$testInputEventsArg$testInputEventsExtendedArg$testInputTabletEventsArg$requireSndArg$disableSndArg$disableSndCaptureArg$testSndCaptureArg$requireSndCaptureArg$requireNonSilenceArg$testSndBufferLimitsArg$allowVirtioSndTransitionalArg" >> "%LOG%" 2>&1
+  /TR "\"C:\AeroTests\aero-virtio-selftest.exe\" --http-url \"$HttpUrl\" --dns-host \"$DnsHost\"$blkArg$testInputEventsArg$testInputEventsExtendedArg$testInputMediaKeysArg$testInputTabletEventsArg$requireSndArg$disableSndArg$disableSndCaptureArg$testSndCaptureArg$requireSndCaptureArg$requireNonSilenceArg$testSndBufferLimitsArg$allowVirtioSndTransitionalArg" >> "%LOG%" 2>&1
 
 echo [AERO] provision done >> "%LOG%"
 $autoRebootCmd
@@ -597,6 +611,8 @@ After reboot, the host harness can boot the VM and parse PASS/FAIL from COM1 ser
     - To also enable the extended virtio-input markers (modifiers/buttons/wheel) (required when running the host harness with
       `-WithInputEventsExtended` / `-WithInputEventsExtra` / `--with-input-events-extended` / `--with-input-events-extra`), generate this media with
       `-TestInputEventsExtended` (alias: `-TestInputEventsExtra`) (adds `--test-input-events-extended` to the scheduled task, and implies `--test-input-events`).
+    - To enable Consumer Control / media key injection (required when running the host harness with `-WithInputMediaKeys` /
+      `--with-input-media-keys`), generate this media with `-TestInputMediaKeys` (adds `--test-input-media-keys` to the scheduled task).
     - To enable tablet (absolute pointer) injection (required when running the host harness with `-WithInputTabletEvents` / `-WithTabletEvents` /
       `--with-input-tablet-events` / `--with-tablet-events`), generate this media with `-TestInputTabletEvents` (alias: `-TestTabletEvents`)
       (adds `--test-input-tablet-events` (alias: `--test-tablet-events`) to the scheduled task).

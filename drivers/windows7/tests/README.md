@@ -40,6 +40,10 @@ drivers/windows7/tests/
   - This path reads HID input reports directly from the virtio-input HID interface so it does not depend on UI focus.
   - By default the guest selftest reports `virtio-input-events|SKIP|flag_not_set`; provision the guest to run the
     selftest with `--test-input-events` to enable it.
+- Emits a `virtio-input-media-keys` marker that can be used to validate **end-to-end Consumer Control (media keys)**
+  input report delivery when the host harness injects a deterministic media key via QMP (`input-send-event`).
+  - By default the guest selftest reports `virtio-input-media-keys|SKIP|flag_not_set`; provision the guest to run the
+    selftest with `--test-input-media-keys` to enable it.
 - Emits a `virtio-input-tablet-events` marker that can be used to validate **end-to-end absolute pointer (tablet)**
   input report delivery when the host harness attaches a `virtio-tablet-pci` device and injects deterministic QMP
   `abs` + click events (`input-send-event`).
@@ -68,20 +72,25 @@ drivers/windows7/tests/
  
  ```
  # virtio-blk includes interrupt diagnostics (from the miniport IOCTL query) as key/value fields:
- AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS|irq_mode=msix|msix_config_vector=0x0000|msix_queue_vector=0x0001
-   AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS|...
-   AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|SKIP|flag_not_set
-   AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|SKIP|flag_not_set
+  AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS|irq_mode=msix|msix_config_vector=0x0000|msix_queue_vector=0x0001
+    AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS|...
+    AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|SKIP|flag_not_set
+    AERO_VIRTIO_SELFTEST|TEST|virtio-input-media-keys|SKIP|flag_not_set
+    AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|SKIP|flag_not_set
 
- # Optional: end-to-end virtio-input event delivery (requires `--test-input-events` in the guest and host-side QMP injection):
- # AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|READY
- # AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|PASS|...
+  # Optional: end-to-end virtio-input event delivery (requires `--test-input-events` in the guest and host-side QMP injection):
+  # AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|READY
+  # AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|PASS|...
 
-  # Optional: end-to-end virtio-input tablet (absolute pointer) event delivery (requires `--test-input-tablet-events` / `--test-tablet-events` in the guest and host-side QMP injection):
-  # AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|READY
-  # AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|PASS|...
- # (virtio-snd is emitted as PASS/FAIL/SKIP depending on device/config):
-  AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP
+  # Optional: end-to-end virtio-input media keys (Consumer Control) event delivery (requires `--test-input-media-keys` in the guest and host-side QMP injection):
+  # AERO_VIRTIO_SELFTEST|TEST|virtio-input-media-keys|READY
+  # AERO_VIRTIO_SELFTEST|TEST|virtio-input-media-keys|PASS|...
+
+   # Optional: end-to-end virtio-input tablet (absolute pointer) event delivery (requires `--test-input-tablet-events` / `--test-tablet-events` in the guest and host-side QMP injection):
+   # AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|READY
+   # AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|PASS|...
+  # (virtio-snd is emitted as PASS/FAIL/SKIP depending on device/config):
+   AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP
   AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|flag_not_set
  # or:
   AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS

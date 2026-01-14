@@ -350,6 +350,36 @@ marker at all (READY/SKIP/PASS/FAIL) after completing `virtio-input`, the harnes
 If QMP input injection fails (for example QMP is unreachable or the QEMU build does not support `input-send-event`),
 the harness fails (PowerShell: `QMP_INPUT_INJECT_FAILED`; Python: `FAIL: QMP_INPUT_INJECT_FAILED: ...`).
 
+#### Optional: Consumer Control (media keys)
+
+To regression-test **Consumer Control / media keys** end-to-end (virtio-input event → KMDF HID → user-mode HID report read),
+run the harness with:
+
+- PowerShell: `-WithInputMediaKeys` (aliases: `-WithVirtioInputMediaKeys`, `-EnableVirtioInputMediaKeys`)
+- Python: `--with-input-media-keys` (aliases: `--with-virtio-input-media-keys`, `--enable-virtio-input-media-keys`)
+
+Guest image requirement:
+
+- Provision the guest selftest to run with `--test-input-media-keys` (or env var `AERO_VIRTIO_SELFTEST_TEST_INPUT_MEDIA_KEYS=1`).
+  One way to bake this into the scheduled task is `New-AeroWin7TestImage.ps1 -TestInputMediaKeys`.
+
+When enabled, the harness:
+
+1. Waits for the guest readiness marker: `AERO_VIRTIO_SELFTEST|TEST|virtio-input-media-keys|READY`
+2. Injects a deterministic media-key sequence via QMP `input-send-event`:
+   - `qcode=volumeup` press + release
+3. Requires the guest marker: `AERO_VIRTIO_SELFTEST|TEST|virtio-input-media-keys|PASS|...`
+
+The harness also emits a host-side marker for the injection step (useful for debugging/log scraping):
+
+- `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_MEDIA_KEYS_INJECT|PASS|attempt=<n>|kbd_mode=device/broadcast|qcode=volumeup`
+- `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_MEDIA_KEYS_INJECT|FAIL|attempt=<n>|reason=...`
+
+If QMP injection fails (for example the QEMU build does not support multimedia qcodes), the harness fails with a clear token:
+
+- PowerShell: `QMP_MEDIA_KEYS_UNSUPPORTED`
+- Python: `FAIL: QMP_MEDIA_KEYS_UNSUPPORTED: ...`
+
 #### Optional: extended virtio-input events (modifiers/buttons/wheel)
 
 The base `virtio-input-events` marker validates that basic keyboard + mouse motion/click reports are delivered end-to-end.
