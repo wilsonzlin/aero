@@ -113,10 +113,10 @@ fn legacy_prefix_bytes<'a>(inst_bytes: &'a [u8], op_code: &OpCodeInfo) -> Option
     None
 }
 
-fn legacy_prefix_bytes_before_modern_prefix<'a>(
-    inst_bytes: &'a [u8],
+fn legacy_prefix_bytes_before_modern_prefix(
+    inst_bytes: &[u8],
     encoding: EncodingKind,
-) -> Option<&'a [u8]> {
+) -> Option<&[u8]> {
     let lead = match encoding {
         EncodingKind::VEX => {
             // 2-byte VEX: C5, 3-byte VEX: C4
