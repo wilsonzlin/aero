@@ -211,19 +211,26 @@ fn aerogpu_scanout_enable_before_fb_is_ok() {
     assert_eq!(m.display_resolution(), (w, h));
     assert_eq!(m.display_framebuffer(), expected.as_slice());
 
-    // Explicit scanout disable should return us to legacy.
+    // Explicit scanout disable should *not* return us to legacy. Once a valid WDDM scanout has been
+    // claimed, scanout ownership stays with WDDM until reset, so disabling scanout results in a
+    // blank display.
     m.write_physical_u32(
         bar0_base + aerogpu_pci::AEROGPU_MMIO_REG_SCANOUT0_ENABLE as u64,
         0,
     );
     m.process_aerogpu();
     m.display_present();
-    assert_eq!(m.display_resolution(), legacy_res);
-    assert_eq!(scanout_state.snapshot().source, SCANOUT_SOURCE_LEGACY_TEXT);
+    assert_eq!(m.display_resolution(), (0, 0));
+    let snap = scanout_state.snapshot();
+    assert_eq!(snap.source, SCANOUT_SOURCE_WDDM);
+    assert_eq!(snap.base_paddr(), 0);
+    assert_eq!(snap.width, 0);
+    assert_eq!(snap.height, 0);
+    assert_eq!(snap.pitch_bytes, 0);
 }
 
 #[test]
-fn aerogpu_scanout_disable_reverts_to_legacy_vbe_scanout_with_panning_stride() {
+fn aerogpu_scanout_disable_does_not_revert_to_legacy_vbe_scanout_with_panning_stride() {
     let bytes_per_scan_line = 4101u16;
     let x_off = 1u16;
     let y_off = 4u16;
@@ -312,7 +319,9 @@ fn aerogpu_scanout_disable_reverts_to_legacy_vbe_scanout_with_panning_stride() {
     m.process_aerogpu();
 
     let snap1 = scanout_state.snapshot();
-    assert_eq!(snap1.source, SCANOUT_SOURCE_LEGACY_VBE_LFB);
-    assert_eq!(snap1.base_paddr(), expected_base);
-    assert_eq!(snap1.pitch_bytes, u32::from(bytes_per_scan_line));
+    assert_eq!(snap1.source, SCANOUT_SOURCE_WDDM);
+    assert_eq!(snap1.base_paddr(), 0);
+    assert_eq!(snap1.width, 0);
+    assert_eq!(snap1.height, 0);
+    assert_eq!(snap1.pitch_bytes, 0);
 }
