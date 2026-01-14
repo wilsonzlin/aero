@@ -2711,14 +2711,33 @@ pub fn generate_wgsl_with_options(
 
     // Private register state shared between the entry point and SM3 subroutine helper functions.
     //
-    // WGSL functions cannot capture entry-point locals. Declaring registers as `var<private>`
-    // allows helper functions (`call` targets) to mutate the same register state as the main
-    // program.
+    // WGSL functions cannot capture entry-point locals. Declaring registers as module-scope
+    // `var<private>` allows helper functions (`call` targets) to access the same register state as
+    // the main program. For embedded constant definitions (`defi` / `defb`) we emit module-scope
+    // `const` instead.
     for idx in &usage.int_consts {
-        let _ = writeln!(wgsl, "var<private> i{idx}: vec4<i32> = vec4<i32>(0);");
+        if let Some(value) = i32_defs.get(idx).copied() {
+            let _ = writeln!(
+                wgsl,
+                "const i{idx}: vec4<i32> = vec4<i32>({}, {}, {}, {});",
+                value[0],
+                value[1],
+                value[2],
+                value[3]
+            );
+        } else {
+            let _ = writeln!(wgsl, "var<private> i{idx}: vec4<i32> = vec4<i32>(0);");
+        }
     }
     for idx in &usage.bool_consts {
-        let _ = writeln!(wgsl, "var<private> b{idx}: vec4<bool> = vec4<bool>(false);");
+        if let Some(v) = bool_defs.get(idx).copied() {
+            let _ = writeln!(
+                wgsl,
+                "const b{idx}: vec4<bool> = vec4<bool>({v}, {v}, {v}, {v});"
+            );
+        } else {
+            let _ = writeln!(wgsl, "var<private> b{idx}: vec4<bool> = vec4<bool>(false);");
+        }
     }
     if let Some(max_r) = usage.temps.iter().copied().max() {
         for r in 0..=max_r {
@@ -2917,22 +2936,16 @@ pub fn generate_wgsl_with_options(
                 }
             }
 
-            // Load integer/bool constants into private registers so SM3 call targets can read them.
+            // Load uniform-provided integer/bool constants into private registers so SM3 call
+            // targets can read them. Embedded `defi` / `defb` constants are emitted as module-scope
+            // `const` and do not require initialization here.
             for idx in &usage.int_consts {
-                if let Some(value) = i32_defs.get(idx).copied() {
-                    let _ = writeln!(
-                        wgsl,
-                        "  i{idx} = vec4<i32>({}, {}, {}, {});",
-                        value[0], value[1], value[2], value[3]
-                    );
-                } else {
+                if !i32_defs.contains_key(idx) {
                     let _ = writeln!(wgsl, "  i{idx} = constants_i.i[CONST_BASE + {idx}u];");
                 }
             }
             for idx in &usage.bool_consts {
-                if let Some(v) = bool_defs.get(idx).copied() {
-                    let _ = writeln!(wgsl, "  b{idx} = vec4<bool>({v}, {v}, {v}, {v});");
-                } else {
+                if !bool_defs.contains_key(idx) {
                     let _ = writeln!(
                         wgsl,
                         "  b{idx} = constants_b.b[CONST_BASE + {idx}u] != vec4<u32>(0u);"
@@ -3156,22 +3169,16 @@ pub fn generate_wgsl_with_options(
                 }
             }
 
-            // Load integer/bool constants into private registers so SM3 call targets can read them.
+            // Load uniform-provided integer/bool constants into private registers so SM3 call
+            // targets can read them. Embedded `defi` / `defb` constants are emitted as module-scope
+            // `const` and do not require initialization here.
             for idx in &usage.int_consts {
-                if let Some(value) = i32_defs.get(idx).copied() {
-                    let _ = writeln!(
-                        wgsl,
-                        "  i{idx} = vec4<i32>({}, {}, {}, {});",
-                        value[0], value[1], value[2], value[3]
-                    );
-                } else {
+                if !i32_defs.contains_key(idx) {
                     let _ = writeln!(wgsl, "  i{idx} = constants_i.i[CONST_BASE + {idx}u];");
                 }
             }
             for idx in &usage.bool_consts {
-                if let Some(v) = bool_defs.get(idx).copied() {
-                    let _ = writeln!(wgsl, "  b{idx} = vec4<bool>({v}, {v}, {v}, {v});");
-                } else {
+                if !bool_defs.contains_key(idx) {
                     let _ = writeln!(
                         wgsl,
                         "  b{idx} = constants_b.b[CONST_BASE + {idx}u] != vec4<u32>(0u);"
