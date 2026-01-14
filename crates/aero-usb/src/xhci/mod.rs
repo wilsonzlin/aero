@@ -589,7 +589,40 @@ impl XhciController {
         for &hop in hub_path {
             hub_dev = hub_dev.model_mut().hub_port_device_mut(hop)?;
         }
-        hub_dev.model_mut().hub_detach_device(leaf_port)
+        hub_dev.model_mut().hub_detach_device(leaf_port)?;
+
+        // Any slots routed to the detached device (or a device behind the detached hub) are no
+        // longer valid. Clear the binding and drop any transfer executors to avoid holding raw
+        // pointers to detached device models.
+        let root_port_number = (root_port as u8).saturating_add(1);
+        for slot_id in 1..self.slots.len() {
+            let (enabled, route_prefix_match) = {
+                let slot = &self.slots[slot_id];
+                if !slot.enabled {
+                    (false, false)
+                } else if slot.port_id != Some(root_port_number) {
+                    (true, false)
+                } else {
+                    let route = slot
+                        .slot_context
+                        .parsed_route_string()
+                        .map(|rs| rs.ports_from_root())
+                        .unwrap_or_default();
+                    (true, route.as_slice().starts_with(rest))
+                }
+            };
+            if !enabled || !route_prefix_match {
+                continue;
+            }
+
+            self.slots[slot_id].device_attached = false;
+            self.transfer_executors[slot_id] = None;
+            let slot_id_u8 = slot_id as u8;
+            self.active_endpoints
+                .retain(|ep| ep.slot_id != slot_id_u8);
+        }
+
+        Ok(())
     }
 
     /// Convenience helper for attaching an external USB hub device to a root port.
@@ -693,6 +726,11 @@ impl XhciController {
         }
 
         self.slots[idx] = SlotState::default();
+        self.transfer_executors[idx] = None;
+        if let Some(state) = self.ep0_control_td.get_mut(idx) {
+            *state = ControlTdState::default();
+        }
+        self.active_endpoints.retain(|ep| ep.slot_id != slot_id);
         CompletionCode::Success
     }
 
@@ -2153,6 +2191,13 @@ impl XhciController {
 
         for slot in self.slots.iter_mut() {
             *slot = SlotState::default();
+        }
+        self.active_endpoints.clear();
+        for td in self.ep0_control_td.iter_mut() {
+            *td = ControlTdState::default();
+        }
+        for exec in self.transfer_executors.iter_mut() {
+            *exec = None;
         }
 
         for port in self.ports.iter_mut() {
