@@ -1709,7 +1709,7 @@ pub fn decode_cmd_stream_listing(
                         let stage = u32_le_at(pkt.payload, 0).unwrap();
                         let start_register = u32_le_at(pkt.payload, 4).unwrap();
                         let vec4_count = u32_le_at(pkt.payload, 8).unwrap();
-                        let reserved0 = u32_le_at(pkt.payload, 12).unwrap();
+                        let stage_ex = u32_le_at(pkt.payload, 12).unwrap();
                         let int_count = vec4_count.checked_mul(4).ok_or(
                             CmdStreamDecodeError::MalformedPayload {
                                 offset,
@@ -1745,8 +1745,17 @@ pub fn decode_cmd_stream_listing(
                             line,
                             " start_register={start_register} vec4_count={vec4_count}"
                         );
-                        if reserved0 != 0 {
-                            let _ = write!(line, " reserved0=0x{reserved0:08X}");
+                        if abi_minor >= AEROGPU_STAGE_EX_MIN_ABI_MINOR
+                            && stage == 2
+                            && stage_ex != 0
+                        {
+                            let _ = write!(
+                                line,
+                                " stage_ex={stage_ex} stage_ex_name={}",
+                                stage_ex_name(stage_ex)
+                            );
+                        } else if stage_ex != 0 {
+                            let _ = write!(line, " reserved0=0x{stage_ex:08X}");
                         }
                         let data = &pkt.payload[16..payload_len];
                         let _ = write!(
@@ -1767,7 +1776,7 @@ pub fn decode_cmd_stream_listing(
                         let stage = u32_le_at(pkt.payload, 0).unwrap();
                         let start_register = u32_le_at(pkt.payload, 4).unwrap();
                         let bool_count = u32_le_at(pkt.payload, 8).unwrap();
-                        let reserved0 = u32_le_at(pkt.payload, 12).unwrap();
+                        let stage_ex = u32_le_at(pkt.payload, 12).unwrap();
                         let payload_len = 16usize
                             .checked_add((bool_count as usize).checked_mul(16).ok_or(
                                 CmdStreamDecodeError::MalformedPayload {
@@ -1796,8 +1805,17 @@ pub fn decode_cmd_stream_listing(
                             line,
                             " start_register={start_register} bool_count={bool_count}"
                         );
-                        if reserved0 != 0 {
-                            let _ = write!(line, " reserved0=0x{reserved0:08X}");
+                        if abi_minor >= AEROGPU_STAGE_EX_MIN_ABI_MINOR
+                            && stage == 2
+                            && stage_ex != 0
+                        {
+                            let _ = write!(
+                                line,
+                                " stage_ex={stage_ex} stage_ex_name={}",
+                                stage_ex_name(stage_ex)
+                            );
+                        } else if stage_ex != 0 {
+                            let _ = write!(line, " reserved0=0x{stage_ex:08X}");
                         }
                         let data = &pkt.payload[16..payload_len];
                         let _ = write!(

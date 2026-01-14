@@ -771,6 +771,119 @@ fn dispatch_stage_ex_is_decoded_in_listings() {
 }
 
 #[test]
+fn shader_constants_i_b_stage_ex_is_decoded_in_listings() {
+    // `SET_SHADER_CONSTANTS_{I,B}.reserved0` is repurposed as `stage_ex` (like the float variant).
+    // Ensure the trace tooling surfaces it when ABI permits.
+    let mut bytes = Vec::new();
+    push_u32_le(&mut bytes, AEROGPU_CMD_STREAM_MAGIC);
+    push_u32_le(&mut bytes, AEROGPU_ABI_VERSION_U32);
+    push_u32_le(&mut bytes, 0); // patched later
+    push_u32_le(&mut bytes, 0); // flags
+    push_u32_le(&mut bytes, 0); // reserved0
+    push_u32_le(&mut bytes, 0); // reserved1
+    assert_eq!(bytes.len(), 24);
+
+    // SET_SHADER_CONSTANTS_I(stage=Compute, start_register=0, vec4_count=1, stage_ex=Hull (3)).
+    let mut payload = Vec::new();
+    push_u32_le(&mut payload, 2); // stage=Compute
+    push_u32_le(&mut payload, 0); // start_register
+    push_u32_le(&mut payload, 1); // vec4_count
+    push_u32_le(&mut payload, 3); // reserved0 / stage_ex = Hull
+    for i in [1u32, 2, 3, 4] {
+        push_u32_le(&mut payload, i);
+    }
+    assert_eq!(payload.len(), 32);
+    push_packet(
+        &mut bytes,
+        AerogpuCmdOpcode::SetShaderConstantsI as u32,
+        &payload,
+    );
+
+    // SET_SHADER_CONSTANTS_B(stage=Compute, start_register=0, bool_count=1, stage_ex=Domain (4)).
+    let mut payload = Vec::new();
+    push_u32_le(&mut payload, 2); // stage=Compute
+    push_u32_le(&mut payload, 0); // start_register
+    push_u32_le(&mut payload, 1); // bool_count
+    push_u32_le(&mut payload, 4); // reserved0 / stage_ex = Domain
+    for _lane in 0..4 {
+        push_u32_le(&mut payload, 1); // true replicated
+    }
+    assert_eq!(payload.len(), 32);
+    push_packet(
+        &mut bytes,
+        AerogpuCmdOpcode::SetShaderConstantsB as u32,
+        &payload,
+    );
+
+    // Patch header.size_bytes.
+    let size_bytes = bytes.len() as u32;
+    bytes[8..12].copy_from_slice(&size_bytes.to_le_bytes());
+
+    // ABI 1.3+ stream: stage_ex must be shown.
+    let listing = aero_gpu_trace_replay::decode_cmd_stream_listing(&bytes, false)
+        .expect("decode should succeed");
+    assert!(listing.contains("SetShaderConstantsI"), "{listing}");
+    assert!(listing.contains("stage_ex=3"), "{listing}");
+    assert!(listing.contains("stage_ex_name=Hull"), "{listing}");
+    assert!(listing.contains("SetShaderConstantsB"), "{listing}");
+    assert!(listing.contains("stage_ex=4"), "{listing}");
+    assert!(listing.contains("stage_ex_name=Domain"), "{listing}");
+
+    let json_listing = aero_gpu_trace_replay::cmd_stream_decode::render_cmd_stream_listing(
+        &bytes,
+        aero_gpu_trace_replay::cmd_stream_decode::CmdStreamListingFormat::Json,
+    )
+    .expect("render json listing");
+    let v: serde_json::Value = serde_json::from_str(&json_listing).expect("parse json listing");
+    let records = v["records"].as_array().expect("records array");
+    let find_packet = |opcode: &str| {
+        records
+            .iter()
+            .find(|r| r["type"] == "packet" && r["opcode"] == opcode)
+            .unwrap_or_else(|| panic!("missing {opcode} packet"))
+    };
+    let sci = find_packet("SetShaderConstantsI");
+    assert_eq!(sci["decoded"]["stage_ex"], 3);
+    assert_eq!(sci["decoded"]["stage_ex_name"], "Hull");
+    let scb = find_packet("SetShaderConstantsB");
+    assert_eq!(scb["decoded"]["stage_ex"], 4);
+    assert_eq!(scb["decoded"]["stage_ex_name"], "Domain");
+
+    // ABI 1.2 stream: reserved0 must not be interpreted as stage_ex.
+    let mut legacy = bytes.clone();
+    legacy[4..8].copy_from_slice(&0x0001_0002u32.to_le_bytes()); // ABI 1.2
+    let listing = aero_gpu_trace_replay::decode_cmd_stream_listing(&legacy, false)
+        .expect("decode should succeed");
+    assert!(listing.contains("abi=1.2"), "{listing}");
+    assert!(
+        !listing.contains("stage_ex="),
+        "stage_ex tags should be suppressed for ABI minor<3 (listing={listing})"
+    );
+    assert!(listing.contains("reserved0=0x00000003"), "{listing}");
+    assert!(listing.contains("reserved0=0x00000004"), "{listing}");
+
+    let json_listing = aero_gpu_trace_replay::cmd_stream_decode::render_cmd_stream_listing(
+        &legacy,
+        aero_gpu_trace_replay::cmd_stream_decode::CmdStreamListingFormat::Json,
+    )
+    .expect("render json listing");
+    let v: serde_json::Value = serde_json::from_str(&json_listing).expect("parse json listing");
+    let records = v["records"].as_array().expect("records array");
+    let find_packet = |opcode: &str| {
+        records
+            .iter()
+            .find(|r| r["type"] == "packet" && r["opcode"] == opcode)
+            .unwrap_or_else(|| panic!("missing {opcode} packet"))
+    };
+    let sci = find_packet("SetShaderConstantsI");
+    assert!(sci["decoded"].get("stage_ex").is_none());
+    assert_eq!(sci["decoded"]["reserved0"], 3);
+    let scb = find_packet("SetShaderConstantsB");
+    assert!(scb["decoded"].get("stage_ex").is_none());
+    assert_eq!(scb["decoded"]["reserved0"], 4);
+}
+
+#[test]
 fn stage_ex_vertex_program_type_is_reported_as_invalid() {
     // `stage_ex=1` matches the DXBC Vertex program type, but it is intentionally invalid in AeroGPU:
     // Vertex shaders must be encoded via the legacy `shader_stage = VERTEX` encoding.

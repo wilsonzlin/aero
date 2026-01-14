@@ -935,6 +935,8 @@ fn decode_known_fields(
             if abi_minor >= AEROGPU_STAGE_EX_MIN_ABI_MINOR && stage == 2 && stage_ex != 0 {
                 out.insert("stage_ex".into(), json!(stage_ex));
                 out.insert("stage_ex_name".into(), json!(stage_ex_name(stage_ex)));
+            } else if stage_ex != 0 {
+                out.insert("reserved0".into(), json!(stage_ex));
             }
             if let Some(int_count) = vec4_count.checked_mul(4) {
                 out.insert("int_count".into(), json!(int_count));
@@ -986,6 +988,8 @@ fn decode_known_fields(
             if abi_minor >= AEROGPU_STAGE_EX_MIN_ABI_MINOR && stage == 2 && stage_ex != 0 {
                 out.insert("stage_ex".into(), json!(stage_ex));
                 out.insert("stage_ex_name".into(), json!(stage_ex_name(stage_ex)));
+            } else if stage_ex != 0 {
+                out.insert("reserved0".into(), json!(stage_ex));
             }
             let Some(data_len) = bool_count.checked_mul(16) else {
                 out.insert("decode_error".into(), json!("bool_count overflow"));
