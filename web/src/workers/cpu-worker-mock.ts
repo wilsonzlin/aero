@@ -78,6 +78,13 @@ self.onmessage = (ev: MessageEvent<CpuWorkerMockInitMessage>) => {
   const intervalMs = Math.floor(1000 / 30);
 
   const timer = setInterval(() => {
+    // `frame_dirty` is a producer->consumer "new frame" / liveness flag. Consumers may clear it
+    // after they finish copying/presenting; treat it as a best-effort ACK and throttle publishing
+    // so we don't overwrite a buffer that might still be read by the presenter.
+    if (Atomics.load(header, SharedFramebufferHeaderIndex.FRAME_DIRTY) !== 0) {
+      return;
+    }
+
     const active = Atomics.load(header, SharedFramebufferHeaderIndex.ACTIVE_INDEX) & 1;
     const back = active ^ 1;
 
