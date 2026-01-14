@@ -1125,8 +1125,8 @@ def main() -> int:
             args.qemu_system, "virtio-mouse-pci"
         ):
             parser.error(
-                "--with-input-events/--with-virtio-input-events requires QEMU virtio-keyboard-pci and virtio-mouse-pci support. "
-                "Upgrade QEMU or omit input event injection."
+                "--with-input-events/--with-virtio-input-events/--with-input-wheel requires QEMU virtio-keyboard-pci and virtio-mouse-pci support. "
+                "Upgrade QEMU or omit virtio-input event injection."
             )
 
     if need_input_tablet_events and not _qemu_has_device(args.qemu_system, "virtio-tablet-pci"):
@@ -1194,7 +1194,7 @@ def main() -> int:
             if port is None:
                 if need_input_events or need_input_tablet_events:
                     print(
-                        "ERROR: --with-input-events/--with-virtio-input-events/--with-input-tablet-events/--with-tablet-events requires QMP, but a free TCP port could not be allocated",
+                        "ERROR: --with-input-events/--with-virtio-input-events/--with-input-wheel/--with-input-tablet-events/--with-tablet-events requires QMP, but a free TCP port could not be allocated",
                         file=sys.stderr,
                     )
                     return 2
@@ -1206,7 +1206,7 @@ def main() -> int:
                 qmp_endpoint = _QmpEndpoint(tcp_host="127.0.0.1", tcp_port=port)
     if (need_input_events or need_input_tablet_events) and qmp_endpoint is None:
         print(
-            "ERROR: --with-input-events/--with-virtio-input-events/--with-input-tablet-events/--with-tablet-events requires QMP, but a QMP endpoint could not be allocated",
+            "ERROR: --with-input-events/--with-virtio-input-events/--with-input-wheel/--with-input-tablet-events/--with-tablet-events requires QMP, but a QMP endpoint could not be allocated",
             file=sys.stderr,
         )
         return 2

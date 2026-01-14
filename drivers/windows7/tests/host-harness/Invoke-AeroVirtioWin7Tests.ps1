@@ -1851,7 +1851,7 @@ try {
       }
     } else {
       if ($needInputEvents -or $needInputTabletEvents) {
-        throw "QEMU does not advertise virtio-keyboard-pci/virtio-mouse-pci but -WithInputEvents/-WithInputTabletEvents was enabled. Upgrade QEMU or omit input event injection."
+        throw "QEMU does not advertise virtio-keyboard-pci/virtio-mouse-pci but -WithInputEvents/-WithInputWheel/-WithInputTabletEvents was enabled. Upgrade QEMU or omit input event injection."
       }
       Write-Warning "QEMU does not advertise virtio-keyboard-pci/virtio-mouse-pci. The guest virtio-input selftest will likely FAIL. Upgrade QEMU or adjust the guest image/selftest expectations."
     }
