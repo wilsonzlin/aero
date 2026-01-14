@@ -280,8 +280,9 @@ Alternative (if the web UI exposes it):
 
 - Use **Audio → “Export audio metrics (json)”** to download a JSON blob containing:
   - AudioWorklet `getMetrics()` + output ring indices/counters
-  - IO-worker producer counters (buffer level + underruns/overruns)
+  - Producer counters (buffer level + underruns/overruns) from the active audio producer worker (CPU demo vs IO guest device)
   - Microphone ring counters (when mic capture is active)
+  - Coordinator ring attachment policy snapshot (effective/default/override owner + current attachment state)
   - WorkerCoordinator snapshot (worker states + wasm variants + last fatal/nonfatal)
   - Effective config snapshot (with sensitive fields redacted)
 - Or use **Audio → “Export audio QA bundle (tar)”** to download a single archive containing:
