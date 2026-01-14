@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import re
 import unittest
 from pathlib import Path
 
@@ -20,8 +21,11 @@ class NewAeroWin7TestImageInputLedFlagTests(unittest.TestCase):
         # Ensure the generator appends --test-input-led when -TestInputLed is set.
         self.assertIn('$testInputLedArg = " --test-input-led"', self.text)
 
-        # Ensure the scheduled task commandline includes the arg variable.
-        self.assertIn("$testInputLedArg$testInputTabletEventsArg", self.text)
+        # Ensure the scheduled task commandline includes the arg variable (avoid brittle ordering assumptions).
+        self.assertRegex(
+            self.text,
+            re.compile(r"(?s)schtasks /Create.*\$testInputLedArg", re.IGNORECASE),
+        )
 
     def test_readme_mentions_test_input_led(self) -> None:
         self.assertIn("`-TestInputLed` (adds `--test-input-led` to the scheduled task)", self.text)
@@ -29,4 +33,3 @@ class NewAeroWin7TestImageInputLedFlagTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
