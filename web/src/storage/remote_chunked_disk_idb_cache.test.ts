@@ -477,6 +477,67 @@ describe("RemoteChunkedDisk (IndexedDB cache)", () => {
     }
   });
 
+  it("treats clearCache quota failures as non-fatal (cache disabled)", async () => {
+    const chunkSize = 512 * 1024;
+    const totalSize = chunkSize;
+    const chunkCount = 1;
+
+    const img = buildTestImageBytes(totalSize);
+    const chunk0 = img.slice(0, chunkSize);
+
+    const { baseUrl, close } = await withServer((req, res) => {
+      const url = new URL(req.url ?? "/", "http://localhost");
+      if (url.pathname === "/manifest.json") {
+        res.statusCode = 200;
+        res.setHeader("content-type", "application/json");
+        res.setHeader("etag", '"m1"');
+        res.end(
+          JSON.stringify({
+            schema: "aero.chunked-disk-image.v1",
+            imageId: "test",
+            version: "v1",
+            mimeType: "application/octet-stream",
+            totalSize,
+            chunkSize,
+            chunkCount,
+            chunkIndexWidth: 8,
+          }),
+        );
+        return;
+      }
+
+      if (url.pathname === "/chunks/00000000.bin") {
+        res.statusCode = 200;
+        res.setHeader("content-type", "application/octet-stream");
+        res.end(chunk0);
+        return;
+      }
+
+      res.statusCode = 404;
+      res.end("not found");
+    });
+    closeServer = close;
+
+    const disk = await RemoteChunkedDisk.open(`${baseUrl}/manifest.json`, {
+      cacheBackend: "idb",
+      cacheLimitBytes: chunkSize * 8,
+      prefetchSequentialChunks: 0,
+      retryBaseDelayMs: 0,
+    });
+
+    const chunkCache = (disk as unknown as { chunkCache?: { clear: () => Promise<void> } }).chunkCache;
+    if (!chunkCache) throw new Error("expected chunk cache");
+
+    chunkCache.clear = async () => {
+      throw new IdbRemoteChunkCacheQuotaError();
+    };
+
+    await expect(disk.clearCache()).resolves.toBeUndefined();
+    expect(disk.getTelemetrySnapshot().cacheLimitBytes).toBe(0);
+
+    await disk.close();
+  });
+
   it("disables persistent caching entirely when cacheLimitBytes is 0", async () => {
     const chunkSize = 512 * 1024;
     const totalSize = chunkSize;

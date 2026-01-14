@@ -417,6 +417,33 @@ describe("RemoteStreamingDisk (IndexedDB cache)", () => {
     }
   });
 
+  it("treats clearCache quota failures as non-fatal (cache disabled)", async () => {
+    const blockSize = 1024 * 1024;
+    const cacheLimitBytes = blockSize * 8;
+    const image = makeTestImage(blockSize * 2);
+    const mock = installMockRangeFetch(image, { etag: '"e1"' });
+
+    const disk = await RemoteStreamingDisk.open("https://example.test/disk.img", {
+      blockSize,
+      cacheBackend: "idb",
+      cacheLimitBytes,
+      prefetchSequentialBlocks: 0,
+    });
+
+    const cache = (disk as unknown as { idbCache?: { clear: () => Promise<void> } }).idbCache;
+    if (!cache) throw new Error("expected idb cache");
+
+    cache.clear = async () => {
+      throw new IdbRemoteChunkCacheQuotaError();
+    };
+
+    await expect(disk.clearCache()).resolves.toBeUndefined();
+    expect(disk.getTelemetrySnapshot().cacheLimitBytes).toBe(0);
+
+    disk.close();
+    mock.restore();
+  });
+
   it("does not wipe telemetry for reads that occur while clearCache is in-flight", async () => {
     const blockSize = 1024 * 1024;
     const cacheLimitBytes = blockSize * 8;

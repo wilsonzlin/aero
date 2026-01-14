@@ -940,7 +940,18 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
 
     if (this.cacheBackend === "idb") {
       if (!this.idbCache) throw new Error("Remote disk IDB cache not initialized");
-      await this.idbCache.clear();
+      try {
+        await this.idbCache.clear();
+      } catch (err) {
+        if (err instanceof IdbRemoteChunkCacheQuotaError) {
+          // Treat quota failures during explicit cache clear as a signal that caching is no longer
+          // viable. Disable caching for the remainder of the disk lifetime, but keep the disk usable.
+          this.idbCacheDisabled = true;
+          this.cachedBytes = 0;
+          return;
+        }
+        throw err;
+      }
       return;
     }
 
