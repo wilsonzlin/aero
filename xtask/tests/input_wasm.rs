@@ -145,6 +145,18 @@ fn said_runs_wasm_pack_without_node_modules() -> Result<(), Box<dyn std::error::
         wasm_pack.iter().any(|arg| arg == "xhci_webusb_bridge"),
         "expected wasm-pack to include xhci_webusb_bridge, argv={wasm_pack:?}"
     );
+    for expected in [
+        "xhci_controller_bridge",
+        "xhci_controller_bridge_topology",
+        "xhci_controller_bridge_webusb",
+        "xhci_controller_topology",
+        "xhci_bme_event_ring",
+    ] {
+        assert!(
+            wasm_pack.iter().any(|arg| arg == expected),
+            "expected wasm-pack to include {expected}, argv={wasm_pack:?}"
+        );
+    }
     assert!(
         wasm_pack.iter().any(|arg| arg == "xhci_webusb_snapshot"),
         "expected wasm-pack to include xhci_webusb_snapshot, argv={wasm_pack:?}"
