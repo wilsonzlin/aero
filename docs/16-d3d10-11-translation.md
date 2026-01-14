@@ -809,6 +809,9 @@ For patchlist topologies:
 - `control_points = topology - 32` (since `PATCHLIST_1 = 33`, …, `PATCHLIST_32 = 64`)
 - `patch_count = input_vertex_invocations / control_points`
   - leftover indices/vertices are ignored.
+- For instanced draws, the patch stream is replicated per instance:
+  - `patch_count_total = patch_count * instance_count`
+  - and `patch_instance_id` ranges `0..patch_count_total`.
 
 Patchlist draws require HS+DS for correct tessellation semantics. If HS/DS are unbound, the runtime
 MUST NOT silently reinterpret the topology as a non-patch topology; it should either route through
