@@ -561,6 +561,10 @@ jobs:
         env:
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
 
+      # Authoritative golden determinism check for PR gating:
+      # `tests/golden/` must always match the output of `npm run generate:goldens`.
+      # (Historically this lived in `.github/workflows/gpu_golden.yml`, but that workflow
+      # is not always required for merges; `ci.yml` is.)
       - name: Check golden images are up-to-date (determinism)
         working-directory: ${{ steps.node-workspace.outputs.dir }}
         shell: bash
@@ -569,7 +573,7 @@ jobs:
           repo_root="$(git rev-parse --show-toplevel)"
           cd "$repo_root"
           npm run generate:goldens
-          if ! git diff --exit-code tests/golden; then
+          if ! git diff --exit-code -- tests/golden; then
             echo "::error::Generated golden images are out of date. Run 'npm run generate:goldens' and commit the updated PNGs under tests/golden/."
             echo "Changed files:"
             git status --porcelain -- tests/golden

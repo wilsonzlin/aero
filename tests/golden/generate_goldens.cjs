@@ -8,7 +8,6 @@ const { PNG } = require('pngjs');
 // CI enforces determinism by running `npm run generate:goldens` and failing if
 // `tests/golden/` has uncommitted changes afterwards. If you touch any of the
 // scene generators below, rerun this script and commit the updated PNGs.
-
 const { generateQuadrantsImageRGBA } = require('../e2e/playwright/scenes/quadrants_scene.cjs');
 const {
   VGA_TEXT_MODE_WIDTH,
