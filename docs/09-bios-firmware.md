@@ -175,6 +175,13 @@ transferring control to the boot sector / El Torito boot image), configured via
 `Machine::reset()`. For host convenience, firmware also supports an optional “CD-first when present”
 policy flag (`firmware::bios::BiosConfig::boot_from_cd_if_present`).
 
+Note: when the “CD-first when present” policy is enabled, the configured `boot_drive` / boot-device
+preference remains the **fallback** (typically HDD0, `DL=0x80`) even when the current boot actually
+came from CD-ROM. Hosts that need to know what firmware actually booted from should use:
+
+- `firmware::bios::Bios::booted_from_cdrom()`, or
+- `aero_machine::Machine::active_boot_device()`.
+
 For CD boots/reads, the BIOS supports two backend shapes:
 
 - Prefer a 2048-byte-sector `CdromDevice` backend when servicing `DL=0xE0..=0xEF`.

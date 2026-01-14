@@ -249,6 +249,11 @@ Boot selection (the `DL` value provided to the boot image) is still primarily dr
 flag (`BiosConfig::boot_from_cd_if_present`) that attempts a CD boot when an ISO is attached and
 otherwise falls back to the configured HDD boot drive.
 
+Note: when using the “CD-first when present” policy, the configured `boot_drive` remains the HDD
+fallback (typically `0x80`) even when the current boot actually came from CD-ROM. Host integrations
+can query `Bios::booted_from_cdrom()` (or `Machine::active_boot_device()`) to report the actual boot
+device for the current boot session.
+
 When booting from CD (`DL=0xE0..=0xEF`), the BIOS Data Area fixed-disk count is still derived from
 HDD backend presence so guests can access HDD0 during install/recovery.
 
