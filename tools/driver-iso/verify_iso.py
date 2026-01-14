@@ -186,40 +186,56 @@ def _arches_for_require_arch(require_arch: str) -> tuple[str, ...]:
     return (require_arch,)
 
 
-def _index_manifest_packages(packages: list[object]) -> tuple[dict[tuple[str, str], dict], set[str]]:
+def _validate_manifest(manifest: dict) -> list[dict]:
     """
-    Returns (packages_by_id_arch, required_ids).
+    Validate the structure of `drivers/virtio/manifest.json`.
 
-    Also validates:
-    - each entry is a dict with string 'id' and 'arch'
-    - no duplicate (id, arch) pairs
+    Returns the validated `packages` list.
     """
 
-    dupes: set[tuple[str, str]] = set()
-    packages_by_id_arch: dict[tuple[str, str], dict] = {}
-    required_ids: set[str] = set()
-    for i, pkg in enumerate(packages):
+    if manifest.get("schema_version") != 1:
+        raise SystemExit(
+            "unsupported manifest schema_version "
+            f"(expected 1, got {manifest.get('schema_version')!r})"
+        )
+
+    packages = manifest.get("packages")
+    if not isinstance(packages, list):
+        raise SystemExit(f"invalid manifest: 'packages' must be a list (got {type(packages).__name__})")
+
+    errors: list[str] = []
+    seen: dict[tuple[str, str], int] = {}
+
+    for idx, pkg in enumerate(packages):
         if not isinstance(pkg, dict):
-            raise SystemExit(f"manifest package entry #{i} must be an object")
+            errors.append(f"packages[{idx}]: expected object, got {type(pkg).__name__}")
+            continue
+
         pkg_id = pkg.get("id")
         arch = pkg.get("arch")
         if not isinstance(pkg_id, str) or not pkg_id:
-            raise SystemExit(f"manifest package entry #{i} is missing a valid 'id'")
+            errors.append(f"packages[{idx}]: missing/invalid 'id'")
+            continue
         if not isinstance(arch, str) or not arch:
-            raise SystemExit(f"manifest package entry #{i} ({pkg_id}) is missing a valid 'arch'")
+            errors.append(f"packages[{idx}]: missing/invalid 'arch' (package id={pkg_id!r})")
+            continue
+
         key = (pkg_id, arch)
-        if key in packages_by_id_arch:
-            dupes.add(key)
+        if key in seen:
+            other = seen[key]
+            errors.append(
+                f"duplicate package entries for (id={pkg_id!r}, arch={arch!r}): "
+                f"packages[{other}] and packages[{idx}]"
+            )
         else:
-            packages_by_id_arch[key] = pkg
-            if pkg.get("required") is True:
-                required_ids.add(pkg_id)
+            seen[key] = idx
 
-    if dupes:
-        formatted = "\n".join(f"- {pkg_id} ({arch})" for (pkg_id, arch) in sorted(dupes))
-        raise SystemExit(f"manifest has duplicate package entries for the same (id, arch):\n{formatted}")
+    if errors:
+        formatted = "\n".join(f"- {e}" for e in errors)
+        raise SystemExit(f"invalid manifest structure:\n{formatted}")
 
-    return packages_by_id_arch, required_ids
+    # Type-checked via validation above.
+    return packages  # type: ignore[return-value]
 
 
 def main() -> int:
@@ -242,15 +258,7 @@ def main() -> int:
     args = parser.parse_args()
 
     manifest = _load_manifest(args.manifest)
-    if manifest.get("schema_version") != 1:
-        raise SystemExit(
-            "unsupported manifest schema_version "
-            f"(expected 1, got {manifest.get('schema_version')!r})"
-        )
-    packages = manifest.get("packages", [])
-    if not isinstance(packages, list):
-        raise SystemExit(f"manifest field 'packages' must be a list: {args.manifest}")
-    packages_by_id_arch, required_ids = _index_manifest_packages(packages)
+    packages = _validate_manifest(manifest)
     files = _list_iso_files(args.iso.resolve())
 
     missing: list[str] = []
@@ -261,19 +269,22 @@ def main() -> int:
     if _normalize_iso_path("/THIRD_PARTY_NOTICES.md") not in files:
         missing.append("/THIRD_PARTY_NOTICES.md")
 
-    for pkg_id in sorted(required_ids):
-        for arch in _arches_for_require_arch(args.require_arch):
-            pkg = packages_by_id_arch.get((pkg_id, arch))
-            if pkg is None:
-                missing.append(f"<manifest entry missing> {pkg_id} ({arch})")
-                continue
-            inf = pkg.get("inf")
-            if not isinstance(inf, str) or not inf:
-                missing.append(f"<manifest missing inf> {pkg_id} ({arch})")
-                continue
-            want = "/" + inf.lstrip("/\\")
-            if _normalize_iso_path(want) not in files:
-                missing.append(want)
+    arches = set(_arches_for_require_arch(args.require_arch))
+    required_packages = [pkg for pkg in packages if pkg.get("required") is True and pkg.get("arch") in arches]
+    for pkg in required_packages:
+        pkg_id = pkg.get("id")
+        arch = pkg.get("arch")
+        inf = pkg.get("inf")
+        if not isinstance(pkg_id, str) or not pkg_id or not isinstance(arch, str) or not arch:
+            # Should not happen if manifest validation succeeded, but keep this defensive.
+            missing.append("<manifest invalid package entry>")
+            continue
+        if not isinstance(inf, str) or not inf:
+            missing.append(f"<manifest missing inf> {pkg_id} ({arch})")
+            continue
+        want = "/" + inf.lstrip("/\\")
+        if _normalize_iso_path(want) not in files:
+            missing.append(want)
 
     if missing:
         formatted = "\n".join(f"- {m}" for m in missing)
