@@ -203,8 +203,7 @@ Pipeline state
   * `pfnCalcPrivateGeometryShaderSize` + `pfnCreateGeometryShader` + `pfnDestroyGeometryShader`
   * note: the **GS stage exists in D3D10**, but many “first triangle” tests never create/bind a GS (it is valid to have no GS bound).
   * AeroGPU note: WebGPU has no geometry shader stage. The command stream can encode a GS handle (e.g. via `aerogpu_cmd_bind_shaders::reserved0` or the extended GS/HS/DS fields).
-    Target design: forward GS DXBC to the host and emulate it via a compute prepass.
-    Current repo status: the host-side executor’s compute-prepass path is still a placeholder and does **not** execute guest GS DXBC yet.
+    GS DXBC is forwarded to the host. The host has compute-prepass plumbing for GS/HS/DS emulation, but executing guest GS DXBC in that prepass is still bring-up work.
     See [`geometry-shader-emulation.md`](./geometry-shader-emulation.md) and [`docs/16-d3d10-11-translation.md`](../16-d3d10-11-translation.md).
 * Stream-output state / SO buffers (`pfnSoSetTargets`, etc)
 * Queries/predication:
@@ -385,9 +384,9 @@ Geometry shader note:
   * **AeroGPU approach (target): forward GS DXBC and emulate on the host (WebGPU).**
     * The guest UMD treats GS like VS/PS: it forwards the DXBC blob to the host and participates in normal shader lifetime + binding.
     * Since WebGPU has **no GS stage**, AeroGPU emulates GS by inserting a **compute prepass** when a GS is bound:
-      1. run the D3D VS as compute (vertex pulling into a scratch buffer),
-      2. run the D3D GS as compute to expand primitives into “expanded” vertex/index buffers (plus indirect draw args),
-      3. render those buffers with a passthrough VS + the original PS.
+      - The executor already routes draws with a bound GS through a compute-prepass + indirect-draw path.
+      - The in-tree GS DXBC→WGSL compute translator exists, but is not yet integrated into that executor path; today the prepass uses a synthetic expansion shader for bring-up/coverage.
+      - The intended end state is: VS-as-compute (vertex pulling) → GS-as-compute (primitive expansion) → render expanded buffers with a passthrough VS + the original PS.
     * This is **internal** WebGPU compute; it does *not* require exposing the D3D11 compute shader stage (you can still keep D3D11 CS as `NOT_SUPPORTED` initially).
     * Details: [`geometry-shader-emulation.md`](./geometry-shader-emulation.md).
     * **Current repo status:** the host-side executor’s GS/HS/DS compute-prepass path is still a placeholder (fixed triangles) and does **not** execute guest GS DXBC yet; treat the above as the intended design until the prepass is wired to real GS execution. See [`docs/graphics/status.md`](./status.md) and [`geometry-shader-emulation.md`](./geometry-shader-emulation.md).

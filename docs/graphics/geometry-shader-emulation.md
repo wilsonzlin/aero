@@ -61,9 +61,10 @@ When a geometry shader is active, a draw is executed as:
      - the original D3D pixel shader (translated to WGSL fragment).
    - Issue `draw_indirect` / `draw_indexed_indirect` using the args buffer produced by step (2).
 
-Note: the current AeroGPU command-stream executor implements the compute-prepass + indirect draw plumbing
-and routes draws through a compute prepass when GS/HS/DS stages are bound, but the compute shader is
-currently a placeholder that emits synthetic geometry. VS-as-compute and GS DXBC execution are WIP.
+Current status: the AeroGPU command-stream executor already implements the **routing** (compute prepass +
+indirect draw plumbing) and routes draws through a compute prepass when GS/HS/DS stages are bound.
+However, the full “VS-as-compute + GS-as-compute” pipeline is still bring-up work: the prepass currently
+uses built-in WGSL to generate synthetic expanded geometry, and does not yet execute guest VS/GS DXBC.
 
 ### Why we expand strips into lists
 
@@ -99,19 +100,29 @@ Implemented today:
 - **Compute→indirect→render pipeline plumbing**: the executor runs a compute prepass to write an
   expanded vertex/index buffer + indirect args, then renders via `draw_indirect` /
   `draw_indexed_indirect` (see `crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs`).
+  - Today the compute prepass WGSL is built-in (“synthetic expansion”) and is used for bring-up and
+    coverage tests (see `GEOMETRY_PREPASS_CS_WGSL` / `GEOMETRY_PREPASS_CS_VERTEX_PULLING_WGSL` in
+    `crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs`).
+  - Executing guest GS DXBC in this prepass is not wired yet.
+- **GS DXBC → WGSL compute translation scaffolding (not yet wired into the executor)**:
+  - GS DXBC is decoded to SM4 IR and translated to WGSL compute in
+    `crates/aero-d3d11/src/runtime/gs_translate.rs`.
+  - Strip-cut (`CutVertex` / `RestartStrip`) semantics are validated by deterministic reference
+    implementations in `crates/aero-d3d11/src/runtime/strip_to_list.rs`.
 
 Current limitation (important):
 
-- The draw-time compute prepass is currently a **placeholder** (see `GEOMETRY_PREPASS_CS_WGSL`) that
-  emits fixed triangles and does **not** execute the guest’s GS/HS/DS DXBC yet.
-- DXBC payloads that parse as GS/HS/DS are accepted at `CREATE_SHADER_DXBC` time, but are currently
-  stored as stub WGSL modules (no real execution yet).
+- The draw-time compute prepass currently uses a built-in synthetic WGSL shader (see
+  `GEOMETRY_PREPASS_CS_WGSL`) that emits deterministic geometry and does **not** execute the guest’s
+  GS/HS/DS DXBC yet.
+- DXBC payloads that parse as GS/HS/DS are accepted at `CREATE_SHADER_DXBC` time, but currently
+  compile to minimal WGSL compute shaders for caching/state tracking (no real execution yet).
 
 Test pointers:
 
-- Placeholder compute-prepass smoke: `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_compute_prepass_smoke.rs`
-- In-progress GS translator unit tests (not wired into the executor yet): `crates/aero-d3d11/tests/gs_translate.rs`
-- Future end-to-end semantics (once wired): `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_restart_strip.rs`
+- Compute prepass plumbing (synthetic expansion): `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_compute_prepass_smoke.rs` (and `*_primitive_id.rs`, `*_vertex_pulling.rs`, etc)
+- GS translator unit tests (not yet integrated into the executor): `crates/aero-d3d11/tests/gs_translate.rs`
+- End-to-end GS target semantics tests (expected once GS DXBC execution is integrated): `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_point_to_triangle.rs`, `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_restart_strip.rs`
 - DXBC tooling (opcode discovery / token shapes): `cargo run -p aero-d3d11 --bin dxbc_dump -- <gs_*.dxbc>`
 
 ---
@@ -120,7 +131,7 @@ Test pointers:
 
 ### Input primitive types
 
-Supported (non-adjacency) GS input primitive declarations:
+Supported (non-adjacency) GS input primitive declarations (initial end-to-end target subset):
 
 - `point`
 - `line`
