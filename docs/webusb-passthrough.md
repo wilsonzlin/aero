@@ -199,11 +199,11 @@ For WebUSB passthrough specifically:
 Browser integration note (important):
 
 - WebUSB host actions are backed by JS Promises that cannot be resumed after a VM snapshot restore.
-  The WASM restore paths therefore call `UsbWebUsbPassthroughDevice::reset_host_state_for_restore()`
-  after restore (e.g. `UhciControllerBridge.load_state()`, `WebUsbUhciBridge.load_state()`,
-  `UhciRuntime.load_state()`).
+  The WASM restore paths therefore call `reset_host_state_for_restore()` after restore (e.g.
+  `UhciControllerBridge.load_state()`, `WebUsbUhciBridge.load_state()`, `UhciRuntime.load_state()`,
+  `EhciControllerBridge.load_state()`, `XhciControllerBridge.load_state()`).
   - This clears queued/in-flight host actions/completions, preventing deadlock on a completion that
-    will never arrive.
+     will never arrive.
   - The monotonic `next_id` is preserved, so re-emitted actions still have deterministic ids.
 
 WASM snapshot API note:
