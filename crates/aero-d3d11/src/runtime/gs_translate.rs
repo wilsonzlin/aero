@@ -3793,6 +3793,50 @@ mod tests {
     }
 
     #[test]
+    fn gs_translate_emits_prepass_state_with_indirect_args_at_offset_0() {
+        // Regression test: the executor feeds the GS prepass state buffer directly into
+        // `draw_indexed_indirect`, so `DrawIndexedIndirectArgs` must be the first field in the
+        // storage struct.
+        let module = Sm4Module {
+            stage: ShaderStage::Geometry,
+            model: ShaderModel { major: 4, minor: 0 },
+            decls: vec![
+                Sm4Decl::GsInputPrimitive {
+                    primitive: GsInputPrimitive::Point(1),
+                },
+                Sm4Decl::GsOutputTopology {
+                    topology: GsOutputTopology::TriangleStrip(3),
+                },
+                Sm4Decl::GsMaxOutputVertexCount { max: 1 },
+            ],
+            instructions: vec![Sm4Inst::Ret],
+        };
+
+        let wgsl = translate_gs_module_to_wgsl_compute_prepass(&module)
+            .expect("translation should succeed");
+
+        let struct_pos = wgsl
+            .find("struct GsPrepassState {")
+            .expect("expected GsPrepassState struct");
+        let out_indirect_pos = wgsl[struct_pos..]
+            .find("out_indirect: DrawIndexedIndirectArgs,")
+            .map(|p| p + struct_pos)
+            .expect("expected out_indirect field");
+        let counters_pos = wgsl[struct_pos..]
+            .find("counters: GsPrepassCounters,")
+            .map(|p| p + struct_pos)
+            .expect("expected counters field");
+        assert!(
+            out_indirect_pos < counters_pos,
+            "expected DrawIndexedIndirectArgs (out_indirect) to appear before counters in GsPrepassState:\n{wgsl}"
+        );
+        assert!(
+            wgsl.contains("@group(0) @binding(2) var<storage, read_write> out_state: GsPrepassState;"),
+            "expected out_state binding at @group(0) @binding(2):\n{wgsl}"
+        );
+    }
+
+    #[test]
     fn gs_translate_rejects_invalid_varying_locations() {
         let module = Sm4Module {
             stage: ShaderStage::Geometry,
