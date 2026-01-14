@@ -292,6 +292,10 @@ The D3D9 implementation is split into:
 
 - D3D9 shader parsing/translation primitives in `crates/aero-d3d9` (+ legacy parser in `crates/legacy/aero-d3d9-shader`)
 - a D3D9-focused AeroGPU command executor in `crates/aero-gpu` consuming `aerogpu_cmd.h` packets
+- [x] D3D9 half-pixel center convention (✅ Task 124 closed)
+  - Translation: [`crates/aero-d3d9/src/shader.rs`](../../crates/aero-d3d9/src/shader.rs) emits `@group(3) @binding(0)` `HalfPixel` uniform + clip-space XY adjustment when `WgslOptions::half_pixel_center` is enabled.
+  - Execution: [`crates/aero-gpu/src/aerogpu_d3d9_executor.rs`](../../crates/aero-gpu/src/aerogpu_d3d9_executor.rs) creates/binds the group(3) bind group and updates the uniform on `AeroGpuCmd::SetViewport`.
+  - Test: [`crates/aero-gpu/tests/aerogpu_d3d9_half_pixel_center.rs`](../../crates/aero-gpu/tests/aerogpu_d3d9_half_pixel_center.rs) (`bash ./scripts/safe-run.sh cargo test -p aero-gpu --test aerogpu_d3d9_half_pixel_center --locked`)
 
 Code pointers:
 
