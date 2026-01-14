@@ -557,6 +557,20 @@ export function ringRegionsForWorker(role: WorkerRole): RingRegions {
 export function allocateSharedMemorySegments(options?: {
   guestRamMiB?: GuestRamMiB;
   vramMiB?: number;
+  /**
+   * Override the default IO IPC buffer allocation.
+   *
+   * Most callers should leave this unset (it defaults to `createIoIpcSab()`).
+   * Tests/harnesses that only need CMD/EVT rings can request a smaller buffer via `ioIpcOptions`
+   * to avoid allocating large NET/HID rings unnecessarily.
+   */
+  ioIpc?: SharedArrayBuffer;
+  /**
+   * Options forwarded to `createIoIpcSab()` when `ioIpc` is not supplied.
+   *
+   * Defaults match production (include NET + HID rings).
+   */
+  ioIpcOptions?: { includeNet?: boolean; includeHidIn?: boolean };
 }): SharedMemorySegments {
   const guestRamMiB = options?.guestRamMiB ?? DEFAULT_GUEST_RAM_MIB;
   const vramMiB = options?.vramMiB ?? DEFAULT_VRAM_MIB;
@@ -686,11 +700,13 @@ export function allocateSharedMemorySegments(options?: {
   Atomics.store(cursorWords, CursorStateIndex.BASE_PADDR_LO, 0);
   Atomics.store(cursorWords, CursorStateIndex.BASE_PADDR_HI, 0);
 
+  const ioIpc = options?.ioIpc ?? createIoIpcSab(options?.ioIpcOptions ?? {});
+
   return {
     control,
     guestMemory,
     vram,
-    ioIpc: createIoIpcSab(),
+    ioIpc,
     sharedFramebuffer,
     sharedFramebufferOffsetBytes,
     scanoutState,

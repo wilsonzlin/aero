@@ -41,6 +41,7 @@ import {
   STATUS_INTS,
   StatusIndex,
   WORKER_ROLES,
+  createIoIpcSab,
   allocateSharedMemorySegments,
   computeGuestRamLayout,
   createSharedMemoryViews,
@@ -66,7 +67,13 @@ describe("runtime/shared_layout", () => {
   let baseSegments: ReturnType<typeof allocateSharedMemorySegments> | null = null;
   const getBaseSegments = (): ReturnType<typeof allocateSharedMemorySegments> => {
     if (!baseSegments) {
-      baseSegments = allocateSharedMemorySegments({ guestRamMiB: TEST_GUEST_RAM_MIB, vramMiB: TEST_VRAM_MIB });
+      // Unit tests don't need NET/HID AIPC rings; omit them to keep the cached shared allocations
+      // as small as possible.
+      baseSegments = allocateSharedMemorySegments({
+        guestRamMiB: TEST_GUEST_RAM_MIB,
+        vramMiB: TEST_VRAM_MIB,
+        ioIpcOptions: { includeNet: false, includeHidIn: false },
+      });
     }
     return baseSegments;
   };
@@ -276,9 +283,19 @@ describe("runtime/shared_layout", () => {
     expect(segments.sharedFramebufferOffsetBytes).toBe(RUNTIME_RESERVED_BYTES + CPU_WORKER_DEMO_FRAMEBUFFER_OFFSET_BYTES);
   });
 
-  it("allocates ioIpc AIPC queues for device I/O + raw Ethernet frames", () => {
+  it("can allocate a minimal ioIpc SAB (CMD/EVT only)", () => {
     const segments = getBaseSegments();
     const { queues } = parseIpcBuffer(segments.ioIpc);
+
+    expect(queues.map((q) => q.kind).sort((a, b) => a - b)).toEqual([IO_IPC_CMD_QUEUE_KIND, IO_IPC_EVT_QUEUE_KIND]);
+
+    const caps = new Map(queues.map((q) => [q.kind, q.capacityBytes]));
+    expect(caps.get(IO_IPC_CMD_QUEUE_KIND)).toBe(IO_IPC_RING_CAPACITY_BYTES);
+    expect(caps.get(IO_IPC_EVT_QUEUE_KIND)).toBe(IO_IPC_RING_CAPACITY_BYTES);
+  });
+
+  it("allocates ioIpc AIPC queues for device I/O + raw Ethernet frames (default)", () => {
+    const { queues } = parseIpcBuffer(createIoIpcSab());
 
     expect(queues.map((q) => q.kind).sort((a, b) => a - b)).toEqual([
       IO_IPC_CMD_QUEUE_KIND,

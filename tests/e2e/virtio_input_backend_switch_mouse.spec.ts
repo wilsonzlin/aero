@@ -42,7 +42,11 @@ test(
     // This test only needs a tiny guest RAM window for virtqueue descriptors/buffers. Keep it
     // small to avoid unnecessary memory pressure when Playwright runs tests fully-parallel across
     // multiple browsers.
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: 0 });
+    const segments = allocateSharedMemorySegments({
+      guestRamMiB: 1,
+      vramMiB: 0,
+      ioIpcOptions: { includeNet: false, includeHidIn: false },
+    });
     const views = createSharedMemoryViews(segments);
 
     const status = views.status;
