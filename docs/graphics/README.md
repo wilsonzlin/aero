@@ -39,3 +39,7 @@ Combined reference:
 
 - `guest-gpu-driver-strategy.md` — options for Windows guest GPU drivers (virtio reuse vs custom WDDM).
 - `virtio-gpu-proto-proof.md` — early prototype notes for virtio-style GPU paths.
+
+## Internal agent coordination / task audits
+
+- [`task-489-sm3-dxbc-sharedsurface-audit.md`](./task-489-sm3-dxbc-sharedsurface-audit.md) — scratchpad task audit (SM3/DXBC/shared-surface); includes code+test pointers to avoid duplicate work.

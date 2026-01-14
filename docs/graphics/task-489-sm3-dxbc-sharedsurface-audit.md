@@ -1,0 +1,221 @@
+# Task 489 audit: SM3 / DXBC / shared-surface tracking cleanup
+
+This document maps legacy **scratchpad task IDs** (the ones referenced by Agent-3 planning) to the
+current **in-tree implementations and tests**, to reduce duplicate work.
+
+All file paths are repository-relative.
+
+---
+
+## Task 40 — SM3 IR → WGSL generator + naga tests
+
+**Status:** ✅ Done
+
+**Implementation (key files):**
+- `crates/aero-d3d9/src/sm3/{decode.rs,ir.rs,ir_builder.rs,wgsl.rs,verify.rs}`
+
+**Implementing commits (high-signal):**
+- `81181fad` — `feat(aero-d3d9): add sm3 WGSL backend with stable varying locations`
+- `62b870b1` — `feat(sm3): derive WGSL declarations from register usage`
+
+**Tests (WGSL + naga validation):**
+- `crates/aero-d3d9/tests/sm3_wgsl.rs` (many `naga::front::wgsl::parse_str` + validator assertions)
+- `crates/aero-d3d9/tests/sm3_wgsl_math.rs`
+- `crates/aero-d3d9/tests/sm3_loop_wgsl.rs`
+
+**How to run:**
+```bash
+bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --locked
+```
+
+---
+
+## Task 49 — semantic-based VS input remap via `StandardLocationMap`
+
+**Status:** ✅ Done
+
+**Implementation (key files):**
+- `crates/aero-d3d9/src/vertex/location_map.rs` (`StandardLocationMap`)
+- `crates/aero-d3d9/src/sm3/ir_builder.rs` (semantic-driven input remap / duplicate detection)
+- `crates/aero-d3d9/src/sm3/wgsl.rs` (emits the remapped `@location(n)` interface)
+
+**Implementing commits (high-signal):**
+- `be5d5b05` — `feat(aero-d3d9/sm3): remap vertex inputs to canonical WGSL locations`
+
+**Tests:**
+- `crates/aero-d3d9/tests/sm3_semantic_locations.rs`
+- `crates/aero-d3d9/tests/sm3_wgsl_semantic_locations.rs`
+- `crates/aero-gpu/tests/aerogpu_d3d9_semantic_locations.rs`
+- `tests/d3d9_vertex_input.rs` (integration coverage via `aero-d3d9` test harness wiring)
+
+---
+
+## Task 51 / 55 / 58 — DXBC parsing consolidation + `build_container` + RDEF/CTAB moved to `aero-dxbc`
+
+**Status:** ✅ Done
+
+**Implementation (key files):**
+- `crates/aero-dxbc/src/{dxbc.rs,lib.rs,rdef.rs,ctab.rs,signature.rs,test_utils.rs}`
+- `crates/aero-d3d9/src/dxbc.rs` (uses `aero_dxbc::DxbcFile` for container parsing)
+- `crates/aero-d3d9-shader/src/lib.rs` (now a thin `pub use aero_dxbc;` wrapper)
+
+**Implementing commits (high-signal):**
+- `2bb1bbca` — `refactor(d3d9): reuse aero-dxbc for shader bytecode extraction`
+- `4447967e` — `feat(dxbc): add test utils container builder`
+- `85f15d9f` — `feat(dxbc): unify RDEF/CTAB parsing in aero-dxbc`
+
+**Tests:**
+- `crates/aero-dxbc/tests/{parse.rs,rdef.rs,rdef_ctab.rs,signature.rs,sm4.rs}`
+- `crates/aero-d3d9/tests/sm3_ir.rs` (uses `aero_dxbc::test_utils::build_container`)
+
+**How to run:**
+```bash
+bash ./scripts/safe-run.sh cargo test -p aero-dxbc --locked
+bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --locked
+```
+
+---
+
+## Task 60 / 102 — DXBC robust feature gating + robust parser moved to `aero-dxbc`
+
+**Status:** ✅ Done
+
+**Implementation (key files):**
+- `crates/aero-dxbc/src/lib.rs` (`#[cfg(feature = "robust")] pub mod robust;`)
+- `crates/aero-dxbc/src/robust/*` (robust container parsing + reflection/disasm helpers)
+- `crates/aero-d3d9/src/dxbc/robust.rs` (re-export shim)
+
+**Implementing commits (high-signal):**
+- `96c10295` — `refactor(dxbc): move robust DXBC parsing into aero-dxbc`
+
+**Tests:**
+- `crates/aero-d3d9/tests/dxbc_parser.rs` (`#![cfg(feature = "dxbc-robust")]`)
+
+**How to run:**
+```bash
+# Enables aero-dxbc's `robust` feature via aero-d3d9's `dxbc-robust` feature.
+bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --features dxbc-robust --test dxbc_parser --locked
+```
+
+---
+
+## Task 62 / 66 / 69 — `SharedSurfaceTable` refactor across command processors + D3D9 executor
+
+**Status:** ✅ Done
+
+**Implementation (key files):**
+- `crates/aero-gpu/src/shared_surface.rs` (single source of truth)
+- Used by:
+  - `crates/aero-gpu/src/command_processor.rs`
+  - `crates/aero-gpu/src/command_processor_d3d9.rs`
+  - `crates/aero-gpu/src/aerogpu_d3d9_executor.rs`
+  - `crates/aero-gpu/src/acmd_executor.rs`
+
+**Implementing commits (high-signal):**
+- `36c5e5f2` — `refactor(aero-gpu): use SharedSurfaceTable in command processor`
+- `d37c607a` — `refactor: reuse SharedSurfaceTable in D3D9 command processor`
+- `f75daac9` — `refactor(aero-gpu): use SharedSurfaceTable in D3D9 executor`
+
+**Tests:**
+- `crates/aero-gpu/src/shared_surface.rs` (unit tests for token retirement/idempotency/etc)
+- `crates/aero-gpu/tests/shared_surface_aliasing.rs`
+- `crates/aero-gpu/tests/aerogpu_d3d9_shared_surface.rs`
+
+---
+
+## Task 85 / 87 / 88 / 92 / 93 / 94 — SM3 opcode + modifier + const support
+
+Ops/features referenced by the scratchpad tasks:
+`frc`, `cmp`, `mova`, `defi`, `defb`, source modifiers, `lrp`, `exp`, `log`, `pow`.
+
+**Status:** ✅ Done
+
+**Implementation (key files):**
+- `crates/aero-d3d9/src/sm3/{decode.rs,ir.rs,ir_builder.rs,wgsl.rs,software.rs,verify.rs}`
+
+**Implementing commits (high-signal):**
+- `d190c9a6` — `feat(sm3): support defi/defb consts in IR + WGSL`
+- `9f4ff084` — `feat(aero-d3d9/sm3): support frc/cmp opcodes in decode/IR/WGSL`
+- `6f0e9530` — `feat(sm3): add mova opcode and WGSL lowering for address regs`
+- `570416e6` — `feat(aero-d3d9/sm3): support D3D9 src modifiers in decode+WGSL`
+- `4c3f1e25` — `feat(sm3): support lrp and emit WGSL`
+- `77dca861` — `feat(aero-d3d9/sm3): add exp/log/pow + WGSL lowering`
+
+**Tests:**
+- `crates/aero-d3d9/src/tests.rs`
+  - `micro_ps2_src_and_result_modifiers_pixel_compare` (src modifiers + result modifiers)
+  - `micro_ps3_lrp_pixel_compare`
+  - `sm3_exp_log_pow_pixel_compare`
+- `crates/aero-d3d9/tests/sm3_wgsl.rs` / `sm3_wgsl_math.rs` (naga-validated WGSL lowering)
+
+---
+
+## Task 125 / 400 — consistent VS↔PS varying location mapping + WGSL IO structs
+
+**Status:** ✅ Done
+
+**Implementation (key files):**
+- `crates/aero-d3d9/src/sm3/wgsl.rs` (emits `VsInput`/`VsOut`/`FsIn`/`FsOut` structs and stable `@location(n)` mapping)
+
+**Implementing commits (high-signal):**
+- `81181fad` — `feat(aero-d3d9): add sm3 WGSL backend with stable varying locations`
+- `fdc5ee53` — `test(aero-d3d9/sm3): cover VS->PS varying @location mapping`
+
+**Tests:**
+- `crates/aero-d3d9/tests/sm3_wgsl.rs::wgsl_vs_outputs_and_ps_inputs_use_consistent_locations`
+- `crates/aero-d3d9/tests/sm3_wgsl_semantic_locations.rs::sm3_vs_output_and_ps_input_semantics_share_locations`
+
+---
+
+## Task 216 / 217 — `dp2` + `dsx`/`dsy` derivatives
+
+**Status:** ✅ Done
+
+**Implementation (key files):**
+- `crates/aero-d3d9/src/sm3/{decode.rs,ir_builder.rs,wgsl.rs,verify.rs}`
+
+**Implementing commits (high-signal):**
+- `571cfa54` — `feat(d3d9-sm3): add dp2 opcode end-to-end`
+- `5067c94f` — `feat(d3d9-sm3): support dsx/dsy derivatives`
+
+**Tests:**
+- `crates/aero-d3d9/tests/sm3_wgsl_dp2.rs`
+- `crates/aero-d3d9/tests/sm3_wgsl.rs::wgsl_dsx_dsy_derivatives_compile`
+
+---
+
+## Task 401 / 402 — `TexSample` lowering/bindings + `texkill` semantics
+
+**Status:** ⚠️ Partial (core behavior implemented; non-2D sampler types remain unsupported)
+
+**Implemented:**
+- WGSL lowering for `texld`/`texldp`/`texldd`/`texldl` (`textureSample*` variants) and bind group layout mapping for samplers/textures.
+- `texkill` lowers to D3D9 semantics: `discard` when **any component** of the operand is `< 0`, and preserves predication nesting.
+
+**Implementation (key files):**
+- `crates/aero-d3d9/src/sm3/wgsl.rs` (sampler bindings + `IrOp::TexSample` lowering + `Stmt::Discard`)
+- `crates/aero-d3d9/src/sm3/ir_builder.rs` (decode → IR for tex ops)
+
+**Implementing commits (high-signal):**
+- `aa89e80b` — `feat(aero-d3d9/sm3): emit WGSL for TexSample ops`
+- `57aa3f8c` — `fix(sm3): preserve texkill predication and D3D9 discard semantics`
+
+**Tests:**
+- `crates/aero-d3d9/tests/sm3_wgsl.rs`
+  - `wgsl_texld_emits_texture_sample`
+  - `wgsl_texldp_emits_projective_divide`
+  - `wgsl_texldd_emits_texture_sample_grad`
+  - `wgsl_vs_texld_emits_texture_sample_level`
+  - `wgsl_texkill_is_conditional`
+  - `wgsl_predicated_texkill_is_nested_under_if`
+
+**Remaining delta (precise):**
+- Non-`Texture2D` sampler types (`TextureCube`/`Texture3D`/`Texture1D`) are rejected today:
+  - `crates/aero-d3d9/src/sm3/wgsl.rs` errors out with “only Texture2D is supported”.
+  - `crates/aero-d3d9/src/shader.rs` also rejects non-2D `dcl_* s#` early for the legacy translator path.
+
+To fully close Task 401/402, add end-to-end support for cube/3D/1D samplers:
+- WGSL type mapping (`texture_cube`/`texture_3d`/`texture_1d`)
+- Correct coordinate dimensionality + projection rules
+- Tests proving the translation and binding layout for each sampler type
+
