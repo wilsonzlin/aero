@@ -6305,9 +6305,13 @@ impl Machine {
                 if let Some((aerogpu, vram_off, pitch_bytes)) = vram_fast.as_ref() {
                     let dev = aerogpu.borrow();
                     let vram = &dev.vram;
+                    let vram_off = *vram_off;
+                    let pitch_bytes = *pitch_bytes;
                     for y in 0..height_usize {
-                        let src_row_off = vram_off.saturating_add(y.saturating_mul(*pitch_bytes));
-                        let src_row = &vram[src_row_off..src_row_off.saturating_add(row_bytes)];
+                        // Bounds safety: `vram_fast` validates `vram_off + pitch_bytes*height <= vram.len()`
+                        // and `row_bytes <= pitch_bytes`, so indexing is in-bounds for all `y`.
+                        let src_row_off = vram_off + y * pitch_bytes;
+                        let src_row = &vram[src_row_off..src_row_off + row_bytes];
                         let dst_row = &mut self.display_fb[y * width_usize..(y + 1) * width_usize];
                         for (src_px, dst) in src_row.chunks_exact(4).zip(dst_row.iter_mut()) {
                             let b = src_px[0];
@@ -6345,9 +6349,13 @@ impl Machine {
                 if let Some((aerogpu, vram_off, pitch_bytes)) = vram_fast.as_ref() {
                     let dev = aerogpu.borrow();
                     let vram = &dev.vram;
+                    let vram_off = *vram_off;
+                    let pitch_bytes = *pitch_bytes;
                     for y in 0..height_usize {
-                        let src_row_off = vram_off.saturating_add(y.saturating_mul(*pitch_bytes));
-                        let src_row = &vram[src_row_off..src_row_off.saturating_add(row_bytes)];
+                        // Bounds safety: `vram_fast` validates `vram_off + pitch_bytes*height <= vram.len()`
+                        // and `row_bytes <= pitch_bytes`, so indexing is in-bounds for all `y`.
+                        let src_row_off = vram_off + y * pitch_bytes;
+                        let src_row = &vram[src_row_off..src_row_off + row_bytes];
                         let dst_row = &mut self.display_fb[y * width_usize..(y + 1) * width_usize];
                         for (src_px, dst) in src_row.chunks_exact(2).zip(dst_row.iter_mut()) {
                             let pix = u16::from_le_bytes([src_px[0], src_px[1]]);
@@ -6418,9 +6426,13 @@ impl Machine {
                 if let Some((aerogpu, vram_off, pitch_bytes)) = vram_fast.as_ref() {
                     let dev = aerogpu.borrow();
                     let vram = &dev.vram;
+                    let vram_off = *vram_off;
+                    let pitch_bytes = *pitch_bytes;
                     for y in 0..height_usize {
-                        let src_row_off = vram_off.saturating_add(y.saturating_mul(*pitch_bytes));
-                        let src_row = &vram[src_row_off..src_row_off.saturating_add(row_bytes)];
+                        // Bounds safety: `vram_fast` validates `vram_off + pitch_bytes*height <= vram.len()`
+                        // and `row_bytes <= pitch_bytes`, so indexing is in-bounds for all `y`.
+                        let src_row_off = vram_off + y * pitch_bytes;
+                        let src_row = &vram[src_row_off..src_row_off + row_bytes];
                         let dst_row = &mut self.display_fb[y * width_usize..(y + 1) * width_usize];
                         for (src, dst) in src_row.iter().zip(dst_row.iter_mut()) {
                             *dst = lut[*src as usize];
