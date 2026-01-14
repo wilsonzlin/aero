@@ -2457,6 +2457,18 @@ BOOLEAN AerovblkHwStartIo(_In_ PVOID deviceExtension, _Inout_ PSCSI_REQUEST_BLOC
     break;
   }
 
+  /*
+   * Default for any remaining non-I/O SRBs: no-op success.
+   *
+   * StorPort may deliver various management SRB function codes with inconsistent
+   * addressing fields. By handling them here, we avoid erroneously rejecting a
+   * benign SRB just because Path/Target/LUN are not zero.
+   */
+  if (srb->Function != SRB_FUNCTION_EXECUTE_SCSI) {
+    AerovblkCompleteSrb(devExt, srb, SRB_STATUS_SUCCESS);
+    return TRUE;
+  }
+
   if (srb->PathId != 0 || srb->TargetId != 0 || srb->Lun != 0) {
     AerovblkHandleUnsupported(devExt, srb);
     return TRUE;
@@ -2465,11 +2477,6 @@ BOOLEAN AerovblkHwStartIo(_In_ PVOID deviceExtension, _Inout_ PSCSI_REQUEST_BLOC
   if (devExt->Removed) {
     AerovblkSetSense(devExt, srb, SCSI_SENSE_NOT_READY, 0x04, 0x00);
     AerovblkCompleteSrb(devExt, srb, SRB_STATUS_ERROR | SRB_STATUS_AUTOSENSE_VALID);
-    return TRUE;
-  }
-
-  if (srb->Function != SRB_FUNCTION_EXECUTE_SCSI) {
-    AerovblkCompleteSrb(devExt, srb, SRB_STATUS_SUCCESS);
     return TRUE;
   }
 
