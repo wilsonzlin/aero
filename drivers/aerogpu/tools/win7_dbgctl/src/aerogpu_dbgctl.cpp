@@ -1320,20 +1320,6 @@ static NTSTATUS SendAerogpuEscapeEx(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapte
   return (w == WAIT_TIMEOUT) ? STATUS_TIMEOUT : STATUS_INVALID_PARAMETER;
 }
 
-static NTSTATUS SendAerogpuEscapeDirect(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, void *buf, UINT bufSize) {
-  if (!f || !f->Escape || !hAdapter || !buf || bufSize == 0) {
-    return STATUS_INVALID_PARAMETER;
-  }
-  D3DKMT_ESCAPE e;
-  ZeroMemory(&e, sizeof(e));
-  e.hAdapter = hAdapter;
-  e.Type = D3DKMT_ESCAPE_DRIVERPRIVATE;
-  e.Flags.Value = 0;
-  e.pPrivateDriverData = buf;
-  e.PrivateDriverDataSize = bufSize;
-  return f->Escape(&e);
-}
-
 static NTSTATUS SendAerogpuEscape(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, void *buf, UINT bufSize) {
   return SendAerogpuEscapeEx(f, hAdapter, buf, bufSize, 0);
 }
