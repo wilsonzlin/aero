@@ -152,8 +152,8 @@ using aerogpu::d3d10_11::FromHandle;
 using aerogpu::d3d10_11::HashSemanticName;
 using aerogpu::d3d10_11::aerogpu_sampler_filter_from_d3d_filter;
 using aerogpu::d3d10_11::aerogpu_sampler_address_from_d3d_mode;
+using aerogpu::d3d10_11::kInvalidHandle;
 
-constexpr aerogpu_handle_t kInvalidHandle = 0;
 constexpr HRESULT kDxgiErrorWasStillDrawing = static_cast<HRESULT>(0x887A000Au); // DXGI_ERROR_WAS_STILL_DRAWING
 constexpr HRESULT kHrPending = static_cast<HRESULT>(0x8000000Au); // E_PENDING
 constexpr HRESULT kHrWaitTimeout = static_cast<HRESULT>(0x80070102u); // HRESULT_FROM_WIN32(WAIT_TIMEOUT)
@@ -194,27 +194,27 @@ void CapsLog(const char* fmt, ...) {
 #define CAPS_LOG(...) ((void)0)
 #endif
 
-constexpr uint32_t kMaxConstantBufferSlots = 14;
-constexpr uint32_t kMaxShaderResourceSlots = 128;
-constexpr uint32_t kMaxSamplerSlots = 16;
+using aerogpu::d3d10_11::kMaxConstantBufferSlots;
+using aerogpu::d3d10_11::kMaxShaderResourceSlots;
+using aerogpu::d3d10_11::kMaxSamplerSlots;
 
 // D3D11_BIND_* subset (numeric values from d3d11.h).
-constexpr uint32_t kD3D11BindVertexBuffer = 0x1;
-constexpr uint32_t kD3D11BindIndexBuffer = 0x2;
-constexpr uint32_t kD3D11BindConstantBuffer = 0x4;
-constexpr uint32_t kD3D11BindShaderResource = 0x8;
-constexpr uint32_t kD3D11BindRenderTarget = 0x20;
-constexpr uint32_t kD3D11BindDepthStencil = 0x40;
+using aerogpu::d3d10_11::kD3D11BindVertexBuffer;
+using aerogpu::d3d10_11::kD3D11BindIndexBuffer;
+using aerogpu::d3d10_11::kD3D11BindConstantBuffer;
+using aerogpu::d3d10_11::kD3D11BindShaderResource;
+using aerogpu::d3d10_11::kD3D11BindRenderTarget;
+using aerogpu::d3d10_11::kD3D11BindDepthStencil;
 
 // D3D11_USAGE subset (numeric values from d3d11.h).
-constexpr uint32_t kD3D11UsageDefault = 0;
-constexpr uint32_t kD3D11UsageImmutable = 1;
-constexpr uint32_t kD3D11UsageDynamic = 2;
-constexpr uint32_t kD3D11UsageStaging = 3;
+using aerogpu::d3d10_11::kD3D11UsageDefault;
+using aerogpu::d3d10_11::kD3D11UsageImmutable;
+using aerogpu::d3d10_11::kD3D11UsageDynamic;
+using aerogpu::d3d10_11::kD3D11UsageStaging;
 
 // D3D11_CPU_ACCESS_FLAG subset (numeric values from d3d11.h).
-constexpr uint32_t kD3D11CpuAccessWrite = 0x10000;
-constexpr uint32_t kD3D11CpuAccessRead = 0x20000;
+using aerogpu::d3d10_11::kD3D11CpuAccessWrite;
+using aerogpu::d3d10_11::kD3D11CpuAccessRead;
 
 // D3D11_MAP subset (numeric values from d3d11.h).
 constexpr uint32_t kD3D11MapRead = 1;

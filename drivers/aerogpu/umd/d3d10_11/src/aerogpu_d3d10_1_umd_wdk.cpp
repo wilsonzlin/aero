@@ -65,7 +65,7 @@ HRESULT AEROGPU_APIENTRY AeroGpuOpenAdapter10Wdk(D3D10DDIARG_OPENADAPTER* pOpenD
 
 namespace {
 
-constexpr aerogpu_handle_t kInvalidHandle = 0;
+using aerogpu::d3d10_11::kInvalidHandle;
 constexpr uint32_t kAeroGpuDeviceLiveCookie = 0xA3E0D301u;
 constexpr HRESULT kDxgiErrorWasStillDrawing = static_cast<HRESULT>(0x887A000Au); // DXGI_ERROR_WAS_STILL_DRAWING
 constexpr HRESULT kHrPending = static_cast<HRESULT>(0x8000000Au); // E_PENDING
@@ -183,7 +183,7 @@ constexpr uint32_t kD3D10BindShaderResource = 0x8;
 constexpr uint32_t kD3D10BindRenderTarget = 0x20;
 constexpr uint32_t kD3D10BindDepthStencil = 0x40;
 
-constexpr uint32_t kMaxConstantBufferSlots = 14;
+using aerogpu::d3d10_11::kMaxConstantBufferSlots;
 constexpr uint32_t kAeroGpuD3D10MaxSrvSlots = 128;
 constexpr uint32_t kAeroGpuD3D10MaxSamplerSlots = 16;
 

@@ -180,10 +180,10 @@ void TraceCreateResourceDesc(const D3D10DDIARG_CREATERESOURCE* pDesc) {
 }
 #endif  // AEROGPU_UMD_TRACE_RESOURCES
 
-constexpr aerogpu_handle_t kInvalidHandle = 0;
-constexpr uint32_t kMaxConstantBufferSlots = 14;
-constexpr uint32_t kMaxShaderResourceSlots = 128;
-constexpr uint32_t kMaxSamplerSlots = 16;
+using aerogpu::d3d10_11::kInvalidHandle;
+using aerogpu::d3d10_11::kMaxConstantBufferSlots;
+using aerogpu::d3d10_11::kMaxShaderResourceSlots;
+using aerogpu::d3d10_11::kMaxSamplerSlots;
 constexpr uint32_t kMaxVertexBufferSlots = D3D10_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT;
 
 constexpr uint64_t AlignUpU64(uint64_t value, uint64_t alignment) {
