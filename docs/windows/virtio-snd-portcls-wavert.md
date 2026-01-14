@@ -5,19 +5,24 @@ This document is a **clean-room design reference** for a minimal Windows 7 audio
 The goal is to make the first bring-up deterministic: if the driver matches the shapes described here, Windows 7 should create “Speakers” (render) and “Microphone” (capture) endpoints and the audio engine should be able to transition streams to `RUN`.
 
 Note: the current in-tree Windows 7 virtio-snd driver (`drivers/windows7/virtio-snd/`) supports both **render**
-and **capture** streams per `AERO-W7-VIRTIO` v1 (stream id 0 via `txq`, stream id 1 via `rxq`).
+and **capture** streams per `AERO-W7-VIRTIO` v1 (stream id 0 via `txq`, stream id 1 via `rxq`). When a virtio-snd
+implementation advertises a **superset** of capabilities in `PCM_INFO`, the driver can optionally expose additional
+formats/rates/channel counts to Windows via dynamic WaveRT pin data ranges (while still requiring and preferring the
+contract-v1 baseline).
 
 ## Scope / assumptions (minimum viable endpoint)
 
 * **Windows target:** Windows 7 SP1 (x86/x64). The driver can be built with a Win7-era WinDDK (7600) layout or with newer WDKs (CI uses WDK10/MSBuild).
 * **Device model:** `virtio-snd` PCI function (`PCI\VEN_1AF4&DEV_1059&REV_01`; Aero `AERO-W7-VIRTIO` v1).
 * **Audio direction:** render + capture.
-* **Streams:** device exposes **2** fixed-format virtio-snd streams by contract:
+* **Streams:** contract v1 defines **2** virtio-snd streams:
   * Stream 0: playback/output (render)
   * Stream 1: capture/input (capture)
-* **Format:** fixed PCM:
+* **Format:** contract v1 baseline PCM:
   * render: **stereo (2ch), 48 kHz, signed 16-bit LE PCM (S16_LE)**
   * capture: **mono (1ch), 48 kHz, signed 16-bit LE PCM (S16_LE)**
+  * *(Optional/non-contract)*: additional formats/rates/channels may be exposed when a device advertises them via
+    `PCM_INFO`.
 * **Mixing:** Windows audio engine (`audiodg.exe`) does mixing; the miniport is a single shared-mode endpoint.
 * **Virtio transport:** virtio-pci **modern-only** (PCI vendor-specific capabilities + BAR0 MMIO).
 * **Virtio feature bits:** `VIRTIO_F_VERSION_1` + `VIRTIO_F_RING_INDIRECT_DESC` only.
@@ -116,9 +121,10 @@ Both the WaveRT and topology miniports implement `IMiniport` as a base.
 
 * **`Init`**: capture the `UnknownAdapter`/resource list, create or reference the shared adapter-common object, and store the port interface pointer (`IPortWaveRT` or `IPortTopology`).
 * **`GetDescription`**: return the **PortCls/KS descriptor** for the subdevice (pins, nodes, connections, categories).
-* **`DataRangeIntersection`**: answer `KSPROPERTY_PIN_DATAINTERSECTION` for the streaming pin (format negotiation). For a fixed-format endpoint, this can be a strict matcher:
-  * if the caller asks for *exactly* stereo/48k/16-bit PCM, return a `KSDATAFORMAT_WAVEFORMATEXTENSIBLE`
-  * otherwise return `STATUS_NO_MATCH` / `STATUS_INVALID_PARAMETER`
+* **`DataRangeIntersection`**: answer `KSPROPERTY_PIN_DATAINTERSECTION` for the streaming pin (format negotiation).
+  * For a fixed-format endpoint, this can be a strict matcher.
+  * When exposing multiple formats/rates/channels, it typically returns a `KSDATAFORMAT_WAVEFORMATEXTENSIBLE`
+    corresponding to the selected `KSDATARANGE_AUDIO` (and validates the request is compatible with it).
 
 Why this matters: Windows uses `DataRangeIntersection` aggressively during endpoint construction. Returning “close enough” formats tends to cause user-mode format failures later (or silent format conversion you didn’t plan for).
 
@@ -130,7 +136,7 @@ The WaveRT miniport owns the streaming pin implementation.
 
 * **Stream creation (`NewStream`)**
   * Validate pin id (render or capture).
-  * Validate data format (only the fixed PCM formats).
+  * Validate data format (baseline fixed PCM formats, or a dynamically generated supported-format table).
   * Create and return an `IMiniportWaveRTStream` instance.
 * **Hardware/stream capabilities**
   * Report that the stream is **render** or **capture** depending on pin id.
@@ -139,8 +145,8 @@ The WaveRT miniport owns the streaming pin implementation.
 **Common implementation pattern:**
 
 * `NewStream` creates a stream object configured with:
-  * `FramesPerSecond = 48000`
-  * `BlockAlign = 4` (2ch * 16-bit)
+  * `FramesPerSecond` (sample rate)
+  * `BlockAlign` (channels * bytes_per_sample)
   * ring buffer size in frames/bytes
   * notification “period” in frames
 
@@ -215,13 +221,13 @@ The descriptors below are a “shape reference”; the exact C structures are in
 | 2 | `Capture` | streaming capture pin | `KSPIN_DATAFLOW_OUT` | `KSPIN_COMMUNICATION_SOURCE` | yes (apps open this) |
 | 3 | `BridgeCapture` | capture connection to topology filter | (usually `IN`) | `KSPIN_COMMUNICATION_BRIDGE` | no |
 
-**Streaming pin data ranges (fixed PCM):**
+**Streaming pin data ranges:**
 
 * MajorFormat: `KSDATAFORMAT_TYPE_AUDIO`
 * SubFormat: `KSDATAFORMAT_SUBTYPE_PCM`
 * Specifier: `KSDATAFORMAT_SPECIFIER_WAVEFORMATEX` (but return `WAVEFORMATEXTENSIBLE` from intersection)
 
-`KSDATARANGE_AUDIO` should constrain:
+For a fixed-format endpoint, `KSDATARANGE_AUDIO` should constrain:
 
 * `MaximumChannels = MinimumChannels = 2`
 * `MinimumBitsPerSample = MaximumBitsPerSample = 16`
@@ -231,7 +237,8 @@ Capture pin data range is identical except:
 
 * `MaximumChannels = MinimumChannels = 1`
 
-**Why fixed ranges instead of “wildcards”:** the simplest stable bring-up is to avoid Windows picking unexpected formats (e.g., 44.1k, float32). Once stable, widen supported ranges deliberately.
+**Why fixed ranges instead of “wildcards”:** the simplest stable bring-up is to avoid Windows picking unexpected formats.
+Once stable, widen supported ranges deliberately (for example by generating pin data ranges from `PCM_INFO`).
 
 #### WaveRT filter descriptor sketch (pseudo-C)
 
