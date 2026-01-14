@@ -2,115 +2,78 @@
 
 use anyhow::{anyhow, Context, Result};
 
-#[cfg(not(target_arch = "wasm32"))]
-use futures_intrusive::sync::Mutex;
-#[cfg(not(target_arch = "wasm32"))]
-use std::sync::OnceLock;
-
 /// Creates a wgpu device/queue pair suitable for headless CI and returns the adapter's downlevel
 /// capabilities.
 #[cfg(not(target_arch = "wasm32"))]
 pub async fn create_device_queue_with_downlevel(
     device_label: &str,
 ) -> Result<(wgpu::Device, wgpu::Queue, wgpu::DownlevelCapabilities)> {
-    #[derive(Clone)]
-    struct SharedDeviceQueue {
-        device: wgpu::Device,
-        queue: wgpu::Queue,
-        downlevel: wgpu::DownlevelCapabilities,
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let needs_runtime_dir = std::env::var("XDG_RUNTIME_DIR")
+            .ok()
+            .map(|v| v.is_empty())
+            .unwrap_or(true);
+
+        if needs_runtime_dir {
+            let dir =
+                std::env::temp_dir().join(format!("aero-d3d11-xdg-runtime-{}", std::process::id()));
+            let _ = std::fs::create_dir_all(&dir);
+            let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+            std::env::set_var("XDG_RUNTIME_DIR", &dir);
+        }
     }
 
-    static SHARED: OnceLock<Mutex<Option<Result<SharedDeviceQueue, String>>>> = OnceLock::new();
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+        // Prefer GL on Linux CI to avoid crashes in some Vulkan software adapters.
+        backends: if cfg!(target_os = "linux") {
+            wgpu::Backends::GL
+        } else {
+            // Prefer "native" backends; this avoids noisy platform warnings from initializing
+            // GL/WAYLAND stacks in headless CI environments.
+            wgpu::Backends::PRIMARY
+        },
+        ..Default::default()
+    });
 
-    let mutex = SHARED.get_or_init(|| Mutex::new(None, true));
-    let mut guard = mutex.lock().await;
-
-    if guard.is_none() {
-        let created: Result<SharedDeviceQueue> = async {
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-
-                let needs_runtime_dir = std::env::var("XDG_RUNTIME_DIR")
-                    .ok()
-                    .map(|v| v.is_empty())
-                    .unwrap_or(true);
-
-                if needs_runtime_dir {
-                    let dir = std::env::temp_dir()
-                        .join(format!("aero-d3d11-xdg-runtime-{}", std::process::id()));
-                    let _ = std::fs::create_dir_all(&dir);
-                    let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
-                    std::env::set_var("XDG_RUNTIME_DIR", &dir);
-                }
-            }
-
-            let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-                // Prefer GL on Linux CI to avoid crashes in some Vulkan software adapters.
-                backends: if cfg!(target_os = "linux") {
-                    wgpu::Backends::GL
-                } else {
-                    // Prefer "native" backends; this avoids noisy platform warnings from
-                    // initializing GL/WAYLAND stacks in headless CI environments.
-                    wgpu::Backends::PRIMARY
-                },
-                ..Default::default()
-            });
-
-            let adapter = match instance
+    let adapter = match instance
+        .request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::LowPower,
+            compatible_surface: None,
+            force_fallback_adapter: true,
+        })
+        .await
+    {
+        Some(adapter) => Some(adapter),
+        None => {
+            instance
                 .request_adapter(&wgpu::RequestAdapterOptions {
                     power_preference: wgpu::PowerPreference::LowPower,
                     compatible_surface: None,
-                    force_fallback_adapter: true,
+                    force_fallback_adapter: false,
                 })
                 .await
-            {
-                Some(adapter) => Some(adapter),
-                None => {
-                    instance
-                        .request_adapter(&wgpu::RequestAdapterOptions {
-                            power_preference: wgpu::PowerPreference::LowPower,
-                            compatible_surface: None,
-                            force_fallback_adapter: false,
-                        })
-                        .await
-                }
-            }
-            .ok_or_else(|| anyhow!("wgpu: no suitable adapter found"))?;
-
-            let downlevel = adapter.get_downlevel_capabilities();
-
-            let (device, queue) = adapter
-                .request_device(
-                    &wgpu::DeviceDescriptor {
-                        label: Some(device_label),
-                        required_features: wgpu::Features::empty(),
-                        required_limits: wgpu::Limits::downlevel_defaults(),
-                    },
-                    None,
-                )
-                .await
-                .map_err(|e| anyhow!("wgpu: request_device failed: {e:?}"))?;
-
-            Ok(SharedDeviceQueue {
-                device,
-                queue,
-                downlevel,
-            })
         }
-        .await;
-
-        *guard = Some(created.map_err(|err| err.to_string()));
     }
+    .ok_or_else(|| anyhow!("wgpu: no suitable adapter found"))?;
 
-    match guard.as_ref().expect("initialized above") {
-        Ok(shared) => Ok((
-            shared.device.clone(),
-            shared.queue.clone(),
-            shared.downlevel.clone(),
-        )),
-        Err(err) => Err(anyhow!(err.clone())),
-    }
+    let downlevel = adapter.get_downlevel_capabilities();
+
+    let (device, queue) = adapter
+        .request_device(
+            &wgpu::DeviceDescriptor {
+                label: Some(device_label),
+                required_features: wgpu::Features::empty(),
+                required_limits: wgpu::Limits::downlevel_defaults(),
+            },
+            None,
+        )
+        .await
+        .map_err(|e| anyhow!("wgpu: request_device failed: {e:?}"))?;
+
+    Ok((device, queue, downlevel))
 }
 
 #[cfg(target_arch = "wasm32")]
