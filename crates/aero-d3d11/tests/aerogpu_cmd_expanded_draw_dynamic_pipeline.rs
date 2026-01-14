@@ -15,13 +15,17 @@ const PS_PASSTHROUGH: &[u8] = include_bytes!("fixtures/ps_passthrough.dxbc");
 #[test]
 fn aerogpu_cmd_expanded_draw_dynamic_pipeline() {
     pollster::block_on(async {
+        let test_name = concat!(module_path!(), "::aerogpu_cmd_expanded_draw_dynamic_pipeline");
         let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
             Ok(exec) => exec,
             Err(e) => {
-                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                common::skip_or_panic(test_name, &format!("wgpu unavailable ({e:#})"));
                 return;
             }
         };
+        if !common::require_gs_prepass_or_skip(&exec, test_name) {
+            return;
+        }
 
         const RT: u32 = 1;
         const DUMMY_IB: u32 = 2;
