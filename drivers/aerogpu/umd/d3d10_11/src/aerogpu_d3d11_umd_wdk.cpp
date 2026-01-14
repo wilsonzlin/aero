@@ -857,13 +857,13 @@ static bool EmitBindShadersLocked(Device* dev) {
   return EmitBindShadersCmdLocked(dev, dev->current_vs, dev->current_ps, dev->current_cs, dev->current_gs);
 }
 
-static void EmitUploadLocked(Device* dev, Resource* res, uint64_t offset_bytes, uint64_t size_bytes) {
+static HRESULT EmitUploadLocked(Device* dev, Resource* res, uint64_t offset_bytes, uint64_t size_bytes) {
   if (!dev || !res || !res->handle || size_bytes == 0) {
-    return;
+    return S_OK;
   }
   if (offset_bytes > static_cast<uint64_t>(SIZE_MAX) || size_bytes > static_cast<uint64_t>(SIZE_MAX)) {
     SetError(dev, E_OUTOFMEMORY);
-    return;
+    return E_OUTOFMEMORY;
   }
 
   uint64_t upload_offset = offset_bytes;
@@ -871,7 +871,7 @@ static void EmitUploadLocked(Device* dev, Resource* res, uint64_t offset_bytes, 
   if (res->kind == ResourceKind::Buffer) {
     const uint64_t end = offset_bytes + size_bytes;
     if (end < offset_bytes) {
-      return;
+      return S_OK;
     }
     const uint64_t aligned_start = offset_bytes & ~3ull;
     const uint64_t aligned_end = AlignUpU64(end, 4);
@@ -881,12 +881,14 @@ static void EmitUploadLocked(Device* dev, Resource* res, uint64_t offset_bytes, 
 
   if (upload_offset > static_cast<uint64_t>(SIZE_MAX) || upload_size > static_cast<uint64_t>(SIZE_MAX)) {
     SetError(dev, E_OUTOFMEMORY);
-    return;
+    return E_OUTOFMEMORY;
   }
   const size_t off = static_cast<size_t>(upload_offset);
   const size_t sz = static_cast<size_t>(upload_size);
   if (off > res->storage.size() || sz > res->storage.size() - off) {
-    return;
+    // Preserve old behavior: treat out-of-bounds uploads as a no-op so callers
+    // can use this helper in "best-effort" paths without forcing an error.
+    return S_OK;
   }
 
   if (res->backing_alloc_id == 0) {
@@ -894,13 +896,13 @@ static void EmitUploadLocked(Device* dev, Resource* res, uint64_t offset_bytes, 
         AEROGPU_CMD_UPLOAD_RESOURCE, res->storage.data() + off, sz);
     if (!cmd) {
       SetError(dev, E_OUTOFMEMORY);
-      return;
+      return E_OUTOFMEMORY;
     }
     cmd->resource_handle = res->handle;
     cmd->reserved0 = 0;
     cmd->offset_bytes = upload_offset;
     cmd->size_bytes = upload_size;
-    return;
+    return S_OK;
   }
 
   // Guest-backed resources: write into the WDDM allocation, then notify the host
@@ -908,7 +910,7 @@ static void EmitUploadLocked(Device* dev, Resource* res, uint64_t offset_bytes, 
   const auto* ddi = reinterpret_cast<const D3DDDI_DEVICECALLBACKS*>(dev->runtime_ddi_callbacks);
   if (!ddi || !ddi->pfnLockCb || !ddi->pfnUnlockCb || !dev->runtime_device || res->wddm_allocation_handle == 0) {
     SetError(dev, E_FAIL);
-    return;
+    return E_FAIL;
   }
 
   D3DDDICB_LOCK lock_args = {};
@@ -919,8 +921,9 @@ static void EmitUploadLocked(Device* dev, Resource* res, uint64_t offset_bytes, 
 
   HRESULT hr = CallCbMaybeHandle(ddi->pfnLockCb, MakeRtDeviceHandle(dev), MakeRtDeviceHandle10(dev), &lock_args);
   if (FAILED(hr) || !lock_args.pData) {
-    SetError(dev, FAILED(hr) ? hr : E_FAIL);
-    return;
+    const HRESULT lock_hr = FAILED(hr) ? hr : E_FAIL;
+    SetError(dev, lock_hr);
+    return lock_hr;
   }
 
   HRESULT copy_hr = S_OK;
@@ -986,11 +989,11 @@ Unlock:
   hr = CallCbMaybeHandle(ddi->pfnUnlockCb, MakeRtDeviceHandle(dev), MakeRtDeviceHandle10(dev), &unlock_args);
   if (FAILED(hr)) {
     SetError(dev, hr);
-    return;
+    return hr;
   }
   if (FAILED(copy_hr)) {
     SetError(dev, copy_hr);
-    return;
+    return copy_hr;
   }
 
   // RESOURCE_DIRTY_RANGE causes the host to read the guest allocation to update the host copy.
@@ -999,7 +1002,7 @@ Unlock:
   auto* dirty = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
   if (!dirty) {
     SetError(dev, E_OUTOFMEMORY);
-    return;
+    return E_OUTOFMEMORY;
   }
   // Note: the host validates RESOURCE_DIRTY_RANGE against the protocol-visible
   // required bytes (CREATE_TEXTURE2D layouts). Do not use the runtime's
@@ -1009,6 +1012,7 @@ Unlock:
   dirty->reserved0 = 0;
   dirty->offset_bytes = upload_offset;
   dirty->size_bytes = upload_size;
+  return S_OK;
 }
 
 static void EmitDirtyRangeLocked(Device* dev, Resource* res, uint64_t offset_bytes, uint64_t size_bytes) {
@@ -2107,7 +2111,7 @@ static bool UnmapLocked(Device* dev, Resource* res) {
       // can overlap other subresources in our packed layout.
       EmitDirtyRangeLocked(dev, res, res->mapped_offset, res->mapped_size);
     } else if (!res->storage.empty()) {
-      EmitUploadLocked(dev, res, res->mapped_offset, res->mapped_size);
+      (void)EmitUploadLocked(dev, res, res->mapped_offset, res->mapped_size);
     }
   }
 
@@ -3050,9 +3054,25 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
       return init_hr;
     }
 
+    // Treat resource creation as transactional: if we fail to append any of the
+    // required packets (including optional initial-data uploads or shared-surface
+    // export), roll back the command stream so the host doesn't observe a
+    // half-created resource.
+    const auto cmd_checkpoint = dev->cmd.checkpoint();
+    const size_t alloc_checkpoint = dev->wddm_submit_allocation_handles.size();
+    const bool alloc_list_oom_checkpoint = dev->wddm_submit_allocation_list_oom;
+    auto rollback_create = [&]() {
+      dev->cmd.rollback(cmd_checkpoint);
+      if (dev->wddm_submit_allocation_handles.size() > alloc_checkpoint) {
+        dev->wddm_submit_allocation_handles.resize(alloc_checkpoint);
+      }
+      dev->wddm_submit_allocation_list_oom = alloc_list_oom_checkpoint;
+    };
+
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_create_buffer>(AEROGPU_CMD_CREATE_BUFFER);
     if (!cmd) {
       SetError(dev, E_OUTOFMEMORY);
+      rollback_create();
       deallocate_if_needed();
       ResetObject(res);
       return E_OUTOFMEMORY;
@@ -3065,14 +3085,30 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
     cmd->reserved0 = 0;
 
     if (has_initial_data) {
-      EmitUploadLocked(dev, res, 0, res->size_bytes);
+      const HRESULT upload_hr = EmitUploadLocked(dev, res, 0, res->size_bytes);
+      if (FAILED(upload_hr)) {
+        rollback_create();
+        deallocate_if_needed();
+        ResetObject(res);
+        return upload_hr;
+      }
     }
 
     TrackWddmAllocForSubmitLocked(dev, res, /*write=*/false);
+    if (dev->wddm_submit_allocation_list_oom) {
+      // The command stream references a guest allocation, but we could not
+      // record it in the submission allocation list. Submitting would be unsafe
+      // (the KMD cannot resolve backing_alloc_id), so fail cleanly.
+      rollback_create();
+      deallocate_if_needed();
+      ResetObject(res);
+      return E_OUTOFMEMORY;
+    }
 
     if (is_shared) {
       if (res->share_token == 0) {
         SetError(dev, E_FAIL);
+        rollback_create();
         deallocate_if_needed();
         ResetObject(res);
         return E_FAIL;
@@ -3085,6 +3121,7 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
       auto* export_cmd =
           dev->cmd.append_fixed<aerogpu_cmd_export_shared_surface>(AEROGPU_CMD_EXPORT_SHARED_SURFACE);
       if (!export_cmd) {
+        rollback_create();
         deallocate_if_needed();
         ResetObject(res);
         return E_OUTOFMEMORY;
@@ -3432,9 +3469,24 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
       return init_hr;
     }
 
+    // Treat CreateResource as a transaction: if any required packets fail to
+    // append (OOM), roll back the command stream so the host doesn't observe a
+    // partially created resource.
+    const auto cmd_checkpoint = dev->cmd.checkpoint();
+    const size_t alloc_checkpoint = dev->wddm_submit_allocation_handles.size();
+    const bool alloc_list_oom_checkpoint = dev->wddm_submit_allocation_list_oom;
+    auto rollback_create = [&]() {
+      dev->cmd.rollback(cmd_checkpoint);
+      if (dev->wddm_submit_allocation_handles.size() > alloc_checkpoint) {
+        dev->wddm_submit_allocation_handles.resize(alloc_checkpoint);
+      }
+      dev->wddm_submit_allocation_list_oom = alloc_list_oom_checkpoint;
+    };
+
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_create_texture2d>(AEROGPU_CMD_CREATE_TEXTURE2D);
     if (!cmd) {
       SetError(dev, E_OUTOFMEMORY);
+      rollback_create();
       deallocate_if_needed();
       ResetObject(res);
       return E_OUTOFMEMORY;
@@ -3452,14 +3504,27 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
     cmd->reserved0 = 0;
 
     if (has_initial_data) {
-      EmitUploadLocked(dev, res, 0, res->storage.size());
+      const HRESULT upload_hr = EmitUploadLocked(dev, res, 0, res->storage.size());
+      if (FAILED(upload_hr)) {
+        rollback_create();
+        deallocate_if_needed();
+        ResetObject(res);
+        return upload_hr;
+      }
     }
 
     TrackWddmAllocForSubmitLocked(dev, res, /*write=*/false);
+    if (dev->wddm_submit_allocation_list_oom) {
+      rollback_create();
+      deallocate_if_needed();
+      ResetObject(res);
+      return E_OUTOFMEMORY;
+    }
 
     if (is_shared) {
       if (res->share_token == 0) {
         SetError(dev, E_FAIL);
+        rollback_create();
         deallocate_if_needed();
         ResetObject(res);
         return E_FAIL;
@@ -3467,6 +3532,7 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
       auto* export_cmd =
           dev->cmd.append_fixed<aerogpu_cmd_export_shared_surface>(AEROGPU_CMD_EXPORT_SHARED_SURFACE);
       if (!export_cmd) {
+        rollback_create();
         deallocate_if_needed();
         ResetObject(res);
         return E_OUTOFMEMORY;
@@ -9887,7 +9953,7 @@ void AEROGPU_APIENTRY CopySubresourceRegion11(D3D11DDI_HDEVICECONTEXT hCtx,
       // Internal invariant violated (storage doesn't match declared buffer size).
       // Preserve old behavior: attempt an upload (may no-op due to bounds) but
       // keep the shadow copy unchanged.
-      EmitUploadLocked(dev, dst, dst_off, bytes);
+      (void)EmitUploadLocked(dev, dst, dst_off, bytes);
     }
 
     const bool transfer_aligned = (((dst_off | src_left | bytes) & 3ull) == 0);
