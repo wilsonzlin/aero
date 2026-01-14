@@ -9,12 +9,12 @@ test images where you want input working immediately).
 > `-device virtio-*-pci,...,x-pci-revision=0x01`) or Windows will not bind the staged driver.
 >
 > - Keyboard/mouse (`aero_virtio_input.inf`):
->   - contract IDs: `SUBSYS_00101AF4` / `SUBSYS_00111AF4`
->   - strict fallback (when subsystem IDs are not exposed/expected): `PCI\VEN_1AF4&DEV_1052&REV_01`
+>   - contract IDs: `SUBSYS_00101AF4` / `SUBSYS_00111AF4` (**SUBSYS-gated only**)
 > - Tablet/absolute pointer (`aero_virtio_tablet.inf`): `SUBSYS_00121AF4`
-> - Optional legacy filename alias (`virtio-input.inf.disabled` → rename to `virtio-input.inf`):
->   - byte-for-byte alias of `aero_virtio_input.inf` (from `[Version]` onward)
->   - disabled by default; do **not** stage/install it alongside `aero_virtio_input.inf` (overlapping INF binding can be confusing)
+> - Optional generic fallback (disabled by default): rename `virtio-input.inf.disabled` to `virtio-input.inf` and stage that
+>   (instead of `aero_virtio_input.inf`) if your environment does not expose the Aero subsystem IDs.
+>   - fallback HWID: `PCI\VEN_1AF4&DEV_1052&REV_01`
+>   - do **not** stage both INFs at once; they overlap on the keyboard/mouse SUBSYS IDs.
 
 The commands below assume you already have a **built driver package directory** containing:
 

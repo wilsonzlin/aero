@@ -68,13 +68,14 @@ aero_virtio_input.sys = 1
 ; in Device Manager.
 ;
 ; The strict, REV-qualified generic fallback match (no SUBSYS;
-; `PCI\VEN_1AF4&DEV_1052&REV_01`) is intentionally omitted from the canonical INF
-; to avoid accidentally binding to non-contract virtio-input devices. For opt-in
-; fallback binding, use `virtio-input.inf.disabled`.
+; `PCI\VEN_1AF4&DEV_1052&REV_01`) is intentionally omitted from the canonical INF.
+; This avoids overlapping bindings with the tablet INF and prevents Windows from
+; binding the driver to non-contract virtio-input devices. For opt-in fallback
+; binding, use the legacy alias INF (`virtio-input.inf.disabled`, rename to
+; `virtio-input.inf` to enable).
 ;
-; Note: tablet-style virtio-input devices (absolute pointer / EV_ABS) typically
-; use `aero_virtio_tablet.inf` (SUBSYS_0012). Without the generic fallback, that
-; device will only bind when the tablet INF is installed (as intended).
+; Note: tablet-style virtio-input devices (absolute pointer / EV_ABS) bind via
+; `aero_virtio_tablet.inf` (SUBSYS_0012).
 ;
 ; If your device enumerates with a different DEV id, add it here.
 ; You can confirm in Device Manager -> Details -> Hardware Ids.

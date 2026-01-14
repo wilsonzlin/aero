@@ -13,7 +13,9 @@ filename alias INF (checked in disabled-by-default):
 To prevent behavior drift, the alias INF should stay in sync with the canonical
 INF in all functional content *except* the models sections (`[Aero.NTx86]` and
 `[Aero.NTamd64]`). The alias is allowed to include an additional generic fallback
-HWID model entry for opt-in driver binding.
+HWID model entry for opt-in driver binding:
+
+  - `PCI\\VEN_1AF4&DEV_1052&REV_01`
 
 Run from the repo root:
   python3 drivers/windows7/virtio-input/scripts/check-inf-alias.py
@@ -25,6 +27,9 @@ import difflib
 import re
 import sys
 from pathlib import Path
+
+
+_MODEL_SECTIONS = {"Aero.NTx86", "Aero.NTamd64"}
 
 
 def _normalized_inf_lines_without_sections(path: Path, *, drop_sections: set[str]) -> list[str]:
@@ -94,8 +99,10 @@ def main() -> int:
         return 0
 
     # The legacy alias INF is allowed to differ only in the models sections.
-    drop_sections = {"Aero.NTx86", "Aero.NTamd64"}
-    canonical_lines = _normalized_inf_lines_without_sections(canonical, drop_sections=drop_sections)
+    drop_sections = set(_MODEL_SECTIONS)
+    canonical_lines = _normalized_inf_lines_without_sections(
+        canonical, drop_sections=drop_sections
+    )
     alias_lines = _normalized_inf_lines_without_sections(alias, drop_sections=drop_sections)
     if canonical_lines == alias_lines:
         return 0
@@ -106,7 +113,7 @@ def main() -> int:
     # Use repo-relative paths in the diff output to keep it readable and stable
     # across machines/CI environments.
     canonical_label = str(canonical.relative_to(repo_root))
-    alias_label = str(alias.relative_to(repo_root))
+    alias_label = str(alias.relative_to(repo_root)) + " (models sections removed)"
 
     diff = difflib.unified_diff(
         [l + "\n" for l in canonical_lines],

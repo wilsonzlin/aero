@@ -237,18 +237,18 @@ The list will also include more specific forms, e.g.:
 The in-tree Aero Win7 virtio-input INFs are intentionally **revision-gated** (Aero contract v1, `REV_01`).
 
 - Keyboard/mouse: `aero_virtio_input.inf`
-  - matches `SUBSYS_00101AF4` / `SUBSYS_00111AF4` for distinct Device Manager names.
-  - also includes a strict, revision-gated fallback match `PCI\VEN_1AF4&DEV_1052&REV_01` (shown as “Aero VirtIO Input Device”).
-- Tablet: `aero_virtio_tablet.inf` matches `SUBSYS_00121AF4` (Aero contract tablet). It is more specific, so it wins over
-  the generic fallback when both INFs are present.
-- Optional legacy filename alias: `virtio-input.inf.disabled` (rename to `virtio-input.inf` to enable)
-  - intended to remain identical to `aero_virtio_input.inf` from `[Version]` onward; disabled by default to avoid accidentally
-    shipping/installing two overlapping INFs.
-  - do **not** install/ship it alongside `aero_virtio_input.inf` (both filenames match the same HWIDs).
+  - matches `SUBSYS_00101AF4` / `SUBSYS_00111AF4` for distinct Device Manager names (**SUBSYS-gated only**).
+- Optional legacy alias: `virtio-input.inf.disabled` (rename to `virtio-input.inf` to enable)
+  - includes a revision-gated generic fallback match `PCI\VEN_1AF4&DEV_1052&REV_01` for environments that do not expose Aero subsystem IDs.
+- Tablet: `aero_virtio_tablet.inf` matches `SUBSYS_00121AF4` (Aero contract tablet).
 
-If your device is `REV_01` but does not expose the Aero subsystem IDs, Windows can still bind via the generic fallback entry
-(it will appear with the generic **Aero VirtIO Input Device** name). Tablet devices without the Aero tablet subsystem ID may
-also bind via the fallback entry if `aero_virtio_tablet.inf` does not match.
+If your device is `REV_01` but does not expose the Aero subsystem IDs, Windows will not bind the canonical keyboard/mouse
+INF; it can bind via the legacy alias INF's fallback entry (it will appear with the generic **Aero VirtIO Input Device**
+name). Tablet devices without the Aero tablet subsystem ID may also bind via the fallback entry if `aero_virtio_tablet.inf`
+does not match.
+
+Avoid shipping both `aero_virtio_input.inf` and `virtio-input.inf` at the same time: they overlap on the keyboard/mouse
+SUBSYS IDs, which can lead to confusing PnP driver selection.
 
 ## Cross-checking with QEMU monitor (no guest required)
 
