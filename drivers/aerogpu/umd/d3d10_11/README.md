@@ -27,7 +27,7 @@ Feature matrix for the Win7 WDK-backed UMDs:
 | Constant buffers | VS/PS supported (14 slots, whole-buffer binding) | VS/PS supported (14 slots, whole-buffer binding) | VS/PS supported (14 slots, `{FirstConstant, NumConstants}` ranges supported) |
 | Samplers | VS/PS supported (16 slots; `CREATE_SAMPLER` + `SET_SAMPLERS`) | VS/PS supported (16 slots; `CREATE_SAMPLER` + `SET_SAMPLERS`) | VS/PS supported (16 slots; basic filter/address modes) |
 
-\* All UMDs preserve the runtime-provided RTV list (including NULL entries / gaps) when emitting `SET_RENDER_TARGETS`. Gaps are encoded as `colors[i] = 0` within `[0, color_count)`, and `color_count` is clamped to `AEROGPU_MAX_RENDER_TARGETS` (8).
+\* All UMDs (D3D10 / D3D10.1 / D3D11) preserve the runtime-provided RTV slot count/list when emitting `SET_RENDER_TARGETS`: `color_count` reflects the runtime-provided slot count, clamped to `AEROGPU_MAX_RENDER_TARGETS` (8). `NULL` entries within `[0, color_count)` are valid and are encoded as `colors[i] = 0` (gaps are preserved).
 
 ### Implemented
 
