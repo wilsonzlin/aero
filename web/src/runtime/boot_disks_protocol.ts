@@ -13,6 +13,10 @@ export type SetBootDisksMessage = {
   cd: DiskImageMetadata | null;
 };
 
+export function emptySetBootDisksMessage(): SetBootDisksMessage {
+  return { type: "setBootDisks", mounts: {}, hdd: null, cd: null };
+}
+
 /**
  * Best-effort parser for untrusted `postMessage` data.
  *
