@@ -15,6 +15,75 @@ static __forceinline UCHAR VirtioSndCtrlFixedChannelsForStream(_In_ ULONG Stream
     return (StreamId == VIRTIO_SND_CAPTURE_STREAM_ID) ? 1 : 2;
 }
 
+_Use_decl_annotations_
+NTSTATUS VirtioSndCtrlSelectPcmConfig(const VIRTIO_SND_PCM_INFO* Info, ULONG StreamId, VIRTIOSND_PCM_CONFIG* OutConfig)
+{
+    UCHAR channels;
+    ULONG i;
+
+    if (OutConfig != NULL) {
+        RtlZeroMemory(OutConfig, sizeof(*OutConfig));
+    }
+
+    if (Info == NULL || OutConfig == NULL) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    if (!VirtioSndCtrlIsValidStreamId(StreamId)) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    if (Info->stream_id != StreamId) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    if (StreamId == VIRTIO_SND_PLAYBACK_STREAM_ID) {
+        if (Info->direction != VIRTIO_SND_D_OUTPUT) {
+            return STATUS_INVALID_PARAMETER;
+        }
+    } else {
+        if (Info->direction != VIRTIO_SND_D_INPUT) {
+            return STATUS_INVALID_PARAMETER;
+        }
+    }
+
+    channels = VirtioSndCtrlFixedChannelsForStream(StreamId);
+    if (Info->channels_min > channels || Info->channels_max < channels) {
+        return STATUS_NOT_SUPPORTED;
+    }
+
+    /*
+     * Deterministic selection algorithm.
+     *
+     * See virtiosnd_control_proto.h for the priority list and rationale.
+     */
+    {
+        static const struct {
+            UCHAR Format;
+            UCHAR Rate;
+        } kCandidates[] = {
+            {VIRTIO_SND_PCM_FMT_S16, VIRTIO_SND_PCM_RATE_48000},
+            {VIRTIO_SND_PCM_FMT_S16, VIRTIO_SND_PCM_RATE_44100},
+            {VIRTIO_SND_PCM_FMT_S24, VIRTIO_SND_PCM_RATE_48000},
+            {VIRTIO_SND_PCM_FMT_S24, VIRTIO_SND_PCM_RATE_44100},
+            {VIRTIO_SND_PCM_FMT_S32, VIRTIO_SND_PCM_RATE_48000},
+            {VIRTIO_SND_PCM_FMT_S32, VIRTIO_SND_PCM_RATE_44100},
+        };
+
+        for (i = 0; i < RTL_NUMBER_OF(kCandidates); ++i) {
+            if ((Info->formats & VIRTIO_SND_PCM_FMT_MASK(kCandidates[i].Format)) != 0 &&
+                (Info->rates & VIRTIO_SND_PCM_RATE_MASK(kCandidates[i].Rate)) != 0) {
+                OutConfig->Channels = channels;
+                OutConfig->Format = kCandidates[i].Format;
+                OutConfig->Rate = kCandidates[i].Rate;
+                return STATUS_SUCCESS;
+            }
+        }
+    }
+
+    return STATUS_NOT_SUPPORTED;
+}
+
 static __forceinline BOOLEAN VirtioSndCtrlIsSupportedPcmFormat(_In_ UCHAR Format, _Out_opt_ USHORT* BytesPerSample)
 {
     /*
@@ -95,16 +164,25 @@ NTSTATUS VirtioSndCtrlParsePcmInfoResp(const void* Resp, ULONG RespLen, VIRTIO_S
 #endif
     }
 
-    if ((info0.formats & VIRTIO_SND_PCM_FMT_MASK_S16) == 0 || (info0.rates & VIRTIO_SND_PCM_RATE_MASK_48000) == 0 ||
-        (info1.formats & VIRTIO_SND_PCM_FMT_MASK_S16) == 0 || (info1.rates & VIRTIO_SND_PCM_RATE_MASK_48000) == 0) {
-        return STATUS_NOT_SUPPORTED;
-    }
+    /*
+     * Validate that there is at least one supported combination for each stream.
+     *
+     * The contract v1 device model offers S16 @ 48kHz, but VIO-020 permits
+     * additional optional formats/rates.
+     */
+    {
+        VIRTIOSND_PCM_CONFIG cfg;
+        NTSTATUS selStatus;
 
-    if (info0.channels_min > 2 || info0.channels_max < 2) {
-        return STATUS_NOT_SUPPORTED;
-    }
-    if (info1.channels_min > 1 || info1.channels_max < 1) {
-        return STATUS_NOT_SUPPORTED;
+        selStatus = VirtioSndCtrlSelectPcmConfig(&info0, VIRTIO_SND_PLAYBACK_STREAM_ID, &cfg);
+        if (!NT_SUCCESS(selStatus)) {
+            return selStatus;
+        }
+
+        selStatus = VirtioSndCtrlSelectPcmConfig(&info1, VIRTIO_SND_CAPTURE_STREAM_ID, &cfg);
+        if (!NT_SUCCESS(selStatus)) {
+            return selStatus;
+        }
     }
 
     *PlaybackInfo = info0;

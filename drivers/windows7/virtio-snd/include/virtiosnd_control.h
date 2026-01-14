@@ -182,13 +182,16 @@ _Must_inspect_result_ NTSTATUS VirtioSndCtrlSendSync(
 _IRQL_requires_(PASSIVE_LEVEL)
 _Must_inspect_result_ NTSTATUS VirtioSndCtrlPcmInfo(_Inout_ VIRTIOSND_CONTROL* Ctrl, _Out_ VIRTIO_SND_PCM_INFO* Info);
 
-/*
- * Query PCM_INFO for both stream 0 (playback) and stream 1 (capture).
- *
- * On success, caches the capabilities into Ctrl->Caps and sets Ctrl->CapsValid.
- *
- * IRQL: PASSIVE_LEVEL only.
- */
+ /*
+  * Query PCM_INFO for both stream 0 (playback) and stream 1 (capture).
+  *
+  * On success:
+  *   - caches the capabilities into Ctrl->Caps and sets Ctrl->CapsValid, and
+  *   - selects a single (channels, format, rate) tuple per stream (VIO-020)
+  *     and stores it into Ctrl->SelectedFormat[] with S16/48kHz preferred.
+  *
+  * IRQL: PASSIVE_LEVEL only.
+  */
 _IRQL_requires_(PASSIVE_LEVEL)
 _Must_inspect_result_ NTSTATUS VirtioSndCtrlPcmInfoAll(
     _Inout_ VIRTIOSND_CONTROL* Ctrl,

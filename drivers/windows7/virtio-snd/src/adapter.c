@@ -745,11 +745,12 @@ static NTSTATUS VirtIoSndStartDevice(PDEVICE_OBJECT DeviceObject, PIRP Irp, PRES
         hwStarted = TRUE;
 
         /*
-         * Contract sanity check:
+         * Capability discovery / sanity check:
+         *
          * Query VIRTIO_SND_R_PCM_INFO during START_DEVICE so we fail fast if the
-         * device model doesn't expose the fixed stream capabilities required by
-         * the Aero contract v1. This avoids discovering mismatches later during
-         * SET_PARAMS / PREPARE / START.
+         * device model doesn't expose any format/rate/channel combination that
+         * the Win7 virtio-snd driver can operate with. This avoids discovering
+         * mismatches later during SET_PARAMS / PREPARE / START.
          */
          if (dx->Started) {
              VIRTIO_SND_PCM_INFO playbackInfo;
@@ -759,13 +760,9 @@ static NTSTATUS VirtIoSndStartDevice(PDEVICE_OBJECT DeviceObject, PIRP Irp, PRES
              RtlZeroMemory(&captureInfo, sizeof(captureInfo));
 
              /*
-              * Capability discovery:
-              * Query stream 0/1 PCM_INFO once and cache the formats/rates/channel
-              * ranges for WaveRT to expose as supported formats.
-              *
-              * VirtioSndCtrlPcmInfoAll also validates that the contract-v1 fixed
-              * format (S16/48kHz) is present so existing Aero device models
-              * remain supported.
+              * Cache capabilities into dx->Control.Caps and negotiate a single
+              * (channels, format, rate) tuple per stream (VIO-020), preferring
+              * the legacy contract-v1 default (S16/48kHz) when available.
               */
              status = VirtioSndCtrlPcmInfoAll(&dx->Control, &playbackInfo, &captureInfo);
              if (!NT_SUCCESS(status)) {

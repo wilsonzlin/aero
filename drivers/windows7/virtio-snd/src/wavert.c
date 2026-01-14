@@ -45,6 +45,20 @@ typedef struct _VIRTIOSND_WAVERT_STREAM_FORMAT {
     GUID SubFormat;
     UCHAR VirtioFormat;
     UCHAR VirtioRate;
+    /*
+     * Timer/grid constraints:
+     *
+     * The WaveRT period timer uses an integer-millisecond periodic interval.
+     * Many sample rates (e.g. 44.1kHz) do not have an integer number of frames
+     * per millisecond. To keep the audio timeline accurate, period sizes are
+     * constrained to multiples of MsQuantum such that:
+     *
+     *   frames_per_quantum = SampleRate * MsQuantum / 1000
+     *
+     * is an integer, and BytesPerQuantum is the corresponding byte count.
+     */
+    ULONG MsQuantum;
+    ULONG BytesPerQuantum;
 } VIRTIOSND_WAVERT_STREAM_FORMAT, *PVIRTIOSND_WAVERT_STREAM_FORMAT;
 
 typedef struct _VIRTIOSND_WAVERT_FORMAT_ENTRY {
@@ -189,6 +203,36 @@ static __forceinline VOID VirtIoSndWaveRtInterlockedOr(_Inout_ volatile LONG* Ta
             break;
         }
     }
+}
+
+static ULONG VirtIoSndWaveRtGcdUlong(_In_ ULONG A, _In_ ULONG B)
+{
+    /* Euclid's algorithm. */
+    while (B != 0) {
+        ULONG t = A % B;
+        A = B;
+        B = t;
+    }
+    return A;
+}
+
+static VOID VirtIoSndWaveRtFormatInitQuantum(_Inout_ PVIRTIOSND_WAVERT_STREAM_FORMAT Format)
+{
+    ULONG gcd;
+
+    if (Format == NULL) {
+        return;
+    }
+
+    gcd = VirtIoSndWaveRtGcdUlong(Format->SampleRate, 1000u);
+    if (gcd == 0 || Format->BlockAlign == 0) {
+        Format->MsQuantum = 1u;
+        Format->BytesPerQuantum = Format->BlockAlign;
+        return;
+    }
+
+    Format->MsQuantum = 1000u / gcd;
+    Format->BytesPerQuantum = (Format->SampleRate / gcd) * Format->BlockAlign;
 }
 
 static __forceinline BOOLEAN VirtIoSndWaveRtShouldLogRareCounter(_In_ LONG Count)
@@ -394,6 +438,7 @@ VirtIoSndWaveRt_IsFormatSupportedEx(
         OutFormat->SubFormat = KSDATAFORMAT_SUBTYPE_PCM;
         OutFormat->VirtioFormat = (UCHAR)VIRTIO_SND_PCM_FMT_S16;
         OutFormat->VirtioRate = (UCHAR)VIRTIO_SND_PCM_RATE_48000;
+        VirtIoSndWaveRtFormatInitQuantum(OutFormat);
     }
 
     return TRUE;
@@ -421,6 +466,7 @@ VirtIoSndWaveRt_IsFormatSupportedEx(
                 IsEqualGUID(&f->SubFormat, &subFormat)) {
                 if (OutFormat != NULL) {
                     *OutFormat = *f;
+                    VirtIoSndWaveRtFormatInitQuantum(OutFormat);
                 }
                 return TRUE;
             }
@@ -448,6 +494,7 @@ VirtIoSndWaveRt_IsFormatSupportedEx(
         OutFormat->SubFormat = KSDATAFORMAT_SUBTYPE_PCM;
         OutFormat->VirtioFormat = (UCHAR)VIRTIO_SND_PCM_FMT_S16;
         OutFormat->VirtioRate = (UCHAR)VIRTIO_SND_PCM_RATE_48000;
+        VirtIoSndWaveRtFormatInitQuantum(OutFormat);
     }
 
     return TRUE;
@@ -1696,7 +1743,36 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtMiniport_Init(
             if (dx != NULL && !dx->Removed) {
                 VirtIoSndHwSetEventCallback(dx, VirtIoSndWaveRtEventqCallback, miniport);
             }
-            (VOID)VirtIoSndWaveRtMiniport_BuildDynamicDescription(miniport);
+            status = VirtIoSndWaveRtMiniport_BuildDynamicDescription(miniport);
+            if (!NT_SUCCESS(status)) {
+                const VIRTIOSND_PCM_FORMAT renderSel = dx->Control.SelectedFormat[VIRTIO_SND_PLAYBACK_STREAM_ID];
+                const VIRTIOSND_PCM_FORMAT captureSel = dx->Control.SelectedFormat[VIRTIO_SND_CAPTURE_STREAM_ID];
+                const BOOLEAN isContractV1 =
+                    (renderSel.Channels == VIRTIOSND_CHANNELS &&
+                     renderSel.Format == (UCHAR)VIRTIO_SND_PCM_FMT_S16 &&
+                     renderSel.Rate == (UCHAR)VIRTIO_SND_PCM_RATE_48000 &&
+                     captureSel.Channels == VIRTIOSND_CAPTURE_CHANNELS &&
+                     captureSel.Format == (UCHAR)VIRTIO_SND_PCM_FMT_S16 &&
+                     captureSel.Rate == (UCHAR)VIRTIO_SND_PCM_RATE_48000) ? TRUE : FALSE;
+
+                VIRTIOSND_TRACE_ERROR(
+                    "wavert: dynamic format exposure build failed: 0x%08X (contractV1=%u)\n",
+                    (UINT)status,
+                    (UINT)isContractV1);
+
+                /*
+                 * If the negotiated format is still the contract-v1 fixed format,
+                 * we can fall back to the static descriptor. Otherwise, failing
+                 * Init avoids advertising an incorrect mix format to Windows.
+                 */
+                if (!isContractV1) {
+                    VirtIoSndHwSetEventCallback(dx, NULL, NULL);
+                    VirtIoSndBackend_Destroy(miniport->Backend);
+                    miniport->Backend = NULL;
+                    miniport->UseVirtioBackend = FALSE;
+                    return status;
+                }
+            }
 #endif
             return STATUS_SUCCESS;
         }
@@ -2198,6 +2274,7 @@ VirtIoSndWaveRtBuildFormatTableFromCaps(
                         formats[out].Format.SubFormat = sub;
                         formats[out].Format.VirtioFormat = vf;
                         formats[out].Format.VirtioRate = (UCHAR)rateCode;
+                        VirtIoSndWaveRtFormatInitQuantum(&formats[out].Format);
 
                         formats[out].DataRange.DataRange.FormatSize = sizeof(KSDATARANGE_AUDIO);
                         formats[out].DataRange.DataRange.Flags = 0;
@@ -2247,6 +2324,10 @@ VirtIoSndWaveRtMiniport_BuildDynamicDescription(_Inout_ PVIRTIOSND_WAVERT_MINIPO
 {
     VIRTIOSND_PORTCLS_DX dx;
     LONG capsValid;
+    VIRTIOSND_PCM_CAPS renderCaps;
+    VIRTIOSND_PCM_CAPS captureCaps;
+    VIRTIOSND_PCM_FORMAT renderSel;
+    VIRTIOSND_PCM_FORMAT captureSel;
     NTSTATUS status;
 
     if (Miniport == NULL) {
@@ -2267,9 +2348,34 @@ VirtIoSndWaveRtMiniport_BuildDynamicDescription(_Inout_ PVIRTIOSND_WAVERT_MINIPO
         return STATUS_NOT_SUPPORTED;
     }
 
+    /*
+     * Expose exactly one format per pin: the deterministically negotiated format
+     * selected during START_DEVICE (VIO-020).
+     *
+     * This avoids Windows picking a different format than the driver negotiated
+     * with the device.
+     */
+    renderSel = dx->Control.SelectedFormat[VIRTIO_SND_PLAYBACK_STREAM_ID];
+    captureSel = dx->Control.SelectedFormat[VIRTIO_SND_CAPTURE_STREAM_ID];
+    if (renderSel.Channels == 0 || captureSel.Channels == 0) {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+
+    RtlZeroMemory(&renderCaps, sizeof(renderCaps));
+    renderCaps.Formats = VIRTIO_SND_PCM_FMT_MASK(renderSel.Format);
+    renderCaps.Rates = VIRTIO_SND_PCM_RATE_MASK(renderSel.Rate);
+    renderCaps.ChannelsMin = renderSel.Channels;
+    renderCaps.ChannelsMax = renderSel.Channels;
+
+    RtlZeroMemory(&captureCaps, sizeof(captureCaps));
+    captureCaps.Formats = VIRTIO_SND_PCM_FMT_MASK(captureSel.Format);
+    captureCaps.Rates = VIRTIO_SND_PCM_RATE_MASK(captureSel.Rate);
+    captureCaps.ChannelsMin = captureSel.Channels;
+    captureCaps.ChannelsMax = captureSel.Channels;
+
     status = VirtIoSndWaveRtBuildFormatTableFromCaps(
-        &dx->Control.Caps[VIRTIO_SND_PLAYBACK_STREAM_ID],
-        (ULONG)VIRTIOSND_CHANNELS,
+        &renderCaps,
+        (ULONG)renderSel.Channels,
         &Miniport->RenderFormats,
         &Miniport->RenderFormatCount,
         &Miniport->RenderDataRanges);
@@ -2278,8 +2384,8 @@ VirtIoSndWaveRtMiniport_BuildDynamicDescription(_Inout_ PVIRTIOSND_WAVERT_MINIPO
     }
 
     status = VirtIoSndWaveRtBuildFormatTableFromCaps(
-        &dx->Control.Caps[VIRTIO_SND_CAPTURE_STREAM_ID],
-        (ULONG)VIRTIOSND_CAPTURE_CHANNELS,
+        &captureCaps,
+        (ULONG)captureSel.Channels,
         &Miniport->CaptureFormats,
         &Miniport->CaptureFormatCount,
         &Miniport->CaptureDataRanges);
@@ -2340,7 +2446,25 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtMiniport_GetDescription(
 
 #if !defined(AERO_VIRTIO_SND_IOPORT_LEGACY)
     if (miniport != NULL && miniport->UseVirtioBackend && miniport->Dx != NULL) {
-        (VOID)VirtIoSndWaveRtMiniport_BuildDynamicDescription(miniport);
+        NTSTATUS buildStatus;
+        const PVIRTIOSND_DEVICE_EXTENSION dx = miniport->Dx;
+
+        buildStatus = VirtIoSndWaveRtMiniport_BuildDynamicDescription(miniport);
+        if (!NT_SUCCESS(buildStatus) && miniport->FilterDescriptor == NULL && dx != NULL) {
+            const VIRTIOSND_PCM_FORMAT renderSel = dx->Control.SelectedFormat[VIRTIO_SND_PLAYBACK_STREAM_ID];
+            const VIRTIOSND_PCM_FORMAT captureSel = dx->Control.SelectedFormat[VIRTIO_SND_CAPTURE_STREAM_ID];
+            const BOOLEAN isContractV1 =
+                (renderSel.Channels == VIRTIOSND_CHANNELS &&
+                 renderSel.Format == (UCHAR)VIRTIO_SND_PCM_FMT_S16 &&
+                 renderSel.Rate == (UCHAR)VIRTIO_SND_PCM_RATE_48000 &&
+                 captureSel.Channels == VIRTIOSND_CAPTURE_CHANNELS &&
+                 captureSel.Format == (UCHAR)VIRTIO_SND_PCM_FMT_S16 &&
+                 captureSel.Rate == (UCHAR)VIRTIO_SND_PCM_RATE_48000) ? TRUE : FALSE;
+
+            if (!isContractV1) {
+                return buildStatus;
+            }
+        }
     }
 
     if (miniport != NULL && miniport->FilterDescriptor != NULL) {
@@ -2438,6 +2562,7 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtMiniport_DataRangeIntersection(
         fixed.SubFormat = KSDATAFORMAT_SUBTYPE_PCM;
         fixed.VirtioFormat = (UCHAR)VIRTIO_SND_PCM_FMT_S16;
         fixed.VirtioRate = (UCHAR)VIRTIO_SND_PCM_RATE_48000;
+        VirtIoSndWaveRtFormatInitQuantum(&fixed);
 
         if (requested->MaximumChannels < fixed.Channels ||
             requested->MinimumBitsPerSample > fixed.ValidBitsPerSample ||
@@ -2513,7 +2638,6 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtMiniport_NewStream(
     PVIRTIOSND_WAVERT_STREAM stream;
     KIRQL oldIrql;
     VIRTIOSND_WAVERT_STREAM_FORMAT streamFormat;
-    ULONG bytesPerMs;
 
     UNREFERENCED_PARAMETER(OuterUnknown);
     UNREFERENCED_PARAMETER(PoolType);
@@ -2567,38 +2691,26 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtMiniport_NewStream(
     KeInitializeDpc(&stream->TimerDpc, VirtIoSndWaveRtDpcRoutine, stream);
     KeInitializeEvent(&stream->DpcIdleEvent, NotificationEvent, TRUE);
 
-    bytesPerMs = streamFormat.AvgBytesPerSec / 1000u;
-    if (bytesPerMs == 0) {
-        /* Defensive fallback for low/odd sample rates. */
-        bytesPerMs = streamFormat.BlockAlign;
-        if (bytesPerMs == 0) {
-            bytesPerMs = 1u;
-        }
-    } else if (streamFormat.BlockAlign != 0) {
-        /*
-         * Keep bytesPerMs frame-aligned so subsequent period sizing math stays
-         * consistent for sample rates that don't divide cleanly into
-         * milliseconds (e.g. 44.1kHz).
-         */
-        bytesPerMs = (bytesPerMs / streamFormat.BlockAlign) * streamFormat.BlockAlign;
-        if (bytesPerMs == 0) {
-            bytesPerMs = streamFormat.BlockAlign;
-        }
-    }
-
     /*
-     * Default to a ~10ms period. PortCls will reconfigure this once a cyclic
-     * buffer is allocated (AllocateBufferWithNotification).
+     * Default to ~10ms where possible, rounded up to the timer quantum (see
+     * VIRTIOSND_WAVERT_STREAM_FORMAT::MsQuantum).
      */
-    stream->PeriodMs = 10u;
-    stream->PeriodBytes = bytesPerMs * stream->PeriodMs;
-    stream->PeriodBytes = (stream->PeriodBytes / streamFormat.BlockAlign) * streamFormat.BlockAlign;
-    if (stream->PeriodBytes == 0) {
-        stream->PeriodBytes = streamFormat.BlockAlign;
-    }
-    stream->PeriodMs = stream->PeriodBytes / bytesPerMs;
-    if (stream->PeriodMs == 0) {
+    if (streamFormat.MsQuantum != 0 && streamFormat.BytesPerQuantum != 0) {
+        ULONG desiredMs;
+        ULONG quanta;
+
+        desiredMs = 10u;
+        quanta = (desiredMs + streamFormat.MsQuantum - 1u) / streamFormat.MsQuantum;
+        if (quanta == 0) {
+            quanta = 1u;
+        }
+
+        stream->PeriodBytes = quanta * streamFormat.BytesPerQuantum;
+        stream->PeriodMs = quanta * streamFormat.MsQuantum;
+    } else {
+        /* Defensive fallback. */
         stream->PeriodMs = 10u;
+        stream->PeriodBytes = (streamFormat.BlockAlign != 0) ? (streamFormat.BlockAlign * 10u) : 0;
     }
     stream->Period100ns = (ULONGLONG)stream->PeriodMs * 10u * 1000u;
     {
@@ -3877,7 +3989,8 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_AllocateBufferWithNotifi
     PVIRTIOSND_WAVERT_STREAM stream = VirtIoSndWaveRtStreamFromInterface(This);
     NTSTATUS status;
     PVIRTIOSND_DMA_CONTEXT dmaCtx;
-    ULONG bytesPerMs;
+    ULONG bytesPerQuantum;
+    ULONG msQuantum;
 #if defined(AERO_VIRTIO_SND_IOPORT_LEGACY)
     VIRTIOSND_DMA_CONTEXT dummyCtx;
 #endif
@@ -3918,15 +4031,16 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_AllocateBufferWithNotifi
     }
 #endif
 
-    bytesPerMs = stream->Format.AvgBytesPerSec / 1000u;
-    if (stream->Format.BlockAlign != 0) {
-        ULONG blockAlign = stream->Format.BlockAlign;
-        bytesPerMs = ((bytesPerMs + (blockAlign - 1u)) / blockAlign) * blockAlign;
-        if (bytesPerMs == 0) {
-            bytesPerMs = blockAlign;
-        }
+    bytesPerQuantum = stream->Format.BytesPerQuantum;
+    msQuantum = stream->Format.MsQuantum;
+    if (bytesPerQuantum == 0 || msQuantum == 0) {
+        VIRTIOSND_WAVERT_STREAM_FORMAT tmp;
+        tmp = stream->Format;
+        VirtIoSndWaveRtFormatInitQuantum(&tmp);
+        bytesPerQuantum = tmp.BytesPerQuantum;
+        msQuantum = tmp.MsQuantum;
     }
-    if (bytesPerMs == 0) {
+    if (bytesPerQuantum == 0 || msQuantum == 0) {
         return STATUS_INVALID_DEVICE_STATE;
     }
 
@@ -3944,14 +4058,14 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_AllocateBufferWithNotifi
     size = RequestedBufferSize;
 
     /*
-     * Ensure the buffer is large enough for at least ~1ms per notification.
-     * bytesPerMs is derived from AvgBytesPerSec, but keep the arithmetic defensive.
+     * Ensure the buffer is large enough for at least one timer quantum per
+     * notification.
      */
-    if (bytesPerMs > MAXULONG / notifications) {
+    if (bytesPerQuantum > MAXULONG / notifications) {
         return STATUS_INVALID_BUFFER_SIZE;
     }
-    if (size < bytesPerMs * notifications) {
-        size = bytesPerMs * notifications;
+    if (size < bytesPerQuantum * notifications) {
+        size = bytesPerQuantum * notifications;
     }
 
     /*
@@ -3963,16 +4077,17 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_AllocateBufferWithNotifi
     }
 
     /*
-     * Compute a period size aligned to milliseconds (bytesPerMs). Ensure the
+     * Compute a period size aligned to the integer-millisecond timer quantum.
+     * Ensure the
      * period payload never exceeds the contract maximum (256 KiB) by increasing
      * the notification count (up to the existing 256 cap).
      */
     for (;;) {
         periodBytes = (size + notifications - 1) / notifications;
-        periodBytes = (periodBytes + (bytesPerMs - 1)) / bytesPerMs;
-        periodBytes *= bytesPerMs;
-        if (periodBytes < bytesPerMs) {
-            periodBytes = bytesPerMs;
+        periodBytes = (periodBytes + (bytesPerQuantum - 1)) / bytesPerQuantum;
+        periodBytes *= bytesPerQuantum;
+        if (periodBytes < bytesPerQuantum) {
+            periodBytes = bytesPerQuantum;
         }
 
         if (periodBytes <= VIRTIOSND_MAX_PCM_PAYLOAD_BYTES) {
@@ -3988,11 +4103,11 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_AllocateBufferWithNotifi
          * If the caller requested an extremely small buffer but we increased
          * notifications, keep the minimum sizing invariant.
          */
-        if (bytesPerMs > MAXULONG / notifications) {
+        if (bytesPerQuantum > MAXULONG / notifications) {
             return STATUS_INVALID_BUFFER_SIZE;
         }
-        if (size < bytesPerMs * notifications) {
-            size = bytesPerMs * notifications;
+        if (size < bytesPerQuantum * notifications) {
+            size = bytesPerQuantum * notifications;
         }
         if (size > VIRTIOSND_MAX_CYCLIC_BUFFER_BYTES) {
             size = VIRTIOSND_MAX_CYCLIC_BUFFER_BYTES;
@@ -4010,10 +4125,10 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_AllocateBufferWithNotifi
 
         maxSize = VIRTIOSND_MAX_CYCLIC_BUFFER_BYTES;
 
-        if (bytesPerMs > MAXULONG / notifications) {
+        if (bytesPerQuantum > MAXULONG / notifications) {
             return STATUS_INVALID_BUFFER_SIZE;
         }
-        quantum = bytesPerMs * notifications;
+        quantum = bytesPerQuantum * notifications;
         if (quantum == 0 || maxSize < quantum) {
             return STATUS_INVALID_BUFFER_SIZE;
         }
@@ -4058,7 +4173,7 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_AllocateBufferWithNotifi
     stream->BufferSize = size;
 
     stream->PeriodBytes = periodBytes;
-    stream->PeriodMs = periodBytes / bytesPerMs;
+    stream->PeriodMs = (periodBytes / bytesPerQuantum) * msQuantum;
     stream->Period100ns = (ULONGLONG)stream->PeriodMs * 10u * 1000u;
 
     stream->FrozenLinearFrames = 0;

@@ -37,7 +37,11 @@ static void test_pcm_set_params_req_packing_and_validation(void)
     status = VirtioSndCtrlBuildPcmSetParamsReq(NULL, VIRTIO_SND_PLAYBACK_STREAM_ID, 4096u, 1024u);
     TEST_ASSERT(status == STATUS_INVALID_PARAMETER);
 
-    status = VirtioSndCtrlBuildPcmSetParamsReq(&req, VIRTIO_SND_PLAYBACK_STREAM_ID, 4096u, 1024u);
+    status = VirtioSndCtrlBuildPcmSetParamsReq(
+        &req,
+        VIRTIO_SND_PLAYBACK_STREAM_ID,
+        4096u,
+        1024u);
     TEST_ASSERT(status == STATUS_SUCCESS);
     TEST_ASSERT(req.code == VIRTIO_SND_R_PCM_SET_PARAMS);
     TEST_ASSERT(req.stream_id == VIRTIO_SND_PLAYBACK_STREAM_ID);
@@ -63,7 +67,11 @@ static void test_pcm_set_params_req_packing_and_validation(void)
     }
 
     /* Capture stream is mono => 2 bytes/frame alignment. */
-    status = VirtioSndCtrlBuildPcmSetParamsReq(&req, VIRTIO_SND_CAPTURE_STREAM_ID, 960u, 480u);
+    status = VirtioSndCtrlBuildPcmSetParamsReq(
+        &req,
+        VIRTIO_SND_CAPTURE_STREAM_ID,
+        960u,
+        480u);
     TEST_ASSERT(status == STATUS_SUCCESS);
     TEST_ASSERT(req.stream_id == VIRTIO_SND_CAPTURE_STREAM_ID);
     TEST_ASSERT(req.channels == 1u);
@@ -85,10 +93,18 @@ static void test_pcm_set_params_req_packing_and_validation(void)
     TEST_ASSERT(status == STATUS_INVALID_PARAMETER);
 
     /* Misaligned buffer/period sizes */
-    status = VirtioSndCtrlBuildPcmSetParamsReq(&req, VIRTIO_SND_PLAYBACK_STREAM_ID, 3u, 2u);
+    status = VirtioSndCtrlBuildPcmSetParamsReq(
+        &req,
+        VIRTIO_SND_PLAYBACK_STREAM_ID,
+        3u,
+        2u);
     TEST_ASSERT(status == STATUS_INVALID_PARAMETER);
 
-    status = VirtioSndCtrlBuildPcmSetParamsReq(&req, VIRTIO_SND_CAPTURE_STREAM_ID, 4u, 6u);
+    status = VirtioSndCtrlBuildPcmSetParamsReq(
+        &req,
+        VIRTIO_SND_CAPTURE_STREAM_ID,
+        4u,
+        6u);
     TEST_ASSERT(status == STATUS_INVALID_PARAMETER);
 
     /* Contract v1: a single PCM payload > 256 KiB must be rejected with BAD_MSG. */
@@ -373,6 +389,52 @@ static void test_pcm_info_resp_unaligned_buffer(void)
     TEST_ASSERT(out1.stream_id == VIRTIO_SND_CAPTURE_STREAM_ID);
 }
 
+static void test_pcm_format_selection_matrix(void)
+{
+    VIRTIO_SND_PCM_INFO info;
+    VIRTIOSND_PCM_CONFIG cfg;
+    NTSTATUS status;
+
+    RtlZeroMemory(&info, sizeof(info));
+    info.stream_id = VIRTIO_SND_PLAYBACK_STREAM_ID;
+    info.direction = VIRTIO_SND_D_OUTPUT;
+    info.channels_min = 2;
+    info.channels_max = 2;
+
+    /* Exact S16/48k present => keep legacy default. */
+    info.formats = VIRTIO_SND_PCM_FMT_MASK_S16;
+    info.rates = VIRTIO_SND_PCM_RATE_MASK_48000;
+    status = VirtioSndCtrlSelectPcmConfig(&info, VIRTIO_SND_PLAYBACK_STREAM_ID, &cfg);
+    TEST_ASSERT(status == STATUS_SUCCESS);
+    TEST_ASSERT(cfg.Channels == 2);
+    TEST_ASSERT(cfg.Format == VIRTIO_SND_PCM_FMT_S16);
+    TEST_ASSERT(cfg.Rate == VIRTIO_SND_PCM_RATE_48000);
+
+    /* S16 present but only 44.1kHz => pick S16/44.1k. */
+    info.formats = VIRTIO_SND_PCM_FMT_MASK_S16;
+    info.rates = VIRTIO_SND_PCM_RATE_MASK_44100;
+    status = VirtioSndCtrlSelectPcmConfig(&info, VIRTIO_SND_PLAYBACK_STREAM_ID, &cfg);
+    TEST_ASSERT(status == STATUS_SUCCESS);
+    TEST_ASSERT(cfg.Channels == 2);
+    TEST_ASSERT(cfg.Format == VIRTIO_SND_PCM_FMT_S16);
+    TEST_ASSERT(cfg.Rate == VIRTIO_SND_PCM_RATE_44100);
+
+    /* 48kHz present but only S24/S32 => pick best alternative (S24/48k per policy). */
+    info.formats = VIRTIO_SND_PCM_FMT_MASK_S24 | VIRTIO_SND_PCM_FMT_MASK_S32;
+    info.rates = VIRTIO_SND_PCM_RATE_MASK_48000;
+    status = VirtioSndCtrlSelectPcmConfig(&info, VIRTIO_SND_PLAYBACK_STREAM_ID, &cfg);
+    TEST_ASSERT(status == STATUS_SUCCESS);
+    TEST_ASSERT(cfg.Channels == 2);
+    TEST_ASSERT(cfg.Format == VIRTIO_SND_PCM_FMT_S24);
+    TEST_ASSERT(cfg.Rate == VIRTIO_SND_PCM_RATE_48000);
+
+    /* Completely unsupported masks => fail. */
+    info.formats = 0;
+    info.rates = 0;
+    status = VirtioSndCtrlSelectPcmConfig(&info, VIRTIO_SND_PLAYBACK_STREAM_ID, &cfg);
+    TEST_ASSERT(status == STATUS_NOT_SUPPORTED);
+}
+
 int main(void)
 {
     test_pcm_info_req_packing();
@@ -380,6 +442,7 @@ int main(void)
     test_pcm_simple_req_packing();
     test_pcm_info_resp_parsing();
     test_pcm_info_resp_unaligned_buffer();
+    test_pcm_format_selection_matrix();
 
     printf("virtiosnd_control_proto_tests: PASS\n");
     return 0;
