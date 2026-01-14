@@ -88,12 +88,18 @@ fn rewrite_snapshot_devices_section_as_legacy_vinp_wrapper(snapshot: &[u8]) -> V
 
         let payload_start = off + SECTION_HEADER_LEN;
         let payload_end = payload_start + usize::try_from(len).expect("section len should fit");
-        assert!(payload_end <= snapshot.len(), "section payload out of bounds");
+        assert!(
+            payload_end <= snapshot.len(),
+            "section payload out of bounds"
+        );
 
         let payload = &snapshot[payload_start..payload_end];
 
         if id == SectionId::DEVICES.0 {
-            assert!(!rewrote, "snapshot unexpectedly contains multiple DEVICES sections");
+            assert!(
+                !rewrote,
+                "snapshot unexpectedly contains multiple DEVICES sections"
+            );
             rewrote = true;
 
             // Decode device list.
@@ -286,4 +292,3 @@ fn restore_accepts_legacy_vinp_wrapper_for_virtio_input_pair() {
         (EV_SYN, SYN_REPORT, 0)
     );
 }
-

@@ -173,8 +173,7 @@ fn xhci_snapshot_does_not_process_halted_active_endpoint_when_guest_context_says
     let mut buf = [0u8; 8];
     mem.read_physical(buf_ptr, &mut buf);
     assert_eq!(
-        buf,
-        [0u8; 8],
+        buf, [0u8; 8],
         "halted shadow endpoint must not execute transfers even if guest context state is running"
     );
     assert_eq!(

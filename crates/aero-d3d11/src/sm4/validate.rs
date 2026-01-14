@@ -54,7 +54,9 @@ pub(crate) fn scan_sm5_nonzero_gs_stream(program: &Sm4Program) -> Option<Sm5GsSt
                 if operand_pos >= inst_end {
                     break;
                 }
-                let Some(ext) = toks.get(operand_pos).copied() else { break };
+                let Some(ext) = toks.get(operand_pos).copied() else {
+                    break;
+                };
                 operand_pos += 1;
                 extended = (ext & sm4_opcode::OPCODE_EXTENDED_BIT) != 0;
             }
@@ -83,7 +85,9 @@ pub(crate) fn scan_sm5_nonzero_gs_stream(program: &Sm4Program) -> Option<Sm5GsSt
                     if operand_pos >= inst_end {
                         break;
                     }
-                    let Some(ext) = toks.get(operand_pos).copied() else { break };
+                    let Some(ext) = toks.get(operand_pos).copied() else {
+                        break;
+                    };
                     operand_pos += 1;
                     operand_ext = (ext & sm4_opcode::OPERAND_EXTENDED_BIT) != 0;
                 }
@@ -116,4 +120,3 @@ pub(crate) fn scan_sm5_nonzero_gs_stream(program: &Sm4Program) -> Option<Sm5GsSt
 
     None
 }
-

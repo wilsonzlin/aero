@@ -2004,7 +2004,11 @@ fn bus_master_status_advertises_dma_capability_for_attached_ata_drive() {
         0,
         "BMIDE DMA capability bit for master should be set"
     );
-    assert_eq!(st & 0x40, 0, "BMIDE DMA capability bit for slave should be clear");
+    assert_eq!(
+        st & 0x40,
+        0,
+        "BMIDE DMA capability bit for slave should be clear"
+    );
 
     // Controller reset should clear runtime status bits but preserve capability bits derived from
     // attached devices.

@@ -317,12 +317,12 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_packed(
     module: &Sm4Module,
     varyings: &[u32],
 ) -> Result<String, GsTranslateError> {
-    Ok(translate_gs_module_to_wgsl_compute_prepass_with_entry_point_packed(
-        module,
-        "cs_main",
-        varyings,
-    )?
-    .wgsl)
+    Ok(
+        translate_gs_module_to_wgsl_compute_prepass_with_entry_point_packed(
+            module, "cs_main", varyings,
+        )?
+        .wgsl,
+    )
 }
 
 /// Translate a decoded SM4 geometry shader module into a WGSL compute shader implementing the

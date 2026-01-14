@@ -1304,7 +1304,9 @@ impl AeroGpuMmioDevice {
                 while head != tail && processed < max {
                     // entry_count is validated as a power-of-two.
                     let slot = head & (ring_hdr.entry_count - 1);
-                    let desc_offset = match u64::from(slot).checked_mul(u64::from(ring_hdr.entry_stride_bytes)) {
+                    let desc_offset = match u64::from(slot)
+                        .checked_mul(u64::from(ring_hdr.entry_stride_bytes))
+                    {
                         Some(v) => v,
                         None => {
                             if let Some(head_addr) = self.ring_gpa.checked_add(RING_HEAD_OFFSET) {

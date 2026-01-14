@@ -218,7 +218,10 @@ fn machine_snapshot_preserves_virtio_input_msix_enable_and_mask() {
         .expect("pc platform should provide PCI config ports");
     {
         let mut pci_cfg = pci_cfg.borrow_mut();
-        for bdf in [profile::VIRTIO_INPUT_KEYBOARD.bdf, profile::VIRTIO_INPUT_MOUSE.bdf] {
+        for bdf in [
+            profile::VIRTIO_INPUT_KEYBOARD.bdf,
+            profile::VIRTIO_INPUT_MOUSE.bdf,
+        ] {
             let cfg = pci_cfg
                 .bus_mut()
                 .device_config_mut(bdf)
@@ -253,7 +256,10 @@ fn machine_snapshot_preserves_virtio_input_msix_enable_and_mask() {
                 .expect("restored runtime virtio-input should have MSI-X capability");
             (msix.enabled(), msix.function_masked())
         };
-        assert!(enabled, "expected restored virtio-input MSI-X to be enabled");
+        assert!(
+            enabled,
+            "expected restored virtio-input MSI-X to be enabled"
+        );
         assert!(
             function_masked,
             "expected restored virtio-input MSI-X function mask bit to be preserved"

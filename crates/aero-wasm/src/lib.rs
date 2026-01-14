@@ -5081,7 +5081,9 @@ impl Machine {
         let path_for_err = path.clone();
         let backend = aero_opfs::OpfsBackend::open_existing(&path)
             .await
-            .map_err(|e| opfs_disk_error_to_js("Machine.attach_install_media_opfs_iso", &path, e))?;
+            .map_err(|e| {
+                opfs_disk_error_to_js("Machine.attach_install_media_opfs_iso", &path, e)
+            })?;
         self.inner
             .attach_install_media_iso_and_set_overlay_ref(Box::new(backend), path)
             .map_err(|e| {

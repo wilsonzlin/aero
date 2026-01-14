@@ -98,4 +98,3 @@ fn aerogpu_snapshot_preserves_mode13h_scanout() {
     let pixel_after = m2.display_framebuffer()[(y as usize) * 320 + (x as usize)];
     assert_eq!(pixel_after, pixel_before);
 }
-

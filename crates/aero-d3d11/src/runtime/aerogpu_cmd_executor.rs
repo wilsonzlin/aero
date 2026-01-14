@@ -18861,10 +18861,7 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {{
                 .stage_mut(ShaderStage::Pixel)
                 .set_texture(0, Some(TEX));
             assert!(
-                exec.bindings
-                    .stage(ShaderStage::Pixel)
-                    .texture(0)
-                    .is_some(),
+                exec.bindings.stage(ShaderStage::Pixel).texture(0).is_some(),
                 "texture should be bound before SET_RENDER_TARGETS"
             );
 

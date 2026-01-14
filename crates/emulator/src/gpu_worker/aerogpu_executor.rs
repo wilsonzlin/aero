@@ -462,8 +462,7 @@ impl AeroGpuExecutor {
         let max = ring.entry_count.min(pending);
 
         while head != tail && processed < max {
-            let desc_offset =
-                u64::from(ring.slot_index(head)) * u64::from(ring.entry_stride_bytes);
+            let desc_offset = u64::from(ring.slot_index(head)) * u64::from(ring.entry_stride_bytes);
             let desc_gpa = match regs
                 .ring_gpa
                 .checked_add(AEROGPU_RING_HEADER_SIZE_BYTES)
