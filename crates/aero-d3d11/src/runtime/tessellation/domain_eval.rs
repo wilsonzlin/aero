@@ -76,8 +76,9 @@ pub fn build_triangle_domain_eval_wgsl(user_ds_wgsl: &str, out_reg_count: u32) -
 struct PatchMeta {{
     tess_level: u32,
     vertex_base: u32,
+    index_base: u32,
     vertex_count: u32,
-    _pad0: u32,
+    index_count: u32,
 }};
 
 @group({internal_group}) @binding({binding_patch_meta})

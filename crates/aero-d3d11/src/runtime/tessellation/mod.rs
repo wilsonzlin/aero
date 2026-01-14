@@ -516,6 +516,12 @@ mod tests {
         Ok(out)
     }
 
+    fn read_u32_le(bytes: &[u8]) -> u32 {
+        let mut arr = [0u8; 4];
+        arr.copy_from_slice(&bytes[..4]);
+        u32::from_le_bytes(arr)
+    }
+
     fn read_f32_le(bytes: &[u8]) -> f32 {
         let mut arr = [0u8; 4];
         arr.copy_from_slice(&bytes[..4]);
@@ -591,25 +597,41 @@ mod tests {
                 }
             };
 
-            let patch_count = 1u32;
+            let patch_count = 2u32;
             let tess_level = 2u32;
-            let expected_vertex_count = tessellator::tri_vertex_count(tess_level);
+            let expected_vertex_count_per_patch = tessellator::tri_vertex_count(tess_level);
+            let expected_index_count_per_patch = tessellator::tri_index_count(tess_level);
+            let expected_vertex_count_total = patch_count * expected_vertex_count_per_patch;
+            let expected_index_count_total = patch_count * expected_index_count_per_patch;
             let out_reg_count = 2u32;
 
             assert_eq!(
-                chunk_count_for_vertex_count(expected_vertex_count),
+                chunk_count_for_vertex_count(expected_vertex_count_per_patch),
                 1,
                 "expected vertex count should fit within one y-chunk of {DOMAIN_EVAL_WORKGROUP_SIZE_Y}"
             );
 
-            // Input control points for one triangle patch.
-            let cp0: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
-            let cp1: [f32; 4] = [1.0, 0.0, 0.0, 1.0];
-            let cp2: [f32; 4] = [0.0, 1.0, 0.0, 1.0];
-            let mut cp_bytes = Vec::with_capacity(3 * 16);
-            for cp in [cp0, cp1, cp2] {
-                for f in cp {
-                    cp_bytes.extend_from_slice(&f.to_le_bytes());
+            // Input control points for two triangle patches.
+            // Patch 1 is offset so we can assert `patch_id` / `vertex_base` handling.
+            let patch_control_points: [[[f32; 4]; 3]; 2] = [
+                [
+                    [0.0, 0.0, 0.0, 1.0],
+                    [1.0, 0.0, 0.0, 1.0],
+                    [0.0, 1.0, 0.0, 1.0],
+                ],
+                [
+                    [10.0, 0.0, 0.0, 1.0],
+                    [11.0, 0.0, 0.0, 1.0],
+                    [10.0, 1.0, 0.0, 1.0],
+                ],
+            ];
+
+            let mut cp_bytes = Vec::with_capacity(patch_count as usize * 3 * 16);
+            for patch in &patch_control_points {
+                for cp in patch {
+                    for &f in cp {
+                        cp_bytes.extend_from_slice(&f.to_le_bytes());
+                    }
                 }
             }
 
@@ -630,7 +652,7 @@ mod tests {
 
             let hs_patch_constants = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("tess test hs patch constants"),
-                size: 16, // one vec4 per patch
+                size: patch_count as u64 * 16, // one vec4 per patch
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
                 mapped_at_creation: false,
             });
@@ -667,7 +689,7 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {
     // One patch with 3 control points.
     if ((idx % 3u) == 0u) {
         let patch_id = idx / 3u;
-        out_patch_constants[patch_id] = vec4<f32>(f32(params.tess_level), 0.0, 0.0, 0.0);
+        out_patch_constants[patch_id] = vec4<f32>(f32(params.tess_level));
     }
 }
 "#;
@@ -760,55 +782,46 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
             });
 
-            // Layout pass: build PatchMeta + vertex_count_total.
+            // Layout pass: compute per-patch metadata (tess_level, counts, prefix sums).
+            let patch_meta_size = core::mem::size_of::<TessellationLayoutPatchMeta>() as u64;
             let patch_meta = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("tess test patch meta"),
-                size: 16, // one PatchMeta
+                size: patch_meta_size * patch_count as u64,
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
                 mapped_at_creation: false,
             });
 
-            let total_vertex_count = device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("tess test vertex count total"),
-                size: 4,
-                usage: wgpu::BufferUsages::STORAGE
-                    | wgpu::BufferUsages::COPY_SRC
-                    | wgpu::BufferUsages::COPY_DST,
+            let indirect_args_size =
+                core::mem::size_of::<crate::runtime::indirect_args::DrawIndexedIndirectArgs>() as u64;
+            let indirect_args = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("tess test indirect args"),
+                size: indirect_args_size,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
                 mapped_at_creation: false,
             });
-            queue.write_buffer(&total_vertex_count, 0, &0u32.to_le_bytes());
 
-            let layout_wgsl = format!(
-                r#"
-{tess_lib}
+            let layout_debug = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("tess test layout debug"),
+                size: 4,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+                mapped_at_creation: false,
+            });
 
-struct PatchMeta {{
-    tess_level: u32,
-    vertex_base: u32,
-    vertex_count: u32,
-    _pad0: u32,
-}};
+            let layout_params = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("tess test layout params"),
+                size: 16,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            let layout_params_value = TessellationLayoutParams {
+                patch_count,
+                max_vertices: expected_vertex_count_total,
+                max_indices: expected_index_count_total,
+                _pad0: 0,
+            };
+            queue.write_buffer(&layout_params, 0, &layout_params_value.to_le_bytes());
 
-@group(0) @binding(0) var<storage, read> hs_patch_constants: array<vec4<f32>>;
-@group(0) @binding(1) var<storage, read_write> out_meta: array<PatchMeta>;
-@group(0) @binding(2) var<storage, read_write> out_total: atomic<u32>;
-
-@compute @workgroup_size(1)
-fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {{
-    let patch_id = id.x;
-    let tess_level = u32(hs_patch_constants[patch_id].x);
-    let vertex_count = tri_vertex_count(tess_level);
-    let base = atomicAdd(&out_total, vertex_count);
-
-    out_meta[patch_id].tess_level = tess_level;
-    out_meta[patch_id].vertex_base = base;
-    out_meta[patch_id].vertex_count = vertex_count;
-    out_meta[patch_id]._pad0 = 0u;
-}}
-"#,
-                tess_lib = tessellator::wgsl_tri_tessellator_lib_default()
-            );
-
+            let layout_wgsl = super::layout_pass::wgsl_tessellation_layout_pass(0, 0, 1, 2, 3, 4);
             let layout_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("tess test layout module"),
                 source: wgpu::ShaderSource::Wgsl(layout_wgsl.into()),
@@ -821,6 +834,16 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {{
                         binding: 0,
                         visibility: wgpu::ShaderStages::COMPUTE,
                         ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: wgpu::BufferSize::new(16),
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Storage { read_only: true },
                             has_dynamic_offset: false,
                             min_binding_size: None,
@@ -828,7 +851,7 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {{
                         count: None,
                     },
                     wgpu::BindGroupLayoutEntry {
-                        binding: 1,
+                        binding: 2,
                         visibility: wgpu::ShaderStages::COMPUTE,
                         ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Storage { read_only: false },
@@ -838,7 +861,17 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {{
                         count: None,
                     },
                     wgpu::BindGroupLayoutEntry {
-                        binding: 2,
+                        binding: 3,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 4,
                         visibility: wgpu::ShaderStages::COMPUTE,
                         ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Storage { read_only: false },
@@ -856,15 +889,23 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {{
                 entries: &[
                     wgpu::BindGroupEntry {
                         binding: 0,
-                        resource: hs_patch_constants.as_entire_binding(),
+                        resource: layout_params.as_entire_binding(),
                     },
                     wgpu::BindGroupEntry {
                         binding: 1,
-                        resource: patch_meta.as_entire_binding(),
+                        resource: hs_patch_constants.as_entire_binding(),
                     },
                     wgpu::BindGroupEntry {
                         binding: 2,
-                        resource: total_vertex_count.as_entire_binding(),
+                        resource: patch_meta.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: indirect_args.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: layout_debug.as_entire_binding(),
                     },
                 ],
             });
@@ -885,7 +926,7 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {{
                 });
 
             // DS eval pass: consumes meta + HS outputs, writes expanded vertex buffer.
-            let expanded_size = expected_vertex_count as u64 * out_reg_count as u64 * 16;
+            let expanded_size = expected_vertex_count_total as u64 * out_reg_count as u64 * 16;
             let expanded_vertices = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("tess test expanded vertices"),
                 size: expanded_size,
@@ -977,18 +1018,32 @@ fn ds_eval(patch_id: u32, domain: vec3<f32>, _local_vertex: u32) -> AeroDsOut {
                 });
                 pass.set_pipeline(&layout_pipeline);
                 pass.set_bind_group(0, &layout_bg, &[]);
-                pass.dispatch_workgroups(patch_count, 1, 1);
+                // The layout pass performs its own serial loop over patches; only one invocation is
+                // required (it ignores `gid.x != 0`).
+                pass.dispatch_workgroups(1, 1, 1);
             }
             ds_pipeline.dispatch(
                 &mut encoder,
                 &ds_internal_bg,
                 &ds_domain_bg,
                 patch_count,
-                chunk_count_for_vertex_count(expected_vertex_count),
+                chunk_count_for_vertex_count(expected_vertex_count_per_patch),
             );
 
-            let staging_total = device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("tess test staging total"),
+            let staging_patch_meta = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("tess test staging patch meta"),
+                size: patch_meta_size * patch_count as u64,
+                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            let staging_indirect = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("tess test staging indirect args"),
+                size: indirect_args_size,
+                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            let staging_debug = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("tess test staging layout debug"),
                 size: 4,
                 usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
@@ -1000,22 +1055,73 @@ fn ds_eval(patch_id: u32, domain: vec3<f32>, _local_vertex: u32) -> AeroDsOut {
                 mapped_at_creation: false,
             });
 
-            encoder.copy_buffer_to_buffer(&total_vertex_count, 0, &staging_total, 0, 4);
             encoder.copy_buffer_to_buffer(
-                &expanded_vertices,
+                &patch_meta,
                 0,
-                &staging_vertices,
+                &staging_patch_meta,
                 0,
-                expanded_size,
+                patch_meta_size * patch_count as u64,
             );
+            encoder.copy_buffer_to_buffer(&indirect_args, 0, &staging_indirect, 0, indirect_args_size);
+            encoder.copy_buffer_to_buffer(&layout_debug, 0, &staging_debug, 0, 4);
+            encoder.copy_buffer_to_buffer(&expanded_vertices, 0, &staging_vertices, 0, expanded_size);
 
             queue.submit([encoder.finish()]);
 
-            let total_bytes = read_buffer(&device, &staging_total, 4).await.unwrap();
-            let total = u32::from_le_bytes(total_bytes[..4].try_into().unwrap());
+            let meta_bytes = read_buffer(
+                &device,
+                &staging_patch_meta,
+                (patch_meta_size * patch_count as u64) as usize,
+            )
+            .await
+            .unwrap();
+
+            let meta0 = 0usize;
+            let meta1 = patch_meta_size as usize;
+            let tess0 = read_u32_le(&meta_bytes[meta0 + 0..meta0 + 4]);
+            let vb0 = read_u32_le(&meta_bytes[meta0 + 4..meta0 + 8]);
+            let ib0 = read_u32_le(&meta_bytes[meta0 + 8..meta0 + 12]);
+            let vc0 = read_u32_le(&meta_bytes[meta0 + 12..meta0 + 16]);
+            let ic0 = read_u32_le(&meta_bytes[meta0 + 16..meta0 + 20]);
+
+            let tess1 = read_u32_le(&meta_bytes[meta1 + 0..meta1 + 4]);
+            let vb1 = read_u32_le(&meta_bytes[meta1 + 4..meta1 + 8]);
+            let ib1 = read_u32_le(&meta_bytes[meta1 + 8..meta1 + 12]);
+            let vc1 = read_u32_le(&meta_bytes[meta1 + 12..meta1 + 16]);
+            let ic1 = read_u32_le(&meta_bytes[meta1 + 16..meta1 + 20]);
+
+            assert_eq!(tess0, tess_level);
+            assert_eq!(vc0, expected_vertex_count_per_patch);
+            assert_eq!(vb0, 0);
+            assert_eq!(ic0, expected_index_count_per_patch);
+            assert_eq!(ib0, 0);
+
+            assert_eq!(tess1, tess_level);
+            assert_eq!(vc1, expected_vertex_count_per_patch);
+            assert_eq!(vb1, expected_vertex_count_per_patch);
+            assert_eq!(ic1, expected_index_count_per_patch);
+            assert_eq!(ib1, expected_index_count_per_patch);
+
+            let vertex_count_total = vb1 + vc1;
             assert_eq!(
-                total, expected_vertex_count,
+                vertex_count_total, expected_vertex_count_total,
                 "vertex_count_total should match triangle integer-partitioning formula"
+            );
+
+            let debug_bytes = read_buffer(&device, &staging_debug, 4).await.unwrap();
+            assert_eq!(
+                read_u32_le(&debug_bytes[0..4]),
+                0,
+                "layout pass should not clamp tessellation for this test"
+            );
+
+            let indirect_bytes = read_buffer(&device, &staging_indirect, indirect_args_size as usize)
+                .await
+                .unwrap();
+            assert_eq!(
+                read_u32_le(&indirect_bytes[0..4]),
+                expected_index_count_total,
+                "layout pass indirect args index_count mismatch"
             );
 
             let vbytes = read_buffer(&device, &staging_vertices, expanded_size as usize)
@@ -1024,32 +1130,39 @@ fn ds_eval(patch_id: u32, domain: vec3<f32>, _local_vertex: u32) -> AeroDsOut {
 
             // Validate a few known vertices. `out_reg_count=2`, so each vertex is 2x vec4.
             let stride = out_reg_count as usize * 16;
-            for &idx in &[0u32, 1u32, 2u32, expected_vertex_count - 1] {
-                let domain = tessellator::tri_vertex_domain_location(tess_level, idx);
-                let expected_pos = [
-                    cp0[0] * domain[0] + cp1[0] * domain[1] + cp2[0] * domain[2],
-                    cp0[1] * domain[0] + cp1[1] * domain[1] + cp2[1] * domain[2],
-                    cp0[2] * domain[0] + cp1[2] * domain[1] + cp2[2] * domain[2],
-                    cp0[3] * domain[0] + cp1[3] * domain[1] + cp2[3] * domain[2],
-                ];
+            for (patch_id, base_vertex) in [(0u32, vb0), (1u32, vb1)] {
+                for &local in &[0u32, 1u32, expected_vertex_count_per_patch - 1] {
+                    let domain = tessellator::tri_vertex_domain_location(tess_level, local);
+                    let cps = patch_control_points[patch_id as usize];
+                    let cp0 = cps[0];
+                    let cp1 = cps[1];
+                    let cp2 = cps[2];
+                    let expected_pos = [
+                        cp0[0] * domain[0] + cp1[0] * domain[1] + cp2[0] * domain[2],
+                        cp0[1] * domain[0] + cp1[1] * domain[1] + cp2[1] * domain[2],
+                        cp0[2] * domain[0] + cp1[2] * domain[1] + cp2[2] * domain[2],
+                        cp0[3] * domain[0] + cp1[3] * domain[1] + cp2[3] * domain[2],
+                    ];
 
-                let base = idx as usize * stride;
-                let got_o0 = read_vec4_f32_le(&vbytes[base..base + 16]);
-                let got_o1 = read_vec4_f32_le(&vbytes[base + 16..base + 32]);
+                    let global = base_vertex + local;
+                    let base = global as usize * stride;
+                    let got_o0 = read_vec4_f32_le(&vbytes[base..base + 16]);
+                    let got_o1 = read_vec4_f32_le(&vbytes[base + 16..base + 32]);
 
-                for c in 0..4 {
-                    assert!(
-                        (got_o0[c] - expected_pos[c]).abs() < 1e-6,
-                        "vertex {idx} o0[{c}] mismatch: got {} expected {}",
-                        got_o0[c],
-                        expected_pos[c]
-                    );
-                    assert!(
-                        (got_o1[c] - expected_pos[c] * 2.0).abs() < 1e-6,
-                        "vertex {idx} o1[{c}] mismatch: got {} expected {}",
-                        got_o1[c],
-                        expected_pos[c] * 2.0
-                    );
+                    for c in 0..4 {
+                        assert!(
+                            (got_o0[c] - expected_pos[c]).abs() < 1e-6,
+                            "patch {patch_id} vertex {local} o0[{c}] mismatch: got {} expected {}",
+                            got_o0[c],
+                            expected_pos[c]
+                        );
+                        assert!(
+                            (got_o1[c] - expected_pos[c] * 2.0).abs() < 1e-6,
+                            "patch {patch_id} vertex {local} o1[{c}] mismatch: got {} expected {}",
+                            got_o1[c],
+                            expected_pos[c] * 2.0
+                        );
+                    }
                 }
             }
         });

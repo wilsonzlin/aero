@@ -2427,6 +2427,7 @@ fn binding_def_to_layout_entry(def: &BindingDef) -> wgpu::BindGroupLayoutEntry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::borrow::Cow;
     use aero_gpu::protocol_d3d11::{CmdWriter, RenderPipelineDesc};
 
     #[test]
