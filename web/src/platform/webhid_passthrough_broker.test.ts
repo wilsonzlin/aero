@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createIpcBuffer, openRingByKind } from "../ipc/ipc";
 import { decodeHidInputReportRingRecord } from "../hid/hid_input_report_ring";
+import { StatusIndex } from "../runtime/shared_layout";
 import { UHCI_EXTERNAL_HUB_FIRST_DYNAMIC_PORT } from "../usb/uhci_external_hub";
 import type { HidPassthroughMessage } from "./hid_passthrough_protocol";
 import { WebHidPassthroughManager } from "./webhid_passthrough";
@@ -776,6 +777,8 @@ describe("WebHidPassthroughManager broker (main thread ↔ I/O worker)", () => {
       const target = new TestTarget();
       // Keep the cap small so the test can exercise dropping deterministically.
       const manager = new WebHidPassthroughManager({ hid: null, target, maxPendingDeviceSends: 1 });
+      const status = new Int32Array(new SharedArrayBuffer(64 * 4));
+      manager.setInputReportRing(null, status);
 
       await manager.attachKnownDevice(device as unknown as HIDDevice);
       const attach = target.posted.find((entry) => entry.message.type === "hid:attach")!.message as any;
@@ -819,6 +822,7 @@ describe("WebHidPassthroughManager broker (main thread ↔ I/O worker)", () => {
       expect(device.sendReport).toHaveBeenCalledTimes(2);
       expect(device.sendReport.mock.calls[0]![0]).toBe(1);
       expect(device.sendReport.mock.calls[1]![0]).toBe(2);
+      expect(Atomics.load(status, StatusIndex.IoHidOutputReportDropCounter)).toBe(1);
       expect(warn).toHaveBeenCalled();
     } finally {
       warn.mockRestore();

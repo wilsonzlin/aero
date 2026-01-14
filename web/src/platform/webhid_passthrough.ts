@@ -309,6 +309,14 @@ export class WebHidPassthroughManager {
   #recordOutputSendDrop(deviceId: string): void {
     this.#outputSendDropped += 1;
     this.#outputSendDroppedByDeviceId.set(deviceId, (this.#outputSendDroppedByDeviceId.get(deviceId) ?? 0) + 1);
+    const status = this.#status;
+    if (status) {
+      try {
+        Atomics.add(status, StatusIndex.IoHidOutputReportDropCounter, 1);
+      } catch {
+        // ignore (status may not be SharedArrayBuffer-backed in tests/harnesses)
+      }
+    }
     this.#warnOutputSendDrop(deviceId);
   }
 
