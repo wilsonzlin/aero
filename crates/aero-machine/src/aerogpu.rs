@@ -325,13 +325,14 @@ impl AeroGpuMmioDevice {
     /// Note: This is *not* part of the guest-visible BAR0 register file and is therefore stored as a
     /// machine-level snapshot extension tag.
     pub(crate) fn save_exec_snapshot_state_v1(&self) -> Vec<u8> {
-        const VERSION: u32 = 1;
+        const VERSION: u32 = 2;
 
         let mut enc = Encoder::new()
             .u32(VERSION)
             .bool(self.submission_bridge_enabled)
             .bool(self.doorbell_pending)
             .bool(self.ring_reset_pending)
+            .bool(self.ring_reset_pending_dma)
             .bool(self.fence_page_dirty);
 
         // Pending fences (ordered).
@@ -389,7 +390,7 @@ impl AeroGpuMmioDevice {
         let mut d = Decoder::new(bytes);
 
         let version = d.u32()?;
-        if version != 1 {
+        if version != 1 && version != 2 {
             return Err(SnapshotError::InvalidFieldEncoding(
                 "aerogpu.exec_state.version",
             ));
@@ -398,6 +399,7 @@ impl AeroGpuMmioDevice {
         let submission_bridge_enabled = d.bool()?;
         let doorbell_pending = d.bool()?;
         let ring_reset_pending = d.bool()?;
+        let ring_reset_pending_dma = if version >= 2 { d.bool()? } else { false };
         let fence_page_dirty = d.bool()?;
 
         let pending_fence_count = d.u32()? as usize;
@@ -501,6 +503,7 @@ impl AeroGpuMmioDevice {
 
         self.doorbell_pending = doorbell_pending;
         self.ring_reset_pending = ring_reset_pending;
+        self.ring_reset_pending_dma = ring_reset_pending_dma;
         self.fence_page_dirty = fence_page_dirty;
         self.pending_fence_completions = pending_fence_completions;
         self.backend_completed_fences = backend_completed_fences;
@@ -1477,8 +1480,8 @@ impl AeroGpuMmioDevice {
         self.tick_vblank(now_ns);
 
         // Ring control RESET is an MMIO write-side effect, but touching the ring header requires
-        // DMA; perform the actual memory update from the machine's device tick path when bus
-        // mastering is enabled.
+        // DMA. Reset internal state immediately, but defer the DMA portion (sync head -> tail and
+        // rewrite the fence page) until PCI COMMAND.BME is enabled.
         if self.ring_reset_pending {
             self.ring_reset_pending = false;
             self.doorbell_pending = false;
@@ -1499,7 +1502,7 @@ impl AeroGpuMmioDevice {
         }
 
         // Ring reset requests must still update guest memory (ring head + fence page) once DMA is
-        // permitted again.
+        // permitted again. If bus mastering is disabled, defer this until DMA is permitted.
         if self.ring_reset_pending_dma && dma_enabled {
             self.ring_reset_pending_dma = false;
 
@@ -3225,7 +3228,7 @@ mod tests {
 
 impl IoSnapshot for AeroGpuMmioDevice {
     const DEVICE_ID: [u8; 4] = *b"AGPU";
-    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 1);
 
     fn save_state(&self) -> Vec<u8> {
         const TAG_ABI_VERSION: u16 = 1;
@@ -3265,6 +3268,7 @@ impl IoSnapshot for AeroGpuMmioDevice {
 
         const TAG_DOORBELL_PENDING: u16 = 32;
         const TAG_RING_RESET_PENDING: u16 = 33;
+        const TAG_RING_RESET_PENDING_DMA: u16 = 35;
 
         // Scanout dirty flag exists only when the shared scanout interface is enabled.
         #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
@@ -3316,6 +3320,7 @@ impl IoSnapshot for AeroGpuMmioDevice {
 
         w.field_bool(TAG_DOORBELL_PENDING, self.doorbell_pending);
         w.field_bool(TAG_RING_RESET_PENDING, self.ring_reset_pending);
+        w.field_bool(TAG_RING_RESET_PENDING_DMA, self.ring_reset_pending_dma);
 
         #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
         {
@@ -3363,6 +3368,7 @@ impl IoSnapshot for AeroGpuMmioDevice {
 
         const TAG_DOORBELL_PENDING: u16 = 32;
         const TAG_RING_RESET_PENDING: u16 = 33;
+        const TAG_RING_RESET_PENDING_DMA: u16 = 35;
 
         #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
         const TAG_SCANOUT0_DIRTY: u16 = 34;
@@ -3465,6 +3471,7 @@ impl IoSnapshot for AeroGpuMmioDevice {
 
         let doorbell_pending = r.bool(TAG_DOORBELL_PENDING)?.unwrap_or(false);
         let ring_reset_pending = r.bool(TAG_RING_RESET_PENDING)?.unwrap_or(false);
+        let ring_reset_pending_dma = r.bool(TAG_RING_RESET_PENDING_DMA)?.unwrap_or(false);
 
         #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
         let scanout0_dirty = r.bool(TAG_SCANOUT0_DIRTY)?.unwrap_or(true);
@@ -3521,6 +3528,7 @@ impl IoSnapshot for AeroGpuMmioDevice {
 
         self.doorbell_pending = doorbell_pending;
         self.ring_reset_pending = ring_reset_pending;
+        self.ring_reset_pending_dma = ring_reset_pending_dma;
 
         // Defensive: if scanout or vblank pacing is disabled, do not leave a pending deadline.
         if self.vblank_interval_ns.is_none() || !self.scanout0_enable {

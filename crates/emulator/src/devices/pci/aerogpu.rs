@@ -99,6 +99,7 @@ pub struct AeroGpuPciDevice {
     suppress_vblank_irq: bool,
 
     ring_reset_pending: bool,
+    ring_reset_pending_dma: bool,
     doorbell_pending: bool,
 }
 
@@ -179,6 +180,7 @@ impl AeroGpuPciDevice {
             next_vblank_ns: None,
             suppress_vblank_irq: false,
             ring_reset_pending: false,
+            ring_reset_pending_dma: false,
             doorbell_pending: false,
         }
     }
@@ -407,6 +409,7 @@ impl AeroGpuPciDevice {
         self.next_vblank_ns = None;
         self.suppress_vblank_irq = false;
         self.ring_reset_pending = false;
+        self.ring_reset_pending_dma = false;
         self.doorbell_pending = false;
 
         // Reset scanout-state publish bookkeeping. If a reset occurs mid-framebuffer-address update,
@@ -439,8 +442,14 @@ impl AeroGpuPciDevice {
 
         if self.ring_reset_pending {
             self.ring_reset_pending = false;
-            self.doorbell_pending = false;
-            self.reset_ring(mem);
+            self.reset_ring_internal();
+        }
+
+        // Ring reset has DMA side effects (sync head -> tail and rewrite the fence page). If bus
+        // mastering is disabled, defer the DMA portion until COMMAND.BME is enabled.
+        if self.ring_reset_pending_dma && dma_enabled {
+            self.reset_ring_dma(mem);
+            self.ring_reset_pending_dma = false;
         }
 
         // Polling completions and flushing fences may write guest memory (fence page / writeback).
@@ -633,14 +642,7 @@ impl AeroGpuPciDevice {
         self.irq_level = (self.regs.irq_status & self.regs.irq_enable) != 0;
     }
 
-    fn reset_ring(&mut self, mem: &mut dyn MemoryBus) {
-        let dma_enabled = self.bus_master_enabled();
-        if dma_enabled && self.regs.ring_gpa != 0 {
-            if let Some(tail_addr) = self.regs.ring_gpa.checked_add(RING_TAIL_OFFSET) {
-                let tail = mem.read_u32(tail_addr);
-                AeroGpuRingHeader::write_head(mem, self.regs.ring_gpa, tail);
-            }
-        }
+    fn reset_ring_internal(&mut self) {
         self.executor.reset();
         self.regs.completed_fence = 0;
         // Treat ring reset as a device-local recovery point: clear any previously latched error
@@ -649,7 +651,24 @@ impl AeroGpuPciDevice {
         self.regs.error_fence = 0;
         self.regs.error_count = 0;
         self.regs.current_submission_fence = 0;
-        if dma_enabled && self.regs.fence_gpa != 0 {
+        self.regs.irq_status = 0;
+        self.update_irq_level();
+        // A ring reset discards any pending doorbell notification. The guest is expected to
+        // reinitialize ring state (including head/tail) before submitting more work.
+        self.doorbell_pending = false;
+        // DMA portion (updating ring head + fence page) will run on the next tick if bus mastering
+        // is enabled.
+        self.ring_reset_pending_dma = true;
+    }
+
+    fn reset_ring_dma(&mut self, mem: &mut dyn MemoryBus) {
+        if self.regs.ring_gpa != 0 {
+            if let Some(tail_addr) = self.regs.ring_gpa.checked_add(RING_TAIL_OFFSET) {
+                let tail = mem.read_u32(tail_addr);
+                AeroGpuRingHeader::write_head(mem, self.regs.ring_gpa, tail);
+            }
+        }
+        if self.regs.fence_gpa != 0 {
             write_fence_page(
                 mem,
                 self.regs.fence_gpa,
@@ -657,8 +676,6 @@ impl AeroGpuPciDevice {
                 self.regs.completed_fence,
             );
         }
-        self.regs.irq_status = 0;
-        self.update_irq_level();
     }
 
     fn mmio_read_dword(&self, offset: u64) -> u32 {
