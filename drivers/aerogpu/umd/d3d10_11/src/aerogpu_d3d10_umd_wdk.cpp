@@ -6757,6 +6757,10 @@ void APIENTRY IaSetInputLayout(D3D10DDI_HDEVICE hDevice, D3D10DDI_HELEMENTLAYOUT
   dev->current_input_layout = handle;
 
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_input_layout>(AEROGPU_CMD_SET_INPUT_LAYOUT);
+  if (!cmd) {
+    SetError(hDevice, E_OUTOFMEMORY);
+    return;
+  }
   cmd->input_layout_handle = handle;
   cmd->reserved0 = 0;
 }
@@ -6866,6 +6870,10 @@ void APIENTRY IaSetIndexBuffer(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hBuf
   dev->current_ib_res = ib_res;
 
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_index_buffer>(AEROGPU_CMD_SET_INDEX_BUFFER);
+  if (!cmd) {
+    SetError(hDevice, E_OUTOFMEMORY);
+    return;
+  }
   cmd->buffer = ib_res ? ib_res->handle : 0;
   cmd->format = dxgi_index_format_to_aerogpu(static_cast<uint32_t>(format));
   cmd->offset_bytes = offset;
@@ -6889,9 +6897,12 @@ void APIENTRY IaSetTopology(D3D10DDI_HDEVICE hDevice, D3D10_DDI_PRIMITIVE_TOPOLO
   if (dev->current_topology == topo_u32) {
     return;
   }
-  dev->current_topology = topo_u32;
-
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_primitive_topology>(AEROGPU_CMD_SET_PRIMITIVE_TOPOLOGY);
+  if (!cmd) {
+    SetError(hDevice, E_OUTOFMEMORY);
+    return;
+  }
+  dev->current_topology = topo_u32;
   cmd->topology = topo_u32;
   cmd->reserved0 = 0;
 }
@@ -7165,6 +7176,10 @@ void APIENTRY ClearState(D3D10DDI_HDEVICE hDevice) {
     auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_constant_buffers>(AEROGPU_CMD_SET_CONSTANT_BUFFERS,
                                                                               zeros,
                                                                               sizeof(zeros));
+    if (!cmd) {
+      SetError(hDevice, E_OUTOFMEMORY);
+      return;
+    }
     cmd->shader_stage = shader_stage;
     cmd->start_slot = 0;
     cmd->buffer_count = kMaxConstantBufferSlots;
@@ -7201,6 +7216,10 @@ void APIENTRY ClearState(D3D10DDI_HDEVICE hDevice) {
     auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_samplers>(AEROGPU_CMD_SET_SAMPLERS,
                                                                        zeros,
                                                                        sizeof(zeros));
+    if (!cmd) {
+      SetError(hDevice, E_OUTOFMEMORY);
+      return;
+    }
     cmd->shader_stage = shader_stage;
     cmd->start_slot = 0;
     cmd->sampler_count = kMaxSamplerSlots;
@@ -7227,13 +7246,21 @@ void APIENTRY ClearState(D3D10DDI_HDEVICE hDevice) {
 
   dev->current_input_layout = 0;
   auto* il_cmd = dev->cmd.append_fixed<aerogpu_cmd_set_input_layout>(AEROGPU_CMD_SET_INPUT_LAYOUT);
-  il_cmd->input_layout_handle = 0;
-  il_cmd->reserved0 = 0;
+  if (!il_cmd) {
+    SetError(hDevice, E_OUTOFMEMORY);
+  } else {
+    il_cmd->input_layout_handle = 0;
+    il_cmd->reserved0 = 0;
+  }
 
-  dev->current_topology = AEROGPU_TOPOLOGY_TRIANGLELIST;
   auto* topo_cmd = dev->cmd.append_fixed<aerogpu_cmd_set_primitive_topology>(AEROGPU_CMD_SET_PRIMITIVE_TOPOLOGY);
-  topo_cmd->topology = AEROGPU_TOPOLOGY_TRIANGLELIST;
-  topo_cmd->reserved0 = 0;
+  if (!topo_cmd) {
+    SetError(hDevice, E_OUTOFMEMORY);
+  } else {
+    dev->current_topology = AEROGPU_TOPOLOGY_TRIANGLELIST;
+    topo_cmd->topology = AEROGPU_TOPOLOGY_TRIANGLELIST;
+    topo_cmd->reserved0 = 0;
+  }
 
   dev->current_vb_res = nullptr;
   dev->current_ib_res = nullptr;
@@ -7254,6 +7281,10 @@ void APIENTRY ClearState(D3D10DDI_HDEVICE hDevice) {
   vb_cmd->buffer_count = kMaxVertexBufferSlots;
 
   auto* ib_cmd = dev->cmd.append_fixed<aerogpu_cmd_set_index_buffer>(AEROGPU_CMD_SET_INDEX_BUFFER);
+  if (!ib_cmd) {
+    SetError(hDevice, E_OUTOFMEMORY);
+    return;
+  }
   ib_cmd->buffer = 0;
   ib_cmd->format = AEROGPU_INDEX_FORMAT_UINT16;
   ib_cmd->offset_bytes = 0;
@@ -7396,6 +7427,10 @@ static void SetSamplersLocked(AeroGpuDevice* dev,
 
   auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_samplers>(
       AEROGPU_CMD_SET_SAMPLERS, handles.data(), handles.size() * sizeof(handles[0]));
+  if (!cmd) {
+    SetError(hDevice, E_OUTOFMEMORY);
+    return;
+  }
   cmd->shader_stage = shader_stage;
   cmd->start_slot = start_slot;
   cmd->sampler_count = sampler_count;
