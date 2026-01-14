@@ -529,6 +529,10 @@ fn sm4_gs_emit_cut_translates_to_wgsl_compute_prepass() {
         wgsl.contains("varyings[1u] = o1;"),
         "expected o1 to map to varyings[1] in expanded vertex output:\n{wgsl}"
     );
+    assert!(
+        wgsl.contains("out_vertices.data[vtx_idx].varyings = array<vec4<f32>, 32>();"),
+        "expected gs_emit to zero-initialize the full varyings table for deterministic output:\n{wgsl}"
+    );
 
     assert_wgsl_validates(&wgsl);
 }
