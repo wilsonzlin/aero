@@ -49,7 +49,9 @@ test("gpu worker smoke: disableWebGpu forces WebGL2 fallback", async ({ page, br
   // The worker should emit a structured Init warning event describing the fallback.
   await page.waitForFunction(() => {
     const text = document.getElementById("status")?.textContent ?? "";
-    return text.includes("gpu_event warn Init:") && text.includes("GPU backend init fell back from");
+    // The smoke page may include the backend kind in parentheses (e.g. `Init (webgl2_raw)`),
+    // so avoid matching an exact `Init:` substring.
+    return text.includes("gpu_event warn Init") && text.includes("GPU backend init fell back from");
   });
 
   const result = await page.evaluate(() => {
@@ -95,12 +97,14 @@ test("gpu worker smoke: presenter errors emit structured events", async ({ page,
 
   await page.waitForFunction(() => {
     const text = document.getElementById("status")?.textContent ?? "";
-    return text.includes("gpu_event error Validation:") && text.includes("cursor_set_image width/height must be non-zero");
+    return (
+      text.includes("gpu_event error Validation") && text.includes("cursor_set_image width/height must be non-zero")
+    );
   });
 
   const counts = await page.evaluate(() => {
     const text = document.getElementById("status")?.textContent ?? "";
-    const eventNeedle = "gpu_event error Validation:";
+    const eventNeedle = "gpu_event error Validation";
     const errorNeedle = "gpu_error msg=cursor_set_image width/height must be non-zero";
     return {
       events: text.split(eventNeedle).length - 1,
@@ -121,7 +125,7 @@ test("gpu worker smoke: init failure emits structured Init fatal event", async (
 
   await page.waitForFunction(() => {
     const text = document.getElementById("status")?.textContent ?? "";
-    return text.includes("gpu_event fatal Init:") && text.includes("WebGPU backend was disabled");
+    return text.includes("gpu_event fatal Init") && text.includes("WebGPU backend was disabled");
   });
 
   const initEvent = await page.evaluate(() => {
