@@ -32,26 +32,32 @@ function parseRustUsizeConstExpr(source: string, name: string): string {
 
 describe("UHCI WebUSB root port reservation matches web runtime topology", () => {
   it("reserves a different root port than the external hub so WebUSB + WebHID/synthetic HID can coexist", () => {
-    const rustUrl = new URL("../../../crates/aero-wasm/src/uhci_controller_bridge.rs", import.meta.url);
-    const rust = readFileSync(rustUrl, "utf8");
-
     const portsUrl = new URL("../../../crates/aero-wasm/src/webusb_ports.rs", import.meta.url);
     const ports = readFileSync(portsUrl, "utf8");
     const sharedWebusbRootPort = parseRustU8ConstLiteral(ports, "WEBUSB_ROOT_PORT");
 
-    const uhciWebusbRootPortExpr = parseRustUsizeConstExpr(rust, "WEBUSB_ROOT_PORT").trim();
-    let uhciWebusbRootPort: number;
-    if (uhciWebusbRootPortExpr === "crate::webusb_ports::WEBUSB_ROOT_PORT as usize") {
-      uhciWebusbRootPort = sharedWebusbRootPort;
-    } else if (/^\d+$/.test(uhciWebusbRootPortExpr)) {
-      uhciWebusbRootPort = Number(uhciWebusbRootPortExpr);
-    } else {
-      throw new Error(`Unexpected UHCI WEBUSB_ROOT_PORT expression: ${uhciWebusbRootPortExpr}`);
-    }
-    expect(uhciWebusbRootPort).toBe(sharedWebusbRootPort);
+    const parseWebusbRootPort = (source: string, label: string): number => {
+      const expr = parseRustUsizeConstExpr(source, "WEBUSB_ROOT_PORT").trim();
+      if (expr === "crate::webusb_ports::WEBUSB_ROOT_PORT as usize") {
+        return sharedWebusbRootPort;
+      }
+      if (/^\d+$/.test(expr)) {
+        return Number(expr);
+      }
+      throw new Error(`Unexpected ${label} WEBUSB_ROOT_PORT expression: ${expr}`);
+    };
+
+    const bridgeUrl = new URL("../../../crates/aero-wasm/src/uhci_controller_bridge.rs", import.meta.url);
+    const bridgeRust = readFileSync(bridgeUrl, "utf8");
+    const bridgeWebusbRootPort = parseWebusbRootPort(bridgeRust, "UHCI bridge");
+    expect(bridgeWebusbRootPort).toBe(sharedWebusbRootPort);
+
+    const runtimeUrl = new URL("../../../crates/aero-wasm/src/uhci_runtime.rs", import.meta.url);
+    const runtimeRust = readFileSync(runtimeUrl, "utf8");
+    const runtimeWebusbRootPort = parseWebusbRootPort(runtimeRust, "UHCI runtime");
+    expect(runtimeWebusbRootPort).toBe(sharedWebusbRootPort);
 
     expect(sharedWebusbRootPort).toBe(WEBUSB_GUEST_ROOT_PORT);
     expect(sharedWebusbRootPort).not.toBe(EXTERNAL_HUB_ROOT_PORT);
   });
 });
-
