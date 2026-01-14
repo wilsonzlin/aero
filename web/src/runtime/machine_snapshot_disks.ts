@@ -163,8 +163,13 @@ export async function reattachMachineSnapshotDisks(opts: {
     (machine as unknown as { attachInstallMediaIsoOpfsForRestore?: unknown }).attachInstallMediaIsoOpfsForRestore ??
     // Back-compat: some builds expose a dedicated `_existing` helper for the same restore-aware ISO attachment path.
     (machine as unknown as { attach_install_media_iso_opfs_existing?: unknown }).attach_install_media_iso_opfs_existing ??
+    (machine as unknown as { attachInstallMediaIsoOpfsExisting?: unknown }).attachInstallMediaIsoOpfsExisting ??
     (machine as unknown as { attach_install_media_iso_opfs_existing_and_set_overlay_ref?: unknown })
       .attach_install_media_iso_opfs_existing_and_set_overlay_ref ??
+    (machine as unknown as { attachInstallMediaIsoOpfsExistingAndSetOverlayRef?: unknown })
+      .attachInstallMediaIsoOpfsExistingAndSetOverlayRef ??
+    (machine as unknown as { attach_install_media_iso_opfs_and_set_overlay_ref?: unknown }).attach_install_media_iso_opfs_and_set_overlay_ref ??
+    (machine as unknown as { attachInstallMediaIsoOpfsAndSetOverlayRef?: unknown }).attachInstallMediaIsoOpfsAndSetOverlayRef ??
     (machine as unknown as { attach_install_media_iso_opfs_for_restore_and_set_overlay_ref?: unknown })
       .attach_install_media_iso_opfs_for_restore_and_set_overlay_ref ??
     (machine as unknown as { attachInstallMediaIsoOpfsForRestoreAndSetOverlayRef?: unknown })
@@ -181,6 +186,16 @@ export async function reattachMachineSnapshotDisks(opts: {
       .attach_ide_primary_master_disk_opfs_existing_and_set_overlay_ref ??
     (machine as unknown as { attachIdePrimaryMasterDiskOpfsExistingAndSetOverlayRef?: unknown })
       .attachIdePrimaryMasterDiskOpfsExistingAndSetOverlayRef;
+
+  const setAhciPort0OverlayRef =
+    (machine as unknown as { set_ahci_port0_disk_overlay_ref?: unknown }).set_ahci_port0_disk_overlay_ref ??
+    (machine as unknown as { setAhciPort0DiskOverlayRef?: unknown }).setAhciPort0DiskOverlayRef;
+  const setIdeSecondaryMasterAtapiOverlayRef =
+    (machine as unknown as { set_ide_secondary_master_atapi_overlay_ref?: unknown }).set_ide_secondary_master_atapi_overlay_ref ??
+    (machine as unknown as { setIdeSecondaryMasterAtapiOverlayRef?: unknown }).setIdeSecondaryMasterAtapiOverlayRef;
+  const setIdePrimaryMasterAtaOverlayRef =
+    (machine as unknown as { set_ide_primary_master_ata_overlay_ref?: unknown }).set_ide_primary_master_ata_overlay_ref ??
+    (machine as unknown as { setIdePrimaryMasterAtaOverlayRef?: unknown }).setIdePrimaryMasterAtaOverlayRef;
 
   for (const entry of raw) {
     if (!isMachineSnapshotDiskOverlayRef(entry)) {
@@ -221,7 +236,9 @@ export async function reattachMachineSnapshotDisks(opts: {
         if (isAerosparBase) {
           if (canOpenAerospar) {
             await callMaybeAsync(openAerospar as (...args: unknown[]) => unknown, machine, [base]);
-            machine.set_ahci_port0_disk_overlay_ref?.(base, "");
+            if (typeof setAhciPort0OverlayRef === "function") {
+              (setAhciPort0OverlayRef as (base: string, overlay: string) => void).call(machine, base, "");
+            }
             continue;
           }
 
@@ -236,7 +253,9 @@ export async function reattachMachineSnapshotDisks(opts: {
             // so we can reopen aerosparse disks even when the dedicated `set_disk_aerospar_opfs_open`
             // exports are absent.
             await callMaybeAsync(openViaFormat as (...args: unknown[]) => unknown, machine, [base, "aerospar"]);
-            machine.set_ahci_port0_disk_overlay_ref?.(base, "");
+            if (typeof setAhciPort0OverlayRef === "function") {
+              (setAhciPort0OverlayRef as (base: string, overlay: string) => void).call(machine, base, "");
+            }
             continue;
           }
 
@@ -257,7 +276,9 @@ export async function reattachMachineSnapshotDisks(opts: {
           );
         }
         await callMaybeAsync(attachExisting as (...args: unknown[]) => unknown, machine, [base]);
-        machine.set_ahci_port0_disk_overlay_ref?.(base, "");
+        if (typeof setAhciPort0OverlayRef === "function") {
+          (setAhciPort0OverlayRef as (base: string, overlay: string) => void).call(machine, base, "");
+        }
         continue;
       }
 
@@ -269,7 +290,9 @@ export async function reattachMachineSnapshotDisks(opts: {
             : null;
       if (attachCow != null) {
         await callMaybeAsync(attachCow as (...args: unknown[]) => unknown, machine, [base, overlay]);
-        machine.set_ahci_port0_disk_overlay_ref?.(base, overlay);
+        if (typeof setAhciPort0OverlayRef === "function") {
+          (setAhciPort0OverlayRef as (base: string, overlay: string) => void).call(machine, base, overlay);
+        }
         continue;
       }
 
@@ -297,6 +320,9 @@ export async function reattachMachineSnapshotDisks(opts: {
         );
       }
       await callMaybeAsync(attachIso as (...args: unknown[]) => unknown, machine, [base]);
+      if (typeof setIdeSecondaryMasterAtapiOverlayRef === "function") {
+        (setIdeSecondaryMasterAtapiOverlayRef as (base: string, overlay: string) => void).call(machine, base, "");
+      }
       continue;
     }
 
@@ -315,6 +341,9 @@ export async function reattachMachineSnapshotDisks(opts: {
         );
       }
       await callMaybeAsync(attachIdePrimaryMaster as (...args: unknown[]) => unknown, machine, [base]);
+      if (typeof setIdePrimaryMasterAtaOverlayRef === "function") {
+        (setIdePrimaryMasterAtaOverlayRef as (base: string, overlay: string) => void).call(machine, base, "");
+      }
       continue;
     }
 

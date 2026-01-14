@@ -26,6 +26,11 @@ function isPowerOfTwo(n: number): boolean {
   return n > 0 && (n & (n - 1)) === 0;
 }
 
+async function callMaybeAsync(fn: (...args: unknown[]) => unknown, thisArg: unknown, args: unknown[]): Promise<void> {
+  // Support both sync and async wasm-bindgen bindings.
+  await Promise.resolve(fn.apply(thisArg, args));
+}
+
 async function tryReadAerosparseBlockSizeBytesFromOpfs(path: string): Promise<number | null> {
   if (!path) return null;
   // In CI/unit tests there is no `navigator` / OPFS environment. Treat this as best-effort.
@@ -149,14 +154,14 @@ async function attachHdd(machine: MachineHandle, plan: MachineBootDiskPlan, meta
       machine.set_disk_aerospar_opfs_open_and_set_overlay_ref ??
       (machine as unknown as { setDiskAerosparOpfsOpenAndSetOverlayRef?: unknown }).setDiskAerosparOpfsOpenAndSetOverlayRef;
     if (typeof aerosparOpenAndSetRef === "function") {
-      await aerosparOpenAndSetRef(plan.opfsPath);
+      await callMaybeAsync(aerosparOpenAndSetRef as (...args: unknown[]) => unknown, machine, [plan.opfsPath]);
       return;
     }
     const aerosparOpen =
       machine.set_disk_aerospar_opfs_open ??
       (machine as unknown as { setDiskAerosparOpfsOpen?: unknown }).setDiskAerosparOpfsOpen;
     if (typeof aerosparOpen === "function") {
-      await aerosparOpen(plan.opfsPath);
+      await callMaybeAsync(aerosparOpen as (...args: unknown[]) => unknown, machine, [plan.opfsPath]);
       machine.set_ahci_port0_disk_overlay_ref?.(plan.opfsPath, "");
       return;
     }
@@ -166,13 +171,13 @@ async function attachHdd(machine: MachineHandle, plan: MachineBootDiskPlan, meta
       machine.set_disk_opfs_existing_and_set_overlay_ref ??
       (machine as unknown as { setDiskOpfsExistingAndSetOverlayRef?: unknown }).setDiskOpfsExistingAndSetOverlayRef;
     if (typeof diskExistingAndSetRef === "function" && diskExistingAndSetRef.length >= 2) {
-      await diskExistingAndSetRef(plan.opfsPath, "aerospar");
+      await callMaybeAsync(diskExistingAndSetRef as (...args: unknown[]) => unknown, machine, [plan.opfsPath, "aerospar"]);
       return;
     }
     const diskExisting =
       machine.set_disk_opfs_existing ?? (machine as unknown as { setDiskOpfsExisting?: unknown }).setDiskOpfsExisting;
     if (typeof diskExisting === "function" && diskExisting.length >= 2) {
-      await diskExisting(plan.opfsPath, "aerospar");
+      await callMaybeAsync(diskExisting as (...args: unknown[]) => unknown, machine, [plan.opfsPath, "aerospar"]);
       machine.set_ahci_port0_disk_overlay_ref?.(plan.opfsPath, "");
       return;
     }
@@ -188,11 +193,7 @@ async function attachHdd(machine: MachineHandle, plan: MachineBootDiskPlan, meta
     const overlayPath = opfsOverlayPathForCow(meta);
     const blockSizeBytes =
       (await tryReadAerosparseBlockSizeBytesFromOpfs(overlayPath)) ?? DEFAULT_PRIMARY_HDD_OVERLAY_BLOCK_SIZE_BYTES;
-    await (setPrimaryCow as (base: string, overlay: string, blockSizeBytes: number) => Promise<void>)(
-      plan.opfsPath,
-      overlayPath,
-      blockSizeBytes,
-    );
+    await callMaybeAsync(setPrimaryCow as (...args: unknown[]) => unknown, machine, [plan.opfsPath, overlayPath, blockSizeBytes]);
     return;
   }
 
@@ -201,7 +202,7 @@ async function attachHdd(machine: MachineHandle, plan: MachineBootDiskPlan, meta
     machine.set_primary_hdd_opfs_existing ??
     (machine as unknown as { setPrimaryHddOpfsExisting?: unknown }).setPrimaryHddOpfsExisting;
   if (typeof setPrimaryExisting === "function") {
-    await setPrimaryExisting(plan.opfsPath);
+    await callMaybeAsync(setPrimaryExisting as (...args: unknown[]) => unknown, machine, [plan.opfsPath]);
     return;
   }
 
@@ -209,13 +210,13 @@ async function attachHdd(machine: MachineHandle, plan: MachineBootDiskPlan, meta
     machine.set_disk_opfs_existing_and_set_overlay_ref ??
     (machine as unknown as { setDiskOpfsExistingAndSetOverlayRef?: unknown }).setDiskOpfsExistingAndSetOverlayRef;
   if (typeof diskExistingAndSetRef === "function") {
-    await diskExistingAndSetRef(plan.opfsPath);
+    await callMaybeAsync(diskExistingAndSetRef as (...args: unknown[]) => unknown, machine, [plan.opfsPath]);
     return;
   }
   const diskExisting =
     machine.set_disk_opfs_existing ?? (machine as unknown as { setDiskOpfsExisting?: unknown }).setDiskOpfsExisting;
   if (typeof diskExisting === "function") {
-    await diskExisting(plan.opfsPath);
+    await callMaybeAsync(diskExisting as (...args: unknown[]) => unknown, machine, [plan.opfsPath]);
     machine.set_ahci_port0_disk_overlay_ref?.(plan.opfsPath, "");
     return;
   }
@@ -230,19 +231,19 @@ async function attachCd(machine: MachineHandle, plan: MachineBootDiskPlan): Prom
     machine.attach_ide_secondary_master_iso_opfs_existing_and_set_overlay_ref ??
     (machine as unknown as { attachIdeSecondaryMasterIsoOpfsExistingAndSetOverlayRef?: unknown }).attachIdeSecondaryMasterIsoOpfsExistingAndSetOverlayRef;
   if (typeof attachIdeAndSetRef === "function") {
-    await attachIdeAndSetRef(plan.opfsPath);
+    await callMaybeAsync(attachIdeAndSetRef as (...args: unknown[]) => unknown, machine, [plan.opfsPath]);
     return;
   }
   const attachIde =
     machine.attach_ide_secondary_master_iso_opfs_existing ??
     (machine as unknown as { attachIdeSecondaryMasterIsoOpfsExisting?: unknown }).attachIdeSecondaryMasterIsoOpfsExisting;
   if (typeof attachIde === "function") {
-    await attachIde(plan.opfsPath);
+    await callMaybeAsync(attachIde as (...args: unknown[]) => unknown, machine, [plan.opfsPath]);
     const setRef =
       machine.set_ide_secondary_master_atapi_overlay_ref ??
       (machine as unknown as { setIdeSecondaryMasterAtapiOverlayRef?: unknown }).setIdeSecondaryMasterAtapiOverlayRef;
     if (typeof setRef === "function") {
-      setRef(plan.opfsPath, "");
+      setRef.call(machine, plan.opfsPath, "");
     }
     return;
   }
@@ -252,19 +253,19 @@ async function attachCd(machine: MachineHandle, plan: MachineBootDiskPlan): Prom
     machine.attach_install_media_iso_opfs_existing_and_set_overlay_ref ??
     (machine as unknown as { attachInstallMediaIsoOpfsExistingAndSetOverlayRef?: unknown }).attachInstallMediaIsoOpfsExistingAndSetOverlayRef;
   if (typeof attachInstallExistingAndSetRef === "function") {
-    await attachInstallExistingAndSetRef(plan.opfsPath);
+    await callMaybeAsync(attachInstallExistingAndSetRef as (...args: unknown[]) => unknown, machine, [plan.opfsPath]);
     return;
   }
   const attachInstallExisting =
     machine.attach_install_media_iso_opfs_existing ??
     (machine as unknown as { attachInstallMediaIsoOpfsExisting?: unknown }).attachInstallMediaIsoOpfsExisting;
   if (typeof attachInstallExisting === "function") {
-    await attachInstallExisting(plan.opfsPath);
+    await callMaybeAsync(attachInstallExisting as (...args: unknown[]) => unknown, machine, [plan.opfsPath]);
     const setRef =
       machine.set_ide_secondary_master_atapi_overlay_ref ??
       (machine as unknown as { setIdeSecondaryMasterAtapiOverlayRef?: unknown }).setIdeSecondaryMasterAtapiOverlayRef;
     if (typeof setRef === "function") {
-      setRef(plan.opfsPath, "");
+      setRef.call(machine, plan.opfsPath, "");
     }
     return;
   }
@@ -272,7 +273,7 @@ async function attachCd(machine: MachineHandle, plan: MachineBootDiskPlan): Prom
     machine.attach_install_media_iso_opfs_and_set_overlay_ref ??
     (machine as unknown as { attachInstallMediaIsoOpfsAndSetOverlayRef?: unknown }).attachInstallMediaIsoOpfsAndSetOverlayRef;
   if (typeof attachInstallAndSetRef === "function") {
-    await attachInstallAndSetRef(plan.opfsPath);
+    await callMaybeAsync(attachInstallAndSetRef as (...args: unknown[]) => unknown, machine, [plan.opfsPath]);
     return;
   }
   const attachInstall =
@@ -281,12 +282,12 @@ async function attachCd(machine: MachineHandle, plan: MachineBootDiskPlan): Prom
     machine.attach_install_media_opfs_iso ??
     (machine as unknown as { attachInstallMediaOpfsIso?: unknown }).attachInstallMediaOpfsIso;
   if (typeof attachInstall === "function") {
-    await attachInstall(plan.opfsPath);
+    await callMaybeAsync(attachInstall as (...args: unknown[]) => unknown, machine, [plan.opfsPath]);
     const setRef =
       machine.set_ide_secondary_master_atapi_overlay_ref ??
       (machine as unknown as { setIdeSecondaryMasterAtapiOverlayRef?: unknown }).setIdeSecondaryMasterAtapiOverlayRef;
     if (typeof setRef === "function") {
-      setRef(plan.opfsPath, "");
+      setRef.call(machine, plan.opfsPath, "");
     }
     return;
   }
