@@ -251,6 +251,8 @@ If Rust/cargo is unavailable, it falls back to external ISO tooling (Linux: `xor
 
 For deterministic builds, set `--source-date-epoch` (or `SOURCE_DATE_EPOCH`) to a fixed value (for example, `0`).
 
+The verifier (`verify_iso.py`) can list ISO contents using the in-tree Rust Joliet parser when `cargo` is available, and otherwise falls back to `pycdlib`/`xorriso`/PowerShell mounting depending on platform.
+
 ### Multi-arch driver ISOs are recommended (x86 + amd64)
 
 Windows will only load kernel drivers that match the OS architecture:
