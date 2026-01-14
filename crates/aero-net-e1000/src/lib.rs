@@ -405,6 +405,30 @@ impl PciConfig {
         self.regs[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
     }
 
+    fn is_read_only_byte(addr: usize) -> bool {
+        // Identity / header bytes are read-only on real PCI hardware.
+        if addr < 0x04 {
+            return true;
+        }
+        // Revision ID + Class Code bytes.
+        if (0x08..=0x0B).contains(&addr) {
+            return true;
+        }
+        // Header Type.
+        if addr == 0x0E {
+            return true;
+        }
+        // Subsystem IDs.
+        if (0x2C..0x30).contains(&addr) {
+            return true;
+        }
+        // Interrupt Pin.
+        if addr == 0x3D {
+            return true;
+        }
+        false
+    }
+
     pub fn read(&self, offset: u16, size: usize) -> u32 {
         let offset = offset as usize;
         if offset
@@ -532,12 +556,12 @@ impl PciConfig {
                     return;
                 }
 
-                match size {
-                    1 => self.regs[offset] = value as u8,
-                    2 => {
-                        self.regs[offset..offset + 2].copy_from_slice(&(value as u16).to_le_bytes())
+                for i in 0..size {
+                    let addr = offset + i;
+                    if Self::is_read_only_byte(addr) {
+                        continue;
                     }
-                    _ => {}
+                    self.regs[addr] = ((value >> (8 * i)) & 0xff) as u8;
                 }
             }
             4 => {
@@ -574,7 +598,13 @@ impl PciConfig {
                     self.write_u32_raw(offset, self.bar1);
                     return;
                 }
-                self.write_u32_raw(offset, value);
+                for i in 0..4 {
+                    let addr = offset + i;
+                    if Self::is_read_only_byte(addr) {
+                        continue;
+                    }
+                    self.regs[addr] = ((value >> (8 * i)) & 0xff) as u8;
+                }
             }
             _ => {}
         }
@@ -2077,6 +2107,41 @@ mod tests {
         assert_eq!(dev.pci_config_read(0x06, 2) as u16, 0x1234);
         assert_eq!(dev.pci_config_read(0x04, 2) as u16, 0x0004);
         assert_eq!(dev.pci_config_read(0x04, 4), 0x1234_0004);
+    }
+
+    #[test]
+    fn pci_interrupt_line_dword_write_does_not_clobber_interrupt_pin() {
+        let mut dev = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
+
+        let pin_before = dev.pci_config_read(0x3d, 1) as u8;
+        assert_eq!(pin_before, 1);
+
+        // Common guest pattern: 32-bit write at 0x3C with upper bytes (Interrupt Pin + reserved)
+        // set to 0. This must not clear the device-reported Interrupt Pin.
+        dev.pci_config_write(0x3c, 4, 0x0000_000a);
+
+        assert_eq!(dev.pci_config_read(0x3d, 1) as u8, pin_before);
+        assert_eq!(dev.pci_config_read(0x3c, 1) as u8, 0x0a);
+    }
+
+    #[test]
+    fn pci_cache_line_dword_write_does_not_clobber_header_type() {
+        let mut dev = E1000Device::new([0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
+
+        let header_before = dev.pci_config_read(0x0e, 1) as u8;
+        assert_eq!(header_before, 0);
+
+        // Dword write at 0x0C spans:
+        // - Cache Line Size (0x0C)
+        // - Latency Timer (0x0D)
+        // - Header Type (0x0E, read-only)
+        // - BIST (0x0F)
+        dev.pci_config_write(0x0c, 4, 0x12_34_56_78);
+
+        assert_eq!(dev.pci_config_read(0x0e, 1) as u8, header_before);
+        assert_eq!(dev.pci_config_read(0x0c, 1) as u8, 0x78);
+        assert_eq!(dev.pci_config_read(0x0d, 1) as u8, 0x56);
+        assert_eq!(dev.pci_config_read(0x0f, 1) as u8, 0x12);
     }
 
     #[test]

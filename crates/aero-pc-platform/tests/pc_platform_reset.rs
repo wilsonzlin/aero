@@ -366,6 +366,7 @@ fn pc_platform_reset_restores_pci_intx_interrupt_line_and_pin_registers() {
             0x3c,
             0x5a,
         );
+        // Interrupt Pin is read-only on real PCI hardware; guest writes must be ignored.
         write_cfg_u8(
             &mut pc,
             ahci_bdf.bus,
@@ -392,7 +393,7 @@ fn pc_platform_reset_restores_pci_intx_interrupt_line_and_pin_registers() {
                 ahci_bdf.function,
                 0x3d
             ),
-            0x04
+            pin_before
         );
     }
 
@@ -438,6 +439,7 @@ fn pc_platform_reset_restores_pci_intx_interrupt_line_and_pin_registers() {
 
     // Smash the guest-visible INTx routing metadata.
     write_cfg_u8(&mut pc, bdf.bus, bdf.device, bdf.function, 0x3c, 0x5a);
+    // Interrupt Pin is read-only on real PCI hardware; guest writes must be ignored.
     write_cfg_u8(&mut pc, bdf.bus, bdf.device, bdf.function, 0x3d, 0x04);
     assert_eq!(
         read_cfg_u8(&mut pc, bdf.bus, bdf.device, bdf.function, 0x3c),
@@ -445,7 +447,7 @@ fn pc_platform_reset_restores_pci_intx_interrupt_line_and_pin_registers() {
     );
     assert_eq!(
         read_cfg_u8(&mut pc, bdf.bus, bdf.device, bdf.function, 0x3d),
-        0x04
+        pin_before
     );
 
     pc.reset();
@@ -530,6 +532,7 @@ fn pc_platform_reset_pci_restores_pci_intx_interrupt_line_and_pin_registers() {
 
     // Smash the guest-visible INTx routing metadata.
     write_cfg_u8(&mut pc, bdf.bus, bdf.device, bdf.function, 0x3c, 0x5a);
+    // Interrupt Pin is read-only on real PCI hardware; guest writes must be ignored.
     write_cfg_u8(&mut pc, bdf.bus, bdf.device, bdf.function, 0x3d, 0x04);
     assert_eq!(
         read_cfg_u8(&mut pc, bdf.bus, bdf.device, bdf.function, 0x3c),
@@ -537,7 +540,7 @@ fn pc_platform_reset_pci_restores_pci_intx_interrupt_line_and_pin_registers() {
     );
     assert_eq!(
         read_cfg_u8(&mut pc, bdf.bus, bdf.device, bdf.function, 0x3d),
-        0x04
+        pin_before
     );
 
     pc.reset_pci();
