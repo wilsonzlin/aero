@@ -3931,6 +3931,400 @@ bool TestCreateStateBlockPixelStateDoesNotCaptureFvfOrStreamSource() {
   return true;
 }
 
+bool TestCreateStateBlockPixelStateUsesEffectiveViewportFromRenderTarget() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnCreateStateBlock != nullptr, "pfnCreateStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnApplyStateBlock != nullptr, "pfnApplyStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDeleteStateBlock != nullptr, "pfnDeleteStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnCreateResource != nullptr, "pfnCreateResource is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetRenderTarget != nullptr, "pfnSetRenderTarget is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetViewport != nullptr, "pfnSetViewport is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // Bind a render-target surface with a non-default size. Do not call SetViewport
+  // beforehand so the cached viewport remains "unset" (Width/Height <= 0).
+  constexpr uint32_t rt_w = 640u;
+  constexpr uint32_t rt_h = 480u;
+  D3D9DDIARG_CREATERESOURCE create_rt{};
+  create_rt.type = 1u;    // D3DRTYPE_SURFACE
+  create_rt.format = 22u; // D3DFMT_X8R8G8B8
+  create_rt.width = rt_w;
+  create_rt.height = rt_h;
+  create_rt.depth = 1;
+  create_rt.mip_levels = 1;
+  create_rt.usage = 0x00000001u; // D3DUSAGE_RENDERTARGET
+  create_rt.pool = 0;
+  create_rt.size = 0;
+  create_rt.hResource.pDrvPrivate = nullptr;
+  create_rt.pSharedHandle = nullptr;
+  create_rt.pPrivateDriverData = nullptr;
+  create_rt.PrivateDriverDataSize = 0;
+  create_rt.wddm_hAllocation = 0;
+
+  HRESULT hr = cleanup.device_funcs.pfnCreateResource(cleanup.hDevice, &create_rt);
+  if (!Check(hr == S_OK, "CreateResource(render target surface)")) {
+    return false;
+  }
+  if (!Check(create_rt.hResource.pDrvPrivate != nullptr, "CreateResource returned RT handle")) {
+    return false;
+  }
+  cleanup.resources.push_back(create_rt.hResource);
+
+  hr = cleanup.device_funcs.pfnSetRenderTarget(cleanup.hDevice, /*slot=*/0, create_rt.hResource);
+  if (!Check(hr == S_OK, "SetRenderTarget(RT0)")) {
+    return false;
+  }
+
+  // D3DSBT_PIXELSTATE = 2 (matches d3d9types.h). Pixel state blocks include
+  // render targets + viewport/scissor.
+  constexpr uint32_t kD3dSbtPixelState = 2u;
+  D3D9DDI_HSTATEBLOCK hSb{};
+  hr = cleanup.device_funcs.pfnCreateStateBlock(cleanup.hDevice, kD3dSbtPixelState, &hSb);
+  if (!Check(hr == S_OK, "CreateStateBlock(PIXELSTATE)")) {
+    return false;
+  }
+  if (!Check(hSb.pDrvPrivate != nullptr, "CreateStateBlock returned handle")) {
+    return false;
+  }
+
+  // Set a different explicit viewport so ApplyStateBlock must restore the
+  // effective viewport derived from the RT.
+  D3DDDIVIEWPORTINFO vp_other{};
+  vp_other.X = 5.0f;
+  vp_other.Y = 6.0f;
+  vp_other.Width = 128.0f;
+  vp_other.Height = 256.0f;
+  vp_other.MinZ = 0.25f;
+  vp_other.MaxZ = 0.75f;
+  hr = cleanup.device_funcs.pfnSetViewport(cleanup.hDevice, &vp_other);
+  if (!Check(hr == S_OK, "SetViewport(other)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  dev->cmd.reset();
+  hr = cleanup.device_funcs.pfnApplyStateBlock(cleanup.hDevice, hSb);
+  if (!Check(hr == S_OK, "ApplyStateBlock(CreateStateBlock viewport)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->viewport.X == 0.0f &&
+                   dev->viewport.Y == 0.0f &&
+                   dev->viewport.Width == static_cast<float>(rt_w) &&
+                   dev->viewport.Height == static_cast<float>(rt_h) &&
+                   dev->viewport.MinZ == 0.0f &&
+                   dev->viewport.MaxZ == 1.0f,
+               "ApplyStateBlock restores effective viewport derived from RT (CreateStateBlock snapshot)")) {
+      cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+      return false;
+    }
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(ApplyStateBlock CreateStateBlock viewport)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  bool saw_viewport = false;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_VIEWPORT)) {
+    if (hdr->size_bytes < sizeof(aerogpu_cmd_set_viewport)) {
+      continue;
+    }
+    const auto* vp = reinterpret_cast<const aerogpu_cmd_set_viewport*>(hdr);
+    if (vp->x_f32 == F32Bits(0.0f) &&
+        vp->y_f32 == F32Bits(0.0f) &&
+        vp->width_f32 == F32Bits(static_cast<float>(rt_w)) &&
+        vp->height_f32 == F32Bits(static_cast<float>(rt_h)) &&
+        vp->min_depth_f32 == F32Bits(0.0f) &&
+        vp->max_depth_f32 == F32Bits(1.0f)) {
+      saw_viewport = true;
+      break;
+    }
+  }
+  if (!Check(saw_viewport, "ApplyStateBlock emits SET_VIEWPORT for effective RT-sized viewport (CreateStateBlock snapshot)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+  return true;
+}
+
+bool TestCreateStateBlockPixelStateUsesEffectiveScissorRectFromRenderTarget() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnCreateStateBlock != nullptr, "pfnCreateStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnApplyStateBlock != nullptr, "pfnApplyStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDeleteStateBlock != nullptr, "pfnDeleteStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnCreateResource != nullptr, "pfnCreateResource is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetRenderTarget != nullptr, "pfnSetRenderTarget is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetRenderState != nullptr, "pfnSetRenderState is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetScissorRect != nullptr, "pfnSetScissorRect is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // Bind a render-target surface with a known size, then enable scissor without
+  // ever calling SetScissorRect. The driver should fix up the unset rect to a
+  // viewport/RT-sized rect, and CreateStateBlock(PIXELSTATE) should snapshot it.
+  constexpr uint32_t rt_w = 640u;
+  constexpr uint32_t rt_h = 480u;
+  D3D9DDIARG_CREATERESOURCE create_rt{};
+  create_rt.type = 1u;    // D3DRTYPE_SURFACE
+  create_rt.format = 22u; // D3DFMT_X8R8G8B8
+  create_rt.width = rt_w;
+  create_rt.height = rt_h;
+  create_rt.depth = 1;
+  create_rt.mip_levels = 1;
+  create_rt.usage = 0x00000001u; // D3DUSAGE_RENDERTARGET
+  create_rt.pool = 0;
+  create_rt.size = 0;
+  create_rt.hResource.pDrvPrivate = nullptr;
+  create_rt.pSharedHandle = nullptr;
+  create_rt.pPrivateDriverData = nullptr;
+  create_rt.PrivateDriverDataSize = 0;
+  create_rt.wddm_hAllocation = 0;
+
+  HRESULT hr = cleanup.device_funcs.pfnCreateResource(cleanup.hDevice, &create_rt);
+  if (!Check(hr == S_OK, "CreateResource(render target surface)")) {
+    return false;
+  }
+  if (!Check(create_rt.hResource.pDrvPrivate != nullptr, "CreateResource returned RT handle")) {
+    return false;
+  }
+  cleanup.resources.push_back(create_rt.hResource);
+
+  hr = cleanup.device_funcs.pfnSetRenderTarget(cleanup.hDevice, /*slot=*/0, create_rt.hResource);
+  if (!Check(hr == S_OK, "SetRenderTarget(RT0)")) {
+    return false;
+  }
+
+  // Enable scissor via render state without calling SetScissorRect.
+  constexpr uint32_t kD3dRsScissorTestEnable = 174u; // D3DRS_SCISSORTESTENABLE
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsScissorTestEnable, 1u);
+  if (!Check(hr == S_OK, "SetRenderState(SCISSORTESTENABLE=1)")) {
+    return false;
+  }
+
+  // D3DSBT_PIXELSTATE = 2 (matches d3d9types.h).
+  constexpr uint32_t kD3dSbtPixelState = 2u;
+  D3D9DDI_HSTATEBLOCK hSb{};
+  hr = cleanup.device_funcs.pfnCreateStateBlock(cleanup.hDevice, kD3dSbtPixelState, &hSb);
+  if (!Check(hr == S_OK, "CreateStateBlock(PIXELSTATE)")) {
+    return false;
+  }
+  if (!Check(hSb.pDrvPrivate != nullptr, "CreateStateBlock returned handle")) {
+    return false;
+  }
+
+  // Change scissor state to a different user-set rect so ApplyStateBlock must
+  // restore the captured RT-sized (non-user-set) rect.
+  RECT other{};
+  other.left = 10;
+  other.top = 20;
+  other.right = 110;
+  other.bottom = 220;
+  hr = cleanup.device_funcs.pfnSetScissorRect(cleanup.hDevice, &other, TRUE);
+  if (!Check(hr == S_OK, "SetScissorRect(other)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  dev->cmd.reset();
+  hr = cleanup.device_funcs.pfnApplyStateBlock(cleanup.hDevice, hSb);
+  if (!Check(hr == S_OK, "ApplyStateBlock(CreateStateBlock scissor)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->scissor_enabled == TRUE, "ApplyStateBlock restores scissor enabled (CreateStateBlock snapshot)")) {
+      cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+      return false;
+    }
+    if (!Check(dev->render_states[kD3dRsScissorTestEnable] == 1u,
+               "ApplyStateBlock restores render state 174 (CreateStateBlock snapshot)")) {
+      cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+      return false;
+    }
+    if (!Check(!dev->scissor_rect_user_set, "ApplyStateBlock restores scissor_rect_user_set=false (CreateStateBlock snapshot)")) {
+      cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+      return false;
+    }
+    if (!Check(dev->scissor_rect.left == 0 &&
+                   dev->scissor_rect.top == 0 &&
+                   dev->scissor_rect.right == static_cast<LONG>(rt_w) &&
+                   dev->scissor_rect.bottom == static_cast<LONG>(rt_h),
+               "ApplyStateBlock restores effective RT-sized scissor rect (CreateStateBlock snapshot)")) {
+      cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+      return false;
+    }
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(ApplyStateBlock CreateStateBlock scissor)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  bool saw_scissor = false;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_SCISSOR)) {
+    if (hdr->size_bytes < sizeof(aerogpu_cmd_set_scissor)) {
+      continue;
+    }
+    const auto* sc = reinterpret_cast<const aerogpu_cmd_set_scissor*>(hdr);
+    if (sc->x == 0 && sc->y == 0 && sc->width == static_cast<int32_t>(rt_w) && sc->height == static_cast<int32_t>(rt_h)) {
+      saw_scissor = true;
+      break;
+    }
+  }
+  if (!Check(saw_scissor, "ApplyStateBlock emits SET_SCISSOR for effective RT-sized rect (CreateStateBlock snapshot)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+  return true;
+}
+
+bool TestCreateStateBlockVertexStateDoesNotCaptureTextures() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnCreateStateBlock != nullptr, "pfnCreateStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnApplyStateBlock != nullptr, "pfnApplyStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDeleteStateBlock != nullptr, "pfnDeleteStateBlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetTexture != nullptr, "pfnSetTexture is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  D3DDDI_HRESOURCE tex_a{};
+  D3DDDI_HRESOURCE tex_b{};
+  if (!CreateDummyTexture(&cleanup, &tex_a)) {
+    return false;
+  }
+  if (!CreateDummyTexture(&cleanup, &tex_b)) {
+    return false;
+  }
+
+  auto* tex_a_res = reinterpret_cast<Resource*>(tex_a.pDrvPrivate);
+  auto* tex_b_res = reinterpret_cast<Resource*>(tex_b.pDrvPrivate);
+  if (!Check(tex_a_res && tex_b_res, "texture resource pointers")) {
+    return false;
+  }
+
+  HRESULT hr = cleanup.device_funcs.pfnSetTexture(cleanup.hDevice, /*stage=*/0, tex_a);
+  if (!Check(hr == S_OK, "SetTexture(stage0=A)")) {
+    return false;
+  }
+
+  // D3DSBT_VERTEXSTATE = 3 (matches d3d9types.h). Vertex state blocks should not
+  // capture/apply texture bindings.
+  constexpr uint32_t kD3dSbtVertexState = 3u;
+  D3D9DDI_HSTATEBLOCK hSb{};
+  hr = cleanup.device_funcs.pfnCreateStateBlock(cleanup.hDevice, kD3dSbtVertexState, &hSb);
+  if (!Check(hr == S_OK, "CreateStateBlock(VERTEXSTATE)")) {
+    return false;
+  }
+  if (!Check(hSb.pDrvPrivate != nullptr, "CreateStateBlock returned handle")) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnSetTexture(cleanup.hDevice, /*stage=*/0, tex_b);
+  if (!Check(hr == S_OK, "SetTexture(stage0=B)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  dev->cmd.reset();
+  hr = cleanup.device_funcs.pfnApplyStateBlock(cleanup.hDevice, hSb);
+  if (!Check(hr == S_OK, "ApplyStateBlock(VERTEXSTATE)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->textures[0] == tex_b_res, "ApplyStateBlock(VERTEXSTATE) leaves stage0 texture unchanged")) {
+      cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+      return false;
+    }
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(ApplyStateBlock VertexState texture binding)")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_SET_TEXTURE) == 0, "ApplyStateBlock(VERTEXSTATE) emits no SET_TEXTURE")) {
+    cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+    return false;
+  }
+
+  cleanup.device_funcs.pfnDeleteStateBlock(cleanup.hDevice, hSb);
+  return true;
+}
+
 bool TestApplyStateBlockRenderStateCapturesRedundantSet() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -24159,6 +24553,15 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestCreateStateBlockPixelStateDoesNotCaptureFvfOrStreamSource()) {
+    return 1;
+  }
+  if (!aerogpu::TestCreateStateBlockPixelStateUsesEffectiveViewportFromRenderTarget()) {
+    return 1;
+  }
+  if (!aerogpu::TestCreateStateBlockPixelStateUsesEffectiveScissorRectFromRenderTarget()) {
+    return 1;
+  }
+  if (!aerogpu::TestCreateStateBlockVertexStateDoesNotCaptureTextures()) {
     return 1;
   }
   if (!aerogpu::TestApplyStateBlockRenderStateCapturesRedundantSet()) {
