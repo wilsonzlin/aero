@@ -28,11 +28,12 @@ The Aero emulator’s Windows 7 virtio contract v1 uses the **modern** virtio-pc
 ID space (so virtio-input is `0x1052`) and the modern virtio-pci transport.
 
 The in-tree Aero virtio-input INFs intentionally match only **contract v1** hardware IDs (revision-gated `REV_01`).
-Subsystem-qualified IDs provide distinct Device Manager names:
+Subsystem-qualified IDs provide distinct Device Manager names, and the keyboard/mouse INF also includes a strict generic
+fallback entry (no `SUBSYS`):
 
 - Keyboard: `PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01` → `inf/aero_virtio_input.inf`
 - Mouse: `PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01` → `inf/aero_virtio_input.inf`
-- Strict generic fallback (no SUBSYS): `PCI\VEN_1AF4&DEV_1052&REV_01` → legacy alias INF (`inf/virtio-input.inf.disabled` → rename to `virtio-input.inf`) (**Aero VirtIO Input Device**)
+- Strict generic fallback (no SUBSYS): `PCI\VEN_1AF4&DEV_1052&REV_01` → `inf/aero_virtio_input.inf` (**Aero VirtIO Input Device**)
 - Tablet (absolute pointer / EV_ABS): `PCI\VEN_1AF4&DEV_1052&SUBSYS_00121AF4&REV_01` → `inf/aero_virtio_tablet.inf`
 
 The canonical keyboard/mouse INF (`inf/aero_virtio_input.inf`) includes:
