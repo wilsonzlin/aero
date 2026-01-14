@@ -24,7 +24,7 @@ class NewAeroWin7TestImageNetLinkFlapFlagTests(unittest.TestCase):
         # Ensure the scheduled task commandline includes the arg variable (avoid brittle ordering assumptions).
         self.assertRegex(
             self.text,
-            re.compile(r"(?s)schtasks /Create.*\$testNetLinkFlapArg", re.IGNORECASE),
+            re.compile(r"schtasks /Create.*?\$testNetLinkFlapArg", re.IGNORECASE | re.DOTALL),
         )
 
     def test_readme_mentions_test_net_link_flap(self) -> None:
