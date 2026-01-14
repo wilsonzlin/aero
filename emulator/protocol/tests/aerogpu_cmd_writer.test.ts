@@ -557,6 +557,8 @@ test("AerogpuCmdWriter emits BIND_SHADERS extended packet with trailing gs/hs/ds
 
   const bytes = w.finish();
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  assert.equal(view.getUint32(AEROGPU_CMD_STREAM_HEADER_OFF_SIZE_BYTES, true), bytes.byteLength);
+  assert.equal(bytes.byteLength % 4, 0, "stream must remain 4-byte aligned");
   const pkt0 = AEROGPU_CMD_STREAM_HEADER_SIZE;
 
   assert.equal(view.getUint32(pkt0 + AEROGPU_CMD_HDR_OFF_OPCODE, true), AerogpuCmdOpcode.BindShaders);
@@ -566,8 +568,8 @@ test("AerogpuCmdWriter emits BIND_SHADERS extended packet with trailing gs/hs/ds
   assert.equal(view.getUint32(pkt0 + 8, true), 1);
   assert.equal(view.getUint32(pkt0 + 12, true), 2);
   assert.equal(view.getUint32(pkt0 + 16, true), 3);
-  // Legacy compatibility: keep GS in `reserved0` so older decoders can still bind it.
-  assert.equal(view.getUint32(pkt0 + 20, true), 4);
+  // Append-only extension keeps reserved0=0.
+  assert.equal(view.getUint32(pkt0 + 20, true), 0);
 
   // Trailing handles: gs/hs/ds.
   assert.equal(view.getUint32(pkt0 + AEROGPU_CMD_BIND_SHADERS_SIZE + 0, true), 4);
@@ -578,6 +580,7 @@ test("AerogpuCmdWriter emits BIND_SHADERS extended packet with trailing gs/hs/ds
   assert.equal(decoded.vs, 1);
   assert.equal(decoded.ps, 2);
   assert.equal(decoded.cs, 3);
+  assert.equal(decoded.reserved0, 0);
   assert.deepEqual(decoded.ex, { gs: 4, hs: 5, ds: 6 });
 });
 
@@ -936,8 +939,8 @@ test("AerogpuCmdWriter emits stage_ex packets and extended BindShaders encoding"
   assert.equal(view.getUint32(cursor + 8, true), 1);
   assert.equal(view.getUint32(cursor + 12, true), 2);
   assert.equal(view.getUint32(cursor + 16, true), 3);
-  // Legacy compatibility: keep GS in `reserved0` so older decoders can still bind it.
-  assert.equal(view.getUint32(cursor + 20, true), 4);
+  // Append-only extension keeps reserved0=0.
+  assert.equal(view.getUint32(cursor + 20, true), 0);
   // Trailing GS/HS/DS u32s.
   assert.equal(view.getUint32(cursor + 24, true), 4);
   assert.equal(view.getUint32(cursor + 28, true), 5);

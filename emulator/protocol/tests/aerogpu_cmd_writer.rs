@@ -66,28 +66,51 @@ fn cmd_writer_bind_shaders_with_gs_reuses_reserved0_field() {
 }
 
 #[test]
-fn cmd_writer_bind_shaders_ex_emits_extended_packet() {
+fn cmd_writer_bind_shaders_ex_emits_append_only_extended_payload() {
     let mut w = AerogpuCmdWriter::new();
-    w.bind_shaders_ex(11, 22, 33, 44, 55, 66);
+    w.bind_shaders_ex(/* vs */ 11, /* ps */ 22, /* cs */ 33, /* gs */ 44, /* hs */ 55, /* ds */ 66);
     w.flush();
 
     let buf = w.finish();
+    assert_eq!(
+        buf.len() % 4,
+        0,
+        "command stream must be 4-byte aligned (len={})",
+        buf.len()
+    );
+
+    let stream = decode_cmd_stream_header_le(&buf).expect("cmd stream header must decode");
+    assert_eq!(stream.size_bytes as usize, buf.len());
 
     let packet_offset = AerogpuCmdStreamHeader::SIZE_BYTES;
     let hdr = decode_cmd_hdr_le(&buf[packet_offset..]).unwrap();
     let opcode = hdr.opcode;
     let size_bytes = hdr.size_bytes;
     assert_eq!(opcode, AerogpuCmdOpcode::BindShaders as u32);
-    assert_eq!(size_bytes as usize, size_of::<AerogpuCmdBindShaders>() + 12);
+    assert_eq!(size_bytes, 36);
 
-    let read_u32 =
-        |off: usize| -> u32 { u32::from_le_bytes(buf[off..off + 4].try_into().unwrap()) };
+    // Extension is append-only: `reserved0` stays 0 and `{gs,hs,ds}` are appended after the base struct.
+    let reserved0 = u32::from_le_bytes(
+        buf[packet_offset + offset_of!(AerogpuCmdBindShaders, reserved0)
+            ..packet_offset + offset_of!(AerogpuCmdBindShaders, reserved0) + 4]
+            .try_into()
+            .unwrap(),
+    );
+    assert_eq!(reserved0, 0);
 
-    // Extended payload begins immediately after `struct aerogpu_cmd_bind_shaders`.
-    let ex_base = packet_offset + size_of::<AerogpuCmdBindShaders>();
-    assert_eq!(read_u32(ex_base), 44); // gs
-    assert_eq!(read_u32(ex_base + 4), 55); // hs
-    assert_eq!(read_u32(ex_base + 8), 66); // ds
+    // Trailing handles are at offsets 24/28/32 from the packet start.
+    assert_eq!(
+        u32::from_le_bytes(buf[packet_offset + 24..packet_offset + 28].try_into().unwrap()),
+        44
+    );
+    assert_eq!(
+        u32::from_le_bytes(buf[packet_offset + 28..packet_offset + 32].try_into().unwrap()),
+        55
+    );
+    assert_eq!(
+        u32::from_le_bytes(buf[packet_offset + 32..packet_offset + 36].try_into().unwrap()),
+        66
+    );
 
     let (cmd, ex) = decode_cmd_bind_shaders_payload_le(&buf[packet_offset..]).unwrap();
     // `AerogpuCmdBindShaders` is `#[repr(packed)]`, so copy fields out before asserting to avoid
@@ -99,8 +122,7 @@ fn cmd_writer_bind_shaders_ex_emits_extended_packet() {
     assert_eq!(vs, 11);
     assert_eq!(ps, 22);
     assert_eq!(cs, 33);
-    // Writer mirrors `gs` into the legacy `reserved0` field for backward compatibility.
-    assert_eq!(reserved0, 44);
+    assert_eq!(reserved0, 0);
     assert_eq!(
         ex,
         Some(BindShadersEx {
@@ -1816,8 +1838,7 @@ fn cmd_writer_emits_bind_shaders_ex_with_trailing_gs_hs_ds_handles() {
         ),
         3
     );
-    // `bind_shaders_ex` keeps writing GS into the legacy `reserved0` field so older decoders can
-    // still bind a geometry shader even if they ignore the appended `{gs,hs,ds}` table.
+    // Append-only extension keeps reserved0=0; trailing `{gs,hs,ds}` are authoritative.
     assert_eq!(
         u32::from_le_bytes(
             buf[pkt_base + offset_of!(AerogpuCmdBindShaders, reserved0)
@@ -1825,7 +1846,7 @@ fn cmd_writer_emits_bind_shaders_ex_with_trailing_gs_hs_ds_handles() {
                 .try_into()
                 .unwrap()
         ),
-        4
+        0
     );
 
     let ext_base = pkt_base + size_of::<AerogpuCmdBindShaders>();

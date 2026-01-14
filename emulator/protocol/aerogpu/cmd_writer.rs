@@ -542,15 +542,11 @@ impl AerogpuCmdWriter {
         self.write_u32_at(base + offset_of!(AerogpuCmdBindShaders, reserved0), gs);
     }
 
-    pub fn bind_shaders(&mut self, vs: AerogpuHandle, ps: AerogpuHandle, cs: AerogpuHandle) {
-        self.bind_shaders_with_gs(vs, 0, ps, cs);
-    }
-
-    /// Forward-compatible extension of `BIND_SHADERS` that appends GS/HS/DS handles after the
-    /// base `struct aerogpu_cmd_bind_shaders`.
+    /// Bind shaders using the canonical append-only BIND_SHADERS ABI extension.
     ///
-    /// Legacy compatibility: `gs` is also mirrored into the base struct's `reserved0` field so
-    /// decoders that only understand the original 24-byte packet can still bind a geometry shader.
+    /// ABI note: the legacy `AerogpuCmdBindShaders` payload remains unchanged; `{gs, hs, ds}`
+    /// handles are appended after the base struct. We keep `reserved0=0` to preserve strict
+    /// append-only semantics for forward-compat.
     pub fn bind_shaders_ex(
         &mut self,
         vs: AerogpuHandle,
@@ -562,21 +558,23 @@ impl AerogpuCmdWriter {
     ) {
         use super::aerogpu_cmd::AerogpuCmdBindShaders;
 
-        let unpadded_size = size_of::<AerogpuCmdBindShaders>() + 3 * size_of::<AerogpuHandle>();
-        let base = self.append_raw(AerogpuCmdOpcode::BindShaders, unpadded_size);
+        let base_struct_size = size_of::<AerogpuCmdBindShaders>();
+        let cmd_size_bytes = base_struct_size + 3 * size_of::<AerogpuHandle>();
+
+        let base = self.append_raw(AerogpuCmdOpcode::BindShaders, cmd_size_bytes);
         self.write_u32_at(base + offset_of!(AerogpuCmdBindShaders, vs), vs);
         self.write_u32_at(base + offset_of!(AerogpuCmdBindShaders, ps), ps);
         self.write_u32_at(base + offset_of!(AerogpuCmdBindShaders, cs), cs);
-        // Legacy compatibility: keep writing the GS handle into the base struct's `reserved0` so
-        // decoders that only understand the original 24-byte `aerogpu_cmd_bind_shaders` layout can
-        // still bind a geometry shader.
-        self.write_u32_at(base + offset_of!(AerogpuCmdBindShaders, reserved0), gs);
+        self.write_u32_at(base + offset_of!(AerogpuCmdBindShaders, reserved0), 0);
 
-        let ext_base = base + size_of::<AerogpuCmdBindShaders>();
-        let handle_size = size_of::<AerogpuHandle>();
-        self.write_u32_at(ext_base, gs);
-        self.write_u32_at(ext_base + handle_size, hs);
-        self.write_u32_at(ext_base + 2 * handle_size, ds);
+        // ABI extension payload: trailing `{gs, hs, ds}`.
+        self.write_u32_at(base + base_struct_size, gs);
+        self.write_u32_at(base + base_struct_size + 4, hs);
+        self.write_u32_at(base + base_struct_size + 8, ds);
+    }
+
+    pub fn bind_shaders(&mut self, vs: AerogpuHandle, ps: AerogpuHandle, cs: AerogpuHandle) {
+        self.bind_shaders_with_gs(vs, 0, ps, cs);
     }
 
     pub fn create_input_layout(&mut self, input_layout_handle: AerogpuHandle, blob: &[u8]) {

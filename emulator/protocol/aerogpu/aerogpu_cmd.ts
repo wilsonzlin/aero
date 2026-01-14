@@ -1737,13 +1737,11 @@ export class AerogpuCmdWriter {
     this.view.setUint32(base + 20, gs, true);
   }
 
-  bindShaders(vs: AerogpuHandle, ps: AerogpuHandle, cs: AerogpuHandle): void {
-    this.bindShadersWithGs(vs, 0, ps, cs);
-  }
-
   /**
-   * Forward-compatible extension of `BIND_SHADERS` that appends GS/HS/DS handles after the
-   * base `struct aerogpu_cmd_bind_shaders`.
+   * BIND_SHADERS using the canonical append-only ABI extension: trailing `{gs, hs, ds}` handles.
+   *
+   * ABI note: the base packet layout remains unchanged (reserved0 stays 0); the extended handles are
+   * appended after the `aerogpu_cmd_bind_shaders` struct.
    */
   bindShadersEx(
     vs: AerogpuHandle,
@@ -1753,18 +1751,19 @@ export class AerogpuCmdWriter {
     hs: AerogpuHandle,
     ds: AerogpuHandle,
   ): void {
-    const unpadded = AEROGPU_CMD_BIND_SHADERS_SIZE + 3 * 4;
-    const base = this.appendRaw(AerogpuCmdOpcode.BindShaders, unpadded);
+    const base = this.appendRaw(AerogpuCmdOpcode.BindShaders, AEROGPU_CMD_BIND_SHADERS_SIZE + 12);
     this.view.setUint32(base + 8, vs, true);
     this.view.setUint32(base + 12, ps, true);
     this.view.setUint32(base + 16, cs, true);
-    // Legacy compatibility: keep writing the GS handle into the base struct's `reserved0` so
-    // decoders that only understand the original 24-byte `aerogpu_cmd_bind_shaders` layout can
-    // still bind a geometry shader.
-    this.view.setUint32(base + 20, gs, true);
-    this.view.setUint32(base + AEROGPU_CMD_BIND_SHADERS_SIZE + 0, gs, true);
-    this.view.setUint32(base + AEROGPU_CMD_BIND_SHADERS_SIZE + 4, hs, true);
-    this.view.setUint32(base + AEROGPU_CMD_BIND_SHADERS_SIZE + 8, ds, true);
+    this.view.setUint32(base + 20, 0, true);
+    // ABI extension payload: trailing `{gs, hs, ds}`.
+    this.view.setUint32(base + 24, gs, true);
+    this.view.setUint32(base + 28, hs, true);
+    this.view.setUint32(base + 32, ds, true);
+  }
+
+  bindShaders(vs: AerogpuHandle, ps: AerogpuHandle, cs: AerogpuHandle): void {
+    this.bindShadersWithGs(vs, 0, ps, cs);
   }
 
   setShaderConstantsF(
