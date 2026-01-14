@@ -622,3 +622,70 @@ fn drain_pending_submissions_and_complete_fence_with_external_backend() {
         fence
     );
 }
+
+#[test]
+fn drain_pending_submissions_filters_out_submissions_completed_before_drain() {
+    let cfg = AeroGpuDeviceConfig {
+        vblank_hz: None,
+        executor: AeroGpuExecutorConfig {
+            verbose: false,
+            keep_last_submissions: 0,
+            fence_completion: AeroGpuFenceCompletionMode::Deferred,
+        },
+    };
+
+    let mut mem = VecMemory::new(0x20_000);
+    let mut dev = new_test_device(cfg);
+
+    // Ring layout in guest memory: two no-op submissions that signal fences 1 and 2.
+    let ring_gpa = 0x1000u64;
+    let ring_size = 0x1000u32;
+    let entry_count = 8u32;
+    let entry_stride = AeroGpuSubmitDesc::SIZE_BYTES;
+
+    mem.write_u32(ring_gpa + RING_MAGIC_OFFSET, AEROGPU_RING_MAGIC);
+    mem.write_u32(ring_gpa + RING_ABI_VERSION_OFFSET, dev.regs.abi_version);
+    mem.write_u32(ring_gpa + RING_SIZE_BYTES_OFFSET, ring_size);
+    mem.write_u32(ring_gpa + RING_ENTRY_COUNT_OFFSET, entry_count);
+    mem.write_u32(ring_gpa + RING_ENTRY_STRIDE_BYTES_OFFSET, entry_stride);
+    mem.write_u32(ring_gpa + RING_FLAGS_OFFSET, 0);
+    mem.write_u32(ring_gpa + RING_HEAD_OFFSET, 0);
+    mem.write_u32(ring_gpa + RING_TAIL_OFFSET, 2);
+
+    let stride = u64::from(AeroGpuSubmitDesc::SIZE_BYTES);
+    for (slot, fence) in [1u64, 2].into_iter().enumerate() {
+        let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES + (slot as u64) * stride;
+        mem.write_u32(desc_gpa + SUBMIT_DESC_SIZE_BYTES_OFFSET, AeroGpuSubmitDesc::SIZE_BYTES);
+        mem.write_u32(desc_gpa + SUBMIT_DESC_FLAGS_OFFSET, 0);
+        mem.write_u32(desc_gpa + SUBMIT_DESC_CONTEXT_ID_OFFSET, 0);
+        mem.write_u32(desc_gpa + SUBMIT_DESC_ENGINE_ID_OFFSET, 0);
+        mem.write_u64(desc_gpa + SUBMIT_DESC_CMD_GPA_OFFSET, 0);
+        mem.write_u32(desc_gpa + SUBMIT_DESC_CMD_SIZE_BYTES_OFFSET, 0);
+        mem.write_u64(desc_gpa + SUBMIT_DESC_ALLOC_TABLE_GPA_OFFSET, 0);
+        mem.write_u32(desc_gpa + SUBMIT_DESC_ALLOC_TABLE_SIZE_BYTES_OFFSET, 0);
+        mem.write_u64(desc_gpa + SUBMIT_DESC_SIGNAL_FENCE_OFFSET, fence);
+    }
+
+    dev.write(mmio::RING_GPA_LO, 4, ring_gpa as u64);
+    dev.write(mmio::RING_GPA_HI, 4, (ring_gpa >> 32) as u64);
+    dev.write(mmio::RING_SIZE_BYTES, 4, ring_size as u64);
+    dev.write(mmio::RING_CONTROL, 4, ring_control::ENABLE as u64);
+    dev.write(mmio::IRQ_ENABLE, 4, irq_bits::FENCE as u64);
+
+    dev.write(mmio::DOORBELL, 4, 1);
+    dev.tick(&mut mem, 0);
+    assert_eq!(dev.regs.completed_fence, 0);
+
+    // If fence 1 is completed before the external backend drains submissions, the already-complete
+    // submission must not be returned again.
+    dev.complete_fence(&mut mem, 1);
+    assert_eq!(dev.regs.completed_fence, 1);
+
+    let subs = dev.drain_pending_submissions();
+    assert_eq!(subs.len(), 1);
+    assert_eq!(subs[0].signal_fence, 2);
+
+    dev.complete_fence(&mut mem, 2);
+    assert_eq!(dev.regs.completed_fence, 2);
+    assert!(dev.drain_pending_submissions().is_empty());
+}
