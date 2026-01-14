@@ -634,6 +634,22 @@ Optional improvements (later):
 * keep a small “always available” silent buffer to avoid hard stalls
 * expose glitch counters via debug output
 
+### 5.5 Optional: using `eventq` PCM events as an additional tick source
+
+The virtio-snd specification defines asynchronous PCM notifications on `eventq`, including:
+
+* `VIRTIO_SND_EVT_PCM_PERIOD_ELAPSED`
+* `VIRTIO_SND_EVT_PCM_XRUN`
+
+For the Aero Windows 7 virtio contract v1, **no `eventq` messages are required**, so a driver must not depend on these events for
+correctness. The safe baseline is a timer-driven “software DMA” loop.
+
+If `PCM_PERIOD_ELAPSED` events do arrive, a driver can treat them as a best-effort **additional wakeup** source for the same period/DPC
+logic. When combining a timer tick with event-driven ticks, coalesce duplicates to avoid double-signaling the WaveRT notification event.
+
+If `PCM_XRUN` events arrive, a driver can treat them as a hint that the device observed an underrun/overrun and attempt recovery at
+`PASSIVE_LEVEL` (for example by issuing `PCM_STOP` / `PCM_START` and re-priming submission state).
+
 ---
 
 ## 6) `virtio-snd` backend mapping

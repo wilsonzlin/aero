@@ -91,6 +91,17 @@ The virtio-snd specification defines `eventq` (queue index `1`) for asynchronous
 
 Contract v1 does **not** define any required event messages (see `docs/windows7-virtio-driver-contract.md` §3.4.2.1).
 
+Driver behavior (Windows 7 in-tree `virtio-snd` driver):
+
+- The driver posts a small bounded set of writable event buffers and keeps `eventq` running.
+- The driver parses events best-effort and always reposts buffers.
+- Known events include:
+  - `JACK_*` (`JACK_CONNECTED` / `JACK_DISCONNECTED`): update fixed jack state used by the topology miniport.
+  - `PCM_*` (`PCM_PERIOD_ELAPSED` / `PCM_XRUN`): optional audio-stream notifications.
+    - Because contract v1 does not require `eventq`, the WaveRT software-DMA path remains **timer-driven** by default.
+    - If `PCM_PERIOD_ELAPSED` events arrive, the driver may treat them as an **additional wakeup source** for the WaveRT period/DPC loop (best-effort), while coalescing duplicates to avoid double-signaling notifications.
+    - If `PCM_XRUN` events arrive, the driver may attempt a best-effort stream recovery (typically `STOP`/`START`).
+
 By default, Aero’s virtio-snd device model does not emit any `eventq` messages unless the host explicitly queues them (for example
 via `VirtioSnd::queue_event(...)` / `VirtioSnd::queue_jack_event(...)`). The browser/WASM runtime uses this to emit jack
 connect/disconnect events when host audio backends are attached/detached:
@@ -105,10 +116,9 @@ Implementation notes (device model):
 - `queue_jack_event(...)` deduplicates redundant JACK state transitions within the pending FIFO (it will not enqueue repeated
   identical connected/disconnected events for the same jack ID).
 
-Even when no events are emitted:
+Even when Aero emits no events (common in current browser builds):
 
-- The Windows 7 virtio-snd driver posts a small bounded set of writable buffers and keeps `eventq` running.
-- If the device completes an event buffer anyway (future extensions, or a buggy device model), the driver parses the standard
+- If the device completes an event buffer anyway (future extensions, or a buggy device model), the Windows 7 driver parses the standard
   8-byte virtio-snd event header (`type: u32` + `data: u32`, little-endian), dispatches known events best-effort, and ignores
   unknown/malformed events without crashing (buffers are always reposted).
 
