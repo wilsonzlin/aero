@@ -3362,6 +3362,12 @@ static NTSTATUS APIENTRY AeroGpuDdiStopDeviceAndReleasePostDisplayOwnership(
      * and interrupt handlers are released consistently.
      */
     if (adapter->Bar0) {
+        const BOOLEAN poweredOn =
+            ((DXGK_DEVICE_POWER_STATE)InterlockedCompareExchange(&adapter->DevicePowerState, 0, 0) ==
+             DxgkDevicePowerStateD0)
+                ? TRUE
+                : FALSE;
+
         /* Snapshot vblank enable state once per release cycle. */
         if (!adapter->PostDisplayOwnershipReleased) {
             adapter->PostDisplayVblankWasEnabled =
@@ -3370,7 +3376,7 @@ static NTSTATUS APIENTRY AeroGpuDdiStopDeviceAndReleasePostDisplayOwnership(
         adapter->PostDisplayOwnershipReleased = TRUE;
 
         /* Disable vblank IRQ generation. */
-        if (adapter->SupportsVblank && adapter->Bar0Length >= (AEROGPU_MMIO_REG_IRQ_ACK + sizeof(ULONG))) {
+        if (poweredOn && adapter->SupportsVblank && adapter->Bar0Length >= (AEROGPU_MMIO_REG_IRQ_ACK + sizeof(ULONG))) {
             KIRQL oldIrql;
             KeAcquireSpinLock(&adapter->IrqEnableLock, &oldIrql);
 
@@ -3405,7 +3411,9 @@ static NTSTATUS APIENTRY AeroGpuDdiStopDeviceAndReleasePostDisplayOwnership(
         }
 
         /* Disable scanout to stop the device from continuously touching guest memory. */
-        AeroGpuSetScanoutEnable(adapter, 0);
+        if (poweredOn) {
+            AeroGpuSetScanoutEnable(adapter, 0);
+        }
     } else {
         adapter->PostDisplayOwnershipReleased = TRUE;
         adapter->PostDisplayVblankWasEnabled = FALSE;
@@ -3526,6 +3534,16 @@ static NTSTATUS APIENTRY AeroGpuDdiAcquirePostDisplayOwnership(
      */
     if (!adapter->Bar0) {
         adapter->PostDisplayOwnershipReleased = FALSE;
+        return STATUS_SUCCESS;
+    }
+
+    const BOOLEAN poweredOn =
+        ((DXGK_DEVICE_POWER_STATE)InterlockedCompareExchange(&adapter->DevicePowerState, 0, 0) ==
+         DxgkDevicePowerStateD0)
+            ? TRUE
+            : FALSE;
+    if (!poweredOn) {
+        /* Avoid touching MMIO while powered down. */
         return STATUS_SUCCESS;
     }
 
