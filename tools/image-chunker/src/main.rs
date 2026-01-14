@@ -3505,7 +3505,10 @@ mod tests {
     async fn download_http_bytes_with_retry_does_not_retry_on_404() -> Result<()> {
         let requests = Arc::new(AtomicU64::new(0));
         let responder: Arc<
-            dyn Fn(TestHttpRequest) -> (u16, Vec<(String, String)>, Vec<u8>) + Send + Sync + 'static,
+            dyn Fn(TestHttpRequest) -> (u16, Vec<(String, String)>, Vec<u8>)
+                + Send
+                + Sync
+                + 'static,
         > = {
             let requests = Arc::clone(&requests);
             Arc::new(move |_req: TestHttpRequest| {
@@ -3540,7 +3543,10 @@ mod tests {
     async fn download_http_bytes_with_retry_retries_on_transient_500() -> Result<()> {
         let requests = Arc::new(AtomicU64::new(0));
         let responder: Arc<
-            dyn Fn(TestHttpRequest) -> (u16, Vec<(String, String)>, Vec<u8>) + Send + Sync + 'static,
+            dyn Fn(TestHttpRequest) -> (u16, Vec<(String, String)>, Vec<u8>)
+                + Send
+                + Sync
+                + 'static,
         > = {
             let requests = Arc::clone(&requests);
             Arc::new(move |_req: TestHttpRequest| {
@@ -3712,7 +3718,10 @@ mod tests {
     async fn download_http_bytes_optional_with_retry_returns_none_on_404() -> Result<()> {
         let requests = Arc::new(AtomicU64::new(0));
         let responder: Arc<
-            dyn Fn(TestHttpRequest) -> (u16, Vec<(String, String)>, Vec<u8>) + Send + Sync + 'static,
+            dyn Fn(TestHttpRequest) -> (u16, Vec<(String, String)>, Vec<u8>)
+                + Send
+                + Sync
+                + 'static,
         > = {
             let requests = Arc::clone(&requests);
             Arc::new(move |_req: TestHttpRequest| {
@@ -3781,7 +3790,10 @@ mod tests {
     async fn download_http_bytes_optional_with_retry_retries_on_transient_500() -> Result<()> {
         let requests = Arc::new(AtomicU64::new(0));
         let responder: Arc<
-            dyn Fn(TestHttpRequest) -> (u16, Vec<(String, String)>, Vec<u8>) + Send + Sync + 'static,
+            dyn Fn(TestHttpRequest) -> (u16, Vec<(String, String)>, Vec<u8>)
+                + Send
+                + Sync
+                + 'static,
         > = {
             let requests = Arc::clone(&requests);
             Arc::new(move |_req: TestHttpRequest| {
@@ -5075,7 +5087,11 @@ mod tests {
             "demo",
             "v1",
             ChecksumAlgorithm::Sha256,
-            &[Some(sha256_hex(b"chunk0")), None, Some(sha256_hex(b"chunk2"))],
+            &[
+                Some(sha256_hex(b"chunk0")),
+                None,
+                Some(sha256_hex(b"chunk2")),
+            ],
         )
         .expect_err("expected missing sha256 failure");
         assert!(
@@ -5886,6 +5902,15 @@ mod tests {
         let err = anyhow!("unexpected Content-Encoding: gzip");
         let err = Err::<(), _>(err)
             .context("GET http://127.0.0.1/chunks/00000000.bin")
+            .unwrap_err();
+        assert!(!is_retryable_http_error(&err));
+    }
+
+    #[test]
+    fn http_response_too_large_is_non_retryable_even_when_wrapped() {
+        let err = anyhow!("response too large: max 1024 bytes, got 2048 (Content-Length)");
+        let err = Err::<(), _>(err)
+            .context("GET http://127.0.0.1/manifest.json")
             .unwrap_err();
         assert!(!is_retryable_http_error(&err));
     }

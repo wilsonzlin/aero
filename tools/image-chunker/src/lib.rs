@@ -1619,7 +1619,11 @@ mod tests {
             "demo",
             "v1",
             ChecksumAlgorithm::Sha256,
-            &[Some(sha256_hex(b"chunk0")), None, Some(sha256_hex(b"chunk2"))],
+            &[
+                Some(sha256_hex(b"chunk0")),
+                None,
+                Some(sha256_hex(b"chunk2")),
+            ],
         )
         .expect_err("expected missing sha256 failure");
         assert!(
