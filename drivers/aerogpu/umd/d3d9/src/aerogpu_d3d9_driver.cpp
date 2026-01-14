@@ -6997,6 +6997,21 @@ HRESULT convert_xyzrhw_to_clipspace_locked(
   float vp_w = 1.0f;
   float vp_h = 1.0f;
   get_viewport_dims_locked(dev, &vp_x, &vp_y, &vp_w, &vp_h);
+  // Defensive: viewport dimensions are used as divisors for XYZRHW -> NDC
+  // conversion. Some runtimes may pass garbage state; ensure we keep conversion
+  // math finite.
+  if (!std::isfinite(vp_x)) {
+    vp_x = 0.0f;
+  }
+  if (!std::isfinite(vp_y)) {
+    vp_y = 0.0f;
+  }
+  if (!std::isfinite(vp_w) || vp_w == 0.0f) {
+    vp_w = 1.0f;
+  }
+  if (!std::isfinite(vp_h) || vp_h == 0.0f) {
+    vp_h = 1.0f;
+  }
 
   const uint64_t total_bytes_u64 = static_cast<uint64_t>(stride_bytes) * static_cast<uint64_t>(vertex_count);
   if (total_bytes_u64 == 0 || total_bytes_u64 > 0x7FFFFFFFu) {
@@ -7018,10 +7033,21 @@ HRESULT convert_xyzrhw_to_clipspace_locked(
     // Preserve any trailing fields (diffuse color etc).
     std::memcpy(dst, src, stride_bytes);
 
-    const float x = read_f32_unaligned(src + 0);
-    const float y = read_f32_unaligned(src + 4);
-    const float z = read_f32_unaligned(src + 8);
+    float x = read_f32_unaligned(src + 0);
+    float y = read_f32_unaligned(src + 4);
+    float z = read_f32_unaligned(src + 8);
     const float rhw = read_f32_unaligned(src + 12);
+    // Keep coordinates finite. If the app provides NaN/Inf XYZRHW positions,
+    // default to the center of the effective viewport (0,0 in NDC).
+    if (!std::isfinite(x)) {
+      x = vp_x + vp_w * 0.5f - 0.5f;
+    }
+    if (!std::isfinite(y)) {
+      y = vp_y + vp_h * 0.5f - 0.5f;
+    }
+    if (!std::isfinite(z)) {
+      z = 0.0f;
+    }
 
     // `rhw` is the reciprocal clip-space w. Some apps (and fuzz tests) may pass
     // non-finite values; keep conversion math finite so downstream shader math
@@ -7036,13 +7062,35 @@ HRESULT convert_xyzrhw_to_clipspace_locked(
     // D3D9's viewport transform uses a -0.5 pixel center convention. Invert it
     // so typical D3D9 pre-transformed vertex coordinates line up with pixel
     // centers.
-    const float ndc_x = ((x + 0.5f - vp_x) / vp_w) * 2.0f - 1.0f;
-    const float ndc_y = 1.0f - ((y + 0.5f - vp_y) / vp_h) * 2.0f;
-    const float ndc_z = z;
+    float ndc_x = ((x + 0.5f - vp_x) / vp_w) * 2.0f - 1.0f;
+    float ndc_y = 1.0f - ((y + 0.5f - vp_y) / vp_h) * 2.0f;
+    float ndc_z = z;
+    if (!std::isfinite(ndc_x)) {
+      ndc_x = 0.0f;
+    }
+    if (!std::isfinite(ndc_y)) {
+      ndc_y = 0.0f;
+    }
+    if (!std::isfinite(ndc_z)) {
+      ndc_z = 0.0f;
+    }
 
-    write_f32_unaligned(dst + 0, ndc_x * w);
-    write_f32_unaligned(dst + 4, ndc_y * w);
-    write_f32_unaligned(dst + 8, ndc_z * w);
+    float clip_x = ndc_x * w;
+    float clip_y = ndc_y * w;
+    float clip_z = ndc_z * w;
+    if (!std::isfinite(clip_x)) {
+      clip_x = 0.0f;
+    }
+    if (!std::isfinite(clip_y)) {
+      clip_y = 0.0f;
+    }
+    if (!std::isfinite(clip_z)) {
+      clip_z = 0.0f;
+    }
+
+    write_f32_unaligned(dst + 0, clip_x);
+    write_f32_unaligned(dst + 4, clip_y);
+    write_f32_unaligned(dst + 8, clip_z);
     write_f32_unaligned(dst + 12, w);
   }
   return S_OK;
@@ -24043,6 +24091,21 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive(
       float vp_w = 1.0f;
       float vp_h = 1.0f;
       get_viewport_dims_locked(dev, &vp_x, &vp_y, &vp_w, &vp_h);
+      // Defensive: viewport dimensions are used as divisors for XYZRHW -> NDC
+      // conversion. Some runtimes may pass garbage state; ensure we keep
+      // conversion math finite.
+      if (!std::isfinite(vp_x)) {
+        vp_x = 0.0f;
+      }
+      if (!std::isfinite(vp_y)) {
+        vp_y = 0.0f;
+      }
+      if (!std::isfinite(vp_w) || vp_w == 0.0f) {
+        vp_w = 1.0f;
+      }
+      if (!std::isfinite(vp_h) || vp_h == 0.0f) {
+        vp_h = 1.0f;
+      }
 
       for (uint32_t i = 0; i < index_count; i++) {
         uint32_t idx = 0;
@@ -24069,10 +24132,21 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive(
         uint8_t* dst = expanded.data() + static_cast<size_t>(i) * ss.stride_bytes;
         std::memcpy(dst, src, ss.stride_bytes);
 
-        const float x = read_f32_unaligned(src + 0);
-        const float y = read_f32_unaligned(src + 4);
-        const float z = read_f32_unaligned(src + 8);
+        float x = read_f32_unaligned(src + 0);
+        float y = read_f32_unaligned(src + 4);
+        float z = read_f32_unaligned(src + 8);
         const float rhw = read_f32_unaligned(src + 12);
+        // Keep coordinates finite. If the app provides NaN/Inf XYZRHW positions,
+        // default to the center of the effective viewport (0,0 in NDC).
+        if (!std::isfinite(x)) {
+          x = vp_x + vp_w * 0.5f - 0.5f;
+        }
+        if (!std::isfinite(y)) {
+          y = vp_y + vp_h * 0.5f - 0.5f;
+        }
+        if (!std::isfinite(z)) {
+          z = 0.0f;
+        }
 
         // `rhw` is the reciprocal clip-space w. Some apps may pass non-finite
         // values; keep conversion math finite so downstream shader math does not
@@ -24087,13 +24161,35 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive(
         // D3D9's viewport transform uses a -0.5 pixel center convention. Invert it
         // so typical D3D9 pre-transformed vertex coordinates line up with pixel
         // centers.
-        const float ndc_x = ((x + 0.5f - vp_x) / vp_w) * 2.0f - 1.0f;
-        const float ndc_y = 1.0f - ((y + 0.5f - vp_y) / vp_h) * 2.0f;
-        const float ndc_z = z;
+        float ndc_x = ((x + 0.5f - vp_x) / vp_w) * 2.0f - 1.0f;
+        float ndc_y = 1.0f - ((y + 0.5f - vp_y) / vp_h) * 2.0f;
+        float ndc_z = z;
+        if (!std::isfinite(ndc_x)) {
+          ndc_x = 0.0f;
+        }
+        if (!std::isfinite(ndc_y)) {
+          ndc_y = 0.0f;
+        }
+        if (!std::isfinite(ndc_z)) {
+          ndc_z = 0.0f;
+        }
 
-        write_f32_unaligned(dst + 0, ndc_x * w);
-        write_f32_unaligned(dst + 4, ndc_y * w);
-        write_f32_unaligned(dst + 8, ndc_z * w);
+        float clip_x = ndc_x * w;
+        float clip_y = ndc_y * w;
+        float clip_z = ndc_z * w;
+        if (!std::isfinite(clip_x)) {
+          clip_x = 0.0f;
+        }
+        if (!std::isfinite(clip_y)) {
+          clip_y = 0.0f;
+        }
+        if (!std::isfinite(clip_z)) {
+          clip_z = 0.0f;
+        }
+
+        write_f32_unaligned(dst + 0, clip_x);
+        write_f32_unaligned(dst + 4, clip_y);
+        write_f32_unaligned(dst + 8, clip_z);
         write_f32_unaligned(dst + 12, w);
       }
     }
