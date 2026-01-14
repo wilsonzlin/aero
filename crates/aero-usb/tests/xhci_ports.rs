@@ -78,8 +78,8 @@ fn xhci_ports_attach_reset_and_events() {
 
     // Configure interrupter 0 with a single-segment event ring so PSC events can be delivered
     // via guest memory.
-    let erstba = 0x1000;
-    let ring_base = 0x2000;
+    let erstba = 0x1000u64;
+    let ring_base = 0x2000u64;
     write_erst_entry(&mut mem, erstba, ring_base, 8);
 
     xhci.mmio_write(regs::REG_INTR0_ERSTSZ, 4, 1);
@@ -180,32 +180,35 @@ fn xhci_tick_advances_mfindex_and_flushes_events_after_erst_configured() {
     assert_eq!(xhci.pending_event_count(), 1);
 
     // Pre-fill a would-be event ring slot so we can detect accidental writes before ERST is configured.
-    let ring_base = 0x2000usize;
-    let ring_base_u64 = ring_base as u64;
-    mem.data[ring_base..ring_base + TRB_LEN].fill(0xA5);
+    let ring_base = 0x2000u64;
+    let ring_base_usize = ring_base as usize;
+    mem.data[ring_base_usize..ring_base_usize + TRB_LEN].fill(0xA5);
 
     // Tick without an event ring: MFINDEX should advance, but the PSC event should remain queued.
     xhci.tick_1ms(&mut mem);
     let mf1 = xhci.mmio_read(regs::REG_MFINDEX, 4);
     assert_ne!(mf1, mf0, "expected MFINDEX to advance on tick_1ms");
     assert_eq!(xhci.pending_event_count(), 1);
-    assert_eq!(&mem.data[ring_base..ring_base + TRB_LEN], &[0xA5; TRB_LEN]);
+    assert_eq!(
+        &mem.data[ring_base_usize..ring_base_usize + TRB_LEN],
+        &[0xA5; TRB_LEN]
+    );
 
     // Now configure interrupter 0 with a single-segment event ring and tick again. The queued PSC event
     // should flush into guest memory.
     let erstba = 0x1000u64;
-    write_erst_entry(&mut mem, erstba, ring_base as u64, 8);
+    write_erst_entry(&mut mem, erstba, ring_base, 8);
     xhci.mmio_write(regs::REG_INTR0_ERSTSZ, 4, 1);
     xhci.mmio_write(regs::REG_INTR0_ERSTBA_LO, 4, erstba);
     xhci.mmio_write(regs::REG_INTR0_ERSTBA_HI, 4, erstba >> 32);
-    xhci.mmio_write(regs::REG_INTR0_ERDP_LO, 4, ring_base as u64);
-    xhci.mmio_write(regs::REG_INTR0_ERDP_HI, 4, (ring_base as u64) >> 32);
+    xhci.mmio_write(regs::REG_INTR0_ERDP_LO, 4, ring_base);
+    xhci.mmio_write(regs::REG_INTR0_ERDP_HI, 4, ring_base >> 32);
     xhci.mmio_write(regs::REG_INTR0_IMAN, 4, u64::from(IMAN_IE));
 
     xhci.tick_1ms(&mut mem);
     assert_eq!(xhci.pending_event_count(), 0);
 
-    let ev = Trb::read_from(&mut mem, ring_base_u64);
+    let ev = Trb::read_from(&mut mem, ring_base);
     assert_eq!(ev.trb_type(), TrbType::PortStatusChangeEvent);
     assert!(ev.cycle());
 }
