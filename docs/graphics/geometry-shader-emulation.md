@@ -321,9 +321,11 @@ Supported instructions/opcodes:
   - 2D textures:
     - `sample`, `sample_l` (`Texture2D.Sample*`)
     - `ld` (`Texture2D.Load`)
+    - `resinfo` (`Texture2D.GetDimensions` / `Texture2D.GetDimensions` + mip count)
   - SRV buffers:
     - `ld_raw`
     - `ld_structured`
+    - `bufinfo` (`ByteAddressBuffer.GetDimensions` / `StructuredBuffer.GetDimensions`)
 
 Supported operand surface (initial):
 
