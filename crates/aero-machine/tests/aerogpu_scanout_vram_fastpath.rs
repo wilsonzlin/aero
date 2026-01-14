@@ -1,3 +1,5 @@
+#![cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
+
 use aero_devices::a20_gate::A20_GATE_PORT;
 use aero_devices::pci::profile::{AEROGPU, AEROGPU_BAR1_VRAM_INDEX};
 use aero_machine::{Machine, MachineConfig, RunExit, VBE_LFB_OFFSET};
