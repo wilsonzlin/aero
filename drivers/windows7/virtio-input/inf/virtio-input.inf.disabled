@@ -79,12 +79,15 @@ aero_virtio_input.sys = 1
 ; pass `x-pci-revision=0x01` (and preferably `disable-legacy=on`).
 ;
 ; This INF includes explicit model lines for the Aero contract v1 keyboard/mouse
-; virtio-input functions (SUBSYS_0010 and SUBSYS_0011), plus a strict REV-qualified
-; fallback HWID (no SUBSYS) to ensure Windows driver binding remains stable if a
-; contract-v1 virtio-input device ships with an unexpected subsystem ID.
+; virtio-input functions (SUBSYS_0010 and SUBSYS_0011) so they appear distinctly
+; in Device Manager, plus a strict REV-qualified fallback HWID (no SUBSYS)
+; (`PCI\VEN_1AF4&DEV_1052&REV_01`) to ensure Windows driver binding remains stable
+; if subsystem IDs are not exposed/recognized or a contract-v1 virtio-input device
+; ships with an unexpected subsystem ID.
 ;
 ; Note: tablet-style virtio-input devices (absolute pointer / EV_ABS) typically
-; use `aero_virtio_tablet.inf` (SUBSYS_0012). If that INF is not installed, this
+; use `aero_virtio_tablet.inf` (SUBSYS_0012). That INF's HWID is more specific,
+; so it will win over the generic fallback. If it is not installed, this
 ; package's generic fallback model line can bind to the tablet as well; runtime
 ; contract checks still validate the device kind.
 ;

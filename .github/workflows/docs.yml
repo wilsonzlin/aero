@@ -11,6 +11,7 @@ on:
       - "scripts/ci/check-windows7-virtio-contract-consistency.py"
       - "scripts/ci/check-aerogpu-share-token-contract.py"
       - "scripts/ci/check-aerogpu-win7-dbgctl-readme-flags.py"
+      - "scripts/ci/check-win7-virtio-input-hidtest-readme-flags.py"
       - "scripts/ci/check-usb-doc-paths.py"
       - "scripts/ci/check-virtio-win-guest-tools-docs.py"
       - "scripts/ci/gen-guest-tools-devices-cmd.py"
@@ -29,6 +30,9 @@ on:
       - "drivers/windows7/virtio-net/inf/aero_virtio_net.inf"
       - "drivers/windows7/virtio-snd/inf/aero_virtio_snd.inf"
       - "drivers/windows7/virtio-input/inf/aero_virtio_input.inf"
+      - "drivers/windows7/virtio-input/tests/qemu/README.md"
+      - "drivers/windows7/virtio-input/tools/hidtest/README.md"
+      - "drivers/windows7/virtio-input/tools/hidtest/main.c"
       - "drivers/windows7/virtio-blk/include/aero_virtio_blk.h"
       - "drivers/windows7/virtio-net/include/aero_virtio_net.h"
       - "drivers/windows7/virtio-input/src/virtio_input.h"
@@ -57,6 +61,7 @@ on:
       - "scripts/ci/check-windows7-virtio-contract-consistency.py"
       - "scripts/ci/check-aerogpu-share-token-contract.py"
       - "scripts/ci/check-aerogpu-win7-dbgctl-readme-flags.py"
+      - "scripts/ci/check-win7-virtio-input-hidtest-readme-flags.py"
       - "scripts/ci/check-usb-doc-paths.py"
       - "scripts/ci/check-virtio-win-guest-tools-docs.py"
       - "scripts/ci/gen-guest-tools-devices-cmd.py"
@@ -75,6 +80,9 @@ on:
       - "drivers/windows7/virtio-net/inf/aero_virtio_net.inf"
       - "drivers/windows7/virtio-snd/inf/aero_virtio_snd.inf"
       - "drivers/windows7/virtio-input/inf/aero_virtio_input.inf"
+      - "drivers/windows7/virtio-input/tests/qemu/README.md"
+      - "drivers/windows7/virtio-input/tools/hidtest/README.md"
+      - "drivers/windows7/virtio-input/tools/hidtest/main.c"
       - "drivers/windows7/virtio-blk/include/aero_virtio_blk.h"
       - "drivers/windows7/virtio-net/include/aero_virtio_net.h"
       - "drivers/windows7/virtio-input/src/virtio_input.h"
@@ -135,6 +143,9 @@ jobs:
 
       - name: Check AeroGPU Win7 dbgctl README flags match implementation
         run: python3 scripts/ci/check-aerogpu-win7-dbgctl-readme-flags.py
+
+      - name: Check Win7 virtio-input hidtest docs flags match implementation
+        run: python3 scripts/ci/check-win7-virtio-input-hidtest-readme-flags.py
 
       - name: Check Guest Tools devices.cmd is generated from contract
         run: python3 scripts/ci/gen-guest-tools-devices-cmd.py --check
