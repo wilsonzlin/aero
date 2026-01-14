@@ -304,7 +304,10 @@ impl VirtioPciDevice {
     /// Virtio legacy interrupts are level-triggered and are deasserted when the guest reads the
     /// ISR status register.
     pub fn irq_level(&self) -> bool {
-        if self.intx_disabled() {
+        // MSI-X is exclusive when enabled: virtio-pci must not assert INTx while MSI-X is on,
+        // even if a legacy interrupt is internally pending (e.g. a driver switches from INTx to
+        // MSI-X without first reading the ISR to clear the pending latch).
+        if self.intx_disabled() || self.msix_enabled() {
             return false;
         }
         self.legacy_irq_pending
