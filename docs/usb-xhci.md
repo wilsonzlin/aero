@@ -132,7 +132,8 @@ Notes:
       the TS BAR size `XHCI_MMIO_BAR_SIZE`),
     - MMIO reads/writes,
     - PCI command gating (DMA gated on Bus Master Enable via `set_pci_command()`),
-    - INTx IRQ level (`irq_asserted()` mirrors `XhciController::irq_level()` / USBSTS.EINT), and
+    - a non-time-advancing poll hook (`poll()`) that drains queued event TRBs into the guest event ring,
+    - INTx IRQ level (`irq_asserted()` mirrors `XhciController::irq_level()`), and
     - deterministic snapshot/restore (controller state + a tick counter).
 - The IRQ line observed by the guest depends on platform routing (PIRQ swizzle); see [`docs/pci-device-compatibility.md`](./pci-device-compatibility.md) and [`docs/irq-semantics.md`](./irq-semantics.md).
 - `aero_machine::Machine` does not yet expose an xHCI controller by default (today it wires UHCI for
@@ -180,7 +181,8 @@ for modern guests and for high-speed/superspeed passthrough, but the in-tree cod
     pending), used to validate **INTx disable gating**.
   - DCBAAP register storage and controller-local slot allocation (Enable Slot scaffolding).
   - Topology-only slot binding (`Address Device`/`Configure Endpoint`) via Slot Context `RootHubPortNumber` + `RouteString`.
-  - USB2-only root hub/port model: PORTSC operational registers + reset timer + Port Status Change Event TRBs (queued host-side and delivered via interrupter 0 event ring when configured).
+  - USB2-only root hub/port model: PORTSC operational registers + reset timer + Port Status Change
+    Event TRBs (queued host-side and delivered via interrupter 0 event ring when configured).
 - Web/WASM: `aero_wasm::XhciControllerBridge`
   - Wraps `XhciController` (shared Rust model) and forwards MMIO reads/writes from the TS PCI device.
   - Enforces **PCI BME DMA gating** by swapping the memory bus implementation when bus mastering is
