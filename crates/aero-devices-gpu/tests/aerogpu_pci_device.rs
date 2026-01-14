@@ -1838,3 +1838,167 @@ fn snapshot_restore_v1_1_accepts_legacy_pending_fence_completions_tag() {
         fence
     );
 }
+
+#[test]
+fn snapshot_restore_rejects_executor_state_with_invalid_pending_fence_kind() {
+    // Tags from `AeroGpuPciDevice::save_state` / `load_state`.
+    const TAG_REGS: u16 = 1;
+    const TAG_EXECUTOR: u16 = 2;
+
+    let cfg = AeroGpuDeviceConfig {
+        vblank_hz: None,
+        ..Default::default()
+    };
+
+    let dev = new_test_device(cfg.clone());
+    let snap = dev.save_state();
+
+    let reader = SnapshotReader::parse(&snap, <AeroGpuPciDevice as IoSnapshot>::DEVICE_ID).unwrap();
+    let regs = reader
+        .bytes(TAG_REGS)
+        .expect("saved snapshot missing TAG_REGS")
+        .to_vec();
+
+    // Executor snapshot field encoding:
+    // - pending_fences_count u32
+    // - { fence u64, wants_irq bool, kind u8 } * pending_fences_count
+    //
+    // Use an invalid kind value to ensure decode is rejected.
+    let exec_bytes = Encoder::new()
+        .u32(1) // pending_fences len
+        .u64(0) // fence
+        .bool(false)
+        .u8(2) // invalid kind
+        .finish();
+
+    let mut writer = SnapshotWriter::new(
+        <AeroGpuPciDevice as IoSnapshot>::DEVICE_ID,
+        <AeroGpuPciDevice as IoSnapshot>::DEVICE_VERSION,
+    );
+    writer.field_bytes(TAG_REGS, regs);
+    writer.field_bytes(TAG_EXECUTOR, exec_bytes);
+    let corrupted = writer.finish();
+
+    let mut restored = new_test_device(cfg);
+    let err = restored.load_state(&corrupted).unwrap_err();
+    assert_eq!(err, SnapshotError::InvalidFieldEncoding("pending_fences.kind"));
+}
+
+#[test]
+fn snapshot_restore_rejects_executor_state_with_invalid_in_flight_kind() {
+    // Tags from `AeroGpuPciDevice::save_state` / `load_state`.
+    const TAG_REGS: u16 = 1;
+    const TAG_EXECUTOR: u16 = 2;
+
+    let cfg = AeroGpuDeviceConfig {
+        vblank_hz: None,
+        ..Default::default()
+    };
+
+    let dev = new_test_device(cfg.clone());
+    let snap = dev.save_state();
+
+    let reader = SnapshotReader::parse(&snap, <AeroGpuPciDevice as IoSnapshot>::DEVICE_ID).unwrap();
+    let regs = reader
+        .bytes(TAG_REGS)
+        .expect("saved snapshot missing TAG_REGS")
+        .to_vec();
+
+    // Executor snapshot field encoding:
+    // - pending_fences_count u32
+    // - in_flight_count u32
+    // - { desc fields..., kind u8, completed_backend bool, vblank_ready bool } * in_flight_count
+    //
+    // Provide a single in-flight entry with an invalid kind value.
+    let exec_bytes = Encoder::new()
+        .u32(0) // pending_fences len
+        .u32(1) // in_flight len
+        .u32(AeroGpuSubmitDesc::SIZE_BYTES) // desc_size_bytes
+        .u32(0) // flags
+        .u32(0) // context_id
+        .u32(0) // engine_id
+        .u64(0) // cmd_gpa
+        .u32(0) // cmd_size_bytes
+        .u64(0) // alloc_table_gpa
+        .u32(0) // alloc_table_size_bytes
+        .u64(1) // signal_fence
+        .u8(2) // invalid kind
+        .finish();
+
+    let mut writer = SnapshotWriter::new(
+        <AeroGpuPciDevice as IoSnapshot>::DEVICE_ID,
+        <AeroGpuPciDevice as IoSnapshot>::DEVICE_VERSION,
+    );
+    writer.field_bytes(TAG_REGS, regs);
+    writer.field_bytes(TAG_EXECUTOR, exec_bytes);
+    let corrupted = writer.finish();
+
+    let mut restored = new_test_device(cfg);
+    let err = restored.load_state(&corrupted).unwrap_err();
+    assert_eq!(err, SnapshotError::InvalidFieldEncoding("in_flight.kind"));
+}
+
+#[test]
+fn snapshot_restore_rejects_executor_state_with_duplicate_in_flight_fence() {
+    // Tags from `AeroGpuPciDevice::save_state` / `load_state`.
+    const TAG_REGS: u16 = 1;
+    const TAG_EXECUTOR: u16 = 2;
+
+    let cfg = AeroGpuDeviceConfig {
+        vblank_hz: None,
+        ..Default::default()
+    };
+
+    let dev = new_test_device(cfg.clone());
+    let snap = dev.save_state();
+
+    let reader = SnapshotReader::parse(&snap, <AeroGpuPciDevice as IoSnapshot>::DEVICE_ID).unwrap();
+    let regs = reader
+        .bytes(TAG_REGS)
+        .expect("saved snapshot missing TAG_REGS")
+        .to_vec();
+
+    // Two in-flight entries using the same signal_fence must be rejected.
+    let exec_bytes = Encoder::new()
+        .u32(0) // pending_fences len
+        .u32(2) // in_flight len
+        // entry 0
+        .u32(AeroGpuSubmitDesc::SIZE_BYTES)
+        .u32(0)
+        .u32(0)
+        .u32(0)
+        .u64(0)
+        .u32(0)
+        .u64(0)
+        .u32(0)
+        .u64(1) // signal_fence
+        .u8(0)
+        .bool(false)
+        .bool(true)
+        // entry 1 (duplicate fence)
+        .u32(AeroGpuSubmitDesc::SIZE_BYTES)
+        .u32(0)
+        .u32(0)
+        .u32(0)
+        .u64(0)
+        .u32(0)
+        .u64(0)
+        .u32(0)
+        .u64(1) // signal_fence
+        .u8(0)
+        .bool(false)
+        .bool(true)
+        .finish();
+
+    let mut writer = SnapshotWriter::new(
+        <AeroGpuPciDevice as IoSnapshot>::DEVICE_ID,
+        <AeroGpuPciDevice as IoSnapshot>::DEVICE_VERSION,
+    );
+    writer.field_bytes(TAG_REGS, regs);
+    writer.field_bytes(TAG_EXECUTOR, exec_bytes);
+    let corrupted = writer.finish();
+
+    let mut restored = new_test_device(cfg);
+    let err = restored.load_state(&corrupted).unwrap_err();
+    assert_eq!(err, SnapshotError::InvalidFieldEncoding("in_flight.duplicate_fence"));
+}
