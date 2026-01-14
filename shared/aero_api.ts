@@ -101,6 +101,12 @@ export type BootDiskSelectionSnapshot = {
   bootDevice?: BootDeviceKind;
 };
 
+export type MachineCpuBootConfigSnapshot = {
+  bootDrive: number;
+  cdBootDrive: number;
+  bootFromCdIfPresent: boolean;
+};
+
 export interface AeroDebugApi {
   /**
    * Reads input telemetry counters from the given shared status view.
@@ -131,6 +137,12 @@ export interface AeroDebugApi {
    * or null if unknown/unavailable.
    */
   getMachineCpuActiveBootDevice?: () => BootDeviceKind | null;
+
+  /**
+   * Returns the machine CPU worker's BIOS boot configuration (boot drive number + CD-first state),
+   * or null if unknown/unavailable.
+   */
+  getMachineCpuBootConfig?: () => MachineCpuBootConfigSnapshot | null;
 }
 
 export interface AeroGlobalApi {

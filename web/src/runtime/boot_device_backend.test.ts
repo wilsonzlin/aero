@@ -14,6 +14,7 @@ describe("runtime/boot_device_backend", () => {
       const coordinator: any = {
         getBootDisks: () => ({ type: "setBootDisks", mounts: { hddId: "hdd0", cdId: "cd0" }, hdd: null, cd: null, bootDevice: "hdd" }),
         getMachineCpuActiveBootDevice: () => "cdrom",
+        getMachineCpuBootConfig: () => ({ bootDrive: 0x80, cdBootDrive: 0xe0, bootFromCdIfPresent: true }),
       };
 
       installBootDeviceBackendOnAeroGlobal(coordinator);
@@ -21,9 +22,11 @@ describe("runtime/boot_device_backend", () => {
       expect(win.aero.debug.existing).toBe(true);
       expect(typeof win.aero.debug.getBootDisks).toBe("function");
       expect(typeof win.aero.debug.getMachineCpuActiveBootDevice).toBe("function");
+      expect(typeof win.aero.debug.getMachineCpuBootConfig).toBe("function");
 
       expect(win.aero.debug.getBootDisks()).toEqual({ mounts: { hddId: "hdd0", cdId: "cd0" }, bootDevice: "hdd" });
       expect(win.aero.debug.getMachineCpuActiveBootDevice()).toBe("cdrom");
+      expect(win.aero.debug.getMachineCpuBootConfig()).toEqual({ bootDrive: 0x80, cdBootDrive: 0xe0, bootFromCdIfPresent: true });
     } finally {
       if (originalWindowDescriptor) {
         Object.defineProperty(globalThis, "window", originalWindowDescriptor);

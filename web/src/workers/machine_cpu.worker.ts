@@ -153,6 +153,12 @@ let pendingBootDisks: SetBootDisksMessage | null = null;
 type MachineCpuBootDevice = "hdd" | "cdrom";
 type MachineCpuBootDeviceSelectedMessage = { type: "machineCpu.bootDeviceSelected"; bootDevice: MachineCpuBootDevice };
 type MachineCpuBootDeviceActiveMessage = { type: "machineCpu.bootDeviceActive"; bootDevice: MachineCpuBootDevice };
+type MachineCpuBootConfigMessage = {
+  type: "machineCpu.bootConfig";
+  bootDrive: number;
+  cdBootDrive: number;
+  bootFromCdIfPresent: boolean;
+};
 let pendingBootDevice: MachineCpuBootDevice = "hdd";
 // Last boot disk selection successfully applied to the Machine. Used to decide whether an HDD is
 // present when handling guest resets (avoid looping on install media).
@@ -798,6 +804,16 @@ function postBootDeviceActive(bootDevice: MachineCpuBootDevice): void {
   }
 }
 
+function postBootConfig(bootDrive: number, cdBootDrive: number, bootFromCdIfPresent: boolean): void {
+  // Best-effort side-channel used by tests and debugging tools.
+  const msg: MachineCpuBootConfigMessage = { type: "machineCpu.bootConfig", bootDrive, cdBootDrive, bootFromCdIfPresent };
+  try {
+    ctx.postMessage(msg);
+  } catch {
+    // ignore
+  }
+}
+
 function tryReadMachineActiveBootDevice(m: unknown): MachineCpuBootDevice | null {
   try {
     const fn = (m as unknown as { active_boot_device?: unknown }).active_boot_device ?? (m as unknown as { activeBootDevice?: unknown }).activeBootDevice;
@@ -824,11 +840,87 @@ function tryReadMachineActiveBootDevice(m: unknown): MachineCpuBootDevice | null
   }
 }
 
+function tryReadMachineBootDrive(m: unknown): number | null {
+  try {
+    const fn = (m as unknown as { boot_drive?: unknown }).boot_drive ?? (m as unknown as { bootDrive?: unknown }).bootDrive;
+    if (typeof fn === "function") {
+      const raw = (fn as () => unknown).call(m);
+      if (typeof raw !== "number" || !Number.isFinite(raw) || !Number.isSafeInteger(raw)) return null;
+      return raw;
+    }
+  } catch {
+    // ignore
+  }
+
+  // Back-compat: some builds expose only `boot_device(MachineBootDevice::<...>)`, which is enough
+  // to map to the canonical BIOS drive numbers.
+  try {
+    const fn = (m as unknown as { boot_device?: unknown }).boot_device ?? (m as unknown as { bootDevice?: unknown }).bootDevice;
+    if (typeof fn !== "function") return null;
+    const raw = (fn as () => unknown).call(m);
+    if (typeof raw !== "number" || !Number.isFinite(raw)) return null;
+    const value = raw | 0;
+
+    // Prefer the wasm-bindgen enum object when available (avoids hard-coding discriminants).
+    const enumObj = wasmApi?.MachineBootDevice as unknown;
+    const anyEnum = enumObj as { Hdd?: unknown; Cdrom?: unknown } | undefined;
+    const hddVal = typeof anyEnum?.Hdd === "number" ? (anyEnum.Hdd as number) : 0;
+    const cdVal = typeof anyEnum?.Cdrom === "number" ? (anyEnum.Cdrom as number) : 1;
+
+    if (value === cdVal) return BIOS_DRIVE_CD0;
+    if (value === hddVal) return BIOS_DRIVE_HDD0;
+
+    // Defensive fallback for older builds (or if enum bindings change).
+    if (value === 1) return BIOS_DRIVE_CD0;
+    if (value === 0) return BIOS_DRIVE_HDD0;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function tryReadMachineCdBootDrive(m: unknown): number | null {
+  try {
+    const fn = (m as unknown as { cd_boot_drive?: unknown }).cd_boot_drive ?? (m as unknown as { cdBootDrive?: unknown }).cdBootDrive;
+    if (typeof fn !== "function") return null;
+    const raw = (fn as () => unknown).call(m);
+    if (typeof raw !== "number" || !Number.isFinite(raw) || !Number.isSafeInteger(raw)) return null;
+    return raw;
+  } catch {
+    return null;
+  }
+}
+
+function tryReadMachineBootFromCdIfPresent(m: unknown): boolean | null {
+  try {
+    const fn =
+      (m as unknown as { boot_from_cd_if_present?: unknown }).boot_from_cd_if_present ??
+      (m as unknown as { bootFromCdIfPresent?: unknown }).bootFromCdIfPresent;
+    if (typeof fn !== "function") return null;
+    const raw = (fn as () => unknown).call(m);
+    if (typeof raw === "boolean") return raw;
+    if (typeof raw === "number" && Number.isFinite(raw)) return raw !== 0;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 function maybePostActiveBootDevice(m: unknown): void {
   const active = tryReadMachineActiveBootDevice(m);
   if (active) {
     postBootDeviceActive(active);
   }
+}
+
+function maybePostBootConfig(m: unknown): void {
+  const bootDrive = tryReadMachineBootDrive(m);
+  if (bootDrive === null) return;
+  const cdBootDrive = tryReadMachineCdBootDrive(m);
+  if (cdBootDrive === null) return;
+  const bootFromCdIfPresent = tryReadMachineBootFromCdIfPresent(m);
+  if (bootFromCdIfPresent === null) return;
+  postBootConfig(bootDrive, cdBootDrive, bootFromCdIfPresent);
 }
 
 function postSnapshot(msg: MachineSnapshotRestoredMessage): void {
@@ -2107,6 +2199,7 @@ async function applyBootDisks(msg: SetBootDisksMessage): Promise<void> {
     // Report what firmware actually booted from (CD vs HDD). This differs from the selected policy
     // when the firmware "CD-first when present" fallback is enabled.
     maybePostActiveBootDevice(m);
+    maybePostBootConfig(m);
   }
 
   currentBootDisks = msg;
@@ -2328,6 +2421,7 @@ function handleRunExit(exit: unknown): void {
           trySetMachineBootFromCdIfPresent(m, false);
         }
         trySetMachineBootDrive(m, drive);
+        maybePostBootConfig(m);
       } catch {
         // ignore
       }
@@ -2465,6 +2559,7 @@ async function handleMachineOp(op: PendingMachineOp): Promise<void> {
       // Snapshot restore can change BIOS state (including what the machine thinks it booted from).
       // Publish the updated active boot device for debug/automation tooling.
       maybePostActiveBootDevice(m);
+      maybePostBootConfig(m);
       invalidateInputStateAfterSnapshotRestore();
       postVmSnapshot({ kind: "vm.snapshot.machine.restored", requestId: op.requestId, ok: true } satisfies VmSnapshotMachineRestoredMessage);
       return;
@@ -2490,6 +2585,7 @@ async function handleMachineOp(op: PendingMachineOp): Promise<void> {
       // Snapshot restore can change BIOS state (including what the machine thinks it booted from).
       // Publish the updated active boot device for debug/automation tooling.
       maybePostActiveBootDevice(m);
+      maybePostBootConfig(m);
       invalidateInputStateAfterSnapshotRestore();
       postSnapshot({ kind: "machine.snapshot.restored", requestId: op.requestId, ok: true });
       return;
@@ -2499,6 +2595,7 @@ async function handleMachineOp(op: PendingMachineOp): Promise<void> {
     // Snapshot restore can change BIOS state (including what the machine thinks it booted from).
     // Publish the updated active boot device for debug/automation tooling.
     maybePostActiveBootDevice(m);
+    maybePostBootConfig(m);
     invalidateInputStateAfterSnapshotRestore();
     postSnapshot({ kind: "machine.snapshot.restored", requestId: op.requestId, ok: true });
   } catch (err) {
@@ -2743,6 +2840,7 @@ async function initWasmInBackground(init: WorkerInitMessage, guestMemory: WebAss
       // ignore
     }
     maybePostActiveBootDevice(machine);
+    maybePostBootConfig(machine);
     publishInputBackendStatusFromMachine();
 
     // WASM init completes asynchronously relative to the main run loop. If the run loop is

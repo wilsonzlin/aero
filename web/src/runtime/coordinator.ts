@@ -364,6 +364,9 @@ export class WorkerCoordinator {
   // firmware actually booted from for the current session (CD-ROM vs HDD). This differs from the
   // selected policy when the firmware "CD-first when present" fallback is enabled.
   private machineCpuActiveBootDevice: "hdd" | "cdrom" | null = null;
+  // Best-effort snapshot of the machine CPU worker's BIOS boot configuration (boot drive number +
+  // CD-first fallback state). This is used by debug/automation tooling.
+  private machineCpuBootConfig: { bootDrive: number; cdBootDrive: number; bootFromCdIfPresent: boolean } | null = null;
 
   private cursorImage: { width: number; height: number; rgba8: ArrayBuffer } | null = null;
   private cursorState: { enabled: boolean; x: number; y: number; hotX: number; hotY: number } | null = null;
@@ -921,6 +924,10 @@ export class WorkerCoordinator {
 
   getMachineCpuActiveBootDevice(): "hdd" | "cdrom" | null {
     return this.machineCpuActiveBootDevice;
+  }
+
+  getMachineCpuBootConfig(): { bootDrive: number; cdBootDrive: number; bootFromCdIfPresent: boolean } | null {
+    return this.machineCpuBootConfig;
   }
 
   /**
@@ -2089,6 +2096,7 @@ export class WorkerCoordinator {
     this.pendingAerogpuSubmissions = [];
     this.aerogpuInFlightFencesByRequestId.clear();
     this.machineCpuActiveBootDevice = null;
+    this.machineCpuBootConfig = null;
 
     if (options.clearShared) {
       this.shared = undefined;
@@ -2491,6 +2499,29 @@ export class WorkerCoordinator {
           return;
         }
         this.forwardAerogpuSubmit(maybeAerogpuSubmit as AerogpuSubmitMessage);
+        return;
+      }
+
+      const bootConfigMsg = data as Partial<{ type: unknown; bootDrive: unknown; cdBootDrive: unknown; bootFromCdIfPresent: unknown }>;
+      if (bootConfigMsg?.type === "machineCpu.bootConfig") {
+        const bootDrive = bootConfigMsg.bootDrive;
+        const cdBootDrive = bootConfigMsg.cdBootDrive;
+        const bootFromCdIfPresent = bootConfigMsg.bootFromCdIfPresent;
+        if (
+          typeof bootDrive === "number" &&
+          Number.isFinite(bootDrive) &&
+          Number.isSafeInteger(bootDrive) &&
+          bootDrive >= 0 &&
+          bootDrive <= 0xff &&
+          typeof cdBootDrive === "number" &&
+          Number.isFinite(cdBootDrive) &&
+          Number.isSafeInteger(cdBootDrive) &&
+          cdBootDrive >= 0 &&
+          cdBootDrive <= 0xff &&
+          typeof bootFromCdIfPresent === "boolean"
+        ) {
+          this.machineCpuBootConfig = { bootDrive, cdBootDrive, bootFromCdIfPresent };
+        }
         return;
       }
 

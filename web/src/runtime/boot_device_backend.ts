@@ -7,6 +7,12 @@ export type BootDiskSelectionSnapshot = {
   bootDevice?: BootDeviceKind;
 };
 
+export type MachineCpuBootConfigSnapshot = {
+  bootDrive: number;
+  cdBootDrive: number;
+  bootFromCdIfPresent: boolean;
+};
+
 export type BootDeviceBackend = {
   /**
    * Returns the current boot disk selection policy (mount IDs + requested boot device), or null if
@@ -21,6 +27,11 @@ export type BootDeviceBackend = {
    * booted from for the current session), or null if unknown/unavailable.
    */
   getMachineCpuActiveBootDevice: () => BootDeviceKind | null;
+  /**
+   * Returns the machine CPU worker's BIOS boot configuration (boot drive number + CD-first state),
+   * or null if unknown/unavailable.
+   */
+  getMachineCpuBootConfig: () => MachineCpuBootConfigSnapshot | null;
 };
 
 /**
@@ -69,6 +80,22 @@ export function installBootDeviceBackendOnAeroGlobal(coordinator: WorkerCoordina
     getMachineCpuActiveBootDevice: () => {
       const raw = coordinator.getMachineCpuActiveBootDevice() as unknown;
       return raw === "hdd" || raw === "cdrom" ? raw : null;
+    },
+    getMachineCpuBootConfig: () => {
+      const raw = coordinator.getMachineCpuBootConfig() as unknown;
+      if (!raw || typeof raw !== "object") return null;
+      const rec = raw as Partial<{ bootDrive: unknown; cdBootDrive: unknown; bootFromCdIfPresent: unknown }>;
+      const sanitizeDrive = (value: unknown): number | null => {
+        if (typeof value !== "number" || !Number.isFinite(value) || !Number.isSafeInteger(value)) return null;
+        if (value < 0 || value > 0xff) return null;
+        return value;
+      };
+      const bootDrive = sanitizeDrive(rec.bootDrive);
+      const cdBootDrive = sanitizeDrive(rec.cdBootDrive);
+      const bootFromCdIfPresent = rec.bootFromCdIfPresent;
+      if (bootDrive === null || cdBootDrive === null) return null;
+      if (typeof bootFromCdIfPresent !== "boolean") return null;
+      return { bootDrive, cdBootDrive, bootFromCdIfPresent };
     },
   };
 

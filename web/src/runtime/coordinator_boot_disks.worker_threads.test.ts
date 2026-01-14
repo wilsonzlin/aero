@@ -216,6 +216,28 @@ describe("runtime/coordinator (boot disks forwarding)", () => {
     expect(coordinator.getMachineCpuActiveBootDevice()).toBe("hdd");
   });
 
+  it("tracks the machine CPU worker's boot config reports", () => {
+    const coordinator = new WorkerCoordinator();
+
+    const segments = allocateTestSegments();
+    const shared = createSharedMemoryViews(segments);
+    (coordinator as unknown as CoordinatorTestHarness).shared = shared;
+    (coordinator as unknown as CoordinatorTestHarness).activeConfig = { vmRuntime: "machine" };
+
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("cpu", segments);
+    const cpuInfo = (coordinator as unknown as CoordinatorTestHarness).workers.cpu;
+
+    expect(coordinator.getMachineCpuBootConfig()).toBe(null);
+
+    (coordinator as unknown as CoordinatorTestHarness).onWorkerMessage("cpu", cpuInfo.instanceId, {
+      type: "machineCpu.bootConfig",
+      bootDrive: 0x80,
+      cdBootDrive: 0xe0,
+      bootFromCdIfPresent: true,
+    });
+    expect(coordinator.getMachineCpuBootConfig()).toEqual({ bootDrive: 0x80, cdBootDrive: 0xe0, bootFromCdIfPresent: true });
+  });
+
   it("clears the active boot device when the VM is stopped", () => {
     const coordinator = new WorkerCoordinator();
 
@@ -232,6 +254,29 @@ describe("runtime/coordinator (boot disks forwarding)", () => {
 
     coordinator.stop();
     expect(coordinator.getMachineCpuActiveBootDevice()).toBe(null);
+  });
+
+  it("clears the machine CPU boot config when the VM is stopped", () => {
+    const coordinator = new WorkerCoordinator();
+
+    const segments = allocateTestSegments();
+    const shared = createSharedMemoryViews(segments);
+    (coordinator as unknown as CoordinatorTestHarness).shared = shared;
+    (coordinator as unknown as CoordinatorTestHarness).activeConfig = { vmRuntime: "machine", enableWorkers: true };
+
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("cpu", segments);
+    const cpuInfo = (coordinator as unknown as CoordinatorTestHarness).workers.cpu;
+
+    (coordinator as unknown as CoordinatorTestHarness).onWorkerMessage("cpu", cpuInfo.instanceId, {
+      type: "machineCpu.bootConfig",
+      bootDrive: 0x80,
+      cdBootDrive: 0xe0,
+      bootFromCdIfPresent: true,
+    });
+    expect(coordinator.getMachineCpuBootConfig()).toEqual({ bootDrive: 0x80, cdBootDrive: 0xe0, bootFromCdIfPresent: true });
+
+    coordinator.stop();
+    expect(coordinator.getMachineCpuBootConfig()).toBe(null);
   });
 
   it("switches boot-device policy to HDD when the guest requests a reset and both HDD+CD are present (machine runtime)", () => {
