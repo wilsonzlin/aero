@@ -1,5 +1,5 @@
 use aero_devices::pci::profile;
-use aero_gpu_vga::{DisplayOutput, SVGA_LFB_BASE};
+use aero_gpu_vga::{DisplayOutput, SVGA_LFB_BASE, VBE_FRAMEBUFFER_OFFSET};
 use aero_machine::{Machine, MachineConfig, RunExit};
 use firmware::bda::BDA_SCREEN_COLS_ADDR;
 use pretty_assertions::assert_eq;
@@ -484,6 +484,76 @@ fn bios_vbe_sync_mode_and_custom_lfb_base() {
 
     // Write a single red pixel at (0,0) in packed 32bpp BGRX.
     m.write_physical_u32(u64::from(custom_lfb_base), 0x00FF_0000);
+    let pixel0 = {
+        let mut vga = vga.borrow_mut();
+        vga.present();
+        vga.get_framebuffer()[0]
+    };
+    assert_eq!(pixel0, 0xFF00_00FF);
+}
+
+#[test]
+fn bios_vbe_sync_mode_and_derived_lfb_base_from_vram_bar_base_and_lfb_offset() {
+    // Exercise the optional VRAM layout knobs:
+    // - `vga_vram_bar_base`: conceptual VRAM aperture base (vram[0])
+    // - `vga_lfb_offset`: offset within VRAM where the packed-pixel VBE framebuffer begins
+    //
+    // The effective VBE LFB base should be:
+    //   lfb_base = vga_vram_bar_base + vga_lfb_offset
+    //
+    // Use a derived base outside the BIOS PCI BAR allocator default window
+    // (`0xE000_0000..0xF000_0000`) to ensure this path does not rely on that sub-window.
+    let lfb_offset: u32 = VBE_FRAMEBUFFER_OFFSET as u32;
+    let vram_bar_base: u32 = 0xCFFC_0000;
+    let expected_lfb_base: u32 = 0xD000_0000;
+    assert_eq!(
+        vram_bar_base.wrapping_add(lfb_offset),
+        expected_lfb_base,
+        "test invariant: derived LFB base mismatch"
+    );
+
+    let cfg = MachineConfig {
+        ram_size_bytes: 64 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_vga: true,
+        enable_aerogpu: false,
+        vga_vram_bar_base: Some(vram_bar_base),
+        vga_lfb_offset: Some(lfb_offset),
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        enable_e1000: false,
+        ..Default::default()
+    };
+
+    let mut m = Machine::new(cfg).unwrap();
+    m.set_disk_image(build_vbe_boot_sector(0x118).to_vec())
+        .unwrap();
+    m.reset();
+    run_until_halt(&mut m);
+
+    let vga = m.vga().expect("pc platform should include VGA");
+    let bar_size_bytes: u32 = vga
+        .borrow()
+        .vram_size()
+        .try_into()
+        .expect("VRAM size fits in u32");
+    assert!(bar_size_bytes.is_power_of_two());
+    let expected_aligned_base = expected_lfb_base & !(bar_size_bytes - 1);
+
+    // VBE mode info block was written to 0x0000:0x0500 by INT 10h AX=4F01.
+    let phys_base_ptr = m.read_physical_u32(0x0500 + 40);
+    assert_eq!(phys_base_ptr, expected_aligned_base);
+
+    {
+        let mut vga = vga.borrow_mut();
+        vga.present();
+        assert_eq!(vga.get_resolution(), (1024, 768));
+    }
+
+    // Write a single red pixel at (0,0) in packed 32bpp BGRX.
+    m.write_physical_u32(u64::from(expected_aligned_base), 0x00FF_0000);
     let pixel0 = {
         let mut vga = vga.borrow_mut();
         vga.present();
