@@ -339,11 +339,11 @@ Tips:
   - To enable it, set (and reboot/restart the driver):  
     `HKLM\SYSTEM\CurrentControlSet\Services\aerogpu\Parameters\EnableReadGpaEscape = 1` (REG_DWORD)  
     and run dbgctl as a privileged user (Administrator and/or `SeDebugPrivilege`).
-- To dump multiple recent submissions in one run (useful if the newest submission is a tiny no-op), use `--count N`:
+- For `aerogpu_dbgctl.exe --dump-last-submit`, to dump multiple recent submissions in one run (useful if the newest submission is a tiny no-op), use `--count N`:
   - `aerogpu_dbgctl.exe --dump-last-submit --count 4 --cmd-out C:\cmd.bin`
   - This writes one output per submission (for example `C:\cmd_0.bin`, `C:\cmd_1.bin`, ...) plus per-submission `.txt`
     metadata and (on AGPU) optional `.alloc_table.bin` dumps.
-- To select an older submission explicitly, use `--index-from-tail K` (0 = newest):
+- For `aerogpu_dbgctl.exe --dump-last-submit`, to select an older submission explicitly, use `--index-from-tail K` (0 = newest):
   - `aerogpu_dbgctl.exe --dump-last-submit --index-from-tail 1 --cmd-out C:\prev_cmd.bin`
 
 Host (repo root):
@@ -353,7 +353,7 @@ cargo run -p aero-gpu-trace-replay -- decode-submit --cmd cmd.bin --alloc alloc.
 cargo run -p aero-gpu-trace-replay -- decode-cmd-stream cmd.bin
 ```
 
-For the canonical workflow (including `--force` and `--index-from-tail` tips), see:
+For the canonical `aerogpu_dbgctl.exe` workflow (including `--force` and `--index-from-tail` tips), see:
 [`docs/windows7-driver-troubleshooting.md` → “Dumping the last AeroGPU submission”](../../../../docs/windows7-driver-troubleshooting.md#dumping-the-last-aerogpu-submission-cmd-stream-and-alloc-table).
 
 ### D3D9 UMD call tracing (bring-up / debugging)

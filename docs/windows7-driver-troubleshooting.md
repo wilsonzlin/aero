@@ -112,7 +112,7 @@ Notes on legacy spellings (kept for compatibility with older dbgctl builds):
 - For `aerogpu_dbgctl.exe`, `--dump-last-cmd` is an alias for `--dump-last-submit`.
 - For `aerogpu_dbgctl.exe --dump-last-submit`, `--out` is an alias for `--cmd-out`.
 
-If you want a stable alloc-table output filename (`C:\alloc.bin`) instead of the default `C:\cmd.bin.alloc_table.bin` (AGPU only), set `--alloc-out` (only supported when dumping a single submission, i.e. `--count 1`):
+For `aerogpu_dbgctl.exe --dump-last-submit`, if you want a stable alloc-table output filename (`C:\alloc.bin`) instead of the default `C:\cmd.bin.alloc_table.bin` (AGPU only), set `--alloc-out` (only supported when dumping a single submission, i.e. `--count 1`):
 
 ```bat
 :: Replace <GuestToolsDrive> with the drive letter of the mounted Guest Tools ISO/zip (e.g. D).
@@ -137,12 +137,12 @@ Notes:
     and run dbgctl as a privileged user (Administrator and/or `SeDebugPrivilege`).
 - If `aerogpu_dbgctl` refuses to dump due to the default size cap (1 MiB), re-run with `--force`:
   - `aerogpu_dbgctl.exe --dump-last-submit --cmd-out C:\cmd.bin --alloc-out C:\alloc.bin --force`
-- To capture an older submission (for example if the newest submit is a tiny no-op), use `--index-from-tail`:
+- For `aerogpu_dbgctl.exe --dump-last-submit`, to capture an older submission (for example if the newest submit is a tiny no-op), use `--index-from-tail`:
   - `aerogpu_dbgctl.exe --dump-last-submit --index-from-tail 1 --cmd-out C:\prev_cmd.bin --alloc-out C:\prev_alloc.bin`
-- To dump multiple recent submissions in one run, use `--count N` (writes one output per submission, like `cmd_0.bin`, `cmd_1.bin`, ...).
+- For `aerogpu_dbgctl.exe --dump-last-submit`, to dump multiple recent submissions in one run, use `--count N` (writes one output per submission, like `cmd_0.bin`, `cmd_1.bin`, ...).
   - Note: for `aerogpu_dbgctl --dump-last-submit`, `--alloc-out` is only supported when dumping a single submission (`--count 1`). When dumping multiple submissions, `aerogpu_dbgctl` writes alloc tables (when present) to `<cmd_path>.alloc_table.bin` next to each dumped cmd stream.
   - `aerogpu_dbgctl.exe --dump-last-submit --count 4 --cmd-out C:\cmd.bin`
-- If your build uses multiple rings, select the ring with `--ring-id N` (default is 0).
+- For `aerogpu_dbgctl.exe`, if your build uses multiple rings, select the ring with `--ring-id N` (default is 0).
 
 ### 2) Host: decode the submission
 
