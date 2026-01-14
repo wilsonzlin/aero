@@ -1,4 +1,4 @@
-#![cfg(debug_assertions)]
+#![cfg(all(debug_assertions, not(target_arch = "wasm32")))]
 
 mod tier1_common;
 
