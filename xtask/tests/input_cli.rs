@@ -31,7 +31,9 @@ fn input_help_mentions_flags_and_steps() {
             "hid_consumer_control_snapshot_clamping",
         ))
         .stdout(predicate::str::contains("hid_gamepad_snapshot_clamping"))
-        .stdout(predicate::str::contains("hid_keyboard_snapshot_sanitization"))
+        .stdout(predicate::str::contains(
+            "hid_keyboard_snapshot_sanitization",
+        ))
         .stdout(predicate::str::contains("hid_mouse_snapshot_clamping"))
         .stdout(predicate::str::contains(
             "usb_hub_snapshot_configuration_clamping",

@@ -1171,11 +1171,9 @@ fn block_contains_uniformity_sensitive_ops(
             ..
         } => {
             block_contains_uniformity_sensitive_ops(then_block, stage, subroutine_infos)
-                || else_block
-                    .as_ref()
-                    .is_some_and(|b| {
-                        block_contains_uniformity_sensitive_ops(b, stage, subroutine_infos)
-                    })
+                || else_block.as_ref().is_some_and(|b| {
+                    block_contains_uniformity_sensitive_ops(b, stage, subroutine_infos)
+                })
         }
         Stmt::Loop { body, .. } | Stmt::Rep { body, .. } => {
             block_contains_uniformity_sensitive_ops(body, stage, subroutine_infos)
@@ -2532,9 +2530,7 @@ fn emit_stmt(
 
             let contains_sensitive =
                 block_contains_uniformity_sensitive_ops(then_block, stage, subroutine_infos)
-                || else_block
-                    .as_ref()
-                    .is_some_and(|b| {
+                    || else_block.as_ref().is_some_and(|b| {
                         block_contains_uniformity_sensitive_ops(b, stage, subroutine_infos)
                     });
 

@@ -84,8 +84,11 @@ const AERO_MACHINE_FOCUSED_TESTS: &[&str] = &[
 
 const WASM_PACK_TESTS: &[&str] = &["webusb_uhci_bridge", "xhci_webusb_bridge"];
 
-const AERO_WASM_INPUT_TESTS: &[&str] =
-    &["machine_input_injection", "machine_input_backends", "machine_virtio_input"];
+const AERO_WASM_INPUT_TESTS: &[&str] = &[
+    "machine_input_injection",
+    "machine_input_backends",
+    "machine_virtio_input",
+];
 
 const WEB_UNIT_TEST_PATHS: &[&str] = &[
     "src/input",
@@ -268,13 +271,8 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
     }
 
     let mut cmd = tools::npm();
-    cmd.current_dir(&repo_root).args([
-        "-w",
-        "web",
-        "run",
-        "test:unit",
-        "--",
-    ]);
+    cmd.current_dir(&repo_root)
+        .args(["-w", "web", "run", "test:unit", "--"]);
     cmd.args(WEB_UNIT_TEST_PATHS.iter().copied());
     match runner.run_step(
         "Web: npm -w web run test:unit -- src/input (plus WebUSB topology guards)",

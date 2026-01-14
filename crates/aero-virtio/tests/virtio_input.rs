@@ -792,13 +792,8 @@ fn virtio_input_statusq_invalid_descriptor_memory_is_ignored() {
 
     write_desc(&mut mem, desc, 0, buf0, payload.len() as u32, 0, 0);
     write_desc(
-        &mut mem,
-        desc,
-        1,
-        0x20000, // outside guest memory
-        48,
-        0,
-        0,
+        &mut mem, desc, 1, 0x20000, // outside guest memory
+        48, 0, 0,
     );
 
     write_u16_le(&mut mem, avail, 0).unwrap();

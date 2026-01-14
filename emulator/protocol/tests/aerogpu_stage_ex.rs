@@ -5,11 +5,11 @@ use aero_protocol::aerogpu::aerogpu_cmd::{
     decode_cmd_set_shader_resource_buffers_bindings_le,
     decode_cmd_set_unordered_access_buffers_bindings_le, decode_stage_ex, decode_stage_ex_gated,
     encode_stage_ex, resolve_shader_stage_with_ex, resolve_shader_stage_with_ex_gated,
-    resolve_stage, AerogpuCmdOpcode, AerogpuCmdSetConstantBuffers,
-    AerogpuCmdSetSamplers, AerogpuCmdSetShaderConstantsF, AerogpuCmdSetShaderResourceBuffers,
-    AerogpuCmdSetTexture, AerogpuCmdSetUnorderedAccessBuffers, AerogpuCmdStreamHeader,
-    AerogpuConstantBufferBinding, AerogpuD3dShaderStage, AerogpuShaderResourceBufferBinding,
-    AerogpuShaderStage, AerogpuShaderStageEx, AerogpuShaderStageResolved, AerogpuStageResolveError,
+    resolve_stage, AerogpuCmdOpcode, AerogpuCmdSetConstantBuffers, AerogpuCmdSetSamplers,
+    AerogpuCmdSetShaderConstantsF, AerogpuCmdSetShaderResourceBuffers, AerogpuCmdSetTexture,
+    AerogpuCmdSetUnorderedAccessBuffers, AerogpuCmdStreamHeader, AerogpuConstantBufferBinding,
+    AerogpuD3dShaderStage, AerogpuShaderResourceBufferBinding, AerogpuShaderStage,
+    AerogpuShaderStageEx, AerogpuShaderStageResolved, AerogpuStageResolveError,
     AerogpuUnorderedAccessBufferBinding, AEROGPU_STAGE_EX_MIN_ABI_MINOR,
 };
 use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
@@ -135,7 +135,11 @@ fn stage_ex_helpers_are_gated_by_cmd_stream_abi_minor() {
         Some(AerogpuShaderStageEx::None)
     );
     assert_eq!(
-        resolve_shader_stage_with_ex_gated(AEROGPU_STAGE_EX_MIN_ABI_MINOR - 1, compute, stage_ex_geom),
+        resolve_shader_stage_with_ex_gated(
+            AEROGPU_STAGE_EX_MIN_ABI_MINOR - 1,
+            compute,
+            stage_ex_geom
+        ),
         Res::Compute
     );
 
