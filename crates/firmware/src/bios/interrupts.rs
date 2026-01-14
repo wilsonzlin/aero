@@ -2283,6 +2283,58 @@ mod tests {
     }
 
     #[test]
+    fn int13_ext_read_cd_24byte_dap_uses_flat_64bit_destination_pointer() {
+        let mut bios = Bios::new(BiosConfig {
+            boot_drive: 0xE0,
+            ..BiosConfig::default()
+        });
+        let mut disk_bytes = vec![0u8; 2048 * 4];
+        let mut expected = vec![0u8; 2048];
+        expected[0..512].fill(0x11);
+        expected[512..1024].fill(0x22);
+        expected[1024..1536].fill(0x33);
+        expected[1536..2048].fill(0x44);
+        disk_bytes[2048..4096].copy_from_slice(&expected); // ISO LBA 1
+        let mut disk = InMemoryDisk::new(disk_bytes);
+
+        let mut cpu = CpuState::new(CpuMode::Real);
+        set_real_mode_seg(&mut cpu.segments.ds, 0);
+        cpu.gpr[gpr::RSI] = 0x0500;
+        cpu.gpr[gpr::RDX] = 0xE0; // DL = CD0
+        cpu.gpr[gpr::RAX] = 0x4200; // AH=42h
+
+        let mut mem = TestMemory::new(2 * 1024 * 1024);
+        ivt::init_bda(&mut mem, 0xE0);
+
+        // Use a >1MiB destination address, which requires A20 to be enabled.
+        mem.set_a20_enabled(true);
+        cpu.a20_enabled = mem.a20_enabled();
+
+        let dap_addr = cpu.apply_a20(cpu.segments.ds.base + 0x0500);
+        mem.write_u8(dap_addr, 0x18);
+        mem.write_u8(dap_addr + 1, 0x00);
+        mem.write_u16(dap_addr + 2, 1); // count (2048-byte sectors)
+        mem.write_u16(dap_addr + 4, 0x2000); // offset (should be ignored)
+        mem.write_u16(dap_addr + 6, 0x0000); // segment (should be ignored)
+        mem.write_u64(dap_addr + 8, 1); // ISO LBA
+        const FLAT_DST: u64 = 0x0011_0000;
+        mem.write_u64(dap_addr + 16, FLAT_DST); // flat 64-bit destination pointer
+
+        // Fill the segment:offset destination with a sentinel pattern to prove it's ignored.
+        let sentinel = vec![0xCC; 2048];
+        mem.write_physical(0x2000, &sentinel);
+        // Also seed the real destination with a different sentinel so we can see the overwrite.
+        mem.write_physical(FLAT_DST, &vec![0xDD; 2048]);
+
+        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
+
+        assert_eq!(cpu.rflags & FLAG_CF, 0);
+        assert_eq!((cpu.gpr[gpr::RAX] >> 8) & 0xFF, 0);
+        assert_eq!(mem.read_bytes(FLAT_DST, 2048), expected);
+        assert_eq!(mem.read_bytes(0x2000, 2048), sentinel);
+    }
+
+    #[test]
     fn int13_eltorito_services_report_unsupported_without_boot_metadata() {
         let mut bios = Bios::new(BiosConfig::default());
         let mut disk = InMemoryDisk::new(vec![0u8; 512]);
