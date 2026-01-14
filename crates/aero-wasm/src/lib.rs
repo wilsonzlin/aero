@@ -20,6 +20,9 @@ pub use aero_ipc::wasm::{SharedRingBuffer, open_ring_by_kind};
 mod guest_layout;
 
 #[cfg(target_arch = "wasm32")]
+mod wasm_guest_memory;
+
+#[cfg(target_arch = "wasm32")]
 mod runtime_alloc;
 
 #[cfg(target_arch = "wasm32")]
@@ -3308,6 +3311,42 @@ impl Machine {
         }
 
         Self::new_with_native_config(cfg)
+    }
+
+    /// Construct a machine whose guest RAM is backed by the wasm linear memory.
+    ///
+    /// This is intended for the threaded/shared-memory wasm build, where the Rust heap is capped
+    /// to the runtime-reserved region (`runtime_alloc.rs`). Supplying a guest RAM region in linear
+    /// memory avoids heap-allocating a `Vec<u8>`/`DenseMemory` of `guest_size` bytes.
+    ///
+    /// The backing storage is the linear-memory byte range `[guest_base, guest_base + guest_size)`.
+    #[cfg(target_arch = "wasm32")]
+    pub fn new_shared(guest_base: u32, guest_size: u32) -> Result<Self, JsValue> {
+        if guest_size == 0 {
+            return Err(JsValue::from_str("guest_size must be non-zero"));
+        }
+
+        let wasm_pages = core::arch::wasm32::memory_size(0) as u64;
+        let wasm_bytes = wasm_pages * 64 * 1024;
+        let end = u64::from(guest_base)
+            .checked_add(u64::from(guest_size))
+            .ok_or_else(|| JsValue::from_str("guest_base + guest_size overflow"))?;
+        if end > wasm_bytes {
+            return Err(JsValue::from_str(&format!(
+                "guest RAM range exceeds wasm memory: guest_base=0x{guest_base:x} guest_size=0x{guest_size:x} wasm_bytes=0x{wasm_bytes:x}"
+            )));
+        }
+
+        let cfg = aero_machine::MachineConfig::browser_defaults(guest_size as u64);
+
+        let mem = crate::wasm_guest_memory::WasmLinearGuestMemory::new(guest_base, guest_size);
+        let inner = aero_machine::Machine::new_with_guest_memory(cfg, Box::new(mem))
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        Ok(Self {
+            inner,
+            mouse_buttons: 0,
+            mouse_buttons_known: true,
+        })
     }
 
     pub fn reset(&mut self) {

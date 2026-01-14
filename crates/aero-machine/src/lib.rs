@@ -666,6 +666,28 @@ impl SystemMemory {
         })
     }
 
+    fn new_with_backing(
+        backing: Box<dyn memory::GuestMemory>,
+        a20: A20GateHandle,
+    ) -> Result<Self, MachineError> {
+        // Dirty tracking must be in *RAM-offset space* so dirty page indices match the contiguous
+        // RAM image used by snapshots even when the PC platform remaps high memory above 4GiB.
+        let (backing, dirty) = DirtyGuestMemory::new(backing, SNAPSHOT_DIRTY_PAGE_SIZE);
+
+        // `PlatformMemoryBus::with_ram` wraps the provided RAM backend with the PC high-memory
+        // layout (PCI/ECAM hole + >4GiB remap) when `ram_size_bytes > PCIE_ECAM_BASE`.
+        let filter = AddressFilter::new(a20.clone());
+        let bus = PlatformMemoryBus::with_ram(filter, Box::new(backing));
+
+        Ok(Self {
+            a20,
+            bus,
+            dirty,
+            mapped_roms: HashMap::new(),
+            mapped_mmio: Vec::new(),
+        })
+    }
+
     fn take_dirty_pages(&mut self) -> Vec<u64> {
         self.dirty.take_dirty_pages()
     }
@@ -2796,7 +2818,7 @@ impl Machine {
     /// `disk_id=2`: Optional IDE primary master ATA disk (if exposed as a separately managed disk).
     pub const DISK_ID_IDE_PRIMARY_MASTER: u32 = 2;
 
-    pub fn new(cfg: MachineConfig) -> Result<Self, MachineError> {
+    fn validate_cfg(cfg: &MachineConfig) -> Result<(), MachineError> {
         if cfg.cpu_count == 0 {
             return Err(MachineError::InvalidCpuCount(cfg.cpu_count));
         }
@@ -2840,12 +2862,12 @@ impl Machine {
         if cfg.enable_virtio_net && !cfg.enable_pc_platform {
             return Err(MachineError::VirtioNetRequiresPcPlatform);
         }
+        Ok(())
+    }
 
-        let chipset = ChipsetState::new(false);
-        let mem = SystemMemory::new(cfg.ram_size_bytes, chipset.a20())?;
+    fn build(cfg: MachineConfig, chipset: ChipsetState, mem: SystemMemory) -> Self {
         let boot_drive = cfg.boot_drive;
-
-        let mut machine = Self {
+        Self {
             cfg,
             chipset,
             reset_latch: ResetLatch::new(),
@@ -2907,8 +2929,36 @@ impl Machine {
             next_snapshot_id: 1,
             last_snapshot_id: None,
             guest_time: GuestTime::default(),
-        };
+        }
+    }
 
+    pub fn new(cfg: MachineConfig) -> Result<Self, MachineError> {
+        Self::validate_cfg(&cfg)?;
+
+        let chipset = ChipsetState::new(false);
+        let mem = SystemMemory::new(cfg.ram_size_bytes, chipset.a20())?;
+
+        let mut machine = Self::build(cfg, chipset, mem);
+
+        machine.reset();
+        Ok(machine)
+    }
+
+    /// Construct a machine using a caller-provided guest RAM backend.
+    ///
+    /// This exists primarily for wasm32 builds where guest RAM is mapped into the wasm linear
+    /// memory instead of being heap-allocated.
+    pub fn new_with_guest_memory(
+        mut cfg: MachineConfig,
+        backing: Box<dyn memory::GuestMemory>,
+    ) -> Result<Self, MachineError> {
+        cfg.ram_size_bytes = backing.size();
+        Self::validate_cfg(&cfg)?;
+
+        let chipset = ChipsetState::new(false);
+        let mem = SystemMemory::new_with_backing(backing, chipset.a20())?;
+
+        let mut machine = Self::build(cfg, chipset, mem);
         machine.reset();
         Ok(machine)
     }
