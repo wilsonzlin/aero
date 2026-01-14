@@ -55,8 +55,11 @@ fn u32_from_seed(seed: &[u8], offset: usize) -> u32 {
     ])
 }
 
-fn opcode_token(op: u32, param_tokens: u32, mod_bits: u8) -> u32 {
-    (op & 0xFFFF) | (param_tokens << 24) | ((mod_bits as u32) << 20)
+fn opcode_token(op: u32, operand_tokens: u32, mod_bits: u8) -> u32 {
+    // D3D9 SM2/SM3 encodes the total instruction length in tokens (including the opcode token)
+    // in bits 24..27.
+    let length = operand_tokens.saturating_add(1);
+    (op & 0xFFFF) | (length << 24) | ((mod_bits as u32) << 20)
 }
 
 fn src_token_rel_const(
@@ -264,8 +267,10 @@ fuzz_target!(|data: &[u8]| {
     let _ = aero_d3d9::shader::parse(&patched);
     // Also wrap the patched SM2/3 token stream in a minimal DXBC container to exercise the DXBC
     // parsing and shader-bytecode extraction entrypoints in `aero_d3d9::dxbc`.
-    let patched_dxbc =
-        aero_dxbc::test_utils::build_container(&[(aero_dxbc::FourCC(*b"SHDR"), patched.as_slice())]);
+    let patched_dxbc = aero_dxbc::test_utils::build_container(&[(
+        aero_dxbc::FourCC(*b"SHDR"),
+        patched.as_slice(),
+    )]);
     let _ = aero_d3d9::shader::parse(&patched_dxbc);
     if let Ok(bytes) = aero_d3d9::dxbc::extract_shader_bytecode(&patched_dxbc) {
         decode_build_verify(bytes);

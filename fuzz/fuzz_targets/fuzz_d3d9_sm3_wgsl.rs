@@ -36,10 +36,7 @@ fn dst_token(regtype: u8, index: u8, mask: u8) -> u32 {
 }
 
 fn src_token(regtype: u8, index: u8, swizzle: u8, modifier: u8) -> u32 {
-    encode_regtype(regtype)
-        | (index as u32)
-        | ((swizzle as u32) << 16)
-        | ((modifier as u32) << 24)
+    encode_regtype(regtype) | (index as u32) | ((swizzle as u32) << 16) | ((modifier as u32) << 24)
 }
 
 fn u32_from_seed(seed: &[u8], offset: usize) -> u32 {
@@ -49,6 +46,13 @@ fn u32_from_seed(seed: &[u8], offset: usize) -> u32 {
         *seed.get(offset + 2).unwrap_or(&0),
         *seed.get(offset + 3).unwrap_or(&0),
     ])
+}
+
+fn opcode_token(op: u32, operand_tokens: u32) -> u32 {
+    // D3D9 SM2/SM3 encodes the total instruction length in tokens (including the opcode token)
+    // in bits 24..27.
+    let length = operand_tokens.saturating_add(1);
+    (op & 0xFFFF) | (length << 24)
 }
 
 fn build_patched_shader(seed: &[u8]) -> Vec<u8> {
@@ -65,7 +69,11 @@ fn build_patched_shader(seed: &[u8]) -> Vec<u8> {
     let op_sel = seed.get(2).copied().unwrap_or(0) % 3;
     let swz = 0xE4u8; // xyzw
 
-    let (dst_regtype, dst_index) = if stage_is_pixel { (8u8, 0u8) } else { (4u8, 0u8) };
+    let (dst_regtype, dst_index) = if stage_is_pixel {
+        (8u8, 0u8)
+    } else {
+        (4u8, 0u8)
+    };
     let dst = dst_token(dst_regtype, dst_index, 0);
 
     let c0 = seed.get(3).copied().unwrap_or(0) % 8;
@@ -79,7 +87,8 @@ fn build_patched_shader(seed: &[u8]) -> Vec<u8> {
     let mut tokens: Vec<u32> = Vec::with_capacity(16);
     tokens.push(version_token);
     if include_def {
-        tokens.push((5u32 << 24) | 81u32);
+        // def c#, imm0..imm3
+        tokens.push(opcode_token(81, 5));
         tokens.push(def_dst);
         tokens.push(u32_from_seed(seed, 8));
         tokens.push(u32_from_seed(seed, 12));
@@ -89,18 +98,21 @@ fn build_patched_shader(seed: &[u8]) -> Vec<u8> {
 
     match op_sel {
         0 => {
-            tokens.push((2u32 << 24) | 1u32);
+            // mov dst, src0
+            tokens.push(opcode_token(1, 2));
             tokens.push(dst);
             tokens.push(src0);
         }
         1 => {
-            tokens.push((3u32 << 24) | 2u32);
+            // add dst, src0, src1
+            tokens.push(opcode_token(2, 3));
             tokens.push(dst);
             tokens.push(src0);
             tokens.push(src1);
         }
         _ => {
-            tokens.push((4u32 << 24) | 88u32);
+            // cmp dst, cond=src0, src_ge=src0, src_lt=src1
+            tokens.push(opcode_token(88, 4));
             tokens.push(dst);
             tokens.push(src0);
             tokens.push(src0);
@@ -156,7 +168,9 @@ fuzz_target!(|data: &[u8]| {
 
     let first = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
     let first_high = first & 0xFFFF_0000;
-    if (first_high == 0xFFFE_0000 || first_high == 0xFFFF_0000) && data.len() <= MAX_RAW_DECODE_BYTES {
+    if (first_high == 0xFFFE_0000 || first_high == 0xFFFF_0000)
+        && data.len() <= MAX_RAW_DECODE_BYTES
+    {
         decode_build_wgsl(data);
     }
 
