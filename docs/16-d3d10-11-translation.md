@@ -1216,6 +1216,22 @@ struct ExpandCounters {
 @group(3) @binding(272) var<storage, read_write> counters: ExpandCounters;
 ```
 
+**Counter usage (allocation + overflow; normative)**
+
+Expansion passes allocate output space by atomically incrementing counters:
+
+- To append `n` vertices:
+  - `base = atomicAdd(&counters.out_vertex_count, n)`
+  - If `base + n > params.out_max_vertices`, set `atomicStore(&counters.overflow, 1)` and **do not
+    write** (to avoid out-of-bounds writes).
+- To append `n` indices:
+  - `base = atomicAdd(&counters.out_index_count, n)`
+  - If `base + n > params.out_max_indices`, set overflow and do not write.
+
+Note: `atomicAdd` will still increment the counter even in the overflow case. This is fine because
+the finalize step MUST turn the indirect draw count(s) into 0 when `overflow != 0`, so the render
+pass deterministically draws nothing.
+
 **Initialization requirements**
 
 Before running expansion for a draw, the runtime MUST initialize the per-draw scratch state:
