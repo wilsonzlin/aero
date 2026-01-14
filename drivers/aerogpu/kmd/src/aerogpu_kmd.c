@@ -1089,7 +1089,282 @@ static VOID AeroGpuFreeSubmissionMeta(_In_opt_ AEROGPU_SUBMISSION_META* Meta)
     ExFreePoolWithTag(Meta, AEROGPU_POOL_TAG);
 }
 
-static NTSTATUS AeroGpuBuildAllocTable(_In_reads_opt_(Count) const DXGK_ALLOCATIONLIST* List,
+static __forceinline SIZE_T AeroGpuAlignUpSizeT(_In_ SIZE_T Value, _In_ SIZE_T Alignment)
+{
+    ASSERT(Alignment != 0);
+    ASSERT((Alignment & (Alignment - 1)) == 0);
+    return (Value + (Alignment - 1)) & ~(Alignment - 1);
+}
+
+static __forceinline UINT AeroGpuAllocTableComputeHashCap(_In_ UINT Count)
+{
+    UINT cap = 16;
+    const uint64_t target = (uint64_t)Count * 2ull;
+    while ((uint64_t)cap < target && cap < (1u << 30)) {
+        cap <<= 1;
+    }
+    return cap;
+}
+
+static BOOLEAN AeroGpuAllocTableScratchAllocBlock(_In_ UINT TmpEntriesCap,
+                                                  _In_ UINT HashCap,
+                                                  _Outptr_result_bytebuffer_(*BlockBytesOut) PVOID* BlockOut,
+                                                  _Out_ SIZE_T* BlockBytesOut,
+                                                  _Out_ struct aerogpu_alloc_entry** TmpEntriesOut,
+                                                  _Out_ uint32_t** SeenOut,
+                                                  _Out_ UINT** SeenIndexOut,
+                                                  _Out_ uint64_t** SeenGpaOut,
+                                                  _Out_ uint64_t** SeenSizeOut)
+{
+    if (!BlockOut || !BlockBytesOut || !TmpEntriesOut || !SeenOut || !SeenIndexOut || !SeenGpaOut || !SeenSizeOut) {
+        return FALSE;
+    }
+
+    *BlockOut = NULL;
+    *BlockBytesOut = 0;
+    *TmpEntriesOut = NULL;
+    *SeenOut = NULL;
+    *SeenIndexOut = NULL;
+    *SeenGpaOut = NULL;
+    *SeenSizeOut = NULL;
+
+    if (TmpEntriesCap == 0 || HashCap == 0) {
+        return FALSE;
+    }
+
+    /*
+     * The hash table uses (cap - 1) masking, so cap must be power-of-two.
+     * AeroGpuAllocTableComputeHashCap() guarantees this, but validate anyway.
+     */
+    if ((HashCap & (HashCap - 1)) != 0) {
+        return FALSE;
+    }
+
+    /*
+     * Allocate a single NonPagedPool block and carve it into the 4-5 scratch
+     * arrays needed by BuildAllocTable. This keeps allocation count and
+     * fragmentation down, and makes it easy to cache.
+     */
+    SIZE_T off = 0;
+    off = AeroGpuAlignUpSizeT(off, 8);
+    const SIZE_T tmpOff = off;
+    off += (SIZE_T)TmpEntriesCap * sizeof(struct aerogpu_alloc_entry);
+
+    off = AeroGpuAlignUpSizeT(off, 4);
+    const SIZE_T seenOff = off;
+    off += (SIZE_T)HashCap * sizeof(uint32_t);
+
+    off = AeroGpuAlignUpSizeT(off, 4);
+    const SIZE_T seenIndexOff = off;
+    off += (SIZE_T)HashCap * sizeof(UINT);
+
+    off = AeroGpuAlignUpSizeT(off, 8);
+    const SIZE_T seenGpaOff = off;
+    off += (SIZE_T)HashCap * sizeof(uint64_t);
+
+    off = AeroGpuAlignUpSizeT(off, 8);
+    const SIZE_T seenSizeOff = off;
+    off += (SIZE_T)HashCap * sizeof(uint64_t);
+
+    if (off == 0) {
+        return FALSE;
+    }
+
+    PVOID block = ExAllocatePoolWithTag(NonPagedPool, off, AEROGPU_POOL_TAG);
+    if (!block) {
+        return FALSE;
+    }
+
+    *BlockOut = block;
+    *BlockBytesOut = off;
+
+    *TmpEntriesOut = (struct aerogpu_alloc_entry*)((PUCHAR)block + tmpOff);
+    *SeenOut = (uint32_t*)((PUCHAR)block + seenOff);
+    *SeenIndexOut = (UINT*)((PUCHAR)block + seenIndexOff);
+    *SeenGpaOut = (uint64_t*)((PUCHAR)block + seenGpaOff);
+    *SeenSizeOut = (uint64_t*)((PUCHAR)block + seenSizeOff);
+    return TRUE;
+}
+
+static BOOLEAN AeroGpuAllocTableScratchEnsureCapacityLocked(_Inout_ AEROGPU_ALLOC_TABLE_SCRATCH* Scratch,
+                                                           _In_ UINT RequiredTmpEntriesCap,
+                                                           _In_ UINT RequiredHashCap)
+{
+    if (!Scratch || RequiredTmpEntriesCap == 0 || RequiredHashCap == 0) {
+        return FALSE;
+    }
+
+    if (Scratch->Block && Scratch->TmpEntriesCapacity >= RequiredTmpEntriesCap && Scratch->HashCapacity >= RequiredHashCap) {
+#if DBG
+        InterlockedIncrement(&Scratch->HitCount);
+#endif
+        return TRUE;
+    }
+
+    UINT newTmpCap = Scratch->TmpEntriesCapacity;
+    UINT newHashCap = Scratch->HashCapacity;
+    if (newTmpCap < RequiredTmpEntriesCap) {
+        newTmpCap = RequiredTmpEntriesCap;
+    }
+    if (newHashCap < RequiredHashCap) {
+        newHashCap = RequiredHashCap;
+    }
+
+    PVOID newBlock = NULL;
+    SIZE_T newBlockBytes = 0;
+    struct aerogpu_alloc_entry* newTmpEntries = NULL;
+    uint32_t* newSeen = NULL;
+    UINT* newSeenIndex = NULL;
+    uint64_t* newSeenGpa = NULL;
+    uint64_t* newSeenSize = NULL;
+    if (!AeroGpuAllocTableScratchAllocBlock(newTmpCap,
+                                            newHashCap,
+                                            &newBlock,
+                                            &newBlockBytes,
+                                            &newTmpEntries,
+                                            &newSeen,
+                                            &newSeenIndex,
+                                            &newSeenGpa,
+                                            &newSeenSize)) {
+        return FALSE;
+    }
+
+    PVOID oldBlock = Scratch->Block;
+
+    Scratch->Block = newBlock;
+    Scratch->BlockBytes = newBlockBytes;
+    Scratch->TmpEntriesCapacity = newTmpCap;
+    Scratch->HashCapacity = newHashCap;
+    Scratch->TmpEntries = newTmpEntries;
+    Scratch->Seen = newSeen;
+    Scratch->SeenIndex = newSeenIndex;
+    Scratch->SeenGpa = newSeenGpa;
+    Scratch->SeenSize = newSeenSize;
+
+#if DBG
+    InterlockedIncrement(&Scratch->GrowCount);
+    static volatile LONG g_BuildAllocTableScratchGrowLogCount = 0;
+    AEROGPU_LOG_RATELIMITED(g_BuildAllocTableScratchGrowLogCount,
+                            4,
+                            "BuildAllocTable: scratch grow tmp_cap=%u hash_cap=%u bytes=%Iu",
+                            newTmpCap,
+                            newHashCap,
+                            (SIZE_T)newBlockBytes);
+#endif
+
+    if (oldBlock) {
+        ExFreePoolWithTag(oldBlock, AEROGPU_POOL_TAG);
+    }
+    return TRUE;
+}
+
+static NTSTATUS AeroGpuBuildAllocTableFillScratch(_In_reads_opt_(Count) const DXGK_ALLOCATIONLIST* List,
+                                                  _In_ UINT Count,
+                                                  _Inout_updates_(Count) struct aerogpu_alloc_entry* TmpEntries,
+                                                  _Inout_updates_(HashCap) uint32_t* Seen,
+                                                  _Inout_updates_(HashCap) UINT* SeenIndex,
+                                                  _Inout_updates_(HashCap) uint64_t* SeenGpa,
+                                                  _Inout_updates_(HashCap) uint64_t* SeenSize,
+                                                  _In_ UINT HashCap,
+                                                  _Out_ UINT* EntryCountOut)
+{
+    if (EntryCountOut) {
+        *EntryCountOut = 0;
+    }
+
+    if (!List || Count == 0) {
+        return STATUS_SUCCESS;
+    }
+    if (!TmpEntries || !Seen || !SeenIndex || !SeenGpa || !SeenSize || !EntryCountOut) {
+        return STATUS_INVALID_PARAMETER;
+    }
+    if (HashCap < 2 || (HashCap & (HashCap - 1)) != 0) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    RtlZeroMemory(Seen, (SIZE_T)HashCap * sizeof(*Seen));
+
+    UINT entryCount = 0;
+    const UINT mask = HashCap - 1;
+
+    for (UINT i = 0; i < Count; ++i) {
+        AEROGPU_ALLOCATION* alloc = (AEROGPU_ALLOCATION*)List[i].hAllocation;
+        if (!alloc) {
+            AEROGPU_LOG("BuildAllocTable: AllocationList[%u] has null hAllocation", i);
+            continue;
+        }
+
+        const uint32_t allocId = (uint32_t)alloc->AllocationId;
+        if (allocId == 0) {
+            AEROGPU_LOG("BuildAllocTable: AllocationList[%u] has alloc_id=0", i);
+            continue;
+        }
+
+        UINT slot = (allocId * 2654435761u) & mask;
+        for (;;) {
+            const uint32_t existing = Seen[slot];
+            if (existing == 0) {
+                Seen[slot] = allocId;
+                SeenIndex[slot] = entryCount;
+                SeenGpa[slot] = (uint64_t)List[i].PhysicalAddress.QuadPart;
+                SeenSize[slot] = (uint64_t)alloc->SizeBytes;
+
+                TmpEntries[entryCount].alloc_id = allocId;
+                TmpEntries[entryCount].flags = 0;
+                TmpEntries[entryCount].gpa = (uint64_t)List[i].PhysicalAddress.QuadPart;
+                TmpEntries[entryCount].size_bytes = (uint64_t)alloc->SizeBytes;
+                TmpEntries[entryCount].reserved0 = 0;
+
+                entryCount += 1;
+                break;
+            }
+
+            if (existing == allocId) {
+                const UINT entryIndex = SeenIndex[slot];
+                const uint64_t gpa = (uint64_t)List[i].PhysicalAddress.QuadPart;
+                const uint64_t sizeBytes = (uint64_t)alloc->SizeBytes;
+                if (SeenGpa[slot] != gpa) {
+#if DBG
+                    static volatile LONG g_BuildAllocTableAllocIdCollisionLogCount = 0;
+                    AEROGPU_LOG_RATELIMITED(
+                        g_BuildAllocTableAllocIdCollisionLogCount,
+                        8,
+                        "BuildAllocTable: alloc_id collision: alloc_id=%lu first_entry=%u gpa0=0x%I64x size0=%I64u list_index=%u gpa1=0x%I64x size1=%I64u",
+                        (ULONG)allocId,
+                        (unsigned)entryIndex,
+                        (ULONGLONG)SeenGpa[slot],
+                        (ULONGLONG)SeenSize[slot],
+                        (unsigned)i,
+                        (ULONGLONG)gpa,
+                        (ULONGLONG)sizeBytes);
+#endif
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                /*
+                 * Duplicate alloc_id for identical backing. Size may vary due to runtime
+                 * alignment or different handle wrappers (CreateAllocation vs OpenAllocation).
+                 * Use the maximum size to keep validation/bounds checks permissive.
+                 */
+                if (sizeBytes > SeenSize[slot]) {
+                    SeenSize[slot] = sizeBytes;
+                    if (entryIndex < entryCount) {
+                        TmpEntries[entryIndex].size_bytes = sizeBytes;
+                    }
+                }
+                break;
+            }
+
+            slot = (slot + 1) & mask;
+        }
+    }
+
+    *EntryCountOut = entryCount;
+    return STATUS_SUCCESS;
+}
+
+static NTSTATUS AeroGpuBuildAllocTable(_Inout_ AEROGPU_ADAPTER* Adapter,
+                                       _In_reads_opt_(Count) const DXGK_ALLOCATIONLIST* List,
                                        _In_ UINT Count,
                                        _Outptr_result_bytebuffer_(*OutSizeBytes) PVOID* OutVa,
                                        _Out_ PHYSICAL_ADDRESS* OutPa,
@@ -1106,15 +1381,25 @@ static NTSTATUS AeroGpuBuildAllocTable(_In_reads_opt_(Count) const DXGK_ALLOCATI
     if (Count > AEROGPU_KMD_SUBMIT_ALLOCATION_LIST_MAX_COUNT) {
         return STATUS_INVALID_PARAMETER;
     }
+    if (!Adapter) {
+        return STATUS_INVALID_PARAMETER;
+    }
+    if (!Count || !List) {
+        return STATUS_SUCCESS;
+    }
 
     NTSTATUS st = STATUS_SUCCESS;
+    UINT entryCount = 0;
 
     struct aerogpu_alloc_entry* tmpEntries = NULL;
     uint32_t* seen = NULL;
     UINT* seenIndex = NULL;
     uint64_t* seenGpa = NULL;
     uint64_t* seenSize = NULL;
-    UINT entryCount = 0;
+
+    PVOID slowBlock = NULL;
+    SIZE_T slowBlockBytes = 0;
+    BOOLEAN usingCache = FALSE;
 
     PVOID tableVa = NULL;
     PHYSICAL_ADDRESS tablePa;
@@ -1122,166 +1407,67 @@ static NTSTATUS AeroGpuBuildAllocTable(_In_reads_opt_(Count) const DXGK_ALLOCATI
     SIZE_T entriesBytes = 0;
     tablePa.QuadPart = 0;
 
-    if (Count && List) {
-        SIZE_T tmpBytes = 0;
-        st = RtlSizeTMult((SIZE_T)Count, sizeof(*tmpEntries), &tmpBytes);
-        if (!NT_SUCCESS(st)) {
-            st = STATUS_INTEGER_OVERFLOW;
-            goto cleanup;
+    /*
+     * LastKnownPa is consumed by the CPU mapping path (DxgkDdiLock) and may be
+     * read/written concurrently. Guard it with CpuMapMutex to avoid torn 64-bit
+     * writes on x86.
+     *
+     * Do this outside the scratch-cache lock so concurrent submissions can still
+     * update their allocations even if they contend on the cached scratch buffer.
+     */
+    for (UINT i = 0; i < Count; ++i) {
+        AEROGPU_ALLOCATION* alloc = (AEROGPU_ALLOCATION*)List[i].hAllocation;
+        if (!alloc) {
+            continue;
         }
+        ExAcquireFastMutex(&alloc->CpuMapMutex);
+        alloc->LastKnownPa.QuadPart = List[i].PhysicalAddress.QuadPart;
+        ExReleaseFastMutex(&alloc->CpuMapMutex);
+    }
 
-        tmpEntries = (struct aerogpu_alloc_entry*)ExAllocatePoolWithTag(NonPagedPool, tmpBytes, AEROGPU_POOL_TAG);
-        if (!tmpEntries) {
-            st = STATUS_INSUFFICIENT_RESOURCES;
-            goto cleanup;
-        }
-        RtlZeroMemory(tmpEntries, tmpBytes);
+    const UINT cap = AeroGpuAllocTableComputeHashCap(Count);
 
-        UINT cap = 16;
-        const uint64_t target = (uint64_t)Count * 2ull;
-        while ((uint64_t)cap < target && cap < (1u << 30)) {
-            cap <<= 1;
-        }
-
-        SIZE_T seenBytes = 0;
-        st = RtlSizeTMult((SIZE_T)cap, sizeof(*seen), &seenBytes);
-        if (!NT_SUCCESS(st)) {
-            st = STATUS_INTEGER_OVERFLOW;
-            goto cleanup;
-        }
-
-        seen = (uint32_t*)ExAllocatePoolWithTag(NonPagedPool, seenBytes, AEROGPU_POOL_TAG);
-        if (!seen) {
-            st = STATUS_INSUFFICIENT_RESOURCES;
-            goto cleanup;
-        }
-        RtlZeroMemory(seen, seenBytes);
-
-        SIZE_T seenIndexBytes = 0;
-        st = RtlSizeTMult((SIZE_T)cap, sizeof(*seenIndex), &seenIndexBytes);
-        if (!NT_SUCCESS(st)) {
-            st = STATUS_INTEGER_OVERFLOW;
-            goto cleanup;
-        }
-
-        seenIndex = (UINT*)ExAllocatePoolWithTag(NonPagedPool, seenIndexBytes, AEROGPU_POOL_TAG);
-        if (!seenIndex) {
-            st = STATUS_INSUFFICIENT_RESOURCES;
-            goto cleanup;
-        }
-        RtlZeroMemory(seenIndex, seenIndexBytes);
-
-        SIZE_T seenGpaBytes = 0;
-        st = RtlSizeTMult((SIZE_T)cap, sizeof(*seenGpa), &seenGpaBytes);
-        if (!NT_SUCCESS(st)) {
-            st = STATUS_INTEGER_OVERFLOW;
-            goto cleanup;
-        }
-
-        seenGpa = (uint64_t*)ExAllocatePoolWithTag(NonPagedPool, seenGpaBytes, AEROGPU_POOL_TAG);
-        if (!seenGpa) {
-            st = STATUS_INSUFFICIENT_RESOURCES;
-            goto cleanup;
-        }
-        RtlZeroMemory(seenGpa, seenGpaBytes);
-
-        SIZE_T seenSizeBytes = 0;
-        st = RtlSizeTMult((SIZE_T)cap, sizeof(*seenSize), &seenSizeBytes);
-        if (!NT_SUCCESS(st)) {
-            st = STATUS_INTEGER_OVERFLOW;
-            goto cleanup;
-        }
-
-        seenSize = (uint64_t*)ExAllocatePoolWithTag(NonPagedPool, seenSizeBytes, AEROGPU_POOL_TAG);
-        if (!seenSize) {
-            st = STATUS_INSUFFICIENT_RESOURCES;
-            goto cleanup;
-        }
-        RtlZeroMemory(seenSize, seenSizeBytes);
-
-        const UINT mask = cap - 1;
-
-        for (UINT i = 0; i < Count; ++i) {
-            AEROGPU_ALLOCATION* alloc = (AEROGPU_ALLOCATION*)List[i].hAllocation;
-            if (!alloc) {
-                AEROGPU_LOG("BuildAllocTable: AllocationList[%u] has null hAllocation", i);
-                continue;
-            }
-
-            /*
-             * LastKnownPa is consumed by the CPU mapping path (DxgkDdiLock) and
-             * may be read/written concurrently. Guard it with CpuMapMutex to
-             * avoid torn 64-bit writes on x86.
-             */
-            ExAcquireFastMutex(&alloc->CpuMapMutex);
-            alloc->LastKnownPa.QuadPart = List[i].PhysicalAddress.QuadPart;
-            ExReleaseFastMutex(&alloc->CpuMapMutex);
-
-            const uint32_t allocId = (uint32_t)alloc->AllocationId;
-            if (allocId == 0) {
-                AEROGPU_LOG("BuildAllocTable: AllocationList[%u] has alloc_id=0", i);
-                continue;
-            }
-
-            UINT slot = (allocId * 2654435761u) & mask;
-            for (;;) {
-                const uint32_t existing = seen[slot];
-                if (existing == 0) {
-                    seen[slot] = allocId;
-                    seenIndex[slot] = entryCount;
-                    seenGpa[slot] = (uint64_t)List[i].PhysicalAddress.QuadPart;
-                    seenSize[slot] = (uint64_t)alloc->SizeBytes;
-
-                    tmpEntries[entryCount].alloc_id = allocId;
-                    tmpEntries[entryCount].flags = 0;
-                    tmpEntries[entryCount].gpa = (uint64_t)List[i].PhysicalAddress.QuadPart;
-                    tmpEntries[entryCount].size_bytes = (uint64_t)alloc->SizeBytes;
-                    tmpEntries[entryCount].reserved0 = 0;
-
-                    entryCount += 1;
-                    break;
-                }
-
-                if (existing == allocId) {
-                    const UINT entryIndex = seenIndex[slot];
-                    const uint64_t gpa = (uint64_t)List[i].PhysicalAddress.QuadPart;
-                    const uint64_t sizeBytes = (uint64_t)alloc->SizeBytes;
-                    if (seenGpa[slot] != gpa) {
+    /*
+     * Use the adapter-owned scratch block when possible; this avoids per-submit
+     * NonPagedPool churn. This is a single shared scratch buffer, so serialize
+     * usage by holding the scratch mutex for the duration of the table build.
+     */
+    ExAcquireFastMutex(&Adapter->AllocTableScratch.Mutex);
+    if (AeroGpuAllocTableScratchEnsureCapacityLocked(&Adapter->AllocTableScratch, Count, cap)) {
+        tmpEntries = Adapter->AllocTableScratch.TmpEntries;
+        seen = Adapter->AllocTableScratch.Seen;
+        seenIndex = Adapter->AllocTableScratch.SeenIndex;
+        seenGpa = Adapter->AllocTableScratch.SeenGpa;
+        seenSize = Adapter->AllocTableScratch.SeenSize;
+        usingCache = TRUE;
+    } else {
 #if DBG
-                        static volatile LONG g_BuildAllocTableAllocIdCollisionLogCount = 0;
-                        AEROGPU_LOG_RATELIMITED(
-                            g_BuildAllocTableAllocIdCollisionLogCount,
-                            8,
-                            "BuildAllocTable: alloc_id collision: alloc_id=%lu first_entry=%u gpa0=0x%I64x size0=%I64u list_index=%u gpa1=0x%I64x size1=%I64u",
-                            (ULONG)allocId,
-                            (unsigned)entryIndex,
-                            (ULONGLONG)seenGpa[slot],
-                            (ULONGLONG)seenSize[slot],
-                            (unsigned)i,
-                            (ULONGLONG)gpa,
-                            (ULONGLONG)sizeBytes);
+        static volatile LONG g_BuildAllocTableScratchFallbackLogCount = 0;
+        AEROGPU_LOG_RATELIMITED(g_BuildAllocTableScratchFallbackLogCount,
+                                4,
+                                "BuildAllocTable: scratch cache unavailable (Count=%u cap=%u); falling back to per-call allocations",
+                                Count,
+                                cap);
 #endif
-                        st = STATUS_INVALID_PARAMETER;
-                        goto cleanup;
-                    }
+        ExReleaseFastMutex(&Adapter->AllocTableScratch.Mutex);
 
-                    /*
-                     * Duplicate alloc_id for identical backing. Size may vary due to runtime
-                     * alignment or different handle wrappers (CreateAllocation vs OpenAllocation).
-                     * Use the maximum size to keep validation/bounds checks permissive.
-                     */
-                    if (sizeBytes > seenSize[slot]) {
-                        seenSize[slot] = sizeBytes;
-                        if (entryIndex < entryCount) {
-                            tmpEntries[entryIndex].size_bytes = sizeBytes;
-                        }
-                    }
-                    break;
-                }
-
-                slot = (slot + 1) & mask;
-            }
+        /* Allocation failure growing the cache. Fall back to one-off scratch allocations. */
+        if (!AeroGpuAllocTableScratchAllocBlock(Count,
+                                                cap,
+                                                &slowBlock,
+                                                &slowBlockBytes,
+                                                &tmpEntries,
+                                                &seen,
+                                                &seenIndex,
+                                                &seenGpa,
+                                                &seenSize)) {
+            return STATUS_INSUFFICIENT_RESOURCES;
         }
+    }
+
+    st = AeroGpuBuildAllocTableFillScratch(List, Count, tmpEntries, seen, seenIndex, seenGpa, seenSize, cap, &entryCount);
+    if (!NT_SUCCESS(st)) {
+        goto cleanup;
     }
 
     /*
@@ -1334,22 +1520,12 @@ cleanup:
     if (tableVa) {
         AeroGpuFreeContiguousNonCached(tableVa, tableSizeBytes);
     }
-    if (seenSize) {
-        ExFreePoolWithTag(seenSize, AEROGPU_POOL_TAG);
+    if (usingCache) {
+        ExReleaseFastMutex(&Adapter->AllocTableScratch.Mutex);
     }
-    if (seenGpa) {
-        ExFreePoolWithTag(seenGpa, AEROGPU_POOL_TAG);
+    if (slowBlock) {
+        ExFreePoolWithTag(slowBlock, AEROGPU_POOL_TAG);
     }
-    if (seenIndex) {
-        ExFreePoolWithTag(seenIndex, AEROGPU_POOL_TAG);
-    }
-    if (seen) {
-        ExFreePoolWithTag(seen, AEROGPU_POOL_TAG);
-    }
-    if (tmpEntries) {
-        ExFreePoolWithTag(tmpEntries, AEROGPU_POOL_TAG);
-    }
-
     return st;
 }
 
@@ -2728,6 +2904,7 @@ static NTSTATUS APIENTRY AeroGpuDdiAddDevice(_In_ PDEVICE_OBJECT PhysicalDeviceO
 
     adapter->PhysicalDeviceObject = PhysicalDeviceObject;
     adapter->NonLocalMemorySizeBytes = AeroGpuGetNonLocalMemorySizeBytes(adapter);
+    ExInitializeFastMutex(&adapter->AllocTableScratch.Mutex);
     KeInitializeSpinLock(&adapter->RingLock);
     KeInitializeSpinLock(&adapter->IrqEnableLock);
     KeInitializeSpinLock(&adapter->PendingLock);
@@ -4203,6 +4380,25 @@ static NTSTATUS APIENTRY AeroGpuDdiRemoveDevice(_In_ const PVOID MiniportDeviceC
     }
 
     AEROGPU_LOG0("RemoveDevice");
+    /* Free cached scratch buffers (BuildAllocTable). */
+    {
+        PVOID block = NULL;
+        ExAcquireFastMutex(&adapter->AllocTableScratch.Mutex);
+        block = adapter->AllocTableScratch.Block;
+        adapter->AllocTableScratch.Block = NULL;
+        adapter->AllocTableScratch.BlockBytes = 0;
+        adapter->AllocTableScratch.TmpEntriesCapacity = 0;
+        adapter->AllocTableScratch.HashCapacity = 0;
+        adapter->AllocTableScratch.TmpEntries = NULL;
+        adapter->AllocTableScratch.Seen = NULL;
+        adapter->AllocTableScratch.SeenIndex = NULL;
+        adapter->AllocTableScratch.SeenGpa = NULL;
+        adapter->AllocTableScratch.SeenSize = NULL;
+        ExReleaseFastMutex(&adapter->AllocTableScratch.Mutex);
+        if (block) {
+            ExFreePoolWithTag(block, AEROGPU_POOL_TAG);
+        }
+    }
     {
         PVOID cursorVa = NULL;
         SIZE_T cursorSize = 0;
@@ -7111,7 +7307,7 @@ static NTSTATUS APIENTRY AeroGpuDdiDestroyContext(_In_ const HANDLE hContext)
     return STATUS_SUCCESS;
 }
 
-static NTSTATUS APIENTRY AeroGpuBuildAndAttachMeta(_In_ const AEROGPU_ADAPTER* Adapter,
+static NTSTATUS APIENTRY AeroGpuBuildAndAttachMeta(_Inout_ AEROGPU_ADAPTER* Adapter,
                                                    _In_ UINT AllocationCount,
                                                    _In_reads_opt_(AllocationCount) const DXGK_ALLOCATIONLIST* AllocationList,
                                                    _In_ BOOLEAN SkipAllocTable,
@@ -7152,12 +7348,10 @@ static NTSTATUS APIENTRY AeroGpuBuildAndAttachMeta(_In_ const AEROGPU_ADAPTER* A
 
     meta->AllocationCount = AllocationCount;
 
-    if (Adapter->AbiKind == AEROGPU_ABI_KIND_V1 && !SkipAllocTable) {
-        st = AeroGpuBuildAllocTable(AllocationList,
-                                    AllocationCount,
-                                    &meta->AllocTableVa,
-                                    &meta->AllocTablePa,
-                                    &meta->AllocTableSizeBytes);
+    const BOOLEAN buildAllocTable = (Adapter->AbiKind == AEROGPU_ABI_KIND_V1 && !SkipAllocTable);
+    if (buildAllocTable) {
+        st = AeroGpuBuildAllocTable(
+            Adapter, AllocationList, AllocationCount, &meta->AllocTableVa, &meta->AllocTablePa, &meta->AllocTableSizeBytes);
         if (!NT_SUCCESS(st)) {
             ExFreePoolWithTag(meta, AEROGPU_POOL_TAG);
             return st;
@@ -7171,7 +7365,12 @@ static NTSTATUS APIENTRY AeroGpuBuildAndAttachMeta(_In_ const AEROGPU_ADAPTER* A
         meta->Allocations[i].size_bytes = (uint32_t)(alloc ? alloc->SizeBytes : 0);
         meta->Allocations[i].alloc_id = (uint32_t)(alloc ? alloc->AllocationId : 0);
 
-        if (alloc) {
+        /*
+         * AeroGpuBuildAllocTable updates LastKnownPa when it runs, but alloc tables can be
+         * intentionally skipped (or omitted on non-v1 ABIs). Keep LastKnownPa updated so
+         * DxgkDdiLock can fall back to it when PhysicalAddress isn't provided by dxgkrnl.
+         */
+        if (!buildAllocTable && alloc) {
             ExAcquireFastMutex(&alloc->CpuMapMutex);
             alloc->LastKnownPa.QuadPart = AllocationList[i].PhysicalAddress.QuadPart;
             ExReleaseFastMutex(&alloc->CpuMapMutex);

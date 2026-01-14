@@ -65,6 +65,37 @@ typedef struct _AEROGPU_SUBMISSION_LOG {
     AEROGPU_SUBMISSION_LOG_ENTRY Entries[AEROGPU_SUBMISSION_LOG_SIZE];
 } AEROGPU_SUBMISSION_LOG;
 
+/*
+ * Scratch buffers used by AeroGpuBuildAllocTable.
+ *
+ * Building the per-submit alloc table can be a hot path under real D3D workloads.
+ * Cache the temporary hash/entry buffers to avoid NonPagedPool allocation churn
+ * and fragmentation on every submission.
+ *
+ * Protected by `Mutex`; callers must be at PASSIVE_LEVEL (BuildAllocTable takes
+ * allocation CpuMapMutexes which are FAST_MUTEXes).
+ */
+typedef struct _AEROGPU_ALLOC_TABLE_SCRATCH {
+    FAST_MUTEX Mutex;
+
+    PVOID Block;
+    SIZE_T BlockBytes;
+
+    UINT TmpEntriesCapacity; /* number of aerogpu_alloc_entry slots */
+    UINT HashCapacity;       /* number of slots in Seen* arrays; power-of-two */
+
+    struct aerogpu_alloc_entry* TmpEntries;
+    uint32_t* Seen;
+    UINT* SeenIndex;
+    uint64_t* SeenGpa;
+    uint64_t* SeenSize;
+
+#if DBG
+    volatile LONG HitCount;
+    volatile LONG GrowCount;
+#endif
+} AEROGPU_ALLOC_TABLE_SCRATCH;
+
 typedef struct _AEROGPU_CREATEALLOCATION_TRACE_ENTRY {
     ULONG Seq;
     ULONG CallSeq;
@@ -418,6 +449,8 @@ typedef struct _AEROGPU_ADAPTER {
     AEROGPU_CREATEALLOCATION_TRACE CreateAllocationTrace;
 
     AEROGPU_SUBMISSION_LOG SubmissionLog;
+
+    AEROGPU_ALLOC_TABLE_SCRATCH AllocTableScratch;
 } AEROGPU_ADAPTER;
 
 static __forceinline ULONG AeroGpuReadRegU32(_In_ const AEROGPU_ADAPTER* Adapter, _In_ ULONG Offset)
