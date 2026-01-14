@@ -1,0 +1,8 @@
+[build]
+# `cargo-fuzz` requires nightly-only `-Zsanitizer=...` flags. In some CI/sandbox
+# environments `RUSTUP_TOOLCHAIN` is forced to stable, which would otherwise make
+# `cargo fuzz run` fail even though `fuzz/rust-toolchain.toml` exists.
+#
+# Force Cargo builds in this crate to use a nightly `rustc` via a tiny wrapper.
+rustc = "scripts/rustc_nightly.sh"
+
