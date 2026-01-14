@@ -417,7 +417,7 @@ drivers may omit them).
 ### virtio-net MSI/MSI-X interrupt mode (guest-observed, optional)
 
 Newer `aero-virtio-selftest.exe` binaries emit a dedicated marker describing the virtio-net interrupt mode/vectors:
-`AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|PASS|mode=intx/msi/msix/unknown|messages=<n>|config_vector=<n\|none>|rx_vector=<n\|none>|tx_vector=<n\|none>`.
+`AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|PASS/FAIL/SKIP|mode=intx/msi/msix/unknown|messages=<n>|config_vector=<n\|none>|rx_vector=<n\|none>|tx_vector=<n\|none>`.
 If the virtio-net diag interface is unavailable, the marker is emitted as `SKIP|reason=diag_unavailable|...`.
 
 When `--require-virtio-net-msix` is used, the **Python** harness additionally requires `mode=msix` from this marker.
