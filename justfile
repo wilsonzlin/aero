@@ -417,6 +417,10 @@ test:
 test-all:
   cargo xtask test-all
 
+wasm-check:
+  # Compile-check core browser-runtime crates for wasm32-unknown-unknown (no JS runtime required).
+  cargo xtask wasm-check
+
 test-input:
   cargo xtask input
 

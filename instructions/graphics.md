@@ -49,6 +49,8 @@ Quick reality check (as of this repo revision):
   and the browser GPU worker (`web/src/workers/`).
 - ✅ Shared “device-side” AeroGPU implementation: `crates/aero-devices-gpu/` contains a portable PCI wrapper (BAR0 regs + BAR1 VRAM),
   ring/vblank/fence/scanout semantics, and a backend boundary for command execution (with unit + e2e tests).
+- ✅ Wasm32 guardrails: `cargo xtask wasm-check` compile-checks `aero-devices-gpu`, `aero-machine`, and `aero-wasm` for
+  `wasm32-unknown-unknown` (CI-friendly; does not require a JS runtime).
 - ✅ Legacy/sandbox emulator wiring exists in `crates/emulator/` (reuses pieces of `aero-devices-gpu`), but it is not yet the canonical
   in-browser machine wiring.
 - ✅ D3D9 + D3D11 translation: substantial implementations exist (`crates/aero-d3d9/`,
