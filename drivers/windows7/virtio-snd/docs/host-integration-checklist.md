@@ -96,6 +96,10 @@ The driver needs **at least one usable interrupt mechanism** (unless you explici
 
 - [ ] PCI **Interrupt Pin** register is `1` (INTA#).
 - [ ] ISR status byte is **read-to-ack** (driver relies on read clearing pending bits to deassert INTx).
+- [ ] ISR status bits follow the virtio ISR definition (required for the Win7 INTx ISR/DPC dispatch):
+  - [ ] Bit 0 (`QUEUE_INTERRUPT`) is set when the device has published used-ring entries for any queue.
+  - [ ] Bit 1 (`CONFIG_INTERRUPT`) is set only for device-specific config change notifications.
+  - [ ] Bits 2–7 are `0`.
 - [ ] **INTx** is implemented and functional (baseline requirement for `AERO-W7-VIRTIO` v1; also used as fallback if MSI/MSI-X connect or vector programming fails).
 - [ ] When the driver programs all virtio MSI-X vectors to `VIRTIO_PCI_MSI_NO_VECTOR` (`0xFFFF`), the device uses legacy virtio ISR semantics and delivers interrupts via INTx.
 
