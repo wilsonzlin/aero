@@ -8657,6 +8657,14 @@ static HRESULT device_open_resource_impl(
     }
     if (res->format == 0 && priv2->format != 0) {
       // DXGI_FORMAT subset (numeric values from dxgiformat.h).
+      // Keep this list minimal and self-contained so portable builds do not
+      // require the Windows SDK headers.
+      //
+      // Include common 16-bit formats as well: D3D9Ex consumers (notably DWM)
+      // can open DXGI shared resources created by D3D10/11 apps, and those apps
+      // may legitimately use B5G6R5/B5G5R5A1 surfaces.
+      constexpr uint32_t kDxgiFmtB5G6R5Unorm = 85;
+      constexpr uint32_t kDxgiFmtB5G5R5A1Unorm = 86;
       constexpr uint32_t kDxgiFmtR8G8B8A8Typeless = 27;
       constexpr uint32_t kDxgiFmtR8G8B8A8Unorm = 28;
       constexpr uint32_t kDxgiFmtR8G8B8A8UnormSrgb = 29;
@@ -8671,10 +8679,18 @@ static HRESULT device_open_resource_impl(
       constexpr uint32_t kD3d9FmtA8R8G8B8 = 21u;
       constexpr uint32_t kD3d9FmtX8R8G8B8 = 22u;
       constexpr uint32_t kD3d9FmtA8B8G8R8 = 32u;
+      constexpr uint32_t kD3d9FmtR5G6B5 = 23u;
+      constexpr uint32_t kD3d9FmtA1R5G5B5 = 25u;
 
       const uint32_t dxgi_fmt = static_cast<uint32_t>(priv2->format);
       uint32_t d3d9_fmt = 0;
       switch (dxgi_fmt) {
+        case kDxgiFmtB5G6R5Unorm:
+          d3d9_fmt = kD3d9FmtR5G6B5;
+          break;
+        case kDxgiFmtB5G5R5A1Unorm:
+          d3d9_fmt = kD3d9FmtA1R5G5B5;
+          break;
         case kDxgiFmtB8G8R8A8Unorm:
         case kDxgiFmtB8G8R8A8Typeless:
         case kDxgiFmtB8G8R8A8UnormSrgb:
