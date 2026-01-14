@@ -219,67 +219,6 @@ fn d3d9_packed16_upload_and_sample() {
     let mut rm = ResourceManager::new(device, queue, ResourceManagerOptions::default());
     rm.begin_frame();
 
-    const TEX: GuestResourceId = 1;
-
-    rm.create_texture(
-        TEX,
-        TextureDesc {
-            kind: TextureKind::Texture2D {
-                width: 2,
-                height: 2,
-                levels: 1,
-            },
-            format: D3DFormat::A1R5G5B5,
-            pool: D3DPool::Default,
-            usage: TextureUsageKind::Sampled,
-        },
-    )
-    .unwrap();
-
-    // A1R5G5B5 pixels (row-major, top-to-bottom) exercising alpha behavior:
-    // - top-left:   opaque red
-    // - top-right:  transparent green
-    // - bottom-left opaque blue
-    // - bottom-right transparent white
-    let pixels: [u16; 4] = [
-        0xFC00, // A=1 R=31 G=0 B=0
-        0x03E0, // A=0 R=0  G=31 B=0
-        0x801F, // A=1 R=0  G=0  B=31
-        0x7FFF, // A=0 R=31 G=31 B=31
-    ];
-    let mut packed = Vec::with_capacity(pixels.len() * 2);
-    for p in pixels {
-        packed.extend_from_slice(&p.to_le_bytes());
-    }
-
-    {
-        let locked = rm.lock_texture_rect(TEX, 0, 0, LockFlags::empty()).unwrap();
-        assert_eq!(locked.pitch, 4); // 2px * 2 bytes/px
-        assert_eq!(locked.data.len(), packed.len());
-        locked.data.copy_from_slice(&packed);
-    }
-    rm.unlock_texture_rect(TEX).unwrap();
-
-    // Acquire the texture view now (requires &mut ResourceManager) so we can build GPU state
-    // without holding a long-lived borrow of `rm`.
-    let view = rm.texture_view(TEX).unwrap();
-
-    let out_tex = rm.device().create_texture(&wgpu::TextureDescriptor {
-        label: Some("out"),
-        size: wgpu::Extent3d {
-            width: 2,
-            height: 2,
-            depth_or_array_layers: 1,
-        },
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::Rgba8Unorm,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
-        view_formats: &[],
-    });
-    let out_view = out_tex.create_view(&wgpu::TextureViewDescriptor::default());
-
     let shader = rm.device().create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("packed16 sample shader"),
         source: wgpu::ShaderSource::Wgsl(SAMPLE_SHADER.into()),
@@ -334,46 +273,170 @@ fn d3d9_packed16_upload_and_sample() {
         multiview: None,
     });
 
-    let bg = rm.device().create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("bg"),
-        layout: &bgl,
-        entries: &[wgpu::BindGroupEntry {
-            binding: 0,
-            resource: wgpu::BindingResource::TextureView(&view),
-        }],
-    });
-
-    let mut encoder = rm
-        .device()
-        .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
-    rm.encode_uploads(&mut encoder);
-
-    {
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("pass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &out_view,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            depth_stencil_attachment: None,
-            occlusion_query_set: None,
-            timestamp_writes: None,
-        });
-        pass.set_pipeline(&pipeline);
-        pass.set_bind_group(0, &bg, &[]);
-        pass.draw(0..3, 0..1);
+    struct Case {
+        fmt: D3DFormat,
+        pixels: [u16; 4],
+        expected: [[u8; 4]; 4],
     }
 
-    rm.submit(encoder);
+    // Pixel order is row-major, top-to-bottom:
+    //   (0,0) (1,0)
+    //   (0,1) (1,1)
+    let cases = [
+        Case {
+            fmt: D3DFormat::R5G6B5,
+            // red, green, blue, white
+            pixels: [0xF800, 0x07E0, 0x001F, 0xFFFF],
+            expected: [
+                [255, 0, 0, 255],
+                [0, 255, 0, 255],
+                [0, 0, 255, 255],
+                [255, 255, 255, 255],
+            ],
+        },
+        Case {
+            fmt: D3DFormat::A1R5G5B5,
+            // Opaque/transparent mix:
+            // - top-left:   opaque red
+            // - top-right:  transparent green
+            // - bottom-left opaque blue
+            // - bottom-right transparent white
+            pixels: [
+                0xFC00, // A=1 R=31 G=0 B=0
+                0x03E0, // A=0 R=0  G=31 B=0
+                0x801F, // A=1 R=0  G=0  B=31
+                0x7FFF, // A=0 R=31 G=31 B=31
+            ],
+            expected: [
+                [255, 0, 0, 255],
+                [0, 255, 0, 0],
+                [0, 0, 255, 255],
+                [255, 255, 255, 0],
+            ],
+        },
+        Case {
+            fmt: D3DFormat::X1R5G5B5,
+            // Same colors as above, but with the unused top bit deliberately varied. Alpha must
+            // still be treated as 1.0.
+            pixels: [0xFC00, 0x83E0, 0x801F, 0xFFFF],
+            expected: [
+                [255, 0, 0, 255],
+                [0, 255, 0, 255],
+                [0, 0, 255, 255],
+                [255, 255, 255, 255],
+            ],
+        },
+        Case {
+            fmt: D3DFormat::A4R4G4B4,
+            // Exercise 4-bit alpha expansion:
+            // - opaque red
+            // - alpha=0x8 green (-> 0x88)
+            // - alpha=0x4 blue (-> 0x44)
+            // - transparent white
+            pixels: [0xFF00, 0x80F0, 0x400F, 0x0FFF],
+            expected: [
+                [255, 0, 0, 255],
+                [0, 255, 0, 0x88],
+                [0, 0, 255, 0x44],
+                [255, 255, 255, 0],
+            ],
+        },
+    ];
 
-    let pixels = readback_rgba8(rm.device(), rm.queue(), &out_tex, 2, 2);
+    for (i, case) in cases.into_iter().enumerate() {
+        let id = 100 + i as u32;
+        rm.create_texture(
+            id,
+            TextureDesc {
+                kind: TextureKind::Texture2D {
+                    width: 2,
+                    height: 2,
+                    levels: 1,
+                },
+                format: case.fmt,
+                pool: D3DPool::Default,
+                usage: TextureUsageKind::Sampled,
+            },
+        )
+        .unwrap();
 
-    assert_rgba_approx(pixel_at_rgba(&pixels, 2, 0, 0), [255, 0, 0, 255], 2);
-    assert_rgba_approx(pixel_at_rgba(&pixels, 2, 1, 0), [0, 255, 0, 0], 2);
-    assert_rgba_approx(pixel_at_rgba(&pixels, 2, 0, 1), [0, 0, 255, 255], 2);
-    assert_rgba_approx(pixel_at_rgba(&pixels, 2, 1, 1), [255, 255, 255, 0], 2);
+        let mut packed = Vec::with_capacity(case.pixels.len() * 2);
+        for p in case.pixels {
+            packed.extend_from_slice(&p.to_le_bytes());
+        }
+
+        {
+            let locked = rm.lock_texture_rect(id, 0, 0, LockFlags::empty()).unwrap();
+            assert_eq!(locked.pitch, 4); // 2px * 2 bytes/px
+            assert_eq!(locked.data.len(), packed.len());
+            locked.data.copy_from_slice(&packed);
+        }
+        rm.unlock_texture_rect(id).unwrap();
+
+        // Acquire the texture view now (requires &mut ResourceManager) so we can build GPU state
+        // without holding a long-lived borrow of `rm`.
+        let view = rm.texture_view(id).unwrap();
+
+        let bg = rm.device().create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("bg"),
+            layout: &bgl,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&view),
+            }],
+        });
+
+        let out_tex = rm.device().create_texture(&wgpu::TextureDescriptor {
+            label: Some("out"),
+            size: wgpu::Extent3d {
+                width: 2,
+                height: 2,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let out_view = out_tex.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let mut encoder = rm
+            .device()
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+        rm.encode_uploads(&mut encoder);
+
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &out_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                occlusion_query_set: None,
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(&pipeline);
+            pass.set_bind_group(0, &bg, &[]);
+            pass.draw(0..3, 0..1);
+        }
+
+        rm.submit(encoder);
+
+        let pixels = readback_rgba8(rm.device(), rm.queue(), &out_tex, 2, 2);
+
+        for (j, expected) in case.expected.into_iter().enumerate() {
+            let x = (j % 2) as u32;
+            let y = (j / 2) as u32;
+            assert_rgba_approx(pixel_at_rgba(&pixels, 2, x, y), expected, 2);
+        }
+
+        assert!(rm.destroy_texture(id));
+    }
 }

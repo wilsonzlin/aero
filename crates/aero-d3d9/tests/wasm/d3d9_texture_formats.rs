@@ -206,6 +206,56 @@ async fn d3d9_texture_formats_upload_and_sample() {
         (D3DFormat::Dxt1, [0, 255, 0, 255], util::bc1_solid_block([0, 255, 0]).to_vec()),
         (D3DFormat::Dxt3, [255, 0, 255, 255], util::bc2_solid_block([255, 0, 255]).to_vec()),
         (D3DFormat::Dxt5, [255, 255, 0, 255], util::bc3_solid_block([255, 255, 0]).to_vec()),
+
+        // Packed 16-bit color formats: 4x4 texture == 32 bytes.
+        (
+            D3DFormat::R5G6B5,
+            [0, 255, 0, 255],
+            {
+                // Solid green: 0b00000_111111_00000
+                let mut v = Vec::with_capacity(4 * 4 * 2);
+                for _ in 0..(4 * 4) {
+                    v.extend_from_slice(&0x07E0u16.to_le_bytes());
+                }
+                v
+            },
+        ),
+        (
+            D3DFormat::A1R5G5B5,
+            [255, 0, 0, 255],
+            {
+                // Solid opaque red: A=1, R=31.
+                let mut v = Vec::with_capacity(4 * 4 * 2);
+                for _ in 0..(4 * 4) {
+                    v.extend_from_slice(&0xFC00u16.to_le_bytes());
+                }
+                v
+            },
+        ),
+        (
+            D3DFormat::X1R5G5B5,
+            [0, 0, 255, 255],
+            {
+                // Solid blue (top bit ignored for alpha).
+                let mut v = Vec::with_capacity(4 * 4 * 2);
+                for _ in 0..(4 * 4) {
+                    v.extend_from_slice(&0x001Fu16.to_le_bytes());
+                }
+                v
+            },
+        ),
+        (
+            D3DFormat::A4R4G4B4,
+            [255, 255, 255, 255],
+            {
+                // Solid opaque white: A=R=G=B=0xF.
+                let mut v = Vec::with_capacity(4 * 4 * 2);
+                for _ in 0..(4 * 4) {
+                    v.extend_from_slice(&0xFFFFu16.to_le_bytes());
+                }
+                v
+            },
+        ),
     ];
 
     for (i, (fmt, expected, data)) in cases.into_iter().enumerate() {
