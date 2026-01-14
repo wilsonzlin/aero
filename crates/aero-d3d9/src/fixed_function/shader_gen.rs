@@ -3,7 +3,7 @@ use std::fmt::Write;
 use super::fvf::{Fvf, FvfLayout, PositionType, TexCoordSize};
 use super::tss::{
     AlphaTestState, CompareFunc, FogState, LightingState, TextureArg, TextureArgFlags,
-    TextureArgSource, TextureOp, TextureStageState,
+    TextureArgSource, TextureOp, TextureResultTarget, TextureStageState,
 };
 
 #[repr(C)]
@@ -115,6 +115,7 @@ impl FixedFunctionShaderDesc {
             write_tex_arg(hash, stage.alpha_arg0);
             write_tex_arg(hash, stage.alpha_arg1);
             write_tex_arg(hash, stage.alpha_arg2);
+            write_u8(hash, stage.result_target as u8);
         }
 
         write_stage(&mut hash, &self.stage0);
@@ -351,6 +352,9 @@ fn generate_fragment_wgsl(desc: &FixedFunctionShaderDesc, layout: &FvfLayout) ->
     wgsl.push_str("@fragment\nfn fs_main(input: FragmentIn) -> @location(0) vec4<f32> {\n");
 
     wgsl.push_str("  var current = input.diffuse;\n");
+    if shader_uses_temp(desc) {
+        wgsl.push_str("  var temp = current;\n");
+    }
     // D3D9 stage disabling: `D3DTOP_DISABLE` on stage N disables stage N and all subsequent
     // stages. D3D9 stage disabling is keyed off COLOROP: if `D3DTOP_DISABLE` is set on stage N,
     // that stage and all subsequent stages are disabled.
@@ -446,7 +450,12 @@ fn emit_tss_stage(
     let _ = writeln!(wgsl, "    let a_raw = {};", a_raw);
     wgsl.push_str("    let rgb = clamp(rgb_raw, vec3<f32>(0.0), vec3<f32>(1.0));\n");
     wgsl.push_str("    let a = clamp(a_raw, 0.0, 1.0);\n");
-    wgsl.push_str("    current = vec4<f32>(rgb, a);\n  }\n");
+    let dst_var = match stage.result_target {
+        TextureResultTarget::Current => "current",
+        TextureResultTarget::Temp => "temp",
+    };
+    let _ = writeln!(wgsl, "    {} = vec4<f32>(rgb, a);", dst_var);
+    wgsl.push_str("  }\n");
 
     if desc.fog.enabled {
         // Fog mixes after the full texture pipeline; handled after all stages.
@@ -476,6 +485,26 @@ fn stage_uses_texture(stage: &TextureStageState) -> bool {
         || implicit_texture
 }
 
+fn stage_uses_temp(stage: &TextureStageState) -> bool {
+    if stage.result_target == TextureResultTarget::Temp {
+        return true;
+    }
+    [
+        stage.color_arg0,
+        stage.color_arg1,
+        stage.color_arg2,
+        stage.alpha_arg0,
+        stage.alpha_arg1,
+        stage.alpha_arg2,
+    ]
+    .into_iter()
+    .any(|arg| matches!(arg.source, TextureArgSource::Temp))
+}
+
+fn shader_uses_temp(desc: &FixedFunctionShaderDesc) -> bool {
+    stage_uses_temp(&desc.stage0) || stage_uses_temp(&desc.stage1)
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Component {
     Rgb,
@@ -485,6 +514,7 @@ enum Component {
 fn wgsl_arg_component(arg: TextureArg, stage_index: usize, component: Component) -> String {
     let base = match arg.source {
         TextureArgSource::Current => "current".to_string(),
+        TextureArgSource::Temp => "temp".to_string(),
         TextureArgSource::Diffuse => "input.diffuse".to_string(),
         TextureArgSource::Specular => "input.specular".to_string(),
         TextureArgSource::Texture => format!("tex{}_color", stage_index),

@@ -1,7 +1,8 @@
 use aero_d3d9::fixed_function::fvf::Fvf;
 use aero_d3d9::fixed_function::shader_gen::{generate_fixed_function_shaders, FixedFunctionShaderDesc};
 use aero_d3d9::fixed_function::tss::{
-    AlphaTestState, FogState, LightingState, TextureArg, TextureOp, TextureStageState,
+    AlphaTestState, FogState, LightingState, TextureArg, TextureOp, TextureResultTarget,
+    TextureStageState,
 };
 
 fn shaders_snapshot(desc: &FixedFunctionShaderDesc) -> String {
@@ -25,6 +26,7 @@ fn wgsl_single_stage_modulate_texture_diffuse() {
             alpha_arg0: TextureArg::Current,
             alpha_arg1: TextureArg::Texture,
             alpha_arg2: TextureArg::Current,
+            result_target: TextureResultTarget::Current,
         },
         stage1: TextureStageState::default(),
         alpha_test: AlphaTestState::default(),
@@ -48,6 +50,7 @@ fn wgsl_two_stage_add_current_texture() {
             alpha_arg0: TextureArg::Current,
             alpha_arg1: TextureArg::Texture,
             alpha_arg2: TextureArg::Current,
+            result_target: TextureResultTarget::Current,
         },
         stage1: TextureStageState {
             color_op: TextureOp::Add,
@@ -58,6 +61,7 @@ fn wgsl_two_stage_add_current_texture() {
             alpha_arg0: TextureArg::Current,
             alpha_arg1: TextureArg::Current,
             alpha_arg2: TextureArg::Current,
+            result_target: TextureResultTarget::Current,
         },
         alpha_test: AlphaTestState::default(),
         fog: FogState::default(),
@@ -82,6 +86,7 @@ fn wgsl_modulate2x_with_complement_and_alpha_replicate() {
             alpha_arg0: TextureArg::Current,
             alpha_arg1: TextureArg::Diffuse,
             alpha_arg2: TextureArg::Current,
+            result_target: TextureResultTarget::Current,
         },
         stage1: TextureStageState::default(),
         alpha_test: AlphaTestState::default(),

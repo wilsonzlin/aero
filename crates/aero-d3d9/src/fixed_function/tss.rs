@@ -11,6 +11,8 @@ pub enum TextureArgSource {
     TextureFactor,
     /// D3D9 `D3DTA_CONSTANT` (`D3DTSS_CONSTANT`).
     Factor,
+    /// D3D9 `D3DTA_TEMP` (requires `D3DTSS_RESULTARG` support).
+    Temp,
 }
 
 bitflags! {
@@ -61,6 +63,11 @@ impl TextureArg {
         source: TextureArgSource::Factor,
         flags: TextureArgFlags::empty(),
     };
+    #[allow(non_upper_case_globals)]
+    pub const Temp: Self = Self {
+        source: TextureArgSource::Temp,
+        flags: TextureArgFlags::empty(),
+    };
 
     pub fn complement(mut self) -> Self {
         self.flags |= TextureArgFlags::COMPLEMENT;
@@ -70,6 +77,21 @@ impl TextureArg {
     pub fn alpha_replicate(mut self) -> Self {
         self.flags |= TextureArgFlags::ALPHA_REPLICATE;
         self
+    }
+}
+
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum TextureResultTarget {
+    /// Store stage output back into `CURRENT` (default D3D9 behavior).
+    Current,
+    /// Store stage output into `TEMP` (`D3DTSS_RESULTARG = D3DTA_TEMP`).
+    Temp,
+}
+
+impl Default for TextureResultTarget {
+    fn default() -> Self {
+        Self::Current
     }
 }
 
@@ -107,6 +129,7 @@ pub struct TextureStageState {
     pub alpha_arg0: TextureArg,
     pub alpha_arg1: TextureArg,
     pub alpha_arg2: TextureArg,
+    pub result_target: TextureResultTarget,
 }
 
 impl Default for TextureStageState {
@@ -120,6 +143,7 @@ impl Default for TextureStageState {
             alpha_arg0: TextureArg::Current,
             alpha_arg1: TextureArg::Current,
             alpha_arg2: TextureArg::Current,
+            result_target: TextureResultTarget::Current,
         }
     }
 }
