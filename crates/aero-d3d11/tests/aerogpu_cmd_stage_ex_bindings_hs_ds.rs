@@ -317,3 +317,46 @@ fn aerogpu_cmd_stage_ex_bindings_route_to_hs_ds_stage_buckets() {
         );
     });
 }
+
+#[test]
+fn aerogpu_cmd_legacy_hs_ds_stage_ids_are_accepted_for_pre_stage_ex_abi() {
+    pollster::block_on(async {
+        let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+            Ok(exec) => exec,
+            Err(e) => {
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                return;
+            }
+        };
+
+        let mut stream = vec![0u8; AerogpuCmdStreamHeader::SIZE_BYTES];
+        stream[0..4].copy_from_slice(&AEROGPU_CMD_STREAM_MAGIC.to_le_bytes());
+        stream[4..8].copy_from_slice(&AEROGPU_ABI_VERSION_U32.to_le_bytes());
+        // Patch cmd stream header ABI version from 1.3+ (current) to 1.2 (pre stage_ex).
+        stream[4..8].copy_from_slice(&0x0001_0002u32.to_le_bytes());
+
+        // Legacy encoding: some older command streams used shader_stage=4/5 for HS/DS instead of
+        // stage_ex (which did not exist yet).
+        //
+        // Use SET_TEXTURE because it exercises the per-packet stage decoder and updates the
+        // binding buckets without requiring actual HS/DS shader execution.
+        push_set_texture(&mut stream, 4, 0, 111, 0); // Hull
+        push_set_texture(&mut stream, 5, 0, 222, 0); // Domain
+
+        let stream = finish_stream(stream);
+
+        let mut guest_mem = VecGuestMemory::new(0);
+        exec.execute_cmd_stream(&stream, None, &mut guest_mem)
+            .expect("command stream should execute");
+
+        let bindings = exec.binding_state();
+        assert_eq!(
+            bindings.stage(ShaderStage::Hull).texture(0),
+            Some(BoundTexture { texture: 111 })
+        );
+        assert_eq!(
+            bindings.stage(ShaderStage::Domain).texture(0),
+            Some(BoundTexture { texture: 222 })
+        );
+    });
+}
