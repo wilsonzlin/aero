@@ -1395,6 +1395,12 @@ bool TestSetRenderTargetsUnbindsOnlyAliasedSrvs() {
   if (!Check(rt_loc.hdr != nullptr, "SET_RENDER_TARGETS present (after combined bind)")) {
     return false;
   }
+  if (!Check(vs1.offset < rt_loc.offset, "VS slot1 unbind occurs before RTV bind")) {
+    return false;
+  }
+  if (!Check(ps1.offset < rt_loc.offset, "PS slot1 unbind occurs before RTV bind")) {
+    return false;
+  }
   const auto* set_rt = reinterpret_cast<const aerogpu_cmd_set_render_targets*>(rt_loc.hdr);
   if (!Check(set_rt->color_count == 1, "SET_RENDER_TARGETS color_count==1 (after combined bind)")) {
     return false;
@@ -1692,6 +1698,25 @@ bool TestSrvBindingUnbindsAllAliasedRtvSlots() {
     return false;
   }
   if (!Check(set_rt->colors[1] == 0, "colors[1]==0 after unbinding duplicate RTV slots")) {
+    return false;
+  }
+
+  const std::vector<aerogpu_handle_t> created =
+      CollectCreateTexture2DHandles(dev.harness.last_stream.data(), dev.harness.last_stream.size());
+  if (!Check(created.size() >= 1, "captured CREATE_TEXTURE2D handles (1)")) {
+    return false;
+  }
+
+  const CmdLoc ps_tex_loc =
+      FindLastSetTexture(dev.harness.last_stream.data(), dev.harness.last_stream.size(), AEROGPU_SHADER_STAGE_PIXEL, /*slot=*/0);
+  if (!Check(ps_tex_loc.hdr != nullptr, "SET_TEXTURE present (PS slot0) after SRV bind")) {
+    return false;
+  }
+  const auto* set_ps = reinterpret_cast<const aerogpu_cmd_set_texture*>(ps_tex_loc.hdr);
+  if (!Check(set_ps->texture == created[0], "PS slot0 bound to SRV texture handle")) {
+    return false;
+  }
+  if (!Check(loc.offset < ps_tex_loc.offset, "hazard unbind (SET_RENDER_TARGETS) happens before PS SRV bind")) {
     return false;
   }
 
