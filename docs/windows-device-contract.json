@@ -2,7 +2,7 @@
   "$schema": "./windows-device-contract.schema.json",
   "schema_version": 1,
   "contract_name": "aero-windows-pci-device-contract",
-  "contract_version": "1.0.5",
+  "contract_version": "1.0.6",
   "devices": [
     {
       "device": "virtio-blk",
@@ -65,6 +65,17 @@
       "driver_service_name": "aero_virtio_input",
       "inf_name": "aero_virtio_input.inf",
       "virtio_device_type": 18
+    },
+    {
+      "device": "aero-virtio-input-tablet",
+      "pci_vendor_id": "0x1AF4",
+      "pci_device_id": "0x1052",
+      "hardware_id_patterns": [
+        "PCI\\VEN_1AF4&DEV_1052&SUBSYS_00121AF4&REV_01",
+        "PCI\\VEN_1AF4&DEV_1052&SUBSYS_00121AF4"
+      ],
+      "driver_service_name": "aero_virtio_input",
+      "inf_name": "aero_virtio_tablet.inf"
     },
     {
       "device": "aero-gpu",
