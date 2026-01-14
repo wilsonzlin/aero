@@ -1733,7 +1733,7 @@ mod tests {
         };
 
         snd.event_buffers.push_back(chain);
-        snd.pending_events.push_back(vec![1, 2, 3, 4]);
+        snd.queue_event(1, 2);
         assert!(!snd.event_buffers.is_empty());
         assert!(!snd.pending_events.is_empty());
 
@@ -1785,7 +1785,7 @@ mod tests {
         let mut evt = [0u8; 8];
         evt[0..4].copy_from_slice(&evt_type.to_le_bytes());
         evt[4..8].copy_from_slice(&evt_data.to_le_bytes());
-        snd.pending_events.push_back(evt.to_vec());
+        snd.queue_event(evt_type, evt_data);
 
         let need_irq = snd.flush_eventq(&mut queue, &mut mem).unwrap();
         assert!(need_irq, "used entry should trigger an interrupt by default");
@@ -1847,7 +1847,7 @@ mod tests {
             0x00, 0x11, 0x00, 0x00, // type = 0x1100
             0x78, 0x56, 0x34, 0x12, // data = 0x12345678
         ]);
-        snd.pending_events.push_back(evt.to_vec());
+        snd.queue_event(0x1100, 0x12345678);
 
         snd.flush_eventq(&mut queue, &mut mem).unwrap();
 
@@ -1896,7 +1896,7 @@ mod tests {
         snd.event_buffers.push_back(chain);
 
         let evt = [1u8, 2, 3, 4, 5, 6, 7, 8];
-        snd.pending_events.push_back(evt.to_vec());
+        snd.queue_event(0x04030201, 0x08070605);
 
         snd.flush_eventq(&mut queue, &mut mem).unwrap();
 
@@ -1958,8 +1958,7 @@ mod tests {
         let chain = pop_chain(&mut queue, &mem);
         snd.event_buffers.push_back(chain);
 
-        let evt = [1u8, 2, 3, 4, 5, 6, 7, 8];
-        snd.pending_events.push_back(evt.to_vec());
+        snd.queue_event(0x04030201, 0x08070605);
 
         snd.flush_eventq(&mut queue, &mut mem).unwrap();
 
@@ -2013,7 +2012,7 @@ mod tests {
         snd.event_buffers.push_back(chain);
 
         let evt = [1u8, 2, 3, 4, 5, 6, 7, 8];
-        snd.pending_events.push_back(evt.to_vec());
+        snd.queue_event(0x04030201, 0x08070605);
 
         snd.flush_eventq(&mut queue, &mut mem).unwrap();
 
