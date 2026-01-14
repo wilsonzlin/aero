@@ -250,7 +250,11 @@ export class InputCapture {
     this.releaseAllKeys();
     this.setMouseButtons(0);
     this.gamepad?.emitNeutral(this.queue, nowUs);
-    this.queue.flush(this.ioWorker, this.flushOpts);
+    try {
+      this.queue.flush(this.ioWorker, this.flushOpts);
+    } catch {
+      // Best-effort only; the worker may have been terminated during teardown.
+    }
   };
 
   private readonly handleClick = (event: MouseEvent): void => {
@@ -288,7 +292,11 @@ export class InputCapture {
     this.gamepad?.emitNeutral(this.queue, toTimestampUs(performance.now()));
     // Flush immediately; timers may be throttled in the background and we don't
     // want the guest to observe "stuck" inputs.
-    this.queue.flush(this.ioWorker, this.flushOpts);
+    try {
+      this.queue.flush(this.ioWorker, this.flushOpts);
+    } catch {
+      // Best-effort only; the worker may have been terminated during teardown.
+    }
   };
 
   private readonly handleWindowBlur = (): void => {
@@ -302,7 +310,11 @@ export class InputCapture {
     this.releaseAllKeys();
     this.setMouseButtons(0);
     this.gamepad?.emitNeutral(this.queue, toTimestampUs(performance.now()));
-    this.queue.flush(this.ioWorker, this.flushOpts);
+    try {
+      this.queue.flush(this.ioWorker, this.flushOpts);
+    } catch {
+      // Best-effort only; the worker may have been terminated during teardown.
+    }
   };
 
   private readonly handleWindowFocus = (): void => {
@@ -324,7 +336,11 @@ export class InputCapture {
     this.releaseAllKeys();
     this.setMouseButtons(0);
     this.gamepad?.emitNeutral(this.queue, toTimestampUs(performance.now()));
-    this.queue.flush(this.ioWorker, this.flushOpts);
+    try {
+      this.queue.flush(this.ioWorker, this.flushOpts);
+    } catch {
+      // Best-effort only; the worker may have been terminated during teardown.
+    }
   };
 
   private readonly handleKeyDown = (event: KeyboardEvent): void => {
@@ -1011,7 +1027,14 @@ export class InputCapture {
     this.releaseAllKeys();
     this.setMouseButtons(0);
     this.gamepad?.emitNeutral(this.queue, toTimestampUs(performance.now()));
-    this.queue.flush(this.ioWorker, this.flushOptsNoRecycle);
+    try {
+      this.queue.flush(this.ioWorker, this.flushOptsNoRecycle);
+    } catch {
+      // `InputCapture.stop()` must be exception-safe: callers may race with worker shutdown and
+      // attempt to stop capture after the target worker is already terminated. In that case,
+      // `postMessage` throws and we still need to detach all DOM listeners to avoid leaving the
+      // page in a partially-capturing state.
+    }
 
     const workerWithEvents = this.ioWorker as unknown as MessageEventTarget;
     workerWithEvents.removeEventListener?.("message", this.handleWorkerMessage);
@@ -1053,7 +1076,13 @@ export class InputCapture {
 
   flushNow(): void {
     this.pollGamepad();
-    const latencyUs = this.queue.flush(this.ioWorker, this.flushOpts);
+    let latencyUs: number | null;
+    try {
+      latencyUs = this.queue.flush(this.ioWorker, this.flushOpts);
+    } catch {
+      // Best-effort only; the worker may have been terminated during teardown.
+      return;
+    }
     if (latencyUs === null || !this.logCaptureLatency) {
       return;
     }
