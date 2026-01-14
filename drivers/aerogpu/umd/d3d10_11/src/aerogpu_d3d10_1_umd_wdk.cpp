@@ -3682,6 +3682,10 @@ void AEROGPU_APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOUR
     if (dev->current_vs_srvs[slot] == res) {
       dev->current_vs_srvs[slot] = nullptr;
       auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_texture>(AEROGPU_CMD_SET_TEXTURE);
+      if (!cmd) {
+        set_error(dev, E_OUTOFMEMORY);
+        break;
+      }
       cmd->shader_stage = AEROGPU_SHADER_STAGE_VERTEX;
       cmd->slot = slot;
       cmd->texture = 0;
@@ -3692,6 +3696,10 @@ void AEROGPU_APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOUR
     if (dev->current_ps_srvs[slot] == res) {
       dev->current_ps_srvs[slot] = nullptr;
       auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_texture>(AEROGPU_CMD_SET_TEXTURE);
+      if (!cmd) {
+        set_error(dev, E_OUTOFMEMORY);
+        break;
+      }
       cmd->shader_stage = AEROGPU_SHADER_STAGE_PIXEL;
       cmd->slot = slot;
       cmd->texture = 0;
@@ -6937,6 +6945,10 @@ void SetShaderResourcesCommon(D3D10DDI_HDEVICE hDevice,
     }
 
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_texture>(AEROGPU_CMD_SET_TEXTURE);
+    if (!cmd) {
+      set_error(dev, E_OUTOFMEMORY);
+      return;
+    }
     cmd->shader_stage = shader_stage;
     cmd->slot = slot;
     cmd->texture = tex;
@@ -7100,6 +7112,10 @@ void AEROGPU_APIENTRY ClearState(D3D10DDI_HDEVICE hDevice) {
     if (dev->current_vs_srvs[slot]) {
       dev->current_vs_srvs[slot] = nullptr;
       auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_texture>(AEROGPU_CMD_SET_TEXTURE);
+      if (!cmd) {
+        set_error(dev, E_OUTOFMEMORY);
+        return;
+      }
       cmd->shader_stage = AEROGPU_SHADER_STAGE_VERTEX;
       cmd->slot = slot;
       cmd->texture = 0;
@@ -7110,6 +7126,10 @@ void AEROGPU_APIENTRY ClearState(D3D10DDI_HDEVICE hDevice) {
     if (dev->current_ps_srvs[slot]) {
       dev->current_ps_srvs[slot] = nullptr;
       auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_texture>(AEROGPU_CMD_SET_TEXTURE);
+      if (!cmd) {
+        set_error(dev, E_OUTOFMEMORY);
+        return;
+      }
       cmd->shader_stage = AEROGPU_SHADER_STAGE_PIXEL;
       cmd->slot = slot;
       cmd->texture = 0;
@@ -7154,6 +7174,10 @@ void AEROGPU_APIENTRY ClearState(D3D10DDI_HDEVICE hDevice) {
   dev->viewport_width = 0;
   dev->viewport_height = 0;
   auto* rt_cmd = dev->cmd.append_fixed<aerogpu_cmd_set_render_targets>(AEROGPU_CMD_SET_RENDER_TARGETS);
+  if (!rt_cmd) {
+    set_error(dev, E_OUTOFMEMORY);
+    return;
+  }
   rt_cmd->color_count = 0;
   rt_cmd->depth_stencil = 0;
   for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; i++) {
@@ -7163,6 +7187,10 @@ void AEROGPU_APIENTRY ClearState(D3D10DDI_HDEVICE hDevice) {
   dev->current_vs = 0;
   dev->current_ps = 0;
   auto* bind_cmd = dev->cmd.append_fixed<aerogpu_cmd_bind_shaders>(AEROGPU_CMD_BIND_SHADERS);
+  if (!bind_cmd) {
+    set_error(dev, E_OUTOFMEMORY);
+    return;
+  }
   bind_cmd->vs = 0;
   bind_cmd->ps = 0;
   bind_cmd->cs = 0;
@@ -7170,11 +7198,19 @@ void AEROGPU_APIENTRY ClearState(D3D10DDI_HDEVICE hDevice) {
 
   dev->current_input_layout = 0;
   auto* il_cmd = dev->cmd.append_fixed<aerogpu_cmd_set_input_layout>(AEROGPU_CMD_SET_INPUT_LAYOUT);
+  if (!il_cmd) {
+    set_error(dev, E_OUTOFMEMORY);
+    return;
+  }
   il_cmd->input_layout_handle = 0;
   il_cmd->reserved0 = 0;
 
   dev->current_topology = AEROGPU_TOPOLOGY_TRIANGLELIST;
   auto* topo_cmd = dev->cmd.append_fixed<aerogpu_cmd_set_primitive_topology>(AEROGPU_CMD_SET_PRIMITIVE_TOPOLOGY);
+  if (!topo_cmd) {
+    set_error(dev, E_OUTOFMEMORY);
+    return;
+  }
   topo_cmd->topology = AEROGPU_TOPOLOGY_TRIANGLELIST;
   topo_cmd->reserved0 = 0;
 
@@ -7197,6 +7233,10 @@ void AEROGPU_APIENTRY ClearState(D3D10DDI_HDEVICE hDevice) {
 
   dev->current_ib_res = nullptr;
   auto* ib_cmd = dev->cmd.append_fixed<aerogpu_cmd_set_index_buffer>(AEROGPU_CMD_SET_INDEX_BUFFER);
+  if (!ib_cmd) {
+    set_error(dev, E_OUTOFMEMORY);
+    return;
+  }
   ib_cmd->buffer = 0;
   ib_cmd->format = AEROGPU_INDEX_FORMAT_UINT16;
   ib_cmd->offset_bytes = 0;
@@ -8590,6 +8630,10 @@ void AEROGPU_APIENTRY RotateResourceIdentities(D3D10DDI_HDEVICE hDevice,
       continue;
     }
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_texture>(AEROGPU_CMD_SET_TEXTURE);
+    if (!cmd) {
+      set_error(dev, E_OUTOFMEMORY);
+      return;
+    }
     cmd->shader_stage = AEROGPU_SHADER_STAGE_VERTEX;
     cmd->slot = slot;
     cmd->texture = dev->current_vs_srvs[slot] ? dev->current_vs_srvs[slot]->handle : 0;
@@ -8600,6 +8644,10 @@ void AEROGPU_APIENTRY RotateResourceIdentities(D3D10DDI_HDEVICE hDevice,
       continue;
     }
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_texture>(AEROGPU_CMD_SET_TEXTURE);
+    if (!cmd) {
+      set_error(dev, E_OUTOFMEMORY);
+      return;
+    }
     cmd->shader_stage = AEROGPU_SHADER_STAGE_PIXEL;
     cmd->slot = slot;
     cmd->texture = dev->current_ps_srvs[slot] ? dev->current_ps_srvs[slot]->handle : 0;
