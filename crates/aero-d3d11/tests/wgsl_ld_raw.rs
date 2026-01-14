@@ -154,12 +154,7 @@ fn compute_shader_ld_raw_reads_from_storage_buffer() {
 
         let dxbc_bytes = build_minimal_dxbc();
         let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
-        let signatures = ShaderSignatures {
-            isgn: None,
-            osgn: None,
-            psgn: None,
-            pcsg: None,
-        };
+        let signatures = ShaderSignatures::default();
         let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures)
             .expect("compute translation should succeed");
         assert!(

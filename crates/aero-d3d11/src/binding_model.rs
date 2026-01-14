@@ -30,6 +30,7 @@ pub const BINDING_BASE_CBUFFER: u32 = 0;
 pub const BINDING_BASE_TEXTURE: u32 = 32;
 /// Base `@binding` offset for `s#` samplers.
 pub const BINDING_BASE_SAMPLER: u32 = 160;
+
 /// Base `@binding` offset for SM5 `u#` UAVs (unordered access views).
 ///
 /// This starts immediately after the sampler range (`[BINDING_BASE_SAMPLER, BINDING_BASE_UAV)`),

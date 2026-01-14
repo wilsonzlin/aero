@@ -194,6 +194,19 @@ pub enum BufferKind {
     Structured,
 }
 
+/// Compute-shader system values exposed as special SM5 operand types.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ComputeBuiltin {
+    /// `SV_DispatchThreadID` (`@builtin(global_invocation_id)`).
+    DispatchThreadId,
+    /// `SV_GroupThreadID` (`@builtin(local_invocation_id)`).
+    GroupThreadId,
+    /// `SV_GroupID` (`@builtin(workgroup_id)`).
+    GroupId,
+    /// `SV_GroupIndex` (`@builtin(local_invocation_index)`).
+    GroupIndex,
+}
+
 /// A single SM4/SM5 instruction.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Sm4Inst {
@@ -842,6 +855,7 @@ pub enum SrcKind {
     },
     /// Immediate 32-bit floats (IEEE bits).
     ImmediateF32([u32; 4]),
+    ComputeBuiltin(ComputeBuiltin),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

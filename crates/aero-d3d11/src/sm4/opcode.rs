@@ -304,6 +304,14 @@ pub const OPERAND_TYPE_NULL: u32 = 13;
 ///
 /// Upstream: `D3D11_SB_OPERAND_TYPE_UNORDERED_ACCESS_VIEW`.
 pub const OPERAND_TYPE_UNORDERED_ACCESS_VIEW: u32 = 30;
+/// `SV_DispatchThreadID` (`@builtin(global_invocation_id)`).
+pub const OPERAND_TYPE_INPUT_THREAD_ID: u32 = 32;
+/// `SV_GroupID` (`@builtin(workgroup_id)`).
+pub const OPERAND_TYPE_INPUT_THREAD_GROUP_ID: u32 = 33;
+/// `SV_GroupThreadID` (`@builtin(local_invocation_id)`).
+pub const OPERAND_TYPE_INPUT_THREAD_ID_IN_GROUP: u32 = 34;
+/// `SV_GroupIndex` (`@builtin(local_invocation_index)`).
+pub const OPERAND_TYPE_INPUT_THREAD_ID_IN_GROUP_FLATTENED: u32 = 35;
 /// Pixel shader depth output with a conservative depth contract (`oDepthGE`).
 ///
 /// Upstream: `D3D11_SB_OPERAND_TYPE_OUTPUT_DEPTH_GREATER_EQUAL`.

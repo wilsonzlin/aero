@@ -587,6 +587,104 @@ fn decodes_and_translates_minimal_compute_shader_without_signatures() {
 }
 
 #[test]
+fn decodes_and_translates_compute_shader_with_srv_and_uav_buffers() {
+    // Minimal compute shader token stream:
+    // - dcl_thread_group 8,1,1
+    // - dcl_resource_raw t0
+    // - dcl_uav_raw u0
+    // - ld_raw r0.x, l(0), t0
+    // - store_raw u0.x, l(0), r0.x
+    // - ret
+    let mut body = Vec::<u32>::new();
+
+    // dcl_thread_group 8,1,1
+    body.push(opcode_token(OPCODE_DCL_THREAD_GROUP, 4));
+    body.push(8);
+    body.push(1);
+    body.push(1);
+
+    // dcl_resource_raw t0
+    body.push(opcode_token(OPCODE_DCL_RESOURCE_RAW, 3));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_RESOURCE, 0, WriteMask::XYZW));
+
+    // dcl_uav_raw u0
+    body.push(opcode_token(OPCODE_DCL_UAV_RAW, 3));
+    body.extend_from_slice(&reg_dst(
+        OPERAND_TYPE_UNORDERED_ACCESS_VIEW,
+        0,
+        WriteMask::XYZW,
+    ));
+
+    // ld_raw r0.x, l(0), t0
+    let addr0 = imm32_scalar(0);
+    let t0 = reg_src(OPERAND_TYPE_RESOURCE, &[0], Swizzle::XYZW);
+    body.push(opcode_token(
+        OPCODE_LD_RAW,
+        1 + 2 + addr0.len() as u32 + t0.len() as u32,
+    ));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 0, WriteMask::X));
+    body.extend_from_slice(&addr0);
+    body.extend_from_slice(&t0);
+
+    // store_raw u0.x, l(0), r0.x
+    let r0 = reg_src(OPERAND_TYPE_TEMP, &[0], Swizzle::XXXX);
+    body.push(opcode_token(
+        OPCODE_STORE_RAW,
+        1 + 2 + addr0.len() as u32 + r0.len() as u32,
+    ));
+    body.extend_from_slice(&reg_dst(
+        OPERAND_TYPE_UNORDERED_ACCESS_VIEW,
+        0,
+        WriteMask::X,
+    ));
+    body.extend_from_slice(&addr0);
+    body.extend_from_slice(&r0);
+
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    // Stage type 5 = compute shader.
+    let tokens = make_sm5_program_tokens(5, &body);
+    let dxbc_bytes = build_dxbc(&[(FOURCC_SHEX, tokens_to_bytes(&tokens))]);
+
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
+    assert_eq!(program.stage, aero_d3d11::ShaderStage::Compute);
+
+    let module = decode_program(&program).expect("SM4 decode");
+    assert!(module
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Sm4Inst::LdRaw { .. })));
+    assert!(module
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Sm4Inst::StoreRaw { .. })));
+
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+    assert!(translated.wgsl.contains("@compute"));
+    assert!(translated.wgsl.contains("@workgroup_size(8, 1, 1)"));
+    assert!(translated
+        .wgsl
+        .contains("@group(2) @binding(32) var<storage, read> t0: AeroStorageBufferU32;"));
+    assert!(translated
+        .wgsl
+        .contains("@group(2) @binding(176) var<storage, read_write> u0: AeroStorageBufferU32;"));
+
+    assert!(translated
+        .reflection
+        .bindings
+        .iter()
+        .any(|b| matches!(b.kind, aero_d3d11::BindingKind::SrvBuffer { slot: 0 })));
+    assert!(translated
+        .reflection
+        .bindings
+        .iter()
+        .any(|b| matches!(b.kind, aero_d3d11::BindingKind::UavBuffer { slot: 0 })));
+}
+
+#[test]
 fn decodes_and_translates_switch_shader_from_dxbc() {
     const DCL_INPUT: u32 = 0x100;
     const DCL_OUTPUT: u32 = 0x101;

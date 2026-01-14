@@ -9,8 +9,8 @@ use crate::signature::{DxbcSignature, DxbcSignatureParameter, ShaderSignatures};
 use crate::sm4::opcode::opcode_name;
 use crate::sm4::ShaderStage;
 use crate::sm4_ir::{
-    BufferKind, CmpOp, CmpType, OperandModifier, RegFile, RegisterRef, Sm4Decl, Sm4Inst, Sm4Module,
-    SrcKind, Swizzle, WriteMask,
+    BufferKind, CmpOp, CmpType, ComputeBuiltin, OperandModifier, RegFile, RegisterRef, Sm4Decl,
+    Sm4Inst, Sm4Module, SrcKind, Swizzle, WriteMask,
 };
 use crate::DxbcFile;
 use aero_dxbc::RdefChunk;
@@ -1110,6 +1110,15 @@ enum HullSysValue {
 }
 
 impl ComputeSysValue {
+    fn from_compute_builtin(builtin: ComputeBuiltin) -> Self {
+        match builtin {
+            ComputeBuiltin::DispatchThreadId => ComputeSysValue::DispatchThreadId,
+            ComputeBuiltin::GroupThreadId => ComputeSysValue::GroupThreadId,
+            ComputeBuiltin::GroupId => ComputeSysValue::GroupId,
+            ComputeBuiltin::GroupIndex => ComputeSysValue::GroupIndex,
+        }
+    }
+
     fn wgsl_builtin(self) -> &'static str {
         match self {
             ComputeSysValue::DispatchThreadId => "global_invocation_id",
@@ -1390,6 +1399,203 @@ fn scan_used_compute_sivs(module: &Sm4Module, io: &IoMaps) -> BTreeSet<ComputeSy
     for reg in used_regs {
         if let Some(siv) = io.cs_inputs.get(&reg) {
             out.insert(*siv);
+        }
+    }
+
+    // SM5 compute shaders can also reference thread IDs using dedicated operand types (e.g.
+    // `D3D11_SB_OPERAND_TYPE_INPUT_THREAD_ID`) rather than the regular `v#` register file.
+    // Those are represented in our IR as `SrcKind::ComputeBuiltin`, and must also contribute to
+    // the set of builtins we declare on the WGSL entry point.
+    let mut scan_src = |src: &crate::sm4_ir::SrcOperand| {
+        if let SrcKind::ComputeBuiltin(builtin) = src.kind {
+            out.insert(ComputeSysValue::from_compute_builtin(builtin));
+        }
+    };
+    for inst in &module.instructions {
+        match inst {
+            Sm4Inst::If { cond, .. } => scan_src(cond),
+            Sm4Inst::Discard { cond, .. } => scan_src(cond),
+            Sm4Inst::Else | Sm4Inst::EndIf | Sm4Inst::Loop | Sm4Inst::EndLoop => {}
+            Sm4Inst::Mov { dst: _, src } | Sm4Inst::Utof { dst: _, src } => scan_src(src),
+            Sm4Inst::Movc { dst: _, cond, a, b } => {
+                scan_src(cond);
+                scan_src(a);
+                scan_src(b);
+            }
+            Sm4Inst::And { dst: _, a, b }
+            | Sm4Inst::Add { dst: _, a, b }
+            | Sm4Inst::IAdd { dst: _, a, b }
+            | Sm4Inst::ISub { dst: _, a, b }
+            | Sm4Inst::IMul { dst: _, a, b }
+            | Sm4Inst::Or { dst: _, a, b }
+            | Sm4Inst::Xor { dst: _, a, b }
+            | Sm4Inst::IShl { dst: _, a, b }
+            | Sm4Inst::IShr { dst: _, a, b }
+            | Sm4Inst::UShr { dst: _, a, b }
+            | Sm4Inst::IAddC {
+                dst_sum: _,
+                dst_carry: _,
+                a,
+                b,
+            }
+            | Sm4Inst::UAddC {
+                dst_sum: _,
+                dst_carry: _,
+                a,
+                b,
+            }
+            | Sm4Inst::ISubC {
+                dst_diff: _,
+                dst_borrow: _,
+                a,
+                b,
+            }
+            | Sm4Inst::USubB {
+                dst_diff: _,
+                dst_borrow: _,
+                a,
+                b,
+            }
+            | Sm4Inst::Mul { dst: _, a, b }
+            | Sm4Inst::Dp3 { dst: _, a, b }
+            | Sm4Inst::Dp4 { dst: _, a, b }
+            | Sm4Inst::Min { dst: _, a, b }
+            | Sm4Inst::Max { dst: _, a, b }
+            | Sm4Inst::IMin { dst: _, a, b }
+            | Sm4Inst::IMax { dst: _, a, b }
+            | Sm4Inst::UMin { dst: _, a, b }
+            | Sm4Inst::UMax { dst: _, a, b }
+            | Sm4Inst::Cmp {
+                dst: _,
+                a,
+                b,
+                op: _,
+                ty: _,
+            }
+            | Sm4Inst::UDiv {
+                dst_quot: _,
+                dst_rem: _,
+                a,
+                b,
+            }
+            | Sm4Inst::IDiv {
+                dst_quot: _,
+                dst_rem: _,
+                a,
+                b,
+            } => {
+                scan_src(a);
+                scan_src(b);
+            }
+            Sm4Inst::Mad { dst: _, a, b, c } => {
+                scan_src(a);
+                scan_src(b);
+                scan_src(c);
+            }
+            Sm4Inst::Bfi {
+                dst: _,
+                width,
+                offset,
+                insert,
+                base,
+            } => {
+                scan_src(width);
+                scan_src(offset);
+                scan_src(insert);
+                scan_src(base);
+            }
+            Sm4Inst::Ubfe {
+                dst: _,
+                width,
+                offset,
+                src,
+            }
+            | Sm4Inst::Ibfe {
+                dst: _,
+                width,
+                offset,
+                src,
+            } => {
+                scan_src(width);
+                scan_src(offset);
+                scan_src(src);
+            }
+            Sm4Inst::Rcp { dst: _, src }
+            | Sm4Inst::Rsq { dst: _, src }
+            | Sm4Inst::Not { dst: _, src }
+            | Sm4Inst::Clip { src }
+            | Sm4Inst::IAbs { dst: _, src }
+            | Sm4Inst::Bfrev { dst: _, src }
+            | Sm4Inst::CountBits { dst: _, src }
+            | Sm4Inst::FirstbitHi { dst: _, src }
+            | Sm4Inst::FirstbitLo { dst: _, src }
+            | Sm4Inst::FirstbitShi { dst: _, src }
+            | Sm4Inst::INeg { dst: _, src } => scan_src(src),
+            Sm4Inst::Sample {
+                dst: _,
+                coord,
+                texture: _,
+                sampler: _,
+            } => scan_src(coord),
+            Sm4Inst::SampleL {
+                dst: _,
+                coord,
+                texture: _,
+                sampler: _,
+                lod,
+            } => {
+                scan_src(coord);
+                scan_src(lod);
+            }
+            Sm4Inst::Ld {
+                dst: _,
+                coord,
+                lod,
+                ..
+            } => {
+                scan_src(coord);
+                scan_src(lod);
+            }
+            Sm4Inst::LdRaw { addr, .. } => scan_src(addr),
+            Sm4Inst::LdUavRaw { addr, .. } => scan_src(addr),
+            Sm4Inst::StoreRaw { addr, value, .. } => {
+                scan_src(addr);
+                scan_src(value);
+            }
+            Sm4Inst::LdStructured { index, offset, .. } => {
+                scan_src(index);
+                scan_src(offset);
+            }
+            Sm4Inst::LdStructuredUav { index, offset, .. } => {
+                scan_src(index);
+                scan_src(offset);
+            }
+            Sm4Inst::StoreStructured {
+                index,
+                offset,
+                value,
+                ..
+            } => {
+                scan_src(index);
+                scan_src(offset);
+                scan_src(value);
+            }
+            Sm4Inst::AtomicAdd { addr, value, .. } => {
+                scan_src(addr);
+                scan_src(value);
+            }
+            Sm4Inst::WorkgroupBarrier => {}
+            Sm4Inst::Switch { selector } => scan_src(selector),
+            Sm4Inst::Case { .. } | Sm4Inst::Default | Sm4Inst::EndSwitch | Sm4Inst::Break => {}
+            Sm4Inst::Emit { .. }
+            | Sm4Inst::Cut { .. }
+            | Sm4Inst::EmitThenCut { .. }
+            | Sm4Inst::BufInfoRaw { .. }
+            | Sm4Inst::BufInfoStructured { .. }
+            | Sm4Inst::BufInfoRawUav { .. }
+            | Sm4Inst::BufInfoStructuredUav { .. }
+            | Sm4Inst::Unknown { .. }
+            | Sm4Inst::Ret => {}
         }
     }
     out
@@ -4537,6 +4743,12 @@ fn emit_src_vec4(
                 lanes[0], lanes[1], lanes[2], lanes[3]
             )
         }
+        SrcKind::ComputeBuiltin(builtin) => {
+            if ctx.stage != ShaderStage::Compute {
+                return Err(ShaderTranslateError::UnsupportedStage(ctx.stage));
+            }
+            ComputeSysValue::from_compute_builtin(*builtin).expand_to_vec4()
+        }
     };
 
     let mut expr = base;
@@ -4575,6 +4787,13 @@ fn emit_src_vec4_u32(
                 "vec4<u32>({}, {}, {}, {})",
                 lanes[0], lanes[1], lanes[2], lanes[3]
             )
+        }
+        SrcKind::ComputeBuiltin(builtin) => {
+            if ctx.stage != ShaderStage::Compute {
+                return Err(ShaderTranslateError::UnsupportedStage(ctx.stage));
+            }
+            let f = ComputeSysValue::from_compute_builtin(*builtin).expand_to_vec4();
+            format!("bitcast<vec4<u32>>({f})")
         }
     };
 
@@ -4630,6 +4849,13 @@ fn emit_src_vec4_i32(
                 "vec4<i32>({}, {}, {}, {})",
                 lanes[0], lanes[1], lanes[2], lanes[3]
             )
+        }
+        SrcKind::ComputeBuiltin(builtin) => {
+            if ctx.stage != ShaderStage::Compute {
+                return Err(ShaderTranslateError::UnsupportedStage(ctx.stage));
+            }
+            let f = ComputeSysValue::from_compute_builtin(*builtin).expand_to_vec4();
+            format!("bitcast<vec4<i32>>({f})")
         }
     };
 

@@ -2,7 +2,8 @@ use core::fmt;
 use std::collections::BTreeMap;
 
 use crate::sm4_ir::{
-    BufferKind, BufferRef, CmpOp, CmpType, DstOperand, OperandModifier, RegFile, RegisterRef,
+    BufferKind, BufferRef, CmpOp, CmpType, ComputeBuiltin, DstOperand, OperandModifier, RegFile,
+    RegisterRef,
     SamplerRef, Sm4Decl, Sm4Inst, Sm4Module, Sm4TestBool, SrcKind, SrcOperand, Swizzle, TextureRef,
     UavRef, WriteMask,
 };
@@ -1994,6 +1995,54 @@ fn decode_src(r: &mut InstrReader<'_>) -> Result<SrcOperand, Sm4DecodeError> {
                     })
                 }
             },
+            OPERAND_TYPE_INPUT_THREAD_ID => {
+                if !op.indices.is_empty() {
+                    return Err(Sm4DecodeError {
+                        at_dword: r.base_at + r.pos.saturating_sub(1),
+                        kind: Sm4DecodeErrorKind::InvalidRegisterIndices {
+                            ty: op.ty,
+                            indices: op.indices,
+                        },
+                    });
+                }
+                SrcKind::ComputeBuiltin(ComputeBuiltin::DispatchThreadId)
+            }
+            OPERAND_TYPE_INPUT_THREAD_GROUP_ID => {
+                if !op.indices.is_empty() {
+                    return Err(Sm4DecodeError {
+                        at_dword: r.base_at + r.pos.saturating_sub(1),
+                        kind: Sm4DecodeErrorKind::InvalidRegisterIndices {
+                            ty: op.ty,
+                            indices: op.indices,
+                        },
+                    });
+                }
+                SrcKind::ComputeBuiltin(ComputeBuiltin::GroupId)
+            }
+            OPERAND_TYPE_INPUT_THREAD_ID_IN_GROUP => {
+                if !op.indices.is_empty() {
+                    return Err(Sm4DecodeError {
+                        at_dword: r.base_at + r.pos.saturating_sub(1),
+                        kind: Sm4DecodeErrorKind::InvalidRegisterIndices {
+                            ty: op.ty,
+                            indices: op.indices,
+                        },
+                    });
+                }
+                SrcKind::ComputeBuiltin(ComputeBuiltin::GroupThreadId)
+            }
+            OPERAND_TYPE_INPUT_THREAD_ID_IN_GROUP_FLATTENED => {
+                if !op.indices.is_empty() {
+                    return Err(Sm4DecodeError {
+                        at_dword: r.base_at + r.pos.saturating_sub(1),
+                        kind: Sm4DecodeErrorKind::InvalidRegisterIndices {
+                            ty: op.ty,
+                            indices: op.indices,
+                        },
+                    });
+                }
+                SrcKind::ComputeBuiltin(ComputeBuiltin::GroupIndex)
+            }
             other => {
                 return Err(Sm4DecodeError {
                     at_dword: r.base_at + r.pos.saturating_sub(1),
