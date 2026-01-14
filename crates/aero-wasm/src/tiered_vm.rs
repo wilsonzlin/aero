@@ -46,6 +46,7 @@ use aero_jit_x86::{
 };
 
 use crate::RunExitKind;
+use crate::guest_memory_bus::wasm_memory_byte_len;
 use crate::guest_phys::{GuestRamChunk, translate_guest_paddr_chunk};
 use crate::guest_phys::{GuestRamRange, guest_ram_phys_end_exclusive, translate_guest_paddr_range};
 use crate::jit_write_log::GuestWriteLog;
@@ -1029,6 +1030,22 @@ impl WasmTieredVm {
         } else {
             table_ptr as usize as u32
         };
+        if table_len_u32 != 0 {
+            // Defensive: ensure the configured table fits within the current wasm linear memory.
+            // This should hold by construction (the table is an in-module allocation), but keep the
+            // ABI robust against misconfiguration.
+            let mem_bytes = wasm_memory_byte_len();
+            let Some(end) = u64::from(table_ptr_u32)
+                .checked_add(u64::from(table_len_u32).saturating_mul(4))
+            else {
+                jit_abi.write_code_version_table(0, 0);
+                return;
+            };
+            if end > mem_bytes {
+                jit_abi.write_code_version_table(0, 0);
+                return;
+            }
+        }
         jit_abi.write_code_version_table(table_ptr_u32, table_len_u32);
     }
 }
@@ -2375,6 +2392,12 @@ export function installAeroTieredMmioTestShims() {
 
         assert!(table_len > 0, "expected non-zero code version table len");
         assert!(table_ptr != 0, "expected non-zero code version table ptr");
+        let mem_bytes = super::wasm_memory_byte_len();
+        let end = u64::from(table_ptr).saturating_add(u64::from(table_len).saturating_mul(4));
+        assert!(
+            end <= mem_bytes,
+            "code version table out of bounds: ptr=0x{table_ptr:x} len={table_len} end=0x{end:x} mem=0x{mem_bytes:x}"
+        );
 
         // Ensure the ABI buffer matches the runtime's actual table pointer/len.
         let (rt_ptr, rt_len) = vm.dispatcher.jit_mut().code_version_table_ptr_len();
@@ -2404,5 +2427,29 @@ export function installAeroTieredMmioTestShims() {
         vm.jit_on_guest_write(paddr, 1);
         let after = unsafe { core::ptr::read_unaligned(entry_ptr) };
         assert_eq!(after, before.wrapping_add(1));
+
+        // After reset_real_mode the Tier-1 runtime (and version table) is recreated; the ABI buffer
+        // must still contain a valid pointer/len pair matching the new runtime.
+        vm.reset_real_mode(0);
+        let cpu_ptr2 = vm.jit_abi.cpu_ptr();
+        let table_ptr_addr2 = cpu_ptr2
+            .checked_add(jit_ctx::CODE_VERSION_TABLE_PTR_OFFSET)
+            .expect("table_ptr_addr2 overflow");
+        let table_len_addr2 = cpu_ptr2
+            .checked_add(jit_ctx::CODE_VERSION_TABLE_LEN_OFFSET)
+            .expect("table_len_addr2 overflow");
+        let table_ptr2 = unsafe { core::ptr::read_unaligned(table_ptr_addr2 as *const u32) };
+        let table_len2 = unsafe { core::ptr::read_unaligned(table_len_addr2 as *const u32) };
+        assert!(table_len2 > 0, "expected non-zero code version table len after reset");
+        assert!(table_ptr2 != 0, "expected non-zero code version table ptr after reset");
+        let mem_bytes2 = super::wasm_memory_byte_len();
+        let end2 = u64::from(table_ptr2).saturating_add(u64::from(table_len2).saturating_mul(4));
+        assert!(
+            end2 <= mem_bytes2,
+            "code version table out of bounds after reset: ptr=0x{table_ptr2:x} len={table_len2} end=0x{end2:x} mem=0x{mem_bytes2:x}"
+        );
+        let (rt_ptr3, rt_len3) = vm.dispatcher.jit_mut().code_version_table_ptr_len();
+        assert_eq!(rt_len3 as u32, table_len2);
+        assert_eq!(rt_ptr3 as usize as u32, table_ptr2);
     }
 }
