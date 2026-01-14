@@ -9,6 +9,12 @@ use aero_d3d11::{
     SrcOperand, Swizzle, UavRef, WriteMask,
 };
 
+// The Aero D3D11 translator emits compute-stage bindings in `@group(2)` (stage-scoped binding
+// model). The `protocol_d3d11` command-stream runtime binds only group 0 for compute pipelines, so
+// translated compute WGSL cannot be executed through that path.
+//
+// Test strategy: use a small wgpu harness with an explicit pipeline layout containing empty bind
+// groups 0/1 and the translated compute resources bound at group 2.
 async fn read_mapped_buffer(device: &wgpu::Device, buffer: &wgpu::Buffer, size: u64) -> Vec<u8> {
     let slice = buffer.slice(0..size);
     let (sender, receiver) = futures_intrusive::channel::shared::oneshot_channel();
@@ -243,7 +249,6 @@ fn compute_translate_and_run_dispatch_thread_id_writes_indexed_uav_buffer() {
         queue.submit([encoder.finish()]);
 
         let data = read_mapped_buffer(device, &readback, size_bytes).await;
-
         let mut got = Vec::<u32>::with_capacity(ELEMENTS as usize);
         for i in 0..ELEMENTS as usize {
             let at = i * 4;
