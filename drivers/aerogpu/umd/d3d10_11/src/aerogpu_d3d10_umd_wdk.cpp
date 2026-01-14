@@ -2779,6 +2779,18 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
       return E_NOTIMPL;
     }
 
+    // The current host executor only supports mip_levels==1 for render targets /
+    // depth-stencil textures. Fail at CreateResource time so apps get a clean
+    // HRESULT instead of later host-side validation errors.
+    if ((res->bind_flags & (kD3D10BindRenderTarget | kD3D10BindDepthStencil)) != 0 &&
+        res->mip_levels != 1) {
+      AEROGPU_D3D10_11_LOG("D3D10 CreateResource: rejecting RT/DS Texture2D with mip_levels=%u (bind=0x%08X)",
+                           static_cast<unsigned>(res->mip_levels),
+                           static_cast<unsigned>(res->bind_flags));
+      res->~AeroGpuResource();
+      return E_NOTIMPL;
+    }
+
     const uint32_t row_bytes = aerogpu_texture_min_row_pitch_bytes(aer_fmt, res->width);
     if (row_bytes == 0) {
       res->~AeroGpuResource();
