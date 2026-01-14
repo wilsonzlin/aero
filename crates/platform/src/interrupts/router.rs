@@ -1450,9 +1450,6 @@ mod tests {
 
         // Reset LAPIC1's internal state. This should *not* require rebuilding the IOAPIC sink graph.
         ints.reset_lapic(1);
-        // LAPIC reset clears SVR[8] (software enable); re-enable it so injected interrupts are
-        // accepted.
-        ints.lapic_mmio_write_for_apic(1, 0xF0, &(0x1FFu32).to_le_bytes());
 
         // Second delivery: should still route to LAPIC1 via the original `Arc<LocalApic>` held by
         // the IOAPIC sinks.
@@ -1461,24 +1458,21 @@ mod tests {
     }
 
     #[test]
-    fn reset_lapic_disables_lapic_software_enable_bit() {
+    fn reset_lapic_keeps_lapic_software_enable_bit_set_for_platform_delivery() {
         let mut ints = PlatformInterrupts::new_with_cpu_count(2);
         ints.set_mode(PlatformInterruptMode::Apic);
 
         ints.reset_lapic(1);
 
-        // Reset should restore the power-on SVR value (0xFF with software enable bit clear).
+        // The LAPIC reset path preserves the `Arc<LocalApic>` identity but rewinds its register
+        // state. Real hardware clears SVR[8] on reset; our platform re-enables it immediately so
+        // IOAPIC/MSI delivery continues to function deterministically after INIT/reset events.
         let mut buf = [0u8; 4];
         ints.lapics[1].mmio_read(0xF0, &mut buf);
-        assert_eq!(u32::from_le_bytes(buf), 0xFF);
+        assert_eq!(u32::from_le_bytes(buf), 0x1FF);
 
-        // With SVR[8] cleared, injected interrupts are silently dropped.
+        // With SVR[8] set, injected interrupts should be accepted immediately.
         let vector = 0x44u8;
-        ints.lapics[1].inject_fixed_interrupt(vector);
-        assert_eq!(ints.get_pending_for_apic(1), None);
-
-        // Re-enable SVR[8] and ensure injection works again.
-        ints.lapics[1].mmio_write(0xF0, &(0x1FFu32).to_le_bytes());
         ints.lapics[1].inject_fixed_interrupt(vector);
         assert_eq!(ints.get_pending_for_apic(1), Some(vector));
     }
@@ -1803,9 +1797,11 @@ mod tests {
         let svr_before = lapic_read_u32_for_cpu(&ints, 1, 0xF0);
         assert_ne!(svr_before & (1 << 8), 0);
 
-        // Mutate a LAPIC register and ensure INIT resets it.
+        // Mutate LAPIC1 state and ensure INIT resets it.
         lapic_write_u32_for_cpu(&ints, 1, 0x80, 0x70); // TPR
-        assert_eq!(lapic_read_u32_for_cpu(&ints, 1, 0x80), 0x70);
+        lapic_write_u32_for_cpu(&ints, 1, 0xF0, 0x1EE); // SVR: enabled + spurious vector 0xEE
+        ints.lapic(1).inject_fixed_interrupt(0x44);
+        assert_eq!(ints.get_pending_for_cpu(1), Some(0x44));
 
         // CPU0 sends INIT (level=assert) to CPU1.
         lapic_write_u32_for_cpu(&ints, 0, 0x310, (1u32) << 24); // dest=1
@@ -1814,13 +1810,13 @@ mod tests {
         assert!(ints.take_pending_init(1));
         assert!(!ints.take_pending_init(1));
 
-        // Destination LAPIC should be reset (TPR cleared).
+        // Destination LAPIC should be reset (TPR cleared), but kept software-enabled for
+        // platform-level interrupt injection (IOAPIC/MSI) immediately after INIT.
         assert_eq!(lapic_read_u32_for_cpu(&ints, 1, 0x80), 0);
-
-        // Platform keeps the target LAPIC software-enabled so external interrupts can be injected
-        // deterministically after INIT (IOAPIC/MSI delivery).
         let svr_after = lapic_read_u32_for_cpu(&ints, 1, 0xF0);
         assert_ne!(svr_after & (1 << 8), 0);
+        assert_eq!(svr_after & 0xFF, 0xFF);
+        assert_eq!(ints.get_pending_for_cpu(1), None);
     }
 
     #[test]
