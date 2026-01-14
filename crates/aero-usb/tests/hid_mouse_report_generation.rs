@@ -184,6 +184,39 @@ fn mouse_hwheel_splits_deltas_with_saturation_and_remainder() {
 }
 
 #[test]
+fn mouse_wheel2_emits_combined_wheel_axes_in_single_reports() {
+    let mut mouse = UsbHidMouse::new();
+    configure_mouse(&mut mouse);
+
+    mouse.wheel2(1, -2);
+
+    let reports = drain_interrupt_reports(&mut mouse);
+    assert_eq!(reports.len(), 1);
+    assert_eq!(parse_report(&reports[0]), (0x00, 0, 0, Some(1), Some(-2)));
+}
+
+#[test]
+fn mouse_wheel2_splits_large_deltas_into_multiple_reports() {
+    let mut mouse = UsbHidMouse::new();
+    configure_mouse(&mut mouse);
+
+    mouse.wheel2(300, -300);
+
+    let reports = drain_interrupt_reports(&mut mouse);
+    assert_eq!(reports.len(), 3);
+
+    assert_eq!(
+        parse_report(&reports[0]),
+        (0x00, 0, 0, Some(127), Some(-127))
+    );
+    assert_eq!(
+        parse_report(&reports[1]),
+        (0x00, 0, 0, Some(127), Some(-127))
+    );
+    assert_eq!(parse_report(&reports[2]), (0x00, 0, 0, Some(46), Some(-46)));
+}
+
+#[test]
 fn mouse_buttons_4_and_5_are_reported_in_report_protocol_but_masked_in_boot_protocol() {
     let mut mouse = UsbHidMouse::new();
     configure_mouse(&mut mouse);
