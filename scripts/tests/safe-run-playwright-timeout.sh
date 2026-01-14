@@ -98,6 +98,18 @@ timeout_val="$(extract_timeout "${out}")"
 assert_eq "npm-test-e2e-uses-playwright-timeout-when-aero-timeout-unset" "${timeout_val}" "37"
 
 ###############################################################################
+# Case 1b: `npm -w web run test:e2e` also bumps timeout to AERO_PLAYWRIGHT_TIMEOUT when AERO_TIMEOUT is unset.
+###############################################################################
+out="$(
+  PATH="${bin_dir}:${PATH}" \
+  AERO_MEM_LIMIT=unlimited \
+  AERO_PLAYWRIGHT_TIMEOUT=37 \
+  bash "${test_repo}/scripts/safe-run.sh" npm -w web run test:e2e 2>&1 >/dev/null
+)"
+timeout_val="$(extract_timeout "${out}")"
+assert_eq "npm-workspace-test-e2e-uses-playwright-timeout-when-aero-timeout-unset" "${timeout_val}" "37"
+
+###############################################################################
 # Case 2: AERO_TIMEOUT overrides the Playwright timeout bump.
 ###############################################################################
 out="$(
