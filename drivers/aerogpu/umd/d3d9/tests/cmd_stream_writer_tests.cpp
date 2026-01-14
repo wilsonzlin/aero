@@ -15322,6 +15322,107 @@ bool TestFvfXyzrhwTex1TexcoordSize1DrawPrimitiveUpEmitsFixedfuncCommands() {
   return Check(std::fabs(u0 - verts[0].u) < 1e-6f, "XYZRHW|TEXCOORDSIZE1->clip: u preserved");
 }
 
+bool TestSetFvfIgnoresUnusedTexcoordSizeBitsForDeclCache() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    bool has_adapter = false;
+    bool has_device = false;
+    ~Cleanup() {
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  if (!Check(cleanup.device_funcs.pfnSetFVF != nullptr, "SetFVF must be available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // Reset so the stream only contains commands relevant to this test.
+  dev->cmd.reset();
+
+  // FVF that requires programmable-layout translation (TEX2 is unsupported by the
+  // fixed-function subset). Include garbage TEXCOORDSIZE bits for an unused set
+  // (set 2) and ensure we don't create a duplicate internal declaration.
+  constexpr uint32_t kD3dFvfTex2 = 2u << 8u;
+  constexpr uint32_t kFvfBase = kD3dFvfXyzRhw | kD3dFvfTex2; // 0x204
+  constexpr uint32_t kGarbageUnusedSet2SizeBits = 1u << 20u; // TEXCOORDSIZE3(2)
+  constexpr uint32_t kFvfWithGarbage = kFvfBase | kGarbageUnusedSet2SizeBits;
+
+  hr = cleanup.device_funcs.pfnSetFVF(create_dev.hDevice, kFvfBase);
+  if (!Check(hr == S_OK, "SetFVF(XYZRHW|TEX2)")) {
+    return false;
+  }
+  if (!Check(dev->fvf == kFvfBase, "GetFVF returns base FVF")) {
+    return false;
+  }
+  if (!Check(dev->fvf_vertex_decl_cache.size() == 1, "FVF decl cache contains one entry")) {
+    return false;
+  }
+  const auto it = dev->fvf_vertex_decl_cache.find(kFvfBase);
+  if (!Check(it != dev->fvf_vertex_decl_cache.end(), "FVF decl cached for base layout key")) {
+    return false;
+  }
+  VertexDecl* decl = it->second;
+  if (!Check(decl != nullptr, "cached decl is non-null")) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnSetFVF(create_dev.hDevice, kFvfWithGarbage);
+  if (!Check(hr == S_OK, "SetFVF(XYZRHW|TEX2|garbage TEXCOORDSIZE bits)")) {
+    return false;
+  }
+  if (!Check(dev->fvf == kFvfWithGarbage, "GetFVF returns TEXCOORDSIZE garbage bits")) {
+    return false;
+  }
+  if (!Check(dev->fvf_vertex_decl_cache.size() == 1, "unused TEXCOORDSIZE bits do not create new cache entry")) {
+    return false;
+  }
+  const auto it2 = dev->fvf_vertex_decl_cache.find(kFvfBase);
+  if (!Check(it2 != dev->fvf_vertex_decl_cache.end(), "cache entry still accessible via base layout key")) {
+    return false;
+  }
+  return Check(it2->second == decl, "unused TEXCOORDSIZE bits reuse existing decl");
+}
+
 bool TestFvfXyzDiffuseDrawPrimitiveUpEmitsFixedfuncCommands() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
@@ -34912,6 +35013,7 @@ int main() {
   RUN_TEST(TestFvfXyzrhwDiffuseDrawPrimitiveUpEmitsFixedfuncCommands);
   RUN_TEST(TestFvfXyzrhwDiffuseTex1DrawPrimitiveUpEmitsFixedfuncCommands);
   RUN_TEST(TestFvfXyzrhwTex1TexcoordSize1DrawPrimitiveUpEmitsFixedfuncCommands);
+  RUN_TEST(TestSetFvfIgnoresUnusedTexcoordSizeBitsForDeclCache);
   RUN_TEST(TestFvfXyzDiffuseDrawPrimitiveUpEmitsFixedfuncCommands);
   RUN_TEST(TestFixedfuncStage0TextureStageStateRebindsPixelShader);
   RUN_TEST(TestFixedfuncStage0ApplyStateBlockRebindsInteropPixelShader);

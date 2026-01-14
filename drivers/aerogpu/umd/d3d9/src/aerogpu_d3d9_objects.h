@@ -949,7 +949,10 @@ struct PatchCacheEntry {
   VertexDecl* fvf_vertex_decl_xyz_normal_diffuse_tex1 = nullptr;
   // Internal FVF-derived vertex declarations synthesized by `SetFVF` for the
   // programmable pipeline (user shaders with FVF instead of an explicit vertex
-  // declaration). Keyed by the full FVF DWORD.
+  // declaration).
+  //
+  // Keyed by a canonicalized FVF "layout key" that clears TEXCOORDSIZE bits for
+  // *unused* texcoord sets (some runtimes leave garbage size bits set).
   std::unordered_map<uint32_t, VertexDecl*> fvf_vertex_decl_cache;
   Shader* fixedfunc_vs = nullptr;
   Shader* fixedfunc_vs_xyz_normal_diffuse = nullptr;

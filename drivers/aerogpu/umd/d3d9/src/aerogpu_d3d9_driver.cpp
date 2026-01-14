@@ -2886,6 +2886,18 @@ constexpr uint32_t fixedfunc_fvf_base(uint32_t fvf) {
   return fvf & ~kD3dFvfTexCoordSizeMask;
 }
 
+// TEXCOORDSIZE bits are encoded per texcoord set, but only the bits for the
+// declared texcoord count are semantically meaningful. Some runtimes appear to
+// leave garbage TEXCOORDSIZE bits set for *unused* texcoord sets; clear them so
+// internal caches can key off the true vertex layout.
+constexpr uint32_t fvf_layout_key(uint32_t fvf) {
+  const uint32_t tex_count = (fvf & kD3dFvfTexCountMask) >> kD3dFvfTexCountShift;
+  const uint32_t clamped = (tex_count > 8u) ? 8u : tex_count;
+  const uint32_t used_size_mask =
+      (clamped == 0) ? 0u : (((1u << (clamped * 2u)) - 1u) << 16u);
+  return (fvf & ~kD3dFvfTexCoordSizeMask) | (fvf & used_size_mask);
+}
+
 constexpr uint32_t kSupportedFvfXyzDiffuse = kD3dFvfXyz | kD3dFvfDiffuse;
 constexpr uint32_t kSupportedFvfXyzrhwDiffuse = kD3dFvfXyzRhw | kD3dFvfDiffuse;
 constexpr uint32_t kSupportedFvfXyzrhwDiffuseTex1 = kD3dFvfXyzRhw | kD3dFvfDiffuse | kD3dFvfTex1;
@@ -14344,9 +14356,10 @@ HRESULT AEROGPU_D3D9_CALL device_set_fvf(D3DDDI_HDEVICE hDevice, uint32_t fvf) {
   // required for apps that use user shaders with SetFVF instead of an explicit
   // vertex declaration.
   FvfVertexDeclTranslation translated{};
-  if (try_translate_fvf_to_vertex_decl(fvf, &translated)) {
+  const uint32_t layout_key = fvf_layout_key(fvf);
+  if (try_translate_fvf_to_vertex_decl(layout_key, &translated)) {
     VertexDecl* decl = nullptr;
-    const auto it = dev->fvf_vertex_decl_cache.find(fvf);
+    const auto it = dev->fvf_vertex_decl_cache.find(layout_key);
     if (it != dev->fvf_vertex_decl_cache.end()) {
       decl = it->second;
     } else {
@@ -14366,7 +14379,7 @@ HRESULT AEROGPU_D3D9_CALL device_set_fvf(D3DDDI_HDEVICE hDevice, uint32_t fvf) {
       if (!decl) {
         return trace.ret(E_OUTOFMEMORY);
       }
-      dev->fvf_vertex_decl_cache.emplace(fvf, decl);
+      dev->fvf_vertex_decl_cache.emplace(layout_key, decl);
     }
 
     if (!emit_set_input_layout_locked(dev, decl)) {
