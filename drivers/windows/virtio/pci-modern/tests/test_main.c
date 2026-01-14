@@ -1098,6 +1098,47 @@ static void TestQueueSetupAndNotify(void)
 	VirtioPciModernTransportUninit(&t);
 }
 
+static void TestQueueSetupPrograms64BitAddressesAbove4GiB(void)
+{
+	FAKE_DEV dev;
+	VIRTIO_PCI_MODERN_OS_INTERFACE os;
+	VIRTIO_PCI_MODERN_TRANSPORT t;
+	volatile virtio_pci_common_cfg *common;
+	NTSTATUS st;
+
+	/* Addresses just above 4GiB must be programmed without truncation. */
+	const UINT64 desc_pa = 0x100001000ull;
+	const UINT64 avail_pa = 0x100002000ull;
+	const UINT64 used_pa = 0x100003000ull;
+
+	FakeDevInitValid(&dev);
+	os = GetOs(&dev);
+
+	st = VirtioPciModernTransportInit(&t, &os, VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT, 0x10000000u, sizeof(dev.Bar0));
+	assert(st == STATUS_SUCCESS);
+
+	common = (volatile virtio_pci_common_cfg *)(dev.Bar0 + 0x0000);
+
+	st = VirtioPciModernTransportSetupQueue(&t, 0, desc_pa, avail_pa, used_pa);
+	assert(st == STATUS_SUCCESS);
+
+	assert(common->queue_desc_lo == (UINT32)desc_pa);
+	assert(common->queue_desc_hi == (UINT32)(desc_pa >> 32));
+	assert(common->queue_desc_hi != 0);
+
+	assert(common->queue_avail_lo == (UINT32)avail_pa);
+	assert(common->queue_avail_hi == (UINT32)(avail_pa >> 32));
+	assert(common->queue_avail_hi != 0);
+
+	assert(common->queue_used_lo == (UINT32)used_pa);
+	assert(common->queue_used_hi == (UINT32)(used_pa >> 32));
+	assert(common->queue_used_hi != 0);
+
+	assert(common->queue_enable == 1);
+
+	VirtioPciModernTransportUninit(&t);
+}
+
 static void TestStrictNotifyHasPreAndPostMemoryBarrier(void)
 {
 	FAKE_DEV dev;
@@ -1745,6 +1786,7 @@ int main(void)
 	TestNegotiateFeaturesCompatDoesNotNegotiatePackedRing();
 	TestNegotiateFeaturesRejectsRequiredPackedRing();
 	TestQueueSetupAndNotify();
+	TestQueueSetupPrograms64BitAddressesAbove4GiB();
 	TestNotifyHasPreBarrier();
 	TestStrictNotifyHasPreAndPostMemoryBarrier();
 	TestCompatNotifyHasSelectorAndPreAndPostMemoryBarrier();

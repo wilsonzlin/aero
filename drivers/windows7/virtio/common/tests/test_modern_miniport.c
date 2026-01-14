@@ -1168,6 +1168,54 @@ static void test_setup_queue_programs_addresses_and_enables(void)
     VirtioPciModernMmioSimUninstall();
 }
 
+static void test_setup_queue_programs_addresses_above_4gib(void)
+{
+    uint8_t bar0[TEST_BAR0_SIZE];
+    uint8_t pci_cfg[256];
+    VIRTIO_PCI_DEVICE dev;
+    VIRTIO_PCI_MODERN_MMIO_SIM sim;
+    NTSTATUS st;
+    const uint64_t desc = 0x100001000ull;  /* 4GiB + 0x1000 */
+    const uint64_t avail = 0x100002000ull; /* 4GiB + 0x2000 */
+    const uint64_t used = 0x100003000ull;  /* 4GiB + 0x3000 */
+
+    setup_device(&dev, bar0, pci_cfg);
+
+    VirtioPciModernMmioSimInit(&sim,
+                               dev.CommonCfg,
+                               (volatile uint8_t*)dev.NotifyBase,
+                               dev.NotifyLength,
+                               (volatile uint8_t*)dev.IsrStatus,
+                               dev.IsrLength,
+                               (volatile uint8_t*)dev.DeviceCfg,
+                               dev.DeviceCfgLength);
+
+    sim.num_queues = 1;
+    sim.queues[0].queue_size = 8;
+
+    VirtioPciModernMmioSimInstall(&sim);
+
+    st = VirtioPciSetupQueue(&dev, 0, desc, avail, used);
+    assert(st == STATUS_SUCCESS);
+
+    /* Verify the common_cfg registers reflect the full 64-bit addresses. */
+    assert(dev.CommonCfg->queue_desc_lo == (uint32_t)desc);
+    assert(dev.CommonCfg->queue_desc_hi == (uint32_t)(desc >> 32));
+    assert(dev.CommonCfg->queue_desc_hi != 0);
+
+    assert(dev.CommonCfg->queue_avail_lo == (uint32_t)avail);
+    assert(dev.CommonCfg->queue_avail_hi == (uint32_t)(avail >> 32));
+    assert(dev.CommonCfg->queue_avail_hi != 0);
+
+    assert(dev.CommonCfg->queue_used_lo == (uint32_t)used);
+    assert(dev.CommonCfg->queue_used_hi == (uint32_t)(used >> 32));
+    assert(dev.CommonCfg->queue_used_hi != 0);
+
+    assert(dev.CommonCfg->queue_enable == 1);
+
+    VirtioPciModernMmioSimUninstall();
+}
+
 static void test_setup_queue_write_order(void)
 {
     uint8_t bar0[TEST_BAR0_SIZE];
@@ -2806,6 +2854,7 @@ int main(void)
     test_set_queue_msix_vector_set_and_clear_two_queues();
     test_disable_msix_vectors_clears_config_and_queues();
     test_setup_queue_programs_addresses_and_enables();
+    test_setup_queue_programs_addresses_above_4gib();
     test_setup_queue_write_order();
     test_setup_queue_is_per_queue();
     test_setup_queue_enable_readback_failure();
