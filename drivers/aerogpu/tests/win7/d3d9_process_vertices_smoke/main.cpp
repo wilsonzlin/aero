@@ -123,13 +123,15 @@ static int RunD3D9ProcessVerticesSmoke(int argc, char** argv) {
   const char* kTestName = "d3d9_process_vertices_smoke";
   if (aerogpu_test::HasHelpArg(argc, argv)) {
     aerogpu_test::PrintfStdout(
-        "Usage: %s.exe [--dump] [--hidden] [--show] [--json[=PATH]] [--require-vid=0x####] [--require-did=0x####] "
+        "Usage: %s.exe [--dump] [--hidden] [--show] [--show-window] [--json[=PATH]] [--require-vid=0x####] [--require-did=0x####] "
         "[--allow-microsoft] [--allow-non-aerogpu] [--require-umd] [--allow-remote]",
         kTestName);
     aerogpu_test::PrintfStdout(
         "Creates a D3D9Ex device, uses IDirect3DDevice9::ProcessVertices to copy/transform vertices into a "
         "destination vertex buffer (with non-zero SrcStartIndex/DestIndex), then draws from the processed buffer "
         "and validates pixels via GetRenderTargetData.");
+    aerogpu_test::PrintfStdout("Default: window is shown (pass --hidden to hide it; --show overrides --hidden).");
+    aerogpu_test::PrintfStdout("With --dump: writes d3d9_process_vertices_smoke.bmp and d3d9_process_vertices_smoke.bin.");
     return 0;
   }
 
