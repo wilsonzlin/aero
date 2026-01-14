@@ -8884,7 +8884,6 @@ impl AerogpuD3d11Executor {
                         as u64,
                     dummy_uniform: &self.dummy_uniform,
                     dummy_storage: &self.dummy_storage,
-                    dummy_storage_texture_views: &self.dummy_storage_texture_views,
                     dummy_texture_view_2d: &self.dummy_texture_view_2d,
                     dummy_texture_view_2d_array: &self.dummy_texture_view_2d_array,
                     dummy_storage_texture_views: &self.dummy_storage_texture_views,
