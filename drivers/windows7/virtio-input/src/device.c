@@ -1535,12 +1535,12 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
         return STATUS_NOT_SUPPORTED;
     }
 
-    /*
-     * Device config discovery (contract v1 required selectors).
-     *
-     * Contract v1 uses ID_NAME as the authoritative device-kind classification
-     * (keyboard vs mouse; see docs/windows7-virtio-driver-contract.md §3.3.4).
-     */
+        /*
+         * Device config discovery (contract v1 required selectors).
+         *
+         * Contract v1 uses ID_NAME as the authoritative device-kind classification
+         * (keyboard vs mouse vs tablet; see docs/windows7-virtio-driver-contract.md §3.3.4).
+         */
     {
         CHAR name[129];
         UCHAR size;
@@ -1568,10 +1568,12 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
             kind = VioInputDeviceKindKeyboard;
         } else if (VioInputAsciiEqualsInsensitiveZ(name, "Aero Virtio Mouse")) {
             kind = VioInputDeviceKindMouse;
+        } else if (VioInputAsciiEqualsInsensitiveZ(name, "Aero Virtio Tablet")) {
+            kind = VioInputDeviceKindTablet;
         } else {
             VIOINPUT_LOG(
                 VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ,
-                "virtio-input unsupported ID_NAME: '%s' (expected 'Aero Virtio Keyboard' or 'Aero Virtio Mouse')\n",
+                "virtio-input unsupported ID_NAME: '%s' (expected 'Aero Virtio Keyboard', 'Aero Virtio Mouse', or 'Aero Virtio Tablet')\n",
                 name);
             VirtioPciResetDevice(&deviceContext->PciDevice);
             return STATUS_NOT_SUPPORTED;
@@ -1582,6 +1584,8 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
             subsysKind = VioInputDeviceKindKeyboard;
         } else if (deviceContext->PciSubsystemDeviceId == VIOINPUT_PCI_SUBSYSTEM_ID_MOUSE) {
             subsysKind = VioInputDeviceKindMouse;
+        } else if (deviceContext->PciSubsystemDeviceId == VIOINPUT_PCI_SUBSYSTEM_ID_TABLET) {
+            subsysKind = VioInputDeviceKindTablet;
         }
 
         /*
@@ -1596,9 +1600,9 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
                 VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ,
                 "virtio-input kind mismatch: ID_NAME='%s' implies %s but PCI subsystem device ID is 0x%04X (%s)\n",
                 name,
-                (kind == VioInputDeviceKindKeyboard) ? "keyboard" : "mouse",
+                VioInputDeviceKindToString(kind),
                 (ULONG)deviceContext->PciSubsystemDeviceId,
-                (subsysKind == VioInputDeviceKindKeyboard) ? "keyboard" : "mouse");
+                VioInputDeviceKindToString(subsysKind));
             VirtioPciResetDevice(&deviceContext->PciDevice);
             return STATUS_NOT_SUPPORTED;
         }
@@ -1611,6 +1615,9 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
             break;
         case VioInputDeviceKindMouse:
             kindStr = "mouse";
+            break;
+        case VioInputDeviceKindTablet:
+            kindStr = "tablet";
             break;
         case VioInputDeviceKindUnknown:
         default:
@@ -1663,6 +1670,9 @@ NTSTATUS VirtioInputEvtDeviceD0Entry(_In_ WDFDEVICE Device, _In_ WDF_POWER_DEVIC
             break;
         case VioInputDeviceKindMouse:
             expectedProduct = VIRTIO_INPUT_DEVIDS_PRODUCT_MOUSE;
+            break;
+        case VioInputDeviceKindTablet:
+            expectedProduct = VIRTIO_INPUT_DEVIDS_PRODUCT_TABLET;
             break;
         default:
             VIOINPUT_LOG(VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ, "virtio-input ID_DEVIDS: unexpected device kind %u\n", (ULONG)deviceContext->DeviceKind);
