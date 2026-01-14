@@ -3284,6 +3284,8 @@ const analyzeAerogpuCmdStream = (cmdStream: ArrayBuffer): AerogpuCmdStreamAnalys
       if (requiresD3d9) continue;
       switch (opcode) {
         // Opcodes handled by the lightweight TypeScript CPU executor.
+        case AerogpuCmdOpcode.Nop:
+        case AerogpuCmdOpcode.DebugMarker:
         case AerogpuCmdOpcode.CreateBuffer:
         case AerogpuCmdOpcode.CreateTexture2d:
         case AerogpuCmdOpcode.DestroyResource:
@@ -3298,6 +3300,7 @@ const analyzeAerogpuCmdStream = (cmdStream: ArrayBuffer): AerogpuCmdStreamAnalys
         case AerogpuCmdOpcode.SetConstantBuffers:
         case AerogpuCmdOpcode.SetShaderResourceBuffers:
         case AerogpuCmdOpcode.SetUnorderedAccessBuffers:
+        case AerogpuCmdOpcode.Dispatch:
         case AerogpuCmdOpcode.Present:
         case AerogpuCmdOpcode.PresentEx:
         case AerogpuCmdOpcode.ExportSharedSurface:
