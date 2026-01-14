@@ -13,6 +13,16 @@ struct Vertex {
   DWORD color;
 };
 
+struct VertexTex1 {
+  float x;
+  float y;
+  float z;
+  float rhw;
+  DWORD color;
+  float u;
+  float v;
+};
+
 static Vertex MixVertex(const Vertex& a, const Vertex& b, float wa, float wb) {
   Vertex out;
   out.x = a.x * wa + b.x * wb;
@@ -625,6 +635,50 @@ static int RunD3D9PatchRenderingSmoke(int argc, char** argv) {
     return reporter.FailHresult("SetStreamSource", hr);
   }
 
+  // Build a second control-point buffer that includes a TEX1 coordinate set.
+  // We use the same positions/colors as the non-textured control points, and
+  // derive UVs from normalized screen-space position. Stage0 is configured to
+  // select DIFFUSE, so the UVs are not sampled by default, but this still
+  // exercises the UMD's TEX1 patch tessellation + fixed-function shader variants.
+  std::vector<VertexTex1> control_points_tex1;
+  control_points_tex1.resize(control_points.size());
+  for (size_t i = 0; i < control_points.size(); ++i) {
+    const Vertex& src = control_points[i];
+    VertexTex1 dst;
+    dst.x = src.x;
+    dst.y = src.y;
+    dst.z = src.z;
+    dst.rhw = src.rhw;
+    dst.color = src.color;
+    const float u = (right != left) ? ((src.x - left) / (right - left)) : 0.0f;
+    const float v = (bottom != top) ? ((src.y - top) / (bottom - top)) : 0.0f;
+    dst.u = u;
+    dst.v = v;
+    control_points_tex1[i] = dst;
+  }
+
+  ComPtr<IDirect3DVertexBuffer9> vb_tex1;
+  hr = dev->CreateVertexBuffer((UINT)(control_points_tex1.size() * sizeof(VertexTex1)),
+                               D3DUSAGE_DYNAMIC | D3DUSAGE_WRITEONLY,
+                               D3DFVF_XYZRHW | D3DFVF_DIFFUSE | D3DFVF_TEX1,
+                               D3DPOOL_DEFAULT,
+                               vb_tex1.put(),
+                               NULL);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("CreateVertexBuffer(tex1)", hr);
+  }
+
+  void* vb_tex1_ptr = NULL;
+  hr = vb_tex1->Lock(0, 0, &vb_tex1_ptr, D3DLOCK_DISCARD);
+  if (FAILED(hr) || !vb_tex1_ptr) {
+    return reporter.FailHresult("IDirect3DVertexBuffer9::Lock(tex1)", FAILED(hr) ? hr : E_FAIL);
+  }
+  memcpy(vb_tex1_ptr, &control_points_tex1[0], control_points_tex1.size() * sizeof(VertexTex1));
+  hr = vb_tex1->Unlock();
+  if (FAILED(hr)) {
+    return reporter.FailHresult("IDirect3DVertexBuffer9::Unlock(tex1)", hr);
+  }
+
   D3DRECTPATCH_INFO rect_info;
   const bool have_rect_info = FillRectPatchInfo(&rect_info);
   if (!have_rect_info) {
@@ -878,6 +932,80 @@ static int RunD3D9PatchRenderingSmoke(int argc, char** argv) {
                                      kTriYellow);
   if (stage_rc != 0) {
     return stage_rc;
+  }
+
+  // Stage 6: TEX1 FVF variant (DrawTriPatch handle 0).
+  hr = dev->SetStreamSource(0, vb_tex1.get(), 0, sizeof(VertexTex1));
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetStreamSource(tex1)", hr);
+  }
+  hr = dev->SetFVF(D3DFVF_XYZRHW | D3DFVF_DIFFUSE | D3DFVF_TEX1);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetFVF(tex1)", hr);
+  }
+  hr = dev->Clear(0, NULL, D3DCLEAR_TARGET, kClearRed, 1.0f, 0);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("Clear(tex1 tri)", hr);
+  }
+  hr = dev->BeginScene();
+  if (FAILED(hr)) {
+    return reporter.FailHresult("BeginScene(tex1 tri)", hr);
+  }
+  hr = dev->DrawTriPatch(0, tri_segs, &tri_info);
+  if (FAILED(hr)) {
+    dev->EndScene();
+    return reporter.FailHresult("DrawTriPatch(tex1 handle0)", hr);
+  }
+  hr = dev->EndScene();
+  if (FAILED(hr)) {
+    return reporter.FailHresult("EndScene(tex1 tri)", hr);
+  }
+  stage_rc = ValidateBackbufferStage(kTestName,
+                                     &reporter,
+                                     "tri_tex1_handle0",
+                                     dev.get(),
+                                     backbuffer.get(),
+                                     sysmem.get(),
+                                     desc,
+                                     dump,
+                                     kClearRed,
+                                     kTriYellow);
+  if (stage_rc != 0) {
+    return stage_rc;
+  }
+
+  // Stage 7: TEX1 FVF variant (DrawRectPatch handle 0).
+  if (have_rect_info) {
+    hr = dev->Clear(0, NULL, D3DCLEAR_TARGET, kClearRed, 1.0f, 0);
+    if (FAILED(hr)) {
+      return reporter.FailHresult("Clear(tex1 rect)", hr);
+    }
+    hr = dev->BeginScene();
+    if (FAILED(hr)) {
+      return reporter.FailHresult("BeginScene(tex1 rect)", hr);
+    }
+    hr = dev->DrawRectPatch(0, rect_segs, &rect_info);
+    if (FAILED(hr)) {
+      dev->EndScene();
+      return reporter.FailHresult("DrawRectPatch(tex1 handle0)", hr);
+    }
+    hr = dev->EndScene();
+    if (FAILED(hr)) {
+      return reporter.FailHresult("EndScene(tex1 rect)", hr);
+    }
+    stage_rc = ValidateBackbufferStage(kTestName,
+                                       &reporter,
+                                       "rect_tex1_handle0",
+                                       dev.get(),
+                                       backbuffer.get(),
+                                       sysmem.get(),
+                                       desc,
+                                       dump,
+                                       kClearRed,
+                                       kRectBlue);
+    if (stage_rc != 0) {
+      return stage_rc;
+    }
   }
 
   if (!have_rect_info) {
