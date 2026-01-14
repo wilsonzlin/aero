@@ -35,15 +35,15 @@ fn aerogpu_intx_level_routes_into_platform_interrupts_and_deasserts_on_ack() {
     let bar0_base = {
         let pci_cfg = m.pci_config_ports().expect("pc platform enabled");
         let mut pci_cfg = pci_cfg.borrow_mut();
-        let bus = pci_cfg.bus_mut();
+        let cfg = pci_cfg
+            .bus_mut()
+            .device_config_mut(bdf)
+            .expect("aerogpu PCI config missing");
 
-        // Ensure MMIO decoding behaves like real PCI hardware (MEM decode + bus mastering enabled).
-        bus.write_config(bdf, 0x04, 2, (1 << 1) | (1 << 2));
+        // Ensure MMIO decoding behaves like real PCI hardware (COMMAND.MEM + COMMAND.BME).
+        cfg.set_command((1 << 1) | (1 << 2));
 
-        bus.device_config(bdf)
-            .and_then(|cfg| cfg.bar_range(0))
-            .map(|range| range.base)
-            .unwrap_or(0)
+        cfg.bar_range(0).expect("AeroGPU BAR0 missing").base
     };
     assert_ne!(
         bar0_base, 0,
@@ -54,8 +54,14 @@ fn aerogpu_intx_level_routes_into_platform_interrupts_and_deasserts_on_ack() {
     m.write_physical_u32(bar0_base + mmio::SCANOUT0_ENABLE, 1);
     m.write_physical_u32(bar0_base + mmio::IRQ_ENABLE, irq_bits::SCANOUT_VBLANK);
 
-    // Advance time enough for at least one vblank edge (default period ~16.6ms).
-    m.tick_platform(20_000_000);
+    let period_ns = u64::from(m.read_physical_u32(
+        bar0_base + mmio::SCANOUT0_VBLANK_PERIOD_NS,
+    ));
+    assert_ne!(period_ns, 0, "test requires vblank pacing to be active");
+
+    // Advance to the next vblank edge so the device latches the vblank IRQ, then synchronize INTx
+    // sources into the platform interrupt controller.
+    m.tick_platform(period_ns);
     m.poll_pci_intx_lines();
 
     assert!(
