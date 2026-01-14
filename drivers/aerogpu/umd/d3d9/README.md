@@ -558,4 +558,4 @@ In particular:
   intentionally not advertised (`D3DDEVCAPS_*PATCHES` / `MaxNpatchTessellationLevel`) so the runtime/apps prefer the core
   triangle/VB/IB paths.
 - **Format caps**: BC/DXT formats are only advertised when the device ABI minor version indicates the
-  guest↔host protocol understands them (see `aerogpu_d3d9_caps.cpp` / `SupportsBcFormats()`). 
+  guest↔host protocol understands them (see `aerogpu_d3d9_caps.cpp` / `supports_bc_formats()`). 
