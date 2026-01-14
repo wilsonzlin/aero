@@ -6167,7 +6167,6 @@ impl AerogpuD3d11Executor {
                 },
             ],
         });
-
         // The translated GS compute prepass keeps its internal prepass resources in `@group(0)` and
         // references D3D11 geometry-stage resources (cbuffers/textures/samplers/SRV buffers) via the
         // shared binding model `@group(3)`.
