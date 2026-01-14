@@ -17798,6 +17798,146 @@ bool TestXyzrhwIndexedConversionIgnoresViewportMinMaxZ() {
   return true;
 }
 
+bool TestXyzrhwConversionAppliesViewportXyAndPixelCenterBias() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetViewport != nullptr, "pfnSetViewport is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // Use a non-zero viewport origin and verify the XYZRHW -> clip conversion
+  // correctly inverts the D3D9 viewport transform (including the -0.5 pixel
+  // center convention).
+  D3DDDIVIEWPORTINFO vp{};
+  vp.X = 10.0f;
+  vp.Y = 20.0f;
+  vp.Width = 256.0f;
+  vp.Height = 256.0f;
+  vp.MinZ = 0.0f;
+  vp.MaxZ = 1.0f;
+  HRESULT hr = cleanup.device_funcs.pfnSetViewport(cleanup.hDevice, &vp);
+  if (!Check(hr == S_OK, "SetViewport(X/Y origin)")) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzrhwDiffuse);
+  if (!Check(hr == S_OK, "SetFVF(XYZRHW|DIFFUSE)")) {
+    return false;
+  }
+
+  dev->cmd.reset();
+
+  // Choose a vertex exactly on the top-left edge of the viewport in D3D9's
+  // pixel-center convention: x = vp.X - 0.5, y = vp.Y - 0.5.
+  //
+  // This should invert to NDC (-1, +1).
+  const VertexXyzrhwDiffuse tri[3] = {
+      {9.5f, 19.5f, 0.25f, 0.5f, 0xFFFFFFFFu},
+      {9.5f + 256.0f, 19.5f, 0.25f, 0.5f, 0xFFFFFFFFu},
+      {9.5f, 19.5f + 256.0f, 0.25f, 0.5f, 0xFFFFFFFFu},
+  };
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzrhwDiffuse));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(XYZRHW viewport X/Y)")) {
+    return false;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->up_vertex_buffer != nullptr, "viewport X/Y: scratch VB created")) {
+      return false;
+    }
+    if (!Check(dev->up_vertex_buffer->storage.size() >= sizeof(tri), "viewport X/Y: scratch VB contains vertices")) {
+      return false;
+    }
+
+    float clip_x = 0.0f;
+    float clip_y = 0.0f;
+    float clip_z = 0.0f;
+    float clip_w = 0.0f;
+    std::memcpy(&clip_x, dev->up_vertex_buffer->storage.data() + 0, sizeof(float));
+    std::memcpy(&clip_y, dev->up_vertex_buffer->storage.data() + 4, sizeof(float));
+    std::memcpy(&clip_z, dev->up_vertex_buffer->storage.data() + 8, sizeof(float));
+    std::memcpy(&clip_w, dev->up_vertex_buffer->storage.data() + 12, sizeof(float));
+    if (!Check(clip_w == 2.0f, "viewport X/Y: clip_w == 1/rhw")) {
+      return false;
+    }
+    if (!Check(clip_x == -2.0f, "viewport X/Y: clip_x == -w (ndc_x=-1)")) {
+      return false;
+    }
+    if (!Check(clip_y == 2.0f, "viewport X/Y: clip_y == +w (ndc_y=+1)")) {
+      return false;
+    }
+    if (!Check(clip_z == 0.5f, "viewport X/Y: clip_z == z*w")) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+bool TestXyzrhwConversionRhwZeroFallsBackToW1() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzrhwDiffuse);
+  if (!Check(hr == S_OK, "SetFVF(XYZRHW|DIFFUSE)")) {
+    return false;
+  }
+
+  dev->cmd.reset();
+
+  // rhw == 0 is not meaningful, but the bring-up conversion uses a safe fallback
+  // (w=1) rather than dividing by zero.
+  const VertexXyzrhwDiffuse tri[3] = {
+      {0.0f, 0.0f, 0.25f, 0.0f, 0xFFFFFFFFu},
+      {1.0f, 0.0f, 0.25f, 0.0f, 0xFFFFFFFFu},
+      {0.0f, 1.0f, 0.25f, 0.0f, 0xFFFFFFFFu},
+  };
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzrhwDiffuse));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(XYZRHW rhw=0)")) {
+    return false;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->up_vertex_buffer != nullptr, "rhw=0: scratch VB created")) {
+      return false;
+    }
+    if (!Check(dev->up_vertex_buffer->storage.size() >= sizeof(tri), "rhw=0: scratch VB contains vertices")) {
+      return false;
+    }
+
+    float clip_z = 0.0f;
+    float clip_w = 0.0f;
+    std::memcpy(&clip_z, dev->up_vertex_buffer->storage.data() + 8, sizeof(float));
+    std::memcpy(&clip_w, dev->up_vertex_buffer->storage.data() + 12, sizeof(float));
+    if (!Check(clip_w == 1.0f, "rhw=0: clip_w falls back to 1")) {
+      return false;
+    }
+    if (!Check(clip_z == 0.25f, "rhw=0: clip_z == z*w (w=1)")) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 bool TestFixedfuncFogVertexModeEmitsConstants() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -18934,6 +19074,12 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestXyzrhwIndexedConversionIgnoresViewportMinMaxZ()) {
+    return 1;
+  }
+  if (!aerogpu::TestXyzrhwConversionAppliesViewportXyAndPixelCenterBias()) {
+    return 1;
+  }
+  if (!aerogpu::TestXyzrhwConversionRhwZeroFallsBackToW1()) {
     return 1;
   }
   if (!aerogpu::TestFixedfuncFogVertexModeEmitsConstants()) {
