@@ -2992,6 +2992,10 @@ fn encode_aerogpu_snapshot_v2(vram: &AeroGpuDevice, bar0: &AeroGpuMmioDevice) ->
     out.extend_from_slice(&regs.error_code.to_le_bytes());
     out.extend_from_slice(&regs.error_fence.to_le_bytes());
     out.extend_from_slice(&regs.error_count.to_le_bytes());
+    // Preserve any pending scanout0 FB_GPA update (LO written, HI not yet committed). This keeps
+    // snapshot/restore deterministic even if the VM is checkpointed between the two dword writes.
+    out.extend_from_slice(&regs.scanout0_fb_gpa_pending_lo.to_le_bytes());
+    out.extend_from_slice(&(regs.scanout0_fb_gpa_lo_pending as u32).to_le_bytes());
     out
 }
 
@@ -3064,7 +3068,9 @@ fn decode_aerogpu_snapshot_v1(bytes: &[u8]) -> Option<AeroGpuSnapshotV1> {
     // Trailing BAR0 error payload (ABI 1.3+). This was added after the initial snapshot v1 format,
     // so treat it as optional and default to zero when absent.
     off = end;
+    let mut has_error_payload = false;
     let (error_code, error_fence, error_count) = if bytes.len() >= end.saturating_add(16) {
+        has_error_payload = true;
         let error_code = read_u32(bytes, &mut off).unwrap_or(0);
         let error_fence = read_u64(bytes, &mut off).unwrap_or(0);
         let error_count = read_u32(bytes, &mut off).unwrap_or(0);
@@ -3072,6 +3078,16 @@ fn decode_aerogpu_snapshot_v1(bytes: &[u8]) -> Option<AeroGpuSnapshotV1> {
     } else {
         (0, 0, 0)
     };
+
+    // Optional scanout0 FB_GPA pending payload (added after the error fields).
+    let (scanout0_fb_gpa_pending_lo, scanout0_fb_gpa_lo_pending) =
+        if has_error_payload && bytes.len() >= off.saturating_add(8) {
+            let pending_lo = read_u32(bytes, &mut off).unwrap_or(0);
+            let pending = read_u32(bytes, &mut off).unwrap_or(0) != 0;
+            (pending_lo, pending)
+        } else {
+            (0, false)
+        };
     // Forward-compatible: ignore trailing bytes from future versions.
 
     Some(AeroGpuSnapshotV1 {
@@ -3094,6 +3110,8 @@ fn decode_aerogpu_snapshot_v1(bytes: &[u8]) -> Option<AeroGpuSnapshotV1> {
             scanout0_format,
             scanout0_pitch_bytes,
             scanout0_fb_gpa,
+            scanout0_fb_gpa_pending_lo,
+            scanout0_fb_gpa_lo_pending,
             scanout0_vblank_seq,
             scanout0_vblank_time_ns,
             scanout0_vblank_period_ns,
@@ -3213,7 +3231,9 @@ fn apply_aerogpu_snapshot_v2(
 
     // Trailing BAR0 error payload (ABI 1.3+). This was added after the initial v2 encoding,
     // so treat it as optional and default to zero when absent.
+    let mut has_error_payload = false;
     let (error_code, error_fence, error_count) = if bytes.len() >= off.saturating_add(16) {
+        has_error_payload = true;
         let error_code = read_u32(bytes, &mut off).unwrap_or(0);
         let error_fence = read_u64(bytes, &mut off).unwrap_or(0);
         let error_count = read_u32(bytes, &mut off).unwrap_or(0);
@@ -3221,6 +3241,16 @@ fn apply_aerogpu_snapshot_v2(
     } else {
         (0, 0, 0)
     };
+
+    // Optional scanout0 FB_GPA pending payload (added after the error fields).
+    let (scanout0_fb_gpa_pending_lo, scanout0_fb_gpa_lo_pending) =
+        if has_error_payload && bytes.len() >= off.saturating_add(8) {
+            let pending_lo = read_u32(bytes, &mut off).unwrap_or(0);
+            let pending = read_u32(bytes, &mut off).unwrap_or(0) != 0;
+            (pending_lo, pending)
+        } else {
+            (0, false)
+        };
     // Forward-compatible: ignore trailing bytes from future versions.
 
     bar0.reset();
@@ -3243,6 +3273,8 @@ fn apply_aerogpu_snapshot_v2(
         scanout0_format,
         scanout0_pitch_bytes,
         scanout0_fb_gpa,
+        scanout0_fb_gpa_pending_lo,
+        scanout0_fb_gpa_lo_pending,
         scanout0_vblank_seq,
         scanout0_vblank_time_ns,
         scanout0_vblank_period_ns,

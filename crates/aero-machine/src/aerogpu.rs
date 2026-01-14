@@ -495,6 +495,10 @@ pub(crate) struct AeroGpuMmioSnapshotV1 {
     pub scanout0_format: u32,
     pub scanout0_pitch_bytes: u32,
     pub scanout0_fb_gpa: u64,
+    /// Pending LO dword for `SCANOUT0_FB_GPA` while waiting for the HI write commit.
+    pub scanout0_fb_gpa_pending_lo: u32,
+    /// Whether the guest has written `SCANOUT0_FB_GPA_LO` without a subsequent HI write.
+    pub scanout0_fb_gpa_lo_pending: bool,
     pub scanout0_vblank_seq: u64,
     pub scanout0_vblank_time_ns: u64,
     pub scanout0_vblank_period_ns: u32,
@@ -858,6 +862,8 @@ impl AeroGpuMmioDevice {
             scanout0_format: self.scanout0_format,
             scanout0_pitch_bytes: self.scanout0_pitch_bytes,
             scanout0_fb_gpa: self.scanout0_fb_gpa,
+            scanout0_fb_gpa_pending_lo: self.scanout0_fb_gpa_pending_lo,
+            scanout0_fb_gpa_lo_pending: self.scanout0_fb_gpa_lo_pending,
             scanout0_vblank_seq: self.scanout0_vblank_seq,
             scanout0_vblank_time_ns: self.scanout0_vblank_time_ns,
             scanout0_vblank_period_ns: self.scanout0_vblank_period_ns,
@@ -904,6 +910,8 @@ impl AeroGpuMmioDevice {
         self.scanout0_format = snap.scanout0_format;
         self.scanout0_pitch_bytes = snap.scanout0_pitch_bytes;
         self.scanout0_fb_gpa = snap.scanout0_fb_gpa;
+        self.scanout0_fb_gpa_pending_lo = snap.scanout0_fb_gpa_pending_lo;
+        self.scanout0_fb_gpa_lo_pending = snap.scanout0_fb_gpa_lo_pending;
         self.scanout0_vblank_seq = snap.scanout0_vblank_seq;
         self.scanout0_vblank_time_ns = snap.scanout0_vblank_time_ns;
         self.scanout0_vblank_period_ns = snap.scanout0_vblank_period_ns;
