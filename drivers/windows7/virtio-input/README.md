@@ -148,7 +148,7 @@ Per the [`AERO-W7-VIRTIO` v1 contract](../../../docs/windows7-virtio-driver-cont
 and MSI/MSI-X is an optional enhancement.
 
 MSI/MSI-X must not be required for functionality: if Windows does not allocate MSI/MSI-X, the driver is expected to
-fall back to INTx.
+use INTx.
 
 #### INF settings (MSI opt-in)
 
