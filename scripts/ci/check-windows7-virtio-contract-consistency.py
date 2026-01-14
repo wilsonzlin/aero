@@ -4572,6 +4572,33 @@ def main() -> None:
         if drift:
             errors.append(drift)
 
+    virtio_snd_inf_dir = REPO_ROOT / "drivers/windows7/virtio-snd/inf"
+    virtio_snd_canonical = virtio_snd_inf_dir / "aero_virtio_snd.inf"
+    virtio_snd_alias_enabled = virtio_snd_inf_dir / "virtio-snd.inf"
+    virtio_snd_alias_disabled = virtio_snd_inf_dir / "virtio-snd.inf.disabled"
+    if virtio_snd_alias_enabled.exists():
+        virtio_snd_alias = virtio_snd_alias_enabled
+    elif virtio_snd_alias_disabled.exists():
+        virtio_snd_alias = virtio_snd_alias_disabled
+    else:
+        virtio_snd_alias = None
+
+    if virtio_snd_alias is not None:
+        # The legacy alias INF is kept for compatibility with workflows/tools that reference the
+        # legacy `virtio-snd.inf` name.
+        #
+        # Policy: it is a filename-only alias. From the first section header (`[Version]`) onward,
+        # it must remain byte-for-byte identical to the canonical INF (only the leading
+        # banner/comments may differ). It does not change HWID matching behavior.
+        drift = check_inf_alias_drift(
+            canonical=virtio_snd_canonical,
+            alias=virtio_snd_alias,
+            repo_root=REPO_ROOT,
+            label="virtio-snd",
+        )
+        if drift:
+            errors.append(drift)
+
     if errors:
         print("\n\n".join(errors), file=sys.stderr)
         raise SystemExit(1)
