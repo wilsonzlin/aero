@@ -14078,33 +14078,41 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
                 ((mmioCount != cachedMmioCount) || (mmioFence != 0 && mmioFence != cachedFence) ||
                  (mmioCode != 0 && mmioCode != cachedCode));
             if (shouldRefreshCache) {
-                AeroGpuAtomicWriteU64(&adapter->LastErrorTime100ns, KeQueryInterruptTime());
-                InterlockedExchange((volatile LONG*)&adapter->LastErrorMmioCount, (LONG)mmioCount);
+                /*
+                 * Avoid clobbering concurrent ISR/error cache updates:
+                 * only refresh the cached payload if LastErrorMmioCount still matches the value we
+                 * observed at the start of this escape.
+                 */
+                const LONG prevCount =
+                    InterlockedCompareExchange((volatile LONG*)&adapter->LastErrorMmioCount, (LONG)mmioCount, (LONG)cachedMmioCount);
+                if ((ULONG)prevCount == cachedMmioCount) {
+                    AeroGpuAtomicWriteU64(&adapter->LastErrorTime100ns, KeQueryInterruptTime());
 
-                ULONG cacheCode = mmioCode;
-                if (cacheCode == 0) {
-                    cacheCode = (ULONG)AEROGPU_ERROR_INTERNAL;
-                }
-                InterlockedExchange((volatile LONG*)&adapter->LastErrorCode, (LONG)cacheCode);
+                    ULONG cacheCode = mmioCode;
+                    if (cacheCode == 0) {
+                        cacheCode = (ULONG)AEROGPU_ERROR_INTERNAL;
+                    }
+                    InterlockedExchange((volatile LONG*)&adapter->LastErrorCode, (LONG)cacheCode);
 
-                if (mmioFence != 0) {
-                    AeroGpuAtomicWriteU64(&adapter->LastErrorFence, mmioFence);
-                } else if (mmioCount != cachedMmioCount) {
-                    /*
-                     * If this looks like a new device-reported error (ERROR_COUNT changed) but the
-                     * device does not provide an associated fence (ERROR_FENCE==0), clear the cached
-                     * fence so powered-down QUERY_ERROR calls do not report a stale fence from a
-                     * prior error (for example if IRQ_ERROR was masked/lost).
-                     *
-                     * Note: when IRQ_ERROR is delivered normally, the ISR path records a best-effort
-                     * LastErrorFence even without ERROR_FENCE, and also updates LastErrorMmioCount.
-                     * In that common case, cachedMmioCount already matches and we do not clear it here.
-                     */
-                    /*
-                     * Avoid clobbering a concurrent ISR update: only clear the fence if it still
-                     * matches the value we observed at the start of QUERY_ERROR.
-                     */
-                    AeroGpuAtomicCompareExchangeU64(&adapter->LastErrorFence, 0, cachedFence);
+                    if (mmioFence != 0) {
+                        AeroGpuAtomicWriteU64(&adapter->LastErrorFence, mmioFence);
+                    } else if (mmioCount != cachedMmioCount) {
+                        /*
+                         * If this looks like a new device-reported error (ERROR_COUNT changed) but the
+                         * device does not provide an associated fence (ERROR_FENCE==0), clear the cached
+                         * fence so powered-down QUERY_ERROR calls do not report a stale fence from a
+                         * prior error (for example if IRQ_ERROR was masked/lost).
+                         *
+                         * Note: when IRQ_ERROR is delivered normally, the ISR path records a best-effort
+                         * LastErrorFence even without ERROR_FENCE, and also updates LastErrorMmioCount.
+                         * In that common case, cachedMmioCount already matches and we do not clear it here.
+                         */
+                        /*
+                         * Avoid clobbering a concurrent ISR update: only clear the fence if it still
+                         * matches the value we observed at the start of QUERY_ERROR.
+                         */
+                        AeroGpuAtomicCompareExchangeU64(&adapter->LastErrorFence, 0, cachedFence);
+                    }
                 }
             }
 
