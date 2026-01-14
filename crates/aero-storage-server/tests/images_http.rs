@@ -458,6 +458,28 @@ async fn symlink_escape_is_blocked() {
         .unwrap();
 
     assert_eq!(res.status(), StatusCode::NOT_FOUND);
+    assert_eq!(
+        res.headers()[header::CACHE_CONTROL].to_str().unwrap(),
+        "no-store, no-transform"
+    );
+    assert_eq!(
+        res.headers()["access-control-allow-origin"]
+            .to_str()
+            .unwrap(),
+        "*"
+    );
+    assert_eq!(
+        res.headers()["access-control-expose-headers"]
+            .to_str()
+            .unwrap(),
+        "ETag, Last-Modified, Cache-Control, Content-Range, Accept-Ranges, Content-Length"
+    );
+    assert_eq!(
+        res.headers()["cross-origin-resource-policy"]
+            .to_str()
+            .unwrap(),
+        "same-site"
+    );
     let body = res.into_body().collect().await.unwrap().to_bytes();
     assert!(
         body.is_empty(),
