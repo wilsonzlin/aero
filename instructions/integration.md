@@ -119,6 +119,7 @@ Older docs may still read like “bring your own BIOS binary” or like the mach
 | `crates/devices/` | Device models (PCI, PIT/RTC/HPET, PIC port wrappers, AHCI/IDE, etc.) |
 | `crates/platform/` / `crates/aero-pc-platform/` | Platform buses + PC/Q35-ish wiring helpers used by `aero-machine` |
 | `crates/aero-interrupts/` | Interrupt controller models (PIC/APIC/I/O APIC) used by the platform layer |
+| `crates/aero-smp/` | Deterministic SMP model (per-vCPU state + LAPIC/IPI delivery + scheduler + snapshot integration) used by the legacy `crates/emulator/` SMP path (not yet wired into the canonical `aero-machine` execution loop). |
 | `crates/aero-timers/` / `crates/aero-time/` | Legacy timer stack (currently not used by the canonical `aero-machine` / `aero-pc-platform` wiring; prefer `crates/devices/*` + `crates/platform/src/interrupts/*`) |
 | `crates/aero-snapshot/` | VM snapshot/restore format + helpers |
 | `crates/emulator/` | Legacy/native emulator runtime + compat stack (not canonical VM wiring). Some subsystems (e.g. the full AeroGPU command executor) still live here. See [`docs/21-emulator-crate-migration.md`](../docs/21-emulator-crate-migration.md). |
