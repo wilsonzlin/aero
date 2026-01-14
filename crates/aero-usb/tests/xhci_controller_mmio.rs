@@ -388,6 +388,45 @@ fn xhci_controller_run_does_not_dma_when_dma_disabled() {
 }
 
 #[test]
+fn xhci_snapshot_preserves_pending_dma_on_run_probe() {
+    let mut ctrl = XhciController::new();
+    let mut nodma = NoDmaCountingMem::default();
+
+    // Put the controller into the running state with DMA disabled so the dma-on-RUN probe is
+    // deferred. This should leave `pending_dma_on_run` set internally without raising an interrupt.
+    ctrl.mmio_write(&mut nodma, regs::REG_CRCR_LO, 4, 0x1000);
+    ctrl.mmio_write(&mut nodma, regs::REG_CRCR_HI, 4, 0);
+    ctrl.mmio_write(&mut nodma, regs::REG_USBCMD, 4, regs::USBCMD_RUN);
+    assert!(!ctrl.irq_level());
+
+    let bytes = ctrl.save_state();
+
+    let mut restored = XhciController::new();
+    restored.load_state(&bytes).expect("load snapshot");
+    assert!(
+        !restored.irq_level(),
+        "pending dma-on-RUN probe must not be converted into an asserted interrupt during restore"
+    );
+
+    let mut mem = CountingMem::new(0x4000);
+    mem.data[0x1000..0x1004].copy_from_slice(&0x1234_5678u32.to_le_bytes());
+
+    // The first DMA-capable tick should execute the deferred probe (1 DMA read) and then perform the
+    // tick-driven CRCR read (1 DMA read), asserting an interrupt.
+    restored.tick_1ms_with_dma(&mut mem);
+    assert_eq!(
+        mem.reads, 2,
+        "expected deferred dma-on-RUN + tick DMA reads on first tick after restore"
+    );
+    assert!(restored.irq_level());
+
+    // Subsequent ticks should not re-run the deferred probe, but still perform the tick-driven CRCR
+    // read.
+    restored.tick_1ms_with_dma(&mut mem);
+    assert_eq!(mem.reads, 3);
+}
+
+#[test]
 fn xhci_tick_1ms_does_not_dma_when_dma_disabled() {
     let mut ctrl = XhciController::new();
     let mut mem = NoDmaCountingMem::default();

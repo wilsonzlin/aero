@@ -51,6 +51,8 @@ const TAG_EP0_CONTROL_TD_FULL: u16 = 26;
 // fields must start at 27+ to avoid duplicate tags.
 const TAG_TIME_MS: u16 = 27;
 const TAG_LAST_TICK_DMA_DWORD: u16 = 28;
+// New in snapshot v0.9.
+const TAG_PENDING_DMA_ON_RUN: u16 = 29;
 
 const SLOT_CONTEXT_DWORDS: usize = 8;
 const ENDPOINT_CONTEXT_DWORDS: usize = 8;
@@ -495,7 +497,7 @@ fn decode_pending_events(buf: &[u8]) -> SnapshotResult<VecDeque<Trb>> {
 
 impl IoSnapshot for XhciController {
     const DEVICE_ID: [u8; 4] = *b"XHCI";
-    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(0, 8);
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(0, 9);
 
     fn save_state(&self) -> Vec<u8> {
         let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
@@ -513,6 +515,7 @@ impl IoSnapshot for XhciController {
         w.field_u32(TAG_DNCTRL, self.dnctrl);
         w.field_u32(TAG_LAST_TICK_DMA_DWORD, self.last_tick_dma_dword);
         w.field_u64(TAG_TIME_MS, self.time_ms);
+        w.field_bool(TAG_PENDING_DMA_ON_RUN, self.pending_dma_on_run);
 
         // Interrupter 0 registers + internal generation counters.
         w.field_u32(TAG_INTR0_IMAN, self.interrupter0.iman_raw());
@@ -737,6 +740,14 @@ impl IoSnapshot for XhciController {
                 return Err(SnapshotError::InvalidFieldEncoding("xhci time_ms"));
             }
         };
+
+        self.pending_dma_on_run = r.bool(TAG_PENDING_DMA_ON_RUN)?.unwrap_or(false);
+        if (self.usbcmd & regs::USBCMD_RUN) == 0 {
+            // Dropping RUN cancels the deferred DMA-on-RUN probe. Preserve that invariant on restore
+            // even if older snapshots omitted the field or if a malformed snapshot has the flag set
+            // while halted.
+            self.pending_dma_on_run = false;
+        }
 
         if let Some(v) = r.u32(TAG_INTR0_IMAN)? {
             self.interrupter0.restore_iman(v);
