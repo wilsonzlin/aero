@@ -294,6 +294,21 @@ fn parse_signature_chunk_with_entry_size(
                         "signature entry {entry_index} read_write_mask offset overflows"
                     ))
                 })?;
+                // Bytes 22..23 are reserved/padding in the v1 layout. Some toolchains may still emit
+                // the v0 (24-byte) entry encoding under a `*G1` chunk ID; in that case these bytes
+                // hold the packed `stream`/`min_precision` fields. Treat non-zero values here as a
+                // strong indicator that the table is actually v0, and force the outer parser to
+                // retry with the v0 entry size.
+                let reserved0_offset = entry_start.checked_add(22).ok_or_else(|| {
+                    DxbcError::invalid_chunk(format!(
+                        "signature entry {entry_index} reserved0 offset overflows"
+                    ))
+                })?;
+                let reserved1_offset = entry_start.checked_add(23).ok_or_else(|| {
+                    DxbcError::invalid_chunk(format!(
+                        "signature entry {entry_index} reserved1 offset overflows"
+                    ))
+                })?;
                 let stream_offset = entry_start.checked_add(24).ok_or_else(|| {
                     DxbcError::invalid_chunk(format!(
                         "signature entry {entry_index} stream offset overflows"
@@ -312,6 +327,23 @@ fn parse_signature_chunk_with_entry_size(
                         read_write_mask_offset
                     ))
                 })?;
+                let reserved0 = *bytes.get(reserved0_offset).ok_or_else(|| {
+                    DxbcError::invalid_chunk(format!(
+                        "need 1 byte for entry {entry_index} reserved0 at {}",
+                        reserved0_offset
+                    ))
+                })?;
+                let reserved1 = *bytes.get(reserved1_offset).ok_or_else(|| {
+                    DxbcError::invalid_chunk(format!(
+                        "need 1 byte for entry {entry_index} reserved1 at {}",
+                        reserved1_offset
+                    ))
+                })?;
+                if reserved0 != 0 || reserved1 != 0 {
+                    return Err(DxbcError::invalid_chunk(format!(
+                        "entry {entry_index} v1 layout reserved bytes are non-zero (reserved0=0x{reserved0:02x}, reserved1=0x{reserved1:02x})"
+                    )));
+                }
                 let stream = read_u32_le_entry(bytes, stream_offset, entry_index, "stream")?;
                 (mask, read_write_mask, stream)
             }
