@@ -3655,15 +3655,9 @@ fn opfs_snapshot_error_to_js(
 #[wasm_bindgen]
 impl Machine {
     fn new_with_native_config(cfg: aero_machine::MachineConfig) -> Result<Self, JsValue> {
-        let inner =
+        #[allow(unused_mut)]
+        let mut inner =
             aero_machine::Machine::new(cfg).map_err(|e| JsValue::from_str(&e.to_string()))?;
-
-        #[cfg(all(
-            target_arch = "wasm32",
-            feature = "wasm-threaded",
-            target_feature = "atomics"
-        ))]
-        let mut inner = inner;
 
         #[cfg(all(
             target_arch = "wasm32",
@@ -3672,20 +3666,12 @@ impl Machine {
         ))]
         let scanout_state = {
             let scanout_state = Self::scanout_state_ref();
-            // `aero_machine` only exposes the shared scanout/cursor state hooks when the target
-            // actually enables wasm atomics (shared memory). Keep the `wasm-threaded` feature
-            // buildable even when the target is compiled without `-C target-feature=+atomics`
-            // (BUILD-002 runs `cargo check --target wasm32-unknown-unknown --features wasm-threaded`).
-            #[cfg(all(
-                target_arch = "wasm32",
-                feature = "wasm-threaded",
-                target_feature = "atomics"
-            ))]
-            {
-                let cursor_state = Self::cursor_state_ref();
-                inner.set_scanout_state_static(Some(scanout_state));
-                inner.set_cursor_state_static(Some(cursor_state));
-            }
+            let cursor_state = Self::cursor_state_ref();
+            // Allow the underlying `aero-machine` integration layer (BIOS INT10, AeroGPU scanout0,
+            // etc.) to publish scanout transitions into the same shared descriptor that JS workers
+            // read.
+            inner.set_scanout_state_static(Some(scanout_state));
+            inner.set_cursor_state_static(Some(cursor_state));
             scanout_state
         };
         Ok(Self {
@@ -3980,15 +3966,9 @@ impl Machine {
                 "Machine.new_shared: failed to init shared guest RAM backend: {e}"
             ))
         })?;
-        let inner = aero_machine::Machine::new_with_guest_memory(cfg, Box::new(mem))
+        #[allow(unused_mut)]
+        let mut inner = aero_machine::Machine::new_with_guest_memory(cfg, Box::new(mem))
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
-
-        #[cfg(all(
-            target_arch = "wasm32",
-            feature = "wasm-threaded",
-            target_feature = "atomics"
-        ))]
-        let mut inner = inner;
 
         #[cfg(all(
             target_arch = "wasm32",
@@ -3997,16 +3977,9 @@ impl Machine {
         ))]
         let scanout_state = {
             let scanout_state = Self::scanout_state_ref();
-            #[cfg(all(
-                target_arch = "wasm32",
-                feature = "wasm-threaded",
-                target_feature = "atomics"
-            ))]
-            {
-                let cursor_state = Self::cursor_state_ref();
-                inner.set_scanout_state_static(Some(scanout_state));
-                inner.set_cursor_state_static(Some(cursor_state));
-            }
+            let cursor_state = Self::cursor_state_ref();
+            inner.set_scanout_state_static(Some(scanout_state));
+            inner.set_cursor_state_static(Some(cursor_state));
             scanout_state
         };
         Ok(Self {
@@ -5329,6 +5302,21 @@ impl Machine {
     ))]
     fn publish_scanout(&mut self, update: ScanoutStateUpdate) {
         if self.last_published_scanout == Some(update) {
+            return;
+        }
+
+        // Avoid bumping generation if the underlying machine/device model already published the
+        // same update (e.g. BIOS INT10 mode set updates).
+        let snap = self.scanout_state.snapshot();
+        if snap.source == update.source
+            && snap.base_paddr_lo == update.base_paddr_lo
+            && snap.base_paddr_hi == update.base_paddr_hi
+            && snap.width == update.width
+            && snap.height == update.height
+            && snap.pitch_bytes == update.pitch_bytes
+            && snap.format == update.format
+        {
+            self.last_published_scanout = Some(update);
             return;
         }
 

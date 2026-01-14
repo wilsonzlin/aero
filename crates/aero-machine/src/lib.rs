@@ -107,9 +107,9 @@ use aero_platform::interrupts::{
 use aero_platform::io::{IoPortBus, PortIoDevice as _};
 use aero_platform::memory::MemoryBus as PlatformMemoryBus;
 use aero_platform::reset::{ResetKind, ResetLatch};
-#[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+#[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
 use aero_shared::cursor_state::{CursorState, CursorStateUpdate, CURSOR_FORMAT_B8G8R8A8};
-#[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+#[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
 use aero_shared::scanout_state::{
     ScanoutState, ScanoutStateUpdate, SCANOUT_FORMAT_B8G8R8X8, SCANOUT_SOURCE_LEGACY_TEXT,
     SCANOUT_SOURCE_LEGACY_VBE_LFB, SCANOUT_SOURCE_WDDM,
@@ -3827,14 +3827,14 @@ impl PciIoBarHandler for E1000PciIoBar {
 
 type SharedPciIoBarRouter = Rc<RefCell<PciIoBarRouter>>;
 
-#[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+#[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
 #[derive(Clone)]
 enum SharedStateHandle<T: 'static> {
     Arc(Arc<T>),
     Static(&'static T),
 }
 
-#[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+#[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
 impl<T: 'static> core::ops::Deref for SharedStateHandle<T> {
     type Target = T;
 
@@ -3928,16 +3928,17 @@ pub struct Machine {
 
     // Optional shared scanout descriptor used by the browser presentation pipeline.
     //
-    // This is only available when the target supports atomic operations (native builds and
-    // wasm32+atomics); on single-threaded wasm builds, the shared scanout protocol is unavailable.
-    #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+    // This is only available when publishing into an external shared scanout header is supported:
+    // native builds always support this, and the wasm32 build supports it when built with the
+    // `wasm-threaded` feature.
+    #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
     scanout_state: Option<SharedStateHandle<ScanoutState>>,
 
     // Optional shared hardware cursor descriptor used by the browser presentation pipeline.
     //
-    // This is only available when the target supports atomic operations (native builds and
-    // wasm32+atomics); on single-threaded wasm builds, the shared cursor protocol is unavailable.
-    #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+    // This is only available when publishing into an external shared header is supported: native
+    // builds and the wasm32 `wasm-threaded` build.
+    #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
     cursor_state: Option<SharedStateHandle<CursorState>>,
 
     // ---------------------------------------------------------------------
@@ -4182,9 +4183,9 @@ impl Machine {
             display_fb: Vec::new(),
             display_width: 0,
             display_height: 0,
-            #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+            #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
             scanout_state: None,
-            #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+            #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
             cursor_state: None,
             ahci_port0_overlay: None,
             ide_secondary_master_atapi_overlay: None,
@@ -5664,7 +5665,7 @@ impl Machine {
     ///
     /// On single-threaded wasm builds (no atomic support), scanout state publishing is unavailable
     /// and this method is not compiled.
-    #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+    #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
     pub fn set_scanout_state(&mut self, state: Option<Arc<ScanoutState>>) {
         self.scanout_state = state.map(SharedStateHandle::Arc);
     }
@@ -5673,7 +5674,7 @@ impl Machine {
     ///
     /// This exists for the threaded wasm build, where the scanout state header is embedded inside
     /// the shared wasm linear memory.
-    #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+    #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
     pub fn set_scanout_state_static(&mut self, state: Option<&'static ScanoutState>) {
         self.scanout_state = state.map(SharedStateHandle::Static);
     }
@@ -5683,7 +5684,7 @@ impl Machine {
     /// When present, AeroGPU BAR0 cursor register updates publish updates to this descriptor so an
     /// external presentation layer (e.g. browser canvas) can render the hardware cursor without
     /// legacy postMessage plumbing.
-    #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+    #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
     pub fn set_cursor_state(&mut self, state: Option<Arc<CursorState>>) {
         self.cursor_state = state.map(SharedStateHandle::Arc);
     }
@@ -5692,7 +5693,7 @@ impl Machine {
     ///
     /// This exists for the threaded wasm build, where the cursor state header is embedded inside
     /// the shared wasm linear memory.
-    #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+    #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
     pub fn set_cursor_state_static(&mut self, state: Option<&'static CursorState>) {
         self.cursor_state = state.map(SharedStateHandle::Static);
     }
@@ -9452,7 +9453,7 @@ impl Machine {
 
         // Reset returns the machine to legacy text mode; publish this so external presentation
         // layers can follow (and so any previous WDDM claim is cleared on reset).
-        #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+        #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
         if let Some(scanout_state) = &self.scanout_state {
             scanout_state.publish(ScanoutStateUpdate {
                 source: SCANOUT_SOURCE_LEGACY_TEXT,
@@ -9467,7 +9468,7 @@ impl Machine {
 
         // Reset returns the machine to a legacy (non-WDDM) scanout; also disable the hardware
         // cursor so hosts don't display stale WDDM cursor state after a reset.
-        #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+        #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
         if let Some(cursor_state) = &self.cursor_state {
             cursor_state.publish(CursorStateUpdate {
                 enable: 0,
@@ -9658,9 +9659,9 @@ impl Machine {
 
         // Publish WDDM scanout state updates based on BAR0 scanout registers.
         //
-        // This is gated behind atomic-support builds because `ScanoutState` is a lock-free shared
-        // structure backed by atomic operations.
-        #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+        // This is gated behind builds that support publishing into the shared scanout header:
+        // native builds and the wasm32 `wasm-threaded` build.
+        #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
         if let Some(scanout_state) = &self.scanout_state {
             let publish_legacy_scanout_descriptor = |scanout_state: &ScanoutState| {
                 let legacy_text = ScanoutStateUpdate {
@@ -9749,7 +9750,7 @@ impl Machine {
         }
 
         // Publish hardware cursor updates based on BAR0 cursor registers.
-        #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+        #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
         if let Some(cursor_state) = &self.cursor_state {
             if let Some(update) = dev.take_cursor_state_update() {
                 cursor_state.publish(update);
@@ -10383,7 +10384,7 @@ impl Machine {
         let cx_before = self.cpu.state.gpr[gpr::RCX] as u16;
         let dx_before = self.cpu.state.gpr[gpr::RDX] as u16;
         let vbe_mode_before = self.bios.video.vbe.current_mode;
-        #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+        #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
         let vbe_scanout_sig_before = vbe_mode_before.map(|mode| {
             (
                 mode,
@@ -10772,7 +10773,7 @@ impl Machine {
         // If the scanout is currently owned by the WDDM path, do not allow legacy INT 10h calls
         // to steal it back (until the VM resets; `SCANOUT0_ENABLE=0` is treated as a visibility
         // toggle and does not release WDDM ownership).
-        #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+        #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
         if vector == 0x10 {
             let vbe_scanout_sig_after = self.bios.video.vbe.current_mode.map(|mode| {
                 (

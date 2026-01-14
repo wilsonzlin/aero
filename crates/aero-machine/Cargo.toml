@@ -4,6 +4,12 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 
+[features]
+# Enables shared-memory/threads-related helpers on wasm32 (e.g. publishing scanout state into a
+# shared header owned by the browser runtime). This is intended to be driven by build-system
+# features (see `aero-wasm`'s `wasm-threaded` feature).
+wasm-threaded = ["dep:aero-shared"]
+
 [dependencies]
 aero-cpu-core = { path = "../aero-cpu-core" }
 aero-devices = { path = "../devices" }
@@ -39,8 +45,8 @@ memory = { path = "../memory" }
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 aero-shared = { path = "../aero-shared" }
 
-[target.'cfg(all(target_arch = "wasm32", target_feature = "atomics"))'.dependencies]
-aero-shared = { path = "../aero-shared" }
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+aero-shared = { path = "../aero-shared", optional = true }
 
 [dev-dependencies]
 pretty_assertions = "1"

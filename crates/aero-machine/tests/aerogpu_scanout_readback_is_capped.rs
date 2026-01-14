@@ -1,4 +1,4 @@
-#![cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+#![cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
 
 use aero_devices::pci::profile;
 use aero_machine::{Machine, MachineConfig, ScanoutSource};

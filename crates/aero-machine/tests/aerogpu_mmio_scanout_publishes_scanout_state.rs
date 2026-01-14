@@ -1,7 +1,4 @@
-#![cfg(any(
-    not(target_arch = "wasm32"),
-    all(target_arch = "wasm32", target_feature = "atomics")
-))]
+#![cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
 
 use std::sync::Arc;
 

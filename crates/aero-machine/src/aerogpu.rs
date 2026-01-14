@@ -19,9 +19,9 @@ use memory::MemoryBus;
 
 use crate::AerogpuSubmission;
 
-#[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+#[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
 use aero_shared::cursor_state::CursorStateUpdate;
-#[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+#[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
 use aero_shared::scanout_state::{
     ScanoutStateUpdate, SCANOUT_FORMAT_B8G8R8X8, SCANOUT_SOURCE_WDDM,
 };
@@ -464,7 +464,7 @@ pub struct AeroGpuMmioDevice {
     vblank_interval_ns: Option<u64>,
     next_vblank_ns: Option<u64>,
     wddm_scanout_active: bool,
-    #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+    #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
     scanout0_dirty: bool,
 
     cursor_enable: bool,
@@ -480,7 +480,7 @@ pub struct AeroGpuMmioDevice {
     cursor_fb_gpa_pending_lo: u32,
     cursor_fb_gpa_lo_pending: bool,
     cursor_pitch_bytes: u32,
-    #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+    #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
     cursor_dirty: bool,
 
     // ---------------------------------------------------------------------
@@ -599,7 +599,7 @@ impl Default for AeroGpuMmioDevice {
             vblank_interval_ns: Some(vblank_period_ns),
             next_vblank_ns: None,
             wddm_scanout_active: false,
-            #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+            #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
             scanout0_dirty: false,
 
             cursor_enable: false,
@@ -614,7 +614,7 @@ impl Default for AeroGpuMmioDevice {
             cursor_fb_gpa_pending_lo: 0,
             cursor_fb_gpa_lo_pending: false,
             cursor_pitch_bytes: 0,
-            #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+            #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
             cursor_dirty: false,
 
             pending_fence_completions: VecDeque::new(),
@@ -725,7 +725,7 @@ impl AeroGpuMmioDevice {
         (self.command() & (1 << 10)) != 0
     }
 
-    #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+    #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
     fn scanout0_disabled_update() -> ScanoutStateUpdate {
         ScanoutStateUpdate {
             source: SCANOUT_SOURCE_WDDM,
@@ -739,7 +739,7 @@ impl AeroGpuMmioDevice {
         }
     }
 
-    #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+    #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
     fn scanout_state_format_from_aerogpu_format(fmt: u32) -> Option<u32> {
         // The scanout state format stores the AeroGPU `AerogpuFormat` discriminant values.
         //
@@ -762,7 +762,7 @@ impl AeroGpuMmioDevice {
         }
     }
 
-    #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+    #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
     fn scanout0_to_scanout_state_update(&self) -> ScanoutStateUpdate {
         let Some(format) = Self::scanout_state_format_from_aerogpu_format(self.scanout0_format)
         else {
@@ -904,7 +904,7 @@ impl AeroGpuMmioDevice {
         self.wddm_scanout_active = true;
 
         // Mark dirty so scanout consumers see the transition immediately.
-        #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+        #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
         {
             self.scanout0_dirty = true;
         }
@@ -919,7 +919,7 @@ impl AeroGpuMmioDevice {
     ///
     /// Returns a disabled descriptor (base/width/height/pitch = 0) when the scanout is enabled but
     /// invalid/unsupported (including unsupported formats).
-    #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+    #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
     pub fn take_scanout0_state_update(&mut self) -> Option<ScanoutStateUpdate> {
         if !self.scanout0_dirty {
             return None;
@@ -948,7 +948,7 @@ impl AeroGpuMmioDevice {
     ///
     /// Returns `None` when the cursor registers have not changed since the last call, or when the
     /// cursor framebuffer GPA is mid-update (avoid publishing a torn 64-bit base address).
-    #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+    #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
     pub fn take_cursor_state_update(&mut self) -> Option<CursorStateUpdate> {
         if !self.cursor_dirty {
             return None;
@@ -1106,7 +1106,7 @@ impl AeroGpuMmioDevice {
         self.cursor_fb_gpa_lo_pending = snap.cursor_fb_gpa_lo_pending;
         self.cursor_pitch_bytes = snap.cursor_pitch_bytes;
 
-        #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+        #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
         {
             // Ensure restored scanout/cursor state is re-published to any installed shared
             // descriptors on the next device tick. These shared headers are host-managed and are
@@ -1721,7 +1721,7 @@ impl AeroGpuMmioDevice {
                     self.scanout0_fb_gpa_lo_pending = false;
                 }
                 self.scanout0_enable = new_enable;
-                #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+                #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
                 {
                     self.scanout0_dirty = true;
                 }
@@ -1729,7 +1729,7 @@ impl AeroGpuMmioDevice {
             }
             x if x == pci::AEROGPU_MMIO_REG_SCANOUT0_WIDTH as u64 => {
                 self.scanout0_width = value;
-                #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+                #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
                 {
                     self.scanout0_dirty = true;
                 }
@@ -1737,7 +1737,7 @@ impl AeroGpuMmioDevice {
             }
             x if x == pci::AEROGPU_MMIO_REG_SCANOUT0_HEIGHT as u64 => {
                 self.scanout0_height = value;
-                #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+                #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
                 {
                     self.scanout0_dirty = true;
                 }
@@ -1745,7 +1745,7 @@ impl AeroGpuMmioDevice {
             }
             x if x == pci::AEROGPU_MMIO_REG_SCANOUT0_FORMAT as u64 => {
                 self.scanout0_format = value;
-                #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+                #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
                 {
                     self.scanout0_dirty = true;
                 }
@@ -1753,7 +1753,7 @@ impl AeroGpuMmioDevice {
             }
             x if x == pci::AEROGPU_MMIO_REG_SCANOUT0_PITCH_BYTES as u64 => {
                 self.scanout0_pitch_bytes = value;
-                #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+                #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
                 {
                     self.scanout0_dirty = true;
                 }
@@ -1764,7 +1764,7 @@ impl AeroGpuMmioDevice {
                 // new update and commit the combined value on the subsequent HI write.
                 self.scanout0_fb_gpa_pending_lo = value;
                 self.scanout0_fb_gpa_lo_pending = true;
-                #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+                #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
                 {
                     self.scanout0_dirty = true;
                 }
@@ -1779,7 +1779,7 @@ impl AeroGpuMmioDevice {
                 };
                 self.scanout0_fb_gpa = (u64::from(value) << 32) | lo;
                 self.scanout0_fb_gpa_lo_pending = false;
-                #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+                #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
                 {
                     self.scanout0_dirty = true;
                 }
@@ -1789,73 +1789,77 @@ impl AeroGpuMmioDevice {
             x if x == pci::AEROGPU_MMIO_REG_CURSOR_ENABLE as u64 => {
                 let new_enable = value != 0;
                 if self.cursor_enable && !new_enable {
+                    // Reset torn-update tracking so a stale LO write can't block future publishes.
                     self.cursor_fb_gpa_pending_lo = 0;
                     self.cursor_fb_gpa_lo_pending = false;
                 }
                 self.cursor_enable = new_enable;
-                #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+                #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
                 {
                     self.cursor_dirty = true;
                 }
             }
             x if x == pci::AEROGPU_MMIO_REG_CURSOR_X as u64 => {
                 self.cursor_x = value as i32;
-                #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+                #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
                 {
                     self.cursor_dirty = true;
                 }
             }
             x if x == pci::AEROGPU_MMIO_REG_CURSOR_Y as u64 => {
                 self.cursor_y = value as i32;
-                #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+                #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
                 {
                     self.cursor_dirty = true;
                 }
             }
             x if x == pci::AEROGPU_MMIO_REG_CURSOR_HOT_X as u64 => {
                 self.cursor_hot_x = value;
-                #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+                #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
                 {
                     self.cursor_dirty = true;
                 }
             }
             x if x == pci::AEROGPU_MMIO_REG_CURSOR_HOT_Y as u64 => {
                 self.cursor_hot_y = value;
-                #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+                #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
                 {
                     self.cursor_dirty = true;
                 }
             }
             x if x == pci::AEROGPU_MMIO_REG_CURSOR_WIDTH as u64 => {
                 self.cursor_width = value;
-                #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+                #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
                 {
                     self.cursor_dirty = true;
                 }
             }
             x if x == pci::AEROGPU_MMIO_REG_CURSOR_HEIGHT as u64 => {
                 self.cursor_height = value;
-                #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+                #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
                 {
                     self.cursor_dirty = true;
                 }
             }
             x if x == pci::AEROGPU_MMIO_REG_CURSOR_FORMAT as u64 => {
                 self.cursor_format = value;
-                #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+                #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
                 {
                     self.cursor_dirty = true;
                 }
             }
             x if x == pci::AEROGPU_MMIO_REG_CURSOR_FB_GPA_LO as u64 => {
+                // Avoid exposing a torn 64-bit `cursor_fb_gpa` update. Treat the LO write as
+                // starting a new update and commit the combined value on the subsequent HI write.
                 self.cursor_fb_gpa_pending_lo = value;
                 self.cursor_fb_gpa_lo_pending = true;
-                #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+                #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
                 {
                     self.cursor_dirty = true;
                 }
             }
             x if x == pci::AEROGPU_MMIO_REG_CURSOR_FB_GPA_HI as u64 => {
+                // Drivers typically write LO then HI; treat HI as the commit point.
                 let lo = if self.cursor_fb_gpa_lo_pending {
                     u64::from(self.cursor_fb_gpa_pending_lo)
                 } else {
@@ -1863,14 +1867,14 @@ impl AeroGpuMmioDevice {
                 };
                 self.cursor_fb_gpa = (u64::from(value) << 32) | lo;
                 self.cursor_fb_gpa_lo_pending = false;
-                #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+                #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
                 {
                     self.cursor_dirty = true;
                 }
             }
             x if x == pci::AEROGPU_MMIO_REG_CURSOR_PITCH_BYTES as u64 => {
                 self.cursor_pitch_bytes = value;
-                #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+                #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
                 {
                     self.cursor_dirty = true;
                 }
@@ -2473,7 +2477,7 @@ impl IoSnapshot for AeroGpuMmioDevice {
         w.field_bool(TAG_DOORBELL_PENDING, self.doorbell_pending);
         w.field_bool(TAG_RING_RESET_PENDING, self.ring_reset_pending);
 
-        #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+        #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
         {
             w.field_bool(TAG_SCANOUT0_DIRTY, self.scanout0_dirty);
         }
@@ -2599,7 +2603,7 @@ impl IoSnapshot for AeroGpuMmioDevice {
         let doorbell_pending = r.bool(TAG_DOORBELL_PENDING)?.unwrap_or(false);
         let ring_reset_pending = r.bool(TAG_RING_RESET_PENDING)?.unwrap_or(false);
 
-        #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+        #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
         let scanout0_dirty = r.bool(TAG_SCANOUT0_DIRTY)?.unwrap_or(true);
 
         // Apply decoded state.
@@ -2630,7 +2634,7 @@ impl IoSnapshot for AeroGpuMmioDevice {
         self.vblank_interval_ns = vblank_interval_ns;
         self.next_vblank_ns = next_vblank_ns;
         self.wddm_scanout_active = wddm_scanout_active;
-        #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+        #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
         {
             self.scanout0_dirty = scanout0_dirty;
         }

@@ -502,6 +502,30 @@ fn boot_sector_vbe_64x64x8_palette_red_pixel() -> [u8; 512] {
     sector
 }
 
+fn boot_sector_int10_vbe_set_mode_118_hlt() -> [u8; 512] {
+    let mut sector = [0u8; 512];
+    let mut i = 0usize;
+
+    // mov ax, 0x4F02 (VBE Set SuperVGA Video Mode)
+    sector[i..i + 3].copy_from_slice(&[0xB8, 0x02, 0x4F]);
+    i += 3;
+
+    // mov bx, 0x4118 (mode 0x118 + LFB requested)
+    sector[i..i + 3].copy_from_slice(&[0xBB, 0x18, 0x41]);
+    i += 3;
+
+    // int 0x10
+    sector[i..i + 2].copy_from_slice(&[0xCD, 0x10]);
+    i += 2;
+
+    // hlt
+    sector[i] = 0xF4;
+
+    sector[510] = 0x55;
+    sector[511] = 0xAA;
+    sector
+}
+
 fn fnv1a(bytes: &[u8]) -> u64 {
     const FNV_OFFSET: u64 = 0xcbf29ce484222325;
     const FNV_PRIME: u64 = 0x100000001b3;
@@ -854,4 +878,51 @@ fn wasm_machine_aerogpu_config_disables_vga_by_default_and_displays_text_mode() 
         hash, blank,
         "expected AeroGPU text-mode framebuffer hash to differ from blank screen"
     );
+}
+
+#[wasm_bindgen_test]
+fn wasm_machine_aerogpu_int10_vbe_updates_scanout_state() {
+    #[cfg(feature = "wasm-threaded")]
+    ensure_runtime_reserved_floor();
+
+    let boot = boot_sector_int10_vbe_set_mode_118_hlt();
+    // Enable AeroGPU via the wasm wrapper and rely on its default to disable VGA.
+    let mut machine = Machine::new_with_config(16 * 1024 * 1024, true, None, None)
+        .expect("Machine::new_with_config(enable_aerogpu=true)");
+    machine
+        .set_disk_image(&boot)
+        .expect("set_disk_image should accept a 512-byte boot sector");
+
+    let scanout_ptr = machine.scanout_state_ptr();
+    let scanout_len = machine.scanout_state_len_bytes();
+    machine.reset();
+
+    // If the build does not support shared scanout state (non-threaded WASM), skip.
+    if scanout_ptr == 0 {
+        assert_eq!(scanout_len, 0);
+        return;
+    }
+    assert_eq!(scanout_len, SCANOUT_STATE_BYTE_LEN);
+
+    let mut halted = false;
+    for _ in 0..10_000 {
+        let exit = machine.run_slice(50_000);
+        match exit.kind() {
+            RunExitKind::Completed => {}
+            RunExitKind::Halted => {
+                halted = true;
+                break;
+            }
+            other => panic!("unexpected RunExitKind: {other:?}"),
+        }
+    }
+    assert!(halted, "guest never reached HLT");
+
+    let snap = unsafe { snapshot_scanout_state(scanout_ptr) };
+    assert_eq!(snap.source, SCANOUT_SOURCE_LEGACY_VBE_LFB);
+    assert_eq!(snap.width, 1024);
+    assert_eq!(snap.height, 768);
+    assert_eq!(snap.pitch_bytes, 1024 * 4);
+    assert_eq!(snap.format, SCANOUT_FORMAT_B8G8R8X8);
+    assert_eq!(snap.base_paddr, u64::from(machine.vbe_lfb_base()));
 }

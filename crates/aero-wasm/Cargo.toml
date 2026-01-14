@@ -8,7 +8,7 @@ license = "MIT OR Apache-2.0"
 # Internal feature used by the build system to ensure the threaded/shared-memory
 # build is fully "thread-ready" (e.g. it contains the TLS metadata expected by
 # wasm-bindgen's threading transform). This must not affect the public JS API.
-wasm-threaded = ["aero-shared"]
+wasm-threaded = ["aero-shared", "aero-machine/wasm-threaded"]
 
 [lib]
 crate-type = ["cdylib", "rlib"]

@@ -1,4 +1,4 @@
-#![cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+#![cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
 
 #![cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
 
