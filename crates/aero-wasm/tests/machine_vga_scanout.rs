@@ -392,6 +392,28 @@ fn machine_aerogpu_display_scanout_exports_non_empty_rgba8888_framebuffer() {
         !copy.is_empty(),
         "copied display framebuffer should be non-empty"
     );
+    let len_bytes = m.display_framebuffer_len_bytes();
+    assert_eq!(
+        copy.len() as u32,
+        len_bytes,
+        "copy length should match display_framebuffer_len_bytes"
+    );
+    // `display_framebuffer_copy_rgba8888` calls `display_present` internally, so re-query the
+    // resolution used for the copied framebuffer.
+    let width2 = m.display_width();
+    let height2 = m.display_height();
+    let expected_len_bytes = (width2 as u64)
+        .saturating_mul(height2 as u64)
+        .saturating_mul(4);
+    assert!(
+        expected_len_bytes <= u64::from(u32::MAX),
+        "display framebuffer byte length should fit in u32 for test mode"
+    );
+    assert_eq!(
+        len_bytes as u64,
+        expected_len_bytes,
+        "display len_bytes must equal width * height * 4"
+    );
 
     let blank = fnv1a_blank_rgba8(copy.len());
     let hash = fnv1a(&copy);
