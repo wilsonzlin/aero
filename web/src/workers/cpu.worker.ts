@@ -2241,7 +2241,8 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
           if (!vm) {
             throw new Error("WasmVm is not initialized; cannot snapshot CPU state.");
           }
-          const save = vm.save_state_v2;
+          const save =
+            (vm as unknown as { save_state_v2?: unknown }).save_state_v2 ?? (vm as unknown as { saveStateV2?: unknown }).saveStateV2;
           if (typeof save !== "function") {
             throw new Error("WasmVm.save_state_v2 is unavailable in this WASM build.");
           }
@@ -2298,7 +2299,8 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
           if (!vm) {
             throw new Error("WasmVm is not initialized; cannot restore CPU state.");
           }
-          const load = vm.load_state_v2;
+          const load =
+            (vm as unknown as { load_state_v2?: unknown }).load_state_v2 ?? (vm as unknown as { loadStateV2?: unknown }).loadStateV2;
           if (typeof load !== "function") {
             throw new Error("WasmVm.load_state_v2 is unavailable in this WASM build.");
           }
@@ -2315,7 +2317,9 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
               if (rec.kind !== "device.9") continue;
               if (!(rec.bytes instanceof ArrayBuffer)) continue;
 
-              const loadInternal = (vm as unknown as { load_cpu_internal_state_v2?: unknown }).load_cpu_internal_state_v2;
+              const loadInternal =
+                (vm as unknown as { load_cpu_internal_state_v2?: unknown }).load_cpu_internal_state_v2 ??
+                (vm as unknown as { loadCpuInternalStateV2?: unknown }).loadCpuInternalStateV2;
               if (typeof loadInternal !== "function") {
                 console.warn(
                   "[cpu.worker] Snapshot contains CPU_INTERNAL device blob but WasmVm.load_cpu_internal_state_v2 is unavailable; ignoring.",
