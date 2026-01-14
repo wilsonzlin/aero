@@ -486,6 +486,22 @@ impl SharedFramebufferWriter {
         Self { shared }
     }
 
+    /// Like [`Self::write_frame`], but only publishes a new frame when the shared `frame_dirty` flag
+    /// is clear.
+    ///
+    /// This can be used by producers to throttle publishing when `frame_dirty` is treated as a
+    /// best-effort consumer acknowledgement (ACK).
+    pub fn try_write_frame<F>(&self, f: F) -> Option<u32>
+    where
+        F: FnOnce(&mut [u8], Option<&mut [u32]>, SharedFramebufferLayout),
+    {
+        let header = self.shared.header();
+        if header.frame_dirty.load(Ordering::SeqCst) != 0 {
+            return None;
+        }
+        Some(self.write_frame(f))
+    }
+
     /// Write into the back buffer, then publish it as the active buffer.
     ///
     /// This performs the publish step in the order required by the JS `Atomics`
@@ -958,6 +974,40 @@ mod tests {
         // active_index=2 -> clamped active=0 -> back=1.
         assert_eq!(shared.header().active_index.load(Ordering::SeqCst), 1);
         assert_eq!(shared.framebuffer(1)[0], 0xAA);
+    }
+
+    #[test]
+    fn writer_try_write_frame_throttles_when_frame_dirty_is_set() {
+        let layout = SharedFramebufferLayout::new_rgba8(16, 16, /*tile_size=*/ 0).unwrap();
+        let mut backing = Backing::new(layout);
+        let shared = backing.shared();
+        shared.header().init(layout);
+
+        let writer = SharedFramebufferWriter::new(shared);
+        let seq1 = writer
+            .try_write_frame(|buf, _dirty, _layout| buf.fill(0x11))
+            .expect("first publish should succeed");
+        assert_eq!(seq1, 1);
+        assert_eq!(shared.header().frame_dirty.load(Ordering::SeqCst), 1);
+
+        let called = std::cell::Cell::new(false);
+        let seq2 = writer.try_write_frame(|_buf, _dirty, _layout| {
+            called.set(true);
+        });
+        assert_eq!(seq2, None);
+        assert!(!called.get(), "closure must not run when throttled");
+        assert_eq!(
+            shared.header().frame_seq.load(Ordering::SeqCst),
+            1,
+            "throttled publish must not bump frame_seq",
+        );
+
+        // Simulate consumer ACK and retry.
+        shared.header().frame_dirty.store(0, Ordering::SeqCst);
+        let seq3 = writer
+            .try_write_frame(|buf, _dirty, _layout| buf.fill(0x22))
+            .expect("publish after ack should succeed");
+        assert_eq!(seq3, 2);
     }
 }
 
