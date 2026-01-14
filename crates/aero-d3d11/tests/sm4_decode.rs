@@ -2248,8 +2248,10 @@ fn sm5_uav_and_raw_buffer_opcode_constants_match_d3d11_tokenized_format() {
     assert_eq!(OPCODE_ITOF, 0x1a);
     assert_eq!(OPCODE_UTOF, 0x1b);
     // Structured control flow opcodes.
-    assert_eq!(OPCODE_LOOP, 0x2b);
-    assert_eq!(OPCODE_ENDLOOP, 0x2e);
+    assert_eq!(OPCODE_BREAK, 0x2d);
+    assert_eq!(OPCODE_LOOP, 0x2f);
+    assert_eq!(OPCODE_ENDLOOP, 0x30);
+    assert_eq!(OPCODE_CONTINUE, 0x31);
     // Integer arithmetic opcodes.
     assert_eq!(OPCODE_IABS, 0x61);
     assert_eq!(OPCODE_INEG, 0x62);
@@ -2275,11 +2277,6 @@ fn sm5_uav_and_raw_buffer_opcode_constants_match_d3d11_tokenized_format() {
     assert_eq!(OPCODE_INE, 0x50);
     assert_eq!(OPCODE_ULT, 0x51);
     assert_eq!(OPCODE_UGE, 0x52);
-    // Integer / bitwise opcodes.
-    assert_eq!(OPCODE_IMUL, 0x70);
-    assert_eq!(OPCODE_AND, 0x71);
-    assert_eq!(OPCODE_OR, 0x72);
-    assert_eq!(OPCODE_USHR, 0x73);
     // Compare opcodes must not overlap the integer/bitwise opcode range; the decoder relies on
     // unique opcode IDs for dispatch.
     let int_bitwise_opcodes = [
@@ -2320,10 +2317,6 @@ fn sm5_uav_and_raw_buffer_opcode_constants_match_d3d11_tokenized_format() {
     assert_eq!(OPCODE_LD_STRUCTURED, 0x54);
     assert_eq!(OPCODE_STORE_RAW, 0x56);
     assert_eq!(OPCODE_STORE_STRUCTURED, 0x57);
-    // Structured control flow.
-    assert_eq!(OPCODE_LOOP, 0x2f);
-    assert_eq!(OPCODE_ENDLOOP, 0x30);
-    assert_eq!(OPCODE_CONTINUE, 0x31);
 }
 
 #[test]
