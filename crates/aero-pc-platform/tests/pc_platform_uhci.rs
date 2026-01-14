@@ -12,6 +12,7 @@ use aero_snapshot::io_snapshot_bridge::{
 };
 use aero_snapshot::DeviceId;
 use aero_usb::hid::composite::UsbCompositeHidInputHandle;
+use aero_usb::hid::consumer_control::UsbHidConsumerControlHandle;
 use aero_usb::hid::gamepad::UsbHidGamepadHandle;
 use aero_usb::hid::keyboard::UsbHidKeyboardHandle;
 use aero_usb::hid::mouse::UsbHidMouseHandle;
@@ -1922,6 +1923,7 @@ fn pc_platform_uhci_external_hub_delivers_multiple_hid_reports_via_dma() {
     let keyboard = UsbHidKeyboardHandle::new();
     let mouse = UsbHidMouseHandle::new();
     let gamepad = UsbHidGamepadHandle::new();
+    let consumer = UsbHidConsumerControlHandle::new();
 
     // Root port0: external USB hub.
     pc.uhci
@@ -1932,7 +1934,7 @@ fn pc_platform_uhci_external_hub_delivers_multiple_hid_reports_via_dma() {
         .hub_mut()
         .attach(0, Box::new(UsbHubDevice::new()));
 
-    // Attach 3 HID devices behind the hub (ports 1..3), matching the web runtime topology.
+    // Attach HID devices behind the hub (ports 1..4), matching the web runtime topology.
     {
         let uhci = pc.uhci.as_ref().unwrap().clone();
         let mut dev = uhci.borrow_mut();
@@ -1942,6 +1944,8 @@ fn pc_platform_uhci_external_hub_delivers_multiple_hid_reports_via_dma() {
         hub.attach_at_path(&[0, 2], Box::new(mouse.clone()))
             .unwrap();
         hub.attach_at_path(&[0, 3], Box::new(gamepad.clone()))
+            .unwrap();
+        hub.attach_at_path(&[0, 4], Box::new(consumer.clone()))
             .unwrap();
     }
 
@@ -1982,7 +1986,7 @@ fn pc_platform_uhci_external_hub_delivers_multiple_hid_reports_via_dma() {
 
     // Power+reset each downstream port and enumerate each device sequentially. This avoids having
     // multiple address-0 devices reachable at once.
-    for (port, addr) in [(1u8, 5u8), (2u8, 6u8), (3u8, 7u8)] {
+    for (port, addr) in [(1u8, 5u8), (2u8, 6u8), (3u8, 7u8), (4u8, 8u8)] {
         control_no_data(
             &mut pc,
             1,
@@ -2010,6 +2014,7 @@ fn pc_platform_uhci_external_hub_delivers_multiple_hid_reports_via_dma() {
     keyboard.key_event(0x04, true); // 'a'
     mouse.movement(5, -3);
     gamepad.set_buttons(0x0001);
+    consumer.consumer_event(0x00E9, true); // AudioVolumeUp
 
     // Keyboard interrupt IN (addr 5, EP1, 8 bytes).
     write_td(
@@ -2052,6 +2057,21 @@ fn pc_platform_uhci_external_hub_delivers_multiple_hid_reports_via_dma() {
     let mut pad = [0u8; 8];
     pc.memory.read_physical(BUF_INT as u64, &mut pad);
     assert_eq!(pad, [0x01, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00]);
+
+    // Consumer control interrupt IN (addr 8, EP1, 2 bytes).
+    write_td(
+        &mut pc,
+        TD0,
+        1,
+        td_status(true),
+        td_token(PID_IN, 8, 1, 0, 2),
+        BUF_INT,
+    );
+    run_one_frame(&mut pc, TD0);
+    let mut consumer_report = [0u8; 2];
+    pc.memory
+        .read_physical(BUF_INT as u64, &mut consumer_report);
+    assert_eq!(consumer_report, 0x00E9u16.to_le_bytes());
 }
 
 #[test]
