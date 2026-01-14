@@ -3732,19 +3732,25 @@ static ULONG AeroGpuShareTokenRefIncrementLocked(_Inout_ AEROGPU_ADAPTER* Adapte
         if (existing->ShareToken == ShareToken) {
             existing->OpenCount += 1;
             const ULONG openCount = existing->OpenCount;
-            /*
-             * Another thread inserted this token while we were allocating. Hand the
-             * unused node back to the caller to free outside AllocationsLock.
-             */
-            if (ToFreeOut) {
-                *ToFreeOut = node;
-            } else {
-                /* Avoid leaking the unused node if the caller is not collecting it. */
-                ExFreePoolWithTag(node, AEROGPU_POOL_TAG);
-            }
-            return openCount;
-        }
-    }
+             /*
+              * Another thread inserted this token while we were allocating. Hand the
+              * unused node back to the caller to free outside AllocationsLock.
+              */
+             if (ToFreeOut) {
+                 *ToFreeOut = node;
+                 return openCount;
+             }
+ 
+             /*
+              * Avoid leaking the unused node if the caller is not collecting it.
+              * Drop AllocationsLock to free outside the spin-locked region.
+              */
+             KeReleaseSpinLock(&Adapter->AllocationsLock, *OldIrqlInOut);
+             ExFreePoolWithTag(node, AEROGPU_POOL_TAG);
+             KeAcquireSpinLock(&Adapter->AllocationsLock, OldIrqlInOut);
+             return openCount;
+         }
+     }
 
     InsertTailList(&Adapter->ShareTokenRefs, &node->ListEntry);
     return node->OpenCount;
