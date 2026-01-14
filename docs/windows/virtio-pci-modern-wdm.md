@@ -40,6 +40,9 @@ For WDM drivers that want a single **INTx-or-message** connect/disconnect API, u
 This helper selects INTx vs MSI/MSI-X based on the translated interrupt descriptor and supports
 a caller-controlled MessageId→(IsConfig/QueueIndex) routing table for message interrupts.
 
+Note: For MSI/MSI-X, `IoConnectInterruptEx` requires a **PhysicalDeviceObject** (PDO). The combined helper
+therefore takes both the driver's device object (typically the FDO) and the underlying PDO.
+
 For the binding device/driver contract, see:
 [`docs/windows7-virtio-driver-contract.md`](../windows7-virtio-driver-contract.md).
 
