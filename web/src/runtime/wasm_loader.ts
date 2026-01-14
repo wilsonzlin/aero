@@ -853,8 +853,10 @@ export interface WasmApi {
      * Optional and has multiple constructor signatures depending on the deployed WASM build:
      * - `new (guestBase)` for legacy builds.
      * - `new (guestBase, guestSize)` for newer builds (guestSize=0 means "use remainder of linear memory").
+     * - some wasm-bindgen glue versions can enforce constructor arity; callers may need to fall back to `new ()`.
      */
     XhciControllerBridge?: {
+        new (): XhciControllerBridgeHandle;
         new (guestBase: number): XhciControllerBridgeHandle;
         new (guestBase: number, guestSize: number): XhciControllerBridgeHandle;
     };

@@ -34,19 +34,13 @@ export function tryInitXhciDevice(opts: {
     const base = opts.guestBase >>> 0;
     const size = opts.guestSize >>> 0;
     try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const Ctor = Bridge as any;
-      bridge = new Ctor(base, size) as typeof bridge;
+      bridge = new Bridge(base, size) as typeof bridge;
     } catch {
       try {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const Ctor = Bridge as any;
-        bridge = new Ctor(base) as typeof bridge;
+        bridge = new Bridge(base) as typeof bridge;
       } catch {
         // Final fallback: support glue that exposes a zero-arg constructor.
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const Ctor = Bridge as any;
-        bridge = new Ctor() as typeof bridge;
+        bridge = new Bridge() as typeof bridge;
       }
     }
   } catch (err) {
