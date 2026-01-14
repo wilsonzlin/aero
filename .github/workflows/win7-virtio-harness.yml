@@ -73,6 +73,11 @@ on:
         required: false
         default: false
         type: boolean
+      with_virtio_input_leds:
+        description: Require virtio-input-leds (legacy keyboard LED/statusq marker) to PASS (requires a guest image provisioned with --test-input-leds; newer guests may use --test-input-led and still emit virtio-input-leds for compatibility)
+        required: false
+        default: false
+        type: boolean
       require_virtio_input_binding:
         description: Require virtio-input-binding (PCI driver service validation) to PASS
         required: false
@@ -220,6 +225,7 @@ jobs:
             echo "  with_virtio_input_wheel: '${{ inputs.with_virtio_input_wheel }}'"
             echo "  with_virtio_input_media_keys: '${{ inputs.with_virtio_input_media_keys }}'"
             echo "  with_virtio_input_led: '${{ inputs.with_virtio_input_led }}'"
+            echo "  with_virtio_input_leds: '${{ inputs.with_virtio_input_leds }}'"
             echo "  require_virtio_input_binding: '${{ inputs.require_virtio_input_binding }}'"
             echo "  with_virtio_input_events_extended: '${{ inputs.with_virtio_input_events_extended }}'"
             echo "  with_virtio_input_tablet_events: '${{ inputs.with_virtio_input_tablet_events }}'"
@@ -298,6 +304,7 @@ jobs:
             with_virtio_input_wheel="${{ inputs.with_virtio_input_wheel }}"
             with_virtio_input_media_keys="${{ inputs.with_virtio_input_media_keys }}"
             with_virtio_input_led="${{ inputs.with_virtio_input_led }}"
+            with_virtio_input_leds="${{ inputs.with_virtio_input_leds }}"
             require_virtio_input_binding="${{ inputs.require_virtio_input_binding }}"
             with_virtio_input_events_extended="${{ inputs.with_virtio_input_events_extended }}"
             with_virtio_input_tablet_events="${{ inputs.with_virtio_input_tablet_events }}"
@@ -359,7 +366,9 @@ jobs:
             if [[ "${with_virtio_input_media_keys}" == "true" ]]; then
               args+=(--with-input-media-keys)
             fi
-            if [[ "${with_virtio_input_led}" == "true" ]]; then
+            if [[ "${with_virtio_input_leds}" == "true" ]]; then
+              args+=(--with-input-leds)
+            elif [[ "${with_virtio_input_led}" == "true" ]]; then
               args+=(--with-input-led)
             fi
             if [[ "${require_virtio_input_binding}" == "true" ]]; then
