@@ -51,7 +51,10 @@ export async function requestWebGpuDevice(
   });
 
   // Surface async validation/pipeline errors (which do not always throw) for debugging.
-  const onUncapturedError = options.onUncapturedError ?? ((error) => console.error("[webgpu] uncapturederror", error));
+  const onUncapturedError =
+    typeof options.onUncapturedError === "function"
+      ? options.onUncapturedError
+      : (error: unknown) => console.error("[webgpu] uncapturederror", error);
   const uncapturedHandler = (ev: any) => {
     try {
       // Avoid double-reporting when cancelable.
