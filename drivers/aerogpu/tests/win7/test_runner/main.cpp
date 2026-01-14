@@ -1082,6 +1082,7 @@ int main(int argc, char** argv) {
       "dump_createalloc_sanity",
       "umd_private_sanity",
       "transfer_feature_sanity",
+      "dbgctl_escape_security_sanity",
       "d3d9_raster_status_sanity",
       "d3d9_raster_status_pacing",
       "d3d9_validate_device_sanity",
