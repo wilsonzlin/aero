@@ -259,6 +259,27 @@ impl Bios {
                         let bytes = count * 4;
                         let mut tmp = vec![0u8; bytes];
                         memory.read_bytes(addr, &mut tmp);
+                        // The VBE palette format is determined by the configured DAC width
+                        // (`4F08h`): 6-bit or 8-bit components.
+                        //
+                        // In 6-bit mode, be permissive and accept 8-bit component values by
+                        // downscaling `0..=255` to `0..=63` when any component of an entry exceeds
+                        // `0x3F`. This matches common VGA DAC programming behavior and avoids
+                        // returning out-of-range palette values via `4F09h Get Palette Data`.
+                        if self.video.vbe.dac_width_bits == 6 {
+                            for entry in tmp.chunks_exact_mut(4) {
+                                let is_8bit = entry[..3].iter().any(|&v| v > 0x3F);
+                                if is_8bit {
+                                    for c in &mut entry[..3] {
+                                        *c >>= 2;
+                                    }
+                                } else {
+                                    for c in &mut entry[..3] {
+                                        *c &= 0x3F;
+                                    }
+                                }
+                            }
+                        }
                         self.video.vbe.palette[start * 4..start * 4 + bytes].copy_from_slice(&tmp);
                         vbe_success(cpu);
                     }
