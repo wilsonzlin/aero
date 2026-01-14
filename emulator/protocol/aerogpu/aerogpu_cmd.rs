@@ -464,6 +464,16 @@ pub enum AerogpuIndexFormat {
     Uint32 = 1,
 }
 
+impl AerogpuIndexFormat {
+    pub const fn from_u32(v: u32) -> Option<Self> {
+        match v {
+            0 => Some(Self::Uint16),
+            1 => Some(Self::Uint32),
+            _ => None,
+        }
+    }
+}
+
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AerogpuSamplerFilter {

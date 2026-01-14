@@ -1,7 +1,7 @@
 use aero_gpu_trace::{BlobKind, TraceReadError, TraceReader, TraceRecord};
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuCmdDecodeError, AerogpuCmdOpcode, AerogpuCmdStreamHeader, AerogpuCmdStreamIter,
-    AerogpuPrimitiveTopology, AerogpuVertexBufferBinding, AEROGPU_CLEAR_COLOR,
+    AerogpuIndexFormat, AerogpuPrimitiveTopology, AerogpuVertexBufferBinding, AEROGPU_CLEAR_COLOR,
     AEROGPU_STAGE_EX_MIN_ABI_MINOR,
 };
 use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
@@ -878,12 +878,8 @@ fn topology_name(topology: u32) -> Option<String> {
     AerogpuPrimitiveTopology::from_u32(topology).map(|t| format!("{t:?}"))
 }
 
-fn index_format_name(format: u32) -> Option<&'static str> {
-    Some(match format {
-        0 => "Uint16",
-        1 => "Uint32",
-        _ => return None,
-    })
+fn index_format_name(format: u32) -> Option<String> {
+    AerogpuIndexFormat::from_u32(format).map(|f| format!("{f:?}"))
 }
 
 /// Decode an AeroGPU command stream (`aerogpu_cmd_stream_header` + packet sequence) and return a
