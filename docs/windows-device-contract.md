@@ -120,9 +120,10 @@ Current canonical machine note:
   - scanout0/vblank register storage so the guest can program scanout and the Win7 stack can use
     vblank timing primitives (see `drivers/aerogpu/protocol/vblank.md`).
 
-  The full versioned-AeroGPU device model with real **command execution** (transfer/render ops,
-  worker backends, etc) lives in `crates/emulator` and is not yet wired into `aero_machine::Machine`
-  (see: [`21-emulator-crate-migration.md`](./21-emulator-crate-migration.md)).
+  Shared device-side building blocks (regs/ring/executor + reusable PCI wrapper) live in
+  `crates/aero-devices-gpu`. A legacy sandbox integration surface remains in `crates/emulator`. Real
+  **command execution** is provided by host-side executors/backends, but it is not yet wired into
+  `aero_machine::Machine` (see: [`21-emulator-crate-migration.md`](./21-emulator-crate-migration.md)).
 - Boot display is provided by `aero_gpu_vga` (VGA + Bochs VBE) when `MachineConfig::enable_vga=true`,
   plus a minimal “Standard VGA”-like PCI stub at `00:0c.0` (`1234:1111`) used only for VBE LFB
   routing through the PCI MMIO router.

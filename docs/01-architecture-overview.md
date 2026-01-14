@@ -251,9 +251,10 @@ Note on boot display vs AeroGPU:
   (ring/fence transport with a no-op executor + scanout0/vblank register storage/pacing and
   host-facing scanout presentation).
 
-  The full versioned-AeroGPU device model with real **command execution** (transfer/render ops,
-  worker backends, etc) lives in `crates/emulator` and is not yet wired into `aero_machine::Machine`
-  (see also: [`21-emulator-crate-migration.md`](./21-emulator-crate-migration.md)).
+  Shared device-side building blocks (regs/ring/executor + reusable PCI wrapper) live in
+  `crates/aero-devices-gpu`. A legacy sandbox integration surface remains in `crates/emulator`. Real
+  **command execution** is provided by host-side executors/backends, but it is not yet wired into
+  `aero_machine::Machine` (see also: [`21-emulator-crate-migration.md`](./21-emulator-crate-migration.md)).
 - The long-term plan is for the AeroGPU WDDM device (`PCI\\VEN_A3A0&DEV_0001`) to also provide
   VGA/VBE compatibility; see:
   - [`abi/aerogpu-pci-identity.md`](./abi/aerogpu-pci-identity.md)

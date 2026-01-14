@@ -29,9 +29,10 @@ Note on the canonical machine (`aero_machine::Machine`):
 
   A shared device-side library (`crates/aero-devices-gpu`) contains the canonical register/ring
   definitions plus a ring executor (doorbell processing, fence tracking, vsync/vblank pacing) and
-  a reusable PCI wrapper. The full versioned-AeroGPU device model with real **command execution**
-  (transfer/render ops, worker backends, etc) lives in `crates/emulator` and is not yet wired into
-  `aero_machine::Machine` (see: [`docs/21-emulator-crate-migration.md`](../21-emulator-crate-migration.md)).
+  a reusable PCI wrapper. Real **command execution** is provided by host-side backends (e.g. the
+  wgpu-backed `NativeAeroGpuBackend` behind `aero-devices-gpu/wgpu-backend`, plus legacy sandbox
+  wiring in `crates/emulator`), but it is not yet wired into `aero_machine::Machine` (see:
+  [`docs/21-emulator-crate-migration.md`](../21-emulator-crate-migration.md)).
 - Boot display in the canonical machine is provided by `aero_gpu_vga` (legacy VGA ports + Bochs VBE)
   when `MachineConfig::enable_vga=true`, plus a minimal “Standard VGA”-like PCI stub at `00:0c.0`
   (`1234:1111`) used only for VBE LFB MMIO routing.
@@ -51,7 +52,7 @@ See:
 - `aerogpu_escape.h` — stable `DxgkDdiEscape` packet header + base ops.
 - `aerogpu_dbgctl_escape.h` — bring-up/tooling `DxgkDdiEscape` packets (layered on `aerogpu_escape.h`).
 
-**Host/emulator implementation:** `crates/emulator`
+**Legacy/sandbox integration surface:** `crates/emulator`
 
 - `crates/emulator/src/devices/pci/aerogpu.rs` — PCI device + MMIO register behavior.
 - `crates/emulator/src/devices/aerogpu_ring.rs` — ring parsing utilities.
@@ -113,7 +114,7 @@ The archived note is kept under:
 
 ## Summary / guidance
 
-- **Implementing the Win7 graphics stack:** use `drivers/aerogpu/protocol/*` + `crates/emulator`.
+- **Implementing the Win7 graphics stack:** target `drivers/aerogpu/protocol/*` and the canonical stack (`crates/aero-machine` + `crates/aero-devices-gpu` + host-side executors). `crates/emulator` is a legacy/sandbox integration surface.
 - **Working on early/prototype plumbing:** the toy protocols are fine, but keep them clearly
   labeled as prototypes.
 

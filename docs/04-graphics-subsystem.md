@@ -33,7 +33,7 @@ Canonical machine GPU device modes (today):
   - On the Rust side, the host can call `Machine::display_present()` to update a host-visible RGBA framebuffer cache (`Machine::display_framebuffer()` / `Machine::display_resolution()`).
     - In AeroGPU mode (no standalone VGA device model), `display_present()` presents (priority order) the WDDM scanout0 framebuffer if claimed, otherwise the BIOS VBE LFB, otherwise BIOS text mode (see `Machine::display_present` in `crates/aero-machine/src/lib.rs`).
   - The full AeroGPU command execution model is not implemented in `aero-machine` yet.
-  - The full emulator-side device model lives at `crates/emulator/src/devices/pci/aerogpu.rs` and is not the canonical browser machine today (tracked for extraction in [`docs/21-emulator-crate-migration.md`](./21-emulator-crate-migration.md)).
+  - Shared device-side AeroGPU building blocks (regs/ring/executor + reusable PCI wrapper) live in `crates/aero-devices-gpu/`. A legacy sandbox integration surface remains in `crates/emulator/src/devices/pci/aerogpu.rs` (see [`docs/21-emulator-crate-migration.md`](./21-emulator-crate-migration.md)).
 
 ### 2) Browser presentation: shared-memory framebuffer → GPU worker → canvas
 
@@ -328,7 +328,7 @@ Canonical machine note:
 - `MachineConfig::enable_aerogpu` wires BAR1 VRAM (plus legacy VGA window aliasing / VBE compatibility mapping) and an MVP BAR0 register block (ABI/features, ring/fence + IRQ transport, scanout0/cursor + vblank registers) that is sufficient for detection/bring-up and basic pacing.
   Full AeroGPU command execution is not implemented in `aero-machine` yet (see the `MachineConfig::enable_aerogpu` docs in `crates/aero-machine/src/lib.rs`).
 - The MVP BAR0 MMIO surface + ring/fence/vblank/scanout implementation in the canonical machine lives in: `crates/aero-machine/src/aerogpu.rs`.
-- A more complete AeroGPU PCI device model exists in the emulator crate (`crates/emulator/src/devices/pci/aerogpu.rs`) and is not the canonical browser machine today.
+- A more complete AeroGPU PCI device model + ring executor exists in `crates/aero-devices-gpu/` (with a legacy sandbox integration surface in `crates/emulator/src/devices/pci/aerogpu.rs`) and is not the canonical browser machine today.
 
 ## How to validate (tests)
 

@@ -36,10 +36,10 @@ The canonical machine supports **two mutually-exclusive** display configurations
       vblank time is a monotonic “nanoseconds since boot” value) so `Machine::display_present` can
       present the WDDM scanout framebuffer by reading its guest physical address from guest memory.
 
-  The reference/full versioned-AeroGPU device model with real **command execution** (GPU worker
-  backends, transfer/render operations, etc) still lives in `crates/emulator` and is not yet wired
-  into `aero_machine::Machine` (see:
-  [`21-emulator-crate-migration.md`](../21-emulator-crate-migration.md)).
+  The shared device-side library `crates/aero-devices-gpu` contains a reusable PCI wrapper + ring
+  executor and can be paired with host-side backends for real **command execution** (feature-gated).
+  A legacy sandbox integration surface also exists in `crates/emulator`. Neither is wired into
+  `aero_machine::Machine` yet (see: [`21-emulator-crate-migration.md`](../21-emulator-crate-migration.md)).
 
   When the AeroGPU-owned VGA/VBE boot display path is active, firmware derives the VBE linear
   framebuffer base from AeroGPU BAR1: `PhysBasePtr = BAR1_BASE + 0x40000` (see
@@ -66,7 +66,7 @@ This repo currently has **two AeroGPU ABI generations**:
 
 | ABI generation | PCI IDs | Header (source of truth) | Host device model |
 |---|---:|---|---|
-| New, versioned ABI | `VID=0xA3A0, DID=0x0001` (`PCI\VEN_A3A0&DEV_0001`) | `drivers/aerogpu/protocol/aerogpu_pci.h` (+ `aerogpu_ring.h`, `aerogpu_cmd.h`) | `crates/emulator/src/devices/pci/aerogpu.rs` |
+| New, versioned ABI | `VID=0xA3A0, DID=0x0001` (`PCI\VEN_A3A0&DEV_0001`) | `drivers/aerogpu/protocol/aerogpu_pci.h` (+ `aerogpu_ring.h`, `aerogpu_cmd.h`) | `crates/aero-devices-gpu/src/pci.rs` (shared) <br> `crates/emulator/src/devices/pci/aerogpu.rs` (legacy integration surface) |
 | Legacy bring-up ABI (deprecated) | `VID=0x1AED, DID=0x0001` (`PCI\VEN_1AED&DEV_0001`) | `drivers/aerogpu/protocol/legacy/aerogpu_protocol_legacy.h` | `crates/emulator/src/devices/pci/aerogpu_legacy.rs` (feature `emulator/aerogpu-legacy`) |
 
 ## PCI class identity (base class / subclass / prog-if)

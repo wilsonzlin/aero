@@ -29,9 +29,10 @@ The canonical machine (`aero_machine::Machine`) supports **two mutually-exclusiv
   - scanout0/vblank register storage so the host can present a guest-programmed scanout framebuffer
     and the Win7 stack can use vblank pacing primitives (see `drivers/aerogpu/protocol/vblank.md`).
 
-  The full versioned-AeroGPU device model with real **command execution** (transfer/render ops,
-  worker backends, etc) lives in `crates/emulator` and is not yet wired into `aero_machine::Machine`
-  (see: [`21-emulator-crate-migration.md`](./21-emulator-crate-migration.md)).
+  Shared device-side building blocks (regs/ring/executor + reusable PCI wrapper) live in
+  `crates/aero-devices-gpu`. Real **command execution** is provided by host-side executors/backends
+  (e.g. `crates/aero-gpu`, `crates/aero-d3d11`) and is exercised by sandbox tests, but it is not yet
+  wired into `aero_machine::Machine` (see: [`21-emulator-crate-migration.md`](./21-emulator-crate-migration.md)).
 - `MachineConfig::enable_vga=true` (and `enable_aerogpu=false`): boot display is provided by
   `aero_gpu_vga` (VGA + Bochs VBE), plus a minimal Bochs/QEMU “Standard VGA”-like PCI stub at
   `00:0c.0` (`1234:1111`) used only for VBE LFB MMIO routing.
@@ -62,7 +63,7 @@ Related repository docs:
 - [`docs/abi/aerogpu-pci-identity.md`](./abi/aerogpu-pci-identity.md) – mapping of PCI IDs ↔ ABI generations
 - [`docs/graphics/aerogpu-protocols.md`](./graphics/aerogpu-protocols.md) – overview of similarly named protocols
 
-Implementation reference (emulator): `crates/emulator/src/devices/pci/aerogpu.rs`.
+Implementation references: shared device-side PCI wrapper + ring executor: `crates/aero-devices-gpu/src/pci.rs`; legacy sandbox integration: `crates/emulator/src/devices/pci/aerogpu.rs`.
 
 If this document disagrees with the headers, **the headers win**.
 

@@ -228,20 +228,19 @@ quietly accreting more responsibilities.
 
 ### 1) AeroGPU PCI device model (guest-visible GPU)
 
-**Current owner (in `crates/emulator`)**
+**Current owners (in-tree)**
 
-- PCI device model:
-  - `crates/emulator/src/devices/pci/aerogpu.rs`
-- Supporting files (regs/ring/scanout helpers):
-  - `crates/emulator/src/devices/aerogpu_*.rs`
-  - `crates/emulator/src/devices/aerogpu_scanout.rs`, `aerogpu_ring.rs`, `aerogpu_regs.rs`
+- Shared device-side library (canonical regs/ring/executor + reusable PCI wrapper):
+  - `crates/aero-devices-gpu/src/{pci.rs,executor.rs,ring.rs,regs.rs,scanout.rs}`
+- Legacy sandbox integration surface (still in `crates/emulator`):
+  - PCI wrapper/integration: `crates/emulator/src/devices/pci/aerogpu.rs`
+  - Supporting files (regs/ring/scanout helpers): `crates/emulator/src/devices/aerogpu_*.rs`
 
 **Intended canonical home**
 
-- Target: a first-class device model under the canonical device layer:
-  - Preferred: `crates/devices` (as `aero_devices::pci::aerogpu::*`)
-  - If it is too large to live in `crates/devices`, create `crates/aero-devices-aerogpu` and have
-    `crates/devices` depend on it (matching the existing `aero-devices-nvme` pattern).
+- Current extracted home for the device-side implementation is `crates/aero-devices-gpu`.
+- Long term, this may move into `crates/devices` (or a dedicated `aero-devices-*` crate) once the API
+  stabilizes and naming/layout decisions settle.
 
 **Integration plan**
 
@@ -251,8 +250,9 @@ quietly accreting more responsibilities.
   - a minimal BAR0 device model: ring/fence transport (no-op command execution) plus scanout/cursor
     regs and vblank counters/IRQ semantics.
 
-  The remaining integration work is wiring the **full AeroGPU command execution** backend (AEROGPU_CMD
-  processing, resource management, GPU worker backends, etc), which still lives in `crates/emulator`.
+  The remaining integration work is wiring the **full ring executor + command-execution backend boundary**
+  into `aero-machine` (likely by reusing `crates/aero-devices-gpu`) and then retiring/deleting the legacy
+  emulator-local duplicates once no longer needed.
 - Keep the driver/ABI contract anchored to:
   - `drivers/aerogpu/protocol/*` (source of truth)
   - `emulator/protocol` (Rust/TS mirror)
@@ -332,12 +332,13 @@ This is intentionally a sequence of small PRs (mirrors the style of the storage 
       - `crates/emulator/src/io/pci.rs`
       - `crates/emulator/src/devices/pci/mod.rs` (after AeroGPU is extracted)
 
-7. **AeroGPU extraction**
-     - Extract the AeroGPU PCI device model out of `crates/emulator` into the canonical device layer
-       (`crates/devices` or a new `crates/aero-devices-aerogpu`).
-     - Replace `aero_machine`’s current BAR0 no-op executor with the extracted full device model
-       (command execution / resource management) behind `MachineConfig::enable_aerogpu` while keeping
-       scanout/vblank semantics consistent with the canonical protocol docs (`drivers/aerogpu/protocol/vblank.md`).
+7. **AeroGPU integration (finish extraction)**
+      - Keep `crates/aero-devices-gpu` as the shared device-side home (or move it into `crates/devices`
+        once stable).
+      - Wire the `crates/aero-devices-gpu` device model/ring executor into `aero_machine` behind
+        `MachineConfig::enable_aerogpu`, replacing the current BAR0 no-op executor while keeping
+        scanout/vblank semantics consistent with the canonical protocol docs (`drivers/aerogpu/protocol/vblank.md`).
+      - Retire/delete the legacy emulator-local AeroGPU PCI wrapper once no longer needed.
 
 8. **SMP integration decision**
     - Define a canonical SMP story for `aero-machine` (multi-vCPU API, scheduling model, snapshot

@@ -431,9 +431,9 @@ Owning docs:
 
 ### Canonical machine vs sandbox: duplicate device models
 
-- A more complete AeroGPU device model + executor exists in `crates/emulator`, but it is not the canonical in-browser machine wiring.
-  - [`crates/emulator/src/devices/pci/aerogpu.rs`](../../crates/emulator/src/devices/pci/aerogpu.rs)
-  - [`crates/emulator/src/gpu_worker/aerogpu_executor.rs`](../../crates/emulator/src/gpu_worker/aerogpu_executor.rs)
+- A more complete AeroGPU device model + ring executor exists in `crates/aero-devices-gpu` (with a legacy sandbox integration surface in `crates/emulator`), but it is not the canonical in-browser machine wiring.
+  - Shared device-side library: [`crates/aero-devices-gpu/src/pci.rs`](../../crates/aero-devices-gpu/src/pci.rs), [`crates/aero-devices-gpu/src/executor.rs`](../../crates/aero-devices-gpu/src/executor.rs)
+  - Legacy emulator integration: [`crates/emulator/src/devices/pci/aerogpu.rs`](../../crates/emulator/src/devices/pci/aerogpu.rs), [`crates/emulator/src/gpu_worker/aerogpu_executor.rs`](../../crates/emulator/src/gpu_worker/aerogpu_executor.rs)
 
 ### End-to-end Win7 graphics validation: needs verification
 
@@ -455,7 +455,7 @@ Where to start verifying:
   - canonical boot VGA/VBE: [`crates/aero-gpu-vga/`](../../crates/aero-gpu-vga/)
   - legacy emulator VGA: [`crates/emulator/src/devices/vga.rs`](../../crates/emulator/src/devices/vga.rs)
 - Two AeroGPU PCI identities/device models exist:
-  - canonical versioned ABI (`A3A0:0001`): [`crates/emulator/src/devices/pci/aerogpu.rs`](../../crates/emulator/src/devices/pci/aerogpu.rs)
+  - canonical versioned ABI (`A3A0:0001`): shared device-side library [`crates/aero-devices-gpu/src/pci.rs`](../../crates/aero-devices-gpu/src/pci.rs) (legacy sandbox integration: [`crates/emulator/src/devices/pci/aerogpu.rs`](../../crates/emulator/src/devices/pci/aerogpu.rs))
   - legacy bring-up ABI (`1AED:0001`): [`crates/emulator/src/devices/pci/aerogpu_legacy.rs`](../../crates/emulator/src/devices/pci/aerogpu_legacy.rs)
   - contract doc: [`docs/abi/aerogpu-pci-identity.md`](../abi/aerogpu-pci-identity.md)
 - Two command execution paths exist in the web runtime:
@@ -483,5 +483,6 @@ bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --locked
 bash ./scripts/safe-run.sh cargo test -p aero-d3d11 --locked
 
 # Legacy/sandbox emulator path (device model + e2e tests)
+bash ./scripts/safe-run.sh cargo test -p aero-devices-gpu --locked
 bash ./scripts/safe-run.sh cargo test -p emulator --locked
 ```
