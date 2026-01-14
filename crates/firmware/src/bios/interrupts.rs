@@ -1967,6 +1967,54 @@ mod tests {
     }
 
     #[test]
+    fn int13_ext_read_24byte_dap_uses_flat_pointer_hdd() {
+        let mut bios = Bios::new(super::super::BiosConfig::default());
+        let mut disk_bytes = vec![0u8; 512 * 4];
+        disk_bytes[512..1024].fill(0xAA);
+        let mut disk = InMemoryDisk::new(disk_bytes);
+
+        let mut cpu = CpuState::new(CpuMode::Real);
+        set_real_mode_seg(&mut cpu.segments.ds, 0);
+        cpu.gpr[gpr::RSI] = 0x0500;
+        cpu.gpr[gpr::RDX] = 0x80; // DL = HDD0
+        cpu.gpr[gpr::RAX] = 0x4200; // AH=42h
+
+        let mut mem = TestMemory::new(2 * 1024 * 1024);
+        ivt::init_bda(&mut mem, 0x80);
+        mem.set_a20_enabled(true);
+        cpu.a20_enabled = mem.a20_enabled();
+
+        // Use a destination above 1MiB so a segment:offset pointer cannot address it in real mode.
+        const FLAT_DST: u64 = 0x0011_0000;
+
+        // Set segment:offset to garbage; ensure the BIOS ignores it when the 64-bit flat pointer
+        // is non-zero.
+        let bogus_off: u16 = 0x5678;
+        let bogus_seg: u16 = 0x1234;
+        let bogus_dst = ((bogus_seg as u64) << 4).wrapping_add(bogus_off as u64);
+        mem.write_physical(bogus_dst, &vec![0x55; 512]);
+
+        let dap_addr = cpu.apply_a20(cpu.segments.ds.base + 0x0500);
+        mem.write_u8(dap_addr, 0x18); // 24-byte DAP
+        mem.write_u8(dap_addr + 1, 0x00);
+        mem.write_u16(dap_addr + 2, 1); // count
+        mem.write_u16(dap_addr + 4, bogus_off);
+        mem.write_u16(dap_addr + 6, bogus_seg);
+        mem.write_u64(dap_addr + 8, 1); // LBA
+        mem.write_u64(dap_addr + 16, FLAT_DST); // flat buffer pointer
+
+        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
+
+        assert_eq!(cpu.rflags & FLAG_CF, 0);
+        assert_eq!((cpu.gpr[gpr::RAX] >> 8) & 0xFF, 0);
+
+        let buf = mem.read_bytes(FLAT_DST, 512);
+        assert_eq!(buf, vec![0xAA; 512]);
+        let bogus_buf = mem.read_bytes(bogus_dst, 512);
+        assert_eq!(bogus_buf, vec![0x55; 512]);
+    }
+
+    #[test]
     fn int13_ext_get_drive_params_reports_sector_count() {
         let mut bios = Bios::new(super::super::BiosConfig::default());
         let disk_bytes = vec![0u8; 512 * 8];
@@ -2178,6 +2226,60 @@ mod tests {
         }
         assert_eq!(buf, expected);
         assert_eq!(mem.read_u8(0x2000 + 2048), 0xAA);
+    }
+
+    #[test]
+    fn int13_ext_read_cd_24byte_dap_uses_flat_pointer_and_2048b_sectors() {
+        let mut bios = Bios::new(BiosConfig {
+            boot_drive: 0xE0,
+            ..BiosConfig::default()
+        });
+
+        let mut disk_bytes = vec![0u8; 2048 * 4];
+        let mut expected = vec![0u8; 2048];
+        expected[0..512].fill(0x11);
+        expected[512..1024].fill(0x22);
+        expected[1024..1536].fill(0x33);
+        expected[1536..2048].fill(0x44);
+        disk_bytes[2048..4096].copy_from_slice(&expected); // ISO LBA 1
+        let mut disk = InMemoryDisk::new(disk_bytes);
+
+        let mut cpu = CpuState::new(CpuMode::Real);
+        set_real_mode_seg(&mut cpu.segments.ds, 0);
+        cpu.gpr[gpr::RSI] = 0x0500;
+        cpu.gpr[gpr::RDX] = 0xE0; // DL = CD0
+        cpu.gpr[gpr::RAX] = 0x4200; // AH=42h
+
+        let mut mem = TestMemory::new(2 * 1024 * 1024);
+        ivt::init_bda(&mut mem, 0xE0);
+        mem.set_a20_enabled(true);
+        cpu.a20_enabled = mem.a20_enabled();
+
+        const FLAT_DST: u64 = 0x0011_0000;
+
+        let bogus_off: u16 = 0x0BAD;
+        let bogus_seg: u16 = 0xB002;
+        let bogus_dst = ((bogus_seg as u64) << 4).wrapping_add(bogus_off as u64);
+        mem.write_physical(bogus_dst, &vec![0x77; 2048]);
+
+        let dap_addr = cpu.apply_a20(cpu.segments.ds.base + 0x0500);
+        mem.write_u8(dap_addr, 0x18); // 24-byte DAP
+        mem.write_u8(dap_addr + 1, 0x00);
+        mem.write_u16(dap_addr + 2, 1); // count (2048-byte sectors)
+        mem.write_u16(dap_addr + 4, bogus_off);
+        mem.write_u16(dap_addr + 6, bogus_seg);
+        mem.write_u64(dap_addr + 8, 1); // ISO LBA
+        mem.write_u64(dap_addr + 16, FLAT_DST); // flat buffer pointer
+
+        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
+
+        assert_eq!(cpu.rflags & FLAG_CF, 0);
+        assert_eq!((cpu.gpr[gpr::RAX] >> 8) & 0xFF, 0);
+
+        let buf = mem.read_bytes(FLAT_DST, 2048);
+        assert_eq!(buf, expected);
+        let bogus_buf = mem.read_bytes(bogus_dst, 2048);
+        assert_eq!(bogus_buf, vec![0x77; 2048]);
     }
 
     #[test]
