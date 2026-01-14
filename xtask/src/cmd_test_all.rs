@@ -183,13 +183,24 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
             "wasm32-unknown-unknown",
             "-p",
             "aero-devices-storage",
-            "-p",
-            "aero-machine",
         ]);
-        runner.run_step(
-            "WASM: cargo check (wasm32) aero-devices-storage + aero-machine",
-            &mut cmd,
-        )?;
+        runner.run_step("WASM: cargo check (wasm32) aero-devices-storage", &mut cmd)?;
+
+        // Compile-check wasm32 compatibility for the AeroGPU device integration surface.
+        //
+        // This is intentionally separated from the wasm-pack entrypoint so we can validate
+        // `aero-devices-gpu` + `aero-machine` + `aero-wasm` build for wasm32 without requiring any
+        // JS runtime.
+        let xtask_exe = std::env::current_exe().map_err(|e| {
+            XtaskError::Message(format!(
+                "failed to resolve current xtask executable path: {e}"
+            ))
+        })?;
+        let mut cmd = Command::new(&xtask_exe);
+        cmd.current_dir(&repo_root)
+            .env("AERO_REQUIRE_WEBGPU", &require_webgpu)
+            .arg("wasm-check");
+        runner.run_step("WASM: cargo xtask wasm-check", &mut cmd)?;
     }
 
     let mut resolved_node_dir: Option<PathBuf> = None;
