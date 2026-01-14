@@ -265,6 +265,23 @@ mod tests {
     }
 
     #[test]
+    fn apic_mode_logical_destination_msi_broadcast_delivers_to_all_lapics() {
+        let mut ints = PlatformInterrupts::new_with_cpu_count(2);
+        ints.set_mode(PlatformInterruptMode::Apic);
+        enable_lapic_svr_for_apic(&ints, 0);
+        enable_lapic_svr_for_apic(&ints, 1);
+
+        assert_eq!(ints.get_pending_for_apic(0), None);
+        assert_eq!(ints.get_pending_for_apic(1), None);
+
+        // Logical destination broadcast (dest=0xFF).
+        ints.trigger_msi(msi_message_logical(0xFF, 0x67));
+
+        assert_eq!(ints.get_pending_for_apic(0), Some(0x67));
+        assert_eq!(ints.get_pending_for_apic(1), Some(0x67));
+    }
+
+    #[test]
     fn apic_mode_non_fixed_delivery_mode_is_treated_as_fixed() {
         let mut ints = PlatformInterrupts::new();
         ints.set_mode(PlatformInterruptMode::Apic);
