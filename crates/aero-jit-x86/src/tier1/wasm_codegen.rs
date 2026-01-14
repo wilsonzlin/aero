@@ -175,8 +175,8 @@ fn analyze_state_usage(block: &IrBlock, options: Tier1WasmOptions) -> BlockState
         // Conservative: helper calls always bail out.
         if matches!(inst, IrInst::CallHelper { .. }) {
             earliest_may_exit = earliest_may_exit.or(Some(i));
-        } else if options.inline_tlb {
-            // Inline-TLB fast paths can exit early on MMIO.
+        } else if options.inline_tlb && options.inline_tlb_mmio_exit {
+            // Inline-TLB fast paths can exit early on MMIO when configured to do so.
             let is_mmio_exit_point = match inst {
                 IrInst::Load { .. } => true,
                 IrInst::Store { .. } => options.inline_tlb_stores,
@@ -246,7 +246,7 @@ fn analyze_state_usage(block: &IrBlock, options: Tier1WasmOptions) -> BlockState
             }
             IrInst::Load { .. } => {
                 // Inline-TLB loads may take an MMIO exit and must pass the current RIP.
-                if options.inline_tlb && !rip_initialized {
+                if options.inline_tlb && options.inline_tlb_mmio_exit && !rip_initialized {
                     usage.rip_used = true;
                     rip_initialized = true;
                 }
@@ -254,7 +254,11 @@ fn analyze_state_usage(block: &IrBlock, options: Tier1WasmOptions) -> BlockState
             IrInst::Store { .. } => {
                 // Inline-TLB stores may take an MMIO exit (when store fast-path is enabled) and
                 // must pass the current RIP.
-                if options.inline_tlb && options.inline_tlb_stores && !rip_initialized {
+                if options.inline_tlb
+                    && options.inline_tlb_mmio_exit
+                    && options.inline_tlb_stores
+                    && !rip_initialized
+                {
                     usage.rip_used = true;
                     rip_initialized = true;
                 }
