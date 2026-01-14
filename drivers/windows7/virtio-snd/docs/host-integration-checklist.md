@@ -131,6 +131,18 @@ The driver reads the virtio-snd device config and requires:
 - [ ] `streams = 2`
 - [ ] `chmaps = 0`
 
+## Optional: virtio-snd `eventq` messages (best-effort)
+
+Contract v1 does **not** require any `eventq` messages and drivers MUST remain correct when `eventq` is silent.
+
+However, some virtio-snd implementations may emit standard virtio-snd events on `eventq` (queue 1). When present, the in-tree
+Windows 7 driver parses them best-effort and may wire some of them into higher layers:
+
+- `VIRTIO_SND_EVT_JACK_*`: updates the fixed speaker/microphone jack connection state exposed by the topology miniport.
+- `VIRTIO_SND_EVT_PCM_PERIOD_ELAPSED`: may be treated as an **additional wakeup source** for the WaveRT period/timer DPC loop
+  (while still keeping timer-based pacing as the baseline).
+- `VIRTIO_SND_EVT_PCM_XRUN`: may be treated as a hint to attempt best-effort stream recovery (typically `STOP`/`START`).
+
 ## `PCM_INFO` (controlq) sanity checks
 
 On `VIRTIO_SND_R_PCM_INFO(start_id=0, count=2)`, the driver expects **two** `virtio_snd_pcm_info` entries
