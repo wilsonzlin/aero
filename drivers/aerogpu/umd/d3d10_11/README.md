@@ -65,7 +65,16 @@ Feature matrix for the Win7 WDK-backed UMDs:
 
 ### Still stubbed / known gaps
 
-- Geometry shaders are **accepted but ignored** (no GS stage in the AeroGPU/WebGPU pipeline yet). This is sufficient for the Win7 smoke test’s pass-through GS that only renames varyings.
+- Geometry shaders (GS) are supported via **host-side compute-prepass emulation** (WebGPU): when a GS is bound, the host expands primitives in compute into intermediate vertex/index buffers and then renders the expanded geometry with a normal render pipeline.
+  - Win7 test subset (current):
+    - Supported input topologies: `PointList` and `TriangleList` (non-adjacency).
+    - Supported output topology: `TriangleStream` (`triangle_strip`). `RestartStrip()` / `cut` terminates the current strip; the host expands strips into a triangle list (no primitive-restart indices).
+  - Known unsupported / not yet implemented:
+    - Stream-output (SO / `CreateGeometryShaderWithStreamOutput`, `SOSetTargets`, etc.).
+    - Multiple output streams (`EmitStream` / `CutStream`; only stream 0 supported).
+    - Adjacency input primitives.
+    - Geometry-stage resource bindings beyond what the Win7 tests exercise (CB/SRV/samplers/UAVs may be ignored/unsupported).
+  - ABI note: the GS handle is carried in `aerogpu_cmd_bind_shaders.reserved0` (legacy compat).
 - Tessellation (HS/DS) and other D3D11 features outside the implemented subset should fail cleanly (`E_NOTIMPL` / `SetErrorCb`).
 
 Unsupported functionality must fail cleanly (returning `E_NOTIMPL` / `E_INVALIDARG`) rather than crashing or dereferencing null DDI function pointers.
