@@ -93,8 +93,6 @@ impl CodeCache {
         match self.map.entry(entry_rip) {
             Entry::Occupied(entry) => {
                 let idx = *entry.get();
-                // Release the mutable borrow of `self.map` before updating other fields.
-                drop(entry);
                 let prev_len = self.nodes[idx]
                     .as_ref()
                     .expect("LRU node must exist for map entry")
@@ -117,7 +115,7 @@ impl CodeCache {
                     prev: None,
                     next: None,
                 });
-                let _ = entry.insert(idx);
+                entry.insert(idx);
                 self.link_front(idx);
             }
         };
