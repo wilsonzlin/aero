@@ -1359,11 +1359,15 @@ To also exercise the virtio-input tablet (absolute pointer) end-to-end path, set
 
 To attach a virtio-tablet device without enabling the tablet events selftest/injection path, set the workflow input
 `with_virtio_tablet=true`. This passes `--with-virtio-tablet` to the Python harness and attaches `virtio-tablet-pci`
-in addition to the virtio keyboard/mouse devices. Ensure the guest tablet driver is installed (for the in-tree stack:
-`aero_virtio_tablet.inf` for `...&SUBSYS_00121AF4&REV_01`). If the device does not expose the Aero contract subsystem IDs,
-either emulate the subsystem IDs to the contract values (so it binds to `aero_virtio_tablet.inf`) or opt into the
-legacy alias INF under `drivers/windows7/virtio-input/inf/` (the `*.inf.disabled` file; drop the `.disabled` suffix to
-enable) to enable the strict revision-gated generic fallback match (`PCI\VEN_1AF4&DEV_1052&REV_01`).
+in addition to the virtio keyboard/mouse devices. Ensure the guest tablet driver is installed:
+
+- Preferred/contract binding: `aero_virtio_tablet.inf` for `...&SUBSYS_00121AF4&REV_01` (wins when it matches).
+- If the device does not expose the Aero contract subsystem IDs, `aero_virtio_input.inf` can still bind via its strict
+  revision-gated generic fallback HWID (`PCI\VEN_1AF4&DEV_1052&REV_01`) as long as the device reports `REV_01`.
+- To specifically exercise the contract tablet binding path, emulate the subsystem IDs to the contract values so it binds
+  to `aero_virtio_tablet.inf`.
+- The `*.inf.disabled` file under `drivers/windows7/virtio-input/inf/` is a filename alias only (optional compatibility);
+  enabling it is not required for fallback binding.
 
 To exercise the optional virtio-blk runtime resize test (`virtio-blk-resize`), set the workflow input
 `with_blk_resize=true`. This triggers a host-side QMP resize (`blockdev-resize` with a fallback to legacy `block_resize`)
@@ -1783,8 +1787,10 @@ Canonical in-tree driver packages:
 
 - virtio-blk: `drivers/windows7/virtio-blk/inf/aero_virtio_blk.inf` (binds `DEV_1042&REV_01`)
 - virtio-net: `drivers/windows7/virtio-net/inf/aero_virtio_net.inf` (binds `DEV_1041&REV_01`)
-- virtio-input (keyboard + mouse): `drivers/windows7/virtio-input/inf/aero_virtio_input.inf` (SUBSYS-gated: binds `DEV_1052&SUBSYS_00101AF4&REV_01` (keyboard) and `DEV_1052&SUBSYS_00111AF4&REV_01` (mouse))
-- virtio-input (tablet): `drivers/windows7/virtio-input/inf/aero_virtio_tablet.inf` (binds `DEV_1052&SUBSYS_00121AF4&REV_01`)
+- virtio-input (keyboard + mouse): `drivers/windows7/virtio-input/inf/aero_virtio_input.inf` (binds `DEV_1052&SUBSYS_00101AF4&REV_01`
+  (keyboard) and `DEV_1052&SUBSYS_00111AF4&REV_01` (mouse); includes strict generic fallback `PCI\VEN_1AF4&DEV_1052&REV_01`)
+- virtio-input (tablet): `drivers/windows7/virtio-input/inf/aero_virtio_tablet.inf` (binds `DEV_1052&SUBSYS_00121AF4&REV_01`; preferred
+  binding for contract tablets and wins when it matches)
 - virtio-snd: `drivers/windows7/virtio-snd/inf/aero_virtio_snd.inf` (binds `DEV_1059&REV_01`)
 
 If QEMU cannot expose modern-only virtio-snd (no `disable-legacy` property on the device), virtio-snd may enumerate as
