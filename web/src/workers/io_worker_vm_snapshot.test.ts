@@ -897,6 +897,64 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
     expect(Array.from(c1.data)).toEqual(Array.from(vramU8.subarray(64)));
   });
 
+  it("persists gpu.vram blobs via WorkerVmSnapshot builder when opts.vram is provided (legacy buffer)", async () => {
+    const addCalls: Array<{ id: number; version: number; flags: number; data: Uint8Array }> = [];
+    class FakeBuilder {
+      constructor(_guestBase: number, _guestSize: number) {
+        // ignore
+      }
+      set_cpu_state_v2(_cpu: Uint8Array, _mmu: Uint8Array): void {
+        // ignore
+      }
+      add_device_state(id: number, version: number, flags: number, data: Uint8Array): void {
+        addCalls.push({ id, version, flags, data });
+      }
+      async snapshot_full_to_opfs(_path: string): Promise<void> {
+        // ignore
+      }
+      free(): void {
+        // ignore
+      }
+    }
+    const api = { WorkerVmSnapshot: FakeBuilder } as unknown as WasmApi;
+
+    const vram = new Uint8Array(16);
+    for (let i = 0; i < vram.length; i++) vram[i] = (0x80 + i) & 0xff;
+
+    await saveIoWorkerVmSnapshotToOpfs({
+      api,
+      path: "state/test.snap",
+      cpu: new ArrayBuffer(4),
+      mmu: new ArrayBuffer(8),
+      guestBase: 0,
+      guestSize: 0x1000,
+      vram,
+      runtimes: {
+        usbXhciControllerBridge: null,
+        usbUhciRuntime: null,
+        usbUhciControllerBridge: null,
+        usbEhciControllerBridge: null,
+        netE1000: null,
+        netStack: null,
+      },
+    });
+
+    const vramAdds = addCalls.filter((c) => c.id === VM_SNAPSHOT_DEVICE_ID_GPU_VRAM);
+    expect(vramAdds.map((c) => c.id)).toEqual([VM_SNAPSHOT_DEVICE_ID_GPU_VRAM]);
+    expect(vramAdds.map((c) => c.version)).toEqual([1]);
+    expect(vramAdds.map((c) => c.flags)).toEqual([0]);
+
+    const bytes = vramAdds[0]!.data;
+    expect(Array.from(bytes.subarray(0, 4))).toEqual([0x41, 0x45, 0x52, 0x4f]); // "AERO"
+    const totalLen = (bytes[12]! | (bytes[13]! << 8) | (bytes[14]! << 16) | (bytes[15]! << 24)) >>> 0;
+    const chunkOffset = (bytes[16]! | (bytes[17]! << 8) | (bytes[18]! << 16) | (bytes[19]! << 24)) >>> 0;
+    const chunkLen = (bytes[20]! | (bytes[21]! << 8) | (bytes[22]! << 16) | (bytes[23]! << 24)) >>> 0;
+    expect(totalLen).toBe(16);
+    expect(chunkOffset).toBe(0);
+    expect(chunkLen).toBe(16);
+    expect(Array.from(bytes.subarray(24, 24 + 16))).toEqual(Array.from(vram));
+  });
+
   it("restores reserved BAR1 VRAM blobs via WorkerVmSnapshot builder (restore path) without forwarding (reserved wins over gpu.vram)", async () => {
     const makeVramChunk = (data: Uint8Array, chunkIndex = 0): Uint8Array => {
       const headerBytes = 24;
