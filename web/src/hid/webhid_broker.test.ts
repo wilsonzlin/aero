@@ -23,6 +23,14 @@ function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void; reje
   return { promise, resolve, reject };
 }
 
+async function flushMicrotasks(iterations = 8): Promise<void> {
+  // `await Promise.resolve()` yields to the microtask queue. Loop a few times so nested async/await
+  // chains (like the broker's per-device send queue runner) have a chance to fully drain.
+  for (let i = 0; i < iterations; i += 1) {
+    await Promise.resolve();
+  }
+}
+
 class FakePort {
   readonly posted: Array<{ msg: unknown; transfer?: Transferable[] }> = [];
   private readonly listeners: FakeListener[] = [];
@@ -940,6 +948,93 @@ describe("hid/WebHidBroker", () => {
 
     expect(device.sendReport).toHaveBeenCalledWith(7, Uint8Array.of(9));
     expect(device.sendFeatureReport).toHaveBeenCalledWith(8, Uint8Array.of(10));
+  });
+
+  it("drains the SAB output ring when handling hid.sendReport messages to preserve report ordering", async () => {
+    vi.useFakeTimers();
+    Object.defineProperty(globalThis, "crossOriginIsolated", { value: true, configurable: true });
+    let broker: WebHidBroker | null = null;
+    try {
+      const manager = new WebHidPassthroughManager({ hid: null });
+      broker = new WebHidBroker({ manager });
+      const port = new FakePort();
+      broker.attachWorkerPort(port as unknown as MessagePort);
+
+      const ringAttach = port.posted.find((p) => (p.msg as { type?: unknown }).type === "hid.ringAttach")?.msg as
+        | { inputRing: SharedArrayBuffer; outputRing: SharedArrayBuffer }
+        | undefined;
+      expect(ringAttach).toBeTruthy();
+      const outputRing = new HidReportRing(ringAttach!.outputRing);
+
+      const device = new FakeHidDevice();
+      const id = await broker.attachDevice(device as unknown as HIDDevice);
+
+      // Queue report A in the SAB ring but do NOT advance timers; the background interval
+      // drain must not run.
+      expect(outputRing.push(id, HidReportType.Output, 1, Uint8Array.of(0xaa))).toBe(true);
+
+      // Immediately send report B via structured message (fallback path when the ring is full or
+      // a record is too large). The broker should drain the ring synchronously so A runs first.
+      port.emit({ type: "hid.sendReport", deviceId: id, reportType: "output", reportId: 2, data: Uint8Array.of(0xbb) });
+
+      // Allow the per-device queue runner to flush.
+      await flushMicrotasks();
+
+      expect(device.sendReport).toHaveBeenCalledTimes(2);
+      expect(device.sendReport).toHaveBeenNthCalledWith(1, 1, Uint8Array.of(0xaa));
+      expect(device.sendReport).toHaveBeenNthCalledWith(2, 2, Uint8Array.of(0xbb));
+    } finally {
+      broker?.destroy();
+      vi.useRealTimers();
+    }
+  });
+
+  it("drains the SAB output ring when handling hid.getFeatureReport messages to preserve report ordering", async () => {
+    vi.useFakeTimers();
+    Object.defineProperty(globalThis, "crossOriginIsolated", { value: true, configurable: true });
+    let broker: WebHidBroker | null = null;
+    try {
+      const manager = new WebHidPassthroughManager({ hid: null });
+      broker = new WebHidBroker({ manager });
+      const port = new FakePort();
+      broker.attachWorkerPort(port as unknown as MessagePort);
+
+      const ringAttach = port.posted.find((p) => (p.msg as { type?: unknown }).type === "hid.ringAttach")?.msg as
+        | { inputRing: SharedArrayBuffer; outputRing: SharedArrayBuffer }
+        | undefined;
+      expect(ringAttach).toBeTruthy();
+      const outputRing = new HidReportRing(ringAttach!.outputRing);
+
+      const device = new FakeHidDevice();
+      const order: string[] = [];
+      device.sendReport.mockImplementation(async () => {
+        order.push("sendReport");
+      });
+      device.receiveFeatureReport.mockImplementation(async () => {
+        order.push("receiveFeatureReport");
+        return new DataView(Uint8Array.of(1, 2, 3).buffer);
+      });
+
+      const id = await broker.attachDevice(device as unknown as HIDDevice);
+
+      // Queue an output report send in the SAB ring, then immediately enqueue a getFeatureReport
+      // request. The ring send must execute first even if the background timer isn't running.
+      expect(outputRing.push(id, HidReportType.Output, 1, Uint8Array.of(0xaa))).toBe(true);
+      port.emit({ type: "hid.getFeatureReport", requestId: 1, deviceId: id, reportId: 7 });
+
+      await flushMicrotasks();
+
+      expect(order).toEqual(["sendReport", "receiveFeatureReport"]);
+
+      const result = port.posted.find(
+        (p) => (p.msg as { type?: unknown }).type === "hid.featureReportResult" && (p.msg as any).requestId === 1,
+      ) as any;
+      expect(result).toBeTruthy();
+      expect(result.msg).toMatchObject({ deviceId: id, reportId: 7, requestId: 1, ok: true });
+    } finally {
+      broker?.destroy();
+      vi.useRealTimers();
+    }
   });
 
   it("executes output/feature reports sequentially per device across message and ring delivery paths", async () => {
