@@ -39,11 +39,13 @@ impl ShaderStage {
     /// - `stage_ex != 0` in a packet's reserved field (opcode-specific)
     ///
     /// The `stage_ex` value uses DXBC program-type numbering (SM4/5 version token `program_type`):
-    /// - 1 = vertex shader (VS)
     /// - 2 = geometry shader (GS)
     /// - 3 = hull shader (HS)
     /// - 4 = domain shader (DS)
-    /// - 5 = compute shader (CS)
+    /// - 5 = compute shader (CS) (accepted as an alias for legacy compute)
+    ///
+    /// Note: `stage_ex = 1` (Vertex) is intentionally rejected for clarity: VS/PS are always encoded
+    /// via the legacy `shader_stage` field.
     pub const fn from_aerogpu_u32_with_stage_ex(stage: u32, stage_ex: u32) -> Option<Self> {
         match stage {
             0 => Some(Self::Vertex),
@@ -55,7 +57,6 @@ impl ShaderStage {
                 // command writers that incorrectly used the DXBC value instead of the reserved 0
                 // sentinel in binding packets.
                 0 | 5 => Some(Self::Compute),
-                1 => Some(Self::Vertex),
                 2 => Some(Self::Geometry),
                 3 => Some(Self::Hull),
                 4 => Some(Self::Domain),
@@ -394,19 +395,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn stage_ex_vertex_decodes_to_vertex() {
-        // The `stage_ex` ABI encoding uses `shader_stage==COMPUTE` plus a non-zero program-type tag
-        // in a reserved field. Ensure we accept the VS tag (1) even though legacy packets would use
-        // `shader_stage==VERTEX`.
-        assert_eq!(
-            ShaderStage::from_aerogpu_u32_with_stage_ex(2, 1),
-            Some(ShaderStage::Vertex)
-        );
+    fn stage_ex_vertex_is_rejected_for_clarity() {
+        // `stage_ex == 1` is the DXBC program type for Vertex, but the stage_ex mechanism reserves
+        // non-zero tags for stages that cannot be represented by the legacy enum (HS/DS; optionally
+        // GS). Vertex must be encoded via `shader_stage=VERTEX` instead.
+        assert_eq!(ShaderStage::from_aerogpu_u32_with_stage_ex(2, 1), None);
+
         // Non-compute stages ignore stage_ex (reserved field).
-        assert_eq!(
-            ShaderStage::from_aerogpu_u32_with_stage_ex(0, 1),
-            Some(ShaderStage::Vertex)
-        );
+        assert_eq!(ShaderStage::from_aerogpu_u32_with_stage_ex(0, 1), Some(ShaderStage::Vertex));
     }
 
     #[test]
