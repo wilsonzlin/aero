@@ -580,6 +580,29 @@ fn parse_wgsl_uniform_var_name(line: &str) -> Option<&str> {
 }
 
 #[cfg(target_arch = "wasm32")]
+fn wgsl_has_expected_entry_point(wgsl: &str, stage: shader::ShaderStage) -> bool {
+    let (attr, fn_prefix) = match stage {
+        shader::ShaderStage::Vertex => ("@vertex", "fn vs_main("),
+        shader::ShaderStage::Pixel => ("@fragment", "fn fs_main("),
+    };
+
+    let lines: Vec<&str> = wgsl.lines().collect();
+    for (idx, line) in lines.iter().enumerate() {
+        if line.trim() != attr {
+            continue;
+        }
+        let mut next = idx + 1;
+        while next < lines.len() && lines[next].trim().is_empty() {
+            next += 1;
+        }
+        if next < lines.len() && lines[next].trim_start().starts_with(fn_prefix) {
+            return true;
+        }
+    }
+    false
+}
+
+#[cfg(target_arch = "wasm32")]
 fn validate_wgsl_binding_contract(
     wgsl: &str,
     stage: shader::ShaderStage,
@@ -3288,7 +3311,7 @@ impl AerogpuD3d9Executor {
                     shader::ShaderStage::Vertex => "fn vs_main(",
                     shader::ShaderStage::Pixel => "fn fs_main(",
                 };
-                if !wgsl.contains(expected_stage_attr) || !wgsl.contains(expected_fn_sig) {
+                if !wgsl_has_expected_entry_point(wgsl.as_str(), bytecode_stage) {
                     debug!(
                         shader_handle,
                         expected_stage_attr,

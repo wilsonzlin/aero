@@ -1103,6 +1103,96 @@ async fn d3d9_executor_retranslates_on_persisted_wgsl_entry_point_mismatch() {
 }
 
 #[wasm_bindgen_test(async)]
+async fn d3d9_executor_retranslates_on_persisted_wgsl_entry_point_stage_mismatch() {
+    // Cached WGSL may contain both @vertex and fn vs_main, but the *pairing* can still be wrong
+    // (e.g. a fragment entry point named vs_main plus a different vertex function). Detect this on
+    // persistent cache hit and invalidate+retry to avoid later pipeline creation failures.
+    let (api, store) = make_persistent_cache_stub();
+    let _guard = PersistentCacheApiGuard::install(&api, &store);
+
+    let mut exec = match AerogpuD3d9Executor::new_headless().await {
+        Ok(exec) => exec,
+        Err(err) => {
+            common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({err})"));
+            return;
+        }
+    };
+
+    let vs_bytes = assemble_vs_pos_only();
+    let mut writer = AerogpuCmdWriter::new();
+    writer.create_shader_dxbc(1, AerogpuShaderStage::Vertex, &vs_bytes);
+    let stream = writer.finish();
+
+    exec.execute_cmd_stream_for_context_async(0, &stream)
+        .await
+        .expect("first shader create succeeds");
+
+    let map: Map = Reflect::get(&store, &JsValue::from_str("map"))
+        .expect("get store.map")
+        .dyn_into()
+        .expect("store.map should be a Map");
+    let keys = Array::from(&map.keys());
+    assert_eq!(keys.length(), 1, "expected one persisted shader entry");
+    let key = keys.get(0);
+    let cached = map.get(&key);
+    assert!(
+        !cached.is_undefined() && !cached.is_null(),
+        "expected persisted cache entry to exist"
+    );
+
+    let wgsl_before = Reflect::get(&cached, &JsValue::from_str("wgsl"))
+        .ok()
+        .and_then(|v| v.as_string())
+        .unwrap_or_default();
+    assert!(
+        wgsl_before.contains("@vertex\nfn vs_main"),
+        "expected cached WGSL to contain @vertex vs_main entry point"
+    );
+
+    // Rename the real vertex entry point and add a fragment entry point named `vs_main`.
+    // This still contains both '@vertex' and 'fn vs_main', but the pairing is wrong.
+    let mut wgsl_corrupt = wgsl_before.replace("@vertex\nfn vs_main", "@vertex\nfn vs_main_actual");
+    wgsl_corrupt.push_str(
+        "\n@fragment\nfn vs_main() -> @location(0) vec4<f32> {\n  return vec4<f32>(0.0);\n}\n",
+    );
+    let cached_obj: Object = cached
+        .clone()
+        .dyn_into()
+        .expect("cached entry should be an object");
+    Reflect::set(
+        &cached_obj,
+        &JsValue::from_str("wgsl"),
+        &JsValue::from_str(&wgsl_corrupt),
+    )
+    .expect("set cached.wgsl");
+
+    exec.reset();
+    exec.execute_cmd_stream_for_context_async(0, &stream)
+        .await
+        .expect("second shader create succeeds");
+
+    let get_calls = read_f64(&store, "getCalls") as u32;
+    let put_calls = read_f64(&store, "putCalls") as u32;
+    let delete_calls = read_f64(&store, "deleteCalls") as u32;
+    assert_eq!(get_calls, 3, "expected invalidate+retry after mismatch");
+    assert_eq!(put_calls, 2, "expected corrected shader to be persisted");
+    assert_eq!(
+        delete_calls, 1,
+        "expected corrupted cached entry to be deleted"
+    );
+
+    let cached_after = map.get(&key);
+    let wgsl_after = Reflect::get(&cached_after, &JsValue::from_str("wgsl"))
+        .ok()
+        .and_then(|v| v.as_string())
+        .unwrap_or_default();
+    assert!(
+        wgsl_after.contains("@vertex\nfn vs_main") && !wgsl_after.contains("vs_main_actual"),
+        "expected retranslation to restore correct @vertex vs_main entry point"
+    );
+}
+
+#[wasm_bindgen_test(async)]
 async fn d3d9_executor_retranslates_on_persisted_wgsl_sampler_binding_mismatch() {
     // Cached WGSL may be corrupt even when reflection metadata looks consistent. If sampler binding
     // numbers are wrong, pipeline creation will fail later due to bind group layout mismatch.
