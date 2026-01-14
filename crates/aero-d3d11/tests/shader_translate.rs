@@ -57,6 +57,53 @@ fn build_minimal_rdef_cbuffer(name: &str, bind_point: u32, size_bytes: u32) -> V
     bytes
 }
 
+fn build_minimal_rdef_cbuffer_array(
+    name: &str,
+    bind_point: u32,
+    bind_count: u32,
+    size_bytes: u32,
+) -> Vec<u8> {
+    // Header (8 DWORDs / 32 bytes) + constant buffer table (24 bytes) + resource binding table
+    // (32 bytes) + string table.
+    let header_len = 32u32;
+    let cb_offset = header_len;
+    let rb_offset = header_len + 24;
+    let string_offset = header_len + 24 + 32;
+
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(&1u32.to_le_bytes()); // cb_count
+    bytes.extend_from_slice(&cb_offset.to_le_bytes());
+    bytes.extend_from_slice(&1u32.to_le_bytes()); // rb_count
+    bytes.extend_from_slice(&rb_offset.to_le_bytes());
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // target
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // flags
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // creator_offset
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // interface_slot_count
+
+    // Constant buffer desc (24 bytes).
+    bytes.extend_from_slice(&string_offset.to_le_bytes()); // name_offset
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // var_count
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // var_offset
+    bytes.extend_from_slice(&size_bytes.to_le_bytes());
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // cb_flags
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // cb_type
+
+    // Resource binding desc (32 bytes) for the cbuffer binding slot.
+    bytes.extend_from_slice(&string_offset.to_le_bytes()); // name_offset
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // input_type (D3D_SIT_CBUFFER)
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // return_type
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // dimension
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // sample_count
+    bytes.extend_from_slice(&bind_point.to_le_bytes());
+    bytes.extend_from_slice(&bind_count.to_le_bytes());
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // flags
+
+    // String table.
+    bytes.extend_from_slice(name.as_bytes());
+    bytes.push(0);
+    bytes
+}
+
 fn build_minimal_rdef_texture_and_sampler_arrays(bind_point: u32, bind_count: u32) -> Vec<u8> {
     // Header (8 DWORDs / 32 bytes) + 2 resource binding descs (2*32 bytes) + string table.
     let header_len = 32u32;
@@ -917,6 +964,62 @@ fn rdef_resource_arrays_expand_used_texture_and_sampler_slots() {
         .bindings
         .iter()
         .any(|b| matches!(b.kind, BindingKind::Sampler { slot: 3 })));
+}
+
+#[test]
+fn rdef_cbuffer_arrays_expand_used_slots() {
+    // Shader reads cb2[0], but RDEF declares an array bound at b0..b3.
+    let osgn_params = vec![sig_param("SV_Target", 0, 0, 0b1111)];
+    let rdef_bytes = build_minimal_rdef_cbuffer_array("CBArray", 0, 4, 64);
+
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, Vec::new()),
+        (FOURCC_RDEF, rdef_bytes),
+        (FOURCC_ISGN, build_signature_chunk(&[])),
+        (FOURCC_OSGN, build_signature_chunk(&osgn_params)),
+    ]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+
+    let module = Sm4Module {
+        stage: ShaderStage::Pixel,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: Vec::new(),
+        instructions: vec![
+            Sm4Inst::Mov {
+                dst: dst(RegFile::Temp, 0, WriteMask::XYZW),
+                src: src_cb(2, 0),
+            },
+            Sm4Inst::Mov {
+                dst: dst(RegFile::Output, 0, WriteMask::XYZW),
+                src: src_reg(RegFile::Temp, 0),
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_parses(&translated.wgsl);
+
+    // Should declare the full b0..b3 range.
+    assert!(translated.wgsl.contains("struct Cb0"));
+    assert!(translated.wgsl.contains("struct Cb3"));
+    assert!(translated.wgsl.contains("@group(1) @binding(0) var<uniform> cb0"));
+    assert!(translated.wgsl.contains("@group(1) @binding(3) var<uniform> cb3"));
+
+    // Reflection should include the expanded bindings with the RDEF-derived size (64 bytes -> 4 regs).
+    for slot in 0..4 {
+        let cb_binding = translated
+            .reflection
+            .bindings
+            .iter()
+            .find(|b| matches!(b.kind, BindingKind::ConstantBuffer { slot: s, .. } if s == slot))
+            .expect("missing constant buffer binding");
+        match cb_binding.kind {
+            BindingKind::ConstantBuffer { reg_count, .. } => assert_eq!(reg_count, 4),
+            _ => panic!("unexpected binding kind"),
+        }
+    }
 }
 
 #[test]

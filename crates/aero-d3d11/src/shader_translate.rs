@@ -962,6 +962,34 @@ fn scan_used_input_registers(module: &Sm4Module) -> BTreeSet<u32> {
             | Sm4Inst::INeg { dst: _, src } => {
                 scan_src_regs(src, &mut scan_reg)
             }
+            Sm4Inst::Bfi {
+                dst: _,
+                width,
+                offset,
+                insert,
+                base,
+            } => {
+                scan_src_regs(width, &mut scan_reg);
+                scan_src_regs(offset, &mut scan_reg);
+                scan_src_regs(insert, &mut scan_reg);
+                scan_src_regs(base, &mut scan_reg);
+            }
+            Sm4Inst::Ubfe {
+                dst: _,
+                width,
+                offset,
+                src,
+            }
+            | Sm4Inst::Ibfe {
+                dst: _,
+                width,
+                offset,
+                src,
+            } => {
+                scan_src_regs(width, &mut scan_reg);
+                scan_src_regs(offset, &mut scan_reg);
+                scan_src_regs(src, &mut scan_reg);
+            }
             Sm4Inst::Sample {
                 dst: _,
                 coord,
@@ -2176,7 +2204,26 @@ fn scan_resources(
             };
             let reg_count_u64 = (u64::from(cb.size) + 15) / 16;
             let reg_count = u32::try_from(reg_count_u64).unwrap_or(u32::MAX).max(1);
-            if let Some(entry) = cbuffers.get_mut(&slot) {
+            let bind_count = cb.bind_count.unwrap_or(1);
+            if bind_count <= 1 {
+                if let Some(entry) = cbuffers.get_mut(&slot) {
+                    *entry = (*entry).max(reg_count);
+                }
+                continue;
+            }
+
+            // Expand constant buffer arrays (e.g. `ConstantBuffer<T> cb[4] : register(b0)`).
+            //
+            // As with other resource arrays, we only expand when the shader already uses at least
+            // one slot within the declared binding range.
+            let end = slot.saturating_add(bind_count);
+            let intersects = cbuffers.range(slot..end).next().is_some();
+            if !intersects {
+                continue;
+            }
+            let end = end.min(D3D11_MAX_CONSTANT_BUFFER_SLOTS);
+            for s in slot..end {
+                let entry = cbuffers.entry(s).or_insert(0);
                 *entry = (*entry).max(reg_count);
             }
         }
