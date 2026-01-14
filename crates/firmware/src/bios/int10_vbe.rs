@@ -138,6 +138,17 @@ impl Bios {
                             let max_pixels = self.video.vbe.logical_width_pixels.max(mode.width);
                             cpu.set_bx(max_bytes);
                             cpu.set_cx(max_pixels);
+                            // Return the maximum number of scan lines available for the current (max)
+                            // scan line length.
+                            //
+                            // Some software expects DX to be updated for BL=0x03 just like the other
+                            // 4F06 subfunctions. Leaving DX unchanged can cause callers to treat the
+                            // value as uninitialized.
+                            let bytes_per_line = u32::from(max_bytes.max(1));
+                            let total_bytes =
+                                u32::from(self.video.vbe.total_memory_64kb_blocks) * 64 * 1024;
+                            let max_lines = total_bytes / bytes_per_line;
+                            cpu.set_dx(max_lines.min(u16::MAX as u32) as u16);
                             vbe_success(cpu);
                         } else {
                             vbe_failure(cpu);

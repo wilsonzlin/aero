@@ -316,6 +316,56 @@ fn int10_vbe_set_mode_oem_1280x720_updates_scanline_and_clears_framebuffer() {
 }
 
 #[test]
+fn int10_vbe_get_maximum_scanline_length_reports_max_scan_lines_in_dx() {
+    let mut mem = VecMemory::new(32 * 1024 * 1024);
+    let mut bios = Bios::new(CmosRtc::new(DateTime::new(2026, 1, 1, 0, 0, 0)));
+    let mut cpu = CpuState::default();
+
+    // Enter a 32bpp VBE mode.
+    cpu.set_ax(0x4F02);
+    cpu.set_bx(0x118 | 0x4000);
+    bios.handle_int10(&mut cpu, &mut mem);
+    assert_eq!(cpu.ax(), 0x004F);
+
+    let total_memory_blocks = bios.video.vbe.total_memory_64kb_blocks;
+    let expected_lines = |bytes_per_line: u16| -> u16 {
+        let bytes_per_line = u32::from(bytes_per_line.max(1));
+        let total_bytes = u32::from(total_memory_blocks) * 64 * 1024;
+        let max_lines = total_bytes / bytes_per_line;
+        max_lines.min(u16::MAX as u32) as u16
+    };
+
+    // 4F06 BL=3: get maximum scan line length should update DX.
+    cpu.set_ax(0x4F06);
+    cpu.set_bx(0x0003);
+    cpu.set_dx(0xBEEF);
+    bios.handle_int10(&mut cpu, &mut mem);
+    assert_eq!(cpu.ax(), 0x004F);
+    assert_eq!(cpu.bx(), 1024 * 4);
+    assert_eq!(cpu.cx(), 1024);
+    assert_eq!(cpu.dx(), expected_lines(1024 * 4));
+
+    // Increase logical scan line length, then verify BL=3 returns updated max scan lines.
+    cpu.set_ax(0x4F06);
+    cpu.set_bx(0x0000); // BL=0 set in pixels
+    cpu.set_cx(2048);
+    bios.handle_int10(&mut cpu, &mut mem);
+    assert_eq!(cpu.ax(), 0x004F);
+    assert_eq!(cpu.bx(), 2048 * 4);
+    assert_eq!(cpu.cx(), 2048);
+    assert_eq!(cpu.dx(), expected_lines(2048 * 4));
+
+    cpu.set_ax(0x4F06);
+    cpu.set_bx(0x0003);
+    cpu.set_dx(0xBEEF);
+    bios.handle_int10(&mut cpu, &mut mem);
+    assert_eq!(cpu.ax(), 0x004F);
+    assert_eq!(cpu.bx(), 2048 * 4);
+    assert_eq!(cpu.cx(), 2048);
+    assert_eq!(cpu.dx(), expected_lines(2048 * 4));
+}
+
+#[test]
 fn int10_vbe_misc_services() {
     let mut mem = VecMemory::new(32 * 1024 * 1024);
     let mut bios = Bios::new(CmosRtc::new(DateTime::new(2026, 1, 1, 0, 0, 0)));
