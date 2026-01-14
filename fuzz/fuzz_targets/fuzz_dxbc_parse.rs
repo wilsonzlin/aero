@@ -23,6 +23,10 @@ const MAX_SIGNATURE_ENTRIES: usize = 256;
 /// counts/offsets. Keep chunk sizes small to ensure parsing stays bounded and fuzz throughput
 /// remains stable.
 const MAX_REFLECTION_CHUNK_BYTES: usize = 32 * 1024;
+const MAX_RDEF_CONSTANT_BUFFERS: usize = 128;
+const MAX_RDEF_RESOURCES: usize = 512;
+const MAX_RDEF_VARIABLES_PER_CBUFFER: usize = 512;
+const MAX_CTAB_CONSTANTS: usize = 512;
 
 /// Patched DXBC builder chunk payload caps (kept small to avoid large allocations in signature
 /// parsing helpers and to keep the synthesized container fast to parse).
@@ -99,18 +103,84 @@ fn fuzz_signature_decoders(fourcc: FourCC, bytes: &[u8]) {
 }
 
 fn fuzz_reflection_decoders(fourcc: FourCC, bytes: &[u8]) {
-    if bytes.len() > MAX_REFLECTION_CHUNK_BYTES {
-        return;
-    }
     match fourcc.0 {
         [b'R', b'D', b'E', b'F'] | [b'R', b'D', b'1', b'1'] => {
+            if !should_parse_rdef_chunk(bytes) {
+                return;
+            }
             let _ = aero_dxbc::parse_rdef_chunk_for_fourcc(fourcc, bytes);
         }
         [b'C', b'T', b'A', b'B'] => {
+            if !should_parse_ctab_chunk(bytes) {
+                return;
+            }
             let _ = aero_dxbc::parse_ctab_chunk(bytes);
         }
         _ => {}
     }
+}
+
+fn should_parse_rdef_chunk(bytes: &[u8]) -> bool {
+    if bytes.len() > MAX_REFLECTION_CHUNK_BYTES {
+        return false;
+    }
+    if bytes.len() < 28 {
+        // Truncated headers fail quickly without allocations; still safe to try.
+        return true;
+    }
+
+    let cb_count = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize;
+    let cb_offset = u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]) as usize;
+    let rb_count = u32::from_le_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]) as usize;
+
+    if cb_count > MAX_RDEF_CONSTANT_BUFFERS || rb_count > MAX_RDEF_RESOURCES {
+        return false;
+    }
+
+    // Scan per-cbuffer var counts so a single small chunk can't request huge allocations.
+    if cb_count > 0 {
+        let cb_desc_len = 24usize;
+        let table_bytes = match cb_count.checked_mul(cb_desc_len) {
+            Some(v) => v,
+            None => return false,
+        };
+        let table_end = match cb_offset.checked_add(table_bytes) {
+            Some(v) => v,
+            None => return false,
+        };
+        if table_end <= bytes.len() {
+            for i in 0..cb_count {
+                let entry = cb_offset + i * cb_desc_len;
+                let var_count_off = entry + 4;
+                if var_count_off + 4 > bytes.len() {
+                    break;
+                }
+                let var_count = u32::from_le_bytes([
+                    bytes[var_count_off],
+                    bytes[var_count_off + 1],
+                    bytes[var_count_off + 2],
+                    bytes[var_count_off + 3],
+                ]) as usize;
+                if var_count > MAX_RDEF_VARIABLES_PER_CBUFFER {
+                    return false;
+                }
+            }
+        }
+    }
+
+    true
+}
+
+fn should_parse_ctab_chunk(bytes: &[u8]) -> bool {
+    if bytes.len() > MAX_REFLECTION_CHUNK_BYTES {
+        return false;
+    }
+    if bytes.len() < 16 {
+        // Truncated headers fail quickly without allocations; still safe to try.
+        return true;
+    }
+    let constant_count = u32::from_le_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]) as usize;
+    constant_count <= MAX_CTAB_CONSTANTS
 }
 
 fn fuzz_dxbc_container(bytes: &[u8]) {
@@ -181,7 +251,13 @@ fn fuzz_dxbc_container(bytes: &[u8]) {
         !matches!(
             chunk.fourcc.0,
             [b'R', b'D', b'E', b'F'] | [b'R', b'D', b'1', b'1'] | [b'C', b'T', b'A', b'B']
-        ) || chunk.data.len() <= MAX_REFLECTION_CHUNK_BYTES
+        ) || match chunk.fourcc.0 {
+            [b'R', b'D', b'E', b'F'] | [b'R', b'D', b'1', b'1'] => {
+                should_parse_rdef_chunk(chunk.data)
+            }
+            [b'C', b'T', b'A', b'B'] => should_parse_ctab_chunk(chunk.data),
+            _ => true,
+        }
     });
     if safe_for_reflection {
         let _ = dxbc.get_rdef();
