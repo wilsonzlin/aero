@@ -346,6 +346,29 @@ impl XhciTransferExecutor {
                     td.last_trb_ptr = trb_ptr;
                     td.last_ioc = trb.ioc();
                 }
+                TrbType::EventData => {
+                    // Event Data TRBs are valid TD terminators. They do not contribute any buffer
+                    // bytes, but may carry a driver-owned pointer in `parameter` for use by the real
+                    // xHC when generating Transfer Events.
+                    //
+                    // This executor does not currently surface that pointer, but we still accept
+                    // the TRB so guests that use Event Data TD terminators do not fault/halt.
+                    let trb_ptr = ptr;
+                    if trb.chain() {
+                        // Event Data TRBs are not expected to be chained.
+                        return GatherTdResult::Fault { trb_ptr };
+                    }
+                    let Some(next) = ptr.checked_add(TRB_SIZE) else {
+                        return GatherTdResult::Fault { trb_ptr };
+                    };
+                    ptr = next;
+
+                    td.last_trb_ptr = trb_ptr;
+                    td.last_ioc = trb.ioc();
+                    td.next_dequeue_ptr = ptr;
+                    td.next_cycle = cycle;
+                    return GatherTdResult::Ready;
+                }
                 _ => {
                     // Unexpected TRB type inside a TD.
                     return GatherTdResult::Fault { trb_ptr: ptr };
