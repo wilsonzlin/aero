@@ -43,7 +43,7 @@ Coordination note:
 | AeroGPU sandbox device model + executor (legacy integration surface) | `[~]` | [`crates/emulator/src/devices/pci/aerogpu.rs`](../../crates/emulator/src/devices/pci/aerogpu.rs) + [`crates/emulator/src/gpu_worker/aerogpu_executor.rs`](../../crates/emulator/src/gpu_worker/aerogpu_executor.rs) |
 | Scanout shared-memory contracts | `[x]` | [`crates/aero-shared/src/`](../../crates/aero-shared/src/) + [`web/src/ipc/`](../../web/src/ipc/) |
 | D3D9 translation/execution (subset) | `[~]` | [`crates/aero-d3d9/`](../../crates/aero-d3d9/) + [`crates/aero-gpu/src/aerogpu_d3d9_executor.rs`](../../crates/aero-gpu/src/aerogpu_d3d9_executor.rs) + [`docs/graphics/d3d9-sm2-sm3-shader-translation.md`](./d3d9-sm2-sm3-shader-translation.md) |
-| D3D10/11 translation/execution (subset; VS/PS/CS + GS compute-prepass (minimal SM4 subset for point-list draws; other cases use synthetic expansion)) | `[~]` | [`crates/aero-d3d11/`](../../crates/aero-d3d11/) |
+| D3D10/11 translation/execution (subset; VS/PS/CS + GS compute-prepass (minimal subset for point-list draws; other cases use synthetic expansion)) | `[~]` | [`crates/aero-d3d11/`](../../crates/aero-d3d11/) |
 | Web presenters/backends (WebGPU + WebGL2) | `[x]` | [`web/src/gpu/`](../../web/src/gpu/) |
 | End-to-end Win7 WDDM + accelerated rendering in the **canonical browser machine** | `[ ]` | See [7) Critical path integration gaps](#7-current-critical-path-integration-gaps-factual) |
 
@@ -395,7 +395,9 @@ Known gaps / limitations (enforced by code/tests):
   - The executor routes draws through a compute prepass (expanded buffers + indirect args) followed by a normal render pass:
     - Code: [`crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs`](../../crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs) (`gs_hs_ds_emulation_required`, `exec_draw_with_compute_prepass`)
   - The compute prepass includes a built-in WGSL path that emits deterministic synthetic triangle geometry for bring-up/fallback (see `GEOMETRY_PREPASS_CS_WGSL`).
-  - For a small supported subset of SM4 GS shaders with point-list input, the executor translates GS DXBC→WGSL compute and executes it as the prepass (see `exec_geometry_shader_prepass_pointlist` and `crates/aero-d3d11/src/runtime/gs_translate.rs`).
+  - For a small supported subset of geometry shaders with point-list input, the executor translates GS DXBC→WGSL compute at create time and can execute it as the prepass for point-list draws (see `exec_geometry_shader_prepass_pointlist`):
+    - Translator: [`crates/aero-d3d11/src/runtime/gs_translate.rs`](../../crates/aero-d3d11/src/runtime/gs_translate.rs)
+    - Translator tests: [`crates/aero-d3d11/tests/gs_translate.rs`](../../crates/aero-d3d11/tests/gs_translate.rs)
   - Strip output expansion helpers for `CutVertex` / `RestartStrip` semantics:
     - Reference implementation: [`crates/aero-d3d11/src/runtime/strip_to_list.rs`](../../crates/aero-d3d11/src/runtime/strip_to_list.rs)
     - Unit tests: `crates/aero-d3d11/src/runtime/strip_to_list.rs` (module `tests`)

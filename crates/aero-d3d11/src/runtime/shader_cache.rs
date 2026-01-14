@@ -120,6 +120,9 @@ pub enum PersistedBindingKind {
         slot: u32,
         format: crate::StorageTextureFormat,
     },
+    ExpansionStorageBuffer {
+        read_only: bool,
+    },
 }
 
 impl PersistedBindingKind {
@@ -139,6 +142,11 @@ impl PersistedBindingKind {
                     format: *format,
                 }
             }
+            crate::BindingKind::ExpansionStorageBuffer { read_only } => {
+                Self::ExpansionStorageBuffer {
+                    read_only: *read_only,
+                }
+            }
         }
     }
 
@@ -156,6 +164,11 @@ impl PersistedBindingKind {
                 crate::BindingKind::UavTexture2DWriteOnly {
                     slot: *slot,
                     format: *format,
+                }
+            }
+            Self::ExpansionStorageBuffer { read_only } => {
+                crate::BindingKind::ExpansionStorageBuffer {
+                    read_only: *read_only,
                 }
             }
         }
