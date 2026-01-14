@@ -183,13 +183,16 @@ impl RamBus {
         &mut self.mem
     }
 
+    #[track_caller]
     fn range(&self, addr: u64, len: usize) -> Range<usize> {
-        let start: usize = addr
-            .try_into()
-            .unwrap_or_else(|_| panic!("address out of range: {addr:#x}"));
-        let end = start
-            .checked_add(len)
-            .unwrap_or_else(|| panic!("address overflow: {addr:#x} + {len}"));
+        let start: usize = match addr.try_into() {
+            Ok(start) => start,
+            Err(_) => panic!("address out of range: {addr:#x}"),
+        };
+        let end = match start.checked_add(len) {
+            Some(end) => end,
+            None => panic!("address overflow: {addr:#x} + {len}"),
+        };
         assert!(
             end <= self.mem.len(),
             "RAM access out of bounds: {addr:#x}..{end:#x} (ram_size={:#x})",
@@ -200,17 +203,21 @@ impl RamBus {
 }
 
 impl Bus for RamBus {
+    #[track_caller]
     fn read_u8(&mut self, addr: u64) -> u8 {
-        let idx: usize = addr
-            .try_into()
-            .unwrap_or_else(|_| panic!("address out of range: {addr:#x}"));
+        let idx: usize = match addr.try_into() {
+            Ok(idx) => idx,
+            Err(_) => panic!("address out of range: {addr:#x}"),
+        };
         self.mem[idx]
     }
 
+    #[track_caller]
     fn write_u8(&mut self, addr: u64, value: u8) {
-        let idx: usize = addr
-            .try_into()
-            .unwrap_or_else(|_| panic!("address out of range: {addr:#x}"));
+        let idx: usize = match addr.try_into() {
+            Ok(idx) => idx,
+            Err(_) => panic!("address out of range: {addr:#x}"),
+        };
         self.mem[idx] = value;
     }
 
@@ -218,6 +225,7 @@ impl Bus for RamBus {
         true
     }
 
+    #[track_caller]
     fn bulk_copy(&mut self, dst: u64, src: u64, len: usize) -> bool {
         if len == 0 {
             return true;
@@ -243,6 +251,7 @@ impl Bus for RamBus {
         true
     }
 
+    #[track_caller]
     fn bulk_set(&mut self, dst: u64, pattern: &[u8], repeat: usize) -> bool {
         if repeat == 0 {
             return true;
@@ -264,5 +273,24 @@ impl Bus for RamBus {
             chunk.copy_from_slice(pattern);
         }
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Bus, RamBus};
+    use crate::test_util::capture_panic_location;
+
+    #[test]
+    fn ram_bus_bulk_copy_panics_at_call_site_on_oob() {
+        let mut bus = RamBus::new(0);
+
+        let expected_file = file!();
+        let expected_line = line!() + 2;
+        let (file, line) = capture_panic_location(|| {
+            let _ = bus.bulk_copy(0, 0, 1);
+        });
+        assert_eq!(file, expected_file);
+        assert_eq!(line, expected_line);
     }
 }
