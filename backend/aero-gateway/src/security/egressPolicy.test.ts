@@ -60,6 +60,17 @@ test('IP policy: blocks private/reserved IPs and allows public IPs', () => {
   assert.equal(isPublicIpAddress('::ffff:127.0.0.1'), false);
 });
 
+test("IP policy: understands common non-canonical IPv4 forms", () => {
+  // These forms are accepted by Node's resolver (`dns.lookup` / `getaddrinfo`).
+  assert.equal(isPublicIpAddress("0177.0.0.1"), false); // octal => 127.0.0.1
+  assert.equal(isPublicIpAddress("0x7f.0.0.1"), false); // hex => 127.0.0.1
+  assert.equal(isPublicIpAddress("2130706433"), false); // 32-bit integer => 127.0.0.1
+  assert.equal(isPublicIpAddress("127.1"), false); // shorthand => 127.0.0.1
+
+  assert.equal(isPublicIpAddress("010.0.0.1"), true); // octal => 8.0.0.1
+  assert.equal(isPublicIpAddress("08.0.0.1"), true); // decimal fallback => 8.0.0.1
+});
+
 test("host policy: allow/deny lists apply to IP-literal targets", () => {
   const allow = parseHostnamePatterns("8.8.8.8");
   const block = parseHostnamePatterns("8.8.8.8");
