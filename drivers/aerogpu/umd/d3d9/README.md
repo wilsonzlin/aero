@@ -525,6 +525,9 @@ Limitations:
 
 `pfnProcessVertices` is implemented and is **not** treated as a stub.
 
+When the device is lost, `ProcessVertices` fails with `D3DERR_DEVICELOST` (or a more specific device-removed style HRESULT
+when available).
+
 Current behavior is intentionally bring-up level, with two paths:
 
 - **Fixed-function CPU transform (small subset):** when **no user vertex shader** is bound (pixel shader binding does not
