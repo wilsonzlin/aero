@@ -111,10 +111,13 @@ Test pointers:
     - `0xB0000..0xBFFFF` remains `VRAM[0x10000..0x1FFFF]`
 - [x] BIOS VBE LFB base set into BAR1: `PhysBasePtr = BAR1_BASE + VBE_LFB_OFFSET` (`VBE_LFB_OFFSET = 0x40000`, protocol: `AEROGPU_PCI_BAR1_VBE_LFB_OFFSET_BYTES`)
 - [x] host-side presentation fallback when VGA is disabled:
-  - WDDM scanout0 if claimed (valid `SCANOUT0_*` config; `SCANOUT0_ENABLE=1` shows, `SCANOUT0_ENABLE=0` blanks output but does not release WDDM ownership), otherwise
-  - VBE LFB (from BIOS state), otherwise
-  - VGA mode 13h (320×200×256) (from BIOS state), otherwise
-  - text mode (scan `0xB8000`)
+  - If WDDM scanout0 has been claimed:
+    - `SCANOUT0_ENABLE=1`: present the WDDM scanout framebuffer
+    - `SCANOUT0_ENABLE=0`: present a blank frame (WDDM ownership is sticky; no fallback to legacy until reset)
+  - Otherwise, present in priority order:
+    - VBE LFB (from BIOS state)
+    - VGA mode 13h (320×200×256) (from BIOS state)
+    - text mode (scan `0xB8000`)
 
 Implementation note: `SCANOUT0_ENABLE` is treated as a **visibility toggle**, not an ownership release.
 Clearing it (`SCANOUT0_ENABLE=0`) blanks output (and stops vblank pacing / flushes vsync-paced fences), but keeps the sticky
