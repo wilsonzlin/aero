@@ -775,30 +775,31 @@ The register names below are the canonical ones from `drivers/aerogpu/protocol/a
   - `AEROGPU_MMIO_REG_COMPLETED_FENCE_LO/HI` (RO): monotonically increasing completed fence value
   - `AEROGPU_MMIO_REG_FENCE_GPA_LO/HI` (RW, optional): GPA of `struct aerogpu_fence_page` (only if `AEROGPU_FEATURE_FENCE_PAGE` is set)
   
- - **Interrupts**
-   - `AEROGPU_MMIO_REG_IRQ_STATUS` (RO): pending causes
-   - `AEROGPU_MMIO_REG_IRQ_ENABLE` (RW): enable mask (line asserted when `(STATUS & ENABLE) != 0`)
-   - `AEROGPU_MMIO_REG_IRQ_ACK` (WO): write-1-to-clear (W1C)
-   - Cause bits:
-      - `AEROGPU_IRQ_FENCE`: completed fence advanced
-      - `AEROGPU_IRQ_SCANOUT_VBLANK`: scanout0 vblank tick (only if `AEROGPU_FEATURE_VBLANK` is set)
-      - `AEROGPU_IRQ_ERROR`: fatal device error
-   - Error reporting (ABI 1.3+; only when `AEROGPU_FEATURE_ERROR_INFO` is set; latched when `AEROGPU_IRQ_ERROR` is asserted):
-     - `AEROGPU_MMIO_REG_ERROR_CODE` (RO): stable `enum aerogpu_error_code`
-     - `AEROGPU_MMIO_REG_ERROR_FENCE_LO/HI` (RO): fence associated with the error (if known)
-     - `AEROGPU_MMIO_REG_ERROR_COUNT` (RO): monotonically increasing error counter
-   
- - **Scanout 0** (if `AEROGPU_FEATURE_SCANOUT` is set)
-   - `AEROGPU_MMIO_REG_SCANOUT0_ENABLE`
-   - `AEROGPU_MMIO_REG_SCANOUT0_WIDTH` / `_HEIGHT`
+- **Interrupts**
+  - `AEROGPU_MMIO_REG_IRQ_STATUS` (RO): pending causes
+  - `AEROGPU_MMIO_REG_IRQ_ENABLE` (RW): enable mask (line asserted when `(STATUS & ENABLE) != 0`)
+  - `AEROGPU_MMIO_REG_IRQ_ACK` (WO): write-1-to-clear (W1C)
+  - Cause bits:
+    - `AEROGPU_IRQ_FENCE`: completed fence advanced
+    - `AEROGPU_IRQ_SCANOUT_VBLANK`: scanout0 vblank tick (only if `AEROGPU_FEATURE_VBLANK` is set)
+    - `AEROGPU_IRQ_ERROR`: fatal device error
+  - Error reporting (ABI 1.3+; only when `AEROGPU_FEATURE_ERROR_INFO` is set; latched when `AEROGPU_IRQ_ERROR` is asserted):
+    - `AEROGPU_MMIO_REG_ERROR_CODE` (RO): stable `enum aerogpu_error_code`
+    - `AEROGPU_MMIO_REG_ERROR_FENCE_LO/HI` (RO): fence associated with the error (if known)
+    - `AEROGPU_MMIO_REG_ERROR_COUNT` (RO): monotonically increasing error counter
+
+- **Scanout 0** (if `AEROGPU_FEATURE_SCANOUT` is set)
+  - `AEROGPU_MMIO_REG_SCANOUT0_ENABLE`
+  - `AEROGPU_MMIO_REG_SCANOUT0_WIDTH` / `_HEIGHT`
   - `AEROGPU_MMIO_REG_SCANOUT0_FORMAT` (`enum aerogpu_format`)
   - `AEROGPU_MMIO_REG_SCANOUT0_PITCH_BYTES`
   - `AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_LO/HI`
-   - If `AEROGPU_FEATURE_VBLANK` is set (RO):
-     - `AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_LO/HI`
-     - `AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_LO/HI` (monotonic ns since boot; see `drivers/aerogpu/protocol/vblank.md`)
-     - `AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS`
-  
+  - Format semantics (important for correct presentation): X8 formats are fully opaque and `*_SRGB` formats are layout-identical to UNORM but differ in interpretation; see `docs/16-gpu-command-abi.md` §2.5.1.
+  - If `AEROGPU_FEATURE_VBLANK` is set (RO):
+    - `AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_LO/HI`
+    - `AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_LO/HI` (monotonic ns since boot; see `drivers/aerogpu/protocol/vblank.md`)
+    - `AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS`
+
 - **Cursor (optional)**
   - If `AEROGPU_FEATURE_CURSOR` is set:
     - `AEROGPU_MMIO_REG_CURSOR_ENABLE`
@@ -808,7 +809,8 @@ The register names below are the canonical ones from `drivers/aerogpu/protocol/a
     - `AEROGPU_MMIO_REG_CURSOR_FORMAT` (`enum aerogpu_format`)
     - `AEROGPU_MMIO_REG_CURSOR_FB_GPA_LO/HI`
     - `AEROGPU_MMIO_REG_CURSOR_PITCH_BYTES`
-  
+    - Format semantics are the same as scanout (X8 opaque; `*_SRGB` interpretation rules); see `docs/16-gpu-command-abi.md` §2.5.1.
+
 ### 7.3 Shared submission ring
   
 The submission transport is a shared ring in guest physical memory, defined in `drivers/aerogpu/protocol/aerogpu_ring.h`.
