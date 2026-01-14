@@ -469,6 +469,8 @@ This is used by the guest stack to resolve hostnames without direct UDP access f
 > Local development note: the repo also includes [`net-proxy/`](../../net-proxy/) which exposes `/dns-query` and
 > `/dns-json` so you can run local networking without the full gateway. `net-proxy`’s DoH endpoints are intentionally
 > lightweight (and are unauthenticated / not policy-filtered); see [`net-proxy/README.md`](../../net-proxy/README.md).
+> If your frontend is running on a different origin than `net-proxy`, either proxy the DoH paths through your dev
+> server (recommended) or enable the explicit CORS allowlist via `AERO_PROXY_DOH_CORS_ALLOW_ORIGINS`.
 
 ### Authentication
 
