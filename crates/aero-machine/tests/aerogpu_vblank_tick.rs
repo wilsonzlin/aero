@@ -90,8 +90,14 @@ fn aerogpu_vblank_ticks_while_halted_and_irq_is_latched_only_when_enabled() {
         "expected vblank IRQ_STATUS bit to remain clear while vblank IRQ is disabled"
     );
 
-    // Advance enough time to cross at least one 60Hz vblank interval (~16.6ms).
-    for _ in 0..25 {
+    // Advance enough time to cross at least one vblank interval while the CPU is halted.
+    let period_ns = u64::from(m.read_physical_u32(
+        bar0_base + u64::from(proto::AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS),
+    ));
+    assert_ne!(period_ns, 0, "test requires vblank pacing to be active");
+    const NS_PER_MS: u64 = 1_000_000;
+    let ticks_needed = period_ns.div_ceil(NS_PER_MS) as usize;
+    for _ in 0..ticks_needed {
         assert!(
             matches!(m.run_slice(1), RunExit::Halted { executed: 0 }),
             "expected CPU to remain halted while advancing platform time"
@@ -122,7 +128,7 @@ fn aerogpu_vblank_ticks_while_halted_and_irq_is_latched_only_when_enabled() {
         proto::AEROGPU_IRQ_SCANOUT_VBLANK,
     );
 
-    for _ in 0..25 {
+    for _ in 0..ticks_needed {
         assert!(
             matches!(m.run_slice(1), RunExit::Halted { executed: 0 }),
             "expected CPU to remain halted while advancing platform time"
