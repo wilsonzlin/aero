@@ -46,6 +46,7 @@ pub struct BindGroupLayout {
     /// - group(0): constants shared by VS/PS (bindings 0/1/2 for float/int/bool constants)
     /// - group(1): VS texture/sampler bindings
     /// - group(2): PS texture/sampler bindings
+    /// - group(3): optional half-pixel-center uniform buffer (VS only)
     pub sampler_group: u32,
     /// sampler_index -> (texture_binding, sampler_binding)
     pub sampler_bindings: HashMap<u32, (u32, u32)>,
@@ -85,6 +86,9 @@ pub enum Sm3WgslError {
 ///
 /// The input must be the legacy D3D9 token stream itself (i.e. the `SHDR`/`SHEX` payload), not a
 /// DXBC container.
+///
+/// For translation options that affect WGSL semantics (e.g. D3D9 half-pixel center adjustment),
+/// use [`translate_to_wgsl_with_options`].
 pub fn translate_to_wgsl(token_stream: &[u8]) -> Result<WgslTranslation, Sm3WgslError> {
     translate_to_wgsl_with_options(token_stream, WgslOptions::default())
 }
