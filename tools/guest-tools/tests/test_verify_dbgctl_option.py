@@ -24,6 +24,17 @@ class VerifyDbgctlOptionTests(unittest.TestCase):
             text,
         )
 
+        # Legacy packaged location should remain in the fallback search list for
+        # backwards compatibility with older Guest Tools media.
+        self.assertIn(
+            r"drivers\amd64\aerogpu\tools\aerogpu_dbgctl.exe",
+            text,
+        )
+        self.assertIn(
+            r"drivers\x86\aerogpu\tools\aerogpu_dbgctl.exe",
+            text,
+        )
+
         # Selftest invocation is referenced.
         self.assertIn("--selftest", text)
 
