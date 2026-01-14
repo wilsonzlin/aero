@@ -46,10 +46,12 @@ Independently of draw-time WVP, `pfnProcessVertices` has a bring-up fixed-functi
   - For `D3DFVF_XYZ*` inputs, it computes `WORLD0 * VIEW * PROJECTION`, applies the D3D9 viewport transform, and writes
     `XYZRHW` (screen space).
   - For `D3DFVF_XYZRHW*` inputs, `XYZRHW` is already in screen space and is passed through unchanged.
-  - When the destination declaration includes diffuse color and the source format does not, the UMD fills it with opaque
-    white (matching fixed-function behavior).
-  - When `D3DPV_DONOTCOPYDATA` is set in `ProcessVertices.Flags`, the UMD writes only the output position (`POSITIONT`) and
-    preserves all other destination bytes (no DIFFUSE/TEX writes, no zero-fill).
+  - `D3DPV_DONOTCOPYDATA` (`ProcessVertices.Flags & 0x1`) controls whether non-position elements are written:
+    - When set, the UMD writes **only** the output position (`POSITIONT` float4) and preserves all other destination bytes
+      (no zeroing, no `DIFFUSE`/`TEXCOORD0` writes).
+    - When not set and the destination declaration includes `DIFFUSE`, the UMD copies it from the source when present,
+      otherwise fills it with opaque white (matching fixed-function behavior). `TEXCOORD0` is copied only when present in
+      both the source and destination layouts.
 
 ## Code anchors
 
@@ -59,7 +61,8 @@ Independently of draw-time WVP, `pfnProcessVertices` has a bring-up fixed-functi
   - `ensure_fixedfunc_wvp_constants_locked()` + `emit_set_shader_constants_f_locked()`
   - `AEROGPU_CMD_SET_SHADER_CONSTANTS_F`
 - Existing CPU vertex processing:
-  - `device_process_vertices_internal()` (`ProcessVertices` fixed-function subset: XYZ→XYZRHW transform, XYZRHW pass-through, optional diffuse fill)
+  - `device_process_vertices_internal()` (`ProcessVertices` fixed-function subset: XYZ→XYZRHW transform, XYZRHW pass-through, optional diffuse fill, honors `D3DPV_DONOTCOPYDATA`)
+  - `device_process_vertices()` (DDI entrypoint; falls back to a stride-aware memcpy and clamps pre-transformed `XYZRHW*` copies to 16 bytes when `D3DPV_DONOTCOPYDATA` is set)
   - `convert_xyzrhw_to_clipspace_locked()` (`XYZRHW` → clip-space for fixed-function draws)
 - Transform state cache:
   - `Device::transform_matrices[...]` (populated by `Device::SetTransform` / state blocks)

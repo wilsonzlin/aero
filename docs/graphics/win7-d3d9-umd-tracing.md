@@ -208,6 +208,7 @@ This trace is meant to be lightweight, so most values are logged as raw integers
   - `a1 = hDestBuffer.pDrvPrivate`
   - `a2 = pack_u32_u32(SrcStartIndex, DestIndex)`
   - `a3 = pack_u32_u32(VertexCount, DestStride)` (`DestStride` may be 0 depending on header/runtime)
+  - Note: `pProcessVertices->Flags` (D3DPV_* bits) is not currently logged; `D3DPV_DONOTCOPYDATA` is bit 0 (`0x1`).
 
 - `Device::CreateStateBlock`
   - `a0 = hDevice.pDrvPrivate`

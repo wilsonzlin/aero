@@ -1276,6 +1276,12 @@ typedef struct _D3DDDIARG_DRAWINDEXEDPRIMITIVE2 {
 // The D3D9 runtime consumes the currently-bound stream sources as the vertex
 // input and writes into `hDestBuffer`.
 //
+// Flags note:
+// - `Flags` is passed through from `IDirect3DDevice9::ProcessVertices` (D3DPV_*
+//   bits). AeroGPU currently observes `D3DPV_DONOTCOPYDATA` (`0x1`), meaning “do
+//   not write non-position output elements”; the UMD preserves the destination
+//   bytes for any non-position fields.
+//
 // Portable ABI note:
 // - The Win7 WDK defines this struct in `d3dumddi.h`.
 // - Some header vintages may not include `DestStride`. When `DestStride` is
