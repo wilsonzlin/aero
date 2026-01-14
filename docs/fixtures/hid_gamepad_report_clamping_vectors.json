@@ -1,0 +1,82 @@
+[
+  {
+    "name": "neutral",
+    "buttons": 0,
+    "hat": 8,
+    "x": 0,
+    "y": 0,
+    "rx": 0,
+    "ry": 0,
+    "bytes": [0, 0, 8, 0, 0, 0, 0, 0]
+  },
+  {
+    "name": "hat_with_upper_bits_set_clamps_to_neutral",
+    "buttons": 4660,
+    "hat": 241,
+    "x": 1,
+    "y": -1,
+    "rx": 127,
+    "ry": -127,
+    "bytes": [52, 18, 8, 1, 255, 127, 129, 0]
+  },
+  {
+    "name": "clamp_negative_hat_to_neutral",
+    "buttons": 0,
+    "hat": -1,
+    "x": 12,
+    "y": -34,
+    "rx": 56,
+    "ry": -78,
+    "bytes": [0, 0, 8, 12, 222, 56, 178, 0]
+  },
+  {
+    "name": "clamp_hat_and_axes_out_of_range",
+    "buttons": 0,
+    "hat": 99,
+    "x": 200,
+    "y": -200,
+    "rx": 200,
+    "ry": -200,
+    "bytes": [0, 0, 8, 127, 129, 127, 129, 0]
+  },
+  {
+    "name": "axis_negative_overflow_clamps",
+    "buttons": 0,
+    "hat": 8,
+    "x": -128,
+    "y": 0,
+    "rx": 0,
+    "ry": 0,
+    "bytes": [0, 0, 8, 129, 0, 0, 0, 0]
+  },
+  {
+    "name": "axis_positive_overflow_clamps",
+    "buttons": 0,
+    "hat": 8,
+    "x": 128,
+    "y": 0,
+    "rx": 0,
+    "ry": 0,
+    "bytes": [0, 0, 8, 127, 0, 0, 0, 0]
+  },
+  {
+    "name": "buttons_mask_to_u16",
+    "buttons": 65537,
+    "hat": 8,
+    "x": 0,
+    "y": 0,
+    "rx": 0,
+    "ry": 0,
+    "bytes": [1, 0, 8, 0, 0, 0, 0, 0]
+  },
+  {
+    "name": "buttons_negative_masks_to_u16",
+    "buttons": -1,
+    "hat": 8,
+    "x": 0,
+    "y": 0,
+    "rx": 0,
+    "ry": 0,
+    "bytes": [255, 255, 8, 0, 0, 0, 0, 0]
+  }
+]

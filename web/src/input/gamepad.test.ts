@@ -171,6 +171,78 @@ describe("hid_gamepad_report_vectors fixture", () => {
   });
 });
 
+describe("hid_gamepad_report_clamping_vectors fixture", () => {
+  it("matches cross-language clamping semantics for packing", async () => {
+    type FixtureVector = {
+      name?: string;
+      buttons: number;
+      hat: number;
+      x: number;
+      y: number;
+      rx: number;
+      ry: number;
+      bytes: number[];
+    };
+
+    const raw = await readFile(
+      new URL("../../../docs/fixtures/hid_gamepad_report_clamping_vectors.json", import.meta.url),
+      "utf8",
+    );
+    const vectors = JSON.parse(raw) as FixtureVector[];
+
+    expect(vectors.length).toBeGreaterThan(0);
+    expect(vectors.length).toBeLessThanOrEqual(64);
+
+    const clampHat = (hat: number): number =>
+      (Number.isFinite(hat) && hat >= 0 && hat <= GAMEPAD_HAT_NEUTRAL ? hat : GAMEPAD_HAT_NEUTRAL) | 0;
+    const clampAxis = (axis: number): number => Math.max(-127, Math.min(127, axis | 0)) | 0;
+
+    for (const [idx, v] of vectors.entries()) {
+      expect(v.bytes, v.name ?? `vector ${idx}`).toHaveLength(8);
+
+      // These vectors intentionally include out-of-range fields (e.g. hat outside [0..8] or axes
+      // outside [-127..127]) so we can pin down clamping/masking semantics across implementations.
+      expect(Number.isSafeInteger(v.buttons), v.name ?? `vector ${idx}`).toBe(true);
+      expect(Number.isSafeInteger(v.hat), v.name ?? `vector ${idx}`).toBe(true);
+      for (const [axisName, axis] of [
+        ["x", v.x],
+        ["y", v.y],
+        ["rx", v.rx],
+        ["ry", v.ry],
+      ] as const) {
+        expect(Number.isSafeInteger(axis), `${v.name ?? `vector ${idx}`}.${axisName}`).toBe(true);
+      }
+      for (const [bIdx, b] of v.bytes.entries()) {
+        expect(Number.isInteger(b), `${v.name ?? `vector ${idx}`}.bytes[${bIdx}]`).toBe(true);
+        expect(b, `${v.name ?? `vector ${idx}`}.bytes[${bIdx}]`).toBeGreaterThanOrEqual(0);
+        expect(b, `${v.name ?? `vector ${idx}`}.bytes[${bIdx}]`).toBeLessThanOrEqual(0xff);
+      }
+
+      const { packedLo, packedHi } = packGamepadReport({
+        buttons: v.buttons,
+        hat: v.hat,
+        x: v.x,
+        y: v.y,
+        rx: v.rx,
+        ry: v.ry,
+      });
+
+      const bytes = Array.from(unpackGamepadReport(packedLo, packedHi));
+      expect(bytes, v.name ?? `vector ${idx}`).toEqual(v.bytes);
+
+      const decoded = decodeGamepadReport(packedLo, packedHi);
+      expect(decoded, v.name ?? `vector ${idx}`).toEqual({
+        buttons: v.buttons & 0xffff,
+        hat: clampHat(v.hat),
+        x: clampAxis(v.x),
+        y: clampAxis(v.y),
+        rx: clampAxis(v.rx),
+        ry: clampAxis(v.ry),
+      });
+    }
+  });
+});
+
 describe("GamepadCapture", () => {
   it("de-dups unchanged reports and can emit a neutral report", () => {
     type Btn = { pressed: boolean };
