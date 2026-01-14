@@ -321,6 +321,11 @@ fn pc_platform_reset_restores_pci_intx_interrupt_line_and_pin_registers() {
 
     // First validate a built-in device from the default platform topology (AHCI at 00:02.0).
     let pirq_to_gsi = PciIntxRouterConfig::default().pirq_to_gsi;
+    assert_eq!(
+        pirq_to_gsi,
+        [10, 11, 12, 13],
+        "default PIRQ->GSI mapping should remain stable for reset determinism tests"
+    );
     let ahci_bdf = SATA_AHCI_ICH9.bdf;
     {
         let pin_before =
@@ -450,6 +455,11 @@ fn pc_platform_reset_pci_restores_pci_intx_interrupt_line_and_pin_registers() {
     // directly so regressions in that helper are also caught.
     let expected_pin = PciInterruptPin::IntC;
     let pirq_to_gsi = PciIntxRouterConfig::default().pirq_to_gsi;
+    assert_eq!(
+        pirq_to_gsi,
+        [10, 11, 12, 13],
+        "default PIRQ->GSI mapping should remain stable for reset determinism tests"
+    );
 
     let bdf = {
         let mut pci_cfg = pc.pci_cfg.borrow_mut();
