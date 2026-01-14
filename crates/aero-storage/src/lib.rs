@@ -28,15 +28,15 @@
 //! disk.read_sectors(0, &mut sector).unwrap();
 //! ```
 //!
-//! On native targets, you can use [`StdFileBackend`] to open a disk image directly from the local
-//! filesystem:
+//! On native targets, you can use [`FileBackend`] (an alias for [`StdFileBackend`]) to open a disk
+//! image directly from the local filesystem:
 //!
 //! ```rust,no_run
 //! # #[cfg(not(target_arch = "wasm32"))]
 //! # {
-//! use aero_storage::{DiskImage, StdFileBackend, VirtualDisk};
+//! use aero_storage::{DiskImage, FileBackend, VirtualDisk};
 //!
-//! let backend = StdFileBackend::open_rw("disk.img").unwrap();
+//! let backend = FileBackend::open_rw("disk.img").unwrap();
 //! let mut disk = DiskImage::open_auto(backend).unwrap();
 //!
 //! let mut sector = [0u8; 512];
