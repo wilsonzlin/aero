@@ -139,6 +139,50 @@ fn reg_src(ty: u32, indices: &[u32], swizzle: Swizzle) -> Vec<u32> {
     out
 }
 
+fn operand_ext_token_modifier(modifier: OperandModifier) -> Option<u32> {
+    let m = match modifier {
+        OperandModifier::None => return None,
+        OperandModifier::Neg => 1u32,
+        OperandModifier::Abs => 2u32,
+        OperandModifier::AbsNeg => 3u32,
+    };
+    // Extended operand token type 0 encodes operand modifiers (neg/abs/absneg) in bits 6..7.
+    Some(m << 6)
+}
+
+fn reg_src_with_modifier(
+    ty: u32,
+    indices: &[u32],
+    swizzle: Swizzle,
+    modifier: OperandModifier,
+) -> Vec<u32> {
+    let num_components = match ty {
+        OPERAND_TYPE_SAMPLER | OPERAND_TYPE_RESOURCE => 0,
+        _ => 2,
+    };
+    let selection_mode = if num_components == 0 {
+        OPERAND_SEL_MASK
+    } else {
+        OPERAND_SEL_SWIZZLE
+    };
+    let ext = operand_ext_token_modifier(modifier);
+    let token = operand_token(
+        ty,
+        num_components,
+        selection_mode,
+        swizzle_bits(swizzle.0),
+        indices.len() as u32,
+        ext.is_some(),
+    );
+    let mut out = Vec::new();
+    out.push(token);
+    if let Some(ext) = ext {
+        out.push(ext);
+    }
+    out.extend_from_slice(indices);
+    out
+}
+
 fn imm32_vec4(values: [u32; 4]) -> Vec<u32> {
     let mut out = Vec::with_capacity(1 + 4);
     out.push(operand_token(
@@ -4309,6 +4353,154 @@ fn decodes_and_translates_f32tof16_sat_clamps_input_before_packing() {
     assert!(
         translated.wgsl.contains("unpack2x16float"),
         "expected WGSL to contain unpack2x16float:\n{}",
+        translated.wgsl
+    );
+}
+
+#[test]
+fn decodes_and_translates_f16tof32_sat_clamps_converted_values() {
+    let mut body = Vec::<u32>::new();
+
+    // dcl_output o0.xyzw
+    body.push(opcode_token(OPCODE_DCL_OUTPUT, 3));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+
+    // mov r0, l(2.0, -1.0, 0.5, 42.0)
+    body.push(opcode_token(OPCODE_MOV, (1 + 2 + 1 + 4) as u32));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 0, WriteMask::XYZW));
+    body.extend_from_slice(&imm32_vec4([
+        2.0f32.to_bits(),
+        (-1.0f32).to_bits(),
+        0.5f32.to_bits(),
+        42.0f32.to_bits(),
+    ]));
+
+    // f32tof16 r1, r0
+    body.push(opcode_token(OPCODE_F32TOF16, 5));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 1, WriteMask::XYZW));
+    body.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, &[0], Swizzle::XYZW));
+
+    // f16tof32_sat r2, r1
+    let f16tof32_dst = reg_dst(OPERAND_TYPE_TEMP, 2, WriteMask::XYZW);
+    let f16tof32_src = reg_src(OPERAND_TYPE_TEMP, &[1], Swizzle::XYZW);
+    let f16tof32_len_without_ext = 1u32 + f16tof32_dst.len() as u32 + f16tof32_src.len() as u32;
+    body.extend_from_slice(&opcode_token_with_sat(
+        OPCODE_F16TOF32,
+        f16tof32_len_without_ext,
+    ));
+    body.extend_from_slice(&f16tof32_dst);
+    body.extend_from_slice(&f16tof32_src);
+
+    // mov o0, r2
+    body.push(opcode_token(OPCODE_MOV, 5));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+    body.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, &[2], Swizzle::XYZW));
+
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    let tokens = make_sm5_program_tokens(0, &body);
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, tokens_to_bytes(&tokens)),
+        (FOURCC_ISGN, build_signature_chunk(&[])),
+        (
+            FOURCC_OSGN,
+            build_signature_chunk(&[sig_param("SV_Target", 0, 0, 0b1111)]),
+        ),
+    ]);
+
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
+    let module = decode_program(&program).expect("SM4 decode");
+    assert!(
+        matches!(&module.instructions[2], Sm4Inst::F16ToF32 { dst, .. } if dst.saturate),
+        "expected third instruction to decode as f16tof32_sat: {:#?}",
+        module.instructions
+    );
+
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+
+    assert!(
+        translated.wgsl.contains("unpack2x16float"),
+        "expected WGSL to contain unpack2x16float:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated.wgsl.contains("clamp(("),
+        "expected f16tof32_sat lowering to clamp the converted float values:\n{}",
+        translated.wgsl
+    );
+}
+
+#[test]
+fn decodes_and_translates_f16tof32_ignores_operand_modifier_to_preserve_half_bits() {
+    let mut body = Vec::<u32>::new();
+
+    // dcl_output o0.xyzw
+    body.push(opcode_token(OPCODE_DCL_OUTPUT, 3));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+
+    // mov r0, l(1, 0, 0, 0)
+    body.push(opcode_token(OPCODE_MOV, (1 + 2 + 1 + 4) as u32));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 0, WriteMask::XYZW));
+    body.extend_from_slice(&imm32_vec4([1.0f32.to_bits(), 0, 0, 0]));
+
+    // f32tof16 r1, r0
+    body.push(opcode_token(OPCODE_F32TOF16, 5));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 1, WriteMask::XYZW));
+    body.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, &[0], Swizzle::XYZW));
+
+    // f16tof32 r2, -r1
+    body.push(opcode_token(OPCODE_F16TOF32, 6));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 2, WriteMask::XYZW));
+    body.extend_from_slice(&reg_src_with_modifier(
+        OPERAND_TYPE_TEMP,
+        &[1],
+        Swizzle::XYZW,
+        OperandModifier::Neg,
+    ));
+
+    // mov o0, r2
+    body.push(opcode_token(OPCODE_MOV, 5));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+    body.extend_from_slice(&reg_src(OPERAND_TYPE_TEMP, &[2], Swizzle::XYZW));
+
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    let tokens = make_sm5_program_tokens(0, &body);
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, tokens_to_bytes(&tokens)),
+        (FOURCC_ISGN, build_signature_chunk(&[])),
+        (
+            FOURCC_OSGN,
+            build_signature_chunk(&[sig_param("SV_Target", 0, 0, 0b1111)]),
+        ),
+    ]);
+
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
+    let module = decode_program(&program).expect("SM4 decode");
+    assert!(
+        matches!(
+            &module.instructions[2],
+            Sm4Inst::F16ToF32 { src, .. } if src.modifier == OperandModifier::Neg
+        ),
+        "expected src modifier on f16tof32 to decode as Neg: {:#?}",
+        module.instructions
+    );
+
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+    assert!(
+        translated.wgsl.contains("unpack2x16float"),
+        "expected WGSL to contain unpack2x16float:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        !translated.wgsl.contains("vec4<u32>(0u) -"),
+        "expected f16tof32 lowering to ignore src operand modifiers (preserve half bits):\n{}",
         translated.wgsl
     );
 }
