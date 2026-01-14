@@ -229,8 +229,8 @@ def _build_qemu_args(
 
     if with_virtio_snd:
         if not snd_device_name:
-            raise SystemExit(
-                "ERROR: QEMU does not advertise a virtio-snd PCI device (expected virtio-sound-pci or virtio-snd-pci)."
+            raise RuntimeError(
+                "QEMU does not advertise a virtio-snd PCI device (expected virtio-sound-pci or virtio-snd-pci)."
             )
         qemu_args += [
             "-audiodev",
@@ -403,14 +403,18 @@ def main() -> int:
         # Small placeholder disk (only used for device instantiation).
         disk_path.write_bytes(b"\x00" * 1024 * 1024)
 
-        qemu_args = _build_qemu_args(
-            qemu_system=args.qemu_system,
-            disk_path=disk_path,
-            mode=args.mode,
-            with_virtio_snd=args.with_virtio_snd,
-            with_virtio_tablet=args.with_virtio_tablet,
-            device_help_text=device_help_text,
-        )
+        try:
+            qemu_args = _build_qemu_args(
+                qemu_system=args.qemu_system,
+                disk_path=disk_path,
+                mode=args.mode,
+                with_virtio_snd=args.with_virtio_snd,
+                with_virtio_tablet=args.with_virtio_tablet,
+                device_help_text=device_help_text,
+            )
+        except RuntimeError as e:
+            print(f"ERROR: {e}", file=sys.stderr)
+            return 2
 
         try:
             proc = subprocess.Popen(
