@@ -10106,6 +10106,122 @@ bool TestFvfXyzNormalDiffuseTransformsLightDirectionByView() {
   return true;
 }
 
+bool TestFvfXyzNormalDiffuseTransformsPointLightPositionByView() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetRenderState != nullptr, "pfnSetRenderState is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetTransform != nullptr, "pfnSetTransform is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // Activate the fixed-function lit path.
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzNormalDiffuse);
+  if (!Check(hr == S_OK, "SetFVF(XYZ|NORMAL|DIFFUSE)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsLighting, 1u);
+  if (!Check(hr == S_OK, "SetRenderState(LIGHTING=TRUE)")) {
+    return false;
+  }
+
+  // Translate VIEW so point lights are transformed into view space.
+  constexpr float tx = 2.0f;
+  constexpr float ty = -3.0f;
+  constexpr float tz = 4.0f;
+  D3DMATRIX identity{};
+  identity.m[0][0] = 1.0f;
+  identity.m[1][1] = 1.0f;
+  identity.m[2][2] = 1.0f;
+  identity.m[3][3] = 1.0f;
+  D3DMATRIX view = identity;
+  view.m[3][0] = tx;
+  view.m[3][1] = ty;
+  view.m[3][2] = tz;
+  hr = cleanup.device_funcs.pfnSetTransform(cleanup.hDevice, kD3dTransformWorld0, &identity);
+  if (!Check(hr == S_OK, "SetTransform(WORLD0)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTransform(cleanup.hDevice, kD3dTransformProjection, &identity);
+  if (!Check(hr == S_OK, "SetTransform(PROJECTION)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTransform(cleanup.hDevice, kD3dTransformView, &view);
+  if (!Check(hr == S_OK, "SetTransform(VIEW translated)")) {
+    return false;
+  }
+
+  D3DLIGHT9 point{};
+  point.Type = D3DLIGHT_POINT;
+  point.Position = {1.0f, 2.0f, 3.0f};
+  point.Diffuse = {1.0f, 1.0f, 1.0f, 1.0f};
+  point.Ambient = {0.0f, 0.0f, 0.0f, 1.0f};
+  point.Attenuation0 = 1.0f;
+  point.Range = 1.0f;
+  hr = device_set_light(cleanup.hDevice, /*index=*/0, &point);
+  if (!Check(hr == S_OK, "SetLight(point0)")) {
+    return false;
+  }
+  hr = device_light_enable(cleanup.hDevice, /*index=*/0, TRUE);
+  if (!Check(hr == S_OK, "LightEnable(point0, TRUE)")) {
+    return false;
+  }
+
+  const VertexXyzNormalDiffuse tri[3] = {
+      {0.0f, 0.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu},
+      {1.0f, 0.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu},
+      {0.0f, 1.0f, 0.0f, /*nx=*/0.0f, /*ny=*/0.0f, /*nz=*/1.0f, 0xFFFFFFFFu},
+  };
+  dev->cmd.reset();
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzNormalDiffuse));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(translated view point light)")) {
+    return false;
+  }
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(translated view point light)")) {
+    return false;
+  }
+
+  const float* payload = FindVsConstantsPayload(buf,
+                                                len,
+                                                kFixedfuncLightingStartRegister,
+                                                kFixedfuncLightingVec4Count);
+  if (!Check(payload != nullptr, "lighting payload present")) {
+    return false;
+  }
+
+  // c208..c210: world*view columns 0..2 (w contains translation).
+  if (!Check(payload[0] == 1.0f && payload[1] == 0.0f && payload[2] == 0.0f && payload[3] == tx &&
+             payload[4] == 0.0f && payload[5] == 1.0f && payload[6] == 0.0f && payload[7] == ty &&
+             payload[8] == 0.0f && payload[9] == 0.0f && payload[10] == 1.0f && payload[11] == tz,
+             "translated view: c208..c210 pack world*view columns")) {
+    return false;
+  }
+
+  // Point slot0 position (c223) should include view translation.
+  constexpr uint32_t kPoint0PosRel = (223u - kFixedfuncLightingStartRegister);
+  if (!Check(payload[kPoint0PosRel * 4 + 0] == 1.0f + tx &&
+             payload[kPoint0PosRel * 4 + 1] == 2.0f + ty &&
+             payload[kPoint0PosRel * 4 + 2] == 3.0f + tz &&
+             payload[kPoint0PosRel * 4 + 3] == 1.0f,
+             "translated view: point light position transformed into view space")) {
+    return false;
+  }
+
+  return true;
+}
+
 bool TestFixedfuncFogTogglesShaderVariant() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -10333,6 +10449,9 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestFvfXyzNormalDiffuseTransformsLightDirectionByView()) {
+    return 1;
+  }
+  if (!aerogpu::TestFvfXyzNormalDiffuseTransformsPointLightPositionByView()) {
     return 1;
   }
   if (!aerogpu::TestVertexDeclXyzrhwTex1InfersFvfAndBindsShaders()) {
