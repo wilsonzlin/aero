@@ -346,8 +346,7 @@ mod tests {
         assert_eq!(sizes.hs_out_bytes, 192);
         assert_eq!(sizes.hs_patch_constants_bytes, 32);
         assert_eq!(
-            sizes.hs_tess_factors_bytes,
-            32,
+            sizes.hs_tess_factors_bytes, 32,
             "one vec4<f32> tess factor payload per patch"
         );
         assert_eq!(

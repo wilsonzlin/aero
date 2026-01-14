@@ -97,17 +97,17 @@ fn compute_worst_case_scratch_usage_bytes(
     let storage_alignment = scratch_storage_alignment(device);
     let mut offset = 0u64;
 
-        // VS/HS stage outputs and patch constants are vertex-like storage payloads.
-        for bytes in [
-            sizes.vs_out_bytes,
-            sizes.hs_out_bytes,
-            sizes.hs_patch_constants_bytes,
-            sizes.hs_tess_factors_bytes,
-            sizes.tess_metadata_bytes,
-            sizes.expanded_vertex_bytes,
-        ] {
-            offset = scratch_add_alloc(offset, bytes, 16, storage_alignment)?;
-        }
+    // VS/HS stage outputs and patch constants are vertex-like storage payloads.
+    for bytes in [
+        sizes.vs_out_bytes,
+        sizes.hs_out_bytes,
+        sizes.hs_patch_constants_bytes,
+        sizes.hs_tess_factors_bytes,
+        sizes.tess_metadata_bytes,
+        sizes.expanded_vertex_bytes,
+    ] {
+        offset = scratch_add_alloc(offset, bytes, 16, storage_alignment)?;
+    }
 
     // Expanded indices + indirect args are u32-based.
     offset = scratch_add_alloc(offset, sizes.expanded_index_bytes, 4, storage_alignment)?;
