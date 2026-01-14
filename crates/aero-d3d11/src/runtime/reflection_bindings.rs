@@ -2001,10 +2001,11 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
             });
             let dummy_texture_view_2d =
                 dummy_texture.create_view(&wgpu::TextureViewDescriptor::default());
-            let dummy_texture_view_2d_array = dummy_texture.create_view(&wgpu::TextureViewDescriptor {
-                dimension: Some(wgpu::TextureViewDimension::D2Array),
-                ..Default::default()
-            });
+            let dummy_texture_view_2d_array =
+                dummy_texture.create_view(&wgpu::TextureViewDescriptor {
+                    dimension: Some(wgpu::TextureViewDimension::D2Array),
+                    ..Default::default()
+                });
             let mut sampler_cache = SamplerCache::new();
             let default_sampler = sampler_cache.get_or_create(
                 &device,
@@ -2052,7 +2053,10 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
                     None
                 }
 
-                fn texture2d_array(&self, _slot: u32) -> Option<(TextureViewId, &wgpu::TextureView)> {
+                fn texture2d_array(
+                    &self,
+                    _slot: u32,
+                ) -> Option<(TextureViewId, &wgpu::TextureView)> {
                     None
                 }
 
@@ -2370,10 +2374,11 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
             });
             let dummy_texture_view_2d =
                 dummy_texture.create_view(&wgpu::TextureViewDescriptor::default());
-            let dummy_texture_view_2d_array = dummy_texture.create_view(&wgpu::TextureViewDescriptor {
-                dimension: Some(wgpu::TextureViewDimension::D2Array),
-                ..Default::default()
-            });
+            let dummy_texture_view_2d_array =
+                dummy_texture.create_view(&wgpu::TextureViewDescriptor {
+                    dimension: Some(wgpu::TextureViewDimension::D2Array),
+                    ..Default::default()
+                });
 
             let mut sampler_cache = SamplerCache::new();
             let default_sampler =
@@ -2545,10 +2550,11 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
             });
             let dummy_texture_view_2d =
                 dummy_texture.create_view(&wgpu::TextureViewDescriptor::default());
-            let dummy_texture_view_2d_array = dummy_texture.create_view(&wgpu::TextureViewDescriptor {
-                dimension: Some(wgpu::TextureViewDimension::D2Array),
-                ..Default::default()
-            });
+            let dummy_texture_view_2d_array =
+                dummy_texture.create_view(&wgpu::TextureViewDescriptor {
+                    dimension: Some(wgpu::TextureViewDimension::D2Array),
+                    ..Default::default()
+                });
 
             let mut sampler_cache = SamplerCache::new();
             let default_sampler =
@@ -2717,10 +2723,11 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
             });
             let dummy_texture_view_2d =
                 dummy_texture.create_view(&wgpu::TextureViewDescriptor::default());
-            let dummy_texture_view_2d_array = dummy_texture.create_view(&wgpu::TextureViewDescriptor {
-                dimension: Some(wgpu::TextureViewDimension::D2Array),
-                ..Default::default()
-            });
+            let dummy_texture_view_2d_array =
+                dummy_texture.create_view(&wgpu::TextureViewDescriptor {
+                    dimension: Some(wgpu::TextureViewDimension::D2Array),
+                    ..Default::default()
+                });
 
             let mut sampler_cache = SamplerCache::new();
             let default_sampler =
@@ -2919,10 +2926,11 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
             });
             let dummy_texture_view_2d =
                 dummy_texture.create_view(&wgpu::TextureViewDescriptor::default());
-            let dummy_texture_view_2d_array = dummy_texture.create_view(&wgpu::TextureViewDescriptor {
-                dimension: Some(wgpu::TextureViewDimension::D2Array),
-                ..Default::default()
-            });
+            let dummy_texture_view_2d_array =
+                dummy_texture.create_view(&wgpu::TextureViewDescriptor {
+                    dimension: Some(wgpu::TextureViewDimension::D2Array),
+                    ..Default::default()
+                });
 
             let mut sampler_cache = SamplerCache::new();
             let default_sampler =
@@ -3409,10 +3417,11 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
             });
             let dummy_texture_view_2d =
                 dummy_texture.create_view(&wgpu::TextureViewDescriptor::default());
-            let dummy_texture_view_2d_array = dummy_texture.create_view(&wgpu::TextureViewDescriptor {
-                dimension: Some(wgpu::TextureViewDimension::D2Array),
-                ..Default::default()
-            });
+            let dummy_texture_view_2d_array =
+                dummy_texture.create_view(&wgpu::TextureViewDescriptor {
+                    dimension: Some(wgpu::TextureViewDimension::D2Array),
+                    ..Default::default()
+                });
 
             let mut sampler_cache = SamplerCache::new();
             let default_sampler =
@@ -3610,10 +3619,11 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
             });
             let dummy_texture_view_2d =
                 dummy_texture.create_view(&wgpu::TextureViewDescriptor::default());
-            let dummy_texture_view_2d_array = dummy_texture.create_view(&wgpu::TextureViewDescriptor {
-                dimension: Some(wgpu::TextureViewDimension::D2Array),
-                ..Default::default()
-            });
+            let dummy_texture_view_2d_array =
+                dummy_texture.create_view(&wgpu::TextureViewDescriptor {
+                    dimension: Some(wgpu::TextureViewDimension::D2Array),
+                    ..Default::default()
+                });
 
             let mut sampler_cache = SamplerCache::new();
             let default_sampler =

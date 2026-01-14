@@ -3400,8 +3400,8 @@ fn scan_resources(
                 slot,
                 max: max_slots.saturating_sub(1),
             });
-    }
-    Ok(())
+        }
+        Ok(())
     }
     let mut cbuffers: BTreeMap<u32, u32> = BTreeMap::new();
     // Collect all `t#` slots referenced by the shader instruction stream (and expand arrays using

@@ -9256,7 +9256,8 @@ impl AerogpuD3d11Executor {
                                         dummy_uniform: &self.dummy_uniform,
                                         dummy_storage: &self.dummy_storage,
                                         dummy_texture_view_2d: &self.dummy_texture_view_2d,
-                                        dummy_texture_view_2d_array: &self.dummy_texture_view_2d_array,
+                                        dummy_texture_view_2d_array: &self
+                                            .dummy_texture_view_2d_array,
                                         default_sampler: &self.default_sampler,
                                         stage,
                                         stage_state: stage_bindings,
@@ -9593,7 +9594,8 @@ impl AerogpuD3d11Executor {
                                         dummy_uniform: &self.dummy_uniform,
                                         dummy_storage: &self.dummy_storage,
                                         dummy_texture_view_2d: &self.dummy_texture_view_2d,
-                                        dummy_texture_view_2d_array: &self.dummy_texture_view_2d_array,
+                                        dummy_texture_view_2d_array: &self
+                                            .dummy_texture_view_2d_array,
                                         default_sampler: &self.default_sampler,
                                         stage,
                                         stage_state: stage_bindings,
@@ -14704,15 +14706,15 @@ impl AerogpuD3d11Executor {
                 group_stage_overrides.as_slice(),
             )?;
             let stage_bindings = self.bindings.stage(stage);
-                for binding in group_bindings {
-                    #[allow(unreachable_patterns)]
-                    match &binding.kind {
-                        crate::BindingKind::Texture2D { slot }
-                        | crate::BindingKind::Texture2DArray { slot } => {
-                            if let Some(tex) = stage_bindings.texture(*slot) {
-                                self.encoder_used_textures.insert(tex.texture);
-                            }
+            for binding in group_bindings {
+                #[allow(unreachable_patterns)]
+                match &binding.kind {
+                    crate::BindingKind::Texture2D { slot }
+                    | crate::BindingKind::Texture2DArray { slot } => {
+                        if let Some(tex) = stage_bindings.texture(*slot) {
+                            self.encoder_used_textures.insert(tex.texture);
                         }
+                    }
                     crate::BindingKind::SrvBuffer { slot } => {
                         if let Some(buf) = stage_bindings.srv_buffer(*slot) {
                             self.encoder_used_buffers.insert(buf.buffer);
@@ -15524,7 +15526,8 @@ impl AerogpuD3d11Executor {
             .chain(patch_constant.bindings.iter())
         {
             match &binding.kind {
-                crate::BindingKind::Texture2D { slot } | crate::BindingKind::Texture2DArray { slot } => {
+                crate::BindingKind::Texture2D { slot }
+                | crate::BindingKind::Texture2DArray { slot } => {
                     if let Some(tex) = stage_bindings.texture(*slot) {
                         self.encoder_used_textures.insert(tex.texture);
                     }

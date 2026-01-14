@@ -1685,10 +1685,7 @@ async fn d3d9_executor_retranslates_on_persisted_wgsl_sampler_type_mismatch() {
         "expected cached WGSL to declare samp0 as a filtering sampler"
     );
 
-    let wgsl_corrupt = wgsl_before.replace(
-        "var samp0: sampler;",
-        "var samp0: sampler_comparison;",
-    );
+    let wgsl_corrupt = wgsl_before.replace("var samp0: sampler;", "var samp0: sampler_comparison;");
     let cached_obj: Object = cached
         .clone()
         .dyn_into()
@@ -1721,8 +1718,7 @@ async fn d3d9_executor_retranslates_on_persisted_wgsl_sampler_type_mismatch() {
         .and_then(|v| v.as_string())
         .unwrap_or_default();
     assert!(
-        wgsl_after.contains("var samp0: sampler;")
-            && !wgsl_after.contains("sampler_comparison"),
+        wgsl_after.contains("var samp0: sampler;") && !wgsl_after.contains("sampler_comparison"),
         "expected retranslation to restore samp0 sampler type"
     );
 }
