@@ -416,6 +416,9 @@ fn d3d9_half_pixel_center_cases() {
         Err(err) => panic!("failed to create executor: {err}"),
     };
     // Create a second executor with half_pixel_center enabled.
+    //
+    // Note: we intentionally create a separate executor instead of trying to share the underlying
+    // wgpu device/queue. `wgpu::Device`/`wgpu::Queue` are not `Clone`, and the executor owns them.
     let mut exec_on = match pollster::block_on(AerogpuD3d9Executor::new_headless_with_config(
         AerogpuD3d9ExecutorConfig {
             half_pixel_center: true,
