@@ -28,7 +28,6 @@ import {
   snapshotScanoutState,
 } from "./src/ipc/scanout_state";
 import {
-  allocateSharedMemorySegments,
   checkSharedMemorySupport,
   createSharedMemoryViews,
   guestPaddrToRamOffset,
@@ -36,6 +35,7 @@ import {
 } from "./src/runtime/shared_layout";
 import { VRAM_BASE_PADDR } from "./src/arch/guest_phys";
 import type { WorkerInitMessage } from "./src/runtime/protocol";
+import { allocateHarnessSharedMemorySegments } from "./src/runtime/harness_shared_memory";
 
 function $(id: string): HTMLElement {
   const el = document.getElementById(id);
@@ -275,13 +275,6 @@ async function main() {
   canvasEl.style.width = `${Math.min(640, WIDTH * 2)}px`;
   canvasEl.style.height = `${Math.min(640, HEIGHT * 2)}px`;
 
-  // Keep the allocation small so the page loads quickly (the wasm32 runtime always
-  // reserves a fixed 128MiB region, so allocating a huge guest_size here is wasted).
-  //
-  // Allocate a small VRAM aperture so this diagnostic page can validate both guest-RAM-backed and
-  // BAR1/VRAM-backed scanout surfaces.
-  const baseSegments = allocateSharedMemorySegments({ guestRamMiB: 2, vramMiB: 2 });
-
   // Small shared framebuffer used only for the legacy path in this diagnostic page.
   const strideBytes = WIDTH * 4;
   const fbLayout = computeSharedFramebufferLayout(WIDTH, HEIGHT, strideBytes, FramebufferFormat.RGBA8, 0);
@@ -314,15 +307,25 @@ async function main() {
   Atomics.store(frameState, FRAME_STATUS_INDEX, FRAME_PRESENTED);
   Atomics.store(frameState, FRAME_SEQ_INDEX, 0);
 
-  const segments = {
-    ...baseSegments,
+  // Allocate only the memory this page needs:
+  // - small guest RAM backing for the WDDM scanout buffers
+  // - a small BAR1/VRAM aperture for VRAM-backed scanout validation
+  // - the shared ScanoutState descriptor
+  //
+  // We intentionally avoid the full runtime allocator, which reserves a large wasm32 runtime region
+  // for the VM; this page does not execute the WASM runtime.
+  const segments = allocateHarnessSharedMemorySegments({
+    guestRamBytes: 2 * 1024 * 1024,
     sharedFramebuffer,
     sharedFramebufferOffsetBytes,
-  };
+    // GPU worker doesn't use IO IPC for this page; keep it empty.
+    ioIpcBytes: 0,
+    vramBytes: 2 * 1024 * 1024,
+  });
   const views = createSharedMemoryViews(segments);
   const scanoutWords = views.scanoutStateI32;
   if (!scanoutWords) {
-    log("scanoutState view missing (unexpected; shared_layout.allocateSharedMemorySegments should provide it)");
+    log("scanoutState view missing (unexpected)");
     return;
   }
 

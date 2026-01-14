@@ -5,11 +5,19 @@ import {
   GPU_PROTOCOL_NAME,
   GPU_PROTOCOL_VERSION,
 } from "./src/ipc/gpu-protocol";
-import { SHARED_FRAMEBUFFER_HEADER_U32_LEN, SharedFramebufferHeaderIndex } from "./src/ipc/shared-layout";
+import {
+  FramebufferFormat,
+  SHARED_FRAMEBUFFER_HEADER_U32_LEN,
+  SHARED_FRAMEBUFFER_MAGIC,
+  SHARED_FRAMEBUFFER_VERSION,
+  SharedFramebufferHeaderIndex,
+  computeSharedFramebufferLayout,
+} from "./src/ipc/shared-layout";
 import { publishScanoutState, SCANOUT_FORMAT_B8G8R8X8, SCANOUT_SOURCE_WDDM } from "./src/ipc/scanout_state";
 import { VRAM_BASE_PADDR } from "./src/arch/guest_phys.ts";
 import type { WorkerInitMessage } from "./src/runtime/protocol";
-import { allocateSharedMemorySegments, createSharedMemoryViews } from "./src/runtime/shared_layout";
+import { createSharedMemoryViews } from "./src/runtime/shared_layout";
+import { allocateHarnessSharedMemorySegments } from "./src/runtime/harness_shared_memory";
 import { fnv1a32Hex } from "./src/utils/fnv1a";
 
 declare global {
@@ -191,8 +199,37 @@ async function main(): Promise<void> {
     const vramParam = (params.get("vram") ?? "").toLowerCase();
     const useVramBacking = backingParam === "vram" || vramParam === "1" || vramParam === "true";
 
-    // Keep allocations small (but note the wasm32 runtime reserves a fixed 128MiB region).
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 2, vramMiB: useVramBacking ? 1 : 0 });
+    // Allocate only what this harness needs (guest RAM backing for the scanout surface, plus
+    // a shared ScanoutState descriptor). This avoids reserving a large wasm32 runtime region,
+    // which is unnecessary for this smoke test.
+    // Still provide a minimal legacy shared framebuffer header so the test can assert that
+    // WDDM scanout presentation clears any pending legacy dirty flag.
+    const fbLayout = computeSharedFramebufferLayout(1, 1, 4, FramebufferFormat.RGBA8, 0);
+    const sharedFramebuffer = new SharedArrayBuffer(fbLayout.totalBytes);
+    const fbHeader = new Int32Array(sharedFramebuffer, 0, SHARED_FRAMEBUFFER_HEADER_U32_LEN);
+    Atomics.store(fbHeader, SharedFramebufferHeaderIndex.MAGIC, SHARED_FRAMEBUFFER_MAGIC);
+    Atomics.store(fbHeader, SharedFramebufferHeaderIndex.VERSION, SHARED_FRAMEBUFFER_VERSION);
+    Atomics.store(fbHeader, SharedFramebufferHeaderIndex.WIDTH, fbLayout.width);
+    Atomics.store(fbHeader, SharedFramebufferHeaderIndex.HEIGHT, fbLayout.height);
+    Atomics.store(fbHeader, SharedFramebufferHeaderIndex.STRIDE_BYTES, fbLayout.strideBytes);
+    Atomics.store(fbHeader, SharedFramebufferHeaderIndex.FORMAT, fbLayout.format);
+    Atomics.store(fbHeader, SharedFramebufferHeaderIndex.ACTIVE_INDEX, 0);
+    Atomics.store(fbHeader, SharedFramebufferHeaderIndex.FRAME_SEQ, 0);
+    Atomics.store(fbHeader, SharedFramebufferHeaderIndex.FRAME_DIRTY, 0);
+    Atomics.store(fbHeader, SharedFramebufferHeaderIndex.TILE_SIZE, fbLayout.tileSize);
+    Atomics.store(fbHeader, SharedFramebufferHeaderIndex.TILES_X, fbLayout.tilesX);
+    Atomics.store(fbHeader, SharedFramebufferHeaderIndex.TILES_Y, fbLayout.tilesY);
+    Atomics.store(fbHeader, SharedFramebufferHeaderIndex.DIRTY_WORDS_PER_BUFFER, fbLayout.dirtyWordsPerBuffer);
+    Atomics.store(fbHeader, SharedFramebufferHeaderIndex.BUF0_FRAME_SEQ, 0);
+    Atomics.store(fbHeader, SharedFramebufferHeaderIndex.BUF1_FRAME_SEQ, 0);
+    Atomics.store(fbHeader, SharedFramebufferHeaderIndex.FLAGS, 0);
+    const segments = allocateHarnessSharedMemorySegments({
+      guestRamBytes: 2 * 1024 * 1024,
+      sharedFramebuffer,
+      sharedFramebufferOffsetBytes: 0,
+      ioIpcBytes: 0,
+      vramBytes: useVramBacking ? 1 * 1024 * 1024 : 0,
+    });
     const views = createSharedMemoryViews(segments);
 
     if (!views.scanoutStateI32) {
