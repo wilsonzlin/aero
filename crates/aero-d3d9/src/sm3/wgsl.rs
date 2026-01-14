@@ -226,6 +226,7 @@ struct RegUsage {
     addrs: BTreeSet<u32>,
     loop_regs: BTreeSet<u32>,
     inputs: BTreeSet<(RegFile, u32)>,
+    misc_inputs: BTreeSet<u32>,
     outputs_used: BTreeSet<(RegFile, u32)>,
     outputs_written: BTreeSet<(RegFile, u32)>,
     samplers: BTreeSet<u32>,
@@ -242,6 +243,7 @@ impl RegUsage {
             addrs: BTreeSet::new(),
             loop_regs: BTreeSet::new(),
             inputs: BTreeSet::new(),
+            misc_inputs: BTreeSet::new(),
             outputs_used: BTreeSet::new(),
             outputs_written: BTreeSet::new(),
             samplers: BTreeSet::new(),
@@ -556,6 +558,9 @@ fn collect_reg_ref_usage(reg: &RegRef, usage: &mut RegUsage, access: RegAccess) 
         }
         RegFile::Predicate => {
             usage.predicates.insert(reg.index);
+        }
+        RegFile::MiscType => {
+            usage.misc_inputs.insert(reg.index);
         }
         RegFile::ColorOut
         | RegFile::DepthOut
@@ -1736,6 +1741,12 @@ pub fn generate_wgsl(ir: &crate::sm3::ir::ShaderIr) -> Result<WgslOutput, WgslEr
 
     match ir.version.stage {
         ShaderStage::Vertex => {
+            if !usage.misc_inputs.is_empty() {
+                return Err(err(
+                    "MiscType (vPos/vFace) inputs are only supported in pixel shaders",
+                ));
+            }
+
             // Vertex attributes (`v#`).
             let mut vs_inputs = BTreeSet::<u32>::new();
             for (file, index) in &usage.inputs {
@@ -1906,7 +1917,7 @@ pub fn generate_wgsl(ir: &crate::sm3::ir::ShaderIr) -> Result<WgslOutput, WgslEr
                     ps_inputs.insert((*file, *index));
                 }
             }
-            let has_inputs = !ps_inputs.is_empty();
+            let has_inputs = !ps_inputs.is_empty() || !usage.misc_inputs.is_empty();
 
             let mut ps_input_locations: BTreeMap<(RegFile, u32), u32> = BTreeMap::new();
             let mut loc_to_reg: BTreeMap<u32, (RegFile, u32)> = BTreeMap::new();
@@ -1947,6 +1958,24 @@ pub fn generate_wgsl(ir: &crate::sm3::ir::ShaderIr) -> Result<WgslOutput, WgslEr
                     };
                     let name = reg_var_name(&reg)?;
                     let _ = writeln!(wgsl, "  @location({loc}) {name}: vec4<f32>,");
+                }
+                // Builtin inputs (misc register file).
+                for idx in &usage.misc_inputs {
+                    match *idx {
+                        // D3D9 vPos (pixel position).
+                        0 => {
+                            wgsl.push_str("  @builtin(position) frag_coord: vec4<f32>,\n");
+                        }
+                        // D3D9 vFace (front-facing sign).
+                        1 => {
+                            wgsl.push_str("  @builtin(front_facing) front_facing: bool,\n");
+                        }
+                        _ => {
+                            return Err(err(format!(
+                                "unsupported MiscType input misc{idx} (only misc0=vPos and misc1=vFace are supported)"
+                            )));
+                        }
+                    }
                 }
                 wgsl.push_str("};\n\n");
                 wgsl.push_str("@fragment\nfn fs_main(input: FsIn) -> FsOut {\n");
@@ -1998,6 +2027,23 @@ pub fn generate_wgsl(ir: &crate::sm3::ir::ShaderIr) -> Result<WgslOutput, WgslEr
                     };
                     let name = reg_var_name(&reg)?;
                     let _ = writeln!(wgsl, "  let {name}: vec4<f32> = input.{name};");
+                }
+
+                // Builtin inputs (misc register file).
+                for idx in &usage.misc_inputs {
+                    match *idx {
+                        0 => {
+                            wgsl.push_str("  let misc0: vec4<f32> = input.frag_coord;\n");
+                        }
+                        1 => {
+                            // D3D9 vFace is a float sign (+1 or -1). WGSL exposes front-facing as a
+                            // boolean, so map it to the legacy sign convention and splat to vec4.
+                            wgsl.push_str(
+                                "  let misc1: vec4<f32> = vec4<f32>(select(-1.0, 1.0, input.front_facing));\n",
+                            );
+                        }
+                        _ => {}
+                    }
                 }
             }
 

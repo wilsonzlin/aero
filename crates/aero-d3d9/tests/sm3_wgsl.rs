@@ -102,6 +102,84 @@ fn wgsl_ps20_reads_t0_and_v0_compiles() {
 }
 
 #[test]
+fn wgsl_ps30_reads_vpos_compiles() {
+    // ps_3_0:
+    //   mov r0, vPos
+    //   mov oC0, r0
+    //   end
+    //
+    // D3D9 encodes vPos as a MiscType register (regtype 17, index 0).
+    let tokens = vec![
+        version_token(ShaderStage::Pixel, 3, 0),
+        // mov r0, misc0
+        opcode_token(1, 2),
+        dst_token(0, 0, 0xF),      // r0
+        src_token(17, 0, 0xE4, 0), // vPos
+        // mov oC0, r0
+        opcode_token(1, 2),
+        dst_token(8, 0, 0xF),     // oC0
+        src_token(0, 0, 0xE4, 0), // r0
+        // end
+        0x0000_FFFF,
+    ];
+
+    let decoded = decode_u32_tokens(&tokens).unwrap();
+    let ir = build_ir(&decoded).unwrap();
+    verify_ir(&ir).unwrap();
+
+    let wgsl = generate_wgsl(&ir).unwrap().wgsl;
+    let module = naga::front::wgsl::parse_str(&wgsl).expect("wgsl parse");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
+
+    assert!(wgsl.contains("@builtin(position)"), "{wgsl}");
+    assert!(wgsl.contains("let misc0"), "{wgsl}");
+}
+
+#[test]
+fn wgsl_ps30_reads_vface_compiles() {
+    // ps_3_0:
+    //   mov r0, vFace
+    //   mov oC0, r0
+    //   end
+    //
+    // D3D9 encodes vFace as a MiscType register (regtype 17, index 1).
+    let tokens = vec![
+        version_token(ShaderStage::Pixel, 3, 0),
+        // mov r0, misc1
+        opcode_token(1, 2),
+        dst_token(0, 0, 0xF),      // r0
+        src_token(17, 1, 0xE4, 0), // vFace
+        // mov oC0, r0
+        opcode_token(1, 2),
+        dst_token(8, 0, 0xF),     // oC0
+        src_token(0, 0, 0xE4, 0), // r0
+        // end
+        0x0000_FFFF,
+    ];
+
+    let decoded = decode_u32_tokens(&tokens).unwrap();
+    let ir = build_ir(&decoded).unwrap();
+    verify_ir(&ir).unwrap();
+
+    let wgsl = generate_wgsl(&ir).unwrap().wgsl;
+    let module = naga::front::wgsl::parse_str(&wgsl).expect("wgsl parse");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
+
+    assert!(wgsl.contains("@builtin(front_facing)"), "{wgsl}");
+    assert!(wgsl.contains("let misc1"), "{wgsl}");
+}
+
+#[test]
 fn wgsl_texld_emits_texture_sample() {
     // ps_2_0:
     //   texld r0, c0, s0
