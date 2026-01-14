@@ -90,9 +90,27 @@ def dep_table_violations(doc: dict, *, path: str) -> list[str]:
     def check_table(table: dict, label: str) -> list[str]:
         if not isinstance(table, dict):
             return []
-        if "emulator" in table:
-            return [f"{path}: {label} contains forbidden dependency 'emulator'"]
-        return []
+        violations: list[str] = []
+
+        for dep_name, dep_spec in table.items():
+            # Simple case: `emulator = ...`
+            if dep_name == "emulator":
+                violations.append(f"{path}: {label} contains forbidden dependency key 'emulator'")
+                continue
+
+            # Renamed dependency case:
+            #   emulator_compat = { package = "emulator", path = "../emulator" }
+            #
+            # Cargo treats `package = ...` as the actual crate name; this still introduces a
+            # dependency edge to `crates/emulator` and must be blocked for canonical crates.
+            if isinstance(dep_spec, dict):
+                pkg = dep_spec.get("package")
+                if pkg == "emulator":
+                    violations.append(
+                        f"{path}: {label} dependency '{dep_name}' renames forbidden package 'emulator'"
+                    )
+
+        return violations
 
     violations: list[str] = []
 
