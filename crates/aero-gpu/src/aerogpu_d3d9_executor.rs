@@ -643,12 +643,54 @@ fn validate_wgsl_binding_contract(
     let mut tex_slots = HashSet::<u32>::new();
     let mut samp_slots = HashSet::<u32>::new();
 
+    // Track group/binding attributes across lines to support formatting like:
+    //   @group(0)
+    //   @binding(0)
+    //   var<uniform> constants: Constants;
+    let mut pending_group = None::<u32>;
+    let mut pending_binding = None::<u32>;
+
     for line in wgsl.lines() {
-        let Some(group) = parse_wgsl_attr_u32(line, "group") else {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with("//") {
             continue;
+        }
+
+        let group_in_line = parse_wgsl_attr_u32(line, "group");
+        if let Some(group) = group_in_line {
+            pending_group = Some(group);
+        }
+        let binding_in_line = parse_wgsl_attr_u32(line, "binding");
+        if let Some(binding) = binding_in_line {
+            pending_binding = Some(binding);
+        }
+
+        let group = group_in_line.or(pending_group);
+        let binding = binding_in_line.or(pending_binding);
+
+        let declares_resource = line.contains("var<uniform>")
+            || line.contains("var tex")
+            || line.contains("var samp")
+            || (line.contains("var") && group.is_some() && binding.is_some());
+
+        if !declares_resource {
+            if trimmed.starts_with('@') {
+                continue;
+            }
+            if pending_group.is_some() || pending_binding.is_some() {
+                return Err(
+                    "WGSL declares @group/@binding attributes without a following resource binding"
+                        .into(),
+                );
+            }
+            continue;
+        }
+
+        let Some(group) = group else {
+            return Err("WGSL resource binding is missing @group attribute".into());
         };
-        let Some(binding) = parse_wgsl_attr_u32(line, "binding") else {
-            continue;
+        let Some(binding) = binding else {
+            return Err("WGSL resource binding is missing @binding attribute".into());
         };
 
         if let Some(name) = parse_wgsl_uniform_var_name(line) {
@@ -660,6 +702,8 @@ fn validate_wgsl_binding_contract(
                         ));
                     }
                     has_constants = true;
+                    pending_group = None;
+                    pending_binding = None;
                     continue;
                 }
                 "half_pixel" => {
@@ -669,6 +713,8 @@ fn validate_wgsl_binding_contract(
                             "half_pixel uniform has unexpected binding (@group({group}) @binding({binding})); expected @group(3) @binding(0)"
                         ));
                     }
+                    pending_group = None;
+                    pending_binding = None;
                     continue;
                 }
                 other => {
@@ -725,6 +771,9 @@ fn validate_wgsl_binding_contract(
             if !tex_slots.insert(idx) {
                 return Err(format!("WGSL declares tex{idx} more than once"));
             }
+
+            pending_group = None;
+            pending_binding = None;
             continue;
         }
 
@@ -768,12 +817,19 @@ fn validate_wgsl_binding_contract(
             if !samp_slots.insert(idx) {
                 return Err(format!("WGSL declares samp{idx} more than once"));
             }
+
+            pending_group = None;
+            pending_binding = None;
             continue;
         }
 
         return Err(format!(
             "WGSL declares unexpected resource binding (@group({group}) @binding({binding}))"
         ));
+    }
+
+    if pending_group.is_some() || pending_binding.is_some() {
+        return Err("WGSL ends with dangling @group/@binding attributes".into());
     }
 
     if !has_constants {
