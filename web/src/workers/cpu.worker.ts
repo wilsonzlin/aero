@@ -86,6 +86,7 @@ import {
   type VmSnapshotPausedMessage,
   type VmSnapshotResumedMessage,
 } from "../runtime/snapshot_protocol";
+import { normalizeSetBootDisksMessage } from "../runtime/boot_disks_protocol";
 import { initWasmForContext, type WasmApi } from "../runtime/wasm_context";
 import { assertWasmMemoryWiring } from "../runtime/wasm_memory_probe";
 import { AeroIpcIoClient } from "../io/ipc/aero_ipc_io";
@@ -2465,11 +2466,11 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
     return;
   }
 
-  if ((msg as { type?: unknown }).type === "setBootDisks") {
-    const m = msg as Partial<{ hdd?: unknown; cd?: unknown }>;
+  const bootDisks = normalizeSetBootDisksMessage(msg);
+  if (bootDisks) {
     // Treat the presence of a mounted HDD/CD as the "real VM" indicator. This is distinct
     // from `AeroConfig.activeDiskImage`, which is deprecated as a VM-mode toggle.
-    vmBootDisksPresent = !!m.hdd || !!m.cd;
+    vmBootDisksPresent = !!bootDisks.hdd || !!bootDisks.cd;
     return;
   }
 
