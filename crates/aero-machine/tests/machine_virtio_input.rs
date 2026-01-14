@@ -131,7 +131,7 @@ fn virtio_input_bar0_is_assigned_and_mmio_reaches_transport_for_both_functions()
         let bar0_base = read_bar0_base(&m, bdf);
         assert_ne!(bar0_base, 0, "{bdf:?} BAR0 must be assigned by BIOS POST");
 
-        const COMMON: u64 = 0x0000;
+        const COMMON: u64 = profile::VIRTIO_COMMON_CFG_BAR0_OFFSET as u64;
         let before = m.read_physical_u8(bar0_base + COMMON + 0x14);
         // Exercise an MMIO write + readback through the PCI MMIO router.
         m.write_physical_u8(bar0_base + COMMON + 0x14, VIRTIO_STATUS_ACKNOWLEDGE);
@@ -165,9 +165,9 @@ fn virtio_input_eventq_delivers_injected_event_end_to_end() {
     assert_ne!(bar0_base, 0);
 
     // Canonical virtio capability layout for Aero profiles (BAR0 offsets).
-    const COMMON: u64 = 0x0000;
-    const NOTIFY: u64 = 0x1000;
-    const NOTIFY_MULT: u64 = 4;
+    const COMMON: u64 = profile::VIRTIO_COMMON_CFG_BAR0_OFFSET as u64;
+    const NOTIFY: u64 = profile::VIRTIO_NOTIFY_CFG_BAR0_OFFSET as u64;
+    const NOTIFY_MULT: u64 = profile::VIRTIO_NOTIFY_OFF_MULTIPLIER as u64;
 
     // Minimal feature negotiation: accept all device features and reach DRIVER_OK.
     m.write_physical_u8(bar0_base + COMMON + 0x14, VIRTIO_STATUS_ACKNOWLEDGE);
@@ -272,9 +272,9 @@ fn snapshot_restore_roundtrips_virtio_input_queue_progress_without_replaying_eve
     let bar0_base = read_bar0_base(&m, bdf);
     assert_ne!(bar0_base, 0);
 
-    const COMMON: u64 = 0x0000;
-    const NOTIFY: u64 = 0x1000;
-    const NOTIFY_MULT: u64 = 4;
+    const COMMON: u64 = profile::VIRTIO_COMMON_CFG_BAR0_OFFSET as u64;
+    const NOTIFY: u64 = profile::VIRTIO_NOTIFY_CFG_BAR0_OFFSET as u64;
+    const NOTIFY_MULT: u64 = profile::VIRTIO_NOTIFY_OFF_MULTIPLIER as u64;
 
     // Configure event queue 0 with two buffers.
     let desc = 0x0090_0000;

@@ -1,3 +1,4 @@
+use aero_devices::pci::profile;
 use aero_virtio::devices::input::{KEY_A, VirtioInputDeviceKind};
 use aero_virtio::memory::{
     GuestMemory, GuestRam, read_u16_le, read_u32_le, write_u16_le, write_u32_le, write_u64_le,
@@ -51,9 +52,9 @@ fn virtio_input_pci_device_core_can_handshake_post_event_and_toggle_irq() {
     // - common: 0x0000
     // - notify: 0x1000
     // - isr: 0x2000
-    const COMMON: u64 = 0x0000;
-    const NOTIFY: u64 = 0x1000;
-    const ISR: u64 = 0x2000;
+    const COMMON: u64 = profile::VIRTIO_COMMON_CFG_BAR0_OFFSET as u64;
+    const NOTIFY: u64 = profile::VIRTIO_NOTIFY_CFG_BAR0_OFFSET as u64;
+    const ISR: u64 = profile::VIRTIO_ISR_CFG_BAR0_OFFSET as u64;
 
     let mut dev = VirtioInputPciDeviceCore::new(VirtioInputDeviceKind::Keyboard);
     // Enable BAR0 MMIO decoding + allow the device to DMA into guest memory (virtqueue descriptor
@@ -163,8 +164,8 @@ fn virtio_input_pci_device_core_snapshot_restore_rewinds_cached_event_buffers() 
     // BAR0 layout in `aero_virtio::pci::VirtioPciDevice`:
     // - common: 0x0000
     // - notify: 0x1000
-    const COMMON: u64 = 0x0000;
-    const NOTIFY: u64 = 0x1000;
+    const COMMON: u64 = profile::VIRTIO_COMMON_CFG_BAR0_OFFSET as u64;
+    const NOTIFY: u64 = profile::VIRTIO_NOTIFY_CFG_BAR0_OFFSET as u64;
 
     let mut dev = VirtioInputPciDeviceCore::new(VirtioInputDeviceKind::Keyboard);
     dev.set_pci_command(0x0006);
@@ -259,9 +260,9 @@ fn virtio_input_pci_device_core_snapshot_restore_preserves_pending_irq() {
     // - common: 0x0000
     // - notify: 0x1000
     // - isr: 0x2000
-    const COMMON: u64 = 0x0000;
-    const NOTIFY: u64 = 0x1000;
-    const ISR: u64 = 0x2000;
+    const COMMON: u64 = profile::VIRTIO_COMMON_CFG_BAR0_OFFSET as u64;
+    const NOTIFY: u64 = profile::VIRTIO_NOTIFY_CFG_BAR0_OFFSET as u64;
+    const ISR: u64 = profile::VIRTIO_ISR_CFG_BAR0_OFFSET as u64;
 
     let mut dev = VirtioInputPciDeviceCore::new(VirtioInputDeviceKind::Keyboard);
     dev.set_pci_command(0x0006);

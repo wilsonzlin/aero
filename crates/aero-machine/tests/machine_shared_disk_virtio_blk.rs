@@ -1,6 +1,6 @@
 #![cfg(not(target_arch = "wasm32"))]
 
-use aero_devices::pci::profile::VIRTIO_BLK;
+use aero_devices::pci::profile::{self, VIRTIO_BLK};
 use aero_devices::{a20_gate::A20_GATE_PORT, pci::PCI_CFG_ADDR_PORT, pci::PCI_CFG_DATA_PORT};
 use aero_machine::{Machine, MachineConfig};
 use aero_storage::SECTOR_SIZE;
@@ -135,8 +135,8 @@ fn machine_shared_bios_disk_is_visible_to_virtio_blk_dma() {
     let status_buf = alloc(1, 1);
 
     // Modern virtio-pci common config lives at BAR0 + 0x0000.
-    const COMMON_BASE: u64 = 0x0000;
-    const NOTIFY_BASE: u64 = 0x1000;
+    const COMMON_BASE: u64 = profile::VIRTIO_COMMON_CFG_BAR0_OFFSET as u64;
+    const NOTIFY_BASE: u64 = profile::VIRTIO_NOTIFY_CFG_BAR0_OFFSET as u64;
 
     // status = ACKNOWLEDGE | DRIVER
     m.write_physical_u8(bar0_base + COMMON_BASE + 0x14, VIRTIO_STATUS_ACKNOWLEDGE);

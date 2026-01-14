@@ -94,10 +94,10 @@ fn virtio_net_pci_tx_and_rx_reach_network_backend_and_are_gated_by_bme() {
         pci_cfg.bus_mut().write_config(bdf, 0x04, 2, u32::from(cmd));
     }
 
-    const COMMON: u64 = 0x0000;
-    const NOTIFY: u64 = 0x1000;
-    const DEVICE: u64 = 0x3000;
-    const NOTIFY_MULT: u64 = 4;
+    const COMMON: u64 = profile::VIRTIO_COMMON_CFG_BAR0_OFFSET as u64;
+    const NOTIFY: u64 = profile::VIRTIO_NOTIFY_CFG_BAR0_OFFSET as u64;
+    const DEVICE: u64 = profile::VIRTIO_DEVICE_CFG_BAR0_OFFSET as u64;
+    const NOTIFY_MULT: u64 = profile::VIRTIO_NOTIFY_OFF_MULTIPLIER as u64;
 
     // --------------------
     // Feature negotiation.

@@ -127,8 +127,8 @@ fn virtio_input_msix_delivers_to_lapic_in_apic_mode() {
     cfg_write(&mut m, bdf, msix_cap + 0x02, 2, u32::from(ctrl));
 
     // BAR0 layout for Aero's virtio-pci contract.
-    const COMMON: u64 = 0x0000;
-    const NOTIFY: u64 = 0x1000;
+    const COMMON: u64 = profile::VIRTIO_COMMON_CFG_BAR0_OFFSET as u64;
+    const NOTIFY: u64 = profile::VIRTIO_NOTIFY_CFG_BAR0_OFFSET as u64;
 
     // Minimal feature negotiation: accept all device features and reach DRIVER_OK.
     m.write_physical_u8(bar0_base + COMMON + 0x14, VIRTIO_STATUS_ACKNOWLEDGE);
