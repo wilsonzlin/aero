@@ -1477,6 +1477,150 @@ fn utf16le_bom_infs_are_parsed_for_reference_validation() -> anyhow::Result<()> 
 }
 
 #[test]
+fn utf16le_no_bom_infs_are_accepted() -> anyhow::Result<()> {
+    let repo_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let testdata = repo_root.join("testdata");
+    let spec_path = testdata.join("spec.json");
+    let guest_tools_dir = testdata.join("guest-tools");
+
+    let drivers_tmp = tempfile::tempdir()?;
+    copy_dir_all(&testdata.join("drivers"), drivers_tmp.path())?;
+
+    // Rewrite the INF as UTF-16LE *without* a BOM. Some real-world driver packages ship
+    // BOM-less UTF-16 INFs and we still want HWID validation to work.
+    for arch in ["x86", "amd64"] {
+        let inf_path = drivers_tmp.path().join(format!("{arch}/testdrv/test.inf"));
+        let inf_text = fs::read_to_string(&inf_path)?;
+
+        let mut bytes = Vec::new();
+        for unit in inf_text.encode_utf16() {
+            bytes.extend_from_slice(&unit.to_le_bytes());
+        }
+        fs::write(&inf_path, bytes)?;
+    }
+
+    let out = tempfile::tempdir()?;
+    let config = aero_packager::PackageConfig {
+        drivers_dir: drivers_tmp.path().to_path_buf(),
+        guest_tools_dir: guest_tools_dir.clone(),
+        windows_device_contract_path: device_contract_path(),
+        out_dir: out.path().to_path_buf(),
+        spec_path,
+        version: "0.0.0".to_string(),
+        build_id: "test".to_string(),
+        volume_id: "AERO_GUEST_TOOLS".to_string(),
+        signing_policy: aero_packager::SigningPolicy::Test,
+        source_date_epoch: 0,
+    };
+
+    // Should succeed; HWID validation must still work.
+    aero_packager::package_guest_tools(&config)?;
+
+    Ok(())
+}
+
+#[test]
+fn catalogfile_directives_are_validated() -> anyhow::Result<()> {
+    let repo_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let testdata = repo_root.join("testdata");
+    let spec_path = testdata.join("spec.json");
+    let guest_tools_dir = testdata.join("guest-tools");
+
+    let drivers_tmp = tempfile::tempdir()?;
+    copy_dir_all(&testdata.join("drivers"), drivers_tmp.path())?;
+
+    // Mutate each INF to reference a missing catalog file. Ensure we fail even if another `.cat`
+    // exists in the driver directory.
+    for (arch, suffix) in [("x86", "NTx86"), ("amd64", "NTamd64")] {
+        let inf_path = drivers_tmp.path().join(format!("{arch}/testdrv/test.inf"));
+        let original = fs::read_to_string(&inf_path)?;
+        let mut out_lines = Vec::new();
+        for line in original.lines() {
+            out_lines.push(line.to_string());
+            if line.trim().eq_ignore_ascii_case("Signature=\"$Windows NT$\"") {
+                out_lines.push(format!("CatalogFile.{suffix}=missing.cat"));
+            }
+        }
+        fs::write(inf_path, out_lines.join("\n") + "\n")?;
+    }
+
+    let out = tempfile::tempdir()?;
+    let config = aero_packager::PackageConfig {
+        drivers_dir: drivers_tmp.path().to_path_buf(),
+        guest_tools_dir: guest_tools_dir.clone(),
+        windows_device_contract_path: device_contract_path(),
+        out_dir: out.path().to_path_buf(),
+        spec_path,
+        version: "0.0.0".to_string(),
+        build_id: "test".to_string(),
+        volume_id: "AERO_GUEST_TOOLS".to_string(),
+        signing_policy: aero_packager::SigningPolicy::Test,
+        source_date_epoch: 0,
+    };
+
+    let err = aero_packager::package_guest_tools(&config).unwrap_err();
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("missing.cat") && msg.contains("INF referenced files are missing"),
+        "unexpected error: {msg}"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn servicebinary_directives_are_validated() -> anyhow::Result<()> {
+    let repo_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let testdata = repo_root.join("testdata");
+    let spec_path = testdata.join("spec.json");
+    let guest_tools_dir = testdata.join("guest-tools");
+
+    let drivers_tmp = tempfile::tempdir()?;
+    copy_dir_all(&testdata.join("drivers"), drivers_tmp.path())?;
+
+    // Add a minimal service install section referencing a missing `*.sys` via `ServiceBinary`.
+    for arch in ["x86", "amd64"] {
+        let inf_path = drivers_tmp.path().join(format!("{arch}/testdrv/test.inf"));
+        let mut original = fs::read_to_string(&inf_path)?;
+        original.push_str(
+            concat!(
+                "\n",
+                "[Install.Services]\n",
+                // Add an inline comment to ensure comment stripping works.
+                "AddService=TestSvc,0x00000002,TestSvc_Inst ; test comment\n",
+                "\n",
+                "[TestSvc_Inst]\n",
+                "ServiceBinary=\\SystemRoot\\system32\\drivers\\missing.sys\n",
+            ),
+        );
+        fs::write(inf_path, original)?;
+    }
+
+    let out = tempfile::tempdir()?;
+    let config = aero_packager::PackageConfig {
+        drivers_dir: drivers_tmp.path().to_path_buf(),
+        guest_tools_dir: guest_tools_dir.clone(),
+        windows_device_contract_path: device_contract_path(),
+        out_dir: out.path().to_path_buf(),
+        spec_path,
+        version: "0.0.0".to_string(),
+        build_id: "test".to_string(),
+        volume_id: "AERO_GUEST_TOOLS".to_string(),
+        signing_policy: aero_packager::SigningPolicy::Test,
+        source_date_epoch: 0,
+    };
+
+    let err = aero_packager::package_guest_tools(&config).unwrap_err();
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("missing.sys") && msg.contains("INF referenced files are missing"),
+        "unexpected error: {msg}"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn wdfcoinstaller_mentioned_only_in_comment_does_not_require_payload() -> anyhow::Result<()> {
     let repo_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let testdata = repo_root.join("testdata");

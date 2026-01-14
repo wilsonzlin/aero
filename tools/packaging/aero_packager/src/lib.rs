@@ -1494,6 +1494,25 @@ fn collect_inf_references(inf_text: &str) -> (BTreeSet<String>, bool) {
     let mut referenced = BTreeSet::<String>::new();
     let mut needs_any_wdf = false;
 
+    // [Version] CatalogFile directives define which catalog (*.cat) file is used for the driver
+    // package. Ensure these references exist in the packaged directory so we fail early if the
+    // driver directory contains a mismatched or missing catalog.
+    if let Some(lines) = sections.get("version") {
+        for line in lines {
+            let Some((key, value)) = line.split_once('=') else {
+                continue;
+            };
+            if !key.trim().to_ascii_lowercase().starts_with("catalogfile") {
+                continue;
+            }
+            let token = value.split(',').next().unwrap_or("");
+            let token = normalize_inf_path_token(token);
+            if token.to_ascii_lowercase().ends_with(".cat") {
+                referenced.insert(token);
+            }
+        }
+    }
+
     // Validate `SourceDisksFiles*` entries if present; these are intended to list every
     // payload file that ships in the driver package.
     for (name, lines) in &sections {
@@ -1578,6 +1597,64 @@ fn collect_inf_references(inf_text: &str) -> (BTreeSet<String>, bool) {
                 .to_string();
             if token.contains('.') || token.contains('/') {
                 referenced.insert(token);
+            }
+        }
+    }
+
+    // Best-effort: validate `ServiceBinary` references.
+    //
+    // Typically, the `ServiceBinary` directive lives inside a service install section referenced
+    // by an `AddService` directive. We follow that link (best-effort) and ensure any referenced
+    // `*.sys` payload exists next to the INF.
+    let mut service_install_sections = BTreeSet::<String>::new();
+    for lines in sections.values() {
+        for line in lines {
+            let Some((key, value)) = line.split_once('=') else {
+                continue;
+            };
+            if !key.trim().eq_ignore_ascii_case("addservice") {
+                continue;
+            }
+            let mut parts = value.split(',').map(|s| s.trim());
+            // 1: service name (ignored)
+            let _svc_name = parts.next();
+            // 2: flags (ignored)
+            let _flags = parts.next();
+            // 3: service install section name.
+            let section = parts.next().unwrap_or("").trim();
+            if section.is_empty() {
+                continue;
+            }
+            let section = section
+                .trim_matches(|c| c == '"' || c == '\'')
+                .to_ascii_lowercase();
+            if section.is_empty() {
+                continue;
+            }
+            service_install_sections.insert(section);
+        }
+    }
+
+    for section in service_install_sections {
+        let Some(lines) = sections.get(&section) else {
+            continue;
+        };
+        for line in lines {
+            let Some((key, value)) = line.split_once('=') else {
+                continue;
+            };
+            if !key.trim().eq_ignore_ascii_case("servicebinary") {
+                continue;
+            }
+            let token = value.split(',').next().unwrap_or("");
+            let token = normalize_inf_path_token(token);
+            let base = token
+                .rsplit_once('/')
+                .map(|(_, b)| b)
+                .unwrap_or(token.as_str())
+                .trim();
+            if base.to_ascii_lowercase().ends_with(".sys") {
+                referenced.insert(base.to_string());
             }
         }
     }
@@ -1854,23 +1931,57 @@ fn read_inf_text(path: &Path) -> Result<String> {
         // UTF-16BE with BOM.
         decode_utf16(&bytes[2..], false)
     } else if bytes.len() >= 4 && bytes.len() % 2 == 0 {
-        // Some Windows tooling produces UTF-16 INFs without a BOM. Detect by looking for a high
-        // ratio of NUL bytes (common for mostly-ASCII UTF-16 text) and decode best-effort.
+        // Some Windows tooling produces UTF-16 INFs without a BOM. Detect UTF-16LE vs UTF-16BE
+        // by looking for a high ratio of NUL bytes in either the odd (LE) or even (BE) byte
+        // positions.
         //
         // Use a small set of prefix windows to avoid missing UTF-16 when the file contains large
         // non-ASCII string tables (which reduce the overall NUL-byte ratio).
-        let likely_utf16 = [128usize, 512, 2048].into_iter().any(|prefix_len| {
+        const NUL_RATIO_THRESHOLD: f64 = 0.30;
+        const NUL_RATIO_SKEW: f64 = 0.20;
+
+        let mut le_votes = 0usize;
+        let mut be_votes = 0usize;
+        for prefix_len in [128usize, 512, 2048] {
             let mut len = bytes.len().min(prefix_len);
             len -= len % 2;
             if len < 4 {
-                return false;
+                continue;
             }
-            let nuls = bytes[..len].iter().filter(|b| **b == 0).count();
-            // "High proportion of NUL bytes": >= 20%.
-            nuls * 5 >= len
-        });
 
-        if likely_utf16 {
+            let mut nul_even = 0usize;
+            let mut nul_odd = 0usize;
+            for (i, b) in bytes[..len].iter().enumerate() {
+                if *b != 0 {
+                    continue;
+                }
+                if i % 2 == 0 {
+                    nul_even += 1;
+                } else {
+                    nul_odd += 1;
+                }
+            }
+
+            let half = len / 2;
+            let ratio_even = nul_even as f64 / half as f64;
+            let ratio_odd = nul_odd as f64 / half as f64;
+
+            if ratio_odd >= NUL_RATIO_THRESHOLD && ratio_odd - ratio_even >= NUL_RATIO_SKEW {
+                le_votes += 1;
+            } else if ratio_even >= NUL_RATIO_THRESHOLD && ratio_even - ratio_odd >= NUL_RATIO_SKEW
+            {
+                be_votes += 1;
+            }
+        }
+
+        if le_votes == 0 && be_votes == 0 {
+            String::from_utf8_lossy(&bytes).to_string()
+        } else if le_votes > be_votes {
+            decode_utf16(&bytes, true)
+        } else if be_votes > le_votes {
+            decode_utf16(&bytes, false)
+        } else {
+            // Ambiguous: decode both and pick the more text-like one.
             let le = decode_utf16(&bytes, true);
             let be = decode_utf16(&bytes, false);
 
@@ -1903,16 +2014,12 @@ fn read_inf_text(path: &Path) -> Result<String> {
 
             let le_score = decode_score(&le);
             let be_score = decode_score(&be);
-            if le_score < be_score {
-                le
-            } else if be_score < le_score {
-                be
-            } else {
+            if le_score <= be_score {
                 // Prefer little-endian when ambiguous (Windows commonly uses UTF-16LE).
                 le
+            } else {
+                be
             }
-        } else {
-            String::from_utf8_lossy(&bytes).to_string()
         }
     } else {
         String::from_utf8_lossy(&bytes).to_string()
