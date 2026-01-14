@@ -1,9 +1,7 @@
 use aero_devices::a20_gate::A20_GATE_PORT;
 use aero_devices::pci::profile;
-use aero_machine::{Machine, MachineConfig, RunExit};
+use aero_machine::{Machine, MachineConfig, RunExit, VBE_LFB_OFFSET};
 use pretty_assertions::assert_eq;
-
-const VBE_LFB_OFFSET: u64 = aero_machine::VBE_LFB_OFFSET as u64;
 
 fn enable_a20(m: &mut Machine) {
     // Fast A20 gate at port 0x92: bit1 enables A20.
@@ -76,7 +74,7 @@ fn aerogpu_boot_sector_int10_vbe_mode_shows_vram_lfb() {
         cfg.bar_range(1).expect("AeroGPU BAR1 must exist").base
     };
     assert_ne!(bar1_base, 0);
-    let lfb_base = bar1_base + VBE_LFB_OFFSET;
+    let lfb_base = bar1_base + VBE_LFB_OFFSET as u64;
 
     // Write a red pixel at (0,0) in VBE packed-pixel B,G,R,X format.
     m.write_physical_u8(lfb_base, 0x00); // B

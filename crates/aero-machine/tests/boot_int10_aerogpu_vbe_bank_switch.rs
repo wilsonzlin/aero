@@ -120,7 +120,7 @@ fn boot_int10_aerogpu_vbe_bank_switch_maps_a0000_window_beyond_64k() {
     //   (x, y) = (0, 16) since stride is 1024 pixels.
     //
     // The banked window at A0000 is 64KiB, so bank 1 maps to LFB offset 0x1_0000.
-    let lfb_base = u64::from(m.vbe_lfb_base());
+    let lfb_base = m.vbe_lfb_base();
     assert_eq!(lfb_base, bar1_base + VBE_LFB_OFFSET as u64);
     assert_eq!(
         m.read_physical_u32(lfb_base + 0x1_0000),

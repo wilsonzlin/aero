@@ -68,7 +68,7 @@ fn boot_int10_aerogpu_vbe_160_sets_mode_and_lfb_is_visible_via_bar1() {
     run_until_halt(&mut m);
 
     // The BIOS should report the LFB base as BAR1_BASE + VBE_LFB_OFFSET.
-    let lfb_base = u64::from(m.vbe_lfb_base());
+    let lfb_base = m.vbe_lfb_base();
     assert_eq!(lfb_base, bar1_base + VBE_LFB_OFFSET as u64);
 
     // Write a red pixel at (0,0) in VBE packed-pixel B,G,R,X format.

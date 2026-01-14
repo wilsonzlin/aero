@@ -95,7 +95,7 @@ fn aerogpu_vbe_mode_set_with_clear_fast_clears_vram_backing() {
         .pci_bar_base(bdf, aero_devices::pci::profile::AEROGPU_BAR1_VRAM_INDEX)
         .unwrap_or(0);
     assert_ne!(bar1_base, 0, "missing/zero AeroGPU BAR1 base");
-    let lfb_base = u64::from(m.vbe_lfb_base());
+    let lfb_base = m.vbe_lfb_base();
     assert_eq!(lfb_base, bar1_base + VBE_LFB_OFFSET as u64);
 
     // Mode 0x118 is 1024x768x32bpp. Pre-fill a few bytes within the VBE LFB region with a
@@ -155,7 +155,7 @@ fn aerogpu_vbe_failed_mode_set_does_not_clear_existing_framebuffer() {
         .pci_bar_base(bdf, aero_devices::pci::profile::AEROGPU_BAR1_VRAM_INDEX)
         .unwrap_or(0);
     assert_ne!(bar1_base, 0, "missing/zero AeroGPU BAR1 base");
-    let lfb_base = u64::from(m.vbe_lfb_base());
+    let lfb_base = m.vbe_lfb_base();
     assert_eq!(lfb_base, bar1_base + VBE_LFB_OFFSET as u64);
 
     const PATTERN: [u8; 16] = [0xA5; 16];

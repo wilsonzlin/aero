@@ -1,10 +1,9 @@
 use aero_devices::a20_gate::A20_GATE_PORT;
 use aero_devices::pci::profile;
-use aero_machine::{Machine, MachineConfig, RunExit};
+use aero_machine::{Machine, MachineConfig, RunExit, VBE_LFB_OFFSET};
 use aero_protocol::aerogpu::aerogpu_pci as pci;
 use pretty_assertions::assert_eq;
 
-const VBE_LFB_OFFSET: u64 = aero_machine::VBE_LFB_OFFSET as u64;
 const WAIT_FLAG_PADDR: u64 = 0x0500;
 
 fn enable_a20(m: &mut Machine) {
@@ -141,11 +140,8 @@ fn aerogpu_scanout_handoff_to_wddm_blocks_legacy_int10_steal() {
         let mut pci_cfg = pci_cfg.borrow_mut();
         let cfg = pci_cfg
             .bus_mut()
-            .device_config_mut(profile::AEROGPU.bdf)
+            .device_config(profile::AEROGPU.bdf)
             .expect("AeroGPU device missing from PCI bus");
-        // The WDDM scanout path reads from guest RAM (device-initiated DMA), so it requires PCI Bus
-        // Master Enable (BME). BIOS POST intentionally leaves BME disabled by default.
-        cfg.set_command(cfg.command() | (1 << 2));
         (
             cfg.bar_range(0).expect("AeroGPU BAR0 must exist").base,
             cfg.bar_range(1).expect("AeroGPU BAR1 must exist").base,
@@ -155,8 +151,8 @@ fn aerogpu_scanout_handoff_to_wddm_blocks_legacy_int10_steal() {
     assert_ne!(bar0_base, 0);
     assert_ne!(bar1_base, 0);
 
-    // Scanout reads behave like device-initiated DMA; enable PCI Bus Master Enable (BME) so the
-    // host-side display_present path can legally read the scanout buffer.
+    // The WDDM scanout path reads from guest RAM (device-initiated DMA), so it requires PCI Bus
+    // Master Enable (BME). BIOS POST intentionally leaves BME disabled by default.
     {
         let pci_cfg = m.pci_config_ports().expect("pc platform enabled");
         let mut pci_cfg = pci_cfg.borrow_mut();
@@ -194,7 +190,7 @@ fn aerogpu_scanout_handoff_to_wddm_blocks_legacy_int10_steal() {
 
     // Scribble into the legacy VBE LFB (BAR1 + fixed offset) to ensure it does not steal scanout
     // after WDDM has claimed it.
-    let legacy_lfb_base = bar1_base + VBE_LFB_OFFSET;
+    let legacy_lfb_base = bar1_base + VBE_LFB_OFFSET as u64;
     m.write_physical_u8(legacy_lfb_base, 0x00);
     m.write_physical_u8(legacy_lfb_base + 1, 0x00);
     m.write_physical_u8(legacy_lfb_base + 2, 0xFF);
