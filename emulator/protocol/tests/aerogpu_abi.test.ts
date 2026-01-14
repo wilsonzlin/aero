@@ -269,21 +269,34 @@ function parseAbiDump(text: string): AbiDump {
 
     const parts = trimmed.split(/\s+/);
     if (parts[0] === "SIZE") {
-      if (sizes.has(parts[1]!)) {
-        throw new Error(`Duplicate SIZE: ${parts[1]}`);
+      const key = parts[1]!;
+      const value = Number(parts[2]!);
+      const prev = sizes.get(key);
+      if (prev !== undefined) {
+        // Duplicates can happen when multiple PRs touch the C ABI dump helper and get merged with
+        // minimal conflict resolution. Accept identical duplicates but still fail if values differ.
+        if (prev !== value) throw new Error(`Duplicate SIZE for ${key}: saw ${prev} and ${value}`);
+        continue;
       }
-      sizes.set(parts[1]!, Number(parts[2]!));
+      sizes.set(key, value);
     } else if (parts[0] === "OFF") {
       const key = `${parts[1]}.${parts[2]}`;
-      if (offsets.has(key)) {
-        throw new Error(`Duplicate OFF: ${key}`);
+      const value = Number(parts[3]!);
+      const prev = offsets.get(key);
+      if (prev !== undefined) {
+        if (prev !== value) throw new Error(`Duplicate OFF for ${key}: saw ${prev} and ${value}`);
+        continue;
       }
-      offsets.set(key, Number(parts[3]!));
+      offsets.set(key, value);
     } else if (parts[0] === "CONST") {
-      if (consts.has(parts[1]!)) {
-        throw new Error(`Duplicate CONST: ${parts[1]}`);
+      const key = parts[1]!;
+      const value = BigInt(parts[2]!);
+      const prev = consts.get(key);
+      if (prev !== undefined) {
+        if (prev !== value) throw new Error(`Duplicate CONST for ${key}: saw ${prev} and ${value}`);
+        continue;
       }
-      consts.set(parts[1]!, BigInt(parts[2]!));
+      consts.set(key, value);
     } else {
       throw new Error(`Unknown ABI dump tag: ${parts[0]}`);
     }

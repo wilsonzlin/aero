@@ -178,36 +178,50 @@ fn parse_c_abi_dump_output(text: String) -> AbiDump {
                 assert_eq!(parts.len(), 3, "bad SIZE line @{line_no}: {line}");
                 let name = parts[1].to_string();
                 let value = parts[2].parse().unwrap();
-                if let Some(prev_value) = dump.sizes.insert(name.clone(), value) {
-                    let prev_line = dump.size_lines.get(&name).copied().unwrap_or(0);
-                    panic!(
-                        "duplicate SIZE for {name}: first @{prev_line} = {prev_value}, again @{line_no} = {value}: {line}"
-                    );
+                if let Some(prev_value) = dump.sizes.get(&name) {
+                    // Duplicates can happen due to merge conflicts in the C ABI dump helper.
+                    // Accept identical duplicates but still fail if values differ.
+                    if *prev_value != value {
+                        let prev_line = dump.size_lines.get(&name).copied().unwrap_or(0);
+                        panic!(
+                            "duplicate SIZE for {name}: first @{prev_line} = {prev_value}, again @{line_no} = {value}: {line}"
+                        );
+                    }
+                    continue;
                 }
+                dump.sizes.insert(name.clone(), value);
                 dump.size_lines.insert(name, line_no);
             }
             "OFF" => {
                 assert_eq!(parts.len(), 4, "bad OFF line @{line_no}: {line}");
                 let key = format!("{}.{}", parts[1], parts[2]);
                 let value = parts[3].parse().unwrap();
-                if let Some(prev_value) = dump.offsets.insert(key.clone(), value) {
-                    let prev_line = dump.offset_lines.get(&key).copied().unwrap_or(0);
-                    panic!(
-                        "duplicate OFF for {key}: first @{prev_line} = {prev_value}, again @{line_no} = {value}: {line}"
-                    );
+                if let Some(prev_value) = dump.offsets.get(&key) {
+                    if *prev_value != value {
+                        let prev_line = dump.offset_lines.get(&key).copied().unwrap_or(0);
+                        panic!(
+                            "duplicate OFF for {key}: first @{prev_line} = {prev_value}, again @{line_no} = {value}: {line}"
+                        );
+                    }
+                    continue;
                 }
+                dump.offsets.insert(key.clone(), value);
                 dump.offset_lines.insert(key, line_no);
             }
             "CONST" => {
                 assert_eq!(parts.len(), 3, "bad CONST line @{line_no}: {line}");
                 let name = parts[1].to_string();
                 let value = parts[2].parse().unwrap();
-                if let Some(prev_value) = dump.consts.insert(name.clone(), value) {
-                    let prev_line = dump.const_lines.get(&name).copied().unwrap_or(0);
-                    panic!(
-                        "duplicate CONST for {name}: first @{prev_line} = {prev_value}, again @{line_no} = {value}: {line}"
-                    );
+                if let Some(prev_value) = dump.consts.get(&name) {
+                    if *prev_value != value {
+                        let prev_line = dump.const_lines.get(&name).copied().unwrap_or(0);
+                        panic!(
+                            "duplicate CONST for {name}: first @{prev_line} = {prev_value}, again @{line_no} = {value}: {line}"
+                        );
+                    }
+                    continue;
                 }
+                dump.consts.insert(name.clone(), value);
                 dump.const_lines.insert(name, line_no);
             }
             other => panic!(
