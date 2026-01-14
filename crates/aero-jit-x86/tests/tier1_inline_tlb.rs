@@ -1666,6 +1666,9 @@ fn tier1_inline_tlb_mmio_exit_preserves_unrelated_gprs() {
     assert_eq!(got_cpu.gpr[Gpr::Rbx.as_u8() as usize], sentinel);
 
     assert_eq!(host_state.mmio_exit_calls, 1);
+    assert_eq!(host_state.mmu_translate_calls, 1);
+    assert_eq!(host_state.slow_mem_reads, 0);
+    assert_eq!(host_state.slow_mem_writes, 0);
 }
 
 #[test]
