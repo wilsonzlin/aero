@@ -163,7 +163,8 @@ Recommended end-to-end regression suite (device model + BIOS INT 10h + canonical
 
 ```bash
 # Runs: cargo test -p aero-gpu-vga, cargo test -p firmware,
-# and all aero-machine boot_int10_* + vga_* integration tests (with safe-run isolation).
+# and aero-machine boot-display integration tests (boot_int10_* + vga_* + bios_vga_sync)
+# with safe-run isolation.
 bash ./scripts/ci/run-vga-vbe-tests.sh
 ```
 
