@@ -105,8 +105,49 @@ pub(crate) fn referenced_ps_input_locations(wgsl: &str) -> BTreeSet<u32> {
     let bytes = wgsl.as_bytes();
     let mut out = BTreeSet::new();
     let mut i = 0usize;
-    while i + 6 <= bytes.len() {
-        if &bytes[i..i + 6] != b"input." {
+
+    fn is_ident_char(b: u8) -> bool {
+        b.is_ascii_alphanumeric() || b == b'_'
+    }
+
+    let mut in_line_comment = false;
+    let mut in_block_comment = false;
+
+    while i < bytes.len() {
+        if in_line_comment {
+            if bytes[i] == b'\n' {
+                in_line_comment = false;
+            }
+            i += 1;
+            continue;
+        }
+        if in_block_comment {
+            if i + 1 < bytes.len() && &bytes[i..i + 2] == b"*/" {
+                in_block_comment = false;
+                i += 2;
+            } else {
+                i += 1;
+            }
+            continue;
+        }
+
+        if i + 1 < bytes.len() && &bytes[i..i + 2] == b"//" {
+            in_line_comment = true;
+            i += 2;
+            continue;
+        }
+        if i + 1 < bytes.len() && &bytes[i..i + 2] == b"/*" {
+            in_block_comment = true;
+            i += 2;
+            continue;
+        }
+
+        if i + 6 > bytes.len() || &bytes[i..i + 6] != b"input." {
+            i += 1;
+            continue;
+        }
+        // Ensure `input` is a standalone identifier, not a suffix of a longer name like `myinput`.
+        if i > 0 && is_ident_char(bytes[i - 1]) {
             i += 1;
             continue;
         }
@@ -793,6 +834,32 @@ mod tests {
         "#;
         let refs = referenced_ps_input_locations(wgsl);
         assert_eq!(refs.iter().copied().collect::<Vec<_>>(), vec![1]);
+    }
+
+    #[test]
+    fn referenced_ps_input_locations_ignores_comments_and_substrings() {
+        let wgsl = r#"
+            struct PsIn {
+                @location(1) uv: vec2<f32>,
+            };
+
+            struct Other {
+                uv: vec2<f32>,
+            };
+
+            @fragment
+            fn fs_main(input: PsIn) -> @location(0) vec4<f32> {
+                // input.uv (comment should not count)
+                let myinput = Other(vec2<f32>(0.0, 0.0));
+                let _a = myinput.uv; // substring match in `myinput.uv` should not count
+                return vec4<f32>(0.0);
+            }
+        "#;
+        let refs = referenced_ps_input_locations(wgsl);
+        assert!(
+            refs.is_empty(),
+            "expected no referenced inputs, got {refs:?}"
+        );
     }
 
     #[test]
