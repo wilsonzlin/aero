@@ -79,7 +79,32 @@ class HarnessUdpEchoServerTests(unittest.TestCase):
         finally:
             server.close()
 
+    def test_drops_oversize_datagram(self) -> None:
+        h = self.harness
+        # Use a small max_datagram_size so we can deterministically exercise the oversize drop path.
+        server = h._UdpEchoServer("127.0.0.1", 0, max_datagram_size=16, socket_timeout_seconds=0.1)
+        server.start()
+        try:
+            port = server.port
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            try:
+                s.settimeout(0.2)
+                oversized = b"x" * 100
+                s.sendto(oversized, ("127.0.0.1", port))
+                with self.assertRaises(socket.timeout):
+                    s.recvfrom(4096)
+
+                # Ensure the server still echoes subsequent valid datagrams after dropping.
+                s.settimeout(1.0)
+                payload = b"ok"
+                s.sendto(payload, ("127.0.0.1", port))
+                data, _ = s.recvfrom(4096)
+                self.assertEqual(data, payload)
+            finally:
+                s.close()
+        finally:
+            server.close()
+
 
 if __name__ == "__main__":
     unittest.main()
-
