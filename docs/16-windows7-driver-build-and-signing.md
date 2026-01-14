@@ -158,7 +158,7 @@ See also the examples under `drivers/_template/`:
 > (`PCI\VEN_1AF4&DEV_1052&REV_01`, no `SUBSYS`) for environments where subsystem IDs are absent/ignored.
 >
 > Tablet devices bind via the separate `inf/aero_virtio_tablet.inf` (`SUBSYS_00121AF4`); that INF is more specific and wins
-> over any generic fallback when both packages are present.
+> over the generic fallback when both packages are present.
 >
 > The repo also carries an optional legacy filename alias checked in disabled-by-default
 > (`inf/virtio-input.inf.disabled` → rename to `inf/virtio-input.inf`) for compatibility with workflows/tools that still

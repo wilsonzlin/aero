@@ -10,11 +10,9 @@
   - Must bind as HIDClass
   - Must reference the expected catalog filename
   - Must target KMDF 1.9 (in-box on Win7 SP1)
-  - Must include the contract v1 keyboard/mouse HWID set (revision gated, REV_01)
-  - Must include the strict, REV-qualified generic fallback HWID (no SUBSYS):
+  - Must include the contract v1 keyboard/mouse HWID set (revision gated, REV_01), plus the strict REV-qualified generic fallback HWID (no SUBSYS):
     `PCI\VEN_1AF4&DEV_1052&REV_01`
-  - The optional legacy filename alias (`virtio-input.inf(.disabled)`) exists for compatibility with older tooling and is
-    expected to follow the same model line policy as the canonical INF
+  - If a legacy filename alias INF exists (`virtio-input.inf{,.disabled}`), it must be a filename alias only and remain byte-for-byte identical to the canonical INF from the first section header (`[Version]`) onward (only the leading banner/comments may differ).
   - Must not include a revision-less base HWID (`PCI\VEN_1AF4&DEV_1052`) (revision gating is required)
   - Must use distinct DeviceDesc strings for keyboard vs mouse (so they appear separately in Device Manager)
   - Must enable MSI/MSI-X and request enough message interrupts for virtio-input
@@ -112,6 +110,88 @@ function Read-InfLines([string]$Path) {
   return [regex]::Split($text, "\r\n|\n|\r")
 }
 
+function Get-FirstNonblankAsciiByte([byte[]]$Line, [bool]$FirstLine) {
+  # Return the first meaningful ASCII byte on a line, ignoring whitespace and NULs.
+  #
+  # This is robust to UTF-16LE/BE encoded INFs where each ASCII character may be
+  # separated by a NUL byte.
+  $start = 0
+  if ($FirstLine) {
+    # Strip BOMs for *detection only*. Returned content still includes them.
+    if ($Line.Length -ge 3 -and $Line[0] -eq 0xEF -and $Line[1] -eq 0xBB -and $Line[2] -eq 0xBF) {
+      $start = 3
+    }
+    elseif ($Line.Length -ge 2 -and (($Line[0] -eq 0xFF -and $Line[1] -eq 0xFE) -or ($Line[0] -eq 0xFE -and $Line[1] -eq 0xFF))) {
+      $start = 2
+    }
+  }
+
+  for ($i = $start; $i -lt $Line.Length; $i++) {
+    $b = $Line[$i]
+    if ($b -in 0x00, 0x09, 0x0A, 0x0D, 0x20) {
+      continue
+    }
+    return $b
+  }
+  return $null
+}
+
+function Inf-BytesFromFirstSection([string]$Path) {
+  # Return the file content starting from the first section header line (typically `[Version]`).
+  #
+  # We intentionally ignore the leading banner/comments so the legacy alias INF can have a different
+  # filename banner, while still enforcing byte-for-byte equality for all functional content.
+  $data = [System.IO.File]::ReadAllBytes($Path)
+  if ($data.Length -eq 0) {
+    throw ("INF is empty: {0}" -f $Path)
+  }
+
+  $lineStart = 0
+  $lineIndex = 0
+  while ($lineStart -lt $data.Length) {
+    # Find end-of-line (including the newline byte, if present).
+    $i = $lineStart
+    while ($i -lt $data.Length -and $data[$i] -ne 0x0A) {
+      $i++
+    }
+    $nextStart = if ($i -lt $data.Length -and $data[$i] -eq 0x0A) { $i + 1 } else { $i }
+
+    $len = $nextStart - $lineStart
+    $line = New-Object byte[] $len
+    [System.Array]::Copy($data, $lineStart, $line, 0, $len)
+
+    $first = Get-FirstNonblankAsciiByte -Line $line -FirstLine ($lineIndex -eq 0)
+    if ($null -ne $first) {
+      # First section header (e.g. "[Version]") starts the compared region.
+      if ($first -eq 0x5B) {
+        $outLen = $data.Length - $lineStart
+        $out = New-Object byte[] $outLen
+        [System.Array]::Copy($data, $lineStart, $out, 0, $outLen)
+        return $out
+      }
+
+      # Ignore leading comments.
+      if ($first -eq 0x3B) {
+        $lineStart = $nextStart
+        $lineIndex++
+        continue
+      }
+
+      # Unexpected preamble content (not comment, not blank, not section): treat it as part of the
+      # compared region to avoid masking drift.
+      $outLen = $data.Length - $lineStart
+      $out = New-Object byte[] $outLen
+      [System.Array]::Copy($data, $lineStart, $out, 0, $outLen)
+      return $out
+    }
+
+    $lineStart = $nextStart
+    $lineIndex++
+  }
+
+  throw ("INF {0}: could not find a section header line (e.g. [Version])" -f $Path)
+}
+
 function Strip-InfComments([string]$Line) {
   # INF comments begin with ';' outside of quoted strings.
   $inQuote = $false
@@ -200,6 +280,50 @@ try {
 
   $failures = New-Object System.Collections.Generic.List[string]
 
+  #------------------------------------------------------------------------------
+  # Legacy filename alias drift guardrail (optional)
+  #------------------------------------------------------------------------------
+  # The repo may contain an optional legacy filename alias INF (`virtio-input.inf{,.disabled}`).
+  # If present alongside the canonical INF, it must be a filename alias only and remain byte-for-byte
+  # identical from the first section header (`[Version]`) onward.
+  $infDir = Split-Path -Parent $infPathResolved
+  $canonicalInf = Join-Path $infDir 'aero_virtio_input.inf'
+  $aliasEnabled = Join-Path $infDir 'virtio-input.inf'
+  $aliasDisabled = Join-Path $infDir 'virtio-input.inf.disabled'
+
+  $aliasCandidates = @()
+  if (Test-Path -LiteralPath $aliasEnabled -PathType Leaf) { $aliasCandidates += @($aliasEnabled) }
+  if (Test-Path -LiteralPath $aliasDisabled -PathType Leaf) { $aliasCandidates += @($aliasDisabled) }
+  if ($aliasCandidates.Count -gt 1) {
+    Add-Failure -Failures $failures -Message ("Both virtio-input.inf and virtio-input.inf.disabled exist in {0}; only one should exist." -f $infDir)
+  }
+  elseif ($aliasCandidates.Count -eq 1 -and (Test-Path -LiteralPath $canonicalInf -PathType Leaf)) {
+    try {
+      $canonicalBytes = Inf-BytesFromFirstSection -Path $canonicalInf
+      $aliasBytes = Inf-BytesFromFirstSection -Path $aliasCandidates[0]
+
+      $equal = $true
+      if ($canonicalBytes.Length -ne $aliasBytes.Length) {
+        $equal = $false
+      }
+      else {
+        for ($i = 0; $i -lt $canonicalBytes.Length; $i++) {
+          if ($canonicalBytes[$i] -ne $aliasBytes[$i]) {
+            $equal = $false
+            break
+          }
+        }
+      }
+
+      if (-not $equal) {
+        Add-Failure -Failures $failures -Message ("virtio-input INF alias drift detected: {0} vs {1}. The alias must be byte-for-byte identical to the canonical INF from the first section header ([Version]) onward (only the leading banner/comments may differ). Tip: run python3 drivers/windows7/virtio-input/scripts/check-inf-alias.py" -f $canonicalInf, $aliasCandidates[0])
+      }
+    }
+    catch {
+      Add-Failure -Failures $failures -Message ("Unable to validate virtio-input INF alias drift: {0}" -f $_.Exception.Message)
+    }
+  }
+
 #------------------------------------------------------------------------------
 # Version section basics
 #------------------------------------------------------------------------------
@@ -286,9 +410,14 @@ foreach ($installSect in $installWdfSections) {
 # Hardware IDs (Aero contract v1)
 #------------------------------------------------------------------------------
 # Hardware ID policy:
-# - The keyboard/mouse INF must include the SUBSYS-qualified Aero contract v1 keyboard/mouse IDs (distinct
-#   keyboard/mouse naming) plus the strict, REV-qualified generic fallback HWID (no SUBSYS) so driver binding
-#   remains revision-gated even if subsystem IDs are absent/ignored.
+# - All virtio-input INFs must include the SUBSYS-qualified Aero contract v1 keyboard/mouse IDs
+#   (distinct keyboard/mouse naming):
+#     PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01
+#     PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01
+# - All virtio-input INFs must also include the strict, REV-qualified generic fallback HWID (no SUBSYS):
+#     PCI\VEN_1AF4&DEV_1052&REV_01
+# - Legacy alias `virtio-input.inf{,.disabled}` (if present) is a filename alias only and must remain byte-for-byte identical
+#   to `aero_virtio_input.inf` from the first section header (`[Version]`) onward (only the leading banner/comments may differ).
 $fallbackHwid = 'PCI\VEN_1AF4&DEV_1052&REV_01'
 $requiredHwids = @(
   # Aero contract v1 keyboard (SUBSYS_0010)
