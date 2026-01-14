@@ -1,5 +1,5 @@
-use emulator::io::usb::core::AttachedUsbDevice;
-use emulator::io::usb::{ControlResponse, SetupPacket, UsbDeviceModel, UsbInResult};
+use aero_usb::device::AttachedUsbDevice;
+use aero_usb::{ControlResponse, SetupPacket, UsbDeviceModel, UsbInResult};
 
 #[derive(Default)]
 struct OversizedInterruptIn;

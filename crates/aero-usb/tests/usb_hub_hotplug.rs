@@ -1,7 +1,6 @@
-use emulator::io::usb::core::{UsbInResult, UsbOutResult};
-use emulator::io::usb::hid::keyboard::UsbHidKeyboardHandle;
-use emulator::io::usb::hub::{RootHub, UsbHubDevice};
-use emulator::io::usb::{ControlResponse, SetupPacket};
+use aero_usb::hid::keyboard::UsbHidKeyboardHandle;
+use aero_usb::hub::{RootHub, UsbHubDevice};
+use aero_usb::{ControlResponse, SetupPacket, UsbInResult, UsbOutResult};
 
 const USB_REQUEST_GET_STATUS: u8 = 0x00;
 const USB_REQUEST_CLEAR_FEATURE: u8 = 0x01;

@@ -2,9 +2,10 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use core::ops::DerefMut;
-use emulator::io::usb::core::{AttachedUsbDevice, UsbInResult, UsbOutResult};
-use emulator::io::usb::hub::{RootHub, UsbHub};
-use emulator::io::usb::{ControlResponse, SetupPacket, UsbDeviceModel};
+
+use aero_usb::device::{AttachedUsbDevice, UsbInResult, UsbOutResult};
+use aero_usb::hub::{RootHub, UsbHub};
+use aero_usb::{ControlResponse, SetupPacket, UsbDeviceModel};
 
 #[derive(Clone)]
 struct TestHubControl {

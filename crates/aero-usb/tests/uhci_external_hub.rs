@@ -1,3 +1,4 @@
+use aero_usb::hid::keyboard::UsbHidKeyboardHandle;
 use aero_usb::hid::{UsbHidPassthroughHandle, UsbHidPassthroughOutputReport};
 use aero_usb::hub::UsbHubDevice;
 use aero_usb::uhci::regs;
@@ -161,6 +162,254 @@ fn setup_hub_clear_port_feature(port: u16, feature: u16) -> SetupPacket {
         w_index: port,
         w_length: 0,
     }
+}
+
+fn power_reset_and_clear_hub_port(
+    ctrl: &mut UhciController,
+    mem: &mut TestMemory,
+    alloc: &mut Alloc,
+    fl_base: u32,
+    hub_addr: u8,
+    port: u16,
+) {
+    // SET_FEATURE(PORT_POWER).
+    control_no_data(
+        ctrl,
+        mem,
+        alloc,
+        fl_base,
+        hub_addr,
+        setup_hub_set_port_feature(port, 8),
+    );
+    // SET_FEATURE(PORT_RESET).
+    control_no_data(
+        ctrl,
+        mem,
+        alloc,
+        fl_base,
+        hub_addr,
+        setup_hub_set_port_feature(port, 4),
+    );
+    // Advance time until reset completes.
+    for _ in 0..50 {
+        ctrl.tick_1ms(mem);
+    }
+    // Clear relevant change bits.
+    for feature in [20u16, 16u16, 17u16] {
+        control_no_data(
+            ctrl,
+            mem,
+            alloc,
+            fl_base,
+            hub_addr,
+            setup_hub_clear_port_feature(port, feature),
+        );
+    }
+}
+
+#[test]
+fn uhci_external_hub_enumerates_downstream_hid() {
+    let mut ctrl = UhciController::new();
+
+    // Root port0: external USB hub.
+    ctrl.hub_mut().attach(0, Box::new(UsbHubDevice::new()));
+
+    // A keyboard behind downstream port 1.
+    let keyboard = UsbHidKeyboardHandle::new();
+    ctrl.hub_mut()
+        .attach_at_path(&[0, 1], Box::new(keyboard.clone()))
+        .unwrap();
+
+    let mut mem = TestMemory::new(0x40000);
+    let mut alloc = Alloc::new(0x2000);
+
+    let fl_base = 0x1000;
+    ctrl.io_write(REG_FRBASEADD, 4, fl_base);
+    ctrl.io_write(REG_USBINTR, 2, USBINTR_IOC as u32);
+
+    // Reset + enable root port 1.
+    ctrl.io_write(REG_PORTSC1, 2, PORTSC_PR as u32);
+    for _ in 0..50 {
+        ctrl.tick_1ms(&mut mem);
+    }
+
+    ctrl.io_write(REG_USBCMD, 2, (USBCMD_RUN | regs::USBCMD_MAXP) as u32);
+
+    // Enumerate and configure the hub itself at address 0 -> 1.
+    control_no_data(&mut ctrl, &mut mem, &mut alloc, fl_base, 0, setup_set_address(1));
+    control_no_data(
+        &mut ctrl,
+        &mut mem,
+        &mut alloc,
+        fl_base,
+        1,
+        setup_set_configuration(1),
+    );
+
+    // Power + reset downstream port 1 so the keyboard becomes routable.
+    power_reset_and_clear_hub_port(&mut ctrl, &mut mem, &mut alloc, fl_base, 1, 1);
+
+    // Enumerate and configure the downstream keyboard at address 5.
+    control_no_data(&mut ctrl, &mut mem, &mut alloc, fl_base, 0, setup_set_address(5));
+    control_no_data(
+        &mut ctrl,
+        &mut mem,
+        &mut alloc,
+        fl_base,
+        5,
+        setup_set_configuration(1),
+    );
+
+    keyboard.key_event(0x04, true); // 'a'
+    let report = interrupt_in(&mut ctrl, &mut mem, &mut alloc, fl_base, 5, 1, 8);
+    assert_eq!(report.len(), 8);
+    assert_eq!(report[2], 0x04);
+    assert!(ctrl.irq_level());
+}
+
+#[test]
+fn uhci_external_hub_enumerates_multiple_downstream_hid_devices() {
+    let mut ctrl = UhciController::new();
+
+    ctrl.hub_mut().attach(0, Box::new(UsbHubDevice::new()));
+
+    let keyboard1 = UsbHidKeyboardHandle::new();
+    let keyboard2 = UsbHidKeyboardHandle::new();
+    let keyboard3 = UsbHidKeyboardHandle::new();
+    ctrl.hub_mut()
+        .attach_at_path(&[0, 1], Box::new(keyboard1.clone()))
+        .unwrap();
+    ctrl.hub_mut()
+        .attach_at_path(&[0, 2], Box::new(keyboard2.clone()))
+        .unwrap();
+    ctrl.hub_mut()
+        .attach_at_path(&[0, 3], Box::new(keyboard3.clone()))
+        .unwrap();
+
+    let mut mem = TestMemory::new(0x40000);
+    let mut alloc = Alloc::new(0x2000);
+
+    let fl_base = 0x1000;
+    ctrl.io_write(REG_FRBASEADD, 4, fl_base);
+    ctrl.io_write(REG_USBINTR, 2, USBINTR_IOC as u32);
+
+    // Reset + enable root port 1.
+    ctrl.io_write(REG_PORTSC1, 2, PORTSC_PR as u32);
+    for _ in 0..50 {
+        ctrl.tick_1ms(&mut mem);
+    }
+
+    ctrl.io_write(REG_USBCMD, 2, (USBCMD_RUN | regs::USBCMD_MAXP) as u32);
+
+    // Enumerate and configure hub at address 0 -> 1.
+    control_no_data(&mut ctrl, &mut mem, &mut alloc, fl_base, 0, setup_set_address(1));
+    control_no_data(
+        &mut ctrl,
+        &mut mem,
+        &mut alloc,
+        fl_base,
+        1,
+        setup_set_configuration(1),
+    );
+
+    // Enumerate each downstream keyboard on ports 1..3 at addresses 5..7.
+    for (port, addr) in [(1u16, 5u16), (2u16, 6u16), (3u16, 7u16)] {
+        power_reset_and_clear_hub_port(&mut ctrl, &mut mem, &mut alloc, fl_base, 1, port);
+        control_no_data(&mut ctrl, &mut mem, &mut alloc, fl_base, 0, setup_set_address(addr));
+        control_no_data(
+            &mut ctrl,
+            &mut mem,
+            &mut alloc,
+            fl_base,
+            addr as u8,
+            setup_set_configuration(1),
+        );
+    }
+
+    keyboard1.key_event(0x04, true); // 'a'
+    keyboard2.key_event(0x05, true); // 'b'
+    keyboard3.key_event(0x06, true); // 'c'
+
+    let report1 = interrupt_in(&mut ctrl, &mut mem, &mut alloc, fl_base, 5, 1, 8);
+    let report2 = interrupt_in(&mut ctrl, &mut mem, &mut alloc, fl_base, 6, 1, 8);
+    let report3 = interrupt_in(&mut ctrl, &mut mem, &mut alloc, fl_base, 7, 1, 8);
+
+    assert_eq!(report1[2], 0x04);
+    assert_eq!(report2[2], 0x05);
+    assert_eq!(report3[2], 0x06);
+}
+
+#[test]
+fn uhci_external_hub_enumerates_device_behind_nested_hubs() {
+    let mut ctrl = UhciController::new();
+
+    // Root port0: hub1 -> hub2 -> keyboard (all full-speed).
+    ctrl.hub_mut().attach(0, Box::new(UsbHubDevice::new()));
+    ctrl.hub_mut()
+        .attach_at_path(&[0, 1], Box::new(UsbHubDevice::new()))
+        .unwrap();
+    let keyboard = UsbHidKeyboardHandle::new();
+    ctrl.hub_mut()
+        .attach_at_path(&[0, 1, 1], Box::new(keyboard.clone()))
+        .unwrap();
+
+    let mut mem = TestMemory::new(0x40000);
+    let mut alloc = Alloc::new(0x2000);
+
+    let fl_base = 0x1000;
+    ctrl.io_write(REG_FRBASEADD, 4, fl_base);
+    ctrl.io_write(REG_USBINTR, 2, USBINTR_IOC as u32);
+
+    // Reset + enable root port 1.
+    ctrl.io_write(REG_PORTSC1, 2, PORTSC_PR as u32);
+    for _ in 0..50 {
+        ctrl.tick_1ms(&mut mem);
+    }
+
+    ctrl.io_write(REG_USBCMD, 2, (USBCMD_RUN | regs::USBCMD_MAXP) as u32);
+
+    // Enumerate and configure hub1 at address 0 -> 1.
+    control_no_data(&mut ctrl, &mut mem, &mut alloc, fl_base, 0, setup_set_address(1));
+    control_no_data(
+        &mut ctrl,
+        &mut mem,
+        &mut alloc,
+        fl_base,
+        1,
+        setup_set_configuration(1),
+    );
+
+    // Enable hub1 downstream port1 so hub2 becomes routable at address 0.
+    power_reset_and_clear_hub_port(&mut ctrl, &mut mem, &mut alloc, fl_base, 1, 1);
+
+    // Enumerate hub2 at address 0 -> 2 and configure it.
+    control_no_data(&mut ctrl, &mut mem, &mut alloc, fl_base, 0, setup_set_address(2));
+    control_no_data(
+        &mut ctrl,
+        &mut mem,
+        &mut alloc,
+        fl_base,
+        2,
+        setup_set_configuration(1),
+    );
+
+    // Enable hub2 downstream port1 so the keyboard becomes routable at address 0.
+    power_reset_and_clear_hub_port(&mut ctrl, &mut mem, &mut alloc, fl_base, 2, 1);
+
+    // Enumerate the downstream keyboard at address 0 -> 5.
+    control_no_data(&mut ctrl, &mut mem, &mut alloc, fl_base, 0, setup_set_address(5));
+    control_no_data(
+        &mut ctrl,
+        &mut mem,
+        &mut alloc,
+        fl_base,
+        5,
+        setup_set_configuration(1),
+    );
+
+    keyboard.key_event(0x04, true); // 'a'
+    let report = interrupt_in(&mut ctrl, &mut mem, &mut alloc, fl_base, 5, 1, 8);
+    assert_eq!(report[2], 0x04);
 }
 
 #[test]

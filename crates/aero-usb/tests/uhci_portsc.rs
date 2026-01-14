@@ -1,7 +1,8 @@
 use core::ops::DerefMut;
-use emulator::io::usb::core::{AttachedUsbDevice, UsbInResult, UsbOutResult};
-use emulator::io::usb::hub::{RootHub, UsbHubDevice};
-use emulator::io::usb::{ControlResponse, SetupPacket, UsbDeviceModel};
+
+use aero_usb::device::{AttachedUsbDevice, UsbInResult, UsbOutResult};
+use aero_usb::hub::{RootHub, UsbHubDevice};
+use aero_usb::{ControlResponse, SetupPacket, UsbDeviceModel};
 
 struct TestUsbDevice;
 
