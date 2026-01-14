@@ -427,7 +427,11 @@ impl BlockLowerer<'_> {
     fn lower_write_reg(&mut self, reg: GuestReg, src: T1ValueId) {
         match reg {
             GuestReg::Rip => {
-                self.unsupported = true;
+                // Tier-2 does not currently model RIP as a first-class SSA value.
+                //
+                // Tier-1 may emit `write.rip` as per-instruction metadata (e.g. to report the
+                // current guest RIP on runtime exits). Tier-2 treats those writes as non-semantic
+                // and ignores them so they don't force CFG-level deopts.
             }
             GuestReg::Flag(_) => {
                 // Tier-2 IR does not currently model direct flag writes; they should be expressed
@@ -1339,5 +1343,52 @@ fn map_binop(op: T1BinOp) -> Option<BinOp> {
         T1BinOp::Shl => Some(BinOp::Shl),
         T1BinOp::Shr => Some(BinOp::Shr),
         T1BinOp::Sar => Some(BinOp::Sar),
+    }
+}
+
+/// Lowers a pre-built Tier-1 IR block into a single Tier-2 [`Block`].
+///
+/// This is a lightweight helper primarily intended for integration tests that want to exercise
+/// Tier-2 lowering without going through x86 decode + Tier-1 translation.
+///
+/// Note: The returned block uses [`Terminator::Return`] on success and models "deopt at entry"
+/// as an empty block that [`Terminator::SideExit`]s at `entry_rip` (matching the CFG builder's
+/// conservative bailout behaviour).
+#[doc(hidden)]
+pub fn lower_tier1_ir_block_for_test(ir: &IrBlock) -> Block {
+    let mut next_value: u32 = ir
+        .value_types
+        .len()
+        .try_into()
+        .expect("Tier-1 IR value count overflows u32");
+    let base = 0u32;
+
+    let mut lower = BlockLowerer {
+        entry_rip: ir.entry_rip,
+        base,
+        next_value: &mut next_value,
+        instrs: Vec::new(),
+        unsupported: false,
+    };
+    lower.lower_block(ir);
+
+    if lower.unsupported {
+        Block {
+            id: BlockId(0),
+            start_rip: ir.entry_rip,
+            code_len: 0,
+            instrs: Vec::new(),
+            term: Terminator::SideExit {
+                exit_rip: ir.entry_rip,
+            },
+        }
+    } else {
+        Block {
+            id: BlockId(0),
+            start_rip: ir.entry_rip,
+            code_len: 0,
+            instrs: lower.instrs,
+            term: Terminator::Return,
+        }
     }
 }
