@@ -286,14 +286,24 @@ The AeroGPU command stream has legacy `shader_stage` enums that mirror WebGPU (V
 includes an explicit Geometry stage (`shader_stage = GEOMETRY`).
 
 To support additional D3D programmable stages (HS/DS) without breaking the ABI, some
-resource-binding packets overload a reserved field with a small **`stage_ex` tag** when
-`shader_stage == COMPUTE` (values match DXBC program types):
+resource-binding packets overload their trailing reserved field as a **`stage_ex` selector** when
+`shader_stage == COMPUTE`.
 
-- Preferred GS encoding: `shader_stage = GEOMETRY`, `reserved0 = 0`.
+Encoding invariant (see `drivers/aerogpu/protocol/aerogpu_cmd.h`):
+
+- If `shader_stage != COMPUTE`, the `stage_ex`/`reserved0` field must be 0 and is ignored.
+- If `shader_stage == COMPUTE`:
+  - `stage_ex == 0` means the real/legacy Compute stage.
+  - `stage_ex != 0` means `stage_ex` is present and encodes a non-zero DXBC program type selector.
+
+- Preferred GS encoding: `shader_stage = GEOMETRY`, `stage_ex = 0`.
 - `stage_ex` encoding (required for HS/DS; may also be used for GS for compatibility):
   - `2 = Geometry`
   - `3 = Hull`
   - `4 = Domain`
+
+Pixel shaders are intentionally not representable via `stage_ex` because `0` is reserved for legacy
+compute packets; pixel bindings always use `shader_stage = PIXEL`.
 
 On the host, these are tracked as distinct per-stage binding tables so that “real compute” state is
 not overwritten by graphics emulation state.
