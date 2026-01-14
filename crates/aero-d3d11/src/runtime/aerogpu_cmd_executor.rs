@@ -221,7 +221,7 @@ fn compute_prepass_vertex_pulling_binding_numbers(slot_count: u32) -> Vec<u32> {
 //
 // Internal bindings must use `@binding >= BINDING_BASE_INTERNAL` to avoid colliding with
 // D3D register-space bindings (`b#`/`t#`/`s#`/`u#`).
-const GEOMETRY_PREPASS_GS_CB0_BINDING: u32 = BINDING_BASE_CBUFFER + 0;
+const GEOMETRY_PREPASS_GS_CB0_BINDING: u32 = BINDING_BASE_CBUFFER;
 const GEOMETRY_PREPASS_OUT_VERTICES_BINDING: u32 = INDEX_PULLING_BUFFER_BINDING + 1;
 const GEOMETRY_PREPASS_OUT_INDICES_BINDING: u32 = GEOMETRY_PREPASS_OUT_VERTICES_BINDING + 1;
 const GEOMETRY_PREPASS_OUT_INDIRECT_BINDING: u32 = GEOMETRY_PREPASS_OUT_VERTICES_BINDING + 2;

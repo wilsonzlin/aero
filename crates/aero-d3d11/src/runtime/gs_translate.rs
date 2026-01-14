@@ -2391,15 +2391,6 @@ fn emit_src_vec4(
                 };
                 expand_u32_to_vec4(u32_expr, info.mask)
             }
-            other => {
-                // Keep this non-exhaustive: new `RegFile` variants should not break GS translation
-                // compilation; instead they should yield a descriptive runtime error.
-                return Err(GsTranslateError::UnsupportedOperand {
-                    inst_index,
-                    opcode,
-                    msg: format!("unsupported source register file {other:?}"),
-                });
-            }
         },
         SrcKind::GsInput { reg, vertex } => format!("gs_load_input(prim_id, {reg}u, {vertex}u)"),
         SrcKind::ConstantBuffer { slot, reg } => {
@@ -2477,15 +2468,6 @@ fn emit_src_vec4_u32(
                     opcode,
                     msg: "RegFile::OutputDepth is not supported in GS prepass".to_owned(),
                 })
-            }
-            other => {
-                // Keep this non-exhaustive: new `RegFile` variants should not break GS translation
-                // compilation; instead they should yield a descriptive runtime error.
-                return Err(GsTranslateError::UnsupportedOperand {
-                    inst_index,
-                    opcode,
-                    msg: format!("unsupported source register file {other:?}"),
-                });
             }
         },
         SrcKind::GsInput { reg, vertex } => {
@@ -2573,15 +2555,6 @@ fn emit_src_vec4_i32(
                     opcode,
                     msg: "RegFile::OutputDepth is not supported in GS prepass".to_owned(),
                 })
-            }
-            other => {
-                // Keep this non-exhaustive: new `RegFile` variants should not break GS translation
-                // compilation; instead they should yield a descriptive runtime error.
-                return Err(GsTranslateError::UnsupportedOperand {
-                    inst_index,
-                    opcode,
-                    msg: format!("unsupported source register file {other:?}"),
-                });
             }
         },
         SrcKind::GsInput { reg, vertex } => {
