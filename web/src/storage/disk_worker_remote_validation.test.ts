@@ -173,6 +173,57 @@ describe("disk_worker remote validation", () => {
     expect(resp.error?.message ?? "").toMatch(/safe/i);
   });
 
+  it("rejects OPFS create_remote with overlayFileName '..'", async () => {
+    vi.resetModules();
+
+    const root = new MemoryDirectoryHandle("root");
+    restoreOpfs = installMemoryOpfs(root).restore;
+
+    hadOriginalSelf = Object.prototype.hasOwnProperty.call(globalThis, "self");
+    originalSelf = (globalThis as unknown as { self?: unknown }).self;
+
+    const requestId = 1;
+    let resolveResponse: ((msg: any) => void) | null = null;
+    const response = new Promise<any>((resolve) => {
+      resolveResponse = resolve;
+    });
+
+    const workerScope: any = {
+      postMessage(msg: any) {
+        if (msg?.type === "response" && msg.requestId === requestId) {
+          resolveResponse?.(msg);
+        }
+      },
+    };
+    (globalThis as unknown as { self?: unknown }).self = workerScope;
+
+    await import("./disk_worker.ts");
+
+    workerScope.onmessage?.({
+      data: {
+        type: "request",
+        requestId,
+        backend: "opfs",
+        op: "create_remote",
+        payload: {
+          name: "Remote disk",
+          imageId: "remote-validation-name",
+          version: "v1",
+          delivery: "range",
+          sizeBytes: 1024 * 1024,
+          kind: "hdd",
+          format: "raw",
+          urls: { url: "https://example.invalid/disk.img" },
+          overlayFileName: "..",
+        },
+      },
+    });
+
+    const resp = await response;
+    expect(resp.ok).toBe(false);
+    expect(resp.error?.message ?? "").toMatch(/overlayFileName/i);
+  });
+
   it("rejects OPFS update_remote overlayBlockSizeBytes larger than 64MiB", async () => {
     vi.resetModules();
 
@@ -244,6 +295,79 @@ describe("disk_worker remote validation", () => {
     const resp = await response;
     expect(resp.ok).toBe(false);
     expect(resp.error?.message ?? "").toMatch(/overlayBlockSizeBytes/i);
+  });
+
+  it("rejects OPFS update_remote with empty cacheFileName", async () => {
+    vi.resetModules();
+
+    const root = new MemoryDirectoryHandle("root");
+    restoreOpfs = installMemoryOpfs(root).restore;
+
+    hadOriginalSelf = Object.prototype.hasOwnProperty.call(globalThis, "self");
+    originalSelf = (globalThis as unknown as { self?: unknown }).self;
+
+    const requestId = 1;
+    let resolveResponse: ((msg: any) => void) | null = null;
+    const response = new Promise<any>((resolve) => {
+      resolveResponse = resolve;
+    });
+
+    const workerScope: any = {
+      postMessage(msg: any) {
+        if (msg?.type === "response" && msg.requestId === requestId) {
+          resolveResponse?.(msg);
+        }
+      },
+    };
+    (globalThis as unknown as { self?: unknown }).self = workerScope;
+
+    await import("./disk_worker.ts");
+
+    const { createMetadataStore } = await import("./metadata");
+    const store = createMetadataStore("opfs");
+
+    const meta = {
+      source: "remote",
+      id: "remote-validation-empty-name",
+      name: "Remote Validation Test",
+      kind: "hdd",
+      format: "raw",
+      sizeBytes: 1024 * 1024,
+      createdAtMs: Date.now(),
+      lastUsedAtMs: undefined,
+      remote: {
+        imageId: "remote-validation-empty-name",
+        version: "v1",
+        delivery: "range",
+        urls: { url: "https://example.invalid/disk.img" },
+      },
+      cache: {
+        chunkSizeBytes: 1024 * 1024,
+        backend: "opfs",
+        fileName: "remote-validation-empty-name.cache.aerospar",
+        overlayFileName: "remote-validation-empty-name.overlay.aerospar",
+        overlayBlockSizeBytes: 1024 * 1024,
+      },
+    } as const;
+
+    await store.putDisk(meta as any);
+
+    workerScope.onmessage?.({
+      data: {
+        type: "request",
+        requestId,
+        backend: "opfs",
+        op: "update_remote",
+        payload: {
+          id: meta.id,
+          cacheFileName: "",
+        },
+      },
+    });
+
+    const resp = await response;
+    expect(resp.ok).toBe(false);
+    expect(resp.error?.message ?? "").toMatch(/cacheFileName/i);
   });
 
   it("rejects OPFS update_remote when setting an unsupported format", async () => {

@@ -206,6 +206,12 @@ function assertValidDiskBackend(backend: unknown): asserts backend is DiskBacken
 
 function assertValidOpfsFileName(name: string, field: string): void {
   // OPFS file names are path components; reject separators to avoid confusion about directories.
+  if (!name || !name.trim()) {
+    throw new Error(`${field} must be a non-empty file name`);
+  }
+  if (name === "." || name === "..") {
+    throw new Error(`${field} must not be "." or ".."`);
+  }
   if (name.includes("/") || name.includes("\\") || name.includes("\0")) {
     throw new Error(`${field} must be a simple file name (no path separators)`);
   }
