@@ -18,7 +18,7 @@ That `HANDLE` is typically an **NT handle** (notably for DXGI shared handles), w
 - When transferred to another process it must be **duplicated** (`DuplicateHandle`) or inherited (for real NT handles).
 - The numeric `HANDLE` value is **not stable** cross-process; the consumer’s handle value commonly differs from the producer’s.
 
-Therefore: **AeroGPU must not use the numeric D3D shared `HANDLE` value as a protocol share identifier.**
+Therefore: **AeroGPU must not use the numeric user-mode shared `HANDLE` value as a protocol share identifier.**
 
 Note: some D3D9Ex implementations use “token-style” shared handles that are not real NT handles and cannot be duplicated
 with `DuplicateHandle`. Even in that case, the numeric value is not a robust protocol key: the stable cross-process
