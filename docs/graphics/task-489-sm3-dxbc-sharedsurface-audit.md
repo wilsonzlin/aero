@@ -48,6 +48,14 @@ bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --locked
 - `crates/aero-gpu/tests/aerogpu_d3d9_semantic_locations.rs`
 - `tests/d3d9_vertex_input.rs` (integration coverage via `aero-d3d9` test harness wiring)
 
+**How to run (focused):**
+```bash
+bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --test sm3_semantic_locations --locked
+bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --test sm3_wgsl_semantic_locations --locked
+bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --test d3d9_vertex_input --locked
+bash ./scripts/safe-run.sh cargo test -p aero-gpu --test aerogpu_d3d9_semantic_locations --locked
+```
+
 ---
 
 ## Task 51 / 55 / 58 — DXBC parsing consolidation + `build_container` + RDEF/CTAB moved to `aero-dxbc`
@@ -65,7 +73,7 @@ bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --locked
 - `85f15d9f` — `feat(dxbc): unify RDEF/CTAB parsing in aero-dxbc`
 
 **Tests:**
-- `crates/aero-dxbc/tests/{parse.rs,rdef.rs,rdef_ctab.rs,signature.rs,sm4.rs}`
+- `crates/aero-dxbc/src/tests.rs` (unit tests; includes `tests_{parse,rdef,rdef_ctab,signature,sm4}.rs`)
 - `crates/aero-d3d9/tests/sm3_ir.rs` (uses `aero_dxbc::test_utils::build_container`)
 
 **How to run:**
@@ -127,6 +135,12 @@ bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --features dxbc-robust --test
   the D3D9 executor/command-processor path, but unifying the D3D11 executor on the canonical
   `aero-gpu` implementation would reduce drift/maintenance.
 
+**How to run (focused):**
+```bash
+bash ./scripts/safe-run.sh cargo test -p aero-gpu --test shared_surface_aliasing --locked
+bash ./scripts/safe-run.sh cargo test -p aero-gpu --test aerogpu_d3d9_shared_surface --locked
+```
+
 ---
 
 ## Task 85 / 87 / 88 / 92 / 93 / 94 — SM3 opcode + modifier + const support
@@ -153,6 +167,11 @@ Ops/features referenced by the scratchpad tasks:
   - `micro_ps3_lrp_pixel_compare`
   - `sm3_exp_log_pow_pixel_compare`
 - `crates/aero-d3d9/tests/sm3_wgsl.rs` / `sm3_wgsl_math.rs` (naga-validated WGSL lowering)
+
+**How to run:**
+```bash
+bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --locked
+```
 
 ---
 
@@ -201,6 +220,12 @@ AERO_TIMEOUT=1200 bash ./scripts/safe-run.sh cargo test -p aero-gpu --test aerog
 - `crates/aero-d3d9/tests/sm3_wgsl.rs::wgsl_vs_outputs_and_ps_inputs_use_consistent_locations`
 - `crates/aero-d3d9/tests/sm3_wgsl_semantic_locations.rs::sm3_vs_output_and_ps_input_semantics_share_locations`
 
+**How to run (focused):**
+```bash
+bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --test sm3_wgsl --locked
+bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --test sm3_wgsl_semantic_locations --locked
+```
+
 ---
 
 ## Task 216 / 217 — `dp2` + `dsx`/`dsy` derivatives
@@ -226,6 +251,13 @@ AERO_TIMEOUT=1200 bash ./scripts/safe-run.sh cargo test -p aero-gpu --test aerog
   - `decode_rejects_dsx_in_vertex_shader`
   - `decode_rejects_dsy_in_vertex_shader`
 - `crates/aero-d3d9/src/tests.rs::translate_entrypoint_legacy_fallback_supports_derivatives`
+
+**How to run (focused):**
+```bash
+bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --test sm3_wgsl_dp2 --locked
+bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --test sm3_wgsl --locked
+bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --test sm3_decode --locked
+```
 
 ---
 
@@ -290,6 +322,12 @@ AERO_TIMEOUT=1200 bash ./scripts/safe-run.sh cargo test -p aero-gpu --test aerog
   - `wgsl_ps3_texld_cube_sampler_emits_texture_cube`
   - `wgsl_ps3_texld_3d_sampler_emits_texture_3d`
   - `wgsl_ps3_texld_1d_sampler_emits_texture_1d`
+
+**How to run (focused):**
+```bash
+bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --test sm3_wgsl --locked
+bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --test sm3_wgsl_tex --locked
+```
 
 **Notes / follow-ups:**
 - The SM3 WGSL backend supports sampler texture types 1D/2D/3D/cube.
