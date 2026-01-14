@@ -29,7 +29,7 @@ static void PrintUsage() {
   aerogpu_test::PrintfStdout(
       "                        When --json is enabled, failing tests include these log files in the JSON artifacts array.");
   aerogpu_test::PrintfStdout(
-      "  --dbgctl=PATH         Optional path to aerogpu_dbgctl.exe; if set, run '--status' and a recent cmd dump after test failures/timeouts.");
+      "  --dbgctl=PATH         Optional path to aerogpu_dbgctl.exe; if set, run '--status', '--query-error', and a recent cmd dump after test failures/timeouts.");
   aerogpu_test::PrintfStdout(
       "                        When --json is enabled, failing tests include dbgctl outputs in the JSON artifacts array.");
   aerogpu_test::PrintfStdout("  --dbgctl-timeout-ms=NNNN  Timeout for the dbgctl process itself (wrapper kill). Default: 5000.");
@@ -630,6 +630,73 @@ static bool DumpDbgctlStatusSnapshotBestEffort(const std::wstring& dbgctl_path,
 
   std::vector<std::wstring> args;
   args.push_back(L"--status");
+  args.push_back(L"--timeout-ms");
+  args.push_back(aerogpu_test::Utf8ToWideFallbackAcp(
+      aerogpu_test::FormatString("%lu", (unsigned long)dbgctl_timeout_ms)));
+
+  RunResult rr = RunProcessWithTimeoutW(dbgctl_path, args, dbgctl_timeout_ms, true, &out_files);
+  if (!rr.started) {
+    if (err) {
+      *err = rr.err;
+    }
+    return false;
+  }
+
+  if (out_path) {
+    *out_path = snapshot_path;
+  }
+  if (rr.timed_out) {
+    if (err) {
+      *err = aerogpu_test::FormatString("dbgctl timed out after %lu ms", (unsigned long)dbgctl_timeout_ms);
+    }
+    return false;
+  }
+  if (rr.exit_code != 0) {
+    if (err) {
+      if (!rr.err.empty()) {
+        *err = rr.err;
+      } else {
+        *err = aerogpu_test::FormatString("dbgctl exit_code=%lu", (unsigned long)rr.exit_code);
+      }
+    }
+    return false;
+  }
+  return true;
+}
+
+static bool DumpDbgctlQueryErrorSnapshotBestEffort(const std::wstring& dbgctl_path,
+                                                   const std::wstring& out_dir,
+                                                   const std::string& test_name,
+                                                   DWORD dbgctl_timeout_ms,
+                                                   std::wstring* out_path,
+                                                   std::string* err) {
+  if (out_path) {
+    out_path->clear();
+  }
+  if (err) {
+    err->clear();
+  }
+  if (dbgctl_path.empty() || out_dir.empty() || test_name.empty() || dbgctl_timeout_ms == 0) {
+    return false;
+  }
+
+  std::string mk_err;
+  if (!EnsureDirExistsRecursive(out_dir, &mk_err)) {
+    if (err) {
+      *err = mk_err;
+    }
+    return false;
+  }
+
+  const std::wstring leaf = aerogpu_test::Utf8ToWideFallbackAcp("dbgctl_" + test_name + "_query_error.txt");
+  const std::wstring snapshot_path = aerogpu_test::JoinPath(out_dir, leaf.c_str());
+
+  ProcessOutputFiles out_files;
+  out_files.stdout_path = snapshot_path;
+  out_files.stderr_path = snapshot_path;  // combined
+
+  std::vector<std::wstring> args;
+  args.push_back(L"--query-error");
   args.push_back(L"--timeout-ms");
   args.push_back(aerogpu_test::Utf8ToWideFallbackAcp(
       aerogpu_test::FormatString("%lu", (unsigned long)dbgctl_timeout_ms)));
@@ -1662,6 +1729,17 @@ int main(int argc, char** argv) {
           aerogpu_test::PrintfStdout("INFO: dbgctl snapshot failed: %s", snapshot_err.c_str());
         }
 
+        std::wstring qe_path;
+        std::string qe_err;
+        bool qe_ok = DumpDbgctlQueryErrorSnapshotBestEffort(
+            dbgctl_path, out_dir, test_name, dbgctl_timeout_ms, &qe_path, &qe_err);
+        AppendArtifactIfExistsW(qe_path, &runner_artifacts);
+        if (qe_ok) {
+          aerogpu_test::PrintfStdout("INFO: wrote dbgctl query-error snapshot: %ls", qe_path.c_str());
+        } else if (!qe_err.empty()) {
+          aerogpu_test::PrintfStdout("INFO: dbgctl query-error snapshot failed: %s", qe_err.c_str());
+        }
+
         std::wstring cmd_base_path;
         std::wstring cmd_log_path;
         std::string cmd_err;
@@ -1719,6 +1797,17 @@ int main(int argc, char** argv) {
           aerogpu_test::PrintfStdout("INFO: wrote dbgctl status snapshot: %ls", snapshot_path.c_str());
         } else if (!snapshot_err.empty()) {
           aerogpu_test::PrintfStdout("INFO: dbgctl snapshot failed: %s", snapshot_err.c_str());
+        }
+
+        std::wstring qe_path;
+        std::string qe_err;
+        bool qe_ok = DumpDbgctlQueryErrorSnapshotBestEffort(
+            dbgctl_path, out_dir, test_name, dbgctl_timeout_ms, &qe_path, &qe_err);
+        AppendArtifactIfExistsW(qe_path, &runner_artifacts);
+        if (qe_ok) {
+          aerogpu_test::PrintfStdout("INFO: wrote dbgctl query-error snapshot: %ls", qe_path.c_str());
+        } else if (!qe_err.empty()) {
+          aerogpu_test::PrintfStdout("INFO: dbgctl query-error snapshot failed: %s", qe_err.c_str());
         }
 
         std::wstring cmd_base_path;
