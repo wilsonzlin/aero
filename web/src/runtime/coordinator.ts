@@ -873,6 +873,18 @@ export class WorkerCoordinator {
     this.syncAudioRingBufferAttachments();
   }
 
+  getAudioRingBufferOwnerOverride(): RingBufferOwner | null {
+    return this.audioRingBufferOwnerOverride;
+  }
+
+  getAudioRingBufferOwnerDefault(): RingBufferOwner {
+    return this.defaultAudioRingBufferOwner();
+  }
+
+  getAudioRingBufferOwner(): RingBufferOwner {
+    return this.effectiveAudioRingBufferOwner();
+  }
+
   /**
    * Override which worker receives the microphone ring buffer attachment (SPSC consumer).
    *
@@ -892,6 +904,18 @@ export class WorkerCoordinator {
     }
     this.micRingBufferOwnerOverride = owner;
     this.syncMicrophoneRingBufferAttachments();
+  }
+
+  getMicrophoneRingBufferOwnerOverride(): RingBufferOwner | null {
+    return this.micRingBufferOwnerOverride;
+  }
+
+  getMicrophoneRingBufferOwnerDefault(): RingBufferOwner {
+    return this.defaultMicrophoneRingBufferOwner();
+  }
+
+  getMicrophoneRingBufferOwner(): RingBufferOwner {
+    return this.effectiveMicrophoneRingBufferOwner();
   }
 
   setMicrophoneRingBuffer(ringBuffer: SharedArrayBuffer | null, sampleRate: number): void {

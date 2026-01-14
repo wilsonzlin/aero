@@ -4500,6 +4500,18 @@ function renderAudioPanel(): HTMLElement {
           userAgent: navigator.userAgent,
           crossOriginIsolated: typeof crossOriginIsolated === "boolean" ? crossOriginIsolated : false,
           host: snapshotHostEnvForExport(),
+          ringBufferOwners: {
+            audioOutput: {
+              effective: workerCoordinator.getAudioRingBufferOwner(),
+              override: workerCoordinator.getAudioRingBufferOwnerOverride(),
+              default: workerCoordinator.getAudioRingBufferOwnerDefault(),
+            },
+            microphone: {
+              effective: workerCoordinator.getMicrophoneRingBufferOwner(),
+              override: workerCoordinator.getMicrophoneRingBufferOwnerOverride(),
+              default: workerCoordinator.getMicrophoneRingBufferOwnerDefault(),
+            },
+          },
           // Include all known audio outputs so QA can tell which ring was actually active.
           audioOutputs: {
             __aeroAudioOutput: snapshotAudioOutput(g.__aeroAudioOutput),
@@ -4687,6 +4699,18 @@ function renderAudioPanel(): HTMLElement {
           userAgent: navigator.userAgent,
           crossOriginIsolated: typeof crossOriginIsolated === "boolean" ? crossOriginIsolated : false,
           host: snapshotHostEnvForExport(),
+          ringBufferOwners: {
+            audioOutput: {
+              effective: workerCoordinator.getAudioRingBufferOwner(),
+              override: workerCoordinator.getAudioRingBufferOwnerOverride(),
+              default: workerCoordinator.getAudioRingBufferOwnerDefault(),
+            },
+            microphone: {
+              effective: workerCoordinator.getMicrophoneRingBufferOwner(),
+              override: workerCoordinator.getMicrophoneRingBufferOwnerOverride(),
+              default: workerCoordinator.getMicrophoneRingBufferOwnerDefault(),
+            },
+          },
           audioOutputs: {
             __aeroAudioOutput: snapshotAudioOutput(g.__aeroAudioOutput),
             __aeroAudioOutputWorker: snapshotAudioOutput(g.__aeroAudioOutputWorker),
