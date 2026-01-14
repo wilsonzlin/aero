@@ -100,6 +100,16 @@ impl MsixCapability {
         self.pba.len() * 8
     }
 
+    /// Clears all pending bits in the MSI-X Pending Bit Array (PBA).
+    ///
+    /// The PBA is read-only from the guest's perspective and is latched by the device when an
+    /// interrupt is generated while delivery is blocked (function mask / vector mask / unprogrammed
+    /// entry). Clearing all pending bits is primarily useful for reset flows so a subsequent
+    /// re-enable does not deliver stale interrupts.
+    pub fn clear_pba_pending_bits(&mut self) {
+        self.pba.fill(0);
+    }
+
     /// Returns a view of the MSI-X table bytes suitable for snapshotting.
     ///
     /// The returned slice is the raw BAR-backed MSI-X table image in little-endian order.

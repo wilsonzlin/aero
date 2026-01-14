@@ -542,8 +542,7 @@ impl PciConfigSpace {
         }
 
         if let Some(msix) = self.capability_mut::<crate::pci::MsixCapability>() {
-            let zeros = vec![0u64; msix.snapshot_pba().len()];
-            let _ = msix.restore_pba(&zeros);
+            msix.clear_pba_pending_bits();
         }
     }
 
