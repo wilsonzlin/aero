@@ -605,7 +605,7 @@ struct aerogpu_cmd_bind_shaders {
    aerogpu_handle_t vs;              // 0 = unbound
    aerogpu_handle_t ps;              // 0 = unbound
    aerogpu_handle_t cs;              // 0 = unbound
-   uint32_t reserved0;               // legacy: may be interpreted as gs when non-zero; extended: should be 0
+   uint32_t reserved0;               // reserved; must be 0; host ignores
 
    // Present when hdr.size_bytes >= 36:
    aerogpu_handle_t gs;              // 0 = unbound
