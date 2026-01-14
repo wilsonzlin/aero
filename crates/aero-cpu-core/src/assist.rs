@@ -3,7 +3,7 @@ use aero_x86::{DecodedInst, Instruction, Mnemonic, OpKind, Register};
 use crate::cpuid::{self, CpuFeatures};
 use crate::exception::{AssistReason, Exception};
 use crate::linear_mem::{
-    fetch_wrapped, read_u16_wrapped, read_u32_wrapped, read_u64_wrapped, write_u16_wrapped,
+    fetch_wrapped_seg_ip, read_u16_wrapped, read_u32_wrapped, read_u64_wrapped, write_u16_wrapped,
     write_u32_wrapped, write_u64_wrapped,
 };
 use crate::mem::CpuBus;
@@ -90,8 +90,8 @@ pub fn handle_assist<B: CpuBus>(
     // `handle_assist` is used outside of `tier0::exec::step` / `run_batch_with_assists`.
     bus.sync(state);
     let ip = state.rip();
-    let fetch_addr = state.apply_a20(state.seg_base_reg(Register::CS).wrapping_add(ip));
-    let bytes = fetch_wrapped(state, bus, fetch_addr, 15)
+    let cs_base = state.seg_base_reg(Register::CS);
+    let bytes = fetch_wrapped_seg_ip(state, bus, cs_base, ip, 15)
         .inspect_err(|e| state.apply_exception_side_effects(e))?;
     let addr_size_override = has_addr_size_override(&bytes, state.bitness());
     let decoded = match aero_x86::decode(&bytes, ip, state.bitness()) {

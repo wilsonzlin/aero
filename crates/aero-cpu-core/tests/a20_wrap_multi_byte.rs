@@ -248,17 +248,40 @@ fn protected_mode_32bit_linear_wrap_stores_across_4gib() {
 }
 
 #[test]
-fn tier0_fetch_wraps_across_a20_alias_boundary() {
-    // Place `mov al, 0x5A` such that the opcode is at 0xFFFFF and the immediate is at 0x00000.
-    // After executing, IP wraps (16-bit) and execution continues at CS:0x0001.
-    let mut bus = FlatTestBus::new(0x100000);
-    bus.write_u8(0xFFFFF, 0xB0).unwrap(); // mov al, imm8
-    bus.write_u8(0x00000, 0x5A).unwrap(); // imm8
-    bus.write_u8(0xF0001, 0xF4).unwrap(); // hlt at CS:0x0001 (CS=0xF000)
+fn tier0_fetch_wraps_across_16bit_ip_boundary() {
+    // Place `mov al, imm8` so the immediate byte is located at IP=0 after wrapping.
+    //
+    // If instruction fetch does *not* wrap the 16-bit IP, it would incorrectly read the immediate
+    // from 0x10000 instead.
+    let mut bus = FlatTestBus::new(0x11000);
+    bus.write_u8(0xFFFF, 0xB0).unwrap(); // mov al, imm8
+    bus.write_u8(0x0000, 0x5A).unwrap(); // imm8 (correct)
+    bus.write_u8(0x0001, 0xF4).unwrap(); // hlt
+    bus.write_u8(0x1_0000, 0xA5).unwrap(); // sentinel (incorrect if read)
 
     let mut state = CpuState::new(CpuMode::Bit16);
-    state.write_reg(Register::CS, 0xF000);
+    state.segments.cs.base = 0;
     state.set_rip(0xFFFF);
+
+    run_to_halt(&mut state, &mut bus, 16);
+    assert_eq!(state.read_reg(Register::AL), 0x5A);
+}
+
+#[test]
+fn tier0_fetch_wraps_across_a20_alias_boundary() {
+    // Place `mov al, 0x5A` such that the opcode is at 0xFFFFF and the immediate is at 0x00000 due
+    // to A20 aliasing (bit 20 forced low).
+    //
+    // Use CS=0xFFFF and IP=0x000F so the instruction crosses 0xFFFFF -> 0x100000 without requiring
+    // IP wraparound.
+    let mut bus = FlatTestBus::new(0x100000);
+    bus.write_u8(0xFFFFF, 0xB0).unwrap(); // mov al, imm8 at CS:0x000F
+    bus.write_u8(0x00000, 0x5A).unwrap(); // imm8 at CS:0x0010 (0x100000) aliased by A20
+    bus.write_u8(0x00001, 0xF4).unwrap(); // hlt at CS:0x0011 (0x100001) aliased by A20
+
+    let mut state = CpuState::new(CpuMode::Bit16);
+    state.write_reg(Register::CS, 0xFFFF);
+    state.set_rip(0x000F);
     state.a20_enabled = false;
 
     run_to_halt(&mut state, &mut bus, 16);

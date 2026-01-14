@@ -272,3 +272,57 @@ pub fn fetch_wrapped<B: CpuBus>(
     }
     Ok(buf)
 }
+
+/// Instruction fetch helper for segmented code: fetches bytes starting at `seg_base + ip`.
+///
+/// This is similar to [`fetch_wrapped`], but additionally models 16-bit IP wrapping within the
+/// segment when executing 16-bit code (real/v8086 or 16-bit protected mode):
+///
+/// `linear[i] = seg_base + ((ip + i) & 0xFFFF)`
+///
+/// Each resulting linear address is then passed through [`CpuState::apply_a20`] so the fetch still
+/// observes 32-bit linear wrapping (non-long modes) and the A20 alias boundary (real/v8086).
+///
+/// Note: This is only used for instruction fetch; data accesses use address-size-specific offset
+/// masking at the effective-address calculation stage.
+pub(crate) fn fetch_wrapped_seg_ip<B: CpuBus>(
+    state: &CpuState,
+    bus: &mut B,
+    seg_base: u64,
+    ip: u64,
+    max_len: usize,
+) -> Result<[u8; 15], Exception> {
+    let bitness = state.bitness();
+    if bitness != 16 {
+        let addr = state.apply_a20(seg_base.wrapping_add(ip));
+        return fetch_wrapped(state, bus, addr, max_len);
+    }
+
+    let len = max_len.min(15);
+    if len == 0 {
+        return Ok([0u8; 15]);
+    }
+
+    let ip = ip & 0xFFFF;
+    let mut buf = [0u8; 15];
+
+    let mut offset = 0usize;
+    while offset < len {
+        let ip_off = ip.wrapping_add(offset as u64) & 0xFFFF;
+        let raw_addr = seg_base.wrapping_add(ip_off);
+
+        // Limit the segment so we don't cross the 16-bit IP boundary.
+        let remaining = len - offset;
+        let until_ip_wrap = (0x1_0000u64 - ip_off).min(remaining as u64) as usize;
+
+        // Further split by linear wrapping rules (32-bit wrap, A20 alias wrap, u64 overflow).
+        let seg_len = wrapped_segment_len(state, raw_addr, until_ip_wrap);
+
+        let start = state.apply_a20(raw_addr);
+        let chunk = bus.fetch(start, seg_len)?;
+        buf[offset..offset + seg_len].copy_from_slice(&chunk[..seg_len]);
+        offset += seg_len;
+    }
+
+    Ok(buf)
+}

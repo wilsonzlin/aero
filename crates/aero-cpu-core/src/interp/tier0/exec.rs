@@ -3,7 +3,7 @@ use crate::assist::{handle_assist_decoded, has_addr_size_override, AssistContext
 use crate::exception::{AssistReason, Exception};
 use crate::interrupts;
 use crate::interrupts::CpuCore;
-use crate::linear_mem::fetch_wrapped;
+use crate::linear_mem::fetch_wrapped_seg_ip;
 use crate::mem::CpuBus;
 use crate::state::CpuState;
 use aero_x86::Register;
@@ -96,8 +96,8 @@ where
     bus.sync(state);
 
     let ip = state.rip();
-    let fetch_addr = state.apply_a20(state.seg_base_reg(Register::CS).wrapping_add(ip));
-    let bytes = match fetch_wrapped(state, bus, fetch_addr, 15) {
+    let cs_base = state.seg_base_reg(Register::CS);
+    let bytes = match fetch_wrapped_seg_ip(state, bus, cs_base, ip, 15) {
         Ok(v) => v,
         Err(e) => {
             state.apply_exception_side_effects(&e);
@@ -341,10 +341,8 @@ pub fn run_batch_with_assists_with_config<B: CpuBus>(
         bus.sync(&cpu.state);
 
         let ip = cpu.state.rip();
-        let fetch_addr = cpu
-            .state
-            .apply_a20(cpu.state.seg_base_reg(Register::CS).wrapping_add(ip));
-        let bytes = match fetch_wrapped(&cpu.state, bus, fetch_addr, 15) {
+        let cs_base = cpu.state.seg_base_reg(Register::CS);
+        let bytes = match fetch_wrapped_seg_ip(&cpu.state, bus, cs_base, ip, 15) {
             Ok(bytes) => bytes,
             Err(e) => {
                 cpu.state.apply_exception_side_effects(&e);
@@ -576,10 +574,8 @@ pub fn run_batch_cpu_core_with_assists<B: CpuBus>(
         bus.sync(&cpu.state);
 
         let ip = cpu.state.rip();
-        let fetch_addr = cpu
-            .state
-            .apply_a20(cpu.state.seg_base_reg(Register::CS).wrapping_add(ip));
-        let bytes = match fetch_wrapped(&cpu.state, bus, fetch_addr, 15) {
+        let cs_base = cpu.state.seg_base_reg(Register::CS);
+        let bytes = match fetch_wrapped_seg_ip(&cpu.state, bus, cs_base, ip, 15) {
             Ok(bytes) => bytes,
             Err(e) => {
                 cpu.state.apply_exception_side_effects(&e);
