@@ -8,6 +8,7 @@ export class PointerLock {
   private readonly onError?: (event: Event) => void;
 
   private locked = false;
+  private attached = false;
 
   private readonly handleChange = (): void => {
     const next = document.pointerLockElement === this.element;
@@ -28,10 +29,7 @@ export class PointerLock {
   ) {
     this.onChange = onChange;
     this.onError = onError;
-    this.locked = document.pointerLockElement === this.element;
-
-    document.addEventListener('pointerlockchange', this.handleChange);
-    document.addEventListener('pointerlockerror', this.handleError);
+    this.attach();
   }
 
   get isLocked(): boolean {
@@ -67,9 +65,27 @@ export class PointerLock {
     }
   }
 
+  attach(): void {
+    // Refresh lock state even if we're already attached; this is helpful when the
+    // instance was previously detached (via `dispose()`) and `document.pointerLockElement`
+    // changed while we weren't listening.
+    this.locked = document.pointerLockElement === this.element;
+
+    if (this.attached) {
+      return;
+    }
+
+    document.addEventListener('pointerlockchange', this.handleChange);
+    document.addEventListener('pointerlockerror', this.handleError);
+    this.attached = true;
+  }
+
   dispose(): void {
+    if (!this.attached) {
+      return;
+    }
     document.removeEventListener('pointerlockchange', this.handleChange);
     document.removeEventListener('pointerlockerror', this.handleError);
+    this.attached = false;
   }
 }
-

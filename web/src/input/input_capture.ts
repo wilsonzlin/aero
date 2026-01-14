@@ -917,6 +917,10 @@ export class InputCapture {
       return;
     }
 
+    // `stop()` detaches document-level pointer lock listeners. Reattach them on
+    // restart so `pointerLocked` state remains accurate across stop/start cycles.
+    this.pointerLock.attach();
+
     // Refresh focus state in case the capture was stopped while the window was
     // blurred/hidden and restarted later without another focus event firing.
     this.windowFocused = typeof document !== "undefined" ? document.hasFocus() : true;
