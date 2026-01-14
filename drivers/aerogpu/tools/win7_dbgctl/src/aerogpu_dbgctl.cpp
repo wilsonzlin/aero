@@ -872,6 +872,16 @@ static void JsonWriteNtStatusError(JsonWriter &w, const D3DKMT_FUNCS *f, NTSTATU
   w.BeginObject();
   w.Key("ntstatus");
   w.String(HexU32((uint32_t)st));
+  if (st == STATUS_TIMEOUT && g_escape_timeout_ms != 0) {
+    w.Key("timeout_ms");
+    w.Uint32(g_escape_timeout_ms);
+    w.Key("hint");
+    char msg[256];
+    sprintf_s(msg, sizeof(msg),
+              "operation timed out after %lu ms (increase --timeout-ms if the system is slow)",
+              (unsigned long)g_escape_timeout_ms);
+    w.String(msg);
+  }
   const DWORD win32 = NtStatusToWin32(f, st);
   if (win32 != 0) {
     w.Key("win32");
