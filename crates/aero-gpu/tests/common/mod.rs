@@ -79,8 +79,7 @@ pub fn d3d9_executor(
     };
 
     #[cfg(not(target_arch = "wasm32"))]
-    let mut exec = exec.lock().unwrap();
-    #[cfg(not(target_arch = "wasm32"))]
+    let mut exec = exec.lock().unwrap_or_else(|poison| poison.into_inner());
     exec.reset();
     #[cfg(not(target_arch = "wasm32"))]
     Some(exec)
@@ -175,8 +174,7 @@ pub fn aerogpu_executor(
     };
 
     #[cfg(not(target_arch = "wasm32"))]
-    let mut exec = exec.lock().unwrap();
-    #[cfg(not(target_arch = "wasm32"))]
+    let mut exec = exec.lock().unwrap_or_else(|poison| poison.into_inner());
     exec.reset();
     #[cfg(not(target_arch = "wasm32"))]
     Some(exec)
