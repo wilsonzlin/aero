@@ -95,4 +95,3 @@ export class PersistentGpuCache {
 // the Rust type name (`JsPersistentGpuCache`) when the two differ. Export an alias so bundlers
 // (Vite/Rollup) can satisfy the import.
 export { PersistentGpuCache as JsPersistentGpuCache };
-

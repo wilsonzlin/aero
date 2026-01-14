@@ -1161,8 +1161,11 @@ export async function saveIoWorkerVmSnapshotToOpfs(opts: {
   /**
    * Optional BAR1 VRAM bytes (SharedArrayBuffer-backed).
    *
-   * When present, VRAM is persisted inside the snapshot file as one or more `gpu.vram`
-   * (`aero_snapshot::DeviceId::GPU_VRAM`) device blobs.
+   * When present, VRAM is persisted inside the snapshot file.
+   *
+   * Newer snapshots store BAR1 VRAM via chunked `gpu.vram` (`aero_snapshot::DeviceId::GPU_VRAM`)
+   * device blobs; older snapshots may contain reserved `device.<id>` chunk blobs, which are still
+   * accepted on restore for backwards compatibility.
    *
    * NOTE: VRAM bytes are kept entirely inside the IO worker; they are not forwarded through the
    * coordinator.
@@ -1205,6 +1208,11 @@ export async function saveIoWorkerVmSnapshotToOpfs(opts: {
     kind: normalizeRestoredDeviceKind(d.kind),
     bytes: d.bytes,
   }));
+
+  const saveExport = resolveVmSnapshotSaveToOpfsExport(opts.api);
+  if (!saveExport) {
+    throw new Error("WASM VM snapshot save export is unavailable (expected *_snapshot*_to_opfs or WorkerVmSnapshot).");
+  }
 
   // Fresh device blobs produced by this IO worker.
   const freshDevices: IoWorkerSnapshotDeviceState[] = collectIoWorkerSnapshotDeviceStates(opts.runtimes);
@@ -1282,11 +1290,6 @@ export async function saveIoWorkerVmSnapshotToOpfs(opts: {
     seen.add(dev.kind);
   }
 
-  const saveExport = resolveVmSnapshotSaveToOpfsExport(opts.api);
-  if (!saveExport) {
-    throw new Error("WASM VM snapshot save export is unavailable (expected *_snapshot*_to_opfs or WorkerVmSnapshot).");
-  }
-
   if (saveExport.kind === "free-function") {
     // Build a JS-friendly device blob list; wasm-bindgen can accept this as `JsValue`.
     const devicePayload = devices.map((d) => ({ kind: snapshotDeviceKindForWasm(d.kind), bytes: d.bytes }));
@@ -1308,9 +1311,25 @@ export async function saveIoWorkerVmSnapshotToOpfs(opts: {
       if (id === null) {
         throw new Error(`Unsupported VM snapshot device kind: ${device.kind}`);
       }
-      // CPU_INTERNAL (`DeviceId::CPU_INTERNAL = 9`) uses a raw v2 encoding (no `AERO` header), so
-      // we must not rely on `parseAeroIoSnapshotVersion`'s default fallback (v1.0).
-      const { version, flags } = id === 9 ? { version: 2, flags: 0 } : parseAeroIoSnapshotVersion(device.bytes);
+
+      // Special-case device metadata extraction:
+      // - CPU_INTERNAL (`DeviceId::CPU_INTERNAL = 9`) uses a raw v2 encoding (no `AERO` header).
+      // - Reserved BAR1 VRAM chunks (legacy web snapshots) store raw bytes without an `AERO` header,
+      //   so we must not attempt to parse `version/flags` out of the VRAM content (it may
+      //   coincidentally begin with "AERO").
+      let version = 1;
+      let flags = 0;
+      if (id === 9) {
+        version = 2;
+        flags = 0;
+      } else if (ioWorkerVramSnapshotChunkIndexFromDeviceId(id) !== null) {
+        version = 1;
+        flags = 0;
+      } else {
+        const parsed = parseAeroIoSnapshotVersion(device.bytes);
+        version = parsed.version;
+        flags = parsed.flags;
+      }
       builder.add_device_state(id, version, flags, device.bytes);
     }
 

@@ -66,8 +66,8 @@ function toArrayBufferUint8(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
 /**
  * Canonical `api.Machine` CPU worker entrypoint.
  *
- * This worker participates in the coordinator's standard `config.update` + `init` protocol and
- * runs the canonical `api.Machine` (shared guest RAM) when WASM assets are available.
+ * Runs the canonical wasm `api.Machine` runtime for `vmRuntime === "machine"`, driven by the
+ * coordinator ring buffers (mirrors `cpu.worker.ts` command semantics).
  *
  * Node `worker_threads` integration tests execute TypeScript sources directly (no Vite transforms)
  * and typically do not have wasm-pack outputs available. WASM initialization is therefore
@@ -436,6 +436,26 @@ function nowMs(): number {
   return typeof performance !== "undefined" && typeof performance.now === "function" ? performance.now() : Date.now();
 }
 
+type RunExitKindMap = Readonly<{
+  Completed: number;
+  Halted: number;
+  ResetRequested: number;
+  Assist: number;
+  Exception: number;
+  CpuExit: number;
+}>;
+
+// wasm-bindgen assigns discriminants in declaration order.
+// Keep these defaults in sync with `crates/aero-wasm/src/lib.rs`.
+let runExitKindMap: RunExitKindMap = {
+  Completed: 0,
+  Halted: 1,
+  ResetRequested: 2,
+  Assist: 3,
+  Exception: 4,
+  CpuExit: 5,
+};
+
 function post(msg: ProtocolMessage | ConfigAckMessage): void {
   ctx.postMessage(msg);
 }
@@ -470,11 +490,13 @@ function pushEvent(evt: Event): void {
   }
 }
 
-function pushEventBlocking(evt: Event, timeoutMs?: number): void {
+function pushEventBlocking(evt: Event, timeoutMs = 250): void {
   const ring = eventRing;
   if (!ring) return;
+  const payload = encodeEvent(evt);
+  if (ring.tryPush(payload)) return;
   try {
-    ring.pushBlocking(encodeEvent(evt), timeoutMs);
+    ring.pushBlocking(payload, timeoutMs);
   } catch {
     // best-effort
   }
@@ -720,6 +742,25 @@ async function createWin7MachineWithSharedGuestMemory(api: WasmApi, layout: Gues
     }
   }
 
+  // No shared-memory constructor exists in this WASM build. Fall back to heap-allocating guest RAM
+  // (`new Machine(ramBytes)`), but warn loudly: large RAM sizes will likely OOM without `new_shared`.
+  const hasSharedCtor = candidates.some((c) => typeof c.fn === "function");
+  if (!hasSharedCtor) {
+    try {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[machine_cpu.worker] api.Machine.new_shared(guest_base, guest_size) is unavailable; falling back to new api.Machine(ramBytes=${guestSize}). ` +
+          "Large RAM sizes will likely OOM without new_shared. Rebuild the wasm-pack output (threaded build) to enable shared guest RAM.",
+      );
+    } catch {
+      // ignore
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const ctor = Machine as unknown as new (ramSizeBytes: number) => InstanceType<WasmApi["Machine"]>;
+    return new ctor(guestSize >>> 0);
+  }
+
   throw new Error(
     "Shared-guest-memory Machine constructor is unavailable in this WASM build. " +
       "Expected Machine.new_win7_storage_shared(guestBase, guestSize) (or an equivalent factory).",
@@ -743,13 +784,14 @@ function queueInputBatch(buffer: ArrayBuffer, recycle: boolean): void {
   if (queuedInputBatchBytes + buffer.byteLength <= MAX_QUEUED_INPUT_BATCH_BYTES) {
     queuedInputBatches.push({ buffer, recycle });
     queuedInputBatchBytes += buffer.byteLength;
-  } else {
-    // Drop excess input to keep memory bounded; best-effort recycle the transferred buffer.
-    const st = status;
-    if (st) Atomics.add(st, StatusIndex.IoInputBatchDropCounter, 1);
-    if (recycle) {
-      postInputBatchRecycle(buffer);
-    }
+    return;
+  }
+
+  // Drop excess input to keep memory bounded; best-effort recycle the transferred buffer.
+  const st = status;
+  if (st) Atomics.add(st, StatusIndex.IoInputBatchDropCounter, 1);
+  if (recycle) {
+    postInputBatchRecycle(buffer);
   }
 }
 
@@ -1320,7 +1362,12 @@ function drainSerialOutput(): void {
   const bytes = m.serial_output();
   if (!(bytes instanceof Uint8Array) || bytes.byteLength === 0) return;
 
-  pushEvent({ kind: "serialOutput", port: UART_COM1.basePort, data: bytes });
+  const port = UART_COM1.basePort;
+  const chunkBytes = 4096;
+  for (let off = 0; off < bytes.byteLength; off += chunkBytes) {
+    const chunk = bytes.subarray(off, Math.min(bytes.byteLength, off + chunkBytes));
+    pushEvent({ kind: "serialOutput", port, data: chunk });
+  }
 }
 
 function toTransferableArrayBuffer(bytes: Uint8Array): ArrayBuffer {
@@ -1397,25 +1444,54 @@ function drainAerogpuSubmissions(): void {
 }
 
 function handleRunExit(exit: unknown): void {
-  const kind = (exit as unknown as { kind?: unknown }).kind;
-  const detail = (exit as unknown as { detail?: unknown }).detail;
-  const kindNum = typeof kind === "number" ? (kind | 0) : -1;
-  const detailStr = typeof detail === "string" ? detail : "";
+  const st = status;
 
-  if (kindNum === 2) {
-    // Guest requested a reset (e.g. reboot). Unlike the legacy runtime, the canonical `Machine`
-    // owns all devices in this worker, so we can handle it internally without restarting the
-    // entire worker set (which would drop state such as boot-drive policy).
+  const kindNum = (() => {
+    const raw = (exit as { kind?: unknown } | null | undefined)?.kind;
+    if (typeof raw === "number") return raw | 0;
+    if (typeof raw === "function") {
+      try {
+        const v = (raw as () => unknown).call(exit);
+        return typeof v === "number" ? (v | 0) : -1;
+      } catch {
+        return -1;
+      }
+    }
+    return -1;
+  })();
+
+  const detailStr = (() => {
+    const raw = (exit as { detail?: unknown } | null | undefined)?.detail;
+    if (typeof raw === "string") return raw;
+    if (typeof raw === "function") {
+      try {
+        const v = (raw as () => unknown).call(exit);
+        return typeof v === "string" ? v : String(v);
+      } catch {
+        return "";
+      }
+    }
+    return "";
+  })();
+
+  if (kindNum === runExitKindMap.Completed || kindNum === runExitKindMap.Halted) {
+    return;
+  }
+
+  if (kindNum === runExitKindMap.ResetRequested) {
+    // Guest requested a reset (reboot). For install media use-cases, boot from the ISO once then
+    // switch to HDD0 on the first guest reset so setup can reboot into the newly-installed OS while
+    // keeping the ISO attached for later file access.
+    if (pendingBootDevice === "cdrom" && currentBootDisks?.hdd) {
+      pendingBootDevice = "hdd";
+      postBootDeviceSelected("hdd");
+    }
+
+    // Best-effort: update the BIOS boot policy *before* handing off to the coordinator reset path.
+    // This keeps behaviour deterministic even if the coordinator resets without re-running
+    // `setBootDisks` first.
     const m = machine;
     if (m) {
-      // When an install ISO is present we boot from it once, then switch to HDD0 on the first
-      // guest reset so that Windows setup can reboot into the newly-installed OS while still
-      // keeping the ISO attached for later file access.
-      if (pendingBootDevice === "cdrom" && currentBootDisks?.hdd) {
-        pendingBootDevice = "hdd";
-        postBootDeviceSelected("hdd");
-      }
-
       try {
         const drive = pendingBootDevice === "cdrom" ? BIOS_DRIVE_CD0 : BIOS_DRIVE_HDD0;
         if (drive === BIOS_DRIVE_HDD0) {
@@ -1426,31 +1502,31 @@ function handleRunExit(exit: unknown): void {
       } catch {
         // ignore
       }
-
-      try {
-        m.reset();
-      } catch {
-        // ignore
-      }
     }
-    return;
-  }
 
-  if (kindNum === 5) {
-    if (/triplefault/i.test(detailStr)) {
-      pushEventBlocking({ kind: "tripleFault" }, 250);
-    } else {
-      pushEventBlocking({ kind: "panic", message: `CPU exit: ${detailStr || "unknown"}` }, 250);
-    }
+    // Reset requests are rare but important; use a blocking push so the coordinator reliably
+    // observes the event and can reset all workers while preserving guest RAM.
+    pushEventBlocking({ kind: "resetRequest" }, 250);
     running = false;
+    if (st) setReadyFlag(st, role, false);
     return;
   }
 
-  if (kindNum === 4) {
+  if (kindNum === runExitKindMap.CpuExit && /triplefault/i.test(detailStr)) {
+    pushEventBlocking({ kind: "tripleFault" }, 250);
+  } else if (kindNum === runExitKindMap.Exception) {
     pushEventBlocking({ kind: "panic", message: `Exception: ${detailStr || "unknown"}` }, 250);
-    running = false;
-    return;
+  } else if (kindNum === runExitKindMap.CpuExit) {
+    pushEventBlocking({ kind: "panic", message: `CPU exit: ${detailStr || "unknown"}` }, 250);
+  } else if (kindNum === runExitKindMap.Assist) {
+    pushEventBlocking({ kind: "panic", message: `Assist: ${detailStr || "unknown"}` }, 250);
+  } else {
+    pushEventBlocking({ kind: "panic", message: `Machine exited with kind=${kindNum}${detailStr ? `: ${detailStr}` : ""}` }, 250);
   }
+
+  running = false;
+  if (st) setReadyFlag(st, role, false);
+  ctx.close();
 }
 
 async function handleMachineOp(op: PendingMachineOp): Promise<void> {
@@ -1718,7 +1794,17 @@ async function runLoop(): Promise<void> {
 
       const exit = machine.run_slice(RUN_SLICE_MAX_INSTS);
       const exitKind = (exit as unknown as { kind?: unknown }).kind;
-      const exitKindNum = typeof exitKind === "number" ? (exitKind | 0) : -1;
+      let exitKindNum = -1;
+      if (typeof exitKind === "number") {
+        exitKindNum = exitKind | 0;
+      } else if (typeof exitKind === "function") {
+        try {
+          const v = (exitKind as () => unknown).call(exit);
+          if (typeof v === "number") exitKindNum = v | 0;
+        } catch {
+          // ignore
+        }
+      }
       handleRunExit(exit);
       drainSerialOutput();
       drainAerogpuSubmissions();
@@ -1728,7 +1814,7 @@ async function runLoop(): Promise<void> {
         // ignore
       }
 
-      if (exitKindNum === 1) {
+      if (exitKindNum === runExitKindMap.Halted) {
         await Promise.race([ring.waitForDataAsync(HALTED_RUN_SLICE_DELAY_MS), runLoopWakePromise]);
       } else {
         await new Promise((resolve) => {

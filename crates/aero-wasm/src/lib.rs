@@ -3982,7 +3982,6 @@ impl Machine {
         #[allow(unused_mut)]
         let mut inner = aero_machine::Machine::new_with_guest_memory(cfg, Box::new(mem))
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
-
         #[cfg(all(
             target_arch = "wasm32",
             feature = "wasm-threaded",
