@@ -1318,6 +1318,8 @@ NTSTATUS VirtioInputEvtDevicePrepareHardware(
         {
             USHORT notifyOff0;
             USHORT notifyOff1;
+            ULONGLONG notifyOffsetBytes0;
+            ULONGLONG notifyOffsetBytes1;
 
             notifyOff0 = VirtioPciReadQueueNotifyOffset(&deviceContext->PciDevice, 0);
             notifyOff1 = VirtioPciReadQueueNotifyOffset(&deviceContext->PciDevice, 1);
@@ -1331,6 +1333,51 @@ NTSTATUS VirtioInputEvtDevicePrepareHardware(
                 VirtioPciModernUninit(&deviceContext->PciDevice);
                 return STATUS_DEVICE_CONFIGURATION_ERROR;
             }
+
+            /*
+             * Pre-cache per-queue notify MMIO addresses.
+             *
+             * VirtioPciNotifyQueue() populates Dev->QueueNotifyAddrCache on-demand,
+             * but that requires taking the CommonCfg lock the first time each queue
+             * is notified (to read queue_notify_off). The virtio-input driver may
+             * notify from hot paths while holding per-queue locks (eventq) and the
+             * internal statusq lock, so pre-caching keeps notifications lock-free.
+             *
+             * Contract v1 additionally requires queue_notify_off(q)=q, but we use
+             * the queried offsets to build the addresses defensively.
+             */
+            if (deviceContext->PciDevice.NotifyBase == NULL || deviceContext->PciDevice.NotifyOffMultiplier == 0 ||
+                deviceContext->PciDevice.NotifyLength < sizeof(UINT16)) {
+                VIOINPUT_LOG(
+                    VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ,
+                    "virtio-input notify capability invalid: base=%p mult=%lu len=%Iu\n",
+                    deviceContext->PciDevice.NotifyBase,
+                    deviceContext->PciDevice.NotifyOffMultiplier,
+                    deviceContext->PciDevice.NotifyLength);
+                VirtioPciModernUninit(&deviceContext->PciDevice);
+                return STATUS_DEVICE_CONFIGURATION_ERROR;
+            }
+
+            notifyOffsetBytes0 = (ULONGLONG)notifyOff0 * (ULONGLONG)deviceContext->PciDevice.NotifyOffMultiplier;
+            notifyOffsetBytes1 = (ULONGLONG)notifyOff1 * (ULONGLONG)deviceContext->PciDevice.NotifyOffMultiplier;
+
+            if (notifyOffsetBytes0 + sizeof(UINT16) > (ULONGLONG)deviceContext->PciDevice.NotifyLength ||
+                notifyOffsetBytes1 + sizeof(UINT16) > (ULONGLONG)deviceContext->PciDevice.NotifyLength) {
+                VIOINPUT_LOG(
+                    VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ,
+                    "virtio-input notify offsets out of range: q0_off=%u q1_off=%u mult=%lu notify_len=%Iu\n",
+                    (ULONG)notifyOff0,
+                    (ULONG)notifyOff1,
+                    deviceContext->PciDevice.NotifyOffMultiplier,
+                    deviceContext->PciDevice.NotifyLength);
+                VirtioPciModernUninit(&deviceContext->PciDevice);
+                return STATUS_DEVICE_CONFIGURATION_ERROR;
+            }
+
+            deviceContext->QueueNotifyAddrCache[0] =
+                (volatile UINT16*)((volatile UCHAR*)deviceContext->PciDevice.NotifyBase + (SIZE_T)notifyOffsetBytes0);
+            deviceContext->QueueNotifyAddrCache[1] =
+                (volatile UINT16*)((volatile UCHAR*)deviceContext->PciDevice.NotifyBase + (SIZE_T)notifyOffsetBytes1);
         }
 
         status = VioInputEventQInitialize(deviceContext, deviceContext->DmaEnabler, qsz0);
