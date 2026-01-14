@@ -377,6 +377,31 @@ async function putDisk(backend: DiskBackend, meta: DiskImageMetadata): Promise<v
   await getStore(backend).putDisk(meta);
 }
 
+function hasOwnProp(obj: object, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(obj, key);
+}
+
+function normalizeMountConfig(raw: unknown): MountConfig {
+  // Use a null prototype so `Object.prototype.hddId`/`cdId` pollution cannot affect mount selection.
+  const mounts: MountConfig = Object.create(null) as MountConfig;
+  if (!raw || typeof raw !== "object") return mounts;
+  const rec = raw as Record<string, unknown>;
+  const sanitizeId = (value: unknown): string | undefined => {
+    if (typeof value !== "string") return undefined;
+    const trimmed = value.trim();
+    return trimmed ? trimmed : undefined;
+  };
+  if (hasOwnProp(rec, "hddId")) {
+    const hddId = sanitizeId(rec.hddId);
+    if (hddId) mounts.hddId = hddId;
+  }
+  if (hasOwnProp(rec, "cdId")) {
+    const cdId = sanitizeId(rec.cdId);
+    if (cdId) mounts.cdId = cdId;
+  }
+  return mounts;
+}
+
 /**
  * @param {DiskBackend} backend
  * @param {{ hddId?: string; cdId?: string }} mounts
@@ -464,7 +489,7 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
     }
 
     case "set_mounts": {
-      const mounts = (msg.payload || {}) as MountConfig;
+      const mounts = normalizeMountConfig(msg.payload);
       await validateMounts(backend, mounts);
 
       const now = Date.now();
