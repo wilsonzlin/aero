@@ -7289,6 +7289,170 @@ bool TestStage0UnsupportedArgFailsAtDraw() {
   return Check(dev->cmd.bytes_used() == before_bad_draw, "unsupported stage0 arg draw emits no new commands");
 }
 
+bool TestStage0VariantCacheEvictsOldShaders() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  dev->cmd.reset();
+
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzrhwDiffuseTex1);
+  if (!Check(hr == S_OK, "SetFVF(XYZRHW|DIFFUSE|TEX1)")) {
+    return false;
+  }
+
+  D3DDDI_HRESOURCE hTex{};
+  if (!CreateDummyTexture(&cleanup, &hTex)) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTexture(cleanup.hDevice, /*stage=*/0, hTex);
+  if (!Check(hr == S_OK, "SetTexture(stage0)")) {
+    return false;
+  }
+
+  // Create a tiny dummy user PS so stage-state updates don't immediately trigger
+  // fixed-function stage0 selection while we're mutating multiple stage0 fields.
+  const uint8_t dummy_dxbc[] = {0x44, 0x58, 0x42, 0x43, 0x11, 0x22, 0x33, 0x44};
+  D3D9DDI_HSHADER hDummyPs{};
+  hr = cleanup.device_funcs.pfnCreateShader(cleanup.hDevice,
+                                            kD3dShaderStagePs,
+                                            dummy_dxbc,
+                                            static_cast<uint32_t>(sizeof(dummy_dxbc)),
+                                            &hDummyPs);
+  if (!Check(hr == S_OK, "CreateShader(dummy PS)")) {
+    return false;
+  }
+  cleanup.shaders.push_back(hDummyPs);
+
+  const auto SetTextureStageState = [&](uint32_t stage, uint32_t state, uint32_t value, const char* msg) -> bool {
+    HRESULT hr2 = S_OK;
+    if (cleanup.device_funcs.pfnSetTextureStageState) {
+      hr2 = cleanup.device_funcs.pfnSetTextureStageState(cleanup.hDevice, stage, state, value);
+    } else {
+      hr2 = aerogpu::device_set_texture_stage_state(cleanup.hDevice, stage, state, value);
+    }
+    if (!Check(hr2 == S_OK, msg)) {
+      std::fprintf(stderr, "FAIL: SetTextureStageState(%s) hr=0x%08x\n", msg, static_cast<unsigned>(hr2));
+      return false;
+    }
+    return true;
+  };
+
+  // All supported stage0 arg variants (sources + modifiers).
+  const uint32_t arg_vals[] = {
+      kD3dTaDiffuse,
+      kD3dTaDiffuse | kD3dTaComplement,
+      kD3dTaDiffuse | kD3dTaAlphaReplicate,
+      kD3dTaDiffuse | kD3dTaComplement | kD3dTaAlphaReplicate,
+      kD3dTaTexture,
+      kD3dTaTexture | kD3dTaComplement,
+      kD3dTaTexture | kD3dTaAlphaReplicate,
+      kD3dTaTexture | kD3dTaComplement | kD3dTaAlphaReplicate,
+      kD3dTaTFactor,
+      kD3dTaTFactor | kD3dTaComplement,
+      kD3dTaTFactor | kD3dTaAlphaReplicate,
+      kD3dTaTFactor | kD3dTaComplement | kD3dTaAlphaReplicate,
+  };
+
+  // Use a few different ops to reduce the chance of bytecode aliasing and to
+  // force stage0 PS variant cache churn.
+  const uint32_t ops[] = {
+      kD3dTopModulate,
+      kD3dTopAdd,
+      kD3dTopSubtract,
+      kD3dTopAddSigned,
+      kD3dTopModulate2x,
+      kD3dTopModulate4x,
+  };
+
+  auto CountPixelShaderCreates = [&](const uint8_t* buf, size_t len) -> size_t {
+    size_t count = 0;
+    for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_CREATE_SHADER_DXBC)) {
+      const auto* cs = reinterpret_cast<const aerogpu_cmd_create_shader_dxbc*>(hdr);
+      if (cs->stage == AEROGPU_SHADER_STAGE_PIXEL) {
+        ++count;
+      }
+    }
+    return count;
+  };
+
+  size_t ps_creates = 0;
+  bool done = false;
+  for (uint32_t op : ops) {
+    for (uint32_t arg1 : arg_vals) {
+      for (uint32_t arg2 : arg_vals) {
+        // Suppress stage0 selection while setting multiple fields.
+        hr = cleanup.device_funcs.pfnSetShader(cleanup.hDevice, kD3dShaderStagePs, hDummyPs);
+        if (!Check(hr == S_OK, "SetShader(PS=dummy)")) {
+          return false;
+        }
+
+        if (!SetTextureStageState(0, kD3dTssColorOp, op, "COLOROP")) {
+          return false;
+        }
+        if (!SetTextureStageState(0, kD3dTssColorArg1, arg1, "COLORARG1")) {
+          return false;
+        }
+        if (!SetTextureStageState(0, kD3dTssColorArg2, arg2, "COLORARG2")) {
+          return false;
+        }
+        if (!SetTextureStageState(0, kD3dTssAlphaOp, kD3dTopDisable, "ALPHAOP=DISABLE")) {
+          return false;
+        }
+
+        // Trigger stage0 selection by unbinding the user PS. Reset the command
+        // stream first so we can detect whether a new PS was created.
+        dev->cmd.reset();
+        D3D9DDI_HSHADER null_shader{};
+        hr = cleanup.device_funcs.pfnSetShader(cleanup.hDevice, kD3dShaderStagePs, null_shader);
+        if (!Check(hr == S_OK, "SetShader(PS=NULL)")) {
+          return false;
+        }
+
+        dev->cmd.finalize();
+        const uint8_t* buf = dev->cmd.data();
+        const size_t len = dev->cmd.bytes_used();
+        if (!Check(ValidateStream(buf, len), "ValidateStream(stage0 variant churn)")) {
+          return false;
+        }
+
+        ps_creates += CountPixelShaderCreates(buf, len);
+        if (ps_creates > 100) {
+          done = true;
+          break;
+        }
+      }
+      if (done) {
+        break;
+      }
+    }
+    if (done) {
+      break;
+    }
+  }
+
+  if (!Check(ps_creates > 100, "created > 100 unique stage0 PS variants")) {
+    return false;
+  }
+
+  size_t cached_variants = 0;
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    for (Shader* ps : dev->fixedfunc_stage0_ps_variants) {
+      if (ps) {
+        ++cached_variants;
+      }
+    }
+  }
+  return Check(cached_variants == 100, "stage0 PS variant array cache is capped at 100 entries");
+}
+
 bool TestTextureFactorRenderStateUpdatesPsConstantWhenUsed() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -8206,6 +8370,9 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestStage0UnsupportedArgFailsAtDraw()) {
+    return 1;
+  }
+  if (!aerogpu::TestStage0VariantCacheEvictsOldShaders()) {
     return 1;
   }
   if (!aerogpu::TestTextureFactorRenderStateUpdatesPsConstantWhenUsed()) {
