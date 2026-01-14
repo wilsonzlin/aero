@@ -22,8 +22,9 @@ class Win7VirtioHarnessWorkflowQemuExtraArgsInputTests(unittest.TestCase):
         self.assertIn('qemu_extra_args="${{ inputs.qemu_extra_args }}"', self.text)
         # Ensure we forward after `--` so argparse does not eat QEMU flags like --help/-h.
         self.assertIn("args+=(--)", self.text)
+        # Ensure CRLF pasted input is handled robustly.
+        self.assertIn("line=\"${line%$'\\r'}\"", self.text)
 
 
 if __name__ == "__main__":
     unittest.main()
-
