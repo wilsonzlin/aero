@@ -132,6 +132,59 @@ fn insert_viewport_reset_and_duplicate_last_draw(bytes: &mut Vec<u8>) {
         .copy_from_slice(&total_size.to_le_bytes());
 }
 
+fn insert_viewport_nan_and_duplicate_last_draw(bytes: &mut Vec<u8>) {
+    // Similar to `insert_viewport_reset_and_duplicate_last_draw`, but uses a NaN viewport size to
+    // ensure the executor treats invalid viewport payloads as a reset to the default viewport
+    // instead of leaving stale state within the render pass.
+    let mut cursor = ProtocolCmdStreamHeader::SIZE_BYTES;
+    let mut last_draw: Option<(usize, usize)> = None;
+    let mut present_offset: Option<usize> = None;
+
+    while cursor + ProtocolCmdHdr::SIZE_BYTES <= bytes.len() {
+        let opcode = u32::from_le_bytes(bytes[cursor..cursor + 4].try_into().unwrap());
+        let size = u32::from_le_bytes(bytes[cursor + 4..cursor + 8].try_into().unwrap()) as usize;
+        if size < ProtocolCmdHdr::SIZE_BYTES || size % 4 != 0 || cursor + size > bytes.len() {
+            break;
+        }
+
+        if opcode == AerogpuCmdOpcode::Draw as u32 || opcode == AerogpuCmdOpcode::DrawIndexed as u32 {
+            last_draw = Some((cursor, size));
+        }
+        if opcode == AerogpuCmdOpcode::Present as u32 || opcode == AerogpuCmdOpcode::PresentEx as u32 {
+            present_offset = Some(cursor);
+            break;
+        }
+
+        cursor += size;
+    }
+
+    let (draw_off, draw_size) = last_draw.expect("expected fixture to contain a draw packet");
+    let present_off = present_offset.expect("expected fixture to contain a present packet");
+    let draw_bytes = bytes[draw_off..draw_off + draw_size].to_vec();
+
+    let mut insert = Vec::with_capacity(32 + draw_bytes.len());
+
+    // SET_VIEWPORT with NaN width/height.
+    let nan = f32::NAN.to_bits();
+    insert.extend_from_slice(&(AerogpuCmdOpcode::SetViewport as u32).to_le_bytes());
+    insert.extend_from_slice(&32u32.to_le_bytes());
+    insert.extend_from_slice(&0u32.to_le_bytes()); // x bits
+    insert.extend_from_slice(&0u32.to_le_bytes()); // y bits
+    insert.extend_from_slice(&nan.to_le_bytes()); // width bits
+    insert.extend_from_slice(&nan.to_le_bytes()); // height bits
+    insert.extend_from_slice(&0u32.to_le_bytes()); // min_depth bits
+    insert.extend_from_slice(&1.0f32.to_bits().to_le_bytes()); // max_depth bits
+
+    insert.extend_from_slice(&draw_bytes);
+
+    bytes.splice(present_off..present_off, insert);
+
+    // Patch stream size in header.
+    let total_size = bytes.len() as u32;
+    bytes[CMD_STREAM_SIZE_BYTES_OFFSET..CMD_STREAM_SIZE_BYTES_OFFSET + 4]
+        .copy_from_slice(&total_size.to_le_bytes());
+}
+
 fn insert_scissor_enable_and_rect_before_first_draw(bytes: &mut Vec<u8>, width: i32, height: i32) {
     // Insert:
     //   SET_RASTERIZER_STATE (scissor_enable=1)
@@ -406,6 +459,48 @@ fn aerogpu_cmd_viewport_reset_restores_default_within_pass() {
 
         // This pixel is outside the initial 32x32 viewport, so it should be the clear color after
         // the first draw. After the viewport reset + second draw, it must be red.
+        assert_eq!(px(48, 48), &[255, 0, 0, 255]);
+    });
+}
+
+#[test]
+fn aerogpu_cmd_viewport_nan_restores_default_within_pass() {
+    pollster::block_on(async {
+        let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+            Ok(exec) => exec,
+            Err(e) => {
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                return;
+            }
+        };
+
+        let mut stream = CMD_TRIANGLE_SM4.to_vec();
+        patch_first_viewport(&mut stream, 32.0, 32.0);
+        insert_viewport_nan_and_duplicate_last_draw(&mut stream);
+
+        let mut guest_mem = VecGuestMemory::new(0);
+        let report = exec
+            .execute_cmd_stream(&stream, None, &mut guest_mem)
+            .expect("execute_cmd_stream should succeed");
+        exec.poll_wait();
+
+        let render_target = report
+            .presents
+            .last()
+            .and_then(|p| p.presented_render_target)
+            .expect("fixture should present a render target");
+        let (width, height) = exec.texture_size(render_target).unwrap();
+        assert_eq!((width, height), (64, 64));
+
+        let pixels = exec.read_texture_rgba8(render_target).await.unwrap();
+        let w = width as usize;
+        let px = |x: usize, y: usize| -> &[u8] {
+            let idx = (y * w + x) * 4;
+            &pixels[idx..idx + 4]
+        };
+
+        // Outside the initial 32x32 viewport: after the NaN viewport update + second draw, the
+        // executor should have restored the default viewport and this pixel must be red.
         assert_eq!(px(48, 48), &[255, 0, 0, 255]);
     });
 }
