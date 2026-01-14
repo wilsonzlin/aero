@@ -333,7 +333,10 @@ static int RunD3D9ExFixedFuncTextureStageState(int argc, char** argv) {
   // Diffuse red * (blue texel) = black.
   const DWORD kDiffuseRed = D3DCOLOR_XRGB(255, 0, 0);
   const DWORD kClearGreen = D3DCOLOR_XRGB(0, 255, 0);
+  const DWORD kClearBlack = D3DCOLOR_XRGB(0, 0, 0);
   const DWORD kTexBlue = D3DCOLOR_ARGB(255, 0, 0, 255);
+  const DWORD kDiffuseRedA128 = D3DCOLOR_ARGB(128, 255, 0, 0);
+  const DWORD kHalfRed = D3DCOLOR_XRGB(128, 0, 0);
 
   Vertex verts[3];
   // Same coverage as d3d9ex_triangle: center pixel covered; top-left corner untouched.
@@ -374,7 +377,7 @@ static int RunD3D9ExFixedFuncTextureStageState(int argc, char** argv) {
   dev->SetSamplerState(0, D3DSAMP_ADDRESSU, D3DTADDRESS_CLAMP);
   dev->SetSamplerState(0, D3DSAMP_ADDRESSV, D3DTADDRESS_CLAMP);
 
-  auto run_phase = [&](const char* phase_name, D3DCOLOR expected_center) -> int {
+  auto run_phase = [&](const char* phase_name, D3DCOLOR clear_color, D3DCOLOR expected_center) -> int {
     D3DCOLOR center = 0;
     D3DCOLOR corner = 0;
     wchar_t dump_prefix[128] = {};
@@ -384,7 +387,7 @@ static int RunD3D9ExFixedFuncTextureStageState(int argc, char** argv) {
                                                 &reporter,
                                                 dev.get(),
                                                 verts,
-                                                kClearGreen,
+                                                clear_color,
                                                 dump,
                                                 dump_prefix,
                                                 &center,
@@ -393,11 +396,11 @@ static int RunD3D9ExFixedFuncTextureStageState(int argc, char** argv) {
       return reporter.FailHresult(phase_name, draw_hr);
     }
 
-    if (!PixelRgbEquals(corner, kClearGreen)) {
+    if (!PixelRgbEquals(corner, clear_color)) {
       return reporter.Fail("%s: corner pixel mismatch: got=0x%08lX expected(clear)=0x%08lX",
                            phase_name,
                            (unsigned long)corner,
-                           (unsigned long)kClearGreen);
+                           (unsigned long)clear_color);
     }
 
     if (!PixelRgbEquals(center, expected_center)) {
@@ -423,7 +426,7 @@ static int RunD3D9ExFixedFuncTextureStageState(int argc, char** argv) {
   if (FAILED(hr)) {
     return reporter.FailHresult("SetTextureStageState(COLORARG2=DIFFUSE)", hr);
   }
-  int rc = run_phase("modulate", D3DCOLOR_XRGB(0, 0, 0));
+  int rc = run_phase("modulate", kClearGreen, D3DCOLOR_XRGB(0, 0, 0));
   if (rc != 0) {
     return rc;
   }
@@ -437,7 +440,7 @@ static int RunD3D9ExFixedFuncTextureStageState(int argc, char** argv) {
   if (FAILED(hr)) {
     return reporter.FailHresult("SetTextureStageState(COLORARG1=TEXTURE) (select)", hr);
   }
-  rc = run_phase("select_texture", kTexBlue);
+  rc = run_phase("select_texture", kClearGreen, kTexBlue);
   if (rc != 0) {
     return rc;
   }
@@ -451,7 +454,80 @@ static int RunD3D9ExFixedFuncTextureStageState(int argc, char** argv) {
   if (FAILED(hr)) {
     return reporter.FailHresult("SetTextureStageState(COLORARG1=DIFFUSE)", hr);
   }
-  rc = run_phase("select_diffuse", kDiffuseRed);
+  rc = run_phase("select_diffuse", kClearGreen, kDiffuseRed);
+  if (rc != 0) {
+    return rc;
+  }
+
+  // Alpha-op coverage via alpha blending. Keep RGB fixed (DIFFUSE) and vary ALPHAOP
+  // to affect the blend factor.
+  for (int i = 0; i < 3; ++i) {
+    verts[i].color = kDiffuseRedA128;
+  }
+  hr = dev->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetRenderState(ALPHABLENDENABLE=TRUE)", hr);
+  }
+  hr = dev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetRenderState(SRCBLEND=SRCALPHA)", hr);
+  }
+  hr = dev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetRenderState(DESTBLEND=INVSRCALPHA)", hr);
+  }
+
+  // RGB=DIFFUSE, A=TEXTURE -> alpha=1.0 (texture is opaque) => full red over black.
+  hr = dev->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_SELECTARG1);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetTextureStageState(COLOROP=SELECTARG1) (alpha)", hr);
+  }
+  hr = dev->SetTextureStageState(0, D3DTSS_COLORARG1, D3DTA_DIFFUSE);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetTextureStageState(COLORARG1=DIFFUSE) (alpha)", hr);
+  }
+  hr = dev->SetTextureStageState(0, D3DTSS_ALPHAOP, D3DTOP_SELECTARG1);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetTextureStageState(ALPHAOP=SELECTARG1) (texture)", hr);
+  }
+  hr = dev->SetTextureStageState(0, D3DTSS_ALPHAARG1, D3DTA_TEXTURE);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetTextureStageState(ALPHAARG1=TEXTURE)", hr);
+  }
+  rc = run_phase("alpha_texture", kClearBlack, kDiffuseRed);
+  if (rc != 0) {
+    return rc;
+  }
+
+  // RGB=DIFFUSE, A=DIFFUSE -> alpha=0.5 => half red over black.
+  hr = dev->SetTextureStageState(0, D3DTSS_ALPHAOP, D3DTOP_SELECTARG1);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetTextureStageState(ALPHAOP=SELECTARG1) (diffuse)", hr);
+  }
+  hr = dev->SetTextureStageState(0, D3DTSS_ALPHAARG1, D3DTA_DIFFUSE);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetTextureStageState(ALPHAARG1=DIFFUSE)", hr);
+  }
+  rc = run_phase("alpha_diffuse", kClearBlack, kHalfRed);
+  if (rc != 0) {
+    return rc;
+  }
+
+  // COLOROP=DISABLE disables the stage entirely, so ALPHAOP must be ignored and
+  // alpha should come from diffuse/current (0.5).
+  hr = dev->SetTextureStageState(0, D3DTSS_ALPHAOP, D3DTOP_SELECTARG1);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetTextureStageState(ALPHAOP=SELECTARG1) (disable)", hr);
+  }
+  hr = dev->SetTextureStageState(0, D3DTSS_ALPHAARG1, D3DTA_TEXTURE);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetTextureStageState(ALPHAARG1=TEXTURE) (disable)", hr);
+  }
+  hr = dev->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_DISABLE);
+  if (FAILED(hr)) {
+    return reporter.FailHresult("SetTextureStageState(COLOROP=DISABLE)", hr);
+  }
+  rc = run_phase("colorop_disable", kClearBlack, kHalfRed);
   if (rc != 0) {
     return rc;
   }

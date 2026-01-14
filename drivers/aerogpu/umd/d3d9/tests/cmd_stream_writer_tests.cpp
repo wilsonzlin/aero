@@ -1592,8 +1592,13 @@ bool TestCreateResourceRejectsNon2dDepth() {
   if (!Check(ValidateStream(dma.data(), dma.size()), "stream validates after failed CreateResource")) {
     return false;
   }
-  return Check(CountOpcode(dma.data(), dma.size(), AEROGPU_CMD_CREATE_TEXTURE2D) == 0,
-               "failed CreateResource must not emit CREATE_TEXTURE2D");
+  const bool ok = Check(CountOpcode(dma.data(), dma.size(), AEROGPU_CMD_CREATE_TEXTURE2D) == 0,
+                        "failed CreateResource must not emit CREATE_TEXTURE2D");
+
+  // Make cleanup safe: switch back to vector mode so subsequent destroy calls
+  // can't touch the span-backed command buffer after it goes out of scope.
+  dev->cmd.set_vector();
+  return ok;
 }
 
 bool TestCreateResourceComputesBcTexturePitchAndSize() {
@@ -1732,10 +1737,12 @@ bool TestCreateResourceComputesBcTexturePitchAndSize() {
   if (!Check(cmd->row_pitch_bytes == 16u, "CREATE_TEXTURE2D row_pitch_bytes")) {
     return false;
   }
+  const bool ok = Check(cmd->mip_levels == 3u, "CREATE_TEXTURE2D mip_levels");
+
   // Make cleanup safe: switch back to vector mode so subsequent destroy calls
-  // can't fail due to span-buffer capacity constraints.
+  // can't touch the span-backed command buffer after it goes out of scope.
   dev->cmd.set_vector();
-  return Check(cmd->mip_levels == 3u, "CREATE_TEXTURE2D mip_levels");
+  return ok;
 }
 
 bool TestCreateResourceMipmappedTextureEmitsMipLevels() {

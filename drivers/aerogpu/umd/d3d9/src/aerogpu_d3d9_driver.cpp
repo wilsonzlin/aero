@@ -4228,6 +4228,16 @@ FixedfuncStage0Key fixedfunc_stage0_key_locked(const Device* dev) {
   key.color = fixedfunc_decode_op_src(colorop, colorarg1, colorarg2, has_tex0);
   key.alpha = fixedfunc_decode_op_src(alphaop, alphaarg1, alphaarg2, has_tex0);
 
+  // D3D9 semantics: if COLOROP is DISABLE, the entire stage is disabled (both
+  // color and alpha come from the incoming diffuse/current value). Ignore
+  // ALPHAOP in that case so we don't accidentally sample the texture just to
+  // source alpha.
+  if (colorop == kD3dTopDisable) {
+    key.color = FixedfuncStage0Src::Diffuse;
+    key.alpha = FixedfuncStage0Src::Diffuse;
+    return key;
+  }
+
   // Defensive: avoid selecting a texture-sampling shader when stage0 has no
   // bound texture. This prevents regressions in non-textured fixed-function
   // tests that leave default COLOROP=MODULATE but never bind texture0.
