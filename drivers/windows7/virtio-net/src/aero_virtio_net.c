@@ -6179,16 +6179,6 @@ static NTSTATUS AerovNetDiagDispatchDeviceControl(_In_ PDEVICE_OBJECT DeviceObje
 
   // Snapshot cached state under the adapter lock.
   NdisAcquireSpinLock(&Adapter->Lock);
-  if (Adapter->State == AerovNetAdapterStopped || Adapter->SurpriseRemoved) {
-    NdisReleaseSpinLock(&Adapter->Lock);
-    AerovNetDiagDereferenceAdapter(Adapter);
-
-    Status = STATUS_DEVICE_NOT_READY;
-    Irp->IoStatus.Status = Status;
-    Irp->IoStatus.Information = 0;
-    IoCompleteRequest(Irp, IO_NO_INCREMENT);
-    return Status;
-  }
 
   if (Ioctl == AEROVNET_DIAG_IOCTL_QUERY) {
     RtlZeroMemory(&Info, sizeof(Info));
@@ -6209,7 +6199,7 @@ static NTSTATUS AerovNetDiagDispatchDeviceControl(_In_ PDEVICE_OBJECT DeviceObje
     Info.MsixConfigVector = Adapter->MsixConfigVector;
     Info.MsixRxVector = Adapter->MsixRxVector;
     Info.MsixTxVector = Adapter->MsixTxVector;
-    CommonCfg = Adapter->Vdev.CommonCfg;
+    CommonCfg = (Adapter->State != AerovNetAdapterStopped && !Adapter->SurpriseRemoved) ? Adapter->Vdev.CommonCfg : NULL;
 
     if (Adapter->UseMsix) {
       Info.Flags |= AEROVNET_DIAG_FLAG_USE_MSIX;
@@ -6299,7 +6289,7 @@ static NTSTATUS AerovNetDiagDispatchDeviceControl(_In_ PDEVICE_OBJECT DeviceObje
     // Only attempt this if:
     //  - we're at PASSIVE_LEVEL (IOCTL path)
     //  - BAR0 is still mapped (not surprise removed / not halted)
-    if (KeGetCurrentIrql() == PASSIVE_LEVEL && CommonCfg != NULL && !Adapter->SurpriseRemoved) {
+    if (KeGetCurrentIrql() == PASSIVE_LEVEL && CommonCfg != NULL && Adapter->State != AerovNetAdapterStopped && !Adapter->SurpriseRemoved) {
       KIRQL OldIrql;
       USHORT MsixConfig;
       USHORT MsixRx;
