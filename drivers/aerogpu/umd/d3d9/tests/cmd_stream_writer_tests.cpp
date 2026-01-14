@@ -1181,7 +1181,18 @@ bool TestAdapterCapsAndQueryAdapterInfo() {
   if (!Check((caps.TextureCaps & D3DPTEXTURECAPS_POW2) == 0, "TextureCaps does not include POW2")) {
     return false;
   }
+  if (!Check((caps.TextureCaps & D3DPTEXTURECAPS_CUBEMAP) != 0, "TextureCaps includes CUBEMAP")) {
+    return false;
+  }
   if (!Check((caps.RasterCaps & D3DPRASTERCAPS_SCISSORTEST) != 0, "RasterCaps includes SCISSORTEST")) {
+    return false;
+  }
+  const uint32_t required_texfilt_caps =
+      D3DPTFILTERCAPS_MINFPOINT | D3DPTFILTERCAPS_MINFLINEAR |
+      D3DPTFILTERCAPS_MAGFPOINT | D3DPTFILTERCAPS_MAGFLINEAR |
+      D3DPTFILTERCAPS_MIPFPOINT | D3DPTFILTERCAPS_MIPFLINEAR;
+  if (!Check((caps.CubeTextureFilterCaps & required_texfilt_caps) == required_texfilt_caps,
+             "CubeTextureFilterCaps includes point/linear+mip filtering")) {
     return false;
   }
   // StretchRect filtering supports only min/mag point/linear (no mip filtering).

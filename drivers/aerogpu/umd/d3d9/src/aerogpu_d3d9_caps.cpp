@@ -340,6 +340,8 @@ void fill_d3d9_caps(D3DCAPS9* out) {
   out->TextureFilterCaps = D3DPTFILTERCAPS_MINFPOINT | D3DPTFILTERCAPS_MINFLINEAR |
                            D3DPTFILTERCAPS_MAGFPOINT | D3DPTFILTERCAPS_MAGFLINEAR |
                            D3DPTFILTERCAPS_MIPFPOINT | D3DPTFILTERCAPS_MIPFLINEAR;
+  // Cube textures use the same filtering path in the host pipeline.
+  out->CubeTextureFilterCaps = out->TextureFilterCaps;
 
   out->StretchRectFilterCaps = D3DPTFILTERCAPS_MINFPOINT | D3DPTFILTERCAPS_MINFLINEAR |
                                D3DPTFILTERCAPS_MAGFPOINT | D3DPTFILTERCAPS_MAGFLINEAR;
@@ -354,8 +356,8 @@ void fill_d3d9_caps(D3DCAPS9* out) {
 #endif
 
   // NPOT textures are required for DWM (arbitrary window sizes). Do NOT set
-  // D3DPTEXTURECAPS_POW2. Also avoid cubemap/volume caps until implemented.
-  out->TextureCaps = D3DPTEXTURECAPS_ALPHA | D3DPTEXTURECAPS_MIPMAP;
+  // D3DPTEXTURECAPS_POW2. Also avoid volume caps until implemented.
+  out->TextureCaps = D3DPTEXTURECAPS_ALPHA | D3DPTEXTURECAPS_MIPMAP | D3DPTEXTURECAPS_CUBEMAP;
 
   // Fixed-function texture stage operation caps (TextureOpCaps) are used by apps
   // and some runtimes to validate stage-state combiner operations. The UMD only
@@ -557,11 +559,13 @@ HRESULT get_caps(Adapter* adapter, const D3D9DDIARG_GETCAPS* pGetCaps) {
       caps->FVFCaps = 1;
 
       caps->ShadeCaps = D3DPSHADECAPS_COLORGOURAUDRGB;
-      caps->TextureCaps = D3DPTEXTURECAPS_ALPHA | D3DPTEXTURECAPS_MIPMAP;
+      caps->TextureCaps = D3DPTEXTURECAPS_ALPHA | D3DPTEXTURECAPS_MIPMAP | D3DPTEXTURECAPS_CUBEMAP;
       caps->TextureFilterCaps = D3DPTFILTERCAPS_MINFPOINT | D3DPTFILTERCAPS_MINFLINEAR |
                                 D3DPTFILTERCAPS_MAGFPOINT | D3DPTFILTERCAPS_MAGFLINEAR |
                                 D3DPTFILTERCAPS_MIPFPOINT | D3DPTFILTERCAPS_MIPFLINEAR;
-       // StretchRect filtering only supports min/mag point/linear (no mip filtering).
+      caps->CubeTextureFilterCaps = caps->TextureFilterCaps;
+
+      // StretchRect filtering only supports min/mag point/linear (no mip filtering).
       caps->StretchRectFilterCaps = D3DPTFILTERCAPS_MINFPOINT | D3DPTFILTERCAPS_MINFLINEAR |
                                     D3DPTFILTERCAPS_MAGFPOINT | D3DPTFILTERCAPS_MAGFLINEAR;
       caps->TextureAddressCaps = D3DPTADDRESSCAPS_CLAMP | D3DPTADDRESSCAPS_WRAP |
@@ -573,7 +577,6 @@ HRESULT get_caps(Adapter* adapter, const D3D9DDIARG_GETCAPS* pGetCaps) {
       caps->SrcBlendCaps = D3DPBLENDCAPS_ZERO | D3DPBLENDCAPS_ONE | D3DPBLENDCAPS_SRCALPHA | D3DPBLENDCAPS_INVSRCALPHA;
       caps->DestBlendCaps = caps->SrcBlendCaps;
       maybe_set_blend_op_caps(caps);
-
       caps->MaxTextureWidth = 4096;
       caps->MaxTextureHeight = 4096;
       caps->MaxTextureRepeat = 8192;

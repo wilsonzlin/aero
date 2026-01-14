@@ -392,6 +392,9 @@ typedef struct _LUID {
 #ifndef D3DPTEXTURECAPS_MIPMAP
   #define D3DPTEXTURECAPS_MIPMAP 0x00000008u
 #endif
+#ifndef D3DPTEXTURECAPS_CUBEMAP
+  #define D3DPTEXTURECAPS_CUBEMAP 0x00000200u
+#endif
 
 // D3DDTCAPS_* (vertex declaration types; subset from d3d9caps.h).
 #ifndef D3DDTCAPS_FLOAT1
