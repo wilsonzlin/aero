@@ -7,6 +7,7 @@
 //! This module owns the **compute pipeline objects** used by that expansion so they can be cached
 //! and reused across draws.
 
+use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 
@@ -95,7 +96,7 @@ impl TessellationPipelines {
             cfg,
         };
 
-        if let std::collections::hash_map::Entry::Vacant(e) = self.vs_as_compute.entry(key) {
+        if let Entry::Vacant(e) = self.vs_as_compute.entry(key) {
             let pipeline = VsAsComputePipeline::new(device, vertex_pulling, cfg)?;
             e.insert(pipeline);
         }
