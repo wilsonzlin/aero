@@ -29,8 +29,8 @@ use js_sys::{Array, BigInt, Object, Reflect};
 use aero_cpu_core::exec::{ExecDispatcher, ExecutedTier, StepOutcome, Tier0Interpreter, Vcpu};
 use aero_cpu_core::jit::cache::{CompiledBlockHandle, CompiledBlockMeta, PageVersionSnapshot};
 use aero_cpu_core::jit::runtime::{
-    CompileRequestSink, JitBackend, JitBlockExit, JitConfig, JitRuntime, PAGE_SHIFT,
-    DEFAULT_CODE_VERSION_MAX_PAGES,
+    CompileRequestSink, JitBackend, JitBlockExit, JitConfig, JitRuntime, PageVersionTracker,
+    PAGE_SHIFT,
 };
 use aero_cpu_core::state::{
     CPU_GPR_OFF, CPU_RFLAGS_OFF, CPU_RIP_OFF, CPU_STATE_ALIGN, CPU_STATE_SIZE, CpuMode, Segment,
@@ -985,6 +985,18 @@ impl WasmTieredVm {
 
         let backend = WasmJitBackend::new(cpu_ptr, jit_ctx_ptr, guest_base, tlb_salt);
 
+        // Size the dense page-version table to cover the full guest-physical RAM span (including
+        // the Q35 high-RAM remap above 4GiB).
+        let phys_end = guest_ram_phys_end_exclusive(guest_size_u64);
+        let page_bytes = 1u64 << PAGE_SHIFT;
+        let pages_u64 = phys_end
+            .saturating_add(page_bytes.saturating_sub(1))
+            .checked_shr(PAGE_SHIFT)
+            .unwrap_or(0);
+        let code_version_max_pages = usize::try_from(pages_u64)
+            .unwrap_or(PageVersionTracker::MAX_TRACKED_PAGES)
+            .min(PageVersionTracker::MAX_TRACKED_PAGES);
+
         let jit_config = JitConfig {
             enabled: true,
             // Low threshold for browser bring-up: we want hot blocks to quickly transition to
@@ -992,7 +1004,7 @@ impl WasmTieredVm {
             hot_threshold: 3,
             cache_max_blocks: 1024,
             cache_max_bytes: 0,
-            code_version_max_pages: DEFAULT_CODE_VERSION_MAX_PAGES,
+            code_version_max_pages,
         };
 
         let mut jit = JitRuntime::new(jit_config.clone(), backend, compile_queue.clone());
