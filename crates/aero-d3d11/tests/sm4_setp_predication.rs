@@ -1613,3 +1613,87 @@ fn decodes_and_translates_predicated_resinfo() {
         translated.wgsl
     );
 }
+
+#[test]
+fn decodes_and_translates_predicated_ld_structured() {
+    let mut body = Vec::<u32>::new();
+
+    // dcl_resource_structured t0, 16
+    //
+    // Structured buffer loads require the element stride from the corresponding declaration.
+    let buf_t0 = resource_operand(0);
+    let dcl_len = 1 + buf_t0.len() as u32 + 1;
+    body.push(opcode_token(OPCODE_DCL_RESOURCE_STRUCTURED, dcl_len));
+    body.extend_from_slice(&buf_t0);
+    body.push(16); // stride bytes
+
+    // (+p0.x) ld_structured r0.xyzw, l(0), l(0), t0
+    //
+    // This exercises predication lowering for structured buffer ops, which depend on
+    // `dcl_resource_structured` metadata.
+    let pred_p0x = pred_operand(0, 0);
+    let dst_r0 = reg_dst(OPERAND_TYPE_TEMP, 0, WriteMask::XYZW);
+    let index = imm32_scalar(0);
+    let offset = imm32_scalar(0);
+    let ld_len = 1
+        + pred_p0x.len() as u32
+        + dst_r0.len() as u32
+        + index.len() as u32
+        + offset.len() as u32
+        + buf_t0.len() as u32;
+    body.push(opcode_token(OPCODE_LD_STRUCTURED, ld_len));
+    body.extend_from_slice(&pred_p0x);
+    body.extend_from_slice(&dst_r0);
+    body.extend_from_slice(&index);
+    body.extend_from_slice(&offset);
+    body.extend_from_slice(&buf_t0);
+
+    // mov o0, r0
+    let dst_o0 = reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW);
+    let src_r0 = reg_src(OPERAND_TYPE_TEMP, 0, [0, 1, 2, 3]);
+    body.push(opcode_token(
+        OPCODE_MOV,
+        1 + dst_o0.len() as u32 + src_r0.len() as u32,
+    ));
+    body.extend_from_slice(&dst_o0);
+    body.extend_from_slice(&src_r0);
+
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    // Stage type 0 is pixel shader.
+    let tokens = make_sm5_program_tokens(0, &body);
+
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, tokens_to_bytes(&tokens)),
+        (FOURCC_ISGN, build_signature_chunk(&[])),
+        (
+            FOURCC_OSGN,
+            build_signature_chunk(&[sig_param("SV_Target", 0, 0, 0b1111)]),
+        ),
+    ]);
+
+    let dxbc = aero_d3d11::DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
+    let module = aero_d3d11::sm4::decode_program(&program).expect("SM4 decode");
+
+    assert!(matches!(
+        &module.instructions[0],
+        Sm4Inst::Predicated { inner, .. }
+            if matches!(inner.as_ref(), Sm4Inst::LdStructured { .. })
+    ));
+
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+
+    assert!(
+        translated.wgsl.contains("if (p0.x) {"),
+        "expected predicated ld_structured to emit an if guard:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated.wgsl.contains("t0.data["),
+        "expected structured load to index t0 storage buffer:\n{}",
+        translated.wgsl
+    );
+}

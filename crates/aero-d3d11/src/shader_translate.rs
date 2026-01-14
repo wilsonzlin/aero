@@ -5544,13 +5544,32 @@ fn emit_instructions(
                 let cond = emit_test_predicate_scalar(pred);
                 w.line(&format!("if ({cond}) {{"));
                 w.indent();
+                // Predicated instruction emission uses a recursive `emit_instructions` call on a
+                // single-instruction "inner module". Some instructions depend on information from
+                // declarations (e.g. structured buffer strides, `resinfo` resource dimensions), so
+                // we must preserve those decls in the inner module.
+                //
+                // However, cloning all declarations can be expensive when the shader contains large
+                // payload decls like `dcl_immediateConstantBuffer { ... }`. `emit_instructions`
+                // currently only consults a small subset of declaration variants, so filter down to
+                // just those to keep predication lowering cheap.
+                let pred_decls: Vec<Sm4Decl> = module
+                    .decls
+                    .iter()
+                    .filter(|d| {
+                        matches!(
+                            d,
+                            Sm4Decl::ResourceBuffer { .. }
+                                | Sm4Decl::UavBuffer { .. }
+                                | Sm4Decl::ResourceTexture2D { .. }
+                        )
+                    })
+                    .cloned()
+                    .collect();
                 let inner_module = Sm4Module {
                     stage: module.stage,
                     model: module.model,
-                    // Instruction predication does not alter the surrounding module's
-                    // declarations. Preserve them here so predicating an instruction that depends
-                    // on declarations (e.g. `resinfo`, structured buffer ops) still emits correctly.
-                    decls: module.decls.clone(),
+                    decls: pred_decls,
                     instructions: vec![inner.as_ref().clone()],
                 };
                 emit_instructions(w, &inner_module, ctx)?;
