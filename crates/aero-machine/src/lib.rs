@@ -7063,11 +7063,12 @@ impl Machine {
         set_cpu_apic_base_bsp_bit(&mut self.cpu, true);
         // Application processors (APs) start with the BSP bit (IA32_APIC_BASE[8]) cleared.
         let mut ap_cpus = Vec::new();
-        for _ in 1..self.cfg.cpu_count {
+        for apic_id in 1..self.cfg.cpu_count {
             let mut cpu = CpuCore::new(CpuMode::Real);
             // APs power up in a halted wait-for-SIPI state until started by the BSP.
             vcpu_init::reset_ap_vcpu_to_init_state(&mut cpu);
-            cpu.state.halted = true;
+            // Optional: expose the APIC ID via RDTSCP (IA32_TSC_AUX).
+            cpu.state.msr.tsc_aux = apic_id as u32;
             set_cpu_apic_base_bsp_bit(&mut cpu, false);
             // APs remain in a halted wait-for-SIPI state until started by the BSP.
             cpu.state.halted = true;
