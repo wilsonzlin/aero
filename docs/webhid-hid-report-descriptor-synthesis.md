@@ -53,7 +53,7 @@ TypeScript/WebHID types:
   repo depends on `@types/w3c-web-hid` and pulls it in via `web/src/vite-env.d.ts`.
 
 For the end-to-end “real device” passthrough architecture (main thread owns the
-`HIDDevice`, worker models UHCI + a generic HID device), see
+`HIDDevice`, worker models a guest-visible USB controller + a generic HID device), see
 [`docs/webhid-webusb-passthrough.md`](./webhid-webusb-passthrough.md).
 
 Windows 7 compatibility goals (what we optimize for):

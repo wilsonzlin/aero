@@ -942,7 +942,7 @@ report descriptor bytes), see
 [`docs/webhid-hid-report-descriptor-synthesis.md`](./webhid-hid-report-descriptor-synthesis.md).
 
 For the end-to-end “real device” passthrough architecture (main thread owns the
-handle; worker models UHCI + a generic HID device), see
+handle; worker models a guest-visible USB controller + a generic HID device), see
 [`docs/webhid-webusb-passthrough.md`](./webhid-webusb-passthrough.md).
 
 ### USB HID Keyboard
