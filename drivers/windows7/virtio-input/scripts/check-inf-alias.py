@@ -103,7 +103,6 @@ def _decode_lines_for_diff(data: bytes) -> list[str]:
         if "\x00" in text:
             text = text.replace("\x00", "")
     return text.splitlines(keepends=True)
-
 def main() -> int:
     virtio_input_root = Path(__file__).resolve().parents[1]
     repo_root = virtio_input_root.parents[2]

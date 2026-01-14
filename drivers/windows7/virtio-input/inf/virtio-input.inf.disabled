@@ -9,12 +9,8 @@
 ;
 ; Policy:
 ; - This file is a *filename alias only*.
-; - It is allowed to diverge from `aero_virtio_input.inf` only in the models
-;   sections (`[Aero.NTx86]` / `[Aero.NTamd64]`) to add an opt-in strict
-;   revision-gated generic fallback match (no SUBSYS).
-; - Outside those models sections, it must remain byte-for-byte identical to
-;   `aero_virtio_input.inf` from `[Version]` onward (only the leading
-;   banner/comments may differ).
+; - From the first section header (`[Version]`) onward, it must remain byte-for-byte
+;   identical to `aero_virtio_input.inf` (only the leading banner/comments may differ).
 ;
 ; Enforcement:
 ;   - CI: scripts/ci/check-windows7-virtio-contract-consistency.py
