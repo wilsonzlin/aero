@@ -719,20 +719,35 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
     const cache = this.cache;
     const totalSize = this.capacityBytesValue;
     const blockSize = this.opts.chunkSize;
-    // The sparse cache stores fixed-size blocks, so its "allocated bytes" can exceed the
-    // remote image size when the final block is partial. Convert back to remote bytes so
-    // telemetry is consistent with other remote disk implementations.
-    let cachedBytes = cache ? cache.getAllocatedBytes() : 0;
-    const remainder = totalSize % blockSize;
-    if (cache && remainder !== 0 && totalSize > 0) {
-      const lastBlockIndex = divFloor(totalSize - 1, blockSize);
-      if (cache.isBlockAllocated(lastBlockIndex)) {
-        cachedBytes -= blockSize - remainder;
+    let cachedBytes = 0;
+    // The sparse cache stores fixed-size blocks, so its "allocated bytes" can exceed the remote
+    // image size when the final block is partial. Convert back to remote bytes so telemetry is
+    // consistent with other remote disk implementations.
+    //
+    // Additionally, quota failures while growing the sparse file can leave the persistent cache in
+    // a partially-updated state. Telemetry should be best-effort: never let cache bookkeeping throw
+    // (and when persistence is disabled, always report cachedBytes=0).
+    if (cache && !this.persistentCacheWritesDisabled) {
+      try {
+        cachedBytes = cache.getAllocatedBytes();
+        const remainder = totalSize % blockSize;
+        if (remainder !== 0 && totalSize > 0) {
+          const lastBlockIndex = divFloor(totalSize - 1, blockSize);
+          // If the cache is corrupt, treat this adjustment as best-effort.
+          try {
+            if (cache.isBlockAllocated(lastBlockIndex)) {
+              cachedBytes -= blockSize - remainder;
+            }
+          } catch {
+            // ignore
+          }
+        }
+        if (cachedBytes < 0) cachedBytes = 0;
+        if (cachedBytes > totalSize) cachedBytes = totalSize;
+      } catch {
+        cachedBytes = 0;
       }
     }
-    if (cachedBytes < 0) cachedBytes = 0;
-    if (cachedBytes > totalSize) cachedBytes = totalSize;
-    if (this.persistentCacheWritesDisabled) cachedBytes = 0;
     return {
       url: this.sourceId,
       totalSize,

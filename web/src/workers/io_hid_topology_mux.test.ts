@@ -19,6 +19,7 @@ describe("workers/io_hid_topology_mux (xhci_hid_topology)", () => {
     };
 
     const uhci = {
+      free: vi.fn(),
       attach_hub: vi.fn(),
       detach_at_path: vi.fn(),
       attach_webhid_device: vi.fn(),
