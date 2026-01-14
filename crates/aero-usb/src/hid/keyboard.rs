@@ -227,7 +227,7 @@ impl IoSnapshot for UsbHidKeyboard {
         }
 
         self.idle_rate = r.u8(TAG_IDLE_RATE)?.unwrap_or(0);
-        self.leds = r.u8(TAG_LEDS)?.unwrap_or(0);
+        self.leds = r.u8(TAG_LEDS)?.unwrap_or(0) & KEYBOARD_LED_MASK;
         self.modifiers = r.u8(TAG_MODIFIERS)?.unwrap_or(0);
 
         if let Some(buf) = r.bytes(TAG_PRESSED_KEYS) {

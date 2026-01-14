@@ -1,4 +1,4 @@
-use aero_io_snapshot::io::state::IoSnapshot;
+use aero_io_snapshot::io::state::{IoSnapshot, SnapshotWriter};
 use aero_usb::device::AttachedUsbDevice;
 use aero_usb::hid::{UsbCompositeHidInputHandle, UsbHidKeyboardHandle};
 use aero_usb::{SetupPacket, UsbInResult, UsbOutResult};
@@ -159,4 +159,37 @@ fn hid_composite_keyboard_set_report_updates_handle_leds_and_snapshot_roundtrip_
     let mut restored_dev = AttachedUsbDevice::new(Box::new(hid_from_dev.clone()));
     restored_dev.load_state(&dev_snapshot).unwrap();
     assert_eq!(hid_from_dev.keyboard_leds(), expected_leds);
+}
+
+#[test]
+fn hid_keyboard_snapshot_load_masks_led_padding_bits() {
+    // Snapshot tag numbers are part of the stable snapshot format.
+    const TAG_LEDS: u16 = 9;
+
+    let mut w = SnapshotWriter::new(
+        <UsbHidKeyboardHandle as IoSnapshot>::DEVICE_ID,
+        <UsbHidKeyboardHandle as IoSnapshot>::DEVICE_VERSION,
+    );
+    w.field_u8(TAG_LEDS, 0xe7);
+    let snap = w.finish();
+
+    let mut kb = UsbHidKeyboardHandle::new();
+    kb.load_state(&snap).unwrap();
+    assert_eq!(kb.leds(), 0x07);
+}
+
+#[test]
+fn hid_composite_snapshot_load_masks_led_padding_bits() {
+    const TAG_KBD_LEDS: u16 = 12;
+
+    let mut w = SnapshotWriter::new(
+        <UsbCompositeHidInputHandle as IoSnapshot>::DEVICE_ID,
+        <UsbCompositeHidInputHandle as IoSnapshot>::DEVICE_VERSION,
+    );
+    w.field_u8(TAG_KBD_LEDS, 0xe3);
+    let snap = w.finish();
+
+    let mut hid = UsbCompositeHidInputHandle::new();
+    hid.load_state(&snap).unwrap();
+    assert_eq!(hid.keyboard_leds(), 0x03);
 }

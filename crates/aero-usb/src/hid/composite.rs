@@ -733,7 +733,7 @@ impl IoSnapshot for UsbCompositeHidInput {
                 _ => return Err(SnapshotError::InvalidFieldEncoding("hid protocol")),
             };
         }
-        self.keyboard.leds = r.u8(TAG_KBD_LEDS)?.unwrap_or(0);
+        self.keyboard.leds = r.u8(TAG_KBD_LEDS)?.unwrap_or(0) & KEYBOARD_LED_MASK;
         self.keyboard.modifiers = r.u8(TAG_KBD_MODIFIERS)?.unwrap_or(0);
         if let Some(buf) = r.bytes(TAG_KBD_PRESSED_KEYS) {
             let mut d = Decoder::new(buf);
