@@ -35,7 +35,7 @@ Legend:
 | AeroGPU sandbox device model + executor (legacy integration surface) | `[~]` | [`crates/emulator/src/devices/pci/aerogpu.rs`](../../crates/emulator/src/devices/pci/aerogpu.rs) + [`crates/emulator/src/gpu_worker/aerogpu_executor.rs`](../../crates/emulator/src/gpu_worker/aerogpu_executor.rs) |
 | Scanout shared-memory contracts | `[x]` | [`crates/aero-shared/src/`](../../crates/aero-shared/src/) + [`web/src/ipc/`](../../web/src/ipc/) |
 | D3D9 translation/execution (subset) | `[~]` | [`crates/aero-d3d9/`](../../crates/aero-d3d9/) + [`crates/aero-gpu/src/aerogpu_d3d9_executor.rs`](../../crates/aero-gpu/src/aerogpu_d3d9_executor.rs) |
-| D3D10/11 translation/execution (subset; VS/PS-focused) | `[~]` | [`crates/aero-d3d11/`](../../crates/aero-d3d11/) |
+| D3D10/11 translation/execution (subset; VS/PS/CS + GS/HS/DS plumbing) | `[~]` | [`crates/aero-d3d11/`](../../crates/aero-d3d11/) |
 | Web presenters/backends (WebGPU + WebGL2) | `[x]` | [`web/src/gpu/`](../../web/src/gpu/) |
 | End-to-end Win7 WDDM + accelerated rendering in the **canonical browser machine** | `[ ]` | See [7) Critical path integration gaps](#7-current-critical-path-integration-gaps-factual) |
 
@@ -295,7 +295,7 @@ For Win7 D3D9Ex/DWM context:
 
 `crates/aero-d3d11` contains:
 
-1. DXBC SM4/SM5 decode + WGSL translation scaffolding (focused on FL10_0 bring-up).
+1. DXBC SM4/SM5 decode + WGSL translation (VS/PS/CS today; plus stage-ex binding plumbing for GS/HS/DS compute emulation).
 2. A wgpu-backed executor for the AeroGPU command stream (`aerogpu_cmd.h`).
 
 Code pointers:
@@ -310,15 +310,20 @@ Representative test pointers:
 
 - [`crates/aero-d3d11/tests/aerogpu_cmd_smoke.rs`](../../crates/aero-d3d11/tests/aerogpu_cmd_smoke.rs)
 - [`crates/aero-d3d11/tests/aerogpu_cmd_textured_triangle.rs`](../../crates/aero-d3d11/tests/aerogpu_cmd_textured_triangle.rs)
+- Compute translation/execution: [`crates/aero-d3d11/tests/d3d11_runtime_compute_dispatch.rs`](../../crates/aero-d3d11/tests/d3d11_runtime_compute_dispatch.rs), [`crates/aero-d3d11/tests/shader_translate_compute.rs`](../../crates/aero-d3d11/tests/shader_translate_compute.rs)
+- Geometry-stage plumbing (compute prepass path): [`crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_compute_prepass_smoke.rs`](../../crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_compute_prepass_smoke.rs), [`crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_point_to_triangle.rs`](../../crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_point_to_triangle.rs)
 - Guest-side Win7 tests live under [`drivers/aerogpu/tests/win7/`](../../drivers/aerogpu/tests/win7/) (see e.g. `d3d10_*`, `d3d11_*`)
 
-Known gaps / limitations (enforced by code):
+Known gaps / limitations (enforced by code/tests):
 
-- Geometry/Hull/Domain shaders are accepted on create but ignored (no binding slots in the command stream):
-  - Test: [`crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_ignore.rs`](../../crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_ignore.rs)
-- Compute stage translation is **not implemented** in the signature-driven translator:
-  - Code: [`crates/aero-d3d11/src/shader_translate.rs`](../../crates/aero-d3d11/src/shader_translate.rs) (VS/PS only)
-  - Test: [`crates/aero-d3d11/tests/shader_translate_compute_visibility.rs`](../../crates/aero-d3d11/tests/shader_translate_compute_visibility.rs)
+- Geometry shaders are **emulated via compute** (WebGPU has no GS stage), but the current “compute prepass” is still a **placeholder** and does not execute guest GS/HS/DS DXBC yet.
+  - Design/notes: [`docs/graphics/geometry-shader-emulation.md`](./geometry-shader-emulation.md) (“Current limitation” section)
+  - Code: [`crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs`](../../crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs) (see `state.gs` and “geometry prepass” paths)
+  - Tests: [`crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_compute_prepass_smoke.rs`](../../crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_compute_prepass_smoke.rs)
+- DXBC payloads that *parse as* Geometry/Hull/Domain are currently accepted but the DXBC program is ignored at `CREATE_SHADER_DXBC` time.
+  - Code: [`crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs`](../../crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs) (`exec_create_shader_dxbc`, early return for `program.stage == Geometry|Hull|Domain`)
+- Tessellation (Hull/Domain) execution is not implemented; patchlist topologies are rejected.
+  - Code: [`crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs`](../../crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs) (`patchlist topology requires tessellation emulation`)
 
 Roadmap/plan docs:
 
