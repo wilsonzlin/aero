@@ -4,7 +4,7 @@ use std::rc::Rc;
 use aero_devices::pci::{profile, PciConfigSpace, PciDevice};
 use memory::{MemoryBus, MmioHandler};
 
-use crate::backend::AeroGpuCommandBackend;
+use crate::backend::{AeroGpuBackendSubmission, AeroGpuCommandBackend};
 use crate::executor::{AeroGpuExecutor, AeroGpuExecutorConfig};
 use crate::regs::{irq_bits, mmio, ring_control, AeroGpuRegs, AEROGPU_MMIO_MAGIC, FEATURE_VBLANK};
 use crate::ring::{write_fence_page, AeroGpuRingHeader, RING_TAIL_OFFSET};
@@ -169,6 +169,16 @@ impl AeroGpuPciDevice {
 
     pub fn set_backend(&mut self, backend: Box<dyn AeroGpuCommandBackend>) {
         self.executor.set_backend(backend);
+    }
+
+    /// Drain newly-decoded AeroGPU submissions queued since the last call.
+    ///
+    /// This is intended for WASM/browser integrations where command execution happens out-of-process
+    /// (e.g. via `aero-gpu-wasm`). The device model (ring processing, fence page updates, IRQ state)
+    /// runs in-process, but the host is responsible for executing each returned submission and then
+    /// calling [`AeroGpuPciDevice::complete_fence`].
+    pub fn drain_pending_submissions(&mut self) -> Vec<AeroGpuBackendSubmission> {
+        self.executor.drain_pending_submissions()
     }
 
     fn mem_space_enabled(&self) -> bool {

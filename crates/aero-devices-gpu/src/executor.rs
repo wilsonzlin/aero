@@ -127,9 +127,21 @@ pub enum AeroGpuCmdStreamDecodeError {
 pub struct AeroGpuExecutor {
     cfg: AeroGpuExecutorConfig,
     pub last_submissions: VecDeque<AeroGpuSubmissionRecord>,
+    /// Submissions that have been decoded by `process_doorbell` but not yet executed by an
+    /// in-process backend.
+    ///
+    /// This queue is only populated when `fence_completion == Deferred` **and** no backend has
+    /// been configured via [`AeroGpuExecutor::set_backend`]. It exists as an integration hook for
+    /// out-of-process/WASM backends (e.g. `aero-wasm` CPU worker decoding submissions and handing
+    /// them off to `aero-gpu-wasm` for execution).
+    ///
+    /// Native in-process backends should call [`AeroGpuExecutor::set_backend`] which disables this
+    /// queue and preserves the existing submit-to-backend behavior.
+    pending_submissions: VecDeque<AeroGpuBackendSubmission>,
     pending_fences: VecDeque<PendingFenceCompletion>,
     in_flight: BTreeMap<u64, InFlightSubmission>,
     completed_before_submit: HashSet<u64>,
+    backend_configured: bool,
     backend: Box<dyn AeroGpuCommandBackend>,
 }
 
@@ -138,9 +150,11 @@ impl Clone for AeroGpuExecutor {
         Self {
             cfg: self.cfg.clone(),
             last_submissions: self.last_submissions.clone(),
+            pending_submissions: self.pending_submissions.clone(),
             pending_fences: self.pending_fences.clone(),
             in_flight: self.in_flight.clone(),
             completed_before_submit: self.completed_before_submit.clone(),
+            backend_configured: false,
             backend: Box::new(NullAeroGpuBackend::new()),
         }
     }
@@ -151,18 +165,54 @@ impl AeroGpuExecutor {
         Self {
             cfg,
             last_submissions: VecDeque::new(),
+            pending_submissions: VecDeque::new(),
             pending_fences: VecDeque::new(),
             in_flight: BTreeMap::new(),
             completed_before_submit: HashSet::new(),
+            backend_configured: false,
             backend: Box::new(NullAeroGpuBackend::new()),
         }
     }
 
     pub fn set_backend(&mut self, backend: Box<dyn AeroGpuCommandBackend>) {
+        // Once a backend is configured, this executor is expected to submit work directly to it.
+        // Clear any queued drain-mode submissions to avoid mixing execution models.
+        self.pending_submissions.clear();
+        self.backend_configured = true;
         self.backend = backend;
     }
 
+    /// Drain newly-decoded submissions queued since the last call.
+    ///
+    /// This is only meaningful when:
+    /// - `fence_completion == Deferred`, and
+    /// - no backend has been configured (i.e. [`AeroGpuExecutor::set_backend`] has not been called).
+    ///
+    /// In that mode, `process_doorbell` will decode ring entries, mark their fences as in-flight,
+    /// and queue [`AeroGpuBackendSubmission`] structs here for an external executor to run.
+    pub fn drain_pending_submissions(&mut self) -> Vec<AeroGpuBackendSubmission> {
+        if self.pending_submissions.is_empty() {
+            return Vec::new();
+        }
+
+        // Only return submissions that are still awaiting backend completion. This avoids returning
+        // work that has already been completed (e.g. if `complete_fence` was called before JS got a
+        // chance to drain).
+        let mut out = Vec::with_capacity(self.pending_submissions.len());
+        while let Some(sub) = self.pending_submissions.pop_front() {
+            let should_return = match self.in_flight.get(&sub.signal_fence) {
+                Some(entry) => !entry.completed_backend,
+                None => false,
+            };
+            if should_return {
+                out.push(sub);
+            }
+        }
+        out
+    }
+
     pub fn reset(&mut self) {
+        self.pending_submissions.clear();
         self.pending_fences.clear();
         self.in_flight.clear();
         self.completed_before_submit.clear();
@@ -412,7 +462,7 @@ impl AeroGpuExecutor {
                 decode_alloc_table(mem, regs.abi_version, &desc, &mut decode_errors);
             let capture_cmd_stream = self.cfg.keep_last_submissions > 0
                 || self.cfg.fence_completion == AeroGpuFenceCompletionMode::Deferred;
-            let (cmd_stream_header, cmd_stream) = decode_cmd_stream(
+            let (cmd_stream_header, mut cmd_stream) = decode_cmd_stream(
                 mem,
                 regs.abi_version,
                 &desc,
@@ -627,9 +677,11 @@ impl AeroGpuExecutor {
                         PendingFenceKind::Immediate
                     };
 
+                    let mut inserted_in_flight = false;
+                    let mut already_completed = false;
                     if desc.signal_fence > regs.completed_fence {
-                        let already_completed =
-                            self.completed_before_submit.remove(&desc.signal_fence);
+                        inserted_in_flight = true;
+                        already_completed = self.completed_before_submit.remove(&desc.signal_fence);
                         self.in_flight.insert(
                             desc.signal_fence,
                             InFlightSubmission {
@@ -645,23 +697,39 @@ impl AeroGpuExecutor {
                         }
                     }
 
+                    // Avoid cloning potentially large command streams unless we are also retaining
+                    // a submission record for debugging (`keep_last_submissions`).
+                    let submit_cmd_stream = if self.cfg.keep_last_submissions > 0 {
+                        cmd_stream.clone()
+                    } else {
+                        core::mem::take(&mut cmd_stream)
+                    };
+
                     let submit = AeroGpuBackendSubmission {
                         flags: desc.flags,
                         context_id: desc.context_id,
                         engine_id: desc.engine_id,
                         signal_fence: desc.signal_fence,
-                        cmd_stream: cmd_stream.clone(),
+                        cmd_stream: submit_cmd_stream,
                         alloc_table,
                     };
 
-                    if self.backend.submit(mem, submit).is_err() {
-                        regs.stats.gpu_exec_errors = regs.stats.gpu_exec_errors.saturating_add(1);
-                        regs.record_error(AerogpuErrorCode::Backend, desc.signal_fence);
-                        // If the backend rejects the submission, still unblock the fence.
-                        if let Some(entry) = self.in_flight.get_mut(&desc.signal_fence) {
-                            entry.vblank_ready = true;
+                    if self.backend_configured {
+                        if self.backend.submit(mem, submit).is_err() {
+                            regs.stats.gpu_exec_errors =
+                                regs.stats.gpu_exec_errors.saturating_add(1);
+                            regs.record_error(AerogpuErrorCode::Backend, desc.signal_fence);
+                            // If the backend rejects the submission, still unblock the fence.
+                            if let Some(entry) = self.in_flight.get_mut(&desc.signal_fence) {
+                                entry.vblank_ready = true;
+                            }
+                            self.complete_fence(regs, mem, desc.signal_fence);
                         }
-                        self.complete_fence(regs, mem, desc.signal_fence);
+                    } else if inserted_in_flight && !already_completed {
+                        // No in-process backend: surface the decoded submission to the caller
+                        // (WASM bridge) so it can be executed externally and later completed via
+                        // `complete_fence`.
+                        self.pending_submissions.push_back(submit);
                     }
                 }
             }
