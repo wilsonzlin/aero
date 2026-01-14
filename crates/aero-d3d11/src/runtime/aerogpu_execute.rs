@@ -1225,6 +1225,7 @@ impl AerogpuCmdRuntime {
             .device
             .features()
             .contains(wgpu::Features::INDIRECT_FIRST_INSTANCE);
+        let supports_indirect_execution = self.supports_indirect_execution;
 
         if !skip_draw {
             match kind {
@@ -1265,9 +1266,13 @@ impl AerogpuCmdRuntime {
                         args.clamp_instances(max);
                     }
 
-                    if args.first_instance != 0 && !indirect_first_instance_supported {
-                        // Downlevel backends (notably wgpu GL) may not support indirect
-                        // first-instance. Fall back to direct draws to preserve semantics.
+                    if !supports_indirect_execution
+                        || (args.first_instance != 0 && !indirect_first_instance_supported)
+                    {
+                        // Some backends (notably wgpu GL/WebGL) do not support indirect execution,
+                        // and some downlevel implementations do not support non-zero
+                        // `first_instance` in indirect draws. Fall back to direct draws to preserve
+                        // semantics.
                         let end_vertex = args.first_vertex.saturating_add(args.vertex_count);
                         let end_instance = args.first_instance.saturating_add(args.instance_count);
                         pass.draw(
@@ -1339,7 +1344,9 @@ impl AerogpuCmdRuntime {
                         args.clamp_instances(max);
                     }
 
-                    if args.first_instance != 0 && !indirect_first_instance_supported {
+                    if !supports_indirect_execution
+                        || (args.first_instance != 0 && !indirect_first_instance_supported)
+                    {
                         let end_index = args.first_index.saturating_add(args.index_count);
                         let end_instance = args.first_instance.saturating_add(args.instance_count);
                         pass.draw_indexed(
