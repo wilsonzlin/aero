@@ -91,6 +91,16 @@ export type MachineHandle = {
      */
     active_boot_device?(): number;
     /**
+     * Returns the configured BIOS boot drive number (`DL`) used for firmware POST/boot.
+     *
+     * Recommended values:
+     * - `0x80`: primary HDD (normal boot)
+     * - `0xE0`: ATAPI CD-ROM (El Torito install media)
+     *
+     * Optional for older WASM builds.
+     */
+    boot_drive?(): number;
+    /**
      * Enable/disable the firmware "CD-first when present" boot policy.
      *
      * When enabled and install media is attached, BIOS POST attempts to boot from CD-ROM first
@@ -102,6 +112,12 @@ export type MachineHandle = {
      */
     set_boot_from_cd_if_present?(enabled: boolean): void;
     /**
+     * Returns whether the firmware "CD-first when present" boot policy is enabled.
+     *
+     * Optional for older WASM builds.
+     */
+    boot_from_cd_if_present?(): boolean;
+    /**
      * Set the BIOS CD-ROM drive number used when booting under the "CD-first when present" policy.
      *
      * Valid El Torito CD-ROM drive numbers are `0xE0..=0xEF` (recommended `0xE0` for first CD-ROM).
@@ -111,6 +127,13 @@ export type MachineHandle = {
      * Optional for older WASM builds.
      */
     set_cd_boot_drive?(drive: number): void;
+    /**
+     * Returns the BIOS CD-ROM drive number used when booting under the "CD-first when present"
+     * policy.
+     *
+     * Optional for older WASM builds.
+     */
+    cd_boot_drive?(): number;
     set_disk_image(bytes: Uint8Array): void;
     /**
      * Open (or create) an OPFS-backed disk image and attach it as the machine's canonical disk.

@@ -4210,6 +4210,26 @@ impl Machine {
         }
     }
 
+    /// Returns the configured BIOS boot drive number (`DL`) used for firmware POST/boot.
+    ///
+    /// Recommended values:
+    /// - `0x80`: primary HDD (normal boot)
+    /// - `0xE0`: ATAPI CD-ROM (El Torito install media)
+    pub fn boot_drive(&self) -> u32 {
+        u32::from(self.inner.boot_drive())
+    }
+
+    /// Returns whether the firmware "CD-first when present" boot policy is enabled.
+    pub fn boot_from_cd_if_present(&self) -> bool {
+        self.inner.boot_from_cd_if_present()
+    }
+
+    /// Returns the BIOS drive number used for CD-ROM boot when the "CD-first when present" policy
+    /// is enabled.
+    pub fn cd_boot_drive(&self) -> u32 {
+        u32::from(self.inner.cd_boot_drive())
+    }
+
     /// Enable/disable the firmware "CD-first when present" boot policy.
     ///
     /// When enabled and install media is attached, BIOS POST attempts to boot from CD-ROM first
