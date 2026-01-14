@@ -135,6 +135,18 @@ timeout_val="$(extract_timeout "${out}")"
 assert_eq "cargo-xtask-e2e-uses-playwright-timeout-when-aero-timeout-unset" "${timeout_val}" "37"
 
 ###############################################################################
+# Case 3b: `cargo +nightly xtask ... --e2e` also bumps timeout (toolchain prefix should be ignored).
+###############################################################################
+out="$(
+  PATH="${bin_dir}:${PATH}" \
+  AERO_MEM_LIMIT=unlimited \
+  AERO_PLAYWRIGHT_TIMEOUT=37 \
+  bash "${test_repo}/scripts/safe-run.sh" cargo +nightly xtask input --e2e 2>&1 >/dev/null
+)"
+timeout_val="$(extract_timeout "${out}")"
+assert_eq "cargo-plus-nightly-xtask-e2e-uses-playwright-timeout-when-aero-timeout-unset" "${timeout_val}" "37"
+
+###############################################################################
 # Case 4: Non-Playwright npm commands keep the default timeout.
 ###############################################################################
 out="$(

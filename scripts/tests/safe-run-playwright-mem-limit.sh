@@ -142,6 +142,18 @@ mem_val="$(extract_mem_limit "${out}")"
 assert_eq "cargo-xtask-e2e-uses-playwright-mem-limit-when-aero-mem-unset" "${mem_val}" "11G"
 
 ###############################################################################
+# Case 3b: `cargo +nightly xtask ... --e2e` also uses AERO_PLAYWRIGHT_MEM_LIMIT (toolchain prefix should be ignored).
+###############################################################################
+out="$(
+  PATH="${bin_dir}:${PATH}" \
+  AERO_TIMEOUT=600 \
+  AERO_PLAYWRIGHT_MEM_LIMIT=11G \
+  bash "${test_repo}/scripts/safe-run.sh" cargo +nightly xtask input --e2e 2>&1 >/dev/null
+)"
+mem_val="$(extract_mem_limit "${out}")"
+assert_eq "cargo-plus-nightly-xtask-e2e-uses-playwright-mem-limit-when-aero-mem-unset" "${mem_val}" "11G"
+
+###############################################################################
 # Case 4: Non-Playwright npm commands should use the Node test mem bump, not the Playwright bump.
 ###############################################################################
 out="$(
