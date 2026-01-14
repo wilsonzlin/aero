@@ -16,8 +16,8 @@
 ## Current status / what’s missing
 
 Most of the “hard” graphics pieces already exist in-tree (with unit/integration tests). The main
-remaining gap is **wiring the canonical AeroGPU device (A3A0:0001) into the canonical machine and
-handing off scanout from boot VGA/VBE → WDDM**.
+remaining gap is **wiring the full AeroGPU BAR0 WDDM/MMIO/ring/vblank device model (A3A0:0001) into the
+canonical machine and handing off scanout from boot VGA/VBE → WDDM**.
 
 Key docs for that bring-up:
 
