@@ -1828,6 +1828,96 @@ describe("RemoteRangeDisk", () => {
     await disk.close();
   });
 
+  it("drops persistent cache writes on Firefox quota errors (NS_ERROR_DOM_QUOTA_REACHED) without breaking reads", async () => {
+    const chunkSize = 512;
+    const data = makeTestData(chunkSize * 4);
+    let rangeGets = 0;
+
+    const fetchFn: typeof fetch = async (_input, init) => {
+      const method = String(init?.method ?? "GET").toUpperCase();
+      const headers = init?.headers;
+      const rangeHeader =
+        headers instanceof Headers
+          ? (headers.get("Range") ?? headers.get("range") ?? undefined)
+          : typeof headers === "object" && headers
+            ? (((headers as any).Range as string | undefined) ?? ((headers as any).range as string | undefined))
+            : undefined;
+
+      if (method === "HEAD") {
+        return new Response(null, {
+          status: 200,
+          headers: { "Content-Length": String(data.byteLength), ETag: "\"v1\"" },
+        });
+      }
+
+      if (method === "GET" && typeof rangeHeader === "string") {
+        rangeGets += 1;
+        const m = /^bytes=(\d+)-(\d+)$/.exec(rangeHeader);
+        if (!m) throw new Error(`invalid Range header: ${rangeHeader}`);
+        const start = Number(m[1]);
+        const endInclusive = Number(m[2]);
+        const endExclusive = endInclusive + 1;
+        const body = data.slice(start, endExclusive);
+
+        return new Response(body, {
+          status: 206,
+          headers: {
+            "Content-Range": `bytes ${start}-${endInclusive}/${data.byteLength}`,
+            ETag: "\"v1\"",
+          },
+        });
+      }
+
+      throw new Error(`unexpected request method=${method} range=${String(rangeHeader)}`);
+    };
+
+    class FirefoxQuotaFailDisk extends MemorySparseDisk {
+      writeCalls = 0;
+
+      override async writeBlock(_blockIndex: number, _data: Uint8Array): Promise<void> {
+        this.writeCalls += 1;
+        throw new DOMException("quota exceeded", "NS_ERROR_DOM_QUOTA_REACHED");
+      }
+    }
+
+    class FirefoxQuotaFailFactory implements RemoteRangeDiskSparseCacheFactory {
+      lastCreated: FirefoxQuotaFailDisk | null = null;
+
+      async open(_cacheId: string): Promise<RemoteRangeDiskSparseCache> {
+        throw new Error("cache not found");
+      }
+
+      async create(
+        _cacheId: string,
+        opts: { diskSizeBytes: number; blockSizeBytes: number },
+      ): Promise<RemoteRangeDiskSparseCache> {
+        this.lastCreated = new FirefoxQuotaFailDisk(opts.diskSizeBytes, opts.blockSizeBytes);
+        return this.lastCreated;
+      }
+    }
+
+    const factory = new FirefoxQuotaFailFactory();
+    const disk = await RemoteRangeDisk.open("https://example.invalid/image.bin", {
+      cacheKeyParts: { imageId: "quota-drop-firefox", version: "v1", deliveryType: remoteRangeDeliveryType(chunkSize) },
+      chunkSize,
+      maxConcurrentFetches: 1,
+      readAheadChunks: 0,
+      metadataStore: new MemoryMetadataStore(),
+      sparseCacheFactory: factory,
+      fetchFn,
+    });
+
+    const buf = new Uint8Array(chunkSize * 3);
+    await expect(disk.readSectors(0, buf)).resolves.toBeUndefined();
+    expect(buf).toEqual(data.subarray(0, buf.byteLength));
+
+    expect(factory.lastCreated?.writeCalls).toBe(1);
+    expect(disk.getTelemetrySnapshot().cacheLimitBytes).toBe(0);
+    expect(rangeGets).toBe(3);
+
+    await disk.close();
+  });
+
   it("treats clearCache quota failures as non-fatal (cache disabled)", async () => {
     const chunkSize = 512;
     const data = makeTestData(chunkSize * 2);
