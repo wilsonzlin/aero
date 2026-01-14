@@ -158,11 +158,14 @@ call :log "Installed media provenance (from setup.cmd): %STATE_INSTALLED_MEDIA%"
 if exist "%STATE_INSTALLED_MEDIA%" (
   set "IM_VERSION="
   set "IM_BUILD_ID="
+  set "IM_MANIFEST_SHA256="
+  set "CUR_MANIFEST_SHA256="
   for /f "usebackq delims=" %%L in ("%STATE_INSTALLED_MEDIA%") do (
     call :log "  %%L"
     for /f "tokens=1,* delims==" %%A in ("%%L") do (
       if /i "%%A"=="GT_VERSION" set "IM_VERSION=%%B"
       if /i "%%A"=="GT_BUILD_ID" set "IM_BUILD_ID=%%B"
+      if /i "%%A"=="manifest_sha256" set "IM_MANIFEST_SHA256=%%B"
     )
   )
 
@@ -180,6 +183,21 @@ if exist "%STATE_INSTALLED_MEDIA%" (
       call :log "WARNING: Installed media differs from current media (build_id mismatch)."
       call :log "         installed-media GT_BUILD_ID=!IM_BUILD_ID!"
       call :log "         current media  GT_BUILD_ID=!GT_BUILD_ID!"
+    )
+  )
+
+  rem Optional: compare manifest SHA-256 when available (useful when version/build_id are missing or reused).
+  if defined GT_MANIFEST if defined IM_MANIFEST_SHA256 if exist "%SYS32%\certutil.exe" (
+    for /f "usebackq delims=" %%H in (`"%SYS32%\certutil.exe" -hashfile "%GT_MANIFEST%" SHA256 ^| "%SYS32%\findstr.exe" /r /i "^[ ]*[0-9a-f][0-9a-f ]*$"`) do (
+      if not defined CUR_MANIFEST_SHA256 set "CUR_MANIFEST_SHA256=%%H"
+    )
+    set "CUR_MANIFEST_SHA256=!CUR_MANIFEST_SHA256: =!"
+    if defined CUR_MANIFEST_SHA256 (
+      if /i not "!CUR_MANIFEST_SHA256!"=="!IM_MANIFEST_SHA256!" (
+        call :log "WARNING: Installed media differs from current media (manifest SHA-256 mismatch)."
+        call :log "         installed-media manifest_sha256=!IM_MANIFEST_SHA256!"
+        call :log "         current media  manifest_sha256=!CUR_MANIFEST_SHA256!"
+      )
     )
   )
   if not defined GT_MANIFEST (
