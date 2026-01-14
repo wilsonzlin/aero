@@ -24,11 +24,23 @@ use crate::input_layout::{
 /// resources. Vertex pulling uses a dedicated group to coexist with those bindings.
 pub const VERTEX_PULLING_GROUP: u32 = 4;
 
+/// First `@binding` number reserved for vertex pulling + compute-expansion internal resources within
+/// [`VERTEX_PULLING_GROUP`].
+///
+/// Bindings below this range are reserved for D3D-style register mappings when `@group(3)` is used
+/// for GS/HS/DS resource bindings (via the `stage_ex` ABI extension).
+pub const VERTEX_PULLING_INTERNAL_BASE_BINDING: u32 = 256;
+
+/// Base `@binding` number for pulled IA vertex buffers.
+///
+/// Vertex buffers are bound at `VERTEX_PULLING_VERTEX_BUFFER_BINDING_BASE + slot`.
+pub const VERTEX_PULLING_VERTEX_BUFFER_BINDING_BASE: u32 = VERTEX_PULLING_INTERNAL_BASE_BINDING + 1;
+
 /// `@binding` number for the vertex pulling uniform buffer inside [`VERTEX_PULLING_GROUP`].
 ///
-/// Buffer bindings for vertex buffer slots use `0..slot_count`, so we place the uniform at a fixed
-/// high binding that won't collide.
-pub const VERTEX_PULLING_UNIFORM_BINDING: u32 = 32;
+/// This lives in the compute-expansion internal range so it can coexist with D3D register bindings
+/// when `@group(3)` is used for GS/HS/DS resources.
+pub const VERTEX_PULLING_UNIFORM_BINDING: u32 = VERTEX_PULLING_INTERNAL_BASE_BINDING;
 
 /// Per-slot vertex buffer dynamic state needed for address calculation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -340,7 +352,9 @@ impl VertexPullingLayout {
         for slot in 0..slot_count {
             s.push_str(&format!(
                 "@group({}) @binding({}) var<storage, read> aero_vp_vb{}: array<u32>;\n",
-                VERTEX_PULLING_GROUP, slot, slot
+                VERTEX_PULLING_GROUP,
+                VERTEX_PULLING_VERTEX_BUFFER_BINDING_BASE + slot,
+                slot
             ));
         }
         s.push_str(&format!(
@@ -399,7 +413,7 @@ impl VertexPullingLayout {
             Vec::with_capacity(slot_count as usize + 1);
         for slot in 0..slot_count {
             entries.push(wgpu::BindGroupLayoutEntry {
-                binding: slot,
+                binding: VERTEX_PULLING_VERTEX_BUFFER_BINDING_BASE + slot,
                 visibility: wgpu::ShaderStages::COMPUTE,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Storage { read_only: true },
@@ -443,7 +457,7 @@ impl VertexPullingLayout {
             Vec::with_capacity(vertex_buffers.len() + 1);
         for (slot, buf) in vertex_buffers.iter().enumerate() {
             entries.push(wgpu::BindGroupEntry {
-                binding: slot as u32,
+                binding: VERTEX_PULLING_VERTEX_BUFFER_BINDING_BASE + slot as u32,
                 resource: buf.as_entire_binding(),
             });
         }
