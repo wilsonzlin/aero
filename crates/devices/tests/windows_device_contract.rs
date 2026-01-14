@@ -704,9 +704,10 @@ fn windows_device_contract_aero_virtio_input_tablet_contract_and_inf_are_consist
         inf_path.display()
     );
 
-    // Tablet binding is intentionally SUBSYS-only: it must not overlap with the keyboard/mouse
-    // INF's generic fallback match (no SUBSYS), since the tablet HWID is more specific and should
-    // win when both packages are present.
+    // Tablet binding is intentionally SUBSYS-only: it must not also include the no-SUBSYS strict
+    // fallback HWID (`...&REV_01`), since that fallback is provided by the keyboard/mouse INF.
+    // The tablet HWID is more specific, so it wins over the fallback when both packages are
+    // present.
     let hwid_tablet = "PCI\\VEN_1AF4&DEV_1052&SUBSYS_00121AF4&REV_01";
     let hwid_kbd = "PCI\\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01";
     let hwid_mouse = "PCI\\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01";

@@ -83,6 +83,8 @@ drivers/windows7/tests/
       - The device can still bind via the canonical `aero_virtio_input.inf` strict fallback HWID
         `PCI\VEN_1AF4&DEV_1052&REV_01` and will appear as the generic **Aero VirtIO Input Device**.
       - Ensure the device reports `REV_01` (for QEMU, ensure `x-pci-revision=0x01` is in effect; the harness does this by default).
+      - Preferred/contract path: emulate the contract tablet subsystem ID (`SUBSYS_00121AF4`) so the device binds via
+        `aero_virtio_tablet.inf` and appears with the tablet device name.
       - The optional `*.inf.disabled` file under `drivers/windows7/virtio-input/inf/` exists for legacy compatibility, but
         is a filename-only alias: from the first section header onward it is byte-identical to `aero_virtio_input.inf`
         and does **not** change HWID matching behavior.
