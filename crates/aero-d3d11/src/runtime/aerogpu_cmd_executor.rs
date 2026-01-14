@@ -7437,12 +7437,19 @@ impl AerogpuD3d11Executor {
                     4,
                 )
                 .map_err(|e| anyhow!("tessellation prepass: alloc layout debug: {e}"))?;
+            // Allocate indirect args from a dedicated scratch buffer so indexed-indirect draws work
+            // reliably on backends that cannot bind index and indirect-arg subranges from the same
+            // underlying buffer (notably wgpu's GL backend).
+            let tess_indirect_args_alloc = self
+                .expansion_indirect_scratch
+                .alloc_indirect_draw_indexed(&self.device)
+                .map_err(|e| anyhow!("tessellation prepass: alloc indirect args buffer: {e}"))?;
             let layout_bg = layout_pipeline.create_bind_group_group3(
                 &self.device,
                 &layout_params_alloc,
                 &draw_scratch.hs_tess_factors,
                 &draw_scratch.tess_metadata,
-                &draw_scratch.indirect_args,
+                &tess_indirect_args_alloc,
                 &debug_alloc,
             )?;
             {
@@ -7464,41 +7471,171 @@ impl AerogpuD3d11Executor {
                 pass.dispatch_workgroups(1, 1, 1);
             }
 
-            // --- DS expansion (placeholder) ---
-            let ds_pipeline = self
-                .tessellation
-                .pipelines_mut()
-                .ds_passthrough(&self.device)
-                .context("tessellation: create DS passthrough pipeline")?;
-            let ds_bg = ds_pipeline.create_bind_group_group3(
-                &self.device,
-                &draw_scratch.hs_out,
-                &draw_scratch.tess_metadata,
-                &draw_scratch.expanded_vertices,
-                &draw_scratch.expanded_indices,
-            )?;
-            {
-                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                    label: Some("aero-d3d11 tessellation DS pass"),
-                    timestamp_writes: None,
+            // --- DS evaluation (placeholder) ---
+            // Execute a minimal placeholder DS that:
+            // - linearly interpolates control-point positions, and
+            // - encodes `SV_DomainLocation` into varyings so the smoke test renders non-black even
+            //   when input vertex colors are black.
+            let ds_user_wgsl = {
+                let mut s = String::new();
+                s.push_str(
+                    r#"
+fn load_cp_reg(patch_id: u32, cp_id: u32, reg: u32) -> vec4<f32> {
+    let idx = (patch_id * AERO_HS_CONTROL_POINTS_PER_PATCH + cp_id) * AERO_DS_OUT_REG_COUNT + reg;
+    return aero_hs_control_points[idx];
+}
+
+fn ds_eval(patch_id: u32, domain: vec3<f32>, _local_vertex: u32) -> AeroDsOut {
+    var out: AeroDsOut;
+    let p0 = load_cp_reg(patch_id, 0u, 0u);
+    let p1 = load_cp_reg(patch_id, 1u, 0u);
+    let p2 = load_cp_reg(patch_id, 2u, 0u);
+    let pos = p0 * domain.x + p1 * domain.y + p2 * domain.z;
+
+    // Barycentric color. Fill all varying slots so the passthrough VS can forward any location
+    // that the pixel shader happens to reference.
+    let c = vec4<f32>(domain.x, domain.y, domain.z, 1.0);
+"#,
+                );
+                // reg0 = SV_Position (pos), reg1.. = varyings.
+                s.push_str("    out.o0 = pos;\n");
+                for r in 1..out_reg_count {
+                    s.push_str(&format!("    out.o{r} = c;\n"));
+                }
+                s.push_str("    return out;\n}\n");
+                s
+            };
+            let ds_wgsl = super::tessellation::domain_eval::build_triangle_domain_eval_wgsl(
+                &ds_user_wgsl,
+                out_reg_count,
+            );
+            let ds_module = self
+                .device
+                .create_shader_module(wgpu::ShaderModuleDescriptor {
+                    label: Some("aero-d3d11 tessellation DS eval placeholder"),
+                    source: wgpu::ShaderSource::Wgsl(ds_wgsl.into()),
                 });
-                pass.set_pipeline(ds_pipeline.pipeline());
-                bind_empty_groups_before_vertex_pulling(
-                    &mut pass,
-                    ds_pipeline.empty_bind_group(),
-                    0,
-                );
-                pass.set_bind_group(
-                    crate::binding_model::BIND_GROUP_INTERNAL_EMULATION,
-                    &ds_bg,
-                    &[],
-                );
-                pass.dispatch_workgroups(patch_count_total, 1, 1);
-            }
+            let ds_domain_bgl =
+                self.device
+                    .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                        label: Some("aero-d3d11 tessellation DS eval placeholder domain bgl"),
+                        entries: &[],
+                    });
+            let ds_domain_bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("aero-d3d11 tessellation DS eval placeholder domain bg"),
+                layout: &ds_domain_bgl,
+                entries: &[],
+            });
+            let ds_pipeline = super::tessellation::domain_eval::DomainEvalPipeline::new(
+                &self.device,
+                &ds_module,
+                &ds_domain_bgl,
+            );
+
+            let meta_size = wgpu::BufferSize::new(draw_scratch.tess_metadata.size)
+                .expect("tessellation patch_meta allocation must be non-empty");
+            let hs_out_size = wgpu::BufferSize::new(draw_scratch.hs_out.size)
+                .expect("tessellation hs_out allocation must be non-empty");
+            let hs_pc_size = wgpu::BufferSize::new(draw_scratch.hs_patch_constants.size)
+                .expect("tessellation hs_patch_constants allocation must be non-empty");
+            let out_v_size = wgpu::BufferSize::new(draw_scratch.expanded_vertices.size)
+                .expect("tessellation expanded_vertices allocation must be non-empty");
+
+            let ds_internal_bg = ds_pipeline.create_internal_bind_group(
+                &self.device,
+                wgpu::BufferBinding {
+                    buffer: draw_scratch.tess_metadata.buffer.as_ref(),
+                    offset: draw_scratch.tess_metadata.offset,
+                    size: Some(meta_size),
+                },
+                wgpu::BufferBinding {
+                    buffer: draw_scratch.hs_out.buffer.as_ref(),
+                    offset: draw_scratch.hs_out.offset,
+                    size: Some(hs_out_size),
+                },
+                wgpu::BufferBinding {
+                    buffer: draw_scratch.hs_patch_constants.buffer.as_ref(),
+                    offset: draw_scratch.hs_patch_constants.offset,
+                    size: Some(hs_pc_size),
+                },
+                wgpu::BufferBinding {
+                    buffer: draw_scratch.expanded_vertices.buffer.as_ref(),
+                    offset: draw_scratch.expanded_vertices.offset,
+                    size: Some(out_v_size),
+                },
+            );
+
+            let max_vertex_count_per_patch = super::tessellator::tri_vertex_count(
+                super::tessellation::MAX_TESS_FACTOR_SUPPORTED,
+            );
+            ds_pipeline.dispatch(
+                encoder,
+                &ds_internal_bg,
+                &ds_domain_bg,
+                patch_count_total,
+                super::tessellation::domain_eval::chunk_count_for_vertex_count(
+                    max_vertex_count_per_patch,
+                ),
+            );
+
+            // --- Index generation ---
+            let tess_index_alloc = self
+                .expansion_index_scratch
+                .alloc_index_output(&self.device, draw_scratch.expanded_indices.size)
+                .map_err(|e| anyhow!("tessellation prepass: alloc expanded index buffer: {e}"))?;
+
+            // Tessellator-generated triangles are CCW in the canonical `(SV_DomainLocation.x, y, z)`
+            // barycentric space. To preserve D3D11's `FrontCounterClockwise` semantics we invert the
+            // winding relative to the rasterizer state.
+            let winding = match self.state.front_face {
+                wgpu::FrontFace::Cw => {
+                    super::tessellation::tri_domain_integer::TriangleWinding::Ccw
+                }
+                wgpu::FrontFace::Ccw => {
+                    super::tessellation::tri_domain_integer::TriangleWinding::Cw
+                }
+            };
+            let index_params =
+                super::tessellation::tri_domain_integer::TriIndexGenParams::new(winding);
+            let (index_params_buffer, index_params_size) = create_uniform_buffer(
+                "aerogpu_cmd tessellation prepass index gen params",
+                &index_params.to_le_bytes(),
+            );
+
+            let index_gen = super::tessellation::tri_domain_integer::TriDomainIntegerIndexGen::new(
+                &self.device,
+            );
+            let out_i_size = wgpu::BufferSize::new(tess_index_alloc.size)
+                .expect("tessellation expanded index alloc must be non-empty");
+            let index_params_binding = wgpu::BufferBinding {
+                buffer: &index_params_buffer,
+                offset: 0,
+                size: wgpu::BufferSize::new(index_params_size),
+            };
+            let index_bg = index_gen.create_bind_group(
+                &self.device,
+                wgpu::BufferBinding {
+                    buffer: draw_scratch.tess_metadata.buffer.as_ref(),
+                    offset: draw_scratch.tess_metadata.offset,
+                    size: Some(meta_size),
+                },
+                wgpu::BufferBinding {
+                    buffer: tess_index_alloc.buffer.as_ref(),
+                    offset: tess_index_alloc.offset,
+                    size: Some(out_i_size),
+                },
+                index_params_binding,
+            );
+            index_gen.dispatch(
+                encoder,
+                &index_bg,
+                patch_count_total,
+                super::tessellator::tri_index_count(super::tessellation::MAX_TESS_FACTOR_SUPPORTED),
+            );
 
             expanded_vertex_alloc = draw_scratch.expanded_vertices;
-            expanded_index_alloc = Some(draw_scratch.expanded_indices);
-            indirect_args_alloc = draw_scratch.indirect_args;
+            expanded_index_alloc = Some(tess_index_alloc);
+            indirect_args_alloc = tess_indirect_args_alloc;
         } else if let Some((gs_handle, gs_meta)) = gs_prepass {
             expanded_draw_topology = match gs_meta.output_topology_kind {
                 GsOutputTopologyKind::PointList => CmdPrimitiveTopology::PointList,

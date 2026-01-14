@@ -81,16 +81,23 @@ struct PatchMeta {{
     index_count: u32,
 }};
 
-@group({internal_group}) @binding({binding_patch_meta})
-var<storage, read> aero_patch_meta: array<PatchMeta>;
+ @group({internal_group}) @binding({binding_patch_meta})
+ // NOTE: This is bound as `read_write` even though we only read it. wgpu tracks buffer usage at
+ // the whole-buffer granularity (not per binding range), and tessellation expansion suballocates
+ // multiple logical buffers from a single backing scratch buffer. Binding scratch inputs as
+ // `read_write` avoids mixing read-only and read-write storage views of the same underlying buffer
+ // in one dispatch.
+ var<storage, read_write> aero_patch_meta: array<PatchMeta>;
 
 // HS output control points. Stored as `vec4<f32>` registers.
-@group({internal_group}) @binding({binding_hs_control_points})
-var<storage, read> aero_hs_control_points: array<vec4<f32>>;
+ @group({internal_group}) @binding({binding_hs_control_points})
+ // NOTE: Bound as `read_write` even though we only read it. See note on `aero_patch_meta`.
+ var<storage, read_write> aero_hs_control_points: array<vec4<f32>>;
 
 // HS patch constants. Stored as `vec4<f32>` registers.
-@group({internal_group}) @binding({binding_hs_patch_constants})
-var<storage, read> aero_hs_patch_constants: array<vec4<f32>>;
+ @group({internal_group}) @binding({binding_hs_patch_constants})
+ // NOTE: Bound as `read_write` even though we only read it. See note on `aero_patch_meta`.
+ var<storage, read_write> aero_hs_patch_constants: array<vec4<f32>>;
 
 // Expanded vertex output buffer. Stored as `vec4<f32>` registers with stride:
 // `AERO_DS_OUT_REG_COUNT * 16`.
@@ -159,7 +166,7 @@ impl DomainEvalPipeline {
                     binding: DOMAIN_EVAL_BINDING_PATCH_META,
                     visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
@@ -169,7 +176,7 @@ impl DomainEvalPipeline {
                     binding: DOMAIN_EVAL_BINDING_HS_CONTROL_POINTS,
                     visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
@@ -179,7 +186,7 @@ impl DomainEvalPipeline {
                     binding: DOMAIN_EVAL_BINDING_HS_PATCH_CONSTANTS,
                     visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },

@@ -120,8 +120,13 @@ struct Params {{
     _pad2: u32,
 }};
 
-@group(0) @binding(0)
-var<storage, read> patches: array<PatchMeta>;
+ @group(0) @binding(0)
+ // NOTE: This is bound as `read_write` even though the kernel only reads it. wgpu tracks buffer
+ // usage at the whole-buffer granularity (not per binding range), and tessellation expansion often
+ // suballocates multiple logical buffers from a single backing scratch buffer. Treating scratch
+ // inputs as `read_write` avoids mixing read-only and read-write storage views of the same
+ // underlying buffer in one dispatch.
+ var<storage, read_write> patches: array<PatchMeta>;
 
 @group(0) @binding(1)
 var<storage, read_write> out_indices: array<u32>;
@@ -133,9 +138,10 @@ var<uniform> params: Params;
 fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {{
     let patch_id: u32 = gid.x;
     let local_index: u32 = gid.y;
-    let patch: PatchMeta = patches[patch_id];
+    // NOTE: `patch` is a reserved keyword in WGSL (wgpu 0.20 / naga).
+    let patch_meta: PatchMeta = patches[patch_id];
 
-    if (local_index >= patch.index_count) {{
+    if (local_index >= patch_meta.index_count) {{
         return;
     }}
 
@@ -145,14 +151,14 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {{
     // Index generation is parameterized by winding so we can share the same per-triangle
     // tessellator math for both CCW and CW topologies.
     let local_verts: vec3<u32> = select(
-        tri_index_to_vertex_indices(patch.tess_level, tri_id),
-        tri_index_to_vertex_indices_cw(patch.tess_level, tri_id),
+        tri_index_to_vertex_indices(patch_meta.tess_level, tri_id),
+        tri_index_to_vertex_indices_cw(patch_meta.tess_level, tri_id),
         params.winding != 0u,
     );
 
-    let v0: u32 = local_verts.x + patch.vertex_base;
-    let v1: u32 = local_verts.y + patch.vertex_base;
-    let v2: u32 = local_verts.z + patch.vertex_base;
+    let v0: u32 = local_verts.x + patch_meta.vertex_base;
+    let v1: u32 = local_verts.y + patch_meta.vertex_base;
+    let v2: u32 = local_verts.z + patch_meta.vertex_base;
 
     var out_val: u32 = v0;
     if (vert_in_tri == 1u) {{
@@ -161,7 +167,7 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {{
         out_val = v2;
     }}
 
-    out_indices[patch.index_base + local_index] = out_val;
+    out_indices[patch_meta.index_base + local_index] = out_val;
 }}
 "#,
         tess_lib = tess_lib,
@@ -184,7 +190,7 @@ impl TriDomainIntegerIndexGen {
                     binding: 0,
                     visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
@@ -248,9 +254,9 @@ impl TriDomainIntegerIndexGen {
     pub fn create_bind_group(
         &self,
         device: &wgpu::Device,
-        patch_meta: &wgpu::Buffer,
-        out_indices: &wgpu::Buffer,
-        params: &wgpu::Buffer,
+        patch_meta: wgpu::BufferBinding<'_>,
+        out_indices: wgpu::BufferBinding<'_>,
+        params: wgpu::BufferBinding<'_>,
     ) -> wgpu::BindGroup {
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("aero tessellation tri index gen bg"),
@@ -258,15 +264,15 @@ impl TriDomainIntegerIndexGen {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: patch_meta.as_entire_binding(),
+                    resource: wgpu::BindingResource::Buffer(patch_meta),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: out_indices.as_entire_binding(),
+                    resource: wgpu::BindingResource::Buffer(out_indices),
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
-                    resource: params.as_entire_binding(),
+                    resource: wgpu::BindingResource::Buffer(params),
                 },
             ],
         })

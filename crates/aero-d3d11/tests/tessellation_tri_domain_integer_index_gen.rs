@@ -78,7 +78,24 @@ async fn run_index_gen(
     queue.write_buffer(&params_buf, 0, &params.to_le_bytes());
 
     let gen = TriDomainIntegerIndexGen::new(device);
-    let bind_group = gen.create_bind_group(device, &patch_buf, &out_indices, &params_buf);
+    let bind_group = gen.create_bind_group(
+        device,
+        wgpu::BufferBinding {
+            buffer: &patch_buf,
+            offset: 0,
+            size: None,
+        },
+        wgpu::BufferBinding {
+            buffer: &out_indices,
+            offset: 0,
+            size: None,
+        },
+        wgpu::BufferBinding {
+            buffer: &params_buf,
+            offset: 0,
+            size: None,
+        },
+    );
 
     let staging = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("tess tri index gen readback"),
