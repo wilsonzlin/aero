@@ -61,6 +61,11 @@ describe("main/frameScheduler", () => {
     const scanoutWords = new Int32Array(scanoutState, 0, SCANOUT_STATE_U32_LEN);
     Atomics.store(scanoutWords, ScanoutStateIndex.GENERATION, 0);
     Atomics.store(scanoutWords, ScanoutStateIndex.SOURCE, SCANOUT_SOURCE_WDDM);
+    // Non-zero geometry with base_paddr=0 is a valid WDDM placeholder descriptor (host-side
+    // AeroGPU path). Ensure the scheduler treats this as WDDM-owned scanout and continues ticking.
+    Atomics.store(scanoutWords, ScanoutStateIndex.WIDTH, 1);
+    Atomics.store(scanoutWords, ScanoutStateIndex.HEIGHT, 1);
+    Atomics.store(scanoutWords, ScanoutStateIndex.PITCH_BYTES, 4);
 
     const handle = startFrameScheduler({
       gpuWorker,
@@ -85,6 +90,39 @@ describe("main/frameScheduler", () => {
       | undefined;
     expect(initMsg?.protocol).toBe(GPU_PROTOCOL_NAME);
     expect(initMsg?.protocolVersion).toBe(GPU_PROTOCOL_VERSION);
+
+    handle.stop();
+  });
+
+  it("does not spam ticks while WDDM scanout is disabled (0x0 descriptor) when the shared framebuffer is PRESENTED", () => {
+    const gpuWorker = makeMockWorker();
+
+    const sharedFrameState = new SharedArrayBuffer(8 * Int32Array.BYTES_PER_ELEMENT);
+    const frameState = new Int32Array(sharedFrameState);
+    Atomics.store(frameState, FRAME_STATUS_INDEX, FRAME_PRESENTED);
+
+    const sharedFramebuffer = new SharedArrayBuffer(64);
+
+    const scanoutState = new SharedArrayBuffer(SCANOUT_STATE_U32_LEN * 4);
+    const scanoutWords = new Int32Array(scanoutState, 0, SCANOUT_STATE_U32_LEN);
+    Atomics.store(scanoutWords, ScanoutStateIndex.GENERATION, 0);
+    Atomics.store(scanoutWords, ScanoutStateIndex.SOURCE, SCANOUT_SOURCE_WDDM);
+    // Disabled descriptor: base/width/height/pitch all zero.
+
+    const handle = startFrameScheduler({
+      gpuWorker,
+      sharedFrameState,
+      sharedFramebuffer,
+      sharedFramebufferOffsetBytes: 0,
+      scanoutState,
+      scanoutStateOffsetBytes: 0,
+      showDebugOverlay: false,
+    });
+
+    expect(rafCallback).not.toBeNull();
+    rafCallback?.(0);
+
+    expect(posted.some((p) => (p.message as { type?: unknown }).type === "tick")).toBe(false);
 
     handle.stop();
   });
@@ -130,4 +168,3 @@ describe("main/frameScheduler", () => {
     handle.stop();
   });
 });
-

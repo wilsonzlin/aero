@@ -516,6 +516,26 @@ const enqueueAerogpuSubmitComplete = (entry: PendingAerogpuSubmitComplete): void
 const flushAerogpuSubmitCompleteOnTick = (): void => {
   if (aerogpuPendingSubmitComplete.length === 0) return;
 
+  // When WDDM disables scanout (publishing the all-zero "disabled descriptor"), vblank pacing is
+  // stopped/undefined. Mirror the device-side behavior (see `aerogpu.rs`): ensure any queued
+  // vsync-delayed completions are flushed rather than waiting for future ticks that may never
+  // arrive.
+  const scanoutDisabled = (() => {
+    const words = scanoutState;
+    if (!words) return false;
+    try {
+      return isWddmDisabledScanoutState(words);
+    } catch {
+      return false;
+    }
+  })();
+  if (scanoutDisabled) {
+    while (aerogpuPendingSubmitComplete.length > 0) {
+      postAerogpuSubmitComplete(aerogpuPendingSubmitComplete.shift()!);
+    }
+    return;
+  }
+
   const first = aerogpuPendingSubmitComplete[0]!;
   if (first.kind === "vsync") {
     // Complete at most one vsync-paced submission per tick, then release any immediate
@@ -3475,7 +3495,22 @@ const handleSubmitAerogpu = async (req: GpuRuntimeSubmitAerogpuMessage): Promise
     requestId: req.requestId,
     completedFence: signalFence,
     ...(presentCount !== undefined ? { presentCount } : {}),
-    kind: submitOk && vsyncPaced ? "vsync" : "immediate",
+    kind:
+      submitOk &&
+      vsyncPaced &&
+      (() => {
+        const words = scanoutState;
+        if (!words) return true;
+        try {
+          // If scanout is disabled, treat vsync-paced completions as immediate so callers don't
+          // deadlock waiting for ticks that the scheduler will (correctly) stop producing.
+          return !isWddmDisabledScanoutState(words);
+        } catch {
+          return true;
+        }
+      })()
+        ? "vsync"
+        : "immediate",
   });
 };
 

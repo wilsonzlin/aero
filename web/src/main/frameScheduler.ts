@@ -237,7 +237,22 @@ export const startFrameScheduler = ({
       const gen = Atomics.load(scanoutWords, ScanoutStateIndex.GENERATION) >>> 0;
       if ((gen & SCANOUT_STATE_GENERATION_BUSY_BIT) !== 0) return true;
       const source = Atomics.load(scanoutWords, ScanoutStateIndex.SOURCE) >>> 0;
-      if (source === SCANOUT_SOURCE_WDDM || source === SCANOUT_SOURCE_LEGACY_VBE_LFB) return true;
+      if (source === SCANOUT_SOURCE_LEGACY_VBE_LFB) return true;
+      if (source === SCANOUT_SOURCE_WDDM) {
+        // Distinguish the WDDM "placeholder" descriptor (base=0 but non-zero geometry, used by some
+        // host-side AeroGPU paths) from the WDDM "disabled descriptor" (base/width/height/pitch=0),
+        // which represents blank output while WDDM retains ownership.
+        //
+        // When scanout is disabled, do not keep ticking continuously: this matches the device-side
+        // "SCANOUT0_ENABLE=0 stops vblank pacing" behavior and avoids tick spam while blank.
+        const lo = Atomics.load(scanoutWords, ScanoutStateIndex.BASE_PADDR_LO) >>> 0;
+        const hi = Atomics.load(scanoutWords, ScanoutStateIndex.BASE_PADDR_HI) >>> 0;
+        const width = Atomics.load(scanoutWords, ScanoutStateIndex.WIDTH) >>> 0;
+        const height = Atomics.load(scanoutWords, ScanoutStateIndex.HEIGHT) >>> 0;
+        const pitchBytes = Atomics.load(scanoutWords, ScanoutStateIndex.PITCH_BYTES) >>> 0;
+        const disabled = ((lo | hi) >>> 0) === 0 && width === 0 && height === 0 && pitchBytes === 0;
+        if (!disabled) return true;
+      }
       const stableGen = gen & ~SCANOUT_STATE_GENERATION_BUSY_BIT;
       if (stableGen !== lastScanoutGeneration) {
         lastScanoutGeneration = stableGen;

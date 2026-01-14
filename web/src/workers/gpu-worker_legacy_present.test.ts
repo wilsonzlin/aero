@@ -489,6 +489,12 @@ describe("workers/gpu-worker legacy framebuffer plumbing", () => {
       // Force scanout/cursor generation busy bits and never clear them.
       const scanoutWords = wrapScanoutState(segments.scanoutState!, segments.scanoutStateOffsetBytes ?? 0);
       Atomics.store(scanoutWords, ScanoutStateIndex.SOURCE, SCANOUT_SOURCE_WDDM | 0);
+      // Mark this as the WDDM "placeholder" descriptor (base_paddr=0 but non-zero geometry) so the
+      // worker is allowed to fall back to the legacy shared framebuffer while the scanout seqlock is
+      // stuck (busy bit never clears).
+      Atomics.store(scanoutWords, ScanoutStateIndex.WIDTH, 1);
+      Atomics.store(scanoutWords, ScanoutStateIndex.HEIGHT, 1);
+      Atomics.store(scanoutWords, ScanoutStateIndex.PITCH_BYTES, 4);
       Atomics.store(scanoutWords, ScanoutStateIndex.GENERATION, (SCANOUT_STATE_GENERATION_BUSY_BIT | 1) | 0);
 
       const cursorWords = wrapCursorState(segments.cursorState!, segments.cursorStateOffsetBytes ?? 0);

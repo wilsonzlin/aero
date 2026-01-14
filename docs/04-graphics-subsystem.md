@@ -269,7 +269,10 @@ Code pointers:
     - 16bpp packed: `B5G6R5` (opaque) and `B5G5R5A1` (1-bit alpha).
     X8 formats force `A=255`; A8 formats preserve alpha. `_SRGB` variants are layout-identical; the GPU worker decodes sRGB→linear after swizzle so the intermediate RGBA8 buffer is in linear space for blending/presentation.
   - Shared helper used by readback paths (size checks + guest-RAM conversion): `web/src/runtime/scanout_readback.ts` (`tryComputeScanoutRgba8ByteLength`, `MAX_SCANOUT_RGBA8_BYTES`, `readScanoutRgba8FromGuestRam`).
-  - Note: `base_paddr == 0` is treated as a placeholder scanout descriptor for the host-side AeroGPU path when `source=WDDM` (no guest-memory readback). Legacy VBE scanout expects a real framebuffer.
+  - Note: for `source=WDDM`, `base_paddr == 0` is used in two distinct ways:
+    - **Placeholder descriptor** for the host-side AeroGPU path: `base_paddr=0` but **non-zero** `width/height/pitch`.
+    - **Disabled descriptor** (WDDM retains ownership but blanks output): `base/width/height/pitch = 0`.
+    Legacy VBE scanout expects a real framebuffer (`base_paddr != 0`).
   - The RAM-vs-VRAM resolution and the VRAM base-paddr contract are documented in [`docs/16-aerogpu-vga-vesa-compat.md`](./16-aerogpu-vga-vesa-compat.md#vram-bar1-backing-as-a-sharedarraybuffer).
   - Unit tests: `web/src/workers/gpu-worker_wddm_scanout_readback.test.ts`, `web/src/workers/gpu-worker_wddm_scanout_screenshot_refresh.test.ts`, `web/src/workers/gpu-worker_scanout_vram_missing.test.ts`, `web/src/workers/gpu-worker_wddm_tick_gate.test.ts`.
 - **Canonical Rust machine (optional):** `crates/aero-machine/src/lib.rs` can publish scanout-source updates into an `aero_shared::scanout_state::ScanoutState` provided by the host:
