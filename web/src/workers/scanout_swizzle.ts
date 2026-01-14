@@ -4,6 +4,8 @@
  * The guest scanout formats are little-endian:
  * - BGRX: [B, G, R, X] in memory => u32 = 0xXXRRGGBB
  * - BGRA: [B, G, R, A] in memory => u32 = 0xAARRGGBB
+ * - RGBX: [R, G, B, X] in memory => u32 = 0xXXBBGGRR
+ * - RGBA: [R, G, B, A] in memory => u32 = 0xAABBGGRR
  *
  * The presenters expect RGBA bytes: [R, G, B, A] in memory => u32 = 0xAABBGGRR
  *
