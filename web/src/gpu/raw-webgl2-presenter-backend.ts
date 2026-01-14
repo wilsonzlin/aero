@@ -88,7 +88,9 @@ export class RawWebGl2Presenter implements Presenter {
     this.resizeCanvas(outputWidth, outputHeight, dpr);
 
     const gl = canvas.getContext('webgl2', {
-      alpha: false,
+      // Keep the default "opaque" behavior unless explicitly requested. Some diagnostics pages
+      // want to visualize alpha semantics by letting the page background show through.
+      alpha: this.opts.canvasAlpha === true,
       antialias: false,
       depth: false,
       stencil: false,

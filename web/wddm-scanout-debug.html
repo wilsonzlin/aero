@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Aero WDDM scanout debug</title>
+    <style>
+      body {
+        font-family: system-ui, sans-serif;
+        margin: 16px;
+      }
+      #layout {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 16px;
+        align-items: flex-start;
+      }
+      #canvasWrap {
+        border: 1px solid #999;
+        background: repeating-conic-gradient(#eee 0% 25%, #ccc 0% 50%) 0 / 16px 16px;
+      }
+      canvas {
+        display: block;
+        image-rendering: pixelated;
+      }
+      #panel {
+        min-width: 320px;
+        max-width: 520px;
+      }
+      #controls {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 8px;
+        margin: 8px 0;
+      }
+      label {
+        display: grid;
+        grid-template-columns: 140px 1fr;
+        gap: 8px;
+        align-items: center;
+      }
+      select,
+      button {
+        font: inherit;
+      }
+      pre {
+        margin: 8px 0;
+        padding: 8px;
+        border: 1px solid #ddd;
+        background: #f7f7f7;
+        white-space: pre-wrap;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      }
+      #log {
+        margin-top: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="layout">
+      <div id="canvasWrap">
+        <canvas id="frame"></canvas>
+      </div>
+      <div id="panel">
+        <h1>WDDM scanout debug</h1>
+        <p>
+          Expected: quadrants are <strong>red</strong>/<strong>green</strong>/<strong>blue</strong>/<strong>white</strong>
+          with a small marker square at top-left. When <em>Source=WDDM</em> and <em>X byte=0x00</em>, the output should
+          still be fully opaque (no checkered background bleeding through).
+        </p>
+        <div id="controls">
+          <label>
+            <span>Source</span>
+            <select id="source">
+              <option value="legacy">Legacy (shared framebuffer)</option>
+              <option value="wddm" selected>WDDM (scanoutState + guest RAM)</option>
+            </select>
+          </label>
+          <label>
+            <span>base_paddr</span>
+            <select id="buffer">
+              <option value="0" selected>Buffer A</option>
+              <option value="1">Buffer B (page flip)</option>
+            </select>
+          </label>
+          <label>
+            <span>pitchBytes</span>
+            <select id="pitch">
+              <option value="tight">Tight (width * 4)</option>
+              <option value="padded" selected>Padded (align up to 256)</option>
+            </select>
+          </label>
+          <label>
+            <span>X byte</span>
+            <select id="xbyte">
+              <option value="0" selected>0x00 (XRGB)</option>
+              <option value="255">0xFF (XRGB)</option>
+            </select>
+          </label>
+        </div>
+
+        <h2>ScanoutState snapshot</h2>
+        <pre id="scanout"></pre>
+
+        <h2>GPU worker stats</h2>
+        <pre id="gpuStats"></pre>
+      </div>
+    </div>
+
+    <pre id="log"></pre>
+    <script type="module" src="./wddm-scanout-debug.ts"></script>
+  </body>
+</html>

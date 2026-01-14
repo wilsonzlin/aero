@@ -61,6 +61,15 @@ export interface PresenterInitOptions {
    */
   clearColor?: [number, number, number, number];
   /**
+   * Request an alpha channel on the underlying canvas when using a WebGL2 presenter.
+   *
+   * Default: false (opaque canvas).
+   *
+   * This is primarily a diagnostic aid for pages that want to visualize alpha semantics
+   * (e.g. XRGB vs ARGB scanout formats) by letting the page background show through.
+   */
+  canvasAlpha?: boolean;
+  /**
    * WebAssembly memory for `present(ptr, stride)` calls.
    */
   wasmMemory?: WebAssembly.Memory;
