@@ -211,6 +211,83 @@ fn nested_and_const_masks_are_collapsed() {
 }
 
 #[test]
+fn mul_of_boolean_values_is_strength_reduced_to_and() {
+    let trace = TraceIr {
+        prologue: vec![],
+        body: vec![
+            Instr::LoadReg {
+                dst: v(0),
+                reg: Gpr::Rax,
+            },
+            Instr::BinOp {
+                dst: v(1),
+                op: BinOp::Eq,
+                lhs: Operand::Value(v(0)),
+                rhs: Operand::Const(0),
+                flags: FlagSet::EMPTY,
+            },
+            Instr::LoadReg {
+                dst: v(2),
+                reg: Gpr::Rbx,
+            },
+            Instr::BinOp {
+                dst: v(3),
+                op: BinOp::Eq,
+                lhs: Operand::Value(v(2)),
+                rhs: Operand::Const(0),
+                flags: FlagSet::EMPTY,
+            },
+            Instr::BinOp {
+                dst: v(4),
+                op: BinOp::Mul,
+                lhs: Operand::Value(v(1)),
+                rhs: Operand::Value(v(3)),
+                flags: FlagSet::EMPTY,
+            },
+            Instr::StoreReg {
+                reg: Gpr::Rcx,
+                src: Operand::Value(v(4)),
+            },
+        ],
+        kind: TraceKind::Linear,
+    };
+
+    let env = RuntimeEnv::default();
+    let mut bus0 = SimpleBus::new(64);
+    let mut bus1 = bus0.clone();
+
+    let mut base_state = T2State::default();
+    base_state.cpu.rflags = aero_jit_x86::abi::RFLAGS_RESERVED1;
+    base_state.cpu.gpr[Gpr::Rax.as_u8() as usize] = 0;
+    base_state.cpu.gpr[Gpr::Rbx.as_u8() as usize] = 5;
+    let mut opt_state = base_state.clone();
+
+    let base = run_trace(&trace, &env, &mut bus0, &mut base_state, 1);
+
+    let mut optimized = trace.clone();
+    optimize_trace(&mut optimized, &OptConfig::default());
+
+    assert!(
+        optimized
+            .iter_instrs()
+            .any(|i| matches!(i, Instr::BinOp { op: BinOp::And, .. })),
+        "expected boolean mul to be reduced to And"
+    );
+    assert!(
+        !optimized
+            .iter_instrs()
+            .any(|i| matches!(i, Instr::BinOp { op: BinOp::Mul, .. })),
+        "unexpected Mul remaining after boolean strength reduction"
+    );
+
+    let opt = run_trace(&optimized, &env, &mut bus1, &mut opt_state, 1);
+    assert_eq!(base.exit, RunExit::Returned);
+    assert_eq!(opt.exit, RunExit::Returned);
+    assert_eq!(base_state, opt_state);
+    assert_eq!(bus0.mem(), bus1.mem());
+}
+
+#[test]
 fn add_sub_const_is_strength_reduced_to_addr() {
     let trace = TraceIr {
         prologue: vec![],

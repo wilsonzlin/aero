@@ -1,6 +1,36 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::tier2::ir::{BinOp, Instr, Operand, TraceIr, ValueId};
+
+fn is_bool_operand(op: Operand, bool_values: &HashSet<ValueId>) -> bool {
+    match op {
+        Operand::Const(c) => c == 0 || c == 1,
+        Operand::Value(v) => bool_values.contains(&v),
+    }
+}
+
+fn compute_bool_values(trace: &TraceIr) -> HashSet<ValueId> {
+    let mut bool_values = HashSet::new();
+    for inst in trace.iter_instrs() {
+        let Some(dst) = inst.dst() else { continue };
+        let is_bool = match *inst {
+            Instr::Const { value, .. } => value == 0 || value == 1,
+            Instr::LoadFlag { .. } => true,
+            Instr::BinOp { op, lhs, rhs, .. } => match op {
+                BinOp::Eq | BinOp::LtU => true,
+                BinOp::And | BinOp::Or | BinOp::Xor => {
+                    is_bool_operand(lhs, &bool_values) && is_bool_operand(rhs, &bool_values)
+                }
+                _ => false,
+            },
+            _ => false,
+        };
+        if is_bool {
+            bool_values.insert(dst);
+        }
+    }
+    bool_values
+}
 
 pub fn run(trace: &mut TraceIr) -> bool {
     let mut changed = false;
@@ -12,6 +42,8 @@ pub fn run(trace: &mut TraceIr) -> bool {
     //   (x & m1) & m2  =>  x & (m1 & m2)
     // This is especially common after lowering of narrow-width operations.
     let mut and_defs: HashMap<ValueId, (Operand, u64)> = HashMap::new();
+
+    let bool_values = compute_bool_values(trace);
 
     for inst in trace.iter_instrs_mut() {
         // Maintain Addr definitions seen so far, so we can fold Add/Sub constants into existing
@@ -45,6 +77,20 @@ pub fn run(trace: &mut TraceIr) -> bool {
             } => {
                 // Keep semantics simple: only rewrite pure arithmetic (no flag updates).
                 if !flags.is_empty() {
+                    continue;
+                }
+
+                // Multiplication of two boolean values (0/1) is equivalent to AND, which is
+                // typically cheaper than a MUL in WASM.
+                if is_bool_operand(lhs, &bool_values) && is_bool_operand(rhs, &bool_values) {
+                    *inst = Instr::BinOp {
+                        dst,
+                        op: BinOp::And,
+                        lhs,
+                        rhs,
+                        flags,
+                    };
+                    changed = true;
                     continue;
                 }
 
