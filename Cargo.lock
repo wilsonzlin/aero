@@ -1926,7 +1926,6 @@ dependencies = [
  "aero-ipc",
  "aero-machine",
  "aero-net-backend",
- "aero-net-e1000",
  "aero-net-pump",
  "aero-net-stack",
  "aero-net-trace",
