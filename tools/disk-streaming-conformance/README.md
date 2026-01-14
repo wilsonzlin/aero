@@ -66,7 +66,7 @@ You can override the cap with:
 Defaults:
 
 - **Range mode**: **1 MiB** (enough for 1-byte range probes, while preventing full-body downloads)
-- **Chunked mode**: **8 MiB** (enough to fetch typical 4 MiB chunks)
+- **Chunked mode**: **64 MiB** (matches the reference client safety bounds; enough to fetch typical 4 MiB chunks and large manifests)
 
 ## Usage
 
@@ -138,7 +138,7 @@ python3 tools/disk-streaming-conformance/conformance.py \
 
 Chunked mode will verify `chunks[i].sha256` for the sampled chunks when present.
 
-Note: The tool will decode common `Content-Encoding` values for the **manifest** (e.g. `gzip`), matching browser `fetch()` behavior. Chunk objects are still required to be served as identity (no compression transforms).
+Note: For compatibility with Aero’s native client and `aero-image-chunker verify`, the tool expects chunked manifests to be served with `Content-Encoding` absent or `identity` when requesting `Accept-Encoding: identity`. Chunk objects are also required to be served as identity (no compression transforms).
 
 ### Private chunked image (Authorization header)
 
@@ -152,7 +152,7 @@ Note: Using `Authorization` on cross-origin chunk GETs will reintroduce CORS pre
 Safety knobs:
 
 - `--max-body-bytes`: per-request read cap (manifest + chunk bodies)
-- `--max-bytes-per-chunk`: refuse to download chunks larger than this (default 8 MiB)
+- `--max-bytes-per-chunk`: refuse to download chunks larger than this (default 64 MiB)
 
 ### Running chunked mode against local MinIO (direct object URLs)
 
