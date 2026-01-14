@@ -200,6 +200,11 @@ VOID VirtioInputEvtIoDeviceControl(
         size_t copyBytes;
         VIOINPUT_COUNTERS snapshot;
 
+        if (OutputBufferLength == 0) {
+            status = STATUS_BUFFER_TOO_SMALL;
+            break;
+        }
+
         outBuf = NULL;
         outBytes = 0;
         status = WdfRequestRetrieveOutputBuffer(Request, 0, (PVOID *)&outBuf, &outBytes);
@@ -246,6 +251,11 @@ VOID VirtioInputEvtIoDeviceControl(
         VIOINPUT_STATE snapshot;
         LONG virtioStarted;
         LONG64 negotiatedFeatures;
+
+        if (OutputBufferLength == 0) {
+            status = STATUS_BUFFER_TOO_SMALL;
+            break;
+        }
 
         outBuf = NULL;
         outBytes = 0;
