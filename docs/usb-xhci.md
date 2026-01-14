@@ -28,8 +28,9 @@ Status:
   `aero_usb::xhci::XhciController`). It implements a limited subset of xHCI (MMIO registers, USB2
   root ports + PORTSC, interrupter 0 + ERST-backed event ring delivery, deterministic snapshot/restore,
   and some host-side topology/WebUSB hooks). Endpoint-0 doorbell-driven control transfers can execute,
-  and doorbell 0-driven command ring processing exists for a limited subset of commands. Bulk/interrupt
-  endpoints (Normal TRBs) can also execute when configured/doorbelled, but overall xHCI coverage is
+  and doorbelled bulk/interrupt endpoints can execute Normal TRBs (when configured). Doorbell 0-driven
+  command ring processing exists for a limited subset of commands. Full xHCI
+  scheduling/state-machine coverage is
   still incomplete, so treat it as bring-up quality and incomplete.
 
 > Canonical USB stack selection: see [ADR 0015](./adr/0015-canonical-usb-stack.md) (`crates/aero-usb` + `crates/aero-wasm` + `web/`).
@@ -173,8 +174,9 @@ Notes:
   EHCI) for guest-visible WebUSB passthrough and disables the UHCI-only
   `OTHER_SPEED_CONFIGURATION` descriptor translation. Otherwise it falls back to the UHCI-based
   passthrough path. As of today, xHCI remains bring-up quality: command ring coverage is incomplete
-  and transfer semantics are still under active development/validation, so UHCI remains the known-good
-  attachment path for HID in practice. See
+  and the transfer plane is still limited (endpoint 0 + a subset of bulk/interrupt Normal TRB
+  transfers) and under active development/validation, so UHCI remains the known-good attachment path
+  for HID in practice. See
   [`docs/webusb-passthrough.md`](./webusb-passthrough.md).
 - Synthetic USB HID devices (keyboard/mouse/gamepad/consumer-control) are still expected to attach
   behind UHCI when available (Windows 7 compatibility), with EHCI/xHCI used as a fallback for WASM
@@ -189,9 +191,9 @@ The current xHCI effort is intentionally staged. The long-term goal is a real xH
 for modern guests and for high-speed/superspeed passthrough, but the in-tree code today is mostly
 **MVP scaffolding**: a minimal-but-realistic MMIO register model (USB2 ports + PORTSC, interrupter 0
 runtime regs, ERST-backed event ring delivery) plus TRB/ring/command/transfer helpers used by tests
-and harnesses. Major guest-visible pieces are still missing (full command-set/state-machine coverage
-and large parts of the xHCI spec), so treat the implementation as “bring-up” quality rather than a
-complete xHCI.
+and harnesses. Major guest-visible pieces are still missing (full command-set/state-machine coverage,
+complete transfer-plane coverage, and large parts of the xHCI spec), so treat the implementation as
+“bring-up” quality rather than a complete xHCI.
 
 ### What exists today
 
@@ -212,8 +214,9 @@ complete xHCI.
       `Configure Endpoint`, `Evaluate Context`, `Stop Endpoint`, `Reset Endpoint`,
       `Set TR Dequeue Pointer`; most other commands complete with TRB Error) and queues
       `Command Completion Event` TRBs.
-    - device endpoint doorbells are latched and can drive a bounded endpoint-0 control transfer
-      executor (Setup/Data/Status TRBs) when the controller is ticked.
+    - device endpoint doorbells are latched and can drive bounded transfer execution:
+      - endpoint 0 control transfers (Setup/Data/Status TRBs), and
+      - bulk/interrupt endpoints via Normal TRBs (via `transfer::XhciTransferExecutor`).
     - runtime interrupter 0 registers + ERST-backed guest event ring producer are modeled (used by
       Rust tests and by the web/WASM bridge via `step_frames()`/`poll()`).
   - A DMA read on the first transition of `USBCMD.RUN` (primarily to validate **PCI Bus Master Enable gating** in wrappers).
@@ -233,7 +236,7 @@ complete xHCI.
   - Enforces **PCI BME DMA gating** by swapping the memory bus implementation when bus mastering is
     disabled (the controller still updates register state, but must not touch guest RAM).
   - `step_frames()` advances controller time; when BME is enabled it also executes pending transfer
-    ring work (endpoint 0 control + bulk/interrupt endpoints) and drains queued events
+    ring work (endpoint 0 control + bulk/interrupt Normal TRBs) and drains queued events
     (`XhciController::tick_1ms_and_service_event_ring`).
   - `poll()` drains any queued event TRBs into the guest event ring (`XhciController::service_event_ring`);
     DMA is gated on BME.
@@ -248,8 +251,8 @@ complete xHCI.
     connected).
 
 These are **not** full xHCI implementations. In particular, command ring coverage is still incomplete
-(bounded to a subset of commands), and transfer execution is still incomplete compared to real xHCI
-(no isochronous, no USB3/SuperSpeed, etc).
+(bounded to a small subset of commands), and transfer execution is limited to endpoint 0 plus a
+subset of bulk/interrupt endpoints via Normal TRBs (no isochronous, no USB3/SuperSpeed, etc).
 
 #### TRB + ring building blocks
 
@@ -281,11 +284,10 @@ command/event behavior:
 - `command`: a minimal endpoint-management state machine used by tests and by early enumeration
   harnesses.
 
-These helpers are wired into the guest-visible MMIO/doorbell model (CRCR + doorbell 0 for the command
-subset, plus slot doorbells for transfer execution on endpoint 0 and bulk/interrupt endpoints), but
-many commands/endpoints remain bring-up-only. The more complete
-`command_ring::CommandRingProcessor` remains a test/harness helper and is not used by the MMIO
-doorbell path today.
+These helpers are partially wired into the guest-visible MMIO/doorbell model (CRCR + doorbell 0 for
+the command subset, plus slot doorbells for endpoint 0 and bulk/interrupt Normal TRBs), but many
+commands/endpoints remain bring-up-only. The more complete `command_ring::CommandRingProcessor`
+remains a test/harness helper and is not used by the MMIO doorbell path today.
 
 #### Transfers (non-control endpoints via Normal TRBs)
 
@@ -315,8 +317,8 @@ This engine is currently a standalone transfer-plane component used by tests; `X
 its own minimal doorbell-driven endpoint-0 executor (driven by slot doorbells +
 `XhciController::tick()`), so `Ep0TransferEngine` is not wired into the guest-visible MMIO model.
 Note: the web/WASM bridge’s `step_frames()` path runs `tick_1ms_and_service_event_ring` when PCI BME
-is enabled, so doorbelled transfers (endpoint 0 + bulk/interrupt) can make forward progress and
-queued events are drained.
+is enabled, so doorbelled endpoint transfers (endpoint 0 + bulk/interrupt Normal TRBs) can make
+forward progress and queued events are drained.
 
 ### Device model layer
 
@@ -350,7 +352,9 @@ Dedicated EP0 unit tests also exist:
 - Full command ring coverage via doorbell 0 (doorbell 0 is modeled, but only a subset of commands is
   implemented today) and the corresponding slot/endpoint context state machines (`Configure Endpoint`,
   `Evaluate Context`, endpoint commands, etc).
-- More complete transfer scheduling/performance for bulk/interrupt endpoints (today execution is
+- More complete transfer-plane coverage (additional TRB types beyond Normal, more complete endpoint
+  state machines, isochronous transfers, etc).
+- Better transfer scheduling/performance for bulk/interrupt endpoints (today execution is
   intentionally bounded to keep guest-induced work finite).
 - More complete event-ring servicing / “main loop” integration in wrappers: regularly call
   `tick_1ms_and_service_event_ring` (or equivalent) so port timers, transfers, and event delivery make
@@ -367,13 +371,13 @@ xHCI is a large spec. The MVP intentionally leaves out many features that guests
 - **Root hub / port model** beyond the current USB2-only PORTSC subset + reset timer scaffolding (no USB3 ports/link states yet).
 - **Doorbell-driven command ring + transfer execution**: the doorbell array is partially implemented
   (doorbell 0 triggers a bounded subset of command ring processing; endpoint doorbells can drive
-  endpoint 0 and bulk/interrupt endpoints), but the command set is incomplete and many advanced xHCI
-  semantics are still missing.
+  endpoint 0 and bulk/interrupt Normal TRBs), but the command set and many endpoint state machines /
+  advanced xHCI semantics remain incomplete.
 - **Full xHCI slot/endpoint context state machines** (`Configure Endpoint`, `Evaluate Context`,
   endpoint commands, etc). A subset of command processing is exposed today via doorbell 0, but full
   coverage/state machines remain incomplete.
-- **Non-control transfers are limited** to bulk/interrupt endpoints (Normal TRBs). Advanced transfer
-  types and semantics (isochronous, USB3/SuperSpeed, streams, etc) are not implemented.
+- **Transfer-plane coverage**: bulk/interrupt Normal TRBs are supported, but many TRB types and
+  endpoint behaviors remain unimplemented (isochronous, streams, etc).
 - **USB 3.x SuperSpeed** (5/10/20Gbps link speeds) and related link state machinery.
 - **Isochronous transfers** (audio/video devices).
 - **MSI/MSI-X in the web runtime**: the TS PCI wrapper currently uses INTx only (no MSI/MSI-X
