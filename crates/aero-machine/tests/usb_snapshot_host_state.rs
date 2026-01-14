@@ -168,6 +168,68 @@ fn snapshot_restore_clears_muxed_webusb_host_state() {
 }
 
 #[test]
+fn snapshot_restore_clears_muxed_webhid_feature_report_host_state() {
+    let mut vm = Machine::new(MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_uhci: true,
+        enable_ehci: true,
+        // Keep this test minimal/deterministic.
+        enable_vga: false,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        enable_e1000: false,
+        ..Default::default()
+    })
+    .unwrap();
+
+    let webhid = UsbHidPassthroughHandle::new(
+        0x1234,
+        0x5678,
+        "Vendor".to_string(),
+        "Product".to_string(),
+        None,
+        sample_hid_report_descriptor_input_2_bytes(),
+        false,
+        None,
+        None,
+        None,
+    );
+    vm.usb_attach_root(1, Box::new(webhid.clone()))
+        .expect("attach WebHID passthrough device behind UHCI root port 1");
+
+    // When both UHCI and EHCI are enabled, the first two root ports are backed by a shared USB2
+    // mux, so the same physical device should be visible from both controllers.
+    {
+        let ehci = vm.ehci().expect("ehci enabled");
+        assert!(
+            ehci.borrow().controller().hub().port_device(1).is_some(),
+            "expected EHCI to observe the UHCI-attached device via the shared USB2 mux"
+        );
+    }
+
+    queue_webhid_feature_report_request(&webhid);
+    let req = webhid
+        .pop_feature_report_request()
+        .expect("expected queued feature report request");
+    assert_eq!(req.request_id, 1);
+
+    let snapshot = vm.take_snapshot_full().unwrap();
+    vm.restore_snapshot_bytes(&snapshot).unwrap();
+
+    assert!(webhid.pop_feature_report_request().is_none());
+
+    // Re-issue the request; IDs should continue from the saved counter.
+    queue_webhid_feature_report_request(&webhid);
+    let req2 = webhid
+        .pop_feature_report_request()
+        .expect("expected feature report request after restore");
+    assert_eq!(req2.request_id, 2);
+}
+
+#[test]
 fn snapshot_restore_clears_webusb_host_state_behind_hub() {
     let mut vm = Machine::new(MachineConfig {
         ram_size_bytes: 2 * 1024 * 1024,
@@ -401,6 +463,61 @@ fn snapshot_restore_clears_webhid_feature_report_host_state_behind_hub() {
     // cleared so the guest's retries will re-emit a fresh request.
     assert!(webhid.pop_feature_report_request().is_none());
 
+    queue_webhid_feature_report_request(&webhid);
+    let req2 = webhid
+        .pop_feature_report_request()
+        .expect("expected feature report request after restore");
+    assert_eq!(req2.request_id, 2);
+}
+
+#[test]
+fn snapshot_restore_clears_ehci_webhid_feature_report_host_state_behind_hub() {
+    let mut vm = Machine::new(MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_ehci: true,
+        enable_uhci: false,
+        // Keep this test minimal/deterministic.
+        enable_vga: false,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        enable_e1000: false,
+        ..Default::default()
+    })
+    .unwrap();
+
+    vm.usb_ehci_attach_root(0, Box::new(UsbHubDevice::with_port_count(4)))
+        .expect("attach hub behind EHCI root port 0");
+
+    let webhid = UsbHidPassthroughHandle::new(
+        0x1234,
+        0x5678,
+        "Vendor".to_string(),
+        "Product".to_string(),
+        None,
+        sample_hid_report_descriptor_input_2_bytes(),
+        false,
+        None,
+        None,
+        None,
+    );
+    vm.usb_ehci_attach_at_path(&[0, 1], Box::new(webhid.clone()))
+        .expect("attach WebHID passthrough device behind hub port 1");
+
+    queue_webhid_feature_report_request(&webhid);
+    let req = webhid
+        .pop_feature_report_request()
+        .expect("expected queued feature report request");
+    assert_eq!(req.request_id, 1);
+
+    let snapshot = vm.take_snapshot_full().unwrap();
+    vm.restore_snapshot_bytes(&snapshot).unwrap();
+
+    assert!(webhid.pop_feature_report_request().is_none());
+
+    // Re-issue the request; IDs should continue from the saved counter.
     queue_webhid_feature_report_request(&webhid);
     let req2 = webhid
         .pop_feature_report_request()
