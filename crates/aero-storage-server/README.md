@@ -115,7 +115,8 @@ Notes:
 
 - `image_id` uses the same validation rules as the main bytes endpoints:
   `[A-Za-z0-9._-]{1,128}` (and must not be `.` or `..`).
-- `chunkName` is strictly validated as `^[0-9]{8}\\.bin$` (fixed-width, zero-padded decimal).
+- `chunkName` is validated as `^[0-9]{1,32}\\.bin$` (zero-padded decimal chunk index; width should
+  match the manifest `chunkIndexWidth`).
 - Chunk responses are capped by `--max-chunk-bytes` (default: 8 MiB) as basic DoS hardening.
 - Public chunked responses use long-lived `Cache-Control` (including `immutable`). Treat the
   on-disk `chunked/<image_id>/...` contents as immutable, or publish new content under a new

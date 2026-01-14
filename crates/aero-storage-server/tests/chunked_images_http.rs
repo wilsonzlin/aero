@@ -2210,8 +2210,9 @@ async fn overly_long_raw_chunked_version_segment_is_rejected_early() {
 async fn overly_long_raw_chunk_name_segment_is_rejected_early() {
     let (app, _dir, _manifest) = setup_app(None).await;
 
-    // `CHUNK_NAME_LEN` in the handler is 12, so reject anything longer than 12*3 raw chars.
-    let too_long_raw = "a".repeat(12 * 3 + 1);
+    // Chunk names are validated as `^[0-9]{1,32}\\.bin$`, so reject raw segments longer than
+    // `(32 + len(\".bin\")) * 3` (a percent-encoded byte takes 3 chars: `%xx`).
+    let too_long_raw = "a".repeat((32 + 4) * 3 + 1);
     let uri = format!("/v1/images/disk/chunked/chunks/{too_long_raw}");
 
     let resp = app
@@ -2244,7 +2245,7 @@ async fn overly_long_raw_chunk_name_segment_is_rejected_early() {
 async fn overly_long_raw_chunk_name_segment_is_rejected_early_for_versioned_route() {
     let (app, _dir, _manifest) = setup_app(None).await;
 
-    let too_long_raw = "a".repeat(12 * 3 + 1);
+    let too_long_raw = "a".repeat((32 + 4) * 3 + 1);
     let uri = format!("/v1/images/disk/chunked/v1/chunks/{too_long_raw}");
 
     let resp = app

@@ -24,8 +24,14 @@ use super::images::ImagesState;
 const PUBLIC_CACHE_CONTROL_CHUNKS: &str = "public, max-age=31536000, immutable, no-transform";
 const PUBLIC_CACHE_CONTROL_MANIFEST: &str = "public, max-age=31536000, immutable";
 
-// `00000000.bin` (zero-padded decimal chunk index, width=8) per docs.
-const CHUNK_NAME_LEN: usize = 12;
+// Chunk filenames are `chunkIndex` formatted as zero-padded decimal, followed by `.bin`.
+//
+// The docs and publisher tooling recommend `chunkIndexWidth = 8`, but treat it as configurable;
+// accept a bounded range of widths to avoid accidental incompatibility while still defending
+// against pathological allocations on untrusted input.
+const MAX_CHUNK_INDEX_WIDTH: usize = 32;
+const MIN_CHUNK_NAME_LEN: usize = 1 /* digits */ + 4 /* ".bin" */;
+const MAX_CHUNK_NAME_LEN: usize = MAX_CHUNK_INDEX_WIDTH + 4 /* ".bin" */;
 
 pub fn router() -> Router<ImagesState> {
     Router::<ImagesState>::new()
@@ -87,7 +93,7 @@ pub(crate) async fn chunk_name_path_len_guard(
     // Unversioned chunk route: `/chunked/chunks/:chunk_name`.
     if seg == "chunks" {
         let raw_chunk = parts.next().unwrap_or("");
-        if raw_chunk.len() > CHUNK_NAME_LEN * 3 {
+        if raw_chunk.len() > MAX_CHUNK_NAME_LEN * 3 {
             return response_with_status(StatusCode::NOT_FOUND, &state, req.headers());
         }
         return next.run(req).await;
@@ -106,7 +112,7 @@ pub(crate) async fn chunk_name_path_len_guard(
     };
     if after_version == "chunks" {
         let raw_chunk = parts.next().unwrap_or("");
-        if raw_chunk.len() > CHUNK_NAME_LEN * 3 {
+        if raw_chunk.len() > MAX_CHUNK_NAME_LEN * 3 {
             return response_with_status(StatusCode::NOT_FOUND, &state, req.headers());
         }
     }
@@ -680,15 +686,14 @@ async fn serve_chunk_version(
 }
 
 fn is_valid_chunk_name(name: &str) -> bool {
-    if name.len() != CHUNK_NAME_LEN {
+    if name.len() < MIN_CHUNK_NAME_LEN || name.len() > MAX_CHUNK_NAME_LEN {
         return false;
     }
-    let bytes = name.as_bytes();
-    // First 8 chars must be ASCII digits.
-    if !bytes[..8].iter().all(|b| b.is_ascii_digit()) {
+    if !name.ends_with(".bin") {
         return false;
     }
-    bytes[8..] == *b".bin"
+    let digits = &name[..name.len() - 4];
+    !digits.is_empty() && digits.as_bytes().iter().all(|b| b.is_ascii_digit())
 }
 
 fn manifest_cache_control_value(req_headers: &HeaderMap, image_public: bool) -> HeaderValue {
