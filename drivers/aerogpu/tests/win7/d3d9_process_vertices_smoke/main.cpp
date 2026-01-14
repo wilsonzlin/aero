@@ -13,7 +13,7 @@ struct Vertex {
   DWORD color;
 };
 
-static const UINT kSrcVertexCount = 4;
+static const UINT kSrcVertexCount = 5;
 static const UINT kDestVertexCount = 9;
 static const UINT kSrcStartIndex = 1;
 static const UINT kDestIndex = 3;
@@ -225,8 +225,10 @@ static int RunD3D9ProcessVerticesSmoke(int argc, char** argv) {
   const DWORD kGreen = D3DCOLOR_XRGB(0, 255, 0);
   const DWORD kYellow = D3DCOLOR_XRGB(255, 255, 0);
 
-  // Source VB includes a dummy vertex at index 0 so that ignoring SrcStartIndex produces a triangle
-  // entirely outside the viewport (center pixel remains the clear color).
+  // Source VB includes dummy vertices at indices 0..1 so that:
+  //   - ignoring SrcStartIndex, or
+  //   - ignoring SetStreamSource's non-zero offset
+  // produces a triangle entirely outside the viewport (center pixel remains the clear color).
   Vertex src_verts[kSrcVertexCount];
   src_verts[0].x = 0.0f;
   src_verts[0].y = -1000.0f;
@@ -234,24 +236,30 @@ static int RunD3D9ProcessVerticesSmoke(int argc, char** argv) {
   src_verts[0].rhw = 1.0f;
   src_verts[0].color = kGreen;
 
-  // Triangle that covers the center pixel while leaving the top-left corner untouched.
-  src_verts[1].x = (float)kWidth * 0.25f;
-  src_verts[1].y = (float)kHeight * 0.25f;
+  src_verts[1].x = 1000.0f;
+  src_verts[1].y = -1000.0f;
   src_verts[1].z = 0.5f;
   src_verts[1].rhw = 1.0f;
-  src_verts[1].color = kBlue;
+  src_verts[1].color = kGreen;
 
-  src_verts[2].x = (float)kWidth * 0.75f;
+  // Triangle that covers the center pixel while leaving the top-left corner untouched.
+  src_verts[2].x = (float)kWidth * 0.25f;
   src_verts[2].y = (float)kHeight * 0.25f;
   src_verts[2].z = 0.5f;
   src_verts[2].rhw = 1.0f;
   src_verts[2].color = kBlue;
 
-  src_verts[3].x = (float)kWidth * 0.5f;
-  src_verts[3].y = (float)kHeight * 0.75f;
+  src_verts[3].x = (float)kWidth * 0.75f;
+  src_verts[3].y = (float)kHeight * 0.25f;
   src_verts[3].z = 0.5f;
   src_verts[3].rhw = 1.0f;
   src_verts[3].color = kBlue;
+
+  src_verts[4].x = (float)kWidth * 0.5f;
+  src_verts[4].y = (float)kHeight * 0.75f;
+  src_verts[4].z = 0.5f;
+  src_verts[4].rhw = 1.0f;
+  src_verts[4].color = kBlue;
 
   ComPtr<IDirect3DVertexBuffer9> vb_src;
   hr = dev->CreateVertexBuffer(sizeof(src_verts),
@@ -377,7 +385,8 @@ static int RunD3D9ProcessVerticesSmoke(int argc, char** argv) {
     return reporter.FailHresult("IDirect3DDevice9Ex::SetFVF", hr);
   }
 
-  hr = dev->SetStreamSource(0, vb_src.get(), 0, sizeof(Vertex));
+  // Use a non-zero stream offset to exercise stream offset handling in the ProcessVertices path.
+  hr = dev->SetStreamSource(0, vb_src.get(), sizeof(Vertex), sizeof(Vertex));
   if (FAILED(hr)) {
     dev->EndScene();
     return reporter.FailHresult("IDirect3DDevice9Ex::SetStreamSource(src)", hr);
