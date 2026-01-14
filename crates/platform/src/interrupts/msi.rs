@@ -137,6 +137,12 @@ mod tests {
         ints.lapic_mmio_write_for_apic(apic_id, 0xF0, &(0x1FFu32).to_le_bytes());
     }
 
+    fn enable_lapic_svr(ints: &PlatformInterrupts) {
+        for apic_id in 0..ints.cpu_count() {
+            enable_lapic_svr_for_apic(ints, apic_id as u8);
+        }
+    }
+
     fn msi_message(dest_id: u8, vector: u8) -> MsiMessage {
         msi_message_with(dest_id, vector, false, 0)
     }
@@ -259,9 +265,9 @@ mod tests {
         // Logical destination mask bit1 -> APIC ID 1.
         ints.trigger_msi(msi_message_logical(0b10, 0x66));
 
-        assert_eq!(ints.lapic_by_index(0).unwrap().get_pending_vector(), None);
+        assert_eq!(ints.lapic(0).get_pending_vector(), None);
         assert_eq!(
-            ints.lapic_by_index(1).unwrap().get_pending_vector(),
+            ints.lapic(1).get_pending_vector(),
             Some(0x66)
         );
     }
@@ -276,6 +282,6 @@ mod tests {
         let bsp_id = ints.lapic_apic_id();
         ints.trigger_msi(msi_message_with(bsp_id, 0x77, false, 0b001));
 
-        assert_eq!(ints.get_pending(), Some(0x77));
+        assert_eq!(ints.get_pending_for_apic(bsp_id), Some(0x77));
     }
 }

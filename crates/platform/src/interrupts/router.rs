@@ -605,6 +605,10 @@ impl PlatformInterrupts {
             .cloned()
     }
 
+    pub(crate) fn lapics_iter(&self) -> impl Iterator<Item = &LocalApic> + '_ {
+        self.lapics.iter().map(|lapic| lapic.as_ref())
+    }
+
     /// Register a callback that is invoked when the guest writes to `ICR_LOW` on the given LAPIC.
     pub fn register_icr_notifier(&self, apic_id: u8, notifier: IcrNotifier) {
         if let Some(lapic) = self.lapic_by_apic_id(apic_id) {
