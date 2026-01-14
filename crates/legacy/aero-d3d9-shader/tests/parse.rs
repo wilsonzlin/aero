@@ -56,10 +56,39 @@ fn rejects_oversized_bytecode() {
     // Ensure the debug/disassembler parser does not allocate unbounded memory on hostile input.
     let bytes = vec![0u8; 256 * 1024 + 4];
     let err = D3d9Shader::parse(&bytes).unwrap_err();
-    assert!(
-        matches!(err, aero_d3d9_shader::ShaderParseError::BytecodeTooLarge { .. }),
-        "{err:?}"
+    assert_eq!(
+        err,
+        ShaderParseError::BytecodeTooLarge {
+            len: 256 * 1024 + 4,
+            max: 256 * 1024,
+        }
     );
+}
+
+#[test]
+fn malformed_dxbc_truncated_header_errors() {
+    let err = D3d9Shader::parse(b"DXBC").unwrap_err();
+    assert!(matches!(
+        err,
+        ShaderParseError::Dxbc(aero_dxbc::DxbcError::MalformedHeader { .. })
+    ));
+}
+
+#[test]
+fn malformed_dxbc_total_size_out_of_bounds_errors() {
+    // A minimal DXBC header whose declared `total_size` exceeds the provided buffer length.
+    let mut dxbc = Vec::new();
+    dxbc.extend_from_slice(b"DXBC");
+    dxbc.extend_from_slice(&[0u8; 16]); // checksum
+    dxbc.extend_from_slice(&1u32.to_le_bytes()); // reserved
+    dxbc.extend_from_slice(&4096u32.to_le_bytes()); // total_size (too large)
+    dxbc.extend_from_slice(&0u32.to_le_bytes()); // chunk_count
+
+    let err = D3d9Shader::parse(&dxbc).unwrap_err();
+    assert!(matches!(
+        err,
+        ShaderParseError::Dxbc(aero_dxbc::DxbcError::OutOfBounds { .. })
+    ));
 }
 
 const VS_2_0_PASSTHROUGH: [u32; 14] = [
