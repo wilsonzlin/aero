@@ -5,10 +5,11 @@
 //! - `@group(0)` = vertex shader stage resources
 //! - `@group(1)` = pixel shader stage resources
 //! - `@group(2)` = compute shader stage resources
-//! - `@group(3)` = D3D11 extended stage resources (GS/HS/DS)
 //!
-//! Internal/emulation-only pipelines use a dedicated bind group:
-//! - `@group(4)` = internal emulation buffers (see [`BIND_GROUP_INTERNAL_EMULATION`])
+//! WebGPU guarantees `maxBindGroups >= 4`, so AeroGPU uses `@group(3)` as a reserved internal /
+//! emulation group for both:
+//! - D3D11 extended stage resources (GS/HS/DS, bound via `stage_ex`), and
+//! - internal emulation helpers (vertex pulling, expanded draws, etc).
 //!
 //! D3D11 extended stages (GS/HS/DS) do not exist in WebGPU, but the guest can still update their
 //! per-stage binding tables (textures/samplers/constant buffers). To keep the bind-group count

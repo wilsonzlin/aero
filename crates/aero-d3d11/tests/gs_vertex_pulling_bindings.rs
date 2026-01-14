@@ -99,11 +99,12 @@ fn gs_stage_bindings_do_not_conflict_with_vertex_pulling() {
         let gs_t0_binding = BINDING_BASE_TEXTURE + 0;
         let gs_s0_binding = BINDING_BASE_SAMPLER + 0;
 
-        // Extended D3D11 stages (GS/HS/DS) share bind group 3 in the binding model, while vertex
-        // pulling uses a dedicated internal emulation bind group.
+        // Extended D3D11 stages (GS/HS/DS) and vertex pulling share bind group 3 in the binding
+        // model. Vertex pulling uses a reserved high binding-number range so it doesn't collide
+        // with the stage-ex D3D register mappings.
         let gs_group = RuntimeShaderStage::Geometry.as_bind_group_index();
         assert_eq!(gs_group, 3);
-        assert_eq!(VERTEX_PULLING_GROUP, 4);
+        assert_eq!(VERTEX_PULLING_GROUP, gs_group);
 
         let wgsl = format!(
             r#"
@@ -133,48 +134,49 @@ fn main() {{
             s0 = gs_s0_binding,
         );
 
-        // Bind group layouts for groups 0..2 are empty; group 3 carries the GS bindings; group 4
-        // carries the vertex pulling bindings.
+        // Bind group layouts for groups 0..2 are empty. Group 3 contains both:
+        // - the stage-ex D3D bindings for GS, and
+        // - the internal vertex pulling bindings (in the reserved `>= 256` range).
         let empty_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("gs+vertex pulling empty bgl"),
             entries: &[],
         });
 
-        // Group 3 layout contains the per-stage D3D bindings for GS.
+        let mut group3_entries = vec![
+            // GS cbuffer b0.
+            wgpu::BindGroupLayoutEntry {
+                binding: gs_cb0_binding,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            // GS t0 + s0.
+            wgpu::BindGroupLayoutEntry {
+                binding: gs_t0_binding,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Texture {
+                    multisampled: false,
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: gs_s0_binding,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            },
+        ];
+        group3_entries.extend(pulling.bind_group_layout_entries());
         let group3_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("gs binding bgl"),
-            entries: &[
-                // GS cbuffer b0.
-                wgpu::BindGroupLayoutEntry {
-                    binding: gs_cb0_binding,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // GS t0 + s0.
-                wgpu::BindGroupLayoutEntry {
-                    binding: gs_t0_binding,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Texture {
-                        multisampled: false,
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: gs_s0_binding,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-            ],
+            label: Some("gs+vertex pulling bgl"),
+            entries: &group3_entries,
         });
-        let vp_bgl = pulling.create_bind_group_layout(&device);
 
         device.push_error_scope(wgpu::ErrorFilter::Validation);
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -182,8 +184,7 @@ fn main() {{
             source: wgpu::ShaderSource::Wgsl(wgsl.into()),
         });
 
-        let layouts: [&wgpu::BindGroupLayout; 5] =
-            [&empty_bgl, &empty_bgl, &empty_bgl, &group3_bgl, &vp_bgl];
+        let layouts: [&wgpu::BindGroupLayout; 4] = [&empty_bgl, &empty_bgl, &empty_bgl, &group3_bgl];
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("gs+vertex pulling pipeline layout"),
             bind_group_layouts: &layouts,

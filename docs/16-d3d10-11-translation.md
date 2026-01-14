@@ -136,11 +136,7 @@ stage→group mapping is:
 - `@group(0)`: vertex shader (VS)
 - `@group(1)`: pixel/fragment shader (PS)
 - `@group(2)`: compute shader (CS)
-- `@group(3)`: geometry/hull/domain (“stage_ex”) resources (executed via compute emulation)
-- `@group(4)`: internal emulation pipelines (`BIND_GROUP_INTERNAL_EMULATION` in
-  `crates/aero-d3d11/src/binding_model.rs`)
-  - This requires a device limit `maxBindGroups >= 5`. The baseline WebGPU design can instead merge
-    internal-only bindings into `@group(3)` using the reserved `@binding >= 256` range.
+- `@group(3)`: reserved internal / emulation group (GS/HS/DS resources + vertex pulling / expansion scratch)
 
 The example above shows the vertex shader group; a pixel shader cbuffer declaration would use
 `@group(1)` instead (see “Resource binding mapping”).
@@ -330,8 +326,9 @@ Bind groups are stage-scoped and mostly map 1:1 to D3D11 shader stages:
 - `@group(0)`: vertex shader (VS) resources
 - `@group(1)`: pixel/fragment shader (PS) resources
 - `@group(2)`: compute shader (CS) resources
-- `@group(3)`: geometry/hull/domain (“stage_ex”) resources (tracked separately from CS to avoid clobbering)
-- `@group(4)`: internal emulation pipelines (vertex pulling, expansion scratch, counters, indirect args)
+- `@group(3)`: reserved internal / emulation group:
+  - geometry/hull/domain (“stage_ex”) resources (tracked separately from CS to avoid clobbering)
+  - internal emulation helpers (vertex pulling, expansion scratch, counters, indirect args)
 
 Why stage-scoped?
 
@@ -341,9 +338,8 @@ Why stage-scoped?
 - It also keeps pipeline layout assembly straightforward:
   - Render pipelines use the VS + PS group layouts (0 and 1).
   - Compute pipelines use the CS layout (2).
-  - Emulation pipelines (GS/HS/DS expansion) may additionally use:
-    - `@group(3)` for GS/HS/DS D3D resources, and
-    - `@group(4)` for internal emulation buffers (vertex pulling, scratch, counters, indirect args).
+  - Emulation pipelines (GS/HS/DS expansion) may additionally use `@group(3)`, which carries both
+    the GS/HS/DS D3D resources and a reserved `@binding` range for internal emulation buffers.
 
 #### Binding numbers use disjoint offset ranges
 
@@ -398,10 +394,9 @@ GS/HS/DS binds never trample compute-shader state, Aero reserves a fourth stage-
   args) are internal to the compute-expansion pipeline. In the baseline design these live alongside
   GS/HS/DS resources in the reserved extended-stage bind group (`@group(3)`) using a reserved
   binding-number range starting at `BINDING_BASE_INTERNAL = 256` (see “Internal bindings” below).
-  - Implementations may temporarily place these in a dedicated internal bind group (`@group(4)`,
-    `BIND_GROUP_INTERNAL_EMULATION`) as long as the device supports at least 5 bind groups.
   - Note: the current executor’s placeholder compute-prepass still uses an ad-hoc bind group layout
-    for some output buffers, but vertex pulling already uses the reserved internal binding range.
+    for some output buffers, but vertex pulling already uses the reserved internal binding range so
+    it can coexist with stage-ex bindings.
   - Implementation detail: the in-tree vertex pulling WGSL uses `@group(3)` (see
     `VERTEX_PULLING_GROUP` in `crates/aero-d3d11/src/runtime/vertex_pulling.rs`) and pads pipeline
     layouts with empty groups so indices line up. Because the binding numbers are already in the
@@ -1140,16 +1135,16 @@ GS/HS/DS are compiled as compute entry points but keep the normal D3D binding mo
 Expansion compute pipelines require additional buffers that are not part of the D3D binding model
 (vertex pulling inputs, scratch outputs, counters, indirect args).
 
-Implementation note: the layout described below is the **target** binding scheme. The current
-executor’s placeholder compute-prepass still uses a separate bind group layout for its output
-buffers. Vertex pulling already uses the reserved expansion-internal binding range (starting at
-`BINDING_BASE_INTERNAL = 256`) within `VERTEX_PULLING_GROUP` (`@group(3)`). Future work is to unify
-all emulation kernels on the shared internal layout.
+Implementation note: the layout described below is the binding scheme. The current executor’s
+placeholder compute-prepass still uses an ad-hoc bind group layout for some output buffers, but
+vertex pulling already uses the reserved expansion-internal binding range (starting at
+`BINDING_BASE_INTERNAL = 256`) within `VERTEX_PULLING_GROUP` (`@group(3)`), so it does not collide
+with the D3D register binding ranges. Future work is to unify all emulation kernels on the shared
+internal layout.
 
 These are not part of the D3D binding model, so they use a reserved binding-number range starting at
-`BINDING_BASE_INTERNAL = 256`. In the baseline design they live in the same bind group as GS/HS/DS
-resources (`@group(3)`), but implementations may temporarily place them in a dedicated internal group
-(`@group(4)`, `BIND_GROUP_INTERNAL_EMULATION`) as long as the device supports at least 5 bind groups.
+`BINDING_BASE_INTERNAL = 256`. They live in the same bind group as GS/HS/DS resources (`@group(3)`),
+but are kept disjoint from the D3D register mappings by using `@binding >= 256`.
 
 Let:
 
@@ -1231,8 +1226,6 @@ WGSL-side, this is typically declared as:
 
 ```wgsl
 struct ExpandParams { /* same fields */ }
-// Bind group index is `3` in the baseline design (shared with GS/HS/DS resources). Implementations
-// using a dedicated internal group instead use `@group(4)`.
 @group(3) @binding(256) var<uniform> params: ExpandParams;
 ```
 
@@ -1247,8 +1240,6 @@ struct ExpandCounters {
   overflow: atomic<u32>; // 0/1 (set when any pass exceeds out_*_max)
   _pad0: u32;
 }
-// Bind group index is `3` in the baseline design (shared with GS/HS/DS resources). Implementations
-// using a dedicated internal group instead use `@group(4)`.
 @group(3) @binding(272) var<storage, read_write> counters: ExpandCounters;
 ```
 
