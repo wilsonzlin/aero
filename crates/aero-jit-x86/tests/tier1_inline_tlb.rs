@@ -498,6 +498,26 @@ fn run_wasm_inner_with_code_version_table(
     options: Tier1WasmOptions,
     code_version_table_len: u32,
 ) -> (u64, CpuState, Vec<u8>, HostState, Vec<u32>) {
+    run_wasm_inner_with_code_version_table_and_prefilled_tlbs(
+        block,
+        cpu,
+        ram,
+        ram_size,
+        options,
+        code_version_table_len,
+        &[],
+    )
+}
+
+fn run_wasm_inner_with_code_version_table_and_prefilled_tlbs(
+    block: &aero_jit_x86::tier1::ir::IrBlock,
+    cpu: CpuState,
+    ram: Vec<u8>,
+    ram_size: u64,
+    options: Tier1WasmOptions,
+    code_version_table_len: u32,
+    prefill_tlbs: &[(u64, u64)],
+) -> (u64, CpuState, Vec<u8>, HostState, Vec<u32>) {
     let wasm = Tier1WasmCodegen::new().compile_block_with_options(block, options);
     validate_wasm(&wasm);
 
@@ -524,6 +544,17 @@ fn run_wasm_inner_with_code_version_table(
         tlb_salt: TLB_SALT,
     };
     ctx.write_header_to_mem(&mut mem, JIT_CTX_PTR as usize);
+
+    for &(vaddr, tlb_data) in prefill_tlbs {
+        let vpn = vaddr >> PAGE_SHIFT;
+        let idx = (vpn & JIT_TLB_INDEX_MASK) as usize;
+        let entry_addr = (JIT_CTX_PTR as usize)
+            + (JitContext::TLB_OFFSET as usize)
+            + idx * (JIT_TLB_ENTRY_SIZE as usize);
+        let tag = (vpn ^ TLB_SALT) | 1;
+        mem[entry_addr..entry_addr + 8].copy_from_slice(&tag.to_le_bytes());
+        mem[entry_addr + 8..entry_addr + 16].copy_from_slice(&tlb_data.to_le_bytes());
+    }
 
     // Configure code-version table.
     mem[jit_ctx::CODE_VERSION_TABLE_PTR_OFFSET as usize
@@ -2399,6 +2430,59 @@ fn tier1_inline_tlb_cross_page_store_bumps_both_code_pages() {
         &got_ram[addr as usize..addr as usize + 8],
         &0x1122_3344_5566_7788u64.to_le_bytes(),
     );
+    assert_eq!(host_state.slow_mem_writes, 0);
+    assert_eq!(host_state.mmio_exit_calls, 0);
+    assert_eq!(table, vec![1, 1]);
+}
+
+#[test]
+fn tier1_inline_tlb_cross_page_store_bumps_both_code_pages_on_prefilled_tlb_hits() {
+    let addr = 0xFF9u64;
+
+    let mut b = IrBuilder::new(0x1000);
+    let a0 = b.const_int(Width::W64, addr);
+    let v0 = b.const_int(Width::W64, 0x1122_3344_5566_7788);
+    b.store(Width::W64, a0, v0);
+    let block = b.finish(IrTerminator::Jump { target: 0x3000 });
+    block.validate().unwrap();
+
+    let cpu = CpuState {
+        rip: 0x1000,
+        ..Default::default()
+    };
+
+    let ram = vec![0u8; 0x2000];
+
+    // Pre-fill both pages into the inline TLB so the split store + version bump can remain on the
+    // fast path without calling `mmu_translate`.
+    let flags = TLB_FLAG_READ | TLB_FLAG_WRITE | TLB_FLAG_EXEC | TLB_FLAG_IS_RAM;
+    let page0_data = (addr & PAGE_BASE_MASK) | flags;
+    let page1_vaddr = 0x1000u64;
+    let page1_data = (page1_vaddr & PAGE_BASE_MASK) | flags;
+
+    let (next_rip, got_cpu, got_ram, host_state, table) =
+        run_wasm_inner_with_code_version_table_and_prefilled_tlbs(
+            &block,
+            cpu,
+            ram,
+            0x2000,
+            Tier1WasmOptions {
+                inline_tlb: true,
+                inline_tlb_cross_page_fastpath: true,
+                ..Default::default()
+            },
+            2,
+            &[(addr, page0_data), (page1_vaddr, page1_data)],
+        );
+
+    assert_eq!(next_rip, 0x3000);
+    assert_eq!(got_cpu.rip, 0x3000);
+    assert_eq!(
+        &got_ram[addr as usize..addr as usize + 8],
+        &0x1122_3344_5566_7788u64.to_le_bytes(),
+    );
+
+    assert_eq!(host_state.mmu_translate_calls, 0);
     assert_eq!(host_state.slow_mem_writes, 0);
     assert_eq!(host_state.mmio_exit_calls, 0);
     assert_eq!(table, vec![1, 1]);
