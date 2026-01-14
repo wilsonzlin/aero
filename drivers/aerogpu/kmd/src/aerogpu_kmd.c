@@ -1170,9 +1170,23 @@ static ULONGLONG AeroGpuReadCompletedFence(_In_ const AEROGPU_ADAPTER* Adapter)
     const ULONGLONG cachedLastCompleted = AeroGpuAtomicReadU64(&Adapter->LastCompletedFence);
 
     /*
+     * Avoid touching device-backed state (including the optional shared fence page) while the adapter
+     * is leaving D0 / submissions are blocked.
+     *
+     * This prevents races with teardown paths (StopDevice) that can detach/free the fence page while
+     * threads are still polling for completion (e.g. DxgkDdiLock CPU mapping paths).
+     */
+    if ((DXGK_DEVICE_POWER_STATE)InterlockedCompareExchange((volatile LONG*)&Adapter->DevicePowerState, 0, 0) !=
+            DxgkDevicePowerStateD0 ||
+        InterlockedCompareExchange((volatile LONG*)&Adapter->AcceptingSubmissions, 0, 0) == 0) {
+        return cachedLastCompleted;
+    }
+
+    /*
      * If a shared fence page is configured, prefer reading it. This is always a
-     * normal system-memory read (no MMIO) and is safe even during power
-     * transitions.
+     * normal system-memory read (no MMIO), but still require the adapter to be
+     * in a stable D0/submission-ready state to avoid racing teardown paths that
+     * can detach/free the page.
      *
      * Clamp to the KMD's cached LastCompletedFence to avoid returning a value
      * that appears to go backwards (for example, if the device resets the fence
@@ -1188,17 +1202,6 @@ static ULONGLONG AeroGpuReadCompletedFence(_In_ const AEROGPU_ADAPTER* Adapter)
     }
 
     if (!Adapter->Bar0) {
-        return cachedLastCompleted;
-    }
-
-    /*
-     * Avoid MMIO reads while the adapter is not in D0 or submissions are
-     * blocked (resume/teardown windows). In these states the device may have
-     * lost MMIO state or be inaccessible; use cached state instead.
-     */
-    if ((DXGK_DEVICE_POWER_STATE)InterlockedCompareExchange((volatile LONG*)&Adapter->DevicePowerState, 0, 0) !=
-            DxgkDevicePowerStateD0 ||
-        InterlockedCompareExchange((volatile LONG*)&Adapter->AcceptingSubmissions, 0, 0) == 0) {
         return cachedLastCompleted;
     }
 
