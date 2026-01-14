@@ -1168,6 +1168,7 @@ mod random_traces {
     ) -> TraceIr {
         let mut next_value: u32 = 0;
         let mut values: Vec<ValueId> = Vec::new();
+        let mut safe_addrs: Vec<ValueId> = Vec::new();
         let kind = if rng.gen_bool(0.25) {
             TraceKind::Loop
         } else {
@@ -1199,16 +1200,37 @@ mod random_traces {
             }
         }
 
+        // Seed at least one safe, in-bounds address value sometimes so memory ops can use
+        // `Operand::Value` addresses (exercise value-local address plumbing).
+        if rng.gen_bool(0.5) {
+            let dst = v(next_value);
+            next_value += 1;
+            let value = rng.gen_range(0..=(GUEST_MEM_SIZE - 8)) as u64;
+            prologue.push(Instr::Const { dst, value });
+            values.push(dst);
+            safe_addrs.push(dst);
+        }
+
         while body.len() < instr_count {
             match rng.gen_range(0..100u32) {
                 0..=15 => {
                     let dst = v(next_value);
                     next_value += 1;
+                    let value = if rng.gen_bool(0.25) {
+                        // Bias towards generating some in-bounds addresses we can safely use for
+                        // any load/store width.
+                        rng.gen_range(0..=(GUEST_MEM_SIZE - 8)) as u64
+                    } else {
+                        rng.gen()
+                    };
                     body.push(Instr::Const {
                         dst,
-                        value: rng.gen(),
+                        value,
                     });
                     values.push(dst);
+                    if value <= (GUEST_MEM_SIZE - 8) as u64 {
+                        safe_addrs.push(dst);
+                    }
                 }
                 16..=33 => {
                     let dst = v(next_value);
@@ -1276,10 +1298,14 @@ mod random_traces {
                         .choose(rng)
                         .unwrap();
                     let bytes = width.bytes() as usize;
-                    let addr = rng.gen_range(0..(GUEST_MEM_SIZE - bytes)) as u64;
+                    let addr = if !safe_addrs.is_empty() && rng.gen_bool(0.6) {
+                        Operand::Value(*safe_addrs.choose(rng).unwrap())
+                    } else {
+                        Operand::Const(rng.gen_range(0..(GUEST_MEM_SIZE - bytes)) as u64)
+                    };
                     body.push(Instr::LoadMem {
                         dst,
-                        addr: Operand::Const(addr),
+                        addr,
                         width,
                     });
                     values.push(dst);
@@ -1294,10 +1320,14 @@ mod random_traces {
                         .choose(rng)
                         .unwrap();
                     let bytes = width.bytes() as usize;
-                    let addr = rng.gen_range(0..(GUEST_MEM_SIZE - bytes)) as u64;
+                    let addr = if !safe_addrs.is_empty() && rng.gen_bool(0.6) {
+                        Operand::Value(*safe_addrs.choose(rng).unwrap())
+                    } else {
+                        Operand::Const(rng.gen_range(0..(GUEST_MEM_SIZE - bytes)) as u64)
+                    };
                     let src = gen_operand(rng, &values);
                     body.push(Instr::StoreMem {
-                        addr: Operand::Const(addr),
+                        addr,
                         src,
                         width,
                     });
