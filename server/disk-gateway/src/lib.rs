@@ -1060,17 +1060,34 @@ fn not_modified_response(etag: HeaderValue) -> Response {
 fn if_none_match_matches(if_none_match: &str, current_etag: &str) -> bool {
     let current = strip_weak_prefix(current_etag.trim());
 
-    for raw in if_none_match.split(',') {
-        let tag = raw.trim();
-        if tag == "*" {
-            return true;
-        }
-        if strip_weak_prefix(tag) == current {
-            return true;
+    // `If-None-Match` is a comma-separated list of entity-tags, but commas are allowed inside
+    // a quoted entity-tag value. Split only on commas that occur *outside* quotes.
+    let mut start = 0usize;
+    let mut in_quotes = false;
+    let bytes = if_none_match.as_bytes();
+    for (i, &b) in bytes.iter().enumerate() {
+        match b {
+            b'"' => in_quotes = !in_quotes,
+            b',' if !in_quotes => {
+                let tag = if_none_match[start..i].trim();
+                if tag == "*" {
+                    return true;
+                }
+                if !tag.is_empty() && strip_weak_prefix(tag) == current {
+                    return true;
+                }
+                start = i + 1;
+            }
+            _ => {}
         }
     }
 
-    false
+    let tag = if_none_match[start..].trim();
+    if tag == "*" {
+        return true;
+    }
+    !tag.is_empty() && strip_weak_prefix(tag) == current
+
 }
 
 fn strip_weak_prefix(tag: &str) -> &str {
@@ -1883,5 +1900,12 @@ mod tests {
                 end: 3
             }]
         );
+    }
+
+    #[test]
+    fn if_none_match_handles_commas_inside_etag() {
+        assert!(if_none_match_matches("\"a,b\"", "\"a,b\""));
+        assert!(if_none_match_matches("W/\"x\", \"a,b\"", "\"a,b\""));
+        assert!(!if_none_match_matches("\"a,b\"", "\"c\""));
     }
 }
