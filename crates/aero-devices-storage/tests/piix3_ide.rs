@@ -4499,6 +4499,9 @@ fn ata_dma_success_on_secondary_channel_requires_secondary_bus_master_start() {
     mem.write_u32(prd_addr, dma_buf as u32);
     mem.write_u16(prd_addr + 4, SECTOR_SIZE as u16);
     mem.write_u16(prd_addr + 6, 0x8000);
+    // Program both PRD pointers so a buggy implementation that consults the wrong channel's PRD
+    // pointer will still touch the known DMA buffer.
+    ioports.write(bm_base + 4, 4, prd_addr as u32);
     ioports.write(bm_base + 8 + 4, 4, prd_addr as u32);
 
     // Seed destination buffer so we can prove no DMA happens before the correct bus master engine
@@ -4523,6 +4526,9 @@ fn ata_dma_success_on_secondary_channel_requires_secondary_bus_master_start() {
         "secondary DMA must not run while only the primary BMIDE engine is started"
     );
     assert!(!ide.borrow().controller.primary_irq_pending());
+
+    let bm_st_primary = ioports.read(bm_base + 2, 1) as u8;
+    assert_eq!(bm_st_primary & 0x07, 0);
 
     let bm_st_secondary = ioports.read(bm_base + 8 + 2, 1) as u8;
     assert_eq!(bm_st_secondary & 0x07, 0);
