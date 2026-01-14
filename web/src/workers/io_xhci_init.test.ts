@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { DeviceManager } from "../io/device_manager";
+import { XhciPciDevice } from "../io/devices/xhci";
 import type { WasmApi } from "../runtime/wasm_context";
 import { tryInitXhciDevice } from "./io_xhci_init";
 
@@ -69,12 +70,11 @@ describe("workers/io_xhci_init", () => {
     expect((bridge as unknown as FakeXhciControllerBridge).size).toBe(0x0200_0000);
 
     const cfg = makeCfgIo(mgr);
-    const bdf = dev.bdf ?? { bus: 0, device: 0x0d, function: 0 };
-    expect(cfg.readU32(bdf.device, bdf.function, 0x00)).toBe(((dev.deviceId & 0xffff) << 16) | (dev.vendorId & 0xffff));
+    expect(cfg.readU32(dev.bdf.device, dev.bdf.function, 0x00)).toBe(((dev.deviceId & 0xffff) << 16) | (dev.vendorId & 0xffff));
 
     // Enable PCI Bus Master so the JS wrapper calls into the bridge on tick.
-    const prevCmd = cfg.readU16(bdf.device, bdf.function, 0x04);
-    cfg.writeU16(bdf.device, bdf.function, 0x04, prevCmd | (1 << 2));
+    const prevCmd = cfg.readU16(dev.bdf.device, dev.bdf.function, 0x04);
+    cfg.writeU16(dev.bdf.device, dev.bdf.function, 0x04, prevCmd | (1 << 2));
     // The xHCI JS wrapper only steps the underlying bridge after observing a positive delta
     // between ticks; the first tick initializes its time base.
     mgr.tick(123);
@@ -97,13 +97,14 @@ describe("workers/io_xhci_init", () => {
     const api = { XhciControllerBridge: FakeXhciControllerBridge } as unknown as WasmApi;
     const mgr = new DeviceManager({ raiseIrq: () => {}, lowerIrq: () => {} });
 
-    // Occupy the canonical 00:0d.0 slot.
+    // Occupy the canonical slot requested by `XhciPciDevice`.
+    const canonical = new XhciPciDevice({ bridge: new FakeXhciControllerBridge(), irqSink: mgr.irqSink }).bdf;
     mgr.registerPciDevice({
       name: "occupied",
       vendorId: 0x1111,
       deviceId: 0x2222,
       classCode: 0,
-      bdf: { bus: 0, device: 0x0d, function: 0 },
+      bdf: canonical,
     });
 
     const res = tryInitXhciDevice({ api, mgr, guestBase: 0x1000_0000, guestSize: 0x0200_0000 });
@@ -112,11 +113,11 @@ describe("workers/io_xhci_init", () => {
     const cfg = makeCfgIo(mgr);
 
     // The canonical slot should still contain the pre-registered device.
-    expect(cfg.readU32(0x0d, 0, 0x00)).toBe(0x2222_1111);
+    expect(cfg.readU32(canonical.device, canonical.function, 0x00)).toBe(0x2222_1111);
 
     // xHCI should have been placed elsewhere.
     expect(dev.bdf).toBeTruthy();
-    expect(dev.bdf).not.toEqual({ bus: 0, device: 0x0d, function: 0 });
+    expect(dev.bdf).not.toEqual(canonical);
     expect(cfg.readU32(dev.bdf!.device, dev.bdf!.function, 0x00)).toBe(((dev.deviceId & 0xffff) << 16) | (dev.vendorId & 0xffff));
   });
 });
