@@ -3,11 +3,15 @@ use crate::{DiskError, Result, StorageBackend};
 
 pub const SECTOR_SIZE: usize = 512;
 
-/// Internal helper trait: conditionally requires `Send` depending on the target.
+/// Helper trait: conditionally requires `Send` depending on the target.
 ///
 /// On native targets, disk backends are frequently moved across threads (worker pools, async
 /// runtimes). On wasm32, backends may wrap JS/OPFS handles and are therefore often `!Send`, so we
 /// intentionally omit the `Send` bound there.
+///
+/// This is re-exported from the crate root (`aero_storage::VirtualDiskSend`) so other crates can
+/// express the same conditional `Send` bound in generic helpers (for example when returning
+/// `AeroCowDisk<Base, Backend>`).
 #[cfg(not(target_arch = "wasm32"))]
 pub trait VirtualDiskSend: Send {}
 #[cfg(target_arch = "wasm32")]
