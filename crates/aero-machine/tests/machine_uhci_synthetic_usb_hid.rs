@@ -475,6 +475,65 @@ fn uhci_synthetic_usb_hid_held_state_is_not_lost_before_configuration() {
 }
 
 #[test]
+fn uhci_synthetic_usb_hid_preconfig_state_survives_snapshot_restore() {
+    let cfg = synthetic_usb_hid_cfg();
+    let mut src = Machine::new(cfg.clone()).unwrap();
+
+    // Inject held state while all devices are still unconfigured, then snapshot.
+    src.inject_usb_hid_keyboard_usage(0x04, true); // 'A'
+    src.inject_usb_hid_mouse_buttons(0x01); // left down
+    let gamepad_report = [0x01, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00];
+    inject_gamepad_report_bytes(&mut src, &gamepad_report);
+    src.inject_usb_hid_consumer_usage(0x00e9, true); // AudioVolumeUp
+
+    let snap = src.take_snapshot_full().unwrap();
+
+    let mut restored = Machine::new(cfg).unwrap();
+    restored.restore_snapshot_bytes(&snap).unwrap();
+
+    // After restore, configuring the devices should still surface the held state.
+    let mut kbd = restored
+        .usb_hid_keyboard_handle()
+        .expect("synthetic keyboard handle should be present after restore");
+    configure_keyboard_for_reports(&mut kbd);
+    expect_keyboard_report_contains(
+        poll_keyboard_interrupt_in(&mut restored),
+        0x04,
+        "after snapshot restore + configuration",
+    );
+
+    let mut mouse = restored
+        .usb_hid_mouse_handle()
+        .expect("synthetic mouse handle should be present after restore");
+    configure_mouse_for_reports(&mut mouse);
+    expect_mouse_report(
+        poll_mouse_interrupt_in(&mut restored),
+        &[0x01, 0, 0, 0, 0],
+        "after snapshot restore + configuration",
+    );
+
+    let mut gamepad = restored
+        .usb_hid_gamepad_handle()
+        .expect("synthetic gamepad handle should be present after restore");
+    configure_gamepad_for_reports(&mut gamepad);
+    expect_gamepad_report(
+        poll_gamepad_interrupt_in(&mut restored),
+        &gamepad_report,
+        "after snapshot restore + configuration",
+    );
+
+    let mut consumer = restored
+        .usb_hid_consumer_control_handle()
+        .expect("synthetic consumer-control handle should be present after restore");
+    configure_consumer_for_reports(&mut consumer);
+    expect_consumer_control_report(
+        poll_consumer_interrupt_in(&mut restored),
+        0x00e9,
+        "after snapshot restore + configuration",
+    );
+}
+
+#[test]
 fn uhci_synthetic_usb_hid_handles_survive_reset_and_snapshot_restore() {
     let cfg = synthetic_usb_hid_cfg();
     let mut m = Machine::new(cfg.clone()).unwrap();
