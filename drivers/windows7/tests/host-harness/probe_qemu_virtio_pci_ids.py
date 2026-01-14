@@ -364,6 +364,10 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    if not args.qemu_system or not str(args.qemu_system).strip():
+        print("ERROR: --qemu-system must be non-empty", file=sys.stderr)
+        return 2
+
     # Keep behaviour consistent with the main Win7 host harness: when a qemu-system path is supplied,
     # fail fast if it points to a directory (common copy/paste mistake, produces confusing subprocess errors).
     try:
