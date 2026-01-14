@@ -4273,6 +4273,13 @@ impl AerogpuD3d9Executor {
                                 in_layer_offset >= mip_base && in_layer_offset < _mip_end
                             );
 
+                            // NOTE: Some wgpu backends (notably the GL path on some drivers) have
+                            // been observed to mishandle `copy_buffer_to_texture` into cube texture
+                            // subresources. To keep UPLOAD_RESOURCE reliable, we route cube uploads
+                            // through an intermediate 2D texture and then `copy_texture_to_texture`
+                            // into the cube subresource.
+                            let prefer_intermediate_upload = array_layers == 6;
+
                             let mip_w = mip_extent(base_width, upload_mip_level);
                             let mip_h = mip_extent(base_height, upload_mip_level);
                             let mip_row_pitch_bytes = if upload_mip_level == 0 {
@@ -4554,6 +4561,116 @@ impl AerogpuD3d9Executor {
                                             || x == AerogpuFormat::B5G5R5A1Unorm as u32
                                     );
 
+                                    let mut upload_copy = |bytes: &[u8],
+                                                           bytes_per_row: u32,
+                                                           rows_per_image: u32|
+                                     -> Result<(), AerogpuD3d9Error> {
+                                        let staging = self.device.create_buffer_init(
+                                            &wgpu::util::BufferInitDescriptor {
+                                                label: Some("aerogpu-d3d9.upload_resource_staging"),
+                                                contents: bytes,
+                                                usage: wgpu::BufferUsages::COPY_SRC,
+                                            },
+                                        );
+                                        let encoder = encoder_opt
+                                            .as_mut()
+                                            .expect("encoder exists for upload_resource");
+
+                                        if prefer_intermediate_upload {
+                                            let upload_tex = self.device.create_texture(
+                                                &wgpu::TextureDescriptor {
+                                                    label: Some(
+                                                        "aerogpu-d3d9.upload_resource_intermediate",
+                                                    ),
+                                                    size: wgpu::Extent3d {
+                                                        width: copy_w_texels,
+                                                        height: copy_h_texels,
+                                                        depth_or_array_layers: 1,
+                                                    },
+                                                    mip_level_count: 1,
+                                                    sample_count: 1,
+                                                    dimension: wgpu::TextureDimension::D2,
+                                                    format: *format,
+                                                    usage: wgpu::TextureUsages::COPY_DST
+                                                        | wgpu::TextureUsages::COPY_SRC,
+                                                    view_formats: &[],
+                                                },
+                                            );
+                                            encoder.copy_buffer_to_texture(
+                                                wgpu::ImageCopyBuffer {
+                                                    buffer: &staging,
+                                                    layout: wgpu::ImageDataLayout {
+                                                        offset: 0,
+                                                        bytes_per_row: Some(bytes_per_row),
+                                                        rows_per_image: Some(rows_per_image),
+                                                    },
+                                                },
+                                                wgpu::ImageCopyTexture {
+                                                    texture: &upload_tex,
+                                                    mip_level: 0,
+                                                    origin: wgpu::Origin3d::ZERO,
+                                                    aspect: wgpu::TextureAspect::All,
+                                                },
+                                                wgpu::Extent3d {
+                                                    width: copy_w_texels,
+                                                    height: copy_h_texels,
+                                                    depth_or_array_layers: 1,
+                                                },
+                                            );
+                                            encoder.copy_texture_to_texture(
+                                                wgpu::ImageCopyTexture {
+                                                    texture: &upload_tex,
+                                                    mip_level: 0,
+                                                    origin: wgpu::Origin3d::ZERO,
+                                                    aspect: wgpu::TextureAspect::All,
+                                                },
+                                                wgpu::ImageCopyTexture {
+                                                    texture,
+                                                    mip_level: upload_mip_level,
+                                                    origin: wgpu::Origin3d {
+                                                        x: origin_x_texels,
+                                                        y: origin_y_texels,
+                                                        z: upload_origin_z,
+                                                    },
+                                                    aspect: wgpu::TextureAspect::All,
+                                                },
+                                                wgpu::Extent3d {
+                                                    width: copy_w_texels,
+                                                    height: copy_h_texels,
+                                                    depth_or_array_layers: 1,
+                                                },
+                                            );
+                                            Ok(())
+                                        } else {
+                                            encoder.copy_buffer_to_texture(
+                                                wgpu::ImageCopyBuffer {
+                                                    buffer: &staging,
+                                                    layout: wgpu::ImageDataLayout {
+                                                        offset: 0,
+                                                        bytes_per_row: Some(bytes_per_row),
+                                                        rows_per_image: Some(rows_per_image),
+                                                    },
+                                                },
+                                                wgpu::ImageCopyTexture {
+                                                    texture,
+                                                    mip_level: upload_mip_level,
+                                                    origin: wgpu::Origin3d {
+                                                        x: origin_x_texels,
+                                                        y: origin_y_texels,
+                                                        z: upload_origin_z,
+                                                    },
+                                                    aspect: wgpu::TextureAspect::All,
+                                                },
+                                                wgpu::Extent3d {
+                                                    width: copy_w_texels,
+                                                    height: copy_h_texels,
+                                                    depth_or_array_layers: 1,
+                                                },
+                                            );
+                                            Ok(())
+                                        }
+                                    };
+
                                     if let (Some(bc), false) = (bc_format, dst_is_bc) {
                                         // CPU BC fallback upload into RGBA8.
                                         let tight_row_bytes =
@@ -4644,50 +4761,16 @@ impl AerogpuD3d9Executor {
                                             padded
                                         };
 
-                                        let staging = self.device.create_buffer_init(
-                                            &wgpu::util::BufferInitDescriptor {
-                                                label: Some("aerogpu-d3d9.upload_resource_staging"),
-                                                contents: &bytes,
-                                                usage: wgpu::BufferUsages::COPY_SRC,
-                                            },
-                                        );
-                                        let encoder = encoder_opt
-                                            .as_mut()
-                                            .expect("encoder exists for upload_resource");
-                                        encoder.copy_buffer_to_texture(
-                                            wgpu::ImageCopyBuffer {
-                                                buffer: &staging,
-                                                layout: wgpu::ImageDataLayout {
-                                                    offset: 0,
-                                                    bytes_per_row: Some(padded_bpr),
-                                                    rows_per_image: Some(copy_h_texels),
-                                                },
-                                            },
-                                            wgpu::ImageCopyTexture {
-                                                texture,
-                                                mip_level: upload_mip_level,
-                                                origin: wgpu::Origin3d {
-                                                    x: origin_x_texels,
-                                                    y: origin_y_texels,
-                                                    z: upload_origin_z,
-                                                },
-                                                aspect: wgpu::TextureAspect::All,
-                                            },
-                                            wgpu::Extent3d {
-                                                width: copy_w_texels,
-                                                height: copy_h_texels,
-                                                depth_or_array_layers: 1,
-                                            },
-                                        );
+                                        upload_copy(&bytes, padded_bpr, copy_h_texels)?;
                                         Ok(())
                                     } else if needs_16bit_expand {
                                         // CPU expansion: 16-bit packed -> RGBA8
                                         let src_row_bytes =
                                             copy_w_texels.checked_mul(2).ok_or_else(|| {
                                                 AerogpuD3d9Error::Validation(
-                                                "UPLOAD_RESOURCE: 16-bit row byte size overflow"
-                                                    .into(),
-                                            )
+                                                    "UPLOAD_RESOURCE: 16-bit row byte size overflow"
+                                                        .into(),
+                                                )
                                             })?;
                                         let unpadded_bpr =
                                             copy_w_texels.checked_mul(4).ok_or_else(|| {
@@ -4719,9 +4802,9 @@ impl AerogpuD3d9Executor {
                                                 row.checked_mul(src_pitch_usize).ok_or_else(
                                                     || {
                                                         AerogpuD3d9Error::Validation(
-                                                    "UPLOAD_RESOURCE: texture row offset overflow"
-                                                        .into(),
-                                                )
+                                                            "UPLOAD_RESOURCE: texture row offset overflow"
+                                                                .into(),
+                                                        )
                                                     },
                                                 )?
                                             } else {
@@ -4731,17 +4814,17 @@ impl AerogpuD3d9Executor {
                                                 .checked_add(src_row_usize)
                                                 .ok_or_else(|| {
                                                     AerogpuD3d9Error::Validation(
-                                                    "UPLOAD_RESOURCE: texture row offset overflow"
-                                                        .into(),
-                                                )
+                                                        "UPLOAD_RESOURCE: texture row offset overflow"
+                                                            .into(),
+                                                    )
                                                 })?;
                                             let src = segment_data
                                                 .get(src_start..src_end)
                                                 .ok_or_else(|| {
                                                     AerogpuD3d9Error::Validation(
-                                                    "UPLOAD_RESOURCE: texture upload out of bounds"
-                                                        .into(),
-                                                )
+                                                        "UPLOAD_RESOURCE: texture upload out of bounds"
+                                                            .into(),
+                                                    )
                                                 })?;
 
                                             let dst_start = row * bytes_per_row_usize;
@@ -4768,41 +4851,7 @@ impl AerogpuD3d9Executor {
                                             }
                                         }
 
-                                        let staging = self.device.create_buffer_init(
-                                            &wgpu::util::BufferInitDescriptor {
-                                                label: Some("aerogpu-d3d9.upload_resource_staging"),
-                                                contents: &bytes,
-                                                usage: wgpu::BufferUsages::COPY_SRC,
-                                            },
-                                        );
-                                        let encoder = encoder_opt
-                                            .as_mut()
-                                            .expect("encoder exists for upload_resource");
-                                        encoder.copy_buffer_to_texture(
-                                            wgpu::ImageCopyBuffer {
-                                                buffer: &staging,
-                                                layout: wgpu::ImageDataLayout {
-                                                    offset: 0,
-                                                    bytes_per_row: Some(bytes_per_row),
-                                                    rows_per_image: Some(copy_h_texels),
-                                                },
-                                            },
-                                            wgpu::ImageCopyTexture {
-                                                texture,
-                                                mip_level: upload_mip_level,
-                                                origin: wgpu::Origin3d {
-                                                    x: origin_x_texels,
-                                                    y: origin_y_texels,
-                                                    z: upload_origin_z,
-                                                },
-                                                aspect: wgpu::TextureAspect::All,
-                                            },
-                                            wgpu::Extent3d {
-                                                width: copy_w_texels,
-                                                height: copy_h_texels,
-                                                depth_or_array_layers: 1,
-                                            },
-                                        );
+                                        upload_copy(&bytes, bytes_per_row, copy_h_texels)?;
                                         Ok(())
                                     } else {
                                         // Direct upload.
@@ -4857,44 +4906,10 @@ impl AerogpuD3d9Executor {
                                             }
                                         }
 
-                                        let staging = self.device.create_buffer_init(
-                                            &wgpu::util::BufferInitDescriptor {
-                                                label: Some("aerogpu-d3d9.upload_resource_staging"),
-                                                contents: &bytes,
-                                                usage: wgpu::BufferUsages::COPY_SRC,
-                                            },
-                                        );
-                                        let encoder = encoder_opt
-                                            .as_mut()
-                                            .expect("encoder exists for upload_resource");
-                                        encoder.copy_buffer_to_texture(
-                                            wgpu::ImageCopyBuffer {
-                                                buffer: &staging,
-                                                layout: wgpu::ImageDataLayout {
-                                                    offset: 0,
-                                                    bytes_per_row: Some(bytes_per_row),
-                                                    rows_per_image: Some(buffer_rows),
-                                                },
-                                            },
-                                            wgpu::ImageCopyTexture {
-                                                texture,
-                                                mip_level: upload_mip_level,
-                                                origin: wgpu::Origin3d {
-                                                    x: origin_x_texels,
-                                                    y: origin_y_texels,
-                                                    z: upload_origin_z,
-                                                },
-                                                aspect: wgpu::TextureAspect::All,
-                                            },
-                                            wgpu::Extent3d {
-                                                width: copy_w_texels,
-                                                height: copy_h_texels,
-                                                depth_or_array_layers: 1,
-                                            },
-                                        );
+                                        upload_copy(&bytes, bytes_per_row, buffer_rows)?;
                                         Ok(())
                                     }
-                                };
+                                 };
 
                             let mut cursor: usize = 0;
                             let mut cur_offset = offset_bytes;
