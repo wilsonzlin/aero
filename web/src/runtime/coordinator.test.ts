@@ -1421,6 +1421,35 @@ describe("runtime/coordinator", () => {
     expect(cpuWorker.posted.length).toBe(0);
   });
 
+  it("ignores aerogpu.submit messages from non-CPU workers", () => {
+    const coordinator = new WorkerCoordinator();
+    const segments = allocateTestSegments();
+    const shared = createSharedMemoryViews(segments);
+    (coordinator as any).shared = shared;
+    (coordinator as any).spawnWorker("cpu", segments);
+    (coordinator as any).spawnWorker("gpu", segments);
+    (coordinator as any).spawnWorker("io", segments);
+
+    const gpuInfo = (coordinator as any).workers.gpu as { instanceId: number; worker: MockWorker };
+    const ioInfo = (coordinator as any).workers.io as { instanceId: number; worker: MockWorker };
+    const gpuWorker = gpuInfo.worker;
+
+    // Bring GPU worker to READY so a non-CPU submit would immediately forward if not gated.
+    gpuWorker.onmessage?.({ data: { type: MessageType.READY, role: "gpu" } } as MessageEvent);
+    gpuWorker.posted.length = 0;
+
+    (coordinator as any).onWorkerMessage("io", ioInfo.instanceId, {
+      kind: "aerogpu.submit",
+      contextId: 1,
+      signalFence: 5n,
+      cmdStream: new Uint8Array([1, 2, 3, 4]).buffer,
+    });
+
+    expect(lastMessageOfType(gpuWorker, "submit_aerogpu")).toBeUndefined();
+    expect(((coordinator as any).pendingAerogpuSubmissions as unknown[]).length).toBe(0);
+    expect(((coordinator as any).aerogpuInFlightFencesByRequestId as Map<number, bigint>).size).toBe(0);
+  });
+
   it("forces completion of in-flight AeroGPU fences when the GPU worker is terminated", () => {
     const coordinator = new WorkerCoordinator();
     const segments = allocateTestSegments();
