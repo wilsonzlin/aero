@@ -106,10 +106,11 @@ Feature matrix for the Win7 WDK-backed UMDs:
     - Translator-backed GS prepass supported subset (covered by `crates/aero-d3d11/tests/gs_translate.rs`; executed for the supported IA input topology subset):
       - End-to-end execution path: `Draw` and `DrawIndexed` for `PointList`/`LineList`/`TriangleList` and adjacency list variants (`LineListAdj`/`TriangleListAdj`).
       - Remaining work (translated-GS execution): strip input topologies (`LineStrip`/`TriangleStrip`) and strip-adjacency variants (`LineStripAdj`/`TriangleStripAdj`) (these currently route through synthetic expansion).
-      - Output (end-to-end): GS output topology `pointlist`/`linestrip`/`triangle_strip` (stream 0). Strip output is expanded into indexed list topologies for `draw_indexed_indirect` (and `pointlist` is rendered as `PointList`).
-      - Shader instructions/operands: a small SM4 subset (see `docs/graphics/geometry-shader-emulation.md`), including `emit`/`cut`, basic ALU, structured control flow (`if`/`loop`/`break`/`continue`, etc), and a small set of **read-only** resource ops:
+      - Output (end-to-end): GS output topology `pointlist`/`linestrip`/`triangle_strip` (stream 0). Strip output is expanded into indexed list topologies (`linestrip` → line list, `triangle_strip` → triangle list). The host executor currently expands indexed prepass output into a dense non-indexed vertex stream so it can always render via `draw_indirect` (avoiding `draw_indexed_indirect` on downlevel backends).
+      - Shader instructions/operands: a small SM4 subset plus a small SM5 UAV-buffer subset (see `docs/graphics/geometry-shader-emulation.md`), including `emit`/`cut`, basic ALU, structured control flow (`if`/`loop`/`break`/`continue`, etc), and a small set of resource ops:
         - Texture2D: `sample`/`sample_l`/`ld`/`resinfo`
         - SRV buffers: `ld_raw`/`ld_structured`/`bufinfo`
+        - UAV buffers (SM5 subset): `ld_uav_raw`/`ld_structured_uav`/`store_raw`/`store_structured`/`atomic_add`/`bufinfo`
     - Design notes: [`docs/graphics/geometry-shader-emulation.md`](../../../../docs/graphics/geometry-shader-emulation.md)
   - Known unsupported / not yet implemented:
     - Stream-output (SO):
