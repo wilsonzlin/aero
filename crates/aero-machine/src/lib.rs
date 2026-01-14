@@ -12577,7 +12577,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             headless.vbe_lfb_base(),
-            firmware::video::vbe::VbeDevice::LFB_BASE_DEFAULT
+            u64::from(firmware::video::vbe::VbeDevice::LFB_BASE_DEFAULT)
         );
 
         // When VGA is enabled, the BIOS should report the legacy MMIO-mapped SVGA base.
