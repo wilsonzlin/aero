@@ -23,7 +23,7 @@ afterEach(() => {
   vi.resetModules();
 });
 
-async function sendResizeDisk(format: string): Promise<any> {
+async function sendResizeDisk(format: string, newSizeBytes: unknown = 2 * 1024 * 1024): Promise<any> {
   vi.resetModules();
 
   const root = new MemoryDirectoryHandle("root");
@@ -76,7 +76,7 @@ async function sendResizeDisk(format: string): Promise<any> {
       requestId,
       backend: "opfs",
       op: "resize_disk",
-      payload: { id, newSizeBytes: 2 * 1024 * 1024 },
+      payload: { id, newSizeBytes },
     },
   });
 
@@ -97,5 +97,16 @@ describe("disk_worker resize_disk format validation", () => {
     expect(String(resp.error?.message ?? "")).toMatch(/only raw hdd images can be resized/i);
     expect(String(resp.error?.message ?? "")).toMatch(/qcow2/i);
   });
-});
 
+  it("rejects resizing to a non-sector-aligned size", async () => {
+    const resp = await sendResizeDisk("raw", 123);
+    expect(resp.ok).toBe(false);
+    expect(String(resp.error?.message ?? "")).toMatch(/multiple of 512/i);
+  });
+
+  it("rejects resizing to zero bytes", async () => {
+    const resp = await sendResizeDisk("raw", 0);
+    expect(resp.ok).toBe(false);
+    expect(String(resp.error?.message ?? "")).toMatch(/positive safe integer/i);
+  });
+});

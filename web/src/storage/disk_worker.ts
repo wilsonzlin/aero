@@ -1521,7 +1521,12 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
         throw new Error("Remote disks cannot be resized");
       }
       const newSizeBytes = hasOwnProp(payload, "newSizeBytes") ? payload.newSizeBytes : undefined;
-      if (typeof newSizeBytes !== "number" || newSizeBytes < 0) throw new Error("Invalid newSizeBytes");
+      if (typeof newSizeBytes !== "number" || !Number.isFinite(newSizeBytes) || !Number.isSafeInteger(newSizeBytes) || newSizeBytes <= 0) {
+        throw new Error("Invalid newSizeBytes (must be a positive safe integer)");
+      }
+      if (newSizeBytes % 512 !== 0) {
+        throw new Error("newSizeBytes must be a multiple of 512");
+      }
       if (meta.kind !== "hdd") {
         throw new Error("Only HDD images can be resized");
       }
