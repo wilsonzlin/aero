@@ -309,10 +309,10 @@ The AeroGPU D3D9 UMD includes a small **fixed-function fallback path** used by D
 
 Supported FVF combinations (bring-up subset):
 
-- `D3DFVF_XYZRHW | D3DFVF_DIFFUSE`
-- `D3DFVF_XYZRHW | D3DFVF_DIFFUSE | D3DFVF_TEX1`
-- `D3DFVF_XYZ | D3DFVF_DIFFUSE` (passthrough; see limitations)
-- `D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1` (WVP transform; see limitations)
+- **Pre-transformed** (`POSITIONT`): `D3DFVF_XYZRHW | D3DFVF_DIFFUSE` (+ optional `D3DFVF_TEX1`)
+- **Untransformed** (`POSITION`): `D3DFVF_XYZ | D3DFVF_DIFFUSE` (+ optional `D3DFVF_TEX1`)
+  - Note: in the current bring-up implementation, `D3DFVF_XYZ | D3DFVF_DIFFUSE` is treated as **clip-space passthrough** (no WVP transform); see limitations below.
+  - `D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1` uses a fixed-function VS that applies the combined world/view/projection (WVP) matrix; see limitations below.
 
 Code anchors (all in `src/aerogpu_d3d9_driver.cpp`):
 
@@ -372,7 +372,9 @@ Limitations (bring-up):
 
 - **Fixed-function pipeline is minimal:** `ensure_fixedfunc_pipeline_locked()` selects between a small set of built-in shader pairs and a narrow stage0 `D3DTSS_*` subset, rather than generating full fixed-function shaders from texture stage state / lighting / fog / etc (stages `> 0` ignored).
 - **Shader int/bool constants are cached only:** `DeviceSetShaderConstI/B` (`device_set_shader_const_i_impl()` / `device_set_shader_const_b_impl()` in `src/aerogpu_d3d9_driver.cpp`) update the UMD-side caches + state blocks, but do not currently emit constant updates into the AeroGPU command stream.
-- **Bring-up no-ops:** `pfnSetConvolutionMonoKernel` and `pfnSetDialogBoxMode` are wired as `S_OK` no-ops via `AEROGPU_D3D9_DEFINE_DDI_NOOP(...)` in the “Stubbed entrypoints” section of `src/aerogpu_d3d9_driver.cpp`. `pfnComposeRects` is also accepted as an `S_OK` no-op (see `device_compose_rects()`).
+- **Bring-up no-ops:** `pfnSetConvolutionMonoKernel` and `pfnSetDialogBoxMode` are wired as `S_OK` no-ops via
+  `AEROGPU_D3D9_DEFINE_DDI_NOOP(...)` in the “Stubbed entrypoints” section of `src/aerogpu_d3d9_driver.cpp`.
+  `pfnComposeRects` is also accepted as an `S_OK` no-op (see `device_compose_rects()`).
 
 ### Validation
 
@@ -383,9 +385,9 @@ This subset is validated via:
   `d3d9ex_triangle`, `d3d9_mipmapped_texture_smoke`, `d3d9ex_fixedfunc_textured_triangle`,
   `d3d9ex_fixedfunc_texture_stage_state`, `d3d9_fixedfunc_xyz_diffuse`, `d3d9_fixedfunc_xyz_diffuse_tex1`,
   `d3d9ex_texture_16bit_formats`, `d3d9_texture_16bit_sampling`, `d3d9_patch_sanity`, `d3d9_patch_rendering_smoke`,
-  `d3d9_process_vertices_sanity`, `d3d9ex_draw_indexed_primitive_up`, `d3d9ex_scissor_sanity`,
-  `d3d9ex_multiframe_triangle`, `d3d9ex_vb_dirty_range`, and the DWM-focused
-  `d3d9ex_dwm_ddi_sanity` / `d3d9ex_dwm_probe`).
+  `d3d9_process_vertices_sanity`, `d3d9_process_vertices_smoke`,
+  `d3d9ex_draw_indexed_primitive_up`, `d3d9ex_scissor_sanity`, `d3d9ex_multiframe_triangle`,
+  `d3d9ex_vb_dirty_range`, and the DWM-focused `d3d9ex_dwm_ddi_sanity` / `d3d9ex_dwm_probe`).
 
 ## Call tracing (bring-up / debugging)
 
@@ -442,13 +444,17 @@ Limitations:
 
 Current behavior is intentionally bring-up level, with two paths:
 
-- **Fixed-function CPU transform (small subset):** when **no user shaders** are bound and the source stream 0 layout
-  corresponds to `D3DFVF_XYZ | D3DFVF_DIFFUSE` (and the `TEX1` variant), the UMD applies a CPU-side
-  **World/View/Projection + viewport** transform and writes **`XYZRHW`** position into the destination layout described by
-  `hVertexDecl`, copying `DIFFUSE` (and `TEXCOORD0` when present).
-- **Fallback memcpy-style path:** for all other cases, `ProcessVertices` falls back to a conservative buffer-to-buffer copy
-  from the active stream 0 vertex buffer into the destination buffer, with stride-aware semantics and the same
-  “upload/dirty-range” notifications used by `Unlock`.
+- **Fixed-function CPU transform (small subset):** when **no user shaders** are bound and the current fixed-function hint
+  (`dev->fvf`, set via `SetFVF` or inferred from `SetVertexDecl`) is one of:
+  - `D3DFVF_XYZ | D3DFVF_DIFFUSE`
+  - `D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1`
+  the UMD reads vertices from **stream 0**, applies a CPU-side **World/View/Projection + viewport** transform, and writes
+  **screen-space `XYZRHW`** position into the destination layout described by `hVertexDecl`, copying `DIFFUSE` (and
+  `TEXCOORD0` when present).
+- **Fallback memcpy-style path:** for all other cases, `ProcessVertices` performs a conservative buffer-to-buffer copy from
+  the active stream 0 vertex buffer into the destination buffer. The copy is stride-aware (copies
+  `min(stream0_stride, dest_stride)` bytes per vertex) and uses the same “upload/dirty-range” notifications used by
+  `Unlock`.
 
 Code anchors (all in `src/aerogpu_d3d9_driver.cpp`):
 
@@ -458,8 +464,12 @@ Code anchors (all in `src/aerogpu_d3d9_driver.cpp`):
 Limitations:
 
 - Only buffer resources are supported (source VB and destination must both be `ResourceKind::Buffer`).
-- The fixed-function CPU transform path is limited to the `XYZ|DIFFUSE` (and `TEX1`) subset and does not execute shaders
-  or fixed-function lighting/material; it is intended to satisfy simple legacy callers.
+- Stream 0 only: additional vertex streams are ignored (matching the D3D9 `ProcessVertices` contract).
+- No shader execution: neither the fixed-function CPU transform path nor the memcpy fallback executes user vertex shaders
+  (or fixed-function lighting/material). When outside the supported fixed-function subset, the implementation is a
+  byte-copy, not vertex processing.
+- The fixed-function CPU transform path is limited to the `XYZ|DIFFUSE` (+ optional `TEX1`) subset and requires that the
+  destination declaration contain a writable float4 position (`POSITIONT`/`POSITION`) for the `XYZRHW` output.
 
 ### Bring-up no-op DDIs
 
