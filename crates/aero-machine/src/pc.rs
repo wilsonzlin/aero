@@ -520,26 +520,23 @@ impl PcMachine {
             let mut pci_cfg = self.bus.platform.pci_cfg.borrow_mut();
             let cfg = pci_cfg.bus_mut().device_config(bdf);
             let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
-            let bar0_base = cfg
-                .and_then(|cfg| cfg.bar_range(0))
-                .map(|range| range.base)
-                .unwrap_or(0);
-            let bar1_base = cfg
-                .and_then(|cfg| cfg.bar_range(1))
-                .map(|range| range.base)
-                .unwrap_or(0);
+            // Preserve `Some(0)`: BARs can be present but programmed to base=0 (guest unassigned).
+            // We must still mirror that into the device model so its internal PCI config image
+            // matches the canonical config space.
+            let bar0_base = cfg.and_then(|cfg| cfg.bar_range(0)).map(|range| range.base);
+            let bar1_base = cfg.and_then(|cfg| cfg.bar_range(1)).map(|range| range.base);
             (command, bar0_base, bar1_base)
         };
 
         let mut dev = e1000.borrow_mut();
         dev.pci_config_write(0x04, 2, u32::from(command));
-        if let Ok(bar0_base) = u32::try_from(bar0_base) {
-            if bar0_base != 0 {
+        if let Some(bar0_base) = bar0_base {
+            if let Ok(bar0_base) = u32::try_from(bar0_base) {
                 dev.pci_config_write(0x10, 4, bar0_base);
             }
         }
-        if let Ok(bar1_base) = u32::try_from(bar1_base) {
-            if bar1_base != 0 {
+        if let Some(bar1_base) = bar1_base {
+            if let Ok(bar1_base) = u32::try_from(bar1_base) {
                 dev.pci_config_write(0x14, 4, bar1_base);
             }
         }

@@ -62,16 +62,14 @@ fn snapshot_restore_roundtrips_nvme_state_and_redrives_intx_level() {
             let mut pci_cfg = pci_cfg.borrow_mut();
             let cfg = pci_cfg.bus_mut().device_config(bdf);
             let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
-            let bar0_base = cfg
-                .and_then(|cfg| cfg.bar_range(0))
-                .map(|r| r.base)
-                .unwrap_or(0);
+            // Preserve `Some(0)`: BARs can be present but programmed to base=0.
+            let bar0_base = cfg.and_then(|cfg| cfg.bar_range(0)).map(|r| r.base);
             (command, bar0_base)
         };
 
         let mut dev = nvme.borrow_mut();
         dev.config_mut().set_command(command);
-        if bar0_base != 0 {
+        if let Some(bar0_base) = bar0_base {
             dev.config_mut().set_bar_base(0, bar0_base);
         }
     }
