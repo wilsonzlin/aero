@@ -266,9 +266,11 @@ impl<'a> DxbcFile<'a> {
             [b'I', b'S', b'G', b'N'] => Some(FourCC(*b"ISG1")),
             [b'O', b'S', b'G', b'N'] => Some(FourCC(*b"OSG1")),
             [b'P', b'S', b'G', b'N'] => Some(FourCC(*b"PSG1")),
+            [b'P', b'C', b'S', b'G'] => Some(FourCC(*b"PCG1")),
             [b'I', b'S', b'G', b'1'] => Some(FourCC(*b"ISGN")),
             [b'O', b'S', b'G', b'1'] => Some(FourCC(*b"OSGN")),
             [b'P', b'S', b'G', b'1'] => Some(FourCC(*b"PSGN")),
+            [b'P', b'C', b'G', b'1'] => Some(FourCC(*b"PCSG")),
             _ => None,
         };
 

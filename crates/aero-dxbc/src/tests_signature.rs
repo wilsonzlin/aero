@@ -366,6 +366,53 @@ fn dxbc_get_signature_falls_back_to_psg1_chunk() {
 }
 
 #[test]
+fn dxbc_get_signature_parses_pcsg_chunk() {
+    let sig_bytes = build_signature_chunk();
+    let dxbc_bytes = build_dxbc(&[(FourCC(*b"PCSG"), &sig_bytes)]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse should succeed");
+
+    let sig = dxbc
+        .get_signature(FourCC(*b"PCSG"))
+        .expect("missing signature chunk")
+        .expect("signature parse should succeed");
+
+    assert_eq!(sig.entries.len(), 2);
+    assert_eq!(sig.entries[0].semantic_name, "POSITION");
+}
+
+#[test]
+fn dxbc_get_signature_falls_back_to_pcg1_chunk() {
+    let sig_bytes = build_signature_chunk_v1();
+    let dxbc_bytes = build_dxbc(&[(FourCC(*b"PCG1"), &sig_bytes)]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse should succeed");
+
+    // Callers commonly ask for `PCSG`, but some toolchains emit `PCG1`.
+    let sig = dxbc
+        .get_signature(FourCC(*b"PCSG"))
+        .expect("missing signature chunk")
+        .expect("signature parse should succeed");
+
+    assert_eq!(sig.entries.len(), 2);
+    assert_eq!(sig.entries[0].semantic_name, "POSITION");
+}
+
+#[test]
+fn dxbc_get_signature_falls_back_to_pcsg_chunk() {
+    let sig_bytes = build_signature_chunk();
+    let dxbc_bytes = build_dxbc(&[(FourCC(*b"PCSG"), &sig_bytes)]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse should succeed");
+
+    // Conversely, callers may request the `*G1` variant directly; accept `PCSG` in that case.
+    let sig = dxbc
+        .get_signature(FourCC(*b"PCG1"))
+        .expect("missing signature chunk")
+        .expect("signature parse should succeed");
+
+    assert_eq!(sig.entries.len(), 2);
+    assert_eq!(sig.entries[0].semantic_name, "POSITION");
+}
+
+#[test]
 fn dxbc_get_signature_parses_osgn_chunk() {
     let sig_bytes = build_signature_chunk();
     let dxbc_bytes = build_dxbc(&[(FourCC(*b"OSGN"), &sig_bytes)]);
