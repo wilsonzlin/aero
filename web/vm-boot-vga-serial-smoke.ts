@@ -3,6 +3,7 @@ import { FRAME_DIRTY, FRAME_STATUS_INDEX, GPU_PROTOCOL_NAME, GPU_PROTOCOL_VERSIO
 import { SHARED_FRAMEBUFFER_HEADER_U32_LEN, SharedFramebufferHeaderIndex } from "./src/ipc/shared-layout";
 import { probeRemoteDisk } from "./src/platform/remote_disk";
 import { WorkerCoordinator } from "./src/runtime/coordinator";
+import type { SetBootDisksMessage } from "./src/runtime/boot_disks_protocol";
 
 const GPU_MESSAGE_BASE = { protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION } as const;
 
@@ -213,7 +214,7 @@ async function main() {
         },
       },
       cd: null,
-    });
+    } satisfies SetBootDisksMessage);
     log(`disk: ${diskUrl} (${diskSize} bytes)`);
 
     // Wait for the CPU worker to boot the sector and emit the serial signature.

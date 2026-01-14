@@ -1,6 +1,7 @@
 import { startFrameScheduler } from "./src/main/frameScheduler";
 import { GPU_PROTOCOL_NAME, GPU_PROTOCOL_VERSION, isGpuWorkerMessageBase } from "./src/ipc/gpu-protocol";
 import { WorkerCoordinator } from "./src/runtime/coordinator";
+import type { SetBootDisksMessage } from "./src/runtime/boot_disks_protocol";
 import { SHARED_FRAMEBUFFER_HEADER_U32_LEN, SharedFramebufferHeaderIndex } from "./src/ipc/shared-layout";
 
 const GPU_MESSAGE_BASE = { protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION } as const;
@@ -71,7 +72,7 @@ async function main() {
 
   try {
     coordinator.start(config as any);
-    coordinator.getIoWorker()?.postMessage({ type: "setBootDisks", mounts: {}, hdd: null, cd: null });
+    coordinator.getIoWorker()?.postMessage({ type: "setBootDisks", mounts: {}, hdd: null, cd: null } satisfies SetBootDisksMessage);
 
     const gpuWorker = coordinator.getWorker("gpu");
     const cpuWorker = coordinator.getWorker("cpu");
