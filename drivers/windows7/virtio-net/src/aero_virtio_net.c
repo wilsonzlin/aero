@@ -2743,7 +2743,15 @@ static BOOLEAN AerovNetInterruptIsr(_In_ NDIS_HANDLE MiniportInterruptContext, _
   AEROVNET_ADAPTER* Adapter = (AEROVNET_ADAPTER*)MiniportInterruptContext;
   UCHAR Isr;
 
-  UNREFERENCED_PARAMETER(TargetProcessors);
+  /*
+   * NDIS uses TargetProcessors to select which CPU(s) should run the DPC.
+   * This is an OUT parameter; always initialize it to a safe default even
+   * when we return FALSE so NDIS never consumes stack garbage.
+   *
+   * 0 means "no preference" (NDIS chooses).
+   */
+  *TargetProcessors = 0;
+  *QueueDefaultInterruptDpc = FALSE;
 
   if (!Adapter) {
     return FALSE;
@@ -3146,7 +3154,12 @@ static BOOLEAN AerovNetMessageInterruptIsr(_In_ NDIS_HANDLE MiniportInterruptCon
   AEROVNET_ADAPTER* Adapter = (AEROVNET_ADAPTER*)MiniportInterruptContext;
 
   UNREFERENCED_PARAMETER(MessageId);
-  UNREFERENCED_PARAMETER(TargetProcessors);
+  /*
+   * TargetProcessors is an OUT parameter (see AerovNetInterruptIsr for details).
+   * Always initialize it so NDIS never observes an uninitialized value.
+   */
+  *TargetProcessors = 0;
+  *QueueDefaultInterruptDpc = FALSE;
 
   if (!Adapter) {
     return FALSE;
