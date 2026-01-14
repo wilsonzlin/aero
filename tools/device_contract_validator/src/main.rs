@@ -2418,7 +2418,7 @@ fn read_inf_text(path: &Path) -> Result<String> {
     Ok(text)
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 fn first_nonblank_ascii_byte(line: &[u8], first_line: bool) -> Option<u8> {
     // Robust to UTF-16 where ASCII characters are NUL-separated.
     let line = if first_line {
@@ -2443,7 +2443,7 @@ fn first_nonblank_ascii_byte(line: &[u8], first_line: bool) -> Option<u8> {
     None
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 fn inf_functional_bytes(path: &Path) -> Result<Vec<u8>> {
     // Return the INF content starting from the first section header line (typically `[Version]`).
     //
