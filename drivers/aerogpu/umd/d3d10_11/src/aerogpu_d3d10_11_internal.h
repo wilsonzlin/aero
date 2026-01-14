@@ -2066,6 +2066,65 @@ inline bool EmitSetRenderTargetsLocked(DeviceT* dev, SetErrorFn&& set_error) {
                                        std::forward<SetErrorFn>(set_error));
 }
 
+template <typename DeviceT, typename ResourceT, typename SetErrorFn>
+inline bool UnbindResourceFromOutputsLocked(DeviceT* dev,
+                                            aerogpu_handle_t handle,
+                                            const ResourceT* res,
+                                            SetErrorFn&& set_error) {
+  if (!dev || (handle == 0 && !res)) {
+    return true;
+  }
+
+  const uint32_t count = std::min<uint32_t>(dev->current_rtv_count, AEROGPU_MAX_RENDER_TARGETS);
+  aerogpu_handle_t rtvs[AEROGPU_MAX_RENDER_TARGETS] = {};
+  using ResourcePtr = std::remove_reference_t<decltype(dev->current_rtv_resources[0])>;
+  ResourcePtr rtv_resources[AEROGPU_MAX_RENDER_TARGETS] = {};
+  for (uint32_t i = 0; i < count; ++i) {
+    rtvs[i] = dev->current_rtvs[i];
+    rtv_resources[i] = dev->current_rtv_resources[i];
+  }
+  aerogpu_handle_t dsv = dev->current_dsv;
+  ResourcePtr dsv_res = dev->current_dsv_res;
+
+  bool changed = false;
+  for (uint32_t i = 0; i < count; ++i) {
+    if ((handle != 0 && rtvs[i] == handle) ||
+        (res && ResourcesAlias(rtv_resources[i], res))) {
+      rtvs[i] = 0;
+      rtv_resources[i] = nullptr;
+      changed = true;
+    }
+  }
+  if ((handle != 0 && dsv == handle) ||
+      (res && ResourcesAlias(dsv_res, res))) {
+    dsv = 0;
+    dsv_res = nullptr;
+    changed = true;
+  }
+
+  if (!changed) {
+    return true;
+  }
+
+  if (!EmitSetRenderTargetsCmdLocked(dev, count, rtvs, dsv, std::forward<SetErrorFn>(set_error))) {
+    return false;
+  }
+
+  // Commit state only after successfully appending the command.
+  dev->current_rtv_count = count;
+  for (uint32_t i = 0; i < count; ++i) {
+    dev->current_rtvs[i] = rtvs[i];
+    dev->current_rtv_resources[i] = rtv_resources[i];
+  }
+  for (uint32_t i = count; i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
+    dev->current_rtvs[i] = 0;
+    dev->current_rtv_resources[i] = nullptr;
+  }
+  dev->current_dsv = dsv;
+  dev->current_dsv_res = dsv_res;
+  return true;
+}
+
 // -------------------------------------------------------------------------------------------------
 // Dynamic state helpers (viewport + scissor)
 // -------------------------------------------------------------------------------------------------
