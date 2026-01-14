@@ -3975,6 +3975,48 @@ const handleRuntimeInit = (init: WorkerInitMessage) => {
     }
   }
 
+  if (snapshotPaused && snapshotGuestMemoryBackup) {
+    // Snapshot pause can race worker init (e.g. coordinator pauses workers while a GPU worker is
+    // still starting). If we are already snapshot-paused, treat the freshly initialized guest
+    // memory views as the "restored" state and keep guest-memory access disabled until resume.
+    //
+    // This ensures:
+    // - init does not re-enable guest-memory access while paused, and
+    // - vm.snapshot.resume restores the correct (new) views instead of the pre-init null backup.
+    snapshotGuestMemoryBackup.guestU8 = guestU8;
+    snapshotGuestMemoryBackup.guestU32 = guestU32;
+    snapshotGuestMemoryBackup.vramU8 = vramU8;
+    snapshotGuestMemoryBackup.vramU32 = vramU32;
+    snapshotGuestMemoryBackup.scanoutState = scanoutState;
+    snapshotGuestMemoryBackup.hwCursorState = hwCursorState;
+    snapshotGuestMemoryBackup.sharedFramebufferViews = sharedFramebufferViews;
+    snapshotGuestMemoryBackup.sharedFramebufferLayoutKey = sharedFramebufferLayoutKey;
+    snapshotGuestMemoryBackup.framebufferProtocolViews = framebufferProtocolViews;
+    snapshotGuestMemoryBackup.framebufferProtocolLayoutKey = framebufferProtocolLayoutKey;
+
+    guestU8 = null;
+    guestU32 = null;
+    vramU8 = null;
+    vramU32 = null;
+    scanoutState = null;
+    (globalThis as unknown as { __aeroScanoutState?: Int32Array }).__aeroScanoutState = undefined;
+    hwCursorState = null;
+    (globalThis as unknown as { __aeroCursorState?: Int32Array }).__aeroCursorState = undefined;
+    sharedFramebufferViews = null;
+    sharedFramebufferLayoutKey = null;
+    framebufferProtocolViews = null;
+    framebufferProtocolLayoutKey = null;
+    (globalThis as unknown as { __aeroSharedFramebuffer?: SharedFramebufferViews }).__aeroSharedFramebuffer = undefined;
+
+    if (aerogpuWasm) {
+      try {
+        syncAerogpuWasmMemoryViews(aerogpuWasm);
+      } catch {
+        // Ignore; wasm module may not have been initialized yet.
+      }
+    }
+  }
+
   const regions = ringRegionsForWorker(role);
   commandRing = new RingBuffer(segments.control, regions.command.byteOffset);
   eventRing = new RingBuffer(segments.control, regions.event.byteOffset);

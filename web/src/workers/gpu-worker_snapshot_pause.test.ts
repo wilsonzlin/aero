@@ -429,4 +429,113 @@ describe("workers/gpu-worker snapshot pause", () => {
       await worker.terminate();
     }
   });
+
+  it("keeps shared-state globals disabled when init runs after snapshot pause (pause before init)", async () => {
+    const segments = allocateHarnessSharedMemorySegments({
+      guestRamBytes: 64 * 1024,
+      sharedFramebuffer: createMinimalSharedFramebuffer(),
+      sharedFramebufferOffsetBytes: 0,
+      ioIpcBytes: 0,
+      vramBytes: 0,
+    });
+
+    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
+    const shimUrl = new URL("./test_workers/worker_threads_webworker_shim.ts", import.meta.url);
+    const worker = new Worker(new URL("./gpu-worker.ts", import.meta.url), {
+      type: "module",
+      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+    } as unknown as WorkerOptions);
+
+    try {
+      // Pause the worker before sending its runtime init message.
+      worker.postMessage({ kind: "vm.snapshot.pause", requestId: 1 });
+      await waitForWorkerMessage(
+        worker,
+        (msg) => (msg as any)?.kind === "vm.snapshot.paused" && (msg as any)?.requestId === 1 && (msg as any)?.ok === true,
+        5_000,
+      );
+
+      const initMsg: WorkerInitMessage = {
+        kind: "init",
+        role: "gpu",
+        controlSab: segments.control,
+        guestMemory: segments.guestMemory,
+        ioIpcSab: segments.ioIpc,
+        sharedFramebuffer: segments.sharedFramebuffer,
+        sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,
+        vgaFramebuffer: segments.sharedFramebuffer,
+        scanoutState: segments.scanoutState,
+        scanoutStateOffsetBytes: segments.scanoutStateOffsetBytes,
+        cursorState: segments.cursorState,
+        cursorStateOffsetBytes: segments.cursorStateOffsetBytes,
+        vram: segments.vram,
+        vramSizeBytes: segments.vram?.byteLength ?? 0,
+      };
+
+      worker.postMessage(initMsg);
+      await waitForWorkerMessage(
+        worker,
+        (msg) => (msg as Partial<ProtocolMessage>)?.type === MessageType.READY && (msg as { role?: unknown }).role === "gpu",
+        10_000,
+      );
+
+      const wasmModuleUrl = new URL("./test_workers/gpu_mock_presenter_globals_probe_module.ts", import.meta.url).href;
+
+      const sharedFrameState = new SharedArrayBuffer(8 * Int32Array.BYTES_PER_ELEMENT);
+      const frameState = new Int32Array(sharedFrameState);
+      Atomics.store(frameState, FRAME_STATUS_INDEX, FRAME_PRESENTED);
+      Atomics.store(frameState, FRAME_SEQ_INDEX, 0);
+
+      worker.postMessage({
+        protocol: GPU_PROTOCOL_NAME,
+        protocolVersion: GPU_PROTOCOL_VERSION,
+        type: "init",
+        sharedFrameState,
+        sharedFramebuffer: segments.sharedFramebuffer,
+        sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,
+        options: { wasmModuleUrl },
+      });
+
+      const probeImport = (await waitForWorkerMessage(
+        worker,
+        (msg) => (msg as { type?: unknown }).type === "mock_presenter_globals_probe" && (msg as any)?.phase === "import",
+        10_000,
+      )) as { scanoutOk?: boolean; cursorOk?: boolean };
+      // Still paused: globals should be disabled.
+      expect(probeImport.scanoutOk).toBe(false);
+      expect(probeImport.cursorOk).toBe(false);
+
+      // Resume and ensure the globals are restored before present().
+      worker.postMessage({ kind: "vm.snapshot.resume", requestId: 2 });
+      await waitForWorkerMessage(
+        worker,
+        (msg) => (msg as any)?.kind === "vm.snapshot.resumed" && (msg as any)?.requestId === 2 && (msg as any)?.ok === true,
+        5_000,
+      );
+
+      const header = new Int32Array(
+        segments.sharedFramebuffer,
+        segments.sharedFramebufferOffsetBytes,
+        SHARED_FRAMEBUFFER_HEADER_U32_LEN,
+      );
+      const nextSeq = (Atomics.load(header, SharedFramebufferHeaderIndex.FRAME_SEQ) + 1) | 0;
+      Atomics.store(header, SharedFramebufferHeaderIndex.FRAME_SEQ, nextSeq);
+      Atomics.store(header, SharedFramebufferHeaderIndex.FRAME_DIRTY, 1);
+
+      Atomics.store(frameState, FRAME_SEQ_INDEX, nextSeq);
+      Atomics.store(frameState, FRAME_STATUS_INDEX, FRAME_DIRTY);
+
+      worker.postMessage({ protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION, type: "tick", frameTimeMs: 0 });
+
+      const probePresent = (await waitForWorkerMessage(
+        worker,
+        (msg) => (msg as { type?: unknown }).type === "mock_presenter_globals_probe" && (msg as any)?.phase === "present",
+        10_000,
+      )) as { scanoutOk?: boolean; cursorOk?: boolean };
+      expect(probePresent.scanoutOk).toBe(true);
+      expect(probePresent.cursorOk).toBe(true);
+    } finally {
+      await worker.terminate();
+    }
+  });
 });
