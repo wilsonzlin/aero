@@ -408,6 +408,42 @@ mod tests {
     use wasm_bindgen::JsValue;
     use wasm_bindgen_test::wasm_bindgen_test;
 
+    fn alloc_outside_heap_bytes(min_bytes: usize) -> u32 {
+        let page_bytes = crate::guest_layout::WASM_PAGE_BYTES as usize;
+        let reserved_bytes = crate::guest_layout::RUNTIME_RESERVED_BYTES as usize;
+        let reserved_pages = reserved_bytes.div_ceil(page_bytes);
+
+        let cur_pages = core::arch::wasm32::memory_size(0);
+        if cur_pages < reserved_pages {
+            let delta = reserved_pages - cur_pages;
+            let prev = core::arch::wasm32::memory_grow(0, delta);
+            assert_ne!(
+                prev,
+                usize::MAX,
+                "memory.grow failed while reserving runtime heap (requested {delta} pages)"
+            );
+        }
+
+        let pages = min_bytes.div_ceil(page_bytes).max(1);
+        let before_pages = core::arch::wasm32::memory_size(0) as u64;
+        let prev = core::arch::wasm32::memory_grow(0, pages);
+        assert_ne!(
+            prev,
+            usize::MAX,
+            "memory.grow failed while allocating test buffer (requested {pages} pages)"
+        );
+
+        let base = before_pages
+            .checked_mul(crate::guest_layout::WASM_PAGE_BYTES)
+            .expect("linear memory byte offset overflow");
+        let base_u32: u32 = base.try_into().expect("linear memory offset must fit in u32");
+        assert!(
+            u64::from(base_u32) >= crate::guest_layout::RUNTIME_RESERVED_BYTES,
+            "test buffer must be allocated above the runtime heap"
+        );
+        base_u32
+    }
+
     fn js_error_message(err: JsValue) -> String {
         if let Ok(e) = err.clone().dyn_into::<js_sys::Error>() {
             return e.message().into();
@@ -422,24 +458,34 @@ mod tests {
             aero_snapshot::limits::MAX_DEVICE_ENTRY_LEN as usize
         );
 
-        let mut snapshot = WorkerVmSnapshot::new(0, 1).expect("WorkerVmSnapshot::new");
-
         let max = MAX_DEVICE_BLOB_BYTES;
 
-        let data = vec![0u8; max];
+        // Avoid allocating the input buffer on the Rust heap: `WorkerVmSnapshot::add_device_state`
+        // copies `data` into its own `Vec<u8>`, and the wasm runtime heap is bounded to
+        // `RUNTIME_RESERVED_BYTES` (128MiB). Allocating both the input and internal copy would be
+        // near the heap limit and can OOM in wasm-bindgen tests.
+        let base = alloc_outside_heap_bytes(max + 1);
+        let region =
+            unsafe { core::slice::from_raw_parts(base as *const u8, max + 1) };
+
+        // Use the canonical shared guest RAM layout base. The guest region is unused by this test
+        // but `WorkerVmSnapshot::new` validates the mapping.
+        let guest_base = crate::guest_layout::RUNTIME_RESERVED_BYTES as u32;
+        let guest_size = crate::guest_layout::WASM_PAGE_BYTES as u32;
+        let mut snapshot =
+            WorkerVmSnapshot::new(guest_base, guest_size).expect("WorkerVmSnapshot::new");
+
         snapshot
-            .add_device_state(1, 1, 0, &data)
+            .add_device_state(1, 1, 0, &region[..max])
             .expect("64 MiB device blob should be accepted");
         assert_eq!(snapshot.devices.len(), 1);
         assert_eq!(snapshot.devices[0].data.len(), max);
 
         // Drop the large allocation before testing the failure case.
         snapshot.devices.clear();
-        drop(data);
 
-        let too_large = vec![0u8; max + 1];
         let err = snapshot
-            .add_device_state(2, 1, 0, &too_large)
+            .add_device_state(2, 1, 0, region)
             .expect_err("device blob larger than 64 MiB should be rejected");
         let msg = js_error_message(err);
         assert!(
