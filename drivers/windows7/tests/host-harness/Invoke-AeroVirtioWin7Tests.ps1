@@ -247,9 +247,11 @@ param(
   [switch]$RequireVirtioNetMsix,
 
   [Parameter(Mandatory = $false)]
+  [Alias("RequireBlkMsix")]
   [switch]$RequireVirtioBlkMsix,
 
   [Parameter(Mandatory = $false)]
+  [Alias("RequireSndMsix")]
   [switch]$RequireVirtioSndMsix,
 
   # If set, require the guest virtio-input-msix marker to report mode=msix.

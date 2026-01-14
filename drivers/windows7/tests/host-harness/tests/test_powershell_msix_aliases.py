@@ -14,9 +14,10 @@ class PowerShellMsixAliasTests(unittest.TestCase):
 
         # Keep these aliases stable for ergonomics (and to match provisioning script naming).
         self.assertIn('Alias("RequireNetMsix")', text)
+        self.assertIn('Alias("RequireBlkMsix")', text)
+        self.assertIn('Alias("RequireSndMsix")', text)
         self.assertIn('Alias("RequireInputMsix")', text)
 
 
 if __name__ == "__main__":
     unittest.main()
-

@@ -3324,6 +3324,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--require-virtio-blk-msix",
+        "--require-blk-msix",
         action="store_true",
         help=(
             "Require virtio-blk to run with MSI-X enabled. This performs a host-side MSI-X enable check via QMP "
@@ -3336,6 +3337,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--require-virtio-snd-msix",
+        "--require-snd-msix",
         action="store_true",
         help=(
             "Require virtio-snd to run with MSI-X enabled. This performs a host-side MSI-X enable check via QMP "

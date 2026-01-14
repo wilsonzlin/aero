@@ -283,6 +283,30 @@ class HarnessArgAliasTests(unittest.TestCase):
         )
         self.assertTrue(args.require_virtio_net_msix)
 
+    def test_require_blk_msix_alias_sets_flag(self) -> None:
+        args = self._parse(
+            [
+                "--qemu-system",
+                "qemu-system-x86_64",
+                "--disk-image",
+                "disk.img",
+                "--require-blk-msix",
+            ]
+        )
+        self.assertTrue(args.require_virtio_blk_msix)
+
+    def test_require_snd_msix_alias_sets_flag(self) -> None:
+        args = self._parse(
+            [
+                "--qemu-system",
+                "qemu-system-x86_64",
+                "--disk-image",
+                "disk.img",
+                "--require-snd-msix",
+            ]
+        )
+        self.assertTrue(args.require_virtio_snd_msix)
+
     def test_require_input_msix_alias_sets_flag(self) -> None:
         args = self._parse(
             [

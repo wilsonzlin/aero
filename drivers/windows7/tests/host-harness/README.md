@@ -322,13 +322,13 @@ MSI-X as disabled on the corresponding PCI function (best-effort introspection v
 
 - PowerShell:
   - `-RequireVirtioNetMsix` *(alias: `-RequireNetMsix`; also requires the guest `virtio-net-msix` marker to report `mode=msix`)*
-  - `-RequireVirtioBlkMsix`
-  - `-RequireVirtioSndMsix` *(requires `-WithVirtioSnd`; also requires the guest `virtio-snd-msix` marker to report `mode=msix`)*
+  - `-RequireVirtioBlkMsix` *(alias: `-RequireBlkMsix`; also requires the guest `virtio-blk-msix` marker to report `mode=msix`)*
+  - `-RequireVirtioSndMsix` *(alias: `-RequireSndMsix`; requires `-WithVirtioSnd`; also requires the guest `virtio-snd-msix` marker to report `mode=msix`)*
   - `-RequireVirtioInputMsix` *(alias: `-RequireInputMsix`; guest marker check: requires `AERO_VIRTIO_SELFTEST|TEST|virtio-input-msix|...` to report `mode=msix`)*
 - Python:
   - `--require-virtio-net-msix` *(alias: `--require-net-msix`; also requires the guest `virtio-net-msix` marker to report `mode=msix`)*
-  - `--require-virtio-blk-msix`
-  - `--require-virtio-snd-msix` *(requires `--with-virtio-snd`; also requires the guest `virtio-snd-msix` marker to report `mode=msix`)*
+  - `--require-virtio-blk-msix` *(alias: `--require-blk-msix`; also requires the guest `virtio-blk-msix` marker to report `mode=msix`)*
+  - `--require-virtio-snd-msix` *(alias: `--require-snd-msix`; requires `--with-virtio-snd`; also requires the guest `virtio-snd-msix` marker to report `mode=msix`)*
   - `--require-virtio-input-msix` *(alias: `--require-input-msix`; guest marker check: requires `AERO_VIRTIO_SELFTEST|TEST|virtio-input-msix|...` to report `mode=msix`)*
 
 Notes:
