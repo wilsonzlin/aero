@@ -94,3 +94,46 @@ fn ensure_file(path: &Path, expected: &[u8], check: bool) -> Result<()> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_args_accepts_check_flag() {
+        assert_eq!(parse_args(Vec::new()).unwrap(), Some(false));
+        assert_eq!(parse_args(vec!["--check".to_string()]).unwrap(), Some(true));
+    }
+
+    #[test]
+    fn parse_args_rejects_unknown_flag() {
+        let err = parse_args(vec!["--nope".to_string()]).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("unknown flag for `bios-rom`"));
+        assert!(msg.contains("--nope"));
+    }
+
+    #[test]
+    fn ensure_file_writes_and_checks() {
+        let tmp = tempfile::tempdir().unwrap();
+        let nested = tmp.path().join("a").join("b").join("bios.bin");
+        let expected = vec![0xAA, 0xBB, 0xCC];
+
+        // Write mode should create parent dirs and write the file.
+        ensure_file(&nested, &expected, false).unwrap();
+        assert_eq!(std::fs::read(&nested).unwrap(), expected);
+
+        // Check mode should succeed when bytes match.
+        ensure_file(&nested, &expected, true).unwrap();
+
+        // Out-of-date should fail in check mode.
+        std::fs::write(&nested, &[0x00]).unwrap();
+        let err = ensure_file(&nested, &expected, true).unwrap_err();
+        assert!(err.to_string().contains("out of date"));
+
+        // Missing should fail in check mode.
+        std::fs::remove_file(&nested).unwrap();
+        let err = ensure_file(&nested, &expected, true).unwrap_err();
+        assert!(err.to_string().contains("is missing"));
+    }
+}

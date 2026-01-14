@@ -7,7 +7,11 @@ use std::path::{Path, PathBuf};
 const REGEN_CMD: &str = "cargo xtask fixtures";
 const CHECK_CMD: &str = "cargo xtask fixtures --check";
 
-// Convenience for regenerating/checking just the BIOS ROM fixture.
+// Preferred regeneration command for the BIOS ROM fixture only.
+const REGEN_CMD_BIOS_ROM: &str = "cargo xtask bios-rom";
+const CHECK_CMD_BIOS_ROM: &str = "cargo xtask bios-rom --check";
+
+// Alternative convenience for regenerating/checking just the BIOS ROM fixture.
 const REGEN_CMD_ALT: &str = "cargo run -p firmware --bin gen_bios_rom --locked";
 // When invoking `--check` via `cargo run`, the `--` separator is required so Cargo forwards the
 // flag to the binary rather than trying to parse it itself.
@@ -33,7 +37,11 @@ Preferred (regen/check all deterministic fixtures):\n\
     {REGEN_CMD}\n\
     {CHECK_CMD}\n\
 \n\
-This binary is a convenience for regenerating just the BIOS ROM fixture:\n\
+Preferred (regen/check BIOS ROM only):\n\
+    {REGEN_CMD_BIOS_ROM}\n\
+    {CHECK_CMD_BIOS_ROM}\n\
+\n\
+This binary is an alternative convenience for regenerating just the BIOS ROM fixture:\n\
     {REGEN_CMD_ALT}\n\
     {CHECK_CMD_ALT}\n\
 \n\
