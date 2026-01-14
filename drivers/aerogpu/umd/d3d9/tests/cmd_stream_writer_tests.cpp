@@ -14332,6 +14332,184 @@ bool TestFvfXyzrhwDiffuseTex1DrawPrimitiveUpEmulationConvertsVertices() {
   return ValidateStream(buf, len);
 }
 
+bool TestFvfXyzrhwTex1DrawPrimitiveUpEmulationConvertsVertices() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    bool has_adapter = false;
+    bool has_device = false;
+
+    ~Cleanup() {
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  if (!Check(cleanup.device_funcs.pfnSetFVF != nullptr, "SetFVF must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetViewport != nullptr, "SetViewport must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDrawPrimitiveUP != nullptr, "DrawPrimitiveUP must be available")) {
+    return false;
+  }
+
+  D3DDDIVIEWPORTINFO vp{};
+  vp.X = 0.0f;
+  vp.Y = 0.0f;
+  vp.Width = 256.0f;
+  vp.Height = 256.0f;
+  vp.MinZ = 0.0f;
+  vp.MaxZ = 1.0f;
+  hr = cleanup.device_funcs.pfnSetViewport(create_dev.hDevice, &vp);
+  if (!Check(hr == S_OK, "SetViewport")) {
+    return false;
+  }
+
+  // D3DFVF_XYZRHW (0x4) | D3DFVF_TEX1 (0x100).
+  hr = cleanup.device_funcs.pfnSetFVF(create_dev.hDevice, 0x104u);
+  if (!Check(hr == S_OK, "SetFVF(XYZRHW|TEX1)")) {
+    return false;
+  }
+
+  struct Vertex {
+    float x;
+    float y;
+    float z;
+    float rhw;
+    float u;
+    float v;
+  };
+
+  Vertex verts[3]{};
+  verts[0] = {256.0f * 0.25f, 256.0f * 0.25f, 0.5f, 1.0f, 0.25f, 0.75f};
+  verts[1] = {256.0f * 0.75f, 256.0f * 0.25f, 0.5f, 1.0f, 0.75f, 0.75f};
+  verts[2] = {256.0f * 0.50f, 256.0f * 0.75f, 0.5f, 1.0f, 0.50f, 0.25f};
+
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(create_dev.hDevice, D3DDDIPT_TRIANGLELIST, 1, verts, sizeof(Vertex));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+  if (!Check(dev->up_vertex_buffer != nullptr, "up_vertex_buffer allocated")) {
+    return false;
+  }
+  const uint32_t up_vb_handle = dev->up_vertex_buffer->handle;
+  if (!Check(up_vb_handle != 0, "up_vertex_buffer handle non-zero")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+
+  const size_t expected_bytes = AlignUp(sizeof(verts), 4);
+  std::vector<uint8_t> vb_upload(expected_bytes, 0);
+  size_t vb_uploaded_bytes = 0;
+
+  const size_t stream_len = StreamBytesUsed(buf, len);
+  size_t off = sizeof(aerogpu_cmd_stream_header);
+  while (off + sizeof(aerogpu_cmd_hdr) <= stream_len) {
+    const auto* hdr = reinterpret_cast<const aerogpu_cmd_hdr*>(buf + off);
+    if (hdr->opcode == AEROGPU_CMD_UPLOAD_RESOURCE) {
+      const auto* upload = reinterpret_cast<const aerogpu_cmd_upload_resource*>(hdr);
+      if (upload->resource_handle == up_vb_handle) {
+        const size_t payload_bytes = upload->size_bytes;
+        if (!Check(upload->offset_bytes + payload_bytes <= expected_bytes, "upload_resource(UP VB) bounds")) {
+          return false;
+        }
+        if (!Check(sizeof(*upload) + payload_bytes <= hdr->size_bytes, "upload_resource(UP VB) payload bounds")) {
+          return false;
+        }
+        const uint8_t* payload = reinterpret_cast<const uint8_t*>(upload) + sizeof(*upload);
+        std::memcpy(vb_upload.data() + upload->offset_bytes, payload, payload_bytes);
+        vb_uploaded_bytes += payload_bytes;
+      }
+    }
+    if (hdr->size_bytes == 0 || hdr->size_bytes > stream_len - off) {
+      break;
+    }
+    off += hdr->size_bytes;
+  }
+
+  if (!Check(vb_uploaded_bytes == expected_bytes, "UP VB upload emitted")) {
+    return false;
+  }
+
+  float x0 = 0.0f;
+  float y0 = 0.0f;
+  float z0 = 0.0f;
+  float w0 = 0.0f;
+  float u0 = 0.0f;
+  float v0 = 0.0f;
+  std::memcpy(&x0, vb_upload.data() + 0, sizeof(float));
+  std::memcpy(&y0, vb_upload.data() + 4, sizeof(float));
+  std::memcpy(&z0, vb_upload.data() + 8, sizeof(float));
+  std::memcpy(&w0, vb_upload.data() + 12, sizeof(float));
+  std::memcpy(&u0, vb_upload.data() + 16, sizeof(float));
+  std::memcpy(&v0, vb_upload.data() + 20, sizeof(float));
+
+  const float expected_x0 = ((verts[0].x + 0.5f - vp.X) / vp.Width) * 2.0f - 1.0f;
+  const float expected_y0 = 1.0f - ((verts[0].y + 0.5f - vp.Y) / vp.Height) * 2.0f;
+  if (!Check(std::fabs(x0 - expected_x0) < 1e-6f, "XYZRHW|TEX1(no diffuse) UP: x0 matches half-pixel convention")) {
+    return false;
+  }
+  if (!Check(std::fabs(y0 - expected_y0) < 1e-6f, "XYZRHW|TEX1(no diffuse) UP: y0 matches half-pixel convention")) {
+    return false;
+  }
+  if (!Check(std::fabs(z0 - verts[0].z) < 1e-6f, "XYZRHW|TEX1(no diffuse) UP: z preserved")) {
+    return false;
+  }
+  if (!Check(std::fabs(w0 - 1.0f) < 1e-6f, "XYZRHW|TEX1(no diffuse) UP: w preserved")) {
+    return false;
+  }
+  if (!Check(std::fabs(u0 - verts[0].u) < 1e-6f, "XYZRHW|TEX1(no diffuse) UP: u preserved")) {
+    return false;
+  }
+  if (!Check(std::fabs(v0 - verts[0].v) < 1e-6f, "XYZRHW|TEX1(no diffuse) UP: v preserved")) {
+    return false;
+  }
+  return ValidateStream(buf, len);
+}
+
 bool TestFvfXyzTex1DrawPrimitiveNoScratchVbConversion() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
@@ -14523,6 +14701,161 @@ bool TestFvfXyzTex1DrawPrimitiveNoScratchVbConversion() {
     return false;
   }
 
+  return ValidateStream(buf, len);
+}
+
+bool TestFvfXyzTex1DrawPrimitiveUpDoesNotConvertVertices() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    bool has_adapter = false;
+    bool has_device = false;
+
+    ~Cleanup() {
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  if (!Check(cleanup.device_funcs.pfnSetFVF != nullptr, "SetFVF must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDrawPrimitiveUP != nullptr, "DrawPrimitiveUP must be available")) {
+    return false;
+  }
+
+  // D3DFVF_XYZ (0x2) | D3DFVF_TEX1 (0x100).
+  hr = cleanup.device_funcs.pfnSetFVF(create_dev.hDevice, 0x102u);
+  if (!Check(hr == S_OK, "SetFVF(XYZ|TEX1)")) {
+    return false;
+  }
+
+  struct Vertex {
+    float x;
+    float y;
+    float z;
+    float u;
+    float v;
+  };
+
+  Vertex verts[3]{};
+  verts[0] = {-0.5f, -0.5f, 0.5f, 0.25f, 0.75f};
+  verts[1] = {0.5f, -0.5f, 0.5f, 0.75f, 0.75f};
+  verts[2] = {0.0f, 0.5f, 0.5f, 0.50f, 0.25f};
+
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(create_dev.hDevice, D3DDDIPT_TRIANGLELIST, 1, verts, sizeof(Vertex));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+  if (!Check(dev->up_vertex_buffer != nullptr, "up_vertex_buffer allocated")) {
+    return false;
+  }
+  const uint32_t up_vb_handle = dev->up_vertex_buffer->handle;
+  if (!Check(up_vb_handle != 0, "up_vertex_buffer handle non-zero")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+
+  const size_t expected_bytes = AlignUp(sizeof(verts), 4);
+  std::vector<uint8_t> vb_upload(expected_bytes, 0);
+  size_t vb_uploaded_bytes = 0;
+
+  const size_t stream_len = StreamBytesUsed(buf, len);
+  size_t off = sizeof(aerogpu_cmd_stream_header);
+  while (off + sizeof(aerogpu_cmd_hdr) <= stream_len) {
+    const auto* hdr = reinterpret_cast<const aerogpu_cmd_hdr*>(buf + off);
+    if (hdr->opcode == AEROGPU_CMD_UPLOAD_RESOURCE) {
+      const auto* upload = reinterpret_cast<const aerogpu_cmd_upload_resource*>(hdr);
+      if (upload->resource_handle == up_vb_handle) {
+        const size_t payload_bytes = upload->size_bytes;
+        if (!Check(upload->offset_bytes + payload_bytes <= expected_bytes, "upload_resource(UP VB) bounds")) {
+          return false;
+        }
+        if (!Check(sizeof(*upload) + payload_bytes <= hdr->size_bytes, "upload_resource(UP VB) payload bounds")) {
+          return false;
+        }
+        const uint8_t* payload = reinterpret_cast<const uint8_t*>(upload) + sizeof(*upload);
+        std::memcpy(vb_upload.data() + upload->offset_bytes, payload, payload_bytes);
+        vb_uploaded_bytes += payload_bytes;
+      }
+    }
+    if (hdr->size_bytes == 0 || hdr->size_bytes > stream_len - off) {
+      break;
+    }
+    off += hdr->size_bytes;
+  }
+
+  if (!Check(vb_uploaded_bytes == expected_bytes, "UP VB upload emitted")) {
+    return false;
+  }
+
+  float x0 = 0.0f;
+  float y0 = 0.0f;
+  float z0 = 0.0f;
+  float u0 = 0.0f;
+  float v0 = 0.0f;
+  std::memcpy(&x0, vb_upload.data() + 0, sizeof(float));
+  std::memcpy(&y0, vb_upload.data() + 4, sizeof(float));
+  std::memcpy(&z0, vb_upload.data() + 8, sizeof(float));
+  std::memcpy(&u0, vb_upload.data() + 12, sizeof(float));
+  std::memcpy(&v0, vb_upload.data() + 16, sizeof(float));
+
+  if (!Check(std::fabs(x0 - verts[0].x) < 1e-6f, "XYZ|TEX1 UP: x0 is not CPU-converted")) {
+    return false;
+  }
+  if (!Check(std::fabs(y0 - verts[0].y) < 1e-6f, "XYZ|TEX1 UP: y0 is not CPU-converted")) {
+    return false;
+  }
+  if (!Check(std::fabs(z0 - verts[0].z) < 1e-6f, "XYZ|TEX1 UP: z preserved")) {
+    return false;
+  }
+  if (!Check(std::fabs(u0 - verts[0].u) < 1e-6f, "XYZ|TEX1 UP: u preserved")) {
+    return false;
+  }
+  if (!Check(std::fabs(v0 - verts[0].v) < 1e-6f, "XYZ|TEX1 UP: v preserved")) {
+    return false;
+  }
   return ValidateStream(buf, len);
 }
 
@@ -15056,6 +15389,36 @@ bool TestFixedfuncStrideTooSmallFailsAndDoesNotEmitDraw() {
 
   hr = cleanup.device_funcs.pfnDrawPrimitive(create_dev.hDevice, D3DDDIPT_TRIANGLELIST, 0, 1);
   if (!Check(hr == kD3DErrInvalidCall, "DrawPrimitive rejects stride-too-small fixedfunc draw")) {
+    return false;
+  }
+
+  // Also validate the stride checks for the TEX1-only fixed-function variants.
+  // - XYZRHW|TEX1 requires >= 24 bytes (float4 + float2).
+  // - XYZ|TEX1 requires >= 20 bytes (float3 + float2).
+
+  hr = cleanup.device_funcs.pfnSetFVF(create_dev.hDevice, 0x104u);
+  if (!Check(hr == S_OK, "SetFVF(XYZRHW|TEX1)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetStreamSource(create_dev.hDevice, 0, create_res.hResource, 0, 20u);
+  if (!Check(hr == S_OK, "SetStreamSource(stride too small, XYZRHW|TEX1)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnDrawPrimitive(create_dev.hDevice, D3DDDIPT_TRIANGLELIST, 0, 1);
+  if (!Check(hr == kD3DErrInvalidCall, "DrawPrimitive rejects stride-too-small XYZRHW|TEX1")) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnSetFVF(create_dev.hDevice, 0x102u);
+  if (!Check(hr == S_OK, "SetFVF(XYZ|TEX1)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetStreamSource(create_dev.hDevice, 0, create_res.hResource, 0, 16u);
+  if (!Check(hr == S_OK, "SetStreamSource(stride too small, XYZ|TEX1)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnDrawPrimitive(create_dev.hDevice, D3DDDIPT_TRIANGLELIST, 0, 1);
+  if (!Check(hr == kD3DErrInvalidCall, "DrawPrimitive rejects stride-too-small XYZ|TEX1")) {
     return false;
   }
 
@@ -22758,8 +23121,10 @@ int main() {
   failures += !aerogpu::TestFvfXyzrhwDiffuseTex1DrawPrimitiveEmulationConvertsVertices();
   failures += !aerogpu::TestFvfXyzrhwTex1DrawPrimitiveEmulationConvertsVertices();
   failures += !aerogpu::TestFvfXyzrhwDiffuseTex1DrawPrimitiveUpEmulationConvertsVertices();
+  failures += !aerogpu::TestFvfXyzrhwTex1DrawPrimitiveUpEmulationConvertsVertices();
   failures += !aerogpu::TestFvfXyzDiffuseDrawPrimitiveNoScratchVbConversion();
   failures += !aerogpu::TestFvfXyzTex1DrawPrimitiveNoScratchVbConversion();
+  failures += !aerogpu::TestFvfXyzTex1DrawPrimitiveUpDoesNotConvertVertices();
   failures += !aerogpu::TestFvfXyzDiffuseDrawPrimitiveUpDoesNotConvertVertices();
   failures += !aerogpu::TestFixedfuncStrideTooSmallFailsAndDoesNotEmitDraw();
   failures += !aerogpu::TestDrawRectPatchReusesTessellationCache();
