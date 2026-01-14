@@ -705,7 +705,7 @@ describe("usb/UHCI synthetic HID passthrough integration (WASM)", () => {
     attach.call(runtime, [EXTERNAL_HUB_ROOT_PORT, UHCI_SYNTHETIC_HID_CONSUMER_CONTROL_HUB_PORT], consumerDev);
 
     // Force an external hub resize after devices are attached. Without runtime-side bookkeeping,
-    // this would disconnect host-managed devices (synthetic keyboard/mouse/gamepad).
+    // this would disconnect host-managed devices (synthetic keyboard/mouse/gamepad/consumer-control).
     grow.call(runtime, [EXTERNAL_HUB_ROOT_PORT], 32);
 
     const uhci: { io_write(offset: number, size: number, value: number): void; step_frame(): void; tick_1ms(): void } = {

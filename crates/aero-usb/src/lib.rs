@@ -5,7 +5,7 @@
 //! (see `docs/adr/0015-canonical-usb-stack.md`).
 //!
 //! The main consumer is the browser-based emulator, which exposes an emulated UHCI (USB 1.1)
-//! controller and USB HID devices (keyboard/mouse/gamepad + passthrough). There is also an
+//! controller and USB HID devices (keyboard/mouse/gamepad/consumer-control + passthrough). There is also an
 //! in-progress xHCI (USB 3.0) controller model; currently only core data types are implemented.
 //!
 //! ## Snapshot/restore
@@ -23,6 +23,7 @@
 //! | `hid::UsbHidKeyboard` / `hid::UsbHidKeyboardHandle` | `b"UKBD"` |
 //! | `hid::UsbHidMouse` / `hid::UsbHidMouseHandle` | `b"UMSE"` |
 //! | `hid::UsbHidGamepad` / `hid::UsbHidGamepadHandle` | `b"UGPD"` |
+//! | `hid::UsbHidConsumerControl` / `hid::UsbHidConsumerControlHandle` | `b"UCON"` |
 //! | `hid::composite::UsbCompositeHidInput` / `hid::UsbCompositeHidInputHandle` | `b"UCMP"` |
 //! | `hid::UsbHidPassthrough` / `hid::UsbHidPassthroughHandle` | `b"HIDP"` |
 //! | `passthrough::UsbPassthroughDevice` | `b"USBP"` |
