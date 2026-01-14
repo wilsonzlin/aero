@@ -102,6 +102,7 @@ import {
   type GuestRamLayout,
   type WorkerRole,
 } from '../runtime/shared_layout';
+import { MAX_SCANOUT_RGBA8_BYTES, tryComputeScanoutRgba8ByteLength } from "../runtime/scanout_readback";
 import { RingBuffer } from '../ipc/ring_buffer';
 import { decodeCommand, encodeEvent, type Command, type Event } from '../ipc/protocol';
 import {
@@ -1103,8 +1104,9 @@ const COPY_BYTES_PER_ROW_ALIGNMENT = 256;
 type WddmScanoutReadback = { width: number; height: number; strideBytes: number; rgba8: Uint8Array };
 
 // Per-tick safety limit to avoid pathological allocations/copies on corrupt scanout descriptors.
-// 32 MiB supports up to ~4K RGBA (3840*2160*4 ≈ 31.6 MiB).
-const MAX_WDDM_SCANOUT_BYTES = 32 * 1024 * 1024;
+//
+// Reuse the same 256 MiB limit as other scanout readback paths (e.g. screenshots) so a corrupt or
+// malicious scanout descriptor cannot OOM/crash the GPU worker.
 
 let wddmScanoutRgbaCapacity = 0;
 let wddmScanoutRgbaU32: Uint32Array | null = null;
@@ -1152,7 +1154,14 @@ const ensureWddmScanoutRgbaCapacity = (requiredBytes: number): Uint8Array | null
     return wddmScanoutRgba;
   }
 
-  wddmScanoutRgba = new Uint8Array(requiredBytes);
+  try {
+    wddmScanoutRgba = new Uint8Array(requiredBytes);
+  } catch {
+    wddmScanoutRgba = null;
+    wddmScanoutRgbaCapacity = 0;
+    wddmScanoutRgbaU32 = null;
+    return null;
+  }
   wddmScanoutRgbaCapacity = requiredBytes;
   wddmScanoutRgbaU32 = new Uint32Array(
     wddmScanoutRgba.buffer,
@@ -1210,14 +1219,14 @@ const tryReadWddmScanoutRgba8 = (snap: ScanoutStateSnapshot): WddmScanoutReadbac
   }
 
   const outputBytesU64 = BigInt(width) * BigInt(height) * BigInt(BYTES_PER_PIXEL_RGBA8);
-  if (outputBytesU64 > BigInt(MAX_WDDM_SCANOUT_BYTES)) {
+  const outputBytes = tryComputeScanoutRgba8ByteLength(width, height, MAX_SCANOUT_RGBA8_BYTES);
+  if (outputBytes === null) {
     emitWddmScanoutInvalid(snap, "WDDM scanout: framebuffer exceeds size budget", {
-      budgetBytes: MAX_WDDM_SCANOUT_BYTES,
+      budgetBytes: MAX_SCANOUT_RGBA8_BYTES,
       outputBytes: outputBytesU64.toString(),
     });
     return null;
   }
-  const outputBytes = Number(outputBytesU64);
 
   const basePaddr = (BigInt(snap.basePaddrHi >>> 0) << 32n) | BigInt(snap.basePaddrLo >>> 0);
   if (basePaddr === 0n) return null;
@@ -3889,8 +3898,7 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
                 return true;
               }
               // Avoid attempting absurd allocations if the descriptor is corrupt.
-              const MAX_SCREENSHOT_BYTES = 256 * 1024 * 1024;
-              if (outBytes > MAX_SCREENSHOT_BYTES) {
+              if (outBytes > MAX_SCANOUT_RGBA8_BYTES) {
                 postStub(typeof seq === "number" ? seq : undefined);
                 return true;
               }

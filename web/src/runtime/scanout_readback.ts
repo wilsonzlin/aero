@@ -26,6 +26,13 @@ export type ScanoutReadbackResult = Readonly<{
   rgba8: Uint8Array<ArrayBuffer>;
 }>;
 
+// Upper bound used by screenshot + presentation readback paths to prevent untrusted/corrupt
+// scanout descriptors from attempting absurd allocations inside the GPU worker.
+//
+// NOTE: This is a *safety* limit, not a correctness limit. Callers should treat oversized
+// descriptors as "no frame" rather than a fatal error.
+export const MAX_SCANOUT_RGBA8_BYTES = 256 * 1024 * 1024;
+
 const MAX_SAFE_U64_BIGINT = BigInt(Number.MAX_SAFE_INTEGER);
 
 const toU32 = (value: number, label: string): number => {
@@ -68,11 +75,39 @@ const u64BigintToSafeNumber = (value: bigint, label: string): number => {
 };
 
 /**
+ * Compute the number of bytes required for a tightly packed RGBA8 buffer (`width*height*4`).
+ *
+ * Returns `null` when:
+ * - width/height are invalid
+ * - the computed size exceeds `maxBytes`
+ *
+ * Uses BigInt math to avoid overflow/precision loss for untrusted `u32` inputs.
+ */
+export function tryComputeScanoutRgba8ByteLength(
+  width: number,
+  height: number,
+  maxBytes: number = MAX_SCANOUT_RGBA8_BYTES,
+): number | null {
+  if (!Number.isFinite(width) || !Number.isFinite(height) || !Number.isFinite(maxBytes)) return null;
+  const w = Math.trunc(width);
+  const h = Math.trunc(height);
+  if (w <= 0 || h <= 0) return null;
+  if (w > 0xffff_ffff || h > 0xffff_ffff) return null;
+  if (maxBytes <= 0) return null;
+
+  const required = BigInt(w) * BigInt(h) * 4n;
+  if (required > BigInt(maxBytes)) return null;
+  return Number(required);
+}
+
+/**
  * Convert a guest scanout buffer into a packed RGBA8 buffer.
  *
  * Supported scanout formats:
  * - `B8G8R8X8` -> RGBA8 (alpha forced to 255)
  * - `B8G8R8A8` -> RGBA8 (alpha preserved)
+ *
+ * Note: SRGB variants are swizzled identically; only sampling differs at render time.
  *
  * This is a pure helper intended for unit tests and screenshot/present paths.
  * It:
@@ -124,6 +159,10 @@ export function readScanoutRgba8FromGuestRam(guestRam: Uint8Array, desc: Scanout
   const totalBytes = rowBytes * height;
   if (!Number.isSafeInteger(totalBytes)) {
     throw new RangeError(`scanout output size exceeds JS safe integer range: ${width}x${height}`);
+  }
+  // Avoid attempting absurd allocations if the descriptor is corrupt/malicious.
+  if (totalBytes > MAX_SCANOUT_RGBA8_BYTES) {
+    throw new RangeError(`scanout output size exceeds cap (${MAX_SCANOUT_RGBA8_BYTES} bytes): ${width}x${height}`);
   }
   const rgba8 = new Uint8Array(totalBytes);
 

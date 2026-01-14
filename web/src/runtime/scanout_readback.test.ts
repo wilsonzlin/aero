@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { SCANOUT_FORMAT_B8G8R8A8, SCANOUT_FORMAT_B8G8R8X8 } from "../ipc/scanout_state";
-import { readScanoutRgba8FromGuestRam } from "./scanout_readback";
+import { readScanoutRgba8FromGuestRam, tryComputeScanoutRgba8ByteLength } from "./scanout_readback";
 
 describe("runtime/scanout_readback", () => {
   it("converts tight pitch (pitch == width*4) BGRX->RGBA and forces alpha=255", () => {
@@ -119,5 +119,12 @@ describe("runtime/scanout_readback", () => {
         format: SCANOUT_FORMAT_B8G8R8X8,
       }),
     ).toThrow(/out of bounds/i);
+  });
+
+  it("returns null for absurd dimensions (caps RGBA8 output size)", () => {
+    // width chosen so pitchBytes can still be a plausible u32 (width*4 ~= 0xffff_fffc).
+    const width = 0x3fff_ffff;
+    const height = 2;
+    expect(tryComputeScanoutRgba8ByteLength(width, height)).toBeNull();
   });
 });
