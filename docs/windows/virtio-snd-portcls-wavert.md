@@ -22,6 +22,7 @@ and **capture** streams per `AERO-W7-VIRTIO` v1 (stream id 0 via `txq`, stream i
 * **Virtio transport:** virtio-pci **modern-only** (PCI vendor-specific capabilities + BAR0 MMIO).
 * **Virtio feature bits:** `VIRTIO_F_VERSION_1` + `VIRTIO_F_RING_INDIRECT_DESC` only.
 * **Virtqueues (contract v1):** `controlq=64`, `eventq=64`, `txq=256`, `rxq=64`.
+* **Interrupts:** PCI **INTx** baseline (required by `AERO-W7-VIRTIO` v1). MSI/MSI-X is an optional enhancement; the in-tree driver prefers message interrupts when Windows grants them (INF opt-in), programs virtio MSI-X routing (`msix_config`, `queue_msix_vector`), and falls back to INTx if message interrupts cannot be used/programmed.
 
 Authoritative virtio contract:
 
@@ -64,7 +65,7 @@ Emulator device model (`docs/virtio-snd.md`) → browser audio backend
 The **PortCls adapter driver** is a single `.sys` that:
 
 1. Binds to the `virtio-snd` PCI function (PnP start/stop).
-2. Initializes the virtio transport (BAR mapping, virtqueues, interrupts or polling).
+2. Initializes the virtio transport (BAR mapping, virtqueues, interrupts (MSI/MSI-X preferred with INTx fallback) or polling-only in bring-up mode).
 3. Registers two PortCls subdevices:
    * `Wave` (WaveRT streaming filter factory)
    * `Topology` (topology filter factory)
@@ -745,6 +746,12 @@ And in `AddReg`:
 * `HKR,Drivers\topology,Driver,,aero_virtio_snd.sys`
 * `HKR,Drivers\topology,Description,,%AeroVirtioSnd.TopologyDesc%`
 
+If you want Windows 7 to allocate **message-signaled interrupts** (MSI/MSI-X), you must opt in via INF `HKR` keys under:
+
+* `Interrupt Management\\MessageSignaledInterruptProperties`
+
+The in-tree Aero virtio-snd INFs include this opt-in (recommended).
+
 ### 7.2 Hardware IDs
 
 Match at least:
@@ -803,6 +810,26 @@ Notes:
 
 * `SubClasses` is a comma-separated string list. Keep the tokens lowercase (`wave`, `topology`) to match common tooling expectations.
 * Real drivers often add `AssociatedFilters`, `FriendlyName`, `WaveRT` flags, etc. Start minimal, then add only when you know why.
+
+### 7.4 Optional: MSI/MSI-X opt-in (`Interrupt Management`)
+
+Windows 7 typically allocates MSI/MSI-X only when explicitly requested via INF:
+
+```inf
+[AeroVirtioSnd_Install.NT.HW]
+AddReg = AeroVirtioSnd_InterruptManagement_AddReg
+
+[AeroVirtioSnd_InterruptManagement_AddReg]
+HKR, "Interrupt Management",,0x00000010
+HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MSISupported,        0x00010001, 1
+; virtio-snd uses 4 virtqueues + a config interrupt = 5 vectors; request a little extra:
+HKR, "Interrupt Management\\MessageSignaledInterruptProperties", MessageNumberLimit,  0x00010001, 8
+```
+
+Notes:
+
+* `MessageNumberLimit` is a request; Windows may allocate fewer messages.
+* When message interrupts are used, drivers must still program virtio MSI-X routing (`msix_config`, `queue_msix_vector`) and fall back to INTx if vector programming fails.
 
 ---
 
