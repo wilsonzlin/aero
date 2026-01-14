@@ -5495,20 +5495,22 @@ void APIENTRY CopySubresourceRegion(D3D10DDI_HDEVICE hDevice,
           cmd->src_array_layer = src_sub.array_layer;
           cmd->dst_x = dstX;
           cmd->dst_y = dstY;
-          cmd->src_x = src_left;
-          cmd->src_y = src_top;
-          cmd->width = copy_width;
-          cmd->height = copy_height;
-          uint32_t copy_flags = AEROGPU_COPY_FLAG_NONE;
-          if (dst->backing_alloc_id != 0 &&
-              dst->usage == kD3D10UsageStaging &&
-              (dst->cpu_access_flags & kD3D10CpuAccessRead) != 0) {
-            copy_flags |= AEROGPU_COPY_FLAG_WRITEBACK_DST;
-          }
-          cmd->flags = copy_flags;
-          cmd->reserved0 = 0;
-          TrackStagingWriteLocked(dev, dst, [&](HRESULT hr) { SetError(hDevice, hr); });
-          emitted_copy = true;
+           cmd->src_x = src_left;
+           cmd->src_y = src_top;
+           cmd->width = copy_width;
+           cmd->height = copy_height;
+           uint32_t copy_flags = AEROGPU_COPY_FLAG_NONE;
+           if (dst->backing_alloc_id != 0 && dst->wddm_allocation_handle != 0) {
+             // Keep guest-backed Texture2D resources coherent: host executors may
+             // upload whole subresources on any intersecting RESOURCE_DIRTY_RANGE.
+             // If a prior GPU-side copy updates only the host texture, later CPU
+             // updates could overwrite it with stale guest backing bytes.
+             copy_flags |= AEROGPU_COPY_FLAG_WRITEBACK_DST;
+           }
+           cmd->flags = copy_flags;
+           cmd->reserved0 = 0;
+           TrackStagingWriteLocked(dev, dst, [&](HRESULT hr) { SetError(hDevice, hr); });
+           emitted_copy = true;
         }
       }
     } else {
@@ -5527,20 +5529,22 @@ void APIENTRY CopySubresourceRegion(D3D10DDI_HDEVICE hDevice,
           cmd->src_array_layer = src_sub.array_layer;
           cmd->dst_x = dstX;
           cmd->dst_y = dstY;
-          cmd->src_x = src_left;
-          cmd->src_y = src_top;
-          cmd->width = copy_width;
-          cmd->height = copy_height;
-          uint32_t copy_flags = AEROGPU_COPY_FLAG_NONE;
-          if (dst->backing_alloc_id != 0 &&
-              dst->usage == kD3D10UsageStaging &&
-              (dst->cpu_access_flags & kD3D10CpuAccessRead) != 0) {
-            copy_flags |= AEROGPU_COPY_FLAG_WRITEBACK_DST;
-          }
-          cmd->flags = copy_flags;
-          cmd->reserved0 = 0;
-          TrackStagingWriteLocked(dev, dst, [&](HRESULT hr) { SetError(hDevice, hr); });
-          emitted_copy = true;
+           cmd->src_x = src_left;
+           cmd->src_y = src_top;
+           cmd->width = copy_width;
+           cmd->height = copy_height;
+           uint32_t copy_flags = AEROGPU_COPY_FLAG_NONE;
+           if (dst->backing_alloc_id != 0 && dst->wddm_allocation_handle != 0) {
+             // Keep guest-backed Texture2D resources coherent: host executors may
+             // upload whole subresources on any intersecting RESOURCE_DIRTY_RANGE.
+             // If a prior GPU-side copy updates only the host texture, later CPU
+             // updates could overwrite it with stale guest backing bytes.
+             copy_flags |= AEROGPU_COPY_FLAG_WRITEBACK_DST;
+           }
+           cmd->flags = copy_flags;
+           cmd->reserved0 = 0;
+           TrackStagingWriteLocked(dev, dst, [&](HRESULT hr) { SetError(hDevice, hr); });
+           emitted_copy = true;
         }
       }
     }

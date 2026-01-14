@@ -10345,7 +10345,11 @@ void AEROGPU_APIENTRY CopySubresourceRegion11(D3D11DDI_HDEVICECONTEXT hCtx,
       cmd->width = copy_width;
       cmd->height = copy_height;
       uint32_t copy_flags = AEROGPU_COPY_FLAG_NONE;
-      if (dst->usage == kD3D11UsageStaging && (dst->cpu_access_flags & kD3D11CpuAccessRead) != 0 && dst->backing_alloc_id != 0) {
+      if (dst->backing_alloc_id != 0 && dst->wddm_allocation_handle != 0) {
+        // Keep guest-backed Texture2D resources coherent: host executors may
+        // upload whole subresources on any intersecting RESOURCE_DIRTY_RANGE.
+        // If a prior GPU-side copy updates only the host texture, later CPU
+        // updates could overwrite it with stale guest backing bytes.
         copy_flags |= AEROGPU_COPY_FLAG_WRITEBACK_DST;
       }
       cmd->flags = copy_flags;
