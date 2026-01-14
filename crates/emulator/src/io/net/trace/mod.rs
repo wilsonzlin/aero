@@ -1648,6 +1648,38 @@ mod tests {
     }
 
     #[test]
+    fn headers_only_redactor_keeps_l2_vlan_l3_l4_headers_for_vlan_ipv6_tcp() {
+        let frame = make_ipv6_tcp_frame(b"hello vlan ipv6");
+        let frame = wrap_vlan(&frame, 0x8100);
+        let redactor = HeadersOnlyRedactor {
+            max_ethernet_bytes: 2048,
+        };
+
+        let out = redactor
+            .redact_ethernet(FrameDirection::GuestTx, &frame)
+            .expect("expected parseable VLAN IPv6/TCP frame");
+
+        assert_eq!(out.len(), 14 + 4 + 40 + 20);
+        assert_eq!(out.as_slice(), &frame[..out.len()]);
+    }
+
+    #[test]
+    fn headers_only_redactor_keeps_l2_vlan_headers_for_vlan_arp() {
+        let frame = make_arp_request_frame();
+        let frame = wrap_vlan(&frame, 0x8100);
+        let redactor = HeadersOnlyRedactor {
+            max_ethernet_bytes: 2048,
+        };
+
+        let out = redactor
+            .redact_ethernet(FrameDirection::GuestRx, &frame)
+            .expect("expected parseable VLAN ARP frame");
+
+        assert_eq!(out.len(), 14 + 4 + 28);
+        assert_eq!(out.as_slice(), &frame[..out.len()]);
+    }
+
+    #[test]
     fn headers_only_redactor_keeps_headers_for_arp() {
         let frame = make_arp_request_frame();
         let redactor = HeadersOnlyRedactor {
