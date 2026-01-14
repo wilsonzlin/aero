@@ -439,7 +439,7 @@ for /r "%MEDIA%\AERO\drivers" %%F in (*.inf) do (
       switch ($entryWin.ToLowerInvariant()) {
         "aero_virtio_blk.inf" { $preferPattern = "PCI\VEN_1AF4&DEV_1042&REV_01" }
         "aero_virtio_net.inf" { $preferPattern = "PCI\VEN_1AF4&DEV_1041&REV_01" }
-        # Note: aero_virtio_input.inf is SUBSYS-gated (no generic DEV-only fallback HWID).
+        # Prefer a SUBSYS-qualified contract HWID for disambiguation (more specific than the generic fallback).
         "aero_virtio_input.inf" { $preferPattern = "PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01" }
         "aero_virtio_tablet.inf" { $preferPattern = "PCI\VEN_1AF4&DEV_1052&SUBSYS_00121AF4&REV_01" }
         "aero_virtio_snd.inf" { $preferPattern = "PCI\VEN_1AF4&DEV_1059&REV_01" }
