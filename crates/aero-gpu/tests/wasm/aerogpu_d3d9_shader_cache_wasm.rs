@@ -1285,9 +1285,9 @@ async fn d3d9_executor_retranslates_on_persisted_wgsl_half_pixel_uniform_binding
 
 #[wasm_bindgen_test(async)]
 async fn d3d9_executor_retranslates_on_persisted_wgsl_constants_binding_mismatch() {
-    // Cached WGSL must follow the executor's binding contract for the shared constants buffer
-    // (group(0) binding(0)). If this is corrupted, pipeline creation would fail later; detect it on
-    // persistent cache hit and invalidate+retry.
+    // Cached WGSL must follow the executor's binding contract for the shared constants uniforms
+    // (group(0) bindings 0/1/2). If this is corrupted, pipeline creation would fail later; detect
+    // it on persistent cache hit and invalidate+retry.
     let (api, store) = make_persistent_cache_stub();
     let _guard = PersistentCacheApiGuard::install(&api, &store);
 
@@ -1326,13 +1326,13 @@ async fn d3d9_executor_retranslates_on_persisted_wgsl_constants_binding_mismatch
         .and_then(|v| v.as_string())
         .unwrap_or_default();
     assert!(
-        wgsl_before.contains("@group(0) @binding(0) var<uniform> constants"),
+        wgsl_before.contains("@group(0) @binding(0) var<uniform> constants:"),
         "expected cached WGSL to bind constants at group(0) binding(0)"
     );
 
     let wgsl_corrupt = wgsl_before.replace(
-        "@group(0) @binding(0) var<uniform> constants",
-        "@group(0) @binding(1) var<uniform> constants",
+        "@group(0) @binding(0) var<uniform> constants:",
+        "@group(0) @binding(1) var<uniform> constants:",
     );
     let cached_obj: Object = cached
         .clone()
@@ -1366,8 +1366,8 @@ async fn d3d9_executor_retranslates_on_persisted_wgsl_constants_binding_mismatch
         .and_then(|v| v.as_string())
         .unwrap_or_default();
     assert!(
-        wgsl_after.contains("@group(0) @binding(0) var<uniform> constants")
-            && !wgsl_after.contains("@group(0) @binding(1) var<uniform> constants"),
+        wgsl_after.contains("@group(0) @binding(0) var<uniform> constants:")
+            && !wgsl_after.contains("@group(0) @binding(1) var<uniform> constants:"),
         "expected retranslation to restore correct constants binding"
     );
 }
@@ -1596,9 +1596,11 @@ async fn d3d9_executor_retranslates_on_persisted_wgsl_unknown_uniform_binding() 
         "expected cached WGSL to contain vs_main entry point"
     );
 
-    let extra =
-        "@group(0) @binding(3) var<uniform> extra_uniform: vec4<f32>;\n\n";
-    let wgsl_corrupt = wgsl_before.replace("@vertex\nfn vs_main", &format!("{extra}@vertex\nfn vs_main"));
+    let extra = "@group(0) @binding(3) var<uniform> extra_uniform: vec4<f32>;\n\n";
+    let wgsl_corrupt = wgsl_before.replace(
+        "@vertex\nfn vs_main",
+        &format!("{extra}@vertex\nfn vs_main"),
+    );
     let cached_obj: Object = cached
         .clone()
         .dyn_into()
