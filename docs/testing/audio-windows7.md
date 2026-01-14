@@ -282,6 +282,7 @@ Alternative (if the web UI exposes it):
   - AudioWorklet `getMetrics()` + output ring indices/counters
   - Producer counters (buffer level + underruns/overruns) from the active audio producer worker (CPU demo vs IO guest device)
   - Microphone ring counters (when mic capture is active)
+  - Host media device inventory + mic permission state (device IDs hashed)
   - Coordinator ring attachment policy snapshot (effective/default/override owner + current attachment state)
   - WorkerCoordinator snapshot (worker states + wasm variants + last fatal/nonfatal)
   - Effective config snapshot (with sensitive fields redacted)

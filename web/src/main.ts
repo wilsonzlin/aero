@@ -4081,6 +4081,47 @@ function renderAudioPanel(): HTMLElement {
     };
   }
 
+  async function snapshotHostMediaDevicesForExport(): Promise<Record<string, unknown>> {
+    const encoder = new TextEncoder();
+    try {
+      const media = navigator.mediaDevices;
+      if (!media) throw new Error("navigator.mediaDevices is unavailable.");
+
+      const supportedConstraints = typeof media.getSupportedConstraints === "function" ? media.getSupportedConstraints() : null;
+
+      let microphonePermissionState: string | null = null;
+      try {
+        // Permissions API is not available in all browsers. Best-effort only.
+        const navAny = navigator as unknown as { permissions?: { query?: (desc: { name: string }) => Promise<unknown> } };
+        const status = await navAny.permissions?.query?.({ name: "microphone" });
+        const state = (status as { state?: unknown } | null)?.state;
+        if (typeof state === "string") microphonePermissionState = state;
+      } catch {
+        // ignore
+      }
+
+      if (typeof media.enumerateDevices !== "function") {
+        throw new Error("navigator.mediaDevices.enumerateDevices is unavailable.");
+      }
+      const devices = await media.enumerateDevices();
+
+      return {
+        ok: true,
+        microphonePermissionState,
+        supportedConstraints,
+        devices: devices.map((d) => ({
+          kind: d.kind,
+          label: d.label,
+          deviceIdHash: d.deviceId ? fnv1a32Hex(encoder.encode(d.deviceId)) : "",
+          groupIdHash: d.groupId ? fnv1a32Hex(encoder.encode(d.groupId)) : "",
+        })),
+      };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { ok: false, error: message };
+    }
+  }
+
   function snapshotAudioOutput(out: unknown): unknown {
     if (!out || (typeof out !== "object" && typeof out !== "function")) return null;
     const o = out as any;
@@ -4490,7 +4531,8 @@ function renderAudioPanel(): HTMLElement {
 
   const exportMetricsButton = el("button", {
     text: "Export audio metrics (json)",
-    onclick: () => {
+    onclick: async () => {
+      status.textContent = "";
       try {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const g = globalThis as any;
@@ -4498,12 +4540,15 @@ function renderAudioPanel(): HTMLElement {
         const timeIso = new Date().toISOString();
         const ts = timeIso.replaceAll(":", "-").replaceAll(".", "-");
 
+        const hostMediaDevices = await snapshotHostMediaDevicesForExport();
+
         const report = {
           timeIso,
           build: getBuildInfoForExport(),
           userAgent: navigator.userAgent,
           crossOriginIsolated: typeof crossOriginIsolated === "boolean" ? crossOriginIsolated : false,
           host: snapshotHostEnvForExport(),
+          hostMediaDevices,
           ringBufferOwners: {
             audioOutput: {
               effective: workerCoordinator.getAudioRingBufferOwner(),
