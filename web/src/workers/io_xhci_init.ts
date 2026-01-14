@@ -34,13 +34,13 @@ export function tryInitXhciDevice(opts: {
     const base = opts.guestBase >>> 0;
     const size = opts.guestSize >>> 0;
     try {
-      bridge = new Bridge(base, size) as typeof bridge;
+      bridge = new Bridge(base, size);
     } catch {
       try {
-        bridge = new Bridge(base) as typeof bridge;
+        bridge = new Bridge(base);
       } catch {
         // Final fallback: support glue that exposes a zero-arg constructor.
-        bridge = new Bridge() as typeof bridge;
+        bridge = new Bridge();
       }
     }
   } catch (err) {
