@@ -1852,4 +1852,35 @@ mod tests {
         assert_eq!(val & 0x30, 0x10, "slave selected => nDS1=0, nDS0=1");
         assert_eq!(val & 0x0F, (!head) & 0x0F);
     }
+
+    #[test]
+    fn drive_address_read_does_not_clear_irq_or_mutate_taskfile() {
+        let mut ctl = IdeController::new(0xFFF0);
+        ctl.primary.drive_present[0] = true;
+
+        let device_port = ctl.primary.ports.cmd_base + ATA_REG_DEVICE;
+        // Select master, head=7.
+        ctl.io_write(device_port, 1, 0xE7);
+
+        ctl.primary.irq_pending = true;
+        let before_device = ctl.primary.tf.device;
+
+        let drive_addr_port = ctl.primary.ports.ctrl_base + ATA_CTRL_DRIVE_ADDRESS;
+        let first = ctl.io_read(drive_addr_port, 1);
+        let second = ctl.io_read(drive_addr_port, 1);
+
+        assert_eq!(first, second, "DADR reads must be stable");
+        assert_eq!(
+            first as u8, 0xE8,
+            "sanity check failed: master head=7 should yield 0xE8"
+        );
+        assert_eq!(
+            ctl.primary.tf.device, before_device,
+            "DADR read must not mutate taskfile registers"
+        );
+        assert!(
+            ctl.primary.irq_pending,
+            "DADR read must not clear the channel IRQ latch"
+        );
+    }
 }
