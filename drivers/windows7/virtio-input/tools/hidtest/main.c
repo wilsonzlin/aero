@@ -3434,6 +3434,10 @@ static int list_hid_devices_json(int quiet)
         int serial_valid = 0;
         WCHAR instance_id[512];
         int instance_id_valid = 0;
+        WCHAR device_desc[256];
+        int device_desc_valid = 0;
+        WCHAR service[256];
+        int service_valid = 0;
 
         ZeroMemory(&iface, sizeof(iface));
         iface.cbSize = sizeof(iface);
@@ -3475,6 +3479,16 @@ static int list_hid_devices_json(int quiet)
         if (SetupDiGetDeviceInstanceIdW(devinfo, &dev_data, instance_id, (DWORD)(sizeof(instance_id) / sizeof(instance_id[0])), NULL)) {
             instance_id[(sizeof(instance_id) / sizeof(instance_id[0])) - 1] = L'\0';
             instance_id_valid = 1;
+        }
+        if (SetupDiGetDeviceRegistryPropertyW(devinfo, &dev_data, SPDRP_DEVICEDESC, NULL, (PBYTE)device_desc,
+                                              (DWORD)sizeof(device_desc), NULL)) {
+            device_desc[(sizeof(device_desc) / sizeof(device_desc[0])) - 1] = L'\0';
+            device_desc_valid = 1;
+        }
+        if (SetupDiGetDeviceRegistryPropertyW(devinfo, &dev_data, SPDRP_SERVICE, NULL, (PBYTE)service,
+                                              (DWORD)sizeof(service), NULL)) {
+            service[(sizeof(service) / sizeof(service[0])) - 1] = L'\0';
+            service_valid = 1;
         }
 
         handle = open_hid_path(detail->DevicePath, &desired_access);
@@ -3560,6 +3574,18 @@ static int list_hid_devices_json(int quiet)
         wprintf(L",\"instanceId\":");
         if (instance_id_valid) {
             json_print_string_w(instance_id);
+        } else {
+            wprintf(L"null");
+        }
+        wprintf(L",\"deviceDesc\":");
+        if (device_desc_valid) {
+            json_print_string_w(device_desc);
+        } else {
+            wprintf(L"null");
+        }
+        wprintf(L",\"service\":");
+        if (service_valid) {
+            json_print_string_w(service);
         } else {
             wprintf(L"null");
         }
