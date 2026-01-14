@@ -313,7 +313,7 @@ mod tests {
     fn map_aero_storage_error_to_io_preserves_invalid_input_and_bounds_errors() {
         let err = map_aero_storage_error_to_io(aero_storage::DiskError::UnalignedLength {
             len: 1,
-            alignment: 512,
+            alignment: SECTOR_SIZE,
         });
         assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
         assert!(matches!(
@@ -321,7 +321,7 @@ mod tests {
                 .and_then(|e| e.downcast_ref::<aero_storage::DiskError>()),
             Some(aero_storage::DiskError::UnalignedLength {
                 len: 1,
-                alignment: 512
+                alignment: SECTOR_SIZE
             })
         ));
 
@@ -354,7 +354,7 @@ mod tests {
     fn map_aero_storage_error_to_io_classifies_alignment_and_bounds() {
         let err = map_aero_storage_error_to_io(aero_storage::DiskError::UnalignedLength {
             len: 1,
-            alignment: 512,
+            alignment: SECTOR_SIZE,
         });
         assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
 

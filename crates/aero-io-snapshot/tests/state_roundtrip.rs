@@ -16,6 +16,7 @@ use aero_io_snapshot::io::storage::state::{
     NvmeControllerState, NvmeInFlightCommandState, NvmeSubmissionQueueState, PciConfigSpaceState,
     RemoteDiskBackendState, RemoteDiskBaseState, RemoteDiskValidator,
 };
+use aero_storage::SECTOR_SIZE;
 
 #[test]
 fn hda_controller_state_roundtrip() {
@@ -138,7 +139,7 @@ fn disk_layer_state_roundtrip() {
             }),
         }),
         4096,
-        512,
+        SECTOR_SIZE,
     );
 
     let snap = disk.save_state();
@@ -176,7 +177,7 @@ fn disk_layer_state_roundtrip_remote() {
             },
         }),
         4096,
-        512,
+        SECTOR_SIZE,
     );
 
     let snap = disk.save_state();

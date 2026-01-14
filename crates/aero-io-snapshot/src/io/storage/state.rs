@@ -505,7 +505,7 @@ impl IoSnapshot for DiskLayerState {
         }
 
         match self.sector_size {
-            512 | 4096 => {}
+            SECTOR_SIZE | 4096 => {}
             _ => return Err(SnapshotError::InvalidFieldEncoding("sector_size")),
         }
         if self.size_bytes == 0 {

@@ -7,6 +7,7 @@ use aero_io_snapshot::io::state::{IoSnapshot, SnapshotReader, SnapshotVersion, S
 use aero_io_snapshot::io::storage::state::{
     DiskBackend, DiskBackendState, DiskLayerState, LocalDiskBackendKind, LocalDiskBackendState,
 };
+use aero_storage::SECTOR_SIZE;
 
 struct InMemoryDiskBackend {
     key: String,
@@ -58,7 +59,7 @@ fn scripted_io_snapshot_restore() {
             overlay: None,
         }),
         4096,
-        512,
+        SECTOR_SIZE,
     );
     let key = match &disk.backend {
         DiskBackendState::Local(local) => local.key.clone(),
@@ -73,7 +74,7 @@ fn scripted_io_snapshot_restore() {
     let mut net = LegacyNetworkStackState::default();
     let conn_id = net.open_tcp_connection(Ipv4Addr::new(93, 184, 216, 34), 80);
 
-    let mut sector = vec![0u8; 512];
+    let mut sector = vec![0u8; SECTOR_SIZE];
     sector[..11].copy_from_slice(b"hello world");
     disk.write_sector(0, &sector);
 

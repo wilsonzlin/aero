@@ -4,6 +4,7 @@ use aero_io_snapshot::io::storage::state::{
     AhciControllerState, DiskBackendState, DiskLayerState, IdeControllerState,
     LocalDiskBackendKind, LocalDiskBackendState, NvmeControllerState, MAX_IDE_DATA_BUFFER_BYTES,
 };
+use aero_storage::SECTOR_SIZE;
 
 #[test]
 fn nvme_snapshot_rejects_excessive_io_queue_count() {
@@ -425,7 +426,7 @@ fn disk_backend_state_rejects_excessive_chunk_size() {
 
     bytes.push(0); // validator_kind = none
                    // Pick a value that remains 512-byte aligned but exceeds the maximum.
-    bytes.extend_from_slice(&(MAX_CHUNK + 512).to_le_bytes());
+    bytes.extend_from_slice(&(MAX_CHUNK + SECTOR_SIZE as u32).to_le_bytes());
 
     let err = DiskBackendState::decode(&bytes).expect_err("should reject excessive chunk_size");
     assert_eq!(
@@ -503,7 +504,7 @@ fn disk_layer_snapshot_rejects_invalid_sector_size() {
     w.field_u32(TAG_SECTOR_SIZE, 1);
     w.field_u64(TAG_SIZE_BYTES, 4096);
 
-    let mut state = DiskLayerState::new(backend, 4096, 512);
+    let mut state = DiskLayerState::new(backend, 4096, SECTOR_SIZE);
     let err = state
         .load_state(&w.finish())
         .expect_err("snapshot should reject invalid sector size");
@@ -524,10 +525,10 @@ fn disk_layer_snapshot_rejects_unaligned_disk_size() {
 
     let mut w = SnapshotWriter::new(DiskLayerState::DEVICE_ID, DiskLayerState::DEVICE_VERSION);
     w.field_bytes(TAG_BACKEND_STATE, backend.encode());
-    w.field_u32(TAG_SECTOR_SIZE, 512);
+    w.field_u32(TAG_SECTOR_SIZE, SECTOR_SIZE as u32);
     w.field_u64(TAG_SIZE_BYTES, 513);
 
-    let mut state = DiskLayerState::new(backend, 4096, 512);
+    let mut state = DiskLayerState::new(backend, 4096, SECTOR_SIZE);
     let err = state
         .load_state(&w.finish())
         .expect_err("snapshot should reject disk sizes that aren't sector-aligned");
@@ -548,7 +549,7 @@ fn disk_layer_snapshot_rejects_excessive_legacy_backend_key_length() {
 
     let mut w = SnapshotWriter::new(DiskLayerState::DEVICE_ID, DiskLayerState::DEVICE_VERSION);
     w.field_bytes(TAG_BACKEND_KEY, vec![0u8; MAX_LEN + 1]);
-    w.field_u32(TAG_SECTOR_SIZE, 512);
+    w.field_u32(TAG_SECTOR_SIZE, SECTOR_SIZE as u32);
     w.field_u64(TAG_SIZE_BYTES, 4096);
 
     let backend = DiskBackendState::Local(LocalDiskBackendState {
@@ -556,7 +557,7 @@ fn disk_layer_snapshot_rejects_excessive_legacy_backend_key_length() {
         key: "ignored".to_string(),
         overlay: None,
     });
-    let mut state = DiskLayerState::new(backend, 4096, 512);
+    let mut state = DiskLayerState::new(backend, 4096, SECTOR_SIZE);
     let err = state
         .load_state(&w.finish())
         .expect_err("snapshot should reject oversized legacy backend key");
@@ -574,7 +575,7 @@ fn disk_layer_snapshot_rejects_legacy_backend_key_invalid_utf8() {
 
     let mut w = SnapshotWriter::new(DiskLayerState::DEVICE_ID, DiskLayerState::DEVICE_VERSION);
     w.field_bytes(TAG_BACKEND_KEY, vec![0xff]);
-    w.field_u32(TAG_SECTOR_SIZE, 512);
+    w.field_u32(TAG_SECTOR_SIZE, SECTOR_SIZE as u32);
     w.field_u64(TAG_SIZE_BYTES, 4096);
 
     let backend = DiskBackendState::Local(LocalDiskBackendState {
@@ -582,7 +583,7 @@ fn disk_layer_snapshot_rejects_legacy_backend_key_invalid_utf8() {
         key: "ignored".to_string(),
         overlay: None,
     });
-    let mut state = DiskLayerState::new(backend, 4096, 512);
+    let mut state = DiskLayerState::new(backend, 4096, SECTOR_SIZE);
     let err = state
         .load_state(&w.finish())
         .expect_err("snapshot should reject non-utf8 legacy backend key");
@@ -603,10 +604,10 @@ fn disk_layer_snapshot_rejects_zero_disk_size() {
 
     let mut w = SnapshotWriter::new(DiskLayerState::DEVICE_ID, DiskLayerState::DEVICE_VERSION);
     w.field_bytes(TAG_BACKEND_STATE, backend.encode());
-    w.field_u32(TAG_SECTOR_SIZE, 512);
+    w.field_u32(TAG_SECTOR_SIZE, SECTOR_SIZE as u32);
     w.field_u64(TAG_SIZE_BYTES, 0);
 
-    let mut state = DiskLayerState::new(backend, 4096, 512);
+    let mut state = DiskLayerState::new(backend, 4096, SECTOR_SIZE);
     let err = state
         .load_state(&w.finish())
         .expect_err("snapshot should reject disk_size=0");
@@ -631,7 +632,7 @@ fn disk_layer_snapshot_rejects_local_overlay_disk_size_mismatch() {
 
     let mut w = SnapshotWriter::new(DiskLayerState::DEVICE_ID, DiskLayerState::DEVICE_VERSION);
     w.field_bytes(TAG_BACKEND_STATE, backend.encode());
-    w.field_u32(TAG_SECTOR_SIZE, 512);
+    w.field_u32(TAG_SECTOR_SIZE, SECTOR_SIZE as u32);
     w.field_u64(TAG_SIZE_BYTES, 8192); // mismatch with overlay.disk_size_bytes
 
     let mut state = DiskLayerState::new(
@@ -641,7 +642,7 @@ fn disk_layer_snapshot_rejects_local_overlay_disk_size_mismatch() {
             overlay: None,
         }),
         4096,
-        512,
+        SECTOR_SIZE,
     );
     let err = state
         .load_state(&w.finish())
@@ -680,7 +681,7 @@ fn disk_layer_snapshot_rejects_remote_overlay_disk_size_mismatch() {
 
     let mut w = SnapshotWriter::new(DiskLayerState::DEVICE_ID, DiskLayerState::DEVICE_VERSION);
     w.field_bytes(TAG_BACKEND_STATE, backend.encode());
-    w.field_u32(TAG_SECTOR_SIZE, 512);
+    w.field_u32(TAG_SECTOR_SIZE, SECTOR_SIZE as u32);
     w.field_u64(TAG_SIZE_BYTES, 8192); // mismatch with overlay.disk_size_bytes
 
     let mut state = DiskLayerState::new(
@@ -690,7 +691,7 @@ fn disk_layer_snapshot_rejects_remote_overlay_disk_size_mismatch() {
             overlay: None,
         }),
         4096,
-        512,
+        SECTOR_SIZE,
     );
     let err = state
         .load_state(&w.finish())
