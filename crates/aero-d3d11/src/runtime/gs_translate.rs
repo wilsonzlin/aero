@@ -171,7 +171,7 @@ fn opcode_name(inst: &Sm4Inst) -> &'static str {
         Sm4Inst::Cut { .. } => "cut",
         Sm4Inst::Ret => "ret",
         Sm4Inst::Unknown { .. } => "unknown",
-        _ => "unimplemented",
+        _ => "unsupported",
     }
 }
 
