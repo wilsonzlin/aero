@@ -70,6 +70,10 @@ fn compute_store_raw_writes_u32_word() {
             wgsl.contains("floor(") || wgsl.contains("16u"),
             "expected float->u32 address heuristic in WGSL:\n{wgsl}"
         );
+        assert!(
+            !wgsl.contains("0x41800000u"),
+            "expected raw float bit-pattern 0x41800000 to not be used as a byte address:\n{wgsl}"
+        );
 
         let (device, queue, supports_compute) =
             match common::wgpu::create_device_queue("compute_store_raw test device").await {
