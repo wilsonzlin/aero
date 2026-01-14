@@ -40,7 +40,7 @@ Feature matrix for the Win7 WDK-backed UMDs:
   - Block-compressed formats (BC1/BC2/BC3/BC7) and explicit sRGB variants are ABI-gated (ABI 1.2+; see `aerogpu_umd_private_v1.device_abi_version_u32`). On older ABIs, sRGB DXGI formats are mapped to UNORM for command-stream compatibility; BC formats are rejected.
 - Shaders (DXBC payload passthrough):
   - D3D10/D3D10.1: VS/PS/GS
-  - D3D11: VS/PS/GS/CS (GS binding currently triggers compute-prepass scaffolding; GS DXBC execution is WIP; see “Geometry shaders (GS)” below)
+  - D3D11: VS/PS/GS/CS (GS binding currently triggers compute-prepass scaffolding; guest GS DXBC execution is not implemented yet; see “Geometry shaders (GS)” below)
 - Input layout + vertex/index buffers, primitive topology
 - Shader binding tables:
   - D3D10: VS/PS/GS constant buffers, shader-resource views, samplers (whole-buffer constant-buffer binding)
@@ -87,16 +87,18 @@ Feature matrix for the Win7 WDK-backed UMDs:
     - `CreateGeometryShader` + `GsSetShader` are forwarded into the command stream.
       - Legacy compat: GS handle carried via `aerogpu_cmd_bind_shaders.reserved0`.
       - Forward-compat: the protocol also supports an append-only `BIND_SHADERS` extension that appends `{gs,hs,ds}` after the base 24-byte packet; producers may mirror `gs` into `reserved0`.
-    - GS stage resource binding DDIs (`GsSetConstantBuffers`, `GsSetShaderResources`, `GsSetSamplers`) emit binding packets; the host tracks these bindings, but the current compute-prepass path does not execute GS DXBC yet.
+    - GS stage resource binding DDIs (`GsSetConstantBuffers`, `GsSetShaderResources`, `GsSetSamplers`) emit binding packets; the host accepts and tracks these bindings separately from CS so apps that set GS resources do not fail (future compute-emulation path).
   - Host/WebGPU execution:
     - WebGPU has no geometry stage; AeroGPU routes draws requiring GS/HS/DS-style emulation through a **compute prepass + indirect draw** scaffolding path.
-    - Current limitation: the draw-time compute prepass is currently a **placeholder** (see `GEOMETRY_PREPASS_CS_WGSL` in `crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs`) and does **not** execute GS DXBC yet.
+    - Current limitation: the draw-time compute prepass is currently a **placeholder** (see `GEOMETRY_PREPASS_CS_WGSL` / `GEOMETRY_PREPASS_CS_VERTEX_PULLING_WGSL` in `crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs`) and does **not** execute guest GS/HS/DS DXBC yet.
+    - GS/HS/DS DXBC payloads are accepted at `CREATE_SHADER_DXBC` time, but are currently stored as **stub WGSL modules** on the WebGPU-backed host executor (see `exec_create_shader_dxbc` in `crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs`).
     - A prototype GS DXBC/SM4 → WGSL compute translator lives in `crates/aero-d3d11/src/runtime/gs_translate.rs`, with strip restart expansion helpers in `crates/aero-d3d11/src/runtime/strip_to_list.rs` (not yet wired into the executor).
-    - The command stream exposes an ABI extension for extended D3D11 stages (`stage_ex`; see `enum aerogpu_shader_stage_ex` in `drivers/aerogpu/protocol/aerogpu_cmd.h`). The host executor accepts both the direct `AEROGPU_SHADER_STAGE_GEOMETRY` (`stage = 3`) encoding and the `stage_ex` encoding.
+    - The command stream exposes an ABI extension for extended D3D11 stages (`stage_ex`; see `enum aerogpu_shader_stage_ex` in `drivers/aerogpu/protocol/aerogpu_cmd.h`):
+      - GS resource bindings may be encoded directly as `shader_stage = GEOMETRY` with `reserved0 = 0` (preferred), or via the `stage_ex` compatibility encoding (`shader_stage = COMPUTE`, `reserved0 = AEROGPU_SHADER_STAGE_EX_GEOMETRY`).
+      - HS/DS require the `stage_ex` encoding.
     - Win7 GS tests:
       - `drivers/aerogpu/tests/win7/d3d11_geometry_shader_smoke`
       - `drivers/aerogpu/tests/win7/d3d11_geometry_shader_restart_strip`
-      - Host-side tests live under `crates/aero-d3d11/tests/` (run via `cargo test -p aero-d3d11`).
     - Prototype GS translator tested subset (not yet wired into the executor):
       - Input primitives: `point` and `triangle` (non-adjacency)
       - Output: `TriangleStream` (`triangle_strip`) only (stream 0)

@@ -416,10 +416,12 @@ The full opcode list and packet payload layouts live in `aerogpu_cmd.h`.
 
 ### 4.3 Extended shader stage selector (`stage_ex`)
 
-The legacy `enum aerogpu_shader_stage` only encodes VS/PS/CS (and later `GEOMETRY=3`). To support
-additional programmable stages used by D3D11 (GS/HS/DS) without breaking older hosts, some packets
-reuse their trailing `reserved0` field as an **extended stage selector** when
-`shader_stage == COMPUTE`.
+The legacy `enum aerogpu_shader_stage` only encodes VS/PS/CS (and later `GEOMETRY=3`). Geometry-stage
+packets can therefore be encoded directly using `shader_stage = GEOMETRY` with `reserved0 = 0`.
+
+To support additional programmable stages used by D3D11 (HS/DS) without breaking older hosts, some
+packets reuse their trailing `reserved0` field as an **extended stage selector** when
+`shader_stage == COMPUTE` (the same encoding may also be used for GS for compatibility).
 
 Encoding invariant (must be enforced by writers and hosts):
 
@@ -428,6 +430,11 @@ Encoding invariant (must be enforced by writers and hosts):
   - `reserved0 == 0` means the real Compute stage (legacy behavior).
   - `reserved0 != 0` means an extended stage is present and `reserved0` encodes a non-zero
     `enum aerogpu_shader_stage_ex`.
+
+GS note: because the legacy `enum aerogpu_shader_stage` includes `GEOMETRY=3`, producers should
+prefer the direct encoding (`shader_stage = GEOMETRY`, `reserved0 = 0`) for GS. The `stage_ex`
+encoding (`shader_stage = COMPUTE`, `reserved0 = 2`) may still be used for compatibility. HS/DS
+require `stage_ex`.
 
 `enum aerogpu_shader_stage_ex` values intentionally match DXBC program type values for **non-zero**
 types:

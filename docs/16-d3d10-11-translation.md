@@ -328,7 +328,7 @@ Bind groups are stage-scoped and mostly map 1:1 to D3D11 shader stages:
 - `@group(1)`: pixel/fragment shader (PS) resources
 - `@group(2)`: compute shader (CS) resources
 - `@group(3)`: reserved internal / emulation group:
-  - geometry/hull/domain (“stage_ex”) resources (tracked separately from CS to avoid clobbering)
+  - geometry/hull/domain (GS/HS/DS) resources (tracked separately from CS to avoid clobbering)
   - internal emulation helpers (vertex pulling, expansion scratch, counters, indirect args)
 
 Why stage-scoped?
@@ -389,20 +389,22 @@ GS/HS/DS binds never trample compute-shader state, Aero reserves a fourth stage-
 
 - D3D resources referenced by GS/HS/DS (`b#`, `t#`, `s#`, and optionally `u#`) are declared in WGSL at
   `@group(3)` using the same `@binding` number scheme (`BINDING_BASE_* + slot`) as other stages.
-- The AeroGPU command stream distinguishes “which D3D stage is being bound” using the `stage_ex`
-  extension carried in reserved fields of the resource-binding opcodes (see the ABI section below).
+- The AeroGPU command stream distinguishes which binding table is being updated (CS vs GS/HS/DS)
+  either via the direct `shader_stage = GEOMETRY` encoding (preferred for GS), or via the `stage_ex`
+  extension carried in reserved fields of the resource-binding opcodes when `shader_stage = COMPUTE`
+  (required for HS/DS; optional GS compatibility). See the ABI section below.
 - Expansion-specific internal buffers (vertex pulling inputs, scratch outputs, counters, indirect
   args) are internal to the compute-expansion pipeline. In the baseline design these live alongside
   GS/HS/DS resources in the reserved extended-stage bind group (`@group(3)`) using a reserved
   binding-number range starting at `BINDING_BASE_INTERNAL = 256` (see “Internal bindings” below).
   - Note: the current executor’s compute-prepass still uses an ad-hoc bind group layout for some
     output buffers, but vertex pulling already uses the reserved internal binding range so it can
-    coexist with stage-ex bindings.
+    coexist with GS/HS/DS bindings.
   - Implementation detail: the in-tree vertex pulling WGSL uses `@group(3)` (see
     `VERTEX_PULLING_GROUP` in `crates/aero-d3d11/src/runtime/vertex_pulling.rs`) and pads pipeline
     layouts with empty groups so indices line up. Because the binding numbers are already in the
-    reserved `>= 256` range, it can safely coexist with `stage_ex` GS/HS/DS bindings in the same
-    group without collisions.
+    reserved `>= 256` range, it can safely coexist with GS/HS/DS D3D bindings in the same group
+    without collisions.
   See [`docs/graphics/geometry-shader-emulation.md`](./graphics/geometry-shader-emulation.md).
 
 #### Only resources used by the shader are emitted/bound
@@ -1606,14 +1608,16 @@ This preserves D3D semantics but increases render pass count and can affect perf
 
 GS/HS/DS are compiled as compute entry points but keep the normal D3D binding model:
 
-- D3D resources live in `@group(3)` (the reserved `stage_ex` group) and use the same binding number
-  scheme as other stages:
+- D3D resources live in `@group(3)` (the reserved GS/HS/DS + internal emulation group) and use the
+  same binding number scheme as other stages:
   - `b#` (cbuffers) → `@binding(BINDING_BASE_CBUFFER + slot)`
   - `t#` (SRVs)     → `@binding(BINDING_BASE_TEXTURE + slot)`
   - `s#` (samplers) → `@binding(BINDING_BASE_SAMPLER + slot)`
   - `u#` (UAVs, SM5) → `@binding(BINDING_BASE_UAV + slot)` (where supported)
-- Resource-binding opcodes specify the logical stage via `stage_ex` so the runtime can maintain
-  separate tables for CS vs GS/HS/DS (and so the WGSL interface uses distinct groups 2 vs 3).
+- Resource-binding opcodes select whether a binding targets CS (`@group(2)`) vs GS/HS/DS (`@group(3)`)
+  either via the direct `shader_stage = GEOMETRY` encoding (preferred for GS), or via the `stage_ex`
+  encoding (`shader_stage = COMPUTE`, non-zero `reserved0`) required for HS/DS (and optionally used
+  for GS).
 
 #### 3.2) Internal bind groups and reserved bindings
 
