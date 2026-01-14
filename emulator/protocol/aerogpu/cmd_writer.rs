@@ -513,10 +513,11 @@ impl AerogpuCmdWriter {
         );
     }
 
-    /// Bind shaders, including an optional geometry shader.
+    /// Legacy BIND_SHADERS variant that can encode an optional geometry shader via `reserved0`.
     ///
-    /// ABI note: The on-wire packet layout is unchanged; the `gs` handle is stored in
-    /// `AerogpuCmdBindShaders.reserved0` when non-zero.
+    /// Newer hosts support an append-only extension: if `hdr.size_bytes >= 36`, the packet appends
+    /// `{gs, hs, ds}` handles. This helper emits the base 24-byte packet only (VS/PS/CS plus the
+    /// legacy `reserved0` field).
     pub fn bind_shaders_with_gs(
         &mut self,
         vs: AerogpuHandle,

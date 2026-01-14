@@ -876,6 +876,15 @@ export interface AerogpuCmdBindShadersPayload {
   vs: AerogpuHandle;
   ps: AerogpuHandle;
   cs: AerogpuHandle;
+  /**
+   * Reserved for ABI-forward-compat.
+   *
+   * For the extended packet form (`sizeBytes >= 36` / when {@link ex} is present), this should be
+   * 0 and the appended `{gs, hs, ds}` handles are authoritative.
+   *
+   * Legacy implementations may interpret a non-zero value as the geometry shader handle (`gs`);
+   * for best-effort compatibility an emitter may choose to duplicate `gs` into this field.
+   */
   reserved0: number;
   ex?: BindShadersEx;
 }
@@ -1601,10 +1610,11 @@ export class AerogpuCmdWriter {
   }
 
   /**
-   * BIND_SHADERS with an optional geometry shader.
+   * Legacy BIND_SHADERS variant that can encode an optional geometry shader via `reserved0`.
    *
-   * ABI note: the on-wire packet layout is unchanged; we reuse the legacy `reserved0` field as the
-   * GS handle when non-zero.
+   * Newer hosts support an append-only extension: if `sizeBytes >= 36`, the packet appends
+   * `{gs, hs, ds}` handles. For the extended form, `reserved0` should be 0 (or may duplicate `gs`
+   * for best-effort compatibility; appended fields are authoritative).
    */
   bindShadersWithGs(vs: AerogpuHandle, gs: AerogpuHandle, ps: AerogpuHandle, cs: AerogpuHandle): void {
     const base = this.appendRaw(AerogpuCmdOpcode.BindShaders, AEROGPU_CMD_BIND_SHADERS_SIZE);

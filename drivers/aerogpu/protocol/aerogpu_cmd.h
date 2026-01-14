@@ -549,6 +549,28 @@ struct aerogpu_cmd_destroy_shader {
 
 AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_destroy_shader) == 16);
 
+/*
+ * BIND_SHADERS:
+ *
+ * Base packet layout is a packed 24-byte prefix (this struct). This prefix is stable and
+ * MUST NOT change.
+ *
+ * ABI extension (append-only):
+ * - If `hdr.size_bytes >= 36`, the packet appends 3 additional `aerogpu_handle_t` shader
+ *   handles in this order:
+ *     - `gs` (geometry shader) 0 = unbound
+ *     - `hs` (hull shader / tessellation control) 0 = unbound
+ *     - `ds` (domain shader / tessellation eval) 0 = unbound
+ *
+ * Forward-compat notes for `reserved0`:
+ * - `reserved0` remains reserved and emitters SHOULD set it to 0 for the extended packet.
+ * - Legacy implementations may interpret a non-zero `reserved0` as the geometry shader (`gs`)
+ *   handle; for best-effort compatibility an emitter MAY duplicate `gs` into `reserved0`, but
+ *   when present, the appended `{gs,hs,ds}` fields are authoritative.
+ *
+ * Any bytes beyond the appended `{gs,hs,ds}` handles are reserved for future extension and MUST
+ * be ignored by readers.
+ */
 #pragma pack(push, 1)
 struct aerogpu_cmd_bind_shaders {
   struct aerogpu_cmd_hdr hdr; /* opcode = AEROGPU_CMD_BIND_SHADERS */
