@@ -535,13 +535,22 @@ fn encode_control_state(state: &ControlState) -> Vec<u8> {
 }
 
 fn decode_control_state(buf: &[u8]) -> SnapshotResult<ControlState> {
+    // Control transfers use the SETUP packet's 16-bit `wLength` field, so the DATA stage cannot
+    // exceed 65535 bytes. Cap snapshot decoding accordingly to avoid pathological allocations when
+    // loading corrupted snapshots.
+    const MAX_CONTROL_DATA_LEN: usize = u16::MAX as usize;
+
     let mut d = Decoder::new(buf);
     let setup = decode_setup_packet(&mut d)?;
     let stage_tag = d.u8()?;
 
     let stage = match stage_tag {
         0 => {
-            let data = d.vec_u8()?;
+            let len = d.u32()? as usize;
+            if len > MAX_CONTROL_DATA_LEN {
+                return Err(SnapshotError::InvalidFieldEncoding("control in_data length"));
+            }
+            let data = d.bytes_vec(len)?;
             let offset = d.u32()? as usize;
             if offset > data.len() {
                 return Err(SnapshotError::InvalidFieldEncoding(
@@ -554,18 +563,34 @@ fn decode_control_state(buf: &[u8]) -> SnapshotResult<ControlState> {
         2 => ControlStage::InDataPending,
         3 => {
             let expected = d.u32()? as usize;
-            let received = d.vec_u8()?;
-            if received.len() > expected {
+            if expected > MAX_CONTROL_DATA_LEN {
+                return Err(SnapshotError::InvalidFieldEncoding(
+                    "control out_data expected length",
+                ));
+            }
+            let received_len = d.u32()? as usize;
+            if received_len > expected {
                 return Err(SnapshotError::InvalidFieldEncoding(
                     "control out_data exceeds expected length",
                 ));
             }
+            let received = d.bytes_vec(received_len)?;
             ControlStage::OutData { expected, received }
         }
         4 => ControlStage::StatusIn,
         5 => {
             let has_data = d.bool()?;
-            let data = if has_data { Some(d.vec_u8()?) } else { None };
+            let data = if has_data {
+                let len = d.u32()? as usize;
+                if len > MAX_CONTROL_DATA_LEN {
+                    return Err(SnapshotError::InvalidFieldEncoding(
+                        "control status_in_pending length",
+                    ));
+                }
+                Some(d.bytes_vec(len)?)
+            } else {
+                None
+            };
             ControlStage::StatusInPending { data }
         }
         6 => ControlStage::StatusOut,
@@ -1091,6 +1116,67 @@ mod tests {
         match mouse.load_state(&kb_snapshot) {
             Err(SnapshotError::InvalidFieldEncoding("usb device model mismatch")) => {}
             other => panic!("expected model mismatch error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn decode_control_state_rejects_oversized_in_data_buffer() {
+        let setup = SetupPacket {
+            bm_request_type: 0x80,
+            b_request: 0,
+            w_value: 0,
+            w_index: 0,
+            w_length: 0,
+        };
+        let buf = encode_setup_packet(Encoder::new(), setup)
+            .u8(0) // InData
+            .u32(u16::MAX as u32 + 1)
+            .finish();
+
+        match decode_control_state(&buf) {
+            Err(SnapshotError::InvalidFieldEncoding("control in_data length")) => {}
+            other => panic!("expected InvalidFieldEncoding, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn decode_control_state_rejects_oversized_out_data_expected_length() {
+        let setup = SetupPacket {
+            bm_request_type: 0,
+            b_request: 0,
+            w_value: 0,
+            w_index: 0,
+            w_length: 0,
+        };
+        let buf = encode_setup_packet(Encoder::new(), setup)
+            .u8(3) // OutData
+            .u32(u16::MAX as u32 + 1)
+            .finish();
+
+        match decode_control_state(&buf) {
+            Err(SnapshotError::InvalidFieldEncoding("control out_data expected length")) => {}
+            other => panic!("expected InvalidFieldEncoding, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn decode_control_state_rejects_oversized_status_in_pending_buffer() {
+        let setup = SetupPacket {
+            bm_request_type: 0,
+            b_request: 0,
+            w_value: 0,
+            w_index: 0,
+            w_length: 0,
+        };
+        let buf = encode_setup_packet(Encoder::new(), setup)
+            .u8(5) // StatusInPending
+            .bool(true)
+            .u32(u16::MAX as u32 + 1)
+            .finish();
+
+        match decode_control_state(&buf) {
+            Err(SnapshotError::InvalidFieldEncoding("control status_in_pending length")) => {}
+            other => panic!("expected InvalidFieldEncoding, got {other:?}"),
         }
     }
 }

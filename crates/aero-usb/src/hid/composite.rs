@@ -37,6 +37,7 @@ const GAMEPAD_INTERRUPT_IN_EP: u8 = 0x83;
 const MAX_PENDING_KEYBOARD_REPORTS: usize = 64;
 const MAX_PENDING_MOUSE_REPORTS: usize = 128;
 const MAX_PENDING_GAMEPAD_REPORTS: usize = 128;
+const MAX_PRESSED_KEYS: usize = 256;
 
 #[derive(Debug, Clone)]
 struct KeyboardInterface {
@@ -736,7 +737,11 @@ impl IoSnapshot for UsbCompositeHidInput {
         self.keyboard.modifiers = r.u8(TAG_KBD_MODIFIERS)?.unwrap_or(0);
         if let Some(buf) = r.bytes(TAG_KBD_PRESSED_KEYS) {
             let mut d = Decoder::new(buf);
-            self.keyboard.pressed_keys = d.vec_u8()?;
+            let count = d.u32()? as usize;
+            if count > MAX_PRESSED_KEYS {
+                return Err(SnapshotError::InvalidFieldEncoding("keyboard pressed keys"));
+            }
+            self.keyboard.pressed_keys = d.bytes_vec(count)?;
             d.finish()?;
         }
         if let Some(buf) = r.bytes(TAG_KBD_LAST_REPORT) {
@@ -1785,5 +1790,30 @@ mod tests {
             dev.handle_in_transfer(MOUSE_INTERRUPT_IN_EP, 4),
             UsbInResult::Data(vec![0x01, 0x00, 0x00, 0x00])
         );
+    }
+
+    #[test]
+    fn snapshot_restore_rejects_oversized_pressed_keys() {
+        const TAG_KBD_PRESSED_KEYS: u16 = 14;
+
+        let snapshot = {
+            let mut w = SnapshotWriter::new(
+                UsbCompositeHidInput::DEVICE_ID,
+                UsbCompositeHidInput::DEVICE_VERSION,
+            );
+            w.field_bytes(
+                TAG_KBD_PRESSED_KEYS,
+                Encoder::new()
+                    .u32(MAX_PRESSED_KEYS as u32 + 1)
+                    .finish(),
+            );
+            w.finish()
+        };
+
+        let mut dev = UsbCompositeHidInput::new();
+        match dev.load_state(&snapshot) {
+            Err(SnapshotError::InvalidFieldEncoding("keyboard pressed keys")) => {}
+            other => panic!("expected InvalidFieldEncoding, got {other:?}"),
+        }
     }
 }

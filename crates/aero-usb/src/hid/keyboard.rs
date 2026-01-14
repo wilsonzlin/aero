@@ -28,6 +28,7 @@ use super::{
 
 const INTERRUPT_IN_EP: u8 = 0x81;
 const MAX_PENDING_REPORTS: usize = 64;
+const MAX_PRESSED_KEYS: usize = 256;
 
 /// HID boot keyboard LED bit: Num Lock.
 pub const KEYBOARD_LED_NUM_LOCK: u8 = 1 << 0;
@@ -266,7 +267,11 @@ impl IoSnapshot for UsbHidKeyboard {
 
         if let Some(buf) = r.bytes(TAG_PRESSED_KEYS) {
             let mut d = Decoder::new(buf);
-            self.pressed_keys = d.vec_u8()?;
+            let count = d.u32()? as usize;
+            if count > MAX_PRESSED_KEYS {
+                return Err(SnapshotError::InvalidFieldEncoding("keyboard pressed keys"));
+            }
+            self.pressed_keys = d.bytes_vec(count)?;
             d.finish()?;
         }
 
@@ -1213,5 +1218,28 @@ mod tests {
         }
 
         assert!(kb.pending_reports.len() <= MAX_PENDING_REPORTS);
+    }
+
+    #[test]
+    fn snapshot_restore_rejects_oversized_pressed_keys() {
+        const TAG_PRESSED_KEYS: u16 = 11;
+
+        let snapshot = {
+            let mut w =
+                SnapshotWriter::new(UsbHidKeyboard::DEVICE_ID, UsbHidKeyboard::DEVICE_VERSION);
+            w.field_bytes(
+                TAG_PRESSED_KEYS,
+                Encoder::new()
+                    .u32(MAX_PRESSED_KEYS as u32 + 1)
+                    .finish(),
+            );
+            w.finish()
+        };
+
+        let mut kb = UsbHidKeyboard::new();
+        match kb.load_state(&snapshot) {
+            Err(SnapshotError::InvalidFieldEncoding("keyboard pressed keys")) => {}
+            other => panic!("expected InvalidFieldEncoding, got {other:?}"),
+        }
     }
 }
