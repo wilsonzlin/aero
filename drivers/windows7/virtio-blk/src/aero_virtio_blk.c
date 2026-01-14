@@ -12,6 +12,9 @@
  * The value is stable across WDK versions (StorStartDevice=0, StorStopDevice=1,
  * StorRemoveDevice=2, StorSurpriseRemoval=3).
  */
+#define AEROVBLK_PNP_ACTION_START_DEVICE 0u
+#define AEROVBLK_PNP_ACTION_STOP_DEVICE 1u
+#define AEROVBLK_PNP_ACTION_REMOVE_DEVICE 2u
 #define AEROVBLK_PNP_ACTION_SURPRISE_REMOVAL 3u
 
 static VOID AerovblkCompleteSrb(_In_ PVOID deviceExtension, _Inout_ PSCSI_REQUEST_BLOCK srb, _In_ UCHAR srbStatus);
@@ -2064,7 +2067,7 @@ BOOLEAN AerovblkHwStartIo(_In_ PVOID deviceExtension, _Inout_ PSCSI_REQUEST_BLOC
     InterlockedIncrement(&devExt->PnpSrbCount);
     pnp = (PSCSI_PNP_REQUEST_BLOCK)srb->DataBuffer;
     if (pnp != NULL && srb->DataTransferLength >= sizeof(*pnp)) {
-      if (pnp->PnPAction == StorStopDevice || pnp->PnPAction == StorRemoveDevice ||
+      if (pnp->PnPAction == AEROVBLK_PNP_ACTION_STOP_DEVICE || pnp->PnPAction == AEROVBLK_PNP_ACTION_REMOVE_DEVICE ||
           pnp->PnPAction == AEROVBLK_PNP_ACTION_SURPRISE_REMOVAL) {
         STOR_LOCK_HANDLE lock;
         BOOLEAN avoidMmio;
@@ -2082,7 +2085,7 @@ BOOLEAN AerovblkHwStartIo(_In_ PVOID deviceExtension, _Inout_ PSCSI_REQUEST_BLOC
          */
         wasRemoved = devExt->Removed ? TRUE : FALSE;
         treatAsSurprise = (pnp->PnPAction == AEROVBLK_PNP_ACTION_SURPRISE_REMOVAL) ? TRUE : FALSE;
-        if (pnp->PnPAction == StorRemoveDevice && !wasRemoved) {
+        if (pnp->PnPAction == AEROVBLK_PNP_ACTION_REMOVE_DEVICE && !wasRemoved) {
           treatAsSurprise = TRUE;
         }
 
@@ -2127,7 +2130,7 @@ BOOLEAN AerovblkHwStartIo(_In_ PVOID deviceExtension, _Inout_ PSCSI_REQUEST_BLOC
           AerovblkResetVirtqueueLocked(devExt);
         }
         StorPortReleaseSpinLock(devExt, &lock);
-      } else if (pnp->PnPAction == StorStartDevice) {
+      } else if (pnp->PnPAction == AEROVBLK_PNP_ACTION_START_DEVICE) {
         BOOLEAN allocateResources;
         STOR_LOCK_HANDLE lock;
         BOOLEAN canStart;
