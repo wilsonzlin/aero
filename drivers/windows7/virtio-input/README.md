@@ -485,8 +485,9 @@ Then reboot (or disable/enable the device). In compat mode the driver accepts QE
 transport checks (PCI IDs/revision, fixed BAR0 layout, queue sizing, etc).
 
 Note: `virtio-tablet-pci` is an **absolute** pointing device (`EV_ABS`). It is supported by this driver, but binds via
-the separate tablet INF (`inf/aero_virtio_tablet.inf`) and requires the device to advertise `ABS_X`/`ABS_Y` (and ideally
-`ABS_INFO` so coordinates can be scaled into the HID range).
+the separate tablet INF (`inf/aero_virtio_tablet.inf`) and requires the device to advertise `ABS_X`/`ABS_Y`.
+In strict contract mode it also requires `ABS_INFO` so coordinates can be scaled into the HID range; in compat mode,
+`ABS_INFO` is best-effort.
 
 ## Testing
 
