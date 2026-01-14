@@ -105,6 +105,11 @@ extern BOOLEAN NTAPI SeTokenIsAdmin(_In_ PACCESS_TOKEN Token);
  * bound and consume nonpaged resources.
  */
 #define AEROGPU_PENDING_META_HANDLES_MAX_COUNT 4096u
+#if defined(_WIN64)
+#define AEROGPU_PENDING_META_HANDLES_MAX_BYTES (256ull * 1024ull * 1024ull) /* 256 MiB */
+#else
+#define AEROGPU_PENDING_META_HANDLES_MAX_BYTES (64ull * 1024ull * 1024ull) /* 64 MiB */
+#endif
 
 #if DBG
 /*
@@ -730,12 +735,14 @@ static __forceinline BOOLEAN AeroGpuMetaHandleAtCapacity(_Inout_ AEROGPU_ADAPTER
     if (PendingBytesOut) {
         *PendingBytesOut = bytes;
     }
-    return count >= AEROGPU_PENDING_META_HANDLES_MAX_COUNT;
+    return (count >= AEROGPU_PENDING_META_HANDLES_MAX_COUNT) || (bytes >= AEROGPU_PENDING_META_HANDLES_MAX_BYTES);
 }
 
 static NTSTATUS AeroGpuMetaHandleStore(_Inout_ AEROGPU_ADAPTER* Adapter, _In_ AEROGPU_SUBMISSION_META* Meta, _Out_ ULONGLONG* HandleOut)
 {
     *HandleOut = 0;
+
+    const ULONGLONG metaBytes = AeroGpuSubmissionMetaTotalBytes(Meta);
 
     AEROGPU_META_HANDLE_ENTRY* entry =
         (AEROGPU_META_HANDLE_ENTRY*)ExAllocatePoolWithTag(NonPagedPool, sizeof(*entry), AEROGPU_POOL_TAG);
@@ -748,18 +755,24 @@ static NTSTATUS AeroGpuMetaHandleStore(_Inout_ AEROGPU_ADAPTER* Adapter, _In_ AE
     KIRQL oldIrql;
     KeAcquireSpinLock(&Adapter->MetaHandleLock, &oldIrql);
 
-    if (Adapter->PendingMetaHandleCount >= AEROGPU_PENDING_META_HANDLES_MAX_COUNT) {
-        const ULONG pendingCount = Adapter->PendingMetaHandleCount;
-        const ULONGLONG pendingBytes = Adapter->PendingMetaHandleBytes;
+    const ULONG pendingCount = Adapter->PendingMetaHandleCount;
+    const ULONGLONG pendingBytes = Adapter->PendingMetaHandleBytes;
+    const BOOLEAN overCount = pendingCount >= AEROGPU_PENDING_META_HANDLES_MAX_COUNT;
+    const BOOLEAN overBytes =
+        (metaBytes > AEROGPU_PENDING_META_HANDLES_MAX_BYTES) ||
+        (pendingBytes > (AEROGPU_PENDING_META_HANDLES_MAX_BYTES - metaBytes));
+    if (overCount || overBytes) {
         KeReleaseSpinLock(&Adapter->MetaHandleLock, oldIrql);
         ExFreePoolWithTag(entry, AEROGPU_POOL_TAG);
 #if DBG
         AEROGPU_LOG_RATELIMITED(g_PendingMetaHandleCapLogCount,
                                 8,
-                                "MetaHandleStore: pending meta handle cap hit (count=%lu max=%lu bytes=%I64u)",
+                                "MetaHandleStore: pending meta handle cap hit (count=%lu/%lu bytes=%I64u/%I64u meta_bytes=%I64u)",
                                 pendingCount,
                                 (ULONG)AEROGPU_PENDING_META_HANDLES_MAX_COUNT,
-                                pendingBytes);
+                                pendingBytes,
+                                (ULONGLONG)AEROGPU_PENDING_META_HANDLES_MAX_BYTES,
+                                metaBytes);
 #endif
         return STATUS_INSUFFICIENT_RESOURCES;
     }
@@ -773,7 +786,7 @@ static NTSTATUS AeroGpuMetaHandleStore(_Inout_ AEROGPU_ADAPTER* Adapter, _In_ AE
     entry->Handle = handle;
     InsertTailList(&Adapter->PendingMetaHandles, &entry->ListEntry);
     Adapter->PendingMetaHandleCount += 1;
-    Adapter->PendingMetaHandleBytes += AeroGpuSubmissionMetaTotalBytes(Meta);
+    Adapter->PendingMetaHandleBytes += metaBytes;
 
     KeReleaseSpinLock(&Adapter->MetaHandleLock, oldIrql);
 
@@ -7966,10 +7979,11 @@ static NTSTATUS APIENTRY AeroGpuDdiRender(_In_ const HANDLE hContext, _Inout_ DX
 #if DBG
             AEROGPU_LOG_RATELIMITED(g_PendingMetaHandleCapLogCount,
                                     8,
-                                    "DdiRender: pending meta handle cap hit (count=%lu max=%lu bytes=%I64u)",
+                                    "DdiRender: pending meta handle cap hit (count=%lu/%lu bytes=%I64u/%I64u)",
                                     pendingCount,
                                     (ULONG)AEROGPU_PENDING_META_HANDLES_MAX_COUNT,
-                                    pendingBytes);
+                                    pendingBytes,
+                                    (ULONGLONG)AEROGPU_PENDING_META_HANDLES_MAX_BYTES);
 #endif
             return STATUS_INSUFFICIENT_RESOURCES;
         }
@@ -8028,10 +8042,11 @@ static NTSTATUS APIENTRY AeroGpuDdiPresent(_In_ const HANDLE hContext, _Inout_ D
 #if DBG
             AEROGPU_LOG_RATELIMITED(g_PendingMetaHandleCapLogCount,
                                     8,
-                                    "DdiPresent: pending meta handle cap hit (count=%lu max=%lu bytes=%I64u)",
+                                    "DdiPresent: pending meta handle cap hit (count=%lu/%lu bytes=%I64u/%I64u)",
                                     pendingCount,
                                     (ULONG)AEROGPU_PENDING_META_HANDLES_MAX_COUNT,
-                                    pendingBytes);
+                                    pendingBytes,
+                                    (ULONGLONG)AEROGPU_PENDING_META_HANDLES_MAX_BYTES);
 #endif
             return STATUS_INSUFFICIENT_RESOURCES;
         }
