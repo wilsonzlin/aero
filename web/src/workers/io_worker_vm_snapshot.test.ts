@@ -808,6 +808,89 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
     expect(res.restoredDevices.map((d) => d.kind)).toEqual(["device.123"]);
   });
 
+  it("prefers reserved BAR1 VRAM blobs over gpu.vram when both are present (compat priority)", async () => {
+    const makeVramChunk = (data: Uint8Array, chunkIndex = 0): Uint8Array => {
+      const headerBytes = 24;
+      const out = new Uint8Array(headerBytes + data.byteLength);
+      // "AERO"
+      out[0] = 0x41;
+      out[1] = 0x45;
+      out[2] = 0x52;
+      out[3] = 0x4f;
+      // version=1
+      out[4] = 0x01;
+      out[5] = 0x00;
+      // flags=chunkIndex
+      out[6] = chunkIndex & 0xff;
+      out[7] = (chunkIndex >>> 8) & 0xff;
+      // magic u32 (0x01415256)
+      out[8] = 0x56;
+      out[9] = 0x52;
+      out[10] = 0x41;
+      out[11] = 0x01;
+      // total_len=u32, offset=u32, len=u32
+      const totalLen = data.byteLength >>> 0;
+      out[12] = totalLen & 0xff;
+      out[13] = (totalLen >>> 8) & 0xff;
+      out[14] = (totalLen >>> 16) & 0xff;
+      out[15] = (totalLen >>> 24) & 0xff;
+      // offset=0
+      out[16] = 0;
+      out[17] = 0;
+      out[18] = 0;
+      out[19] = 0;
+      // len=totalLen
+      out[20] = totalLen & 0xff;
+      out[21] = (totalLen >>> 8) & 0xff;
+      out[22] = (totalLen >>> 16) & 0xff;
+      out[23] = (totalLen >>> 24) & 0xff;
+      out.set(data, headerBytes);
+      return out;
+    };
+
+    const snapshotReserved = new Uint8Array([0x01, 0x02, 0x03, 0x04]);
+    const snapshotGpuVram = new Uint8Array([0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f]);
+    const vramBlob = makeVramChunk(snapshotGpuVram);
+    const unknown = new Uint8Array([0xde, 0xad]);
+
+    // Note: order intentionally includes gpu.vram first to ensure reserved-id VRAM still wins.
+    const restore = vi.fn(() => ({
+      cpu: new Uint8Array([0xaa]),
+      mmu: new Uint8Array([0xbb]),
+      devices: [
+        { kind: `device.${VM_SNAPSHOT_DEVICE_ID_GPU_VRAM}`, bytes: vramBlob },
+        { kind: `device.${IO_WORKER_VRAM_SNAPSHOT_DEVICE_ID_BASE}`, bytes: snapshotReserved },
+        { kind: "device.123", bytes: unknown },
+      ],
+    }));
+    const api = { vm_snapshot_restore_from_opfs: restore } as unknown as WasmApi;
+
+    const vramU8 = new Uint8Array(16);
+    vramU8.fill(0xff);
+
+    const res = await restoreIoWorkerVmSnapshotFromOpfs({
+      api,
+      path: "state/test.snap",
+      guestBase: 0,
+      guestSize: 0x1000,
+      vramU8,
+      runtimes: {
+        usbXhciControllerBridge: null,
+        usbUhciRuntime: null,
+        usbUhciControllerBridge: null,
+        usbEhciControllerBridge: null,
+        netE1000: null,
+        netStack: null,
+      },
+    });
+
+    // Reserved-id VRAM should win and clear the remainder to zero.
+    expect(vramU8.subarray(0, snapshotReserved.length)).toEqual(snapshotReserved);
+    expect(vramU8.subarray(snapshotReserved.length)).toEqual(new Uint8Array(vramU8.length - snapshotReserved.length));
+    expect(res.devices?.map((d) => d.kind)).toEqual(["device.123"]);
+    expect(res.restoredDevices.map((d) => d.kind)).toEqual(["device.123"]);
+  });
+
   it("clears vramU8 on restore when the snapshot contains no VRAM blobs", async () => {
     const restore = vi.fn(() => ({
       cpu: new Uint8Array([0xaa]),
