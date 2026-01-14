@@ -36,9 +36,8 @@ for table in "${aml_tables[@]}"; do
     # Decompile emits `${prefix}.dsl` in the current directory.
     #
     # `iasl` warns (3168) when compiling legacy Processor() objects back from the
-    # decompiler output. We intentionally keep ProcessorOp in our shipped AML for
-    # Windows 7 compatibility, so ignore the warning during this round-trip
-    # validation to avoid noisy output/future warning-as-error regressions.
+    # decompiler output. Ignore it during this round-trip validation to keep the
+    # script quiet and stable across ACPICA versions.
     iasl -vw 3168 -d "${base}" >/dev/null
 
     dsl="${prefix}.dsl"
