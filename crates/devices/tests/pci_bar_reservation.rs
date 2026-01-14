@@ -48,7 +48,7 @@ fn pci_bus_reset_reserves_fixed_bar_assignments() {
     let dev_a_bdf = PciBdf::new(0, 1, 0);
     let dev_b_bdf = PciBdf::new(0, 2, 0);
 
-    // Device A: fixed MMIO BAR0 mapping (e.g. VGA LFB stub at 0xE000_0000).
+    // Device A: fixed MMIO BAR0 mapping (example at 0xE000_0000).
     bus.add_device(
         dev_a_bdf,
         Box::new(StubPciDevice::new_mmio32_bar0(
@@ -92,4 +92,3 @@ fn pci_bus_reset_reserves_fixed_bar_assignments() {
     assert_eq!(dev_a_range.base % dev_a_range.size, 0);
     assert_eq!(dev_b_range.base % dev_b_range.size, 0);
 }
-

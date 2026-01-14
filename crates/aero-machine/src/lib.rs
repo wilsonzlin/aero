@@ -1726,9 +1726,10 @@ impl MmioHandler for VgaMmio {
 // occupy that BDF.
 //
 // When `MachineConfig::enable_vga` is enabled (and `enable_aerogpu` is not), we also expose a
-// minimal Bochs/QEMU-compatible VGA PCI function on a different slot so the fixed SVGA linear
-// framebuffer can be routed via the PCI MMIO window. When AeroGPU is enabled, this transitional
-// PCI stub is intentionally not installed.
+// minimal Bochs/QEMU-compatible VGA PCI function on a different slot so the SVGA/VBE linear
+// framebuffer (LFB) can be routed via the PCI MMIO window (stub BAR mirrors the configured LFB
+// base; legacy default `SVGA_LFB_BASE`). When AeroGPU is enabled, this transitional PCI stub is
+// intentionally not installed.
 const VGA_PCI_BDF: PciBdf = PciBdf::new(0, 0x0c, 0);
 const VGA_PCI_BAR_INDEX: u8 = 0;
 
@@ -1757,7 +1758,8 @@ impl VgaPciConfigDevice {
                 prefetchable: false,
             },
         );
-        // Use a fixed BAR base so it is preserved across `PciBus::reset` + `bios_post` runs.
+        // Use a deterministic BAR base so it is preserved across `PciBus::reset` + `bios_post`
+        // runs. (Legacy default: `SVGA_LFB_BASE`.)
         cfg.set_bar_base(VGA_PCI_BAR_INDEX, aero_gpu_vga::SVGA_LFB_BASE as u64);
 
         Self { cfg }
@@ -5081,7 +5083,8 @@ impl Machine {
             self.io
                 .register_range(0x01CE, 0x0002, Box::new(VgaPortWindow { vga: vga.clone() }));
 
-            // Map the VBE/SVGA linear framebuffer (fixed physical address in `aero_gpu_vga`).
+            // Map the VBE/SVGA linear framebuffer at the configured LFB base (legacy default:
+            // `SVGA_LFB_BASE`).
             let lfb_base = u64::from(aero_gpu_vga::SVGA_LFB_BASE);
             let lfb_len = vga.borrow().vram().len() as u64;
             self.mem.map_mmio_once(lfb_base, lfb_len, || {
@@ -10927,7 +10930,7 @@ mod tests {
             firmware::video::vbe::VbeDevice::LFB_BASE_DEFAULT
         );
 
-        // When VGA is enabled, the BIOS should report the fixed MMIO-mapped SVGA base.
+        // When VGA is enabled, the BIOS should report the legacy MMIO-mapped SVGA base.
         let vga = Machine::new(MachineConfig {
             ram_size_bytes: 64 * 1024 * 1024,
             enable_pc_platform: true,

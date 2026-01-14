@@ -30,7 +30,8 @@ Quick reality check (as of this repo revision):
 - ✅ Boot display (default): `MachineConfig::enable_vga=true` uses `crates/aero-gpu-vga/` and is wired into
   `crates/aero-machine/` (plus BIOS INT 10h handlers in `crates/firmware/`). When the PC platform is enabled,
   `aero_machine` also exposes a **transitional** Bochs/QEMU “Standard VGA”-like PCI stub at `00:0c.0` used only
-  to route the fixed VBE LFB through PCI MMIO.
+  to route the VBE LFB through PCI MMIO (stub BAR mirrors the configured LFB base; legacy default
+  `0xE000_0000`).
 - ✅ Canonical AeroGPU identity in `aero_machine`: `MachineConfig::enable_aerogpu=true` / `MachineConfig::win7_graphics(...)`
   exposes `A3A0:0001` at `00:07.0` with **BAR1-backed VRAM**, legacy VGA window aliasing (`0xA0000..0xC0000`),
   minimal BAR0 ring/fence transport (no-op command execution), and BIOS VBE LFB scanout/text-mode fallback (see `crates/aero-machine/src/lib.rs` and
