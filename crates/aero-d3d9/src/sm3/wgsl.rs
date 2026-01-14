@@ -40,8 +40,22 @@ pub struct WgslOutput {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BindGroupLayout {
-    /// Binding 0 is always the constants buffer.
-    pub sampler_bindings: HashMap<u32, (u32, u32)>, // sampler_index -> (texture_binding, sampler_binding)
+    /// Bind group index used for texture/sampler bindings in this shader stage.
+    ///
+    /// Contract:
+    /// - group(0): constants buffer shared by VS/PS
+    /// - group(1): VS texture/sampler bindings
+    /// - group(2): PS texture/sampler bindings
+    pub sampler_group: u32,
+    /// sampler_index -> (texture_binding, sampler_binding)
+    pub sampler_bindings: HashMap<u32, (u32, u32)>,
+}
+
+fn sampler_bind_group(stage: ShaderStage) -> u32 {
+    match stage {
+        ShaderStage::Vertex => 1,
+        ShaderStage::Pixel => 2,
+    }
 }
 
 /// Output of SM2/SM3 bytecode → WGSL translation.
@@ -1815,6 +1829,8 @@ pub fn generate_wgsl(ir: &crate::sm3::ir::ShaderIr) -> Result<WgslOutput, WgslEr
     wgsl.push_str("struct Constants { c: array<vec4<f32>, 512>, };\n");
     wgsl.push_str("@group(0) @binding(0) var<uniform> constants: Constants;\n");
 
+    let sampler_group = sampler_bind_group(ir.version.stage);
+
     let sampler_type_map: HashMap<u32, TextureType> = ir
         .samplers
         .iter()
@@ -1832,16 +1848,19 @@ pub fn generate_wgsl(ir: &crate::sm3::ir::ShaderIr) -> Result<WgslOutput, WgslEr
                 "unsupported texture type for sampler s{s}: {ty:?} (only Texture2D is supported)"
             )));
         }
-        let tex_binding = 1u32 + s * 2;
+        // Binding contract matches the legacy token-stream translator and the AeroGPU executor:
+        //   texture binding = 2*s
+        //   sampler binding = 2*s + 1
+        let tex_binding = s * 2;
         let samp_binding = tex_binding + 1;
         sampler_bindings.insert(*s, (tex_binding, samp_binding));
         let _ = writeln!(
             wgsl,
-            "@group(0) @binding({tex_binding}) var tex{s}: texture_2d<f32>;"
+            "@group({sampler_group}) @binding({tex_binding}) var tex{s}: texture_2d<f32>;"
         );
         let _ = writeln!(
             wgsl,
-            "@group(0) @binding({samp_binding}) var samp{s}: sampler;"
+            "@group({sampler_group}) @binding({samp_binding}) var samp{s}: sampler;"
         );
     }
     if !usage.samplers.is_empty() {
@@ -2258,6 +2277,9 @@ pub fn generate_wgsl(ir: &crate::sm3::ir::ShaderIr) -> Result<WgslOutput, WgslEr
     Ok(WgslOutput {
         wgsl,
         entry_point,
-        bind_group_layout: BindGroupLayout { sampler_bindings },
+        bind_group_layout: BindGroupLayout {
+            sampler_group,
+            sampler_bindings,
+        },
     })
 }

@@ -238,9 +238,21 @@ fn wgsl_texld_emits_texture_sample() {
 
     let wgsl = generate_wgsl(&ir).unwrap();
     assert!(wgsl.wgsl.contains("textureSample("), "{}", wgsl.wgsl);
+    assert_eq!(wgsl.bind_group_layout.sampler_group, 2);
     assert_eq!(
         wgsl.bind_group_layout.sampler_bindings.get(&0),
-        Some(&(1, 2))
+        Some(&(0, 1))
+    );
+    assert!(
+        wgsl.wgsl
+            .contains("@group(2) @binding(0) var tex0: texture_2d<f32>;"),
+        "{}",
+        wgsl.wgsl
+    );
+    assert!(
+        wgsl.wgsl.contains("@group(2) @binding(1) var samp0: sampler;"),
+        "{}",
+        wgsl.wgsl
     );
 
     let module = naga::front::wgsl::parse_str(&wgsl.wgsl).expect("wgsl parse");
@@ -361,11 +373,27 @@ fn wgsl_vs_texld_emits_texture_sample_level() {
     let ir = build_ir(&decoded).unwrap();
     verify_ir(&ir).unwrap();
 
-    let wgsl = generate_wgsl(&ir).unwrap().wgsl;
-    assert!(wgsl.contains("@vertex"), "{wgsl}");
-    assert!(wgsl.contains("textureSampleLevel("), "{wgsl}");
+    let wgsl = generate_wgsl(&ir).unwrap();
+    assert!(wgsl.wgsl.contains("@vertex"), "{}", wgsl.wgsl);
+    assert!(wgsl.wgsl.contains("textureSampleLevel("), "{}", wgsl.wgsl);
+    assert_eq!(wgsl.bind_group_layout.sampler_group, 1);
+    assert_eq!(
+        wgsl.bind_group_layout.sampler_bindings.get(&0),
+        Some(&(0, 1))
+    );
+    assert!(
+        wgsl.wgsl
+            .contains("@group(1) @binding(0) var tex0: texture_2d<f32>;"),
+        "{}",
+        wgsl.wgsl
+    );
+    assert!(
+        wgsl.wgsl.contains("@group(1) @binding(1) var samp0: sampler;"),
+        "{}",
+        wgsl.wgsl
+    );
 
-    let module = naga::front::wgsl::parse_str(&wgsl).expect("wgsl parse");
+    let module = naga::front::wgsl::parse_str(&wgsl.wgsl).expect("wgsl parse");
     naga::valid::Validator::new(
         naga::valid::ValidationFlags::all(),
         naga::valid::Capabilities::all(),
@@ -403,9 +431,10 @@ fn wgsl_texldl_emits_texture_sample_level_explicit_lod() {
     let wgsl = generate_wgsl(&ir).unwrap();
     assert!(wgsl.wgsl.contains("textureSampleLevel("), "{}", wgsl.wgsl);
     assert!(wgsl.wgsl.contains("(c0).w"), "{}", wgsl.wgsl);
+    assert_eq!(wgsl.bind_group_layout.sampler_group, 2);
     assert_eq!(
         wgsl.bind_group_layout.sampler_bindings.get(&1),
-        Some(&(3, 4))
+        Some(&(2, 3))
     );
 
     let module = naga::front::wgsl::parse_str(&wgsl.wgsl).expect("wgsl parse");
