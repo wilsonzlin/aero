@@ -5785,9 +5785,8 @@ fn emit_src_scalar_u32(
 }
 
 fn emit_u32_mul_hi(a: &str, b: &str) -> String {
-    let lanes = ['x', 'y', 'z', 'w'].map(|c| {
-        format!("u32((u64(({a}).{c}) * u64(({b}).{c})) >> 32u)")
-    });
+    let lanes =
+        ['x', 'y', 'z', 'w'].map(|c| format!("u32((u64(({a}).{c}) * u64(({b}).{c})) >> 32u)"));
     format!(
         "vec4<u32>({}, {}, {}, {})",
         lanes[0], lanes[1], lanes[2], lanes[3]
@@ -5796,9 +5795,7 @@ fn emit_u32_mul_hi(a: &str, b: &str) -> String {
 
 fn emit_u32_mad_hi(a: &str, b: &str, c: &str) -> String {
     let lanes = ['x', 'y', 'z', 'w'].map(|lane| {
-        format!(
-            "u32((u64(({a}).{lane}) * u64(({b}).{lane}) + u64(({c}).{lane})) >> 32u)"
-        )
+        format!("u32((u64(({a}).{lane}) * u64(({b}).{lane}) + u64(({c}).{lane})) >> 32u)")
     });
     format!(
         "vec4<u32>({}, {}, {}, {})",
@@ -5807,9 +5804,8 @@ fn emit_u32_mad_hi(a: &str, b: &str, c: &str) -> String {
 }
 
 fn emit_i32_mul_hi(a: &str, b: &str) -> String {
-    let lanes = ['x', 'y', 'z', 'w'].map(|c| {
-        format!("i32((i64(({a}).{c}) * i64(({b}).{c})) >> 32u)")
-    });
+    let lanes =
+        ['x', 'y', 'z', 'w'].map(|c| format!("i32((i64(({a}).{c}) * i64(({b}).{c})) >> 32u)"));
     format!(
         "vec4<i32>({}, {}, {}, {})",
         lanes[0], lanes[1], lanes[2], lanes[3]
@@ -5818,9 +5814,7 @@ fn emit_i32_mul_hi(a: &str, b: &str) -> String {
 
 fn emit_i32_mad_hi(a: &str, b: &str, c: &str) -> String {
     let lanes = ['x', 'y', 'z', 'w'].map(|lane| {
-        format!(
-            "i32((i64(({a}).{lane}) * i64(({b}).{lane}) + i64(({c}).{lane})) >> 32u)"
-        )
+        format!("i32((i64(({a}).{lane}) * i64(({b}).{lane}) + i64(({c}).{lane})) >> 32u)")
     });
     format!(
         "vec4<i32>({}, {}, {}, {})",

@@ -1449,10 +1449,7 @@ fn decode_int_mul(signed: bool, r: &mut InstrReader<'_>) -> Result<Sm4Inst, Sm4D
     })
 }
 
-fn decode_int_mul_single(
-    signed: bool,
-    r: &mut InstrReader<'_>,
-) -> Result<Sm4Inst, Sm4DecodeError> {
+fn decode_int_mul_single(signed: bool, r: &mut InstrReader<'_>) -> Result<Sm4Inst, Sm4DecodeError> {
     let dst_lo = decode_dst(r)?;
     let a = decode_src(r)?;
     let b = decode_src(r)?;
@@ -1500,10 +1497,7 @@ fn decode_int_mad(signed: bool, r: &mut InstrReader<'_>) -> Result<Sm4Inst, Sm4D
     })
 }
 
-fn decode_int_mad_single(
-    signed: bool,
-    r: &mut InstrReader<'_>,
-) -> Result<Sm4Inst, Sm4DecodeError> {
+fn decode_int_mad_single(signed: bool, r: &mut InstrReader<'_>) -> Result<Sm4Inst, Sm4DecodeError> {
     let dst_lo = decode_dst(r)?;
     let a = decode_src(r)?;
     let b = decode_src(r)?;

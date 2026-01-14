@@ -2615,10 +2615,13 @@ fn decodes_and_translates_umul_multi_dst_hi_lo_from_dxbc() {
     let module = decode_program(&program).expect("SM4 decode");
 
     assert!(
-        module
-            .instructions
-            .iter()
-            .any(|i| matches!(i, Sm4Inst::UMul { dst_hi: Some(_), .. })),
+        module.instructions.iter().any(|i| matches!(
+            i,
+            Sm4Inst::UMul {
+                dst_hi: Some(_),
+                ..
+            }
+        )),
         "expected UMul instruction with dst_hi"
     );
 
