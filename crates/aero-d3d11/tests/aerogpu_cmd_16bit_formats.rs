@@ -192,6 +192,96 @@ fn aerogpu_cmd_upload_resource_supports_16bit_packed_formats() {
 }
 
 #[test]
+fn aerogpu_cmd_upload_resource_supports_partial_b5_texture_uploads() {
+    pollster::block_on(async {
+        let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+            Ok(exec) => exec,
+            Err(e) => {
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                return;
+            }
+        };
+
+        const TEX: u32 = 1;
+        let width = 2u32;
+        let height = 2u32;
+        let row_pitch_bytes = 8u32; // 4 bytes pixels + 4 bytes padding
+
+        // 2x2 pixels, row-major:
+        // row0: red, green
+        // row1: blue, white
+        let mut b5 = Vec::new();
+        // row0
+        b5.extend_from_slice(&[0x00, 0xF8, 0xE0, 0x07]);
+        b5.extend_from_slice(&[0xDE, 0xAD, 0xBE, 0xEF]); // padding
+        // row1
+        b5.extend_from_slice(&[0x1F, 0x00, 0xFF, 0xFF]);
+        b5.extend_from_slice(&[0xFE, 0xED, 0xFA, 0xCE]); // padding
+        assert_eq!(b5.len(), row_pitch_bytes as usize * height as usize);
+
+        // Patch the top-right pixel (row0,col1) from green (0x07E0) to white (0xFFFF).
+        let patch_offset = 2u64; // second u16 in row0
+        let patch: [u8; 2] = [0xFF, 0xFF];
+
+        let stream = build_stream(|stream| {
+            // CREATE_TEXTURE2D (host allocated)
+            let start = begin_cmd(stream, AerogpuCmdOpcode::CreateTexture2d as u32);
+            stream.extend_from_slice(&TEX.to_le_bytes());
+            stream.extend_from_slice(&AEROGPU_RESOURCE_USAGE_TEXTURE.to_le_bytes());
+            stream.extend_from_slice(&(AerogpuFormat::B5G6R5Unorm as u32).to_le_bytes());
+            stream.extend_from_slice(&width.to_le_bytes());
+            stream.extend_from_slice(&height.to_le_bytes());
+            stream.extend_from_slice(&1u32.to_le_bytes()); // mip_levels
+            stream.extend_from_slice(&1u32.to_le_bytes()); // array_layers
+            stream.extend_from_slice(&row_pitch_bytes.to_le_bytes());
+            stream.extend_from_slice(&0u32.to_le_bytes()); // backing_alloc_id
+            stream.extend_from_slice(&0u32.to_le_bytes()); // backing_offset_bytes
+            stream.extend_from_slice(&0u64.to_le_bytes()); // reserved0
+            end_cmd(stream, start);
+
+            // UPLOAD_RESOURCE full texture
+            let start = begin_cmd(stream, AerogpuCmdOpcode::UploadResource as u32);
+            stream.extend_from_slice(&TEX.to_le_bytes());
+            stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+            stream.extend_from_slice(&0u64.to_le_bytes()); // offset_bytes
+            stream.extend_from_slice(&(b5.len() as u64).to_le_bytes());
+            stream.extend_from_slice(&b5);
+            stream.resize(stream.len() + (align4(b5.len()) - b5.len()), 0);
+            end_cmd(stream, start);
+
+            // UPLOAD_RESOURCE partial patch
+            let start = begin_cmd(stream, AerogpuCmdOpcode::UploadResource as u32);
+            stream.extend_from_slice(&TEX.to_le_bytes());
+            stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+            stream.extend_from_slice(&patch_offset.to_le_bytes());
+            stream.extend_from_slice(&(patch.len() as u64).to_le_bytes());
+            stream.extend_from_slice(&patch);
+            stream.resize(stream.len() + (align4(patch.len()) - patch.len()), 0);
+            end_cmd(stream, start);
+        });
+
+        let mut guest_mem = VecGuestMemory::new(0);
+        exec.execute_cmd_stream(&stream, None, &mut guest_mem)
+            .expect("execute_cmd_stream should succeed");
+        exec.poll_wait();
+
+        let pixels = exec
+            .read_texture_rgba8(TEX)
+            .await
+            .expect("readback should succeed");
+        assert_eq!(
+            pixels,
+            vec![
+                255, 0, 0, 255, // red
+                255, 255, 255, 255, // patched to white
+                0, 0, 255, 255, // blue
+                255, 255, 255, 255, // white
+            ]
+        );
+    });
+}
+
+#[test]
 fn aerogpu_cmd_guest_backed_b5_formats_expand_on_upload_and_copy() {
     pollster::block_on(async {
         let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
