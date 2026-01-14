@@ -1048,7 +1048,7 @@ export class WebHidPassthroughManager {
   #canUseSharedMemory(): boolean {
     // SharedArrayBuffer requires cross-origin isolation in browsers. Node/Vitest may still provide it,
     // but keep the check aligned with the browser contract so behaviour matches production.
-    if ((globalThis as any).crossOriginIsolated !== true) return false;
+    if ((globalThis as unknown as { crossOriginIsolated?: unknown }).crossOriginIsolated !== true) return false;
     if (typeof SharedArrayBuffer === "undefined") return false;
     if (typeof Atomics === "undefined") return false;
     return true;
@@ -1101,8 +1101,7 @@ function el<K extends keyof HTMLElementTagNameMap>(
     } else if (key === "text") {
       node.textContent = String(value);
     } else if (key.startsWith("on") && typeof value === "function") {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (node as any)[key.toLowerCase()] = value;
+      (node as unknown as Record<string, unknown>)[key.toLowerCase()] = value;
     } else {
       node.setAttribute(key, String(value));
     }
