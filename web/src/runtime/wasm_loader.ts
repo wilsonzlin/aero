@@ -500,6 +500,35 @@ export type MachineHandle = {
     inject_mouse_back?(pressed: boolean): void;
     inject_mouse_forward?(pressed: boolean): void;
     /**
+     * Synthetic USB HID injection helpers (devices behind the external hub).
+     *
+     * Requires constructing the machine with `enableSyntheticUsbHid=true`
+     * (see `Machine.new_with_input_backends`).
+     *
+     * Optional for older WASM builds.
+     */
+    inject_usb_hid_keyboard_usage?(usage: number, pressed: boolean): void;
+    /**
+     * Inject a Consumer Control (HID Usage Page 0x0C) usage transition (media keys).
+     *
+     * Optional for older WASM builds.
+     */
+    inject_usb_hid_consumer_usage?(usage: number, pressed: boolean): void;
+    /** Inject relative mouse motion (`dy > 0` = down, matches browser coordinates). */
+    inject_usb_hid_mouse_move?(dx: number, dy: number): void;
+    /** Set mouse button state (low bits match DOM `MouseEvent.buttons`). */
+    inject_usb_hid_mouse_buttons?(mask: number): void;
+    /** Set vertical mouse wheel delta (`delta > 0` = wheel up). */
+    inject_usb_hid_mouse_wheel?(delta: number): void;
+    /** Set horizontal mouse wheel delta (`delta > 0` = wheel right). */
+    inject_usb_hid_mouse_hwheel?(delta: number): void;
+    /**
+     * Inject a packed gamepad report.
+     *
+     * Packing matches `web/src/input/gamepad.ts`.
+     */
+    inject_usb_hid_gamepad_report?(packedLo: number, packedHi: number): void;
+    /**
      * Attach/detach the canonical machine network backend via Aero IPC rings.
      *
      * Optional for older WASM builds.

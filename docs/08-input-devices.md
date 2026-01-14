@@ -110,7 +110,6 @@ For the full-system `Machine` wrapper, synthetic USB HID injection is available 
   - buttons: `Machine.inject_usb_hid_mouse_buttons(mask)` (low bits match DOM `MouseEvent.buttons`)
   - wheel: `Machine.inject_usb_hid_mouse_wheel(delta)` (`delta > 0` = wheel up)
 - Gamepad: `Machine.inject_usb_hid_gamepad_report(packed_lo, packed_hi)` (matches `web/src/input/gamepad.ts` packing)
-- Consumer Control (media keys, Usage Page 0x0C): `Machine.inject_usb_hid_consumer_usage(usage, pressed)`
 
 In the production worker runtime, input is typically translated into USB HID reports using the WASM export `UsbHidBridge`:
 
@@ -121,7 +120,6 @@ In the production worker runtime, input is typically translated into USB HID rep
   - buttons: `UsbHidBridge.mouse_buttons(mask)` (low bits match DOM `MouseEvent.buttons`)
   - wheel: `UsbHidBridge.mouse_wheel(delta)` (`delta > 0` = wheel up)
 - Gamepad: `UsbHidBridge.gamepad_report(packed_lo, packed_hi)` (matches `web/src/input/gamepad.ts` packing)
-- Consumer Control (media keys, Usage Page 0x0C): `UsbHidBridge.consumer_event(usage, pressed)`
 
 See [`USB HID (Optional)`](#usb-hid-optional) for the guest-visible external hub topology + reserved ports.
 
