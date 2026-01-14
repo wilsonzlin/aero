@@ -264,10 +264,53 @@ bool TestValidateAndConvertRejectsD3d10_1Src1Factor() {
 
   aerogpu::d3d10_11::AerogpuBlendStateBase out{};
   const HRESULT hr = aerogpu::d3d10_11::ValidateAndConvertBlendDesc(&rt,
-                                                                    /*rt_count=*/1,
-                                                                    /*alpha_to_coverage_enable=*/false,
-                                                                    &out);
+                                                                     /*rt_count=*/1,
+                                                                     /*alpha_to_coverage_enable=*/false,
+                                                                     &out);
   return Check(hr == E_NOTIMPL, "ValidateAndConvertBlendDesc rejects D3D10.1 SRC1_ALPHA");
+}
+
+bool TestUnsupportedBlendOpReturnsNotImpl() {
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev), "InitTestDevice(unsupported blend op)")) {
+    return false;
+  }
+
+  // Numeric values match D3D10_BLEND / D3D11_BLEND and D3D10_BLEND_OP / D3D11_BLEND_OP.
+  constexpr uint32_t kBlendZero = 1;
+  constexpr uint32_t kBlendOne = 2;
+  constexpr uint32_t kBlendSrcAlpha = 5;
+  constexpr uint32_t kBlendInvSrcAlpha = 6;
+  constexpr uint32_t kBlendOpInvalid = 6; // valid ops are 1..5
+
+  AEROGPU_DDIARG_CREATEBLENDSTATE desc = {};
+  desc.AlphaToCoverageEnable = 0;
+  desc.SrcBlend = kBlendSrcAlpha;
+  desc.DestBlend = kBlendInvSrcAlpha;
+  desc.BlendOp = kBlendOpInvalid;
+  desc.SrcBlendAlpha = kBlendOne;
+  desc.DestBlendAlpha = kBlendZero;
+  desc.BlendOpAlpha = kBlendOpInvalid;
+  for (uint32_t i = 0; i < 8; ++i) {
+    desc.BlendEnable[i] = 1;
+    desc.RenderTargetWriteMask[i] = 0xF;
+  }
+
+  std::vector<uint8_t> state_storage;
+  D3D10DDI_HBLENDSTATE hState = MakeBlendState(&dev, desc, &state_storage);
+  if (!Check(hState.pDrvPrivate != nullptr, "blend state storage (unsupported blend op)")) {
+    return false;
+  }
+
+  const HRESULT hr = dev.device_funcs.pfnCreateBlendState(dev.hDevice, &desc, hState);
+  if (!Check(hr == E_NOTIMPL, "CreateBlendState should return E_NOTIMPL for unsupported blend op")) {
+    return false;
+  }
+
+  dev.device_funcs.pfnDestroyBlendState(dev.hDevice, hState);
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
 }
 
 } // namespace
@@ -289,6 +332,9 @@ int main() {
     return 1;
   }
   if (!TestValidateAndConvertRejectsD3d10_1Src1Factor()) {
+    return 1;
+  }
+  if (!TestUnsupportedBlendOpReturnsNotImpl()) {
     return 1;
   }
   return 0;

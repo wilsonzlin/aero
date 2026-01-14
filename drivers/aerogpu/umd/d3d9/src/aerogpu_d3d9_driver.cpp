@@ -8177,7 +8177,7 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
   // types explicitly. This avoids accidentally treating them as 2D surfaces via
   // the size-vs-(w,h) heuristic.
   {
-    const D3DDDIRESTYPE create_type = static_cast<D3DDDIRESTYPE>(d3d9_resource_type(*pCreateResource));
+    const D3DDDIRESTYPE create_type = static_cast<D3DDDIRESTYPE>(create_type_u32);
     if (create_size_bytes == 0 &&
         (create_type == D3DDDIRESTYPE_CUBETEXTURE || create_type == D3DDDIRESTYPE_VOLUMETEXTURE ||
          create_type == D3DDDIRESTYPE_VOLUME)) {

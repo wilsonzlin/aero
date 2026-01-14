@@ -1712,6 +1712,16 @@ bool TestCreateResourceRejectsNon2dDepth() {
   std::vector<uint8_t> dma(4096, 0);
   dev->cmd.set_span(dma.data(), dma.size());
   dev->cmd.reset();
+  struct CmdStreamRestore {
+    Device* dev = nullptr;
+    ~CmdStreamRestore() {
+      if (dev) {
+        // Ensure Cleanup's DestroyDevice/CloseAdapter paths use a safe, owned
+        // command buffer (the span backing store is about to be freed).
+        dev->cmd.set_vector();
+      }
+    }
+  } cmd_restore{dev};
 
   D3D9DDIARG_CREATERESOURCE create_res{};
   create_res.type = 0;
