@@ -402,6 +402,7 @@ fn handle_int13(
 ) {
     let ah = ((cpu.gpr[gpr::RAX] >> 8) & 0xFF) as u8;
     let drive = (cpu.gpr[gpr::RDX] & 0xFF) as u8;
+    let cdrom_present = cdrom.is_some();
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     enum DriveKind {
@@ -440,14 +441,14 @@ fn handle_int13(
         bus.read_u8(BDA_BASE + 0x75)
     }
 
-    fn drive_present(bios: &Bios, bus: &mut dyn BiosBus, drive: u8) -> bool {
+    fn drive_present(bios: &Bios, bus: &mut dyn BiosBus, drive: u8, cdrom_present: bool) -> bool {
         match classify_drive(drive) {
             Some(DriveKind::Floppy) => drive < floppy_drive_count(bus),
             Some(DriveKind::Hdd) => {
                 let idx = drive.wrapping_sub(0x80);
                 idx < fixed_drive_count(bus)
             }
-            Some(DriveKind::Cd) => bios.config.boot_drive == drive,
+            Some(DriveKind::Cd) => cdrom_present || bios.config.boot_drive == drive,
             None => false,
         }
     }
@@ -614,7 +615,7 @@ fn handle_int13(
         match ah {
             0x00 => {
                 // Reset disk system.
-                if !drive_present(bios, bus, drive) {
+                if !drive_present(bios, bus, drive, cdrom_present) {
                     set_error(bios, cpu, 0x01);
                     return;
                 }
@@ -624,7 +625,7 @@ fn handle_int13(
             }
             0x01 => {
                 // Get status of last disk operation.
-                if !drive_present(bios, bus, drive) {
+                if !drive_present(bios, bus, drive, cdrom_present) {
                     set_error(bios, cpu, 0x01);
                     return;
                 }
@@ -638,7 +639,7 @@ fn handle_int13(
             }
             0x15 => {
                 // Get disk type.
-                if !drive_present(bios, bus, drive) {
+                if !drive_present(bios, bus, drive, cdrom_present) {
                     set_error(bios, cpu, 0x01);
                     return;
                 }
@@ -658,7 +659,7 @@ fn handle_int13(
             }
             0x03 | 0x05 => {
                 // CHS write / format track.
-                if !drive_present(bios, bus, drive) {
+                if !drive_present(bios, bus, drive, cdrom_present) {
                     set_error(bios, cpu, 0x01);
                     return;
                 }
@@ -668,7 +669,7 @@ fn handle_int13(
             }
             0x41 => {
                 // Extensions check.
-                if !drive_present(bios, bus, drive) {
+                if !drive_present(bios, bus, drive, cdrom_present) {
                     set_error(bios, cpu, 0x01);
                     return;
                 }
@@ -697,7 +698,7 @@ fn handle_int13(
             }
             0x42 => {
                 // Extended read via Disk Address Packet (DAP) at DS:SI.
-                if !drive_present(bios, bus, drive) {
+                if !drive_present(bios, bus, drive, cdrom_present) {
                     set_error(bios, cpu, 0x01);
                     return;
                 }
@@ -795,7 +796,7 @@ fn handle_int13(
             }
             0x43 => {
                 // Extended write via Disk Address Packet (EDD): CD media is write-protected.
-                if !drive_present(bios, bus, drive) {
+                if !drive_present(bios, bus, drive, cdrom_present) {
                     set_error(bios, cpu, 0x01);
                     return;
                 }
@@ -850,7 +851,7 @@ fn handle_int13(
             }
             0x48 => {
                 // Extended get drive parameters (EDD) for CD-ROM media (2048-byte sectors).
-                if !drive_present(bios, bus, drive) {
+                if !drive_present(bios, bus, drive, cdrom_present) {
                     set_error(bios, cpu, 0x01);
                     return;
                 }
@@ -958,7 +959,7 @@ fn handle_int13(
             _ => {
                 // Legacy CHS functions are not supported for CD-ROM drives; extensions are
                 // sufficient for El Torito boot paths.
-                if !drive_present(bios, bus, drive) {
+                if !drive_present(bios, bus, drive, cdrom_present) {
                     set_error(bios, cpu, 0x01);
                     return;
                 }
@@ -971,7 +972,7 @@ fn handle_int13(
     match ah {
         0x00 => {
             // Reset disk system.
-            if !drive_present(bios, bus, drive) {
+            if !drive_present(bios, bus, drive, cdrom_present) {
                 set_error(bios, cpu, 0x01);
                 return;
             }
@@ -981,7 +982,7 @@ fn handle_int13(
         }
         0x01 => {
             // Get status of last disk operation.
-            if !drive_present(bios, bus, drive) {
+            if !drive_present(bios, bus, drive, cdrom_present) {
                 set_error(bios, cpu, 0x01);
                 return;
             }
@@ -995,7 +996,7 @@ fn handle_int13(
         }
         0x02 => {
             // Read sectors (CHS).
-            if !drive_present(bios, bus, drive) {
+            if !drive_present(bios, bus, drive, cdrom_present) {
                 set_error(bios, cpu, 0x01);
                 return;
             }
@@ -1073,7 +1074,7 @@ fn handle_int13(
             // The BIOS disk interface is currently backed by a read-only [`BlockDevice`]. Report
             // write-protect rather than "function unsupported" so DOS-era software can degrade
             // gracefully.
-            if !drive_present(bios, bus, drive) {
+            if !drive_present(bios, bus, drive, cdrom_present) {
                 set_error(bios, cpu, 0x01);
                 return;
             }
@@ -1086,7 +1087,7 @@ fn handle_int13(
             //
             // Like other write operations, formatting is not supported with the current read-only
             // [`BlockDevice`] implementation.
-            if !drive_present(bios, bus, drive) {
+            if !drive_present(bios, bus, drive, cdrom_present) {
                 set_error(bios, cpu, 0x01);
                 return;
             }
@@ -1100,7 +1101,7 @@ fn handle_int13(
             //
             // Verify is like a read without transferring data into memory. We implement it by
             // reading sectors and discarding the contents.
-            if !drive_present(bios, bus, drive) {
+            if !drive_present(bios, bus, drive, cdrom_present) {
                 set_error(bios, cpu, 0x01);
                 return;
             }
@@ -1147,7 +1148,7 @@ fn handle_int13(
         0x08 => {
             // Get drive parameters (very small subset).
             // Return: CF clear, AH=0, CH/CL/DH describe geometry.
-            if !drive_present(bios, bus, drive) {
+            if !drive_present(bios, bus, drive, cdrom_present) {
                 set_error(bios, cpu, 0x01);
                 return;
             }
@@ -1198,7 +1199,7 @@ fn handle_int13(
             // Real BIOS implementations may use this to configure controller timing based on drive
             // type. Our disk interface is fully emulated in software, so this is a no-op that
             // validates drive presence.
-            if !drive_present(bios, bus, drive) {
+            if !drive_present(bios, bus, drive, cdrom_present) {
                 set_error(bios, cpu, 0x01);
                 return;
             }
@@ -1211,7 +1212,7 @@ fn handle_int13(
             //
             // Real hardware performs a mechanical seek; we model disk I/O synchronously so this is
             // a validation/no-op path.
-            if !drive_present(bios, bus, drive) {
+            if !drive_present(bios, bus, drive, cdrom_present) {
                 set_error(bios, cpu, 0x01);
                 return;
             }
@@ -1237,7 +1238,7 @@ fn handle_int13(
             // Check drive ready.
             //
             // We model disk I/O synchronously; if the drive exists, it is always ready.
-            if !drive_present(bios, bus, drive) {
+            if !drive_present(bios, bus, drive, cdrom_present) {
                 set_error(bios, cpu, 0x01);
                 return;
             }
@@ -1250,7 +1251,7 @@ fn handle_int13(
             //
             // Real hardware would seek back to cylinder 0. We model disk I/O synchronously, so this
             // is a no-op that validates drive presence.
-            if !drive_present(bios, bus, drive) {
+            if !drive_present(bios, bus, drive, cdrom_present) {
                 set_error(bios, cpu, 0x01);
                 return;
             }
@@ -1262,7 +1263,7 @@ fn handle_int13(
             // Alternate disk reset (often used for hard disks).
             //
             // Treat this as equivalent to AH=00h reset.
-            if !drive_present(bios, bus, drive) {
+            if !drive_present(bios, bus, drive, cdrom_present) {
                 set_error(bios, cpu, 0x01);
                 return;
             }
@@ -1275,7 +1276,7 @@ fn handle_int13(
             //
             // Hardware BIOSes use this to run controller self-tests. We treat the emulated
             // controller as always healthy.
-            if !drive_present(bios, bus, drive) {
+            if !drive_present(bios, bus, drive, cdrom_present) {
                 set_error(bios, cpu, 0x01);
                 return;
             }
@@ -1285,7 +1286,7 @@ fn handle_int13(
         }
         0x15 => {
             // Get disk type.
-            if !drive_present(bios, bus, drive) {
+            if !drive_present(bios, bus, drive, cdrom_present) {
                 set_error(bios, cpu, 0x01);
                 return;
             }
@@ -1309,7 +1310,7 @@ fn handle_int13(
             //
             // DOS programs use this to detect when a floppy disk is swapped. We do not model a
             // disk-change line; always report "not changed" and succeed.
-            if !drive_present(bios, bus, drive) {
+            if !drive_present(bios, bus, drive, cdrom_present) {
                 set_error(bios, cpu, 0x01);
                 return;
             }
@@ -1319,7 +1320,7 @@ fn handle_int13(
         }
         0x41 => {
             // Extensions check.
-            if !drive_present(bios, bus, drive) {
+            if !drive_present(bios, bus, drive, cdrom_present) {
                 set_error(bios, cpu, 0x01);
                 return;
             }
@@ -1348,7 +1349,7 @@ fn handle_int13(
         }
         0x42 => {
             // Extended read via Disk Address Packet (DAP) at DS:SI.
-            if !drive_present(bios, bus, drive) {
+            if !drive_present(bios, bus, drive, cdrom_present) {
                 set_error(bios, cpu, 0x01);
                 return;
             }
@@ -1417,7 +1418,7 @@ fn handle_int13(
             // Extended write via Disk Address Packet (EDD).
             //
             // Not supported with the current read-only [`BlockDevice`] implementation.
-            if !drive_present(bios, bus, drive) {
+            if !drive_present(bios, bus, drive, cdrom_present) {
                 set_error(bios, cpu, 0x01);
                 return;
             }
@@ -1480,7 +1481,7 @@ fn handle_int13(
             //
             // DS:SI points to a caller-supplied buffer; the first WORD is the
             // buffer size in bytes.
-            if !drive_present(bios, bus, drive) {
+            if !drive_present(bios, bus, drive, cdrom_present) {
                 set_error(bios, cpu, 0x01);
                 return;
             }
@@ -2624,6 +2625,52 @@ mod tests {
 
         let mut mem = TestMemory::new(2 * 1024 * 1024);
         ivt::init_bda(&mut mem, 0xE0);
+        cpu.a20_enabled = mem.a20_enabled();
+
+        // Sentinel-fill so we can assert the BIOS writes exactly 2048 bytes.
+        for off in 0..4096u64 {
+            mem.write_u8(0x2000 + off, 0xAA);
+        }
+
+        let dap_addr = cpu.apply_a20(cpu.segments.ds.base + 0x0500);
+        mem.write_u8(dap_addr, 0x10);
+        mem.write_u8(dap_addr + 1, 0x00);
+        mem.write_u16(dap_addr + 2, 1); // count (2048-byte sectors)
+        mem.write_u16(dap_addr + 4, 0x2000); // offset
+        mem.write_u16(dap_addr + 6, 0x0000); // segment
+        mem.write_u64(dap_addr + 8, lba); // ISO LBA
+
+        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk, Some(&mut cdrom));
+
+        assert_eq!(cpu.rflags & FLAG_CF, 0);
+        assert_eq!((cpu.gpr[gpr::RAX] >> 8) & 0xFF, 0);
+        let buf = mem.read_bytes(0x2000, 2048);
+        let mut expected = vec![0u8; 2048];
+        for (i, slot) in expected.iter_mut().enumerate() {
+            *slot = (lba as u8).wrapping_add(i as u8);
+        }
+        assert_eq!(buf, expected);
+        assert_eq!(mem.read_u8(0x2000 + 2048), 0xAA);
+    }
+
+    #[test]
+    fn int13_ext_read_cd_works_when_booted_from_hdd_if_cdrom_backend_present() {
+        let mut bios = Bios::new(BiosConfig {
+            boot_drive: 0x80,
+            ..BiosConfig::default()
+        });
+        let mut disk = InMemoryDisk::new(vec![0u8; 512]);
+        let mut cdrom = PatternCdrom::new(32);
+        let lba = 1u64;
+
+        let mut cpu = CpuState::new(CpuMode::Real);
+        set_real_mode_seg(&mut cpu.segments.ds, 0);
+        cpu.gpr[gpr::RSI] = 0x0500;
+        cpu.gpr[gpr::RDX] = 0xE0; // DL = CD0
+        cpu.gpr[gpr::RAX] = 0x4200; // AH=42h
+
+        let mut mem = TestMemory::new(2 * 1024 * 1024);
+        ivt::init_bda(&mut mem, 0x80);
         cpu.a20_enabled = mem.a20_enabled();
 
         // Sentinel-fill so we can assert the BIOS writes exactly 2048 bytes.
