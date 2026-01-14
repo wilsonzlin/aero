@@ -953,7 +953,8 @@ according to the reserved port layout above.
 ### Browser runtime wiring (current implementation)
 
 This section describes the legacy browser worker runtime (`vmRuntime=legacy`), where the guest USB stack is owned by the I/O worker.
-In `vmRuntime=machine`, the I/O worker runs in a host-only stub mode (no guest USB stack), so this path is not yet available.
+
+In `vmRuntime=machine`, the I/O worker runs in a host-only stub mode (it does not own guest device models). The guest-visible USB stack (including the external hub + synthetic HID devices) lives inside the canonical `api.Machine` instance owned by the machine CPU worker. Synthetic HID input injection is supported in machine runtime, but WebHID/WebUSB passthrough is not yet wired up.
 
 In the legacy web runtime, browser keyboard/mouse/gamepad events can be exposed to the guest as **guest-visible USB HID devices**
 (inbox drivers on Windows 7).
