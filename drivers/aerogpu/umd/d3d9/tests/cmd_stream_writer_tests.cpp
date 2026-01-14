@@ -265,6 +265,33 @@ size_t CountOpcode(const uint8_t* buf, size_t capacity, uint32_t opcode) {
   return count;
 }
 
+CmdLoc FindLastVsWvpConstants(const uint8_t* buf, size_t capacity) {
+  CmdLoc loc{};
+  const size_t stream_len = StreamBytesUsed(buf, capacity);
+  if (stream_len == 0) {
+    return loc;
+  }
+
+  size_t offset = sizeof(aerogpu_cmd_stream_header);
+  while (offset + sizeof(aerogpu_cmd_hdr) <= stream_len) {
+    const auto* hdr = reinterpret_cast<const aerogpu_cmd_hdr*>(buf + offset);
+    if (hdr->opcode == AEROGPU_CMD_SET_SHADER_CONSTANTS_F &&
+        hdr->size_bytes >= sizeof(aerogpu_cmd_set_shader_constants_f) &&
+        hdr->size_bytes <= stream_len - offset) {
+      const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(hdr);
+      if (sc->stage == AEROGPU_SHADER_STAGE_VERTEX && sc->start_register == 240 && sc->vec4_count == 4) {
+        loc.hdr = hdr;
+        loc.offset = offset;
+      }
+    }
+    if (hdr->size_bytes == 0 || hdr->size_bytes > stream_len - offset) {
+      break;
+    }
+    offset += hdr->size_bytes;
+  }
+  return loc;
+}
+
 void MulMat4RowMajor(const float a[16], const float b[16], float out[16]) {
   for (int r = 0; r < 4; ++r) {
     for (int c = 0; c < 4; ++c) {
@@ -12894,14 +12921,18 @@ bool TestPartialShaderStageBindingPsOnlyXyzDiffuseUploadsWvpConstants() {
   const uint8_t* buf = dev->cmd.data();
   const size_t len = dev->cmd.bytes_used();
 
-  // Expected clip-space transform.
+  // Expected WVP columns (transpose of row-major WVP) uploaded to c240..c243.
   float wv[16];
   float wvp[16];
   MulMat4RowMajor(world, view, wv);
   MulMat4RowMajor(wv, proj, wvp);
-  const float v0[4] = {tri[0].x, tri[0].y, tri[0].z, 1.0f};
-  float expected[4] = {};
-  MulVec4Mat4RowMajor(v0, wvp, expected);
+  float expected_cols[16] = {};
+  for (int c = 0; c < 4; ++c) {
+    expected_cols[c * 4 + 0] = wvp[0 * 4 + c];
+    expected_cols[c * 4 + 1] = wvp[1 * 4 + c];
+    expected_cols[c * 4 + 2] = wvp[2 * 4 + c];
+    expected_cols[c * 4 + 3] = wvp[3 * 4 + c];
+  }
 
   const CmdLoc upload = FindLastUploadForHandle(buf, len, up_vb_handle);
   if (!Check(upload.hdr != nullptr, "upload_resource(up_vertex_buffer) emitted")) {
@@ -12911,7 +12942,7 @@ bool TestPartialShaderStageBindingPsOnlyXyzDiffuseUploadsWvpConstants() {
   if (!Check(upload_cmd->offset_bytes == 0, "upload_resource VB offset is 0")) {
     return false;
   }
-  if (!Check(upload_cmd->size_bytes == 3 * 20u, "upload_resource VB size matches transformed vertex data")) {
+  if (!Check(upload_cmd->size_bytes == sizeof(tri), "upload_resource VB size matches original vertex data")) {
     return false;
   }
 
@@ -12919,27 +12950,35 @@ bool TestPartialShaderStageBindingPsOnlyXyzDiffuseUploadsWvpConstants() {
   float x0 = 0.0f;
   float y0 = 0.0f;
   float z0 = 0.0f;
-  float w0 = 0.0f;
   uint32_t c0 = 0;
   std::memcpy(&x0, payload + 0, sizeof(float));
   std::memcpy(&y0, payload + 4, sizeof(float));
   std::memcpy(&z0, payload + 8, sizeof(float));
-  std::memcpy(&w0, payload + 12, sizeof(float));
-  std::memcpy(&c0, payload + 16, sizeof(uint32_t));
+  std::memcpy(&c0, payload + 12, sizeof(uint32_t));
 
-  if (!Check(std::fabs(x0 - expected[0]) < 1e-6f, "PS-only XYZ UP: x0 matches WVP")) {
+  if (!Check(std::fabs(x0 - tri[0].x) < 1e-6f, "PS-only XYZ UP: x0 is not CPU-converted")) {
     return false;
   }
-  if (!Check(std::fabs(y0 - expected[1]) < 1e-6f, "PS-only XYZ UP: y0 matches WVP")) {
+  if (!Check(std::fabs(y0 - tri[0].y) < 1e-6f, "PS-only XYZ UP: y0 is not CPU-converted")) {
     return false;
   }
-  if (!Check(std::fabs(z0 - expected[2]) < 1e-6f, "PS-only XYZ UP: z0 matches WVP")) {
-    return false;
-  }
-  if (!Check(std::fabs(w0 - expected[3]) < 1e-6f, "PS-only XYZ UP: w0 matches WVP")) {
+  if (!Check(std::fabs(z0 - tri[0].z) < 1e-6f, "PS-only XYZ UP: z0 preserved")) {
     return false;
   }
   if (!Check(c0 == kWhite, "PS-only XYZ UP: diffuse color preserved")) {
+    return false;
+  }
+
+  const CmdLoc wvp_consts = FindLastVsWvpConstants(buf, len);
+  if (!Check(wvp_consts.hdr != nullptr, "SET_SHADER_CONSTANTS_F uploads WVP constants")) {
+    return false;
+  }
+  const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(wvp_consts.hdr);
+  if (!Check(wvp_consts.hdr->size_bytes >= sizeof(*sc) + sizeof(expected_cols), "WVP constants payload size")) {
+    return false;
+  }
+  const float* cols = reinterpret_cast<const float*>(reinterpret_cast<const uint8_t*>(sc) + sizeof(*sc));
+  if (!Check(std::memcmp(cols, expected_cols, sizeof(expected_cols)) == 0, "WVP constants payload matches expected columns")) {
     return false;
   }
 
@@ -13944,14 +13983,18 @@ bool TestFvfXyzDiffuseDrawPrimitiveUpEmitsFixedfuncCommands() {
   const uint8_t* buf = dev->cmd.data();
   const size_t len = dev->cmd.bytes_used();
 
-  // Expected clip-space transform.
+  // Expected WVP columns (transpose of row-major WVP) uploaded to c240..c243.
   float wv[16];
   float wvp[16];
   MulMat4RowMajor(world, view, wv);
   MulMat4RowMajor(wv, proj, wvp);
-  const float v0[4] = {verts[0].x, verts[0].y, verts[0].z, 1.0f};
-  float expected[4] = {};
-  MulVec4Mat4RowMajor(v0, wvp, expected);
+  float expected_cols[16] = {};
+  for (int c = 0; c < 4; ++c) {
+    expected_cols[c * 4 + 0] = wvp[0 * 4 + c];
+    expected_cols[c * 4 + 1] = wvp[1 * 4 + c];
+    expected_cols[c * 4 + 2] = wvp[2 * 4 + c];
+    expected_cols[c * 4 + 3] = wvp[3 * 4 + c];
+  }
 
   const CmdLoc upload = FindLastUploadForHandle(buf, len, up_vb_handle);
   if (!Check(upload.hdr != nullptr, "upload_resource(up_vertex_buffer) emitted")) {
@@ -13961,7 +14004,7 @@ bool TestFvfXyzDiffuseDrawPrimitiveUpEmitsFixedfuncCommands() {
   if (!Check(upload_cmd->offset_bytes == 0, "upload_resource VB offset is 0")) {
     return false;
   }
-  if (!Check(upload_cmd->size_bytes == 3 * 20u, "upload_resource VB size matches transformed vertex data")) {
+  if (!Check(upload_cmd->size_bytes == sizeof(verts), "upload_resource VB size matches original vertex data")) {
     return false;
   }
 
@@ -13969,27 +14012,35 @@ bool TestFvfXyzDiffuseDrawPrimitiveUpEmitsFixedfuncCommands() {
   float x0 = 0.0f;
   float y0 = 0.0f;
   float z0 = 0.0f;
-  float w0 = 0.0f;
   uint32_t c0 = 0;
   std::memcpy(&x0, payload + 0, sizeof(float));
   std::memcpy(&y0, payload + 4, sizeof(float));
   std::memcpy(&z0, payload + 8, sizeof(float));
-  std::memcpy(&w0, payload + 12, sizeof(float));
-  std::memcpy(&c0, payload + 16, sizeof(uint32_t));
+  std::memcpy(&c0, payload + 12, sizeof(uint32_t));
 
-  if (!Check(std::fabs(x0 - expected[0]) < 1e-6f, "XYZ UP: x0 matches WVP")) {
+  if (!Check(std::fabs(x0 - verts[0].x) < 1e-6f, "XYZ UP: x0 is not CPU-converted")) {
     return false;
   }
-  if (!Check(std::fabs(y0 - expected[1]) < 1e-6f, "XYZ UP: y0 matches WVP")) {
+  if (!Check(std::fabs(y0 - verts[0].y) < 1e-6f, "XYZ UP: y0 is not CPU-converted")) {
     return false;
   }
-  if (!Check(std::fabs(z0 - expected[2]) < 1e-6f, "XYZ UP: z0 matches WVP")) {
-    return false;
-  }
-  if (!Check(std::fabs(w0 - expected[3]) < 1e-6f, "XYZ UP: w0 matches WVP")) {
+  if (!Check(std::fabs(z0 - verts[0].z) < 1e-6f, "XYZ UP: z0 preserved")) {
     return false;
   }
   if (!Check(c0 == kGreen, "XYZ UP: diffuse color preserved")) {
+    return false;
+  }
+
+  const CmdLoc wvp_consts = FindLastVsWvpConstants(buf, len);
+  if (!Check(wvp_consts.hdr != nullptr, "SET_SHADER_CONSTANTS_F uploads WVP constants")) {
+    return false;
+  }
+  const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(wvp_consts.hdr);
+  if (!Check(wvp_consts.hdr->size_bytes >= sizeof(*sc) + sizeof(expected_cols), "WVP constants payload size")) {
+    return false;
+  }
+  const float* cols = reinterpret_cast<const float*>(reinterpret_cast<const uint8_t*>(sc) + sizeof(*sc));
+  if (!Check(std::memcmp(cols, expected_cols, sizeof(expected_cols)) == 0, "WVP constants payload matches expected columns")) {
     return false;
   }
 
@@ -14779,14 +14830,18 @@ bool TestFvfXyzDiffuseTex1DrawPrimitiveUpEmitsFixedfuncCommands() {
   const uint8_t* buf = dev->cmd.data();
   const size_t len = dev->cmd.bytes_used();
 
-  // Expected clip-space transform.
+  // Expected WVP columns (transpose of row-major WVP) uploaded to c240..c243.
   float wv[16];
   float wvp[16];
   MulMat4RowMajor(world, view, wv);
   MulMat4RowMajor(wv, proj, wvp);
-  const float v0[4] = {verts[0].x, verts[0].y, verts[0].z, 1.0f};
-  float expected[4] = {};
-  MulVec4Mat4RowMajor(v0, wvp, expected);
+  float expected_cols[16] = {};
+  for (int c = 0; c < 4; ++c) {
+    expected_cols[c * 4 + 0] = wvp[0 * 4 + c];
+    expected_cols[c * 4 + 1] = wvp[1 * 4 + c];
+    expected_cols[c * 4 + 2] = wvp[2 * 4 + c];
+    expected_cols[c * 4 + 3] = wvp[3 * 4 + c];
+  }
 
   const CmdLoc upload = FindLastUploadForHandle(buf, len, up_vb_handle);
   if (!Check(upload.hdr != nullptr, "upload_resource(up_vertex_buffer) emitted")) {
@@ -14796,7 +14851,7 @@ bool TestFvfXyzDiffuseTex1DrawPrimitiveUpEmitsFixedfuncCommands() {
   if (!Check(upload_cmd->offset_bytes == 0, "upload_resource VB offset is 0")) {
     return false;
   }
-  if (!Check(upload_cmd->size_bytes == 3 * 28u, "upload_resource VB size matches transformed vertex data")) {
+  if (!Check(upload_cmd->size_bytes == sizeof(verts), "upload_resource VB size matches original vertex data")) {
     return false;
   }
 
@@ -14804,28 +14859,23 @@ bool TestFvfXyzDiffuseTex1DrawPrimitiveUpEmitsFixedfuncCommands() {
   float x0 = 0.0f;
   float y0 = 0.0f;
   float z0 = 0.0f;
-  float w0 = 0.0f;
   uint32_t c0 = 0;
   float u0 = 0.0f;
   float v0_out = 0.0f;
   std::memcpy(&x0, payload + 0, sizeof(float));
   std::memcpy(&y0, payload + 4, sizeof(float));
   std::memcpy(&z0, payload + 8, sizeof(float));
-  std::memcpy(&w0, payload + 12, sizeof(float));
-  std::memcpy(&c0, payload + 16, sizeof(uint32_t));
-  std::memcpy(&u0, payload + 20, sizeof(float));
-  std::memcpy(&v0_out, payload + 24, sizeof(float));
+  std::memcpy(&c0, payload + 12, sizeof(uint32_t));
+  std::memcpy(&u0, payload + 16, sizeof(float));
+  std::memcpy(&v0_out, payload + 20, sizeof(float));
 
-  if (!Check(std::fabs(x0 - expected[0]) < 1e-6f, "XYZ|TEX1 UP: x0 matches WVP")) {
+  if (!Check(std::fabs(x0 - verts[0].x) < 1e-6f, "XYZ|TEX1 UP: x0 is not CPU-converted")) {
     return false;
   }
-  if (!Check(std::fabs(y0 - expected[1]) < 1e-6f, "XYZ|TEX1 UP: y0 matches WVP")) {
+  if (!Check(std::fabs(y0 - verts[0].y) < 1e-6f, "XYZ|TEX1 UP: y0 is not CPU-converted")) {
     return false;
   }
-  if (!Check(std::fabs(z0 - expected[2]) < 1e-6f, "XYZ|TEX1 UP: z0 matches WVP")) {
-    return false;
-  }
-  if (!Check(std::fabs(w0 - expected[3]) < 1e-6f, "XYZ|TEX1 UP: w0 matches WVP")) {
+  if (!Check(std::fabs(z0 - verts[0].z) < 1e-6f, "XYZ|TEX1 UP: z preserved")) {
     return false;
   }
   if (!Check(c0 == kWhite, "XYZ|TEX1 UP: diffuse color preserved")) {
@@ -14835,6 +14885,19 @@ bool TestFvfXyzDiffuseTex1DrawPrimitiveUpEmitsFixedfuncCommands() {
     return false;
   }
   if (!Check(std::fabs(v0_out - verts[0].v) < 1e-6f, "XYZ|TEX1 UP: v preserved")) {
+    return false;
+  }
+
+  const CmdLoc wvp_consts = FindLastVsWvpConstants(buf, len);
+  if (!Check(wvp_consts.hdr != nullptr, "SET_SHADER_CONSTANTS_F uploads WVP constants")) {
+    return false;
+  }
+  const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(wvp_consts.hdr);
+  if (!Check(wvp_consts.hdr->size_bytes >= sizeof(*sc) + sizeof(expected_cols), "WVP constants payload size")) {
+    return false;
+  }
+  const float* cols = reinterpret_cast<const float*>(reinterpret_cast<const uint8_t*>(sc) + sizeof(*sc));
+  if (!Check(std::memcmp(cols, expected_cols, sizeof(expected_cols)) == 0, "WVP constants payload matches expected columns")) {
     return false;
   }
 
@@ -14949,7 +15012,7 @@ bool TestFvfXyzDiffuseTex1SetTransformDrawPrimitiveUpEmitsWvpConstants() {
     return false;
   }
 
-  // Set WORLD/VIEW/PROJECTION transforms to exercise CPU WVP conversion.
+  // Set WORLD/VIEW/PROJECTION transforms to exercise fixed-function WVP constant upload.
   D3DMATRIX identity{};
   identity.m[0][0] = 1.0f;
   identity.m[1][1] = 1.0f;
@@ -15032,14 +15095,18 @@ bool TestFvfXyzDiffuseTex1SetTransformDrawPrimitiveUpEmitsWvpConstants() {
       identity.m[3][0], identity.m[3][1], identity.m[3][2], identity.m[3][3],
   };
 
-  // Expected clip-space transform.
+  // Expected WVP columns (transpose of row-major WVP) uploaded to c240..c243.
   float wv[16];
   float wvp[16];
   MulMat4RowMajor(world_f, view_f, wv);
   MulMat4RowMajor(wv, proj_f, wvp);
-  const float v0[4] = {verts[0].x, verts[0].y, verts[0].z, 1.0f};
-  float expected[4] = {};
-  MulVec4Mat4RowMajor(v0, wvp, expected);
+  float expected_cols[16] = {};
+  for (int c = 0; c < 4; ++c) {
+    expected_cols[c * 4 + 0] = wvp[0 * 4 + c];
+    expected_cols[c * 4 + 1] = wvp[1 * 4 + c];
+    expected_cols[c * 4 + 2] = wvp[2 * 4 + c];
+    expected_cols[c * 4 + 3] = wvp[3 * 4 + c];
+  }
 
   const CmdLoc upload = FindLastUploadForHandle(buf, len, up_vb_handle);
   if (!Check(upload.hdr != nullptr, "upload_resource(up_vertex_buffer) emitted")) {
@@ -15049,7 +15116,7 @@ bool TestFvfXyzDiffuseTex1SetTransformDrawPrimitiveUpEmitsWvpConstants() {
   if (!Check(upload_cmd->offset_bytes == 0, "upload_resource VB offset is 0")) {
     return false;
   }
-  if (!Check(upload_cmd->size_bytes == 3 * 28u, "upload_resource VB size matches transformed vertex data")) {
+  if (!Check(upload_cmd->size_bytes == sizeof(verts), "upload_resource VB size matches original vertex data")) {
     return false;
   }
 
@@ -15057,28 +15124,23 @@ bool TestFvfXyzDiffuseTex1SetTransformDrawPrimitiveUpEmitsWvpConstants() {
   float x0 = 0.0f;
   float y0 = 0.0f;
   float z0 = 0.0f;
-  float w0 = 0.0f;
   uint32_t c0 = 0;
   float u0 = 0.0f;
   float v0_out = 0.0f;
   std::memcpy(&x0, payload + 0, sizeof(float));
   std::memcpy(&y0, payload + 4, sizeof(float));
   std::memcpy(&z0, payload + 8, sizeof(float));
-  std::memcpy(&w0, payload + 12, sizeof(float));
-  std::memcpy(&c0, payload + 16, sizeof(uint32_t));
-  std::memcpy(&u0, payload + 20, sizeof(float));
-  std::memcpy(&v0_out, payload + 24, sizeof(float));
+  std::memcpy(&c0, payload + 12, sizeof(uint32_t));
+  std::memcpy(&u0, payload + 16, sizeof(float));
+  std::memcpy(&v0_out, payload + 20, sizeof(float));
 
-  if (!Check(std::fabs(x0 - expected[0]) < 1e-6f, "XYZ|TEX1 SetTransform: x0 matches WVP")) {
+  if (!Check(std::fabs(x0 - verts[0].x) < 1e-6f, "XYZ|TEX1 SetTransform: x0 is not CPU-converted")) {
     return false;
   }
-  if (!Check(std::fabs(y0 - expected[1]) < 1e-6f, "XYZ|TEX1 SetTransform: y0 matches WVP")) {
+  if (!Check(std::fabs(y0 - verts[0].y) < 1e-6f, "XYZ|TEX1 SetTransform: y0 is not CPU-converted")) {
     return false;
   }
-  if (!Check(std::fabs(z0 - expected[2]) < 1e-6f, "XYZ|TEX1 SetTransform: z0 matches WVP")) {
-    return false;
-  }
-  if (!Check(std::fabs(w0 - expected[3]) < 1e-6f, "XYZ|TEX1 SetTransform: w0 matches WVP")) {
+  if (!Check(std::fabs(z0 - verts[0].z) < 1e-6f, "XYZ|TEX1 SetTransform: z0 preserved")) {
     return false;
   }
   if (!Check(c0 == kWhite, "XYZ|TEX1 SetTransform: diffuse color preserved")) {
@@ -15088,6 +15150,19 @@ bool TestFvfXyzDiffuseTex1SetTransformDrawPrimitiveUpEmitsWvpConstants() {
     return false;
   }
   if (!Check(std::fabs(v0_out - verts[0].v) < 1e-6f, "XYZ|TEX1 SetTransform: v preserved")) {
+    return false;
+  }
+
+  const CmdLoc wvp_consts = FindLastVsWvpConstants(buf, len);
+  if (!Check(wvp_consts.hdr != nullptr, "SET_SHADER_CONSTANTS_F uploads WVP constants")) {
+    return false;
+  }
+  const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(wvp_consts.hdr);
+  if (!Check(wvp_consts.hdr->size_bytes >= sizeof(*sc) + sizeof(expected_cols), "WVP constants payload size")) {
+    return false;
+  }
+  const float* cols = reinterpret_cast<const float*>(reinterpret_cast<const uint8_t*>(sc) + sizeof(*sc));
+  if (!Check(std::memcmp(cols, expected_cols, sizeof(expected_cols)) == 0, "WVP constants payload matches expected columns")) {
     return false;
   }
 
@@ -15287,14 +15362,18 @@ bool TestFvfXyzDiffuseTex1ReuploadsWvpAfterUserVsClobbersConstants() {
   const uint8_t* buf = dev->cmd.data();
   const size_t len = dev->cmd.bytes_used();
 
-  // Expected clip-space transform.
+  // Expected WVP columns (transpose of row-major WVP) uploaded to c240..c243.
   float wv[16];
   float wvp[16];
   MulMat4RowMajor(world, view, wv);
   MulMat4RowMajor(wv, proj, wvp);
-  const float v0[4] = {verts[0].x, verts[0].y, verts[0].z, 1.0f};
-  float expected[4] = {};
-  MulVec4Mat4RowMajor(v0, wvp, expected);
+  float expected_cols[16] = {};
+  for (int c = 0; c < 4; ++c) {
+    expected_cols[c * 4 + 0] = wvp[0 * 4 + c];
+    expected_cols[c * 4 + 1] = wvp[1 * 4 + c];
+    expected_cols[c * 4 + 2] = wvp[2 * 4 + c];
+    expected_cols[c * 4 + 3] = wvp[3 * 4 + c];
+  }
 
   const CmdLoc upload = FindLastUploadForHandle(buf, len, up_vb_handle);
   if (!Check(upload.hdr != nullptr, "upload_resource(up_vertex_buffer) emitted")) {
@@ -15304,7 +15383,7 @@ bool TestFvfXyzDiffuseTex1ReuploadsWvpAfterUserVsClobbersConstants() {
   if (!Check(upload_cmd->offset_bytes == 0, "upload_resource VB offset is 0")) {
     return false;
   }
-  if (!Check(upload_cmd->size_bytes == 3 * 28u, "upload_resource VB size matches transformed vertex data")) {
+  if (!Check(upload_cmd->size_bytes == sizeof(verts), "upload_resource VB size matches original vertex data")) {
     return false;
   }
 
@@ -15312,28 +15391,23 @@ bool TestFvfXyzDiffuseTex1ReuploadsWvpAfterUserVsClobbersConstants() {
   float x0 = 0.0f;
   float y0 = 0.0f;
   float z0 = 0.0f;
-  float w0 = 0.0f;
   uint32_t c0 = 0;
   float u0 = 0.0f;
   float v0_out = 0.0f;
   std::memcpy(&x0, payload + 0, sizeof(float));
   std::memcpy(&y0, payload + 4, sizeof(float));
   std::memcpy(&z0, payload + 8, sizeof(float));
-  std::memcpy(&w0, payload + 12, sizeof(float));
-  std::memcpy(&c0, payload + 16, sizeof(uint32_t));
-  std::memcpy(&u0, payload + 20, sizeof(float));
-  std::memcpy(&v0_out, payload + 24, sizeof(float));
+  std::memcpy(&c0, payload + 12, sizeof(uint32_t));
+  std::memcpy(&u0, payload + 16, sizeof(float));
+  std::memcpy(&v0_out, payload + 20, sizeof(float));
 
-  if (!Check(std::fabs(x0 - expected[0]) < 1e-6f, "XYZ|TEX1 clobber: x0 matches WVP")) {
+  if (!Check(std::fabs(x0 - verts[0].x) < 1e-6f, "XYZ|TEX1 clobber: x0 is not CPU-converted")) {
     return false;
   }
-  if (!Check(std::fabs(y0 - expected[1]) < 1e-6f, "XYZ|TEX1 clobber: y0 matches WVP")) {
+  if (!Check(std::fabs(y0 - verts[0].y) < 1e-6f, "XYZ|TEX1 clobber: y0 is not CPU-converted")) {
     return false;
   }
-  if (!Check(std::fabs(z0 - expected[2]) < 1e-6f, "XYZ|TEX1 clobber: z0 matches WVP")) {
-    return false;
-  }
-  if (!Check(std::fabs(w0 - expected[3]) < 1e-6f, "XYZ|TEX1 clobber: w0 matches WVP")) {
+  if (!Check(std::fabs(z0 - verts[0].z) < 1e-6f, "XYZ|TEX1 clobber: z0 preserved")) {
     return false;
   }
   if (!Check(c0 == kWhite, "XYZ|TEX1 clobber: diffuse color preserved")) {
@@ -15343,6 +15417,20 @@ bool TestFvfXyzDiffuseTex1ReuploadsWvpAfterUserVsClobbersConstants() {
     return false;
   }
   if (!Check(std::fabs(v0_out - verts[0].v) < 1e-6f, "XYZ|TEX1 clobber: v preserved")) {
+    return false;
+  }
+
+  const CmdLoc wvp_consts = FindLastVsWvpConstants(buf, len);
+  if (!Check(wvp_consts.hdr != nullptr, "SET_SHADER_CONSTANTS_F reuploads WVP constants after clobber")) {
+    return false;
+  }
+  const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(wvp_consts.hdr);
+  if (!Check(wvp_consts.hdr->size_bytes >= sizeof(*sc) + sizeof(expected_cols), "WVP constants payload size")) {
+    return false;
+  }
+  const float* cols = reinterpret_cast<const float*>(reinterpret_cast<const uint8_t*>(sc) + sizeof(*sc));
+  if (!Check(std::memcmp(cols, expected_cols, sizeof(expected_cols)) == 0,
+             "WVP constants payload matches expected columns after clobber")) {
     return false;
   }
 
@@ -15509,14 +15597,18 @@ bool TestFvfXyzDiffuseTex1DrawIndexedPrimitiveUpAppliesWvpTransform() {
   const uint8_t* buf = dev->cmd.data();
   const size_t len = dev->cmd.bytes_used();
 
-  // Expected clip-space transform.
+  // Expected WVP columns (transpose of row-major WVP) uploaded to c240..c243.
   float wv[16];
   float wvp[16];
   MulMat4RowMajor(world, view, wv);
   MulMat4RowMajor(wv, proj, wvp);
-  const float v0[4] = {verts[0].x, verts[0].y, verts[0].z, 1.0f};
-  float expected[4] = {};
-  MulVec4Mat4RowMajor(v0, wvp, expected);
+  float expected_cols[16] = {};
+  for (int c = 0; c < 4; ++c) {
+    expected_cols[c * 4 + 0] = wvp[0 * 4 + c];
+    expected_cols[c * 4 + 1] = wvp[1 * 4 + c];
+    expected_cols[c * 4 + 2] = wvp[2 * 4 + c];
+    expected_cols[c * 4 + 3] = wvp[3 * 4 + c];
+  }
 
   const CmdLoc upload = FindLastUploadForHandle(buf, len, up_vb_handle);
   if (!Check(upload.hdr != nullptr, "upload_resource(up_vertex_buffer) emitted")) {
@@ -15526,7 +15618,7 @@ bool TestFvfXyzDiffuseTex1DrawIndexedPrimitiveUpAppliesWvpTransform() {
   if (!Check(upload_cmd->offset_bytes == 0, "upload_resource VB offset is 0")) {
     return false;
   }
-  if (!Check(upload_cmd->size_bytes == 3 * 28u, "upload_resource VB size matches transformed vertex data")) {
+  if (!Check(upload_cmd->size_bytes == sizeof(verts), "upload_resource VB size matches original vertex data")) {
     return false;
   }
 
@@ -15534,28 +15626,23 @@ bool TestFvfXyzDiffuseTex1DrawIndexedPrimitiveUpAppliesWvpTransform() {
   float x0 = 0.0f;
   float y0 = 0.0f;
   float z0 = 0.0f;
-  float w0 = 0.0f;
   uint32_t c0 = 0;
   float u0 = 0.0f;
   float v0_out = 0.0f;
   std::memcpy(&x0, payload + 0, sizeof(float));
   std::memcpy(&y0, payload + 4, sizeof(float));
   std::memcpy(&z0, payload + 8, sizeof(float));
-  std::memcpy(&w0, payload + 12, sizeof(float));
-  std::memcpy(&c0, payload + 16, sizeof(uint32_t));
-  std::memcpy(&u0, payload + 20, sizeof(float));
-  std::memcpy(&v0_out, payload + 24, sizeof(float));
+  std::memcpy(&c0, payload + 12, sizeof(uint32_t));
+  std::memcpy(&u0, payload + 16, sizeof(float));
+  std::memcpy(&v0_out, payload + 20, sizeof(float));
 
-  if (!Check(std::fabs(x0 - expected[0]) < 1e-6f, "XYZ|TEX1 Indexed UP: x0 matches WVP")) {
+  if (!Check(std::fabs(x0 - verts[0].x) < 1e-6f, "XYZ|TEX1 Indexed UP: x0 is not CPU-converted")) {
     return false;
   }
-  if (!Check(std::fabs(y0 - expected[1]) < 1e-6f, "XYZ|TEX1 Indexed UP: y0 matches WVP")) {
+  if (!Check(std::fabs(y0 - verts[0].y) < 1e-6f, "XYZ|TEX1 Indexed UP: y0 is not CPU-converted")) {
     return false;
   }
-  if (!Check(std::fabs(z0 - expected[2]) < 1e-6f, "XYZ|TEX1 Indexed UP: z0 matches WVP")) {
-    return false;
-  }
-  if (!Check(std::fabs(w0 - expected[3]) < 1e-6f, "XYZ|TEX1 Indexed UP: w0 matches WVP")) {
+  if (!Check(std::fabs(z0 - verts[0].z) < 1e-6f, "XYZ|TEX1 Indexed UP: z preserved")) {
     return false;
   }
   if (!Check(c0 == kWhite, "XYZ|TEX1 Indexed UP: diffuse color preserved")) {
@@ -15565,6 +15652,19 @@ bool TestFvfXyzDiffuseTex1DrawIndexedPrimitiveUpAppliesWvpTransform() {
     return false;
   }
   if (!Check(std::fabs(v0_out - verts[0].v) < 1e-6f, "XYZ|TEX1 Indexed UP: v preserved")) {
+    return false;
+  }
+
+  const CmdLoc wvp_consts = FindLastVsWvpConstants(buf, len);
+  if (!Check(wvp_consts.hdr != nullptr, "SET_SHADER_CONSTANTS_F uploads WVP constants")) {
+    return false;
+  }
+  const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(wvp_consts.hdr);
+  if (!Check(wvp_consts.hdr->size_bytes >= sizeof(*sc) + sizeof(expected_cols), "WVP constants payload size")) {
+    return false;
+  }
+  const float* cols = reinterpret_cast<const float*>(reinterpret_cast<const uint8_t*>(sc) + sizeof(*sc));
+  if (!Check(std::memcmp(cols, expected_cols, sizeof(expected_cols)) == 0, "WVP constants payload matches expected columns")) {
     return false;
   }
 
@@ -15714,14 +15814,18 @@ bool TestFvfXyzDiffuseDrawPrimitiveUpEmitsWvpConstants() {
   const uint8_t* buf = dev->cmd.data();
   const size_t len = dev->cmd.bytes_used();
 
-  // Expected clip-space transform.
+  // Expected WVP columns (transpose of row-major WVP) uploaded to c240..c243.
   float wv[16];
   float wvp[16];
   MulMat4RowMajor(world_f, view_f, wv);
   MulMat4RowMajor(wv, proj_f, wvp);
-  const float v0[4] = {verts[0].x, verts[0].y, verts[0].z, 1.0f};
-  float expected[4] = {};
-  MulVec4Mat4RowMajor(v0, wvp, expected);
+  float expected_cols[16] = {};
+  for (int c = 0; c < 4; ++c) {
+    expected_cols[c * 4 + 0] = wvp[0 * 4 + c];
+    expected_cols[c * 4 + 1] = wvp[1 * 4 + c];
+    expected_cols[c * 4 + 2] = wvp[2 * 4 + c];
+    expected_cols[c * 4 + 3] = wvp[3 * 4 + c];
+  }
 
   const CmdLoc upload = FindLastUploadForHandle(buf, len, up_vb_handle);
   if (!Check(upload.hdr != nullptr, "upload_resource(up_vertex_buffer) emitted")) {
@@ -15731,7 +15835,7 @@ bool TestFvfXyzDiffuseDrawPrimitiveUpEmitsWvpConstants() {
   if (!Check(upload_cmd->offset_bytes == 0, "upload_resource VB offset is 0")) {
     return false;
   }
-  if (!Check(upload_cmd->size_bytes == 3 * 20u, "upload_resource VB size matches transformed vertex data")) {
+  if (!Check(upload_cmd->size_bytes == sizeof(verts), "upload_resource VB size matches original vertex data")) {
     return false;
   }
 
@@ -15739,27 +15843,35 @@ bool TestFvfXyzDiffuseDrawPrimitiveUpEmitsWvpConstants() {
   float x0 = 0.0f;
   float y0 = 0.0f;
   float z0 = 0.0f;
-  float w0 = 0.0f;
   uint32_t c0 = 0;
   std::memcpy(&x0, payload + 0, sizeof(float));
   std::memcpy(&y0, payload + 4, sizeof(float));
   std::memcpy(&z0, payload + 8, sizeof(float));
-  std::memcpy(&w0, payload + 12, sizeof(float));
-  std::memcpy(&c0, payload + 16, sizeof(uint32_t));
+  std::memcpy(&c0, payload + 12, sizeof(uint32_t));
 
-  if (!Check(std::fabs(x0 - expected[0]) < 1e-6f, "XYZ SetTransform: x0 matches WVP")) {
+  if (!Check(std::fabs(x0 - verts[0].x) < 1e-6f, "XYZ SetTransform: x0 is not CPU-converted")) {
     return false;
   }
-  if (!Check(std::fabs(y0 - expected[1]) < 1e-6f, "XYZ SetTransform: y0 matches WVP")) {
+  if (!Check(std::fabs(y0 - verts[0].y) < 1e-6f, "XYZ SetTransform: y0 is not CPU-converted")) {
     return false;
   }
-  if (!Check(std::fabs(z0 - expected[2]) < 1e-6f, "XYZ SetTransform: z0 matches WVP")) {
-    return false;
-  }
-  if (!Check(std::fabs(w0 - expected[3]) < 1e-6f, "XYZ SetTransform: w0 matches WVP")) {
+  if (!Check(std::fabs(z0 - verts[0].z) < 1e-6f, "XYZ SetTransform: z0 preserved")) {
     return false;
   }
   if (!Check(c0 == kWhite, "XYZ SetTransform: diffuse color preserved")) {
+    return false;
+  }
+
+  const CmdLoc wvp_consts = FindLastVsWvpConstants(buf, len);
+  if (!Check(wvp_consts.hdr != nullptr, "SET_SHADER_CONSTANTS_F uploads WVP constants")) {
+    return false;
+  }
+  const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(wvp_consts.hdr);
+  if (!Check(wvp_consts.hdr->size_bytes >= sizeof(*sc) + sizeof(expected_cols), "WVP constants payload size")) {
+    return false;
+  }
+  const float* cols = reinterpret_cast<const float*>(reinterpret_cast<const uint8_t*>(sc) + sizeof(*sc));
+  if (!Check(std::memcmp(cols, expected_cols, sizeof(expected_cols)) == 0, "WVP constants payload matches expected columns")) {
     return false;
   }
 
@@ -15953,7 +16065,7 @@ bool TestFixedFuncXyzStateBlockApplyReuploadsWvpConstants() {
   const uint8_t* buf = dev->cmd.data();
   const size_t len = dev->cmd.bytes_used();
 
-  // Expected clip-space transform for WORLD=A (view/proj identity).
+  // Expected WVP columns for WORLD=A (view/proj identity), uploaded to c240..c243.
   float worldA_f[16] = {
       A.m[0][0], A.m[0][1], A.m[0][2], A.m[0][3],
       A.m[1][0], A.m[1][1], A.m[1][2], A.m[1][3],
@@ -15976,9 +16088,13 @@ bool TestFixedFuncXyzStateBlockApplyReuploadsWvpConstants() {
   float wvp[16];
   MulMat4RowMajor(worldA_f, view_f, wv);
   MulMat4RowMajor(wv, proj_f, wvp);
-  const float v0[4] = {verts[0].x, verts[0].y, verts[0].z, 1.0f};
-  float expected[4] = {};
-  MulVec4Mat4RowMajor(v0, wvp, expected);
+  float expected_cols[16] = {};
+  for (int c = 0; c < 4; ++c) {
+    expected_cols[c * 4 + 0] = wvp[0 * 4 + c];
+    expected_cols[c * 4 + 1] = wvp[1 * 4 + c];
+    expected_cols[c * 4 + 2] = wvp[2 * 4 + c];
+    expected_cols[c * 4 + 3] = wvp[3 * 4 + c];
+  }
 
   const CmdLoc upload = FindLastUploadForHandle(buf, len, up_vb_handle);
   if (!Check(upload.hdr != nullptr, "upload_resource(up_vertex_buffer) emitted")) {
@@ -15988,7 +16104,7 @@ bool TestFixedFuncXyzStateBlockApplyReuploadsWvpConstants() {
   if (!Check(upload_cmd->offset_bytes == 0, "upload_resource VB offset is 0")) {
     return false;
   }
-  if (!Check(upload_cmd->size_bytes == 3 * 28u, "upload_resource VB size matches transformed vertex data")) {
+  if (!Check(upload_cmd->size_bytes == sizeof(verts), "upload_resource VB size matches original vertex data")) {
     return false;
   }
 
@@ -15996,28 +16112,23 @@ bool TestFixedFuncXyzStateBlockApplyReuploadsWvpConstants() {
   float x0 = 0.0f;
   float y0 = 0.0f;
   float z0 = 0.0f;
-  float w0 = 0.0f;
   uint32_t c0 = 0;
   float u0 = 0.0f;
   float v0_out = 0.0f;
   std::memcpy(&x0, payload + 0, sizeof(float));
   std::memcpy(&y0, payload + 4, sizeof(float));
   std::memcpy(&z0, payload + 8, sizeof(float));
-  std::memcpy(&w0, payload + 12, sizeof(float));
-  std::memcpy(&c0, payload + 16, sizeof(uint32_t));
-  std::memcpy(&u0, payload + 20, sizeof(float));
-  std::memcpy(&v0_out, payload + 24, sizeof(float));
+  std::memcpy(&c0, payload + 12, sizeof(uint32_t));
+  std::memcpy(&u0, payload + 16, sizeof(float));
+  std::memcpy(&v0_out, payload + 20, sizeof(float));
 
-  if (!Check(std::fabs(x0 - expected[0]) < 1e-6f, "StateBlock XYZ|TEX1: x0 matches WORLD=A")) {
+  if (!Check(std::fabs(x0 - verts[0].x) < 1e-6f, "StateBlock XYZ|TEX1: x0 is not CPU-converted")) {
     return false;
   }
-  if (!Check(std::fabs(y0 - expected[1]) < 1e-6f, "StateBlock XYZ|TEX1: y0 matches WORLD=A")) {
+  if (!Check(std::fabs(y0 - verts[0].y) < 1e-6f, "StateBlock XYZ|TEX1: y0 is not CPU-converted")) {
     return false;
   }
-  if (!Check(std::fabs(z0 - expected[2]) < 1e-6f, "StateBlock XYZ|TEX1: z0 matches WORLD=A")) {
-    return false;
-  }
-  if (!Check(std::fabs(w0 - expected[3]) < 1e-6f, "StateBlock XYZ|TEX1: w0 matches WORLD=A")) {
+  if (!Check(std::fabs(z0 - verts[0].z) < 1e-6f, "StateBlock XYZ|TEX1: z preserved")) {
     return false;
   }
   if (!Check(c0 == kWhite, "StateBlock XYZ|TEX1: diffuse color preserved")) {
@@ -16027,6 +16138,20 @@ bool TestFixedFuncXyzStateBlockApplyReuploadsWvpConstants() {
     return false;
   }
   if (!Check(std::fabs(v0_out - verts[0].v) < 1e-6f, "StateBlock XYZ|TEX1: v preserved")) {
+    return false;
+  }
+
+  const CmdLoc wvp_consts = FindLastVsWvpConstants(buf, len);
+  if (!Check(wvp_consts.hdr != nullptr, "SET_SHADER_CONSTANTS_F reuploads WVP constants after ApplyStateBlock")) {
+    return false;
+  }
+  const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(wvp_consts.hdr);
+  if (!Check(wvp_consts.hdr->size_bytes >= sizeof(*sc) + sizeof(expected_cols), "WVP constants payload size")) {
+    return false;
+  }
+  const float* cols = reinterpret_cast<const float*>(reinterpret_cast<const uint8_t*>(sc) + sizeof(*sc));
+  if (!Check(std::memcmp(cols, expected_cols, sizeof(expected_cols)) == 0,
+             "WVP constants payload matches expected columns for WORLD=A")) {
     return false;
   }
 
@@ -21003,14 +21128,18 @@ bool TestFvfXyzDiffuseDrawPrimitiveUpDoesNotConvertVertices() {
   const uint8_t* buf = dev->cmd.data();
   const size_t len = dev->cmd.bytes_used();
 
-  // Expected clip-space transform.
+  // Expected WVP columns (transpose of row-major WVP) uploaded to c240..c243.
   float wv[16];
   float wvp[16];
   MulMat4RowMajor(world, view, wv);
   MulMat4RowMajor(wv, proj, wvp);
-  const float v0[4] = {verts[0].x, verts[0].y, verts[0].z, 1.0f};
-  float expected[4] = {};
-  MulVec4Mat4RowMajor(v0, wvp, expected);
+  float expected_cols[16] = {};
+  for (int c = 0; c < 4; ++c) {
+    expected_cols[c * 4 + 0] = wvp[0 * 4 + c];
+    expected_cols[c * 4 + 1] = wvp[1 * 4 + c];
+    expected_cols[c * 4 + 2] = wvp[2 * 4 + c];
+    expected_cols[c * 4 + 3] = wvp[3 * 4 + c];
+  }
 
   const CmdLoc upload = FindLastUploadForHandle(buf, len, up_vb_handle);
   if (!Check(upload.hdr != nullptr, "upload_resource(up_vertex_buffer) emitted")) {
@@ -21020,7 +21149,7 @@ bool TestFvfXyzDiffuseDrawPrimitiveUpDoesNotConvertVertices() {
   if (!Check(upload_cmd->offset_bytes == 0, "upload_resource VB offset is 0")) {
     return false;
   }
-  if (!Check(upload_cmd->size_bytes == 3 * 20u, "upload_resource VB size matches transformed vertex data")) {
+  if (!Check(upload_cmd->size_bytes == sizeof(verts), "upload_resource VB size matches original vertex data")) {
     return false;
   }
 
@@ -21028,27 +21157,35 @@ bool TestFvfXyzDiffuseDrawPrimitiveUpDoesNotConvertVertices() {
   float x0 = 0.0f;
   float y0 = 0.0f;
   float z0 = 0.0f;
-  float w0 = 0.0f;
   uint32_t c0 = 0;
   std::memcpy(&x0, payload + 0, sizeof(float));
   std::memcpy(&y0, payload + 4, sizeof(float));
   std::memcpy(&z0, payload + 8, sizeof(float));
-  std::memcpy(&w0, payload + 12, sizeof(float));
-  std::memcpy(&c0, payload + 16, sizeof(uint32_t));
+  std::memcpy(&c0, payload + 12, sizeof(uint32_t));
 
-  if (!Check(std::fabs(x0 - expected[0]) < 1e-6f, "XYZ UP: x0 matches WVP")) {
+  if (!Check(std::fabs(x0 - verts[0].x) < 1e-6f, "XYZ UP: x0 is not CPU-converted")) {
     return false;
   }
-  if (!Check(std::fabs(y0 - expected[1]) < 1e-6f, "XYZ UP: y0 matches WVP")) {
+  if (!Check(std::fabs(y0 - verts[0].y) < 1e-6f, "XYZ UP: y0 is not CPU-converted")) {
     return false;
   }
-  if (!Check(std::fabs(z0 - expected[2]) < 1e-6f, "XYZ UP: z0 matches WVP")) {
-    return false;
-  }
-  if (!Check(std::fabs(w0 - expected[3]) < 1e-6f, "XYZ UP: w0 matches WVP")) {
+  if (!Check(std::fabs(z0 - verts[0].z) < 1e-6f, "XYZ UP: z0 preserved")) {
     return false;
   }
   if (!Check(c0 == kGreen, "XYZ UP: diffuse color preserved")) {
+    return false;
+  }
+
+  const CmdLoc wvp_consts = FindLastVsWvpConstants(buf, len);
+  if (!Check(wvp_consts.hdr != nullptr, "SET_SHADER_CONSTANTS_F uploads WVP constants")) {
+    return false;
+  }
+  const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(wvp_consts.hdr);
+  if (!Check(wvp_consts.hdr->size_bytes >= sizeof(*sc) + sizeof(expected_cols), "WVP constants payload size")) {
+    return false;
+  }
+  const float* cols = reinterpret_cast<const float*>(reinterpret_cast<const uint8_t*>(sc) + sizeof(*sc));
+  if (!Check(std::memcmp(cols, expected_cols, sizeof(expected_cols)) == 0, "WVP constants payload matches expected columns")) {
     return false;
   }
 
@@ -21288,55 +21425,55 @@ bool TestFvfXyzDiffuseDrawPrimitiveNoScratchVbConversion() {
     return false;
   }
 
-  if (!Check(dev->up_vertex_buffer != nullptr, "up_vertex_buffer allocated")) {
-    return false;
-  }
-  const aerogpu_handle_t vb_handle = dev->up_vertex_buffer->handle;
-  if (!Check(vb_handle != 0, "up_vertex_buffer handle non-zero")) {
+  if (!Check(dev->up_vertex_buffer == nullptr, "XYZ draw does not allocate scratch up_vertex_buffer")) {
     return false;
   }
 
-  // Expected clip-space transform.
+  // Expected WVP columns (transpose of row-major WVP) uploaded to c240..c243.
   float wv[16];
   float wvp[16];
   MulMat4RowMajor(world, view, wv);
   MulMat4RowMajor(wv, proj, wvp);
-  const float v0[4] = {verts[0].x, verts[0].y, verts[0].z, 1.0f};
-  float expected[4] = {};
-  MulVec4Mat4RowMajor(v0, wvp, expected);
+  float expected_cols[16] = {};
+  for (int c = 0; c < 4; ++c) {
+    expected_cols[c * 4 + 0] = wvp[0 * 4 + c];
+    expected_cols[c * 4 + 1] = wvp[1 * 4 + c];
+    expected_cols[c * 4 + 2] = wvp[2 * 4 + c];
+    expected_cols[c * 4 + 3] = wvp[3 * 4 + c];
+  }
 
-  const CmdLoc upload = FindLastUploadForHandle(buf, len, vb_handle);
-  if (!Check(upload.hdr != nullptr, "upload_resource(up_vertex_buffer) emitted")) {
-    return false;
-  }
-  const auto* upload_cmd = reinterpret_cast<const aerogpu_cmd_upload_resource*>(upload.hdr);
-  if (!Check(upload_cmd->offset_bytes == 0, "upload_resource VB offset is 0")) {
-    return false;
-  }
-  if (!Check(upload_cmd->size_bytes == 3 * 20u, "upload_resource VB size matches transformed vertex data")) {
+  const auto* vb_res = reinterpret_cast<const Resource*>(create_res.hResource.pDrvPrivate);
+  const uint32_t vb_handle = vb_res ? vb_res->handle : 0;
+  if (!Check(vb_handle != 0, "vertex buffer handle")) {
     return false;
   }
 
-  const uint8_t* payload = reinterpret_cast<const uint8_t*>(upload_cmd) + sizeof(*upload_cmd);
-  float x0 = 0.0f;
-  float y0 = 0.0f;
-  float z0 = 0.0f;
-  float w0 = 0.0f;
-  std::memcpy(&x0, payload + 0, sizeof(float));
-  std::memcpy(&y0, payload + 4, sizeof(float));
-  std::memcpy(&z0, payload + 8, sizeof(float));
-  std::memcpy(&w0, payload + 12, sizeof(float));
+  const size_t stream_len = StreamBytesUsed(buf, len);
+  size_t off = sizeof(aerogpu_cmd_stream_header);
+  while (off + sizeof(aerogpu_cmd_hdr) <= stream_len) {
+    const auto* hdr = reinterpret_cast<const aerogpu_cmd_hdr*>(buf + off);
+    if (hdr->opcode == AEROGPU_CMD_UPLOAD_RESOURCE) {
+      const auto* u = reinterpret_cast<const aerogpu_cmd_upload_resource*>(hdr);
+      if (!Check(u->resource_handle == vb_handle, "XYZ draw emits no scratch UPLOAD_RESOURCE")) {
+        return false;
+      }
+    }
+    if (hdr->size_bytes == 0 || hdr->size_bytes > stream_len - off) {
+      break;
+    }
+    off += hdr->size_bytes;
+  }
 
-  if (!Check(std::fabs(x0 - expected[0]) < 1e-6f, "XYZ draw: x0 matches WVP")) {
+  const CmdLoc wvp_consts = FindLastVsWvpConstants(buf, len);
+  if (!Check(wvp_consts.hdr != nullptr, "SET_SHADER_CONSTANTS_F uploads WVP constants")) {
     return false;
   }
-  if (!Check(std::fabs(y0 - expected[1]) < 1e-6f, "XYZ draw: y0 matches WVP")) {
+  const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(wvp_consts.hdr);
+  if (!Check(wvp_consts.hdr->size_bytes >= sizeof(*sc) + sizeof(expected_cols), "WVP constants payload size")) {
     return false;
   }
-  if (!Check(std::fabs(z0 - expected[2]) < 1e-6f, "XYZ draw: z0 matches WVP")) {
-    return false;
-  }
-  if (!Check(std::fabs(w0 - expected[3]) < 1e-6f, "XYZ draw: w0 matches WVP")) {
+  const float* cols = reinterpret_cast<const float*>(reinterpret_cast<const uint8_t*>(sc) + sizeof(*sc));
+  if (!Check(std::memcmp(cols, expected_cols, sizeof(expected_cols)) == 0, "WVP constants payload matches expected columns")) {
     return false;
   }
 
@@ -24699,20 +24836,16 @@ bool TestFvfXyzDiffuseTex1DrawIndexedPrimitiveNoScratchVbConversion() {
                                                     /*base_vertex=*/0,
                                                     /*min_index=*/0,
                                                     /*num_vertices=*/3,
-                                                     /*start_index=*/0,
-                                                     /*primitive_count=*/1);
+                                                      /*start_index=*/0,
+                                                      /*primitive_count=*/1);
   if (!Check(hr == S_OK, "DrawIndexedPrimitive")) {
     return false;
   }
 
-  if (!Check(dev->up_vertex_buffer != nullptr, "XYZ|DIFFUSE|TEX1 indexed draw allocates scratch VB")) {
+  if (!Check(dev->up_vertex_buffer == nullptr, "XYZ|DIFFUSE|TEX1 indexed draw does not allocate scratch VB")) {
     return false;
   }
   if (!Check(dev->up_index_buffer == nullptr, "XYZ|DIFFUSE|TEX1 indexed draw does not allocate scratch IB")) {
-    return false;
-  }
-  const aerogpu_handle_t up_vb_handle = dev->up_vertex_buffer->handle;
-  if (!Check(up_vb_handle != 0, "up_vertex_buffer handle non-zero")) {
     return false;
   }
 
@@ -24727,62 +24860,114 @@ bool TestFvfXyzDiffuseTex1DrawIndexedPrimitiveNoScratchVbConversion() {
     return false;
   }
 
-  // Expected clip-space transform.
+  // Expected WVP columns (transpose of row-major WVP) uploaded to c240..c243.
   float wv[16];
   float wvp[16];
   MulMat4RowMajor(world, view, wv);
   MulMat4RowMajor(wv, proj, wvp);
-  const float v0[4] = {verts[0].x, verts[0].y, verts[0].z, 1.0f};
-  float expected[4] = {};
-  MulVec4Mat4RowMajor(v0, wvp, expected);
-
-  const CmdLoc upload = FindLastUploadForHandle(buf, len, up_vb_handle);
-  if (!Check(upload.hdr != nullptr, "upload_resource(up_vertex_buffer) emitted")) {
-    return false;
-  }
-  const auto* upload_cmd = reinterpret_cast<const aerogpu_cmd_upload_resource*>(upload.hdr);
-  if (!Check(upload_cmd->offset_bytes == 0, "upload_resource VB offset is 0")) {
-    return false;
-  }
-  if (!Check(upload_cmd->size_bytes == 3 * 28u, "upload_resource VB size matches transformed vertex data")) {
-    return false;
+  float expected_cols[16] = {};
+  for (int c = 0; c < 4; ++c) {
+    expected_cols[c * 4 + 0] = wvp[0 * 4 + c];
+    expected_cols[c * 4 + 1] = wvp[1 * 4 + c];
+    expected_cols[c * 4 + 2] = wvp[2 * 4 + c];
+    expected_cols[c * 4 + 3] = wvp[3 * 4 + c];
   }
 
-  const uint8_t* payload = reinterpret_cast<const uint8_t*>(upload_cmd) + sizeof(*upload_cmd);
+  const auto* vb_res = reinterpret_cast<const Resource*>(create_vb.hResource.pDrvPrivate);
+  const auto* ib_res = reinterpret_cast<const Resource*>(create_ib.hResource.pDrvPrivate);
+  const uint32_t vb_handle = vb_res ? vb_res->handle : 0;
+  const uint32_t ib_handle = ib_res ? ib_res->handle : 0;
+  if (!Check(vb_handle != 0, "vb handle")) {
+    return false;
+  }
+  if (!Check(ib_handle != 0, "ib handle")) {
+    return false;
+  }
+
+  // Ensure we upload only the user-provided VB/IB and not a scratch VB conversion.
+  bool saw_vb_upload = false;
+  bool saw_ib_upload = false;
+  const size_t stream_len = StreamBytesUsed(buf, len);
+  size_t off = sizeof(aerogpu_cmd_stream_header);
+  while (off + sizeof(aerogpu_cmd_hdr) <= stream_len) {
+    const auto* hdr = reinterpret_cast<const aerogpu_cmd_hdr*>(buf + off);
+    if (hdr->opcode == AEROGPU_CMD_UPLOAD_RESOURCE) {
+      const auto* u = reinterpret_cast<const aerogpu_cmd_upload_resource*>(hdr);
+      if (u->resource_handle == vb_handle) {
+        saw_vb_upload = true;
+      } else if (u->resource_handle == ib_handle) {
+        saw_ib_upload = true;
+      } else {
+        return Check(false, "XYZ|DIFFUSE|TEX1 indexed draw emits no scratch UPLOAD_RESOURCE");
+      }
+    }
+    if (hdr->size_bytes == 0 || hdr->size_bytes > stream_len - off) {
+      break;
+    }
+    off += hdr->size_bytes;
+  }
+  if (!Check(saw_vb_upload, "vertex buffer upload emitted")) {
+    return false;
+  }
+  if (!Check(saw_ib_upload, "index buffer upload emitted")) {
+    return false;
+  }
+
+  const CmdLoc vb_upload = FindLastUploadForHandle(buf, len, vb_handle);
+  if (!Check(vb_upload.hdr != nullptr, "upload_resource(VB) emitted")) {
+    return false;
+  }
+  const auto* vb_upload_cmd = reinterpret_cast<const aerogpu_cmd_upload_resource*>(vb_upload.hdr);
+  if (!Check(vb_upload_cmd->offset_bytes == 0, "upload_resource VB offset is 0")) {
+    return false;
+  }
+  if (!Check(vb_upload_cmd->size_bytes == sizeof(verts), "upload_resource VB size matches original vertex data")) {
+    return false;
+  }
+
+  const uint8_t* payload = reinterpret_cast<const uint8_t*>(vb_upload_cmd) + sizeof(*vb_upload_cmd);
   float x0 = 0.0f;
   float y0 = 0.0f;
   float z0 = 0.0f;
-  float w0 = 0.0f;
   uint32_t c0 = 0;
   float u0 = 0.0f;
   float v0_out = 0.0f;
   std::memcpy(&x0, payload + 0, sizeof(float));
   std::memcpy(&y0, payload + 4, sizeof(float));
   std::memcpy(&z0, payload + 8, sizeof(float));
-  std::memcpy(&w0, payload + 12, sizeof(float));
-  std::memcpy(&c0, payload + 16, sizeof(uint32_t));
-  std::memcpy(&u0, payload + 20, sizeof(float));
-  std::memcpy(&v0_out, payload + 24, sizeof(float));
+  std::memcpy(&c0, payload + 12, sizeof(uint32_t));
+  std::memcpy(&u0, payload + 16, sizeof(float));
+  std::memcpy(&v0_out, payload + 20, sizeof(float));
 
-  if (!Check(std::fabs(x0 - expected[0]) < 1e-6f, "XYZ|TEX1 indexed draw: x0 matches WVP")) {
+  if (!Check(std::fabs(x0 - verts[0].x) < 1e-6f, "XYZ|DIFFUSE|TEX1 indexed draw: x0 is not CPU-converted")) {
     return false;
   }
-  if (!Check(std::fabs(y0 - expected[1]) < 1e-6f, "XYZ|TEX1 indexed draw: y0 matches WVP")) {
+  if (!Check(std::fabs(y0 - verts[0].y) < 1e-6f, "XYZ|DIFFUSE|TEX1 indexed draw: y0 is not CPU-converted")) {
     return false;
   }
-  if (!Check(std::fabs(z0 - expected[2]) < 1e-6f, "XYZ|TEX1 indexed draw: z0 matches WVP")) {
+  if (!Check(std::fabs(z0 - verts[0].z) < 1e-6f, "XYZ|DIFFUSE|TEX1 indexed draw: z0 preserved")) {
     return false;
   }
-  if (!Check(std::fabs(w0 - expected[3]) < 1e-6f, "XYZ|TEX1 indexed draw: w0 matches WVP")) {
+  if (!Check(c0 == kGreen, "XYZ|DIFFUSE|TEX1 indexed draw: diffuse color preserved")) {
     return false;
   }
-  if (!Check(c0 == kGreen, "XYZ|TEX1 indexed draw: diffuse color preserved")) {
+  if (!Check(std::fabs(u0 - verts[0].u) < 1e-6f, "XYZ|DIFFUSE|TEX1 indexed draw: u preserved")) {
     return false;
   }
-  if (!Check(std::fabs(u0 - verts[0].u) < 1e-6f, "XYZ|TEX1 indexed draw: u preserved")) {
+  if (!Check(std::fabs(v0_out - verts[0].v) < 1e-6f, "XYZ|DIFFUSE|TEX1 indexed draw: v preserved")) {
     return false;
   }
-  if (!Check(std::fabs(v0_out - verts[0].v) < 1e-6f, "XYZ|TEX1 indexed draw: v preserved")) {
+
+  const CmdLoc wvp_consts = FindLastVsWvpConstants(buf, len);
+  if (!Check(wvp_consts.hdr != nullptr, "SET_SHADER_CONSTANTS_F uploads WVP constants")) {
+    return false;
+  }
+  const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(wvp_consts.hdr);
+  if (!Check(wvp_consts.hdr->size_bytes >= sizeof(*sc) + sizeof(expected_cols), "WVP constants payload size")) {
+    return false;
+  }
+  const float* cols = reinterpret_cast<const float*>(reinterpret_cast<const uint8_t*>(sc) + sizeof(*sc));
+  if (!Check(std::memcmp(cols, expected_cols, sizeof(expected_cols)) == 0, "WVP constants payload matches expected columns")) {
     return false;
   }
 

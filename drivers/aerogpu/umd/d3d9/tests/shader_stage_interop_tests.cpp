@@ -931,7 +931,7 @@ bool TestPsOnlyBindsFixedfuncVsXyzTex1() {
   return Check(saw_user_ps_bind, "saw BIND_SHADERS with user PS handle");
 }
 
-bool TestPsOnlyXyzDiffuseBindsPassthroughVs() {
+bool TestPsOnlyXyzDiffuseBindsWvpVs() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
     return false;
@@ -991,6 +991,30 @@ bool TestPsOnlyXyzDiffuseBindsPassthroughVs() {
 
   dev->cmd.reset();
 
+  // Force a deterministic WVP upload. Fixed-function XYZ interop uses an internal
+  // WVP VS variant and uploads the matrix into c240..c243 as column vectors.
+  const float expected_wvp_cols[16] = {
+      1.0f, 0.0f, 0.0f, 0.0f,
+      0.0f, 1.0f, 0.0f, 0.0f,
+      0.0f, 0.0f, 1.0f, 0.0f,
+      0.0f, 0.0f, 0.0f, 1.0f,
+  };
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    constexpr uint32_t kD3dTransformView = 2u;
+    constexpr uint32_t kD3dTransformProjection = 3u;
+    constexpr uint32_t kD3dTransformWorld0 = 256u;
+    for (uint32_t idx : {kD3dTransformView, kD3dTransformProjection, kD3dTransformWorld0}) {
+      float* m = dev->transform_matrices[idx];
+      std::memset(m, 0, 16 * sizeof(float));
+      m[0] = 1.0f;
+      m[5] = 1.0f;
+      m[10] = 1.0f;
+      m[15] = 1.0f;
+    }
+    dev->fixedfunc_matrix_dirty = true;
+  }
+
   const VertexXyzDiffuse tri[3] = {
       {0.0f, 0.0f, 0.0f, 0xFFFF0000u},
       {1.0f, 0.0f, 0.0f, 0xFF00FF00u},
@@ -1002,12 +1026,10 @@ bool TestPsOnlyXyzDiffuseBindsPassthroughVs() {
     return false;
   }
 
-  // XYZ|DIFFUSE draws are CPU-transformed to clip-space in the draw path. The
-  // PS-only interop fallback therefore binds a passthrough internal VS.
-  if (!Check(dev->fixedfunc_vs != nullptr, "fixedfunc_vs created")) {
+  if (!Check(dev->fixedfunc_vs_xyz_diffuse != nullptr, "fixedfunc_vs_xyz_diffuse created")) {
     return false;
   }
-  const aerogpu_handle_t passthrough_vs_handle = dev->fixedfunc_vs->handle;
+  const aerogpu_handle_t wvp_vs_handle = dev->fixedfunc_vs_xyz_diffuse->handle;
 
   dev->cmd.finalize();
   const uint8_t* buf = dev->cmd.data();
@@ -1016,7 +1038,8 @@ bool TestPsOnlyXyzDiffuseBindsPassthroughVs() {
     return false;
   }
 
-  bool saw_passthrough_vs_bind = false;
+  bool saw_wvp_vs_bind = false;
+  bool saw_wvp_constants = false;
   size_t offset = sizeof(aerogpu_cmd_stream_header);
   const size_t stream_len = StreamBytesUsed(buf, len);
   while (offset + sizeof(aerogpu_cmd_hdr) <= stream_len) {
@@ -1026,8 +1049,19 @@ bool TestPsOnlyXyzDiffuseBindsPassthroughVs() {
       if (!Check(bind->vs != 0 && bind->ps != 0, "BIND_SHADERS must not bind null handles")) {
         return false;
       }
-      if (bind->ps == ps_handle && bind->vs == passthrough_vs_handle) {
-        saw_passthrough_vs_bind = true;
+      if (bind->ps == ps_handle && bind->vs == wvp_vs_handle) {
+        saw_wvp_vs_bind = true;
+      }
+    }
+    if (hdr->opcode == AEROGPU_CMD_SET_SHADER_CONSTANTS_F &&
+        hdr->size_bytes >= sizeof(aerogpu_cmd_set_shader_constants_f) + sizeof(expected_wvp_cols)) {
+      const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(hdr);
+      if (sc->stage == AEROGPU_SHADER_STAGE_VERTEX && sc->start_register == 240 && sc->vec4_count == 4) {
+        const float* payload = reinterpret_cast<const float*>(
+            reinterpret_cast<const uint8_t*>(sc) + sizeof(aerogpu_cmd_set_shader_constants_f));
+        if (std::memcmp(payload, expected_wvp_cols, sizeof(expected_wvp_cols)) == 0) {
+          saw_wvp_constants = true;
+        }
       }
     }
     if (hdr->size_bytes == 0 || hdr->size_bytes > stream_len - offset) {
@@ -1036,7 +1070,10 @@ bool TestPsOnlyXyzDiffuseBindsPassthroughVs() {
     offset += hdr->size_bytes;
   }
 
-  return Check(saw_passthrough_vs_bind, "saw BIND_SHADERS with passthrough VS handle + user PS handle");
+  if (!Check(saw_wvp_vs_bind, "saw BIND_SHADERS with WVP VS handle + user PS handle")) {
+    return false;
+  }
+  return Check(saw_wvp_constants, "PS-only XYZ|DIFFUSE uploaded identity WVP constants");
 }
 
 bool TestUnsupportedFvfPsOnlyFailsWithoutDraw() {
@@ -1210,7 +1247,7 @@ int main() {
   if (!aerogpu::TestPsOnlyBindsFixedfuncVsXyzTex1()) {
     return 1;
   }
-  if (!aerogpu::TestPsOnlyXyzDiffuseBindsPassthroughVs()) {
+  if (!aerogpu::TestPsOnlyXyzDiffuseBindsWvpVs()) {
     return 1;
   }
   if (!aerogpu::TestUnsupportedFvfPsOnlyFailsWithoutDraw()) {

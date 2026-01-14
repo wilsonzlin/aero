@@ -2916,13 +2916,12 @@ constexpr bool fixedfunc_fvf_is_xyzrhw(uint32_t fvf) {
 }
 
 constexpr bool fixedfunc_fvf_needs_matrix(uint32_t fvf) {
-  // Bring-up: XYZ|DIFFUSE{,TEX1} fixed-function draws are CPU-transformed to
-  // clip-space at draw time (see convert_xyz_to_clipspace_locked()), so they use
-  // a passthrough VS.
-  //
-  // Only the non-diffuse XYZ|TEX1 path uses an internal VS that reads the WVP
-  // constants uploaded into the reserved range (c240..c243).
-  return (fvf == kSupportedFvfXyzTex1);
+  // Fixed-function emulation for non-pretransformed XYZ vertices uses internal
+  // vertex shaders that apply the cached WORLD/VIEW/PROJECTION matrix via a
+  // reserved high VS constant range (c240..c243).
+  return (fvf == kSupportedFvfXyzDiffuse) ||
+         (fvf == kSupportedFvfXyzDiffuseTex1) ||
+         (fvf == kSupportedFvfXyzTex1);
 }
 
 #pragma pack(push, 1)
@@ -5404,14 +5403,12 @@ HRESULT ensure_fixedfunc_pipeline_locked(Device* dev) {
       vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsPassthroughPosColor));
       break;
     case kSupportedFvfXyzDiffuse:
-      // XYZ fixed-function draws are CPU-transformed to clip-space by the
-      // draw-time conversion path (see draw_* fixedfunc_xyz branches). Bind a
-      // passthrough VS here so the transformed vertices can be consumed directly.
-      vs_slot = &dev->fixedfunc_vs;
+      vs_slot = &dev->fixedfunc_vs_xyz_diffuse;
       ps_slot = &dev->fixedfunc_ps;
       fvf_decl = dev->fvf_vertex_decl_xyz_diffuse;
-      vs_bytes = fixedfunc::kVsPassthroughPosColor;
-      vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsPassthroughPosColor));
+      vs_bytes = fixedfunc::kVsWvpPosColor;
+      vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsWvpPosColor));
+      needs_matrix = true;
       break;
     case kSupportedFvfXyzrhwDiffuseTex1:
       vs_slot = &dev->fixedfunc_vs_tex1;
@@ -5428,14 +5425,12 @@ HRESULT ensure_fixedfunc_pipeline_locked(Device* dev) {
       vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsPassthroughPosWhiteTex1));
       break;
     case kSupportedFvfXyzDiffuseTex1:
-      // Bring-up: XYZ fixed-function draws are CPU-transformed to clip-space by
-      // the draw-time conversion path (see draw_* fixedfunc_xyz branches). Bind a
-      // passthrough VS here so the transformed vertices can be consumed directly.
       vs_slot = &dev->fixedfunc_vs_xyz_diffuse_tex1;
       ps_slot = &dev->fixedfunc_ps_xyz_diffuse_tex1;
       fvf_decl = dev->fvf_vertex_decl_xyz_diffuse_tex1;
-      vs_bytes = fixedfunc::kVsPassthroughPosColorTex1;
-      vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsPassthroughPosColorTex1));
+      vs_bytes = fixedfunc::kVsWvpPosColorTex0;
+      vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsWvpPosColorTex0));
+      needs_matrix = true;
       break;
     case kSupportedFvfXyzTex1:
       vs_slot = &dev->fixedfunc_vs_xyz_tex1;
@@ -5513,7 +5508,7 @@ Shader* fixedfunc_vs_variant_for_fvf_locked(const Device* dev) {
     case kSupportedFvfXyzrhwDiffuse:
       return dev->fixedfunc_vs;
     case kSupportedFvfXyzDiffuse:
-      return dev->fixedfunc_vs;
+      return dev->fixedfunc_vs_xyz_diffuse;
     case kSupportedFvfXyzrhwDiffuseTex1:
       return dev->fixedfunc_vs_tex1;
     case kSupportedFvfXyzrhwTex1:
@@ -5753,9 +5748,7 @@ static HRESULT ensure_fixedfunc_vs_fallback_locked(Device* dev, Shader** out_vs)
       vs = dev->fixedfunc_vs_tex1_nodiffuse;
       break;
     case kSupportedFvfXyzDiffuse:
-      // XYZ|DIFFUSE draws are CPU transformed to clip-space by the draw-time
-      // conversion path, so the fallback VS is a passthrough.
-      vs = dev->fixedfunc_vs;
+      vs = dev->fixedfunc_vs_xyz_diffuse;
       break;
     case kSupportedFvfXyzDiffuseTex1:
       vs = dev->fixedfunc_vs_xyz_diffuse_tex1;
@@ -20862,8 +20855,6 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive(
 
   const bool fixedfunc_vertex_active = fixedfunc_supported_fvf(dev->fvf) && dev->vertex_decl && !dev->user_vs;
   const bool fixedfunc_xyzrhw = fixedfunc_vertex_active && fixedfunc_fvf_is_xyzrhw(dev->fvf);
-  const bool fixedfunc_xyz = fixedfunc_vertex_active &&
-                             (dev->fvf == kSupportedFvfXyzDiffuse || dev->fvf == kSupportedFvfXyzDiffuseTex1);
 
   if (fixedfunc_vertex_active) {
     const DeviceStateStream& ss0 = dev->streams[0];
@@ -21009,158 +21000,6 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive(
     return trace.ret(S_OK);
   }
 
-  // Fixed-function emulation for non-pretransformed XYZ vertices: apply WVP on
-  // the CPU and upload a clip-space copy of the referenced vertices into a
-  // scratch VB.
-  if (fixedfunc_xyz) {
-    DeviceStateStream saved_stream = dev->streams[0];
-    VertexDecl* saved_decl = dev->vertex_decl;
-    DeviceStateStream& ss = dev->streams[0];
-    const bool tex1 = (dev->fvf == kSupportedFvfXyzDiffuseTex1);
-    const uint32_t src_min_stride = tex1 ? 24u : 16u;
-    const uint32_t dst_stride = tex1 ? 28u : 20u;
-    if (!ss.vb || ss.stride_bytes < src_min_stride) {
-      return E_FAIL;
-    }
-
-    const uint32_t vertex_count = vertex_count_from_primitive(type, primitive_count);
-    const uint64_t src_offset_u64 =
-        static_cast<uint64_t>(ss.offset_bytes) + static_cast<uint64_t>(start_vertex) * ss.stride_bytes;
-    const uint64_t size_u64 = static_cast<uint64_t>(vertex_count) * ss.stride_bytes;
-    const uint64_t vb_size_u64 = ss.vb->size_bytes;
-    if (src_offset_u64 > vb_size_u64 || size_u64 > vb_size_u64 - src_offset_u64) {
-      return E_INVALIDARG;
-    }
-
-    const uint8_t* src_vertices = nullptr;
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
-    void* vb_ptr = nullptr;
-    bool vb_locked = false;
-#endif
-
-    bool use_vb_storage = ss.vb->storage.size() >= static_cast<size_t>(src_offset_u64 + size_u64);
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
-    // Guest-backed buffers may still allocate a CPU shadow buffer (e.g. shared
-    // resources opened via OpenResource). On real WDDM builds the authoritative
-    // bytes live in the WDDM allocation, so prefer mapping it directly.
-    if (ss.vb->backing_alloc_id != 0) {
-      use_vb_storage = false;
-    }
-#endif
-
-    if (use_vb_storage) {
-      src_vertices = ss.vb->storage.data() + static_cast<size_t>(src_offset_u64);
-    } else {
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
-      if (ss.vb->wddm_hAllocation != 0 && dev->wddm_device != 0) {
-        const HRESULT lock_hr = wddm_lock_allocation(dev->wddm_callbacks,
-                                                     dev->wddm_device,
-                                                     ss.vb->wddm_hAllocation,
-                                                     src_offset_u64,
-                                                     size_u64,
-                                                     kD3DLOCK_READONLY,
-                                                     &vb_ptr,
-                                                     dev->wddm_context.hContext);
-        if (FAILED(lock_hr) || !vb_ptr) {
-          return FAILED(lock_hr) ? lock_hr : E_FAIL;
-        }
-        vb_locked = true;
-        src_vertices = static_cast<const uint8_t*>(vb_ptr);
-      } else
-#endif
-      {
-        return E_INVALIDARG;
-      }
-    }
-
-    std::vector<uint8_t> converted;
-    hr = convert_xyz_to_clipspace_locked(dev, src_vertices, ss.stride_bytes, vertex_count, tex1, &converted);
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
-    if (vb_locked) {
-      const HRESULT unlock_hr =
-          wddm_unlock_allocation(dev->wddm_callbacks, dev->wddm_device, ss.vb->wddm_hAllocation, dev->wddm_context.hContext);
-      if (FAILED(unlock_hr)) {
-        logf("aerogpu-d3d9: draw_primitive fixedfunc(XYZ): UnlockCb failed hr=0x%08lx alloc_id=%u hAllocation=%llu\n",
-             static_cast<unsigned long>(unlock_hr),
-             static_cast<unsigned>(ss.vb->backing_alloc_id),
-             static_cast<unsigned long long>(ss.vb->wddm_hAllocation));
-        return unlock_hr;
-      }
-    }
-#endif
-    if (FAILED(hr)) {
-      return hr;
-    }
-
-    hr = ensure_up_vertex_buffer_locked(dev, static_cast<uint32_t>(converted.size()));
-    if (FAILED(hr)) {
-      return hr;
-    }
-    hr = emit_upload_buffer_locked(dev, dev->up_vertex_buffer, converted.data(), static_cast<uint32_t>(converted.size()));
-    if (FAILED(hr)) {
-      return hr;
-    }
-
-    VertexDecl* fvf_decl = ensure_fixedfunc_fvf_vertex_decl_locked(dev, tex1);
-    if (!fvf_decl) {
-      return device_lost_override(dev, E_OUTOFMEMORY);
-    }
-
-    if (!emit_set_stream_source_locked(dev, 0, dev->up_vertex_buffer, 0, dst_stride)) {
-      return device_lost_override(dev, E_OUTOFMEMORY);
-    }
-    if (!emit_set_input_layout_locked(dev, fvf_decl)) {
-      (void)emit_set_stream_source_locked(dev, 0, saved_stream.vb, saved_stream.offset_bytes, saved_stream.stride_bytes);
-      return device_lost_override(dev, E_OUTOFMEMORY);
-    }
-
-    const uint32_t topology = d3d9_prim_to_topology(type);
-    if (!emit_set_topology_locked(dev, topology)) {
-      (void)emit_set_stream_source_locked(dev, 0, saved_stream.vb, saved_stream.offset_bytes, saved_stream.stride_bytes);
-      (void)emit_set_input_layout_locked(dev, saved_decl);
-      return device_lost_override(dev, E_OUTOFMEMORY);
-    }
-
-    // Ensure the command buffer has space before we track allocations; tracking
-    // may force a submission split, and command-buffer splits must not occur
-    // after tracking or the allocation list would be out of sync.
-    if (!ensure_cmd_space(dev, align_up(sizeof(aerogpu_cmd_draw), 4))) {
-      (void)emit_set_stream_source_locked(dev, 0, saved_stream.vb, saved_stream.offset_bytes, saved_stream.stride_bytes);
-      (void)emit_set_input_layout_locked(dev, saved_decl);
-      return device_lost_override(dev, E_OUTOFMEMORY);
-    }
-    hr = track_draw_state_locked(dev);
-    if (FAILED(hr)) {
-      (void)emit_set_stream_source_locked(dev, 0, saved_stream.vb, saved_stream.offset_bytes, saved_stream.stride_bytes);
-      (void)emit_set_input_layout_locked(dev, saved_decl);
-      return hr;
-    }
-
-    auto* cmd = append_fixed_locked<aerogpu_cmd_draw>(dev, AEROGPU_CMD_DRAW);
-    if (!cmd) {
-      (void)emit_set_stream_source_locked(dev, 0, saved_stream.vb, saved_stream.offset_bytes, saved_stream.stride_bytes);
-      (void)emit_set_input_layout_locked(dev, saved_decl);
-      return device_lost_override(dev, E_OUTOFMEMORY);
-    }
-    cmd->vertex_count = vertex_count;
-    cmd->instance_count = 1;
-    cmd->first_vertex = 0;
-    cmd->first_instance = 0;
-
-    // Restore stream source 0 and input layout.
-    if (!emit_set_stream_source_locked(dev, 0, saved_stream.vb, saved_stream.offset_bytes, saved_stream.stride_bytes)) {
-      return device_lost_override(dev, E_OUTOFMEMORY);
-    }
-    if (!emit_set_input_layout_locked(dev, saved_decl)) {
-      return device_lost_override(dev, E_OUTOFMEMORY);
-    }
-
-    hr = restore_draw_shaders_locked(dev, &shader_override);
-    if (FAILED(hr)) {
-      return trace.ret(hr);
-    }
-    return trace.ret(S_OK);
-  }
   const uint32_t vertex_count = vertex_count_from_primitive(type, primitive_count);
   const size_t draw_bytes = align_up(sizeof(aerogpu_cmd_set_primitive_topology), 4) +
                             align_up(sizeof(aerogpu_cmd_draw), 4);
@@ -21273,11 +21112,8 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive_up(
 
   const bool fixedfunc_vertex_active = fixedfunc_supported_fvf(dev->fvf) && dev->vertex_decl && !dev->user_vs;
   const bool fixedfunc_xyzrhw = fixedfunc_vertex_active && fixedfunc_fvf_is_xyzrhw(dev->fvf);
-  const bool fixedfunc_xyz = fixedfunc_vertex_active &&
-                             (dev->fvf == kSupportedFvfXyzDiffuse || dev->fvf == kSupportedFvfXyzDiffuseTex1);
 
   DeviceStateStream saved = dev->streams[0];
-  VertexDecl* saved_decl = dev->vertex_decl;
 
   if (fixedfunc_vertex_active) {
     const HRESULT stride_hr = validate_fixedfunc_vertex_stride(dev->fvf, stride_bytes);
@@ -21298,15 +21134,6 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive_up(
     }
     upload_data = converted.data();
     upload_size = static_cast<uint32_t>(converted.size());
-  } else if (fixedfunc_xyz) {
-    const bool tex1 = (dev->fvf == kSupportedFvfXyzDiffuseTex1);
-    HRESULT hr = convert_xyz_to_clipspace_locked(dev, pVertexData, stride_bytes, vertex_count, tex1, &converted);
-    if (FAILED(hr)) {
-      return trace.ret(hr);
-    }
-    upload_data = converted.data();
-    upload_size = static_cast<uint32_t>(converted.size());
-    upload_stride = tex1 ? 28u : 20u;
   }
 
   hr = ensure_up_vertex_buffer_locked(dev, upload_size);
@@ -21322,24 +21149,9 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive_up(
     return trace.ret(device_lost_override(dev, E_OUTOFMEMORY));
   }
 
-  if (fixedfunc_xyz) {
-    const bool tex1 = (dev->fvf == kSupportedFvfXyzDiffuseTex1);
-    VertexDecl* fvf_decl = ensure_fixedfunc_fvf_vertex_decl_locked(dev, tex1);
-    if (!fvf_decl) {
-      (void)emit_set_stream_source_locked(dev, 0, saved.vb, saved.offset_bytes, saved.stride_bytes);
-      return trace.ret(device_lost_override(dev, E_OUTOFMEMORY));
-    }
-    if (!emit_set_input_layout_locked(dev, fvf_decl)) {
-      (void)emit_set_stream_source_locked(dev, 0, saved.vb, saved.offset_bytes, saved.stride_bytes);
-      return trace.ret(device_lost_override(dev, E_OUTOFMEMORY));
-    }
-  }
   const uint32_t topology = d3d9_prim_to_topology(type);
   if (!emit_set_topology_locked(dev, topology)) {
     (void)emit_set_stream_source_locked(dev, 0, saved.vb, saved.offset_bytes, saved.stride_bytes);
-    if (fixedfunc_xyz) {
-      (void)emit_set_input_layout_locked(dev, saved_decl);
-    }
     return trace.ret(device_lost_override(dev, E_OUTOFMEMORY));
   }
 
@@ -21348,26 +21160,17 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive_up(
   // after tracking or the allocation list would be out of sync.
   if (!ensure_cmd_space(dev, align_up(sizeof(aerogpu_cmd_draw), 4))) {
     (void)emit_set_stream_source_locked(dev, 0, saved.vb, saved.offset_bytes, saved.stride_bytes);
-    if (fixedfunc_xyz) {
-      (void)emit_set_input_layout_locked(dev, saved_decl);
-    }
     return trace.ret(device_lost_override(dev, E_OUTOFMEMORY));
   }
   hr = track_draw_state_locked(dev);
   if (FAILED(hr)) {
     (void)emit_set_stream_source_locked(dev, 0, saved.vb, saved.offset_bytes, saved.stride_bytes);
-    if (fixedfunc_xyz) {
-      (void)emit_set_input_layout_locked(dev, saved_decl);
-    }
     return trace.ret(hr);
   }
 
   auto* cmd = append_fixed_locked<aerogpu_cmd_draw>(dev, AEROGPU_CMD_DRAW);
   if (!cmd) {
     (void)emit_set_stream_source_locked(dev, 0, saved.vb, saved.offset_bytes, saved.stride_bytes);
-    if (fixedfunc_xyz) {
-      (void)emit_set_input_layout_locked(dev, saved_decl);
-    }
     return trace.ret(device_lost_override(dev, E_OUTOFMEMORY));
   }
   cmd->vertex_count = vertex_count;
@@ -21377,11 +21180,6 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive_up(
 
   if (!emit_set_stream_source_locked(dev, 0, saved.vb, saved.offset_bytes, saved.stride_bytes)) {
     return trace.ret(device_lost_override(dev, E_OUTOFMEMORY));
-  }
-  if (fixedfunc_xyz) {
-    if (!emit_set_input_layout_locked(dev, saved_decl)) {
-      return trace.ret(device_lost_override(dev, E_OUTOFMEMORY));
-    }
   }
   hr = restore_draw_shaders_locked(dev, &shader_override);
   if (FAILED(hr)) {
@@ -21491,11 +21289,8 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive2(
 
   const bool fixedfunc_vertex_active = fixedfunc_supported_fvf(dev->fvf) && dev->vertex_decl && !dev->user_vs;
   const bool fixedfunc_xyzrhw = fixedfunc_vertex_active && fixedfunc_fvf_is_xyzrhw(dev->fvf);
-  const bool fixedfunc_xyz = fixedfunc_vertex_active &&
-                             (dev->fvf == kSupportedFvfXyzDiffuse || dev->fvf == kSupportedFvfXyzDiffuseTex1);
 
   DeviceStateStream saved = dev->streams[0];
-  VertexDecl* saved_decl = dev->vertex_decl;
 
   if (fixedfunc_vertex_active) {
     const HRESULT stride_hr = validate_fixedfunc_vertex_stride(dev->fvf, pDraw->VertexStreamZeroStride);
@@ -21517,16 +21312,6 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive2(
     }
     upload_data = converted.data();
     upload_size = static_cast<uint32_t>(converted.size());
-  } else if (fixedfunc_xyz) {
-    const bool tex1 = (dev->fvf == kSupportedFvfXyzDiffuseTex1);
-    HRESULT hr = convert_xyz_to_clipspace_locked(
-        dev, pDraw->pVertexStreamZeroData, pDraw->VertexStreamZeroStride, vertex_count, tex1, &converted);
-    if (FAILED(hr)) {
-      return hr;
-    }
-    upload_data = converted.data();
-    upload_size = static_cast<uint32_t>(converted.size());
-    upload_stride = tex1 ? 28u : 20u;
   }
 
   hr = ensure_up_vertex_buffer_locked(dev, upload_size);
@@ -21542,24 +21327,9 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive2(
     return device_lost_override(dev, E_OUTOFMEMORY);
   }
 
-  if (fixedfunc_xyz) {
-    const bool tex1 = (dev->fvf == kSupportedFvfXyzDiffuseTex1);
-    VertexDecl* fvf_decl = ensure_fixedfunc_fvf_vertex_decl_locked(dev, tex1);
-    if (!fvf_decl) {
-      (void)emit_set_stream_source_locked(dev, 0, saved.vb, saved.offset_bytes, saved.stride_bytes);
-      return device_lost_override(dev, E_OUTOFMEMORY);
-    }
-    if (!emit_set_input_layout_locked(dev, fvf_decl)) {
-      (void)emit_set_stream_source_locked(dev, 0, saved.vb, saved.offset_bytes, saved.stride_bytes);
-      return device_lost_override(dev, E_OUTOFMEMORY);
-    }
-  }
   const uint32_t topology = d3d9_prim_to_topology(pDraw->PrimitiveType);
   if (!emit_set_topology_locked(dev, topology)) {
     (void)emit_set_stream_source_locked(dev, 0, saved.vb, saved.offset_bytes, saved.stride_bytes);
-    if (fixedfunc_xyz) {
-      (void)emit_set_input_layout_locked(dev, saved_decl);
-    }
     return device_lost_override(dev, E_OUTOFMEMORY);
   }
 
@@ -21568,27 +21338,18 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive2(
   // after tracking or the allocation list would be out of sync.
   if (!ensure_cmd_space(dev, align_up(sizeof(aerogpu_cmd_draw), 4))) {
     (void)emit_set_stream_source_locked(dev, 0, saved.vb, saved.offset_bytes, saved.stride_bytes);
-    if (fixedfunc_xyz) {
-      (void)emit_set_input_layout_locked(dev, saved_decl);
-    }
     return device_lost_override(dev, E_OUTOFMEMORY);
   }
 
   hr = track_draw_state_locked(dev);
   if (FAILED(hr)) {
     (void)emit_set_stream_source_locked(dev, 0, saved.vb, saved.offset_bytes, saved.stride_bytes);
-    if (fixedfunc_xyz) {
-      (void)emit_set_input_layout_locked(dev, saved_decl);
-    }
     return hr;
   }
 
   auto* cmd = append_fixed_locked<aerogpu_cmd_draw>(dev, AEROGPU_CMD_DRAW);
   if (!cmd) {
     (void)emit_set_stream_source_locked(dev, 0, saved.vb, saved.offset_bytes, saved.stride_bytes);
-    if (fixedfunc_xyz) {
-      (void)emit_set_input_layout_locked(dev, saved_decl);
-    }
     return device_lost_override(dev, E_OUTOFMEMORY);
   }
   cmd->vertex_count = vertex_count;
@@ -21598,11 +21359,6 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive2(
 
   if (!emit_set_stream_source_locked(dev, 0, saved.vb, saved.offset_bytes, saved.stride_bytes)) {
     return device_lost_override(dev, E_OUTOFMEMORY);
-  }
-  if (fixedfunc_xyz) {
-    if (!emit_set_input_layout_locked(dev, saved_decl)) {
-      return device_lost_override(dev, E_OUTOFMEMORY);
-    }
   }
   hr = restore_draw_shaders_locked(dev, &shader_override);
   if (FAILED(hr)) {
@@ -21680,11 +21436,8 @@ static HRESULT device_draw_indexed_primitive2_locked(
 
   const bool fixedfunc_vertex_active = fixedfunc_supported_fvf(dev->fvf) && dev->vertex_decl && !dev->user_vs;
   const bool fixedfunc_xyzrhw = fixedfunc_vertex_active && fixedfunc_fvf_is_xyzrhw(dev->fvf);
-  const bool fixedfunc_xyz = fixedfunc_vertex_active &&
-                             (dev->fvf == kSupportedFvfXyzDiffuse || dev->fvf == kSupportedFvfXyzDiffuseTex1);
 
   DeviceStateStream saved_stream = dev->streams[0];
-  VertexDecl* saved_decl = dev->vertex_decl;
   Resource* saved_ib = dev->index_buffer;
   const D3DDDIFORMAT saved_fmt = dev->index_format;
   const uint32_t saved_offset = dev->index_offset_bytes;
@@ -21713,21 +21466,6 @@ static HRESULT device_draw_indexed_primitive2_locked(
     }
     vb_upload_data = converted.data();
     vb_upload_size = static_cast<uint32_t>(converted.size());
-  } else if (fixedfunc_xyz) {
-    const bool tex1 = (dev->fvf == kSupportedFvfXyzDiffuseTex1);
-    HRESULT hr = convert_xyz_to_clipspace_locked(
-        dev,
-        pDraw->pVertexStreamZeroData,
-        pDraw->VertexStreamZeroStride,
-        static_cast<uint32_t>(vertex_count_u64),
-        tex1,
-        &converted);
-    if (FAILED(hr)) {
-      return hr;
-    }
-    vb_upload_data = converted.data();
-    vb_upload_size = static_cast<uint32_t>(converted.size());
-    vb_upload_stride = tex1 ? 28u : 20u;
   }
 
   hr = ensure_up_vertex_buffer_locked(dev, vb_upload_size);
@@ -21769,46 +21507,9 @@ static HRESULT device_draw_indexed_primitive2_locked(
   ib_cmd->offset_bytes = 0;
   ib_cmd->reserved0 = 0;
 
-  if (fixedfunc_xyz) {
-    const bool tex1 = (dev->fvf == kSupportedFvfXyzDiffuseTex1);
-    VertexDecl* fvf_decl = ensure_fixedfunc_fvf_vertex_decl_locked(dev, tex1);
-    if (!fvf_decl) {
-      (void)emit_set_stream_source_locked(dev, 0, saved_stream.vb, saved_stream.offset_bytes, saved_stream.stride_bytes);
-      // Restore IB state.
-      dev->index_buffer = saved_ib;
-      dev->index_format = saved_fmt;
-      dev->index_offset_bytes = saved_offset;
-      auto* restore = append_fixed_locked<aerogpu_cmd_set_index_buffer>(dev, AEROGPU_CMD_SET_INDEX_BUFFER);
-      if (restore) {
-        restore->buffer = saved_ib ? saved_ib->handle : 0;
-        restore->format = d3d9_index_format_to_aerogpu(saved_fmt);
-        restore->offset_bytes = saved_offset;
-        restore->reserved0 = 0;
-      }
-      return device_lost_override(dev, E_OUTOFMEMORY);
-    }
-    if (!emit_set_input_layout_locked(dev, fvf_decl)) {
-      (void)emit_set_stream_source_locked(dev, 0, saved_stream.vb, saved_stream.offset_bytes, saved_stream.stride_bytes);
-      // Restore IB state.
-      dev->index_buffer = saved_ib;
-      dev->index_format = saved_fmt;
-      dev->index_offset_bytes = saved_offset;
-      auto* restore = append_fixed_locked<aerogpu_cmd_set_index_buffer>(dev, AEROGPU_CMD_SET_INDEX_BUFFER);
-      if (restore) {
-        restore->buffer = saved_ib ? saved_ib->handle : 0;
-        restore->format = d3d9_index_format_to_aerogpu(saved_fmt);
-        restore->offset_bytes = saved_offset;
-        restore->reserved0 = 0;
-      }
-      return device_lost_override(dev, E_OUTOFMEMORY);
-    }
-  }
   const uint32_t topology = d3d9_prim_to_topology(pDraw->PrimitiveType);
   if (!emit_set_topology_locked(dev, topology)) {
     (void)emit_set_stream_source_locked(dev, 0, saved_stream.vb, saved_stream.offset_bytes, saved_stream.stride_bytes);
-    if (fixedfunc_xyz) {
-      (void)emit_set_input_layout_locked(dev, saved_decl);
-    }
     // Restore IB state.
     dev->index_buffer = saved_ib;
     dev->index_format = saved_fmt;
@@ -21828,9 +21529,6 @@ static HRESULT device_draw_indexed_primitive2_locked(
   // after tracking or the allocation list would be out of sync.
   if (!ensure_cmd_space(dev, align_up(sizeof(aerogpu_cmd_draw_indexed), 4))) {
     (void)emit_set_stream_source_locked(dev, 0, saved_stream.vb, saved_stream.offset_bytes, saved_stream.stride_bytes);
-    if (fixedfunc_xyz) {
-      (void)emit_set_input_layout_locked(dev, saved_decl);
-    }
     // Restore IB state.
     dev->index_buffer = saved_ib;
     dev->index_format = saved_fmt;
@@ -21848,9 +21546,6 @@ static HRESULT device_draw_indexed_primitive2_locked(
   hr = track_draw_state_locked(dev);
   if (FAILED(hr)) {
     (void)emit_set_stream_source_locked(dev, 0, saved_stream.vb, saved_stream.offset_bytes, saved_stream.stride_bytes);
-    if (fixedfunc_xyz) {
-      (void)emit_set_input_layout_locked(dev, saved_decl);
-    }
     // Restore IB state.
     dev->index_buffer = saved_ib;
     dev->index_format = saved_fmt;
@@ -21868,9 +21563,6 @@ static HRESULT device_draw_indexed_primitive2_locked(
   auto* cmd = append_fixed_locked<aerogpu_cmd_draw_indexed>(dev, AEROGPU_CMD_DRAW_INDEXED);
   if (!cmd) {
     (void)emit_set_stream_source_locked(dev, 0, saved_stream.vb, saved_stream.offset_bytes, saved_stream.stride_bytes);
-    if (fixedfunc_xyz) {
-      (void)emit_set_input_layout_locked(dev, saved_decl);
-    }
     // Restore IB state.
     dev->index_buffer = saved_ib;
     dev->index_format = saved_fmt;
@@ -21893,11 +21585,6 @@ static HRESULT device_draw_indexed_primitive2_locked(
   // Restore stream source 0.
   if (!emit_set_stream_source_locked(dev, 0, saved_stream.vb, saved_stream.offset_bytes, saved_stream.stride_bytes)) {
     return device_lost_override(dev, E_OUTOFMEMORY);
-  }
-  if (fixedfunc_xyz) {
-    if (!emit_set_input_layout_locked(dev, saved_decl)) {
-      return device_lost_override(dev, E_OUTOFMEMORY);
-    }
   }
 
   // Restore index buffer binding.
@@ -21965,8 +21652,6 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive(
 
   const bool fixedfunc_vertex_active = fixedfunc_supported_fvf(dev->fvf) && dev->vertex_decl && !dev->user_vs;
   const bool fixedfunc_xyzrhw = fixedfunc_vertex_active && fixedfunc_fvf_is_xyzrhw(dev->fvf);
-  const bool fixedfunc_xyz = fixedfunc_vertex_active &&
-                             (dev->fvf == kSupportedFvfXyzDiffuse || dev->fvf == kSupportedFvfXyzDiffuseTex1);
 
   // Fixed-function emulation for indexed draws: expand indices into a temporary
   // vertex stream and issue a non-indexed draw. This is intentionally
@@ -22259,277 +21944,6 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive(
     return trace.ret(S_OK);
   }
 
-  // Fixed-function emulation for indexed draws with non-pretransformed XYZ
-  // vertices: apply WVP on the CPU for the referenced vertex range and draw
-  // indexed using the original index buffer with an adjusted base vertex.
-  if (fixedfunc_xyz) {
-    DeviceStateStream saved_stream = dev->streams[0];
-    VertexDecl* saved_decl = dev->vertex_decl;
-    DeviceStateStream& ss = dev->streams[0];
-
-    const bool tex1 = (dev->fvf == kSupportedFvfXyzDiffuseTex1);
-    const uint32_t src_min_stride = tex1 ? 24u : 16u;
-    const uint32_t dst_stride = tex1 ? 28u : 20u;
-    if (!ss.vb || ss.stride_bytes < src_min_stride) {
-      return E_FAIL;
-    }
-    if (!dev->index_buffer) {
-      return E_FAIL;
-    }
-
-    const uint32_t index_count = index_count_from_primitive(type, primitive_count);
-    const uint32_t index_size = (dev->index_format == kD3dFmtIndex32) ? 4u : 2u;
-    const uint64_t index_bytes_u64 = static_cast<uint64_t>(index_count) * index_size;
-    const uint64_t index_offset_u64 =
-        static_cast<uint64_t>(dev->index_offset_bytes) + static_cast<uint64_t>(start_index) * index_size;
-    const uint64_t ib_size_u64 = dev->index_buffer->size_bytes;
-    if (index_offset_u64 > ib_size_u64 || index_bytes_u64 > ib_size_u64 - index_offset_u64) {
-      return E_INVALIDARG;
-    }
-
-    uint32_t min_vtx = 0;
-    uint32_t max_vtx = 0;
-    bool have_bounds = false;
-
-    const uint8_t* index_data = nullptr;
-    const uint8_t* vb_base = nullptr;
-
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
-    struct AutoUnlock {
-      Device* dev = nullptr;
-      WddmAllocationHandle hAllocation = 0;
-      uint32_t alloc_id = 0;
-      const char* tag = nullptr;
-      bool locked = false;
-
-      AutoUnlock(Device* dev, WddmAllocationHandle hAllocation, uint32_t alloc_id, const char* tag)
-          : dev(dev), hAllocation(hAllocation), alloc_id(alloc_id), tag(tag) {}
-
-      ~AutoUnlock() {
-        if (locked && dev && dev->wddm_device != 0 && hAllocation != 0) {
-          const HRESULT hr = wddm_unlock_allocation(dev->wddm_callbacks, dev->wddm_device, hAllocation, dev->wddm_context.hContext);
-          if (FAILED(hr)) {
-            logf("aerogpu-d3d9: draw_indexed_primitive fixedfunc(XYZ): UnlockCb(%s) failed hr=0x%08lx alloc_id=%u hAllocation=%llu\n",
-                 tag ? tag : "?",
-                 static_cast<unsigned long>(hr),
-                 static_cast<unsigned>(alloc_id),
-                 static_cast<unsigned long long>(hAllocation));
-          }
-        }
-      }
-    };
-
-    AutoUnlock ib_lock(dev, dev->index_buffer->wddm_hAllocation, dev->index_buffer->backing_alloc_id, "IB");
-    AutoUnlock vb_lock(dev, ss.vb->wddm_hAllocation, ss.vb->backing_alloc_id, "VB");
-    void* ib_ptr = nullptr;
-    void* vb_ptr = nullptr;
-#endif
-
-    // Map index buffer bytes.
-    bool use_ib_storage = dev->index_buffer->storage.size() >= static_cast<size_t>(index_offset_u64 + index_bytes_u64);
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
-    if (dev->index_buffer->backing_alloc_id != 0) {
-      use_ib_storage = false;
-    }
-#endif
-    if (use_ib_storage) {
-      index_data = dev->index_buffer->storage.data() + static_cast<size_t>(index_offset_u64);
-    } else {
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
-      if (dev->index_buffer->wddm_hAllocation != 0 && dev->wddm_device != 0) {
-        const HRESULT lock_hr = wddm_lock_allocation(dev->wddm_callbacks,
-                                                     dev->wddm_device,
-                                                     dev->index_buffer->wddm_hAllocation,
-                                                     index_offset_u64,
-                                                     index_bytes_u64,
-                                                     kD3DLOCK_READONLY,
-                                                     &ib_ptr,
-                                                     dev->wddm_context.hContext);
-        if (FAILED(lock_hr) || !ib_ptr) {
-          return FAILED(lock_hr) ? lock_hr : E_FAIL;
-        }
-        ib_lock.locked = true;
-        index_data = static_cast<const uint8_t*>(ib_ptr);
-      } else
-#endif
-      {
-        return E_INVALIDARG;
-      }
-    }
-
-    // First pass: compute min/max referenced vertex index.
-    for (uint32_t i = 0; i < index_count; ++i) {
-      uint32_t idx = 0;
-      if (index_size == 4) {
-        std::memcpy(&idx, index_data + static_cast<size_t>(i) * 4, sizeof(idx));
-      } else {
-        uint16_t idx16 = 0;
-        std::memcpy(&idx16, index_data + static_cast<size_t>(i) * 2, sizeof(idx16));
-        idx = idx16;
-      }
-
-      const int64_t vtx = static_cast<int64_t>(base_vertex) + static_cast<int64_t>(idx);
-      if (vtx < 0) {
-        return E_INVALIDARG;
-      }
-      const uint32_t vtx_u32 = static_cast<uint32_t>(vtx);
-      if (!have_bounds) {
-        min_vtx = vtx_u32;
-        max_vtx = vtx_u32;
-        have_bounds = true;
-      } else {
-        min_vtx = std::min(min_vtx, vtx_u32);
-        max_vtx = std::max(max_vtx, vtx_u32);
-      }
-    }
-    if (!have_bounds) {
-      return E_INVALIDARG;
-    }
-
-    const uint64_t vb_size_u64 = ss.vb->size_bytes;
-    const uint64_t vb_range_offset =
-        static_cast<uint64_t>(ss.offset_bytes) + static_cast<uint64_t>(min_vtx) * ss.stride_bytes;
-    const uint64_t vb_range_size =
-        (static_cast<uint64_t>(max_vtx) - static_cast<uint64_t>(min_vtx) + 1) * ss.stride_bytes;
-    if (vb_range_offset > vb_size_u64 || vb_range_size > vb_size_u64 - vb_range_offset) {
-      return E_INVALIDARG;
-    }
-
-    bool use_vb_storage = ss.vb->storage.size() >= static_cast<size_t>(vb_range_offset + vb_range_size);
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
-    if (ss.vb->backing_alloc_id != 0) {
-      use_vb_storage = false;
-    }
-#endif
-    if (use_vb_storage) {
-      vb_base = ss.vb->storage.data() + static_cast<size_t>(vb_range_offset);
-    } else {
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
-      if (ss.vb->wddm_hAllocation != 0 && dev->wddm_device != 0) {
-        const HRESULT lock_hr = wddm_lock_allocation(dev->wddm_callbacks,
-                                                     dev->wddm_device,
-                                                     ss.vb->wddm_hAllocation,
-                                                     vb_range_offset,
-                                                     vb_range_size,
-                                                     kD3DLOCK_READONLY,
-                                                     &vb_ptr,
-                                                     dev->wddm_context.hContext);
-        if (FAILED(lock_hr) || !vb_ptr) {
-          return FAILED(lock_hr) ? lock_hr : E_FAIL;
-        }
-        vb_lock.locked = true;
-        vb_base = static_cast<const uint8_t*>(vb_ptr);
-      } else
-#endif
-      {
-        return E_INVALIDARG;
-      }
-    }
-
-    const uint64_t range_vertex_count_u64 = (static_cast<uint64_t>(max_vtx) - static_cast<uint64_t>(min_vtx) + 1);
-    if (range_vertex_count_u64 == 0 || range_vertex_count_u64 > 0x7FFFFFFFu) {
-      return E_INVALIDARG;
-    }
-
-    std::vector<uint8_t> converted;
-    HRESULT hr = convert_xyz_to_clipspace_locked(dev,
-                                                 vb_base,
-                                                 ss.stride_bytes,
-                                                 static_cast<uint32_t>(range_vertex_count_u64),
-                                                 tex1,
-                                                 &converted);
-    if (FAILED(hr)) {
-      return hr;
-    }
-
-    hr = ensure_up_vertex_buffer_locked(dev, static_cast<uint32_t>(converted.size()));
-    if (FAILED(hr)) {
-      return hr;
-    }
-    hr = emit_upload_buffer_locked(dev, dev->up_vertex_buffer, converted.data(), static_cast<uint32_t>(converted.size()));
-    if (FAILED(hr)) {
-      return hr;
-    }
-
-    VertexDecl* fvf_decl = ensure_fixedfunc_fvf_vertex_decl_locked(dev, tex1);
-    if (!fvf_decl) {
-      return device_lost_override(dev, E_OUTOFMEMORY);
-    }
-
-    if (!emit_set_stream_source_locked(dev, 0, dev->up_vertex_buffer, 0, dst_stride)) {
-      return device_lost_override(dev, E_OUTOFMEMORY);
-    }
-    if (!emit_set_input_layout_locked(dev, fvf_decl)) {
-      (void)emit_set_stream_source_locked(dev, 0, saved_stream.vb, saved_stream.offset_bytes, saved_stream.stride_bytes);
-      return device_lost_override(dev, E_OUTOFMEMORY);
-    }
-
-    const uint32_t topology = d3d9_prim_to_topology(type);
-    if (!emit_set_topology_locked(dev, topology)) {
-      (void)emit_set_stream_source_locked(dev, 0, saved_stream.vb, saved_stream.offset_bytes, saved_stream.stride_bytes);
-      (void)emit_set_input_layout_locked(dev, saved_decl);
-      return device_lost_override(dev, E_OUTOFMEMORY);
-    }
-
-    // Ensure the command buffer has space before we track allocations; tracking
-    // may force a submission split, and command-buffer splits must not occur
-    // after tracking or the allocation list would be out of sync.
-    if (!ensure_cmd_space(dev, align_up(sizeof(aerogpu_cmd_draw_indexed), 4))) {
-      (void)emit_set_stream_source_locked(dev, 0, saved_stream.vb, saved_stream.offset_bytes, saved_stream.stride_bytes);
-      (void)emit_set_input_layout_locked(dev, saved_decl);
-      return device_lost_override(dev, E_OUTOFMEMORY);
-    }
-    hr = track_draw_state_locked(dev);
-    if (FAILED(hr)) {
-      (void)emit_set_stream_source_locked(dev, 0, saved_stream.vb, saved_stream.offset_bytes, saved_stream.stride_bytes);
-      (void)emit_set_input_layout_locked(dev, saved_decl);
-      return hr;
-    }
-
-    auto* cmd = append_fixed_locked<aerogpu_cmd_draw_indexed>(dev, AEROGPU_CMD_DRAW_INDEXED);
-    if (!cmd) {
-      (void)emit_set_stream_source_locked(dev, 0, saved_stream.vb, saved_stream.offset_bytes, saved_stream.stride_bytes);
-      (void)emit_set_input_layout_locked(dev, saved_decl);
-      return device_lost_override(dev, E_OUTOFMEMORY);
-    }
-
-    const int64_t base_vertex_new_i64 = static_cast<int64_t>(base_vertex) - static_cast<int64_t>(min_vtx);
-    if (base_vertex_new_i64 < static_cast<int64_t>(std::numeric_limits<int32_t>::min()) ||
-        base_vertex_new_i64 > static_cast<int64_t>(std::numeric_limits<int32_t>::max())) {
-      (void)emit_set_stream_source_locked(dev, 0, saved_stream.vb, saved_stream.offset_bytes, saved_stream.stride_bytes);
-      (void)emit_set_input_layout_locked(dev, saved_decl);
-      return E_INVALIDARG;
-    }
-    const int32_t base_vertex_new = static_cast<int32_t>(base_vertex_new_i64);
-
-    cmd->index_count = index_count;
-    cmd->instance_count = 1;
-    cmd->first_index = start_index;
-    cmd->base_vertex = base_vertex_new;
-    cmd->first_instance = 0;
-
-    // The fixed-function XYZ path draws indexed using the app-provided index
-    // buffer, so record index-buffer usage for DISCARD/NOOVERWRITE overlap
-    // detection even though we rewrite the referenced vertex range into the
-    // scratch UP vertex buffer.
-    record_dynamic_buffer_read_range_locked(
-        dev,
-        dev->index_buffer,
-        static_cast<uint32_t>(index_offset_u64),
-        static_cast<uint32_t>(index_bytes_u64));
-
-    if (!emit_set_stream_source_locked(dev, 0, saved_stream.vb, saved_stream.offset_bytes, saved_stream.stride_bytes)) {
-      return device_lost_override(dev, E_OUTOFMEMORY);
-    }
-    if (!emit_set_input_layout_locked(dev, saved_decl)) {
-      return device_lost_override(dev, E_OUTOFMEMORY);
-    }
-    hr = restore_draw_shaders_locked(dev, &shader_override);
-    if (FAILED(hr)) {
-      return trace.ret(hr);
-    }
-    return trace.ret(S_OK);
-  }
   const uint32_t index_count = index_count_from_primitive(type, primitive_count);
   const size_t draw_bytes = align_up(sizeof(aerogpu_cmd_set_primitive_topology), 4) +
                             align_up(sizeof(aerogpu_cmd_draw_indexed), 4);
