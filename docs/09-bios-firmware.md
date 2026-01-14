@@ -70,7 +70,7 @@ This repo keeps a handful of **tiny, deterministic, in-repo** firmware blobs for
 
 - `assets/bios.bin` (BIOS ROM image; generated from `firmware::bios::build_bios_rom()`)
 - `crates/firmware/acpi/dsdt.aml` (ACPI DSDT AML; legacy PCI root bridge; generated from `aero-acpi`)
-- `crates/firmware/acpi/dsdt_pcie.aml` (ACPI DSDT AML; PCIe ECAM/MMCONFIG-enabled variant; generated from `aero-acpi`)
+- `crates/firmware/acpi/dsdt_pcie.aml` (ACPI DSDT AML; PCIe ECAM/MMCONFIG-enabled variant; generated from `aero-acpi`; matches the canonical PC platform config)
 
 Human-readable references live alongside as `crates/firmware/acpi/dsdt*.asl` and are kept in sync
 with the shipped AML blobs (see `scripts/verify_dsdt.sh`).
@@ -209,6 +209,10 @@ validation/diffing:
 - Fixtures (used by tests and `scripts/validate-acpi.sh`):
   - `crates/firmware/acpi/dsdt.aml` (legacy PCI root bridge; ECAM/MMCONFIG disabled)
   - `crates/firmware/acpi/dsdt_pcie.aml` (PCIe root bridge + ECAM/MMCONFIG enabled)
+
+Note: the canonical PC platform enables PCIe ECAM/MMCONFIG, so `firmware::bios` typically emits
+DSDT content matching `dsdt_pcie.aml` (and also publishes an `MCFG` table describing the ECAM
+window). The `dsdt.aml` fixture is kept as a legacy/no-ECAM reference.
 
 Regenerate the repo fixtures (recommended; this also refreshes `assets/bios.bin`):
 
