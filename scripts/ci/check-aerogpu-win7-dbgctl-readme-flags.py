@@ -49,6 +49,10 @@ WIN7_VALIDATION_DOC = ROOT / "docs" / "graphics" / "win7-aerogpu-validation.md"
 CPP_FLAG_WCSCMP_RE = re.compile(r'wcscmp\(\s*a\s*,\s*L"(--[A-Za-z0-9][A-Za-z0-9-]*)"\s*\)')
 CPP_FLAG_WCSNCMP_EQ_RE = re.compile(r'wcsncmp\(\s*a\s*,\s*L"(--[A-Za-z0-9][A-Za-z0-9-]*)="\s*,')
 MD_FLAG_RE = re.compile(r"--[A-Za-z0-9][A-Za-z0-9-]*")
+# Catch wildcard-style flag mentions like `--dump-scanout-*` early and emit a more
+# helpful error than the generic "unknown flag" result (since `MD_FLAG_RE` would
+# otherwise extract a truncated prefix).
+MD_FLAG_WILDCARD_RE = re.compile(r"--[A-Za-z0-9][A-Za-z0-9-]*\*")
 
 # We only scan markdown files in these dirs for dbgctl invocations.
 SCAN_MD_DIRS = [
@@ -173,6 +177,27 @@ def iter_dbgctl_flag_refs(path: pathlib.Path) -> list[tuple[int, str]]:
     return out
 
 
+def iter_dbgctl_wildcard_flag_refs(path: pathlib.Path) -> list[tuple[int, str]]:
+    """
+    Find wildcard-style dbgctl flag references (e.g. `--dump-scanout-*`) in places
+    that appear to be dbgctl invocations.
+    """
+    text = read_text(path)
+    if "aerogpu_dbgctl" not in text:
+        return []
+
+    dbgctl_context_re = re.compile(r"--(?:dump|watch|read|map|list|query)-")
+    out: list[tuple[int, str]] = []
+    for line_no, line in enumerate(text.splitlines(), start=1):
+        if "--dbgctl" in line:
+            continue
+        if "aerogpu_dbgctl" not in line and not dbgctl_context_re.search(line):
+            continue
+        for flag in MD_FLAG_WILDCARD_RE.findall(line):
+            out.append((line_no, flag))
+    return out
+
+
 def iter_md_files(base: pathlib.Path) -> list[pathlib.Path]:
     if not base.exists():
         return []
@@ -212,6 +237,19 @@ def main() -> int:
         return 1
 
     readme = read_text(DBGCTL_README)
+    wildcard_readme_refs: list[tuple[int, str]] = []
+    for line_no, line in enumerate(readme.splitlines(), start=1):
+        for flag in MD_FLAG_WILDCARD_RE.findall(line):
+            wildcard_readme_refs.append((line_no, flag))
+    if wildcard_readme_refs:
+        print(
+            "ERROR: drivers/aerogpu/tools/win7_dbgctl/README.md references wildcard-style flags; list explicit flags instead:",
+            file=sys.stderr,
+        )
+        for line_no, flag in wildcard_readme_refs:
+            print(f"  - drivers/aerogpu/tools/win7_dbgctl/README.md:{line_no}: {flag}", file=sys.stderr)
+        return 1
+
     referenced_flags = set(MD_FLAG_RE.findall(readme))
 
     unknown = sorted(referenced_flags - allowed_flags)
@@ -303,8 +341,11 @@ def main() -> int:
     # Check dbgctl invocations across docs (only in lines that look like dbgctl
     # usage, to avoid false positives from unrelated tools).
     doc_errors: list[str] = []
+    wildcard_errors: list[str] = []
     for base in SCAN_MD_DIRS:
         for path in iter_md_files(base):
+            for line_no, flag in iter_dbgctl_wildcard_flag_refs(path):
+                wildcard_errors.append(f"{path.relative_to(ROOT)}:{line_no}: {flag}")
             refs = iter_dbgctl_flag_refs(path)
             if not refs:
                 continue
@@ -324,6 +365,12 @@ def main() -> int:
         print("\nAllowed flags (extracted from aerogpu_dbgctl.cpp):", file=sys.stderr)
         for f in sorted(allowed_flags):
             print(f"  - {f}", file=sys.stderr)
+        return 1
+
+    if wildcard_errors:
+        print("ERROR: docs reference wildcard-style aerogpu_dbgctl flags; list explicit flags instead:", file=sys.stderr)
+        for e in sorted(wildcard_errors):
+            print(f"  - {e}", file=sys.stderr)
         return 1
 
     print("OK: Win7 dbgctl docs flags match parsed implementation.")
