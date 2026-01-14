@@ -1496,8 +1496,8 @@ const tryReadScanoutRgba8 = (snap: ScanoutStateSnapshot): ScanoutReadback | null
   const isSrgb =
     fmt === SCANOUT_FORMAT_B8G8R8X8_SRGB ||
     fmt === SCANOUT_FORMAT_B8G8R8A8_SRGB ||
-    fmt === AerogpuFormat.R8G8B8A8UnormSrgb ||
-    fmt === AerogpuFormat.R8G8B8X8UnormSrgb;
+    fmt === SCANOUT_FORMAT_R8G8B8A8_SRGB ||
+    fmt === SCANOUT_FORMAT_R8G8B8X8_SRGB;
   // Supported scanout formats:
   // - BGRX/RGBX: force alpha=255 so presenters (which may render with blending enabled) do not show
   //              random transparency from uninitialized X bytes.
@@ -4578,8 +4578,8 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
                 if (
                   format === SCANOUT_FORMAT_B8G8R8X8_SRGB ||
                   format === SCANOUT_FORMAT_B8G8R8A8_SRGB ||
-                  format === AerogpuFormat.R8G8B8A8UnormSrgb ||
-                  format === AerogpuFormat.R8G8B8X8UnormSrgb
+                  format === SCANOUT_FORMAT_R8G8B8A8_SRGB ||
+                  format === SCANOUT_FORMAT_R8G8B8X8_SRGB
                 ) {
                   linearizeSrgbRgba8InPlace(out);
                 }

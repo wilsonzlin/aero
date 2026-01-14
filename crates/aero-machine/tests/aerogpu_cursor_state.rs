@@ -76,7 +76,7 @@ fn aerogpu_cursor_state_publishes_after_hi_commit() {
     );
     m.write_physical_u32(
         bar0_base + aerogpu_pci::AEROGPU_MMIO_REG_CURSOR_FORMAT as u64,
-        aerogpu_pci::AerogpuFormat::B8G8R8A8Unorm as u32,
+        CURSOR_FORMAT_B8G8R8A8,
     );
     m.write_physical_u32(
         bar0_base + aerogpu_pci::AEROGPU_MMIO_REG_CURSOR_PITCH_BYTES as u64,
@@ -113,7 +113,7 @@ fn aerogpu_cursor_state_publishes_after_hi_commit() {
     assert_eq!(snap2.pitch_bytes, 32 * 4);
     assert_eq!(
         snap2.format,
-        aerogpu_pci::AerogpuFormat::B8G8R8A8Unorm as u32
+        CURSOR_FORMAT_B8G8R8A8
     );
     assert_eq!(snap2.base_paddr(), cursor_gpa);
 }
