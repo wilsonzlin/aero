@@ -614,7 +614,7 @@ describe("runtime/machine_snapshot_disks", () => {
     }
   });
 
-  it("ignores truncated aerosparse headers when sniffing base disks (falls back to raw open)", async () => {
+  it("treats truncated aerosparse headers as aerospar when sniffing base disks (does not fall back to raw)", async () => {
     const events: string[] = [];
     const restore_snapshot_from_opfs = vi.fn(async (_path: string) => {
       events.push("restore");
@@ -628,11 +628,9 @@ describe("runtime/machine_snapshot_disks", () => {
       events.push("aerospar");
     });
 
-    const calls: Array<[string, string | undefined]> = [];
-    async function set_disk_opfs_existing(path: string, baseFormat?: string): Promise<void> {
-      calls.push([path, baseFormat]);
+    const set_disk_opfs_existing = vi.fn(async (_path: string, _baseFormat?: string) => {
       events.push("raw");
-    }
+    });
 
     const machine = {
       restore_snapshot_from_opfs,
@@ -708,9 +706,9 @@ describe("runtime/machine_snapshot_disks", () => {
 
       await restoreMachineSnapshotFromOpfsAndReattachDisks({ api, machine, path: "state/test.snap", logPrefix: "test" });
 
-      expect(set_disk_aerospar_opfs_open).not.toHaveBeenCalled();
-      expect(calls).toEqual([["aero/disks/win7.base", undefined]]);
-      expect(events).toEqual(["restore", "take", "raw"]);
+      expect(set_disk_aerospar_opfs_open).toHaveBeenCalledWith("aero/disks/win7.base");
+      expect(set_disk_opfs_existing).not.toHaveBeenCalled();
+      expect(events).toEqual(["restore", "take", "aerospar"]);
     } finally {
       if (originalNavigatorDesc) {
         Object.defineProperty(globalThis, "navigator", originalNavigatorDesc);

@@ -7,7 +7,6 @@ export type MachineSnapshotDiskOverlayRef = Readonly<{
 }>;
 
 const DEFAULT_COW_OVERLAY_BLOCK_SIZE_BYTES = 1024 * 1024;
-const AEROSPARSE_HEADER_SIZE_BYTES = 64;
 const AEROSPARSE_MAGIC = [0x41, 0x45, 0x52, 0x4f, 0x53, 0x50, 0x41, 0x52] as const; // "AEROSPAR"
 
 function formatPrefix(prefix: string | undefined): string {
@@ -16,25 +15,16 @@ function formatPrefix(prefix: string | undefined): string {
   return `[${prefix}]`;
 }
 
-function isPowerOfTwo(n: number): boolean {
-  return n > 0 && (n & (n - 1)) === 0;
-}
-
-function alignUpBigInt(value: bigint, alignment: bigint): bigint {
-  if (alignment <= 0n) return value;
-  return ((value + alignment - 1n) / alignment) * alignment;
-}
-
-async function tryReadAerosparseBlockSizeBytesFromOpfs(path: string, prefix: string): Promise<number | null> {
-  if (!path) return null;
+async function looksLikeAerosparseDiskFromOpfs(path: string, prefix: string): Promise<boolean> {
+  if (!path) return false;
   // In CI/unit tests there is no `navigator` / OPFS environment. Treat this as best-effort.
   const storage = (globalThis as unknown as { navigator?: unknown }).navigator as { storage?: unknown } | undefined;
   const getDirectory = (storage?.storage as { getDirectory?: unknown } | undefined)?.getDirectory;
-  if (typeof getDirectory !== "function") return null;
+  if (typeof getDirectory !== "function") return false;
 
   // Overlay refs are expected to be relative OPFS paths. Refuse to interpret `..` to avoid path traversal.
   const parts = path.split("/").filter((p) => p && p !== ".");
-  if (parts.length === 0 || parts.some((p) => p === "..")) return null;
+  if (parts.length === 0 || parts.some((p) => p === "..")) return false;
 
   try {
     let dir = (await (getDirectory as () => Promise<FileSystemDirectoryHandle>)()) as FileSystemDirectoryHandle;
@@ -42,46 +32,23 @@ async function tryReadAerosparseBlockSizeBytesFromOpfs(path: string, prefix: str
       dir = await dir.getDirectoryHandle(part, { create: false });
     }
     const file = await dir.getFileHandle(parts[parts.length - 1]!, { create: false }).then((h) => h.getFile());
-    if (file.size < AEROSPARSE_HEADER_SIZE_BYTES) return null;
-    const buf = await file.slice(0, AEROSPARSE_HEADER_SIZE_BYTES).arrayBuffer();
-    if (buf.byteLength < AEROSPARSE_HEADER_SIZE_BYTES) return null;
+    if (file.size < AEROSPARSE_MAGIC.length) return false;
+    const sniffLen = file.size >= 12 ? 12 : file.size;
+    const buf = await file.slice(0, sniffLen).arrayBuffer();
+    if (buf.byteLength < AEROSPARSE_MAGIC.length) return false;
     const bytes = new Uint8Array(buf);
     for (let i = 0; i < AEROSPARSE_MAGIC.length; i += 1) {
-      if (bytes[i] !== AEROSPARSE_MAGIC[i]) return null;
+      if (bytes[i] !== AEROSPARSE_MAGIC[i]) return false;
     }
+    // If the file is truncated (< 12 bytes), treat it as aerosparse so callers get a corruption
+    // error instead of silently treating the header bytes as a raw disk.
+    if (buf.byteLength < 12) return true;
     const dv = new DataView(buf);
     const version = dv.getUint32(8, true);
-    const headerSize = dv.getUint32(12, true);
-    const blockSizeBytes = dv.getUint32(16, true);
-    if (version !== 1 || headerSize !== AEROSPARSE_HEADER_SIZE_BYTES) return null;
-    // Mirror the Rust-side aerosparse header validation (looser, but enough to avoid nonsense).
-    const diskSizeBytes = dv.getBigUint64(24, true);
-    if (diskSizeBytes === 0n || diskSizeBytes % 512n !== 0n) return null;
-    if (blockSizeBytes === 0 || blockSizeBytes % 512 !== 0 || !isPowerOfTwo(blockSizeBytes) || blockSizeBytes > 64 * 1024 * 1024) {
-      return null;
-    }
-    const tableOffset = dv.getBigUint64(32, true);
-    if (tableOffset !== 64n) return null;
-    const tableEntries = dv.getBigUint64(40, true);
-    const blockSizeBig = BigInt(blockSizeBytes);
-    const expectedTableEntries = (diskSizeBytes + blockSizeBig - 1n) / blockSizeBig;
-    if (tableEntries !== expectedTableEntries) return null;
-    const dataOffset = dv.getBigUint64(48, true);
-    const expectedDataOffset = alignUpBigInt(64n + tableEntries * 8n, blockSizeBig);
-    if (dataOffset !== expectedDataOffset) return null;
-    const allocatedBlocks = dv.getBigUint64(56, true);
-    if (allocatedBlocks > tableEntries) return null;
-    // Ensure the file is large enough to contain the advertised data region.
-    // (Mirrors the Rust-side `AeroSparseDisk::open` truncation checks.)
-    const fileSize = file.size;
-    if (typeof fileSize === "number" && Number.isFinite(fileSize) && fileSize >= 0 && Number.isSafeInteger(fileSize)) {
-      const expectedMinLen = expectedDataOffset + allocatedBlocks * blockSizeBig;
-      if (BigInt(fileSize) < expectedMinLen) return null;
-    }
-    return blockSizeBytes;
+    return version === 1;
   } catch (err) {
-    console.warn(`${prefix} Failed to read aerosparse overlay header from OPFS path=${path}:`, err);
-    return null;
+    console.warn(`${prefix} Failed to sniff aerosparse header from OPFS path=${path}:`, err);
+    return false;
   }
 }
 
@@ -272,8 +239,7 @@ export async function reattachMachineSnapshotDisks(opts: {
         const baseLower = base.toLowerCase();
         let isAerosparBase = baseLower.endsWith(".aerospar") || baseLower.endsWith(".aerosparse");
         if (!isAerosparBase) {
-          const blockSize = await tryReadAerosparseBlockSizeBytesFromOpfs(base, prefix);
-          isAerosparBase = blockSize != null;
+          isAerosparBase = await looksLikeAerosparseDiskFromOpfs(base, prefix);
         }
 
         if (isAerosparBase) {
