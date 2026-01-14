@@ -325,3 +325,59 @@ fn sgl_datablock_rejects_null_address() {
     assert_eq!(cqe.cid, 0x24);
     assert_eq!(cqe.status & !0x1, 0x4004);
 }
+
+#[test]
+fn sgl_rejects_inline_datablock_descriptor_too_short_for_transfer() {
+    let (mut ctrl, mut mem, io_cq, io_sq) = setup_ctrl_with_io_queues();
+
+    // WRITE 1 sector but provide an inline Data Block descriptor that is smaller than 512 bytes.
+    let buf = 0x60000u64;
+    mem.write_physical(buf, &[0xAAu8; 100]);
+
+    let mut cmd = build_command(0x01, 1); // WRITE, PSDT=SGL
+    set_cid(&mut cmd, 0x30);
+    set_nsid(&mut cmd, 1);
+    set_prp1(&mut cmd, buf);
+    set_prp2(&mut cmd, 100); // Data Block length = 100 bytes
+    set_cdw10(&mut cmd, 0);
+    set_cdw11(&mut cmd, 0);
+    set_cdw12(&mut cmd, 0); // nlb=0 (1 sector)
+    mem.write_physical(io_sq, &cmd);
+    ctrl.mmio_write(0x1008, 4, 1);
+    ctrl.process(&mut mem);
+
+    let cqe = read_cqe(&mut mem, io_cq);
+    assert_eq!(cqe.cid, 0x30);
+    assert_eq!(cqe.status & !0x1, 0x4004);
+}
+
+#[test]
+fn sgl_rejects_segment_list_too_short_for_transfer() {
+    let (mut ctrl, mut mem, io_cq, io_sq) = setup_ctrl_with_io_queues();
+
+    // WRITE 1 sector but provide only 400 bytes worth of Data Block descriptors.
+    let buf1 = 0x60000u64;
+    let buf2 = 0x61000u64;
+    mem.write_physical(buf1, &[0xBBu8; 200]);
+    mem.write_physical(buf2, &[0xCCu8; 200]);
+
+    let list = 0x70000u64;
+    write_sgl_desc(&mut mem, list, buf1, 200, 0x00);
+    write_sgl_desc(&mut mem, list + 16, buf2, 200, 0x00);
+
+    let mut cmd = build_command(0x01, 1); // WRITE, PSDT=SGL
+    set_cid(&mut cmd, 0x31);
+    set_nsid(&mut cmd, 1);
+    set_prp1(&mut cmd, list);
+    set_prp2(&mut cmd, 32u64 | ((0x02u64) << 56)); // Segment (2 descriptors)
+    set_cdw10(&mut cmd, 0);
+    set_cdw11(&mut cmd, 0);
+    set_cdw12(&mut cmd, 0); // nlb=0 (1 sector)
+    mem.write_physical(io_sq, &cmd);
+    ctrl.mmio_write(0x1008, 4, 1);
+    ctrl.process(&mut mem);
+
+    let cqe = read_cqe(&mut mem, io_cq);
+    assert_eq!(cqe.cid, 0x31);
+    assert_eq!(cqe.status & !0x1, 0x4004);
+}
