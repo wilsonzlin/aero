@@ -69,6 +69,7 @@ do not affect PASS/FAIL):
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_UDP|PASS/FAIL/SKIP|bytes=...|small_bytes=...|mtu_bytes=...|reason=...|wsa=...`
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_UDP_DNS|PASS/FAIL/SKIP|server=...|query=...|sent=...|recv=...|rcode=...`
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_DIAG|INFO/WARN|reason=...|host_features=...|guest_features=...|...`
+- `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_BIND|PASS/FAIL|devices=...|wrong_service=...|missing_service=...|problem=...`
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_SND|PASS/FAIL/SKIP|...`
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_CAPTURE|PASS/FAIL/SKIP|...`
 - `AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_DUPLEX|PASS/FAIL/SKIP|...`
@@ -6575,6 +6576,7 @@ def main() -> int:
         _emit_virtio_snd_irq_host_marker(tail)
         _emit_virtio_snd_msix_host_marker(tail)
         _emit_virtio_input_irq_host_marker(tail)
+        _emit_virtio_input_bind_host_marker(tail)
         _emit_virtio_input_msix_host_marker(tail)
         _emit_virtio_irq_host_markers(tail, markers=irq_diag_markers)
         _emit_virtio_snd_playback_host_marker(tail)
@@ -8428,6 +8430,43 @@ def _emit_virtio_input_msix_host_marker(tail: bytes) -> None:
         "reason",
         "err",
     ]
+    for k in ordered:
+        if k in fields:
+            parts.append(f"{k}={_sanitize_marker_value(fields[k])}")
+
+    extra = sorted(k for k in fields if k not in ordered)
+    for k in extra:
+        parts.append(f"{k}={_sanitize_marker_value(fields[k])}")
+
+    print("|".join(parts))
+
+
+def _emit_virtio_input_bind_host_marker(tail: bytes) -> None:
+    """
+    Best-effort: emit a host-side marker mirroring the guest `virtio-input-bind` TEST marker.
+
+    The guest selftest emits:
+      AERO_VIRTIO_SELFTEST|TEST|virtio-input-bind|PASS|devices=<n>
+      AERO_VIRTIO_SELFTEST|TEST|virtio-input-bind|FAIL|devices=<n>|wrong_service=<n>|missing_service=<n>|problem=<n>
+
+    Mirror it into:
+      AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_BIND|PASS/FAIL|devices=<n>|wrong_service=<n>|missing_service=<n>|problem=<n>
+
+    This does not affect harness PASS/FAIL; it's only for log scraping/diagnostics.
+    """
+    marker_line = _try_extract_last_marker_line(tail, b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-bind|")
+    if marker_line is None:
+        return
+
+    status = _try_extract_marker_status(marker_line)
+    if status is None:
+        return
+
+    fields = _parse_marker_kv_fields(marker_line)
+    parts = [f"AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_BIND|{status}"]
+
+    # Keep ordering stable for log scraping.
+    ordered = ["devices", "wrong_service", "missing_service", "problem"]
     for k in ordered:
         if k in fields:
             parts.append(f"{k}={_sanitize_marker_value(fields[k])}")
