@@ -1042,10 +1042,14 @@ def validate_virtio_input_model_lines(
     """
     Validate the virtio-input model line policy for the given INF.
 
-    - Canonical `aero_virtio_input.inf` is SUBSYS-only (keyboard + mouse) so it
-      does not overlap with the tablet INF.
-    - The optional legacy filename alias INF (`virtio-input.inf.disabled`) is
-      allowed/expected to include the strict (no SUBSYS) fallback binding.
+    - `aero_virtio_input.inf` (and its legacy filename alias `virtio-input.inf.disabled`)
+      must include:
+        - the SUBSYS-qualified Aero contract v1 keyboard/mouse HWIDs (distinct naming), and
+        - the strict REV-qualified generic fallback HWID (no SUBSYS), for environments
+          that don't expose Aero subsystem IDs.
+    - It must not include the tablet subsystem ID (`SUBSYS_00121AF4`); tablet devices
+      bind via `aero_virtio_tablet.inf` (which is more specific and wins over the
+      generic fallback when both are installed).
     """
 
     model_entries = parse_inf_model_entries(inf_path)
@@ -1116,7 +1120,7 @@ def validate_virtio_input_model_lines(
             if fb:
                 errors.append(
                     format_error(
-                        f"{inf_path.as_posix()}: unexpected fallback model line(s) in [{section}] ({strict_hwid}); canonical INF must be SUBSYS-only:",
+                        f"{inf_path.as_posix()}: unexpected fallback model line(s) in [{section}] ({strict_hwid}) (fallback not allowed for this INF):",
                         [e.raw_line for e in fb],
                     )
                 )
