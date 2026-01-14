@@ -1,4 +1,4 @@
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -8261,6 +8261,1817 @@ impl AerogpuD3d11Executor {
             indirect_args_alloc,
         ))
     }
+    #[allow(clippy::too_many_arguments)]
+    fn exec_geometry_shader_prepass_adjacency_strip(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        allocs: &AllocTable,
+        guest_mem: &mut dyn GuestMemory,
+        vs_handle: u32,
+        gs_handle: u32,
+        gs_meta: GsPrepassMetadata,
+        ia_topology: CmdPrimitiveTopology,
+        primitive_count_estimate: u32,
+        element_count: u32,
+        gs_instance_count: u32,
+        instance_count: u32,
+        vertex_pulling_draw: VertexPullingDrawParams,
+        indexed_draw: bool,
+    ) -> Result<(
+        ExpansionScratchAlloc,
+        ExpansionScratchAlloc,
+        ExpansionScratchAlloc,
+    )> {
+        let verts_per_prim: u32 = match ia_topology {
+            CmdPrimitiveTopology::LineStripAdj => 4,
+            CmdPrimitiveTopology::TriangleStripAdj => 6,
+            other => bail!(
+                "GS adjacency-strip prepass called for unsupported IA topology {other:?}"
+            ),
+        };
+        if gs_meta.verts_per_primitive != verts_per_prim {
+            bail!(
+                "GS adjacency-strip prepass requires verts_per_primitive={verts_per_prim}, got {}",
+                gs_meta.verts_per_primitive
+            );
+        }
+        if !indexed_draw {
+            // Sanity-check the caller-provided estimate. This keeps the non-indexed path honest
+            // across future refactors.
+            debug_assert_eq!(
+                primitive_count_estimate,
+                ia_topology.primitive_count_from_element_count(element_count)
+            );
+        }
+
+        let gs_shader = self
+            .resources
+            .shaders
+            .get(&gs_handle)
+            .ok_or_else(|| anyhow!("unknown GS shader {gs_handle}"))?
+            .clone();
+        if gs_shader.stage != ShaderStage::Geometry {
+            bail!("shader {gs_handle} is not a geometry shader");
+        }
+
+        let vs_shader = self
+            .resources
+            .shaders
+            .get(&vs_handle)
+            .ok_or_else(|| anyhow!("unknown VS shader {vs_handle}"))?
+            .clone();
+        if vs_shader.stage != ShaderStage::Vertex {
+            bail!("shader {vs_handle} is not a vertex shader");
+        }
+
+        let layout_handle = self
+            .state
+            .input_layout
+            .ok_or_else(|| anyhow!("GS prepass requires an input layout"))?;
+        let layout = self
+            .resources
+            .input_layouts
+            .get(&layout_handle)
+            .ok_or_else(|| anyhow!("unknown input layout {layout_handle}"))?;
+
+        let slot_strides: Vec<u32> = self
+            .state
+            .vertex_buffers
+            .iter()
+            .map(|vb| vb.as_ref().map(|b| b.stride_bytes).unwrap_or(0))
+            .collect();
+        let binding = InputLayoutBinding::new(&layout.layout, &slot_strides);
+        let pulling =
+            VertexPullingLayout::new(&binding, &vs_shader.vs_input_signature).map_err(|e| {
+                anyhow!(
+                    "failed to build vertex pulling layout for input layout {layout_handle}: {e}"
+                )
+            })?;
+
+        let mut slots: Vec<VertexPullingSlot> =
+            Vec::with_capacity(pulling.pulling_slot_to_d3d_slot.len());
+        let mut buffers: Vec<&wgpu::Buffer> =
+            Vec::with_capacity(pulling.pulling_slot_to_d3d_slot.len());
+        for &d3d_slot in &pulling.pulling_slot_to_d3d_slot {
+            let vb = self
+                .state
+                .vertex_buffers
+                .get(d3d_slot as usize)
+                .and_then(|v| *v)
+                .ok_or_else(|| anyhow!("missing vertex buffer binding for slot {d3d_slot}"))?;
+            let base_offset_bytes: u32 = vb.offset_bytes.try_into().map_err(|_| {
+                anyhow!(
+                    "vertex buffer slot {d3d_slot} offset {} out of range",
+                    vb.offset_bytes
+                )
+            })?;
+
+            let buf = self
+                .resources
+                .buffers
+                .get(&vb.buffer)
+                .ok_or_else(|| anyhow!("unknown vertex buffer {}", vb.buffer))?;
+            slots.push(VertexPullingSlot {
+                base_offset_bytes,
+                stride_bytes: vb.stride_bytes,
+            });
+            buffers.push(&buf.buffer);
+        }
+
+        let uniform_align = self.device.limits().min_uniform_buffer_offset_alignment as u64;
+        let uniform_bytes = pulling.pack_uniform_bytes(&slots, vertex_pulling_draw);
+        let uniform_alloc = self
+            .expansion_uniform_scratch
+            .alloc_metadata(&self.device, uniform_bytes.len() as u64, uniform_align)
+            .map_err(|e| anyhow!("GS prepass: alloc vertex pulling uniform: {e}"))?;
+        self.queue.write_buffer(
+            uniform_alloc.buffer.as_ref(),
+            uniform_alloc.offset,
+            &uniform_bytes,
+        );
+
+        let vp_bgl_entries = pulling.bind_group_layout_entries();
+        let vp_bgl = self
+            .bind_group_layout_cache
+            .get_or_create(&self.device, &vp_bgl_entries);
+
+        let mut vp_bg_entries: Vec<wgpu::BindGroupEntry<'_>> =
+            Vec::with_capacity(buffers.len() + 1);
+        for (slot, buf) in buffers.iter().enumerate() {
+            vp_bg_entries.push(wgpu::BindGroupEntry {
+                binding: VERTEX_PULLING_VERTEX_BUFFER_BINDING_BASE + slot as u32,
+                resource: buf.as_entire_binding(),
+            });
+        }
+        vp_bg_entries.push(wgpu::BindGroupEntry {
+            binding: VERTEX_PULLING_UNIFORM_BINDING,
+            resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                buffer: uniform_alloc.buffer.as_ref(),
+                offset: uniform_alloc.offset,
+                size: wgpu::BufferSize::new(uniform_alloc.size),
+            }),
+        });
+        let vp_bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("aerogpu_cmd gs prepass vertex pulling bind group"),
+            layout: vp_bgl.layout.as_ref(),
+            entries: &vp_bg_entries,
+        });
+
+        // For indexed draws, emulate primitive restart by converting the index stream (with cuts)
+        // into a dense list of adjacency primitives. This keeps `SV_PrimitiveID` dense across
+        // cut boundaries and correctly resets triangle-strip-adj parity.
+        let (primitive_count, prim_vertices_alloc) = if indexed_draw {
+            fn assemble_adjacency_primitives(
+                ia_topology: CmdPrimitiveTopology,
+                events: &[StreamEvent],
+            ) -> Vec<u32> {
+                match ia_topology {
+                    CmdPrimitiveTopology::LineStripAdj => {
+                        let mut out: Vec<u32> = Vec::new();
+                        let mut window: VecDeque<u32> = VecDeque::new();
+                        for ev in events {
+                            match *ev {
+                                StreamEvent::Vertex(v) => {
+                                    window.push_back(v);
+                                    if window.len() == 4 {
+                                        out.extend(window.iter().copied());
+                                        window.pop_front();
+                                    }
+                                }
+                                StreamEvent::Cut => {
+                                    window.clear();
+                                }
+                            }
+                        }
+                        out
+                    }
+                    CmdPrimitiveTopology::TriangleStripAdj => {
+                        let mut out: Vec<u32> = Vec::new();
+                        let mut window: VecDeque<u32> = VecDeque::new();
+                        let mut odd = false;
+                        for ev in events {
+                            match *ev {
+                                StreamEvent::Vertex(v) => {
+                                    window.push_back(v);
+                                    if window.len() == 6 {
+                                        if odd {
+                                            // Odd primitive: (base+2, base+1, base+0, base+5, base+4, base+3).
+                                            out.extend_from_slice(&[
+                                                window[2],
+                                                window[1],
+                                                window[0],
+                                                window[5],
+                                                window[4],
+                                                window[3],
+                                            ]);
+                                        } else {
+                                            out.extend(window.iter().copied());
+                                        }
+                                        // Slide the window by 2 vertices (base += 2).
+                                        window.pop_front();
+                                        window.pop_front();
+                                        odd = !odd;
+                                    }
+                                }
+                                StreamEvent::Cut => {
+                                    window.clear();
+                                    odd = false;
+                                }
+                            }
+                        }
+                        out
+                    }
+                    _ => unreachable!("assemble_adjacency_primitives called for non-adj strip"),
+                }
+            }
+
+            let ib = self
+                .state
+                .index_buffer
+                .ok_or_else(|| anyhow!("DRAW_INDEXED without index buffer"))?;
+            let index_size = match ib.format {
+                wgpu::IndexFormat::Uint16 => 2u64,
+                wgpu::IndexFormat::Uint32 => 4u64,
+            };
+            let start_bytes = (vertex_pulling_draw.first_index as u64)
+                .checked_mul(index_size)
+                .ok_or_else(|| anyhow!("GS prepass: index range start overflows u64"))?;
+            let size_bytes = (element_count as u64)
+                .checked_mul(index_size)
+                .ok_or_else(|| anyhow!("GS prepass: index range size overflows u64"))?;
+            let end_bytes = start_bytes
+                .checked_add(size_bytes)
+                .ok_or_else(|| anyhow!("GS prepass: index range end overflows u64"))?;
+
+            let buf_res = self
+                .resources
+                .buffers
+                .get(&ib.buffer)
+                .ok_or_else(|| anyhow!("unknown index buffer {}", ib.buffer))?;
+            if end_bytes > buf_res.size {
+                bail!(
+                    "GS prepass: index range out of bounds (start={start_bytes} size={size_bytes} buffer_size={})",
+                    buf_res.size
+                );
+            }
+
+            let start_usize: usize = start_bytes
+                .try_into()
+                .map_err(|_| anyhow!("GS prepass: start offset out of range"))?;
+            let size_usize: usize = size_bytes
+                .try_into()
+                .map_err(|_| anyhow!("GS prepass: size out of range"))?;
+
+            let mut tmp_bytes: Vec<u8> = Vec::new();
+            let bytes: &[u8] = if let Some(shadow) = buf_res.host_shadow.as_ref() {
+                let buf_size_usize: usize = buf_res
+                    .size
+                    .try_into()
+                    .map_err(|_| anyhow!("GS prepass: buffer size out of range"))?;
+                if shadow.len() != buf_size_usize {
+                    bail!("GS prepass: internal index-buffer shadow size mismatch");
+                }
+                &shadow[start_usize..start_usize + size_usize]
+            } else if let Some(backing) = buf_res.backing {
+                let backing_offset = backing
+                    .offset_bytes
+                    .checked_add(start_bytes)
+                    .ok_or_else(|| anyhow!("GS prepass: backing offset overflows u64"))?;
+                allocs.validate_range(backing.alloc_id, backing_offset, size_bytes)?;
+                let gpa = allocs
+                    .gpa(backing.alloc_id)?
+                    .checked_add(backing_offset)
+                    .ok_or_else(|| anyhow!("GS prepass: backing GPA overflows u64"))?;
+                tmp_bytes.resize(size_usize, 0);
+                guest_mem
+                    .read(gpa, &mut tmp_bytes)
+                    .map_err(anyhow_guest_mem)?;
+                &tmp_bytes
+            } else {
+                bail!(
+                    "GS prepass: indexed adjacency requires a CPU-visible index buffer (UPLOAD_RESOURCE shadow or guest-backed allocation)"
+                );
+            };
+
+            let index_count_usize: usize = element_count
+                .try_into()
+                .map_err(|_| anyhow!("GS prepass: index_count out of range"))?;
+            let mut events: Vec<StreamEvent> = Vec::with_capacity(index_count_usize);
+
+            match ib.format {
+                wgpu::IndexFormat::Uint16 => {
+                    if bytes.len() != index_count_usize * 2 {
+                        bail!("GS prepass: internal u16 index byte-length mismatch");
+                    }
+                    for i in 0..index_count_usize {
+                        let base = i * 2;
+                        let idx = u16::from_le_bytes([bytes[base], bytes[base + 1]]);
+                        if idx == u16::MAX {
+                            events.push(StreamEvent::Cut);
+                        } else {
+                            let vtx: u32 =
+                                i32::from(idx).wrapping_add(vertex_pulling_draw.base_vertex) as u32;
+                            events.push(StreamEvent::Vertex(vtx));
+                        }
+                    }
+                }
+                wgpu::IndexFormat::Uint32 => {
+                    if bytes.len() != index_count_usize * 4 {
+                        bail!("GS prepass: internal u32 index byte-length mismatch");
+                    }
+                    for i in 0..index_count_usize {
+                        let base = i * 4;
+                        let idx = u32::from_le_bytes([
+                            bytes[base],
+                            bytes[base + 1],
+                            bytes[base + 2],
+                            bytes[base + 3],
+                        ]);
+                        if idx == u32::MAX {
+                            events.push(StreamEvent::Cut);
+                        } else {
+                            let vtx: u32 =
+                                (idx as i32).wrapping_add(vertex_pulling_draw.base_vertex) as u32;
+                            events.push(StreamEvent::Vertex(vtx));
+                        }
+                    }
+                }
+            }
+
+            let prim_vertices = assemble_adjacency_primitives(ia_topology, &events);
+            let expected_stride: usize = verts_per_prim as usize;
+            if (prim_vertices.len() % expected_stride) != 0 {
+                bail!("GS prepass: internal adjacency primitive list length mismatch");
+            }
+            let prim_count_usize = prim_vertices.len() / expected_stride;
+            let prim_count: u32 = prim_count_usize
+                .try_into()
+                .map_err(|_| anyhow!("GS prepass: primitive count out of range"))?;
+
+            let prim_vertices_size: u64 = (prim_vertices.len() as u64)
+                .checked_mul(4)
+                .ok_or_else(|| anyhow!("GS prepass: prim_vertices buffer size overflow"))?
+                .max(4);
+            let prim_vertices_alloc = self
+                .expansion_scratch
+                .alloc_metadata(&self.device, prim_vertices_size, 4)
+                .map_err(|e| anyhow!("GS prepass: alloc prim_vertices buffer: {e}"))?;
+            if cfg!(target_endian = "little") {
+                // SAFETY: `u32` is plain-old-data and the output scratch buffer expects raw bytes.
+                let out_bytes: &[u8] = unsafe {
+                    std::slice::from_raw_parts(
+                        prim_vertices.as_ptr() as *const u8,
+                        prim_vertices.len() * 4,
+                    )
+                };
+                self.queue.write_buffer(
+                    prim_vertices_alloc.buffer.as_ref(),
+                    prim_vertices_alloc.offset,
+                    out_bytes,
+                );
+            } else {
+                let mut out_bytes: Vec<u8> = Vec::with_capacity(prim_vertices.len() * 4);
+                for &idx in &prim_vertices {
+                    out_bytes.extend_from_slice(&idx.to_le_bytes());
+                }
+                self.queue.write_buffer(
+                    prim_vertices_alloc.buffer.as_ref(),
+                    prim_vertices_alloc.offset,
+                    &out_bytes,
+                );
+            }
+
+            if prim_count > primitive_count_estimate {
+                bail!(
+                    "GS prepass: generated primitive count {prim_count} exceeds expected estimate {primitive_count_estimate}"
+                );
+            }
+
+            (prim_count, Some(prim_vertices_alloc))
+        } else {
+            (primitive_count_estimate, None)
+        };
+
+        // Allocate and populate the GS input payload (flattened v#[] register file).
+        let gs_input_vec4_count = u64::from(primitive_count)
+            .checked_mul(u64::from(verts_per_prim))
+            .and_then(|v| v.checked_mul(u64::from(gs_meta.input_reg_count)))
+            .ok_or_else(|| anyhow!("GS prepass: gs_inputs element count overflow"))?;
+        let gs_inputs_size = gs_input_vec4_count
+            .checked_mul(16)
+            .ok_or_else(|| anyhow!("GS prepass: gs_inputs buffer size overflow"))?
+            .max(16);
+        let max_buffer_size = self.device.limits().max_buffer_size;
+        if gs_inputs_size > max_buffer_size {
+            bail!(
+                "GS prepass: gs_inputs buffer size {gs_inputs_size} exceeds max_buffer_size {max_buffer_size}"
+            );
+        }
+        let max_storage_binding_size = self.device.limits().max_storage_buffer_binding_size as u64;
+        if gs_inputs_size > max_storage_binding_size {
+            bail!(
+                "GS prepass: gs_inputs buffer size {gs_inputs_size} exceeds max_storage_buffer_binding_size {max_storage_binding_size}"
+            );
+        }
+        // The translated GS prepass binds `gs_inputs` as a storage buffer; allocate it from the
+        // expansion scratch buffer and bind it as `STORAGE_READ_WRITE` to avoid per-buffer READ vs
+        // READ_WRITE hazard validation on downlevel backends.
+        let gs_inputs_alloc = self
+            .expansion_scratch
+            .alloc_metadata(&self.device, gs_inputs_size, 16)
+            .map_err(|e| anyhow!("GS prepass: alloc gs_inputs buffer: {e}"))?;
+
+        // Map WGSL `@location` indices (used by the vertex-pulling layout) back to the original
+        // D3D11 input register indices.
+        let vs_location_to_input_reg: HashMap<u32, u32> = vs_shader
+            .vs_input_signature
+            .iter()
+            .map(|s| (s.shader_location, s.input_register))
+            .collect();
+
+        // Prefer executing the bound VS as compute so the GS sees VS output registers (correct
+        // D3D11 semantics). Fall back to the legacy IA->gs_inputs path when VS-as-compute is
+        // unavailable and we can prove the VS is a pure passthrough.
+        let fill_wgsl_ia = {
+            use crate::input_layout::DxgiFormatComponentType;
+            let mut out = String::new();
+            out.push_str(&pulling.wgsl_prelude());
+            out.push('\n');
+            out.push_str("struct U32Buffer { data: array<u32> };\n");
+            out.push_str("struct Vec4F32Buffer { data: array<vec4<f32>> };\n");
+            out.push_str(
+                "@group(0) @binding(0) var<storage, read_write> gs_inputs: Vec4F32Buffer;\n",
+            );
+            if indexed_draw {
+                out.push_str(
+                    "@group(0) @binding(1) var<storage, read_write> prim_vertices: U32Buffer;\n",
+                );
+            }
+            out.push_str(&format!(
+                "const GS_INPUT_REG_COUNT: u32 = {}u;\n\n",
+                gs_meta.input_reg_count
+            ));
+            out.push_str(
+                "fn aero_gs_default() -> vec4<f32> { return vec4<f32>(0.0, 0.0, 0.0, 1.0); }\n\n",
+            );
+
+            out.push_str("fn aero_gs_load_reg(reg: u32, vertex_index: u32) -> vec4<f32> {\n");
+            out.push_str("  switch reg {\n");
+            for attr in &pulling.attributes {
+                let reg = vs_location_to_input_reg
+                    .get(&attr.shader_location)
+                    .copied()
+                    .unwrap_or(attr.shader_location);
+                if reg >= gs_meta.input_reg_count {
+                    continue;
+                }
+                let slot = attr.pulling_slot;
+                let offset = attr.offset_bytes;
+                let element_index_expr = match attr.step_mode {
+                    wgpu::VertexStepMode::Vertex => "vertex_index",
+                    wgpu::VertexStepMode::Instance => "aero_vp_ia.first_instance",
+                };
+                out.push_str(&format!("    case {reg}u: {{\n"));
+                out.push_str(&format!(
+                    "      let addr: u32 = aero_vp_ia.slots[{slot}u].base_offset_bytes + ({element_index_expr}) * aero_vp_ia.slots[{slot}u].stride_bytes + {offset}u;\n"
+                ));
+
+                let expr = match (attr.format.component_type, attr.format.component_count) {
+                    (DxgiFormatComponentType::F32, 1) => {
+                        "let x: f32 = load_attr_f32(slot, addr);\n      return vec4<f32>(x, 0.0, 0.0, 1.0);"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::F32, 2) => {
+                        "let v: vec2<f32> = load_attr_f32x2(slot, addr);\n      return vec4<f32>(v, 0.0, 1.0);"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::F32, 3) => {
+                        "let v: vec3<f32> = load_attr_f32x3(slot, addr);\n      return vec4<f32>(v, 1.0);"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::F32, 4) => {
+                        "return load_attr_f32x4(slot, addr);".to_owned()
+                    }
+                    (DxgiFormatComponentType::Unorm8, 1) => {
+                        "let v: vec2<f32> = load_attr_unorm8x2(slot, addr);\n      return vec4<f32>(v.x, 0.0, 0.0, 1.0);"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::Unorm8, 2) => {
+                        "let v: vec2<f32> = load_attr_unorm8x2(slot, addr);\n      return vec4<f32>(v.x, v.y, 0.0, 1.0);"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::Unorm8, 4) => {
+                        "return load_attr_unorm8x4(slot, addr);".to_owned()
+                    }
+                    (DxgiFormatComponentType::Snorm8, 2) => {
+                        "let v: vec2<f32> = load_attr_snorm8x2(slot, addr);\n      return vec4<f32>(v.x, v.y, 0.0, 1.0);"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::Snorm8, 4) => {
+                        "return load_attr_snorm8x4(slot, addr);".to_owned()
+                    }
+                    (DxgiFormatComponentType::Unorm16, 1) => {
+                        "let v: vec2<f32> = load_attr_unorm16x2(slot, addr);\n      return vec4<f32>(v.x, 0.0, 0.0, 1.0);"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::Unorm16, 2) => {
+                        "let v: vec2<f32> = load_attr_unorm16x2(slot, addr);\n      return vec4<f32>(v.x, v.y, 0.0, 1.0);"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::Unorm16, 4) => {
+                        "return load_attr_unorm16x4(slot, addr);".to_owned()
+                    }
+                    (DxgiFormatComponentType::Snorm16, 1) => {
+                        "let v: vec2<f32> = load_attr_snorm16x2(slot, addr);\n      return vec4<f32>(v.x, 0.0, 0.0, 1.0);"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::Snorm16, 2) => {
+                        "let v: vec2<f32> = load_attr_snorm16x2(slot, addr);\n      return vec4<f32>(v.x, v.y, 0.0, 1.0);"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::Snorm16, 4) => {
+                        "return load_attr_snorm16x4(slot, addr);".to_owned()
+                    }
+                    (DxgiFormatComponentType::Unorm10_10_10_2, 4) => {
+                        "return load_attr_unorm10_10_10_2(slot, addr);".to_owned()
+                    }
+                    (DxgiFormatComponentType::U32, 1) => {
+                        "let v: u32 = load_attr_u32(slot, addr);\n      return vec4<f32>(f32(v), 0.0, 0.0, 1.0);"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::U32, 2) => {
+                        "let v: vec2<u32> = load_attr_u32x2(slot, addr);\n      return vec4<f32>(f32(v.x), f32(v.y), 0.0, 1.0);"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::U32, 3) => {
+                        "let v: vec3<u32> = load_attr_u32x3(slot, addr);\n      return vec4<f32>(f32(v.x), f32(v.y), f32(v.z), 1.0);"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::U32, 4) => {
+                        "let v: vec4<u32> = load_attr_u32x4(slot, addr);\n      return vec4<f32>(f32(v.x), f32(v.y), f32(v.z), f32(v.w));"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::I32, 1) => {
+                        "let v: i32 = load_attr_i32(slot, addr);\n      return vec4<f32>(f32(v), 0.0, 0.0, 1.0);"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::I32, 2) => {
+                        "let v: vec2<i32> = load_attr_i32x2(slot, addr);\n      return vec4<f32>(f32(v.x), f32(v.y), 0.0, 1.0);"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::I32, 3) => {
+                        "let v: vec3<i32> = load_attr_i32x3(slot, addr);\n      return vec4<f32>(f32(v.x), f32(v.y), f32(v.z), 1.0);"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::I32, 4) => {
+                        "let v: vec4<i32> = load_attr_i32x4(slot, addr);\n      return vec4<f32>(f32(v.x), f32(v.y), f32(v.z), f32(v.w));"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::U16, 1) => {
+                        "let v: u32 = load_attr_u16(slot, addr);\n      return vec4<f32>(f32(v), 0.0, 0.0, 1.0);"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::U16, 2) => {
+                        "let v: vec2<u32> = load_attr_u16x2(slot, addr);\n      return vec4<f32>(f32(v.x), f32(v.y), 0.0, 1.0);"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::U16, 4) => {
+                        "let v: vec4<u32> = load_attr_u16x4(slot, addr);\n      return vec4<f32>(f32(v.x), f32(v.y), f32(v.z), f32(v.w));"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::I16, 1) => {
+                        "let v: i32 = load_attr_i16(slot, addr);\n      return vec4<f32>(f32(v), 0.0, 0.0, 1.0);"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::I16, 2) => {
+                        "let v: vec2<i32> = load_attr_i16x2(slot, addr);\n      return vec4<f32>(f32(v.x), f32(v.y), 0.0, 1.0);"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::I16, 4) => {
+                        "let v: vec4<i32> = load_attr_i16x4(slot, addr);\n      return vec4<f32>(f32(v.x), f32(v.y), f32(v.z), f32(v.w));"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::U8, 2) => {
+                        "let v: vec2<u32> = load_attr_u8x2(slot, addr);\n      return vec4<f32>(f32(v.x), f32(v.y), 0.0, 1.0);"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::U8, 4) => {
+                        "let v: vec4<u32> = load_attr_u8x4(slot, addr);\n      return vec4<f32>(f32(v.x), f32(v.y), f32(v.z), f32(v.w));"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::I8, 2) => {
+                        "let v: vec2<i32> = load_attr_i8x2(slot, addr);\n      return vec4<f32>(f32(v.x), f32(v.y), 0.0, 1.0);"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::I8, 4) => {
+                        "let v: vec4<i32> = load_attr_i8x4(slot, addr);\n      return vec4<f32>(f32(v.x), f32(v.y), f32(v.z), f32(v.w));"
+                            .to_owned()
+                    }
+                    _ => "return aero_gs_default();".to_owned(),
+                };
+
+                out.push_str(&format!("      let slot: u32 = {slot}u;\n"));
+                out.push_str("      ");
+                out.push_str(&expr.replace('\n', "\n      "));
+                out.push('\n');
+                out.push_str("    }\n");
+            }
+            out.push_str("    default: { return aero_gs_default(); }\n");
+            out.push_str("  }\n");
+            out.push_str("}\n\n");
+
+            out.push_str("@compute @workgroup_size(1)\n");
+            out.push_str("fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {\n");
+            out.push_str("  let prim_id: u32 = id.x;\n");
+            out.push_str(&format!(
+                "  for (var vert_in_prim: u32 = 0u; vert_in_prim < {verts_per_prim}u; vert_in_prim = vert_in_prim + 1u) {{\n"
+            ));
+            match (indexed_draw, ia_topology) {
+                (true, _) => {
+                    out.push_str(&format!(
+                        "    let vertex_index: u32 = prim_vertices.data[prim_id * {verts_per_prim}u + vert_in_prim];\n"
+                    ));
+                }
+                (false, CmdPrimitiveTopology::LineStripAdj) => {
+                    out.push_str(
+                        "    let vertex_index: u32 = aero_vp_ia.first_vertex + prim_id + vert_in_prim;\n",
+                    );
+                }
+                (false, CmdPrimitiveTopology::TriangleStripAdj) => {
+                    out.push_str("    let base: u32 = prim_id * 2u;\n");
+                    out.push_str("    var vinv: u32 = 0u;\n");
+                    out.push_str("    if ((prim_id & 1u) == 0u) {\n");
+                    out.push_str("      vinv = base + vert_in_prim;\n");
+                    out.push_str("    } else {\n");
+                    out.push_str("      switch vert_in_prim {\n");
+                    out.push_str("        case 0u: { vinv = base + 2u; }\n");
+                    out.push_str("        case 1u: { vinv = base + 1u; }\n");
+                    out.push_str("        case 2u: { vinv = base + 0u; }\n");
+                    out.push_str("        case 3u: { vinv = base + 5u; }\n");
+                    out.push_str("        case 4u: { vinv = base + 4u; }\n");
+                    out.push_str("        case 5u: { vinv = base + 3u; }\n");
+                    out.push_str("        default: { vinv = base; }\n");
+                    out.push_str("      }\n");
+                    out.push_str("    }\n");
+                    out.push_str("    let vertex_index: u32 = aero_vp_ia.first_vertex + vinv;\n");
+                }
+                (false, _) => unreachable!(),
+            }
+            out.push_str(
+                "    for (var reg: u32 = 0u; reg < GS_INPUT_REG_COUNT; reg = reg + 1u) {\n",
+            );
+            out.push_str(&format!(
+                "      let idx: u32 = ((prim_id * {verts_per_prim}u + vert_in_prim) * GS_INPUT_REG_COUNT + reg);\n"
+            ));
+            out.push_str("      gs_inputs.data[idx] = aero_gs_load_reg(reg, vertex_index);\n");
+            out.push_str("    }\n");
+            out.push_str("  }\n");
+            out.push_str("}\n");
+            out
+        };
+
+        fn vs_is_identity_passthrough_for_gs_inputs(
+            module: &crate::sm4_ir::Sm4Module,
+            gs_input_reg_count: u32,
+        ) -> bool {
+            use crate::sm4_ir::{OperandModifier, RegFile, Sm4Inst, SrcKind, Swizzle, WriteMask};
+
+            if module.stage != crate::sm4::ShaderStage::Vertex {
+                return false;
+            }
+
+            let mut wrote = vec![false; gs_input_reg_count as usize];
+
+            for inst in &module.instructions {
+                match inst {
+                    Sm4Inst::Mov { dst, src } => {
+                        if dst.reg.file != RegFile::Output {
+                            return false;
+                        }
+                        if dst.saturate {
+                            return false;
+                        }
+                        if dst.mask != WriteMask::XYZW {
+                            return false;
+                        }
+                        let SrcKind::Register(src_reg) = &src.kind else {
+                            return false;
+                        };
+                        if src_reg.file != RegFile::Input {
+                            return false;
+                        }
+                        if src_reg.index != dst.reg.index {
+                            return false;
+                        }
+                        if src.swizzle != Swizzle::XYZW {
+                            return false;
+                        }
+                        if src.modifier != OperandModifier::None {
+                            return false;
+                        }
+
+                        if let Some(slot) = wrote.get_mut(dst.reg.index as usize) {
+                            *slot = true;
+                        }
+                    }
+                    Sm4Inst::Ret => break,
+                    _ => return false,
+                }
+            }
+
+            wrote.into_iter().all(|v| v)
+        }
+
+        fn build_vs_as_compute_gs_input_wgsl(
+            module: &crate::sm4_ir::Sm4Module,
+            pulling: &VertexPullingLayout,
+            vs_location_to_input_reg: &HashMap<u32, u32>,
+            gs_input_reg_count: u32,
+            verts_per_prim: u32,
+            indexed_draw: bool,
+            ia_topology: CmdPrimitiveTopology,
+        ) -> Result<String> {
+            use crate::sm4_ir::{RegFile, Sm4Inst, SrcKind, Swizzle, WriteMask};
+
+            if module.stage != crate::sm4::ShaderStage::Vertex {
+                bail!(
+                    "VS-as-compute: expected vertex shader module, got {:?}",
+                    module.stage
+                );
+            }
+
+            let mut max_temp: i32 = -1;
+            let mut inst_count = 0usize;
+
+            // Pre-scan for temp register usage and validate supported instruction set.
+            for inst in &module.instructions {
+                match inst {
+                    Sm4Inst::Mov { dst, src } => {
+                        if dst.reg.file == RegFile::Temp {
+                            max_temp = max_temp.max(dst.reg.index as i32);
+                        } else if dst.reg.file == RegFile::Output {
+                            if dst.reg.index >= gs_input_reg_count {
+                                bail!(
+                                    "VS-as-compute: writes to o{} but GS expects only {} output regs",
+                                    dst.reg.index,
+                                    gs_input_reg_count
+                                );
+                            }
+                        } else {
+                            bail!(
+                                "VS-as-compute: unsupported mov dst reg file {:?}",
+                                dst.reg.file
+                            );
+                        }
+
+                        match &src.kind {
+                            SrcKind::Register(reg) => {
+                                if reg.file == RegFile::Temp {
+                                    max_temp = max_temp.max(reg.index as i32);
+                                } else if reg.file == RegFile::Output {
+                                    if reg.index >= gs_input_reg_count {
+                                        bail!(
+                                            "VS-as-compute: reads from o{} but GS expects only {} output regs",
+                                            reg.index,
+                                            gs_input_reg_count
+                                        );
+                                    }
+                                } else if reg.file != RegFile::Input {
+                                    bail!(
+                                        "VS-as-compute: unsupported mov src reg file {:?}",
+                                        reg.file
+                                    );
+                                }
+                            }
+                            SrcKind::ImmediateF32(_) => {}
+                            other => {
+                                bail!(
+                                    "VS-as-compute: unsupported mov src operand kind {:?}",
+                                    other
+                                );
+                            }
+                        }
+                    }
+                    Sm4Inst::Add { dst, a, b } => {
+                        if dst.reg.file == RegFile::Temp {
+                            max_temp = max_temp.max(dst.reg.index as i32);
+                        } else if dst.reg.file == RegFile::Output {
+                            if dst.reg.index >= gs_input_reg_count {
+                                bail!(
+                                    "VS-as-compute: writes to o{} but GS expects only {} output regs",
+                                    dst.reg.index,
+                                    gs_input_reg_count
+                                );
+                            }
+                        } else {
+                            bail!(
+                                "VS-as-compute: unsupported add dst reg file {:?}",
+                                dst.reg.file
+                            );
+                        }
+
+                        for src in [a, b] {
+                            match &src.kind {
+                                SrcKind::Register(reg) => {
+                                    if reg.file == RegFile::Temp {
+                                        max_temp = max_temp.max(reg.index as i32);
+                                    } else if reg.file == RegFile::Output {
+                                        if reg.index >= gs_input_reg_count {
+                                            bail!(
+                                                "VS-as-compute: reads from o{} but GS expects only {} output regs",
+                                                reg.index,
+                                                gs_input_reg_count
+                                            );
+                                        }
+                                    } else if reg.file != RegFile::Input {
+                                        bail!(
+                                            "VS-as-compute: unsupported add src reg file {:?}",
+                                            reg.file
+                                        );
+                                    }
+                                }
+                                SrcKind::ImmediateF32(_) => {}
+                                other => {
+                                    bail!(
+                                        "VS-as-compute: unsupported add src operand kind {:?}",
+                                        other
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    Sm4Inst::Ret => break,
+                    _ => bail!("VS-as-compute: unsupported VS instruction {:?}", inst),
+                }
+                inst_count += 1;
+            }
+
+            let temp_reg_count: u32 = (max_temp + 1).max(1) as u32;
+
+            fn swizzle_to_wgsl(swizzle: Swizzle) -> String {
+                let mut s = String::new();
+                for &lane in &swizzle.0 {
+                    s.push(match lane {
+                        0 => 'x',
+                        1 => 'y',
+                        2 => 'z',
+                        _ => 'w',
+                    });
+                }
+                s
+            }
+
+            fn f32_bits_to_wgsl(bits: u32) -> String {
+                let v = f32::from_bits(bits);
+                // Use Debug formatting for stable `1.0`-style literals.
+                format!("{v:?}")
+            }
+
+            fn emit_write_masked(
+                out: &mut String,
+                dst_expr: &str,
+                mask: WriteMask,
+                tmp_name: &str,
+            ) {
+                if mask == WriteMask::XYZW {
+                    out.push_str(&format!("  {dst_expr} = {tmp_name};\n"));
+                    return;
+                }
+                for (bit, ch) in [
+                    (WriteMask::X.0, 'x'),
+                    (WriteMask::Y.0, 'y'),
+                    (WriteMask::Z.0, 'z'),
+                    (WriteMask::W.0, 'w'),
+                ] {
+                    if (mask.0 & bit) != 0 {
+                        out.push_str(&format!("  {dst_expr}.{ch} = {tmp_name}.{ch};\n"));
+                    }
+                }
+            }
+
+            let mut out = String::new();
+            out.push_str(&pulling.wgsl_prelude());
+            out.push('\n');
+
+            out.push_str("struct U32Buffer { data: array<u32> };\n");
+            out.push_str("struct Vec4F32Buffer { data: array<vec4<f32>> };\n");
+            out.push_str(
+                "@group(0) @binding(0) var<storage, read_write> gs_inputs: Vec4F32Buffer;\n",
+            );
+            if indexed_draw {
+                out.push_str(
+                    "@group(0) @binding(1) var<storage, read_write> prim_vertices: U32Buffer;\n",
+                );
+            }
+            out.push_str(&format!(
+                "const GS_INPUT_REG_COUNT: u32 = {}u;\n",
+                gs_input_reg_count
+            ));
+            out.push_str(&format!(
+                "const VS_TEMP_REG_COUNT: u32 = {}u;\n",
+                temp_reg_count
+            ));
+
+            // Load a VS input register by D3D register index.
+            out.push_str("fn aero_vp_load_reg(reg: u32, vertex_index: u32) -> vec4<f32> {\n");
+            out.push_str("  switch reg {\n");
+            for attr in &pulling.attributes {
+                let reg = vs_location_to_input_reg
+                    .get(&attr.shader_location)
+                    .copied()
+                    .unwrap_or(attr.shader_location);
+                out.push_str(&format!("    case {reg}u: {{\n"));
+                let slot = attr.pulling_slot;
+                let offset = attr.offset_bytes;
+                let element_index_expr = match attr.step_mode {
+                    wgpu::VertexStepMode::Vertex => "vertex_index",
+                    wgpu::VertexStepMode::Instance => "aero_vp_ia.first_instance",
+                };
+                out.push_str(&format!(
+                    "      let addr: u32 = aero_vp_ia.slots[{slot}u].base_offset_bytes + ({element_index_expr}) * aero_vp_ia.slots[{slot}u].stride_bytes + {offset}u;\n"
+                ));
+
+                let expr = match (attr.format.component_type, attr.format.component_count) {
+                    (crate::input_layout::DxgiFormatComponentType::F32, 1) => {
+                        "let x: f32 = load_attr_f32(slot, addr);\n      return vec4<f32>(x, 0.0, 0.0, 1.0);"
+                            .to_owned()
+                    }
+                    (crate::input_layout::DxgiFormatComponentType::F32, 2) => {
+                        "let v: vec2<f32> = load_attr_f32x2(slot, addr);\n      return vec4<f32>(v, 0.0, 1.0);"
+                            .to_owned()
+                    }
+                    (crate::input_layout::DxgiFormatComponentType::F32, 3) => {
+                        "let v: vec3<f32> = load_attr_f32x3(slot, addr);\n      return vec4<f32>(v, 1.0);"
+                            .to_owned()
+                    }
+                    (crate::input_layout::DxgiFormatComponentType::F32, 4) => {
+                        "return load_attr_f32x4(slot, addr);".to_owned()
+                    }
+                    (crate::input_layout::DxgiFormatComponentType::Unorm8, 1) => {
+                        "let v: vec2<f32> = load_attr_unorm8x2(slot, addr);\n      return vec4<f32>(v.x, 0.0, 0.0, 1.0);"
+                            .to_owned()
+                    }
+                    (crate::input_layout::DxgiFormatComponentType::Unorm8, 2) => {
+                        "let v: vec2<f32> = load_attr_unorm8x2(slot, addr);\n      return vec4<f32>(v.x, v.y, 0.0, 1.0);"
+                            .to_owned()
+                    }
+                    (crate::input_layout::DxgiFormatComponentType::Unorm8, 4) => {
+                        "return load_attr_unorm8x4(slot, addr);".to_owned()
+                    }
+                    (crate::input_layout::DxgiFormatComponentType::Snorm8, 2) => {
+                        "let v: vec2<f32> = load_attr_snorm8x2(slot, addr);\n      return vec4<f32>(v.x, v.y, 0.0, 1.0);"
+                            .to_owned()
+                    }
+                    (crate::input_layout::DxgiFormatComponentType::Snorm8, 4) => {
+                        "return load_attr_snorm8x4(slot, addr);".to_owned()
+                    }
+                    (crate::input_layout::DxgiFormatComponentType::Unorm16, 1) => {
+                        "let v: vec2<f32> = load_attr_unorm16x2(slot, addr);\n      return vec4<f32>(v.x, 0.0, 0.0, 1.0);"
+                            .to_owned()
+                    }
+                    (crate::input_layout::DxgiFormatComponentType::Unorm16, 2) => {
+                        "let v: vec2<f32> = load_attr_unorm16x2(slot, addr);\n      return vec4<f32>(v.x, v.y, 0.0, 1.0);"
+                            .to_owned()
+                    }
+                    (crate::input_layout::DxgiFormatComponentType::Unorm16, 4) => {
+                        "return load_attr_unorm16x4(slot, addr);".to_owned()
+                    }
+                    (crate::input_layout::DxgiFormatComponentType::Snorm16, 1) => {
+                        "let v: vec2<f32> = load_attr_snorm16x2(slot, addr);\n      return vec4<f32>(v.x, 0.0, 0.0, 1.0);"
+                            .to_owned()
+                    }
+                    (crate::input_layout::DxgiFormatComponentType::Snorm16, 2) => {
+                        "let v: vec2<f32> = load_attr_snorm16x2(slot, addr);\n      return vec4<f32>(v.x, v.y, 0.0, 1.0);"
+                            .to_owned()
+                    }
+                    (crate::input_layout::DxgiFormatComponentType::Snorm16, 4) => {
+                        "return load_attr_snorm16x4(slot, addr);".to_owned()
+                    }
+                    (crate::input_layout::DxgiFormatComponentType::Unorm10_10_10_2, 4) => {
+                        "return load_attr_unorm10_10_10_2(slot, addr);".to_owned()
+                    }
+                    (crate::input_layout::DxgiFormatComponentType::U32, 1) => {
+                        "let v: u32 = load_attr_u32(slot, addr);\n      return vec4<f32>(f32(v), 0.0, 0.0, 1.0);"
+                            .to_owned()
+                    }
+                    (crate::input_layout::DxgiFormatComponentType::U32, 2) => {
+                        "let v: vec2<u32> = load_attr_u32x2(slot, addr);\n      return vec4<f32>(f32(v.x), f32(v.y), 0.0, 1.0);"
+                            .to_owned()
+                    }
+                    (crate::input_layout::DxgiFormatComponentType::U32, 3) => {
+                        "let v: vec3<u32> = load_attr_u32x3(slot, addr);\n      return vec4<f32>(f32(v.x), f32(v.y), f32(v.z), 1.0);"
+                            .to_owned()
+                    }
+                    (crate::input_layout::DxgiFormatComponentType::U32, 4) => {
+                        "let v: vec4<u32> = load_attr_u32x4(slot, addr);\n      return vec4<f32>(f32(v.x), f32(v.y), f32(v.z), f32(v.w));"
+                            .to_owned()
+                    }
+                    (crate::input_layout::DxgiFormatComponentType::I32, 1) => {
+                        "let v: i32 = load_attr_i32(slot, addr);\n      return vec4<f32>(f32(v), 0.0, 0.0, 1.0);"
+                            .to_owned()
+                    }
+                    (crate::input_layout::DxgiFormatComponentType::I32, 2) => {
+                        "let v: vec2<i32> = load_attr_i32x2(slot, addr);\n      return vec4<f32>(f32(v.x), f32(v.y), 0.0, 1.0);"
+                            .to_owned()
+                    }
+                    (crate::input_layout::DxgiFormatComponentType::I32, 3) => {
+                        "let v: vec3<i32> = load_attr_i32x3(slot, addr);\n      return vec4<f32>(f32(v.x), f32(v.y), f32(v.z), 1.0);"
+                            .to_owned()
+                    }
+                    (crate::input_layout::DxgiFormatComponentType::I32, 4) => {
+                        "let v: vec4<i32> = load_attr_i32x4(slot, addr);\n      return vec4<f32>(f32(v.x), f32(v.y), f32(v.z), f32(v.w));"
+                            .to_owned()
+                    }
+                    (crate::input_layout::DxgiFormatComponentType::U16, 1) => {
+                        "let v: u32 = load_attr_u16(slot, addr);\n      return vec4<f32>(f32(v), 0.0, 0.0, 1.0);"
+                            .to_owned()
+                    }
+                    (crate::input_layout::DxgiFormatComponentType::U16, 2) => {
+                        "let v: vec2<u32> = load_attr_u16x2(slot, addr);\n      return vec4<f32>(f32(v.x), f32(v.y), 0.0, 1.0);"
+                            .to_owned()
+                    }
+                    (crate::input_layout::DxgiFormatComponentType::U16, 4) => {
+                        "let v: vec4<u32> = load_attr_u16x4(slot, addr);\n      return vec4<f32>(f32(v.x), f32(v.y), f32(v.z), f32(v.w));"
+                            .to_owned()
+                    }
+                    (crate::input_layout::DxgiFormatComponentType::I16, 1) => {
+                        "let v: i32 = load_attr_i16(slot, addr);\n      return vec4<f32>(f32(v), 0.0, 0.0, 1.0);"
+                            .to_owned()
+                    }
+                    (crate::input_layout::DxgiFormatComponentType::I16, 2) => {
+                        "let v: vec2<i32> = load_attr_i16x2(slot, addr);\n      return vec4<f32>(f32(v.x), f32(v.y), 0.0, 1.0);"
+                            .to_owned()
+                    }
+                    (crate::input_layout::DxgiFormatComponentType::I16, 4) => {
+                        "let v: vec4<i32> = load_attr_i16x4(slot, addr);\n      return vec4<f32>(f32(v.x), f32(v.y), f32(v.z), f32(v.w));"
+                            .to_owned()
+                    }
+                    (crate::input_layout::DxgiFormatComponentType::U8, 2) => {
+                        "let v: vec2<u32> = load_attr_u8x2(slot, addr);\n      return vec4<f32>(f32(v.x), f32(v.y), 0.0, 1.0);"
+                            .to_owned()
+                    }
+                    (crate::input_layout::DxgiFormatComponentType::U8, 4) => {
+                        "let v: vec4<u32> = load_attr_u8x4(slot, addr);\n      return vec4<f32>(f32(v.x), f32(v.y), f32(v.z), f32(v.w));"
+                            .to_owned()
+                    }
+                    (crate::input_layout::DxgiFormatComponentType::I8, 2) => {
+                        "let v: vec2<i32> = load_attr_i8x2(slot, addr);\n      return vec4<f32>(f32(v.x), f32(v.y), 0.0, 1.0);"
+                            .to_owned()
+                    }
+                    (crate::input_layout::DxgiFormatComponentType::I8, 4) => {
+                        "let v: vec4<i32> = load_attr_i8x4(slot, addr);\n      return vec4<f32>(f32(v.x), f32(v.y), f32(v.z), f32(v.w));"
+                            .to_owned()
+                    }
+                    _ => "return vec4<f32>(0.0, 0.0, 0.0, 1.0);".to_owned(),
+                };
+
+                out.push_str(&format!("      let slot: u32 = {slot}u;\n"));
+                out.push_str("      ");
+                out.push_str(&expr.replace('\n', "\n      "));
+                out.push('\n');
+                out.push_str("    }\n");
+            }
+            out.push_str("    default: { return vec4<f32>(0.0, 0.0, 0.0, 1.0); }\n");
+            out.push_str("  }\n");
+            out.push_str("}\n");
+
+            out.push_str("@compute @workgroup_size(1)\n");
+            out.push_str("fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {\n");
+            out.push_str("  let prim_id: u32 = id.x;\n");
+            out.push_str(&format!(
+                "  for (var vert_in_prim: u32 = 0u; vert_in_prim < {verts_per_prim}u; vert_in_prim = vert_in_prim + 1u) {{\n"
+            ));
+            match (indexed_draw, ia_topology) {
+                (true, _) => {
+                    out.push_str(&format!(
+                        "    let vertex_index: u32 = prim_vertices.data[prim_id * {verts_per_prim}u + vert_in_prim];\n"
+                    ));
+                }
+                (false, CmdPrimitiveTopology::LineStripAdj) => {
+                    out.push_str(
+                        "    let vertex_index: u32 = aero_vp_ia.first_vertex + prim_id + vert_in_prim;\n",
+                    );
+                }
+                (false, CmdPrimitiveTopology::TriangleStripAdj) => {
+                    out.push_str("    let base: u32 = prim_id * 2u;\n");
+                    out.push_str("    var vinv: u32 = 0u;\n");
+                    out.push_str("    if ((prim_id & 1u) == 0u) {\n");
+                    out.push_str("      vinv = base + vert_in_prim;\n");
+                    out.push_str("    } else {\n");
+                    out.push_str("      switch vert_in_prim {\n");
+                    out.push_str("        case 0u: { vinv = base + 2u; }\n");
+                    out.push_str("        case 1u: { vinv = base + 1u; }\n");
+                    out.push_str("        case 2u: { vinv = base + 0u; }\n");
+                    out.push_str("        case 3u: { vinv = base + 5u; }\n");
+                    out.push_str("        case 4u: { vinv = base + 4u; }\n");
+                    out.push_str("        case 5u: { vinv = base + 3u; }\n");
+                    out.push_str("        default: { vinv = base; }\n");
+                    out.push_str("      }\n");
+                    out.push_str("    }\n");
+                    out.push_str("    let vertex_index: u32 = aero_vp_ia.first_vertex + vinv;\n");
+                }
+                (false, _) => unreachable!(),
+            }
+            out.push_str("    var o: array<vec4<f32>, GS_INPUT_REG_COUNT> = array<vec4<f32>, GS_INPUT_REG_COUNT>();\n");
+            out.push_str("    var t: array<vec4<f32>, VS_TEMP_REG_COUNT> = array<vec4<f32>, VS_TEMP_REG_COUNT>();\n");
+            out.push_str("    // Execute VS instruction stream.\n");
+
+            for (inst_index, inst) in module.instructions.iter().enumerate().take(inst_count) {
+                match inst {
+                    Sm4Inst::Mov { dst, src } => {
+                        let dst_expr = match dst.reg.file {
+                            RegFile::Temp => format!("t[{}u]", dst.reg.index),
+                            RegFile::Output => format!("o[{}u]", dst.reg.index),
+                            other => {
+                                bail!("VS-as-compute: unsupported mov dst reg file {:?}", other)
+                            }
+                        };
+                        let tmp_name = format!("mov_tmp_{inst_index}");
+
+                        let src_expr = match &src.kind {
+                            SrcKind::Register(reg) => match reg.file {
+                                RegFile::Temp => format!("t[{}u]", reg.index),
+                                RegFile::Input => format!(
+                                    "aero_vp_load_reg({}u, vertex_index).{}",
+                                    reg.index,
+                                    swizzle_to_wgsl(src.swizzle)
+                                ),
+                                RegFile::Output => format!("o[{}u]", reg.index),
+                                other => {
+                                    bail!(
+                                        "VS-as-compute: unsupported src register file {:?}",
+                                        other
+                                    )
+                                }
+                            },
+                            SrcKind::ImmediateF32(v) => {
+                                let [x, y, z, w] = *v;
+                                format!(
+                                    "vec4<f32>({}, {}, {}, {}).{}",
+                                    f32_bits_to_wgsl(x),
+                                    f32_bits_to_wgsl(y),
+                                    f32_bits_to_wgsl(z),
+                                    f32_bits_to_wgsl(w),
+                                    swizzle_to_wgsl(src.swizzle)
+                                )
+                            }
+                            other => bail!(
+                                "VS-as-compute: unsupported src operand kind {:?}",
+                                other
+                            ),
+                        };
+
+                        out.push_str(&format!("  let {tmp_name}: vec4<f32> = {src_expr};\n"));
+                        emit_write_masked(&mut out, &dst_expr, dst.mask, &tmp_name);
+                    }
+                    Sm4Inst::Add { dst, a, b } => {
+                        let dst_expr = match dst.reg.file {
+                            RegFile::Temp => format!("t[{}u]", dst.reg.index),
+                            RegFile::Output => format!("o[{}u]", dst.reg.index),
+                            other => {
+                                bail!("VS-as-compute: unsupported add dst reg file {:?}", other)
+                            }
+                        };
+                        let tmp_name = format!("add_tmp_{inst_index}");
+
+                        let src_expr = |src: &crate::sm4_ir::SrcOperand| -> Result<String> {
+                            Ok(match &src.kind {
+                                SrcKind::Register(reg) => match reg.file {
+                                    RegFile::Temp => format!("t[{}u]", reg.index),
+                                    RegFile::Input => format!(
+                                        "aero_vp_load_reg({}u, vertex_index).{}",
+                                        reg.index,
+                                        swizzle_to_wgsl(src.swizzle)
+                                    ),
+                                    RegFile::Output => format!("o[{}u]", reg.index),
+                                    other => bail!(
+                                        "VS-as-compute: unsupported src register file {:?}",
+                                        other
+                                    ),
+                                },
+                                SrcKind::ImmediateF32(v) => {
+                                    let [x, y, z, w] = *v;
+                                    format!(
+                                        "vec4<f32>({}, {}, {}, {}).{}",
+                                        f32_bits_to_wgsl(x),
+                                        f32_bits_to_wgsl(y),
+                                        f32_bits_to_wgsl(z),
+                                        f32_bits_to_wgsl(w),
+                                        swizzle_to_wgsl(src.swizzle)
+                                    )
+                                }
+                                other => bail!(
+                                    "VS-as-compute: unsupported src operand kind {:?}",
+                                    other
+                                ),
+                            })
+                        };
+
+                        let a_expr = src_expr(a)?;
+                        let b_expr = src_expr(b)?;
+
+                        out.push_str(&format!(
+                            "  let {tmp_name}: vec4<f32> = ({a_expr}) + ({b_expr});\n"
+                        ));
+                        emit_write_masked(&mut out, &dst_expr, dst.mask, &tmp_name);
+                    }
+                    Sm4Inst::Ret => {}
+                    other => bail!("VS-as-compute: unsupported VS instruction {:?}", other),
+                }
+            }
+
+            out.push_str(
+                "\n    for (var reg: u32 = 0u; reg < GS_INPUT_REG_COUNT; reg = reg + 1u) {\n",
+            );
+            out.push_str(&format!(
+                "      let idx: u32 = ((prim_id * {verts_per_prim}u + vert_in_prim) * GS_INPUT_REG_COUNT + reg);\n"
+            ));
+            out.push_str("      gs_inputs.data[idx] = o[reg];\n");
+            out.push_str("    }\n");
+            out.push_str("  }\n");
+            out.push_str("}\n");
+            Ok(out)
+        }
+
+        let fill_wgsl = match vs_shader.sm4_module.as_deref() {
+            Some(module) => match build_vs_as_compute_gs_input_wgsl(
+                module,
+                &pulling,
+                &vs_location_to_input_reg,
+                gs_meta.input_reg_count,
+                verts_per_prim,
+                indexed_draw,
+                ia_topology,
+            ) {
+                Ok(wgsl) => wgsl,
+                Err(err) => {
+                    if vs_is_identity_passthrough_for_gs_inputs(module, gs_meta.input_reg_count) {
+                        fill_wgsl_ia
+                    } else if super::env_var_truthy("AERO_D3D11_ALLOW_INCORRECT_GS_INPUTS") {
+                        eprintln!(
+                            "aero-d3d11: WARNING: VS-as-compute translation failed for VS shader {} (using incorrect IA-fill fallback): {:#}",
+                            vs_handle,
+                            err
+                        );
+                        fill_wgsl_ia
+                    } else {
+                        bail!(
+                            "GS prepass requires VS-as-compute to feed GS inputs, but VS-as-compute translation failed for VS shader {vs_handle}: {err:#}\n\
+                             Set AERO_D3D11_ALLOW_INCORRECT_GS_INPUTS=1 to fall back to IA-fill (may misrender)."
+                        );
+                    }
+                }
+            },
+            None => {
+                if super::env_var_truthy("AERO_D3D11_ALLOW_INCORRECT_GS_INPUTS") {
+                    eprintln!(
+                        "aero-d3d11: WARNING: missing decoded SM4 module for VS shader {} (using incorrect IA-fill fallback)",
+                        vs_handle
+                    );
+                    fill_wgsl_ia
+                } else {
+                    bail!(
+                        "GS prepass requires VS-as-compute to feed GS inputs, but the bound VS shader {vs_handle} has no decoded SM4 module available.\n\
+                         Set AERO_D3D11_ALLOW_INCORRECT_GS_INPUTS=1 to fall back to IA-fill (may misrender)."
+                    );
+                }
+            }
+        };
+
+        // Fill bind group layout: gs_inputs (always) + prim_vertices (indexed only).
+        let mut fill_bgl_entries = Vec::new();
+        fill_bgl_entries.push(wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Storage { read_only: false },
+                has_dynamic_offset: false,
+                min_binding_size: wgpu::BufferSize::new(16),
+            },
+            count: None,
+        });
+        if indexed_draw {
+            fill_bgl_entries.push(wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: wgpu::BufferSize::new(4),
+                },
+                count: None,
+            });
+        }
+        let fill_bgl = self
+            .bind_group_layout_cache
+            .get_or_create(&self.device, &fill_bgl_entries);
+
+        let mut fill_bg_entries = Vec::new();
+        fill_bg_entries.push(wgpu::BindGroupEntry {
+            binding: 0,
+            resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                buffer: gs_inputs_alloc.buffer.as_ref(),
+                offset: gs_inputs_alloc.offset,
+                size: wgpu::BufferSize::new(gs_inputs_alloc.size),
+            }),
+        });
+        if let Some(prim_vertices_alloc) = prim_vertices_alloc.as_ref() {
+            fill_bg_entries.push(wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: prim_vertices_alloc.buffer.as_ref(),
+                    offset: prim_vertices_alloc.offset,
+                    size: wgpu::BufferSize::new(prim_vertices_alloc.size),
+                }),
+            });
+        }
+        let fill_bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("aerogpu_cmd gs prepass input fill bind group"),
+            layout: fill_bgl.layout.as_ref(),
+            entries: &fill_bg_entries,
+        });
+
+        let empty_bgl = self
+            .bind_group_layout_cache
+            .get_or_create(&self.device, &[]);
+        let (fill_layout_key, fill_pipeline_layout) = {
+            let mut hashes: Vec<u64> = Vec::with_capacity(VERTEX_PULLING_GROUP as usize + 1);
+            let mut layouts: Vec<&wgpu::BindGroupLayout> =
+                Vec::with_capacity(VERTEX_PULLING_GROUP as usize + 1);
+            hashes.push(fill_bgl.hash);
+            layouts.push(fill_bgl.layout.as_ref());
+            for _ in 1..VERTEX_PULLING_GROUP {
+                hashes.push(empty_bgl.hash);
+                layouts.push(empty_bgl.layout.as_ref());
+            }
+            hashes.push(vp_bgl.hash);
+            layouts.push(vp_bgl.layout.as_ref());
+            let key = PipelineLayoutKey {
+                bind_group_layout_hashes: hashes,
+            };
+            let layout = self.pipeline_layout_cache.get_or_create(
+                &self.device,
+                &key,
+                &layouts,
+                Some("aerogpu_cmd gs prepass fill pipeline layout"),
+            );
+            (key, layout)
+        };
+
+        let fill_pipeline_ptr = {
+            let (cs_hash, _module) = self.pipeline_cache.get_or_create_shader_module(
+                &self.device,
+                aero_gpu::pipeline_key::ShaderStage::Compute,
+                &fill_wgsl,
+                Some("aerogpu_cmd gs prepass fill CS"),
+            );
+            let key = ComputePipelineKey {
+                shader: cs_hash,
+                layout: fill_layout_key.clone(),
+                entry_point: "cs_main",
+            };
+            let pipeline = self
+                .pipeline_cache
+                .get_or_create_compute_pipeline(&self.device, key, move |device, cs| {
+                    device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                        label: Some("aerogpu_cmd gs prepass fill compute pipeline"),
+                        layout: Some(fill_pipeline_layout.as_ref()),
+                        module: cs,
+                        entry_point: "cs_main",
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    })
+                })
+                .map_err(|e| anyhow!("wgpu pipeline cache: {e:?}"))?;
+            pipeline as *const wgpu::ComputePipeline
+        };
+        let fill_pipeline = unsafe { &*fill_pipeline_ptr };
+
+        self.encoder_has_commands = true;
+        if primitive_count != 0 {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("aerogpu_cmd gs prepass fill compute pass"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(fill_pipeline);
+            pass.set_bind_group(0, &fill_bg, &[]);
+            bind_empty_groups_before_vertex_pulling(&mut pass, self.empty_bind_group.as_ref(), 1);
+            pass.set_bind_group(VERTEX_PULLING_GROUP, &vp_bg, &[]);
+            pass.dispatch_workgroups(primitive_count, 1, 1);
+        }
+
+        // Allocate expanded output buffers for the GS prepass.
+        let expanded_vertex_count = u64::from(primitive_count)
+            .checked_mul(u64::from(gs_instance_count))
+            .and_then(|v| v.checked_mul(u64::from(gs_meta.max_output_vertices)))
+            .ok_or_else(|| anyhow!("GS prepass: expanded vertex count overflow"))?;
+        let expanded_vertex_size = GEOMETRY_PREPASS_EXPANDED_VERTEX_STRIDE_BYTES
+            .checked_mul(expanded_vertex_count.max(1))
+            .ok_or_else(|| anyhow!("GS prepass: expanded vertex buffer size overflow"))?;
+
+        let max_indices_per_prim: u64 = match gs_meta.output_topology_kind {
+            GsOutputTopologyKind::PointList => u64::from(gs_meta.max_output_vertices),
+            GsOutputTopologyKind::LineStrip => u64::from(gs_meta.max_output_vertices.saturating_sub(1))
+                .checked_mul(2)
+                .ok_or_else(|| anyhow!("GS prepass: max indices per primitive overflow"))?,
+            GsOutputTopologyKind::TriangleStrip => {
+                u64::from(gs_meta.max_output_vertices.saturating_sub(2))
+                    .checked_mul(3)
+                    .ok_or_else(|| anyhow!("GS prepass: max indices per primitive overflow"))?
+            }
+        };
+        let expanded_index_count = u64::from(primitive_count)
+            .checked_mul(u64::from(gs_instance_count))
+            .and_then(|v| v.checked_mul(max_indices_per_prim))
+            .ok_or_else(|| anyhow!("GS prepass: expanded index count overflow"))?;
+        let expanded_index_size = expanded_index_count
+            .checked_mul(4)
+            .ok_or_else(|| anyhow!("GS prepass: expanded index buffer size overflow"))?
+            .max(4);
+
+        let expanded_vertex_alloc = self
+            .expansion_scratch
+            .alloc_vertex_output(&self.device, expanded_vertex_size)
+            .map_err(|e| anyhow!("GS prepass: alloc expanded vertex buffer: {e}"))?;
+        let expanded_index_alloc = self
+            .expansion_index_scratch
+            .alloc_index_output(&self.device, expanded_index_size)
+            .map_err(|e| anyhow!("GS prepass: alloc expanded index buffer: {e}"))?;
+
+        // The translated GS prepass uses both atomic counters and indirect args.
+        let state_alloc = self
+            .expansion_indirect_scratch
+            .alloc_gs_prepass_state_draw_indexed(&self.device)
+            .map_err(|e| anyhow!("GS prepass: alloc indirect args + counters buffer: {e}"))?;
+        let indirect_args_alloc = ExpansionScratchAlloc {
+            buffer: state_alloc.buffer.clone(),
+            offset: state_alloc.offset,
+            size: GEOMETRY_PREPASS_INDIRECT_ARGS_SIZE_BYTES,
+        };
+        let counter_offset = state_alloc
+            .offset
+            .checked_add(GEOMETRY_PREPASS_INDIRECT_ARGS_SIZE_BYTES)
+            .ok_or_else(|| anyhow!("GS prepass: state counter offset overflows u64"))?;
+        // Clear counters before dispatch so the prepass has deterministic behavior.
+        self.queue.write_buffer(
+            state_alloc.buffer.as_ref(),
+            counter_offset,
+            &[0u8; GEOMETRY_PREPASS_COUNTER_SIZE_BYTES as usize],
+        );
+
+        // GS prepass params: {primitive_count, instance_count, first_instance, pad}.
+        let mut params_bytes = [0u8; 16];
+        params_bytes[0..4].copy_from_slice(&primitive_count.to_le_bytes());
+        params_bytes[4..8].copy_from_slice(&instance_count.to_le_bytes());
+        params_bytes[8..12].copy_from_slice(&vertex_pulling_draw.first_instance.to_le_bytes());
+        let params_alloc = self
+            .expansion_uniform_scratch
+            .alloc_metadata(&self.device, params_bytes.len() as u64, uniform_align)
+            .map_err(|e| anyhow!("GS prepass: alloc params buffer: {e}"))?;
+        self.queue.write_buffer(
+            params_alloc.buffer.as_ref(),
+            params_alloc.offset,
+            &params_bytes,
+        );
+
+        // Build GS prepass pipeline + bind group.
+        let gs_bgl_entries = [
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: wgpu::BufferSize::new(
+                        GEOMETRY_PREPASS_EXPANDED_VERTEX_STRIDE_BYTES,
+                    ),
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: wgpu::BufferSize::new(4),
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: wgpu::BufferSize::new(GEOMETRY_PREPASS_GS_STATE_SIZE_BYTES),
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 4,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: wgpu::BufferSize::new(16),
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 5,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: wgpu::BufferSize::new(16),
+                },
+                count: None,
+            },
+        ];
+        let gs_bgl = self
+            .bind_group_layout_cache
+            .get_or_create(&self.device, &gs_bgl_entries);
+        let gs_bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("aerogpu_cmd gs prepass bind group"),
+            layout: gs_bgl.layout.as_ref(),
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: expanded_vertex_alloc.buffer.as_ref(),
+                        offset: expanded_vertex_alloc.offset,
+                        size: wgpu::BufferSize::new(expanded_vertex_alloc.size),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: expanded_index_alloc.buffer.as_ref(),
+                        offset: expanded_index_alloc.offset,
+                        size: wgpu::BufferSize::new(expanded_index_alloc.size),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: state_alloc.buffer.as_ref(),
+                        offset: state_alloc.offset,
+                        size: wgpu::BufferSize::new(state_alloc.size),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: params_alloc.buffer.as_ref(),
+                        offset: params_alloc.offset,
+                        size: wgpu::BufferSize::new(params_alloc.size),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: gs_inputs_alloc.buffer.as_ref(),
+                        offset: gs_inputs_alloc.offset,
+                        size: wgpu::BufferSize::new(gs_inputs_alloc.size),
+                    }),
+                },
+            ],
+        });
+
+        // The translated GS compute prepass keeps its internal prepass resources in `@group(0)` and
+        // references D3D11 geometry-stage resources (cbuffers/textures/samplers/SRV buffers) via the
+        // shared binding model `@group(3)`.
+        //
+        // Build group(3) layout + binding list from the GS shader's reflection and ensure any guest
+        // resources referenced by those bindings are uploaded before dispatch.
+        let gs_resource_bindings = reflection_bindings::build_pipeline_bindings_info(
+            &self.device,
+            &mut self.bind_group_layout_cache,
+            std::iter::once(reflection_bindings::ShaderBindingSet::Guest(
+                gs_shader.reflection.bindings.as_slice(),
+            )),
+            reflection_bindings::BindGroupIndexValidation::GuestShaders,
+        )
+        .context("GS prepass: build geometry-stage pipeline bindings")?;
+        self.ensure_bound_resources_uploaded(
+            ShaderStage::Geometry,
+            encoder,
+            &gs_resource_bindings,
+            allocs,
+            guest_mem,
+        )?;
+
+        let empty_bgl = self
+            .bind_group_layout_cache
+            .get_or_create(&self.device, &[]);
+        let (gs_group3_bgl, gs_group3_bindings) = if gs_resource_bindings.group_layouts.len()
+            > ShaderStage::Geometry.as_bind_group_index() as usize
+        {
+            (
+                &gs_resource_bindings.group_layouts
+                    [ShaderStage::Geometry.as_bind_group_index() as usize],
+                gs_resource_bindings.group_bindings[ShaderStage::Geometry.as_bind_group_index()
+                    as usize]
+                    .as_slice(),
+            )
+        } else {
+            (&empty_bgl, &[][..])
+        };
+
+        let gs_group3_bg: Arc<wgpu::BindGroup> = if gs_group3_bindings.is_empty() {
+            self.empty_bind_group.clone()
+        } else {
+            let stage_bindings = self.bindings.stage_mut(ShaderStage::Geometry);
+            let was_dirty = stage_bindings.is_dirty();
+            let provider = CmdExecutorBindGroupProvider {
+                resources: &self.resources,
+                legacy_constants: &self.legacy_constants,
+                cbuffer_scratch: &self.cbuffer_scratch,
+                srv_buffer_scratch: &self.srv_buffer_scratch,
+                storage_align: (self.device.limits().min_storage_buffer_offset_alignment as u64)
+                    .max(1),
+                max_storage_binding_size: self.device.limits().max_storage_buffer_binding_size
+                    as u64,
+                dummy_uniform: &self.dummy_uniform,
+                dummy_storage: &self.dummy_storage,
+                dummy_texture_view_2d: &self.dummy_texture_view_2d,
+                dummy_texture_view_2d_array: &self.dummy_texture_view_2d_array,
+                dummy_storage_texture_views: &self.dummy_storage_texture_views,
+                default_sampler: &self.default_sampler,
+                stage: ShaderStage::Geometry,
+                stage_state: stage_bindings,
+                internal_buffers: &[],
+            };
+            let bg = reflection_bindings::build_bind_group(
+                &self.device,
+                &mut self.bind_group_cache,
+                gs_group3_bgl,
+                gs_group3_bindings,
+                &provider,
+            )?;
+            if was_dirty {
+                stage_bindings.clear_dirty();
+            }
+            bg
+        };
+
+        // Group indices `0..=2` are reserved for VS/PS/CS resources in the binding model, so we
+        // include empty bind group layouts for `@group(1..=2)` to reach `@group(3)`.
+        let gs_layout_key = PipelineLayoutKey {
+            bind_group_layout_hashes: vec![
+                gs_bgl.hash,
+                empty_bgl.hash,
+                empty_bgl.hash,
+                gs_group3_bgl.hash,
+            ],
+        };
+        let gs_pipeline_layout = self.pipeline_layout_cache.get_or_create(
+            &self.device,
+            &gs_layout_key,
+            &[
+                gs_bgl.layout.as_ref(),
+                empty_bgl.layout.as_ref(),
+                empty_bgl.layout.as_ref(),
+                gs_group3_bgl.layout.as_ref(),
+            ],
+            Some("aerogpu_cmd gs prepass pipeline layout"),
+        );
+
+        let gs_pipeline_ptr = {
+            let entry_point = gs_shader.entry_point;
+            let key = ComputePipelineKey {
+                shader: gs_shader.wgsl_hash,
+                layout: gs_layout_key.clone(),
+                entry_point,
+            };
+            let mut recovery_attempts_remaining = 2u8;
+            loop {
+                let pipeline_layout = gs_pipeline_layout.clone();
+                let result = self
+                    .pipeline_cache
+                    .get_or_create_compute_pipeline(&self.device, key.clone(), move |device, cs| {
+                        device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                            label: Some("aerogpu_cmd gs prepass compute pipeline"),
+                            layout: Some(pipeline_layout.as_ref()),
+                            module: cs,
+                            entry_point,
+                            compilation_options: wgpu::PipelineCompilationOptions::default(),
+                        })
+                    })
+                    .map(|pipeline| pipeline as *const wgpu::ComputePipeline);
+
+                match result {
+                    Ok(pipeline) => break pipeline,
+                    Err(GpuError::MissingShaderModule { stage, hash })
+                        if recovery_attempts_remaining > 0
+                            && stage == aero_gpu::pipeline_key::ShaderStage::Compute
+                            && hash == gs_shader.wgsl_hash =>
+                    {
+                        recovery_attempts_remaining -= 1;
+                        let (rehash, _module) = self.pipeline_cache.get_or_create_shader_module(
+                            &self.device,
+                            stage,
+                            gs_shader.wgsl_source.as_str(),
+                            Some("aerogpu_cmd recovered shader module"),
+                        );
+                        if rehash != hash {
+                            bail!(
+                                "pipeline cache recovery produced unexpected shader hash (expected=0x{hash:032x}, got=0x{rehash:032x})"
+                            );
+                        }
+                    }
+                    Err(e) => return Err(anyhow!("wgpu pipeline cache: {e:?}")),
+                }
+            }
+        };
+        let gs_pipeline = unsafe { &*gs_pipeline_ptr };
+
+        let gs_finalize_pipeline_ptr = {
+            let key = ComputePipelineKey {
+                shader: gs_shader.wgsl_hash,
+                layout: gs_layout_key.clone(),
+                entry_point: "cs_finalize",
+            };
+            let mut recovery_attempts_remaining = 2u8;
+            loop {
+                let pipeline_layout = gs_pipeline_layout.clone();
+                let result = self
+                    .pipeline_cache
+                    .get_or_create_compute_pipeline(&self.device, key.clone(), move |device, cs| {
+                        device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                            label: Some("aerogpu_cmd gs prepass finalize compute pipeline"),
+                            layout: Some(pipeline_layout.as_ref()),
+                            module: cs,
+                            entry_point: "cs_finalize",
+                            compilation_options: wgpu::PipelineCompilationOptions::default(),
+                        })
+                    })
+                    .map(|pipeline| pipeline as *const wgpu::ComputePipeline);
+
+                match result {
+                    Ok(pipeline) => break pipeline,
+                    Err(GpuError::MissingShaderModule { stage, hash })
+                        if recovery_attempts_remaining > 0
+                            && stage == aero_gpu::pipeline_key::ShaderStage::Compute
+                            && hash == gs_shader.wgsl_hash =>
+                    {
+                        recovery_attempts_remaining -= 1;
+                        let (rehash, _module) = self.pipeline_cache.get_or_create_shader_module(
+                            &self.device,
+                            stage,
+                            gs_shader.wgsl_source.as_str(),
+                            Some("aerogpu_cmd recovered shader module"),
+                        );
+                        if rehash != hash {
+                            bail!(
+                                "pipeline cache recovery produced unexpected shader hash (expected=0x{hash:032x}, got=0x{rehash:032x})"
+                            );
+                        }
+                    }
+                    Err(e) => return Err(anyhow!("wgpu pipeline cache: {e:?}")),
+                }
+            }
+        };
+        let gs_finalize_pipeline = unsafe { &*gs_finalize_pipeline_ptr };
+
+        self.encoder_has_commands = true;
+        if primitive_count != 0 {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("aerogpu_cmd gs prepass compute pass"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(gs_pipeline);
+            pass.set_bind_group(0, &gs_bg, &[]);
+            bind_empty_groups_before_vertex_pulling(&mut pass, self.empty_bind_group.as_ref(), 1);
+            pass.set_bind_group(
+                ShaderStage::Geometry.as_bind_group_index(),
+                gs_group3_bg.as_ref(),
+                &[],
+            );
+            pass.dispatch_workgroups(primitive_count, 1, 1);
+        }
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("aerogpu_cmd gs prepass finalize compute pass"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(gs_finalize_pipeline);
+            pass.set_bind_group(0, &gs_bg, &[]);
+            bind_empty_groups_before_vertex_pulling(&mut pass, self.empty_bind_group.as_ref(), 1);
+            pass.set_bind_group(
+                ShaderStage::Geometry.as_bind_group_index(),
+                gs_group3_bg.as_ref(),
+                &[],
+            );
+            pass.dispatch_workgroups(1, 1, 1);
+        }
+
+        Ok((
+            expanded_vertex_alloc,
+            expanded_index_alloc,
+            indirect_args_alloc,
+        ))
+    }
 
     /// Execute a single draw that requires a compute prepass (GS/HS/DS emulation).
     ///
@@ -8742,9 +10553,9 @@ impl AerogpuD3d11Executor {
                 CmdPrimitiveTopology::PointList => 1,
                 CmdPrimitiveTopology::LineList => 2,
                 CmdPrimitiveTopology::TriangleList => 3,
-                // D3D11 adjacency-list topologies (GS input).
-                CmdPrimitiveTopology::LineListAdj => 4,
-                CmdPrimitiveTopology::TriangleListAdj => 6,
+                // D3D11 adjacency topologies (GS input).
+                CmdPrimitiveTopology::LineListAdj | CmdPrimitiveTopology::LineStripAdj => 4,
+                CmdPrimitiveTopology::TriangleListAdj | CmdPrimitiveTopology::TriangleStripAdj => 6,
                 _ => 0,
             };
             if expected_verts_per_primitive == 0 {
@@ -9356,8 +11167,8 @@ fn ds_eval(patch_id: u32, domain: vec3<f32>, _local_vertex: u32) -> AeroDsOut {
             // render via `draw_indirect` (some downlevel backends are unreliable with
             // `draw_indexed_indirect`).
             let indexed_draw = opcode == OPCODE_DRAW_INDEXED;
-            let (v_alloc, i_alloc, args_alloc) = match gs_meta.verts_per_primitive {
-                1 => self.exec_geometry_shader_prepass_pointlist(
+            let (v_alloc, i_alloc, args_alloc) = match (gs_meta.verts_per_primitive, self.state.primitive_topology) {
+                (1, _) => self.exec_geometry_shader_prepass_pointlist(
                     encoder,
                     allocs,
                     guest_mem,
@@ -9370,7 +11181,7 @@ fn ds_eval(patch_id: u32, domain: vec3<f32>, _local_vertex: u32) -> AeroDsOut {
                     vertex_pulling_draw,
                     indexed_draw,
                 )?,
-                2 => self.exec_geometry_shader_prepass_linelist(
+                (2, _) => self.exec_geometry_shader_prepass_linelist(
                     encoder,
                     allocs,
                     guest_mem,
@@ -9383,7 +11194,23 @@ fn ds_eval(patch_id: u32, domain: vec3<f32>, _local_vertex: u32) -> AeroDsOut {
                     vertex_pulling_draw,
                     indexed_draw,
                 )?,
-                3 | 4 | 6 => self.exec_geometry_shader_prepass_trianglelist(
+                (4, CmdPrimitiveTopology::LineStripAdj)
+                | (6, CmdPrimitiveTopology::TriangleStripAdj) => self.exec_geometry_shader_prepass_adjacency_strip(
+                    encoder,
+                    allocs,
+                    guest_mem,
+                    vs_handle,
+                    gs_handle,
+                    gs_meta,
+                    self.state.primitive_topology,
+                    primitive_count,
+                    element_count,
+                    gs_instance_count,
+                    instance_count,
+                    vertex_pulling_draw,
+                    indexed_draw,
+                )?,
+                (3 | 4 | 6, _) => self.exec_geometry_shader_prepass_trianglelist(
                     encoder,
                     allocs,
                     guest_mem,
@@ -9396,7 +11223,7 @@ fn ds_eval(patch_id: u32, domain: vec3<f32>, _local_vertex: u32) -> AeroDsOut {
                     vertex_pulling_draw,
                     indexed_draw,
                 )?,
-                other => bail!("unsupported GS prepass input verts_per_primitive={other}"),
+                (other, _) => bail!("unsupported GS prepass input verts_per_primitive={other}"),
             };
             expanded_vertex_alloc = v_alloc;
             expanded_index_alloc = Some(i_alloc);
