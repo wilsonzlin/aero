@@ -8056,8 +8056,50 @@ impl snapshot::SnapshotSource for Machine {
         snapshot::cpu_state_from_cpu_core(&self.cpu)
     }
 
+    fn cpu_states(&self) -> Vec<snapshot::VcpuSnapshot> {
+        let cpu_count = self.cfg.cpu_count as usize;
+        let mut cpus = Vec::with_capacity(cpu_count);
+
+        cpus.push(snapshot::VcpuSnapshot {
+            apic_id: 0,
+            cpu: snapshot::cpu_state_from_cpu_core(&self.cpu),
+            internal_state: Vec::new(),
+        });
+
+        let ap_cpus = self.ap_cpus.borrow();
+        for (idx, cpu) in ap_cpus.iter().enumerate() {
+            cpus.push(snapshot::VcpuSnapshot {
+                apic_id: (idx + 1) as u32,
+                cpu: snapshot::cpu_state_from_cpu_core(cpu),
+                internal_state: Vec::new(),
+            });
+        }
+
+        cpus
+    }
+
     fn mmu_state(&self) -> snapshot::MmuState {
         snapshot::mmu_state_from_cpu_core(&self.cpu)
+    }
+
+    fn mmu_states(&self) -> Vec<snapshot::VcpuMmuSnapshot> {
+        let cpu_count = self.cfg.cpu_count as usize;
+        let mut mmus = Vec::with_capacity(cpu_count);
+
+        mmus.push(snapshot::VcpuMmuSnapshot {
+            apic_id: 0,
+            mmu: snapshot::mmu_state_from_cpu_core(&self.cpu),
+        });
+
+        let ap_cpus = self.ap_cpus.borrow();
+        for (idx, cpu) in ap_cpus.iter().enumerate() {
+            mmus.push(snapshot::VcpuMmuSnapshot {
+                apic_id: (idx + 1) as u32,
+                mmu: snapshot::mmu_state_from_cpu_core(cpu),
+            });
+        }
+
+        mmus
     }
 
     fn device_states(&self) -> Vec<snapshot::DeviceState> {
@@ -8586,9 +8628,82 @@ impl snapshot::SnapshotTarget for Machine {
         snapshot::apply_cpu_state_to_cpu_core(&state, &mut self.cpu);
     }
 
+    fn restore_cpu_states(&mut self, states: Vec<snapshot::VcpuSnapshot>) -> snapshot::Result<()> {
+        let expected = self.cfg.cpu_count as usize;
+        if states.len() != expected {
+            return Err(snapshot::SnapshotError::Corrupt("CPU count mismatch"));
+        }
+
+        let mut seen = vec![false; expected];
+        let mut ap_cpus = self.ap_cpus.borrow_mut();
+
+        for state in states {
+            let apic_id = usize::try_from(state.apic_id)
+                .map_err(|_| snapshot::SnapshotError::Corrupt("unknown APIC ID"))?;
+            if apic_id >= expected {
+                return Err(snapshot::SnapshotError::Corrupt("unknown APIC ID"));
+            }
+            if seen[apic_id] {
+                return Err(snapshot::SnapshotError::Corrupt("duplicate APIC ID"));
+            }
+            seen[apic_id] = true;
+
+            if apic_id == 0 {
+                snapshot::apply_cpu_state_to_cpu_core(&state.cpu, &mut self.cpu);
+            } else {
+                let idx = apic_id - 1;
+                let Some(cpu) = ap_cpus.get_mut(idx) else {
+                    return Err(snapshot::SnapshotError::Corrupt("unknown APIC ID"));
+                };
+                snapshot::apply_cpu_state_to_cpu_core(&state.cpu, cpu);
+            }
+        }
+
+        Ok(())
+    }
+
     fn restore_mmu_state(&mut self, state: snapshot::MmuState) {
         snapshot::apply_mmu_state_to_cpu_core(&state, &mut self.cpu);
         self.cpu.time.set_tsc(self.cpu.state.msr.tsc);
+    }
+
+    fn restore_mmu_states(
+        &mut self,
+        states: Vec<snapshot::VcpuMmuSnapshot>,
+    ) -> snapshot::Result<()> {
+        let expected = self.cfg.cpu_count as usize;
+        if states.len() != expected {
+            return Err(snapshot::SnapshotError::Corrupt("MMU count mismatch"));
+        }
+
+        let mut seen = vec![false; expected];
+        let mut ap_cpus = self.ap_cpus.borrow_mut();
+
+        for state in states {
+            let apic_id = usize::try_from(state.apic_id)
+                .map_err(|_| snapshot::SnapshotError::Corrupt("unknown APIC ID"))?;
+            if apic_id >= expected {
+                return Err(snapshot::SnapshotError::Corrupt("unknown APIC ID"));
+            }
+            if seen[apic_id] {
+                return Err(snapshot::SnapshotError::Corrupt("duplicate APIC ID"));
+            }
+            seen[apic_id] = true;
+
+            if apic_id == 0 {
+                snapshot::apply_mmu_state_to_cpu_core(&state.mmu, &mut self.cpu);
+                self.cpu.time.set_tsc(self.cpu.state.msr.tsc);
+            } else {
+                let idx = apic_id - 1;
+                let Some(cpu) = ap_cpus.get_mut(idx) else {
+                    return Err(snapshot::SnapshotError::Corrupt("unknown APIC ID"));
+                };
+                snapshot::apply_mmu_state_to_cpu_core(&state.mmu, cpu);
+                cpu.time.set_tsc(cpu.state.msr.tsc);
+            }
+        }
+
+        Ok(())
     }
 
     fn restore_device_states(&mut self, states: Vec<snapshot::DeviceState>) {
