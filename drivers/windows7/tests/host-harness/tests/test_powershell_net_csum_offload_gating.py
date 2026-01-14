@@ -8,20 +8,20 @@ import unittest
 from pathlib import Path
 
 
-class PowerShellNetUdpCsumOffloadGatingTests(unittest.TestCase):
+class PowerShellNetCsumOffloadGatingTests(unittest.TestCase):
     def setUp(self) -> None:
         self.ps_path = Path(__file__).resolve().parents[1] / "Invoke-AeroVirtioWin7Tests.ps1"
         self.text = self.ps_path.read_text(encoding="utf-8", errors="replace")
 
-    def test_require_net_udp_csum_offload_switch_exists(self) -> None:
+    def test_require_net_csum_offload_switch_exists(self) -> None:
         self.assertRegex(
             self.text,
-            re.compile(r"\[switch\]\s*\$RequireNetUdpCsumOffload\b", re.IGNORECASE),
+            re.compile(r"\[switch\]\s*\$RequireNetCsumOffload\b", re.IGNORECASE),
         )
         self.assertRegex(
             self.text,
             re.compile(
-                r'\[Alias\("RequireVirtioNetUdpCsumOffload"\)\]\s*\r?\n\s*\[switch\]\s*\$RequireNetUdpCsumOffload\b',
+                r'\[Alias\("RequireVirtioNetCsumOffload"\)\]\s*\r?\n\s*\[switch\]\s*\$RequireNetCsumOffload\b',
                 re.IGNORECASE,
             ),
         )
@@ -31,7 +31,7 @@ class PowerShellNetUdpCsumOffloadGatingTests(unittest.TestCase):
         self.assertRegex(
             self.text,
             re.compile(
-                r"function\s+Wait-AeroSelftestResult\s*\{[\s\S]*?\[bool\]\$RequireNetUdpCsumOffload\b",
+                r"function\s+Wait-AeroSelftestResult\s*\{[\s\S]*?\[bool\]\$RequireNetCsumOffload\b",
                 re.IGNORECASE,
             ),
         )
@@ -41,7 +41,7 @@ class PowerShellNetUdpCsumOffloadGatingTests(unittest.TestCase):
         self.assertRegex(
             self.text,
             re.compile(
-                r"Wait-AeroSelftestResult[\s\S]*?-RequireNetUdpCsumOffload\b",
+                r"Wait-AeroSelftestResult[\s\S]*?-RequireNetCsumOffload\b",
                 re.IGNORECASE,
             ),
         )
@@ -49,18 +49,19 @@ class PowerShellNetUdpCsumOffloadGatingTests(unittest.TestCase):
     def test_failure_tokens_exist_in_output_cases(self) -> None:
         # The PowerShell harness should emit deterministic failure tokens matching the Python harness.
         for tok in (
-            "MISSING_VIRTIO_NET_UDP_CSUM_OFFLOAD",
-            "VIRTIO_NET_UDP_CSUM_OFFLOAD_FAILED",
-            "VIRTIO_NET_UDP_CSUM_OFFLOAD_MISSING_FIELDS",
-            "VIRTIO_NET_UDP_CSUM_OFFLOAD_ZERO",
+            "MISSING_VIRTIO_NET_CSUM_OFFLOAD",
+            "VIRTIO_NET_CSUM_OFFLOAD_FAILED",
+            "VIRTIO_NET_CSUM_OFFLOAD_MISSING_FIELDS",
+            "VIRTIO_NET_CSUM_OFFLOAD_ZERO",
         ):
             self.assertIn(f"FAIL: {tok}:", self.text)
 
     def test_docs_mention_powershell_flag(self) -> None:
         readme_path = Path(__file__).resolve().parents[1] / "README.md"
         readme = readme_path.read_text(encoding="utf-8", errors="replace")
-        self.assertIn("-RequireNetUdpCsumOffload", readme)
+        self.assertIn("-RequireNetCsumOffload", readme)
 
 
 if __name__ == "__main__":
     unittest.main()
+

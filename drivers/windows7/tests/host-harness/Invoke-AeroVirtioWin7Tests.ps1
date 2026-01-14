@@ -304,12 +304,14 @@ param(
   # This checks the guest marker:
   #   AERO_VIRTIO_SELFTEST|TEST|virtio-net-offload-csum|PASS|tx_csum=...
   [Parameter(Mandatory = $false)]
+  [Alias("RequireVirtioNetCsumOffload")]
   [switch]$RequireNetCsumOffload,
  
   # If set, require at least one UDP checksum-offloaded TX packet in the virtio-net driver.
   # This checks the guest marker:
   #   AERO_VIRTIO_SELFTEST|TEST|virtio-net-offload-csum|PASS|tx_udp=... (or tx_udp4/tx_udp6)
   [Parameter(Mandatory = $false)]
+  [Alias("RequireVirtioNetUdpCsumOffload")]
   [switch]$RequireNetUdpCsumOffload,
 
   # If set, stream newly captured COM1 serial output to stdout while waiting.
@@ -359,7 +361,7 @@ param(
   # Note: this requires a guest image provisioned with `--test-net-link-flap` (or env var equivalent),
   # and a QEMU build that supports QMP `set_link`.
   [Parameter(Mandatory = $false)]
-  [Alias("WithVirtioNetLinkFlap", "EnableVirtioNetLinkFlap")]
+  [Alias("WithVirtioNetLinkFlap", "EnableVirtioNetLinkFlap", "RequireVirtioNetLinkFlap")]
   [switch]$WithNetLinkFlap,
 
   # If set, attach a virtio-snd device (virtio-sound-pci / virtio-snd-pci).

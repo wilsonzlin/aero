@@ -18,7 +18,7 @@ class PowerShellHarnessNetLinkFlapFlagTests(unittest.TestCase):
         # Alias list may grow; keep the test tolerant to additional aliases and formatting changes.
         self.assertRegex(
             self.text,
-            r'\[Alias\s*\((?=[^)]*"WithVirtioNetLinkFlap")(?=[^)]*"EnableVirtioNetLinkFlap")[^)]*\)\]',
+            r'\[Alias\s*\((?=[^)]*"WithVirtioNetLinkFlap")(?=[^)]*"EnableVirtioNetLinkFlap")(?=[^)]*"RequireVirtioNetLinkFlap")[^)]*\)\]',
         )
 
     def test_wait_result_enforces_link_flap_marker_when_required(self) -> None:
