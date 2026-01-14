@@ -159,6 +159,20 @@ fn malformed_total_size_truncates_chunk_header_is_error() {
 }
 
 #[test]
+fn malformed_total_size_truncates_offset_table_is_error() {
+    // Build a valid single-chunk container, then shrink the declared total_size
+    // so it cuts into the chunk offset table itself.
+    let mut bytes = build_dxbc(&[(FourCC(*b"SHDR"), &[1, 2, 3])]);
+    let bad_total_size = (4 + 16 + 4 + 4 + 4 + 2) as u32; // header (32) + 2 bytes
+    bytes[24..28].copy_from_slice(&bad_total_size.to_le_bytes());
+
+    let err = DxbcFile::parse(&bytes).unwrap_err();
+    assert!(matches!(err, DxbcError::MalformedOffsets { .. }));
+    assert!(err.context().contains("chunk offset table"));
+    assert!(err.context().contains("total_size"));
+}
+
+#[test]
 fn malformed_truncated_chunk_offset_table_is_error() {
     // DXBC header declaring one chunk, but missing the chunk offset table entry.
     let mut bytes = Vec::new();
