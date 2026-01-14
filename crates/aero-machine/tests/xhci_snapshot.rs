@@ -419,3 +419,199 @@ fn snapshot_restore_preserves_xhci_msix_table_and_delivery() {
         "xHCI INTx should be suppressed while MSI-X is active"
     );
 }
+
+#[test]
+fn snapshot_restore_preserves_xhci_msix_pending_bit_and_delivers_after_unmask() {
+    let mut vm = Machine::new(MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_xhci: true,
+        // Keep this test focused on xHCI + snapshot + MSI-X pending bit handling.
+        enable_ahci: false,
+        enable_ide: false,
+        enable_vga: false,
+        enable_serial: false,
+        enable_debugcon: false,
+        enable_i8042: false,
+        enable_reset_ctrl: false,
+        enable_e1000: false,
+        // Keep the A20 gate so we can explicitly enable A20 before touching high MMIO addresses.
+        enable_a20_gate: true,
+        ..Default::default()
+    })
+    .unwrap();
+
+    // Ensure high MMIO addresses decode correctly (avoid A20 aliasing).
+    vm.io_write(A20_GATE_PORT, 1, 0x02);
+
+    let interrupts = vm.platform_interrupts().expect("pc platform enabled");
+    interrupts
+        .borrow_mut()
+        .set_mode(PlatformInterruptMode::Apic);
+    assert_eq!(interrupts.borrow().mode(), PlatformInterruptMode::Apic);
+
+    let bdf = profile::USB_XHCI_QEMU.bdf;
+    let bar0_base = vm
+        .pci_bar_base(bdf, 0)
+        .expect("xHCI BAR0 should exist");
+    assert_ne!(bar0_base, 0);
+
+    // Enable MSI-X (with Function Mask) in canonical PCI config space, and discover table/PBA
+    // offsets.
+    let (table_offset, pba_offset) = {
+        let pci_cfg = vm
+            .pci_config_ports()
+            .expect("pc platform should expose pci_cfg");
+        let mut pci_cfg = pci_cfg.borrow_mut();
+        let cfg = pci_cfg
+            .bus_mut()
+            .device_config_mut(bdf)
+            .expect("xHCI should exist on PCI bus");
+
+        // Ensure MMIO decode + bus mastering are enabled so BAR0 MMIO is valid, and disable INTx so
+        // there is no fallback interrupt delivery.
+        let command = cfg.command();
+        cfg.write(
+            0x04,
+            2,
+            u32::from(command | (1 << 1) | (1 << 2) | (1 << 10)),
+        );
+
+        let msix_off = cfg
+            .find_capability(PCI_CAP_ID_MSIX)
+            .expect("xHCI should expose MSI-X capability in PCI config space");
+        let msix_base = u16::from(msix_off);
+
+        let table = cfg.read(msix_base + 0x04, 4);
+        let pba = cfg.read(msix_base + 0x08, 4);
+        assert_eq!(table & 0x7, 0, "xHCI MSI-X table should live in BAR0 (BIR=0)");
+        assert_eq!(pba & 0x7, 0, "xHCI MSI-X PBA should live in BAR0 (BIR=0)");
+
+        // Enable MSI-X (bit 15) and set Function Mask (bit 14) so the interrupt is latched as
+        // pending rather than delivered.
+        let ctrl = cfg.read(msix_base + 0x02, 2) as u16;
+        cfg.write(
+            msix_base + 0x02,
+            2,
+            u32::from(ctrl | (1 << 15) | (1 << 14)),
+        );
+
+        (u64::from(table & !0x7), u64::from(pba & !0x7))
+    };
+
+    // Program MSI-X table entry 0: destination = BSP (APIC ID 0), vector = 0x68.
+    let vector: u8 = 0x68;
+    let entry0 = bar0_base + table_offset;
+    vm.write_physical_u32(entry0 + 0x00, 0xfee0_0000);
+    vm.write_physical_u32(entry0 + 0x04, 0);
+    vm.write_physical_u32(entry0 + 0x08, u32::from(vector));
+    vm.write_physical_u32(entry0 + 0x0c, 0); // unmasked
+
+    // Raise an xHCI interrupt condition while MSI-X is function-masked. This should set the PBA
+    // pending bit without delivering an MSI.
+    let xhci = vm.xhci().expect("xhci enabled");
+    assert_eq!(
+        PlatformInterruptController::get_pending(&*interrupts.borrow()),
+        None
+    );
+    xhci.borrow_mut().raise_event_interrupt();
+    assert_eq!(
+        PlatformInterruptController::get_pending(&*interrupts.borrow()),
+        None
+    );
+    assert_eq!(
+        xhci.borrow().irq_level(),
+        false,
+        "xHCI INTx should be suppressed while MSI-X is active (even if masked)"
+    );
+    let pba_bits = vm.read_physical_u64(bar0_base + pba_offset);
+    assert_ne!(
+        pba_bits & 1,
+        0,
+        "expected MSI-X pending bit 0 to be set while function-masked"
+    );
+
+    let snapshot = vm.take_snapshot_full().unwrap();
+
+    // Mutate state after snapshot: clear function mask and allow xHCI to deliver the pending MSI-X
+    // vector (which should clear the pending bit).
+    {
+        let pci_cfg = vm
+            .pci_config_ports()
+            .expect("pc platform should expose pci_cfg");
+        let mut pci_cfg = pci_cfg.borrow_mut();
+        let cfg = pci_cfg
+            .bus_mut()
+            .device_config_mut(bdf)
+            .expect("xHCI should exist on PCI bus");
+        let msix_off = cfg
+            .find_capability(PCI_CAP_ID_MSIX)
+            .expect("xHCI should expose MSI-X capability in PCI config space");
+        let msix_base = u16::from(msix_off);
+        let ctrl = cfg.read(msix_base + 0x02, 2) as u16;
+        cfg.write(msix_base + 0x02, 2, u32::from(ctrl & !(1 << 14)));
+    }
+    vm.tick_platform(1_000_000);
+
+    assert_eq!(
+        PlatformInterruptController::get_pending(&*interrupts.borrow()),
+        Some(vector)
+    );
+    let pba_bits = vm.read_physical_u64(bar0_base + pba_offset);
+    assert_eq!(
+        pba_bits & 1,
+        0,
+        "expected MSI-X pending bit 0 to be cleared after unmask + delivery"
+    );
+    interrupts.borrow_mut().acknowledge(vector);
+    interrupts.borrow_mut().eoi(vector);
+    assert_eq!(
+        PlatformInterruptController::get_pending(&*interrupts.borrow()),
+        None
+    );
+
+    vm.restore_snapshot_bytes(&snapshot).unwrap();
+
+    // Restore should not replace the xHCI instance.
+    let xhci_after = vm.xhci().expect("xhci still enabled");
+    assert!(Rc::ptr_eq(&xhci, &xhci_after));
+
+    // After restore, the pending bit should be set again (rewound), and delivery should occur once
+    // the function mask is cleared.
+    let pba_bits = vm.read_physical_u64(bar0_base + pba_offset);
+    assert_ne!(
+        pba_bits & 1,
+        0,
+        "expected MSI-X pending bit 0 to be restored as set"
+    );
+
+    // Clear the function mask again and tick to re-drive pending MSI-X delivery.
+    {
+        let pci_cfg = vm
+            .pci_config_ports()
+            .expect("pc platform should expose pci_cfg");
+        let mut pci_cfg = pci_cfg.borrow_mut();
+        let cfg = pci_cfg
+            .bus_mut()
+            .device_config_mut(bdf)
+            .expect("xHCI should exist on PCI bus");
+        let msix_off = cfg
+            .find_capability(PCI_CAP_ID_MSIX)
+            .expect("xHCI should expose MSI-X capability in PCI config space");
+        let msix_base = u16::from(msix_off);
+        let ctrl = cfg.read(msix_base + 0x02, 2) as u16;
+        cfg.write(msix_base + 0x02, 2, u32::from(ctrl & !(1 << 14)));
+    }
+    vm.tick_platform(1_000_000);
+
+    assert_eq!(
+        PlatformInterruptController::get_pending(&*interrupts.borrow()),
+        Some(vector)
+    );
+    let pba_bits = vm.read_physical_u64(bar0_base + pba_offset);
+    assert_eq!(
+        pba_bits & 1,
+        0,
+        "expected MSI-X pending bit 0 to be cleared after restore + unmask + delivery"
+    );
+}
