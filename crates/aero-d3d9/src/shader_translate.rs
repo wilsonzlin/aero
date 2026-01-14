@@ -338,10 +338,11 @@ fn collect_semantic_locations_sm3(ir: &sm3::ir::ShaderIr) -> Vec<shader::Semanti
         return Vec::new();
     }
 
-    // Vertex input semantics are remapped using the adaptive semantic->location allocator in the
-    // SM3 IR builder. Mirror that mapping here so callers (e.g. the runtime vertex fetch path) can
-    // bind vertex buffers using the same locations as the generated WGSL.
+    // Vertex input semantics are remapped using the adaptive semantic→location allocator in the
+    // SM3 IR builder. Mirror that mapping here so callers can bind vertex buffers using the same
+    // locations as the generated WGSL.
     let mut input_dcl_order = Vec::<(DeclUsage, u8)>::new();
+    let mut seen = HashSet::<(DeclUsage, u8)>::new();
     for decl in &ir.inputs {
         if decl.reg.file != sm3::ir::RegFile::Input {
             continue;
@@ -349,30 +350,29 @@ fn collect_semantic_locations_sm3(ir: &sm3::ir::ShaderIr) -> Vec<shader::Semanti
         let Some((usage, usage_index)) = semantic_to_decl_usage(&decl.semantic) else {
             continue;
         };
-        input_dcl_order.push((usage, usage_index));
+        if seen.insert((usage, usage_index)) {
+            input_dcl_order.push((usage, usage_index));
+        }
     }
-    let Ok(map) = AdaptiveLocationMap::new(input_dcl_order.clone()) else {
+
+    let Ok(map) = AdaptiveLocationMap::new(input_dcl_order.iter().copied()) else {
+        // If semantic remapping was enabled, the IR builder already succeeded in constructing a
+        // location map. This should be unreachable, but avoid panicking in release builds.
         return Vec::new();
     };
-    let mut out = Vec::<shader::SemanticLocation>::new();
-    let mut seen = HashSet::<(DeclUsage, u8)>::new();
 
-    // Iterate in DCL order so the mapping is deterministic.
-    for (usage, usage_index) in input_dcl_order {
-        if !seen.insert((usage, usage_index)) {
-            continue;
-        }
-        let Ok(location) = map.location_for(usage, usage_index) else {
-            continue;
-        };
-        out.push(shader::SemanticLocation {
-            usage,
-            usage_index,
-            location,
-        });
-    }
-
-    out
+    input_dcl_order
+        .into_iter()
+        .filter_map(|(usage, usage_index)| {
+            map.location_for(usage, usage_index)
+                .ok()
+                .map(|location| shader::SemanticLocation {
+                    usage,
+                    usage_index,
+                    location,
+                })
+        })
+        .collect()
 }
 
 fn collect_used_samplers_sm3(ir: &sm3::ir::ShaderIr) -> BTreeSet<u16> {
