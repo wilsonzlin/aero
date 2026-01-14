@@ -990,6 +990,55 @@ mod tests {
     }
 
     #[test]
+    fn config_write_preserves_device_managed_msi_pending_bits_32bit() {
+        // Same as `config_write_preserves_device_managed_msi_pending_bits`, but covering the 32-bit
+        // MSI capability layout (no Message Address High dword).
+        let mut config = PciConfigSpace::new(0x1234, 0x5678);
+        config.add_capability(Box::new(MsiCapability::new_with_config(false, true)));
+        let cap_offset = config.find_capability(PCI_CAP_ID_MSI).unwrap() as u16;
+
+        // Program and enable MSI (32-bit layout).
+        config.write(cap_offset + 0x04, 4, 0xfee0_0000);
+        config.write(cap_offset + 0x08, 2, 0x0045);
+        let ctrl = config.read(cap_offset + 0x02, 2) as u16;
+        assert_eq!(
+            ctrl & (1 << 7),
+            0,
+            "test requires 32-bit MSI capability layout"
+        );
+        config.write(cap_offset + 0x02, 2, u32::from(ctrl | 0x0001));
+
+        let per_vector_masking = (ctrl & (1 << 8)) != 0;
+        assert!(
+            per_vector_masking,
+            "test requires per-vector masking support"
+        );
+        let mask_off = cap_offset + 0x0c;
+
+        // Mask the vector so triggering will set the pending bit instead of delivering.
+        config.write(mask_off, 4, 1);
+
+        struct Sink;
+        impl MsiTrigger for Sink {
+            fn trigger_msi(&mut self, _message: MsiMessage) {}
+        }
+
+        // Trigger while masked to set the pending bit in the capability state.
+        {
+            let msi = config.capability_mut::<MsiCapability>().unwrap();
+            assert!(!msi.trigger(&mut Sink));
+            assert_eq!(msi.pending_bits() & 1, 1);
+        }
+
+        // Unmask via a config-space write. This write must not clear the pending bit.
+        config.write(mask_off, 4, 0);
+        assert_eq!(
+            config.capability::<MsiCapability>().unwrap().pending_bits() & 1,
+            1
+        );
+    }
+
+    #[test]
     fn msi_pending_bits_register_is_read_only() {
         let mut config = PciConfigSpace::new(0x1234, 0x5678);
         config.add_capability(Box::new(MsiCapability::new()));
@@ -1030,6 +1079,65 @@ mod tests {
             fn trigger_msi(&mut self, _message: MsiMessage) {}
         }
         {
+            let msi = config.capability_mut::<MsiCapability>().unwrap();
+            assert!(!msi.trigger(&mut Sink));
+        }
+        assert_eq!(
+            config.capability::<MsiCapability>().unwrap().pending_bits() & 1,
+            1
+        );
+
+        // Guest writes must not be able to clear it either.
+        config.write(pending_off, 4, 0);
+        assert_eq!(
+            config.capability::<MsiCapability>().unwrap().pending_bits() & 1,
+            1
+        );
+    }
+
+    #[test]
+    fn msi_pending_bits_register_is_read_only_32bit() {
+        // Same as `msi_pending_bits_register_is_read_only`, but covering the 32-bit MSI capability
+        // layout.
+        let mut config = PciConfigSpace::new(0x1234, 0x5678);
+        config.add_capability(Box::new(MsiCapability::new_with_config(false, true)));
+        let cap_offset = config.find_capability(PCI_CAP_ID_MSI).unwrap() as u16;
+
+        // Enable MSI.
+        let ctrl = config.read(cap_offset + 0x02, 2) as u16;
+        assert_eq!(
+            ctrl & (1 << 7),
+            0,
+            "test requires 32-bit MSI capability layout"
+        );
+        config.write(cap_offset + 0x02, 2, u32::from(ctrl | 0x0001));
+
+        let per_vector_masking = (ctrl & (1 << 8)) != 0;
+        assert!(
+            per_vector_masking,
+            "test requires per-vector masking support"
+        );
+        let mask_off = cap_offset + 0x0c;
+        let pending_off = cap_offset + 0x10;
+
+        // Guest writes to Pending Bits must be ignored.
+        config.write(pending_off, 4, 1);
+        assert_eq!(
+            config.capability::<MsiCapability>().unwrap().pending_bits() & 1,
+            0
+        );
+
+        // Latch a pending bit via a masked trigger.
+        config.write(mask_off, 4, 1);
+        struct Sink;
+        impl MsiTrigger for Sink {
+            fn trigger_msi(&mut self, _message: MsiMessage) {}
+        }
+        {
+            // Program a valid MSI address to ensure the pending bit is latched due to masking (not
+            // because the address is invalid).
+            config.write(cap_offset + 0x04, 4, 0xfee0_0000);
+            config.write(cap_offset + 0x08, 2, 0x0045);
             let msi = config.capability_mut::<MsiCapability>().unwrap();
             assert!(!msi.trigger(&mut Sink));
         }
