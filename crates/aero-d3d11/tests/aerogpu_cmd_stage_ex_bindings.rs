@@ -6,15 +6,18 @@ use aero_d3d11::runtime::bindings::{BoundConstantBuffer, BoundSampler, BoundText
 use aero_gpu::guest_memory::VecGuestMemory;
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode, AerogpuCmdStreamHeader,
-    AerogpuShaderStage, AEROGPU_CMD_STREAM_MAGIC,
+    AerogpuSamplerAddressMode, AerogpuSamplerFilter, AerogpuShaderStage, AEROGPU_CMD_STREAM_MAGIC,
+    AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER, AEROGPU_RESOURCE_USAGE_TEXTURE,
 };
-use aero_protocol::aerogpu::aerogpu_pci::AEROGPU_ABI_VERSION_U32;
+use aero_protocol::aerogpu::aerogpu_pci::{AerogpuFormat, AEROGPU_ABI_VERSION_U32};
 
 const CMD_STREAM_SIZE_BYTES_OFFSET: usize = core::mem::offset_of!(AerogpuCmdStreamHeader, size_bytes);
 const CMD_HDR_SIZE_BYTES_OFFSET: usize = core::mem::offset_of!(ProtocolCmdHdr, size_bytes);
 
 // `stage_ex` values use DXBC program-type numbering (SM4/SM5 version token).
 const STAGE_EX_GEOMETRY: u32 = 2;
+const STAGE_EX_HULL: u32 = 3;
+const STAGE_EX_DOMAIN: u32 = 4;
 
 fn align4(len: usize) -> usize {
     (len + 3) & !3
@@ -75,6 +78,43 @@ fn push_bind_shaders(stream: &mut Vec<u8>, vs: u32, ps: u32, cs: u32, gs: u32) {
     stream.extend_from_slice(&ps.to_le_bytes());
     stream.extend_from_slice(&cs.to_le_bytes());
     stream.extend_from_slice(&gs.to_le_bytes());
+    end_cmd(stream, start);
+}
+
+fn push_create_texture2d(stream: &mut Vec<u8>, texture: u32) {
+    let start = begin_cmd(stream, AerogpuCmdOpcode::CreateTexture2d as u32);
+    stream.extend_from_slice(&texture.to_le_bytes());
+    stream.extend_from_slice(&AEROGPU_RESOURCE_USAGE_TEXTURE.to_le_bytes());
+    stream.extend_from_slice(&(AerogpuFormat::R8G8B8A8Unorm as u32).to_le_bytes());
+    stream.extend_from_slice(&1u32.to_le_bytes()); // width
+    stream.extend_from_slice(&1u32.to_le_bytes()); // height
+    stream.extend_from_slice(&1u32.to_le_bytes()); // mip_levels
+    stream.extend_from_slice(&1u32.to_le_bytes()); // array_layers
+    stream.extend_from_slice(&0u32.to_le_bytes()); // row_pitch_bytes
+    stream.extend_from_slice(&0u32.to_le_bytes()); // backing_alloc_id
+    stream.extend_from_slice(&0u32.to_le_bytes()); // backing_offset_bytes
+    stream.extend_from_slice(&0u64.to_le_bytes()); // reserved0
+    end_cmd(stream, start);
+}
+
+fn push_create_sampler(stream: &mut Vec<u8>, sampler: u32) {
+    let start = begin_cmd(stream, AerogpuCmdOpcode::CreateSampler as u32);
+    stream.extend_from_slice(&sampler.to_le_bytes());
+    stream.extend_from_slice(&(AerogpuSamplerFilter::Nearest as u32).to_le_bytes());
+    stream.extend_from_slice(&(AerogpuSamplerAddressMode::ClampToEdge as u32).to_le_bytes());
+    stream.extend_from_slice(&(AerogpuSamplerAddressMode::ClampToEdge as u32).to_le_bytes());
+    stream.extend_from_slice(&(AerogpuSamplerAddressMode::ClampToEdge as u32).to_le_bytes());
+    end_cmd(stream, start);
+}
+
+fn push_create_buffer(stream: &mut Vec<u8>, buffer: u32) {
+    let start = begin_cmd(stream, AerogpuCmdOpcode::CreateBuffer as u32);
+    stream.extend_from_slice(&buffer.to_le_bytes());
+    stream.extend_from_slice(&AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER.to_le_bytes());
+    stream.extend_from_slice(&64u64.to_le_bytes()); // size_bytes
+    stream.extend_from_slice(&0u32.to_le_bytes()); // backing_alloc_id
+    stream.extend_from_slice(&0u32.to_le_bytes()); // backing_offset_bytes
+    stream.extend_from_slice(&0u64.to_le_bytes()); // reserved0
     end_cmd(stream, start);
 }
 
@@ -154,6 +194,17 @@ fn aerogpu_cmd_stage_ex_bindings_route_to_correct_stage_bucket() {
         // Bind the GS via the extended BIND_SHADERS ABI (reserved0 carries GS handle).
         push_bind_shaders(&mut stream, 0, 0, 0, GS_SHADER);
 
+        // Create dummy resources for each binding table.
+        for texture in [301u32, 302, 303, 304, 306, 308] {
+            push_create_texture2d(&mut stream, texture);
+        }
+        for sampler in [201u32, 202, 203, 204, 206, 208] {
+            push_create_sampler(&mut stream, sampler);
+        }
+        for buffer in [101u32, 102, 103, 104, 106, 108] {
+            push_create_buffer(&mut stream, buffer);
+        }
+
         // VS/PS bindings (baseline routing should remain unchanged).
         push_set_constant_buffer(
             &mut stream,
@@ -199,11 +250,12 @@ fn aerogpu_cmd_stage_ex_bindings_route_to_correct_stage_bucket() {
             0,
         );
 
-        // CS bindings (reserved0==0 is the real compute stage).
+        // CS bindings (reserved0==0 is the real compute stage). Write slot 0 first; stage_ex writes
+        // must not clobber it.
         push_set_constant_buffer(
             &mut stream,
             AerogpuShaderStage::Compute as u32,
-            1,
+            0,
             103,
             0,
         );
@@ -226,7 +278,7 @@ fn aerogpu_cmd_stage_ex_bindings_route_to_correct_stage_bucket() {
         push_set_constant_buffer(
             &mut stream,
             AerogpuShaderStage::Compute as u32,
-            1,
+            0,
             104,
             STAGE_EX_GEOMETRY,
         );
@@ -245,26 +297,103 @@ fn aerogpu_cmd_stage_ex_bindings_route_to_correct_stage_bucket() {
             STAGE_EX_GEOMETRY,
         );
 
-        // Second CS update ensures CS/GS buckets remain distinct in both directions.
+        // HS/DS bindings also use shader_stage==COMPUTE + stage_ex.
         push_set_constant_buffer(
             &mut stream,
             AerogpuShaderStage::Compute as u32,
-            1,
-            105,
             0,
+            106,
+            STAGE_EX_HULL,
         );
         push_set_samplers(
             &mut stream,
             AerogpuShaderStage::Compute as u32,
             0,
-            205,
-            0,
+            206,
+            STAGE_EX_HULL,
         );
         push_set_texture(
             &mut stream,
             AerogpuShaderStage::Compute as u32,
             0,
-            305,
+            306,
+            STAGE_EX_HULL,
+        );
+
+        push_set_constant_buffer(
+            &mut stream,
+            AerogpuShaderStage::Compute as u32,
+            0,
+            108,
+            STAGE_EX_DOMAIN,
+        );
+        push_set_samplers(
+            &mut stream,
+            AerogpuShaderStage::Compute as u32,
+            0,
+            208,
+            STAGE_EX_DOMAIN,
+        );
+        push_set_texture(
+            &mut stream,
+            AerogpuShaderStage::Compute as u32,
+            0,
+            308,
+            STAGE_EX_DOMAIN,
+        );
+
+        // Second CS update writes slot 1 and must not clobber any stage_ex bindings written to
+        // slot 1.
+        for stage_ex in [STAGE_EX_GEOMETRY, STAGE_EX_HULL, STAGE_EX_DOMAIN] {
+            let (cb, samp, tex) = match stage_ex {
+                STAGE_EX_GEOMETRY => (104u32, 204u32, 304u32),
+                STAGE_EX_HULL => (106u32, 206u32, 306u32),
+                STAGE_EX_DOMAIN => (108u32, 208u32, 308u32),
+                _ => unreachable!(),
+            };
+
+            push_set_constant_buffer(
+                &mut stream,
+                AerogpuShaderStage::Compute as u32,
+                1,
+                cb,
+                stage_ex,
+            );
+            push_set_samplers(
+                &mut stream,
+                AerogpuShaderStage::Compute as u32,
+                1,
+                samp,
+                stage_ex,
+            );
+            push_set_texture(
+                &mut stream,
+                AerogpuShaderStage::Compute as u32,
+                1,
+                tex,
+                stage_ex,
+            );
+        }
+
+        push_set_constant_buffer(
+            &mut stream,
+            AerogpuShaderStage::Compute as u32,
+            1,
+            103,
+            0,
+        );
+        push_set_samplers(
+            &mut stream,
+            AerogpuShaderStage::Compute as u32,
+            1,
+            203,
+            0,
+        );
+        push_set_texture(
+            &mut stream,
+            AerogpuShaderStage::Compute as u32,
+            1,
+            303,
             0,
         );
 
@@ -324,18 +453,97 @@ fn aerogpu_cmd_stage_ex_bindings_route_to_correct_stage_bucket() {
             Some(BoundTexture { texture: 304 })
         );
 
-        // CS state must remain separate from stage_ex GS updates.
         assert_eq!(
-            bindings.stage(ShaderStage::Compute).constant_buffer(1),
-            expect_cb(105)
+            bindings.stage(ShaderStage::Hull).constant_buffer(0),
+            expect_cb(106)
+        );
+        assert_eq!(
+            bindings.stage(ShaderStage::Hull).sampler(0),
+            Some(BoundSampler { sampler: 206 })
+        );
+        assert_eq!(
+            bindings.stage(ShaderStage::Hull).texture(0),
+            Some(BoundTexture { texture: 306 })
+        );
+
+        assert_eq!(
+            bindings.stage(ShaderStage::Domain).constant_buffer(0),
+            expect_cb(108)
+        );
+        assert_eq!(
+            bindings.stage(ShaderStage::Domain).sampler(0),
+            Some(BoundSampler { sampler: 208 })
+        );
+        assert_eq!(
+            bindings.stage(ShaderStage::Domain).texture(0),
+            Some(BoundTexture { texture: 308 })
+        );
+
+        // CS state must remain separate from stage_ex GS/HS/DS updates.
+        assert_eq!(
+            bindings.stage(ShaderStage::Compute).constant_buffer(0),
+            expect_cb(103)
         );
         assert_eq!(
             bindings.stage(ShaderStage::Compute).sampler(0),
-            Some(BoundSampler { sampler: 205 })
+            Some(BoundSampler { sampler: 203 })
         );
         assert_eq!(
             bindings.stage(ShaderStage::Compute).texture(0),
-            Some(BoundTexture { texture: 305 })
+            Some(BoundTexture { texture: 303 })
+        );
+
+        // And CS writes must not clobber stage_ex bindings in the same slot number.
+        assert_eq!(
+            bindings.stage(ShaderStage::Geometry).constant_buffer(1),
+            expect_cb(104)
+        );
+        assert_eq!(
+            bindings.stage(ShaderStage::Geometry).sampler(1),
+            Some(BoundSampler { sampler: 204 })
+        );
+        assert_eq!(
+            bindings.stage(ShaderStage::Geometry).texture(1),
+            Some(BoundTexture { texture: 304 })
+        );
+
+        assert_eq!(
+            bindings.stage(ShaderStage::Hull).constant_buffer(1),
+            expect_cb(106)
+        );
+        assert_eq!(
+            bindings.stage(ShaderStage::Hull).sampler(1),
+            Some(BoundSampler { sampler: 206 })
+        );
+        assert_eq!(
+            bindings.stage(ShaderStage::Hull).texture(1),
+            Some(BoundTexture { texture: 306 })
+        );
+
+        assert_eq!(
+            bindings.stage(ShaderStage::Domain).constant_buffer(1),
+            expect_cb(108)
+        );
+        assert_eq!(
+            bindings.stage(ShaderStage::Domain).sampler(1),
+            Some(BoundSampler { sampler: 208 })
+        );
+        assert_eq!(
+            bindings.stage(ShaderStage::Domain).texture(1),
+            Some(BoundTexture { texture: 308 })
+        );
+
+        assert_eq!(
+            bindings.stage(ShaderStage::Compute).constant_buffer(1),
+            expect_cb(103)
+        );
+        assert_eq!(
+            bindings.stage(ShaderStage::Compute).sampler(1),
+            Some(BoundSampler { sampler: 203 })
+        );
+        assert_eq!(
+            bindings.stage(ShaderStage::Compute).texture(1),
+            Some(BoundTexture { texture: 303 })
         );
     });
 }
