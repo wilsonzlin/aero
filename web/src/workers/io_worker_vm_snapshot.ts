@@ -26,7 +26,6 @@ import {
 } from "./usb_snapshot_container";
 import {
   IO_WORKER_VRAM_SNAPSHOT_MAX_CHUNK_BYTES,
-  appendIoWorkerVramSnapshotDeviceBlobs,
   ioWorkerVramSnapshotChunkIndexFromDeviceId,
   ioWorkerVramSnapshotChunkIndexFromDeviceKind,
 } from "./io_worker_vram_snapshot";
@@ -168,13 +167,24 @@ function buildVramChunkPayload(vram: Uint8Array, chunkOffset: number, chunkLen: 
   return out;
 }
 
-function snapshotVramDeviceStates(vram: Uint8Array | null | undefined): IoWorkerSnapshotDeviceState[] {
+function snapshotVramDeviceStates(
+  vram: Uint8Array | null | undefined,
+  optsChunkBytes?: number,
+): IoWorkerSnapshotDeviceState[] {
   if (!vram) return [];
   if (vram.byteLength === 0) return [];
 
-  const maxChunkLen = AERO_SNAPSHOT_MAX_DEVICE_ENTRY_LEN - VRAM_CHUNK_HEADER_BYTES;
+  // Production snapshots use the maximum possible chunk size (64 MiB minus header), but tests can
+  // pass a smaller `optsChunkBytes` to exercise splitting without allocating huge buffers.
+  let maxChunkLen = AERO_SNAPSHOT_MAX_DEVICE_ENTRY_LEN - VRAM_CHUNK_HEADER_BYTES;
   if (maxChunkLen <= 0) {
     throw new Error("VRAM chunk header exceeds max device entry length");
+  }
+  if (typeof optsChunkBytes === "number" && Number.isFinite(optsChunkBytes)) {
+    const requested = Math.max(0, Math.trunc(optsChunkBytes)) >>> 0;
+    if (requested > 0) {
+      maxChunkLen = Math.min(maxChunkLen, requested);
+    }
   }
 
   const totalLen = vram.byteLength;
@@ -1091,18 +1101,21 @@ export async function saveIoWorkerVmSnapshotToOpfs(opts: {
   guestBase: number;
   guestSize: number;
   /**
-   * Optional BAR1 VRAM bytes (SharedArrayBuffer-backed). When present, VRAM is persisted inside the
-   * snapshot file as one or more reserved `device.<id>` blobs so WDDM scanout surfaces and AeroGPU
-   * allocations survive snapshot restore.
+   * Optional BAR1 VRAM bytes (SharedArrayBuffer-backed).
+   *
+   * When present, VRAM is persisted inside the snapshot file as one or more `gpu.vram`
+   * (`aero_snapshot::DeviceId::GPU_VRAM`) device blobs.
    *
    * NOTE: VRAM bytes are kept entirely inside the IO worker; they are not forwarded through the
    * coordinator.
    */
   vramU8?: Uint8Array | null;
   /**
-   * Test-only override for VRAM chunking; must be `<= 64 MiB`.
+   * Test-only override for the maximum data bytes per `gpu.vram` chunk.
    *
-   * Production snapshots always use 64 MiB chunks to satisfy `aero_snapshot::limits::MAX_DEVICE_ENTRY_LEN`.
+   * This allows unit tests to exercise chunking behavior without allocating 64MiB buffers.
+   * Production snapshots use the maximum possible chunk size permitted by
+   * `aero_snapshot::limits::MAX_DEVICE_ENTRY_LEN`.
    */
   vramChunkBytes?: number;
   runtimes: IoWorkerSnapshotRuntimes;
@@ -1120,8 +1133,8 @@ export async function saveIoWorkerVmSnapshotToOpfs(opts: {
   /**
    * Optional guest-visible GPU VRAM/BAR1 backing store.
    *
-   * When present, its contents are persisted into the snapshot file as one or more `gpu.vram`
-   * device blobs.
+   * When present (and `vramU8` is absent), its contents are persisted into the snapshot file as one
+   * or more `gpu.vram` device blobs.
    */
   vram?: Uint8Array | null;
 }): Promise<void> {
@@ -1137,12 +1150,9 @@ export async function saveIoWorkerVmSnapshotToOpfs(opts: {
 
   // Fresh device blobs produced by this IO worker.
   const freshDevices: IoWorkerSnapshotDeviceState[] = collectIoWorkerSnapshotDeviceStates(opts.runtimes);
-  // Avoid persisting VRAM twice when both the legacy `gpu.vram` path and the newer reserved-id VRAM
-  // path are wired up. Prefer the reserved-id format when `vramU8` is provided (IO worker BAR1
-  // mapping).
-  if (!(opts.vramU8 && opts.vramU8.byteLength)) {
-    freshDevices.push(...snapshotVramDeviceStates(opts.vram));
-  }
+  // Prefer BAR1 VRAM (`vramU8`) when available; otherwise fall back to the legacy `vram` buffer.
+  const vramForSnapshot = opts.vramU8 && opts.vramU8.byteLength ? opts.vramU8 : (opts.vram ?? null);
+  freshDevices.push(...snapshotVramDeviceStates(vramForSnapshot, opts.vramChunkBytes));
 
   // Merge in any coordinator-provided device blobs (e.g. CPU-owned device state like CPU_INTERNAL).
   // Treat these as "fresh" so they override any cached restored blobs of the same kind.
@@ -1154,12 +1164,6 @@ export async function saveIoWorkerVmSnapshotToOpfs(opts: {
       const kind = normalizeRestoredDeviceKind((dev as { kind: string }).kind);
       freshDevices.push({ kind, bytes: new Uint8Array((dev as { bytes: ArrayBuffer }).bytes) });
     }
-  }
-
-  // Persist BAR1 VRAM contents as opaque device blobs so GPU allocations and scanout surfaces
-  // survive snapshot restore.
-  if (opts.vramU8 && opts.vramU8.byteLength) {
-    appendIoWorkerVramSnapshotDeviceBlobs(freshDevices, opts.vramU8, { chunkBytes: opts.vramChunkBytes });
   }
 
   // USB snapshots are a special case: multiple controller snapshots (UHCI/EHCI/xHCI/...) are
@@ -1424,10 +1428,9 @@ export async function restoreIoWorkerVmSnapshotFromOpfs(opts: {
     if (e1000Bytes) restoreNetE1000DeviceState(opts.runtimes.netE1000, e1000Bytes);
     if (pciBytes) restorePciDeviceState(opts.runtimes.pciBus ?? null, pciBytes);
     if (stackBytes) restoreNetStackDeviceState(opts.runtimes.netStack, stackBytes, { tcpRestorePolicy: "drop" });
-    // Backwards compatibility: older snapshots stored VRAM in `gpu.vram` (DeviceId::GPU_VRAM).
-    // When using the reserved-id VRAM snapshot format (`vramU8`), prefer those chunks if present;
-    // otherwise, fall back to applying any `gpu.vram` chunks into `vramU8` so older snapshots still
-    // restore scanout surfaces.
+    // VRAM restore:
+    // - Prefer legacy reserved-id VRAM chunks (BAR1 `vramU8`) when present.
+    // - Otherwise apply `gpu.vram` (`DeviceId::GPU_VRAM`) chunks.
     if (!reservedVramApplied) {
       const legacyVram = opts.vram ?? null;
       if (legacyVram) {

@@ -265,8 +265,8 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
       },
     } as unknown as WasmApi;
 
-    const vram = new Uint8Array(new SharedArrayBuffer(16));
-    for (let i = 0; i < vram.length; i++) vram[i] = i & 0xff;
+    const vramU8 = new Uint8Array(new SharedArrayBuffer(16));
+    for (let i = 0; i < vramU8.length; i++) vramU8[i] = i & 0xff;
 
     await saveIoWorkerVmSnapshotToOpfs({
       api,
@@ -283,7 +283,7 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
         netE1000: null,
         netStack: null,
       },
-      vram,
+      vramU8,
     });
 
     expect(calls).toHaveLength(1);
@@ -307,7 +307,7 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
     expect(totalLen).toBe(16);
     expect(chunkOffset).toBe(0);
     expect(chunkLen).toBe(16);
-    expect(Array.from(bytes.subarray(24, 24 + 16))).toEqual(Array.from(vram));
+    expect(Array.from(bytes.subarray(24, 24 + 16))).toEqual(Array.from(vramU8));
   });
 
   it("applies gpu.vram blobs on restore and does not return them in res.devices", async () => {
@@ -350,8 +350,8 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
       return out;
     };
 
-    const vram = new Uint8Array(new SharedArrayBuffer(16));
-    vram.fill(0xcc);
+    const vramU8 = new Uint8Array(new SharedArrayBuffer(16));
+    vramU8.fill(0xcc);
 
     const data = new Uint8Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
     const vramBlob = makeVramChunk(data);
@@ -377,10 +377,10 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
         netE1000: null,
         netStack: null,
       },
-      vram,
+      vramU8,
     });
 
-    expect(Array.from(vram)).toEqual(Array.from(data));
+    expect(Array.from(vramU8)).toEqual(Array.from(data));
     expect(res.devices).toBeUndefined();
   });
 
@@ -459,8 +459,8 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
   });
 
   it("clears VRAM to 0 on restore when snapshot has no gpu.vram blobs", async () => {
-    const vram = new Uint8Array(new SharedArrayBuffer(8));
-    vram.fill(0xab);
+    const vramU8 = new Uint8Array(new SharedArrayBuffer(8));
+    vramU8.fill(0xab);
 
     const api = {
       vm_snapshot_restore_from_opfs: () => ({
@@ -483,50 +483,13 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
         netE1000: null,
         netStack: null,
       },
-      vram,
-    });
-
-    expect(Array.from(vram)).toEqual([0, 0, 0, 0, 0, 0, 0, 0]);
-  });
-
-  it("includes BAR1 VRAM as reserved device blobs on save when vramU8 is provided", async () => {
-    const calls: Array<{ devices: unknown }> = [];
-    const api = {
-      vm_snapshot_save_to_opfs: (_path: string, _cpu: Uint8Array, _mmu: Uint8Array, devices: unknown) => {
-        calls.push({ devices });
-      },
-    } as unknown as WasmApi;
-
-    const vramU8 = new Uint8Array(100);
-    for (let i = 0; i < vramU8.length; i++) vramU8[i] = (i * 3) & 0xff;
-
-    await saveIoWorkerVmSnapshotToOpfs({
-      api,
-      path: "state/test.snap",
-      cpu: new ArrayBuffer(4),
-      mmu: new ArrayBuffer(8),
-      guestBase: 0,
-      guestSize: 0x1000,
       vramU8,
-      runtimes: {
-        usbXhciControllerBridge: null,
-        usbUhciRuntime: null,
-        usbUhciControllerBridge: null,
-        usbEhciControllerBridge: null,
-        netE1000: null,
-        netStack: null,
-      },
     });
 
-    expect(calls).toHaveLength(1);
-    const devices = calls[0]!.devices as Array<{ kind: string; bytes: Uint8Array }>;
-    expect(devices.map((d) => d.kind)).toEqual([`device.${IO_WORKER_VRAM_SNAPSHOT_DEVICE_ID_BASE}`]);
-    expect(devices[0]!.bytes).toEqual(vramU8);
-    // VRAM chunks should be views into the original buffer, not copies.
-    expect(devices[0]!.bytes.buffer).toBe(vramU8.buffer);
+    expect(Array.from(vramU8)).toEqual([0, 0, 0, 0, 0, 0, 0, 0]);
   });
 
-  it("chunks VRAM into <=64MiB device blobs with ascending reserved IDs (test chunk size override)", async () => {
+  it("chunks gpu.vram into multiple device blobs on save when vramChunkBytes override is provided (test-only)", async () => {
     const calls: Array<{ devices: unknown }> = [];
     const api = {
       vm_snapshot_save_to_opfs: (_path: string, _cpu: Uint8Array, _mmu: Uint8Array, devices: unknown) => {
@@ -558,12 +521,35 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
     });
 
     const devices = calls[0]!.devices as Array<{ kind: string; bytes: Uint8Array }>;
-    expect(devices.map((d) => d.kind)).toEqual([
-      `device.${IO_WORKER_VRAM_SNAPSHOT_DEVICE_ID_BASE}`,
-      `device.${IO_WORKER_VRAM_SNAPSHOT_DEVICE_ID_BASE + 1}`,
-    ]);
-    expect(devices[0]!.bytes).toEqual(vramU8.subarray(0, 64));
-    expect(devices[1]!.bytes).toEqual(vramU8.subarray(64));
+    expect(devices.map((d) => d.kind)).toEqual([`device.${VM_SNAPSHOT_DEVICE_ID_GPU_VRAM}`, `device.${VM_SNAPSHOT_DEVICE_ID_GPU_VRAM}`]);
+
+    const readU16Le = (bytes: Uint8Array, off: number): number => (bytes[off]! | (bytes[off + 1]! << 8)) >>> 0;
+    const readU32Le = (bytes: Uint8Array, off: number): number =>
+      (bytes[off]! | (bytes[off + 1]! << 8) | (bytes[off + 2]! << 16) | (bytes[off + 3]! << 24)) >>> 0;
+
+    const parseChunk = (bytes: Uint8Array): { chunkIndex: number; totalLen: number; offset: number; len: number; data: Uint8Array } => {
+      expect(Array.from(bytes.subarray(0, 4))).toEqual([0x41, 0x45, 0x52, 0x4f]); // "AERO"
+      const version = readU16Le(bytes, 4);
+      expect(version).toBe(1);
+      const chunkIndex = readU16Le(bytes, 6);
+      const totalLen = readU32Le(bytes, 12);
+      const offset = readU32Le(bytes, 16);
+      const len = readU32Le(bytes, 20);
+      return { chunkIndex, totalLen, offset, len, data: bytes.subarray(24, 24 + len) };
+    };
+
+    const c0 = parseChunk(devices[0]!.bytes);
+    const c1 = parseChunk(devices[1]!.bytes);
+    expect(c0.totalLen).toBe(100);
+    expect(c1.totalLen).toBe(100);
+    expect(c0.chunkIndex).toBe(0);
+    expect(c1.chunkIndex).toBe(1);
+    expect(c0.offset).toBe(0);
+    expect(c0.len).toBe(64);
+    expect(c1.offset).toBe(64);
+    expect(c1.len).toBe(36);
+    expect(Array.from(c0.data)).toEqual(Array.from(vramU8.subarray(0, 64)));
+    expect(Array.from(c1.data)).toEqual(Array.from(vramU8.subarray(64)));
   });
 
   it("restores BAR1 VRAM blobs into vramU8 and does not forward them to the coordinator", async () => {
