@@ -595,6 +595,7 @@ pub struct MachineConfig {
     ///   inside the ACPI-reported PCI MMIO window, but is not exposed as a separate PCI function),
     /// - the direct MMIO mapping when [`MachineConfig::enable_pc_platform`] is `false`, and
     /// - the BIOS VBE mode info `PhysBasePtr` (so guests learn the correct LFB address).
+    ///
     /// When unset, defaults to [`aero_gpu_vga::SVGA_LFB_BASE`].
     ///
     /// Note: This is only used when the standalone legacy VGA/VBE path is active
@@ -9645,7 +9646,7 @@ impl Machine {
                 bios_post_with_extra_reservations(
                     pci_cfg.bus_mut(),
                     &mut allocator,
-                    legacy_vga_lfb_reservation.into_iter(),
+                    legacy_vga_lfb_reservation,
                 )
                 .expect("PCI BIOS POST resource assignment should succeed");
             }

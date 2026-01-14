@@ -487,7 +487,7 @@ fn aerogpu_submission_bridge_duplicate_fence_merges_no_irq_semantics() {
 
     // Submit desc in slot 0: NO_IRQ set.
     let desc0_gpa = ring_gpa + ring::AerogpuRingHeader::SIZE_BYTES as u64;
-    m.write_physical_u32(desc0_gpa + 0, ring::AerogpuSubmitDesc::SIZE_BYTES as u32); // desc_size_bytes
+    m.write_physical_u32(desc0_gpa, ring::AerogpuSubmitDesc::SIZE_BYTES as u32); // desc_size_bytes
     m.write_physical_u32(desc0_gpa + 4, ring::AEROGPU_SUBMIT_FLAG_NO_IRQ); // flags
     m.write_physical_u32(desc0_gpa + 8, 0); // context_id
     m.write_physical_u32(desc0_gpa + 12, ring::AEROGPU_ENGINE_0); // engine_id
@@ -502,7 +502,7 @@ fn aerogpu_submission_bridge_duplicate_fence_merges_no_irq_semantics() {
 
     // Submit desc in slot 1: wants IRQ, reuses the same fence value.
     let desc1_gpa = desc0_gpa + u64::from(entry_stride_bytes);
-    m.write_physical_u32(desc1_gpa + 0, ring::AerogpuSubmitDesc::SIZE_BYTES as u32); // desc_size_bytes
+    m.write_physical_u32(desc1_gpa, ring::AerogpuSubmitDesc::SIZE_BYTES as u32); // desc_size_bytes
     m.write_physical_u32(desc1_gpa + 4, 0); // flags
     m.write_physical_u32(desc1_gpa + 8, 0); // context_id
     m.write_physical_u32(desc1_gpa + 12, ring::AEROGPU_ENGINE_0); // engine_id
