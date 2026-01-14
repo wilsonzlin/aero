@@ -1128,6 +1128,7 @@ int main(int argc, char** argv) {
       "cursor_state_sanity",
       "modeset_roundtrip_sanity",
       "dump_createalloc_sanity",
+      "map_shared_handle_stress",
       "umd_private_sanity",
       "transfer_feature_sanity",
       "dbgctl_escape_security_sanity",
