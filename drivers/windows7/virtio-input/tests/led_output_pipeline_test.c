@@ -79,6 +79,21 @@ static void test_single_byte_buffer(void) {
   assert_events((uint8_t)leds, 1, 1, 1, 1, 1);
 }
 
+static void test_padding_bits_are_masked(void) {
+  /*
+   * HID boot keyboard LED output report defines 5 LED bits and 3 padding bits.
+   * Some callers set the padding bits anyway; we must ignore them.
+   */
+  const unsigned char buf[] = {0x01, 0xFF};
+  unsigned char leds = 0;
+
+  NTSTATUS status = virtio_input_parse_keyboard_led_output_report(0x01, buf, sizeof(buf), &leds);
+  assert(status == STATUS_SUCCESS);
+  assert(leds == 0x1F);
+
+  assert_events((uint8_t)leds, 1, 1, 1, 1, 1);
+}
+
 static void test_first_byte_not_report_id(void) {
   /*
    * When buffer[0] doesn't match report_id, parsing treats buffer[0] as the LED
@@ -97,6 +112,7 @@ static void test_first_byte_not_report_id(void) {
 int main(void) {
   test_prefixed_report_id_buffer();
   test_single_byte_buffer();
+  test_padding_bits_are_masked();
   test_first_byte_not_report_id();
   printf("led_output_pipeline_test: ok\n");
   return 0;

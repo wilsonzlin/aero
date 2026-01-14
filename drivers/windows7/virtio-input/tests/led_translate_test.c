@@ -62,6 +62,8 @@ static void test_bit_mapping(void) {
   assert_full_mask(0x08u, 0, 0, 0, 1, 0);
   assert_full_mask(0x10u, 0, 0, 0, 0, 1);
   assert_full_mask(0x1Fu, 1, 1, 1, 1, 1);
+  /* Padding bits in the HID output report byte should be ignored. */
+  assert_full_mask(0xFFu, 1, 1, 1, 1, 1);
 
   /*
    * Filtering: only required LEDs advertised (Num/Caps/Scroll) => only emit
