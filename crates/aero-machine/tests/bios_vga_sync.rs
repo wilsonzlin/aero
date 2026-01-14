@@ -1,4 +1,3 @@
-use aero_gpu_vga::VBE_FRAMEBUFFER_OFFSET;
 use aero_machine::{Machine, MachineConfig, RunExit};
 use firmware::bda::BDA_SCREEN_COLS_ADDR;
 use pretty_assertions::assert_eq;
@@ -250,17 +249,14 @@ fn bios_vbe_sync_mode_and_lfb_base() {
         assert_eq!(m.read_physical_u8(mode_info_addr + 37), 8); // ReservedMaskSize
         assert_eq!(m.read_physical_u8(mode_info_addr + 38), 24); // ReservedFieldPosition
 
-        let vga = m.vga().expect("pc platform should include VGA");
-        let lfb_base = vga.borrow().lfb_base();
-
         let phys_base_ptr = m.read_physical_u32(mode_info_addr + 40);
-        assert_eq!(phys_base_ptr, lfb_base);
+        assert_eq!(phys_base_ptr, m.vbe_lfb_base_u32());
 
         m.display_present();
         assert_eq!(m.display_resolution(), (w as u32, h as u32));
 
         // Write a single red pixel at (0,0) in packed 32bpp BGRX.
-        m.write_physical_u32(u64::from(lfb_base), 0x00FF_0000);
+        m.write_physical_u32(m.vbe_lfb_base(), 0x00FF_0000);
         m.display_present();
         let pixel0 = m.display_framebuffer()[0];
         assert_eq!(pixel0, 0xFF00_00FF);
@@ -324,13 +320,7 @@ fn bios_vbe_palette_sync_updates_vga_dac() {
     run_until_halt(&mut m);
 
     // Write palette index 1 to the first pixel in the 8bpp framebuffer.
-    let lfb_base = u64::from(
-        m.vga()
-            .expect("machine should include VGA")
-            .borrow()
-            .lfb_base(),
-    );
-    m.write_physical_u8(lfb_base, 1);
+    m.write_physical_u8(m.vbe_lfb_base(), 1);
 
     m.display_present();
     let pixel0 = m.display_framebuffer()[0];
@@ -362,12 +352,7 @@ fn bios_vbe_failed_mode_set_does_not_clear_existing_framebuffer() {
     // Pre-fill the first pixel in VRAM. The boot sector sets mode 0x118 with no-clear, then
     // attempts (and fails) to set an invalid VBE mode. The existing framebuffer contents must be
     // preserved across the failing INT 10h call.
-    let vga = m.vga().expect("pc platform should include VGA");
-    {
-        let mut vga = vga.borrow_mut();
-        vga.vram_mut()[VBE_FRAMEBUFFER_OFFSET..VBE_FRAMEBUFFER_OFFSET + 4]
-            .copy_from_slice(&0x00FF_0000u32.to_le_bytes());
-    }
+    m.write_physical_u32(m.vbe_lfb_base(), 0x00FF_0000);
 
     run_until_halt(&mut m);
 

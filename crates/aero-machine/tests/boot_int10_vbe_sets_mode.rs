@@ -77,8 +77,7 @@ fn assert_vbe_mode_set_and_lfb_visible(vbe_mode_with_flags: u16, expected_res: (
     assert_eq!(m.display_resolution(), expected_res);
 
     // Write a red pixel at (0,0) in VBE packed-pixel B,G,R,X format.
-    let vga = m.vga().expect("machine should have a VGA device");
-    let base = u64::from(vga.borrow().lfb_base());
+    let base = m.vbe_lfb_base();
     m.write_physical_u32(base, 0x00FF_0000);
 
     m.display_present();

@@ -9698,7 +9698,7 @@ impl Machine {
     fn sync_text_mode_cursor_bda_to_vga_crtc(&mut self) {
         if self.vga.is_none() && self.aerogpu.is_none() {
             return;
-        };
+        }
 
         // BIOS Data Area (BDA) cursor state is the canonical source of truth for text-mode cursor
         // position/shape in our HLE BIOS. The emulated VGA device renders the cursor overlay based
