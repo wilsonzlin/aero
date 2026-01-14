@@ -1199,10 +1199,15 @@ fn validate_virtio_input_device_desc_split(
     inf_text: &str,
     base_hwid: &str,
     expected_rev: u8,
+    require_fallback: bool,
 ) -> Result<()> {
-    // The in-tree virtio-input INF binds both keyboard and mouse PCI functions to the same
-    // install sections, but should use distinct DeviceDesc strings so the two functions
-    // appear with different names in Device Manager.
+    // virtio-input uses one driver/service for both the keyboard and mouse PCI functions.
+    // INFs should bind both functions to the same install sections, but use distinct
+    // DeviceDesc strings so they appear with different names in Device Manager.
+    //
+    // The canonical virtio-input INF is intentionally SUBSYS-only (keyboard + mouse) so it
+    // does not overlap with the tablet INF; the opt-in legacy alias INF is allowed to carry
+    // a strict (REV-qualified) generic fallback HWID.
     let strings = parse_inf_strings(inf_text);
     let rev = format!("{expected_rev:02X}");
     let kb_hwid = format!("{base_hwid}&SUBSYS_00101AF4&REV_{rev}");
@@ -1249,9 +1254,23 @@ fn validate_virtio_input_device_desc_split(
                 ms.iter().map(|e| e.raw_line.as_str()).collect::<Vec<_>>()
             );
         }
-        if fb_rev.len() != 1 {
+        if require_fallback {
+            if fb_rev.len() != 1 {
+                bail!(
+                    "virtio-input INF {}: expected exactly one generic fallback model entry in [{}] for HWID {} (found {}): {:?}",
+                    inf_path.display(),
+                    models_section,
+                    fb_hwid,
+                    fb_rev.len(),
+                    fb_rev
+                        .iter()
+                        .map(|e| e.raw_line.as_str())
+                        .collect::<Vec<_>>()
+                );
+            }
+        } else if !fb_rev.is_empty() {
             bail!(
-                "virtio-input INF {}: expected exactly one generic fallback model entry in [{}] for HWID {} (found {}): {:?}",
+                "virtio-input INF {}: must not contain a generic fallback model entry in [{}] for HWID {} (overlaps with tablet); found {}: {:?}",
                 inf_path.display(),
                 models_section,
                 fb_hwid,
@@ -1305,24 +1324,32 @@ fn validate_virtio_input_device_desc_split(
 
         let kb = kb[0];
         let ms = ms[0];
-        let fb = fb_rev[0];
 
-        if !kb.install_section.eq_ignore_ascii_case(&ms.install_section)
-            || !kb.install_section.eq_ignore_ascii_case(&fb.install_section)
-        {
+        if !kb.install_section.eq_ignore_ascii_case(&ms.install_section) {
             bail!(
-                "virtio-input INF {}: keyboard, mouse, and fallback model entries in [{}] must share the same install section.\nkeyboard: {}\nmouse:    {}\nfallback: {}",
+                "virtio-input INF {}: keyboard and mouse model entries in [{}] must share the same install section.\nkeyboard: {}\nmouse:    {}",
                 inf_path.display(),
                 models_section,
                 kb.raw_line,
                 ms.raw_line,
-                fb.raw_line,
             );
+        }
+        if require_fallback {
+            let fb = fb_rev[0];
+            if !kb.install_section.eq_ignore_ascii_case(&fb.install_section) {
+                bail!(
+                    "virtio-input INF {}: keyboard, mouse, and fallback model entries in [{}] must share the same install section.\nkeyboard: {}\nmouse:    {}\nfallback: {}",
+                    inf_path.display(),
+                    models_section,
+                    kb.raw_line,
+                    ms.raw_line,
+                    fb.raw_line,
+                );
+            }
         }
 
         let kb_desc = resolve_inf_device_desc(&kb.device_desc, &strings)?;
         let ms_desc = resolve_inf_device_desc(&ms.device_desc, &strings)?;
-        let fb_desc = resolve_inf_device_desc(&fb.device_desc, &strings)?;
 
         if kb_desc.eq_ignore_ascii_case(&ms_desc) {
             bail!(
@@ -1335,16 +1362,20 @@ fn validate_virtio_input_device_desc_split(
             );
         }
 
-        if fb_desc.eq_ignore_ascii_case(&kb_desc) || fb_desc.eq_ignore_ascii_case(&ms_desc) {
-            bail!(
-                "virtio-input INF {}: fallback model entry in [{}] must have a generic DeviceDesc string (must not equal keyboard/mouse; got {:?}).\nkeyboard: {}\nmouse:    {}\nfallback: {}",
-                inf_path.display(),
-                models_section,
-                fb_desc,
-                kb.raw_line,
-                ms.raw_line,
-                fb.raw_line,
-            );
+        if require_fallback {
+            let fb = fb_rev[0];
+            let fb_desc = resolve_inf_device_desc(&fb.device_desc, &strings)?;
+            if fb_desc.eq_ignore_ascii_case(&kb_desc) || fb_desc.eq_ignore_ascii_case(&ms_desc) {
+                bail!(
+                    "virtio-input INF {}: fallback model entry in [{}] must have a generic DeviceDesc string (must not equal keyboard/mouse; got {:?}).\nkeyboard: {}\nmouse:    {}\nfallback: {}",
+                    inf_path.display(),
+                    models_section,
+                    fb_desc,
+                    kb.raw_line,
+                    ms.raw_line,
+                    fb.raw_line,
+                );
+            }
         }
     }
 
@@ -1358,17 +1389,36 @@ mod virtio_input_device_desc_split_tests {
     const BASE_HWID: &str = r"PCI\VEN_1AF4&DEV_1052";
     const EXPECTED_REV: u8 = 0x01;
 
-    fn validate(inf_text: &str) -> Result<()> {
+    fn validate(inf_text: &str, require_fallback: bool) -> Result<()> {
         validate_virtio_input_device_desc_split(
             Path::new("aero_virtio_input.inf"),
             inf_text,
             BASE_HWID,
             EXPECTED_REV,
+            require_fallback,
         )
     }
 
     #[test]
-    fn virtio_input_device_desc_split_accepts_kb_mouse_with_fallback() {
+    fn virtio_input_device_desc_split_accepts_kb_mouse_without_fallback() {
+        let inf = r#"
+[Aero.NTx86]
+%AeroVirtioKeyboard.DeviceDesc% = AeroVirtioInput_Install.NTx86, PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01
+%AeroVirtioMouse.DeviceDesc%    = AeroVirtioInput_Install.NTx86, PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01
+
+[Aero.NTamd64]
+%AeroVirtioKeyboard.DeviceDesc% = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01
+%AeroVirtioMouse.DeviceDesc%    = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01
+
+[Strings]
+AeroVirtioKeyboard.DeviceDesc = "Aero VirtIO Keyboard"
+AeroVirtioMouse.DeviceDesc    = "Aero VirtIO Mouse"
+"#;
+        validate(inf, false).unwrap();
+    }
+
+    #[test]
+    fn virtio_input_device_desc_split_accepts_kb_mouse_with_fallback_when_required() {
         let inf = r#"
 [Aero.NTx86]
 %AeroVirtioKeyboard.DeviceDesc% = AeroVirtioInput_Install.NTx86, PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01
@@ -1385,11 +1435,34 @@ AeroVirtioKeyboard.DeviceDesc = "Aero VirtIO Keyboard"
 AeroVirtioMouse.DeviceDesc    = "Aero VirtIO Mouse"
 AeroVirtioInput.DeviceDesc    = "Aero VirtIO Input Device"
 "#;
-        validate(inf).unwrap();
+        validate(inf, true).unwrap();
     }
 
     #[test]
-    fn virtio_input_device_desc_split_rejects_missing_fallback_with_rev() {
+    fn virtio_input_device_desc_split_rejects_fallback_when_not_required() {
+        let inf = r#"
+[Aero.NTx86]
+%AeroVirtioKeyboard.DeviceDesc% = AeroVirtioInput_Install.NTx86, PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01
+%AeroVirtioMouse.DeviceDesc%    = AeroVirtioInput_Install.NTx86, PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01
+%AeroVirtioInput.DeviceDesc%    = AeroVirtioInput_Install.NTx86, PCI\VEN_1AF4&DEV_1052&REV_01
+
+[Aero.NTamd64]
+%AeroVirtioKeyboard.DeviceDesc% = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01
+%AeroVirtioMouse.DeviceDesc%    = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01
+%AeroVirtioInput.DeviceDesc%    = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&REV_01
+
+[Strings]
+AeroVirtioKeyboard.DeviceDesc = "Aero VirtIO Keyboard"
+AeroVirtioMouse.DeviceDesc    = "Aero VirtIO Mouse"
+AeroVirtioInput.DeviceDesc    = "Aero VirtIO Input Device"
+"#;
+        let err = validate(inf, false).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("must not contain a generic fallback model entry"));
+    }
+
+    #[test]
+    fn virtio_input_device_desc_split_requires_generic_fallback_with_rev_when_required() {
         let inf = r#"
 [Aero.NTx86]
 %AeroVirtioKeyboard.DeviceDesc% = AeroVirtioInput_Install.NTx86, PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01
@@ -1403,7 +1476,7 @@ AeroVirtioInput.DeviceDesc    = "Aero VirtIO Input Device"
 AeroVirtioKeyboard.DeviceDesc = "Aero VirtIO Keyboard"
 AeroVirtioMouse.DeviceDesc    = "Aero VirtIO Mouse"
 "#;
-        let err = validate(inf).unwrap_err();
+        let err = validate(inf, true).unwrap_err();
         let msg = format!("{err:#}");
         assert!(msg.contains("expected exactly one generic fallback model entry"));
     }
@@ -1424,11 +1497,11 @@ AeroVirtioMouse.DeviceDesc    = "Aero VirtIO Mouse"
 %AeroVirtioInput.DeviceDesc%    = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052
 
 [Strings]
-AeroVirtioKeyboard.DeviceDesc = "Aero VirtIO Keyboard"
-AeroVirtioMouse.DeviceDesc    = "Aero VirtIO Mouse"
-AeroVirtioInput.DeviceDesc    = "Aero VirtIO Input Device"
-"#;
-        let err = validate(inf).unwrap_err();
+ AeroVirtioKeyboard.DeviceDesc = "Aero VirtIO Keyboard"
+ AeroVirtioMouse.DeviceDesc    = "Aero VirtIO Mouse"
+ AeroVirtioInput.DeviceDesc    = "Aero VirtIO Input Device"
+ "#;
+        let err = validate(inf, true).unwrap_err();
         let msg = format!("{err:#}");
         assert!(msg.contains("revision-less generic fallback"));
     }
@@ -1447,10 +1520,10 @@ AeroVirtioInput.DeviceDesc    = "Aero VirtIO Input Device"
 %AeroVirtioKeyboard.DeviceDesc% = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&REV_01
 
 [Strings]
-AeroVirtioKeyboard.DeviceDesc = "Aero VirtIO Keyboard"
-AeroVirtioMouse.DeviceDesc    = "Aero VirtIO Mouse"
-"#;
-        let err = validate(inf).unwrap_err();
+ AeroVirtioKeyboard.DeviceDesc = "Aero VirtIO Keyboard"
+ AeroVirtioMouse.DeviceDesc    = "Aero VirtIO Mouse"
+ "#;
+        let err = validate(inf, true).unwrap_err();
         let msg = format!("{err:#}");
         assert!(msg.contains("fallback model entry"));
         assert!(msg.contains("generic DeviceDesc"));
@@ -1496,10 +1569,10 @@ AeroVirtioTablet.DeviceDesc   = "Aero VirtIO Tablet Device"
 %AeroVirtioInput.DeviceDesc%    = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&REV_01
 
 [Strings]
-AeroVirtioKeyboard.DeviceDesc = "Aero VirtIO Input"
-AeroVirtioInput.DeviceDesc    = "Aero VirtIO Input Device"
-"#;
-        let err = validate(inf).unwrap_err();
+ AeroVirtioKeyboard.DeviceDesc = "Aero VirtIO Input"
+ AeroVirtioInput.DeviceDesc    = "Aero VirtIO Input Device"
+ "#;
+        let err = validate(inf, true).unwrap_err();
         let msg = format!("{err:#}");
         assert!(msg.contains("must have distinct DeviceDesc strings"));
     }
@@ -1709,9 +1782,12 @@ fn validate_in_tree_infs(repo_root: &Path, devices: &BTreeMap<String, DeviceEntr
                     .with_context(|| format!("{name}: parse contract PCI revision for {base}"))?;
                 let strict = format!("{base}&REV_{expected_rev:02X}");
 
-                // Most in-tree virtio INFs include a less-specific `PCI\\VEN_...&DEV_...&REV_..` model
-                // entry to provide a stable fallback binding even if subsystem IDs vary.
-                if !active_hwids.iter().any(|h| h.eq_ignore_ascii_case(&strict)) {
+                // Most in-tree virtio INFs include a less-specific `PCI\\VEN_...&DEV_...&REV_..` model entry.
+                //
+                // virtio-input is intentionally SUBSYS-only (keyboard + mouse) so the canonical keyboard/mouse INF
+                // does not overlap with the tablet INF. The generic (no SUBSYS) fallback HWID is carried only by
+                // the opt-in legacy alias INF (`virtio-input.inf.disabled`).
+                if dev.device != "virtio-input" && !active_hwids.iter().any(|h| h.eq_ignore_ascii_case(&strict)) {
                     bail!(
                         "{name}: INF {} missing strict revision-gated HWID {strict}.\nActive HWIDs found in INF:\n{}",
                         inf_path.display(),
@@ -1749,8 +1825,41 @@ fn validate_in_tree_infs(repo_root: &Path, devices: &BTreeMap<String, DeviceEntr
                 }
 
                 if dev.device == "virtio-input" {
-                    validate_virtio_input_device_desc_split(inf_path, &inf_text, &base, expected_rev)
-                        .with_context(|| format!("{name}: validate virtio-input DeviceDesc split"))?;
+                    validate_virtio_input_device_desc_split(
+                        inf_path,
+                        &inf_text,
+                        &base,
+                        expected_rev,
+                        /* require_fallback */ false,
+                    )
+                    .with_context(|| format!("{name}: validate virtio-input canonical DeviceDesc split"))?;
+
+                    // Optional: validate the legacy alias INF (if present) which is allowed to carry
+                    // a strict generic fallback HWID for environments that don't expose subsystem IDs.
+                    let alias_candidates = [
+                        inf_path.with_file_name("virtio-input.inf"),
+                        inf_path.with_file_name("virtio-input.inf.disabled"),
+                    ];
+                    for alias in alias_candidates {
+                        if !alias.exists() {
+                            continue;
+                        }
+                        let alias_text = read_inf_text(&alias)
+                            .with_context(|| format!("{name}: read virtio-input legacy alias INF"))?;
+                        validate_virtio_input_device_desc_split(
+                            &alias,
+                            &alias_text,
+                            &base,
+                            expected_rev,
+                            /* require_fallback */ true,
+                        )
+                        .with_context(|| {
+                            format!(
+                                "{name}: validate virtio-input legacy alias DeviceDesc split: {}",
+                                alias.display()
+                            )
+                        })?;
+                    }
                 }
             }
 

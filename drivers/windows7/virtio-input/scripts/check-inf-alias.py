@@ -40,8 +40,7 @@ def _normalized_inf_lines_without_sections(path: Path, *, drop_sections: set[str
     current_section: str | None = None
     dropping = False
 
-    text = path.read_text(encoding="utf-8", errors="replace")
-    for raw in text.splitlines():
+    for raw in path.read_text(encoding="utf-8", errors="replace").splitlines():
         line = raw.strip()
         if not line:
             continue
