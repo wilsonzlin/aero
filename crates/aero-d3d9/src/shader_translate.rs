@@ -163,7 +163,10 @@ pub fn translate_d3d9_shader_to_wgsl(
         .map_err(ShaderTranslateError::Malformed)?;
 
     match try_translate_sm3(token_stream.as_ref(), options) {
-        Ok(ok) => Ok(ok),
+        Ok(ok) => {
+            validate_sampler_texture_types(&ok.sampler_texture_types)?;
+            Ok(ok)
+        }
         Err(err) => {
             if !err.is_fallbackable() {
                 return Err(ShaderTranslateError::Malformed(err.to_string()));
@@ -192,7 +195,7 @@ pub fn translate_d3d9_shader_to_wgsl(
                 sampler_texture_types,
                 ..
             } = ir;
-            Ok(ShaderTranslation {
+            let out = ShaderTranslation {
                 backend: ShaderTranslateBackend::LegacyFallback,
                 version: program.version,
                 wgsl: wgsl.wgsl,
@@ -202,7 +205,9 @@ pub fn translate_d3d9_shader_to_wgsl(
                 used_samplers,
                 sampler_texture_types,
                 fallback_reason: Some(err.to_string()),
-            })
+            };
+            validate_sampler_texture_types(&out.sampler_texture_types)?;
+            Ok(out)
         }
     }
 }
@@ -411,7 +416,19 @@ fn normalize_sm2_sm3_instruction_lengths<'a>(
     }
     Ok(Cow::Owned(out))
 }
-
+fn validate_sampler_texture_types(
+    sampler_texture_types: &HashMap<u16, TextureType>,
+) -> Result<(), ShaderTranslateError> {
+    for (sampler, ty) in sampler_texture_types {
+        if matches!(ty, TextureType::Texture2D | TextureType::TextureCube) {
+            continue;
+        }
+        return Err(ShaderTranslateError::Translation(format!(
+            "unsupported sampler texture type {ty:?} for s{sampler} (aero currently only supports 2D and cube textures)"
+        )));
+    }
+    Ok(())
+}
 #[derive(Debug)]
 enum Sm3TranslateFailure {
     Decode(sm3::decode::DecodeError),

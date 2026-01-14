@@ -4384,11 +4384,7 @@ mod tests {
     fn shared_executor_bc_off() -> Option<&'static Mutex<AeroGpuExecutor>> {
         static EXEC: OnceLock<Option<&'static Mutex<AeroGpuExecutor>>> = OnceLock::new();
         EXEC.get_or_init(|| {
-            let Some((device, queue)) =
-                pollster::block_on(create_device_queue(wgpu::Features::empty()))
-            else {
-                return None;
-            };
+            let (device, queue) = pollster::block_on(create_device_queue(wgpu::Features::empty()))?;
             let exec = AeroGpuExecutor::new(device, queue).expect("executor init must succeed");
             Some(Box::leak(Box::new(Mutex::new(exec))))
         })
@@ -4399,11 +4395,9 @@ mod tests {
     fn shared_executor_bc_on() -> Option<&'static Mutex<AeroGpuExecutor>> {
         static EXEC: OnceLock<Option<&'static Mutex<AeroGpuExecutor>>> = OnceLock::new();
         EXEC.get_or_init(|| {
-            let Some((device, queue)) =
-                pollster::block_on(create_device_queue(wgpu::Features::TEXTURE_COMPRESSION_BC))
-            else {
-                return None;
-            };
+            let (device, queue) = pollster::block_on(create_device_queue(
+                wgpu::Features::TEXTURE_COMPRESSION_BC,
+            ))?;
             let exec = AeroGpuExecutor::new(device, queue).expect("executor init must succeed");
             Some(Box::leak(Box::new(Mutex::new(exec))))
         })

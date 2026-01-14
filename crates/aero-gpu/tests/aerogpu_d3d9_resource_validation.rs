@@ -47,8 +47,9 @@ fn assemble_vs_passthrough_pos() -> Vec<u8> {
 fn assemble_ps3_dcl_cube_s0() -> Vec<u8> {
     // ps_3_0 with a `dcl_cube s0` declaration.
     let mut words = vec![0xFFFF_0300];
-    let dcl_token = 0x001Fu32 | (2u32 << 24) | (3u32 << 16); // texture type = cube
-    words.extend([dcl_token, enc_dst(10, 0, 0xF)]);
+    // DCL opcode=0x001F, texture type is encoded in opcode token bits 16..20; 3=cube
+    words.push(0x001F | (2u32 << 24) | (3u32 << 16));
+    words.push(enc_dst(10, 0, 0xF));
     words.push(0x0000_FFFF);
     to_bytes(&words)
 }
@@ -56,8 +57,9 @@ fn assemble_ps3_dcl_cube_s0() -> Vec<u8> {
 fn assemble_ps3_dcl_volume_s0() -> Vec<u8> {
     // ps_3_0 with a `dcl_volume s0` (3D texture) declaration.
     let mut words = vec![0xFFFF_0300];
-    let dcl_token = 0x001Fu32 | (2u32 << 24) | (4u32 << 16); // texture type = volume (3D)
-    words.extend([dcl_token, enc_dst(10, 0, 0xF)]);
+    // DCL opcode=0x001F, texture type is encoded in opcode token bits 16..20; 4=volume (3D)
+    words.push(0x001F | (2u32 << 24) | (4u32 << 16));
+    words.push(enc_dst(10, 0, 0xF));
     words.push(0x0000_FFFF);
     to_bytes(&words)
 }

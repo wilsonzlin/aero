@@ -1144,7 +1144,7 @@ mod tests {
 
         let pair = DEVICE_QUEUE
             .get_or_init(|| {
-                let Some((device, queue)) = pollster::block_on(async {
+                let (device, queue) = pollster::block_on(async {
                     #[cfg(unix)]
                     {
                         use std::os::unix::fs::PermissionsExt;
@@ -1211,9 +1211,7 @@ mod tests {
                         )
                         .await
                         .ok()
-                }) else {
-                    return None;
-                };
+                })?;
 
                 Some(Box::leak(Box::new((device, queue))))
             })
