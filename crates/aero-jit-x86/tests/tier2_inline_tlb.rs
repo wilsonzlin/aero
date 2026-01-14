@@ -1579,3 +1579,110 @@ fn tier2_inline_tlb_high_ram_remap_store_uses_contiguous_ram_offset() {
     assert_eq!(host.slow_mem_reads, 0);
     assert_eq!(host.slow_mem_writes, 0);
 }
+
+#[test]
+fn tier2_inline_tlb_high_ram_remap_store_bumps_physical_code_page_version() {
+    // Ensure self-modifying code invalidation (code-version bump) uses the physical page number
+    // (4GiB >> 12) and does not accidentally use the Q35 remapped offset page number
+    // (0xB000_0000 >> 12).
+    const HIGH_RAM_BASE: u64 = 0x1_0000_0000;
+    let desired_offset: usize = 0x10000;
+    let ram_base: u64 = 0x5000_0000 + desired_offset as u64;
+
+    // Allocate a version table large enough to include the 4GiB physical page number.
+    let phys_page: u64 = HIGH_RAM_BASE >> PAGE_SHIFT;
+    let table_len: u32 = (phys_page as u32) + 1;
+    let table_ptr: usize = 0x20000;
+    let table_bytes = usize::try_from(table_len).unwrap().checked_mul(4).unwrap();
+
+    let trace = TraceIr {
+        prologue: Vec::new(),
+        body: vec![Instr::StoreMem {
+            addr: Operand::Const(HIGH_RAM_BASE),
+            src: Operand::Const(0xab),
+            width: Width::W8,
+        }],
+        kind: TraceKind::Linear,
+    };
+
+    let plan = RegAllocPlan::default();
+    let wasm = Tier2WasmCodegen::new().compile_trace_with_options(
+        &trace,
+        &plan,
+        Tier2WasmOptions {
+            inline_tlb: true,
+            code_version_guard_import: true,
+            ..Default::default()
+        },
+    );
+    validate_wasm(&wasm);
+
+    let ram_len = table_ptr + table_bytes + 0x1000;
+    let ram = vec![0u8; ram_len];
+
+    let cpu_ptr = ram.len() as u64;
+    let cpu_ptr_usize = cpu_ptr as usize;
+    let jit_ctx_ptr_usize = cpu_ptr_usize + (abi::CPU_STATE_SIZE as usize);
+    let total_len =
+        jit_ctx_ptr_usize + JitContext::TOTAL_BYTE_SIZE + (jit_ctx::TIER2_CTX_SIZE as usize);
+    let mut mem = vec![0u8; total_len];
+
+    // RAM backing store at offset 0.
+    mem[..ram.len()].copy_from_slice(&ram);
+
+    // Configure the code-version table (stored in the Tier-2 ctx region relative to `cpu_ptr`).
+    write_u32_le(
+        &mut mem,
+        cpu_ptr_usize + jit_ctx::CODE_VERSION_TABLE_PTR_OFFSET as usize,
+        table_ptr as u32,
+    );
+    write_u32_le(
+        &mut mem,
+        cpu_ptr_usize + jit_ctx::CODE_VERSION_TABLE_LEN_OFFSET as usize,
+        table_len,
+    );
+
+    // CPU state at `cpu_ptr`, JIT context immediately following.
+    write_cpu_rip(&mut mem, cpu_ptr_usize, 0x1000);
+    write_cpu_rflags(&mut mem, cpu_ptr_usize, 0x2);
+
+    let ctx = JitContext {
+        ram_base,
+        tlb_salt: 0x1234_5678_9abc_def0,
+    };
+    ctx.write_header_to_mem(&mut mem, jit_ctx_ptr_usize);
+
+    let pages = total_len.div_ceil(65_536) as u32;
+    // Make `mmu_translate` classify the 4GiB address as RAM so the inline-TLB store fast-path is taken.
+    let ram_size = HIGH_RAM_BASE + 0x1000;
+    let (mut store, memory, func) = instantiate(&wasm, pages, ram_size);
+    memory.write(&mut store, 0, &mem).unwrap();
+
+    let _ret = func
+        .call(&mut store, (cpu_ptr as i32, jit_ctx_ptr_usize as i32))
+        .unwrap();
+
+    let mut got_mem = vec![0u8; total_len];
+    memory.read(&store, 0, &mut got_mem).unwrap();
+
+    let got_ram = &got_mem[..ram.len()];
+
+    // Store should target the remapped contiguous RAM backing store.
+    assert_eq!(got_ram[desired_offset], 0xab);
+
+    // Bump should target the physical page index (4GiB >> 12).
+    let phys_off = table_ptr + (phys_page as usize) * 4;
+    let phys_val = u32::from_le_bytes(got_ram[phys_off..phys_off + 4].try_into().unwrap());
+    assert_eq!(phys_val, 1);
+
+    // And should *not* use the Q35 remapped offset page index (LOW_RAM_END >> 12).
+    let remap_page: u64 = aero_pc_constants::PCIE_ECAM_BASE >> PAGE_SHIFT;
+    let remap_off = table_ptr + (remap_page as usize) * 4;
+    let remap_val = u32::from_le_bytes(got_ram[remap_off..remap_off + 4].try_into().unwrap());
+    assert_eq!(remap_val, 0);
+
+    let host = *store.data();
+    assert_eq!(host.mmu_translate_calls, 1);
+    assert_eq!(host.slow_mem_reads, 0);
+    assert_eq!(host.slow_mem_writes, 0);
+}
