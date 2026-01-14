@@ -4275,7 +4275,7 @@ fn coalesce_ranges(ranges: &mut Vec<Range<u64>>) {
     ranges.truncate(out_len);
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 fn coalesce_ranges_u32(ranges: &mut Vec<Range<u32>>) {
     ranges.sort_unstable_by_key(|r| r.start);
 
