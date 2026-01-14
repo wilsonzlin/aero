@@ -1,6 +1,6 @@
 // IA vertex pulling helper library.
 //
-// Binding scheme (group 0):
+// Binding scheme (group 2):
 // - binding 0: uniform IaMeta (per-slot base offset + stride)
 // - binding 1..8: IA vertex buffers (storage, read) in compacted slot order (max 8)
 //
@@ -18,16 +18,16 @@ struct ByteAddressBuffer {
   data: array<u32>,
 };
 
-@group(0) @binding(0) var<uniform> ia_meta: IaMeta;
+@group(2) @binding(0) var<uniform> ia_meta: IaMeta;
 
-@group(0) @binding(1) var<storage, read> ia_vb0: ByteAddressBuffer;
-@group(0) @binding(2) var<storage, read> ia_vb1: ByteAddressBuffer;
-@group(0) @binding(3) var<storage, read> ia_vb2: ByteAddressBuffer;
-@group(0) @binding(4) var<storage, read> ia_vb3: ByteAddressBuffer;
-@group(0) @binding(5) var<storage, read> ia_vb4: ByteAddressBuffer;
-@group(0) @binding(6) var<storage, read> ia_vb5: ByteAddressBuffer;
-@group(0) @binding(7) var<storage, read> ia_vb6: ByteAddressBuffer;
-@group(0) @binding(8) var<storage, read> ia_vb7: ByteAddressBuffer;
+@group(2) @binding(1) var<storage, read> ia_vb0: ByteAddressBuffer;
+@group(2) @binding(2) var<storage, read> ia_vb1: ByteAddressBuffer;
+@group(2) @binding(3) var<storage, read> ia_vb2: ByteAddressBuffer;
+@group(2) @binding(4) var<storage, read> ia_vb3: ByteAddressBuffer;
+@group(2) @binding(5) var<storage, read> ia_vb4: ByteAddressBuffer;
+@group(2) @binding(6) var<storage, read> ia_vb5: ByteAddressBuffer;
+@group(2) @binding(7) var<storage, read> ia_vb6: ByteAddressBuffer;
+@group(2) @binding(8) var<storage, read> ia_vb7: ByteAddressBuffer;
 
 fn ia_bab_load_u32(buf: ptr<storage, ByteAddressBuffer, read>, byte_addr: u32) -> u32 {
   // D3D11 input element offsets are 4-byte aligned; vertex pulling assumes the caller provides a
@@ -95,4 +95,3 @@ fn ia_load_r8g8b8a8_unorm(slot: u32, vertex_index: u32, element_offset_bytes: u3
   let a = f32((packed >> 24u) & 0xffu) / 255.0;
   return vec4<f32>(r, g, b, a);
 }
-

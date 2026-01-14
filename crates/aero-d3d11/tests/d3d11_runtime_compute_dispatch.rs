@@ -120,7 +120,7 @@ fn d3d11_runtime_ia_buffers_are_bindable_as_storage_for_vertex_pulling() {
         let size = 16u64;
 
         let wgsl = r#"
-@group(0) @binding(0)
+@group(2) @binding(0)
 var<storage, read> buf: array<u32>;
 
 @compute @workgroup_size(1)

@@ -5,8 +5,8 @@
 //! vertex attributes directly out of the D3D11 IA buffers using "vertex pulling".
 //!
 //! The corresponding WGSL (`vertex_pulling.wgsl`) defines:
-//! - `@group(0) @binding(0)` = uniform metadata (`IaMeta`)
-//! - `@group(0) @binding(1..=8)` = up to 8 IA vertex buffers as `var<storage, read>`
+//! - `@group(2) @binding(0)` = uniform metadata (`IaMeta`)
+//! - `@group(2) @binding(1..=8)` = up to 8 IA vertex buffers as `var<storage, read>`
 //!
 //! The metadata encodes per-slot base offset + stride in bytes.
 

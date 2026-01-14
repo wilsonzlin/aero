@@ -91,7 +91,7 @@ struct OutBuf {{
   data: array<vec4<f32>>,
 }};
 
-@group(0) @binding({out_binding}) var<storage, read_write> out_buf: OutBuf;
+@group(2) @binding({out_binding}) var<storage, read_write> out_buf: OutBuf;
 
 @compute @workgroup_size(1)
 fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {{
