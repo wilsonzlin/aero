@@ -1233,10 +1233,13 @@ pub fn generate_wgsl_with_options(
     //
     // Pack each register file into a stable per-type uniform buffer:
     // - binding(0): float4 constants (`c#`)
+    // - binding(1): int4 constants (`i#`)
     // - binding(2): bool constants (`b#`, represented as `vec4<u32>` per register)
     wgsl.push_str("struct Constants { c: array<vec4<f32>, 512>, };\n");
+    wgsl.push_str("struct ConstantsI { i: array<vec4<i32>, 512>, };\n");
     wgsl.push_str("struct ConstantsB { b: array<vec4<u32>, 512>, };\n");
     wgsl.push_str("@group(0) @binding(0) var<uniform> constants: Constants;\n");
+    wgsl.push_str("@group(0) @binding(1) var<uniform> constants_i: ConstantsI;\n");
     wgsl.push_str("@group(0) @binding(2) var<uniform> constants_b: ConstantsB;\n\n");
 
     let sampler_group = match ir.version.stage {

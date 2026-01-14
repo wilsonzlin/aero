@@ -571,6 +571,8 @@ fn validate_wgsl_binding_contract(
     half_pixel_center: bool,
 ) -> Result<(), String> {
     let mut has_constants = false;
+    let mut has_constants_i = false;
+    let mut has_constants_b = false;
     let mut has_half_pixel = false;
     let sampler_group_expected = match stage {
         shader::ShaderStage::Vertex => 1u32,
@@ -581,7 +583,7 @@ fn validate_wgsl_binding_contract(
     let mut samp_slots = HashSet::<u32>::new();
 
     for line in wgsl.lines() {
-        if line.contains("var<uniform> constants") {
+        if line.contains("var<uniform> constants:") {
             let group = parse_wgsl_attr_u32(line, "group")
                 .ok_or_else(|| "constants uniform is missing @group()".to_string())?;
             let binding = parse_wgsl_attr_u32(line, "binding")
@@ -592,6 +594,34 @@ fn validate_wgsl_binding_contract(
                 ));
             }
             has_constants = true;
+            continue;
+        }
+
+        if line.contains("var<uniform> constants_i:") {
+            let group = parse_wgsl_attr_u32(line, "group")
+                .ok_or_else(|| "constants_i uniform is missing @group()".to_string())?;
+            let binding = parse_wgsl_attr_u32(line, "binding")
+                .ok_or_else(|| "constants_i uniform is missing @binding()".to_string())?;
+            if group != 0 || binding != 1 {
+                return Err(format!(
+                    "constants_i uniform has unexpected binding (@group({group}) @binding({binding})); expected @group(0) @binding(1)"
+                ));
+            }
+            has_constants_i = true;
+            continue;
+        }
+
+        if line.contains("var<uniform> constants_b:") {
+            let group = parse_wgsl_attr_u32(line, "group")
+                .ok_or_else(|| "constants_b uniform is missing @group()".to_string())?;
+            let binding = parse_wgsl_attr_u32(line, "binding")
+                .ok_or_else(|| "constants_b uniform is missing @binding()".to_string())?;
+            if group != 0 || binding != 2 {
+                return Err(format!(
+                    "constants_b uniform has unexpected binding (@group({group}) @binding({binding})); expected @group(0) @binding(2)"
+                ));
+            }
+            has_constants_b = true;
             continue;
         }
 
@@ -706,6 +736,12 @@ fn validate_wgsl_binding_contract(
 
     if !has_constants {
         return Err("WGSL is missing the expected constants uniform binding".into());
+    }
+    if !has_constants_i {
+        return Err("WGSL is missing the expected constants_i uniform binding".into());
+    }
+    if !has_constants_b {
+        return Err("WGSL is missing the expected constants_b uniform binding".into());
     }
     if stage == shader::ShaderStage::Vertex && half_pixel_center && !has_half_pixel {
         return Err(
