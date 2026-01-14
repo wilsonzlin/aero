@@ -87,6 +87,12 @@ impl ApicSystem {
 
 impl MsiTrigger for ApicSystem {
     fn trigger_msi(&mut self, message: MsiMessage) {
+        // Keep `ApicSystem` consistent with `PlatformInterrupts`: this platform only models
+        // xAPIC-style MSI delivery (writes to the LAPIC window). Drop anything else to avoid
+        // spuriously injecting interrupts in tests that use `ApicSystem` as a simple MSI sink.
+        if !message.is_xapic_address() {
+            return;
+        }
         let vector = message.vector();
         self.lapic0_mut().inject_fixed_interrupt(vector);
     }
@@ -200,6 +206,24 @@ mod tests {
             data: 0x0044,
         });
         assert_eq!(sys.lapic0().get_pending_vector(), Some(0x44));
+    }
+
+    #[test]
+    fn apic_system_drops_non_apic_addresses() {
+        let mut sys = ApicSystem::new_single_cpu();
+
+        sys.trigger_msi(MsiMessage {
+            address: 0,
+            data: 0x0044,
+        });
+        assert_eq!(sys.lapic0().get_pending_vector(), None);
+
+        // High dword set is also invalid in our xAPIC-only MSI model.
+        sys.trigger_msi(MsiMessage {
+            address: 0x1_0000_0000 | 0xFEE0_0000,
+            data: 0x0045,
+        });
+        assert_eq!(sys.lapic0().get_pending_vector(), None);
     }
 
     // NOTE: `PlatformInterrupts` implements xAPIC "physical destination" MSI decoding.
