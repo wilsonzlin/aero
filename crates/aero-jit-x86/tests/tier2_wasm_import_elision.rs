@@ -186,6 +186,61 @@ fn tier2_inline_tlb_cross_page_only_trace_with_value_const_elides_mmu_translate_
 }
 
 #[test]
+fn tier2_inline_tlb_cross_page_only_trace_with_addr_const_elides_mmu_translate_import() {
+    // Same as the `Value(Const)` variant, but ensure we also propagate constant addresses through
+    // `Instr::Addr`.
+    let trace = TraceIr {
+        prologue: Vec::new(),
+        body: vec![
+            Instr::Const {
+                dst: ValueId(0),
+                value: aero_jit_x86::PAGE_SIZE,
+            },
+            Instr::Const {
+                dst: ValueId(1),
+                value: 0,
+            },
+            Instr::Addr {
+                dst: ValueId(2),
+                base: Operand::Value(ValueId(0)),
+                index: Operand::Value(ValueId(1)),
+                scale: 1,
+                disp: -2,
+            },
+            Instr::LoadMem {
+                dst: ValueId(3),
+                addr: Operand::Value(ValueId(2)),
+                width: Width::W32,
+            },
+        ],
+        kind: TraceKind::Linear,
+    };
+    let plan = RegAllocPlan::default();
+    let wasm = Tier2WasmCodegen::new().compile_trace_with_options(
+        &trace,
+        &plan,
+        Tier2WasmOptions {
+            inline_tlb: true,
+            ..Default::default()
+        },
+    );
+    let imports = import_names(&wasm);
+
+    assert!(
+        imports
+            .iter()
+            .any(|(module, name)| module == IMPORT_MODULE && name == IMPORT_MEM_READ_U32),
+        "expected env.mem_read_u32 import for cross-page load, got {imports:?}"
+    );
+    assert!(
+        !imports
+            .iter()
+            .any(|(module, name)| module == IMPORT_MODULE && name == IMPORT_MMU_TRANSLATE),
+        "expected Addr-constant cross-page-only trace to not import env.mmu_translate, got {imports:?}"
+    );
+}
+
+#[test]
 fn tier2_inline_tlb_cross_page_only_store_elides_mmu_translate_import() {
     let trace = TraceIr {
         prologue: Vec::new(),
