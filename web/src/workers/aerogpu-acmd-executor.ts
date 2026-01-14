@@ -1033,7 +1033,6 @@ export const executeAerogpuCmdStream = (
             state.buffers.delete(shared.underlying);
             if (state.currentRenderTarget === shared.underlying) state.currentRenderTarget = null;
           }
-          if (state.currentRenderTarget === handle) state.currentRenderTarget = null;
           break;
         }
 

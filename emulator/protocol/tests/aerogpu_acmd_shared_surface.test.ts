@@ -218,3 +218,29 @@ test("ACMD shared surface IMPORT into destroyed original handle is an error", ()
     /IMPORT_SHARED_SURFACE.*still in use/i,
   );
 });
+
+test("ACMD destroying original handle does not unbind current render target when alias is alive", () => {
+  const state = createAerogpuCpuExecutorState();
+
+  const token = 0xD00D_F00Dn;
+  const upload = Uint8Array.from([
+    // 2x2 RGBA8
+    101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116,
+  ]);
+
+  const w = new AerogpuCmdWriter();
+  w.createTexture2d(1, 0, AerogpuFormat.R8G8B8A8Unorm, 2, 2, 1, 1, 0, 0, 0);
+  w.exportSharedSurface(1, token);
+  w.importSharedSurface(10, token);
+  w.uploadResource(10, 0n, upload);
+  w.setRenderTargets([10], 0);
+  // Destroy the original handle after binding the alias as the render target. The alias should
+  // keep the underlying alive, and the current render target should remain valid.
+  w.destroyResource(1);
+  w.present(0, 0);
+
+  executeAerogpuCmdStream(state, w.finish().buffer, { allocTable: null, guestU8: null });
+
+  assert(state.lastPresentedFrame, "expected a present to populate lastPresentedFrame");
+  assert.deepEqual(Array.from(new Uint8Array(state.lastPresentedFrame.rgba8)), Array.from(upload));
+});
