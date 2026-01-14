@@ -384,3 +384,125 @@ impl fmt::Display for ShaderStage {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn srv_texture_and_buffer_are_mutually_exclusive() {
+        let mut stage = StageBindings::default();
+
+        stage.set_srv_buffer(
+            0,
+            Some(BoundBuffer {
+                buffer: 1,
+                offset: 4,
+                size: Some(16),
+            }),
+        );
+        assert!(stage.is_dirty());
+        assert!(stage.texture(0).is_none());
+        assert_eq!(
+            stage.srv_buffer(0),
+            Some(BoundBuffer {
+                buffer: 1,
+                offset: 4,
+                size: Some(16)
+            })
+        );
+
+        stage.clear_dirty();
+        stage.set_texture(0, Some(2));
+        assert!(stage.is_dirty(), "binding a texture must dirty the stage");
+        assert_eq!(stage.texture(0), Some(BoundTexture { texture: 2 }));
+        assert!(
+            stage.srv_buffer(0).is_none(),
+            "binding a texture SRV must unbind a buffer SRV in the same slot"
+        );
+
+        stage.clear_dirty();
+        stage.set_srv_buffer(0, Some(BoundBuffer { buffer: 3, offset: 0, size: None }));
+        assert!(stage.is_dirty(), "binding an SRV buffer must dirty the stage");
+        assert!(
+            stage.texture(0).is_none(),
+            "binding a buffer SRV must unbind a texture SRV in the same slot"
+        );
+        assert_eq!(
+            stage.srv_buffer(0),
+            Some(BoundBuffer {
+                buffer: 3,
+                offset: 0,
+                size: None
+            })
+        );
+
+        // Redundant bind should not mark the stage dirty again.
+        stage.clear_dirty();
+        stage.set_srv_buffer(0, Some(BoundBuffer { buffer: 3, offset: 0, size: None }));
+        assert!(!stage.is_dirty(), "redundant binding should not dirty the stage");
+    }
+
+    #[test]
+    fn uav_texture_and_buffer_are_mutually_exclusive() {
+        let mut stage = StageBindings::default();
+
+        stage.set_uav_texture(0, Some(BoundTexture { texture: 42 }));
+        assert_eq!(stage.uav_texture(0), Some(BoundTexture { texture: 42 }));
+        assert!(stage.uav_buffer(0).is_none());
+
+        stage.clear_dirty();
+        stage.set_uav_buffer(
+            0,
+            Some(BoundBuffer {
+                buffer: 7,
+                offset: 0,
+                size: None,
+            }),
+        );
+        assert!(stage.is_dirty());
+        assert!(
+            stage.uav_texture(0).is_none(),
+            "binding a UAV buffer must unbind a UAV texture in the same slot"
+        );
+        assert_eq!(
+            stage.uav_buffer(0),
+            Some(BoundBuffer {
+                buffer: 7,
+                offset: 0,
+                size: None
+            })
+        );
+
+        stage.clear_dirty();
+        stage.set_uav_texture(0, Some(BoundTexture { texture: 99 }));
+        assert!(stage.is_dirty());
+        assert!(
+            stage.uav_buffer(0).is_none(),
+            "binding a UAV texture must unbind a UAV buffer in the same slot"
+        );
+        assert_eq!(stage.uav_texture(0), Some(BoundTexture { texture: 99 }));
+    }
+
+    #[test]
+    fn clear_handles_clears_srv_and_uav_buffers() {
+        let mut stage = StageBindings::default();
+
+        stage.set_srv_buffer(0, Some(BoundBuffer { buffer: 5, offset: 0, size: None }));
+        stage.set_uav_buffer(1, Some(BoundBuffer { buffer: 5, offset: 0, size: None }));
+        stage.clear_dirty();
+
+        stage.clear_srv_buffer_handle(5);
+        assert!(stage.is_dirty());
+        assert!(stage.srv_buffer(0).is_none());
+        assert!(
+            stage.uav_buffer(1).is_some(),
+            "clearing srv buffer handle must not affect uav buffer bindings"
+        );
+
+        stage.clear_dirty();
+        stage.clear_uav_buffer_handle(5);
+        assert!(stage.is_dirty());
+        assert!(stage.uav_buffer(1).is_none());
+    }
+}
