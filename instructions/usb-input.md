@@ -435,11 +435,15 @@ bash ./scripts/safe-run.sh cargo test -p aero-usb --locked \
   --test hid_remote_wakeup \
   --test hid_idle_rate \
   --test webusb_passthrough_uhci \
+  --test webusb_passthrough_speed \
+  --test passthrough_validation \
   --test hid_builtin_snapshot \
   --test hid_composite_mouse_snapshot_compat \
   --test hid_configuration_snapshot_clamping \
   --test hid_consumer_control_snapshot_clamping \
   --test hid_gamepad_snapshot_clamping \
+  --test hid_gamepad_report_fixture \
+  --test hid_gamepad_report_clamping_fixture \
   --test hid_keyboard_snapshot_sanitization \
   --test hid_keyboard_leds \
   --test hid_mouse_report_generation \

@@ -31,6 +31,10 @@ fn input_help_mentions_flags_and_steps() {
             "hid_consumer_control_snapshot_clamping",
         ))
         .stdout(predicate::str::contains("hid_gamepad_snapshot_clamping"))
+        .stdout(predicate::str::contains("hid_gamepad_report_fixture"))
+        .stdout(predicate::str::contains(
+            "hid_gamepad_report_clamping_fixture",
+        ))
         .stdout(predicate::str::contains(
             "hid_keyboard_snapshot_sanitization",
         ))
@@ -295,6 +299,8 @@ fn input_help_mentions_flags_and_steps() {
         .stdout(predicate::str::contains("hid_remote_wakeup"))
         .stdout(predicate::str::contains("hid_idle_rate"))
         .stdout(predicate::str::contains("webusb_passthrough_uhci"))
+        .stdout(predicate::str::contains("webusb_passthrough_speed"))
+        .stdout(predicate::str::contains("--test passthrough_validation"))
         .stdout(predicate::str::contains("xhci_controller_webusb_ep0"))
         .stdout(predicate::str::contains("xhci_doorbell0"))
         .stdout(predicate::str::contains("xhci_stop_endpoint_unschedules"))
