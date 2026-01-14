@@ -356,12 +356,12 @@ Supported instructions/opcodes:
   - `dp3`, `dp4`
   - `min`, `max`
   - `rcp`, `rsq`
-  - integer/bitfield ops (subset): `iadd`, `isub`, `ishl`, `ishr`, `ushr`, `imin`, `imax`, `umin`,
-    `umax`, `iabs`, `ineg`, `cmp`, `udiv`, `idiv`, `bfi`, `ubfe`, `ibfe`, `bfrev`, `countbits`,
-    `firstbit_hi`, `firstbit_lo`, `firstbit_shi`
+  - integer/bitfield ops (subset): `iadd`, `isub`, `imul`, `umul`, `iaddc`, `uaddc`, `isubc`, `ishl`,
+    `ishr`, `ushr`, `imin`, `imax`, `umin`, `umax`, `iabs`, `ineg`, `cmp`, `udiv`, `idiv`, `bfi`,
+    `ubfe`, `ibfe`, `bfrev`, `countbits`, `firstbit_hi`, `firstbit_lo`, `firstbit_shi`
   - `and`/`or`/`xor`/`not` (bitwise ops on raw 32-bit lanes)
   - conversions: `itof`, `utof`, `ftoi`, `ftou`, `f32tof16`, `f16tof32`
-- **Resource reads (subset)**
+- **Resource operations (subset)**
   - 2D textures:
     - `sample`, `sample_l` (`Texture2D.Sample*`)
     - `ld` (`Texture2D.Load`)
@@ -383,7 +383,7 @@ Supported operand surface (initial):
   set of output registers declared/written by the GS; unwritten slots default to zero)
 - GS inputs via `v#[]` (no vertex index out of range for the declared input primitive)
 - constant buffers (`cb#[]`) for statically indexed reads (requires `dcl_constantbuffer`)
-- resources used by the supported read-only ops above:
+- resources used by the supported resource ops above:
   - `t#` Texture2D (requires `dcl_resource_texture2d`)
   - `t#` SRV buffer (requires `dcl_resource_buffer`)
   - `u#` UAV buffer (requires `dcl_uav_raw` / `dcl_uav_structured`)
