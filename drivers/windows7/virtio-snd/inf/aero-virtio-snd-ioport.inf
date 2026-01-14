@@ -53,7 +53,7 @@ AddReg = AeroVirtioSndIoPort_Parameters_AddReg
 
 [AeroVirtioSndIoPort_Parameters_AddReg]
 HKR,Parameters,,0x00000010
-HKR,Parameters,ForceNullBackend,0x00010001,0
+HKR,Parameters,ForceNullBackend,0x00010003,0
 
 [AeroVirtioSndIoPort_Install.NT.Interfaces]
 AddInterface = %KSCATEGORY_AUDIO%,    %KSNAME_Wave%,     AeroVirtioSndIoPort.Wave.Interface
@@ -84,7 +84,7 @@ HKR,,NTMPDriver,,virtiosnd_ioport.sys
 ; Optional bring-up flag (debug/dev only):
 ;  - 0 (default): normal I/O-port backend (fail START_DEVICE on transport bring-up failure)
 ;  - 1: force the silent null backend and allow START_DEVICE to succeed even when virtio transport bring-up fails
-HKR,Parameters,ForceNullBackend,0x00010001,0
+HKR,Parameters,ForceNullBackend,0x00010003,0
 HKR,,AssociatedFilters,0x00010000,%KSNAME_Wave%,%KSNAME_Topology%
 HKR,Drivers,SubClasses,,"wave,topology"
 HKR,Drivers,Driver,,wdmaud.sys

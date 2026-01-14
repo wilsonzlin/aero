@@ -413,13 +413,13 @@ note "checking bring-up toggle defaults..."
 section_contains_norm \
   "$INF_CONTRACT" \
   'AeroVirtioSnd.AddReg' \
-  'hkr,parameters,forcenullbackend,0x00010001,0' \
+  'hkr,parameters,forcenullbackend,0x00010003,0' \
   "inf/aero_virtio_snd.inf must set HKR\\Parameters\\ForceNullBackend default to 0"
 
 section_contains_norm \
   "$INF_CONTRACT" \
   'AeroVirtioSnd.AddReg' \
-  'hkr,parameters,allowpollingonly,0x00010001,0' \
+  'hkr,parameters,allowpollingonly,0x00010003,0' \
   "inf/aero_virtio_snd.inf must set HKR\\Parameters\\AllowPollingOnly default to 0"
 
 # Also seed these defaults under the device instance's hardware key (Device Parameters)
@@ -433,13 +433,13 @@ section_contains_norm \
 section_contains_norm \
   "$INF_CONTRACT" \
   'AeroVirtioSnd_Parameters_AddReg' \
-  'hkr,parameters,forcenullbackend,0x00010001,0' \
+  'hkr,parameters,forcenullbackend,0x00010003,0' \
   "inf/aero_virtio_snd.inf must seed HKR\\Parameters\\ForceNullBackend under the hardware key"
 
 section_contains_norm \
   "$INF_CONTRACT" \
   'AeroVirtioSnd_Parameters_AddReg' \
-  'hkr,parameters,allowpollingonly,0x00010001,0' \
+  'hkr,parameters,allowpollingonly,0x00010003,0' \
   "inf/aero_virtio_snd.inf must seed HKR\\Parameters\\AllowPollingOnly under the hardware key"
 
 if [ -f "$INF_TRANSITIONAL" ]; then
@@ -529,13 +529,13 @@ if [ -f "$INF_TRANSITIONAL" ]; then
   section_contains_norm \
     "$INF_TRANSITIONAL" \
     'AeroVirtioSndLegacy.AddReg' \
-    'hkr,parameters,forcenullbackend,0x00010001,0' \
+    'hkr,parameters,forcenullbackend,0x00010003,0' \
     "inf/aero-virtio-snd-legacy.inf must set HKR\\Parameters\\ForceNullBackend default to 0"
 
   section_contains_norm \
     "$INF_TRANSITIONAL" \
     'AeroVirtioSndLegacy.AddReg' \
-    'hkr,parameters,allowpollingonly,0x00010001,0' \
+    'hkr,parameters,allowpollingonly,0x00010003,0' \
     "inf/aero-virtio-snd-legacy.inf must set HKR\\Parameters\\AllowPollingOnly default to 0"
 
   section_contains_norm \
@@ -547,13 +547,13 @@ if [ -f "$INF_TRANSITIONAL" ]; then
   section_contains_norm \
     "$INF_TRANSITIONAL" \
     'AeroVirtioSndLegacy_Parameters_AddReg' \
-    'hkr,parameters,forcenullbackend,0x00010001,0' \
+    'hkr,parameters,forcenullbackend,0x00010003,0' \
     "inf/aero-virtio-snd-legacy.inf must seed HKR\\Parameters\\ForceNullBackend under the hardware key"
 
   section_contains_norm \
     "$INF_TRANSITIONAL" \
     'AeroVirtioSndLegacy_Parameters_AddReg' \
-    'hkr,parameters,allowpollingonly,0x00010001,0' \
+    'hkr,parameters,allowpollingonly,0x00010003,0' \
     "inf/aero-virtio-snd-legacy.inf must seed HKR\\Parameters\\AllowPollingOnly under the hardware key"
 
   note "checking transitional INF MSI interrupt management registrations..."
@@ -642,7 +642,7 @@ if [ -f "$INF_IOPORT" ]; then
   section_contains_norm \
     "$INF_IOPORT" \
     'AeroVirtioSndIoPort.AddReg' \
-    'hkr,parameters,forcenullbackend,0x00010001,0' \
+    'hkr,parameters,forcenullbackend,0x00010003,0' \
     "inf/aero-virtio-snd-ioport.inf must set HKR\\Parameters\\ForceNullBackend default to 0"
 
   section_contains_norm \
@@ -654,7 +654,7 @@ if [ -f "$INF_IOPORT" ]; then
   section_contains_norm \
     "$INF_IOPORT" \
     'AeroVirtioSndIoPort_Parameters_AddReg' \
-    'hkr,parameters,forcenullbackend,0x00010001,0' \
+    'hkr,parameters,forcenullbackend,0x00010003,0' \
     "inf/aero-virtio-snd-ioport.inf must seed HKR\\Parameters\\ForceNullBackend under the hardware key"
 
   note "checking ioport legacy INF SYS/service consistency..."
