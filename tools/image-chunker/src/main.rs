@@ -2107,11 +2107,12 @@ fn sdk_error_status_code<E>(err: &aws_sdk_s3::error::SdkError<E>) -> Option<u16>
 }
 
 fn validate_args(args: &PublishArgs) -> Result<()> {
+    let sector = SECTOR_SIZE as u64;
     if args.chunk_size == 0 {
         bail!("--chunk-size must be > 0");
     }
-    if !args.chunk_size.is_multiple_of(512) {
-        bail!("--chunk-size must be a multiple of 512 bytes");
+    if !args.chunk_size.is_multiple_of(sector) {
+        bail!("--chunk-size must be a multiple of {sector} bytes");
     }
     if args.concurrency == 0 {
         bail!("--concurrency must be > 0");
@@ -2925,6 +2926,7 @@ mod tests {
         };
         assert_eq!(args.chunk_size, DEFAULT_CHUNK_SIZE_BYTES);
         assert_eq!(args.chunk_size, 4 * 1024 * 1024);
+        assert!(matches!(args.format, InputFormat::Auto));
     }
 
     #[test]
@@ -3368,5 +3370,25 @@ mod tests {
             check_chunk_bytes(bytes, 5, Some("deadbeef")),
             Err(ChunkCheckError::Sha256Mismatch { .. })
         ));
+    }
+
+    #[test]
+    fn cli_accepts_aerospar_format_alias() {
+        let cli = Cli::parse_from([
+            "aero-image-chunker",
+            "publish",
+            "--file",
+            "disk.img",
+            "--format",
+            "aerospar",
+            "--bucket",
+            "bucket",
+            "--prefix",
+            "images/win7/sha256-abc/",
+        ]);
+        let Commands::Publish(args) = cli.command else {
+            panic!("expected publish subcommand");
+        };
+        assert!(matches!(args.format, InputFormat::AeroSparse));
     }
 }

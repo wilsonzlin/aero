@@ -51,6 +51,7 @@ pub enum ImageFormat {
     Raw,
     Qcow2,
     Vhd,
+    #[value(name = "aerosparse", alias = "aerospar")]
     Aerosparse,
 }
 
