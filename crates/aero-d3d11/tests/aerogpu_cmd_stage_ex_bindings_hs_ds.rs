@@ -73,9 +73,7 @@ fn push_bind_shaders_ex(stream: &mut Vec<u8>, hs: u32, ds: u32) {
     // Use `AerogpuCmdWriter` here so packet sizing/padding stays correct and consistent across
     // tests/fixtures.
     let mut w = AerogpuCmdWriter::new();
-    w.bind_shaders_ex(
-        /* vs */ 0, /* ps */ 0, /* cs */ 0, /* gs */ 0, hs, ds,
-    );
+    w.bind_shaders_hs_ds(hs, ds);
     let packet_stream = w.finish();
     stream.extend_from_slice(&packet_stream[AerogpuCmdStreamHeader::SIZE_BYTES..]);
 }

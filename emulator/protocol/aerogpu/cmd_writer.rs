@@ -583,6 +583,15 @@ impl AerogpuCmdWriter {
         self.write_u32_at(base + base_struct_size + 8, ds);
     }
 
+    /// Bind tessellation shaders (HS/DS) using the canonical append-only BIND_SHADERS ABI extension.
+    ///
+    /// This emits the extended packet form (appended `{gs, hs, ds}` handles), leaving VS/PS/CS/GS
+    /// unbound (0). This helper exists mainly for tests/fixtures that want to bind HS/DS without
+    /// having to pass a bunch of zero handles into [`Self::bind_shaders_ex`].
+    pub fn bind_shaders_hs_ds(&mut self, hs: AerogpuHandle, ds: AerogpuHandle) {
+        self.bind_shaders_ex(/*vs=*/ 0, /*ps=*/ 0, /*cs=*/ 0, /*gs=*/ 0, hs, ds);
+    }
+
     pub fn bind_shaders(&mut self, vs: AerogpuHandle, ps: AerogpuHandle, cs: AerogpuHandle) {
         self.bind_shaders_with_gs(vs, 0, ps, cs);
     }

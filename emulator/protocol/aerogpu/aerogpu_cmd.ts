@@ -1896,6 +1896,16 @@ export class AerogpuCmdWriter {
     this.view.setUint32(base + 32, ds, true);
   }
 
+  /**
+   * Convenience helper for binding tessellation shaders (HS/DS) via the append-only BIND_SHADERS
+   * extension.
+   *
+   * Leaves VS/PS/CS/GS unbound (0).
+   */
+  bindShadersHsDs(hs: AerogpuHandle, ds: AerogpuHandle): void {
+    this.bindShadersEx(/*vs=*/ 0, /*ps=*/ 0, /*cs=*/ 0, /*gs=*/ 0, hs, ds);
+  }
+
   bindShaders(vs: AerogpuHandle, ps: AerogpuHandle, cs: AerogpuHandle): void {
     this.bindShadersWithGs(vs, 0, ps, cs);
   }
