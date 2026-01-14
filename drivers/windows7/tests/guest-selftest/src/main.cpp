@@ -11334,10 +11334,11 @@ int wmain(int argc, wchar_t** argv) {
 
   log.LogLine("AERO_VIRTIO_SELFTEST|START|version=1");
   log.Logf(
-      "AERO_VIRTIO_SELFTEST|CONFIG|http_url=%s|http_url_large=%s|udp_port=%lu|dns_host=%s|blk_root=%s|expect_blk_msi=%d|test_net_link_flap=%d",
+      "AERO_VIRTIO_SELFTEST|CONFIG|http_url=%s|http_url_large=%s|udp_port=%lu|dns_host=%s|blk_root=%s|expect_blk_msi=%d|require_net_msix=%d|require_input_msix=%d|test_net_link_flap=%d",
       WideToUtf8(opt.http_url).c_str(),
       WideToUtf8(UrlAppendSuffix(opt.http_url, L"-large")).c_str(), static_cast<unsigned long>(opt.udp_port),
       WideToUtf8(opt.dns_host).c_str(), WideToUtf8(opt.blk_root).c_str(), opt.expect_blk_msi ? 1 : 0,
+      opt.require_net_msix ? 1 : 0, opt.require_input_msix ? 1 : 0,
       opt.test_net_link_flap ? 1 : 0);
 
   bool all_ok = true;
