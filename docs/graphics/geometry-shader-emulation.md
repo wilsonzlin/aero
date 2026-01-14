@@ -7,7 +7,7 @@ WebGPU render pipeline.
 This document describes:
 
 - what is **implemented today** (command-stream plumbing, binding model, compute-expansion/compute-prepass scaffolding + current limitations; plus a minimal SM4 GS DXBC→WGSL compute path that is executed for point-list draws (`Draw` and `DrawIndexed`) and triangle-list draws), and
-- the **next steps** (expand GS DXBC execution beyond the current point/triangle-list subset, expand VS-as-compute feeding for GS inputs (currently minimal), then grow opcode/topology/system-value coverage and bring up HS/DS emulation).
+- the **next steps** (expand GS DXBC execution beyond the current point-list and triangle-list subset, expand VS-as-compute feeding for GS inputs (currently minimal), then grow opcode/topology/system-value coverage and bring up HS/DS emulation).
 
 > Related: [`docs/16-d3d10-11-translation.md`](../16-d3d10-11-translation.md) (high-level D3D10/11→WebGPU mapping).
 >
@@ -106,7 +106,7 @@ expansion.
 
 The AeroGPU D3D10/11 command-stream executor implements GS emulation as a GPU-side **compute expansion
 prepass** + **indirect draw** path. It also has an initial “execute guest GS DXBC” path for a small
-point/triangle-list subset, but it is not yet a complete GS implementation.
+point-list and triangle-list subset, but it is not yet a complete GS implementation.
 
 There are currently three compute-prepass “modes”:
 
