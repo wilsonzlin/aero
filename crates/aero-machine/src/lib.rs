@@ -5096,9 +5096,12 @@ impl Machine {
         }
 
         if self.cfg.enable_aerogpu {
-            // While the guest WDDM driver has claimed scanout (valid `SCANOUT0_*` + `ENABLE=1`),
-            // prefer presenting that framebuffer over the VBE/text fallbacks. Disabling scanout
-            // releases the claim and allows falling back to legacy VBE/text.
+            // While the guest WDDM driver has claimed scanout (valid `SCANOUT0_*` configuration),
+            // prefer presenting that framebuffer over the VBE/text fallbacks.
+            //
+            // Clearing `SCANOUT0_ENABLE` is treated as a visibility toggle: we present a blank
+            // frame while WDDM ownership remains sticky (legacy VGA/VBE must not steal scanout back
+            // until reset).
             if self.display_present_aerogpu_scanout() {
                 return;
             }
@@ -9642,8 +9645,7 @@ impl Machine {
                 scanout_state.publish(update);
             } else {
                 // If the shared scanout descriptor currently indicates WDDM scanout but the device
-                // itself has not claimed WDDM ownership (e.g. after `SCANOUT0_ENABLE=0` or a
-                // reset/restore mismatch),
+                // itself has not claimed WDDM ownership (e.g. after a reset/restore mismatch),
                 // revert the shared scanout descriptor back to the legacy BIOS source.
                 //
                 // This cannot be handled inside `AeroGpuMmioDevice` because it does not have access
