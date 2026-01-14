@@ -371,6 +371,28 @@ fn decode_output_topology(
     }
 }
 
+fn apply_sig_mask_to_vec4(expr: &str, mask: WriteMask) -> String {
+    let bits = mask.0 & 0xF;
+    // Fast path: common case for full `xyzw`.
+    if bits == 0xF {
+        return expr.to_owned();
+    }
+    let lane = |component: char, bit: u8, default: &str| -> String {
+        if (bits & bit) != 0 {
+            format!("{expr}.{component}")
+        } else {
+            default.to_owned()
+        }
+    };
+    format!(
+        "vec4<f32>({}, {}, {}, {})",
+        lane('x', 1, "0.0"),
+        lane('y', 2, "0.0"),
+        lane('z', 4, "0.0"),
+        lane('w', 8, "1.0"),
+    )
+}
+
 #[cfg(test)]
 fn module_output_topology_kind(
     module: &Sm4Module,
@@ -694,6 +716,7 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_impl(
     let mut max_output_vertices: Option<u32> = None;
     let mut gs_instance_count: Option<u32> = None;
     let mut input_sivs: HashMap<u32, InputSivInfo> = HashMap::new();
+    let mut output_masks: HashMap<u32, WriteMask> = HashMap::new();
     let mut cbuffer_decls: BTreeMap<u32, u32> = BTreeMap::new();
     let mut texture2d_decls: BTreeSet<u32> = BTreeSet::new();
     let mut sampler_decls: BTreeSet<u32> = BTreeSet::new();
@@ -772,6 +795,13 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_impl(
                         sys_value: *sys_value,
                         mask: *mask,
                     });
+            }
+            Sm4Decl::Output { reg, mask }
+            | Sm4Decl::OutputSiv { reg, mask, .. } => {
+                output_masks
+                    .entry(*reg)
+                    .and_modify(|existing| existing.0 |= mask.0)
+                    .or_insert(*mask);
             }
             _ => {}
         }
@@ -2374,20 +2404,33 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_impl(
     w.dedent();
     w.line("}");
     w.line("");
-    w.line("out_vertices.data[vtx_idx].pos = o0;");
+    let pos_mask = output_masks.get(&0).copied().unwrap_or(WriteMask::XYZW);
+    let pos_expr = apply_sig_mask_to_vec4("o0", pos_mask);
+    w.line(&format!("out_vertices.data[vtx_idx].pos = {pos_expr};"));
+
     match expanded_vertex_layout {
         ExpandedVertexOutputLayout::Packed { .. } => {
             for (i, &loc) in emit_output_regs.iter().enumerate() {
-                w.line(&format!("out_vertices.data[vtx_idx].v{i} = o{loc};"));
+                let mask = output_masks.get(&loc).copied().unwrap_or(WriteMask::XYZW);
+                let expr = apply_sig_mask_to_vec4(&format!("o{loc}"), mask);
+                w.line(&format!("out_vertices.data[vtx_idx].v{i} = {expr};"));
             }
         }
         ExpandedVertexOutputLayout::FixedArray { max_varyings } => {
+            // Initialize varyings to D3D default fill so missing outputs are deterministic.
             w.line(&format!(
-                "out_vertices.data[vtx_idx].varyings = array<vec4<f32>, {max_varyings}>();"
+                "for (var i: u32 = 0u; i < {max_varyings}u; i = i + 1u) {{"
             ));
+            w.indent();
+            w.line("out_vertices.data[vtx_idx].varyings[i] = vec4<f32>(0.0, 0.0, 0.0, 1.0);");
+            w.dedent();
+            w.line("}");
+
             for &loc in &emit_output_regs {
+                let mask = output_masks.get(&loc).copied().unwrap_or(WriteMask::XYZW);
+                let expr = apply_sig_mask_to_vec4(&format!("o{loc}"), mask);
                 w.line(&format!(
-                    "out_vertices.data[vtx_idx].varyings[{loc}u] = o{loc};"
+                    "out_vertices.data[vtx_idx].varyings[{loc}u] = {expr};"
                 ));
             }
         }
@@ -2506,7 +2549,10 @@ fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_impl(
         w.line(&format!("var p{i}: vec4<bool> = vec4<bool>(false);"));
     }
     for i in 0..output_reg_count {
-        w.line(&format!("var o{i}: vec4<f32> = vec4<f32>(0.0);"));
+        // Default-fill output registers so missing semantics/components behave deterministically.
+        w.line(&format!(
+            "var o{i}: vec4<f32> = vec4<f32>(0.0, 0.0, 0.0, 1.0);"
+        ));
     }
     w.line("");
     w.line("var emitted_count: u32 = 0u;");
@@ -5697,6 +5743,14 @@ mod tests {
             decls: vec![
                 Sm4Decl::GsInputPrimitive {
                     primitive: GsInputPrimitive::Point(1),
+                },
+                Sm4Decl::Output {
+                    reg: 1,
+                    mask: WriteMask::XYZW,
+                },
+                Sm4Decl::Output {
+                    reg: 7,
+                    mask: WriteMask::XYZW,
                 },
                 Sm4Decl::GsOutputTopology {
                     topology: GsOutputTopology::TriangleStrip(3),

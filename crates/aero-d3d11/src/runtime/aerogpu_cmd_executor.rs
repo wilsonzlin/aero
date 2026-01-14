@@ -1794,6 +1794,9 @@ impl AerogpuD3d11Executor {
                 crate::StorageTextureFormat::Rgba16Float,
                 crate::StorageTextureFormat::Rgba16Uint,
                 crate::StorageTextureFormat::Rgba16Sint,
+                crate::StorageTextureFormat::Rgba32Float,
+                crate::StorageTextureFormat::Rgba32Uint,
+                crate::StorageTextureFormat::Rgba32Sint,
                 crate::StorageTextureFormat::R32Float,
                 crate::StorageTextureFormat::R32Uint,
                 crate::StorageTextureFormat::R32Sint,
@@ -1807,9 +1810,6 @@ impl AerogpuD3d11Executor {
                     crate::StorageTextureFormat::Rg32Float,
                     crate::StorageTextureFormat::Rg32Uint,
                     crate::StorageTextureFormat::Rg32Sint,
-                    crate::StorageTextureFormat::Rgba32Float,
-                    crate::StorageTextureFormat::Rgba32Uint,
-                    crate::StorageTextureFormat::Rgba32Sint,
                 ]);
             }
 
