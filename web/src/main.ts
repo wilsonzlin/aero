@@ -48,6 +48,7 @@ import { SharedLayoutPresenter } from "./display/shared_layout_presenter";
 import { installAeroGlobal } from "./runtime/aero_global";
 import { createWebGpuCanvasContext, requestWebGpuDevice } from "./platform/webgpu";
 import { WorkerCoordinator } from "./runtime/coordinator";
+import type { SetBootDisksMessage } from "./runtime/boot_disks_protocol";
 import { installNetTraceBackendOnAeroGlobal } from "./net/trace_backend";
 import { installIoInputTelemetryBackendOnAeroGlobal } from "./runtime/io_input_telemetry_backend";
 import { initWasm, type WasmApi, type WasmVariant } from "./runtime/wasm_loader";
@@ -5776,7 +5777,7 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
             mounts: selection.mounts,
             hdd: selection.hdd ?? null,
             cd: selection.cd ?? null,
-          });
+          } satisfies SetBootDisksMessage);
         }
         const gpuWorker = workerCoordinator.getWorker("gpu");
         const frameStateSab = workerCoordinator.getFrameStateSab();
@@ -6115,7 +6116,7 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
           mounts: selection?.mounts ?? {},
           hdd: selection?.hdd ?? null,
           cd: selection?.cd ?? null,
-        });
+        } satisfies SetBootDisksMessage);
         void webHidManager.resyncAttachedDevices();
       }
       syncWebHidInputReportRing(ioWorker);

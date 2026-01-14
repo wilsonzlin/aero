@@ -31,6 +31,7 @@ import {
   type VmSnapshotRestoredMessage,
   type VmSnapshotSavedMessage,
 } from "../runtime/snapshot_protocol";
+import type { SetBootDisksMessage } from "../runtime/boot_disks_protocol";
 import {
   IO_IPC_CMD_QUEUE_KIND,
   IO_IPC_EVT_QUEUE_KIND,
@@ -79,8 +80,7 @@ import { VirtioSndPciDevice } from "../io/devices/virtio_snd";
 import { UART_COM1, Uart16550, type SerialOutputSink } from "../io/devices/uart16550";
 import { AeroIpcIoServer, type AeroIpcIoDiskResult, type AeroIpcIoDispatchTarget } from "../io/ipc/aero_ipc_io";
 import { defaultReadValue } from "../io/ipc/io_protocol";
-import type { MountConfig } from "../storage/metadata";
-import { RuntimeDiskClient, type DiskImageMetadata } from "../storage/runtime_disk_client";
+import { RuntimeDiskClient } from "../storage/runtime_disk_client";
 import { computeAlignedDiskIoRange, diskReadIntoGuest, diskWriteFromGuest } from "./io_disk_dma";
 import {
   isUsbRingAttachMessage,
@@ -2981,13 +2981,6 @@ type SetAudioRingBufferMessage = {
   dstSampleRate: number;
 };
 
-type SetBootDisksMessage = {
-  type: "setBootDisks";
-  mounts: MountConfig;
-  hdd: DiskImageMetadata | null;
-  cd: DiskImageMetadata | null;
-};
-
 type HdaMicCaptureTestMessage = {
   type: "hda.micCaptureTest";
   requestId: number;
@@ -4487,9 +4480,9 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
       const msg = data as Partial<SetBootDisksMessage>;
       pendingBootDisks = {
         type: "setBootDisks",
-        mounts: (msg.mounts || {}) as MountConfig,
-        hdd: (msg.hdd as DiskImageMetadata | null) ?? null,
-        cd: (msg.cd as DiskImageMetadata | null) ?? null,
+        mounts: (msg.mounts || {}) as SetBootDisksMessage["mounts"],
+        hdd: (msg.hdd as SetBootDisksMessage["hdd"]) ?? null,
+        cd: (msg.cd as SetBootDisksMessage["cd"]) ?? null,
       };
       if (bootDisksInitResolve) {
         bootDisksInitResolve();
