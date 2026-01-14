@@ -140,8 +140,7 @@ fn inf_body_from_first_section(contents: &str) -> &str {
     // allows the leading banner/comment block to differ.
     let mut offset = 0;
     for line in contents.split_inclusive('\n') {
-        let trimmed =
-            line.trim_start_matches(['\0', ' ', '\t', '\r', '\n']);
+        let trimmed = line.trim_start_matches(['\0', ' ', '\t', '\r', '\n']);
         if trimmed.is_empty() {
             offset += line.len();
             continue;

@@ -46,7 +46,9 @@ fn aerogpu_cursor_readback_is_capped_to_avoid_unbounded_allocations() {
         let pci_cfg = m.pci_config_ports().expect("pc platform enabled");
         let mut pci_cfg = pci_cfg.borrow_mut();
         let bus = pci_cfg.bus_mut();
-        let cfg = bus.device_config(AEROGPU.bdf).expect("AeroGPU device present");
+        let cfg = bus
+            .device_config(AEROGPU.bdf)
+            .expect("AeroGPU device present");
         let bar0_base = cfg.bar_range(0).expect("BAR0 range").base;
         let command = cfg.command();
         (bar0_base, command)
@@ -177,4 +179,3 @@ fn aerogpu_cursor_readback_is_capped_to_avoid_unbounded_allocations() {
         assert_eq!(px, blue);
     }
 }
-

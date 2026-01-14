@@ -421,16 +421,8 @@ fn usb2_port_mux_ehci_remote_wakeup_does_not_propagate_through_external_hub_with
         0,
         "unexpected EHCI resume state even though hub remote wake is disabled"
     );
-    assert_ne!(
-        portsc & PORTSC_SUSP,
-        0,
-        "port should remain suspended"
-    );
-    assert_eq!(
-        portsc & PORTSC_LS_MASK,
-        0b10 << 10,
-        "expected J-state"
-    );
+    assert_ne!(portsc & PORTSC_SUSP, 0, "port should remain suspended");
+    assert_eq!(portsc & PORTSC_LS_MASK, 0b10 << 10, "expected J-state");
     assert!(
         ehci.hub_mut().device_mut_for_address(2).is_none(),
         "device should not be reachable while the root port remains suspended"

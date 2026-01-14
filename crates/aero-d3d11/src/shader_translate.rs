@@ -5510,8 +5510,9 @@ fn emit_instructions(
                 let pack_y = format!("pack2x16float(vec2<f32>(({src}).y, 0.0)) & 0xffffu");
                 let pack_z = format!("pack2x16float(vec2<f32>(({src}).z, 0.0)) & 0xffffu");
                 let pack_w = format!("pack2x16float(vec2<f32>(({src}).w, 0.0)) & 0xffffu");
-                let expr =
-                    format!("bitcast<vec4<f32>>(vec4<u32>({pack_x}, {pack_y}, {pack_z}, {pack_w}))");
+                let expr = format!(
+                    "bitcast<vec4<f32>>(vec4<u32>({pack_x}, {pack_y}, {pack_z}, {pack_w}))"
+                );
                 emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "f32tof16", ctx)?;
             }
             Sm4Inst::F16ToF32 { dst, src } => {
@@ -5525,9 +5526,7 @@ fn emit_instructions(
                 let unpack_y = format!("unpack2x16float(({src_u}).y & 0xffffu).x");
                 let unpack_z = format!("unpack2x16float(({src_u}).z & 0xffffu).x");
                 let unpack_w = format!("unpack2x16float(({src_u}).w & 0xffffu).x");
-                let expr = format!(
-                    "vec4<f32>({unpack_x}, {unpack_y}, {unpack_z}, {unpack_w})"
-                );
+                let expr = format!("vec4<f32>({unpack_x}, {unpack_y}, {unpack_z}, {unpack_w})");
                 let expr = maybe_saturate(dst, expr);
                 emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "f16tof32", ctx)?;
             }
