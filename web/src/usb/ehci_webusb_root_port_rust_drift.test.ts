@@ -3,13 +3,18 @@ import { describe, expect, it } from "vitest";
 
 import { EXTERNAL_HUB_ROOT_PORT, WEBUSB_GUEST_ROOT_PORT } from "./uhci_external_hub";
 
-function parseRustU8Const(source: string, name: string): number {
+function parseRustU8ConstExpr(source: string, name: string): string {
   // Keep the matcher intentionally strict so we fail loudly if the Rust source changes.
-  const re = new RegExp(String.raw`^const ${name}: u8 = (\d+);$`, "m");
+  const re = new RegExp(String.raw`^(?:pub(?:\([^\)]*\))?\s+)?const ${name}: u8 = ([^;]+);$`, "m");
   const match = source.match(re);
-  if (!match) {
-    throw new Error(`Failed to locate \`const ${name}: u8\` in crates/aero-wasm/src/ehci_controller_bridge.rs`);
-  }
+  if (!match) throw new Error(`Failed to locate \`${name}: u8\` constant`);
+  return match[1]!;
+}
+
+function parseRustU8ConstLiteral(source: string, name: string): number {
+  const expr = parseRustU8ConstExpr(source, name);
+  const match = expr.match(/^(\d+)$/);
+  if (!match) throw new Error(`Expected ${name} to be a numeric literal, got: ${expr}`);
   const value = Number(match[1]);
   if (!Number.isFinite(value) || !Number.isInteger(value) || value < 0 || value > 0xff) {
     throw new Error(`Invalid uint8 value for ${name}: ${match[1]}`);
@@ -22,9 +27,24 @@ describe("EHCI WebUSB root port reservation matches web runtime topology", () =>
     const rustUrl = new URL("../../../crates/aero-wasm/src/ehci_controller_bridge.rs", import.meta.url);
     const rust = readFileSync(rustUrl, "utf8");
 
-    const ehciWebusbRootPort = parseRustU8Const(rust, "WEBUSB_ROOT_PORT");
-    expect(ehciWebusbRootPort).toBe(WEBUSB_GUEST_ROOT_PORT);
-    expect(ehciWebusbRootPort).not.toBe(EXTERNAL_HUB_ROOT_PORT);
+    const portsUrl = new URL("../../../crates/aero-wasm/src/webusb_ports.rs", import.meta.url);
+    const ports = readFileSync(portsUrl, "utf8");
+    const sharedWebusbRootPort = parseRustU8ConstLiteral(ports, "WEBUSB_ROOT_PORT");
+
+    const ehciWebusbRootPortExpr = parseRustU8ConstExpr(rust, "WEBUSB_ROOT_PORT");
+    let ehciWebusbRootPort: number;
+    if (ehciWebusbRootPortExpr === "crate::webusb_ports::WEBUSB_ROOT_PORT") {
+      ehciWebusbRootPort = sharedWebusbRootPort;
+    } else if (/^\d+$/.test(ehciWebusbRootPortExpr)) {
+      ehciWebusbRootPort = Number(ehciWebusbRootPortExpr);
+    } else {
+      throw new Error(
+        `Unexpected EHCI WEBUSB_ROOT_PORT expression: ${ehciWebusbRootPortExpr}`,
+      );
+    }
+    expect(ehciWebusbRootPort).toBe(sharedWebusbRootPort);
+
+    expect(sharedWebusbRootPort).toBe(WEBUSB_GUEST_ROOT_PORT);
+    expect(sharedWebusbRootPort).not.toBe(EXTERNAL_HUB_ROOT_PORT);
   });
 });
-
