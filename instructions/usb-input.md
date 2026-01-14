@@ -227,9 +227,9 @@ The input injector worker (`io.worker.ts` in `vmRuntime=legacy`, `machine_cpu.wo
 # Run the USB/input-focused test suite (Rust + targeted web unit tests).
 # (Assumes Node deps are installed; run `npm ci` from repo root if needed.)
 # Note: by default this runs a focused subset of `aero-usb` tests (UHCI + external hub + EHCI +
-# EHCI snapshot roundtrip + USB2 companion routing + key HID snapshot compatibility/clamping tests +
-# shared HID usage fixtures + xHCI bring-up smoke/reg-gating). Use `--usb-all` if you want to run the
-# full `aero-usb` integration suite (all xHCI tests, passthrough, etc).
+# EHCI snapshot roundtrip + USB2 companion routing + WebUSB passthrough (UHCI + xHCI) + key HID
+# snapshot compatibility/clamping tests + shared HID usage fixtures + xHCI bring-up smoke/reg-gating).
+# Use `--usb-all` if you want to run the full `aero-usb` integration suite (all xHCI tests, etc).
 cargo xtask input
 
 # Run only the Rust USB/input tests (skips Node + Playwright; does not require `node_modules`).
@@ -294,6 +294,7 @@ bash ./scripts/safe-run.sh cargo test -p aero-usb --locked \
   --test ehci \
   --test ehci_snapshot_roundtrip \
   --test usb2_companion_routing \
+  --test webusb_passthrough_uhci \
   --test hid_builtin_snapshot \
   --test hid_composite_mouse_snapshot_compat \
   --test hid_configuration_snapshot_clamping \
@@ -308,7 +309,8 @@ bash ./scripts/safe-run.sh cargo test -p aero-usb --locked \
   --test xhci_enum_smoke \
   --test xhci_controller_webusb_ep0 \
   --test xhci_doorbell0 \
-  --test xhci_usbcmd_run_gates_transfers
+  --test xhci_usbcmd_run_gates_transfers \
+  --test xhci_webusb_passthrough
 # Full USB suite:
 bash ./scripts/safe-run.sh cargo test -p aero-usb --locked
 
