@@ -141,18 +141,34 @@ These expectations should match **exactly** what is specified in:
 
 ## 2) Windows 7 driver unit tests (portable host-side)
 
-The Win7 virtio-input driver contains a portable translator (`virtio_input_event` → HID reports) that can be tested on any host without the WDK.
+The Win7 virtio-input driver contains several **portable C helpers** that can be tested on any host without the WDK:
 
-Source and test:
+- virtio-input → HID input report translation (`virtio_input_event` → HID reports)
+- HID keyboard LED output report parsing (ReportID-prefix ambiguity)
+- HID keyboard LED bitfield → virtio-input `EV_LED` statusq events
+
+Key sources/tests:
 
 - Translator: [`drivers/windows7/virtio-input/src/hid_translate.c`](../drivers/windows7/virtio-input/src/hid_translate.c)
-- Test: [`drivers/windows7/virtio-input/tests/hid_translate_test.c`](../drivers/windows7/virtio-input/tests/hid_translate_test.c)
+  - Test: [`drivers/windows7/virtio-input/tests/hid_translate_test.c`](../drivers/windows7/virtio-input/tests/hid_translate_test.c)
+- HID LED output report parsing: [`drivers/windows7/virtio-input/src/led_report_parse.c`](../drivers/windows7/virtio-input/src/led_report_parse.c)
+  - Test: [`drivers/windows7/virtio-input/tests/led_report_parse_test.c`](../drivers/windows7/virtio-input/tests/led_report_parse_test.c)
+- HID LED bitfield → virtio statusq events: [`drivers/windows7/virtio-input/src/led_translate.c`](../drivers/windows7/virtio-input/src/led_translate.c)
+  - Test: [`drivers/windows7/virtio-input/tests/led_translate_test.c`](../drivers/windows7/virtio-input/tests/led_translate_test.c)
+  - End-to-end parse+translate: [`drivers/windows7/virtio-input/tests/led_output_pipeline_test.c`](../drivers/windows7/virtio-input/tests/led_output_pipeline_test.c)
 
 See also: [`drivers/windows7/virtio-input/tests/README.md`](../drivers/windows7/virtio-input/tests/README.md)
 
 ### 2.1 Build + run (gcc / clang)
 
-From the repo root:
+Run the full suite:
+
+```bash
+cd drivers/windows7/virtio-input
+bash tests/run.sh
+```
+
+Or build a single test manually (from the repo root):
 
 ```bash
 cd drivers/windows7/virtio-input/tests
