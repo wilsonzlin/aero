@@ -400,6 +400,37 @@ mod tests {
     }
 
     #[test]
+    fn immediate_backend_completes_in_submission_order() {
+        let mut backend = ImmediateAeroGpuBackend::new();
+        let mut mem = ZeroMem;
+
+        for fence in [10, 11, 12] {
+            backend
+                .submit(
+                    &mut mem,
+                    AeroGpuBackendSubmission {
+                        flags: 0,
+                        context_id: 1,
+                        engine_id: 2,
+                        signal_fence: fence,
+                        cmd_stream: Vec::new(),
+                        alloc_table: None,
+                    },
+                )
+                .unwrap();
+        }
+
+        let fences: Vec<u64> = backend
+            .poll_completions()
+            .into_iter()
+            .map(|completion| completion.fence)
+            .collect();
+
+        assert_eq!(fences, vec![10, 11, 12]);
+        assert!(backend.poll_completions().is_empty());
+    }
+
+    #[test]
     fn reset_clears_pending_completions() {
         let mut backend = ImmediateAeroGpuBackend::new();
         let mut mem = ZeroMem;
