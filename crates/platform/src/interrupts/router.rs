@@ -501,6 +501,7 @@ impl PlatformInterrupts {
     pub fn cpu_count(&self) -> usize {
         self.lapics.len()
     }
+
     pub fn lapic(&self, cpu_index: usize) -> &LocalApic {
         self.lapics
             .get(cpu_index)

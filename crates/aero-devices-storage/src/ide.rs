@@ -167,6 +167,7 @@ impl IdeChannel {
     fn attach_drive(&mut self, slot: usize, drive: AtaDrive) {
         self.drives[slot] = Some(drive);
     }
+
     fn drive_mut(&mut self) -> Option<&mut AtaDrive> {
         self.drives[self.selected].as_mut()
     }
