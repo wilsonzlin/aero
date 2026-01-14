@@ -6,7 +6,7 @@ WebGPU render pipeline.
 
 This document describes:
 
-- what is **implemented today** (command-stream plumbing, binding model, compute-expansion/compute-prepass scaffolding + current limitations; plus a minimal SM4 GS DXBC→WGSL compute path that is executed for point-list and triangle-list draws), and
+- what is **implemented today** (command-stream plumbing, binding model, compute-expansion/compute-prepass scaffolding + current limitations; plus a minimal SM4 GS DXBC→WGSL compute path that is executed for point-list draws (`Draw` and `DrawIndexed`) and triangle-list draws), and
 - the **next steps** (expand GS DXBC execution beyond the current point/triangle-list subset, implement VS-as-compute to feed GS inputs, then grow opcode/topology/system-value coverage and bring up HS/DS emulation).
 
 > Related: [`docs/16-d3d10-11-translation.md`](../16-d3d10-11-translation.md) (high-level D3D10/11→WebGPU mapping).
@@ -69,9 +69,9 @@ Current status:
   generate expanded geometry.
 - Patchlist draws with HS+DS bound route through the tessellation prepass pipeline (VS-as-compute +
   HS/DS passthrough + tessellator layout + DS passthrough).
-- There is an initial “real GS” path for **point-list and triangle-list draws**: if the bound GS DXBC can be
-   translated by `crates/aero-d3d11/src/runtime/gs_translate.rs`, the executor executes that translated
-   WGSL compute prepass at draw time.
+- There is an initial “real GS” path for **point-list draws (`Draw` and `DrawIndexed`) and triangle-list draws**:
+  if the bound GS DXBC can be translated by `crates/aero-d3d11/src/runtime/gs_translate.rs`, the executor
+  executes that translated WGSL compute prepass at draw time.
   - Currently, the GS `v#[]` inputs are populated directly from IA vertex buffers via vertex pulling
     (VS-as-compute is not implemented yet). This requires an input layout.
 
@@ -92,8 +92,9 @@ Note: there is an in-tree GS→WGSL compute translator at `crates/aero-d3d11/src
 It supports `pointlist`, `linestrip`, and `trianglestrip` GS output topologies. Strip topologies are
 lowered to indexed list topologies (`linestrip` → **line list**, `trianglestrip` → **triangle list**)
 suitable for `draw_indexed_indirect`.
-It is partially wired into the command executor via the translated-GS prepass paths (`PointList` and
-`TriangleList` draws); other topologies still fall back to synthetic expansion.
+It is partially wired into the command executor via the translated-GS prepass paths (`PointList` draws
+(`Draw` and `DrawIndexed`) and `TriangleList` draws); other topologies still fall back to synthetic
+expansion.
 
 ---
 
@@ -129,9 +130,10 @@ Implemented today:
   - A built-in WGSL prepass (“synthetic expansion”) is used as a fallback and for bring-up coverage
     tests (see `GEOMETRY_PREPASS_CS_WGSL` / `GEOMETRY_PREPASS_CS_VERTEX_PULLING_WGSL` in
     `crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs`).
-  - A translator-backed GS prepass exists for **point-list and triangle-list** draws: a supported
-    subset of SM4 GS DXBC is translated to WGSL compute and executed to produce expanded geometry
-    (see `exec_geometry_shader_prepass_pointlist` and `exec_geometry_shader_prepass_trianglelist`).
+  - A translator-backed GS prepass exists for **point-list** draws (`Draw` and `DrawIndexed`) and
+    **triangle-list** draws: a supported subset of SM4 GS DXBC is translated to WGSL compute and
+    executed to produce expanded geometry (see `exec_geometry_shader_prepass_pointlist` and
+    `exec_geometry_shader_prepass_trianglelist`).
 - **GS DXBC → WGSL compute translation (minimal subset)**:
   - GS DXBC is decoded to SM4 IR and translated to WGSL compute in
     `crates/aero-d3d11/src/runtime/gs_translate.rs` (invoked from `CREATE_SHADER_DXBC` for GS).
@@ -141,8 +143,9 @@ Implemented today:
 Current limitations (high-level):
 
 - Only a small “real GS” path is implemented today:
-  - `PointList` and `TriangleList` draws (indexed or non-indexed) can execute translated SM4 GS DXBC
-    as the compute prepass when the shader is within the supported translator subset.
+  - `PointList` draws (`Draw` and `DrawIndexed`) and `TriangleList` draws (indexed or non-indexed)
+    can execute translated SM4 GS DXBC as the compute prepass when the shader is within the supported
+    translator subset.
   - Other input topologies (line, strip, adjacency) still use the built-in synthetic expansion WGSL
     prepass.
 - The prepass does not execute the guest VS DXBC yet. For the current translated-GS paths, the GS
