@@ -526,7 +526,6 @@ pub enum MachineError {
     VirtioInputRequiresPcPlatform,
     UhciRequiresPcPlatform,
     EhciRequiresPcPlatform,
-    AeroGpuRequiresPcPlatform,
     AeroGpuConflictsWithVga,
     E1000RequiresPcPlatform,
     VirtioNetRequiresPcPlatform,
@@ -574,9 +573,6 @@ impl fmt::Display for MachineError {
             }
             MachineError::EhciRequiresPcPlatform => {
                 write!(f, "enable_ehci requires enable_pc_platform=true")
-            }
-            MachineError::AeroGpuRequiresPcPlatform => {
-                write!(f, "enable_aerogpu requires enable_pc_platform=true")
             }
             MachineError::AeroGpuConflictsWithVga => {
                 write!(
