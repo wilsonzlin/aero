@@ -94,6 +94,38 @@ class QuotaChunkWriteStore implements BinaryStore {
   }
 }
 
+class QuotaChunkReadStore implements BinaryStore {
+  readonly files = new Map<string, Uint8Array<ArrayBuffer>>();
+  chunkReads = 0;
+  throwOnChunkReads = false;
+
+  constructor(private readonly quotaErrorName: string = "QuotaExceededError") {}
+
+  async read(path: string): Promise<Uint8Array<ArrayBuffer> | null> {
+    if (this.throwOnChunkReads && path.includes("/chunks/") && path.endsWith(".bin")) {
+      this.chunkReads += 1;
+      throw new DOMException("quota", this.quotaErrorName);
+    }
+    const data = this.files.get(path);
+    return data ? data.slice() : null;
+  }
+
+  async write(path: string, data: Uint8Array<ArrayBuffer>): Promise<void> {
+    this.files.set(path, data.slice());
+  }
+
+  async remove(path: string, options: { recursive?: boolean } = {}): Promise<void> {
+    if (options.recursive) {
+      const prefix = path.endsWith("/") ? path : `${path}/`;
+      for (const key of Array.from(this.files.keys())) {
+        if (key === path || key.startsWith(prefix)) this.files.delete(key);
+      }
+      return;
+    }
+    this.files.delete(path);
+  }
+}
+
 function toArrayBufferUint8(data: Uint8Array): Uint8Array<ArrayBuffer> {
   return data.buffer instanceof ArrayBuffer ? (data as unknown as Uint8Array<ArrayBuffer>) : new Uint8Array(data);
 }
@@ -811,6 +843,83 @@ describe("RemoteChunkedDisk", () => {
     const t = disk.getTelemetrySnapshot();
     expect(t.cacheHits).toBe(0);
     expect(t.cachedBytes).toBe(0);
+
+    await disk.close();
+  });
+
+  it("tolerates quota errors when reading cached chunks (treat as cache miss + disable caching)", async () => {
+    const chunkSize = 1024; // multiple of 512
+    const totalSize = chunkSize;
+    const chunkCount = 1;
+
+    const img = buildTestImageBytes(totalSize);
+    const chunk0 = img.slice(0, chunkSize);
+
+    const manifest = {
+      schema: "aero.chunked-disk-image.v1",
+      imageId: "test",
+      version: "v1",
+      mimeType: "application/octet-stream",
+      totalSize,
+      chunkSize,
+      chunkCount,
+      chunkIndexWidth: 8,
+      chunks: [{ size: chunkSize, sha256: await sha256Hex(chunk0) }],
+    };
+
+    const { baseUrl, hits, close } = await withServer((_req, res) => {
+      const url = new URL(_req.url ?? "/", "http://localhost");
+      if (url.pathname === "/manifest.json") {
+        res.statusCode = 200;
+        res.setHeader("content-type", "application/json");
+        res.end(JSON.stringify(manifest));
+        return;
+      }
+
+      if (url.pathname === "/chunks/00000000.bin") {
+        res.statusCode = 200;
+        res.setHeader("content-type", "application/octet-stream");
+        res.end(chunk0);
+        return;
+      }
+
+      res.statusCode = 404;
+      res.end("not found");
+    });
+    closeServer = close;
+
+    const store = new QuotaChunkReadStore();
+    const disk = await RemoteChunkedDisk.open(`${baseUrl}/manifest.json`, {
+      store,
+      cacheLimitBytes: chunkSize * 8,
+      prefetchSequentialChunks: 0,
+      retryBaseDelayMs: 0,
+      maxConcurrentFetches: 1,
+    });
+
+    // Prime the cache (successful write).
+    const buf1 = new Uint8Array(512);
+    await disk.readSectors(0, buf1);
+    expect(buf1).toEqual(img.slice(0, 512));
+    expect(hits.get("/chunks/00000000.bin")).toBe(1);
+
+    // Force the cache read path to throw a quota error.
+    store.throwOnChunkReads = true;
+
+    const buf2 = new Uint8Array(512);
+    await disk.readSectors(0, buf2);
+    expect(buf2).toEqual(img.slice(0, 512));
+    // Cache read failed, so we must re-fetch.
+    expect(hits.get("/chunks/00000000.bin")).toBe(2);
+    expect(store.chunkReads).toBe(1);
+    expect(disk.getTelemetrySnapshot().cacheLimitBytes).toBe(0);
+
+    // With caching disabled, subsequent reads should not attempt further cache reads.
+    const buf3 = new Uint8Array(512);
+    await disk.readSectors(0, buf3);
+    expect(buf3).toEqual(img.slice(0, 512));
+    expect(hits.get("/chunks/00000000.bin")).toBe(3);
+    expect(store.chunkReads).toBe(1);
 
     await disk.close();
   });
