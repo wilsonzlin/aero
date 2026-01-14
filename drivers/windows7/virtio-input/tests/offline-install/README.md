@@ -13,18 +13,17 @@ test images where you want input working immediately).
 > - Keyboard/mouse: `aero_virtio_input.inf`
 >   - Contract keyboard HWID: `...&SUBSYS_00101AF4&REV_01`
 >   - Contract mouse HWID: `...&SUBSYS_00111AF4&REV_01`
+>   - Strict generic fallback HWID (no `SUBSYS`): `PCI\VEN_1AF4&DEV_1052&REV_01`
+>     - When binding via the fallback entry, Device Manager will show the generic **Aero VirtIO Input Device** name.
 > - Tablet/absolute pointer: `aero_virtio_tablet.inf` (`...&SUBSYS_00121AF4&REV_01`)
 >   - Tablet binding is more specific, so it wins over the generic fallback when the tablet subsystem ID is present and
 >     both packages are installed.
 >   - If the tablet subsystem ID is missing (or the tablet INF is not staged), the device may bind via the generic fallback
->     entry when using the legacy alias INF (see below) and show up as **Aero VirtIO Input Device**.
+>     entry and show up as **Aero VirtIO Input Device**.
 > - Optional legacy filename alias: `virtio-input.inf.disabled` → rename to `virtio-input.inf` to enable.
->   - Adds opt-in strict generic fallback binding (no `SUBSYS`): `PCI\VEN_1AF4&DEV_1052&REV_01`
->     - When binding via the fallback entry, Device Manager will show the generic **Aero VirtIO Input Device** name.
->   - Alias drift policy: allowed to diverge from `aero_virtio_input.inf` only in the models sections (`[Aero.NTx86]` /
->     `[Aero.NTamd64]`), where the alias adds the fallback match. Outside those sections it is expected to be byte-identical
->     from the first section header (`[Version]`) onward (banner/comments may differ; see `drivers/windows7/virtio-input/scripts/check-inf-alias.py`).
->   - Enabling the alias **does** change HWID matching behavior (it enables fallback binding when Aero `SUBSYS_` IDs are not exposed/recognized).
+>   - Filename alias only: from the first section header (`[Version]`) onward, it must remain byte-identical to
+>     `aero_virtio_input.inf` (banner/comments may differ; see `drivers/windows7/virtio-input/scripts/check-inf-alias.py`).
+>   - Because it is identical, it does **not** change HWID matching behavior (and is not required for fallback binding).
 >   - Do **not** stage/install both basenames at once: choose **either** `aero_virtio_input.inf` **or** `virtio-input.inf`.
 
 The commands below assume you already have a **built driver package directory** containing:

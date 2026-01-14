@@ -79,26 +79,23 @@ drivers/windows7/tests/
     - `aero_virtio_tablet.inf` is the preferred binding for the contract tablet HWID. It is more specific than
       `aero_virtio_input.inf` and wins when both are installed and it matches.
     - If your QEMU/device does **not** expose the Aero contract tablet subsystem ID (`SUBSYS_0012`):
-      - `aero_virtio_tablet.inf` will not match (tablet-SUBSYS-only).
-      - The device can still bind via the opt-in strict fallback HWID `PCI\VEN_1AF4&DEV_1052&REV_01` if you enable the optional
-        legacy alias INF (the `*.inf.disabled` file under `drivers/windows7/virtio-input/inf/`). It will appear as the generic
-        **Aero VirtIO Input Device**.
+      - `aero_virtio_tablet.inf` will not match (it matches only the tablet subsystem-qualified HWID).
+      - The device can still bind via the canonical `aero_virtio_input.inf` strict fallback HWID
+        `PCI\VEN_1AF4&DEV_1052&REV_01` and will appear as the generic **Aero VirtIO Input Device**.
       - Ensure the device reports `REV_01` (for QEMU, ensure `x-pci-revision=0x01` is in effect; the harness does this by default).
       - Preferred/contract path: emulate the contract tablet subsystem ID (`SUBSYS_00121AF4`) so the device binds via
         `aero_virtio_tablet.inf` and appears with the tablet device name.
-      - The optional `*.inf.disabled` file under `drivers/windows7/virtio-input/inf/` exists for legacy compatibility and opt-in
-        fallback binding:
-        - It is allowed to diverge from `aero_virtio_input.inf` only in the models sections (`[Aero.NTx86]` / `[Aero.NTamd64]`)
-          where it adds the strict generic fallback model line `PCI\VEN_1AF4&DEV_1052&REV_01` (no `SUBSYS`).
-        - Outside those models sections, from the first section header onward it is expected to remain byte-identical
-          (banner/comments may differ).
-        - Enabling it does **change** HWID matching behavior (it enables strict generic fallback binding).
-      - Do **not** install or ship both the canonical INF and the alias INF at the same time: they have overlapping bindings and
-        can cause confusing/non-deterministic device selection.
+      - The optional `*.inf.disabled` file under `drivers/windows7/virtio-input/inf/` exists for legacy compatibility, but is a
+        filename-only alias: from the first section header (`[Version]`) onward it is byte-identical to `aero_virtio_input.inf`
+        (banner/comments may differ; see `drivers/windows7/virtio-input/scripts/check-inf-alias.py`) and does **not** change HWID
+        matching behavior.
+      - Do **not** install or ship both the canonical INF and the alias INF at the same time: they are two filenames for the same
+        INF content and can cause confusing/non-deterministic device binding.
       - Note: documentation under `drivers/windows7/tests/` intentionally avoids spelling deprecated legacy INF basenames.
         CI scans this tree for those strings. If you need to refer to a filename alias, refer to it generically as
         the `*.inf.disabled` file.
-      - Caveat: avoid installing overlapping virtio-input INFs that can match the same HWIDs and steal device binding.
+      - Caveat: avoid installing additional/third-party virtio-input INFs that can match the same HWIDs and steal
+        device binding.
     - Once bound, the driver classifies the device as a tablet via `EV_BITS` (`EV_ABS` + `ABS_X`/`ABS_Y`).
 - Optionally runs a virtio-snd test (PCI detection + endpoint enumeration + short playback) when a supported virtio-snd
   device is detected (or when `--require-snd` / `--test-snd` is set).

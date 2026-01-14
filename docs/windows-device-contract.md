@@ -240,33 +240,31 @@ Examples (illustrative) INF model entries:
 %AeroVirtioBlk.DeviceDesc% = AeroVirtioBlk_Install, PCI\VEN_1AF4&DEV_1042&REV_01
 %AeroVirtioBlk.DeviceDesc% = AeroVirtioBlk_Install, PCI\VEN_1AF4&DEV_1042&SUBSYS_00021AF4&REV_01
 
-; aero_virtio_net.inf
-%AeroVirtioNet.DeviceDesc% = AeroVirtioNet_Install, PCI\VEN_1AF4&DEV_1041&REV_01
-%AeroVirtioNet.DeviceDesc% = AeroVirtioNet_Install, PCI\VEN_1AF4&DEV_1041&SUBSYS_00011AF4&REV_01
-
-; aero_virtio_snd.inf
-%AeroVirtioSnd.DeviceDesc% = AeroVirtioSnd_Install, PCI\VEN_1AF4&DEV_1059&REV_01
-  
-; aero_virtio_input.inf (virtio-input is a multi-function device: keyboard + mouse)
-; Canonical keyboard/mouse INF is SUBSYS-only: it includes only the Aero keyboard/mouse subsystem-qualified contract v1 HWIDs,
-; for distinct Device Manager naming:
-%AeroVirtioKeyboard.DeviceDesc% = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01
-%AeroVirtioMouse.DeviceDesc%    = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01
-
-; Legacy filename alias `virtio-input.inf` (checked in disabled-by-default as `virtio-input.inf.disabled`)
-; - Exists for compatibility with workflows/tools that still reference `virtio-input.inf` instead of `aero_virtio_input.inf`.
-; - Allowed to diverge from the canonical INF only in the models sections (`[Aero.NTx86]` / `[Aero.NTamd64]`) to add an opt-in
-;   strict revision-gated generic fallback model line (no `SUBSYS`):
-%AeroVirtioInput.DeviceDesc%    = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&REV_01
-; - Outside those models sections, from the first section header (`[Version]`) onward, it is expected to remain byte-for-byte
-;   identical to `aero_virtio_input.inf` (banner/comments may differ; see `drivers/windows7/virtio-input/scripts/check-inf-alias.py`).
-; - Enabling the alias does change HWID matching behavior (it enables the strict generic fallback binding above).
-; - Install only one basename at a time (avoid duplicate overlapping INFs that can cause confusing driver selection).
-
-; aero_virtio_tablet.inf (optional tablet / absolute pointer)
-; Note: this SUBSYS-qualified HWID is more specific, so it wins over the generic fallback when both packages are installed.
-%AeroVirtioTablet.DeviceDesc%   = AeroVirtioTablet_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&SUBSYS_00121AF4&REV_01
-```
+ ; aero_virtio_net.inf
+ %AeroVirtioNet.DeviceDesc% = AeroVirtioNet_Install, PCI\VEN_1AF4&DEV_1041&REV_01
+ %AeroVirtioNet.DeviceDesc% = AeroVirtioNet_Install, PCI\VEN_1AF4&DEV_1041&SUBSYS_00011AF4&REV_01
+ 
+ ; aero_virtio_snd.inf
+ %AeroVirtioSnd.DeviceDesc% = AeroVirtioSnd_Install, PCI\VEN_1AF4&DEV_1059&REV_01
+   
+ ; aero_virtio_input.inf (virtio-input is a multi-function device: keyboard + mouse)
+ ; Includes explicit keyboard/mouse model lines for distinct Device Manager naming, plus a strict revision-gated generic
+ ; fallback model line (no SUBSYS) for environments where subsystem IDs are not exposed/recognized:
+ %AeroVirtioKeyboard.DeviceDesc% = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01
+ %AeroVirtioMouse.DeviceDesc%    = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01
+ %AeroVirtioInput.DeviceDesc%    = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&REV_01
+ 
+ ; Legacy filename alias `virtio-input.inf` (checked in disabled-by-default as `virtio-input.inf.disabled`)
+ ; - Exists for compatibility with workflows/tools that still reference `virtio-input.inf` instead of `aero_virtio_input.inf`.
+ ; - From the first section header (`[Version]`) onward, it must remain byte-for-byte identical to `aero_virtio_input.inf`
+ ;   (only the leading banner/comments may differ; see `drivers/windows7/virtio-input/scripts/check-inf-alias.py`).
+ ; - It does not change HWID matching behavior.
+ ; - Do not ship/install both INFs at the same time: they match overlapping HWIDs and can cause confusing driver selection.
+ 
+ ; aero_virtio_tablet.inf (optional tablet / absolute pointer)
+ ; Note: this SUBSYS-qualified HWID is more specific, so it wins over the generic fallback when both packages are installed.
+ %AeroVirtioTablet.DeviceDesc%   = AeroVirtioTablet_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&SUBSYS_00121AF4&REV_01
+ ```
 
 ### Boot-critical storage (`CriticalDeviceDatabase`)
 
