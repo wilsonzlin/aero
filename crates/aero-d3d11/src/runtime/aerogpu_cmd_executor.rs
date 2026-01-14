@@ -18303,7 +18303,58 @@ fn cs_main() {
             // allocating a multi-megabyte backing buffer.
             let mut desc = ExpansionScratchDescriptor::default();
             desc.frames_in_flight = 1;
-            desc.per_frame_size = 256;
+            // `ExpansionScratchAllocator` rounds the requested per-frame segment size up to satisfy
+            // WebGPU offset alignment rules (storage/uniform/copy). Some backends (notably wgpu GL)
+            // report `min_storage_buffer_offset_alignment == 256`, meaning two tiny allocations can
+            // still require offsets 0 and 256. Ensure the segment is big enough for both
+            // allocations without forcing the allocator to grow/reallocate immediately.
+            let limits = exec.device.limits();
+            let storage_alignment = (limits.min_storage_buffer_offset_alignment as u64).max(1);
+            let uniform_alignment = (limits.min_uniform_buffer_offset_alignment as u64).max(1);
+
+            fn gcd_u64(mut a: u64, mut b: u64) -> u64 {
+                while b != 0 {
+                    let r = a % b;
+                    a = b;
+                    b = r;
+                }
+                a
+            }
+
+            fn lcm_u64(a: u64, b: u64) -> u64 {
+                debug_assert!(a > 0);
+                debug_assert!(b > 0);
+                let g = gcd_u64(a, b);
+                (a / g).saturating_mul(b)
+            }
+
+            fn align_up(value: u64, alignment: u64) -> u64 {
+                debug_assert!(alignment > 0);
+                let add = alignment - 1;
+                match value.checked_add(add) {
+                    Some(v) => v / alignment * alignment,
+                    None => u64::MAX / alignment * alignment,
+                }
+            }
+
+            let required_alignment = lcm_u64(
+                wgpu::COPY_BUFFER_ALIGNMENT,
+                lcm_u64(lcm_u64(storage_alignment, uniform_alignment), 16),
+            );
+
+            // Mirror the allocator's first two allocations:
+            // - vertex output (size 16, align 16)
+            // - index output (size 4, align 4)
+            let size_vertex = align_up(16, wgpu::COPY_BUFFER_ALIGNMENT);
+            let size_index = align_up(4, wgpu::COPY_BUFFER_ALIGNMENT);
+            let align_vertex = lcm_u64(lcm_u64(16, wgpu::COPY_BUFFER_ALIGNMENT), storage_alignment);
+            let align_index = lcm_u64(lcm_u64(4, wgpu::COPY_BUFFER_ALIGNMENT), storage_alignment);
+
+            let cursor_after_vertex = align_up(0, align_vertex).saturating_add(size_vertex);
+            let offset_index = align_up(cursor_after_vertex, align_index);
+            let required_bytes = offset_index.saturating_add(size_index);
+
+            desc.per_frame_size = required_bytes.max(required_alignment);
             exec.expansion_scratch = ExpansionScratchAllocator::new(desc);
 
             let a = exec
