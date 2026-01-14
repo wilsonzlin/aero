@@ -130,6 +130,12 @@ fn input_help_mentions_flags_and_steps() {
         ))
         .stdout(predicate::str::contains("src/usb/usb_proxy_ring.test.ts"))
         .stdout(predicate::str::contains(
+            "src/usb/usb_proxy_ring_dispatcher.test.ts",
+        ))
+        .stdout(predicate::str::contains(
+            "src/usb/usb_proxy_ring_integration.test.ts",
+        ))
+        .stdout(predicate::str::contains(
             "src/usb/xhci_webusb_bridge.test.ts",
         ))
         .stdout(predicate::str::contains("xhci_webusb_passthrough_runtime"))
