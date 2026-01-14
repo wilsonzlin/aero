@@ -5277,6 +5277,84 @@ mod tests {
     }
 
     #[test]
+    fn gs_translate_fixed_array_layout_matches_passthrough_vs_expanded_vertex_format() {
+        // The cmd-stream executor's passthrough VS (`runtime/wgsl_link.rs`) expects the expanded
+        // vertex record to be:
+        //   - pos: vec4<f32>
+        //   - varyings: array<vec4<f32>, 32>
+        //
+        // Ensure the internal fixed-array GS translation mode emits that layout and maps `oN`
+        // outputs into `varyings[N]`.
+        let module = Sm4Module {
+            stage: ShaderStage::Geometry,
+            model: ShaderModel { major: 4, minor: 0 },
+            decls: vec![
+                Sm4Decl::GsInputPrimitive {
+                    primitive: GsInputPrimitive::Point(1),
+                },
+                Sm4Decl::GsOutputTopology {
+                    topology: GsOutputTopology::Point(1),
+                },
+                Sm4Decl::GsMaxOutputVertexCount { max: 1 },
+            ],
+            instructions: vec![
+                // Initialize outputs required by `emit`.
+                Sm4Inst::Mov {
+                    dst: DstOperand {
+                        reg: RegisterRef {
+                            file: RegFile::Output,
+                            index: 0,
+                        },
+                        mask: WriteMask::XYZW,
+                        saturate: false,
+                    },
+                    src: SrcOperand {
+                        kind: SrcKind::ImmediateF32([0; 4]),
+                        swizzle: Swizzle::XYZW,
+                        modifier: OperandModifier::None,
+                    },
+                },
+                Sm4Inst::Mov {
+                    dst: DstOperand {
+                        reg: RegisterRef {
+                            file: RegFile::Output,
+                            index: 1,
+                        },
+                        mask: WriteMask::XYZW,
+                        saturate: false,
+                    },
+                    src: SrcOperand {
+                        kind: SrcKind::ImmediateF32([0; 4]),
+                        swizzle: Swizzle::XYZW,
+                        modifier: OperandModifier::None,
+                    },
+                },
+                Sm4Inst::Emit { stream: 0 },
+                Sm4Inst::Ret,
+            ],
+        };
+
+        let wgsl = translate_gs_module_to_wgsl_compute_prepass_with_entry_point_fixed(
+            &module, "cs_main",
+        )
+        .expect("translation should succeed")
+        .wgsl;
+
+        assert!(
+            wgsl.contains("varyings: array<vec4<f32>, 32>"),
+            "expected fixed ExpandedVertex varyings array layout in WGSL:\n{wgsl}"
+        );
+        assert!(
+            wgsl.contains("out_vertices.data[vtx_idx].varyings = array<vec4<f32>, 32>();"),
+            "expected gs_emit to zero-initialize the varyings array in WGSL:\n{wgsl}"
+        );
+        assert!(
+            wgsl.contains("out_vertices.data[vtx_idx].varyings[1u] = o1;"),
+            "expected o1 to map to varyings[1] in expanded vertex output:\n{wgsl}"
+        );
+    }
+
+    #[test]
     fn gs_translate_emits_half_float_conversions() {
         // Ensure GS prepass translation supports the SM4/SM5 half-float conversion ops
         // `f32tof16`/`f16tof32` using WGSL pack/unpack builtins (no `f16` types required).
