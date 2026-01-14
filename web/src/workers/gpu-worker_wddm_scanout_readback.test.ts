@@ -9,6 +9,8 @@ import { MessageType, type ProtocolMessage, type WorkerInitMessage } from "../ru
 import { FRAME_PRESENTED, FRAME_SEQ_INDEX, FRAME_STATUS_INDEX, GPU_PROTOCOL_NAME, GPU_PROTOCOL_VERSION } from "../ipc/gpu-protocol";
 import {
   publishScanoutState,
+  SCANOUT_FORMAT_B5G5R5A1,
+  SCANOUT_FORMAT_B5G6R5,
   SCANOUT_FORMAT_B8G8R8A8,
   SCANOUT_FORMAT_B8G8R8A8_SRGB,
   SCANOUT_FORMAT_B8G8R8X8,
@@ -141,6 +143,27 @@ function writeRgba2x2(dst: Uint8Array, pitchBytes: number): void {
   dst.set([0xff, 0xff, 0xff, 0x44], pitchBytes + 4); // white, A=0x44
 }
 
+function writeRgb5652x2(dst: Uint8Array, pitchBytes: number): void {
+  // 2x2 pixels, rowBytes=4.
+  // Quadrants (top-left origin):
+  // - TL: red
+  // - TR: green
+  // - BL: blue
+  // - BR: white
+  //
+  // RGB565 values (little-endian):
+  // - red   = 0xF800 (00 F8)
+  // - green = 0x07E0 (E0 07)
+  // - blue  = 0x001F (1F 00)
+  // - white = 0xFFFF (FF FF)
+  if (pitchBytes < 4) throw new Error("pitch too small");
+  dst.fill(0);
+  // Row 0: red, green.
+  dst.set([0x00, 0xf8, 0xe0, 0x07], 0);
+  // Row 1: blue, white.
+  dst.set([0x1f, 0x00, 0xff, 0xff], pitchBytes);
+}
+
 describe("workers/gpu-worker WDDM scanout readback", () => {
   it("reads BGRX scanout from guest RAM (honors pitch, forces alpha=255)", async () => {
     const segments = allocateHarnessSharedMemorySegments({
@@ -245,6 +268,229 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
     }
   }, TEST_TIMEOUT_MS);
 
+  it("reads B5G6R5 scanout from guest RAM even when last-row pitch padding is out of bounds (expands to RGBA8)", async () => {
+    const segments = allocateHarnessSharedMemorySegments({
+      guestRamBytes: 64 * 1024,
+      sharedFramebuffer: new SharedArrayBuffer(8),
+      sharedFramebufferOffsetBytes: 0,
+      ioIpcBytes: 0,
+      vramBytes: 0,
+    });
+    const views = createSharedMemoryViews(segments);
+
+    const width = 2;
+    const height = 2;
+    const pitchBytes = 8; // padded (srcRowBytes=4)
+    const srcRowBytes = width * 2;
+    const requiredBytes = pitchBytes * (height - 1) + srcRowBytes;
+    // Place the surface at the end of guest RAM so unused pitch padding after the last row would
+    // be out of bounds if the worker incorrectly required `pitchBytes * height`.
+    const basePaddr = views.guestU8.byteLength - requiredBytes;
+
+    views.guestU8.fill(0);
+    writeRgb5652x2(views.guestU8.subarray(basePaddr, basePaddr + requiredBytes), pitchBytes);
+
+    publishScanoutState(views.scanoutStateI32!, {
+      source: SCANOUT_SOURCE_WDDM,
+      basePaddrLo: basePaddr >>> 0,
+      basePaddrHi: 0,
+      width,
+      height,
+      pitchBytes,
+      format: SCANOUT_FORMAT_B5G6R5,
+    });
+
+    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
+    const shimUrl = new URL("./test_workers/worker_threads_webworker_shim.ts", import.meta.url);
+    const worker = new Worker(new URL("./gpu-worker.ts", import.meta.url), {
+      type: "module",
+      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+    } as unknown as WorkerOptions);
+
+    try {
+      const initMsg: WorkerInitMessage = {
+        kind: "init",
+        role: "gpu",
+        controlSab: segments.control,
+        guestMemory: segments.guestMemory,
+        ioIpcSab: segments.ioIpc,
+        sharedFramebuffer: segments.sharedFramebuffer,
+        sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,
+        scanoutState: segments.scanoutState,
+        scanoutStateOffsetBytes: segments.scanoutStateOffsetBytes,
+      };
+
+      worker.postMessage(initMsg);
+      await waitForWorkerMessage(
+        worker,
+        (msg) => (msg as Partial<ProtocolMessage>)?.type === MessageType.READY && (msg as { role?: unknown }).role === "gpu",
+        WORKER_MESSAGE_TIMEOUT_MS,
+      );
+
+      const sharedFrameState = new SharedArrayBuffer(8 * Int32Array.BYTES_PER_ELEMENT);
+      const frameState = new Int32Array(sharedFrameState);
+      Atomics.store(frameState, FRAME_STATUS_INDEX, FRAME_PRESENTED);
+      Atomics.store(frameState, FRAME_SEQ_INDEX, 0);
+
+      worker.postMessage({
+        protocol: GPU_PROTOCOL_NAME,
+        protocolVersion: GPU_PROTOCOL_VERSION,
+        type: "init",
+        sharedFrameState,
+        sharedFramebuffer: segments.sharedFramebuffer,
+        sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,
+      });
+
+      await waitForWorkerMessage(
+        worker,
+        (msg) => (msg as { protocol?: unknown; type?: unknown }).protocol === GPU_PROTOCOL_NAME && (msg as { type?: unknown }).type === "ready",
+        WORKER_MESSAGE_TIMEOUT_MS,
+      );
+
+      const requestId = 1;
+      const shotPromise = waitForWorkerMessage(
+        worker,
+        (msg) =>
+          (msg as { protocol?: unknown; type?: unknown; requestId?: unknown }).protocol === GPU_PROTOCOL_NAME &&
+          (msg as { type?: unknown }).type === "screenshot" &&
+          (msg as { requestId?: unknown }).requestId === requestId,
+        WORKER_MESSAGE_TIMEOUT_MS,
+      );
+      worker.postMessage({ protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION, type: "screenshot", requestId });
+
+      const shot = (await shotPromise) as { width: number; height: number; rgba8: ArrayBuffer };
+      expect(shot.width).toBe(width);
+      expect(shot.height).toBe(height);
+
+      const px = new Uint8Array(shot.rgba8);
+      expect(Array.from(px)).toEqual([
+        // Row 0: red, green.
+        0xff, 0x00, 0x00, 0xff, 0x00, 0xff, 0x00, 0xff,
+        // Row 1: blue, white.
+        0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+      ]);
+    } finally {
+      await worker.terminate();
+    }
+  }, TEST_TIMEOUT_MS);
+
+  it("reads B5G5R5A1 scanout from the shared VRAM aperture even when last-row pitch padding is out of bounds (expands alpha)", async () => {
+    const segments = allocateHarnessSharedMemorySegments({
+      guestRamBytes: 64 * 1024,
+      sharedFramebuffer: new SharedArrayBuffer(8),
+      sharedFramebufferOffsetBytes: 0,
+      ioIpcBytes: 0,
+      vramBytes: 64,
+    });
+    const views = createSharedMemoryViews(segments);
+
+    const width = 2;
+    const height = 2;
+    const pitchBytes = 8; // padded (srcRowBytes=4)
+    const srcRowBytes = width * 2;
+    const requiredBytes = pitchBytes * (height - 1) + srcRowBytes;
+    if (requiredBytes > views.vramU8.byteLength) {
+      throw new Error("vram buffer too small for B5G5R5A1 surface");
+    }
+    // Place the surface at the end of the VRAM SAB so the unused pitch padding after the last row
+    // would be out of bounds if the readback path incorrectly required `pitchBytes * height`.
+    const vramOffset = views.vramU8.byteLength - requiredBytes;
+    const basePaddr = (VRAM_BASE_PADDR + vramOffset) >>> 0;
+
+    views.vramU8.fill(0);
+    // Two rows of pixels:
+    // Row 0: red with alpha=1 (0xFC00), red with alpha=0 (0x7C00).
+    views.vramU8.set([0x00, 0xfc, 0x00, 0x7c], vramOffset);
+    // Row 1: green with alpha=1 (0x83E0), blue with alpha=0 (0x001F).
+    views.vramU8.set([0xe0, 0x83, 0x1f, 0x00], vramOffset + pitchBytes);
+
+    publishScanoutState(views.scanoutStateI32!, {
+      source: SCANOUT_SOURCE_WDDM,
+      basePaddrLo: basePaddr,
+      basePaddrHi: 0,
+      width,
+      height,
+      pitchBytes,
+      format: SCANOUT_FORMAT_B5G5R5A1,
+    });
+
+    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
+    const shimUrl = new URL("./test_workers/worker_threads_webworker_shim.ts", import.meta.url);
+    const worker = new Worker(new URL("./gpu-worker.ts", import.meta.url), {
+      type: "module",
+      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+    } as unknown as WorkerOptions);
+
+    try {
+      const initMsg: WorkerInitMessage = {
+        kind: "init",
+        role: "gpu",
+        controlSab: segments.control,
+        guestMemory: segments.guestMemory,
+        vram: segments.vram,
+        vramBasePaddr: VRAM_BASE_PADDR,
+        vramSizeBytes: segments.vram!.byteLength,
+        ioIpcSab: segments.ioIpc,
+        sharedFramebuffer: segments.sharedFramebuffer,
+        sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,
+        scanoutState: segments.scanoutState,
+        scanoutStateOffsetBytes: segments.scanoutStateOffsetBytes,
+      };
+
+      worker.postMessage(initMsg);
+      await waitForWorkerMessage(
+        worker,
+        (msg) => (msg as Partial<ProtocolMessage>)?.type === MessageType.READY && (msg as { role?: unknown }).role === "gpu",
+        WORKER_MESSAGE_TIMEOUT_MS,
+      );
+
+      const sharedFrameState = new SharedArrayBuffer(8 * Int32Array.BYTES_PER_ELEMENT);
+      const frameState = new Int32Array(sharedFrameState);
+      Atomics.store(frameState, FRAME_STATUS_INDEX, FRAME_PRESENTED);
+      Atomics.store(frameState, FRAME_SEQ_INDEX, 0);
+
+      worker.postMessage({
+        protocol: GPU_PROTOCOL_NAME,
+        protocolVersion: GPU_PROTOCOL_VERSION,
+        type: "init",
+        sharedFrameState,
+        sharedFramebuffer: segments.sharedFramebuffer,
+        sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,
+      });
+
+      await waitForWorkerMessage(
+        worker,
+        (msg) => (msg as { protocol?: unknown; type?: unknown }).protocol === GPU_PROTOCOL_NAME && (msg as { type?: unknown }).type === "ready",
+        WORKER_MESSAGE_TIMEOUT_MS,
+      );
+
+      const requestId = 1;
+      const shotPromise = waitForWorkerMessage(
+        worker,
+        (msg) =>
+          (msg as { protocol?: unknown; type?: unknown; requestId?: unknown }).protocol === GPU_PROTOCOL_NAME &&
+          (msg as { type?: unknown }).type === "screenshot" &&
+          (msg as { requestId?: unknown }).requestId === requestId,
+        WORKER_MESSAGE_TIMEOUT_MS,
+      );
+      worker.postMessage({ protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION, type: "screenshot", requestId });
+
+      const shot = (await shotPromise) as { width: number; height: number; rgba8: ArrayBuffer };
+      expect(shot.width).toBe(width);
+      expect(shot.height).toBe(height);
+
+      const px = new Uint8Array(shot.rgba8);
+      expect(Array.from(px)).toEqual([
+        // Row 0: red A=1, red A=0.
+        0xff, 0x00, 0x00, 0xff, 0xff, 0x00, 0x00, 0x00,
+        // Row 1: green A=1, blue A=0.
+        0x00, 0xff, 0x00, 0xff, 0x00, 0x00, 0xff, 0x00,
+      ]);
+    } finally {
+      await worker.terminate();
+    }
+  }, TEST_TIMEOUT_MS);
+
   it("reads BGRX scanout from guest RAM with a byte-granular pitch (forces alpha=255)", async () => {
     const segments = allocateHarnessSharedMemorySegments({
       guestRamBytes: 64 * 1024,
@@ -299,7 +545,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
       await waitForWorkerMessage(
         worker,
         (msg) => (msg as Partial<ProtocolMessage>)?.type === MessageType.READY && (msg as { role?: unknown }).role === "gpu",
-        10_000,
+        WORKER_MESSAGE_TIMEOUT_MS,
       );
 
       const sharedFrameState = new SharedArrayBuffer(8 * Int32Array.BYTES_PER_ELEMENT);
@@ -319,7 +565,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
       await waitForWorkerMessage(
         worker,
         (msg) => (msg as { protocol?: unknown; type?: unknown }).protocol === GPU_PROTOCOL_NAME && (msg as { type?: unknown }).type === "ready",
-        10_000,
+        WORKER_MESSAGE_TIMEOUT_MS,
       );
 
       const requestId = 1;
@@ -329,7 +575,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
           (msg as { protocol?: unknown; type?: unknown; requestId?: unknown }).protocol === GPU_PROTOCOL_NAME &&
           (msg as { type?: unknown }).type === "screenshot" &&
           (msg as { requestId?: unknown }).requestId === requestId,
-        10_000,
+        WORKER_MESSAGE_TIMEOUT_MS,
       );
       worker.postMessage({ protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION, type: "screenshot", requestId });
 
@@ -347,7 +593,7 @@ describe("workers/gpu-worker WDDM scanout readback", () => {
     } finally {
       await worker.terminate();
     }
-  }, 20_000);
+  }, TEST_TIMEOUT_MS);
 
   it("reads RGBX scanout from guest RAM (honors pitch, forces alpha=255)", async () => {
     const segments = allocateHarnessSharedMemorySegments({
