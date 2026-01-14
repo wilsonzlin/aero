@@ -245,3 +245,17 @@ fn ring_cursor_step_budget_prevents_infinite_link_loops() {
         RingPoll::Err(RingError::StepBudgetExceeded)
     );
 }
+
+#[test]
+fn ring_cursor_treats_all_ones_trb_fetch_as_error() {
+    let mut mem = TestMemory::new(0x1000);
+    let addr: u64 = 0x100;
+    mem.write_physical(addr, &[0xFF; TRB_LEN]);
+
+    let mut cur = RingCursor::new(addr, true);
+    assert_eq!(
+        cur.poll(&mut mem, 8),
+        RingPoll::Err(RingError::InvalidDmaRead)
+    );
+    assert_eq!(cur.dequeue_ptr(), addr);
+}

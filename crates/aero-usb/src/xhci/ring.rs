@@ -28,6 +28,12 @@ pub enum RingError {
 
     /// Link TRB pointed at an invalid segment base address (e.g. null).
     InvalidLinkTarget,
+
+    /// TRB fetch returned an all-ones value (commonly produced by unmapped DMA reads).
+    ///
+    /// This is treated as a fatal ring error to avoid "successfully" processing garbage TRBs when
+    /// the guest misprograms ring pointers or DMA is unavailable.
+    InvalidDmaRead,
 }
 
 /// Result of polling a ring cursor.
@@ -88,7 +94,12 @@ impl RingCursor {
     /// reaches a non-Link TRB.
     pub fn poll<M: MemoryBus + ?Sized>(&mut self, mem: &mut M, step_budget: usize) -> RingPoll {
         for _ in 0..step_budget {
-            let trb = Trb::read_from(mem, self.paddr);
+            let mut bytes = [0u8; TRB_LEN];
+            mem.read_physical(self.paddr, &mut bytes);
+            if bytes.iter().all(|&b| b == 0xFF) {
+                return RingPoll::Err(RingError::InvalidDmaRead);
+            }
+            let trb = Trb::from_bytes(bytes);
 
             if trb.cycle() != self.cycle {
                 return RingPoll::NotReady;
@@ -132,7 +143,12 @@ impl RingCursor {
     /// controller must *not* advance its dequeue pointer past the TRB so it can be retried later.
     pub fn peek<M: MemoryBus + ?Sized>(&mut self, mem: &mut M, step_budget: usize) -> RingPoll {
         for _ in 0..step_budget {
-            let trb = Trb::read_from(mem, self.paddr);
+            let mut bytes = [0u8; TRB_LEN];
+            mem.read_physical(self.paddr, &mut bytes);
+            if bytes.iter().all(|&b| b == 0xFF) {
+                return RingPoll::Err(RingError::InvalidDmaRead);
+            }
+            let trb = Trb::from_bytes(bytes);
 
             if trb.cycle() != self.cycle {
                 return RingPoll::NotReady;
