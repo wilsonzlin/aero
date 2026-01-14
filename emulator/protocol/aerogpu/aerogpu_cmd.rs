@@ -2010,7 +2010,6 @@ where
     let mut stream_hdr_bytes = [0u8; AerogpuCmdStreamHeader::SIZE_BYTES];
     read(cmd_gpa, &mut stream_hdr_bytes);
     let stream_hdr = decode_cmd_stream_header_le(&stream_hdr_bytes)?;
-
     if stream_hdr.size_bytes > cmd_size_bytes {
         return Err(AerogpuCmdDecodeError::PacketOverrunsStream {
             offset: 0,

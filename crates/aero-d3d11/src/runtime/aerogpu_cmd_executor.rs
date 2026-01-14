@@ -4120,8 +4120,6 @@ impl AerogpuD3d11Executor {
             None
         };
 
-        let uniform_align = self.device.limits().min_uniform_buffer_offset_alignment as u64;
-
         if let Some((gs_handle, gs_meta)) = gs_prepass {
             // The GS translator writes `DrawIndexedIndirectArgs`, so always render via
             // `draw_indexed_indirect`.
@@ -4819,7 +4817,7 @@ impl AerogpuD3d11Executor {
             // offset. Some backends (notably wgpu's GL backend) cannot apply the index-buffer binding
             // offset when executing `draw_indexed_indirect`, so we bind the full index buffer at
             // offset 0 and patch the indirect args `first_index` accordingly.
-            if (expanded_index_alloc.offset % 4) != 0 {
+            if !expanded_index_alloc.offset.is_multiple_of(4) {
                 bail!(
                     "geometry prepass expanded index buffer offset {} is not 4-byte aligned",
                     expanded_index_alloc.offset
