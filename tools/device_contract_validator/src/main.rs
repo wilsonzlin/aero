@@ -2527,6 +2527,39 @@ mod tests {
         validate_in_tree_infs(tmp.path(), &devices)
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
+    fn validate_temp_virtio_input_infs(canonical_inf: &str, alias_inf: Option<&str>) -> Result<()> {
+        let tmp = tempfile::tempdir().expect("create tempdir");
+        let inf_dir = tmp.path().join("drivers/windows7/virtio-input/inf");
+        fs::create_dir_all(&inf_dir).expect("create drivers/windows7/virtio-input/inf");
+
+        fs::write(inf_dir.join("aero_virtio_input.inf"), canonical_inf)
+            .expect("write aero_virtio_input.inf");
+        if let Some(alias) = alias_inf {
+            fs::write(inf_dir.join("virtio-input.inf.disabled"), alias)
+                .expect("write virtio-input.inf.disabled");
+        }
+
+        let dev = DeviceEntry {
+            device: "virtio-input".to_string(),
+            pci_vendor_id: "0x1AF4".to_string(),
+            pci_device_id: "0x1052".to_string(), // virtio-input modern: 0x1040 + 18
+            pci_device_id_transitional: Some("0x1011".to_string()),
+            hardware_id_patterns: vec![
+                r"PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01".to_string(),
+                r"PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01".to_string(),
+                r"PCI\VEN_1AF4&DEV_1052&REV_01".to_string(),
+            ],
+            driver_service_name: "testsvc".to_string(),
+            inf_name: "aero_virtio_input.inf".to_string(),
+            virtio_device_type: Some(18),
+        };
+
+        let mut devices = BTreeMap::new();
+        devices.insert(dev.device.clone(), dev);
+        validate_in_tree_infs(tmp.path(), &devices)
+    }
+
     #[test]
     fn validator_passes_on_repo_contracts() -> Result<()> {
         let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
@@ -2765,6 +2798,67 @@ TransDesc = "Transitional Device"
         assert!(out.starts_with(b"[Version]\n"));
         assert!(!String::from_utf8_lossy(&out).contains("banner"));
         Ok(())
+    }
+
+    #[test]
+    fn virtio_input_alias_drift_ignores_banner_differences() -> Result<()> {
+        let canonical = r#"
+[Version]
+Signature="$Windows NT$"
+
+[Aero.NTx86]
+%Kb%    = Install, PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01
+%Mouse% = Install, PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01
+%Input% = Install, PCI\VEN_1AF4&DEV_1052&REV_01
+
+[Aero.NTamd64]
+%Kb%    = Install, PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01
+%Mouse% = Install, PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01
+%Input% = Install, PCI\VEN_1AF4&DEV_1052&REV_01
+
+[Install.Services]
+AddService = testsvc, 0x00000002, ServiceInst
+
+[Strings]
+Kb    = "Keyboard"
+Mouse = "Mouse"
+Input = "Input Device"
+"#;
+        let alias = format!(
+            "; legacy filename alias banner line 1\n; line 2\n\n{canonical}"
+        );
+        validate_temp_virtio_input_infs(canonical, Some(&alias))
+    }
+
+    #[test]
+    fn virtio_input_alias_drift_is_detected_after_version_section() {
+        let canonical = r#"
+[Version]
+Signature="$Windows NT$"
+
+[Aero.NTx86]
+%Kb%    = Install, PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01
+%Mouse% = Install, PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01
+%Input% = Install, PCI\VEN_1AF4&DEV_1052&REV_01
+
+[Aero.NTamd64]
+%Kb%    = Install, PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01
+%Mouse% = Install, PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01
+%Input% = Install, PCI\VEN_1AF4&DEV_1052&REV_01
+
+[Install.Services]
+AddService = testsvc, 0x00000002, ServiceInst
+
+[Strings]
+Kb    = "Keyboard"
+Mouse = "Mouse"
+Input = "Input Device"
+"#;
+        let alias = canonical.replace(r#"Input = "Input Device""#, r#"Input = "Input Device X""#);
+
+        let err = validate_temp_virtio_input_infs(canonical, Some(&alias)).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("legacy alias INF drift detected"), "{msg}");
     }
 
     #[cfg(not(target_arch = "wasm32"))]
