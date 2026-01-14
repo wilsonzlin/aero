@@ -215,10 +215,24 @@ impl PageVersionTracker {
 
     /// Ensure the internal dense version table contains at least `len` entries.
     ///
-    /// For the bounded, pointer-stable tracker this is a no-op: the table length is fixed at
-    /// construction time. Calls with `len > table_len` are ignored (out-of-range pages behave as
-    /// version 0).
-    pub fn ensure_table_len(&mut self, _len: usize) {}
+    /// The tracker uses a fixed-size, pointer-stable table, so the table length is determined at
+    /// construction time (via `max_pages` / [`JitConfig::code_version_max_pages`]) and cannot grow
+    /// later without invalidating the exported pointer.
+    ///
+    /// This method therefore acts as a *check*: it ensures `len <= table_len`, panicking if the
+    /// configured table is too small.
+    pub fn ensure_table_len(&mut self, len: usize) {
+        assert!(
+            len <= self.versions.len(),
+            "requested code-version table length ({len}) exceeds configured max_pages ({})",
+            self.versions.len()
+        );
+    }
+
+    /// Backwards-compatible alias for [`Self::ensure_table_len`].
+    pub fn ensure_tracked_pages(&mut self, pages: usize) {
+        self.ensure_table_len(pages);
+    }
 
     /// Returns `(ptr, len_entries)` for the JIT-visible page-version table.
     ///
