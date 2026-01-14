@@ -99,7 +99,13 @@ describe("runtime/machine_snapshot_disks", () => {
     ]);
 
     // Older wasm-bindgen exports require a third `overlayBlockSizeBytes` argument.
-    const set_primary_hdd_opfs_cow = vi.fn(async (_base: string, _overlay: string, _blockSizeBytes: number) => {});
+    //
+    // NOTE: Do not use `vi.fn` here: Vitest mock fns have `.length === 0`, but the runtime
+    // detection uses `fn.length >= 3` to decide whether it must supply the block size.
+    const calls: Array<[string, string, number]> = [];
+    async function set_primary_hdd_opfs_cow(base: string, overlay: string, blockSizeBytes: number): Promise<void> {
+      calls.push([base, overlay, blockSizeBytes]);
+    }
 
     const machine = {
       restore_snapshot_from_opfs,
@@ -117,10 +123,6 @@ describe("runtime/machine_snapshot_disks", () => {
 
     await restoreMachineSnapshotFromOpfsAndReattachDisks({ api, machine, path: "state/test.snap", logPrefix: "test" });
 
-    expect(set_primary_hdd_opfs_cow).toHaveBeenCalledWith(
-      "aero/disks/win7.base",
-      "aero/disks/win7.overlay",
-      1024 * 1024,
-    );
+    expect(calls).toEqual([["aero/disks/win7.base", "aero/disks/win7.overlay", 1024 * 1024]]);
   });
 });
