@@ -425,7 +425,7 @@ Code anchors (see `src/aerogpu_d3d9_driver.cpp` unless noted):
   `kSupportedFvfXyzNormalDiffuse` / `kSupportedFvfXyzNormalDiffuseTex1`
 - `fixedfunc_fvf_supported()` (internal FVF-driven decl subset required by patch emulation; **XYZRHW + DIFFUSE (+ optional TEX1) variants only**)
 - `ensure_fixedfunc_pipeline_locked()` / `bind_draw_shaders_locked()` / `ensure_shader_bindings_locked()`
-- Stage0 fixed-function PS generation: `fixedfunc_stage0_key_locked()` + `ensure_fixedfunc_pixel_shader_locked()` (`fixedfunc_ps20` token builder)
+- Fixed-function PS generation from texture stage state (stages 0..3): `fixedfunc_ps_key_locked()` + `ensure_fixedfunc_pixel_shader_locked()` (`fixedfunc_ps20` token builder)
 - Fixed-function shader token streams: `src/aerogpu_d3d9_fixedfunc_shaders.h` (`fixedfunc::kVsPassthroughPosColor`, `fixedfunc::kVsPassthroughPosColorTex1`, `fixedfunc::kVsWvpPosColor`, `fixedfunc::kVsWvpPosColorTex0`, `fixedfunc::kVsTransformPosWhiteTex1`, etc)
 - XYZRHW conversion path: `fixedfunc_fvf_is_xyzrhw()` + `convert_xyzrhw_to_clipspace_locked()`
 - Fixed-function WVP VS constant upload: `fixedfunc_fvf_needs_matrix()` + `ensure_fixedfunc_wvp_constants_locked()` (`WORLD0*VIEW*PROJECTION` into reserved `c240..c243`)
@@ -458,7 +458,8 @@ Not yet implemented for **fixed-function emulation** (examples; expected by some
   implements only a small bounded subset (see “Limitations (bring-up)” below).
 - Vertex blending / indexed vertex blending (`D3DFVF_XYZB*`, `D3DRS_VERTEXBLEND`, `D3DRS_INDEXEDVERTEXBLENDENABLE`, etc)
 - Multiple texture coordinate sets (`D3DFVF_TEX2+`)
-- Full stage-state-driven fixed-function emulation (stage1+ texture combiners, fog, fixed-function lighting, etc). Stage0 has a guarded partial emulation path (see “Limitations (bring-up)” below).
+- Full fixed-function texture stage state coverage (many `D3DTSS_*` values are cached-only today, including `D3DTSS_TEXCOORDINDEX`).
+- Fog and other legacy fixed-function pixel pipeline features (beyond the combiner subset below).
 
 Implementation notes (bring-up):
 
@@ -496,7 +497,7 @@ Implementation notes (bring-up):
   - See also: `docs/graphics/win7-d3d9-fixedfunc-wvp.md` (WVP draw-time paths + `ProcessVertices` notes).
 - Shader-stage interop is supported: when exactly one stage is bound (VS-only or PS-only), the draw paths bind a
   fixed-function fallback shader for the missing stage at draw time (see `bind_draw_shaders_locked()`).
-  - VS-only interop (PS is NULL) uses a stage0 fixed-function PS variant (validated by `d3d9_shader_stage_interop`).
+  - VS-only interop (PS is NULL) uses a fixed-function PS generated from texture stage state (stages 0..3; validated by `d3d9_shader_stage_interop`).
   - PS-only interop (VS is NULL) uses a fixed-function VS derived from the active FVF (validated by `d3d9ex_ps_only_triangle`).
 - For indexed draws in this mode, indices may be expanded into a temporary vertex stream (conservative but sufficient
   for bring-up).
@@ -531,7 +532,7 @@ Limitations (bring-up):
   two components as `(u, v)`. `TEXCOORD0` may be declared as `float1/2/3/4` via `D3DFVF_TEXCOORDSIZE*` (extra components
   are ignored; `float1` implies `v=0`). Multiple texture coordinate sets still require user shaders (layout translation is
   supported; fixed-function shading is not).
-- Stage0 texture stage state (`D3DTSS_COLOROP/ALPHAOP` + `D3DTSS_COLORARG*/ALPHAARG*`) is interpreted for a guarded, stage0-only subset (validated by `d3d9ex_fixedfunc_texture_stage_state`):
+- Texture stage state (`D3DTSS_COLOROP/ALPHAOP` + `D3DTSS_COLORARG*/ALPHAARG*`) is interpreted for a guarded, multi-stage subset (stages 0..3) to synthesize a `ps_2_0` fixed-function combiner shader (validated by `d3d9ex_fixedfunc_texture_stage_state` and `d3d9_fixedfunc_multitexture`):
   - Supported COLOR/ALPHA ops:
     - `DISABLE`, `SELECTARG1`, `SELECTARG2`
     - `MODULATE`, `MODULATE2X`, `MODULATE4X`
@@ -539,21 +540,23 @@ Limitations (bring-up):
     - `BLENDTEXTUREALPHA`, `BLENDDIFFUSEALPHA`
   - Supported arg sources:
     - `DIFFUSE` / `CURRENT` (stage0 `CURRENT` treated as diffuse)
-    - `TEXTURE` (stage0 only)
+    - `TEXTURE`
     - `TFACTOR` (`D3DRS_TEXTUREFACTOR`; provided to the fixed-function PS as `c255` in normalized RGBA)
   - Supported arg modifiers for the sources above: `COMPLEMENT`, `ALPHAREPLICATE`
   - Guardrails:
     - Unsupported stage-state combinations are cached for `Get*`/state blocks, but fixed-function draws fail cleanly with `D3DERR_INVALIDCALL` (only when the fixed-function path is actually used; i.e., no user pixel shader is bound).
-    - If no texture is bound to stage0, the UMD avoids selecting a texture-sampling shader even if the cached stage state references `TEXTURE` (stage0 is treated as disabled/passthrough diffuse).
-  - Stages `> 0` are cached only for `Get*`/state blocks and are ignored by the fixed-function shader selection for now.
+    - If a stage references `TEXTURE` but the corresponding stage texture is unbound, the UMD truncates the stage chain (passthrough) instead of emitting a `texld` from an invalid slot.
+    - Stage chain termination follows D3D9 semantics: `COLOROP=DISABLE` on stage *N* disables stage *N* and all subsequent stages.
+  - Stages `> 3` are cached only for `Get*`/state blocks and are ignored by the fixed-function shader selection for now.
 - Fixed-function lighting/material beyond the minimal subset above is cached-only (for `Get*` and state blocks) and is not
   forwarded into shader generation (specular, spot cone falloff, additional attenuation terms, more lights, etc).
 
 ### Known limitations / next steps
 
-- **Fixed-function pipeline is still limited:** `ensure_fixedfunc_pipeline_locked()` synthesizes a small `ps_2_0` token stream for the supported subset of stage0 texture stage state (see above).
+- **Fixed-function pipeline is still limited:** `ensure_fixedfunc_pipeline_locked()` synthesizes a small `ps_2_0` token stream for the supported subset of texture stage state (stages 0..3; see above).
   - The pixel shader bytecode is generated at runtime by a tiny “ps_2_0 token builder” in `src/aerogpu_d3d9_driver.cpp` (no offline shader generation step is required).
-  - Stage1+ texture stage state, fog, and more complete fixed-function lighting (specular, spot cones, more lights, etc) are still TODOs.
+  - The current implementation supports up to 4 texture stages (`MaxTextureBlendStages = 4`) and uses `TEXCOORD0` for all stages (no `D3DTSS_TEXCOORDINDEX` support yet).
+  - Fog and more complete fixed-function lighting (specular, spot cones, more lights, etc) are still TODOs.
 - **Shader int/bool constants are supported:** `DeviceSetShaderConstI/B` (`device_set_shader_const_i_impl()` / `device_set_shader_const_b_impl()` in `src/aerogpu_d3d9_driver.cpp`) update the UMD-side caches + state blocks and emit constant updates into the AeroGPU command stream (`AEROGPU_CMD_SET_SHADER_CONSTANTS_I/B`).
 - **Bring-up no-ops:** `pfnSetConvolutionMonoKernel` and `pfnSetDialogBoxMode` are wired as `S_OK` no-ops via
   `AEROGPU_D3D9_DEFINE_DDI_NOOP(...)` in the “Stubbed entrypoints” section of `src/aerogpu_d3d9_driver.cpp`.
@@ -568,6 +571,7 @@ This subset is validated via:
   `umd_private_sanity`, `transfer_feature_sanity`,
   `d3d9ex_triangle`, `d3d9_mipmapped_texture_smoke`, `d3d9ex_fixedfunc_textured_triangle`,
   `d3d9ex_fixedfunc_texture_stage_state`, `d3d9_fixedfunc_xyz_diffuse`, `d3d9_fixedfunc_xyz_diffuse_tex1`,
+  `d3d9_fixedfunc_multitexture`,
   `d3d9_fixedfunc_textured_wvp`, `d3d9_fixedfunc_wvp_triangle`, `d3d9_fixedfunc_lighting_directional`,
   `d3d9_fixedfunc_lighting_multi_directional`, `d3d9_fixedfunc_lighting_point`,
   `d3d9_shader_stage_interop`, `d3d9ex_ps_only_triangle`,
@@ -743,7 +747,7 @@ no-op to keep D3D9Ex composition paths alive.
 
 Several fixed-function/resource state paths are cached for deterministic `Get*` queries and state-block compatibility.
 Some cached values are also consumed by fixed-function emulation/pipeline selection or draw-time emulation (for example:
-stage 0 `D3DTSS_*` influences fixed-function pixel shader selection, cached transforms feed fixed-function WVP paths, and
+stages 0..3 `D3DTSS_*` influence fixed-function pixel shader selection, cached transforms feed fixed-function WVP paths, and
 `SetStreamSourceFreq` drives CPU-expanded instancing), but most are still cached-only and are not forwarded 1:1 into the
 AeroGPU command stream. This includes:
 
@@ -782,8 +786,5 @@ In particular:
 - **FVF caps**: keep `D3DCAPS9.FVFCaps` conservative (advertise only 1 texture coordinate set / `TEX1`) so fixed-function
   apps don't assume multi-texcoord fixed-function coverage. The UMD can translate additional FVFs into input layouts for
   user shaders (see “FVF-derived input layouts for user shaders” above), but this is not fully advertised in caps.
-- **TextureOpCaps**: keep `D3DCAPS9.TextureOpCaps` intentionally conservative (advertise only
-  `DISABLE`/`SELECTARG1`/`SELECTARG2`/`MODULATE`) so apps don't assume full fixed-function combiner coverage. The UMD's
-  stage0 fixed-function fallback can recognize a few additional bring-up patterns (ADD/SUBTRACT/MODULATE2X/4X, plus
-  `TFACTOR` tinting), but not all op/source combinations are handled end-to-end (see the `TextureOpCaps` comment in
-  `aerogpu_d3d9_caps.cpp`).
+- **TextureOpCaps**: `D3DCAPS9.TextureOpCaps` advertises the exact fixed-function combiner ops implemented by the
+  fixed-function fallback path (see `aerogpu_d3d9_caps.cpp` and “Limitations (bring-up)” below).

@@ -406,10 +406,10 @@ void fill_d3d9_caps(D3DCAPS9* out) {
   // Fixed-function texture stage operation caps (TextureOpCaps) are used by apps
   // and some runtimes to validate stage-state combiner operations.
   //
-  // The stage0 fixed-function fallback can recognize a few additional bring-up
-  // patterns, but keep caps intentionally conservative so apps don't assume full
-  // fixed-function combiner coverage (unsupported op/source combinations fall
-  // back deterministically).
+  // AeroGPU advertises only the subset implemented by the fixed-function
+  // fallback path (stages 0..3). Unsupported op/source combinations are cached
+  // for Get*/state-block compatibility but fixed-function draws fail cleanly
+  // with INVALIDCALL when the fallback path is active.
   out->TextureOpCaps = D3DTEXOPCAPS_DISABLE |
                        D3DTEXOPCAPS_SELECTARG1 |
                        D3DTEXOPCAPS_SELECTARG2 |
