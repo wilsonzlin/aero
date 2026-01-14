@@ -244,7 +244,7 @@ The in-tree Aero Win7 virtio-input INFs are intentionally **revision-gated** (Ae
 - Legacy filename alias: `virtio-input.inf.disabled` (rename to `virtio-input.inf` to enable)
   - legacy filename alias for workflows/tools that still reference `virtio-input.inf`
   - from the first section header (`[Version]`) onward, expected to be byte-for-byte identical to `aero_virtio_input.inf`
-    (see `drivers/windows7/virtio-input/scripts/check-inf-alias.py`)
+    (different filename only; leading comment banner may differ; see `drivers/windows7/virtio-input/scripts/check-inf-alias.py`)
   - do **not** ship/install it alongside `aero_virtio_input.inf` (duplicate INFs can lead to confusing binding/upgrade behavior)
 
 If your device is `REV_01` but does not expose the Aero subsystem IDs, Windows can bind via the revision-gated generic fallback entry.
