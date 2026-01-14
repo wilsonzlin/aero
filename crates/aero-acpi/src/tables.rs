@@ -1042,6 +1042,28 @@ fn aml_method_wak() -> Vec<u8> {
     out
 }
 
+fn aml_method_osc() -> Vec<u8> {
+    // Windows (and other OSes) may call `_OSC` on a PCIe root bridge to negotiate control over
+    // PCIe native features. We implement a minimal handler that returns `Arg3` (the OS-provided
+    // capabilities buffer), effectively granting what the OS requests.
+    //
+    // Method (_OSC, 4, NotSerialized) { Return (Arg3) }
+    let mut body = Vec::new();
+    body.push(0xA4); // ReturnOp
+    body.push(0x6B); // Arg3Op
+
+    let mut payload = Vec::new();
+    payload.extend_from_slice(b"_OSC");
+    payload.push(0x04); // method flags: 4 arguments, NotSerialized, sync level 0
+    payload.extend_from_slice(&body);
+
+    let mut out = Vec::new();
+    out.push(0x14); // MethodOp
+    out.extend_from_slice(&aml_pkg_length_for_payload(payload.len()));
+    out.extend_from_slice(&payload);
+    out
+}
+
 fn aml_s5() -> Vec<u8> {
     aml_sleep_state(*b"_S5_", 5)
 }
@@ -1125,6 +1147,9 @@ fn aml_device_pci0(cfg: &AcpiConfig) -> Vec<u8> {
     }
     body.extend_from_slice(&aml_name_buffer(*b"_CRS", &pci0_crs(cfg)));
     body.extend_from_slice(&aml_name_pkg(*b"_PRT", &pci0_prt(cfg)));
+    if pcie {
+        body.extend_from_slice(&aml_method_osc());
+    }
 
     aml_device(*b"PCI0", &body)
 }
@@ -1750,6 +1775,41 @@ mod tests {
         assert!(
             !contains_subslice(&dsdt, &hid_pnp0a03),
             "did not expect PCI0._HID to be PNP0A03 when ECAM is enabled"
+        );
+    }
+
+    #[test]
+    fn dsdt_emits_pci_osc_method_when_ecam_enabled() {
+        let cfg = AcpiConfig {
+            pcie_ecam_base: 0xC000_0000,
+            ..Default::default()
+        };
+        let dsdt = build_dsdt(&cfg);
+        let aml = &dsdt[36..];
+
+        // Method (_OSC, 4, NotSerialized) { Return (Arg3) }
+        let osc = [
+            &[0x14, 0x08][..], // MethodOp + PkgLength (7-byte payload, plus PkgLength byte)
+            &b"_OSC"[..],
+            &[0x04, 0xA4, 0x6B][..], // flags + ReturnOp + Arg3Op
+        ]
+        .concat();
+        assert!(
+            contains_subslice(aml, &osc),
+            "expected DSDT AML to contain PCI0._OSC method returning Arg3 when ECAM is enabled"
+        );
+    }
+
+    #[test]
+    fn dsdt_omits_pci_osc_method_when_ecam_disabled() {
+        let cfg = AcpiConfig::default();
+        assert_eq!(cfg.pcie_ecam_base, 0);
+        let dsdt = build_dsdt(&cfg);
+        let aml = &dsdt[36..];
+
+        assert!(
+            !contains_subslice(aml, b"_OSC"),
+            "did not expect DSDT AML to contain _OSC when ECAM is disabled"
         );
     }
 
