@@ -1578,3 +1578,93 @@ fn gs_translate_supports_structured_control_flow_if_else_loop_break_continue_bre
 
     assert_wgsl_validates(&wgsl);
 }
+
+#[test]
+fn gs_translate_supports_switch_case_default() {
+    const D3D_NAME_PRIMITIVE_ID: u32 = 7;
+
+    let module = Sm4Module {
+        stage: ShaderStage::Geometry,
+        model: ShaderModel { major: 4, minor: 0 },
+        decls: vec![
+            Sm4Decl::GsInputPrimitive {
+                primitive: GsInputPrimitive::Triangle(3),
+            },
+            Sm4Decl::GsOutputTopology {
+                topology: GsOutputTopology::TriangleStrip(3),
+            },
+            Sm4Decl::GsMaxOutputVertexCount { max: 1 },
+            Sm4Decl::InputSiv {
+                reg: 0,
+                mask: WriteMask::X,
+                sys_value: D3D_NAME_PRIMITIVE_ID,
+            },
+        ],
+        instructions: vec![
+            Sm4Inst::Mov {
+                dst: DstOperand {
+                    reg: RegisterRef {
+                        file: RegFile::Output,
+                        index: 0,
+                    },
+                    mask: WriteMask::XYZW,
+                    saturate: false,
+                },
+                src: SrcOperand {
+                    kind: SrcKind::ImmediateF32([0, 0, 0, 0x3f800000]), // (0,0,0,1)
+                    swizzle: Swizzle::XYZW,
+                    modifier: OperandModifier::None,
+                },
+            },
+            Sm4Inst::Mov {
+                dst: DstOperand {
+                    reg: RegisterRef {
+                        file: RegFile::Output,
+                        index: 1,
+                    },
+                    mask: WriteMask::XYZW,
+                    saturate: false,
+                },
+                src: SrcOperand {
+                    kind: SrcKind::ImmediateF32([0x3f800000, 0, 0, 0x3f800000]), // (1,0,0,1)
+                    swizzle: Swizzle::XYZW,
+                    modifier: OperandModifier::None,
+                },
+            },
+            Sm4Inst::Switch {
+                selector: SrcOperand {
+                    kind: SrcKind::Register(RegisterRef {
+                        file: RegFile::Input,
+                        index: 0,
+                    }),
+                    swizzle: Swizzle::XXXX,
+                    modifier: OperandModifier::None,
+                },
+            },
+            Sm4Inst::Case { value: 0 },
+            Sm4Inst::Emit { stream: 0 },
+            Sm4Inst::Break,
+            Sm4Inst::Default,
+            Sm4Inst::Cut { stream: 0 },
+            Sm4Inst::EndSwitch,
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let wgsl = translate_gs_module_to_wgsl_compute_prepass(&module).expect("translate");
+
+    assert!(
+        wgsl.contains("switch("),
+        "expected translated WGSL to contain a switch statement:\n{wgsl}"
+    );
+    assert!(
+        wgsl.contains("case 0i:"),
+        "expected translated WGSL to contain a case label:\n{wgsl}"
+    );
+    assert!(
+        wgsl.contains("default:"),
+        "expected translated WGSL to contain a default label:\n{wgsl}"
+    );
+
+    assert_wgsl_validates(&wgsl);
+}

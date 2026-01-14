@@ -152,6 +152,10 @@ fn opcode_name(inst: &Sm4Inst) -> &'static str {
         Sm4Inst::ContinueC { .. } => "continuec",
         Sm4Inst::Break => "break",
         Sm4Inst::Continue => "continue",
+        Sm4Inst::Switch { .. } => "switch",
+        Sm4Inst::Case { .. } => "case",
+        Sm4Inst::Default => "default",
+        Sm4Inst::EndSwitch => "endswitch",
         Sm4Inst::Mov { .. } => "mov",
         Sm4Inst::Movc { .. } => "movc",
         Sm4Inst::Itof { .. } => "itof",
@@ -452,6 +456,19 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
                 )?;
             }
             Sm4Inst::Break | Sm4Inst::Continue => {}
+            Sm4Inst::Switch { selector } => {
+                scan_src_operand(
+                    selector,
+                    &mut max_temp_reg,
+                    &mut max_output_reg,
+                    &mut max_gs_input_reg,
+                    verts_per_primitive,
+                    inst_index,
+                    "switch",
+                    &input_sivs,
+                )?;
+            }
+            Sm4Inst::Case { .. } | Sm4Inst::Default | Sm4Inst::EndSwitch => {}
             Sm4Inst::Mov { dst, src } => {
                 bump_reg_max(dst.reg, &mut max_temp_reg, &mut max_output_reg);
                 scan_src_operand(
@@ -952,6 +969,113 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
 
     let mut blocks: Vec<BlockKind> = Vec::new();
 
+    #[derive(Debug, Clone, Copy)]
+    enum SwitchLabel {
+        Case(i32),
+        Default,
+    }
+
+    #[derive(Debug, Default)]
+    struct SwitchFrame {
+        pending_labels: Vec<SwitchLabel>,
+        saw_default: bool,
+    }
+
+    #[derive(Debug)]
+    enum CfFrame {
+        Switch(SwitchFrame),
+        Case,
+    }
+
+    let mut cf_stack: Vec<CfFrame> = Vec::new();
+
+    let fmt_case_values = |values: &[i32]| -> String {
+        values
+            .iter()
+            .map(|v| format!("{v}i"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+
+    let close_case_body =
+        |w: &mut WgslWriter, cf_stack: &mut Vec<CfFrame>| -> Result<(), GsTranslateError> {
+            let Some(CfFrame::Case) = cf_stack.last() else {
+                return Ok(());
+            };
+
+            // Close the WGSL case block.
+            w.dedent();
+            w.line("}");
+            cf_stack.pop();
+            Ok(())
+        };
+
+    let flush_pending_labels = |w: &mut WgslWriter,
+                                cf_stack: &mut Vec<CfFrame>,
+                                inst_index: usize|
+     -> Result<(), GsTranslateError> {
+        let pending_labels = match cf_stack.last_mut() {
+            Some(CfFrame::Switch(sw)) => {
+                if sw.pending_labels.is_empty() {
+                    return Err(GsTranslateError::MalformedControlFlow {
+                        inst_index,
+                        expected: "case/default label inside switch".to_owned(),
+                        found: "switch body without case label".to_owned(),
+                    });
+                }
+                std::mem::take(&mut sw.pending_labels)
+            }
+            _ => return Ok(()),
+        };
+
+        let mut case_values = Vec::<i32>::new();
+        let mut has_default = false;
+        for lbl in &pending_labels {
+            match *lbl {
+                SwitchLabel::Case(v) => case_values.push(v),
+                SwitchLabel::Default => has_default = true,
+            }
+        }
+
+        let last_label = *pending_labels.last().expect("pending_labels non-empty");
+
+        // If the label set contains a default label, we may need an extra empty clause stub, since
+        // WGSL can't combine `default` with `case` selectors in a single clause.
+        match (has_default, last_label) {
+            (false, _) => {
+                let selectors = fmt_case_values(&case_values);
+                w.line(&format!("case {selectors}: {{"));
+                w.indent();
+                cf_stack.push(CfFrame::Case);
+            }
+            (true, SwitchLabel::Default) => {
+                if !case_values.is_empty() {
+                    let selectors = fmt_case_values(&case_values);
+                    w.line(&format!("case {selectors}: {{"));
+                    w.indent();
+                    w.dedent();
+                    w.line("}");
+                }
+                w.line("default: {");
+                w.indent();
+                cf_stack.push(CfFrame::Case);
+            }
+            (true, SwitchLabel::Case(_)) => {
+                // Emit the default empty clause first so it can reach the case body.
+                w.line("default: {");
+                w.indent();
+                w.dedent();
+                w.line("}");
+                let selectors = fmt_case_values(&case_values);
+                w.line(&format!("case {selectors}: {{"));
+                w.indent();
+                cf_stack.push(CfFrame::Case);
+            }
+        }
+
+        Ok(())
+    };
+
     let emit_cmp = |inst_index: usize,
                     opcode: &'static str,
                     op: Sm4CmpOp,
@@ -987,6 +1111,83 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
     };
 
     for (inst_index, inst) in module.instructions.iter().enumerate() {
+        match inst {
+            Sm4Inst::Case { value } => {
+                close_case_body(&mut w, &mut cf_stack)?;
+
+                let Some(CfFrame::Switch(sw)) = cf_stack.last_mut() else {
+                    return Err(GsTranslateError::MalformedControlFlow {
+                        inst_index,
+                        expected: "switch".to_owned(),
+                        found: "case".to_owned(),
+                    });
+                };
+                sw.pending_labels.push(SwitchLabel::Case(*value as i32));
+                continue;
+            }
+            Sm4Inst::Default => {
+                close_case_body(&mut w, &mut cf_stack)?;
+
+                let Some(CfFrame::Switch(sw)) = cf_stack.last_mut() else {
+                    return Err(GsTranslateError::MalformedControlFlow {
+                        inst_index,
+                        expected: "switch".to_owned(),
+                        found: "default".to_owned(),
+                    });
+                };
+                sw.saw_default = true;
+                sw.pending_labels.push(SwitchLabel::Default);
+                continue;
+            }
+            Sm4Inst::EndSwitch => {
+                // Close any open case body. If the clause falls through naturally (no `break;`),
+                // reaching the end of the final clause still exits the `switch`.
+                close_case_body(&mut w, &mut cf_stack)?;
+
+                let Some(CfFrame::Switch(_)) = cf_stack.last() else {
+                    return Err(GsTranslateError::MalformedControlFlow {
+                        inst_index,
+                        expected: "switch".to_owned(),
+                        found: "endswitch".to_owned(),
+                    });
+                };
+
+                let (pending_labels_nonempty, saw_default) = match cf_stack.last() {
+                    Some(CfFrame::Switch(sw)) => (!sw.pending_labels.is_empty(), sw.saw_default),
+                    _ => unreachable!("checked switch exists above"),
+                };
+
+                // If there are pending labels but no body, emit an empty clause.
+                if pending_labels_nonempty {
+                    flush_pending_labels(&mut w, &mut cf_stack, inst_index)?;
+                    close_case_body(&mut w, &mut cf_stack)?;
+                }
+
+                // WGSL `switch` allows omitting `default`, but we always emit one so that
+                // switch-without-default shaders stay structurally valid and match the HLSL
+                // semantics where a missing default is equivalent to an empty one.
+                if !saw_default {
+                    w.line("default: {");
+                    w.indent();
+                    w.dedent();
+                    w.line("}");
+                }
+
+                // Close the switch.
+                w.dedent();
+                w.line("}");
+                cf_stack.pop();
+                continue;
+            }
+            _ => {}
+        }
+
+        // Ensure any pending case labels are emitted before the first instruction of the clause
+        // body.
+        if matches!(cf_stack.last(), Some(CfFrame::Switch(_))) {
+            flush_pending_labels(&mut w, &mut cf_stack, inst_index)?;
+        }
+
         match inst {
             // ---- Structured control flow ----
             Sm4Inst::If { cond, test } => {
@@ -1126,12 +1327,22 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
                 w.dedent();
                 w.line("}");
             }
+            Sm4Inst::Switch { selector } => {
+                // Integer instructions consume raw integer bits from the untyped register file.
+                // Do not attempt to reinterpret float-typed sources as numeric integers.
+                let selector_i = emit_src_vec4_i32(inst_index, "switch", selector, &input_sivs)?;
+                let selector = format!("({selector_i}).x");
+                w.line(&format!("switch({selector}) {{"));
+                w.indent();
+                cf_stack.push(CfFrame::Switch(SwitchFrame::default()));
+            }
             Sm4Inst::Break => {
+                let inside_case = matches!(cf_stack.last(), Some(CfFrame::Case));
                 let inside_loop = blocks.iter().any(|b| matches!(b, BlockKind::Loop));
-                if !inside_loop {
+                if !inside_case && !inside_loop {
                     return Err(GsTranslateError::MalformedControlFlow {
                         inst_index,
-                        expected: "loop".to_owned(),
+                        expected: "loop or switch case".to_owned(),
                         found: blocks
                             .last()
                             .map(|b| b.describe())
@@ -1304,6 +1515,9 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
             Sm4Inst::Ret => {
                 w.line("return;");
             }
+            Sm4Inst::Case { .. } | Sm4Inst::Default | Sm4Inst::EndSwitch => {
+                unreachable!("switch label instructions handled at top of loop")
+            }
             other => {
                 return Err(GsTranslateError::UnsupportedInstruction {
                     inst_index,
@@ -1318,6 +1532,13 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
             inst_index: module.instructions.len(),
             expected: open.expected_end_token().to_owned(),
             found: open.describe(),
+        });
+    }
+    if !cf_stack.is_empty() {
+        return Err(GsTranslateError::MalformedControlFlow {
+            inst_index: module.instructions.len(),
+            expected: "EndSwitch".to_owned(),
+            found: "end of shader".to_owned(),
         });
     }
 
