@@ -4,6 +4,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use aero_devices::pci::{profile, PciConfigSpace, PciDevice};
+use aero_protocol::aerogpu::aerogpu_pci as proto;
 use memory::{MemoryBus, MmioHandler};
 
 use crate::backend::{AeroGpuBackendSubmission, AeroGpuCommandBackend};
@@ -32,7 +33,7 @@ pub const LEGACY_VGA_VRAM_BYTES: u64 = 0x20_000;
 /// firmware/bootloaders/Windows can draw into the LFB without overwriting VGA plane contents.
 ///
 /// See `docs/16-aerogpu-vga-vesa-compat.md`.
-pub const VBE_LFB_OFFSET: u64 = 0x40_000;
+pub const VBE_LFB_OFFSET: u64 = proto::AEROGPU_PCI_BAR1_VBE_LFB_OFFSET_BYTES as u64;
 
 /// Start physical address of the legacy VGA window.
 pub const LEGACY_VGA_PADDR_BASE: u64 = 0xA_0000;

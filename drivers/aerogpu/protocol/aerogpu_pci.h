@@ -77,6 +77,19 @@ extern "C" {
 #define AEROGPU_PCI_BAR1_INDEX 1u
 #define AEROGPU_PCI_BAR1_SIZE_BYTES (64u * 1024u * 1024u)
 
+/*
+ * Offset within BAR1/VRAM where the VBE linear framebuffer (LFB) begins.
+ *
+ * The canonical BAR1 VRAM layout reserves the first 256KiB for legacy VGA planar storage
+ * (4 × 64KiB planes) and places the packed-pixel VBE framebuffer after that region.
+ *
+ * BIOS reports:
+ *   PhysBasePtr = BAR1_BASE + AEROGPU_PCI_BAR1_VBE_LFB_OFFSET_BYTES
+ *
+ * See: `docs/16-aerogpu-vga-vesa-compat.md`.
+ */
+#define AEROGPU_PCI_BAR1_VBE_LFB_OFFSET_BYTES 0x40000u
+
 /* ------------------------------ MMIO registers --------------------------- */
 
 /*

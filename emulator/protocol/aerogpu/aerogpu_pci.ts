@@ -56,6 +56,14 @@ export const AEROGPU_PCI_BAR0_SIZE_BYTES = 64 * 1024;
 export const AEROGPU_PCI_BAR1_INDEX = 1;
 export const AEROGPU_PCI_BAR1_SIZE_BYTES = 64 * 1024 * 1024;
 
+/**
+ * Offset within BAR1/VRAM where the VBE linear framebuffer (LFB) begins.
+ *
+ * The canonical BAR1 VRAM layout reserves the first 256KiB for legacy VGA planar storage
+ * (4 × 64KiB planes) and places the packed-pixel VBE framebuffer after that region.
+ */
+export const AEROGPU_PCI_BAR1_VBE_LFB_OFFSET_BYTES = 0x40_000;
+
 /* ------------------------------ MMIO registers ---------------------------- */
 
 export const AEROGPU_MMIO_REG_MAGIC = 0x0000;

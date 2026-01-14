@@ -19,6 +19,7 @@ import type { WorkerInitMessage } from "./src/runtime/protocol";
 import { createSharedMemoryViews } from "./src/runtime/shared_layout";
 import { allocateHarnessSharedMemorySegments } from "./src/runtime/harness_shared_memory";
 import { fnv1a32Hex } from "./src/utils/fnv1a";
+import { AEROGPU_PCI_BAR1_VBE_LFB_OFFSET_BYTES } from "../emulator/protocol/aerogpu/aerogpu_pci.ts";
 
 declare global {
   interface Window {
@@ -190,9 +191,9 @@ async function main(): Promise<void> {
     const pitchBytes = width * 4 + 16;
     // Place the scanout surface inside the shared VRAM aperture (BAR1 backing).
     //
-    // Use the canonical VBE LFB offset (0x40000; after the 256KiB legacy VGA planar reservation)
-    // as a convenient non-zero location within VRAM.
-    const baseVramOffset = 0x40_000;
+    // Use the canonical VBE LFB offset (after the 256KiB legacy VGA planar reservation) as a
+    // convenient non-zero location within VRAM.
+    const baseVramOffset = AEROGPU_PCI_BAR1_VBE_LFB_OFFSET_BYTES;
     const basePaddr = (VRAM_BASE_PADDR + baseVramOffset) >>> 0;
 
     canvas.width = width;
