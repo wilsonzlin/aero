@@ -293,7 +293,10 @@ if ($InstallAllInfs -and $PSBoundParameters.ContainsKey("InfAllowList") -and $In
 }
 
 $driversOutDirResolved = (Resolve-Path -LiteralPath $driversOutDir).Path
-$infFiles = Get-ChildItem -LiteralPath $driversOutDirResolved -Recurse -Filter "*.inf" -File | Sort-Object FullName
+# Wrap in @() so $infFiles is always an array (not $null) under strict mode when there are no matches.
+$infFiles = @(
+  Get-ChildItem -LiteralPath $driversOutDirResolved -Recurse -Filter "*.inf" -File | Sort-Object FullName
+)
 if ($infFiles.Count -eq 0) {
   throw "No .inf files found under -DriversDir '$DriversDir'."
 }
