@@ -1334,6 +1334,137 @@ fn decodes_ubfe_ibfe_bfi_bitfield_ops() {
 }
 
 #[test]
+fn decodes_integer_compare_ops() {
+    let mut body = Vec::<u32>::new();
+
+    // ieq r0, r1, r2
+    let a = reg_src(
+        OPERAND_TYPE_TEMP,
+        &[1],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    );
+    let b = reg_src(
+        OPERAND_TYPE_TEMP,
+        &[2],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    );
+    let mut ieq = vec![opcode_token(OPCODE_IEQ, (1 + 2 + a.len() + b.len()) as u32)];
+    ieq.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 0, WriteMask::XYZW));
+    ieq.extend_from_slice(&a);
+    ieq.extend_from_slice(&b);
+    body.extend_from_slice(&ieq);
+
+    // ult r3, r4, r5
+    let a = reg_src(
+        OPERAND_TYPE_TEMP,
+        &[4],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    );
+    let b = reg_src(
+        OPERAND_TYPE_TEMP,
+        &[5],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    );
+    let mut ult = vec![opcode_token(OPCODE_ULT, (1 + 2 + a.len() + b.len()) as u32)];
+    ult.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 3, WriteMask::XYZW));
+    ult.extend_from_slice(&a);
+    ult.extend_from_slice(&b);
+    body.extend_from_slice(&ult);
+
+    // uge r6, r7, r8
+    let a = reg_src(
+        OPERAND_TYPE_TEMP,
+        &[7],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    );
+    let b = reg_src(
+        OPERAND_TYPE_TEMP,
+        &[8],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    );
+    let mut uge = vec![opcode_token(OPCODE_UGE, (1 + 2 + a.len() + b.len()) as u32)];
+    uge.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 6, WriteMask::XYZW));
+    uge.extend_from_slice(&a);
+    uge.extend_from_slice(&b);
+    body.extend_from_slice(&uge);
+
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    // Stage type 0 is pixel shader.
+    let tokens = make_sm5_program_tokens(0, &body);
+    let program =
+        Sm4Program::parse_program_tokens(&tokens_to_bytes(&tokens)).expect("parse_program_tokens");
+    let module = decode_program(&program).expect("decode");
+
+    assert_eq!(
+        module.instructions[0],
+        Sm4Inst::Cmp {
+            dst: dst(RegFile::Temp, 0, WriteMask::XYZW),
+            a: src_reg(RegFile::Temp, 1),
+            b: src_reg(RegFile::Temp, 2),
+            op: aero_d3d11::CmpOp::Eq,
+            ty: aero_d3d11::CmpType::I32,
+        }
+    );
+    assert_eq!(
+        module.instructions[1],
+        Sm4Inst::Cmp {
+            dst: dst(RegFile::Temp, 3, WriteMask::XYZW),
+            a: src_reg(RegFile::Temp, 4),
+            b: src_reg(RegFile::Temp, 5),
+            op: aero_d3d11::CmpOp::Lt,
+            ty: aero_d3d11::CmpType::U32,
+        }
+    );
+    assert_eq!(
+        module.instructions[2],
+        Sm4Inst::Cmp {
+            dst: dst(RegFile::Temp, 6, WriteMask::XYZW),
+            a: src_reg(RegFile::Temp, 7),
+            b: src_reg(RegFile::Temp, 8),
+            op: aero_d3d11::CmpOp::Ge,
+            ty: aero_d3d11::CmpType::U32,
+        }
+    );
+}
+
+#[test]
+fn decodes_sync_with_thread_group_sync_as_workgroup_barrier() {
+    let mut body = Vec::<u32>::new();
+
+    // `sync` encodes flags in bits 24..=30 of the opcode token.
+    // - With thread-group sync (`*_t` variants), decode should map to `WorkgroupBarrier`.
+    // - Without thread-group sync, decode conservatively leaves it as an unknown instruction.
+    let with_sync_flags = SYNC_FLAG_THREAD_GROUP_SYNC | SYNC_FLAG_THREAD_GROUP_SHARED_MEMORY;
+    body.push(opcode_token(OPCODE_SYNC, 1) | (with_sync_flags << OPCODE_CONTROL_SHIFT));
+
+    let without_sync_flags = SYNC_FLAG_THREAD_GROUP_SHARED_MEMORY;
+    body.push(opcode_token(OPCODE_SYNC, 1) | (without_sync_flags << OPCODE_CONTROL_SHIFT));
+
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    // Stage type 5 is compute shader.
+    let tokens = make_sm5_program_tokens(5, &body);
+    let program =
+        Sm4Program::parse_program_tokens(&tokens_to_bytes(&tokens)).expect("parse_program_tokens");
+    let module = decode_program(&program).expect("decode");
+
+    assert_eq!(module.stage, aero_d3d11::ShaderStage::Compute);
+    assert_eq!(module.model, ShaderModel { major: 5, minor: 0 });
+    assert_eq!(module.instructions[0], Sm4Inst::WorkgroupBarrier);
+    assert!(matches!(
+        module.instructions[1],
+        Sm4Inst::Unknown { opcode: OPCODE_SYNC }
+    ));
+}
+
+#[test]
 fn decodes_bit_utils_ops() {
     let mut body = Vec::<u32>::new();
 
