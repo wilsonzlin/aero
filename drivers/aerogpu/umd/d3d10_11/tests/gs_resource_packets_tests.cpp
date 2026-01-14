@@ -31,10 +31,11 @@ bool TestGeometryStageResourceBindingPackets() {
   if (!Check(set_tex != nullptr, "append SET_TEXTURE")) {
     return false;
   }
-  set_tex->shader_stage = AEROGPU_SHADER_STAGE_GEOMETRY;
+  // Use stage_ex encoding (stage=COMPUTE + reserved0=GEOMETRY) for GS bindings.
+  set_tex->shader_stage = AEROGPU_SHADER_STAGE_COMPUTE;
   set_tex->slot = 3;
   set_tex->texture = kTex;
-  set_tex->reserved0 = 0;
+  set_tex->reserved0 = AEROGPU_SHADER_STAGE_EX_GEOMETRY;
 
   // SET_SAMPLERS (GS)
   constexpr aerogpu_handle_t kSamplers[] = {0x1111u, 0x2222u, 0x3333u};
@@ -43,10 +44,10 @@ bool TestGeometryStageResourceBindingPackets() {
   if (!Check(set_samplers != nullptr, "append SET_SAMPLERS")) {
     return false;
   }
-  set_samplers->shader_stage = AEROGPU_SHADER_STAGE_GEOMETRY;
+  set_samplers->shader_stage = AEROGPU_SHADER_STAGE_COMPUTE;
   set_samplers->start_slot = 1;
   set_samplers->sampler_count = static_cast<uint32_t>(std::size(kSamplers));
-  set_samplers->reserved0 = 0;
+  set_samplers->reserved0 = AEROGPU_SHADER_STAGE_EX_GEOMETRY;
 
   // SET_CONSTANT_BUFFERS (GS)
   constexpr aerogpu_constant_buffer_binding kCbs[] = {
@@ -57,10 +58,10 @@ bool TestGeometryStageResourceBindingPackets() {
   if (!Check(set_cbs != nullptr, "append SET_CONSTANT_BUFFERS")) {
     return false;
   }
-  set_cbs->shader_stage = AEROGPU_SHADER_STAGE_GEOMETRY;
+  set_cbs->shader_stage = AEROGPU_SHADER_STAGE_COMPUTE;
   set_cbs->start_slot = 2;
   set_cbs->buffer_count = static_cast<uint32_t>(std::size(kCbs));
-  set_cbs->reserved0 = 0;
+  set_cbs->reserved0 = AEROGPU_SHADER_STAGE_EX_GEOMETRY;
 
   // SET_SHADER_RESOURCE_BUFFERS (GS)
   constexpr aerogpu_shader_resource_buffer_binding kSrvBufs[] = {
@@ -71,10 +72,10 @@ bool TestGeometryStageResourceBindingPackets() {
   if (!Check(set_srv_bufs != nullptr, "append SET_SHADER_RESOURCE_BUFFERS")) {
     return false;
   }
-  set_srv_bufs->shader_stage = AEROGPU_SHADER_STAGE_GEOMETRY;
+  set_srv_bufs->shader_stage = AEROGPU_SHADER_STAGE_COMPUTE;
   set_srv_bufs->start_slot = 4;
   set_srv_bufs->buffer_count = static_cast<uint32_t>(std::size(kSrvBufs));
-  set_srv_bufs->reserved0 = 0;
+  set_srv_bufs->reserved0 = AEROGPU_SHADER_STAGE_EX_GEOMETRY;
 
   w.finalize();
   if (!Check(w.error() == aerogpu::CmdStreamError::kOk, "writer error == kOk")) {
@@ -110,7 +111,8 @@ bool TestGeometryStageResourceBindingPackets() {
       return false;
     }
     const auto* cmd = reinterpret_cast<const aerogpu_cmd_set_texture*>(hdr);
-    if (!Check(cmd->shader_stage == AEROGPU_SHADER_STAGE_GEOMETRY, "SET_TEXTURE shader_stage==GEOMETRY")) {
+    if (!Check(cmd->shader_stage == AEROGPU_SHADER_STAGE_COMPUTE,
+               "SET_TEXTURE shader_stage==COMPUTE (stage_ex encoding)")) {
       return false;
     }
     if (!Check(cmd->slot == 3, "SET_TEXTURE slot==3")) {
@@ -119,7 +121,8 @@ bool TestGeometryStageResourceBindingPackets() {
     if (!Check(cmd->texture == kTex, "SET_TEXTURE texture")) {
       return false;
     }
-    if (!Check(cmd->reserved0 == 0, "SET_TEXTURE reserved0==0")) {
+    if (!Check(cmd->reserved0 == AEROGPU_SHADER_STAGE_EX_GEOMETRY,
+               "SET_TEXTURE reserved0==GEOMETRY stage_ex")) {
       return false;
     }
     offset += hdr->size_bytes;
@@ -139,7 +142,8 @@ bool TestGeometryStageResourceBindingPackets() {
       return false;
     }
     const auto* cmd = reinterpret_cast<const aerogpu_cmd_set_samplers*>(hdr);
-    if (!Check(cmd->shader_stage == AEROGPU_SHADER_STAGE_GEOMETRY, "SET_SAMPLERS shader_stage==GEOMETRY")) {
+    if (!Check(cmd->shader_stage == AEROGPU_SHADER_STAGE_COMPUTE,
+               "SET_SAMPLERS shader_stage==COMPUTE (stage_ex encoding)")) {
       return false;
     }
     if (!Check(cmd->start_slot == 1, "SET_SAMPLERS start_slot==1")) {
@@ -148,7 +152,8 @@ bool TestGeometryStageResourceBindingPackets() {
     if (!Check(cmd->sampler_count == std::size(kSamplers), "SET_SAMPLERS sampler_count")) {
       return false;
     }
-    if (!Check(cmd->reserved0 == 0, "SET_SAMPLERS reserved0==0")) {
+    if (!Check(cmd->reserved0 == AEROGPU_SHADER_STAGE_EX_GEOMETRY,
+               "SET_SAMPLERS reserved0==GEOMETRY stage_ex")) {
       return false;
     }
     const size_t payload_off = offset + sizeof(aerogpu_cmd_set_samplers);
@@ -175,7 +180,8 @@ bool TestGeometryStageResourceBindingPackets() {
       return false;
     }
     const auto* cmd = reinterpret_cast<const aerogpu_cmd_set_constant_buffers*>(hdr);
-    if (!Check(cmd->shader_stage == AEROGPU_SHADER_STAGE_GEOMETRY, "SET_CONSTANT_BUFFERS shader_stage==GEOMETRY")) {
+    if (!Check(cmd->shader_stage == AEROGPU_SHADER_STAGE_COMPUTE,
+               "SET_CONSTANT_BUFFERS shader_stage==COMPUTE (stage_ex encoding)")) {
       return false;
     }
     if (!Check(cmd->start_slot == 2, "SET_CONSTANT_BUFFERS start_slot==2")) {
@@ -184,7 +190,8 @@ bool TestGeometryStageResourceBindingPackets() {
     if (!Check(cmd->buffer_count == std::size(kCbs), "SET_CONSTANT_BUFFERS buffer_count")) {
       return false;
     }
-    if (!Check(cmd->reserved0 == 0, "SET_CONSTANT_BUFFERS reserved0==0")) {
+    if (!Check(cmd->reserved0 == AEROGPU_SHADER_STAGE_EX_GEOMETRY,
+               "SET_CONSTANT_BUFFERS reserved0==GEOMETRY stage_ex")) {
       return false;
     }
     const size_t payload_off = offset + sizeof(aerogpu_cmd_set_constant_buffers);
@@ -212,7 +219,8 @@ bool TestGeometryStageResourceBindingPackets() {
       return false;
     }
     const auto* cmd = reinterpret_cast<const aerogpu_cmd_set_shader_resource_buffers*>(hdr);
-    if (!Check(cmd->shader_stage == AEROGPU_SHADER_STAGE_GEOMETRY, "SET_SHADER_RESOURCE_BUFFERS shader_stage==GEOMETRY")) {
+    if (!Check(cmd->shader_stage == AEROGPU_SHADER_STAGE_COMPUTE,
+               "SET_SHADER_RESOURCE_BUFFERS shader_stage==COMPUTE (stage_ex encoding)")) {
       return false;
     }
     if (!Check(cmd->start_slot == 4, "SET_SHADER_RESOURCE_BUFFERS start_slot==4")) {
@@ -221,7 +229,8 @@ bool TestGeometryStageResourceBindingPackets() {
     if (!Check(cmd->buffer_count == std::size(kSrvBufs), "SET_SHADER_RESOURCE_BUFFERS buffer_count")) {
       return false;
     }
-    if (!Check(cmd->reserved0 == 0, "SET_SHADER_RESOURCE_BUFFERS reserved0==0")) {
+    if (!Check(cmd->reserved0 == AEROGPU_SHADER_STAGE_EX_GEOMETRY,
+               "SET_SHADER_RESOURCE_BUFFERS reserved0==GEOMETRY stage_ex")) {
       return false;
     }
     const size_t payload_off = offset + sizeof(aerogpu_cmd_set_shader_resource_buffers);
