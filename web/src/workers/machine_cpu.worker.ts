@@ -232,15 +232,22 @@ function verifyWasmSharedStateLayout(
   // are reading. Detect that mismatch early and surface a warning with actionable context.
   try {
     const guestSab = guestMemory.buffer as unknown as SharedArrayBuffer;
-    const scanoutSab = init.scanoutState;
-    const cursorSab = init.cursorState;
-    const scanoutEmbedded = scanoutSab instanceof SharedArrayBuffer && scanoutSab === guestSab;
-    const cursorEmbedded = cursorSab instanceof SharedArrayBuffer && cursorSab === guestSab;
-
     const expectedScanoutPtr =
       typeof init.scanoutStateOffsetBytes === "number" ? (init.scanoutStateOffsetBytes >>> 0) : null;
     const expectedCursorPtr =
       typeof init.cursorStateOffsetBytes === "number" ? (init.cursorStateOffsetBytes >>> 0) : null;
+    // Newer coordinators omit `scanoutState`/`cursorState` from the init message to avoid passing
+    // multiple aliases of the same SharedArrayBuffer through structured clone (Firefox has been
+    // observed to corrupt such messages). When an offset is provided, treat the guest memory
+    // backing store as the implicit shared-state buffer.
+    const scanoutSab =
+      init.scanoutState ??
+      (expectedScanoutPtr !== null && expectedScanoutPtr > 0 ? (guestSab as unknown as SharedArrayBuffer) : undefined);
+    const cursorSab =
+      init.cursorState ??
+      (expectedCursorPtr !== null && expectedCursorPtr > 0 ? (guestSab as unknown as SharedArrayBuffer) : undefined);
+    const scanoutEmbedded = scanoutSab instanceof SharedArrayBuffer && scanoutSab === guestSab;
+    const cursorEmbedded = cursorSab instanceof SharedArrayBuffer && cursorSab === guestSab;
 
     if (typeof m.scanout_state_ptr === "function") {
       const got = m.scanout_state_ptr() >>> 0;
@@ -2515,6 +2522,9 @@ async function runLoop(): Promise<void> {
       }
 
       if (exitKindNum === runExitKindMap.Halted) {
+        // `Promise.race` treats non-promises as immediately resolved values. Ensure we always race
+        // against an actual wakeup promise; otherwise the halted loop can devolve into an endless
+        // chain of microtasks (`await null`) that starves `message` events (input batches).
         await Promise.race([ring.waitForDataAsync(HALTED_RUN_SLICE_DELAY_MS), ensureRunLoopWakePromise()]);
       } else {
         await new Promise((resolve) => {
@@ -2891,6 +2901,9 @@ ctx.onmessage = (ev) => {
     if (recycle) {
       postInputBatchRecycle(buffer);
     }
+    // The CPU worker's main loop may be blocked waiting on the command ring (or throttling a
+    // halted CPU). Wake it so queued batch processing + telemetry updates are applied promptly.
+    wakeRunLoop();
     return;
   }
   if (input?.type === "in:input-batch-recycle") {

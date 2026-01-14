@@ -793,14 +793,46 @@ export function createSharedMemoryViews(segments: SharedMemorySegments): SharedM
   const vramU8 = vramSab instanceof SharedArrayBuffer ? new Uint8Array(vramSab) : new Uint8Array(0);
   const vramSizeBytes = vramU8.byteLength;
 
-  const scanoutState = segments.scanoutState;
+  const guestSab = segments.guestMemory.buffer as unknown as ArrayBufferLike;
+
   const scanoutStateOffsetBytes = segments.scanoutStateOffsetBytes ?? 0;
-  const scanoutStateI32 =
-    scanoutState instanceof SharedArrayBuffer ? wrapScanoutState(scanoutState, scanoutStateOffsetBytes) : undefined;
-  const cursorState = segments.cursorState;
+  let scanoutState = segments.scanoutState;
+  // Some runtimes embed ScanoutState inside the guest WebAssembly.Memory and only communicate the
+  // byte offset. This avoids passing multiple aliases of the same SharedArrayBuffer through
+  // structured clone (which has been observed to corrupt init messages on Firefox).
+  if (!(scanoutState instanceof SharedArrayBuffer) && scanoutStateOffsetBytes > 0 && guestSab instanceof SharedArrayBuffer) {
+    scanoutState = guestSab;
+  }
+  let scanoutStateI32: Int32Array | undefined = undefined;
+  if (scanoutState instanceof SharedArrayBuffer) {
+    try {
+      scanoutStateI32 = wrapScanoutState(scanoutState, scanoutStateOffsetBytes);
+    } catch {
+      // Defensive fallback: if a caller passed the wrong SAB (e.g. due to browser structured-clone
+      // bugs), retry using the guest memory backing store when the offset suggests embedding.
+      if (scanoutStateOffsetBytes > 0 && guestSab instanceof SharedArrayBuffer && scanoutState !== guestSab) {
+        scanoutState = guestSab;
+        scanoutStateI32 = wrapScanoutState(scanoutState, scanoutStateOffsetBytes);
+      }
+    }
+  }
+
   const cursorStateOffsetBytes = segments.cursorStateOffsetBytes ?? 0;
-  const cursorStateI32 =
-    cursorState instanceof SharedArrayBuffer ? wrapCursorState(cursorState, cursorStateOffsetBytes) : undefined;
+  let cursorState = segments.cursorState;
+  if (!(cursorState instanceof SharedArrayBuffer) && cursorStateOffsetBytes > 0 && guestSab instanceof SharedArrayBuffer) {
+    cursorState = guestSab;
+  }
+  let cursorStateI32: Int32Array | undefined = undefined;
+  if (cursorState instanceof SharedArrayBuffer) {
+    try {
+      cursorStateI32 = wrapCursorState(cursorState, cursorStateOffsetBytes);
+    } catch {
+      if (cursorStateOffsetBytes > 0 && guestSab instanceof SharedArrayBuffer && cursorState !== guestSab) {
+        cursorState = guestSab;
+        cursorStateI32 = wrapCursorState(cursorState, cursorStateOffsetBytes);
+      }
+    }
+  }
   return {
     segments,
     status,

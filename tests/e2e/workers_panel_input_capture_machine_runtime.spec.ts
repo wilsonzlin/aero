@@ -10,11 +10,13 @@ test("Workers panel: VGA canvas captures keyboard input and forwards batches to 
   // canonical harness UI at `/`). In other deployments the legacy UI may be
   // mounted at the origin root. Start at `/` as the smoke-test entrypoint, then
   // fall back to `/web/index.html` when the Workers panel isn't present.
-  await page.goto("/?vmRuntime=machine", { waitUntil: "load" });
+  // Keep the worker VM footprint modest on browsers like Firefox that can be
+  // significantly slower to initialize large shared WebAssembly.Memory regions.
+  await page.goto("/?vmRuntime=machine&mem=256&vram=16", { waitUntil: "load" });
   try {
     await page.locator("#workers-start").waitFor({ state: "attached", timeout: 2000 });
   } catch {
-    await page.goto("/web/index.html?vmRuntime=machine", { waitUntil: "load" });
+    await page.goto("/web/index.html?vmRuntime=machine&mem=256&vram=16", { waitUntil: "load" });
   }
 
   const support = await page.evaluate(() => {
@@ -81,37 +83,64 @@ test("Workers panel: VGA canvas captures keyboard input and forwards batches to 
     return value;
   };
 
+  const getFailureDiagnostics = async (): Promise<string> => {
+    return await page.evaluate(() => {
+      const inputStatus = document.querySelector("#workers-input-status")?.textContent ?? "";
+      const activeElement = (document.activeElement as HTMLElement | null)?.id ?? "(none)";
+      return `inputStatus=${JSON.stringify(inputStatus)} activeElement=${activeElement} document.hasFocus=${String(document.hasFocus())} visibility=${document.visibilityState}`;
+    });
+  };
+
   const pressKeyAndWaitForBatchIncrement = async (prev: number): Promise<number> => {
     // In machine runtime, the CPU worker posts WASM_READY before the `Machine` instance is fully
     // constructed. Input batches delivered in that small window are recycled but not processed,
     // so retry a few times to avoid flaking on slower machines.
     const MAX_ATTEMPTS = 20;
-    let last = prev;
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
-      // Click the VGA canvas to focus it (pointer lock may fail in headless CI; focus must be enough).
+      await page.evaluate(() => {
+        // Some headless environments start with `document.hasFocus() === false` and never deliver a
+        // real window focus event. InputCapture gates keyboard capture on an internal `windowFocused`
+        // flag, so synthesize a best-effort focus event to keep the test deterministic.
+        window.dispatchEvent(new Event("focus"));
+      });
+      // Click the canvas to reliably focus it. InputCapture's click handler also requests pointer
+      // lock; release it immediately so subsequent Playwright mouse interactions remain reliable.
       await page.locator("#workers-vga-canvas").click();
+      await page.evaluate(() => {
+        try {
+          document.exitPointerLock();
+        } catch {
+          // ignore
+        }
+      });
       await page.keyboard.press("KeyA");
 
       try {
-        await page.waitForFunction(
+        const handle = await page.waitForFunction(
           (p) => {
             const text = document.querySelector("#workers-input-status")?.textContent ?? "";
             const match = /ioBatches=(\d+)/.exec(text);
             if (!match) return false;
             const cur = Number.parseInt(match[1] ?? "", 10);
-            return Number.isFinite(cur) && cur > (p as number);
+            return Number.isFinite(cur) && cur > (p as number) ? cur : false;
           },
-          last,
+          prev,
           { timeout: 1500 },
         );
+        const value = await handle.jsonValue();
+        if (typeof value === "number" && Number.isFinite(value)) {
+          return value;
+        }
         return await getIoBatches();
       } catch {
         // Keep trying until the CPU worker is ready to process input batches.
-        last = await getIoBatches();
         await page.waitForTimeout(200);
       }
     }
-    throw new Error(`Timed out waiting for ioBatches to increment after ${MAX_ATTEMPTS} keypress attempts.`);
+    throw new Error(
+      `Timed out waiting for ioBatches to increment after ${MAX_ATTEMPTS} keypress attempts. ` +
+        (await getFailureDiagnostics()),
+    );
   };
 
   const initialIoBatches = await getIoBatches();

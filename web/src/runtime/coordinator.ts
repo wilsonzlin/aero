@@ -2345,12 +2345,9 @@ export class WorkerCoordinator {
         vramBasePaddr: segments.vram ? VRAM_BASE_PADDR : undefined,
         vramSizeBytes: segments.vram ? segments.vram.byteLength : undefined,
         // Legacy VGA scanout is backed by the shared framebuffer segment in the web runtime.
-        // Keep `vgaFramebuffer` as an explicit alias so workers can migrate to a standalone VGA
-        // buffer in the future without another init schema break.
-        vgaFramebuffer: segments.sharedFramebuffer,
-        scanoutState: segments.scanoutState,
+        // Do not send the deprecated `vgaFramebuffer` alias; passing multiple SAB aliases through
+        // structured clone has been observed to corrupt init messages on Firefox.
         scanoutStateOffsetBytes: segments.scanoutStateOffsetBytes,
-        cursorState: segments.cursorState,
         cursorStateOffsetBytes: segments.cursorStateOffsetBytes,
         ioIpcSab: segments.ioIpc,
         sharedFramebuffer: segments.sharedFramebuffer,
