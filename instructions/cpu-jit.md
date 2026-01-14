@@ -206,7 +206,16 @@ AERO_TIMEOUT=1200 bash ./scripts/safe-run.sh cargo test -p aero-jit-x86 --locked
 AERO_TIMEOUT=1800 bash ./scripts/safe-run.sh cargo test --locked
 ```
 
-Use `crates/conformance` for differential testing against QEMU.
+Use `cargo xtask conformance` (or `just test-conformance`) for differential instruction
+semantics testing (`crates/conformance`, Aero vs reference backend).
+
+```bash
+# Recommended (uses scripts/safe-run.sh internally)
+cargo xtask conformance --cases 512
+
+# In contended/CI-like sandboxes, wrap the outer cargo invocation too (builds xtask under safe-run):
+bash ./scripts/safe-run.sh cargo xtask conformance --cases 512 -- --nocapture
+```
 
 ---
 
