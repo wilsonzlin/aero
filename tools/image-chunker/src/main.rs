@@ -3433,6 +3433,41 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn download_http_bytes_with_retry_does_not_retry_on_oversized_response() -> Result<()> {
+        let requests = Arc::new(AtomicU64::new(0));
+        let responder: Arc<
+            dyn Fn(TestHttpRequest) -> (u16, Vec<(String, String)>, Vec<u8>) + Send + Sync + 'static,
+        > = {
+            let requests = Arc::clone(&requests);
+            Arc::new(move |_req: TestHttpRequest| {
+                requests.fetch_add(1, Ordering::SeqCst);
+                (200, Vec::new(), vec![b'a'; 11])
+            })
+        };
+        let (base_url, shutdown_tx, handle) = start_test_http_server(responder).await?;
+
+        let url: reqwest::Url = format!("{base_url}/manifest.json").parse().unwrap();
+        let client = build_reqwest_client(&[])?;
+        let err = download_http_bytes_with_retry(&client, url, 3, 10)
+            .await
+            .expect_err("expected oversized download to be rejected");
+        assert!(
+            error_chain_summary(&err).to_ascii_lowercase().contains("too large"),
+            "unexpected error chain: {}",
+            error_chain_summary(&err)
+        );
+        assert_eq!(
+            requests.load(Ordering::SeqCst),
+            1,
+            "expected oversized response to be treated as non-retryable"
+        );
+
+        let _ = shutdown_tx.send(());
+        let _ = handle.await;
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn download_http_bytes_with_retry_retries_on_429() -> Result<()> {
         let requests = Arc::new(AtomicU64::new(0));
         let responder: Arc<
@@ -3698,6 +3733,43 @@ mod tests {
             requests.load(Ordering::SeqCst),
             1,
             "expected the optional downloader to not retry 404"
+        );
+
+        let _ = shutdown_tx.send(());
+        let _ = handle.await;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn download_http_bytes_optional_with_retry_does_not_retry_on_oversized_response(
+    ) -> Result<()> {
+        let requests = Arc::new(AtomicU64::new(0));
+        let responder: Arc<
+            dyn Fn(TestHttpRequest) -> (u16, Vec<(String, String)>, Vec<u8>) + Send + Sync + 'static,
+        > = {
+            let requests = Arc::clone(&requests);
+            Arc::new(move |_req: TestHttpRequest| {
+                requests.fetch_add(1, Ordering::SeqCst);
+                (200, Vec::new(), vec![b'a'; 11])
+            })
+        };
+
+        let (base_url, shutdown_tx, handle) = start_test_http_server(responder).await?;
+
+        let url: reqwest::Url = format!("{base_url}/meta.json").parse().unwrap();
+        let client = build_reqwest_client(&[])?;
+        let err = download_http_bytes_optional_with_retry(&client, url, 3, 10)
+            .await
+            .expect_err("expected oversized download to be rejected");
+        assert!(
+            error_chain_summary(&err).to_ascii_lowercase().contains("too large"),
+            "unexpected error chain: {}",
+            error_chain_summary(&err)
+        );
+        assert_eq!(
+            requests.load(Ordering::SeqCst),
+            1,
+            "expected oversized response to be treated as non-retryable"
         );
 
         let _ = shutdown_tx.send(());
