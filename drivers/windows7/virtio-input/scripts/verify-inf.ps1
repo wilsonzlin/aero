@@ -12,6 +12,7 @@
   - Must target KMDF 1.9 (in-box on Win7 SP1)
   - Must include the contract v1 keyboard/mouse HWID set (revision gated, REV_01)
   - Must include the strict (no SUBSYS) REV-qualified fallback HWID: `PCI\VEN_1AF4&DEV_1052&REV_01`
+    (so driver binding remains stable if subsystem IDs are not exposed/recognized)
   - Must not include a revision-less base HWID (`PCI\VEN_1AF4&DEV_1052`) (revision gating is required)
   - Must use distinct DeviceDesc strings for keyboard vs mouse (so they appear separately in Device Manager)
   - Must enable MSI/MSI-X and request enough message interrupts for virtio-input
@@ -281,8 +282,8 @@ foreach ($installSect in $installWdfSections) {
 # Hardware IDs (Aero contract v1)
 #------------------------------------------------------------------------------
 # The canonical keyboard/mouse INF must include the SUBSYS-qualified Aero contract v1
-# keyboard/mouse IDs (distinct keyboard/mouse naming), plus a strict (no SUBSYS) fallback
-# HWID for stable binding when subsystem IDs are missing/unrecognized.
+# keyboard/mouse IDs (distinct keyboard/mouse naming), plus a strict, REV-qualified
+# (no SUBSYS) fallback HWID for stable binding when subsystem IDs are missing/unrecognized.
 #
 # Note: tablet devices bind via `aero_virtio_tablet.inf` (more specific) and will win over
 # the generic fallback when that INF is installed.
