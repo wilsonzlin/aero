@@ -66,6 +66,12 @@ fn write_guest_texture2d_4x4_bgra8(w: &mut AerogpuCmdWriter, texture_handle: u32
 }
 
 fn fuzz_cmd_stream(cmd_bytes: &[u8]) {
+    fn read_u32_le(buf: &[u8], off: usize) -> Option<u32> {
+        let end = off.checked_add(4)?;
+        let bytes: [u8; 4] = buf.get(off..end)?.try_into().ok()?;
+        Some(u32::from_le_bytes(bytes))
+    }
+
     fn packet_bytes<'a>(cmd_bytes: &'a [u8], pkt: &cmd::AerogpuCmdPacket<'a>) -> Option<&'a [u8]> {
         let base = cmd_bytes.as_ptr() as usize;
         let payload = pkt.payload.as_ptr() as usize;
@@ -93,10 +99,11 @@ fn fuzz_cmd_stream(cmd_bytes: &[u8]) {
             //
             // Many command packets use a `(u32 shader_stage, ..., u32 reserved0)` pattern, with
             // stage_ex encoded via `(shader_stage=COMPUTE, reserved0=stage_ex)`.
-            if pkt.payload.len() >= 16 {
-                let a0 = u32::from_le_bytes(pkt.payload[0..4].try_into().unwrap());
-                let a1 = u32::from_le_bytes(pkt.payload[4..8].try_into().unwrap());
-                let reserved0 = u32::from_le_bytes(pkt.payload[12..16].try_into().unwrap());
+            if let (Some(a0), Some(a1), Some(reserved0)) = (
+                read_u32_le(pkt.payload, 0),
+                read_u32_le(pkt.payload, 4),
+                read_u32_le(pkt.payload, 12),
+            ) {
                 let _ = cmd::decode_stage_ex(a0, reserved0);
                 let _ = cmd::decode_stage_ex(a1, reserved0);
                 let _ = cmd::decode_stage_ex_gated(abi_minor, a0, reserved0);
@@ -416,7 +423,9 @@ fn fuzz_d3d11_cmd_stream(bytes: &[u8]) {
     let word_count = (bytes.len() / 4).min(MAX_WORDS);
     let mut words = Vec::with_capacity(word_count);
     for chunk in bytes.chunks_exact(4).take(word_count) {
-        words.push(u32::from_le_bytes(chunk.try_into().unwrap()));
+        let mut arr = [0u8; 4];
+        arr.copy_from_slice(chunk);
+        words.push(u32::from_le_bytes(arr));
     }
 
     for pkt in d3d11::CmdStream::new(&words).take(1024) {
