@@ -331,6 +331,114 @@ fn tier2_shr_count_1_sets_of_from_old_msb() {
 }
 
 #[test]
+fn tier2_shl_clears_sf_observed_by_js() {
+    // mov eax, 0x8000_0000
+    // test eax, eax     ; SF=1
+    // mov al, 1
+    // shl al, 1         ; result=2 => SF=0
+    // js taken          ; must NOT take
+    // mov al, 1
+    // int3
+    // taken: mov al, 2
+    // int3
+    const CODE: &[u8] = &[
+        0xB8, 0x00, 0x00, 0x00, 0x80, // mov eax, 0x8000_0000
+        0x85, 0xC0, // test eax, eax
+        0xB0, 0x01, // mov al, 1
+        0xD0, 0xE0, // shl al, 1
+        0x78, 0x03, // js +3
+        0xB0, 0x01, // mov al, 1
+        0xCC, // int3
+        0xB0, 0x02, // mov al, 2
+        0xCC, // int3
+    ];
+
+    let (_func, exit, state) = run_x86(CODE);
+    assert_eq!(exit, RunExit::SideExit { next_rip: 15 });
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize] & 0xff, 1);
+}
+
+#[test]
+fn tier2_shl8_nonzero_to_zero_sets_zf_observed_by_jz() {
+    // mov al, 0x80
+    // shl al, 1         ; result truncates to 0x00 => ZF=1
+    // jz taken          ; must take
+    // mov al, 0
+    // int3
+    // taken: mov al, 1
+    // int3
+    const CODE: &[u8] = &[
+        0xB0, 0x80, // mov al, 0x80
+        0xD0, 0xE0, // shl al, 1
+        0x74, 0x03, // jz +3
+        0xB0, 0x00, // mov al, 0
+        0xCC, // int3
+        0xB0, 0x01, // mov al, 1
+        0xCC, // int3
+    ];
+
+    let (_func, exit, state) = run_x86(CODE);
+    assert_eq!(exit, RunExit::SideExit { next_rip: 11 });
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize] & 0xff, 1);
+}
+
+#[test]
+fn tier2_shl_clears_pf_observed_by_jp() {
+    // mov eax, 0x00
+    // test eax, eax     ; PF=1
+    // mov al, 1
+    // shl al, 1         ; result=2 => PF=0
+    // jp taken          ; must NOT take
+    // mov al, 1
+    // int3
+    // taken: mov al, 2
+    // int3
+    const CODE: &[u8] = &[
+        0xB8, 0x00, 0x00, 0x00, 0x00, // mov eax, 0x00
+        0x85, 0xC0, // test eax, eax
+        0xB0, 0x01, // mov al, 1
+        0xD0, 0xE0, // shl al, 1
+        0x7A, 0x03, // jp +3
+        0xB0, 0x01, // mov al, 1
+        0xCC, // int3
+        0xB0, 0x02, // mov al, 2
+        0xCC, // int3
+    ];
+
+    let (_func, exit, state) = run_x86(CODE);
+    assert_eq!(exit, RunExit::SideExit { next_rip: 15 });
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize] & 0xff, 1);
+}
+
+#[test]
+fn tier2_shl_high8_sets_cf_observed_by_jc() {
+    // mov ah, 0x81
+    // shl ah, 1         ; CF=1
+    // jc taken          ; must take
+    // mov al, 0
+    // int3
+    // taken: mov al, 1
+    // int3
+    const CODE: &[u8] = &[
+        0xB4, 0x81, // mov ah, 0x81
+        0xC0, 0xE4, 0x01, // shl ah, 1
+        0x72, 0x03, // jc +3
+        0xB0, 0x00, // mov al, 0
+        0xCC, // int3
+        0xB0, 0x01, // mov al, 1
+        0xCC, // int3
+    ];
+
+    let (func, exit, state) = run_x86(CODE);
+    assert!(
+        !func.block(func.entry).instrs.is_empty(),
+        "unexpected deopt-at-entry when lowering shl ah with flags"
+    );
+    assert_eq!(exit, RunExit::SideExit { next_rip: 12 });
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize] & 0xff, 1);
+}
+
+#[test]
 fn tier2_shl_updates_pf_observed_by_jp() {
     // mov al, 0x03
     // shl al, 1
