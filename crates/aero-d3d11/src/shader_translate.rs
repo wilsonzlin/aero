@@ -4630,6 +4630,31 @@ fn emit_instructions(
                 }
             },
             Sm4Inst::Predicated { pred, inner } => {
+                // Most predicated instructions can be expressed by emitting a WGSL `if` wrapper
+                // around the inner op. Some DXBC instructions are structurally incompatible with
+                // this lowering (e.g. predicating an `if` would create unbalanced structured control
+                // flow). `ret` is also special: `emit_instructions` elides top-level `ret` tokens
+                // because we always emit an explicit stage return sequence after instruction
+                // emission. A predicated `ret` must therefore be handled directly here so that the
+                // early-exit is preserved.
+                if matches!(inner.as_ref(), Sm4Inst::Ret) {
+                    let cond = emit_test_predicate_scalar(pred);
+                    w.line(&format!("if ({cond}) {{"));
+                    w.indent();
+                    match ctx.stage {
+                        ShaderStage::Vertex | ShaderStage::Domain => ctx.io.emit_vs_return(w)?,
+                        ShaderStage::Pixel => ctx.io.emit_ps_return(w)?,
+                        ShaderStage::Compute | ShaderStage::Hull => {
+                            // Compute entry points return `()`.
+                            w.line("return;");
+                        }
+                        other => return Err(ShaderTranslateError::UnsupportedStage(other)),
+                    }
+                    w.dedent();
+                    w.line("}");
+                    continue;
+                }
+
                 match inner.as_ref() {
                     Sm4Inst::If { .. } => {
                         return Err(ShaderTranslateError::UnsupportedInstruction {
@@ -4653,12 +4678,6 @@ fn emit_instructions(
                         return Err(ShaderTranslateError::UnsupportedInstruction {
                             inst_index,
                             opcode: "predicated_endif".to_owned(),
-                        })
-                    }
-                    Sm4Inst::Ret => {
-                        return Err(ShaderTranslateError::UnsupportedInstruction {
-                            inst_index,
-                            opcode: "predicated_ret".to_owned(),
                         })
                     }
                     _ => {}

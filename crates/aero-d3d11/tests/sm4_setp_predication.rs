@@ -582,3 +582,81 @@ fn decodes_and_translates_trailing_predicated_setp() {
         translated.wgsl
     );
 }
+
+#[test]
+fn decodes_and_translates_predicated_ret() {
+    let mut body = Vec::<u32>::new();
+
+    // setp p0.x, v0.x, l(0.0), gt
+    let dst_p0x = reg_dst(OPERAND_TYPE_PREDICATE, 0, WriteMask::X);
+    let src_v0x = reg_src(OPERAND_TYPE_INPUT, 0, [0, 0, 0, 0]);
+    let src_zero = imm32_scalar(0.0f32.to_bits());
+    let setp_len = 1 + dst_p0x.len() as u32 + src_v0x.len() as u32 + src_zero.len() as u32;
+    body.push(opcode_token_setp(setp_len, 5));
+    body.extend_from_slice(&dst_p0x);
+    body.extend_from_slice(&src_v0x);
+    body.extend_from_slice(&src_zero);
+
+    // mov o0, l(0, 0, 0, 0)
+    let imm0 = imm32_vec4([0u32; 4]);
+    body.push(opcode_token(OPCODE_MOV, 1 + 2 + imm0.len() as u32));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+    body.extend_from_slice(&imm0);
+
+    // (+p0.x) ret
+    let pred_p0x = pred_operand(0, 0);
+    body.push(opcode_token(OPCODE_RET, 1 + pred_p0x.len() as u32));
+    body.extend_from_slice(&pred_p0x);
+
+    // mov o0, l(1, 1, 1, 1)
+    let imm1 = imm32_vec4([1.0f32.to_bits(); 4]);
+    body.push(opcode_token(OPCODE_MOV, 1 + 2 + imm1.len() as u32));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+    body.extend_from_slice(&imm1);
+
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    // Stage type 0 is pixel shader.
+    let tokens = make_sm5_program_tokens(0, &body);
+
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, tokens_to_bytes(&tokens)),
+        (
+            FOURCC_ISGN,
+            build_signature_chunk(&[sig_param("TEXCOORD", 0, 0, 0b1111)]),
+        ),
+        (
+            FOURCC_OSGN,
+            build_signature_chunk(&[sig_param("SV_Target", 0, 0, 0b1111)]),
+        ),
+    ]);
+
+    let dxbc = aero_d3d11::DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
+    let module = aero_d3d11::sm4::decode_program(&program).expect("SM4 decode");
+
+    assert!(matches!(module.instructions[2], Sm4Inst::Predicated { .. }));
+    assert!(matches!(
+        &module.instructions[2],
+        Sm4Inst::Predicated {
+            inner,
+            ..
+        } if matches!(inner.as_ref(), Sm4Inst::Ret)
+    ));
+
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_parses(&translated.wgsl);
+
+    assert!(
+        translated.wgsl.contains("if (p0.x) {"),
+        "expected predicated ret to translate to if(p0.x):\n{}",
+        translated.wgsl
+    );
+    let return_count = translated.wgsl.match_indices("return out;").count();
+    assert!(
+        return_count >= 2,
+        "expected predicated ret to emit an additional return out (count={return_count}):\n{}",
+        translated.wgsl
+    );
+}
