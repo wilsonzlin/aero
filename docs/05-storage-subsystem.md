@@ -286,6 +286,7 @@ As of the current implementation, the AHCI path supports the following ATA comma
 - `SET FEATURES` (`0xEF`)
   - `0x02` = enable write cache
   - `0x82` = disable write cache
+  - Other subcommands currently complete successfully but are treated as no-ops.
 
 Notes:
 
@@ -306,6 +307,7 @@ For reference, the current IDE (PIO) ATA command support includes:
 - `WRITE SECTORS EXT` (48-bit PIO) (`0x34`)
 - `FLUSH CACHE` (`0xE7`) and `FLUSH CACHE EXT` (`0xEA`)
 - `SET FEATURES` (`0xEF`) (write cache enable/disable, as above)
+  - Other subcommands currently complete successfully but are treated as no-ops.
 
 ### AHCI port reset / COMRESET handling (PxSCTL.DET)
 
