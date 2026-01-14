@@ -417,6 +417,12 @@ test:
 test-all:
   cargo xtask test-all
 
+test-input:
+  cargo xtask input
+
+test-input-e2e:
+  cargo xtask input --e2e
+
 gen-scancodes:
   #!/usr/bin/env bash
   set -euo pipefail
