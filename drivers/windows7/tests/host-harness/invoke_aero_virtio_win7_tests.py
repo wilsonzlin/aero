@@ -6724,8 +6724,15 @@ def main() -> int:
                             or saw_virtio_input_events_buttons_skip
                             or saw_virtio_input_events_wheel_skip
                         ):
+                            skipped = "virtio-input-events-*"
+                            if saw_virtio_input_events_modifiers_skip:
+                                skipped = "virtio-input-events-modifiers"
+                            elif saw_virtio_input_events_buttons_skip:
+                                skipped = "virtio-input-events-buttons"
+                            elif saw_virtio_input_events_wheel_skip:
+                                skipped = "virtio-input-events-wheel"
                             print(
-                                "FAIL: VIRTIO_INPUT_EVENTS_EXTENDED_SKIPPED: virtio-input-events-extended markers were skipped but "
+                                f"FAIL: VIRTIO_INPUT_EVENTS_EXTENDED_SKIPPED: {skipped} was skipped (flag_not_set) but "
                                 "--with-input-events-extended was enabled (provision the guest with --test-input-events-extended)",
                                 file=sys.stderr,
                             )

@@ -47,7 +47,25 @@ class PowerShellSkipMarkersUseExtractLastMarkerLineTests(unittest.TestCase):
         self.assertIn("Try-ExtractLastAeroMarkerLine", body)
         self.assertIn('-Prefix "AERO_VIRTIO_SELFTEST|TEST|virtio-snd-buffer-limits|SKIP|"', body)
 
+    def test_virtio_input_events_extended_skipped_uses_try_extract_last_aero_marker_line(self) -> None:
+        body = self._extract_case_body(
+            "VIRTIO_INPUT_EVENTS_EXTENDED_SKIPPED",
+            r'"VIRTIO_INPUT_EVENTS_FAILED"\s*\{',
+        )
+        self.assertIn("Try-ExtractLastAeroMarkerLine", body)
+        self.assertIn(
+            '-Prefix "AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-modifiers|SKIP|"',
+            body,
+        )
+        self.assertIn(
+            '-Prefix "AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-buttons|SKIP|"',
+            body,
+        )
+        self.assertIn(
+            '-Prefix "AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-wheel|SKIP|"',
+            body,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
-

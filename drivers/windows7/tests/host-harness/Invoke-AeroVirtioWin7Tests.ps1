@@ -8233,7 +8233,47 @@ try {
       $scriptExitCode = 1
     }
     "VIRTIO_INPUT_EVENTS_EXTENDED_SKIPPED" {
-      Write-Host "FAIL: VIRTIO_INPUT_EVENTS_EXTENDED_SKIPPED: virtio-input-events-* extended tests were skipped (flag_not_set) but -WithInputEventsExtended/-WithInputEventsExtra was enabled (provision the guest with --test-input-events-extended)"
+      $subtest = ""
+      $reason = "unknown"
+      $line = $null
+
+      $line = Try-ExtractLastAeroMarkerLine `
+        -Tail $result.Tail `
+        -Prefix "AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-modifiers|SKIP|" `
+        -SerialLogPath $SerialLogPath
+      if ($null -ne $line) {
+        $subtest = "virtio-input-events-modifiers"
+      } else {
+        $line = Try-ExtractLastAeroMarkerLine `
+          -Tail $result.Tail `
+          -Prefix "AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-buttons|SKIP|" `
+          -SerialLogPath $SerialLogPath
+        if ($null -ne $line) {
+          $subtest = "virtio-input-events-buttons"
+        } else {
+          $line = Try-ExtractLastAeroMarkerLine `
+            -Tail $result.Tail `
+            -Prefix "AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-wheel|SKIP|" `
+            -SerialLogPath $SerialLogPath
+          if ($null -ne $line) {
+            $subtest = "virtio-input-events-wheel"
+          }
+        }
+      }
+
+      if ($null -ne $line) {
+        if ($line -match "(?:^|\|)reason=([^|\r\n]+)") { $reason = $Matches[1] }
+        elseif ($line -match "\|SKIP\|([^|\r\n=]+)(?:\||$)") { $reason = $Matches[1] }
+      }
+
+      $subtestDesc = $subtest
+      if ([string]::IsNullOrEmpty($subtestDesc)) { $subtestDesc = "virtio-input-events-*" }
+
+      if ($reason -eq "flag_not_set") {
+        Write-Host "FAIL: VIRTIO_INPUT_EVENTS_EXTENDED_SKIPPED: $subtestDesc was skipped (flag_not_set) but -WithInputEventsExtended/-WithInputEventsExtra was enabled (provision the guest with --test-input-events-extended)"
+      } else {
+        Write-Host "FAIL: VIRTIO_INPUT_EVENTS_EXTENDED_SKIPPED: $subtestDesc was skipped ($reason) but -WithInputEventsExtended/-WithInputEventsExtra was enabled"
+      }
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
