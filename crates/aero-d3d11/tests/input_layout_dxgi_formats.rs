@@ -1,6 +1,7 @@
 use aero_d3d11::input_layout::{
-    fnv1a_32, map_layout_to_shader_locations_compact, InputLayoutBinding, InputLayoutDesc,
-    InputLayoutError, VsInputSignatureElement, AEROGPU_INPUT_LAYOUT_BLOB_MAGIC,
+    dxgi_format_info, fnv1a_32, map_layout_to_shader_locations_compact, DxgiFormatComponentType,
+    InputLayoutBinding, InputLayoutDesc, InputLayoutError, VsInputSignatureElement,
+    AEROGPU_INPUT_LAYOUT_BLOB_MAGIC,
     AEROGPU_INPUT_LAYOUT_BLOB_VERSION, D3D11_APPEND_ALIGNED_ELEMENT,
 };
 
@@ -119,6 +120,102 @@ fn maps_new_dxgi_formats_to_wgpu_vertex_formats() {
         assert_eq!(mapped.buffers.len(), 1);
         assert_eq!(mapped.buffers[0].attributes.len(), 1);
         assert_eq!(mapped.buffers[0].attributes[0].format, case.expect);
+    }
+}
+
+#[test]
+fn dxgi_format_info_includes_component_metadata() {
+    struct Case {
+        dxgi_format: u32,
+        wgpu_format: wgpu::VertexFormat,
+        size_bytes: u32,
+        align_bytes: u32,
+        component_type: DxgiFormatComponentType,
+        component_count: u32,
+    }
+
+    let cases = [
+        Case {
+            dxgi_format: 11, // R16G16B16A16_UNORM
+            wgpu_format: wgpu::VertexFormat::Unorm16x4,
+            size_bytes: 8,
+            align_bytes: 4,
+            component_type: DxgiFormatComponentType::Unorm16,
+            component_count: 4,
+        },
+        Case {
+            dxgi_format: 12, // R16G16B16A16_UINT
+            wgpu_format: wgpu::VertexFormat::Uint16x4,
+            size_bytes: 8,
+            align_bytes: 4,
+            component_type: DxgiFormatComponentType::U16,
+            component_count: 4,
+        },
+        Case {
+            dxgi_format: 13, // R16G16B16A16_SNORM
+            wgpu_format: wgpu::VertexFormat::Snorm16x4,
+            size_bytes: 8,
+            align_bytes: 4,
+            component_type: DxgiFormatComponentType::Snorm16,
+            component_count: 4,
+        },
+        Case {
+            dxgi_format: 14, // R16G16B16A16_SINT
+            wgpu_format: wgpu::VertexFormat::Sint16x4,
+            size_bytes: 8,
+            align_bytes: 4,
+            component_type: DxgiFormatComponentType::I16,
+            component_count: 4,
+        },
+        Case {
+            dxgi_format: 24, // R10G10B10A2_UNORM (fallback u32)
+            wgpu_format: wgpu::VertexFormat::Uint32,
+            size_bytes: 4,
+            align_bytes: 4,
+            component_type: DxgiFormatComponentType::U32,
+            component_count: 1,
+        },
+        Case {
+            dxgi_format: 49, // R8G8_UNORM
+            wgpu_format: wgpu::VertexFormat::Unorm8x2,
+            size_bytes: 2,
+            align_bytes: 4,
+            component_type: DxgiFormatComponentType::Unorm8,
+            component_count: 2,
+        },
+        Case {
+            dxgi_format: 50, // R8G8_UINT
+            wgpu_format: wgpu::VertexFormat::Uint8x2,
+            size_bytes: 2,
+            align_bytes: 4,
+            component_type: DxgiFormatComponentType::U8,
+            component_count: 2,
+        },
+        Case {
+            dxgi_format: 51, // R8G8_SNORM
+            wgpu_format: wgpu::VertexFormat::Snorm8x2,
+            size_bytes: 2,
+            align_bytes: 4,
+            component_type: DxgiFormatComponentType::Snorm8,
+            component_count: 2,
+        },
+        Case {
+            dxgi_format: 52, // R8G8_SINT
+            wgpu_format: wgpu::VertexFormat::Sint8x2,
+            size_bytes: 2,
+            align_bytes: 4,
+            component_type: DxgiFormatComponentType::I8,
+            component_count: 2,
+        },
+    ];
+
+    for case in cases {
+        let info = dxgi_format_info(case.dxgi_format).expect("dxgi_format_info");
+        assert_eq!(info.wgpu_vertex_format, case.wgpu_format);
+        assert_eq!(info.size_bytes, case.size_bytes);
+        assert_eq!(info.align_bytes, case.align_bytes);
+        assert_eq!(info.component_type, case.component_type);
+        assert_eq!(info.component_count, case.component_count);
     }
 }
 

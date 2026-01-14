@@ -1,7 +1,7 @@
 use aero_d3d11::binding_model::{
-    BINDING_BASE_CBUFFER, BINDING_BASE_SAMPLER, BINDING_BASE_TEXTURE, BINDING_BASE_UAV,
-    D3D11_MAX_CONSTANT_BUFFER_SLOTS, MAX_CBUFFER_SLOTS, MAX_SAMPLER_SLOTS, MAX_TEXTURE_SLOTS,
-    MAX_UAV_SLOTS,
+    BINDING_BASE_CBUFFER, BINDING_BASE_INTERNAL, BINDING_BASE_SAMPLER, BINDING_BASE_TEXTURE,
+    BINDING_BASE_UAV, D3D11_MAX_CONSTANT_BUFFER_SLOTS, MAX_CBUFFER_SLOTS, MAX_SAMPLER_SLOTS,
+    MAX_TEXTURE_SLOTS, MAX_UAV_SLOTS,
 };
 
 #[test]
@@ -18,6 +18,7 @@ fn binding_model_ranges_are_disjoint() {
     assert_eq!(MAX_TEXTURE_SLOTS, 128);
     assert_eq!(MAX_SAMPLER_SLOTS, 16);
     assert_eq!(MAX_UAV_SLOTS, 8);
+    assert_eq!(BINDING_BASE_INTERNAL, 256);
 
     // Ensure the max binding of each range is strictly below the start of the next range.
     let max_cb_binding = BINDING_BASE_CBUFFER + MAX_CBUFFER_SLOTS - 1;
@@ -28,6 +29,10 @@ fn binding_model_ranges_are_disjoint() {
 
     let max_sampler_binding = BINDING_BASE_SAMPLER + MAX_SAMPLER_SLOTS - 1;
     assert!(max_sampler_binding < BINDING_BASE_UAV);
+
+    // Internal bindings must not overlap the D3D11 register-space ranges.
+    let max_uav_binding = BINDING_BASE_UAV + MAX_UAV_SLOTS - 1;
+    assert!(max_uav_binding < BINDING_BASE_INTERNAL);
 }
 
 #[test]
