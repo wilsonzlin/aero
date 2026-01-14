@@ -12,8 +12,9 @@
 ;
 ; Maintenance note: from the first section header (`[Version]`) onward, this
 ; legacy alias must remain **byte-for-byte identical** to `aero_virtio_input.inf`
-; so driver behavior cannot drift between filenames (CI enforces this via the
-; repo-level Win7 virtio contract consistency check).
+; so driver behavior cannot drift between filenames (CI enforces this; see
+; `drivers/windows7/virtio-input/scripts/check-inf-alias.py` and the repo-level
+; Win7 virtio contract consistency check).
 ;
 ; Aero virtio-input PCI device -> HIDClass KMDF minidriver (Windows 7 SP1)
 ;
