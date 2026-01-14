@@ -158,7 +158,7 @@ See also the examples under `drivers/_template/`:
 > include a strict generic (no `SUBSYS`) fallback entry.
 >
 > Tablet devices bind via the separate `inf/aero_virtio_tablet.inf` (`SUBSYS_00121AF4`); that INF is more specific and wins
-> over any generic fallback match when both packages are present.
+> over the opt-in generic fallback match (from the legacy alias INF) when both packages are present.
 >
 > The repo also carries an optional legacy filename alias checked in disabled-by-default
 > (`inf/virtio-input.inf.disabled` → rename to `inf/virtio-input.inf`) for compatibility with workflows/tools that still
