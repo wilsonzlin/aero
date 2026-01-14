@@ -27,7 +27,14 @@ To verify the checked-in blob is up to date:
 cargo xtask fixtures --check
 ```
 
-If you only want to regenerate the BIOS ROM fixture:
+If you only want to regenerate/check the BIOS ROM fixture:
+
+```bash
+cargo xtask bios-rom
+cargo xtask bios-rom --check
+```
+
+Alternative (lower-level) generator:
 
 ```bash
 cargo run -p firmware --bin gen_bios_rom --locked
