@@ -5916,14 +5916,12 @@ impl AerogpuD3d11Executor {
                 if hs.stage != ShaderStage::Hull {
                     bail!("shader {hs_handle} is not a hull shader");
                 }
-                let expected = hs.sm4_metadata.hs_input_control_points.ok_or_else(|| {
-                    anyhow!("hull shader {hs_handle} is missing dcl_inputcontrolpoints metadata")
-                })?;
-
-                if expected != actual {
-                    bail!(
-                        "patchlist control point count mismatch: hull shader expects {expected} input control points, but primitive topology is PatchList{actual}"
-                    );
+                if let Some(expected) = hs.sm4_metadata.hs_input_control_points {
+                    if expected != actual {
+                        bail!(
+                            "patchlist control point count mismatch: hull shader expects {expected} input control points, but primitive topology is PatchList{actual}"
+                        );
+                    }
                 }
 
                 if self.state.ds.is_none() {

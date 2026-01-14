@@ -9,6 +9,7 @@
 //! GPU shader logic.
 
 use super::super::expansion_scratch::ExpansionScratchAlloc;
+use crate::binding_model::EXPANDED_VERTEX_MAX_VARYINGS;
 use crate::runtime::indirect_args::DrawIndexedIndirectArgs;
 
 const REGISTER_STRIDE_BYTES: u64 = 16;
@@ -208,6 +209,12 @@ impl TessellationDrawScratchSizes {
         }
 
         let ds_output_stride_bytes = payload_stride_bytes(params.ds_output_register_count)?;
+        // Expanded draws are consumed by `runtime::wgsl_link::generate_passthrough_vs_wgsl`, which
+        // expects the fixed `ExpandedVertex` record layout:
+        //   { pos: vec4<f32>, varyings: array<vec4<f32>, EXPANDED_VERTEX_MAX_VARYINGS> }.
+        //
+        // Keep the expanded vertex stride in sync with that layout (pos + 32 varyings).
+        let expanded_vertex_stride_bytes = payload_stride_bytes(1 + EXPANDED_VERTEX_MAX_VARYINGS)?;
 
         let patch_count_total = params.patch_count_total as u64;
         let control_points = params.control_points as u64;
@@ -256,7 +263,7 @@ impl TessellationDrawScratchSizes {
         require_u32_count(expanded_vertex_count_total, "expanded_vertex_count_total")?;
         let expanded_vertex_bytes = checked_mul_u64(
             expanded_vertex_count_total,
-            ds_output_stride_bytes,
+            expanded_vertex_stride_bytes,
             "expanded vertex bytes",
         )?;
 
@@ -354,7 +361,9 @@ mod tests {
             "Patch meta is 5 u32s (tess_level + 4 offsets/counts)"
         );
         assert_eq!(sizes.expanded_vertex_count_total, 50);
-        assert_eq!(sizes.expanded_vertex_bytes, 1600);
+        // Expanded vertices are written in the same layout consumed by the emulation passthrough VS:
+        // `pos + 32 varyings` => 33 * 16 bytes per vertex.
+        assert_eq!(sizes.expanded_vertex_bytes, 50 * 33 * 16);
         assert_eq!(sizes.expanded_index_count_total, 192);
         assert_eq!(sizes.expanded_index_bytes, 768);
         assert_eq!(sizes.indirect_args_bytes, 20);
