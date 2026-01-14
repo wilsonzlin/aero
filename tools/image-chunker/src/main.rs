@@ -2078,4 +2078,17 @@ mod tests {
             "unexpected error: {err}"
         );
     }
+
+    #[test]
+    fn missing_chunk_is_non_retryable_even_with_context_wrapping() {
+        let err = anyhow!("object not found (404)");
+        let err = Err::<(), _>(err)
+            .context("GET s3://bucket/prefix/chunks/00000000.bin")
+            .unwrap_err();
+        assert!(
+            !is_retryable_chunk_error(&err),
+            "expected missing chunk to be non-retryable; error chain was: {}",
+            error_chain_summary(&err)
+        );
+    }
 }
