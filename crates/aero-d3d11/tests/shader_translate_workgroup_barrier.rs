@@ -3,7 +3,8 @@ use aero_d3d11::sm4::opcode::{
 };
 use aero_d3d11::{
     parse_signatures, translate_sm4_module_to_wgsl, DxbcFile, FourCC, ShaderModel, ShaderStage,
-    ShaderTranslateError, Sm4Decl, Sm4Inst, Sm4Module,
+    OperandModifier, ShaderTranslateError, Sm4Decl, Sm4Inst, Sm4Module, Sm4TestBool, SrcKind,
+    SrcOperand, Swizzle,
 };
 use aero_dxbc::test_utils as dxbc_test_utils;
 
@@ -85,6 +86,49 @@ fn translates_sync_uav_fence_only_to_wgsl() {
         "fence-only sync must not introduce a workgroup barrier"
     );
     assert_wgsl_validates(&translated.wgsl);
+}
+
+#[test]
+fn rejects_sync_uav_fence_only_inside_control_flow() {
+    // Fence-only `sync` instructions are allowed in divergent control flow in DXBC, but WGSL's
+    // `storageBarrier()` is lowered by WebGPU/Naga as a workgroup-level barrier, which can
+    // deadlock when not executed uniformly.
+    //
+    // We conservatively reject the translation when the fence-only sync appears inside structured
+    // control flow.
+    let module = Sm4Module {
+        stage: ShaderStage::Compute,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: vec![Sm4Decl::ThreadGroupSize { x: 1, y: 1, z: 1 }],
+        instructions: vec![
+            Sm4Inst::If {
+                cond: SrcOperand {
+                    kind: SrcKind::ImmediateF32([1.0f32.to_bits(); 4]),
+                    swizzle: Swizzle::XXXX,
+                    modifier: OperandModifier::None,
+                },
+                test: Sm4TestBool::NonZero,
+            },
+            Sm4Inst::Sync {
+                flags: SYNC_FLAG_UAV_MEMORY,
+            },
+            Sm4Inst::EndIf,
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let dxbc_bytes = build_dxbc(&[(FOURCC_SHEX, Vec::new())]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+
+    let err = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).unwrap_err();
+    match err {
+        ShaderTranslateError::UnsupportedInstruction { inst_index, opcode } => {
+            assert_eq!(inst_index, 1);
+            assert_eq!(opcode, "sync_fence_only_in_control_flow");
+        }
+        other => panic!("expected UnsupportedInstruction for sync, got {other:?}"),
+    }
 }
 
 #[test]

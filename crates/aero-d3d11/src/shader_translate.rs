@@ -5801,6 +5801,21 @@ fn emit_instructions(
                     // approximation.
                     let uav_fence = (flags & crate::sm4::opcode::SYNC_FLAG_UAV_MEMORY) != 0;
                     if uav_fence {
+                        // If this `sync` occurs within potentially divergent structured control
+                        // flow, we currently refuse to translate it: WebGPU/Naga lower
+                        // `storageBarrier()` as a workgroup-level barrier, which can deadlock when
+                        // some invocations do not reach it.
+                        //
+                        // DXBC fence-only `sync` is allowed in divergent control flow, so there is
+                        // no generally-correct lowering here without a true per-invocation memory
+                        // fence primitive.
+                        let in_structured_cf = !blocks.is_empty() || !cf_stack.is_empty();
+                        if in_structured_cf {
+                            return Err(ShaderTranslateError::UnsupportedInstruction {
+                                inst_index,
+                                opcode: "sync_fence_only_in_control_flow".to_owned(),
+                            });
+                        }
                         w.line("storageBarrier();");
                     } else if (flags & crate::sm4::opcode::SYNC_FLAG_THREAD_GROUP_SHARED_MEMORY)
                         != 0
