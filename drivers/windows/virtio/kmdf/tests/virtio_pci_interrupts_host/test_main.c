@@ -1122,6 +1122,88 @@ static void TestMsixQuiesceResumeVectors(void)
     UninstallCommonCfgQueueVectorWindowHooks();
 }
 
+static void TestMsixQuiesceWithoutCommonCfgReturnsError(void)
+{
+    VIRTIO_PCI_INTERRUPTS interrupts;
+    WDFDEVICE dev;
+    TEST_CALLBACKS cb;
+    WDFSPINLOCK commonCfgLock;
+    NTSTATUS st;
+    ULONG i;
+
+    commonCfgLock = NULL;
+    PrepareMsix(&interrupts, &dev, &cb, 2 /* queues */, 3 /* config + 2 queues */, &commonCfgLock);
+    assert(commonCfgLock != NULL);
+
+    assert(interrupts.ResetInProgress == 0);
+    for (i = 0; i < interrupts.u.Msix.UsedVectorCount; i++) {
+        assert(interrupts.u.Msix.Interrupts[i]->Enabled == TRUE);
+        assert(interrupts.u.Msix.Interrupts[i]->DisableCalls == 0);
+    }
+
+    ResetSpinLockInstrumentation();
+    st = VirtioPciInterruptsQuiesce(&interrupts, NULL);
+    assert(st == STATUS_INVALID_PARAMETER);
+
+    assert(interrupts.ResetInProgress == 1);
+    for (i = 0; i < interrupts.u.Msix.UsedVectorCount; i++) {
+        assert(interrupts.u.Msix.Interrupts[i]->Enabled == FALSE);
+        assert(interrupts.u.Msix.Interrupts[i]->DisableCalls == 1);
+    }
+
+    /* No CommonCfg means no vector-clearing lock acquisition. */
+    assert(commonCfgLock->AcquireCalls == 0);
+    assert(commonCfgLock->ReleaseCalls == 0);
+
+    /* Quiesce should still synchronize with config + per-queue locks. */
+    assert(interrupts.ConfigLock->AcquireCalls == 1);
+    assert(interrupts.ConfigLock->ReleaseCalls == 1);
+    assert(interrupts.QueueLocks[0]->AcquireCalls == 1);
+    assert(interrupts.QueueLocks[0]->ReleaseCalls == 1);
+    assert(interrupts.QueueLocks[1]->AcquireCalls == 1);
+    assert(interrupts.QueueLocks[1]->ReleaseCalls == 1);
+
+    Cleanup(&interrupts, dev);
+}
+
+static void TestMsixResumeWithoutCommonCfgReturnsError(void)
+{
+    VIRTIO_PCI_INTERRUPTS interrupts;
+    WDFDEVICE dev;
+    TEST_CALLBACKS cb;
+    WDFSPINLOCK commonCfgLock;
+    volatile VIRTIO_PCI_COMMON_CFG commonCfg;
+    NTSTATUS st;
+    ULONG i;
+
+    commonCfgLock = NULL;
+    memset((void*)&commonCfg, 0, sizeof(commonCfg));
+
+    PrepareMsix(&interrupts, &dev, &cb, 2 /* queues */, 3 /* config + 2 queues */, &commonCfgLock);
+    assert(commonCfgLock != NULL);
+
+    st = VirtioPciInterruptsQuiesce(&interrupts, &commonCfg);
+    assert(st == STATUS_SUCCESS);
+    assert(interrupts.ResetInProgress == 1);
+    for (i = 0; i < interrupts.u.Msix.UsedVectorCount; i++) {
+        assert(interrupts.u.Msix.Interrupts[i]->Enabled == FALSE);
+        assert(interrupts.u.Msix.Interrupts[i]->DisableCalls == 1);
+        assert(interrupts.u.Msix.Interrupts[i]->EnableCalls == 0);
+    }
+
+    st = VirtioPciInterruptsResume(&interrupts, NULL);
+    assert(st == STATUS_INVALID_PARAMETER);
+
+    /* Resume failure must not re-enable interrupts or clear ResetInProgress. */
+    assert(interrupts.ResetInProgress == 1);
+    for (i = 0; i < interrupts.u.Msix.UsedVectorCount; i++) {
+        assert(interrupts.u.Msix.Interrupts[i]->Enabled == FALSE);
+        assert(interrupts.u.Msix.Interrupts[i]->EnableCalls == 0);
+    }
+
+    Cleanup(&interrupts, dev);
+}
+
 static void TestIntxQuiesceResume(void)
 {
     VIRTIO_PCI_INTERRUPTS interrupts;
@@ -1385,11 +1467,13 @@ int main(void)
     TestMsixProgramConfigVectorReadbackFailure();
     TestResetInProgressGating();
     TestMsixQuiesceResumeVectors();
+    TestMsixQuiesceWithoutCommonCfgReturnsError();
     TestIntxQuiesceResume();
     TestMsixResumeVectorReadbackFailure();
     TestMsixResumeQueueVectorReadbackFailure();
     TestMsixQuiesceQueueVectorReadbackFailure();
     TestMsixQuiesceConfigVectorReadbackFailure();
+    TestMsixResumeWithoutCommonCfgReturnsError();
     printf("virtio_pci_interrupts_host_tests: PASS\n");
     return 0;
 }
