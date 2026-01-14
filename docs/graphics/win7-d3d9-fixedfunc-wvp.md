@@ -10,22 +10,29 @@ It is referenced by:
 
 ## Draw-time WVP for fixed-function `D3DFVF_XYZ*` draws
 
-When the D3D9 runtime is using the fixed-function fallback path with an untransformed position FVF (`D3DFVF_XYZ*`), the UMD binds an internal VS variant that applies the combined `WORLD0 * VIEW * PROJECTION` transform on the GPU.
+When the D3D9 runtime is using the fixed-function fallback path with an untransformed position FVF (`D3DFVF_XYZ*`), the UMD binds an internal VS variant that applies the combined `WORLD0 * VIEW * PROJECTION` transform on the GPU and sources the matrix from a reserved high VS constant register range.
 
-Fixed-function `D3DFVF_XYZ*` FVF → internal VS mapping:
+### VS WVP constants (XYZ fixed-function FVFs)
 
-- `D3DFVF_XYZ | D3DFVF_DIFFUSE` → `fixedfunc::kVsWvpPosColor`
-- `D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1` → `fixedfunc::kVsWvpPosColorTex0`
-- `D3DFVF_XYZ | D3DFVF_TEX1` → `fixedfunc::kVsTransformPosWhiteTex1` (driver supplies default diffuse white)
+For these fixed-function FVFs, the UMD binds one of a few built-in vertex shaders that multiplies the input position by the cached `WORLD0 * VIEW * PROJECTION` matrix:
 
-WVP constant upload (bring-up):
+- `D3DFVF_XYZ | D3DFVF_DIFFUSE`: `fixedfunc::kVsWvpPosColor`
+- `D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1`: `fixedfunc::kVsWvpPosColorTex0`
+- `D3DFVF_XYZ | D3DFVF_TEX1` (no diffuse): `fixedfunc::kVsTransformPosWhiteTex1` (supplies constant opaque white diffuse)
 
-- Computes `WORLD0 * VIEW * PROJECTION` from cached `Device::transform_matrices[...]` and uploads it via `ensure_fixedfunc_wvp_constants_locked()`.
+The matrix is computed from cached `Device::transform_matrices[...]` (`WORLD0`, `VIEW`, `PROJECTION`) and uploaded by
+`ensure_fixedfunc_wvp_constants_locked()` into a reserved constant range:
+
 - Constant range: `c240..c243` (`kFixedfuncMatrixStartRegister = 240`)
-  - The constants are intentionally placed in a high register range so they are unlikely to collide with app/user shader constants when switching between fixed-function and programmable paths.
-  - The cached matrices are row-major; the upload transposes to column vectors so `dp4(v, cN)` computes row-vector multiplication.
 - Uploads are lazy and gated by `Device::fixedfunc_matrix_dirty`.
-- Upload path: `ensure_fixedfunc_wvp_constants_locked()` + `emit_set_shader_constants_f_locked()` emitting `AEROGPU_CMD_SET_SHADER_CONSTANTS_F`.
+- The cached matrices are row-major (`D3DMATRIX`); the upload transposes to column vectors so `dp4(v, cN)` computes row-vector multiplication.
+- The constants live in a high register range so they are unlikely to collide with app/user shader constants when switching between fixed-function and programmable paths.
+
+This covers the fixed-function FVFs:
+
+- `D3DFVF_XYZ | D3DFVF_DIFFUSE` (VS WVP constants)
+- `D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1` (VS WVP constants)
+- `D3DFVF_XYZ | D3DFVF_TEX1` (VS WVP constants; driver supplies default diffuse white)
 
 ## Pre-transformed `D3DFVF_XYZRHW*` draws (no WVP)
 
@@ -83,7 +90,7 @@ Independently of draw-time WVP, `pfnProcessVertices` has a bring-up fixed-functi
 
 - Fixed-function shader binding:
   - `ensure_fixedfunc_pipeline_locked()` (`drivers/aerogpu/umd/d3d9/src/aerogpu_d3d9_driver.cpp`)
-- Fixed-function shader token streams:
+- Internal fixed-function shader token streams:
   - `fixedfunc::kVsWvpPosColor`, `fixedfunc::kVsWvpPosColorTex0`, `fixedfunc::kVsTransformPosWhiteTex1` (`drivers/aerogpu/umd/d3d9/src/aerogpu_d3d9_fixedfunc_shaders.h`)
 - Draw-time fixed-function constant upload (untransformed `D3DFVF_XYZ*` fixed-function paths):
   - `ensure_fixedfunc_wvp_constants_locked()` + `emit_set_shader_constants_f_locked()` (`AEROGPU_CMD_SET_SHADER_CONSTANTS_F`)

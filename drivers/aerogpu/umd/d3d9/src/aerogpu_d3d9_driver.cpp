@@ -15409,13 +15409,14 @@ void d3d9_write_handle(HandleT* out, void* pDrvPrivate) {
 // Most fixed-function DDIs are cached-only and are not emitted as explicit
 // fixed-function GPU state in the AeroGPU command stream. However, the UMD does
 // emulate a minimal fixed-function pipeline:
-// - WORLD/VIEW/PROJECTION matrices drive the fixed-function WVP behavior:
-//   - Untransformed `D3DFVF_XYZ*`: internal WVP VS variants using a reserved high
-//     VS constant range (`c240..c243`).
-//     - When `D3DFVF_DIFFUSE` is omitted, the internal VS supplies an opaque white
-//       diffuse color.
-//   - Pre-transformed `D3DFVF_XYZRHW*`: CPU conversion of `XYZRHW` (`POSITIONT`) to
-//     clip-space at draw time (`convert_xyzrhw_to_clipspace_locked()`).
+// - WORLD/VIEW/PROJECTION matrices drive the fixed-function WVP behavior for
+//   untransformed `D3DFVF_XYZ*` FVFs: internal WVP VS variants consume WVP
+//   columns uploaded into a reserved high VS constant range (`c240..c243`).
+//   - When `D3DFVF_DIFFUSE` is omitted, the internal VS supplies an opaque white
+//     diffuse color.
+// - Pre-transformed `D3DFVF_XYZRHW*` vertices are converted from screen-space
+//   `XYZRHW` (`POSITIONT`) to clip-space on the CPU at draw time
+//   (`convert_xyzrhw_to_clipspace_locked()`).
 // - Stage0 texture stage state selects a fixed-function PS variant.
 //
 // Cache state so Set*/Get* and state blocks round-trip for legacy apps that treat

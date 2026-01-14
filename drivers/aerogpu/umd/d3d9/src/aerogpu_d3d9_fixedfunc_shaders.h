@@ -92,8 +92,8 @@ static constexpr uint32_t kVsPassthroughPosWhiteTex1[] = {
 //   D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1
 //
 // This shader expects the UMD to upload the *columns* of the row-major
-// `world_view_proj` matrix into a reserved high VS constant range (c240..c243;
-// i.e. transpose for `dp4(v, cN)` row-vector multiplication).
+// WORLD*VIEW*PROJECTION matrix into a reserved high VS constant range
+// (c240..c243; i.e. transpose for `dp4(v, cN)` row-vector multiplication).
 static constexpr uint32_t kVsWvpPosColorTex0[] = {
     0xFFFE0200u, // vs_2_0
  
@@ -143,8 +143,8 @@ static constexpr uint32_t kVsWvpPosColorTex0[] = {
 // Notes:
 // - The input declaration supplies POSITION as float3; D3D9 expands it to float4
 //   in the shader input register (v0.w = 1).
-// - The UMD uploads the *columns* of the row-major `world_view_proj` matrix into
-//   a reserved high VS constant range (c240..c243).
+// - The UMD uploads the *columns* of the row-major WORLD*VIEW*PROJECTION matrix
+//   into a reserved high VS constant range (c240..c243).
 // - Like `kVsPassthroughPosColor`, we also write oT0 to provide a stable stage0
 //   texture coordinate stream for minimal fixed-function PS variants.
 static constexpr uint32_t kVsWvpPosColor[] = {
