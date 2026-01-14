@@ -417,7 +417,8 @@ Snapshotting follows the repo’s general device snapshot conventions (see [`doc
 - The xHCI device snapshot captures **guest-visible register state** and any controller bookkeeping that is not stored in guest RAM.
   - Today, `aero_usb::xhci::XhciController` snapshots (device ID `XHCI`, version `0.7`) capture:
     - operational/runtime state (`USBCMD`, `USBSTS`, `CONFIG`, `MFINDEX`, `CRCR`, `DCBAAP`, port count,
-      `DNCTRL`, Interrupter 0 regs: `IMAN`, `IMOD`, `ERSTSZ`, `ERSTBA`, `ERDP` + internal generation counters),
+      `DNCTRL`, controller time bookkeeping (`time_ms`, `last_tick_dma_dword`), Interrupter 0 regs:
+      `IMAN`, `IMOD`, `ERSTSZ`, `ERSTBA`, `ERDP` + internal generation counters),
     - per-port snapshot records (connection/change bits/reset timers/link state/speed + nested
       `AttachedUsbDevice` snapshot, when present),
     - controller-local slot/endpoint state (enabled slots, Slot/Endpoint context mirrors + transfer

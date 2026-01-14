@@ -47,9 +47,8 @@ const TAG_DNCTRL: u16 = 25;
 const TAG_EP0_CONTROL_TD_FULL: u16 = 26;
 
 // New in snapshot v0.7.
-// Note: tag 26 is already used by `TAG_EP0_CONTROL_TD_FULL` (added in v0.5). v0.7 added new
-// controller-local timekeeping fields; they must use fresh tags to avoid SnapshotWriter panicking
-// on duplicate tags.
+// Note: tag 26 is already used by `TAG_EP0_CONTROL_TD_FULL`, so v0.7's controller-local timekeeping
+// fields must start at 27+ to avoid duplicate tags.
 const TAG_TIME_MS: u16 = 27;
 const TAG_LAST_TICK_DMA_DWORD: u16 = 28;
 
@@ -655,8 +654,47 @@ impl IoSnapshot for XhciController {
         self.config = (self.config & !0xff) | u32::from(max_slots_en.min(regs::MAX_SLOTS));
         self.mfindex = r.u32(TAG_MFINDEX)?.unwrap_or(0) & regs::runtime::MFINDEX_MASK;
         self.dnctrl = r.u32(TAG_DNCTRL)?.unwrap_or(0);
-        self.time_ms = r.u64(TAG_TIME_MS)?.unwrap_or(0);
-        self.last_tick_dma_dword = r.u32(TAG_LAST_TICK_DMA_DWORD)?.unwrap_or(0);
+
+        // `time_ms`/`last_tick_dma_dword` were added in snapshot v0.7. An early implementation
+        // mistakenly reused tag 26 (EP0 control TD full) for `time_ms`, so accept that legacy
+        // encoding by detecting field "shapes" (tag 26 is a vec-bytes blob in valid snapshots and
+        // is never exactly 8 bytes).
+        let ep0_td_full_overwritten = match (r.bytes(TAG_TIME_MS), r.bytes(TAG_LAST_TICK_DMA_DWORD))
+        {
+            // Current mapping: tag 27 = time_ms (u64) and tag 28 = last_tick_dma_dword (u32).
+            (_, Some(_)) => {
+                self.time_ms = r.u64(TAG_TIME_MS)?.unwrap_or(0);
+                self.last_tick_dma_dword = r.u32(TAG_LAST_TICK_DMA_DWORD)?.unwrap_or(0);
+                false
+            }
+            // Older snapshots (before v0.7) have neither field.
+            (None, None) => {
+                self.time_ms = 0;
+                self.last_tick_dma_dword = 0;
+                false
+            }
+            // Snapshot with only time_ms present (possible for intermediate builds/tests).
+            (Some(time_bytes), None) if time_bytes.len() == 8 => {
+                self.time_ms = r.u64(TAG_TIME_MS)?.unwrap_or(0);
+                self.last_tick_dma_dword = 0;
+                false
+            }
+            // Legacy tag collision mapping: tag 26 = time_ms and tag 27 = last_tick_dma_dword.
+            (Some(time_bytes), None) if time_bytes.len() == 4 => {
+                let ok = matches!(r.bytes(TAG_EP0_CONTROL_TD_FULL), Some(b) if b.len() == 8);
+                if !ok {
+                    return Err(SnapshotError::InvalidFieldEncoding(
+                        "xhci time_ms legacy tag collision",
+                    ));
+                }
+                self.time_ms = r.u64(TAG_EP0_CONTROL_TD_FULL)?.unwrap_or(0);
+                self.last_tick_dma_dword = r.u32(TAG_TIME_MS)?.unwrap_or(0);
+                true
+            }
+            (Some(_), None) => {
+                return Err(SnapshotError::InvalidFieldEncoding("xhci time_ms"));
+            }
+        };
 
         if let Some(v) = r.u32(TAG_INTR0_IMAN)? {
             self.interrupter0.restore_iman(v);
@@ -720,16 +758,23 @@ impl IoSnapshot for XhciController {
             self.active_endpoints = decode_active_endpoints(self.slots.len(), buf)?;
         }
 
-        if let Some(buf) = r.bytes(TAG_EP0_CONTROL_TD_FULL) {
-            if buf.len() > MAX_EP_RECORD_BYTES {
-                return Err(SnapshotError::InvalidFieldEncoding("xhci ep0 td"));
+        let mut restored_ep0_td = false;
+        if !ep0_td_full_overwritten {
+            if let Some(buf) = r.bytes(TAG_EP0_CONTROL_TD_FULL) {
+                if buf.len() > MAX_EP_RECORD_BYTES {
+                    return Err(SnapshotError::InvalidFieldEncoding("xhci ep0 td"));
+                }
+                decode_ep0_control_td_full(&mut self.ep0_control_td, buf)?;
+                restored_ep0_td = true;
             }
-            decode_ep0_control_td_full(&mut self.ep0_control_td, buf)?;
-        } else if let Some(buf) = r.bytes(TAG_EP0_CONTROL_TD) {
-            if buf.len() > MAX_EP_RECORD_BYTES {
-                return Err(SnapshotError::InvalidFieldEncoding("xhci ep0 td"));
+        }
+        if !restored_ep0_td {
+            if let Some(buf) = r.bytes(TAG_EP0_CONTROL_TD) {
+                if buf.len() > MAX_EP_RECORD_BYTES {
+                    return Err(SnapshotError::InvalidFieldEncoding("xhci ep0 td"));
+                }
+                decode_ep0_control_td(&mut self.ep0_control_td, buf)?;
             }
-            decode_ep0_control_td(&mut self.ep0_control_td, buf)?;
         }
 
         self.dropped_event_trbs = r.u64(TAG_DROPPED_EVENT_TRBS)?.unwrap_or(0);
