@@ -1081,27 +1081,48 @@ async fn verify_chunk_with_retry(
             Ok(()) => return Ok(()),
             Err(err) if attempt < retries && is_retryable_chunk_error(&err) => {
                 let sleep_for = retry_backoff(attempt);
+                let err_summary = error_chain_summary(&err);
                 eprintln!(
-                    "chunk verify failed (attempt {attempt}/{retries}) for s3://{bucket}/{key}: {err}; retrying in {:?}",
+                    "chunk verify failed (attempt {attempt}/{retries}) for s3://{bucket}/{key}: {err_summary}; retrying in {:?}",
                     sleep_for
                 );
                 tokio::time::sleep(sleep_for).await;
             }
             Err(err) => {
-                return Err(anyhow!(
-                    "chunk verify failed (attempt {attempt}/{retries}) for s3://{bucket}/{key}: {err}"
-                ));
+                let root = err.root_cause().to_string();
+                return Err(err).with_context(|| {
+                    format!(
+                        "chunk verify failed (attempt {attempt}/{retries}) for s3://{bucket}/{key} (root cause: {root})"
+                    )
+                });
             }
         }
     }
 }
 
 fn is_retryable_chunk_error(err: &anyhow::Error) -> bool {
-    // Treat all size/hash mismatches as non-retryable (deterministic integrity failures).
-    let msg = err.to_string();
-    !msg.contains("size mismatch")
-        && !msg.contains("sha256 mismatch")
-        && !msg.contains("object not found (404)")
+    // Treat deterministic integrity failures as non-retryable.
+    //
+    // Note: `anyhow::Error` `Display` only shows the top-level context by default, so inspect the
+    // full error chain to reliably detect inner causes (e.g. `GET ...` wrapping `object not found
+    // (404)`).
+    for cause in err.chain() {
+        let msg = cause.to_string();
+        if msg.contains("size mismatch")
+            || msg.contains("sha256 mismatch")
+            || msg.contains("object not found (404)")
+        {
+            return false;
+        }
+    }
+    true
+}
+
+fn error_chain_summary(err: &anyhow::Error) -> String {
+    err.chain()
+        .map(|cause| cause.to_string())
+        .collect::<Vec<_>>()
+        .join(": ")
 }
 
 async fn verify_chunk_once(
@@ -1309,17 +1330,30 @@ async fn download_object_bytes_optional_with_retry(
     }
 }
 
-fn is_no_such_key_error<E>(err: &aws_sdk_s3::error::SdkError<E>) -> bool {
+fn is_no_such_key_error<E>(err: &aws_sdk_s3::error::SdkError<E>) -> bool
+where
+    E: aws_sdk_s3::error::ProvideErrorMetadata + std::fmt::Debug,
+{
     // Prefer checking the HTTP status code to support S3-compatible endpoints (e.g. MinIO) where
     // the Display string may not include the canonical AWS error code.
     if matches!(sdk_error_status_code(err), Some(404)) {
         return true;
     }
 
-    // Fallback to a best-effort string match.
-    err.to_string().contains("NoSuchKey")
-        || err.to_string().contains("NotFound")
-        || err.to_string().contains("404")
+    // Prefer checking for an explicit service error code (works even when Display is
+    // unhelpful/empty).
+    if let aws_sdk_s3::error::SdkError::ServiceError(service_err) = err {
+        if matches!(
+            service_err.err().meta().code(),
+            Some("NoSuchKey" | "NotFound")
+        ) {
+            return true;
+        }
+    }
+
+    // Final fallback to a best-effort string match.
+    let msg = err.to_string();
+    msg.contains("NoSuchKey") || msg.contains("NotFound") || msg.contains("404")
 }
 
 fn sdk_error_status_code<E>(err: &aws_sdk_s3::error::SdkError<E>) -> Option<u16> {
@@ -1327,6 +1361,7 @@ fn sdk_error_status_code<E>(err: &aws_sdk_s3::error::SdkError<E>) -> Option<u16>
 
     match err {
         SdkError::ServiceError(service_err) => Some(service_err.raw().status().as_u16()),
+        SdkError::ResponseError(resp_err) => Some(resp_err.raw().status().as_u16()),
         _ => None,
     }
 }
