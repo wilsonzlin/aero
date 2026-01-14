@@ -778,8 +778,7 @@ function Read-TextFileWithEncodingDetection([string]$path) {
     # - Detect BOM: UTF-8, UTF-16LE, UTF-16BE.
     # - Heuristic detect BOM-less UTF-16: if lots of NUL bytes in either even or odd
     #   positions (sampled), treat as UTF-16. Prefer LE unless strong evidence for BE.
-    # - Fallback: system default encoding (matches legacy Get-Content behavior for
-    #   BOM-less ASCII/ANSI files).
+    # - Fallback: UTF-8/ASCII for BOM-less non-UTF16 text.
     # - Strip any leading U+FEFF (BOM char) after decoding.
     $bytes = $null
     try {
@@ -1189,7 +1188,7 @@ $report = @{
     schema_version = 1
     tool = @{
          name = "Aero Guest Tools Verify"
-         version = "2.5.2"
+         version = "2.5.3"
          started_utc = $started.ToUniversalTime().ToString("o")
          ended_utc = $null
          duration_ms = $null
@@ -1813,25 +1812,38 @@ try {
 
     if (-not $policyLower -or $policyLower.Length -eq 0) {
         $sum = "signing_policy unknown; certificate files under certs\\: " + $certFiles.Count
-    } elseif (($policyLower -eq "production") -or ($policyLower -eq "none")) {
         if ($certFiles -and $certFiles.Count -gt 0) {
             $st = "WARN"
-            $sum = "signing_policy=" + $policyLower + " but found " + $certFiles.Count + " certificate file(s) under certs\\."
-            $names = @($certFiles | ForEach-Object { $_.Name })
-            if ($names.Count -le 10) {
-                $det += ("Cert files: " + ($names -join ", "))
-            } else {
-                $preview = @($names | Select-Object -First 10)
-                $det += ("Cert files: " + ($preview -join ", ") + " ... (" + $names.Count + " total)")
-            }
-            $det += ("Remediation: Rebuild/replace the Guest Tools media so certs\\ is empty/absent for signing_policy=" + $policyLower + ".")
-            $det += "If you intended to use test-signed drivers, set signing_policy=test and include only the required signing certificate(s) under certs\\."
-        } else {
-            $sum = "signing_policy=" + $policyLower + "; no certificate files found under certs\\ (expected)."
+            $det += "WARN: Certificate file(s) exist under certs\\, but signing_policy is missing/unknown."
         }
     } else {
-        # signing_policy=test: certificate files are expected; do not warn.
-        $sum = "signing_policy=" + $policyLower + "; certificate files under certs\\: " + $certFiles.Count
+        $knownPolicy = (@("test","production","none") -contains $policyLower)
+        if (-not $knownPolicy) {
+            $st = "WARN"
+            $det += ("WARN: Unknown signing_policy='" + $policyLower + "'. Expected: test|production|none.")
+        }
+
+        if ($policyLower -ne "test") {
+            # For production/none (and any unknown policy), cert payloads are suspicious.
+            if ($certFiles -and $certFiles.Count -gt 0) {
+                $st = Merge-Status $st "WARN"
+                $sum = "signing_policy=" + $policyLower + " but found " + $certFiles.Count + " certificate file(s) under certs\\."
+                $names = @($certFiles | ForEach-Object { $_.Name })
+                if ($names.Count -le 10) {
+                    $det += ("Cert files: " + ($names -join ", "))
+                } else {
+                    $preview = @($names | Select-Object -First 10)
+                    $det += ("Cert files: " + ($preview -join ", ") + " ... (" + $names.Count + " total)")
+                }
+                $det += ("Remediation: Rebuild/replace the Guest Tools media so certs\\ is empty/absent for signing_policy=" + $policyLower + ".")
+                $det += "If you intended to use test-signed drivers, set signing_policy=test and include only the required signing certificate(s) under certs\\."
+            } else {
+                $sum = "signing_policy=" + $policyLower + "; no certificate files found under certs\\ (expected)."
+            }
+        } else {
+            # signing_policy=test: certificate files are expected; do not warn.
+            $sum = "signing_policy=" + $policyLower + "; certificate files under certs\\: " + $certFiles.Count
+        }
     }
 
     $data = @{
