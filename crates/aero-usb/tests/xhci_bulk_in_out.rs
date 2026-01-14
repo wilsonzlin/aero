@@ -355,3 +355,84 @@ fn xhci_transfer_executor_td_can_span_linked_segments() {
     let events = xhci.take_events();
     assert_single_success_event(&events, 0x81, normal2_addr, 0);
 }
+
+#[test]
+fn xhci_bulk_out_chained_normal_trbs_concatenate_payload() {
+    let mut mem = TestMemory::new(0x10000);
+    let mut alloc = Alloc::new(0x2000);
+
+    let ring_base = alloc.alloc((TRB_LEN * 2) as u32, 0x10) as u64;
+    let trb0_addr = ring_base;
+    let trb1_addr = ring_base + TRB_LEN;
+
+    let buf0 = alloc.alloc(2, 0x10) as u64;
+    let buf1 = alloc.alloc(2, 0x10) as u64;
+
+    mem.write(buf0 as u32, &[0x10, 0x20]);
+    mem.write(buf1 as u32, &[0x30, 0x40]);
+
+    // TD: Normal (CH=1) then Normal (CH=0, IOC=1).
+    write_trb(&mut mem, trb0_addr, make_normal_trb(buf0, 2, true, true, false));
+    write_trb(&mut mem, trb1_addr, make_normal_trb(buf1, 2, true, false, true));
+
+    let in_queue = Rc::new(RefCell::new(VecDeque::new()));
+    let out_received = Rc::new(RefCell::new(Vec::new()));
+    let dev = BulkEndpointDevice::new(in_queue, out_received.clone());
+    let mut xhci = XhciTransferExecutor::new(Box::new(dev));
+
+    xhci.add_endpoint(0x01, ring_base);
+    xhci.tick_1ms(&mut mem);
+
+    assert_eq!(
+        out_received.borrow().as_slice(),
+        &[vec![0x10, 0x20, 0x30, 0x40]]
+    );
+
+    let events = xhci.take_events();
+    assert_single_success_event(&events, 0x01, trb1_addr, 0);
+}
+
+#[test]
+fn xhci_bulk_out_stall_halts_endpoint_and_reports_residual() {
+    let mut mem = TestMemory::new(0x10000);
+    let mut alloc = Alloc::new(0x2000);
+
+    let ring_base = alloc.alloc(TRB_LEN as u32, 0x10) as u64;
+
+    let payload = [0xdeu8, 0xad, 0xbe, 0xef];
+    let buf = alloc.alloc(payload.len() as u32, 0x10) as u64;
+    mem.write(buf as u32, &payload);
+
+    write_trb(
+        &mut mem,
+        ring_base,
+        make_normal_trb(buf, payload.len() as u32, true, false, true),
+    );
+
+    // BulkEndpointDevice only implements EP 0x01. Using a different OUT endpoint should STALL.
+    let in_queue = Rc::new(RefCell::new(VecDeque::new()));
+    let out_received = Rc::new(RefCell::new(Vec::new()));
+    let dev = BulkEndpointDevice::new(in_queue, out_received.clone());
+    let mut xhci = XhciTransferExecutor::new(Box::new(dev));
+
+    xhci.add_endpoint(0x02, ring_base);
+    xhci.tick_1ms(&mut mem);
+
+    // Device must not observe the stalled transfer.
+    assert!(out_received.borrow().is_empty());
+
+    let events = xhci.take_events();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].ep_addr, 0x02);
+    assert_eq!(events[0].trb_ptr, ring_base);
+    assert_eq!(events[0].residual, payload.len() as u32);
+    assert_eq!(events[0].completion_code, CompletionCode::StallError);
+
+    let state = xhci.endpoint_state(0x02).unwrap();
+    assert!(state.halted);
+    assert_eq!(state.ring.dequeue_ptr, ring_base + TRB_LEN);
+
+    // Further ticks must not process additional TRBs while halted.
+    xhci.tick_1ms(&mut mem);
+    assert!(xhci.take_events().is_empty());
+}
