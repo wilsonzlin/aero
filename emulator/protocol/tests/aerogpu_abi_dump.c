@@ -1,5 +1,6 @@
 #include <stddef.h>
 #include <stdio.h>
+#include <string.h>
 
 #include "drivers/aerogpu/protocol/aerogpu_alloc.h"
 #include "drivers/aerogpu/protocol/aerogpu_cmd.h"
@@ -9,9 +10,117 @@
 #include "drivers/aerogpu/protocol/aerogpu_umd_private.h"
 #include "drivers/aerogpu/protocol/aerogpu_wddm_alloc.h"
 
-#define PRINT_SIZE(name, type) printf("SIZE %s %zu\n", name, sizeof(type))
-#define PRINT_OFF(name, type, field) printf("OFF %s %s %zu\n", name, #field, offsetof(type, field))
-#define PRINT_CONST(name) printf("CONST %s %llu\n", #name, (unsigned long long)(name))
+/* When multiple branches extend this file in parallel, merges can accidentally introduce duplicate
+ * PRINT_* lines. This helper keeps the dump stable by deduping identical keys at runtime, while
+ * still erroring if a duplicate key maps to a different value. */
+
+#define AEROGPU_ABI_DUMP_MAX_SIZES 512
+#define AEROGPU_ABI_DUMP_MAX_OFFS 4096
+#define AEROGPU_ABI_DUMP_MAX_CONSTS 4096
+
+typedef struct {
+  const char* name;
+  size_t size;
+} aerogpu_abi_dump_size_entry;
+
+typedef struct {
+  const char* ty;
+  const char* field;
+  size_t off;
+} aerogpu_abi_dump_off_entry;
+
+typedef struct {
+  const char* name;
+  unsigned long long value;
+} aerogpu_abi_dump_const_entry;
+
+static aerogpu_abi_dump_size_entry g_sizes[AEROGPU_ABI_DUMP_MAX_SIZES];
+static size_t g_sizes_count = 0;
+
+static aerogpu_abi_dump_off_entry g_offs[AEROGPU_ABI_DUMP_MAX_OFFS];
+static size_t g_offs_count = 0;
+
+static aerogpu_abi_dump_const_entry g_consts[AEROGPU_ABI_DUMP_MAX_CONSTS];
+static size_t g_consts_count = 0;
+
+static int print_size_once(const char* name, size_t size) {
+  for (size_t i = 0; i < g_sizes_count; i++) {
+    if (strcmp(g_sizes[i].name, name) == 0) {
+      if (g_sizes[i].size != size) {
+        fprintf(stderr, "ABI dump duplicate SIZE mismatch for %s: %zu vs %zu\n", name, g_sizes[i].size, size);
+        return 1;
+      }
+      return 0;
+    }
+  }
+
+  if (g_sizes_count >= AEROGPU_ABI_DUMP_MAX_SIZES) {
+    fprintf(stderr, "ABI dump exceeded max SIZE entries (%d)\n", AEROGPU_ABI_DUMP_MAX_SIZES);
+    return 1;
+  }
+  g_sizes[g_sizes_count++] = (aerogpu_abi_dump_size_entry){ name, size };
+  printf("SIZE %s %zu\n", name, size);
+  return 0;
+}
+
+static int print_off_once(const char* ty, const char* field, size_t off) {
+  for (size_t i = 0; i < g_offs_count; i++) {
+    if (strcmp(g_offs[i].ty, ty) == 0 && strcmp(g_offs[i].field, field) == 0) {
+      if (g_offs[i].off != off) {
+        fprintf(stderr,
+                "ABI dump duplicate OFF mismatch for %s.%s: %zu vs %zu\n",
+                ty,
+                field,
+                g_offs[i].off,
+                off);
+        return 1;
+      }
+      return 0;
+    }
+  }
+
+  if (g_offs_count >= AEROGPU_ABI_DUMP_MAX_OFFS) {
+    fprintf(stderr, "ABI dump exceeded max OFF entries (%d)\n", AEROGPU_ABI_DUMP_MAX_OFFS);
+    return 1;
+  }
+  g_offs[g_offs_count++] = (aerogpu_abi_dump_off_entry){ ty, field, off };
+  printf("OFF %s %s %zu\n", ty, field, off);
+  return 0;
+}
+
+static int print_const_once(const char* name, unsigned long long value) {
+  for (size_t i = 0; i < g_consts_count; i++) {
+    if (strcmp(g_consts[i].name, name) == 0) {
+      if (g_consts[i].value != value) {
+        fprintf(
+            stderr, "ABI dump duplicate CONST mismatch for %s: %llu vs %llu\n", name, g_consts[i].value, value);
+        return 1;
+      }
+      return 0;
+    }
+  }
+
+  if (g_consts_count >= AEROGPU_ABI_DUMP_MAX_CONSTS) {
+    fprintf(stderr, "ABI dump exceeded max CONST entries (%d)\n", AEROGPU_ABI_DUMP_MAX_CONSTS);
+    return 1;
+  }
+  g_consts[g_consts_count++] = (aerogpu_abi_dump_const_entry){ name, value };
+  printf("CONST %s %llu\n", name, value);
+  return 0;
+}
+
+#define PRINT_SIZE(name, type) \
+  do {                         \
+    if (print_size_once(name, sizeof(type))) return 1; \
+  } while (0)
+#define PRINT_OFF(name, type, field) \
+  do {                               \
+    if (print_off_once(name, #field, offsetof(type, field))) return 1; \
+  } while (0)
+#define PRINT_CONST(name) \
+  do {                    \
+    if (print_const_once(#name, (unsigned long long)(name))) return 1; \
+  } while (0)
 
 int main(void) {
   /* ------------------------------- Struct sizes -------------------------- */
