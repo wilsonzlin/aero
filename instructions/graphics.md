@@ -39,7 +39,8 @@ Quick reality check (as of this repo revision):
   - When `MachineConfig::enable_pc_platform=false`, `aero_machine` maps the VBE LFB MMIO aperture directly at
     the configured LFB base.
   - When `MachineConfig::enable_pc_platform=true`, `aero_machine` exposes a transitional Bochs/QEMU-compatible
-    VGA PCI stub (currently `00:0c.0`) so the VBE LFB can be routed through the PCI MMIO window.
+    VGA PCI stub (currently `00:0c.0`, `1234:1111`) so the VBE LFB can be routed through its BAR0 inside the
+    PCI MMIO window (BAR base assigned by BIOS POST / the PCI allocator unless pinned).
 - ✅ Boot display (canonical browser machine): `MachineConfig::browser_defaults` (used by `crates/aero-wasm::Machine::new`)
   enables **AeroGPU** by default (`enable_aerogpu=true`, `enable_vga=false`), using AeroGPU's BAR1-backed VRAM
   plus legacy VGA/VBE decode for BIOS/boot display, and then handing off to WDDM scanout once claimed.
