@@ -4611,6 +4611,26 @@ def main() -> int:
             virtio_input_marker_carry = b""
             virtio_input_bind_marker_line: Optional[str] = None
             virtio_input_bind_marker_carry = b""
+            virtio_input_msix_marker_line: Optional[str] = None
+            virtio_input_msix_marker_carry = b""
+            virtio_input_leds_marker_line: Optional[str] = None
+            virtio_input_leds_marker_carry = b""
+            virtio_input_events_marker_line: Optional[str] = None
+            virtio_input_events_marker_carry = b""
+            virtio_input_media_keys_marker_line: Optional[str] = None
+            virtio_input_media_keys_marker_carry = b""
+            virtio_input_led_marker_line: Optional[str] = None
+            virtio_input_led_marker_carry = b""
+            virtio_input_wheel_marker_line: Optional[str] = None
+            virtio_input_wheel_marker_carry = b""
+            virtio_input_events_modifiers_marker_line: Optional[str] = None
+            virtio_input_events_modifiers_marker_carry = b""
+            virtio_input_events_buttons_marker_line: Optional[str] = None
+            virtio_input_events_buttons_marker_carry = b""
+            virtio_input_events_wheel_marker_line: Optional[str] = None
+            virtio_input_events_wheel_marker_carry = b""
+            virtio_input_tablet_events_marker_line: Optional[str] = None
+            virtio_input_tablet_events_marker_carry = b""
             virtio_input_msix_marker: Optional[_VirtioInputMsixMarker] = None
             virtio_input_binding_marker_line: Optional[str] = None
             virtio_input_binding_marker_carry = b""
@@ -4835,6 +4855,66 @@ def main() -> int:
                         prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-bind|",
                         carry=virtio_input_bind_marker_carry,
                     )
+                    virtio_input_msix_marker_line, virtio_input_msix_marker_carry = _update_last_marker_line_from_chunk(
+                        virtio_input_msix_marker_line,
+                        chunk,
+                        prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-msix|",
+                        carry=virtio_input_msix_marker_carry,
+                    )
+                    virtio_input_leds_marker_line, virtio_input_leds_marker_carry = _update_last_marker_line_from_chunk(
+                        virtio_input_leds_marker_line,
+                        chunk,
+                        prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-leds|",
+                        carry=virtio_input_leds_marker_carry,
+                    )
+                    virtio_input_events_marker_line, virtio_input_events_marker_carry = _update_last_marker_line_from_chunk(
+                        virtio_input_events_marker_line,
+                        chunk,
+                        prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|",
+                        carry=virtio_input_events_marker_carry,
+                    )
+                    virtio_input_media_keys_marker_line, virtio_input_media_keys_marker_carry = _update_last_marker_line_from_chunk(
+                        virtio_input_media_keys_marker_line,
+                        chunk,
+                        prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-media-keys|",
+                        carry=virtio_input_media_keys_marker_carry,
+                    )
+                    virtio_input_led_marker_line, virtio_input_led_marker_carry = _update_last_marker_line_from_chunk(
+                        virtio_input_led_marker_line,
+                        chunk,
+                        prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-led|",
+                        carry=virtio_input_led_marker_carry,
+                    )
+                    virtio_input_wheel_marker_line, virtio_input_wheel_marker_carry = _update_last_marker_line_from_chunk(
+                        virtio_input_wheel_marker_line,
+                        chunk,
+                        prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-wheel|",
+                        carry=virtio_input_wheel_marker_carry,
+                    )
+                    virtio_input_events_modifiers_marker_line, virtio_input_events_modifiers_marker_carry = _update_last_marker_line_from_chunk(
+                        virtio_input_events_modifiers_marker_line,
+                        chunk,
+                        prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-modifiers|",
+                        carry=virtio_input_events_modifiers_marker_carry,
+                    )
+                    virtio_input_events_buttons_marker_line, virtio_input_events_buttons_marker_carry = _update_last_marker_line_from_chunk(
+                        virtio_input_events_buttons_marker_line,
+                        chunk,
+                        prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-buttons|",
+                        carry=virtio_input_events_buttons_marker_carry,
+                    )
+                    virtio_input_events_wheel_marker_line, virtio_input_events_wheel_marker_carry = _update_last_marker_line_from_chunk(
+                        virtio_input_events_wheel_marker_line,
+                        chunk,
+                        prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-wheel|",
+                        carry=virtio_input_events_wheel_marker_carry,
+                    )
+                    virtio_input_tablet_events_marker_line, virtio_input_tablet_events_marker_carry = _update_last_marker_line_from_chunk(
+                        virtio_input_tablet_events_marker_line,
+                        chunk,
+                        prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|",
+                        carry=virtio_input_tablet_events_marker_carry,
+                    )
                     virtio_input_binding_marker_line, virtio_input_binding_marker_carry = _update_last_marker_line_from_chunk(
                         virtio_input_binding_marker_line,
                         chunk,
@@ -4888,10 +4968,22 @@ def main() -> int:
                                 _print_tail(serial_log)
                                 result_code = 1
                                 break
-                    if virtio_input_msix_marker is None or b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-msix|" in tail:
-                        marker = _parse_virtio_input_msix_marker(tail)
-                        if marker is not None:
-                            virtio_input_msix_marker = marker
+                    # Prefer the incrementally captured marker line so we don't miss virtio-input-msix when
+                    # the rolling tail buffer truncates earlier output.
+                    if virtio_input_msix_marker is None:
+                        if virtio_input_msix_marker_line is not None:
+                            parts = virtio_input_msix_marker_line.split("|")
+                            status = parts[3] if len(parts) >= 4 else ""
+                            fields = _parse_marker_kv_fields(virtio_input_msix_marker_line)
+                            virtio_input_msix_marker = _VirtioInputMsixMarker(
+                                status=status,
+                                fields=fields,
+                                line=virtio_input_msix_marker_line,
+                            )
+                        elif b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-msix|" in tail:
+                            marker = _parse_virtio_input_msix_marker(tail)
+                            if marker is not None:
+                                virtio_input_msix_marker = marker
 
                     # Prefer the incrementally captured virtio-blk test marker line so we don't miss
                     # PASS/FAIL when the rolling tail buffer truncates earlier output.
@@ -5069,6 +5161,99 @@ def main() -> int:
                         and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-bind|FAIL" in tail
                     ):
                         saw_virtio_input_bind_fail = True
+
+                    # Prefer incrementally captured virtio-input sub-test markers so we don't miss them
+                    # when the rolling tail buffer truncates earlier output (or when a large read chunk
+                    # exceeds the tail cap).
+                    if virtio_input_leds_marker_line is not None:
+                        status_tok = _try_extract_marker_status(virtio_input_leds_marker_line)
+                        if not saw_virtio_input_leds_pass and status_tok == "PASS":
+                            saw_virtio_input_leds_pass = True
+                        if not saw_virtio_input_leds_fail and status_tok == "FAIL":
+                            saw_virtio_input_leds_fail = True
+                        if not saw_virtio_input_leds_skip and status_tok == "SKIP":
+                            saw_virtio_input_leds_skip = True
+
+                    if virtio_input_events_marker_line is not None:
+                        toks = virtio_input_events_marker_line.split("|")
+                        status_tok = toks[3] if len(toks) >= 4 else ""
+                        if not saw_virtio_input_events_ready and status_tok == "READY":
+                            saw_virtio_input_events_ready = True
+                        if not saw_virtio_input_events_pass and status_tok == "PASS":
+                            saw_virtio_input_events_pass = True
+                        if not saw_virtio_input_events_fail and status_tok == "FAIL":
+                            saw_virtio_input_events_fail = True
+                        if not saw_virtio_input_events_skip and status_tok == "SKIP":
+                            saw_virtio_input_events_skip = True
+
+                    if virtio_input_media_keys_marker_line is not None:
+                        toks = virtio_input_media_keys_marker_line.split("|")
+                        status_tok = toks[3] if len(toks) >= 4 else ""
+                        if not saw_virtio_input_media_keys_ready and status_tok == "READY":
+                            saw_virtio_input_media_keys_ready = True
+                        if not saw_virtio_input_media_keys_pass and status_tok == "PASS":
+                            saw_virtio_input_media_keys_pass = True
+                        if not saw_virtio_input_media_keys_fail and status_tok == "FAIL":
+                            saw_virtio_input_media_keys_fail = True
+                        if not saw_virtio_input_media_keys_skip and status_tok == "SKIP":
+                            saw_virtio_input_media_keys_skip = True
+
+                    if virtio_input_led_marker_line is not None:
+                        status_tok = _try_extract_marker_status(virtio_input_led_marker_line)
+                        if not saw_virtio_input_led_pass and status_tok == "PASS":
+                            saw_virtio_input_led_pass = True
+                        if not saw_virtio_input_led_fail and status_tok == "FAIL":
+                            saw_virtio_input_led_fail = True
+                        if not saw_virtio_input_led_skip and status_tok == "SKIP":
+                            saw_virtio_input_led_skip = True
+
+                    if virtio_input_wheel_marker_line is not None:
+                        status_tok = _try_extract_marker_status(virtio_input_wheel_marker_line)
+                        if not saw_virtio_input_wheel_pass and status_tok == "PASS":
+                            saw_virtio_input_wheel_pass = True
+                        if not saw_virtio_input_wheel_fail and status_tok == "FAIL":
+                            saw_virtio_input_wheel_fail = True
+                        if not saw_virtio_input_wheel_skip and status_tok == "SKIP":
+                            saw_virtio_input_wheel_skip = True
+
+                    if virtio_input_events_modifiers_marker_line is not None:
+                        status_tok = _try_extract_marker_status(virtio_input_events_modifiers_marker_line)
+                        if not saw_virtio_input_events_modifiers_pass and status_tok == "PASS":
+                            saw_virtio_input_events_modifiers_pass = True
+                        if not saw_virtio_input_events_modifiers_fail and status_tok == "FAIL":
+                            saw_virtio_input_events_modifiers_fail = True
+                        if not saw_virtio_input_events_modifiers_skip and status_tok == "SKIP":
+                            saw_virtio_input_events_modifiers_skip = True
+
+                    if virtio_input_events_buttons_marker_line is not None:
+                        status_tok = _try_extract_marker_status(virtio_input_events_buttons_marker_line)
+                        if not saw_virtio_input_events_buttons_pass and status_tok == "PASS":
+                            saw_virtio_input_events_buttons_pass = True
+                        if not saw_virtio_input_events_buttons_fail and status_tok == "FAIL":
+                            saw_virtio_input_events_buttons_fail = True
+                        if not saw_virtio_input_events_buttons_skip and status_tok == "SKIP":
+                            saw_virtio_input_events_buttons_skip = True
+
+                    if virtio_input_events_wheel_marker_line is not None:
+                        status_tok = _try_extract_marker_status(virtio_input_events_wheel_marker_line)
+                        if not saw_virtio_input_events_wheel_pass and status_tok == "PASS":
+                            saw_virtio_input_events_wheel_pass = True
+                        if not saw_virtio_input_events_wheel_fail and status_tok == "FAIL":
+                            saw_virtio_input_events_wheel_fail = True
+                        if not saw_virtio_input_events_wheel_skip and status_tok == "SKIP":
+                            saw_virtio_input_events_wheel_skip = True
+
+                    if virtio_input_tablet_events_marker_line is not None:
+                        toks = virtio_input_tablet_events_marker_line.split("|")
+                        status_tok = toks[3] if len(toks) >= 4 else ""
+                        if not saw_virtio_input_tablet_events_ready and status_tok == "READY":
+                            saw_virtio_input_tablet_events_ready = True
+                        if not saw_virtio_input_tablet_events_pass and status_tok == "PASS":
+                            saw_virtio_input_tablet_events_pass = True
+                        if not saw_virtio_input_tablet_events_fail and status_tok == "FAIL":
+                            saw_virtio_input_tablet_events_fail = True
+                        if not saw_virtio_input_tablet_events_skip and status_tok == "SKIP":
+                            saw_virtio_input_tablet_events_skip = True
                     if (
                         not saw_virtio_input_leds_pass
                         and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-leds|PASS" in tail
@@ -6502,7 +6687,11 @@ def main() -> int:
                             msix_tail = (
                                 virtio_input_msix_marker.line.encode("utf-8")
                                 if virtio_input_msix_marker is not None
-                                else tail
+                                else (
+                                    virtio_input_msix_marker_line.encode("utf-8")
+                                    if virtio_input_msix_marker_line is not None
+                                    else tail
+                                )
                             )
                             ok, reason = _require_virtio_input_msix_marker(msix_tail)
                             if not ok:
@@ -7148,6 +7337,66 @@ def main() -> int:
                             prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-bind|",
                             carry=virtio_input_bind_marker_carry,
                         )
+                        virtio_input_msix_marker_line, virtio_input_msix_marker_carry = _update_last_marker_line_from_chunk(
+                            virtio_input_msix_marker_line,
+                            chunk2,
+                            prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-msix|",
+                            carry=virtio_input_msix_marker_carry,
+                        )
+                        virtio_input_leds_marker_line, virtio_input_leds_marker_carry = _update_last_marker_line_from_chunk(
+                            virtio_input_leds_marker_line,
+                            chunk2,
+                            prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-leds|",
+                            carry=virtio_input_leds_marker_carry,
+                        )
+                        virtio_input_events_marker_line, virtio_input_events_marker_carry = _update_last_marker_line_from_chunk(
+                            virtio_input_events_marker_line,
+                            chunk2,
+                            prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|",
+                            carry=virtio_input_events_marker_carry,
+                        )
+                        virtio_input_media_keys_marker_line, virtio_input_media_keys_marker_carry = _update_last_marker_line_from_chunk(
+                            virtio_input_media_keys_marker_line,
+                            chunk2,
+                            prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-media-keys|",
+                            carry=virtio_input_media_keys_marker_carry,
+                        )
+                        virtio_input_led_marker_line, virtio_input_led_marker_carry = _update_last_marker_line_from_chunk(
+                            virtio_input_led_marker_line,
+                            chunk2,
+                            prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-led|",
+                            carry=virtio_input_led_marker_carry,
+                        )
+                        virtio_input_wheel_marker_line, virtio_input_wheel_marker_carry = _update_last_marker_line_from_chunk(
+                            virtio_input_wheel_marker_line,
+                            chunk2,
+                            prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-wheel|",
+                            carry=virtio_input_wheel_marker_carry,
+                        )
+                        virtio_input_events_modifiers_marker_line, virtio_input_events_modifiers_marker_carry = _update_last_marker_line_from_chunk(
+                            virtio_input_events_modifiers_marker_line,
+                            chunk2,
+                            prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-modifiers|",
+                            carry=virtio_input_events_modifiers_marker_carry,
+                        )
+                        virtio_input_events_buttons_marker_line, virtio_input_events_buttons_marker_carry = _update_last_marker_line_from_chunk(
+                            virtio_input_events_buttons_marker_line,
+                            chunk2,
+                            prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-buttons|",
+                            carry=virtio_input_events_buttons_marker_carry,
+                        )
+                        virtio_input_events_wheel_marker_line, virtio_input_events_wheel_marker_carry = _update_last_marker_line_from_chunk(
+                            virtio_input_events_wheel_marker_line,
+                            chunk2,
+                            prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-wheel|",
+                            carry=virtio_input_events_wheel_marker_carry,
+                        )
+                        virtio_input_tablet_events_marker_line, virtio_input_tablet_events_marker_carry = _update_last_marker_line_from_chunk(
+                            virtio_input_tablet_events_marker_line,
+                            chunk2,
+                            prefix=b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|",
+                            carry=virtio_input_tablet_events_marker_carry,
+                        )
                         virtio_input_binding_marker_line, virtio_input_binding_marker_carry = _update_last_marker_line_from_chunk(
                             virtio_input_binding_marker_line,
                             chunk2,
@@ -7192,10 +7441,20 @@ def main() -> int:
                                     _print_tail(serial_log)
                                     result_code = 1
                                     break
-                        if virtio_input_msix_marker is None or b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-msix|" in tail:
-                            marker = _parse_virtio_input_msix_marker(tail)
-                            if marker is not None:
-                                virtio_input_msix_marker = marker
+                        if virtio_input_msix_marker is None:
+                            if virtio_input_msix_marker_line is not None:
+                                parts = virtio_input_msix_marker_line.split("|")
+                                status = parts[3] if len(parts) >= 4 else ""
+                                fields = _parse_marker_kv_fields(virtio_input_msix_marker_line)
+                                virtio_input_msix_marker = _VirtioInputMsixMarker(
+                                    status=status,
+                                    fields=fields,
+                                    line=virtio_input_msix_marker_line,
+                                )
+                            elif b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-msix|" in tail:
+                                marker = _parse_virtio_input_msix_marker(tail)
+                                if marker is not None:
+                                    virtio_input_msix_marker = marker
 
                         if virtio_blk_marker_line is not None:
                             status_tok = _try_extract_marker_status(virtio_blk_marker_line)
@@ -7329,6 +7588,96 @@ def main() -> int:
                             and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-bind|FAIL" in tail
                         ):
                             saw_virtio_input_bind_fail = True
+
+                        if virtio_input_leds_marker_line is not None:
+                            status_tok = _try_extract_marker_status(virtio_input_leds_marker_line)
+                            if not saw_virtio_input_leds_pass and status_tok == "PASS":
+                                saw_virtio_input_leds_pass = True
+                            if not saw_virtio_input_leds_fail and status_tok == "FAIL":
+                                saw_virtio_input_leds_fail = True
+                            if not saw_virtio_input_leds_skip and status_tok == "SKIP":
+                                saw_virtio_input_leds_skip = True
+
+                        if virtio_input_events_marker_line is not None:
+                            toks = virtio_input_events_marker_line.split("|")
+                            status_tok = toks[3] if len(toks) >= 4 else ""
+                            if not saw_virtio_input_events_ready and status_tok == "READY":
+                                saw_virtio_input_events_ready = True
+                            if not saw_virtio_input_events_pass and status_tok == "PASS":
+                                saw_virtio_input_events_pass = True
+                            if not saw_virtio_input_events_fail and status_tok == "FAIL":
+                                saw_virtio_input_events_fail = True
+                            if not saw_virtio_input_events_skip and status_tok == "SKIP":
+                                saw_virtio_input_events_skip = True
+
+                        if virtio_input_media_keys_marker_line is not None:
+                            toks = virtio_input_media_keys_marker_line.split("|")
+                            status_tok = toks[3] if len(toks) >= 4 else ""
+                            if not saw_virtio_input_media_keys_ready and status_tok == "READY":
+                                saw_virtio_input_media_keys_ready = True
+                            if not saw_virtio_input_media_keys_pass and status_tok == "PASS":
+                                saw_virtio_input_media_keys_pass = True
+                            if not saw_virtio_input_media_keys_fail and status_tok == "FAIL":
+                                saw_virtio_input_media_keys_fail = True
+                            if not saw_virtio_input_media_keys_skip and status_tok == "SKIP":
+                                saw_virtio_input_media_keys_skip = True
+
+                        if virtio_input_led_marker_line is not None:
+                            status_tok = _try_extract_marker_status(virtio_input_led_marker_line)
+                            if not saw_virtio_input_led_pass and status_tok == "PASS":
+                                saw_virtio_input_led_pass = True
+                            if not saw_virtio_input_led_fail and status_tok == "FAIL":
+                                saw_virtio_input_led_fail = True
+                            if not saw_virtio_input_led_skip and status_tok == "SKIP":
+                                saw_virtio_input_led_skip = True
+
+                        if virtio_input_wheel_marker_line is not None:
+                            status_tok = _try_extract_marker_status(virtio_input_wheel_marker_line)
+                            if not saw_virtio_input_wheel_pass and status_tok == "PASS":
+                                saw_virtio_input_wheel_pass = True
+                            if not saw_virtio_input_wheel_fail and status_tok == "FAIL":
+                                saw_virtio_input_wheel_fail = True
+                            if not saw_virtio_input_wheel_skip and status_tok == "SKIP":
+                                saw_virtio_input_wheel_skip = True
+
+                        if virtio_input_events_modifiers_marker_line is not None:
+                            status_tok = _try_extract_marker_status(virtio_input_events_modifiers_marker_line)
+                            if not saw_virtio_input_events_modifiers_pass and status_tok == "PASS":
+                                saw_virtio_input_events_modifiers_pass = True
+                            if not saw_virtio_input_events_modifiers_fail and status_tok == "FAIL":
+                                saw_virtio_input_events_modifiers_fail = True
+                            if not saw_virtio_input_events_modifiers_skip and status_tok == "SKIP":
+                                saw_virtio_input_events_modifiers_skip = True
+
+                        if virtio_input_events_buttons_marker_line is not None:
+                            status_tok = _try_extract_marker_status(virtio_input_events_buttons_marker_line)
+                            if not saw_virtio_input_events_buttons_pass and status_tok == "PASS":
+                                saw_virtio_input_events_buttons_pass = True
+                            if not saw_virtio_input_events_buttons_fail and status_tok == "FAIL":
+                                saw_virtio_input_events_buttons_fail = True
+                            if not saw_virtio_input_events_buttons_skip and status_tok == "SKIP":
+                                saw_virtio_input_events_buttons_skip = True
+
+                        if virtio_input_events_wheel_marker_line is not None:
+                            status_tok = _try_extract_marker_status(virtio_input_events_wheel_marker_line)
+                            if not saw_virtio_input_events_wheel_pass and status_tok == "PASS":
+                                saw_virtio_input_events_wheel_pass = True
+                            if not saw_virtio_input_events_wheel_fail and status_tok == "FAIL":
+                                saw_virtio_input_events_wheel_fail = True
+                            if not saw_virtio_input_events_wheel_skip and status_tok == "SKIP":
+                                saw_virtio_input_events_wheel_skip = True
+
+                        if virtio_input_tablet_events_marker_line is not None:
+                            toks = virtio_input_tablet_events_marker_line.split("|")
+                            status_tok = toks[3] if len(toks) >= 4 else ""
+                            if not saw_virtio_input_tablet_events_ready and status_tok == "READY":
+                                saw_virtio_input_tablet_events_ready = True
+                            if not saw_virtio_input_tablet_events_pass and status_tok == "PASS":
+                                saw_virtio_input_tablet_events_pass = True
+                            if not saw_virtio_input_tablet_events_fail and status_tok == "FAIL":
+                                saw_virtio_input_tablet_events_fail = True
+                            if not saw_virtio_input_tablet_events_skip and status_tok == "SKIP":
+                                saw_virtio_input_tablet_events_skip = True
                         if (
                             not saw_virtio_input_leds_pass
                             and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-leds|PASS" in tail
@@ -8317,7 +8666,11 @@ def main() -> int:
                                 msix_tail = (
                                     virtio_input_msix_marker.line.encode("utf-8")
                                     if virtio_input_msix_marker is not None
-                                    else tail
+                                    else (
+                                        virtio_input_msix_marker_line.encode("utf-8")
+                                        if virtio_input_msix_marker_line is not None
+                                        else tail
+                                    )
                                 )
                                 ok, reason = _require_virtio_input_msix_marker(msix_tail)
                                 if not ok:
@@ -8709,6 +9062,14 @@ def main() -> int:
                     virtio_snd_msix_marker_line = raw2.decode("utf-8", errors="replace").strip()
                 except Exception:
                     pass
+        if virtio_input_msix_marker_carry:
+            raw = virtio_input_msix_marker_carry.rstrip(b"\r")
+            raw2 = raw.lstrip()
+            if raw2.startswith(b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-msix|"):
+                try:
+                    virtio_input_msix_marker_line = raw2.decode("utf-8", errors="replace").strip()
+                except Exception:
+                    pass
         if virtio_input_marker_carry:
             raw = virtio_input_marker_carry.rstrip(b"\r")
             raw2 = raw.lstrip()
@@ -8723,6 +9084,78 @@ def main() -> int:
             if raw2.startswith(b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-bind|"):
                 try:
                     virtio_input_bind_marker_line = raw2.decode("utf-8", errors="replace").strip()
+                except Exception:
+                    pass
+        if virtio_input_leds_marker_carry:
+            raw = virtio_input_leds_marker_carry.rstrip(b"\r")
+            raw2 = raw.lstrip()
+            if raw2.startswith(b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-leds|"):
+                try:
+                    virtio_input_leds_marker_line = raw2.decode("utf-8", errors="replace").strip()
+                except Exception:
+                    pass
+        if virtio_input_events_marker_carry:
+            raw = virtio_input_events_marker_carry.rstrip(b"\r")
+            raw2 = raw.lstrip()
+            if raw2.startswith(b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|"):
+                try:
+                    virtio_input_events_marker_line = raw2.decode("utf-8", errors="replace").strip()
+                except Exception:
+                    pass
+        if virtio_input_media_keys_marker_carry:
+            raw = virtio_input_media_keys_marker_carry.rstrip(b"\r")
+            raw2 = raw.lstrip()
+            if raw2.startswith(b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-media-keys|"):
+                try:
+                    virtio_input_media_keys_marker_line = raw2.decode("utf-8", errors="replace").strip()
+                except Exception:
+                    pass
+        if virtio_input_led_marker_carry:
+            raw = virtio_input_led_marker_carry.rstrip(b"\r")
+            raw2 = raw.lstrip()
+            if raw2.startswith(b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-led|"):
+                try:
+                    virtio_input_led_marker_line = raw2.decode("utf-8", errors="replace").strip()
+                except Exception:
+                    pass
+        if virtio_input_wheel_marker_carry:
+            raw = virtio_input_wheel_marker_carry.rstrip(b"\r")
+            raw2 = raw.lstrip()
+            if raw2.startswith(b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-wheel|"):
+                try:
+                    virtio_input_wheel_marker_line = raw2.decode("utf-8", errors="replace").strip()
+                except Exception:
+                    pass
+        if virtio_input_events_modifiers_marker_carry:
+            raw = virtio_input_events_modifiers_marker_carry.rstrip(b"\r")
+            raw2 = raw.lstrip()
+            if raw2.startswith(b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-modifiers|"):
+                try:
+                    virtio_input_events_modifiers_marker_line = raw2.decode("utf-8", errors="replace").strip()
+                except Exception:
+                    pass
+        if virtio_input_events_buttons_marker_carry:
+            raw = virtio_input_events_buttons_marker_carry.rstrip(b"\r")
+            raw2 = raw.lstrip()
+            if raw2.startswith(b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-buttons|"):
+                try:
+                    virtio_input_events_buttons_marker_line = raw2.decode("utf-8", errors="replace").strip()
+                except Exception:
+                    pass
+        if virtio_input_events_wheel_marker_carry:
+            raw = virtio_input_events_wheel_marker_carry.rstrip(b"\r")
+            raw2 = raw.lstrip()
+            if raw2.startswith(b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-events-wheel|"):
+                try:
+                    virtio_input_events_wheel_marker_line = raw2.decode("utf-8", errors="replace").strip()
+                except Exception:
+                    pass
+        if virtio_input_tablet_events_marker_carry:
+            raw = virtio_input_tablet_events_marker_carry.rstrip(b"\r")
+            raw2 = raw.lstrip()
+            if raw2.startswith(b"AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|"):
+                try:
+                    virtio_input_tablet_events_marker_line = raw2.decode("utf-8", errors="replace").strip()
                 except Exception:
                     pass
         if virtio_input_binding_marker_carry:
@@ -8796,7 +9229,13 @@ def main() -> int:
         )
         _emit_virtio_input_bind_host_marker(input_bind_tail)
         input_msix_tail = (
-            virtio_input_msix_marker.line.encode("utf-8") if virtio_input_msix_marker is not None else tail
+            virtio_input_msix_marker.line.encode("utf-8")
+            if virtio_input_msix_marker is not None
+            else (
+                virtio_input_msix_marker_line.encode("utf-8")
+                if virtio_input_msix_marker_line is not None
+                else tail
+            )
         )
         _emit_virtio_input_msix_host_marker(input_msix_tail)
         _emit_virtio_irq_host_markers(tail, markers=irq_diag_markers)
