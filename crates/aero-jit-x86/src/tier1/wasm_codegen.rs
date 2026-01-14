@@ -161,6 +161,8 @@ struct BlockStateUsage {
     rip_used: bool,
     /// Whether the block reads and/or writes RFLAGS.
     uses_rflags: bool,
+    /// Whether the block writes RFLAGS and therefore must spill `CpuState.rflags` at exit.
+    rflags_written: bool,
 }
 
 fn analyze_state_usage(block: &IrBlock, options: Tier1WasmOptions) -> BlockStateUsage {
@@ -220,7 +222,10 @@ fn analyze_state_usage(block: &IrBlock, options: Tier1WasmOptions) -> BlockState
                     // Any write (full or partial) initializes the local for subsequent accesses.
                     initialized[idx] = true;
                 }
-                GuestReg::Flag(_) => usage.uses_rflags = true,
+                GuestReg::Flag(_) => {
+                    usage.uses_rflags = true;
+                    usage.rflags_written = true;
+                }
                 GuestReg::Rip => rip_initialized = true,
             },
             IrInst::BinOp { flags, .. }
@@ -228,6 +233,7 @@ fn analyze_state_usage(block: &IrBlock, options: Tier1WasmOptions) -> BlockState
             | IrInst::TestFlags { flags, .. } => {
                 if !flags.is_empty() {
                     usage.uses_rflags = true;
+                    usage.rflags_written = true;
                 }
             }
             IrInst::EvalCond { cond, .. } => {
@@ -689,7 +695,7 @@ impl Tier1WasmCodegen {
             }
         }
 
-        if state_usage.uses_rflags {
+        if state_usage.rflags_written {
             emitter
                 .func
                 .instruction(&Instruction::LocalGet(layout.cpu_ptr_local()));

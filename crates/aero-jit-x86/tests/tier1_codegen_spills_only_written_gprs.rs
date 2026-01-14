@@ -60,9 +60,9 @@ fn collect_gpr_load_store_offsets(wasm: &[u8]) -> (BTreeSet<u64>, BTreeSet<u64>)
     (loads, stores)
 }
 
-#[cfg(feature = "tier1-inline-tlb")]
-fn collect_cpu_ptr_i64_load_offsets(wasm: &[u8]) -> BTreeSet<u64> {
+fn collect_cpu_ptr_i64_load_store_offsets(wasm: &[u8]) -> (BTreeSet<u64>, BTreeSet<u64>) {
     let mut loads: BTreeSet<u64> = BTreeSet::new();
+    let mut stores: BTreeSet<u64> = BTreeSet::new();
 
     #[derive(Clone, Copy)]
     enum PrevOp {
@@ -75,23 +75,34 @@ fn collect_cpu_ptr_i64_load_offsets(wasm: &[u8]) -> BTreeSet<u64> {
         if let wasmparser::Payload::CodeSectionEntry(body) = payload {
             let mut ops = body.get_operators_reader().unwrap();
             let mut prev0 = PrevOp::Other;
+            let mut prev1 = PrevOp::Other;
             while !ops.eof() {
                 let op = ops.read().unwrap();
-                if let wasmparser::Operator::I64Load { memarg } = op {
-                    if matches!(prev0, PrevOp::LocalGet(0)) {
-                        loads.insert(memarg.offset);
+                match op {
+                    wasmparser::Operator::I64Load { memarg } => {
+                        if matches!(prev0, PrevOp::LocalGet(0)) {
+                            loads.insert(memarg.offset);
+                        }
                     }
-                }
+                    wasmparser::Operator::I64Store { memarg } => {
+                        if matches!(prev1, PrevOp::LocalGet(0)) {
+                            stores.insert(memarg.offset);
+                        }
+                    }
+                    _ => {}
+                };
 
-                prev0 = match op {
+                let cur = match op {
                     wasmparser::Operator::LocalGet { local_index } => PrevOp::LocalGet(local_index),
                     _ => PrevOp::Other,
                 };
+                prev1 = prev0;
+                prev0 = cur;
             }
         }
     }
 
-    loads
+    (loads, stores)
 }
 
 #[test]
@@ -351,9 +362,31 @@ fn tier1_codegen_inline_tlb_mmio_fallback_does_not_force_gpr_or_rip_loads() {
 
     // In the MMIO-fallback configuration, Tier-1 shouldn't need to load RIP at block entry either
     // (it is only needed to report MMIO exits / helper-call bailouts).
-    let cpu_ptr_i64_loads = collect_cpu_ptr_i64_load_offsets(&wasm);
+    let (cpu_ptr_i64_loads, _cpu_ptr_i64_stores) = collect_cpu_ptr_i64_load_store_offsets(&wasm);
     assert!(
         !cpu_ptr_i64_loads.contains(&(abi::CPU_RIP_OFF as u64)),
         "RIP should not be loaded when inline_tlb_mmio_exit=false"
+    );
+}
+
+#[test]
+fn tier1_codegen_read_only_flags_loads_without_spill() {
+    use aero_types::Cond;
+
+    let entry = 0x1000u64;
+    let mut b = IrBuilder::new(entry);
+    let _ = b.eval_cond(Cond::E);
+    let block = b.finish(IrTerminator::Jump { target: entry + 1 });
+    block.validate().unwrap();
+
+    let wasm = Tier1WasmCodegen::new().compile_block(&block);
+    let (loads, stores) = collect_cpu_ptr_i64_load_store_offsets(&wasm);
+    assert!(
+        loads.contains(&(abi::CPU_RFLAGS_OFF as u64)),
+        "expected CpuState.rflags to be loaded when flags are read"
+    );
+    assert!(
+        !stores.contains(&(abi::CPU_RFLAGS_OFF as u64)),
+        "expected CpuState.rflags not to be spilled when flags are only read"
     );
 }
