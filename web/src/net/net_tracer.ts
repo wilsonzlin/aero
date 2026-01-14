@@ -7,7 +7,7 @@ import {
   writePcapng,
   type PcapngEnhancedPacket,
   type PcapngInterfaceDescription,
-} from "./pcapng";
+} from "./pcapng.ts";
 
 export type FrameDirection = "guest_tx" | "guest_rx";
 export type ProxyDirection = "guest_to_remote" | "remote_to_guest";

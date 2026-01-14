@@ -5,7 +5,7 @@
 // - `tools/net-proxy-server` (dev relay)
 
 import { buildWebSocketUrl } from "./wsUrl.ts";
-import type { NetTracer } from "./net_tracer";
+import type { NetTracer } from "./net_tracer.ts";
 
 export const TCP_MUX_SUBPROTOCOL = "aero-tcp-mux-v1";
 

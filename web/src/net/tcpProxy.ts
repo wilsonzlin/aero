@@ -1,6 +1,6 @@
 import { WebSocketTcpMuxProxyClient, type TcpMuxProxyOptions } from "./tcpMuxProxy.ts";
 import { buildWebSocketUrl } from "./wsUrl.ts";
-import type { NetTracer } from "./net_tracer";
+import type { NetTracer } from "./net_tracer.ts";
 
 export type TcpProxyEvent =
   | { type: "connected"; connectionId: number }
