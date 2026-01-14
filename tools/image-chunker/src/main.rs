@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use aero_storage::{DiskFormat, DiskImage, FileBackend, VirtualDisk};
+use aero_storage::{DiskFormat, DiskImage, FileBackend, VirtualDisk, SECTOR_SIZE};
 use anyhow::{anyhow, bail, Context, Result};
 use aws_config::meta::region::RegionProviderChain;
 use aws_config::BehaviorVersion;
@@ -58,9 +58,9 @@ struct PublishArgs {
     /// Input disk image format.
     ///
     /// Chunks always contain the *expanded* guest-visible disk byte stream (a raw "disk view").
-    /// For container formats like qcow2/vhd/aerospar, this means the output chunks are not the
+    /// For container formats like qcow2/vhd/aerosparse, this means the output chunks are not the
     /// same as the input file bytes.
-    #[arg(long, value_enum, default_value_t = InputFormat::Raw)]
+    #[arg(long, value_enum, default_value_t = InputFormat::Auto)]
     format: InputFormat,
 
     /// Destination bucket name.
@@ -239,11 +239,11 @@ enum InputFormat {
     /// Interpret the input file bytes directly as the guest-visible disk bytes.
     Raw,
     /// Interpret the input as an Aero sparse disk image (`AEROSPAR`).
-    #[value(name = "aerospar")]
+    #[value(name = "aerosparse")]
     AeroSparse,
     /// Interpret the input as a QCOW2 v2/v3 disk image.
     Qcow2,
-    /// Interpret the input as a VHD disk image (fixed/dynamic/differencing).
+    /// Interpret the input as a VHD disk image (fixed/dynamic).
     Vhd,
     /// Auto-detect the disk format from magic values.
     Auto,
@@ -367,6 +367,10 @@ async fn publish(args: PublishArgs) -> Result<()> {
     let prefix = normalize_prefix(&args.prefix);
     let (input_format, total_size) =
         inspect_input_disk(&args.file, args.format).context("open input disk")?;
+    let sector = SECTOR_SIZE as u64;
+    if !total_size.is_multiple_of(sector) {
+        bail!("virtual disk size {total_size} is not a multiple of {sector} bytes");
+    }
     let chunk_count = chunk_count(total_size, args.chunk_size);
     if chunk_count > MAX_CHUNKS {
         bail!(
@@ -422,7 +426,9 @@ async fn publish(args: PublishArgs) -> Result<()> {
 
     let chunks_uploaded = Arc::new(AtomicU64::new(0));
 
-    let (work_tx, work_rx) = async_channel::bounded::<ChunkJob>(args.concurrency * 2);
+    // Keep the in-flight chunk buffer count bounded to cap memory: each worker owns at most one
+    // chunk at a time, and this queue limits producer read-ahead.
+    let (work_tx, work_rx) = async_channel::bounded::<ChunkJob>(args.concurrency);
     let (result_tx, mut result_rx) = tokio::sync::mpsc::unbounded_channel::<ChunkResult>();
 
     let mut workers = Vec::with_capacity(args.concurrency);
@@ -1931,7 +1937,7 @@ fn open_input_disk(path: &Path, format: InputFormat) -> Result<DiskImage<FileBac
             InputFormat::Raw => DiskImage::open_with_format(DiskFormat::Raw, backend)
                 .context("open raw disk image")?,
             InputFormat::AeroSparse => DiskImage::open_with_format(DiskFormat::AeroSparse, backend)
-                .context("open aerospar disk image")?,
+                .context("open aerosparse disk image")?,
             InputFormat::Qcow2 => DiskImage::open_with_format(DiskFormat::Qcow2, backend)
                 .context("open qcow2 disk image")?,
             InputFormat::Vhd => DiskImage::open_with_format(DiskFormat::Vhd, backend)

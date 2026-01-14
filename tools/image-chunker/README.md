@@ -1,6 +1,6 @@
 # `aero-image-chunker`
 
-Chunks a large **disk image** into fixed-size objects and uploads them to an **S3-compatible object store** (AWS S3, MinIO, etc.), along with a `manifest.json`.
+Chunks a disk image (raw/qcow2/vhd/aerosparse) into fixed-size objects representing the **guest-visible logical disk bytes**, and uploads them to an **S3-compatible object store** (AWS S3, MinIO, etc.), along with a `manifest.json`.
 
 This enables CDN-friendly delivery without relying on HTTP `Range` requests: clients fetch `manifest.json`, then fetch `chunks/00000000.bin`, `chunks/00000001.bin`, … as needed.
 
@@ -36,17 +36,17 @@ Note: `--chunk-size` must be a multiple of **512 bytes** (ATA sector size). The 
 
 ### Input format (`--format`)
 
-By default, the tool assumes `--format raw` (the input file bytes are already the guest-visible disk bytes).
+By default, the tool uses `--format auto` (format detection) and treats unknown images as `raw`.
 
 To publish other disk image formats, use `--format`:
 
 - `raw`: treat the input as a raw disk image (`.img`).
 - `qcow2`: open QCOW2 v2/v3 and publish the *expanded disk view*.
-- `vhd`: open VHD (fixed/dynamic/differencing) and publish the *expanded disk view*.
-- `aerospar`: open Aero sparse (`AEROSPAR`) and publish the *expanded disk view*.
+- `vhd`: open VHD (fixed/dynamic) and publish the *expanded disk view*.
+- `aerosparse`: open Aero sparse (`AEROSPAR`) and publish the *expanded disk view*.
 - `auto`: auto-detect the format from magic values.
 
-For container formats (`qcow2`, `vhd`, `aerospar`), the published chunks correspond to the **logical disk byte stream** (what the guest sees), not the on-disk container file bytes.
+For container formats (`qcow2`, `vhd`, `aerosparse`), the published chunks correspond to the **logical disk byte stream** (what the guest sees), not the on-disk container file bytes.
 
 ### CDN-ready HTTP metadata (Cache-Control, Content-Encoding)
 
@@ -86,7 +86,7 @@ These defaults match [`docs/18-chunked-disk-image-format.md`](../../docs/18-chun
 `--image-version` can be omitted in two cases:
 
 - When `--compute-version none` (default) and `--prefix` already ends with `/<imageId>/<version>/` (the version is inferred from the prefix).
-- When `--compute-version sha256` is enabled (the version is computed as `sha256-<digest>` over the entire disk image content).
+- When `--compute-version sha256` is enabled (the version is computed as `sha256-<digest>` over the entire **logical disk** content).
 
 If you enable `--compute-version sha256` and also provide `--image-version`, the tool validates they match.
 
@@ -287,7 +287,7 @@ curl -fSs "<presigned-url>"
 - `schema`: `aero.chunked-disk-image.v1`
 - `imageId` and `version`: identifiers for the image/version
 - `mimeType`: MIME type for chunk objects
-- `totalSize`: original file size in bytes
+- `totalSize`: logical disk size in bytes (`VirtualDisk::capacity_bytes()`), which may differ from the on-disk container file size for sparse formats
 - `chunkSize`: the chosen chunk size in bytes
 - `chunkCount`: total number of chunk objects
 - `chunkIndexWidth`: decimal zero-padding width (8)
