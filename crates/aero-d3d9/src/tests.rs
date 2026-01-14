@@ -38,6 +38,10 @@ fn enc_inst(opcode: u16, params: &[u32]) -> Vec<u32> {
     v
 }
 
+fn enc_inst_sm3(opcode: u16, params: &[u32]) -> Vec<u32> {
+    enc_inst(opcode, params)
+}
+
 fn enc_inst_with_extra(opcode: u16, extra: u32, params: &[u32]) -> Vec<u32> {
     let token = (opcode as u32) | (((params.len() as u32) + 1) << 24) | extra;
     let mut v = vec![token];
