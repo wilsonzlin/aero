@@ -31,10 +31,19 @@ class PowerShellInputEventsFailMarkerDetailsTests(unittest.TestCase):
         self.assertIn("mouse_reports=([^|\\r\\n]+)", body)
         self.assertIn("kbd_bad_reports=([^|\\r\\n]+)", body)
         self.assertIn("mouse_bad_reports=([^|\\r\\n]+)", body)
+        for pat in (
+            "kbd_a_down=([^|\\r\\n]+)",
+            "kbd_a_up=([^|\\r\\n]+)",
+            "mouse_move=([^|\\r\\n]+)",
+            "mouse_left_down=([^|\\r\\n]+)",
+            "mouse_left_up=([^|\\r\\n]+)",
+        ):
+            self.assertIn(pat, body)
+        self.assertIn("kbd_a_down=$kbdADown", body)
+        self.assertIn("mouse_left_down=$mouseLeftDown", body)
         self.assertIn("reason=$reason err=$err", body)
         self.assertIn("VIRTIO_INPUT_EVENTS_FAILED", body)
 
 
 if __name__ == "__main__":
     unittest.main()
-

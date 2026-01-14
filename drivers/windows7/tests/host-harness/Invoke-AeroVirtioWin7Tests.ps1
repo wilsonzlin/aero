@@ -8297,6 +8297,11 @@ try {
       $mouseReports = ""
       $kbdBadReports = ""
       $mouseBadReports = ""
+      $kbdADown = ""
+      $kbdAUp = ""
+      $mouseMove = ""
+      $mouseLeftDown = ""
+      $mouseLeftUp = ""
       $line = Try-ExtractLastAeroMarkerLine `
         -Tail $result.Tail `
         -Prefix "AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|FAIL|" `
@@ -8309,12 +8314,22 @@ try {
         if ($line -match "(?:^|\|)mouse_reports=([^|\r\n]+)") { $mouseReports = $Matches[1] }
         if ($line -match "(?:^|\|)kbd_bad_reports=([^|\r\n]+)") { $kbdBadReports = $Matches[1] }
         if ($line -match "(?:^|\|)mouse_bad_reports=([^|\r\n]+)") { $mouseBadReports = $Matches[1] }
+        if ($line -match "(?:^|\|)kbd_a_down=([^|\r\n]+)") { $kbdADown = $Matches[1] }
+        if ($line -match "(?:^|\|)kbd_a_up=([^|\r\n]+)") { $kbdAUp = $Matches[1] }
+        if ($line -match "(?:^|\|)mouse_move=([^|\r\n]+)") { $mouseMove = $Matches[1] }
+        if ($line -match "(?:^|\|)mouse_left_down=([^|\r\n]+)") { $mouseLeftDown = $Matches[1] }
+        if ($line -match "(?:^|\|)mouse_left_up=([^|\r\n]+)") { $mouseLeftUp = $Matches[1] }
       }
       $details = "(reason=$reason err=$err"
       if (-not [string]::IsNullOrEmpty($kbdReports)) { $details += " kbd_reports=$kbdReports" }
       if (-not [string]::IsNullOrEmpty($mouseReports)) { $details += " mouse_reports=$mouseReports" }
       if (-not [string]::IsNullOrEmpty($kbdBadReports)) { $details += " kbd_bad_reports=$kbdBadReports" }
       if (-not [string]::IsNullOrEmpty($mouseBadReports)) { $details += " mouse_bad_reports=$mouseBadReports" }
+      if (-not [string]::IsNullOrEmpty($kbdADown)) { $details += " kbd_a_down=$kbdADown" }
+      if (-not [string]::IsNullOrEmpty($kbdAUp)) { $details += " kbd_a_up=$kbdAUp" }
+      if (-not [string]::IsNullOrEmpty($mouseMove)) { $details += " mouse_move=$mouseMove" }
+      if (-not [string]::IsNullOrEmpty($mouseLeftDown)) { $details += " mouse_left_down=$mouseLeftDown" }
+      if (-not [string]::IsNullOrEmpty($mouseLeftUp)) { $details += " mouse_left_up=$mouseLeftUp" }
       $details += ")"
       Write-Host "FAIL: VIRTIO_INPUT_EVENTS_FAILED: virtio-input-events test reported FAIL while input injection flags were enabled (-WithInputEvents/-WithVirtioInputEvents/-RequireVirtioInputEvents/-EnableVirtioInputEvents, -WithInputWheel/-WithVirtioInputWheel/-RequireVirtioInputWheel/-EnableVirtioInputWheel, -WithInputEventsExtended/-WithInputEventsExtra) $details"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
@@ -8492,6 +8507,16 @@ try {
       $reason = "unknown"
       $wheelTotal = ""
       $hwheelTotal = ""
+      $expectedWheel = ""
+      $expectedHwheel = ""
+      $wheelEvents = ""
+      $hwheelEvents = ""
+      $sawWheel = ""
+      $sawHwheel = ""
+      $sawWheelExpected = ""
+      $sawHwheelExpected = ""
+      $wheelUnexpectedLast = ""
+      $hwheelUnexpectedLast = ""
       $line = Try-ExtractLastAeroMarkerLine `
         -Tail $result.Tail `
         -Prefix "AERO_VIRTIO_SELFTEST|TEST|virtio-input-wheel|FAIL|" `
@@ -8501,10 +8526,30 @@ try {
         elseif ($line -match "\|FAIL\|([^|\r\n=]+)(?:\||$)") { $reason = $Matches[1] }
         if ($line -match "(?:^|\|)wheel_total=([^|\r\n]+)") { $wheelTotal = $Matches[1] }
         if ($line -match "(?:^|\|)hwheel_total=([^|\r\n]+)") { $hwheelTotal = $Matches[1] }
+        if ($line -match "(?:^|\|)expected_wheel=([^|\r\n]+)") { $expectedWheel = $Matches[1] }
+        if ($line -match "(?:^|\|)expected_hwheel=([^|\r\n]+)") { $expectedHwheel = $Matches[1] }
+        if ($line -match "(?:^|\|)wheel_events=([^|\r\n]+)") { $wheelEvents = $Matches[1] }
+        if ($line -match "(?:^|\|)hwheel_events=([^|\r\n]+)") { $hwheelEvents = $Matches[1] }
+        if ($line -match "(?:^|\|)saw_wheel=([^|\r\n]+)") { $sawWheel = $Matches[1] }
+        if ($line -match "(?:^|\|)saw_hwheel=([^|\r\n]+)") { $sawHwheel = $Matches[1] }
+        if ($line -match "(?:^|\|)saw_wheel_expected=([^|\r\n]+)") { $sawWheelExpected = $Matches[1] }
+        if ($line -match "(?:^|\|)saw_hwheel_expected=([^|\r\n]+)") { $sawHwheelExpected = $Matches[1] }
+        if ($line -match "(?:^|\|)wheel_unexpected_last=([^|\r\n]+)") { $wheelUnexpectedLast = $Matches[1] }
+        if ($line -match "(?:^|\|)hwheel_unexpected_last=([^|\r\n]+)") { $hwheelUnexpectedLast = $Matches[1] }
       }
       $details = "(reason=$reason"
       if (-not [string]::IsNullOrEmpty($wheelTotal)) { $details += " wheel_total=$wheelTotal" }
       if (-not [string]::IsNullOrEmpty($hwheelTotal)) { $details += " hwheel_total=$hwheelTotal" }
+      if (-not [string]::IsNullOrEmpty($expectedWheel)) { $details += " expected_wheel=$expectedWheel" }
+      if (-not [string]::IsNullOrEmpty($expectedHwheel)) { $details += " expected_hwheel=$expectedHwheel" }
+      if (-not [string]::IsNullOrEmpty($wheelEvents)) { $details += " wheel_events=$wheelEvents" }
+      if (-not [string]::IsNullOrEmpty($hwheelEvents)) { $details += " hwheel_events=$hwheelEvents" }
+      if (-not [string]::IsNullOrEmpty($sawWheel)) { $details += " saw_wheel=$sawWheel" }
+      if (-not [string]::IsNullOrEmpty($sawHwheel)) { $details += " saw_hwheel=$sawHwheel" }
+      if (-not [string]::IsNullOrEmpty($sawWheelExpected)) { $details += " saw_wheel_expected=$sawWheelExpected" }
+      if (-not [string]::IsNullOrEmpty($sawHwheelExpected)) { $details += " saw_hwheel_expected=$sawHwheelExpected" }
+      if (-not [string]::IsNullOrEmpty($wheelUnexpectedLast)) { $details += " wheel_unexpected_last=$wheelUnexpectedLast" }
+      if (-not [string]::IsNullOrEmpty($hwheelUnexpectedLast)) { $details += " hwheel_unexpected_last=$hwheelUnexpectedLast" }
       $details += ")"
       Write-Host "FAIL: VIRTIO_INPUT_WHEEL_FAILED: virtio-input-wheel test reported FAIL while -WithInputWheel/-WithVirtioInputWheel/-RequireVirtioInputWheel/-EnableVirtioInputWheel was enabled $details"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
@@ -8544,8 +8589,19 @@ try {
       $err = ""
       $kbdReports = ""
       $kbdBadReports = ""
+      $shiftB = ""
+      $ctrlDown = ""
+      $ctrlUp = ""
+      $altDown = ""
+      $altUp = ""
+      $f1Down = ""
+      $f1Up = ""
       $mouseReports = ""
       $mouseBadReports = ""
+      $sideDown = ""
+      $sideUp = ""
+      $extraDown = ""
+      $extraUp = ""
       $wheelTotal = ""
       $hwheelTotal = ""
       $expectedWheel = ""
@@ -8558,8 +8614,19 @@ try {
         if ($line -match "(?:^|\|)err=([^|\r\n]+)") { $err = $Matches[1] }
         if ($line -match "(?:^|\|)kbd_reports=([^|\r\n]+)") { $kbdReports = $Matches[1] }
         if ($line -match "(?:^|\|)kbd_bad_reports=([^|\r\n]+)") { $kbdBadReports = $Matches[1] }
+        if ($line -match "(?:^|\|)shift_b=([^|\r\n]+)") { $shiftB = $Matches[1] }
+        if ($line -match "(?:^|\|)ctrl_down=([^|\r\n]+)") { $ctrlDown = $Matches[1] }
+        if ($line -match "(?:^|\|)ctrl_up=([^|\r\n]+)") { $ctrlUp = $Matches[1] }
+        if ($line -match "(?:^|\|)alt_down=([^|\r\n]+)") { $altDown = $Matches[1] }
+        if ($line -match "(?:^|\|)alt_up=([^|\r\n]+)") { $altUp = $Matches[1] }
+        if ($line -match "(?:^|\|)f1_down=([^|\r\n]+)") { $f1Down = $Matches[1] }
+        if ($line -match "(?:^|\|)f1_up=([^|\r\n]+)") { $f1Up = $Matches[1] }
         if ($line -match "(?:^|\|)mouse_reports=([^|\r\n]+)") { $mouseReports = $Matches[1] }
         if ($line -match "(?:^|\|)mouse_bad_reports=([^|\r\n]+)") { $mouseBadReports = $Matches[1] }
+        if ($line -match "(?:^|\|)side_down=([^|\r\n]+)") { $sideDown = $Matches[1] }
+        if ($line -match "(?:^|\|)side_up=([^|\r\n]+)") { $sideUp = $Matches[1] }
+        if ($line -match "(?:^|\|)extra_down=([^|\r\n]+)") { $extraDown = $Matches[1] }
+        if ($line -match "(?:^|\|)extra_up=([^|\r\n]+)") { $extraUp = $Matches[1] }
         if ($line -match "(?:^|\|)wheel_total=([^|\r\n]+)") { $wheelTotal = $Matches[1] }
         if ($line -match "(?:^|\|)hwheel_total=([^|\r\n]+)") { $hwheelTotal = $Matches[1] }
         if ($line -match "(?:^|\|)expected_wheel=([^|\r\n]+)") { $expectedWheel = $Matches[1] }
@@ -8573,8 +8640,19 @@ try {
       if (-not [string]::IsNullOrEmpty($err)) { $detailsParts += "err=$err" }
       if (-not [string]::IsNullOrEmpty($kbdReports)) { $detailsParts += "kbd_reports=$kbdReports" }
       if (-not [string]::IsNullOrEmpty($kbdBadReports)) { $detailsParts += "kbd_bad_reports=$kbdBadReports" }
+      if (-not [string]::IsNullOrEmpty($shiftB)) { $detailsParts += "shift_b=$shiftB" }
+      if (-not [string]::IsNullOrEmpty($ctrlDown)) { $detailsParts += "ctrl_down=$ctrlDown" }
+      if (-not [string]::IsNullOrEmpty($ctrlUp)) { $detailsParts += "ctrl_up=$ctrlUp" }
+      if (-not [string]::IsNullOrEmpty($altDown)) { $detailsParts += "alt_down=$altDown" }
+      if (-not [string]::IsNullOrEmpty($altUp)) { $detailsParts += "alt_up=$altUp" }
+      if (-not [string]::IsNullOrEmpty($f1Down)) { $detailsParts += "f1_down=$f1Down" }
+      if (-not [string]::IsNullOrEmpty($f1Up)) { $detailsParts += "f1_up=$f1Up" }
       if (-not [string]::IsNullOrEmpty($mouseReports)) { $detailsParts += "mouse_reports=$mouseReports" }
       if (-not [string]::IsNullOrEmpty($mouseBadReports)) { $detailsParts += "mouse_bad_reports=$mouseBadReports" }
+      if (-not [string]::IsNullOrEmpty($sideDown)) { $detailsParts += "side_down=$sideDown" }
+      if (-not [string]::IsNullOrEmpty($sideUp)) { $detailsParts += "side_up=$sideUp" }
+      if (-not [string]::IsNullOrEmpty($extraDown)) { $detailsParts += "extra_down=$extraDown" }
+      if (-not [string]::IsNullOrEmpty($extraUp)) { $detailsParts += "extra_up=$extraUp" }
       if (-not [string]::IsNullOrEmpty($wheelTotal)) { $detailsParts += "wheel_total=$wheelTotal" }
       if (-not [string]::IsNullOrEmpty($hwheelTotal)) { $detailsParts += "hwheel_total=$hwheelTotal" }
       if (-not [string]::IsNullOrEmpty($expectedWheel)) { $detailsParts += "expected_wheel=$expectedWheel" }
@@ -8652,6 +8730,13 @@ try {
     "VIRTIO_INPUT_TABLET_EVENTS_FAILED" {
       $reason = "unknown"
       $err = "unknown"
+      $tabletReports = ""
+      $moveTarget = ""
+      $leftDown = ""
+      $leftUp = ""
+      $lastX = ""
+      $lastY = ""
+      $lastLeft = ""
       $line = Try-ExtractLastAeroMarkerLine `
         -Tail $result.Tail `
         -Prefix "AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|FAIL|" `
@@ -8660,8 +8745,24 @@ try {
         if ($line -match "reason=([^|\r\n]+)") { $reason = $Matches[1] }
         elseif ($line -match "\|FAIL\|([^|\r\n=]+)(?:\||$)") { $reason = $Matches[1] }
         if ($line -match "(?:^|\|)err=([^|\r\n]+)") { $err = $Matches[1] }
+        if ($line -match "(?:^|\|)tablet_reports=([^|\r\n]+)") { $tabletReports = $Matches[1] }
+        if ($line -match "(?:^|\|)move_target=([^|\r\n]+)") { $moveTarget = $Matches[1] }
+        if ($line -match "(?:^|\|)left_down=([^|\r\n]+)") { $leftDown = $Matches[1] }
+        if ($line -match "(?:^|\|)left_up=([^|\r\n]+)") { $leftUp = $Matches[1] }
+        if ($line -match "(?:^|\|)last_x=([^|\r\n]+)") { $lastX = $Matches[1] }
+        if ($line -match "(?:^|\|)last_y=([^|\r\n]+)") { $lastY = $Matches[1] }
+        if ($line -match "(?:^|\|)last_left=([^|\r\n]+)") { $lastLeft = $Matches[1] }
       }
-      Write-Host "FAIL: VIRTIO_INPUT_TABLET_EVENTS_FAILED: virtio-input-tablet-events test reported FAIL while -WithInputTabletEvents/-WithVirtioInputTabletEvents/-RequireVirtioInputTabletEvents/-WithTabletEvents/-EnableTabletEvents was enabled (reason=$reason err=$err)"
+      $details = "(reason=$reason err=$err"
+      if (-not [string]::IsNullOrEmpty($tabletReports)) { $details += " tablet_reports=$tabletReports" }
+      if (-not [string]::IsNullOrEmpty($moveTarget)) { $details += " move_target=$moveTarget" }
+      if (-not [string]::IsNullOrEmpty($leftDown)) { $details += " left_down=$leftDown" }
+      if (-not [string]::IsNullOrEmpty($leftUp)) { $details += " left_up=$leftUp" }
+      if (-not [string]::IsNullOrEmpty($lastX)) { $details += " last_x=$lastX" }
+      if (-not [string]::IsNullOrEmpty($lastY)) { $details += " last_y=$lastY" }
+      if (-not [string]::IsNullOrEmpty($lastLeft)) { $details += " last_left=$lastLeft" }
+      $details += ")"
+      Write-Host "FAIL: VIRTIO_INPUT_TABLET_EVENTS_FAILED: virtio-input-tablet-events test reported FAIL while -WithInputTabletEvents/-WithVirtioInputTabletEvents/-RequireVirtioInputTabletEvents/-WithTabletEvents/-EnableTabletEvents was enabled $details"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue

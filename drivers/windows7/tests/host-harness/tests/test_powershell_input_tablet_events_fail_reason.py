@@ -30,9 +30,22 @@ class PowerShellInputTabletEventsFailReasonTests(unittest.TestCase):
         # Backcompat: accept token-only FAIL markers (no `reason=` field).
         self.assertIn("\\|FAIL\\|([^|\\r\\n=]+)(?:\\||$)", body)
         self.assertIn("err=([^|\\r\\n]+)", body)
-        self.assertIn("reason=$reason err=$err", body)
+        for pat in (
+            "tablet_reports=([^|\\r\\n]+)",
+            "move_target=([^|\\r\\n]+)",
+            "left_down=([^|\\r\\n]+)",
+            "left_up=([^|\\r\\n]+)",
+            "last_x=([^|\\r\\n]+)",
+            "last_y=([^|\\r\\n]+)",
+            "last_left=([^|\\r\\n]+)",
+        ):
+            self.assertIn(pat, body)
+
+        # Message should append the parsed fields in stable order.
+        self.assertIn('"(reason=$reason err=$err"', body)
+        self.assertIn("tablet_reports=$tabletReports", body)
+        self.assertIn("move_target=$moveTarget", body)
 
 
 if __name__ == "__main__":
     unittest.main()
-

@@ -34,6 +34,9 @@ class PowerShellInputEventsExtendedFailMarkerDetailsTests(unittest.TestCase):
             "kbd_reports=([^|\\r\\n]+)",
             "mouse_reports=([^|\\r\\n]+)",
             "wheel_total=([^|\\r\\n]+)",
+            # Subtest-specific counters (modifiers/buttons) should be parsed when present.
+            "ctrl_down=([^|\\r\\n]+)",
+            "side_down=([^|\\r\\n]+)",
         ):
             self.assertIn(pat, body)
 
@@ -42,4 +45,3 @@ class PowerShellInputEventsExtendedFailMarkerDetailsTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

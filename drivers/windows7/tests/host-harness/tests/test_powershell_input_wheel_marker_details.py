@@ -50,10 +50,20 @@ class PowerShellInputWheelMarkerDetailsTests(unittest.TestCase):
         self.assertIn("\\|FAIL\\|([^|\\r\\n=]+)(?:\\||$)", body)
         self.assertIn("wheel_total=([^|\\r\\n]+)", body)
         self.assertIn("hwheel_total=([^|\\r\\n]+)", body)
+        for pat in (
+            "expected_wheel=([^|\\r\\n]+)",
+            "expected_hwheel=([^|\\r\\n]+)",
+            "wheel_events=([^|\\r\\n]+)",
+            "hwheel_events=([^|\\r\\n]+)",
+            "saw_wheel=([^|\\r\\n]+)",
+            "saw_hwheel=([^|\\r\\n]+)",
+        ):
+            self.assertIn(pat, body)
         self.assertIn('$details = "(reason=$reason"', body)
+        self.assertIn("expected_wheel=$expectedWheel", body)
+        self.assertIn("wheel_events=$wheelEvents", body)
         self.assertIn("enabled $details", body)
 
 
 if __name__ == "__main__":
     unittest.main()
-
