@@ -137,6 +137,65 @@ fn bench_wgsl_translate(c: &mut Criterion) {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-criterion_group!(benches, bench_dxbc_parse, bench_sm4_decode, bench_wgsl_translate);
+fn bench_end_to_end(c: &mut Criterion) {
+    // End-to-end signature-driven path (DXBC bytes → WGSL).
+    {
+        let fixtures = ["vs_matrix.dxbc", "ps_sample.dxbc"];
+        let mut group = c.benchmark_group("dxbc_to_wgsl_end_to_end");
+        for name in fixtures {
+            let bytes = load_fixture(name);
+            group.throughput(Throughput::Bytes(bytes.len() as u64));
+            group.bench_with_input(BenchmarkId::from_parameter(name), &bytes, |b, bytes| {
+                b.iter(|| {
+                    let dxbc = aero_dxbc::DxbcFile::parse(black_box(bytes.as_slice()))
+                        .expect("fixture should parse as DXBC");
+                    let signatures = parse_signatures(&dxbc).expect("signature parsing failed");
+                    let program =
+                        Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 token parse failed");
+                    let module = decode_program(&program).expect("SM4 decode failed");
+                    let translated = translate_sm4_module_to_wgsl(
+                        &dxbc,
+                        black_box(&module),
+                        black_box(&signatures),
+                    )
+                    .expect("WGSL translation failed");
+                    black_box(translated.wgsl);
+                })
+            });
+        }
+        group.finish();
+    }
+
+    // End-to-end bootstrap path (DXBC bytes → WGSL) for MOV/RET-only shaders.
+    {
+        let fixtures = ["vs_passthrough.dxbc", "ps_passthrough.dxbc"];
+        let mut group = c.benchmark_group("dxbc_to_wgsl_end_to_end_bootstrap");
+        for name in fixtures {
+            let bytes = load_fixture(name);
+            group.throughput(Throughput::Bytes(bytes.len() as u64));
+            group.bench_with_input(BenchmarkId::from_parameter(name), &bytes, |b, bytes| {
+                b.iter(|| {
+                    let dxbc = aero_dxbc::DxbcFile::parse(black_box(bytes.as_slice()))
+                        .expect("fixture should parse as DXBC");
+                    let program =
+                        Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 token parse failed");
+                    let translated = translate_sm4_to_wgsl_bootstrap(black_box(&program))
+                        .expect("bootstrap WGSL translation failed");
+                    black_box(translated.wgsl);
+                })
+            });
+        }
+        group.finish();
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+criterion_group!(
+    benches,
+    bench_dxbc_parse,
+    bench_sm4_decode,
+    bench_wgsl_translate,
+    bench_end_to_end
+);
 #[cfg(not(target_arch = "wasm32"))]
 criterion_main!(benches);
