@@ -353,6 +353,12 @@ static NTSTATUS VirtioStatusQTrySubmit(_Inout_ PVIRTIO_STATUSQ Q)
         (uint8_t)Q->PendingLedBitfield,
         (uint8_t)Q->KeyboardLedSupportedMask,
         (struct virtio_input_event_le*)bufVa);
+    if (eventCount == 0) {
+        VIOINPUT_LOG(VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ, "statusq led_translate returned 0 events\n");
+        VirtioStatusQPushFreeTxBuffer(Q, idx);
+        Q->PendingValid = FALSE;
+        return STATUS_SUCCESS;
+    }
     if (eventCount > VIOINPUT_STATUSQ_EVENTS_PER_BUFFER) {
         VIOINPUT_LOG(
             VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ,
