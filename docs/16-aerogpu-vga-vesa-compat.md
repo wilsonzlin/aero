@@ -66,10 +66,10 @@ See:
 At all times, the browser canvas renders from exactly one active scanout source:
 
 ```text
-Legacy VGA text / VBE LFB  ──(WDDM claims scanout)──▶  WDDM scanout
+Legacy VGA text / VBE LFB  ──(SCANOUT0_ENABLE=1)──▶  WDDM scanout
             ▲                                     │
-            ├──────────(SCANOUT0_ENABLE=0)─────────┘
-            └──────────────(VM reset)──────────────┘
+            ├──────────(SCANOUT0_ENABLE=0)────────┤
+            └──────────────(VM reset)─────────────┘
 ```
 
 Implementation-wise, AeroGPU owns **both**:
