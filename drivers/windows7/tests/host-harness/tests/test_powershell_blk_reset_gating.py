@@ -49,6 +49,12 @@ class PowerShellBlkResetGatingTests(unittest.TestCase):
         # for log scraping/debugging (best-effort; does not affect PASS/FAIL).
         self.assertIn("AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RESET|", self.text)
 
+    def test_flag_not_set_skip_includes_provisioning_hint(self) -> None:
+        # When the guest emits SKIP|reason=flag_not_set and -WithBlkReset is enabled, the harness
+        # should surface a clear provisioning hint.
+        self.assertIn("flag_not_set", self.text)
+        self.assertIn("--test-blk-reset", self.text)
+
 
 if __name__ == "__main__":
     unittest.main()
