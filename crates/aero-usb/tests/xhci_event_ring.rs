@@ -447,6 +447,67 @@ fn event_ring_consumer_full_lap_same_erdp_toggles_cycle_and_unblocks_producer() 
 }
 
 #[test]
+fn event_ring_multi_segment_wraps_to_first_segment_and_toggles_cycle() {
+    let mut mem = TestMemory::new(0x40_000);
+
+    let erstba = 0x1000;
+    let seg0_base = 0x2000;
+    let seg1_base = 0x3000;
+    // Two segments, 2 TRBs each.
+    write_erst_entry(&mut mem, erstba, seg0_base, 2);
+    write_erst_entry(&mut mem, erstba + 16, seg1_base, 2);
+
+    let mut xhci = XhciController::new();
+    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTSZ, 4, 2);
+    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_LO, 4, erstba as u32);
+    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERSTBA_HI, 4, (erstba >> 32) as u32);
+    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_LO, 4, seg0_base as u32);
+    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_HI, 4, (seg0_base >> 32) as u32);
+    xhci.mmio_write(&mut mem, regs::REG_INTR0_IMAN, 4, IMAN_IE);
+
+    for i in 0..5u64 {
+        let mut evt = Trb::default();
+        evt.parameter = 0x1000 + i;
+        evt.set_trb_type(TrbType::PortStatusChangeEvent);
+        xhci.post_event(evt);
+    }
+
+    // Drain into both segments; the ring holds 4 TRBs total, so 1 event should remain pending.
+    xhci.service_event_ring(&mut mem);
+    assert_eq!(xhci.pending_event_count(), 1);
+
+    let trb0 = Trb::read_from(&mut mem, seg0_base);
+    let trb1 = Trb::read_from(&mut mem, seg0_base + TRB_LEN as u64);
+    let trb2 = Trb::read_from(&mut mem, seg1_base);
+    let trb3 = Trb::read_from(&mut mem, seg1_base + TRB_LEN as u64);
+
+    assert!(trb0.cycle());
+    assert!(trb1.cycle());
+    assert!(trb2.cycle());
+    assert!(trb3.cycle());
+    assert_eq!(trb0.parameter, 0x1000);
+    assert_eq!(trb1.parameter, 0x1001);
+    assert_eq!(trb2.parameter, 0x1002);
+    assert_eq!(trb3.parameter, 0x1003);
+
+    // Simulate the guest consuming both TRBs in the first segment by advancing ERDP into segment 1.
+    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_LO, 4, seg1_base as u32);
+    xhci.mmio_write(&mut mem, regs::REG_INTR0_ERDP_HI, 4, (seg1_base >> 32) as u32);
+
+    // The producer should have wrapped back to segment 0 and toggled its cycle bit, so it can now
+    // overwrite the consumed TRB0 slot.
+    xhci.service_event_ring(&mut mem);
+    assert_eq!(xhci.pending_event_count(), 0);
+
+    let wrapped = Trb::read_from(&mut mem, seg0_base);
+    assert!(
+        !wrapped.cycle(),
+        "producer should toggle cycle bit after wrapping past the final segment"
+    );
+    assert_eq!(wrapped.parameter, 0x1004);
+}
+
+#[test]
 fn port_status_change_event_is_delivered_into_guest_event_ring() {
     let mut mem = TestMemory::new(0x20_000);
 
