@@ -44,5 +44,15 @@ export function assertValidLeaseEndpoint(endpoint: string | undefined): void {
   if (!endpoint.startsWith("/")) {
     throw new Error("leaseEndpoint must be a same-origin path starting with '/'");
   }
+  // `//example.com` is a protocol-relative URL (cross-origin). Disallow it even though it starts
+  // with `/`.
+  if (endpoint.startsWith("//")) {
+    throw new Error("leaseEndpoint must not start with '//'");
+  }
+  // Defensive: disallow embedded absolute URLs in query params (e.g. `/lease?url=https://...`).
+  // This value is persisted and must remain stable + non-secret.
+  const lower = endpoint.toLowerCase();
+  if (lower.includes("http:") || lower.includes("https:")) {
+    throw new Error("leaseEndpoint must not contain http:/https:");
+  }
 }
-

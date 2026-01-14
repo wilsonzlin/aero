@@ -36,8 +36,15 @@ describe("assertValidLeaseEndpoint", () => {
     expect(() => assertValidLeaseEndpoint("https://evil.example/lease")).toThrow();
   });
 
+  it("rejects protocol-relative URL", () => {
+    expect(() => assertValidLeaseEndpoint("//evil.example/lease")).toThrow();
+  });
+
+  it("rejects embedded absolute URL", () => {
+    expect(() => assertValidLeaseEndpoint("/lease?next=https://evil.example/lease")).toThrow();
+  });
+
   it("rejects path without leading slash", () => {
     expect(() => assertValidLeaseEndpoint("api/lease")).toThrow();
   });
 });
-
