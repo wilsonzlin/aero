@@ -315,6 +315,14 @@ impl UsbHidConsumerControl {
                 return;
             }
             if !self.pressed_usages.contains(&usage) {
+                // Host input is untrusted; bound the pressed-usage stack so a stream of unique
+                // (possibly bogus) consumer usages can't grow memory without limit.
+                //
+                // Keep the most recently pressed usages since the current report always reflects
+                // the last pressed usage.
+                if self.pressed_usages.len() >= MAX_PRESSED_USAGES {
+                    self.pressed_usages.remove(0);
+                }
                 self.pressed_usages.push(usage);
             }
         } else {
@@ -771,6 +779,24 @@ pub(super) static HID_REPORT_DESCRIPTOR: [u8; 23] = [
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pressed_usages_is_bounded() {
+        let mut dev = UsbHidConsumerControl::new();
+
+        // Press more unique usages than the bound; we should drop the oldest entries so the "last
+        // pressed" ordering semantics remain intact.
+        for usage in 1u16..=((MAX_PRESSED_USAGES as u16) + 10) {
+            dev.consumer_event(usage, true);
+        }
+
+        assert_eq!(dev.pressed_usages.len(), MAX_PRESSED_USAGES);
+        assert_eq!(dev.pressed_usages.first().copied(), Some(11));
+        assert_eq!(
+            dev.pressed_usages.last().copied(),
+            Some((MAX_PRESSED_USAGES as u16) + 10)
+        );
+    }
 
     #[test]
     fn snapshot_restore_rejects_oversized_pressed_usages_count() {
