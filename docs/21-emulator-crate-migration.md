@@ -84,7 +84,7 @@ expected outcome is either:
 - `src/display/`
 - VGA/VBE-focused emulator tests once equivalents exist in the canonical stack:
   - `tests/vga_smoke.rs`
-  - `tests/vbe*`
+  - `tests/golden/vga_*`
 
 ### PCI / interrupts / “platform wiring”
 
@@ -306,9 +306,10 @@ This is intentionally a sequence of small PRs (mirrors the style of the storage 
      canonical VM wiring story.
 
 2. **VGA/VBE: converge on `aero-gpu-vga`**
-   - Move/duplicate any missing VGA/VBE tests from `crates/emulator/tests` into `crates/aero-gpu-vga`
-     (unit tests) and/or `crates/aero-machine` (integration/boot tests).
-   - Delete `crates/emulator/src/devices/vga/` and `crates/emulator/src/display/` once coverage exists.
+    - Move/duplicate any missing VGA/VBE tests from `crates/emulator/tests` into `crates/aero-gpu-vga`
+      (unit tests) and/or `crates/aero-machine` (integration/boot tests).
+    - Delete `crates/emulator/src/devices/vga.rs` and `crates/emulator/src/display/` once no callers
+      rely on the legacy `emulator::devices::vga` / `emulator::display` paths.
 
 3. **USB: converge UHCI wiring on the canonical PCI stack**
    - Ensure UHCI PCI wiring lives only in `crates/devices/src/usb/uhci.rs`.
@@ -325,11 +326,12 @@ This is intentionally a sequence of small PRs (mirrors the style of the storage 
      dedicated crates, e.g. `aero-net-e1000`).
    - Reduce `crates/emulator/src/io/net/*` to thin compatibility shims (or delete entirely).
 
-6. **Platform wiring: delete the emulator’s bespoke PCI/interrupt framework**
-   - Move remaining PCI/APIC/interrupt glue into `aero-pc-platform` and/or directly into
-     `aero-machine`.
-   - Delete `crates/emulator/src/chipset.rs`, `src/memory_bus.rs`, `src/io/pci.rs`,
-     `src/devices/{ioapic,lapic}.rs`.
+6. **Platform/PCI wiring: delete the emulator’s bespoke PCI framework**
+    - Move remaining PCI/platform glue into `aero-pc-platform` and/or directly into `aero-machine`.
+    - Delete the emulator-local PCI framework once it is no longer used by the remaining legacy
+      device models:
+      - `crates/emulator/src/io/pci.rs`
+      - `crates/emulator/src/devices/pci/mod.rs` (after AeroGPU is extracted)
 
 7. **AeroGPU extraction**
     - Extract the AeroGPU PCI device model out of `crates/emulator` into the canonical device layer
