@@ -27,6 +27,42 @@ typedef struct msix_test_ctx {
     int drain_calls_by_queue[8];
 } msix_test_ctx_t;
 
+typedef struct ke_insert_queue_dpc_hook_ctx {
+    int call_count;
+    LONG inflight_at_call[4];
+    BOOLEAN inserted_at_call[4];
+    USHORT vector_index_at_call[4];
+} ke_insert_queue_dpc_hook_ctx_t;
+
+static VOID ke_insert_queue_dpc_hook(_Inout_ PKDPC Dpc,
+                                     _In_opt_ PVOID SystemArgument1,
+                                     _In_opt_ PVOID SystemArgument2,
+                                     _In_opt_ PVOID Context)
+{
+    PVIRTIO_MSIX_WDM_VECTOR vec;
+    PVIRTIO_MSIX_WDM msix;
+    ke_insert_queue_dpc_hook_ctx_t* ctx = (ke_insert_queue_dpc_hook_ctx_t*)Context;
+
+    (void)SystemArgument1;
+    (void)SystemArgument2;
+
+    assert(ctx != NULL);
+    assert(Dpc != NULL);
+
+    vec = (PVIRTIO_MSIX_WDM_VECTOR)Dpc->DeferredContext;
+    assert(vec != NULL);
+    msix = vec->Msix;
+    assert(msix != NULL);
+
+    assert(ctx->call_count >= 0);
+    assert(ctx->call_count < (int)(sizeof(ctx->inflight_at_call) / sizeof(ctx->inflight_at_call[0])));
+
+    ctx->inserted_at_call[ctx->call_count] = Dpc->Inserted;
+    ctx->inflight_at_call[ctx->call_count] = InterlockedCompareExchange(&msix->DpcInFlight, 0, 0);
+    ctx->vector_index_at_call[ctx->call_count] = vec->VectorIndex;
+    ctx->call_count++;
+}
+
 static VOID evt_config(_In_ PDEVICE_OBJECT DeviceObject, _In_opt_ PVOID Cookie)
 {
     msix_test_ctx_t* ctx = (msix_test_ctx_t*)Cookie;
@@ -280,6 +316,90 @@ static void test_all_on_0_fallback_drains_all_queues(void)
     VirtioMsixDisconnect(&msix);
 }
 
+static void test_isr_increments_dpc_inflight_before_queueing_dpc(void)
+{
+    VIRTIO_MSIX_WDM msix;
+    DEVICE_OBJECT dev;
+    DEVICE_OBJECT pdo;
+    CM_PARTIAL_RESOURCE_DESCRIPTOR desc;
+    NTSTATUS status;
+    ke_insert_queue_dpc_hook_ctx_t hook_ctx;
+
+    desc = make_msg_desc(2);
+    RtlZeroMemory(&hook_ctx, sizeof(hook_ctx));
+
+    WdkTestSetKeInsertQueueDpcHook(ke_insert_queue_dpc_hook, &hook_ctx);
+
+    status = VirtioMsixConnect(&dev, &pdo, &desc, 0, NULL, NULL, NULL, NULL, &msix);
+    assert(status == STATUS_SUCCESS);
+    assert(msix.UsedVectorCount == 1);
+
+    /*
+     * Trigger two interrupts before running the DPC.
+     *
+     * ISR increments DpcInFlight *before* calling KeInsertQueueDpc, and then
+     * decrements it on the "already queued" path. This test observes the
+     * transient DpcInFlight=2 case on the second interrupt.
+     */
+    assert(WdkTestTriggerMessageInterrupt(msix.MessageInfo, 0) != FALSE);
+    assert(WdkTestTriggerMessageInterrupt(msix.MessageInfo, 0) != FALSE);
+
+    assert(hook_ctx.call_count == 2);
+
+    assert(hook_ctx.vector_index_at_call[0] == 0);
+    assert(hook_ctx.inserted_at_call[0] == FALSE);
+    assert(hook_ctx.inflight_at_call[0] == 1);
+
+    assert(hook_ctx.vector_index_at_call[1] == 0);
+    assert(hook_ctx.inserted_at_call[1] != FALSE);
+    assert(hook_ctx.inflight_at_call[1] == 2);
+
+    /* Drain the queued DPC and ensure state returns to idle. */
+    assert(WdkTestRunQueuedDpc(&msix.Vectors[0].Dpc) != FALSE);
+    assert(msix.DpcInFlight == 0);
+
+    VirtioMsixDisconnect(&msix);
+    WdkTestClearKeInsertQueueDpcHook();
+}
+
+static void test_isr_returns_false_for_out_of_range_message_id(void)
+{
+    VIRTIO_MSIX_WDM msix;
+    DEVICE_OBJECT dev;
+    DEVICE_OBJECT pdo;
+    CM_PARTIAL_RESOURCE_DESCRIPTOR desc;
+    NTSTATUS status;
+    PKINTERRUPT intr0;
+    PKMESSAGE_SERVICE_ROUTINE sr;
+    PVOID ctx;
+    BOOLEAN claimed;
+
+    desc = make_msg_desc(1);
+
+    WdkTestResetKeInsertQueueDpcCounts();
+
+    status = VirtioMsixConnect(&dev, &pdo, &desc, 0, NULL, NULL, NULL, NULL, &msix);
+    assert(status == STATUS_SUCCESS);
+    assert(msix.UsedVectorCount == 1);
+    assert(msix.MessageInfo != NULL);
+    assert(msix.MessageInfo->MessageCount == 1);
+
+    intr0 = msix.MessageInfo->MessageInfo[0].InterruptObject;
+    assert(intr0 != NULL);
+    sr = intr0->MessageServiceRoutine;
+    ctx = intr0->ServiceContext;
+    assert(sr != NULL);
+
+    /* Out-of-range MessageId should be rejected and must not queue a DPC. */
+    claimed = sr(intr0, ctx, 99);
+    assert(claimed == FALSE);
+    assert(msix.DpcInFlight == 0);
+    assert(msix.Vectors[0].Dpc.Inserted == FALSE);
+    assert(WdkTestGetKeInsertQueueDpcCount() == 0);
+
+    VirtioMsixDisconnect(&msix);
+}
+
 int main(void)
 {
     test_connect_validation();
@@ -288,6 +408,8 @@ int main(void)
     test_disconnect_waits_for_inflight_dpc();
     test_multivector_mapping();
     test_all_on_0_fallback_drains_all_queues();
+    test_isr_increments_dpc_inflight_before_queueing_dpc();
+    test_isr_returns_false_for_out_of_range_message_id();
 
     printf("virtio_msix_wdm_tests: PASS\n");
     return 0;
