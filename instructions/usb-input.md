@@ -259,6 +259,10 @@ cargo test -p aero-machine --lib --locked
 # Canonical USB stack tests (catches UHCI/EHCI/xHCI regressions).
 cargo test -p aero-usb --locked
 
+# xHCI gotcha: transfer-ring execution is gated on `USBCMD.RUN`. If you're writing a unit test that
+# rings xHCI doorbells and expects DMA to occur, make sure to set RUN first (see existing xHCI tests
+# for the `ctrl.mmio_write(regs::REG_USBCMD, 4, u64::from(regs::USBCMD_RUN))` pattern).
+
 # Optional: also run a small input-focused Playwright subset.
 # (Defaults to Chromium + 1 worker; sets `AERO_WASM_PACKAGES=core` unless already configured.)
 cargo xtask input --e2e
