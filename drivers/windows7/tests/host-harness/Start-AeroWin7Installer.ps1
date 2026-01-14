@@ -59,6 +59,22 @@ if ($QemuSystem -match "[\\/\\\\]" -and (Test-Path -LiteralPath $QemuSystem -Pat
   throw "-QemuSystem must be a QEMU system binary path (got a directory): $QemuSystem"
 }
 
+if ($CreateDisk) {
+  if ($QemuImg -match "[\\/\\\\]" -and (Test-Path -LiteralPath $QemuImg -PathType Container)) {
+    throw "-QemuImg must be a qemu-img binary path (got a directory): $QemuImg"
+  }
+}
+
+if ($DiskSizeGB -le 0) {
+  throw "-DiskSizeGB must be a positive integer."
+}
+if ($MemoryMB -le 0) {
+  throw "-MemoryMB must be a positive integer."
+}
+if ($Smp -le 0) {
+  throw "-Smp must be a positive integer."
+}
+
 $Win7IsoPath = (Resolve-Path -LiteralPath $Win7IsoPath).Path
 if (Test-Path -LiteralPath $Win7IsoPath -PathType Container) {
   throw "-Win7IsoPath must be a file path (got a directory): $Win7IsoPath"
