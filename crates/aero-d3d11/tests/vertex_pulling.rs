@@ -1695,6 +1695,405 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {{
 }
 
 #[test]
+fn compute_vertex_pulling_reads_extended_formats() {
+    fn push_u32(buf: &mut Vec<u8>, v: u32) {
+        buf.extend_from_slice(&v.to_le_bytes());
+    }
+
+    fn assert_approx(a: f32, b: f32, eps: f32) {
+        if (a - b).abs() > eps {
+            panic!("expected {a} ~= {b} (eps={eps})");
+        }
+    }
+
+    pollster::block_on(async {
+        let (device, queue, supports_compute) = match create_device_queue().await {
+            Ok(v) => v,
+            Err(e) => {
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                return Ok(());
+            }
+        };
+        if !supports_compute {
+            common::skip_or_panic(module_path!(), "compute unsupported");
+            return Ok(());
+        }
+
+        // ILAY: multiple attributes in one struct to exercise the various `load_attr_*` helpers:
+        // - loc0: R16G16_FLOAT (f16x2)
+        // - loc1: R16G16_SINT (i16x2)
+        // - loc2: R8G8B8A8_SINT (i8x4)
+        // - loc3: R16G16_UNORM (unorm16x2)
+        // - loc4: R16G16_SNORM (snorm16x2)
+        // - loc5: R16G16B16A16_FLOAT (f16x4)
+        // - loc6: R8G8B8A8_SNORM (snorm8x4)
+        let tex_hash = aero_d3d11::input_layout::fnv1a_32(b"TEXCOORD");
+        let mut blob = Vec::new();
+        push_u32(
+            &mut blob,
+            aero_d3d11::input_layout::AEROGPU_INPUT_LAYOUT_BLOB_MAGIC,
+        );
+        push_u32(
+            &mut blob,
+            aero_d3d11::input_layout::AEROGPU_INPUT_LAYOUT_BLOB_VERSION,
+        );
+        push_u32(&mut blob, 7); // element_count
+        push_u32(&mut blob, 0); // reserved0
+
+        let mut push_elem = |semantic_index: u32, dxgi_format: u32, offset: u32| {
+            push_u32(&mut blob, tex_hash);
+            push_u32(&mut blob, semantic_index);
+            push_u32(&mut blob, dxgi_format);
+            push_u32(&mut blob, 0); // input_slot
+            push_u32(&mut blob, offset);
+            push_u32(&mut blob, 0); // per-vertex
+            push_u32(&mut blob, 0); // step rate
+        };
+        push_elem(0, 34, 0); // DXGI_FORMAT_R16G16_FLOAT
+        push_elem(1, 38, 4); // DXGI_FORMAT_R16G16_SINT
+        push_elem(2, 32, 8); // DXGI_FORMAT_R8G8B8A8_SINT
+        push_elem(3, 35, 12); // DXGI_FORMAT_R16G16_UNORM
+        push_elem(4, 37, 16); // DXGI_FORMAT_R16G16_SNORM
+        push_elem(5, 10, 20); // DXGI_FORMAT_R16G16B16A16_FLOAT
+        push_elem(6, 31, 28); // DXGI_FORMAT_R8G8B8A8_SNORM
+
+        let layout = InputLayoutDesc::parse(&blob).context("parse ILAY")?;
+        let signature = [
+            VsInputSignatureElement {
+                semantic_name_hash: tex_hash,
+                semantic_index: 0,
+                input_register: 0,
+                mask: 0x3, // xy
+                shader_location: 0,
+            },
+            VsInputSignatureElement {
+                semantic_name_hash: tex_hash,
+                semantic_index: 1,
+                input_register: 1,
+                mask: 0x3, // xy
+                shader_location: 1,
+            },
+            VsInputSignatureElement {
+                semantic_name_hash: tex_hash,
+                semantic_index: 2,
+                input_register: 2,
+                mask: 0xF,
+                shader_location: 2,
+            },
+            VsInputSignatureElement {
+                semantic_name_hash: tex_hash,
+                semantic_index: 3,
+                input_register: 3,
+                mask: 0x3, // xy
+                shader_location: 3,
+            },
+            VsInputSignatureElement {
+                semantic_name_hash: tex_hash,
+                semantic_index: 4,
+                input_register: 4,
+                mask: 0x3, // xy
+                shader_location: 4,
+            },
+            VsInputSignatureElement {
+                semantic_name_hash: tex_hash,
+                semantic_index: 5,
+                input_register: 5,
+                mask: 0xF,
+                shader_location: 5,
+            },
+            VsInputSignatureElement {
+                semantic_name_hash: tex_hash,
+                semantic_index: 6,
+                input_register: 6,
+                mask: 0xF,
+                shader_location: 6,
+            },
+        ];
+
+        let stride = 32u32;
+        let slot_strides = [stride];
+        let binding = InputLayoutBinding::new(&layout, &slot_strides);
+        let pulling = VertexPullingLayout::new(&binding, &signature).context("build pulling")?;
+
+        let mut vb_bytes = Vec::new();
+        // f16x2 = (1.0, 0.5)
+        vb_bytes.extend_from_slice(&0x3c00u16.to_le_bytes());
+        vb_bytes.extend_from_slice(&0x3800u16.to_le_bytes());
+        // i16x2 = (-1, -32768)
+        vb_bytes.extend_from_slice(&(-1i16).to_le_bytes());
+        vb_bytes.extend_from_slice(&(-32768i16).to_le_bytes());
+        // i8x4 = (-1, 1, -128, 127)
+        vb_bytes.extend_from_slice(&[(-1i8) as u8, 1u8, (-128i8) as u8, 127u8]);
+        // unorm16x2 = (0.0, 1.0)
+        vb_bytes.extend_from_slice(&0u16.to_le_bytes());
+        vb_bytes.extend_from_slice(&0xffffu16.to_le_bytes());
+        // snorm16x2 = (-1.0, 1.0)
+        vb_bytes.extend_from_slice(&(-32768i16).to_le_bytes());
+        vb_bytes.extend_from_slice(&(32767i16).to_le_bytes());
+        // f16x4 = (1.0, -2.0, 4.0, 0.0)
+        vb_bytes.extend_from_slice(&0x3c00u16.to_le_bytes()); // 1.0
+        vb_bytes.extend_from_slice(&0xc000u16.to_le_bytes()); // -2.0
+        vb_bytes.extend_from_slice(&0x4400u16.to_le_bytes()); // 4.0
+        vb_bytes.extend_from_slice(&0x0000u16.to_le_bytes()); // 0.0
+                                                              // snorm8x4 = (-1.0, 1.0, 0.0, -1/127)
+        vb_bytes.extend_from_slice(&[(-128i8) as u8, 127u8, 0u8, (-1i8) as u8]);
+
+        assert_eq!(vb_bytes.len(), stride as usize);
+        let vb = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("vertex pulling extended vb"),
+            size: vb_bytes.len() as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&vb, 0, &vb_bytes);
+
+        let uniform_bytes = pulling.pack_uniform_bytes(
+            &[VertexPullingSlot {
+                base_offset_bytes: 0,
+                stride_bytes: stride,
+            }],
+            VertexPullingDrawParams::default(),
+        );
+        let ia_uniform = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("vertex pulling extended uniform"),
+            size: uniform_bytes.len() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&ia_uniform, 0, &uniform_bytes);
+
+        let out_words = 20u64;
+        let out_size = out_words * 4;
+        let out_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("vertex pulling extended out"),
+            size: out_size,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+
+        let off_f16x2 = pulling
+            .attributes
+            .iter()
+            .find(|a| a.shader_location == 0)
+            .unwrap()
+            .offset_bytes;
+        let off_i16x2 = pulling
+            .attributes
+            .iter()
+            .find(|a| a.shader_location == 1)
+            .unwrap()
+            .offset_bytes;
+        let off_i8x4 = pulling
+            .attributes
+            .iter()
+            .find(|a| a.shader_location == 2)
+            .unwrap()
+            .offset_bytes;
+        let off_unorm16x2 = pulling
+            .attributes
+            .iter()
+            .find(|a| a.shader_location == 3)
+            .unwrap()
+            .offset_bytes;
+        let off_snorm16x2 = pulling
+            .attributes
+            .iter()
+            .find(|a| a.shader_location == 4)
+            .unwrap()
+            .offset_bytes;
+        let off_f16x4 = pulling
+            .attributes
+            .iter()
+            .find(|a| a.shader_location == 5)
+            .unwrap()
+            .offset_bytes;
+        let off_snorm8x4 = pulling
+            .attributes
+            .iter()
+            .find(|a| a.shader_location == 6)
+            .unwrap()
+            .offset_bytes;
+
+        let prelude = pulling.wgsl_prelude();
+        let wgsl = format!(
+            r#"
+{prelude}
+
+@group(0) @binding(0) var<storage, read_write> out: array<u32>;
+
+@compute @workgroup_size(1)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {{
+  let vertex: u32 = aero_vp_ia.first_vertex + gid.x;
+  let base: u32 = aero_vp_ia.slots[0].base_offset_bytes + vertex * aero_vp_ia.slots[0].stride_bytes;
+
+  let f16_2: vec2<f32> = load_attr_f16x2(0u, base + {off_f16x2}u);
+  let i16_2: vec2<i32> = load_attr_i16x2(0u, base + {off_i16x2}u);
+  let i8_4: vec4<i32> = load_attr_i8x4(0u, base + {off_i8x4}u);
+  let un16_2: vec2<f32> = load_attr_unorm16x2(0u, base + {off_un16x2}u);
+  let sn16_2: vec2<f32> = load_attr_snorm16x2(0u, base + {off_sn16x2}u);
+  let f16_4: vec4<f32> = load_attr_f16x4(0u, base + {off_f16x4}u);
+  let sn8_4: vec4<f32> = load_attr_snorm8x4(0u, base + {off_sn8x4}u);
+
+  // f16x2 -> f32 bits
+  out[0] = bitcast<u32>(f16_2.x);
+  out[1] = bitcast<u32>(f16_2.y);
+  // i16x2 sign extension
+  out[2] = u32(i16_2.x);
+  out[3] = u32(i16_2.y);
+  // i8x4 sign extension
+  out[4] = u32(i8_4.x);
+  out[5] = u32(i8_4.y);
+  out[6] = u32(i8_4.z);
+  out[7] = u32(i8_4.w);
+  // normalized formats -> f32 bits
+  out[8] = bitcast<u32>(un16_2.x);
+  out[9] = bitcast<u32>(un16_2.y);
+  out[10] = bitcast<u32>(sn16_2.x);
+  out[11] = bitcast<u32>(sn16_2.y);
+  // f16x4 -> f32 bits
+  out[12] = bitcast<u32>(f16_4.x);
+  out[13] = bitcast<u32>(f16_4.y);
+  out[14] = bitcast<u32>(f16_4.z);
+  out[15] = bitcast<u32>(f16_4.w);
+  // snorm8x4 -> f32 bits
+  out[16] = bitcast<u32>(sn8_4.x);
+  out[17] = bitcast<u32>(sn8_4.y);
+  out[18] = bitcast<u32>(sn8_4.z);
+  out[19] = bitcast<u32>(sn8_4.w);
+}}
+"#,
+            off_f16x2 = off_f16x2,
+            off_i16x2 = off_i16x2,
+            off_i8x4 = off_i8x4,
+            off_un16x2 = off_unorm16x2,
+            off_sn16x2 = off_snorm16x2,
+            off_f16x4 = off_f16x4,
+            off_sn8x4 = off_snorm8x4,
+        );
+
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("vertex pulling extended shader"),
+            source: wgpu::ShaderSource::Wgsl(wgsl.into()),
+        });
+
+        let out_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("vertex pulling extended out bgl"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+        let out_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("vertex pulling extended out bg"),
+            layout: &out_bgl,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: out_buf.as_entire_binding(),
+            }],
+        });
+
+        let empty_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("vertex pulling extended empty bgl"),
+            entries: &[],
+        });
+        let empty_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("vertex pulling extended empty bg"),
+            layout: &empty_bgl,
+            entries: &[],
+        });
+
+        let ia_bgl = pulling.create_bind_group_layout(&device);
+        let ia_bg = pulling.create_bind_group(
+            &device,
+            &ia_bgl,
+            &[&vb],
+            wgpu::BufferBinding {
+                buffer: &ia_uniform,
+                offset: 0,
+                size: None,
+            },
+        );
+        let pipeline_layout = create_vertex_pulling_pipeline_layout(
+            &device,
+            "vertex pulling extended pipeline layout",
+            &out_bgl,
+            &ia_bgl,
+            &empty_bgl,
+        );
+
+        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("vertex pulling extended pipeline"),
+            layout: Some(&pipeline_layout),
+            module: &shader,
+            entry_point: "main",
+            compilation_options: Default::default(),
+        });
+
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("vertex pulling extended encoder"),
+        });
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("vertex pulling extended pass"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(&pipeline);
+            pass.set_bind_group(0, &out_bg, &[]);
+            for group in 1..VERTEX_PULLING_GROUP {
+                pass.set_bind_group(group, &empty_bg, &[]);
+            }
+            pass.set_bind_group(VERTEX_PULLING_GROUP, &ia_bg, &[]);
+            pass.dispatch_workgroups(1, 1, 1);
+        }
+        queue.submit([encoder.finish()]);
+
+        let bytes = read_buffer(&device, &queue, &out_buf, out_size).await?;
+        let got: Vec<u32> = bytes
+            .chunks_exact(4)
+            .map(|c| u32::from_le_bytes(c.try_into().unwrap()))
+            .collect();
+        assert_eq!(got.len(), out_words as usize);
+
+        // f16x2
+        assert_approx(f32::from_bits(got[0]), 1.0, 1e-6);
+        assert_approx(f32::from_bits(got[1]), 0.5, 1e-6);
+        // i16x2
+        assert_eq!(got[2] as i32, -1);
+        assert_eq!(got[3] as i32, -32768);
+        // i8x4
+        assert_eq!(got[4] as i32, -1);
+        assert_eq!(got[5] as i32, 1);
+        assert_eq!(got[6] as i32, -128);
+        assert_eq!(got[7] as i32, 127);
+        // unorm16x2
+        assert_approx(f32::from_bits(got[8]), 0.0, 1e-6);
+        assert_approx(f32::from_bits(got[9]), 1.0, 1e-6);
+        // snorm16x2
+        assert_approx(f32::from_bits(got[10]), -1.0, 1e-6);
+        assert_approx(f32::from_bits(got[11]), 1.0, 1e-6);
+        // f16x4
+        assert_approx(f32::from_bits(got[12]), 1.0, 1e-6);
+        assert_approx(f32::from_bits(got[13]), -2.0, 1e-6);
+        assert_approx(f32::from_bits(got[14]), 4.0, 1e-6);
+        assert_approx(f32::from_bits(got[15]), 0.0, 1e-6);
+        // snorm8x4
+        assert_approx(f32::from_bits(got[16]), -1.0, 1e-6);
+        assert_approx(f32::from_bits(got[17]), 1.0, 1e-6);
+        assert_approx(f32::from_bits(got[18]), 0.0, 1e-6);
+        assert_approx(f32::from_bits(got[19]), -(1.0 / 127.0), 1e-6);
+
+        Ok::<_, anyhow::Error>(())
+    })
+    .unwrap();
+}
+
+#[test]
 fn compute_vertex_pulling_handles_unaligned_base_offset() {
     fn push_u32(buf: &mut Vec<u8>, v: u32) {
         buf.extend_from_slice(&v.to_le_bytes());
