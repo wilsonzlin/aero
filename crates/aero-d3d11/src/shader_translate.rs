@@ -3383,6 +3383,14 @@ fn emit_instructions(
                 value,
                 mask,
             } => {
+                let mask_bits = mask.0 & 0xF;
+                if mask_bits == 0 {
+                    return Err(ShaderTranslateError::UnsupportedWriteMask {
+                        inst_index,
+                        opcode: "store_structured",
+                        mask: *mask,
+                    });
+                }
                 let Some((kind, stride)) = uav_buffer_decls.get(&uav.slot).copied() else {
                     return Err(ShaderTranslateError::UnsupportedInstruction {
                         inst_index,
@@ -3407,7 +3415,6 @@ fn emit_instructions(
                 let value_name = format!("store_struct_val{inst_index}");
                 w.line(&format!("let {value_name}: vec4<u32> = {value_u};"));
 
-                let mask_bits = mask.0 & 0xF;
                 let comps = [('x', 1u8, 0u32), ('y', 2u8, 1), ('z', 4u8, 2), ('w', 8u8, 3)];
                 for (c, bit, offset) in comps {
                     if (mask_bits & bit) != 0 {

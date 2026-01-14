@@ -1,7 +1,7 @@
 use aero_d3d11::{
     parse_signatures, translate_sm4_module_to_wgsl, BufferKind, BufferRef, DstOperand, DxbcFile,
-    FourCC, OperandModifier, RegFile, RegisterRef, ShaderModel, ShaderStage, Sm4Decl, Sm4Inst,
-    Sm4Module, SrcKind, SrcOperand, Swizzle, UavRef, WriteMask,
+    FourCC, OperandModifier, RegFile, RegisterRef, ShaderModel, ShaderStage, ShaderTranslateError,
+    Sm4Decl, Sm4Inst, Sm4Module, SrcKind, SrcOperand, Swizzle, UavRef, WriteMask,
 };
 use aero_dxbc::test_utils as dxbc_test_utils;
 
@@ -166,4 +166,44 @@ fn translates_compute_structured_buffer_load_store() {
         "expected stride 16 to participate in address calculation, wgsl={}",
         translated.wgsl
     );
+}
+
+#[test]
+fn rejects_store_structured_with_empty_write_mask() {
+    let dxbc_bytes = build_dxbc(&[(FOURCC_SHEX, Vec::new())]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+
+    let module = Sm4Module {
+        stage: ShaderStage::Compute,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: vec![
+            Sm4Decl::ThreadGroupSize { x: 1, y: 1, z: 1 },
+            Sm4Decl::UavBuffer {
+                slot: 0,
+                stride: 16,
+                kind: BufferKind::Structured,
+            },
+        ],
+        instructions: vec![
+            Sm4Inst::StoreStructured {
+                uav: UavRef { slot: 0 },
+                index: src_imm_u32_scalar(0),
+                offset: src_imm_u32_scalar(0),
+                value: src_imm_u32_scalar(0),
+                mask: WriteMask(0),
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let err = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).unwrap_err();
+    assert!(matches!(
+        err,
+        ShaderTranslateError::UnsupportedWriteMask {
+            opcode: "store_structured",
+            mask,
+            ..
+        } if mask.0 == 0
+    ));
 }
