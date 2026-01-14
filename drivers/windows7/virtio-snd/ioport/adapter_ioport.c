@@ -151,9 +151,10 @@ VirtIoSndReadForceNullBackend(_In_ PDEVICE_OBJECT DeviceObject)
     }
 
     /*
-     * Preferred location (INF creates this by default):
-      *   HKR\Parameters\ForceNullBackend (REG_DWORD)
-      *
+     * Preferred location (per-device, under the device instance key):
+     *   HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Device Parameters\Parameters\ForceNullBackend
+     *   (REG_DWORD)
+     *
      * Fallback: also accept the value in the driver key (PLUGPLAY_REGKEY_DRIVER)
      * for backwards compatibility with older installs.
      */

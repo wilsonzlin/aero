@@ -195,14 +195,16 @@ typedef struct _VIRTIOSND_DEVICE_EXTENSION {
     BOOLEAN InterruptDescPresent;
 
      /*
-      * Registry: HKR\Parameters\AllowPollingOnly (REG_DWORD)
+      * Registry (per-device, under the device instance key):
+      *   HKLM\SYSTEM\CurrentControlSet\Enum\<DeviceInstancePath>\Device Parameters\Parameters\AllowPollingOnly
+      *   (REG_DWORD)
       *
       * When TRUE, the driver is permitted to start even if no usable interrupt
       * resource can be discovered/connected (neither MSI/MSI-X nor legacy INTx).
       * In that case, higher layers are expected to rely on polling used rings for
       * completion delivery.
       *
-      * Default: 0 / FALSE (set by the INF; normal interrupt-driven mode).
+      * Default: 0 / FALSE (seeded by the INF; normal interrupt-driven mode).
       */
     BOOLEAN AllowPollingOnly;
 
