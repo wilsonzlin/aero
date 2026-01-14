@@ -8,6 +8,15 @@ pub enum D3DFormat {
     /// `D3DFMT_X8R8G8B8` (alpha treated as 1.0)
     X8R8G8B8,
 
+    /// `D3DFMT_R5G6B5` (alpha treated as 1.0)
+    R5G6B5,
+    /// `D3DFMT_A1R5G5B5`
+    A1R5G5B5,
+    /// `D3DFMT_X1R5G5B5` (alpha treated as 1.0)
+    X1R5G5B5,
+    /// `D3DFMT_A4R4G4B4`
+    A4R4G4B4,
+
     /// `D3DFMT_DXT1` / BC1
     Dxt1,
     /// `D3DFMT_DXT3` / BC2
@@ -46,8 +55,10 @@ pub struct FormatInfo {
     pub upload_is_compressed: bool,
 
     pub wgpu: wgpu::TextureFormat,
-    /// True when the source data is DXTn but the GPU texture is uncompressed and expects BGRA8.
-    pub decompress_to_bgra8: bool,
+    /// True when the source data is not in the same layout/format as the GPU texture and we must
+    /// convert on the CPU before staging the upload (e.g. BCn decompression or 16-bit packed color
+    /// expansion to BGRA8).
+    pub cpu_convert_to_bgra8: bool,
     /// For formats with unused alpha (X8R8G8B8) we force alpha to 255 on upload.
     pub force_opaque_alpha: bool,
 }
@@ -228,7 +239,7 @@ pub fn format_info(
             upload_block_width: 1,
             upload_block_height: 1,
             upload_is_compressed: false,
-            decompress_to_bgra8: false,
+            cpu_convert_to_bgra8: false,
             force_opaque_alpha: false,
         }),
         (D3DFormat::X8R8G8B8, _) => Ok(FormatInfo {
@@ -242,8 +253,29 @@ pub fn format_info(
             upload_block_width: 1,
             upload_block_height: 1,
             upload_is_compressed: false,
-            decompress_to_bgra8: false,
+            cpu_convert_to_bgra8: false,
             force_opaque_alpha: true,
+        }),
+
+        (
+            D3DFormat::R5G6B5 | D3DFormat::A1R5G5B5 | D3DFormat::X1R5G5B5 | D3DFormat::A4R4G4B4,
+            _,
+        ) => Ok(FormatInfo {
+            // These packed 16-bit formats are commonly used by D3D9 games, but WebGPU doesn't
+            // require native support on all backends. We store them as BGRA8 on the GPU and expand
+            // on upload.
+            d3d: format,
+            wgpu: wgpu::TextureFormat::Bgra8Unorm,
+            d3d_bytes_per_block: 2,
+            d3d_block_width: 1,
+            d3d_block_height: 1,
+            d3d_is_compressed: false,
+            upload_bytes_per_block: 4,
+            upload_block_width: 1,
+            upload_block_height: 1,
+            upload_is_compressed: false,
+            cpu_convert_to_bgra8: true,
+            force_opaque_alpha: false,
         }),
 
         (D3DFormat::Dxt1, _) if bc_supported => Ok(FormatInfo {
@@ -257,7 +289,7 @@ pub fn format_info(
             upload_block_width: 4,
             upload_block_height: 4,
             upload_is_compressed: true,
-            decompress_to_bgra8: false,
+            cpu_convert_to_bgra8: false,
             force_opaque_alpha: false,
         }),
         (D3DFormat::Dxt3, _) if bc_supported => Ok(FormatInfo {
@@ -271,7 +303,7 @@ pub fn format_info(
             upload_block_width: 4,
             upload_block_height: 4,
             upload_is_compressed: true,
-            decompress_to_bgra8: false,
+            cpu_convert_to_bgra8: false,
             force_opaque_alpha: false,
         }),
         (D3DFormat::Dxt5, _) if bc_supported => Ok(FormatInfo {
@@ -285,7 +317,7 @@ pub fn format_info(
             upload_block_width: 4,
             upload_block_height: 4,
             upload_is_compressed: true,
-            decompress_to_bgra8: false,
+            cpu_convert_to_bgra8: false,
             force_opaque_alpha: false,
         }),
 
@@ -300,7 +332,7 @@ pub fn format_info(
             upload_block_width: 1,
             upload_block_height: 1,
             upload_is_compressed: false,
-            decompress_to_bgra8: true,
+            cpu_convert_to_bgra8: true,
             force_opaque_alpha: false,
         }),
         (D3DFormat::Dxt3 | D3DFormat::Dxt5, _) => Ok(FormatInfo {
@@ -314,7 +346,7 @@ pub fn format_info(
             upload_block_width: 1,
             upload_block_height: 1,
             upload_is_compressed: false,
-            decompress_to_bgra8: true,
+            cpu_convert_to_bgra8: true,
             force_opaque_alpha: false,
         }),
 
@@ -329,7 +361,7 @@ pub fn format_info(
             upload_block_width: 1,
             upload_block_height: 1,
             upload_is_compressed: false,
-            decompress_to_bgra8: false,
+            cpu_convert_to_bgra8: false,
             force_opaque_alpha: false,
         }),
         (D3DFormat::D24S8, TextureUsageKind::DepthStencil) => Ok(FormatInfo {
@@ -343,7 +375,7 @@ pub fn format_info(
             upload_block_width: 1,
             upload_block_height: 1,
             upload_is_compressed: false,
-            decompress_to_bgra8: false,
+            cpu_convert_to_bgra8: false,
             force_opaque_alpha: false,
         }),
         (D3DFormat::D32, TextureUsageKind::DepthStencil) => Ok(FormatInfo {
@@ -357,7 +389,7 @@ pub fn format_info(
             upload_block_width: 1,
             upload_block_height: 1,
             upload_is_compressed: false,
-            decompress_to_bgra8: false,
+            cpu_convert_to_bgra8: false,
             force_opaque_alpha: false,
         }),
 
@@ -380,6 +412,10 @@ mod tests {
     const ALL_FORMATS: &[D3DFormat] = &[
         D3DFormat::A8R8G8B8,
         D3DFormat::X8R8G8B8,
+        D3DFormat::R5G6B5,
+        D3DFormat::A1R5G5B5,
+        D3DFormat::X1R5G5B5,
+        D3DFormat::A4R4G4B4,
         D3DFormat::Dxt1,
         D3DFormat::Dxt3,
         D3DFormat::Dxt5,
@@ -412,7 +448,7 @@ mod tests {
             upload_block_width: u32,
             upload_block_height: u32,
             upload_is_compressed: bool,
-            decompress_to_bgra8: bool,
+            cpu_convert_to_bgra8: bool,
             force_opaque_alpha: bool,
         }
 
@@ -428,7 +464,7 @@ mod tests {
                     upload_block_width: 1,
                     upload_block_height: 1,
                     upload_is_compressed: false,
-                    decompress_to_bgra8: false,
+                    cpu_convert_to_bgra8: false,
                     force_opaque_alpha: false,
                 },
                 D3DFormat::X8R8G8B8 => ExpectedOk {
@@ -441,8 +477,25 @@ mod tests {
                     upload_block_width: 1,
                     upload_block_height: 1,
                     upload_is_compressed: false,
-                    decompress_to_bgra8: false,
+                    cpu_convert_to_bgra8: false,
                     force_opaque_alpha: true,
+                },
+
+                D3DFormat::R5G6B5
+                | D3DFormat::A1R5G5B5
+                | D3DFormat::X1R5G5B5
+                | D3DFormat::A4R4G4B4 => ExpectedOk {
+                    wgpu: wgpu::TextureFormat::Bgra8Unorm,
+                    d3d_bytes_per_block: 2,
+                    d3d_block_width: 1,
+                    d3d_block_height: 1,
+                    d3d_is_compressed: false,
+                    upload_bytes_per_block: 4,
+                    upload_block_width: 1,
+                    upload_block_height: 1,
+                    upload_is_compressed: false,
+                    cpu_convert_to_bgra8: true,
+                    force_opaque_alpha: false,
                 },
 
                 D3DFormat::Dxt1 if bc_supported => ExpectedOk {
@@ -455,7 +508,7 @@ mod tests {
                     upload_block_width: 4,
                     upload_block_height: 4,
                     upload_is_compressed: true,
-                    decompress_to_bgra8: false,
+                    cpu_convert_to_bgra8: false,
                     force_opaque_alpha: false,
                 },
                 D3DFormat::Dxt3 if bc_supported => ExpectedOk {
@@ -468,7 +521,7 @@ mod tests {
                     upload_block_width: 4,
                     upload_block_height: 4,
                     upload_is_compressed: true,
-                    decompress_to_bgra8: false,
+                    cpu_convert_to_bgra8: false,
                     force_opaque_alpha: false,
                 },
                 D3DFormat::Dxt5 if bc_supported => ExpectedOk {
@@ -481,7 +534,7 @@ mod tests {
                     upload_block_width: 4,
                     upload_block_height: 4,
                     upload_is_compressed: true,
-                    decompress_to_bgra8: false,
+                    cpu_convert_to_bgra8: false,
                     force_opaque_alpha: false,
                 },
 
@@ -496,7 +549,7 @@ mod tests {
                     upload_block_width: 1,
                     upload_block_height: 1,
                     upload_is_compressed: false,
-                    decompress_to_bgra8: true,
+                    cpu_convert_to_bgra8: true,
                     force_opaque_alpha: false,
                 },
                 D3DFormat::Dxt3 | D3DFormat::Dxt5 => ExpectedOk {
@@ -509,7 +562,7 @@ mod tests {
                     upload_block_width: 1,
                     upload_block_height: 1,
                     upload_is_compressed: false,
-                    decompress_to_bgra8: true,
+                    cpu_convert_to_bgra8: true,
                     force_opaque_alpha: false,
                 },
 
@@ -523,7 +576,7 @@ mod tests {
                     upload_block_width: 1,
                     upload_block_height: 1,
                     upload_is_compressed: false,
-                    decompress_to_bgra8: false,
+                    cpu_convert_to_bgra8: false,
                     force_opaque_alpha: false,
                 },
                 D3DFormat::D24S8 => ExpectedOk {
@@ -536,7 +589,7 @@ mod tests {
                     upload_block_width: 1,
                     upload_block_height: 1,
                     upload_is_compressed: false,
-                    decompress_to_bgra8: false,
+                    cpu_convert_to_bgra8: false,
                     force_opaque_alpha: false,
                 },
                 D3DFormat::D32 => ExpectedOk {
@@ -549,7 +602,7 @@ mod tests {
                     upload_block_width: 1,
                     upload_block_height: 1,
                     upload_is_compressed: false,
-                    decompress_to_bgra8: false,
+                    cpu_convert_to_bgra8: false,
                     force_opaque_alpha: false,
                 },
             }
@@ -600,7 +653,7 @@ mod tests {
                         assert_eq!(info.upload_block_width, expected.upload_block_width);
                         assert_eq!(info.upload_block_height, expected.upload_block_height);
                         assert_eq!(info.upload_is_compressed, expected.upload_is_compressed);
-                        assert_eq!(info.decompress_to_bgra8, expected.decompress_to_bgra8);
+                        assert_eq!(info.cpu_convert_to_bgra8, expected.cpu_convert_to_bgra8);
                         assert_eq!(info.force_opaque_alpha, expected.force_opaque_alpha);
                     } else {
                         assert!(res.is_err());
@@ -648,7 +701,7 @@ mod tests {
             (D3DFormat::Dxt3, wgpu::TextureFormat::Bc2RgbaUnorm),
             (D3DFormat::Dxt5, wgpu::TextureFormat::Bc3RgbaUnorm),
         ] {
-            // Feature off: always BGRA8 + CPU decompression.
+            // Feature off: always BGRA8 + CPU conversion.
             let info = format_info_for_texture(
                 format,
                 no_bc,
@@ -659,7 +712,7 @@ mod tests {
             )
             .unwrap();
             assert_eq!(info.wgpu, wgpu::TextureFormat::Bgra8Unorm);
-            assert!(info.decompress_to_bgra8);
+            assert!(info.cpu_convert_to_bgra8);
 
             // Feature on but dimensions incompatible: still use BGRA8.
             let info = format_info_for_texture(
@@ -672,7 +725,7 @@ mod tests {
             )
             .unwrap();
             assert_eq!(info.wgpu, wgpu::TextureFormat::Bgra8Unorm);
-            assert!(info.decompress_to_bgra8);
+            assert!(info.cpu_convert_to_bgra8);
 
             // Feature on but mips incompatible: still use BGRA8.
             let info = format_info_for_texture(
@@ -685,7 +738,7 @@ mod tests {
             )
             .unwrap();
             assert_eq!(info.wgpu, wgpu::TextureFormat::Bgra8Unorm);
-            assert!(info.decompress_to_bgra8);
+            assert!(info.cpu_convert_to_bgra8);
 
             // Feature on and dimensions compatible: use native BC texture.
             let info = format_info_for_texture(
@@ -698,7 +751,7 @@ mod tests {
             )
             .unwrap();
             assert_eq!(info.wgpu, expected_bc);
-            assert!(!info.decompress_to_bgra8);
+            assert!(!info.cpu_convert_to_bgra8);
             assert!(info.upload_is_compressed);
         }
     }
@@ -722,6 +775,20 @@ mod tests {
         assert_eq!(bgra8.upload_rows_per_image(5, 0), 5);
         assert_eq!(bgra8.upload_mip_level_byte_len(7, 5, 0), 7 * 5 * 4);
 
+        // Packed 16-bit layout (D3D pitch uses 2 bytes/px, GPU upload uses BGRA8).
+        let r5g6b5 = format_info(
+            D3DFormat::R5G6B5,
+            wgpu::Features::empty(),
+            TextureUsageKind::Sampled,
+        )
+        .unwrap();
+        assert!(r5g6b5.cpu_convert_to_bgra8);
+        assert_eq!(r5g6b5.d3d_mip_level_pitch(7, 0), 7 * 2);
+        assert_eq!(r5g6b5.d3d_mip_level_byte_len(7, 5, 0), 7 * 5 * 2);
+        assert_eq!(r5g6b5.upload_bytes_per_row(7, 0), 7 * 4);
+        assert_eq!(r5g6b5.upload_rows_per_image(5, 0), 5);
+        assert_eq!(r5g6b5.upload_mip_level_byte_len(7, 5, 0), 7 * 5 * 4);
+
         // Native BC1 upload when supported.
         let bc1 = format_info(
             D3DFormat::Dxt1,
@@ -731,7 +798,7 @@ mod tests {
         .unwrap();
         assert!(bc1.d3d_is_compressed);
         assert!(bc1.upload_is_compressed);
-        assert!(!bc1.decompress_to_bgra8);
+        assert!(!bc1.cpu_convert_to_bgra8);
         assert_eq!(bc1.d3d_mip_level_pitch(8, 0), 2 * 8);
         assert_eq!(bc1.d3d_mip_level_byte_len(8, 8, 0), 2 * 2 * 8);
         assert_eq!(bc1.d3d_mip_level_pitch(8, 1), 1 * 8);
@@ -743,14 +810,14 @@ mod tests {
         assert_eq!(bc1.upload_rows_per_image(8, 0), 2);
         assert_eq!(bc1.upload_mip_level_byte_len(8, 8, 0), 2 * 2 * 8);
 
-        // DXT5 fallback decompression path (upload is uncompressed, source/D3D layout is BC).
+        // DXT5 fallback conversion path (upload is uncompressed, source/D3D layout is BC).
         let dxt5_fallback = format_info(
             D3DFormat::Dxt5,
             wgpu::Features::empty(),
             TextureUsageKind::Sampled,
         )
         .unwrap();
-        assert!(dxt5_fallback.decompress_to_bgra8);
+        assert!(dxt5_fallback.cpu_convert_to_bgra8);
         assert!(dxt5_fallback.d3d_is_compressed);
         assert!(!dxt5_fallback.upload_is_compressed);
         assert_eq!(dxt5_fallback.d3d_mip_level_pitch(7, 0), 2 * 16);
@@ -772,5 +839,27 @@ mod tests {
         assert_eq!(align_copy_bytes_per_row(255), 256);
         assert_eq!(align_copy_bytes_per_row(256), 256);
         assert_eq!(align_copy_bytes_per_row(257), 512);
+    }
+
+    #[test]
+    fn packed_16bit_formats_report_correct_lockrect_layout() {
+        let features = wgpu::Features::empty();
+
+        for fmt in [
+            D3DFormat::R5G6B5,
+            D3DFormat::A1R5G5B5,
+            D3DFormat::X1R5G5B5,
+            D3DFormat::A4R4G4B4,
+        ] {
+            let info = format_info(fmt, features, TextureUsageKind::Sampled).unwrap();
+            assert_eq!(info.d3d_bytes_per_block, 2);
+            assert_eq!(info.d3d_mip_level_pitch(3, 0), 6);
+            assert_eq!(info.d3d_mip_level_byte_len(3, 2, 0), 12);
+
+            // GPU storage uses BGRA8.
+            assert_eq!(info.wgpu, wgpu::TextureFormat::Bgra8Unorm);
+            assert_eq!(info.upload_bytes_per_block, 4);
+            assert!(info.cpu_convert_to_bgra8);
+        }
     }
 }

@@ -225,11 +225,10 @@ impl Texture {
         let (mip_w, mip_h) = self.info.mip_dimensions(width, height, level);
 
         let (upload_data, upload_bytes_per_row_unpadded, upload_rows_per_image) =
-            if self.info.decompress_to_bgra8 {
-                let decompressed =
-                    decompress_dxt_to_bgra8(self.desc.format, mip_w, mip_h, d3d_data)?;
+            if self.info.cpu_convert_to_bgra8 {
+                let converted = convert_to_bgra8(self.desc.format, mip_w, mip_h, d3d_data)?;
                 (
-                    decompressed,
+                    converted,
                     mip_w * 4,
                     mip_h, // texel rows
                 )
@@ -544,11 +543,125 @@ fn decompress_dxt_to_bgra8(
         D3DFormat::Dxt1 => decompress_bc1_to_bgra8(width, height, src),
         D3DFormat::Dxt3 => decompress_bc2_to_bgra8(width, height, src),
         D3DFormat::Dxt5 => decompress_bc3_to_bgra8(width, height, src),
-        _ => Err(anyhow!(
-            "decompress_dxt_to_bgra8 called for non-DXT format {:?}",
-            format
+        _ => Err(anyhow!("expected DXT/BCn format, got {:?}", format)),
+    }
+}
+
+/// Convert a D3D9 texture memory layout into the BGRA8 byte layout expected by
+/// `wgpu::TextureFormat::Bgra8Unorm`.
+///
+/// This is used when the guest uploads a format we don't store natively on the GPU (e.g. BCn on
+/// backends without BC support, or packed 16-bit color formats).
+fn convert_to_bgra8(format: D3DFormat, width: u32, height: u32, src: &[u8]) -> Result<Vec<u8>> {
+    match format {
+        D3DFormat::Dxt1 | D3DFormat::Dxt3 | D3DFormat::Dxt5 => {
+            decompress_dxt_to_bgra8(format, width, height, src)
+        }
+        D3DFormat::R5G6B5 => expand_r5g6b5_to_bgra8(width, height, src),
+        D3DFormat::A1R5G5B5 => expand_a1r5g5b5_to_bgra8(width, height, src),
+        D3DFormat::X1R5G5B5 => expand_x1r5g5b5_to_bgra8(width, height, src),
+        D3DFormat::A4R4G4B4 => expand_a4r4g4b4_to_bgra8(width, height, src),
+        other => Err(anyhow!(
+            "CPU BGRA8 conversion requested for unsupported format {:?}",
+            other
         )),
     }
+}
+
+// Bit-expansion rules for packed 16-bit formats.
+//
+// D3D9 defines these formats as integer bitfields. When sampling, they are converted to normalized
+// floats by expanding to 8-bit channels. We do this deterministically by replicating the high bits:
+//   - 5 bits -> 8 bits: (v << 3) | (v >> 2)
+//   - 6 bits -> 8 bits: (v << 2) | (v >> 4)
+//   - 4 bits -> 8 bits: (v << 4) | v
+#[inline]
+fn expand_5_to_8(v: u8) -> u8 {
+    (v << 3) | (v >> 2)
+}
+
+#[inline]
+fn expand_6_to_8(v: u8) -> u8 {
+    (v << 2) | (v >> 4)
+}
+
+#[inline]
+fn expand_4_to_8(v: u8) -> u8 {
+    (v << 4) | v
+}
+
+fn expand_packed_16_to_bgra8(
+    width: u32,
+    height: u32,
+    src: &[u8],
+    mut decode: impl FnMut(u16) -> [u8; 4],
+) -> Result<Vec<u8>> {
+    let pixels = (width as usize)
+        .checked_mul(height as usize)
+        .ok_or_else(|| anyhow!("pixel count overflows usize"))?;
+    let expected = pixels
+        .checked_mul(2)
+        .ok_or_else(|| anyhow!("packed 16-bit byte length overflows usize"))?;
+    if src.len() < expected {
+        return Err(anyhow!(
+            "packed 16-bit data too small (got {}, need {})",
+            src.len(),
+            expected
+        ));
+    }
+
+    let mut out = vec![0u8; pixels * 4];
+    for i in 0..pixels {
+        let off = i * 2;
+        let c = u16::from_le_bytes([src[off], src[off + 1]]);
+        out[i * 4..i * 4 + 4].copy_from_slice(&decode(c));
+    }
+    Ok(out)
+}
+
+fn expand_r5g6b5_to_bgra8(width: u32, height: u32, src: &[u8]) -> Result<Vec<u8>> {
+    expand_packed_16_to_bgra8(width, height, src, |c| {
+        let r5 = ((c >> 11) & 0x1F) as u8;
+        let g6 = ((c >> 5) & 0x3F) as u8;
+        let b5 = (c & 0x1F) as u8;
+        [expand_5_to_8(b5), expand_6_to_8(g6), expand_5_to_8(r5), 0xFF]
+    })
+}
+
+fn expand_a1r5g5b5_to_bgra8(width: u32, height: u32, src: &[u8]) -> Result<Vec<u8>> {
+    expand_packed_16_to_bgra8(width, height, src, |c| {
+        let a1 = ((c >> 15) & 0x1) as u8;
+        let r5 = ((c >> 10) & 0x1F) as u8;
+        let g5 = ((c >> 5) & 0x1F) as u8;
+        let b5 = (c & 0x1F) as u8;
+        let a = if a1 == 0 { 0x00 } else { 0xFF };
+        [expand_5_to_8(b5), expand_5_to_8(g5), expand_5_to_8(r5), a]
+    })
+}
+
+fn expand_x1r5g5b5_to_bgra8(width: u32, height: u32, src: &[u8]) -> Result<Vec<u8>> {
+    expand_packed_16_to_bgra8(width, height, src, |c| {
+        let r5 = ((c >> 10) & 0x1F) as u8;
+        let g5 = ((c >> 5) & 0x1F) as u8;
+        let b5 = (c & 0x1F) as u8;
+        // X1* formats treat alpha as 1.0 regardless of the stored bit.
+        [expand_5_to_8(b5), expand_5_to_8(g5), expand_5_to_8(r5), 0xFF]
+    })
+}
+
+fn expand_a4r4g4b4_to_bgra8(width: u32, height: u32, src: &[u8]) -> Result<Vec<u8>> {
+    expand_packed_16_to_bgra8(width, height, src, |c| {
+        let a4 = ((c >> 12) & 0xF) as u8;
+        let r4 = ((c >> 8) & 0xF) as u8;
+        let g4 = ((c >> 4) & 0xF) as u8;
+        let b4 = (c & 0xF) as u8;
+        [
+            expand_4_to_8(b4),
+            expand_4_to_8(g4),
+            expand_4_to_8(r4),
+            expand_4_to_8(a4),
+        ]
+    })
 }
 
 fn decompress_bc1_to_bgra8(width: u32, height: u32, src: &[u8]) -> Result<Vec<u8>> {
@@ -813,7 +926,7 @@ mod tests {
 
         let info = format_info_for_texture_desc(&desc, features).unwrap();
         assert_eq!(info.wgpu, wgpu::TextureFormat::Bc1RgbaUnorm);
-        assert!(!info.decompress_to_bgra8);
+        assert!(!info.cpu_convert_to_bgra8);
     }
 
     #[test]
@@ -832,7 +945,7 @@ mod tests {
 
         let info = format_info_for_texture_desc(&desc, features).unwrap();
         assert_eq!(info.wgpu, wgpu::TextureFormat::Bgra8Unorm);
-        assert!(info.decompress_to_bgra8);
+        assert!(info.cpu_convert_to_bgra8);
     }
 
     #[test]
@@ -851,7 +964,7 @@ mod tests {
 
         let info = format_info_for_texture_desc(&desc, features).unwrap();
         assert_eq!(info.wgpu, wgpu::TextureFormat::Bc1RgbaUnorm);
-        assert!(!info.decompress_to_bgra8);
+        assert!(!info.cpu_convert_to_bgra8);
     }
 
     #[test]
@@ -870,7 +983,7 @@ mod tests {
 
         let info = format_info_for_texture_desc(&desc, features).unwrap();
         assert_eq!(info.wgpu, wgpu::TextureFormat::Bgra8Unorm);
-        assert!(info.decompress_to_bgra8);
+        assert!(info.cpu_convert_to_bgra8);
     }
 
     #[test]
@@ -889,7 +1002,7 @@ mod tests {
 
         let info = format_info_for_texture_desc(&desc, features).unwrap();
         assert_eq!(info.wgpu, wgpu::TextureFormat::Bc2RgbaUnorm);
-        assert!(!info.decompress_to_bgra8);
+        assert!(!info.cpu_convert_to_bgra8);
     }
 
     #[test]
@@ -908,7 +1021,7 @@ mod tests {
 
         let info = format_info_for_texture_desc(&desc, features).unwrap();
         assert_eq!(info.wgpu, wgpu::TextureFormat::Bgra8Unorm);
-        assert!(info.decompress_to_bgra8);
+        assert!(info.cpu_convert_to_bgra8);
     }
 
     #[test]
@@ -923,7 +1036,7 @@ mod tests {
 
         let info = format_info_for_texture_desc(&desc, features).unwrap();
         assert_eq!(info.wgpu, wgpu::TextureFormat::Bc1RgbaUnorm);
-        assert!(!info.decompress_to_bgra8);
+        assert!(!info.cpu_convert_to_bgra8);
     }
 
     #[test]
@@ -938,6 +1051,74 @@ mod tests {
 
         let info = format_info_for_texture_desc(&desc, features).unwrap();
         assert_eq!(info.wgpu, wgpu::TextureFormat::Bgra8Unorm);
-        assert!(info.decompress_to_bgra8);
+        assert!(info.cpu_convert_to_bgra8);
+    }
+
+    #[test]
+    fn expands_r5g6b5_to_bgra8_with_bit_replication() {
+        // 2x2: red, green, blue, white.
+        let pixels: [u16; 4] = [0xF800, 0x07E0, 0x001F, 0xFFFF];
+        let mut src = Vec::new();
+        for p in pixels {
+            src.extend_from_slice(&p.to_le_bytes());
+        }
+        let out = convert_to_bgra8(D3DFormat::R5G6B5, 2, 2, &src).unwrap();
+        assert_eq!(
+            out,
+            vec![
+                0, 0, 255, 255, // red
+                0, 255, 0, 255, // green
+                255, 0, 0, 255, // blue
+                255, 255, 255, 255, // white
+            ]
+        );
+    }
+
+    #[test]
+    fn expands_a1r5g5b5_alpha_bit() {
+        // 1x2: opaque white, transparent white.
+        let pixels: [u16; 2] = [0xFFFF, 0x7FFF];
+        let mut src = Vec::new();
+        for p in pixels {
+            src.extend_from_slice(&p.to_le_bytes());
+        }
+        let out = convert_to_bgra8(D3DFormat::A1R5G5B5, 1, 2, &src).unwrap();
+        assert_eq!(
+            out,
+            vec![
+                255, 255, 255, 255, // a=1
+                255, 255, 255, 0,   // a=0
+            ]
+        );
+    }
+
+    #[test]
+    fn expands_x1r5g5b5_forces_opaque_alpha() {
+        // Both values have different top bits, but alpha must always be 255.
+        let pixels: [u16; 2] = [0xFFFF, 0x7FFF];
+        let mut src = Vec::new();
+        for p in pixels {
+            src.extend_from_slice(&p.to_le_bytes());
+        }
+        let out = convert_to_bgra8(D3DFormat::X1R5G5B5, 1, 2, &src).unwrap();
+        assert_eq!(out, vec![255, 255, 255, 255, 255, 255, 255, 255]);
+    }
+
+    #[test]
+    fn expands_a4r4g4b4_to_bgra8_with_bit_replication() {
+        // 1x2: (a=0xF, r=0x8, g=0x4, b=0x2), and (a=0x0, r=g=b=0xF)
+        let pixels: [u16; 2] = [0xF842, 0x0FFF];
+        let mut src = Vec::new();
+        for p in pixels {
+            src.extend_from_slice(&p.to_le_bytes());
+        }
+        let out = convert_to_bgra8(D3DFormat::A4R4G4B4, 1, 2, &src).unwrap();
+        assert_eq!(
+            out,
+            vec![
+                0x22, 0x44, 0x88, 0xFF, // bit replication: 0x2->0x22, 0x4->0x44, 0x8->0x88, 0xF->0xFF
+                0xFF, 0xFF, 0xFF, 0x00, // alpha=0
+            ]
+        );
     }
 }

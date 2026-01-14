@@ -1,0 +1,379 @@
+use aero_d3d9::resources::*;
+
+fn require_webgpu() -> bool {
+    std::env::var("AERO_REQUIRE_WEBGPU")
+        .ok()
+        .map(|raw| {
+            let v = raw.trim();
+            v == "1"
+                || v.eq_ignore_ascii_case("true")
+                || v.eq_ignore_ascii_case("yes")
+                || v.eq_ignore_ascii_case("on")
+        })
+        .unwrap_or(false)
+}
+
+fn skip_or_panic(test_name: &str, reason: &str) {
+    if require_webgpu() {
+        panic!("AERO_REQUIRE_WEBGPU is enabled but {test_name} cannot run: {reason}");
+    }
+    eprintln!("skipping {test_name}: {reason}");
+}
+
+fn ensure_xdg_runtime_dir() {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let needs_runtime_dir = std::env::var("XDG_RUNTIME_DIR")
+            .ok()
+            .map(|v| v.is_empty())
+            .unwrap_or(true);
+        if !needs_runtime_dir {
+            return;
+        }
+
+        let dir = std::env::temp_dir().join(format!(
+            "aero-d3d9-xdg-runtime-{}-packed16-upload",
+            std::process::id()
+        ));
+        let _ = std::fs::create_dir_all(&dir);
+        let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+        std::env::set_var("XDG_RUNTIME_DIR", &dir);
+    }
+}
+
+async fn request_device() -> Option<(wgpu::Device, wgpu::Queue)> {
+    ensure_xdg_runtime_dir();
+
+    // Prefer GL on Linux CI to avoid crashes in some Vulkan software adapters.
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+        backends: if cfg!(target_os = "linux") {
+            wgpu::Backends::GL
+        } else {
+            wgpu::Backends::all()
+        },
+        ..Default::default()
+    });
+
+    let adapter = match instance
+        .request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::LowPower,
+            compatible_surface: None,
+            force_fallback_adapter: true,
+        })
+        .await
+    {
+        Some(adapter) => Some(adapter),
+        None => {
+            instance
+                .request_adapter(&wgpu::RequestAdapterOptions {
+                    power_preference: wgpu::PowerPreference::LowPower,
+                    compatible_surface: None,
+                    force_fallback_adapter: false,
+                })
+                .await
+        }
+    }?;
+
+    adapter
+        .request_device(
+            &wgpu::DeviceDescriptor {
+                label: Some("aero-d3d9 packed16 upload test device"),
+                required_features: wgpu::Features::empty(),
+                required_limits: wgpu::Limits::downlevel_defaults(),
+            },
+            None,
+        )
+        .await
+        .ok()
+}
+
+fn readback_rgba8(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    texture: &wgpu::Texture,
+    width: u32,
+    height: u32,
+) -> Vec<u8> {
+    let bytes_per_pixel = 4u32;
+    let unpadded_bytes_per_row = width * bytes_per_pixel;
+    let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+    let padded_bytes_per_row = unpadded_bytes_per_row.div_ceil(align) * align;
+    let buffer_size = padded_bytes_per_row as u64 * height as u64;
+
+    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("readback-buffer"),
+        size: buffer_size,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("readback-encoder"),
+    });
+
+    encoder.copy_texture_to_buffer(
+        wgpu::ImageCopyTexture {
+            texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        wgpu::ImageCopyBuffer {
+            buffer: &buffer,
+            layout: wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(padded_bytes_per_row),
+                rows_per_image: Some(height),
+            },
+        },
+        wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+    );
+
+    queue.submit([encoder.finish()]);
+
+    let slice = buffer.slice(..);
+    let (tx, rx) = std::sync::mpsc::channel();
+    slice.map_async(wgpu::MapMode::Read, move |result| {
+        tx.send(result).ok();
+    });
+    #[cfg(not(target_arch = "wasm32"))]
+    device.poll(wgpu::Maintain::Wait);
+    rx.recv()
+        .expect("map_async callback dropped")
+        .expect("map_async failed");
+
+    let data = slice.get_mapped_range();
+    let mut out = vec![0u8; (width * height * bytes_per_pixel) as usize];
+    for y in 0..height as usize {
+        let src_start = y * padded_bytes_per_row as usize;
+        let dst_start = y * unpadded_bytes_per_row as usize;
+        out[dst_start..dst_start + unpadded_bytes_per_row as usize]
+            .copy_from_slice(&data[src_start..src_start + unpadded_bytes_per_row as usize]);
+    }
+    drop(data);
+    buffer.unmap();
+
+    out
+}
+
+fn pixel_at_rgba(pixels: &[u8], width: u32, x: u32, y: u32) -> [u8; 4] {
+    let idx = ((y * width + x) * 4) as usize;
+    [pixels[idx], pixels[idx + 1], pixels[idx + 2], pixels[idx + 3]]
+}
+
+fn assert_rgba_approx(actual: [u8; 4], expected: [u8; 4], tolerance: u8) {
+    for (a, e) in actual.into_iter().zip(expected) {
+        let diff = a.abs_diff(e);
+        assert!(
+            diff <= tolerance,
+            "component mismatch: actual={actual:?} expected={expected:?} tolerance={tolerance}",
+        );
+    }
+}
+
+const SAMPLE_SHADER: &str = r#"
+struct VsOut {
+    @builtin(position) pos: vec4<f32>,
+}
+
+@vertex
+fn vs_main(@builtin(vertex_index) idx: u32) -> VsOut {
+    var positions = array<vec2<f32>, 3>(
+        vec2<f32>(-1.0, -1.0),
+        vec2<f32>( 3.0, -1.0),
+        vec2<f32>(-1.0,  3.0),
+    );
+    let p = positions[idx];
+    var out: VsOut;
+    out.pos = vec4<f32>(p, 0.0, 1.0);
+    return out;
+}
+
+@group(0) @binding(0) var t: texture_2d<f32>;
+
+// Copy texel (x,y) to the output pixel (x,y).
+@fragment
+fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
+    let x = i32(pos.x);
+    let y = i32(pos.y);
+    return textureLoad(t, vec2<i32>(x, y), 0);
+}
+"#;
+
+#[test]
+fn d3d9_packed16_upload_and_sample() {
+    let (device, queue) = match pollster::block_on(request_device()) {
+        Some(device) => device,
+        None => {
+            skip_or_panic(module_path!(), "wgpu adapter/device not available");
+            return;
+        }
+    };
+
+    let mut rm = ResourceManager::new(device, queue, ResourceManagerOptions::default());
+    rm.begin_frame();
+
+    const TEX: GuestResourceId = 1;
+
+    rm.create_texture(
+        TEX,
+        TextureDesc {
+            kind: TextureKind::Texture2D {
+                width: 2,
+                height: 2,
+                levels: 1,
+            },
+            format: D3DFormat::A1R5G5B5,
+            pool: D3DPool::Default,
+            usage: TextureUsageKind::Sampled,
+        },
+    )
+    .unwrap();
+
+    // A1R5G5B5 pixels (row-major, top-to-bottom) exercising alpha behavior:
+    // - top-left:   opaque red
+    // - top-right:  transparent green
+    // - bottom-left opaque blue
+    // - bottom-right transparent white
+    let pixels: [u16; 4] = [
+        0xFC00, // A=1 R=31 G=0 B=0
+        0x03E0, // A=0 R=0  G=31 B=0
+        0x801F, // A=1 R=0  G=0  B=31
+        0x7FFF, // A=0 R=31 G=31 B=31
+    ];
+    let mut packed = Vec::with_capacity(pixels.len() * 2);
+    for p in pixels {
+        packed.extend_from_slice(&p.to_le_bytes());
+    }
+
+    {
+        let locked = rm.lock_texture_rect(TEX, 0, 0, LockFlags::empty()).unwrap();
+        assert_eq!(locked.pitch, 4); // 2px * 2 bytes/px
+        assert_eq!(locked.data.len(), packed.len());
+        locked.data.copy_from_slice(&packed);
+    }
+    rm.unlock_texture_rect(TEX).unwrap();
+
+    // Acquire the texture view now (requires &mut ResourceManager) so we can build GPU state
+    // without holding a long-lived borrow of `rm`.
+    let view = rm.texture_view(TEX).unwrap();
+
+    let out_tex = rm.device().create_texture(&wgpu::TextureDescriptor {
+        label: Some("out"),
+        size: wgpu::Extent3d {
+            width: 2,
+            height: 2,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    });
+    let out_view = out_tex.create_view(&wgpu::TextureViewDescriptor::default());
+
+    let shader = rm.device().create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("packed16 sample shader"),
+        source: wgpu::ShaderSource::Wgsl(SAMPLE_SHADER.into()),
+    });
+
+    let bgl = rm
+        .device()
+        .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("bgl"),
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Texture {
+                multisampled: false,
+                view_dimension: wgpu::TextureViewDimension::D2,
+                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+            },
+            count: None,
+        }],
+    });
+
+    let pipeline_layout = rm.device().create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("pl"),
+        bind_group_layouts: &[&bgl],
+        push_constant_ranges: &[],
+    });
+
+    let pipeline = rm
+        .device()
+        .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("sample pipeline"),
+        layout: Some(&pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: &shader,
+            entry_point: "vs_main",
+            buffers: &[],
+            compilation_options: Default::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &shader,
+            entry_point: "fs_main",
+            targets: &[Some(wgpu::ColorTargetState {
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                blend: None,
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            compilation_options: Default::default(),
+        }),
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        multiview: None,
+    });
+
+    let bg = rm.device().create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("bg"),
+        layout: &bgl,
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: wgpu::BindingResource::TextureView(&view),
+        }],
+    });
+
+    let mut encoder = rm
+        .device()
+        .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+    rm.encode_uploads(&mut encoder);
+
+    {
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &out_view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            occlusion_query_set: None,
+            timestamp_writes: None,
+        });
+        pass.set_pipeline(&pipeline);
+        pass.set_bind_group(0, &bg, &[]);
+        pass.draw(0..3, 0..1);
+    }
+
+    rm.submit(encoder);
+
+    let pixels = readback_rgba8(rm.device(), rm.queue(), &out_tex, 2, 2);
+
+    assert_rgba_approx(pixel_at_rgba(&pixels, 2, 0, 0), [255, 0, 0, 255], 2);
+    assert_rgba_approx(pixel_at_rgba(&pixels, 2, 1, 0), [0, 255, 0, 0], 2);
+    assert_rgba_approx(pixel_at_rgba(&pixels, 2, 0, 1), [0, 0, 255, 255], 2);
+    assert_rgba_approx(pixel_at_rgba(&pixels, 2, 1, 1), [255, 255, 255, 0], 2);
+}
