@@ -201,7 +201,7 @@ Pipeline state
 * Geometry shader object creation:
   * `pfnCalcPrivateGeometryShaderSize` + `pfnCreateGeometryShader` + `pfnDestroyGeometryShader`
   * note: the **GS stage exists in D3D10**, but many “first triangle” tests never create/bind a GS (it is valid to have no GS bound).
-  * AeroGPU note: WebGPU has no geometry shader stage. For Win7 bring-up we currently accept GS creation/binding but treat it as a **no-op** in the translation path (sufficient for pass-through GS usage such as `d3d11_geometry_shader_smoke`). Longer-term, Aero’s plan is to emulate GS via compute expansion; see [`geometry-shader-emulation.md`](./geometry-shader-emulation.md) and [`docs/16-d3d10-11-translation.md`](../16-d3d10-11-translation.md).
+  * AeroGPU note: WebGPU has no geometry shader stage. The command stream can encode a GS handle (via `aerogpu_cmd_bind_shaders::reserved0`), but the current AeroGPU/WebGPU backend ignores it. For Win7 bring-up we currently accept GS creation/binding but treat it as a **no-op** in the translation path (sufficient for pass-through GS usage such as `d3d11_geometry_shader_smoke`). Longer-term, Aero’s plan is to emulate GS via compute expansion; see [`geometry-shader-emulation.md`](./geometry-shader-emulation.md) and [`docs/16-d3d10-11-translation.md`](../16-d3d10-11-translation.md).
 * Stream-output state / SO buffers (`pfnSoSetTargets`, etc)
 * Queries/predication:
   * `pfnCreateQuery` / `pfnDestroyQuery`, `pfnBegin` / `pfnEnd`, `pfnSetPredication`
@@ -374,7 +374,7 @@ Geometry shader note:
 
 * Geometry shaders are part of the D3D10-class pipeline and are expected at `D3D_FEATURE_LEVEL_10_0` and above.
 * If you advertise **FL10_0** (or higher) from `pfnGetCaps`, implement `pfnCreateGeometryShader` / `D3D11DDIARG_CREATEGEOMETRYSHADER` (and the corresponding bind/state entrypoints) even if the first implementation is “limited but functional”.
-  * AeroGPU bring-up: accept GS creation/binding but treat it as a no-op. Full support requires emulation; see [`geometry-shader-emulation.md`](./geometry-shader-emulation.md).
+  * AeroGPU bring-up: accept GS creation/binding but treat it as a no-op (GS is representable in the command stream, but ignored by the WebGPU backend). Full support requires emulation; see [`geometry-shader-emulation.md`](./geometry-shader-emulation.md).
 * If you are not ready to support GS yet, prefer advertising only `D3D_FEATURE_LEVEL_9_x` for D3D11 (while still supporting D3D10 separately), or be explicit that some FL10_0 apps will fail when they create/bind GS.
 
 #### 2.2.3 Mandatory context/state binding + draw path

@@ -478,9 +478,11 @@ impl AerogpuCmdRuntime {
         let stage = match program.stage {
             crate::ShaderStage::Vertex => ShaderStage::Vertex,
             crate::ShaderStage::Pixel => ShaderStage::Fragment,
-            // Geometry/hull/domain stages are not supported by the AeroGPU/WebGPU pipeline. Accept
-            // the create call (so guests can compile/pass these shaders around) but ignore the
-            // resulting shader since there is no way to bind it.
+            // Geometry/hull/domain stages are not supported by the AeroGPU/WebGPU pipeline.
+            //
+            // The command stream includes a geometry stage slot for ABI compatibility, but the
+            // stage is ignored by the host today. Accept the create call (so guests can
+            // compile/pass these shaders around) but ignore the resulting shader.
             crate::ShaderStage::Geometry
             | crate::ShaderStage::Hull
             | crate::ShaderStage::Domain => {

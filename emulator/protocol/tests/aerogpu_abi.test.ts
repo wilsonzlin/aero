@@ -785,6 +785,7 @@ test("TypeScript layout matches C headers", () => {
   assert.equal(off("aerogpu_cmd_bind_shaders", "vs"), 8);
   assert.equal(off("aerogpu_cmd_bind_shaders", "ps"), 12);
   assert.equal(off("aerogpu_cmd_bind_shaders", "cs"), 16);
+  assert.equal(off("aerogpu_cmd_bind_shaders", "reserved0"), 20);
   assert.equal(off("aerogpu_cmd_set_shader_constants_f", "stage"), 8);
   assert.equal(off("aerogpu_cmd_set_shader_constants_f", "start_register"), 12);
   assert.equal(off("aerogpu_cmd_create_input_layout", "input_layout_handle"), 8);

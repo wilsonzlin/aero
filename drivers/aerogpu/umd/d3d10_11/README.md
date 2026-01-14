@@ -35,7 +35,7 @@ Feature matrix for the Win7 WDK-backed UMDs:
 - Buffers + Texture2D resources
   - Texture2D **mip chains + array layers** (`MipLevels = 0` → full chain), including initial-data upload + subresource layout packing for guest-backed allocations
   - 16-bit packed formats (`B5G6R5_UNORM`, `B5G5R5A1_UNORM`)
-  - Block-compressed formats (BC1/BC2/BC3/BC7) and explicit sRGB variants are supported when the host ABI is new enough (ABI 1.2+; see `aerogpu_umd_private_v1.device_abi_version_u32`)
+- Block-compressed formats (BC1/BC2/BC3/BC7) and explicit sRGB variants are supported when the host ABI is new enough (ABI 1.2+; see `aerogpu_umd_private_v1.device_abi_version_u32`)
 - Vertex/pixel shaders (DXBC payload passthrough)
 - Input layout + vertex/index buffers, primitive topology
 - VS/PS binding tables:
@@ -62,7 +62,7 @@ Feature matrix for the Win7 WDK-backed UMDs:
 
 ### Still stubbed / known gaps
 
-- Geometry shaders are **accepted but ignored** (no GS stage in the AeroGPU/WebGPU pipeline yet). This is sufficient for the Win7 smoke test’s pass-through GS that only renames varyings.
+- Geometry shaders are **accepted but ignored** (the command stream can represent a GS binding, but the AeroGPU/WebGPU pipeline does not execute geometry shaders yet). This is sufficient for the Win7 smoke test’s pass-through GS that only renames varyings.
 - D3D11-only features outside FL10_0 (compute/tessellation/UAV) are unsupported; related DDIs should fail cleanly (`E_NOTIMPL` / `SetErrorCb`).
 
 Unsupported functionality must fail cleanly (returning `E_NOTIMPL` / `E_INVALIDARG`) rather than crashing or dereferencing null DDI function pointers.

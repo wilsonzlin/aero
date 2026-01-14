@@ -4879,15 +4879,15 @@ HRESULT AEROGPU_APIENTRY CreateGeometryShader(D3D10DDI_HDEVICE hDevice,
   (void)new (hShader.pDrvPrivate) AeroGpuShader();
 
   // Geometry shaders are accepted by the Win7 D3D10.1 runtime at FL10_0, but
-  // the AeroGPU command stream / WebGPU backend currently has no GS stage.
-  // Treat GS as a no-op and do not forward DXBC to the host.
+  // the AeroGPU/WebGPU backend currently cannot execute geometry shaders. Treat
+  // GS as a no-op and do not forward DXBC to the host.
   //
   // NOTE: The created AeroGpuShader's `handle` intentionally stays 0 so
   // DestroyShaderCommon does not emit a host-side DESTROY_SHADER for a shader
   // that was never created.
   static std::once_flag log_once;
   std::call_once(log_once, [] {
-    AEROGPU_D3D10_11_LOG("CreateGeometryShader: ignoring geometry shader (no GS stage in AeroGPU/WebGPU yet)");
+    AEROGPU_D3D10_11_LOG("CreateGeometryShader: ignoring geometry shader (GS not supported by AeroGPU/WebGPU yet)");
   });
 
   AEROGPU_D3D10_RET_HR(S_OK);
@@ -8746,7 +8746,7 @@ HRESULT AEROGPU_APIENTRY CreateDevice(D3D10DDI_HADAPTER hAdapter, D3D10_1DDIARG_
   pCreateDevice->pDeviceFuncs->pfnDestroyPixelShader = &DestroyPixelShader;
   __if_exists(D3D10_1DDI_DEVICEFUNCS::pfnCalcPrivateGeometryShaderSize) {
     // Geometry shaders are accepted by the Win7 D3D10.1 runtime, but are ignored
-    // by AeroGPU for now (no GS stage in the command stream / WebGPU backend).
+    // by the AeroGPU/WebGPU backend for now.
     pCreateDevice->pDeviceFuncs->pfnCalcPrivateGeometryShaderSize = &CalcPrivateGeometryShaderSize;
     pCreateDevice->pDeviceFuncs->pfnCreateGeometryShader = &CreateGeometryShader;
     pCreateDevice->pDeviceFuncs->pfnDestroyGeometryShader = &DestroyGeometryShader;
@@ -8956,7 +8956,7 @@ HRESULT AEROGPU_APIENTRY CreateDevice10(D3D10DDI_HADAPTER hAdapter, D3D10DDIARG_
   pCreateDevice->pDeviceFuncs->pfnDestroyPixelShader = &DestroyPixelShader;
   __if_exists(D3D10DDI_DEVICEFUNCS::pfnCalcPrivateGeometryShaderSize) {
     // Geometry shaders are accepted by the Win7 D3D10 runtime, but are ignored
-    // by AeroGPU for now (no GS stage in the command stream / WebGPU backend).
+    // by the AeroGPU/WebGPU backend for now.
     pCreateDevice->pDeviceFuncs->pfnCalcPrivateGeometryShaderSize = &CalcPrivateGeometryShaderSize;
     pCreateDevice->pDeviceFuncs->pfnCreateGeometryShader = &CreateGeometryShader;
     pCreateDevice->pDeviceFuncs->pfnDestroyGeometryShader = &DestroyGeometryShader;
