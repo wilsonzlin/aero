@@ -25794,12 +25794,24 @@ static HRESULT AEROGPU_D3D9_CALL device_set_transform_portable(
 
   auto* dev = as_device(hDevice);
   std::lock_guard<std::mutex> lock(dev->mutex);
-  std::memcpy(dev->transform_matrices[idx], pMatrix, 16 * sizeof(float));
-  if (idx == kD3dTransformWorld0 || idx == kD3dTransformView || idx == kD3dTransformProjection) {
-    dev->fixedfunc_matrix_dirty = true;
+  const bool affects_fixedfunc_matrix =
+      (idx == kD3dTransformWorld0 || idx == kD3dTransformView || idx == kD3dTransformProjection);
+  const bool affects_fixedfunc_lighting = (idx == kD3dTransformWorld0 || idx == kD3dTransformView);
+
+  // Avoid spurious fixed-function constant updates when the runtime (or app)
+  // redundantly calls SetTransform with identical data.
+  bool changed = true;
+  if (affects_fixedfunc_matrix || affects_fixedfunc_lighting) {
+    changed = std::memcmp(dev->transform_matrices[idx], pMatrix, 16u * sizeof(float)) != 0;
   }
-  if (idx == kD3dTransformWorld0 || idx == kD3dTransformView) {
-    dev->fixedfunc_lighting_dirty = true;
+  if (changed) {
+    std::memcpy(dev->transform_matrices[idx], pMatrix, 16u * sizeof(float));
+    if (affects_fixedfunc_matrix) {
+      dev->fixedfunc_matrix_dirty = true;
+    }
+    if (affects_fixedfunc_lighting) {
+      dev->fixedfunc_lighting_dirty = true;
+    }
   }
   stateblock_record_transform_locked(dev, idx, dev->transform_matrices[idx]);
 
@@ -25810,7 +25822,7 @@ static HRESULT AEROGPU_D3D9_CALL device_set_transform_portable(
   //
   // Important: do not touch the reserved range when a user vertex shader is
   // bound, as that would clobber app-provided constants.
-  if (!dev->user_vs && fixedfunc_fvf_needs_matrix(dev->fvf)) {
+  if (affects_fixedfunc_matrix && !dev->user_vs && fixedfunc_fvf_needs_matrix(dev->fvf)) {
     const HRESULT hr = ensure_fixedfunc_wvp_constants_locked(dev);
     if (FAILED(hr)) {
       return trace.ret(hr);
@@ -25844,19 +25856,30 @@ static HRESULT AEROGPU_D3D9_CALL device_multiply_transform_portable(
   float rhs[16];
   std::memcpy(rhs, pMatrix, sizeof(rhs));
   d3d9_mul_mat4_row_major(dev->transform_matrices[idx], rhs, tmp);
-  std::memcpy(dev->transform_matrices[idx], tmp, sizeof(tmp));
-  if (idx == kD3dTransformWorld0 || idx == kD3dTransformView || idx == kD3dTransformProjection) {
-    dev->fixedfunc_matrix_dirty = true;
+
+  const bool affects_fixedfunc_matrix =
+      (idx == kD3dTransformWorld0 || idx == kD3dTransformView || idx == kD3dTransformProjection);
+  const bool affects_fixedfunc_lighting = (idx == kD3dTransformWorld0 || idx == kD3dTransformView);
+
+  bool changed = true;
+  if (affects_fixedfunc_matrix || affects_fixedfunc_lighting) {
+    changed = std::memcmp(dev->transform_matrices[idx], tmp, sizeof(tmp)) != 0;
   }
-  if (idx == kD3dTransformWorld0 || idx == kD3dTransformView) {
-    dev->fixedfunc_lighting_dirty = true;
+  if (changed) {
+    std::memcpy(dev->transform_matrices[idx], tmp, sizeof(tmp));
+    if (affects_fixedfunc_matrix) {
+      dev->fixedfunc_matrix_dirty = true;
+    }
+    if (affects_fixedfunc_lighting) {
+      dev->fixedfunc_lighting_dirty = true;
+    }
   }
   stateblock_record_transform_locked(dev, idx, dev->transform_matrices[idx]);
 
   // Mirror SetTransform: when fixed-function WVP rendering is active, eagerly
   // update the reserved VS constant range on MultiplyTransform so the first
   // subsequent draw does not redundantly re-upload the matrix constants.
-  if (!dev->user_vs && fixedfunc_fvf_needs_matrix(dev->fvf)) {
+  if (affects_fixedfunc_matrix && !dev->user_vs && fixedfunc_fvf_needs_matrix(dev->fvf)) {
     const HRESULT hr = ensure_fixedfunc_wvp_constants_locked(dev);
     if (FAILED(hr)) {
       return trace.ret(hr);
