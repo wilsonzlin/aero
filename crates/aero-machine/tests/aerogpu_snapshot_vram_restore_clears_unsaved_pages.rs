@@ -150,9 +150,7 @@ fn aerogpu_snapshot_restore_clears_unsaved_vram_pages() {
     };
 
     let mut src = Machine::new(cfg.clone()).unwrap();
-    let aerogpu_bdf = src
-        .aerogpu_bdf()
-        .expect("expected AeroGPU device present");
+    let aerogpu_bdf = src.aerogpu_bdf().expect("expected AeroGPU device present");
     {
         let pci_cfg = src.pci_config_ports().expect("pc platform enabled");
         let mut pci_cfg = pci_cfg.borrow_mut();
@@ -193,9 +191,7 @@ fn aerogpu_snapshot_restore_clears_unsaved_vram_pages() {
     // this stale data.
     let mut dst = Machine::new(cfg).unwrap();
     dst.reset();
-    let aerogpu_bdf = dst
-        .aerogpu_bdf()
-        .expect("expected AeroGPU device present");
+    let aerogpu_bdf = dst.aerogpu_bdf().expect("expected AeroGPU device present");
     {
         let pci_cfg = dst.pci_config_ports().expect("pc platform enabled");
         let mut pci_cfg = pci_cfg.borrow_mut();
