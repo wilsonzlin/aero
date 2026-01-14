@@ -1191,6 +1191,112 @@ fn ehci_periodic_itd_forward_link_to_qh_executes_qh() {
 }
 
 #[test]
+fn ehci_periodic_sitd_forward_link_to_qh_executes_qh() {
+    let mut mem = TestMemory::new(MEM_SIZE);
+    let mut c = EhciController::new();
+
+    let in_queue = Rc::new(RefCell::new(VecDeque::new()));
+    let out_received = Rc::new(RefCell::new(Vec::new()));
+    c.hub_mut().attach(
+        0,
+        Box::new(BulkEndpointDevice::new(
+            in_queue.clone(),
+            out_received.clone(),
+        )),
+    );
+    reset_port(&mut c, &mut mem, 0);
+
+    let fl_base: u32 = 0x7000;
+    let sitd: u32 = 0x1800;
+    let qh: u32 = 0x1a00;
+    let qtd: u32 = 0x2000;
+
+    let payload = [0x10, 0x20, 0x30];
+    mem.write(BUF_DATA, &payload);
+
+    // Frame list entry 0 points at a siTD whose Next Link Pointer points at a QH.
+    mem.write_u32(fl_base, (sitd & LINK_ADDR_MASK) | LINK_TYPE_SITD);
+    mem.write_u32(sitd + 0x00, qh_link_ptr_qh(qh));
+
+    write_qtd(
+        &mut mem,
+        qtd,
+        LINK_TERMINATE,
+        qtd_token(QTD_TOKEN_PID_OUT, payload.len(), true, true),
+        BUF_DATA,
+    );
+    let ep_char = qh_epchar(0, 1, 64);
+    write_qh(&mut mem, qh, LINK_TERMINATE, ep_char, qtd);
+
+    c.mmio_write(regs::REG_PERIODICLISTBASE, 4, fl_base);
+    c.mmio_write(regs::REG_USBINTR, 4, regs::USBINTR_USBINT);
+    c.mmio_write(regs::REG_USBCMD, 4, regs::USBCMD_RS | regs::USBCMD_PSE);
+
+    c.tick_1ms(&mut mem);
+
+    assert_eq!(out_received.borrow().len(), 1);
+    assert_eq!(out_received.borrow()[0], payload);
+
+    let sts = c.mmio_read(regs::REG_USBSTS, 4);
+    assert_eq!(sts & regs::USBSTS_HSE, 0);
+    assert_ne!(sts & regs::USBSTS_USBINT, 0);
+    assert!(c.irq_level());
+}
+
+#[test]
+fn ehci_periodic_fstn_forward_link_to_qh_executes_qh() {
+    let mut mem = TestMemory::new(MEM_SIZE);
+    let mut c = EhciController::new();
+
+    let in_queue = Rc::new(RefCell::new(VecDeque::new()));
+    let out_received = Rc::new(RefCell::new(Vec::new()));
+    c.hub_mut().attach(
+        0,
+        Box::new(BulkEndpointDevice::new(
+            in_queue.clone(),
+            out_received.clone(),
+        )),
+    );
+    reset_port(&mut c, &mut mem, 0);
+
+    let fl_base: u32 = 0x7000;
+    let fstn: u32 = 0x1800;
+    let qh: u32 = 0x1a00;
+    let qtd: u32 = 0x2000;
+
+    let payload = [0x10, 0x20, 0x30];
+    mem.write(BUF_DATA, &payload);
+
+    // Frame list entry 0 points at an FSTN whose Normal Path Link Pointer points at a QH.
+    mem.write_u32(fl_base, (fstn & LINK_ADDR_MASK) | LINK_TYPE_FSTN);
+    mem.write_u32(fstn + 0x00, qh_link_ptr_qh(qh));
+
+    write_qtd(
+        &mut mem,
+        qtd,
+        LINK_TERMINATE,
+        qtd_token(QTD_TOKEN_PID_OUT, payload.len(), true, true),
+        BUF_DATA,
+    );
+    let ep_char = qh_epchar(0, 1, 64);
+    write_qh(&mut mem, qh, LINK_TERMINATE, ep_char, qtd);
+
+    c.mmio_write(regs::REG_PERIODICLISTBASE, 4, fl_base);
+    c.mmio_write(regs::REG_USBINTR, 4, regs::USBINTR_USBINT);
+    c.mmio_write(regs::REG_USBCMD, 4, regs::USBCMD_RS | regs::USBCMD_PSE);
+
+    c.tick_1ms(&mut mem);
+
+    assert_eq!(out_received.borrow().len(), 1);
+    assert_eq!(out_received.borrow()[0], payload);
+
+    let sts = c.mmio_read(regs::REG_USBSTS, 4);
+    assert_eq!(sts & regs::USBSTS_HSE, 0);
+    assert_ne!(sts & regs::USBSTS_USBINT, 0);
+    assert!(c.irq_level());
+}
+
+#[test]
 fn ehci_async_qh_budget_exceeded_sets_hse_and_halts() {
     const QH_COUNT: usize = 16 * 1024;
     let mut mem = TestMemory::new(0x100000);
