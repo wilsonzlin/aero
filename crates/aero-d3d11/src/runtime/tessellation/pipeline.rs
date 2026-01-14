@@ -40,9 +40,13 @@ const LAYOUT_INDIRECT_ARGS_BINDING: u32 = LAYOUT_PARAMS_BINDING + 3;
 const LAYOUT_DEBUG_BINDING: u32 = LAYOUT_PARAMS_BINDING + 4;
 
 // ---- DS (placeholder) bindings ----
+#[allow(dead_code)]
 const DS_HS_OUT_BINDING: u32 = BIND_INTERNAL;
+#[allow(dead_code)]
 const DS_PATCH_META_BINDING: u32 = DS_HS_OUT_BINDING + 1;
+#[allow(dead_code)]
 const DS_OUT_VERTICES_BINDING: u32 = DS_HS_OUT_BINDING + 2;
+#[allow(dead_code)]
 const DS_OUT_INDICES_BINDING: u32 = DS_HS_OUT_BINDING + 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -66,6 +70,7 @@ pub(crate) struct LayoutPassPipeline {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub(crate) struct DsPassthroughPipeline {
     empty_bg: wgpu::BindGroup,
     bgl_group3: wgpu::BindGroupLayout,
@@ -77,6 +82,7 @@ pub(crate) struct TessellationPipelines {
     vs_as_compute: HashMap<VsAsComputePipelineKey, VsAsComputePipeline>,
     hs_passthrough: Option<HsPassthroughPipeline>,
     layout_pass: Option<LayoutPassPipeline>,
+    #[allow(dead_code)]
     ds_passthrough: Option<DsPassthroughPipeline>,
 }
 
@@ -132,6 +138,7 @@ impl TessellationPipelines {
         Ok(self.layout_pass.as_ref().expect("pipeline inserted above"))
     }
 
+    #[allow(dead_code)]
     pub(crate) fn ds_passthrough(
         &mut self,
         device: &wgpu::Device,
@@ -569,6 +576,7 @@ impl LayoutPassPipeline {
     }
 }
 
+#[allow(dead_code)]
 impl DsPassthroughPipeline {
     fn new(device: &wgpu::Device) -> Result<Self> {
         if GROUP_INTERNAL != 3 {
