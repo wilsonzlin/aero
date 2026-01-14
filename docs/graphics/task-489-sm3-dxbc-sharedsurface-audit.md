@@ -52,7 +52,7 @@ bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --locked
 ```bash
 bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --test sm3_semantic_locations --locked
 bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --test sm3_wgsl_semantic_locations --locked
-bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --test d3d9_vertex_input --locked
+bash ./scripts/safe-run.sh cargo test -p aero --test d3d9_vertex_input --locked
 bash ./scripts/safe-run.sh cargo test -p aero-gpu --test aerogpu_d3d9_semantic_locations --locked
 ```
 
