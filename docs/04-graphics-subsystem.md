@@ -154,6 +154,7 @@ This is a small `u32[]` / `Int32Array` structure containing:
 - source (`LEGACY_TEXT`, `LEGACY_VBE_LFB`, `WDDM`)
 - base physical address (lo/hi)
 - width/height/pitch/format
+  - `format` uses the AeroGPU `AerogpuFormat` numeric (`u32`) discriminants (where `0` is reserved for `Invalid`).
 
 Defined in:
 
