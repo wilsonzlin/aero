@@ -254,6 +254,12 @@ mod tests {
         InterruptController, PlatformInterruptMode, PlatformInterrupts,
     };
 
+    fn enable_lapic_svr(ints: &PlatformInterrupts, apic_id: u8) {
+        // The LAPIC model drops injected interrupts while the software enable bit is cleared.
+        // Keep this explicit in tests so behaviour doesn't depend on constructor defaults.
+        ints.lapic_mmio_write_for_apic(apic_id, 0xF0, &0x1FFu32.to_le_bytes());
+    }
+
     #[test]
     fn trigger_msi_delivers_vector_to_lapic() {
         let mut config = PciConfigSpace::new(0x1234, 0x5678);
@@ -268,6 +274,7 @@ mod tests {
 
         let mut interrupts = PlatformInterrupts::new();
         interrupts.set_mode(PlatformInterruptMode::Apic);
+        enable_lapic_svr(&interrupts, 0);
         let msi = config.capability_mut::<MsiCapability>().unwrap();
         assert!(msi.trigger(&mut interrupts));
         assert_eq!(interrupts.get_pending(), Some(0x45));
@@ -288,8 +295,33 @@ mod tests {
 
         let mut interrupts = PlatformInterrupts::new();
         interrupts.set_mode(PlatformInterruptMode::Apic);
+        enable_lapic_svr(&interrupts, 0);
         let msi = config.capability_mut::<MsiCapability>().unwrap();
         assert!(msi.trigger(&mut interrupts));
         assert_eq!(interrupts.get_pending(), Some(0x45));
+    }
+
+    #[test]
+    fn trigger_msi_delivers_vector_to_non_bsp_lapic() {
+        let mut config = PciConfigSpace::new(0x1234, 0x5678);
+        config.add_capability(Box::new(MsiCapability::new()));
+
+        let cap_offset = config.find_capability(super::PCI_CAP_ID_MSI).unwrap() as u16;
+        // MSI address with destination ID 1 in xAPIC physical mode.
+        config.write(cap_offset + 0x04, 4, 0xfee0_1000);
+        config.write(cap_offset + 0x08, 4, 0);
+        config.write(cap_offset + 0x0c, 2, 0x0045);
+        let ctrl = config.read(cap_offset + 0x02, 2) as u16;
+        config.write(cap_offset + 0x02, 2, (ctrl | 0x0001) as u32);
+
+        let mut interrupts = PlatformInterrupts::new_with_cpu_count(2);
+        interrupts.set_mode(PlatformInterruptMode::Apic);
+        enable_lapic_svr(&interrupts, 0);
+        enable_lapic_svr(&interrupts, 1);
+
+        let msi = config.capability_mut::<MsiCapability>().unwrap();
+        assert!(msi.trigger(&mut interrupts));
+        assert_eq!(interrupts.get_pending_for_apic(0), None);
+        assert_eq!(interrupts.get_pending_for_apic(1), Some(0x45));
     }
 }
