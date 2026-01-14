@@ -4136,7 +4136,17 @@ def _qemu_has_device_strict(qemu_system: str, device_name: str) -> bool:
         msg = str(e)
         if msg.startswith("qemu-system binary not found:") or msg.startswith("failed to run '"):
             raise
-        return False
+        # If QEMU executed but the device is not supported, treat this as "not present" so callers can
+        # surface a clear "requires QEMU <device>" error.
+        out = msg
+        if "Output:\n" in msg:
+            out = msg.split("Output:\n", 1)[1]
+        if f"Device '{device_name}' not found" in out or f'Device "{device_name}" not found' in out:
+            return False
+
+        # Any other non-zero QEMU failure should be treated as fatal; otherwise callers would misreport
+        # QEMU execution errors as missing device support.
+        raise
 
 
 _QEMU_DEVICE_VECTORS_RE = re.compile(r"(?m)^\s*vectors\b")
