@@ -6900,7 +6900,11 @@ void EmitBindShadersLocked(AeroGpuDevice* dev) {
   cmd->vs = dev->current_vs;
   cmd->ps = dev->current_ps;
   cmd->cs = 0;
-  // `reserved0` is interpreted as the optional geometry shader handle.
+  // `reserved0` is interpreted as the optional geometry shader handle (legacy compat).
+  //
+  // Newer protocol versions also support an append-only extension that appends `{gs, hs, ds}`
+  // handles after the stable 24-byte prefix. Producers may mirror `gs` into `reserved0` so older
+  // hosts/tools can still observe a bound GS.
   cmd->reserved0 = dev->current_gs;
 }
 

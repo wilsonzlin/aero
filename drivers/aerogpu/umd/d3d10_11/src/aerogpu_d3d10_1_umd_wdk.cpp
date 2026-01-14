@@ -9491,7 +9491,12 @@ HRESULT AEROGPU_APIENTRY CreateDevice10(D3D10DDI_HADAPTER hAdapter, D3D10DDIARG_
   pCreateDevice->pDeviceFuncs->pfnDestroyPixelShader = &DestroyPixelShader;
   __if_exists(D3D10DDI_DEVICEFUNCS::pfnCalcPrivateGeometryShaderSize) {
     // Geometry shaders are accepted by the Win7 D3D10 runtime at FL10_0; forward
-    // DXBC to the host and bind via the legacy GS slot in BIND_SHADERS.reserved0.
+    // DXBC to the host and bind via `BIND_SHADERS` (legacy compat: GS handle carried via
+    // `aerogpu_cmd_bind_shaders.reserved0`).
+    //
+    // Newer protocol versions also support an append-only extension that appends `{gs, hs, ds}`
+    // handles after the stable 24-byte prefix. Producers may mirror `gs` into `reserved0` so older
+    // hosts/tools can still observe a bound GS.
     pCreateDevice->pDeviceFuncs->pfnCalcPrivateGeometryShaderSize = &CalcPrivateGeometryShaderSize;
     pCreateDevice->pDeviceFuncs->pfnCreateGeometryShader = &CreateGeometryShader;
     pCreateDevice->pDeviceFuncs->pfnDestroyGeometryShader = &DestroyGeometryShader;

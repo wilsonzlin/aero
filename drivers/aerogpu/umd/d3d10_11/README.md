@@ -26,7 +26,7 @@ Feature matrix for the Win7 WDK-backed UMDs:
 | Vertex buffer binding | **Multiple slots** supported (`StartSlot/NumBuffers` forwarded) | **Multiple slots** supported (`StartSlot/NumBuffers` forwarded) | **Multiple slots** supported (`StartSlot/NumBuffers` forwarded) |
 | Constant buffers | VS/PS/GS supported (14 slots, whole-buffer binding) | VS/PS/GS supported (14 slots, whole-buffer binding) | VS/PS/GS/CS supported (14 slots, `{FirstConstant, NumConstants}` ranges supported) |
 | Samplers | VS/PS/GS supported (16 slots; `CREATE_SAMPLER` + `SET_SAMPLERS`) | VS/PS/GS supported (16 slots; `CREATE_SAMPLER` + `SET_SAMPLERS`) | VS/PS/GS/CS supported (16 slots; basic filter/address modes) |
-| Geometry shaders (GS) | **Supported (partial)**: GS create + bind (GS handle carried via `aerogpu_cmd_bind_shaders.reserved0` (legacy compat)) | **Supported (partial)**: GS create + bind (GS handle carried via `aerogpu_cmd_bind_shaders.reserved0` (legacy compat)) | **Supported (partial)**: GS create + bind + stage bindings (host has compute-prepass scaffolding; GS DXBC execution is WIP; see below) |
+| Geometry shaders (GS) | **Supported (partial)**: GS create + bind (legacy compat: GS handle carried via `aerogpu_cmd_bind_shaders.reserved0`; newer streams may also use the append-only `{gs,hs,ds}` extension) | **Supported (partial)**: GS create + bind (legacy compat: GS handle carried via `aerogpu_cmd_bind_shaders.reserved0`; newer streams may also use the append-only `{gs,hs,ds}` extension) | **Supported (partial)**: GS create + bind + stage bindings (host has compute-prepass scaffolding; see below) |
 | Compute (CS) + UAV buffers | — | — | **Supported (partial)**: CS shaders + `AEROGPU_CMD_DISPATCH`; UAV **buffers** only (8 slots; no UAV textures / OM UAV binding) |
 
 \* All UMDs (D3D10 / D3D10.1 / D3D11) preserve the runtime-provided RTV slot count/list when emitting `SET_RENDER_TARGETS`: `color_count` reflects the runtime-provided slot count, clamped to `AEROGPU_MAX_RENDER_TARGETS` (8). `NULL` entries within `[0, color_count)` are valid and are encoded as `colors[i] = 0` (gaps are preserved).
@@ -80,9 +80,13 @@ Feature matrix for the Win7 WDK-backed UMDs:
 ### Still stubbed / known gaps
 
 - Geometry shaders (GS):
-  - D3D10 / D3D10.1: `CreateGeometryShader` + `GsSetShader` (and GS resource bindings: `GsSetConstantBuffers`, `GsSetShaderResources`, `GsSetSamplers`) are forwarded into the command stream (GS handle carried via `aerogpu_cmd_bind_shaders.reserved0` (legacy compat)).
+  - D3D10 / D3D10.1: `CreateGeometryShader` + `GsSetShader` (and GS resource bindings: `GsSetConstantBuffers`, `GsSetShaderResources`, `GsSetSamplers`) are forwarded into the command stream.
+    - Legacy compat: GS handle carried via `aerogpu_cmd_bind_shaders.reserved0`.
+    - Forward-compat: the protocol also supports an append-only `BIND_SHADERS` extension that appends `{gs,hs,ds}` after the base 24-byte packet; producers may mirror `gs` into `reserved0`.
   - D3D11:
-    - `CreateGeometryShader` + `GsSetShader` are forwarded into the command stream (GS handle carried via `aerogpu_cmd_bind_shaders.reserved0` for legacy compat).
+    - `CreateGeometryShader` + `GsSetShader` are forwarded into the command stream.
+      - Legacy compat: GS handle carried via `aerogpu_cmd_bind_shaders.reserved0`.
+      - Forward-compat: the protocol also supports an append-only `BIND_SHADERS` extension that appends `{gs,hs,ds}` after the base 24-byte packet; producers may mirror `gs` into `reserved0`.
     - GS stage resource binding DDIs (`GsSetConstantBuffers`, `GsSetShaderResources`, `GsSetSamplers`) emit binding packets; the host tracks these bindings, but the current compute-prepass path does not execute GS DXBC yet.
   - Host/WebGPU execution:
     - WebGPU has no geometry stage; AeroGPU routes draws requiring GS/HS/DS-style emulation through a **compute prepass + indirect draw** scaffolding path.
@@ -122,7 +126,9 @@ Host-side unit tests (portable; no WDK required) for command-stream encoding and
 - `drivers/aerogpu/umd/d3d10_11/tests/viewport_scissor_validation_tests.cpp` (CMake target: `aerogpu_d3d10_11_viewport_scissor_validation_tests`) covers single-viewport/scissor validation behavior (`E_NOTIMPL` surfaced for mismatched arrays; best-effort slot 0 is applied).
 - `drivers/aerogpu/umd/d3d10_11/tests/render_targets_tests.cpp` (CMake target: `aerogpu_d3d10_11_render_targets_tests`) and `drivers/aerogpu/umd/d3d10_11/tests/mrt_tests.cpp` (CMake target: `aerogpu_d3d10_11_mrt_tests`) cover `SET_RENDER_TARGETS` packet encoding and MRT invariants (including slot/gap preservation).
 - `drivers/aerogpu/umd/d3d10_11/tests/render_target_tests.cpp` (CMake target: `aerogpu_d3d10_11_render_target_tests`) is an end-to-end harness that opens an adapter/device (`OpenAdapter10`) and validates render-target binding behavior.
-- `drivers/aerogpu/umd/d3d10_11/tests/gs_shader_packets_tests.cpp` (CMake target: `aerogpu_d3d10_11_gs_shader_packets_tests`) and `drivers/aerogpu/umd/d3d10_11/tests/gs_resource_packets_tests.cpp` (CMake target: `aerogpu_d3d10_11_gs_resource_packets_tests`) cover GS create/bind and geometry-stage resource binding packet encoding using the preferred direct `AEROGPU_SHADER_STAGE_GEOMETRY` encoding.
+- `drivers/aerogpu/umd/d3d10_11/tests/gs_shader_packets_tests.cpp` (CMake target: `aerogpu_d3d10_11_gs_shader_packets_tests`) and `drivers/aerogpu/umd/d3d10_11/tests/gs_resource_packets_tests.cpp` (CMake target: `aerogpu_d3d10_11_gs_resource_packets_tests`) cover:
+  - GS create/bind and geometry-stage resource binding packet encoding using the preferred direct `AEROGPU_SHADER_STAGE_GEOMETRY` encoding, and
+  - forward-compat encoding for HS/DS via the `stage_ex` ABI extension plus the append-only extended `BIND_SHADERS` layout.
 - Host-side command-stream execution tests for the WebGPU-backed executor live under `crates/aero-d3d11/tests/` (run via `cargo test -p aero-d3d11`), including smoke coverage for `AEROGPU_CMD_*` packets, GS translation (`runtime/gs_translate.rs`), and strip restart semantics (`runtime/strip_to_list.rs`).
 - Command-stream/host validation for B5 formats, MRT, and state packets lives under `crates/aero-gpu/tests/` (run via `cargo test -p aero-gpu`)
   (for example: `aerogpu_d3d9_16bit_formats.rs`, `aerogpu_d3d9_clear_scissor.rs`, `aerogpu_d3d9_cmd_stream_state.rs`).

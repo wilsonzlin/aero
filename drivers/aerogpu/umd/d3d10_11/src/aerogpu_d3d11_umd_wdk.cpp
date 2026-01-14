@@ -866,8 +866,11 @@ static void EmitBindShadersLocked(Device* dev) {
   cmd->vs = dev->current_vs;
   cmd->ps = dev->current_ps;
   cmd->cs = dev->current_cs;
-  // Geometry shader (GS) handle is carried via `reserved0` (legacy extension)
-  // so the packet size stays stable.
+  // Geometry shader (GS) handle is carried via `reserved0` for legacy compatibility.
+  //
+  // Newer protocol versions also support an append-only extension that appends `{gs, hs, ds}`
+  // handles after the stable 24-byte prefix. Producers may mirror `gs` into `reserved0` so older
+  // hosts/tools can still observe a bound GS.
   cmd->reserved0 = dev->current_gs;
 }
 
