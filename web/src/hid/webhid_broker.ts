@@ -158,7 +158,9 @@ function assertPositiveSafeInteger(name: string, value: number): number {
   return value;
 }
 
-const DEFAULT_MAX_PENDING_SENDS_PER_DEVICE = 256;
+// Keep this large enough to absorb bursts, but bounded so a stalled WebHID send
+// can't cause unbounded memory growth if the guest spams reports.
+const DEFAULT_MAX_PENDING_SENDS_PER_DEVICE = 1024;
 const OUTPUT_SEND_DROP_WARN_INTERVAL_MS = 5000;
 
 export class WebHidBroker {
