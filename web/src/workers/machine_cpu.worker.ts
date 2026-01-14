@@ -1345,6 +1345,11 @@ function drainAerogpuSubmissions(): void {
   if (vmSnapshotPaused || machineBusy) return;
   const m = machine;
   if (!m || typeof m.aerogpu_drain_submissions !== "function") return;
+  const st = status;
+  // Avoid draining (and thus removing) submissions while the GPU worker is not ready to accept
+  // them. The WASM device model maintains its own bounded queue; draining too early would drop
+  // command streams during GPU worker startup/restart windows.
+  if (st && Atomics.load(st, StatusIndex.GpuReady) !== 1) return;
 
   let drained: unknown;
   try {
