@@ -82,5 +82,39 @@ describe("runtime/boot_disks_protocol", () => {
       expect(msg?.cd).toBe(cd);
       expect(msg?.mounts).toEqual({ hddId: "hdd0", cdId: "cd0" });
     });
+
+    it("accepts a valid bootDevice and drops invalid values", () => {
+      expect(
+        normalizeSetBootDisksMessage({
+          type: "setBootDisks",
+          mounts: {},
+          hdd: null,
+          cd: null,
+          bootDevice: "hdd",
+        }),
+      ).toEqual({
+        type: "setBootDisks",
+        mounts: {},
+        hdd: null,
+        cd: null,
+        bootDevice: "hdd",
+      });
+
+      // Invalid bootDevice values are ignored.
+      expect(
+        normalizeSetBootDisksMessage({
+          type: "setBootDisks",
+          mounts: {},
+          hdd: null,
+          cd: null,
+          bootDevice: "floppy",
+        }),
+      ).toEqual({
+        type: "setBootDisks",
+        mounts: {},
+        hdd: null,
+        cd: null,
+      });
+    });
   });
 });

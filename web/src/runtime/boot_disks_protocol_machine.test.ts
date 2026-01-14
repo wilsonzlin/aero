@@ -76,6 +76,37 @@ describe("runtime/boot_disks_protocol (machineBootDisksToOpfsSpec)", () => {
     expect(spec.bootDrive).toBe(0xe0);
   });
 
+  it("honors explicit bootDevice when both HDD + CD are present", () => {
+    const hdd = {
+      source: "local",
+      id: "disk-1",
+      name: "Disk 1",
+      backend: "opfs",
+      kind: "hdd",
+      format: "raw",
+      fileName: "disk-1.img",
+      sizeBytes: 512,
+      createdAtMs: 0,
+    } satisfies DiskImageMetadata;
+    const cd = {
+      source: "local",
+      id: "win7-iso",
+      name: "Windows 7 ISO",
+      backend: "opfs",
+      kind: "cd",
+      format: "iso",
+      fileName: "win7.iso",
+      sizeBytes: 1024,
+      createdAtMs: 0,
+    } satisfies DiskImageMetadata;
+
+    const cdBoot = machineBootDisksToOpfsSpec({ ...emptySetBootDisksMessage(), hdd, cd, bootDevice: "cdrom" });
+    expect(cdBoot.bootDrive).toBe(0xe0);
+
+    const hddBoot = machineBootDisksToOpfsSpec({ ...emptySetBootDisksMessage(), hdd, cd, bootDevice: "hdd" });
+    expect(hddBoot.bootDrive).toBe(0x80);
+  });
+
   it("rejects remote disks", () => {
     const remote = {
       source: "remote",
