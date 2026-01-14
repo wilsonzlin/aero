@@ -1169,16 +1169,18 @@ fn tier2_inline_tlb_prefilled_ram_entry_bumps_physical_code_page_version() {
     write_cpu_rflags(&mut mem, cpu_ptr_usize, 0x2);
 
     let tlb_salt = 0x1234_5678_9abc_def0u64;
-    let ctx = JitContext { ram_base: 0, tlb_salt };
+    let ctx = JitContext {
+        ram_base: 0,
+        tlb_salt,
+    };
     ctx.write_header_to_mem(&mut mem, jit_ctx_ptr_usize);
 
     // Prefill a TLB entry that maps vaddr page 1 (0x1000) to phys_base page 2 (0x2000).
     let vaddr = 0x1000u64;
     let vpn = vaddr >> PAGE_SHIFT;
     let idx = (vpn & JIT_TLB_INDEX_MASK) as usize;
-    let entry_addr = jit_ctx_ptr_usize
-        + (JitContext::TLB_OFFSET as usize)
-        + idx * (JIT_TLB_ENTRY_SIZE as usize);
+    let entry_addr =
+        jit_ctx_ptr_usize + (JitContext::TLB_OFFSET as usize) + idx * (JIT_TLB_ENTRY_SIZE as usize);
     let tag = (vpn ^ tlb_salt) | 1;
     let tlb_data = (0x2000u64 & PAGE_BASE_MASK)
         | (TLB_FLAG_READ | TLB_FLAG_WRITE | TLB_FLAG_EXEC | TLB_FLAG_IS_RAM);
