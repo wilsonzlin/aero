@@ -65,11 +65,11 @@ This is the **coordination hub**. You wire together the work from all other work
   - `aero_machine::Machine` includes basic SMP plumbing (per-vCPU LAPIC MMIO + INIT/SIPI bring-up +
     a bounded cooperative AP run loop inside `Machine::run_slice`; see
     `crates/aero-machine/tests/ap_tsc_sipi_sync.rs`, `lapic_mmio_per_vcpu.rs`,
-    `ioapic_routes_to_apic1.rs`, and `smp_timer_irq_routed_to_ap.rs` (ignored).
+    `ioapic_routes_to_apic1.rs`, `smp_lapic_timer_wakes_ap.rs`, and `smp_timer_irq_routed_to_ap.rs`.
   - `aero_machine::pc::PcMachine` / `aero_pc_platform::PcPlatform` remain **BSP-only execution**
     today; `cpu_count > 1` there is still primarily for firmware-table enumeration tests.
-  Full SMP work remains substantial (stable multi-vCPU scheduling, per-vCPU interrupt injection, AP→BSP
-  IPI paths, and determinism/snapshot/time integration).
+  Full SMP work remains substantial (stable multi-vCPU scheduling, AP↔BSP/AP IPI paths, and
+  determinism/snapshot/time integration).
   - **Workaround (for real guest boots today):** keep `cpu_count = 1` and use snapshots for fast
     boot/dev workflows (see [`docs/16-snapshots.md`](../docs/16-snapshots.md)).
   - **Progress tracker / plan:** [`docs/21-smp.md`](../docs/21-smp.md)

@@ -16,8 +16,7 @@ are still **SMP bring-up only**, but progress has landed:
   This is sufficient for SMP contract/bring-up tests, but it is **not** a full SMP scheduler or
   parallel vCPU execution environment yet.
   - Tests/coverage: `crates/aero-machine/tests/ap_tsc_sipi_sync.rs`, `lapic_mmio_per_vcpu.rs`,
-    `ioapic_routes_to_apic1.rs`; `smp_timer_irq_routed_to_ap.rs` is an ignored regression test that
-    captures desired PIT→AP IOAPIC destination routing.
+    `ioapic_routes_to_apic1.rs`, `smp_lapic_timer_wakes_ap.rs`, `smp_timer_irq_routed_to_ap.rs`.
 - `aero_machine::PcMachine` and `aero_pc_platform::PcPlatform` still execute only the BSP today;
   `cpu_count > 1` there is primarily for firmware-table enumeration tests.
 - Lower-level interrupt-fabric SMP semantics are covered in `crates/platform-compat/tests/smp_*`
@@ -51,9 +50,10 @@ Key missing pieces include (what’s still left even with the current bring-up s
      bring-up sequences still need hardening and coverage.
 
 3. **LAPIC/IPI plumbing**
-   - Per-vCPU LAPIC state exists and IOAPIC destination routing works for non-BSP LAPICs.
-   - Remaining work includes full IPI delivery semantics (AP→BSP/AP, broadcast modes), per-vCPU
-     interrupt injection, and safety/determinism under nested interrupt activity.
+    - Per-vCPU LAPIC state exists and IOAPIC destination routing works for non-BSP LAPICs.
+    - Remaining work includes full IPI delivery semantics (AP→BSP/AP, broadcast modes), per-vCPU
+      interrupt polling/injection hardening (beyond bring-up), and safety/determinism under nested
+      interrupt activity.
 
 4. **Firmware topology and OS discovery**
    - ACPI MADT must enumerate all CPUs and their APIC IDs.
