@@ -1770,3 +1770,111 @@ pub fn decode_cmd_stream_listing(
 
     Ok(out)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use aero_protocol::aerogpu::aerogpu_cmd::AEROGPU_CMD_STREAM_MAGIC;
+    use aero_protocol::aerogpu::aerogpu_pci::AEROGPU_ABI_VERSION_U32;
+
+    fn push_u32_le(out: &mut Vec<u8>, v: u32) {
+        out.extend_from_slice(&v.to_le_bytes());
+    }
+
+    fn push_u64_le(out: &mut Vec<u8>, v: u64) {
+        out.extend_from_slice(&v.to_le_bytes());
+    }
+
+    fn push_packet(out: &mut Vec<u8>, opcode: u32, payload: &[u8]) {
+        let size_bytes = 8u32 + payload.len() as u32;
+        assert_eq!(size_bytes % 4, 0, "packet size must be 4-byte aligned");
+        push_u32_le(out, opcode);
+        push_u32_le(out, size_bytes);
+        out.extend_from_slice(payload);
+    }
+
+    #[test]
+    fn software_executor_resolves_texture_views_in_set_render_targets() {
+        // Regression guard: newer command streams may bind RTs via a texture view handle rather
+        // than the base texture handle.
+        let mut bytes = Vec::new();
+        push_u32_le(&mut bytes, AEROGPU_CMD_STREAM_MAGIC);
+        push_u32_le(&mut bytes, AEROGPU_ABI_VERSION_U32);
+        push_u32_le(&mut bytes, 0); // patched later
+        push_u32_le(&mut bytes, 0); // flags
+        push_u32_le(&mut bytes, 0); // reserved0
+        push_u32_le(&mut bytes, 0); // reserved1
+
+        // CREATE_TEXTURE2D(texture_handle=1, format=R8G8B8A8_UNORM, 4x4, mip=1, array=1).
+        let mut payload = Vec::new();
+        push_u32_le(&mut payload, 1); // texture_handle
+        push_u32_le(&mut payload, 0); // usage_flags
+        push_u32_le(&mut payload, AerogpuFormat::R8G8B8A8Unorm as u32);
+        push_u32_le(&mut payload, 4); // width
+        push_u32_le(&mut payload, 4); // height
+        push_u32_le(&mut payload, 1); // mip_levels
+        push_u32_le(&mut payload, 1); // array_layers
+        push_u32_le(&mut payload, 0); // row_pitch_bytes
+        push_u32_le(&mut payload, 0); // backing_alloc_id
+        push_u32_le(&mut payload, 0); // backing_offset_bytes
+        push_u64_le(&mut payload, 0); // reserved0
+        assert_eq!(payload.len(), 48);
+        push_packet(&mut bytes, AerogpuCmdOpcode::CreateTexture2d as u32, &payload);
+
+        // CREATE_TEXTURE_VIEW(view_handle=2, texture_handle=1, format=R8G8B8A8_UNORM, mip 0..1, layer 0..1).
+        payload.clear();
+        push_u32_le(&mut payload, 2); // view_handle
+        push_u32_le(&mut payload, 1); // texture_handle
+        push_u32_le(&mut payload, AerogpuFormat::R8G8B8A8Unorm as u32);
+        push_u32_le(&mut payload, 0); // base_mip_level
+        push_u32_le(&mut payload, 1); // mip_level_count
+        push_u32_le(&mut payload, 0); // base_array_layer
+        push_u32_le(&mut payload, 1); // array_layer_count
+        push_u64_le(&mut payload, 0); // reserved0
+        assert_eq!(payload.len(), 36);
+        push_packet(&mut bytes, AerogpuCmdOpcode::CreateTextureView as u32, &payload);
+
+        // SET_RENDER_TARGETS(color_count=1, colors[0]=view_handle=2).
+        payload.clear();
+        push_u32_le(&mut payload, 1); // color_count
+        push_u32_le(&mut payload, 0); // depth_stencil
+        push_u32_le(&mut payload, 2); // colors[0] = view_handle
+        for _ in 1..aero_protocol::aerogpu::aerogpu_cmd::AEROGPU_MAX_RENDER_TARGETS {
+            push_u32_le(&mut payload, 0);
+        }
+        assert_eq!(payload.len(), 40);
+        push_packet(&mut bytes, AerogpuCmdOpcode::SetRenderTargets as u32, &payload);
+
+        // CLEAR(COLOR=green).
+        payload.clear();
+        push_u32_le(&mut payload, AEROGPU_CLEAR_COLOR);
+        push_u32_le(&mut payload, 0.0f32.to_bits()); // r
+        push_u32_le(&mut payload, 1.0f32.to_bits()); // g
+        push_u32_le(&mut payload, 0.0f32.to_bits()); // b
+        push_u32_le(&mut payload, 1.0f32.to_bits()); // a
+        push_u32_le(&mut payload, 1.0f32.to_bits()); // depth
+        push_u32_le(&mut payload, 0); // stencil
+        assert_eq!(payload.len(), 28);
+        push_packet(&mut bytes, AerogpuCmdOpcode::Clear as u32, &payload);
+
+        // PRESENT.
+        payload.clear();
+        push_u32_le(&mut payload, 0); // scanout_id
+        push_u32_le(&mut payload, 0); // flags
+        assert_eq!(payload.len(), 8);
+        push_packet(&mut bytes, AerogpuCmdOpcode::Present as u32, &payload);
+
+        // Patch header.size_bytes.
+        let size_bytes = bytes.len() as u32;
+        bytes[8..12].copy_from_slice(&size_bytes.to_le_bytes());
+
+        let mut exec = AerogpuSoftwareExecutor::new();
+        let mem = SubmissionMemory::default();
+        exec.process_cmd_stream(&bytes, &mem)
+            .expect("process cmd stream");
+        let frame = exec.take_presented_frame().expect("presented frame");
+        assert_eq!(frame.width, 4);
+        assert_eq!(frame.height, 4);
+        assert_eq!(&frame.rgba8[..4], &[0, 255, 0, 255]);
+    }
+}
