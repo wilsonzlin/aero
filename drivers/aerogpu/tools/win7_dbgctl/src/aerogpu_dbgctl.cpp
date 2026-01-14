@@ -6275,6 +6275,8 @@ static int DoWatchFenceJson(const D3DKMT_FUNCS *f,
                             std::string *out) {
   // Stall threshold: warn after ~2 seconds of no completed-fence progress while work is pending.
   static const uint32_t kStallWarnTimeMs = 2000;
+  // JSON mode builds the entire payload in memory; keep output bounded to avoid huge allocations.
+  static const uint32_t kJsonMaxSamples = 10000;
 
   if (!out) {
     return 1;
@@ -6283,8 +6285,10 @@ static int DoWatchFenceJson(const D3DKMT_FUNCS *f,
     JsonWriteTopLevelError(out, "watch-fence", f, "--watch-fence requires --samples N", STATUS_INVALID_PARAMETER);
     return 1;
   }
-  if (samples > 1000000u) {
-    samples = 1000000u;
+  const uint32_t requestedSamples = samples;
+  const uint32_t requestedIntervalMs = intervalMs;
+  if (samples > kJsonMaxSamples) {
+    samples = kJsonMaxSamples;
   }
 
   LARGE_INTEGER freq;
@@ -6313,7 +6317,11 @@ static int DoWatchFenceJson(const D3DKMT_FUNCS *f,
   w.Key("command");
   w.String("watch-fence");
   w.Key("samples_requested");
+  w.Uint32(requestedSamples);
+  w.Key("samples_effective");
   w.Uint32(samples);
+  w.Key("interval_ms_requested");
+  w.Uint32(requestedIntervalMs);
   w.Key("interval_ms");
   w.Uint32(intervalMs);
   w.Key("overall_timeout_ms");
@@ -7760,6 +7768,8 @@ static int DoWatchRingJson(const D3DKMT_FUNCS *f,
                            std::string *out) {
   // Stall threshold: warn after ~2 seconds of no observed pending-count change while work is pending.
   static const uint32_t kStallWarnTimeMs = 2000;
+  // JSON mode builds the entire payload in memory; keep output bounded to avoid huge allocations.
+  static const uint32_t kJsonMaxSamples = 10000;
 
   if (!out) {
     return 1;
@@ -7770,8 +7780,10 @@ static int DoWatchRingJson(const D3DKMT_FUNCS *f,
     return 1;
   }
 
-  if (samples > 1000000u) {
-    samples = 1000000u;
+  const uint32_t requestedSamples = samples;
+  const uint32_t requestedIntervalMs = intervalMs;
+  if (samples > kJsonMaxSamples) {
+    samples = kJsonMaxSamples;
   }
   if (intervalMs > 60000u) {
     intervalMs = 60000u;
@@ -7817,7 +7829,11 @@ static int DoWatchRingJson(const D3DKMT_FUNCS *f,
   w.Key("ring_id");
   w.Uint32(ringId);
   w.Key("samples_requested");
+  w.Uint32(requestedSamples);
+  w.Key("samples_effective");
   w.Uint32(samples);
+  w.Key("interval_ms_requested");
+  w.Uint32(requestedIntervalMs);
   w.Key("interval_ms");
   w.Uint32(intervalMs);
   w.Key("samples");
