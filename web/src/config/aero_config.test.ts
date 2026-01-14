@@ -29,6 +29,7 @@ describe("AeroConfig", () => {
     expect(resolved.effective.l2RelaySignalingMode).toBe("ws-trickle");
     expect(resolved.effective.l2TunnelToken).toBeUndefined();
     expect(resolved.effective.l2TunnelTokenTransport).toBe("query");
+    expect(resolved.effective.vmRuntime).toBe("legacy");
     expect(resolved.effective.virtioNetMode).toBe("modern");
     expect(resolved.effective.virtioInputMode).toBe("modern");
     expect(resolved.effective.virtioSndMode).toBe("modern");
@@ -190,6 +191,31 @@ describe("AeroConfig", () => {
     expect(parsed.lockedKeys.has("forceKeyboardBackend")).toBe(false);
     expect(parsed.overrides.forceKeyboardBackend).toBeUndefined();
     expect(parsed.issues.some((i) => i.key === "forceKeyboardBackend")).toBe(true);
+  });
+
+  it("query parsing: accepts vm runtime override", () => {
+    const parsed = parseAeroConfigQueryOverrides("?vm=machine");
+    expect(parsed.lockedKeys.has("vmRuntime")).toBe(true);
+    expect(parsed.overrides.vmRuntime).toBe("machine");
+  });
+
+  it("query parsing: accepts machine=1 shorthand", () => {
+    const parsed = parseAeroConfigQueryOverrides("?machine=1");
+    expect(parsed.lockedKeys.has("vmRuntime")).toBe(true);
+    expect(parsed.overrides.vmRuntime).toBe("machine");
+  });
+
+  it("query parsing: invalid vm runtime produces issue and falls back to default", () => {
+    const caps = {
+      supportsThreadedWorkers: true,
+      threadedWorkersUnsupportedReason: null,
+      supportsWebGPU: false,
+      webgpuUnsupportedReason: "no webgpu",
+    };
+    const resolved = resolveAeroConfigFromSources({ capabilities: caps, queryString: "?vm=invalid" });
+    expect(resolved.effective.vmRuntime).toBe("legacy");
+    expect(resolved.issues.some((i) => i.key === "vmRuntime")).toBe(true);
+    expect(resolved.lockedKeys.has("vmRuntime")).toBe(false);
   });
 
   it("query parsing: accepts same-origin proxy paths", () => {

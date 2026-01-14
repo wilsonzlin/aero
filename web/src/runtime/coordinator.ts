@@ -2323,6 +2323,7 @@ function aeroConfigsEqual(a: AeroConfig, b: AeroConfig): boolean {
     a.activeDiskImage === b.activeDiskImage &&
     a.logLevel === b.logLevel &&
     a.uiScale === b.uiScale &&
+    (a.vmRuntime ?? "legacy") === (b.vmRuntime ?? "legacy") &&
     a.virtioNetMode === b.virtioNetMode &&
     a.virtioInputMode === b.virtioInputMode &&
     a.virtioSndMode === b.virtioSndMode

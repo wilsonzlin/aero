@@ -10,6 +10,9 @@ import type { RelaySignalingMode } from "../net/webrtcRelaySignalingClient";
 export const AERO_LOG_LEVELS = ["trace", "debug", "info", "warn", "error"] as const;
 export type AeroLogLevel = (typeof AERO_LOG_LEVELS)[number];
 
+export const AERO_VM_RUNTIMES = ["legacy", "machine"] as const;
+export type AeroVmRuntime = (typeof AERO_VM_RUNTIMES)[number];
+
 export interface AeroConfig {
   guestMemoryMiB: number;
   enableWorkers: boolean;
@@ -49,6 +52,14 @@ export interface AeroConfig {
   activeDiskImage: string | null;
   logLevel: AeroLogLevel;
   uiScale?: number;
+  /**
+   * Selects which VM runtime implementation to use:
+   * - "legacy": CPU-only `WasmVm` + io.worker AIPC shims (status quo)
+   * - "machine": canonical full-system `api.Machine`
+   *
+   * Defaults to "legacy".
+   */
+  vmRuntime?: AeroVmRuntime;
   /**
    * Overrides the keyboard input backend selection in the IO worker.
    *
@@ -255,6 +266,23 @@ function parseInputBackendOverride(value: unknown): InputBackendOverride | undef
   return undefined;
 }
 
+function parseVmRuntime(value: unknown): AeroVmRuntime | undefined {
+  if (typeof value === "string") {
+    const v = value.trim().toLowerCase();
+    if (v === "legacy") return "legacy";
+    if (v === "machine") return "machine";
+    return undefined;
+  }
+  if (typeof value === "boolean") {
+    return value ? "machine" : "legacy";
+  }
+  if (typeof value === "number") {
+    if (value === 1) return "machine";
+    if (value === 0) return "legacy";
+  }
+  return undefined;
+}
+
 export function detectAeroBrowserCapabilities(): AeroBrowserCapabilities {
   const hasWorker = typeof Worker !== "undefined";
   const hasSAB = typeof SharedArrayBuffer !== "undefined";
@@ -303,6 +331,7 @@ export function getDefaultAeroConfig(
     l2TunnelTransport: "ws",
     l2RelaySignalingMode: "ws-trickle",
     l2TunnelTokenTransport: "query",
+    vmRuntime: "legacy",
     virtioNetMode: "modern",
     virtioInputMode: "modern",
     virtioSndMode: "modern",
@@ -455,6 +484,15 @@ export function parseAeroConfigOverrides(input: unknown): ParsedAeroConfigOverri
     if (parsed) {
       overrides.uiScale = parsed.value;
       if ("issue" in parsed) issues.push({ key: "uiScale", message: parsed.issue });
+    }
+  }
+
+  if (hasOwn(input, "vmRuntime")) {
+    const parsed = parseVmRuntime(input.vmRuntime);
+    if (parsed !== undefined) {
+      overrides.vmRuntime = parsed;
+    } else {
+      issues.push({ key: "vmRuntime", message: 'vmRuntime must be "legacy" or "machine".' });
     }
   }
 
@@ -640,6 +678,29 @@ export function parseAeroConfigQueryOverrides(search: string): ParsedAeroQueryOv
       overrides.uiScale = parsed.value;
       lockedKeys.add("uiScale");
       if ("issue" in parsed) issues.push({ key: "uiScale", message: parsed.issue });
+    }
+  }
+
+  const vm = params.get("vm");
+  if (vm !== null) {
+    const parsed = parseVmRuntime(vm);
+    if (parsed !== undefined) {
+      overrides.vmRuntime = parsed;
+      lockedKeys.add("vmRuntime");
+    } else {
+      issues.push({ key: "vmRuntime", message: 'vm must be "legacy" or "machine".' });
+    }
+  } else {
+    // Backwards/short-hand query param: ?machine=1
+    const machine = params.get("machine");
+    if (machine !== null) {
+      const parsed = parseBoolean(machine);
+      if (parsed !== undefined) {
+        overrides.vmRuntime = parsed ? "machine" : "legacy";
+        lockedKeys.add("vmRuntime");
+      } else {
+        issues.push({ key: "vmRuntime", message: 'machine must be a boolean ("1"/"0"/"true"/"false").' });
+      }
     }
   }
 

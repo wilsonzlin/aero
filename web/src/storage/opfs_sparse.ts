@@ -152,15 +152,19 @@ function decodeHeader(bytes: Uint8Array): SparseHeader {
   if (tableEntries <= 0) {
     throw new Error(`invalid tableEntries=${tableEntries}`);
   }
+  // Keep sparse file decoding bounded: reject pathological tables early based on
+  // the header alone, before any file-size dependent validation.
+  const tableBytesLenBig = BigInt(tableEntries) * 8n;
+  if (tableBytesLenBig > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new Error("sparse table size overflow");
+  }
+  if (tableBytesLenBig > BigInt(MAX_TABLE_BYTES)) {
+    throw new Error(`sparse table too large: ${tableBytesLenBig} bytes (max ${MAX_TABLE_BYTES})`);
+  }
   const expectedEntries =
     (BigInt(diskSizeBytes) + BigInt(blockSizeBytes) - 1n) / BigInt(blockSizeBytes);
   if (BigInt(tableEntries) !== expectedEntries) {
     throw new Error(`tableEntries mismatch: expected=${expectedEntries} actual=${tableEntries}`);
-  }
-
-  const tableBytesLenBig = BigInt(tableEntries) * 8n;
-  if (tableBytesLenBig > BigInt(MAX_TABLE_BYTES)) {
-    throw new Error(`sparse table too large: ${tableBytesLenBig} bytes (max ${MAX_TABLE_BYTES})`);
   }
 
   const expectedDataOffset = alignUpBigInt(

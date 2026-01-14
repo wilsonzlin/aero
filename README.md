@@ -170,6 +170,7 @@ Aero uses a typed configuration object (`AeroConfig`) that can be sourced from m
 | `disk`    | string \| `null` | `activeDiskImage` | `?disk=win7-sp1.img` |
 | `log`     | `trace|debug|info|warn|error` | `logLevel` | `?log=debug` |
 | `scale`   | number | `uiScale` | `?scale=1.25` |
+| `vm`      | `legacy\|machine` | `vmRuntime` | `?vm=machine` |
 | `kbd`     | `auto|ps2|usb|virtio` | `forceKeyboardBackend` | `?kbd=ps2` |
 | `mouse`   | `auto|ps2|usb|virtio` | `forceMouseBackend` | `?mouse=virtio` |
 
@@ -185,6 +186,7 @@ Aero uses a typed configuration object (`AeroConfig`) that can be sourced from m
 - URL overrides are intentionally *highest precedence* and are shown as read-only in the Settings panel.
 - Some settings may be forced off at runtime if the browser lacks required capabilities (e.g. workers require `SharedArrayBuffer` + cross-origin isolation).
 - `proxy` (`proxyUrl`) may be either an absolute `ws(s)://` / `http(s)://` URL or a same-origin path like `/l2` (legacy alias: `/eth`).
+- `vmRuntime` can also be set via `?machine=1` (shorthand for `?vm=machine`).
 
 ## WASM in workers
 
