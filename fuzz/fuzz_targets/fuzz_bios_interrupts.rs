@@ -414,7 +414,7 @@ fn run(data: &[u8]) -> Outcome {
         _ => {}
     }
 
-    bios.dispatch_interrupt(vector, &mut cpu, &mut bus, &mut disk);
+    bios.dispatch_interrupt(vector, &mut cpu, &mut bus, &mut disk, None);
 
     // Safety invariants.
     bus.assert_no_oob();
