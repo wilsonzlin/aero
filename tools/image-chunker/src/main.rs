@@ -437,7 +437,7 @@ async fn publish(args: PublishArgs) -> Result<()> {
     // Keep the in-flight chunk buffer count bounded to cap memory: each worker owns at most one
     // chunk at a time, and this queue limits producer read-ahead.
     let (work_tx, work_rx) = async_channel::bounded::<ChunkJob>(args.concurrency);
-    let (result_tx, result_rx) = tokio::sync::mpsc::unbounded_channel::<ChunkResult>();
+    let (result_tx, result_rx) = tokio::sync::mpsc::channel::<ChunkResult>(args.concurrency);
 
     // Drain chunk results concurrently so we don't buffer `ChunkResult` messages for the entire
     // disk before constructing the manifest.
@@ -451,17 +451,36 @@ async fn publish(args: PublishArgs) -> Result<()> {
             };
 
         let mut result_rx = result_rx;
+        let mut collector_err: Option<anyhow::Error> = None;
         while let Some(result) = result_rx.recv().await {
             if matches!(checksum, ChecksumAlgorithm::Sha256) {
-                let idx: usize = result
-                    .index
-                    .try_into()
-                    .map_err(|_| anyhow!("chunk index {} does not fit into usize", result.index))?;
-                sha256_by_index[idx] = result.sha256;
+                match usize::try_from(result.index) {
+                    Ok(idx) => {
+                        if let Some(slot) = sha256_by_index.get_mut(idx) {
+                            *slot = result.sha256;
+                        } else if collector_err.is_none() {
+                            collector_err = Some(anyhow!(
+                                "chunk index {idx} is out of bounds (sha256 vector len={})",
+                                sha256_by_index.len()
+                            ));
+                        }
+                    }
+                    Err(_) => {
+                        if collector_err.is_none() {
+                            collector_err = Some(anyhow!(
+                                "chunk index {} does not fit into usize",
+                                result.index
+                            ));
+                        }
+                    }
+                }
             }
         }
 
-        Ok::<Vec<Option<String>>, anyhow::Error>(sha256_by_index)
+        match collector_err {
+            Some(err) => Err(err),
+            None => Ok(sha256_by_index),
+        }
     });
 
     let mut workers = Vec::with_capacity(args.concurrency);
@@ -874,7 +893,8 @@ async fn verify_optional_meta_http_or_file(
             // Preserve querystring auth material from the manifest URL (e.g. signed URLs).
             meta_url.set_query(manifest_url.query());
             meta_url.set_fragment(None);
-            match download_http_bytes_optional_with_retry(client, meta_url.clone(), retries).await? {
+            match download_http_bytes_optional_with_retry(client, meta_url.clone(), retries).await?
+            {
                 None => {
                     eprintln!("Note: {meta_url} not found; skipping meta.json validation.");
                 }
@@ -2692,7 +2712,7 @@ async fn build_s3_client(
 #[allow(clippy::too_many_arguments)]
 async fn worker_loop(
     work_rx: async_channel::Receiver<ChunkJob>,
-    result_tx: tokio::sync::mpsc::UnboundedSender<ChunkResult>,
+    result_tx: tokio::sync::mpsc::Sender<ChunkResult>,
     s3: S3Client,
     bucket: String,
     prefix: String,
@@ -2727,10 +2747,13 @@ async fn worker_loop(
         let uploaded = chunks_uploaded.fetch_add(1, Ordering::SeqCst) + 1;
         pb.set_message(format!("{uploaded}/{chunk_count} chunks"));
 
-        let _ = result_tx.send(ChunkResult {
-            index: job.index,
-            sha256,
-        });
+        result_tx
+            .send(ChunkResult {
+                index: job.index,
+                sha256,
+            })
+            .await
+            .map_err(|err| anyhow!("internal result channel closed unexpectedly: {err}"))?;
     }
     Ok(())
 }

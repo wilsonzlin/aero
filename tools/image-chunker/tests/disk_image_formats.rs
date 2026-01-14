@@ -457,13 +457,8 @@ fn assert_chunking_raw_uses_file_bytes(format: ImageFormat) {
     backend.write_at(0, &expected).unwrap();
     let tmp = persist_mem_backend(backend);
 
-    let (manifest, chunks) = chunk_disk_to_vecs(
-        tmp.path(),
-        format,
-        chunk_size,
-        ChecksumAlgorithm::Sha256,
-    )
-    .unwrap();
+    let (manifest, chunks) =
+        chunk_disk_to_vecs(tmp.path(), format, chunk_size, ChecksumAlgorithm::Sha256).unwrap();
 
     assert_eq!(manifest.total_size, disk_size_bytes);
     assert_eq!(manifest.chunk_size, chunk_size);
