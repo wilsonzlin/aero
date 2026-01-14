@@ -519,6 +519,8 @@ static BOOLEAN AerovblkDeviceBringUp(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, 
   if (InterlockedCompareExchange(&devExt->ResetInProgress, 1, 0) != 0) {
     return TRUE;
   }
+  /* Refresh whether StorPort assigned message-signaled interrupts (MSI/MSI-X). */
+  AerovblkCaptureInterruptMode(devExt);
 
   devExt->Vdev.QueueNotifyAddrCache = devExt->QueueNotifyAddrCache;
   devExt->Vdev.QueueNotifyAddrCacheCount = RTL_NUMBER_OF(devExt->QueueNotifyAddrCache);
