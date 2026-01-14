@@ -241,7 +241,10 @@ fn strip_inf_sections_bytes(contents: &[u8], drop_sections: &[&str]) -> Vec<u8> 
     // This is used for controlled drift checks where we want byte-for-byte equality everywhere
     // except a small set of allowed sections (e.g. virtio-input legacy alias INF may diverge only
     // in its models sections).
-    let drop: Vec<String> = drop_sections.iter().map(|s| s.to_ascii_lowercase()).collect();
+    let drop: Vec<String> = drop_sections
+        .iter()
+        .map(|s| s.to_ascii_lowercase())
+        .collect();
 
     let mut out = Vec::with_capacity(contents.len());
     let mut skipping = false;
@@ -290,7 +293,9 @@ fn strip_inf_sections_bytes(contents: &[u8], drop_sections: &[&str]) -> Vec<u8> 
                 k += 1;
             }
             if k < line.len() && line[k] == b']' {
-                let name = String::from_utf8_lossy(&name_bytes).trim().to_ascii_lowercase();
+                let name = String::from_utf8_lossy(&name_bytes)
+                    .trim()
+                    .to_ascii_lowercase();
                 skipping = drop.iter().any(|s| s == &name);
             }
         }
