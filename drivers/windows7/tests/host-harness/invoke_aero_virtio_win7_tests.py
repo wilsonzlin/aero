@@ -4105,6 +4105,9 @@ def _qemu_device_list_help_text(qemu_system: str) -> str:
         raise RuntimeError(f"qemu-system binary not found: {qemu_system}") from e
     except OSError as e:
         raise RuntimeError(f"failed to run '{qemu_system} -device help': {e}") from e
+    if proc.returncode != 0:
+        out = (proc.stdout or "").strip()
+        raise RuntimeError(f"failed to query QEMU device list (exit={proc.returncode}). Output:\n{out}")
     return proc.stdout or ""
 
 
