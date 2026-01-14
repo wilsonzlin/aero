@@ -21,8 +21,8 @@ class Win7VirtioHarnessWorkflowHttpPathInputTests(unittest.TestCase):
         self.assertIn("http_path:", self.text)
         self.assertIn('http_path="${{ inputs.http_path }}"', self.text)
         self.assertIn('--http-path "${http_path}"', self.text)
+        self.assertIn("workflow input 'http_path' must not contain whitespace", self.text)
 
 
 if __name__ == "__main__":
     unittest.main()
-

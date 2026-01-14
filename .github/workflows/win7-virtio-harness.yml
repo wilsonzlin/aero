@@ -513,6 +513,10 @@ jobs:
               echo "ERROR: workflow input 'http_path' must start with '/', got: '${http_path}'"
               exit 1
             fi
+            if [[ "${http_path}" =~ [[:space:]] ]]; then
+              echo "ERROR: workflow input 'http_path' must not contain whitespace, got: '${http_path}'"
+              exit 1
+            fi
             if [[ -z "${udp_port}" || ! "${udp_port}" =~ ^[0-9]+$ ]]; then
               echo "ERROR: workflow input 'udp_port' must be an integer UDP port, got: '${udp_port}'"
               exit 1
