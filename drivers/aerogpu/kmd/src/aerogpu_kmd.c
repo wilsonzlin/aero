@@ -5107,7 +5107,7 @@ static NTSTATUS APIENTRY AeroGpuDdiEnumVidPnCofuncModality(_In_ const HANDLE hAd
         }
 
         if (pinnedW != 0 && pinnedH != 0 && pinnedTargetW != 0 && pinnedTargetH != 0 &&
-            (pinnedW != pinnedTargetW || pinnedH != pinnedTargetH)) {
+            !AeroGpuVidPnModeDimsApproximatelyEqual(pinnedW, pinnedH, pinnedTargetW, pinnedTargetH)) {
             return STATUS_GRAPHICS_INVALID_VIDPN_TOPOLOGY;
         }
 
