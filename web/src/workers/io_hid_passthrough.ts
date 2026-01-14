@@ -20,6 +20,25 @@ function isOutputReport(value: unknown): value is NonNullable<OutputReportResult
 }
 
 const MAX_HID_INPUT_REPORT_PAYLOAD_BYTES = 64;
+const MAX_HID_CONTROL_TRANSFER_BYTES = 0xffff;
+
+function maxHidControlPayloadBytes(reportId: number): number {
+  // USB control transfers have a u16 `wLength`. When `reportId != 0` the on-wire report includes a
+  // 1-byte reportId prefix, so the payload must be <= 0xfffe.
+  return (reportId >>> 0) === 0 ? MAX_HID_CONTROL_TRANSFER_BYTES : MAX_HID_CONTROL_TRANSFER_BYTES - 1;
+}
+
+function toTransferableArrayBufferBacked(view: Uint8Array): Uint8Array<ArrayBuffer> {
+  // We transfer `data.buffer` across threads. Ensure the view's backing buffer is:
+  // - an ArrayBuffer (not SharedArrayBuffer), AND
+  // - tightly sized (so we don't transfer a huge underlying buffer for a small slice).
+  if (view.buffer instanceof ArrayBuffer && view.byteOffset === 0 && view.byteLength === view.buffer.byteLength) {
+    return view as unknown as Uint8Array<ArrayBuffer>;
+  }
+  const out = new Uint8Array(view.byteLength);
+  out.set(view);
+  return out;
+}
 
 /**
  * IO worker-side glue for managing WebHID passthrough devices.
@@ -29,10 +48,10 @@ const MAX_HID_INPUT_REPORT_PAYLOAD_BYTES = 64;
  */
 export class IoWorkerHidPassthrough {
   readonly #wasm: WasmApi;
-  readonly #postMessage: (msg: HidSendReportMessage) => void;
+  readonly #postMessage: (msg: HidSendReportMessage, transfer: Transferable[]) => void;
   readonly #devices = new Map<number, HidPassthroughBridge>();
 
-  constructor(wasm: WasmApi, postMessage: (msg: HidSendReportMessage) => void) {
+  constructor(wasm: WasmApi, postMessage: (msg: HidSendReportMessage, transfer: Transferable[]) => void) {
     this.#wasm = wasm;
     this.#postMessage = postMessage;
   }
@@ -107,13 +126,19 @@ export class IoWorkerHidPassthrough {
         const next = bridge.drain_next_output_report() as unknown;
         if (next === null) break;
         if (!isOutputReport(next)) break;
-        this.#postMessage({
+
+        const reportId = next.reportId >>> 0;
+        const maxPayloadBytes = maxHidControlPayloadBytes(reportId);
+        const clamped = next.data.byteLength > maxPayloadBytes ? next.data.subarray(0, maxPayloadBytes) : next.data;
+        const data = toTransferableArrayBufferBacked(clamped);
+        const msg: HidSendReportMessage = {
           type: "hid.sendReport",
           deviceId,
           reportType: next.reportType,
-          reportId: next.reportId,
-          data: next.data as Uint8Array<ArrayBuffer>,
-        });
+          reportId,
+          data,
+        };
+        this.#postMessage(msg, [data.buffer]);
       }
     }
   }

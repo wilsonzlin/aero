@@ -22,7 +22,7 @@ describe("workers/IoWorkerHidPassthrough", () => {
       }
     }
 
-    const posted: HidSendReportMessage[] = [];
+    const posted: Array<{ msg: HidSendReportMessage; transfer: Transferable[] }> = [];
 
     const wasm = {
       // Minimal subset required by the IoWorkerHidPassthrough helper.
@@ -30,7 +30,7 @@ describe("workers/IoWorkerHidPassthrough", () => {
       UsbHidPassthroughBridge: FakeBridge,
     } as unknown as WasmApi;
 
-    const mgr = new IoWorkerHidPassthrough(wasm, (msg) => posted.push(msg));
+    const mgr = new IoWorkerHidPassthrough(wasm, (msg, transfer) => posted.push({ msg, transfer }));
 
     const attach: HidAttachMessage = {
       type: "hid.attach",
@@ -76,15 +76,15 @@ describe("workers/IoWorkerHidPassthrough", () => {
 
     mgr.tick();
 
-    expect(posted).toEqual([
-      {
-        type: "hid.sendReport",
-        deviceId: attach.deviceId,
-        reportType: "output",
-        reportId: 1,
-        data: outData,
-      },
-    ]);
+    expect(posted).toHaveLength(1);
+    expect(posted[0]!.msg).toEqual({
+      type: "hid.sendReport",
+      deviceId: attach.deviceId,
+      reportType: "output",
+      reportId: 1,
+      data: outData,
+    });
+    expect(posted[0]!.transfer).toEqual([outData.buffer]);
   });
 
   it("falls back to WebHidPassthroughBridge when synthesize/UsbHidPassthroughBridge are unavailable", () => {
@@ -103,13 +103,13 @@ describe("workers/IoWorkerHidPassthrough", () => {
       }
     }
 
-    const posted: HidSendReportMessage[] = [];
+    const posted: Array<{ msg: HidSendReportMessage; transfer: Transferable[] }> = [];
 
     const wasm = {
       WebHidPassthroughBridge: FakeBridge,
     } as unknown as WasmApi;
 
-    const mgr = new IoWorkerHidPassthrough(wasm, (msg) => posted.push(msg));
+    const mgr = new IoWorkerHidPassthrough(wasm, (msg, transfer) => posted.push({ msg, transfer }));
 
     const attach: HidAttachMessage = {
       type: "hid.attach",
@@ -150,15 +150,15 @@ describe("workers/IoWorkerHidPassthrough", () => {
 
     mgr.tick();
 
-    expect(posted).toEqual([
-      {
-        type: "hid.sendReport",
-        deviceId: attach.deviceId,
-        reportType: "output",
-        reportId: 1,
-        data: outData,
-      },
-    ]);
+    expect(posted).toHaveLength(1);
+    expect(posted[0]!.msg).toEqual({
+      type: "hid.sendReport",
+      deviceId: attach.deviceId,
+      reportType: "output",
+      reportId: 1,
+      data: outData,
+    });
+    expect(posted[0]!.transfer).toEqual([outData.buffer]);
   });
 
   it("clamps oversized input reports before forwarding to push_input_report", () => {
@@ -199,5 +199,55 @@ describe("workers/IoWorkerHidPassthrough", () => {
     const payload = bridgeInstance!.push_input_report.mock.calls[0]![1] as Uint8Array;
     expect(payload.byteLength).toBe(64);
     expect(Array.from(payload.slice(0, 3))).toEqual([1, 2, 3]);
+  });
+
+  it("clamps and copies oversized output report payloads before posting", () => {
+    let bridgeInstance: FakeBridge | null = null;
+    class FakeBridge {
+      readonly push_input_report = vi.fn();
+      readonly drain_next_output_report = vi.fn();
+      readonly configured = vi.fn(() => true);
+      readonly free = vi.fn();
+      constructor() {
+        bridgeInstance = this;
+      }
+    }
+
+    const posted: Array<{ msg: HidSendReportMessage; transfer: Transferable[] }> = [];
+    const wasm = { WebHidPassthroughBridge: FakeBridge } as unknown as WasmApi;
+    const mgr = new IoWorkerHidPassthrough(wasm, (msg, transfer) => posted.push({ msg, transfer }));
+
+    mgr.attach({
+      type: "hid.attach",
+      deviceId: 1,
+      vendorId: 0x1234,
+      productId: 0x5678,
+      collections: [],
+      hasInterruptOut: false,
+    });
+
+    expect(bridgeInstance).not.toBeNull();
+    const backing = new Uint8Array(0xffff + 128);
+    backing.set([1, 2, 3], 64);
+    const view = backing.subarray(64, 64 + 0xffff);
+    bridgeInstance!.drain_next_output_report.mockReturnValueOnce({ reportType: "output", reportId: 9, data: view });
+    bridgeInstance!.drain_next_output_report.mockReturnValueOnce(null);
+
+    mgr.tick();
+
+    expect(posted).toHaveLength(1);
+    const { msg, transfer } = posted[0]!;
+    expect(msg.type).toBe("hid.sendReport");
+    expect(msg.deviceId).toBe(1);
+    expect(msg.reportType).toBe("output");
+    expect(msg.reportId).toBe(9);
+    // reportId != 0 => on-wire report includes a reportId prefix byte, so clamp payload to 0xfffe.
+    expect(msg.data.byteLength).toBe(0xfffe);
+    expect(Array.from(msg.data.slice(0, 3))).toEqual([1, 2, 3]);
+    // Ensure we don't transfer the entire backing buffer.
+    expect(msg.data.buffer).not.toBe(backing.buffer);
+    expect(msg.data.byteOffset).toBe(0);
+    expect(msg.data.byteLength).toBe(msg.data.buffer.byteLength);
+    expect(transfer).toEqual([msg.data.buffer]);
   });
 });
