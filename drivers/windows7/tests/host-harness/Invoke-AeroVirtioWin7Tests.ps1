@@ -7921,7 +7921,21 @@ try {
       $scriptExitCode = 1
     }
     "VIRTIO_BLK_RESIZE_SKIPPED" {
-      Write-Host "FAIL: VIRTIO_BLK_RESIZE_SKIPPED: virtio-blk-resize test was skipped (flag_not_set) but -WithBlkResize/-WithVirtioBlkResize/-RequireVirtioBlkResize/-EnableVirtioBlkResize was enabled (provision the guest with --test-blk-resize)"
+      $reason = "unknown"
+      $line = Try-ExtractLastAeroMarkerLine `
+        -Tail $result.Tail `
+        -Prefix "AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|SKIP|" `
+        -SerialLogPath $SerialLogPath
+      if ($null -ne $line) {
+        if ($line -match "reason=([^|\r\n]+)") { $reason = $Matches[1] }
+        elseif ($line -match "\|SKIP\|([^|\r\n=]+)(?:\||$)") { $reason = $Matches[1] }
+      }
+
+      if ($reason -eq "flag_not_set") {
+        Write-Host "FAIL: VIRTIO_BLK_RESIZE_SKIPPED: virtio-blk-resize test was skipped (flag_not_set) but -WithBlkResize/-WithVirtioBlkResize/-RequireVirtioBlkResize/-EnableVirtioBlkResize was enabled (provision the guest with --test-blk-resize)"
+      } else {
+        Write-Host "FAIL: VIRTIO_BLK_RESIZE_SKIPPED: virtio-blk-resize test was skipped ($reason) but -WithBlkResize/-WithVirtioBlkResize/-RequireVirtioBlkResize/-EnableVirtioBlkResize was enabled"
+      }
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
@@ -9355,7 +9369,26 @@ try {
         $reason = "--disable-snd"
       }
 
-      Write-Host "FAIL: VIRTIO_SND_SKIPPED: virtio-snd test was skipped ($reason) but -WithVirtioSnd/-RequireVirtioSnd/-EnableVirtioSnd was enabled"
+      $irqMode = ""
+      $irqMessageCount = ""
+      $irqReason = ""
+      $line = Try-ExtractLastAeroMarkerLine `
+        -Tail $result.Tail `
+        -Prefix "AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP" `
+        -SerialLogPath $SerialLogPath
+      if ($null -ne $line) {
+        if ($line -match "(?:^|\|)irq_mode=([^|\r\n]+)") { $irqMode = $Matches[1] }
+        if ($line -match "(?:^|\|)irq_message_count=([^|\r\n]+)") { $irqMessageCount = $Matches[1] }
+        if ($line -match "(?:^|\|)irq_reason=([^|\r\n]+)") { $irqReason = $Matches[1] }
+      }
+      $detailsParts = @()
+      if (-not [string]::IsNullOrEmpty($irqMode)) { $detailsParts += "irq_mode=$irqMode" }
+      if (-not [string]::IsNullOrEmpty($irqMessageCount)) { $detailsParts += "irq_message_count=$irqMessageCount" }
+      if (-not [string]::IsNullOrEmpty($irqReason)) { $detailsParts += "irq_reason=$irqReason" }
+      $details = ""
+      if ($detailsParts.Count -gt 0) { $details = " (" + ($detailsParts -join " ") + ")" }
+
+      Write-Host "FAIL: VIRTIO_SND_SKIPPED: virtio-snd test was skipped ($reason) but -WithVirtioSnd/-RequireVirtioSnd/-EnableVirtioSnd was enabled$details"
       if ($SerialLogPath -and (Test-Path -LiteralPath $SerialLogPath)) {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue

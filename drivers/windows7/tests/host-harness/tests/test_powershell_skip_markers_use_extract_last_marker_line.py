@@ -27,10 +27,26 @@ class PowerShellSkipMarkersUseExtractLastMarkerLineTests(unittest.TestCase):
         self.assertIn("Try-ExtractLastAeroMarkerLine", body)
         self.assertIn('-Prefix "AERO_VIRTIO_SELFTEST|TEST|virtio-input-led|SKIP|"', body)
 
+    def test_virtio_blk_resize_skipped_uses_try_extract_last_aero_marker_line(self) -> None:
+        body = self._extract_case_body("VIRTIO_BLK_RESIZE_SKIPPED", r'"VIRTIO_BLK_RESIZE_FAILED"\s*\{')
+        self.assertIn("Try-ExtractLastAeroMarkerLine", body)
+        self.assertIn('-Prefix "AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|SKIP|"', body)
+        self.assertIn("\\|SKIP\\|([^|\\r\\n=]+)(?:\\||$)", body)
+
     def test_virtio_net_link_flap_skipped_uses_try_extract_last_aero_marker_line(self) -> None:
         body = self._extract_case_body("VIRTIO_NET_LINK_FLAP_SKIPPED", r'"VIRTIO_NET_UDP_FAILED"\s*\{')
         self.assertIn("Try-ExtractLastAeroMarkerLine", body)
         self.assertIn('-Prefix "AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|SKIP|"', body)
+
+    def test_virtio_snd_skipped_uses_try_extract_last_aero_marker_line(self) -> None:
+        body = self._extract_case_body("VIRTIO_SND_SKIPPED", r'"VIRTIO_SND_CAPTURE_SKIPPED"\s*\{')
+        self.assertIn("Try-ExtractLastAeroMarkerLine", body)
+        self.assertIn('-Prefix "AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP"', body)
+        for pat in (
+            "irq_mode=([^|\\r\\n]+)",
+            "irq_message_count=([^|\\r\\n]+)",
+        ):
+            self.assertIn(pat, body)
 
     def test_virtio_snd_capture_skipped_uses_try_extract_last_aero_marker_line(self) -> None:
         body = self._extract_case_body("VIRTIO_SND_CAPTURE_SKIPPED", r'"VIRTIO_SND_DUPLEX_SKIPPED"\s*\{')

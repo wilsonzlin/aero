@@ -2167,22 +2167,59 @@ def _qemu_device_arg_maybe_add_vectors(
     return _qemu_device_arg_add_vectors(device_arg, vectors)
 
 
-def _virtio_snd_skip_failure_message(tail: bytes) -> str:
+def _virtio_snd_skip_failure_message(
+    tail: bytes, *, marker_line: Optional[str] = None
+) -> str:
     # The guest selftest's virtio-snd marker is intentionally strict and machine-friendly:
-    #   AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS/FAIL/SKIP
+    #   AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS/FAIL/SKIP|irq_mode=...|irq_message_count=...
     #
     # Any reason for SKIP is logged as human-readable text, so the host harness must infer
     # a useful error message from the tail log.
+
+    # But still surface any stable IRQ details that the guest appended to the marker line, since
+    # those survive tail truncation when we capture the marker incrementally.
+    details = ""
+    marker = marker_line
+    if marker is not None:
+        if (
+            not marker.startswith("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|")
+            or _try_extract_marker_status(marker) != "SKIP"
+        ):
+            marker = None
+    if marker is None:
+        marker = _try_extract_last_marker_line(
+            tail, b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP"
+        )
+    if marker is not None:
+        fields = _parse_marker_kv_fields(marker)
+        parts: list[str] = []
+        for k in ("irq_mode", "irq_message_count", "irq_reason"):
+            v = (fields.get(k) or "").strip()
+            if v:
+                parts.append(f"{k}={_sanitize_marker_value(v)}")
+        if parts:
+            details = " (" + " ".join(parts) + ")"
+
     if b"virtio-snd: skipped (enable with --test-snd)" in tail:
         return (
             "FAIL: VIRTIO_SND_SKIPPED: virtio-snd test was skipped (guest not configured with --test-snd) "
             "but --with-virtio-snd/--require-virtio-snd/--enable-virtio-snd was enabled"
+            + details
         )
     if b"virtio-snd: disabled by --disable-snd" in tail:
-        return "FAIL: VIRTIO_SND_SKIPPED: virtio-snd test was skipped (--disable-snd) but --with-virtio-snd/--require-virtio-snd/--enable-virtio-snd was enabled"
+        return (
+            "FAIL: VIRTIO_SND_SKIPPED: virtio-snd test was skipped (--disable-snd) but --with-virtio-snd/--require-virtio-snd/--enable-virtio-snd was enabled"
+            + details
+        )
     if b"virtio-snd:" in tail and b"device not detected" in tail:
-        return "FAIL: VIRTIO_SND_SKIPPED: virtio-snd test was skipped (device missing) but --with-virtio-snd/--require-virtio-snd/--enable-virtio-snd was enabled"
-    return "FAIL: VIRTIO_SND_SKIPPED: virtio-snd test was skipped but --with-virtio-snd/--require-virtio-snd/--enable-virtio-snd was enabled"
+        return (
+            "FAIL: VIRTIO_SND_SKIPPED: virtio-snd test was skipped (device missing) but --with-virtio-snd/--require-virtio-snd/--enable-virtio-snd was enabled"
+            + details
+        )
+    return (
+        "FAIL: VIRTIO_SND_SKIPPED: virtio-snd test was skipped but --with-virtio-snd/--require-virtio-snd/--enable-virtio-snd was enabled"
+        + details
+    )
 
 
 def _try_extract_plain_marker_token(marker_line: str, status: str) -> Optional[str]:
@@ -7467,7 +7504,10 @@ def main() -> int:
                                 if not saw_virtio_snd_pass:
                                     msg = "FAIL: MISSING_VIRTIO_SND: virtio-snd test did not PASS while --with-virtio-snd/--require-virtio-snd/--enable-virtio-snd was enabled"
                                     if saw_virtio_snd_skip:
-                                        msg = _virtio_snd_skip_failure_message(tail)
+                                        msg = _virtio_snd_skip_failure_message(
+                                            tail,
+                                            marker_line=virtio_snd_marker_line,
+                                        )
                                     print(msg, file=sys.stderr)
                                     _print_tail(serial_log)
                                     result_code = 1
@@ -7661,7 +7701,10 @@ def main() -> int:
                             if not saw_virtio_snd_pass:
                                 msg = "FAIL: MISSING_VIRTIO_SND: virtio-snd test did not PASS while --with-virtio-snd/--require-virtio-snd/--enable-virtio-snd was enabled"
                                 if saw_virtio_snd_skip:
-                                    msg = _virtio_snd_skip_failure_message(tail)
+                                    msg = _virtio_snd_skip_failure_message(
+                                        tail,
+                                        marker_line=virtio_snd_marker_line,
+                                    )
                                 print(msg, file=sys.stderr)
                                 _print_tail(serial_log)
                                 result_code = 1
@@ -9611,7 +9654,10 @@ def main() -> int:
                                     if not saw_virtio_snd_pass:
                                         msg = "FAIL: MISSING_VIRTIO_SND: virtio-snd test did not PASS while --with-virtio-snd/--require-virtio-snd/--enable-virtio-snd was enabled"
                                         if saw_virtio_snd_skip:
-                                            msg = _virtio_snd_skip_failure_message(tail)
+                                            msg = _virtio_snd_skip_failure_message(
+                                                tail,
+                                                marker_line=virtio_snd_marker_line,
+                                            )
                                         print(msg, file=sys.stderr)
                                         _print_tail(serial_log)
                                         result_code = 1
@@ -9802,7 +9848,10 @@ def main() -> int:
                                 if not saw_virtio_snd_pass:
                                     msg = "FAIL: MISSING_VIRTIO_SND: virtio-snd test did not PASS while --with-virtio-snd/--require-virtio-snd/--enable-virtio-snd was enabled"
                                     if saw_virtio_snd_skip:
-                                        msg = _virtio_snd_skip_failure_message(tail)
+                                        msg = _virtio_snd_skip_failure_message(
+                                            tail,
+                                            marker_line=virtio_snd_marker_line,
+                                        )
                                     print(msg, file=sys.stderr)
                                     _print_tail(serial_log)
                                     result_code = 1
