@@ -1319,7 +1319,7 @@ impl NvmeController {
 
         match fid {
             // Number of Queues:
-            // - SEL=0/1: current/default, 0-based values (NSQR in [31:16], NCQR in [15:0]).
+            // - SEL=0/1/2: current/default/saved, 0-based values (NSQR in [31:16], NCQR in [15:0]).
             // - SEL=3: supported capabilities (max supported queues, also 0-based).
             //
             // Other SEL values are not implemented.
@@ -1328,14 +1328,14 @@ impl NvmeController {
                 (NvmeStatus::SUCCESS, (u32::from(max) << 16) | u32::from(max))
             }
             // Number of Queues: 0-based values (NSQR in [31:16], NCQR in [15:0]).
-            0x07 if sel <= 1 => (
+            0x07 if sel <= 2 => (
                 NvmeStatus::SUCCESS,
                 (u32::from(self.feature_num_io_sqs) << 16) | u32::from(self.feature_num_io_cqs),
             ),
             // Interrupt Coalescing: return the raw 16-bit value in DW0.
-            0x08 if sel <= 1 => (NvmeStatus::SUCCESS, u32::from(self.feature_interrupt_coalescing)),
+            0x08 if sel <= 2 => (NvmeStatus::SUCCESS, u32::from(self.feature_interrupt_coalescing)),
             // Volatile Write Cache: bit 0.
-            0x06 if sel <= 1 => (
+            0x06 if sel <= 2 => (
                 NvmeStatus::SUCCESS,
                 u32::from(self.feature_volatile_write_cache as u8),
             ),
