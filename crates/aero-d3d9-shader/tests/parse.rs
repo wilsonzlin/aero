@@ -445,3 +445,52 @@ fn malformed_invalid_predicate_register_encoding_errors() {
         }
     );
 }
+
+#[test]
+fn malformed_truncated_comment_errors() {
+    // Comment with length=1 but missing the payload token.
+    let words = [0xFFFE_0200, 0x0001_FFFE];
+    let err = D3d9Shader::parse(&words_to_bytes(&words)).unwrap_err();
+    assert_eq!(
+        err,
+        ShaderParseError::TruncatedInstruction {
+            opcode: 0xFFFE,
+            at_token: 1,
+            needed_tokens: 1,
+            remaining_tokens: 0,
+        }
+    );
+}
+
+#[test]
+fn malformed_truncated_dcl_errors() {
+    // dcl has a fixed operand length of 2 tokens; make the stream end after only 1 operand.
+    let words = [0xFFFE_0200, 0x0200_001F, 0x8000_0000];
+    let err = D3d9Shader::parse(&words_to_bytes(&words)).unwrap_err();
+    assert_eq!(
+        err,
+        ShaderParseError::TruncatedInstruction {
+            opcode: 0x001F,
+            at_token: 1,
+            needed_tokens: 2,
+            remaining_tokens: 1,
+        }
+    );
+}
+
+#[test]
+fn malformed_dcl_with_invalid_length_nibble_errors() {
+    // dcl with an invalid length nibble (1) should still return a structured error and not panic
+    // when attempting to access operands[1].
+    let words = [0xFFFE_0200, 0x0100_001F, 0x8000_0000, 0x0000_FFFF];
+    let err = D3d9Shader::parse(&words_to_bytes(&words)).unwrap_err();
+    assert_eq!(
+        err,
+        ShaderParseError::TruncatedInstruction {
+            opcode: 0x001F,
+            at_token: 1,
+            needed_tokens: 2,
+            remaining_tokens: 1,
+        }
+    );
+}
