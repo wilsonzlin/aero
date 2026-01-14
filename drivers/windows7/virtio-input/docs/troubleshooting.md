@@ -143,15 +143,20 @@ If you are iterating on a device model, fixing `ID_NAME` and implementing `EV_BI
 Stock QEMU virtio-input devices typically report `ID_NAME` strings like `QEMU Virtio Keyboard` and may not use the Aero
 contract subsystem IDs. In **strict mode** (compat disabled), the driver will refuse to start (Code 10 / `STATUS_NOT_SUPPORTED`).
 
-If you are intentionally testing against stock QEMU (or other non-Aero virtio-input frontends), enable the driver's **compat mode**:
+For QEMU development/testing, you can either:
 
-```bat
-reg add HKLM\System\CurrentControlSet\Services\aero_virtio_input\Parameters ^
-  /v CompatIdName /t REG_DWORD /d 1 /f
-```
+1. Use a contract-compliant virtio-input device model (Aero `ID_NAME` strings + `SUBSYS_0010/0011/0012` + `REV_01`), or
+2. Enable the driver's **compat mode**:
 
-Then reboot (or disable/enable the device). Compat mode accepts QEMU `ID_NAME` strings, relaxes strict `ID_DEVIDS` validation, and can infer device kind from `EV_BITS`.
-See [`docs/virtio-input-notes.md`](./virtio-input-notes.md) for more detail.
+   ```bat
+   reg add HKLM\System\CurrentControlSet\Services\aero_virtio_input\Parameters ^
+     /v CompatIdName /t REG_DWORD /d 1 /f
+   ```
+
+   Then reboot (or disable/enable the device).
+
+Compat mode accepts common QEMU `ID_NAME` strings, relaxes strict `ID_DEVIDS` validation, and can infer device kind from
+`EV_BITS`. See [`docs/virtio-input-notes.md`](./virtio-input-notes.md) for more detail.
 
 ## `hidtest` can’t open the device
 

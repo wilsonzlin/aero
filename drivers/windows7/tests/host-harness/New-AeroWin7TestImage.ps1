@@ -112,7 +112,19 @@ param(
   # - Python: `--with-input-tablet-events` / `--with-tablet-events`
   [Parameter(Mandatory = $false)]
   [Alias("TestTabletEvents")]
-  [switch]$TestInputTabletEvents
+  [switch]$TestInputTabletEvents,
+
+  # If set, enable virtio-input "CompatIdName" mode in the guest by writing:
+  #   HKLM\System\CurrentControlSet\Services\aero_virtio_input\Parameters\CompatIdName = 1 (REG_DWORD)
+  #
+  # This relaxes strict Aero contract ID_NAME/ID_DEVIDS validation so the driver can bind to
+  # stock QEMU virtio-input devices (which typically report ID_NAME strings like "QEMU Virtio Keyboard").
+  #
+  # This is useful for the in-tree QEMU host harness, but should be left disabled when validating
+  # strict Aero contract v1 device-model conformance.
+  [Parameter(Mandatory = $false)]
+  [Alias("VirtioInputCompatIdName", "EnableVirtioInputCompat")]
+  [switch]$EnableVirtioInputCompatIdName
 )
 
 Set-StrictMode -Version Latest
@@ -443,6 +455,16 @@ shutdown /r /t 0 >> "%LOG%" 2>&1
 "@
 }
 
+$enableVirtioInputCompatCmd = ""
+if ($EnableVirtioInputCompatIdName) {
+  $enableVirtioInputCompatCmd = @"
+
+REM Enable virtio-input CompatIdName mode (accept QEMU ID_NAME strings, relax ID_DEVIDS checks).
+echo [AERO] enabling virtio-input CompatIdName=1 >> "%LOG%"
+reg add "HKLM\System\CurrentControlSet\Services\aero_virtio_input\Parameters" /v CompatIdName /t REG_DWORD /d 1 /f >> "%LOG%" 2>&1
+"@
+}
+
 $provisionCmd = @"
 @echo off
 setlocal enableextensions enabledelayedexpansion
@@ -464,6 +486,7 @@ if "%MEDIA%"=="" (
 echo [AERO] MEDIA=%MEDIA% >> "%LOG%"
 
 $installDriversCmd
+$enableVirtioInputCompatCmd
 
 REM Install selftest binary.
 mkdir C:\AeroTests >> "%LOG%" 2>&1
@@ -514,6 +537,9 @@ After reboot, the host harness can boot the VM and parse PASS/FAIL from COM1 ser
     - To enable tablet (absolute pointer) injection (required when running the host harness with `-WithInputTabletEvents` / `-WithTabletEvents` /
       `--with-input-tablet-events` / `--with-tablet-events`), generate this media with `-TestInputTabletEvents` (alias: `-TestTabletEvents`)
       (adds `--test-input-tablet-events` (alias: `--test-tablet-events`) to the scheduled task).
+  - Stock QEMU virtio-input devices typically report non-Aero `ID_NAME` strings (for example `QEMU Virtio Keyboard`).
+    The Aero virtio-input driver defaults to strict contract mode and may refuse to start (Code 10) unless compatibility mode is enabled.
+    - To enable QEMU compatibility mode, generate this media with `-EnableVirtioInputCompatIdName` (alias: `-EnableVirtioInputCompat`).
   - By default, virtio-snd is optional (SKIP if missing). To require it, generate this media with `-RequireSnd` (adds `--require-snd`).
     - To skip the virtio-snd test entirely, generate this media with `-DisableSnd`.
       Note: if you run the host harness with `-WithVirtioSnd` / `--with-virtio-snd`, it expects virtio-snd to PASS (not SKIP).

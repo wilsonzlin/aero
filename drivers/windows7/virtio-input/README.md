@@ -565,7 +565,7 @@ The driver and INF are intentionally strict and are **not** intended to be “ge
 This driver is built for the **Aero contract v1** device model (`AERO-W7-VIRTIO`) and is strict by default.
 
 If you're testing against stock QEMU virtio-input devices (which usually report `ID_NAME` strings like
-`"QEMU Virtio Keyboard"`), enable compat mode in the guest:
+`"QEMU Virtio Keyboard"`), enable compat mode in the guest (or build the driver with `AERO_VIOINPUT_COMPAT_ID_NAME=1`):
 
 ```cmd
 reg add HKLM\System\CurrentControlSet\Services\aero_virtio_input\Parameters ^

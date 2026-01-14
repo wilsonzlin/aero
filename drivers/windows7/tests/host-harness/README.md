@@ -15,6 +15,14 @@ This directory contains the host-side scripts used to run the Windows 7 guest se
   - Windows PowerShell 5.1 or PowerShell 7+ should work
 - A **prepared Windows 7 image** that:
   - has the virtio drivers installed (virtio-blk + virtio-net + virtio-input, modern-only)
+    - Stock QEMU virtio-input devices typically report non-Aero `ID_NAME` strings (e.g. `QEMU Virtio Keyboard`).
+      The in-tree Aero virtio-input driver defaults to strict contract mode and may refuse to start (Code 10) unless
+      virtio-input compatibility mode is enabled.
+      - Enable by setting:
+        `HKLM\System\CurrentControlSet\Services\aero_virtio_input\Parameters\CompatIdName` (REG_DWORD) = `1`
+        and rebooting (or by building the driver with `AERO_VIOINPUT_COMPAT_ID_NAME=1`).
+      - When using the in-tree provisioning media generator, you can bake this in via:
+        `New-AeroWin7TestImage.ps1 -EnableVirtioInputCompatIdName` (alias: `-EnableVirtioInputCompat`).
     - To enable the optional end-to-end virtio-input event delivery smoke tests (HID input reports),
       the guest selftest must be provisioned with:
       - keyboard + relative mouse: `--test-input-events` (or env var `AERO_VIRTIO_SELFTEST_TEST_INPUT_EVENTS=1`)
