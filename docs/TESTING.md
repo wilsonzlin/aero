@@ -672,6 +672,9 @@ AERO_BENCH_PROFILE=full cargo bench --locked -p aero-cpu-core --bench jit_bookke
 The workflow `.github/workflows/bench.yml` runs these microbenchmarks and fails
 on regressions:
 
+- `aero-cpu-core/benches/emulator_critical` (legacy-interp)
+- `aero-cpu-core/benches/jit_bookkeeping`
+
 - **pull_request**: benchmarks the PR base commit and the PR head commit (same
   runner), then compares results. The workflow fails if any benchmark slows down
   by more than the configured threshold (see `bench/perf_thresholds.json` → `profiles.pr-smoke.criterion.maxRegressionPct`).
