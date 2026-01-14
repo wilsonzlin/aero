@@ -704,53 +704,149 @@ static const wchar_t *vioinput_device_kind_to_string(ULONG kind)
     }
 }
 
-static int query_vioinput_state(HANDLE handle, VIOINPUT_STATE *out, DWORD *bytes_out)
+static int query_vioinput_state_blob(HANDLE handle, BYTE **buf_out, DWORD *bytes_out)
 {
-    BOOL ok;
+    BYTE *buf = NULL;
+    DWORD cap;
     DWORD bytes = 0;
+    BOOL ok;
+    DWORD err;
+    ULONG expected_size = 0;
 
+    if (buf_out != NULL) {
+        *buf_out = NULL;
+    }
     if (bytes_out != NULL) {
         *bytes_out = 0;
     }
 
-    if (out == NULL) {
+    if (handle == INVALID_HANDLE_VALUE || handle == NULL) {
+        SetLastError(ERROR_INVALID_HANDLE);
         return 0;
     }
 
-    ZeroMemory(out, sizeof(*out));
-    out->Size = (ULONG)sizeof(*out);
-    out->Version = VIOINPUT_STATE_VERSION;
+    cap = (DWORD)sizeof(VIOINPUT_STATE);
+    if (cap < sizeof(VIOINPUT_STATE_V1_MIN)) {
+        cap = (DWORD)sizeof(VIOINPUT_STATE_V1_MIN);
+    }
 
-    ok = DeviceIoControl(handle, IOCTL_VIOINPUT_QUERY_STATE, out, (DWORD)sizeof(*out), out, (DWORD)sizeof(*out),
-                         &bytes, NULL);
-    if (!ok) {
+    buf = (BYTE *)calloc(cap, 1);
+    if (buf == NULL) {
+        SetLastError(ERROR_OUTOFMEMORY);
         return 0;
     }
 
-    if (bytes_out != NULL) {
-        *bytes_out = bytes;
+    ok = DeviceIoControl(handle, IOCTL_VIOINPUT_QUERY_STATE, NULL, 0, buf, cap, &bytes, NULL);
+    if (ok) {
+        if (buf_out != NULL) {
+            *buf_out = buf;
+        }
+        if (bytes_out != NULL) {
+            *bytes_out = bytes;
+        }
+        return 1;
     }
-    return 1;
+
+    err = GetLastError();
+
+    // If the buffer was too small, the driver should still return at least Size
+    // (and ideally Size+Version). Retry with the reported Size.
+    if ((err == ERROR_INSUFFICIENT_BUFFER || err == ERROR_MORE_DATA) && cap >= sizeof(expected_size)) {
+        memcpy(&expected_size, buf, sizeof(expected_size));
+        if (expected_size != 0 && expected_size > cap && expected_size <= 64u * 1024u) {
+            BYTE *b2 = (BYTE *)realloc(buf, expected_size);
+            if (b2 == NULL) {
+                free(buf);
+                SetLastError(ERROR_OUTOFMEMORY);
+                return 0;
+            }
+            buf = b2;
+            ZeroMemory(buf, expected_size);
+            bytes = 0;
+            ok = DeviceIoControl(handle, IOCTL_VIOINPUT_QUERY_STATE, NULL, 0, buf, expected_size, &bytes, NULL);
+            if (ok) {
+                if (buf_out != NULL) {
+                    *buf_out = buf;
+                }
+                if (bytes_out != NULL) {
+                    *bytes_out = bytes;
+                }
+                return 1;
+            }
+            err = GetLastError();
+        }
+    }
+
+    free(buf);
+    SetLastError(err);
+    return 0;
 }
 
 static void print_vioinput_state(const VIOINPUT_STATE *st, DWORD bytes)
 {
+    DWORD avail;
+
     if (st == NULL) {
         return;
     }
 
+    avail = bytes;
+    if (st->Size != 0 && st->Size < avail) {
+        avail = st->Size;
+    }
+
     wprintf(L"\nvirtio-input driver state:\n");
-    wprintf(L"  Size:              %lu (returned %lu bytes)\n", st->Size, bytes);
-    wprintf(L"  Version:           %lu\n", st->Version);
-    wprintf(L"  DeviceKind:        %ls (%lu)\n", vioinput_device_kind_to_string(st->DeviceKind), st->DeviceKind);
-    wprintf(L"  PciRevisionId:     0x%02lX\n", st->PciRevisionId);
-    wprintf(L"  PciSubsystemDevId: 0x%04lX\n", st->PciSubsystemDeviceId);
-    wprintf(L"  HardwareReady:     %lu\n", st->HardwareReady);
-    wprintf(L"  InD0:              %lu\n", st->InD0);
-    wprintf(L"  HidActivated:      %lu\n", st->HidActivated);
-    wprintf(L"  VirtioStarted:     %lu\n", st->VirtioStarted);
-    wprintf(L"  NegotiatedFeatures: 0x%016llX\n", (unsigned long long)st->NegotiatedFeatures);
-    if (bytes >= offsetof(VIOINPUT_STATE, StatusQDropOnFull) + sizeof(ULONG)) {
+    if (avail >= offsetof(VIOINPUT_STATE, Size) + sizeof(ULONG)) {
+        wprintf(L"  Size:              %lu (returned %lu bytes)\n", st->Size, bytes);
+    } else {
+        wprintf(L"  Size:              <missing> (returned %lu bytes)\n", bytes);
+    }
+    if (avail >= offsetof(VIOINPUT_STATE, Version) + sizeof(ULONG)) {
+        wprintf(L"  Version:           %lu\n", st->Version);
+    } else {
+        wprintf(L"  Version:           <missing>\n");
+    }
+    if (avail >= offsetof(VIOINPUT_STATE, DeviceKind) + sizeof(ULONG)) {
+        wprintf(L"  DeviceKind:        %ls (%lu)\n", vioinput_device_kind_to_string(st->DeviceKind), st->DeviceKind);
+    } else {
+        wprintf(L"  DeviceKind:        <missing>\n");
+    }
+    if (avail >= offsetof(VIOINPUT_STATE, PciRevisionId) + sizeof(ULONG)) {
+        wprintf(L"  PciRevisionId:     0x%02lX\n", st->PciRevisionId);
+    } else {
+        wprintf(L"  PciRevisionId:     <missing>\n");
+    }
+    if (avail >= offsetof(VIOINPUT_STATE, PciSubsystemDeviceId) + sizeof(ULONG)) {
+        wprintf(L"  PciSubsystemDevId: 0x%04lX\n", st->PciSubsystemDeviceId);
+    } else {
+        wprintf(L"  PciSubsystemDevId: <missing>\n");
+    }
+    if (avail >= offsetof(VIOINPUT_STATE, HardwareReady) + sizeof(ULONG)) {
+        wprintf(L"  HardwareReady:     %lu\n", st->HardwareReady);
+    } else {
+        wprintf(L"  HardwareReady:     <missing>\n");
+    }
+    if (avail >= offsetof(VIOINPUT_STATE, InD0) + sizeof(ULONG)) {
+        wprintf(L"  InD0:              %lu\n", st->InD0);
+    } else {
+        wprintf(L"  InD0:              <missing>\n");
+    }
+    if (avail >= offsetof(VIOINPUT_STATE, HidActivated) + sizeof(ULONG)) {
+        wprintf(L"  HidActivated:      %lu\n", st->HidActivated);
+    } else {
+        wprintf(L"  HidActivated:      <missing>\n");
+    }
+    if (avail >= offsetof(VIOINPUT_STATE, VirtioStarted) + sizeof(ULONG)) {
+        wprintf(L"  VirtioStarted:     %lu\n", st->VirtioStarted);
+    } else {
+        wprintf(L"  VirtioStarted:     <missing>\n");
+    }
+    if (avail >= offsetof(VIOINPUT_STATE, NegotiatedFeatures) + sizeof(st->NegotiatedFeatures)) {
+        wprintf(L"  NegotiatedFeatures: 0x%016llX\n", (unsigned long long)st->NegotiatedFeatures);
+    } else {
+        wprintf(L"  NegotiatedFeatures: <missing>\n");
+    }
+    if (avail >= offsetof(VIOINPUT_STATE, StatusQDropOnFull) + sizeof(ULONG)) {
         wprintf(L"  StatusQDropOnFull: %lu\n", st->StatusQDropOnFull);
     } else {
         wprintf(L"  StatusQDropOnFull: <missing>\n");
@@ -5233,16 +5329,20 @@ int wmain(int argc, wchar_t **argv)
     }
 
     if (opt.query_state) {
-        VIOINPUT_STATE st;
+        BYTE* buf;
         DWORD bytes = 0;
+        const VIOINPUT_STATE* st;
 
-        if (!query_vioinput_state(dev.handle, &st, &bytes)) {
+        buf = NULL;
+        if (!query_vioinput_state_blob(dev.handle, &buf, &bytes) || buf == NULL) {
             print_last_error_w(L"DeviceIoControl(IOCTL_VIOINPUT_QUERY_STATE)");
             free_selected_device(&dev);
             return 1;
         }
 
-        print_vioinput_state(&st, bytes);
+        st = (const VIOINPUT_STATE*)buf;
+        print_vioinput_state(st, bytes);
+        free(buf);
         free_selected_device(&dev);
         return 0;
     }
