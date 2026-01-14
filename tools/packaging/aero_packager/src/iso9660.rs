@@ -614,8 +614,9 @@ impl Identifiers {
 
         for (idx, file) in tree.files.iter().enumerate() {
             validate_joliet_level3_name_len(&file.name, false, &file.rel_path)?;
-            let encoded = encode_ucs2be(&file.name)
-                .with_context(|| format!("encode Joliet UCS-2 identifier for {}", file.rel_path))?;
+            let encoded = encode_ucs2be(&file.name).with_context(|| {
+                format!("encode Joliet UCS-2 identifier for {}", file.rel_path)
+            })?;
             validate_joliet_id_len(&file.name, false, &file.rel_path, &encoded)?;
             ids.joliet_file_id[idx] = encoded;
         }
@@ -1128,4 +1129,144 @@ fn iso9660_epoch_bounds() -> (i64, i64) {
 
         (min_dt.unix_timestamp(), max_dt.unix_timestamp())
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    fn write_test_iso(epoch: i64, files: Vec<FileToPackage>) -> Vec<u8> {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let iso_path = tmp.path().join("test.iso");
+        write_iso9660_joliet(&iso_path, "TEST_VOL", epoch, &files).expect("write iso");
+        fs::read(&iso_path).expect("read iso")
+    }
+
+    fn pvd_offset() -> usize {
+        SYSTEM_AREA_SECTORS as usize * SECTOR_SIZE
+    }
+
+    #[test]
+    fn iso_timestamps_are_clamped_to_iso9660_range() {
+        let epoch_3000 = time::Date::from_calendar_date(3000, time::Month::January, 1)
+            .unwrap()
+            .with_hms(0, 0, 0)
+            .unwrap()
+            .assume_utc()
+            .unix_timestamp();
+
+        let iso_3000 = write_test_iso(
+            epoch_3000,
+            vec![FileToPackage {
+                rel_path: "a.txt".to_string(),
+                bytes: b"hello".to_vec(),
+            }],
+        );
+
+        // Root directory record timestamp (7 bytes) stores years as offset-from-1900 in a u8.
+        let year7 = iso_3000[pvd_offset() + 156 + 18];
+        assert_eq!(year7, 255, "expected clamped year-1900 to be 255 (2155)");
+
+        // Volume descriptor timestamps (17 bytes) should clamp consistently.
+        assert_eq!(&iso_3000[pvd_offset() + 813..pvd_offset() + 817], b"2155");
+
+        // Extremely out-of-range values should not panic and should clamp deterministically.
+        let iso_max = write_test_iso(
+            i64::MAX,
+            vec![FileToPackage {
+                rel_path: "a.txt".to_string(),
+                bytes: b"hello".to_vec(),
+            }],
+        );
+        assert_eq!(iso_max[pvd_offset() + 156 + 18], 255);
+        assert_eq!(&iso_max[pvd_offset() + 813..pvd_offset() + 817], b"2155");
+
+        let epoch_1800 = time::Date::from_calendar_date(1800, time::Month::January, 1)
+            .unwrap()
+            .with_hms(0, 0, 0)
+            .unwrap()
+            .assume_utc()
+            .unix_timestamp();
+        let iso_1800 = write_test_iso(
+            epoch_1800,
+            vec![FileToPackage {
+                rel_path: "a.txt".to_string(),
+                bytes: b"hello".to_vec(),
+            }],
+        );
+        assert_eq!(iso_1800[pvd_offset() + 156 + 18], 0, "expected clamped year to be 1900");
+        assert_eq!(&iso_1800[pvd_offset() + 813..pvd_offset() + 817], b"1900");
+    }
+
+    #[test]
+    fn joliet_rejects_non_bmp_names() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let iso_path = tmp.path().join("test.iso");
+        let err = write_iso9660_joliet(
+            &iso_path,
+            "TEST_VOL",
+            0,
+            &[FileToPackage {
+                rel_path: "config/emoji😀.txt".to_string(),
+                bytes: b"hi".to_vec(),
+            }],
+        )
+        .unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("UCS-2") && msg.contains("config/emoji😀.txt"),
+            "unexpected error: {msg}"
+        );
+    }
+
+    #[test]
+    fn joliet_rejects_path_components_over_64_chars() {
+        let long = "a".repeat(65);
+        let rel_path = format!("config/{long}");
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let iso_path = tmp.path().join("test.iso");
+        let err = write_iso9660_joliet(
+            &iso_path,
+            "TEST_VOL",
+            0,
+            &[FileToPackage {
+                rel_path: rel_path.clone(),
+                bytes: b"hi".to_vec(),
+            }],
+        )
+        .unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("Joliet Level 3") && msg.contains("max=64") && msg.contains(&rel_path),
+            "unexpected error: {msg}"
+        );
+    }
+
+    #[test]
+    fn iso_is_deterministic_with_out_of_range_source_date_epoch() {
+        let epoch_3000 = time::Date::from_calendar_date(3000, time::Month::January, 1)
+            .unwrap()
+            .with_hms(0, 0, 0)
+            .unwrap()
+            .assume_utc()
+            .unix_timestamp();
+
+        let iso1 = write_test_iso(
+            epoch_3000,
+            vec![FileToPackage {
+                rel_path: "a.txt".to_string(),
+                bytes: b"hello".to_vec(),
+            }],
+        );
+        let iso2 = write_test_iso(
+            epoch_3000,
+            vec![FileToPackage {
+                rel_path: "a.txt".to_string(),
+                bytes: b"hello".to_vec(),
+            }],
+        );
+        assert_eq!(iso1, iso2);
+    }
 }
