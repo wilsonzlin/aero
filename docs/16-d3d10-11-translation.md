@@ -481,6 +481,15 @@ bring up correctness incrementally:
     - **P2b:** `domain("quad")` with integer partitioning.
     - **P2c:** `domain("isoline")`.
     - **P2d:** fractional partitioning + crack-free edge rules.
+  - Initial P2a limitations (explicit):
+    - only integer partitioning (no `fractional_even`/`fractional_odd`/`pow2`),
+    - tess factor handling is conservative and may ignore per-edge variation (see “Tessellation sizing”),
+    - only tess factors (`SV_TessFactor` / `SV_InsideTessFactor`) are plumbed through as patch-constant
+      data initially (no additional user patch constants),
+    - HS control-point pass may be treated as a pass-through for bring-up (HS does not modify control
+      points), and
+    - GS-after-tessellation (HS/DS → GS) is supported only when the GS emulation path can consume the
+      indexed tess output (future work; not required for initial P2 bring-up).
 
 #### Capabilities required
 
@@ -781,6 +790,10 @@ uniform tessellation pattern:
 This deliberately ignores per-edge variation and crack-free edge rules (P2d work). It is
 deterministic and implementable with minimal fixed-function emulation.
 
+Implementation note: in the compute-emulation pipeline, the HS patch-constant pass writes the raw
+tess factors into `tess_patch_constants[patch_id]`. The tessellator/DS pass then derives `T` from
+those stored factors.
+
 For a tri-domain patch tessellated at level `T`:
 
 - Domain vertices per patch: `V_patch = (T + 1) * (T + 2) / 2`
@@ -943,6 +956,13 @@ If you change the required scratch layouts/bindings, update the allocator usage 
       - allocated output ranges within `tess_out_vertices` / `tess_out_indices`.
     - Usage: `STORAGE` (read_write).
     - Layout: `array<TessPatchState>` (see below), 32 bytes per entry.
+    - Entry count: `patch_count * instance_count`.
+
+7. **Tessellation patch constants (`tess_patch_constants`)**
+    - Purpose: per-patch tess factors (`SV_TessFactor` / `SV_InsideTessFactor`) produced by the HS
+      patch-constant function and consumed by DS (and by the tessellator sizing policy).
+    - Usage: `STORAGE` (read_write).
+    - Layout: `array<TessPatchConstants>` (see below), 32 bytes per entry.
     - Entry count: `patch_count * instance_count`.
 
 **GS output sizing: strip → list**
@@ -1130,7 +1150,9 @@ with an implementation-defined workgroup size chosen by the translator/runtime.
       - Reads control points from `vs_out`.
       - Computes tessellation level(s) and writes them to `tess_patch_state[patch_id]`:
         - P2a tri-domain: `tess_level_u = T`, `tess_level_v = 0`
-      - Writes any additional patch constants needed by DS to scratch (per patch; future work).
+      - Writes tess factors to `tess_patch_constants[patch_id]` (`SV_TessFactor` /
+        `SV_InsideTessFactor`).
+      - Writes any additional patch constants needed by DS to scratch (per patch; P2 follow-up).
       - Dispatch mapping (recommended):
         - `global_invocation_id.x` = `patch_id` (`0..patch_count`)
         - `global_invocation_id.y` = `instance_id` (`0..instance_count`) (optional; may flatten instances)
@@ -1147,6 +1169,8 @@ with an implementation-defined workgroup size chosen by the translator/runtime.
         index generation (see “Tri-domain grid enumeration” above).
       - Uses `tess_patch_state` to coordinate per-patch output ranges (`base_vertex/base_index`) when
         emitting into the shared `tess_out_*` buffers.
+      - DS consumes the HS patch-constant outputs (at minimum tess factors) via
+        `tess_patch_constants[patch_id]`.
       - Writes `tess_out_vertices` + `tess_out_indices`, updates counters, then writes final
         `indirect_args`.
 
@@ -1285,6 +1309,7 @@ runtime can share common helper WGSL across VS/GS/HS/DS compute variants:
 - `@binding(271)`: `indirect_args` (read_write storage)
 - `@binding(272)`: `counters` (read_write storage; atomics)
 - `@binding(273)`: `tess_patch_state` (read_write storage; per patch, used by HS/DS emulation)
+- `@binding(274)`: `tess_patch_constants` (read_write storage; per patch tess factors for DS)
 
 **`ExpandParams` layout (concrete; `@binding(256)`)**
 
@@ -1407,6 +1432,46 @@ struct TessPatchState {
 ```
 
 Entry count: `patch_count * instance_count` (one patch-state entry per patch per instance).
+
+**`tess_patch_constants` layout (concrete; `@binding(274)`)**
+
+The HS patch-constant function produces tessellation factors and (optionally) other patch-constant
+data. DS consumes the patch-constant data, including the tess factors.
+
+For P2 bring-up we start by supporting the tess factors themselves (no additional user patch
+constants yet).
+
+Recommended layout (32 bytes per patch):
+
+```wgsl
+struct TessPatchConstants {
+  // Edge tess factors (float bits) packed into a 4-wide vector for simplicity.
+  //
+  // Domain mapping:
+  // - tri domain:   edge[0..2] = xyz, edge[3] unused
+  // - quad domain:  edge[0..3] = xyzw
+  // - isoline:      edge[0..1] = xy,  edge[2..3] unused
+  edge_factors_bits: vec4<u32>;
+
+  // Inside tess factors (float bits).
+  //
+  // Domain mapping:
+  // - tri domain:   inside[0] = x, inside[1..3] unused
+  // - quad domain:  inside[0..1] = xy, inside[2..3] unused
+  // - isoline:      unused (all zero)
+  inside_factors_bits: vec4<u32>;
+}
+// Bind group index is `3` in the baseline design (shared with GS/HS/DS resources). Implementations
+// using a dedicated internal group instead use `@group(4)`.
+@group(3) @binding(274) var<storage, read_write> tess_patch_constants: array<TessPatchConstants>;
+```
+
+HS writes `f32` tess factors by storing their bit patterns:
+
+- `edge_factors_bits[i] = bitcast<u32>(edge_factor_i)`
+- `inside_factors_bits[i] = bitcast<u32>(inside_factor_i)`
+
+Unused lanes MUST be written as 0 so tools and debug readbacks are deterministic.
 
 **Initialization requirements**
 
