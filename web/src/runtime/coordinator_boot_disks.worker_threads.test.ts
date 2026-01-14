@@ -380,6 +380,14 @@ describe("runtime/coordinator (boot disks forwarding)", () => {
       bootFromCdIfPresent: true,
     });
     expect(coordinator.getMachineCpuBootConfig()).toEqual({ bootDrive: 0x80, cdBootDrive: 0xe0, bootFromCdIfPresent: true });
+
+    // Defensive: callers should not be able to mutate the cached boot config state.
+    const snapshot = coordinator.getMachineCpuBootConfig();
+    expect(snapshot).not.toBe(null);
+    if (snapshot) {
+      snapshot.bootDrive = 0;
+    }
+    expect(coordinator.getMachineCpuBootConfig()).toEqual({ bootDrive: 0x80, cdBootDrive: 0xe0, bootFromCdIfPresent: true });
   });
 
   it("ignores invalid machine CPU boot config reports", () => {
