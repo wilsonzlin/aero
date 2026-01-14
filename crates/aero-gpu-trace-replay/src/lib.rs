@@ -859,59 +859,6 @@ fn hex_prefix(bytes: &[u8], max_len: usize) -> String {
     out
 }
 
-fn opcode_name(op: AerogpuCmdOpcode) -> &'static str {
-    match op {
-        AerogpuCmdOpcode::Nop => "Nop",
-        AerogpuCmdOpcode::DebugMarker => "DebugMarker",
-        AerogpuCmdOpcode::CreateBuffer => "CreateBuffer",
-        AerogpuCmdOpcode::CreateTexture2d => "CreateTexture2d",
-        AerogpuCmdOpcode::CreateTextureView => "CreateTextureView",
-        AerogpuCmdOpcode::DestroyTextureView => "DestroyTextureView",
-        AerogpuCmdOpcode::DestroyResource => "DestroyResource",
-        AerogpuCmdOpcode::ResourceDirtyRange => "ResourceDirtyRange",
-        AerogpuCmdOpcode::UploadResource => "UploadResource",
-        AerogpuCmdOpcode::CopyBuffer => "CopyBuffer",
-        AerogpuCmdOpcode::CopyTexture2d => "CopyTexture2d",
-        AerogpuCmdOpcode::CreateShaderDxbc => "CreateShaderDxbc",
-        AerogpuCmdOpcode::DestroyShader => "DestroyShader",
-        AerogpuCmdOpcode::BindShaders => "BindShaders",
-        AerogpuCmdOpcode::SetShaderConstantsF => "SetShaderConstantsF",
-        AerogpuCmdOpcode::SetShaderConstantsI => "SetShaderConstantsI",
-        AerogpuCmdOpcode::SetShaderConstantsB => "SetShaderConstantsB",
-        AerogpuCmdOpcode::CreateInputLayout => "CreateInputLayout",
-        AerogpuCmdOpcode::DestroyInputLayout => "DestroyInputLayout",
-        AerogpuCmdOpcode::SetInputLayout => "SetInputLayout",
-        AerogpuCmdOpcode::SetBlendState => "SetBlendState",
-        AerogpuCmdOpcode::SetDepthStencilState => "SetDepthStencilState",
-        AerogpuCmdOpcode::SetRasterizerState => "SetRasterizerState",
-        AerogpuCmdOpcode::SetRenderTargets => "SetRenderTargets",
-        AerogpuCmdOpcode::SetViewport => "SetViewport",
-        AerogpuCmdOpcode::SetScissor => "SetScissor",
-        AerogpuCmdOpcode::SetVertexBuffers => "SetVertexBuffers",
-        AerogpuCmdOpcode::SetIndexBuffer => "SetIndexBuffer",
-        AerogpuCmdOpcode::SetPrimitiveTopology => "SetPrimitiveTopology",
-        AerogpuCmdOpcode::SetTexture => "SetTexture",
-        AerogpuCmdOpcode::SetSamplerState => "SetSamplerState",
-        AerogpuCmdOpcode::SetRenderState => "SetRenderState",
-        AerogpuCmdOpcode::CreateSampler => "CreateSampler",
-        AerogpuCmdOpcode::DestroySampler => "DestroySampler",
-        AerogpuCmdOpcode::SetSamplers => "SetSamplers",
-        AerogpuCmdOpcode::SetConstantBuffers => "SetConstantBuffers",
-        AerogpuCmdOpcode::SetShaderResourceBuffers => "SetShaderResourceBuffers",
-        AerogpuCmdOpcode::SetUnorderedAccessBuffers => "SetUnorderedAccessBuffers",
-        AerogpuCmdOpcode::Clear => "Clear",
-        AerogpuCmdOpcode::Draw => "Draw",
-        AerogpuCmdOpcode::DrawIndexed => "DrawIndexed",
-        AerogpuCmdOpcode::Dispatch => "Dispatch",
-        AerogpuCmdOpcode::Present => "Present",
-        AerogpuCmdOpcode::PresentEx => "PresentEx",
-        AerogpuCmdOpcode::ExportSharedSurface => "ExportSharedSurface",
-        AerogpuCmdOpcode::ImportSharedSurface => "ImportSharedSurface",
-        AerogpuCmdOpcode::ReleaseSharedSurface => "ReleaseSharedSurface",
-        AerogpuCmdOpcode::Flush => "Flush",
-    }
-}
-
 fn stage_ex_name(stage_ex: u32) -> &'static str {
     // Human-readable names for `stage_ex` discriminators (DXBC program type IDs).
     //
@@ -983,8 +930,7 @@ pub fn decode_cmd_stream_listing(
             Some(opcode) => {
                 let _ = write!(
                     line,
-                    "0x{offset:08X} {} size_bytes={size_bytes} opcode_id=0x{opcode_id:08X}",
-                    opcode_name(opcode)
+                    "0x{offset:08X} {opcode:?} size_bytes={size_bytes} opcode_id=0x{opcode_id:08X}"
                 );
 
                 match opcode {
@@ -2075,10 +2021,7 @@ pub fn decode_cmd_stream_listing(
                         }
                     }
 
-                    AerogpuCmdOpcode::Flush
-                    | AerogpuCmdOpcode::ExportSharedSurface
-                    | AerogpuCmdOpcode::ImportSharedSurface
-                    | AerogpuCmdOpcode::ReleaseSharedSurface => {
+                    _ => {
                         // Decoders for the less-common opcodes can be added as needed; keep the
                         // listing stable and always show opcode_id/size_bytes for forward-compat.
                         let _ = write!(line, " payload_len={}", pkt.payload.len());
