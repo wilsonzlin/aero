@@ -5,7 +5,7 @@ It intentionally avoids aspirational pseudocode; **the referenced code is the so
 
 For the current “what works today vs what’s missing for Win7 usability” checklist, see:
 
-- `docs/graphics/status.md`
+- [`docs/graphics/status.md`](./graphics/status.md)
 
 If you are looking for deeper background on the AeroGPU/WDDM direction, start with:
 
