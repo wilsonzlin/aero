@@ -17999,10 +17999,21 @@ HRESULT device_set_shader_const_i_impl(
   int32_t* dst = (stage_norm == kD3d9ShaderStageVs) ? dev->vs_consts_i : dev->ps_consts_i;
   const uint32_t base = start * 4u;
   const uint32_t elems = count * 4u;
+  bool changed = false;
   for (uint32_t i = 0; i < elems; ++i) {
-    dst[base + i] = static_cast<int32_t>(pData[i]);
+    const int32_t v = static_cast<int32_t>(pData[i]);
+    if (dst[base + i] != v) {
+      changed = true;
+    }
+    dst[base + i] = v;
   }
   stateblock_record_shader_const_i_locked(dev, stage_norm, start, dst + base, count);
+
+  if (!changed) {
+    // Skip redundant constant uploads: setting identical constant data again is a
+    // no-op, but still record it for state blocks above.
+    return trace.ret(S_OK);
+  }
 
   const size_t payload_size = static_cast<size_t>(elems) * sizeof(int32_t);
   auto* cmd = append_with_payload_locked<aerogpu_cmd_set_shader_constants_i>(
@@ -18095,10 +18106,21 @@ HRESULT device_set_shader_const_b_impl(
   auto* dev = as_device(hDevice);
   std::lock_guard<std::mutex> lock(dev->mutex);
   uint8_t* dst = (stage_norm == kD3d9ShaderStageVs) ? dev->vs_consts_b : dev->ps_consts_b;
+  bool changed = false;
   for (uint32_t i = 0; i < count; ++i) {
-    dst[start + i] = pData[i] ? 1u : 0u;
+    const uint8_t v = pData[i] ? 1u : 0u;
+    if (dst[start + i] != v) {
+      changed = true;
+    }
+    dst[start + i] = v;
   }
   stateblock_record_shader_const_b_locked(dev, stage_norm, start, dst + start, count);
+
+  if (!changed) {
+    // Skip redundant constant uploads: setting identical constant data again is a
+    // no-op, but still record it for state blocks above.
+    return trace.ret(S_OK);
+  }
 
   std::vector<uint32_t> expanded;
   expanded.resize(static_cast<size_t>(count) * 4u);
@@ -19405,16 +19427,19 @@ HRESULT AEROGPU_D3D9_CALL device_set_shader_const_i(
   std::lock_guard<std::mutex> lock(dev->mutex);
   int32_t* dst = (stage_norm == kD3d9ShaderStageVs) ? dev->vs_consts_i
                                                     : dev->ps_consts_i;
-  const uint32_t base = start * 4u;
-  const uint32_t elems = count * 4u;
-  for (uint32_t i = 0; i < elems; ++i) {
-    dst[base + i] = pData[i];
-  }
-  stateblock_record_shader_const_i_locked(dev, stage_norm, start, dst + base,
-                                          count);
+  stateblock_record_shader_const_i_locked(dev, stage_norm, start, pData, count);
 
   const size_t payload_size =
       static_cast<size_t>(count) * 4u * sizeof(int32_t);
+  if (std::memcmp(dst + start * 4u, pData, payload_size) == 0) {
+    // Skip redundant constant uploads: setting identical constant data again is
+    // a no-op, but still record it for state blocks above.
+    return trace.ret(S_OK);
+  }
+
+  std::memcpy(dst + start * 4u, pData, payload_size);
+
+  const uint32_t base = start * 4u;
   auto* cmd = append_with_payload_locked<aerogpu_cmd_set_shader_constants_i>(
       dev, AEROGPU_CMD_SET_SHADER_CONSTANTS_I, dst + base, payload_size);
   if (!cmd) {
@@ -19455,11 +19480,22 @@ HRESULT AEROGPU_D3D9_CALL device_set_shader_const_b(
   std::lock_guard<std::mutex> lock(dev->mutex);
   uint8_t* dst = (stage_norm == kD3d9ShaderStageVs) ? dev->vs_consts_b
                                                     : dev->ps_consts_b;
+  bool changed = false;
   for (uint32_t i = 0; i < count; ++i) {
-    dst[start + i] = pData[i] ? 1u : 0u;
+    const uint8_t v = pData[i] ? 1u : 0u;
+    if (dst[start + i] != v) {
+      changed = true;
+    }
+    dst[start + i] = v;
   }
   stateblock_record_shader_const_b_locked(dev, stage_norm, start, dst + start,
                                           count);
+
+  if (!changed) {
+    // Skip redundant constant uploads: setting identical constant data again is
+    // a no-op, but still record it for state blocks above.
+    return trace.ret(S_OK);
+  }
 
   // AeroGPU represents each bool register as a `vec4<u32>` (16 bytes) in the
   // constants uniform buffer. Expand scalar bools into that representation.
