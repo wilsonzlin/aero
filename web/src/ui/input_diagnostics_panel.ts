@@ -10,7 +10,16 @@ export type InputDiagnosticsSnapshot = {
   syntheticUsbKeyboardConfigured: boolean;
   syntheticUsbMouseConfigured: boolean;
   mouseButtonsMask: number;
-  pressedKeyboardHidUsageCount: number;
+  /**
+   * Total number of "keyboard-like" inputs currently held down.
+   *
+   * Note: this currently includes both:
+   * - keyboard HID usages (usage page 0x07), and
+   * - Consumer Control usages (usage page 0x0C, e.g. volume/media keys),
+   *
+   * because backend switching is gated on *either* being held.
+   */
+  keyboardHeldCount: number;
   batchesReceived: number;
   batchesProcessed: number;
   batchesDropped: number;
@@ -37,7 +46,7 @@ export function readInputDiagnosticsSnapshotFromStatus(status: Int32Array): Inpu
     syntheticUsbKeyboardConfigured: Atomics.load(status, StatusIndex.IoInputUsbKeyboardOk) !== 0,
     syntheticUsbMouseConfigured: Atomics.load(status, StatusIndex.IoInputUsbMouseOk) !== 0,
     mouseButtonsMask: Atomics.load(status, StatusIndex.IoInputMouseButtonsHeldMask) >>> 0,
-    pressedKeyboardHidUsageCount: Atomics.load(status, StatusIndex.IoInputKeyboardHeldCount) >>> 0,
+    keyboardHeldCount: Atomics.load(status, StatusIndex.IoInputKeyboardHeldCount) >>> 0,
     batchesReceived: Atomics.load(status, StatusIndex.IoInputBatchReceivedCounter) >>> 0,
     batchesProcessed: Atomics.load(status, StatusIndex.IoInputBatchCounter) >>> 0,
     batchesDropped: Atomics.load(status, StatusIndex.IoInputBatchDropCounter) >>> 0,
@@ -114,7 +123,7 @@ export function mountInputDiagnosticsPanel(container: HTMLElement, opts?: { init
       `synthetic_usb_mouse.configured=${formatYesNo(snapshot.syntheticUsbMouseConfigured)}`,
       `mouse_buttons_mask=${formatHex32(snapshot.mouseButtonsMask)}`,
       `mouse_buttons_held=${formatMouseButtonsHeld(snapshot.mouseButtonsMask)}`,
-      `pressed_hid_usage_count=${snapshot.pressedKeyboardHidUsageCount >>> 0}`,
+      `keyboard_held_count=${snapshot.keyboardHeldCount >>> 0}`,
       `io.batches_received=${snapshot.batchesReceived >>> 0}`,
       `io.batches_processed=${snapshot.batchesProcessed >>> 0}`,
       `io.batches_dropped=${snapshot.batchesDropped >>> 0}`,
