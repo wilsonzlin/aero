@@ -1033,79 +1033,23 @@ static bool EmitSetRenderTargetsCmdLocked(AeroGpuDevice* dev,
                                          uint32_t color_count,
                                          const aerogpu_handle_t rtvs[AEROGPU_MAX_RENDER_TARGETS],
                                          aerogpu_handle_t dsv) {
-  if (!dev) {
-    return false;
-  }
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_render_targets>(AEROGPU_CMD_SET_RENDER_TARGETS);
-  if (!cmd) {
-    return false;
-  }
-  const uint32_t count = std::min<uint32_t>(color_count, AEROGPU_MAX_RENDER_TARGETS);
-  cmd->color_count = count;
-  cmd->depth_stencil = dsv;
-  for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
-    cmd->colors[i] = (i < count && rtvs) ? rtvs[i] : 0;
-  }
-  return true;
+  return aerogpu::d3d10_11::EmitSetRenderTargetsCmdLocked(dev,
+                                                         color_count,
+                                                         rtvs,
+                                                         dsv,
+                                                         [](HRESULT) {});
 }
 
 bool unbind_resource_from_outputs_locked(AeroGpuDevice* dev,
                                          D3D10DDI_HDEVICE hDevice,
                                          aerogpu_handle_t resource_handle,
                                          const AeroGpuResource* res) {
-  if (!dev || (resource_handle == 0 && !res)) {
-    return true;
-  }
-
-  const uint32_t current_count = std::min<uint32_t>(dev->current_rtv_count, AEROGPU_MAX_RENDER_TARGETS);
-  aerogpu_handle_t new_rtvs[AEROGPU_MAX_RENDER_TARGETS] = {};
-  AeroGpuResource* new_rtv_resources[AEROGPU_MAX_RENDER_TARGETS] = {};
-  for (uint32_t i = 0; i < current_count; ++i) {
-    new_rtvs[i] = dev->current_rtvs[i];
-    new_rtv_resources[i] = dev->current_rtv_resources[i];
-  }
-  aerogpu_handle_t new_dsv = dev->current_dsv;
-  AeroGpuResource* new_dsv_res = dev->current_dsv_res;
-
-  bool changed = false;
-  for (uint32_t i = 0; i < current_count; ++i) {
-    if ((resource_handle != 0 && new_rtvs[i] == resource_handle) ||
-        (res && ResourcesAlias(new_rtv_resources[i], res))) {
-      new_rtvs[i] = 0;
-      new_rtv_resources[i] = nullptr;
-      changed = true;
-    }
-  }
-  if ((resource_handle != 0 && new_dsv == resource_handle) ||
-      (res && ResourcesAlias(new_dsv_res, res))) {
-    new_dsv = 0;
-    new_dsv_res = nullptr;
-    changed = true;
-  }
-
-  if (!changed) {
-    return true;
-  }
-
-  if (!new_dsv_res) {
-    new_dsv = 0;
-  }
-
-  if (!EmitSetRenderTargetsCmdLocked(dev, current_count, new_rtvs, new_dsv)) {
-    ReportDeviceErrorLocked(dev, hDevice, E_OUTOFMEMORY);
-    return false;
-  }
-
-  // Commit the cached output state only after successful command emission, so
-  // hazard-mitigation logic can safely use it for early-out decisions.
-  dev->current_rtv_count = current_count;
-  for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
-    dev->current_rtvs[i] = (i < current_count) ? new_rtvs[i] : 0;
-    dev->current_rtv_resources[i] = (i < current_count) ? new_rtv_resources[i] : nullptr;
-  }
-  dev->current_dsv = new_dsv;
-  dev->current_dsv_res = new_dsv_res;
-  return true;
+  return aerogpu::d3d10_11::UnbindResourceFromOutputsLocked(dev,
+                                                           resource_handle,
+                                                           res,
+                                                           [&](HRESULT hr) {
+                                                             ReportDeviceErrorLocked(dev, hDevice, hr);
+                                                           });
 }
 
 bool unbind_resource_from_outputs_locked(AeroGpuDevice* dev, D3D10DDI_HDEVICE hDevice, const AeroGpuResource* res) {
@@ -1373,34 +1317,7 @@ HRESULT flush_locked(AeroGpuDevice* dev, D3D10DDI_HDEVICE hDevice) {
 }
 
 bool emit_set_render_targets_locked(AeroGpuDevice* dev) {
-  if (!dev) {
-    return false;
-  }
-
-  // Keep unused entries cleared so callers can freely change `current_rtv_count`
-  // without having to remember to zero the tail.
-  const uint32_t count = std::min<uint32_t>(dev->current_rtv_count, AEROGPU_MAX_RENDER_TARGETS);
-  for (uint32_t i = count; i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
-    dev->current_rtvs[i] = 0;
-    dev->current_rtv_resources[i] = nullptr;
-  }
-  if (!dev->current_dsv_res) {
-    dev->current_dsv = 0;
-  }
-
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_render_targets>(AEROGPU_CMD_SET_RENDER_TARGETS);
-  if (!cmd) {
-    return false;
-  }
-  cmd->color_count = count;
-  cmd->depth_stencil = dev->current_dsv;
-  for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; i++) {
-    cmd->colors[i] = 0;
-  }
-  for (uint32_t i = 0; i < count; ++i) {
-    cmd->colors[i] = dev->current_rtvs[i];
-  }
-  return true;
+  return aerogpu::d3d10_11::EmitSetRenderTargetsLocked(dev, [](HRESULT) {});
 }
 
 // -------------------------------------------------------------------------------------------------

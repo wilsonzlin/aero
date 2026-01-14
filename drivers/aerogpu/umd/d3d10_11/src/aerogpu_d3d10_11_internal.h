@@ -2047,6 +2047,7 @@ inline bool EmitSetRenderTargetsCmdFromStateLocked(Device* dev) {
 //   - `current_rtvs[]`
 //   - `current_rtv_resources[]`
 //   - `current_dsv`
+//   - `current_dsv_res`
 //
 // Keep these helpers templated to avoid pulling WDK-specific types into this
 // shared header (repo builds use a small ABI subset).
@@ -2061,6 +2062,13 @@ inline void NormalizeRenderTargetsLocked(DeviceT* dev) {
   for (uint32_t i = dev->current_rtv_count; i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
     dev->current_rtvs[i] = 0;
     dev->current_rtv_resources[i] = nullptr;
+  }
+
+  // Keep the cached DSV handle consistent with the cached resource pointer. The
+  // protocol binds a handle for the depth/stencil attachment; if the resource
+  // pointer is null, ensure we do not accidentally re-emit a stale handle.
+  if (!dev->current_dsv_res) {
+    dev->current_dsv = 0;
   }
 }
 
@@ -2140,6 +2148,9 @@ inline bool UnbindResourceFromOutputsLocked(DeviceT* dev,
   }
   aerogpu_handle_t dsv = dev->current_dsv;
   ResourcePtr dsv_res = dev->current_dsv_res;
+  if (!dsv_res) {
+    dsv = 0;
+  }
 
   bool changed = false;
   for (uint32_t i = 0; i < count; ++i) {
