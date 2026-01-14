@@ -2383,6 +2383,143 @@ fn wgsl_nonuniform_if_else_texld_avoids_invalid_control_flow() {
 }
 
 #[test]
+fn wgsl_nonuniform_if_predicated_texld_avoids_invalid_control_flow() {
+    // ps_3_0:
+    //   dcl_texcoord0 v0
+    //   setp_gt p0, v0.x, c0.x
+    //   if v0.y
+    //     texld (p0) r0, v0, s0
+    //   endif
+    //   mov oC0, r0
+    //   end
+    //
+    // Ensure we also avoid non-uniform control flow when the single op guarded by the `if` is
+    // itself predicated.
+    let tokens = vec![
+        version_token(ShaderStage::Pixel, 3, 0),
+        // dcl_texcoord0 v0  (usage 5 = texcoord)
+        opcode_token(31, 1) | (5u32 << 16),
+        dst_token(1, 0, 0xF),
+        // setp_gt p0, v0.x, c0.x  (compare op 0 = gt)
+        opcode_token(94, 3),
+        dst_token(19, 0, 0xF),
+        src_token(1, 0, 0x00, 0), // v0.xxxx
+        src_token(2, 0, 0x00, 0), // c0.xxxx
+        // if v0.y
+        opcode_token(40, 1),
+        src_token(1, 0, 0x55, 0), // v0.yyyy
+        // texld (p0) r0, v0, s0
+        opcode_token(66, 4) | 0x1000_0000,
+        dst_token(0, 0, 0xF),
+        src_token(1, 0, 0xE4, 0),
+        src_token(10, 0, 0xE4, 0),
+        src_token(19, 0, 0x00, 0), // p0.x
+        // endif
+        opcode_token(43, 0),
+        // mov oC0, r0
+        opcode_token(1, 2),
+        dst_token(8, 0, 0xF),
+        src_token(0, 0, 0xE4, 0),
+        // end
+        0x0000_FFFF,
+    ];
+
+    let decoded = decode_u32_tokens(&tokens).unwrap();
+    let ir = build_ir(&decoded).unwrap();
+    verify_ir(&ir).unwrap();
+
+    let wgsl = generate_wgsl(&ir).unwrap().wgsl;
+    assert!(wgsl.contains("textureSample("), "{wgsl}");
+    assert!(wgsl.contains("select("), "{wgsl}");
+    assert!(
+        !wgsl.contains("if ("),
+        "non-uniform if guarding a predicated texld should lower to select; got:\n{wgsl}"
+    );
+
+    let module = naga::front::wgsl::parse_str(&wgsl).expect("wgsl parse");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
+}
+
+#[test]
+fn wgsl_nonuniform_if_else_predicated_texld_avoids_invalid_control_flow() {
+    // ps_3_0:
+    //   dcl_texcoord0 v0
+    //   dcl_texcoord1 v1
+    //   setp_gt p0, v0.x, c0.x
+    //   if v0.y
+    //     texld (p0) r0, v0, s0
+    //   else
+    //     texld (p0) r0, v1, s0
+    //   endif
+    //   mov oC0, r0
+    //   end
+    let tokens = vec![
+        version_token(ShaderStage::Pixel, 3, 0),
+        // dcl_texcoord0 v0  (usage 5 = texcoord)
+        opcode_token(31, 1) | (5u32 << 16),
+        dst_token(1, 0, 0xF),
+        // dcl_texcoord1 v1  (usage_index 1 in opcode_token[20..24])
+        opcode_token(31, 1) | (5u32 << 16) | (1u32 << 20),
+        dst_token(1, 1, 0xF),
+        // setp_gt p0, v0.x, c0.x  (compare op 0 = gt)
+        opcode_token(94, 3),
+        dst_token(19, 0, 0xF),
+        src_token(1, 0, 0x00, 0), // v0.xxxx
+        src_token(2, 0, 0x00, 0), // c0.xxxx
+        // if v0.y
+        opcode_token(40, 1),
+        src_token(1, 0, 0x55, 0), // v0.yyyy
+        // texld (p0) r0, v0, s0
+        opcode_token(66, 4) | 0x1000_0000,
+        dst_token(0, 0, 0xF),
+        src_token(1, 0, 0xE4, 0),
+        src_token(10, 0, 0xE4, 0),
+        src_token(19, 0, 0x00, 0), // p0.x
+        // else
+        opcode_token(42, 0),
+        // texld (p0) r0, v1, s0
+        opcode_token(66, 4) | 0x1000_0000,
+        dst_token(0, 0, 0xF),
+        src_token(1, 1, 0xE4, 0),
+        src_token(10, 0, 0xE4, 0),
+        src_token(19, 0, 0x00, 0), // p0.x
+        // endif
+        opcode_token(43, 0),
+        // mov oC0, r0
+        opcode_token(1, 2),
+        dst_token(8, 0, 0xF),
+        src_token(0, 0, 0xE4, 0),
+        // end
+        0x0000_FFFF,
+    ];
+
+    let decoded = decode_u32_tokens(&tokens).unwrap();
+    let ir = build_ir(&decoded).unwrap();
+    verify_ir(&ir).unwrap();
+
+    let wgsl = generate_wgsl(&ir).unwrap().wgsl;
+    assert_eq!(wgsl.matches("textureSample(").count(), 2, "{wgsl}");
+    assert!(wgsl.matches("select(").count() >= 2, "{wgsl}");
+    assert!(
+        !wgsl.contains("if ("),
+        "non-uniform if/else guarding predicated texld should lower to select; got:\n{wgsl}"
+    );
+
+    let module = naga::front::wgsl::parse_str(&wgsl).expect("wgsl parse");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
+}
+
+#[test]
 fn wgsl_predicated_texldd_is_valid_with_non_uniform_predicate() {
     // ps_3_0:
     //   dcl_texcoord0 v0

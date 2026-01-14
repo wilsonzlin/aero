@@ -1995,17 +1995,21 @@ fn emit_stmt(
                 // Pattern 1: if (cond) { <single op>; }
                 if else_block.is_none() {
                     if let Stmt::Op(op) = &then_block.stmts[0] {
-                        if op_modifiers(op).predicate.is_none() {
-                            if let Some(line) = emit_branchless_predicated_op_line(
-                                op,
-                                &cond_e,
-                                stage,
-                                f32_defs,
-                                sampler_types,
-                            )? {
-                                let _ = writeln!(wgsl, "{pad}{line}");
-                                return Ok(());
-                            }
+                        let cond_for_op = if let Some(pred) = &op_modifiers(op).predicate {
+                            let pred_cond = predicate_expr(pred)?;
+                            format!("({cond_e} && {pred_cond})")
+                        } else {
+                            cond_e.clone()
+                        };
+                        if let Some(line) = emit_branchless_predicated_op_line(
+                            op,
+                            &cond_for_op,
+                            stage,
+                            f32_defs,
+                            sampler_types,
+                        )? {
+                            let _ = writeln!(wgsl, "{pad}{line}");
+                            return Ok(());
                         }
                     }
                 }
@@ -2016,55 +2020,76 @@ fn emit_stmt(
                         if let (Stmt::Op(then_op), Stmt::Op(else_op)) =
                             (&then_block.stmts[0], &else_block.stmts[0])
                         {
-                            if op_modifiers(then_op).predicate.is_none()
-                                && op_modifiers(else_op).predicate.is_none()
-                            {
-                                let then_line = emit_branchless_predicated_op_line(
-                                    then_op,
-                                    &cond_e,
-                                    stage,
-                                    f32_defs,
-                                    sampler_types,
-                                )?;
-                                let not_cond_e = format!("!({cond_e})");
-                                let else_line = emit_branchless_predicated_op_line(
-                                    else_op,
-                                    &not_cond_e,
-                                    stage,
-                                    f32_defs,
-                                    sampler_types,
-                                )?;
+                            let then_cond_for_op =
+                                if let Some(pred) = &op_modifiers(then_op).predicate {
+                                    let pred_cond = predicate_expr(pred)?;
+                                    format!("({cond_e} && {pred_cond})")
+                                } else {
+                                    cond_e.clone()
+                                };
+                            let not_cond_e = format!("!({cond_e})");
+                            let else_cond_for_op =
+                                if let Some(pred) = &op_modifiers(else_op).predicate {
+                                    let pred_cond = predicate_expr(pred)?;
+                                    format!("({not_cond_e} && {pred_cond})")
+                                } else {
+                                    not_cond_e.clone()
+                                };
 
-                                if then_line.is_some() || else_line.is_some() {
-                                    // Emit the branchless lines first.
-                                    if let Some(line) = &then_line {
-                                        let _ = writeln!(wgsl, "{pad}{line}");
-                                    }
-                                    if let Some(line) = &else_line {
-                                        let _ = writeln!(wgsl, "{pad}{line}");
-                                    }
+                            let then_line = emit_branchless_predicated_op_line(
+                                then_op,
+                                &then_cond_for_op,
+                                stage,
+                                f32_defs,
+                                sampler_types,
+                            )?;
+                            let else_line = emit_branchless_predicated_op_line(
+                                else_op,
+                                &else_cond_for_op,
+                                stage,
+                                f32_defs,
+                                sampler_types,
+                            )?;
 
-                                    // For the remaining branch, emit a real `if` since it doesn't
-                                    // contain a uniformity-sensitive op.
-                                    if then_line.is_none() {
-                                        let _ = writeln!(wgsl, "{pad}if ({cond_e}) {{");
-                                        let line =
-                                            emit_op_line(then_op, stage, f32_defs, sampler_types)?;
-                                        let inner_pad = "  ".repeat(indent + 1);
-                                        let _ = writeln!(wgsl, "{inner_pad}{line}");
-                                        let _ = writeln!(wgsl, "{pad}}}");
-                                    }
-                                    if else_line.is_none() {
-                                        let _ = writeln!(wgsl, "{pad}if ({not_cond_e}) {{");
-                                        let line =
-                                            emit_op_line(else_op, stage, f32_defs, sampler_types)?;
-                                        let inner_pad = "  ".repeat(indent + 1);
-                                        let _ = writeln!(wgsl, "{inner_pad}{line}");
-                                        let _ = writeln!(wgsl, "{pad}}}");
-                                    }
-
-                                    return Ok(());
+                            if then_line.is_some() || else_line.is_some() {
+                                // Emit the branchless lines first.
+                                if let Some(line) = &then_line {
+                                    let _ = writeln!(wgsl, "{pad}{line}");
                                 }
+                                if let Some(line) = &else_line {
+                                    let _ = writeln!(wgsl, "{pad}{line}");
+                                }
+
+                                // For the remaining branch, emit a real `if` since it doesn't
+                                // contain a uniformity-sensitive op.
+                                if then_line.is_none() {
+                                    let _ = writeln!(wgsl, "{pad}if ({cond_e}) {{");
+                                    emit_stmt(
+                                        wgsl,
+                                        &Stmt::Op(then_op.clone()),
+                                        indent + 1,
+                                        depth + 1,
+                                        stage,
+                                        f32_defs,
+                                        sampler_types,
+                                    )?;
+                                    let _ = writeln!(wgsl, "{pad}}}");
+                                }
+                                if else_line.is_none() {
+                                    let _ = writeln!(wgsl, "{pad}if ({not_cond_e}) {{");
+                                    emit_stmt(
+                                        wgsl,
+                                        &Stmt::Op(else_op.clone()),
+                                        indent + 1,
+                                        depth + 1,
+                                        stage,
+                                        f32_defs,
+                                        sampler_types,
+                                    )?;
+                                    let _ = writeln!(wgsl, "{pad}}}");
+                                }
+
+                                return Ok(());
                             }
                         }
                     }
