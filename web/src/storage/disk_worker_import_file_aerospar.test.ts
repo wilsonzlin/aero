@@ -27,6 +27,13 @@ function alignUpBigInt(value: bigint, alignment: bigint): bigint {
   return ((value + alignment - 1n) / alignment) * alignment;
 }
 
+function toArrayBufferUint8(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
+  // `BlobPart` types only accept ArrayBuffer-backed views; `Uint8Array` is generic over
+  // `ArrayBufferLike` and may be backed by `SharedArrayBuffer`. Copy when needed so TypeScript
+  // (and spec compliance) are happy.
+  return bytes.buffer instanceof ArrayBuffer ? (bytes as unknown as Uint8Array<ArrayBuffer>) : new Uint8Array(bytes);
+}
+
 function makeAerosparBytes(options: { diskSizeBytes: number; blockSizeBytes: number }): Uint8Array<ArrayBuffer> {
   const { diskSizeBytes, blockSizeBytes } = options;
   const blockSizeBig = BigInt(blockSizeBytes);
@@ -190,11 +197,12 @@ describe("disk_worker import_file content sniffing + validation", () => {
     expect(String(resp.error?.message ?? "")).toMatch(/iso/i);
   });
 
-  it("rejects explicit ISO imports when the ISO9660 signature is missing", async () => {
+  it("allows .iso imports even when the ISO9660 signature is missing", async () => {
     const file = new File([new Uint8Array(512)], "disk.iso");
     const resp = await sendImportFile({ file, format: "iso" });
-    expect(resp.ok).toBe(false);
-    expect(String(resp.error?.message ?? "")).toMatch(/iso/i);
+    expect(resp.ok).toBe(true);
+    expect(resp.result.format).toBe("iso");
+    expect(resp.result.kind).toBe("cd");
   });
 
   it("rejects empty files", async () => {

@@ -1129,9 +1129,9 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
           if (format === "vhd") {
             throw new Error("selected format vhd but the file does not look like a VHD image");
           }
-          if (format === "iso") {
-            throw new Error("selected format iso but the file does not look like an ISO9660 image");
-          }
+          // ISO images are treated as raw sector disks; we do not require an ISO9660 filesystem
+          // signature (some images may be UDF or other CD/DVD layouts). Only *detect* ISO by
+          // content when the file extension is ambiguous (e.g. `.img`).
         }
       }
 
