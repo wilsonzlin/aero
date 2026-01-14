@@ -4,6 +4,7 @@ use crate::{
     AEROGPU_CMD_STREAM_MAGIC,
 };
 
+use aero_protocol::aerogpu::aerogpu_cmd as cmd;
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdStreamHeader as ProtocolCmdStreamHeader,
     AerogpuShaderStage, AerogpuShaderStageEx,
@@ -701,12 +702,14 @@ fn protocol_parses_all_opcodes() {
     match cmds.next().unwrap() {
         AeroGpuCmd::SetShaderConstantsF {
             stage,
+            reserved0,
             start_register,
             vec4_count,
             stage_ex,
             data,
         } => {
             assert_eq!(stage, 0);
+            assert_eq!(reserved0, 0);
             assert_eq!(start_register, 4);
             assert_eq!(vec4_count, 2);
             assert_eq!(stage_ex, 0);
@@ -895,11 +898,13 @@ fn protocol_parses_all_opcodes() {
     match cmds.next().unwrap() {
         AeroGpuCmd::SetTexture {
             shader_stage,
+            reserved0,
             slot,
             texture,
             stage_ex,
         } => {
             assert_eq!(shader_stage, 1);
+            assert_eq!(reserved0, 0);
             assert_eq!(slot, 3);
             assert_eq!(texture, 0xC0);
             assert_eq!(stage_ex, 0);
@@ -942,12 +947,14 @@ fn protocol_parses_all_opcodes() {
     match cmds.next().unwrap() {
         AeroGpuCmd::SetSamplers {
             shader_stage,
+            reserved0,
             start_slot,
             sampler_count,
             stage_ex,
             handles_bytes,
         } => {
             assert_eq!(shader_stage, 1);
+            assert_eq!(reserved0, 0);
             assert_eq!(start_slot, 3);
             assert_eq!(sampler_count, 2);
             assert_eq!(stage_ex, 0);
@@ -959,12 +966,14 @@ fn protocol_parses_all_opcodes() {
     match cmds.next().unwrap() {
         AeroGpuCmd::SetConstantBuffers {
             shader_stage,
+            reserved0,
             start_slot,
             buffer_count,
             stage_ex,
             bindings_bytes,
         } => {
             assert_eq!(shader_stage, 1);
+            assert_eq!(reserved0, 0);
             assert_eq!(start_slot, 0);
             assert_eq!(buffer_count, 2);
             assert_eq!(stage_ex, 0);
@@ -1606,4 +1615,102 @@ fn accepts_newer_minor_abi_version() {
     let parsed_abi_version = parsed.header.abi_version;
     assert_eq!(parsed_abi_version, abi_version);
     assert!(parsed.cmds.is_empty());
+}
+
+#[test]
+fn protocol_preserves_stage_ex_reserved0_for_binding_cmds() {
+    let shader_stage = cmd::AerogpuShaderStage::Compute as u32;
+    let stage_ex = cmd::AerogpuShaderStageEx::Geometry as u32;
+
+    let stream = build_stream(|out| {
+        emit_packet(out, AeroGpuOpcode::SetTexture as u32, |out| {
+            push_u32(out, shader_stage);
+            push_u32(out, 0); // slot
+            push_u32(out, 0xC0); // texture
+            push_u32(out, stage_ex); // reserved0 (stage_ex)
+        });
+
+        emit_packet(out, AeroGpuOpcode::SetSamplers as u32, |out| {
+            push_u32(out, shader_stage);
+            push_u32(out, 0); // start_slot
+            push_u32(out, 1); // sampler_count
+            push_u32(out, stage_ex); // reserved0 (stage_ex)
+            push_u32(out, 0x55); // handles[0]
+        });
+
+        emit_packet(out, AeroGpuOpcode::SetConstantBuffers as u32, |out| {
+            push_u32(out, shader_stage);
+            push_u32(out, 0); // start_slot
+            push_u32(out, 1); // buffer_count
+            push_u32(out, stage_ex); // reserved0 (stage_ex)
+            // binding[0]
+            push_u32(out, 0x90); // buffer
+            push_u32(out, 16); // offset_bytes
+            push_u32(out, 64); // size_bytes
+            push_u32(out, 0); // reserved0
+        });
+
+        emit_packet(out, AeroGpuOpcode::SetShaderConstantsF as u32, |out| {
+            push_u32(out, shader_stage);
+            push_u32(out, 0); // start_register
+            push_u32(out, 1); // vec4_count
+            push_u32(out, stage_ex); // reserved0 (stage_ex)
+            // one vec4
+            push_u32(out, 1.0f32.to_bits());
+            push_u32(out, 2.0f32.to_bits());
+            push_u32(out, 3.0f32.to_bits());
+            push_u32(out, 4.0f32.to_bits());
+        });
+    });
+
+    let parsed = parse_cmd_stream(&stream).expect("parse should succeed");
+    assert_eq!(parsed.cmds.len(), 4);
+
+    match &parsed.cmds[0] {
+        AeroGpuCmd::SetTexture {
+            shader_stage: parsed_stage,
+            reserved0,
+            ..
+        } => {
+            assert_eq!(*parsed_stage, shader_stage);
+            assert_eq!(*reserved0, stage_ex);
+        }
+        other => panic!("unexpected cmd: {other:?}"),
+    }
+
+    match &parsed.cmds[1] {
+        AeroGpuCmd::SetSamplers {
+            shader_stage: parsed_stage,
+            reserved0,
+            ..
+        } => {
+            assert_eq!(*parsed_stage, shader_stage);
+            assert_eq!(*reserved0, stage_ex);
+        }
+        other => panic!("unexpected cmd: {other:?}"),
+    }
+
+    match &parsed.cmds[2] {
+        AeroGpuCmd::SetConstantBuffers {
+            shader_stage: parsed_stage,
+            reserved0,
+            ..
+        } => {
+            assert_eq!(*parsed_stage, shader_stage);
+            assert_eq!(*reserved0, stage_ex);
+        }
+        other => panic!("unexpected cmd: {other:?}"),
+    }
+
+    match &parsed.cmds[3] {
+        AeroGpuCmd::SetShaderConstantsF {
+            stage: parsed_stage,
+            reserved0,
+            ..
+        } => {
+            assert_eq!(*parsed_stage, shader_stage);
+            assert_eq!(*reserved0, stage_ex);
+        }
+        other => panic!("unexpected cmd: {other:?}"),
+    }
 }
