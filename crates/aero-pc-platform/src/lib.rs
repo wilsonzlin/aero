@@ -1771,43 +1771,31 @@ impl PcPlatform {
                     query_level: Box::new(move |pc| {
                         let (command, msi_state) = {
                             let mut pci_cfg = pc.pci_cfg.borrow_mut();
-                            pci_cfg
-                                .bus_mut()
-                                .device_config_mut(bdf)
-                                .map(|cfg| {
-                                    let command = cfg.command();
-                                    let msi = cfg
-                                        .find_capability(aero_devices::pci::msi::PCI_CAP_ID_MSI)
-                                        .map(|off| {
-                                            let base = u16::from(off);
-                                            (
-                                                cfg.read(base + 0x02, 2) as u16,
-                                                cfg.read(base + 0x04, 4),
-                                                cfg.read(base + 0x08, 4),
-                                                cfg.read(base + 0x0c, 2) as u16,
-                                                cfg.read(base + 0x10, 4),
-                                            )
-                                        });
-                                    (command, msi)
-                                })
-                                .unwrap_or((0, None))
+                            let cfg = pci_cfg.bus_mut().device_config(bdf);
+                            let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
+                            let msi_state = cfg
+                                .and_then(|cfg| cfg.capability::<MsiCapability>())
+                                .map(|msi| {
+                                    (
+                                        msi.enabled(),
+                                        msi.message_address(),
+                                        msi.message_data(),
+                                        msi.mask_bits(),
+                                    )
+                                });
+                            (command, msi_state)
                         };
 
                         // Keep device-side gating consistent when the same device model is also used
                         // outside the platform (e.g. in unit tests).
                         let mut ahci = ahci_for_intx.borrow_mut();
-                        ahci.config_mut().set_command(command);
-                        if let Some((ctrl, addr_lo, addr_hi, data, mask)) = msi_state {
-                            if let Some(off) = ahci
-                                .config_mut()
-                                .find_capability(aero_devices::pci::msi::PCI_CAP_ID_MSI)
-                            {
-                                let base = u16::from(off);
-                                ahci.config_mut().write(base + 0x04, 4, addr_lo);
-                                ahci.config_mut().write(base + 0x08, 4, addr_hi);
-                                ahci.config_mut().write(base + 0x0c, 2, u32::from(data));
-                                ahci.config_mut().write(base + 0x10, 4, mask);
-                                ahci.config_mut().write(base + 0x02, 2, u32::from(ctrl));
+                        {
+                            // Note: MSI pending bits are device-managed and must not be overwritten
+                            // from the canonical PCI config space (which cannot observe them).
+                            let cfg = ahci.config_mut();
+                            cfg.set_command(command);
+                            if let Some((enabled, addr, data, mask)) = msi_state {
+                                sync_msi_capability_into_config(cfg, enabled, addr, data, mask);
                             }
                         }
 
@@ -2831,44 +2819,32 @@ impl PcPlatform {
         let bdf = aero_devices::pci::profile::SATA_AHCI_ICH9.bdf;
         let (command, msi_state) = {
             let mut pci_cfg = self.pci_cfg.borrow_mut();
-            pci_cfg
-                .bus_mut()
-                .device_config_mut(bdf)
-                .map(|cfg| {
-                    let command = cfg.command();
-                    let msi = cfg
-                        .find_capability(aero_devices::pci::msi::PCI_CAP_ID_MSI)
-                        .map(|off| {
-                            let base = u16::from(off);
-                            (
-                                cfg.read(base + 0x02, 2) as u16,
-                                cfg.read(base + 0x04, 4),
-                                cfg.read(base + 0x08, 4),
-                                cfg.read(base + 0x0c, 2) as u16,
-                                cfg.read(base + 0x10, 4),
-                            )
-                        });
-                    (command, msi)
-                })
-                .unwrap_or((0, None))
+            let cfg = pci_cfg.bus_mut().device_config(bdf);
+            let command = cfg.map(|cfg| cfg.command()).unwrap_or(0);
+            let msi_state = cfg
+                .and_then(|cfg| cfg.capability::<MsiCapability>())
+                .map(|msi| {
+                    (
+                        msi.enabled(),
+                        msi.message_address(),
+                        msi.message_data(),
+                        msi.mask_bits(),
+                    )
+                });
+            (command, msi_state)
         };
 
         // Keep the device's internal view of the PCI command register in sync so it can apply
         // Bus Master and INTx disable gating when used standalone.
         {
             let mut ahci = ahci.borrow_mut();
-            ahci.config_mut().set_command(command);
-            if let Some((ctrl, addr_lo, addr_hi, data, mask)) = msi_state {
-                if let Some(off) = ahci
-                    .config_mut()
-                    .find_capability(aero_devices::pci::msi::PCI_CAP_ID_MSI)
-                {
-                    let base = u16::from(off);
-                    ahci.config_mut().write(base + 0x04, 4, addr_lo);
-                    ahci.config_mut().write(base + 0x08, 4, addr_hi);
-                    ahci.config_mut().write(base + 0x0c, 2, u32::from(data));
-                    ahci.config_mut().write(base + 0x10, 4, mask);
-                    ahci.config_mut().write(base + 0x02, 2, u32::from(ctrl));
+            {
+                // Note: MSI pending bits are device-managed and must not be overwritten from the
+                // canonical PCI config space (which cannot observe them).
+                let cfg = ahci.config_mut();
+                cfg.set_command(command);
+                if let Some((enabled, addr, data, mask)) = msi_state {
+                    sync_msi_capability_into_config(cfg, enabled, addr, data, mask);
                 }
             }
         }
