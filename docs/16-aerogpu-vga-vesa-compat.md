@@ -310,8 +310,9 @@ This makes scanout switching glitch-free without locks.
 
 ### Scanout format semantics (presentation)
 
-- **sRGB vs UNORM:** sRGB variants are byte-identical to their UNORM counterparts. Scanout presentation
-  may treat them identically unless explicit colorspace conversion is implemented.
+- **sRGB vs UNORM:** sRGB variants are byte-identical to their UNORM counterparts, but the *interpretation*
+  differs. Sampling should decode sRGB→linear and render-target writes/views may encode linear→sRGB.
+  Presenters must avoid double-applying gamma when handling `*_SRGB` scanout formats.
 - **X8 alpha semantics:** `B8G8R8X8*` / `R8G8B8X8*` formats must be treated as fully opaque when
   presenting. If converting to RGBA (e.g. browser canvas), alpha is implicitly `1.0` / `0xFF`.
 
