@@ -265,8 +265,7 @@ Examples (illustrative) INF model entries:
 ; - Install only one basename at a time (avoid duplicate overlapping INFs that can cause confusing driver selection).
 
 ; aero_virtio_tablet.inf (optional tablet / absolute pointer)
-; Note: this SUBSYS-qualified HWID is more specific, so it wins over the generic fallback when both packages are installed
-; (i.e. when the opt-in fallback alias is enabled).
+; Note: this SUBSYS-qualified HWID is more specific, so it wins over the generic fallback when both packages are installed.
 %AeroVirtioTablet.DeviceDesc%   = AeroVirtioTablet_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&SUBSYS_00121AF4&REV_01
 ```
 
