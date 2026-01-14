@@ -35,6 +35,17 @@ const vitestMaxForks = (() => {
   return 8;
 })();
 
+const vitestTestTimeoutMs = (() => {
+  // Some of our unit tests dynamically import worker bundles (and their WASM dependencies) during
+  // the test body. On newer Node majors (or under cold caches / constrained sandboxes), that
+  // overhead can exceed Vitest's default 5s per-test timeout.
+  //
+  // Keep CI baseline (Node 22.x) tight, but bump newer majors so `npm -w web run test:unit` is
+  // runnable for contributors / hermetic runners.
+  if (nodeMajor >= 25) return 20_000;
+  return 5_000;
+})();
+
 type AeroBuildInfo = Readonly<{
   version: string;
   gitSha: string;
@@ -230,6 +241,7 @@ export default defineConfig({
   },
   test: {
     environment: "node",
+    testTimeout: vitestTestTimeoutMs,
     // These tests exercise blocking Atomics.wait() + Node worker_threads.
     // On newer Node releases, Vitest's default thread pool can interfere with
     // nested Worker scheduling / Atomics wakeups, causing flakes/timeouts.
