@@ -862,6 +862,55 @@ static void test_unsupported_protocol(void)
     assert(res == AEROVNET_OFFLOAD_ERR_UNSUPPORTED_L4_PROTOCOL);
 }
 
+static void test_unsupported_ethertype(void)
+{
+    uint8_t pkt[14];
+    AEROVNET_TX_OFFLOAD_INTENT intent;
+    AEROVNET_VIRTIO_NET_HDR hdr;
+    AEROVNET_OFFLOAD_RESULT res;
+
+    build_eth(pkt, 0x0806); /* ARP */
+
+    memset(&intent, 0, sizeof(intent));
+    intent.WantUdpChecksum = 1;
+
+    res = AerovNetBuildTxVirtioNetHdr(pkt, sizeof(pkt), &intent, &hdr, NULL);
+    assert(res == AEROVNET_OFFLOAD_ERR_UNSUPPORTED_ETHERTYPE);
+}
+
+static void test_short_frame_rejected(void)
+{
+    uint8_t pkt[13];
+    AEROVNET_TX_OFFLOAD_INTENT intent;
+    AEROVNET_VIRTIO_NET_HDR hdr;
+    AEROVNET_OFFLOAD_RESULT res;
+
+    memset(pkt, 0, sizeof(pkt));
+
+    memset(&intent, 0, sizeof(intent));
+    intent.WantUdpChecksum = 1;
+
+    res = AerovNetBuildTxVirtioNetHdr(pkt, sizeof(pkt), &intent, &hdr, NULL);
+    assert(res == AEROVNET_OFFLOAD_ERR_FRAME_TOO_SHORT);
+}
+
+static void test_short_udp_header_rejected(void)
+{
+    uint8_t pkt[14 + 20];
+    AEROVNET_TX_OFFLOAD_INTENT intent;
+    AEROVNET_VIRTIO_NET_HDR hdr;
+    AEROVNET_OFFLOAD_RESULT res;
+
+    build_eth(pkt, 0x0800);
+    build_ipv4_udp(pkt + 14, 0);
+
+    memset(&intent, 0, sizeof(intent));
+    intent.WantUdpChecksum = 1;
+
+    res = AerovNetBuildTxVirtioNetHdr(pkt, sizeof(pkt), &intent, &hdr, NULL);
+    assert(res == AEROVNET_OFFLOAD_ERR_FRAME_TOO_SHORT);
+}
+
 int main(void)
 {
     test_ipv4_tcp_checksum_only();
@@ -891,5 +940,8 @@ int main(void)
     test_ipv6_fragment_rejected();
     test_ipv6_hopbyhop_tcp_checksum_only();
     test_unsupported_protocol();
+    test_unsupported_ethertype();
+    test_short_frame_rejected();
+    test_short_udp_header_rejected();
     return 0;
 }
