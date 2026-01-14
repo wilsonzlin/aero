@@ -10,6 +10,7 @@ use aero_snapshot as snapshot;
 use aero_usb::hid::{
     UsbHidConsumerControlHandle, UsbHidGamepadHandle, UsbHidKeyboardHandle, UsbHidMouseHandle,
 };
+use aero_usb::hub::UsbHubDevice;
 use aero_usb::{ControlResponse, SetupPacket, UsbDeviceModel, UsbInResult};
 use core::any::Any;
 
@@ -117,6 +118,50 @@ fn uhci_portsc_reflects_device_attach_and_detach() {
     let portsc_detached = m.io_read(base + regs::REG_PORTSC1, 2) as u16;
     assert_eq!(portsc_detached & 0x0001, 0, "CCS should clear after detach");
     assert_ne!(portsc_detached & 0x0002, 0, "CSC should latch after detach");
+}
+
+#[test]
+fn machine_reset_preserves_host_attached_uhci_devices() {
+    let cfg = MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_uhci: true,
+        // Keep the machine minimal/deterministic for this reset/topology test.
+        enable_vga: false,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        enable_e1000: false,
+        ..Default::default()
+    };
+
+    let mut m = Machine::new(cfg).unwrap();
+
+    // Host attach a hub at UHCI root port 0 and a keyboard behind hub port 1.
+    m.usb_attach_root(0, Box::new(UsbHubDevice::with_port_count(2)))
+        .expect("attach hub at root port 0");
+
+    m.usb_attach_at_path(&[0, 1], Box::new(UsbHidKeyboardHandle::new()))
+        .expect("attach keyboard behind hub");
+
+    // Reset the whole machine (this calls `UhciPciDevice::reset()`).
+    m.reset();
+
+    let uhci = m.uhci().expect("UHCI device should exist after reset");
+    let mut uhci = uhci.borrow_mut();
+    let root = uhci.controller_mut().hub_mut();
+    let mut dev0 = root
+        .port_device_mut(0)
+        .expect("UHCI root port 0 should remain occupied after reset");
+
+    let hub = dev0
+        .as_hub_mut()
+        .expect("root port 0 should still be a hub after reset");
+    assert!(
+        hub.downstream_device_mut(0).is_some(),
+        "expected downstream device behind hub port 1 to remain attached after reset"
+    );
 }
 
 #[test]
