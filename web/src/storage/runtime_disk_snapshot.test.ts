@@ -203,6 +203,22 @@ describe("runtime disk snapshot payload", () => {
       ),
     ).toBe(false);
 
+    // Corrupt/untrusted bindings should not crash and should keep overlays (conservative).
+    expect(
+      shouldInvalidateRemoteOverlay(expected, {
+        version: 1,
+        base: { ...(expected as any), deliveryType: 123 },
+      } as any),
+    ).toBe(false);
+
+    // Missing/invalid expectedValidator info is not positive evidence of mismatch; keep overlay.
+    expect(
+      shouldInvalidateRemoteOverlay(expected, {
+        version: 1,
+        base: { imageId: expected.imageId, version: expected.version, deliveryType: expected.deliveryType, chunkSize: expected.chunkSize },
+      } as any),
+    ).toBe(false);
+
     expect(
       shouldInvalidateRemoteOverlay(expected, {
         version: 1,

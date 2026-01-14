@@ -454,6 +454,14 @@ function remoteDeliveryKind(deliveryType: string): string {
   return idx === -1 ? deliveryType : deliveryType.slice(0, idx);
 }
 
+function isRemoteDiskValidator(value: unknown): value is RemoteDiskValidator {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const obj = value as { kind?: unknown; value?: unknown };
+  if (obj.kind !== "etag" && obj.kind !== "lastModified") return false;
+  if (typeof obj.value !== "string" || obj.value.trim().length === 0) return false;
+  return true;
+}
+
 export function shouldInvalidateRemoteOverlay(
   expected: RemoteDiskBaseSnapshot,
   binding: RemoteCacheBinding | null | undefined,
@@ -464,10 +472,14 @@ export function shouldInvalidateRemoteOverlay(
   if (!binding || binding.version !== 1) return false;
   const base = binding.base;
   if (!base) return false;
+  const baseAny = base as unknown as { imageId?: unknown; version?: unknown; deliveryType?: unknown; expectedValidator?: unknown };
+  if (typeof baseAny.imageId !== "string" || baseAny.imageId.trim().length === 0) return false;
+  if (typeof baseAny.version !== "string" || baseAny.version.trim().length === 0) return false;
+  if (typeof baseAny.deliveryType !== "string" || baseAny.deliveryType.trim().length === 0) return false;
 
-  if (base.imageId !== expected.imageId) return true;
-  if (base.version !== expected.version) return true;
-  if (remoteDeliveryKind(base.deliveryType) !== remoteDeliveryKind(expected.deliveryType)) return true;
+  if (baseAny.imageId !== expected.imageId) return true;
+  if (baseAny.version !== expected.version) return true;
+  if (remoteDeliveryKind(baseAny.deliveryType) !== remoteDeliveryKind(expected.deliveryType)) return true;
 
   // NOTE: We intentionally *do not* compare `chunkSize` here. `chunkSize` is a local cache
   // tuning parameter for remote delivery and can be changed without changing the underlying
@@ -475,9 +487,10 @@ export function shouldInvalidateRemoteOverlay(
   // user state.
 
   const a = expected.expectedValidator;
-  const b = base.expectedValidator;
-  if (!a && !b) return false;
-  if (!a || !b) return true;
+  const b = isRemoteDiskValidator(baseAny.expectedValidator) ? (baseAny.expectedValidator as RemoteDiskValidator) : undefined;
+  // Only invalidate when both expected and binding provide a validator and they conflict. Missing
+  // validator info is not positive evidence of mismatch, and overlays may contain user data.
+  if (!a || !b) return false;
   return a.kind !== b.kind || a.value !== b.value;
 }
 
