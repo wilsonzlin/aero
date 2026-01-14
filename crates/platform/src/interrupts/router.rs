@@ -704,7 +704,7 @@ impl PlatformInterrupts {
 
     pub fn tick(&self, delta_ns: u64) {
         self.lapic_clock.advance_ns(delta_ns);
-        for lapic in &self.lapics {
+        for lapic in self.lapics_iter() {
             lapic.poll();
         }
     }
@@ -994,7 +994,7 @@ impl IoSnapshot for PlatformInterrupts {
             w.field_bytes(TAG_LAPIC, self.lapics[0].save_state());
         } else {
             let mut enc = Encoder::new().u32(self.lapics.len() as u32);
-            for lapic in &self.lapics {
+            for lapic in self.lapics_iter() {
                 let state = lapic.save_state();
                 enc = enc.u64(state.len() as u64).bytes(&state);
             }
