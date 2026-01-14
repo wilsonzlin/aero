@@ -455,6 +455,41 @@ fn jwt_rejects_noncanonical_base64url_header_even_if_signature_matches() {
 }
 
 #[test]
+fn session_token_rejects_noncanonical_base64url_signature_even_if_hmac_matches() {
+    let secret = b"unit-test-secret";
+    let now_ms = 0;
+
+    let payload = br#"{"v":1,"sid":"abc","exp":12345}"#;
+    let payload_b64 = general_purpose::URL_SAFE_NO_PAD.encode(payload);
+    let sig = hmac_sha256(secret, payload_b64.as_bytes());
+    let sig_b64 = general_purpose::URL_SAFE_NO_PAD.encode(sig);
+    assert_eq!(sig_b64.len() % 4, 3, "expected signature b64 to be mod4==3");
+    let sig_b64 = make_noncanonical_base64url(sig_b64);
+
+    let token = format!("{payload_b64}.{sig_b64}");
+    assert!(verify_gateway_session_token(&token, secret, now_ms).is_none());
+}
+
+#[test]
+fn jwt_rejects_noncanonical_base64url_signature_even_if_hmac_matches() {
+    let secret = b"unit-test-secret";
+    let now_sec = 0;
+
+    let header = br#"{"alg":"HS256"}"#;
+    let payload = br#"{"sid":"abc","exp":12345,"iat":0}"#;
+    let header_b64 = general_purpose::URL_SAFE_NO_PAD.encode(header);
+    let payload_b64 = general_purpose::URL_SAFE_NO_PAD.encode(payload);
+    let signing_input = format!("{header_b64}.{payload_b64}");
+    let sig = hmac_sha256(secret, signing_input.as_bytes());
+    let sig_b64 = general_purpose::URL_SAFE_NO_PAD.encode(sig);
+    assert_eq!(sig_b64.len() % 4, 3, "expected signature b64 to be mod4==3");
+    let sig_b64 = make_noncanonical_base64url(sig_b64);
+    let token = format!("{signing_input}.{sig_b64}");
+
+    assert!(verify_hs256_jwt(&token, secret, now_sec).is_none());
+}
+
+#[test]
 fn session_token_rejects_deeply_nested_json_payload_without_panicking() {
     let secret = b"unit-test-secret";
 
