@@ -245,6 +245,9 @@ export class WebHidBroker {
        * WebHID requires per-device serialization, so if an in-flight
        * `sendReport`/`sendFeatureReport`/`receiveFeatureReport` stalls and the
        * guest keeps sending, the queue can otherwise grow without bound.
+       *
+       * Drop policy when the queue is full: drop newest tasks. This preserves the
+       * FIFO ordering for already-queued reports.
        */
       maxPendingDeviceSends?: number;
       /**
