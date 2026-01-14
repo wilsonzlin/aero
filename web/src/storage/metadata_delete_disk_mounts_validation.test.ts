@@ -40,20 +40,24 @@ describe("metadata deleteDisk mount handling", () => {
       const db2 = await openDiskManagerDb();
       try {
         const tx2 = db2.transaction(["mounts"], "readonly");
-        const rec = (await idbReq(tx2.objectStore("mounts").get("mounts"))) as any;
+        const rec = (await idbReq(tx2.objectStore("mounts").get("mounts"))) as unknown;
         await idbTxDone(tx2);
         expect(rec).toBeTruthy();
-        expect(rec.value).toBeTruthy();
+        const recObj = rec as { value?: unknown } | null | undefined;
+        expect(recObj?.value).toBeTruthy();
+        const value = recObj?.value;
+        if (!value || typeof value !== "object") {
+          throw new Error("expected mounts record value");
+        }
         // The deleteDisk path should not write an explicit `hddId` field just because
         // `Object.prototype.hddId` is polluted.
-        expect(Object.prototype.hasOwnProperty.call(rec.value, "hddId")).toBe(false);
+        expect(Object.prototype.hasOwnProperty.call(value, "hddId")).toBe(false);
       } finally {
         db2.close();
       }
     } finally {
       if (hddIdExisting) Object.defineProperty(Object.prototype, "hddId", hddIdExisting);
-      else delete (Object.prototype as any).hddId;
+      else Reflect.deleteProperty(Object.prototype, "hddId");
     }
   });
 });
-

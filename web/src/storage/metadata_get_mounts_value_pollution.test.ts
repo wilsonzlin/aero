@@ -25,7 +25,7 @@ describe("metadata getMounts value pollution handling", () => {
       try {
         const tx = db.transaction(["mounts"], "readwrite");
         // Simulate corrupted/foreign IDB state: a mounts record without an own `value` field.
-        tx.objectStore("mounts").put({ key: "mounts" } as any);
+        tx.objectStore("mounts").put({ key: "mounts" });
         await idbTxDone(tx);
       } finally {
         db.close();
@@ -47,8 +47,7 @@ describe("metadata getMounts value pollution handling", () => {
       expect(Object.prototype.hasOwnProperty.call(mounts, "cdId")).toBe(false);
     } finally {
       if (existing) Object.defineProperty(Object.prototype, "value", existing);
-      else delete (Object.prototype as any).value;
+      else Reflect.deleteProperty(Object.prototype, "value");
     }
   });
 });
-

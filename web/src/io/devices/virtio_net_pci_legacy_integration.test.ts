@@ -12,7 +12,7 @@ import { assertWasmMemoryWiring } from "../../runtime/wasm_memory_probe";
 import { initWasm } from "../../runtime/wasm_loader";
 import { DeviceManager, type IrqSink } from "../device_manager";
 import type { PciAddress } from "../bus/pci";
-import { VirtioNetPciDevice, type VirtioNetPciMode } from "./virtio_net";
+import { VirtioNetPciDevice, type VirtioNetPciBridgeLike, type VirtioNetPciMode } from "./virtio_net";
 
 // Legacy virtio-pci (0.9) I/O port register layout (see `crates/aero-virtio/src/pci.rs`).
 const VIRTIO_PCI_LEGACY_HOST_FEATURES = 0x00; // u32
@@ -84,13 +84,14 @@ describe("io/devices/virtio-net (pci bridge integration)", () => {
     // Prefer legacy-only virtio-pci (modern capabilities disabled, legacy I/O BAR enabled).
     // Fall back to transitional if the current WASM build only supports the older
     // `transitional?: boolean` constructor contract.
-    let bridge: any = null;
+    let bridge: VirtioNetPciBridgeLike | null = null;
     let mode: VirtioNetPciMode = "legacy";
+    const BridgeCtor = Bridge as unknown as new (...args: unknown[]) => VirtioNetPciBridgeLike;
     try {
-      bridge = new (Bridge as any)(layout.guest_base >>> 0, layout.guest_size >>> 0, ioIpcSab, "legacy");
+      bridge = new BridgeCtor(layout.guest_base >>> 0, layout.guest_size >>> 0, ioIpcSab, "legacy");
     } catch {
       try {
-        bridge = new (Bridge as any)(layout.guest_base >>> 0, layout.guest_size >>> 0, ioIpcSab, true);
+        bridge = new BridgeCtor(layout.guest_base >>> 0, layout.guest_size >>> 0, ioIpcSab, true);
         mode = "transitional";
       } catch {
         // Older/partial builds may export VirtioNetPciBridge but not the legacy transport selector.
@@ -99,22 +100,18 @@ describe("io/devices/virtio-net (pci bridge integration)", () => {
     }
 
     // Ensure the legacy I/O accessors exist (some builds expose `io_*`, newer ones `legacy_io_*`).
-    const bridgeAny = bridge as any;
+    if (!bridge) return;
     const legacyRead =
-      typeof bridgeAny.legacy_io_read === "function"
-        ? bridgeAny.legacy_io_read
-        : typeof bridgeAny.io_read === "function"
-          ? bridgeAny.io_read
-          : null;
+      typeof bridge.legacy_io_read === "function" ? bridge.legacy_io_read : typeof bridge.io_read === "function" ? bridge.io_read : null;
     const legacyWrite =
-      typeof bridgeAny.legacy_io_write === "function"
-        ? bridgeAny.legacy_io_write
-        : typeof bridgeAny.io_write === "function"
-          ? bridgeAny.io_write
+      typeof bridge.legacy_io_write === "function"
+        ? bridge.legacy_io_write
+        : typeof bridge.io_write === "function"
+          ? bridge.io_write
           : null;
     if (!legacyRead || !legacyWrite) {
       try {
-        bridgeAny.free?.();
+        bridge.free();
       } catch {
         // ignore
       }
@@ -125,7 +122,7 @@ describe("io/devices/virtio-net (pci bridge integration)", () => {
     //
     // Note: virtio-pci legacy IO reads are gated by PCI command bit0 (I/O enable). For the probe
     // we temporarily enable I/O decoding inside the bridge so the read is meaningful.
-    const setCmd = typeof bridgeAny.set_pci_command === "function" ? bridgeAny.set_pci_command : null;
+    const setCmd = bridge.set_pci_command ?? null;
     let probeOk = false;
     try {
       if (setCmd) {
@@ -151,7 +148,7 @@ describe("io/devices/virtio-net (pci bridge integration)", () => {
 
     if (!probeOk) {
       try {
-        bridgeAny.free?.();
+        bridge.free();
       } catch {
         // ignore
       }
