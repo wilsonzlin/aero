@@ -1888,6 +1888,62 @@ static std::set<DWORD> DetectVirtioDiskNumbers(Logger& log) {
   return disks;
 }
 
+static DEVINST FindDiskDevInstForDiskNumber(Logger& log, DWORD disk_number) {
+  HDEVINFO devinfo =
+      SetupDiGetClassDevsW(&GUID_DEVINTERFACE_DISK, nullptr, nullptr, DIGCF_PRESENT | DIGCF_DEVICEINTERFACE);
+  if (devinfo == INVALID_HANDLE_VALUE) {
+    log.Logf("virtio-blk: SetupDiGetClassDevs(GUID_DEVINTERFACE_DISK) failed: %lu", GetLastError());
+    return 0;
+  }
+
+  DEVINST out = 0;
+
+  for (DWORD idx = 0;; idx++) {
+    SP_DEVICE_INTERFACE_DATA iface{};
+    iface.cbSize = sizeof(iface);
+    if (!SetupDiEnumDeviceInterfaces(devinfo, nullptr, &GUID_DEVINTERFACE_DISK, idx, &iface)) {
+      if (GetLastError() == ERROR_NO_MORE_ITEMS) break;
+      continue;
+    }
+
+    DWORD detail_size = 0;
+    SetupDiGetDeviceInterfaceDetailW(devinfo, &iface, nullptr, 0, &detail_size, nullptr);
+    if (detail_size == 0) continue;
+
+    std::vector<BYTE> detail_buf(detail_size);
+    auto* detail = reinterpret_cast<SP_DEVICE_INTERFACE_DETAIL_DATA_W*>(detail_buf.data());
+    detail->cbSize = sizeof(SP_DEVICE_INTERFACE_DETAIL_DATA_W);
+
+    SP_DEVINFO_DATA dev{};
+    dev.cbSize = sizeof(dev);
+
+    if (!SetupDiGetDeviceInterfaceDetailW(devinfo, &iface, detail, detail_size, nullptr, &dev)) {
+      continue;
+    }
+
+    HANDLE h =
+        CreateFileW(detail->DevicePath, 0, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
+    if (h == INVALID_HANDLE_VALUE) {
+      continue;
+    }
+
+    STORAGE_DEVICE_NUMBER devnum{};
+    DWORD bytes = 0;
+    const bool ok = DeviceIoControl(h, IOCTL_STORAGE_GET_DEVICE_NUMBER, nullptr, 0, &devnum, sizeof(devnum),
+                                    &bytes, nullptr) != 0;
+    CloseHandle(h);
+    if (!ok) continue;
+
+    if (devnum.DeviceNumber == disk_number) {
+      out = dev.DevInst;
+      break;
+    }
+  }
+
+  SetupDiDestroyDeviceInfoList(devinfo);
+  return out;
+}
+
 static std::optional<wchar_t> FindMountedDriveLetterOnDisks(Logger& log,
                                                             const std::set<DWORD>& disk_numbers) {
   if (disk_numbers.empty()) return std::nullopt;
@@ -2139,8 +2195,10 @@ static bool VirtioBlkReportLuns(Logger& log, HANDLE hPhysicalDrive) {
 }
 
 static bool VirtioBlkTest(Logger& log, const Options& opt,
-                          std::optional<AerovblkQueryInfoResult>* miniport_info_out = nullptr) {
+                          std::optional<AerovblkQueryInfoResult>* miniport_info_out = nullptr,
+                          DEVINST* devinst_out = nullptr) {
   if (miniport_info_out) miniport_info_out->reset();
+  if (devinst_out) *devinst_out = 0;
   const auto disks = DetectVirtioDiskNumbers(log);
   if (disks.empty()) {
     log.LogLine("virtio-blk: no virtio disk devices detected");
@@ -2178,6 +2236,10 @@ static bool VirtioBlkTest(Logger& log, const Options& opt,
     log.Logf("virtio-blk: unable to query disk number for %lc:", *base_drive);
     log.LogLine("virtio-blk: specify --blk-root (e.g. D:\\aero-test\\) on a virtio volume");
     return false;
+  }
+
+  if (devinst_out) {
+    *devinst_out = FindDiskDevInstForDiskNumber(log, *base_disk);
   }
 
   if (disks.count(*base_disk) == 0 && !DriveLetterLooksLikeVirtio(log, *base_drive)) {
@@ -7477,7 +7539,8 @@ int wmain(int argc, wchar_t** argv) {
   bool all_ok = true;
 
   std::optional<AerovblkQueryInfoResult> blk_miniport_info;
-  const bool blk_ok = VirtioBlkTest(log, opt, &blk_miniport_info);
+  DEVINST blk_devinst = 0;
+  const bool blk_ok = VirtioBlkTest(log, opt, &blk_miniport_info, &blk_devinst);
   if (blk_miniport_info.has_value()) {
     // Only include interrupt diagnostics if the miniport returned the extended fields.
     constexpr size_t kIrqModeEnd = offsetof(AEROVBLK_QUERY_INFO, InterruptMode) + sizeof(ULONG);
@@ -7511,6 +7574,12 @@ int wmain(int argc, wchar_t** argv) {
     log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-blk|%s", blk_ok ? "PASS" : "FAIL");
   }
   all_ok = all_ok && blk_ok;
+
+  if (blk_devinst != 0) {
+    EmitVirtioIrqMarkerForDevInst(log, "virtio-blk", blk_devinst);
+  } else {
+    EmitVirtioIrqMarker(log, "virtio-blk", {L"PCI\\VEN_1AF4&DEV_1042"});
+  }
 
   const auto input = VirtioInputTest(log);
   log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-input|%s|devices=%d|keyboard_devices=%d|"
