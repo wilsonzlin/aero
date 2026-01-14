@@ -778,7 +778,14 @@ fn build_dsdt_aml(cfg: &AcpiConfig) -> Vec<u8> {
     }
     out.extend_from_slice(&aml_scope(*b"_PR_", &pr));
 
+    // Sleep state types for Win7: advertise common PC encodings.
+    // Name (_S1_, Package () { 0x01, 0x01 })
+    // Name (_S3_, Package () { 0x03, 0x03 })
+    // Name (_S4_, Package () { 0x04, 0x04 })
     // Name (_S5_, Package () { 0x05, 0x05 })
+    out.extend_from_slice(&aml_s1());
+    out.extend_from_slice(&aml_s3());
+    out.extend_from_slice(&aml_s4());
     out.extend_from_slice(&aml_s5());
 
     out
@@ -983,8 +990,30 @@ fn aml_method_pic() -> Vec<u8> {
 }
 
 fn aml_s5() -> Vec<u8> {
-    let elements = [aml_integer(5), aml_integer(5)];
-    aml_name_pkg(*b"_S5_", &elements)
+    aml_sleep_state(*b"_S5_", 5)
+}
+
+fn aml_s4() -> Vec<u8> {
+    aml_sleep_state(*b"_S4_", 4)
+}
+
+fn aml_s3() -> Vec<u8> {
+    aml_sleep_state(*b"_S3_", 3)
+}
+
+fn aml_s1() -> Vec<u8> {
+    aml_sleep_state(*b"_S1_", 1)
+}
+
+fn aml_sleep_state(name: [u8; 4], slp_typ: u64) -> Vec<u8> {
+    // ACPI defines _Sx_ objects as a package with two integers:
+    //   - SLP_TYPa for PM1a control register
+    //   - SLP_TYPb for PM1b control register
+    //
+    // We only implement PM1a, but the conventional PC encoding uses the same
+    // values in both slots (and many OSes expect two elements to be present).
+    let elements = [aml_integer(slp_typ), aml_integer(slp_typ)];
+    aml_name_pkg(name, &elements)
 }
 
 fn sys0_crs(cfg: &AcpiConfig) -> Vec<u8> {
