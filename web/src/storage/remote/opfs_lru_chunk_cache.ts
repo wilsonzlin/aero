@@ -159,8 +159,19 @@ function validateIndex(parsed: unknown, expectedChunkSize: number): ChunkIndexV1
   const chunks = obj.chunks as Record<string, unknown>;
   let count = 0;
   for (const key in chunks) {
+    if (!Object.prototype.hasOwnProperty.call(chunks, key)) continue;
     count += 1;
     if (count > MAX_INDEX_CHUNK_ENTRIES) return null;
+
+    // Chunk indices are always stored as base-10 integer strings (`"0"`, `"1"`, ...). Treat any
+    // other keys as a corrupt index so we can rebuild by scanning the chunk files on disk.
+    //
+    // This intentionally rejects keys like "__proto__" (prototype pollution hazard) and other
+    // non-numeric keys that can break eviction accounting.
+    if (!/^\d+$/.test(key)) return null;
+    const idx = Number(key);
+    if (!Number.isSafeInteger(idx) || idx < 0) return null;
+
     const meta = chunks[key];
     if (!meta || typeof meta !== "object") return null;
     const byteLength = (meta as { byteLength?: unknown }).byteLength;
