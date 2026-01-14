@@ -77,6 +77,7 @@ const SATA_SIG_ATA: u32 = 0x0000_0101;
 // PxSCTL.DET (Device Detection Initialization) values.
 const SCTL_DET_MASK: u32 = 0x0F;
 const SCTL_DET_COMRESET: u32 = 1;
+const SCTL_DET_DISABLE: u32 = 4;
 
 #[derive(Debug, Clone, Copy)]
 struct HbaRegs {
@@ -450,6 +451,18 @@ impl AhciController {
                     };
                 }
 
+                // DET=4 disables the port (PHY offline). Model it as an immediate link-down state
+                // while preserving the fact that a drive is still physically attached.
+                if new_det == SCTL_DET_DISABLE {
+                    port.regs.ci = 0;
+                    port.regs.sact = 0;
+                    port.regs.is = 0;
+                    port.regs.serr = 0;
+                    port.regs.ssts = 0;
+                    port.regs.sig = 0;
+                    port.regs.tfd = 0;
+                }
+
                 // COMRESET deasserted: if we were previously in DET=1, bring the link back up.
                 if old_det == SCTL_DET_COMRESET && new_det == 0 {
                     if port.present {
@@ -459,6 +472,21 @@ impl AhciController {
                         port.regs.tfd = u32::from(ATA_STATUS_DRDY | ATA_STATUS_DSC);
 
                         // Signal that the device-to-host register FIS has been received.
+                        port.regs.is |= PORT_IS_DHRS;
+                    } else {
+                        port.regs.ssts = 0;
+                        port.regs.sig = 0;
+                        port.regs.tfd = 0;
+                    }
+                }
+
+                // If the guest re-enables a previously disabled port, complete link bring-up
+                // synchronously (similar to COMRESET completion).
+                if old_det == SCTL_DET_DISABLE && new_det == 0 {
+                    if port.present {
+                        port.regs.ssts = (1 << 8) | (1 << 4) | 3;
+                        port.regs.sig = SATA_SIG_ATA;
+                        port.regs.tfd = u32::from(ATA_STATUS_DRDY | ATA_STATUS_DSC);
                         port.regs.is |= PORT_IS_DHRS;
                     } else {
                         port.regs.ssts = 0;
@@ -1332,6 +1360,41 @@ mod tests {
             ctl.read_u32(PORT_BASE + PORT_REG_TFD) & (ATA_STATUS_BSY as u32),
             0
         );
+    }
+
+    #[test]
+    fn sctl_det_disable_offlines_and_reenables_port() {
+        let (mut ctl, irq, _mem, drive) = setup_controller();
+        ctl.attach_drive(0, drive);
+
+        ctl.write_u32(HBA_REG_GHC, GHC_IE | GHC_AE);
+        ctl.write_u32(PORT_BASE + PORT_REG_IE, PORT_IS_DHRS);
+
+        // Disable the interface (DET=4).
+        ctl.write_u32(PORT_BASE + PORT_REG_SCTL, 4);
+        assert_eq!(ctl.read_u32(PORT_BASE + PORT_REG_SSTS) & 0xF, 0);
+        assert_eq!(ctl.read_u32(PORT_BASE + PORT_REG_SIG), 0);
+        assert_eq!(ctl.read_u32(PORT_BASE + PORT_REG_TFD), 0);
+        assert_eq!(ctl.read_u32(PORT_BASE + PORT_REG_IS), 0);
+        assert!(!irq.level());
+
+        // Re-enable (DET=0) and complete link-up synchronously.
+        ctl.write_u32(PORT_BASE + PORT_REG_SCTL, 0);
+
+        let ssts = ctl.read_u32(PORT_BASE + PORT_REG_SSTS);
+        assert_eq!(ssts & 0xF, 3);
+        assert_eq!((ssts >> 4) & 0xF, 1);
+        assert_eq!((ssts >> 8) & 0xF, 1);
+        assert_eq!(ctl.read_u32(PORT_BASE + PORT_REG_SIG), SATA_SIG_ATA);
+        assert_eq!(
+            ctl.read_u32(PORT_BASE + PORT_REG_TFD) & 0xFF,
+            (ATA_STATUS_DRDY | ATA_STATUS_DSC) as u32
+        );
+        assert_ne!(ctl.read_u32(PORT_BASE + PORT_REG_IS) & PORT_IS_DHRS, 0);
+        assert!(irq.level());
+
+        ctl.write_u32(PORT_BASE + PORT_REG_IS, PORT_IS_DHRS);
+        assert!(!irq.level());
     }
 
     #[test]
