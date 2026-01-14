@@ -667,18 +667,40 @@ fn dsdt_exposes_standard_acpi_power_and_sleep_buttons() {
     let pwrb = find_device_body(aml, b"PWRB").expect("expected DSDT to contain _SB_.PWRB");
     let slpb = find_device_body(aml, b"SLPB").expect("expected DSDT to contain _SB_.SLPB");
 
-    let pnp0c0c = eisa_id_to_u32("PNP0C0C").unwrap().to_le_bytes();
+    // Known EISA ID encodings (little endian bytes of EisaId("PNP0C0C") / EisaId("PNP0C0E")).
+    // This avoids relying on the local `eisa_id_to_u32` helper for correctness.
+    let pnp0c0c = 0x0C0C_D041u32.to_le_bytes();
     let hid_pnp0c0c = [&[0x08][..], &b"_HID"[..], &[0x0C][..], &pnp0c0c[..]].concat();
     assert!(
         pwrb.windows(hid_pnp0c0c.len()).any(|w| w == hid_pnp0c0c),
         "expected PWRB._HID to be PNP0C0C (ACPI power button)"
     );
 
-    let pnp0c0e = eisa_id_to_u32("PNP0C0E").unwrap().to_le_bytes();
+    let pnp0c0e = 0x0E0C_D041u32.to_le_bytes();
     let hid_pnp0c0e = [&[0x08][..], &b"_HID"[..], &[0x0C][..], &pnp0c0e[..]].concat();
     assert!(
         slpb.windows(hid_pnp0c0e.len()).any(|w| w == hid_pnp0c0e),
         "expected SLPB._HID to be PNP0C0E (ACPI sleep button)"
+    );
+
+    // Both devices are modeled as always-present singletons.
+    let uid0 = [&[0x08][..], &b"_UID"[..], &[0x00][..]].concat(); // Name (_UID, Zero)
+    let sta0f = [&[0x08][..], &b"_STA"[..], &[0x0A, 0x0F][..]].concat(); // Name (_STA, 0x0F)
+    assert!(
+        pwrb.windows(uid0.len()).any(|w| w == uid0),
+        "expected PWRB._UID to be 0"
+    );
+    assert!(
+        pwrb.windows(sta0f.len()).any(|w| w == sta0f),
+        "expected PWRB._STA to be 0x0F (present/enabled/show in UI/functioning)"
+    );
+    assert!(
+        slpb.windows(uid0.len()).any(|w| w == uid0),
+        "expected SLPB._UID to be 0"
+    );
+    assert!(
+        slpb.windows(sta0f.len()).any(|w| w == sta0f),
+        "expected SLPB._STA to be 0x0F (present/enabled/show in UI/functioning)"
     );
 }
 

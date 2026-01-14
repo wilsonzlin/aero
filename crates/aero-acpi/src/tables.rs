@@ -1701,6 +1701,8 @@ mod tests {
         assert_eq!(eisa_id_to_u32("PNP0A03"), Some(0x030A_D041));
         assert_eq!(eisa_id_to_u32("PNP0A08"), Some(0x080A_D041));
         assert_eq!(eisa_id_to_u32("PNP0103"), Some(0x0301_D041));
+        assert_eq!(eisa_id_to_u32("PNP0C0C"), Some(0x0C0C_D041));
+        assert_eq!(eisa_id_to_u32("PNP0C0E"), Some(0x0E0C_D041));
     }
 
     #[test]
