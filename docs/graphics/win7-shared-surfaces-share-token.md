@@ -88,7 +88,9 @@ into `reserved0` (marker bit set; `format/width/height`), and the D3D10/11 UMD m
 
 ### 2) Open shared resource → import (token)
 
-1. If the shared handle is a real NT handle, the OS duplicates/inherits the shared `HANDLE` into the consumer process.
+1. Consumer obtains the shared handle in-process:
+   - If the shared handle is a real NT handle, duplicate/inherit the shared `HANDLE` into the consumer process.
+   - If the shared handle is token-style (not a real NT handle), pass the raw numeric value to the consumer (do not call `CloseHandle`).
 2. Consumer opens the resource; dxgkrnl returns the preserved allocation private driver data so the UMD can recover the same `share_token`.
 3. The UMD sends `AEROGPU_CMD_IMPORT_SHARED_SURFACE` with `share_token`.
 
