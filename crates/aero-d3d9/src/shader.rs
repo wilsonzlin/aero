@@ -279,9 +279,7 @@ pub enum ShaderError {
         first: u16,
         second: u16,
     },
-    #[error(
-        "unsupported sampler texture type {ty:?} for s{sampler} (aero currently only supports 2D and cube textures)"
-    )]
+    #[error("unsupported sampler texture type {ty:?} for s{sampler}")]
     UnsupportedSamplerTextureType { sampler: u32, ty: TextureType },
 }
 
