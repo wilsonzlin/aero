@@ -458,7 +458,8 @@ impl AhciController {
                     port.regs.sact = 0;
                     port.regs.is = 0;
                     port.regs.serr = 0;
-                    port.regs.ssts = 0;
+                    // DET=4 indicates the PHY is offline.
+                    port.regs.ssts = 4;
                     port.regs.sig = 0;
                     port.regs.tfd = 0;
                 }
@@ -1395,7 +1396,7 @@ mod tests {
 
         // Disable the interface (DET=4).
         ctl.write_u32(PORT_BASE + PORT_REG_SCTL, 4);
-        assert_eq!(ctl.read_u32(PORT_BASE + PORT_REG_SSTS) & 0xF, 0);
+        assert_eq!(ctl.read_u32(PORT_BASE + PORT_REG_SSTS) & 0xF, 4);
         assert_eq!(ctl.read_u32(PORT_BASE + PORT_REG_SIG), 0);
         assert_eq!(ctl.read_u32(PORT_BASE + PORT_REG_TFD), 0);
         assert_eq!(ctl.read_u32(PORT_BASE + PORT_REG_IS), 0);
