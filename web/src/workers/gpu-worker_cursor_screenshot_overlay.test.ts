@@ -792,6 +792,93 @@ describe("workers/gpu-worker cursor screenshot overlay", () => {
     }
   }, 25_000);
 
+  it("blends sRGB cursor over sRGB scanout from the VRAM aperture in linear space when compositing screenshots", async () => {
+    const segments = allocateHarnessSharedMemorySegments({
+      guestRamBytes: 64 * 1024,
+      sharedFramebuffer: new SharedArrayBuffer(8),
+      sharedFramebufferOffsetBytes: 0,
+      ioIpcBytes: 0,
+      vramBytes: 1 * 1024 * 1024,
+    });
+    const views = createSharedMemoryViews(segments);
+    if (!segments.vram || views.vramSizeBytes === 0) {
+      throw new Error("test requires a non-empty shared VRAM segment");
+    }
+
+    const scanoutVramOffset = 0x1000;
+    const cursorVramOffset = 0x2000;
+    if (cursorVramOffset + 4 > views.vramU8.byteLength) {
+      throw new Error("vram buffer too small for scanout/cursor pixels");
+    }
+
+    // Scanout pixel: RGBA with R=0x80 in an sRGB format (alpha preserved).
+    // This should decode to linear R ~= 0x37.
+    views.vramU8.fill(0);
+    views.vramU8.set([0x80, 0x00, 0x00, 0xff], scanoutVramOffset);
+    const scanoutPaddr = (VRAM_BASE_PADDR + scanoutVramOffset) >>> 0;
+    publishScanoutState(views.scanoutStateI32!, {
+      source: SCANOUT_SOURCE_WDDM,
+      basePaddrLo: scanoutPaddr,
+      basePaddrHi: 0,
+      width: 1,
+      height: 1,
+      pitchBytes: 4,
+      format: SCANOUT_FORMAT_R8G8B8A8_SRGB,
+    });
+
+    // Cursor pixel: BGRA with G=0x80 in an sRGB format and 50% alpha (A=0x80).
+    // This should decode to linear G ~= 0x37, then blend over the linearized scanout.
+    views.vramU8.set([0x00, 0x80, 0x00, 0x80], cursorVramOffset);
+    const cursorPaddr = (VRAM_BASE_PADDR + cursorVramOffset) >>> 0;
+    publishCursorState(views.cursorStateI32!, {
+      enable: 1,
+      x: 0,
+      y: 0,
+      hotX: 0,
+      hotY: 0,
+      width: 1,
+      height: 1,
+      pitchBytes: 4,
+      format: CURSOR_FORMAT_B8G8R8A8_SRGB,
+      basePaddrLo: cursorPaddr,
+      basePaddrHi: 0,
+    });
+
+    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
+    const shimUrl = new URL("./test_workers/worker_threads_webworker_shim.ts", import.meta.url);
+    const worker = new Worker(new URL("./gpu-worker.ts", import.meta.url), {
+      type: "module",
+      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+    } as unknown as WorkerOptions);
+
+    try {
+      await initHeadlessGpuWorker(worker, {
+        kind: "init",
+        role: "gpu",
+        controlSab: segments.control,
+        guestMemory: segments.guestMemory,
+        vram: segments.vram,
+        vramBasePaddr: VRAM_BASE_PADDR,
+        vramSizeBytes: segments.vram.byteLength,
+        ioIpcSab: segments.ioIpc,
+        sharedFramebuffer: segments.sharedFramebuffer,
+        sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,
+        vgaFramebuffer: segments.sharedFramebuffer,
+        scanoutState: segments.scanoutState,
+        scanoutStateOffsetBytes: segments.scanoutStateOffsetBytes,
+        cursorState: segments.cursorState,
+        cursorStateOffsetBytes: segments.cursorStateOffsetBytes,
+      });
+
+      const shot = await requestScreenshot(worker, 1, true);
+      expect(shot.width).toBe(1);
+      expect(shot.height).toBe(1);
+      expect(firstPixelU32(shot.rgba8)).toBe(0xff001c1b);
+    } finally {
+      await worker.terminate();
+    }
+  }, 25_000);
+
   it("decodes sRGB cursor formats from the shared VRAM aperture before compositing screenshots", async () => {
     const segments = allocateHarnessSharedMemorySegments({
       guestRamBytes: 64 * 1024,
