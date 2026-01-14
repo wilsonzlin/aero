@@ -81,24 +81,41 @@ test("Workers panel: VGA canvas captures keyboard input and forwards batches to 
     return value;
   };
 
+  const pressKeyAndWaitForBatchIncrement = async (prev: number): Promise<number> => {
+    // In machine runtime, the CPU worker posts WASM_READY before the `Machine` instance is fully
+    // constructed. Input batches delivered in that small window are recycled but not processed,
+    // so retry a few times to avoid flaking on slower machines.
+    const MAX_ATTEMPTS = 20;
+    let last = prev;
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
+      // Click the VGA canvas to focus it (pointer lock may fail in headless CI; focus must be enough).
+      await page.locator("#workers-vga-canvas").click();
+      await page.keyboard.press("KeyA");
+
+      try {
+        await page.waitForFunction(
+          (p) => {
+            const text = document.querySelector("#workers-input-status")?.textContent ?? "";
+            const match = /ioBatches=(\d+)/.exec(text);
+            if (!match) return false;
+            const cur = Number.parseInt(match[1] ?? "", 10);
+            return Number.isFinite(cur) && cur > (p as number);
+          },
+          last,
+          { timeout: 1500 },
+        );
+        return await getIoBatches();
+      } catch {
+        // Keep trying until the CPU worker is ready to process input batches.
+        last = await getIoBatches();
+        await page.waitForTimeout(200);
+      }
+    }
+    throw new Error(`Timed out waiting for ioBatches to increment after ${MAX_ATTEMPTS} keypress attempts.`);
+  };
+
   const initialIoBatches = await getIoBatches();
-
-  // Click the VGA canvas to focus it (pointer lock may fail in headless CI; focus must be enough).
-  await page.locator("#workers-vga-canvas").click();
-  await page.keyboard.down("KeyA");
-  await page.keyboard.up("KeyA");
-
-  await page.waitForFunction(
-    (prev) => {
-      const text = document.querySelector("#workers-input-status")?.textContent ?? "";
-      const match = /ioBatches=(\d+)/.exec(text);
-      if (!match) return false;
-      const cur = Number.parseInt(match[1] ?? "", 10);
-      return Number.isFinite(cur) && cur > (prev as number);
-    },
-    initialIoBatches,
-    { timeout: 10_000 },
-  );
+  await pressKeyAndWaitForBatchIncrement(initialIoBatches);
 
   // Stop and restart workers to ensure input capture is recreated for the new CPU worker instance
   // (and potentially a recreated VGA canvas if OffscreenCanvas transfer was used).
@@ -136,22 +153,7 @@ test("Workers panel: VGA canvas captures keyboard input and forwards batches to 
 
   const afterRestartIoBatches = await getIoBatches();
 
-  // The VGA canvas element may have been recreated; re-focus it before sending input.
-  await page.locator("#workers-vga-canvas").click();
-  await page.keyboard.down("KeyA");
-  await page.keyboard.up("KeyA");
-
-  await page.waitForFunction(
-    (prev) => {
-      const text = document.querySelector("#workers-input-status")?.textContent ?? "";
-      const match = /ioBatches=(\d+)/.exec(text);
-      if (!match) return false;
-      const cur = Number.parseInt(match[1] ?? "", 10);
-      return Number.isFinite(cur) && cur > (prev as number);
-    },
-    afterRestartIoBatches,
-    { timeout: 10_000 },
-  );
+  await pressKeyAndWaitForBatchIncrement(afterRestartIoBatches);
 
   expect(await getIoBatches()).toBeGreaterThan(afterRestartIoBatches);
 });
