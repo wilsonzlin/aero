@@ -239,7 +239,7 @@ pub(in crate::runtime) fn dispatch_hull_phases(
         let mut copies: Vec<InternalBufferCopy> = Vec::new();
         for (binding_num, bound) in read_only_bindings {
             let buf_ptr = bound.buffer as *const wgpu::Buffer;
-            if !write_buffers.iter().any(|&p| p == buf_ptr) {
+            if !write_buffers.contains(&buf_ptr) {
                 continue;
             }
 
