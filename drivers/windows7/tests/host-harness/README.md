@@ -736,6 +736,10 @@ To also exercise the virtio-input tablet (absolute pointer) end-to-end path, set
 `with_virtio_input_tablet_events=true`. This requires a guest image provisioned with `--test-input-tablet-events`
 (alias: `--test-tablet-events`) so the guest selftest enables the `virtio-input-tablet-events` read loop.
 
+To require the virtio-snd buffer limits stress test (`virtio-snd-buffer-limits`), set the workflow input
+`with_snd_buffer_limits=true` (requires `with_virtio_snd=true` and a guest image provisioned with `--test-snd-buffer-limits`,
+for example via `New-AeroWin7TestImage.ps1 -TestSndBufferLimits`).
+
 ### Invoking the workflow
 
 1. Place your prepared Windows 7 image somewhere on the runner (example: `/var/lib/aero/win7/win7-aero-tests.qcow2`).

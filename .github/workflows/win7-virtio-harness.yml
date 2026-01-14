@@ -65,6 +65,11 @@ on:
         required: false
         default: false
         type: boolean
+      with_snd_buffer_limits:
+        description: Require virtio-snd-buffer-limits to PASS (requires with_virtio_snd and a guest image provisioned with --test-snd-buffer-limits)
+        required: false
+        default: false
+        type: boolean
       virtio_snd_audio_backend:
         description: Audio backend to use when virtio-snd is enabled
         required: false
@@ -143,6 +148,7 @@ jobs:
             echo "  with_virtio_input_events_extended: '${{ inputs.with_virtio_input_events_extended }}'"
             echo "  with_virtio_input_tablet_events: '${{ inputs.with_virtio_input_tablet_events }}'"
             echo "  with_virtio_snd: '${{ inputs.with_virtio_snd }}'"
+            echo "  with_snd_buffer_limits: '${{ inputs.with_snd_buffer_limits }}'"
             echo "  virtio_snd_audio_backend: '${{ inputs.virtio_snd_audio_backend }}'"
             echo "  virtio_snd_verify_wav: '${{ inputs.virtio_snd_verify_wav }}'"
             echo "  virtio_snd_wav_peak_threshold: '${{ inputs.virtio_snd_wav_peak_threshold }}'"
@@ -206,6 +212,7 @@ jobs:
             with_virtio_input_media_keys="${{ inputs.with_virtio_input_media_keys }}"
             with_virtio_input_events_extended="${{ inputs.with_virtio_input_events_extended }}"
             with_virtio_input_tablet_events="${{ inputs.with_virtio_input_tablet_events }}"
+            with_snd_buffer_limits="${{ inputs.with_snd_buffer_limits }}"
 
             # Remove stale output from previous runs (self-hosted runners persist state).
             rm -f "${virtio_snd_wav_path}"
@@ -270,6 +277,13 @@ jobs:
                   ;;
               esac
             fi
+            if [[ "${with_snd_buffer_limits}" == "true" ]]; then
+              if [[ "${with_virtio_snd}" != "true" ]]; then
+                echo "ERROR: workflow input with_snd_buffer_limits=true requires with_virtio_snd=true"
+                exit 1
+              fi
+              args+=(--with-snd-buffer-limits)
+            fi
 
             echo "Executing harness:"
             printf '  %q' "${args[@]}"
@@ -329,6 +343,7 @@ jobs:
           input_tablet_inject_marker=""
           snd_capture_marker=""
           snd_duplex_marker=""
+          snd_buffer_limits_marker=""
           wav_marker=""
           failure_token=""
           failure_line=""
@@ -344,6 +359,7 @@ jobs:
             input_tablet_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-input-tablet-events\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
             snd_capture_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-snd-capture\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
             snd_duplex_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-snd-duplex\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
+            snd_buffer_limits_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-snd-buffer-limits\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
           fi
           if [[ -f "${harness_log}" ]]; then
             wav_marker="$(grep -Eo 'AERO_VIRTIO_WIN7_HOST\\|VIRTIO_SND_WAV\\|[A-Z]+' "${harness_log}" | tail -n 1 || true)"
@@ -407,6 +423,9 @@ jobs:
             fi
             if [[ -n "${snd_duplex_marker}" ]]; then
               echo "- Guest virtio-snd-duplex marker: ${snd_duplex_marker}"
+            fi
+            if [[ -n "${snd_buffer_limits_marker}" ]]; then
+              echo "- Guest virtio-snd-buffer-limits marker: ${snd_buffer_limits_marker}"
             fi
             if [[ -n "${wav_marker}" ]]; then
               echo "- Host wav marker: ${wav_marker}"

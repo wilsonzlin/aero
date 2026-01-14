@@ -312,6 +312,8 @@ This repo also includes an **opt-in** self-hosted GitHub Actions workflow wrappe
     and/or `with_virtio_input_tablet_events=true` to enable the optional QMP injection-based end-to-end virtio-input tests.
     (Requires a guest image provisioned with `--test-input-events` for events/wheel, also `--test-input-events-extended` for the
     extended markers, and `--test-input-tablet-events` (alias: `--test-tablet-events`) for tablet.)
+  - To require the virtio-snd buffer limits stress test, set `with_virtio_snd=true` and `with_snd_buffer_limits=true` (requires a
+    guest image provisioned with `--test-snd-buffer-limits`).
 
 See `host-harness/README.md` for required prerequisites and usage.
 
