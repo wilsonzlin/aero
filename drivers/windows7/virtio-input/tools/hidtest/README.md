@@ -33,7 +33,7 @@ For the consolidated end-to-end virtio-input validation plan (device model + dri
   - `WriteFile` (exercises `IOCTL_HID_WRITE_REPORT`)
   - `HidD_SetOutputReport` (exercises `IOCTL_HID_SET_OUTPUT_REPORT`)
   - `DeviceIoControl(IOCTL_HID_SET_OUTPUT_REPORT)` (explicit IOCTL test path)
-- Supports stress-testing the LED/statusq write path via `--led-spam N`.
+- Supports stress-testing the LED/statusq write path via `--led-spam N` (alternates `0` and `0x1F` by default; the "on" mask can be overridden by combining with `--led`, `--led-hidd`, or `--led-ioctl-set-output`).
 - Optionally queries/resets virtio-input driver diagnostics counters via:
   - `DeviceIoControl(IOCTL_VIOINPUT_QUERY_COUNTERS)`
   - `DeviceIoControl(IOCTL_VIOINPUT_RESET_COUNTERS)`
@@ -371,6 +371,9 @@ hidtest.exe --keyboard --state
 hidtest.exe --keyboard --led-spam 10000
 hidtest.exe --keyboard --counters
 ```
+
+By default, `--led-spam` alternates the LED output report between `0` and `0x1F` (all 5 defined HID boot keyboard LED bits).
+To spam a different pattern, combine with an explicit `--led 0xMASK` (or `--led-hidd` / `--led-ioctl-set-output`).
 
 Watch:
 
