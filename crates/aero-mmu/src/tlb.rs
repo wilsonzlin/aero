@@ -1,6 +1,7 @@
 use crate::InvpcidType;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
 pub(crate) enum PageSize {
     Size4K,
     Size2M,
@@ -25,6 +26,7 @@ impl PageSize {
 /// This allows the hottest TLB paths (`lookup` / `set_dirty`) to avoid scanning
 /// page sizes that cannot occur (e.g. 4MiB pages in long mode).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
 pub(crate) enum TlbLookupPageSizes {
     /// Only 4KiB pages are possible.
     Only4K,
@@ -42,20 +44,20 @@ pub(crate) struct TlbEntry {
     /// Cached `pbase - vbase` (wrapping) so translation can use `vaddr + delta`
     /// (wrapping) instead of `pbase + (vaddr - vbase)`.
     paddr_delta: u64,
-    page_size: PageSize,
-    pub(crate) user: bool,
-    pub(crate) writable: bool,
-    pub(crate) nx: bool,
-    pub(crate) global: bool,
     /// Physical address of the leaf paging-structure entry (PTE/PDE/PDPTE).
     pub(crate) leaf_addr: u64,
-    /// `true` for PAE/long-mode entries (64-bit), `false` for legacy 32-bit entries.
-    pub(crate) leaf_is_64: bool,
-    /// Cached state of the leaf dirty bit. Used to lazily set D on write hits.
-    pub(crate) dirty: bool,
     pcid: u16,
-    valid: bool,
+    flags: u8,
+    page_size: PageSize,
 }
+
+const FLAG_USER: u8 = 1 << 0;
+const FLAG_WRITABLE: u8 = 1 << 1;
+const FLAG_NX: u8 = 1 << 2;
+const FLAG_GLOBAL: u8 = 1 << 3;
+const FLAG_LEAF_64: u8 = 1 << 4;
+const FLAG_DIRTY: u8 = 1 << 5;
+const FLAG_VALID: u8 = 1 << 6;
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct TlbEntryAttributes {
@@ -76,16 +78,10 @@ impl Default for TlbEntry {
         Self {
             vbase: 0,
             paddr_delta: 0,
-            page_size: PageSize::Size4K,
-            user: false,
-            writable: false,
-            nx: false,
-            global: false,
             leaf_addr: 0,
-            leaf_is_64: true,
-            dirty: false,
             pcid: 0,
-            valid: false,
+            flags: 0,
+            page_size: PageSize::Size4K,
         }
     }
 }
@@ -108,19 +104,32 @@ impl TlbEntry {
             leaf_is_64,
             dirty,
         } = attrs;
+        let mut flags = FLAG_VALID;
+        if user {
+            flags |= FLAG_USER;
+        }
+        if writable {
+            flags |= FLAG_WRITABLE;
+        }
+        if nx {
+            flags |= FLAG_NX;
+        }
+        if global {
+            flags |= FLAG_GLOBAL;
+        }
+        if leaf_is_64 {
+            flags |= FLAG_LEAF_64;
+        }
+        if dirty {
+            flags |= FLAG_DIRTY;
+        }
         Self {
             vbase,
             paddr_delta: pbase.wrapping_sub(vbase),
-            page_size,
-            user,
-            writable,
-            nx,
-            global,
             leaf_addr,
-            leaf_is_64,
-            dirty,
             pcid,
-            valid: true,
+            flags,
+            page_size,
         }
     }
 
@@ -141,8 +150,53 @@ impl TlbEntry {
     }
 
     #[inline]
+    pub(crate) fn user(&self) -> bool {
+        self.flags & FLAG_USER != 0
+    }
+
+    #[inline]
+    pub(crate) fn writable(&self) -> bool {
+        self.flags & FLAG_WRITABLE != 0
+    }
+
+    #[inline]
+    pub(crate) fn nx(&self) -> bool {
+        self.flags & FLAG_NX != 0
+    }
+
+    #[inline]
+    fn global(&self) -> bool {
+        self.flags & FLAG_GLOBAL != 0
+    }
+
+    #[inline]
+    pub(crate) fn leaf_is_64(&self) -> bool {
+        self.flags & FLAG_LEAF_64 != 0
+    }
+
+    #[inline]
+    pub(crate) fn dirty(&self) -> bool {
+        self.flags & FLAG_DIRTY != 0
+    }
+
+    #[inline]
+    fn valid(&self) -> bool {
+        self.flags & FLAG_VALID != 0
+    }
+
+    #[inline]
     fn matches_pcid(&self, pcid: u16) -> bool {
-        self.valid && (self.global || self.pcid == pcid)
+        self.valid() && (self.global() || self.pcid == pcid)
+    }
+
+    #[inline]
+    fn invalidate(&mut self) {
+        self.flags &= !FLAG_VALID;
+    }
+
+    #[inline]
+    fn set_dirty(&mut self) {
+        self.flags |= FLAG_DIRTY;
     }
 }
 
@@ -249,10 +303,10 @@ impl TlbSet {
         // Replace existing entry if present.
         for way in 0..WAYS {
             let cur = &mut self.entries[set][way];
-            if cur.valid
+            if cur.valid()
                 && cur.vbase == entry.vbase
                 && cur.page_size == entry.page_size
-                && (cur.global || cur.pcid == entry.pcid)
+                && (cur.global() || cur.pcid == entry.pcid)
             {
                 *cur = entry;
                 return;
@@ -263,7 +317,7 @@ impl TlbSet {
         self.next_way[set] = self.next_way[set].wrapping_add(1);
 
         let old = self.entries[set][way];
-        if old.valid {
+        if old.valid() {
             match old.page_size {
                 PageSize::Size1G => {
                     debug_assert!(self.count_1g > 0);
@@ -303,8 +357,8 @@ impl TlbSet {
             let set = set_index(tag);
             for way in 0..WAYS {
                 let entry = &mut self.entries[set][way];
-                if entry.valid && entry.vbase == vbase && entry.page_size == page_size {
-                    entry.valid = false;
+                if entry.valid() && entry.vbase == vbase && entry.page_size == page_size {
+                    entry.invalidate();
                     match page_size {
                         PageSize::Size1G => {
                             debug_assert!(self.count_1g > 0);
@@ -337,12 +391,12 @@ impl TlbSet {
             let set = set_index(tag);
             for way in 0..WAYS {
                 let entry = &mut self.entries[set][way];
-                if !entry.valid || entry.page_size != page_size || entry.vbase != vbase {
+                if !entry.valid() || entry.page_size != page_size || entry.vbase != vbase {
                     continue;
                 }
-                if entry.global {
+                if entry.global() {
                     if include_global {
-                        entry.valid = false;
+                        entry.invalidate();
                         match page_size {
                             PageSize::Size1G => {
                                 debug_assert!(self.count_1g > 0);
@@ -362,7 +416,7 @@ impl TlbSet {
                     continue;
                 }
                 if entry.pcid == pcid {
-                    entry.valid = false;
+                    entry.invalidate();
                     match page_size {
                         PageSize::Size1G => {
                             debug_assert!(self.count_1g > 0);
@@ -389,7 +443,7 @@ impl TlbSet {
         self.count_2m = 0;
         for set in 0..SETS {
             for way in 0..WAYS {
-                self.entries[set][way].valid = false;
+                self.entries[set][way].invalidate();
             }
         }
     }
@@ -401,11 +455,11 @@ impl TlbSet {
         for set in 0..SETS {
             for way in 0..WAYS {
                 let entry = &mut self.entries[set][way];
-                if entry.valid && !entry.global {
-                    entry.valid = false;
+                if entry.valid() && !entry.global() {
+                    entry.invalidate();
                     continue;
                 }
-                if entry.valid {
+                if entry.valid() {
                     match entry.page_size {
                         PageSize::Size1G => self.count_1g += 1,
                         PageSize::Size4M => self.count_4m += 1,
@@ -424,16 +478,16 @@ impl TlbSet {
         for set in 0..SETS {
             for way in 0..WAYS {
                 let entry = &mut self.entries[set][way];
-                if !entry.valid {
+                if !entry.valid() {
                     continue;
                 }
-                if entry.global {
+                if entry.global() {
                     if include_global {
-                        entry.valid = false;
+                        entry.invalidate();
                         continue;
                     }
                 } else if entry.pcid == pcid {
-                    entry.valid = false;
+                    entry.invalidate();
                     continue;
                 }
                 match entry.page_size {
@@ -453,7 +507,7 @@ impl TlbSet {
         for way in 0..WAYS {
             let entry = &mut self.entries[set][way];
             if entry.page_size == page_size && entry.vbase == vbase && entry.matches_pcid(pcid) {
-                entry.dirty = true;
+                entry.set_dirty();
                 return true;
             }
         }

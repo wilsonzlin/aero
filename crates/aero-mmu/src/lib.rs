@@ -898,7 +898,7 @@ impl Mmu {
             // Fast path for reads: the only possible permission failure is a
             // user-mode read of a supervisor-only page.
             if access == AccessType::Read {
-                if is_user && !entry.user {
+                if is_user && !entry.user() {
                     let pf = PageFault::new(vaddr, pf_error_code(true, access, is_user, false));
                     self.cr2 = pf.addr;
                     return Err(TranslateFault::PageFault(pf));
@@ -909,12 +909,12 @@ impl Mmu {
             match access {
                 AccessType::Execute => {
                     // Fast path for instruction fetches: only U/S and NX can fault.
-                    if is_user && !entry.user {
+                    if is_user && !entry.user() {
                         let pf = PageFault::new(vaddr, pf_error_code(true, access, is_user, false));
                         self.cr2 = pf.addr;
                         return Err(TranslateFault::PageFault(pf));
                     }
-                    if entry.nx {
+                    if entry.nx() {
                         let pf = PageFault::new(vaddr, pf_error_code(true, access, is_user, false));
                         self.cr2 = pf.addr;
                         return Err(TranslateFault::PageFault(pf));
@@ -924,13 +924,13 @@ impl Mmu {
                 AccessType::Write => {
                     // Writes may fault due to U/S or R/W (including CR0.WP semantics).
                     if is_user {
-                        if !entry.user || !entry.writable {
+                        if !entry.user() || !entry.writable() {
                             let pf =
                                 PageFault::new(vaddr, pf_error_code(true, access, is_user, false));
                             self.cr2 = pf.addr;
                             return Err(TranslateFault::PageFault(pf));
                         }
-                    } else if !entry.writable && self.wp_enabled() {
+                    } else if !entry.writable() && self.wp_enabled() {
                         let pf = PageFault::new(vaddr, pf_error_code(true, access, is_user, false));
                         self.cr2 = pf.addr;
                         return Err(TranslateFault::PageFault(pf));
@@ -939,9 +939,9 @@ impl Mmu {
                     let paddr = entry.translate(vaddr);
 
                     // Lazily set D on the first write hit.
-                    if !entry.dirty {
+                    if !entry.dirty() {
                         let leaf_addr = entry.leaf_addr;
-                        let leaf_is_64 = entry.leaf_is_64;
+                        let leaf_is_64 = entry.leaf_is_64();
                         let tlb_vbase = entry.vbase();
                         let tlb_page_size = entry.page_size();
 
@@ -1055,7 +1055,7 @@ impl Mmu {
             // Fast path for reads: the only possible permission failure is a
             // user-mode read of a supervisor-only page.
             if access == AccessType::Read {
-                if is_user && !entry.user {
+                if is_user && !entry.user() {
                     let pf = PageFault::new(vaddr, pf_error_code(true, access, is_user, false));
                     return Err(TranslateFault::PageFault(pf));
                 }
@@ -1064,11 +1064,11 @@ impl Mmu {
 
             match access {
                 AccessType::Execute => {
-                    if is_user && !entry.user {
+                    if is_user && !entry.user() {
                         let pf = PageFault::new(vaddr, pf_error_code(true, access, is_user, false));
                         return Err(TranslateFault::PageFault(pf));
                     }
-                    if entry.nx {
+                    if entry.nx() {
                         let pf = PageFault::new(vaddr, pf_error_code(true, access, is_user, false));
                         return Err(TranslateFault::PageFault(pf));
                     }
@@ -1076,12 +1076,12 @@ impl Mmu {
                 }
                 AccessType::Write => {
                     if is_user {
-                        if !entry.user || !entry.writable {
+                        if !entry.user() || !entry.writable() {
                             let pf =
                                 PageFault::new(vaddr, pf_error_code(true, access, is_user, false));
                             return Err(TranslateFault::PageFault(pf));
                         }
-                    } else if !entry.writable && self.wp_enabled() {
+                    } else if !entry.writable() && self.wp_enabled() {
                         let pf = PageFault::new(vaddr, pf_error_code(true, access, is_user, false));
                         return Err(TranslateFault::PageFault(pf));
                     }
