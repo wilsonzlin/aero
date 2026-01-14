@@ -22,8 +22,9 @@ export type ScanoutDescriptor = Readonly<{
 export type ScanoutReadbackResult = Readonly<{
   width: number;
   height: number;
-  // The readback buffer is always owned by the caller and transferred across workers,
-  // so it must be backed by a non-shared ArrayBuffer (not SharedArrayBuffer).
+  // `readScanoutRgba8FromGuestRam` always allocates a fresh, transferable buffer.
+  // Model the backing as an `ArrayBuffer` (not `ArrayBufferLike`) so callers can safely
+  // `postMessage(..., [rgba8.buffer])` without extra casting.
   rgba8: Uint8Array<ArrayBuffer>;
 }>;
 

@@ -105,7 +105,11 @@ import {
   type GuestRamLayout,
   type WorkerRole,
 } from '../runtime/shared_layout';
-import { MAX_SCANOUT_RGBA8_BYTES, tryComputeScanoutRgba8ByteLength } from "../runtime/scanout_readback";
+import {
+  MAX_SCANOUT_RGBA8_BYTES,
+  readScanoutRgba8FromGuestRam,
+  tryComputeScanoutRgba8ByteLength,
+} from "../runtime/scanout_readback";
 import { RingBuffer } from '../ipc/ring_buffer';
 import { decodeCommand, encodeEvent, type Command, type Event } from '../ipc/protocol';
 import {
@@ -2855,15 +2859,26 @@ const presentOnce = async (): Promise<boolean> => {
           }
         }
 
-        // WDDM owns scanout but we don't have pixels; do not fall back to the legacy
-        // shared framebuffer (that would "steal" scanout).
-        return false;
+        // Placeholder descriptor (base_paddr == 0) but we have no AeroGPU pixels yet; do not
+        // fall back to the legacy shared framebuffer (that would "steal" scanout).
+        if (!hasBasePaddr) {
+          clearSharedFramebufferDirty();
+          return false;
+        }
+        // base_paddr != 0: `frame` should already contain the scanout pixels. Fall through to the
+        // normal presentation path below.
       }
 
       if (!frame) {
-        if (wddmOwnsScanout) {
+        if (scanoutOwnsOutput) {
           clearSharedFramebufferDirty();
         }
+        return false;
+      }
+
+      // If WDDM owns scanout (base_paddr != 0), never present legacy framebuffer bytes.
+      if (wddmOwnsScanout && frame.outputSource !== "wddm_scanout") {
+        clearSharedFramebufferDirty();
         return false;
       }
 
@@ -4140,11 +4155,13 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
               const height = snap.height >>> 0;
               const pitchBytes = snap.pitchBytes >>> 0;
               const format = snap.format >>> 0;
+              const basePaddr = (BigInt(snap.basePaddrHi >>> 0) << 32n) | BigInt(snap.basePaddrLo >>> 0);
 
-              if (width === 0 || height === 0) {
+              if (width === 0 || height === 0 || basePaddr === 0n) {
                 postStub(typeof seq === "number" ? seq : undefined);
                 return true;
               }
+
               // Guard against corrupt descriptors that would otherwise trigger huge loops even if the
               // total byte count is still under the MAX_SCREENSHOT_BYTES cap (e.g. width=1, height=64M).
               const MAX_SCANOUT_DIM = 16384;
@@ -4178,121 +4195,112 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
                 return true;
               }
 
-              const requiredSrcBytesBig = BigInt(pitchBytes) * BigInt(height);
-              if (requiredSrcBytesBig > BigInt(Number.MAX_SAFE_INTEGER)) {
+              const outBytes = tryComputeScanoutRgba8ByteLength(width, height, MAX_SCANOUT_RGBA8_BYTES);
+              if (outBytes === null) {
                 postStub(typeof seq === "number" ? seq : undefined);
                 return true;
-              }
-              const requiredSrcBytes = Number(requiredSrcBytesBig);
-
-              const basePaddr = (BigInt(snap.basePaddrHi >>> 0) << 32n) | BigInt(snap.basePaddrLo >>> 0);
-              if (basePaddr === 0n) {
-                postStub(typeof seq === "number" ? seq : undefined);
-                return true;
-              }
-              if (basePaddr > BigInt(Number.MAX_SAFE_INTEGER)) {
-                postStub(typeof seq === "number" ? seq : undefined);
-                return true;
-              }
-              const basePaddrNum = Number(basePaddr);
-
-              // Ensure the final row address still fits the JS safe-integer subset so
-              // the scanout readback helper (and any fallback read) can safely index
-              // into the guest RAM view.
-              if (height > 1) {
-                const lastRowPaddr = basePaddr + BigInt(pitchBytes) * BigInt(height - 1);
-                if (lastRowPaddr > BigInt(Number.MAX_SAFE_INTEGER)) {
-                  postStub(typeof seq === "number" ? seq : undefined);
-                  return true;
-                }
-                const endPaddr = lastRowPaddr + BigInt(rowBytes);
-                if (endPaddr > BigInt(Number.MAX_SAFE_INTEGER)) {
-                  postStub(typeof seq === "number" ? seq : undefined);
-                  return true;
-                }
               }
 
               // Determine whether the scanout surface is backed by VRAM (BAR1 aperture) or guest RAM.
-              // This affects validation: guest RAM has PCI holes/high-RAM remap, while VRAM is a
-              // separate contiguous SharedArrayBuffer.
+              // This affects which readback helper we can use.
               const scanoutIsInVram = (() => {
                 if (!vram || vramSizeBytes === 0) return false;
+
+                const requiredSrcBytesBig = BigInt(pitchBytes) * BigInt(height);
+                if (requiredSrcBytesBig > BigInt(Number.MAX_SAFE_INTEGER)) return false;
+                const requiredSrcBytes = Number(requiredSrcBytesBig);
+
                 const vramBase = BigInt(vramBasePaddr >>> 0);
                 const vramEnd = vramBase + BigInt(vramSizeBytes >>> 0);
                 const endPaddr = basePaddr + requiredSrcBytesBig;
                 if (basePaddr < vramBase || endPaddr > vramEnd) return false;
+
                 const startBig = basePaddr - vramBase;
                 if (startBig > BigInt(Number.MAX_SAFE_INTEGER)) return false;
                 const start = Number(startBig);
+
                 const end = start + requiredSrcBytes;
                 if (end < start || end > vram.byteLength) return false;
                 return true;
               })();
 
-              if (!scanoutIsInVram) {
+              const helperCompatibleFormat =
+                format === SCANOUT_FORMAT_B8G8R8X8 ||
+                format === SCANOUT_FORMAT_B8G8R8X8_SRGB ||
+                format === SCANOUT_FORMAT_B8G8R8A8 ||
+                format === SCANOUT_FORMAT_B8G8R8A8_SRGB;
+
+              let out: Uint8Array;
+              if (!scanoutIsInVram && helperCompatibleFormat) {
                 if (!guest) {
                   postStub(typeof seq === "number" ? seq : undefined);
                   return true;
                 }
 
-                // Guest RAM-backed scanout: validate that the descriptor rows are actually backed by
-                // guest RAM before using the cached last-presented scanout buffer. Without this, a
-                // corrupt `base_paddr` could cause us to return stale cached pixels instead of
-                // falling back to the stub.
-                const ramBytes = guest.byteLength;
-                for (let y = 0; y < height; y += 1) {
-                  const rowPaddr = basePaddrNum + y * pitchBytes;
-                  if (!Number.isSafeInteger(rowPaddr)) {
+                // Guest RAM-backed scanout: use the unit-tested helper (handles guest paddr translation,
+                // pitch padding, and BGRX/BGRA swizzle semantics).
+                out = readScanoutRgba8FromGuestRam(guest, { basePaddr, width, height, pitchBytes, format }).rgba8;
+              } else {
+                if (!scanoutIsInVram) {
+                  if (!guest) {
                     postStub(typeof seq === "number" ? seq : undefined);
                     return true;
                   }
-                  try {
-                    if (!guestRangeInBoundsRaw(ramBytes, rowPaddr, rowBytes)) {
+
+                  // Validate that the descriptor rows are actually backed by guest RAM before using the cached
+                  // last-presented scanout buffer. Without this, a corrupt `base_paddr` could cause us to return
+                  // stale cached pixels instead of falling back to the stub.
+                  if (basePaddr > BigInt(Number.MAX_SAFE_INTEGER)) {
+                    postStub(typeof seq === "number" ? seq : undefined);
+                    return true;
+                  }
+                  const basePaddrNum = Number(basePaddr);
+
+                  const ramBytes = guest.byteLength;
+                  for (let y = 0; y < height; y += 1) {
+                    const rowPaddr = basePaddrNum + y * pitchBytes;
+                    if (!Number.isSafeInteger(rowPaddr)) {
                       postStub(typeof seq === "number" ? seq : undefined);
                       return true;
                     }
-                  } catch {
+                    try {
+                      if (!guestRangeInBoundsRaw(ramBytes, rowPaddr, rowBytes)) {
+                        postStub(typeof seq === "number" ? seq : undefined);
+                        return true;
+                      }
+                    } catch {
+                      postStub(typeof seq === "number" ? seq : undefined);
+                      return true;
+                    }
+                    const rowOff = guestPaddrToRamOffsetRaw(ramBytes, rowPaddr);
+                    if (rowOff === null || rowOff + rowBytes > guest.byteLength) {
+                      postStub(typeof seq === "number" ? seq : undefined);
+                      return true;
+                    }
+                  }
+                }
+
+                // Prefer the cached last-presented scanout buffer when available so the screenshot bytes
+                // match what the presenter most recently consumed (important for deterministic hashing).
+                //
+                // Fall back to re-reading scanout memory if the cache is unavailable or mismatched.
+                const cached = wddmScanoutRgba;
+                if (
+                  cached &&
+                  wddmScanoutWidth === width &&
+                  wddmScanoutHeight === height &&
+                  wddmScanoutFormat === format &&
+                  cached.byteLength >= outBytes
+                ) {
+                  out = cached.subarray(0, outBytes).slice();
+                } else {
+                  const frame = tryReadScanoutFrame(snap);
+                  if (!frame || frame.width !== width || frame.height !== height || frame.pixels.byteLength < outBytes) {
                     postStub(typeof seq === "number" ? seq : undefined);
                     return true;
                   }
-                  const rowOff = guestPaddrToRamOffsetRaw(ramBytes, rowPaddr);
-                  if (rowOff === null || rowOff + rowBytes > guest.byteLength) {
-                    postStub(typeof seq === "number" ? seq : undefined);
-                    return true;
-                  }
+                  out = frame.pixels.subarray(0, outBytes).slice();
                 }
-              }
-              const outBytes = rowBytes * height;
-              if (!Number.isSafeInteger(outBytes) || outBytes <= 0) {
-                postStub(typeof seq === "number" ? seq : undefined);
-                return true;
-              }
-              // Avoid attempting absurd allocations if the descriptor is corrupt.
-              if (outBytes > MAX_SCANOUT_RGBA8_BYTES) {
-                postStub(typeof seq === "number" ? seq : undefined);
-                return true;
-              }
-              // Prefer the cached last-presented scanout buffer when available so the screenshot bytes
-              // match what the presenter most recently consumed (important for deterministic hashing).
-              //
-              // Fall back to re-reading guest memory if the cache is unavailable or mismatched.
-              let out: Uint8Array;
-              const cached = wddmScanoutRgba;
-              if (
-                cached &&
-                wddmScanoutWidth === width &&
-                wddmScanoutHeight === height &&
-                wddmScanoutFormat === format &&
-                cached.byteLength >= outBytes
-              ) {
-                out = cached.subarray(0, outBytes).slice();
-              } else {
-                const frame = tryReadScanoutFrame(snap);
-                if (!frame || frame.width !== width || frame.height !== height || frame.pixels.byteLength < outBytes) {
-                  postStub(typeof seq === "number" ? seq : undefined);
-                  return true;
-                }
-                out = frame.pixels.subarray(0, outBytes).slice();
               }
 
               if (includeCursor) {
@@ -4315,21 +4323,17 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
                 }
               }
 
-              const rgba8 =
-                out.buffer instanceof ArrayBuffer && out.byteOffset === 0 && out.byteLength === out.buffer.byteLength
-                  ? out.buffer
-                  : out.slice().buffer;
               postToMain(
                 {
                   type: "screenshot",
                   requestId: req.requestId,
                   width,
                   height,
-                  rgba8,
+                  rgba8: out.buffer,
                   origin: "top-left",
                   ...(typeof seq === "number" ? { frameSeq: seq } : {}),
                 },
-                [rgba8],
+                [out.buffer],
               );
               return true;
             } catch {
