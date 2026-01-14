@@ -3489,49 +3489,59 @@ void APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hReso
   // allocations) before deallocating the WDDM handles. Ensure we also emit the
   // corresponding SET_CONSTANT_BUFFERS updates so the host does not observe stale
   // constant buffer bindings pointing at a destroyed resource.
+  bool oom = false;
   const aerogpu_constant_buffer_binding null_cb{};
   for (uint32_t slot = 0; slot < kMaxConstantBufferSlots; ++slot) {
     if (dev->current_vs_cb_resources[slot] == res) {
       dev->current_vs_cb_resources[slot] = nullptr;
       dev->vs_constant_buffers[slot] = {};
-      auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_constant_buffers>(
-          AEROGPU_CMD_SET_CONSTANT_BUFFERS, &null_cb, sizeof(null_cb));
-      if (!cmd) {
-        SetError(hDevice, E_OUTOFMEMORY);
-        break;
+      if (!oom) {
+        auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_constant_buffers>(
+            AEROGPU_CMD_SET_CONSTANT_BUFFERS, &null_cb, sizeof(null_cb));
+        if (!cmd) {
+          SetError(hDevice, E_OUTOFMEMORY);
+          oom = true;
+        } else {
+          cmd->shader_stage = AEROGPU_SHADER_STAGE_VERTEX;
+          cmd->start_slot = slot;
+          cmd->buffer_count = 1;
+          cmd->reserved0 = 0;
+        }
       }
-      cmd->shader_stage = AEROGPU_SHADER_STAGE_VERTEX;
-      cmd->start_slot = slot;
-      cmd->buffer_count = 1;
-      cmd->reserved0 = 0;
     }
     if (dev->current_ps_cb_resources[slot] == res) {
       dev->current_ps_cb_resources[slot] = nullptr;
       dev->ps_constant_buffers[slot] = {};
-      auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_constant_buffers>(
-          AEROGPU_CMD_SET_CONSTANT_BUFFERS, &null_cb, sizeof(null_cb));
-      if (!cmd) {
-        SetError(hDevice, E_OUTOFMEMORY);
-        break;
+      if (!oom) {
+        auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_constant_buffers>(
+            AEROGPU_CMD_SET_CONSTANT_BUFFERS, &null_cb, sizeof(null_cb));
+        if (!cmd) {
+          SetError(hDevice, E_OUTOFMEMORY);
+          oom = true;
+        } else {
+          cmd->shader_stage = AEROGPU_SHADER_STAGE_PIXEL;
+          cmd->start_slot = slot;
+          cmd->buffer_count = 1;
+          cmd->reserved0 = 0;
+        }
       }
-      cmd->shader_stage = AEROGPU_SHADER_STAGE_PIXEL;
-      cmd->start_slot = slot;
-      cmd->buffer_count = 1;
-      cmd->reserved0 = 0;
     }
     if (dev->current_gs_cb_resources[slot] == res) {
       dev->current_gs_cb_resources[slot] = nullptr;
       dev->gs_constant_buffers[slot] = {};
-      auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_constant_buffers>(
-          AEROGPU_CMD_SET_CONSTANT_BUFFERS, &null_cb, sizeof(null_cb));
-      if (!cmd) {
-        SetError(hDevice, E_OUTOFMEMORY);
-        break;
+      if (!oom) {
+        auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_constant_buffers>(
+            AEROGPU_CMD_SET_CONSTANT_BUFFERS, &null_cb, sizeof(null_cb));
+        if (!cmd) {
+          SetError(hDevice, E_OUTOFMEMORY);
+          oom = true;
+        } else {
+          cmd->shader_stage = AEROGPU_SHADER_STAGE_GEOMETRY;
+          cmd->start_slot = slot;
+          cmd->buffer_count = 1;
+          cmd->reserved0 = 0;
+        }
       }
-      cmd->shader_stage = AEROGPU_SHADER_STAGE_GEOMETRY;
-      cmd->start_slot = slot;
-      cmd->buffer_count = 1;
-      cmd->reserved0 = 0;
     }
   }
 
