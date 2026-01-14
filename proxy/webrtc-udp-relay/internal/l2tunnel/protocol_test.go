@@ -169,3 +169,34 @@ func TestEncodeStructuredErrorPayload_Truncation(t *testing.T) {
 		t.Fatalf("msg=%q, want empty", msg)
 	}
 }
+
+func TestStructuredErrorCodes_Stable(t *testing.T) {
+	// These codes are part of the on-the-wire contract (see docs/l2-tunnel-protocol.md).
+	if errorCodeProtocolError != 1 {
+		t.Fatalf("errorCodeProtocolError=%d, want 1", errorCodeProtocolError)
+	}
+	if errorCodeAuthRequired != 2 {
+		t.Fatalf("errorCodeAuthRequired=%d, want 2", errorCodeAuthRequired)
+	}
+	if errorCodeAuthInvalid != 3 {
+		t.Fatalf("errorCodeAuthInvalid=%d, want 3", errorCodeAuthInvalid)
+	}
+	if errorCodeOriginMissing != 4 {
+		t.Fatalf("errorCodeOriginMissing=%d, want 4", errorCodeOriginMissing)
+	}
+	if errorCodeOriginDenied != 5 {
+		t.Fatalf("errorCodeOriginDenied=%d, want 5", errorCodeOriginDenied)
+	}
+	if errorCodeQuotaBytes != 6 {
+		t.Fatalf("errorCodeQuotaBytes=%d, want 6", errorCodeQuotaBytes)
+	}
+	if errorCodeQuotaFPS != 7 {
+		t.Fatalf("errorCodeQuotaFPS=%d, want 7", errorCodeQuotaFPS)
+	}
+	if errorCodeQuotaConnections != 8 {
+		t.Fatalf("errorCodeQuotaConnections=%d, want 8", errorCodeQuotaConnections)
+	}
+	if errorCodeBackpressure != 9 {
+		t.Fatalf("errorCodeBackpressure=%d, want 9", errorCodeBackpressure)
+	}
+}
