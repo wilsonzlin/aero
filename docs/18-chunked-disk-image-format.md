@@ -164,6 +164,8 @@ Recommended schema (v1):
 Notes:
 
 - `chunks.length` **MUST** equal `chunkCount` if present.
+- `chunkCount` **MUST** be > 0.
+- `chunkIndexWidth` **MUST** be > 0.
 - If `chunks` is present, each entry may omit `size` and/or `sha256`:
   - missing `size` defaults to `chunkSize` (or the derived final chunk size for the last chunk)
   - missing `sha256` means “no integrity check for this chunk”
@@ -172,6 +174,12 @@ Notes:
   - For raw disk images, this is typically the same as the input file length.
   - For sparse/container formats (qcow2/VHD/AeroSparse), this may differ from the on-disk container file size.
 - `sha256` is optional to reduce manifest size and hashing cost; it is strongly recommended when serving from untrusted infrastructure.
+- Implementations should apply reasonable defensive limits when handling untrusted manifests (e.g.
+  bounds on `chunkSize`, `chunkCount`, `chunkIndexWidth`, and the manifest JSON size). Aero’s
+  reference clients currently enforce:
+  - `chunkSize <= 64 MiB`
+  - `chunkCount <= 500,000`
+  - `chunkIndexWidth <= 32`
 
 ### 1.4 Versioning / immutability
 
