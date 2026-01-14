@@ -413,11 +413,12 @@ mod tests {
 
     #[test]
     fn detects_overflow() {
-        // Keep element counts within u32 so we validate u64 byte-size overflow paths.
-        // (D3D-style indexing/indirect args are u32-based.)
+        // Keep counts within u32 so we validate u64 byte-size overflow paths.
         //
         // Use an absurd per-control-point output payload (ds_output_register_count) together with a
-        // maximal patch count to overflow the VS/HS stage-IO byte-size computation.
+        // maximal patch count to overflow the VS/HS stage-IO byte-size computation:
+        //   control_point_count_total * ds_output_stride_bytes > u64::MAX
+        // where `ds_output_stride_bytes = payload_stride_bytes(u32::MAX) = u32::MAX * 16`.
         let params = TessellationSizingParams::new(u32::MAX, 1, 1, u32::MAX);
         assert!(matches!(
             TessellationDrawScratchSizes::new(params),
