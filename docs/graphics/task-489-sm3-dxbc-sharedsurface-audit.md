@@ -323,7 +323,7 @@ bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --test sm3_decode --locked
 - `e8523a8f9` — `test(sm3): assert default sampler texture types in bind layout`
 - `de317d81a` — `test(sm3): cover translate_to_wgsl wrapper`
 - `b0ccdf25e` — `docs(graphics): document default Texture2D sampler type`
-- `cb9001d34` — `docs(graphics): note SM3 software sampler is 2D-only`
+- `9bb17163c` — `feat(d3d9): support cube textures in software shader interpreters`
 
 **Tests:**
 - `crates/aero-d3d9/tests/sm3_wgsl.rs`
@@ -373,9 +373,51 @@ bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --test sm3_wgsl_tex --locked
 - The SM3 WGSL backend supports sampler texture types 1D/2D/3D/cube.
 - WGSL does not support `textureSampleBias` for `texture_1d`; `texldb` for 1D samplers is lowered via
   `textureSampleGrad` with `dpdx`/`dpdy` scaled by `exp2(bias)`.
-- The SM3 software reference interpreter (`crates/aero-d3d9/src/sm3/software.rs`) is currently a 2D-only
-  texture sampler model; it does not emulate 1D/3D/cube sampling.
+- The SM3 software reference interpreter (`crates/aero-d3d9/src/sm3/software.rs`) supports 2D + cube
+  sampling, but does not yet emulate 1D/3D textures.
 - The legacy token-stream translator in `crates/aero-d3d9/src/shader.rs` still restricts sampler types (currently supports 2D + cube only); extending that path to 1D/3D would be a separate task from 401/402.
 - The WGSL generator does not attempt to model sampler *state* (filtering/address modes/LOD bias/etc.) directly;
   those are handled in runtime pipeline setup. Depth-compare sampling is also not modeled in the SM3 WGSL generator.
   (This is tracked in `docs/graphics/d3d9-sm2-sm3-shader-translation.md`.)
+
+---
+
+## Task 439 — PS MISCTYPE builtins (vPos/vFace → misc0/misc1)
+
+**Status:** ✅ Done
+
+**Implementation (key files):**
+- `crates/aero-d3d9/src/sm3/wgsl.rs` (builtin emission + local mapping for `misc0`/`misc1`)
+
+**Implementing commits (high-signal):**
+- `0b946c43c` — `feat(d3d9): Add WGSL support for SM3 vPos/vFace MISCTYPE`
+
+**Tests:**
+- `crates/aero-d3d9/tests/sm3_wgsl.rs`
+  - `wgsl_ps3_vpos_misctype_builtin_compiles`
+  - `wgsl_ps3_vface_misctype_builtin_compiles`
+
+**How to run (focused):**
+```bash
+bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --test sm3_wgsl --locked
+```
+
+---
+
+## Task 468 — PS depth output (oDepth/DepthOut → @builtin(frag_depth))
+
+**Status:** ✅ Done
+
+**Implementation (key files):**
+- `crates/aero-d3d9/src/sm3/wgsl.rs` (maps `DepthOut` / `oDepth` to `@builtin(frag_depth)`)
+
+**Implementing commits (high-signal):**
+- `a360c250a` — `feat(aero-d3d9): map SM2/SM3 oDepth to WGSL frag_depth`
+
+**Tests:**
+- `crates/aero-d3d9/tests/sm3_wgsl_depth_out.rs`
+
+**How to run (focused):**
+```bash
+bash ./scripts/safe-run.sh cargo test -p aero-d3d9 --test sm3_wgsl_depth_out --locked
+```
