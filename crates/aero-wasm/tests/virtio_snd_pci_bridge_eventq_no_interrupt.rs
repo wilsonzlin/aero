@@ -6,6 +6,7 @@ use aero_virtio::devices::snd::{
 };
 use aero_virtio::pci::{
     VIRTIO_PCI_LEGACY_GUEST_FEATURES, VIRTIO_PCI_LEGACY_HOST_FEATURES,
+    VIRTIO_PCI_LEGACY_ISR,
     VIRTIO_PCI_LEGACY_QUEUE_NOTIFY, VIRTIO_PCI_LEGACY_QUEUE_NUM, VIRTIO_PCI_LEGACY_QUEUE_PFN,
     VIRTIO_PCI_LEGACY_QUEUE_SEL, VIRTIO_PCI_LEGACY_STATUS, VIRTIO_PCI_LEGACY_VRING_ALIGN,
     VIRTIO_STATUS_ACKNOWLEDGE, VIRTIO_STATUS_DRIVER, VIRTIO_STATUS_DRIVER_OK,
@@ -55,6 +56,7 @@ fn virtio_snd_pci_bridge_eventq_does_not_raise_irq_when_avail_no_interrupt_is_se
 
     const COMMON: u32 = 0x0000;
     const NOTIFY: u32 = 0x1000;
+    const ISR: u32 = 0x2000;
 
     // Minimal virtio feature negotiation (accept everything offered).
     bridge.mmio_write(COMMON + 0x14, 1, u32::from(VIRTIO_STATUS_ACKNOWLEDGE));
@@ -143,6 +145,11 @@ fn virtio_snd_pci_bridge_eventq_does_not_raise_irq_when_avail_no_interrupt_is_se
         !bridge.irq_asserted(),
         "IRQ should remain deasserted when VIRTQ_AVAIL_F_NO_INTERRUPT is set"
     );
+
+    // No interrupt should be pending in the ISR.
+    let isr = bridge.mmio_read(ISR, 1) as u8;
+    assert_eq!(isr, 0);
+    assert!(!bridge.irq_asserted());
 }
 
 #[wasm_bindgen_test]
@@ -221,6 +228,10 @@ fn virtio_snd_pci_bridge_legacy_only_eventq_does_not_raise_irq_when_avail_no_int
         !bridge.irq_asserted(),
         "IRQ should remain deasserted when VIRTQ_AVAIL_F_NO_INTERRUPT is set"
     );
+
+    let isr = bridge.io_read(VIRTIO_PCI_LEGACY_ISR as u32, 1) as u8;
+    assert_eq!(isr, 0);
+    assert!(!bridge.irq_asserted());
 }
 
 #[wasm_bindgen_test]
@@ -299,4 +310,8 @@ fn virtio_snd_pci_bridge_transitional_eventq_does_not_raise_irq_when_avail_no_in
         !bridge.irq_asserted(),
         "IRQ should remain deasserted when VIRTQ_AVAIL_F_NO_INTERRUPT is set"
     );
+
+    let isr = bridge.io_read(VIRTIO_PCI_LEGACY_ISR as u32, 1) as u8;
+    assert_eq!(isr, 0);
+    assert!(!bridge.irq_asserted());
 }
