@@ -859,9 +859,8 @@ static void EmitBindShadersLocked(Device* dev) {
   cmd->vs = dev->current_vs;
   cmd->ps = dev->current_ps;
   cmd->cs = dev->current_cs;
-  // Geometry shaders are currently ignored by the AeroGPU/WebGPU backend, but the
-  // command stream can carry a GS handle via `aerogpu_cmd_bind_shaders::reserved0`
-  // without changing packet sizes.
+  // Geometry shader (GS) handle is carried via `reserved0` (legacy extension)
+  // so the packet size stays stable.
   cmd->reserved0 = dev->current_gs;
 }
 
@@ -4320,7 +4319,7 @@ HRESULT AEROGPU_APIENTRY CreateGeometryShader11(D3D11DDI_HDEVICE hDevice,
                                                 const D3D11DDIARG_CREATEGEOMETRYSHADER* pDesc,
                                                 D3D11DDI_HGEOMETRYSHADER hShader,
                                                 D3D11DDI_HRTGEOMETRYSHADER) {
-  if (!pDesc || !hShader.pDrvPrivate || !pDesc->pShaderCode || pDesc->ShaderCodeSize == 0) {
+  if (!pDesc || !hShader.pDrvPrivate) {
     return E_INVALIDARG;
   }
   auto* dev = FromHandle<D3D11DDI_HDEVICE, Device>(hDevice);
@@ -4328,22 +4327,12 @@ HRESULT AEROGPU_APIENTRY CreateGeometryShader11(D3D11DDI_HDEVICE hDevice,
     return E_FAIL;
   }
   std::lock_guard<std::mutex> lock(dev->mutex);
-  (void)new (hShader.pDrvPrivate) Shader();
-  // MVP: Geometry shaders are accepted by the Win7 D3D11 runtime at FL10_0, but
-  // the AeroGPU/WebGPU backend currently cannot execute geometry shaders.
-  //
-  // The AeroGPU command stream can carry a GS handle (via `aerogpu_cmd_bind_shaders::reserved0`)
-  // for ABI completeness, but the stage is still ignored by the host today. To keep the pipeline
-  // working for pass-through GS usage (e.g. the Win7 `d3d11_geometry_shader_smoke` test), we treat
-  // GS as a no-op and do not forward the DXBC to the host.
-  //
-  // NOTE: The created Shader's `handle` intentionally stays 0 so
-  // `DestroyShaderCommon` does not emit a host-side DESTROY_SHADER for a shader
-  // that was never created.
-  static std::once_flag log_once;
-  std::call_once(log_once, [] {
-    AEROGPU_D3D10_11_LOG("CreateGeometryShader11: ignoring geometry shader (GS not supported by AeroGPU/WebGPU yet)");
-  });
+  auto* sh = new (hShader.pDrvPrivate) Shader();
+  const HRESULT hr =
+      CreateShaderCommon(hDevice, pDesc->pShaderCode, pDesc->ShaderCodeSize, sh, AEROGPU_SHADER_STAGE_GEOMETRY);
+  if (FAILED(hr)) {
+    return hr;
+  }
   return S_OK;
 }
 
@@ -5061,9 +5050,7 @@ void AEROGPU_APIENTRY GsSetShader11(D3D11DDI_HDEVICECONTEXT hCtx,
   }
   std::lock_guard<std::mutex> lock(dev->mutex);
   dev->current_gs = hShader.pDrvPrivate ? FromHandle<D3D11DDI_HGEOMETRYSHADER, Shader>(hShader)->handle : 0;
-  // Geometry shaders are currently ignored by the AeroGPU/WebGPU backend. The command stream has
-  // a GS slot (in `aerogpu_cmd_bind_shaders::reserved0`) for ABI completeness, but it is not executed today.
-  // See CreateGeometryShader11.
+  EmitBindShadersLocked(dev);
 }
 
 static void SetConstantBuffers11Locked(Device* dev,
