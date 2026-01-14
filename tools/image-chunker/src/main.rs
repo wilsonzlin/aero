@@ -1355,6 +1355,12 @@ async fn verify_chunk_file(
         total = total
             .checked_add(n as u64)
             .ok_or_else(|| anyhow!("chunk {index} size overflows u64"))?;
+        if total > expected_size {
+            bail!(
+                "size mismatch for chunk {index} (file://{}): expected {expected_size} bytes, got at least {total} bytes",
+                path.display()
+            );
+        }
         if let Some(hasher) = &mut hasher {
             hasher.update(&buf[..n]);
         }
@@ -1498,6 +1504,11 @@ async fn verify_chunk_http(
         total = total
             .checked_add(chunk.len() as u64)
             .ok_or_else(|| anyhow!("chunk {index} size overflows u64"))?;
+        if total > expected_size {
+            bail!(
+                "size mismatch for chunk {index} ({url}): expected {expected_size} bytes, got at least {total} bytes"
+            );
+        }
         if let Some(hasher) = &mut hasher {
             hasher.update(&chunk);
         }
@@ -2502,6 +2513,11 @@ async fn verify_chunk_once(
         read_total = read_total
             .checked_add(n as u64)
             .ok_or_else(|| anyhow!("downloaded size overflows u64 for s3://{bucket}/{key}"))?;
+        if read_total > expected_size {
+            bail!(
+                "size mismatch: expected {expected_size} bytes, got at least {read_total} bytes (streamed)"
+            );
+        }
         if let Some(hasher) = hasher.as_mut() {
             hasher.update(&buf[..n]);
         }
