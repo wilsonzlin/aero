@@ -242,6 +242,10 @@ Semantics:
   - Restore cached hardware cursor state (shape buffer + position) when `AEROGPU_FEATURE_CURSOR` is available.
   - Restore `IRQ_ENABLE` to the cached enable mask when an ISR has been registered.
 
+Related robustness:
+
+- dbgctl `DxgkDdiEscape` query ops avoid touching MMIO while the adapter is not in D0; they return cached state where possible.
+
 This power callback is intentionally minimal: it prioritizes avoiding stuck IRQ/vblank state after resume over
 preserving in-flight rendering across a power cycle.
 

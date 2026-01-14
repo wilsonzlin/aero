@@ -8416,9 +8416,17 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
         if (adapter->AbiKind == AEROGPU_ABI_KIND_V1 && adapter->RingHeader) {
             head = adapter->RingHeader->head;
             tail = adapter->RingHeader->tail;
-        } else if (adapter->Bar0) {
-            head = AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_RING_HEAD);
-            tail = AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_RING_TAIL);
+        } else {
+            /*
+             * Legacy head is device-owned (MMIO). Avoid MMIO reads unless the
+             * adapter is in D0.
+             */
+            tail = adapter->RingTail;
+            if (poweredOn) {
+                head = AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_RING_HEAD);
+            } else {
+                head = tail;
+            }
         }
         io->head = head;
         io->tail = tail;
@@ -8536,9 +8544,17 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
         if (adapter->AbiKind == AEROGPU_ABI_KIND_V1 && adapter->RingHeader) {
             head = adapter->RingHeader->head;
             tail = adapter->RingHeader->tail;
-        } else if (adapter->Bar0) {
-            head = AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_RING_HEAD);
-            tail = AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_RING_TAIL);
+        } else {
+            /*
+             * Legacy head is device-owned (MMIO). Avoid MMIO reads unless the
+             * adapter is in D0.
+             */
+            tail = adapter->RingTail;
+            if (poweredOn) {
+                head = AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_RING_HEAD);
+            } else {
+                head = tail;
+            }
         }
         io->head = head;
         io->tail = tail;
@@ -9313,8 +9329,10 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
             return STATUS_NOT_SUPPORTED;
         }
 
-        const ULONGLONG features = (ULONGLONG)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_FEATURES_LO) |
-                                  ((ULONGLONG)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_FEATURES_HI) << 32);
+        const ULONGLONG features = poweredOn
+                                       ? ((ULONGLONG)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_FEATURES_LO) |
+                                          ((ULONGLONG)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_FEATURES_HI) << 32))
+                                       : adapter->DeviceFeatures;
         if ((features & (ULONGLONG)AEROGPU_FEATURE_VBLANK) == 0) {
             return STATUS_NOT_SUPPORTED;
         }
@@ -9324,23 +9342,29 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
         out->hdr.size = sizeof(*out);
         out->hdr.reserved0 = 0;
 
+        out->irq_enable = 0;
+        out->irq_status = 0;
         const BOOLEAN haveIrqRegs = adapter->Bar0Length >= (AEROGPU_MMIO_REG_IRQ_ENABLE + sizeof(ULONG));
-        if (haveIrqRegs) {
+        if (poweredOn && haveIrqRegs) {
             out->irq_enable = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE);
             out->irq_status = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_IRQ_STATUS);
-        } else {
-            out->irq_enable = 0;
-            out->irq_status = 0;
         }
 
         out->flags = AEROGPU_DBGCTL_QUERY_VBLANK_FLAGS_VALID | AEROGPU_DBGCTL_QUERY_VBLANK_FLAG_VBLANK_SUPPORTED;
-        out->vblank_seq = AeroGpuReadRegU64HiLoHi(adapter,
-                                                  AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_LO,
-                                                  AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_HI);
-        out->last_vblank_time_ns = AeroGpuReadRegU64HiLoHi(adapter,
-                                                           AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_LO,
-                                                           AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_HI);
-        out->vblank_period_ns = (uint32_t)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS);
+        if (poweredOn) {
+            out->vblank_seq = AeroGpuReadRegU64HiLoHi(adapter,
+                                                      AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_LO,
+                                                      AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_HI);
+            out->last_vblank_time_ns = AeroGpuReadRegU64HiLoHi(adapter,
+                                                               AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_LO,
+                                                               AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_HI);
+            out->vblank_period_ns = (uint32_t)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS);
+        } else {
+            /* Avoid MMIO reads while powered down; return last-known values. */
+            out->vblank_seq = AeroGpuAtomicReadU64(&adapter->LastVblankSeq);
+            out->last_vblank_time_ns = AeroGpuAtomicReadU64(&adapter->LastVblankTimeNs);
+            out->vblank_period_ns = (uint32_t)adapter->VblankPeriodNs;
+        }
         out->vblank_interrupt_type = 0;
         if (adapter->VblankInterruptTypeValid) {
             KeMemoryBarrier();
@@ -9382,7 +9406,7 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
         out->mmio_pitch_bytes = 0;
         out->mmio_fb_gpa = 0;
 
-        if (!adapter->Bar0) {
+        if (!poweredOn) {
             return STATUS_SUCCESS;
         }
         if (!poweredOn) {
@@ -9458,9 +9482,7 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
 
         BOOLEAN cursorSupported = TRUE;
         if (adapter->Bar0Length >= (AEROGPU_MMIO_REG_FEATURES_HI + sizeof(ULONG))) {
-            const ULONGLONG features = (ULONGLONG)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_FEATURES_LO) |
-                                       ((ULONGLONG)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_FEATURES_HI) << 32);
-            cursorSupported = (features & (ULONGLONG)AEROGPU_FEATURE_CURSOR) != 0;
+            cursorSupported = (adapter->DeviceFeatures & (ULONGLONG)AEROGPU_FEATURE_CURSOR) != 0;
         }
 
         if (!cursorSupported) {
@@ -9469,22 +9491,43 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
 
         out->flags |= AEROGPU_DBGCTL_QUERY_CURSOR_FLAG_CURSOR_SUPPORTED;
 
-        out->enable = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_ENABLE);
-        out->x = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_X);
-        out->y = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_Y);
-        out->hot_x = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_HOT_X);
-        out->hot_y = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_HOT_Y);
-        out->width = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_WIDTH);
-        out->height = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_HEIGHT);
-        out->format = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_FORMAT);
+        if (poweredOn) {
+            out->enable = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_ENABLE);
+            out->x = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_X);
+            out->y = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_Y);
+            out->hot_x = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_HOT_X);
+            out->hot_y = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_HOT_Y);
+            out->width = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_WIDTH);
+            out->height = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_HEIGHT);
+            out->format = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_FORMAT);
 
-        {
-            const ULONG lo = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_FB_GPA_LO);
-            const ULONG hi = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_FB_GPA_HI);
-            out->fb_gpa = ((uint64_t)hi << 32) | (uint64_t)lo;
+            {
+                const ULONG lo = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_FB_GPA_LO);
+                const ULONG hi = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_FB_GPA_HI);
+                out->fb_gpa = ((uint64_t)hi << 32) | (uint64_t)lo;
+            }
+
+            out->pitch_bytes = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_PITCH_BYTES);
+        } else {
+            /*
+             * Avoid MMIO reads while powered down. Return the last cached cursor
+             * state; this is the state that will be restored on the next D0
+             * transition.
+             */
+            KIRQL cursorIrql;
+            KeAcquireSpinLock(&adapter->CursorLock, &cursorIrql);
+            out->enable = (adapter->CursorVisible && adapter->CursorShapeValid) ? 1u : 0u;
+            out->x = (ULONG)adapter->CursorX;
+            out->y = (ULONG)adapter->CursorY;
+            out->hot_x = adapter->CursorHotX;
+            out->hot_y = adapter->CursorHotY;
+            out->width = adapter->CursorWidth;
+            out->height = adapter->CursorHeight;
+            out->format = adapter->CursorFormat;
+            out->fb_gpa = (uint64_t)adapter->CursorFbPa.QuadPart;
+            out->pitch_bytes = adapter->CursorPitchBytes;
+            KeReleaseSpinLock(&adapter->CursorLock, cursorIrql);
         }
-
-        out->pitch_bytes = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_CURSOR_PITCH_BYTES);
 
         return STATUS_SUCCESS;
     }
@@ -9762,13 +9805,23 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
         if (!haveErrorRegs) {
             return STATUS_SUCCESS;
         }
- 
+  
         out->flags |= AEROGPU_DBGCTL_QUERY_ERROR_FLAG_ERROR_SUPPORTED;
-        out->error_code = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_ERROR_CODE);
-        out->error_fence = AeroGpuReadRegU64HiLoHi(adapter,
-                                                   AEROGPU_MMIO_REG_ERROR_FENCE_LO,
-                                                   AEROGPU_MMIO_REG_ERROR_FENCE_HI);
-        out->error_count = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_ERROR_COUNT);
+        if (poweredOn) {
+            out->error_code = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_ERROR_CODE);
+            out->error_fence = AeroGpuReadRegU64HiLoHi(adapter,
+                                                       AEROGPU_MMIO_REG_ERROR_FENCE_LO,
+                                                       AEROGPU_MMIO_REG_ERROR_FENCE_HI);
+            out->error_count = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_ERROR_COUNT);
+        } else {
+            /* Avoid MMIO reads while powered down; return best-effort cached state. */
+            out->error_fence = AeroGpuAtomicReadU64(&adapter->LastErrorFence);
+            const ULONGLONG errorCount = AeroGpuAtomicReadU64(&adapter->ErrorIrqCount);
+            out->error_count = (errorCount > 0xFFFFFFFFull) ? 0xFFFFFFFFu : (ULONG)errorCount;
+            if (InterlockedCompareExchange(&adapter->DeviceErrorLatched, 0, 0) != 0) {
+                out->error_code = (ULONG)AEROGPU_ERROR_INTERNAL;
+            }
+        }
         return STATUS_SUCCESS;
     }
 
