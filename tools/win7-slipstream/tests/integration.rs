@@ -1,3 +1,5 @@
+#![cfg(not(target_arch = "wasm32"))]
+
 use assert_cmd::cargo::cargo_bin_cmd;
 use std::env;
 use tempfile::TempDir;

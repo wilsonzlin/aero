@@ -17,6 +17,6 @@ tempfile = "3.10.1"
 walkdir = "2.5.0"
 which = "6.0.1"
 
-[dev-dependencies]
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 assert_cmd = "2.0.14"
 predicates = "3.1.0"
