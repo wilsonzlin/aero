@@ -178,4 +178,51 @@ describe("RuntimeDiskWorker (I/O size limits)", () => {
     expect(String(resp.error.message)).toMatch(String(RUNTIME_DISK_MAX_IO_BYTES));
     expect(writeCalls).toBe(0);
   });
+
+  it("rejects oversize bench chunkBytes", async () => {
+    const posted: any[] = [];
+    let readCalls = 0;
+
+    const disk: AsyncSectorDisk = {
+      sectorSize: 512,
+      capacityBytes: 1024 * 1024,
+      async readSectors() {
+        readCalls += 1;
+      },
+      async writeSectors() {},
+      async flush() {},
+    };
+
+    const openDisk: OpenDiskFn = async () => ({ disk, readOnly: false, backendSnapshot: null });
+    const worker = new RuntimeDiskWorker((msg) => posted.push(msg), openDisk);
+
+    await worker.handleMessage({
+      type: "request",
+      requestId: 1,
+      op: "open",
+      payload: { spec: { kind: "local", meta: {} as any } },
+    } satisfies RuntimeDiskRequestMessage);
+
+    const openResp = posted.shift();
+    expect(openResp.ok).toBe(true);
+    const handle = openResp.result.handle as number;
+
+    await worker.handleMessage({
+      type: "request",
+      requestId: 2,
+      op: "bench",
+      payload: {
+        handle,
+        totalBytes: 512,
+        chunkBytes: RUNTIME_DISK_MAX_IO_BYTES + 512,
+        mode: "read",
+      },
+    } satisfies RuntimeDiskRequestMessage);
+
+    const benchResp = posted.shift();
+    expect(benchResp.ok).toBe(false);
+    expect(String(benchResp.error.message)).toMatch(/bench chunkBytes too large/i);
+    expect(String(benchResp.error.message)).toMatch(String(RUNTIME_DISK_MAX_IO_BYTES));
+    expect(readCalls).toBe(0);
+  });
 });

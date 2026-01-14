@@ -1459,10 +1459,21 @@ export class RuntimeDiskWorker {
       }
 
       case "bench": {
-        const { handle, totalBytes, chunkBytes, mode } = msg.payload;
+        const { handle } = msg.payload;
         const entry = await this.requireDisk(handle);
 
+        const totalBytes = requireSafeNonNegativeInteger((msg.payload as any).totalBytes, "totalBytes");
+        const chunkBytesRaw = (msg.payload as any).chunkBytes;
+        const chunkBytes = chunkBytesRaw === undefined ? undefined : requireSafeNonNegativeInteger(chunkBytesRaw, "chunkBytes");
+        if (chunkBytes !== undefined && chunkBytes > RUNTIME_DISK_MAX_IO_BYTES) {
+          throw new Error(`bench chunkBytes too large: ${chunkBytes} bytes (max ${RUNTIME_DISK_MAX_IO_BYTES})`);
+        }
+
+        const mode = (msg.payload as any).mode;
         const selected = mode ?? "rw";
+        if (selected !== "read" && selected !== "write" && selected !== "rw") {
+          throw new Error(`invalid mode=${String(selected)}`);
+        }
         const results: Record<string, unknown> = {};
 
         if (selected === "write" || selected === "rw") {
