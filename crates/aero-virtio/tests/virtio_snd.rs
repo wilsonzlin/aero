@@ -822,6 +822,128 @@ fn virtio_snd_eventq_retains_pending_event_when_buffer_is_too_small() {
 }
 
 #[test]
+fn virtio_snd_eventq_retains_pending_event_when_buffer_is_out_of_bounds() {
+    let snd = VirtioSnd::new(aero_audio::ring::AudioRingBuffer::new_stereo(8));
+    let mut dev = VirtioPciDevice::new(Box::new(snd), Box::new(InterruptLog::default()));
+
+    // Enable PCI memory decoding (BAR0 MMIO) + bus mastering (DMA). The virtio-pci transport gates
+    // all guest-memory access on `PCI COMMAND.BME` (bit 2).
+    dev.config_write(0x04, &0x0006u16.to_le_bytes());
+    let caps = parse_caps(&mut dev);
+
+    let mut mem = GuestRam::new(0x20000);
+
+    // Feature negotiation: accept everything the device offers.
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE,
+    );
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER,
+    );
+
+    bar_write_u32(&mut dev, &mut mem, caps.common, 0);
+    let f0 = bar_read_u32(&mut dev, caps.common + 0x04);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 0);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f0);
+
+    bar_write_u32(&mut dev, &mut mem, caps.common, 1);
+    let f1 = bar_read_u32(&mut dev, caps.common + 0x04);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 1);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f1);
+
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK,
+    );
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE
+            | VIRTIO_STATUS_DRIVER
+            | VIRTIO_STATUS_FEATURES_OK
+            | VIRTIO_STATUS_DRIVER_OK,
+    );
+
+    // Configure event queue 1.
+    let desc = 0x1000;
+    let avail = 0x2000;
+    let used = 0x3000;
+    configure_queue(
+        &mut dev,
+        &mut mem,
+        &caps,
+        VIRTIO_SND_QUEUE_EVENT,
+        desc,
+        avail,
+        used,
+    );
+
+    // Post a buffer that points outside guest memory.
+    let invalid_buf = 0x30000;
+    write_desc(&mut mem, desc, 0, invalid_buf, 8, VIRTQ_DESC_F_WRITE, 0);
+    write_u16_le(&mut mem, avail + 4, 0).unwrap();
+    write_u16_le(&mut mem, avail + 2, 1).unwrap();
+
+    // Queue an event payload into the device model.
+    dev.device_mut::<VirtioSnd<aero_audio::ring::AudioRingBuffer>>()
+        .unwrap()
+        .queue_event(VIRTIO_SND_EVT_PCM_PERIOD_ELAPSED, 0);
+
+    dev.bar0_write(
+        caps.notify + u64::from(VIRTIO_SND_QUEUE_EVENT) * u64::from(caps.notify_mult),
+        &VIRTIO_SND_QUEUE_EVENT.to_le_bytes(),
+    );
+    dev.process_notified_queues(&mut mem);
+
+    // The device should complete the chain with `len=0` and keep the pending event.
+    assert_eq!(
+        u16::from_le_bytes(mem.get_slice(used + 2, 2).unwrap().try_into().unwrap()),
+        1
+    );
+    let used_id = u32::from_le_bytes(mem.get_slice(used + 4, 4).unwrap().try_into().unwrap());
+    let used_len = u32::from_le_bytes(mem.get_slice(used + 8, 4).unwrap().try_into().unwrap());
+    assert_eq!(used_id, 0);
+    assert_eq!(used_len, 0);
+
+    // Post a valid buffer and confirm the original pending event is still delivered.
+    let buf = 0x4000;
+    mem.write(buf, &[0xAAu8; 8]).unwrap();
+    write_desc(&mut mem, desc, 0, buf, 8, VIRTQ_DESC_F_WRITE, 0);
+    write_u16_le(&mut mem, avail + 6, 0).unwrap(); // avail.ring[1] = desc 0
+    write_u16_le(&mut mem, avail + 2, 2).unwrap(); // avail.idx = 2
+
+    dev.bar0_write(
+        caps.notify + u64::from(VIRTIO_SND_QUEUE_EVENT) * u64::from(caps.notify_mult),
+        &VIRTIO_SND_QUEUE_EVENT.to_le_bytes(),
+    );
+    dev.process_notified_queues(&mut mem);
+
+    assert_eq!(
+        u16::from_le_bytes(mem.get_slice(used + 2, 2).unwrap().try_into().unwrap()),
+        2
+    );
+    let used_id = u32::from_le_bytes(mem.get_slice(used + 12, 4).unwrap().try_into().unwrap());
+    let used_len = u32::from_le_bytes(mem.get_slice(used + 16, 4).unwrap().try_into().unwrap());
+    assert_eq!(used_id, 0);
+    assert_eq!(used_len, 8);
+
+    let expected_evt = [
+        0x00, 0x11, 0x00, 0x00, // type = PCM_PERIOD_ELAPSED
+        0x00, 0x00, 0x00, 0x00, // data = stream_id 0
+    ];
+    assert_eq!(mem.get_slice(buf, 8).unwrap(), &expected_evt);
+}
+
+#[test]
 fn virtio_snd_snapshot_restore_can_rewind_eventq_progress_to_recover_buffers() {
     // The virtio-snd event queue can pop guest-provided buffers without completing them (no used
     // entries) because Aero's contract currently defines no events. The device model caches those
