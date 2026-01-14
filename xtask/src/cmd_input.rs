@@ -203,7 +203,7 @@ mod tests {
 
         assert!(
             capture_io_worker < malformed_batch && malformed_batch < i8042,
-            "expected input_batch_malformed.spec.ts to stay adjacent to IO-worker input specs \
+            "expected {INPUT_BATCH_MALFORMED_SPEC} to stay adjacent to IO-worker input specs \
              (after input_capture_io_worker and before io_worker_i8042)"
         );
     }
