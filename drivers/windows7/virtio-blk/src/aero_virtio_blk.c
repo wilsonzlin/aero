@@ -1284,6 +1284,15 @@ static VOID AerovblkHandleIoControl(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, _
       KeAcquireSpinLock(&devExt->Vdev.CommonCfgLock, &irql);
       WRITE_REGISTER_USHORT((volatile USHORT*)&devExt->Vdev.CommonCfg->queue_select, (USHORT)AEROVBLK_QUEUE_INDEX);
       KeMemoryBarrier();
+      /*
+       * Flush posted MMIO selector writes (see docs/windows7-virtio-driver-contract.md §1.5.0).
+       *
+       * Even though queue 0 is the contract v1 baseline, treat the selector as
+       * write-posted and ensure subsequent reads observe the selected queue on
+       * all chipsets.
+       */
+      (VOID)READ_REGISTER_USHORT((volatile USHORT*)&devExt->Vdev.CommonCfg->queue_select);
+      KeMemoryBarrier();
       msixQueue0 = READ_REGISTER_USHORT((volatile USHORT*)&devExt->Vdev.CommonCfg->queue_msix_vector);
       KeMemoryBarrier();
       KeReleaseSpinLock(&devExt->Vdev.CommonCfgLock, irql);

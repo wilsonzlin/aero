@@ -4942,10 +4942,19 @@ static NTSTATUS AerovNetDiagDispatchDeviceControl(_In_ PDEVICE_OBJECT DeviceObje
 
     WRITE_REGISTER_USHORT((volatile USHORT*)&Adapter->Vdev.CommonCfg->queue_select, 0);
     KeMemoryBarrier();
+    /*
+     * Flush posted MMIO selector writes (see docs/windows7-virtio-driver-contract.md §1.5.0).
+     * Without a readback, some platforms can observe the old queue_select value
+     * when reading queue_msix_vector immediately after the write.
+     */
+    (VOID)READ_REGISTER_USHORT((volatile USHORT*)&Adapter->Vdev.CommonCfg->queue_select);
+    KeMemoryBarrier();
     MsixRx = READ_REGISTER_USHORT((volatile USHORT*)&Adapter->Vdev.CommonCfg->queue_msix_vector);
     KeMemoryBarrier();
 
     WRITE_REGISTER_USHORT((volatile USHORT*)&Adapter->Vdev.CommonCfg->queue_select, 1);
+    KeMemoryBarrier();
+    (VOID)READ_REGISTER_USHORT((volatile USHORT*)&Adapter->Vdev.CommonCfg->queue_select);
     KeMemoryBarrier();
     MsixTx = READ_REGISTER_USHORT((volatile USHORT*)&Adapter->Vdev.CommonCfg->queue_msix_vector);
     KeMemoryBarrier();
