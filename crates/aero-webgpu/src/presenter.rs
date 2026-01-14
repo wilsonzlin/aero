@@ -1287,120 +1287,124 @@ mod tests {
                 ],
             });
 
-            async fn render_and_readback(
-                device: &wgpu::Device,
-                queue: &wgpu::Queue,
-                pipeline: &wgpu::RenderPipeline,
-                bind_group: &wgpu::BindGroup,
-                uniform_buffer: &wgpu::Buffer,
-                output: &wgpu::Texture,
-                output_view: &wgpu::TextureView,
-                readback: &wgpu::Buffer,
-                srgb_encode: bool,
-            ) -> [u8; 4] {
-                let uniforms = PresentUniforms {
-                    output_size: [1.0, 1.0],
-                    input_size: [1.0, 1.0],
-                    mode: 0,
-                    srgb_encode: if srgb_encode { 1 } else { 0 },
-                    _pad: [0; 2],
-                };
-                queue.write_buffer(uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
-
-                let mut encoder =
-                    device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                        label: Some("present shader test encoder"),
-                    });
-                {
-                    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                        label: Some("present shader test pass"),
-                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                            view: output_view,
-                            resolve_target: None,
-                            ops: wgpu::Operations {
-                                load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                                store: wgpu::StoreOp::Store,
-                            },
-                        })],
-                        depth_stencil_attachment: None,
-                        timestamp_writes: None,
-                        occlusion_query_set: None,
-                    });
-                    pass.set_pipeline(pipeline);
-                    pass.set_bind_group(0, bind_group, &[]);
-                    pass.draw(0..3, 0..1);
-                }
-
-                encoder.copy_texture_to_buffer(
-                    wgpu::ImageCopyTexture {
-                        texture: output,
-                        mip_level: 0,
-                        origin: wgpu::Origin3d::ZERO,
-                        aspect: wgpu::TextureAspect::All,
-                    },
-                    wgpu::ImageCopyBuffer {
-                        buffer: readback,
-                        layout: wgpu::ImageDataLayout {
-                            offset: 0,
-                            bytes_per_row: Some(padded_bytes_per_row(4)),
-                            rows_per_image: Some(1),
-                        },
-                    },
-                    wgpu::Extent3d {
-                        width: 1,
-                        height: 1,
-                        depth_or_array_layers: 1,
-                    },
-                );
-                queue.submit(Some(encoder.finish()));
-
-                let slice = readback.slice(..);
-                let (sender, receiver) = futures_intrusive::channel::shared::oneshot_channel();
-                slice.map_async(wgpu::MapMode::Read, move |res| {
-                    sender.send(res).ok();
-                });
-                #[cfg(not(target_arch = "wasm32"))]
-                device.poll(wgpu::Maintain::Wait);
-                #[cfg(target_arch = "wasm32")]
-                device.poll(wgpu::Maintain::Poll);
-                receiver.receive().await.unwrap().unwrap();
-
-                let mapped = slice.get_mapped_range();
-                let out = [mapped[0], mapped[1], mapped[2], mapped[3]];
-                drop(mapped);
-                readback.unmap();
-                out
+            struct RenderAndReadback<'a> {
+                device: &'a wgpu::Device,
+                queue: &'a wgpu::Queue,
+                bind_group: &'a wgpu::BindGroup,
+                uniform_buffer: &'a wgpu::Buffer,
+                readback: &'a wgpu::Buffer,
+                bytes_per_row: u32,
             }
 
-            let linear = render_and_readback(
+            impl<'a> RenderAndReadback<'a> {
+                async fn render_and_readback(
+                    &self,
+                    pipeline: &wgpu::RenderPipeline,
+                    output: &wgpu::Texture,
+                    output_view: &wgpu::TextureView,
+                    srgb_encode: bool,
+                ) -> [u8; 4] {
+                    let uniforms = PresentUniforms {
+                        output_size: [1.0, 1.0],
+                        input_size: [1.0, 1.0],
+                        mode: 0,
+                        srgb_encode: if srgb_encode { 1 } else { 0 },
+                        _pad: [0; 2],
+                    };
+                    self.queue.write_buffer(
+                        self.uniform_buffer,
+                        0,
+                        bytemuck::bytes_of(&uniforms),
+                    );
+
+                    let mut encoder =
+                        self.device
+                            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                                label: Some("present shader test encoder"),
+                            });
+                    {
+                        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                            label: Some("present shader test pass"),
+                            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                                view: output_view,
+                                resolve_target: None,
+                                ops: wgpu::Operations {
+                                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                                    store: wgpu::StoreOp::Store,
+                                },
+                            })],
+                            depth_stencil_attachment: None,
+                            timestamp_writes: None,
+                            occlusion_query_set: None,
+                        });
+                        pass.set_pipeline(pipeline);
+                        pass.set_bind_group(0, self.bind_group, &[]);
+                        pass.draw(0..3, 0..1);
+                    }
+
+                    encoder.copy_texture_to_buffer(
+                        wgpu::ImageCopyTexture {
+                            texture: output,
+                            mip_level: 0,
+                            origin: wgpu::Origin3d::ZERO,
+                            aspect: wgpu::TextureAspect::All,
+                        },
+                        wgpu::ImageCopyBuffer {
+                            buffer: self.readback,
+                            layout: wgpu::ImageDataLayout {
+                                offset: 0,
+                                bytes_per_row: Some(self.bytes_per_row),
+                                rows_per_image: Some(1),
+                            },
+                        },
+                        wgpu::Extent3d {
+                            width: 1,
+                            height: 1,
+                            depth_or_array_layers: 1,
+                        },
+                    );
+                    self.queue.submit(Some(encoder.finish()));
+
+                    let slice = self.readback.slice(..);
+                    let (sender, receiver) =
+                        futures_intrusive::channel::shared::oneshot_channel();
+                    slice.map_async(wgpu::MapMode::Read, move |res| {
+                        sender.send(res).ok();
+                    });
+                    #[cfg(not(target_arch = "wasm32"))]
+                    self.device.poll(wgpu::Maintain::Wait);
+                    #[cfg(target_arch = "wasm32")]
+                    self.device.poll(wgpu::Maintain::Poll);
+                    receiver.receive().await.unwrap().unwrap();
+
+                    let mapped = slice.get_mapped_range();
+                    let out = [mapped[0], mapped[1], mapped[2], mapped[3]];
+                    drop(mapped);
+                    self.readback.unmap();
+                    out
+                }
+            }
+
+            let renderer = RenderAndReadback {
                 device,
                 queue,
-                &pipeline,
-                &bind_group,
-                &uniform_buffer,
-                &output,
-                &output_view,
-                &readback,
-                false,
-            )
-            .await;
+                bind_group: &bind_group,
+                uniform_buffer: &uniform_buffer,
+                readback: &readback,
+                bytes_per_row,
+            };
+
+            let linear = renderer
+                .render_and_readback(&pipeline, &output, &output_view, false)
+                .await;
             assert_eq!(linear[0], 128, "linear path should preserve input channel");
             assert_eq!(linear[1], 0);
             assert_eq!(linear[2], 0);
             assert_eq!(linear[3], 255, "present shader must force opaque alpha");
 
-            let encoded = render_and_readback(
-                device,
-                queue,
-                &pipeline,
-                &bind_group,
-                &uniform_buffer,
-                &output,
-                &output_view,
-                &readback,
-                true,
-            )
-            .await;
+            let encoded = renderer
+                .render_and_readback(&pipeline, &output, &output_view, true)
+                .await;
             assert!(
                 (186..=189).contains(&encoded[0]),
                 "manual sRGB encode produced unexpected value: {}",
@@ -1416,18 +1420,9 @@ mod tests {
 
             // Rendering to an sRGB render target should encode automatically when the shader does
             // *not* apply manual gamma.
-            let srgb_auto = render_and_readback(
-                device,
-                queue,
-                &pipeline_srgb,
-                &bind_group,
-                &uniform_buffer,
-                &output_srgb,
-                &output_srgb_view,
-                &readback,
-                false,
-            )
-            .await;
+            let srgb_auto = renderer
+                .render_and_readback(&pipeline_srgb, &output_srgb, &output_srgb_view, false)
+                .await;
             assert!(
                 (186..=189).contains(&srgb_auto[0]),
                 "sRGB render target encode produced unexpected value: {}",
@@ -1437,18 +1432,9 @@ mod tests {
 
             // And if manual sRGB encoding is (incorrectly) enabled on top of an sRGB target, we
             // should observe double-gamma.
-            let srgb_double = render_and_readback(
-                device,
-                queue,
-                &pipeline_srgb,
-                &bind_group,
-                &uniform_buffer,
-                &output_srgb,
-                &output_srgb_view,
-                &readback,
-                true,
-            )
-            .await;
+            let srgb_double = renderer
+                .render_and_readback(&pipeline_srgb, &output_srgb, &output_srgb_view, true)
+                .await;
             assert!(
                 (220..=225).contains(&srgb_double[0]),
                 "double sRGB encode produced unexpected value: {}",
