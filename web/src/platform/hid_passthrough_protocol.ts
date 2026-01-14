@@ -169,6 +169,10 @@ function isUint32(value: unknown): value is number {
   return isFiniteNumber(value) && Number.isInteger(value) && value >= 0 && value <= 0xffff_ffff;
 }
 
+function isUint8(value: unknown): value is number {
+  return isFiniteNumber(value) && Number.isInteger(value) && value >= 0 && value <= 0xff;
+}
+
 function isArrayBuffer(value: unknown): value is ArrayBuffer {
   return value instanceof ArrayBuffer;
 }
@@ -222,7 +226,7 @@ function isNormalizedHidReportItem(value: unknown): boolean {
 
 function isNormalizedHidReportInfo(value: unknown): boolean {
   if (!isRecord(value)) return false;
-  return isFiniteNumber(value.reportId) && Array.isArray(value.items) && value.items.every(isNormalizedHidReportItem);
+  return isUint8(value.reportId) && Array.isArray(value.items) && value.items.every(isNormalizedHidReportItem);
 }
 
 function isNormalizedHidCollectionInfo(value: unknown): value is NormalizedHidCollectionInfo {
@@ -282,7 +286,7 @@ export function isHidDetachMessage(value: unknown): value is HidDetachMessage {
 export function isHidInputReportMessage(value: unknown): value is HidInputReportMessage {
   if (!isRecord(value) || value.type !== "hid:inputReport") return false;
   if (typeof value.deviceId !== "string") return false;
-  if (!isFiniteNumber(value.reportId)) return false;
+  if (!isUint8(value.reportId)) return false;
   return isArrayBuffer(value.data);
 }
 
@@ -290,7 +294,7 @@ export function isHidSendReportMessage(value: unknown): value is HidSendReportMe
   if (!isRecord(value) || value.type !== "hid:sendReport") return false;
   if (typeof value.deviceId !== "string") return false;
   if (!isHidReportType(value.reportType)) return false;
-  if (!isFiniteNumber(value.reportId)) return false;
+  if (!isUint8(value.reportId)) return false;
   return isArrayBuffer(value.data);
 }
 
@@ -298,14 +302,14 @@ export function isHidGetFeatureReportMessage(value: unknown): value is HidGetFea
   if (!isRecord(value) || value.type !== "hid:getFeatureReport") return false;
   if (typeof value.deviceId !== "string") return false;
   if (!isUint32(value.requestId)) return false;
-  return isFiniteNumber(value.reportId);
+  return isUint8(value.reportId);
 }
 
 export function isHidFeatureReportResultMessage(value: unknown): value is HidFeatureReportResultMessage {
   if (!isRecord(value) || value.type !== "hid:featureReportResult") return false;
   if (typeof value.deviceId !== "string") return false;
   if (!isUint32(value.requestId)) return false;
-  if (!isFiniteNumber(value.reportId)) return false;
+  if (!isUint8(value.reportId)) return false;
   if (typeof value.ok !== "boolean") return false;
   if (value.ok) {
     return isArrayBuffer(value.data);

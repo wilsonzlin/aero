@@ -122,6 +122,10 @@ describe("platform/hid_passthrough_protocol", () => {
     expect(isHidInputReportMessage(input)).toBe(true);
     expect(isHidPassthroughMessage(input)).toBe(true);
 
+    expect(isHidInputReportMessage({ ...input, reportId: -1 })).toBe(false);
+    expect(isHidInputReportMessage({ ...input, reportId: 1.5 })).toBe(false);
+    expect(isHidInputReportMessage({ ...input, reportId: 256 })).toBe(false);
+
     const send: HidSendReportMessage = {
       type: "hid:sendReport",
       deviceId: "dev-1",
@@ -131,6 +135,10 @@ describe("platform/hid_passthrough_protocol", () => {
     };
     expect(isHidSendReportMessage(send)).toBe(true);
     expect(isHidPassthroughMessage(send)).toBe(true);
+
+    expect(isHidSendReportMessage({ ...send, reportId: -1 })).toBe(false);
+    expect(isHidSendReportMessage({ ...send, reportId: 1.5 })).toBe(false);
+    expect(isHidSendReportMessage({ ...send, reportId: 256 })).toBe(false);
 
     // Views are not accepted (we require ArrayBuffer so it can be transferred).
     expect(isHidInputReportMessage({ ...input, data: new Uint8Array([1]) } as unknown)).toBe(false);
@@ -147,6 +155,10 @@ describe("platform/hid_passthrough_protocol", () => {
     expect(isHidGetFeatureReportMessage(get)).toBe(true);
     expect(isHidPassthroughMessage(get)).toBe(true);
 
+    expect(isHidGetFeatureReportMessage({ ...get, reportId: -1 })).toBe(false);
+    expect(isHidGetFeatureReportMessage({ ...get, reportId: 1.5 })).toBe(false);
+    expect(isHidGetFeatureReportMessage({ ...get, reportId: 256 })).toBe(false);
+
     const ok: HidFeatureReportResultMessage = {
       type: "hid:featureReportResult",
       deviceId: "dev-1",
@@ -157,6 +169,10 @@ describe("platform/hid_passthrough_protocol", () => {
     };
     expect(isHidFeatureReportResultMessage(ok)).toBe(true);
     expect(isHidPassthroughMessage(ok)).toBe(true);
+
+    expect(isHidFeatureReportResultMessage({ ...ok, reportId: -1 } as any)).toBe(false);
+    expect(isHidFeatureReportResultMessage({ ...ok, reportId: 1.5 } as any)).toBe(false);
+    expect(isHidFeatureReportResultMessage({ ...ok, reportId: 256 } as any)).toBe(false);
 
     const err: HidFeatureReportResultMessage = {
       type: "hid:featureReportResult",
