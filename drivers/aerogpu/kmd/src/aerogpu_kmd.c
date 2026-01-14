@@ -3217,18 +3217,20 @@ static NTSTATUS APIENTRY AeroGpuDdiStopDeviceAndReleasePostDisplayOwnership(
         DXGK_FRAMEBUFFER_INFORMATION* fbInfo = pStopDeviceAndReleasePostDisplayOwnership->pFrameBufferInfo;
         if (fbInfo) {
             RtlZeroMemory(fbInfo, sizeof(*fbInfo));
-            fbInfo->FrameBufferBase = adapter->CurrentScanoutFbPa;
+            if (adapter->CurrentScanoutFbPa.QuadPart != 0) {
+                fbInfo->FrameBufferBase = adapter->CurrentScanoutFbPa;
 
-            ULONGLONG len = 0;
-            if (adapter->CurrentPitch != 0 && adapter->CurrentHeight != 0) {
-                len = (ULONGLONG)adapter->CurrentPitch * (ULONGLONG)adapter->CurrentHeight;
-            }
-            if (len > 0xFFFFFFFFull) {
-                len = 0xFFFFFFFFull;
-            }
-            fbInfo->FrameBufferLength = (ULONG)len;
+                ULONGLONG len = 0;
+                if (adapter->CurrentPitch != 0 && adapter->CurrentHeight != 0) {
+                    len = (ULONGLONG)adapter->CurrentPitch * (ULONGLONG)adapter->CurrentHeight;
+                }
+                if (len > 0xFFFFFFFFull) {
+                    len = 0xFFFFFFFFull;
+                }
+                fbInfo->FrameBufferLength = (ULONG)len;
 
-            fbInfo->FrameBufferSegmentId = AEROGPU_SEGMENT_ID_SYSTEM;
+                fbInfo->FrameBufferSegmentId = AEROGPU_SEGMENT_ID_SYSTEM;
+            }
         }
     }
 
@@ -3376,18 +3378,20 @@ static NTSTATUS APIENTRY AeroGpuDdiAcquirePostDisplayOwnership(
         DXGK_FRAMEBUFFER_INFORMATION* fbInfo = pAcquirePostDisplayOwnership->pFrameBufferInfo;
         if (fbInfo) {
             RtlZeroMemory(fbInfo, sizeof(*fbInfo));
-            fbInfo->FrameBufferBase = adapter->CurrentScanoutFbPa;
+            if (adapter->CurrentScanoutFbPa.QuadPart != 0) {
+                fbInfo->FrameBufferBase = adapter->CurrentScanoutFbPa;
 
-            ULONGLONG len = 0;
-            if (adapter->CurrentPitch != 0 && adapter->CurrentHeight != 0) {
-                len = (ULONGLONG)adapter->CurrentPitch * (ULONGLONG)adapter->CurrentHeight;
-            }
-            if (len > 0xFFFFFFFFull) {
-                len = 0xFFFFFFFFull;
-            }
-            fbInfo->FrameBufferLength = (ULONG)len;
+                ULONGLONG len = 0;
+                if (adapter->CurrentPitch != 0 && adapter->CurrentHeight != 0) {
+                    len = (ULONGLONG)adapter->CurrentPitch * (ULONGLONG)adapter->CurrentHeight;
+                }
+                if (len > 0xFFFFFFFFull) {
+                    len = 0xFFFFFFFFull;
+                }
+                fbInfo->FrameBufferLength = (ULONG)len;
 
-            fbInfo->FrameBufferSegmentId = AEROGPU_SEGMENT_ID_SYSTEM;
+                fbInfo->FrameBufferSegmentId = AEROGPU_SEGMENT_ID_SYSTEM;
+            }
         }
     }
 
