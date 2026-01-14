@@ -1,6 +1,7 @@
+use aero_io_snapshot::io::state::codec::Encoder;
 use aero_io_snapshot::io::state::{IoSnapshot, SnapshotWriter};
 use aero_usb::hid::{UsbCompositeHidInputHandle, UsbHidGamepadHandle};
-use aero_usb::{ControlResponse, SetupPacket, UsbDeviceModel};
+use aero_usb::{ControlResponse, SetupPacket, UsbDeviceModel, UsbInResult};
 
 #[test]
 fn hid_gamepad_snapshot_load_clamps_hat_and_axes() {
@@ -82,3 +83,63 @@ fn hid_composite_gamepad_snapshot_load_clamps_hat_and_axes() {
     );
 }
 
+#[test]
+fn hid_gamepad_snapshot_load_sanitizes_pending_reports() {
+    const TAG_CONFIGURATION: u16 = 2;
+    const TAG_PENDING_REPORTS: u16 = 16;
+
+    let pending = vec![vec![0x34, 0x12, 0x0f, 0x80, 0, 0, 0x80, 0xff]];
+
+    let mut w = SnapshotWriter::new(
+        <UsbHidGamepadHandle as IoSnapshot>::DEVICE_ID,
+        <UsbHidGamepadHandle as IoSnapshot>::DEVICE_VERSION,
+    );
+    w.field_u8(TAG_CONFIGURATION, 1);
+    w.field_bytes(TAG_PENDING_REPORTS, Encoder::new().vec_bytes(&pending).finish());
+    let snap = w.finish();
+
+    let mut pad = UsbHidGamepadHandle::new();
+    pad.load_state(&snap).unwrap();
+
+    let report = match pad.handle_in_transfer(0x81, 8) {
+        UsbInResult::Data(data) => data,
+        other => panic!("expected interrupt IN data, got {other:?}"),
+    };
+    assert_eq!(
+        report,
+        vec![0x34, 0x12, 0x08, (-127i8) as u8, 0, 0, (-127i8) as u8, 0]
+    );
+    assert!(matches!(pad.handle_in_transfer(0x81, 8), UsbInResult::Nak));
+}
+
+#[test]
+fn hid_composite_gamepad_snapshot_load_sanitizes_pending_reports() {
+    const TAG_CONFIGURATION: u16 = 2;
+    const TAG_GAMEPAD_PENDING_REPORTS: u16 = 37;
+
+    let pending = vec![vec![0x34, 0x12, 0x0f, 0x80, 0, 0, 0x80, 0xff]];
+
+    let mut w = SnapshotWriter::new(
+        <UsbCompositeHidInputHandle as IoSnapshot>::DEVICE_ID,
+        <UsbCompositeHidInputHandle as IoSnapshot>::DEVICE_VERSION,
+    );
+    w.field_u8(TAG_CONFIGURATION, 1);
+    w.field_bytes(
+        TAG_GAMEPAD_PENDING_REPORTS,
+        Encoder::new().vec_bytes(&pending).finish(),
+    );
+    let snap = w.finish();
+
+    let mut hid = UsbCompositeHidInputHandle::new();
+    hid.load_state(&snap).unwrap();
+
+    let report = match hid.handle_in_transfer(0x83, 8) {
+        UsbInResult::Data(data) => data,
+        other => panic!("expected interrupt IN data, got {other:?}"),
+    };
+    assert_eq!(
+        report,
+        vec![0x34, 0x12, 0x08, (-127i8) as u8, 0, 0, (-127i8) as u8, 0]
+    );
+    assert!(matches!(hid.handle_in_transfer(0x83, 8), UsbInResult::Nak));
+}

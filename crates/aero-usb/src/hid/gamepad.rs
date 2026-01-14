@@ -61,6 +61,21 @@ impl GamepadReport {
     }
 }
 
+pub(super) fn sanitize_gamepad_report_bytes(bytes: [u8; 8]) -> [u8; 8] {
+    let hat = (bytes[2] & 0x0f).min(8);
+    let clamp_axis = |b: u8| (b as i8).clamp(-127, 127) as u8;
+    [
+        bytes[0],
+        bytes[1],
+        hat,
+        clamp_axis(bytes[3]),
+        clamp_axis(bytes[4]),
+        clamp_axis(bytes[5]),
+        clamp_axis(bytes[6]),
+        0,
+    ]
+}
+
 #[derive(Debug)]
 pub struct UsbHidGamepad {
     address: u8,
@@ -269,7 +284,9 @@ impl IoSnapshot for UsbHidGamepad {
             if buf.len() != self.last_report.len() {
                 return Err(SnapshotError::InvalidFieldEncoding("gamepad last report"));
             }
-            self.last_report.copy_from_slice(buf);
+            let mut report = [0u8; 8];
+            report.copy_from_slice(buf);
+            self.last_report = sanitize_gamepad_report_bytes(report);
         }
 
         if let Some(buf) = r.bytes(TAG_PENDING_REPORTS) {
@@ -287,8 +304,9 @@ impl IoSnapshot for UsbHidGamepad {
                     return Err(SnapshotError::InvalidFieldEncoding("gamepad report length"));
                 }
                 let report = d.bytes_vec(len)?;
+                let report = report.try_into().expect("len checked");
                 self.pending_reports
-                    .push_back(report.try_into().expect("len checked"));
+                    .push_back(sanitize_gamepad_report_bytes(report));
             }
             d.finish()?;
         }

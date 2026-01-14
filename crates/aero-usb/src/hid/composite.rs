@@ -875,7 +875,9 @@ impl IoSnapshot for UsbCompositeHidInput {
             if buf.len() != self.gamepad.last_report.len() {
                 return Err(SnapshotError::InvalidFieldEncoding("gamepad last report"));
             }
-            self.gamepad.last_report.copy_from_slice(buf);
+            let mut report = [0u8; 8];
+            report.copy_from_slice(buf);
+            self.gamepad.last_report = super::gamepad::sanitize_gamepad_report_bytes(report);
         }
         if let Some(buf) = r.bytes(TAG_GAMEPAD_PENDING_REPORTS) {
             let mut d = Decoder::new(buf);
@@ -892,9 +894,10 @@ impl IoSnapshot for UsbCompositeHidInput {
                     return Err(SnapshotError::InvalidFieldEncoding("gamepad report length"));
                 }
                 let report = d.bytes_vec(len)?;
+                let report = report.try_into().expect("len checked");
                 self.gamepad
                     .pending_reports
-                    .push_back(report.try_into().expect("len checked"));
+                    .push_back(super::gamepad::sanitize_gamepad_report_bytes(report));
             }
             d.finish()?;
         }
