@@ -3360,8 +3360,6 @@ fn open_or_create_cow_disk<Base, OverlayBackend>(
 ) -> aero_storage::Result<aero_storage::AeroCowDisk<Base, OverlayBackend>>
 where
     Base: aero_storage::VirtualDisk,
-    // `aero_storage::AeroCowDisk` wants its overlay backend to be `Send` on native targets, but not
-    // on wasm32 (OPFS/JS-backed storage is often `!Send`). `VirtualDiskSend` captures that policy.
     OverlayBackend: aero_storage::StorageBackend + aero_storage::VirtualDiskSend,
 {
     let base_size = base.capacity_bytes();

@@ -402,16 +402,13 @@ impl ExpansionScratchAllocator {
         // Retry the allocation in the fresh segment.
         let state = self.state.as_mut().expect("realloc keeps state present");
         let remaining = state.arenas.remaining();
-        let offset =
-            state
-                .arenas
-                .alloc(size, alignment)
-                .ok_or(ExpansionScratchError::OutOfSpace {
-                    requested: size,
-                    alignment,
-                    remaining,
-                    per_frame_capacity: state.arenas.per_frame_capacity,
-                })?;
+        let per_frame_capacity = state.arenas.per_frame_capacity;
+        let offset = state.arenas.alloc(size, alignment).ok_or(ExpansionScratchError::OutOfSpace {
+            requested: size,
+            alignment,
+            remaining,
+            per_frame_capacity,
+        })?;
         Ok(ExpansionScratchAlloc {
             buffer: Arc::clone(&state.buffer),
             offset,

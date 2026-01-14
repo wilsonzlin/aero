@@ -218,7 +218,7 @@ impl XhciHarness {
 
         let pending = self.ep0_pending.as_ref().expect("pending must exist");
         match self.dev.handle_in(0, pending.len) {
-            UsbInResult::Nak => (),
+            UsbInResult::Nak => {}
             UsbInResult::Data(data) => {
                 mem.write(pending.buf_ptr as u32, &data);
                 // STATUS stage: for control-IN, the status stage is an OUT ZLP.
@@ -272,7 +272,7 @@ impl XhciHarness {
             .as_ref()
             .expect("pending bulk out must exist");
         match self.dev.handle_out(pending.ep, &pending.data) {
-            UsbOutResult::Nak => (),
+            UsbOutResult::Nak => {}
             UsbOutResult::Ack => {
                 *cursor = pending.next_cursor;
                 self.completions.push_back(Completion {
@@ -319,7 +319,7 @@ impl XhciHarness {
             .as_ref()
             .expect("pending bulk in must exist");
         match self.dev.handle_in(pending.ep, pending.len) {
-            UsbInResult::Nak => (),
+            UsbInResult::Nak => {}
             UsbInResult::Data(data) => {
                 mem.write(pending.buf_ptr as u32, &data);
                 *cursor = pending.next_cursor;

@@ -4,13 +4,13 @@ const IA32_APIC_BASE_BSP_BIT: u64 = 1 << 8;
 
 #[test]
 fn ia32_apic_base_bsp_bit_is_set_only_on_vcpu0() {
-    let cfg = MachineConfig {
+    let mut m = Machine::new(MachineConfig {
         ram_size_bytes: 2 * 1024 * 1024,
         cpu_count: 2,
         enable_pc_platform: true,
         ..Default::default()
-    };
-    let mut m = Machine::new(cfg).unwrap();
+    })
+    .unwrap();
 
     assert_ne!(m.cpu().msr.apic_base & IA32_APIC_BASE_BSP_BIT, 0);
     assert_eq!(

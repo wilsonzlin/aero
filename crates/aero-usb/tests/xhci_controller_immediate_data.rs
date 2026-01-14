@@ -138,7 +138,7 @@ fn xhci_controller_control_out_immediate_data_stage_is_delivered() {
             (setup.w_length >> 8) as u8,
         ]),
         status: 8,
-        ..Trb::default()
+        ..Default::default()
     };
     setup_trb.set_cycle(true);
     setup_trb.set_trb_type(TrbType::SetupStage);
@@ -164,7 +164,7 @@ fn xhci_controller_control_out_immediate_data_stage_is_delivered() {
 
     let mut link_trb = Trb {
         parameter: transfer_ring_base,
-        ..Trb::default()
+        ..Default::default()
     };
     link_trb.set_cycle(true);
     link_trb.set_trb_type(TrbType::Link);
@@ -226,7 +226,7 @@ fn xhci_controller_control_in_immediate_data_stage_writes_trb_parameter() {
             (setup.w_length >> 8) as u8,
         ]),
         status: 8,
-        ..Trb::default()
+        ..Default::default()
     };
     setup_trb.set_cycle(true);
     setup_trb.set_trb_type(TrbType::SetupStage);
@@ -251,7 +251,7 @@ fn xhci_controller_control_in_immediate_data_stage_writes_trb_parameter() {
 
     let mut link_trb = Trb {
         parameter: transfer_ring_base,
-        ..Trb::default()
+        ..Default::default()
     };
     link_trb.set_cycle(true);
     link_trb.set_trb_type(TrbType::Link);

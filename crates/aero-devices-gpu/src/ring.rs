@@ -91,6 +91,7 @@ pub const FENCE_PAGE_COMPLETED_FENCE_OFFSET: u64 =
 pub const FENCE_PAGE_RESERVED0_OFFSET: u64 =
     offset_of!(protocol_ring::AerogpuFencePage, reserved0) as u64;
 
+// Compile-time layout assertions for the fence page writeback protocol.
 const _: () = {
     assert!(FENCE_PAGE_MAGIC_OFFSET + 4 <= AEROGPU_FENCE_PAGE_SIZE_BYTES);
     assert!(FENCE_PAGE_ABI_VERSION_OFFSET + 4 <= AEROGPU_FENCE_PAGE_SIZE_BYTES);

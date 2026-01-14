@@ -204,7 +204,6 @@ fn pc_platform_xhci_msix_triggers_lapic_vector_and_suppresses_intx() {
     // Enable MSI-X.
     let ctrl = pci_cfg_read_u16(&mut pc, bdf, msix_base + 0x02);
     pci_cfg_write_u16(&mut pc, bdf, msix_base + 0x02, ctrl | (1 << 15));
-
     // Program table entry 0: destination = BSP (APIC ID 0), vector = 0x65.
     let entry0 = bar0_base + table_offset;
     pc.memory.write_u32(entry0, 0xfee0_0000);

@@ -569,10 +569,7 @@ mod tests {
     #[test]
     fn dos_guard_accepts_header_at_max_len() {
         let mut header = "bytes=0-0".to_string();
-        header.extend(std::iter::repeat_n(
-            ' ',
-            MAX_RANGE_HEADER_LEN - header.len(),
-        ));
+        header.extend(std::iter::repeat_n(' ', MAX_RANGE_HEADER_LEN - header.len()));
         assert_eq!(header.len(), MAX_RANGE_HEADER_LEN);
 
         let specs = parse_range_header(&header).unwrap();
@@ -585,10 +582,7 @@ mod tests {
         // is applied before trimming; this ensures excessively padded headers are
         // still rejected.
         let mut header = "bytes=0-0".to_string();
-        header.extend(std::iter::repeat_n(
-            ' ',
-            MAX_RANGE_HEADER_LEN + 1 - header.len(),
-        ));
+        header.extend(std::iter::repeat_n(' ', MAX_RANGE_HEADER_LEN + 1 - header.len()));
         assert_eq!(header.len(), MAX_RANGE_HEADER_LEN + 1);
 
         assert!(matches!(

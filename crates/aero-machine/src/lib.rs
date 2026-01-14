@@ -12568,18 +12568,22 @@ impl Machine {
     }
 
     fn legacy_vga_device_config(&self) -> VgaConfig {
-        let mut cfg = VgaConfig {
-            vram_size: self.legacy_vga_vram_size_bytes(),
+        let vram_size = self.legacy_vga_vram_size_bytes();
+        // Avoid panicking on invalid configuration; clamp to the allocated VRAM size so the VGA
+        // device model's invariants hold.
+        let max_off = u32::try_from(vram_size).unwrap_or(u32::MAX);
+        let lfb_offset = self
+            .cfg
+            .vga_lfb_offset
+            .unwrap_or(aero_gpu_vga::VBE_FRAMEBUFFER_OFFSET as u32)
+            .min(max_off);
+
+        VgaConfig {
+            vram_size,
+            lfb_offset,
+            vram_bar_base: self.legacy_vga_lfb_base().wrapping_sub(lfb_offset),
             ..Default::default()
-        };
-        if let Some(lfb_offset) = self.cfg.vga_lfb_offset {
-            // Avoid panicking on invalid configuration; clamp to the allocated VRAM size so the
-            // VGA device model's invariants hold.
-            let max_off = u32::try_from(cfg.vram_size).unwrap_or(u32::MAX);
-            cfg.lfb_offset = lfb_offset.min(max_off);
         }
-        cfg.vram_bar_base = self.legacy_vga_lfb_base().wrapping_sub(cfg.lfb_offset);
-        cfg
     }
 
     fn sync_bios_vbe_lfb_base_to_display_wiring(&mut self) {

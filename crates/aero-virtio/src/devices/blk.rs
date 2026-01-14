@@ -908,10 +908,7 @@ impl VirtioDevice for VirtioBlk {
                                                         if read_buf[..take].iter().any(|b| *b != 0)
                                                             && self
                                                                 .disk
-                                                                .write_at(
-                                                                    scan_off,
-                                                                    &zero_buf[..take],
-                                                                )
+                                                                .write_at(scan_off, &zero_buf[..take])
                                                                 .is_err()
                                                         {
                                                             status = VIRTIO_BLK_S_IOERR;

@@ -390,7 +390,7 @@ fn dsm_rejects_reserved_cdw10_bits_even_without_deallocate() {
     let mut cmd = build_command(0x09);
     set_cid(&mut cmd, 0x44);
     set_nsid(&mut cmd, 1);
-    set_cdw10(&mut cmd, 1 << 31); // reserved bit + NR=0
+    set_cdw10(&mut cmd, 1u32 << 31); // reserved bit + NR=0
     set_cdw11(&mut cmd, 1 << 0); // IDR hint only
     mem.write_physical(io_sq, &cmd);
     ctrl.mmio_write(0x1008, 4, 1);
