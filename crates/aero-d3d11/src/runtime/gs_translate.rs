@@ -618,6 +618,13 @@ fn scan_src_operand(
                     msg: "RegFile::Input is not supported in GS prepass; expected v#[] (SrcKind::GsInput)".to_owned(),
                 });
             }
+            if reg.file == RegFile::OutputDepth {
+                return Err(GsTranslateError::UnsupportedOperand {
+                    inst_index,
+                    opcode,
+                    msg: "RegFile::OutputDepth is not supported in GS prepass".to_owned(),
+                });
+            }
         }
         SrcKind::GsInput { reg, vertex } => {
             *max_gs_input_reg = (*max_gs_input_reg).max(*reg as i32);
