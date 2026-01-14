@@ -3248,6 +3248,12 @@ const analyzeAerogpuCmdStream = (cmdStream: ArrayBuffer): AerogpuCmdStreamAnalys
         case AerogpuCmdOpcode.CopyBuffer:
         case AerogpuCmdOpcode.CopyTexture2d:
         case AerogpuCmdOpcode.SetRenderTargets:
+        case AerogpuCmdOpcode.CreateSampler:
+        case AerogpuCmdOpcode.DestroySampler:
+        case AerogpuCmdOpcode.SetSamplers:
+        case AerogpuCmdOpcode.SetConstantBuffers:
+        case AerogpuCmdOpcode.SetShaderResourceBuffers:
+        case AerogpuCmdOpcode.SetUnorderedAccessBuffers:
         case AerogpuCmdOpcode.Present:
         case AerogpuCmdOpcode.PresentEx:
         case AerogpuCmdOpcode.ExportSharedSurface:
