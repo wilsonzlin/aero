@@ -39,11 +39,19 @@ SRC_DIR = ROOT / "drivers" / "aerogpu" / "kmd" / "src"
 HDR = ROOT / "drivers" / "aerogpu" / "kmd" / "include" / "aerogpu_kmd.h"
 
 
-FENCE_FIELDS = {
+ATOMIC_U64_FIELDS = {
+    # Fence tracking.
     "LastSubmittedFence",
     "LastCompletedFence",
+    # Sticky error IRQ tracking / telemetry.
+    "ErrorIrqCount",
     "LastErrorFence",
     "LastNotifiedErrorFence",
+    "LastErrorTime100ns",
+    # VBlank / scanline estimation telemetry.
+    "LastVblankSeq",
+    "LastVblankTimeNs",
+    "LastVblankInterruptTime100ns",
 }
 
 TYPE_KEYWORDS = {
@@ -456,7 +464,7 @@ def _check_header_invariants() -> list[str]:
 
     text = HDR.read_text(encoding="utf-8", errors="replace")
 
-    for field in sorted(FENCE_FIELDS):
+    for field in sorted(ATOMIC_U64_FIELDS):
         decl_re = re.compile(rf"DECLSPEC_ALIGN\s*\(\s*8\s*\)[^;]*\bULONGLONG\b[^;]*\b{re.escape(field)}\b\s*;",
                              re.MULTILINE)
         if not decl_re.search(text):
@@ -520,7 +528,7 @@ def main() -> int:
                 if paren_stack:
                     paren_stack.pop()
 
-            if tok.kind == "ident" and tok.value in FENCE_FIELDS and i >= 2 and tokens[i - 1].value in ("->", "."):
+            if tok.kind == "ident" and tok.value in ATOMIC_U64_FIELDS and i >= 2 and tokens[i - 1].value in ("->", "."):
                 # Find the start of the object expression in `<obj>-><field>`.
                 obj_end_idx = i - 2
                 obj_start_idx = _member_expr_start(tokens, obj_end_idx)
