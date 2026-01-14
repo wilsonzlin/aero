@@ -405,7 +405,25 @@ static bool ApplyDisplayModeAndWaitEx(const DEVMODEW& target,
     remaining = timeout_ms - elapsed;
   }
   DWORD wait_start = GetTickCount();
+  DEVMODEW last_mode;
+  ZeroMemory(&last_mode, sizeof(last_mode));
+  last_mode.dmSize = sizeof(last_mode);
+  bool have_last_mode = false;
   for (;;) {
+    // Prefer EnumDisplaySettingsW(ENUM_CURRENT_SETTINGS) over GetSystemMetrics: metrics can lag or
+    // reflect virtualized work areas in some configurations.
+    DEVMODEW cur;
+    ZeroMemory(&cur, sizeof(cur));
+    cur.dmSize = sizeof(cur);
+    if (EnumDisplaySettingsW(NULL, ENUM_CURRENT_SETTINGS, &cur)) {
+      last_mode = cur;
+      have_last_mode = true;
+      if (cur.dmPelsWidth == target.dmPelsWidth && cur.dmPelsHeight == target.dmPelsHeight) {
+        return true;
+      }
+    }
+
+    // Fallback/secondary signal: desktop metrics.
     const int w = GetSystemMetrics(SM_CXSCREEN);
     const int h = GetSystemMetrics(SM_CYSCREEN);
     if (w == (int)target.dmPelsWidth && h == (int)target.dmPelsHeight) {
@@ -420,12 +438,25 @@ static bool ApplyDisplayModeAndWaitEx(const DEVMODEW& target,
   if (err) {
     const int w = GetSystemMetrics(SM_CXSCREEN);
     const int h = GetSystemMetrics(SM_CYSCREEN);
-    *err = aerogpu_test::FormatString("desktop resolution did not update within %lu ms (have=%dx%d want=%lux%lu)",
-                                      (unsigned long)timeout_ms,
-                                      w,
-                                      h,
-                                      (unsigned long)target.dmPelsWidth,
-                                      (unsigned long)target.dmPelsHeight);
+    if (have_last_mode) {
+      *err = aerogpu_test::FormatString(
+          "desktop resolution did not update within %lu ms (metrics=%dx%d mode=%lux%lu want=%lux%lu)",
+          (unsigned long)timeout_ms,
+          w,
+          h,
+          (unsigned long)last_mode.dmPelsWidth,
+          (unsigned long)last_mode.dmPelsHeight,
+          (unsigned long)target.dmPelsWidth,
+          (unsigned long)target.dmPelsHeight);
+    } else {
+      *err = aerogpu_test::FormatString(
+          "desktop resolution did not update within %lu ms (metrics=%dx%d want=%lux%lu)",
+          (unsigned long)timeout_ms,
+          w,
+          h,
+          (unsigned long)target.dmPelsWidth,
+          (unsigned long)target.dmPelsHeight);
+    }
   }
   return false;
 }
