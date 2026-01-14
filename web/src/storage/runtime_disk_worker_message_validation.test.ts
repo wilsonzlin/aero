@@ -47,5 +47,49 @@ describe("runtime disk worker message validation", () => {
       else delete (Object.prototype as any).op;
     }
   });
-});
 
+  it("does not accept open payload fields inherited from Object.prototype", async () => {
+    const specExisting = Object.getOwnPropertyDescriptor(Object.prototype, "spec");
+    if (specExisting && specExisting.configurable === false) {
+      // Extremely unlikely, but avoid breaking the test environment.
+      return;
+    }
+
+    const dummyLocalMeta: DiskImageMetadata = {
+      source: "local",
+      id: "disk1",
+      name: "disk1",
+      backend: "idb",
+      kind: "hdd",
+      format: "raw",
+      fileName: "disk1.img",
+      sizeBytes: 2 * 1024 * 1024,
+      createdAtMs: 0,
+    };
+
+    const posted: any[] = [];
+    const disk = { sectorSize: 512, capacityBytes: dummyLocalMeta.sizeBytes, async readSectors() {}, async writeSectors() {}, async flush() {} };
+    const openDisk: OpenDiskFn = vi.fn(async () => ({ disk, readOnly: false, backendSnapshot: null }));
+    const worker = new RuntimeDiskWorker((msg) => posted.push(msg), openDisk);
+
+    try {
+      Object.defineProperty(Object.prototype, "spec", { value: { kind: "local", meta: dummyLocalMeta }, configurable: true });
+
+      await worker.handleMessage({
+        type: "request",
+        requestId: 1,
+        op: "open",
+        // Missing `spec` must not be satisfied by prototype pollution.
+        payload: {},
+      } as any);
+
+      const resp = posted.shift();
+      expect(resp.ok).toBe(false);
+      expect(String(resp.error?.message ?? "")).toMatch(/open payload/i);
+      expect(openDisk).toHaveBeenCalledTimes(0);
+    } finally {
+      if (specExisting) Object.defineProperty(Object.prototype, "spec", specExisting);
+      else delete (Object.prototype as any).spec;
+    }
+  });
+});

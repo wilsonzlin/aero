@@ -28,7 +28,7 @@ import type {
 import { normalizeDiskOpenSpec } from "./runtime_disk_protocol";
 import { idbDeleteDiskData, opfsDeleteDisk, opfsGetDiskFileHandle } from "./import_export";
 import { RemoteRangeDisk, defaultRemoteRangeUrl, type RemoteRangeDiskMetadataStore } from "./remote_range_disk";
-import { RemoteChunkedDisk } from "./remote_chunked_disk";
+import { RemoteChunkedDisk, type RemoteChunkedDiskOpenOptions } from "./remote_chunked_disk";
 import { RANGE_STREAM_CHUNK_SIZE } from "./chunk_sizes";
 import {
   RemoteCacheManager,
@@ -1265,9 +1265,15 @@ export class RuntimeDiskWorker {
   }
 
   private normalizeOpenPayload(payload: OpenRequestPayload | any): OpenRequestPayload {
+    if (!isRecord(payload)) {
+      throw new Error("invalid open payload (expected object)");
+    }
     // Backward-compat: older clients sent `{ meta, ... }`.
-    if (payload && typeof payload === "object" && payload.meta && !payload.spec) {
-      return { ...payload, spec: { kind: "local", meta: payload.meta } };
+    if (hasOwn(payload, "meta") && !hasOwn(payload, "spec")) {
+      return { ...(payload as Record<string, unknown>), spec: { kind: "local", meta: (payload as Record<string, unknown>).meta } } as OpenRequestPayload;
+    }
+    if (!hasOwn(payload, "spec")) {
+      throw new Error("invalid open payload (missing spec)");
     }
     return payload as OpenRequestPayload;
   }
@@ -1276,8 +1282,15 @@ export class RuntimeDiskWorker {
     switch (msg.op) {
       case "open": {
         const payload = this.normalizeOpenPayload(msg.payload);
+        const payloadRec = payload as unknown as Record<string, unknown>;
         const spec = normalizeDiskOpenSpec(payload.spec);
-        const entry = await this.openDisk(spec, payload.mode ?? "cow", payload.overlayBlockSizeBytes);
+        const modeRaw = hasOwn(payloadRec, "mode") ? payloadRec.mode : undefined;
+        const mode = modeRaw === undefined ? "cow" : modeRaw;
+        if (mode !== "cow" && mode !== "direct") {
+          throw new Error(`invalid mode=${String(mode)}`);
+        }
+        const overlayBlockSizeBytes = hasOwn(payloadRec, "overlayBlockSizeBytes") ? payloadRec.overlayBlockSizeBytes : undefined;
+        const entry = await this.openDisk(spec, mode, overlayBlockSizeBytes as any);
         const handle = this.nextHandle++;
         this.disks.set(handle, { ...entry, io: emptyIoTelemetry() });
         this.postOk(msg.requestId, {
@@ -1290,8 +1303,17 @@ export class RuntimeDiskWorker {
       }
 
       case "openRemote": {
-        const { url, options } = msg.payload;
-        const entry: DiskEntry = { disk: await openRemoteDisk(url, options), readOnly: true, backendSnapshot: null };
+        if (!isRecord(msg.payload)) {
+          throw new Error("invalid openRemote payload (expected object)");
+        }
+        const payload = msg.payload as Record<string, unknown>;
+        const urlRaw = hasOwn(payload, "url") ? payload.url : undefined;
+        if (typeof urlRaw !== "string" || !urlRaw.trim()) {
+          throw new Error("invalid openRemote url");
+        }
+        const optionsRaw = hasOwn(payload, "options") ? payload.options : undefined;
+        const options = optionsRaw === undefined ? undefined : (optionsRaw as RemoteDiskOptions);
+        const entry: DiskEntry = { disk: await openRemoteDisk(urlRaw, options), readOnly: true, backendSnapshot: null };
         const handle = this.nextHandle++;
         this.disks.set(handle, { ...entry, io: emptyIoTelemetry() });
         this.postOk(msg.requestId, {
@@ -1304,8 +1326,21 @@ export class RuntimeDiskWorker {
       }
 
       case "openChunked": {
-        const { manifestUrl, options } = msg.payload;
-        const entry: DiskEntry = { disk: await RemoteChunkedDisk.open(manifestUrl, options), readOnly: true, backendSnapshot: null };
+        if (!isRecord(msg.payload)) {
+          throw new Error("invalid openChunked payload (expected object)");
+        }
+        const payload = msg.payload as Record<string, unknown>;
+        const manifestUrlRaw = hasOwn(payload, "manifestUrl") ? payload.manifestUrl : undefined;
+        if (typeof manifestUrlRaw !== "string" || !manifestUrlRaw.trim()) {
+          throw new Error("invalid openChunked manifestUrl");
+        }
+        const optionsRaw = hasOwn(payload, "options") ? payload.options : undefined;
+        const options = optionsRaw === undefined ? undefined : (optionsRaw as RemoteChunkedDiskOpenOptions);
+        const entry: DiskEntry = {
+          disk: await RemoteChunkedDisk.open(manifestUrlRaw, options),
+          readOnly: true,
+          backendSnapshot: null,
+        };
         const handle = this.nextHandle++;
         this.disks.set(handle, { ...entry, io: emptyIoTelemetry() });
         this.postOk(msg.requestId, {
@@ -1318,7 +1353,9 @@ export class RuntimeDiskWorker {
       }
 
       case "close": {
-        const { handle } = msg.payload;
+        if (!isRecord(msg.payload)) throw new Error("invalid close payload (expected object)");
+        const payload = msg.payload as Record<string, unknown>;
+        const handle = requireSafeNonNegativeInteger(hasOwn(payload, "handle") ? payload.handle : undefined, "handle");
         const entry = await this.requireDisk(handle);
         await entry.disk.close?.();
         this.disks.delete(handle);
@@ -1327,7 +1364,9 @@ export class RuntimeDiskWorker {
       }
 
       case "flush": {
-        const { handle } = msg.payload;
+        if (!isRecord(msg.payload)) throw new Error("invalid flush payload (expected object)");
+        const payload = msg.payload as Record<string, unknown>;
+        const handle = requireSafeNonNegativeInteger(hasOwn(payload, "handle") ? payload.handle : undefined, "handle");
         const entry = await this.requireDisk(handle);
         const start = performance.now();
         entry.io.flushes++;
@@ -1343,7 +1382,9 @@ export class RuntimeDiskWorker {
       }
 
       case "clearCache": {
-        const { handle } = msg.payload;
+        if (!isRecord(msg.payload)) throw new Error("invalid clearCache payload (expected object)");
+        const payload = msg.payload as Record<string, unknown>;
+        const handle = requireSafeNonNegativeInteger(hasOwn(payload, "handle") ? payload.handle : undefined, "handle");
         const entry = await this.requireDisk(handle);
         const diskAny = entry.disk as unknown as { clearCache?: () => Promise<void> };
         if (typeof diskAny.clearCache !== "function") {
@@ -1356,11 +1397,12 @@ export class RuntimeDiskWorker {
       }
 
       case "read": {
-        const { handle, lba, byteLength } = msg.payload;
+        if (!isRecord(msg.payload)) throw new Error("invalid read payload (expected object)");
+        const payload = msg.payload as Record<string, unknown>;
+        const handle = requireSafeNonNegativeInteger(hasOwn(payload, "handle") ? payload.handle : undefined, "handle");
+        const lba = requireSafeNonNegativeInteger(hasOwn(payload, "lba") ? payload.lba : undefined, "lba");
+        const byteLength = requireSafeNonNegativeInteger(hasOwn(payload, "byteLength") ? payload.byteLength : undefined, "byteLength");
         const entry = await this.requireDisk(handle);
-        if (!Number.isSafeInteger(byteLength) || byteLength < 0) {
-          throw new Error(`invalid read byteLength=${String(byteLength)}`);
-        }
         if (byteLength > RUNTIME_DISK_MAX_IO_BYTES) {
           throw new Error(`read too large: ${byteLength} bytes (max ${RUNTIME_DISK_MAX_IO_BYTES})`);
         }
@@ -1383,7 +1425,12 @@ export class RuntimeDiskWorker {
       }
 
       case "readInto": {
-        const { handle, lba, byteLength: byteLengthRaw, dest } = msg.payload;
+        if (!isRecord(msg.payload)) throw new Error("invalid readInto payload (expected object)");
+        const payload = msg.payload as Record<string, unknown>;
+        const handle = requireSafeNonNegativeInteger(hasOwn(payload, "handle") ? payload.handle : undefined, "handle");
+        const lba = requireSafeNonNegativeInteger(hasOwn(payload, "lba") ? payload.lba : undefined, "lba");
+        const byteLengthRaw = hasOwn(payload, "byteLength") ? payload.byteLength : undefined;
+        const dest = hasOwn(payload, "dest") ? payload.dest : undefined;
         const entry = await this.requireDisk(handle);
 
         const byteLength = requireSafeNonNegativeInteger(byteLengthRaw, "byteLength");
@@ -1393,11 +1440,13 @@ export class RuntimeDiskWorker {
         assertSectorAligned(byteLength, entry.disk.sectorSize);
         checkedOffset(lba, byteLength, entry.disk.sectorSize);
 
-        if (!dest || typeof dest !== "object") {
+        if (!isRecord(dest)) {
           throw new Error("invalid dest");
         }
         const destRecord = dest as Record<string, unknown>;
-        const { view } = createSabView(destRecord["sab"], destRecord["offsetBytes"], byteLength, "dest");
+        const sab = hasOwn(destRecord, "sab") ? destRecord.sab : undefined;
+        const offsetBytes = hasOwn(destRecord, "offsetBytes") ? destRecord.offsetBytes : undefined;
+        const { view } = createSabView(sab, offsetBytes, byteLength, "dest");
 
         const start = performance.now();
         entry.io.reads++;
@@ -1416,7 +1465,11 @@ export class RuntimeDiskWorker {
       }
 
       case "write": {
-        const { handle, lba, data } = msg.payload;
+        if (!isRecord(msg.payload)) throw new Error("invalid write payload (expected object)");
+        const payload = msg.payload as Record<string, unknown>;
+        const handle = requireSafeNonNegativeInteger(hasOwn(payload, "handle") ? payload.handle : undefined, "handle");
+        const lba = requireSafeNonNegativeInteger(hasOwn(payload, "lba") ? payload.lba : undefined, "lba");
+        const data = hasOwn(payload, "data") ? payload.data : undefined;
         const entry = await this.requireDisk(handle);
         if (entry.readOnly) throw new Error("disk is read-only");
         if (!(data instanceof Uint8Array)) {
@@ -1442,22 +1495,31 @@ export class RuntimeDiskWorker {
       }
 
       case "writeFrom": {
-        const { handle, lba, src } = msg.payload;
+        if (!isRecord(msg.payload)) throw new Error("invalid writeFrom payload (expected object)");
+        const payload = msg.payload as Record<string, unknown>;
+        const handle = requireSafeNonNegativeInteger(hasOwn(payload, "handle") ? payload.handle : undefined, "handle");
+        const lba = requireSafeNonNegativeInteger(hasOwn(payload, "lba") ? payload.lba : undefined, "lba");
+        const src = hasOwn(payload, "src") ? payload.src : undefined;
         const entry = await this.requireDisk(handle);
         if (entry.readOnly) throw new Error("disk is read-only");
 
-        if (!src || typeof src !== "object") {
+        if (!isRecord(src)) {
           throw new Error("invalid src");
         }
         const srcRecord = src as Record<string, unknown>;
-        const byteLength = requireSafeNonNegativeInteger(srcRecord["byteLength"], "src.byteLength");
+        const byteLength = requireSafeNonNegativeInteger(
+          hasOwn(srcRecord, "byteLength") ? srcRecord.byteLength : undefined,
+          "src.byteLength",
+        );
         if (byteLength > RUNTIME_DISK_MAX_IO_BYTES) {
           throw new Error(`writeFrom too large: ${byteLength} bytes (max ${RUNTIME_DISK_MAX_IO_BYTES})`);
         }
         assertSectorAligned(byteLength, entry.disk.sectorSize);
         checkedOffset(lba, byteLength, entry.disk.sectorSize);
 
-        const { view } = createSabView(srcRecord["sab"], srcRecord["offsetBytes"], byteLength, "src");
+        const sab = hasOwn(srcRecord, "sab") ? srcRecord.sab : undefined;
+        const offsetBytes = hasOwn(srcRecord, "offsetBytes") ? srcRecord.offsetBytes : undefined;
+        const { view } = createSabView(sab, offsetBytes, byteLength, "src");
 
         const start = performance.now();
         entry.io.writes++;
@@ -1476,7 +1538,9 @@ export class RuntimeDiskWorker {
       }
 
       case "stats": {
-        const { handle } = msg.payload;
+        if (!isRecord(msg.payload)) throw new Error("invalid stats payload (expected object)");
+        const payload = msg.payload as Record<string, unknown>;
+        const handle = requireSafeNonNegativeInteger(hasOwn(payload, "handle") ? payload.handle : undefined, "handle");
         const entry = await this.requireDisk(handle);
         const diskAny = entry.disk as unknown as { getTelemetrySnapshot?: () => RemoteDiskTelemetrySnapshot };
         const remote = typeof diskAny.getTelemetrySnapshot === "function" ? diskAny.getTelemetrySnapshot() : null;
@@ -1531,7 +1595,13 @@ export class RuntimeDiskWorker {
       }
 
       case "restoreFromSnapshot": {
-        const snapshot = deserializeRuntimeDiskSnapshot(msg.payload.state);
+        if (!isRecord(msg.payload)) throw new Error("invalid restoreFromSnapshot payload (expected object)");
+        const payload = msg.payload as Record<string, unknown>;
+        const state = hasOwn(payload, "state") ? payload.state : undefined;
+        if (!(state instanceof Uint8Array)) {
+          throw new Error("invalid restoreFromSnapshot state (expected Uint8Array)");
+        }
+        const snapshot = deserializeRuntimeDiskSnapshot(state);
 
         for (const entry of this.disks.values()) {
           await entry.disk.close?.();
@@ -1562,17 +1632,19 @@ export class RuntimeDiskWorker {
       }
 
       case "bench": {
-        const { handle } = msg.payload;
+        if (!isRecord(msg.payload)) throw new Error("invalid bench payload (expected object)");
+        const payload = msg.payload as Record<string, unknown>;
+        const handle = requireSafeNonNegativeInteger(hasOwn(payload, "handle") ? payload.handle : undefined, "handle");
         const entry = await this.requireDisk(handle);
 
-        const totalBytes = requireSafeNonNegativeInteger(msg.payload.totalBytes, "totalBytes");
-        const chunkBytesRaw = msg.payload.chunkBytes;
+        const totalBytes = requireSafeNonNegativeInteger(hasOwn(payload, "totalBytes") ? payload.totalBytes : undefined, "totalBytes");
+        const chunkBytesRaw = hasOwn(payload, "chunkBytes") ? payload.chunkBytes : undefined;
         const chunkBytes = chunkBytesRaw === undefined ? undefined : requireSafeNonNegativeInteger(chunkBytesRaw, "chunkBytes");
         if (chunkBytes !== undefined && chunkBytes > RUNTIME_DISK_MAX_IO_BYTES) {
           throw new Error(`bench chunkBytes too large: ${chunkBytes} bytes (max ${RUNTIME_DISK_MAX_IO_BYTES})`);
         }
 
-        const mode = msg.payload.mode;
+        const mode = hasOwn(payload, "mode") ? payload.mode : undefined;
         const selected = mode ?? "rw";
         if (selected !== "read" && selected !== "write" && selected !== "rw") {
           throw new Error(`invalid mode=${String(selected)}`);
