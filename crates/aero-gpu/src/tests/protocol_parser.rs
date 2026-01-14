@@ -219,7 +219,7 @@ fn protocol_parses_all_opcodes() {
             push_u32(out, 1); // vs
             push_u32(out, 2); // ps
             push_u32(out, 3); // cs
-            push_u32(out, 0); // reserved0
+            push_u32(out, 4); // reserved0 (gs)
         });
 
         emit_packet(out, AeroGpuOpcode::SetShaderConstantsF as u32, |out| {
@@ -597,10 +597,13 @@ fn protocol_parses_all_opcodes() {
     }
 
     match cmds.next().unwrap() {
-        AeroGpuCmd::BindShaders { vs, ps, cs } => {
+        AeroGpuCmd::BindShaders { vs, ps, cs, gs, hs, ds } => {
             assert_eq!(vs, 1);
             assert_eq!(ps, 2);
             assert_eq!(cs, 3);
+            assert_eq!(gs, 4);
+            assert_eq!(hs, 0);
+            assert_eq!(ds, 0);
         }
         other => panic!("unexpected cmd: {other:?}"),
     }
@@ -1163,8 +1166,8 @@ fn protocol_accepts_extended_bind_shaders_packet() {
     let parsed = parse_cmd_stream(&stream).expect("parse should succeed");
     assert_eq!(parsed.cmds.len(), 1);
     match &parsed.cmds[0] {
-        AeroGpuCmd::BindShaders { vs, ps, cs } => {
-            assert_eq!((*vs, *ps, *cs), (1, 2, 3));
+        AeroGpuCmd::BindShaders { vs, ps, cs, gs, hs, ds } => {
+            assert_eq!((*vs, *ps, *cs, *gs, *hs, *ds), (1, 2, 3, 4, 5, 6));
         }
         other => panic!("expected BindShaders cmd, got {other:?}"),
     }

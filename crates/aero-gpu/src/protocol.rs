@@ -274,6 +274,9 @@ pub enum AeroGpuCmd<'a> {
         vs: u32,
         ps: u32,
         cs: u32,
+        gs: u32,
+        hs: u32,
+        ds: u32,
     },
     SetShaderConstantsF {
         stage: u32,
@@ -668,12 +671,19 @@ pub fn parse_cmd_stream(
                 }
             }
             Some(AeroGpuOpcode::BindShaders) => {
-                let (cmd, _ex) = protocol::decode_cmd_bind_shaders_payload_le(packet)
+                let (cmd, ex) = protocol::decode_cmd_bind_shaders_payload_le(packet)
                     .map_err(|_| AeroGpuCmdStreamParseError::BufferTooSmall)?;
+                let (gs, hs, ds) = match ex {
+                    Some(ex) => (ex.gs, ex.hs, ex.ds),
+                    None => (cmd.gs(), 0, 0),
+                };
                 AeroGpuCmd::BindShaders {
                     vs: cmd.vs,
                     ps: cmd.ps,
                     cs: cmd.cs,
+                    gs,
+                    hs,
+                    ds,
                 }
             }
             Some(AeroGpuOpcode::SetShaderConstantsF) => {

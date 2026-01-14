@@ -288,6 +288,9 @@ struct PipelineState {
     index_buffer: Option<IndexBufferBinding>,
     input_layout: u32,
     vs: u32,
+    gs: u32,
+    hs: u32,
+    ds: u32,
     ps: u32,
     cs: u32,
 }
@@ -311,6 +314,9 @@ impl Default for PipelineState {
             index_buffer: None,
             input_layout: 0,
             vs: 0,
+            gs: 0,
+            hs: 0,
+            ds: 0,
             ps: 0,
             cs: 0,
         }
@@ -3506,7 +3512,7 @@ impl AeroGpuSoftwareExecutor {
                 self.shaders.remove(&handle);
             }
             cmd::AerogpuCmdOpcode::BindShaders => {
-                let (packet_cmd, _ex) = match cmd::decode_cmd_bind_shaders_payload_le(packet) {
+                let (packet_cmd, ex) = match cmd::decode_cmd_bind_shaders_payload_le(packet) {
                     Ok(v) => v,
                     Err(_) => {
                         Self::record_error(regs);
@@ -3516,6 +3522,18 @@ impl AeroGpuSoftwareExecutor {
                 self.state.vs = packet_cmd.vs;
                 self.state.ps = packet_cmd.ps;
                 self.state.cs = packet_cmd.cs;
+                match ex {
+                    Some(ex) => {
+                        self.state.gs = ex.gs;
+                        self.state.hs = ex.hs;
+                        self.state.ds = ex.ds;
+                    }
+                    None => {
+                        self.state.gs = packet_cmd.gs();
+                        self.state.hs = 0;
+                        self.state.ds = 0;
+                    }
+                }
             }
             cmd::AerogpuCmdOpcode::SetShaderConstantsF => {
                 // Currently ignored by the software backend.
