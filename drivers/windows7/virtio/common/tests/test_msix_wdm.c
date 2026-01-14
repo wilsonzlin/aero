@@ -63,6 +63,28 @@ static VOID ke_insert_queue_dpc_hook(_Inout_ PKDPC Dpc,
     ctx->call_count++;
 }
 
+typedef struct io_connect_interrupt_ex_hook_ctx {
+    ULONG message_id_to_trigger;
+    int call_count;
+} io_connect_interrupt_ex_hook_ctx_t;
+
+static VOID io_connect_interrupt_ex_hook_trigger_message(_Inout_ PIO_CONNECT_INTERRUPT_PARAMETERS Parameters, _In_opt_ PVOID Context)
+{
+    io_connect_interrupt_ex_hook_ctx_t* ctx = (io_connect_interrupt_ex_hook_ctx_t*)Context;
+    assert(ctx != NULL);
+    assert(Parameters != NULL);
+    assert(Parameters->Version == CONNECT_MESSAGE_BASED);
+    assert(Parameters->MessageBased.MessageInfo != NULL);
+    assert(ctx->message_id_to_trigger < Parameters->MessageBased.MessageInfo->MessageCount);
+    ctx->call_count++;
+
+    /*
+     * Simulate an interrupt arriving immediately after IoConnectInterruptEx
+     * establishes the connection, but before the driver's connect helper returns.
+     */
+    assert(WdkTestTriggerMessageInterrupt(Parameters->MessageBased.MessageInfo, ctx->message_id_to_trigger) != FALSE);
+}
+
 static VOID evt_config(_In_ PDEVICE_OBJECT DeviceObject, _In_opt_ PVOID Cookie)
 {
     msix_test_ctx_t* ctx = (msix_test_ctx_t*)Cookie;
@@ -413,6 +435,48 @@ static void test_isr_returns_false_for_out_of_range_message_id(void)
     VirtioMsixDisconnect(&msix);
 }
 
+static void test_interrupt_during_connect_is_handled(void)
+{
+    VIRTIO_MSIX_WDM msix;
+    DEVICE_OBJECT dev;
+    DEVICE_OBJECT pdo;
+    CM_PARTIAL_RESOURCE_DESCRIPTOR desc;
+    msix_test_ctx_t ctx;
+    io_connect_interrupt_ex_hook_ctx_t hook_ctx;
+    NTSTATUS status;
+
+    desc = make_msg_desc(1); /* single vector fallback */
+    RtlZeroMemory(&ctx, sizeof(ctx));
+    RtlZeroMemory(&hook_ctx, sizeof(hook_ctx));
+
+    hook_ctx.message_id_to_trigger = 0;
+    ctx.expected_msix = &msix;
+
+    WdkTestResetKeInsertQueueDpcCounts();
+    WdkTestSetIoConnectInterruptExHook(io_connect_interrupt_ex_hook_trigger_message, &hook_ctx);
+
+    status = VirtioMsixConnect(&dev, &pdo, &desc, 1, NULL, evt_config, evt_drain, &ctx, &msix);
+    assert(status == STATUS_SUCCESS);
+    assert(msix.UsedVectorCount == 1);
+
+    /* Hook must have fired exactly once and queued a DPC. */
+    assert(hook_ctx.call_count == 1);
+    assert(msix.DpcInFlight == 1);
+    assert(msix.Vectors[0].Dpc.Inserted != FALSE);
+    assert(WdkTestGetKeInsertQueueDpcCount() == 1);
+
+    WdkTestClearIoConnectInterruptExHook();
+
+    /* Run the queued DPC and verify dispatch. */
+    assert(WdkTestRunQueuedDpc(&msix.Vectors[0].Dpc) != FALSE);
+    assert(ctx.config_calls == 1);
+    assert(ctx.drain_calls == 1);
+    assert(ctx.drain_calls_by_queue[0] == 1);
+    assert(msix.DpcInFlight == 0);
+
+    VirtioMsixDisconnect(&msix);
+}
+
 int main(void)
 {
     test_connect_validation();
@@ -423,6 +487,7 @@ int main(void)
     test_all_on_0_fallback_drains_all_queues();
     test_isr_increments_dpc_inflight_before_queueing_dpc();
     test_isr_returns_false_for_out_of_range_message_id();
+    test_interrupt_during_connect_is_handled();
 
     printf("virtio_msix_wdm_tests: PASS\n");
     return 0;
