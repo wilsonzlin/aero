@@ -21,7 +21,6 @@ import (
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/metrics"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/origin"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/policy"
-	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/ratelimit"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/relay"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/webrtcpeer"
 )
@@ -733,8 +732,7 @@ func (s *server) handleWebSocketSignal(w http.ResponseWriter, r *http.Request) {
 		authTimeout:  s.signalingAuthTimeout(),
 		idleTimeout:  s.signalingWSIdleTimeout(),
 		pingInterval: s.signalingWSPingInterval(),
-		limiter: ratelimit.NewTokenBucket(
-			nil,
+		limiter: newTokenBucket(
 			int64(s.maxSignalingMessagesPerSecond()),
 			int64(s.maxSignalingMessagesPerSecond()),
 		),

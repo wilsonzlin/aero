@@ -25,7 +25,7 @@ func (c *fakeClock) Advance(d time.Duration) {
 
 func TestTokenBucket_AllowAndRefill(t *testing.T) {
 	clk := &fakeClock{now: time.Unix(0, 0)}
-	b := NewTokenBucket(clk, 5, 5) // 5 tokens capacity, 5 tokens/sec.
+	b := newTokenBucket(clk, 5, 5) // 5 tokens capacity, 5 tokens/sec.
 
 	if !b.Allow(5) {
 		t.Fatalf("expected initial burst to succeed")
@@ -42,7 +42,7 @@ func TestTokenBucket_AllowAndRefill(t *testing.T) {
 
 func TestTokenBucket_DoesNotExceedCapacity(t *testing.T) {
 	clk := &fakeClock{now: time.Unix(0, 0)}
-	b := NewTokenBucket(clk, 1, 1) // capacity 1 token.
+	b := newTokenBucket(clk, 1, 1) // capacity 1 token.
 
 	if !b.Allow(1) {
 		t.Fatalf("expected initial token")

@@ -1,24 +1,20 @@
-package ratelimit
+package signaling
 
 import (
 	"sync"
 	"time"
 )
 
-const nanoTokensPerToken int64 = int64(time.Second) // 1e9
-
-const maxInt64 = int64(^uint64(0) >> 1)
-
-// tokenBucket is a deterministic token bucket that refills at an integer
-// rate (tokens/sec) using a provided clock.
+// tokenBucket is a deterministic token bucket used for signaling message rate
+// limiting.
 //
-// The implementation uses fixed-point "nano-tokens" to avoid float rounding.
-// One token is represented as 1e9 nano-tokens, so a rate of X tokens/sec adds
-// X nano-tokens per nanosecond elapsed.
+// It uses fixed-point "nano-tokens" to avoid float rounding. One token is
+// represented as 1e9 nano-tokens, so a rate of X tokens/sec adds X nano-tokens
+// per nanosecond elapsed.
 type tokenBucket struct {
 	mu sync.Mutex
 
-	clock clock
+	now func() time.Time
 
 	capacityTokens int64 // tokens
 	fillRate       int64 // tokens/sec
@@ -27,10 +23,11 @@ type tokenBucket struct {
 	last                time.Time
 }
 
-func newTokenBucket(clock clock, capacityTokens, fillRate int64) *tokenBucket {
-	if clock == nil {
-		clock = realClock{}
-	}
+const nanoTokensPerToken int64 = int64(time.Second) // 1e9
+
+const maxInt64 = int64(^uint64(0) >> 1)
+
+func newTokenBucket(capacityTokens, fillRate int64) *tokenBucket {
 	if capacityTokens < 0 {
 		capacityTokens = 0
 	}
@@ -38,10 +35,10 @@ func newTokenBucket(clock clock, capacityTokens, fillRate int64) *tokenBucket {
 		fillRate = 0
 	}
 
-	now := clock.Now()
+	now := time.Now()
 	capacityNano := mulTokenToNano(capacityTokens)
 	return &tokenBucket{
-		clock:               clock,
+		now:                 time.Now,
 		capacityTokens:      capacityTokens,
 		fillRate:            fillRate,
 		availableNanoTokens: capacityNano,
@@ -73,7 +70,7 @@ func (b *tokenBucket) Allow(tokens int64) bool {
 }
 
 func (b *tokenBucket) refillLocked() {
-	now := b.clock.Now()
+	now := b.now()
 	if now.Before(b.last) {
 		// Time went backwards. Avoid refilling and move the reference point.
 		b.last = now

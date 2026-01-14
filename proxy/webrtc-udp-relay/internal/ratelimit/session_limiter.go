@@ -86,17 +86,17 @@ func NewSessionLimiter(
 func newSessionLimiter(clock clock, cfg sessionLimiterConfig) *sessionLimiterImpl {
 	var udpPackets *tokenBucket
 	if cfg.udpPacketsPerSecond > 0 {
-		udpPackets = NewTokenBucket(clock, int64(cfg.udpPacketsPerSecond), int64(cfg.udpPacketsPerSecond))
+		udpPackets = newTokenBucket(clock, int64(cfg.udpPacketsPerSecond), int64(cfg.udpPacketsPerSecond))
 	}
 
 	var udpBytes *tokenBucket
 	if cfg.udpBytesPerSecond > 0 {
-		udpBytes = NewTokenBucket(clock, int64(cfg.udpBytesPerSecond), int64(cfg.udpBytesPerSecond))
+		udpBytes = newTokenBucket(clock, int64(cfg.udpBytesPerSecond), int64(cfg.udpBytesPerSecond))
 	}
 
 	var dcBytes *tokenBucket
 	if cfg.dataChannelBytesPerSecond > 0 {
-		dcBytes = NewTokenBucket(clock, int64(cfg.dataChannelBytesPerSecond), int64(cfg.dataChannelBytesPerSecond))
+		dcBytes = newTokenBucket(clock, int64(cfg.dataChannelBytesPerSecond), int64(cfg.dataChannelBytesPerSecond))
 	}
 
 	maxUDPDestBuckets := cfg.maxUDPDestBuckets
@@ -206,7 +206,7 @@ func (l *sessionLimiterImpl) getOrCreateDestBucket(destKey string) *tokenBucket 
 		}
 	}
 
-	bucket = NewTokenBucket(l.clock, l.perDestRate, l.perDestRate)
+	bucket = newTokenBucket(l.clock, l.perDestRate, l.perDestRate)
 	elem := l.perDestQ.PushFront(destKey)
 	l.perDest[destKey] = &destBucketEntry{
 		bucket: bucket,
