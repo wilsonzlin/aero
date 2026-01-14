@@ -201,20 +201,20 @@ class Set2ToSet1 {
   sawE0 = false;
   sawF0 = false;
 
-  feed(byte: number): number[] {
+  feed(byte: number): number | null {
     const b = byte & 0xff;
     switch (b) {
       case 0xe0:
         this.sawE0 = true;
-        return [0xe0];
+        return 0xe0;
       case 0xe1:
         // Pause/Break sequence.
         this.sawE0 = false;
         this.sawF0 = false;
-        return [0xe1];
+        return 0xe1;
       case 0xf0:
         this.sawF0 = true;
-        return [];
+        return null;
       default: {
         const extended = this.sawE0;
         const breakCode = this.sawF0;
@@ -223,7 +223,7 @@ class Set2ToSet1 {
 
         let out = set2ToSet1(b, extended);
         if (breakCode) out |= 0x80;
-        return [out & 0xff];
+        return out & 0xff;
       }
     }
   }
@@ -1286,19 +1286,18 @@ export class I8042Controller implements PortIoHandler {
 
   #pumpDeviceQueues(): void {
     while (this.#outQueue.length < MAX_CONTROLLER_OUTPUT_QUEUE) {
-      if (this.#keyboardPortEnabled()) {
-        const kb = this.#keyboard.popOutputByte();
-        if (kb !== null) {
-          if (this.#translationEnabled()) {
-            const outs = this.#translator.feed(kb);
-            for (const out of outs) {
-              if (this.#outQueue.length >= MAX_CONTROLLER_OUTPUT_QUEUE) break;
-              this.#outQueue.push({ value: out & 0xff, source: "keyboard" });
+        if (this.#keyboardPortEnabled()) {
+          const kb = this.#keyboard.popOutputByte();
+          if (kb !== null) {
+            if (this.#translationEnabled()) {
+              const out = this.#translator.feed(kb);
+              if (out !== null) {
+                this.#outQueue.push({ value: out & 0xff, source: "keyboard" });
+              }
+            } else {
+              this.#outQueue.push({ value: kb & 0xff, source: "keyboard" });
             }
-          } else {
-            this.#outQueue.push({ value: kb & 0xff, source: "keyboard" });
-          }
-          // Either we pushed output bytes, or we consumed a prefix byte (F0) that
+            // Either we pushed output bytes, or we consumed a prefix byte (F0) that
           // produced no output. In both cases, keep pumping.
           continue;
         }
