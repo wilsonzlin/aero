@@ -120,3 +120,140 @@ pub(crate) fn scan_sm5_nonzero_gs_stream(program: &Sm4Program) -> Option<Sm5GsSt
 
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_program(mut tokens: Vec<u32>) -> Sm4Program {
+        // Patch the declared length.
+        tokens[1] = tokens.len() as u32;
+        Sm4Program {
+            stage: super::super::ShaderStage::Geometry,
+            model: super::super::ShaderModel { major: 5, minor: 0 },
+            tokens,
+        }
+    }
+
+    fn opcode_token(opcode: u32, len: u32) -> u32 {
+        opcode | (len << sm4_opcode::OPCODE_LEN_SHIFT)
+    }
+
+    fn opcode_token_extended(opcode: u32, len: u32) -> u32 {
+        opcode | (len << sm4_opcode::OPCODE_LEN_SHIFT) | sm4_opcode::OPCODE_EXTENDED_BIT
+    }
+
+    fn operand_token_immediate32(num_components: u32) -> u32 {
+        let mut token = 0u32;
+        token |= num_components & sm4_opcode::OPERAND_NUM_COMPONENTS_MASK;
+        token |= (sm4_opcode::OPERAND_SEL_SELECT1 & sm4_opcode::OPERAND_SELECTION_MODE_MASK)
+            << sm4_opcode::OPERAND_SELECTION_MODE_SHIFT;
+        token |= (sm4_opcode::OPERAND_TYPE_IMMEDIATE32 & sm4_opcode::OPERAND_TYPE_MASK)
+            << sm4_opcode::OPERAND_TYPE_SHIFT;
+        token |= (sm4_opcode::OPERAND_INDEX_DIMENSION_0D & sm4_opcode::OPERAND_INDEX_DIMENSION_MASK)
+            << sm4_opcode::OPERAND_INDEX_DIMENSION_SHIFT;
+        token
+    }
+
+    #[test]
+    fn stream0_implicit_operand_is_ok() {
+        let program = make_program(vec![
+            0, // version (ignored by scan)
+            0, // declared length patched by helper
+            opcode_token(sm4_opcode::OPCODE_EMIT_STREAM, 1),
+        ]);
+        assert_eq!(scan_sm5_nonzero_gs_stream(&program), None);
+    }
+
+    #[test]
+    fn stream0_explicit_operand_is_ok() {
+        let program = make_program(vec![
+            0,
+            0,
+            opcode_token(sm4_opcode::OPCODE_EMIT_STREAM, 3),
+            operand_token_immediate32(1),
+            0,
+        ]);
+        assert_eq!(scan_sm5_nonzero_gs_stream(&program), None);
+    }
+
+    #[test]
+    fn detects_nonzero_stream_scalar_immediate() {
+        let program = make_program(vec![
+            0,
+            0,
+            opcode_token(sm4_opcode::OPCODE_EMIT_STREAM, 3),
+            operand_token_immediate32(1),
+            1,
+        ]);
+        assert_eq!(
+            scan_sm5_nonzero_gs_stream(&program),
+            Some(Sm5GsStreamViolation {
+                op_name: "emit_stream",
+                stream: 1
+            })
+        );
+    }
+
+    #[test]
+    fn detects_nonzero_stream_after_implicit_zero() {
+        let program = make_program(vec![
+            0,
+            0,
+            opcode_token(sm4_opcode::OPCODE_EMIT_STREAM, 1),
+            opcode_token(sm4_opcode::OPCODE_EMIT_STREAM, 3),
+            operand_token_immediate32(1),
+            1,
+        ]);
+        assert_eq!(
+            scan_sm5_nonzero_gs_stream(&program),
+            Some(Sm5GsStreamViolation {
+                op_name: "emit_stream",
+                stream: 1
+            })
+        );
+    }
+
+    #[test]
+    fn detects_nonzero_stream_with_extended_opcode_token() {
+        let program = make_program(vec![
+            0,
+            0,
+            opcode_token_extended(sm4_opcode::OPCODE_EMIT_STREAM, 4),
+            0, // extended opcode token
+            operand_token_immediate32(1),
+            1,
+        ]);
+        assert_eq!(
+            scan_sm5_nonzero_gs_stream(&program),
+            Some(Sm5GsStreamViolation {
+                op_name: "emit_stream",
+                stream: 1
+            })
+        );
+    }
+
+    #[test]
+    fn detects_nonzero_stream_with_extended_operand_token_and_vec4_immediate() {
+        let mut operand = operand_token_immediate32(2);
+        operand |= sm4_opcode::OPERAND_EXTENDED_BIT;
+        let program = make_program(vec![
+            0,
+            0,
+            opcode_token(sm4_opcode::OPCODE_EMIT_STREAM, 7),
+            operand,
+            0, // extended operand token
+            1, // lane0 stream index
+            0,
+            0,
+            0,
+        ]);
+        assert_eq!(
+            scan_sm5_nonzero_gs_stream(&program),
+            Some(Sm5GsStreamViolation {
+                op_name: "emit_stream",
+                stream: 1
+            })
+        );
+    }
+}
