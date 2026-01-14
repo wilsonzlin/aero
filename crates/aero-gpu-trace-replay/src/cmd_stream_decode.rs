@@ -1,8 +1,8 @@
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuBlendFactor, AerogpuBlendOp, AerogpuCmdDecodeError, AerogpuCmdOpcode,
     AerogpuCmdStreamHeader, AerogpuCmdStreamIter, AerogpuCompareFunc, AerogpuCullMode,
-    AerogpuFillMode, AerogpuIndexFormat, AerogpuPrimitiveTopology, AerogpuShaderStage,
-    AEROGPU_STAGE_EX_MIN_ABI_MINOR,
+    AerogpuFillMode, AerogpuIndexFormat, AerogpuPrimitiveTopology, AerogpuSamplerAddressMode,
+    AerogpuSamplerFilter, AerogpuShaderStage, AEROGPU_STAGE_EX_MIN_ABI_MINOR,
 };
 use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
 use serde_json::{json, Value};
@@ -817,9 +817,21 @@ fn decode_known_fields(
             ) {
                 out.insert("sampler_handle".into(), json!(sampler_handle));
                 out.insert("filter".into(), json!(filter));
+                if let Some(name) = decode_sampler_filter_name(filter) {
+                    out.insert("filter_name".into(), Value::String(name));
+                }
                 out.insert("address_u".into(), json!(address_u));
+                if let Some(name) = decode_sampler_address_mode_name(address_u) {
+                    out.insert("address_u_name".into(), Value::String(name));
+                }
                 out.insert("address_v".into(), json!(address_v));
+                if let Some(name) = decode_sampler_address_mode_name(address_v) {
+                    out.insert("address_v_name".into(), Value::String(name));
+                }
                 out.insert("address_w".into(), json!(address_w));
+                if let Some(name) = decode_sampler_address_mode_name(address_w) {
+                    out.insert("address_w_name".into(), Value::String(name));
+                }
             } else {
                 out.insert("decode_error".into(), json!("truncated payload"));
             }
@@ -1271,6 +1283,14 @@ fn decode_cull_mode_name(mode: u32) -> Option<String> {
 
 fn decode_format_name(format: u32) -> Option<String> {
     AerogpuFormat::from_u32(format).map(|f| format!("{f:?}"))
+}
+
+fn decode_sampler_filter_name(filter: u32) -> Option<String> {
+    AerogpuSamplerFilter::from_u32(filter).map(|f| format!("{f:?}"))
+}
+
+fn decode_sampler_address_mode_name(mode: u32) -> Option<String> {
+    AerogpuSamplerAddressMode::from_u32(mode).map(|m| format!("{m:?}"))
 }
 
 fn read_u32_le(buf: &[u8], off: usize) -> Option<u32> {

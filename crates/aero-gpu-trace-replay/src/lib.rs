@@ -2,8 +2,9 @@ use aero_gpu_trace::{BlobKind, TraceReadError, TraceReader, TraceRecord};
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuBlendFactor, AerogpuBlendOp, AerogpuCmdDecodeError, AerogpuCmdOpcode,
     AerogpuCmdStreamHeader, AerogpuCmdStreamIter, AerogpuCompareFunc, AerogpuCullMode,
-    AerogpuFillMode, AerogpuIndexFormat, AerogpuPrimitiveTopology, AerogpuShaderStage,
-    AerogpuVertexBufferBinding, AEROGPU_CLEAR_COLOR, AEROGPU_STAGE_EX_MIN_ABI_MINOR,
+    AerogpuFillMode, AerogpuIndexFormat, AerogpuPrimitiveTopology, AerogpuSamplerAddressMode,
+    AerogpuSamplerFilter, AerogpuShaderStage, AerogpuVertexBufferBinding, AEROGPU_CLEAR_COLOR,
+    AEROGPU_STAGE_EX_MIN_ABI_MINOR,
 };
 use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
 use sha2::{Digest, Sha256};
@@ -907,6 +908,14 @@ fn cull_mode_name(mode: u32) -> Option<String> {
     AerogpuCullMode::from_u32(mode).map(|m| format!("{m:?}"))
 }
 
+fn sampler_filter_name(filter: u32) -> Option<String> {
+    AerogpuSamplerFilter::from_u32(filter).map(|f| format!("{f:?}"))
+}
+
+fn sampler_address_mode_name(mode: u32) -> Option<String> {
+    AerogpuSamplerAddressMode::from_u32(mode).map(|m| format!("{m:?}"))
+}
+
 /// Decode an AeroGPU command stream (`aerogpu_cmd_stream_header` + packet sequence) and return a
 /// stable, grep-friendly opcode listing.
 ///
@@ -1580,10 +1589,22 @@ pub fn decode_cmd_stream_listing(
                         let address_u = u32_le_at(pkt.payload, 8).unwrap();
                         let address_v = u32_le_at(pkt.payload, 12).unwrap();
                         let address_w = u32_le_at(pkt.payload, 16).unwrap();
-                        let _ = write!(
-                            line,
-                            " sampler_handle={sampler_handle} filter={filter} address_u={address_u} address_v={address_v} address_w={address_w}"
-                        );
+                        let _ = write!(line, " sampler_handle={sampler_handle} filter={filter}");
+                        if let Some(name) = sampler_filter_name(filter) {
+                            let _ = write!(line, " filter_name={name}");
+                        }
+                        let _ = write!(line, " address_u={address_u}");
+                        if let Some(name) = sampler_address_mode_name(address_u) {
+                            let _ = write!(line, " address_u_name={name}");
+                        }
+                        let _ = write!(line, " address_v={address_v}");
+                        if let Some(name) = sampler_address_mode_name(address_v) {
+                            let _ = write!(line, " address_v_name={name}");
+                        }
+                        let _ = write!(line, " address_w={address_w}");
+                        if let Some(name) = sampler_address_mode_name(address_w) {
+                            let _ = write!(line, " address_w_name={name}");
+                        }
                     }
                     AerogpuCmdOpcode::DestroySampler => {
                         if pkt.payload.len() < 8 {

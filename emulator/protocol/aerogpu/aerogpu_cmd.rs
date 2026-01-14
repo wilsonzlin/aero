@@ -481,12 +481,33 @@ pub enum AerogpuSamplerFilter {
     Linear = 1,
 }
 
+impl AerogpuSamplerFilter {
+    pub const fn from_u32(v: u32) -> Option<Self> {
+        match v {
+            0 => Some(Self::Nearest),
+            1 => Some(Self::Linear),
+            _ => None,
+        }
+    }
+}
+
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AerogpuSamplerAddressMode {
     ClampToEdge = 0,
     Repeat = 1,
     MirrorRepeat = 2,
+}
+
+impl AerogpuSamplerAddressMode {
+    pub const fn from_u32(v: u32) -> Option<Self> {
+        match v {
+            0 => Some(Self::ClampToEdge),
+            1 => Some(Self::Repeat),
+            2 => Some(Self::MirrorRepeat),
+            _ => None,
+        }
+    }
 }
 
 #[repr(u32)]

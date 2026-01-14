@@ -603,6 +603,8 @@ fn decodes_cmd_stream_dump_to_stable_listing() {
     assert!(listing.contains("CreateSampler"));
     assert!(listing.contains("sampler_handle=26214")); // 0x6666
     assert!(listing.contains("filter=1"));
+    assert!(listing.contains("filter_name=Linear"));
+    assert!(listing.contains("address_u_name=MirrorRepeat"));
 
     assert!(listing.contains("SetSamplerState"));
     assert!(listing.contains("shader_stage=1"));
@@ -1167,7 +1169,9 @@ fn json_listing_decodes_new_opcodes() {
     let create_sampler = find_packet("CreateSampler");
     assert_eq!(create_sampler["decoded"]["sampler_handle"], 0x6666);
     assert_eq!(create_sampler["decoded"]["filter"], 1);
+    assert_eq!(create_sampler["decoded"]["filter_name"], "Linear");
     assert_eq!(create_sampler["decoded"]["address_u"], 2);
+    assert_eq!(create_sampler["decoded"]["address_u_name"], "MirrorRepeat");
     assert_eq!(create_sampler["decoded"]["address_v"], 3);
     assert_eq!(create_sampler["decoded"]["address_w"], 4);
 
