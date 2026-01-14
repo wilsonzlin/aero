@@ -243,6 +243,7 @@ fn browser_defaults_preset_is_valid_and_stable() {
     assert!(cfg.enable_e1000);
     assert!(!cfg.enable_virtio_net);
     assert!(cfg.enable_uhci);
+    assert!(!cfg.enable_xhci);
 
     // Deterministic core devices.
     assert!(!cfg.enable_vga);
@@ -324,4 +325,17 @@ fn cpu_by_index_nonzero_returns_ap_state() {
         0,
         "BSP bit must be clear for application processors"
     );
+}
+
+#[test]
+fn cpu_by_index_nonzero_exposes_ap_state_when_smp_is_enabled() {
+    let machine = Machine::new(MachineConfig {
+        cpu_count: 2,
+        ..Default::default()
+    })
+    .unwrap();
+
+    // APs should start in a halted wait-for-SIPI state.
+    let ap = machine.cpu_by_index(1);
+    assert!(ap.halted);
 }

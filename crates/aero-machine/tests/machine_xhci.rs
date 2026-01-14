@@ -3,7 +3,7 @@
 use aero_devices::a20_gate::A20_GATE_PORT;
 use aero_devices::pci::msi::PCI_CAP_ID_MSI;
 use aero_devices::pci::profile::USB_XHCI_QEMU;
-use aero_devices::pci::{PciBdf, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
+use aero_devices::pci::{PciBdf, PciInterruptPin, PCI_CFG_ADDR_PORT, PCI_CFG_DATA_PORT};
 use aero_devices::usb::xhci::regs;
 use aero_machine::{Machine, MachineConfig};
 use aero_platform::interrupts::{
@@ -216,3 +216,45 @@ fn xhci_msi_triggers_lapic_vector_and_suppresses_intx() {
         "xHCI INTx should be suppressed while MSI is active"
     );
 }
+
+#[test]
+fn xhci_intx_level_is_routed_and_gated_by_command_intx_disable() {
+    let mut m = Machine::new(MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_xhci: true,
+        // Keep this test focused on PCI INTx routing.
+        enable_vga: false,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_reset_ctrl: false,
+        enable_e1000: false,
+        ..Default::default()
+    })
+    .unwrap();
+
+    let bdf = USB_XHCI_QEMU.bdf;
+    let pci_intx = m.pci_intx_router().expect("pc platform enabled");
+    let interrupts = m.platform_interrupts().expect("pc platform enabled");
+    let gsi = pci_intx.borrow().gsi_for_intx(bdf, PciInterruptPin::IntA);
+
+    // Ensure INTx is enabled in the PCI command register (bit 10 clear).
+    let command = cfg_read(&mut m, bdf, 0x04, 2) as u16;
+    cfg_write(&mut m, bdf, 0x04, 2, u32::from(command & !(1 << 10)));
+
+    let xhci = m.xhci().expect("xhci enabled");
+    xhci.borrow_mut().raise_event_interrupt();
+    assert!(xhci.borrow().irq_level(), "xHCI should assert legacy INTx");
+
+    // Polling should drive the xHCI INTx level into the platform interrupt controller.
+    m.poll_pci_intx_lines();
+    assert_eq!(interrupts.borrow().gsi_level(gsi), true);
+
+    // Disable INTx in the guest-visible PCI command register.
+    let command = cfg_read(&mut m, bdf, 0x04, 2) as u16;
+    cfg_write(&mut m, bdf, 0x04, 2, u32::from(command | (1 << 10)));
+
+    m.poll_pci_intx_lines();
+    assert_eq!(interrupts.borrow().gsi_level(gsi), false);
+}
+

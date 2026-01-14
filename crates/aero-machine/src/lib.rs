@@ -5409,17 +5409,13 @@ impl Machine {
             const NS_PER_MS: u64 = 1_000_000;
 
             let bdf = aero_devices::pci::profile::USB_XHCI_QEMU.bdf;
-            let pci_state = self
-                .pci_cfg
-                .as_ref()
-                .map(|pci_cfg| {
-                    let mut pci_cfg = pci_cfg.borrow_mut();
-                    pci_cfg
-                        .bus_mut()
-                        .device_config(bdf)
-                        .map(|cfg| cfg.snapshot_state())
-                })
-                .unwrap_or(None);
+            let pci_state = self.pci_cfg.as_ref().and_then(|pci_cfg| {
+                let mut pci_cfg = pci_cfg.borrow_mut();
+                pci_cfg
+                    .bus_mut()
+                    .device_config(bdf)
+                    .map(|cfg| cfg.snapshot_state())
+            });
 
             // Keep the xHCI model's view of PCI config state in sync (including MSI capability
             // state) so it can deliver MSI through `tick_1ms`.
@@ -6961,29 +6957,6 @@ impl Machine {
                 None
             };
 
-            let xhci = if self.cfg.enable_xhci {
-                pci_cfg.borrow_mut().bus_mut().add_device(
-                    aero_devices::pci::profile::USB_XHCI_QEMU.bdf,
-                    Box::new(XhciPciConfigDevice::new()),
-                );
-                match &self.xhci {
-                    Some(xhci) => {
-                        xhci.borrow_mut().reset();
-                        Some(xhci.clone())
-                    }
-                    None => {
-                        let xhci = Rc::new(RefCell::new(XhciPciDevice::default()));
-                        // Provide an MSI sink so the xHCI device model can deliver MSI when the
-                        // guest enables it via PCI config space.
-                        xhci.borrow_mut()
-                            .set_msi_target(Some(Box::new(interrupts.clone())));
-                        Some(xhci)
-                    }
-                }
-            } else {
-                None
-            };
-
             if attach_usb2_mux {
                 if let (Some(uhci), Some(ehci)) = (&uhci, &ehci) {
                     // UHCI exposes two root hub ports. EHCI defaults to six; mux the first two so
@@ -7003,6 +6976,27 @@ impl Machine {
                     }
                 }
             }
+
+            let xhci = if self.cfg.enable_xhci {
+                pci_cfg.borrow_mut().bus_mut().add_device(
+                    aero_devices::pci::profile::USB_XHCI_QEMU.bdf,
+                    Box::new(XhciPciConfigDevice::new()),
+                );
+                match &self.xhci {
+                    Some(dev) => {
+                        dev.borrow_mut().reset();
+                        Some(dev.clone())
+                    }
+                    None => {
+                        let dev = Rc::new(RefCell::new(XhciPciDevice::default()));
+                        dev.borrow_mut()
+                            .set_msi_target(Some(Box::new(interrupts.clone())));
+                        Some(dev)
+                    }
+                }
+            } else {
+                None
+            };
 
             let ide = if self.cfg.enable_ide {
                 pci_cfg.borrow_mut().bus_mut().add_device(
@@ -7237,6 +7231,19 @@ impl Machine {
                 }
             }
 
+            if let Some(xhci) = xhci.as_ref() {
+                let bdf = aero_devices::pci::profile::USB_XHCI_QEMU.bdf;
+                let pci_state = {
+                    let mut pci_cfg = pci_cfg.borrow_mut();
+                    let cfg = pci_cfg.bus_mut().device_config(bdf);
+                    cfg.map(|cfg| cfg.snapshot_state())
+                };
+
+                if let Some(ref state) = pci_state {
+                    xhci.borrow_mut().config_mut().restore_state(state);
+                }
+            }
+
             // Keep storage controller device models' internal PCI config state coherent with the
             // canonical PCI config space. These devices snapshot their internal PCI config image,
             // so this ensures `save_state()` sees a consistent view even before the first
@@ -7324,6 +7331,8 @@ impl Machine {
             let vga = self.vga.clone();
             let aerogpu = self.aerogpu.clone();
             let aerogpu_mmio = self.aerogpu_mmio.clone();
+            let ehci = ehci.clone();
+            let xhci = xhci.clone();
 
             // Map the full ACPI-reported PCI MMIO window so BAR relocation is reflected
             // immediately even when the guest OS programs a BAR outside the allocator's default
@@ -9378,7 +9387,6 @@ impl snapshot::SnapshotSource for Machine {
                 &wrapper,
             ));
         }
-
         if self.uhci.is_some() || self.ehci.is_some() || self.xhci.is_some() {
             let mut wrapper = MachineUsbSnapshot::default();
 
@@ -9436,19 +9444,15 @@ impl snapshot::SnapshotSource for Machine {
 
             if let Some(xhci) = &self.xhci {
                 let bdf = aero_devices::pci::profile::USB_XHCI_QEMU.bdf;
-                if let Some(pci_cfg) = &self.pci_cfg {
-                    let pci_state = {
-                        let mut pci_cfg = pci_cfg.borrow_mut();
-                        pci_cfg
-                            .bus_mut()
-                            .device_config(bdf)
-                            .map(|cfg| cfg.snapshot_state())
-                    };
-
-                    let mut xhci = xhci.borrow_mut();
-                    if let Some(state) = pci_state {
-                        xhci.config_mut().restore_state(&state);
-                    }
+                let pci_state = self.pci_cfg.as_ref().and_then(|pci_cfg| {
+                    let mut pci_cfg = pci_cfg.borrow_mut();
+                    pci_cfg
+                        .bus_mut()
+                        .device_config(bdf)
+                        .map(|cfg| cfg.snapshot_state())
+                });
+                if let Some(ref state) = pci_state {
+                    xhci.borrow_mut().config_mut().restore_state(state);
                 }
 
                 wrapper.xhci = Some(xhci.borrow().save_state());
@@ -9825,6 +9829,7 @@ impl snapshot::SnapshotTarget for Machine {
         // field) do not preserve stale partial-tick state from the pre-restore execution.
         self.uhci_ns_remainder = 0;
         self.ehci_ns_remainder = 0;
+        self.xhci_ns_remainder = 0;
 
         // Restore ordering must be explicit and independent of snapshot file ordering so device
         // state is deterministic (especially for interrupt lines and PCI INTx routing).
@@ -10459,28 +10464,32 @@ impl snapshot::SnapshotTarget for Machine {
             if matches!(state.data.get(8..12), Some(id) if id == b"USBC") {
                 let mut wrapper = MachineUsbSnapshot::default();
                 if wrapper.load_state(&state.data).is_ok() {
-                    if let (Some(uhci), Some(uhci_bytes)) = (&self.uhci, wrapper.uhci.as_ref()) {
-                        self.uhci_ns_remainder = wrapper.uhci_ns_remainder % NS_PER_MS;
-                        let _ = uhci.borrow_mut().load_state(uhci_bytes);
+                    if let Some(uhci) = &self.uhci {
+                        if let Some(uhci_bytes) = wrapper.uhci.as_deref() {
+                            self.uhci_ns_remainder = wrapper.uhci_ns_remainder % NS_PER_MS;
+                            let _ = uhci.borrow_mut().load_state(uhci_bytes);
+                        }
                     }
-                    if let (Some(ehci), Some(ehci_bytes)) = (&self.ehci, wrapper.ehci.as_ref()) {
-                        self.ehci_ns_remainder = wrapper.ehci_ns_remainder % NS_PER_MS;
-                        let _ = ehci.borrow_mut().load_state(ehci_bytes);
+                    if let Some(ehci) = &self.ehci {
+                        if let Some(ehci_bytes) = wrapper.ehci.as_deref() {
+                            self.ehci_ns_remainder = wrapper.ehci_ns_remainder % NS_PER_MS;
+                            let _ = ehci.borrow_mut().load_state(ehci_bytes);
+                        }
                     }
-                    if let (Some(xhci), Some(xhci_bytes)) = (&self.xhci, wrapper.xhci.as_ref()) {
-                        self.xhci_ns_remainder = wrapper.xhci_ns_remainder % NS_PER_MS;
-                        let _ = xhci.borrow_mut().load_state(xhci_bytes);
+                    if let Some(xhci) = &self.xhci {
+                        if let Some(xhci_bytes) = wrapper.xhci.as_deref() {
+                            self.xhci_ns_remainder = wrapper.xhci_ns_remainder % NS_PER_MS;
+                            let _ = xhci.borrow_mut().load_state(xhci_bytes);
+                        }
                     }
                 }
-            } else {
+            } else if let Some(uhci) = &self.uhci {
                 // Backward compatibility: older snapshots stored the UHCI PCI device snapshot
                 // (`UHCP`) directly under `DeviceId::USB`.
-                if let Some(uhci) = &self.uhci {
-                    let _ = snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
-                        &state,
-                        &mut *uhci.borrow_mut(),
-                    );
-                }
+                let _ = snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(
+                    &state,
+                    &mut *uhci.borrow_mut(),
+                );
             }
         }
 
@@ -10802,14 +10811,14 @@ mod tests {
     }
 
     #[test]
-    fn usb_snapshot_container_roundtrips_uhci_and_ehci_state() {
+    fn usb_snapshot_container_roundtrips_uhci_xhci_and_ehci_state() {
         let snapshot = MachineUsbSnapshot {
             uhci: Some(vec![1, 2, 3]),
             uhci_ns_remainder: 500_123,
             ehci: Some(vec![4, 5, 6, 7]),
             ehci_ns_remainder: 250_456,
-            xhci: Some(vec![8, 9]),
-            xhci_ns_remainder: 123_456,
+            xhci: Some(vec![0xaa, 0xbb]),
+            xhci_ns_remainder: 750_789,
         };
 
         let bytes = snapshot.save_state();
