@@ -150,11 +150,12 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {{
 
     // Index generation is parameterized by winding so we can share the same per-triangle
     // tessellator math for both CCW and CW topologies.
-    let local_verts: vec3<u32> = select(
-        tri_index_to_vertex_indices(patch_meta.tess_level, tri_id),
-        tri_index_to_vertex_indices_cw(patch_meta.tess_level, tri_id),
-        params.winding != 0u,
-    );
+    //
+    // Avoid calling the tessellator helper twice (WGSL `select` is not short-circuit): compute CCW
+    // once, then swizzle for CW.
+    let verts_ccw: vec3<u32> = tri_index_to_vertex_indices(patch_meta.tess_level, tri_id);
+    let verts_cw: vec3<u32> = vec3<u32>(verts_ccw.x, verts_ccw.z, verts_ccw.y);
+    let local_verts: vec3<u32> = select(verts_ccw, verts_cw, params.winding != 0u);
 
     let v0: u32 = local_verts.x + patch_meta.vertex_base;
     let v1: u32 = local_verts.y + patch_meta.vertex_base;
