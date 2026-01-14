@@ -128,15 +128,14 @@ Contract note:
 - `AERO-W7-VIRTIO` v1 encodes the contract major version in the PCI Revision ID (`REV_01`).
 - The in-tree Win7 virtio-input INFs are intentionally **revision-gated** (match only `...&REV_01` HWIDs), so QEMU-style
   `REV_00` virtio-input devices will not bind unless you override the revision (for example `x-pci-revision=0x01`).
-  - The canonical keyboard/mouse INF (`drivers/windows7/virtio-input/inf/aero_virtio_input.inf`) is intentionally strict
-    and **SUBSYS-gated only** (`SUBSYS_0010` / `SUBSYS_0011`) for deterministic binding and distinct Device Manager names.
-    - It intentionally does **not** include a generic (no `SUBSYS_...`) fallback HWID, which avoids overlapping bindings and
-      prevents Windows from binding the driver to non-contract virtio-input devices.
-  - If you need an opt-in strict generic fallback HWID (`PCI\VEN_1AF4&DEV_1052&REV_01`) for environments that do not expose
-    Aero subsystem IDs, enable the legacy alias INF (`virtio-input.inf.disabled` → `virtio-input.inf`).
-    - The alias is allowed to differ in the models sections to provide the fallback match, but should otherwise stay in sync
-      with `aero_virtio_input.inf` (see `drivers/windows7/virtio-input/scripts/check-inf-alias.py`).
-    - It is not a separate “fallback-only” variant; it also includes the subsystem-qualified keyboard/mouse IDs.
+  - The keyboard/mouse INF (`drivers/windows7/virtio-input/inf/aero_virtio_input.inf`) is intentionally strict:
+    - matches the subsystem-qualified IDs (`SUBSYS_0010` / `SUBSYS_0011`) for distinct Device Manager names, and
+    - includes a strict REV-qualified fallback HWID (`PCI\VEN_1AF4&DEV_1052&REV_01`) so Windows can bind when subsystem IDs
+      are not exposed/recognized.
+  - If your tooling expects the legacy INF filename, enable the legacy filename alias INF (`virtio-input.inf.disabled` →
+    `virtio-input.inf`).
+    - From the first section header (`[Version]`) onward, it must match `aero_virtio_input.inf` byte-for-byte (see
+      `drivers/windows7/virtio-input/scripts/check-inf-alias.py`).
   - Do not ship/install both `aero_virtio_input.inf` and `virtio-input.inf` at the same time (overlapping INFs can lead to
     confusing PnP driver selection).
 - The driver also validates the Revision ID at runtime.
