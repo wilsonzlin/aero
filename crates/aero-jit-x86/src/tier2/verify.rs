@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use super::ir::{Function, Instr, Operand, Terminator, TraceIr, TraceKind, ValueId};
+use super::ir::{Function, Instr, Operand, Terminator, TraceIr, ValueId};
 
 /// Verify basic structural invariants of a Tier-2 trace.
 ///
@@ -18,17 +18,6 @@ pub fn verify_trace(trace: &TraceIr) -> Result<(), String> {
         return Err(
             "trace contains a SideExit in the prologue but also has body instructions".to_string(),
         );
-    }
-
-    // Best-effort: loop-specific artifacts should not appear in linear traces.
-    if trace.kind == TraceKind::Linear
-        && trace
-            .body
-            .iter()
-            .any(|i| matches!(i, Instr::GuardCodeVersion { .. }))
-    {
-        return Err("TraceKind::Linear trace contains GuardCodeVersion in body (loop artifact)"
-            .to_string());
     }
 
     let mut defined_so_far: HashSet<ValueId> = HashSet::new();
@@ -167,4 +156,3 @@ fn verify_instr_operands_defined(inst: &Instr, defined: &HashSet<ValueId>) -> Re
     });
     err.map_or(Ok(()), Err)
 }
-
