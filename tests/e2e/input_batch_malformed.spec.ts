@@ -34,7 +34,9 @@ test("IO worker survives malformed in:input-batch messages", async ({ page }) =>
     const { InputEventQueue } = await import("/web/src/input/event_queue.ts");
     const { MessageType } = await import("/web/src/runtime/protocol.ts");
 
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 1 });
+    // Disable VRAM allocation; this test only exercises the input pipeline and does not
+    // require a BAR1 aperture.
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: 0 });
     const views = createSharedMemoryViews(segments);
     const status = views.status;
 
