@@ -843,7 +843,8 @@ The runtime may:
 
 - allocate buffers for the worst case (`T = 64`) and rely on overflow-detection to skip draws when
   scratch runs out, or
-- allocate dynamically based on per-patch `T` (recommended; requires per-patch allocation state).
+- allocate dynamically based on per-patch `T` (recommended; requires per-patch allocation state,
+  e.g. `tess_patch_state`).
 
 #### 2.1.3) Geometry shader instancing (`SV_GSInstanceID`)
 
@@ -1270,6 +1271,7 @@ runtime can share common helper WGSL across VS/GS/HS/DS compute variants:
 - `@binding(270)`: `gs_out_indices` (read_write storage)
 - `@binding(271)`: `indirect_args` (read_write storage)
 - `@binding(272)`: `counters` (read_write storage; atomics)
+- `@binding(273)`: `tess_patch_state` (read_write storage; per patch, used by HS/DS emulation)
 
 **`ExpandParams` layout (concrete; `@binding(256)`)**
 
@@ -1360,6 +1362,38 @@ Expansion passes allocate output space by atomically incrementing counters:
 Note: `atomicAdd` will still increment the counter even in the overflow case. This is fine because
 the finalize step MUST turn the indirect draw count(s) into 0 when `overflow != 0`, so the render
 pass deterministically draws nothing.
+
+**`tess_patch_state` layout (concrete; `@binding(273)`)**
+
+Tessellation requires per-patch state that is produced by the HS patch-constant pass and then
+consumed by subsequent tessellator/DS passes (and optionally GS).
+
+Recommended layout (32 bytes per patch):
+
+```wgsl
+struct TessPatchState {
+  // Tessellation level for the patch after clamping/rounding.
+  //
+  // For P2a tri-domain integer tessellation, `tess_level_u` stores `T` and `tess_level_v` is 0.
+  // For future quad-domain tessellation, `tess_level_u/v` can store independent U/V levels.
+  tess_level_u: u32;
+  tess_level_v: u32;
+
+  // Allocated output ranges (in element counts, not bytes).
+  base_vertex: u32;
+  vertex_count: u32;
+  base_index: u32;
+  index_count: u32;
+
+  _pad0: u32;
+  _pad1: u32;
+}
+// Bind group index is `3` in the baseline design (shared with GS/HS/DS resources). Implementations
+// using a dedicated internal group instead use `@group(4)`.
+@group(3) @binding(273) var<storage, read_write> tess_patch_state: array<TessPatchState>;
+```
+
+Entry count: `patch_count * instance_count` (one patch-state entry per patch per instance).
 
 **Initialization requirements**
 
