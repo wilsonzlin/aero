@@ -1341,6 +1341,40 @@ fn malformed_chains_return_ioerr_without_panicking() {
 }
 
 #[test]
+fn invalid_status_descriptor_is_consumed_without_touching_disk() {
+    let (mut dev, caps, mut mem, backing, _flushes) = setup();
+
+    // Well-formed OUT request, but the status descriptor is invalid (not write-only). The device
+    // should still consume the chain and advance the used ring without performing any disk I/O.
+    let header = 0x7000;
+    let data = 0x8000;
+    let status = 0x9000;
+
+    write_u32_le(&mut mem, header, VIRTIO_BLK_T_OUT).unwrap();
+    write_u32_le(&mut mem, header + 4, 0).unwrap();
+    write_u64_le(&mut mem, header + 8, 0).unwrap();
+    mem.write(data, &vec![0xa5u8; 512]).unwrap();
+    mem.write(status, &[0xff]).unwrap();
+
+    write_desc(&mut mem, DESC_TABLE, 0, header, 16, 0x0001, 1);
+    write_desc(&mut mem, DESC_TABLE, 1, data, 512, 0x0001, 2);
+    // Invalid status descriptor: read-only.
+    write_desc(&mut mem, DESC_TABLE, 2, status, 1, 0x0000, 0);
+
+    write_u16_le(&mut mem, AVAIL_RING, 0).unwrap();
+    write_u16_le(&mut mem, AVAIL_RING + 2, 1).unwrap();
+    write_u16_le(&mut mem, AVAIL_RING + 4, 0).unwrap();
+    write_u16_le(&mut mem, USED_RING, 0).unwrap();
+    write_u16_le(&mut mem, USED_RING + 2, 0).unwrap();
+
+    kick_queue0(&mut dev, &caps, &mut mem);
+
+    assert_eq!(dev.debug_queue_used_idx(&mem, 0), Some(1));
+    assert_eq!(mem.get_slice(status, 1).unwrap()[0], 0xff);
+    assert!(backing.borrow().iter().all(|b| *b == 0));
+}
+
+#[test]
 fn virtio_blk_rejects_non_sector_multiple_requests() {
     let (mut dev, caps, mut mem, backing, _flushes) = setup();
 

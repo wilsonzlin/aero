@@ -644,6 +644,15 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
                 .map_err(|_| VirtioDeviceError::IoError);
         }
 
+        // If the status descriptor is invalid, treat the whole request as invalid. We still
+        // advance the used ring so the guest can reclaim the descriptors, but we avoid touching
+        // any other guest buffers or backend state.
+        if !can_write_status {
+            return queue
+                .add_used(mem, chain.head_index(), 0)
+                .map_err(|_| VirtioDeviceError::IoError);
+        }
+
         // Read the 16-byte request header.
         let mut hdr = [0u8; 16];
         let mut hdr_written = 0usize;
