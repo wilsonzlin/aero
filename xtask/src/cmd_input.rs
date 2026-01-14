@@ -56,6 +56,7 @@ const AERO_USB_FOCUSED_TESTS: &[&str] = &[
     "xhci_enum_smoke",
     "xhci_controller_webusb_ep0",
     "xhci_doorbell0",
+    "xhci_stop_endpoint_unschedules",
     "xhci_usbcmd_run_gates_transfers",
     "xhci_webusb_passthrough",
 ];
