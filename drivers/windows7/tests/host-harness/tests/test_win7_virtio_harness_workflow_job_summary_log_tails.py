@@ -33,6 +33,9 @@ class Win7VirtioHarnessWorkflowJobSummaryLogTailsTests(unittest.TestCase):
 
         self.assertIn("<details><summary>qemu.stderr.log (tail)</summary>", self.text)
         self.assertIn('tail -n 200 "${qemu_stderr_log}"', self.text)
+        # Even if QEMU fails before emitting stderr, keep a stable summary section.
+        self.assertIn("(qemu stderr log was not produced)", self.text)
+        self.assertIn("(qemu stderr log was empty)", self.text)
 
 
 if __name__ == "__main__":
