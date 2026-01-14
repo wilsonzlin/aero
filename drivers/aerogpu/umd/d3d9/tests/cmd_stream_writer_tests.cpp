@@ -1338,6 +1338,76 @@ bool TestBindShadersHelpers() {
     }
   }
 
+  // CmdStreamWriter: cover the type-erased wrapper helpers (both vector-backed and span-backed).
+  //
+  // This is the API surface most UMD code uses (e.g. `aerogpu::CmdWriter` in the D3D9/D3D10/11
+  // bring-up paths), so keep a small direct test here even though the underlying concrete writers
+  // are tested above.
+
+  // CmdStreamWriter (vector): base packet (reserved0=0).
+  {
+    CmdStreamWriter w;
+    w.set_vector();
+    auto* cmd = w.bind_shaders(1, 2, 3);
+    if (!Check(cmd != nullptr, "CmdStreamWriter.bind_shaders (vector)")) {
+      return false;
+    }
+    w.finalize();
+    expected = ExpectedBindShadersPacket{};
+    expected.vs = 1;
+    expected.ps = 2;
+    expected.cs = 3;
+    expected.reserved0 = 0;
+    expected.has_tail = false;
+    if (!CheckBindShadersPacket(w.data(), w.bytes_used(), expected)) {
+      return false;
+    }
+  }
+
+  // CmdStreamWriter (span): legacy GS encoding in reserved0.
+  {
+    uint8_t buf[256] = {};
+    CmdStreamWriter w;
+    w.set_span(buf, sizeof(buf));
+    auto* cmd = w.bind_shaders_with_gs(1, 2, 3, 4);
+    if (!Check(cmd != nullptr, "CmdStreamWriter.bind_shaders_with_gs (span)")) {
+      return false;
+    }
+    w.finalize();
+    expected = ExpectedBindShadersPacket{};
+    expected.vs = 1;
+    expected.ps = 2;
+    expected.cs = 3;
+    expected.reserved0 = 4;
+    expected.has_tail = false;
+    if (!CheckBindShadersPacket(buf, sizeof(buf), expected)) {
+      return false;
+    }
+  }
+
+  // CmdStreamWriter (vector): extended packet default reserved0=0 + appended {gs,hs,ds}.
+  {
+    CmdStreamWriter w;
+    w.set_vector();
+    auto* cmd = w.bind_shaders_ex(1, 2, 3, 4, 5, 6);
+    if (!Check(cmd != nullptr, "CmdStreamWriter.bind_shaders_ex (vector)")) {
+      return false;
+    }
+    w.finalize();
+    expected = ExpectedBindShadersPacket{};
+    expected.vs = 1;
+    expected.ps = 2;
+    expected.cs = 3;
+    expected.reserved0 = 0;
+    expected.has_tail = true;
+    expected.gs = 4;
+    expected.hs = 5;
+    expected.ds = 6;
+    if (!CheckBindShadersPacket(w.data(), w.bytes_used(), expected)) {
+      return false;
+    }
+  }
+
   return true;
 }
 
