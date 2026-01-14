@@ -1,10 +1,10 @@
-use aero_io_snapshot::io::state::IoSnapshot;
+use aero_io_snapshot::io::state::{IoSnapshot, SnapshotWriter};
 use aero_usb::device::AttachedUsbDevice;
 use aero_usb::hid::{
     GamepadReport, UsbCompositeHidInputHandle, UsbHidGamepadHandle, UsbHidKeyboardHandle,
     UsbHidMouseHandle,
 };
-use aero_usb::{SetupPacket, UsbInResult, UsbOutResult};
+use aero_usb::{ControlResponse, SetupPacket, UsbDeviceModel, UsbInResult, UsbOutResult};
 
 fn control_no_data(dev: &mut AttachedUsbDevice, setup: SetupPacket) {
     assert_eq!(dev.handle_setup(setup), UsbOutResult::Ack);
@@ -47,6 +47,83 @@ fn control_out_data(dev: &mut AttachedUsbDevice, setup: SetupPacket, data: &[u8]
     assert!(
         matches!(dev.handle_in(0, 0), UsbInResult::Data(resp) if resp.is_empty()),
         "expected ACK for control-OUT status stage"
+    );
+}
+
+#[test]
+fn hid_mouse_snapshot_load_clamps_button_state_before_first_configuration() {
+    // Snapshot tag numbers are part of the stable snapshot format.
+    const TAG_CONFIGURATION: u16 = 2;
+    const TAG_BUTTONS: u16 = 9;
+
+    // Set an invalid padding bit in the button image while the device is unconfigured. A corrupt
+    // snapshot must not cause a "held buttons" interrupt report to be enqueued when the guest
+    // later configures the device.
+    let mut w = SnapshotWriter::new(
+        <UsbHidMouseHandle as IoSnapshot>::DEVICE_ID,
+        <UsbHidMouseHandle as IoSnapshot>::DEVICE_VERSION,
+    );
+    w.field_u8(TAG_CONFIGURATION, 0);
+    w.field_u8(TAG_BUTTONS, 0x80);
+    let snap = w.finish();
+
+    let mut mouse = UsbHidMouseHandle::new();
+    mouse.load_state(&snap).unwrap();
+
+    assert_eq!(
+        mouse.handle_control_request(
+            SetupPacket {
+                bm_request_type: 0x00,
+                b_request: 0x09, // SET_CONFIGURATION
+                w_value: 1,
+                w_index: 0,
+                w_length: 0,
+            },
+            None,
+        ),
+        ControlResponse::Ack
+    );
+
+    assert!(
+        matches!(mouse.handle_in_transfer(0x81, 5), UsbInResult::Nak),
+        "invalid snapshot button bits should not enqueue a held-button report on first configuration"
+    );
+}
+
+#[test]
+fn hid_composite_snapshot_load_clamps_mouse_buttons_before_first_configuration() {
+    // Snapshot tag numbers are part of the stable snapshot format.
+    const TAG_CONFIGURATION: u16 = 2;
+    const TAG_MOUSE_BUTTONS: u16 = 22;
+
+    let mut w = SnapshotWriter::new(
+        <UsbCompositeHidInputHandle as IoSnapshot>::DEVICE_ID,
+        <UsbCompositeHidInputHandle as IoSnapshot>::DEVICE_VERSION,
+    );
+    w.field_u8(TAG_CONFIGURATION, 0);
+    w.field_u8(TAG_MOUSE_BUTTONS, 0x80);
+    let snap = w.finish();
+
+    let mut hid = UsbCompositeHidInputHandle::new();
+    hid.load_state(&snap).unwrap();
+
+    assert_eq!(
+        hid.handle_control_request(
+            SetupPacket {
+                bm_request_type: 0x00,
+                b_request: 0x09, // SET_CONFIGURATION
+                w_value: 1,
+                w_index: 0,
+                w_length: 0,
+            },
+            None,
+        ),
+        ControlResponse::Ack
+    );
+
+    assert!(
+        matches!(hid.handle_in_transfer(0x82, 5), UsbInResult::Nak),
+        "invalid snapshot button bits should not enqueue a held-button report on first configuration"
     );
 }
 

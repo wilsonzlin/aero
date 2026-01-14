@@ -178,13 +178,20 @@ impl MouseInterface {
     }
 
     fn button_event(&mut self, button_bit: u8, pressed: bool, configured: bool) {
-        self.flush_motion(configured);
-        let before = self.buttons;
-        if pressed {
-            self.buttons |= button_bit;
-        } else {
-            self.buttons &= !button_bit;
+        let bit = button_bit & 0x1f;
+        if bit == 0 {
+            return;
         }
+        self.flush_motion(configured);
+        // Ignore any stale padding bits (e.g. from a corrupt snapshot) when determining whether the
+        // guest-visible button state actually changed.
+        let before = self.buttons & 0x1f;
+        if pressed {
+            self.buttons |= bit;
+        } else {
+            self.buttons &= !bit;
+        }
+        self.buttons &= 0x1f;
         if self.buttons != before {
             self.push_report(
                 MouseReport {
@@ -866,7 +873,9 @@ impl IoSnapshot for UsbCompositeHidInput {
                 _ => return Err(SnapshotError::InvalidFieldEncoding("hid protocol")),
             };
         }
-        self.mouse.buttons = r.u8(TAG_MOUSE_BUTTONS)?.unwrap_or(0);
+        // Button state is a 5-bit mask (left/right/middle/back/forward). Clamp to avoid carrying
+        // arbitrary padding bits from untrusted snapshots into subsequent state transitions.
+        self.mouse.buttons = r.u8(TAG_MOUSE_BUTTONS)?.unwrap_or(0) & 0x1f;
         self.mouse.dx = r.i32(TAG_MOUSE_DX)?.unwrap_or(0);
         self.mouse.dy = r.i32(TAG_MOUSE_DY)?.unwrap_or(0);
         self.mouse.wheel = r.i32(TAG_MOUSE_WHEEL)?.unwrap_or(0);
@@ -886,7 +895,7 @@ impl IoSnapshot for UsbCompositeHidInput {
                 let report = d.bytes(len)?;
                 let hwheel = if len == 5 { report[4] as i8 } else { 0 };
                 self.mouse.pending_reports.push_back(MouseReport {
-                    buttons: report[0],
+                    buttons: report[0] & 0x1f,
                     x: report[1] as i8,
                     y: report[2] as i8,
                     wheel: report[3] as i8,

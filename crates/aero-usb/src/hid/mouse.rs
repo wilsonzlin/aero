@@ -264,7 +264,9 @@ impl IoSnapshot for UsbHidMouse {
             };
         }
 
-        self.buttons = r.u8(TAG_BUTTONS)?.unwrap_or(0);
+        // Button state is a 5-bit mask (left/right/middle/back/forward). Clamp to avoid carrying
+        // arbitrary padding bits from untrusted snapshots into subsequent state transitions.
+        self.buttons = r.u8(TAG_BUTTONS)?.unwrap_or(0) & 0x1f;
         self.ticks_ms = r.u32(TAG_TICKS_MS)?.unwrap_or(0);
         self.last_interrupt_in_ms = r.u32(TAG_LAST_INTERRUPT_IN_MS)?.unwrap_or(0);
         self.dx = r.i32(TAG_DX)?.unwrap_or(0);
@@ -288,7 +290,7 @@ impl IoSnapshot for UsbHidMouse {
                 }
                 let report = d.bytes(len)?;
                 self.pending_reports.push_back(MouseReport {
-                    buttons: report[0],
+                    buttons: report[0] & 0x1f,
                     x: report[1] as i8,
                     y: report[2] as i8,
                     wheel: report[3] as i8,
@@ -362,7 +364,9 @@ impl UsbHidMouse {
             return;
         }
         self.flush_motion();
-        let before = self.buttons;
+        // Ignore any stale padding bits (e.g. from a corrupt snapshot) when determining whether the
+        // guest-visible button state actually changed.
+        let before = self.buttons & 0x1f;
         if pressed {
             self.buttons |= bit;
         } else {
