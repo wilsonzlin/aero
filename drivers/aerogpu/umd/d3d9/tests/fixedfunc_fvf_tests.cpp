@@ -2590,7 +2590,8 @@ bool TestPsOnlyInteropXyzTex1SynthesizesVsAndUploadsWvp() {
     return false;
   }
 
-  // XYZ variants require a WVP upload for the fixed-function VS.
+  // The synthesized fixed-function VS for `XYZ | TEX1` requires a WVP upload
+  // (reserved register range c240..c243).
   bool saw_wvp = false;
   for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_F)) {
     const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(hdr);

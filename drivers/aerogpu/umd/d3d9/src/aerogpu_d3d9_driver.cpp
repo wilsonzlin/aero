@@ -14864,9 +14864,12 @@ static HRESULT stateblock_apply_locked(Device* dev, const StateBlock* sb) {
   }
 
   // Fixed-function state: transforms. Cached for GetTransform/state blocks.
-  // WORLD/VIEW/PROJECTION also drive the internal WVP constants used by the
-  // fixed-function fallback vertex shaders and other bring-up paths that consume
-  // transforms (e.g. ProcessVertices).
+  //
+  // WORLD/VIEW/PROJECTION are also consumed by bring-up fixed-function paths:
+  // - `D3DFVF_XYZ | D3DFVF_DIFFUSE{,TEX1}` draw-time CPU transform to clip-space, and
+  // - `D3DFVF_XYZ | D3DFVF_TEX1` internal WVP VS constant upload (reserved c240..c243).
+  //
+  // Transforms are also consumed by the fixed-function `ProcessVertices` subset.
   if (sb->transform_mask.any()) {
     for (uint32_t t = 0; t < Device::kTransformCacheCount; ++t) {
       if (!sb->transform_mask.test(t)) {
