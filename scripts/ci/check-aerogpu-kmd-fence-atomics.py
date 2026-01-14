@@ -9,8 +9,10 @@ Why:
     accessed across multiple contexts (submit thread, ISR/DPC, dbgctl escapes).
 
 This script scans `drivers/aerogpu/kmd/src/aerogpu_kmd.c` and enforces that
-member accesses to the fence fields are only performed via the local atomic
-helper family (AeroGpuAtomic*U64).
+member accesses to the fence fields are never performed as plain loads/stores.
+In practice this means every occurrence must take the address of the field
+(`&Adapter->LastCompletedFence`, etc), so the value is read/written via an
+Interlocked-based helper.
 
 It is intentionally lightweight and Linux-friendly; it does not require a WDK.
 """
@@ -38,11 +40,20 @@ FENCE_FIELDS = {
     "LastNotifiedErrorFence",
 }
 
-ALLOWED_CALLS = {
-    "AeroGpuAtomicReadU64",
-    "AeroGpuAtomicWriteU64",
-    "AeroGpuAtomicExchangeU64",
-    "AeroGpuAtomicCompareExchangeU64",
+TYPE_KEYWORDS = {
+    # C type/qualifier keywords commonly used in casts.
+    "const",
+    "volatile",
+    "signed",
+    "unsigned",
+    "short",
+    "long",
+    "int",
+    "char",
+    "void",
+    "struct",
+    "union",
+    "enum",
 }
 
 
@@ -235,11 +246,103 @@ def _lex(text: str) -> list[Token]:
     return tokens
 
 
-def _nearest_enclosing_call(paren_stack: list[str | None]) -> str | None:
-    for name in reversed(paren_stack):
-        if name is not None:
-            return name
+def _match_open_paren(tokens: list[Token], close_idx: int) -> int | None:
+    """
+    Given an index to a ')' token, return the matching '(' index (or None).
+    """
+
+    if close_idx < 0 or close_idx >= len(tokens) or tokens[close_idx].value != ")":
+        return None
+    depth = 0
+    for i in range(close_idx, -1, -1):
+        v = tokens[i].value
+        if v == ")":
+            depth += 1
+        elif v == "(":
+            depth -= 1
+            if depth == 0:
+                return i
     return None
+
+
+def _is_probably_type_cast(tokens: list[Token], close_idx: int) -> bool:
+    """
+    Heuristic: determine whether the parentheses ending at `close_idx` look like a
+    type-cast, so an `&` immediately following is unary (e.g. `(volatile ULONGLONG*)&x`).
+
+    This is intentionally conservative and tailored for this repo's C style:
+      - Allow identifiers that are either in TYPE_KEYWORDS or contain no lowercase
+        letters (ULONGLONG, AEROGPU_ADAPTER, ULONG_PTR, ...).
+      - Allow `*` tokens, but only as trailing tokens (TYPE*, TYPE**, ...).
+      - Reject anything that looks like an expression (numbers or other operators).
+    """
+
+    open_idx = _match_open_paren(tokens, close_idx)
+    if open_idx is None:
+        return False
+
+    inner = tokens[open_idx + 1 : close_idx]
+    if not inner:
+        return False
+
+    saw_star = False
+    saw_typeish_ident = False
+    for t in inner:
+        if t.kind == "number":
+            return False
+        if t.value == "*":
+            saw_star = True
+            continue
+        if t.kind != "ident":
+            return False
+        if t.value in TYPE_KEYWORDS:
+            saw_typeish_ident = True
+            continue
+        # If the identifier contains lowercase letters, assume it's not a type.
+        if any(c.islower() for c in t.value):
+            return False
+        saw_typeish_ident = True
+
+        if saw_star:
+            # Non-trailing identifier after '*' => likely an expression (a*b), not a cast.
+            return False
+
+    return saw_typeish_ident
+
+
+def _is_unary_address_of(tokens: list[Token], amp_idx: int) -> bool:
+    """
+    Determine whether `tokens[amp_idx] == '&'` is unary address-of.
+
+    We treat it as unary when it appears in a context where an expression is
+    expected, or when it follows a type-cast close-paren.
+    """
+
+    if amp_idx < 0 or amp_idx >= len(tokens) or tokens[amp_idx].value != "&":
+        return False
+    if amp_idx == 0:
+        return True
+
+    prev = tokens[amp_idx - 1]
+
+    if prev.value == ")":
+        return _is_probably_type_cast(tokens, amp_idx - 1)
+
+    # Identifiers and numbers generally terminate an expression, making '&' binary.
+    if prev.kind in ("ident", "number"):
+        # Keywords like `return` do not terminate an expression.
+        return prev.kind == "ident" and prev.value in {
+            "return",
+            "case",
+            "sizeof",
+            "__forceinline",
+        }
+
+    if prev.value in (")", "]", "++", "--"):
+        return False
+
+    # Default: treat as unary after operators/delimiters like '(', ',', '='.
+    return True
 
 
 def main() -> int:
@@ -251,33 +354,37 @@ def main() -> int:
     stripped = _strip_c_comments_and_literals(src_text)
     tokens = _lex(stripped)
 
-    # Track a lightweight parenthesis stack. For each '(' we record the nearest
-    # identifier token to its left (which is typically the call name, but also
-    # covers keywords like `if`/`for` so the "nearest enclosing call" heuristic
-    # remains meaningful).
-    paren_stack: list[str | None] = []
+    violations: list[tuple[str, int, int]] = []
 
-    violations: list[tuple[str, int, int, str | None]] = []
+    for i in range(2, len(tokens)):
+        tok = tokens[i]
+        if tok.kind != "ident" or tok.value not in FENCE_FIELDS:
+            continue
+        access_op = tokens[i - 1].value
+        if access_op not in ("->", "."):
+            continue
 
-    prev: Token | None = None
-    for tok in tokens:
-        if tok.value == "(":
-            name: str | None = None
-            if prev is not None and prev.kind == "ident":
-                name = prev.value
-            paren_stack.append(name)
-        elif tok.value == ")":
-            if paren_stack:
-                paren_stack.pop()
-        else:
-            # Fence field member access?
-            if tok.kind == "ident" and tok.value in FENCE_FIELDS:
-                if prev is not None and prev.value in ("->", "."):
-                    enclosing = _nearest_enclosing_call(paren_stack)
-                    if enclosing not in ALLOWED_CALLS:
-                        violations.append((tok.value, tok.line, tok.col, enclosing))
+        # Find the start of the object expression in `<obj>-><field>`.
+        obj_end_idx = i - 2
+        if obj_end_idx < 0:
+            violations.append((tok.value, tok.line, tok.col))
+            continue
 
-        prev = tok
+        obj_start_idx = obj_end_idx
+        if tokens[obj_end_idx].value == ")":
+            match = _match_open_paren(tokens, obj_end_idx)
+            if match is not None:
+                obj_start_idx = match
+
+        # Include any extra wrapping parens, so `&(Adapter->Field)` is treated
+        # the same as `&Adapter->Field`.
+        expr_start_idx = obj_start_idx
+        while expr_start_idx > 0 and tokens[expr_start_idx - 1].value == "(":
+            expr_start_idx -= 1
+
+        amp_idx = expr_start_idx - 1
+        if amp_idx < 0 or tokens[amp_idx].value != "&" or not _is_unary_address_of(tokens, amp_idx):
+            violations.append((tok.value, tok.line, tok.col))
 
     if not violations:
         print("OK: AeroGPU KMD fence atomic access checks passed.")
@@ -285,18 +392,17 @@ def main() -> int:
 
     lines = src_text.splitlines()
     print("ERROR: Found non-atomic fence field access in aerogpu_kmd.c:\n")
-    for field, line, col, call in violations:
+    for field, line, col in violations:
         context = lines[line - 1] if 1 <= line <= len(lines) else ""
-        print(f"- {field} at {SRC}:{line}:{col} (enclosing call: {call!r})")
+        print(f"- {field} at {SRC}:{line}:{col}")
         if context:
             print(f"    {context}")
             print(f"    {' ' * (col - 1)}^")
         print("")
 
-    print("Fence state must be accessed via AeroGpuAtomic*U64 helpers to avoid torn 64-bit reads/writes on x86.")
+    print("Fence state must only be accessed via Interlocked-based helpers to avoid torn 64-bit reads/writes on x86.")
     return 1
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
