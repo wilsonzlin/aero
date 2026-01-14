@@ -471,6 +471,7 @@ USB-related unit tests commonly live under:
 Rust xHCI-focused tests commonly live under:
 
 - `crates/aero-usb/tests/xhci_controller_mmio.rs`
+- `crates/aero-usb/tests/xhci_command_ring_tick.rs`
 - `crates/aero-usb/tests/xhci_event_ring.rs`
 - `crates/aero-usb/tests/xhci_trb_ring.rs`
 - `crates/aero-usb/tests/xhci_context_parse.rs`
