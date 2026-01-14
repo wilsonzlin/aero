@@ -98,11 +98,15 @@ fn qcow2_to_aerospar_roundtrip() {
     Command::cargo_bin("aero-disk-convert")
         .unwrap()
         .args([
+            "convert",
+            "--input",
             in_path.to_str().unwrap(),
+            "--output",
             out_path.to_str().unwrap(),
+            "--output-format",
+            "aerosparse",
             "--block-size-bytes",
             "4096",
-            "--quiet",
         ])
         .assert()
         .success();
@@ -145,11 +149,15 @@ fn raw_to_aerospar_is_smaller_when_sparse() {
     Command::cargo_bin("aero-disk-convert")
         .unwrap()
         .args([
+            "convert",
+            "--input",
             in_path.to_str().unwrap(),
+            "--output",
             out_path.to_str().unwrap(),
+            "--output-format",
+            "aerosparse",
             "--block-size-bytes",
             "4096",
-            "--quiet",
         ])
         .assert()
         .success();
@@ -167,4 +175,3 @@ fn raw_to_aerospar_is_smaller_when_sparse() {
     disk.read_at(0, &mut first).unwrap();
     assert_eq!(&first[..10], b"hello raw!");
 }
-
