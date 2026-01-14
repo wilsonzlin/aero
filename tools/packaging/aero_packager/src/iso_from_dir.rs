@@ -41,6 +41,12 @@ pub fn write_iso9660_joliet_from_dir(
                 return true;
             }
 
+            // Always yield symlinks so we can fail fast with a clear error message rather than
+            // silently skipping them due to hidden/metadata filtering.
+            if e.file_type().is_symlink() {
+                return true;
+            }
+
             // Avoid descending into hidden directories / __MACOSX at all. We also filter these
             // paths later at the file level, but skipping traversal is faster and avoids touching
             // host metadata trees.
