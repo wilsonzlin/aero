@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <mutex>
 #include <vector>
 
 #include "aerogpu_cmd_stream_writer.h"
@@ -173,6 +174,30 @@ bool ValidateNoDrawWithNullShaders(const uint8_t* buf, size_t capacity) {
     offset += hdr->size_bytes;
   }
   return true;
+}
+
+uint32_t F32Bits(float f) {
+  uint32_t u = 0;
+  static_assert(sizeof(u) == sizeof(f), "F32Bits assumes 32-bit float");
+  std::memcpy(&u, &f, sizeof(u));
+  return u;
+}
+
+bool ShaderContainsToken(const aerogpu::Shader* shader, uint32_t token) {
+  if (!shader) {
+    return false;
+  }
+  if (shader->bytecode.size() < sizeof(uint32_t) || (shader->bytecode.size() % sizeof(uint32_t)) != 0) {
+    return false;
+  }
+  const auto* words = reinterpret_cast<const uint32_t*>(shader->bytecode.data());
+  const size_t count = shader->bytecode.size() / sizeof(uint32_t);
+  for (size_t i = 0; i < count; ++i) {
+    if (words[i] == token) {
+      return true;
+    }
+  }
+  return false;
 }
 
 struct D3d9Context {
@@ -737,6 +762,128 @@ bool TestPsOnlyUnsupportedFvfFailsWithoutDraw() {
   return Check(CountOpcode(buf, cap, AEROGPU_CMD_DRAW) == 0, "expected no DRAW packets on INVALIDCALL");
 }
 
+bool TestFixedfuncFogRhwColorSelectsFogPs() {
+  D3d9Context ctx;
+  if (!InitD3d9(&ctx)) {
+    return false;
+  }
+  aerogpu::Device* dev = GetDevice(ctx);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+  if (!Check(ctx.device_funcs.pfnSetFVF != nullptr, "pfnSetFVF")) {
+    return false;
+  }
+  if (!Check(ctx.device_funcs.pfnSetRenderState != nullptr, "pfnSetRenderState")) {
+    return false;
+  }
+  if (!Check(ctx.device_funcs.pfnDrawPrimitiveUP != nullptr, "pfnDrawPrimitiveUP")) {
+    return false;
+  }
+
+  // Portable D3DRS_* numeric values (from d3d9types.h).
+  constexpr uint32_t kD3dRsFogEnable = 28u;     // D3DRS_FOGENABLE
+  constexpr uint32_t kD3dRsFogColor = 34u;      // D3DRS_FOGCOLOR
+  constexpr uint32_t kD3dRsFogTableMode = 35u;  // D3DRS_FOGTABLEMODE
+  constexpr uint32_t kD3dRsFogStart = 36u;      // D3DRS_FOGSTART (float bits)
+  constexpr uint32_t kD3dRsFogEnd = 37u;        // D3DRS_FOGEND   (float bits)
+  constexpr uint32_t kD3dFogLinear = 3u;        // D3DFOG_LINEAR
+
+  // c1 (fog color) as encoded by D3D9 shader bytecode.
+  constexpr uint32_t kPsSrcConst1 = 0x20E40001u;
+
+  // Pick an FVF without TEX1: RHW_COLOR. This variant does not have a dedicated fog VS
+  // variant, but the base passthrough VS still writes TEXCOORD0 from position, so the
+  // fog PS can safely read TEXCOORD0.z.
+  HRESULT hr = ctx.device_funcs.pfnSetFVF(ctx.hDevice, kFvfXyzrhwDiffuse);
+  if (!Check(hr == S_OK, "SetFVF(XYZRHW|DIFFUSE)")) {
+    return false;
+  }
+
+  const VertexXyzrhwDiffuse verts[3] = {
+      {0.0f, 0.0f, 0.25f, 1.0f, 0xFF00FF00u},
+      {1.0f, 0.0f, 0.25f, 1.0f, 0xFF00FF00u},
+      {0.0f, 1.0f, 0.25f, 1.0f, 0xFF00FF00u},
+  };
+
+  // Baseline draw with fog disabled; record the selected fixed-function PS.
+  hr = ctx.device_funcs.pfnSetRenderState(ctx.hDevice, kD3dRsFogEnable, 0u);
+  if (!Check(hr == S_OK, "SetRenderState(FOGENABLE=0)")) {
+    return false;
+  }
+  hr = ctx.device_funcs.pfnSetRenderState(ctx.hDevice, kD3dRsFogTableMode, 0u);
+  if (!Check(hr == S_OK, "SetRenderState(FOGTABLEMODE=0)")) {
+    return false;
+  }
+  hr = ctx.device_funcs.pfnDrawPrimitiveUP(ctx.hDevice,
+                                           D3DDDIPT_TRIANGLELIST,
+                                           /*primitive_count=*/1,
+                                           verts,
+                                           static_cast<uint32_t>(sizeof(VertexXyzrhwDiffuse)));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(fog off)")) {
+    return false;
+  }
+
+  aerogpu::Shader* ps_off = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    ps_off = dev->ps;
+  }
+  if (!Check(ps_off != nullptr, "PS bound (fog off)")) {
+    return false;
+  }
+  if (!Check(!ShaderContainsToken(ps_off, kPsSrcConst1), "fog-off PS does not reference c1 (fog color)")) {
+    return false;
+  }
+
+  // Enable linear fog and draw again; fixed-function fallback should select a new PS variant.
+  hr = ctx.device_funcs.pfnSetRenderState(ctx.hDevice, kD3dRsFogEnable, 1u);
+  if (!Check(hr == S_OK, "SetRenderState(FOGENABLE=1)")) {
+    return false;
+  }
+  hr = ctx.device_funcs.pfnSetRenderState(ctx.hDevice, kD3dRsFogTableMode, kD3dFogLinear);
+  if (!Check(hr == S_OK, "SetRenderState(FOGTABLEMODE=LINEAR)")) {
+    return false;
+  }
+  hr = ctx.device_funcs.pfnSetRenderState(ctx.hDevice, kD3dRsFogColor, 0xFFFF0000u);
+  if (!Check(hr == S_OK, "SetRenderState(FOGCOLOR)")) {
+    return false;
+  }
+  hr = ctx.device_funcs.pfnSetRenderState(ctx.hDevice, kD3dRsFogStart, F32Bits(0.2f));
+  if (!Check(hr == S_OK, "SetRenderState(FOGSTART)")) {
+    return false;
+  }
+  hr = ctx.device_funcs.pfnSetRenderState(ctx.hDevice, kD3dRsFogEnd, F32Bits(0.8f));
+  if (!Check(hr == S_OK, "SetRenderState(FOGEND)")) {
+    return false;
+  }
+
+  hr = ctx.device_funcs.pfnDrawPrimitiveUP(ctx.hDevice,
+                                           D3DDDIPT_TRIANGLELIST,
+                                           /*primitive_count=*/1,
+                                           verts,
+                                           static_cast<uint32_t>(sizeof(VertexXyzrhwDiffuse)));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(fog on)")) {
+    return false;
+  }
+
+  aerogpu::Shader* ps_on = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    ps_on = dev->ps;
+  }
+  if (!Check(ps_on != nullptr, "PS bound (fog on)")) {
+    return false;
+  }
+  if (!Check(ps_on != ps_off, "fog toggle changes fixed-function PS variant (RHW_COLOR)")) {
+    return false;
+  }
+  if (!Check(ShaderContainsToken(ps_on, kPsSrcConst1), "fog-on PS references c1 (fog color)")) {
+    return false;
+  }
+  return true;
+}
+
 } // namespace
 
 int main() {
@@ -747,6 +894,7 @@ int main() {
   ok = ok && TestVsOnlyStage0PsUpdateDoesNotRebindDestroyedShader();
   ok = ok && TestDestroyShaderDoesNotBindAfterDestroy();
   ok = ok && TestPsOnlyUnsupportedFvfFailsWithoutDraw();
+  ok = ok && TestFixedfuncFogRhwColorSelectsFogPs();
   if (ok) {
     std::fprintf(stdout, "PASS\n");
     return 0;
