@@ -3,10 +3,11 @@ mod common;
 use aero_dxbc::test_utils as dxbc_test_utils;
 use aero_d3d11::binding_model::{BINDING_BASE_TEXTURE, BINDING_BASE_UAV};
 use aero_d3d11::runtime::execute::D3D11Runtime;
+use aero_d3d11::sm4::decode_program;
 use aero_d3d11::{
     translate_sm4_module_to_wgsl, BufferKind, BufferRef, DstOperand, DxbcFile, OperandModifier,
     RegFile, RegisterRef, ShaderModel, ShaderStage, ShaderSignatures, Sm4Decl, Sm4Inst, Sm4Module,
-    SrcKind, SrcOperand, Swizzle, UavRef, WriteMask,
+    Sm4Program, SrcKind, SrcOperand, Swizzle, UavRef, WriteMask,
 };
 use aero_gpu::protocol_d3d11::{
     BindingDesc, BindingType, BufferUsage, CmdWriter, PipelineKind, ShaderStageFlags,
@@ -15,6 +16,8 @@ use aero_gpu::protocol_d3d11::{
 // Note: translated compute shaders use `@group(2)` (stage-scoped binding model). The
 // `protocol_d3d11` runtime (`D3D11Runtime`) binds compute resources at group 2 so translated WGSL
 // can execute through the CmdWriter path.
+
+const CS_STORE_UAV_RAW_DXBC: &[u8] = include_bytes!("fixtures/cs_store_uav_raw.dxbc");
 
 fn dummy_dxbc_bytes() -> Vec<u8> {
     // Minimal DXBC container with no chunks. The signature-driven SM4→WGSL translator only uses the
@@ -43,38 +46,11 @@ fn compute_translate_and_run_store_raw_uav_buffer() {
 
         let expected: u32 = 0x1234_5678;
 
-        let module = Sm4Module {
-            stage: ShaderStage::Compute,
-            model: ShaderModel { major: 5, minor: 0 },
-            decls: vec![
-                Sm4Decl::ThreadGroupSize { x: 1, y: 1, z: 1 },
-                Sm4Decl::UavBuffer {
-                    slot: 0,
-                    stride: 0,
-                    kind: BufferKind::Raw,
-                },
-            ],
-            instructions: vec![
-                Sm4Inst::StoreRaw {
-                    uav: UavRef { slot: 0 },
-                    addr: SrcOperand {
-                        kind: SrcKind::ImmediateF32([0; 4]),
-                        swizzle: Swizzle::XYZW,
-                        modifier: OperandModifier::None,
-                    },
-                    value: SrcOperand {
-                        kind: SrcKind::ImmediateF32([expected, 0, 0, 0]),
-                        swizzle: Swizzle::XYZW,
-                        modifier: OperandModifier::None,
-                    },
-                    mask: WriteMask::X,
-                },
-                Sm4Inst::Ret,
-            ],
-        };
-
-        let dxbc_bytes = dummy_dxbc_bytes();
-        let dxbc = DxbcFile::parse(&dxbc_bytes).expect("dummy DXBC should parse");
+        // Use a checked-in DXBC fixture (rather than constructing an Sm4Module manually) so the
+        // runtime test covers the full DXBC → decode → WGSL path.
+        let dxbc = DxbcFile::parse(CS_STORE_UAV_RAW_DXBC).expect("fixture DXBC should parse");
+        let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM5 parse should succeed");
+        let module = decode_program(&program).expect("SM5 decode should succeed");
 
         let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &ShaderSignatures::default())
             .expect("compute translation should succeed");
