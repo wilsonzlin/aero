@@ -19,6 +19,7 @@ use aero_gpu_trace::{BlobKind, TraceReader, TraceRecord};
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuIndexFormat, AerogpuPrimitiveTopology, AerogpuShaderStage, AerogpuVertexBufferBinding,
     AEROGPU_CLEAR_COLOR, AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
+    AEROGPU_RESOURCE_USAGE_INDEX_BUFFER,
     AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
 };
 #[cfg(not(target_arch = "wasm32"))]
@@ -126,7 +127,7 @@ fn build_synthetic_triangle_stream(draws: u32) -> Vec<u8> {
     );
     w.create_buffer(
         3,
-        AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
+        AEROGPU_RESOURCE_USAGE_INDEX_BUFFER,
         256, // index data (still requires 4-byte alignment)
         0,
         0,
