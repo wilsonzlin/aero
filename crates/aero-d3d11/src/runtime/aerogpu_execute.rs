@@ -1631,9 +1631,7 @@ impl AerogpuCmdRuntime {
                 args.first_vertex..args.first_vertex + args.vertex_count,
                 args.first_instance..args.first_instance + args.instance_count,
             ),
-            DrawKind::Indexed(_) => {
-                bail!("draw_expanded_passthrough does not support indexed draws yet");
-            }
+            DrawKind::Indexed(_) => bail!("draw_expanded_passthrough does not support indexed draws yet"),
         }
 
         drop(pass);

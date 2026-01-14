@@ -5398,17 +5398,26 @@ impl AerogpuD3d11Executor {
                 }
                 OPCODE_SET_VIEWPORT => {
                     self.exec_set_viewport(cmd_bytes)?;
-                    if let Some(vp) = self.state.viewport {
-                        if vp.x.is_finite()
-                            && vp.y.is_finite()
-                            && vp.width.is_finite()
-                            && vp.height.is_finite()
-                            && vp.min_depth.is_finite()
-                            && vp.max_depth.is_finite()
-                        {
-                            if let Some((rt_w, rt_h)) = rt_dims {
-                                let max_w = rt_w as f32;
-                                let max_h = rt_h as f32;
+                    // WebGPU requires that viewports stay within the render target bounds and have
+                    // positive dimensions. The AeroGPU protocol uses a degenerate 0x0 viewport to
+                    // represent "reset to default", so when we see an invalid/degenerate viewport
+                    // update mid-render-pass we must explicitly restore the default viewport (WGSL
+                    // dynamic state persists until changed).
+                    if let Some((rt_w, rt_h)) = rt_dims {
+                        let default_w = rt_w as f32;
+                        let default_h = rt_h as f32;
+
+                        let mut applied = false;
+                        if let Some(vp) = self.state.viewport {
+                            if vp.x.is_finite()
+                                && vp.y.is_finite()
+                                && vp.width.is_finite()
+                                && vp.height.is_finite()
+                                && vp.min_depth.is_finite()
+                                && vp.max_depth.is_finite()
+                            {
+                                let max_w = default_w;
+                                let max_h = default_h;
 
                                 let left = vp.x.max(0.0);
                                 let top = vp.y.max(0.0);
@@ -5426,33 +5435,59 @@ impl AerogpuD3d11Executor {
                                     pass.set_viewport(
                                         left, top, width, height, min_depth, max_depth,
                                     );
+                                    applied = true;
                                 }
-                            } else {
-                                pass.set_viewport(
-                                    vp.x,
-                                    vp.y,
-                                    vp.width,
-                                    vp.height,
-                                    vp.min_depth,
-                                    vp.max_depth,
-                                );
                             }
+                        }
+
+                        if !applied && default_w.is_finite() && default_h.is_finite() {
+                            // Reset to the default viewport (full render target).
+                            pass.set_viewport(0.0, 0.0, default_w, default_h, 0.0, 1.0);
+                        }
+                    } else if let Some(vp) = self.state.viewport {
+                        // No known render target dims (should be rare). Apply the raw viewport only
+                        // when it is valid; otherwise treat it as a no-op.
+                        if vp.x.is_finite()
+                            && vp.y.is_finite()
+                            && vp.width.is_finite()
+                            && vp.height.is_finite()
+                            && vp.min_depth.is_finite()
+                            && vp.max_depth.is_finite()
+                            && vp.width > 0.0
+                            && vp.height > 0.0
+                        {
+                            let mut min_depth = vp.min_depth.clamp(0.0, 1.0);
+                            let mut max_depth = vp.max_depth.clamp(0.0, 1.0);
+                            if min_depth > max_depth {
+                                std::mem::swap(&mut min_depth, &mut max_depth);
+                            }
+                            pass.set_viewport(vp.x, vp.y, vp.width, vp.height, min_depth, max_depth);
                         }
                     }
                 }
                 OPCODE_SET_SCISSOR => {
                     self.exec_set_scissor(cmd_bytes)?;
-                    if self.state.scissor_enable {
-                        if let Some(sc) = self.state.scissor {
-                            if let Some((rt_w, rt_h)) = rt_dims {
+                    // Similar to viewports, scissor state persists within a render pass. The
+                    // AeroGPU protocol uses a 0x0 rect to encode "scissor disabled", so we must
+                    // explicitly restore the full-target scissor when a degenerate scissor rect is
+                    // set mid-pass.
+                    if let Some((rt_w, rt_h)) = rt_dims {
+                        if self.state.scissor_enable {
+                            if let Some(sc) = self.state.scissor {
                                 let x = sc.x.min(rt_w);
                                 let y = sc.y.min(rt_h);
                                 let width = sc.width.min(rt_w.saturating_sub(x));
                                 let height = sc.height.min(rt_h.saturating_sub(y));
                                 if width > 0 && height > 0 {
                                     pass.set_scissor_rect(x, y, width, height);
+                                } else {
+                                    pass.set_scissor_rect(0, 0, rt_w, rt_h);
                                 }
+                            } else {
+                                pass.set_scissor_rect(0, 0, rt_w, rt_h);
                             }
+                        } else {
+                            pass.set_scissor_rect(0, 0, rt_w, rt_h);
                         }
                     }
                 }
