@@ -17,6 +17,7 @@ fn build_signature_chunk() -> Vec<u8> {
             mask: 0xF,
             read_write_mask: 0xF,
             stream: 0,
+            min_precision: 0,
         },
         dxbc_test_utils::SignatureEntryDesc {
             semantic_name: "TEXCOORD",
@@ -27,6 +28,7 @@ fn build_signature_chunk() -> Vec<u8> {
             mask: 0x3,
             read_write_mask: 0x3,
             stream: 0,
+            min_precision: 0,
         },
     ])
 }
@@ -42,6 +44,7 @@ fn build_signature_chunk_with_registers(pos_reg: u32, tex_reg: u32) -> Vec<u8> {
             mask: 0xF,
             read_write_mask: 0xF,
             stream: 0,
+            min_precision: 0,
         },
         dxbc_test_utils::SignatureEntryDesc {
             semantic_name: "TEXCOORD",
@@ -52,6 +55,7 @@ fn build_signature_chunk_with_registers(pos_reg: u32, tex_reg: u32) -> Vec<u8> {
             mask: 0x3,
             read_write_mask: 0x3,
             stream: 0,
+            min_precision: 0,
         },
     ])
 }
@@ -67,6 +71,7 @@ fn build_signature_chunk_v1_with_registers(pos_reg: u32, tex_reg: u32) -> Vec<u8
             mask: 0xF,
             read_write_mask: 0xF,
             stream: 0,
+            min_precision: 0,
         },
         dxbc_test_utils::SignatureEntryDesc {
             semantic_name: "TEXCOORD",
@@ -77,6 +82,7 @@ fn build_signature_chunk_v1_with_registers(pos_reg: u32, tex_reg: u32) -> Vec<u8
             mask: 0x3,
             read_write_mask: 0x3,
             stream: 0,
+            min_precision: 0,
         },
     ])
 }
@@ -92,6 +98,7 @@ fn build_signature_chunk_v1() -> Vec<u8> {
             mask: 0xF,
             read_write_mask: 0xF,
             stream: 0,
+            min_precision: 0,
         },
         dxbc_test_utils::SignatureEntryDesc {
             semantic_name: "TEXCOORD",
@@ -102,6 +109,7 @@ fn build_signature_chunk_v1() -> Vec<u8> {
             mask: 0x3,
             read_write_mask: 0x3,
             stream: 0,
+            min_precision: 0,
         },
     ])
 }
@@ -116,6 +124,7 @@ fn build_signature_chunk_v1_one_entry(stream: u32) -> Vec<u8> {
         mask: 0xF,
         read_write_mask: 0xF,
         stream,
+        min_precision: 0,
     }])
 }
 
@@ -129,6 +138,7 @@ fn build_signature_chunk_v0_one_entry(stream: u8) -> Vec<u8> {
         mask: 0xF,
         read_write_mask: 0xF,
         stream: u32::from(stream),
+        min_precision: 0,
     }])
 }
 
@@ -597,6 +607,7 @@ fn signature_chunk_missing_null_terminator_is_rejected() {
             mask: 0xF,
             read_write_mask: 0xF,
             stream: 0,
+            min_precision: 0,
         }]);
     *bytes
         .last_mut()

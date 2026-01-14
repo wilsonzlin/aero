@@ -11,6 +11,7 @@ fn build_signature_chunk_v0_one_entry(semantic_name: &str, register: u32) -> Vec
         mask: 0xF,
         read_write_mask: 0xF,
         stream: 0,
+        min_precision: 0,
     }])
 }
 
@@ -24,6 +25,7 @@ fn build_signature_chunk_v1_one_entry(semantic_name: &str, register: u32, stream
         mask: 0xF,
         read_write_mask: 0xF,
         stream,
+        min_precision: 0,
     }])
 }
 

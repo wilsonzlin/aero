@@ -38,6 +38,7 @@ fn build_signature_chunk(params: &[SigParam]) -> Vec<u8> {
             mask: p.mask,
             read_write_mask: p.mask,
             stream: 0,
+            min_precision: 0,
         })
         .collect();
     dxbc_test_utils::build_signature_chunk_v0(&entries)
@@ -55,6 +56,7 @@ fn build_signature_chunk_v1(params: &[SigParam]) -> Vec<u8> {
             mask: p.mask,
             read_write_mask: p.mask,
             stream: 0,
+            min_precision: 0,
         })
         .collect();
     dxbc_test_utils::build_signature_chunk_v1(&entries)

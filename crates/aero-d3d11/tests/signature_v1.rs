@@ -47,20 +47,10 @@ fn build_signature_chunk_v0(params: &[DxbcSignatureParameter]) -> Vec<u8> {
             mask: p.mask,
             read_write_mask: p.read_write_mask,
             stream: u32::from(p.stream),
+            min_precision: u32::from(p.min_precision),
         })
         .collect();
-
-    let mut bytes = dxbc_test_utils::build_signature_chunk_v0(&entries);
-
-    // Patch the v0 min-precision byte (stored in the last byte of the packed DWORD).
-    let table_start = 8usize;
-    let entry_size = 24usize;
-    for (i, p) in params.iter().enumerate() {
-        let base = table_start + i * entry_size;
-        bytes[base + 23] = p.min_precision;
-    }
-
-    bytes
+    dxbc_test_utils::build_signature_chunk_v0(&entries)
 }
 
 fn build_signature_chunk_v1(params: &[DxbcSignatureParameter]) -> Vec<u8> {
@@ -75,20 +65,10 @@ fn build_signature_chunk_v1(params: &[DxbcSignatureParameter]) -> Vec<u8> {
             mask: p.mask,
             read_write_mask: p.read_write_mask,
             stream: u32::from(p.stream),
+            min_precision: u32::from(p.min_precision),
         })
         .collect();
-
-    let mut bytes = dxbc_test_utils::build_signature_chunk_v1(&entries);
-
-    // Patch v1 min-precision DWORDs so tests can verify they are ignored by the parser.
-    let table_start = 8usize;
-    let entry_size = 32usize;
-    for (i, p) in params.iter().enumerate() {
-        let base = table_start + i * entry_size;
-        bytes[base + 28..base + 32].copy_from_slice(&(u32::from(p.min_precision)).to_le_bytes());
-    }
-
-    bytes
+    dxbc_test_utils::build_signature_chunk_v1(&entries)
 }
 
 fn build_signature_chunk_v1_one_entry(stream: u32) -> Vec<u8> {
@@ -101,6 +81,7 @@ fn build_signature_chunk_v1_one_entry(stream: u32) -> Vec<u8> {
         mask: 0xF,
         read_write_mask: 0x3,
         stream,
+        min_precision: 0,
     }])
 }
 

@@ -23,6 +23,14 @@ pub struct SignatureEntryDesc<'a> {
     pub read_write_mask: u8,
     /// Stream index (typically 0; used by geometry shader stream-output).
     pub stream: u32,
+    /// Min-precision field as stored in the signature entry.
+    ///
+    /// - In the v0 (24-byte) layout this is a single byte.
+    /// - In the v1 (32-byte) layout this is a full DWORD.
+    ///
+    /// Many parsers (including `aero-dxbc`) ignore this value, but it is still
+    /// useful for crafting edge-case blobs in tests.
+    pub min_precision: u32,
 }
 
 const SIGNATURE_HEADER_LEN: usize = 8;
@@ -94,14 +102,19 @@ fn build_signature_chunk_with_entry_size(
                 out[base + 21] = e.read_write_mask;
                 out[base + 22] = u8::try_from(e.stream)
                     .unwrap_or_else(|_| panic!("signature stream {} does not fit in u8", e.stream));
-                out[base + 23] = 0; // min_precision (unused)
+                out[base + 23] = u8::try_from(e.min_precision).unwrap_or_else(|_| {
+                    panic!(
+                        "signature min_precision {} does not fit in u8",
+                        e.min_precision
+                    )
+                });
             }
             SIGNATURE_ENTRY_LEN_V1 => {
                 out[base + 20] = e.mask;
                 out[base + 21] = e.read_write_mask;
                 // bytes 22..23 are reserved/unused (keep as 0)
                 out[base + 24..base + 28].copy_from_slice(&e.stream.to_le_bytes());
-                out[base + 28..base + 32].copy_from_slice(&0u32.to_le_bytes()); // min_precision
+                out[base + 28..base + 32].copy_from_slice(&e.min_precision.to_le_bytes());
             }
             _ => unreachable!(),
         }
