@@ -26,6 +26,10 @@ The files are intentionally tiny and deterministic, so CI does **not** require
   * Shader model: `ps_4_0`
   * Chunks: `ISGN`, `OSGN`, `SHDR`
   * Behavior: `mov o0, v1` (return color), `ret`
+* `ps_primitive_id.dxbc`
+  * Shader model: `ps_4_0`
+  * Chunks: `ISGN`, `OSGN`, `SHDR`
+  * Behavior: `movc o0, v0, l(1,0,0,1), l(0,0,0,1)` (red for `SV_PrimitiveID != 0`), `ret`
 * `ps_add.dxbc`
   * Shader model: `ps_4_0`
   * Chunks: `ISGN`, `OSGN`, `SHDR`

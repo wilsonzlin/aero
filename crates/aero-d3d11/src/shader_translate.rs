@@ -139,6 +139,11 @@ pub enum ShaderTranslateError {
         slot: u32,
         max: u32,
     },
+    UnsupportedSystemValue {
+        stage: ShaderStage,
+        semantic: String,
+        reason: &'static str,
+    },
     PixelShaderMissingColorOutputs,
     MissingThreadGroupSize,
     InvalidThreadGroupSize {
@@ -233,6 +238,14 @@ impl fmt::Display for ShaderTranslateError {
                     _ => write!(f, "{kind} slot {slot} is out of range (max {max})"),
                 }
             }
+            ShaderTranslateError::UnsupportedSystemValue {
+                stage,
+                semantic,
+                reason,
+            } => write!(
+                f,
+                "unsupported system-value input {semantic} in {stage:?} shader: {reason}"
+            ),
             ShaderTranslateError::PixelShaderMissingColorOutputs => {
                 write!(
                     f,
@@ -749,19 +762,19 @@ fn build_io_maps(
                 .map(|p| p.param.register)
         })
         .flatten();
-    let ps_front_facing_reg = (module.stage == ShaderStage::Pixel)
-        .then(|| {
-            inputs
-                .values()
-                .find(|p| p.sys_value == Some(D3D_NAME_IS_FRONT_FACE))
-                .map(|p| p.param.register)
-        })
-        .flatten();
     let ps_primitive_id_reg = (module.stage == ShaderStage::Pixel)
         .then(|| {
             inputs
                 .values()
                 .find(|p| p.sys_value == Some(D3D_NAME_PRIMITIVE_ID))
+                .map(|p| p.param.register)
+        })
+        .flatten();
+    let ps_front_facing_reg = (module.stage == ShaderStage::Pixel)
+        .then(|| {
+            inputs
+                .values()
+                .find(|p| p.sys_value == Some(D3D_NAME_IS_FRONT_FACE))
                 .map(|p| p.param.register)
         })
         .flatten();
@@ -1473,6 +1486,17 @@ impl IoMaps {
                     // than a numeric `f32(...)` conversion.
                     return Ok(expand_to_vec4("bitcast<f32>(input.instance_id)", p));
                 }
+                let p = self.inputs.get(&reg).ok_or(ShaderTranslateError::SignatureMissingRegister {
+                    io: "input",
+                    register: reg,
+                })?;
+                if p.sys_value.is_some() {
+                    return Err(ShaderTranslateError::UnsupportedSystemValue {
+                        stage,
+                        semantic: format!("{}{}", p.param.semantic_name, p.param.semantic_index),
+                        reason: "emulation not implemented",
+                    });
+                }
                 let field_indices = self.vs_input_fields_by_register.get(&reg).ok_or(
                     ShaderTranslateError::SignatureMissingRegister {
                         io: "input",
@@ -1598,6 +1622,13 @@ impl IoMaps {
                         register: reg,
                     },
                 )?;
+                if p.sys_value.is_some() {
+                    return Err(ShaderTranslateError::UnsupportedSystemValue {
+                        stage,
+                        semantic: format!("{}{}", p.param.semantic_name, p.param.semantic_index),
+                        reason: "emulation not implemented",
+                    });
+                }
                 // `PsIn` always declares varyings as vec4, so apply the signature mask to fill
                 // missing components with D3D defaults.
                 Ok(apply_sig_mask_to_vec4(
@@ -1669,11 +1700,11 @@ fn semantic_to_d3d_name(name: &str) -> Option<u32> {
     if is_sv_position(name) {
         return Some(D3D_NAME_POSITION);
     }
-    if is_sv_vertex_id(name) {
-        return Some(D3D_NAME_VERTEX_ID);
-    }
     if is_sv_primitive_id(name) {
         return Some(D3D_NAME_PRIMITIVE_ID);
+    }
+    if is_sv_vertex_id(name) {
+        return Some(D3D_NAME_VERTEX_ID);
     }
     if is_sv_instance_id(name) {
         return Some(D3D_NAME_INSTANCE_ID);
@@ -1719,12 +1750,12 @@ fn is_sv_vertex_id(name: &str) -> bool {
     name.eq_ignore_ascii_case("SV_VertexID") || name.eq_ignore_ascii_case("SV_VERTEXID")
 }
 
-fn is_sv_instance_id(name: &str) -> bool {
-    name.eq_ignore_ascii_case("SV_InstanceID") || name.eq_ignore_ascii_case("SV_INSTANCEID")
-}
-
 fn is_sv_primitive_id(name: &str) -> bool {
     name.eq_ignore_ascii_case("SV_PrimitiveID") || name.eq_ignore_ascii_case("SV_PRIMITIVEID")
+}
+
+fn is_sv_instance_id(name: &str) -> bool {
+    name.eq_ignore_ascii_case("SV_InstanceID") || name.eq_ignore_ascii_case("SV_INSTANCEID")
 }
 
 fn is_sv_gs_instance_id(name: &str) -> bool {
