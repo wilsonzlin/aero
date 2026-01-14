@@ -424,9 +424,13 @@ backed by a dedicated VRAM buffer and implements permissive legacy VGA decode (V
 VRAM-backed `0xA0000..0xBFFFF` window; see `docs/16-aerogpu-vga-vesa-compat.md`).
 
 BAR0 is currently implemented as a **minimal MMIO + ring/fence transport stub** (no-op command
-execution; enough for the in-tree Win7 KMD to initialize and advance fences), but the full
-versioned-AeroGPU device model (command execution + scanout + vblank pacing) still lives in
-`crates/emulator` and is not yet wired into the canonical machine.
+execution; enough for the in-tree Win7 KMD to initialize and advance fences). `aero_machine` also
+implements scanout0 + vblank register storage (including vblank counters/timestamps and IRQ
+semantics) and a host presentation path that can read/present the guest-programmed scanout
+framebuffer via `Machine::display_present`.
+
+The full AeroGPU **command execution** model (AEROGPU_CMD processing, resource management, GPU worker
+backends, etc) still lives in `crates/emulator` and is not yet wired into the canonical machine.
 
 When AeroGPU owns the boot display path, firmware derives the VBE mode-info linear framebuffer base
 from AeroGPU BAR1 (`PhysBasePtr = BAR1_BASE + 0x40000`, aka `VBE_LFB_OFFSET` in `aero_machine`).

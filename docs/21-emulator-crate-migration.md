@@ -248,10 +248,11 @@ quietly accreting more responsibilities.
 - `aero_machine::Machine` now exposes an optional AeroGPU PCI function behind
   `MachineConfig::enable_aerogpu` (`A3A0:0001` at `00:07.0`) using the canonical PCI stack:
   - BAR1-backed VRAM + legacy VGA/VBE decode (boot display foundation), and
-  - a minimal BAR0 ring/fence transport stub (no-op command execution).
+  - a minimal BAR0 device model: ring/fence transport (no-op command execution) plus scanout/cursor
+    regs and vblank counters/IRQ semantics.
 
-  The remaining integration work is wiring the **full** AeroGPU device model (command execution +
-  scanout + vblank pacing), which still lives in `crates/emulator`.
+  The remaining integration work is wiring the **full AeroGPU command execution** backend (AEROGPU_CMD
+  processing, resource management, GPU worker backends, etc), which still lives in `crates/emulator`.
 - Keep the driver/ABI contract anchored to:
   - `drivers/aerogpu/protocol/*` (source of truth)
   - `emulator/protocol` (Rust/TS mirror)
@@ -334,10 +335,11 @@ This is intentionally a sequence of small PRs (mirrors the style of the storage 
       - `crates/emulator/src/devices/pci/mod.rs` (after AeroGPU is extracted)
 
 7. **AeroGPU extraction**
-    - Extract the AeroGPU PCI device model out of `crates/emulator` into the canonical device layer
-      (`crates/devices` or a new `crates/aero-devices-aerogpu`).
-    - Replace `aero_machine`’s current BAR0 stub with the extracted full device model (command
-      execution + scanout + vblank pacing) behind `MachineConfig::enable_aerogpu`.
+     - Extract the AeroGPU PCI device model out of `crates/emulator` into the canonical device layer
+       (`crates/devices` or a new `crates/aero-devices-aerogpu`).
+     - Replace `aero_machine`’s current BAR0 no-op executor with the extracted full device model
+       (command execution / resource management) behind `MachineConfig::enable_aerogpu` while keeping
+       scanout/vblank semantics consistent with the canonical protocol docs (`drivers/aerogpu/protocol/vblank.md`).
 
 8. **SMP integration decision**
     - Define a canonical SMP story for `aero-machine` (multi-vCPU API, scheduling model, snapshot
