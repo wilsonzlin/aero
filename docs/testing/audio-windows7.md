@@ -402,6 +402,8 @@ Collect:
 - Audio ring metrics: buffer level + underrun/overrun counters + `AudioContext.state` + `sampleRate`.
 - (Optional) `baseLatencySeconds` / `outputLatencySeconds` from `out.getMetrics()` (if exposed by the browser); useful for comparing real host playback latency across platforms.
 - If available: runtime/worker “producer” counters (how full the emulator-to-worklet ring is from the producer’s point of view).
+- If available: buffered WAV snapshot summary (`audio-samples.txt` in the QA bundle) and/or `audio-output-*.json` signal stats:
+  - `signal.rms` / `signal.peakAbs` and their dBFS estimates help quickly distinguish “ring contains silence” from “ring contains real audio but host output is muted/broken”.
 - If available: guest HDA stream debug (`LPIB`, `CBL`, position buffer).
 - Browser console logs (preserve timestamps; include `[cpu]`/`[io]` worker logs if present).
 - If Perf tracing is enabled in the build, export a trace (it should include `audio.*` counters when the host is sampling audio metrics).
@@ -420,6 +422,7 @@ Collect:
 Collect:
 
 - Browser permission status + any `getUserMedia` error shown in the console.
+- If available: host media device inventory (from the QA bundle `host-media-devices.json`), including the `microphonePermissionState` and the list of detected `audioinput` devices (IDs are hashed).
 - Mic ring stats (buffered/dropped) if available in UI.
 - Optional: if the web UI exposes it, use:
   - **Audio → “Export HDA codec state (json)”** (downloads the same gating state without opening the I/O worker console).
