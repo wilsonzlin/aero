@@ -4230,7 +4230,9 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
                 format === SCANOUT_FORMAT_B8G8R8A8 ||
                 format === SCANOUT_FORMAT_B8G8R8A8_SRGB;
 
-              let out: Uint8Array;
+              // Screenshot buffers must be transferable to the main thread, which means the
+              // backing store must be an `ArrayBuffer` (not a `SharedArrayBuffer`).
+              let out: Uint8Array<ArrayBuffer>;
               if (!scanoutIsInVram && helperCompatibleFormat) {
                 if (!guest) {
                   postStub(typeof seq === "number" ? seq : undefined);
