@@ -45,8 +45,7 @@ static VOID AerovblkCaptureInterruptMode(_Inout_ PAEROVBLK_DEVICE_EXTENSION devE
 static BOOLEAN AerovblkProgramMsixVectors(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt) {
   USHORT configVec;
   USHORT queueVec;
-  USHORT readback;
-  KIRQL irql;
+  NTSTATUS st;
 
   if (devExt == NULL || devExt->Vdev.CommonCfg == NULL) {
     return FALSE;
@@ -57,15 +56,7 @@ static BOOLEAN AerovblkProgramMsixVectors(_Inout_ PAEROVBLK_DEVICE_EXTENSION dev
      * INTx path: ensure MSI-X vectors are unassigned so the device must fall
      * back to INTx + ISR semantics even if MSI-X is present/enabled.
      */
-    WRITE_REGISTER_USHORT((volatile USHORT*)&devExt->Vdev.CommonCfg->msix_config, VIRTIO_PCI_MSI_NO_VECTOR);
-    KeMemoryBarrier();
-
-    KeAcquireSpinLock(&devExt->Vdev.CommonCfgLock, &irql);
-    WRITE_REGISTER_USHORT((volatile USHORT*)&devExt->Vdev.CommonCfg->queue_select, (USHORT)AEROVBLK_QUEUE_INDEX);
-    KeMemoryBarrier();
-    WRITE_REGISTER_USHORT((volatile USHORT*)&devExt->Vdev.CommonCfg->queue_msix_vector, VIRTIO_PCI_MSI_NO_VECTOR);
-    KeMemoryBarrier();
-    KeReleaseSpinLock(&devExt->Vdev.CommonCfgLock, irql);
+    (void)VirtioPciDisableMsixVectors(&devExt->Vdev, /*QueueCount=*/1);
     return TRUE;
   }
 
@@ -81,40 +72,21 @@ static BOOLEAN AerovblkProgramMsixVectors(_Inout_ PAEROVBLK_DEVICE_EXTENSION dev
   configVec = 0;
   queueVec = (devExt->MsiMessageCount >= 2u) ? 1u : 0u;
 
-  WRITE_REGISTER_USHORT((volatile USHORT*)&devExt->Vdev.CommonCfg->msix_config, configVec);
-  KeMemoryBarrier();
-  readback = READ_REGISTER_USHORT((volatile USHORT*)&devExt->Vdev.CommonCfg->msix_config);
-  if (readback == VIRTIO_PCI_MSI_NO_VECTOR || readback != configVec) {
+  st = VirtioPciSetConfigMsixVector(&devExt->Vdev, configVec);
+  if (!NT_SUCCESS(st)) {
     return FALSE;
   }
 
-  KeAcquireSpinLock(&devExt->Vdev.CommonCfgLock, &irql);
-  WRITE_REGISTER_USHORT((volatile USHORT*)&devExt->Vdev.CommonCfg->queue_select, (USHORT)AEROVBLK_QUEUE_INDEX);
-  KeMemoryBarrier();
-  WRITE_REGISTER_USHORT((volatile USHORT*)&devExt->Vdev.CommonCfg->queue_msix_vector, queueVec);
-  KeMemoryBarrier();
-  readback = READ_REGISTER_USHORT((volatile USHORT*)&devExt->Vdev.CommonCfg->queue_msix_vector);
-  KeMemoryBarrier();
-  KeReleaseSpinLock(&devExt->Vdev.CommonCfgLock, irql);
-
-  if (readback == VIRTIO_PCI_MSI_NO_VECTOR || readback != queueVec) {
+  st = VirtioPciSetQueueMsixVector(&devExt->Vdev, (USHORT)AEROVBLK_QUEUE_INDEX, queueVec);
+  if (!NT_SUCCESS(st)) {
     /*
      * If programming vector 1 failed, fall back to vector 0 mapping so the
      * device can still interrupt via message 0.
      */
     if (queueVec != 0) {
       queueVec = 0;
-
-      KeAcquireSpinLock(&devExt->Vdev.CommonCfgLock, &irql);
-      WRITE_REGISTER_USHORT((volatile USHORT*)&devExt->Vdev.CommonCfg->queue_select, (USHORT)AEROVBLK_QUEUE_INDEX);
-      KeMemoryBarrier();
-      WRITE_REGISTER_USHORT((volatile USHORT*)&devExt->Vdev.CommonCfg->queue_msix_vector, queueVec);
-      KeMemoryBarrier();
-      readback = READ_REGISTER_USHORT((volatile USHORT*)&devExt->Vdev.CommonCfg->queue_msix_vector);
-      KeMemoryBarrier();
-      KeReleaseSpinLock(&devExt->Vdev.CommonCfgLock, irql);
-
-      if (readback == VIRTIO_PCI_MSI_NO_VECTOR || readback != queueVec) {
+      st = VirtioPciSetQueueMsixVector(&devExt->Vdev, (USHORT)AEROVBLK_QUEUE_INDEX, queueVec);
+      if (!NT_SUCCESS(st)) {
         return FALSE;
       }
     } else {
