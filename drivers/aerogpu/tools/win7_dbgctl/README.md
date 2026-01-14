@@ -324,11 +324,13 @@ This tool currently supports JSON output for snapshot-style commands:
 - `--dump-ring`
 - `--dump-createalloc` (still supports `--csv`)
 - `--dump-vblank`
+- `--wait-vblank`
+- `--query-scanline`
 - `--map-shared-handle`
 - `--selftest`
 - `--list-displays`
 
-Streaming/binary-output commands (`--watch-fence`, `--watch-ring`, `--wait-vblank`, `--query-scanline`, `--dump-scanout-bmp`,
+Streaming/binary-output commands (`--watch-fence`, `--watch-ring`, `--dump-scanout-bmp`,
 `--dump-scanout-png`, `--dump-cursor-bmp`, `--dump-cursor-png`, `--dump-last-cmd`, `--read-gpa`) currently return `ok:false`
 in JSON mode.
 

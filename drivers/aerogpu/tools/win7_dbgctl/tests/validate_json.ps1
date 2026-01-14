@@ -48,6 +48,8 @@ Assert-ValidJson -ExpectedCommand "query-scanout" -Args @("--query-scanout")
 Assert-ValidJson -ExpectedCommand "query-cursor" -Args @("--query-cursor")
 Assert-ValidJson -ExpectedCommand "dump-ring" -Args @("--dump-ring", "--ring-id", "0")
 Assert-ValidJson -ExpectedCommand "dump-vblank" -Args @("--dump-vblank", "--vblank-samples", "1")
+Assert-ValidJson -ExpectedCommand "query-scanline" -Args @("--query-scanline", "--vblank-samples", "1", "--vblank-interval-ms", "0")
+Assert-ValidJson -ExpectedCommand "wait-vblank" -Args @("--wait-vblank", "--vblank-samples", "2", "--timeout-ms", "200")
 
 Write-Host "OK: dbgctl JSON output parsed successfully"
 

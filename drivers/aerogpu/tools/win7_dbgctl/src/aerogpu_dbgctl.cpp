@@ -7090,6 +7090,362 @@ static int DoDumpVblankJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint3
   return 0;
 }
 
+static int DoWaitVblankJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t vidpnSourceId, uint32_t samples,
+                            uint32_t timeoutMs, bool *skipCloseAdapter, std::string *out) {
+  if (skipCloseAdapter) {
+    *skipCloseAdapter = false;
+  }
+  if (!out) {
+    return 1;
+  }
+  if (!f->WaitForVerticalBlankEvent) {
+    JsonWriteTopLevelError(out, "wait-vblank", f, "D3DKMTWaitForVerticalBlankEvent not available (missing gdi32 export)",
+                           STATUS_NOT_SUPPORTED);
+    return 1;
+  }
+
+  if (samples == 0) {
+    samples = 1;
+  }
+  if (samples > 10000) {
+    samples = 10000;
+  }
+  if (timeoutMs == 0) {
+    timeoutMs = 1;
+  }
+
+  LARGE_INTEGER freq;
+  if (!QueryPerformanceFrequency(&freq) || freq.QuadPart <= 0) {
+    JsonWriteTopLevelError(out, "wait-vblank", f, "QueryPerformanceFrequency failed", STATUS_INVALID_PARAMETER);
+    return 1;
+  }
+
+  // Allocate on heap so we can safely leak on timeout (the wait thread may be
+  // blocked inside the kernel thunk; tearing it down can deadlock).
+  WaitThreadCtx *waiter = (WaitThreadCtx *)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(WaitThreadCtx));
+  if (!waiter) {
+    JsonWriteTopLevelError(out, "wait-vblank", f, "HeapAlloc failed", STATUS_INSUFFICIENT_RESOURCES);
+    return 1;
+  }
+
+  uint32_t effectiveVidpnSourceId = vidpnSourceId;
+  bool fallbackToSource0 = false;
+  if (!StartWaitThread(waiter, f, hAdapter, effectiveVidpnSourceId)) {
+    JsonWriteTopLevelError(out, "wait-vblank", f, "Failed to start wait thread", STATUS_INSUFFICIENT_RESOURCES);
+    HeapFree(GetProcessHeap(), 0, waiter);
+    return 1;
+  }
+
+  DWORD w = 0;
+  NTSTATUS st = 0;
+  for (;;) {
+    // Prime: perform one wait so subsequent deltas represent full vblank periods.
+    SetEvent(waiter->request_event);
+    w = WaitForSingleObject(waiter->done_event, timeoutMs);
+    if (w == WAIT_TIMEOUT) {
+      if (skipCloseAdapter) {
+        // The wait thread may be blocked inside the kernel thunk. Avoid calling
+        // D3DKMTCloseAdapter in this case; just exit the process.
+        *skipCloseAdapter = true;
+      }
+      JsonWriteTopLevelError(out, "wait-vblank", f, "vblank wait timed out (sample 1)", STATUS_TIMEOUT);
+      return 2;
+    }
+    if (w != WAIT_OBJECT_0) {
+      JsonWriteTopLevelError(out, "wait-vblank", f, "WaitForSingleObject failed", STATUS_INVALID_PARAMETER);
+      StopWaitThread(waiter);
+      HeapFree(GetProcessHeap(), 0, waiter);
+      return 2;
+    }
+
+    st = (NTSTATUS)InterlockedCompareExchange(&waiter->last_status, 0, 0);
+    if (st == STATUS_INVALID_PARAMETER && effectiveVidpnSourceId != 0) {
+      // Retry with source 0 for older KMDs / single-source implementations.
+      StopWaitThread(waiter);
+      effectiveVidpnSourceId = 0;
+      fallbackToSource0 = true;
+      if (!StartWaitThread(waiter, f, hAdapter, effectiveVidpnSourceId)) {
+        JsonWriteTopLevelError(out, "wait-vblank", f, "Failed to restart wait thread", STATUS_INSUFFICIENT_RESOURCES);
+        HeapFree(GetProcessHeap(), 0, waiter);
+        return 1;
+      }
+      continue;
+    }
+    if (!NT_SUCCESS(st)) {
+      JsonWriteTopLevelError(out, "wait-vblank", f, "D3DKMTWaitForVerticalBlankEvent failed", st);
+      StopWaitThread(waiter);
+      HeapFree(GetProcessHeap(), 0, waiter);
+      return 2;
+    }
+    break;
+  }
+
+  LARGE_INTEGER last;
+  QueryPerformanceCounter(&last);
+
+  double min_ms = 1e9;
+  double max_ms = 0.0;
+  double sum_ms = 0.0;
+  uint32_t deltas = 0;
+
+  JsonWriter jw(out);
+  jw.BeginObject();
+  jw.Key("schema_version");
+  jw.Uint32(1);
+  jw.Key("command");
+  jw.String("wait-vblank");
+  jw.Key("vidpn_source_id_requested");
+  jw.Uint32(vidpnSourceId);
+  jw.Key("vidpn_source_id");
+  jw.Uint32(effectiveVidpnSourceId);
+  jw.Key("fallback_to_source0");
+  jw.Bool(fallbackToSource0);
+  jw.Key("samples_requested");
+  jw.Uint32(samples);
+  jw.Key("timeout_ms");
+  jw.Uint32(timeoutMs);
+  jw.Key("samples");
+  jw.BeginArray();
+
+  for (uint32_t i = 1; i < samples; ++i) {
+    SetEvent(waiter->request_event);
+    w = WaitForSingleObject(waiter->done_event, timeoutMs);
+    if (w == WAIT_TIMEOUT) {
+      jw.EndArray();
+      jw.Key("ok");
+      jw.Bool(false);
+      jw.Key("error");
+      jw.BeginObject();
+      jw.Key("message");
+      jw.String("vblank wait timed out");
+      jw.Key("sample_index");
+      jw.Uint32(i + 1);
+      jw.Key("status");
+      JsonWriteNtStatusError(jw, f, STATUS_TIMEOUT);
+      jw.EndObject();
+      jw.EndObject();
+      out->push_back('\n');
+      if (skipCloseAdapter) {
+        *skipCloseAdapter = true;
+      }
+      return 2;
+    }
+    if (w != WAIT_OBJECT_0) {
+      jw.EndArray();
+      jw.Key("ok");
+      jw.Bool(false);
+      jw.Key("error");
+      jw.BeginObject();
+      jw.Key("message");
+      jw.String("WaitForSingleObject failed");
+      jw.Key("status");
+      JsonWriteNtStatusError(jw, f, STATUS_INVALID_PARAMETER);
+      jw.EndObject();
+      jw.EndObject();
+      out->push_back('\n');
+      StopWaitThread(waiter);
+      HeapFree(GetProcessHeap(), 0, waiter);
+      return 2;
+    }
+
+    st = (NTSTATUS)InterlockedCompareExchange(&waiter->last_status, 0, 0);
+    if (!NT_SUCCESS(st)) {
+      jw.EndArray();
+      jw.Key("ok");
+      jw.Bool(false);
+      jw.Key("error");
+      jw.BeginObject();
+      jw.Key("message");
+      jw.String("D3DKMTWaitForVerticalBlankEvent failed");
+      jw.Key("status");
+      JsonWriteNtStatusError(jw, f, st);
+      jw.EndObject();
+      jw.EndObject();
+      out->push_back('\n');
+      StopWaitThread(waiter);
+      HeapFree(GetProcessHeap(), 0, waiter);
+      return 2;
+    }
+
+    LARGE_INTEGER now;
+    QueryPerformanceCounter(&now);
+    const double dt_ms = (double)(now.QuadPart - last.QuadPart) * 1000.0 / (double)freq.QuadPart;
+    last = now;
+
+    if (dt_ms < min_ms) {
+      min_ms = dt_ms;
+    }
+    if (dt_ms > max_ms) {
+      max_ms = dt_ms;
+    }
+    sum_ms += dt_ms;
+    deltas += 1;
+
+    jw.BeginObject();
+    jw.Key("index");
+    jw.Uint32(i + 1);
+    jw.Key("dt_ms");
+    jw.Double(dt_ms);
+    jw.EndObject();
+  }
+
+  StopWaitThread(waiter);
+  HeapFree(GetProcessHeap(), 0, waiter);
+
+  jw.EndArray();
+  jw.Key("ok");
+  jw.Bool(true);
+  if (deltas != 0) {
+    const double avg_ms = sum_ms / (double)deltas;
+    const double hz = (avg_ms > 0.0) ? (1000.0 / avg_ms) : 0.0;
+    jw.Key("summary");
+    jw.BeginObject();
+    jw.Key("waits");
+    jw.Uint32(samples);
+    jw.Key("deltas");
+    jw.Uint32(deltas);
+    jw.Key("avg_ms");
+    jw.Double(avg_ms);
+    jw.Key("min_ms");
+    jw.Double(min_ms);
+    jw.Key("max_ms");
+    jw.Double(max_ms);
+    jw.Key("hz");
+    jw.Double(hz);
+    jw.EndObject();
+  }
+  jw.EndObject();
+  out->push_back('\n');
+  return 0;
+}
+
+static int DoQueryScanlineJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t vidpnSourceId, uint32_t samples,
+                               uint32_t intervalMs, std::string *out) {
+  if (!out) {
+    return 1;
+  }
+  if (!f->GetScanLine) {
+    JsonWriteTopLevelError(out, "query-scanline", f, "D3DKMTGetScanLine not available (missing gdi32 export)",
+                           STATUS_NOT_SUPPORTED);
+    return 1;
+  }
+
+  if (samples == 0) {
+    samples = 1;
+  }
+  if (samples > 10000) {
+    samples = 10000;
+  }
+
+  uint32_t inVblank = 0;
+  uint32_t outVblank = 0;
+  uint32_t minLine = 0xFFFFFFFFu;
+  uint32_t maxLine = 0;
+  uint32_t effectiveVidpnSourceId = vidpnSourceId;
+  bool fallbackToSource0 = false;
+
+  JsonWriter w(out);
+  w.BeginObject();
+  w.Key("schema_version");
+  w.Uint32(1);
+  w.Key("command");
+  w.String("query-scanline");
+  w.Key("vidpn_source_id_requested");
+  w.Uint32(vidpnSourceId);
+  w.Key("samples_requested");
+  w.Uint32(samples);
+  w.Key("interval_ms");
+  w.Uint32(intervalMs);
+
+  w.Key("samples");
+  w.BeginArray();
+
+  for (uint32_t i = 0; i < samples; ++i) {
+    D3DKMT_GETSCANLINE s;
+    ZeroMemory(&s, sizeof(s));
+    s.hAdapter = hAdapter;
+    s.VidPnSourceId = effectiveVidpnSourceId;
+
+    NTSTATUS st = f->GetScanLine(&s);
+    if (!NT_SUCCESS(st) && st == STATUS_INVALID_PARAMETER && effectiveVidpnSourceId != 0) {
+      fallbackToSource0 = true;
+      effectiveVidpnSourceId = 0;
+      s.VidPnSourceId = 0;
+      st = f->GetScanLine(&s);
+    }
+    if (!NT_SUCCESS(st)) {
+      w.EndArray();
+      w.Key("ok");
+      w.Bool(false);
+      w.Key("error");
+      w.BeginObject();
+      w.Key("message");
+      w.String("D3DKMTGetScanLine failed");
+      w.Key("status");
+      JsonWriteNtStatusError(w, f, st);
+      w.EndObject();
+      w.EndObject();
+      out->push_back('\n');
+      return 2;
+    }
+
+    w.BeginObject();
+    w.Key("index");
+    w.Uint32(i + 1);
+    w.Key("vidpn_source_id");
+    w.Uint32(s.VidPnSourceId);
+    w.Key("scanline");
+    w.Uint32((uint32_t)s.ScanLine);
+    w.Key("in_vblank");
+    w.Bool(!!s.InVerticalBlank);
+    w.EndObject();
+
+    if (s.InVerticalBlank) {
+      inVblank += 1;
+    } else {
+      outVblank += 1;
+      if ((uint32_t)s.ScanLine < minLine) {
+        minLine = (uint32_t)s.ScanLine;
+      }
+      if ((uint32_t)s.ScanLine > maxLine) {
+        maxLine = (uint32_t)s.ScanLine;
+      }
+    }
+
+    if (i + 1 < samples && intervalMs != 0) {
+      Sleep(intervalMs);
+    }
+  }
+
+  w.EndArray();
+  w.Key("ok");
+  w.Bool(true);
+  w.Key("vidpn_source_id");
+  w.Uint32(effectiveVidpnSourceId);
+  w.Key("fallback_to_source0");
+  w.Bool(fallbackToSource0);
+  w.Key("summary");
+  w.BeginObject();
+  w.Key("in_vblank");
+  w.Uint32(inVblank);
+  w.Key("out_vblank");
+  w.Uint32(outVblank);
+  if (outVblank != 0) {
+    w.Key("out_scanline_range");
+    w.BeginObject();
+    w.Key("min");
+    w.Uint32(minLine);
+    w.Key("max");
+    w.Uint32(maxLine);
+    w.EndObject();
+  }
+  w.EndObject();
+
+  w.EndObject();
+  out->push_back('\n');
+  return 0;
+}
+
 static int DoMapSharedHandleJson(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint64_t sharedHandle,
                                 std::string *out) {
   if (!out) {
@@ -8035,16 +8391,11 @@ int wmain(int argc, wchar_t **argv) {
       rc = 1;
       break;
     case CMD_WAIT_VBLANK:
-      JsonWriteTopLevelError(&json, "wait-vblank", &f,
-                             "JSON output is not supported for watch/streaming commands; use text output",
-                             STATUS_NOT_SUPPORTED);
-      rc = 1;
+      rc = DoWaitVblankJson(&f, open.hAdapter, (uint32_t)open.VidPnSourceId, vblankSamples, timeoutMs, &skipCloseAdapter,
+                            &json);
       break;
     case CMD_QUERY_SCANLINE:
-      JsonWriteTopLevelError(&json, "query-scanline", &f,
-                             "JSON output is not supported for watch/streaming commands; use text output",
-                             STATUS_NOT_SUPPORTED);
-      rc = 1;
+      rc = DoQueryScanlineJson(&f, open.hAdapter, (uint32_t)open.VidPnSourceId, vblankSamples, vblankIntervalMs, &json);
       break;
     default:
       JsonWriteTopLevelError(&json, "unknown", &f, "Unknown command", STATUS_INVALID_PARAMETER);
