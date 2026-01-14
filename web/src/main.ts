@@ -48,7 +48,6 @@ import { SharedLayoutPresenter } from "./display/shared_layout_presenter";
 import { installAeroGlobal } from "./runtime/aero_global";
 import { createWebGpuCanvasContext, requestWebGpuDevice } from "./platform/webgpu";
 import { WorkerCoordinator } from "./runtime/coordinator";
-import type { SetBootDisksMessage } from "./runtime/boot_disks_protocol";
 import { installNetTraceBackendOnAeroGlobal } from "./net/trace_backend";
 import { installIoInputTelemetryBackendOnAeroGlobal } from "./runtime/io_input_telemetry_backend";
 import { initWasm, type WasmApi, type WasmVariant } from "./runtime/wasm_loader";
@@ -6383,7 +6382,6 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
       booting = true;
       update();
       const config = configManager.getState().effective;
-      const vmRuntime = config.vmRuntime ?? "legacy";
       try {
         const platformFeatures = forceJitCspBlock.checked ? { ...report, jit_dynamic_wasm: false } : report;
         const diskManager = await diskManagerPromise;
@@ -6391,17 +6389,7 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
         bootDiskSelection = selection;
 
         workerCoordinator.start(config, { platformFeatures });
-        const cpuWorker = workerCoordinator.getCpuWorker();
-        if (vmRuntime === "machine" && cpuWorker) {
-          attachedCpuWorker = cpuWorker;
-          lastSentCpuBootDiskSelection = selection;
-          cpuWorker.postMessage({
-            type: "setBootDisks",
-            mounts: selection.mounts,
-            hdd: selection.hdd ?? null,
-            cd: selection.cd ?? null,
-          } satisfies SetBootDisksMessage);
-        }
+        workerCoordinator.setBootDisks(selection.mounts, selection.hdd ?? null, selection.cd ?? null);
         const ioWorker = workerCoordinator.getIoWorker();
         if (ioWorker) {
           usbBroker.attachWorkerPort(ioWorker);
@@ -6409,14 +6397,6 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
           void webHidManager.resyncAttachedDevices();
           syncWebHidInputReportRing(ioWorker);
           attachedIoWorker = ioWorker;
-          ioWorker.postMessage({
-            type: "setBootDisks",
-            mounts: selection.mounts,
-            // In machine runtime mode the CPU worker owns OPFS disks. Avoid sending disk metadata
-            // to io.worker so it doesn't open a competing SyncAccessHandle (InUse).
-            hdd: vmRuntime === "machine" ? null : (selection.hdd ?? null),
-            cd: vmRuntime === "machine" ? null : (selection.cd ?? null),
-          } satisfies SetBootDisksMessage);
         }
         const gpuWorker = workerCoordinator.getWorker("gpu");
         const frameStateSab = workerCoordinator.getFrameStateSab();
@@ -6606,8 +6586,6 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
   let schedulerWorker: Worker | null = null;
   let schedulerFrameStateSab: SharedArrayBuffer | null = null;
   let schedulerSharedFramebuffer: { sab: SharedArrayBuffer; offsetBytes: number } | null = null;
-  let attachedCpuWorker: Worker | null = null;
-  let lastSentCpuBootDiskSelection: BootDiskSelection | null = null;
   let attachedIoWorker: Worker | null = null;
   let inputCapture: InputCapture | null = null;
   let inputCaptureCanvas: HTMLCanvasElement | null = null;
@@ -6703,6 +6681,7 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
     const anyActive = Object.values(statuses).some((s) => s.state !== "stopped");
     const config = configManager.getState().effective;
     const vmRuntime = config.vmRuntime ?? "legacy";
+    const cpuWorker = workerCoordinator.getCpuWorker();
 
     startButton.disabled = booting || !support.ok || !report.wasmThreads || !config.enableWorkers || anyActive;
     stopButton.disabled = !anyActive;
@@ -6741,26 +6720,6 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
     jitDemoButton.disabled = statuses.jit.state !== "ready" || jitDemoInFlight;
     forceJitCspBlock.disabled = anyActive;
 
-    const cpuWorker = workerCoordinator.getCpuWorker();
-    if (vmRuntime === "machine") {
-      const selection = bootDiskSelection;
-      if (cpuWorker && (cpuWorker !== attachedCpuWorker || selection !== lastSentCpuBootDiskSelection)) {
-        cpuWorker.postMessage({
-          type: "setBootDisks",
-          mounts: selection?.mounts ?? {},
-          hdd: selection?.hdd ?? null,
-          cd: selection?.cd ?? null,
-        } satisfies SetBootDisksMessage);
-        lastSentCpuBootDiskSelection = selection;
-      }
-      attachedCpuWorker = cpuWorker;
-    } else {
-      // Reset state so toggling to machine runtime while workers are running will
-      // re-send the current selection to the CPU worker.
-      attachedCpuWorker = null;
-      lastSentCpuBootDiskSelection = null;
-    }
-
     const ioWorker = workerCoordinator.getIoWorker();
     if (ioWorker !== attachedIoWorker) {
       if (attachedIoWorker) {
@@ -6773,14 +6732,7 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
         // Ensure we always send *something* so non-VM worker harnesses (audio demos, etc)
         // don't wedge the io worker in "starting" forever.
         const selection = bootDiskSelection;
-        ioWorker.postMessage({
-          type: "setBootDisks",
-          mounts: selection?.mounts ?? {},
-          // In machine runtime mode the CPU worker owns OPFS disks. Avoid sending disk metadata
-          // to io.worker so it doesn't open a competing SyncAccessHandle (InUse).
-          hdd: vmRuntime === "machine" ? null : (selection?.hdd ?? null),
-          cd: vmRuntime === "machine" ? null : (selection?.cd ?? null),
-        } satisfies SetBootDisksMessage);
+        workerCoordinator.setBootDisks(selection?.mounts ?? {}, selection?.hdd ?? null, selection?.cd ?? null);
         void webHidManager.resyncAttachedDevices();
       }
       syncWebHidInputReportRing(ioWorker);

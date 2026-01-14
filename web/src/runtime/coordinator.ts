@@ -8,6 +8,7 @@ import { perf } from "../perf/perf";
 import { WorkerKind } from "../perf/record.js";
 import type { PerfChannel } from "../perf/shared.js";
 import type { PlatformFeatureReport } from "../platform/features";
+import type { DiskImageMetadata, MountConfig } from "../storage/metadata";
 import {
   WORKER_ROLES,
   type WorkerRole,
@@ -199,6 +200,13 @@ type LastSentMicRingAttachment = {
   sampleRate: number;
 };
 
+type SetBootDisksMessage = {
+  type: "setBootDisks";
+  mounts: MountConfig;
+  hdd: DiskImageMetadata | null;
+  cd: DiskImageMetadata | null;
+};
+
 function nowMs(): number {
   return typeof performance !== "undefined" && typeof performance.now === "function" ? performance.now() : Date.now();
 }
@@ -335,10 +343,25 @@ export class WorkerCoordinator {
   // When unset (null), these resolve to a mode-specific default:
   // - Machine runtime (`vmRuntime == "machine"`): io owns both rings (real devices live in IO worker).
   // - Legacy runtime:
-  //   - Demo mode (`activeDiskImage == null`): cpu owns both rings (tone/loopback demos).
-  //   - VM mode   (`activeDiskImage != null`): io owns both rings (real devices live in IO worker).
+  //   - Demo mode (no boot disks): cpu owns both rings (tone/loopback demos).
+  //   - VM mode (boot disk mounted): io owns both rings (real devices live in IO worker).
+  //
+  // `activeDiskImage` is deprecated as a VM-mode toggle now that disks are selected via
+  // DiskManager + `setBootDisks`. Prefer `vmRuntime` + boot disk mounts.
   private audioRingBufferOwnerOverride: RingBufferOwner | null = null;
   private micRingBufferOwnerOverride: RingBufferOwner | null = null;
+
+  // Cached boot disk selection. This is driven by the UI (DiskManager) via `setBootDisks(...)`.
+  //
+  // In the legacy runtime, this is used to differentiate between "demo mode" (no VM disks) and
+  // "VM mode" (real disks mounted).
+  //
+  // In the machine runtime, the CPU worker owns OPFS disks; we still forward mount IDs to the IO
+  // worker but intentionally omit disk metadata to avoid competing SyncAccessHandle opens.
+  //
+  // NOTE: This is intentionally separate from `AeroConfig.activeDiskImage` — disk selection no longer
+  // flows through config, and relying on it as a VM-mode toggle can mis-route SPSC ring buffers.
+  private bootDisks: SetBootDisksMessage | null = null;
 
   private cursorImage: { width: number; height: number; rgba8: ArrayBuffer } | null = null;
   private cursorState: { enabled: boolean; x: number; y: number; hotX: number; hotY: number } | null = null;
@@ -552,8 +575,9 @@ export class WorkerCoordinator {
 
     this.broadcastConfig(config);
 
-    // When no explicit ring owner override is set, recompute the default forwarding
-    // targets (machine runtime vs legacy demo/VM mode).
+    // Boot disk selection + runtime mode can affect which worker should own the
+    // AudioWorklet ring buffers (SPSC). Recompute the default forwarding targets
+    // unless the caller explicitly overrode them.
     this.syncMicrophoneRingBufferAttachments();
     this.syncAudioRingBufferAttachments();
   }
@@ -857,8 +881,8 @@ export class WorkerCoordinator {
    *
    * Pass `null` to clear any prior override and return to the default policy:
    * - machine runtime: IO worker
-   * - legacy demo mode (no disk): CPU worker
-   * - legacy VM mode (disk present): IO worker
+   * - legacy demo mode (no boot disk): CPU worker
+   * - legacy VM mode (boot disk mounted): IO worker
    */
   setAudioRingBufferOwner(owner: RingBufferOwner | null): void {
     if (owner === null) {
@@ -890,8 +914,8 @@ export class WorkerCoordinator {
    *
    * Pass `null` to clear any prior override and return to the default policy:
    * - machine runtime: IO worker
-   * - legacy demo mode (no disk): CPU worker
-   * - legacy VM mode (disk present): IO worker
+   * - legacy demo mode (no boot disk): CPU worker
+   * - legacy VM mode (boot disk mounted): IO worker
    */
   setMicrophoneRingBufferOwner(owner: RingBufferOwner | null): void {
     if (owner === null) {
@@ -1010,6 +1034,34 @@ export class WorkerCoordinator {
     this.setAudioRingBuffer(ringBuffer, capacityFrames, channelCount, sampleRate);
   }
 
+  /**
+   * Select which disks the I/O worker should expose as boot media and broadcast the selection
+   * to workers that need to know whether a "real VM" is active.
+   *
+   * TODO(task 127): Once runtime selection is explicit (`config.vmRuntime`), use that as the
+   * primary mode selector and treat boot-disk presence as an *activity* signal (VM vs demo loops).
+   */
+  setBootDisks(mounts: MountConfig, hdd: DiskImageMetadata | null, cd: DiskImageMetadata | null): void {
+    const msg: SetBootDisksMessage = { type: "setBootDisks", mounts, hdd, cd };
+    this.bootDisks = msg;
+
+    const vmRuntime = this.activeConfig?.vmRuntime ?? "legacy";
+
+    // In machine runtime mode, the CPU worker owns OPFS disks. Avoid sending disk metadata to the IO worker
+    // so it doesn't open a competing SyncAccessHandle (InUse).
+    const ioMsg = vmRuntime === "machine" ? { ...msg, hdd: null, cd: null } : msg;
+
+    // Forward to the workers that care. `io.worker.ts` blocks READY on receiving this message.
+    // - legacy: IO worker opens disks; CPU worker uses this as a "VM active" signal for demo policies.
+    // - machine: CPU worker opens disks; IO worker only needs mount IDs (no disk handles).
+    this.workers.io?.worker.postMessage(ioMsg);
+    this.workers.cpu?.worker.postMessage(msg);
+
+    // Boot disk presence changes the default SPSC ring ownership policy; recompute attachments.
+    this.syncMicrophoneRingBufferAttachments();
+    this.syncAudioRingBufferAttachments();
+  }
+
   setNetTraceEnabled(enabled: boolean): void {
     this.netTraceEnabled = !!enabled;
     const net = this.workers.net?.worker;
@@ -1123,9 +1175,10 @@ export class WorkerCoordinator {
   private defaultAudioRingBufferOwner(): RingBufferOwner {
     // Machine runtime: audio devices live in the IO worker, regardless of disk state.
     if (this.activeConfig?.vmRuntime === "machine") return "io";
-    // Legacy demo mode (no disk): the CPU worker runs the tone/loopback demos.
-    // Legacy VM mode (disk present): audio devices live in the IO worker.
-    return this.activeConfig?.activeDiskImage ? "io" : "cpu";
+    // Legacy demo mode (no boot disk): the CPU worker runs the tone/loopback demos.
+    // Legacy VM mode (boot disk mounted): audio devices live in the IO worker.
+    const hasBootDisk = !!this.bootDisks?.hdd || !!this.bootDisks?.cd;
+    return hasBootDisk ? "io" : "cpu";
   }
 
   private effectiveAudioRingBufferOwner(): RingBufferOwner {
@@ -1137,7 +1190,8 @@ export class WorkerCoordinator {
     if (this.activeConfig?.vmRuntime === "machine") return "io";
     // Legacy demo mode: loopback demo consumes mic samples in CPU worker.
     // Legacy VM mode: microphone is consumed by the IO worker device model.
-    return this.activeConfig?.activeDiskImage ? "io" : "cpu";
+    const hasBootDisk = !!this.bootDisks?.hdd || !!this.bootDisks?.cd;
+    return hasBootDisk ? "io" : "cpu";
   }
 
   private effectiveMicrophoneRingBufferOwner(): RingBufferOwner {
@@ -1948,6 +2002,19 @@ export class WorkerCoordinator {
     worker.onmessage = (ev) => this.onWorkerMessage(role, instanceId, ev.data);
     worker.onerror = (ev) => this.onWorkerScriptError(role, instanceId, ev);
     worker.onmessageerror = () => this.onWorkerMessageError(role, instanceId);
+
+    // Re-apply the most recent boot disk selection to restarted CPU/IO workers so they
+    // don't fall back to demo-mode behaviour after an automatic restart.
+    if ((role === "cpu" || role === "io") && this.bootDisks) {
+      try {
+        const vmRuntime = this.activeConfig?.vmRuntime ?? "legacy";
+        const msg =
+          role === "io" && vmRuntime === "machine" ? { ...this.bootDisks, hdd: null, cd: null } : this.bootDisks;
+        worker.postMessage(msg);
+      } catch {
+        // Best-effort; worker may not be ready to accept structured messages yet.
+      }
+    }
 
     setReadyFlag(shared.status, role, false);
   }

@@ -308,6 +308,14 @@ let sharedTileToggle = false;
 
 let currentConfig: AeroConfig | null = null;
 let currentConfigVersion = 0;
+// True when the UI has mounted at least one boot disk (HDD/CD) via `setBootDisks`.
+//
+// This is the preferred signal for "VM mode" in the legacy worker runtime now that disk
+// selection is handled by DiskManager, not `AeroConfig.activeDiskImage`.
+//
+// TODO(task 127): Use `config.vmRuntime` as the primary mode selector; treat boot disk mounts
+// as an activity indicator ("VM active") for demo loops, audio ring ownership, etc.
+let vmBootDisksPresent = false;
 
 type MicRingBufferView = MicRingBuffer & { sampleRate: number };
 let hdaDemoTimer: number | null = null;
@@ -2457,6 +2465,14 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
     return;
   }
 
+  if ((msg as { type?: unknown }).type === "setBootDisks") {
+    const m = msg as Partial<{ hdd?: unknown; cd?: unknown }>;
+    // Treat the presence of a mounted HDD/CD as the "real VM" indicator. This is distinct
+    // from `AeroConfig.activeDiskImage`, which is deprecated as a VM-mode toggle.
+    vmBootDisksPresent = !!m.hdd || !!m.cd;
+    return;
+  }
+
   if ((msg as Partial<SetMicrophoneRingBufferMessage>)?.type === "setMicrophoneRingBuffer") {
     attachMicrophoneRingBuffer(msg as SetMicrophoneRingBufferMessage);
     return;
@@ -2918,9 +2934,9 @@ async function runLoopInner(): Promise<void> {
         perfLastFrameId = 0;
         nextHeartbeatMs = performance.now();
         nextFrameMs = performance.now();
-        // Keep the legacy disk demo behind the "no active disk image" path so it
+        // Keep the legacy disk demo behind the "no VM boot disks mounted" path so it
         // doesn't interfere with real VM boot fixtures.
-        if (!diskDemoStarted && !currentConfig?.activeDiskImage) {
+        if (!diskDemoStarted && !vmBootDisksPresent) {
           diskDemoStarted = true;
           void runDiskReadDemo();
         }
@@ -2946,15 +2962,15 @@ async function runLoopInner(): Promise<void> {
       // not actively waiting on an I/O roundtrip.
       io?.poll(64);
 
-      const demoMode = !currentConfig?.activeDiskImage;
+      const vmMode = vmBootDisksPresent;
+      const demoMode = !vmMode;
       // The AudioWorklet output ring buffer is treated as SPSC (single-producer,
       // single-consumer). In demo mode we let the CPU worker own the producer side
       // to generate a fallback sine tone or mic loopback for smoke tests.
       //
-      // Once a real VM is requested (`activeDiskImage` is set), the I/O worker's
-      // guest audio device must become the sole producer. If the CPU worker kept
-      // writing its demo audio, we'd have multiple producers racing and corrupting
-      // the ring buffer.
+      // Once a real VM is active (boot disks mounted), the I/O worker's guest audio
+      // device must become the sole producer. If the CPU worker kept writing demo
+      // audio, we'd have multiple producers racing and corrupting the ring buffer.
       if (workletBridge && audioDstSampleRate > 0 && audioCapacityFrames > 0) {
         if (nextAudioFillDeadlineMs === 0) nextAudioFillDeadlineMs = now;
         if (now >= nextAudioFillDeadlineMs) {
@@ -3022,7 +3038,7 @@ async function runLoopInner(): Promise<void> {
         }
       }
 
-      if (!didIoDemo && io && Atomics.load(status, StatusIndex.IoReady) === 1 && !currentConfig?.activeDiskImage) {
+      if (!didIoDemo && io && Atomics.load(status, StatusIndex.IoReady) === 1 && demoMode) {
         didIoDemo = true;
         try {
           perf.spanBegin("cpu:io:demo");
@@ -3121,7 +3137,7 @@ async function runLoopInner(): Promise<void> {
         const t0 = perfActive ? performance.now() : 0;
         const ioWaitBefore = perfIoWaitMs;
 
-        const vmRequested = !!currentConfig?.activeDiskImage;
+        const vmRequested = vmMode;
         const vmReady = vmRequested && !!wasmVm;
 
         if (vmReady && wasmVm && io && Atomics.load(status, StatusIndex.IoReady) === 1) {
@@ -3273,6 +3289,10 @@ async function runDiskReadDemo(): Promise<void> {
     if (Atomics.load(status, StatusIndex.StopRequested) === 1) return;
     await new Promise((resolve) => setTimeout(resolve, 1));
   }
+
+  // If a boot disk has since been mounted, skip the demo so we don't interfere with
+  // a real VM's disk traffic.
+  if (vmBootDisksPresent) return;
 
   // Read the first sector into guest RAM at an arbitrary scratch offset.
   const guestOffset = 0x1000n;

@@ -47,8 +47,15 @@ export interface AeroConfig {
    * See `L2TunnelTokenTransport` / `WebSocketL2TunnelClient` for details.
    *
    * Default: `"query"`.
-  */
+   */
   l2TunnelTokenTransport?: L2TunnelTokenTransport;
+  /**
+   * @deprecated
+   * Legacy VM-mode toggle used by older harnesses.
+   *
+   * Disk selection now flows through DiskManager + `setBootDisks`, and VM/demo policies should
+   * instead be keyed off explicit runtime selection (`vmRuntime`, task 127) and boot-disk presence.
+   */
   activeDiskImage: string | null;
   logLevel: AeroLogLevel;
   /**

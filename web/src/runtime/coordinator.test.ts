@@ -4,6 +4,7 @@ import { perf } from "../perf/perf";
 import { WorkerCoordinator } from "./coordinator";
 import { MessageType } from "./protocol";
 import { allocateSharedMemorySegments, createSharedMemoryViews } from "./shared_layout";
+import type { DiskImageMetadata } from "../storage/metadata";
 import {
   SCANOUT_FORMAT_B8G8R8X8,
   SCANOUT_SOURCE_LEGACY_TEXT,
@@ -42,6 +43,24 @@ describe("runtime/coordinator", () => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const originalWorker = (globalThis as any).Worker as unknown;
   const TEST_VRAM_MIB = 1;
+  const dummyHdd = (): DiskImageMetadata => ({
+    source: "local",
+    id: "disk.img",
+    name: "disk.img",
+    backend: "opfs",
+    kind: "hdd",
+    format: "raw",
+    fileName: "disk.img",
+    sizeBytes: 0,
+    createdAtMs: 0,
+  });
+  const lastMessageOfType = (worker: MockWorker, type: string): unknown | undefined => {
+    for (let i = worker.posted.length - 1; i >= 0; i -= 1) {
+      const msg = worker.posted[i]?.message as { type?: unknown } | undefined;
+      if (msg?.type === type) return msg;
+    }
+    return undefined;
+  };
 
   beforeEach(() => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -179,7 +198,7 @@ describe("runtime/coordinator", () => {
 
   it("restarts the VM when vmRuntime changes (legacy → machine)", () => {
     const coordinator = new WorkerCoordinator();
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 1 });
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: TEST_VRAM_MIB });
     const shared = createSharedMemoryViews(segments);
     (coordinator as any).shared = shared;
     (coordinator as any).activeConfig = {
@@ -211,7 +230,7 @@ describe("runtime/coordinator", () => {
 
   it("restarts the VM when vmRuntime changes (machine → legacy)", () => {
     const coordinator = new WorkerCoordinator();
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 1 });
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: TEST_VRAM_MIB });
     const shared = createSharedMemoryViews(segments);
     (coordinator as any).shared = shared;
     (coordinator as any).activeConfig = {
@@ -274,7 +293,7 @@ describe("runtime/coordinator", () => {
     expect(restartSpy).not.toHaveBeenCalled();
   });
 
-  it("allows VM start when activeDiskImage is set even without OPFS SyncAccessHandle", () => {
+  it("allows worker runtime start even without OPFS SyncAccessHandle", () => {
     const coordinator = new WorkerCoordinator();
 
     expect(() =>
@@ -284,7 +303,7 @@ describe("runtime/coordinator", () => {
           enableWorkers: true,
           enableWebGPU: false,
           proxyUrl: null,
-          activeDiskImage: "disk.img",
+          activeDiskImage: null,
           logLevel: "info",
         },
         {
@@ -308,7 +327,7 @@ describe("runtime/coordinator", () => {
     ).not.toThrow();
   });
 
-  it("does not stop when switching into VM mode via updateConfig without OPFS SyncAccessHandle", () => {
+  it("does not stop when setting boot disks without OPFS SyncAccessHandle", () => {
     const coordinator = new WorkerCoordinator();
 
     const baseConfig = {
@@ -346,7 +365,7 @@ describe("runtime/coordinator", () => {
     (coordinator as any).spawnWorker("cpu", segments);
     (coordinator as any).spawnWorker("io", segments);
 
-    coordinator.updateConfig({ ...baseConfig, activeDiskImage: "disk.img" });
+    coordinator.setBootDisks({}, dummyHdd(), null);
 
     expect(coordinator.getVmState()).toBe("running");
     expect(coordinator.getLastFatalEvent()).toBeNull();
@@ -407,12 +426,14 @@ describe("runtime/coordinator", () => {
       enableWorkers: true,
       enableWebGPU: false,
       proxyUrl: null,
-      activeDiskImage: "disk.img",
+      activeDiskImage: null,
       vmRuntime: "legacy",
       logLevel: "info",
     };
     (coordinator as any).spawnWorker("cpu", segments);
     (coordinator as any).spawnWorker("io", segments);
+
+    coordinator.setBootDisks({}, dummyHdd(), null);
 
     const cpuWorker = (coordinator as any).workers.cpu.worker as MockWorker;
     const ioWorker = (coordinator as any).workers.io.worker as MockWorker;
@@ -430,8 +451,12 @@ describe("runtime/coordinator", () => {
     const micSab = new SharedArrayBuffer(256);
     coordinator.setMicrophoneRingBuffer(micSab, 48_000);
 
-    const cpuMic = cpuWorker.posted.at(-1)?.message as { ringBuffer?: unknown; type?: unknown } | undefined;
-    const ioMic = ioWorker.posted.at(-1)?.message as { ringBuffer?: unknown; type?: unknown } | undefined;
+    // The coordinator suppresses re-sending identical ring-buffer attachments to avoid
+    // resetting device state / discarding buffered microphone samples. In VM mode, the
+    // CPU worker's mic attachment stays `null`, so a call to `setMicrophoneRingBuffer`
+    // may only send a message to the IO worker.
+    const cpuMic = lastMessageOfType(cpuWorker, "setMicrophoneRingBuffer") as { ringBuffer?: unknown; type?: unknown } | undefined;
+    const ioMic = lastMessageOfType(ioWorker, "setMicrophoneRingBuffer") as { ringBuffer?: unknown; type?: unknown } | undefined;
     expect(cpuMic?.type).toBe("setMicrophoneRingBuffer");
     expect(cpuMic?.ringBuffer).toBe(null);
     expect(ioMic?.type).toBe("setMicrophoneRingBuffer");
@@ -442,7 +467,7 @@ describe("runtime/coordinator", () => {
     "forwards audio/mic rings to IO only in machine runtime by default (SPSC, activeDiskImage=%s)",
     (activeDiskImage) => {
       const coordinator = new WorkerCoordinator();
-      const segments = allocateSharedMemorySegments({ guestRamMiB: 1 });
+      const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: TEST_VRAM_MIB });
       const shared = createSharedMemoryViews(segments);
       (coordinator as any).shared = shared;
       (coordinator as any).activeConfig = {
