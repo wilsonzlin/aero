@@ -6424,14 +6424,19 @@ HRESULT AEROGPU_D3D9_CALL device_process_vertices_internal(
   const uint32_t fvf = dev->fvf;
   const uint32_t fvf_base = fvf & ~kD3dFvfTexCoordSizeMask;
   const bool src_xyz_plain = (fvf_base == kD3dFvfXyz);
+  const bool src_xyzw_plain = (fvf_base == kD3dFvfXyzw);
   const bool src_xyzrhw_plain = (fvf_base == kD3dFvfXyzRhw);
   const bool src_xyz_diffuse = (fvf_base == kSupportedFvfXyzDiffuse);
+  const bool src_xyzw_diffuse = (fvf_base == (kD3dFvfXyzw | kD3dFvfDiffuse));
   const bool src_xyz_diffuse_tex1 = (fvf_base == kSupportedFvfXyzDiffuseTex1);
+  const bool src_xyzw_diffuse_tex1 = (fvf_base == (kD3dFvfXyzw | kD3dFvfDiffuse | kD3dFvfTex1));
   const bool src_xyz_tex1 = (fvf_base == kSupportedFvfXyzTex1);
+  const bool src_xyzw_tex1 = (fvf_base == (kD3dFvfXyzw | kD3dFvfTex1));
   const bool src_xyzrhw_diffuse = (fvf_base == kSupportedFvfXyzrhwDiffuse);
   const bool src_xyzrhw_diffuse_tex1 = (fvf_base == kSupportedFvfXyzrhwDiffuseTex1);
   const bool src_xyzrhw_tex1 = (fvf_base == kSupportedFvfXyzrhwTex1);
   const bool src_xyzrhw = (src_xyzrhw_plain || src_xyzrhw_diffuse || src_xyzrhw_diffuse_tex1 || src_xyzrhw_tex1);
+  const bool src_xyzw = (src_xyzw_plain || src_xyzw_diffuse || src_xyzw_diffuse_tex1 || src_xyzw_tex1);
   // Note: XYZRHW inputs are already pre-transformed. We still handle a minimal
   // subset here to support fixed-function default values (e.g. diffuse=white
   // when requested by the destination decl) and basic TEX0 relocation.
@@ -6444,7 +6449,8 @@ HRESULT AEROGPU_D3D9_CALL device_process_vertices_internal(
   // When D3DPV_DONOTCOPYDATA is set, the UMD writes only POSITIONT and preserves
   // all other destination bytes.
   if (!(fixedfunc &&
-        (src_xyzrhw || src_xyz_plain || src_xyz_diffuse || src_xyz_diffuse_tex1 || src_xyz_tex1))) {
+        (src_xyzrhw || src_xyz_plain || src_xyzw || src_xyz_diffuse || src_xyzw_diffuse || src_xyz_diffuse_tex1 ||
+         src_xyzw_diffuse_tex1 || src_xyz_tex1 || src_xyzw_tex1))) {
     return D3DERR_NOTAVAILABLE;
   }
 
@@ -6651,7 +6657,8 @@ HRESULT AEROGPU_D3D9_CALL device_process_vertices_internal(
   // Fixed-function fallback: implement a minimal CPU vertex transform for common
   // FVF paths when no user shaders are bound.
   if (fixedfunc &&
-      (src_xyzrhw || src_xyz_plain || src_xyz_diffuse || src_xyz_diffuse_tex1 || src_xyz_tex1)) {
+      (src_xyzrhw || src_xyz_plain || src_xyzw || src_xyz_diffuse || src_xyzw_diffuse || src_xyz_diffuse_tex1 ||
+       src_xyzw_diffuse_tex1 || src_xyz_tex1 || src_xyzw_tex1)) {
     uint32_t src_min_stride = 0;
     bool src_has_diffuse = false;
     uint32_t src_diffuse_offset = 0;
@@ -6659,12 +6666,21 @@ HRESULT AEROGPU_D3D9_CALL device_process_vertices_internal(
     uint32_t src_tex0_offset = 0;
     uint32_t src_tex0_size_bytes = 0;
     bool src_is_xyzrhw = false;
+    bool src_is_xyzw = false;
     if (src_xyz_plain) {
       src_min_stride = 12u;
+    } else if (src_xyzw_plain) {
+      src_is_xyzw = true;
+      src_min_stride = 16u;
     } else if (src_xyz_diffuse) {
       src_min_stride = 16u;
       src_has_diffuse = true;
       src_diffuse_offset = 12u;
+    } else if (src_xyzw_diffuse) {
+      src_is_xyzw = true;
+      src_min_stride = 20u;
+      src_has_diffuse = true;
+      src_diffuse_offset = 16u;
     } else if (src_xyz_diffuse_tex1) {
       const uint32_t tex0_dim = fvf_decode_texcoord_size(fvf, 0);
       if (tex0_dim < 1u || tex0_dim > 4u) {
@@ -6676,6 +6692,18 @@ HRESULT AEROGPU_D3D9_CALL device_process_vertices_internal(
       src_diffuse_offset = 12u;
       src_has_tex0 = true;
       src_tex0_offset = 16u;
+    } else if (src_xyzw_diffuse_tex1) {
+      src_is_xyzw = true;
+      const uint32_t tex0_dim = fvf_decode_texcoord_size(fvf, 0);
+      if (tex0_dim < 1u || tex0_dim > 4u) {
+        return E_FAIL;
+      }
+      src_tex0_size_bytes = tex0_dim * 4u;
+      src_min_stride = 20u + src_tex0_size_bytes;
+      src_has_diffuse = true;
+      src_diffuse_offset = 16u;
+      src_has_tex0 = true;
+      src_tex0_offset = 20u;
     } else if (src_xyz_tex1) {
       const uint32_t tex0_dim = fvf_decode_texcoord_size(fvf, 0);
       if (tex0_dim < 1u || tex0_dim > 4u) {
@@ -6685,6 +6713,16 @@ HRESULT AEROGPU_D3D9_CALL device_process_vertices_internal(
       src_min_stride = 12u + src_tex0_size_bytes;
       src_has_tex0 = true;
       src_tex0_offset = 12u;
+    } else if (src_xyzw_tex1) {
+      src_is_xyzw = true;
+      const uint32_t tex0_dim = fvf_decode_texcoord_size(fvf, 0);
+      if (tex0_dim < 1u || tex0_dim > 4u) {
+        return E_FAIL;
+      }
+      src_tex0_size_bytes = tex0_dim * 4u;
+      src_min_stride = 16u + src_tex0_size_bytes;
+      src_has_tex0 = true;
+      src_tex0_offset = 16u;
     } else if (src_xyzrhw_plain) {
       src_is_xyzrhw = true;
       src_min_stride = 16u;
@@ -6825,8 +6863,9 @@ HRESULT AEROGPU_D3D9_CALL device_process_vertices_internal(
         const float in_x = read_f32_unaligned(src + 0);
         const float in_y = read_f32_unaligned(src + 4);
         const float in_z = read_f32_unaligned(src + 8);
+        const float in_w = src_is_xyzw ? read_f32_unaligned(src + 12) : 1.0f;
 
-        const float v[4] = {in_x, in_y, in_z, 1.0f};
+        const float v[4] = {in_x, in_y, in_z, in_w};
         float clip[4] = {};
         d3d9_mul_vec4_mat4_row_major(v, wvp, clip);
 

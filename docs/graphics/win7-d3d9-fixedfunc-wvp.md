@@ -65,11 +65,12 @@ Independently of draw-time WVP, `pfnProcessVertices` has a bring-up fixed-functi
 - Condition: no user **vertex** shader is bound (pixel shader binding does not affect `ProcessVertices`).
 - Supported source `dev->fvf` values:
   - `D3DFVF_XYZRHW` (+ optional `D3DFVF_DIFFUSE`, + optional `D3DFVF_TEX1`)
+  - `D3DFVF_XYZW` (+ optional `D3DFVF_DIFFUSE`, + optional `D3DFVF_TEX1`)
   - `D3DFVF_XYZ` (+ optional `D3DFVF_DIFFUSE`, + optional `D3DFVF_TEX1`)
 - It writes screen-space `XYZRHW` into **stream 0** of the destination layout described by `hVertexDecl`. Declaration
   elements in other streams are ignored when inferring destination stride/offsets.
   - For `D3DFVF_XYZ*` inputs, it computes `WORLD0 * VIEW * PROJECTION`, applies the D3D9 viewport transform, and writes
-    `XYZRHW` (screen space).
+    `XYZRHW` (screen space). For `D3DFVF_XYZW*`, the input `w` component is respected.
   - For `D3DFVF_XYZRHW*` inputs, `XYZRHW` is already in screen space and is passed through unchanged.
   - `D3DPV_DONOTCOPYDATA` (`ProcessVertices.Flags & 0x1`) controls whether non-position elements are written:
     - When set, the UMD writes **only** the output position (`POSITIONT` float4) and preserves all other destination bytes

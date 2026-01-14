@@ -598,13 +598,18 @@ Current behavior is intentionally bring-up level, with two paths:
   - `D3DFVF_XYZRHW | D3DFVF_DIFFUSE`
   - `D3DFVF_XYZRHW | D3DFVF_DIFFUSE | D3DFVF_TEX1`
   - `D3DFVF_XYZRHW | D3DFVF_TEX1`
+  - `D3DFVF_XYZW`
+  - `D3DFVF_XYZW | D3DFVF_DIFFUSE`
+  - `D3DFVF_XYZW | D3DFVF_DIFFUSE | D3DFVF_TEX1`
+  - `D3DFVF_XYZW | D3DFVF_TEX1`
   - `D3DFVF_XYZ`
   - `D3DFVF_XYZ | D3DFVF_DIFFUSE`
   - `D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1`
   - `D3DFVF_XYZ | D3DFVF_TEX1`
   the UMD reads vertices from **stream 0** and writes **screen-space `XYZRHW`** position into **stream 0** of the
   destination layout described by `hVertexDecl` (declaration elements in other streams are ignored):
-  - for `D3DFVF_XYZ*` inputs: applies a CPU-side **World/View/Projection + viewport** transform to produce `XYZRHW`, and
+  - for `D3DFVF_XYZ*` / `D3DFVF_XYZW*` inputs: applies a CPU-side **World/View/Projection + viewport** transform to produce
+    `XYZRHW` (for `D3DFVF_XYZW*` the input `w` is respected), and
   - for `D3DFVF_XYZRHW*` inputs: passes through the source `XYZRHW` position as-is (already `POSITIONT` screen space).
 
   Unless `D3DPV_DONOTCOPYDATA` is set, the UMD clears the full destination vertex (`DestStride` bytes) before writing
