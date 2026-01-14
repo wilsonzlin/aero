@@ -532,6 +532,10 @@ async function spawnRelayServer(extraEnv = {}) {
          MAX_SIGNALING_MESSAGES_PER_SECOND: "",
          UDP_WS_IDLE_TIMEOUT: "",
          UDP_WS_PING_INTERVAL: "",
+         AERO_WEBRTC_UDP_RELAY_ICE_GATHERING_TIMEOUT: "",
+         AERO_WEBRTC_UDP_RELAY_SHUTDOWN_TIMEOUT: "",
+         AERO_WEBRTC_UDP_RELAY_LOG_FORMAT: "",
+         AERO_WEBRTC_UDP_RELAY_MODE: "",
          // Clear WebRTC ICE/network env vars that can break localhost connectivity
          // when a developer shell carries production NAT/listen settings.
          WEBRTC_NAT_1TO1_IPS: "",
