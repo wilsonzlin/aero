@@ -453,9 +453,12 @@ impl D3D11Runtime {
                 | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+
+        let shadow_len = usize::try_from(size).context("CreateBuffer size overflows usize")?;
+        let shadow = vec![0u8; shadow_len];
         self.resources
             .buffers
-            .insert(id, BufferResource { buffer, size });
+            .insert(id, BufferResource { buffer, size, shadow });
         Ok(())
     }
 
@@ -495,9 +498,19 @@ impl D3D11Runtime {
         let buffer = self
             .resources
             .buffers
-            .get(&id)
+            .get_mut(&id)
             .ok_or_else(|| anyhow!("unknown buffer {id}"))?;
         self.queue.write_buffer(&buffer.buffer, offset, bytes);
+
+        let shadow_start = usize::try_from(offset).context("UpdateBuffer offset overflows usize")?;
+        let shadow_end = shadow_start
+            .checked_add(bytes.len())
+            .ok_or_else(|| anyhow!("UpdateBuffer shadow range overflows usize"))?;
+        buffer
+            .shadow
+            .get_mut(shadow_start..shadow_end)
+            .ok_or_else(|| anyhow!("UpdateBuffer shadow range out of bounds"))?
+            .copy_from_slice(bytes);
         Ok(())
     }
 
@@ -1335,6 +1348,81 @@ impl D3D11Runtime {
             );
         }
 
+        let (src_buf_size, dst_buf_size) = {
+            let src_buf = self
+                .resources
+                .buffers
+                .get(&src)
+                .ok_or_else(|| anyhow!("unknown buffer {src}"))?;
+            let dst_buf = self
+                .resources
+                .buffers
+                .get(&dst)
+                .ok_or_else(|| anyhow!("unknown buffer {dst}"))?;
+            (src_buf.size, dst_buf.size)
+        };
+
+        let src_end = src_offset
+            .checked_add(size)
+            .ok_or_else(|| anyhow!("CopyBufferToBuffer src range overflows u64"))?;
+        let dst_end = dst_offset
+            .checked_add(size)
+            .ok_or_else(|| anyhow!("CopyBufferToBuffer dst range overflows u64"))?;
+        if src_end > src_buf_size || dst_end > dst_buf_size {
+            bail!(
+                "CopyBufferToBuffer out of bounds: src_end={src_end} (size={}) dst_end={dst_end} (size={})",
+                src_buf_size,
+                dst_buf_size
+            );
+        }
+
+        // Update the CPU shadow copies so later commands (e.g. strip primitive-restart emulation)
+        // see the same buffer contents that the GPU will.
+        let shadow_src_start =
+            usize::try_from(src_offset).context("CopyBufferToBuffer src_offset overflows usize")?;
+        let shadow_dst_start =
+            usize::try_from(dst_offset).context("CopyBufferToBuffer dst_offset overflows usize")?;
+        let shadow_size = usize::try_from(size).context("CopyBufferToBuffer size overflows usize")?;
+        let shadow_src_end = shadow_src_start
+            .checked_add(shadow_size)
+            .ok_or_else(|| anyhow!("CopyBufferToBuffer src shadow range overflows usize"))?;
+        let shadow_dst_end = shadow_dst_start
+            .checked_add(shadow_size)
+            .ok_or_else(|| anyhow!("CopyBufferToBuffer dst shadow range overflows usize"))?;
+
+        if src == dst {
+            let buf = self
+                .resources
+                .buffers
+                .get_mut(&src)
+                .ok_or_else(|| anyhow!("unknown buffer {src}"))?;
+            buf.shadow
+                .copy_within(shadow_src_start..shadow_src_end, shadow_dst_start);
+        } else {
+            let tmp = {
+                let src_buf = self
+                    .resources
+                    .buffers
+                    .get(&src)
+                    .ok_or_else(|| anyhow!("unknown buffer {src}"))?;
+                src_buf
+                    .shadow
+                    .get(shadow_src_start..shadow_src_end)
+                    .ok_or_else(|| anyhow!("CopyBufferToBuffer src shadow range out of bounds"))?
+                    .to_vec()
+            };
+            let dst_buf = self
+                .resources
+                .buffers
+                .get_mut(&dst)
+                .ok_or_else(|| anyhow!("unknown buffer {dst}"))?;
+            dst_buf
+                .shadow
+                .get_mut(shadow_dst_start..shadow_dst_end)
+                .ok_or_else(|| anyhow!("CopyBufferToBuffer dst shadow range out of bounds"))?
+                .copy_from_slice(&tmp);
+        }
+
         let src_buf = self
             .resources
             .buffers
@@ -1345,20 +1433,6 @@ impl D3D11Runtime {
             .buffers
             .get(&dst)
             .ok_or_else(|| anyhow!("unknown buffer {dst}"))?;
-
-        let src_end = src_offset
-            .checked_add(size)
-            .ok_or_else(|| anyhow!("CopyBufferToBuffer src range overflows u64"))?;
-        let dst_end = dst_offset
-            .checked_add(size)
-            .ok_or_else(|| anyhow!("CopyBufferToBuffer dst range overflows u64"))?;
-        if src_end > src_buf.size || dst_end > dst_buf.size {
-            bail!(
-                "CopyBufferToBuffer out of bounds: src_end={src_end} (size={}) dst_end={dst_end} (size={})",
-                src_buf.size,
-                dst_buf.size
-            );
-        }
 
         encoder.copy_buffer_to_buffer(
             &src_buf.buffer,
@@ -1647,11 +1721,20 @@ impl D3D11Runtime {
                         bail!("DrawIndexed without an index buffer bound");
                     };
                     sync_index_buffer(&mut render_pass, resources, index, &mut bound_index_buffer)?;
-                    render_pass.draw_indexed(
-                        first_index..first_index + index_count,
-                        base_vertex,
-                        first_instance..first_instance + instance_count,
-                    );
+                    let instances = first_instance..first_instance + instance_count;
+                    if pipeline.pipelines.uses_strip_index_format() {
+                        draw_indexed_strip_restart_emulated(
+                            &mut render_pass,
+                            resources,
+                            index,
+                            first_index,
+                            index_count,
+                            base_vertex,
+                            instances,
+                        )?;
+                    } else {
+                        render_pass.draw_indexed(first_index..first_index + index_count, base_vertex, instances);
+                    }
                 }
                 _ => bail!(
                     "opcode {:?} not allowed inside render pass",
@@ -2114,6 +2197,93 @@ fn sync_index_buffer<'a>(
     pass.set_index_buffer(buf.buffer.slice(index.offset..), index.format);
     *bound = Some(index);
     Ok(())
+}
+
+fn draw_indexed_strip_restart_emulated<'a>(
+    pass: &mut wgpu::RenderPass<'a>,
+    resources: &'a D3D11Resources,
+    index: BoundIndexBuffer,
+    first_index: u32,
+    index_count: u32,
+    base_vertex: i32,
+    instances: std::ops::Range<u32>,
+) -> Result<()> {
+    let buf = resources
+        .buffers
+        .get(&index.buffer)
+        .ok_or_else(|| anyhow!("unknown index buffer {}", index.buffer))?;
+
+    let (stride_bytes, restart_value) = match index.format {
+        wgpu::IndexFormat::Uint16 => (2usize, u16::MAX as u32),
+        wgpu::IndexFormat::Uint32 => (4usize, u32::MAX),
+    };
+
+    // Compute the byte offset for the first index in the draw call.
+    let start_byte = index
+        .offset
+        .checked_add(first_index as u64 * stride_bytes as u64)
+        .ok_or_else(|| anyhow!("index buffer offset overflows u64"))?;
+    let start_byte =
+        usize::try_from(start_byte).context("index buffer offset overflows usize")?;
+
+    let shadow = buf.shadow.as_slice();
+
+    // wgpu's primitive restart appears unreliable on some GL backends. Emulate restart by scanning
+    // the index range on CPU and splitting into multiple `draw_indexed` calls that omit restart
+    // indices entirely.
+    let mut seg_start = 0u32;
+    let mut byte_off = start_byte;
+    for i in 0..index_count {
+        let idx = read_index_from_shadow(shadow, byte_off, index.format);
+        if idx == restart_value {
+            if i > seg_start {
+                pass.draw_indexed(
+                    first_index + seg_start..first_index + i,
+                    base_vertex,
+                    instances.clone(),
+                );
+            }
+            seg_start = i + 1;
+        }
+        byte_off = byte_off.saturating_add(stride_bytes);
+    }
+
+    if seg_start < index_count {
+        pass.draw_indexed(
+            first_index + seg_start..first_index + index_count,
+            base_vertex,
+            instances,
+        );
+    }
+    Ok(())
+}
+
+fn read_index_from_shadow(
+    shadow: &[u8],
+    byte_offset: usize,
+    format: wgpu::IndexFormat,
+) -> u32 {
+    match format {
+        wgpu::IndexFormat::Uint16 => {
+            if byte_offset + 2 <= shadow.len() {
+                u16::from_le_bytes([shadow[byte_offset], shadow[byte_offset + 1]]) as u32
+            } else {
+                0
+            }
+        }
+        wgpu::IndexFormat::Uint32 => {
+            if byte_offset + 4 <= shadow.len() {
+                u32::from_le_bytes([
+                    shadow[byte_offset],
+                    shadow[byte_offset + 1],
+                    shadow[byte_offset + 2],
+                    shadow[byte_offset + 3],
+                ])
+            } else {
+                0
+            }
+        }
+    }
 }
 
 fn map_buffer_usage(usage: BufferUsage, supports_compute: bool) -> wgpu::BufferUsages {

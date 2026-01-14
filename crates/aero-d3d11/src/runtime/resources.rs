@@ -1,14 +1,31 @@
 use std::collections::HashMap;
+use std::fmt;
 use std::sync::Arc;
 
 use aero_gpu::bindings::layout_cache::CachedBindGroupLayout;
 use aero_gpu::bindings::samplers::SamplerId;
 use aero_gpu::protocol_d3d11::ResourceId;
 
-#[derive(Debug)]
 pub struct BufferResource {
     pub buffer: wgpu::Buffer,
     pub size: u64,
+    /// CPU shadow copy of the buffer contents.
+    ///
+    /// The protocol D3D11 runtime uses this to emulate behaviors that require inspecting index
+    /// buffers on the CPU (e.g. primitive-restart handling for strip topologies on wgpu GL).
+    ///
+    /// This is kept up to date by `UpdateBuffer` and `CopyBufferToBuffer` opcodes.
+    pub shadow: Vec<u8>,
+}
+
+impl fmt::Debug for BufferResource {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("BufferResource")
+            .field("buffer", &self.buffer)
+            .field("size", &self.size)
+            .field("shadow_len", &self.shadow.len())
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone)]
