@@ -57,7 +57,12 @@ The canonical machine supports **two mutually-exclusive** display configurations
 - `MachineConfig::enable_vga=true` (and `enable_aerogpu=false`): provide boot display via the
   standalone `aero_gpu_vga` VGA/VBE implementation. The VBE linear framebuffer is exposed at the
   configured `MachineConfig::vga_lfb_base` (historically defaulting to `0xE000_0000` via
-  `aero_gpu_vga::SVGA_LFB_BASE`) without requiring a dedicated PCI VGA stub.
+  `aero_gpu_vga::SVGA_LFB_BASE`).
+  - When `MachineConfig::enable_pc_platform=false`, the machine maps the LFB MMIO aperture directly
+    at that base.
+  - When `MachineConfig::enable_pc_platform=true`, the canonical machine exposes a small
+    Bochs/QEMU-compatible VGA PCI stub (currently `00:0c.0`) so the LFB can be reached via the PCI
+    MMIO window / BAR router.
 
 See also:
 
