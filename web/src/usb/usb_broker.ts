@@ -18,7 +18,7 @@ import {
   type UsbSelectDeviceMessage,
   type UsbSelectedMessage,
 } from "./usb_proxy_protocol";
-import { WebUsbBackend } from "./webusb_backend";
+import { WebUsbBackend, type WebUsbBackendOptions } from "./webusb_backend";
 import { formatWebUsbError } from "../platform/webusb_troubleshooting";
 import { createUsbProxyRingBuffer, UsbProxyRing } from "./usb_proxy_ring";
 
@@ -48,6 +48,7 @@ function extractActionKind(action: unknown): UsbHostAction["kind"] | null {
 type QueueItem = {
   action: UsbHostAction;
   resolve: (completion: UsbHostCompletion) => void;
+  port: MessagePort | Worker | null;
 };
 
 type UsbForgettableDevice = USBDevice & { forget: () => Promise<void> };
@@ -85,9 +86,39 @@ function getNavigatorUsb(): USB | null {
   return nav?.usb ?? null;
 }
 
+function resolveWebUsbBackendOptions(options?: WebUsbBackendOptions): Required<WebUsbBackendOptions> {
+  return { translateOtherSpeedConfigurationDescriptor: options?.translateOtherSpeedConfigurationDescriptor ?? true };
+}
+
+type UsbBrokerAttachPortMessage = {
+  type: "usb.broker.attachPort";
+  port: MessagePort;
+  attachRings?: boolean;
+  backendOptions?: WebUsbBackendOptions;
+};
+
+function isMessagePortLike(value: unknown): value is MessagePort {
+  if (!value || typeof value !== "object") return false;
+  const v = value as { postMessage?: unknown; addEventListener?: unknown; removeEventListener?: unknown };
+  return typeof v.postMessage === "function" && typeof v.addEventListener === "function" && typeof v.removeEventListener === "function";
+}
+
+function isUsbBrokerAttachPortMessage(value: unknown): value is UsbBrokerAttachPortMessage {
+  if (!isRecord(value) || value.type !== "usb.broker.attachPort") return false;
+  if (!isMessagePortLike(value.port)) return false;
+  if (value.attachRings !== undefined && typeof value.attachRings !== "boolean") return false;
+  if (value.backendOptions !== undefined) {
+    if (!isRecord(value.backendOptions)) return false;
+    const translate = value.backendOptions.translateOtherSpeedConfigurationDescriptor;
+    if (translate !== undefined && typeof translate !== "boolean") return false;
+  }
+  return true;
+}
+
 export class UsbBroker {
   private device: USBDevice | null = null;
-  private backend: WebUsbBackend | null = null;
+  private backendDefault: WebUsbBackend | null = null;
+  private backendNoOtherSpeed: WebUsbBackend | null = null;
   private selectedInfo: UsbDeviceInfo | null = null;
   private guestStatus: UsbGuestWebUsbSnapshot | null = null;
 
@@ -96,6 +127,7 @@ export class UsbBroker {
 
   private readonly ports = new Set<MessagePort | Worker>();
   private readonly portListeners = new Map<MessagePort | Worker, EventListener>();
+  private readonly portBackendOptions = new Map<MessagePort | Worker, Required<WebUsbBackendOptions>>();
   private readonly deviceChangeListeners = new Set<() => void>();
 
   private readonly ringDrainTimers = new Map<MessagePort | Worker, ReturnType<typeof setInterval>>();
@@ -172,7 +204,8 @@ export class UsbBroker {
     this.resetSelectedDevice("WebUSB device replaced.");
 
     this.device = device;
-    this.backend = backend;
+    this.backendDefault = backend;
+    this.backendNoOtherSpeed = null;
     this.selectedInfo = {
       vendorId: device.vendorId,
       productId: device.productId,
@@ -187,7 +220,7 @@ export class UsbBroker {
   }
 
   async detachSelectedDevice(reason = "WebUSB device detached."): Promise<void> {
-    if (!this.device && !this.backend && !this.selectedInfo) return;
+    if (!this.device && !this.backendDefault && !this.selectedInfo) return;
     this.resetSelectedDevice(reason);
     this.broadcast({ type: "usb.selected", ok: false, error: reason } satisfies UsbSelectedMessage);
   }
@@ -297,13 +330,7 @@ export class UsbBroker {
   }
 
   async execute(action: UsbHostAction): Promise<UsbHostCompletion> {
-    if (this.disconnectError) return usbErrorCompletion(action.kind, action.id, this.disconnectError);
-    if (!this.backend || !this.device) return usbErrorCompletion(action.kind, action.id, "WebUSB device not selected.");
-
-    return await new Promise<UsbHostCompletion>((resolve) => {
-      this.queue.push({ action, resolve });
-      this.kickQueue();
-    });
+    return await this.executeForPort(null, action);
   }
 
   /**
@@ -317,15 +344,26 @@ export class UsbBroker {
    * (which only listen for status updates) should pass `{ attachRings: false }` to avoid allocating
    * ring buffers and per-port drain timers.
    */
-  attachWorkerPort(port: MessagePort | Worker, options: { attachRings?: boolean } = {}): void {
+  attachWorkerPort(port: MessagePort | Worker, options: { attachRings?: boolean; backendOptions?: WebUsbBackendOptions } = {}): void {
     const isNew = !this.ports.has(port);
     if (isNew) this.ports.add(port);
+
+    // Record per-port backend behaviour even when the port was already attached so callers can
+    // adjust options for re-used MessagePorts (e.g. worker-provided subports).
+    this.portBackendOptions.set(port, resolveWebUsbBackendOptions(options.backendOptions));
 
     if (isNew) {
       const onMessage: EventListener = (ev) => {
         const data = (ev as MessageEvent<unknown>).data;
+        if (isUsbBrokerAttachPortMessage(data)) {
+          this.attachWorkerPort(data.port, {
+            attachRings: data.attachRings,
+            backendOptions: data.backendOptions,
+          });
+          return;
+        }
         if (isUsbActionMessage(data)) {
-          void this.execute(data.action).then((completion) => {
+          void this.executeForPort(port, data.action).then((completion) => {
             const msg: UsbCompletionMessage = { type: "usb.completion", completion };
             this.postToPort(port, msg);
           });
@@ -412,6 +450,7 @@ export class UsbBroker {
     }
     this.actionRings.delete(port);
     this.completionRings.delete(port);
+    this.portBackendOptions.delete(port);
 
     const listener = this.portListeners.get(port);
     if (listener) {
@@ -472,7 +511,7 @@ export class UsbBroker {
       }
       if (!action) break;
 
-      void this.execute(action).then((completion) => {
+      void this.executeForPort(port, action).then((completion) => {
         // The port may have been detached (or rings disabled) while the completion was in-flight.
         const activeCompletionRing = this.completionRings.get(port) ?? null;
         if (activeCompletionRing) {
@@ -508,7 +547,7 @@ export class UsbBroker {
   }
 
   private async adoptDevice(device: USBDevice): Promise<UsbDeviceInfo> {
-    if (device === this.device && this.backend && !this.disconnectError && this.selectedInfo) {
+    if (device === this.device && this.backendDefault && !this.disconnectError && this.selectedInfo) {
       return this.selectedInfo;
     }
 
@@ -529,7 +568,8 @@ export class UsbBroker {
     this.resetSelectedDevice("WebUSB device replaced.");
 
     this.device = device;
-    this.backend = backend;
+    this.backendDefault = backend;
+    this.backendNoOtherSpeed = null;
     this.selectedInfo = {
       vendorId: device.vendorId,
       productId: device.productId,
@@ -560,7 +600,7 @@ export class UsbBroker {
         continue;
       }
 
-      const backend = this.backend;
+      const backend = this.getBackendForPort(item.port);
       if (!backend || !this.device) {
         item.resolve(usbErrorCompletion(item.action.kind, item.action.id, "WebUSB device not selected."));
         continue;
@@ -594,13 +634,14 @@ export class UsbBroker {
 
   private resetSelectedDevice(reason: string, options: { closeDevice?: boolean } = {}): void {
     const prevDevice = this.device;
-    if (this.backend || this.device) {
+    if (this.backendDefault || this.device) {
       // Resolve in-flight actions (if any) via the disconnect signal.
       this.disconnectError = reason;
       this.disconnectSignal.resolve(reason);
     }
 
-    this.backend = null;
+    this.backendDefault = null;
+    this.backendNoOtherSpeed = null;
     this.device = null;
     this.selectedInfo = null;
 
@@ -614,6 +655,33 @@ export class UsbBroker {
       const item = this.queue.shift()!;
       item.resolve(usbErrorCompletion(item.action.kind, item.action.id, reason));
     }
+  }
+
+  private getBackendForPort(port: MessagePort | Worker | null): WebUsbBackend | null {
+    const device = this.device;
+    if (!device) return null;
+
+    const opts = port ? this.portBackendOptions.get(port) : null;
+    const translateOtherSpeed = opts?.translateOtherSpeedConfigurationDescriptor ?? true;
+
+    if (translateOtherSpeed) {
+      return this.backendDefault;
+    }
+
+    if (this.backendNoOtherSpeed) return this.backendNoOtherSpeed;
+    const backend = new WebUsbBackend(device, { translateOtherSpeedConfigurationDescriptor: false });
+    this.backendNoOtherSpeed = backend;
+    return backend;
+  }
+
+  private async executeForPort(port: MessagePort | Worker | null, action: UsbHostAction): Promise<UsbHostCompletion> {
+    if (this.disconnectError) return usbErrorCompletion(action.kind, action.id, this.disconnectError);
+    if (!this.device) return usbErrorCompletion(action.kind, action.id, "WebUSB device not selected.");
+
+    return await new Promise<UsbHostCompletion>((resolve) => {
+      this.queue.push({ action, resolve, port });
+      this.kickQueue();
+    });
   }
 
   private handleDisconnect(reason: string): void {

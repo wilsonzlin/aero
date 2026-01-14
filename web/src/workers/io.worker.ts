@@ -3722,11 +3722,44 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
         if (import.meta.env.DEV && api.WebUsbEhciPassthroughHarness && !usbEhciHarnessRuntime) {
           const ctor = api.WebUsbEhciPassthroughHarness;
           try {
+            // EHCI is a high-speed controller: disable the UHCI-only CONFIGURATION→OTHER_SPEED_CONFIGURATION
+            // translation in the WebUSB backend so the harness sees the device's real current-speed descriptors.
+            //
+            // The main-thread UsbBroker routes actions based on the MessagePort they arrive on, so create a
+            // dedicated port for the EHCI harness with translation disabled.
+            let port: MessagePort | DedicatedWorkerGlobalScope = ctx;
+            if (typeof MessageChannel !== "undefined") {
+              try {
+                const channel = new MessageChannel();
+                // Ask the main-thread UsbBroker (listening on `ctx`) to attach the other end with EHCI options.
+                ctx.postMessage(
+                  {
+                    type: "usb.broker.attachPort",
+                    port: channel.port2,
+                    attachRings: false,
+                    backendOptions: { translateOtherSpeedConfigurationDescriptor: false },
+                  },
+                  [channel.port2],
+                );
+                port = channel.port1;
+                try {
+                  // Node/Vitest may keep MessagePorts alive; unref so unit tests don't hang.
+                  (channel.port1 as unknown as { unref?: () => void }).unref?.();
+                  (channel.port2 as unknown as { unref?: () => void }).unref?.();
+                } catch {
+                  // ignore
+                }
+              } catch {
+                // Fall back to the default worker channel when MessageChannel is unavailable.
+              }
+            }
+
             usbEhciHarnessRuntime = new WebUsbEhciHarnessRuntime({
               createHarness: () => new ctor(),
-              port: ctx,
+              port,
               initiallyBlocked: true,
-              initialRingAttach: usbRingAttach ?? undefined,
+              // Ring handles received on the main worker channel are not compatible with the dedicated harness port.
+              initialRingAttach: port === ctx ? (usbRingAttach ?? undefined) : undefined,
               onUpdate: (snapshot) => {
                 ctx.postMessage({ type: "usb.ehciHarness.status", snapshot } satisfies UsbEhciHarnessStatusMessage);
               },
