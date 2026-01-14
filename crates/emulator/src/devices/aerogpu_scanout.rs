@@ -97,12 +97,15 @@ impl AeroGpuFormat {
     /// Map an AeroGPU pixel format (`enum aerogpu_format`) to the shared scanout descriptor format
     /// enum (`aero_shared::scanout_state::SCANOUT_FORMAT_*`).
     ///
-    /// This mapping is intentionally conservative: the scanout descriptor currently supports only
-    /// a single format, so we only publish a compatible format when we can represent it without
-    /// ambiguity.
+    /// The scanout descriptor currently supports only a single format (`B8G8R8X8`). We treat
+    /// AeroGPU BGRA/XRGB variants as compatible since they share the same byte layout for the RGB
+    /// channels; alpha (if present) is ignored by the scanout consumer.
     pub fn to_scanout_state_format(self) -> Option<u32> {
         match self {
-            Self::B8G8R8X8Unorm => Some(SCANOUT_FORMAT_B8G8R8X8),
+            Self::B8G8R8X8Unorm
+            | Self::B8G8R8A8Unorm
+            | Self::B8G8R8X8UnormSrgb
+            | Self::B8G8R8A8UnormSrgb => Some(SCANOUT_FORMAT_B8G8R8X8),
             _ => None,
         }
     }
@@ -185,6 +188,11 @@ impl AeroGpuScanoutConfig {
         };
         let pitch = u64::from(self.pitch_bytes);
         if pitch < row_bytes {
+            return Self::disabled_scanout_state_update(source);
+        }
+        if bytes_per_pixel != 0 && pitch % (bytes_per_pixel as u64) != 0 {
+            // Scanout consumers treat the pitch as a byte stride for `bytes_per_pixel`-sized pixels.
+            // If it's not a multiple of the pixel size, row starts would land mid-pixel.
             return Self::disabled_scanout_state_update(source);
         }
 
@@ -647,6 +655,17 @@ mod tests {
         assert_eq!(update.base_paddr_hi, 0);
         assert_eq!(update.format, SCANOUT_FORMAT_B8G8R8X8);
 
+        // BGRA is treated as compatible (alpha ignored by scanout consumer).
+        let bgra = AeroGpuScanoutConfig {
+            format: AeroGpuFormat::B8G8R8A8Unorm,
+            ..cfg
+        };
+        let update = bgra.to_scanout_state_update(SCANOUT_SOURCE_WDDM);
+        assert_eq!(update.width, 640);
+        assert_eq!(update.height, 480);
+        assert_eq!(update.pitch_bytes, 640 * 4);
+        assert_eq!(update.format, SCANOUT_FORMAT_B8G8R8X8);
+
         // Unsupported format must not panic and must publish a disabled descriptor.
         let unsupported = AeroGpuScanoutConfig {
             format: AeroGpuFormat::R8G8B8A8Unorm,
@@ -662,5 +681,14 @@ mod tests {
         assert_eq!(update0.base_paddr_lo, 0);
         assert_eq!(update0.base_paddr_hi, 0);
         assert_eq!(update0.format, SCANOUT_FORMAT_B8G8R8X8);
+
+        // Pitch that isn't a multiple of the pixel size is rejected as an invalid descriptor.
+        let misaligned_pitch = AeroGpuScanoutConfig {
+            pitch_bytes: cfg.pitch_bytes + 2,
+            ..cfg
+        };
+        let update = misaligned_pitch.to_scanout_state_update(SCANOUT_SOURCE_WDDM);
+        assert_eq!(update.width, 0);
+        assert_eq!(update.height, 0);
     }
 }
