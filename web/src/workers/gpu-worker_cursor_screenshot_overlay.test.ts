@@ -16,7 +16,12 @@ import { allocateSharedMemorySegments, createSharedMemoryViews } from "../runtim
 import { MessageType, type ProtocolMessage, type WorkerInitMessage } from "../runtime/protocol";
 import { FRAME_PRESENTED, FRAME_SEQ_INDEX, FRAME_STATUS_INDEX, GPU_PROTOCOL_NAME, GPU_PROTOCOL_VERSION } from "../ipc/gpu-protocol";
 import { publishScanoutState, SCANOUT_FORMAT_B8G8R8A8, SCANOUT_FORMAT_B8G8R8X8, SCANOUT_SOURCE_WDDM } from "../ipc/scanout_state";
-import { CURSOR_FORMAT_B8G8R8A8, CURSOR_FORMAT_B8G8R8X8, publishCursorState } from "../ipc/cursor_state";
+import {
+  CURSOR_FORMAT_B8G8R8A8,
+  CURSOR_FORMAT_B8G8R8A8_SRGB,
+  CURSOR_FORMAT_B8G8R8X8,
+  publishCursorState,
+} from "../ipc/cursor_state";
 
 async function waitForWorkerMessage(
   worker: Worker,
@@ -532,6 +537,80 @@ describe("workers/gpu-worker cursor screenshot overlay", () => {
       expect(shot.height).toBe(1);
       // 50% red over black: R = round(255*128/255) = 128 => 0xff000080.
       expect(firstPixelU32(shot.rgba8)).toBe(0xff000080);
+    } finally {
+      await worker.terminate();
+    }
+  }, 25_000);
+
+  it("decodes sRGB cursor formats before compositing screenshots", async () => {
+    const segments = allocateHarnessSharedMemorySegments({
+      guestRamBytes: 1 * 1024 * 1024,
+      sharedFramebuffer: new SharedArrayBuffer(8),
+      sharedFramebufferOffsetBytes: 0,
+      ioIpcBytes: 0,
+      vramBytes: 0,
+    });
+    const views = createSharedMemoryViews(segments);
+
+    const scanoutPaddr = 0x1000;
+    const cursorPaddr = 0x2000;
+    // Background pixel: black BGRX -> RGBA [0,0,0,0xff].
+    views.guestU8.set([0x00, 0x00, 0x00, 0x00], scanoutPaddr);
+    publishScanoutState(views.scanoutStateI32!, {
+      source: SCANOUT_SOURCE_WDDM,
+      basePaddrLo: scanoutPaddr,
+      basePaddrHi: 0,
+      width: 1,
+      height: 1,
+      pitchBytes: 4,
+      format: SCANOUT_FORMAT_B8G8R8X8,
+    });
+
+    // Cursor pixel: BGRA with R=0x80 in an sRGB format.
+    // If treated as linear, we'd see R=0x80. When decoded from sRGB -> linear, it becomes ~0x37.
+    views.guestU8.set([0x00, 0x00, 0x80, 0xff], cursorPaddr);
+    publishCursorState(views.cursorStateI32!, {
+      enable: 1,
+      x: 0,
+      y: 0,
+      hotX: 0,
+      hotY: 0,
+      width: 1,
+      height: 1,
+      pitchBytes: 4,
+      format: CURSOR_FORMAT_B8G8R8A8_SRGB,
+      basePaddrLo: cursorPaddr,
+      basePaddrHi: 0,
+    });
+
+    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
+    const shimUrl = new URL("./test_workers/worker_threads_webworker_shim.ts", import.meta.url);
+    const worker = new Worker(new URL("./gpu-worker.ts", import.meta.url), {
+      type: "module",
+      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+    } as unknown as WorkerOptions);
+
+    try {
+      await initHeadlessGpuWorker(worker, {
+        kind: "init",
+        role: "gpu",
+        controlSab: segments.control,
+        guestMemory: segments.guestMemory,
+        ioIpcSab: segments.ioIpc,
+        sharedFramebuffer: segments.sharedFramebuffer,
+        sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,
+        vgaFramebuffer: segments.sharedFramebuffer,
+        scanoutState: segments.scanoutState,
+        scanoutStateOffsetBytes: segments.scanoutStateOffsetBytes,
+        cursorState: segments.cursorState,
+        cursorStateOffsetBytes: segments.cursorStateOffsetBytes,
+      });
+
+      const shot = await requestScreenshot(worker, 1, true);
+      expect(shot.width).toBe(1);
+      expect(shot.height).toBe(1);
+      // sRGB 0x80 -> linear ~0x37, with alpha forced to 0xff => 0xff000037.
+      expect(firstPixelU32(shot.rgba8)).toBe(0xff000037);
     } finally {
       await worker.terminate();
     }
