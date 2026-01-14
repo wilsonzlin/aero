@@ -593,3 +593,146 @@ fn tier2_shl_high8_updates_cf_observed_by_jc() {
     assert_eq!(exit, RunExit::SideExit { next_rip: 11 });
     assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize] & 0xff, 1);
 }
+
+#[test]
+fn tier2_shl64_updates_cf_observed_by_jc() {
+    // mov rax, 0x8000_0000_0000_0000
+    // shl rax, 1
+    // jc +3
+    // mov bl, 0
+    // int3
+    // mov bl, 1
+    // int3
+    //
+    // For SHL count==1, CF is the old MSB. With old MSB=1, ensure `jc` is taken.
+    const CODE: &[u8] = &[
+        0x48, 0xB8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80, // mov rax, 0x8000...
+        0x48, 0xD1, 0xE0, // shl rax, 1
+        0x72, 0x03, // jc +3
+        0xB3, 0x00, // mov bl, 0
+        0xCC, // int3
+        0xB3, 0x01, // mov bl, 1
+        0xCC, // int3
+    ];
+
+    let (_func, exit, state) = run_x86(CODE);
+    assert_eq!(exit, RunExit::SideExit { next_rip: 20 });
+    assert_eq!(state.cpu.gpr[Gpr::Rbx.as_u8() as usize] & 0xff, 1);
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize], 0);
+}
+
+#[test]
+fn tier2_shl64_updates_of_observed_by_jo() {
+    // mov rax, 0x8000_0000_0000_0000
+    // shl rax, 1
+    // jo +3
+    // mov bl, 0
+    // int3
+    // mov bl, 1
+    // int3
+    //
+    // For SHL count==1, OF is old MSB XOR new MSB. With old MSB=1 and new MSB=0, OF=1 => `jo` taken.
+    const CODE: &[u8] = &[
+        0x48, 0xB8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80, // mov rax, 0x8000...
+        0x48, 0xD1, 0xE0, // shl rax, 1
+        0x70, 0x03, // jo +3
+        0xB3, 0x00, // mov bl, 0
+        0xCC, // int3
+        0xB3, 0x01, // mov bl, 1
+        0xCC, // int3
+    ];
+
+    let (_func, exit, state) = run_x86(CODE);
+    assert_eq!(exit, RunExit::SideExit { next_rip: 20 });
+    assert_eq!(state.cpu.gpr[Gpr::Rbx.as_u8() as usize] & 0xff, 1);
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize], 0);
+}
+
+#[test]
+fn tier2_shr64_count_1_sets_cf_observed_by_jc() {
+    // mov rax, 1
+    // shr rax, 1
+    // jc +3
+    // mov bl, 0
+    // int3
+    // mov bl, 1
+    // int3
+    //
+    // For SHR count==1, CF is the old LSB. With old LSB=1, ensure `jc` is taken.
+    const CODE: &[u8] = &[
+        0x48, 0xB8, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // mov rax, 1
+        0x48, 0xD1, 0xE8, // shr rax, 1
+        0x72, 0x03, // jc +3
+        0xB3, 0x00, // mov bl, 0
+        0xCC, // int3
+        0xB3, 0x01, // mov bl, 1
+        0xCC, // int3
+    ];
+
+    let (_func, exit, state) = run_x86(CODE);
+    assert_eq!(exit, RunExit::SideExit { next_rip: 20 });
+    assert_eq!(state.cpu.gpr[Gpr::Rbx.as_u8() as usize] & 0xff, 1);
+    assert_eq!(state.cpu.gpr[Gpr::Rax.as_u8() as usize], 0);
+}
+
+#[test]
+fn tier2_shr64_count_1_sets_of_from_old_msb_observed_by_jo() {
+    // mov rax, 0x8000_0000_0000_0000
+    // shr rax, 1
+    // jo +3
+    // mov bl, 0
+    // int3
+    // mov bl, 1
+    // int3
+    //
+    // For SHR count==1, OF is the old MSB. With old MSB=1, ensure `jo` is taken.
+    const CODE: &[u8] = &[
+        0x48, 0xB8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80, // mov rax, 0x8000...
+        0x48, 0xD1, 0xE8, // shr rax, 1
+        0x70, 0x03, // jo +3
+        0xB3, 0x00, // mov bl, 0
+        0xCC, // int3
+        0xB3, 0x01, // mov bl, 1
+        0xCC, // int3
+    ];
+
+    let (_func, exit, state) = run_x86(CODE);
+    assert_eq!(exit, RunExit::SideExit { next_rip: 20 });
+    assert_eq!(state.cpu.gpr[Gpr::Rbx.as_u8() as usize] & 0xff, 1);
+    assert_eq!(
+        state.cpu.gpr[Gpr::Rax.as_u8() as usize],
+        0x4000_0000_0000_0000u64
+    );
+}
+
+#[test]
+fn tier2_sar64_count_1_sets_of_to_0() {
+    // mov rax, 0x8000_0000_0000_0000
+    // sar rax, 1
+    // jo +3
+    // mov bl, 0
+    // int3
+    // mov bl, 1
+    // int3
+    //
+    // For SAR count==1, x86 defines OF=0. Seed OF=1 and ensure `jo` is *not* taken.
+    const CODE: &[u8] = &[
+        0x48, 0xB8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80, // mov rax, 0x8000...
+        0x48, 0xD1, 0xF8, // sar rax, 1
+        0x70, 0x03, // jo +3
+        0xB3, 0x00, // mov bl, 0
+        0xCC, // int3
+        0xB3, 0x01, // mov bl, 1
+        0xCC, // int3
+    ];
+
+    let init_rflags = aero_jit_x86::abi::RFLAGS_RESERVED1 | RFLAGS_OF;
+    let (_func, exit, state) = run_x86_with_rflags(CODE, init_rflags);
+
+    assert_eq!(exit, RunExit::SideExit { next_rip: 17 });
+    assert_eq!(state.cpu.gpr[Gpr::Rbx.as_u8() as usize] & 0xff, 0);
+    assert_eq!(
+        state.cpu.gpr[Gpr::Rax.as_u8() as usize],
+        0xC000_0000_0000_0000u64
+    );
+}
