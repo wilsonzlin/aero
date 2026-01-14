@@ -22143,8 +22143,8 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive(
     D3DDDI_HDEVICE hDevice,
     D3DDDIPRIMITIVETYPE type,
     int32_t base_vertex,
-    uint32_t /*min_index*/,
-    uint32_t /*num_vertices*/,
+    uint32_t min_index,
+    uint32_t num_vertices,
     uint32_t start_index,
     uint32_t primitive_count) {
   D3d9TraceCall trace(D3d9TraceFunc::DeviceDrawIndexedPrimitive,
