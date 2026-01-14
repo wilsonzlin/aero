@@ -47,7 +47,7 @@ Steps:
   1. cargo test -p aero-devices-input --locked
   2. cargo test -p aero-usb --locked --test uhci --test uhci_external_hub --test hid_builtin_snapshot
      (or: --usb-all to run the full aero-usb test suite)
-  3. (optional: --machine) cargo test -p aero-machine --lib --locked
+  3. (optional: --machine) cargo test -p aero-machine --lib --locked --test machine_uhci --test machine_xhci --test xhci_snapshot --test machine_xhci_usb_attach_at_path
   4. (optional: --wasm) wasm-pack test --node crates/aero-wasm --test webusb_uhci_bridge --locked
   5. (optional: --with-wasm) cargo test -p aero-wasm --test machine_input_backends --locked
   6. (unless --rust-only) npm -w web run test:unit -- src/input
@@ -56,7 +56,7 @@ Steps:
 
 Options:
   --e2e                 Also run a small subset of Playwright E2E tests relevant to input.
-  --machine             Also run `aero-machine` unit tests (covers snapshot + device integration).
+  --machine             Also run targeted `aero-machine` tests (UHCI/xHCI wiring + snapshot/restore).
   --wasm                Also run wasm-pack tests for the WASM USB bridge (does not require `node_modules`).
   --rust-only            Only run the Rust input/USB tests (skips Node + Playwright).
   --with-wasm            Also run the `aero-wasm` input backend integration smoke test.
@@ -114,10 +114,29 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
     }
 
     if opts.machine {
+        // Keep this targeted: `aero-machine` has a large integration test suite (GPU/BIOS/etc).
+        // For input/USB changes we only need the unit tests plus the UHCI/xHCI integration tests
+        // that validate device wiring and snapshot/restore behaviour.
         let mut cmd = Command::new("cargo");
-        cmd.current_dir(&repo_root)
-            .args(["test", "-p", "aero-machine", "--lib", "--locked"]);
-        runner.run_step("Rust: cargo test -p aero-machine --lib --locked", &mut cmd)?;
+        cmd.current_dir(&repo_root).args([
+            "test",
+            "-p",
+            "aero-machine",
+            "--lib",
+            "--locked",
+            "--test",
+            "machine_uhci",
+            "--test",
+            "machine_xhci",
+            "--test",
+            "xhci_snapshot",
+            "--test",
+            "machine_xhci_usb_attach_at_path",
+        ]);
+        runner.run_step(
+            "Rust: cargo test -p aero-machine --lib --locked --test machine_uhci --test machine_xhci --test xhci_snapshot --test machine_xhci_usb_attach_at_path",
+            &mut cmd,
+        )?;
     }
 
     if opts.with_wasm {
