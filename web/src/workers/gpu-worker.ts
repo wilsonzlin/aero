@@ -2449,7 +2449,21 @@ const presentOnce = async (): Promise<boolean> => {
       const predictedKind: GpuRuntimePresentUploadV1["kind"] =
         chosenDirtyRects && chosenDirtyRects.length > 0 ? "dirty_rects" : "full";
       const predictedDirtyCount = chosenDirtyRects ? chosenDirtyRects.length : 0;
-      const result = await presentFn(chosenDirtyRects);
+      // Clear the shared framebuffer dirty flag *before* calling into the presenter module.
+      //
+      // In the Node `worker_threads` harness used by unit tests, the presenter module can post
+      // messages to the parent thread while the GPU worker is still executing. Clearing first
+      // ensures observers see the expected "frame consumed" semantics even when the module drops
+      // the frame.
+      clearSharedFramebufferDirty();
+      // `presentFn` can be synchronous (returns void/boolean) or async (returns a Promise). Avoid
+      // unconditionally `await`ing the result so synchronous presenters can complete in the same
+      // task (important for deterministic unit tests + avoids extra microtask churn).
+      const maybeResult = presentFn(chosenDirtyRects);
+      const result =
+        maybeResult && typeof (maybeResult as unknown as { then?: unknown }).then === "function"
+          ? await (maybeResult as Promise<void | boolean>)
+          : (maybeResult as void | boolean);
       const didPresent = didPresenterPresent(result);
         if (didPresent) {
           lastPresentUploadKind = predictedKind;
