@@ -138,6 +138,9 @@ pub fn run(
     let mut reference =
         ReferenceBackend::new().map_err(|e| format!("reference backend unavailable: {e}"))?;
     let mem_base = reference.memory_base();
+    let isolate = std::env::var("AERO_CONFORMANCE_REFERENCE_ISOLATE")
+        .map(|v| v != "0")
+        .unwrap_or(true);
     let base_templates = {
         #[cfg(feature = "qemu-reference")]
         {
@@ -152,29 +155,32 @@ pub fn run(
             corpus::templates()
         }
     };
-    let templates = templates_for_run(base_templates)?;
+    // Coverage "expected" must remain the full set even when a template filter is active.
+    // Use the unfiltered template corpus for the selected reference backend, while only
+    // incrementing counts for the executed templates.
+    let mut report = ConformanceReport::new_for_templates(cases, &base_templates);
 
-    // Fault templates intentionally crash in user mode on the host reference backend.
-    // If isolation is disabled, fail fast with a clear message instead of taking down
-    // the entire test runner process.
-    let isolate = std::env::var("AERO_CONFORMANCE_REFERENCE_ISOLATE")
-        .map(|v| v != "0")
-        .unwrap_or(true);
+    // Determine which host signal to use for user-mode memory faults (SIGSEGV vs SIGBUS, etc).
+    // This uses a known-faulting template and must only run when the host backend is isolated.
+    let memory_fault_signal = if isolate {
+        detect_memory_fault_signal(&mut reference, &base_templates)
+    } else {
+        libc::SIGSEGV
+    };
+
+    let templates = templates_for_run(base_templates)?;
     if !isolate && templates.iter().any(|t| t.kind.is_fault_template()) {
+        // Fault templates intentionally crash in user mode on the host reference backend.
+        // If isolation is disabled, fail fast with a clear message instead of taking down
+        // the entire test runner process.
         return Err(
             "fault templates require AERO_CONFORMANCE_REFERENCE_ISOLATE=1 (fork isolation)"
                 .to_string(),
         );
     }
-
-    let memory_fault_signal = detect_memory_fault_signal(&mut reference, &templates);
     let mut aero = aero::AeroBackend::new(memory_fault_signal);
 
     let mut rng = corpus::XorShift64::new(seed);
-    // Coverage "expected" must remain the full set even when a template filter is active,
-    // so `ConformanceReport::new()` always uses the complete template corpus to build the
-    // expected coverage key list. Counts are incremented only for the executed templates.
-    let mut report = ConformanceReport::new(cases);
     let reference_env = std::env::var("AERO_CONFORMANCE_REFERENCE")
         .ok()
         .map(|v| v.trim().to_string())
