@@ -1,6 +1,8 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
+import { MAX_MESSAGE_BYTES } from "./protocol";
+
 type TagMap = Readonly<Record<string, bigint>>;
 
 function parseIntLiteral(token: string): bigint | null {
@@ -42,12 +44,31 @@ function parseTagConstsFromTs(source: string): TagMap {
   return tags;
 }
 
+function evalConstExpr(expr: string): bigint {
+  const e = expr.trim();
+  const lit = parseIntLiteral(e);
+  if (lit != null) return lit;
+
+  const shift = e.match(/^(.+?)\s*<<\s*(.+)$/);
+  if (shift) return evalConstExpr(shift[1] ?? "") << evalConstExpr(shift[2] ?? "");
+
+  const mul = e.match(/^(.+?)\s*\*\s*(.+)$/);
+  if (mul) return evalConstExpr(mul[1] ?? "") * evalConstExpr(mul[2] ?? "");
+
+  throw new Error(`Unsupported const expression: ${expr}`);
+}
+
 describe("IPC protocol tags match Rust source of truth", () => {
   it("keeps web/src/ipc/protocol.ts tags in sync with crates/aero-ipc/src/protocol.rs", () => {
     const rustUrl = new URL("../../../crates/aero-ipc/src/protocol.rs", import.meta.url);
     const tsUrl = new URL("./protocol.ts", import.meta.url);
     const rust = readFileSync(rustUrl, "utf8");
     const ts = readFileSync(tsUrl, "utf8");
+
+    const maxMatch = rust.match(/^\s*pub const MAX_MESSAGE_BYTES: [^=]+ = (.+?);/m);
+    if (!maxMatch) throw new Error("Failed to locate MAX_MESSAGE_BYTES in crates/aero-ipc/src/protocol.rs");
+    const maxBytesRust = evalConstExpr(maxMatch[1] ?? "");
+    expect(MAX_MESSAGE_BYTES, "MAX_MESSAGE_BYTES mismatch (Rust <-> TS)").toBe(Number(maxBytesRust));
 
     const rustTags = parseTagConstsFromRust(rust);
     const tsTags = parseTagConstsFromTs(ts);
@@ -66,4 +87,3 @@ describe("IPC protocol tags match Rust source of truth", () => {
     }
   });
 });
-

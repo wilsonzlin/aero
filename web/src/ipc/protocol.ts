@@ -45,6 +45,13 @@ export type Event =
   | { kind: "panic"; message: string }
   | { kind: "tripleFault" };
 
+/**
+ * Defensive maximum message size (bytes) for decode.
+ *
+ * Keep in sync with `crates/aero-ipc/src/protocol.rs` (`MAX_MESSAGE_BYTES`).
+ */
+export const MAX_MESSAGE_BYTES = 1 << 20; // 1 MiB
+
 const CMD_TAG_NOP = 0x0000;
 const CMD_TAG_SHUTDOWN = 0x0001;
 const CMD_TAG_MMIO_READ = 0x0100;
@@ -145,6 +152,9 @@ export function encodeCommand(cmd: Command): Uint8Array {
 }
 
 export function decodeCommand(bytes: Uint8Array): Command {
+  if (bytes.byteLength > MAX_MESSAGE_BYTES) {
+    throw new Error("payload too large");
+  }
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   let off = 0;
   const readU16 = () => {
@@ -312,6 +322,9 @@ export function encodeEvent(evt: Event): Uint8Array {
 }
 
 export function decodeEvent(bytes: Uint8Array): Event {
+  if (bytes.byteLength > MAX_MESSAGE_BYTES) {
+    throw new Error("payload too large");
+  }
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   let off = 0;
   const readU8 = () => view.getUint8(off++);

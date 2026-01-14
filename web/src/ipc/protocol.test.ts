@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { decodeCommand, decodeEvent, encodeCommand, encodeEvent } from "./protocol.ts";
+import { MAX_MESSAGE_BYTES, decodeCommand, decodeEvent, encodeCommand, encodeEvent } from "./protocol.ts";
 
 describe("ipc/protocol", () => {
   it("roundtrips commands", () => {
@@ -24,6 +24,13 @@ describe("ipc/protocol", () => {
 
   it("encodes NOP with a stable byte layout", () => {
     expect(Array.from(encodeCommand({ kind: "nop", seq: 1 }))).toEqual([0x00, 0x00, 1, 0, 0, 0]);
+  });
+
+  it("rejects oversized payloads", () => {
+    // Oversize handling is defensive and should trigger before attempting to decode tags.
+    const tooBig = new Uint8Array(MAX_MESSAGE_BYTES + 1);
+    expect(() => decodeCommand(tooBig)).toThrow(/payload too large/);
+    expect(() => decodeEvent(tooBig)).toThrow(/payload too large/);
   });
 
   it("roundtrips events", () => {
