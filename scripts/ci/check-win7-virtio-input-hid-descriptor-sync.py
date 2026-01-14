@@ -69,10 +69,8 @@ def extract_braced_initializer(text: str, symbol: str) -> str:
     """
     # Be permissive about whitespace and qualifiers; only anchor on the variable name
     # and the first '{' after the assignment.
-    m = re.search(
-        rf"\b{re.escape(symbol)}\b\s*\[\s*\]\s*=\s*\{{",
-        text,
-    )
+    # Allow both `name[] = { ... }` and `name[N] = { ... }` forms.
+    m = re.search(rf"\b{re.escape(symbol)}\b\s*\[\s*(?:\d+\s*)?\]\s*=\s*\{{", text)
     if not m:
         raise ValueError(f"could not find initializer for '{symbol}[] = {{ ... }}'")
 
@@ -106,7 +104,7 @@ def count_hex_byte_literals(text: str) -> int:
 
 def extract_c_assert_sizeof(text: str, symbol: str) -> int:
     m = re.search(
-        rf"C_ASSERT\s*\(\s*sizeof\s*\(\s*{re.escape(symbol)}\s*\)\s*==\s*(\d+)\s*\)\s*;",
+        rf"C_ASSERT\s*\(\s*sizeof\s*\(\s*{re.escape(symbol)}\s*\)\s*==\s*(\d+)\s*[uUlL]*\s*\)\s*;",
         text,
         flags=re.S,
     )
@@ -116,7 +114,7 @@ def extract_c_assert_sizeof(text: str, symbol: str) -> int:
 
 
 def extract_c_define_int(text: str, macro: str) -> int:
-    m = re.search(rf"^\s*#define\s+{re.escape(macro)}\s+(\d+)\b", text, flags=re.M)
+    m = re.search(rf"^\s*#define\s+{re.escape(macro)}\s+(\d+)\s*[uUlL]*\b", text, flags=re.M)
     if not m:
         raise ValueError(f"could not find '#define {macro} N' in hidtest/main.c")
     return int(m.group(1))
@@ -124,7 +122,7 @@ def extract_c_define_int(text: str, macro: str) -> int:
 
 def extract_enum_int(text: str, name: str) -> int:
     # Match `NAME = 123,` inside an enum.
-    m = re.search(rf"\b{re.escape(name)}\b\s*=\s*(\d+)\s*,", text)
+    m = re.search(rf"\b{re.escape(name)}\b\s*=\s*(\d+)\s*[uUlL]*\s*,", text)
     if not m:
         raise ValueError(f"could not find '{name} = N,' in hid_translate.h")
     return int(m.group(1))
