@@ -8268,6 +8268,18 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
     return trace.ret(D3DERR_INVALIDCALL);
   }
 
+  // The AeroGPU host executor currently interprets `array_layers==6` as a cube
+  // texture (via a cube view). Cube textures must be square; reject invalid
+  // descriptors early so we don't emit a CREATE_TEXTURE2D packet that the host
+  // will later reject during command execution.
+  if (create_size_bytes == 0 &&
+      create_depth == 6 &&
+      create_width != 0 &&
+      create_height != 0 &&
+      create_width != create_height) {
+    return trace.ret(D3DERR_INVALIDCALL);
+  }
+
   // AeroGPU only supports 2D textures/surfaces (CREATE_TEXTURE2D) plus buffers.
   // Portable build heuristic:
   // - Interpret `depth > 1` as array layers for 2D textures.
