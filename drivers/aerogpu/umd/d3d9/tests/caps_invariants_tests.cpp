@@ -218,6 +218,21 @@ bool TestCapsFormatContract() {
     }
   }
 
+  // Blend factors are used by DWM-style effects (fade/constant alpha blending).
+  const uint32_t required_blend_caps =
+      D3DPBLENDCAPS_ZERO |
+      D3DPBLENDCAPS_ONE |
+      D3DPBLENDCAPS_SRCALPHA |
+      D3DPBLENDCAPS_INVSRCALPHA |
+      D3DPBLENDCAPS_BLENDFACTOR |
+      D3DPBLENDCAPS_INVBLENDFACTOR;
+  if (!Check((caps.SrcBlendCaps & required_blend_caps) == required_blend_caps, "SrcBlendCaps includes required blend factors")) {
+    return false;
+  }
+  if (!Check((caps.DestBlendCaps & required_blend_caps) == required_blend_caps, "DestBlendCaps includes required blend factors")) {
+    return false;
+  }
+
   // Fixed-function fallback supports FVFs with TEX1, so FVFCaps must advertise at
   // least one texture coordinate set.
   const uint32_t fvf_texcoord_count = caps.FVFCaps & D3DFVFCAPS_TEXCOORDCOUNTMASK;

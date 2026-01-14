@@ -193,6 +193,19 @@ struct caps_has_blend_op_caps<T, std::void_t<decltype(std::declval<T>().BlendOpC
   #define D3DTEXOPCAPS_MODULATE 0x00000008u
 #endif
 
+#ifndef D3DPBLENDCAPS_DESTALPHA
+  #define D3DPBLENDCAPS_DESTALPHA 0x00000040u
+#endif
+#ifndef D3DPBLENDCAPS_INVDESTALPHA
+  #define D3DPBLENDCAPS_INVDESTALPHA 0x00000080u
+#endif
+#ifndef D3DPBLENDCAPS_BLENDFACTOR
+  #define D3DPBLENDCAPS_BLENDFACTOR 0x00002000u
+#endif
+#ifndef D3DPBLENDCAPS_INVBLENDFACTOR
+  #define D3DPBLENDCAPS_INVBLENDFACTOR 0x00004000u
+#endif
+
 template <typename CapsT>
 void maybe_set_blend_op_caps(CapsT* out) {
   if (!out) {
@@ -296,23 +309,16 @@ void fill_d3d9_caps(D3DCAPS9* out) {
                   D3DPCMPCAPS_GREATER | D3DPCMPCAPS_NOTEQUAL | D3DPCMPCAPS_GREATEREQUAL | D3DPCMPCAPS_ALWAYS;
   out->AlphaCmpCaps = out->ZCmpCaps;
 
+  // Blend-factor support is required for common D3D9-era compositing/fade paths
+  // (D3DBLEND_BLENDFACTOR / INVBLENDFACTOR via D3DRS_BLENDFACTOR).
   out->SrcBlendCaps = D3DPBLENDCAPS_ZERO |
                       D3DPBLENDCAPS_ONE |
                       D3DPBLENDCAPS_SRCALPHA |
-                      D3DPBLENDCAPS_INVSRCALPHA
-#ifdef D3DPBLENDCAPS_DESTALPHA
-                      | D3DPBLENDCAPS_DESTALPHA
-#endif
-#ifdef D3DPBLENDCAPS_INVDESTALPHA
-                      | D3DPBLENDCAPS_INVDESTALPHA
-#endif
-#ifdef D3DPBLENDCAPS_BLENDFACTOR
-                      | D3DPBLENDCAPS_BLENDFACTOR
-#endif
-#ifdef D3DPBLENDCAPS_INVBLENDFACTOR
-                      | D3DPBLENDCAPS_INVBLENDFACTOR
-#endif
-      ;
+                      D3DPBLENDCAPS_INVSRCALPHA |
+                      D3DPBLENDCAPS_DESTALPHA |
+                      D3DPBLENDCAPS_INVDESTALPHA |
+                      D3DPBLENDCAPS_BLENDFACTOR |
+                      D3DPBLENDCAPS_INVBLENDFACTOR;
   out->DestBlendCaps = out->SrcBlendCaps;
   maybe_set_blend_op_caps(out);
 
@@ -577,7 +583,14 @@ HRESULT get_caps(Adapter* adapter, const D3D9DDIARG_GETCAPS* pGetCaps) {
                             D3DTEXOPCAPS_SELECTARG1 |
                             D3DTEXOPCAPS_SELECTARG2 |
                             D3DTEXOPCAPS_MODULATE;
-      caps->SrcBlendCaps = D3DPBLENDCAPS_ZERO | D3DPBLENDCAPS_ONE | D3DPBLENDCAPS_SRCALPHA | D3DPBLENDCAPS_INVSRCALPHA;
+      caps->SrcBlendCaps = D3DPBLENDCAPS_ZERO |
+                           D3DPBLENDCAPS_ONE |
+                           D3DPBLENDCAPS_SRCALPHA |
+                           D3DPBLENDCAPS_INVSRCALPHA |
+                           D3DPBLENDCAPS_DESTALPHA |
+                           D3DPBLENDCAPS_INVDESTALPHA |
+                           D3DPBLENDCAPS_BLENDFACTOR |
+                           D3DPBLENDCAPS_INVBLENDFACTOR;
       caps->DestBlendCaps = caps->SrcBlendCaps;
       maybe_set_blend_op_caps(caps);
       caps->MaxTextureWidth = 4096;
