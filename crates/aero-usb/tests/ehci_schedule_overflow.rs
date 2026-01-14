@@ -81,7 +81,7 @@ fn ehci_async_qh_overlay_addr_overflow_sets_hse_and_halts_without_wrapping() {
 
     // Minimal qTD (token inactive). The overflow happens while copying qTD buffer pointers into the
     // QH overlay, before any transfer execution.
-    mem.write_u32(u64::from(QTD_ADDR) + 0x00, 1); // NEXT=terminate
+    mem.write_u32(u64::from(QTD_ADDR), 1); // NEXT=terminate
     mem.write_u32(u64::from(QTD_ADDR) + 0x04, 1); // ALT_NEXT=terminate
     mem.write_u32(u64::from(QTD_ADDR) + 0x08, 0); // TOKEN (inactive)
     // Buffer pointer 0..4 (values don't matter for the overflow case).
