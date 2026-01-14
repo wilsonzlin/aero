@@ -62,7 +62,7 @@ CI guardrail: PRs must keep `aero_virtio_snd.vcxproj` on the modern-only backend
 - **Queues:** contract v1 defines `controlq`/`eventq`/`txq`/`rxq`. The driver initializes all four; PortCls
   uses `controlq` (0) + `txq` (2) for render (stream 0) and `controlq` (0) + `rxq` (3) for capture (stream 1).
   `eventq` is currently unused by the PortCls endpoints.
-- **Interrupts:** MSI/MSI-X (message interrupts) preferred when granted by Windows (the shipped INF opts in), with INTx fallback (required by contract v1).
+- **Interrupts:** MSI/MSI-X (message interrupts) preferred when granted by Windows (the shipped INF opts in). When MSI/MSI-X is active, the driver programs virtio MSI-X routing (`common_cfg.msix_config`, `common_cfg.queue_msix_vector`) and falls back to INTx if message interrupts cannot be connected or vector programming fails (INTx is required by contract v1 as a baseline).
 - **Protocol:** PCM control + TX/RX protocol engines for streams 0/1.
 - **Pacing:** WaveRT period timer/DPC provides the playback clock; virtqueue used
   entries are treated as resource reclamation rather than timing.
@@ -165,7 +165,7 @@ Current behavior:
 Baseline requirements:
 
 - Work correctly with **PCI INTx** + the virtio ISR status register (contract v1).
-- Prefer **MSI/MSI-X** when Windows assigns message interrupts (INF `Interrupt Management\\MessageSignaledInterruptProperties` opt-in) and virtio MSI-X vector programming succeeds, and fall back to INTx when message interrupts are unavailable or cannot be connected/programmed.
+- Prefer **MSI/MSI-X** when Windows assigns message interrupts (INF `Interrupt Management\\MessageSignaledInterruptProperties` opt-in) and virtio MSI-X vector programming succeeds (`common_cfg.msix_config`, `common_cfg.queue_msix_vector`), and fall back to INTx when message interrupts are unavailable or cannot be connected/programmed.
 
 Behavior:
 
