@@ -940,7 +940,7 @@ impl AeroGpuMmioDevice {
             // pending fences so the guest cannot deadlock waiting for work the host can no longer
             // track.
             self.record_error(pci::AerogpuErrorCode::Backend, fence);
-            self.flush_pending_fences();
+            self.force_complete_pending_fences();
             return;
         }
 
@@ -967,7 +967,7 @@ impl AeroGpuMmioDevice {
             .is_err()
         {
             self.record_error(pci::AerogpuErrorCode::Backend, 0);
-            self.flush_pending_fences();
+            self.force_complete_pending_fences();
             return;
         }
         for fence in &self.pending_fence_completions {
@@ -2265,6 +2265,16 @@ impl AeroGpuMmioDevice {
         }
     }
 
+    fn force_complete_pending_fences(&mut self) {
+        // When the host cannot track backend completions (e.g. due to OOM in the completion
+        // bookkeeping structures), fail closed: complete all queued fences so the guest cannot
+        // deadlock waiting for work the host is no longer able to observe.
+        while let Some(fence) = self.pending_fence_completions.pop_front() {
+            self.backend_completed_fences.remove(&fence.fence_value);
+            self.complete_fence(fence.fence_value, fence.wants_irq);
+        }
+    }
+
     fn flush_pending_fences(&mut self) {
         // If vblank pacing is disabled (either by configuration or by disabling scanout), do not
         // allow vsync-paced fences to remain blocked forever. Complete as many fences as possible
@@ -3078,6 +3088,35 @@ mod tests {
         assert!(
             dev.load_exec_snapshot_state_v1(&bytes).is_err(),
             "expected oversized exec snapshot to be rejected"
+        );
+    }
+
+    #[test]
+    fn force_complete_pending_fences_completes_without_backend_completion() {
+        let mut dev = AeroGpuMmioDevice::default();
+        dev.irq_enable = pci::AEROGPU_IRQ_FENCE;
+
+        dev.pending_fence_completions
+            .push_back(PendingFenceCompletion {
+                fence_value: 1,
+                wants_irq: true,
+                kind: PendingFenceKind::Vblank,
+            });
+        dev.pending_fence_completions
+            .push_back(PendingFenceCompletion {
+                fence_value: 2,
+                wants_irq: false,
+                kind: PendingFenceKind::Immediate,
+            });
+
+        dev.force_complete_pending_fences();
+
+        assert!(dev.pending_fence_completions.is_empty());
+        assert_eq!(dev.completed_fence, 2);
+        assert_ne!(
+            dev.irq_status & pci::AEROGPU_IRQ_FENCE,
+            0,
+            "force-completing pending fences should still respect wants_irq for already-queued work"
         );
     }
 
