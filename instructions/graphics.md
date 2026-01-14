@@ -334,12 +334,13 @@ bash ./scripts/safe-run.sh npm run test:e2e -- tests/e2e/wddm_scanout_vram_smoke
 # Open `/web/wddm-scanout-debug.html` under a COOP/COEP-enabled dev server (e.g. `npm run dev:harness`).
 
  # Run AeroGPU end-to-end command-execution tests (feature-gated; wgpu/WebGPU; may skip unless AERO_REQUIRE_WEBGPU=1)
- bash ./scripts/safe-run.sh cargo test -p aero-devices-gpu --features wgpu-backend --test aerogpu_end_to_end --locked
- bash ./scripts/safe-run.sh cargo test -p emulator --features aerogpu-native --test aerogpu_end_to_end --locked
-
-# Run aero_machine AeroGPU boot display + BAR0 ring/fence + vblank/scanout plumbing smoke tests
-bash ./scripts/safe-run.sh cargo test -p aero-machine --test aerogpu_vram_alias --locked
-bash ./scripts/safe-run.sh cargo test -p aero-machine --test boot_int10_aerogpu_vbe_115_sets_mode --locked
+  bash ./scripts/safe-run.sh cargo test -p aero-devices-gpu --features wgpu-backend --test aerogpu_end_to_end --locked
+  bash ./scripts/safe-run.sh cargo test -p emulator --features aerogpu-native --test aerogpu_end_to_end --locked
+  bash ./scripts/safe-run.sh cargo test -p aero-machine --features aerogpu-wgpu-backend --test aerogpu_wgpu_backend_smoke --locked
+ 
+ # Run aero_machine AeroGPU boot display + BAR0 ring/fence + vblank/scanout plumbing smoke tests
+ bash ./scripts/safe-run.sh cargo test -p aero-machine --test aerogpu_vram_alias --locked
+ bash ./scripts/safe-run.sh cargo test -p aero-machine --test boot_int10_aerogpu_vbe_115_sets_mode --locked
 bash ./scripts/safe-run.sh cargo test -p aero-machine --test aerogpu_ring_noop_fence --locked
 bash ./scripts/safe-run.sh cargo test -p aero-machine --test aerogpu_bar0_mmio_vblank --locked
 

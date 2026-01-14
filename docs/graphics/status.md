@@ -647,6 +647,7 @@ Fast regression commands:
 
 ```bash
 bash ./scripts/safe-run.sh cargo test -p aero-machine --test aerogpu_submission_bridge --locked
+AERO_TIMEOUT=1200 bash ./scripts/safe-run.sh cargo test -p aero-machine --locked --features aerogpu-wgpu-backend --test aerogpu_wgpu_backend_smoke
 AERO_TIMEOUT=600 AERO_MEM_LIMIT=32G bash ./scripts/safe-run.sh npm -w web run test:unit -- src/runtime/coordinator.test.ts
 bash ./scripts/safe-run.sh npm run test:e2e -- tests/e2e/web/gpu_submit_aerogpu.spec.ts
 bash ./scripts/safe-run.sh npm run test:e2e -- tests/e2e/web/gpu_submit_aerogpu_vsync_completion.spec.ts
