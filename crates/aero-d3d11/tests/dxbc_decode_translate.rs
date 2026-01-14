@@ -1254,6 +1254,90 @@ fn decodes_and_translates_loop_with_continuec() {
 }
 
 #[test]
+fn decodes_and_translates_loop_with_breakc_and_continuec() {
+    // Minimal ps_5_0 containing:
+    //   loop
+    //     breakc_lt v0.x, l(0.0)
+    //     continuec_gt v0.x, l(1.0)
+    //   endloop
+    //   ret
+    let mut body = Vec::<u32>::new();
+    body.push(opcode_token(OPCODE_LOOP, 1));
+
+    let v0x = reg_src(OPERAND_TYPE_INPUT, &[0], Swizzle::XXXX);
+    let zero = imm32_scalar(0.0f32.to_bits());
+    body.push(opcode_token_with_test(
+        OPCODE_BREAKC,
+        1 + v0x.len() as u32 + zero.len() as u32,
+        6, // lt
+    ));
+    body.extend_from_slice(&v0x);
+    body.extend_from_slice(&zero);
+
+    let one = imm32_scalar(1.0f32.to_bits());
+    body.push(opcode_token_with_test(
+        OPCODE_CONTINUEC,
+        1 + v0x.len() as u32 + one.len() as u32,
+        4, // gt
+    ));
+    body.extend_from_slice(&v0x);
+    body.extend_from_slice(&one);
+
+    // Ensure the loop can exit even if neither condition triggers.
+    body.push(opcode_token(OPCODE_BREAK, 1));
+
+    body.push(opcode_token(OPCODE_ENDLOOP, 1));
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    let tokens = make_sm5_program_tokens(0, &body);
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, tokens_to_bytes(&tokens)),
+        (
+            FOURCC_ISGN,
+            build_signature_chunk(&[sig_param("TEXCOORD", 0, 0, 0b0001)]),
+        ),
+        (
+            FOURCC_OSGN,
+            build_signature_chunk(&[sig_param("SV_Target", 0, 0, 0b1111)]),
+        ),
+    ]);
+
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
+    let module = decode_program(&program).expect("SM4 decode");
+    assert!(
+        module
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Sm4Inst::BreakC { .. })),
+        "expected BreakC instruction in decoded module: {:#?}",
+        module.instructions
+    );
+    assert!(
+        module
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Sm4Inst::ContinueC { .. })),
+        "expected ContinueC instruction in decoded module: {:#?}",
+        module.instructions
+    );
+    assert!(module.instructions.iter().all(|i| {
+        !matches!(
+            i,
+            Sm4Inst::Unknown { opcode }
+                if *opcode == OPCODE_BREAKC || *opcode == OPCODE_CONTINUEC
+        )
+    }));
+
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+    assert!(translated.wgsl.contains("loop {"), "{}", translated.wgsl);
+    assert!(translated.wgsl.contains("break;"), "{}", translated.wgsl);
+    assert!(translated.wgsl.contains("continue;"), "{}", translated.wgsl);
+}
+
+#[test]
 fn decodes_and_translates_uaddc_shader_from_dxbc() {
     let mut body = Vec::<u32>::new();
 

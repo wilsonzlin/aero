@@ -4692,6 +4692,18 @@ fn emit_instructions(
                             opcode: "predicated_endif".to_owned(),
                         })
                     }
+                    Sm4Inst::BreakC { .. } => {
+                        return Err(ShaderTranslateError::UnsupportedInstruction {
+                            inst_index,
+                            opcode: "predicated_breakc".to_owned(),
+                        })
+                    }
+                    Sm4Inst::ContinueC { .. } => {
+                        return Err(ShaderTranslateError::UnsupportedInstruction {
+                            inst_index,
+                            opcode: "predicated_continuec".to_owned(),
+                        })
+                    }
                     _ => {}
                 }
 

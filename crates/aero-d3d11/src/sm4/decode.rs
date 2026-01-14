@@ -852,6 +852,15 @@ pub fn decode_instruction(
                 _ => Ok(Sm4Inst::Unknown { opcode }),
             }
         }
+        OPCODE_IFC => {
+            let Some(op) = decode_flow_cmp_op(opcode_token) else {
+                return Ok(Sm4Inst::Unknown { opcode });
+            };
+            let a = decode_src(&mut r)?;
+            let b = decode_src(&mut r)?;
+            r.expect_eof()?;
+            Ok(Sm4Inst::IfC { op, a, b })
+        }
         OPCODE_ELSE => {
             r.expect_eof()?;
             Ok(Sm4Inst::Else)

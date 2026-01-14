@@ -71,8 +71,12 @@ pub const OPCODE_IDIV: u32 = 0x3d;
 pub const OPCODE_IF: u32 = 0x28;
 pub const OPCODE_ELSE: u32 = 0x29;
 pub const OPCODE_ENDIF: u32 = 0x2a;
-// Note: SM4/SM5 encode compare-based `ifc_*` via `OPCODE_IF` with a non-boolean instruction-test
-// value in the opcode token (see `OPCODE_TEST_SHIFT`/`OPCODE_TEST_MASK`).
+// Note: Some SM4/SM5 token streams encode compare-based `ifc_*` via `OPCODE_IF` with a non-boolean
+// instruction-test value in the opcode token (see `OPCODE_TEST_SHIFT`/`OPCODE_TEST_MASK`).
+/// `ifc` (structured `if` with an embedded comparison op).
+///
+/// Tokenized shader format: `D3D10_SB_OPCODE_TYPE_IFC`.
+pub const OPCODE_IFC: u32 = 0x2b;
 
 /// `setp` (set predicate register).
 ///
@@ -138,6 +142,8 @@ pub const OPCODE_USHR: u32 = 0x73;
 /// `break` (structured break out of `loop`/`switch`).
 pub const OPCODE_BREAK: u32 = 0x2d;
 /// `breakc` (structured conditional break).
+///
+/// Tokenized shader format: `D3D10_SB_OPCODE_TYPE_BREAKC`.
 pub const OPCODE_BREAKC: u32 = 0x2e;
 /// `loop` (begin structured loop).
 ///
@@ -152,6 +158,8 @@ pub const OPCODE_ENDLOOP: u32 = 0x30;
 /// Tokenized shader format: `D3D10_SB_OPCODE_TYPE_CONTINUE`.
 pub const OPCODE_CONTINUE: u32 = 0x31;
 /// `continuec` (structured conditional continue).
+///
+/// Tokenized shader format: `D3D10_SB_OPCODE_TYPE_CONTINUEC`.
 pub const OPCODE_CONTINUEC: u32 = 0x32;
 /// `switch` (structured switch statement).
 pub const OPCODE_SWITCH: u32 = 0x35;
@@ -518,6 +526,7 @@ pub fn opcode_name(opcode: u32) -> Option<&'static str> {
         OPCODE_DISCARD => Some("discard"),
         OPCODE_CLIP => Some("clip"),
         OPCODE_IF => Some("if"),
+        OPCODE_IFC => Some("ifc"),
         OPCODE_ELSE => Some("else"),
         OPCODE_ENDIF => Some("endif"),
         OPCODE_SETP => Some("setp"),
