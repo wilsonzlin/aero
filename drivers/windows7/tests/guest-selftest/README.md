@@ -95,7 +95,7 @@ For the consolidated virtio-input end-to-end validation plan (device model + dri
     - expects a 2xx response from the host harness, which validates integrity (SHA-256)
   - Optional interrupt-mode diagnostics (`virtio-net-msix`):
     - The selftest queries the virtio-net diagnostics device (`\\.\AeroVirtioNetDiag`) and emits:
-      `AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|PASS/FAIL/SKIP|mode=<intx|msi|msix>|messages=<n>|config_vector=...|rx_vector=...|tx_vector=...`.
+      `AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|PASS/FAIL/SKIP|mode=<intx|msi|msix|unknown>|messages=<n>|config_vector=<n\|none>|rx_vector=<n\|none>|tx_vector=<n\|none>|...`.
       - Newer driver builds may append additional diagnostic fields (best-effort), for example:
         `flags=0x...|intr0=...|intr1=...|intr2=...|dpc0=...|dpc1=...|dpc2=...|rx_drained=...|tx_drained=...`.
     - This marker is informational by default (so older configurations that fall back to INTx can still PASS overall).
@@ -144,7 +144,7 @@ For the consolidated virtio-input end-to-end validation plan (device model + dri
     This marker is informational and does not affect the overall selftest PASS/FAIL.
   - Optional interrupt-mode diagnostics (`virtio-input-msix`):
     - The selftest queries the virtio-input HID minidriver for its interrupt configuration via a diagnostics IOCTL and emits:
-      `AERO_VIRTIO_SELFTEST|TEST|virtio-input-msix|PASS/FAIL/SKIP|mode=<intx|msix>|messages=<n>|mapping=...|...`.
+      `AERO_VIRTIO_SELFTEST|TEST|virtio-input-msix|PASS/FAIL/SKIP|mode=<intx|msix|unknown>|messages=<n>|mapping=...|used_vectors=<n>|config_vector=<n\|none>|queue0_vector=<n\|none>|queue1_vector=<n\|none>|...`.
     - This marker is informational by default (so older configurations that fall back to INTx can still PASS overall).
     - Use `--require-input-msix` (or env var `AERO_VIRTIO_SELFTEST_REQUIRE_INPUT_MSIX=1`) to make the selftest **FAIL**
       when virtio-input is not using MSI-X (mode != `msix`).
