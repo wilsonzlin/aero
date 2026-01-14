@@ -192,6 +192,9 @@ fn input_help_mentions_flags_and_steps() {
         ))
         .stdout(predicate::str::contains("src/usb/usb_hex.test.ts"))
         .stdout(predicate::str::contains(
+            "src/usb/usb_passthrough_demo_runtime.test.ts",
+        ))
+        .stdout(predicate::str::contains(
             "src/usb/webusb_passthrough_runtime.test.ts",
         ))
         .stdout(predicate::str::contains(

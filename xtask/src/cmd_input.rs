@@ -155,6 +155,7 @@ const WEB_UNIT_TEST_PATHS: &[&str] = &[
     "src/usb/usb_broker.test.ts",
     "src/usb/usb_broker_subport.test.ts",
     "src/usb/usb_hex.test.ts",
+    "src/usb/usb_passthrough_demo_runtime.test.ts",
     "src/usb/webusb_backend.test.ts",
     "src/usb/webusb_executor.test.ts",
     "src/usb/webusb_passthrough_runtime.test.ts",
