@@ -3336,6 +3336,72 @@ mod tests {
         Ok(())
     }
 
+    #[tokio::test]
+    async fn download_http_bytes_with_retry_rejects_oversized_chunked_response_without_content_length(
+    ) -> Result<()> {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .context("bind test listener")?;
+        let addr = listener.local_addr().context("get listener addr")?;
+        let handle = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await?;
+            let mut buf = [0u8; 1024];
+            let _ = socket.read(&mut buf).await?;
+
+            let body = vec![b'a'; 11];
+            let header = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n";
+            socket.write_all(header).await?;
+            socket
+                .write_all(format!("{:x}\r\n", body.len()).as_bytes())
+                .await?;
+            socket.write_all(&body).await?;
+            socket.write_all(b"\r\n0\r\n\r\n").await?;
+            socket.shutdown().await?;
+            Ok::<(), std::io::Error>(())
+        });
+
+        let url: reqwest::Url = format!("http://{addr}/manifest.json").parse().unwrap();
+        let client = build_reqwest_client(&[])?;
+        let err = download_http_bytes_with_retry(&client, url, 1, 10)
+            .await
+            .expect_err("expected download to be rejected");
+        assert!(
+            err.root_cause()
+                .to_string()
+                .to_ascii_lowercase()
+                .contains("too large"),
+            "unexpected error chain: {}",
+            error_chain_summary(&err)
+        );
+
+        handle
+            .await
+            .map_err(|err| anyhow!("test server panicked: {err}"))??;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn download_http_bytes_optional_with_retry_returns_none_on_404() -> Result<()> {
+        let (base_url, shutdown_tx, handle) = start_test_http_server(Arc::new(|_req| {
+            (404, Vec::new(), b"not found".to_vec())
+        }))
+        .await?;
+
+        let url: reqwest::Url = format!("{base_url}/meta.json").parse().unwrap();
+        let client = build_reqwest_client(&[])?;
+        let bytes = download_http_bytes_optional_with_retry(&client, url, 1, 1024)
+            .await
+            .context("download optional")?;
+        assert!(bytes.is_none(), "expected None on 404");
+
+        let _ = shutdown_tx.send(());
+        let _ = handle.await;
+        Ok(())
+    }
+
     #[test]
     fn default_cache_control_values_match_docs() {
         assert_eq!(
