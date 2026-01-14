@@ -711,6 +711,7 @@ jobs:
           input_wheel_marker=""
           input_media_keys_marker=""
           input_led_marker=""
+          input_leds_marker=""
           input_binding_host_marker=""
           input_events_modifiers_marker=""
           input_events_buttons_marker=""
@@ -757,6 +758,9 @@ jobs:
             input_media_keys_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-input-media-keys\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
             input_led_marker="$(
               grep -F 'AERO_VIRTIO_SELFTEST|TEST|virtio-input-led|' "${serial_log}" | tail -n 1 | tr -d '\r' || true
+            )"
+            input_leds_marker="$(
+              grep -F 'AERO_VIRTIO_SELFTEST|TEST|virtio-input-leds|' "${serial_log}" | tail -n 1 | tr -d '\r' || true
             )"
             input_events_modifiers_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-input-events-modifiers\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
             input_events_buttons_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-input-events-buttons\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
@@ -905,6 +909,9 @@ jobs:
             fi
             if [[ "${{ inputs.with_virtio_input_led }}" == "true" && -n "${input_led_marker}" ]]; then
               echo "- Guest virtio-input-led marker: \`${input_led_marker}\`"
+            fi
+            if [[ "${{ inputs.with_virtio_input_leds }}" == "true" && -n "${input_leds_marker}" ]]; then
+              echo "- Guest virtio-input-leds marker: \`${input_leds_marker}\`"
             fi
             if [[ -n "${input_events_modifiers_marker}" ]]; then
               echo "- Guest virtio-input-events-modifiers marker: ${input_events_modifiers_marker}"

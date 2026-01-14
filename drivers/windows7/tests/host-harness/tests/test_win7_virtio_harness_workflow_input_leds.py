@@ -26,8 +26,17 @@ class Win7VirtioHarnessWorkflowInputLedsTests(unittest.TestCase):
             'with_virtio_input_leds="${{ inputs.with_virtio_input_leds }}"', self.text
         )
         self.assertIn("args+=(--with-input-leds)", self.text)
+        # And ensure the job summary surfaces the corresponding guest marker when enabled.
+        self.assertIn("AERO_VIRTIO_SELFTEST|TEST|virtio-input-leds|", self.text)
+        self.assertIn(
+            'if [[ "${{ inputs.with_virtio_input_leds }}" == "true" && -n "${input_leds_marker}" ]]; then',
+            self.text,
+        )
+        self.assertIn(
+            r'echo "- Guest virtio-input-leds marker: \`${input_leds_marker}\`"',
+            self.text,
+        )
 
 
 if __name__ == "__main__":
     unittest.main()
-
