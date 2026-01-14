@@ -1200,6 +1200,15 @@ bool TestAdapterCapsAndQueryAdapterInfo() {
   if (!Check(caps.MaxNpatchTessellationLevel > 0.0f, "MaxNpatchTessellationLevel > 0")) {
     return false;
   }
+  if (!Check((caps.TextureAddressCaps & D3DPTADDRESSCAPS_CLAMP) != 0, "TextureAddressCaps includes CLAMP")) {
+    return false;
+  }
+  if (!Check((caps.TextureAddressCaps & D3DPTADDRESSCAPS_WRAP) != 0, "TextureAddressCaps includes WRAP")) {
+    return false;
+  }
+  if (!Check((caps.TextureAddressCaps & D3DPTADDRESSCAPS_MIRROR) != 0, "TextureAddressCaps includes MIRROR")) {
+    return false;
+  }
   // If we enumerate a depth/stencil format, we must advertise the corresponding
   // compare-function caps so the runtime accepts render-state updates.
   if (!Check((caps.ZCmpCaps & D3DPCMPCAPS_ALWAYS) != 0, "ZCmpCaps includes ALWAYS")) {
