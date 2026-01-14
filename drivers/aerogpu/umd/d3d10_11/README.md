@@ -26,7 +26,7 @@ Feature matrix for the Win7 WDK-backed UMDs:
 | Vertex buffer binding | **Multiple slots** supported (`StartSlot/NumBuffers` forwarded) | **Multiple slots** supported (`StartSlot/NumBuffers` forwarded) | **Multiple slots** supported (`StartSlot/NumBuffers` forwarded) |
 | Constant buffers | VS/PS/GS supported (14 slots, whole-buffer binding) | VS/PS/GS supported (14 slots, whole-buffer binding) | VS/PS/GS/CS supported (14 slots, `{FirstConstant, NumConstants}` ranges supported) |
 | Samplers | VS/PS/GS supported (16 slots; `CREATE_SAMPLER` + `SET_SAMPLERS`) | VS/PS/GS supported (16 slots; `CREATE_SAMPLER` + `SET_SAMPLERS`) | VS/PS/GS/CS supported (16 slots; basic filter/address modes) |
-| Geometry shaders (GS) | **Supported (partial)**: GS create + bind (GS handle carried via `aerogpu_cmd_bind_shaders.reserved0` (legacy compat)) | **Supported (partial)**: GS create + bind (GS handle carried via `aerogpu_cmd_bind_shaders.reserved0` (legacy compat)) | **Supported (partial)**: GS create + bind + stage bindings (executed on the host via compute emulation; see below) |
+| Geometry shaders (GS) | **Supported (partial)**: GS create + bind (GS handle carried via `aerogpu_cmd_bind_shaders.reserved0` (legacy compat)) | **Supported (partial)**: GS create + bind (GS handle carried via `aerogpu_cmd_bind_shaders.reserved0` (legacy compat)) | **Supported (partial)**: GS create + bind + stage bindings (host has compute-prepass scaffolding; GS DXBC execution is WIP; see below) |
 | Compute (CS) + UAV buffers | — | — | **Supported (partial)**: CS shaders + `AEROGPU_CMD_DISPATCH`; UAV **buffers** only (8 slots; no UAV textures / OM UAV binding) |
 
 \* All UMDs (D3D10 / D3D10.1 / D3D11) preserve the runtime-provided RTV slot count/list when emitting `SET_RENDER_TARGETS`: `color_count` reflects the runtime-provided slot count, clamped to `AEROGPU_MAX_RENDER_TARGETS` (8). `NULL` entries within `[0, color_count)` are valid and are encoded as `colors[i] = 0` (gaps are preserved).
@@ -39,8 +39,8 @@ Feature matrix for the Win7 WDK-backed UMDs:
   - 16-bit packed formats (`B5G6R5_UNORM`, `B5G5R5A1_UNORM`)
   - Block-compressed formats (BC1/BC2/BC3/BC7) and explicit sRGB variants are ABI-gated (ABI 1.2+; see `aerogpu_umd_private_v1.device_abi_version_u32`). On older ABIs, sRGB DXGI formats are mapped to UNORM for command-stream compatibility; BC formats are rejected.
 - Shaders (DXBC payload passthrough):
-  - D3D10/D3D10.1: VS/PS/GS (GS resource bindings are stubbed)
-  - D3D11: VS/PS/GS/CS (GS is emulated on the host via a compute prepass; GS DXBC is translated/executed via `crates/aero-d3d11/src/runtime/gs_translate.rs`)
+  - D3D10/D3D10.1: VS/PS/GS
+  - D3D11: VS/PS/GS/CS (GS binding currently triggers a placeholder compute-prepass; real GS DXBC translation/execution is WIP)
 - Input layout + vertex/index buffers, primitive topology
 - Shader binding tables:
   - D3D10: VS/PS/GS constant buffers, shader-resource views, samplers (whole-buffer constant-buffer binding)
@@ -83,20 +83,17 @@ Feature matrix for the Win7 WDK-backed UMDs:
   - D3D10 / D3D10.1: `CreateGeometryShader` + `GsSetShader` (and GS resource bindings: `GsSetConstantBuffers`, `GsSetShaderResources`, `GsSetSamplers`) are forwarded into the command stream (GS handle carried via `aerogpu_cmd_bind_shaders.reserved0` (legacy compat)).
   - D3D11:
     - `CreateGeometryShader` + `GsSetShader` are forwarded into the command stream (GS handle carried via `aerogpu_cmd_bind_shaders.reserved0` for legacy compat).
-    - GS stage resource binding DDIs (`GsSetConstantBuffers`, `GsSetShaderResources`, `GsSetSamplers`) emit binding packets; the host uses these bindings for the GS compute-emulation path (supported subset).
+    - GS stage resource binding DDIs (`GsSetConstantBuffers`, `GsSetShaderResources`, `GsSetSamplers`) emit binding packets; the host tracks these bindings, but the current compute-prepass placeholder does not execute GS DXBC yet.
   - Host/WebGPU execution:
-    - WebGPU has no geometry stage; GS is emulated via a **compute prepass + indirect draw** pipeline.
-    - The host decodes the GS DXBC/SM4 module and translates it to WGSL compute in `crates/aero-d3d11/src/runtime/gs_translate.rs`. The generated compute shader executes the GS instruction stream per input primitive and produces:
-      - an expanded vertex buffer
-      - an expanded **triangle-list** index buffer
-      - `DrawIndexedIndirectArgs` so the render pass can consume the expansion via `draw_indexed_indirect`
-    - Output topology: `TriangleStream` (`triangle_strip`). `RestartStrip()` / `cut` terminates the current strip; strip output is expanded into a triangle list with CUT semantics (no bridge triangles; see `crates/aero-d3d11/src/runtime/strip_to_list.rs`).
+    - WebGPU has no geometry stage; AeroGPU uses a **compute prepass + indirect draw** scaffolding path when a GS is bound.
+    - The current host executor prepass emits **synthetic triangle-list geometry** (placeholder) to exercise the command-stream plumbing and indirect execution path. It does **not** execute GS DXBC yet.
+    - A prototype GS DXBC/SM4 → WGSL compute translator lives in `crates/aero-d3d11/src/runtime/gs_translate.rs`, with strip restart expansion helpers in `crates/aero-d3d11/src/runtime/strip_to_list.rs` (CUT semantics; no bridge triangles; currently covered by unit tests; not yet wired into the executor).
     - The command stream exposes an ABI extension for extended D3D11 stages (`stage_ex`; see `enum aerogpu_shader_stage_ex` in `drivers/aerogpu/protocol/aerogpu_cmd.h`). The host executor accepts both the direct `AEROGPU_SHADER_STAGE_GEOMETRY` (`stage = 3`) encoding and the `stage_ex` encoding.
     - Win7 GS tests:
       - `drivers/aerogpu/tests/win7/d3d11_geometry_shader_smoke`
       - `drivers/aerogpu/tests/win7/d3d11_geometry_shader_restart_strip`
       - Host-side tests live under `crates/aero-d3d11/tests/` (run via `cargo test -p aero-d3d11`).
-    - Current tested GS subset:
+    - Prototype GS translator tested subset (not yet wired into the executor):
       - Input primitives: `point` and `triangle` (non-adjacency)
       - Output: `TriangleStream` (`triangle_strip`) only (stream 0)
       - Shader instructions/operands: a small SM4 subset (enough for tests: `mov`/`add` + immediate constants + `v#[]` inputs + `emit`/`cut`)
