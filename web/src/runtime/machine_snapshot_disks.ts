@@ -109,14 +109,14 @@ export async function reattachMachineSnapshotDisks(opts: {
   if (raw == null) return;
   if (!Array.isArray(raw) || raw.length === 0) return;
 
-  const diskIdPrimary = opts.api.Machine.disk_id_primary_hdd?.();
-  const diskIdInstall = opts.api.Machine.disk_id_install_media?.();
+  const diskIdPrimaryRaw = opts.api.Machine.disk_id_primary_hdd?.();
+  const diskIdInstallRaw = opts.api.Machine.disk_id_install_media?.();
+  // Older WASM builds may not expose `Machine.disk_id_*` helpers yet. The snapshot format's disk_id
+  // mapping for the canonical Win7 storage topology is stable (0=primary HDD, 1=install media,
+  // 2=IDE primary master), so fall back to those values when needed.
+  const diskIdPrimary = typeof diskIdPrimaryRaw === "number" ? diskIdPrimaryRaw : 0;
+  const diskIdInstall = typeof diskIdInstallRaw === "number" ? diskIdInstallRaw : 1;
   const diskIdIdeRaw = opts.api.Machine.disk_id_ide_primary_master?.();
-  if (typeof diskIdPrimary !== "number" || typeof diskIdInstall !== "number") {
-    throw new Error(
-      "Machine snapshot restore produced DISKS overlay refs but Machine.disk_id_primary_hdd()/disk_id_install_media() are unavailable.",
-    );
-  }
   // `disk_id_ide_primary_master` was added later than the other helpers. If it is unavailable,
   // fall back to the stable contract value (2) when it does not conflict with the other IDs.
   const diskIdIde =
