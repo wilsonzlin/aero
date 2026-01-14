@@ -766,10 +766,88 @@ python3 drivers/windows7/tests/host-harness/invoke_aero_virtio_win7_tests.py \
 When enabled, the harness also prints a host-side marker for log scraping/debugging:
 
 `AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RESIZE|REQUEST|old_bytes=...|new_bytes=...|qmp_cmd=...`
-
 It also mirrors the final guest result marker into a stable host marker:
 
 `AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RESIZE|PASS/FAIL/SKIP/READY|...`
+
+### virtio-blk reset (guest IOCTL; optional)
+
+The guest selftest includes an opt-in `virtio-blk-reset` test that forces a virtio-blk miniport/device reset via a
+control IOCTL (driver diagnostics interface) and validates that the driver recovers cleanly.
+
+To enable end-to-end testing:
+
+1. Provision the guest image so the scheduled selftest runs with `--test-blk-reset`
+   (or set env var `AERO_VIRTIO_SELFTEST_TEST_BLK_RESET=1` in the guest).
+   - When generating provisioning media with `New-AeroWin7TestImage.ps1`, bake this in via:
+     `-TestBlkReset` (adds `--test-blk-reset` to the scheduled task).
+2. Run the host harness with blk-reset enabled so it requires:
+   `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|PASS`.
+
+Example (PowerShell):
+
+```powershell
+pwsh ./drivers/windows7/tests/host-harness/Invoke-AeroVirtioWin7Tests.ps1 `
+  -QemuSystem qemu-system-x86_64 `
+  -DiskImagePath ./win7-aero-tests.qcow2 `
+  -Snapshot `
+  -WithBlkReset `
+  -TimeoutSeconds 600
+```
+
+Example (Python):
+
+```bash
+python3 drivers/windows7/tests/host-harness/invoke_aero_virtio_win7_tests.py \
+  --qemu-system qemu-system-x86_64 \
+  --disk-image ./win7-aero-tests.qcow2 \
+  --snapshot \
+  --with-blk-reset \
+  --timeout-seconds 600
+```
+
+### virtio-net link flap (QMP `set_link`; optional)
+
+The guest selftest includes an opt-in `virtio-net-link-flap` test that validates link state transitions.
+
+When enabled, the host harness:
+
+1. Waits for the guest marker: `AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|READY`
+2. Uses QMP `set_link` to toggle the virtio-net device link **down**, waits a short delay (currently 2 seconds), then
+   toggles it **up**
+3. Requires the guest marker: `AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|PASS`
+4. Emits a host-side marker for log scraping/debugging:
+   `AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_LINK_FLAP|PASS/FAIL|name=...|down_delay_sec=...|reason=...`
+
+To enable end-to-end testing:
+
+1. Provision the guest image so the scheduled selftest runs with `--test-net-link-flap`
+   (or set env var `AERO_VIRTIO_SELFTEST_TEST_NET_LINK_FLAP=1` in the guest).
+   - When generating provisioning media with `New-AeroWin7TestImage.ps1`, bake this in via:
+     `-TestNetLinkFlap` (adds `--test-net-link-flap` to the scheduled task).
+2. Run the host harness with link flap enabled.
+
+Example (PowerShell):
+
+```powershell
+pwsh ./drivers/windows7/tests/host-harness/Invoke-AeroVirtioWin7Tests.ps1 `
+  -QemuSystem qemu-system-x86_64 `
+  -DiskImagePath ./win7-aero-tests.qcow2 `
+  -Snapshot `
+  -WithNetLinkFlap `
+  -TimeoutSeconds 600
+```
+
+Example (Python):
+
+```bash
+python3 drivers/windows7/tests/host-harness/invoke_aero_virtio_win7_tests.py \
+  --qemu-system qemu-system-x86_64 \
+  --disk-image ./win7-aero-tests.qcow2 \
+  --snapshot \
+  --with-net-link-flap \
+  --timeout-seconds 600
+```
 ### virtio-snd (audio)
 
 If your test image includes the virtio-snd driver, you can ask the harness to attach a virtio-snd PCI device:
@@ -1059,6 +1137,7 @@ only if you explicitly want the base image to be mutated.
   - `AERO_VIRTIO_SELFTEST|RESULT|PASS` / `AERO_VIRTIO_SELFTEST|RESULT|FAIL`
   - When `RESULT|PASS` is seen, the harness also requires that the guest emitted per-test markers for:
     - `AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS`
+    - (only when blk reset is enabled via `-WithBlkReset` / `--with-blk-reset`) `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset|PASS`
     - (only when blk resize is enabled via `-WithBlkResize` / `--with-blk-resize`) `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-resize|PASS`
     - `AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS`
     - `AERO_VIRTIO_SELFTEST|TEST|virtio-input-bind|PASS`
@@ -1076,6 +1155,7 @@ only if you explicitly want the base image to be mutated.
     - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|PASS` or `...|SKIP` (if `-WithVirtioSnd` / `--with-virtio-snd` is set, it must be `PASS`)
     - (only when `-WithSndBufferLimits` / `--with-snd-buffer-limits` is enabled) `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-buffer-limits|PASS`
     - `AERO_VIRTIO_SELFTEST|TEST|virtio-net|PASS`
+    - (only when link flap is enabled via `-WithNetLinkFlap` / `--with-net-link-flap`) `AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|PASS`
     - `AERO_VIRTIO_SELFTEST|TEST|virtio-net-udp|PASS`
 
 The Python/PowerShell harnesses may also emit additional host-side markers after the run for log scraping/diagnostics:
@@ -1087,6 +1167,7 @@ AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RECOVERY|INFO|abort_srb=...|reset_device_srb=..
 AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RESIZE|REQUEST|old_bytes=...|new_bytes=...|qmp_cmd=...
 AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_RESIZE|PASS/FAIL/SKIP/READY|disk=...|old_bytes=...|new_bytes=...|elapsed_ms=...|reason=...|err=...
 AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_LARGE|PASS/FAIL/INFO|large_ok=...|large_bytes=...|large_fnv1a64=...|large_mbps=...|upload_ok=...|upload_bytes=...|upload_mbps=...|msi=...|msi_messages=...
+AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_LINK_FLAP|PASS/FAIL|name=...|down_delay_sec=...|reason=...
 AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_UDP|PASS/FAIL/SKIP|bytes=...|small_bytes=...|mtu_bytes=...|reason=...|wsa=...
 AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_UDP_DNS|PASS/FAIL/SKIP|server=...|query=...|sent=...|recv=...|rcode=...
 AERO_VIRTIO_WIN7_HOST|VIRTIO_NET_DIAG|INFO/WARN|reason=...|host_features=...|guest_features=...|irq_mode=...|irq_message_count=...|...
