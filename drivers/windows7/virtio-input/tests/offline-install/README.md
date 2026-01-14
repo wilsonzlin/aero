@@ -16,7 +16,8 @@ test images where you want input working immediately).
 > - Tablet/absolute pointer (`aero_virtio_tablet.inf`): `SUBSYS_00121AF4`
 >   - This match is more specific, so it wins over the generic fallback when both driver packages are installed.
 > - Legacy basename alias: `virtio-input.inf.disabled` → rename to `virtio-input.inf` to enable.
->   - Filename-only alias: expected to be byte-identical to `aero_virtio_input.inf` from `[Version]` onward (banner/comments may differ).
+>   - Filename-only alias: expected to be byte-identical to `aero_virtio_input.inf` from `[Version]` onward
+>     (banner/comments may differ; see `drivers/windows7/virtio-input/scripts/check-inf-alias.py`).
 >   - Because it is identical, it does **not** change HWID matching behavior.
 >   - Do **not** stage/install both basenames at once: choose **either** `aero_virtio_input.inf` **or** `virtio-input.inf`.
 
