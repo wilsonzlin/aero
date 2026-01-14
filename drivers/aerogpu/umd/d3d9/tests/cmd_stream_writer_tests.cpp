@@ -12666,12 +12666,10 @@ bool TestDrawStateTrackingPreSplitRetainsAllocs() {
   Resource rt{};
   rt.kind = ResourceKind::Texture2D;
   rt.handle = 0x2000u;
-  rt.share_token = 0;
 
   Resource tex{};
   tex.kind = ResourceKind::Texture2D;
   tex.handle = 0x3000u;
-  tex.share_token = 0;
 
   D3DDDI_HRESOURCE hRt{};
   hRt.pDrvPrivate = &rt;
@@ -12794,7 +12792,6 @@ bool TestBlitStateTrackingPreSplitRetainsAllocs() {
   dst.format = static_cast<D3DDDIFORMAT>(21u); // D3DFMT_A8R8G8B8
   dst.width = 64;
   dst.height = 64;
-  dst.share_token = 0;
   D3DDDI_HRESOURCE hDst{};
   hDst.pDrvPrivate = &dst;
   hr = device_test_set_resource_backing(hDevice, hDst, /*alloc_id=*/1, /*offset_bytes=*/0, /*hAllocation=*/0x2000u);
@@ -12808,7 +12805,6 @@ bool TestBlitStateTrackingPreSplitRetainsAllocs() {
   src.format = static_cast<D3DDDIFORMAT>(21u); // D3DFMT_A8R8G8B8
   src.width = 32;
   src.height = 32;
-  src.share_token = 0;
   D3DDDI_HRESOURCE hSrc{};
   hSrc.pDrvPrivate = &src;
   hr = device_test_set_resource_backing(hDevice, hSrc, /*alloc_id=*/2, /*offset_bytes=*/0, /*hAllocation=*/0x3000u);
@@ -12967,12 +12963,10 @@ bool TestRenderTargetTrackingPreSplitRetainsAllocs() {
   Resource rt0{};
   rt0.kind = ResourceKind::Texture2D;
   rt0.handle = 0x2000u;
-  rt0.share_token = 0;
 
   Resource rt1{};
   rt1.kind = ResourceKind::Texture2D;
   rt1.handle = 0x2001u;
-  rt1.share_token = 0;
 
   D3DDDI_HRESOURCE hRt0{};
   hRt0.pDrvPrivate = &rt0;
@@ -13105,18 +13099,22 @@ bool TestDrawStateTrackingDedupsSharedAllocIds() {
     return false;
   }
 
+  constexpr uint64_t kShareToken = 0x1122334455667788ull;
+
   Resource rt{};
   rt.kind = ResourceKind::Texture2D;
   rt.handle = 1;
-  rt.share_token = 0x1122334455667788ull;
 
   Resource tex{};
   tex.kind = ResourceKind::Texture2D;
   tex.handle = 2;
-  tex.share_token = 0x1122334455667788ull;
 
   D3DDDI_HRESOURCE hRt{};
   hRt.pDrvPrivate = &rt;
+  hr = device_test_set_resource_share_token(create_dev.hDevice, hRt, kShareToken);
+  if (!Check(hr == S_OK, "device_test_set_resource_share_token(dedup rt)")) {
+    return false;
+  }
   hr = device_test_set_resource_backing(
       create_dev.hDevice, hRt, /*alloc_id=*/1, /*offset_bytes=*/0, /*hAllocation=*/100);
   if (!Check(hr == S_OK, "device_test_set_resource_backing(dedup rt)")) {
@@ -13128,6 +13126,10 @@ bool TestDrawStateTrackingDedupsSharedAllocIds() {
   }
   D3DDDI_HRESOURCE hTex{};
   hTex.pDrvPrivate = &tex;
+  hr = device_test_set_resource_share_token(create_dev.hDevice, hTex, kShareToken);
+  if (!Check(hr == S_OK, "device_test_set_resource_share_token(dedup tex)")) {
+    return false;
+  }
   hr = device_test_set_resource_backing(
       create_dev.hDevice, hTex, /*alloc_id=*/1, /*offset_bytes=*/0, /*hAllocation=*/200);
   if (!Check(hr == S_OK, "device_test_set_resource_backing(dedup tex)")) {
@@ -13284,7 +13286,6 @@ bool TestRotateResourceIdentitiesTrackingPreSplitRetainsAllocs() {
   Resource rt{};
   rt.kind = ResourceKind::Texture2D;
   rt.handle = 0x2000u;
-  rt.share_token = 0;
 
   Resource tex0{};
   tex0.kind = ResourceKind::Texture2D;
@@ -13300,7 +13301,6 @@ bool TestRotateResourceIdentitiesTrackingPreSplitRetainsAllocs() {
   tex0.row_pitch = 16u * 4u;
   tex0.slice_pitch = tex0.size_bytes;
   tex0.handle = 0x3000u;
-  tex0.share_token = 0;
 
   Resource tex1 = tex0;
   tex1.handle = 0x3001u;

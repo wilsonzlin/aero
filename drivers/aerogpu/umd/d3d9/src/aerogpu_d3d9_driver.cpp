@@ -27615,6 +27615,20 @@ HRESULT AEROGPU_D3D9_CALL device_test_set_resource_backing(
   return S_OK;
 }
 
+HRESULT AEROGPU_D3D9_CALL device_test_set_resource_share_token(
+    D3DDDI_HDEVICE hDevice,
+    D3DDDI_HRESOURCE hResource,
+    uint64_t share_token) {
+  if (!hDevice.pDrvPrivate || !hResource.pDrvPrivate) {
+    return E_INVALIDARG;
+  }
+  auto* dev = as_device(hDevice);
+  auto* res = as_resource(hResource);
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  res->share_token = share_token;
+  return S_OK;
+}
+
 HRESULT AEROGPU_D3D9_CALL device_test_set_resource_shared_private_driver_data(
     D3DDDI_HDEVICE hDevice,
     D3DDDI_HRESOURCE hResource,

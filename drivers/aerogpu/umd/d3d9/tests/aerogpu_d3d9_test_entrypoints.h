@@ -185,6 +185,11 @@ HRESULT AEROGPU_D3D9_CALL device_test_set_resource_backing(
     uint32_t backing_offset_bytes,
     WddmAllocationHandle wddm_hAllocation);
 
+HRESULT AEROGPU_D3D9_CALL device_test_set_resource_share_token(
+    D3DDDI_HDEVICE hDevice,
+    D3DDDI_HRESOURCE hResource,
+    uint64_t share_token);
+
 HRESULT AEROGPU_D3D9_CALL device_test_set_resource_shared_private_driver_data(
     D3DDDI_HDEVICE hDevice,
     D3DDDI_HRESOURCE hResource,
@@ -199,4 +204,3 @@ HRESULT AEROGPU_D3D9_CALL device_test_alias_fixedfunc_stage0_ps_variant(
 HRESULT AEROGPU_D3D9_CALL device_test_force_device_lost(D3DDDI_HDEVICE hDevice, HRESULT hr);
 
 } // namespace aerogpu
-
