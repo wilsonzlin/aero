@@ -148,19 +148,18 @@ The executor currently uses **two distinct** compute prepass implementations for
   vertices/indices and indirect args.
 - **When it runs:** currently for `PointList` and `TriangleList` draws (indexed or non-indexed) where the
   bound GS DXBC successfully translated at `CREATE_SHADER_DXBC` time.
-- **Pass sequence (translated-GS prepass paths today):**
-  1. **Input fill:** a compute pass populates the packed `gs_inputs` payload from **VS outputs**, using
-     vertex pulling to load IA data and a small VS-as-compute translator (currently a minimal SM4 subset)
-     to execute the guest VS instruction stream for the subset needed by GS tests.
-     - If the VS is a strict passthrough, the executor can fill `gs_inputs` directly from the IA stream
-       (fast path).
-     - If VS-as-compute translation fails, draws fail unless `AERO_D3D11_ALLOW_INCORRECT_GS_INPUTS=1`
-       is set (debug-only fallback).
-  2. **GS execution:** the translated GS WGSL compute entry point runs once per input primitive
-     (`dispatch_workgroups(primitive_count, 1, 1)`) and loops `gs_instance_id` in `0..GS_INSTANCE_COUNT`.
-     It appends outputs using atomics, performing strip→list conversion and honoring `cut` semantics.
-  3. **Finalize:** a 1-workgroup dispatch runs `cs_finalize` to write `DrawIndexedIndirectArgs` from the
-     counters (and to deterministically skip the draw if overflow occurred).
+ - **Pass sequence (translated-GS prepass paths today):**
+   1. **Input fill:** a compute pass populates the packed `gs_inputs` payload from **VS outputs**, using
+      vertex pulling to load IA data and a small VS-as-compute translator (currently a minimal SM4 subset)
+      to execute the guest VS instruction stream for the subset needed by GS tests.
+      - If VS-as-compute translation fails, the executor only falls back to filling `gs_inputs` from the
+        IA stream when the VS is a strict passthrough (or `AERO_D3D11_ALLOW_INCORRECT_GS_INPUTS=1` is set
+        to force IA-fill for debugging; may misrender). Otherwise the draw fails with a clear error.
+   2. **GS execution:** the translated GS WGSL compute entry point runs once per input primitive
+      (`dispatch_workgroups(primitive_count, 1, 1)`) and loops `gs_instance_id` in `0..GS_INSTANCE_COUNT`.
+      It appends outputs using atomics, performing strip→list conversion and honoring `cut` semantics.
+   3. **Finalize:** a 1-workgroup dispatch runs `cs_finalize` to write `DrawIndexedIndirectArgs` from the
+      counters (and to deterministically skip the draw if overflow occurred).
 - **Bindings (translated GS prepass WGSL):**
   - `@group(0)` contains prepass IO (expanded vertices/indices, counters+indirect args, params, and
     `gs_inputs`).
@@ -230,13 +229,14 @@ Current limitations (high-level):
 Test pointers:
 
 - End-to-end translated GS execution:
-  - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_point_to_triangle.rs`
-  - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_restart_strip.rs`
-  - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_pointlist_draw_indexed.rs`
-  - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_output_topology_pointlist.rs`
-  - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_trianglelist_emits_triangle.rs`
-  - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_cbuffer_b0_translated_prepass.rs`
-  - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_line_strip_output.rs`
+ - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_point_to_triangle.rs`
+ - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_restart_strip.rs`
+ - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_pointlist_draw_indexed.rs`
+ - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_vs_as_compute_feeds_gs_inputs.rs`
+ - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_output_topology_pointlist.rs`
+ - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_trianglelist_emits_triangle.rs`
+ - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_cbuffer_b0_translated_prepass.rs`
+ - `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_line_strip_output.rs`
   - `crates/aero-d3d11/tests/aerogpu_cmd_gs_emulation_passthrough.rs`
   - `crates/aero-d3d11/tests/aerogpu_cmd_gs_instance_count.rs`
 - Compute prepass plumbing (synthetic expansion): `crates/aero-d3d11/tests/aerogpu_cmd_geometry_shader_compute_prepass_smoke.rs`

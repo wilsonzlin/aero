@@ -4391,8 +4391,11 @@ impl AerogpuD3d11Executor {
                 let slot = attr.pulling_slot;
                 let offset = attr.offset_bytes;
                 let element_index_expr = match attr.step_mode {
-                    wgpu::VertexStepMode::Vertex => "vertex_index",
-                    wgpu::VertexStepMode::Instance => "aero_vp_ia.first_instance",
+                    wgpu::VertexStepMode::Vertex => "vertex_index".to_owned(),
+                    wgpu::VertexStepMode::Instance => {
+                        let step = attr.instance_step_rate.max(1);
+                        format!("aero_vp_ia.first_instance / {step}u")
+                    }
                 };
                 out.push_str(&format!("    case {reg}u: {{\n"));
                 out.push_str(&format!(
@@ -4413,12 +4416,130 @@ impl AerogpuD3d11Executor {
                         "let v: vec3<f32> = load_attr_f32x3(slot, addr);\n      return vec4<f32>(v, 1.0);"
                             .to_owned()
                     }
-                    (DxgiFormatComponentType::F32, 4) => "return load_attr_f32x4(slot, addr);".to_owned(),
+                    (DxgiFormatComponentType::F32, 4) => {
+                        "return load_attr_f32x4(slot, addr);".to_owned()
+                    }
+                    (DxgiFormatComponentType::F16, 1) => {
+                        "let v: vec2<f32> = load_attr_f16x2(slot, addr);\n      return vec4<f32>(v.x, 0.0, 0.0, 1.0);"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::F16, 2) => {
+                        "let v: vec2<f32> = load_attr_f16x2(slot, addr);\n      return vec4<f32>(v.x, v.y, 0.0, 1.0);"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::F16, 4) => {
+                        "return load_attr_f16x4(slot, addr);".to_owned()
+                    }
+                    (DxgiFormatComponentType::Unorm8, 2) => {
+                        "let v: vec2<f32> = load_attr_unorm8x2(slot, addr);\n      return vec4<f32>(v.x, v.y, 0.0, 1.0);"
+                            .to_owned()
+                    }
                     (DxgiFormatComponentType::Unorm8, 4) => {
                         "return load_attr_unorm8x4(slot, addr);".to_owned()
                     }
+                    (DxgiFormatComponentType::Snorm8, 2) => {
+                        "let v: vec2<f32> = load_attr_snorm8x2(slot, addr);\n      return vec4<f32>(v.x, v.y, 0.0, 1.0);"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::Snorm8, 4) => {
+                        "return load_attr_snorm8x4(slot, addr);".to_owned()
+                    }
+                    (DxgiFormatComponentType::Unorm16, 1) => {
+                        "let v: vec2<f32> = load_attr_unorm16x2(slot, addr);\n      return vec4<f32>(v.x, 0.0, 0.0, 1.0);"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::Unorm16, 2) => {
+                        "let v: vec2<f32> = load_attr_unorm16x2(slot, addr);\n      return vec4<f32>(v.x, v.y, 0.0, 1.0);"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::Unorm16, 4) => {
+                        "return load_attr_unorm16x4(slot, addr);".to_owned()
+                    }
+                    (DxgiFormatComponentType::Snorm16, 1) => {
+                        "let v: vec2<f32> = load_attr_snorm16x2(slot, addr);\n      return vec4<f32>(v.x, 0.0, 0.0, 1.0);"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::Snorm16, 2) => {
+                        "let v: vec2<f32> = load_attr_snorm16x2(slot, addr);\n      return vec4<f32>(v.x, v.y, 0.0, 1.0);"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::Snorm16, 4) => {
+                        "return load_attr_snorm16x4(slot, addr);".to_owned()
+                    }
                     (DxgiFormatComponentType::Unorm10_10_10_2, 4) => {
                         "return load_attr_unorm10_10_10_2(slot, addr);".to_owned()
+                    }
+                    (DxgiFormatComponentType::U32, 1) => {
+                        "let v: u32 = load_attr_u32(slot, addr);\n      return vec4<f32>(f32(v), 0.0, 0.0, 1.0);"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::U32, 2) => {
+                        "let v: vec2<u32> = load_attr_u32x2(slot, addr);\n      return vec4<f32>(f32(v.x), f32(v.y), 0.0, 1.0);"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::U32, 3) => {
+                        "let v: vec3<u32> = load_attr_u32x3(slot, addr);\n      return vec4<f32>(f32(v.x), f32(v.y), f32(v.z), 1.0);"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::U32, 4) => {
+                        "let v: vec4<u32> = load_attr_u32x4(slot, addr);\n      return vec4<f32>(f32(v.x), f32(v.y), f32(v.z), f32(v.w));"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::I32, 1) => {
+                        "let v: i32 = load_attr_i32(slot, addr);\n      return vec4<f32>(f32(v), 0.0, 0.0, 1.0);"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::I32, 2) => {
+                        "let v: vec2<i32> = load_attr_i32x2(slot, addr);\n      return vec4<f32>(f32(v.x), f32(v.y), 0.0, 1.0);"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::I32, 3) => {
+                        "let v: vec3<i32> = load_attr_i32x3(slot, addr);\n      return vec4<f32>(f32(v.x), f32(v.y), f32(v.z), 1.0);"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::I32, 4) => {
+                        "let v: vec4<i32> = load_attr_i32x4(slot, addr);\n      return vec4<f32>(f32(v.x), f32(v.y), f32(v.z), f32(v.w));"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::U16, 1) => {
+                        "let v: u32 = load_attr_u16(slot, addr);\n      return vec4<f32>(f32(v), 0.0, 0.0, 1.0);"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::U16, 2) => {
+                        "let v: vec2<u32> = load_attr_u16x2(slot, addr);\n      return vec4<f32>(f32(v.x), f32(v.y), 0.0, 1.0);"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::U16, 4) => {
+                        "let v: vec4<u32> = load_attr_u16x4(slot, addr);\n      return vec4<f32>(f32(v.x), f32(v.y), f32(v.z), f32(v.w));"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::I16, 1) => {
+                        "let v: i32 = load_attr_i16(slot, addr);\n      return vec4<f32>(f32(v), 0.0, 0.0, 1.0);"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::I16, 2) => {
+                        "let v: vec2<i32> = load_attr_i16x2(slot, addr);\n      return vec4<f32>(f32(v.x), f32(v.y), 0.0, 1.0);"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::I16, 4) => {
+                        "let v: vec4<i32> = load_attr_i16x4(slot, addr);\n      return vec4<f32>(f32(v.x), f32(v.y), f32(v.z), f32(v.w));"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::U8, 2) => {
+                        "let v: vec2<u32> = load_attr_u8x2(slot, addr);\n      return vec4<f32>(f32(v.x), f32(v.y), 0.0, 1.0);"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::U8, 4) => {
+                        "let v: vec4<u32> = load_attr_u8x4(slot, addr);\n      return vec4<f32>(f32(v.x), f32(v.y), f32(v.z), f32(v.w));"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::I8, 2) => {
+                        "let v: vec2<i32> = load_attr_i8x2(slot, addr);\n      return vec4<f32>(f32(v.x), f32(v.y), 0.0, 1.0);"
+                            .to_owned()
+                    }
+                    (DxgiFormatComponentType::I8, 4) => {
+                        "let v: vec4<i32> = load_attr_i8x4(slot, addr);\n      return vec4<f32>(f32(v.x), f32(v.y), f32(v.z), f32(v.w));"
+                            .to_owned()
                     }
                     _ => "return aero_vs_default();".to_owned(),
                 };
@@ -5834,7 +5955,13 @@ impl AerogpuD3d11Executor {
             Ok(out)
         }
 
-        let fill_wgsl = match vs_shader.sm4_module.as_deref() {
+        let vertex_invocation_count: u32 = primitive_count.checked_mul(VERTS_PER_PRIM).ok_or_else(|| {
+            anyhow!(
+                "GS prepass: vertex_invocation_count overflows u32 (primitive_count={primitive_count})"
+            )
+        })?;
+
+        let (fill_wgsl, fill_dispatch_x) = match vs_shader.sm4_module.as_deref() {
             Some(module) => match build_vs_as_compute_gs_input_wgsl(
                 module,
                 &pulling,
@@ -5842,20 +5969,20 @@ impl AerogpuD3d11Executor {
                 gs_meta.input_reg_count,
                 indexed_draw,
             ) {
-                Ok(wgsl) => wgsl,
+                Ok(wgsl) => (wgsl, vertex_invocation_count),
                 Err(err) => {
                     // Only allow IA-fill fallback when VS is a strict passthrough. Otherwise the
                     // GS would observe incorrect register values (VS-side transforms would be
                     // skipped).
                     if vs_is_identity_passthrough_for_gs_inputs(module, gs_meta.input_reg_count) {
-                        fill_wgsl_ia
+                        (fill_wgsl_ia, primitive_count)
                     } else if super::env_var_truthy("AERO_D3D11_ALLOW_INCORRECT_GS_INPUTS") {
                         eprintln!(
                             "aero-d3d11: WARNING: VS-as-compute translation failed for VS shader {} (using incorrect IA-fill fallback): {:#}",
                             vs_handle,
                             err
                         );
-                        fill_wgsl_ia
+                        (fill_wgsl_ia, primitive_count)
                     } else {
                         bail!(
                             "GS prepass requires VS-as-compute to feed GS inputs, but VS-as-compute translation failed for VS shader {vs_handle}: {err:#}\n\
@@ -5870,7 +5997,7 @@ impl AerogpuD3d11Executor {
                         "aero-d3d11: WARNING: missing decoded SM4 module for VS shader {} (using incorrect IA-fill fallback)",
                         vs_handle
                     );
-                    fill_wgsl_ia
+                    (fill_wgsl_ia, primitive_count)
                 } else {
                     bail!(
                         "GS prepass requires VS-as-compute to feed GS inputs, but the bound VS shader {vs_handle} has no decoded SM4 module available.\n\
@@ -5973,7 +6100,7 @@ impl AerogpuD3d11Executor {
             pass.set_bind_group(0, &fill_bg, &[]);
             bind_empty_groups_before_vertex_pulling(&mut pass, self.empty_bind_group.as_ref(), 1);
             pass.set_bind_group(VERTEX_PULLING_GROUP, &vp_bg, &[]);
-            pass.dispatch_workgroups(primitive_count, 1, 1);
+            pass.dispatch_workgroups(fill_dispatch_x, 1, 1);
         }
 
         // Allocate expanded output buffers for the GS prepass.
