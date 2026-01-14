@@ -3,7 +3,7 @@
 use aero_machine::{Machine, MachineConfig};
 use aero_usb::hid::UsbHidPassthroughHandle;
 use aero_usb::hub::UsbHubDevice;
-use aero_usb::{ControlResponse, SetupPacket, UsbDeviceModel, UsbWebUsbPassthroughDevice};
+use aero_usb::{ControlResponse, SetupPacket, UsbDeviceModel, UsbInResult, UsbWebUsbPassthroughDevice};
 
 fn queue_webusb_control_in_action(dev: &UsbWebUsbPassthroughDevice) {
     let setup = SetupPacket {
@@ -19,6 +19,15 @@ fn queue_webusb_control_in_action(dev: &UsbWebUsbPassthroughDevice) {
         handle.handle_control_request(setup, None),
         ControlResponse::Nak,
         "expected first control request to queue a host action and return NAK"
+    );
+}
+
+fn queue_webusb_bulk_in_action(dev: &UsbWebUsbPassthroughDevice) {
+    let mut handle = dev.clone();
+    assert_eq!(
+        handle.handle_in_transfer(0x81, 16),
+        UsbInResult::Nak,
+        "expected first bulk/interrupt IN transfer to queue a host action and return NAK"
     );
 }
 
@@ -84,6 +93,41 @@ fn snapshot_restore_clears_uhci_webusb_host_state() {
     let summary = webusb.pending_summary();
     assert_eq!(summary.queued_actions, 0);
     assert_eq!(summary.inflight_control, None);
+}
+
+#[test]
+fn snapshot_restore_clears_uhci_webusb_bulk_in_host_state() {
+    let mut vm = Machine::new(MachineConfig {
+        ram_size_bytes: 2 * 1024 * 1024,
+        enable_pc_platform: true,
+        enable_uhci: true,
+        // Keep this test minimal/deterministic.
+        enable_vga: false,
+        enable_serial: false,
+        enable_i8042: false,
+        enable_a20_gate: false,
+        enable_reset_ctrl: false,
+        enable_e1000: false,
+        ..Default::default()
+    })
+    .unwrap();
+
+    let webusb = UsbWebUsbPassthroughDevice::new();
+    vm.usb_attach_root(1, Box::new(webusb.clone()))
+        .expect("attach WebUSB device behind UHCI");
+
+    queue_webusb_bulk_in_action(&webusb);
+    let before = webusb.pending_summary();
+    assert_eq!(before.queued_actions, 1);
+    assert_eq!(before.inflight_endpoints, 1);
+
+    let snapshot = vm.take_snapshot_full().unwrap();
+    vm.restore_snapshot_bytes(&snapshot).unwrap();
+
+    let after = webusb.pending_summary();
+    assert_eq!(after.queued_actions, 0);
+    assert_eq!(after.inflight_endpoints, 0);
+    assert_eq!(after.inflight_control, None);
 }
 
 #[test]
