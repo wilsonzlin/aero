@@ -8413,6 +8413,22 @@ impl Machine {
             let Some((cpu, after)) = rest.split_first_mut() else {
                 break;
             };
+
+            let apic_id = (idx as u8).saturating_add(1);
+
+            // Ensure APs can be woken from HLT by timer/IOAPIC delivery.
+            //
+            // The BSP uses `poll_platform_interrupt` to translate the platform interrupt controller
+            // (PIC/IOAPIC+LAPIC) into `cpu.pending.external_interrupts`. Do the same for APs so they
+            // can observe LAPIC timer interrupts and IOAPIC destination routing.
+            const MAX_QUEUED_EXTERNAL_INTERRUPTS: usize = 1;
+            let _ = Self::poll_platform_interrupt_for_apic(
+                interrupts.as_ref(),
+                apic_id,
+                cpu,
+                MAX_QUEUED_EXTERNAL_INTERRUPTS,
+            );
+
             if cpu.state.halted {
                 continue;
             }
@@ -8421,7 +8437,6 @@ impl Machine {
             cpu.state.a20_enabled = self.chipset.a20().enabled();
 
             // Wrap the shared `SystemMemory` in the per-vCPU LAPIC routing adapter.
-            let apic_id = (idx as u8).saturating_add(1);
             let phys = PerCpuSystemMemoryBus::new(
                 apic_id,
                 interrupts.clone(),
@@ -9199,6 +9214,43 @@ impl Machine {
 
         PlatformInterruptController::acknowledge(&mut *interrupts, vector);
         self.cpu.pending.inject_external_interrupt(vector);
+        true
+    }
+
+    fn poll_platform_interrupt_for_apic(
+        interrupts: Option<&Rc<RefCell<PlatformInterrupts>>>,
+        apic_id: u8,
+        cpu: &mut CpuCore,
+        max_queued: usize,
+    ) -> bool {
+        if cpu.pending.external_interrupts().len() >= max_queued {
+            return false;
+        }
+
+        // Only acknowledge/present a maskable interrupt to the vCPU when it can be delivered.
+        //
+        // If we acknowledge while the vCPU is unable to accept delivery (IF=0, interrupt shadow,
+        // pending exception), we could incorrectly clear the controller and lose the interrupt.
+        if cpu.pending.has_pending_event()
+            || (cpu.state.rflags() & RFLAGS_IF) == 0
+            || cpu.pending.interrupt_inhibit() != 0
+        {
+            return false;
+        }
+
+        let Some(interrupts) = interrupts else {
+            return false;
+        };
+
+        let mut interrupts = interrupts.borrow_mut();
+        let Some(vector) = interrupts.get_pending_for_apic(apic_id) else {
+            return false;
+        };
+
+        interrupts.acknowledge_for_apic(apic_id, vector);
+        cpu.pending.inject_external_interrupt(vector);
+        // Wake the vCPU from a `HLT` wait state.
+        cpu.state.halted = false;
         true
     }
 

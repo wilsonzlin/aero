@@ -112,7 +112,6 @@ fn run_slice_allow_hlt(m: &mut Machine, max_insts: u64) {
 }
 
 #[test]
-#[ignore = "requires SMP scheduling + per-vCPU interrupt polling (task 325)"]
 fn smp_lapic_timer_wakes_ap() {
     let cfg = MachineConfig {
         cpu_count: 2,
