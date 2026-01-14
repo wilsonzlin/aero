@@ -539,10 +539,14 @@ function Add-DeviceBindingCheck(
         $inf = $null
         $signer = $null
         $isSigned = $null
+        $provider = $null
+        $driverVersion = $null
         if ($m.signed_driver) {
             $inf = "" + $m.signed_driver.inf_name
             $signer = "" + $m.signed_driver.signer
             $isSigned = $m.signed_driver.is_signed
+            $provider = "" + $m.signed_driver.driver_provider_name
+            $driverVersion = "" + $m.signed_driver.driver_version
         }
 
         $data.matched_devices += @{
@@ -555,6 +559,8 @@ function Add-DeviceBindingCheck(
             config_manager_error_code = $m.config_manager_error_code
             config_manager_error_meaning = "" + $m.config_manager_error_meaning
             inf_name = $inf
+            driver_provider_name = $provider
+            driver_version = $driverVersion
             is_signed = $isSigned
             signer = $signer
         }
@@ -566,6 +572,8 @@ function Add-DeviceBindingCheck(
             if ($m.config_manager_error_meaning) { $line += " (" + $m.config_manager_error_meaning + ")" }
         }
         if ($inf) { $line += ", INF=" + $inf }
+        if ($provider) { $line += ", Provider=" + $provider }
+        if ($driverVersion) { $line += ", Version=" + $driverVersion }
         if ($isSigned -ne $null) { $line += ", IsSigned=" + $isSigned }
         if ($signer) { $line += ", Signer=" + $signer }
         $details += $line
@@ -1195,7 +1203,7 @@ $report = @{
     schema_version = 1
     tool = @{
          name = "Aero Guest Tools Verify"
-         version = "2.5.7"
+         version = "2.5.8"
          started_utc = $started.ToUniversalTime().ToString("o")
          ended_utc = $null
          duration_ms = $null
