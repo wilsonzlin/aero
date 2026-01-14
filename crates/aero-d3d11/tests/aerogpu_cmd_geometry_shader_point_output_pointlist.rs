@@ -290,7 +290,7 @@ fn aerogpu_cmd_geometry_shader_point_output_pointlist() {
         let w = 64u32;
         let h = 64u32;
         let target_x = w * 7 / 8;
-        let target_y = h * 1 / 8;
+        let target_y = h / 8;
         let x_ndc = ((target_x as f32 + 0.5) / w as f32) * 2.0 - 1.0;
         let y_ndc = 1.0 - ((target_y as f32 + 0.5) / h as f32) * 2.0;
 
