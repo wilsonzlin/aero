@@ -44,6 +44,10 @@ const TAG_CMD_KICK: u16 = 24;
 const TAG_DNCTRL: u16 = 25;
 const TAG_EP0_CONTROL_TD_FULL: u16 = 26;
 
+// New in snapshot v0.7.
+const TAG_TIME_MS: u16 = 26;
+const TAG_LAST_TICK_DMA_DWORD: u16 = 27;
+
 const SLOT_CONTEXT_DWORDS: usize = 8;
 const ENDPOINT_CONTEXT_DWORDS: usize = 8;
 
@@ -507,6 +511,8 @@ impl IoSnapshot for XhciController {
         w.field_u32(TAG_CONFIG, self.config & regs::CONFIG_SNAPSHOT_MASK);
         w.field_u32(TAG_MFINDEX, self.mfindex & regs::runtime::MFINDEX_MASK);
         w.field_u32(TAG_DNCTRL, self.dnctrl);
+        w.field_u64(TAG_TIME_MS, self.time_ms);
+        w.field_u32(TAG_LAST_TICK_DMA_DWORD, self.last_tick_dma_dword);
 
         // Interrupter 0 registers + internal generation counters.
         w.field_u32(TAG_INTR0_IMAN, self.interrupter0.iman_raw());
@@ -644,6 +650,9 @@ impl IoSnapshot for XhciController {
         let max_slots_en = (self.config & 0xff) as u8;
         self.config = (self.config & !0xff) | u32::from(max_slots_en.min(regs::MAX_SLOTS));
         self.mfindex = r.u32(TAG_MFINDEX)?.unwrap_or(0) & regs::runtime::MFINDEX_MASK;
+        self.dnctrl = r.u32(TAG_DNCTRL)?.unwrap_or(0);
+        self.time_ms = r.u64(TAG_TIME_MS)?.unwrap_or(0);
+        self.last_tick_dma_dword = r.u32(TAG_LAST_TICK_DMA_DWORD)?.unwrap_or(0);
         self.dnctrl = r.u32(TAG_DNCTRL)?.unwrap_or(0);
 
         if let Some(v) = r.u32(TAG_INTR0_IMAN)? {

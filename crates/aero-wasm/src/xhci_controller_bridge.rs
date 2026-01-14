@@ -258,19 +258,21 @@ impl XhciControllerBridge {
 
     /// Advance the controller by `frames` 1ms frames.
     ///
-    /// The current xHCI model in `aero-usb` does not yet have a time-based scheduler; this exists
-    /// primarily so the JS-side PCI wrapper can share a common device-stepping contract across
-    /// controllers.
+    /// This drives the underlying [`aero_usb::xhci::XhciController`] model. One "frame" is treated
+    /// as 1ms of guest time (USB frame).
+    ///
+    /// DMA is gated on PCI Bus Master Enable (command bit 2):
+    /// - When BME is set, the controller can DMA into guest RAM via [`WasmGuestMemory`]. Stepping
+    ///   also runs transfer-ring work and drains queued events into the guest-configured event ring.
+    /// - When BME is clear, the controller still advances internal timers (e.g. port reset timers)
+    ///   but all DMA observes open-bus reads (`0xFF`) and ignores writes via [`NoDmaMemory`].
     pub fn step_frames(&mut self, frames: u32) {
         if frames == 0 {
             return;
         }
-        self.tick_count = self.tick_count.wrapping_add(u64::from(frames));
 
-        // Advance controller/port timers. Without this, operations like PORTSC port reset will never
-        // complete (the xHCI model clears PR/PED after a timeout in `tick_1ms`). When DMA is enabled
-        // (PCI COMMAND.BME), also drain queued events into the guest-configured event ring so
-        // interrupts can be observed by the guest.
+        // Gate DMA on PCI Bus Master Enable (command bit 2). When bus mastering is disabled, the
+        // controller must not touch guest memory.
         let dma_enabled = (self.pci_command & (1 << 2)) != 0;
         if dma_enabled {
             let mut mem = GuestMemoryBus::new(self.guest_base, self.guest_size);
@@ -280,10 +282,18 @@ impl XhciControllerBridge {
                 self.ctrl.tick_1ms(&mut mem);
             }
         } else {
+            // Advance controller/port timers. Without this, operations like PORTSC port reset will
+            // never complete (the xHCI model clears PR/PED after a timeout in `tick_1ms`).
+            //
+            // Use `tick_1ms_with_dma` with a NoDmaMemory bus so any DMA that occurs observes open-bus
+            // reads instead of touching guest RAM.
+            let mut mem = NoDmaMemory;
             for _ in 0..frames {
-                self.ctrl.tick_1ms_no_dma();
+                self.ctrl.tick_1ms_with_dma(&mut mem);
             }
         }
+
+        self.tick_count = self.tick_count.wrapping_add(u64::from(frames));
     }
 
     /// Convenience wrapper for stepping a single frame.

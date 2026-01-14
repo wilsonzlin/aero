@@ -415,6 +415,15 @@ pub struct XhciController {
     // Host-side event buffering.
     pending_events: VecDeque<Trb>,
     dropped_event_trbs: u64,
+    /// Internal controller time in 1ms USB frames.
+    ///
+    /// This is advanced via [`XhciController::tick_1ms`] and is intended to back time-based
+    /// features such as port reset timers and transfer scheduling.
+    time_ms: u64,
+    /// Last dword read via the tick-driven DMA path.
+    ///
+    /// This is primarily used by wrapper tests to validate PCI Bus Master Enable (BME) gating.
+    last_tick_dma_dword: u32,
 
     // --- Endpoint transfer execution (subset) ---
     active_endpoints: Vec<ActiveEndpoint>,
@@ -449,6 +458,8 @@ impl fmt::Debug for XhciController {
             .field("cmd_kick", &self.cmd_kick)
             .field("pending_events", &self.pending_events.len())
             .field("dropped_event_trbs", &self.dropped_event_trbs)
+            .field("time_ms", &self.time_ms)
+            .field("last_tick_dma_dword", &self.last_tick_dma_dword)
             .field("interrupter0", &self.interrupter0)
             .field("active_endpoints", &self.active_endpoints.len())
             .field("transfer_executors", &active_execs)
@@ -502,6 +513,8 @@ impl XhciController {
             mfindex: 0,
             pending_events: VecDeque::new(),
             dropped_event_trbs: 0,
+            time_ms: 0,
+            last_tick_dma_dword: 0,
             active_endpoints: Vec::new(),
             ep0_control_td: vec![ControlTdState::default(); slot_count],
             transfer_executors,
@@ -647,6 +660,20 @@ impl XhciController {
         }
         self.attach_device(root_port, Box::new(UsbHubDevice::with_port_count(port_count)));
         Ok(())
+    }
+
+    /// Advance the controller by one 1ms USB frame while allowing DMA via `mem`.
+    ///
+    /// Wrappers can enforce PCI Bus Master Enable (BME) gating by passing a `MemoryBus`
+    /// implementation that provides open-bus reads and ignores writes.
+    pub fn tick_1ms_with_dma(&mut self, mem: &mut dyn MemoryBus) {
+        self.tick_ports_1ms();
+
+        // Minimal DMA touch-point used by wrapper tests: read a dword from CRCR while the
+        // controller is running.
+        if (self.usbcmd & regs::USBCMD_RUN) != 0 {
+            self.last_tick_dma_dword = mem.read_u32(self.crcr);
+        }
     }
 
     pub fn mmio_read_u32(&mut self, mem: &mut dyn MemoryBus, offset: u64) -> u32 {
@@ -1939,6 +1966,7 @@ impl XhciController {
 
     fn tick_ports_1ms(&mut self) {
         self.mfindex = self.mfindex.wrapping_add(8) & 0x3fff;
+        self.time_ms = self.time_ms.wrapping_add(1);
 
         let mut ports_with_events = Vec::new();
         for (i, port) in self.ports.iter_mut().enumerate() {
@@ -1964,7 +1992,7 @@ impl XhciController {
     /// This method performs DMA into guest memory (transfer buffers + event ring). Callers should
     /// gate this on PCI Bus Master Enable.
     pub fn tick_1ms(&mut self, mem: &mut dyn MemoryBus) {
-        self.tick_ports_1ms();
+        self.tick_1ms_with_dma(mem);
         self.tick(mem);
         // Command completion events flow through the guest event ring as well. Command ring
         // processing is kicked via doorbell 0 and is otherwise controller-local state, so make sure

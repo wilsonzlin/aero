@@ -573,11 +573,11 @@ impl UhciRuntime {
         let report_id = u8::try_from(report_id)
             .map_err(|_| js_error("reportId is out of range (expected 0..=255)"))?;
 
-        let bytes = if ok {
-            if data.is_null() || data.is_undefined() {
-                Some(Vec::new())
+        if ok {
+            let bytes = if data.is_null() || data.is_undefined() {
+                Vec::new()
             } else if let Ok(buf) = data.clone().dyn_into::<Uint8Array>() {
-                Some(buf.to_vec())
+                buf.to_vec()
             } else if Array::is_array(&data) {
                 let arr = Array::from(&data);
                 let mut out = Vec::with_capacity(arr.length() as usize);
@@ -599,21 +599,15 @@ impl UhciRuntime {
                         })?;
                     out.push(b);
                 }
-                Some(out)
+                out
             } else {
                 return Err(js_error(
                     "Invalid feature report result: data must be a Uint8Array, number[], or undefined",
                 ));
-            }
-        } else {
-            None
-        };
-
-        if ok {
-            let payload = bytes.as_deref().unwrap_or(&[]);
+            };
             let _ = state
                 .dev
-                .complete_feature_report_request(request_id, report_id, payload);
+                .complete_feature_report_request(request_id, report_id, &bytes);
         } else {
             let _ = state.dev.fail_feature_report_request(request_id, report_id);
         }
