@@ -365,7 +365,7 @@ For each entrypoint:
 #### `DxgkDdiSetVidPnSourceVisibility`
   
 - **Purpose:** Enable/disable scanout for a source (blanking).
-- **AeroGPU MVP behavior:** Set/clear `AEROGPU_MMIO_REG_SCANOUT0_ENABLE` (1/0); host presentation should render a blank frame when not visible.
+- **AeroGPU MVP behavior:** Set/clear `AEROGPU_MMIO_REG_SCANOUT0_ENABLE` (1/0). When cleared, the device model releases WDDM scanout ownership so host presentation can fall back to the legacy VGA/VBE scanout (rather than presenting a “blanked” WDDM scanout).
 - **Can be deferred:** DPMS, advanced power gating.
  
 #### `DxgkDdiQueryVidPnHardwareCapability`
