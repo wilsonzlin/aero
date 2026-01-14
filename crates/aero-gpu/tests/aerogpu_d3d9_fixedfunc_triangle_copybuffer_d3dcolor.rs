@@ -135,7 +135,7 @@ fn d3d9_cmd_stream_fixedfunc_poscolor_copy_buffer_preserves_d3dcolor_ordering() 
         0x000F_0800u32, // oC0.xyzw
         0x10E4_0000u32, // v0.xyzw
         0x0000_FFFFu32, // end
-     ];
+    ];
 
     let vs_bytes = to_bytes(&VS_WORDS);
     let ps_bytes = to_bytes(&PS_WORDS);

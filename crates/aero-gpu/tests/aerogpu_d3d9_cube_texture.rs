@@ -68,7 +68,11 @@ fn assemble_ps3_texld_cube_from_c0() -> Vec<u8> {
     //   end
     let mut words = vec![0xFFFF_0300];
     // dcl_cube s0 (DCL opcode=0x001F, texture type in opcode_token[16..20]; 3=cube)
-    words.extend(enc_inst_with_extra(0x001F, 3u32 << 16, &[enc_dst(10, 0, 0xF)]));
+    words.extend(enc_inst_with_extra(
+        0x001F,
+        3u32 << 16,
+        &[enc_dst(10, 0, 0xF)],
+    ));
     // texld r0, c0, s0
     words.extend(enc_inst(
         0x0042,

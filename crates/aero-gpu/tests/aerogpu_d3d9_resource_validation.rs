@@ -57,7 +57,11 @@ fn assemble_ps3_dcl_cube_s0() -> Vec<u8> {
     // ps_3_0 with a `dcl_cube s0` declaration.
     let mut words = vec![0xFFFF_0300];
     // Texture type is encoded in opcode_token[16..20] for SM2/3 `dcl`.
-    words.extend(enc_inst_with_extra(0x001F, 3u32 << 16, &[enc_dst(10, 0, 0xF)]));
+    words.extend(enc_inst_with_extra(
+        0x001F,
+        3u32 << 16,
+        &[enc_dst(10, 0, 0xF)],
+    ));
     words.push(0x0000_FFFF);
     to_bytes(&words)
 }
@@ -66,7 +70,11 @@ fn assemble_ps3_dcl_volume_s0() -> Vec<u8> {
     // ps_3_0 with a `dcl_volume s0` (3D texture) declaration.
     let mut words = vec![0xFFFF_0300];
     // Texture type is encoded in opcode_token[16..20] for SM2/3 `dcl`.
-    words.extend(enc_inst_with_extra(0x001F, 4u32 << 16, &[enc_dst(10, 0, 0xF)]));
+    words.extend(enc_inst_with_extra(
+        0x001F,
+        4u32 << 16,
+        &[enc_dst(10, 0, 0xF)],
+    ));
     words.push(0x0000_FFFF);
     to_bytes(&words)
 }
@@ -75,7 +83,11 @@ fn assemble_ps3_dcl_unknown_sampler_s0() -> Vec<u8> {
     // ps_3_0 with a `dcl` sampler declaration that uses an unknown texture type encoding.
     let mut words = vec![0xFFFF_0300];
     // Texture type is encoded in opcode_token[16..20] for SM2/3 `dcl`.
-    words.extend(enc_inst_with_extra(0x001F, 5u32 << 16, &[enc_dst(10, 0, 0xF)]));
+    words.extend(enc_inst_with_extra(
+        0x001F,
+        5u32 << 16,
+        &[enc_dst(10, 0, 0xF)],
+    ));
     words.push(0x0000_FFFF);
     to_bytes(&words)
 }

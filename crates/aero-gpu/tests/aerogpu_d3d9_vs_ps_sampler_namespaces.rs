@@ -61,7 +61,11 @@ fn assemble_vs_sample_s0_to_od0_with_t0() -> Vec<u8> {
     //   end
     let mut words = vec![0xFFFE_0300];
     // dcl_texcoord0 o0 (DCL opcode=0x001F, usage in opcode_token[16..20]; 5=texcoord)
-    words.extend(enc_inst_with_extra(0x001F, 5u32 << 16, &[enc_dst(6, 0, 0xF)]));
+    words.extend(enc_inst_with_extra(
+        0x001F,
+        5u32 << 16,
+        &[enc_dst(6, 0, 0xF)],
+    ));
     // mov oPos, v0
     words.extend(enc_inst(0x0001, &[enc_dst(4, 0, 0xF), enc_src(1, 0, 0xE4)]));
     // mov o0, c0
