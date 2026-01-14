@@ -67,6 +67,17 @@ fn xhci_attach_rejects_paths_deeper_than_5_hub_tiers() {
 }
 
 #[wasm_bindgen_test]
+fn xhci_attach_rejects_reserved_webusb_root_port() {
+    let mut xhci = make_controller();
+
+    // Root port 1 is reserved by the xHCI bridge for WebUSB passthrough.
+    let err = xhci
+        .attach_hub(1, 4)
+        .expect_err("expected attach_hub on reserved root port to error");
+    assert!(err.is_instance_of::<js_sys::Error>());
+}
+
+#[wasm_bindgen_test]
 fn xhci_detach_is_idempotent() {
     let mut xhci = make_controller();
     xhci.attach_hub(0, 4).expect("attach hub ok");

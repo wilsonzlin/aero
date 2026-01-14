@@ -6555,13 +6555,6 @@ impl Machine {
                 None
             };
 
-            if self.cfg.enable_aerogpu {
-                // Canonical AeroGPU PCI identity contract (00:07.0, A3A0:0001).
-                pci_cfg.borrow_mut().bus_mut().add_device(
-                    aero_devices::pci::profile::AEROGPU.bdf,
-                    Box::new(AeroGpuPciConfigDevice::new()),
-                );
-            }
             // Allocate PCI BAR resources and enable decoding so devices are reachable via MMIO/PIO
             // immediately after reset (without requiring the guest OS to assign BARs first).
             let pci_allocator_cfg = PciResourceAllocatorConfig::default();
