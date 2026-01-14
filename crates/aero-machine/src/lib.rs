@@ -10424,7 +10424,7 @@ mod tests {
         assert_eq!(overlay.disk_id, Machine::DISK_ID_INSTALL_MEDIA);
         assert_eq!(overlay.base_image, "/state/win7.iso");
         assert_eq!(overlay.overlay_image, "");
-
+ 
         m.eject_install_media();
         assert!(
             m.ide_secondary_master_atapi_overlay.is_none(),
