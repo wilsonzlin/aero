@@ -572,8 +572,8 @@ enum ExpandedVertexOutputLayout<'a> {
     /// `ExpandedVertex`.
     Packed { varyings: &'a [u32] },
     /// Use the legacy expanded-vertex layout expected by the current cmd-stream executor
-    /// passthrough VS (`pos + varyings: array<vec4<f32>, 32>`), writing output registers into the
-    /// corresponding `varyings[loc]` slot.
+    /// passthrough VS (`pos + varyings: array<vec4<f32>, EXPANDED_VERTEX_MAX_VARYINGS>`), writing
+    /// output registers into the corresponding `varyings[loc]` slot.
     FixedArray { max_varyings: u32 },
 }
 
@@ -649,7 +649,7 @@ pub fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point(
 }
 
 /// Internal executor helper: translate using the fixed expanded-vertex layout
-/// (`ExpandedVertex { pos, varyings: array<vec4<f32>, 32> }`).
+/// (`ExpandedVertex { pos, varyings: array<vec4<f32>, EXPANDED_VERTEX_MAX_VARYINGS> }`).
 pub(crate) fn translate_gs_module_to_wgsl_compute_prepass_with_entry_point_fixed(
     module: &Sm4Module,
     entry_point: &str,
