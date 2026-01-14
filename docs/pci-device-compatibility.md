@@ -50,6 +50,7 @@ We assume a single PCI bus (`bus 0`) with stable device numbers. Not all devices
 | 00:0A.0  | vInput | 1AF4:1052     | 09/80/00                 | INTA     | virtio-input keyboard (Aero Win7 contract v1: `SUBSYS_00101AF4`, `REV_01`, `header_type=0x80` for multi-function discovery) |
 | 00:0A.1  | vInput | 1AF4:1052     | 09/80/00                 | INTA     | virtio-input mouse (Aero Win7 contract v1: `SUBSYS_00111AF4`, `REV_01`) |
 | 00:0B.0  | vSnd   | 1AF4:1059     | 04/01/00                 | INTA     | virtio-snd (Aero Win7 contract v1: modern-only, `REV_01`) |
+| 00:0c.0  | (reserved) | 1234:1111 | 03/00/00 | - | Historical Bochs/QEMU “Standard VGA” PCI stub identity (see `aero_devices::pci::profile::VGA_TRANSITIONAL_STUB`). The canonical `aero_machine::Machine` keeps this BDF empty, but the identity is reserved for compatibility tests and alternate integrations. |
 | 00:0d.0  | USB3   | 1B36:000D     | 0C/03/30                 | INTA     | xHCI (USB 3.x) controller (QEMU xHCI identity). Wired in the web runtime when the WASM build exports `XhciControllerBridge` (optional/experimental; Windows 7 has no in-box xHCI driver). See [`docs/usb-xhci.md`](./usb-xhci.md). |
 | 00:12.0  | USB2   | 8086:293A     | 0C/03/20                 | INTA     | EHCI (USB 2.0) controller (ICH9-family identity; Windows 7 in-box `usbehci.sys`). See [`docs/usb-ehci.md`](./usb-ehci.md). |
 
