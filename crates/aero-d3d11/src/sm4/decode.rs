@@ -848,6 +848,10 @@ pub fn decode_instruction(
             r.expect_eof()?;
             Ok(Sm4Inst::Max { dst, a, b })
         }
+        OPCODE_LT => decode_cmp(CmpOp::Lt, saturate, &mut r),
+        OPCODE_GE => decode_cmp(CmpOp::Ge, saturate, &mut r),
+        OPCODE_EQ => decode_cmp(CmpOp::Eq, saturate, &mut r),
+        OPCODE_NE => decode_cmp(CmpOp::Ne, saturate, &mut r),
         OPCODE_UDIV => {
             // `udiv dst_quot, dst_rem, a, b`
             // Note: integer division does not support saturate; ignore the opcode modifier if
@@ -1372,6 +1376,25 @@ fn decode_bufinfo(saturate: bool, r: &mut InstrReader<'_>) -> Result<Sm4Inst, Sm
             kind: Sm4DecodeErrorKind::UnsupportedOperandType { ty: other },
         }),
     }
+}
+
+fn decode_cmp(
+    op: CmpOp,
+    saturate: bool,
+    r: &mut InstrReader<'_>,
+) -> Result<Sm4Inst, Sm4DecodeError> {
+    let mut dst = decode_dst(r)?;
+    dst.saturate = saturate;
+    let a = decode_src(r)?;
+    let b = decode_src(r)?;
+    r.expect_eof()?;
+    Ok(Sm4Inst::Cmp {
+        dst,
+        a,
+        b,
+        op,
+        ty: CmpType::F32,
+    })
 }
 
 fn decode_ld(saturate: bool, r: &mut InstrReader<'_>) -> Result<Sm4Inst, Sm4DecodeError> {

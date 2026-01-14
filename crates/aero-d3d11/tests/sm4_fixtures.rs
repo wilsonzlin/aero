@@ -19,6 +19,17 @@ fn assert_wgsl_parses(wgsl: &str) {
     naga::front::wgsl::parse_str(wgsl).expect("generated WGSL failed to parse");
 }
 
+fn assert_wgsl_validates(wgsl: &str) {
+    let module = naga::front::wgsl::parse_str(wgsl).expect("generated WGSL failed to parse");
+    let mut validator = naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    );
+    validator
+        .validate(&module)
+        .expect("generated WGSL failed to validate");
+}
+
 #[test]
 fn parses_and_translates_sm4_vs_passthrough_fixture() {
     let bytes = load_fixture("vs_passthrough.dxbc");
@@ -304,6 +315,62 @@ fn parses_and_decodes_sm4_gs_emit_triangle_fixture() {
             .iter()
             .any(|i| matches!(i, Sm4Inst::Cut { .. })),
         "expected cut instruction"
+    );
+}
+
+#[test]
+fn parses_and_translates_sm4_ps_if_movc_fixture() {
+    let bytes = load_fixture("ps_if_movc.dxbc");
+    let dxbc = DxbcFile::parse(&bytes).expect("fixture should parse as DXBC");
+
+    assert!(dxbc.get_chunk(FOURCC_ISGN).is_some(), "missing ISGN chunk");
+    assert!(dxbc.get_chunk(FOURCC_OSGN).is_some(), "missing OSGN chunk");
+    assert!(dxbc.get_chunk(FOURCC_SHDR).is_some(), "missing SHDR chunk");
+
+    let signatures = parse_signatures(&dxbc).expect("signature parsing failed");
+    let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse failed");
+    assert_eq!(program.stage, ShaderStage::Pixel);
+
+    let module = decode_program(&program).expect("SM4 decode failed");
+    assert!(
+        module.instructions.iter().any(|i| matches!(i, Sm4Inst::Cmp { .. })),
+        "expected comparison instruction"
+    );
+    assert!(
+        module.instructions.iter().any(|i| matches!(i, Sm4Inst::Movc { .. })),
+        "expected movc instruction"
+    );
+    assert!(
+        module.instructions.iter().any(|i| matches!(i, Sm4Inst::If { .. })),
+        "expected if instruction"
+    );
+    assert!(
+        module.instructions.iter().any(|i| matches!(i, Sm4Inst::Else)),
+        "expected else instruction"
+    );
+    assert!(
+        module.instructions.iter().any(|i| matches!(i, Sm4Inst::EndIf)),
+        "expected endif instruction"
+    );
+
+    let translated = translate_sm4_to_wgsl(&dxbc, &module, &signatures)
+        .expect("signature-driven translation failed");
+    assert_wgsl_parses(&translated.wgsl);
+    assert_wgsl_validates(&translated.wgsl);
+    assert!(
+        translated.wgsl.contains("if ("),
+        "expected WGSL to contain structured if:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated.wgsl.contains("} else {"),
+        "expected WGSL to contain else branch:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        translated.wgsl.contains("select("),
+        "expected WGSL to contain select() for movc:\n{}",
+        translated.wgsl
     );
 }
 

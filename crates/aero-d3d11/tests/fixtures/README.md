@@ -42,6 +42,10 @@ The files are intentionally tiny and deterministic, so CI does **not** require
   * Shader model: `ps_4_0`
   * Chunks: `ISGN`, `OSGN`, `SHDR`
   * Behavior: `ld o0, l(0,0,0,0), t0`, `ret`
+* `ps_if_movc.dxbc`
+  * Shader model: `ps_4_0`
+  * Chunks: `ISGN`, `OSGN`, `SHDR`
+  * Behavior: `lt` + `movc` + `if/else/endif` to drive a simple branchy color output
 * `gs_passthrough.dxbc`
   * Shader model: `gs_4_0`
   * Chunks: `ISGN`, `OSGN`, `SHDR`

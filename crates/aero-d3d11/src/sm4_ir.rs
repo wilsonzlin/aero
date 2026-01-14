@@ -523,11 +523,11 @@ pub enum Sm4Inst {
         offset: SrcOperand,
         src: SrcOperand,
     },
-    /// Integer compare (`ieq/ine/ilt/ige/ult/uge`).
+    /// Compare (`lt/ge/eq/ne` and the integer compare family).
     ///
-    /// Produces a per-component predicate mask: `0xffffffff` for true, `0x00000000` for false.
-    /// The result is stored in the untyped register file, which the current IR models as
-    /// `vec4<f32>` (bit patterns preserved).
+    /// Output encoding depends on [`CmpType`]:
+    /// - `F32`: float mask (`1.0` for true, `0.0` for false).
+    /// - `I32`/`U32`: D3D predicate mask bits (`0xffffffff` for true, `0x00000000` for false).
     Cmp {
         dst: DstOperand,
         a: SrcOperand,
@@ -811,6 +811,7 @@ pub enum CmpOp {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CmpType {
+    F32,
     I32,
     U32,
 }

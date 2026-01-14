@@ -157,6 +157,11 @@ pub enum ShaderTranslateError {
         inst_index: usize,
         opcode: String,
     },
+    InvalidControlFlow {
+        inst_index: usize,
+        opcode: &'static str,
+        msg: &'static str,
+    },
     UnsupportedWriteMask {
         inst_index: usize,
         opcode: &'static str,
@@ -235,6 +240,14 @@ impl fmt::Display for ShaderTranslateError {
             ShaderTranslateError::UnsupportedInstruction { inst_index, opcode } => {
                 write!(f, "unsupported SM4/5 instruction {opcode} at index {inst_index}")
             }
+            ShaderTranslateError::InvalidControlFlow {
+                inst_index,
+                opcode,
+                msg,
+            } => write!(
+                f,
+                "invalid structured control flow ({opcode}) at instruction index {inst_index}: {msg}"
+            ),
             ShaderTranslateError::UnsupportedWriteMask {
                 inst_index,
                 opcode,
@@ -1319,6 +1332,7 @@ fn scan_used_input_registers(module: &Sm4Module) -> BTreeSet<u32> {
             | Sm4Inst::IMax { dst: _, a, b }
             | Sm4Inst::UMin { dst: _, a, b }
             | Sm4Inst::UMax { dst: _, a, b }
+            | Sm4Inst::Cmp { dst: _, a, b, .. }
             | Sm4Inst::IAddC { a, b, .. }
             | Sm4Inst::UAddC { a, b, .. }
             | Sm4Inst::ISubC { a, b, .. }
@@ -1353,10 +1367,6 @@ fn scan_used_input_registers(module: &Sm4Module) -> BTreeSet<u32> {
             | Sm4Inst::FirstbitHi { dst: _, src }
             | Sm4Inst::FirstbitLo { dst: _, src }
             | Sm4Inst::FirstbitShi { dst: _, src } => scan_src_regs(src, &mut scan_reg),
-            Sm4Inst::Cmp { a, b, .. } => {
-                scan_src_regs(a, &mut scan_reg);
-                scan_src_regs(b, &mut scan_reg);
-            }
             Sm4Inst::Bfi {
                 dst: _,
                 width,
@@ -2817,6 +2827,7 @@ fn scan_resources(
             | Sm4Inst::IMax { dst: _, a, b }
             | Sm4Inst::UMin { dst: _, a, b }
             | Sm4Inst::UMax { dst: _, a, b }
+            | Sm4Inst::Cmp { dst: _, a, b, .. }
             | Sm4Inst::UDiv {
                 dst_quot: _,
                 dst_rem: _,
@@ -2829,7 +2840,6 @@ fn scan_resources(
                 a,
                 b,
             }
-            | Sm4Inst::Cmp { dst: _, a, b, .. }
             | Sm4Inst::IAdd { dst: _, a, b }
             | Sm4Inst::ISub { dst: _, a, b }
             | Sm4Inst::IMul { dst: _, a, b }
@@ -4385,30 +4395,56 @@ fn emit_instructions(
                 emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "ibfe", ctx)?;
             }
             Sm4Inst::Cmp { dst, a, b, op, ty } => {
-                let (a, b) = match ty {
-                    CmpType::I32 => (
-                        emit_src_vec4_i32(a, inst_index, "cmp", ctx)?,
-                        emit_src_vec4_i32(b, inst_index, "cmp", ctx)?,
-                    ),
-                    CmpType::U32 => (
-                        emit_src_vec4_u32(a, inst_index, "cmp", ctx)?,
-                        emit_src_vec4_u32(b, inst_index, "cmp", ctx)?,
-                    ),
-                };
+                match ty {
+                    CmpType::F32 => {
+                        let a = emit_src_vec4(a, inst_index, "cmp", ctx)?;
+                        let b = emit_src_vec4(b, inst_index, "cmp", ctx)?;
 
-                let cmp = match op {
-                    CmpOp::Eq => format!("({a}) == ({b})"),
-                    CmpOp::Ne => format!("({a}) != ({b})"),
-                    CmpOp::Lt => format!("({a}) < ({b})"),
-                    CmpOp::Le => format!("({a}) <= ({b})"),
-                    CmpOp::Gt => format!("({a}) > ({b})"),
-                    CmpOp::Ge => format!("({a}) >= ({b})"),
-                };
+                        let cmp = match op {
+                            CmpOp::Eq => format!("({a}) == ({b})"),
+                            CmpOp::Ne => format!("({a}) != ({b})"),
+                            CmpOp::Lt => format!("({a}) < ({b})"),
+                            CmpOp::Le => format!("({a}) <= ({b})"),
+                            CmpOp::Gt => format!("({a}) > ({b})"),
+                            CmpOp::Ge => format!("({a}) >= ({b})"),
+                        };
 
-                // Convert the bool vector result into D3D-style predicate mask bits.
-                let mask = format!("select(vec4<u32>(0u), vec4<u32>(0xffffffffu), {cmp})");
-                let expr = format!("bitcast<vec4<f32>>({mask})");
-                emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "cmp", ctx)?;
+                        // SM4 `lt/ge/eq/ne` produce float masks: `1.0` for true, `0.0` for false.
+                        let expr = maybe_saturate(
+                            dst,
+                            format!("select(vec4<f32>(0.0), vec4<f32>(1.0), {cmp})"),
+                        );
+                        emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "cmp", ctx)?;
+                    }
+                    CmpType::I32 | CmpType::U32 => {
+                        let (a, b) = match ty {
+                            CmpType::I32 => (
+                                emit_src_vec4_i32(a, inst_index, "cmp", ctx)?,
+                                emit_src_vec4_i32(b, inst_index, "cmp", ctx)?,
+                            ),
+                            CmpType::U32 => (
+                                emit_src_vec4_u32(a, inst_index, "cmp", ctx)?,
+                                emit_src_vec4_u32(b, inst_index, "cmp", ctx)?,
+                            ),
+                            CmpType::F32 => unreachable!("handled above"),
+                        };
+
+                        let cmp = match op {
+                            CmpOp::Eq => format!("({a}) == ({b})"),
+                            CmpOp::Ne => format!("({a}) != ({b})"),
+                            CmpOp::Lt => format!("({a}) < ({b})"),
+                            CmpOp::Le => format!("({a}) <= ({b})"),
+                            CmpOp::Gt => format!("({a}) > ({b})"),
+                            CmpOp::Ge => format!("({a}) >= ({b})"),
+                        };
+
+                        // Convert the bool vector result into D3D-style predicate mask bits.
+                        let mask =
+                            format!("select(vec4<u32>(0u), vec4<u32>(0xffffffffu), {cmp})");
+                        let expr = format!("bitcast<vec4<f32>>({mask})");
+                        emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "cmp", ctx)?;
+                    }
+                }
             }
             Sm4Inst::Bfrev { dst, src } => {
                 let src_u = emit_src_vec4_u32(src, inst_index, "bfrev", ctx)?;

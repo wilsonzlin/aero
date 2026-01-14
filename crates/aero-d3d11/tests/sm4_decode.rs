@@ -607,7 +607,9 @@ fn decodes_arithmetic_and_skips_decls() {
 #[test]
 fn does_not_misclassify_unknown_instruction_as_decl() {
     const DCL_DUMMY: u32 = 0x100;
-    const OPCODE_UNKNOWN: u32 = 0x0c;
+    // Pick an opcode that is not implemented by our decoder, but is still in the
+    // executable-instruction range (< 0x100).
+    const OPCODE_UNKNOWN: u32 = 0x10;
 
     let mut body = Vec::<u32>::new();
 
@@ -1410,6 +1412,7 @@ fn does_not_decode_ld_with_offset_like_trailing_operand_as_explicit_lod() {
         Sm4Inst::Unknown { opcode: OPCODE_LD }
     ));
 }
+
 #[test]
 fn decodes_ubfe_ibfe_bfi_bitfield_ops() {
     let mut body = Vec::<u32>::new();
@@ -1852,6 +1855,176 @@ fn decodes_bit_utils_ops() {
             src: src_reg(RegFile::Temp, 9),
         }
     );
+    assert_eq!(module.instructions[5], Sm4Inst::Ret);
+}
+
+#[test]
+fn decodes_cmp_movc_and_structured_if() {
+    let mut body = Vec::<u32>::new();
+
+    // lt r0, v0.xxxx, l(1.0)
+    let imm_one = imm32_scalar(1.0f32.to_bits());
+    let mut lt = vec![opcode_token(
+        OPCODE_LT,
+        (1 + 2 + 2 + imm_one.len()) as u32,
+    )];
+    lt.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 0, WriteMask::XYZW));
+    lt.extend_from_slice(&reg_src(
+        OPERAND_TYPE_INPUT,
+        &[0],
+        Swizzle::XXXX,
+        OperandModifier::None,
+    ));
+    lt.extend_from_slice(&imm_one);
+    body.extend_from_slice(&lt);
+
+    // movc r1, r0, l(1,0,0,1), l(0,0,1,1)
+    let t = imm32_vec4([
+        1.0f32.to_bits(),
+        0.0f32.to_bits(),
+        0.0f32.to_bits(),
+        1.0f32.to_bits(),
+    ]);
+    let f = imm32_vec4([
+        0.0f32.to_bits(),
+        0.0f32.to_bits(),
+        1.0f32.to_bits(),
+        1.0f32.to_bits(),
+    ]);
+    let mut movc = vec![opcode_token(
+        OPCODE_MOVC,
+        (1 + 2 + 2 + t.len() + f.len()) as u32,
+    )];
+    movc.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 1, WriteMask::XYZW));
+    movc.extend_from_slice(&reg_src(
+        OPERAND_TYPE_TEMP,
+        &[0],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    ));
+    movc.extend_from_slice(&t);
+    movc.extend_from_slice(&f);
+    body.extend_from_slice(&movc);
+
+    // if_nz r0.x
+    let mut if_inst = vec![opcode_token(OPCODE_IF, 1 + 2) | (1 << OPCODE_TEST_BOOLEAN_SHIFT)];
+    if_inst.extend_from_slice(&reg_src(
+        OPERAND_TYPE_TEMP,
+        &[0],
+        Swizzle::XXXX,
+        OperandModifier::None,
+    ));
+    body.extend_from_slice(&if_inst);
+
+    // mov r1.y, l(1.0)
+    let imm_one = imm32_scalar(1.0f32.to_bits());
+    let mut mov_then = vec![opcode_token(OPCODE_MOV, (1 + 2 + imm_one.len()) as u32)];
+    mov_then.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 1, WriteMask::Y));
+    mov_then.extend_from_slice(&imm_one);
+    body.extend_from_slice(&mov_then);
+
+    // else
+    body.push(opcode_token(OPCODE_ELSE, 1));
+
+    // mov r1.x, l(2.0)
+    let imm_two = imm32_scalar(2.0f32.to_bits());
+    let mut mov_else = vec![opcode_token(OPCODE_MOV, (1 + 2 + imm_two.len()) as u32)];
+    mov_else.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 1, WriteMask::X));
+    mov_else.extend_from_slice(&imm_two);
+    body.extend_from_slice(&mov_else);
+
+    // endif
+    body.push(opcode_token(OPCODE_ENDIF, 1));
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    // Stage type 0 is pixel shader.
+    let tokens = make_sm5_program_tokens(0, &body);
+    let program =
+        Sm4Program::parse_program_tokens(&tokens_to_bytes(&tokens)).expect("parse_program_tokens");
+    let module = decode_program(&program).expect("decode");
+
+    let imm_scalar = |v: u32| SrcOperand {
+        kind: SrcKind::ImmediateF32([v, v, v, v]),
+        swizzle: Swizzle::XXXX,
+        modifier: OperandModifier::None,
+    };
+
+    assert_eq!(
+        module.instructions[0],
+        Sm4Inst::Cmp {
+            dst: dst(RegFile::Temp, 0, WriteMask::XYZW),
+            op: aero_d3d11::CmpOp::Lt,
+            ty: aero_d3d11::CmpType::F32,
+            a: SrcOperand {
+                kind: SrcKind::Register(RegisterRef {
+                    file: RegFile::Input,
+                    index: 0,
+                }),
+                swizzle: Swizzle::XXXX,
+                modifier: OperandModifier::None,
+            },
+            b: imm_scalar(1.0f32.to_bits()),
+        }
+    );
+    assert_eq!(
+        module.instructions[1],
+        Sm4Inst::Movc {
+            dst: dst(RegFile::Temp, 1, WriteMask::XYZW),
+            cond: src_reg(RegFile::Temp, 0),
+            a: SrcOperand {
+                kind: SrcKind::ImmediateF32([
+                    1.0f32.to_bits(),
+                    0.0f32.to_bits(),
+                    0.0f32.to_bits(),
+                    1.0f32.to_bits(),
+                ]),
+                swizzle: Swizzle::XYZW,
+                modifier: OperandModifier::None,
+            },
+            b: SrcOperand {
+                kind: SrcKind::ImmediateF32([
+                    0.0f32.to_bits(),
+                    0.0f32.to_bits(),
+                    1.0f32.to_bits(),
+                    1.0f32.to_bits(),
+                ]),
+                swizzle: Swizzle::XYZW,
+                modifier: OperandModifier::None,
+            },
+        }
+    );
+
+    assert_eq!(
+        module.instructions[2],
+        Sm4Inst::If {
+            cond: SrcOperand {
+                kind: SrcKind::Register(RegisterRef {
+                    file: RegFile::Temp,
+                    index: 0,
+                }),
+                swizzle: Swizzle::XXXX,
+                modifier: OperandModifier::None,
+            },
+            test: aero_d3d11::Sm4TestBool::NonZero,
+        }
+    );
+    assert_eq!(
+        module.instructions[3],
+        Sm4Inst::Mov {
+            dst: dst(RegFile::Temp, 1, WriteMask::Y),
+            src: imm_scalar(1.0f32.to_bits()),
+        }
+    );
+    assert_eq!(module.instructions[4], Sm4Inst::Else);
+    assert_eq!(
+        module.instructions[5],
+        Sm4Inst::Mov {
+            dst: dst(RegFile::Temp, 1, WriteMask::X),
+            src: imm_scalar(2.0f32.to_bits()),
+        }
+    );
+    assert_eq!(module.instructions[6], Sm4Inst::EndIf);
+    assert_eq!(module.instructions[7], Sm4Inst::Ret);
 }
 
 #[test]

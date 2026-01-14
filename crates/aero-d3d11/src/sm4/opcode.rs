@@ -30,6 +30,14 @@ pub const OPCODE_DP4: u32 = 0x09;
 pub const OPCODE_MIN: u32 = 0x0a;
 pub const OPCODE_MAX: u32 = 0x0b;
 
+// ---- Comparisons ----
+//
+// These opcodes write `0.0/1.0` float masks into the untyped register file.
+pub const OPCODE_LT: u32 = 0x0c;
+pub const OPCODE_GE: u32 = 0x0d;
+pub const OPCODE_EQ: u32 = 0x0e;
+pub const OPCODE_NE: u32 = 0x0f;
+
 /// Unsigned integer add with carry: `uaddc dst_sum, dst_carry, a, b`.
 pub const OPCODE_UADDC: u32 = 0x6a;
 /// Unsigned integer subtract with borrow: `usubb dst_diff, dst_borrow, a, b`.
@@ -77,8 +85,6 @@ pub const OPCODE_IBFE: u32 = 0x69;
 //
 // Note: keep these distinct from the integer/bitwise arithmetic opcodes; the decoder relies on
 // unique opcode IDs.
-// These numeric IDs are expected to match the Windows SDK tokenized-program opcode table
-// (`d3d11tokenizedprogramformat.h`).
 pub const OPCODE_IEQ: u32 = 0x4d;
 pub const OPCODE_IGE: u32 = 0x4e;
 pub const OPCODE_ILT: u32 = 0x4f;
@@ -402,6 +408,10 @@ pub fn opcode_name(opcode: u32) -> Option<&'static str> {
         OPCODE_DP4 => Some("dp4"),
         OPCODE_MIN => Some("min"),
         OPCODE_MAX => Some("max"),
+        OPCODE_LT => Some("lt"),
+        OPCODE_GE => Some("ge"),
+        OPCODE_EQ => Some("eq"),
+        OPCODE_NE => Some("ne"),
         OPCODE_IADD => Some("iadd"),
         OPCODE_ISUB => Some("isub"),
         OPCODE_IMUL => Some("imul"),
