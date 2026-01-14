@@ -10691,7 +10691,6 @@ impl AerogpuD3d11Executor {
                 size_bytes,
             });
         }
-
         // If the destination has a CPU shadow copy, keep it in sync with the GPU copy.
         //
         // This is best-effort: if we cannot source the copied bytes (e.g. host-owned src without a
@@ -10765,7 +10764,6 @@ impl AerogpuD3d11Executor {
                 }
             }
         }
-
         // The destination GPU buffer content has changed; discard any pending "dirty" ranges that
         // would otherwise cause us to overwrite the copy with stale guest-memory contents.
         if let Some(dst) = self.resources.buffers.get_mut(&dst_buffer) {
@@ -10782,46 +10780,48 @@ impl AerogpuD3d11Executor {
             if dst_is_index {
                 // Copy the source bytes out of the shadow / guest backing first so we can mutably
                 // borrow the destination entry.
-                let src_bytes: Option<Vec<u8>> =
-                    if let Some(src) = self.resources.buffers.get(&src_buffer) {
-                        let size_usize: usize = size_bytes
-                            .try_into()
-                            .map_err(|_| anyhow!("COPY_BUFFER: size out of range"))?;
-                        let src_offset_usize: usize = src_offset_bytes
-                            .try_into()
-                            .map_err(|_| anyhow!("COPY_BUFFER: src_offset out of range"))?;
-                        let end = src_offset_usize
-                            .checked_add(size_usize)
-                            .ok_or_else(|| anyhow!("COPY_BUFFER: src range overflows usize"))?;
+                let src_bytes: Option<Vec<u8>> = if let Some(src) = self.resources.buffers.get(&src_buffer)
+                {
+                    let size_usize: usize = size_bytes
+                        .try_into()
+                        .map_err(|_| anyhow!("COPY_BUFFER: size out of range"))?;
+                    let src_offset_usize: usize = src_offset_bytes
+                        .try_into()
+                        .map_err(|_| anyhow!("COPY_BUFFER: src_offset out of range"))?;
+                    let end = src_offset_usize
+                        .checked_add(size_usize)
+                        .ok_or_else(|| anyhow!("COPY_BUFFER: src range overflows usize"))?;
 
-                        if let Some(shadow) = src.host_shadow.as_ref() {
-                            let src_size_usize: usize = src
-                                .size
-                                .try_into()
-                                .map_err(|_| anyhow!("COPY_BUFFER: src size out of range"))?;
-                            if shadow.len() != src_size_usize {
-                                None
-                            } else {
-                                shadow.get(src_offset_usize..end).map(|s| s.to_vec())
-                            }
-                        } else if let Some(src_backing) = src.backing {
-                            allocs.validate_range(
-                                src_backing.alloc_id,
-                                src_backing.offset_bytes + src_offset_bytes,
-                                size_bytes,
-                            )?;
-                            let gpa = allocs.gpa(src_backing.alloc_id)?
-                                + src_backing.offset_bytes
-                                + src_offset_bytes;
-                            let mut tmp = vec![0u8; size_usize];
-                            guest_mem.read(gpa, &mut tmp).map_err(anyhow_guest_mem)?;
-                            Some(tmp)
-                        } else {
+                    if let Some(shadow) = src.host_shadow.as_ref() {
+                        let src_size_usize: usize = src
+                            .size
+                            .try_into()
+                            .map_err(|_| anyhow!("COPY_BUFFER: src size out of range"))?;
+                        if shadow.len() != src_size_usize {
                             None
+                        } else {
+                            shadow.get(src_offset_usize..end).map(|s| s.to_vec())
                         }
+                    } else if let Some(src_backing) = src.backing {
+                        let backing_offset = src_backing
+                            .offset_bytes
+                            .checked_add(src_offset_bytes)
+                            .ok_or_else(|| anyhow!("COPY_BUFFER: src backing offset overflows u64"))?;
+                        allocs.validate_range(src_backing.alloc_id, backing_offset, size_bytes)?;
+                        let gpa = allocs
+                            .gpa(src_backing.alloc_id)?
+                            .checked_add(backing_offset)
+                            .ok_or_else(|| anyhow!("COPY_BUFFER: src backing GPA overflows u64"))?;
+
+                        let mut tmp = vec![0u8; size_usize];
+                        guest_mem.read(gpa, &mut tmp).map_err(anyhow_guest_mem)?;
+                        Some(tmp)
                     } else {
                         None
-                    };
+                    }
+                } else {
+                    None
+                };
 
                 if let Some(dst) = self.resources.buffers.get_mut(&dst_buffer) {
                     let dst_size_usize: usize = dst
