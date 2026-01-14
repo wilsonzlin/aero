@@ -140,6 +140,14 @@ Browser/wasm note: `crates/aero-wasm` exports `Machine` to JS and also exposes
 `machine.set_boot_drive(0xE0|0x80)` alongside `machine.reset()`. The same rule applies: set the boot
 drive number and then reset to re-run BIOS POST with the new `DL` value.
 
+When available in the active WASM build, the JS-facing `Machine` wrapper also provides
+introspection helpers for debugging/automation:
+
+- `machine.boot_drive()` – configured BIOS boot drive (`DL`) used for firmware POST/boot.
+- `machine.boot_from_cd_if_present()` – whether the firmware "CD-first when present" policy is enabled.
+- `machine.cd_boot_drive()` – CD-ROM boot drive number used when the CD-first policy is enabled.
+- `machine.active_boot_device()` – what firmware actually booted from in the current boot session (CD vs HDD).
+
 ### 2) Normal boot (after installation)
 
 1. Select HDD0 as the BIOS boot drive (**`DL=0x80`**) before reset. BIOS enters the boot sector with
