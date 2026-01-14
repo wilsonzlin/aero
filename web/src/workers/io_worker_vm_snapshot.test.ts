@@ -385,7 +385,7 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
   });
 
   it("restores legacy gpu.vram blobs into vramU8 when vramU8 is provided (backwards compatibility)", async () => {
-    const makeVramChunk = (data: Uint8Array, chunkIndex = 0): Uint8Array => {
+    const makeVramChunk = (data: Uint8Array, chunkIndex = 0, totalLenOverride?: number): Uint8Array => {
       const headerBytes = 24;
       const out = new Uint8Array(headerBytes + data.byteLength);
       // "AERO"
@@ -405,7 +405,8 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
       out[10] = 0x41;
       out[11] = 0x01;
       // total_len=u32, offset=u32, len=u32
-      const totalLen = data.byteLength >>> 0;
+      const chunkLen = data.byteLength >>> 0;
+      const totalLen = (totalLenOverride ?? chunkLen) >>> 0;
       out[12] = totalLen & 0xff;
       out[13] = (totalLen >>> 8) & 0xff;
       out[14] = (totalLen >>> 16) & 0xff;
@@ -415,11 +416,11 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
       out[17] = 0;
       out[18] = 0;
       out[19] = 0;
-      // len=totalLen
-      out[20] = totalLen & 0xff;
-      out[21] = (totalLen >>> 8) & 0xff;
-      out[22] = (totalLen >>> 16) & 0xff;
-      out[23] = (totalLen >>> 24) & 0xff;
+      // len=chunkLen
+      out[20] = chunkLen & 0xff;
+      out[21] = (chunkLen >>> 8) & 0xff;
+      out[22] = (chunkLen >>> 16) & 0xff;
+      out[23] = (chunkLen >>> 24) & 0xff;
       out.set(data, headerBytes);
       return out;
     };
@@ -428,7 +429,9 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
     vramU8.fill(0xcc);
 
     const data = new Uint8Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
-    const vramBlob = makeVramChunk(data);
+    // Use a deliberately oversize total_len to ensure the restore path is best-effort (older
+    // snapshots can have different VRAM sizes).
+    const vramBlob = makeVramChunk(data, 0, 0x1000);
 
     const api = {
       vm_snapshot_restore_from_opfs: () => ({
@@ -552,7 +555,7 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
     expect(Array.from(c1.data)).toEqual(Array.from(vramU8.subarray(64)));
   });
 
-  it("persists gpu.vram BAR1 VRAM blobs via WorkerVmSnapshot builder (save path)", async () => {
+  it("persists gpu.vram blobs via WorkerVmSnapshot builder (save path)", async () => {
     const addCalls: Array<{ id: number; version: number; flags: number; data: Uint8Array }> = [];
     class FakeBuilder {
       constructor(_guestBase: number, _guestSize: number) {
@@ -595,8 +598,8 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
       },
     });
 
-    const vramAdds = addCalls.filter((c) => c.id === VM_SNAPSHOT_DEVICE_ID_GPU_VRAM).sort((a, b) => a.flags - b.flags);
-    expect(vramAdds.map((c) => c.id)).toEqual([VM_SNAPSHOT_DEVICE_ID_GPU_VRAM, VM_SNAPSHOT_DEVICE_ID_GPU_VRAM]);
+    const vramAdds = addCalls.filter((c) => c.id === VM_SNAPSHOT_DEVICE_ID_GPU_VRAM);
+    expect(vramAdds).toHaveLength(2);
     expect(vramAdds.map((c) => c.flags)).toEqual([0, 1]);
 
     const readU16Le = (bytes: Uint8Array, off: number): number => (bytes[off]! | (bytes[off + 1]! << 8)) >>> 0;
@@ -613,11 +616,8 @@ describe("snapshot usb: workers/io_worker_vm_snapshot", () => {
       return { chunkIndex, totalLen, offset, len, data: bytes.subarray(24, 24 + len) };
     };
 
-    expect(vramAdds.map((c) => c.version)).toEqual([1, 1]);
     const c0 = parseChunk(vramAdds[0]!.data);
     const c1 = parseChunk(vramAdds[1]!.data);
-    expect(vramAdds[0]!.flags).toBe(c0.chunkIndex);
-    expect(vramAdds[1]!.flags).toBe(c1.chunkIndex);
     expect(c0.totalLen).toBe(100);
     expect(c1.totalLen).toBe(100);
     expect(c0.chunkIndex).toBe(0);

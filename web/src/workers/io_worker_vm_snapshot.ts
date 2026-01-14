@@ -271,6 +271,64 @@ function applyVramSnapshotToBuffer(vram: Uint8Array, chunks: Uint8Array[]): void
   }
 }
 
+function applyVramSnapshotToBufferBestEffort(vram: Uint8Array, chunks: Uint8Array[]): void {
+  // Best-effort variant for backwards compatibility paths. Unlike `applyVramSnapshotToBuffer`, this
+  // helper never throws and will restore as much as possible even when:
+  // - the snapshot is larger than the runtime VRAM size
+  // - chunks are missing/out-of-order (holes remain zero)
+  //
+  // This is primarily used when applying legacy `gpu.vram` (DeviceId::GPU_VRAM) blobs into the
+  // IO worker's BAR1 VRAM mapping (`vramU8`).
+  vram.fill(0);
+  if (chunks.length === 0) return;
+
+  let warnedTotalMismatch = false;
+  let warnedOversize = false;
+  let warnedChunkOob = false;
+
+  const parsed: Array<{ totalLen: number; offset: number; len: number; data: Uint8Array }> = [];
+  for (const chunk of chunks) {
+    try {
+      parsed.push(parseVramChunkPayload(chunk));
+    } catch (err) {
+      console.warn("[io.worker] Ignoring invalid gpu.vram chunk during best-effort restore:", err);
+    }
+  }
+  if (parsed.length === 0) return;
+
+  const totalLen0 = parsed[0]!.totalLen;
+  let maxTotalLen = totalLen0;
+  for (const c of parsed) {
+    if (c.totalLen !== totalLen0 && !warnedTotalMismatch) {
+      warnedTotalMismatch = true;
+      console.warn("[io.worker] gpu.vram chunks disagree on total_len; applying best-effort restore.");
+    }
+    if (c.totalLen > maxTotalLen) maxTotalLen = c.totalLen;
+  }
+  if (maxTotalLen > vram.byteLength && !warnedOversize) {
+    warnedOversize = true;
+    console.warn(
+      `[io.worker] gpu.vram snapshot expects ${maxTotalLen} bytes but runtime has only ${vram.byteLength}; restoring prefix that fits.`,
+    );
+  }
+
+  // Deterministic application order: sort by offset then length (last-wins is stable when offsets equal).
+  parsed.sort((a, b) => a.offset - b.offset || a.len - b.len);
+  for (const c of parsed) {
+    const start = c.offset >>> 0;
+    if (start >= vram.byteLength) {
+      if (!warnedChunkOob) {
+        warnedChunkOob = true;
+        console.warn("[io.worker] gpu.vram chunk starts beyond runtime VRAM; ignoring chunk(s).");
+      }
+      continue;
+    }
+    const maxLen = vram.byteLength - start;
+    const copyLen = Math.min(c.data.byteLength, maxLen);
+    vram.set(c.data.subarray(0, copyLen), start);
+  }
+}
+
 function snapshotDeviceKindForWasm(kind: string): string {
   // WASM snapshot free-function exports historically understood `device.<id>` blobs (and may lag
   // behind the canonical string kinds). Prefer numeric IDs when possible so new device kinds can
@@ -1455,7 +1513,7 @@ export async function restoreIoWorkerVmSnapshotFromOpfs(opts: {
         }
       } else if (vramU8 && gpuVramChunks.length) {
         try {
-          applyVramSnapshotToBuffer(vramU8, gpuVramChunks);
+          applyVramSnapshotToBufferBestEffort(vramU8, gpuVramChunks);
         } catch (err) {
           console.warn("[io.worker] Failed to apply legacy gpu.vram snapshot blob(s) to VRAM buffer; clearing VRAM.", err);
           vramU8.fill(0);
@@ -1630,7 +1688,7 @@ export async function restoreIoWorkerVmSnapshotFromOpfs(opts: {
         }
       } else if (vramU8 && gpuVramChunks.length) {
         try {
-          applyVramSnapshotToBuffer(vramU8, gpuVramChunks);
+          applyVramSnapshotToBufferBestEffort(vramU8, gpuVramChunks);
         } catch (err) {
           console.warn("[io.worker] Failed to apply legacy gpu.vram snapshot blob(s) to VRAM buffer; clearing VRAM.", err);
           vramU8.fill(0);
