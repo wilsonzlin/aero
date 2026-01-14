@@ -136,6 +136,11 @@ impl DeviceId {
     /// virtio-pci transport state (virtqueues + pending interrupts) can be snapshotted/restored
     /// deterministically.
     pub const VIRTIO_NET: DeviceId = DeviceId(23);
+    /// Guest-visible virtio-input (virtio-pci) multi-function device state (keyboard + mouse).
+    ///
+    /// Canonical full-system snapshots store both PCI functions under this single outer ID as a
+    /// wrapper blob so snapshot restore can treat the multi-function topology atomically.
+    pub const VIRTIO_INPUT: DeviceId = DeviceId(24);
 
     pub fn name(self) -> Option<&'static str> {
         match self {
@@ -162,6 +167,7 @@ impl DeviceId {
             DeviceId::PLATFORM_INTERRUPTS => Some("PLATFORM_INTERRUPTS"),
             DeviceId::VIRTIO_SND => Some("VIRTIO_SND"),
             DeviceId::VIRTIO_NET => Some("VIRTIO_NET"),
+            DeviceId::VIRTIO_INPUT => Some("VIRTIO_INPUT"),
             _ => None,
         }
     }

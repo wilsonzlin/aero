@@ -126,6 +126,20 @@ fn enable_virtio_net_requires_enable_pc_platform() {
 }
 
 #[test]
+fn enable_virtio_input_requires_enable_pc_platform() {
+    let cfg = MachineConfig {
+        enable_pc_platform: false,
+        enable_virtio_input: true,
+        ..Default::default()
+    };
+
+    assert!(matches!(
+        Machine::new(cfg),
+        Err(MachineError::VirtioInputRequiresPcPlatform)
+    ));
+}
+
+#[test]
 fn enable_e1000_and_enable_virtio_net_are_mutually_exclusive() {
     let cfg = MachineConfig {
         enable_pc_platform: true,

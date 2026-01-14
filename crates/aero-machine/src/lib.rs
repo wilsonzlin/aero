@@ -5321,6 +5321,14 @@ impl Machine {
         }
     }
 
+    /// Process virtio-input transport state for both keyboard and mouse functions.
+    ///
+    /// This is the same work performed by the machine in `run_slice()` and is exposed so callers
+    /// (and integration tests) can drive queue progress deterministically.
+    pub fn process_virtio_input(&mut self) {
+        self.poll_virtio_input();
+    }
+
     /// Inject a Linux input key event (`EV_KEY` + `KEY_*`) into the virtio-input keyboard device.
     ///
     /// This is a no-op when virtio-input is disabled.
@@ -7536,6 +7544,42 @@ impl IoSnapshot for MachineUsbSnapshot {
     }
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct MachineVirtioInputSnapshot {
+    keyboard: Option<Vec<u8>>,
+    mouse: Option<Vec<u8>>,
+}
+
+impl MachineVirtioInputSnapshot {
+    const TAG_KEYBOARD_STATE: u16 = 1;
+    const TAG_MOUSE_STATE: u16 = 2;
+}
+
+impl IoSnapshot for MachineVirtioInputSnapshot {
+    const DEVICE_ID: [u8; 4] = *b"VINP";
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
+
+    fn save_state(&self) -> Vec<u8> {
+        let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
+        if let Some(kbd) = &self.keyboard {
+            w.field_bytes(Self::TAG_KEYBOARD_STATE, kbd.clone());
+        }
+        if let Some(mouse) = &self.mouse {
+            w.field_bytes(Self::TAG_MOUSE_STATE, mouse.clone());
+        }
+        w.finish()
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> IoSnapshotResult<()> {
+        let r = IoSnapshotReader::parse(bytes, Self::DEVICE_ID)?;
+        r.ensure_device_major(Self::DEVICE_VERSION.major)?;
+
+        self.keyboard = r.bytes(Self::TAG_KEYBOARD_STATE).map(|buf| buf.to_vec());
+        self.mouse = r.bytes(Self::TAG_MOUSE_STATE).map(|buf| buf.to_vec());
+        Ok(())
+    }
+}
+
 impl snapshot::SnapshotSource for Machine {
     fn snapshot_meta(&mut self) -> snapshot::SnapshotMeta {
         let snapshot_id = self.next_snapshot_id;
@@ -7684,6 +7728,50 @@ impl snapshot::SnapshotSource for Machine {
             devices.push(snapshot::io_snapshot_bridge::device_state_from_io_snapshot(
                 snapshot::DeviceId::VIRTIO_NET,
                 &*virtio_net.borrow(),
+            ));
+        }
+
+        // virtio-input is a multi-function virtio-pci device (keyboard + mouse). Snapshot both
+        // PCI functions under a single outer device id so restore can treat the topology
+        // atomically.
+        if self.virtio_input_keyboard.is_some() || self.virtio_input_mouse.is_some() {
+            let mut wrapper = MachineVirtioInputSnapshot::default();
+
+            if let Some(kbd) = &self.virtio_input_keyboard {
+                let bdf = aero_devices::pci::profile::VIRTIO_INPUT_KEYBOARD.bdf;
+                if let Some(pci_cfg) = &self.pci_cfg {
+                    let command = {
+                        let mut pci_cfg = pci_cfg.borrow_mut();
+                        pci_cfg
+                            .bus_mut()
+                            .device_config(bdf)
+                            .map(|cfg| cfg.command())
+                            .unwrap_or(0)
+                    };
+                    kbd.borrow_mut().set_pci_command(command);
+                }
+                wrapper.keyboard = Some(kbd.borrow().save_state());
+            }
+
+            if let Some(mouse) = &self.virtio_input_mouse {
+                let bdf = aero_devices::pci::profile::VIRTIO_INPUT_MOUSE.bdf;
+                if let Some(pci_cfg) = &self.pci_cfg {
+                    let command = {
+                        let mut pci_cfg = pci_cfg.borrow_mut();
+                        pci_cfg
+                            .bus_mut()
+                            .device_config(bdf)
+                            .map(|cfg| cfg.command())
+                            .unwrap_or(0)
+                    };
+                    mouse.borrow_mut().set_pci_command(command);
+                }
+                wrapper.mouse = Some(mouse.borrow().save_state());
+            }
+
+            devices.push(snapshot::io_snapshot_bridge::device_state_from_io_snapshot(
+                snapshot::DeviceId::VIRTIO_INPUT,
+                &wrapper,
             ));
         }
         if let Some(uhci) = &self.uhci {
@@ -8496,6 +8584,39 @@ impl snapshot::SnapshotTarget for Machine {
 
             let _ = snapshot::io_snapshot_bridge::apply_io_snapshot_to_device(&state, &mut *virtio);
             virtio.rewind_queue_next_avail_to_next_used(0);
+        }
+
+        // Restore virtio-input (keyboard + mouse) after the interrupt controller + PCI INTx router
+        // so any restored legacy INTx level can be re-driven deterministically.
+        if let Some(state) = by_id.remove(&snapshot::DeviceId::VIRTIO_INPUT) {
+            // Canonical encoding: `DeviceId::VIRTIO_INPUT` stores a `VINP` wrapper that contains
+            // nested virtio-pci snapshots for both PCI functions.
+            if matches!(state.data.get(8..12), Some(id) if id == b"VINP") {
+                let mut wrapper = MachineVirtioInputSnapshot::default();
+                if wrapper.load_state(&state.data).is_ok() {
+                    if let (Some(kbd), Some(kbd_state)) =
+                        (&self.virtio_input_keyboard, wrapper.keyboard.as_deref())
+                    {
+                        let mut dev = kbd.borrow_mut();
+                        if let Some(input) = dev.device_mut::<VirtioInput>() {
+                            aero_virtio::devices::VirtioDevice::reset(input);
+                        }
+                        let _ = dev.load_state(kbd_state);
+                        dev.rewind_queue_next_avail_to_next_used(0);
+                    }
+
+                    if let (Some(mouse), Some(mouse_state)) =
+                        (&self.virtio_input_mouse, wrapper.mouse.as_deref())
+                    {
+                        let mut dev = mouse.borrow_mut();
+                        if let Some(input) = dev.device_mut::<VirtioInput>() {
+                            aero_virtio::devices::VirtioDevice::reset(input);
+                        }
+                        let _ = dev.load_state(mouse_state);
+                        dev.rewind_queue_next_avail_to_next_used(0);
+                    }
+                }
+            }
         }
 
         // Restore USB controller state after the interrupt controller + PCI core so its IRQ level
