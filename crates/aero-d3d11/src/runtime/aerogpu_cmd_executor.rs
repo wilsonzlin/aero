@@ -191,7 +191,8 @@ const DEFAULT_BIND_GROUP_CACHE_CAPACITY: usize = 4096;
 // Placeholder geometry/tessellation emulation path:
 // - Compute prepass expands one or more synthetic primitives into an "expanded vertex" buffer +
 //   indirect args.
-// - Render pass consumes those buffers via `draw_indirect`/`draw_indexed_indirect`.
+// - Follow-up compute pass expands indices into a non-indexed triangle list and repacks indirect
+//   args, then the render pass consumes the result via `draw_indirect`.
 //
 // This prepass is scaffolding for GS/HS/DS compute-based emulation. In particular:
 // - `@builtin(global_invocation_id).x` is treated as the GS `SV_PrimitiveID`
@@ -573,6 +574,162 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {
         out_state[3] = 0u;
         out_state[4] = 0u;
     }
+}
+"#;
+
+// Convert an indexed triangle-list output (expanded vertices + u32 indices + DrawIndexedIndirectArgs)
+// into a non-indexed triangle list vertex stream and repack the indirect args buffer so we can
+// render via `draw_indirect` even on backends where `draw_indexed_indirect` is unreliable.
+//
+// This prepass is used only for GS/HS/DS emulation bring-up, so favor correctness over efficiency.
+// Binding all buffers as `storage, read_write` avoids wgpu's storage hazard validation when multiple
+// slices of the same scratch buffer are used in the same dispatch.
+const GEOMETRY_PREPASS_INDEX_EXPAND_CS_WGSL: &str = r#"
+struct ExpandedVertex {
+    pos: vec4<f32>,
+    varyings: array<vec4<f32>, 32>,
+};
+
+struct ExpandedVertexBuffer {
+    data: array<ExpandedVertex>,
+};
+
+struct U32Buffer {
+    data: array<u32>,
+};
+
+struct DrawIndexedIndirectArgs {
+    index_count: u32,
+    instance_count: u32,
+    first_index: u32,
+    base_vertex: i32,
+    first_instance: u32,
+};
+
+@group(0) @binding(0) var<storage, read_write> src_vertices: ExpandedVertexBuffer;
+@group(0) @binding(1) var<storage, read_write> src_indices: U32Buffer;
+@group(0) @binding(2) var<storage, read_write> indirect: DrawIndexedIndirectArgs;
+@group(0) @binding(3) var<storage, read_write> dst_vertices: ExpandedVertexBuffer;
+
+@compute @workgroup_size(64)
+fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {
+    let idx: u32 = id.x;
+
+    // Repack `DrawIndexedIndirectArgs` into `DrawIndirectArgs` *in place*.
+    //
+    // The render pass will interpret the first 16 bytes as:
+    //   { vertex_count=index_count, instance_count, first_vertex=0, first_instance=original first_instance }
+    // so we store `first_instance` in the `base_vertex` slot (bitcast) and clear the old
+    // `first_instance` field at offset 16 for clarity.
+    if (idx == 0u) {
+        // Clamp index_count to the actual source/destination buffer lengths so a malformed prepass
+        // cannot trigger out-of-bounds accesses downstream.
+        let idx_cap: u32 = arrayLength(&src_indices.data);
+        let dst_cap: u32 = arrayLength(&dst_vertices.data);
+        indirect.index_count = min(indirect.index_count, min(idx_cap, dst_cap));
+        indirect.first_index = 0u;
+        indirect.base_vertex = bitcast<i32>(indirect.first_instance);
+        indirect.first_instance = 0u;
+    }
+
+    let count: u32 = indirect.index_count;
+    if (idx >= count) {
+        return;
+    }
+
+    let src_idx: u32 = src_indices.data[idx];
+    let vtx_cap: u32 = arrayLength(&src_vertices.data);
+    if (src_idx >= vtx_cap) {
+        // Out-of-bounds index: emit a degenerate vertex so the output triangle has no area.
+        dst_vertices.data[idx].pos = vec4<f32>(0.0);
+        for (var i: u32 = 0u; i < 32u; i = i + 1u) {
+            dst_vertices.data[idx].varyings[i] = vec4<f32>(0.0);
+        }
+        return;
+    }
+    dst_vertices.data[idx] = src_vertices.data[src_idx];
+}
+"#;
+
+// Variant of `GEOMETRY_PREPASS_INDEX_EXPAND_CS_WGSL` for prepass outputs that write a packed
+// per-vertex "register file" (`regs[0] = position`, `regs[1] = o1`) rather than the
+// `ExpandedVertex` layout used by the passthrough VS.
+//
+// This shader performs both index expansion and vertex format conversion.
+const GEOMETRY_PREPASS_INDEX_EXPAND_TESS_REGFILE2_CS_WGSL: &str = r#"
+struct ExpandedVertex {
+    pos: vec4<f32>,
+    varyings: array<vec4<f32>, 32>,
+};
+
+struct ExpandedVertexBuffer {
+    data: array<ExpandedVertex>,
+};
+
+struct TessVertex {
+    regs: array<vec4<u32>, 2>,
+};
+
+struct TessVertexBuffer {
+    data: array<TessVertex>,
+};
+
+struct U32Buffer {
+    data: array<u32>,
+};
+
+struct DrawIndexedIndirectArgs {
+    index_count: u32,
+    instance_count: u32,
+    first_index: u32,
+    base_vertex: i32,
+    first_instance: u32,
+};
+
+@group(0) @binding(0) var<storage, read_write> src_vertices: TessVertexBuffer;
+@group(0) @binding(1) var<storage, read_write> src_indices: U32Buffer;
+@group(0) @binding(2) var<storage, read_write> indirect: DrawIndexedIndirectArgs;
+@group(0) @binding(3) var<storage, read_write> dst_vertices: ExpandedVertexBuffer;
+
+@compute @workgroup_size(64)
+fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {
+    let idx: u32 = id.x;
+
+    // Repack `DrawIndexedIndirectArgs` into `DrawIndirectArgs` *in place* (see
+    // `GEOMETRY_PREPASS_INDEX_EXPAND_CS_WGSL` for details).
+    if (idx == 0u) {
+        let idx_cap: u32 = arrayLength(&src_indices.data);
+        let dst_cap: u32 = arrayLength(&dst_vertices.data);
+        indirect.index_count = min(indirect.index_count, min(idx_cap, dst_cap));
+        indirect.first_index = 0u;
+        indirect.base_vertex = bitcast<i32>(indirect.first_instance);
+        indirect.first_instance = 0u;
+    }
+
+    let count: u32 = indirect.index_count;
+    if (idx >= count) {
+        return;
+    }
+
+    let src_idx: u32 = src_indices.data[idx];
+    let vtx_cap: u32 = arrayLength(&src_vertices.data);
+
+    var out_v: ExpandedVertex;
+    out_v.pos = vec4<f32>(0.0);
+    for (var i: u32 = 0u; i < 32u; i = i + 1u) {
+        out_v.varyings[i] = vec4<f32>(0.0);
+    }
+
+    if (src_idx >= vtx_cap) {
+        // Out-of-bounds index: emit a degenerate vertex so the output triangle has no area.
+        dst_vertices.data[idx] = out_v;
+        return;
+    }
+
+    let src = src_vertices.data[src_idx];
+    out_v.pos = bitcast<vec4<f32>>(src.regs[0u]);
+    out_v.varyings[1u] = bitcast<vec4<f32>>(src.regs[1u]);
+    dst_vertices.data[idx] = out_v;
 }
 "#;
 
@@ -6199,7 +6356,9 @@ impl AerogpuD3d11Executor {
     ///
     /// This records:
     /// 1) a compute pass that writes expanded vertex/index buffers + indirect args, then
-    /// 2) a render pass that consumes those buffers via `draw_indirect`/`draw_indexed_indirect`.
+    /// 2) a compute pass that expands indices into a non-indexed triangle list and repacks indirect
+    ///    args for `draw_indirect`, then
+    /// 3) a render pass that consumes those buffers via `draw_indirect`.
     #[allow(clippy::too_many_arguments)]
     fn exec_draw_with_compute_prepass<'a>(
         &mut self,
@@ -6639,20 +6798,17 @@ impl AerogpuD3d11Executor {
                 self.state.primitive_topology,
                 CmdPrimitiveTopology::PointList
             );
-        // The placeholder/scaffolding compute prepass always emits a non-indexed expanded draw for
-        // now (draw_indirect), even when the original command was DRAW_INDEXED. This keeps the
-        // prepass bind group layout within downlevel-default limits (notably
-        // `max_storage_buffers_per_shader_stage = 4`) while still exercising GS/HS/DS emulation
-        // control flow.
-        //
-        // Tessellation (HS/DS) and real GS prepasses can still opt into indexed indirect draws.
-        let mut use_indexed_indirect = false;
         // Primitive topology for the expanded draw render pass (post GS strip->list lowering).
-        // For the placeholder prepass path we always emit triangles.
+        //
+        // The placeholder/scaffolding compute prepass always emits triangles.
         let mut expanded_draw_topology = CmdPrimitiveTopology::TriangleList;
         let expanded_vertex_alloc: ExpansionScratchAlloc;
         let mut expanded_index_alloc: Option<ExpansionScratchAlloc> = None;
         let indirect_args_alloc: ExpansionScratchAlloc;
+        // Some emulation prepasses may produce a packed per-vertex "register file" buffer rather
+        // than the `ExpandedVertex` layout used by the passthrough VS. Track that here so we can
+        // select the appropriate index-expansion/format-conversion prepass before rendering.
+        let prepass_vertices_are_reg_file = false;
 
         let gs_prepass = if opcode == OPCODE_DRAW || opcode == OPCODE_DRAW_INDEXED {
             let expected_verts_per_primitive = match self.state.primitive_topology {
@@ -6677,9 +6833,9 @@ impl AerogpuD3d11Executor {
         };
 
         if self.state.hs.is_some() || self.state.ds.is_some() {
-            // Tessellation (HS/DS) emulation: expand the patch list into an indexed triangle list
-            // and render via `draw_indexed_indirect`.
-            use_indexed_indirect = true;
+            // Tessellation (HS/DS) emulation: expand the patch list into an indexed triangle list +
+            // `DrawIndexedIndirectArgs`. We'll later expand indices into a non-indexed vertex stream
+            // so the render pass can always use `draw_indirect`.
 
             let hs_handle = self
                 .state
@@ -7079,9 +7235,10 @@ impl AerogpuD3d11Executor {
                 GsOutputTopologyKind::TriangleStrip => CmdPrimitiveTopology::TriangleList,
             };
 
-            // The GS translator writes `DrawIndexedIndirectArgs`, so always render via
-            // `draw_indexed_indirect`.
-            use_indexed_indirect = true;
+            // The GS translator writes `DrawIndexedIndirectArgs` + an indexed list. We
+            // expand indices into a non-indexed vertex stream before the render pass so we can
+            // render via `draw_indirect` (some downlevel backends are unreliable with
+            // `draw_indexed_indirect`).
             let indexed_draw = opcode == OPCODE_DRAW_INDEXED;
             let (v_alloc, i_alloc, args_alloc) = match gs_meta.verts_per_primitive {
                 1 => self.exec_geometry_shader_prepass_pointlist(
@@ -7689,51 +7846,205 @@ impl AerogpuD3d11Executor {
             }
         }
 
-        if use_indexed_indirect {
-            let expanded_index_alloc = expanded_index_alloc
-                .as_ref()
-                .expect("use_indexed_indirect implies expanded_index_alloc.is_some()");
-            // The compute prepass writes indices into `expanded_index_alloc` at a non-zero scratch
-            // offset. Some backends (notably wgpu's GL backend) cannot apply the index-buffer binding
-            // offset when executing `draw_indexed_indirect`, so we bind the full index buffer at
-            // offset 0 and patch the indirect args `first_index` accordingly.
-            if !expanded_index_alloc.offset.is_multiple_of(4) {
-                bail!(
-                    "geometry prepass expanded index buffer offset {} is not 4-byte aligned",
-                    expanded_index_alloc.offset
-                );
-            }
-            let first_index_u64 = expanded_index_alloc.offset / 4;
-            let first_index: u32 = first_index_u64.try_into().map_err(|_| {
-                anyhow!(
-                    "geometry prepass expanded index buffer offset {} is too large for u32 first_index",
-                    expanded_index_alloc.offset
-                )
-            })?;
+        let expanded_render_vertex_alloc: ExpansionScratchAlloc =
+            if let Some(expanded_index_alloc) = expanded_index_alloc.as_ref() {
+                // Convert the (potentially indexed) compute-prepass output into a non-indexed
+                // vertex stream so the render pass can always use `draw_indirect`.
+                //
+                // Some downlevel backends report indirect-draw support but silently drop
+                // `draw_indexed_indirect`, so avoid depending on it.
+                if !expanded_index_alloc.offset.is_multiple_of(4) {
+                    bail!(
+                        "geometry prepass expanded index buffer offset {} is not 4-byte aligned",
+                        expanded_index_alloc.offset
+                    );
+                }
+                let expanded_vertex_size = expanded_vertex_alloc.size;
+                let expanded_index_size = expanded_index_alloc.size;
+                if !expanded_index_size.is_multiple_of(4) {
+                    bail!(
+                        "geometry prepass expanded index buffer size {} is not a multiple of 4",
+                        expanded_index_size
+                    );
+                }
+                let expanded_index_count = expanded_index_size / 4;
+                let expanded_render_vertex_count = expanded_index_count.max(1);
+                let expanded_render_vertex_size = GEOMETRY_PREPASS_EXPANDED_VERTEX_STRIDE_BYTES
+                    .checked_mul(expanded_render_vertex_count)
+                    .ok_or_else(|| anyhow!("geometry prepass expanded render vertex buffer size overflow"))?;
+                let expanded_render_vertex_alloc = self
+                    .expansion_scratch
+                    .alloc_vertex_output(&self.device, expanded_render_vertex_size)
+                    .map_err(|e| anyhow!("geometry prepass: alloc expanded render vertex buffer: {e}"))?;
 
-            let first_index_offset =
-                indirect_args_alloc.offset.checked_add(8).ok_or_else(|| {
-                    anyhow!(
-                        "geometry prepass indirect args offset overflows when patching first_index"
-                    )
-                })?;
+                {
+                    let expand_bgl_entries = [
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 0,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: false },
+                                has_dynamic_offset: false,
+                                min_binding_size: wgpu::BufferSize::new(
+                                    GEOMETRY_PREPASS_EXPANDED_VERTEX_STRIDE_BYTES,
+                                ),
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 1,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: false },
+                                has_dynamic_offset: false,
+                                min_binding_size: wgpu::BufferSize::new(4),
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 2,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: false },
+                                has_dynamic_offset: false,
+                                min_binding_size: wgpu::BufferSize::new(
+                                    GEOMETRY_PREPASS_INDIRECT_ARGS_SIZE_BYTES,
+                                ),
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 3,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: false },
+                                has_dynamic_offset: false,
+                                min_binding_size: wgpu::BufferSize::new(
+                                    GEOMETRY_PREPASS_EXPANDED_VERTEX_STRIDE_BYTES,
+                                ),
+                            },
+                            count: None,
+                        },
+                    ];
+                    let expand_bgl = self
+                        .bind_group_layout_cache
+                        .get_or_create(&self.device, &expand_bgl_entries);
+                    let expand_layout_key = PipelineLayoutKey {
+                        bind_group_layout_hashes: vec![expand_bgl.hash],
+                    };
+                    let layouts = [expand_bgl.layout.as_ref()];
+                    let expand_pipeline_layout = self.pipeline_layout_cache.get_or_create(
+                        &self.device,
+                        &expand_layout_key,
+                        &layouts,
+                        Some("aerogpu_cmd geometry prepass index expand pipeline layout"),
+                    );
 
-            let patch_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("aerogpu_cmd geometry prepass first_index patch"),
-                size: 4,
-                usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-            self.queue
-                .write_buffer(&patch_buffer, 0, &first_index.to_le_bytes());
-            encoder.copy_buffer_to_buffer(
-                &patch_buffer,
-                0,
-                indirect_args_alloc.buffer.as_ref(),
-                first_index_offset,
-                4,
-            );
-        }
+                    let expand_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("aerogpu_cmd geometry prepass index expand bind group"),
+                        layout: expand_bgl.layout.as_ref(),
+                        entries: &[
+                            wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                                    buffer: expanded_vertex_alloc.buffer.as_ref(),
+                                    offset: expanded_vertex_alloc.offset,
+                                    size: wgpu::BufferSize::new(expanded_vertex_size),
+                                }),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 1,
+                                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                                    buffer: expanded_index_alloc.buffer.as_ref(),
+                                    offset: expanded_index_alloc.offset,
+                                    size: wgpu::BufferSize::new(expanded_index_size),
+                                }),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 2,
+                                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                                    buffer: indirect_args_alloc.buffer.as_ref(),
+                                    offset: indirect_args_alloc.offset,
+                                    size: wgpu::BufferSize::new(GEOMETRY_PREPASS_INDIRECT_ARGS_SIZE_BYTES),
+                                }),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 3,
+                                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                                    buffer: expanded_render_vertex_alloc.buffer.as_ref(),
+                                    offset: expanded_render_vertex_alloc.offset,
+                                    size: wgpu::BufferSize::new(expanded_render_vertex_size),
+                                }),
+                            },
+                        ],
+                    });
+
+                    let expand_pipeline_ptr = {
+                        let expand_wgsl = if prepass_vertices_are_reg_file {
+                            GEOMETRY_PREPASS_INDEX_EXPAND_TESS_REGFILE2_CS_WGSL
+                        } else {
+                            GEOMETRY_PREPASS_INDEX_EXPAND_CS_WGSL
+                        };
+                        let (cs_hash, _module) = self.pipeline_cache.get_or_create_shader_module(
+                            &self.device,
+                            aero_gpu::pipeline_key::ShaderStage::Compute,
+                            expand_wgsl,
+                            Some("aerogpu_cmd geometry prepass index expand CS"),
+                        );
+                        let key = ComputePipelineKey {
+                            shader: cs_hash,
+                            layout: expand_layout_key.clone(),
+                            entry_point: "cs_main",
+                        };
+                        let pipeline = self
+                            .pipeline_cache
+                            .get_or_create_compute_pipeline(&self.device, key, move |device, cs| {
+                                device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                                    label: Some("aerogpu_cmd geometry prepass index expand pipeline"),
+                                    layout: Some(expand_pipeline_layout.as_ref()),
+                                    module: cs,
+                                    entry_point: "cs_main",
+                                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                                })
+                            })
+                            .map_err(|e| anyhow!("wgpu pipeline cache: {e:?}"))?;
+                        pipeline as *const wgpu::ComputePipeline
+                    };
+                    let expand_pipeline = unsafe { &*expand_pipeline_ptr };
+
+                    let thread_count = expanded_index_count.max(1);
+                    let wg_size = 64u64;
+                    let mut dispatch_x = thread_count
+                        .checked_add(wg_size - 1)
+                        .map(|v| v / wg_size)
+                        .unwrap_or(u64::MAX);
+                    dispatch_x = dispatch_x.max(1);
+                    let dispatch_x_u32: u32 = dispatch_x.try_into().map_err(|_| {
+                        anyhow!(
+                            "geometry prepass: expanded index count {expanded_index_count} is too large for index expand dispatch"
+                        )
+                    })?;
+                    let limit = self.device.limits().max_compute_workgroups_per_dimension;
+                    if dispatch_x_u32 > limit {
+                        bail!(
+                            "geometry prepass: expanded index expand dispatch size {dispatch_x_u32} exceeds device max_compute_workgroups_per_dimension {limit}"
+                        );
+                    }
+
+                    self.encoder_has_commands = true;
+                    let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                        label: Some("aerogpu_cmd geometry prepass index expand pass"),
+                        timestamp_writes: None,
+                    });
+                    pass.set_pipeline(expand_pipeline);
+                    pass.set_bind_group(0, &expand_bind_group, &[]);
+                    pass.dispatch_workgroups(dispatch_x_u32, 1, 1);
+                }
+
+                expanded_render_vertex_alloc
+            } else {
+                expanded_vertex_alloc.clone()
+            };
         // Build bind groups for the render pass (before starting the pass so we can freely mutate
         // executor caches).
         //
@@ -7751,7 +8062,7 @@ impl AerogpuD3d11Executor {
         for group_index in 0..pipeline_bindings.group_layouts.len() {
             let group_u32 = group_index as u32;
             if group_u32 == BIND_GROUP_INTERNAL_EMULATION {
-                let size = wgpu::BufferSize::new(expanded_vertex_alloc.size)
+                let size = wgpu::BufferSize::new(expanded_render_vertex_alloc.size)
                     .expect("expanded vertex allocation must be non-empty");
                 render_bind_groups.push(Arc::new(self.device.create_bind_group(
                     &wgpu::BindGroupDescriptor {
@@ -7760,8 +8071,8 @@ impl AerogpuD3d11Executor {
                         entries: &[wgpu::BindGroupEntry {
                             binding: BINDING_INTERNAL_EXPANDED_VERTICES,
                             resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                                buffer: expanded_vertex_alloc.buffer.as_ref(),
-                                offset: expanded_vertex_alloc.offset,
+                                buffer: expanded_render_vertex_alloc.buffer.as_ref(),
+                                offset: expanded_render_vertex_alloc.offset,
                                 size: Some(size),
                             }),
                         }],
@@ -7996,32 +8307,10 @@ impl AerogpuD3d11Executor {
             }
 
             if !skip_draw {
-                if use_indexed_indirect {
-                    let expanded_index_alloc = expanded_index_alloc
-                        .as_ref()
-                        .expect("use_indexed_indirect implies expanded_index_alloc.is_some()");
-                    let ib_end = expanded_index_alloc
-                        .offset
-                        .checked_add(expanded_index_alloc.size)
-                        .ok_or_else(|| {
-                            anyhow!("geometry prepass expanded index slice overflows u64")
-                        })?;
-                    pass.set_index_buffer(
-                        expanded_index_alloc
-                            .buffer
-                            .slice(expanded_index_alloc.offset..ib_end),
-                        wgpu::IndexFormat::Uint32,
-                    );
-                    pass.draw_indexed_indirect(
-                        indirect_args_alloc.buffer.as_ref(),
-                        indirect_args_alloc.offset,
-                    );
-                } else {
-                    pass.draw_indirect(
-                        indirect_args_alloc.buffer.as_ref(),
-                        indirect_args_alloc.offset,
-                    );
-                }
+                pass.draw_indirect(
+                    indirect_args_alloc.buffer.as_ref(),
+                    indirect_args_alloc.offset,
+                );
             }
         }
 
