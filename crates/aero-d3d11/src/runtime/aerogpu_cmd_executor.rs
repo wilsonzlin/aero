@@ -6069,6 +6069,12 @@ impl AerogpuD3d11Executor {
                 count: None,
             },
             wgpu::BindGroupLayoutEntry {
+                // Note: Binding numbers must match `runtime::gs_translate`:
+                // - @group(0) @binding(4) = uniform params
+                // - @group(0) @binding(5) = gs_inputs storage buffer
+                //
+                // Keep these stable so translated GS WGSL can be reused across draw calls and so
+                // point-list and triangle-list prepass paths share the same bind group layout.
                 binding: 4,
                 visibility: wgpu::ShaderStages::COMPUTE,
                 ty: wgpu::BindingType::Buffer {
