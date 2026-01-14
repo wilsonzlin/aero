@@ -302,6 +302,14 @@ To mitigate this, the relay supports these env vars (passed through by `deploy/d
 
 See `proxy/webrtc-udp-relay/README.md` for details (including how the auto-derived defaults are computed).
 
+#### Optional: WebRTC session connect timeout (half-open session leak mitigation)
+
+To avoid leaking server-side PeerConnections due to half-open WebRTC sessions (misbehaving clients / DoS), the relay enforces a connect timeout and closes PeerConnections that never reach a connected state:
+
+- `WEBRTC_SESSION_CONNECT_TIMEOUT` (default `30s`)
+
+This setting is also passed through by `deploy/docker-compose.yml` and configurable via `deploy/.env`. Setting it too low can break slow networks / delayed ICE or TURN negotiation.
+
 The relay also enforces a **UDP destination policy** (to prevent accidental open-proxy deployments).
 By default, `proxy/webrtc-udp-relay` uses `DESTINATION_POLICY_PRESET=production` (**deny by default**),
 so you must configure an allowlist (CIDRs/ports) before UDP relay traffic will flow.
