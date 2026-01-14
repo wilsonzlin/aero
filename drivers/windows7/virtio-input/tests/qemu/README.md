@@ -239,22 +239,24 @@ The in-tree Aero Win7 virtio-input INFs are intentionally **revision-gated** (Ae
 - Keyboard/mouse: `aero_virtio_input.inf`
   - Contract keyboard HWID: `...&SUBSYS_00101AF4&REV_01` (Device Manager name: **Aero VirtIO Keyboard**).
   - Contract mouse HWID: `...&SUBSYS_00111AF4&REV_01` (Device Manager name: **Aero VirtIO Mouse**).
-  - Strict generic fallback (no `SUBSYS`): `PCI\VEN_1AF4&DEV_1052&REV_01` (**Aero VirtIO Input Device**).
+  - Note: intentionally **SUBSYS-only** (no strict generic fallback).
 - Tablet/absolute pointer: `aero_virtio_tablet.inf`
   - Contract tablet HWID: `...&SUBSYS_00121AF4&REV_01` (Aero contract tablet).
-  - This HWID is more specific than the generic fallback, so it wins when it matches (i.e. when both packages are installed).
+  - This HWID is more specific than the generic fallback, so it wins when it matches (i.e. when both the tablet INF and the opt-in alias INF are installed).
   - If the tablet subsystem ID is missing (or `aero_virtio_tablet.inf` is not installed), the device may bind via the generic fallback
-    in `aero_virtio_input.inf` and appear as **Aero VirtIO Input Device**.
+    model line (when enabled via the legacy alias INF) and appear as **Aero VirtIO Input Device**.
 - Optional legacy filename alias (disabled by default): `virtio-input.inf.disabled` → rename to `virtio-input.inf` to enable
   - Intended for compatibility with workflows/tools that still reference `virtio-input.inf`.
-  - Filename-only alias: from the first section header (`[Version]`) onward, it is expected to be byte-identical to
-    `aero_virtio_input.inf`
+  - Adds opt-in strict generic fallback matching (no `SUBSYS`): `PCI\VEN_1AF4&DEV_1052&REV_01` (**Aero VirtIO Input Device**).
+  - Drift policy: allowed to diverge from `aero_virtio_input.inf` only in the models sections (`[Aero.NTx86]` / `[Aero.NTamd64]`) where it adds
+    the fallback model line. Outside those models sections, from the first section header (`[Version]`) onward, it must remain byte-identical
     (banner/comments may differ; see `drivers/windows7/virtio-input/scripts/check-inf-alias.py`).
-  - Enabling the alias does **not** change HWID matching behavior (it matches the same HWIDs as `aero_virtio_input.inf`).
+  - Enabling the alias **does** change HWID matching behavior (it enables strict generic fallback binding).
   - Do **not** ship/install both basenames at once: choose **either** `aero_virtio_input.inf` **or** `virtio-input.inf`.
 
-If your device is `REV_01` but does not expose the Aero subsystem IDs, `aero_virtio_input.inf` can still bind via the strict
-generic fallback model line (`PCI\VEN_1AF4&DEV_1052&REV_01`); in that case it will show up as **Aero VirtIO Input Device**.
+If your device is `REV_01` but does not expose the Aero subsystem IDs, the canonical `aero_virtio_input.inf` will not bind (SUBSYS-only).
+To bind in that environment, enable the legacy alias INF (`virtio-input.inf.disabled` → rename to `virtio-input.inf`), which adds the strict
+generic fallback model line (`PCI\VEN_1AF4&DEV_1052&REV_01`). In that case the device will show up as **Aero VirtIO Input Device**.
 If you expect distinct keyboard/mouse names, ensure the subsystem IDs are present (`SUBSYS_0010` / `SUBSYS_0011`).
 
 If the device reports `REV_00`, Windows will not bind (the INFs are revision-gated). Ensure `x-pci-revision=0x01` is set.
@@ -263,7 +265,7 @@ If you want tablet devices to bind with the tablet Device Manager name, ensure `
 (it is more specific than the generic fallback match, so it wins when both packages are present and it matches).
 
 Avoid shipping/installing both `aero_virtio_input.inf` and `virtio-input.inf` at the same time: the alias overlaps the canonical
-HWID set (including the strict generic fallback), which can lead to duplicate DriverStore entries and confusing PnP driver selection.
+HWID set **and** adds the strict generic fallback, which can lead to duplicate DriverStore entries and confusing PnP driver selection.
 
 ## Cross-checking with QEMU monitor (no guest required)
 
