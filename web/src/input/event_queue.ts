@@ -104,12 +104,14 @@ export type InputBatchFlushHook = (
   recycle: boolean,
 ) => void;
 
-const HEADER_WORDS = 2;
-const WORDS_PER_EVENT = 4;
-// Hard cap on how many events we will store in a single batch. Keep this in sync with
-// `web/src/workers/io_input_batch.ts::MAX_INPUT_EVENTS_PER_BATCH` so the main thread never
-// allocates buffers larger than what the I/O worker will process.
-const MAX_EVENTS_PER_BATCH = 4096;
+// Input batch wire format constants. Keep these in sync with the worker-side decoder in
+// `web/src/workers/io_input_batch.ts`.
+export const INPUT_BATCH_HEADER_WORDS = 2;
+export const INPUT_BATCH_WORDS_PER_EVENT = 4;
+export const INPUT_BATCH_HEADER_BYTES = INPUT_BATCH_HEADER_WORDS * 4;
+// Hard cap on how many events we will store in a single batch. This mirrors the I/O worker's
+// per-batch clamp so we don't allocate buffers larger than what the receiver will process anyway.
+export const MAX_INPUT_EVENTS_PER_BATCH = 4096;
 
 let nextInputBatchId = 1;
 type BufferFactory = (byteLength: number) => ArrayBuffer;
@@ -137,12 +139,12 @@ export class InputEventQueue {
     // buffer (via `new ArrayBuffer(NaN)` -> 0), leaving the queue in a corrupted state where pushes
     // "succeed" but do not actually write event data.
     if (Number.isFinite(capacityEvents)) {
-      this.capacityEvents = Math.max(1, Math.min(MAX_EVENTS_PER_BATCH, Math.floor(capacityEvents)));
+      this.capacityEvents = Math.max(1, Math.min(MAX_INPUT_EVENTS_PER_BATCH, Math.floor(capacityEvents)));
     } else {
       this.capacityEvents = 128;
     }
     this.bufferFactory = bufferFactory;
-    this.buf = this.allocateBuffer((HEADER_WORDS + this.capacityEvents * WORDS_PER_EVENT) * 4);
+    this.buf = this.allocateBuffer((INPUT_BATCH_HEADER_WORDS + this.capacityEvents * INPUT_BATCH_WORDS_PER_EVENT) * 4);
     this.words = new Int32Array(this.buf);
   }
 
@@ -168,7 +170,7 @@ export class InputEventQueue {
   pushMouseMove(timestampUs: number, dx: number, dy: number): void {
     // Merge with previous mouse move to reduce event count without changing ordering.
     if (this.count > 0) {
-      const base = HEADER_WORDS + (this.count - 1) * WORDS_PER_EVENT;
+      const base = INPUT_BATCH_HEADER_WORDS + (this.count - 1) * INPUT_BATCH_WORDS_PER_EVENT;
       if (this.words[base] === InputEventType.MouseMove) {
         this.words[base + 1] = timestampUs | 0;
         this.words[base + 2] = (this.words[base + 2] + (dx | 0)) | 0;
@@ -186,7 +188,7 @@ export class InputEventQueue {
   pushMouseWheel(timestampUs: number, dz: number, dx = 0): void {
     // Merge with previous wheel event.
     if (this.count > 0) {
-      const base = HEADER_WORDS + (this.count - 1) * WORDS_PER_EVENT;
+      const base = INPUT_BATCH_HEADER_WORDS + (this.count - 1) * INPUT_BATCH_WORDS_PER_EVENT;
       if (this.words[base] === InputEventType.MouseWheel) {
         this.words[base + 1] = timestampUs | 0;
         this.words[base + 2] = (this.words[base + 2] + (dz | 0)) | 0;
@@ -296,7 +298,7 @@ export class InputEventQueue {
       this.minTimestampUs = timestampUs >>> 0;
     }
 
-    const base = HEADER_WORDS + this.count * WORDS_PER_EVENT;
+    const base = INPUT_BATCH_HEADER_WORDS + this.count * INPUT_BATCH_WORDS_PER_EVENT;
     this.words[base] = type | 0;
     this.words[base + 1] = timestampUs | 0;
     this.words[base + 2] = a | 0;
@@ -305,12 +307,14 @@ export class InputEventQueue {
   }
 
   private grow(): void {
-    if (this.capacityEvents >= MAX_EVENTS_PER_BATCH) {
+    if (this.capacityEvents >= MAX_INPUT_EVENTS_PER_BATCH) {
       return;
     }
 
-    const nextCapacity = Math.min(MAX_EVENTS_PER_BATCH, this.capacityEvents * 2);
-    const nextBuf = this.allocateBuffer((HEADER_WORDS + nextCapacity * WORDS_PER_EVENT) * 4);
+    const nextCapacity = Math.min(MAX_INPUT_EVENTS_PER_BATCH, this.capacityEvents * 2);
+    const nextBuf = this.allocateBuffer(
+      (INPUT_BATCH_HEADER_WORDS + nextCapacity * INPUT_BATCH_WORDS_PER_EVENT) * 4,
+    );
     new Int32Array(nextBuf).set(this.words);
     this.capacityEvents = nextCapacity;
     this.buf = nextBuf;

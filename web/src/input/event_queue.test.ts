@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { InputEventQueue, InputEventType, type InputBatchMessage, type InputBatchTarget } from "./event_queue";
+import {
+  InputEventQueue,
+  InputEventType,
+  MAX_INPUT_EVENTS_PER_BATCH,
+  type InputBatchMessage,
+  type InputBatchTarget,
+} from "./event_queue";
 
 describe("InputEventQueue", () => {
   it("enqueues GamepadReport without changing the existing wire format", () => {
@@ -136,6 +142,6 @@ describe("InputEventQueue", () => {
     if (!state.posted) throw new Error("expected flush to post a batch");
 
     const words = new Int32Array(state.posted.buffer);
-    expect(words[0]).toBe(4096);
+    expect(words[0]).toBe(MAX_INPUT_EVENTS_PER_BATCH);
   });
 });

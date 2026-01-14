@@ -1,11 +1,16 @@
-export const INPUT_BATCH_HEADER_WORDS = 2;
-export const INPUT_BATCH_WORDS_PER_EVENT = 4;
-export const INPUT_BATCH_HEADER_BYTES = INPUT_BATCH_HEADER_WORDS * 4;
+import {
+  INPUT_BATCH_HEADER_BYTES,
+  INPUT_BATCH_HEADER_WORDS,
+  INPUT_BATCH_WORDS_PER_EVENT,
+  MAX_INPUT_EVENTS_PER_BATCH,
+} from "../input/event_queue";
 
-// Hard cap for per-batch work. This should be large enough to cover normal UI
-// bursts but small enough to bound worst-case worker CPU time if a buggy or
-// hostile sender claims an absurd event count.
-export const MAX_INPUT_EVENTS_PER_BATCH = 4096;
+export {
+  INPUT_BATCH_HEADER_BYTES,
+  INPUT_BATCH_HEADER_WORDS,
+  INPUT_BATCH_WORDS_PER_EVENT,
+  MAX_INPUT_EVENTS_PER_BATCH,
+};
 
 export type InputBatchValidationError = "buffer_too_small" | "buffer_unaligned" | "int32_view_failed";
 
@@ -39,4 +44,3 @@ export function validateInputBatchBuffer(buffer: ArrayBuffer): InputBatchValidat
 
   return { ok: true, words, count, claimedCount, maxCount };
 }
-
