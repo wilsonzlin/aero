@@ -367,4 +367,27 @@ mod tests {
         assert_eq!(interrupts.get_pending_for_apic(0), None);
         assert_eq!(interrupts.get_pending_for_apic(1), Some(0x45));
     }
+
+    #[test]
+    fn reserved_mask_bits_read_as_zero() {
+        let mut config = PciConfigSpace::new(0x1234, 0x5678);
+        config.add_capability(Box::new(MsiCapability::new()));
+
+        let cap_offset = config.find_capability(super::PCI_CAP_ID_MSI).unwrap() as u16;
+        let ctrl = config.read(cap_offset + 0x02, 2) as u16;
+        assert!(
+            (ctrl & (1 << 8)) != 0,
+            "test requires per-vector masking support"
+        );
+        assert!(
+            (ctrl & (1 << 7)) != 0,
+            "test assumes 64-bit MSI capability layout"
+        );
+
+        // Attempt to set all bits in the mask register; only bit 0 is valid for this
+        // single-vector MSI capability implementation.
+        config.write(cap_offset + 0x10, 4, 0xFFFF_FFFF);
+        assert_eq!(config.read(cap_offset + 0x10, 4), 1);
+        assert_eq!(config.capability::<MsiCapability>().unwrap().mask_bits(), 1);
+    }
 }

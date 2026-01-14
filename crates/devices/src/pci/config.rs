@@ -354,10 +354,10 @@ impl PciConfigSpace {
 
     /// Synchronize capability-backed state into the raw config space byte array.
     ///
-    /// PCI config space reads already call this implicitly, but device models may mutate
-    /// capability state internally (e.g. MSI pending bits when a vector is masked). In those cases,
-    /// calling this method ensures that subsequent config space writes (which round-trip through the
-    /// byte array) do not inadvertently clobber the device-updated capability fields.
+    /// PCI config space reads and writes already synchronize capabilities implicitly, but device
+    /// models may mutate capability state internally (e.g. MSI pending bits when a vector is
+    /// masked). Calling this method is a convenient way to ensure the raw config-space byte image
+    /// reflects those internal updates immediately.
     pub fn sync_capabilities(&mut self) {
         self.sync_capabilities_to_config();
     }
