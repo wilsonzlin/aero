@@ -3,7 +3,7 @@ use std::fmt::Write;
 use super::fvf::{Fvf, FvfLayout, PositionType, TexCoordSize};
 use super::tss::{
     AlphaTestState, CompareFunc, FogState, LightingState, TextureArg, TextureArgFlags,
-    TextureArgSource, TextureOp, TextureResultTarget, TextureStageState,
+    TextureArgSource, TextureOp, TextureResultTarget, TextureStageState, TextureTransform,
 };
 
 const MAX_TEXTURE_STAGES: usize = 8;
@@ -36,17 +36,20 @@ pub struct FixedFunctionGlobals {
     pub texture_factor: [f32; 4],
     /// `D3DTSS_CONSTANT` values for stages 0..7.
     pub stage_constants: [[f32; 4]; MAX_TEXTURE_STAGES],
+    /// `D3DTS_TEXTUREn` matrices for stages 0..7 (column-major).
+    pub texture_transforms: [[[f32; 4]; 4]; MAX_TEXTURE_STAGES],
 }
 
 impl FixedFunctionGlobals {
     pub fn identity() -> Self {
+        let identity_mat = [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ];
         Self {
-            world_view_proj: [
-                [1.0, 0.0, 0.0, 0.0],
-                [0.0, 1.0, 0.0, 0.0],
-                [0.0, 0.0, 1.0, 0.0],
-                [0.0, 0.0, 0.0, 1.0],
-            ],
+            world_view_proj: identity_mat,
             viewport: [0.0, 0.0, 1.0, 1.0],
             alpha_test: [0.0, 0.0, 0.0, 0.0],
             fog_color: [0.0, 0.0, 0.0, 0.0],
@@ -58,6 +61,7 @@ impl FixedFunctionGlobals {
             lighting_flags: [0, 0, 0, 0],
             texture_factor: [1.0, 1.0, 1.0, 1.0],
             stage_constants: [[0.0, 0.0, 0.0, 0.0]; MAX_TEXTURE_STAGES],
+            texture_transforms: [identity_mat; MAX_TEXTURE_STAGES],
         }
     }
 
@@ -117,6 +121,7 @@ impl FixedFunctionShaderDesc {
             write_tex_arg(hash, stage.alpha_arg1);
             write_tex_arg(hash, stage.alpha_arg2);
             write_u8(hash, stage.texcoord_index.unwrap_or(0xFF));
+            write_u8(hash, stage.texture_transform as u8);
             write_u8(hash, stage.result_target as u8);
         }
 
@@ -418,19 +423,59 @@ fn emit_tss_stage(
         //
         // If the vertex format provides fewer sets than requested, fall back to TEXCOORD0 (common
         // for UI that reuses the same UVs).
-        let texcoord_index = stage.texcoord_index.unwrap_or(stage_index as u8) as usize;
-        let uv_expr = if layout.texcoords.is_empty() {
-            "vec2<f32>(0.0, 0.0)".to_string()
+        let texcoord_index = stage
+            .texcoord_index
+            .unwrap_or(stage_index as u8) as usize;
+        let tc_expr = if layout.texcoords.is_empty() {
+            "vec4<f32>(0.0, 0.0, 0.0, 1.0)".to_string()
         } else if texcoord_index < layout.texcoords.len() {
-            format!("input.tex{}.xy", texcoord_index)
+            format!("input.tex{}", texcoord_index)
         } else {
-            "input.tex0.xy".to_string()
+            "input.tex0".to_string()
         };
-        let _ = writeln!(
-            wgsl,
-            "  let {} = textureSample({}, {}, {});",
-            tex_var, tex_name, samp_name, uv_expr
-        );
+        match stage.texture_transform {
+            TextureTransform::Disable => {
+                let uv_expr = format!("{}.xy", tc_expr);
+                let _ = writeln!(
+                    wgsl,
+                    "  let {} = textureSample({}, {}, {});",
+                    tex_var, tex_name, samp_name, uv_expr
+                );
+            }
+            TextureTransform::Count2 => {
+                let tc_var = format!("tc{}_xform", stage_index);
+                let _ = writeln!(
+                    wgsl,
+                    "  let {} = globals.texture_transforms[{}] * {};",
+                    tc_var, stage_index, tc_expr
+                );
+                let _ = writeln!(
+                    wgsl,
+                    "  let {} = textureSample({}, {}, {}.xy);",
+                    tex_var, tex_name, samp_name, tc_var
+                );
+            }
+            TextureTransform::Count2Projected => {
+                let tc_var = format!("tc{}_xform", stage_index);
+                let w_var = format!("tc{}_w", stage_index);
+                let _ = writeln!(
+                    wgsl,
+                    "  let {} = globals.texture_transforms[{}] * {};",
+                    tc_var, stage_index, tc_expr
+                );
+                // Avoid NaNs when w==0.
+                let _ = writeln!(
+                    wgsl,
+                    "  let {} = select(1.0, {}.w, {}.w != 0.0);",
+                    w_var, tc_var, tc_var
+                );
+                let _ = writeln!(
+                    wgsl,
+                    "  let {} = textureSample({}, {}, {}.xy / {});",
+                    tex_var, tex_name, samp_name, tc_var, w_var
+                );
+            }
+        }
     } else {
         let _ = writeln!(wgsl, "  let {} = vec4<f32>(1.0, 1.0, 1.0, 1.0);", tex_var);
     }
@@ -677,6 +722,7 @@ struct Globals {
   lighting_flags: vec4<u32>,
   texture_factor: vec4<f32>,
   stage_constants: array<vec4<f32>, 8>,
+  texture_transforms: array<mat4x4<f32>, 8>,
 };
 
 @group(0) @binding(0) var<uniform> globals: Globals;

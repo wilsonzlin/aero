@@ -90,6 +90,20 @@ pub enum TextureResultTarget {
     Temp,
 }
 
+/// Subset of D3D9 `D3DTSS_TEXTURETRANSFORMFLAGS`.
+///
+/// This controls whether the stage applies its corresponding `D3DTS_TEXTUREn` matrix (provided via
+/// `FixedFunctionGlobals::texture_transforms`).
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+pub enum TextureTransform {
+    #[default]
+    Disable,
+    /// Apply the texture matrix and use the resulting `.xy` as the 2D texture coordinate.
+    Count2,
+    /// Apply the texture matrix, then divide `.xy` by `.w` (projected texture coordinates).
+    Count2Projected,
+}
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum TextureOp {
@@ -128,6 +142,7 @@ pub struct TextureStageState {
     ///
     /// `None` means "use the stage index" (D3D9's default `D3DTSS_TEXCOORDINDEX` value).
     pub texcoord_index: Option<u8>,
+    pub texture_transform: TextureTransform,
     pub result_target: TextureResultTarget,
 }
 
@@ -143,6 +158,7 @@ impl Default for TextureStageState {
             alpha_arg1: TextureArg::Current,
             alpha_arg2: TextureArg::Current,
             texcoord_index: None,
+            texture_transform: TextureTransform::Disable,
             result_target: TextureResultTarget::Current,
         }
     }

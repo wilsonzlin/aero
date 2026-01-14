@@ -2,7 +2,7 @@ use aero_d3d9::fixed_function::fvf::Fvf;
 use aero_d3d9::fixed_function::shader_gen::{FixedFunctionGlobals, FixedFunctionShaderDesc};
 use aero_d3d9::fixed_function::tss::{
     AlphaTestState, CompareFunc, FogState, LightingState, TextureArg, TextureOp,
-    TextureResultTarget, TextureStageState,
+    TextureResultTarget, TextureStageState, TextureTransform,
 };
 use aero_d3d9::fixed_function::FixedFunctionShaderCache;
 
@@ -3809,6 +3809,365 @@ fn render_texcoord_index_override() {
 }
 
 #[test]
+fn render_texture_transform_shift_u() {
+    let Some((device, queue)) = request_device() else {
+        return;
+    };
+
+    #[repr(C)]
+    #[derive(Clone, Copy, Pod, Zeroable)]
+    struct Vertex {
+        pos: [f32; 3],
+        tex0: [f32; 2],
+    }
+
+    let width = 4;
+    let height = 4;
+
+    let make_target = |label: &str| {
+        let tex = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some(label),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let view = tex.create_view(&Default::default());
+        (tex, view)
+    };
+
+    let (target_no_xform, view_no_xform) = make_target("target-no-xform");
+    let (target_xform, view_xform) = make_target("target-xform");
+
+    // 2x2 texture with left column = red, right column = green.
+    let tex0 = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("tex0"),
+        size: wgpu::Extent3d {
+            width: 2,
+            height: 2,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    queue.write_texture(
+        wgpu::ImageCopyTexture {
+            texture: &tex0,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        &[
+            255, 0, 0, 255, 0, 255, 0, 255, // row 0
+            255, 0, 0, 255, 0, 255, 0, 255, // row 1
+        ],
+        wgpu::ImageDataLayout {
+            offset: 0,
+            bytes_per_row: Some(8),
+            rows_per_image: Some(2),
+        },
+        wgpu::Extent3d {
+            width: 2,
+            height: 2,
+            depth_or_array_layers: 1,
+        },
+    );
+    let tex0_view = tex0.create_view(&Default::default());
+
+    let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some("nearest"),
+        mag_filter: wgpu::FilterMode::Nearest,
+        min_filter: wgpu::FilterMode::Nearest,
+        ..Default::default()
+    });
+
+    let mut globals = FixedFunctionGlobals::identity();
+    globals.viewport = [0.0, 0.0, width as f32, height as f32];
+    // Shift u by +0.5 so u=0.25 samples red, but transformed u=0.75 samples green.
+    globals.texture_transforms[0] = [
+        [1.0, 0.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0, 0.0],
+        [0.5, 0.0, 0.0, 1.0],
+    ];
+    let globals_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("globals"),
+        contents: globals.as_bytes(),
+        usage: wgpu::BufferUsages::UNIFORM,
+    });
+
+    let globals_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("globals-bgl"),
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        }],
+    });
+    let globals_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("globals-bg"),
+        layout: &globals_bgl,
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: globals_buf.as_entire_binding(),
+        }],
+    });
+
+    let mut tex_entries = Vec::new();
+    for stage in 0..8u32 {
+        tex_entries.push(wgpu::BindGroupLayoutEntry {
+            binding: stage * 2,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: false,
+            },
+            count: None,
+        });
+        tex_entries.push(wgpu::BindGroupLayoutEntry {
+            binding: stage * 2 + 1,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+            count: None,
+        });
+    }
+    let tex_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("tex-bgl"),
+        entries: &tex_entries,
+    });
+    let mut tex_bg_entries = Vec::new();
+    for stage in 0..8u32 {
+        tex_bg_entries.push(wgpu::BindGroupEntry {
+            binding: stage * 2,
+            resource: wgpu::BindingResource::TextureView(&tex0_view),
+        });
+        tex_bg_entries.push(wgpu::BindGroupEntry {
+            binding: stage * 2 + 1,
+            resource: wgpu::BindingResource::Sampler(&sampler),
+        });
+    }
+    let tex_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("tex-bg"),
+        layout: &tex_bgl,
+        entries: &tex_bg_entries,
+    });
+
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("pipeline-layout"),
+        bind_group_layouts: &[&globals_bgl, &tex_bgl],
+        push_constant_ranges: &[],
+    });
+
+    let uv = [0.25, 0.5];
+    let verts = [
+        Vertex {
+            pos: [-1.0, -1.0, 0.0],
+            tex0: uv,
+        },
+        Vertex {
+            pos: [-1.0, 1.0, 0.0],
+            tex0: uv,
+        },
+        Vertex {
+            pos: [1.0, 1.0, 0.0],
+            tex0: uv,
+        },
+        Vertex {
+            pos: [-1.0, -1.0, 0.0],
+            tex0: uv,
+        },
+        Vertex {
+            pos: [1.0, 1.0, 0.0],
+            tex0: uv,
+        },
+        Vertex {
+            pos: [1.0, -1.0, 0.0],
+            tex0: uv,
+        },
+    ];
+    let vb = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("vb"),
+        contents: bytemuck::cast_slice(&verts),
+        usage: wgpu::BufferUsages::VERTEX,
+    });
+
+    let mk_desc = |texture_transform| {
+        let mut stages = [TextureStageState::default(); 8];
+        stages[0] = TextureStageState {
+            color_op: TextureOp::SelectArg1,
+            color_arg0: TextureArg::Current,
+            color_arg1: TextureArg::Texture,
+            color_arg2: TextureArg::Current,
+            alpha_op: TextureOp::SelectArg1,
+            alpha_arg0: TextureArg::Current,
+            alpha_arg1: TextureArg::Texture,
+            alpha_arg2: TextureArg::Current,
+            texture_transform,
+            ..Default::default()
+        };
+        FixedFunctionShaderDesc {
+            fvf: Fvf(Fvf::XYZ | (1 << 8)),
+            stages,
+            alpha_test: AlphaTestState::default(),
+            fog: FogState::default(),
+            lighting: LightingState::default(),
+        }
+    };
+
+    let desc_no_xform = mk_desc(TextureTransform::Disable);
+    let desc_xform = mk_desc(TextureTransform::Count2);
+
+    let shaders_no_xform =
+        aero_d3d9::fixed_function::shader_gen::generate_fixed_function_shaders(&desc_no_xform);
+    let shaders_xform =
+        aero_d3d9::fixed_function::shader_gen::generate_fixed_function_shaders(&desc_xform);
+
+    let vs_no_xform = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("vs-no-xform"),
+        source: wgpu::ShaderSource::Wgsl(shaders_no_xform.vertex_wgsl.clone().into()),
+    });
+    let fs_no_xform = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("fs-no-xform"),
+        source: wgpu::ShaderSource::Wgsl(shaders_no_xform.fragment_wgsl.clone().into()),
+    });
+    let vs_xform = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("vs-xform"),
+        source: wgpu::ShaderSource::Wgsl(shaders_xform.vertex_wgsl.clone().into()),
+    });
+    let fs_xform = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("fs-xform"),
+        source: wgpu::ShaderSource::Wgsl(shaders_xform.fragment_wgsl.clone().into()),
+    });
+
+    let pipeline_no_xform = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("pipeline-no-xform"),
+        layout: Some(&pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: &vs_no_xform,
+            entry_point: "vs_main",
+            buffers: &[shaders_no_xform.vertex_buffer_layout()],
+            compilation_options: Default::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &fs_no_xform,
+            entry_point: "fs_main",
+            targets: &[Some(wgpu::ColorTargetState {
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                blend: None,
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            compilation_options: Default::default(),
+        }),
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        multiview: None,
+    });
+    let pipeline_xform = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("pipeline-xform"),
+        layout: Some(&pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: &vs_xform,
+            entry_point: "vs_main",
+            buffers: &[shaders_xform.vertex_buffer_layout()],
+            compilation_options: Default::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &fs_xform,
+            entry_point: "fs_main",
+            targets: &[Some(wgpu::ColorTargetState {
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                blend: None,
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            compilation_options: Default::default(),
+        }),
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        multiview: None,
+    });
+
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("render-encoder"),
+    });
+    {
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("pass-no-xform"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &view_no_xform,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            occlusion_query_set: None,
+            timestamp_writes: None,
+        });
+        pass.set_pipeline(&pipeline_no_xform);
+        pass.set_bind_group(0, &globals_bg, &[]);
+        pass.set_bind_group(1, &tex_bg, &[]);
+        pass.set_vertex_buffer(0, vb.slice(..));
+        pass.draw(0..6, 0..1);
+    }
+    {
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("pass-xform"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &view_xform,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            occlusion_query_set: None,
+            timestamp_writes: None,
+        });
+        pass.set_pipeline(&pipeline_xform);
+        pass.set_bind_group(0, &globals_bg, &[]);
+        pass.set_bind_group(1, &tex_bg, &[]);
+        pass.set_vertex_buffer(0, vb.slice(..));
+        pass.draw(0..6, 0..1);
+    }
+    queue.submit([encoder.finish()]);
+
+    let pixels_no_xform = readback_rgba8(&device, &queue, &target_no_xform, width, height);
+    let pixels_xform = readback_rgba8(&device, &queue, &target_xform, width, height);
+
+    assert_rgba_approx(
+        pixel_at_rgba(&pixels_no_xform, width, 1, 1),
+        [255, 0, 0, 255],
+        2,
+    );
+    assert_rgba_approx(
+        pixel_at_rgba(&pixels_xform, width, 1, 1),
+        [0, 255, 0, 255],
+        2,
+    );
+}
+
+#[test]
 fn render_two_stage_result_to_temp_then_add() {
     let Some((device, queue)) = request_device() else {
         return;
@@ -4032,6 +4391,7 @@ fn render_two_stage_result_to_temp_then_add() {
         alpha_arg2: TextureArg::Current,
         texcoord_index: None,
         result_target: TextureResultTarget::Temp,
+        ..Default::default()
     };
     stages[1] = TextureStageState {
         color_op: TextureOp::Add,
@@ -4044,6 +4404,7 @@ fn render_two_stage_result_to_temp_then_add() {
         alpha_arg2: TextureArg::Current,
         texcoord_index: None,
         result_target: TextureResultTarget::Current,
+        ..Default::default()
     };
     let desc = FixedFunctionShaderDesc {
         fvf: Fvf(Fvf::XYZ | Fvf::DIFFUSE | (2 << 8)),

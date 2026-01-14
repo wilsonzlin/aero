@@ -1,8 +1,9 @@
 ---
 source: crates/aero-d3d9/tests/fixed_function_wgsl_snapshots.rs
+assertion_line: 102
 expression: shaders_snapshot(&desc)
 ---
-// hash: 0xbbb97605ffec5274
+// hash: 0x73cabb29a0e257e2
 
 // --- vertex.wgsl ---
 
@@ -19,6 +20,7 @@ struct Globals {
   lighting_flags: vec4<u32>,
   texture_factor: vec4<f32>,
   stage_constants: array<vec4<f32>, 8>,
+  texture_transforms: array<mat4x4<f32>, 8>,
 };
 
 @group(0) @binding(0) var<uniform> globals: Globals;
@@ -70,6 +72,7 @@ struct Globals {
   lighting_flags: vec4<u32>,
   texture_factor: vec4<f32>,
   stage_constants: array<vec4<f32>, 8>,
+  texture_transforms: array<mat4x4<f32>, 8>,
 };
 
 @group(0) @binding(0) var<uniform> globals: Globals;
