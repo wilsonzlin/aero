@@ -13,6 +13,26 @@ struct Vertex {
   DWORD color;
 };
 
+static Vertex MixVertex(const Vertex& a, const Vertex& b, float wa, float wb) {
+  Vertex out;
+  out.x = a.x * wa + b.x * wb;
+  out.y = a.y * wa + b.y * wb;
+  out.z = a.z * wa + b.z * wb;
+  out.rhw = a.rhw * wa + b.rhw * wb;
+  out.color = a.color;
+  return out;
+}
+
+static Vertex MixVertex3(const Vertex& a, const Vertex& b, const Vertex& c, float wa, float wb, float wc) {
+  Vertex out;
+  out.x = a.x * wa + b.x * wb + c.x * wc;
+  out.y = a.y * wa + b.y * wb + c.y * wc;
+  out.z = a.z * wa + b.z * wb + c.z * wc;
+  out.rhw = a.rhw * wa + b.rhw * wb + c.rhw * wc;
+  out.color = a.color;
+  return out;
+}
+
 static bool FillRectPatchInfo(D3DRECTPATCH_INFO* out) {
   if (!out) {
     return false;
@@ -545,36 +565,17 @@ static int RunD3D9PatchRenderingSmoke(int argc, char** argv) {
   const float a_23 = 2.0f / 3.0f;
   const float a_13 = 1.0f / 3.0f;
 
-  const auto mix = [](const Vertex& a, const Vertex& b, float wa, float wb) -> Vertex {
-    Vertex out;
-    out.x = a.x * wa + b.x * wb;
-    out.y = a.y * wa + b.y * wb;
-    out.z = a.z * wa + b.z * wb;
-    out.rhw = a.rhw * wa + b.rhw * wb;
-    out.color = a.color;
-    return out;
-  };
-  const auto mix3 = [](const Vertex& a, const Vertex& b, const Vertex& c, float wa, float wb, float wc) -> Vertex {
-    Vertex out;
-    out.x = a.x * wa + b.x * wb + c.x * wc;
-    out.y = a.y * wa + b.y * wb + c.y * wc;
-    out.z = a.z * wa + b.z * wb + c.z * wc;
-    out.rhw = a.rhw * wa + b.rhw * wb + c.rhw * wc;
-    out.color = a.color;
-    return out;
-  };
-
   std::vector<Vertex> tri_cp;
   tri_cp.resize(10);
   tri_cp[0] = tri_u;                       // u^3
-  tri_cp[1] = mix(tri_u, tri_v, a_23, a_13); // u^2 v
-  tri_cp[2] = mix(tri_u, tri_v, a_13, a_23); // u v^2
+  tri_cp[1] = MixVertex(tri_u, tri_v, a_23, a_13); // u^2 v
+  tri_cp[2] = MixVertex(tri_u, tri_v, a_13, a_23); // u v^2
   tri_cp[3] = tri_v;                       // v^3
-  tri_cp[4] = mix(tri_u, tri_w, a_23, a_13); // u^2 w
-  tri_cp[5] = mix3(tri_u, tri_v, tri_w, a_13, a_13, a_13); // u v w
-  tri_cp[6] = mix(tri_v, tri_w, a_23, a_13); // v^2 w
-  tri_cp[7] = mix(tri_u, tri_w, a_13, a_23); // u w^2
-  tri_cp[8] = mix(tri_v, tri_w, a_13, a_23); // v w^2
+  tri_cp[4] = MixVertex(tri_u, tri_w, a_23, a_13); // u^2 w
+  tri_cp[5] = MixVertex3(tri_u, tri_v, tri_w, a_13, a_13, a_13); // u v w
+  tri_cp[6] = MixVertex(tri_v, tri_w, a_23, a_13); // v^2 w
+  tri_cp[7] = MixVertex(tri_u, tri_w, a_13, a_23); // u w^2
+  tri_cp[8] = MixVertex(tri_v, tri_w, a_13, a_23); // v w^2
   tri_cp[9] = tri_w;                       // w^3
 
   for (int i = 0; i < 10; ++i) {
