@@ -9,9 +9,9 @@ use crate::dxbc;
 use crate::shader_limits::{
     MAX_D3D9_ATTR_OUTPUT_REGISTER_INDEX, MAX_D3D9_COLOR_OUTPUT_REGISTER_INDEX,
     MAX_D3D9_INPUT_REGISTER_INDEX, MAX_D3D9_SAMPLER_REGISTER_INDEX,
-    MAX_D3D9_SHADER_BYTECODE_BYTES, MAX_D3D9_SHADER_REGISTER_INDEX, MAX_D3D9_SHADER_TOKEN_COUNT,
-    MAX_D3D9_TEMP_REGISTER_INDEX, MAX_D3D9_TEXCOORD_OUTPUT_REGISTER_INDEX,
-    MAX_D3D9_TEXTURE_REGISTER_INDEX,
+    MAX_D3D9_SHADER_BLOB_BYTES, MAX_D3D9_SHADER_BYTECODE_BYTES, MAX_D3D9_SHADER_REGISTER_INDEX,
+    MAX_D3D9_SHADER_TOKEN_COUNT, MAX_D3D9_TEMP_REGISTER_INDEX,
+    MAX_D3D9_TEXCOORD_OUTPUT_REGISTER_INDEX, MAX_D3D9_TEXTURE_REGISTER_INDEX,
 };
 use crate::sm3::decode::TextureType;
 use crate::vertex::{DeclUsage, LocationMapError, StandardLocationMap, VertexLocationMap};
@@ -909,6 +909,12 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
 
 /// Parse DXBC or raw D3D9 shader bytecode into a [`ShaderProgram`].
 pub fn parse(bytes: &[u8]) -> Result<ShaderProgram, ShaderError> {
+    if bytes.len() > MAX_D3D9_SHADER_BLOB_BYTES {
+        return Err(ShaderError::BytecodeTooLarge {
+            len: bytes.len(),
+            max: MAX_D3D9_SHADER_BLOB_BYTES,
+        });
+    }
     let token_stream = dxbc::extract_shader_bytecode(bytes)?;
     parse_token_stream(token_stream)
 }
@@ -1795,6 +1801,13 @@ impl ShaderCache {
 
     pub fn get_or_translate(&mut self, bytes: &[u8]) -> Result<ShaderCacheLookup<'_>, ShaderError> {
         use std::collections::hash_map::Entry;
+
+        if bytes.len() > MAX_D3D9_SHADER_BLOB_BYTES {
+            return Err(ShaderError::BytecodeTooLarge {
+                len: bytes.len(),
+                max: MAX_D3D9_SHADER_BLOB_BYTES,
+            });
+        }
 
         let hash = blake3::hash(bytes);
         match self.map.entry(hash) {

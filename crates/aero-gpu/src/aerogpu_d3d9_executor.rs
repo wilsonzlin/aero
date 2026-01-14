@@ -2284,11 +2284,11 @@ impl AerogpuD3d9Executor {
         expected_stage: shader::ShaderStage,
         dxbc_bytes: &[u8],
     ) -> Result<(), AerogpuD3d9Error> {
-        let key = xxhash_rust::xxh3::xxh3_64(dxbc_bytes);
         let cached = self
             .shader_cache
             .get_or_translate(dxbc_bytes)
             .map_err(|e| AerogpuD3d9Error::ShaderTranslation(e.to_string()))?;
+        let key = xxhash_rust::xxh3::xxh3_64(dxbc_bytes);
         match cached.source {
             shader::ShaderCacheLookupSource::Memory => {
                 self.stats.inc_d3d9_shader_cache_memory_hits();
@@ -2350,8 +2350,6 @@ impl AerogpuD3d9Executor {
         expected_stage: shader::ShaderStage,
         dxbc_bytes: &[u8],
     ) -> Result<(), AerogpuD3d9Error> {
-        let key = xxhash_rust::xxh3::xxh3_64(dxbc_bytes);
-
         let flags = self.persistent_shader_cache_flags.clone();
 
         // At most one invalidation+retranslate retry for corruption defense.
@@ -2602,6 +2600,7 @@ impl AerogpuD3d9Executor {
                 }
             }
 
+            let key = xxhash_rust::xxh3::xxh3_64(dxbc_bytes);
             self.shaders.insert(
                 shader_handle,
                 Shader {

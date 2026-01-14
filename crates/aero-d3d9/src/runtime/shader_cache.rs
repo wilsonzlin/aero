@@ -16,6 +16,8 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
+use crate::shader_limits::MAX_D3D9_SHADER_BLOB_BYTES;
+
 /// Version used to invalidate persisted D3D9 DXBC -> WGSL translation artifacts.
 ///
 /// Bump this when the Rust translator's output *semantics* change in a way that could still
@@ -145,6 +147,13 @@ async fn compute_persistent_key(
     dxbc: &[u8],
     flags: &ShaderTranslationFlags,
 ) -> Result<ShaderCacheKey, JsValue> {
+    if dxbc.len() > MAX_D3D9_SHADER_BLOB_BYTES {
+        return Err(JsValue::from_str(&format!(
+            "shader bytecode length {} exceeds maximum {} bytes",
+            dxbc.len(),
+            MAX_D3D9_SHADER_BLOB_BYTES
+        )));
+    }
     let dxbc_u8 = js_sys::Uint8Array::from(dxbc);
     let flags_js =
         serde_wasm_bindgen::to_value(flags).map_err(|e| JsValue::from_str(&e.to_string()))?;
@@ -276,6 +285,13 @@ impl ShaderCache {
         F: FnOnce() -> Fut,
         Fut: std::future::Future<Output = Result<PersistedShaderArtifact, String>>,
     {
+        if dxbc.len() > MAX_D3D9_SHADER_BLOB_BYTES {
+            return Err(JsValue::from_str(&format!(
+                "shader bytecode length {} exceeds maximum {} bytes",
+                dxbc.len(),
+                MAX_D3D9_SHADER_BLOB_BYTES
+            )));
+        }
         let mem_key = compute_in_memory_key(dxbc, &flags);
 
         if let Some(hit) = self.in_memory.get(&mem_key) {
@@ -374,6 +390,13 @@ impl ShaderCache {
         dxbc: &[u8],
         flags: ShaderTranslationFlags,
     ) -> Result<(), JsValue> {
+        if dxbc.len() > MAX_D3D9_SHADER_BLOB_BYTES {
+            return Err(JsValue::from_str(&format!(
+                "shader bytecode length {} exceeds maximum {} bytes",
+                dxbc.len(),
+                MAX_D3D9_SHADER_BLOB_BYTES
+            )));
+        }
         let mem_key = compute_in_memory_key(dxbc, &flags);
         self.in_memory.remove(&mem_key);
 

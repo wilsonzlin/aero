@@ -7,7 +7,7 @@ use aero_dxbc::{
     FourCC as DxbcFourCC,
 };
 
-use crate::shader_limits::MAX_D3D9_SHADER_BYTECODE_BYTES;
+use crate::shader_limits::{MAX_D3D9_SHADER_BLOB_BYTES, MAX_D3D9_SHADER_BYTECODE_BYTES};
 use crate::{dxbc, shader, sm3, software, state};
 use crate::sm3::decode::TextureType;
 
@@ -1645,6 +1645,24 @@ fn rejects_oversized_shader_bytecode_legacy_translator() {
     let err = shader::parse(&bytes).unwrap_err();
     assert!(
         matches!(err, shader::ShaderError::BytecodeTooLarge { .. }),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn rejects_oversized_shader_blob() {
+    // DXBC containers (and other outer shader blobs) are hashed and can be copied across the
+    // wasm32 JS boundary for persistent caching. Reject absurdly large blobs early.
+    let bytes = vec![0u8; MAX_D3D9_SHADER_BLOB_BYTES + 1];
+    let err = shader::parse(&bytes).unwrap_err();
+    assert!(
+        matches!(
+            err,
+            shader::ShaderError::BytecodeTooLarge {
+                max: MAX_D3D9_SHADER_BLOB_BYTES,
+                ..
+            }
+        ),
         "{err:?}"
     );
 }

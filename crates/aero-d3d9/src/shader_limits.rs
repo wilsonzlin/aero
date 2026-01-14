@@ -10,6 +10,14 @@
 /// comfortably above real-world SM2/SM3 shader sizes.
 pub(crate) const MAX_D3D9_SHADER_BYTECODE_BYTES: usize = 256 * 1024; // 256 KiB
 
+/// Maximum accepted shader blob length in bytes.
+///
+/// This applies to the *outer* byte slice passed around the system (raw D3D9 token stream or DXBC
+/// container). It is intentionally larger than [`MAX_D3D9_SHADER_BYTECODE_BYTES`] to allow for DXBC
+/// container overhead and additional reflection/debug chunks, while still preventing pathological
+/// inputs from triggering expensive hashing or large host↔JS copies (wasm32 persistent cache).
+pub(crate) const MAX_D3D9_SHADER_BLOB_BYTES: usize = MAX_D3D9_SHADER_BYTECODE_BYTES * 2; // 512 KiB
+
 /// Maximum accepted D3D9 shader token count (DWORDs / `u32`s).
 pub(crate) const MAX_D3D9_SHADER_TOKEN_COUNT: usize = MAX_D3D9_SHADER_BYTECODE_BYTES / 4;
 
