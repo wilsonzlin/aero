@@ -117,7 +117,7 @@ export function snapshotScanoutState(words: Int32Array): ScanoutStateSnapshot {
   // IMPORTANT: this must not spin forever if the writer crashes while holding the
   // busy bit. Bound the retry loop so callers (especially the GPU worker present
   // path) can recover and render a safe fallback.
-  const startMs = typeof performance !== "undefined" && typeof performance.now === "function" ? performance.now() : Date.now();
+  const startMs = nowMs();
   // Allow some time for a writer to complete even on slow/contended JS runtimes, but
   // still guarantee we won't spin forever if the busy bit is stuck.
   const MAX_SPIN_MS = 50;
@@ -127,8 +127,7 @@ export function snapshotScanoutState(words: Int32Array): ScanoutStateSnapshot {
     const gen0 = Atomics.load(words, ScanoutStateIndex.GENERATION) >>> 0;
     if ((gen0 & SCANOUT_STATE_GENERATION_BUSY_BIT) !== 0) {
       if ((spins & 0x3fff) === 0) {
-        const nowMs = typeof performance !== "undefined" && typeof performance.now === "function" ? performance.now() : Date.now();
-        if (nowMs - startMs > MAX_SPIN_MS) break;
+        if (nowMs() - startMs > MAX_SPIN_MS) break;
       }
       continue;
     }
@@ -144,8 +143,7 @@ export function snapshotScanoutState(words: Int32Array): ScanoutStateSnapshot {
     const gen1 = Atomics.load(words, ScanoutStateIndex.GENERATION) >>> 0;
     if (gen0 !== gen1) {
       if ((spins & 0x3fff) === 0) {
-        const nowMs = typeof performance !== "undefined" && typeof performance.now === "function" ? performance.now() : Date.now();
-        if (nowMs - startMs > MAX_SPIN_MS) break;
+        if (nowMs() - startMs > MAX_SPIN_MS) break;
       }
       continue;
     }
@@ -247,7 +245,7 @@ export function trySnapshotScanoutState(words: Int32Array, options?: TrySnapshot
   return null;
 }
 
-export function publishScanoutState(words: Int32Array, update: ScanoutStateUpdate): number {
+export function tryPublishScanoutState(words: Int32Array, update: ScanoutStateUpdate): number | null {
   if (words.length < SCANOUT_STATE_U32_LEN) {
     throw new RangeError(`ScanoutState Int32Array too small: len=${words.length}, need >=${SCANOUT_STATE_U32_LEN}`);
   }
@@ -288,5 +286,13 @@ export function publishScanoutState(words: Int32Array, update: ScanoutStateUpdat
     if ((spins & 0x3fff) === 0 && nowMs() - startMs > MAX_SPIN_MS) break;
   }
 
-  throw new Error("publishScanoutState: timed out (writer busy bit stuck or too much contention)");
+  return null;
+}
+
+export function publishScanoutState(words: Int32Array, update: ScanoutStateUpdate): number {
+  const g = tryPublishScanoutState(words, update);
+  if (g === null) {
+    throw new Error("publishScanoutState: timed out (writer busy bit stuck or too much contention)");
+  }
+  return g;
 }

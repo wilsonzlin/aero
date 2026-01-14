@@ -126,7 +126,7 @@ export function snapshotCursorState(words: Int32Array): CursorStateSnapshot {
   // IMPORTANT: this must not spin forever if the writer crashes while holding the
   // busy bit. Bound the retry loop so callers (especially the GPU worker present
   // path) can recover and render a safe fallback.
-  const startMs = typeof performance !== "undefined" && typeof performance.now === "function" ? performance.now() : Date.now();
+  const startMs = nowMs();
   // Allow some time for a writer to complete even on slow/contended JS runtimes, but
   // still guarantee we won't spin forever if the busy bit is stuck.
   const MAX_SPIN_MS = 50;
@@ -136,8 +136,7 @@ export function snapshotCursorState(words: Int32Array): CursorStateSnapshot {
     const gen0 = Atomics.load(words, CursorStateIndex.GENERATION) >>> 0;
     if ((gen0 & CURSOR_STATE_GENERATION_BUSY_BIT) !== 0) {
       if ((spins & 0x3fff) === 0) {
-        const nowMs = typeof performance !== "undefined" && typeof performance.now === "function" ? performance.now() : Date.now();
-        if (nowMs - startMs > MAX_SPIN_MS) break;
+        if (nowMs() - startMs > MAX_SPIN_MS) break;
       }
       continue;
     }
@@ -157,8 +156,7 @@ export function snapshotCursorState(words: Int32Array): CursorStateSnapshot {
     const gen1 = Atomics.load(words, CursorStateIndex.GENERATION) >>> 0;
     if (gen0 !== gen1) {
       if ((spins & 0x3fff) === 0) {
-        const nowMs = typeof performance !== "undefined" && typeof performance.now === "function" ? performance.now() : Date.now();
-        if (nowMs - startMs > MAX_SPIN_MS) break;
+        if (nowMs() - startMs > MAX_SPIN_MS) break;
       }
       continue;
     }
@@ -272,7 +270,7 @@ export function trySnapshotCursorState(words: Int32Array, options?: TrySnapshotC
   return null;
 }
 
-export function publishCursorState(words: Int32Array, update: CursorStateUpdate): number {
+export function tryPublishCursorState(words: Int32Array, update: CursorStateUpdate): number | null {
   if (words.length < CURSOR_STATE_U32_LEN) {
     throw new RangeError(`CursorState Int32Array too small: len=${words.length}, need >=${CURSOR_STATE_U32_LEN}`);
   }
@@ -318,5 +316,13 @@ export function publishCursorState(words: Int32Array, update: CursorStateUpdate)
     if ((spins & 0x3fff) === 0 && nowMs() - startMs > MAX_SPIN_MS) break;
   }
 
-  throw new Error("publishCursorState: timed out (writer busy bit stuck or too much contention)");
+  return null;
+}
+
+export function publishCursorState(words: Int32Array, update: CursorStateUpdate): number {
+  const g = tryPublishCursorState(words, update);
+  if (g === null) {
+    throw new Error("publishCursorState: timed out (writer busy bit stuck or too much contention)");
+  }
+  return g;
 }
