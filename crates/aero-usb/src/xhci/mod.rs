@@ -439,7 +439,7 @@ pub struct XhciController {
     pending_dma_on_run: bool,
 
     // --- Endpoint transfer execution (subset) ---
-    active_endpoints: Vec<ActiveEndpoint>,
+    active_endpoints: VecDeque<ActiveEndpoint>,
     ep0_control_td: Vec<ControlTdState>,
 
     /// Per-slot transfer-ring executors for bulk/interrupt endpoints.
@@ -533,7 +533,7 @@ impl XhciController {
             time_ms: 0,
             last_tick_dma_dword: 0,
             pending_dma_on_run: false,
-            active_endpoints: Vec::new(),
+            active_endpoints: VecDeque::new(),
             ep0_control_td: vec![ControlTdState::default(); slot_count],
             transfer_executors,
         };
@@ -1939,8 +1939,8 @@ impl XhciController {
             slot_id,
             endpoint_id,
         };
-        if !self.active_endpoints.contains(&entry) {
-            self.active_endpoints.push(entry);
+        if !self.active_endpoints.iter().any(|ep| ep == &entry) {
+            self.active_endpoints.push_back(entry);
         }
     }
 
@@ -1955,25 +1955,19 @@ impl XhciController {
         // host-side polling). Charge at least 1 unit per endpoint attempt so a large active endpoint
         // list cannot stall the host.
         let mut budget = MAX_TRBS_PER_TICK;
-        let mut i = 0;
-        while i < self.active_endpoints.len() && budget > 0 {
-            let ep = self.active_endpoints[i];
+        let mut remaining = self.active_endpoints.len();
+        while remaining > 0 && budget > 0 {
+            let Some(ep) = self.active_endpoints.pop_front() else {
+                break;
+            };
             let outcome = self.process_endpoint(mem, ep.slot_id, ep.endpoint_id, budget);
             let charged = outcome.trbs_consumed.max(1);
             budget = budget.saturating_sub(charged);
 
             if outcome.keep_active {
-                i += 1;
-            } else {
-                self.active_endpoints.swap_remove(i);
+                self.active_endpoints.push_back(ep);
             }
-        }
-
-        // If the active endpoint list is longer than the per-tick budget, rotate it so endpoints
-        // that didn't get a chance to run this tick are processed first next tick. Without this,
-        // endpoints later in the list can starve indefinitely.
-        if budget == 0 && i < self.active_endpoints.len() {
-            self.active_endpoints.rotate_left(i);
+            remaining = remaining.saturating_sub(1);
         }
     }
 

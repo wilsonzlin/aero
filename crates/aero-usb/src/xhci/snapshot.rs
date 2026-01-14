@@ -233,7 +233,7 @@ fn decode_command_ring(buf: &[u8]) -> SnapshotResult<Option<RingCursor>> {
     Ok(out)
 }
 
-fn encode_active_endpoints(endpoints: &[ActiveEndpoint]) -> Vec<u8> {
+fn encode_active_endpoints(endpoints: &VecDeque<ActiveEndpoint>) -> Vec<u8> {
     let mut enc = Encoder::new().u32(endpoints.len() as u32);
     for ep in endpoints {
         enc = enc.u8(ep.slot_id).u8(ep.endpoint_id);
@@ -241,7 +241,10 @@ fn encode_active_endpoints(endpoints: &[ActiveEndpoint]) -> Vec<u8> {
     enc.finish()
 }
 
-fn decode_active_endpoints(slots_len: usize, buf: &[u8]) -> SnapshotResult<Vec<ActiveEndpoint>> {
+fn decode_active_endpoints(
+    slots_len: usize,
+    buf: &[u8],
+) -> SnapshotResult<VecDeque<ActiveEndpoint>> {
     let mut d = Decoder::new(buf);
     let count = d.u32()? as usize;
     // At most 31 endpoints per slot; slot 0 is reserved.
@@ -250,7 +253,7 @@ fn decode_active_endpoints(slots_len: usize, buf: &[u8]) -> SnapshotResult<Vec<A
         return Err(SnapshotError::InvalidFieldEncoding("xhci active endpoints"));
     }
 
-    let mut out = Vec::new();
+    let mut out = VecDeque::new();
     for _ in 0..count {
         let slot_id = d.u8()?;
         let endpoint_id = d.u8()?;
@@ -264,7 +267,7 @@ fn decode_active_endpoints(slots_len: usize, buf: &[u8]) -> SnapshotResult<Vec<A
                 "xhci active endpoint id",
             ));
         }
-        out.push(ActiveEndpoint {
+        out.push_back(ActiveEndpoint {
             slot_id,
             endpoint_id,
         });

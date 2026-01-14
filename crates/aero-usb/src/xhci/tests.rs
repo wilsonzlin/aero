@@ -1175,7 +1175,7 @@ fn controller_snapshot_roundtrip_is_deterministic() {
     // bookkeeping.
     xhci.host_controller_error = true;
     xhci.cmd_kick = true;
-    xhci.active_endpoints.push(super::ActiveEndpoint {
+    xhci.active_endpoints.push_back(super::ActiveEndpoint {
         slot_id: 1,
         endpoint_id: 1,
     });
