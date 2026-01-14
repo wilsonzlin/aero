@@ -761,7 +761,7 @@ fn assemble_ps3_loop_accumulate() -> Vec<u32> {
         &[enc_dst(0, 1, 0x1), enc_src(2, 0, 0x00)],
     ));
 
-    // loop aL, i0 (operands ignored by IR builder for now)
+    // loop aL, i0
     out.extend(enc_inst(
         0x001B,
         &[
@@ -794,6 +794,37 @@ fn assemble_ps3_loop_accumulate() -> Vec<u32> {
         &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)],
     ));
 
+    out.push(0x0000FFFF);
+    out
+}
+
+fn assemble_ps3_break_outside_loop() -> Vec<u32> {
+    // ps_3_0
+    let mut out = vec![0xFFFF0300];
+    // break (invalid: not inside a loop)
+    out.extend(enc_inst(0x002C, &[]));
+    out.push(0x0000FFFF);
+    out
+}
+
+fn assemble_ps3_breakc_outside_loop() -> Vec<u32> {
+    // ps_3_0
+    let mut out = vec![0xFFFF0300];
+    // breakc_ge r0.x, c0.x (invalid: not inside a loop)
+    out.extend(enc_inst_with_extra(
+        0x002D,
+        2u32 << 16, // compare op 2 = ge
+        &[enc_src(0, 0, 0x00), enc_src(2, 0, 0x00)],
+    ));
+    out.push(0x0000FFFF);
+    out
+}
+
+fn assemble_vs3_texkill() -> Vec<u32> {
+    // vs_3_0
+    let mut out = vec![0xFFFE0300];
+    // texkill r0 (invalid: texkill/discard is only valid in pixel shaders)
+    out.extend(enc_inst(0x0041, &[enc_src(0, 0, 0xE4)]));
     out.push(0x0000FFFF);
     out
 }
@@ -2447,6 +2478,33 @@ fn sm3_translates_additional_src_modifiers_to_wgsl() {
     assert!(wgsl.wgsl.contains("vec4<f32>(0.5)"), "{}", wgsl.wgsl);
     assert!(wgsl.wgsl.contains("* 2.0"), "{}", wgsl.wgsl);
     assert!(wgsl.wgsl.contains(").z"), "{}", wgsl.wgsl);
+}
+
+#[test]
+fn sm3_verify_rejects_break_outside_loop() {
+    let words = assemble_ps3_break_outside_loop();
+    let decoded = crate::sm3::decode_u32_tokens(&words).expect("decode");
+    let ir = crate::sm3::build_ir(&decoded).expect("build_ir");
+    let err = crate::sm3::verify_ir(&ir).unwrap_err();
+    assert_eq!(err.message, "break outside of a loop");
+}
+
+#[test]
+fn sm3_verify_rejects_breakc_outside_loop() {
+    let words = assemble_ps3_breakc_outside_loop();
+    let decoded = crate::sm3::decode_u32_tokens(&words).expect("decode");
+    let ir = crate::sm3::build_ir(&decoded).expect("build_ir");
+    let err = crate::sm3::verify_ir(&ir).unwrap_err();
+    assert_eq!(err.message, "breakc outside of a loop");
+}
+
+#[test]
+fn sm3_verify_rejects_texkill_in_vertex_shader() {
+    let words = assemble_vs3_texkill();
+    let decoded = crate::sm3::decode_u32_tokens(&words).expect("decode");
+    let ir = crate::sm3::build_ir(&decoded).expect("build_ir");
+    let err = crate::sm3::verify_ir(&ir).unwrap_err();
+    assert_eq!(err.message, "discard/texkill is only valid in pixel shaders");
 }
 
 #[test]
