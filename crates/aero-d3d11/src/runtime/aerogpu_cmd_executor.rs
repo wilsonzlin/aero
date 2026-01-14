@@ -4974,17 +4974,16 @@ impl AerogpuD3d11Executor {
             },
         ];
 
-        // The GS prepass bind group uses 4 storage buffers:
-        // - expanded vertices
-        // - expanded indices
-        // - indirect args + counters (`GsPrepassState`)
-        // - flattened GS input payload
+        // --- Resource limit validation ---
         //
-        // Some downlevel backends request very small limits via `wgpu::Limits::downlevel_defaults()`
-        // (e.g. max_storage_buffers_per_shader_stage=4), which would otherwise cause a wgpu
-        // validation panic during bind group layout creation.
-        let max_storage = self.device.limits().max_storage_buffers_per_shader_stage;
-        let storage_bindings = gs_bgl_entries
+        // The translated GS prepass uses `@group(0)` for internal expansion buffers and `@group(3)`
+        // for the D3D11 geometry stage resource table (cbuffers/textures/samplers/SRV buffers).
+        //
+        // wgpu enforces `max_storage_buffers_per_shader_stage` across *all* bind groups visible to a
+        // shader stage. Some downlevel backends use very small limits (e.g. 4), and exceeding the
+        // limit can trigger a wgpu validation panic when creating the pipeline layout. Validate
+        // early so we can return a clear error instead of panicking.
+        let internal_storage_buffers: u32 = gs_bgl_entries
             .iter()
             .filter(|e| {
                 e.visibility.contains(wgpu::ShaderStages::COMPUTE)
@@ -4997,9 +4996,26 @@ impl AerogpuD3d11Executor {
                     )
             })
             .count() as u32;
-        if storage_bindings > max_storage {
+        let gs_resource_storage_buffers: u32 = gs_shader
+            .reflection
+            .bindings
+            .iter()
+            .filter(|b| {
+                b.visibility.contains(wgpu::ShaderStages::COMPUTE)
+                    && matches!(
+                        b.kind,
+                        crate::BindingKind::SrvBuffer { .. }
+                            | crate::BindingKind::UavBuffer { .. }
+                            | crate::BindingKind::ExpansionStorageBuffer { .. }
+                    )
+            })
+            .count() as u32;
+        let total_storage_buffers =
+            internal_storage_buffers.saturating_add(gs_resource_storage_buffers);
+        let max_storage_buffers = self.device.limits().max_storage_buffers_per_shader_stage;
+        if total_storage_buffers > max_storage_buffers {
             bail!(
-                "GS prepass requires {storage_bindings} storage buffers in compute bind group 0, but this device/backend only supports max_storage_buffers_per_shader_stage={max_storage}"
+                "GS prepass requires {total_storage_buffers} storage buffers visible to the compute stage (internal prepass: {internal_storage_buffers}, GS resources: {gs_resource_storage_buffers}), but this device/backend only supports max_storage_buffers_per_shader_stage={max_storage_buffers}"
             );
         }
 
@@ -6305,7 +6321,8 @@ impl AerogpuD3d11Executor {
             &params_bytes,
         );
 
-        // Build GS prepass pipeline + bind group.
+        // Build GS prepass pipeline + bind groups.
+        //
         // Keep group(0) bindings consistent with `runtime::gs_translate`:
         // - out_vertices: @binding(0) storage
         // - out_indices:  @binding(1) storage
@@ -6376,17 +6393,16 @@ impl AerogpuD3d11Executor {
             },
         ];
 
-        // The GS prepass bind group uses 4 storage buffers:
-        // - expanded vertices
-        // - expanded indices
-        // - indirect args + counters (`GsPrepassState`)
-        // - flattened GS input payload
+        // --- Resource limit validation ---
         //
-        // Some downlevel backends request very small limits via `wgpu::Limits::downlevel_defaults()`
-        // (e.g. max_storage_buffers_per_shader_stage=4), which would otherwise cause a wgpu
-        // validation panic during bind group layout creation.
-        let max_storage = self.device.limits().max_storage_buffers_per_shader_stage;
-        let storage_bindings = gs_bgl_entries
+        // The translated GS prepass uses `@group(0)` for internal expansion buffers and `@group(3)`
+        // for the D3D11 geometry stage resource table (cbuffers/textures/samplers/SRV buffers).
+        //
+        // wgpu enforces `max_storage_buffers_per_shader_stage` across *all* bind groups visible to a
+        // shader stage. Some downlevel backends use very small limits (e.g. 4), and exceeding the
+        // limit can trigger a wgpu validation panic when creating the pipeline layout. Validate
+        // early so we can return a clear error instead of panicking.
+        let internal_storage_buffers: u32 = gs_bgl_entries
             .iter()
             .filter(|e| {
                 e.visibility.contains(wgpu::ShaderStages::COMPUTE)
@@ -6399,9 +6415,25 @@ impl AerogpuD3d11Executor {
                     )
             })
             .count() as u32;
-        if storage_bindings > max_storage {
+        let gs_resource_storage_buffers: u32 = gs_shader
+            .reflection
+            .bindings
+            .iter()
+            .filter(|b| {
+                b.visibility.contains(wgpu::ShaderStages::COMPUTE)
+                    && matches!(
+                        b.kind,
+                        crate::BindingKind::SrvBuffer { .. }
+                            | crate::BindingKind::UavBuffer { .. }
+                            | crate::BindingKind::ExpansionStorageBuffer { .. }
+                    )
+            })
+            .count() as u32;
+        let total_storage_buffers = internal_storage_buffers.saturating_add(gs_resource_storage_buffers);
+        let max_storage_buffers = self.device.limits().max_storage_buffers_per_shader_stage;
+        if total_storage_buffers > max_storage_buffers {
             bail!(
-                "GS prepass requires {storage_bindings} storage buffers in compute bind group 0, but this device/backend only supports max_storage_buffers_per_shader_stage={max_storage}"
+                "GS prepass requires {total_storage_buffers} storage buffers visible to the compute stage (internal prepass: {internal_storage_buffers}, GS resources: {gs_resource_storage_buffers}), but this device/backend only supports max_storage_buffers_per_shader_stage={max_storage_buffers}"
             );
         }
 
