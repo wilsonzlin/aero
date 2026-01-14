@@ -2209,6 +2209,7 @@ fn cmd_diff(args: Vec<String>) -> Result<()> {
     diff_cpu_section(&mut out, &mut file_a, &index_a.sections, &mut file_b, &index_b.sections)?;
     diff_cpus_section(&mut out, &mut file_a, &index_a.sections, &mut file_b, &index_b.sections)?;
     diff_mmu_section(&mut out, &mut file_a, &index_a.sections, &mut file_b, &index_b.sections)?;
+    diff_mmus_section(&mut out, &mut file_a, &index_a.sections, &mut file_b, &index_b.sections)?;
     diff_disks_section(&mut out, &mut file_a, &index_a.sections, &mut file_b, &index_b.sections)?;
 
     // DEVICES section (device ids/versions/blob lengths + hash).
@@ -2708,6 +2709,172 @@ fn read_mmu_state(file: &mut fs::File, section: &SnapshotSectionInfo, tag: &str)
         )));
     };
     mmu.map_err(|e| XtaskError::Message(format!("MMU {tag}: decode failed: {e}")))
+}
+
+fn diff_mmus_section(
+    out: &mut DiffOutput,
+    file_a: &mut fs::File,
+    sections_a: &[SnapshotSectionInfo],
+    file_b: &mut fs::File,
+    sections_b: &[SnapshotSectionInfo],
+) -> Result<()> {
+    let sec_a = sections_a.iter().find(|s| s.id == SectionId::MMUS);
+    let sec_b = sections_b.iter().find(|s| s.id == SectionId::MMUS);
+
+    match (sec_a, sec_b) {
+        (None, None) => Ok(()),
+        (Some(_), None) => {
+            out.diff_msg("MMUS", "A=present B=<missing>");
+            Ok(())
+        }
+        (None, Some(_)) => {
+            out.diff_msg("MMUS", "A=<missing> B=present");
+            Ok(())
+        }
+        (Some(sec_a), Some(sec_b)) => {
+            if sec_a.version != sec_b.version {
+                out.diff("MMUS.version", sec_a.version, sec_b.version);
+                return Ok(());
+            }
+            if sec_a.version == 0 {
+                out.diff_msg("MMUS", "unsupported MMUS section version 0");
+                return Ok(());
+            }
+
+            let (order_a, map_a) = read_mmus_states(file_a, sec_a, "A")?;
+            let (order_b, map_b) = read_mmus_states(file_b, sec_b, "B")?;
+
+            if map_a.len() != map_b.len() {
+                out.diff("MMUS.count", map_a.len(), map_b.len());
+            }
+
+            if order_a != order_b
+                && map_a.keys().copied().collect::<Vec<_>>() == map_b.keys().copied().collect::<Vec<_>>()
+            {
+                out.diff_msg("MMUS.order", "same entries, different on-disk ordering");
+            }
+
+            let all_keys: BTreeMap<u32, ()> =
+                map_a.keys().chain(map_b.keys()).map(|&k| (k, ())).collect();
+
+            for (apic_id, ()) in all_keys {
+                match (map_a.get(&apic_id), map_b.get(&apic_id)) {
+                    (Some(a), Some(b)) => {
+                        macro_rules! diff_hex_u64 {
+                            ($field:literal, $a:expr, $b:expr) => {
+                                if $a != $b {
+                                    out.diff(
+                                        &format!("MMUS[apic_id={apic_id}].{field}", field = $field),
+                                        format!("0x{:x}", $a),
+                                        format!("0x{:x}", $b),
+                                    );
+                                }
+                            };
+                        }
+
+                        diff_hex_u64!("cr0", a.cr0, b.cr0);
+                        diff_hex_u64!("cr3", a.cr3, b.cr3);
+                        diff_hex_u64!("cr4", a.cr4, b.cr4);
+                        diff_hex_u64!("efer", a.efer, b.efer);
+                        diff_hex_u64!("apic_base", a.apic_base, b.apic_base);
+                        diff_hex_u64!("tsc", a.tsc, b.tsc);
+                        diff_hex_u64!("gdtr_base", a.gdtr_base, b.gdtr_base);
+                        if a.gdtr_limit != b.gdtr_limit {
+                            out.diff(
+                                &format!("MMUS[apic_id={apic_id}].gdtr_limit"),
+                                a.gdtr_limit,
+                                b.gdtr_limit,
+                            );
+                        }
+                        diff_hex_u64!("idtr_base", a.idtr_base, b.idtr_base);
+                        if a.idtr_limit != b.idtr_limit {
+                            out.diff(
+                                &format!("MMUS[apic_id={apic_id}].idtr_limit"),
+                                a.idtr_limit,
+                                b.idtr_limit,
+                            );
+                        }
+                    }
+                    (Some(_), None) => out.diff_msg(
+                        &format!("MMUS[apic_id={apic_id}]"),
+                        "present in A, missing in B",
+                    ),
+                    (None, Some(_)) => out.diff_msg(
+                        &format!("MMUS[apic_id={apic_id}]"),
+                        "missing in A, present in B",
+                    ),
+                    (None, None) => {}
+                }
+            }
+
+            Ok(())
+        }
+    }
+}
+
+fn read_mmus_states(
+    file: &mut fs::File,
+    section: &SnapshotSectionInfo,
+    tag: &str,
+) -> Result<(Vec<u32>, BTreeMap<u32, MmuState>)> {
+    let section_end = section
+        .offset
+        .checked_add(section.len)
+        .ok_or_else(|| XtaskError::Message("section length overflow".to_string()))?;
+    file.seek(SeekFrom::Start(section.offset))
+        .map_err(|e| XtaskError::Message(format!("seek MMUS {tag}: {e}")))?;
+
+    ensure_section_remaining(file, section_end, 4, "mmu count")?;
+    let count = read_u32_le(file)?;
+    if count == 0 {
+        return Err(XtaskError::Message(format!("MMUS {tag}: missing MMU entry")));
+    }
+    if count > limits::MAX_CPU_COUNT {
+        return Err(XtaskError::Message(format!(
+            "MMUS {tag}: too many MMU entries ({count})"
+        )));
+    }
+
+    let mut order = Vec::with_capacity(count as usize);
+    let mut map: BTreeMap<u32, MmuState> = BTreeMap::new();
+
+    for idx in 0..count {
+        ensure_section_remaining(file, section_end, 8, "mmu entry_len")?;
+        let entry_len = read_u64_le(file)?;
+        let entry_start = file
+            .stream_position()
+            .map_err(|e| XtaskError::Message(format!("tell MMUS {tag} entry {idx}: {e}")))?;
+        let entry_end = entry_start
+            .checked_add(entry_len)
+            .ok_or_else(|| XtaskError::Message("mmu entry length overflow".to_string()))?;
+        if entry_end > section_end {
+            return Err(XtaskError::Message(format!("MMUS {tag}: truncated section")));
+        }
+
+        let mut entry_reader = file.take(entry_len);
+        let apic_id = read_u32_le(&mut entry_reader)
+            .map_err(|e| XtaskError::Message(format!("MMUS {tag}: apic_id: {e}")))?;
+
+        let mmu = if section.version == 1 {
+            MmuState::decode_v1(&mut entry_reader)
+        } else {
+            MmuState::decode_v2(&mut entry_reader)
+        }
+        .map_err(|e| XtaskError::Message(format!("MMUS {tag} apic_id={apic_id}: mmu: {e}")))?;
+
+        order.push(apic_id);
+        if map.insert(apic_id, mmu).is_some() {
+            return Err(XtaskError::Message(format!(
+                "MMUS {tag}: duplicate apic_id {apic_id}"
+            )));
+        }
+
+        // Skip any remaining bytes in this entry.
+        file.seek(SeekFrom::Start(entry_end))
+            .map_err(|e| XtaskError::Message(format!("skip MMUS {tag} entry: {e}")))?;
+    }
+
+    Ok((order, map))
 }
 
 fn diff_disks_section(
