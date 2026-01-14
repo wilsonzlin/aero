@@ -87,6 +87,66 @@ fn xhci_msix_interrupt_reaches_guest_and_suppresses_intx_and_msi() {
         None,
         "interrupt should not be delivered twice"
     );
+
+    // MSI/MSI-X delivery is edge-triggered. If the interrupt condition remains asserted (we did not
+    // clear it above), calling `raise_event_interrupt` again must not re-deliver.
+    drop(ints);
+    dev.raise_event_interrupt();
+    assert_eq!(
+        interrupts.borrow_mut().get_pending(),
+        None,
+        "MSI-X should not retrigger without a new rising edge"
+    );
+}
+
+#[test]
+fn xhci_msix_masked_vector_sets_pba_and_delivers_on_unmask() {
+    let mut dev = XhciPciDevice::default();
+    dev.config_mut().set_command(1 << 1);
+
+    let interrupts = Rc::new(RefCell::new(PlatformInterrupts::new()));
+    interrupts
+        .borrow_mut()
+        .set_mode(PlatformInterruptMode::Apic);
+    dev.set_msi_target(Some(Box::new(interrupts.clone())));
+
+    // Program a masked MSI-X table entry and enable MSI-X.
+    program_msix_table_entry0(&mut dev, 0xfee0_0000, 0x45, true);
+    enable_msix(&mut dev);
+
+    let (table_base, pba_base) = {
+        let msix = dev
+            .config()
+            .capability::<MsixCapability>()
+            .expect("MSI-X capability");
+        (u64::from(msix.table_offset()), u64::from(msix.pba_offset()))
+    };
+
+    // Trigger: masked entry should set PBA[0] instead of delivering.
+    dev.raise_event_interrupt();
+    assert!(
+        !dev.irq_level(),
+        "legacy INTx must be suppressed while MSI-X is active"
+    );
+    assert_eq!(
+        interrupts.borrow_mut().get_pending(),
+        None,
+        "masked MSI-X entry must not deliver immediately"
+    );
+    let pba = MmioHandler::read(&mut dev, pba_base, 8);
+    assert_eq!(pba & 1, 1, "masked trigger should set PBA pending bit");
+
+    // Unmask the vector. The xHCI interrupt condition is still asserted, so this MMIO write should
+    // cause `service_interrupts()` to retry delivery and clear the pending bit.
+    MmioHandler::write(&mut dev, table_base + 0x0c, 4, 0);
+    let mut ints = interrupts.borrow_mut();
+    assert_eq!(ints.get_pending(), Some(0x45));
+    ints.acknowledge(0x45);
+    ints.eoi(0x45);
+    assert_eq!(ints.get_pending(), None);
+
+    let pba_after = MmioHandler::read(&mut dev, pba_base, 8);
+    assert_eq!(pba_after & 1, 0, "PBA pending bit should clear after delivery");
 }
 
 #[test]
