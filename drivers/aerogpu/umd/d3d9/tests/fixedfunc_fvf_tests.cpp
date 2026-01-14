@@ -17938,6 +17938,109 @@ bool TestXyzrhwConversionRhwZeroFallsBackToW1() {
   return true;
 }
 
+bool TestXyzrhwConversionUsesEffectiveViewportFromRenderTarget() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetRenderTarget != nullptr, "pfnSetRenderTarget is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // Some runtimes rely on the implicit default viewport (full render target)
+  // without ever calling SetViewport. Validate that XYZRHW conversion uses the
+  // effective viewport derived from the current render target when the cached
+  // viewport is unset (Width/Height <= 0).
+  //
+  // We pick a small render target so if the conversion accidentally falls back
+  // to adapter dimensions (1024x768 by default) the expected NDC values differ.
+  constexpr float rt_w = 640.0f;
+  constexpr float rt_h = 480.0f;
+
+  // Create a dummy render-target surface.
+  D3D9DDIARG_CREATERESOURCE create_rt{};
+  create_rt.type = 1u;   // D3DRTYPE_SURFACE
+  create_rt.format = 22u; // D3DFMT_X8R8G8B8
+  create_rt.width = static_cast<uint32_t>(rt_w);
+  create_rt.height = static_cast<uint32_t>(rt_h);
+  create_rt.depth = 1;
+  create_rt.mip_levels = 1;
+  create_rt.usage = 0x00000001u; // D3DUSAGE_RENDERTARGET
+  create_rt.pool = 0;
+  create_rt.size = 0;
+  create_rt.hResource.pDrvPrivate = nullptr;
+  create_rt.pSharedHandle = nullptr;
+  create_rt.pPrivateDriverData = nullptr;
+  create_rt.PrivateDriverDataSize = 0;
+  create_rt.wddm_hAllocation = 0;
+
+  HRESULT hr = cleanup.device_funcs.pfnCreateResource(cleanup.hDevice, &create_rt);
+  if (!Check(hr == S_OK, "CreateResource(render target surface)")) {
+    return false;
+  }
+  if (!Check(create_rt.hResource.pDrvPrivate != nullptr, "CreateResource returned RT handle")) {
+    return false;
+  }
+  cleanup.resources.push_back(create_rt.hResource);
+
+  hr = cleanup.device_funcs.pfnSetRenderTarget(cleanup.hDevice, /*slot=*/0, create_rt.hResource);
+  if (!Check(hr == S_OK, "SetRenderTarget(RT0)")) {
+    return false;
+  }
+
+  // Do not call SetViewport: rely on viewport_effective_locked() fallback.
+  hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzrhwDiffuse);
+  if (!Check(hr == S_OK, "SetFVF(XYZRHW|DIFFUSE)")) {
+    return false;
+  }
+
+  dev->cmd.reset();
+
+  // Vertex at the center of the effective viewport should map to NDC (0,0).
+  const float cx = rt_w * 0.5f - 0.5f;
+  const float cy = rt_h * 0.5f - 0.5f;
+  const VertexXyzrhwDiffuse tri[3] = {
+      {cx, cy, 0.25f, 1.0f, 0xFFFFFFFFu},
+      {cx + 1.0f, cy, 0.25f, 1.0f, 0xFFFFFFFFu},
+      {cx, cy + 1.0f, 0.25f, 1.0f, 0xFFFFFFFFu},
+  };
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzrhwDiffuse));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(XYZRHW effective viewport from RT)")) {
+    return false;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->up_vertex_buffer != nullptr, "effective viewport from RT: scratch VB created")) {
+      return false;
+    }
+
+    float clip_x = 0.0f;
+    float clip_y = 0.0f;
+    float clip_w = 0.0f;
+    std::memcpy(&clip_x, dev->up_vertex_buffer->storage.data() + 0, sizeof(float));
+    std::memcpy(&clip_y, dev->up_vertex_buffer->storage.data() + 4, sizeof(float));
+    std::memcpy(&clip_w, dev->up_vertex_buffer->storage.data() + 12, sizeof(float));
+    if (!Check(clip_w == 1.0f, "effective viewport from RT: clip_w == 1")) {
+      return false;
+    }
+    if (!Check(clip_x == 0.0f, "effective viewport from RT: clip_x == 0 at center")) {
+      return false;
+    }
+    if (!Check(clip_y == 0.0f, "effective viewport from RT: clip_y == 0 at center")) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 bool TestFixedfuncFogVertexModeEmitsConstants() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -19080,6 +19183,9 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestXyzrhwConversionRhwZeroFallsBackToW1()) {
+    return 1;
+  }
+  if (!aerogpu::TestXyzrhwConversionUsesEffectiveViewportFromRenderTarget()) {
     return 1;
   }
   if (!aerogpu::TestFixedfuncFogVertexModeEmitsConstants()) {
