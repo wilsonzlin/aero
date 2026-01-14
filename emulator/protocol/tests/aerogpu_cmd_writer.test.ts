@@ -618,7 +618,7 @@ test("AerogpuCmdWriter stage_ex binding packets encode GS/HS/DS via (COMPUTE, re
   assert.equal(cursor, bytes.byteLength);
 });
 
-test("AerogpuCmdWriter optional stageEx parameters encode (shaderStage=COMPUTE, reserved0=stageEx)", () => {
+test("AerogpuCmdWriter optional stageEx parameters encode (shaderStage=COMPUTE, reserved0=stageEx) for GS/HS/DS", () => {
   const w = new AerogpuCmdWriter();
   w.setTexture(AerogpuShaderStage.Pixel, 0, 99, AerogpuShaderStageEx.Geometry);
   w.setSamplers(AerogpuShaderStage.Pixel, 0, new Uint32Array([1, 2]), AerogpuShaderStageEx.Hull);
@@ -669,7 +669,8 @@ test("AerogpuCmdWriter optional stageEx parameters encode (shaderStage=COMPUTE, 
 
   // SET_SHADER_CONSTANTS_F
   assert.equal(view.getUint32(cursor + 8, true), AerogpuShaderStage.Compute);
-  assert.equal(view.getUint32(cursor + 20, true), AerogpuShaderStageEx.Compute);
+  // Compute bindings remain the legacy encoding: reserved0 stays 0 (not 5).
+  assert.equal(view.getUint32(cursor + 20, true), 0);
   cursor += AEROGPU_CMD_SET_SHADER_CONSTANTS_F_SIZE + 16;
 
   assert.equal(cursor, bytes.byteLength);
