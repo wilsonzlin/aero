@@ -106,7 +106,7 @@ class VirtioBlkIrqMarkerTests(unittest.TestCase):
         # to `virtio-blk-miniport-irq|...` so `virtio-blk-irq|...` can be reserved for
         # cfgmgr32/Windows-assigned IRQ resource enumeration.
         tail = (
-            b"virtio-blk-miniport-irq|INFO|mode=msix|message_count=2|msix_config_vector=0x0000|"
+            b"virtio-blk-miniport-irq|INFO|mode=msi|message_count=2|msix_config_vector=0x0000|"
             b"msix_queue0_vector=0x0001\n"
         )
         out = self._emit(tail)
@@ -120,7 +120,7 @@ class VirtioBlkIrqMarkerTests(unittest.TestCase):
         tail = (
             b"AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS\n"
             b"virtio-blk-irq|INFO|mode=intx|message_count=1|msix_config_vector=0xffff|msix_queue0_vector=0xffff\n"
-            b"virtio-blk-miniport-irq|INFO|mode=msix|message_count=2|msix_config_vector=0x0000|msix_queue0_vector=0x0001\n"
+            b"virtio-blk-miniport-irq|INFO|mode=msi|message_count=2|msix_config_vector=0x0000|msix_queue0_vector=0x0001\n"
         )
         out = self._emit(tail)
         self.assertEqual(
@@ -207,8 +207,8 @@ class VirtioBlkIrqMarkerTests(unittest.TestCase):
         irq_diag_markers = {
             "virtio-blk-miniport": {
                 "level": "INFO",
-                "mode": "msix",
-                "message_count": "2",
+                "mode": "msi",
+                "messages": "2",
                 "msix_config_vector": "0x0000",
                 "msix_queue0_vector": "0x0001",
             }

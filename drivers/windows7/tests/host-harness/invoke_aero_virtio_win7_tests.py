@@ -7062,7 +7062,23 @@ def _emit_virtio_blk_irq_host_marker(
         )
 
     def _apply_irq_diag(diag: dict[str, str]) -> None:
-        _set_if_missing("irq_mode", diag.get("irq_mode") or diag.get("mode") or diag.get("interrupt_mode"))
+        diag_mode = diag.get("irq_mode") or diag.get("mode") or diag.get("interrupt_mode")
+        # Some guest diagnostics (notably virtio-blk miniport IOCTL output) intentionally conflate
+        # MSI and MSI-X in the reported `mode` field (e.g. `mode=msi` even when MSI-X vectors are
+        # assigned). If the diagnostic includes MSI-X vector indices, treat this as MSI-X so the
+        # stable host marker matches the per-test marker semantics (`irq_mode=msix`).
+        if diag_mode == "msi":
+            for vec_key in ("msix_config_vector", "msix_queue_vector", "msix_queue0_vector"):
+                vec = diag.get(vec_key)
+                if vec is None:
+                    continue
+                v = vec.strip().lower()
+                if not v or v in ("none", "0xffff", "65535"):
+                    continue
+                diag_mode = "msix"
+                break
+
+        _set_if_missing("irq_mode", diag_mode)
         if "irq_message_count" not in out_fields:
             _set_if_missing(
                 "irq_message_count",

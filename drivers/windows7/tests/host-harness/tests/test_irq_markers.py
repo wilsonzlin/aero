@@ -48,12 +48,12 @@ class VirtioIrqMarkerTests(unittest.TestCase):
 
     def test_parses_blk_miniport_irq_markers(self) -> None:
         tail = (
-            b"virtio-blk-miniport-irq|INFO|mode=msix|message_count=2|msix_config_vector=0x0000|"
+            b"virtio-blk-miniport-irq|INFO|mode=msi|message_count=2|msix_config_vector=0x0000|"
             b"msix_queue0_vector=0x0001\n"
         )
         out = self.harness._parse_virtio_irq_markers(tail)
         self.assertEqual(out["virtio-blk-miniport"]["level"], "INFO")
-        self.assertEqual(out["virtio-blk-miniport"]["mode"], "msix")
+        self.assertEqual(out["virtio-blk-miniport"]["mode"], "msi")
         self.assertEqual(out["virtio-blk-miniport"]["messages"], "2")
         self.assertEqual(out["virtio-blk-miniport"]["msix_config_vector"], "0x0000")
         self.assertEqual(out["virtio-blk-miniport"]["msix_queue0_vector"], "0x0001")
@@ -101,7 +101,7 @@ class VirtioIrqMarkerTests(unittest.TestCase):
 
     def test_emits_host_markers_for_blk_miniport_prefix(self) -> None:
         tail = (
-            b"virtio-blk-miniport-irq|INFO|mode=msix|message_count=2|msix_config_vector=0x0000|"
+            b"virtio-blk-miniport-irq|INFO|mode=msi|message_count=2|msix_config_vector=0x0000|"
             b"msix_queue0_vector=0x0001\n"
         )
         buf = io.StringIO()
@@ -110,7 +110,7 @@ class VirtioIrqMarkerTests(unittest.TestCase):
         self.assertEqual(
             buf.getvalue().strip(),
             "AERO_VIRTIO_WIN7_HOST|VIRTIO_BLK_MINIPORT_IRQ_DIAG|INFO|"
-            "messages=2|mode=msix|msix_config_vector=0x0000|msix_queue0_vector=0x0001",
+            "messages=2|mode=msi|msix_config_vector=0x0000|msix_queue0_vector=0x0001",
         )
 
     def test_emits_host_markers_from_parsed_dict(self) -> None:
@@ -151,10 +151,10 @@ class VirtioIrqMarkerTests(unittest.TestCase):
         carry = b""
         carry = self.harness._update_virtio_irq_markers_from_chunk(
             markers,
-            b"virtio-blk-miniport-irq|INFO|mode=msix|message_count=2|msix_config_vector=0x0000|msix_queue0_",
+            b"virtio-blk-miniport-irq|INFO|mode=msi|message_count=2|msix_config_vector=0x0000|msix_queue0_",
             carry=carry,
         )
-        self.assertTrue(carry.startswith(b"virtio-blk-miniport-irq|INFO|mode=msix"))
+        self.assertTrue(carry.startswith(b"virtio-blk-miniport-irq|INFO|mode=msi"))
         self.assertEqual(markers, {})
 
         carry = self.harness._update_virtio_irq_markers_from_chunk(
@@ -163,7 +163,7 @@ class VirtioIrqMarkerTests(unittest.TestCase):
             carry=carry,
         )
         self.assertEqual(carry, b"")
-        self.assertEqual(markers["virtio-blk-miniport"]["mode"], "msix")
+        self.assertEqual(markers["virtio-blk-miniport"]["mode"], "msi")
         self.assertEqual(markers["virtio-blk-miniport"]["messages"], "2")
         self.assertEqual(markers["virtio-blk-miniport"]["msix_config_vector"], "0x0000")
         self.assertEqual(markers["virtio-blk-miniport"]["msix_queue0_vector"], "0x0001")

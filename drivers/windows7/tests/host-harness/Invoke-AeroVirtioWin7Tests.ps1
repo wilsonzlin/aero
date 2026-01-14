@@ -1776,6 +1776,20 @@ function Try-EmitAeroVirtioBlkIrqMarker {
   if ($fields.ContainsKey("msix_queue_vector")) { $msixQueueVector = $fields["msix_queue_vector"] }
   elseif ($fields.ContainsKey("msix_queue0_vector")) { $msixQueueVector = $fields["msix_queue0_vector"] }
 
+  # Some guest diagnostics (notably virtio-blk miniport IOCTL output) intentionally conflate MSI and MSI-X
+  # in the reported `mode` field (e.g. `mode=msi` even when MSI-X vectors are assigned). If we see
+  # `mode=msi` plus any MSI-X vector index, treat this as MSI-X for the stable host marker so it
+  # matches the per-test marker semantics (`irq_mode=msix`).
+  if (-not [string]::IsNullOrEmpty($mode) -and $mode.Trim().ToLowerInvariant() -eq "msi") {
+    foreach ($vec in @($msixConfigVector, $msixQueueVector)) {
+      if ([string]::IsNullOrEmpty($vec)) { continue }
+      $v = ([string]$vec).Trim().ToLowerInvariant()
+      if ([string]::IsNullOrEmpty($v) -or $v -eq "none" -or $v -eq "0xffff" -or $v -eq "65535") { continue }
+      $mode = "msix"
+      break
+    }
+  }
+
   if (-not $mode -and -not $messages -and -not $vectors -and -not $msiVector -and -not $msixConfigVector -and -not $msixQueueVector) { return }
 
   $status = "INFO"
