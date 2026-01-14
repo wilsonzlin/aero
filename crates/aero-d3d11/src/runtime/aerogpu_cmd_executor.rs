@@ -652,6 +652,12 @@ enum PendingWriteback {
 
 #[derive(Debug)]
 struct BufferResource {
+    /// Unique bind-group cache ID for this buffer allocation.
+    ///
+    /// Do not use the guest resource handle as the cache key: handles can be destroyed and then
+    /// reused for a different underlying `wgpu::Buffer`, which would cause the bind-group cache to
+    /// return stale bind groups that still reference the old buffer.
+    id: BufferId,
     buffer: wgpu::Buffer,
     size: u64,
     gpu_size: u64,
@@ -701,6 +707,10 @@ struct Texture2dDesc {
 struct Texture2dResource {
     texture: wgpu::Texture,
     view: wgpu::TextureView,
+    /// Unique bind-group cache ID for `view`.
+    ///
+    /// Do not use the guest resource handle as the cache key (see `BufferResource::id`).
+    view_id: TextureViewId,
     desc: Texture2dDesc,
     format_u32: u32,
     backing: Option<ResourceBacking>,
@@ -1204,6 +1214,8 @@ pub struct AerogpuD3d11Executor {
     cbuffer_scratch: HashMap<(ShaderStage, u32), ConstantBufferScratch>,
     srv_buffer_scratch: HashMap<(ShaderStage, u32), SrvBufferScratch>,
     gs_scratch: GsScratchPool,
+    next_buffer_id: u64,
+    next_texture_view_id: u64,
     next_scratch_buffer_id: u64,
     expansion_scratch: ExpansionScratchAllocator,
     expansion_uniform_scratch: ExpansionScratchAllocator,
@@ -1481,6 +1493,8 @@ impl AerogpuD3d11Executor {
             cbuffer_scratch: HashMap::new(),
             srv_buffer_scratch: HashMap::new(),
             gs_scratch: GsScratchPool::default(),
+            next_buffer_id: 1,
+            next_texture_view_id: 1,
             next_scratch_buffer_id: 1u64 << 32,
             expansion_scratch: ExpansionScratchAllocator::new(ExpansionScratchDescriptor::default()),
             expansion_uniform_scratch: ExpansionScratchAllocator::new(ExpansionScratchDescriptor {
@@ -1762,6 +1776,7 @@ impl AerogpuD3d11Executor {
         self.state = AerogpuD3d11State::default();
         self.shared_surfaces.clear();
         self.pipeline_cache.clear();
+        self.bind_group_cache = BindGroupCache::new(DEFAULT_BIND_GROUP_CACHE_CAPACITY);
         self.cbuffer_scratch.clear();
         self.srv_buffer_scratch.clear();
         self.gpu_scratch.clear();
@@ -1774,6 +1789,8 @@ impl AerogpuD3d11Executor {
         self.encoder_used_textures.clear();
         self.destroyed_buffers.clear();
         self.destroyed_textures.clear();
+        self.next_buffer_id = 1;
+        self.next_texture_view_id = 1;
         self.next_scratch_buffer_id = 1u64 << 32;
         self.resource_upload_debug = ResourceUploadDebugStats::default();
         self.bindings = BindingState::default();
@@ -6859,7 +6876,7 @@ impl AerogpuD3d11Executor {
                                     let entries = [BindGroupCacheEntry {
                                         binding: BINDING_INTERNAL_EXPANDED_VERTICES,
                                         resource: BindGroupCacheResource::Buffer {
-                                            id: BufferId(buf_handle as u64),
+                                            id: buf.id,
                                             buffer: &buf.buffer,
                                             offset: 0,
                                             size: None,
@@ -7105,7 +7122,7 @@ impl AerogpuD3d11Executor {
                                     let entries = [BindGroupCacheEntry {
                                         binding: BINDING_INTERNAL_EXPANDED_VERTICES,
                                         resource: BindGroupCacheResource::Buffer {
-                                            id: BufferId(buf_handle as u64),
+                                            id: buf.id,
                                             buffer: &buf.buffer,
                                             offset: 0,
                                             size: None,
@@ -7992,6 +8009,12 @@ impl AerogpuD3d11Executor {
             bail!("CREATE_BUFFER: buffer_handle {buffer_handle} is still in use");
         }
 
+        let id = BufferId(self.next_buffer_id);
+        self.next_buffer_id = self.next_buffer_id.wrapping_add(1);
+        if self.next_buffer_id == 0 {
+            self.next_buffer_id = 1;
+        }
+
         let usage = map_buffer_usage_flags(usage_flags, self.caps.supports_compute);
         let gpu_size = align_copy_buffer_size(size_bytes)?;
 
@@ -8025,6 +8048,7 @@ impl AerogpuD3d11Executor {
         });
 
         let mut res = BufferResource {
+            id,
             buffer,
             size: size_bytes,
             gpu_size,
@@ -8087,6 +8111,12 @@ impl AerogpuD3d11Executor {
                 );
             }
             bail!("CREATE_TEXTURE2D: texture_handle {texture_handle} is still in use");
+        }
+
+        let view_id = TextureViewId(self.next_texture_view_id);
+        self.next_texture_view_id = self.next_texture_view_id.wrapping_add(1);
+        if self.next_texture_view_id == 0 {
+            self.next_texture_view_id = 1;
         }
 
         let format_layout = aerogpu_texture_format_layout(format_u32)?;
@@ -8179,6 +8209,7 @@ impl AerogpuD3d11Executor {
             Texture2dResource {
                 texture,
                 view,
+                view_id,
                 desc: Texture2dDesc {
                     width,
                     height,
@@ -13480,7 +13511,7 @@ impl reflection_bindings::BindGroupResourceProvider for CmdExecutorBindGroupProv
 
         let buf = self.resources.buffers.get(&bound.buffer)?;
         Some(reflection_bindings::BufferBinding {
-            id: BufferId(bound.buffer as u64),
+            id: buf.id,
             buffer: &buf.buffer,
             offset: bound.offset,
             size: bound.size,
@@ -13497,13 +13528,13 @@ impl reflection_bindings::BindGroupResourceProvider for CmdExecutorBindGroupProv
     fn texture2d(&self, slot: u32) -> Option<(TextureViewId, &wgpu::TextureView)> {
         let bound = self.stage_state.texture(slot)?;
         let tex = self.resources.textures.get(&bound.texture)?;
-        Some((TextureViewId(bound.texture as u64), &tex.view))
+        Some((tex.view_id, &tex.view))
     }
 
     fn uav_texture2d(&self, slot: u32) -> Option<(TextureViewId, &wgpu::TextureView)> {
         let bound = self.stage_state.uav_texture(slot)?;
         let tex = self.resources.textures.get(&bound.texture)?;
-        Some((TextureViewId(bound.texture as u64), &tex.view))
+        Some((tex.view_id, &tex.view))
     }
 
     fn srv_buffer(&self, slot: u32) -> Option<reflection_bindings::BufferBinding<'_>> {
@@ -13546,7 +13577,7 @@ impl reflection_bindings::BindGroupResourceProvider for CmdExecutorBindGroupProv
         }
 
         Some(reflection_bindings::BufferBinding {
-            id: BufferId(bound.buffer as u64),
+            id: buf.id,
             buffer: &buf.buffer,
             offset,
             size: bound.size,
@@ -13562,7 +13593,7 @@ impl reflection_bindings::BindGroupResourceProvider for CmdExecutorBindGroupProv
         let bound = self.stage_state.uav_buffer(slot)?;
         let buf = self.resources.buffers.get(&bound.buffer)?;
         Some(reflection_bindings::BufferBinding {
-            id: BufferId(bound.buffer as u64),
+            id: buf.id,
             buffer: &buf.buffer,
             offset: bound.offset,
             size: bound.size,
@@ -16366,6 +16397,7 @@ mod tests {
                 Texture2dResource {
                     texture: tex,
                     view,
+                    view_id: TextureViewId(1),
                     desc: Texture2dDesc {
                         width: 1,
                         height: 1,
@@ -16495,6 +16527,7 @@ mod tests {
                     Texture2dResource {
                         texture: tex,
                         view,
+                        view_id: TextureViewId(handle as u64),
                         desc: Texture2dDesc {
                             width: 1,
                             height: 1,
@@ -16689,6 +16722,7 @@ mod tests {
                 Texture2dResource {
                     texture: ds_tex,
                     view: ds_view,
+                    view_id: TextureViewId(DS as u64),
                     desc: Texture2dDesc {
                         width: 1,
                         height: 1,
@@ -18378,6 +18412,7 @@ fn cs_main() {
             exec.resources.buffers.insert(
                 GS_CB,
                 BufferResource {
+                    id: BufferId(GS_CB as u64),
                     buffer: cb,
                     size: cb_size,
                     gpu_size: cb_size,
@@ -18407,6 +18442,7 @@ fn cs_main() {
                 Texture2dResource {
                     texture: tex,
                     view,
+                    view_id: TextureViewId(GS_TEX as u64),
                     desc: Texture2dDesc {
                         width: 1,
                         height: 1,
@@ -18987,6 +19023,7 @@ fn cs_main() {
             exec.resources.buffers.insert(
                 BUF,
                 BufferResource {
+                    id: BufferId(BUF as u64),
                     buffer: src,
                     size: buf_size,
                     gpu_size: buf_size,
