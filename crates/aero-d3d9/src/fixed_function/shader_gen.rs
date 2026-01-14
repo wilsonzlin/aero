@@ -197,12 +197,16 @@ impl FixedFunctionShaderDesc {
             write_stage(&mut hash, stage);
         }
 
-        write_u8(&mut hash, self.alpha_test.enabled as u8);
-        // Only hash the alpha-test compare function when alpha testing is actually enabled.
-        // When disabled, the shader does not emit the discard path and the function is irrelevant.
+        // Alpha testing is only observable when enabled *and* the compare func can actually
+        // discard fragments. `ALWAYS` is equivalent to alpha test disabled, so normalize it away
+        // for hashing purposes (avoids shader-cache misses for no-op state changes).
+        let alpha_test_effective =
+            self.alpha_test.enabled && self.alpha_test.func != CompareFunc::Always;
+        write_u8(&mut hash, alpha_test_effective as u8);
+        // Only hash the alpha-test compare function when alpha testing is actually effective.
         write_u8(
             &mut hash,
-            if self.alpha_test.enabled {
+            if alpha_test_effective {
                 self.alpha_test.func as u8
             } else {
                 CompareFunc::Always as u8
@@ -459,7 +463,7 @@ fn generate_fragment_wgsl(desc: &FixedFunctionShaderDesc, layout: &FvfLayout) ->
         emit_tss_stage(&mut wgsl, desc, layout, stage_index, stage);
     }
 
-    if desc.alpha_test.enabled {
+    if desc.alpha_test.enabled && desc.alpha_test.func != CompareFunc::Always {
         let cond = wgsl_compare_func(desc.alpha_test.func, "current.a", "globals.alpha_test.x");
         let _ = writeln!(wgsl, "  if (!({})) {{ discard; }}", cond);
     }

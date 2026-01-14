@@ -642,3 +642,44 @@ fn state_hash_ignores_alpha_test_func_when_disabled() {
         "alpha-test func must not affect the hash when alpha testing is disabled"
     );
 }
+
+#[test]
+fn alpha_test_always_is_treated_as_disabled_for_hash_and_wgsl() {
+    let stages = [TextureStageState::default(); 8];
+
+    let base = FixedFunctionShaderDesc {
+        fvf: Fvf(Fvf::XYZ),
+        stages,
+        alpha_test: AlphaTestState {
+            enabled: false,
+            func: CompareFunc::Less,
+        },
+        fog: FogState::default(),
+        lighting: LightingState::default(),
+    };
+
+    let always_enabled = FixedFunctionShaderDesc {
+        alpha_test: AlphaTestState {
+            enabled: true,
+            func: CompareFunc::Always,
+        },
+        ..base.clone()
+    };
+
+    assert_eq!(
+        base.state_hash(),
+        always_enabled.state_hash(),
+        "ALPHATEST=ENABLED + FUNC=ALWAYS is a no-op and should not change the shader hash"
+    );
+
+    let wgsl_base = generate_fixed_function_shaders(&base).fragment_wgsl;
+    let wgsl_always = generate_fixed_function_shaders(&always_enabled).fragment_wgsl;
+    assert_eq!(
+        wgsl_base, wgsl_always,
+        "ALPHATEST=ENABLED + FUNC=ALWAYS should generate identical WGSL"
+    );
+    assert!(
+        !wgsl_always.contains("discard"),
+        "unexpected discard:\n{wgsl_always}"
+    );
+}
