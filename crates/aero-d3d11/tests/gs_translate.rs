@@ -641,9 +641,12 @@ fn sm4_gs_linestrip_output_topology_d3d_encoding_translates() {
 
 #[test]
 fn sm4_gs_emit_cut_fixture_translates() {
-    // The checked-in fixture uses decl encodings that differ from the tokenized-format enums
-    // (triangle=4, triangle_strip=5). The GS prepass translator should accept these encodings so it
-    // can run real DXBC blobs produced by various toolchains.
+    // The checked-in fixture uses D3D10 tokenized-program-format encodings for GS declarations
+    // (e.g. output topology triangle_strip=5), which differ from the small synthetic token streams
+    // in this test (which use "tokenized shader format" enums like triangle_strip=3).
+    //
+    // The GS prepass translator should accept these encodings so it can run real DXBC blobs
+    // produced by various toolchains.
     const DXBC: &[u8] = include_bytes!("fixtures/gs_cut.dxbc");
 
     let program = Sm4Program::parse_from_dxbc_bytes(DXBC).expect("SM4 parse");

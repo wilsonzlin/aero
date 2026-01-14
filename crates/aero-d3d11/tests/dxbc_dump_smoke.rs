@@ -8,7 +8,7 @@ fn dxbc_dump_runs_on_gs_fixture() {
     let bin = env!("CARGO_BIN_EXE_dxbc_dump");
 
     let mut fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    fixture.push("tests/fixtures/gs_point_to_triangle.dxbc");
+    fixture.push("tests/fixtures/gs_cut.dxbc");
 
     let output = Command::new(bin)
         .arg(&fixture)

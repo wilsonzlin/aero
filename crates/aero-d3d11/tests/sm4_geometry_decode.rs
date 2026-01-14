@@ -1,8 +1,8 @@
 use std::fs;
 
 use aero_d3d11::{
-    GsInputPrimitive, GsOutputTopology, OperandModifier, RegFile, RegisterRef, ShaderModel,
-    ShaderStage, Sm4Decl, Sm4Inst, Sm4Program, SrcKind, SrcOperand, Swizzle, WriteMask,
+    GsInputPrimitive, GsOutputTopology, RegFile, RegisterRef, ShaderModel, ShaderStage, Sm4Decl,
+    Sm4Inst, Sm4Program, SrcKind, WriteMask,
 };
 
 fn load_fixture(name: &str) -> Vec<u8> {
@@ -27,7 +27,7 @@ fn decodes_geometry_shader_decls_and_emit_cut() {
             .any(|d| matches!(
                 d,
                 Sm4Decl::GsInputPrimitive {
-                    primitive: GsInputPrimitive::Triangle(_)
+                    primitive: GsInputPrimitive::Point(1)
                 }
             )),
         "expected dcl_inputprimitive in decls: {:#?}",
@@ -40,7 +40,7 @@ fn decodes_geometry_shader_decls_and_emit_cut() {
             .any(|d| matches!(
                 d,
                 Sm4Decl::GsOutputTopology {
-                    topology: GsOutputTopology::TriangleStrip(_)
+                    topology: GsOutputTopology::TriangleStrip(5)
                 }
             )),
         "expected dcl_outputtopology in decls: {:#?}",
@@ -50,33 +50,42 @@ fn decodes_geometry_shader_decls_and_emit_cut() {
         module
             .decls
             .iter()
-            .any(|d| matches!(d, Sm4Decl::GsMaxOutputVertexCount { max: 3 })),
+            .any(|d| matches!(d, Sm4Decl::GsMaxOutputVertexCount { max: 4 })),
         "expected dcl_maxvertexcount in decls: {:#?}",
         module.decls
     );
 
-    assert_eq!(module.instructions.len(), 4);
-    assert_eq!(
-        module.instructions[0],
-        Sm4Inst::Mov {
-            dst: aero_d3d11::DstOperand {
-                reg: RegisterRef {
-                    file: RegFile::Temp,
-                    index: 0
-                },
-                mask: WriteMask::XYZW,
-                saturate: false,
-            },
-            src: SrcOperand {
-                kind: SrcKind::GsInput { reg: 0, vertex: 0 },
-                swizzle: Swizzle::XYZW,
-                modifier: OperandModifier::None,
-            },
-        }
+    // The fixture expands each point into a quad (4 emits) and terminates the strip with CUT.
+    let emit_count = module
+        .instructions
+        .iter()
+        .filter(|i| matches!(i, Sm4Inst::Emit { stream: 0 }))
+        .count();
+    assert_eq!(emit_count, 4, "expected four emitted vertices");
+    assert!(
+        module.instructions.iter().any(|i| matches!(i, Sm4Inst::Cut { stream: 0 })),
+        "expected CUT/RestartStrip instruction"
     );
-    assert_eq!(module.instructions[1], Sm4Inst::Emit { stream: 0 });
-    assert_eq!(module.instructions[2], Sm4Inst::Cut { stream: 0 });
-    assert_eq!(module.instructions[3], Sm4Inst::Ret);
+    assert!(
+        matches!(module.instructions.last(), Some(Sm4Inst::Ret)),
+        "expected final Ret"
+    );
+
+    // Sanity-check the first two moves that pull v0[0] and v1[0] into temps.
+    assert!(matches!(
+        module.instructions.first(),
+        Some(Sm4Inst::Mov { dst, src })
+            if dst.reg == RegisterRef { file: RegFile::Temp, index: 0 }
+                && dst.mask == WriteMask::XYZW
+                && matches!(src.kind, SrcKind::GsInput { reg: 0, vertex: 0 })
+    ));
+    assert!(module.instructions.iter().any(|i| matches!(
+        i,
+        Sm4Inst::Mov { dst, src }
+            if dst.reg == RegisterRef { file: RegFile::Temp, index: 1 }
+                && dst.mask == WriteMask::XYZW
+                && matches!(src.kind, SrcKind::GsInput { reg: 1, vertex: 0 })
+    )));
 }
 
 #[test]

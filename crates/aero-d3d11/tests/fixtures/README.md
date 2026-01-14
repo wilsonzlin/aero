@@ -79,8 +79,8 @@ The files are intentionally tiny and deterministic, so CI does **not** require
   * Behavior: `emit_stream(1)`, `ret` (minimal stream-index fixture; used to exercise SM5 stream policy)
 * `gs_cut.dxbc`
   * Shader model: `gs_4_0`
-  * Chunks: `SHDR`
-  * Behavior: `dcl_inputprimitive`, `dcl_outputtopology`, `dcl_maxvertexcount`, `mov r0, v0[0]`, `emit`, `cut`, `ret`
+  * Chunks: `ISGN`, `OSGN`, `SHDR`
+  * Behavior: point input → triangle strip output, `maxvertexcount=4`, emits a quad (4 verts) then `cut`, `ret` (RestartStrip semantics)
 * `gs_emit_stream_cut_stream.dxbc`
   * Shader model: `gs_5_0`
   * Chunks: `SHEX`
@@ -147,10 +147,16 @@ void gs_main(triangle GsIn input[3], inout TriangleStream<GsOut> stream) {
 }
 
 // gs_cut.hlsl
-[maxvertexcount(1)]
+struct GsIn { float4 pos : SV_Position; float4 color : COLOR0; };
+struct GsOut { float4 pos : SV_Position; float4 color : COLOR0; };
+[maxvertexcount(4)]
 void gs_main(point GsIn input[1], inout TriangleStream<GsOut> stream) {
   GsOut o;
-  o.pos = input[0].pos; stream.Append(o);
+  o.color = input[0].color;
+  o.pos = input[0].pos + float4(-0.3, -0.3, 0, 0); stream.Append(o);
+  o.pos = input[0].pos + float4(-0.3,  0.3, 0, 0); stream.Append(o);
+  o.pos = input[0].pos + float4( 0.3, -0.3, 0, 0); stream.Append(o);
+  o.pos = input[0].pos + float4( 0.3,  0.3, 0, 0); stream.Append(o);
   stream.RestartStrip();
 }
 
