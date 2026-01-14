@@ -127,6 +127,19 @@ fn merge_and_cap_rects_does_not_merge_corner_touching_rects() {
 }
 
 #[test]
+fn merge_and_cap_rects_cap_one_returns_bounding_box() {
+    let bounds = (100u32, 100u32);
+    let rects = [
+        Rect::new(10, 10, 5, 5),
+        Rect::new(50, 50, 10, 10),
+        Rect::new(90, 90, 20, 20), // clamps to reach the bottom-right corner.
+    ];
+
+    let out = merge_and_cap_rects(&rects, bounds, 1);
+    assert_eq!(out.rects, vec![Rect::new(10, 10, 90, 90)]);
+}
+
+#[test]
 fn merge_and_cap_rects_randomized_invariants() {
     // This test is specifically aimed at catching regressions that could lead to out-of-bounds
     // texture uploads in the presenter (e.g. `x+w > width`).

@@ -181,6 +181,19 @@ fn tile_diff_ignores_stride_padding_bytes() {
 }
 
 #[test]
+fn tile_diff_stride_too_small_falls_back_to_full_frame() {
+    let (width, height, bpp) = (8u32, 8u32, 4usize);
+    let row_bytes = width as usize * bpp;
+    let stride = row_bytes - 1; // malformed
+
+    let frame = vec![0x11u8; stride * height as usize];
+    let mut diff = TileDiff::new(width, height, bpp);
+
+    let dirty = diff.diff(&frame, stride);
+    assert_eq!(dirty, vec![Rect::new(0, 0, width, height)]);
+}
+
+#[test]
 fn tile_diff_randomized_matches_reference_and_stays_in_bounds() {
     let mut rng = Rng::new(0xD1FF_D1FF_5EED_5EED);
 
