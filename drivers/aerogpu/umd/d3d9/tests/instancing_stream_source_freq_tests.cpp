@@ -896,6 +896,183 @@ void TestNonIndexedTriangleStripStartVertexRebindsOffset() {
   assert(bind1->offset_bytes == sizeof(Vec4));
 }
 
+void TestNonIndexedLineStripDrawsPerInstance() {
+  aerogpu::Adapter adapter{};
+  aerogpu::Device dev(&adapter);
+  D3DDDI_HDEVICE hDevice{};
+  hDevice.pDrvPrivate = &dev;
+
+  aerogpu::Shader vs{};
+  aerogpu::Shader ps{};
+  BindTestShaders(dev, vs, ps);
+
+  aerogpu::VertexDecl decl{};
+  BindTestDecl(dev, decl);
+
+  // Line strip with primitive_count=2 uses 3 vertices.
+  const Vec4 vertices[3] = {
+      {0.0f, 0.0f, 0.0f, 1.0f},
+      {1.0f, 0.0f, 0.0f, 1.0f},
+      {1.0f, 1.0f, 0.0f, 1.0f},
+  };
+  aerogpu::Resource vb0{};
+  vb0.handle = 0x4C0;
+  vb0.kind = aerogpu::ResourceKind::Buffer;
+  vb0.size_bytes = sizeof(vertices);
+  vb0.storage.resize(sizeof(vertices));
+  std::memcpy(vb0.storage.data(), vertices, sizeof(vertices));
+
+  const InstanceData instances[2] = {
+      {{10.0f, 0.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f, 1.0f}},
+      {{20.0f, 0.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f, 1.0f}},
+  };
+  aerogpu::Resource vb1{};
+  vb1.handle = 0x4C1;
+  vb1.kind = aerogpu::ResourceKind::Buffer;
+  vb1.size_bytes = sizeof(instances);
+  vb1.storage.resize(sizeof(instances));
+  std::memcpy(vb1.storage.data(), instances, sizeof(instances));
+
+  dev.streams[0] = {&vb0, 0, sizeof(Vec4)};
+  dev.streams[1] = {&vb1, 0, sizeof(InstanceData)};
+
+  dev.stream_source_freq[0] = kD3DStreamSourceIndexedData | 2u;
+  dev.stream_source_freq[1] = kD3DStreamSourceInstanceData | 1u;
+
+  const HRESULT hr = aerogpu::device_draw_primitive(
+      hDevice,
+      D3DDDIPT_LINESTRIP,
+      /*start_vertex=*/0,
+      /*primitive_count=*/2);
+  assert(hr == S_OK);
+
+  // Line strip instancing should not expand per-vertex streams into scratch buffers.
+  assert(dev.instancing_vertex_buffers[0] == nullptr);
+
+  dev.cmd.finalize();
+  const uint8_t* buf = dev.cmd.data();
+  const size_t len = dev.cmd.size();
+
+  const auto draws = FindAllCmds<aerogpu_cmd_draw>(buf, len, AEROGPU_CMD_DRAW);
+  assert(draws.size() == 2);
+  for (const auto* d : draws) {
+    assert(d->first_vertex == 0);
+    assert(d->vertex_count == 3);
+  }
+
+  // Per-instance stream1 data is uploaded once per instance.
+  assert(dev.instancing_vertex_buffers[1] != nullptr);
+  const auto uploads = FindAllCmds<aerogpu_cmd_upload_resource>(buf, len, AEROGPU_CMD_UPLOAD_RESOURCE);
+  std::vector<const aerogpu_cmd_upload_resource*> vb1_uploads;
+  for (const auto* u : uploads) {
+    if (u->resource_handle == dev.instancing_vertex_buffers[1]->handle) {
+      vb1_uploads.push_back(u);
+    }
+  }
+  assert(vb1_uploads.size() == 2);
+  const size_t expected_vb1_bytes = sizeof(InstanceData) * 3;
+  for (size_t i = 0; i < 2; ++i) {
+    const auto* upload = vb1_uploads[i];
+    assert(upload->offset_bytes == 0);
+    assert(upload->size_bytes == expected_vb1_bytes);
+    std::vector<uint8_t> expected(expected_vb1_bytes, 0);
+    for (int v = 0; v < 3; ++v) {
+      std::memcpy(expected.data() + (size_t)v * sizeof(InstanceData), &instances[i], sizeof(InstanceData));
+    }
+    const uint8_t* payload = reinterpret_cast<const uint8_t*>(upload) + sizeof(*upload);
+    assert(std::memcmp(payload, expected.data(), expected.size()) == 0);
+  }
+}
+
+void TestNonIndexedTriangleFanDrawsPerInstance() {
+  aerogpu::Adapter adapter{};
+  aerogpu::Device dev(&adapter);
+  D3DDDI_HDEVICE hDevice{};
+  hDevice.pDrvPrivate = &dev;
+
+  aerogpu::Shader vs{};
+  aerogpu::Shader ps{};
+  BindTestShaders(dev, vs, ps);
+
+  aerogpu::VertexDecl decl{};
+  BindTestDecl(dev, decl);
+
+  // Triangle fan with primitive_count=2 uses 4 vertices.
+  const Vec4 vertices[4] = {
+      {0.0f, 0.0f, 0.0f, 1.0f},
+      {1.0f, 0.0f, 0.0f, 1.0f},
+      {0.0f, 1.0f, 0.0f, 1.0f},
+      {1.0f, 1.0f, 0.0f, 1.0f},
+  };
+  aerogpu::Resource vb0{};
+  vb0.handle = 0x4D0;
+  vb0.kind = aerogpu::ResourceKind::Buffer;
+  vb0.size_bytes = sizeof(vertices);
+  vb0.storage.resize(sizeof(vertices));
+  std::memcpy(vb0.storage.data(), vertices, sizeof(vertices));
+
+  const InstanceData instances[2] = {
+      {{10.0f, 0.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f, 1.0f}},
+      {{20.0f, 0.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f, 1.0f}},
+  };
+  aerogpu::Resource vb1{};
+  vb1.handle = 0x4D1;
+  vb1.kind = aerogpu::ResourceKind::Buffer;
+  vb1.size_bytes = sizeof(instances);
+  vb1.storage.resize(sizeof(instances));
+  std::memcpy(vb1.storage.data(), instances, sizeof(instances));
+
+  dev.streams[0] = {&vb0, 0, sizeof(Vec4)};
+  dev.streams[1] = {&vb1, 0, sizeof(InstanceData)};
+
+  dev.stream_source_freq[0] = kD3DStreamSourceIndexedData | 2u;
+  dev.stream_source_freq[1] = kD3DStreamSourceInstanceData | 1u;
+
+  const HRESULT hr = aerogpu::device_draw_primitive(
+      hDevice,
+      D3DDDIPT_TRIANGLEFAN,
+      /*start_vertex=*/0,
+      /*primitive_count=*/2);
+  assert(hr == S_OK);
+
+  // Triangle fan instancing should not expand per-vertex streams into scratch buffers.
+  assert(dev.instancing_vertex_buffers[0] == nullptr);
+
+  dev.cmd.finalize();
+  const uint8_t* buf = dev.cmd.data();
+  const size_t len = dev.cmd.size();
+
+  const auto draws = FindAllCmds<aerogpu_cmd_draw>(buf, len, AEROGPU_CMD_DRAW);
+  assert(draws.size() == 2);
+  for (const auto* d : draws) {
+    assert(d->first_vertex == 0);
+    assert(d->vertex_count == 4);
+  }
+
+  // Per-instance stream1 data is uploaded once per instance.
+  assert(dev.instancing_vertex_buffers[1] != nullptr);
+  const auto uploads = FindAllCmds<aerogpu_cmd_upload_resource>(buf, len, AEROGPU_CMD_UPLOAD_RESOURCE);
+  std::vector<const aerogpu_cmd_upload_resource*> vb1_uploads;
+  for (const auto* u : uploads) {
+    if (u->resource_handle == dev.instancing_vertex_buffers[1]->handle) {
+      vb1_uploads.push_back(u);
+    }
+  }
+  assert(vb1_uploads.size() == 2);
+  const size_t expected_vb1_bytes = sizeof(InstanceData) * 4;
+  for (size_t i = 0; i < 2; ++i) {
+    const auto* upload = vb1_uploads[i];
+    assert(upload->offset_bytes == 0);
+    assert(upload->size_bytes == expected_vb1_bytes);
+    std::vector<uint8_t> expected(expected_vb1_bytes, 0);
+    for (int v = 0; v < 4; ++v) {
+      std::memcpy(expected.data() + (size_t)v * sizeof(InstanceData), &instances[i], sizeof(InstanceData));
+    }
+    const uint8_t* payload = reinterpret_cast<const uint8_t*>(upload) + sizeof(*upload);
+    assert(std::memcmp(payload, expected.data(), expected.size()) == 0);
+  }
+}
+
 void TestNonIndexedTriangleListUpInstancingRestoresStream0() {
   aerogpu::Adapter adapter{};
   aerogpu::Device dev(&adapter);
@@ -1469,6 +1646,86 @@ void TestIndexedTriangleStripNegativeBaseVertex() {
   assert(bind1->offset_bytes == sizeof(Vec4));
 }
 
+void TestIndexedTriangleFanUsesBaseVertexNoIndexExpansion() {
+  aerogpu::Adapter adapter{};
+  aerogpu::Device dev(&adapter);
+  D3DDDI_HDEVICE hDevice{};
+  hDevice.pDrvPrivate = &dev;
+
+  aerogpu::Shader vs{};
+  aerogpu::Shader ps{};
+  BindTestShaders(dev, vs, ps);
+
+  aerogpu::VertexDecl decl{};
+  BindTestDecl(dev, decl);
+
+  // Triangle fan with primitive_count=2 uses 4 vertices/indices.
+  const Vec4 vertices[4] = {
+      {0.0f, 0.0f, 0.0f, 1.0f},
+      {1.0f, 0.0f, 0.0f, 1.0f},
+      {0.0f, 1.0f, 0.0f, 1.0f},
+      {1.0f, 1.0f, 0.0f, 1.0f},
+  };
+  aerogpu::Resource vb0{};
+  vb0.handle = 0x4E0;
+  vb0.kind = aerogpu::ResourceKind::Buffer;
+  vb0.size_bytes = sizeof(vertices);
+  vb0.storage.resize(sizeof(vertices));
+  std::memcpy(vb0.storage.data(), vertices, sizeof(vertices));
+
+  const InstanceData instances[2] = {
+      {{10.0f, 0.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f, 1.0f}},
+      {{20.0f, 0.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f, 1.0f}},
+  };
+  aerogpu::Resource vb1{};
+  vb1.handle = 0x4E1;
+  vb1.kind = aerogpu::ResourceKind::Buffer;
+  vb1.size_bytes = sizeof(instances);
+  vb1.storage.resize(sizeof(instances));
+  std::memcpy(vb1.storage.data(), instances, sizeof(instances));
+
+  const uint16_t indices_u16[4] = {0, 1, 2, 3};
+  aerogpu::Resource ib{};
+  ib.handle = 0x4E2;
+  ib.kind = aerogpu::ResourceKind::Buffer;
+  ib.size_bytes = sizeof(indices_u16);
+  ib.storage.resize(sizeof(indices_u16));
+  std::memcpy(ib.storage.data(), indices_u16, sizeof(indices_u16));
+
+  dev.streams[0] = {&vb0, 0, sizeof(Vec4)};
+  dev.streams[1] = {&vb1, 0, sizeof(InstanceData)};
+  dev.index_buffer = &ib;
+  dev.index_format = static_cast<D3DDDIFORMAT>(101); // D3DFMT_INDEX16
+  dev.index_offset_bytes = 0;
+
+  dev.stream_source_freq[0] = kD3DStreamSourceIndexedData | 2u;
+  dev.stream_source_freq[1] = kD3DStreamSourceInstanceData | 1u;
+
+  const HRESULT hr = aerogpu::device_draw_indexed_primitive(
+      hDevice,
+      D3DDDIPT_TRIANGLEFAN,
+      /*base_vertex=*/0,
+      /*min_index=*/0,
+      /*num_vertices=*/4,
+      /*start_index=*/0,
+      /*primitive_count=*/2);
+  assert(hr == S_OK);
+
+  // Fan instancing reuses the app index buffer by adjusting stream offsets; no
+  // expanded index upload is required.
+  assert(dev.up_index_buffer == nullptr);
+  assert(dev.instancing_vertex_buffers[0] == nullptr);
+
+  dev.cmd.finalize();
+  const uint8_t* buf = dev.cmd.data();
+  const size_t len = dev.cmd.size();
+
+  const auto draws = FindAllCmds<aerogpu_cmd_draw_indexed>(buf, len, AEROGPU_CMD_DRAW_INDEXED);
+  assert(draws.size() == 2);
+  assert(draws[0]->base_vertex == 0);
+  assert(draws[1]->base_vertex == 0);
+}
+
 } // namespace
 
 int main() {
@@ -1480,9 +1737,12 @@ int main() {
   TestNonIndexedTriangleStripDrawsPerInstance();
   TestNonIndexedTriangleStripInstancedDivisorSkipsUploads();
   TestNonIndexedTriangleStripStartVertexRebindsOffset();
+  TestNonIndexedLineStripDrawsPerInstance();
+  TestNonIndexedTriangleFanDrawsPerInstance();
   TestNonIndexedTriangleListUpInstancingRestoresStream0();
   TestPrimitiveUpInstancingWithoutUserVsDoesNotEmitShaderBinds();
   TestIndexedTriangleStripUsesBaseVertexNoIndexExpansion();
+  TestIndexedTriangleFanUsesBaseVertexNoIndexExpansion();
   TestIndexedTriangleStripNegativeBaseVertex();
   TestIndexedTriangleListUpInstancingRestoresStream0AndIb();
   TestIndexedTriangleListUpLargeInstanceCountDoesNotReallocateUpIndexBuffer();
