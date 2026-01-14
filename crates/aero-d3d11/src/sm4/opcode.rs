@@ -454,6 +454,7 @@ pub fn opcode_name(opcode: u32) -> Option<&'static str> {
         OPCODE_IF => Some("if"),
         OPCODE_ELSE => Some("else"),
         OPCODE_ENDIF => Some("endif"),
+        OPCODE_SETP => Some("setp"),
         OPCODE_RET => Some("ret"),
         OPCODE_EMITTHENCUT => Some("emitthen_cut"),
         OPCODE_EMITTHENCUT_STREAM => Some("emitthen_cut_stream"),
@@ -547,6 +548,11 @@ mod tests {
         assert_eq!(opcode_name(OPCODE_UTOF), Some("utof"));
         assert_eq!(opcode_name(OPCODE_FTOI), Some("ftoi"));
         assert_eq!(opcode_name(OPCODE_FTOU), Some("ftou"));
+    }
+
+    #[test]
+    fn opcode_name_includes_predicate_ops() {
+        assert_eq!(opcode_name(OPCODE_SETP), Some("setp"));
     }
 
     #[test]
