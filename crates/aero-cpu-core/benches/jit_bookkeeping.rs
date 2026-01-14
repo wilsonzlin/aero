@@ -3,6 +3,7 @@
 // Focus: regress-test the costs of:
 // - `CodeCache` lookups + O(1) LRU maintenance
 // - `HotnessProfile::record_hit` counter updates + hot-threshold trigger
+// - `PageVersionTracker` snapshotting (small, 1–4 page spans)
 //
 // These benches intentionally keep per-iteration allocations to a minimum by:
 // - pre-generating RIP sequences / working sets
@@ -22,6 +23,8 @@ use std::time::Duration;
 use aero_cpu_core::jit::cache::{CodeCache, CompiledBlockHandle, CompiledBlockMeta};
 #[cfg(not(target_arch = "wasm32"))]
 use aero_cpu_core::jit::profile::HotnessProfile;
+#[cfg(not(target_arch = "wasm32"))]
+use aero_cpu_core::jit::runtime::{PageVersionTracker, PAGE_SIZE};
 #[cfg(not(target_arch = "wasm32"))]
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 
@@ -71,7 +74,7 @@ fn bench_code_cache(c: &mut Criterion) {
 
     for &size in SIZES {
         group.bench_with_input(
-            BenchmarkId::new("get_cloned_hit", size),
+            BenchmarkId::new("codecache_get_hit", size),
             &size,
             |b, &size| {
                 let mut cache = CodeCache::new(size, 0);
@@ -79,7 +82,9 @@ fn bench_code_cache(c: &mut Criterion) {
                     cache.insert(dummy_handle(i as u64, i as u32, 16));
                 }
 
-                let rips: Vec<u64> = (0..size as u64).collect();
+                // Keep the working set "hot" by repeatedly touching a small subset of keys.
+                let working_set = size.min(32);
+                let rips: Vec<u64> = (0..working_set as u64).collect();
                 let mut pos = 0usize;
 
                 b.iter(|| {
@@ -152,31 +157,35 @@ fn bench_code_cache(c: &mut Criterion) {
         );
 
         // Insert distinct keys into a full cache so every insert triggers an eviction.
-        group.bench_with_input(BenchmarkId::new("insert_evict", size), &size, |b, &size| {
-            let mut cache = CodeCache::new(size, 0);
-            for i in 0..size {
-                cache.insert(dummy_handle(i as u64, i as u32, 16));
-            }
-
-            let insert_rips: Vec<u64> = (size as u64..(size as u64 * 3)).collect();
-            let mut pos = 0usize;
-            let mut gen = 0u32;
-
-            b.iter(|| {
-                let mut checksum = 0u64;
-                for _ in 0..OPS_PER_ITER {
-                    let rip = insert_rips[pos];
-                    pos = (pos + 1) % insert_rips.len();
-
-                    gen = gen.wrapping_add(1);
-                    let handle = dummy_handle(rip, gen, 16);
-                    let evicted = cache.insert(black_box(handle));
-                    checksum ^= evicted.first().copied().unwrap_or(0);
+        group.bench_with_input(
+            BenchmarkId::new("codecache_insert_evict", size),
+            &size,
+            |b, &size| {
+                let mut cache = CodeCache::new(size, 0);
+                for i in 0..size {
+                    cache.insert(dummy_handle(i as u64, i as u32, 16));
                 }
-                checksum ^= cache.len() as u64;
-                black_box(checksum);
-            });
-        });
+
+                let insert_rips: Vec<u64> = (size as u64..(size as u64 * 3)).collect();
+                let mut pos = 0usize;
+                let mut gen = 0u32;
+
+                b.iter(|| {
+                    let mut checksum = 0u64;
+                    for _ in 0..OPS_PER_ITER {
+                        let rip = insert_rips[pos];
+                        pos = (pos + 1) % insert_rips.len();
+
+                        gen = gen.wrapping_add(1);
+                        let handle = dummy_handle(rip, gen, 16);
+                        let evicted = cache.insert(black_box(handle));
+                        checksum ^= evicted.first().copied().unwrap_or(0);
+                    }
+                    checksum ^= cache.len() as u64;
+                    black_box(checksum);
+                });
+            },
+        );
     }
 
     group.finish();
@@ -188,6 +197,44 @@ fn bench_hotness_profile(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("jit/hotness_profile");
     group.throughput(Throughput::Elements(OPS_PER_ITER as u64));
+
+    // Mixed hot/cold stream that exceeds the bounded table capacity and forces steady-state
+    // eviction. This exercises the "pressure" path introduced by HotnessProfile refactors.
+    group.bench_function("hotness_record_hit", |b| {
+        // Keep this small to make the bench CI-friendly while still exercising eviction.
+        let capacity = 256usize;
+        let threshold = 32u32;
+
+        // A small hot working set + a larger cold stream that exceeds capacity.
+        let hot_rips: Vec<u64> = (0..8u64).map(|i| 0x1000 + i * 16).collect();
+        let cold_rips: Vec<u64> = (0..(OPS_PER_ITER / 2) as u64)
+            .map(|i| 0x10_000 + i * 16)
+            .collect();
+
+        // Deterministic access pattern: alternate cold/hot so cold keys are always evicted before
+        // reuse, while hot keys build high counters and remain resident.
+        let mut rips = Vec::with_capacity(OPS_PER_ITER);
+        for i in 0..OPS_PER_ITER {
+            if i % 2 == 0 {
+                rips.push(cold_rips[i / 2]);
+            } else {
+                rips.push(hot_rips[i % hot_rips.len()]);
+            }
+        }
+
+        let mut profile = HotnessProfile::new_with_capacity(threshold, capacity);
+        // Pre-fill once so the measured loop reflects steady-state under pressure.
+        for &rip in &rips {
+            black_box(profile.record_hit(rip, false));
+        }
+
+        b.iter(|| {
+            for &rip in &rips {
+                black_box(profile.record_hit(black_box(rip), false));
+            }
+            black_box(profile.len());
+        });
+    });
 
     // Hot hit: we already have a compiled block, so we only do a counter increment.
     group.bench_function("record_hit_has_compiled", |b| {
@@ -255,10 +302,54 @@ fn bench_hotness_profile(c: &mut Criterion) {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+fn bench_page_versions(c: &mut Criterion) {
+    const OPS_PER_ITER: usize = 1024;
+    const PAGE_COUNTS: &[u32] = &[1, 2, 4];
+
+    let mut group = c.benchmark_group("jit/page_versions");
+
+    for &pages in PAGE_COUNTS {
+        let byte_len = pages * (PAGE_SIZE as u32);
+        group.throughput(Throughput::Bytes(u64::from(byte_len) * OPS_PER_ITER as u64));
+
+        group.bench_with_input(
+            BenchmarkId::new("page_versions_snapshot_small", pages),
+            &pages,
+            |b, &pages| {
+                let start_page = 128u64;
+                let code_paddr = start_page * PAGE_SIZE;
+                let byte_len = pages * (PAGE_SIZE as u32);
+
+                // Keep the backing table small but non-trivial; ensure the requested pages are in
+                // range so the snapshot reads actual table entries (not the out-of-range fast path).
+                let tracker = PageVersionTracker::new(1024);
+                for i in 0..u64::from(pages) {
+                    tracker.set_version(start_page + i, (i as u32).wrapping_add(1));
+                }
+
+                b.iter(|| {
+                    let mut checksum = 0u64;
+                    for _ in 0..OPS_PER_ITER {
+                        let snap = tracker.snapshot(black_box(code_paddr), black_box(byte_len));
+                        for entry in &snap {
+                            checksum ^= entry.page ^ u64::from(entry.version);
+                        }
+                        black_box(snap);
+                    }
+                    black_box(checksum);
+                });
+            },
+        );
+    }
+
+    group.finish();
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 criterion_group! {
     name = benches;
     config = criterion_config();
-    targets = bench_code_cache, bench_hotness_profile
+    targets = bench_code_cache, bench_hotness_profile, bench_page_versions
 }
 
 #[cfg(not(target_arch = "wasm32"))]
