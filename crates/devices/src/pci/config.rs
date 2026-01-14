@@ -147,6 +147,7 @@ pub struct PciConfigSpaceState {
 impl PciConfigSpace {
     pub const INTERRUPT_LINE_OFFSET: u16 = 0x3C;
     pub const INTERRUPT_PIN_OFFSET: u16 = 0x3D;
+    pub const HEADER_TYPE_OFFSET: u16 = 0x0E;
 
     pub fn new(vendor_id: u16, device_id: u16) -> Self {
         let mut bytes = [0u8; PCI_CONFIG_SPACE_SIZE];
@@ -195,6 +196,16 @@ impl PciConfigSpace {
     pub fn set_subsystem_ids(&mut self, ids: PciSubsystemIds) {
         self.bytes[0x2c..0x2e].copy_from_slice(&ids.subsystem_vendor_id.to_le_bytes());
         self.bytes[0x2e..0x30].copy_from_slice(&ids.subsystem_id.to_le_bytes());
+    }
+
+    pub fn header_type(&self) -> u8 {
+        self.bytes[usize::from(Self::HEADER_TYPE_OFFSET)]
+    }
+
+    pub fn set_header_type(&mut self, header_type: u8) {
+        // Header Type (0x0E) is read-only from the guest's perspective. Allow device/platform code
+        // to set it directly.
+        self.bytes[usize::from(Self::HEADER_TYPE_OFFSET)] = header_type;
     }
 
     pub fn command(&self) -> u16 {
@@ -683,6 +694,14 @@ impl PciConfigSpace {
         if addr < 0x04 {
             return true;
         }
+        // Revision ID / Class Code bytes (0x08..=0x0B) are read-only.
+        if (0x08..=0x0B).contains(&addr) {
+            return true;
+        }
+        // Header Type (0x0E) is read-only.
+        if addr == usize::from(Self::HEADER_TYPE_OFFSET) {
+            return true;
+        }
         // The Status register (0x06..=0x07) is largely read-only / RW1C on real hardware. Guests
         // commonly perform 32-bit writes to the Command register at 0x04 and write zeros in the
         // upper 16 bits; those writes must not clobber device-managed status bits such as the
@@ -694,6 +713,10 @@ impl PciConfigSpace {
         // (0x3C) with zeros in the upper bytes; those writes must not clobber the device-reported
         // pin.
         if addr == usize::from(Self::INTERRUPT_PIN_OFFSET) {
+            return true;
+        }
+        // Subsystem IDs (0x2C..=0x2F) are read-only.
+        if (0x2C..0x30).contains(&addr) {
             return true;
         }
         if addr == PCI_CAP_PTR_OFFSET {
@@ -1024,6 +1047,24 @@ mod tests {
             config.read(PciConfigSpace::INTERRUPT_LINE_OFFSET, 1) as u8,
             0x0A
         );
+    }
+
+    #[test]
+    fn dword_write_to_cache_line_size_does_not_clobber_header_type() {
+        let mut config = PciConfigSpace::new(0x1234, 0x5678);
+        config.set_header_type(0x80); // multifunction bit
+
+        // Dword write at 0x0C spans:
+        // - Cache Line Size (0x0C)
+        // - Latency Timer (0x0D)
+        // - Header Type (0x0E, read-only)
+        // - BIST (0x0F)
+        config.write(0x0C, 4, 0x12_00_11_22);
+
+        assert_eq!(config.header_type(), 0x80);
+        assert_eq!(config.read(0x0C, 1) as u8, 0x22);
+        assert_eq!(config.read(0x0D, 1) as u8, 0x11);
+        assert_eq!(config.read(0x0F, 1) as u8, 0x12);
     }
 
     #[test]

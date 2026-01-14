@@ -62,7 +62,7 @@ fn pci_scan_enumerates_registered_functions() {
 
     // Multifunction device at 00:02.{0,1}
     let mut fn0 = Stub::new(0x1111, 0x0001);
-    fn0.cfg.write(0x0E, 1, 0x80); // multifunction bit
+    fn0.cfg.set_header_type(0x80); // multifunction bit
     bus.add_device(PciBdf::new(0, 2, 0), Box::new(fn0));
     let fn1 = Stub::new(0x2222, 0x0002);
     bus.add_device(PciBdf::new(0, 2, 1), Box::new(fn1));

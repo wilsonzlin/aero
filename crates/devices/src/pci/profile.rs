@@ -2,7 +2,7 @@ use super::capabilities::VendorSpecificCapability;
 use super::irq_router::{PciIntxRouter, PciIntxRouterConfig};
 use super::{
     MsiCapability, MsixCapability, PciBarDefinition, PciBdf, PciBus, PciConfigSpace, PciDevice,
-    PciInterruptPin, PciPlatform,
+    PciInterruptPin, PciPlatform, PciSubsystemIds,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -168,14 +168,17 @@ impl PciDeviceProfile {
     pub fn build_config_space(self) -> PciConfigSpace {
         let mut config = PciConfigSpace::new(self.vendor_id, self.device_id);
 
-        config.write(0x08, 1, u32::from(self.revision_id));
-        config.write(0x09, 1, u32::from(self.class.prog_if));
-        config.write(0x0a, 1, u32::from(self.class.sub_class));
-        config.write(0x0b, 1, u32::from(self.class.base_class));
-        config.write(0x0e, 1, u32::from(self.header_type));
-
-        config.write(0x2c, 2, u32::from(self.subsystem_vendor_id));
-        config.write(0x2e, 2, u32::from(self.subsystem_id));
+        config.set_class_code(
+            self.class.base_class,
+            self.class.sub_class,
+            self.class.prog_if,
+            self.revision_id,
+        );
+        config.set_header_type(self.header_type);
+        config.set_subsystem_ids(PciSubsystemIds {
+            subsystem_vendor_id: self.subsystem_vendor_id,
+            subsystem_id: self.subsystem_id,
+        });
 
         for bar in self.bars {
             match bar.kind {

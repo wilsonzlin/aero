@@ -1021,7 +1021,7 @@ impl VirtioPciDevice {
             _ => (0x00, 0x00),
         };
         cfg.set_class_code(class, subclass, 0, 0x01);
-        cfg.write(0x0e, 1, u32::from(self.device.pci_header_type()));
+        cfg.set_header_type(self.device.pci_header_type());
 
         cfg.set_subsystem_ids(PciSubsystemIds {
             subsystem_vendor_id: PCI_VENDOR_ID_VIRTIO,
