@@ -2176,13 +2176,13 @@ def _virtio_snd_skip_failure_message(tail: bytes) -> str:
     if b"virtio-snd: skipped (enable with --test-snd)" in tail:
         return (
             "FAIL: VIRTIO_SND_SKIPPED: virtio-snd test was skipped (guest not configured with --test-snd) "
-            "but --with-virtio-snd was enabled"
+            "but --with-virtio-snd/--require-virtio-snd/--enable-virtio-snd was enabled"
         )
     if b"virtio-snd: disabled by --disable-snd" in tail:
-        return "FAIL: VIRTIO_SND_SKIPPED: virtio-snd test was skipped (--disable-snd) but --with-virtio-snd was enabled"
+        return "FAIL: VIRTIO_SND_SKIPPED: virtio-snd test was skipped (--disable-snd) but --with-virtio-snd/--require-virtio-snd/--enable-virtio-snd was enabled"
     if b"virtio-snd:" in tail and b"device not detected" in tail:
-        return "FAIL: VIRTIO_SND_SKIPPED: virtio-snd test was skipped (device missing) but --with-virtio-snd was enabled"
-    return "FAIL: VIRTIO_SND_SKIPPED: virtio-snd test was skipped but --with-virtio-snd was enabled"
+        return "FAIL: VIRTIO_SND_SKIPPED: virtio-snd test was skipped (device missing) but --with-virtio-snd/--require-virtio-snd/--enable-virtio-snd was enabled"
+    return "FAIL: VIRTIO_SND_SKIPPED: virtio-snd test was skipped but --with-virtio-snd/--require-virtio-snd/--enable-virtio-snd was enabled"
 
 
 def _try_extract_plain_marker_token(marker_line: str, status: str) -> Optional[str]:
@@ -2432,25 +2432,25 @@ def _virtio_snd_capture_skip_failure_message(tail: bytes, *, marker_line: Option
             reason = _try_extract_plain_marker_token(marker, "SKIP") or ""
 
     if reason == "endpoint_missing":
-        return "FAIL: VIRTIO_SND_CAPTURE_SKIPPED: virtio-snd capture endpoint missing but --with-virtio-snd was enabled"
+        return "FAIL: VIRTIO_SND_CAPTURE_SKIPPED: virtio-snd capture endpoint missing but --with-virtio-snd/--require-virtio-snd/--enable-virtio-snd was enabled"
     if reason == "flag_not_set":
         return (
-            "FAIL: VIRTIO_SND_CAPTURE_SKIPPED: virtio-snd capture test was skipped (flag_not_set) but --with-virtio-snd was enabled "
+            "FAIL: VIRTIO_SND_CAPTURE_SKIPPED: virtio-snd capture test was skipped (flag_not_set) but --with-virtio-snd/--require-virtio-snd/--enable-virtio-snd was enabled "
             "(ensure the guest is configured with --test-snd-capture or AERO_VIRTIO_SELFTEST_TEST_SND_CAPTURE=1)"
         )
     if reason == "disabled":
         return (
             "FAIL: VIRTIO_SND_CAPTURE_SKIPPED: virtio-snd capture test was skipped (disabled via --disable-snd or --disable-snd-capture) "
-            "but --with-virtio-snd was enabled"
+            "but --with-virtio-snd/--require-virtio-snd/--enable-virtio-snd was enabled"
         )
     if reason == "device_missing":
-        return "FAIL: VIRTIO_SND_CAPTURE_SKIPPED: virtio-snd capture test was skipped (device missing) but --with-virtio-snd was enabled"
+        return "FAIL: VIRTIO_SND_CAPTURE_SKIPPED: virtio-snd capture test was skipped (device missing) but --with-virtio-snd/--require-virtio-snd/--enable-virtio-snd was enabled"
     if reason:
         return (
             f"FAIL: VIRTIO_SND_CAPTURE_SKIPPED: virtio-snd capture test was skipped ({reason}) "
-            "but --with-virtio-snd was enabled"
+            "but --with-virtio-snd/--require-virtio-snd/--enable-virtio-snd was enabled"
         )
-    return "FAIL: VIRTIO_SND_CAPTURE_SKIPPED: virtio-snd capture test was skipped but --with-virtio-snd was enabled"
+    return "FAIL: VIRTIO_SND_CAPTURE_SKIPPED: virtio-snd capture test was skipped but --with-virtio-snd/--require-virtio-snd/--enable-virtio-snd was enabled"
 
 
 def _virtio_snd_duplex_skip_failure_message(tail: bytes, *, marker_line: Optional[str] = None) -> str:
@@ -2476,22 +2476,22 @@ def _virtio_snd_duplex_skip_failure_message(tail: bytes, *, marker_line: Optiona
             reason = _try_extract_plain_marker_token(marker, "SKIP") or ""
 
     if reason == "endpoint_missing":
-        return "FAIL: VIRTIO_SND_DUPLEX_SKIPPED: virtio-snd duplex test was skipped (endpoint_missing) but --with-virtio-snd was enabled"
+        return "FAIL: VIRTIO_SND_DUPLEX_SKIPPED: virtio-snd duplex test was skipped (endpoint_missing) but --with-virtio-snd/--require-virtio-snd/--enable-virtio-snd was enabled"
     if reason == "flag_not_set":
         return (
-            "FAIL: VIRTIO_SND_DUPLEX_SKIPPED: virtio-snd duplex test was skipped (flag_not_set) but --with-virtio-snd was enabled "
+            "FAIL: VIRTIO_SND_DUPLEX_SKIPPED: virtio-snd duplex test was skipped (flag_not_set) but --with-virtio-snd/--require-virtio-snd/--enable-virtio-snd was enabled "
             "(ensure the guest is configured with --test-snd-capture or AERO_VIRTIO_SELFTEST_TEST_SND_CAPTURE=1)"
         )
     if reason == "disabled":
         return (
             "FAIL: VIRTIO_SND_DUPLEX_SKIPPED: virtio-snd duplex test was skipped (disabled via --disable-snd or --disable-snd-capture) "
-            "but --with-virtio-snd was enabled"
+            "but --with-virtio-snd/--require-virtio-snd/--enable-virtio-snd was enabled"
         )
     if reason == "device_missing":
-        return "FAIL: VIRTIO_SND_DUPLEX_SKIPPED: virtio-snd duplex test was skipped (device missing) but --with-virtio-snd was enabled"
+        return "FAIL: VIRTIO_SND_DUPLEX_SKIPPED: virtio-snd duplex test was skipped (device missing) but --with-virtio-snd/--require-virtio-snd/--enable-virtio-snd was enabled"
     if reason:
-        return f"FAIL: VIRTIO_SND_DUPLEX_SKIPPED: virtio-snd duplex test was skipped ({reason}) but --with-virtio-snd was enabled"
-    return "FAIL: VIRTIO_SND_DUPLEX_SKIPPED: virtio-snd duplex test was skipped but --with-virtio-snd was enabled"
+        return f"FAIL: VIRTIO_SND_DUPLEX_SKIPPED: virtio-snd duplex test was skipped ({reason}) but --with-virtio-snd/--require-virtio-snd/--enable-virtio-snd was enabled"
+    return "FAIL: VIRTIO_SND_DUPLEX_SKIPPED: virtio-snd duplex test was skipped but --with-virtio-snd/--require-virtio-snd/--enable-virtio-snd was enabled"
 
 
 def _virtio_snd_buffer_limits_skip_failure_message(tail: bytes, *, marker_line: Optional[str] = None) -> str:
@@ -7420,7 +7420,7 @@ def main() -> int:
                                 # When we explicitly attach virtio-snd, the guest test must actually run and PASS
                                 # (it must not be skipped via --disable-snd).
                                 if not saw_virtio_snd_pass:
-                                    msg = "FAIL: MISSING_VIRTIO_SND: virtio-snd test did not PASS while --with-virtio-snd was enabled"
+                                    msg = "FAIL: MISSING_VIRTIO_SND: virtio-snd test did not PASS while --with-virtio-snd/--require-virtio-snd/--enable-virtio-snd was enabled"
                                     if saw_virtio_snd_skip:
                                         msg = _virtio_snd_skip_failure_message(tail)
                                     print(msg, file=sys.stderr)
@@ -7439,7 +7439,7 @@ def main() -> int:
                                     result_code = 1
                                     break
                                 if not saw_virtio_snd_capture_pass:
-                                    msg = "FAIL: MISSING_VIRTIO_SND_CAPTURE: virtio-snd capture test did not PASS while --with-virtio-snd was enabled"
+                                    msg = "FAIL: MISSING_VIRTIO_SND_CAPTURE: virtio-snd capture test did not PASS while --with-virtio-snd/--require-virtio-snd/--enable-virtio-snd was enabled"
                                     if saw_virtio_snd_capture_skip:
                                         msg = _virtio_snd_capture_skip_failure_message(
                                             tail,
@@ -7469,7 +7469,7 @@ def main() -> int:
                                     else:
                                         msg = (
                                             "FAIL: MISSING_VIRTIO_SND_DUPLEX: selftest RESULT=PASS but did not emit virtio-snd-duplex test marker "
-                                            "while --with-virtio-snd was enabled"
+                                            "while --with-virtio-snd/--require-virtio-snd/--enable-virtio-snd was enabled"
                                         )
                                     print(msg, file=sys.stderr)
                                     _print_tail(serial_log)
@@ -7614,7 +7614,7 @@ def main() -> int:
                                 result_code = 1
                                 break
                             if not saw_virtio_snd_pass:
-                                msg = "FAIL: MISSING_VIRTIO_SND: virtio-snd test did not PASS while --with-virtio-snd was enabled"
+                                msg = "FAIL: MISSING_VIRTIO_SND: virtio-snd test did not PASS while --with-virtio-snd/--require-virtio-snd/--enable-virtio-snd was enabled"
                                 if saw_virtio_snd_skip:
                                     msg = _virtio_snd_skip_failure_message(tail)
                                 print(msg, file=sys.stderr)
@@ -7633,7 +7633,7 @@ def main() -> int:
                                 result_code = 1
                                 break
                             if not saw_virtio_snd_capture_pass:
-                                msg = "FAIL: MISSING_VIRTIO_SND_CAPTURE: virtio-snd capture test did not PASS while --with-virtio-snd was enabled"
+                                msg = "FAIL: MISSING_VIRTIO_SND_CAPTURE: virtio-snd capture test did not PASS while --with-virtio-snd/--require-virtio-snd/--enable-virtio-snd was enabled"
                                 if saw_virtio_snd_capture_skip:
                                     msg = _virtio_snd_capture_skip_failure_message(
                                         tail,
@@ -7663,7 +7663,7 @@ def main() -> int:
                                 else:
                                     msg = (
                                         "FAIL: MISSING_VIRTIO_SND_DUPLEX: selftest RESULT=PASS but did not emit virtio-snd-duplex test marker "
-                                        "while --with-virtio-snd was enabled"
+                                        "while --with-virtio-snd/--require-virtio-snd/--enable-virtio-snd was enabled"
                                     )
                                 print(msg, file=sys.stderr)
                                 _print_tail(serial_log)
@@ -9564,7 +9564,7 @@ def main() -> int:
 
                                 if args.enable_virtio_snd:
                                     if not saw_virtio_snd_pass:
-                                        msg = "FAIL: MISSING_VIRTIO_SND: virtio-snd test did not PASS while --with-virtio-snd was enabled"
+                                        msg = "FAIL: MISSING_VIRTIO_SND: virtio-snd test did not PASS while --with-virtio-snd/--require-virtio-snd/--enable-virtio-snd was enabled"
                                         if saw_virtio_snd_skip:
                                             msg = _virtio_snd_skip_failure_message(tail)
                                         print(msg, file=sys.stderr)
@@ -9584,7 +9584,7 @@ def main() -> int:
                                         break
                                     if not saw_virtio_snd_capture_pass:
                                         msg = (
-                                            "FAIL: MISSING_VIRTIO_SND_CAPTURE: virtio-snd capture test did not PASS while --with-virtio-snd was enabled"
+                                            "FAIL: MISSING_VIRTIO_SND_CAPTURE: virtio-snd capture test did not PASS while --with-virtio-snd/--require-virtio-snd/--enable-virtio-snd was enabled"
                                         )
                                         if saw_virtio_snd_capture_skip:
                                             msg = _virtio_snd_capture_skip_failure_message(
@@ -9613,10 +9613,10 @@ def main() -> int:
                                                 marker_line=virtio_snd_duplex_marker_line,
                                             )
                                         else:
-                                            msg = (
-                                                "FAIL: MISSING_VIRTIO_SND_DUPLEX: selftest RESULT=PASS but did not emit virtio-snd-duplex test marker "
-                                                "while --with-virtio-snd was enabled"
-                                            )
+                                                msg = (
+                                                    "FAIL: MISSING_VIRTIO_SND_DUPLEX: selftest RESULT=PASS but did not emit virtio-snd-duplex test marker "
+                                                    "while --with-virtio-snd/--require-virtio-snd/--enable-virtio-snd was enabled"
+                                                )
                                         print(msg, file=sys.stderr)
                                         _print_tail(serial_log)
                                         result_code = 1
@@ -9755,7 +9755,7 @@ def main() -> int:
                                     break
 
                                 if not saw_virtio_snd_pass:
-                                    msg = "FAIL: MISSING_VIRTIO_SND: virtio-snd test did not PASS while --with-virtio-snd was enabled"
+                                    msg = "FAIL: MISSING_VIRTIO_SND: virtio-snd test did not PASS while --with-virtio-snd/--require-virtio-snd/--enable-virtio-snd was enabled"
                                     if saw_virtio_snd_skip:
                                         msg = _virtio_snd_skip_failure_message(tail)
                                     print(msg, file=sys.stderr)
@@ -9774,7 +9774,7 @@ def main() -> int:
                                     result_code = 1
                                     break
                                 if not saw_virtio_snd_capture_pass:
-                                    msg = "FAIL: MISSING_VIRTIO_SND_CAPTURE: virtio-snd capture test did not PASS while --with-virtio-snd was enabled"
+                                    msg = "FAIL: MISSING_VIRTIO_SND_CAPTURE: virtio-snd capture test did not PASS while --with-virtio-snd/--require-virtio-snd/--enable-virtio-snd was enabled"
                                     if saw_virtio_snd_capture_skip:
                                         msg = _virtio_snd_capture_skip_failure_message(
                                             tail,
@@ -9804,7 +9804,7 @@ def main() -> int:
                                     else:
                                         msg = (
                                             "FAIL: MISSING_VIRTIO_SND_DUPLEX: selftest RESULT=PASS but did not emit virtio-snd-duplex test marker "
-                                            "while --with-virtio-snd was enabled"
+                                            "while --with-virtio-snd/--require-virtio-snd/--enable-virtio-snd was enabled"
                                         )
                                     print(msg, file=sys.stderr)
                                     _print_tail(serial_log)
