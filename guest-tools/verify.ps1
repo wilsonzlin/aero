@@ -1194,7 +1194,7 @@ $report = @{
     schema_version = 1
     tool = @{
          name = "Aero Guest Tools Verify"
-         version = "2.5.5"
+         version = "2.5.6"
          started_utc = $started.ToUniversalTime().ToString("o")
          ended_utc = $null
          duration_ms = $null
@@ -1684,6 +1684,7 @@ try {
                         "report.txt",
                         "dbgctl_status.txt",
                         "dbgctl_version.txt",
+                        "dbgctl_selftest.txt",
                         "install.log",
                         "installed-driver-packages.txt",
                         "installed-certs.txt",
