@@ -6,49 +6,11 @@ use aero_d3d11::FourCC;
 use aero_dxbc::test_utils as dxbc_test_utils;
 use aero_gpu::guest_memory::VecGuestMemory;
 use aero_protocol::aerogpu::aerogpu_cmd::{
-    AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode, AerogpuCmdStreamHeader, AerogpuShaderStage,
-    AEROGPU_CMD_STREAM_MAGIC,
+    AerogpuConstantBufferBinding, AerogpuShaderStage, AerogpuShaderStageEx,
 };
-use aero_protocol::aerogpu::aerogpu_pci::AEROGPU_ABI_VERSION_U32;
 use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
 
-const CMD_STREAM_SIZE_BYTES_OFFSET: usize =
-    core::mem::offset_of!(AerogpuCmdStreamHeader, size_bytes);
-const CMD_HDR_SIZE_BYTES_OFFSET: usize = core::mem::offset_of!(ProtocolCmdHdr, size_bytes);
-
-// `stage_ex` values use DXBC program-type numbering (SM4/SM5 version token).
-//
-// Note: DXBC program types 0/1 (Pixel/Vertex) are intentionally invalid in AeroGPU's stage_ex
-// encoding; those stages must be represented via the legacy `shader_stage` field.
-const STAGE_EX_HULL: u32 = 3;
-const STAGE_EX_DOMAIN: u32 = 4;
-
 const FOURCC_SHEX: FourCC = FourCC(*b"SHEX");
-
-fn align4(len: usize) -> usize {
-    (len + 3) & !3
-}
-
-fn begin_cmd(stream: &mut Vec<u8>, opcode: u32) -> usize {
-    let start = stream.len();
-    stream.extend_from_slice(&opcode.to_le_bytes());
-    stream.extend_from_slice(&0u32.to_le_bytes()); // size placeholder
-    start
-}
-
-fn end_cmd(stream: &mut [u8], start: usize) {
-    let size = (stream.len() - start) as u32;
-    stream[start + CMD_HDR_SIZE_BYTES_OFFSET..start + CMD_HDR_SIZE_BYTES_OFFSET + 4]
-        .copy_from_slice(&size.to_le_bytes());
-    assert_eq!(size % 4, 0, "command not 4-byte aligned");
-}
-
-fn finish_stream(mut stream: Vec<u8>) -> Vec<u8> {
-    let total_size = stream.len() as u32;
-    stream[CMD_STREAM_SIZE_BYTES_OFFSET..CMD_STREAM_SIZE_BYTES_OFFSET + 4]
-        .copy_from_slice(&total_size.to_le_bytes());
-    stream
-}
 
 fn build_dxbc(chunks: &[(FourCC, Vec<u8>)]) -> Vec<u8> {
     dxbc_test_utils::build_container_owned(chunks)
@@ -72,56 +34,6 @@ fn build_minimal_sm4_program_chunk(program_type: u16) -> Vec<u8> {
     bytes
 }
 
-fn push_bind_shaders_ex(
-    stream: &mut Vec<u8>,
-    vs: u32,
-    ps: u32,
-    cs: u32,
-    gs: u32,
-    hs: u32,
-    ds: u32,
-) {
-    // `aerogpu_cmd_bind_shaders` extended ABI:
-    // - Appends `{gs, hs, ds}` handles after the legacy payload.
-    //
-    // Use `AerogpuCmdWriter` here so packet sizing/padding stays correct and consistent across
-    // tests/fixtures.
-    let mut w = AerogpuCmdWriter::new();
-    w.bind_shaders_ex(vs, ps, cs, gs, hs, ds);
-    let packet_stream = w.finish();
-    stream.extend_from_slice(&packet_stream[AerogpuCmdStreamHeader::SIZE_BYTES..]);
-}
-
-fn push_set_texture(stream: &mut Vec<u8>, stage: u32, slot: u32, texture: u32, stage_ex: u32) {
-    let start = begin_cmd(stream, AerogpuCmdOpcode::SetTexture as u32);
-    stream.extend_from_slice(&stage.to_le_bytes());
-    stream.extend_from_slice(&slot.to_le_bytes());
-    stream.extend_from_slice(&texture.to_le_bytes());
-    stream.extend_from_slice(&stage_ex.to_le_bytes());
-    end_cmd(stream, start);
-}
-
-fn push_set_constant_buffer(
-    stream: &mut Vec<u8>,
-    stage: u32,
-    slot: u32,
-    buffer: u32,
-    stage_ex: u32,
-) {
-    let start = begin_cmd(stream, AerogpuCmdOpcode::SetConstantBuffers as u32);
-    stream.extend_from_slice(&stage.to_le_bytes());
-    stream.extend_from_slice(&slot.to_le_bytes()); // start_slot
-    stream.extend_from_slice(&1u32.to_le_bytes()); // buffer_count
-    stream.extend_from_slice(&stage_ex.to_le_bytes());
-
-    // struct aerogpu_constant_buffer_binding
-    stream.extend_from_slice(&buffer.to_le_bytes());
-    stream.extend_from_slice(&0u32.to_le_bytes()); // offset_bytes
-    stream.extend_from_slice(&16u32.to_le_bytes()); // size_bytes
-    stream.extend_from_slice(&0u32.to_le_bytes()); // binding reserved0
-    end_cmd(stream, start);
-}
-
 #[test]
 fn aerogpu_cmd_create_and_bind_hs_ds_stage_ex() {
     pollster::block_on(async {
@@ -140,77 +52,36 @@ fn aerogpu_cmd_create_and_bind_hs_ds_stage_ex() {
         let hs_dxbc = build_dxbc(&[(FOURCC_SHEX, build_minimal_sm4_program_chunk(3))]);
         let ds_dxbc = build_dxbc(&[(FOURCC_SHEX, build_minimal_sm4_program_chunk(4))]);
 
-        let mut stream = vec![0u8; AerogpuCmdStreamHeader::SIZE_BYTES];
-        stream[0..4].copy_from_slice(&AEROGPU_CMD_STREAM_MAGIC.to_le_bytes());
-        stream[4..8].copy_from_slice(&AEROGPU_ABI_VERSION_U32.to_le_bytes());
-
-        // CREATE_SHADER_DXBC (HS).
-        {
-            let start = begin_cmd(&mut stream, AerogpuCmdOpcode::CreateShaderDxbc as u32);
-            stream.extend_from_slice(&HS_SHADER.to_le_bytes());
-            stream.extend_from_slice(&(AerogpuShaderStage::Compute as u32).to_le_bytes()); // stage
-            stream.extend_from_slice(&(hs_dxbc.len() as u32).to_le_bytes());
-            stream.extend_from_slice(&STAGE_EX_HULL.to_le_bytes()); // reserved0 = stage_ex
-            stream.extend_from_slice(&hs_dxbc);
-            stream.resize(align4(stream.len()), 0);
-            end_cmd(&mut stream, start);
-        }
-
-        // CREATE_SHADER_DXBC (DS).
-        {
-            let start = begin_cmd(&mut stream, AerogpuCmdOpcode::CreateShaderDxbc as u32);
-            stream.extend_from_slice(&DS_SHADER.to_le_bytes());
-            stream.extend_from_slice(&(AerogpuShaderStage::Compute as u32).to_le_bytes()); // stage
-            stream.extend_from_slice(&(ds_dxbc.len() as u32).to_le_bytes());
-            stream.extend_from_slice(&STAGE_EX_DOMAIN.to_le_bytes()); // reserved0 = stage_ex
-            stream.extend_from_slice(&ds_dxbc);
-            stream.resize(align4(stream.len()), 0);
-            end_cmd(&mut stream, start);
-        }
+        let mut w = AerogpuCmdWriter::new();
+        w.create_shader_dxbc_ex(HS_SHADER, AerogpuShaderStageEx::Hull, &hs_dxbc);
+        w.create_shader_dxbc_ex(DS_SHADER, AerogpuShaderStageEx::Domain, &ds_dxbc);
 
         // Bind HS/DS via the extended BIND_SHADERS payload (`{gs, hs, ds}`).
-        push_bind_shaders_ex(&mut stream, 0, 0, CS_SHADER, 0, HS_SHADER, DS_SHADER);
+        w.bind_shaders_ex(/*vs=*/ 0, /*ps=*/ 0, /*cs=*/ CS_SHADER, /*gs=*/ 0, /*hs=*/ HS_SHADER, /*ds=*/ DS_SHADER);
+
+        let cb = |buffer: u32| AerogpuConstantBufferBinding {
+            buffer,
+            offset_bytes: 0,
+            size_bytes: 16,
+            reserved0: 0,
+        };
 
         // Set baseline CS bindings.
-        push_set_constant_buffer(&mut stream, AerogpuShaderStage::Compute as u32, 1, 101, 0);
-        push_set_texture(&mut stream, AerogpuShaderStage::Compute as u32, 0, 201, 0);
+        w.set_constant_buffers(AerogpuShaderStage::Compute, 1, &[cb(101)]);
+        w.set_texture(AerogpuShaderStage::Compute, 0, 201);
 
         // HS/DS binding updates must not overwrite CS stage state.
-        push_set_constant_buffer(
-            &mut stream,
-            AerogpuShaderStage::Compute as u32,
-            1,
-            102,
-            STAGE_EX_HULL,
-        );
-        push_set_texture(
-            &mut stream,
-            AerogpuShaderStage::Compute as u32,
-            0,
-            202,
-            STAGE_EX_HULL,
-        );
+        w.set_constant_buffers_ex(AerogpuShaderStageEx::Hull, 1, &[cb(102)]);
+        w.set_texture_ex(AerogpuShaderStageEx::Hull, 0, 202);
 
-        push_set_constant_buffer(
-            &mut stream,
-            AerogpuShaderStage::Compute as u32,
-            1,
-            103,
-            STAGE_EX_DOMAIN,
-        );
-        push_set_texture(
-            &mut stream,
-            AerogpuShaderStage::Compute as u32,
-            0,
-            203,
-            STAGE_EX_DOMAIN,
-        );
+        w.set_constant_buffers_ex(AerogpuShaderStageEx::Domain, 1, &[cb(103)]);
+        w.set_texture_ex(AerogpuShaderStageEx::Domain, 0, 203);
 
         // Second CS update ensures CS remains distinct even after HS/DS stage_ex updates.
-        push_set_constant_buffer(&mut stream, AerogpuShaderStage::Compute as u32, 1, 104, 0);
-        push_set_texture(&mut stream, AerogpuShaderStage::Compute as u32, 0, 204, 0);
+        w.set_constant_buffers(AerogpuShaderStage::Compute, 1, &[cb(104)]);
+        w.set_texture(AerogpuShaderStage::Compute, 0, 204);
 
-        let stream = finish_stream(stream);
+        let stream = w.finish();
 
         let mut guest_mem = VecGuestMemory::new(0);
         exec.execute_cmd_stream(&stream, None, &mut guest_mem)
@@ -263,10 +134,7 @@ fn aerogpu_cmd_create_and_bind_hs_ds_stage_ex() {
             Some(BoundTexture { texture: 204 })
         );
 
-        assert_eq!(
-            bindings.stage(ShaderStage::Hull).constant_buffer(1),
-            expect_cb(102)
-        );
+        assert_eq!(bindings.stage(ShaderStage::Hull).constant_buffer(1), expect_cb(102));
         assert_eq!(
             bindings.stage(ShaderStage::Hull).texture(0),
             Some(BoundTexture { texture: 202 })
@@ -282,3 +150,4 @@ fn aerogpu_cmd_create_and_bind_hs_ds_stage_ex() {
         );
     });
 }
+
