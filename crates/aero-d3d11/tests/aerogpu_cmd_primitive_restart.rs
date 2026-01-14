@@ -47,7 +47,13 @@ struct Vertex {
     color: [f32; 4],
 }
 
-fn build_stream(vb_bytes: &[u8], ib_bytes: &[u8], index_format: u32, index_count: u32) -> Vec<u8> {
+fn build_stream(
+    vb_bytes: &[u8],
+    ib_bytes: &[u8],
+    topology: AerogpuPrimitiveTopology,
+    index_format: u32,
+    index_count: u32,
+) -> Vec<u8> {
     const VB: u32 = 1;
     const IB: u32 = 2;
     const RT: u32 = 3;
@@ -173,7 +179,7 @@ fn build_stream(vb_bytes: &[u8], ib_bytes: &[u8], index_format: u32, index_count
 
     // SET_PRIMITIVE_TOPOLOGY
     let start = begin_cmd(&mut stream, AerogpuCmdOpcode::SetPrimitiveTopology as u32);
-    stream.extend_from_slice(&(AerogpuPrimitiveTopology::TriangleStrip as u32).to_le_bytes());
+    stream.extend_from_slice(&(topology as u32).to_le_bytes());
     stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
     end_cmd(&mut stream, start);
 
@@ -270,6 +276,27 @@ fn assert_restart_gap(pixels: &[u8], width: u32, height: u32) {
     }
 }
 
+fn assert_restart_gap_line_strip(pixels: &[u8], width: u32, height: u32) {
+    assert_eq!(pixels.len(), width as usize * height as usize * 4);
+    let w = width as usize;
+    let px = |x: usize, y: usize| -> &[u8] {
+        let idx = (y * w + x) * 4;
+        &pixels[idx..idx + 4]
+    };
+
+    // Unlike triangle strips, line rasterization can be sensitive to endpoint inclusion rules.
+    // Sample along the interior of each vertical line segment to ensure stable coverage.
+    let left_x = 8usize;
+    let mid_x = 32usize;
+    let right_x = 60usize;
+    let top_y = 16usize;
+    let mid_y = 32usize;
+
+    assert_eq!(px(left_x, mid_y), &[255, 255, 255, 255]);
+    assert_eq!(px(right_x, mid_y), &[255, 255, 255, 255]);
+    assert_eq!(px(mid_x, top_y), &[0, 0, 0, 255]);
+}
+
 #[test]
 fn aerogpu_cmd_enables_primitive_restart_for_triangle_strip() {
     pollster::block_on(async {
@@ -319,7 +346,13 @@ fn aerogpu_cmd_enables_primitive_restart_for_triangle_strip() {
         // Triangle strip indices with a primitive-restart cut between the triangles.
         let indices: [u32; 7] = [0, 1, 2, 0xFFFF_FFFF, 3, 4, 5];
         let ib_bytes = bytemuck::bytes_of(&indices);
-        let stream = build_stream(vb_bytes, ib_bytes, 1, indices.len() as u32);
+        let stream = build_stream(
+            vb_bytes,
+            ib_bytes,
+            AerogpuPrimitiveTopology::TriangleStrip,
+            1,
+            indices.len() as u32,
+        );
 
         let mut guest_mem = VecGuestMemory::new(0);
         exec.execute_cmd_stream(&stream, None, &mut guest_mem)
@@ -390,7 +423,13 @@ fn aerogpu_cmd_enables_primitive_restart_for_triangle_strip_u16() {
         let indices: [u16; 7] = [0, 1, 2, 0xFFFF, 3, 4, 5];
         let ib_bytes = bytemuck::bytes_of(&indices);
 
-        let stream = build_stream(vb_bytes, ib_bytes, 0, indices.len() as u32);
+        let stream = build_stream(
+            vb_bytes,
+            ib_bytes,
+            AerogpuPrimitiveTopology::TriangleStrip,
+            0,
+            indices.len() as u32,
+        );
 
         let mut guest_mem = VecGuestMemory::new(0);
         exec.execute_cmd_stream(&stream, None, &mut guest_mem)
@@ -399,5 +438,80 @@ fn aerogpu_cmd_enables_primitive_restart_for_triangle_strip_u16() {
 
         let pixels = exec.read_texture_rgba8(RT).await.unwrap();
         assert_restart_gap(&pixels, WIDTH, HEIGHT);
+    });
+}
+
+#[test]
+fn aerogpu_cmd_enables_primitive_restart_for_line_strip_u16() {
+    pollster::block_on(async {
+        let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+            Ok(exec) => exec,
+            Err(e) => {
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                return;
+            }
+        };
+
+        const WIDTH: u32 = 64;
+        const HEIGHT: u32 = 64;
+        const RT: u32 = 3;
+
+        // Use the same sampling coordinates as `assert_restart_gap_line_strip`.
+        let x_left = -47.0 / 64.0;
+        let x_mid = 1.0 / 64.0;
+        let x_right = 57.0 / 64.0;
+        let y_top = 31.0 / 64.0;
+
+        // Make the u16 restart index (0xFFFF) be in-bounds. If primitive restart is disabled, the
+        // sentinel becomes a real vertex reference (index 65535) and the strip will connect across
+        // the gap through that vertex.
+        let mut vertices = vec![
+            Vertex {
+                pos: [0.0, 0.0, 0.0],
+                color: [0.0, 0.0, 0.0, 0.0],
+            };
+            65536
+        ];
+        let white = [1.0, 1.0, 1.0, 1.0];
+        vertices[0] = Vertex {
+            pos: [x_left, -1.0, 0.0],
+            color: white,
+        };
+        vertices[1] = Vertex {
+            pos: [x_left, y_top, 0.0],
+            color: white,
+        };
+        vertices[2] = Vertex {
+            pos: [x_right, y_top, 0.0],
+            color: white,
+        };
+        vertices[3] = Vertex {
+            pos: [x_right, -1.0, 0.0],
+            color: white,
+        };
+        vertices[65535] = Vertex {
+            pos: [x_mid, y_top, 0.0],
+            color: white,
+        };
+        let vb_bytes = bytemuck::cast_slice(vertices.as_slice());
+
+        let indices: [u16; 5] = [0, 1, 0xFFFF, 2, 3];
+        let ib_bytes = bytemuck::bytes_of(&indices);
+
+        let stream = build_stream(
+            vb_bytes,
+            ib_bytes,
+            AerogpuPrimitiveTopology::LineStrip,
+            0,
+            indices.len() as u32,
+        );
+
+        let mut guest_mem = VecGuestMemory::new(0);
+        exec.execute_cmd_stream(&stream, None, &mut guest_mem)
+            .expect("execute_cmd_stream should succeed");
+        exec.poll_wait();
+
+        let pixels = exec.read_texture_rgba8(RT).await.unwrap();
+        assert_restart_gap_line_strip(&pixels, WIDTH, HEIGHT);
     });
 }
