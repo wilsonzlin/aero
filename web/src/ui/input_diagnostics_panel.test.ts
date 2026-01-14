@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { mountInputDiagnosticsPanel, type InputDiagnosticsSnapshot } from "./input_diagnostics_panel";
+import { mountInputDiagnosticsPanel, readInputDiagnosticsSnapshotFromStatus } from "./input_diagnostics_panel";
+import { encodeInputBackendStatus } from "../input/input_backend_status";
+import { STATUS_BYTES, StatusIndex } from "../runtime/shared_layout";
 
 const originalDocumentDescriptor = Object.getOwnPropertyDescriptor(globalThis, "document");
 
@@ -68,23 +70,23 @@ describe("mountInputDiagnosticsPanel", () => {
     const host = document.createElement("div") as unknown as HTMLElement;
     const panel = mountInputDiagnosticsPanel(host);
 
-    const snap1: InputDiagnosticsSnapshot = {
-      keyboardBackend: "ps2",
-      mouseBackend: "usb",
-      virtioKeyboardDriverOk: false,
-      virtioMouseDriverOk: true,
-      syntheticUsbKeyboardConfigured: true,
-      syntheticUsbMouseConfigured: false,
-      mouseButtonsMask: 0x1f,
-      pressedKeyboardHidUsageCount: 2,
-      batchesReceived: 10,
-      batchesProcessed: 9,
-      batchesDropped: 1,
-      eventsProcessed: 123,
-      keyboardBackendSwitches: 4,
-      mouseBackendSwitches: 5,
-    };
-    panel.setSnapshot(snap1);
+    const status = new Int32Array(new SharedArrayBuffer(STATUS_BYTES));
+    Atomics.store(status, StatusIndex.IoInputKeyboardBackend, encodeInputBackendStatus("ps2"));
+    Atomics.store(status, StatusIndex.IoInputMouseBackend, encodeInputBackendStatus("usb"));
+    Atomics.store(status, StatusIndex.IoInputVirtioKeyboardDriverOk, 0);
+    Atomics.store(status, StatusIndex.IoInputVirtioMouseDriverOk, 1);
+    Atomics.store(status, StatusIndex.IoInputUsbKeyboardOk, 1);
+    Atomics.store(status, StatusIndex.IoInputUsbMouseOk, 0);
+    Atomics.store(status, StatusIndex.IoInputMouseButtonsHeldMask, 0x1f);
+    Atomics.store(status, StatusIndex.IoInputKeyboardHeldCount, 2);
+    Atomics.store(status, StatusIndex.IoInputBatchReceivedCounter, 10);
+    Atomics.store(status, StatusIndex.IoInputBatchCounter, 9);
+    Atomics.store(status, StatusIndex.IoInputBatchDropCounter, 1);
+    Atomics.store(status, StatusIndex.IoInputEventCounter, 123);
+    Atomics.store(status, StatusIndex.IoKeyboardBackendSwitchCounter, 4);
+    Atomics.store(status, StatusIndex.IoMouseBackendSwitchCounter, 5);
+
+    panel.setSnapshot(readInputDiagnosticsSnapshotFromStatus(status));
     expect((host as any).textContent).toContain("keyboard_backend=ps2");
     expect((host as any).textContent).toContain("mouse_backend=usb");
     expect((host as any).textContent).toContain("virtio_mouse.driver_ok=yes");
@@ -98,24 +100,22 @@ describe("mountInputDiagnosticsPanel", () => {
     expect((host as any).textContent).toContain("io.keyboard_backend_switches=4");
     expect((host as any).textContent).toContain("io.mouse_backend_switches=5");
 
-    const snap2: InputDiagnosticsSnapshot = {
-      ...snap1,
-      keyboardBackend: "virtio",
-      mouseBackend: "virtio",
-      virtioKeyboardDriverOk: true,
-      virtioMouseDriverOk: true,
-      syntheticUsbKeyboardConfigured: false,
-      syntheticUsbMouseConfigured: true,
-      mouseButtonsMask: 0,
-      pressedKeyboardHidUsageCount: 0,
-      batchesReceived: 42,
-      batchesProcessed: 42,
-      batchesDropped: 0,
-      eventsProcessed: 999,
-      keyboardBackendSwitches: 6,
-      mouseBackendSwitches: 7,
-    };
-    panel.setSnapshot(snap2);
+    Atomics.store(status, StatusIndex.IoInputKeyboardBackend, encodeInputBackendStatus("virtio"));
+    Atomics.store(status, StatusIndex.IoInputMouseBackend, encodeInputBackendStatus("virtio"));
+    Atomics.store(status, StatusIndex.IoInputVirtioKeyboardDriverOk, 1);
+    Atomics.store(status, StatusIndex.IoInputVirtioMouseDriverOk, 1);
+    Atomics.store(status, StatusIndex.IoInputUsbKeyboardOk, 0);
+    Atomics.store(status, StatusIndex.IoInputUsbMouseOk, 1);
+    Atomics.store(status, StatusIndex.IoInputMouseButtonsHeldMask, 0);
+    Atomics.store(status, StatusIndex.IoInputKeyboardHeldCount, 0);
+    Atomics.store(status, StatusIndex.IoInputBatchReceivedCounter, 42);
+    Atomics.store(status, StatusIndex.IoInputBatchCounter, 42);
+    Atomics.store(status, StatusIndex.IoInputBatchDropCounter, 0);
+    Atomics.store(status, StatusIndex.IoInputEventCounter, 999);
+    Atomics.store(status, StatusIndex.IoKeyboardBackendSwitchCounter, 6);
+    Atomics.store(status, StatusIndex.IoMouseBackendSwitchCounter, 7);
+
+    panel.setSnapshot(readInputDiagnosticsSnapshotFromStatus(status));
     expect((host as any).textContent).toContain("keyboard_backend=virtio");
     expect((host as any).textContent).toContain("mouse_backend=virtio");
     expect((host as any).textContent).toContain("virtio_keyboard.driver_ok=yes");

@@ -1,4 +1,6 @@
+import { decodeInputBackendStatus } from "../input/input_backend_status";
 import type { InputBackend } from "../input/input_backend_selection";
+import { StatusIndex } from "../runtime/shared_layout";
 
 export type InputDiagnosticsSnapshot = {
   keyboardBackend: InputBackend;
@@ -16,6 +18,28 @@ export type InputDiagnosticsSnapshot = {
   keyboardBackendSwitches: number;
   mouseBackendSwitches: number;
 };
+
+export function readInputDiagnosticsSnapshotFromStatus(status: Int32Array): InputDiagnosticsSnapshot {
+  const keyboardBackend =
+    decodeInputBackendStatus(Atomics.load(status, StatusIndex.IoInputKeyboardBackend)) ?? "ps2";
+  const mouseBackend = decodeInputBackendStatus(Atomics.load(status, StatusIndex.IoInputMouseBackend)) ?? "ps2";
+  return {
+    keyboardBackend,
+    mouseBackend,
+    virtioKeyboardDriverOk: Atomics.load(status, StatusIndex.IoInputVirtioKeyboardDriverOk) !== 0,
+    virtioMouseDriverOk: Atomics.load(status, StatusIndex.IoInputVirtioMouseDriverOk) !== 0,
+    syntheticUsbKeyboardConfigured: Atomics.load(status, StatusIndex.IoInputUsbKeyboardOk) !== 0,
+    syntheticUsbMouseConfigured: Atomics.load(status, StatusIndex.IoInputUsbMouseOk) !== 0,
+    mouseButtonsMask: Atomics.load(status, StatusIndex.IoInputMouseButtonsHeldMask) >>> 0,
+    pressedKeyboardHidUsageCount: Atomics.load(status, StatusIndex.IoInputKeyboardHeldCount) >>> 0,
+    batchesReceived: Atomics.load(status, StatusIndex.IoInputBatchReceivedCounter) >>> 0,
+    batchesProcessed: Atomics.load(status, StatusIndex.IoInputBatchCounter) >>> 0,
+    batchesDropped: Atomics.load(status, StatusIndex.IoInputBatchDropCounter) >>> 0,
+    eventsProcessed: Atomics.load(status, StatusIndex.IoInputEventCounter) >>> 0,
+    keyboardBackendSwitches: Atomics.load(status, StatusIndex.IoKeyboardBackendSwitchCounter) >>> 0,
+    mouseBackendSwitches: Atomics.load(status, StatusIndex.IoMouseBackendSwitchCounter) >>> 0,
+  };
+}
 
 export type InputDiagnosticsPanelApi = {
   setSnapshot: (snapshot: InputDiagnosticsSnapshot | null) => void;

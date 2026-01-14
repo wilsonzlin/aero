@@ -46,7 +46,7 @@ import { installNetTraceBackendOnAeroGlobal } from "./net/trace_backend";
 import { installIoInputTelemetryBackendOnAeroGlobal } from "./runtime/io_input_telemetry_backend";
 import { initWasm, type WasmApi, type WasmVariant } from "./runtime/wasm_loader";
 import { precompileWasm } from "./runtime/wasm_preload";
-import { IO_IPC_HID_IN_QUEUE_KIND, StatusIndex, type WorkerRole } from "./runtime/shared_layout";
+import { IO_IPC_HID_IN_QUEUE_KIND, type WorkerRole } from "./runtime/shared_layout";
 import { DiskManager } from "./storage/disk_manager";
 import type { DiskImageMetadata, MountConfig } from "./storage/metadata";
 import { OPFS_DISKS_PATH, OPFS_LEGACY_IMAGES_DIR } from "./storage/metadata";
@@ -66,7 +66,7 @@ import {
 import { SHARED_FRAMEBUFFER_HEADER_U32_LEN, SharedFramebufferHeaderIndex } from "./ipc/shared-layout";
 import { mountSettingsPanel } from "./ui/settings_panel";
 import { mountStatusPanel } from "./ui/status_panel";
-import { mountInputDiagnosticsPanel, type InputDiagnosticsSnapshot } from "./ui/input_diagnostics_panel";
+import { mountInputDiagnosticsPanel, readInputDiagnosticsSnapshotFromStatus } from "./ui/input_diagnostics_panel";
 import { installNetTraceUI } from "./net/trace_ui";
 import { renderWebUsbPanel } from "./usb/webusb_panel";
 import { renderWebUsbUhciHarnessPanel } from "./usb/webusb_uhci_harness_panel";
@@ -81,7 +81,6 @@ import {
   type UsbPassthroughDemoRunMessage,
 } from "./usb/usb_passthrough_demo_runtime";
 import { isUsbSelectedMessage, type UsbHostAction, type UsbHostCompletion } from "./usb/usb_proxy_protocol";
-import { decodeInputBackendStatus } from "./input/input_backend_status";
 
 const configManager = new AeroConfigManager({ staticConfigUrl: "/aero.config.json" });
 const configInitPromise = configManager.init();
@@ -4189,28 +4188,7 @@ function renderInputDiagnosticsPanel(): HTMLElement {
       panel.setSnapshot(null);
       return;
     }
-
-    const keyboardBackend =
-      decodeInputBackendStatus(Atomics.load(status, StatusIndex.IoInputKeyboardBackend)) ?? "ps2";
-    const mouseBackend = decodeInputBackendStatus(Atomics.load(status, StatusIndex.IoInputMouseBackend)) ?? "ps2";
-
-    const snapshot: InputDiagnosticsSnapshot = {
-      keyboardBackend,
-      mouseBackend,
-      virtioKeyboardDriverOk: Atomics.load(status, StatusIndex.IoInputVirtioKeyboardDriverOk) !== 0,
-      virtioMouseDriverOk: Atomics.load(status, StatusIndex.IoInputVirtioMouseDriverOk) !== 0,
-      syntheticUsbKeyboardConfigured: Atomics.load(status, StatusIndex.IoInputUsbKeyboardOk) !== 0,
-      syntheticUsbMouseConfigured: Atomics.load(status, StatusIndex.IoInputUsbMouseOk) !== 0,
-      mouseButtonsMask: Atomics.load(status, StatusIndex.IoInputMouseButtonsHeldMask) >>> 0,
-      pressedKeyboardHidUsageCount: Atomics.load(status, StatusIndex.IoInputKeyboardHeldCount) >>> 0,
-      batchesReceived: Atomics.load(status, StatusIndex.IoInputBatchReceivedCounter) >>> 0,
-      batchesProcessed: Atomics.load(status, StatusIndex.IoInputBatchCounter) >>> 0,
-      batchesDropped: Atomics.load(status, StatusIndex.IoInputBatchDropCounter) >>> 0,
-      eventsProcessed: Atomics.load(status, StatusIndex.IoInputEventCounter) >>> 0,
-      keyboardBackendSwitches: Atomics.load(status, StatusIndex.IoKeyboardBackendSwitchCounter) >>> 0,
-      mouseBackendSwitches: Atomics.load(status, StatusIndex.IoMouseBackendSwitchCounter) >>> 0,
-    };
-    panel.setSnapshot(snapshot);
+    panel.setSnapshot(readInputDiagnosticsSnapshotFromStatus(status));
   };
 
   tick();
