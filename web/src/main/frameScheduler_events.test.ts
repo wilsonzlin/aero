@@ -144,4 +144,58 @@ describe("main/frameScheduler (telemetry)", () => {
 
     handle.stop();
   });
+
+  it("preserves gpuStats across metrics updates", async () => {
+    const { startFrameScheduler } = await import("./frameScheduler");
+
+    const gpuWorker = makeMockWorker();
+    const sharedFrameState = new SharedArrayBuffer(8 * Int32Array.BYTES_PER_ELEMENT);
+    const sharedFramebuffer = new SharedArrayBuffer(64);
+
+    const handle = startFrameScheduler({
+      gpuWorker,
+      sharedFrameState,
+      sharedFramebuffer,
+      showDebugOverlay: true,
+    });
+
+    expect(typeof overlay.getSnapshot).toBe("function");
+
+    gpuWorker.dispatch({
+      protocol: GPU_PROTOCOL_NAME,
+      protocolVersion: GPU_PROTOCOL_VERSION,
+      type: "stats",
+      version: 1,
+      timeMs: 0,
+      backendKind: "webgpu",
+      counters: {
+        presents_attempted: 2,
+        presents_succeeded: 1,
+        recoveries_attempted: 3,
+        recoveries_succeeded: 1,
+        surface_reconfigures: 4,
+      },
+    });
+
+    const snapAfterStats = overlay.getSnapshot?.() as any;
+    expect(snapAfterStats.gpuStats?.type).toBe("stats");
+    expect(snapAfterStats.gpuStats?.backendKind).toBe("webgpu");
+    expect(snapAfterStats.gpuStats?.counters?.recoveries_attempted).toBe(3);
+
+    gpuWorker.dispatch({
+      protocol: GPU_PROTOCOL_NAME,
+      protocolVersion: GPU_PROTOCOL_VERSION,
+      type: "metrics",
+      framesReceived: 1,
+      framesPresented: 1,
+      framesDropped: 0,
+      telemetry: { hello: "world" },
+    });
+
+    const snapAfterMetrics = overlay.getSnapshot?.() as any;
+    expect(snapAfterMetrics.hello).toBe("world");
+    expect(snapAfterMetrics.gpuStats?.backendKind).toBe("webgpu");
+
+    handle.stop();
+  });
 });

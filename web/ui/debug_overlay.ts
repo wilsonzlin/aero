@@ -203,6 +203,34 @@ export class DebugOverlay {
       );
     }
 
+    const gpuStats = (s as any).gpuStats as any;
+    const backendKind = typeof gpuStats?.backendKind === "string" ? (gpuStats.backendKind as string) : null;
+    if (backendKind) {
+      lines.push(`Backend: ${backendKind}`);
+    }
+    const counters = gpuStats?.counters && typeof gpuStats.counters === "object" ? (gpuStats.counters as any) : null;
+    if (counters) {
+      const presentsAttempted = typeof counters.presents_attempted === "number" ? (counters.presents_attempted as number) : null;
+      const presentsSucceeded = typeof counters.presents_succeeded === "number" ? (counters.presents_succeeded as number) : null;
+      const recoveriesAttempted =
+        typeof counters.recoveries_attempted === "number" ? (counters.recoveries_attempted as number) : null;
+      const recoveriesSucceeded =
+        typeof counters.recoveries_succeeded === "number" ? (counters.recoveries_succeeded as number) : null;
+      const surfaceReconfigures =
+        typeof counters.surface_reconfigures === "number" ? (counters.surface_reconfigures as number) : null;
+      lines.push(
+        `Presents: ${presentsSucceeded ?? "?"}/${presentsAttempted ?? "?"}  Recoveries: ${recoveriesSucceeded ?? "?"}/${recoveriesAttempted ?? "?"}  Surface reconfigures: ${surfaceReconfigures ?? "?"}`,
+      );
+
+      const recoveriesAttemptedWddm =
+        typeof counters.recoveries_attempted_wddm === "number" ? (counters.recoveries_attempted_wddm as number) : null;
+      const recoveriesSucceededWddm =
+        typeof counters.recoveries_succeeded_wddm === "number" ? (counters.recoveries_succeeded_wddm as number) : null;
+      if (recoveriesAttemptedWddm != null || recoveriesSucceededWddm != null) {
+        lines.push(`Recoveries (WDDM): ${recoveriesSucceededWddm ?? "?"}/${recoveriesAttemptedWddm ?? "?"}`);
+      }
+    }
+
     const outputSource = typeof s.outputSource === "string" ? s.outputSource : null;
     const presentUpload = s.presentUpload && typeof s.presentUpload === "object" ? (s.presentUpload as any) : null;
     if (outputSource || presentUpload) {

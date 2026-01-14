@@ -124,6 +124,10 @@ export const startFrameScheduler = ({
       lastTelemetry && typeof lastTelemetry === "object" && Array.isArray((lastTelemetry as Record<string, unknown>).gpuEvents)
         ? ((lastTelemetry as Record<string, unknown>).gpuEvents as unknown[])
         : null;
+    const prevGpuStats =
+      lastTelemetry && typeof lastTelemetry === "object" && (lastTelemetry as Record<string, unknown>).gpuStats !== undefined
+        ? (lastTelemetry as Record<string, unknown>).gpuStats
+        : null;
 
     const baseTelemetry = msg.telemetry;
     if (baseTelemetry && typeof baseTelemetry === 'object') {
@@ -131,11 +135,17 @@ export const startFrameScheduler = ({
       if (prevGpuEvents && next.gpuEvents === undefined) {
         next.gpuEvents = prevGpuEvents;
       }
+      if (prevGpuStats !== null && next.gpuStats === undefined) {
+        next.gpuStats = prevGpuStats;
+      }
       lastTelemetry = next;
     } else {
       const next = { ...msg } as Record<string, unknown>;
       if (prevGpuEvents && next.gpuEvents === undefined) {
         next.gpuEvents = prevGpuEvents;
+      }
+      if (prevGpuStats !== null && next.gpuStats === undefined) {
+        next.gpuStats = prevGpuStats;
       }
       lastTelemetry = next;
     }
@@ -151,6 +161,15 @@ export const startFrameScheduler = ({
       metrics.framesPresented = typed.framesPresented;
       metrics.framesDropped = typed.framesDropped;
       updateTelemetry(typed);
+      return;
+    }
+
+    if (typed.type === "stats") {
+      if (lastTelemetry && typeof lastTelemetry === "object") {
+        lastTelemetry = { ...(lastTelemetry as Record<string, unknown>), gpuStats: typed };
+      } else {
+        lastTelemetry = { gpuStats: typed };
+      }
       return;
     }
 
