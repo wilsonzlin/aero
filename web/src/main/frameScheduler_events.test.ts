@@ -198,4 +198,48 @@ describe("main/frameScheduler (telemetry)", () => {
 
     handle.stop();
   });
+
+  it("forwards scanout.format_str from metrics messages into the debug overlay snapshot", async () => {
+    const { startFrameScheduler } = await import("./frameScheduler");
+
+    const gpuWorker = makeMockWorker();
+    const sharedFrameState = new SharedArrayBuffer(8 * Int32Array.BYTES_PER_ELEMENT);
+    const sharedFramebuffer = new SharedArrayBuffer(64);
+
+    const handle = startFrameScheduler({
+      gpuWorker,
+      sharedFrameState,
+      sharedFramebuffer,
+      showDebugOverlay: true,
+    });
+
+    expect(typeof overlay.getSnapshot).toBe("function");
+
+    gpuWorker.dispatch({
+      protocol: GPU_PROTOCOL_NAME,
+      protocolVersion: GPU_PROTOCOL_VERSION,
+      type: "metrics",
+      framesReceived: 1,
+      framesPresented: 1,
+      framesDropped: 0,
+      telemetry: {},
+      scanout: {
+        source: 2,
+        base_paddr: "0x0000000000001000",
+        width: 1,
+        height: 1,
+        pitchBytes: 4,
+        format: 2,
+        format_str: "B8G8R8X8Unorm (2)",
+        generation: 7,
+      },
+    });
+
+    const snap = overlay.getSnapshot?.() as any;
+    expect(snap.scanout).toBeTruthy();
+    expect(snap.scanout.format).toBe(2);
+    expect(snap.scanout.format_str).toBe("B8G8R8X8Unorm (2)");
+
+    handle.stop();
+  });
 });
