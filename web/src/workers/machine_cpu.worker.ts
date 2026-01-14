@@ -961,12 +961,18 @@ async function applyBootDisks(msg: SetBootDisksMessage): Promise<void> {
       // Prefer a copy-on-write overlay when available so machine runtime matches the legacy
       // disk worker behaviour: imported base images remain unchanged and guest writes persist in a
       // derived `*.overlay.aerospar` file.
-      const cowOpenAndSetRef = (m as unknown as { set_disk_cow_opfs_open_and_set_overlay_ref?: unknown })
-        .set_disk_cow_opfs_open_and_set_overlay_ref;
-      const cowOpen = (m as unknown as { set_disk_cow_opfs_open?: unknown }).set_disk_cow_opfs_open;
-      const cowCreateAndSetRef = (m as unknown as { set_disk_cow_opfs_create_and_set_overlay_ref?: unknown })
-        .set_disk_cow_opfs_create_and_set_overlay_ref;
-      const cowCreate = (m as unknown as { set_disk_cow_opfs_create?: unknown }).set_disk_cow_opfs_create;
+      const cowOpenAndSetRef =
+        (m as unknown as { set_disk_cow_opfs_open_and_set_overlay_ref?: unknown }).set_disk_cow_opfs_open_and_set_overlay_ref ??
+        (m as unknown as { setDiskCowOpfsOpenAndSetOverlayRef?: unknown }).setDiskCowOpfsOpenAndSetOverlayRef;
+      const cowOpen =
+        (m as unknown as { set_disk_cow_opfs_open?: unknown }).set_disk_cow_opfs_open ??
+        (m as unknown as { setDiskCowOpfsOpen?: unknown }).setDiskCowOpfsOpen;
+      const cowCreateAndSetRef =
+        (m as unknown as { set_disk_cow_opfs_create_and_set_overlay_ref?: unknown }).set_disk_cow_opfs_create_and_set_overlay_ref ??
+        (m as unknown as { setDiskCowOpfsCreateAndSetOverlayRef?: unknown }).setDiskCowOpfsCreateAndSetOverlayRef;
+      const cowCreate =
+        (m as unknown as { set_disk_cow_opfs_create?: unknown }).set_disk_cow_opfs_create ??
+        (m as unknown as { setDiskCowOpfsCreate?: unknown }).setDiskCowOpfsCreate;
 
       const canCowOpen = typeof cowOpenAndSetRef === "function" || typeof cowOpen === "function";
       const canCowCreate = typeof cowCreateAndSetRef === "function" || typeof cowCreate === "function";
@@ -991,7 +997,9 @@ async function applyBootDisks(msg: SetBootDisksMessage): Promise<void> {
           // Best-effort overlay ref: `set_disk_cow_opfs_open` may not record snapshot refs.
           if (typeof cowOpenAndSetRef !== "function") {
             try {
-              const setRef = (m as unknown as { set_ahci_port0_disk_overlay_ref?: unknown }).set_ahci_port0_disk_overlay_ref;
+              const setRef =
+                (m as unknown as { set_ahci_port0_disk_overlay_ref?: unknown }).set_ahci_port0_disk_overlay_ref ??
+                (m as unknown as { setAhciPort0DiskOverlayRef?: unknown }).setAhciPort0DiskOverlayRef;
               if (typeof setRef === "function") {
                 (setRef as (base: string, overlay: string) => void).call(m, cowPaths.basePath, cowPaths.overlayPath);
               }
@@ -1026,7 +1034,9 @@ async function applyBootDisks(msg: SetBootDisksMessage): Promise<void> {
 
           if (typeof cowCreateAndSetRef !== "function") {
             try {
-              const setRef = (m as unknown as { set_ahci_port0_disk_overlay_ref?: unknown }).set_ahci_port0_disk_overlay_ref;
+              const setRef =
+                (m as unknown as { set_ahci_port0_disk_overlay_ref?: unknown }).set_ahci_port0_disk_overlay_ref ??
+                (m as unknown as { setAhciPort0DiskOverlayRef?: unknown }).setAhciPort0DiskOverlayRef;
               if (typeof setRef === "function") {
                 (setRef as (base: string, overlay: string) => void).call(m, cowPaths.basePath, cowPaths.overlayPath);
               }
@@ -1040,9 +1050,12 @@ async function applyBootDisks(msg: SetBootDisksMessage): Promise<void> {
 
       if (!changed) {
         // Fall back to attaching the aerosparse disk directly when COW overlay helpers are unavailable.
-        const openAndSetRef = (m as unknown as { set_disk_aerospar_opfs_open_and_set_overlay_ref?: unknown })
-          .set_disk_aerospar_opfs_open_and_set_overlay_ref;
-        const open = (m as unknown as { set_disk_aerospar_opfs_open?: unknown }).set_disk_aerospar_opfs_open;
+        const openAndSetRef =
+          (m as unknown as { set_disk_aerospar_opfs_open_and_set_overlay_ref?: unknown }).set_disk_aerospar_opfs_open_and_set_overlay_ref ??
+          (m as unknown as { setDiskAerosparOpfsOpenAndSetOverlayRef?: unknown }).setDiskAerosparOpfsOpenAndSetOverlayRef;
+        const open =
+          (m as unknown as { set_disk_aerospar_opfs_open?: unknown }).set_disk_aerospar_opfs_open ??
+          (m as unknown as { setDiskAerosparOpfsOpen?: unknown }).setDiskAerosparOpfsOpen;
         if (typeof openAndSetRef === "function") {
           try {
             await maybeAwait((openAndSetRef as (path: string) => unknown).call(m, plan.opfsPath));
@@ -1059,7 +1072,9 @@ async function applyBootDisks(msg: SetBootDisksMessage): Promise<void> {
           }
           // Best-effort overlay ref: ensure snapshots record a stable base_image for disk_id=0.
           try {
-            const setRef = (m as unknown as { set_ahci_port0_disk_overlay_ref?: unknown }).set_ahci_port0_disk_overlay_ref;
+            const setRef =
+              (m as unknown as { set_ahci_port0_disk_overlay_ref?: unknown }).set_ahci_port0_disk_overlay_ref ??
+              (m as unknown as { setAhciPort0DiskOverlayRef?: unknown }).setAhciPort0DiskOverlayRef;
             if (typeof setRef === "function") {
               (setRef as (base: string, overlay: string) => void).call(m, plan.opfsPath, "");
             }
@@ -1069,9 +1084,12 @@ async function applyBootDisks(msg: SetBootDisksMessage): Promise<void> {
         } else {
           // Newer WASM builds can open aerosparse disks via the generic OPFS existing open path when
           // provided an explicit base format.
-          const existingAndSetRef = (m as unknown as { set_disk_opfs_existing_and_set_overlay_ref?: unknown })
-            .set_disk_opfs_existing_and_set_overlay_ref;
-          const existing = (m as unknown as { set_disk_opfs_existing?: unknown }).set_disk_opfs_existing;
+          const existingAndSetRef =
+            (m as unknown as { set_disk_opfs_existing_and_set_overlay_ref?: unknown }).set_disk_opfs_existing_and_set_overlay_ref ??
+            (m as unknown as { setDiskOpfsExistingAndSetOverlayRef?: unknown }).setDiskOpfsExistingAndSetOverlayRef;
+          const existing =
+            (m as unknown as { set_disk_opfs_existing?: unknown }).set_disk_opfs_existing ??
+            (m as unknown as { setDiskOpfsExisting?: unknown }).setDiskOpfsExisting;
           const openViaFormat =
             typeof existingAndSetRef === "function" && existingAndSetRef.length >= 2
               ? existingAndSetRef
@@ -1094,7 +1112,9 @@ async function applyBootDisks(msg: SetBootDisksMessage): Promise<void> {
           if (openViaFormat !== existingAndSetRef) {
             // Best-effort overlay ref: ensure snapshots record a stable base_image for disk_id=0.
             try {
-              const setRef = (m as unknown as { set_ahci_port0_disk_overlay_ref?: unknown }).set_ahci_port0_disk_overlay_ref;
+              const setRef =
+                (m as unknown as { set_ahci_port0_disk_overlay_ref?: unknown }).set_ahci_port0_disk_overlay_ref ??
+                (m as unknown as { setAhciPort0DiskOverlayRef?: unknown }).setAhciPort0DiskOverlayRef;
               if (typeof setRef === "function") {
                 (setRef as (base: string, overlay: string) => void).call(m, plan.opfsPath, "");
               }
@@ -1114,7 +1134,9 @@ async function applyBootDisks(msg: SetBootDisksMessage): Promise<void> {
         );
       }
 
-      const setPrimary = (m as unknown as { set_primary_hdd_opfs_cow?: unknown }).set_primary_hdd_opfs_cow;
+      const setPrimary =
+        (m as unknown as { set_primary_hdd_opfs_cow?: unknown }).set_primary_hdd_opfs_cow ??
+        (m as unknown as { setPrimaryHddOpfsCow?: unknown }).setPrimaryHddOpfsCow;
       if (typeof setPrimary !== "function") {
         throw new Error("Machine.set_primary_hdd_opfs_cow is unavailable in this WASM build.");
       }
@@ -1147,12 +1169,16 @@ async function applyBootDisks(msg: SetBootDisksMessage): Promise<void> {
     // Best-effort: clear HDD overlay refs when the slot is cleared so future snapshots do not
     // persist stale disk paths.
     try {
-      const clearRef = (m as unknown as { clear_ahci_port0_disk_overlay_ref?: unknown }).clear_ahci_port0_disk_overlay_ref;
+      const clearRef =
+        (m as unknown as { clear_ahci_port0_disk_overlay_ref?: unknown }).clear_ahci_port0_disk_overlay_ref ??
+        (m as unknown as { clearAhciPort0DiskOverlayRef?: unknown }).clearAhciPort0DiskOverlayRef;
       if (typeof clearRef === "function") {
         (clearRef as () => void).call(m);
         changed = true;
       } else {
-        const setRef = (m as unknown as { set_ahci_port0_disk_overlay_ref?: unknown }).set_ahci_port0_disk_overlay_ref;
+        const setRef =
+          (m as unknown as { set_ahci_port0_disk_overlay_ref?: unknown }).set_ahci_port0_disk_overlay_ref ??
+          (m as unknown as { setAhciPort0DiskOverlayRef?: unknown }).setAhciPort0DiskOverlayRef;
         if (typeof setRef === "function") {
           (setRef as (base: string, overlay: string) => void).call(m, "", "");
           changed = true;
@@ -1165,7 +1191,9 @@ async function applyBootDisks(msg: SetBootDisksMessage): Promise<void> {
 
   if (!msg.cd) {
     // Best-effort: allow detaching install media when the selection removes it.
-    const eject = (m as unknown as { eject_install_media?: unknown }).eject_install_media;
+    const eject =
+      (m as unknown as { eject_install_media?: unknown }).eject_install_media ??
+      (m as unknown as { ejectInstallMedia?: unknown }).ejectInstallMedia;
     if (typeof eject === "function") {
       try {
         await maybeAwait((eject as () => unknown).call(m));
@@ -1179,13 +1207,15 @@ async function applyBootDisks(msg: SetBootDisksMessage): Promise<void> {
     // Best-effort: clear CD overlay refs when the slot is cleared.
     try {
       const clearRef =
-        (m as unknown as { clear_ide_secondary_master_atapi_overlay_ref?: unknown }).clear_ide_secondary_master_atapi_overlay_ref;
+        (m as unknown as { clear_ide_secondary_master_atapi_overlay_ref?: unknown }).clear_ide_secondary_master_atapi_overlay_ref ??
+        (m as unknown as { clearIdeSecondaryMasterAtapiOverlayRef?: unknown }).clearIdeSecondaryMasterAtapiOverlayRef;
       if (typeof clearRef === "function") {
         (clearRef as () => void).call(m);
         changed = true;
       } else {
         const setRef =
-          (m as unknown as { set_ide_secondary_master_atapi_overlay_ref?: unknown }).set_ide_secondary_master_atapi_overlay_ref;
+          (m as unknown as { set_ide_secondary_master_atapi_overlay_ref?: unknown }).set_ide_secondary_master_atapi_overlay_ref ??
+          (m as unknown as { setIdeSecondaryMasterAtapiOverlayRef?: unknown }).setIdeSecondaryMasterAtapiOverlayRef;
         if (typeof setRef === "function") {
           (setRef as (base: string, overlay: string) => void).call(m, "", "");
           changed = true;
@@ -1203,14 +1233,23 @@ async function applyBootDisks(msg: SetBootDisksMessage): Promise<void> {
     const attachIso =
       (m as unknown as { attach_ide_secondary_master_iso_opfs_existing_and_set_overlay_ref?: unknown })
         .attach_ide_secondary_master_iso_opfs_existing_and_set_overlay_ref ??
+      (m as unknown as { attachIdeSecondaryMasterIsoOpfsExistingAndSetOverlayRef?: unknown })
+        .attachIdeSecondaryMasterIsoOpfsExistingAndSetOverlayRef ??
       (m as unknown as { attach_ide_secondary_master_iso_opfs_existing?: unknown }).attach_ide_secondary_master_iso_opfs_existing ??
+      (m as unknown as { attachIdeSecondaryMasterIsoOpfsExisting?: unknown }).attachIdeSecondaryMasterIsoOpfsExisting ??
       // Back-compat: some wasm builds expose install-media naming with an `_existing` suffix.
       (m as unknown as { attach_install_media_iso_opfs_existing_and_set_overlay_ref?: unknown })
         .attach_install_media_iso_opfs_existing_and_set_overlay_ref ??
+      (m as unknown as { attachInstallMediaIsoOpfsExistingAndSetOverlayRef?: unknown })
+        .attachInstallMediaIsoOpfsExistingAndSetOverlayRef ??
       (m as unknown as { attach_install_media_iso_opfs_existing?: unknown }).attach_install_media_iso_opfs_existing ??
+      (m as unknown as { attachInstallMediaIsoOpfsExisting?: unknown }).attachInstallMediaIsoOpfsExisting ??
       (m as unknown as { attach_install_media_iso_opfs_and_set_overlay_ref?: unknown }).attach_install_media_iso_opfs_and_set_overlay_ref ??
+      (m as unknown as { attachInstallMediaIsoOpfsAndSetOverlayRef?: unknown }).attachInstallMediaIsoOpfsAndSetOverlayRef ??
       (m as unknown as { attach_install_media_iso_opfs?: unknown }).attach_install_media_iso_opfs ??
-      (m as unknown as { attach_install_media_opfs_iso?: unknown }).attach_install_media_opfs_iso;
+      (m as unknown as { attachInstallMediaIsoOpfs?: unknown }).attachInstallMediaIsoOpfs ??
+      (m as unknown as { attach_install_media_opfs_iso?: unknown }).attach_install_media_opfs_iso ??
+      (m as unknown as { attachInstallMediaOpfsIso?: unknown }).attachInstallMediaOpfsIso;
 
     if (typeof attachIso !== "function") {
       throw new Error("Machine install-media ISO OPFS attach export is unavailable in this WASM build.");
@@ -1225,7 +1264,9 @@ async function applyBootDisks(msg: SetBootDisksMessage): Promise<void> {
 
     // Best-effort overlay ref: some attach APIs do not set DISKS refs; try to do it here when available.
     try {
-      const setRef = (m as unknown as { set_ide_secondary_master_atapi_overlay_ref?: unknown }).set_ide_secondary_master_atapi_overlay_ref;
+      const setRef =
+        (m as unknown as { set_ide_secondary_master_atapi_overlay_ref?: unknown }).set_ide_secondary_master_atapi_overlay_ref ??
+        (m as unknown as { setIdeSecondaryMasterAtapiOverlayRef?: unknown }).setIdeSecondaryMasterAtapiOverlayRef;
       if (typeof setRef === "function") {
         (setRef as (base: string, overlay: string) => void).call(m, isoPath, "");
       }

@@ -184,6 +184,27 @@ describe("runtime/machine_disk_attach (Machine attach method selection)", () => 
     expect(set_ahci_port0_disk_overlay_ref).toHaveBeenCalledWith(plan.opfsPath, "");
   });
 
+  it("supports camelCase Machine.setDiskOpfsExisting(path, \"aerospar\") for aerosparse HDD attachment", async () => {
+    const meta = hddMetaAerospar();
+    const plan = planMachineBootDiskAttachment(meta, "hdd");
+
+    const calls: Array<[string, string | undefined]> = [];
+    async function setDiskOpfsExisting(path: string, baseFormat?: string): Promise<void> {
+      calls.push([path, baseFormat]);
+    }
+    const set_ahci_port0_disk_overlay_ref = vi.fn((_base: string, _overlay: string) => {});
+
+    const machine = {
+      setDiskOpfsExisting,
+      set_ahci_port0_disk_overlay_ref,
+    } as unknown as MachineHandle;
+
+    await attachMachineBootDisk(machine, "hdd", meta);
+
+    expect(calls).toEqual([[plan.opfsPath, "aerospar"]]);
+    expect(set_ahci_port0_disk_overlay_ref).toHaveBeenCalledWith(plan.opfsPath, "");
+  });
+
   it("falls back to set_disk_opfs_existing_and_set_overlay_ref when set_primary_hdd_opfs_existing is unavailable", async () => {
     const meta = hddMetaRaw();
     const plan = planMachineBootDiskAttachment(meta, "hdd");

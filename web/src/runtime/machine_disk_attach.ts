@@ -144,26 +144,34 @@ export function planMachineBootDiskAttachment(meta: DiskImageMetadata, role: Mac
 
 async function attachHdd(machine: MachineHandle, plan: MachineBootDiskPlan, meta: DiskImageMetadata): Promise<void> {
   if (plan.format === "aerospar") {
-    if (typeof machine.set_disk_aerospar_opfs_open_and_set_overlay_ref === "function") {
-      await machine.set_disk_aerospar_opfs_open_and_set_overlay_ref(plan.opfsPath);
+    const aerosparOpenAndSetRef =
+      machine.set_disk_aerospar_opfs_open_and_set_overlay_ref ??
+      (machine as unknown as { setDiskAerosparOpfsOpenAndSetOverlayRef?: unknown }).setDiskAerosparOpfsOpenAndSetOverlayRef;
+    if (typeof aerosparOpenAndSetRef === "function") {
+      await aerosparOpenAndSetRef(plan.opfsPath);
       return;
     }
-    if (typeof machine.set_disk_aerospar_opfs_open === "function") {
-      await machine.set_disk_aerospar_opfs_open(plan.opfsPath);
+    const aerosparOpen =
+      machine.set_disk_aerospar_opfs_open ??
+      (machine as unknown as { setDiskAerosparOpfsOpen?: unknown }).setDiskAerosparOpfsOpen;
+    if (typeof aerosparOpen === "function") {
+      await aerosparOpen(plan.opfsPath);
       machine.set_ahci_port0_disk_overlay_ref?.(plan.opfsPath, "");
       return;
     }
     // Newer WASM builds can open aerosparse disks via the generic OPFS existing open path when an
     // explicit base format is provided.
-    if (
-      typeof machine.set_disk_opfs_existing_and_set_overlay_ref === "function" &&
-      machine.set_disk_opfs_existing_and_set_overlay_ref.length >= 2
-    ) {
-      await machine.set_disk_opfs_existing_and_set_overlay_ref(plan.opfsPath, "aerospar");
+    const diskExistingAndSetRef =
+      machine.set_disk_opfs_existing_and_set_overlay_ref ??
+      (machine as unknown as { setDiskOpfsExistingAndSetOverlayRef?: unknown }).setDiskOpfsExistingAndSetOverlayRef;
+    if (typeof diskExistingAndSetRef === "function" && diskExistingAndSetRef.length >= 2) {
+      await diskExistingAndSetRef(plan.opfsPath, "aerospar");
       return;
     }
-    if (typeof machine.set_disk_opfs_existing === "function" && machine.set_disk_opfs_existing.length >= 2) {
-      await machine.set_disk_opfs_existing(plan.opfsPath, "aerospar");
+    const diskExisting =
+      machine.set_disk_opfs_existing ?? (machine as unknown as { setDiskOpfsExisting?: unknown }).setDiskOpfsExisting;
+    if (typeof diskExisting === "function" && diskExisting.length >= 2) {
+      await diskExisting(plan.opfsPath, "aerospar");
       machine.set_ahci_port0_disk_overlay_ref?.(plan.opfsPath, "");
       return;
     }
@@ -172,27 +180,41 @@ async function attachHdd(machine: MachineHandle, plan: MachineBootDiskPlan, meta
     );
   }
 
-  const setPrimaryCow = machine.set_primary_hdd_opfs_cow;
+  const setPrimaryCow =
+    machine.set_primary_hdd_opfs_cow ??
+    (machine as unknown as { setPrimaryHddOpfsCow?: unknown }).setPrimaryHddOpfsCow;
   if (typeof setPrimaryCow === "function") {
     const overlayPath = opfsOverlayPathForCow(meta);
     const blockSizeBytes =
       (await tryReadAerosparseBlockSizeBytesFromOpfs(overlayPath)) ?? DEFAULT_PRIMARY_HDD_OVERLAY_BLOCK_SIZE_BYTES;
-    await setPrimaryCow(plan.opfsPath, overlayPath, blockSizeBytes);
+    await (setPrimaryCow as (base: string, overlay: string, blockSizeBytes: number) => Promise<void>)(
+      plan.opfsPath,
+      overlayPath,
+      blockSizeBytes,
+    );
     return;
   }
 
   // Prefer the explicit canonical primary HDD helper when available.
-  if (typeof machine.set_primary_hdd_opfs_existing === "function") {
-    await machine.set_primary_hdd_opfs_existing(plan.opfsPath);
+  const setPrimaryExisting =
+    machine.set_primary_hdd_opfs_existing ??
+    (machine as unknown as { setPrimaryHddOpfsExisting?: unknown }).setPrimaryHddOpfsExisting;
+  if (typeof setPrimaryExisting === "function") {
+    await setPrimaryExisting(plan.opfsPath);
     return;
   }
 
-  if (typeof machine.set_disk_opfs_existing_and_set_overlay_ref === "function") {
-    await machine.set_disk_opfs_existing_and_set_overlay_ref(plan.opfsPath);
+  const diskExistingAndSetRef =
+    machine.set_disk_opfs_existing_and_set_overlay_ref ??
+    (machine as unknown as { setDiskOpfsExistingAndSetOverlayRef?: unknown }).setDiskOpfsExistingAndSetOverlayRef;
+  if (typeof diskExistingAndSetRef === "function") {
+    await diskExistingAndSetRef(plan.opfsPath);
     return;
   }
-  if (typeof machine.set_disk_opfs_existing === "function") {
-    await machine.set_disk_opfs_existing(plan.opfsPath);
+  const diskExisting =
+    machine.set_disk_opfs_existing ?? (machine as unknown as { setDiskOpfsExisting?: unknown }).setDiskOpfsExisting;
+  if (typeof diskExisting === "function") {
+    await diskExisting(plan.opfsPath);
     machine.set_ahci_port0_disk_overlay_ref?.(plan.opfsPath, "");
     return;
   }
@@ -203,33 +225,68 @@ async function attachHdd(machine: MachineHandle, plan: MachineBootDiskPlan, meta
 
 async function attachCd(machine: MachineHandle, plan: MachineBootDiskPlan): Promise<void> {
   // Prefer the canonical, explicit IDE secondary master naming (matches `disk_id=1`).
-  if (typeof machine.attach_ide_secondary_master_iso_opfs_existing_and_set_overlay_ref === "function") {
-    await machine.attach_ide_secondary_master_iso_opfs_existing_and_set_overlay_ref(plan.opfsPath);
+  const attachIdeAndSetRef =
+    machine.attach_ide_secondary_master_iso_opfs_existing_and_set_overlay_ref ??
+    (machine as unknown as { attachIdeSecondaryMasterIsoOpfsExistingAndSetOverlayRef?: unknown }).attachIdeSecondaryMasterIsoOpfsExistingAndSetOverlayRef;
+  if (typeof attachIdeAndSetRef === "function") {
+    await attachIdeAndSetRef(plan.opfsPath);
     return;
   }
-  if (typeof machine.attach_ide_secondary_master_iso_opfs_existing === "function") {
-    await machine.attach_ide_secondary_master_iso_opfs_existing(plan.opfsPath);
-    machine.set_ide_secondary_master_atapi_overlay_ref?.(plan.opfsPath, "");
+  const attachIde =
+    machine.attach_ide_secondary_master_iso_opfs_existing ??
+    (machine as unknown as { attachIdeSecondaryMasterIsoOpfsExisting?: unknown }).attachIdeSecondaryMasterIsoOpfsExisting;
+  if (typeof attachIde === "function") {
+    await attachIde(plan.opfsPath);
+    const setRef =
+      machine.set_ide_secondary_master_atapi_overlay_ref ??
+      (machine as unknown as { setIdeSecondaryMasterAtapiOverlayRef?: unknown }).setIdeSecondaryMasterAtapiOverlayRef;
+    if (typeof setRef === "function") {
+      setRef(plan.opfsPath, "");
+    }
     return;
   }
 
   // Back-compat: some builds expose the install-media naming.
-  if (typeof machine.attach_install_media_iso_opfs_existing_and_set_overlay_ref === "function") {
-    await machine.attach_install_media_iso_opfs_existing_and_set_overlay_ref(plan.opfsPath);
+  const attachInstallExistingAndSetRef =
+    machine.attach_install_media_iso_opfs_existing_and_set_overlay_ref ??
+    (machine as unknown as { attachInstallMediaIsoOpfsExistingAndSetOverlayRef?: unknown }).attachInstallMediaIsoOpfsExistingAndSetOverlayRef;
+  if (typeof attachInstallExistingAndSetRef === "function") {
+    await attachInstallExistingAndSetRef(plan.opfsPath);
     return;
   }
-  if (typeof machine.attach_install_media_iso_opfs_existing === "function") {
-    await machine.attach_install_media_iso_opfs_existing(plan.opfsPath);
-    machine.set_ide_secondary_master_atapi_overlay_ref?.(plan.opfsPath, "");
+  const attachInstallExisting =
+    machine.attach_install_media_iso_opfs_existing ??
+    (machine as unknown as { attachInstallMediaIsoOpfsExisting?: unknown }).attachInstallMediaIsoOpfsExisting;
+  if (typeof attachInstallExisting === "function") {
+    await attachInstallExisting(plan.opfsPath);
+    const setRef =
+      machine.set_ide_secondary_master_atapi_overlay_ref ??
+      (machine as unknown as { setIdeSecondaryMasterAtapiOverlayRef?: unknown }).setIdeSecondaryMasterAtapiOverlayRef;
+    if (typeof setRef === "function") {
+      setRef(plan.opfsPath, "");
+    }
     return;
   }
-  if (typeof machine.attach_install_media_iso_opfs_and_set_overlay_ref === "function") {
-    await machine.attach_install_media_iso_opfs_and_set_overlay_ref(plan.opfsPath);
+  const attachInstallAndSetRef =
+    machine.attach_install_media_iso_opfs_and_set_overlay_ref ??
+    (machine as unknown as { attachInstallMediaIsoOpfsAndSetOverlayRef?: unknown }).attachInstallMediaIsoOpfsAndSetOverlayRef;
+  if (typeof attachInstallAndSetRef === "function") {
+    await attachInstallAndSetRef(plan.opfsPath);
     return;
   }
-  if (typeof machine.attach_install_media_iso_opfs === "function") {
-    await machine.attach_install_media_iso_opfs(plan.opfsPath);
-    machine.set_ide_secondary_master_atapi_overlay_ref?.(plan.opfsPath, "");
+  const attachInstall =
+    machine.attach_install_media_iso_opfs ??
+    (machine as unknown as { attachInstallMediaIsoOpfs?: unknown }).attachInstallMediaIsoOpfs ??
+    machine.attach_install_media_opfs_iso ??
+    (machine as unknown as { attachInstallMediaOpfsIso?: unknown }).attachInstallMediaOpfsIso;
+  if (typeof attachInstall === "function") {
+    await attachInstall(plan.opfsPath);
+    const setRef =
+      machine.set_ide_secondary_master_atapi_overlay_ref ??
+      (machine as unknown as { setIdeSecondaryMasterAtapiOverlayRef?: unknown }).setIdeSecondaryMasterAtapiOverlayRef;
+    if (typeof setRef === "function") {
+      setRef(plan.opfsPath, "");
+    }
     return;
   }
 
