@@ -36,6 +36,11 @@ constexpr uint32_t kFvfXyzDiffuse = kD3dFvfXyz | kD3dFvfDiffuse;
 constexpr uint32_t kFvfXyzDiffuseTex1 = kD3dFvfXyz | kD3dFvfDiffuse | kD3dFvfTex1;
 constexpr uint32_t kFvfXyzTex1 = kD3dFvfXyz | kD3dFvfTex1;
 
+// D3D9 shader stage IDs used by the DDI (from d3d9umddi.h). Keep local numeric
+// definitions so portable builds don't require the Windows SDK/WDK.
+constexpr uint32_t kD3dShaderStageVs = 0u;
+constexpr uint32_t kD3dShaderStagePs = 1u;
+
 // D3DTSS_* texture stage state IDs (from d3d9types.h).
 constexpr uint32_t kD3dTssColorOp = 1u;
 constexpr uint32_t kD3dTssColorArg1 = 2u;
@@ -182,10 +187,26 @@ struct CleanupDevice {
   D3DDDI_HADAPTER hAdapter{};
   D3DDDI_HDEVICE hDevice{};
   std::vector<D3DDDI_HRESOURCE> resources{};
+  std::vector<D3D9DDI_HVERTEXDECL> vertex_decls{};
+  std::vector<D3D9DDI_HSHADER> shaders{};
   bool has_adapter = false;
   bool has_device = false;
 
   ~CleanupDevice() {
+    if (has_device && device_funcs.pfnDestroyShader) {
+      for (auto& s : shaders) {
+        if (s.pDrvPrivate) {
+          device_funcs.pfnDestroyShader(hDevice, s);
+        }
+      }
+    }
+    if (has_device && device_funcs.pfnDestroyVertexDecl) {
+      for (auto& d : vertex_decls) {
+        if (d.pDrvPrivate) {
+          device_funcs.pfnDestroyVertexDecl(hDevice, d);
+        }
+      }
+    }
     if (has_device && device_funcs.pfnDestroyResource) {
       for (auto& r : resources) {
         if (r.pDrvPrivate) {
@@ -259,6 +280,15 @@ bool CreateDevice(CleanupDevice* cleanup) {
     return false;
   }
   if (!Check(cleanup->device_funcs.pfnDestroyResource != nullptr, "pfnDestroyResource is available")) {
+    return false;
+  }
+  if (!Check(cleanup->device_funcs.pfnCreateShader != nullptr, "pfnCreateShader is available")) {
+    return false;
+  }
+  if (!Check(cleanup->device_funcs.pfnSetShader != nullptr, "pfnSetShader is available")) {
+    return false;
+  }
+  if (!Check(cleanup->device_funcs.pfnDestroyShader != nullptr, "pfnDestroyShader is available")) {
     return false;
   }
   return true;
@@ -1184,6 +1214,7 @@ bool TestVertexDeclXyzrhwTex1InfersFvfAndBindsShaders() {
   if (!Check(hr == S_OK, "CreateVertexDecl(XYZRHW|TEX1)")) {
     return false;
   }
+  cleanup.vertex_decls.push_back(hDecl);
 
   hr = cleanup.device_funcs.pfnSetVertexDecl(cleanup.hDevice, hDecl);
   if (!Check(hr == S_OK, "SetVertexDecl(XYZRHW|TEX1)")) {
@@ -1285,6 +1316,7 @@ bool TestVertexDeclXyzTex1InfersFvfAndUploadsWvp() {
   if (!Check(hr == S_OK, "CreateVertexDecl(XYZ|TEX1)")) {
     return false;
   }
+  cleanup.vertex_decls.push_back(hDecl);
 
   hr = cleanup.device_funcs.pfnSetVertexDecl(cleanup.hDevice, hDecl);
   if (!Check(hr == S_OK, "SetVertexDecl(XYZ|TEX1)")) {
@@ -1542,6 +1574,222 @@ bool TestSetTextureStageStateUpdatesPsForTex1NoDiffuseFvfs() {
         return false;
       }
     }
+  }
+
+  return true;
+}
+
+bool TestPsOnlyInteropXyzrhwTex1SynthesizesVs() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  dev->cmd.reset();
+
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzrhwTex1);
+  if (!Check(hr == S_OK, "SetFVF(XYZRHW|TEX1)")) {
+    return false;
+  }
+
+  // Bind only a user pixel shader (VS stays NULL). D3D9 expects the runtime to
+  // interop fixed-function on the missing stage.
+  D3D9DDI_HSHADER hPs{};
+  hr = cleanup.device_funcs.pfnCreateShader(cleanup.hDevice,
+                                            kD3dShaderStagePs,
+                                            fixedfunc::kPsPassthroughColor,
+                                            static_cast<uint32_t>(sizeof(fixedfunc::kPsPassthroughColor)),
+                                            &hPs);
+  if (!Check(hr == S_OK, "CreateShader(PS passthrough)")) {
+    return false;
+  }
+  cleanup.shaders.push_back(hPs);
+
+  hr = cleanup.device_funcs.pfnSetShader(cleanup.hDevice, kD3dShaderStagePs, hPs);
+  if (!Check(hr == S_OK, "SetShader(PS passthrough)")) {
+    return false;
+  }
+
+  const VertexXyzrhwTex1 tri[3] = {
+      {0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f},
+      {1.0f, 0.0f, 0.0f, 1.0f, 1.0f, 0.0f},
+      {0.0f, 1.0f, 0.0f, 1.0f, 0.0f, 1.0f},
+  };
+
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzrhwTex1));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(PS-only interop XYZRHW|TEX1)")) {
+    return false;
+  }
+
+  aerogpu_handle_t expected_vs = 0;
+  aerogpu_handle_t expected_ps = 0;
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    auto* user_ps = reinterpret_cast<Shader*>(hPs.pDrvPrivate);
+    if (!Check(user_ps != nullptr, "user PS pointer")) {
+      return false;
+    }
+    expected_ps = user_ps->handle;
+
+    if (!Check(dev->user_vs == nullptr, "PS-only interop: user_vs is NULL")) {
+      return false;
+    }
+    if (!Check(dev->user_ps == user_ps, "PS-only interop: user_ps is bound")) {
+      return false;
+    }
+
+    if (!Check(dev->fixedfunc_vs_tex1_nodiffuse != nullptr, "interop created fixedfunc_vs_tex1_nodiffuse")) {
+      return false;
+    }
+    if (!Check(dev->vs == dev->fixedfunc_vs_tex1_nodiffuse, "interop bound fixedfunc VS (XYZRHW|TEX1)")) {
+      return false;
+    }
+    if (!Check(dev->ps == user_ps, "interop kept user PS bound")) {
+      return false;
+    }
+    expected_vs = dev->vs ? dev->vs->handle : 0;
+    if (!Check(expected_vs != 0, "synthesized VS handle non-zero")) {
+      return false;
+    }
+    if (!Check(ShaderBytecodeEquals(dev->vs, fixedfunc::kVsPassthroughPosWhiteTex1),
+               "synthesized VS bytecode matches kVsPassthroughPosWhiteTex1")) {
+      return false;
+    }
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(PS-only interop XYZRHW|TEX1)")) {
+    return false;
+  }
+
+  const auto binds = CollectOpcodes(buf, len, AEROGPU_CMD_BIND_SHADERS);
+  if (!Check(!binds.empty(), "BIND_SHADERS packets collected")) {
+    return false;
+  }
+  const auto* last_bind = reinterpret_cast<const aerogpu_cmd_bind_shaders*>(binds.back());
+  if (!Check(last_bind->vs == expected_vs, "BIND_SHADERS uses synthesized VS handle")) {
+    return false;
+  }
+  if (!Check(last_bind->ps == expected_ps, "BIND_SHADERS uses user PS handle")) {
+    return false;
+  }
+
+  return true;
+}
+
+bool TestPsOnlyInteropXyzTex1SynthesizesVsAndUploadsWvp() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  dev->cmd.reset();
+
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzTex1);
+  if (!Check(hr == S_OK, "SetFVF(XYZ|TEX1)")) {
+    return false;
+  }
+
+  D3D9DDI_HSHADER hPs{};
+  hr = cleanup.device_funcs.pfnCreateShader(cleanup.hDevice,
+                                            kD3dShaderStagePs,
+                                            fixedfunc::kPsPassthroughColor,
+                                            static_cast<uint32_t>(sizeof(fixedfunc::kPsPassthroughColor)),
+                                            &hPs);
+  if (!Check(hr == S_OK, "CreateShader(PS passthrough)")) {
+    return false;
+  }
+  cleanup.shaders.push_back(hPs);
+
+  hr = cleanup.device_funcs.pfnSetShader(cleanup.hDevice, kD3dShaderStagePs, hPs);
+  if (!Check(hr == S_OK, "SetShader(PS passthrough)")) {
+    return false;
+  }
+
+  const VertexXyzTex1 tri[3] = {
+      {-1.0f, -1.0f, 0.0f, 0.0f, 0.0f},
+      {1.0f, -1.0f, 0.0f, 1.0f, 0.0f},
+      {-1.0f, 1.0f, 0.0f, 0.0f, 1.0f},
+  };
+
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzTex1));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(PS-only interop XYZ|TEX1)")) {
+    return false;
+  }
+
+  aerogpu_handle_t expected_vs = 0;
+  aerogpu_handle_t expected_ps = 0;
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    auto* user_ps = reinterpret_cast<Shader*>(hPs.pDrvPrivate);
+    if (!Check(user_ps != nullptr, "user PS pointer")) {
+      return false;
+    }
+    expected_ps = user_ps->handle;
+
+    if (!Check(dev->fixedfunc_vs_xyz_tex1 != nullptr, "interop created fixedfunc_vs_xyz_tex1")) {
+      return false;
+    }
+    if (!Check(dev->vs == dev->fixedfunc_vs_xyz_tex1, "interop bound fixedfunc VS (XYZ|TEX1)")) {
+      return false;
+    }
+    if (!Check(dev->ps == user_ps, "interop kept user PS bound")) {
+      return false;
+    }
+    expected_vs = dev->vs ? dev->vs->handle : 0;
+    if (!Check(expected_vs != 0, "synthesized VS handle non-zero")) {
+      return false;
+    }
+    if (!Check(ShaderBytecodeEquals(dev->vs, fixedfunc::kVsTransformPosWhiteTex1),
+               "synthesized VS bytecode matches kVsTransformPosWhiteTex1")) {
+      return false;
+    }
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(PS-only interop XYZ|TEX1)")) {
+    return false;
+  }
+
+  const auto binds = CollectOpcodes(buf, len, AEROGPU_CMD_BIND_SHADERS);
+  if (!Check(!binds.empty(), "BIND_SHADERS packets collected")) {
+    return false;
+  }
+  const auto* last_bind = reinterpret_cast<const aerogpu_cmd_bind_shaders*>(binds.back());
+  if (!Check(last_bind->vs == expected_vs, "BIND_SHADERS uses synthesized VS handle")) {
+    return false;
+  }
+  if (!Check(last_bind->ps == expected_ps, "BIND_SHADERS uses user PS handle")) {
+    return false;
+  }
+
+  // XYZ variants require a WVP upload for the fixed-function VS.
+  bool saw_wvp = false;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_F)) {
+    const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(hdr);
+    if (sc->stage == AEROGPU_SHADER_STAGE_VERTEX && sc->start_register == 0 && sc->vec4_count == 4) {
+      saw_wvp = true;
+      break;
+    }
+  }
+  if (!Check(saw_wvp, "PS-only interop uploaded WVP constants")) {
+    return false;
   }
 
   return true;
@@ -1837,6 +2085,12 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestSetTextureStageStateUpdatesPsForTex1NoDiffuseFvfs()) {
+    return 1;
+  }
+  if (!aerogpu::TestPsOnlyInteropXyzrhwTex1SynthesizesVs()) {
+    return 1;
+  }
+  if (!aerogpu::TestPsOnlyInteropXyzTex1SynthesizesVsAndUploadsWvp()) {
     return 1;
   }
   if (!aerogpu::TestStageStateChangeRebindsShadersIfImplemented()) {

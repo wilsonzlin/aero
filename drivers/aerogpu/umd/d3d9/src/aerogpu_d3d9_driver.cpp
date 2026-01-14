@@ -4969,6 +4969,7 @@ static HRESULT ensure_fixedfunc_vs_fallback_locked(Device* dev, Shader** out_vs)
   if (!dev || !out_vs) {
     return E_INVALIDARG;
   }
+
   // Fixed-function vertex processing requires a supported FVF/decl.
   if (!fixedfunc_supported_fvf(dev->fvf)) {
     return kD3DErrInvalidCall;
@@ -5029,6 +5030,7 @@ static HRESULT ensure_fixedfunc_ps_fallback_locked(Device* dev, Shader** out_ps)
       ps_slot = &dev->fixedfunc_ps;
       break;
     case kSupportedFvfXyzrhwDiffuseTex1:
+    case kSupportedFvfXyzrhwTex1:
       ps_slot = &dev->fixedfunc_ps_tex1;
       break;
     case kSupportedFvfXyzrhwTex1:
@@ -5039,6 +5041,7 @@ static HRESULT ensure_fixedfunc_ps_fallback_locked(Device* dev, Shader** out_ps)
       ps_slot = &dev->fixedfunc_ps;
       break;
     case kSupportedFvfXyzDiffuseTex1:
+    case kSupportedFvfXyzTex1:
       ps_slot = &dev->fixedfunc_ps_xyz_diffuse_tex1;
       break;
     case kSupportedFvfXyzTex1:
