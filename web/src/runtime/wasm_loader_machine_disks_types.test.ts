@@ -18,6 +18,8 @@ describe("runtime/wasm_loader (Machine disk overlay typings)", () => {
       set_ide_primary_master_ata_overlay_ref: (_base: string, _overlay: string) => {},
       clear_ide_primary_master_ata_overlay_ref: () => {},
       reattach_restored_disks_from_opfs: async () => {},
+      set_primary_hdd_opfs_cow: (_base: string, _overlay: string) => {},
+      attach_install_media_opfs_iso: (_path: string) => {},
       take_restored_disk_overlays: () => null,
     } as unknown as Machine;
 
@@ -43,6 +45,10 @@ describe("runtime/wasm_loader (Machine disk overlay typings)", () => {
       machine.clear_ide_primary_master_ata_overlay_ref();
       // @ts-expect-error reattach_restored_disks_from_opfs may be undefined
       void machine.reattach_restored_disks_from_opfs();
+      // @ts-expect-error set_primary_hdd_opfs_cow may be undefined
+      void machine.set_primary_hdd_opfs_cow("d.base", "d.overlay");
+      // @ts-expect-error attach_install_media_opfs_iso may be undefined
+      void machine.attach_install_media_opfs_iso("win7.iso");
       // @ts-expect-error take_restored_disk_overlays may be undefined
       machine.take_restored_disk_overlays();
 
@@ -76,6 +82,12 @@ describe("runtime/wasm_loader (Machine disk overlay typings)", () => {
     }
     if (machine.reattach_restored_disks_from_opfs) {
       void machine.reattach_restored_disks_from_opfs();
+    }
+    if (machine.set_primary_hdd_opfs_cow) {
+      void machine.set_primary_hdd_opfs_cow("d.base", "d.overlay");
+    }
+    if (machine.attach_install_media_opfs_iso) {
+      void machine.attach_install_media_opfs_iso("win7.iso");
     }
     if (machine.take_restored_disk_overlays) {
       machine.take_restored_disk_overlays();

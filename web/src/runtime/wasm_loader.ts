@@ -317,6 +317,17 @@ export type MachineHandle = {
     clear_ide_secondary_master_atapi_overlay_ref?(): void;
     set_ide_primary_master_ata_overlay_ref?(base_image: string, overlay_image: string): void;
     clear_ide_primary_master_ata_overlay_ref?(): void;
+    /**
+     * Re-open OPFS-backed disk images referenced by snapshot `DISKS` overlay refs.
+     *
+     * Newer builds expose higher-level attachment helpers that understand the canonical Win7
+     * storage topology (primary HDD + install media) and accept OPFS *path strings* (relative to
+     * `navigator.storage.getDirectory()`).
+     *
+     * Optional for older WASM builds.
+     */
+    set_primary_hdd_opfs_cow?(base_image: string, overlay_image: string): Promise<void>;
+    attach_install_media_opfs_iso?(path: string): Promise<void>;
     take_restored_disk_overlays?():
         | {
               disk_id: number;
