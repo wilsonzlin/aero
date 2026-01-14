@@ -11,9 +11,14 @@ Background:
   `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`). dxgkrnl returns the exact same
   bytes on cross-process opens, so both processes observe the same token.
 
-This script is intentionally narrow and fast: it prevents accidental doc/protocol
-comment drift back toward older, incorrect descriptions (for example: referencing
-the deleted `aerogpu_alloc_privdata.h` model).
+This script is intentionally narrow and fast:
+
+- Prevent accidental doc/protocol comment drift back toward older, incorrect
+  descriptions (for example: referencing the deleted
+  `aerogpu_alloc_privdata.h` model).
+- Enforce a key KMD invariant for share-token refcount tracking: avoid
+  `ExAllocatePoolWithTag` under `Adapter->AllocationsLock` (spin lock hold time /
+  contention).
 """
 
 from __future__ import annotations
@@ -30,8 +35,10 @@ def repo_root() -> pathlib.Path:
 
 ROOT = repo_root()
 
-# We only scan documentation and protocol headers/comments. We intentionally do
-# not scan driver source trees where legacy identifiers may still appear.
+# For the doc/protocol contract checks, we only scan documentation and protocol
+# headers/comments. We intentionally do not scan driver source trees where legacy
+# identifiers may still appear. (We do read the KMD source for a targeted
+# lock/allocate guardrail; see check_no_pool_alloc_under_allocations_lock.)
 SCAN_PATHS: list[pathlib.Path] = [
     ROOT / "docs",
     ROOT / "instructions",
@@ -83,10 +90,10 @@ def read_text(path: pathlib.Path) -> str:
     return path.read_text(encoding="utf-8", errors="replace")
 
 
-def extract_c_function_body(text: str, func_name: str) -> str | None:
+def extract_c_function_body_span(text: str, func_name: str) -> tuple[int, str] | None:
     """
-    Returns the full function body (including the outer braces) for a C function
-    in `text`, or None if not found.
+    Returns (brace_start_offset, body_with_outer_braces) for a C function in
+    `text`, or None if not found.
 
     This is intentionally lightweight: it only needs to be robust enough to
     extract a single known KMD helper for a CI guardrail.
@@ -109,7 +116,7 @@ def extract_c_function_body(text: str, func_name: str) -> str | None:
         elif c == "}":
             depth -= 1
             if depth == 0:
-                return text[brace_start : end + 1]
+                return brace_start, text[brace_start : end + 1]
 
     return None
 
@@ -130,15 +137,18 @@ def check_no_pool_alloc_under_allocations_lock(errors: list[str]) -> None:
         return
 
     text = read_text(kmd_path)
-    body = extract_c_function_body(text, "AeroGpuShareTokenRefIncrementLocked")
-    if body is None:
+    span = extract_c_function_body_span(text, "AeroGpuShareTokenRefIncrementLocked")
+    if span is None:
         errors.append(f"{kmd_path.relative_to(ROOT)}: AeroGpuShareTokenRefIncrementLocked not found")
         return
+    brace_start, body = span
+    base_line = text[:brace_start].count("\n") + 1
 
     # This helper is named "*Locked" and is expected to be entered with the lock
     # held by the caller.
     lock_held = True
-    for idx, raw_line in enumerate(body.splitlines(), start=1):
+    for idx, raw_line in enumerate(body.splitlines(), start=0):
+        file_line = base_line + idx
         line = raw_line.strip()
         if "KeReleaseSpinLock(&Adapter->AllocationsLock" in line:
             lock_held = False
@@ -147,7 +157,7 @@ def check_no_pool_alloc_under_allocations_lock(errors: list[str]) -> None:
 
         if "ExAllocatePoolWithTag(" in line and lock_held:
             errors.append(
-                f"{kmd_path.relative_to(ROOT)}:{idx}: ExAllocatePoolWithTag called while Adapter->AllocationsLock is held"
+                f"{kmd_path.relative_to(ROOT)}:{file_line}: ExAllocatePoolWithTag called while Adapter->AllocationsLock is held"
             )
 
 
