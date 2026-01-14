@@ -80,6 +80,7 @@ Related shared-memory descriptor: **hardware cursor state** uses the same seqloc
 The repo also contains substantial implemented host-side GPU infrastructure (even though full guest WDDM integration is still evolving):
 
 - AeroGPU command processing + present + recovery/telemetry primitives: `crates/aero-gpu`
+- AeroGPU device-model helpers (PCI/MMIO/ring executor/vblank pacing building blocks): `crates/aero-devices-gpu`
 - D3D-related crates:
   - `crates/aero-d3d9`
   - `crates/aero-d3d11`
@@ -222,6 +223,7 @@ Code pointers:
 - **Main thread scheduling:** `web/src/main/frameScheduler.ts` uses `ScanoutState` to decide whether to keep ticking the GPU worker even when the shared framebuffer is in the `PRESENTED` state.
 - **GPU worker output selection:** `web/src/workers/gpu-worker.ts` snapshots `ScanoutState` during `presentOnce()` and uses it to avoid “flashing back” to the legacy framebuffer after WDDM scanout is considered active.
 - **GPU worker WDDM scanout readback (when `base_paddr != 0`):** `web/src/workers/gpu-worker.ts` treats `base_paddr` as a guest physical address and can present WDDM scanout by reading from either the shared VRAM aperture (BAR1 backing) or guest RAM, normalizing to a tightly-packed RGBA8 buffer (`tryReadWddmScanoutFrame()` / `tryReadWddmScanoutRgba8()`). The RAM-vs-VRAM resolution and the VRAM base-paddr contract are documented in [`docs/16-aerogpu-vga-vesa-compat.md`](./16-aerogpu-vga-vesa-compat.md#7-web-runtime-implementation-notes-wasm32-browser-runtime).
+  - Unit tests: `web/src/workers/gpu-worker_wddm_vram_scanout.test.ts`, `web/src/workers/gpu-worker_scanout_vram_missing.test.ts`.
 - **Canonical Rust machine (optional):** `crates/aero-machine/src/lib.rs` can publish scanout-source updates into an `aero_shared::scanout_state::ScanoutState` provided by the host:
   - `Machine::set_scanout_state()` installs the shared descriptor.
   - `Machine::reset()` publishes `LEGACY_TEXT` on reset.
