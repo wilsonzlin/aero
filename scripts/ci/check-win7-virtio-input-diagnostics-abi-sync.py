@@ -21,6 +21,7 @@ This script prevents accidental drift between:
 
 It checks:
   - VIOINPUT_COUNTERS_VERSION / VIOINPUT_STATE_VERSION / VIOINPUT_INTERRUPT_INFO_VERSION match
+  - IOCTL_VIOINPUT_* CTL_CODE() definitions match (so tools don't drift to the wrong function codes)
   - field order/name lists for VIOINPUT_COUNTERS / VIOINPUT_STATE / VIOINPUT_INTERRUPT_INFO match
 
 Note: it intentionally ignores qualifiers like `volatile`, and does not attempt
@@ -58,6 +59,32 @@ def extract_define_int(text: str, macro: str, *, file: Path) -> int:
     if not m:
         fail(f"{file.as_posix()}: missing '#define {macro} <int>'")
     return int(m.group(1))
+
+
+def extract_ctl_code_args(text: str, macro: str, *, file: Path) -> tuple[str, str, str, str]:
+    """
+    Extract the 4 CTL_CODE() arguments from a macro definition like:
+        #define IOCTL_FOO \\n
+            CTL_CODE(FILE_DEVICE_UNKNOWN, 0x800, METHOD_BUFFERED, FILE_READ_ACCESS)
+
+    Returns a tuple of the 4 arguments as normalized strings (whitespace stripped).
+    """
+
+    m = re.search(
+        rf"(?m)^\s*#define\s+{re.escape(macro)}\b[\s\\]*CTL_CODE\s*\(\s*([^\)]*?)\s*\)",
+        text,
+        flags=re.S,
+    )
+    if not m:
+        fail(f"{file.as_posix()}: missing '#define {macro} CTL_CODE(...)'")
+
+    args_str = m.group(1)
+    # Remove explicit line continuation backslashes for robustness.
+    args_str = args_str.replace("\\", " ")
+    parts = [p.strip() for p in args_str.split(",")]
+    if len(parts) != 4:
+        fail(f"{file.as_posix()}: could not parse 4 CTL_CODE args for {macro} (got {len(parts)}): {parts!r}")
+    return (parts[0], parts[1], parts[2], parts[3])
 
 
 def extract_struct_body(text: str, typedef_regex: str, *, file: Path, what: str) -> str:
@@ -159,6 +186,27 @@ def main() -> int:
             "VIOINPUT_INTERRUPT_INFO_VERSION mismatch: "
             f"driver={driver_interrupt_version} hidtest={tool_interrupt_version}"
         )
+
+    # IOCTL definitions are user-mode visible API. Ensure hidtest stays in sync with the
+    # driver's canonical CTL_CODE choices.
+    ioctl_macros = (
+        "IOCTL_VIOINPUT_QUERY_COUNTERS",
+        "IOCTL_VIOINPUT_RESET_COUNTERS",
+        "IOCTL_VIOINPUT_QUERY_STATE",
+        "IOCTL_VIOINPUT_QUERY_INTERRUPT_INFO",
+        # Diagnostics-only (still checked for header/tooling drift).
+        "IOCTL_VIOINPUT_GET_LOG_MASK",
+        "IOCTL_VIOINPUT_SET_LOG_MASK",
+    )
+    for name in ioctl_macros:
+        driver_args = extract_ctl_code_args(driver_text, name, file=LOG_H)
+        tool_args = extract_ctl_code_args(tool_text, name, file=HIDTEST_C)
+        if driver_args != tool_args:
+            failures.append(
+                f"{name} CTL_CODE mismatch:\n"
+                f"  driver: {driver_args}\n"
+                f"  hidtest: {tool_args}"
+            )
 
     driver_counters_body = extract_struct_body(
         driver_text,
