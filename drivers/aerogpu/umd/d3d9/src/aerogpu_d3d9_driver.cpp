@@ -4491,6 +4491,7 @@ HRESULT ensure_fixedfunc_pipeline_locked(Device* dev) {
       // Some host-side tests intentionally pass clip-space-ish coordinates here.
       vs_slot = &dev->fixedfunc_vs;
       ps_slot = &dev->fixedfunc_ps;
+      fvf_decl = dev->fvf_vertex_decl_xyz_diffuse;
       vs_bytes = fixedfunc::kVsPassthroughPosColor;
       vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsPassthroughPosColor));
       break;
@@ -7591,6 +7592,11 @@ HRESULT AEROGPU_D3D9_CALL device_destroy(D3DDDI_HDEVICE hDevice) {
       (void)emit_destroy_input_layout_locked(dev, dev->fvf_vertex_decl_tex1->handle);
       delete dev->fvf_vertex_decl_tex1;
       dev->fvf_vertex_decl_tex1 = nullptr;
+    }
+    if (dev->fvf_vertex_decl_xyz_diffuse) {
+      (void)emit_destroy_input_layout_locked(dev, dev->fvf_vertex_decl_xyz_diffuse->handle);
+      delete dev->fvf_vertex_decl_xyz_diffuse;
+      dev->fvf_vertex_decl_xyz_diffuse = nullptr;
     }
     if (dev->fvf_vertex_decl_xyz_diffuse_tex1) {
       (void)emit_destroy_input_layout_locked(dev, dev->fvf_vertex_decl_xyz_diffuse_tex1->handle);
@@ -11691,6 +11697,8 @@ HRESULT AEROGPU_D3D9_CALL device_set_fvf(D3DDDI_HDEVICE hDevice, uint32_t fvf) {
     VertexDecl* decl = dev->vertex_decl;
     if (fvf == kSupportedFvfXyzrhwDiffuse) {
       decl = dev->fvf_vertex_decl;
+    } else if (fvf == kSupportedFvfXyzDiffuse) {
+      decl = dev->fvf_vertex_decl_xyz_diffuse;
     } else if (fvf == kSupportedFvfXyzDiffuseTex1) {
       decl = dev->fvf_vertex_decl_xyz_diffuse_tex1;
     }
@@ -11704,12 +11712,10 @@ HRESULT AEROGPU_D3D9_CALL device_set_fvf(D3DDDI_HDEVICE hDevice, uint32_t fvf) {
     return trace.ret(S_OK);
   }
 
-  // The AeroGPU fixed-function fallback renders only a small FVF subset (see
+  // The AeroGPU fixed-function fallback supports only a small FVF subset (see
   // `drivers/aerogpu/umd/d3d9/README.md`). The SetFVF path synthesizes/binds an
-  // internal vertex declaration for:
-  // - the pre-transformed XYZRHW variants, and
-  // - the `XYZ | DIFFUSE | TEX1` WVP-transform path.
-  // Other `XYZ*` variants may rely on explicit SetVertexDecl pattern detection.
+  // internal vertex declaration for the supported fixed-function FVFs so the UMD
+  // can bind a known input layout.
   //
   // Other FVFs may be accepted and cached so GetFVF + state blocks behave
   // deterministically, but rendering is not guaranteed for unsupported formats.
@@ -11748,6 +11754,29 @@ HRESULT AEROGPU_D3D9_CALL device_set_fvf(D3DDDI_HDEVICE hDevice, uint32_t fvf) {
     }
     dev->fvf = fvf;
     stateblock_record_vertex_decl_locked(dev, *decl_slot, dev->fvf);
+    return trace.ret(S_OK);
+  }
+
+  if (fvf == kSupportedFvfXyzDiffuse) {
+    if (!dev->fvf_vertex_decl_xyz_diffuse) {
+      const D3DVERTEXELEMENT9_COMPAT elems[] = {
+          // stream, offset, type, method, usage, usage_index
+          {0, 0, kD3dDeclTypeFloat3, kD3dDeclMethodDefault, /*POSITION=*/0, 0},
+          {0, 12, kD3dDeclTypeD3dColor, kD3dDeclMethodDefault, kD3dDeclUsageColor, 0},
+          {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0}, // D3DDECL_END
+      };
+
+      dev->fvf_vertex_decl_xyz_diffuse = create_internal_vertex_decl_locked(dev, elems, sizeof(elems));
+      if (!dev->fvf_vertex_decl_xyz_diffuse) {
+        return trace.ret(E_OUTOFMEMORY);
+      }
+    }
+
+    if (!emit_set_input_layout_locked(dev, dev->fvf_vertex_decl_xyz_diffuse)) {
+      return trace.ret(E_OUTOFMEMORY);
+    }
+    dev->fvf = fvf;
+    stateblock_record_vertex_decl_locked(dev, dev->fvf_vertex_decl_xyz_diffuse, dev->fvf);
     return trace.ret(S_OK);
   }
 

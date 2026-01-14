@@ -798,6 +798,7 @@ struct Device {
   uint32_t fvf = 0;
   VertexDecl* fvf_vertex_decl = nullptr;
   VertexDecl* fvf_vertex_decl_tex1 = nullptr;
+  VertexDecl* fvf_vertex_decl_xyz_diffuse = nullptr;
   VertexDecl* fvf_vertex_decl_xyz_diffuse_tex1 = nullptr;
   Shader* fixedfunc_vs = nullptr;
   Shader* fixedfunc_ps = nullptr;

@@ -13,12 +13,15 @@ namespace aerogpu {
 namespace {
 
 // Portable D3D9 FVF bits (from d3d9types.h).
+constexpr uint32_t kD3dFvfXyz = 0x00000002u;
 constexpr uint32_t kD3dFvfXyzRhw = 0x00000004u;
 constexpr uint32_t kD3dFvfDiffuse = 0x00000040u;
 constexpr uint32_t kD3dFvfTex1 = 0x00000100u;
 
 constexpr uint32_t kFvfXyzrhwDiffuse = kD3dFvfXyzRhw | kD3dFvfDiffuse;
 constexpr uint32_t kFvfXyzrhwDiffuseTex1 = kD3dFvfXyzRhw | kD3dFvfDiffuse | kD3dFvfTex1;
+constexpr uint32_t kFvfXyzDiffuse = kD3dFvfXyz | kD3dFvfDiffuse;
+constexpr uint32_t kFvfXyzDiffuseTex1 = kD3dFvfXyz | kD3dFvfDiffuse | kD3dFvfTex1;
 
 // D3DTSS_* texture stage state IDs (from d3d9types.h).
 constexpr uint32_t kD3dTssColorOp = 1u;
@@ -273,6 +276,22 @@ struct VertexXyzrhwDiffuseTex1 {
   float v;
 };
 
+struct VertexXyzDiffuse {
+  float x;
+  float y;
+  float z;
+  uint32_t color;
+};
+
+struct VertexXyzDiffuseTex1 {
+  float x;
+  float y;
+  float z;
+  uint32_t color;
+  float u;
+  float v;
+};
+
 bool TestFvfXyzrhwDiffuseEmitsSaneCommands() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -414,6 +433,72 @@ bool TestFvfXyzrhwDiffuseEmitsSaneCommands() {
     }
   }
   if (!Check(saw_draw3, "DRAW has expected vertex_count=3 instance_count=1")) {
+    return false;
+  }
+
+  const auto binds = CollectOpcodes(buf, len, AEROGPU_CMD_BIND_SHADERS);
+  if (!Check(!binds.empty(), "BIND_SHADERS packets collected")) {
+    return false;
+  }
+  const auto* last_bind = reinterpret_cast<const aerogpu_cmd_bind_shaders*>(binds.back());
+  if (!Check(last_bind->vs != 0 && last_bind->ps != 0, "BIND_SHADERS binds non-zero VS/PS")) {
+    return false;
+  }
+
+  return true;
+}
+
+bool TestFvfXyzDiffuseEmitsInputLayoutAndShaders() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  dev->cmd.reset();
+
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzDiffuse);
+  if (!Check(hr == S_OK, "SetFVF(XYZ|DIFFUSE)")) {
+    return false;
+  }
+
+  // XYZ is currently treated as already clip-space (no WVP transforms).
+  const VertexXyzDiffuse tri[3] = {
+      {-1.0f, -1.0f, 0.0f, 0xFFFF0000u},
+      {1.0f, -1.0f, 0.0f, 0xFF00FF00u},
+      {-1.0f, 1.0f, 0.0f, 0xFF0000FFu},
+  };
+
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzDiffuse));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(triangle xyz)")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(XYZ|DIFFUSE)")) {
+    return false;
+  }
+
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_CREATE_SHADER_DXBC) >= 2, "CREATE_SHADER_DXBC emitted")) {
+    return false;
+  }
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_BIND_SHADERS) >= 1, "BIND_SHADERS emitted")) {
+    return false;
+  }
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_SET_INPUT_LAYOUT) >= 1, "SET_INPUT_LAYOUT emitted")) {
+    return false;
+  }
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_SET_VERTEX_BUFFERS) >= 1, "SET_VERTEX_BUFFERS emitted")) {
+    return false;
+  }
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_DRAW) >= 1, "DRAW emitted")) {
     return false;
   }
 
@@ -617,6 +702,90 @@ bool TestFvfXyzrhwDiffuseTex1EmitsTextureAndShaders() {
   return true;
 }
 
+bool TestFvfXyzDiffuseTex1EmitsTextureAndShaders() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  dev->cmd.reset();
+
+  HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzDiffuseTex1);
+  if (!Check(hr == S_OK, "SetFVF(XYZ|DIFFUSE|TEX1)")) {
+    return false;
+  }
+
+  D3DDDI_HRESOURCE hTex{};
+  if (!CreateDummyTexture(&cleanup, &hTex)) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnSetTexture(cleanup.hDevice, /*stage=*/0, hTex);
+  if (!Check(hr == S_OK, "SetTexture(stage0)")) {
+    return false;
+  }
+
+  const VertexXyzDiffuseTex1 tri[3] = {
+      {-1.0f, -1.0f, 0.0f, 0xFFFFFFFFu, 0.0f, 0.0f},
+      {1.0f, -1.0f, 0.0f, 0xFFFFFFFFu, 1.0f, 0.0f},
+      {-1.0f, 1.0f, 0.0f, 0xFFFFFFFFu, 0.0f, 1.0f},
+  };
+
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzDiffuseTex1));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(triangle xyz tex1)")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(XYZ|DIFFUSE|TEX1)")) {
+    return false;
+  }
+
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_SET_TEXTURE) >= 1, "SET_TEXTURE emitted")) {
+    return false;
+  }
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_CREATE_SHADER_DXBC) >= 2, "CREATE_SHADER_DXBC emitted")) {
+    return false;
+  }
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_BIND_SHADERS) >= 1, "BIND_SHADERS emitted")) {
+    return false;
+  }
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_SET_INPUT_LAYOUT) >= 1, "SET_INPUT_LAYOUT emitted")) {
+    return false;
+  }
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_SET_VERTEX_BUFFERS) >= 1, "SET_VERTEX_BUFFERS emitted")) {
+    return false;
+  }
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_DRAW) >= 1, "DRAW emitted")) {
+    return false;
+  }
+
+  const auto set_textures = CollectOpcodes(buf, len, AEROGPU_CMD_SET_TEXTURE);
+  if (!Check(!set_textures.empty(), "SET_TEXTURE packets collected")) {
+    return false;
+  }
+  const auto* st = reinterpret_cast<const aerogpu_cmd_set_texture*>(set_textures.back());
+  if (!Check(st->shader_stage == AEROGPU_SHADER_STAGE_PIXEL, "SET_TEXTURE shader_stage == PIXEL")) {
+    return false;
+  }
+  if (!Check(st->slot == 0, "SET_TEXTURE slot == 0")) {
+    return false;
+  }
+  if (!Check(st->texture != 0, "SET_TEXTURE texture handle non-zero")) {
+    return false;
+  }
+
+  return true;
+}
+
 bool TestStageStateChangeRebindsShadersIfImplemented() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -711,7 +880,13 @@ int main() {
   if (!aerogpu::TestFvfXyzrhwDiffuseEmitsSaneCommands()) {
     return 1;
   }
+  if (!aerogpu::TestFvfXyzDiffuseEmitsInputLayoutAndShaders()) {
+    return 1;
+  }
   if (!aerogpu::TestFvfXyzrhwDiffuseTex1EmitsTextureAndShaders()) {
+    return 1;
+  }
+  if (!aerogpu::TestFvfXyzDiffuseTex1EmitsTextureAndShaders()) {
     return 1;
   }
   if (!aerogpu::TestStageStateChangeRebindsShadersIfImplemented()) {
