@@ -19,6 +19,8 @@ import {
   type ProtocolMessage,
   type WorkerInitMessage,
 } from "../runtime/protocol";
+import { CURSOR_STATE_BYTE_LEN } from "../ipc/cursor_state";
+import { SCANOUT_STATE_BYTE_LEN } from "../ipc/scanout_state";
 import { openFileHandle } from "../platform/opfs";
 import {
   IO_IPC_NET_RX_QUEUE_KIND,
@@ -188,6 +190,71 @@ const pendingMachineOps: PendingMachineOp[] = [];
 
 let wasmApi: WasmApi | null = null;
 let machine: InstanceType<WasmApi["Machine"]> | null = null;
+
+function verifyWasmSharedStateLayout(m: InstanceType<WasmApi["Machine"]>, init: WorkerInitMessage): void {
+  // These shared-state headers are embedded at fixed offsets inside wasm linear memory so both:
+  // - Rust device models (running inside the Machine wasm module), and
+  // - JS workers (GPU presenter, etc)
+  // can access them without dedicated SharedArrayBuffer allocations.
+  //
+  // The offsets are calculated independently in:
+  // - Rust (`crates/aero-wasm/src/lib.rs` + `runtime_alloc.rs`), and
+  // - JS (`web/src/runtime/shared_layout.ts`).
+  //
+  // When JS/wasm assets are out of sync (stale wasm-pack output, mixed dev/prod bundles, etc),
+  // the Machine will publish scanout/cursor updates into a different region than the JS workers
+  // are reading. Detect that mismatch early and surface a warning with actionable context.
+  try {
+    const expectedScanoutPtr =
+      typeof init.scanoutStateOffsetBytes === "number" ? (init.scanoutStateOffsetBytes >>> 0) : null;
+    const expectedCursorPtr =
+      typeof init.cursorStateOffsetBytes === "number" ? (init.cursorStateOffsetBytes >>> 0) : null;
+
+    if (typeof m.scanout_state_ptr === "function" && expectedScanoutPtr !== null) {
+      const got = m.scanout_state_ptr() >>> 0;
+      if (got !== expectedScanoutPtr) {
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[machine_cpu.worker] Shared scanout state offset mismatch: js=${expectedScanoutPtr} wasm=${got}. ` +
+            "This usually means the worker is running a stale wasm-pack build. Rebuild/reload the WASM assets.",
+        );
+      }
+    }
+    if (typeof m.scanout_state_len_bytes === "function") {
+      const len = m.scanout_state_len_bytes() >>> 0;
+      if (len !== 0 && len !== (SCANOUT_STATE_BYTE_LEN >>> 0)) {
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[machine_cpu.worker] Shared scanout state length mismatch: js=${SCANOUT_STATE_BYTE_LEN} wasm=${len}. ` +
+            "Update/rebuild the WASM assets to match the web runtime.",
+        );
+      }
+    }
+
+    if (typeof m.cursor_state_ptr === "function" && expectedCursorPtr !== null) {
+      const got = m.cursor_state_ptr() >>> 0;
+      if (got !== expectedCursorPtr) {
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[machine_cpu.worker] Shared cursor state offset mismatch: js=${expectedCursorPtr} wasm=${got}. ` +
+            "This usually means the worker is running a stale wasm-pack build. Rebuild/reload the WASM assets.",
+        );
+      }
+    }
+    if (typeof m.cursor_state_len_bytes === "function") {
+      const len = m.cursor_state_len_bytes() >>> 0;
+      if (len !== 0 && len !== (CURSOR_STATE_BYTE_LEN >>> 0)) {
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[machine_cpu.worker] Shared cursor state length mismatch: js=${CURSOR_STATE_BYTE_LEN} wasm=${len}. ` +
+            "Update/rebuild the WASM assets to match the web runtime.",
+        );
+      }
+    }
+  } catch {
+    // ignore
+  }
+}
 
 const HEARTBEAT_INTERVAL_MS = 250;
 const RUN_SLICE_MAX_INSTS = 50_000;
@@ -1489,6 +1556,9 @@ async function initWasmInBackground(init: WorkerInitMessage, guestMemory: WebAss
     if (!layout) return;
 
     machine = await createWin7MachineWithSharedGuestMemory(api as WasmApi, layout);
+    if (machine) {
+      verifyWasmSharedStateLayout(machine, init);
+    }
 
     // Attach optional network backend if enabled.
     if (networkWanted) {
