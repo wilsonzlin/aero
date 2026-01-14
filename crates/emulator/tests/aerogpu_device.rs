@@ -106,7 +106,11 @@ impl MemoryBus for VecMemory {
 }
 
 fn new_test_device(cfg: AeroGpuDeviceConfig) -> AeroGpuPciDevice {
-    let mut dev = AeroGpuPciDevice::new(cfg, 0);
+    let mut cfg = cfg;
+    // Unit tests don't need a huge VRAM backing allocation; keep it small to avoid blowing out
+    // memory when the test runner executes cases in parallel.
+    cfg.vram_size_bytes = 2 * 1024 * 1024;
+    let mut dev = AeroGpuPciDevice::new(cfg, 0, 0);
     // Enable PCI MMIO decode + bus mastering so MMIO and DMA paths behave like a real enumerated
     // device (guests must set COMMAND.MEM/BME before touching BARs).
     dev.config_write(0x04, 2, (1 << 1) | (1 << 2));
@@ -116,7 +120,14 @@ fn new_test_device(cfg: AeroGpuDeviceConfig) -> AeroGpuPciDevice {
 #[test]
 fn pci_wrapper_gates_aerogpu_mmio_on_pci_command_mem_bit() {
     let mut mem = VecMemory::new(0x1000);
-    let mut dev = AeroGpuPciDevice::new(AeroGpuDeviceConfig::default(), 0);
+    let mut dev = AeroGpuPciDevice::new(
+        AeroGpuDeviceConfig {
+            vram_size_bytes: 2 * 1024 * 1024,
+            ..Default::default()
+        },
+        0,
+        0,
+    );
 
     // With COMMAND.MEM clear, reads float high and writes are ignored.
     assert_eq!(dev.mmio_read(&mut mem, mmio::MAGIC, 4), u32::MAX);
@@ -131,7 +142,14 @@ fn pci_wrapper_gates_aerogpu_mmio_on_pci_command_mem_bit() {
 #[test]
 fn pci_wrapper_gates_aerogpu_dma_on_pci_command_bme_bit() {
     let mut mem = VecMemory::new(0x20_000);
-    let mut dev = AeroGpuPciDevice::new(AeroGpuDeviceConfig::default(), 0);
+    let mut dev = AeroGpuPciDevice::new(
+        AeroGpuDeviceConfig {
+            vram_size_bytes: 2 * 1024 * 1024,
+            ..Default::default()
+        },
+        0,
+        0,
+    );
 
     // Enable MMIO decode but leave bus mastering disabled.
     dev.config_write(0x04, 2, 1 << 1);
@@ -1026,6 +1044,7 @@ fn vsynced_present_fence_completes_on_vblank_with_deferred_backend() {
             keep_last_submissions: 0,
             fence_completion: AeroGpuFenceCompletionMode::Deferred,
         },
+        ..Default::default()
     };
 
     let mut mem = VecMemory::new(0x40_000);
@@ -1143,6 +1162,7 @@ fn vsynced_present_fence_completes_on_vblank_with_deferred_backend() {
 fn drain_pending_submissions_and_complete_fence_with_external_backend() {
     let cfg = AeroGpuDeviceConfig {
         vblank_hz: None,
+        vram_size_bytes: 2 * 1024 * 1024,
         executor: AeroGpuExecutorConfig {
             verbose: false,
             keep_last_submissions: 0,

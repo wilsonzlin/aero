@@ -108,24 +108,50 @@ pub const DEFAULT_VRAM_SIZE: usize = 16 * 1024 * 1024;
 
 /// Configuration for [`VgaDevice`].
 ///
-/// This primarily controls how the device's VRAM is exposed into the guest physical address
-/// space:
-/// - the physical base address of the VBE linear framebuffer (LFB), and
-/// - the total VRAM backing size.
+/// This exists to support embedding the VGA/VBE frontend behind a PCI BAR-backed VRAM aperture
+/// (e.g. AeroGPU BAR1), where:
+/// - the *entire* VRAM aperture lives at a guest physical base (`vram_bar_base`), and
+/// - the VBE linear framebuffer (LFB) begins at a fixed offset (`lfb_offset`) within that VRAM.
+///
+/// The default configuration matches Bochs/QEMU-style VGA/VBE:
+/// - legacy VGA planar memory occupies the first 256KiB of VRAM (4 × 64KiB planes)
+/// - the VBE packed-pixel framebuffer begins immediately after that region
+/// - the VBE LFB is exposed at [`SVGA_LFB_BASE`] in guest physical address space
+///
+/// Since the LFB base is *not* the start of the VRAM allocation (it begins after the legacy VGA
+/// planes), the default `vram_bar_base` is set such that `vram_bar_base + lfb_offset ==
+/// SVGA_LFB_BASE`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct VgaConfig {
-    /// Physical base address of the VBE linear framebuffer (LFB).
-    pub lfb_base: u32,
-    /// Total VRAM backing size in bytes.
+    /// Total VRAM size in bytes.
     pub vram_size: usize,
+    /// Guest physical base of the VRAM aperture (e.g. PCI BAR base).
+    pub vram_bar_base: u32,
+    /// Offset within VRAM where the VBE linear framebuffer (LFB) begins.
+    pub lfb_offset: u32,
+    /// Number of legacy VGA planes backed by VRAM starting at offset 0.
+    ///
+    /// - `4` matches traditional VGA (256KiB planar memory).
+    /// - `2` is sufficient for VGA text mode (character + attribute planes) and is useful when the
+    ///   guest VRAM layout reserves only 128KiB for legacy VGA (e.g. `0x00000..0x1FFFF`).
+    pub legacy_plane_count: usize,
 }
 
 impl Default for VgaConfig {
     fn default() -> Self {
         Self {
-            lfb_base: SVGA_LFB_BASE,
             vram_size: DEFAULT_VRAM_SIZE,
+            vram_bar_base: SVGA_LFB_BASE.wrapping_sub(VBE_FRAMEBUFFER_OFFSET as u32),
+            lfb_offset: VBE_FRAMEBUFFER_OFFSET as u32,
+            legacy_plane_count: 4,
         }
+    }
+}
+
+impl VgaConfig {
+    /// Returns the guest physical base address of the VBE linear framebuffer (LFB).
+    pub fn lfb_base(self) -> u32 {
+        self.vram_bar_base.wrapping_add(self.lfb_offset)
     }
 }
 
@@ -262,11 +288,13 @@ pub struct VgaDevice {
     /// representable by `virt_width`.
     vbe_bytes_per_scan_line_override: u16,
 
-    // VRAM: the first 256KiB are treated as planar VGA memory (4 planes).
-    // VBE/SVGA packed-pixel modes are backed by the same allocation starting at
-    // `VBE_FRAMEBUFFER_OFFSET`.
+    // VRAM layout:
+    // - the first `legacy_plane_count × 64KiB` backs legacy VGA planar memory (text/planar/13h).
+    // - the VBE/SVGA packed-pixel framebuffer begins at `lfb_offset`.
     vram: Vec<u8>,
     latches: [u8; 4],
+
+    config: VgaConfig,
 
     // Output buffers.
     front: Vec<u32>,
@@ -298,14 +326,28 @@ impl VgaDevice {
     }
 
     pub fn new_with_config(config: VgaConfig) -> Self {
-        let vram_size = config.vram_size.max(VGA_VRAM_SIZE);
         assert!(
-            vram_size <= u32::MAX as usize,
-            "vram_size {vram_size} exceeds u32::MAX; aero-gpu-vga uses 32-bit guest physical addresses"
+            config.vram_size <= u32::MAX as usize,
+            "vram_size {} exceeds u32::MAX; aero-gpu-vga uses 32-bit guest physical addresses",
+            config.vram_size
+        );
+        assert!(
+            (1..=4).contains(&config.legacy_plane_count),
+            "legacy_plane_count must be in 1..=4"
+        );
+        assert!(
+            config.vram_size >= config.legacy_plane_count * VGA_PLANE_SIZE,
+            "vram_size too small for legacy planes"
+        );
+        assert!(
+            usize::try_from(config.lfb_offset)
+                .ok()
+                .is_some_and(|off| off <= config.vram_size),
+            "lfb_offset out of range"
         );
 
         let mut device = Self {
-            svga_lfb_base: config.lfb_base,
+            svga_lfb_base: config.lfb_base(),
             misc_output: 0,
             sequencer_index: 0,
             sequencer: [0; 5],
@@ -332,8 +374,9 @@ impl VgaDevice {
             vbe_index: 0,
             vbe: VbeRegs::default(),
             vbe_bytes_per_scan_line_override: 0,
-            vram: vec![0; vram_size],
+            vram: vec![0; config.vram_size],
             latches: [0; 4],
+            config,
             front: Vec::new(),
             back: Vec::new(),
             width: 0,
@@ -363,25 +406,29 @@ impl VgaDevice {
         pos < Self::VBLANK_PULSE_NS
     }
 
+    pub fn config(&self) -> VgaConfig {
+        self.config
+    }
+
+    /// Updates the guest physical base address of the VRAM aperture (e.g. on PCI BAR reprogram).
+    pub fn set_vram_bar_base(&mut self, vram_bar_base: u32) {
+        self.config.vram_bar_base = vram_bar_base;
+        self.svga_lfb_base = self.config.lfb_base();
+    }
+
+    pub fn lfb_base(&self) -> u32 {
+        self.svga_lfb_base
+    }
+
     pub fn svga_lfb_base(&self) -> u32 {
         self.svga_lfb_base
     }
 
     pub fn set_svga_lfb_base(&mut self, base: u32) {
         self.svga_lfb_base = base;
-    }
-
-    /// Return the configuration used to construct this device.
-    pub fn config(&self) -> VgaConfig {
-        VgaConfig {
-            lfb_base: self.svga_lfb_base,
-            vram_size: self.vram.len(),
-        }
-    }
-
-    /// Physical base address of the VBE linear framebuffer (LFB).
-    pub fn lfb_base(&self) -> u32 {
-        self.svga_lfb_base
+        // Keep the config-derived base address in sync so callers that only update the LFB base
+        // still get correct address translation for the configured VRAM layout.
+        self.config.vram_bar_base = base.wrapping_sub(self.config.lfb_offset);
     }
 
     /// Total VRAM backing size in bytes.
@@ -468,7 +515,11 @@ impl VgaDevice {
             };
 
             // Validate that the scanout rectangle fits within the backing VRAM aperture.
-            let vbe_len = match self.vram.len().checked_sub(VBE_FRAMEBUFFER_OFFSET) {
+            let fb_base = match usize::try_from(self.config.lfb_offset) {
+                Ok(v) => v,
+                Err(_) => return disabled,
+            };
+            let vbe_len = match self.vram.len().checked_sub(fb_base) {
                 Some(v) => v as u64,
                 None => return disabled,
             };
@@ -699,13 +750,14 @@ impl VgaDevice {
             return None;
         }
 
-        let vbe_len = self.vram.len().checked_sub(VBE_FRAMEBUFFER_OFFSET)? as u64;
+        let fb_base = usize::try_from(self.config.lfb_offset).ok()?;
+        let vbe_len = self.vram.len().checked_sub(fb_base)? as u64;
         let off = paddr - start;
         if off >= vbe_len {
             return None;
         }
 
-        VBE_FRAMEBUFFER_OFFSET.checked_add(off as usize)
+        fb_base.checked_add(off as usize)
     }
 
     fn map_svga_bank_window(&self, paddr: u32) -> Option<usize> {
@@ -718,13 +770,14 @@ impl VgaDevice {
         let window_off = (paddr - start) as usize;
         let bank_base = (self.vbe.bank as usize) * 64 * 1024;
 
-        let vbe_len = self.vram.len().checked_sub(VBE_FRAMEBUFFER_OFFSET)?;
+        let fb_base = usize::try_from(self.config.lfb_offset).ok()?;
+        let vbe_len = self.vram.len().checked_sub(fb_base)?;
         let off = bank_base.checked_add(window_off)?;
         if off >= vbe_len {
             return None;
         }
 
-        VBE_FRAMEBUFFER_OFFSET.checked_add(off)
+        fb_base.checked_add(off)
     }
 
     fn legacy_memory_map(&self) -> u8 {
@@ -748,6 +801,9 @@ impl VgaDevice {
         if self.chain4_enabled() {
             let plane = off & 0x03;
             let plane_off = off >> 2;
+            if plane >= self.config.legacy_plane_count {
+                return None;
+            }
             Some(LegacyReadTarget::Single {
                 plane,
                 off: plane_off,
@@ -755,6 +811,9 @@ impl VgaDevice {
         } else if self.odd_even_enabled() {
             let plane = off & 0x01;
             let plane_off = off >> 1;
+            if plane >= self.config.legacy_plane_count {
+                return None;
+            }
             Some(LegacyReadTarget::Single {
                 plane,
                 off: plane_off,
@@ -781,6 +840,9 @@ impl VgaDevice {
         if self.chain4_enabled() {
             let plane = off & 0x03;
             let plane_off = off >> 2;
+            if plane >= self.config.legacy_plane_count {
+                return None;
+            }
             Some(LegacyWriteTargets::Single {
                 plane,
                 off: plane_off,
@@ -788,6 +850,9 @@ impl VgaDevice {
         } else if self.odd_even_enabled() {
             let plane = off & 0x01;
             let plane_off = off >> 1;
+            if plane >= self.config.legacy_plane_count {
+                return None;
+            }
             Some(LegacyWriteTargets::Single {
                 plane,
                 off: plane_off,
@@ -806,7 +871,11 @@ impl VgaDevice {
     fn load_latches(&mut self, off: usize) {
         let off = self.plane_offset(off);
         for plane in 0..4 {
-            self.latches[plane] = self.vram[plane * VGA_PLANE_SIZE + off];
+            if plane < self.config.legacy_plane_count {
+                self.latches[plane] = self.vram[plane * VGA_PLANE_SIZE + off];
+            } else {
+                self.latches[plane] = 0;
+            }
         }
     }
 
@@ -873,7 +942,7 @@ impl VgaDevice {
         let set_reset = self.graphics[0];
         let enable_set_reset = self.graphics[1];
 
-        for plane in 0..4 {
+        for plane in 0..self.config.legacy_plane_count {
             let plane_mask_bit = 1u8 << plane;
             if (map_mask & plane_mask_bit) == 0 {
                 continue;
@@ -1043,7 +1112,11 @@ impl VgaDevice {
                 let cell_index = row * cols + col;
                 let mem_index = (usize::from(start_addr) + cell_index) & 0x3FFF;
                 let ch = self.vram[mem_index];
-                let attr = self.vram[VGA_PLANE_SIZE + mem_index];
+                let attr = if self.config.legacy_plane_count >= 2 {
+                    self.vram[VGA_PLANE_SIZE + mem_index]
+                } else {
+                    0
+                };
 
                 let fg = attr & 0x0F;
                 let bg = if blink_enabled {
@@ -1159,7 +1232,11 @@ impl VgaDevice {
                 let linear = y * width + x;
                 let plane = linear & 3;
                 let off = linear >> 2;
-                let idx = self.vram[plane * VGA_PLANE_SIZE + off];
+                let idx = if plane < self.config.legacy_plane_count {
+                    self.vram[plane * VGA_PLANE_SIZE + off]
+                } else {
+                    0
+                };
                 let color = self.dac[(idx & self.pel_mask) as usize];
                 self.back[linear] = rgb_to_rgba_u32(color);
             }
@@ -1178,6 +1255,9 @@ impl VgaDevice {
                 let bit = 7 - (x & 7);
                 let mut color = 0u8;
                 for plane in 0..4 {
+                    if plane >= self.config.legacy_plane_count {
+                        continue;
+                    }
                     let b = self.vram[plane * VGA_PLANE_SIZE + byte_index];
                     let v = (b >> bit) & 1;
                     color |= v << plane;
@@ -1193,7 +1273,9 @@ impl VgaDevice {
         self.back.fill(0);
         let x_off = usize::from(self.vbe.x_offset);
         let y_off = usize::from(self.vbe.y_offset);
-        let fb_base = VBE_FRAMEBUFFER_OFFSET;
+        let Ok(fb_base) = usize::try_from(self.config.lfb_offset) else {
+            return;
+        };
 
         let bytes_per_pixel = match bpp {
             32 => 4,
@@ -1365,8 +1447,10 @@ impl VgaDevice {
             0x0007 => self.vbe.virt_height,
             0x0008 => self.vbe.x_offset,
             0x0009 => self.vbe.y_offset,
-            0x000A => u16::try_from(self.vram.len().saturating_sub(VBE_FRAMEBUFFER_OFFSET) / (64 * 1024))
-                .unwrap_or(u16::MAX),
+            0x000A => {
+                let fb_base = usize::try_from(self.config.lfb_offset).unwrap_or(0);
+                u16::try_from(self.vram.len().saturating_sub(fb_base) / (64 * 1024)).unwrap_or(u16::MAX)
+            }
             _ => 0,
         }
     }
@@ -1843,19 +1927,24 @@ impl IoSnapshot for VgaDevice {
 
         // Reset to a deterministic baseline while preserving config unless the snapshot provides
         // an explicit override.
-        let cfg = self.config();
-        let lfb_base = r.u32(TAG_LFB_BASE)?.unwrap_or(cfg.lfb_base);
+        let cfg = self.config;
+        let lfb_base = r.u32(TAG_LFB_BASE)?.unwrap_or(self.svga_lfb_base);
         let vram_len = r
             .u32(TAG_VRAM_LEN)?
             .map(|v| v as usize)
             .or_else(|| r.bytes(TAG_VRAM).map(|b| b.len()))
             .unwrap_or(cfg.vram_size);
-        if vram_len < VGA_VRAM_SIZE || vram_len > u32::MAX as usize {
+        if vram_len < cfg.legacy_plane_count * VGA_PLANE_SIZE
+            || vram_len < usize::try_from(cfg.lfb_offset).ok().unwrap_or(usize::MAX)
+            || vram_len > u32::MAX as usize
+        {
             return Err(SnapshotError::InvalidFieldEncoding("vram_len"));
         }
         *self = Self::new_with_config(VgaConfig {
-            lfb_base,
             vram_size: vram_len,
+            vram_bar_base: lfb_base.wrapping_sub(cfg.lfb_offset),
+            lfb_offset: cfg.lfb_offset,
+            legacy_plane_count: cfg.legacy_plane_count,
         });
 
         if let Some(v) = r.u8(TAG_MISC_OUTPUT)? {
@@ -1994,21 +2083,22 @@ impl IoSnapshot for VgaDevice {
             self.vram.copy_from_slice(buf);
 
             // Backward-compatible migration for snapshots captured before the VRAM layout change
-            // that introduced `VBE_FRAMEBUFFER_OFFSET` (device_version 1.0).
+            // that moved the VBE packed-pixel framebuffer after the legacy VGA planes
+            // (device_version 1.0).
             //
             // Old layout (v1.0): VBE linear/banked framebuffer starts at vram[0..].
-            // New layout (v1.1+): VBE framebuffer starts at vram[VBE_FRAMEBUFFER_OFFSET..].
+            // New layout (v1.1+): VBE framebuffer starts at vram[lfb_offset..].
             //
             // For v1.0 snapshots captured while VBE is enabled, copy the beginning of VRAM into the
             // new VBE region so the renderer reads the expected pixels.
             if snapshot_minor == 0 && self.vbe.enabled() {
-                if let Some(vbe_region_len) = self.vram.len().checked_sub(VBE_FRAMEBUFFER_OFFSET) {
+                let fb_base = usize::try_from(self.config.lfb_offset).unwrap_or(0);
+                if let Some(vbe_region_len) = self.vram.len().checked_sub(fb_base) {
                     let vbe_len = std::cmp::min(buf.len(), vbe_region_len);
                     if vbe_len != 0 {
-                        if let Some(dst_end) = VBE_FRAMEBUFFER_OFFSET.checked_add(vbe_len) {
+                        if let Some(dst_end) = fb_base.checked_add(vbe_len) {
                             if dst_end <= self.vram.len() && vbe_len <= buf.len() {
-                                self.vram[VBE_FRAMEBUFFER_OFFSET..dst_end]
-                                    .copy_from_slice(&buf[..vbe_len]);
+                                self.vram[fb_base..dst_end].copy_from_slice(&buf[..vbe_len]);
                             }
                         }
                     }

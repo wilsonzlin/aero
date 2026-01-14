@@ -104,10 +104,11 @@ fn aerogpu_ring_submission_executes_and_updates_scanout() {
             keep_last_submissions: 0,
             fence_completion: AeroGpuFenceCompletionMode::Deferred,
         },
+        vram_size_bytes: 8 * 1024 * 1024,
         ..Default::default()
     };
 
-    let mut dev = AeroGpuPciDevice::new(cfg, 0);
+    let mut dev = AeroGpuPciDevice::new(cfg, 0, 0);
     dev.config_write(0x04, 2, (1 << 1) | (1 << 2));
     let backend = match NativeAeroGpuBackend::new_headless() {
         Ok(backend) => backend,

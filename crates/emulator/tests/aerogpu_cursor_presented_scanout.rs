@@ -41,7 +41,9 @@ fn presented_scanout_includes_cursor_overlay() {
     let blue = [0u8, 0, 255, 255];
     let scanout_rgba = blue.repeat(4);
 
-    let mut dev = AeroGpuPciDevice::new(AeroGpuDeviceConfig::default(), 0);
+    let mut cfg = AeroGpuDeviceConfig::default();
+    cfg.vram_size_bytes = 2 * 1024 * 1024;
+    let mut dev = AeroGpuPciDevice::new(cfg, 0, 0);
     // Enable PCI MMIO decode + bus mastering so the device behaves like a real enumerated endpoint.
     dev.config_write(0x04, 2, (1 << 1) | (1 << 2));
     dev.set_backend(Box::new(StaticScanoutBackend {
@@ -105,7 +107,9 @@ fn presented_scanout_cursor_overlay_requires_bus_mastering() {
     let blue = [0u8, 0, 255, 255];
     let scanout_rgba = blue.repeat(4);
 
-    let mut dev = AeroGpuPciDevice::new(AeroGpuDeviceConfig::default(), 0);
+    let mut cfg = AeroGpuDeviceConfig::default();
+    cfg.vram_size_bytes = 2 * 1024 * 1024;
+    let mut dev = AeroGpuPciDevice::new(cfg, 0, 0);
     // Enable PCI MMIO decode so we can program cursor regs, but leave bus mastering disabled.
     dev.config_write(0x04, 2, 1 << 1);
     dev.set_backend(Box::new(StaticScanoutBackend {

@@ -562,6 +562,7 @@ pub enum MachineError {
     AeroGpuConflictsWithVga,
     E1000RequiresPcPlatform,
     VirtioNetRequiresPcPlatform,
+    AeroGpuRequiresPcPlatform,
     MultipleNicsEnabled,
 }
 
@@ -621,6 +622,9 @@ impl fmt::Display for MachineError {
             }
             MachineError::VirtioNetRequiresPcPlatform => {
                 write!(f, "enable_virtio_net requires enable_pc_platform=true")
+            }
+            MachineError::AeroGpuRequiresPcPlatform => {
+                write!(f, "enable_aerogpu requires enable_pc_platform=true")
             }
             MachineError::MultipleNicsEnabled => write!(
                 f,
@@ -2068,10 +2072,10 @@ const LEGACY_VGA_WINDOW_SIZE: usize =
 
 /// Offset within VRAM where the VBE linear framebuffer (LFB) begins.
 ///
-/// This keeps the LFB aligned to 64KiB and leaves the first 256KiB reserved for legacy VGA planar
-/// storage (4 × 64KiB planes), matching `aero_gpu_vga`'s VRAM layout.
+/// This keeps the LFB aligned to 64KiB and leaves the first 128KiB reserved for legacy VGA
+/// mappings.
 #[allow(dead_code)]
-pub const VBE_LFB_OFFSET: usize = aero_gpu_vga::VBE_FRAMEBUFFER_OFFSET;
+pub const VBE_LFB_OFFSET: usize = LEGACY_VGA_WINDOW_SIZE;
 
 /// Total VRAM size exposed via AeroGPU BAR1.
 const AEROGPU_VRAM_SIZE: usize = aero_devices::pci::profile::AEROGPU_VRAM_SIZE as usize;
@@ -4081,9 +4085,7 @@ impl Machine {
     /// Return the physical base address of the VBE linear framebuffer (LFB) as reported by the
     /// machine's firmware (VBE mode info `PhysBasePtr`).
     ///
-    /// This is the value reported via `INT 10h AX=4F01h` (`VBE ModeInfoBlock.PhysBasePtr`) and is
-    /// the canonical way for host-side tests/glue code to discover where the firmware expects the
-    /// framebuffer to live.
+    /// This is the canonical address guests are expected to use when mapping the VBE framebuffer.
     ///
     /// Note: When VGA is disabled, the firmware keeps the LFB inside conventional RAM so BIOS-only
     /// helpers do not scribble over the canonical PCI MMIO window.

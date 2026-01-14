@@ -1,12 +1,9 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use aero_gpu_vga::{PortIO as _, VgaDevice};
+use aero_shared::scanout_state::{ScanoutState, ScanoutStateUpdate, SCANOUT_SOURCE_WDDM};
 use memory::MemoryBus;
-
-use aero_shared::scanout_state::{
-    ScanoutState, ScanoutStateUpdate, SCANOUT_FORMAT_B8G8R8X8, SCANOUT_SOURCE_LEGACY_TEXT,
-    SCANOUT_SOURCE_WDDM,
-};
 
 use crate::devices::aerogpu_regs::{
     irq_bits, mmio, ring_control, AeroGpuRegs, AEROGPU_MMIO_MAGIC, AEROGPU_PCI_BAR0_SIZE_BYTES,
@@ -24,6 +21,11 @@ use crate::io::pci::{MmioDevice, PciConfigSpace, PciDevice};
 pub struct AeroGpuDeviceConfig {
     pub executor: AeroGpuExecutorConfig,
     pub vblank_hz: Option<u32>,
+    /// Size in bytes of the BAR1 VRAM aperture.
+    ///
+    /// Must be a power-of-two and large enough for the legacy VGA window backing (128KiB) plus
+    /// the VBE linear framebuffer region.
+    pub vram_size_bytes: u32,
 }
 
 impl Default for AeroGpuDeviceConfig {
@@ -31,9 +33,14 @@ impl Default for AeroGpuDeviceConfig {
         Self {
             executor: AeroGpuExecutorConfig::default(),
             vblank_hz: Some(60),
+            vram_size_bytes: 32 * 1024 * 1024,
         }
     }
 }
+
+const AEROGPU_PCI_BAR1_LFB_OFFSET: u32 = 0x20000;
+const LEGACY_VGA_WINDOW_BASE: u32 = 0xA0000;
+const LEGACY_VGA_WINDOW_SIZE: u32 = 0x20000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Scanout0Descriptor {
@@ -50,9 +57,15 @@ pub struct AeroGpuPciDevice {
     pub bar0: u32,
     bar0_probe: bool,
 
+    pub bar1: u32,
+    bar1_probe: bool,
+    bar1_size_bytes: u32,
+
     pub regs: AeroGpuRegs,
     executor: AeroGpuExecutor,
     irq_level: bool,
+
+    vga: VgaDevice,
 
     scanout_state: Option<Arc<ScanoutState>>,
     last_published_scanout0: Option<Scanout0Descriptor>,
@@ -68,7 +81,16 @@ pub struct AeroGpuPciDevice {
 }
 
 impl AeroGpuPciDevice {
-    pub fn new(cfg: AeroGpuDeviceConfig, bar0: u32) -> Self {
+    pub fn new(cfg: AeroGpuDeviceConfig, bar0: u32, bar1: u32) -> Self {
+        assert!(
+            cfg.vram_size_bytes.is_power_of_two(),
+            "BAR1 VRAM size must be a power-of-two"
+        );
+        assert!(
+            cfg.vram_size_bytes >= AEROGPU_PCI_BAR1_LFB_OFFSET + 0x1000,
+            "BAR1 VRAM size must be large enough for legacy VGA + LFB"
+        );
+
         let mut config_space = PciConfigSpace::new();
 
         config_space.set_u16(0x00, AEROGPU_PCI_VENDOR_ID);
@@ -84,6 +106,10 @@ impl AeroGpuPciDevice {
         // BAR0 (MMIO regs), non-prefetchable 32-bit.
         let bar0 = bar0 & !(AEROGPU_PCI_BAR0_SIZE_BYTES as u32 - 1) & 0xffff_fff0;
         config_space.set_u32(0x10, bar0);
+
+        // BAR1 (VRAM aperture), prefetchable 32-bit.
+        let bar1 = bar1 & !(cfg.vram_size_bytes - 1) & 0xffff_fff0;
+        config_space.set_u32(0x14, bar1 | (1 << 3));
 
         // Interrupt pin INTA#.
         config_space.write(0x3d, 1, 1);
@@ -106,13 +132,25 @@ impl AeroGpuPciDevice {
             regs.features &= !FEATURE_VBLANK;
         }
 
+        let vga = VgaDevice::new_with_config(aero_gpu_vga::VgaConfig {
+            vram_size: cfg.vram_size_bytes as usize,
+            vram_bar_base: bar1,
+            lfb_offset: AEROGPU_PCI_BAR1_LFB_OFFSET,
+            // Back only planes 0/1 (text mode) in the reserved legacy VGA window (128KiB).
+            legacy_plane_count: 2,
+        });
+
         Self {
             config: config_space,
             bar0,
             bar0_probe: false,
+            bar1,
+            bar1_probe: false,
+            bar1_size_bytes: cfg.vram_size_bytes,
             regs,
             executor: AeroGpuExecutor::new(cfg.executor),
             irq_level: false,
+            vga,
             scanout_state: None,
             last_published_scanout0: None,
             scanout0_fb_gpa_lo_pending: false,
@@ -158,6 +196,142 @@ impl AeroGpuPciDevice {
 
     pub fn bar0_size(&self) -> u64 {
         AEROGPU_PCI_BAR0_SIZE_BYTES
+    }
+
+    pub fn bar1_size(&self) -> u64 {
+        u64::from(self.bar1_size_bytes)
+    }
+
+    pub fn bar1_lfb_base(&self) -> u64 {
+        u64::from(self.bar1).wrapping_add(u64::from(AEROGPU_PCI_BAR1_LFB_OFFSET))
+    }
+
+    fn maybe_publish_scanout_state(&self, update: ScanoutStateUpdate) {
+        let Some(state) = &self.scanout_state else {
+            return;
+        };
+
+        let cur = state.snapshot();
+        if cur.source == update.source
+            && cur.base_paddr_lo == update.base_paddr_lo
+            && cur.base_paddr_hi == update.base_paddr_hi
+            && cur.width == update.width
+            && cur.height == update.height
+            && cur.pitch_bytes == update.pitch_bytes
+            && cur.format == update.format
+        {
+            return;
+        }
+        state.publish(update);
+    }
+
+    fn update_scanout_state_from_vga(&self) {
+        // While WDDM scanout0 is enabled, legacy VGA/VBE must not steal scanout ownership.
+        if self.regs.scanout0.enable {
+            return;
+        }
+
+        self.maybe_publish_scanout_state(self.vga.active_scanout_update());
+    }
+
+    pub fn vga_port_read(&mut self, port: u16, size: usize) -> u32 {
+        // VGA legacy ports + Bochs VBE ports.
+        if (0x3B0..=0x3DF).contains(&port) || port == 0x01CE || port == 0x01CF {
+            return self.vga.port_read(port, size);
+        }
+        match size {
+            0 => 0,
+            1 => 0xFF,
+            2 => 0xFFFF,
+            4 => 0xFFFF_FFFF,
+            _ => 0xFFFF_FFFF,
+        }
+    }
+
+    pub fn vga_port_write(&mut self, port: u16, size: usize, value: u32) {
+        if (0x3B0..=0x3DF).contains(&port) || port == 0x01CE || port == 0x01CF {
+            self.vga.port_write(port, size, value);
+            self.update_scanout_state_from_vga();
+        }
+    }
+
+    /// Legacy VGA window MMIO handler for guest physical `0xA0000..0xBFFFF`.
+    pub fn vga_legacy_mmio_read(&mut self, paddr: u32, size: usize) -> u64 {
+        if size == 0 {
+            return 0;
+        }
+        if !(1..=8).contains(&size) {
+            return u64::MAX;
+        }
+        let end = LEGACY_VGA_WINDOW_BASE + LEGACY_VGA_WINDOW_SIZE;
+        if paddr < LEGACY_VGA_WINDOW_BASE || paddr >= end {
+            return u64::MAX;
+        }
+        let mut out = 0u64;
+        for i in 0..size {
+            let b = self
+                .vga
+                .mem_read_u8(paddr.wrapping_add(i as u32)) as u64;
+            out |= b << (i * 8);
+        }
+        out
+    }
+
+    pub fn vga_legacy_mmio_write(&mut self, paddr: u32, size: usize, value: u64) {
+        if size == 0 || !(1..=8).contains(&size) {
+            return;
+        }
+        let end = LEGACY_VGA_WINDOW_BASE + LEGACY_VGA_WINDOW_SIZE;
+        if paddr < LEGACY_VGA_WINDOW_BASE || paddr >= end {
+            return;
+        }
+        for i in 0..size {
+            let b = ((value >> (i * 8)) & 0xFF) as u8;
+            self.vga.mem_write_u8(paddr.wrapping_add(i as u32), b);
+        }
+        // Legacy window writes can affect text rendering; update scanout if still legacy-owned.
+        self.update_scanout_state_from_vga();
+    }
+
+    /// BAR1 VRAM aperture MMIO handler (raw VRAM bytes).
+    pub fn vram_mmio_read(&mut self, offset: u64, size: usize) -> u64 {
+        if size == 0 {
+            return 0;
+        }
+        if !(1..=8).contains(&size) {
+            return u64::MAX;
+        }
+        // Gate VRAM decode on PCI command Memory Space Enable (bit 1).
+        if !self.mem_space_enabled() {
+            return u64::MAX;
+        }
+        let mut out = 0u64;
+        let vram = self.vga.vram();
+        for i in 0..size {
+            let idx = offset.wrapping_add(i as u64) as usize;
+            let b = vram.get(idx).copied().unwrap_or(0xFF) as u64;
+            out |= b << (i * 8);
+        }
+        out
+    }
+
+    pub fn vram_mmio_write(&mut self, offset: u64, size: usize, value: u64) {
+        if size == 0 || !(1..=8).contains(&size) {
+            return;
+        }
+        if !self.mem_space_enabled() {
+            return;
+        }
+        let vram_len = self.vga.vram().len();
+        let vram = self.vga.vram_mut();
+        for i in 0..size {
+            let idx = offset.wrapping_add(i as u64) as usize;
+            if idx >= vram_len {
+                continue;
+            }
+            let b = ((value >> (i * 8)) & 0xFF) as u8;
+            vram[idx] = b;
+        }
     }
 
     pub fn tick(&mut self, mem: &mut dyn MemoryBus, now: Instant) {
@@ -251,9 +425,18 @@ impl AeroGpuPciDevice {
 
     pub fn set_scanout_state(&mut self, scanout_state: Option<Arc<ScanoutState>>) {
         self.scanout_state = scanout_state;
-        // If scanout is already enabled, publish the current scanout descriptor immediately so
-        // consumers don't have to wait for the next register write / tick.
-        self.maybe_publish_wddm_scanout0_state();
+        // If the consumer swaps out the `ScanoutState` instance, always republish the next time we
+        // have enough information to describe scanout0. (The last-published cache is per-device,
+        // not per-consumer.)
+        self.last_published_scanout0 = None;
+
+        // Publish a best-effort current state immediately so consumers don't have to wait for the
+        // next register write / tick.
+        if self.regs.scanout0.enable {
+            self.maybe_publish_wddm_scanout0_state();
+        } else {
+            self.publish_legacy_scanout_state();
+        }
     }
 
     /// Drain newly-decoded AeroGPU submissions queued since the last call.
@@ -265,7 +448,6 @@ impl AeroGpuPciDevice {
     pub fn drain_pending_submissions(&mut self) -> Vec<AeroGpuBackendSubmission> {
         self.executor.drain_pending_submissions()
     }
-
     pub fn read_presented_scanout_rgba8(
         &mut self,
         mem: &mut dyn MemoryBus,
@@ -325,20 +507,8 @@ impl AeroGpuPciDevice {
     }
 
     fn publish_legacy_scanout_state(&self) {
-        let Some(state) = &self.scanout_state else {
-            return;
-        };
-        state.publish(ScanoutStateUpdate {
-            source: SCANOUT_SOURCE_LEGACY_TEXT,
-            base_paddr_lo: 0,
-            base_paddr_hi: 0,
-            width: 0,
-            height: 0,
-            pitch_bytes: 0,
-            format: SCANOUT_FORMAT_B8G8R8X8,
-        });
+        self.update_scanout_state_from_vga();
     }
-
     fn update_irq_level(&mut self) {
         self.irq_level = (self.regs.irq_status & self.regs.irq_enable) != 0;
     }
@@ -482,10 +652,10 @@ impl AeroGpuPciDevice {
             }
 
             mmio::SCANOUT0_ENABLE => {
+                let prev_enable = self.regs.scanout0.enable;
                 let new_enable = value != 0;
-                let old_enable = self.regs.scanout0.enable;
                 self.regs.scanout0.enable = new_enable;
-                if old_enable && !new_enable {
+                if prev_enable && !new_enable {
                     // When scanout is disabled, stop vblank scheduling and drop any pending vblank IRQ.
                     self.next_vblank = None;
                     self.regs.irq_status &= !irq_bits::SCANOUT_VBLANK;
@@ -500,7 +670,7 @@ impl AeroGpuPciDevice {
                     self.last_published_scanout0 = None;
                 }
 
-                if old_enable && !new_enable {
+                if prev_enable && !new_enable {
                     self.publish_legacy_scanout_state();
                 } else {
                     // WDDM claims scanout by programming the scanout registers and then
@@ -572,6 +742,14 @@ impl PciDevice for AeroGpuPciDevice {
                 self.bar0
             };
         }
+        if offset == 0x14 && size == 4 {
+            let mask = (!(self.bar1_size_bytes - 1)) & 0xffff_fff0;
+            return if self.bar1_probe {
+                mask | (1 << 3)
+            } else {
+                self.bar1 | (1 << 3)
+            };
+        }
         self.config.read(offset, size)
     }
 
@@ -586,6 +764,21 @@ impl PciDevice for AeroGpuPciDevice {
                 self.bar0_probe = false;
                 self.bar0 = value & addr_mask;
                 self.config.write(offset, size, self.bar0);
+            }
+            return;
+        }
+        if offset == 0x14 && size == 4 {
+            let addr_mask = (!(self.bar1_size_bytes - 1)) & 0xffff_fff0;
+            if value == 0xffff_ffff {
+                self.bar1_probe = true;
+                self.bar1 = 0;
+                self.config.write(offset, size, 0);
+            } else {
+                self.bar1_probe = false;
+                self.bar1 = value & addr_mask;
+                self.config.write(offset, size, self.bar1 | (1 << 3));
+                self.vga.set_vram_bar_base(self.bar1);
+                self.update_scanout_state_from_vga();
             }
             return;
         }
@@ -742,7 +935,9 @@ mod tests {
     fn backend_exec_error_sets_error_irq_and_fence_advances() {
         let mut mem = PhysicalMemoryBus::new(Box::new(DenseMemory::new(0x10000).unwrap()));
 
-        let mut dev = AeroGpuPciDevice::new(AeroGpuDeviceConfig::default(), 0);
+        let mut cfg = AeroGpuDeviceConfig::default();
+        cfg.vram_size_bytes = 2 * 1024 * 1024;
+        let mut dev = AeroGpuPciDevice::new(cfg, 0, 0);
         dev.set_backend(Box::new(FailOnceBackend::default()));
 
         // Enable PCI MMIO decode and DMA.
@@ -855,7 +1050,9 @@ mod tests {
     fn backend_exec_error_with_vsync_present_sets_error_before_fence_and_fence_advances_on_vblank() {
         let mut mem = PhysicalMemoryBus::new(Box::new(DenseMemory::new(0x10000).unwrap()));
 
-        let mut dev = AeroGpuPciDevice::new(AeroGpuDeviceConfig::default(), 0);
+        let mut cfg = AeroGpuDeviceConfig::default();
+        cfg.vram_size_bytes = 2 * 1024 * 1024;
+        let mut dev = AeroGpuPciDevice::new(cfg, 0, 0);
         dev.set_backend(Box::new(FailOnceBackend::default()));
 
         // Enable PCI MMIO decode and DMA.
@@ -979,7 +1176,7 @@ mod tests {
         let ram = Box::new(DenseMemory::new(1024 * 1024).unwrap());
         let mut mem = PhysicalMemoryBus::new(ram);
 
-        let mut dev = AeroGpuPciDevice::new(AeroGpuDeviceConfig::default(), 0);
+        let mut dev = AeroGpuPciDevice::new(AeroGpuDeviceConfig::default(), 0, 0);
 
         // Enable PCI memory space and bus mastering so MMIO reads decode and the device is allowed
         // to poll backend completions.

@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use aero_shared::scanout_state::{ScanoutState, SCANOUT_SOURCE_WDDM};
-use emulator::devices::aerogpu_regs::mmio;
 use emulator::devices::aerogpu_scanout::AeroGpuFormat;
+use emulator::devices::aerogpu_regs::mmio;
 use emulator::devices::pci::aerogpu::{AeroGpuDeviceConfig, AeroGpuPciDevice};
 use emulator::io::pci::{MmioDevice, PciDevice};
 use memory::MemoryBus;
@@ -18,7 +18,7 @@ impl MemoryBus for DummyMemory {
 }
 
 fn new_test_device(scanout_state: Arc<ScanoutState>) -> AeroGpuPciDevice {
-    let mut dev = AeroGpuPciDevice::new(AeroGpuDeviceConfig::default(), 0);
+    let mut dev = AeroGpuPciDevice::new(AeroGpuDeviceConfig::default(), 0, 0);
     dev.set_scanout_state(Some(scanout_state));
     // Enable PCI MMIO decode + bus mastering so register writes behave like a real enumerated device.
     dev.config_write(0x04, 2, (1 << 1) | (1 << 2));
@@ -49,18 +49,6 @@ fn scanout_state_updates_on_fb_gpa_flips_while_enabled() {
     let snap0 = scanout_state.snapshot();
     assert_eq!(snap0.source, SCANOUT_SOURCE_WDDM);
     assert_eq!(snap0.base_paddr(), 0);
-
-    // Provide a minimally valid scanout descriptor so subsequent FB flips are considered valid.
-    // Real drivers program these registers before (and sometimes while) scanout is enabled.
-    dev.mmio_write(&mut mem, mmio::SCANOUT0_WIDTH, 4, 1);
-    dev.mmio_write(&mut mem, mmio::SCANOUT0_HEIGHT, 4, 1);
-    dev.mmio_write(&mut mem, mmio::SCANOUT0_PITCH_BYTES, 4, 4);
-    dev.mmio_write(
-        &mut mem,
-        mmio::SCANOUT0_FORMAT,
-        4,
-        AeroGpuFormat::B8G8R8X8Unorm as u32,
-    );
 
     // Flip to a new framebuffer address. Drivers typically write LO then HI.
     let fb1 = 0x1234_5678_9abc_def0u64;

@@ -24,10 +24,14 @@ fn publishes_wddm_scanout_state_on_enable_transition() {
     let mut mem = DummyMemory;
     let scanout = Arc::new(ScanoutState::new());
 
-    let mut dev = AeroGpuPciDevice::new(AeroGpuDeviceConfig::default(), 0);
+    let mut cfg = AeroGpuDeviceConfig::default();
+    cfg.vram_size_bytes = 2 * 1024 * 1024;
+    let mut dev = AeroGpuPciDevice::new(cfg, 0, 0);
     dev.set_scanout_state(Some(scanout.clone()));
     // Enable PCI MMIO decode so BAR0 writes are accepted.
     dev.config_write(0x04, 2, 1 << 1);
+
+    let gen0 = scanout.snapshot().generation;
 
     // Program scanout0 registers as a guest would.
     let fb_gpa: u64 = 0x1234_5678_9abc_def0;
@@ -41,18 +45,13 @@ fn publishes_wddm_scanout_state_on_enable_transition() {
         AeroGpuFormat::B8G8R8X8Unorm as u32,
     );
     dev.mmio_write(&mut mem, mmio::SCANOUT0_FB_GPA_LO, 4, fb_gpa as u32);
-    dev.mmio_write(
-        &mut mem,
-        mmio::SCANOUT0_FB_GPA_HI,
-        4,
-        (fb_gpa >> 32) as u32,
-    );
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_FB_GPA_HI, 4, (fb_gpa >> 32) as u32);
 
     // Transition ENABLE from 0->1, which should publish the scanout descriptor.
     dev.mmio_write(&mut mem, mmio::SCANOUT0_ENABLE, 4, 1);
 
     let snap = scanout.snapshot();
-    assert_eq!(snap.generation, 1);
+    assert_eq!(snap.generation, gen0 + 1);
     assert_eq!(snap.source, SCANOUT_SOURCE_WDDM);
     assert_eq!(snap.base_paddr_lo, fb_gpa as u32);
     assert_eq!(snap.base_paddr_hi, (fb_gpa >> 32) as u32);
@@ -64,7 +63,7 @@ fn publishes_wddm_scanout_state_on_enable_transition() {
     // Transition ENABLE from 1->0 and verify we fall back to legacy.
     dev.mmio_write(&mut mem, mmio::SCANOUT0_ENABLE, 4, 0);
     let snap2 = scanout.snapshot();
-    assert_eq!(snap2.generation, 2);
+    assert_eq!(snap2.generation, gen0 + 2);
     assert_eq!(snap2.source, SCANOUT_SOURCE_LEGACY_TEXT);
     assert_eq!(snap2.width, 0);
     assert_eq!(snap2.height, 0);
@@ -75,10 +74,12 @@ fn unsupported_scanout_format_publishes_deterministic_disabled_descriptor() {
     let mut mem = DummyMemory;
     let scanout = Arc::new(ScanoutState::new());
 
-    let mut dev = AeroGpuPciDevice::new(AeroGpuDeviceConfig::default(), 0);
+    let mut dev = AeroGpuPciDevice::new(AeroGpuDeviceConfig::default(), 0, 0);
     dev.set_scanout_state(Some(scanout.clone()));
     // Enable PCI MMIO decode so BAR0 writes are accepted.
     dev.config_write(0x04, 2, 1 << 1);
+
+    let gen0 = scanout.snapshot().generation;
 
     // Program scanout0 registers with a format that the shared scanout descriptor cannot represent.
     let fb_gpa: u64 = 0x1234_5678_9abc_def0;
@@ -92,19 +93,14 @@ fn unsupported_scanout_format_publishes_deterministic_disabled_descriptor() {
         AeroGpuFormat::R8G8B8A8Unorm as u32,
     );
     dev.mmio_write(&mut mem, mmio::SCANOUT0_FB_GPA_LO, 4, fb_gpa as u32);
-    dev.mmio_write(
-        &mut mem,
-        mmio::SCANOUT0_FB_GPA_HI,
-        4,
-        (fb_gpa >> 32) as u32,
-    );
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_FB_GPA_HI, 4, (fb_gpa >> 32) as u32);
 
     // Transition ENABLE from 0->1, which should publish a disabled descriptor rather than a
     // descriptor with an unsupported pixel format.
     dev.mmio_write(&mut mem, mmio::SCANOUT0_ENABLE, 4, 1);
 
     let snap0 = scanout.snapshot();
-    assert_eq!(snap0.generation, 1);
+    assert_eq!(snap0.generation, gen0 + 1);
     assert_eq!(snap0.source, SCANOUT_SOURCE_WDDM);
     assert_eq!(snap0.base_paddr_lo, 0);
     assert_eq!(snap0.base_paddr_hi, 0);
@@ -118,6 +114,7 @@ fn unsupported_scanout_format_publishes_deterministic_disabled_descriptor() {
     dev.mmio_write(&mut mem, mmio::SCANOUT0_ENABLE, 4, 0);
     dev.mmio_write(&mut mem, mmio::SCANOUT0_ENABLE, 4, 1);
     let snap1 = scanout.snapshot();
+    assert_eq!(snap1.generation, gen0 + 3);
     assert_eq!(snap1.source, SCANOUT_SOURCE_WDDM);
     assert_eq!(snap1.base_paddr_lo, 0);
     assert_eq!(snap1.base_paddr_hi, 0);
@@ -126,3 +123,4 @@ fn unsupported_scanout_format_publishes_deterministic_disabled_descriptor() {
     assert_eq!(snap1.pitch_bytes, 0);
     assert_eq!(snap1.format, SCANOUT_FORMAT_B8G8R8X8);
 }
+

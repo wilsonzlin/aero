@@ -121,7 +121,14 @@ fn aerogpu_abi_constants_match_aero_protocol() {
 
 #[test]
 fn aerogpu_pci_bar0_is_masked_to_bar_size_alignment() {
-    let mut dev = AeroGpuPciDevice::new(AeroGpuDeviceConfig::default(), 0);
+    let mut dev = AeroGpuPciDevice::new(
+        AeroGpuDeviceConfig {
+            vram_size_bytes: 2 * 1024 * 1024,
+            ..Default::default()
+        },
+        0,
+        0,
+    );
 
     dev.config_write(0x10, 4, 0xffff_ffff);
     let mask = dev.config_read(0x10, 4);
@@ -137,7 +144,14 @@ fn aerogpu_pci_bar0_is_masked_to_bar_size_alignment() {
 
 #[test]
 fn aerogpu_pci_config_space_uses_protocol_identity() {
-    let dev = AeroGpuPciDevice::new(AeroGpuDeviceConfig::default(), 0);
+    let dev = AeroGpuPciDevice::new(
+        AeroGpuDeviceConfig {
+            vram_size_bytes: 2 * 1024 * 1024,
+            ..Default::default()
+        },
+        0,
+        0,
+    );
 
     assert_eq!(read_u16(&dev, 0x00), proto::AEROGPU_PCI_VENDOR_ID);
     assert_eq!(read_u16(&dev, 0x02), proto::AEROGPU_PCI_DEVICE_ID);

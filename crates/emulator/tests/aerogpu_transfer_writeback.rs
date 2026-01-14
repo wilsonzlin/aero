@@ -23,12 +23,13 @@ fn test_device_config() -> AeroGpuDeviceConfig {
             keep_last_submissions: 0,
             fence_completion: AeroGpuFenceCompletionMode::Deferred,
         },
+        vram_size_bytes: 8 * 1024 * 1024,
         ..Default::default()
     }
 }
 
 fn new_test_device() -> AeroGpuPciDevice {
-    let mut dev = AeroGpuPciDevice::new(test_device_config(), 0);
+    let mut dev = AeroGpuPciDevice::new(test_device_config(), 0, 0);
     dev.config_write(0x04, 2, (1 << 1) | (1 << 2));
     dev
 }
