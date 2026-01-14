@@ -2431,6 +2431,15 @@ impl NvmePciDevice {
         self.controller.intx_level
     }
 
+    /// Returns whether the controller currently has an interrupt pending.
+    ///
+    /// This reflects the NVMe controller's own interrupt logic (completion queues + INTMS + per-CQ
+    /// interrupt enable), but is **not** gated by PCI COMMAND.INTX_DISABLE. Platforms can use this
+    /// to deliver MSI even when the guest has disabled legacy INTx.
+    pub fn irq_pending(&self) -> bool {
+        self.controller.intx_level
+    }
+
     pub fn pci_read_u32(&mut self, offset: u16) -> u32 {
         self.config.read(offset, 4)
     }
