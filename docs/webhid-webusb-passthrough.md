@@ -542,7 +542,7 @@ Recommended guardrails:
     - root port **1** is reserved for the guest-visible WebUSB passthrough device
   - The browser/WASM USB stack includes an external USB hub device model (`UsbHubDevice`, USB class
     `0x09`) that can be attached behind a root port to expose additional downstream ports.
-    - Implementation: `crates/aero-usb/src/hub/device.rs`
+    - Implementation: `crates/aero-usb/src/hub.rs`
     - UHCI integration tests: `crates/aero-usb/tests/uhci_external_hub.rs`
   - Current host-side WebHID UI assumes an external hub is attached on guest root port 0. The first few
     downstream hub ports (1..4) are reserved for Aero's synthetic HID devices (keyboard/mouse/gamepad/
