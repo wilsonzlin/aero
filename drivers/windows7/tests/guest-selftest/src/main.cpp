@@ -2764,8 +2764,8 @@ static std::set<DWORD> DetectVirtioDiskNumbers(Logger& log) {
     HANDLE h = CreateFileW(detail->DevicePath, 0, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
                            OPEN_EXISTING, 0, nullptr);
     if (h == INVALID_HANDLE_VALUE) {
-      log.Logf("virtio-blk: CreateFile(%s) failed: %lu", WideToUtf8(detail->DevicePath).c_str(),
-               GetLastError());
+      const DWORD err = GetLastError();
+      log.Logf("virtio-blk: CreateFile(%s) failed: %lu", WideToUtf8(detail->DevicePath).c_str(), err);
       continue;
     }
 
@@ -2964,7 +2964,10 @@ static bool EnsureDirectory(Logger& log, const std::wstring& dir) {
   if (CreateDirectoryW(dir.c_str(), nullptr)) return true;
   if (GetLastError() == ERROR_ALREADY_EXISTS) return true;
 
-  log.Logf("failed to create directory: %s err=%lu", WideToUtf8(dir).c_str(), GetLastError());
+  const DWORD err = GetLastError();
+  log.Logf("failed to create directory: %s err=%lu", WideToUtf8(dir).c_str(), err);
+  // Preserve the CreateDirectory() failure code for callers (log.Logf()/WideToUtf8 may clobber LastError).
+  SetLastError(err);
   return false;
 }
 
@@ -4557,8 +4560,8 @@ static VirtioInputTestResult VirtioInputTest(Logger& log) {
     HANDLE h = OpenHidDeviceForIoctl(device_path.c_str());
     if (h == INVALID_HANDLE_VALUE) {
       had_error = true;
-      log.Logf("virtio-input: CreateFile(%s) failed err=%lu", WideToUtf8(device_path).c_str(),
-               GetLastError());
+      const DWORD err = GetLastError();
+      log.Logf("virtio-input: CreateFile(%s) failed err=%lu", WideToUtf8(device_path).c_str(), err);
       continue;
     }
 
@@ -4787,8 +4790,8 @@ static VirtioInputHidPaths FindVirtioInputHidPaths(Logger& log) {
     HANDLE h = OpenHidDeviceForIoctl(device_path.c_str());
     if (h == INVALID_HANDLE_VALUE) {
       had_error = true;
-      log.Logf("virtio-input-events: CreateFile(%s) failed err=%lu", WideToUtf8(device_path).c_str(),
-               GetLastError());
+      const DWORD err = GetLastError();
+      log.Logf("virtio-input-events: CreateFile(%s) failed err=%lu", WideToUtf8(device_path).c_str(), err);
       continue;
     }
 
@@ -7084,8 +7087,9 @@ static bool HttpGet(Logger& log, const std::wstring& url) {
   comp.dwExtraInfoLength = static_cast<DWORD>(-1);
 
   if (!WinHttpCrackUrl(url.c_str(), 0, 0, &comp)) {
-    log.Logf("virtio-net: WinHttpCrackUrl failed url=%s err=%lu", WideToUtf8(url).c_str(),
-             GetLastError());
+    const DWORD err = GetLastError();
+    log.Logf("virtio-net: WinHttpCrackUrl failed url=%s err=%lu", WideToUtf8(url).c_str(), err);
+    SetLastError(err);
     return false;
   }
 
@@ -7115,9 +7119,10 @@ static bool HttpGet(Logger& log, const std::wstring& url) {
 
   HINTERNET connect = WinHttpConnect(session, host.c_str(), port, 0);
   if (!connect) {
-    log.Logf("virtio-net: WinHttpConnect failed host=%s port=%u err=%lu",
-             WideToUtf8(host).c_str(), port, GetLastError());
+    const DWORD err = GetLastError();
+    log.Logf("virtio-net: WinHttpConnect failed host=%s port=%u err=%lu", WideToUtf8(host).c_str(), port, err);
     WinHttpCloseHandle(session);
+    SetLastError(err);
     return false;
   }
 
@@ -7204,8 +7209,9 @@ static bool HttpGetLargeDeterministic(Logger& log, const std::wstring& url, uint
   comp.dwExtraInfoLength = static_cast<DWORD>(-1);
 
   if (!WinHttpCrackUrl(url.c_str(), 0, 0, &comp)) {
-    log.Logf("virtio-net: WinHttpCrackUrl failed url=%s err=%lu", WideToUtf8(url).c_str(),
-             GetLastError());
+    const DWORD err = GetLastError();
+    log.Logf("virtio-net: WinHttpCrackUrl failed url=%s err=%lu", WideToUtf8(url).c_str(), err);
+    SetLastError(err);
     return false;
   }
 
@@ -7232,9 +7238,10 @@ static bool HttpGetLargeDeterministic(Logger& log, const std::wstring& url, uint
 
   HINTERNET connect = WinHttpConnect(session, host.c_str(), port, 0);
   if (!connect) {
-    log.Logf("virtio-net: WinHttpConnect failed host=%s port=%u err=%lu", WideToUtf8(host).c_str(),
-             port, GetLastError());
+    const DWORD err = GetLastError();
+    log.Logf("virtio-net: WinHttpConnect failed host=%s port=%u err=%lu", WideToUtf8(host).c_str(), port, err);
     WinHttpCloseHandle(session);
+    SetLastError(err);
     return false;
   }
 
@@ -7430,8 +7437,9 @@ static bool HttpPostLargeDeterministic(Logger& log, const std::wstring& url, uin
   comp.dwExtraInfoLength = static_cast<DWORD>(-1);
 
   if (!WinHttpCrackUrl(url.c_str(), 0, 0, &comp)) {
-    log.Logf("virtio-net: WinHttpCrackUrl failed url=%s err=%lu", WideToUtf8(url).c_str(),
-             GetLastError());
+    const DWORD err = GetLastError();
+    log.Logf("virtio-net: WinHttpCrackUrl failed url=%s err=%lu", WideToUtf8(url).c_str(), err);
+    SetLastError(err);
     return false;
   }
 
@@ -7458,9 +7466,10 @@ static bool HttpPostLargeDeterministic(Logger& log, const std::wstring& url, uin
 
   HINTERNET connect = WinHttpConnect(session, host.c_str(), port, 0);
   if (!connect) {
-    log.Logf("virtio-net: WinHttpConnect failed host=%s port=%u err=%lu", WideToUtf8(host).c_str(),
-             port, GetLastError());
+    const DWORD err = GetLastError();
+    log.Logf("virtio-net: WinHttpConnect failed host=%s port=%u err=%lu", WideToUtf8(host).c_str(), port, err);
     WinHttpCloseHandle(session);
+    SetLastError(err);
     return false;
   }
 
