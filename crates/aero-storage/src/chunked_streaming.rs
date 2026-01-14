@@ -255,7 +255,7 @@ fn parse_hex_sha256(value: &str) -> Result<[u8; 32], ChunkedStreamingDiskError> 
         ));
     }
     let mut out = [0u8; 32];
-    for i in 0..32 {
+    for (i, out_byte) in out.iter_mut().enumerate() {
         let hi = normalized.as_bytes()[i * 2];
         let lo = normalized.as_bytes()[i * 2 + 1];
         let hex_val = |b: u8| -> Option<u8> {
@@ -275,7 +275,7 @@ fn parse_hex_sha256(value: &str) -> Result<[u8; 32], ChunkedStreamingDiskError> 
                 "sha256 must be a 64-char hex string".to_string(),
             ));
         };
-        out[i] = (hi << 4) | lo;
+        *out_byte = (hi << 4) | lo;
     }
     Ok(out)
 }

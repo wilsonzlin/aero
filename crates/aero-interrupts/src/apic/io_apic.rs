@@ -410,10 +410,6 @@ impl IoApic {
 
             lapic.inject_external_interrupt(entry.vector);
         }
-
-        if !delivered {
-            return;
-        }
     }
 }
 

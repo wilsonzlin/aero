@@ -586,7 +586,8 @@ impl<B: StorageBackend> AeroSparseDisk<B> {
 
         self.header.allocated_blocks = new_allocated;
 
-        let new_len_usize: usize = ((new_allocated + 63) / 64)
+        let new_len_usize: usize = new_allocated
+            .div_ceil(64)
             .try_into()
             .map_err(|_| DiskError::OffsetOverflow)?;
         self.phys_used.truncate(new_len_usize);
@@ -646,7 +647,10 @@ impl<B: StorageBackend> AeroSparseDisk<B> {
                 .checked_add(1)
                 .ok_or(DiskError::OffsetOverflow)?;
 
-            let new_len_usize: usize = ((self.header.allocated_blocks + 63) / 64)
+            let new_len_usize: usize = self
+                .header
+                .allocated_blocks
+                .div_ceil(64)
                 .try_into()
                 .map_err(|_| DiskError::OffsetOverflow)?;
             if self.phys_used.len() < new_len_usize {

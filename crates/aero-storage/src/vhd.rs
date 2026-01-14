@@ -1195,15 +1195,13 @@ impl<B: StorageBackend> VirtualDisk for VhdDisk<B> {
                         &mut buf[pos..pos + run_len],
                         "vhd block data truncated",
                     )?;
+                } else if let Some(parent) = self.parent.as_mut() {
+                    let abs_run = offset
+                        .checked_add(pos as u64)
+                        .ok_or(DiskError::OffsetOverflow)?;
+                    parent.read_at(abs_run, &mut buf[pos..pos + run_len])?;
                 } else {
-                    if let Some(parent) = self.parent.as_mut() {
-                        let abs_run = offset
-                            .checked_add(pos as u64)
-                            .ok_or(DiskError::OffsetOverflow)?;
-                        parent.read_at(abs_run, &mut buf[pos..pos + run_len])?;
-                    } else {
-                        buf[pos..pos + run_len].fill(0);
-                    }
+                    buf[pos..pos + run_len].fill(0);
                 }
 
                 within = within

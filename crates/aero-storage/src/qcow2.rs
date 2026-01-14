@@ -1116,12 +1116,10 @@ impl<B: StorageBackend> VirtualDisk for Qcow2Disk<B> {
                     &mut buf[pos..pos + chunk_len],
                     "qcow2 data cluster truncated",
                 )?;
+            } else if let Some(backing) = self.backing.as_mut() {
+                backing.read_at(cur_guest, &mut buf[pos..pos + chunk_len])?;
             } else {
-                if let Some(backing) = self.backing.as_mut() {
-                    backing.read_at(cur_guest, &mut buf[pos..pos + chunk_len])?;
-                } else {
-                    buf[pos..pos + chunk_len].fill(0);
-                }
+                buf[pos..pos + chunk_len].fill(0);
             }
 
             pos += chunk_len;
