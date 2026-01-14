@@ -253,7 +253,20 @@ function Get-VersionString {
     if ($null -ne $commitDate) {
         $date = $commitDate.ToString("yyyyMMdd", [System.Globalization.CultureInfo]::InvariantCulture)
     } else {
-        $date = Get-Date -Format "yyyyMMdd"
+        # Prefer SOURCE_DATE_EPOCH when available so artifact naming can be reproducible even
+        # in environments without a working git checkout.
+        $sde = $env:SOURCE_DATE_EPOCH
+        if (-not [string]::IsNullOrWhiteSpace($sde)) {
+            try {
+                $epoch = [int64] $sde.Trim()
+                $date = [DateTimeOffset]::FromUnixTimeSeconds($epoch).ToString("yyyyMMdd", [System.Globalization.CultureInfo]::InvariantCulture)
+            } catch {
+                $date = $null
+            }
+        }
+        if ($null -eq $date) {
+            $date = Get-Date -Format "yyyyMMdd"
+        }
     }
 
     if ([string]::IsNullOrWhiteSpace($sha) -or [string]::IsNullOrWhiteSpace($repoRoot)) {
