@@ -7702,6 +7702,20 @@ static NTSTATUS APIENTRY AeroGpuDdiRender(_In_ const HANDLE hContext, _Inout_ DX
     priv->Reserved0 = ctx ? ctx->ContextId : 0;
     priv->MetaHandle = 0;
 
+    /*
+     * Render/Present can run during power transitions (or after the device is
+     * disabled). Avoid allocating per-submit metadata when the adapter is not
+     * ready to accept submissions; SubmitCommand can rebuild the metadata from
+     * the allocation list once the device is back in D0.
+     */
+    const BOOLEAN poweredOn =
+        (adapter->Bar0 != NULL) &&
+        ((DXGK_DEVICE_POWER_STATE)InterlockedCompareExchange(&adapter->DevicePowerState, 0, 0) == DxgkDevicePowerStateD0) &&
+        (InterlockedCompareExchange(&adapter->AcceptingSubmissions, 0, 0) != 0);
+    if (!poweredOn) {
+        return STATUS_SUCCESS;
+    }
+
     if (pRender->AllocationListSize && pRender->pAllocationList) {
         AEROGPU_SUBMISSION_META* meta = NULL;
         NTSTATUS st = AeroGpuBuildAndAttachMeta(adapter,
@@ -7740,6 +7754,15 @@ static NTSTATUS APIENTRY AeroGpuDdiPresent(_In_ const HANDLE hContext, _Inout_ D
     priv->Type = AEROGPU_SUBMIT_PRESENT;
     priv->Reserved0 = ctx ? ctx->ContextId : 0;
     priv->MetaHandle = 0;
+
+    /* See AeroGpuDdiRender: skip allocating metadata when the device can't accept submissions. */
+    const BOOLEAN poweredOn =
+        (adapter->Bar0 != NULL) &&
+        ((DXGK_DEVICE_POWER_STATE)InterlockedCompareExchange(&adapter->DevicePowerState, 0, 0) == DxgkDevicePowerStateD0) &&
+        (InterlockedCompareExchange(&adapter->AcceptingSubmissions, 0, 0) != 0);
+    if (!poweredOn) {
+        return STATUS_SUCCESS;
+    }
 
     if (pPresent->AllocationListSize && pPresent->pAllocationList) {
         AEROGPU_SUBMISSION_META* meta = NULL;
