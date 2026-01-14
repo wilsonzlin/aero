@@ -201,6 +201,39 @@ fn generate_edid_synthesized_mode_is_sane() {
 }
 
 #[test]
+fn generate_edid_nonstandard_width_preferred_mode_is_sane() {
+    // 1366×768 is a very common mode, but cannot be represented as an EDID
+    // standard timing (width not multiple of 8). It must still be represented
+    // correctly as the preferred DTD.
+    let preferred = aero_edid::Timing::new(1366, 768, 60);
+    let edid = aero_edid::generate_edid(preferred);
+    assert!(checksum_ok(&edid));
+
+    let dtd = parse_dtd(&edid[54..72]).expect("missing preferred DTD");
+    assert_eq!(dtd.h_active, preferred.width);
+    assert_eq!(dtd.v_active, preferred.height);
+    let refresh = dtd.refresh_hz();
+    assert!((refresh - 60.0).abs() < 1.0, "refresh={refresh}");
+
+    let range = parse_range_limits(&edid[90..108]).expect("missing range limits descriptor");
+    let required_pclk_10mhz = dtd.pixel_clock_hz.div_ceil(10_000_000) as u8;
+    assert!(range.max_pixel_clock_10mhz >= required_pclk_10mhz);
+    let h_khz = dtd.h_freq_khz();
+    assert!(
+        (range.min_h_rate_khz as u64) <= h_khz && h_khz <= (range.max_h_rate_khz as u64),
+        "h_khz={h_khz} range={}..={}",
+        range.min_h_rate_khz,
+        range.max_h_rate_khz
+    );
+    assert!(
+        range.min_v_rate_hz as f64 <= refresh && refresh <= range.max_v_rate_hz as f64,
+        "refresh={refresh} range={}..={}",
+        range.min_v_rate_hz,
+        range.max_v_rate_hz
+    );
+}
+
+#[test]
 fn generate_edid_high_resolution_mode_is_sane() {
     // This timing is within the DTD pixel clock limit, but would exceed it if the
     // generator always used the default blanking heuristic. Ensure `generate_edid`
