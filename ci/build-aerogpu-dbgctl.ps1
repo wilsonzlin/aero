@@ -203,6 +203,83 @@ Remediation:
 "@
 }
 
+function Get-PeCoffMachine {
+  <#
+  .SYNOPSIS
+    Returns the PE/COFF Machine field for a PE executable.
+
+  .DESCRIPTION
+    Performs minimal PE validation:
+      - DOS header magic: "MZ"
+      - PE signature: "PE\0\0"
+    and then reads the COFF Machine field from the File Header.
+
+    Pure PowerShell/.NET implementation (no external tools). Compatible with Windows PowerShell 5.1.
+  #>
+
+  [CmdletBinding()]
+  param([Parameter(Mandatory = $true)][string]$Path)
+
+  if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+    throw "File not found: $Path"
+  }
+
+  $absPath = (Resolve-Path -LiteralPath $Path).Path
+
+  $fs = $null
+  $br = $null
+  try {
+    $fs = [System.IO.File]::Open($absPath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+    if ($fs.Length -lt 64) {
+      throw "File is too small to be a valid PE executable (expected at least 64 bytes): $absPath"
+    }
+
+    $br = New-Object System.IO.BinaryReader($fs)
+
+    # DOS header: e_magic (0x00) should be 'MZ' (0x5A4D).
+    $fs.Position = 0
+    $mz = $br.ReadUInt16()
+    if ($mz -ne 0x5A4D) {
+      throw ("File is not a PE executable (missing 'MZ' DOS header magic): {0}" -f $absPath)
+    }
+
+    # DOS header: e_lfanew (0x3C) is a 32-bit offset to the PE signature.
+    $fs.Position = 0x3C
+    $peOffset = $br.ReadInt32()
+    if ($peOffset -lt 0 -or $peOffset -gt ($fs.Length - 6)) {
+      throw ("File has an invalid PE header offset (e_lfanew=0x{0:X8}): {1}" -f $peOffset, $absPath)
+    }
+
+    # PE signature: 'PE\0\0' (0x00004550).
+    $fs.Position = $peOffset
+    $peSig = $br.ReadUInt32()
+    if ($peSig -ne 0x00004550) {
+      throw ("File is not a PE executable (missing 'PE\0\0' signature at offset 0x{0:X8}): {1}" -f $peOffset, $absPath)
+    }
+
+    # COFF File Header follows the 4-byte PE signature; Machine is the first field (2 bytes).
+    $machine = $br.ReadUInt16()
+    return $machine
+  } finally {
+    if ($br) { $br.Dispose() }
+    if ($fs) { $fs.Dispose() }
+  }
+}
+
+function Assert-PeMachineI386 {
+  [CmdletBinding()]
+  param([Parameter(Mandatory = $true)][string]$Path)
+
+  $machine = Get-PeCoffMachine -Path $Path
+
+  # IMAGE_FILE_MACHINE_I386 = 0x014c (x86 / 32-bit). The dbgctl tool is intentionally shipped as x86
+  # and used on x64 via WOW64.
+  if ($machine -ne 0x014c) {
+    $absPath = (Resolve-Path -LiteralPath $Path).Path
+    throw ("AeroGPU dbgctl must be an x86 (32-bit) PE executable (IMAGE_FILE_MACHINE_I386 0x014c), but '{0}' has COFF Machine 0x{1:X4}. Ensure the dbgctl build uses the x86 toolchain/target, then re-run ci/build-aerogpu-dbgctl.ps1." -f $absPath, $machine)
+  }
+}
+
 $repoRoot = Resolve-RepoRoot
 $toolchainJsonAbs = Resolve-RepoPath -Path $ToolchainJson
 $toolchain = Read-ToolchainJson -ToolchainJsonPath $toolchainJsonAbs
@@ -246,6 +323,8 @@ $dbgctlFile = Get-Item -LiteralPath $dbgctlExe
 if ($dbgctlFile.Length -le 0) {
   throw "Dbgctl output exists but is empty: $dbgctlExe"
 }
+
+Assert-PeMachineI386 -Path $dbgctlExe
 
 Write-Host ("OK: built dbgctl: {0} ({1} bytes)" -f $dbgctlExe, $dbgctlFile.Length)
 

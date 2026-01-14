@@ -180,6 +180,12 @@ and (when `out/drivers/aerogpu/<arch>/` exists, i.e. after `ci/build-drivers.ps1
 - `out/drivers/aerogpu/x86/tools/win7_dbgctl/bin/aerogpu_dbgctl.exe`
 - `out/drivers/aerogpu/x64/tools/win7_dbgctl/bin/aerogpu_dbgctl.exe`
 
+Bitness policy:
+
+- `aerogpu_dbgctl.exe` is intentionally built/shipped as an **x86 (32-bit)** tool.
+- For the x64 driver/package tree we still ship the same x86 binary and run it under **WOW64**.
+- CI enforces this by inspecting the PE header and requiring `IMAGE_FILE_MACHINE_I386 (0x014c)`.
+
 Build it before catalog generation:
 
 ```powershell
