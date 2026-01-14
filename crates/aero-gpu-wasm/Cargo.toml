@@ -14,7 +14,7 @@ wasm-threaded = []
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-aero-pc-constants = { path = "../aero-pc-constants" }
+aero-guest-phys = { path = "../aero-guest-phys" }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 aero-gpu = { path = "../aero-gpu" }

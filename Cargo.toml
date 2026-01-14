@@ -68,6 +68,7 @@ members = [
     "crates/firmware",
     "crates/memory",
     "crates/platform",
+    "crates/aero-guest-phys",
     "crates/aero-pc-constants",
     "crates/aero-pc-platform",
     "crates/aero-pci-firmware-adapter",

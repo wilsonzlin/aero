@@ -10,79 +10,19 @@ mod drain_queue;
 //
 // The web runtime stores guest RAM as a flat `[0..guest_size)` byte array (backed by a shared
 // `WebAssembly.Memory`). On the PC/Q35 platform, guest *physical* RAM is non-contiguous once the
-// configured guest RAM exceeds the PCIe ECAM base (`aero_pc_constants::PCIE_ECAM_BASE`): the
-// "high" portion is remapped
-// above 4GiB, leaving an ECAM+PCI/MMIO hole below 4GiB.
+// configured guest RAM exceeds the PCIe ECAM base (`aero_guest_phys::PCIE_ECAM_BASE`): the "high"
+// portion is remapped above 4GiB, leaving an ECAM+PCI/MMIO hole below 4GiB.
 //
 // AeroGPU allocation tables (`alloc.gpa`) use guest physical addresses, so the browser GPU worker
 // must translate GPAs back into this backing-store offset space before indexing `Uint8Array`.
 //
 // Keep this in sync with:
-// - `crates/aero-wasm/src/guest_phys.rs`
+// - `crates/aero-guest-phys/src/lib.rs`
 // - `web/src/runtime/shared_layout.ts`
 #[cfg(any(test, target_arch = "wasm32"))]
 mod guest_phys {
-    /// End of low RAM / start of the ECAM+PCI hole.
-    pub const LOW_RAM_END: u64 = aero_pc_constants::PCIE_ECAM_BASE;
-    /// Base of remapped high RAM.
-    pub const HIGH_RAM_START: u64 = 0x1_0000_0000;
-
-    /// Translate a guest physical address range into a backing-RAM offset.
-    ///
-    /// Returns `Some(ram_offset)` if (and only if) the entire range is backed by RAM.
-    /// Returns `None` for hole/out-of-range ranges, or for ranges that span multiple regions.
-    pub fn translate_guest_paddr_range(ram_bytes: u64, paddr: u64, len: u64) -> Option<u64> {
-        // For zero-length accesses, accept boundary addresses (mirrors slice indexing semantics).
-        if len == 0 {
-            if ram_bytes <= LOW_RAM_END {
-                return (paddr <= ram_bytes).then_some(paddr);
-            }
-
-            // Low RAM boundary.
-            if paddr <= LOW_RAM_END {
-                return Some(paddr);
-            }
-
-            // High RAM boundary.
-            let high_len = ram_bytes.saturating_sub(LOW_RAM_END);
-            let high_end = HIGH_RAM_START.saturating_add(high_len);
-            if paddr >= HIGH_RAM_START && paddr <= high_end {
-                return Some(LOW_RAM_END + (paddr - HIGH_RAM_START));
-            }
-
-            return None;
-        }
-
-        if ram_bytes <= LOW_RAM_END {
-            let end = paddr.checked_add(len)?;
-            if paddr < ram_bytes && end <= ram_bytes {
-                return Some(paddr);
-            }
-            return None;
-        }
-
-        // Low RAM.
-        if paddr < LOW_RAM_END {
-            let end = paddr.checked_add(len)?;
-            if end <= LOW_RAM_END {
-                return Some(paddr);
-            }
-            return None;
-        }
-
-        // High RAM remap.
-        let high_len = ram_bytes.saturating_sub(LOW_RAM_END);
-        let high_end = HIGH_RAM_START.saturating_add(high_len);
-        if paddr >= HIGH_RAM_START && paddr < high_end {
-            let end = paddr.checked_add(len)?;
-            if end <= high_end {
-                return Some(LOW_RAM_END + (paddr - HIGH_RAM_START));
-            }
-        }
-
-        // Hole or out-of-range.
-        None
-    }
+    pub use aero_guest_phys::{HIGH_RAM_START, LOW_RAM_END};
+    pub use aero_guest_phys::translate_guest_paddr_range_to_offset as translate_guest_paddr_range;
 
     #[cfg(test)]
     mod tests {

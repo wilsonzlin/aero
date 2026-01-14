@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+#![no_std]
 
 //! Shared physical address / topology constants for the x86 PC platform.
 //!

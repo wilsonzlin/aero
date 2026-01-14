@@ -20,6 +20,7 @@ aero-gpu-vga = { path = "../aero-gpu-vga" }
 aero-machine = { path = "../aero-machine" }
 aero-net-backend = { path = "../aero-net-backend" }
 aero-net-pump = { path = "../aero-net-pump" }
+aero-guest-phys = { path = "../aero-guest-phys" }
 aero-pc-constants = { path = "../aero-pc-constants" }
 aero-platform = { path = "../platform" }
 aero-usb = { path = "../aero-usb" }

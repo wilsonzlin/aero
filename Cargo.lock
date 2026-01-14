@@ -324,7 +324,7 @@ version = "0.1.0"
 dependencies = [
  "aero-d3d9",
  "aero-gpu",
- "aero-pc-constants",
+ "aero-guest-phys",
  "aero-protocol",
  "bytemuck",
  "futures-intrusive",
@@ -335,6 +335,13 @@ dependencies = [
  "web-sys",
  "wgpu",
  "xxhash-rust",
+]
+
+[[package]]
+name = "aero-guest-phys"
+version = "0.1.0"
+dependencies = [
+ "aero-pc-constants",
 ]
 
 [[package]]
@@ -808,6 +815,7 @@ dependencies = [
  "aero-cpu-core",
  "aero-devices-input",
  "aero-gpu-vga",
+ "aero-guest-phys",
  "aero-io-snapshot",
  "aero-ipc",
  "aero-jit-x86",
