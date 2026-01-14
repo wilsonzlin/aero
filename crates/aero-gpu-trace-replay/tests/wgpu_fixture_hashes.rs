@@ -294,6 +294,26 @@ fn replays_aerogpu_cmd_triangle_first_vertex_fixture_and_matches_hash() {
 }
 
 #[test]
+fn replays_aerogpu_cmd_triangle_vertex_buffer_offset_fixture_and_matches_hash() {
+    let bytes = fs::read(fixture_path(
+        "aerogpu_cmd_triangle_vertex_buffer_offset.aerogputrace",
+    ))
+    .expect("fixture file missing; run with AERO_UPDATE_TRACE_FIXTURES=1 to regenerate");
+    pollster::block_on(async {
+        let Some((width, height, hash)) = run_trace_and_hash(&bytes).await else {
+            return;
+        };
+        assert_eq!(width, 64);
+        assert_eq!(height, 64);
+        // Expected frame is solid green with alpha=0.
+        assert_eq!(
+            hash,
+            "cf776eb69882dd61bfb58c0f385347f3d11ac6954b7bbd348cb2c4eb1d33a57d"
+        );
+    });
+}
+
+#[test]
 fn replays_aerogpu_cmd_blend_add_fixture_and_matches_hash() {
     let bytes = fs::read(fixture_path("aerogpu_cmd_blend_add.aerogputrace"))
         .expect("fixture file missing; run with AERO_UPDATE_TRACE_FIXTURES=1 to regenerate");
