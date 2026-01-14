@@ -571,9 +571,8 @@ fn xhci_msix_triggers_lapic_vector_and_suppresses_intx() {
         PlatformInterruptController::get_pending(&*interrupts.borrow()),
         Some(vector)
     );
-    assert_eq!(
-        xhci.borrow().irq_level(),
-        false,
+    assert!(
+        !xhci.borrow().irq_level(),
         "xHCI INTx should be suppressed while MSI-X is active"
     );
 }
@@ -625,7 +624,7 @@ fn xhci_msix_function_mask_defers_delivery_until_unmasked() {
     // Program MSI-X table entry 0: dest = BSP (APIC ID 0), vector = 0x67.
     let vector: u8 = 0x67;
     let entry0 = bar0_base + table_offset;
-    m.write_physical_u32(entry0 + 0x00, 0xfee0_0000);
+    m.write_physical_u32(entry0, 0xfee0_0000);
     m.write_physical_u32(entry0 + 0x04, 0);
     m.write_physical_u32(entry0 + 0x08, u32::from(vector));
     m.write_physical_u32(entry0 + 0x0c, 0); // unmasked
@@ -740,7 +739,7 @@ fn xhci_msix_vector_mask_delivers_pending_after_unmask_even_when_interrupt_clear
     // Program MSI-X table entry 0 and keep it masked.
     let vector: u8 = 0x68;
     let entry0 = bar0_base + table_offset;
-    m.write_physical_u32(entry0 + 0x00, 0xfee0_0000);
+    m.write_physical_u32(entry0, 0xfee0_0000);
     m.write_physical_u32(entry0 + 0x04, 0);
     m.write_physical_u32(entry0 + 0x08, u32::from(vector));
     m.write_physical_u32(entry0 + 0x0c, 1); // entry masked
@@ -826,7 +825,7 @@ fn xhci_msix_function_mask_delivers_pending_after_unmask_even_when_interrupt_cle
     // Program MSI-X table entry 0 (unmasked): dest = BSP (APIC ID 0), vector = 0x69.
     let vector: u8 = 0x69;
     let entry0 = bar0_base + table_offset;
-    m.write_physical_u32(entry0 + 0x00, 0xfee0_0000);
+    m.write_physical_u32(entry0, 0xfee0_0000);
     m.write_physical_u32(entry0 + 0x04, 0);
     m.write_physical_u32(entry0 + 0x08, u32::from(vector));
     m.write_physical_u32(entry0 + 0x0c, 0);

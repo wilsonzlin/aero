@@ -95,9 +95,9 @@ fn rx_ring_consumes_descriptors_in_modulo_order_on_wraparound() {
 
     // Populate all descriptors with buffers; only indices 2,3,0 should be consumed.
     write_rx_desc(&mut dma, 0x2000, 0x3000);
-    write_rx_desc(&mut dma, 0x2010, 0x3400);
-    write_rx_desc(&mut dma, 0x2020, 0x3800);
-    write_rx_desc(&mut dma, 0x2030, 0x3C00);
+    write_rx_desc(&mut dma, 0x2000 + 16, 0x3400);
+    write_rx_desc(&mut dma, 0x2000 + 2 * 16, 0x3800);
+    write_rx_desc(&mut dma, 0x2000 + 3 * 16, 0x3C00);
 
     let frames = [
         build_test_frame(0xA1),
@@ -139,7 +139,7 @@ fn rx_ring_consumes_descriptors_in_modulo_order_on_wraparound() {
     }
 
     // Descriptor 1 should remain untouched.
-    let (len, status, errors) = read_rx_desc_fields(&mut dma, 0x2010);
+    let (len, status, errors) = read_rx_desc_fields(&mut dma, 0x2000 + 16);
     assert_eq!(len, 0);
     assert_eq!(status, 0);
     assert_eq!(errors, 0);

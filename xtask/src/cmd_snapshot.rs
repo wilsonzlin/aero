@@ -3113,8 +3113,8 @@ fn diff_devices_section(
                     map_b.insert(d.key(), d);
                 }
 
-                // Detect ordering differences separately (the file-order list is often important when
-                // debugging determinism).
+                // Detect ordering differences separately (the file-order list is often important
+                // when debugging determinism).
                 let order_a: Vec<(u32, u16, u16)> = devs_a.iter().map(|d| d.key()).collect();
                 let order_b: Vec<(u32, u16, u16)> = devs_b.iter().map(|d| d.key()).collect();
                 if order_a != order_b && map_a == map_b {

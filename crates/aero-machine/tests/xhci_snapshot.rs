@@ -96,7 +96,7 @@ fn snapshot_restore_roundtrips_xhci_state_and_redrives_intx_level() {
     // Intentionally do *not* sync xHCI's INTx into the platform interrupt controller before
     // snapshot. This leaves the interrupt sink desynchronized, which restore must fix up by
     // polling device-level IRQ lines again.
-    assert_eq!(interrupts.borrow().gsi_level(gsi), false);
+    assert!(!interrupts.borrow().gsi_level(gsi));
 
     let expected_xhci_state = { xhci.borrow().save_state() };
 
@@ -133,9 +133,8 @@ fn snapshot_restore_roundtrips_xhci_state_and_redrives_intx_level() {
 
     // After restore, the xHCI's asserted INTx level should be re-driven into the platform
     // interrupt sink via PCI routing.
-    assert_eq!(
+    assert!(
         interrupts.borrow().gsi_level(gsi),
-        true,
         "expected PCI INTx (GSI {gsi}) to be asserted for xHCI (bdf={bdf:?}) after restore"
     );
 }
@@ -556,7 +555,7 @@ fn snapshot_restore_preserves_xhci_msix_table_and_delivery() {
 
     let vector1: u8 = 0x66;
     let entry0 = bar0_base + table_offset;
-    vm.write_physical_u32(entry0 + 0x00, 0xfee0_0000);
+    vm.write_physical_u32(entry0, 0xfee0_0000);
     vm.write_physical_u32(entry0 + 0x04, 0);
     vm.write_physical_u32(entry0 + 0x08, u32::from(vector1));
     vm.write_physical_u32(entry0 + 0x0c, 0); // unmasked
@@ -607,9 +606,8 @@ fn snapshot_restore_preserves_xhci_msix_table_and_delivery() {
         PlatformInterruptController::get_pending(&*interrupts.borrow()),
         Some(vector1)
     );
-    assert_eq!(
-        xhci_after.borrow().irq_level(),
-        false,
+    assert!(
+        !xhci_after.borrow().irq_level(),
         "xHCI INTx should be suppressed while MSI-X is active"
     );
 }
@@ -694,7 +692,7 @@ fn snapshot_restore_preserves_xhci_msix_pending_bit_and_delivers_after_unmask() 
     // Program MSI-X table entry 0: destination = BSP (APIC ID 0), vector = 0x68.
     let vector: u8 = 0x68;
     let entry0 = bar0_base + table_offset;
-    vm.write_physical_u32(entry0 + 0x00, 0xfee0_0000);
+    vm.write_physical_u32(entry0, 0xfee0_0000);
     vm.write_physical_u32(entry0 + 0x04, 0);
     vm.write_physical_u32(entry0 + 0x08, u32::from(vector));
     vm.write_physical_u32(entry0 + 0x0c, 0); // unmasked
@@ -711,9 +709,8 @@ fn snapshot_restore_preserves_xhci_msix_pending_bit_and_delivers_after_unmask() 
         PlatformInterruptController::get_pending(&*interrupts.borrow()),
         None
     );
-    assert_eq!(
-        xhci.borrow().irq_level(),
-        false,
+    assert!(
+        !xhci.borrow().irq_level(),
         "xHCI INTx should be suppressed while MSI-X is active (even if masked)"
     );
     let pba_bits = vm.read_physical_u64(bar0_base + pba_offset);

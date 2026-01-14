@@ -56,7 +56,7 @@ fn aerogpu_immediate_backend_completes_fence() {
         ring::AerogpuRingHeader::SIZE_BYTES as u32 + entry_count * entry_stride_bytes;
 
     // Write the ring header (one pending entry: head=0, tail=1).
-    m.write_physical_u32(ring_gpa + 0, ring::AEROGPU_RING_MAGIC);
+    m.write_physical_u32(ring_gpa, ring::AEROGPU_RING_MAGIC);
     m.write_physical_u32(ring_gpa + 4, pci::AEROGPU_ABI_VERSION_U32);
     m.write_physical_u32(ring_gpa + 8, ring_size_bytes);
     m.write_physical_u32(ring_gpa + 12, entry_count);
@@ -68,7 +68,7 @@ fn aerogpu_immediate_backend_completes_fence() {
     // Write one submission descriptor with a signal fence.
     let fence_value = 7u64;
     let desc_gpa = ring_gpa + ring::AerogpuRingHeader::SIZE_BYTES as u64;
-    m.write_physical_u32(desc_gpa + 0, ring::AerogpuSubmitDesc::SIZE_BYTES as u32);
+    m.write_physical_u32(desc_gpa, ring::AerogpuSubmitDesc::SIZE_BYTES as u32);
     m.write_physical_u32(desc_gpa + 4, 0); // flags
     m.write_physical_u32(desc_gpa + 8, 0); // context_id
     m.write_physical_u32(desc_gpa + 12, 0); // engine_id

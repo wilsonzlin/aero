@@ -70,7 +70,7 @@ fn aerogpu_submission_bridge_drains_and_requires_host_fence_completion() {
         ring::AerogpuRingHeader::SIZE_BYTES as u32 + entry_count * entry_stride_bytes;
 
     // Ring header.
-    m.write_physical_u32(ring_gpa + 0, ring::AEROGPU_RING_MAGIC);
+    m.write_physical_u32(ring_gpa, ring::AEROGPU_RING_MAGIC);
     m.write_physical_u32(ring_gpa + 4, pci::AEROGPU_ABI_VERSION_U32);
     m.write_physical_u32(ring_gpa + 8, ring_size_bytes);
     m.write_physical_u32(ring_gpa + 12, entry_count);
@@ -83,7 +83,7 @@ fn aerogpu_submission_bridge_drains_and_requires_host_fence_completion() {
     let desc_gpa = ring_gpa + ring::AerogpuRingHeader::SIZE_BYTES as u64;
     let signal_fence = 0x1234_5678_9ABC_DEF0u64;
 
-    m.write_physical_u32(desc_gpa + 0, ring::AerogpuSubmitDesc::SIZE_BYTES as u32); // desc_size_bytes
+    m.write_physical_u32(desc_gpa, ring::AerogpuSubmitDesc::SIZE_BYTES as u32); // desc_size_bytes
     m.write_physical_u32(desc_gpa + 4, 0); // flags
     m.write_physical_u32(desc_gpa + 8, 0); // context_id
     m.write_physical_u32(desc_gpa + 12, ring::AEROGPU_ENGINE_0); // engine_id
@@ -153,7 +153,7 @@ fn aerogpu_submission_bridge_drains_and_requires_host_fence_completion() {
 
     // Fence page written (but still reports completed_fence=0).
     assert_eq!(
-        m.read_physical_u32(fence_gpa + 0),
+        m.read_physical_u32(fence_gpa),
         ring::AEROGPU_FENCE_PAGE_MAGIC
     );
     assert_eq!(
@@ -241,7 +241,7 @@ fn aerogpu_submission_bridge_vsync_present_fence_waits_for_vblank_tick() {
     let ring_size_bytes =
         ring::AerogpuRingHeader::SIZE_BYTES as u32 + entry_count * entry_stride_bytes;
 
-    m.write_physical_u32(ring_gpa + 0, ring::AEROGPU_RING_MAGIC);
+    m.write_physical_u32(ring_gpa, ring::AEROGPU_RING_MAGIC);
     m.write_physical_u32(ring_gpa + 4, pci::AEROGPU_ABI_VERSION_U32);
     m.write_physical_u32(ring_gpa + 8, ring_size_bytes);
     m.write_physical_u32(ring_gpa + 12, entry_count);
@@ -252,7 +252,7 @@ fn aerogpu_submission_bridge_vsync_present_fence_waits_for_vblank_tick() {
 
     let desc_gpa = ring_gpa + ring::AerogpuRingHeader::SIZE_BYTES as u64;
     let signal_fence = 1u64;
-    m.write_physical_u32(desc_gpa + 0, ring::AerogpuSubmitDesc::SIZE_BYTES as u32); // desc_size_bytes
+    m.write_physical_u32(desc_gpa, ring::AerogpuSubmitDesc::SIZE_BYTES as u32); // desc_size_bytes
     m.write_physical_u32(desc_gpa + 4, ring::AEROGPU_SUBMIT_FLAG_PRESENT); // flags
     m.write_physical_u32(desc_gpa + 8, 0); // context_id
     m.write_physical_u32(desc_gpa + 12, ring::AEROGPU_ENGINE_0); // engine_id

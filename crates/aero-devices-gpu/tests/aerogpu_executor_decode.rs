@@ -1584,10 +1584,12 @@ fn vblank_irq_is_only_latched_while_enabled() {
 #[test]
 fn flush_pending_fences_unblocks_vsync_fence_when_scanout_disabled_deferred_mode() {
     let mut mem = VecMemory::new(0x40_000);
-    let mut regs = AeroGpuRegs::default();
+    let mut regs = AeroGpuRegs {
+        irq_enable: irq_bits::FENCE,
+        ..Default::default()
+    };
     regs.features |= FEATURE_VBLANK;
     regs.scanout0.enable = true;
-    regs.irq_enable = irq_bits::FENCE;
 
     let mut exec = AeroGpuExecutor::new(AeroGpuExecutorConfig {
         verbose: false,
@@ -1989,10 +1991,12 @@ fn deferred_mode_applies_completion_received_before_submit_for_immediate_fence()
 #[test]
 fn deferred_mode_does_not_bypass_vsync_gating_for_completion_received_before_submit() {
     let mut mem = VecMemory::new(0x40_000);
-    let mut regs = AeroGpuRegs::default();
+    let mut regs = AeroGpuRegs {
+        irq_enable: irq_bits::FENCE,
+        ..Default::default()
+    };
     regs.features |= FEATURE_VBLANK;
     regs.scanout0.enable = true;
-    regs.irq_enable = irq_bits::FENCE;
 
     let mut exec = AeroGpuExecutor::new(AeroGpuExecutorConfig {
         verbose: false,

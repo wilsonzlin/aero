@@ -170,7 +170,7 @@ fn aerogpu_snapshot_roundtrip_preserves_vblank_timeline_and_redrives_intx_level(
         (bar0, gsi)
     };
     assert!(bar0_base != 0, "AeroGPU BAR0 must be assigned by BIOS POST");
-    let bar0 = bar0_base as u64;
+    let bar0 = bar0_base;
 
     // Enable scanout + vblank IRQ so vblank ticks both advance counters and latch an interrupt bit.
     src.write_physical_u32(
@@ -233,7 +233,7 @@ fn aerogpu_snapshot_roundtrip_preserves_vblank_timeline_and_redrives_intx_level(
             false,
             &mut *interrupts.borrow_mut(),
         );
-        assert_eq!(interrupts.borrow().gsi_level(gsi), false);
+        assert!(!interrupts.borrow().gsi_level(gsi));
     }
 
     let snapshot = src.take_snapshot_full().expect("snapshot should succeed");
@@ -246,7 +246,7 @@ fn aerogpu_snapshot_roundtrip_preserves_vblank_timeline_and_redrives_intx_level(
 
     // Re-drive INTx levels during restore (see `Machine::restore_device_states`).
     let interrupts = dst.platform_interrupts().expect("pc platform enabled");
-    assert_eq!(interrupts.borrow().gsi_level(gsi), true);
+    assert!(interrupts.borrow().gsi_level(gsi));
 
     // Continue ticking from the restored timebase; the next half period should reach the third
     // vblank exactly.
@@ -261,7 +261,7 @@ fn aerogpu_snapshot_roundtrip_preserves_vblank_timeline_and_redrives_intx_level(
             .bus_mut()
             .device_config(bdf)
             .and_then(|cfg| cfg.bar_range(0))
-            .map(|range| range.base as u64)
+            .map(|range| range.base)
             .unwrap_or(0)
     };
     assert_eq!(

@@ -70,7 +70,7 @@ fn aerogpu_cursor_is_composited_over_scanout() {
     let scanout_pitch = scanout_w * 4;
     // WDDM scanout currently requires a B8G8R8X8-compatible format.
     // Fill the framebuffer with solid blue pixels (B,G,R,X = 255,0,0,0).
-    let scanout_bytes = vec![255u8, 0, 0, 0].repeat((scanout_w * scanout_h) as usize);
+    let scanout_bytes = [255u8, 0, 0, 0].repeat((scanout_w * scanout_h) as usize);
     m.write_physical(scanout_fb_gpa, &scanout_bytes);
 
     m.write_physical_u32(

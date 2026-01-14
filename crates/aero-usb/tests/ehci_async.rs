@@ -131,7 +131,7 @@ impl UsbDeviceModel for DummyHsDevice {
             if st.bulk_reads == 0 {
                 st.bulk_reads += 1;
                 let data = [1u8, 2, 3, 4];
-                return UsbInResult::Data(data[..data.len().min(max_len)].to_vec());
+                return UsbInResult::Data(data[..max_len.min(data.len())].to_vec());
             }
             return UsbInResult::Nak;
         }

@@ -230,7 +230,12 @@ const _: () = {
     const BYTES_PER_PIXEL: u64 = 4;
     const LFB_BYTES: u64 = WIDTH * HEIGHT * BYTES_PER_PIXEL;
 
-    assert!(AEROGPU_VRAM_SIZE >= VBE_LFB_OFFSET + LFB_BYTES);
+    const {
+        assert!(
+            AEROGPU_VRAM_SIZE >= VBE_LFB_OFFSET + LFB_BYTES,
+            "AEROGPU_VRAM_SIZE too small for VBE linear framebuffer"
+        );
+    }
 };
 
 #[test]

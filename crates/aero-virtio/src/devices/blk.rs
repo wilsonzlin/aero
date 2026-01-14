@@ -905,7 +905,9 @@ impl VirtioDevice for VirtioBlk {
                                                     .read_at(scan_off, &mut read_buf[..take])
                                                 {
                                                     Ok(()) => {
-                                                        if read_buf[..take].iter().any(|b| *b != 0)
+                                                        if read_buf[..take]
+                                                            .iter()
+                                                            .any(|b| *b != 0)
                                                             && self
                                                                 .disk
                                                                 .write_at(

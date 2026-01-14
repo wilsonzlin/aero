@@ -68,7 +68,7 @@ async fn handle_request(
     req: Request<Body>,
     state: Arc<State>,
 ) -> Result<Response<Body>, Infallible> {
-    if req.method() == Method::GET {
+    if *req.method() == Method::GET {
         match req.uri().path() {
             "/manifest.json" => {
                 state.counters.manifest_get.fetch_add(1, Ordering::SeqCst);

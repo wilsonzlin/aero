@@ -73,8 +73,8 @@ fn emit_packet(out: &mut Vec<u8>, opcode: u32, payload: impl FnOnce(&mut Vec<u8>
 
 #[test]
 fn resource_dirty_range_uploads_from_guest_memory_before_draw() {
-    pollster::block_on(async {
-        let mut exec = match common::aerogpu_executor(module_path!()).await {
+    {
+        let mut exec = match pollster::block_on(common::aerogpu_executor(module_path!())) {
             Some(exec) => exec,
             None => return,
         };
@@ -254,7 +254,7 @@ fn resource_dirty_range_uploads_from_guest_memory_before_draw() {
 
         let rgba = {
             let rt_tex = exec.texture(3).expect("render target texture");
-            readback_rgba8(
+            pollster::block_on(readback_rgba8(
                 exec.device(),
                 exec.queue(),
                 rt_tex,
@@ -267,64 +267,62 @@ fn resource_dirty_range_uploads_from_guest_memory_before_draw() {
                         depth_or_array_layers: 1,
                     },
                 },
-            )
-            .await
+            ))
         };
 
         // Sample the center pixel and ensure it matches the uploaded texture (solid red).
         let idx = ((2 * 4 + 2) * 4) as usize;
         assert_eq!(&rgba[idx..idx + 4], &[255, 0, 0, 255]);
-    });
+    }
 }
 
 #[test]
 fn alloc_table_is_resolved_per_submission_instead_of_caching_gpa() {
-    pollster::block_on(async {
-        let mut exec = match common::aerogpu_executor(module_path!()).await {
-            Some(exec) => exec,
-            None => return,
-        };
+    let mut exec = match pollster::block_on(common::aerogpu_executor(module_path!())) {
+        Some(exec) => exec,
+        None => return,
+    };
 
-        // Guest memory containing two potential backing locations for the same alloc_id.
-        let mut guest = VecGuestMemory::new(0x20_000);
-        const ALLOC_TEX: u32 = 1;
-        let tex_gpa_a = 0x1000u64;
-        let tex_gpa_b = 0x2000u64;
-        guest
-            .write(tex_gpa_a, &[255, 0, 0, 255])
-            .expect("write red texel");
-        guest
-            .write(tex_gpa_b, &[0, 255, 0, 255])
-            .expect("write green texel");
+    // Guest memory containing two potential backing locations for the same alloc_id.
+    let mut guest = VecGuestMemory::new(0x20_000);
+    const ALLOC_TEX: u32 = 1;
+    let tex_gpa_a = 0x1000u64;
+    let tex_gpa_b = 0x2000u64;
+    guest
+        .write(tex_gpa_a, &[255, 0, 0, 255])
+        .expect("write red texel");
+    guest
+        .write(tex_gpa_b, &[0, 255, 0, 255])
+        .expect("write green texel");
 
-        fn build_single_entry_alloc_table(alloc_id: u32, gpa: u64, size_bytes: u64) -> Vec<u8> {
-            let mut out = Vec::new();
-            push_u32(&mut out, AEROGPU_ALLOC_TABLE_MAGIC);
-            push_u32(&mut out, AEROGPU_ABI_VERSION_U32);
-            push_u32(&mut out, 0); // size_bytes (patch later)
-            push_u32(&mut out, 1); // entry_count
-            push_u32(&mut out, ProtocolAllocEntry::SIZE_BYTES as u32); // entry_stride_bytes
-            push_u32(&mut out, 0); // reserved0
+    fn build_single_entry_alloc_table(alloc_id: u32, gpa: u64, size_bytes: u64) -> Vec<u8> {
+        let mut out = Vec::new();
+        push_u32(&mut out, AEROGPU_ALLOC_TABLE_MAGIC);
+        push_u32(&mut out, AEROGPU_ABI_VERSION_U32);
+        push_u32(&mut out, 0); // size_bytes (patch later)
+        push_u32(&mut out, 1); // entry_count
+        push_u32(&mut out, ProtocolAllocEntry::SIZE_BYTES as u32); // entry_stride_bytes
+        push_u32(&mut out, 0); // reserved0
 
-            push_u32(&mut out, alloc_id);
-            push_u32(&mut out, 0); // flags
-            push_u64(&mut out, gpa);
-            push_u64(&mut out, size_bytes);
-            push_u64(&mut out, 0); // reserved0
+        push_u32(&mut out, alloc_id);
+        push_u32(&mut out, 0); // flags
+        push_u64(&mut out, gpa);
+        push_u64(&mut out, size_bytes);
+        push_u64(&mut out, 0); // reserved0
 
-            let total_size_bytes = out.len() as u32;
-            out[ALLOC_TABLE_SIZE_BYTES_OFFSET..ALLOC_TABLE_SIZE_BYTES_OFFSET + 4]
-                .copy_from_slice(&total_size_bytes.to_le_bytes());
-            out
-        }
+        let total_size_bytes = out.len() as u32;
+        out[ALLOC_TABLE_SIZE_BYTES_OFFSET..ALLOC_TABLE_SIZE_BYTES_OFFSET + 4]
+            .copy_from_slice(&total_size_bytes.to_le_bytes());
+        out
+    }
 
-        let alloc_table_gpa = 0x8000u64;
+    let alloc_table_gpa = 0x8000u64;
 
-        // First submission: create resources and draw using alloc_id -> tex_gpa_a (red).
-        let alloc_table_a = build_single_entry_alloc_table(ALLOC_TEX, tex_gpa_a, 0x100);
-        guest
-            .write(alloc_table_gpa, &alloc_table_a)
-            .expect("write alloc table A");
+    // First submission: create resources and draw using alloc_id -> tex_gpa_a (red).
+    let alloc_table_a = build_single_entry_alloc_table(ALLOC_TEX, tex_gpa_a, 0x100);
+    guest
+        .write(alloc_table_gpa, &alloc_table_a)
+        .expect("write alloc table A");
 
         // Full-screen triangle (pos: vec2<f32>).
         let verts: [f32; 6] = [-1.0, -1.0, 3.0, -1.0, -1.0, 3.0];
@@ -456,9 +454,108 @@ fn alloc_table_is_resolved_per_submission_instead_of_caching_gpa() {
             report_a.events
         );
 
-        // Verify the first draw sampled red from tex_gpa_a.
+    // Verify the first draw sampled red from tex_gpa_a.
+    let rt_tex = exec.texture(3).expect("render target texture");
+    let rgba = pollster::block_on(readback_rgba8(
+        exec.device(),
+        exec.queue(),
+        rt_tex,
+        TextureRegion {
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            size: wgpu::Extent3d {
+                width: 4,
+                height: 4,
+                depth_or_array_layers: 1,
+            },
+        },
+    ));
+    let idx = ((2 * 4 + 2) * 4) as usize;
+    assert_eq!(&rgba[idx..idx + 4], &[255, 0, 0, 255]);
+
+    // Second submission: remap alloc_id -> tex_gpa_b (green) and re-upload via dirty range.
+    let alloc_table_b = build_single_entry_alloc_table(ALLOC_TEX, tex_gpa_b, 0x100);
+    guest
+        .write(alloc_table_gpa, &alloc_table_b)
+        .expect("write alloc table B");
+
+    let stream_b = build_stream(|out| {
+        // RESOURCE_DIRTY_RANGE for texture 2 (forces upload from the new alloc table mapping).
+        emit_packet(out, AerogpuCmdOpcode::ResourceDirtyRange as u32, |out| {
+            push_u32(out, 2); // resource_handle
+            push_u32(out, 0); // reserved0
+            push_u64(out, 0); // offset_bytes
+            push_u64(out, 4); // size_bytes
+        });
+
+        // SET_RENDER_TARGETS: color0 = texture 3.
+        emit_packet(out, AerogpuCmdOpcode::SetRenderTargets as u32, |out| {
+            push_u32(out, 1); // color_count
+            push_u32(out, 0); // depth_stencil
+            push_u32(out, 3); // colors[0]
+            for _ in 1..8 {
+                push_u32(out, 0);
+            }
+        });
+
+        // CLEAR to black.
+        emit_packet(out, AerogpuCmdOpcode::Clear as u32, |out| {
+            push_u32(out, 1); // flags: CLEAR_COLOR
+            push_f32_bits(out, 0.0);
+            push_f32_bits(out, 0.0);
+            push_f32_bits(out, 0.0);
+            push_f32_bits(out, 1.0);
+            push_f32_bits(out, 1.0); // depth (unused)
+            push_u32(out, 0); // stencil
+        });
+
+        // SET_TEXTURE (ps slot 0) = texture 2.
+        emit_packet(out, AerogpuCmdOpcode::SetTexture as u32, |out| {
+            push_u32(out, 1); // shader_stage: PIXEL
+            push_u32(out, 0); // slot
+            push_u32(out, 2); // texture handle
+            push_u32(out, 0); // reserved0
+        });
+
+        // SET_VERTEX_BUFFERS: slot 0 = buffer 1.
+        emit_packet(out, AerogpuCmdOpcode::SetVertexBuffers as u32, |out| {
+            push_u32(out, 0); // start_slot
+            push_u32(out, 1); // buffer_count
+            push_u32(out, 1); // binding[0].buffer
+            push_u32(out, 8); // binding[0].stride_bytes
+            push_u32(out, 0); // binding[0].offset_bytes
+            push_u32(out, 0); // binding[0].reserved0
+        });
+
+        // DRAW: 3 vertices.
+        emit_packet(out, AerogpuCmdOpcode::Draw as u32, |out| {
+            push_u32(out, 3); // vertex_count
+            push_u32(out, 1); // instance_count
+            push_u32(out, 0); // first_vertex
+            push_u32(out, 0); // first_instance
+        });
+    });
+
+    let cmd_b_gpa = 0xA000u64;
+    guest
+        .write(cmd_b_gpa, &stream_b)
+        .expect("write cmd stream B");
+    let report_b = exec.process_submission_from_guest_memory(
+        &mut guest,
+        cmd_b_gpa,
+        stream_b.len() as u32,
+        alloc_table_gpa,
+        alloc_table_b.len() as u32,
+    );
+    assert!(
+        report_b.is_ok(),
+        "submission B errors: {:#?}",
+        report_b.events
+    );
+
+    let rgba = {
         let rt_tex = exec.texture(3).expect("render target texture");
-        let rgba = readback_rgba8(
+        pollster::block_on(readback_rgba8(
             exec.device(),
             exec.queue(),
             rt_tex,
@@ -471,112 +568,10 @@ fn alloc_table_is_resolved_per_submission_instead_of_caching_gpa() {
                     depth_or_array_layers: 1,
                 },
             },
-        )
-        .await;
-        let idx = ((2 * 4 + 2) * 4) as usize;
-        assert_eq!(&rgba[idx..idx + 4], &[255, 0, 0, 255]);
-
-        // Second submission: remap alloc_id -> tex_gpa_b (green) and re-upload via dirty range.
-        let alloc_table_b = build_single_entry_alloc_table(ALLOC_TEX, tex_gpa_b, 0x100);
-        guest
-            .write(alloc_table_gpa, &alloc_table_b)
-            .expect("write alloc table B");
-
-        let stream_b = build_stream(|out| {
-            // RESOURCE_DIRTY_RANGE for texture 2 (forces upload from the new alloc table mapping).
-            emit_packet(out, AerogpuCmdOpcode::ResourceDirtyRange as u32, |out| {
-                push_u32(out, 2); // resource_handle
-                push_u32(out, 0); // reserved0
-                push_u64(out, 0); // offset_bytes
-                push_u64(out, 4); // size_bytes
-            });
-
-            // SET_RENDER_TARGETS: color0 = texture 3.
-            emit_packet(out, AerogpuCmdOpcode::SetRenderTargets as u32, |out| {
-                push_u32(out, 1); // color_count
-                push_u32(out, 0); // depth_stencil
-                push_u32(out, 3); // colors[0]
-                for _ in 1..8 {
-                    push_u32(out, 0);
-                }
-            });
-
-            // CLEAR to black.
-            emit_packet(out, AerogpuCmdOpcode::Clear as u32, |out| {
-                push_u32(out, 1); // flags: CLEAR_COLOR
-                push_f32_bits(out, 0.0);
-                push_f32_bits(out, 0.0);
-                push_f32_bits(out, 0.0);
-                push_f32_bits(out, 1.0);
-                push_f32_bits(out, 1.0); // depth (unused)
-                push_u32(out, 0); // stencil
-            });
-
-            // SET_TEXTURE (ps slot 0) = texture 2.
-            emit_packet(out, AerogpuCmdOpcode::SetTexture as u32, |out| {
-                push_u32(out, 1); // shader_stage: PIXEL
-                push_u32(out, 0); // slot
-                push_u32(out, 2); // texture handle
-                push_u32(out, 0); // reserved0
-            });
-
-            // SET_VERTEX_BUFFERS: slot 0 = buffer 1.
-            emit_packet(out, AerogpuCmdOpcode::SetVertexBuffers as u32, |out| {
-                push_u32(out, 0); // start_slot
-                push_u32(out, 1); // buffer_count
-                push_u32(out, 1); // binding[0].buffer
-                push_u32(out, 8); // binding[0].stride_bytes
-                push_u32(out, 0); // binding[0].offset_bytes
-                push_u32(out, 0); // binding[0].reserved0
-            });
-
-            // DRAW: 3 vertices.
-            emit_packet(out, AerogpuCmdOpcode::Draw as u32, |out| {
-                push_u32(out, 3); // vertex_count
-                push_u32(out, 1); // instance_count
-                push_u32(out, 0); // first_vertex
-                push_u32(out, 0); // first_instance
-            });
-        });
-
-        let cmd_b_gpa = 0xA000u64;
-        guest
-            .write(cmd_b_gpa, &stream_b)
-            .expect("write cmd stream B");
-        let report_b = exec.process_submission_from_guest_memory(
-            &mut guest,
-            cmd_b_gpa,
-            stream_b.len() as u32,
-            alloc_table_gpa,
-            alloc_table_b.len() as u32,
-        );
-        assert!(
-            report_b.is_ok(),
-            "submission B errors: {:#?}",
-            report_b.events
-        );
-
-        let rgba = {
-            let rt_tex = exec.texture(3).expect("render target texture");
-            readback_rgba8(
-                exec.device(),
-                exec.queue(),
-                rt_tex,
-                TextureRegion {
-                    mip_level: 0,
-                    origin: wgpu::Origin3d::ZERO,
-                    size: wgpu::Extent3d {
-                        width: 4,
-                        height: 4,
-                        depth_or_array_layers: 1,
-                    },
-                },
-            )
-            .await
-        };
-        let idx = ((2 * 4 + 2) * 4) as usize;
-        assert_eq!(&rgba[idx..idx + 4], &[0, 255, 0, 255]);
-    });
+        ))
+    };
+    let idx = ((2 * 4 + 2) * 4) as usize;
+    assert_eq!(&rgba[idx..idx + 4], &[0, 255, 0, 255]);
 }
 
 #[test]
@@ -880,8 +875,7 @@ fn copy_texture2d_writeback_roundtrips_bytes() {
 
 #[test]
 fn copy_buffer_executes_before_draw() {
-    pollster::block_on(async {
-        let mut exec = match common::aerogpu_executor(module_path!()).await {
+        let mut exec = match pollster::block_on(common::aerogpu_executor(module_path!())) {
             Some(exec) => exec,
             None => return,
         };
@@ -1052,7 +1046,7 @@ fn copy_buffer_executes_before_draw() {
         );
 
         let rt_tex = exec.texture(4).expect("render target texture");
-        let rgba = readback_rgba8(
+        let rgba = pollster::block_on(readback_rgba8(
             exec.device(),
             exec.queue(),
             rt_tex,
@@ -1065,19 +1059,16 @@ fn copy_buffer_executes_before_draw() {
                     depth_or_array_layers: 1,
                 },
             },
-        )
-        .await;
+        ));
 
         // Sample the center pixel and ensure it matches the uploaded texture (solid red).
         let idx = ((2 * 4 + 2) * 4) as usize;
         assert_eq!(&rgba[idx..idx + 4], &[255, 0, 0, 255]);
-    });
 }
 
 #[test]
 fn copy_texture2d_executes_before_draw() {
-    pollster::block_on(async {
-        let mut exec = match common::aerogpu_executor(module_path!()).await {
+        let mut exec = match pollster::block_on(common::aerogpu_executor(module_path!())) {
             Some(exec) => exec,
             None => return,
         };
@@ -1250,7 +1241,7 @@ fn copy_texture2d_executes_before_draw() {
         );
 
         let rt_tex = exec.texture(3).expect("render target texture");
-        let rgba = readback_rgba8(
+        let rgba = pollster::block_on(readback_rgba8(
             exec.device(),
             exec.queue(),
             rt_tex,
@@ -1263,13 +1254,11 @@ fn copy_texture2d_executes_before_draw() {
                     depth_or_array_layers: 1,
                 },
             },
-        )
-        .await;
+        ));
 
         // Sample the center pixel and ensure it matches the copied texture (solid red).
         let idx = ((2 * 4 + 2) * 4) as usize;
         assert_eq!(&rgba[idx..idx + 4], &[255, 0, 0, 255]);
-    });
 }
 
 #[test]
@@ -2100,8 +2089,7 @@ fn copy_texture2d_writeback_rejects_readonly_alloc() {
 
 #[test]
 fn resource_dirty_range_uploads_guest_backed_index_buffer_before_draw_indexed() {
-    pollster::block_on(async {
-        let mut exec = match common::aerogpu_executor(module_path!()).await {
+        let mut exec = match pollster::block_on(common::aerogpu_executor(module_path!())) {
             Some(exec) => exec,
             None => return,
         };
@@ -2321,7 +2309,7 @@ fn resource_dirty_range_uploads_guest_backed_index_buffer_before_draw_indexed() 
         );
 
         let rt_tex = exec.texture(3).expect("render target texture");
-        let rgba = readback_rgba8(
+        let rgba = pollster::block_on(readback_rgba8(
             exec.device(),
             exec.queue(),
             rt_tex,
@@ -2334,19 +2322,16 @@ fn resource_dirty_range_uploads_guest_backed_index_buffer_before_draw_indexed() 
                     depth_or_array_layers: 1,
                 },
             },
-        )
-        .await;
+        ));
 
         // Sample the center pixel and ensure it matches the uploaded texture (solid red).
         let idx = ((2 * 4 + 2) * 4) as usize;
         assert_eq!(&rgba[idx..idx + 4], &[255, 0, 0, 255]);
-    });
 }
 
 #[test]
 fn upload_resource_updates_host_owned_resources() {
-    pollster::block_on(async {
-        let mut exec = match common::aerogpu_executor(module_path!()).await {
+        let mut exec = match pollster::block_on(common::aerogpu_executor(module_path!())) {
             Some(exec) => exec,
             None => return,
         };
@@ -2483,7 +2468,7 @@ fn upload_resource_updates_host_owned_resources() {
         );
 
         let rt_tex = exec.texture(3).expect("render target texture");
-        let rgba = readback_rgba8(
+        let rgba = pollster::block_on(readback_rgba8(
             exec.device(),
             exec.queue(),
             rt_tex,
@@ -2496,13 +2481,11 @@ fn upload_resource_updates_host_owned_resources() {
                     depth_or_array_layers: 1,
                 },
             },
-        )
-        .await;
+        ));
 
         // Sample the center pixel and ensure it matches the uploaded texture (solid red).
         let idx = ((2 * 4 + 2) * 4) as usize;
         assert_eq!(&rgba[idx..idx + 4], &[255, 0, 0, 255]);
-    });
 }
 
 #[test]
@@ -2604,8 +2587,7 @@ fn cmd_descriptor_requires_gpa_and_size_bytes_to_match() {
 
 #[test]
 fn resource_dirty_range_texture_row_pitch_is_respected() {
-    pollster::block_on(async {
-        let mut exec = match common::aerogpu_executor(module_path!()).await {
+        let mut exec = match pollster::block_on(common::aerogpu_executor(module_path!())) {
             Some(exec) => exec,
             None => return,
         };
@@ -2781,7 +2763,7 @@ fn resource_dirty_range_texture_row_pitch_is_respected() {
         );
 
         let tex = exec.texture(2).expect("uploaded texture");
-        let rgba = readback_rgba8(
+        let rgba = pollster::block_on(readback_rgba8(
             exec.device(),
             exec.queue(),
             tex,
@@ -2794,18 +2776,15 @@ fn resource_dirty_range_texture_row_pitch_is_respected() {
                     depth_or_array_layers: 1,
                 },
             },
-        )
-        .await;
+        ));
 
         assert_eq!(&rgba[0..4], &[255, 0, 0, 255]);
         assert_eq!(&rgba[4..8], &[0, 255, 0, 255]);
-    });
 }
 
 #[test]
 fn draw_to_bgra_render_target_is_supported() {
-    pollster::block_on(async {
-        let mut exec = match common::aerogpu_executor(module_path!()).await {
+        let mut exec = match pollster::block_on(common::aerogpu_executor(module_path!())) {
             Some(exec) => exec,
             None => return,
         };
@@ -2942,7 +2921,7 @@ fn draw_to_bgra_render_target_is_supported() {
         );
 
         let rt_tex = exec.texture(3).expect("render target texture");
-        let rgba = readback_rgba8(
+        let rgba = pollster::block_on(readback_rgba8(
             exec.device(),
             exec.queue(),
             rt_tex,
@@ -2955,19 +2934,16 @@ fn draw_to_bgra_render_target_is_supported() {
                     depth_or_array_layers: 1,
                 },
             },
-        )
-        .await;
+        ));
 
         // BGRA8 render target stores bytes as B,G,R,A.
         let idx = ((2 * 4 + 2) * 4) as usize;
         assert_eq!(&rgba[idx..idx + 4], &[0, 0, 255, 255]);
-    });
 }
 
 #[test]
 fn executor_supports_16bit_formats_b5g6r5_and_b5g5r5a1() {
-    pollster::block_on(async {
-        let mut exec = match common::aerogpu_executor(module_path!()).await {
+        let mut exec = match pollster::block_on(common::aerogpu_executor(module_path!())) {
             Some(exec) => exec,
             None => return,
         };
@@ -3133,7 +3109,7 @@ fn executor_supports_16bit_formats_b5g6r5_and_b5g5r5a1() {
             );
 
             let rt_tex = exec.texture(2).expect("render target");
-            let rgba = readback_rgba8(
+            let rgba = pollster::block_on(readback_rgba8(
                 exec.device(),
                 exec.queue(),
                 rt_tex,
@@ -3146,8 +3122,7 @@ fn executor_supports_16bit_formats_b5g6r5_and_b5g5r5a1() {
                         depth_or_array_layers: 1,
                     },
                 },
-            )
-            .await;
+            ));
             let idx_bytes = ((2 * 4 + 2) * 4) as usize;
             assert_eq!(
                 &rgba[idx_bytes..idx_bytes + 4],
@@ -3266,7 +3241,7 @@ fn executor_supports_16bit_formats_b5g6r5_and_b5g5r5a1() {
             );
 
             let rt_tex = exec.texture(2).expect("render target");
-            let rgba = readback_rgba8(
+            let rgba = pollster::block_on(readback_rgba8(
                 exec.device(),
                 exec.queue(),
                 rt_tex,
@@ -3279,8 +3254,7 @@ fn executor_supports_16bit_formats_b5g6r5_and_b5g5r5a1() {
                         depth_or_array_layers: 1,
                     },
                 },
-            )
-            .await;
+            ));
             let idx_bytes = ((2 * 4 + 2) * 4) as usize;
             assert_eq!(
                 &rgba[idx_bytes..idx_bytes + 4],
@@ -3288,7 +3262,6 @@ fn executor_supports_16bit_formats_b5g6r5_and_b5g5r5a1() {
                 "guest-backed {name} sampled color mismatch"
             );
         }
-    });
 }
 
 #[test]

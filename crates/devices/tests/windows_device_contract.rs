@@ -505,7 +505,7 @@ fn windows_device_contract_virtio_input_alias_inf_includes_generic_fallback_mode
         // Keep this logic simple and close to `drivers/windows7/virtio-input/scripts/check-inf-alias.py`.
         let mut start_idx = None;
         for (i, line) in s.lines().enumerate() {
-            let trimmed = line.trim_start_matches(|c| c == ' ' || c == '\t');
+            let trimmed = line.trim_start_matches([' ', '\t']);
             if trimmed.starts_with('[') {
                 start_idx = Some(i);
                 break;

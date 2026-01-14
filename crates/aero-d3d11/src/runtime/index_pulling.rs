@@ -137,20 +137,27 @@ mod tests {
         // Index pulling bindings are typically used in the same bind group as vertex pulling
         // (`VERTEX_PULLING_GROUP`). They must be in the reserved internal binding range so they
         // never collide with D3D11 register-space bindings.
-        const { assert!(INDEX_PULLING_PARAMS_BINDING >= BINDING_BASE_INTERNAL) };
-        const { assert!(INDEX_PULLING_BUFFER_BINDING >= BINDING_BASE_INTERNAL) };
-
-        // Index pulling must not overlap any possible vertex buffer bindings.
-        let last_possible_vb_binding =
+        const LAST_POSSIBLE_VB_BINDING: u32 =
             VERTEX_PULLING_VERTEX_BUFFER_BINDING_BASE + MAX_WGPU_VERTEX_BUFFERS - 1;
-        assert!(
-            INDEX_PULLING_PARAMS_BINDING > last_possible_vb_binding,
-            "index pulling params binding must come after the vertex pulling vertex-buffer binding range"
-        );
-        assert_eq!(
-            INDEX_PULLING_BUFFER_BINDING,
-            INDEX_PULLING_PARAMS_BINDING + 1,
-            "index pulling buffer binding must immediately follow params binding"
-        );
+        const {
+            assert!(
+                INDEX_PULLING_PARAMS_BINDING >= BINDING_BASE_INTERNAL,
+                "index pulling params binding must be in internal range"
+            );
+            assert!(
+                INDEX_PULLING_BUFFER_BINDING >= BINDING_BASE_INTERNAL,
+                "index pulling buffer binding must be in internal range"
+            );
+
+            // Index pulling must not overlap any possible vertex buffer bindings.
+            assert!(
+                INDEX_PULLING_PARAMS_BINDING > LAST_POSSIBLE_VB_BINDING,
+                "index pulling params binding must come after the vertex pulling vertex-buffer binding range"
+            );
+            assert!(
+                INDEX_PULLING_BUFFER_BINDING == INDEX_PULLING_PARAMS_BINDING + 1,
+                "index pulling buffer binding must immediately follow params binding"
+            );
+        }
     }
 }

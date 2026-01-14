@@ -1426,7 +1426,7 @@ mod tests {
         // - PRESENT packet (16 bytes): cmd hdr (8) + payload {scanout_id:u32, flags:u32} (8)
         let size_bytes = 40u32;
 
-        mem.write_u32(gpa + 0, AEROGPU_CMD_STREAM_MAGIC);
+        mem.write_u32(gpa, AEROGPU_CMD_STREAM_MAGIC);
         mem.write_u32(gpa + 4, AeroGpuRegs::default().abi_version);
         mem.write_u32(gpa + 8, size_bytes);
         mem.write_u32(gpa + 12, 0);

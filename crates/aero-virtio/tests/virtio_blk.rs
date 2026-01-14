@@ -270,6 +270,15 @@ type Setup = (
     Arc<AtomicU32>,
 );
 
+type SetupTrackingDiscardDisk = (
+    VirtioPciDevice,
+    Caps,
+    GuestRam,
+    Arc<Mutex<Vec<u8>>>,
+    Arc<AtomicU32>,
+    Arc<AtomicU32>,
+);
+
 #[derive(Clone, Default)]
 struct TestIrq {
     legacy_count: Rc<Cell<u64>>,
@@ -432,14 +441,7 @@ fn setup_with_sizes(disk_len: usize, mem_len: usize) -> Setup {
 
 fn setup_tracking_discard_disk(
     disk_len: usize,
-) -> (
-    VirtioPciDevice,
-    Caps,
-    GuestRam,
-    Arc<Mutex<Vec<u8>>>,
-    Arc<AtomicU32>,
-    Arc<AtomicU32>,
-) {
+) -> SetupTrackingDiscardDisk {
     let backing = Arc::new(Mutex::new(vec![0u8; disk_len]));
     let discards = Arc::new(AtomicU32::new(0));
     let writes = Arc::new(AtomicU32::new(0));

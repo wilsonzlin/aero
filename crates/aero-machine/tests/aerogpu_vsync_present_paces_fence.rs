@@ -279,7 +279,7 @@ fn aerogpu_vsync_present_flushes_fence_when_scanout_disabled() {
     let ring_size_bytes =
         ring::AerogpuRingHeader::SIZE_BYTES as u32 + entry_count * entry_stride_bytes;
 
-    m.write_physical_u32(ring_gpa + 0, ring::AEROGPU_RING_MAGIC);
+    m.write_physical_u32(ring_gpa, ring::AEROGPU_RING_MAGIC);
     m.write_physical_u32(ring_gpa + 4, pci::AEROGPU_ABI_VERSION_U32);
     m.write_physical_u32(ring_gpa + 8, ring_size_bytes);
     m.write_physical_u32(ring_gpa + 12, entry_count);
@@ -290,7 +290,7 @@ fn aerogpu_vsync_present_flushes_fence_when_scanout_disabled() {
 
     let desc_gpa = ring_gpa + ring::AerogpuRingHeader::SIZE_BYTES as u64;
     let signal_fence = 0x1111_2222_3333_4444u64;
-    m.write_physical_u32(desc_gpa + 0, ring::AerogpuSubmitDesc::SIZE_BYTES as u32);
+    m.write_physical_u32(desc_gpa, ring::AerogpuSubmitDesc::SIZE_BYTES as u32);
     m.write_physical_u32(desc_gpa + 4, ring::AEROGPU_SUBMIT_FLAG_PRESENT);
     m.write_physical_u32(desc_gpa + 8, 0);
     m.write_physical_u32(desc_gpa + 12, ring::AEROGPU_ENGINE_0);
@@ -382,7 +382,7 @@ fn aerogpu_vsync_present_flushes_fence_when_scanout_disabled() {
 
     // Fence page written.
     assert_eq!(
-        m.read_physical_u32(fence_gpa + 0),
+        m.read_physical_u32(fence_gpa),
         ring::AEROGPU_FENCE_PAGE_MAGIC
     );
     assert_eq!(m.read_physical_u64(fence_gpa + 8), signal_fence);
@@ -428,7 +428,7 @@ fn aerogpu_vsync_present_completes_one_fence_per_vblank_tick() {
     let ring_size_bytes =
         ring::AerogpuRingHeader::SIZE_BYTES as u32 + entry_count * entry_stride_bytes;
 
-    m.write_physical_u32(ring_gpa + 0, ring::AEROGPU_RING_MAGIC);
+    m.write_physical_u32(ring_gpa, ring::AEROGPU_RING_MAGIC);
     m.write_physical_u32(ring_gpa + 4, pci::AEROGPU_ABI_VERSION_U32);
     m.write_physical_u32(ring_gpa + 8, ring_size_bytes);
     m.write_physical_u32(ring_gpa + 12, entry_count);
@@ -444,7 +444,7 @@ fn aerogpu_vsync_present_completes_one_fence_per_vblank_tick() {
         let desc_gpa = ring_gpa
             + ring::AerogpuRingHeader::SIZE_BYTES as u64
             + (i as u64) * u64::from(entry_stride_bytes);
-        m.write_physical_u32(desc_gpa + 0, ring::AerogpuSubmitDesc::SIZE_BYTES as u32);
+        m.write_physical_u32(desc_gpa, ring::AerogpuSubmitDesc::SIZE_BYTES as u32);
         m.write_physical_u32(desc_gpa + 4, ring::AEROGPU_SUBMIT_FLAG_PRESENT);
         m.write_physical_u32(desc_gpa + 8, 0);
         m.write_physical_u32(desc_gpa + 12, ring::AEROGPU_ENGINE_0);
