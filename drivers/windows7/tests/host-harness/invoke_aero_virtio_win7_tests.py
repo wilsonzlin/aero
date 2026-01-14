@@ -57,7 +57,8 @@ It:
   - when --with-virtio-snd is enabled, virtio-snd, virtio-snd-capture, and virtio-snd-duplex must PASS (not SKIP)
   - when --with-snd-buffer-limits is enabled, virtio-snd-buffer-limits must PASS (not FAIL/SKIP/missing)
   - when --with-input-events (alias: --with-virtio-input-events) is enabled, virtio-input-events must PASS (not FAIL/missing)
-  - when --with-input-leds is enabled, virtio-input-leds must PASS (not SKIP/FAIL/missing)
+  - when --with-input-leds is enabled, virtio-input-leds must PASS (not SKIP/FAIL/missing) (provision the guest with
+    --test-input-leds; newer guest selftests also accept --test-input-led and emit the legacy marker)
   - when --with-input-media-keys is enabled, virtio-input-media-keys must PASS (not FAIL/missing)
   - when --with-input-led is enabled, virtio-input-led must PASS (not FAIL/SKIP/missing)
   - when --with-input-tablet-events/--with-tablet-events is enabled, virtio-input-tablet-events must PASS (not FAIL/missing)
