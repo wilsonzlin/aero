@@ -5075,10 +5075,18 @@ impl Machine {
         if let Some(vga) = &self.vga {
             let vga = vga.borrow();
             if (vga.vbe.enable & 0x0001) != 0 {
-                ScanoutSource::LegacyVbe
-            } else {
-                ScanoutSource::LegacyText
+                return ScanoutSource::LegacyVbe;
             }
+
+            // The VGA device model can be placed into mode 13h (320x200x256) via BIOS INT 10h or by
+            // software directly programming VGA regs. The machine does not track the full VGA
+            // state machine here; instead, use the BIOS-cached mode value which is updated when the
+            // guest uses INT 10h AH=00h to set a classic VGA mode.
+            if (self.bios.cached_video_mode() & 0x7F) == 0x13 {
+                return ScanoutSource::LegacyVga;
+            }
+
+            return ScanoutSource::LegacyText;
         } else if self.cfg.enable_aerogpu {
             // When AeroGPU is enabled (and standalone VGA is disabled), legacy VBE state is tracked
             // in the BIOS HLE layer.

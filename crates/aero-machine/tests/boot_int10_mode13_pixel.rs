@@ -1,5 +1,5 @@
 use aero_gpu_vga::DisplayOutput;
-use aero_machine::{Machine, MachineConfig, RunExit};
+use aero_machine::{Machine, MachineConfig, RunExit, ScanoutSource};
 use pretty_assertions::assert_eq;
 
 fn build_mode13h_write_pixel_boot_sector(x: u16, y: u16, color: u8) -> [u8; 512] {
@@ -70,6 +70,7 @@ fn boot_sector_int10_mode13h_write_pixel_is_visible() {
     m.reset();
 
     run_until_halt(&mut m);
+    assert_eq!(m.active_scanout_source(), ScanoutSource::LegacyVga);
 
     let vga = m.vga().expect("machine should have a VGA device");
     let pixel = {
