@@ -25,6 +25,8 @@ test.describe("gpu worker presented cursor overlay", () => {
     expect(result?.error ?? null).toBeNull();
     expect(result.backend).toBe("webgl2_raw");
 
+    expect(result.sampleNoCursor).toEqual(result.expectedNoCursor);
+
     const sample: number[] = result.sample;
     const expected: number[] = result.expected;
     expect(sample[3]).toBe(255);
@@ -48,6 +50,8 @@ test.describe("gpu worker presented cursor overlay", () => {
     expect(result?.error ?? null).toBeNull();
     expect(result.backend).toBe("webgpu");
 
+    expect(result.sampleNoCursor).toEqual(result.expectedNoCursor);
+
     const sample: number[] = result.sample;
     const expected: number[] = result.expected;
     expect(sample[3]).toBe(255);
@@ -57,4 +61,3 @@ test.describe("gpu worker presented cursor overlay", () => {
     }
   });
 });
-

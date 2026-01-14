@@ -8,6 +8,8 @@ declare global {
       ready?: boolean;
       backend?: string;
       error?: string;
+      sampleNoCursor?: number[];
+      expectedNoCursor?: number[];
       sample?: number[];
       expected?: number[];
     };
@@ -119,22 +121,35 @@ async function main() {
       hotY: 0,
     });
 
+    const shotNoCursor = await gpu.requestPresentedScreenshot();
+    const rgbaNoCursor = new Uint8Array(shotNoCursor.rgba8);
+    const sampleNoCursor = [rgbaNoCursor[0]!, rgbaNoCursor[1]!, rgbaNoCursor[2]!, rgbaNoCursor[3]!];
+
+    const a = 128 / 255;
+    const expectedNoCursor = [0, 0, 255, 255];
+    const expected = [srgbEncodeChannel(a), 0, srgbEncodeChannel(1 - a), 255];
+
     const shot = await gpu.requestPresentedScreenshot({ includeCursor: true });
     const rgba = new Uint8Array(shot.rgba8);
     const sample = [rgba[0]!, rgba[1]!, rgba[2]!, rgba[3]!];
 
-    const a = 128 / 255;
-    const expected = [srgbEncodeChannel(a), 0, srgbEncodeChannel(1 - a), 255];
-
     log(`backend=${ready.backendKind}`);
+    log(`sample(no cursor)=${sampleNoCursor.join(",")}`);
+    log(`expected(no cursor)=${expectedNoCursor.join(",")}`);
     log(`sample=${sample.join(",")}`);
     log(`expected≈${expected.join(",")} (tolerance ±2 on RGB)`);
 
-    window.__aeroTest = { ready: true, backend: ready.backendKind, sample, expected };
+    window.__aeroTest = {
+      ready: true,
+      backend: ready.backendKind,
+      sampleNoCursor,
+      expectedNoCursor,
+      sample,
+      expected,
+    };
   } catch (err) {
     renderError(err instanceof Error ? err.message : String(err));
   }
 }
 
 void main();
-
