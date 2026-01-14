@@ -2918,12 +2918,12 @@ mod tests {
     #[test]
     fn scanout_update_reports_vbe_lfb_base_and_pitch() {
         let mut dev = VgaDevice::new();
-        dev.set_svga_lfb_base(0xE100_0000);
+        dev.set_svga_lfb_base(0xD000_0000);
         dev.set_svga_mode(64, 32, 32, true);
 
         let update = dev.active_scanout_update();
         assert_eq!(update.source, SCANOUT_SOURCE_LEGACY_VBE_LFB);
-        assert_eq!(update.base_paddr_lo, 0xE100_0000);
+        assert_eq!(update.base_paddr_lo, 0xD000_0000);
         assert_eq!(update.base_paddr_hi, 0);
         assert_eq!(update.pitch_bytes, 64 * 4);
     }
@@ -2932,7 +2932,7 @@ mod tests {
     #[test]
     fn scanout_update_accounts_for_stride_and_panning() {
         let mut dev = VgaDevice::new();
-        dev.set_svga_lfb_base(0xE100_0000);
+        dev.set_svga_lfb_base(0xD000_0000);
         dev.set_svga_mode(64, 32, 32, true);
 
         // Configure a virtual width larger than the visible resolution and apply a pan offset.
@@ -2950,7 +2950,7 @@ mod tests {
         assert_eq!(update.pitch_bytes, expected_pitch);
 
         let base = (update.base_paddr_hi as u64) << 32 | update.base_paddr_lo as u64;
-        let expected_base = 0xE100_0000u64 + 2u64 * u64::from(expected_pitch) + 8u64 * 4;
+        let expected_base = 0xD000_0000u64 + 2u64 * u64::from(expected_pitch) + 8u64 * 4;
         assert_eq!(base, expected_base);
     }
 
@@ -2958,7 +2958,7 @@ mod tests {
     #[test]
     fn scanout_update_uses_scanline_override_and_pan_offsets() {
         let mut dev = VgaDevice::new();
-        dev.set_svga_lfb_base(0xE100_0000);
+        dev.set_svga_lfb_base(0xD000_0000);
         dev.set_svga_mode(64, 32, 32, true);
 
         // Override pitch to something other than width*4 so we can observe it being used.
@@ -2971,14 +2971,14 @@ mod tests {
         assert_eq!(update.pitch_bytes, 512);
 
         let base = (u64::from(update.base_paddr_hi) << 32) | u64::from(update.base_paddr_lo);
-        assert_eq!(base, 0xE100_0000 + 3 * 512 + 2 * 4);
+        assert_eq!(base, 0xD000_0000 + 3 * 512 + 2 * 4);
     }
 
     #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
     #[test]
     fn scanout_update_disables_when_pan_offsets_exceed_vram() {
         let mut dev = VgaDevice::new();
-        dev.set_svga_lfb_base(0xE100_0000);
+        dev.set_svga_lfb_base(0xD000_0000);
         dev.set_svga_mode(64, 32, 32, true);
 
         // Crank the stride + offset high enough that the visible rectangle would exceed the VBE
