@@ -10884,6 +10884,20 @@ impl AerogpuD3d11Executor {
                     );
                 } else {
                     stage_bindings.set_texture(slot, Some(handle));
+
+                    // Mirror D3D11 hazard behavior: binding a texture as an SRV should unbind it
+                    // from any currently bound render targets / depth-stencil outputs.
+                    for rt in &mut self.state.render_targets {
+                        if *rt == Some(handle) {
+                            *rt = None;
+                        }
+                    }
+                    while let Some(None) = self.state.render_targets.last() {
+                        self.state.render_targets.pop();
+                    }
+                    if self.state.depth_stencil == Some(handle) {
+                        self.state.depth_stencil = None;
+                    }
                 }
             }
         }
@@ -11330,8 +11344,19 @@ impl AerogpuD3d11Executor {
         while let Some(None) = colors.last() {
             colors.pop();
         }
-        self.state.render_targets = colors;
-        self.state.depth_stencil = if depth_stencil == 0 {
+
+        // D3D11 forbids a resource from being simultaneously bound as an SRV and as an output
+        // (RTV/DSV). When binding render targets, unbind any SRV texture views of the same
+        // underlying textures across all stages to avoid WebGPU validation errors.
+        for &handle in colors.iter().flatten() {
+            for stage in ALL_SHADER_STAGES {
+                let stage_bindings = self.bindings.stage_mut(stage);
+                stage_bindings.clear_texture_handle(handle);
+                stage_bindings.clear_uav_texture_handle(handle);
+            }
+        }
+
+        let depth_stencil = if depth_stencil == 0 {
             None
         } else {
             Some(
@@ -11339,6 +11364,16 @@ impl AerogpuD3d11Executor {
                     .resolve_cmd_handle(depth_stencil, "SET_RENDER_TARGETS")?,
             )
         };
+        if let Some(handle) = depth_stencil {
+            for stage in ALL_SHADER_STAGES {
+                let stage_bindings = self.bindings.stage_mut(stage);
+                stage_bindings.clear_texture_handle(handle);
+                stage_bindings.clear_uav_texture_handle(handle);
+            }
+        }
+
+        self.state.render_targets = colors;
+        self.state.depth_stencil = depth_stencil;
         Ok(())
     }
 
@@ -18806,6 +18841,104 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {{
                     offset: 0,
                     size: None
                 })
+            );
+        });
+    }
+
+    #[test]
+    fn set_render_targets_unbinds_srv_textures_with_same_resource() {
+        pollster::block_on(async {
+            let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+                Ok(exec) => exec,
+                Err(e) => {
+                    skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                    return;
+                }
+            };
+
+            const TEX: u32 = 0x1000;
+            exec.bindings
+                .stage_mut(ShaderStage::Pixel)
+                .set_texture(0, Some(TEX));
+            assert!(
+                exec.bindings
+                    .stage(ShaderStage::Pixel)
+                    .texture(0)
+                    .is_some(),
+                "texture should be bound before SET_RENDER_TARGETS"
+            );
+
+            // SET_RENDER_TARGETS: bind TEX as RT0.
+            let mut cmd = Vec::new();
+            cmd.extend_from_slice(&(AerogpuCmdOpcode::SetRenderTargets as u32).to_le_bytes());
+            cmd.extend_from_slice(&48u32.to_le_bytes()); // size_bytes
+            cmd.extend_from_slice(&1u32.to_le_bytes()); // color_count
+            cmd.extend_from_slice(&0u32.to_le_bytes()); // depth_stencil
+            cmd.extend_from_slice(&TEX.to_le_bytes()); // rt0
+            for _ in 1..8 {
+                cmd.extend_from_slice(&0u32.to_le_bytes());
+            }
+
+            exec.exec_set_render_targets(&cmd)
+                .expect("SET_RENDER_TARGETS should succeed");
+
+            assert!(
+                exec.bindings
+                    .stage(ShaderStage::Pixel)
+                    .texture(0)
+                    .is_none(),
+                "binding a texture as a render target must unbind SRV texture views of the same resource"
+            );
+        });
+    }
+
+    #[test]
+    fn set_texture_unbinds_render_target_with_same_resource() {
+        pollster::block_on(async {
+            let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+                Ok(exec) => exec,
+                Err(e) => {
+                    skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                    return;
+                }
+            };
+
+            const TEX: u32 = 0x2000;
+            // Bind TEX as RT0 first.
+            let mut rt_cmd = Vec::new();
+            rt_cmd.extend_from_slice(&(AerogpuCmdOpcode::SetRenderTargets as u32).to_le_bytes());
+            rt_cmd.extend_from_slice(&48u32.to_le_bytes()); // size_bytes
+            rt_cmd.extend_from_slice(&1u32.to_le_bytes()); // color_count
+            rt_cmd.extend_from_slice(&0u32.to_le_bytes()); // depth_stencil
+            rt_cmd.extend_from_slice(&TEX.to_le_bytes()); // rt0
+            for _ in 1..8 {
+                rt_cmd.extend_from_slice(&0u32.to_le_bytes());
+            }
+            exec.exec_set_render_targets(&rt_cmd)
+                .expect("SET_RENDER_TARGETS should succeed");
+            assert_eq!(exec.state.render_targets, vec![Some(TEX)]);
+
+            // Now bind TEX as an SRV texture (t0) in pixel stage; it should be removed from RTs.
+            let mut srv_cmd = Vec::new();
+            srv_cmd.extend_from_slice(&(AerogpuCmdOpcode::SetTexture as u32).to_le_bytes());
+            srv_cmd.extend_from_slice(&24u32.to_le_bytes()); // size_bytes
+            srv_cmd.extend_from_slice(&1u32.to_le_bytes()); // stage = pixel
+            srv_cmd.extend_from_slice(&0u32.to_le_bytes()); // slot = 0
+            srv_cmd.extend_from_slice(&TEX.to_le_bytes()); // texture handle
+            srv_cmd.extend_from_slice(&0u32.to_le_bytes()); // stage_ex
+            exec.exec_set_texture(&srv_cmd)
+                .expect("SET_TEXTURE should succeed");
+
+            assert!(
+                exec.state.render_targets.is_empty(),
+                "binding a texture as SRV must unbind it from render targets"
+            );
+            assert!(
+                exec.bindings
+                    .stage(ShaderStage::Pixel)
+                    .texture(0)
+                    .is_some_and(|t| t.texture == TEX),
+                "expected SRV texture binding to be set"
             );
         });
     }
