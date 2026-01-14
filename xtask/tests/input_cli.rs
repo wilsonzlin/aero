@@ -27,6 +27,8 @@ fn input_help_mentions_flags_and_steps() {
         .stdout(predicate::str::contains("machine_xhci_usb_attach_at_path"))
         .stdout(predicate::str::contains("webusb_uhci_bridge"))
         .stdout(predicate::str::contains("xhci_webusb_bridge"))
+        .stdout(predicate::str::contains("ehci_webusb_root_port_rust_drift"))
+        .stdout(predicate::str::contains("xhci_webusb_root_port_rust_drift"))
         .stdout(predicate::str::contains("--e2e"))
         .stdout(predicate::str::contains("--machine"))
         .stdout(predicate::str::contains("--wasm"))
