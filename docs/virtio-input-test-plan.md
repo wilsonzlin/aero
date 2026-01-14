@@ -406,7 +406,7 @@ Success looks like:
 The Aero contract v1 requires INTx and permits MSI-X as an optional enhancement. When debugging MSI-X enablement (or when
 intentionally exercising MSI-X code paths under QEMU), the guest selftest may emit:
 
-- `AERO_VIRTIO_SELFTEST|TEST|virtio-input-msix|PASS/FAIL/SKIP|mode=<intx|msix>|messages=<n>|mapping=...|...`
+- `AERO_VIRTIO_SELFTEST|TEST|virtio-input-msix|PASS/FAIL/SKIP|mode=intx/msix/unknown|messages=<n>|mapping=...|used_vectors=<n>|config_vector=<n\|none>|queue0_vector=<n\|none>|queue1_vector=<n\|none>|...`
 
 To make MSI-X a **hard harness requirement** (end-to-end, guest-reported effective mode):
 
