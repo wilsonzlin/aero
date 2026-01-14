@@ -2046,6 +2046,12 @@ static void SetTextureLocked(AeroGpuDevice* dev, uint32_t shader_stage, uint32_t
     return;
   }
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_texture>(AEROGPU_CMD_SET_TEXTURE);
+  if (!cmd) {
+    D3D10DDI_HDEVICE hDevice{};
+    hDevice.pDrvPrivate = dev;
+    SetError(hDevice, E_OUTOFMEMORY);
+    return;
+  }
   cmd->shader_stage = shader_stage;
   cmd->slot = slot;
   cmd->texture = texture;
@@ -6832,6 +6838,12 @@ void EmitBindShadersLocked(AeroGpuDevice* dev) {
     return;
   }
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_bind_shaders>(AEROGPU_CMD_BIND_SHADERS);
+  if (!cmd) {
+    D3D10DDI_HDEVICE hDevice{};
+    hDevice.pDrvPrivate = dev;
+    SetError(hDevice, E_OUTOFMEMORY);
+    return;
+  }
   cmd->vs = dev->current_vs;
   cmd->ps = dev->current_ps;
   cmd->cs = 0;
@@ -6941,6 +6953,10 @@ static void SetConstantBuffersLocked(AeroGpuDevice* dev,
 
   auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_constant_buffers>(
       AEROGPU_CMD_SET_CONSTANT_BUFFERS, bindings.data(), bindings.size() * sizeof(bindings[0]));
+  if (!cmd) {
+    SetError(hDevice, E_OUTOFMEMORY);
+    return;
+  }
   cmd->shader_stage = shader_stage;
   cmd->start_slot = start_slot;
   cmd->buffer_count = buffer_count;
