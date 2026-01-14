@@ -58,6 +58,9 @@ MD_FLAG_RE = re.compile(r"--[A-Za-z0-9][A-Za-z0-9-]*")
 # helpful error than the generic "unknown flag" result (since `MD_FLAG_RE` would
 # otherwise extract a truncated prefix).
 MD_FLAG_WILDCARD_RE = re.compile(r"--[A-Za-z0-9][A-Za-z0-9-]*\*")
+# Some docs (and usage strings) refer to dbgctl flags in single quotes (e.g. "'--status'").
+MD_FLAG_SINGLE_QUOTED_RE = re.compile(r"'(--[A-Za-z0-9][A-Za-z0-9-]*)'")
+MD_FLAG_SINGLE_QUOTED_WILDCARD_RE = re.compile(r"'(--[A-Za-z0-9][A-Za-z0-9-]*\*)'")
 
 # Extract dbgctl flags from C++ code that composes an argv list for dbgctl. We intentionally keep
 # this narrow to avoid treating unrelated `--...` strings as dbgctl flags.
@@ -209,6 +212,12 @@ def iter_dbgctl_flag_refs(path: pathlib.Path) -> list[tuple[int, str]]:
     out: list[tuple[int, str]] = []
     for line_no, line in enumerate(text.splitlines(), start=1):
         if "--dbgctl" in line:
+            # Some docs mention dbgctl flags in prose on the same line as a `--dbgctl=...` runner
+            # flag. Avoid treating runner flags that follow the dbgctl path as dbgctl flags, but
+            # still validate explicitly-quoted `--...` tokens like "'--status'".
+            if "aerogpu_dbgctl" in line:
+                for flag in MD_FLAG_SINGLE_QUOTED_RE.findall(line):
+                    out.append((line_no, flag))
             continue
         lower = line.lower()
         tool_idx = lower.find("aerogpu_dbgctl")
@@ -281,6 +290,9 @@ def iter_dbgctl_wildcard_flag_refs(path: pathlib.Path) -> list[tuple[int, str]]:
     out: list[tuple[int, str]] = []
     for line_no, line in enumerate(text.splitlines(), start=1):
         if "--dbgctl" in line:
+            if "aerogpu_dbgctl" in line:
+                for flag in MD_FLAG_SINGLE_QUOTED_WILDCARD_RE.findall(line):
+                    out.append((line_no, flag))
             continue
         lower = line.lower()
         tool_idx = lower.find("aerogpu_dbgctl")
