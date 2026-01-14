@@ -5,16 +5,17 @@ use aero_devices_gpu::{
 use memory::MmioHandler as _;
 
 #[test]
-fn bar1_mmio_read_write_roundtrip() {
+fn bar1_mmio_writes_back_device_vram() {
     let dev = AeroGpuPciDevice::default();
+    let vram = dev.vram_shared();
     let mut bar1 = dev.bar1_mmio_handler();
 
-    bar1.write(0x1234, 4, 0xAABB_CCDD);
-    assert_eq!(bar1.read(0x1234, 4), 0xAABB_CCDD);
+    // Writes through BAR1 at offset 0 should land in VRAM[0].
+    bar1.write(0, 4, 0xAABB_CCDD);
+    assert_eq!(bar1.read(0, 4), 0xAABB_CCDD);
 
-    // Ensure byte granularity matches little-endian layout.
-    assert_eq!(bar1.read(0x1234, 1), 0xDD);
-    assert_eq!(bar1.read(0x1235, 1), 0xCC);
+    let vram = vram.borrow();
+    assert_eq!(&vram[0..4], &[0xDD, 0xCC, 0xBB, 0xAA]);
 }
 
 #[test]
@@ -54,10 +55,24 @@ fn legacy_vga_alias_maps_text_buffer_to_expected_offset() {
 }
 
 #[test]
-fn vbe_lfb_offset_matches_machine_vga_vram_layout_contract() {
-    // `aero_machine` (and `aero_gpu_vga`) reserve 256KiB for VGA planar memory (4 × 64KiB planes)
-    // and start the VBE packed-pixel linear framebuffer (LFB) after that region.
-    assert_eq!(VBE_LFB_OFFSET, 0x40_000);
+fn legacy_vga_mmio_writes_alias_to_expected_vram_offsets() {
+    let dev = AeroGpuPciDevice::default();
+    let vram = dev.vram_shared();
+    let mut legacy = dev.legacy_vga_mmio_handler();
+
+    let off = AeroGpuPciDevice::legacy_vga_paddr_to_vram_offset(0xB8000).unwrap();
+    legacy.write(off, 2, 0x1122);
+
+    {
+        let vram = vram.borrow();
+        let off = off as usize;
+        assert_eq!(vram[off], 0x22);
+        assert_eq!(vram[off + 1], 0x11);
+    }
+
+    // The BAR1 view of VRAM should observe the same bytes.
+    let mut bar1 = dev.bar1_mmio_handler();
+    assert_eq!(bar1.read(off, 2), 0x1122);
 }
 
 #[test]
@@ -89,4 +104,6 @@ fn bar1_layout_constants_match_canonical_vga_vbe_layout() {
     // - the VBE LFB begins after the full 4-plane VGA planar region at 0x40000.
     assert_eq!(LEGACY_VGA_VRAM_BYTES, 0x20_000);
     assert_eq!(VBE_LFB_OFFSET, 0x40_000);
+    // The BIOS VBE linear framebuffer base must be 64KiB-aligned.
+    assert_eq!(VBE_LFB_OFFSET % 0x1_0000, 0);
 }

@@ -159,6 +159,37 @@ impl AeroGpuPciDevice {
         }
     }
 
+    /// Returns an [`MmioHandler`] implementing the legacy VGA window alias
+    /// (`0xA0000..0xC0000` -> `VRAM[0..LEGACY_VGA_VRAM_BYTES)`).
+    pub fn legacy_vga_mmio_handler(&self) -> AeroGpuLegacyVgaMmio {
+        AeroGpuLegacyVgaMmio {
+            vram: Rc::clone(&self.vram),
+        }
+    }
+
+    /// Translate a physical address in the AeroGPU BAR1 VRAM aperture into a VRAM offset starting
+    /// at 0.
+    pub fn bar1_paddr_to_vram_offset(bar1_base: u64, paddr: u64) -> Option<u64> {
+        if paddr < bar1_base {
+            return None;
+        }
+        let size = Self::bar1_size_bytes()?;
+        let off = paddr.checked_sub(bar1_base)?;
+        if off >= size {
+            return None;
+        }
+        Some(off)
+    }
+
+    /// Translate a VRAM offset into an absolute physical address in the AeroGPU BAR1 range.
+    pub fn vram_offset_to_bar1_paddr(bar1_base: u64, vram_offset: u64) -> Option<u64> {
+        let size = Self::bar1_size_bytes()?;
+        if vram_offset >= size {
+            return None;
+        }
+        bar1_base.checked_add(vram_offset)
+    }
+
     /// Translate a physical address in the legacy VGA window (`0xA0000..0xC0000`) into a VRAM
     /// offset starting at 0.
     pub fn legacy_vga_paddr_to_vram_offset(paddr: u64) -> Option<u64> {
@@ -168,17 +199,26 @@ impl AeroGpuPciDevice {
         Some(paddr - LEGACY_VGA_PADDR_BASE)
     }
 
+    /// Translate a VRAM offset (within the legacy VGA alias region) back into a physical address
+    /// in the legacy VGA window (`0xA0000..0xC0000`).
+    pub fn legacy_vga_vram_offset_to_paddr(vram_offset: u64) -> Option<u64> {
+        if vram_offset >= LEGACY_VGA_VRAM_BYTES {
+            return None;
+        }
+        LEGACY_VGA_PADDR_BASE.checked_add(vram_offset)
+    }
+
+    /// Physical base address of the VBE linear framebuffer (LFB) given the assigned BAR1 base.
+    pub fn vbe_lfb_base_paddr(bar1_base: u64) -> Option<u64> {
+        bar1_base.checked_add(VBE_LFB_OFFSET)
+    }
+
     /// Translate a physical address in the VBE linear framebuffer region into a VRAM offset.
     ///
     /// The VBE LFB is expected to live at `bar1_base + VBE_LFB_OFFSET`.
     pub fn vbe_lfb_paddr_to_vram_offset(bar1_base: u64, paddr: u64) -> Option<u64> {
-        let lfb_base = bar1_base.checked_add(VBE_LFB_OFFSET)?;
-        if paddr < lfb_base {
-            return None;
-        }
-        let off = paddr.checked_sub(bar1_base)?;
-        let end = bar1_base.checked_add(Self::bar1_size_bytes()?)?;
-        if paddr >= end {
+        let off = Self::bar1_paddr_to_vram_offset(bar1_base, paddr)?;
+        if off < VBE_LFB_OFFSET {
             return None;
         }
         Some(off)
@@ -701,6 +741,61 @@ impl MmioHandler for AeroGpuBar1VramMmio {
         let mut vram = self.vram.borrow_mut();
         for i in 0..size {
             let addr = offset.wrapping_add(i as u64);
+            let Some(idx) = usize::try_from(addr).ok() else {
+                continue;
+            };
+            if idx >= vram.len() {
+                continue;
+            }
+            vram[idx] = ((value >> (i * 8)) & 0xFF) as u8;
+        }
+    }
+}
+
+/// MMIO handler for the legacy VGA window alias (`0xA0000..0xC0000`).
+///
+/// This is a simple linear alias into the start of BAR1-backed VRAM:
+/// `legacy_offset -> VRAM[legacy_offset]`.
+pub struct AeroGpuLegacyVgaMmio {
+    vram: Rc<RefCell<Vec<u8>>>,
+}
+
+impl MmioHandler for AeroGpuLegacyVgaMmio {
+    fn read(&mut self, offset: u64, size: usize) -> u64 {
+        if size == 0 {
+            return 0;
+        }
+        if size > 8 {
+            return u64::MAX;
+        }
+
+        let vram = self.vram.borrow();
+        let mut out = 0u64;
+        for i in 0..size {
+            let addr = offset.wrapping_add(i as u64);
+            if addr >= LEGACY_VGA_VRAM_BYTES {
+                continue;
+            }
+            let b = usize::try_from(addr)
+                .ok()
+                .and_then(|idx| vram.get(idx).copied())
+                .unwrap_or(0);
+            out |= (b as u64) << (i * 8);
+        }
+        out
+    }
+
+    fn write(&mut self, offset: u64, size: usize, value: u64) {
+        if size == 0 || size > 8 {
+            return;
+        }
+
+        let mut vram = self.vram.borrow_mut();
+        for i in 0..size {
+            let addr = offset.wrapping_add(i as u64);
+            if addr >= LEGACY_VGA_VRAM_BYTES {
+                continue;
+            }
             let Some(idx) = usize::try_from(addr).ok() else {
                 continue;
             };
