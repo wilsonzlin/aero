@@ -216,19 +216,20 @@ Options:
   --rust-only            Skip npm unit + Playwright steps (does not require `node_modules`).
   --usb-all             Run the full `aero-usb` test suite (all integration tests).
   --with-wasm            Also run host-side `aero-wasm` input integration smoke tests (no wasm-pack; does not require `node_modules`).
-  --node-dir <path>     Override the Node workspace directory for the web unit-test step (same as AERO_NODE_DIR / AERO_WEB_DIR).
+  --node-dir <path>     Override the Node workspace directory for the web unit-test step (same as AERO_NODE_DIR / AERO_WEB_DIR / WEB_DIR).
   --web-dir <path>      Alias for --node-dir.
   -- <args>             Extra Playwright args forwarded to `npm run test:e2e` (requires --e2e).
   -h, --help            Show this help.
 
 Environment:
-  AERO_NODE_DIR / AERO_WEB_DIR
-                        Override the Node workspace directory for the web unit-test step.
-                        If set to `web`, step 6 runs `npm run test:unit -- ...` inside `web/`.
+  AERO_NODE_DIR / AERO_WEB_DIR / WEB_DIR
+                         Override the Node workspace directory for the web unit-test step.
+                         (`AERO_WEB_DIR` and `WEB_DIR` are deprecated aliases.)
+                         If set to `web`, step 6 runs `npm run test:unit -- ...` inside `web/`.
   AERO_WASM_PACKAGES    When running `--e2e`, defaults to `core` unless already set.
   AERO_ALLOW_UNSUPPORTED_NODE
-                        Set to 1 to bypass Node version enforcement (see `.nvmrc` + `scripts/check-node-version.mjs`).
-                        Not recommended, especially with `--wasm` (wasm-pack tooling can hang on unsupported Node majors).
+                         Set to 1 to bypass Node version enforcement (see `.nvmrc` + `scripts/check-node-version.mjs`).
+                         Not recommended, especially with `--wasm` (wasm-pack tooling can hang on unsupported Node majors).
 
 Examples:
   cargo xtask input

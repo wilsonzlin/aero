@@ -260,5 +260,6 @@ fn input_help_mentions_flags_and_steps() {
         .stdout(predicate::str::contains("--node-dir"))
         .stdout(predicate::str::contains("--web-dir"))
         .stdout(predicate::str::contains("AERO_WEB_DIR"))
+        .stdout(predicate::str::contains("WEB_DIR"))
         .stdout(predicate::str::contains("AERO_NODE_DIR"));
 }
