@@ -190,6 +190,11 @@ For an emulator, a simple implementation is:
 * compute `(now - last_vblank_timestamp) mod period`
 * map that into a scanline number `[0, total_lines)` and an `InVBlank` flag
 
+**Performance note:** `GetRasterStatus` can be polled at very high frequency (often many thousands of calls/sec). Avoid doing multiple MMIO reads per `DxgkDdiGetScanLine` call when you already have a vblank interrupt path:
+* keep a cached “last vblank” anchor updated by the vblank ISR/DPC (guest monotonic time + nominal period),
+* treat it as stale if you stop observing vblank IRQs for a few frames (or if interrupts are disabled), and
+* fall back to MMIO timing registers or a synthetic cadence only when the cache is uninitialized/stale.
+
 **Note on phase:** most virtual devices naturally timestamp the vblank tick at the **start of the vblank interval** (end-of-frame). If you want `InVBlank=TRUE` immediately after that tick, rotate the synthetic scanline range so that vblank occupies `[height, total_lines)`:
 
 * `t = (pos_ns * total_lines) / period_ns`
