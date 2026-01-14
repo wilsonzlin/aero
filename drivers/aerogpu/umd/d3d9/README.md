@@ -411,6 +411,7 @@ Limitations (bring-up):
 - For `D3DFVF_XYZ*` fixed-function FVFs, the fixed-function VS applies the combined world/view/projection matrix (built
   from cached `SetTransform` state and uploaded into a reserved VS constant range by the UMD via
   `ensure_fixedfunc_wvp_constants_locked()`). Fixed-function lighting/material is still not implemented.
+  (Task doc: [`docs/graphics/win7-d3d9-fixedfunc-wvp.md`](../../../../docs/graphics/win7-d3d9-fixedfunc-wvp.md).)
 - `TEX1` assumes a single set of 2D texture coordinates (`TEXCOORD0` as `float2`). Other `D3DFVF_TEXCOORDSIZE*` encodings and multiple texture coordinate sets are not implemented.
 - Stage0 texture stage state is **partially interpreted** to select among a small set of pixel shader variants (validated by
   `d3d9ex_fixedfunc_texture_stage_state`):
@@ -505,8 +506,9 @@ Current behavior is intentionally bring-up level, with two paths:
   - `D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1`
   - `D3DFVF_XYZ | D3DFVF_TEX1`
   the UMD reads vertices from **stream 0**, applies a CPU-side **World/View/Projection + viewport** transform, and writes
-  **screen-space `XYZRHW`** position into the destination layout described by `hVertexDecl`. When present in both the
-  source and destination layouts, it also copies `DIFFUSE` and `TEXCOORD0`.
+  **screen-space `XYZRHW`** position into the destination layout described by `hVertexDecl`. When the destination layout
+  includes `DIFFUSE`, the driver copies it when the source layout has it, otherwise writes opaque white (matching
+  fixed-function FVF behavior). When present in both the source and destination layouts, it also copies `TEXCOORD0`.
 - **Fallback memcpy-style path:** for all other cases, `ProcessVertices` performs a conservative buffer-to-buffer copy from
   the active stream 0 vertex buffer into the destination buffer. The copy is stride-aware (copies
   `min(stream0_stride, dest_stride)` bytes per vertex) and uses the same “upload/dirty-range” notifications used by
