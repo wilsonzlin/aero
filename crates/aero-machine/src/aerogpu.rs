@@ -420,6 +420,8 @@ pub struct AeroGpuMmioDevice {
     scanout0_format: u32,
     scanout0_pitch_bytes: u32,
     scanout0_fb_gpa: u64,
+    /// Pending LO dword for `SCANOUT0_FB_GPA` while waiting for the HI write commit.
+    scanout0_fb_gpa_pending_lo: u32,
     scanout0_fb_gpa_lo_pending: bool,
     scanout0_vblank_seq: u64,
     scanout0_vblank_time_ns: u64,
@@ -526,6 +528,7 @@ impl Default for AeroGpuMmioDevice {
             scanout0_format: 0,
             scanout0_pitch_bytes: 0,
             scanout0_fb_gpa: 0,
+            scanout0_fb_gpa_pending_lo: 0,
             scanout0_fb_gpa_lo_pending: false,
             scanout0_vblank_seq: 0,
             scanout0_vblank_time_ns: 0,
@@ -1136,7 +1139,13 @@ impl AeroGpuMmioDevice {
                 self.scanout0_pitch_bytes
             }
             x if x == pci::AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_LO as u64 => {
-                self.scanout0_fb_gpa as u32
+                // Expose the pending LO value while keeping `scanout0_fb_gpa` stable to avoid
+                // consumers observing a torn 64-bit address mid-update.
+                if self.scanout0_fb_gpa_lo_pending {
+                    self.scanout0_fb_gpa_pending_lo
+                } else {
+                    self.scanout0_fb_gpa as u32
+                }
             }
             x if x == pci::AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_HI as u64 => {
                 (self.scanout0_fb_gpa >> 32) as u32
@@ -1241,6 +1250,7 @@ impl AeroGpuMmioDevice {
                     // can fall back to legacy VGA/VBE presentation.
                     self.wddm_scanout_active = false;
                     // Reset torn-update tracking so a stale LO write can't block future publishes.
+                    self.scanout0_fb_gpa_pending_lo = 0;
                     self.scanout0_fb_gpa_lo_pending = false;
                 }
                 self.scanout0_enable = new_enable;
@@ -1283,9 +1293,9 @@ impl AeroGpuMmioDevice {
                 self.maybe_claim_wddm_scanout();
             }
             x if x == pci::AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_LO as u64 => {
-                self.scanout0_fb_gpa =
-                    (self.scanout0_fb_gpa & 0xffff_ffff_0000_0000) | u64::from(value);
-                // Avoid publishing a torn 64-bit `fb_gpa` update. Defer until the HI write.
+                // Avoid exposing a torn 64-bit `fb_gpa` update. Treat the LO write as starting a
+                // new update and commit the combined value on the subsequent HI write.
+                self.scanout0_fb_gpa_pending_lo = value;
                 self.scanout0_fb_gpa_lo_pending = true;
                 #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
                 {
@@ -1294,9 +1304,13 @@ impl AeroGpuMmioDevice {
                 self.maybe_claim_wddm_scanout();
             }
             x if x == pci::AEROGPU_MMIO_REG_SCANOUT0_FB_GPA_HI as u64 => {
-                self.scanout0_fb_gpa =
-                    (self.scanout0_fb_gpa & 0x0000_0000_ffff_ffff) | (u64::from(value) << 32);
                 // Drivers typically write LO then HI; treat HI as the commit point.
+                let lo = if self.scanout0_fb_gpa_lo_pending {
+                    u64::from(self.scanout0_fb_gpa_pending_lo)
+                } else {
+                    self.scanout0_fb_gpa & 0xffff_ffff
+                };
+                self.scanout0_fb_gpa = (u64::from(value) << 32) | lo;
                 self.scanout0_fb_gpa_lo_pending = false;
                 #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
                 {
@@ -1333,38 +1347,52 @@ impl AeroGpuMmioDevice {
 
 impl PciBarMmioHandler for AeroGpuMmioDevice {
     fn read(&mut self, offset: u64, size: usize) -> u64 {
-        if size == 0 {
-            return 0;
+        match size {
+            0 => 0,
+            1 | 2 | 4 => {
+                let aligned = offset & !3;
+                let shift = ((offset & 3) * 8) as u32;
+                let dword = self.mmio_read_dword(aligned);
+                let mask = if size == 4 {
+                    u32::MAX
+                } else {
+                    (1u32 << (size * 8)) - 1
+                };
+                u64::from((dword >> shift) & mask)
+            }
+            8 => {
+                // Reads are issued by the physical memory bus using naturally-aligned sizes, so
+                // `size=8` implies `offset` is 8-byte aligned.
+                let lo = self.mmio_read_dword(offset) as u64;
+                let hi = self.mmio_read_dword(offset + 4) as u64;
+                lo | (hi << 32)
+            }
+            _ => 0,
         }
-        let size = size.clamp(1, 8);
-
-        let mut out = 0u64;
-        for i in 0..size {
-            let off = offset.wrapping_add(i as u64);
-            let aligned = off & !3;
-            let shift = ((off & 3) * 8) as u32;
-            let dword = self.mmio_read_dword(aligned);
-            let byte = ((dword >> shift) & 0xFF) as u64;
-            out |= byte << (i * 8);
-        }
-        out
     }
 
     fn write(&mut self, offset: u64, size: usize, value: u64) {
-        if size == 0 {
-            return;
-        }
-        let size = size.clamp(1, 8);
-        let bytes = value.to_le_bytes();
-
-        for i in 0..size {
-            let off = offset.wrapping_add(i as u64);
-            let aligned = off & !3;
-            let shift = ((off & 3) * 8) as u32;
-            let mut cur = self.mmio_read_dword(aligned);
-            let mask = 0xFFu32 << shift;
-            cur = (cur & !mask) | (u32::from(bytes[i]) << shift);
-            self.mmio_write_dword(aligned, cur);
+        match size {
+            0 => {}
+            1 | 2 => {
+                // Read-modify-write within the aligned dword.
+                let aligned = offset & !3;
+                let shift = ((offset & 3) * 8) as u32;
+                let mask = ((1u32 << (size * 8)) - 1) << shift;
+                let mut cur = self.mmio_read_dword(aligned);
+                cur = (cur & !mask) | ((value as u32) << shift);
+                self.mmio_write_dword(aligned, cur);
+            }
+            4 => {
+                self.mmio_write_dword(offset, value as u32);
+            }
+            8 => {
+                // Writes are issued by the physical memory bus using naturally-aligned sizes, so
+                // `size=8` implies `offset` is 8-byte aligned.
+                self.mmio_write_dword(offset, value as u32);
+                self.mmio_write_dword(offset + 4, (value >> 32) as u32);
+            }
+            _ => {}
         }
     }
 }
