@@ -12,6 +12,7 @@ import {
   GPU_PROTOCOL_VERSION,
   isGpuWorkerMessageBase,
   type GpuRuntimeMetricsMessage,
+  type GpuRuntimeStatsMessage,
 } from "../ipc/gpu-protocol";
 import { publishScanoutState, SCANOUT_FORMAT_B8G8R8X8, SCANOUT_SOURCE_WDDM, wrapScanoutState } from "../ipc/scanout_state.ts";
 import { aerogpuFormatToString } from "../../../emulator/protocol/aerogpu/aerogpu_pci.ts";
@@ -72,7 +73,7 @@ async function waitForWorkerMessage(
 }
 
 describe("workers/gpu-worker metrics scanout snapshot", () => {
-  it("includes scanout.format_str in metrics messages", async () => {
+  it("includes scanout.format_str in metrics/stats messages", async () => {
     const segments = allocateHarnessSharedMemorySegments({
       guestRamBytes: 64 * 1024,
       sharedFramebuffer: new SharedArrayBuffer(8),
@@ -159,6 +160,16 @@ describe("workers/gpu-worker metrics scanout snapshot", () => {
       expect(metricsMsg.scanout).toBeTruthy();
       expect(metricsMsg.scanout?.format).toBe(SCANOUT_FORMAT_B8G8R8X8);
       expect(metricsMsg.scanout?.format_str).toBe(aerogpuFormatToString(SCANOUT_FORMAT_B8G8R8X8));
+
+      // Stats messages are emitted by the telemetry poller and should include the same scanout snapshot.
+      const statsMsg = (await waitForWorkerMessage(
+        worker,
+        (msg) => isGpuWorkerMessageBase(msg) && (msg as { type?: unknown }).type === "stats" && !!(msg as any).scanout,
+        10_000,
+      )) as GpuRuntimeStatsMessage;
+      expect(statsMsg.scanout).toBeTruthy();
+      expect(statsMsg.scanout?.format).toBe(SCANOUT_FORMAT_B8G8R8X8);
+      expect(statsMsg.scanout?.format_str).toBe(aerogpuFormatToString(SCANOUT_FORMAT_B8G8R8X8));
     } finally {
       await worker.terminate();
     }
