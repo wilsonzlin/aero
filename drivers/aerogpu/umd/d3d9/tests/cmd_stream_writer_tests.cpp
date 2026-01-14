@@ -13954,6 +13954,227 @@ bool TestFvfXyzDiffuseDrawPrimitiveUpEmitsWvpConstants() {
   return true;
 }
 
+bool TestFixedFuncXyzStateBlockApplyReuploadsWvpConstants() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    D3D9DDI_HSTATEBLOCK hStateBlock{};
+    bool has_adapter = false;
+    bool has_device = false;
+    bool has_stateblock = false;
+
+    ~Cleanup() {
+      if (has_stateblock && device_funcs.pfnDeleteStateBlock) {
+        device_funcs.pfnDeleteStateBlock(hDevice, hStateBlock);
+      }
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  if (!Check(cleanup.device_funcs.pfnSetFVF != nullptr, "SetFVF must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDrawPrimitiveUP != nullptr, "DrawPrimitiveUP must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetTransform != nullptr, "SetTransform must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnBeginStateBlock != nullptr, "BeginStateBlock must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnEndStateBlock != nullptr, "EndStateBlock must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnApplyStateBlock != nullptr, "ApplyStateBlock must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDeleteStateBlock != nullptr, "DeleteStateBlock must be available")) {
+    return false;
+  }
+
+  // D3DFVF_XYZ (0x2) | D3DFVF_DIFFUSE (0x40) | D3DFVF_TEX1 (0x100).
+  hr = cleanup.device_funcs.pfnSetFVF(create_dev.hDevice, 0x142u);
+  if (!Check(hr == S_OK, "SetFVF(XYZ|DIFFUSE|TEX1)")) {
+    return false;
+  }
+
+  // Ensure view/proj are identity so WVP == WORLD0.
+  D3DMATRIX identity{};
+  identity.m[0][0] = 1.0f;
+  identity.m[1][1] = 1.0f;
+  identity.m[2][2] = 1.0f;
+  identity.m[3][3] = 1.0f;
+  hr = cleanup.device_funcs.pfnSetTransform(create_dev.hDevice, D3DTS_VIEW, &identity);
+  if (!Check(hr == S_OK, "SetTransform(VIEW=identity)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTransform(create_dev.hDevice, D3DTS_PROJECTION, &identity);
+  if (!Check(hr == S_OK, "SetTransform(PROJECTION=identity)")) {
+    return false;
+  }
+
+  // Matrix A (captured in state block).
+  D3DMATRIX A{};
+  A.m[0][0] = 2.0f;
+  A.m[1][1] = 3.0f;
+  A.m[2][2] = 4.0f;
+  A.m[3][3] = 1.0f;
+  A.m[3][0] = 5.0f;
+  A.m[3][1] = 6.0f;
+  A.m[3][2] = 7.0f;
+
+  // Matrix B (mutated after recording).
+  D3DMATRIX B{};
+  B.m[0][0] = 8.0f;
+  B.m[1][1] = 9.0f;
+  B.m[2][2] = 10.0f;
+  B.m[3][3] = 1.0f;
+  B.m[3][0] = 11.0f;
+  B.m[3][1] = 12.0f;
+  B.m[3][2] = 13.0f;
+
+  // Record a state block that sets WORLD=A.
+  hr = cleanup.device_funcs.pfnBeginStateBlock(create_dev.hDevice);
+  if (!Check(hr == S_OK, "BeginStateBlock")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetTransform(create_dev.hDevice, D3DTS_WORLD, &A);
+  if (!Check(hr == S_OK, "SetTransform(WORLD=A)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnEndStateBlock(create_dev.hDevice, &cleanup.hStateBlock);
+  if (!Check(hr == S_OK, "EndStateBlock")) {
+    return false;
+  }
+  if (!Check(cleanup.hStateBlock.pDrvPrivate != nullptr, "EndStateBlock returns stateblock handle")) {
+    return false;
+  }
+  cleanup.has_stateblock = true;
+
+  // Mutate WORLD=B.
+  hr = cleanup.device_funcs.pfnSetTransform(create_dev.hDevice, D3DTS_WORLD, &B);
+  if (!Check(hr == S_OK, "SetTransform(WORLD=B)")) {
+    return false;
+  }
+
+  struct Vertex {
+    float x;
+    float y;
+    float z;
+    uint32_t color;
+    float u;
+    float v;
+  };
+
+  constexpr uint32_t kWhite = 0xFFFFFFFFu;
+  Vertex verts[3]{};
+  verts[0] = {-1.0f, -1.0f, 0.0f, kWhite, 0.0f, 0.0f};
+  verts[1] = {1.0f, -1.0f, 0.0f, kWhite, 1.0f, 0.0f};
+  verts[2] = {0.0f, 1.0f, 0.0f, kWhite, 0.5f, 1.0f};
+
+  // First draw uploads WVP derived from B (clears dirty flag).
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(create_dev.hDevice, D3DDDIPT_TRIANGLELIST, 1, verts, sizeof(Vertex));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP (first)")) {
+    return false;
+  }
+
+  // Apply state block: should restore WORLD=A and mark fixed-function matrix dirty.
+  hr = cleanup.device_funcs.pfnApplyStateBlock(create_dev.hDevice, cleanup.hStateBlock);
+  if (!Check(hr == S_OK, "ApplyStateBlock")) {
+    return false;
+  }
+
+  // Second draw must upload WVP derived from A (not B).
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(create_dev.hDevice, D3DDDIPT_TRIANGLELIST, 1, verts, sizeof(Vertex));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP (second)")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+
+  const CmdLoc draw = FindLastOpcode(buf, len, AEROGPU_CMD_DRAW);
+  if (!Check(draw.hdr != nullptr, "draw emitted")) {
+    return false;
+  }
+  const CmdLoc set_consts = FindLastOpcodeBefore(buf, len, draw.offset, AEROGPU_CMD_SET_SHADER_CONSTANTS_F);
+  if (!Check(set_consts.hdr != nullptr, "set_shader_constants_f emitted before draw")) {
+    return false;
+  }
+
+  const auto* const_cmd = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(set_consts.hdr);
+  if (!Check(const_cmd->stage == AEROGPU_SHADER_STAGE_VERTEX, "WVP constants uploaded to VS stage")) {
+    return false;
+  }
+  if (!Check(const_cmd->start_register == 0 && const_cmd->vec4_count == 4, "WVP constants cover c0..c3")) {
+    return false;
+  }
+  const float* m = reinterpret_cast<const float*>(reinterpret_cast<const uint8_t*>(const_cmd) + sizeof(*const_cmd));
+  // WVP is uploaded as column vectors.
+  if (!Check(std::fabs(m[0] - 2.0f) < 1e-6f, "WVP[0][0] = 2 (from A)")) {
+    return false;
+  }
+  if (!Check(std::fabs(m[5] - 3.0f) < 1e-6f, "WVP[1][1] = 3 (from A)")) {
+    return false;
+  }
+  if (!Check(std::fabs(m[10] - 4.0f) < 1e-6f, "WVP[2][2] = 4 (from A)")) {
+    return false;
+  }
+  if (!Check(std::fabs(m[15] - 1.0f) < 1e-6f, "WVP[3][3] = 1 (from A)")) {
+    return false;
+  }
+  if (!Check(std::fabs(m[3] - 5.0f) < 1e-6f, "WVP translate X in c0.w (from A)")) {
+    return false;
+  }
+  if (!Check(std::fabs(m[7] - 6.0f) < 1e-6f, "WVP translate Y in c1.w (from A)")) {
+    return false;
+  }
+  if (!Check(std::fabs(m[11] - 7.0f) < 1e-6f, "WVP translate Z in c2.w (from A)")) {
+    return false;
+  }
+  return Check(set_consts.offset < draw.offset, "WVP constants uploaded before draw");
+}
+
 bool TestVertexDeclXyzrhwDiffuseTex1DrawPrimitiveUpEmitsFixedfuncCommands() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
@@ -28873,6 +29094,7 @@ int main() {
   failures += !aerogpu::TestFvfXyzDiffuseTex1SetTransformDrawPrimitiveUpEmitsWvpConstants();
   failures += !aerogpu::TestFvfXyzDiffuseTex1ReuploadsWvpAfterUserVsClobbersConstants();
   failures += !aerogpu::TestFvfXyzDiffuseDrawPrimitiveUpEmitsWvpConstants();
+  failures += !aerogpu::TestFixedFuncXyzStateBlockApplyReuploadsWvpConstants();
   failures += !aerogpu::TestVertexDeclXyzrhwDiffuseTex1DrawPrimitiveUpEmitsFixedfuncCommands();
   failures += !aerogpu::TestSetFvfIdempotentRebindsInternalXyzrhwInputLayout();
   failures += !aerogpu::TestVertexDeclXyzDiffuseDrawPrimitiveUpEmitsFixedfuncCommands();

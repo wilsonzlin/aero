@@ -1316,7 +1316,7 @@ const char* d3d9_vtable_member_name(size_t index) {
   return nullptr;
 }
 
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+#if defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
 template <typename T, typename = void>
 struct aerogpu_has_member_pDrvPrivate : std::false_type {};
 
@@ -1512,7 +1512,7 @@ uint64_t monotonic_ms() {
 }
 
 namespace {
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+#if defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
 template <typename T, typename = void>
 struct has_member_hAllocation : std::false_type {};
 template <typename T>
@@ -1603,7 +1603,7 @@ WddmAllocationHandle get_wddm_allocation_from_create_resource(const D3D9DDIARG_C
     return 0;
   }
 
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+#if defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
   return extract_primary_wddm_allocation_handle(*args);
 #else
   return static_cast<WddmAllocationHandle>(args->wddm_hAllocation);
@@ -3019,11 +3019,9 @@ Query* as_query(D3D9DDI_HQUERY hQuery) {
   return reinterpret_cast<Query*>(hQuery.pDrvPrivate);
 }
 
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
 StateBlock* as_state_block(D3D9DDI_HSTATEBLOCK hStateBlock) {
   return reinterpret_cast<StateBlock*>(hStateBlock.pDrvPrivate);
 }
-#endif
 
 // -----------------------------------------------------------------------------
 // State-block recording helpers
@@ -13230,7 +13228,6 @@ HRESULT AEROGPU_D3D9_CALL device_set_shader_const_f(
   return trace.ret(S_OK);
 }
 
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
 // -----------------------------------------------------------------------------
 // State block DDIs
 // -----------------------------------------------------------------------------
@@ -13320,6 +13317,7 @@ static void stateblock_init_for_type_locked(Device* dev, StateBlock* sb, uint32_
     }
     std::memcpy(sb->ps_consts_b.data(), dev->ps_consts_b, sizeof(uint8_t) * 256u);
 
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
     // Palette tables (for palettized textures) + current texture palette.
     for (uint32_t p = 0; p < Device::kMaxPalettes; ++p) {
       sb->palette_mask.set(p);
@@ -13336,6 +13334,7 @@ static void stateblock_init_for_type_locked(Device* dev, StateBlock* sb, uint32_
     sb->gamma_ramp_set = true;
     sb->gamma_ramp_valid = dev->gamma_ramp_valid;
     sb->gamma_ramp = dev->gamma_ramp;
+#endif
   }
 
   if (is_vertex) {
@@ -13376,9 +13375,11 @@ static void stateblock_init_for_type_locked(Device* dev, StateBlock* sb, uint32_
     }
 #endif
 
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
     sb->clip_status_set = true;
     sb->clip_status_valid = dev->clip_status_valid;
     sb->clip_status = dev->clip_status;
+#endif
 
     sb->vertex_decl_set = true;
     sb->vertex_decl = dev->vertex_decl;
@@ -15732,8 +15733,6 @@ Ret device_generate_mip_sub_levels_dispatch(Args... /*args*/) {
     return Ret{};
   }
 }
-#endif
-
 template <typename ValueT>
 HRESULT device_set_software_vertex_processing_impl(D3DDDI_HDEVICE hDevice, ValueT enabled) {
   D3d9TraceCall trace(D3d9TraceFunc::DeviceSetSoftwareVertexProcessing,
@@ -23452,6 +23451,14 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
   pDeviceFuncs->pfnDrawTriPatch = device_draw_tri_patch;
   pDeviceFuncs->pfnDeletePatch = device_delete_patch;
   pDeviceFuncs->pfnGenerateMipSubLevels = device_generate_mip_sub_levels;
+  pDeviceFuncs->pfnSetTransform = device_set_transform_dispatch;
+  pDeviceFuncs->pfnMultiplyTransform = device_multiply_transform_dispatch;
+  pDeviceFuncs->pfnCreateStateBlock = device_create_state_block;
+  pDeviceFuncs->pfnDeleteStateBlock = device_delete_state_block;
+  pDeviceFuncs->pfnCaptureStateBlock = device_capture_state_block;
+  pDeviceFuncs->pfnApplyStateBlock = device_apply_state_block;
+  pDeviceFuncs->pfnBeginStateBlock = device_begin_state_block;
+  pDeviceFuncs->pfnEndStateBlock = device_end_state_block;
   pDeviceFuncs->pfnCreateSwapChain = device_create_swap_chain;
   pDeviceFuncs->pfnDestroySwapChain = device_destroy_swap_chain;
   pDeviceFuncs->pfnGetSwapChain = device_get_swap_chain;

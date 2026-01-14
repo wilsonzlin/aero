@@ -18,7 +18,7 @@
 
 #pragma once
 
-#if !(defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI)
+#if !(defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI)
 // Repo-local builds do not have the WDK headers; keep this header inert.
 #else
 

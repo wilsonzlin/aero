@@ -38,6 +38,7 @@ typedef int32_t LONG;
 typedef uint32_t UINT;
 typedef int32_t HRESULT;
 typedef uint8_t BYTE;
+typedef uint16_t WORD;
 typedef int32_t BOOL;
 typedef struct _LARGE_INTEGER {
   int64_t QuadPart;
@@ -71,6 +72,25 @@ typedef struct _POINT {
 
   #ifndef APIENTRY
     #define APIENTRY
+  #endif
+
+  // The Win7 WDK headers use `__stdcall` for many D3D9 UMD entrypoints on x86.
+  // Portable (non-Windows) builds don't need stdcall calling conventions, but
+  // the translation layer uses template specializations on `__stdcall` function
+  // pointer types to remain compatible with different header vintages.
+  //
+  // On x86-64, GCC ignores the `stdcall` attribute (there is only one ABI),
+  // which would make the `Ret(__stdcall*)(...)` and `Ret(*)(...)` template
+  // specializations collide. Use `ms_abi` to keep the types distinct in
+  // portable builds.
+  #ifndef __stdcall
+    #if defined(__x86_64__) || defined(_M_X64)
+      #define __stdcall __attribute__((ms_abi))
+    #elif defined(__i386__) || defined(_M_IX86)
+      #define __stdcall __attribute__((stdcall))
+    #else
+      #define __stdcall
+    #endif
   #endif
 
   #ifndef S_OK
@@ -559,6 +579,9 @@ typedef struct _D3DADAPTER_IDENTIFIER9 {
 // shaders are bound (fixed-function vertex processing). Provide the minimal
 // public ABI needed by the UMD's state cache and host-side tests.
 typedef uint32_t D3DTRANSFORMSTATETYPE;
+
+// D3DMATRIX (from d3d9types.h). The real SDK exposes a union with _11/_12/etc
+// fields; for the UMD we only require an ABI-compatible 16-float layout.
 typedef struct _D3DMATRIX {
   float m[4][4];
 } D3DMATRIX;
@@ -621,6 +644,10 @@ typedef struct _D3D9DDI_HVERTEXDECL {
 typedef struct _D3D9DDI_HQUERY {
   void* pDrvPrivate;
 } D3D9DDI_HQUERY;
+
+typedef struct _D3D9DDI_HSTATEBLOCK {
+  void* pDrvPrivate;
+} D3D9DDI_HSTATEBLOCK;
 
 // Handle for D3D9 patch rendering APIs (DrawRectPatch/DrawTriPatch/DeletePatch).
 typedef struct _D3D9DDI_HPATCH {
@@ -1467,6 +1494,14 @@ typedef HRESULT(AEROGPU_D3D9_CALL* PFND3D9DDI_DRAWRECTPATCH)(D3DDDI_HDEVICE hDev
 typedef HRESULT(AEROGPU_D3D9_CALL* PFND3D9DDI_DRAWTRIPATCH)(D3DDDI_HDEVICE hDevice, const D3DDDIARG_DRAWTRIPATCH* pDrawTriPatch);
 typedef HRESULT(AEROGPU_D3D9_CALL* PFND3D9DDI_DELETEPATCH)(D3DDDI_HDEVICE hDevice, UINT Handle);
 
+// State blocks (Create/Capture/Apply + Begin/End record).
+typedef HRESULT(AEROGPU_D3D9_CALL* PFND3D9DDI_CREATESTATEBLOCK)(D3DDDI_HDEVICE hDevice, uint32_t type_u32, D3D9DDI_HSTATEBLOCK* phStateBlock);
+typedef HRESULT(AEROGPU_D3D9_CALL* PFND3D9DDI_DELETESTATEBLOCK)(D3DDDI_HDEVICE hDevice, D3D9DDI_HSTATEBLOCK hStateBlock);
+typedef HRESULT(AEROGPU_D3D9_CALL* PFND3D9DDI_CAPTURESTATEBLOCK)(D3DDDI_HDEVICE hDevice, D3D9DDI_HSTATEBLOCK hStateBlock);
+typedef HRESULT(AEROGPU_D3D9_CALL* PFND3D9DDI_APPLYSTATEBLOCK)(D3DDDI_HDEVICE hDevice, D3D9DDI_HSTATEBLOCK hStateBlock);
+typedef HRESULT(AEROGPU_D3D9_CALL* PFND3D9DDI_BEGINSTATEBLOCK)(D3DDDI_HDEVICE hDevice);
+typedef HRESULT(AEROGPU_D3D9_CALL* PFND3D9DDI_ENDSTATEBLOCK)(D3DDDI_HDEVICE hDevice, D3D9DDI_HSTATEBLOCK* phStateBlock);
+
 struct _D3D9DDI_DEVICEFUNCS {
   PFND3D9DDI_DESTROYDEVICE pfnDestroyDevice;
   PFND3D9DDI_CREATERESOURCE pfnCreateResource;
@@ -1562,6 +1597,14 @@ struct _D3D9DDI_DEVICEFUNCS {
   PFND3D9DDI_SETTRANSFORM pfnSetTransform;
   PFND3D9DDI_MULTIPLYTRANSFORM pfnMultiplyTransform;
   PFND3D9DDI_GETTRANSFORM pfnGetTransform;
+
+  // State blocks (Create/Capture/Apply + Begin/End record).
+  PFND3D9DDI_CREATESTATEBLOCK pfnCreateStateBlock;
+  PFND3D9DDI_DELETESTATEBLOCK pfnDeleteStateBlock;
+  PFND3D9DDI_CAPTURESTATEBLOCK pfnCaptureStateBlock;
+  PFND3D9DDI_APPLYSTATEBLOCK pfnApplyStateBlock;
+  PFND3D9DDI_BEGINSTATEBLOCK pfnBeginStateBlock;
+  PFND3D9DDI_ENDSTATEBLOCK pfnEndStateBlock;
 
   // Cursor DDIs are appended to the tail in the portable ABI subset so existing
   // anchor offsets remain stable.

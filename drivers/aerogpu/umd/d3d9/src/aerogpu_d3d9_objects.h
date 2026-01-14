@@ -483,7 +483,7 @@ struct Resource {
   // The stable ID referenced in command buffers is `backing_alloc_id`.
   WddmAllocationHandle wddm_hAllocation = 0;
 
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+#if defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
   // Legacy resource properties (cached only, not currently emitted to the
   // AeroGPU command stream).
   uint32_t priority = 0;
@@ -771,7 +771,7 @@ struct Device {
       m[15] = 1.0f;
     }
 
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+#if defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
     // Default fixed-function material is white.
     std::memset(&material, 0, sizeof(material));
     material.Diffuse.r = 1.0f;
