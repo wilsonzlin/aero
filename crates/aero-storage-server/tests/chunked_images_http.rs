@@ -234,11 +234,29 @@ async fn chunked_manifest_head_has_expected_headers_and_empty_body() {
         resp.headers()["x-content-type-options"].to_str().unwrap(),
         "nosniff"
     );
+    assert_eq!(
+        resp.headers()["access-control-expose-headers"]
+            .to_str()
+            .unwrap(),
+        "ETag, Last-Modified, Cache-Control, Content-Range, Accept-Ranges, Content-Length"
+    );
     assert!(resp.headers().contains_key(header::ETAG));
     assert!(resp.headers().contains_key(header::LAST_MODIFIED));
     assert_eq!(
         resp.headers()[header::CONTENT_LENGTH].to_str().unwrap(),
         expected_manifest.as_bytes().len().to_string()
+    );
+    assert_eq!(
+        resp.headers()["access-control-allow-origin"]
+            .to_str()
+            .unwrap(),
+        "*"
+    );
+    assert_eq!(
+        resp.headers()["cross-origin-resource-policy"]
+            .to_str()
+            .unwrap(),
+        "same-site"
     );
 
     let body = resp.into_body().collect().await.unwrap().to_bytes();
@@ -345,11 +363,33 @@ async fn versioned_chunked_manifest_head_has_expected_headers_and_empty_body() {
         resp.headers()[header::CACHE_CONTROL].to_str().unwrap(),
         "public, max-age=31536000, immutable"
     );
+    assert_eq!(
+        resp.headers()["access-control-expose-headers"]
+            .to_str()
+            .unwrap(),
+        "ETag, Last-Modified, Cache-Control, Content-Range, Accept-Ranges, Content-Length"
+    );
+    assert_eq!(
+        resp.headers()["x-content-type-options"].to_str().unwrap(),
+        "nosniff"
+    );
     assert!(resp.headers().contains_key(header::ETAG));
     assert!(resp.headers().contains_key(header::LAST_MODIFIED));
     assert_eq!(
         resp.headers()[header::CONTENT_LENGTH].to_str().unwrap(),
         expected_manifest.as_bytes().len().to_string()
+    );
+    assert_eq!(
+        resp.headers()["access-control-allow-origin"]
+            .to_str()
+            .unwrap(),
+        "*"
+    );
+    assert_eq!(
+        resp.headers()["cross-origin-resource-policy"]
+            .to_str()
+            .unwrap(),
+        "same-site"
     );
 
     let body = resp.into_body().collect().await.unwrap().to_bytes();
@@ -993,9 +1033,32 @@ async fn chunked_chunk_head_has_expected_headers_and_empty_body() {
         resp.headers()[header::CONTENT_ENCODING].to_str().unwrap(),
         "identity"
     );
+    assert_eq!(
+        resp.headers()[header::CACHE_CONTROL].to_str().unwrap(),
+        "public, max-age=31536000, immutable, no-transform"
+    );
+    assert_eq!(resp.headers()["x-content-type-options"].to_str().unwrap(), "nosniff");
+    assert_eq!(
+        resp.headers()["access-control-expose-headers"]
+            .to_str()
+            .unwrap(),
+        "ETag, Last-Modified, Cache-Control, Content-Range, Accept-Ranges, Content-Length"
+    );
     assert!(resp.headers().contains_key(header::ETAG));
     assert!(resp.headers().contains_key(header::LAST_MODIFIED));
     assert_eq!(resp.headers()[header::CONTENT_LENGTH].to_str().unwrap(), "2");
+    assert_eq!(
+        resp.headers()["access-control-allow-origin"]
+            .to_str()
+            .unwrap(),
+        "*"
+    );
+    assert_eq!(
+        resp.headers()["cross-origin-resource-policy"]
+            .to_str()
+            .unwrap(),
+        "same-site"
+    );
 
     let body = resp.into_body().collect().await.unwrap().to_bytes();
     assert!(body.is_empty());
@@ -1064,9 +1127,32 @@ async fn versioned_chunked_chunk_head_has_expected_headers_and_empty_body() {
         resp.headers()[header::CONTENT_ENCODING].to_str().unwrap(),
         "identity"
     );
+    assert_eq!(
+        resp.headers()[header::CACHE_CONTROL].to_str().unwrap(),
+        "public, max-age=31536000, immutable, no-transform"
+    );
+    assert_eq!(
+        resp.headers()["access-control-expose-headers"]
+            .to_str()
+            .unwrap(),
+        "ETag, Last-Modified, Cache-Control, Content-Range, Accept-Ranges, Content-Length"
+    );
+    assert_eq!(resp.headers()["x-content-type-options"].to_str().unwrap(), "nosniff");
     assert!(resp.headers().contains_key(header::ETAG));
     assert!(resp.headers().contains_key(header::LAST_MODIFIED));
     assert_eq!(resp.headers()[header::CONTENT_LENGTH].to_str().unwrap(), "2");
+    assert_eq!(
+        resp.headers()["access-control-allow-origin"]
+            .to_str()
+            .unwrap(),
+        "*"
+    );
+    assert_eq!(
+        resp.headers()["cross-origin-resource-policy"]
+            .to_str()
+            .unwrap(),
+        "same-site"
+    );
 
     let body = resp.into_body().collect().await.unwrap().to_bytes();
     assert!(body.is_empty());
