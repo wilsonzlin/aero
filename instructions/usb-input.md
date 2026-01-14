@@ -210,6 +210,20 @@ The canonical browser capture implementation lives in `web/src/input/`:
 
 The input injector worker (`io.worker.ts` in `vmRuntime=legacy`, `machine_cpu.worker.ts` in `vmRuntime=machine`) consumes the batches (`type: "in:input-batch"`), decodes `InputEventType`, and injects into the active backend (PS/2, USB HID, or virtio-input).
 
+### Input Diagnostics Panel (`?input=1`)
+
+The main web UI can optionally show a live **input diagnostics** panel (useful for debugging stuck keys/buttons, backend switching, and input-batch latency).
+
+- Enable: add `?input=1` (or any truthy `?input` value, including just `?input`) to the URL.
+- Disable: `?input=0` or `?input=false`.
+
+The panel reports (among other things):
+
+- active keyboard/mouse backend (`ps2` / `usb` / `virtio`)
+- held key count + held mouse button mask
+- per-backend keyboard LED masks (USB / virtio / PS/2)
+- input batch counters and latency stats (avg/EWMA/max)
+
 ---
 
 ## Coordination Points
