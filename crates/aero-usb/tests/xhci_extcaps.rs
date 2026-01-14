@@ -67,6 +67,8 @@ fn supported_protocol_capability_usb2_matches_port_count() {
     // DWORD3: speed ID count.
     let dword3 = xhci.mmio_read_u32(&mut mem, xecp + 12);
     let psic = (dword3 & 0xf) as u8;
+    let psio = ((dword3 >> 16) & 0xffff) as u16;
+    assert_eq!(psio, 4, "PSI descriptor table should start at DWORD4 (PSIO=4)");
     assert!(
         psic >= 2,
         "USB2 Supported Protocol should expose at least LS+FS PSI descriptors"
@@ -75,8 +77,9 @@ fn supported_protocol_capability_usb2_matches_port_count() {
     // Ensure we included low-speed and full-speed entries (drivers use PSIT to map PORTSC.PS).
     let mut has_low = false;
     let mut has_full = false;
+    let psi_base = xecp + u64::from(psio) * 4;
     for i in 0..psic {
-        let psi = xhci.mmio_read_u32(&mut mem, xecp + 16 + (i as u64) * 4);
+        let psi = xhci.mmio_read_u32(&mut mem, psi_base + (i as u64) * 4);
         let psit = ((psi >> 4) & 0xf) as u8;
         if psit == PSI_TYPE_LOW {
             has_low = true;

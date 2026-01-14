@@ -511,7 +511,16 @@ impl XhciController {
         caps.push(header0);
         caps.push(regs::PROTOCOL_NAME_USB2);
         caps.push((1u32) | ((self.port_count as u32) << 8));
-        caps.push((psic as u32) | ((regs::USB2_PROTOCOL_SLOT_TYPE as u32) << 8));
+        // DWORD3: PSIC (0..=15) + Protocol Slot Type + PSI descriptor table offset.
+        //
+        // The PSI descriptor table begins immediately after DWORD3, at offset 4 dwords from the
+        // start of the capability.
+        let psio = 4u16;
+        caps.push(
+            (psic as u32)
+                | ((regs::USB2_PROTOCOL_SLOT_TYPE as u32) << 8)
+                | ((psio as u32) << 16),
+        );
 
         // Protocol Speed ID descriptors.
         // These values are consumed by guest xHCI drivers to interpret PORTSC.PS values.
