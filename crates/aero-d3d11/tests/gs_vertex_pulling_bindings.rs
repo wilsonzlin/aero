@@ -68,23 +68,41 @@ async fn create_device(bool_fallback: bool) -> Result<(wgpu::Device, bool)> {
 #[test]
 fn gs_stage_bindings_do_not_conflict_with_vertex_pulling() {
     pollster::block_on(async {
-        let (device, supports_compute) = match create_device(true).await {
-            Ok(v) => v,
-            Err(_) => match create_device(false).await {
-                Ok(v) => v,
-                Err(e) => {
-                    common::skip_or_panic(
-                        module_path!(),
-                        &format!("wgpu unavailable ({e:#})"),
-                    );
-                    return;
+        // Prefer a fallback adapter for CI stability, but if it doesn't support compute we still
+        // want to try a non-fallback adapter so this test actually exercises the binding model on
+        // real GPU backends.
+        let mut saw_device = false;
+        let mut device: Option<wgpu::Device> = None;
+        let mut last_err: Option<anyhow::Error> = None;
+        for force_fallback_adapter in [true, false] {
+            match create_device(force_fallback_adapter).await {
+                Ok((dev, supports_compute)) => {
+                    saw_device = true;
+                    if supports_compute {
+                        device = Some(dev);
+                        break;
+                    }
                 }
-            },
-        };
-        if !supports_compute {
-            common::skip_or_panic(module_path!(), "compute unsupported");
-            return;
+                Err(e) => last_err = Some(e),
+            }
         }
+        let Some(device) = device else {
+            if saw_device {
+                common::skip_or_panic(module_path!(), "compute unsupported");
+            } else {
+                common::skip_or_panic(
+                    module_path!(),
+                    &format!(
+                        "wgpu unavailable ({})",
+                        last_err
+                            .as_ref()
+                            .map(|e| e.to_string())
+                            .unwrap_or_else(|| "unknown error".to_owned())
+                    ),
+                );
+            }
+            return;
+        };
 
         // Minimal vertex pulling layout: one compacted vertex buffer slot.
         let pulling = VertexPullingLayout {
