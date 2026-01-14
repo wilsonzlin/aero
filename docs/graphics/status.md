@@ -599,6 +599,9 @@ What is still missing (P0):
   - Code: [`crates/aero-machine/src/lib.rs`](../../crates/aero-machine/src/lib.rs) (`process_aerogpu`, INT 10h scanout publishing)
   - Code: [`crates/aero-machine/src/aerogpu.rs`](../../crates/aero-machine/src/aerogpu.rs) (`take_scanout0_state_update`)
   - Tests: [`crates/aero-machine/tests/aerogpu_wddm_scanout_state_format_mapping.rs`](../../crates/aero-machine/tests/aerogpu_wddm_scanout_state_format_mapping.rs)
+  - Disable semantics: after WDDM scanout is claimed, clearing `SCANOUT0_ENABLE=0` publishes a **disabled WDDM** descriptor
+    (source=WDDM, base/width/height/pitch=0) so legacy scanout cannot steal ownership back.
+    - Test: [`crates/aero-machine/tests/aerogpu_scanout_disable_publishes_wddm_disabled.rs`](../../crates/aero-machine/tests/aerogpu_scanout_disable_publishes_wddm_disabled.rs)
 - The GPU worker can present WDDM scanout from either guest RAM **or** the shared VRAM aperture (BAR1 backing) when `ScanoutState` is published with `source=WDDM` and a non-zero `base_paddr`:
   - Code: [`web/src/workers/gpu-worker.ts`](../../web/src/workers/gpu-worker.ts) (`tryReadScanoutFrame` / `tryReadScanoutRgba8`)
   - E2E test (guest RAM base_paddr): [`tests/e2e/wddm_scanout_smoke.spec.ts`](../../tests/e2e/wddm_scanout_smoke.spec.ts) (harness: [`web/wddm-scanout-smoke.ts`](../../web/wddm-scanout-smoke.ts))
