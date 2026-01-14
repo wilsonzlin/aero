@@ -93,20 +93,27 @@ fn compute_translate_and_run_dispatch_thread_id_writes_indexed_uav_buffer() {
 
         // Use a workgroup size > 1 to ensure `SV_DispatchThreadID` is lowered to
         // `@builtin(global_invocation_id)` (and not accidentally to `workgroup_id`).
-        const GROUP_SIZE_X: u32 = 4;
-        const WORKGROUPS_X: u32 = 4;
-        const ELEMENTS: u32 = GROUP_SIZE_X * WORKGROUPS_X;
+        const GROUP_SIZE_X: u32 = 2;
+        const GROUP_SIZE_Y: u32 = 2;
+        const WORKGROUPS_X: u32 = 2;
+        const WORKGROUPS_Y: u32 = 2;
+        const GRID_X: u32 = GROUP_SIZE_X * WORKGROUPS_X;
+        const GRID_Y: u32 = GROUP_SIZE_Y * WORKGROUPS_Y;
+        // GRID_X == 4, so `log2(GRID_X) == 2`.
+        const LOG2_GRID_X: u32 = 2;
+        const INSERT_WIDTH: u32 = 32 - LOG2_GRID_X;
+        const ELEMENTS: u32 = GRID_X * GRID_Y;
         let size_bytes = (ELEMENTS as u64) * 4;
 
         // D3D10_SB_NAME_DISPATCH_THREAD_ID.
         const D3D_NAME_DISPATCH_THREAD_ID: u32 = 20;
 
-        // Build an SM4 IR module that writes `SV_DispatchThreadID.x` into a UAV buffer at index
-        // `SV_DispatchThreadID.x`.
+        // Build an SM4 IR module that flattens `SV_DispatchThreadID.xy` into a linear index and
+        // writes that index into a UAV buffer at `u0[index]`.
         //
-        // Since `store_raw` takes a byte offset, compute `addr = id.x << 2` using the `bfi`
+        // Since `store_raw` takes a byte offset, compute `addr = linear << 2` using the `bfi`
         // (bitfield insert) instruction:
-        //   addr = insertBits(0, id.x, 2, 30)
+        //   addr = insertBits(0, linear, 2, 30)
         //
         // This test is specifically sensitive to whether the builtin is expanded into the untyped
         // `vec4<f32>` register model as *raw integer bits* (via bitcast) rather than float numeric
@@ -118,7 +125,7 @@ fn compute_translate_and_run_dispatch_thread_id_writes_indexed_uav_buffer() {
             decls: vec![
                 Sm4Decl::ThreadGroupSize {
                     x: GROUP_SIZE_X,
-                    y: 1,
+                    y: GROUP_SIZE_Y,
                     z: 1,
                 },
                 Sm4Decl::InputSiv {
@@ -133,19 +140,27 @@ fn compute_translate_and_run_dispatch_thread_id_writes_indexed_uav_buffer() {
                 },
             ],
             instructions: vec![
-                // r0.x = v0.x << 2
+                // r0.x = linear = id.x | (id.y << log2(GRID_X))
                 Sm4Inst::Bfi {
                     dst: dst(RegFile::Temp, 0, WriteMask::X),
+                    width: src_imm_u32(INSERT_WIDTH),
+                    offset: src_imm_u32(LOG2_GRID_X),
+                    insert: src_reg(RegFile::Input, 0, Swizzle::YYYY),
+                    base: src_reg(RegFile::Input, 0, Swizzle::XXXX),
+                },
+                // r1.x = addr = linear << 2 (byte address)
+                Sm4Inst::Bfi {
+                    dst: dst(RegFile::Temp, 1, WriteMask::X),
                     width: src_imm_u32(30),
                     offset: src_imm_u32(2),
-                    insert: src_reg(RegFile::Input, 0, Swizzle::XXXX),
+                    insert: src_reg(RegFile::Temp, 0, Swizzle::XXXX),
                     base: src_imm_u32(0),
                 },
-                // store_raw u0.x, r0.x, v0.x
+                // store_raw u0.x, r1.x, r0.x
                 Sm4Inst::StoreRaw {
                     uav: UavRef { slot: 0 },
-                    addr: src_reg(RegFile::Temp, 0, Swizzle::XXXX),
-                    value: src_reg(RegFile::Input, 0, Swizzle::XXXX),
+                    addr: src_reg(RegFile::Temp, 1, Swizzle::XXXX),
+                    value: src_reg(RegFile::Temp, 0, Swizzle::XXXX),
                     mask: WriteMask::X,
                 },
                 Sm4Inst::Ret,
@@ -248,7 +263,7 @@ fn compute_translate_and_run_dispatch_thread_id_writes_indexed_uav_buffer() {
             });
             pass.set_pipeline(&pipeline);
             pass.set_bind_group(2, &bind_group, &[]);
-            pass.dispatch_workgroups(WORKGROUPS_X, 1, 1);
+            pass.dispatch_workgroups(WORKGROUPS_X, WORKGROUPS_Y, 1);
         }
         encoder.copy_buffer_to_buffer(&out, 0, &readback, 0, size_bytes);
         queue.submit([encoder.finish()]);
