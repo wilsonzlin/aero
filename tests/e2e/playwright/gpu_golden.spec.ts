@@ -487,8 +487,12 @@ async function captureGpuTraceReplayFrameRGBA(
 const TRACE_FIXTURE_DIR = path.resolve(TEST_DIR, '../../fixtures');
 const TRACE_TOOL_PATH = path.resolve(TEST_DIR, '../../../web/tools/gpu_trace_replay.ts');
 
-// Map fixture filename -> golden override. Anything not listed here is expected to
-// use a golden named `gpu_trace_<fixture_basename>_64.png` (frame 0, strict diff).
+// Map fixture filename -> golden override.
+//
+// Note: Only trace fixtures that have a corresponding committed PNG golden under
+// `tests/golden/` are included in the browser golden suite. Additional trace
+// fixtures may exist purely for Rust-side replay/hash tests (e.g. formats not yet
+// supported by the JS/WebGL trace backend), and those should not fail browser CI.
 const TRACE_GOLDEN_OVERRIDES: Record<string, string> = {
   // Historical name (kept for compatibility with existing committed goldens).
   'triangle.aerogputrace': GOLDEN_GPU_TRACE_TRIANGLE_RED,
@@ -506,47 +510,55 @@ for (const traceFile of fs
   const goldenName =
     TRACE_GOLDEN_OVERRIDES[traceFile] ??
     `gpu_trace_${path.basename(traceFile, '.aerogputrace')}_64`;
-  const goldenSize = tryReadPngSize(resolveGoldenPngPath(goldenName));
+  const goldenPath = resolveGoldenPngPath(goldenName);
+  const goldenSize = tryReadPngSize(goldenPath);
   const canvasWidth = goldenSize?.width ?? 64;
   const canvasHeight = goldenSize?.height ?? 64;
 
-  test(`GPU trace replay: ${traceFile} renders deterministically (golden)`, async ({ page }, testInfo) => {
-    const traceB64 = fs.readFileSync(tracePath).toString('base64');
+  const describeFn = goldenSize ? test.describe : test.describe.skip;
+  describeFn(`GPU trace replay: ${traceFile}`, () => {
+    if (!goldenSize) {
+      test.skip(true, `No committed golden found at ${goldenPath}; this fixture is not part of the browser golden suite.`);
+    }
 
-    await page.setContent(`<canvas id="c" width="${canvasWidth}" height="${canvasHeight}"></canvas>`);
-    await page.addScriptTag({ path: TRACE_TOOL_PATH });
+    test(`renders deterministically (golden)`, async ({ page }, testInfo) => {
+      const traceB64 = fs.readFileSync(tracePath).toString('base64');
 
-    const actual = await captureGpuTraceReplayFrameRGBA(page, { traceB64, frameIndex: 0, backend: 'webgl2' });
-    await expectRgbaToMatchGolden(testInfo, goldenName, actual, { maxDiffPixels: 0, threshold: 0 });
-  });
+      await page.setContent(`<canvas id="c" width="${canvasWidth}" height="${canvasHeight}"></canvas>`);
+      await page.addScriptTag({ path: TRACE_TOOL_PATH });
 
-  if (traceHeader.commandAbiVersion === 1) {
-    // The WebGPU trace backend currently only supports the minimal trace ABI v1.
-    test(`GPU trace replay: ${traceFile} renders deterministically (golden) @webgpu`, async ({ page }, testInfo) => {
-      test.skip(testInfo.project.name !== 'chromium-webgpu', 'WebGPU trace replay only runs on Chromium WebGPU project.');
-
-      const hasNavigatorGpu = await page.evaluate(() => !!(navigator as any).gpu);
-      if (!hasNavigatorGpu) {
-        if (isWebGPURequired()) {
-          throw new Error('WebGPU is unavailable: `navigator.gpu` is missing');
-        }
-        test.skip(true, 'WebGPU is unavailable: `navigator.gpu` is missing');
-      }
-
-      try {
-        const traceB64 = fs.readFileSync(tracePath).toString('base64');
-
-        await page.setContent(`<canvas id="c" width="${canvasWidth}" height="${canvasHeight}"></canvas>`);
-        await page.addScriptTag({ path: TRACE_TOOL_PATH });
-
-        const actual = await captureGpuTraceReplayFrameRGBA(page, { traceB64, frameIndex: 0, backend: 'webgpu' });
-        await expectRgbaToMatchGolden(testInfo, goldenName, actual, { maxDiffPixels: 0, threshold: 0 });
-      } catch (error) {
-        if (isWebGPURequired()) {
-          throw error;
-        }
-        test.skip(true, `WebGPU not usable in this environment: ${String(error)}`);
-      }
+      const actual = await captureGpuTraceReplayFrameRGBA(page, { traceB64, frameIndex: 0, backend: 'webgl2' });
+      await expectRgbaToMatchGolden(testInfo, goldenName, actual, { maxDiffPixels: 0, threshold: 0 });
     });
-  }
+
+    if (traceHeader.commandAbiVersion === 1) {
+      // The WebGPU trace backend currently only supports the minimal trace ABI v1.
+      test(`renders deterministically (golden) @webgpu`, async ({ page }, testInfo) => {
+        test.skip(testInfo.project.name !== 'chromium-webgpu', 'WebGPU trace replay only runs on Chromium WebGPU project.');
+
+        const hasNavigatorGpu = await page.evaluate(() => !!(navigator as any).gpu);
+        if (!hasNavigatorGpu) {
+          if (isWebGPURequired()) {
+            throw new Error('WebGPU is unavailable: `navigator.gpu` is missing');
+          }
+          test.skip(true, 'WebGPU is unavailable: `navigator.gpu` is missing');
+        }
+
+        try {
+          const traceB64 = fs.readFileSync(tracePath).toString('base64');
+
+          await page.setContent(`<canvas id="c" width="${canvasWidth}" height="${canvasHeight}"></canvas>`);
+          await page.addScriptTag({ path: TRACE_TOOL_PATH });
+
+          const actual = await captureGpuTraceReplayFrameRGBA(page, { traceB64, frameIndex: 0, backend: 'webgpu' });
+          await expectRgbaToMatchGolden(testInfo, goldenName, actual, { maxDiffPixels: 0, threshold: 0 });
+        } catch (error) {
+          if (isWebGPURequired()) {
+            throw error;
+          }
+          test.skip(true, `WebGPU not usable in this environment: ${String(error)}`);
+        }
+      });
+    }
+  });
 }
