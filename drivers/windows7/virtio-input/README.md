@@ -561,7 +561,8 @@ Device kind / report descriptor selection:
 `DeviceKind` is primarily derived from virtio `ID_NAME` and cross-checked against the PCI subsystem device ID when present.
 In compat mode (`CompatIdName=1`), the driver also accepts common QEMU `ID_NAME` strings and may infer the kind from `EV_BITS`
 when `ID_NAME` is unrecognized. For tablet/absolute-pointer devices, the driver can also fall back to `EV_BITS` inference
-(`EV_ABS` + `ABS_X`/`ABS_Y`) even when compat mode is disabled. See `docs/virtio-input-notes.md` for details.
+(`EV_ABS` + `ABS_X`/`ABS_Y`) even when compat mode is disabled, as long as the PCI subsystem device ID does **not** indicate an
+Aero contract kind (`0x0010`/`0x0011`/`0x0012`). See `docs/virtio-input-notes.md` for details.
 
 #### Mouse button mapping (`EV_KEY` → HID buttons 1–8)
 

@@ -21,7 +21,8 @@ It uses QEMU to provide virtio-input keyboard/mouse devices, then verifies:
 >
 > - Keyboard/mouse expect the Aero virtio-input `ID_NAME` strings (`"Aero Virtio Keyboard"` / `"Aero Virtio Mouse"`).
 > - Tablet/absolute-pointer devices can additionally be accepted (best-effort) via `EV_BITS` inference
->   (`EV_ABS` + `ABS_X`/`ABS_Y`) even if `ID_NAME` is not an Aero string.
+>   (`EV_ABS` + `ABS_X`/`ABS_Y`) even if `ID_NAME` is not an Aero string, as long as the PCI subsystem device ID does **not**
+>   indicate an Aero contract kind (`0x0010`/`0x0011`/`0x0012`).
 >
 > If your QEMU virtio-input devices report QEMU `ID_NAME` strings (as stock QEMU often does:
 > `"QEMU Virtio Keyboard"` / `"QEMU Virtio Mouse"` / `"QEMU Virtio Tablet"`), enable **compat mode** in the guest
