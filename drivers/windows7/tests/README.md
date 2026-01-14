@@ -80,9 +80,9 @@ drivers/windows7/tests/
       (`aero_virtio_input.inf` / `aero_virtio_tablet.inf`) will not bind. In that case you must either:
       - Adjust/emulate the subsystem IDs to the contract values (so the tablet enumerates as
         `...&SUBSYS_00121AF4&REV_01` and binds via `aero_virtio_tablet.inf`), **or**
-      - Opt into the legacy alias INF by renaming
-        `drivers/windows7/virtio-input/inf/virtio-input.inf.disabled` → `virtio-input.inf` and installing that INF,
-        which provides the revision-gated generic fallback match (`PCI\VEN_1AF4&DEV_1052&REV_01`).
+      - Opt into the legacy virtio-input INF alias (disabled-by-default) by enabling the `.disabled` INF in
+        `drivers/windows7/virtio-input/inf/` (rename it to remove the `.disabled` suffix) and installing it.
+        This provides the revision-gated generic fallback match (`PCI\VEN_1AF4&DEV_1052&REV_01`).
         - Caveat: do not ship/install overlapping virtio-input INFs; the alias INF is intended only for compatibility
           with non-contract devices.
     - Once bound, the driver classifies the device as a tablet via `EV_BITS` (`EV_ABS` + `ABS_X`/`ABS_Y`).
