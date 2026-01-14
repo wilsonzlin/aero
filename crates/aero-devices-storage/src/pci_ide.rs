@@ -2177,6 +2177,103 @@ mod tests {
     }
 
     #[test]
+    fn atapi_dma_error_on_secondary_channel_sets_secondary_bm_status_and_irq_only() {
+        const BM_BASE: u16 = 0xC000;
+        const PRD_BASE: u64 = 0x1000;
+        const BUF_BASE: u64 = 0x2000;
+
+        let mut expected = vec![0u8; AtapiCdrom::SECTOR_SIZE];
+        for (i, b) in expected.iter_mut().enumerate() {
+            *b = (i & 0xFF) as u8;
+        }
+
+        let mut cd = AtapiCdrom::new(Some(Box::new(TestIsoBackend {
+            image: expected.clone(),
+        })));
+        // Clear Unit Attention.
+        let tur = [0u8; 12];
+        let _ = cd.handle_packet(&tur, false);
+
+        let mut ctl = IdeController::new(BM_BASE);
+        ctl.attach_secondary_master_atapi(cd);
+
+        let mut mem = Bus::new(0x10_000);
+
+        // Malformed PRD: one entry long enough to cover the transfer but missing the EOT bit.
+        mem.write_u32(PRD_BASE, BUF_BASE as u32);
+        mem.write_u16(PRD_BASE + 4, AtapiCdrom::SECTOR_SIZE as u16);
+        mem.write_u16(PRD_BASE + 6, 0x0000);
+
+        // Program secondary bus master registers: PRD pointer + direction=ToMemory + start.
+        ctl.io_write(BM_BASE + 8 + 4, 4, PRD_BASE as u32);
+        ctl.io_write(BM_BASE + 8 + 0, 1, 0x09);
+
+        // Issue ATAPI PACKET command with DMA enabled in Features on the secondary channel.
+        let cmd_base = SECONDARY_PORTS.cmd_base;
+        let ctrl_base = SECONDARY_PORTS.ctrl_base;
+
+        let data_port = cmd_base + ATA_REG_DATA;
+        let features_port = cmd_base + ATA_REG_ERROR_FEATURES;
+        let lba1_port = cmd_base + ATA_REG_LBA1;
+        let lba2_port = cmd_base + ATA_REG_LBA2;
+        let device_port = cmd_base + ATA_REG_DEVICE;
+        let command_port = cmd_base + ATA_REG_STATUS_COMMAND;
+        let alt_status_port = ctrl_base + ATA_CTRL_ALT_STATUS_DEVICE_CTRL;
+
+        ctl.io_write(device_port, 1, 0xA0);
+        ctl.io_write(features_port, 1, 0x01); // DMA
+        ctl.io_write(lba1_port, 1, 0x00);
+        ctl.io_write(lba2_port, 1, 0x08); // 2048-byte packet byte count
+        ctl.io_write(command_port, 1, 0xA0); // PACKET
+
+        // PACKET phase asserts DRQ and raises a secondary IRQ.
+        let st = ctl.io_read(alt_status_port, 1) as u8;
+        assert_ne!(st & IDE_STATUS_DRQ, 0);
+        assert_ne!(st & IDE_STATUS_DRDY, 0);
+        assert_eq!(st & IDE_STATUS_BSY, 0);
+        assert!(ctl.secondary_irq_pending());
+        assert!(!ctl.primary_irq_pending());
+
+        // Acknowledge the PACKET IRQ.
+        let _ = ctl.io_read(command_port, 1);
+        assert!(!ctl.secondary_irq_pending());
+
+        // READ(10) packet (LBA=0, blocks=1).
+        let mut pkt = [0u8; 12];
+        pkt[0] = 0x28;
+        pkt[7..9].copy_from_slice(&1u16.to_be_bytes());
+        for chunk in pkt.chunks_exact(2) {
+            let w = u16::from_le_bytes([chunk[0], chunk[1]]);
+            ctl.io_write(data_port, 2, w as u32);
+        }
+
+        assert!(ctl.secondary.pending_dma.is_some());
+
+        // Run DMA; it should error due to malformed PRD table.
+        ctl.tick(&mut mem);
+
+        assert!(ctl.secondary_irq_pending());
+        assert!(!ctl.primary_irq_pending());
+
+        let bm_st_primary = ctl.io_read(BM_BASE + 2, 1) as u8;
+        assert_eq!(bm_st_primary & 0x07, 0, "primary BMIDE status should be unaffected");
+
+        let bm_st_secondary = ctl.io_read(BM_BASE + 8 + 2, 1) as u8;
+        assert_eq!(bm_st_secondary & 0x07, 0x06, "secondary BMIDE status should have IRQ+ERR set");
+        assert_ne!(bm_st_secondary & (1 << 5), 0, "secondary DMA capability bit should be set");
+
+        // ATAPI uses Sector Count as interrupt reason; errors should transition to status phase.
+        let irq_reason = ctl.io_read(cmd_base + ATA_REG_SECTOR_COUNT, 1) as u8;
+        assert_eq!(irq_reason, 0x03);
+
+        // Even though the PRD table is malformed, the DMA engine should still have written the
+        // data before detecting the missing EOT bit.
+        let mut actual = vec![0u8; AtapiCdrom::SECTOR_SIZE];
+        mem.read_physical(BUF_BASE, &mut actual);
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
     fn atapi_dma_error_irq_is_latched_while_nien_is_set_and_surfaces_after_reenable() {
         const BM_BASE: u16 = 0xC000;
         const PRD_BASE: u64 = 0x1000;
