@@ -262,8 +262,9 @@ Note on boot display vs AeroGPU:
   `crates/aero-devices-gpu`. A legacy sandbox integration surface remains in `crates/emulator`. Real
   **command execution** is provided by host-side executors/backends, but it is not yet wired into
   `aero_machine::Machine` (see also: [`21-emulator-crate-migration.md`](./21-emulator-crate-migration.md)).
-- The long-term plan is for the AeroGPU WDDM device (`PCI\\VEN_A3A0&DEV_0001`) to also provide
-  VGA/VBE compatibility; see:
+- Long-term direction: the AeroGPU WDDM device (`PCI\\VEN_A3A0&DEV_0001`) should be the sole display
+  adapter and also own VGA/VBE compatibility. This is already implemented in `aero_machine` when
+  `MachineConfig::enable_aerogpu=true`; see:
   - [`abi/aerogpu-pci-identity.md`](./abi/aerogpu-pci-identity.md)
   - [`16-aerogpu-vga-vesa-compat.md`](./16-aerogpu-vga-vesa-compat.md)
 
