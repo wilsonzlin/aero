@@ -16,7 +16,7 @@ struct Vertex {
 static const UINT kSrcVertexCount = 4;
 static const UINT kDestVertexCount = 6;
 static const UINT kSrcStartIndex = 1;
-static const UINT kDestIndex = 2;
+static const UINT kDestIndex = 3;
 static const UINT kProcessVertexCount = 3;
 
 static HRESULT CreateDeviceExWithFallback(IDirect3D9Ex* d3d,
@@ -248,7 +248,29 @@ static int RunD3D9ProcessVerticesSmoke(int argc, char** argv) {
   // Initialize the destination VB to sentinel off-screen verts. If ProcessVertices silently does
   // nothing, DrawPrimitive will render nothing and the center pixel will remain red.
   Vertex dst_init[kDestVertexCount];
-  for (UINT i = 0; i < kDestVertexCount; ++i) {
+  // Indices [0..2] form a small on-screen sentinel triangle (green) so we can detect bugs where
+  // ProcessVertices ignores DestIndex and overwrites the start of the buffer.
+  dst_init[0].x = 20.0f;
+  dst_init[0].y = 20.0f;
+  dst_init[0].z = 0.5f;
+  dst_init[0].rhw = 1.0f;
+  dst_init[0].color = kGreen;
+
+  dst_init[1].x = 60.0f;
+  dst_init[1].y = 20.0f;
+  dst_init[1].z = 0.5f;
+  dst_init[1].rhw = 1.0f;
+  dst_init[1].color = kGreen;
+
+  dst_init[2].x = 20.0f;
+  dst_init[2].y = 60.0f;
+  dst_init[2].z = 0.5f;
+  dst_init[2].rhw = 1.0f;
+  dst_init[2].color = kGreen;
+
+  // Indices [3..5] are off-screen sentinels; a no-op ProcessVertices should leave these untouched
+  // so the "processed" draw renders nothing (center stays red).
+  for (UINT i = 3; i < kDestVertexCount; ++i) {
     dst_init[i].x = 0.0f;
     dst_init[i].y = -1000.0f;
     dst_init[i].z = 0.5f;
@@ -318,6 +340,13 @@ static int RunD3D9ProcessVerticesSmoke(int argc, char** argv) {
     return reporter.FailHresult("IDirect3DDevice9Ex::SetStreamSource(dst)", hr);
   }
 
+  // Draw the sentinel triangle first (should remain green if DestIndex is honored).
+  hr = dev->DrawPrimitive(D3DPT_TRIANGLELIST, 0, 1);
+  if (FAILED(hr)) {
+    dev->EndScene();
+    return reporter.FailHresult("IDirect3DDevice9Ex::DrawPrimitive(sentinel)", hr);
+  }
+
   // Draw the processed vertices from DestIndex (non-zero).
   hr = dev->DrawPrimitive(D3DPT_TRIANGLELIST, kDestIndex, 1);
   if (FAILED(hr)) {
@@ -372,6 +401,7 @@ static int RunD3D9ProcessVerticesSmoke(int argc, char** argv) {
   const int cy = (int)desc.Height / 2;
   const uint32_t center = aerogpu_test::ReadPixelBGRA(lr.pBits, (int)lr.Pitch, cx, cy);
   const uint32_t corner = aerogpu_test::ReadPixelBGRA(lr.pBits, (int)lr.Pitch, 5, 5);
+  const uint32_t sentinel = aerogpu_test::ReadPixelBGRA(lr.pBits, (int)lr.Pitch, 30, 30);
 
   if (dump) {
     std::string err;
@@ -388,13 +418,18 @@ static int RunD3D9ProcessVerticesSmoke(int argc, char** argv) {
 
   const uint32_t expected_center = 0xFF0000FFu;  // BGRA = blue.
   const uint32_t expected_corner = 0xFFFF0000u;  // BGRA = red clear.
+  const uint32_t expected_sentinel = 0xFF00FF00u;  // BGRA = green sentinel.
   if ((center & 0x00FFFFFFu) != (expected_center & 0x00FFFFFFu) ||
-      (corner & 0x00FFFFFFu) != (expected_corner & 0x00FFFFFFu)) {
-    return reporter.Fail("pixel mismatch: center=0x%08lX expected 0x%08lX; corner(5,5)=0x%08lX expected 0x%08lX",
+      (corner & 0x00FFFFFFu) != (expected_corner & 0x00FFFFFFu) ||
+      (sentinel & 0x00FFFFFFu) != (expected_sentinel & 0x00FFFFFFu)) {
+    return reporter.Fail(
+        "pixel mismatch: center=0x%08lX expected 0x%08lX; corner(5,5)=0x%08lX expected 0x%08lX; sentinel(30,30)=0x%08lX expected 0x%08lX",
                          (unsigned long)center,
                          (unsigned long)expected_center,
                          (unsigned long)corner,
-                         (unsigned long)expected_corner);
+                         (unsigned long)expected_corner,
+                         (unsigned long)sentinel,
+                         (unsigned long)expected_sentinel);
   }
 
   hr = dev->PresentEx(NULL, NULL, NULL, NULL, 0);
