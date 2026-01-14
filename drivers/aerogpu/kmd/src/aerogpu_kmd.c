@@ -13326,27 +13326,30 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
                 }
                 InterlockedExchange((volatile LONG*)&adapter->LastErrorCode, (LONG)cacheCode);
 
-                if (mmioFence != 0 && mmioFence <= 0xFFFFFFFFull) {
+                if (mmioFence != 0) {
                     AeroGpuAtomicWriteU64(&adapter->LastErrorFence, mmioFence);
                 }
             }
 
-            if (mmioCode != 0) {
-                out->error_code = mmioCode;
-            } else if (mmioCount != 0 && out->error_code == 0) {
-                /*
-                 * Defensive: if the device reports a non-zero error payload count but an empty/unknown
-                 * error_code, treat it as INTERNAL so dbgctl tooling does not interpret it as "no error".
-                 *
-                 * Do not override a previously cached/non-zero error_code unless the device provides a
-                 * new non-zero code above.
-                 */
-                out->error_code = (ULONG)AEROGPU_ERROR_INTERNAL;
-            }
-            if (mmioFence != 0 && mmioFence <= 0xFFFFFFFFull) {
-                out->error_fence = (uint64_t)mmioFence;
-            }
+            /*
+             * Only trust device-provided error payload fields when error_count is non-zero.
+             * This avoids reporting stale/invalid code/fence values after a device reset
+             * that cleared the payload (count==0) but left other registers at arbitrary
+             * values.
+             */
             if (mmioCount != 0) {
+                if (mmioCode != 0) {
+                    out->error_code = mmioCode;
+                } else if (out->error_code == 0) {
+                    /*
+                     * Defensive: if the device reports a non-zero error payload count but an empty/unknown
+                     * error_code, treat it as INTERNAL so dbgctl tooling does not interpret it as "no error".
+                     */
+                    out->error_code = (ULONG)AEROGPU_ERROR_INTERNAL;
+                }
+                if (mmioFence != 0) {
+                    out->error_fence = (uint64_t)mmioFence;
+                }
                 out->error_count = mmioCount;
             }
         }
