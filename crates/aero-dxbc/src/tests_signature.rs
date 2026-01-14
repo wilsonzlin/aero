@@ -229,6 +229,18 @@ fn parse_signature_chunk_with_fourcc_falls_back_to_v0_layout_when_entry_table_is
 }
 
 #[test]
+fn parse_signature_chunk_with_fourcc_falls_back_to_v1_layout_when_sgn_chunk_contains_v1_entry() {
+    // Conversely, accept the 32-byte v1 entry layout even when the chunk ID ends with `N`.
+    // This happens in some real-world DXBC blobs and should preserve stream indices.
+    let bytes = build_signature_chunk_v1_one_entry(2);
+    let sig = parse_signature_chunk_with_fourcc(FourCC(*b"OSGN"), &bytes)
+        .expect("signature parse should succeed");
+    assert_eq!(sig.entries.len(), 1);
+    assert_eq!(sig.entries[0].semantic_name, "POSITION");
+    assert_eq!(sig.entries[0].stream, Some(2));
+}
+
+#[test]
 fn parse_signature_chunk_v1_layout_single_entry_stream_is_preserved() {
     let bytes = build_signature_chunk_v1_one_entry(2);
     let sig = parse_signature_chunk(&bytes).expect("signature parse should succeed");

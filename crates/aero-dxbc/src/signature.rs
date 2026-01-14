@@ -276,11 +276,45 @@ fn parse_signature_chunk_with_entry_size(
                     entry_index,
                     "mask/rw_mask/stream",
                 )?;
-                (
-                    (packed & 0xFF) as u8,
-                    ((packed >> 8) & 0xFF) as u8,
-                    ((packed >> 16) & 0xFF) as u32,
-                )
+                let mask = (packed & 0xFF) as u8;
+                let read_write_mask = ((packed >> 8) & 0xFF) as u8;
+                let stream = ((packed >> 16) & 0xFF) as u32;
+                let min_precision = ((packed >> 24) & 0xFF) as u32;
+
+                // Toolchains occasionally mismatch the chunk FourCC suffix and the entry layout
+                // (e.g. emit a v1 table under `*SGN`). When parsing with a forced v0 entry size,
+                // a single-entry v1 table can "accidentally" parse as v0 but lose the stream
+                // information (v1 stores `stream` as a DWORD at offset 24).
+                //
+                // Detect this situation by checking for plausible v1 `stream`/`min_precision` DWORDs
+                // immediately after the packed-byte field. Only trigger when the packed v0 stream
+                // and min-precision bytes are zero (otherwise we might reject a padded v0 table).
+                if stream == 0 && min_precision == 0 {
+                    let Some(stream_offset) = entry_start.checked_add(24) else {
+                        return Err(DxbcError::invalid_chunk(
+                            "signature entry stream offset overflows",
+                        ));
+                    };
+                    let Some(min_precision_offset) = entry_start.checked_add(28) else {
+                        return Err(DxbcError::invalid_chunk(
+                            "signature entry min_precision offset overflows",
+                        ));
+                    };
+                    let stream_dword = read_u32_le_opt(bytes, stream_offset);
+                    let min_precision_dword = read_u32_le_opt(bytes, min_precision_offset);
+                    if let (Some(stream_dword), Some(min_precision_dword)) =
+                        (stream_dword, min_precision_dword)
+                    {
+                        // Mirror the v1-layout heuristic used elsewhere in this module.
+                        if stream_dword != 0 && (stream_dword <= 3) && (min_precision_dword <= 8) {
+                            return Err(DxbcError::invalid_chunk(format!(
+                                "entry {entry_index} appears to use v1 layout (stream={stream_dword}, min_precision={min_precision_dword})"
+                            )));
+                        }
+                    }
+                }
+
+                (mask, read_write_mask, stream)
             }
             SIGNATURE_ENTRY_LEN_V1 => {
                 // 32-byte variant: mask/rw bytes followed by stream/min-precision DWORDs.
