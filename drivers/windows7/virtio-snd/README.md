@@ -65,6 +65,7 @@ If Windows grants fewer than `1 + numQueues` messages, the driver falls back to:
   - The selftest also emits a `virtio-snd-irq|INFO|...` line describing the observed interrupt mode:
     - `virtio-snd-irq|INFO|mode=intx|...`
     - `virtio-snd-irq|INFO|mode=msix|messages=<n>|msix_config_vector=0x....|msix_queue0_vector=0x....|...`
+    - `virtio-snd-irq|INFO|mode=none|...` (polling-only; no interrupt objects are connected)
     - (On older images/drivers where the diag interface is unavailable, the selftest falls back to best-effort PnP
       resource inspection and may report `mode=msi` with only a message count.)
   - See `../tests/guest-selftest/README.md` for how to build/run the tool.

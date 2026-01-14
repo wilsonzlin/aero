@@ -102,6 +102,7 @@ If `aero-virtio-selftest.exe` is installed, it also emits a serial/stdout marker
 
 - `virtio-snd-irq|INFO|mode=intx`
 - `virtio-snd-irq|INFO|mode=msix|messages=<n>|msix_config_vector=0x....|...` (when the driver exposes the optional `\\.\aero_virtio_snd_diag` interface)
+- `virtio-snd-irq|INFO|mode=none|...` (polling-only; no interrupt objects are connected)
 - `virtio-snd-irq|INFO|mode=msi|messages=<n>` (fallback: message interrupts; does not distinguish MSI vs MSI-X)
 
 ## Optional bring-up: polling-only mode (no interrupts)

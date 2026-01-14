@@ -53,6 +53,7 @@ If you have access to Aero’s Windows 7 guest test tool (`aero-virtio-selftest.
 - `virtio-input-irq|INFO|mode=msi|messages=<n>`
 - `virtio-snd-irq|INFO|mode=intx`
 - `virtio-snd-irq|INFO|mode=msix|messages=<n>|msix_config_vector=0x....|...` *(when the driver exposes the optional `\\.\aero_virtio_snd_diag` interface)*
+- `virtio-snd-irq|INFO|mode=none|...` *(polling-only; no interrupt objects are connected)*
 - `virtio-snd-irq|INFO|mode=msi|messages=<n>` *(fallback: message interrupts; does not distinguish MSI vs MSI-X)*
 
 For `virtio-blk`, the selftest may also emit a richer miniport-IOCTL-derived line (best-effort; depends on the installed miniport contract):
