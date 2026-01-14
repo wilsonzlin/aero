@@ -70,9 +70,9 @@ fn maps_new_dxgi_formats_to_wgpu_vertex_formats() {
             stride: 4,
         },
         Case {
-            name: "R10G10B10A2_UNORM (fallback u32)",
+            name: "R10G10B10A2_UNORM",
             dxgi_format: 24,
-            expect: wgpu::VertexFormat::Uint32,
+            expect: wgpu::VertexFormat::Unorm10_10_10_2,
             stride: 4,
         },
         Case {
@@ -168,12 +168,12 @@ fn dxgi_format_info_includes_component_metadata() {
             component_count: 4,
         },
         Case {
-            dxgi_format: 24, // R10G10B10A2_UNORM (fallback u32)
-            wgpu_format: wgpu::VertexFormat::Uint32,
+            dxgi_format: 24, // R10G10B10A2_UNORM
+            wgpu_format: wgpu::VertexFormat::Unorm10_10_10_2,
             size_bytes: 4,
             align_bytes: 4,
-            component_type: DxgiFormatComponentType::U32,
-            component_count: 1,
+            component_type: DxgiFormatComponentType::Unorm10_10_10_2,
+            component_count: 4,
         },
         Case {
             dxgi_format: 49, // R8G8_UNORM

@@ -426,6 +426,8 @@ pub enum DxgiFormatComponentType {
     Unorm8,
     /// Signed normalized integer in memory (maps to float in the shader).
     Snorm8,
+    /// Packed `R10G10B10A2_UNORM` (10:10:10:2).
+    Unorm10_10_10_2,
 }
 
 /// Metadata about a `DXGI_FORMAT` relevant for both WebGPU vertex input and compute-side vertex
@@ -582,17 +584,12 @@ pub fn dxgi_format_info(dxgi_format: u32) -> Result<DxgiFormatInfo, InputLayoutE
             component_count: 2,
         },
         // R10G10B10A2_UNORM
-        //
-        // WebGPU / wgpu does not currently expose a packed 10:10:10:2 vertex format. We expose the
-        // raw 32-bit payload as `uint32` so shader translation can unpack and normalize to float.
         24 => DxgiFormatInfo {
-            wgpu_vertex_format: wgpu::VertexFormat::Uint32,
+            wgpu_vertex_format: wgpu::VertexFormat::Unorm10_10_10_2,
             size_bytes: 4,
             align_bytes: 4,
-            // Treated as an opaque packed payload. Higher-level shader translation is responsible
-            // for unpacking and normalization.
-            component_type: DxgiFormatComponentType::U32,
-            component_count: 1,
+            component_type: DxgiFormatComponentType::Unorm10_10_10_2,
+            component_count: 4,
         },
         // R32_UINT
         42 => DxgiFormatInfo {
