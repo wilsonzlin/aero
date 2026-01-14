@@ -4592,7 +4592,8 @@ Track progress: docs/21-smp.md\n\
             .attach_secondary_master_atapi(dev);
     }
 
-    /// Attach an ISO image as the machine's canonical install media / ATAPI CD-ROM (`disk_id=1`).
+    /// Attach an ISO backend as the machine's canonical install media / ATAPI CD-ROM (`disk_id=1`)
+    /// without changing guest-visible tray/media state.
     ///
     /// This attaches a host-side ISO backend to the IDE secondary master ATAPI device without
     /// mutating guest-visible tray/media state (it uses the snapshot-restore attachment path).
@@ -4600,19 +4601,19 @@ Track progress: docs/21-smp.md\n\
     /// On `wasm32`, disk backends such as OPFS handles may not be `Send`, so this method has a
     /// wasm32-specific signature without the `Send` bound.
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn attach_install_media_iso(
+    pub fn attach_install_media_iso_for_restore(
         &mut self,
         disk: Box<dyn aero_storage::VirtualDisk + Send>,
     ) -> io::Result<()> {
         self.attach_ide_secondary_master_iso_for_restore(disk)
     }
 
-    /// wasm32 variant of [`Machine::attach_install_media_iso`].
+    /// wasm32 variant of [`Machine::attach_install_media_iso_for_restore`].
     ///
     /// The browser build supports non-`Send` disk backends (e.g. OPFS handles) that cannot safely
     /// cross threads, so we avoid imposing a `Send` bound on the trait object in wasm builds.
     #[cfg(target_arch = "wasm32")]
-    pub fn attach_install_media_iso(
+    pub fn attach_install_media_iso_for_restore(
         &mut self,
         disk: Box<dyn aero_storage::VirtualDisk>,
     ) -> io::Result<()> {
@@ -4628,7 +4629,7 @@ Track progress: docs/21-smp.md\n\
     pub fn attach_install_media_iso_bytes(&mut self, bytes: Vec<u8>) -> io::Result<()> {
         let disk = RawDisk::open(MemBackend::from_vec(bytes))
             .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
-        self.attach_install_media_iso(Box::new(disk))
+        self.attach_install_media_iso_for_restore(Box::new(disk))
     }
 
     /// Attach a disk image as an ATAPI CD-ROM ISO on the IDE secondary master, if present.
