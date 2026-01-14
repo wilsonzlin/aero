@@ -286,8 +286,6 @@ Notes:
     `AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|PASS|mode=msix|...` so the harness validates the **effective** interrupt mode.
   - Exception: for virtio-blk, `-RequireVirtioBlkMsix` / `--require-virtio-blk-msix` also requires the guest marker
     `AERO_VIRTIO_SELFTEST|TEST|virtio-blk-msix|PASS|mode=msix|...` so the harness validates the **effective** interrupt mode.
-  - Exception: for virtio-net, `-RequireVirtioNetMsix` / `--require-virtio-net-msix` also requires the guest marker
-    `AERO_VIRTIO_SELFTEST|TEST|virtio-net-msix|PASS|mode=msix|...` so the harness validates the **effective** interrupt mode.
   - Exception: for virtio-snd, `-RequireVirtioSndMsix` / `--require-virtio-snd-msix` requires the guest marker
     `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-msix|PASS|mode=msix|...` so the harness validates the **effective** interrupt mode.
   - Exception: for virtio-input, `-RequireVirtioInputMsix` / `--require-virtio-input-msix` requires the guest marker
