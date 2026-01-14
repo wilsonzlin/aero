@@ -395,9 +395,9 @@ GS/HS/DS binds never trample compute-shader state, Aero reserves a fourth stage-
   args) are internal to the compute-expansion pipeline. In the baseline design these live alongside
   GS/HS/DS resources in the reserved extended-stage bind group (`@group(3)`) using a reserved
   binding-number range starting at `BINDING_BASE_INTERNAL = 256` (see “Internal bindings” below).
-  - Note: the current executor’s placeholder compute-prepass still uses an ad-hoc bind group layout
-    for some output buffers, but vertex pulling already uses the reserved internal binding range so
-    it can coexist with stage-ex bindings.
+  - Note: the current executor’s compute-prepass still uses an ad-hoc bind group layout for some
+    output buffers, but vertex pulling already uses the reserved internal binding range so it can
+    coexist with stage-ex bindings.
   - Implementation detail: the in-tree vertex pulling WGSL uses `@group(3)` (see
     `VERTEX_PULLING_GROUP` in `crates/aero-d3d11/src/runtime/vertex_pulling.rs`) and pads pipeline
     layouts with empty groups so indices line up. Because the binding numbers are already in the
@@ -1246,7 +1246,7 @@ To match the packed `ExpandedVertex` layout above:
 This keeps the final draw in the “normal” vertex-input path (no storage-buffer reads in the vertex
 stage), while still being bit-preserving via `bitcast`.
 
-Implementation note: the current in-tree placeholder expansion path uses a simpler vertex format
+Implementation note: the current in-tree expansion path uses a simpler vertex format
 (`vec4<f32>` position + one `vec4<f32>` varying) and binds it via `VertexFormat::Float32x4` at fixed
 locations 0/1 (see `GEOMETRY_PREPASS_CS_WGSL` and `EXPANDED_DRAW_PASSTHROUGH_VS_WGSL` in
 `crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs`).
@@ -1441,7 +1441,7 @@ Notes:
   bind group(s) (typically `@group(1)`). Implementations may include an empty `@group(0)` or the
   original VS layout for cache compatibility, but no VS resources are required by the passthrough VS
   itself.
-- Implementation note: the in-tree placeholder expansion prepass currently writes `vec4<f32>`
+- Implementation note: the in-tree expansion prepass currently writes `vec4<f32>`
   attributes (`pos` + `o1`). When switching to the bit-preserving `ExpandedVertex` layout described
   above, update the passthrough VS template and vertex buffer formats (e.g. use `Uint32x4` +
   `bitcast`).
@@ -1481,11 +1481,10 @@ Expansion compute pipelines require additional buffers that are not part of the 
 (vertex pulling inputs, scratch outputs, counters, indirect args).
 
 Implementation note: the layout described below is the binding scheme. The current executor’s
-placeholder compute-prepass still uses an ad-hoc bind group layout for some output buffers, but
-vertex pulling already uses the reserved expansion-internal binding range (starting at
-`BINDING_BASE_INTERNAL = 256`) within `VERTEX_PULLING_GROUP` (`@group(3)`), so it does not collide
-with the D3D register binding ranges. Future work is to unify all emulation kernels on the shared
-internal layout.
+compute-prepass still uses an ad-hoc bind group layout for some output buffers, but vertex pulling
+already uses the reserved expansion-internal binding range (starting at `BINDING_BASE_INTERNAL =
+256`) within `VERTEX_PULLING_GROUP` (`@group(3)`), so it does not collide with the D3D register
+binding ranges. Future work is to unify all emulation kernels on the shared internal layout.
 
 These are not part of the D3D binding model, so they use a reserved binding-number range starting at
 `BINDING_BASE_INTERNAL = 256`. They live in the same bind group as GS/HS/DS resources (`@group(3)`),
@@ -1599,7 +1598,7 @@ Note: D3D11 index-buffer binding offsets are not guaranteed to be 256-byte align
 index pulling it is often simplest to fold the IA index-buffer byte offset into `first_index` on
 the host (if the offset is stride-aligned). In that case, set `index_offset_bytes = 0` and treat
 `first_index` as the fully-adjusted first index. This is what the current in-tree executor does for
-its placeholder prepass.
+its compute prepass.
 
 **`IndexPullingParams` layout (concrete; `@binding(265)`; optional helper)**
 
