@@ -8207,7 +8207,7 @@ int wmain(int argc, wchar_t **argv)
     }
 
     if (!enumerate_hid_devices(&opt, &dev)) {
-        if (opt.query_state_json || opt.query_counters_json || opt.query_interrupt_info_json) {
+        if (opt.json || opt.query_state_json || opt.query_counters_json || opt.query_interrupt_info_json) {
             fwprintf(stderr, L"No matching HID devices found.\n");
         } else {
             wprintf(L"No matching HID devices found.\n");
