@@ -26,6 +26,8 @@ function isObjectLikeRecord(value: unknown): value is Record<string, unknown> {
  * Best-effort parser for untrusted `postMessage` data.
  *
  * - Accepts missing/invalid fields (normalizes to `{ mounts: {}, hdd: null, cd: null }`).
+ * - Sanitizes mount IDs to strings and copies them into a fresh `{}` object to avoid prototype
+ *   pollution / unexpected value types.
  * - Does not deeply validate DiskImageMetadata (the schema is large); it only ensures objects are
  *   object-like so downstream code doesn't accidentally treat e.g. a string as metadata.
  */

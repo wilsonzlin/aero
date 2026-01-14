@@ -14,6 +14,7 @@ describe("runtime/boot_disks_protocol", () => {
       expect(normalizeSetBootDisksMessage(null)).toBeNull();
       expect(normalizeSetBootDisksMessage(undefined)).toBeNull();
       expect(normalizeSetBootDisksMessage(123)).toBeNull();
+      expect(normalizeSetBootDisksMessage([])).toBeNull();
     });
 
     it("returns null for mismatched message types", () => {
