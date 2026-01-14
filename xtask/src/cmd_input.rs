@@ -672,6 +672,47 @@ mod tests {
     }
 
     #[test]
+    fn focused_xtask_input_references_exist_on_disk() {
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("xtask/CARGO_MANIFEST_DIR should have a parent");
+
+        fn assert_integration_tests_exist(repo_root: &Path, crate_dir: &str, tests: &[&str]) {
+            for &test in tests {
+                let path = repo_root
+                    .join(crate_dir)
+                    .join("tests")
+                    .join(format!("{test}.rs"));
+                assert!(
+                    path.is_file(),
+                    "expected integration test target `{test}` to exist at {path:?}"
+                );
+            }
+        }
+
+        assert_integration_tests_exist(repo_root, "crates/aero-usb", AERO_USB_FOCUSED_TESTS);
+        assert_integration_tests_exist(repo_root, "crates/aero-machine", AERO_MACHINE_FOCUSED_TESTS);
+        assert_integration_tests_exist(repo_root, "crates/aero-wasm", AERO_WASM_INPUT_TESTS);
+        assert_integration_tests_exist(repo_root, "crates/aero-wasm", WASM_PACK_TESTS);
+
+        for &path in WEB_UNIT_TEST_PATHS {
+            let full = repo_root.join("web").join(path);
+            assert!(
+                full.exists(),
+                "expected web unit test path `{path}` to exist at {full:?}"
+            );
+        }
+
+        for &spec in INPUT_E2E_SPECS {
+            let full = repo_root.join(spec);
+            assert!(
+                full.is_file(),
+                "expected Playwright spec `{spec}` to exist at {full:?}"
+            );
+        }
+    }
+
+    #[test]
     fn curated_e2e_specs_keep_malformed_batch_near_io_worker_input_specs() {
         fn idx(spec: &str) -> usize {
             INPUT_E2E_SPECS
