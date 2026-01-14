@@ -472,6 +472,28 @@ function trySetMachineBootDrive(m: unknown, drive: number): boolean {
   }
 }
 
+function trySetMachineBootFromCdIfPresent(m: unknown, enabled: boolean): boolean {
+  try {
+    const fn = (m as unknown as { set_boot_from_cd_if_present?: unknown }).set_boot_from_cd_if_present;
+    if (typeof fn !== "function") return false;
+    (fn as (enabled: boolean) => void).call(m, enabled);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function trySetMachineCdBootDrive(m: unknown, drive: number): boolean {
+  try {
+    const fn = (m as unknown as { set_cd_boot_drive?: unknown }).set_cd_boot_drive;
+    if (typeof fn !== "function") return false;
+    (fn as (drive: number) => void).call(m, drive);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function isNodeWorkerThreads(): boolean {
   // Avoid referencing `process` directly so this file remains valid in browser builds without polyfills.
   const p = (globalThis as unknown as { process?: unknown }).process as { versions?: { node?: unknown } } | undefined;
@@ -837,14 +859,12 @@ async function applyBootDisks(msg: SetBootDisksMessage): Promise<void> {
   let changed = false;
 
   // The Aero BIOS can expose both HDD0 (`DL=0x80`) and CD0 (`DL=0xE0`) via INT 13h when both are
-  // present, but the boot-device choice is still driven by the boot-drive number (`DL`) used when
-  // transferring control to the boot sector (and optionally the firmware "CD-first when present"
-  // policy).
+  // present. The boot-device choice is still driven by the boot-drive number (`DL`) used when
+  // transferring control to the boot sector, but newer BIOS builds also support an optional
+  // "CD-first when present" policy (attempt CD boot first, then fall back to the configured HDD
+  // boot drive).
   //
-  // For Windows install flows (HDD + install ISO), we explicitly select the CD drive (`0xE0`)
-  // before resetting so BIOS can El Torito boot it.
-  //
-  // Policy:
+  // Policy (worker-side):
   // - When an ISO is attached, prefer a CD boot for the next host-triggered reset (install/recovery).
   // - When the guest requests a reset, fall back to HDD0 after the first CD boot so installs do not
   //   loop back into the ISO.
@@ -859,6 +879,14 @@ async function applyBootDisks(msg: SetBootDisksMessage): Promise<void> {
         : msg.cd
           ? BIOS_DRIVE_CD0
           : BIOS_DRIVE_HDD0;
+
+  // When supported by the wasm build, prefer the BIOS "CD-first when present" policy so we can boot
+  // from the ISO once while leaving the configured boot drive as HDD0 (useful for later ISO eject /
+  // post-install reboots without host-side `DL` toggling).
+  const canCdFirstPolicy =
+    typeof (m as unknown as { set_boot_from_cd_if_present?: unknown }).set_boot_from_cd_if_present === "function";
+  const useCdFirstPolicy = desiredBootDrive === BIOS_DRIVE_CD0 && !!msg.cd && !!msg.hdd && canCdFirstPolicy;
+  const configuredBootDrive = useCdFirstPolicy ? BIOS_DRIVE_HDD0 : desiredBootDrive;
 
   if (msg.hdd) {
     const plan = planMachineBootDiskAttachment(msg.hdd, "hdd");
@@ -1142,8 +1170,16 @@ async function applyBootDisks(msg: SetBootDisksMessage): Promise<void> {
   }
 
   if (changed) {
-    const bootDriveOk = trySetMachineBootDrive(m, desiredBootDrive);
-    if (!bootDriveOk && msg.cd && desiredBootDrive === BIOS_DRIVE_CD0) {
+    // Enable/disable the firmware "CD-first when present" policy when available. When enabled, we
+    // keep the configured `boot_drive` as HDD0 and let firmware temporarily switch `DL` to CD0 for
+    // the El Torito boot attempt.
+    trySetMachineBootFromCdIfPresent(m, useCdFirstPolicy);
+    if (useCdFirstPolicy) {
+      trySetMachineCdBootDrive(m, BIOS_DRIVE_CD0);
+    }
+
+    const bootDriveOk = trySetMachineBootDrive(m, configuredBootDrive);
+    if (!bootDriveOk && msg.cd && desiredBootDrive === BIOS_DRIVE_CD0 && !useCdFirstPolicy) {
       throw new Error("Machine.set_boot_drive is unavailable in this WASM build; cannot boot from install media.");
     }
 
@@ -1200,6 +1236,10 @@ function handleRunExit(exit: unknown): void {
 
       try {
         const drive = pendingBootDevice === "cdrom" ? BIOS_DRIVE_CD0 : BIOS_DRIVE_HDD0;
+        if (drive === BIOS_DRIVE_HDD0) {
+          // Avoid looping back into install media on post-install guest resets.
+          trySetMachineBootFromCdIfPresent(m, false);
+        }
         trySetMachineBootDrive(m, drive);
       } catch {
         // ignore
