@@ -11,6 +11,7 @@ import {
   FRAME_STATUS_INDEX,
   GPU_PROTOCOL_NAME,
   GPU_PROTOCOL_VERSION,
+  type GpuRuntimeStatsMessage,
 } from "../ipc/gpu-protocol";
 import { SCANOUT_SOURCE_WDDM, SCANOUT_STATE_GENERATION_BUSY_BIT, ScanoutStateIndex, wrapScanoutState } from "../ipc/scanout_state";
 import { CURSOR_STATE_GENERATION_BUSY_BIT, CursorStateIndex, wrapCursorState } from "../ipc/cursor_state";
@@ -370,6 +371,25 @@ describe("workers/gpu-worker legacy framebuffer plumbing", () => {
 
       expect(metricsMsg.framesPresented).toBe(0);
       expect(metricsMsg.framesDropped).toBe(1);
+
+      // Stats are posted periodically by the telemetry poller; ensure present outcome is
+      // reflected in the worker counters too (presents_attempted increments, presents_succeeded does not).
+      const statsMsg = (await waitForWorkerMessage(
+        worker,
+        (msg) => {
+          const m = msg as Partial<GpuRuntimeStatsMessage> | undefined;
+          return (
+            m?.protocol === GPU_PROTOCOL_NAME &&
+            m?.type === "stats" &&
+            typeof m.counters?.presents_attempted === "number" &&
+            m.counters.presents_attempted >= 1
+          );
+        },
+        10_000,
+      )) as GpuRuntimeStatsMessage;
+
+      expect(statsMsg.counters.presents_attempted).toBe(1);
+      expect(statsMsg.counters.presents_succeeded).toBe(0);
     } finally {
       await worker.terminate();
     }
