@@ -1960,8 +1960,12 @@ async function runTieredVm(iterations: number, threshold: number) {
 
     // Mutate guest bytes and bump page versions so jobA is stale.
     const u8 = new Uint8Array(memory.buffer);
-    u8[guest_base + STALE_RACE_RIP] ^= 0x01;
-    bumpOrNotifyGuestWrite(BigInt(STALE_RACE_RIP), 1);
+    // Patch the hot-loop immediate (`add eax, imm8`) from 1 -> 0. Mutating the operand-size prefix
+    // (0x66 -> 0x67) can cause Tier-1 compilation to bail out at entry in newer builds (unsupported
+    // address-size override), so keep the first instruction shape intact.
+    const patchOffset = 3; // imm8
+    u8[guest_base + STALE_RACE_RIP + patchOffset] ^= 0x01;
+    bumpOrNotifyGuestWrite(BigInt(STALE_RACE_RIP + patchOffset), 1);
 
     // Compile job B on worker 2 with a fresh meta snapshot.
     const jobB = startCompileOn(jitWorker2, STALE_RACE_RIP, { max_bytes: DEFAULT_MAX_BYTES });
