@@ -9442,6 +9442,14 @@ bool TestFvfXyzNormalDiffuseLightingSelectsLitVs() {
                "VS bytecode == fixedfunc::kVsWvpLitPosNormalDiffuse (lit)")) {
       return false;
     }
+    if (!Check(ShaderReferencesConstRegister(dev->vs, kFixedfuncLightingStartRegister),
+               "lit normal+diffuse VS references lighting start register c208")) {
+      return false;
+    }
+    if (!Check(!ShaderReferencesConstRegister(dev->vs, 244u),
+               "lit normal+diffuse VS does not reference legacy c244 layout")) {
+      return false;
+    }
   }
 
   return true;
