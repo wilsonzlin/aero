@@ -42,6 +42,50 @@ import {
 import { PCI_MMIO_BASE } from "../arch/guest_phys.ts";
 import { guestPaddrToRamOffset, guestRangeInBounds } from "../arch/guest_ram_translate.ts";
 
+/**
+ * Returns whether the lightweight TypeScript CPU executor can handle the given opcode without
+ * requiring the wasm/wgpu-backed executor.
+ *
+ * This is used by the GPU worker to decide which executor to use for a submission.
+ *
+ * Note: Unknown opcodes return `false` so newer command streams naturally fall back to the more
+ * complete executor implementation.
+ */
+export const aerogpuCpuExecutorSupportsOpcode = (opcode: number): boolean => {
+  switch (opcode) {
+    case AerogpuCmdOpcode.Nop:
+    case AerogpuCmdOpcode.DebugMarker:
+
+    case AerogpuCmdOpcode.CreateBuffer:
+    case AerogpuCmdOpcode.CreateTexture2d:
+    case AerogpuCmdOpcode.DestroyResource:
+    case AerogpuCmdOpcode.ResourceDirtyRange:
+    case AerogpuCmdOpcode.UploadResource:
+    case AerogpuCmdOpcode.CopyBuffer:
+    case AerogpuCmdOpcode.CopyTexture2d:
+
+    case AerogpuCmdOpcode.CreateSampler:
+    case AerogpuCmdOpcode.DestroySampler:
+    case AerogpuCmdOpcode.SetSamplers:
+    case AerogpuCmdOpcode.SetConstantBuffers:
+    case AerogpuCmdOpcode.SetShaderResourceBuffers:
+    case AerogpuCmdOpcode.SetUnorderedAccessBuffers:
+
+    case AerogpuCmdOpcode.SetRenderTargets:
+    case AerogpuCmdOpcode.Dispatch:
+    case AerogpuCmdOpcode.Present:
+    case AerogpuCmdOpcode.PresentEx:
+
+    case AerogpuCmdOpcode.ExportSharedSurface:
+    case AerogpuCmdOpcode.ImportSharedSurface:
+    case AerogpuCmdOpcode.ReleaseSharedSurface:
+    case AerogpuCmdOpcode.Flush:
+      return true;
+    default:
+      return false;
+  }
+};
+
 export type AeroGpuCpuTexture = {
   width: number;
   height: number;

@@ -151,6 +151,7 @@ import { didPresenterPresent, presentOutcomeDeltas } from "./present-outcome.ts"
 import {
   createAerogpuCpuExecutorState,
   decodeAerogpuAllocTable,
+  aerogpuCpuExecutorSupportsOpcode,
   executeAerogpuCmdStream,
   resetAerogpuCpuExecutorState,
   type AeroGpuCpuTexture,
@@ -3264,36 +3265,7 @@ const analyzeAerogpuCmdStream = (cmdStream: ArrayBuffer): AerogpuCmdStreamAnalys
       if (opcode === AerogpuCmdOpcode.Present || opcode === AerogpuCmdOpcode.PresentEx) presentCount += 1n;
 
       if (requiresD3d9) continue;
-      switch (opcode) {
-        // Opcodes handled by the lightweight TypeScript CPU executor.
-        case AerogpuCmdOpcode.Nop:
-        case AerogpuCmdOpcode.DebugMarker:
-        case AerogpuCmdOpcode.CreateBuffer:
-        case AerogpuCmdOpcode.CreateTexture2d:
-        case AerogpuCmdOpcode.DestroyResource:
-        case AerogpuCmdOpcode.UploadResource:
-        case AerogpuCmdOpcode.ResourceDirtyRange:
-        case AerogpuCmdOpcode.CopyBuffer:
-        case AerogpuCmdOpcode.CopyTexture2d:
-        case AerogpuCmdOpcode.SetRenderTargets:
-        case AerogpuCmdOpcode.CreateSampler:
-        case AerogpuCmdOpcode.DestroySampler:
-        case AerogpuCmdOpcode.SetSamplers:
-        case AerogpuCmdOpcode.SetConstantBuffers:
-        case AerogpuCmdOpcode.SetShaderResourceBuffers:
-        case AerogpuCmdOpcode.SetUnorderedAccessBuffers:
-        case AerogpuCmdOpcode.Dispatch:
-        case AerogpuCmdOpcode.Present:
-        case AerogpuCmdOpcode.PresentEx:
-        case AerogpuCmdOpcode.ExportSharedSurface:
-        case AerogpuCmdOpcode.ImportSharedSurface:
-        case AerogpuCmdOpcode.ReleaseSharedSurface:
-        case AerogpuCmdOpcode.Flush:
-          break;
-        default:
-          requiresD3d9 = true;
-          break;
-      }
+      if (!aerogpuCpuExecutorSupportsOpcode(opcode)) requiresD3d9 = true;
     }
 
     return { vsyncPaced, presentCount, requiresD3d9 };
