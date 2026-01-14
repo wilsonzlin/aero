@@ -752,12 +752,20 @@ fn read_shift_count<B: CpuBus>(
 
 fn shl(val: u64, count: u32, bits: u32, old_flags: u64) -> (u64, Option<u64>) {
     let mask = mask_bits(bits);
+    let val = val & mask;
     let c = count & if bits == 64 { 0x3F } else { 0x1F };
     if c == 0 {
-        return (val & mask, None);
+        return (val, None);
     }
     let res = (val << c) & mask;
-    let cf = ((val >> (bits - c)) & 1) != 0;
+    // `c` is masked to 5/6 bits per x86 rules, so it can still exceed the operand width for
+    // 8/16/32-bit shifts. Hardware defines the result for those cases but flags are undefined;
+    // we keep it deterministic while avoiding debug-assertion panics.
+    let cf = if c <= bits {
+        ((val >> (bits - c)) & 1) != 0
+    } else {
+        false
+    };
     let mut flags = old_flags & !(FLAG_CF | FLAG_OF | FLAG_SF | FLAG_ZF | FLAG_PF | FLAG_AF);
     set_logic_szp(&mut flags, res, bits);
     if cf {
@@ -770,6 +778,22 @@ fn shl(val: u64, count: u32, bits: u32, old_flags: u64) -> (u64, Option<u64>) {
         }
     }
     (res, Some(flags))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shl_count_exceeding_operand_width_does_not_panic() {
+        // SHL uses a masked shift count (5 bits for <=32-bit operands), so an 8-bit operand can
+        // legally see counts > 8. This used to panic due to `bits - c` underflow when calculating
+        // CF.
+        let (res, flags) = shl(0x12, 46, 8, 0);
+        assert_eq!(res, 0);
+        assert!(flags.is_some());
+        assert_ne!(flags.unwrap() & FLAG_ZF, 0);
+    }
 }
 
 fn shr(val: u64, count: u32, bits: u32, old_flags: u64) -> (u64, Option<u64>) {
