@@ -252,6 +252,7 @@ Because chunk URLs are versioned and immutable, they should be cached very aggre
 - `Cache-Control: public, max-age=31536000, immutable, no-transform`
 - `ETag: "<strong etag>"` (optional but recommended; quoted entity-tag, visible ASCII)
 - `Access-Control-Allow-Origin: *` (if served cross-origin without credentials)
+- `Access-Control-Expose-Headers: Content-Encoding` (recommended when serving cross-origin and you include `Content-Encoding`, so browser JS can detect non-identity encodings)
 
 **Manifest (`manifest.json`):**
 
@@ -260,6 +261,7 @@ Because chunk URLs are versioned and immutable, they should be cached very aggre
 - `Cache-Control: public, max-age=31536000, immutable, no-transform` (when versioned/immutable as described above)
 - `ETag: "<strong etag>"` (optional; quoted entity-tag, visible ASCII)
 - `Access-Control-Allow-Origin: *` (same policy as chunks)
+- `Access-Control-Expose-Headers: Content-Encoding` (recommended when serving cross-origin and you include `Content-Encoding`)
 
 ---
 
