@@ -143,11 +143,39 @@ fn ia_load_r16_float(slot: u32, vertex_index: u32, element_offset_bytes: u32) ->
   return unpack2x16float(packed).x;
 }
 
+// DXGI_FORMAT_R16_UNORM
+fn ia_load_r16_unorm(slot: u32, vertex_index: u32, element_offset_bytes: u32) -> f32 {
+  let addr = ia_vertex_byte_addr(slot, vertex_index, element_offset_bytes);
+  let packed = ia_load_u32(slot, addr);
+  return unpack2x16unorm(packed).x;
+}
+
+// DXGI_FORMAT_R16_SNORM
+fn ia_load_r16_snorm(slot: u32, vertex_index: u32, element_offset_bytes: u32) -> f32 {
+  let addr = ia_vertex_byte_addr(slot, vertex_index, element_offset_bytes);
+  let packed = ia_load_u32(slot, addr);
+  return unpack2x16snorm(packed).x;
+}
+
 // DXGI_FORMAT_R16G16_FLOAT
 fn ia_load_r16g16_float(slot: u32, vertex_index: u32, element_offset_bytes: u32) -> vec2<f32> {
   let addr = ia_vertex_byte_addr(slot, vertex_index, element_offset_bytes);
   let packed = ia_load_u32(slot, addr);
   return unpack2x16float(packed);
+}
+
+// DXGI_FORMAT_R16G16_UNORM
+fn ia_load_r16g16_unorm(slot: u32, vertex_index: u32, element_offset_bytes: u32) -> vec2<f32> {
+  let addr = ia_vertex_byte_addr(slot, vertex_index, element_offset_bytes);
+  let packed = ia_load_u32(slot, addr);
+  return unpack2x16unorm(packed);
+}
+
+// DXGI_FORMAT_R16G16_SNORM
+fn ia_load_r16g16_snorm(slot: u32, vertex_index: u32, element_offset_bytes: u32) -> vec2<f32> {
+  let addr = ia_vertex_byte_addr(slot, vertex_index, element_offset_bytes);
+  let packed = ia_load_u32(slot, addr);
+  return unpack2x16snorm(packed);
 }
 
 // DXGI_FORMAT_R16G16B16A16_FLOAT
@@ -157,6 +185,26 @@ fn ia_load_r16g16b16a16_float(slot: u32, vertex_index: u32, element_offset_bytes
   let p1 = ia_load_u32(slot, addr + 4u);
   let a = unpack2x16float(p0);
   let b = unpack2x16float(p1);
+  return vec4<f32>(a.x, a.y, b.x, b.y);
+}
+
+// DXGI_FORMAT_R16G16B16A16_UNORM
+fn ia_load_r16g16b16a16_unorm(slot: u32, vertex_index: u32, element_offset_bytes: u32) -> vec4<f32> {
+  let addr = ia_vertex_byte_addr(slot, vertex_index, element_offset_bytes);
+  let p0 = ia_load_u32(slot, addr + 0u);
+  let p1 = ia_load_u32(slot, addr + 4u);
+  let a = unpack2x16unorm(p0);
+  let b = unpack2x16unorm(p1);
+  return vec4<f32>(a.x, a.y, b.x, b.y);
+}
+
+// DXGI_FORMAT_R16G16B16A16_SNORM
+fn ia_load_r16g16b16a16_snorm(slot: u32, vertex_index: u32, element_offset_bytes: u32) -> vec4<f32> {
+  let addr = ia_vertex_byte_addr(slot, vertex_index, element_offset_bytes);
+  let p0 = ia_load_u32(slot, addr + 0u);
+  let p1 = ia_load_u32(slot, addr + 4u);
+  let a = unpack2x16snorm(p0);
+  let b = unpack2x16snorm(p1);
   return vec4<f32>(a.x, a.y, b.x, b.y);
 }
 
