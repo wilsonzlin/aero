@@ -4308,6 +4308,15 @@ VertexDecl* create_internal_vertex_decl_locked(Device* dev, const void* pDecl, u
   return decl.release();
 }
 
+// Forward declaration (defined below): used by fixed-function helpers to upload
+// internal constant registers (e.g. D3DRS_TEXTUREFACTOR).
+static bool emit_set_shader_constants_f_locked(
+    Device* dev,
+    uint32_t stage,
+    uint32_t start_reg,
+    const float* data,
+    uint32_t vec4_count);
+
 // -----------------------------------------------------------------------------
 // Fixed-function fallback shader selection (stage0 COLOROP/ALPHAOP minimal)
 // -----------------------------------------------------------------------------
@@ -4324,15 +4333,31 @@ constexpr uint32_t kD3dTopDisable = 1u;     // D3DTOP_DISABLE
 constexpr uint32_t kD3dTopSelectArg1 = 2u;  // D3DTOP_SELECTARG1
 constexpr uint32_t kD3dTopSelectArg2 = 3u;  // D3DTOP_SELECTARG2
 constexpr uint32_t kD3dTopModulate = 4u;    // D3DTOP_MODULATE
+constexpr uint32_t kD3dTopModulate2x = 5u;  // D3DTOP_MODULATE2X
+constexpr uint32_t kD3dTopModulate4x = 6u;  // D3DTOP_MODULATE4X
+constexpr uint32_t kD3dTopAdd = 7u;         // D3DTOP_ADD
+constexpr uint32_t kD3dTopSubtract = 10u;   // D3DTOP_SUBTRACT
 
 constexpr uint32_t kD3dTaSelectMask = 0xFu;  // D3DTA_SELECTMASK
 constexpr uint32_t kD3dTaDiffuse = 0u;       // D3DTA_DIFFUSE
 constexpr uint32_t kD3dTaTexture = 2u;       // D3DTA_TEXTURE
+constexpr uint32_t kD3dTaTFactor = 3u;       // D3DTA_TFACTOR
 
 enum class FixedfuncStage0Src : uint8_t {
   Diffuse = 0,
   Texture = 1,
-  Modulate = 2,
+  Modulate = 2, // TEXTURE * DIFFUSE
+
+  // Extended stage0 subset:
+  Add = 3, // TEXTURE + DIFFUSE
+  Subtract = 4, // TEXTURE - DIFFUSE
+  SubtractReverse = 5, // DIFFUSE - TEXTURE
+  Modulate2x = 6, // (TEXTURE * DIFFUSE) * 2
+  Modulate4x = 7, // (TEXTURE * DIFFUSE) * 4
+
+  // D3DRS_TEXTUREFACTOR (PS constant c0).
+  TextureFactor = 8,
+  ModulateTextureFactor = 9, // TEXTURE * TFACTOR (RGB)
 };
 
 struct FixedfuncStage0Key {
@@ -4354,6 +4379,8 @@ FixedfuncStage0Src fixedfunc_decode_arg_src(uint32_t arg) {
   switch (arg & kD3dTaSelectMask) {
     case kD3dTaTexture:
       return FixedfuncStage0Src::Texture;
+    case kD3dTaTFactor:
+      return FixedfuncStage0Src::TextureFactor;
     case kD3dTaDiffuse:
     default:
       return FixedfuncStage0Src::Diffuse;
@@ -4380,6 +4407,15 @@ FixedfuncStage0Src fixedfunc_decode_op_src(uint32_t op, uint32_t arg1, uint32_t 
           (a1 == FixedfuncStage0Src::Diffuse && a2 == FixedfuncStage0Src::Texture)) {
         return FixedfuncStage0Src::Modulate;
       }
+      if ((a1 == FixedfuncStage0Src::Texture && a2 == FixedfuncStage0Src::TextureFactor) ||
+          (a1 == FixedfuncStage0Src::TextureFactor && a2 == FixedfuncStage0Src::Texture)) {
+        return FixedfuncStage0Src::ModulateTextureFactor;
+      }
+      // No texture involvement: avoid sampling even if a texture happens to be bound.
+      if (a1 != FixedfuncStage0Src::Texture && a2 != FixedfuncStage0Src::Texture) {
+        // Best-effort: treat TFACTOR as unsupported here and fall back to diffuse/current.
+        return FixedfuncStage0Src::Diffuse;
+      }
       if (a1 == FixedfuncStage0Src::Diffuse && a2 == FixedfuncStage0Src::Diffuse) {
         return FixedfuncStage0Src::Diffuse;
       }
@@ -4391,6 +4427,50 @@ FixedfuncStage0Src fixedfunc_decode_op_src(uint32_t op, uint32_t arg1, uint32_t 
       // even if their exact state isn't represented by our minimal shader set).
       return has_tex0 ? FixedfuncStage0Src::Modulate : FixedfuncStage0Src::Diffuse;
     }
+    case kD3dTopModulate2x: {
+      const FixedfuncStage0Src a1 = fixedfunc_decode_arg_src(arg1);
+      const FixedfuncStage0Src a2 = fixedfunc_decode_arg_src(arg2);
+      if ((a1 == FixedfuncStage0Src::Texture && a2 == FixedfuncStage0Src::Diffuse) ||
+          (a1 == FixedfuncStage0Src::Diffuse && a2 == FixedfuncStage0Src::Texture)) {
+        return FixedfuncStage0Src::Modulate2x;
+      }
+      // Best-effort: fall back to plain modulate.
+      return fixedfunc_decode_op_src(kD3dTopModulate, arg1, arg2, has_tex0);
+    }
+    case kD3dTopModulate4x: {
+      const FixedfuncStage0Src a1 = fixedfunc_decode_arg_src(arg1);
+      const FixedfuncStage0Src a2 = fixedfunc_decode_arg_src(arg2);
+      if ((a1 == FixedfuncStage0Src::Texture && a2 == FixedfuncStage0Src::Diffuse) ||
+          (a1 == FixedfuncStage0Src::Diffuse && a2 == FixedfuncStage0Src::Texture)) {
+        return FixedfuncStage0Src::Modulate4x;
+      }
+      // Best-effort: fall back to plain modulate.
+      return fixedfunc_decode_op_src(kD3dTopModulate, arg1, arg2, has_tex0);
+    }
+    case kD3dTopAdd: {
+      const FixedfuncStage0Src a1 = fixedfunc_decode_arg_src(arg1);
+      const FixedfuncStage0Src a2 = fixedfunc_decode_arg_src(arg2);
+      // Common case: TEXTURE + DIFFUSE.
+      if ((a1 == FixedfuncStage0Src::Texture && a2 == FixedfuncStage0Src::Diffuse) ||
+          (a1 == FixedfuncStage0Src::Diffuse && a2 == FixedfuncStage0Src::Texture)) {
+        return FixedfuncStage0Src::Add;
+      }
+      // Best-effort: fall back to select arg1 (avoids sampling when possible).
+      return fixedfunc_decode_arg_src(arg1);
+    }
+    case kD3dTopSubtract: {
+      const FixedfuncStage0Src a1 = fixedfunc_decode_arg_src(arg1);
+      const FixedfuncStage0Src a2 = fixedfunc_decode_arg_src(arg2);
+      // Common cases: (TEXTURE - DIFFUSE) or (DIFFUSE - TEXTURE).
+      if (a1 == FixedfuncStage0Src::Texture && a2 == FixedfuncStage0Src::Diffuse) {
+        return FixedfuncStage0Src::Subtract;
+      }
+      if (a1 == FixedfuncStage0Src::Diffuse && a2 == FixedfuncStage0Src::Texture) {
+        return FixedfuncStage0Src::SubtractReverse;
+      }
+      // Best-effort: fall back to select arg1.
+      return fixedfunc_decode_arg_src(arg1);
+    }
     default:
       // Unsupported op: best-effort approximation based on the referenced sources.
       //
@@ -4401,13 +4481,71 @@ FixedfuncStage0Src fixedfunc_decode_op_src(uint32_t op, uint32_t arg1, uint32_t 
       if (a1 == FixedfuncStage0Src::Diffuse && a2 == FixedfuncStage0Src::Diffuse) {
         return FixedfuncStage0Src::Diffuse;
       }
+      if (a1 == FixedfuncStage0Src::TextureFactor && a2 == FixedfuncStage0Src::TextureFactor) {
+        return FixedfuncStage0Src::TextureFactor;
+      }
+      // If the unsupported op doesn't reference TEXTURE, avoid sampling even if a
+      // texture is currently bound.
+      if (a1 != FixedfuncStage0Src::Texture && a2 != FixedfuncStage0Src::Texture) {
+        return FixedfuncStage0Src::Diffuse;
+      }
       if (a1 == FixedfuncStage0Src::Texture && a2 == FixedfuncStage0Src::Texture) {
         return has_tex0 ? FixedfuncStage0Src::Texture : FixedfuncStage0Src::Diffuse;
       }
-      // One texture + one diffuse: approximate with modulate when a texture is
+      // One texture + one diffuse/tfactor: approximate with modulate when a texture is
       // bound, otherwise treat as diffuse-only.
+      if ((a1 == FixedfuncStage0Src::Texture && a2 == FixedfuncStage0Src::TextureFactor) ||
+          (a1 == FixedfuncStage0Src::TextureFactor && a2 == FixedfuncStage0Src::Texture)) {
+        return has_tex0 ? FixedfuncStage0Src::ModulateTextureFactor : FixedfuncStage0Src::Diffuse;
+      }
       return has_tex0 ? FixedfuncStage0Src::Modulate : FixedfuncStage0Src::Diffuse;
   }
+}
+
+bool fixedfunc_stage0_src_requires_texture(FixedfuncStage0Src src) {
+  switch (src) {
+    case FixedfuncStage0Src::Diffuse:
+    case FixedfuncStage0Src::TextureFactor:
+      return false;
+    default:
+      return true;
+  }
+}
+
+bool fixedfunc_stage0_src_uses_texture_factor(FixedfuncStage0Src src) {
+  return src == FixedfuncStage0Src::TextureFactor || src == FixedfuncStage0Src::ModulateTextureFactor;
+}
+
+HRESULT ensure_fixedfunc_texture_factor_constant_locked(Device* dev) {
+  if (!dev) {
+    return E_FAIL;
+  }
+
+  // Render-state numeric value from d3d9types.h (D3DRS_TEXTUREFACTOR).
+  constexpr uint32_t kD3dRsTextureFactor = 60u;
+  constexpr uint32_t kPsTextureFactorRegister = 0u; // c0 in fixed-function PS variants
+
+  const uint32_t tf = (kD3dRsTextureFactor < 256) ? dev->render_states[kD3dRsTextureFactor] : 0u;
+  const float a = static_cast<float>((tf >> 24) & 0xFFu) * (1.0f / 255.0f);
+  const float r = static_cast<float>((tf >> 16) & 0xFFu) * (1.0f / 255.0f);
+  const float g = static_cast<float>((tf >> 8) & 0xFFu) * (1.0f / 255.0f);
+  const float b = static_cast<float>((tf >> 0) & 0xFFu) * (1.0f / 255.0f);
+  const float data[4] = {r, g, b, a};
+
+  const float* cached = dev->ps_consts_f + static_cast<size_t>(kPsTextureFactorRegister) * 4u;
+  if (cached[0] == data[0] && cached[1] == data[1] && cached[2] == data[2] && cached[3] == data[3]) {
+    return S_OK;
+  }
+
+  if (!emit_set_shader_constants_f_locked(dev,
+                                          kD3d9ShaderStagePs,
+                                          kPsTextureFactorRegister,
+                                          data,
+                                          /*vec4_count=*/1u)) {
+    return E_OUTOFMEMORY;
+  }
+
+  return S_OK;
 }
 
 FixedfuncStage0Key fixedfunc_stage0_key_locked(const Device* dev) {
@@ -4442,10 +4580,10 @@ FixedfuncStage0Key fixedfunc_stage0_key_locked(const Device* dev) {
   // bound texture. This prevents regressions in non-textured fixed-function
   // tests that leave default COLOROP=MODULATE but never bind texture0.
   if (!has_tex0) {
-    if (key.color != FixedfuncStage0Src::Diffuse) {
+    if (fixedfunc_stage0_src_requires_texture(key.color)) {
       key.color = FixedfuncStage0Src::Diffuse;
     }
-    if (key.alpha != FixedfuncStage0Src::Diffuse) {
+    if (fixedfunc_stage0_src_requires_texture(key.alpha)) {
       key.alpha = FixedfuncStage0Src::Diffuse;
     }
   }
@@ -4469,6 +4607,34 @@ const void* fixedfunc_ps_variant_bytes(FixedfuncStage0Key key, uint32_t* size_ou
     return set(fixedfunc::kPsPassthroughColor, sizeof(fixedfunc::kPsPassthroughColor));
   }
 
+  // TextureFactor/TextureFactor.
+  if (key.color == FixedfuncStage0Src::TextureFactor && key.alpha == FixedfuncStage0Src::TextureFactor) {
+    return set(fixedfunc::kPsStage0TextureFactor, sizeof(fixedfunc::kPsStage0TextureFactor));
+  }
+
+  // Alpha-op expansion cases where RGB is diffuse but alpha uses an extended op.
+  if (key.color == FixedfuncStage0Src::Diffuse) {
+    if (key.alpha == FixedfuncStage0Src::Add) {
+      return set(fixedfunc::kPsStage0DiffuseAlphaAddTextureDiffuse, sizeof(fixedfunc::kPsStage0DiffuseAlphaAddTextureDiffuse));
+    }
+    if (key.alpha == FixedfuncStage0Src::Subtract) {
+      return set(fixedfunc::kPsStage0DiffuseAlphaSubtractTextureDiffuse,
+                 sizeof(fixedfunc::kPsStage0DiffuseAlphaSubtractTextureDiffuse));
+    }
+    if (key.alpha == FixedfuncStage0Src::SubtractReverse) {
+      return set(fixedfunc::kPsStage0DiffuseAlphaSubtractDiffuseTexture,
+                 sizeof(fixedfunc::kPsStage0DiffuseAlphaSubtractDiffuseTexture));
+    }
+    if (key.alpha == FixedfuncStage0Src::Modulate2x) {
+      return set(fixedfunc::kPsStage0DiffuseAlphaModulate2xTextureDiffuse,
+                 sizeof(fixedfunc::kPsStage0DiffuseAlphaModulate2xTextureDiffuse));
+    }
+    if (key.alpha == FixedfuncStage0Src::Modulate4x) {
+      return set(fixedfunc::kPsStage0DiffuseAlphaModulate4xTextureDiffuse,
+                 sizeof(fixedfunc::kPsStage0DiffuseAlphaModulate4xTextureDiffuse));
+    }
+  }
+
   // Texture variants.
   if (key.color == FixedfuncStage0Src::Texture && key.alpha == FixedfuncStage0Src::Texture) {
     return set(fixedfunc::kPsStage0TextureTexture, sizeof(fixedfunc::kPsStage0TextureTexture));
@@ -4486,6 +4652,94 @@ const void* fixedfunc_ps_variant_bytes(FixedfuncStage0Key key, uint32_t* size_ou
   }
   if (key.color == FixedfuncStage0Src::Diffuse && key.alpha == FixedfuncStage0Src::Modulate) {
     return set(fixedfunc::kPsStage0DiffuseModulate, sizeof(fixedfunc::kPsStage0DiffuseModulate));
+  }
+
+  // RGB extended ops with "classic" alpha sources.
+  if (key.alpha == FixedfuncStage0Src::Texture || key.alpha == FixedfuncStage0Src::Diffuse || key.alpha == FixedfuncStage0Src::Modulate) {
+    if (key.color == FixedfuncStage0Src::Add) {
+      if (key.alpha == FixedfuncStage0Src::Texture) {
+        return set(fixedfunc::kPsStage0AddTextureDiffuseAlphaTexture,
+                   sizeof(fixedfunc::kPsStage0AddTextureDiffuseAlphaTexture));
+      }
+      if (key.alpha == FixedfuncStage0Src::Diffuse) {
+        return set(fixedfunc::kPsStage0AddTextureDiffuseAlphaDiffuse,
+                   sizeof(fixedfunc::kPsStage0AddTextureDiffuseAlphaDiffuse));
+      }
+      if (key.alpha == FixedfuncStage0Src::Modulate) {
+        return set(fixedfunc::kPsStage0AddTextureDiffuseAlphaModulate,
+                   sizeof(fixedfunc::kPsStage0AddTextureDiffuseAlphaModulate));
+      }
+    }
+    if (key.color == FixedfuncStage0Src::Subtract) {
+      if (key.alpha == FixedfuncStage0Src::Texture) {
+        return set(fixedfunc::kPsStage0SubtractTextureDiffuseAlphaTexture,
+                   sizeof(fixedfunc::kPsStage0SubtractTextureDiffuseAlphaTexture));
+      }
+      if (key.alpha == FixedfuncStage0Src::Diffuse) {
+        return set(fixedfunc::kPsStage0SubtractTextureDiffuseAlphaDiffuse,
+                   sizeof(fixedfunc::kPsStage0SubtractTextureDiffuseAlphaDiffuse));
+      }
+      if (key.alpha == FixedfuncStage0Src::Modulate) {
+        return set(fixedfunc::kPsStage0SubtractTextureDiffuseAlphaModulate,
+                   sizeof(fixedfunc::kPsStage0SubtractTextureDiffuseAlphaModulate));
+      }
+    }
+    if (key.color == FixedfuncStage0Src::SubtractReverse) {
+      if (key.alpha == FixedfuncStage0Src::Texture) {
+        return set(fixedfunc::kPsStage0SubtractDiffuseTextureAlphaTexture,
+                   sizeof(fixedfunc::kPsStage0SubtractDiffuseTextureAlphaTexture));
+      }
+      if (key.alpha == FixedfuncStage0Src::Diffuse) {
+        return set(fixedfunc::kPsStage0SubtractDiffuseTextureAlphaDiffuse,
+                   sizeof(fixedfunc::kPsStage0SubtractDiffuseTextureAlphaDiffuse));
+      }
+      if (key.alpha == FixedfuncStage0Src::Modulate) {
+        return set(fixedfunc::kPsStage0SubtractDiffuseTextureAlphaModulate,
+                   sizeof(fixedfunc::kPsStage0SubtractDiffuseTextureAlphaModulate));
+      }
+    }
+    if (key.color == FixedfuncStage0Src::Modulate2x) {
+      if (key.alpha == FixedfuncStage0Src::Texture) {
+        return set(fixedfunc::kPsStage0Modulate2xTextureDiffuseAlphaTexture,
+                   sizeof(fixedfunc::kPsStage0Modulate2xTextureDiffuseAlphaTexture));
+      }
+      if (key.alpha == FixedfuncStage0Src::Diffuse) {
+        return set(fixedfunc::kPsStage0Modulate2xTextureDiffuseAlphaDiffuse,
+                   sizeof(fixedfunc::kPsStage0Modulate2xTextureDiffuseAlphaDiffuse));
+      }
+      if (key.alpha == FixedfuncStage0Src::Modulate) {
+        return set(fixedfunc::kPsStage0Modulate2xTextureDiffuseAlphaModulate,
+                   sizeof(fixedfunc::kPsStage0Modulate2xTextureDiffuseAlphaModulate));
+      }
+    }
+    if (key.color == FixedfuncStage0Src::Modulate4x) {
+      if (key.alpha == FixedfuncStage0Src::Texture) {
+        return set(fixedfunc::kPsStage0Modulate4xTextureDiffuseAlphaTexture,
+                   sizeof(fixedfunc::kPsStage0Modulate4xTextureDiffuseAlphaTexture));
+      }
+      if (key.alpha == FixedfuncStage0Src::Diffuse) {
+        return set(fixedfunc::kPsStage0Modulate4xTextureDiffuseAlphaDiffuse,
+                   sizeof(fixedfunc::kPsStage0Modulate4xTextureDiffuseAlphaDiffuse));
+      }
+      if (key.alpha == FixedfuncStage0Src::Modulate) {
+        return set(fixedfunc::kPsStage0Modulate4xTextureDiffuseAlphaModulate,
+                   sizeof(fixedfunc::kPsStage0Modulate4xTextureDiffuseAlphaModulate));
+      }
+    }
+    if (key.color == FixedfuncStage0Src::ModulateTextureFactor) {
+      if (key.alpha == FixedfuncStage0Src::Texture) {
+        return set(fixedfunc::kPsStage0ModulateTextureTFactorAlphaTexture,
+                   sizeof(fixedfunc::kPsStage0ModulateTextureTFactorAlphaTexture));
+      }
+      if (key.alpha == FixedfuncStage0Src::Diffuse) {
+        return set(fixedfunc::kPsStage0ModulateTextureTFactorAlphaDiffuse,
+                   sizeof(fixedfunc::kPsStage0ModulateTextureTFactorAlphaDiffuse));
+      }
+      if (key.alpha == FixedfuncStage0Src::Modulate) {
+        return set(fixedfunc::kPsStage0ModulateTextureTFactorAlphaModulate,
+                   sizeof(fixedfunc::kPsStage0ModulateTextureTFactorAlphaModulate));
+      }
+    }
   }
 
   // Modulate variants.
@@ -4514,6 +4768,14 @@ HRESULT ensure_fixedfunc_pixel_shader_locked(Device* dev, Shader** ps_slot) {
   const void* ps_bytes = fixedfunc_ps_variant_bytes(key, &ps_size);
   if (!ps_bytes || ps_size == 0) {
     return E_FAIL;
+  }
+
+  // Upload D3DRS_TEXTUREFACTOR (c0) when the selected stage0 path uses it.
+  if (fixedfunc_stage0_src_uses_texture_factor(key.color) || fixedfunc_stage0_src_uses_texture_factor(key.alpha)) {
+    const HRESULT hr = ensure_fixedfunc_texture_factor_constant_locked(dev);
+    if (FAILED(hr)) {
+      return hr;
+    }
   }
 
   if (*ps_slot && shader_bytecode_equals(*ps_slot, ps_bytes, ps_size)) {

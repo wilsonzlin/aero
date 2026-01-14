@@ -16308,9 +16308,10 @@ bool TestFixedFuncPsSelectionTextureBoundUnknownColorOpDiffuseArgsUsesColorOnly(
     return false;
   }
 
-  // Stage-state override:
-  // Use an unsupported COLOROP (ADD), but specify DIFFUSE-only args. The PS
-  // selection should remain diffuse-only and avoid sampling the bound texture.
+   // Stage-state override:
+   // Use a stage0 COLOROP that this UMD does not implement for DIFFUSE-only args.
+   // The PS selection should remain diffuse-only and avoid sampling the bound
+   // texture.
   {
     std::lock_guard<std::mutex> lock(dev->mutex);
     constexpr uint32_t kD3dTssColorOp = 1u;
@@ -16319,7 +16320,7 @@ bool TestFixedFuncPsSelectionTextureBoundUnknownColorOpDiffuseArgsUsesColorOnly(
     constexpr uint32_t kD3dTssAlphaOp = 4u;
     constexpr uint32_t kD3dTssAlphaArg1 = 5u;
 
-    constexpr uint32_t kD3dTopAdd = 7u;
+     constexpr uint32_t kD3dTopAdd = 7u; // D3DTOP_ADD (unsupported with DIFFUSE/DIFFUSE in this subset)
     constexpr uint32_t kD3dTopSelectArg1 = 2u;
     constexpr uint32_t kD3dTaDiffuse = 0u;
 
@@ -16486,9 +16487,9 @@ bool TestFixedFuncPsSelectionTextureBoundUnknownColorOpFallsBackToModulate() {
     return false;
   }
 
-  // Stage-state override: use an unsupported COLOROP to validate the fixed-function
-  // fallback behavior (should still render textured content rather than falling
-  // back to diffuse-only).
+   // Stage-state override: use an unsupported COLOROP to validate the fixed-function
+   // fallback behavior (should still render textured content rather than falling
+   // back to diffuse-only).
   {
     std::lock_guard<std::mutex> lock(dev->mutex);
     constexpr uint32_t kD3dTssColorOp = 1u;
@@ -16498,12 +16499,12 @@ bool TestFixedFuncPsSelectionTextureBoundUnknownColorOpFallsBackToModulate() {
     constexpr uint32_t kD3dTssAlphaArg1 = 5u;
     constexpr uint32_t kD3dTssAlphaArg2 = 6u;
 
-    constexpr uint32_t kD3dTopAdd = 7u;
+     constexpr uint32_t kD3dTopUnsupported = 0xDEADBEEFu;
     constexpr uint32_t kD3dTopSelectArg1 = 2u;
     constexpr uint32_t kD3dTaDiffuse = 0u;
     constexpr uint32_t kD3dTaTexture = 2u;
 
-    dev->texture_stage_states[0][kD3dTssColorOp] = kD3dTopAdd;
+     dev->texture_stage_states[0][kD3dTssColorOp] = kD3dTopUnsupported;
     dev->texture_stage_states[0][kD3dTssColorArg1] = kD3dTaTexture;
     dev->texture_stage_states[0][kD3dTssColorArg2] = kD3dTaDiffuse;
 

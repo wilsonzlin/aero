@@ -422,11 +422,19 @@ Limitations (bring-up):
   (Implementation notes: [`docs/graphics/win7-d3d9-fixedfunc-wvp.md`](../../../../docs/graphics/win7-d3d9-fixedfunc-wvp.md).)
 - `TEX1` assumes a single set of 2D texture coordinates (`TEXCOORD0` as `float2`). Other `D3DFVF_TEXCOORDSIZE*` encodings and multiple texture coordinate sets are not implemented.
 - Stage0 texture stage state is **partially interpreted** to select among a small set of pixel shader variants (validated by
-  `d3d9ex_fixedfunc_texture_stage_state`):
-  - `D3DTSS_COLOROP`/`ALPHAOP`: `DISABLE`, `SELECTARG1`, `SELECTARG2`, `MODULATE`
-  - `D3DTSS_COLORARG1/2` + `ALPHAARG1/2`: `DIFFUSE` and `TEXTURE` sources (with `TEXTURE*DIFFUSE` modulate)
-  - Other ops/sources fall back to a best-effort textured modulate when stage0 has a bound texture, otherwise diffuse;
-    stages `> 0` are cached only for `Get*`/state blocks.
+   `d3d9ex_fixedfunc_texture_stage_state`):
+  - `D3DTSS_COLOROP`/`ALPHAOP` supported ops:
+    - `DISABLE`, `SELECTARG1`, `SELECTARG2`, `MODULATE`
+    - `MODULATE2X`, `MODULATE4X`
+    - `ADD`, `SUBTRACT`
+  - `D3DTSS_COLORARG1/2` + `ALPHAARG1/2` supported sources:
+    - `DIFFUSE`
+    - `TEXTURE` (stage0 only)
+    - `TFACTOR` (`D3DRS_TEXTUREFACTOR`; provided to the fixed-function PS as `c0` in normalized RGBA)
+  - Supported combinations are intentionally bring-up level and **stage0-only**:
+    - Binary ops above are recognized for common `TEXTURE`↔`DIFFUSE` cases (and `MODULATE` also supports `TEXTURE`↔`TFACTOR` for simple tinting).
+    - Unsupported op/source combinations fall back deterministically to `DIFFUSE` or a best-effort textured `MODULATE` when stage0 has a bound texture.
+    - Stages `> 0` are cached only for `Get*`/state blocks and are ignored by the fixed-function shader selection.
 - Fixed-function lighting/material is not implemented (legacy `SetLight`/`SetMaterial` etc are cached for `Get*` and state blocks).
 
 ### Known limitations / next steps

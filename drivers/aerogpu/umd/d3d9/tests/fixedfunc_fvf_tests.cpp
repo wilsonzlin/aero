@@ -51,11 +51,20 @@ constexpr uint32_t kD3dTssAlphaArg2 = 6u;
 // D3DTEXTUREOP values (from d3d9types.h).
 constexpr uint32_t kD3dTopDisable = 1u;
 constexpr uint32_t kD3dTopSelectArg1 = 2u;
+constexpr uint32_t kD3dTopSelectArg2 = 3u;
 constexpr uint32_t kD3dTopModulate = 4u;
+constexpr uint32_t kD3dTopModulate2x = 5u;
+constexpr uint32_t kD3dTopModulate4x = 6u;
+constexpr uint32_t kD3dTopAdd = 7u;
+constexpr uint32_t kD3dTopSubtract = 10u;
 
 // D3DTA_* source selector (from d3d9types.h).
 constexpr uint32_t kD3dTaDiffuse = 0u;
 constexpr uint32_t kD3dTaTexture = 2u;
+constexpr uint32_t kD3dTaTFactor = 3u;
+
+// D3DRS_* render state IDs (from d3d9types.h).
+constexpr uint32_t kD3dRsTextureFactor = 60u; // D3DRS_TEXTUREFACTOR
 
 bool Check(bool cond, const char* msg) {
   if (!cond) {
@@ -2080,6 +2089,176 @@ bool TestStageStateChangeRebindsShadersIfImplemented() {
   return true;
 }
 
+bool TestStage0OpExpansionSelectsShadersAndCaches() {
+  struct Case {
+    const char* name;
+    // Stage0 state.
+    uint32_t color_op = kD3dTopSelectArg1;
+    uint32_t color_arg1 = kD3dTaDiffuse;
+    uint32_t color_arg2 = kD3dTaDiffuse;
+    uint32_t alpha_op = kD3dTopSelectArg1;
+    uint32_t alpha_arg1 = kD3dTaTexture;
+    uint32_t alpha_arg2 = kD3dTaDiffuse;
+
+    // Optional render-state setup.
+    bool set_tfactor = false;
+    uint32_t tfactor = 0u;
+
+    const void* expected_ps_bytes = nullptr;
+    size_t expected_ps_size = 0;
+  };
+
+  const Case cases[] = {
+      // Extended ops (RGB path). Keep ALPHA=TEXTURE so RGB expectations match common D3D9 usage.
+      {"add", kD3dTopAdd, kD3dTaTexture, kD3dTaDiffuse, kD3dTopSelectArg1, kD3dTaTexture, kD3dTaDiffuse,
+       /*set_tfactor=*/false, 0u,
+       fixedfunc::kPsStage0AddTextureDiffuseAlphaTexture, sizeof(fixedfunc::kPsStage0AddTextureDiffuseAlphaTexture)},
+      {"subtract_tex_minus_diff", kD3dTopSubtract, kD3dTaTexture, kD3dTaDiffuse, kD3dTopSelectArg1, kD3dTaTexture, kD3dTaDiffuse,
+       /*set_tfactor=*/false, 0u,
+       fixedfunc::kPsStage0SubtractTextureDiffuseAlphaTexture, sizeof(fixedfunc::kPsStage0SubtractTextureDiffuseAlphaTexture)},
+      {"subtract_diff_minus_tex", kD3dTopSubtract, kD3dTaDiffuse, kD3dTaTexture, kD3dTopSelectArg1, kD3dTaTexture, kD3dTaDiffuse,
+       /*set_tfactor=*/false, 0u,
+       fixedfunc::kPsStage0SubtractDiffuseTextureAlphaTexture, sizeof(fixedfunc::kPsStage0SubtractDiffuseTextureAlphaTexture)},
+      {"modulate2x", kD3dTopModulate2x, kD3dTaTexture, kD3dTaDiffuse, kD3dTopSelectArg1, kD3dTaTexture, kD3dTaDiffuse,
+       /*set_tfactor=*/false, 0u,
+       fixedfunc::kPsStage0Modulate2xTextureDiffuseAlphaTexture, sizeof(fixedfunc::kPsStage0Modulate2xTextureDiffuseAlphaTexture)},
+      {"modulate4x", kD3dTopModulate4x, kD3dTaTexture, kD3dTaDiffuse, kD3dTopSelectArg1, kD3dTaTexture, kD3dTaDiffuse,
+       /*set_tfactor=*/false, 0u,
+       fixedfunc::kPsStage0Modulate4xTextureDiffuseAlphaTexture, sizeof(fixedfunc::kPsStage0Modulate4xTextureDiffuseAlphaTexture)},
+
+      // TFACTOR source (select arg1).
+      {"tfactor_select", kD3dTopSelectArg1, kD3dTaTFactor, kD3dTaDiffuse, kD3dTopSelectArg1, kD3dTaTFactor, kD3dTaDiffuse,
+       /*set_tfactor=*/true, 0xFF3366CCu,
+       fixedfunc::kPsStage0TextureFactor, sizeof(fixedfunc::kPsStage0TextureFactor)},
+  };
+
+  const VertexXyzrhwDiffuseTex1 tri[3] = {
+      {0.0f, 0.0f, 0.0f, 1.0f, 0xFFFFFFFFu, 0.0f, 0.0f},
+      {1.0f, 0.0f, 0.0f, 1.0f, 0xFFFFFFFFu, 1.0f, 0.0f},
+      {0.0f, 1.0f, 0.0f, 1.0f, 0xFFFFFFFFu, 0.0f, 1.0f},
+  };
+
+  for (const auto& c : cases) {
+    CleanupDevice cleanup;
+    if (!CreateDevice(&cleanup)) {
+      return false;
+    }
+    auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+    if (!Check(dev != nullptr, "device pointer")) {
+      return false;
+    }
+
+    dev->cmd.reset();
+
+    HRESULT hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzrhwDiffuseTex1);
+    if (!Check(hr == S_OK, "SetFVF(XYZRHW|DIFFUSE|TEX1)")) {
+      return false;
+    }
+
+    // Most cases require a bound texture so the stage0 path can sample it.
+    // For the TFACTOR-only shader, binding a texture is optional but harmless.
+    D3DDDI_HRESOURCE hTex{};
+    if (!CreateDummyTexture(&cleanup, &hTex)) {
+      return false;
+    }
+    hr = cleanup.device_funcs.pfnSetTexture(cleanup.hDevice, /*stage=*/0, hTex);
+    if (!Check(hr == S_OK, "SetTexture(stage0)")) {
+      return false;
+    }
+
+    if (c.set_tfactor) {
+      hr = cleanup.device_funcs.pfnSetRenderState(cleanup.hDevice, kD3dRsTextureFactor, c.tfactor);
+      if (!Check(hr == S_OK, "SetRenderState(TEXTUREFACTOR)")) {
+        return false;
+      }
+    }
+
+    // Override stage0 state (D3D9 defaults are established by Device ctor, but
+    // tests mutate it directly to keep the harness small).
+    {
+      std::lock_guard<std::mutex> lock(dev->mutex);
+      dev->texture_stage_states[0][kD3dTssColorOp] = c.color_op;
+      dev->texture_stage_states[0][kD3dTssColorArg1] = c.color_arg1;
+      dev->texture_stage_states[0][kD3dTssColorArg2] = c.color_arg2;
+      dev->texture_stage_states[0][kD3dTssAlphaOp] = c.alpha_op;
+      dev->texture_stage_states[0][kD3dTssAlphaArg1] = c.alpha_arg1;
+      dev->texture_stage_states[0][kD3dTssAlphaArg2] = c.alpha_arg2;
+    }
+
+    // Draw twice: the first draw may create/bind the internal fixed-function PS,
+    // the second draw should reuse it without re-emitting CREATE_SHADER_DXBC.
+    for (int i = 0; i < 2; ++i) {
+      hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+          cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzrhwDiffuseTex1));
+      if (!Check(hr == S_OK, c.name)) {
+        return false;
+      }
+    }
+
+    // Validate the bound PS matches the expected variant.
+    {
+      std::lock_guard<std::mutex> lock(dev->mutex);
+      if (!Check(dev->ps != nullptr, "PS must be bound")) {
+        return false;
+      }
+      if (!Check(dev->ps->bytecode.size() == c.expected_ps_size, "expected PS bytecode size")) {
+        return false;
+      }
+      if (!Check(std::memcmp(dev->ps->bytecode.data(), c.expected_ps_bytes, c.expected_ps_size) == 0,
+                 "expected PS bytecode bytes")) {
+        return false;
+      }
+    }
+
+    dev->cmd.finalize();
+    const uint8_t* buf = dev->cmd.data();
+    const size_t len = dev->cmd.bytes_used();
+    if (!Check(ValidateStream(buf, len), "ValidateStream(stage0 op expansion)")) {
+      return false;
+    }
+
+    // Confirm the expected PS bytecode was created at most once.
+    size_t create_count = 0;
+    for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_CREATE_SHADER_DXBC)) {
+      const auto* cs = reinterpret_cast<const aerogpu_cmd_create_shader_dxbc*>(hdr);
+      if (cs->stage != AEROGPU_SHADER_STAGE_PIXEL) {
+        continue;
+      }
+      if (cs->dxbc_size_bytes != c.expected_ps_size) {
+        continue;
+      }
+      const size_t need = sizeof(aerogpu_cmd_create_shader_dxbc) + c.expected_ps_size;
+      if (hdr->size_bytes < need) {
+        continue;
+      }
+      const void* payload = reinterpret_cast<const uint8_t*>(cs) + sizeof(aerogpu_cmd_create_shader_dxbc);
+      if (std::memcmp(payload, c.expected_ps_bytes, c.expected_ps_size) == 0) {
+        ++create_count;
+      }
+    }
+    if (!Check(create_count == 1, "PS variant CREATE_SHADER_DXBC emitted once (cached)")) {
+      return false;
+    }
+
+    // TFACTOR case: ensure the PS constant upload was emitted once (c0).
+    if (c.set_tfactor) {
+      size_t tfactor_uploads = 0;
+      for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_F)) {
+        const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(hdr);
+        if (sc->stage != AEROGPU_SHADER_STAGE_PIXEL || sc->start_register != 0 || sc->vec4_count != 1) {
+          continue;
+        }
+        ++tfactor_uploads;
+      }
+      if (!Check(tfactor_uploads == 1, "TFACTOR constant upload emitted once (cached)")) {
+        return false;
+      }
+    }
+  }
+
+  return true;
+}
+
 } // namespace
 } // namespace aerogpu
 
@@ -2118,6 +2297,9 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestStageStateChangeRebindsShadersIfImplemented()) {
+    return 1;
+  }
+  if (!aerogpu::TestStage0OpExpansionSelectsShadersAndCaches()) {
     return 1;
   }
   return 0;

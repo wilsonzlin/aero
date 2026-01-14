@@ -451,5 +451,749 @@ static constexpr uint32_t kPsStage0ModulateTexture[] = {
     0x0000FFFFu, // end
 };
 
+// -----------------------------------------------------------------------------
+// Extended stage0 fixed-function fallback variants (ps_2_0)
+// -----------------------------------------------------------------------------
+// These variants extend the bring-up stage0 texture combiner subset with a few
+// additional D3DTOP_* operations and the D3DTA_TFACTOR source (provided via PS
+// constant c0 by the UMD).
+//
+// Notes:
+// - These shaders intentionally avoid declarations and stick to a small set of
+//   ALU ops (mov/add/mul + def) so they remain compatible with minimal SM2.0
+//   translators.
+// - "Alpha = <X>" means the output alpha component is sourced independently
+//   from RGB (matching the UMD's stage0 COLOROP vs ALPHAOP handling).
+
+// ps_2_0 (stage0): COLOR = TEXTURE + DIFFUSE, ALPHA = TEXTURE
+//   texld r0, t0, s0
+//   add  r1, r0, v0
+//   mov  r1.w, r0
+//   mov  oC0, r1
+//   end
+static constexpr uint32_t kPsStage0AddTextureDiffuseAlphaTexture[] = {
+    0xFFFF0200u, // ps_2_0
+    0x03000042u, // texld
+    0x000F0000u, // r0.xyzw
+    0x30E40000u, // t0.xyzw
+    0x20E40800u, // s0
+    0x03000002u, // add
+    0x000F0001u, // r1.xyzw
+    0x00E40000u, // r0.xyzw
+    0x10E40000u, // v0.xyzw
+    0x02000001u, // mov
+    0x00080001u, // r1.w
+    0x00E40000u, // r0.xyzw
+    0x02000001u, // mov
+    0x000F0800u, // oC0.xyzw
+    0x00E40001u, // r1.xyzw
+    0x0000FFFFu, // end
+};
+
+// ps_2_0 (stage0): COLOR = TEXTURE + DIFFUSE, ALPHA = DIFFUSE
+//   texld r0, t0, s0
+//   add  r0.xyz, r0, v0
+//   mov  r0.w, v0
+//   mov  oC0, r0
+//   end
+static constexpr uint32_t kPsStage0AddTextureDiffuseAlphaDiffuse[] = {
+    0xFFFF0200u, // ps_2_0
+    0x03000042u, // texld
+    0x000F0000u, // r0.xyzw
+    0x30E40000u, // t0.xyzw
+    0x20E40800u, // s0
+    0x03000002u, // add
+    0x00070000u, // r0.xyz
+    0x00E40000u, // r0.xyzw
+    0x10E40000u, // v0.xyzw
+    0x02000001u, // mov
+    0x00080000u, // r0.w
+    0x10E40000u, // v0.xyzw
+    0x02000001u, // mov
+    0x000F0800u, // oC0.xyzw
+    0x00E40000u, // r0.xyzw
+    0x0000FFFFu, // end
+};
+
+// ps_2_0 (stage0): COLOR = TEXTURE + DIFFUSE, ALPHA = TEXTURE * DIFFUSE
+//   texld r0, t0, s0
+//   add  r0.xyz, r0, v0
+//   mul  r0.w, r0, v0
+//   mov  oC0, r0
+//   end
+static constexpr uint32_t kPsStage0AddTextureDiffuseAlphaModulate[] = {
+    0xFFFF0200u, // ps_2_0
+    0x03000042u, // texld
+    0x000F0000u, // r0.xyzw
+    0x30E40000u, // t0.xyzw
+    0x20E40800u, // s0
+    0x03000002u, // add
+    0x00070000u, // r0.xyz
+    0x00E40000u, // r0.xyzw
+    0x10E40000u, // v0.xyzw
+    0x03000005u, // mul
+    0x00080000u, // r0.w
+    0x00E40000u, // r0.xyzw
+    0x10E40000u, // v0.xyzw
+    0x02000001u, // mov
+    0x000F0800u, // oC0.xyzw
+    0x00E40000u, // r0.xyzw
+    0x0000FFFFu, // end
+};
+
+// ps_2_0 (stage0): COLOR = TEXTURE * DIFFUSE * 2, ALPHA = TEXTURE
+//   texld r0, t0, s0
+//   mul  r1, r0, v0
+//   add  r1, r1, r1
+//   mov  r1.w, r0
+//   mov  oC0, r1
+//   end
+static constexpr uint32_t kPsStage0Modulate2xTextureDiffuseAlphaTexture[] = {
+    0xFFFF0200u, // ps_2_0
+    0x03000042u, // texld
+    0x000F0000u, // r0.xyzw
+    0x30E40000u, // t0.xyzw
+    0x20E40800u, // s0
+    0x03000005u, // mul
+    0x000F0001u, // r1.xyzw
+    0x00E40000u, // r0.xyzw
+    0x10E40000u, // v0.xyzw
+    0x03000002u, // add
+    0x000F0001u, // r1.xyzw
+    0x00E40001u, // r1.xyzw
+    0x00E40001u, // r1.xyzw
+    0x02000001u, // mov
+    0x00080001u, // r1.w
+    0x00E40000u, // r0.xyzw
+    0x02000001u, // mov
+    0x000F0800u, // oC0.xyzw
+    0x00E40001u, // r1.xyzw
+    0x0000FFFFu, // end
+};
+
+// ps_2_0 (stage0): COLOR = TEXTURE * DIFFUSE * 2, ALPHA = DIFFUSE
+//   texld r0, t0, s0
+//   mul  r0.xyz, r0, v0
+//   add  r0.xyz, r0, r0
+//   mov  r0.w, v0
+//   mov  oC0, r0
+//   end
+static constexpr uint32_t kPsStage0Modulate2xTextureDiffuseAlphaDiffuse[] = {
+    0xFFFF0200u, // ps_2_0
+    0x03000042u, // texld
+    0x000F0000u, // r0.xyzw
+    0x30E40000u, // t0.xyzw
+    0x20E40800u, // s0
+    0x03000005u, // mul
+    0x00070000u, // r0.xyz
+    0x00E40000u, // r0.xyzw
+    0x10E40000u, // v0.xyzw
+    0x03000002u, // add
+    0x00070000u, // r0.xyz
+    0x00E40000u, // r0.xyzw
+    0x00E40000u, // r0.xyzw
+    0x02000001u, // mov
+    0x00080000u, // r0.w
+    0x10E40000u, // v0.xyzw
+    0x02000001u, // mov
+    0x000F0800u, // oC0.xyzw
+    0x00E40000u, // r0.xyzw
+    0x0000FFFFu, // end
+};
+
+// ps_2_0 (stage0): COLOR = TEXTURE * DIFFUSE * 2, ALPHA = TEXTURE * DIFFUSE
+//   texld r0, t0, s0
+//   mul  r1, r0, v0
+//   add  r1.xyz, r1, r1
+//   mov  oC0, r1
+//   end
+static constexpr uint32_t kPsStage0Modulate2xTextureDiffuseAlphaModulate[] = {
+    0xFFFF0200u, // ps_2_0
+    0x03000042u, // texld
+    0x000F0000u, // r0.xyzw
+    0x30E40000u, // t0.xyzw
+    0x20E40800u, // s0
+    0x03000005u, // mul
+    0x000F0001u, // r1.xyzw
+    0x00E40000u, // r0.xyzw
+    0x10E40000u, // v0.xyzw
+    0x03000002u, // add
+    0x00070001u, // r1.xyz
+    0x00E40001u, // r1.xyzw
+    0x00E40001u, // r1.xyzw
+    0x02000001u, // mov
+    0x000F0800u, // oC0.xyzw
+    0x00E40001u, // r1.xyzw
+    0x0000FFFFu, // end
+};
+
+// ps_2_0 (stage0): COLOR = TEXTURE * DIFFUSE * 4, ALPHA = TEXTURE
+//   texld r0, t0, s0
+//   mul  r1, r0, v0
+//   add  r1, r1, r1
+//   add  r1, r1, r1
+//   mov  r1.w, r0
+//   mov  oC0, r1
+//   end
+static constexpr uint32_t kPsStage0Modulate4xTextureDiffuseAlphaTexture[] = {
+    0xFFFF0200u, // ps_2_0
+    0x03000042u, // texld
+    0x000F0000u, // r0.xyzw
+    0x30E40000u, // t0.xyzw
+    0x20E40800u, // s0
+    0x03000005u, // mul
+    0x000F0001u, // r1.xyzw
+    0x00E40000u, // r0.xyzw
+    0x10E40000u, // v0.xyzw
+    0x03000002u, // add
+    0x000F0001u, // r1.xyzw
+    0x00E40001u, // r1.xyzw
+    0x00E40001u, // r1.xyzw
+    0x03000002u, // add
+    0x000F0001u, // r1.xyzw
+    0x00E40001u, // r1.xyzw
+    0x00E40001u, // r1.xyzw
+    0x02000001u, // mov
+    0x00080001u, // r1.w
+    0x00E40000u, // r0.xyzw
+    0x02000001u, // mov
+    0x000F0800u, // oC0.xyzw
+    0x00E40001u, // r1.xyzw
+    0x0000FFFFu, // end
+};
+
+// ps_2_0 (stage0): COLOR = TEXTURE * DIFFUSE * 4, ALPHA = DIFFUSE
+//   texld r0, t0, s0
+//   mul  r0.xyz, r0, v0
+//   add  r0.xyz, r0, r0
+//   add  r0.xyz, r0, r0
+//   mov  r0.w, v0
+//   mov  oC0, r0
+//   end
+static constexpr uint32_t kPsStage0Modulate4xTextureDiffuseAlphaDiffuse[] = {
+    0xFFFF0200u, // ps_2_0
+    0x03000042u, // texld
+    0x000F0000u, // r0.xyzw
+    0x30E40000u, // t0.xyzw
+    0x20E40800u, // s0
+    0x03000005u, // mul
+    0x00070000u, // r0.xyz
+    0x00E40000u, // r0.xyzw
+    0x10E40000u, // v0.xyzw
+    0x03000002u, // add
+    0x00070000u, // r0.xyz
+    0x00E40000u, // r0.xyzw
+    0x00E40000u, // r0.xyzw
+    0x03000002u, // add
+    0x00070000u, // r0.xyz
+    0x00E40000u, // r0.xyzw
+    0x00E40000u, // r0.xyzw
+    0x02000001u, // mov
+    0x00080000u, // r0.w
+    0x10E40000u, // v0.xyzw
+    0x02000001u, // mov
+    0x000F0800u, // oC0.xyzw
+    0x00E40000u, // r0.xyzw
+    0x0000FFFFu, // end
+};
+
+// ps_2_0 (stage0): COLOR = TEXTURE * DIFFUSE * 4, ALPHA = TEXTURE * DIFFUSE
+//   texld r0, t0, s0
+//   mul  r1, r0, v0
+//   add  r1.xyz, r1, r1
+//   add  r1.xyz, r1, r1
+//   mov  oC0, r1
+//   end
+static constexpr uint32_t kPsStage0Modulate4xTextureDiffuseAlphaModulate[] = {
+    0xFFFF0200u, // ps_2_0
+    0x03000042u, // texld
+    0x000F0000u, // r0.xyzw
+    0x30E40000u, // t0.xyzw
+    0x20E40800u, // s0
+    0x03000005u, // mul
+    0x000F0001u, // r1.xyzw
+    0x00E40000u, // r0.xyzw
+    0x10E40000u, // v0.xyzw
+    0x03000002u, // add
+    0x00070001u, // r1.xyz
+    0x00E40001u, // r1.xyzw
+    0x00E40001u, // r1.xyzw
+    0x03000002u, // add
+    0x00070001u, // r1.xyz
+    0x00E40001u, // r1.xyzw
+    0x00E40001u, // r1.xyzw
+    0x02000001u, // mov
+    0x000F0800u, // oC0.xyzw
+    0x00E40001u, // r1.xyzw
+    0x0000FFFFu, // end
+};
+
+// ps_2_0 (stage0): COLOR = TEXTURE - DIFFUSE, ALPHA = TEXTURE
+//   def  c1, -1, -1, -1, -1
+//   texld r0, t0, s0
+//   mul  r1, v0, c1
+//   add  r0.xyz, r0, r1
+//   mov  oC0, r0
+//   end
+static constexpr uint32_t kPsStage0SubtractTextureDiffuseAlphaTexture[] = {
+    0xFFFF0200u, // ps_2_0
+    0x05000051u, // def
+    0x200F0001u, // c1.xyzw
+    0xBF800000u, // -1.0
+    0xBF800000u, // -1.0
+    0xBF800000u, // -1.0
+    0xBF800000u, // -1.0
+    0x03000042u, // texld
+    0x000F0000u, // r0.xyzw
+    0x30E40000u, // t0.xyzw
+    0x20E40800u, // s0
+    0x03000005u, // mul
+    0x000F0001u, // r1.xyzw
+    0x10E40000u, // v0.xyzw
+    0x20E40001u, // c1.xyzw
+    0x03000002u, // add
+    0x00070000u, // r0.xyz
+    0x00E40000u, // r0.xyzw
+    0x00E40001u, // r1.xyzw
+    0x02000001u, // mov
+    0x000F0800u, // oC0.xyzw
+    0x00E40000u, // r0.xyzw
+    0x0000FFFFu, // end
+};
+
+// ps_2_0 (stage0): COLOR = TEXTURE - DIFFUSE, ALPHA = DIFFUSE
+//   def  c1, -1, -1, -1, -1
+//   texld r0, t0, s0
+//   mul  r1, v0, c1
+//   add  r0.xyz, r0, r1
+//   mov  r0.w, v0
+//   mov  oC0, r0
+//   end
+static constexpr uint32_t kPsStage0SubtractTextureDiffuseAlphaDiffuse[] = {
+    0xFFFF0200u, // ps_2_0
+    0x05000051u, // def
+    0x200F0001u, // c1.xyzw
+    0xBF800000u, // -1.0
+    0xBF800000u, // -1.0
+    0xBF800000u, // -1.0
+    0xBF800000u, // -1.0
+    0x03000042u, // texld
+    0x000F0000u, // r0.xyzw
+    0x30E40000u, // t0.xyzw
+    0x20E40800u, // s0
+    0x03000005u, // mul
+    0x000F0001u, // r1.xyzw
+    0x10E40000u, // v0.xyzw
+    0x20E40001u, // c1.xyzw
+    0x03000002u, // add
+    0x00070000u, // r0.xyz
+    0x00E40000u, // r0.xyzw
+    0x00E40001u, // r1.xyzw
+    0x02000001u, // mov
+    0x00080000u, // r0.w
+    0x10E40000u, // v0.xyzw
+    0x02000001u, // mov
+    0x000F0800u, // oC0.xyzw
+    0x00E40000u, // r0.xyzw
+    0x0000FFFFu, // end
+};
+
+// ps_2_0 (stage0): COLOR = TEXTURE - DIFFUSE, ALPHA = TEXTURE * DIFFUSE
+//   def  c1, -1, -1, -1, -1
+//   texld r0, t0, s0
+//   mul  r1, v0, c1
+//   add  r0.xyz, r0, r1
+//   mul  r0.w, r0, v0
+//   mov  oC0, r0
+//   end
+static constexpr uint32_t kPsStage0SubtractTextureDiffuseAlphaModulate[] = {
+    0xFFFF0200u, // ps_2_0
+    0x05000051u, // def
+    0x200F0001u, // c1.xyzw
+    0xBF800000u, // -1.0
+    0xBF800000u, // -1.0
+    0xBF800000u, // -1.0
+    0xBF800000u, // -1.0
+    0x03000042u, // texld
+    0x000F0000u, // r0.xyzw
+    0x30E40000u, // t0.xyzw
+    0x20E40800u, // s0
+    0x03000005u, // mul
+    0x000F0001u, // r1.xyzw
+    0x10E40000u, // v0.xyzw
+    0x20E40001u, // c1.xyzw
+    0x03000002u, // add
+    0x00070000u, // r0.xyz
+    0x00E40000u, // r0.xyzw
+    0x00E40001u, // r1.xyzw
+    0x03000005u, // mul
+    0x00080000u, // r0.w
+    0x00E40000u, // r0.xyzw
+    0x10E40000u, // v0.xyzw
+    0x02000001u, // mov
+    0x000F0800u, // oC0.xyzw
+    0x00E40000u, // r0.xyzw
+    0x0000FFFFu, // end
+};
+
+// ps_2_0 (stage0): COLOR = DIFFUSE - TEXTURE, ALPHA = TEXTURE
+//   def  c1, -1, -1, -1, -1
+//   texld r0, t0, s0
+//   mul  r1, r0, c1
+//   add  r0.xyz, v0, r1
+//   mov  oC0, r0
+//   end
+static constexpr uint32_t kPsStage0SubtractDiffuseTextureAlphaTexture[] = {
+    0xFFFF0200u, // ps_2_0
+    0x05000051u, // def
+    0x200F0001u, // c1.xyzw
+    0xBF800000u, // -1.0
+    0xBF800000u, // -1.0
+    0xBF800000u, // -1.0
+    0xBF800000u, // -1.0
+    0x03000042u, // texld
+    0x000F0000u, // r0.xyzw
+    0x30E40000u, // t0.xyzw
+    0x20E40800u, // s0
+    0x03000005u, // mul
+    0x000F0001u, // r1.xyzw
+    0x00E40000u, // r0.xyzw
+    0x20E40001u, // c1.xyzw
+    0x03000002u, // add
+    0x00070000u, // r0.xyz
+    0x10E40000u, // v0.xyzw
+    0x00E40001u, // r1.xyzw
+    0x02000001u, // mov
+    0x000F0800u, // oC0.xyzw
+    0x00E40000u, // r0.xyzw
+    0x0000FFFFu, // end
+};
+
+// ps_2_0 (stage0): COLOR = DIFFUSE - TEXTURE, ALPHA = DIFFUSE
+//   def  c1, -1, -1, -1, -1
+//   texld r0, t0, s0
+//   mul  r1, r0, c1
+//   add  r0.xyz, v0, r1
+//   mov  r0.w, v0
+//   mov  oC0, r0
+//   end
+static constexpr uint32_t kPsStage0SubtractDiffuseTextureAlphaDiffuse[] = {
+    0xFFFF0200u, // ps_2_0
+    0x05000051u, // def
+    0x200F0001u, // c1.xyzw
+    0xBF800000u, // -1.0
+    0xBF800000u, // -1.0
+    0xBF800000u, // -1.0
+    0xBF800000u, // -1.0
+    0x03000042u, // texld
+    0x000F0000u, // r0.xyzw
+    0x30E40000u, // t0.xyzw
+    0x20E40800u, // s0
+    0x03000005u, // mul
+    0x000F0001u, // r1.xyzw
+    0x00E40000u, // r0.xyzw
+    0x20E40001u, // c1.xyzw
+    0x03000002u, // add
+    0x00070000u, // r0.xyz
+    0x10E40000u, // v0.xyzw
+    0x00E40001u, // r1.xyzw
+    0x02000001u, // mov
+    0x00080000u, // r0.w
+    0x10E40000u, // v0.xyzw
+    0x02000001u, // mov
+    0x000F0800u, // oC0.xyzw
+    0x00E40000u, // r0.xyzw
+    0x0000FFFFu, // end
+};
+
+// ps_2_0 (stage0): COLOR = DIFFUSE - TEXTURE, ALPHA = TEXTURE * DIFFUSE
+//   def  c1, -1, -1, -1, -1
+//   texld r0, t0, s0
+//   mul  r1, r0, c1
+//   add  r0.xyz, v0, r1
+//   mul  r0.w, r0, v0
+//   mov  oC0, r0
+//   end
+static constexpr uint32_t kPsStage0SubtractDiffuseTextureAlphaModulate[] = {
+    0xFFFF0200u, // ps_2_0
+    0x05000051u, // def
+    0x200F0001u, // c1.xyzw
+    0xBF800000u, // -1.0
+    0xBF800000u, // -1.0
+    0xBF800000u, // -1.0
+    0xBF800000u, // -1.0
+    0x03000042u, // texld
+    0x000F0000u, // r0.xyzw
+    0x30E40000u, // t0.xyzw
+    0x20E40800u, // s0
+    0x03000005u, // mul
+    0x000F0001u, // r1.xyzw
+    0x00E40000u, // r0.xyzw
+    0x20E40001u, // c1.xyzw
+    0x03000002u, // add
+    0x00070000u, // r0.xyz
+    0x10E40000u, // v0.xyzw
+    0x00E40001u, // r1.xyzw
+    0x03000005u, // mul
+    0x00080000u, // r0.w
+    0x00E40000u, // r0.xyzw
+    0x10E40000u, // v0.xyzw
+    0x02000001u, // mov
+    0x000F0800u, // oC0.xyzw
+    0x00E40000u, // r0.xyzw
+    0x0000FFFFu, // end
+};
+
+// ps_2_0 (stage0): COLOR = TEXTURE * TFACTOR (RGB), ALPHA = TEXTURE
+//   texld r0, t0, s0
+//   mul  r1, r0, c0        ; c0 is TFACTOR
+//   mov  r1.w, r0
+//   mov  oC0, r1
+//   end
+static constexpr uint32_t kPsStage0ModulateTextureTFactorAlphaTexture[] = {
+    0xFFFF0200u, // ps_2_0
+    0x03000042u, // texld
+    0x000F0000u, // r0.xyzw
+    0x30E40000u, // t0.xyzw
+    0x20E40800u, // s0
+    0x03000005u, // mul
+    0x000F0001u, // r1.xyzw
+    0x00E40000u, // r0.xyzw
+    0x20E40000u, // c0.xyzw
+    0x02000001u, // mov
+    0x00080001u, // r1.w
+    0x00E40000u, // r0.xyzw
+    0x02000001u, // mov
+    0x000F0800u, // oC0.xyzw
+    0x00E40001u, // r1.xyzw
+    0x0000FFFFu, // end
+};
+
+// ps_2_0 (stage0): COLOR = TEXTURE * TFACTOR (RGB), ALPHA = DIFFUSE
+//   texld r0, t0, s0
+//   mul  r0.xyz, r0, c0
+//   mov  r0.w, v0
+//   mov  oC0, r0
+//   end
+static constexpr uint32_t kPsStage0ModulateTextureTFactorAlphaDiffuse[] = {
+    0xFFFF0200u, // ps_2_0
+    0x03000042u, // texld
+    0x000F0000u, // r0.xyzw
+    0x30E40000u, // t0.xyzw
+    0x20E40800u, // s0
+    0x03000005u, // mul
+    0x00070000u, // r0.xyz
+    0x00E40000u, // r0.xyzw
+    0x20E40000u, // c0.xyzw
+    0x02000001u, // mov
+    0x00080000u, // r0.w
+    0x10E40000u, // v0.xyzw
+    0x02000001u, // mov
+    0x000F0800u, // oC0.xyzw
+    0x00E40000u, // r0.xyzw
+    0x0000FFFFu, // end
+};
+
+// ps_2_0 (stage0): COLOR = TEXTURE * TFACTOR (RGB), ALPHA = TEXTURE * DIFFUSE
+//   texld r0, t0, s0
+//   mul  r0.xyz, r0, c0
+//   mul  r0.w, r0, v0
+//   mov  oC0, r0
+//   end
+static constexpr uint32_t kPsStage0ModulateTextureTFactorAlphaModulate[] = {
+    0xFFFF0200u, // ps_2_0
+    0x03000042u, // texld
+    0x000F0000u, // r0.xyzw
+    0x30E40000u, // t0.xyzw
+    0x20E40800u, // s0
+    0x03000005u, // mul
+    0x00070000u, // r0.xyz
+    0x00E40000u, // r0.xyzw
+    0x20E40000u, // c0.xyzw
+    0x03000005u, // mul
+    0x00080000u, // r0.w
+    0x00E40000u, // r0.xyzw
+    0x10E40000u, // v0.xyzw
+    0x02000001u, // mov
+    0x000F0800u, // oC0.xyzw
+    0x00E40000u, // r0.xyzw
+    0x0000FFFFu, // end
+};
+
+// ps_2_0 (stage0): COLOR = DIFFUSE, ALPHA = TEXTURE + DIFFUSE
+//   texld r0, t0, s0
+//   mov  r0.xyz, v0
+//   add  r0.w, r0, v0
+//   mov  oC0, r0
+//   end
+static constexpr uint32_t kPsStage0DiffuseAlphaAddTextureDiffuse[] = {
+    0xFFFF0200u, // ps_2_0
+    0x03000042u, // texld
+    0x000F0000u, // r0.xyzw
+    0x30E40000u, // t0.xyzw
+    0x20E40800u, // s0
+    0x02000001u, // mov
+    0x00070000u, // r0.xyz
+    0x10E40000u, // v0.xyzw
+    0x03000002u, // add
+    0x00080000u, // r0.w
+    0x00E40000u, // r0.xyzw
+    0x10E40000u, // v0.xyzw
+    0x02000001u, // mov
+    0x000F0800u, // oC0.xyzw
+    0x00E40000u, // r0.xyzw
+    0x0000FFFFu, // end
+};
+
+// ps_2_0 (stage0): COLOR = DIFFUSE, ALPHA = TEXTURE - DIFFUSE
+//   def  c1, -1, -1, -1, -1
+//   texld r0, t0, s0
+//   mov  r0.xyz, v0
+//   mul  r1, v0, c1
+//   add  r0.w, r0, r1
+//   mov  oC0, r0
+//   end
+static constexpr uint32_t kPsStage0DiffuseAlphaSubtractTextureDiffuse[] = {
+    0xFFFF0200u, // ps_2_0
+    0x05000051u, // def
+    0x200F0001u, // c1.xyzw
+    0xBF800000u, // -1.0
+    0xBF800000u, // -1.0
+    0xBF800000u, // -1.0
+    0xBF800000u, // -1.0
+    0x03000042u, // texld
+    0x000F0000u, // r0.xyzw
+    0x30E40000u, // t0.xyzw
+    0x20E40800u, // s0
+    0x02000001u, // mov
+    0x00070000u, // r0.xyz
+    0x10E40000u, // v0.xyzw
+    0x03000005u, // mul
+    0x000F0001u, // r1.xyzw
+    0x10E40000u, // v0.xyzw
+    0x20E40001u, // c1.xyzw
+    0x03000002u, // add
+    0x00080000u, // r0.w
+    0x00E40000u, // r0.xyzw
+    0x00E40001u, // r1.xyzw
+    0x02000001u, // mov
+    0x000F0800u, // oC0.xyzw
+    0x00E40000u, // r0.xyzw
+    0x0000FFFFu, // end
+};
+
+// ps_2_0 (stage0): COLOR = DIFFUSE, ALPHA = DIFFUSE - TEXTURE
+//   def  c1, -1, -1, -1, -1
+//   texld r0, t0, s0
+//   mov  r0.xyz, v0
+//   mul  r1, r0, c1
+//   add  r0.w, v0, r1
+//   mov  oC0, r0
+//   end
+static constexpr uint32_t kPsStage0DiffuseAlphaSubtractDiffuseTexture[] = {
+    0xFFFF0200u, // ps_2_0
+    0x05000051u, // def
+    0x200F0001u, // c1.xyzw
+    0xBF800000u, // -1.0
+    0xBF800000u, // -1.0
+    0xBF800000u, // -1.0
+    0xBF800000u, // -1.0
+    0x03000042u, // texld
+    0x000F0000u, // r0.xyzw
+    0x30E40000u, // t0.xyzw
+    0x20E40800u, // s0
+    0x02000001u, // mov
+    0x00070000u, // r0.xyz
+    0x10E40000u, // v0.xyzw
+    0x03000005u, // mul
+    0x000F0001u, // r1.xyzw
+    0x00E40000u, // r0.xyzw
+    0x20E40001u, // c1.xyzw
+    0x03000002u, // add
+    0x00080000u, // r0.w
+    0x10E40000u, // v0.xyzw
+    0x00E40001u, // r1.xyzw
+    0x02000001u, // mov
+    0x000F0800u, // oC0.xyzw
+    0x00E40000u, // r0.xyzw
+    0x0000FFFFu, // end
+};
+
+// ps_2_0 (stage0): COLOR = DIFFUSE, ALPHA = (TEXTURE * DIFFUSE) * 2
+//   texld r0, t0, s0
+//   mov  r0.xyz, v0
+//   mul  r0.w, r0, v0
+//   add  r0.w, r0, r0
+//   mov  oC0, r0
+//   end
+static constexpr uint32_t kPsStage0DiffuseAlphaModulate2xTextureDiffuse[] = {
+    0xFFFF0200u, // ps_2_0
+    0x03000042u, // texld
+    0x000F0000u, // r0.xyzw
+    0x30E40000u, // t0.xyzw
+    0x20E40800u, // s0
+    0x02000001u, // mov
+    0x00070000u, // r0.xyz
+    0x10E40000u, // v0.xyzw
+    0x03000005u, // mul
+    0x00080000u, // r0.w
+    0x00E40000u, // r0.xyzw
+    0x10E40000u, // v0.xyzw
+    0x03000002u, // add
+    0x00080000u, // r0.w
+    0x00E40000u, // r0.xyzw
+    0x00E40000u, // r0.xyzw
+    0x02000001u, // mov
+    0x000F0800u, // oC0.xyzw
+    0x00E40000u, // r0.xyzw
+    0x0000FFFFu, // end
+};
+
+// ps_2_0 (stage0): COLOR = DIFFUSE, ALPHA = (TEXTURE * DIFFUSE) * 4
+//   texld r0, t0, s0
+//   mov  r0.xyz, v0
+//   mul  r0.w, r0, v0
+//   add  r0.w, r0, r0
+//   add  r0.w, r0, r0
+//   mov  oC0, r0
+//   end
+static constexpr uint32_t kPsStage0DiffuseAlphaModulate4xTextureDiffuse[] = {
+    0xFFFF0200u, // ps_2_0
+    0x03000042u, // texld
+    0x000F0000u, // r0.xyzw
+    0x30E40000u, // t0.xyzw
+    0x20E40800u, // s0
+    0x02000001u, // mov
+    0x00070000u, // r0.xyz
+    0x10E40000u, // v0.xyzw
+    0x03000005u, // mul
+    0x00080000u, // r0.w
+    0x00E40000u, // r0.xyzw
+    0x10E40000u, // v0.xyzw
+    0x03000002u, // add
+    0x00080000u, // r0.w
+    0x00E40000u, // r0.xyzw
+    0x00E40000u, // r0.xyzw
+    0x03000002u, // add
+    0x00080000u, // r0.w
+    0x00E40000u, // r0.xyzw
+    0x00E40000u, // r0.xyzw
+    0x02000001u, // mov
+    0x000F0800u, // oC0.xyzw
+    0x00E40000u, // r0.xyzw
+    0x0000FFFFu, // end
+};
+
+// ps_2_0 (stage0): COLOR = TFACTOR, ALPHA = TFACTOR
+//   mov oC0, c0
+//   end
+static constexpr uint32_t kPsStage0TextureFactor[] = {
+    0xFFFF0200u, // ps_2_0
+    0x02000001u, // mov
+    0x000F0800u, // oC0.xyzw
+    0x20E40000u, // c0.xyzw
+    0x0000FFFFu, // end
+};
+
 } // namespace fixedfunc
 } // namespace aerogpu
