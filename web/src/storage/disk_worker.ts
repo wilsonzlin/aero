@@ -214,9 +214,11 @@ async function idbSumDiskChunkBytes(db: IDBDatabase, diskId: string): Promise<nu
 async function opfsReadLruChunkCacheBytes(
   remoteCacheDir: FileSystemDirectoryHandle,
   cacheKey: string,
+  opts: { scanChunksFallback?: boolean } = {},
 ): Promise<number> {
   // Keep in sync with `OpfsLruChunkCache`'s index bounds.
   const MAX_LRU_INDEX_JSON_BYTES = 64 * 1024 * 1024; // 64 MiB
+  const scanChunksFallback = opts.scanChunksFallback ?? true;
 
   try {
     const cacheDir = await remoteCacheDir.getDirectoryHandle(cacheKey, { create: false });
@@ -255,23 +257,25 @@ async function opfsReadLruChunkCacheBytes(
       // ignore and fall back to scanning
     }
 
-    // Fall back to scanning the chunk files if the index is missing/corrupt.
-    try {
-      const chunksDir = await cacheDir.getDirectoryHandle("chunks", { create: false });
-      let total = 0;
-      for await (const [name, handle] of chunksDir.entries()) {
-        if (handle.kind !== "file") continue;
-        if (!name.endsWith(".bin")) continue;
-        const file = await (handle as FileSystemFileHandle).getFile();
-        total += file.size;
-      }
-      return total;
-    } catch {
-      // ignore
-    }
-  } catch {
-    // cache directory missing or OPFS unavailable
-  }
+     if (scanChunksFallback) {
+       // Fall back to scanning the chunk files if the index is missing/corrupt.
+       try {
+         const chunksDir = await cacheDir.getDirectoryHandle("chunks", { create: false });
+         let total = 0;
+         for await (const [name, handle] of chunksDir.entries()) {
+           if (handle.kind !== "file") continue;
+           if (!name.endsWith(".bin")) continue;
+           const file = await (handle as FileSystemFileHandle).getFile();
+           total += file.size;
+         }
+         return total;
+       } catch {
+         // ignore
+       }
+     }
+   } catch {
+     // cache directory missing or OPFS unavailable
+   }
   return 0;
 }
 
@@ -1347,6 +1351,23 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
           status = null;
         }
         if (status) {
+          // RemoteCacheManager's persisted metadata tracks cached ranges for some cache types
+          // (e.g. sparse caches), but other implementations (e.g. OPFS LRU chunk caches) persist
+          // cache bytes in an `index.json` file. Best-effort: if `cachedBytes` is zero, try to
+          // derive a better estimate from the LRU index without walking the chunk directory.
+          if (status.cachedBytes === 0) {
+            try {
+              const lruBytes = await opfsReadLruChunkCacheBytes(remoteCacheDir, name, { scanChunksFallback: false });
+              if (lruBytes > status.cachedBytes) {
+                status.cachedBytes = lruBytes;
+                // Approximate: LRU chunk caches store per-chunk files, so chunk count is roughly
+                // bytes / chunkSize. Keep cachedRanges as-is (may be empty for LRU caches).
+                status.cachedChunks = Math.max(status.cachedChunks, Math.ceil(lruBytes / status.chunkSizeBytes));
+              }
+            } catch {
+              // best-effort
+            }
+          }
           caches.push(status);
         } else {
           corruptKeys.push(name);

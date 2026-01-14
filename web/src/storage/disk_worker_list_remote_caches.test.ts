@@ -61,6 +61,28 @@ describe("disk_worker list_remote_caches", () => {
     );
     await manager.recordCachedRange(opened.cacheKey, 0, 4096);
 
+    // Simulate an OPFS LRU chunk cache that stores bytes in `index.json` but does not update
+    // RemoteCacheManager cachedRanges (so `getCacheStatus().cachedBytes` would otherwise be 0).
+    const openedLru = await manager.openCache(
+      { imageId: "img2", version: "v1", deliveryType: remoteRangeDeliveryType(1024) },
+      { chunkSizeBytes: 1024, validators: { sizeBytes: 1024 * 1024 } },
+    );
+    {
+      const remoteCacheDir = await opfsGetRemoteCacheDir();
+      const dir = await remoteCacheDir.getDirectoryHandle(openedLru.cacheKey, { create: false });
+      const handle = await dir.getFileHandle("index.json", { create: true });
+      const writable = await handle.createWritable({ keepExistingData: false });
+      await writable.write(
+        JSON.stringify({
+          chunks: {
+            "0": { byteLength: 1024, lastAccess: nowMs },
+            "1": { byteLength: 2048, lastAccess: nowMs },
+          },
+        }),
+      );
+      await writable.close();
+    }
+
     const corruptKey = "rc1_corrupt";
     {
       const remoteCacheDir = await opfsGetRemoteCacheDir();
@@ -89,12 +111,20 @@ describe("disk_worker list_remote_caches", () => {
     });
 
     const list = resp.result as { caches: any[]; corruptKeys: string[] };
-    expect(list.caches).toHaveLength(1);
-    expect(list.caches[0]).toMatchObject({
+    expect(list.caches).toHaveLength(2);
+
+    const fromRanges = list.caches.find((c) => c.cacheKey === opened.cacheKey);
+    expect(fromRanges).toMatchObject({
       cacheKey: opened.cacheKey,
       cachedBytes: 4096,
       lastAccessedAtMs: nowMs,
     });
+
+    const fromIndex = list.caches.find((c) => c.cacheKey === openedLru.cacheKey);
+    expect(fromIndex).toMatchObject({
+      cacheKey: openedLru.cacheKey,
+      cachedBytes: 3072,
+      lastAccessedAtMs: nowMs,
+    });
   });
 });
-
