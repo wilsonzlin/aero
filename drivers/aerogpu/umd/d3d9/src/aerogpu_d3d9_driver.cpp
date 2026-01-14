@@ -4184,7 +4184,7 @@ FixedfuncStage0Src fixedfunc_decode_arg_src(uint32_t arg) {
   }
 }
 
-FixedfuncStage0Src fixedfunc_decode_op_src(uint32_t op, uint32_t arg1, uint32_t arg2) {
+FixedfuncStage0Src fixedfunc_decode_op_src(uint32_t op, uint32_t arg1, uint32_t arg2, bool has_tex0) {
   switch (op) {
     case kD3dTopDisable:
       return FixedfuncStage0Src::Diffuse;
@@ -4198,10 +4198,15 @@ FixedfuncStage0Src fixedfunc_decode_op_src(uint32_t op, uint32_t arg1, uint32_t 
           (a1 == FixedfuncStage0Src::Diffuse && a2 == FixedfuncStage0Src::Texture)) {
         return FixedfuncStage0Src::Modulate;
       }
-      return FixedfuncStage0Src::Diffuse;
+      // Unknown modulate source combination: best-effort fall back to texturing
+      // when a texture is bound (fixed-function apps often assume stage0 texturing
+      // even if their exact state isn't represented by our minimal shader set).
+      return has_tex0 ? FixedfuncStage0Src::Modulate : FixedfuncStage0Src::Diffuse;
     }
     default:
-      return FixedfuncStage0Src::Diffuse;
+      // Unsupported op: best-effort fall back to textured modulate when a texture
+      // is bound, otherwise treat as diffuse-only.
+      return has_tex0 ? FixedfuncStage0Src::Modulate : FixedfuncStage0Src::Diffuse;
   }
 }
 
@@ -4220,8 +4225,8 @@ FixedfuncStage0Key fixedfunc_stage0_key_locked(const Device* dev) {
   const uint32_t alphaarg1 = dev->texture_stage_states[0][kD3dTssAlphaArg1];
   const uint32_t alphaarg2 = dev->texture_stage_states[0][kD3dTssAlphaArg2];
 
-  key.color = fixedfunc_decode_op_src(colorop, colorarg1, colorarg2);
-  key.alpha = fixedfunc_decode_op_src(alphaop, alphaarg1, alphaarg2);
+  key.color = fixedfunc_decode_op_src(colorop, colorarg1, colorarg2, has_tex0);
+  key.alpha = fixedfunc_decode_op_src(alphaop, alphaarg1, alphaarg2, has_tex0);
 
   // Defensive: avoid selecting a texture-sampling shader when stage0 has no
   // bound texture. This prevents regressions in non-textured fixed-function
