@@ -3964,8 +3964,9 @@ mod tests {
         ctrl.mmio_write(0x1000, 4, 2);
         ctrl.process(&mut mem);
 
-        // Request one sector more than the controller's max transfer (4MiB / 512 = 8192 sectors).
-        let sectors = (NVME_MAX_DMA_BYTES / 512) as u32 + 1;
+        // Request one sector more than the controller's max transfer
+        // (4MiB / 512B = 8192 sectors).
+        let sectors = (NVME_MAX_DMA_BYTES / SECTOR_SIZE) as u32 + 1;
         let nlb = sectors - 1;
 
         let mut cmd = build_command(0x02);
