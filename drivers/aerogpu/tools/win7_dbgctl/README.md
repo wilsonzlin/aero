@@ -244,6 +244,7 @@ Example output excerpt (`--status`):
 AeroGPU features:
   raw: lo=0x1f hi=0x0
   decoded: cursor, scanout, vblank, fence_page, transfer
+Last error: code=0 (NONE) fence=0x0 count=0
 ```
 
 Notes:
@@ -379,6 +380,7 @@ Escape ops used:
 - `AEROGPU_ESCAPE_OP_QUERY_DEVICE_V2` (fallback: `AEROGPU_ESCAPE_OP_QUERY_DEVICE`) → `--query-version` / `--query-device`
 - `AEROGPU_ESCAPE_OP_QUERY_FENCE` → `--query-fence`, `--watch-fence`
 - `AEROGPU_ESCAPE_OP_QUERY_PERF` → `--query-perf`
+- `AEROGPU_ESCAPE_OP_QUERY_ERROR` → reported inline by `--status` and `--query-perf` (last latched device error, if supported)
 - `AEROGPU_ESCAPE_OP_QUERY_SCANOUT` → `--query-scanout`, `--dump-scanout-bmp`, `--dump-scanout-png`
 - `AEROGPU_ESCAPE_OP_QUERY_CURSOR` → `--query-cursor`, `--dump-cursor-bmp`, `--dump-cursor-png`
 - `AEROGPU_ESCAPE_OP_DUMP_RING_V2` (fallback: `AEROGPU_ESCAPE_OP_DUMP_RING`) → `--dump-ring`, `--watch-ring`, `--dump-last-cmd`
