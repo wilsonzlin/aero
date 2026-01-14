@@ -3277,7 +3277,7 @@ function Get-AeroPciMsixInfoFromInfoPci {
 
   foreach ($raw in ($InfoPciText -split "`n")) {
     $line = $raw.TrimEnd("`r")
-    if ($line -match "^Bus\\s+(\\d+),\\s*device\\s+(\\d+),\\s*function\\s+(\\d+):") {
+    if ($line -match "^Bus\s+(\d+),\s*device\s+(\d+),\s*function\s+(\d+):") {
       if (($null -ne $vendor) -and ($null -ne $device)) {
         $infos += [pscustomobject]@{
           VendorId    = $vendor
@@ -3298,14 +3298,14 @@ function Get-AeroPciMsixInfoFromInfoPci {
       continue
     }
 
-    if ($line -match "\\bVendor\\s+ID:\\s*([0-9a-fA-Fx]+)\\s+Device\\s+ID:\\s*([0-9a-fA-Fx]+)\\b") {
+    if ($line -match "\bVendor\s+ID:\s*([0-9a-fA-Fx]+)\s+Device\s+ID:\s*([0-9a-fA-Fx]+)\b") {
       $vendor = Convert-AeroPciInt $Matches[1]
       $device = Convert-AeroPciInt $Matches[2]
       continue
     }
 
     if (($null -eq $vendor) -or ($null -eq $device)) {
-      if ($line -match "\\b([0-9a-fA-F]{4}):([0-9a-fA-F]{4})\\b") {
+      if ($line -match "\b([0-9a-fA-F]{4}):([0-9a-fA-F]{4})\b") {
         $vendor = Convert-AeroPciInt ("0x" + $Matches[1])
         $device = Convert-AeroPciInt ("0x" + $Matches[2])
       }
