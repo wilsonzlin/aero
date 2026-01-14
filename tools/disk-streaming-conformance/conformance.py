@@ -1765,6 +1765,9 @@ def _test_chunked_manifest_fetch(
 ) -> tuple[TestResult, HttpResponse | None, object | None]:
     name = "manifest: GET returns 200 and parses JSON"
     try:
+        # Read at most max_body_bytes+1 so we can distinguish "exactly hit cap" from
+        # "response is larger than cap" even when Content-Length is missing.
+        request_cap = max_body_bytes + 1
         headers: dict[str, str] = {"Accept-Encoding": "identity"}
         if origin is not None:
             headers["Origin"] = origin
@@ -1776,13 +1779,14 @@ def _test_chunked_manifest_fetch(
             method="GET",
             headers=headers,
             timeout_s=timeout_s,
-            max_body_bytes=max_body_bytes,
+            max_body_bytes=request_cap,
         )
         _require(200 <= resp.status < 300, f"expected 2xx, got {resp.status}")
-        if resp.body_truncated:
+        if len(resp.body) > max_body_bytes:
+            truncated = " (body truncated by safety cap)" if resp.body_truncated else ""
             raise TestFailure(
-                "manifest response body was truncated by safety cap; "
-                f"read {len(resp.body)} bytes (cap {_fmt_bytes(max_body_bytes)}). "
+                "manifest response exceeds safety cap; "
+                f"read {len(resp.body)} bytes{truncated} (cap {_fmt_bytes(max_body_bytes)}). "
                 "Increase --max-body-bytes to debug."
             )
 
@@ -1799,35 +1803,48 @@ def _test_chunked_manifest_fetch(
             # Chunks must be served as identity (checked elsewhere) because their bytes are
             # byte-addressed disk sectors.
             if tokens in ({"gzip"}, {"x-gzip"}):
-                with gzip.GzipFile(fileobj=io.BytesIO(body)) as f:
-                    decoded = f.read(max_body_bytes + 1)
-                    if len(decoded) > max_body_bytes:
+                try:
+                    with gzip.GzipFile(fileobj=io.BytesIO(body)) as f:
+                        decoded = f.read(max_body_bytes + 1)
+                except OSError as e:
+                    raise TestFailure(f"invalid gzip manifest: {e}") from None
+                if len(decoded) > max_body_bytes:
                         raise TestFailure(
                             "decoded manifest exceeds safety cap; "
                             f"decoded {len(decoded)} bytes (cap {_fmt_bytes(max_body_bytes)}). "
                             "Increase --max-body-bytes to debug."
                         )
-                    return decoded
+                return decoded
 
             if tokens == {"deflate"}:
-                decomp = zlib.decompressobj()
-                decoded = decomp.decompress(body, max_body_bytes + 1)
-                if len(decoded) > max_body_bytes:
-                    raise TestFailure(
-                        "decoded manifest exceeds safety cap; "
-                        f"decoded {len(decoded)} bytes (cap {_fmt_bytes(max_body_bytes)}). "
-                        "Increase --max-body-bytes to debug."
-                    )
-                decoded += decomp.flush(max_body_bytes + 1 - len(decoded))
-                if len(decoded) > max_body_bytes:
-                    raise TestFailure(
-                        "decoded manifest exceeds safety cap; "
-                        f"decoded {len(decoded)} bytes (cap {_fmt_bytes(max_body_bytes)}). "
-                        "Increase --max-body-bytes to debug."
-                    )
-                if not decomp.eof:
-                    raise TestFailure(f"deflate manifest did not reach end-of-stream (Content-Encoding={content_encoding!r})")
-                return decoded
+                # RFC 9110 defines deflate as zlib-wrapped DEFLATE. Some legacy servers send raw
+                # DEFLATE streams; try both.
+                for wbits in (zlib.MAX_WBITS, -zlib.MAX_WBITS):
+                    try:
+                        decomp = zlib.decompressobj(wbits)
+                        decoded = decomp.decompress(body, max_body_bytes + 1)
+                        if len(decoded) > max_body_bytes:
+                            raise TestFailure(
+                                "decoded manifest exceeds safety cap; "
+                                f"decoded {len(decoded)} bytes (cap {_fmt_bytes(max_body_bytes)}). "
+                                "Increase --max-body-bytes to debug."
+                            )
+                        decoded += decomp.flush(max_body_bytes + 1 - len(decoded))
+                        if len(decoded) > max_body_bytes:
+                            raise TestFailure(
+                                "decoded manifest exceeds safety cap; "
+                                f"decoded {len(decoded)} bytes (cap {_fmt_bytes(max_body_bytes)}). "
+                                "Increase --max-body-bytes to debug."
+                            )
+                        if not decomp.eof:
+                            raise TestFailure(
+                                f"deflate manifest did not reach end-of-stream (Content-Encoding={content_encoding!r})"
+                            )
+                        return decoded
+                    except zlib.error:
+                        continue
+
+                raise TestFailure(f"invalid deflate manifest (Content-Encoding={content_encoding!r})") from None
 
             raise TestFailure(
                 f"unsupported manifest Content-Encoding {content_encoding!r} "
@@ -2014,24 +2031,10 @@ def _test_cors_expose_last_modified_if_present(
     last_modified = _header(resp, "Last-Modified")
     if last_modified is None:
         return TestResult(name=name, status="SKIP", details="skipped (no Last-Modified header)")
-    expose = _header(resp, "Access-Control-Expose-Headers")
-    if expose is None:
-        return TestResult(
-            name=name,
-            status="WARN",
-            details=(
-                "Last-Modified is present but Access-Control-Expose-Headers is missing "
-                "(browsers won't expose Last-Modified to JS)"
-            ),
-        )
-    tokens = _csv_tokens(expose)
-    if "*" in tokens or "last-modified" in tokens:
-        return TestResult(name=name, status="PASS", details=f"Expose-Headers={expose!r}")
-    return TestResult(
-        name=name,
-        status="WARN",
-        details=f"Last-Modified not exposed via Access-Control-Expose-Headers: {expose!r}",
-    )
+    # `Last-Modified` is a CORS-safelisted response header and is exposed to JS by default.
+    # Keep this check as informational (PASS) to avoid noisy strict-mode failures on servers that
+    # reasonably only expose non-safelisted headers like ETag.
+    return TestResult(name=name, status="PASS", details=f"value={last_modified!r} (CORS-safelisted)")
 
 
 def _test_x_content_type_options_nosniff(*, name: str, resp: HttpResponse | None) -> TestResult:
@@ -2276,7 +2279,7 @@ def _main_chunked(args: argparse.Namespace) -> int:
 
                     # Read up to expected_len+1 so we can detect accidental extra bytes when
                     # Content-Length is missing.
-                    cap = min(max_body_bytes, max_bytes_per_chunk, expected_len + 1)
+                    cap = min(max_body_bytes + 1, max_bytes_per_chunk + 1, expected_len + 1)
                     resp = _request(
                         url=chunk_url,
                         method="GET",
