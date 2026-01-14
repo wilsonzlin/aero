@@ -316,6 +316,7 @@ All JSON outputs include:
 - New fields may be added over time; existing fields keep their meaning.
 - 64-bit counters are emitted as strings or `{ "hex": "...", "dec": "..." }` objects to avoid precision loss in JS runtimes.
 - On failure, `ok` is `false` and an `error` object is present. When available, `error.status` includes `ntstatus` and a Win32 translation.
+- For bounded “watch” commands, JSON output is capped to 10,000 samples to avoid excessive memory usage (dbgctl builds the full JSON payload in memory).
 
 ### JSON-supported commands
 
