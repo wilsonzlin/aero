@@ -156,10 +156,10 @@ Implementation note (bring-up):
 
 - In the web runtime, the EHCI PCI function exposes a **4 KiB MMIO BAR** (`web/src/io/devices/ehci.ts`).
 - The current `aero-usb` EHCI model only implements the subset of registers needed for early driver
-  bring-up (capability regs, operational regs, and `PORTSC[n]`). Reads from unimplemented offsets
-  inside the “core” register window return `0`; reads beyond the modelled window are treated as
-  open-bus (`0xff` bytes). This may be tightened to “reserved reads as 0” across the full 4 KiB
-  window as the model matures.
+  bring-up (capability regs, operational regs, the USB Legacy Support extended capability, and
+  `PORTSC[n]`). Reads from unimplemented offsets inside the “core” register window return `0`; reads
+  beyond the modelled window are treated as open-bus (`0xff` bytes). This may be tightened to
+  “reserved reads as 0” across the full 4 KiB window as the model matures.
 
 ### Capability registers (read-only)
 
@@ -218,8 +218,8 @@ The EHCI operational register block includes:
 - Status bits that are defined as **W1C** are W1C in Aero. Writes that attempt to set read-only
   bits are masked out.
 - `USBSTS.HCHALTED` is derived from `USBCMD.RunStop` and reset state; it is not directly writable.
-- The “schedule status” bits (`USBSTS.ASS` / `USBSTS.PSS`) are modeled as read-only bits derived
-  from `USBCMD.ASE` / `USBCMD.PSE` (and `USBCMD.RunStop`).
+- The “schedule status” bits (`USBSTS.ASS` / `USBSTS.PSS`) are part of the EHCI spec but are **not
+  currently modeled** in Aero’s implementation (reads return `0` for these bits).
 - `USBCMD.HCRESET` resets controller-local state (registers and scheduler bookkeeping) but should
   not implicitly detach devices from the root hub; device topology is modeled separately.
 - `USBCMD.IAAD` (Interrupt on Async Advance Doorbell) is implemented:
