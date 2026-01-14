@@ -314,3 +314,23 @@ fn replays_aerogpu_cmd_clear_b8g8r8x8_fixture_and_matches_hash() {
         );
     });
 }
+
+#[test]
+fn replays_aerogpu_cmd_copy_texture2d_subrect_fixture_and_matches_hash() {
+    let bytes = fs::read(fixture_path(
+        "aerogpu_cmd_copy_texture2d_subrect.aerogputrace",
+    ))
+    .expect("fixture file missing; run with AERO_UPDATE_TRACE_FIXTURES=1 to regenerate");
+    pollster::block_on(async {
+        let Some((width, height, hash)) = run_trace_and_hash(&bytes).await else {
+            return;
+        };
+        assert_eq!(width, 64);
+        assert_eq!(height, 64);
+        // Expected frame is a red background with a centered green 32x32 square.
+        assert_eq!(
+            hash,
+            "e1fa5ec4ae376ab32cf48b7f06df327e6a50b45cac336c410b39a3685d699a60"
+        );
+    });
+}
