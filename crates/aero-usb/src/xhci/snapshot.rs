@@ -497,7 +497,7 @@ impl IoSnapshot for XhciController {
         w.field_u32(TAG_USBCMD, self.usbcmd & regs::USBCMD_SNAPSHOT_MASK);
         // Store the derived USBSTS view so older snapshots that relied on USBSTS.EINT can still be
         // mapped back into `IMAN.IP` on restore.
-        w.field_u32(TAG_USBSTS, self.usbsts_read() & regs::USBSTS_SNAPSHOT_MASK);
+        w.field_u32(TAG_USBSTS, self.usbsts_read());
         w.field_u64(TAG_CRCR, self.crcr & regs::CRCR_SNAPSHOT_MASK);
         w.field_u8(TAG_PORT_COUNT, self.port_count);
         w.field_u64(TAG_DCBAAP, self.dcbaap & regs::DCBAAP_SNAPSHOT_MASK);
@@ -633,7 +633,7 @@ impl IoSnapshot for XhciController {
 
         // Architectural registers.
         self.usbcmd = r.u32(TAG_USBCMD)?.unwrap_or(0) & regs::USBCMD_SNAPSHOT_MASK;
-        let saved_usbsts = r.u32(TAG_USBSTS)?.unwrap_or(0) & regs::USBSTS_SNAPSHOT_MASK;
+        let saved_usbsts = r.u32(TAG_USBSTS)?.unwrap_or(0);
         // USBSTS.EINT/HCH/HCE are derived bits in the controller model.
         self.usbsts = saved_usbsts & !(regs::USBSTS_EINT | regs::USBSTS_HCH | regs::USBSTS_HCE);
         self.host_controller_error = r

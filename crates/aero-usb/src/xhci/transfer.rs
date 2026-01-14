@@ -177,8 +177,6 @@ impl XhciTransferExecutor {
     /// This is useful for wiring into xHCI doorbell behavior where the guest explicitly notifies
     /// the controller that a particular endpoint has new work available.
     pub fn poll_endpoint<M: MemoryBus + ?Sized>(&mut self, mem: &mut M, ep_addr: u8) {
-        self.device.tick_1ms();
-
         // See `tick_1ms`: move the endpoint map out to avoid holding a mutable borrow of
         // `self.endpoints` while calling helpers that need `&mut self`.
         let mut endpoints = core::mem::take(&mut self.endpoints);

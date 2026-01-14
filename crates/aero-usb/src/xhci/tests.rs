@@ -1215,9 +1215,7 @@ fn controller_snapshot_roundtrip_is_deterministic() {
     assert_eq!(restored.usbcmd, xhci.usbcmd & regs::USBCMD_SNAPSHOT_MASK);
     assert_eq!(
         restored.usbsts,
-        xhci.usbsts
-            & regs::USBSTS_SNAPSHOT_MASK
-            & !(regs::USBSTS_EINT | regs::USBSTS_HCH | regs::USBSTS_HCE)
+        xhci.usbsts & !(regs::USBSTS_EINT | regs::USBSTS_HCH | regs::USBSTS_HCE)
     );
     assert_eq!(restored.host_controller_error, xhci.host_controller_error);
     assert_eq!(restored.crcr, xhci.crcr & regs::CRCR_SNAPSHOT_MASK);
