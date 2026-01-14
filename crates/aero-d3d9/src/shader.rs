@@ -1900,14 +1900,14 @@ fn inst_value_expr(
 ) -> Option<String> {
     let expr = match inst.op {
         Op::Mov => {
-            let src0 = inst.src.get(0)?;
+            let src0 = inst.src.first()?;
             Some(apply_result_modifier(
                 src_expr(src0, const_defs_f32, const_base),
                 inst.result_modifier,
             ))
         }
         Op::Add | Op::Sub | Op::Mul => {
-            let src0 = inst.src.get(0)?;
+            let src0 = inst.src.first()?;
             let src1 = inst.src.get(1)?;
             let op = match inst.op {
                 Op::Add => "+",
@@ -1926,7 +1926,7 @@ fn inst_value_expr(
             ))
         }
         Op::Min | Op::Max => {
-            let src0 = inst.src.get(0)?;
+            let src0 = inst.src.first()?;
             let src1 = inst.src.get(1)?;
             let func = if inst.op == Op::Min { "min" } else { "max" };
             Some(apply_result_modifier(
@@ -1940,7 +1940,7 @@ fn inst_value_expr(
             ))
         }
         Op::Mad => {
-            let a = inst.src.get(0)?;
+            let a = inst.src.first()?;
             let b = inst.src.get(1)?;
             let c = inst.src.get(2)?;
             Some(apply_result_modifier(
@@ -1954,7 +1954,7 @@ fn inst_value_expr(
             ))
         }
         Op::Dp2Add => {
-            let a = inst.src.get(0)?;
+            let a = inst.src.first()?;
             let b = inst.src.get(1)?;
             let c = inst.src.get(2)?;
             let a = src_expr(a, const_defs_f32, const_base);
@@ -1966,7 +1966,7 @@ fn inst_value_expr(
             ))
         }
         Op::Lrp => {
-            let t = inst.src.get(0)?;
+            let t = inst.src.first()?;
             let a = inst.src.get(1)?;
             let b = inst.src.get(2)?;
             // D3D9 `lrp`: dst = t * a + (1 - t) * b = mix(b, a, t).
@@ -1981,7 +1981,7 @@ fn inst_value_expr(
             ))
         }
         Op::Cmp => {
-            let cond = inst.src.get(0)?;
+            let cond = inst.src.first()?;
             let a = inst.src.get(1)?;
             let b = inst.src.get(2)?;
             // Per-component compare: if cond >= 0 then a else b.
@@ -1996,7 +1996,7 @@ fn inst_value_expr(
             ))
         }
         Op::Slt | Op::Sge | Op::Seq | Op::Sne => {
-            let a = inst.src.get(0)?;
+            let a = inst.src.first()?;
             let b = inst.src.get(1)?;
             let op = match inst.op {
                 Op::Slt => "<",
@@ -2016,7 +2016,7 @@ fn inst_value_expr(
             ))
         }
         Op::Dp2 | Op::Dp3 | Op::Dp4 => {
-            let a = inst.src.get(0)?;
+            let a = inst.src.first()?;
             let b = inst.src.get(1)?;
             let a = src_expr(a, const_defs_f32, const_base);
             let b = src_expr(b, const_defs_f32, const_base);
@@ -2036,7 +2036,7 @@ fn inst_value_expr(
             sampler_texture_types,
         )),
         Op::Rcp => {
-            let src0 = inst.src.get(0)?;
+            let src0 = inst.src.first()?;
             Some(apply_result_modifier(
                 format!(
                     "(vec4<f32>(1.0) / {})",
@@ -2046,7 +2046,7 @@ fn inst_value_expr(
             ))
         }
         Op::Rsq => {
-            let src0 = inst.src.get(0)?;
+            let src0 = inst.src.first()?;
             Some(apply_result_modifier(
                 format!(
                     "inverseSqrt({})",
@@ -2056,14 +2056,14 @@ fn inst_value_expr(
             ))
         }
         Op::Exp => {
-            let src0 = inst.src.get(0)?;
+            let src0 = inst.src.first()?;
             Some(apply_result_modifier(
                 format!("exp2({})", src_expr(src0, const_defs_f32, const_base)),
                 inst.result_modifier,
             ))
         }
         Op::Log => {
-            let src0 = inst.src.get(0)?;
+            let src0 = inst.src.first()?;
             Some(apply_result_modifier(
                 format!("log2({})", src_expr(src0, const_defs_f32, const_base)),
                 inst.result_modifier,
@@ -2073,7 +2073,7 @@ fn inst_value_expr(
             Some(derivative_expr(inst, const_defs_f32, const_base, inst.op))
         }
         Op::Pow => {
-            let src0 = inst.src.get(0)?;
+            let src0 = inst.src.first()?;
             let src1 = inst.src.get(1)?;
             Some(apply_result_modifier(
                 format!(
@@ -2085,7 +2085,7 @@ fn inst_value_expr(
             ))
         }
         Op::Frc => {
-            let src0 = inst.src.get(0)?;
+            let src0 = inst.src.first()?;
             Some(apply_result_modifier(
                 format!("fract({})", src_expr(src0, const_defs_f32, const_base)),
                 inst.result_modifier,

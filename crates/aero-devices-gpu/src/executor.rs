@@ -901,7 +901,7 @@ impl AeroGpuExecutor {
         }
 
         enc = enc.u32(self.in_flight.len() as u32);
-        for (_fence, entry) in &self.in_flight {
+        for entry in self.in_flight.values() {
             let desc = &entry.desc;
             let kind = match entry.kind {
                 PendingFenceKind::Immediate => 0u8,

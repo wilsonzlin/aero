@@ -756,7 +756,7 @@ fn irq_ack_sub_dword_writes_clear_the_correct_bit_lanes() {
 
     dev.regs.irq_status = irq_bits::FENCE | irq_bits::ERROR;
     // Enable both bits using sub-dword writes to ensure byte-lane merges preserve the other bytes.
-    dev.write(mmio::IRQ_ENABLE + 0, 1, 0x01);
+    dev.write(mmio::IRQ_ENABLE, 1, 0x01);
     dev.write(mmio::IRQ_ENABLE + 3, 1, 0x80);
     assert!(dev.irq_level());
 
@@ -767,7 +767,7 @@ fn irq_ack_sub_dword_writes_clear_the_correct_bit_lanes() {
     assert!(dev.irq_level());
 
     // Clear FENCE via the low byte lane.
-    dev.write(mmio::IRQ_ACK + 0, 1, 0x01);
+    dev.write(mmio::IRQ_ACK, 1, 0x01);
     assert_eq!(dev.regs.irq_status, 0);
     assert!(!dev.irq_level());
 }
