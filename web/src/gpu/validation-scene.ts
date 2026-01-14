@@ -83,8 +83,18 @@ export async function renderGpuColorTestCardAndHash(canvas: HTMLCanvasElement, o
   if (opts.backend === "webgpu") {
     const presenter = await WebGpuPresenter.create(canvas, common);
     presenter.setSourceRgba8(card, width, height);
-    const out = await presenter.presentAndReadbackRgba8();
-    return await sha256Hex(out);
+    try {
+      const out = await presenter.presentAndReadbackRgba8();
+      return await sha256Hex(out);
+    } finally {
+      // Avoid leaking a WebGPU device when running multiple validation scenes in one session.
+      // (This presenter is not performance-critical; explicit cleanup keeps tests deterministic.)
+      try {
+        presenter.destroy();
+      } catch {
+        // Ignore; best-effort cleanup.
+      }
+    }
   }
 
   throw new Error(`unknown backend: ${opts.backend}`);
