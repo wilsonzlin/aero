@@ -862,7 +862,7 @@ bool TestFvfXyzDiffuseEmitsTransformConstantsAndDecl() {
   return true;
 }
 
-bool TestFvfXyzDiffuseDrawPrimitiveVbCpuTransformsAndBindsScratchVb() {
+bool TestFvfXyzDiffuseDrawPrimitiveVbUploadsWvpAndBindsVb() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
     return false;
@@ -1619,7 +1619,7 @@ bool TestFvfXyzDiffuseTex1EmitsTransformConstantsAndDecl() {
   return true;
 }
 
-bool TestFvfXyzDiffuseTex1DrawPrimitiveVbCpuTransformsAndBindsScratchVb() {
+bool TestFvfXyzDiffuseTex1DrawPrimitiveVbUploadsWvpAndBindsVb() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
     return false;
@@ -2635,7 +2635,7 @@ bool TestVertexDeclXyzTex1InfersFvfAndUploadsWvp() {
   return true;
 }
 
-bool TestVertexDeclXyzDiffuseDrawPrimitiveVbCpuTransformsAndRestoresDecl() {
+bool TestVertexDeclXyzDiffuseDrawPrimitiveVbUploadsWvpAndRestoresDecl() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
     return false;
@@ -2911,7 +2911,7 @@ bool TestVertexDeclXyzDiffuseDrawPrimitiveVbCpuTransformsAndRestoresDecl() {
   return true;
 }
 
-bool TestVertexDeclXyzDiffuseTex1DrawPrimitiveVbCpuTransformsAndRestoresDecl() {
+bool TestVertexDeclXyzDiffuseTex1DrawPrimitiveVbUploadsWvpAndRestoresDecl() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
     return false;
@@ -4983,7 +4983,7 @@ int main() {
   if (!aerogpu::TestFvfXyzDiffuseEmitsTransformConstantsAndDecl()) {
     return 1;
   }
-  if (!aerogpu::TestFvfXyzDiffuseDrawPrimitiveVbCpuTransformsAndBindsScratchVb()) {
+  if (!aerogpu::TestFvfXyzDiffuseDrawPrimitiveVbUploadsWvpAndBindsVb()) {
     return 1;
   }
   if (!aerogpu::TestFvfXyzrhwDiffuseTex1EmitsTextureAndShaders()) {
@@ -4995,7 +4995,7 @@ int main() {
   if (!aerogpu::TestFvfXyzDiffuseTex1EmitsTransformConstantsAndDecl()) {
     return 1;
   }
-  if (!aerogpu::TestFvfXyzDiffuseTex1DrawPrimitiveVbCpuTransformsAndBindsScratchVb()) {
+  if (!aerogpu::TestFvfXyzDiffuseTex1DrawPrimitiveVbUploadsWvpAndBindsVb()) {
     return 1;
   }
   if (!aerogpu::TestFvfXyzrhwTex1EmitsTextureAndShaders()) {
@@ -5013,10 +5013,10 @@ int main() {
   if (!aerogpu::TestVertexDeclXyzTex1InfersFvfAndUploadsWvp()) {
     return 1;
   }
-  if (!aerogpu::TestVertexDeclXyzDiffuseDrawPrimitiveVbCpuTransformsAndRestoresDecl()) {
+  if (!aerogpu::TestVertexDeclXyzDiffuseDrawPrimitiveVbUploadsWvpAndRestoresDecl()) {
     return 1;
   }
-  if (!aerogpu::TestVertexDeclXyzDiffuseTex1DrawPrimitiveVbCpuTransformsAndRestoresDecl()) {
+  if (!aerogpu::TestVertexDeclXyzDiffuseTex1DrawPrimitiveVbUploadsWvpAndRestoresDecl()) {
     return 1;
   }
   if (!aerogpu::TestSetTextureStageStateUpdatesPsForTex1NoDiffuseFvfs()) {
