@@ -409,7 +409,7 @@ impl Tier1WasmCodegen {
         } else {
             None
         };
-        let ty_jit_exit_mmio = if options.inline_tlb {
+        let ty_jit_exit_mmio = if options.inline_tlb && options.inline_tlb_mmio_exit {
             let ty = types.len();
             types.ty().function(
                 [
@@ -468,7 +468,8 @@ impl Tier1WasmCodegen {
             mem_write_u32: needs_mem_write_u32.then(|| next(&mut next_func)),
             mem_write_u64: needs_mem_write_u64.then(|| next(&mut next_func)),
             mmu_translate: options.inline_tlb.then(|| next(&mut next_func)),
-            jit_exit_mmio: options.inline_tlb.then(|| next(&mut next_func)),
+            jit_exit_mmio: (options.inline_tlb && options.inline_tlb_mmio_exit)
+                .then(|| next(&mut next_func)),
             jit_exit: needs_jit_exit.then(|| next(&mut next_func)),
             count: next_func - func_base,
         };
@@ -536,7 +537,7 @@ impl Tier1WasmCodegen {
                 EntityType::Function(ty_mmu_translate.expect("type for mmu_translate")),
             );
         }
-        if options.inline_tlb {
+        if options.inline_tlb && options.inline_tlb_mmio_exit {
             imports.import(
                 IMPORT_MODULE,
                 IMPORT_JIT_EXIT_MMIO,

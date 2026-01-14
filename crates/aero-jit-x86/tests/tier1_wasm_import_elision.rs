@@ -1,11 +1,14 @@
 use aero_jit_x86::tier1::ir::{IrBuilder, IrTerminator};
 use aero_jit_x86::tier1::Tier1WasmCodegen;
+#[cfg(feature = "tier1-inline-tlb")]
+use aero_jit_x86::tier1::Tier1WasmOptions;
 use aero_jit_x86::wasm::{
     IMPORT_JIT_EXIT, IMPORT_MEM_READ_U16, IMPORT_MEM_READ_U64, IMPORT_MEM_READ_U8,
-    IMPORT_MEM_WRITE_U16,
-    IMPORT_MEM_WRITE_U32,
-    IMPORT_MEM_WRITE_U64, IMPORT_MEM_WRITE_U8, IMPORT_MEMORY, IMPORT_MODULE,
+    IMPORT_MEM_WRITE_U16, IMPORT_MEM_WRITE_U32, IMPORT_MEM_WRITE_U64, IMPORT_MEM_WRITE_U8,
+    IMPORT_MEMORY, IMPORT_MODULE,
 };
+#[cfg(feature = "tier1-inline-tlb")]
+use aero_jit_x86::wasm::{IMPORT_JIT_EXIT_MMIO, IMPORT_MEM_READ_U32, IMPORT_MMU_TRANSLATE};
 use aero_types::Width;
 use wasmparser::{Parser, Payload, TypeRef};
 
@@ -281,5 +284,46 @@ fn tier1_block_with_u64_load_and_call_helper_reuses_i64_return_type() {
         type_count(&wasm),
         2,
         "expected mem_read_u64 and jit_exit to share the (i32,i64)->i64 type plus the block signature"
+    );
+}
+
+#[cfg(feature = "tier1-inline-tlb")]
+#[test]
+fn tier1_inline_tlb_mmio_fallback_does_not_import_jit_exit_mmio() {
+    let mut b = IrBuilder::new(0x1000);
+    let addr = b.const_int(Width::W64, 0);
+    let _value = b.load(Width::W32, addr);
+    let ir = b.finish(IrTerminator::Jump { target: 0x2000 });
+    ir.validate().unwrap();
+
+    let wasm = Tier1WasmCodegen::new().compile_block_with_options(
+        &ir,
+        Tier1WasmOptions {
+            inline_tlb: true,
+            inline_tlb_mmio_exit: false,
+            ..Default::default()
+        },
+    );
+    let imports = import_entries(&wasm);
+
+    let mut found_translate = false;
+    let mut found_mem_read_u32 = false;
+    for (module, name, _ty) in &imports {
+        if module == IMPORT_MODULE && name == IMPORT_MMU_TRANSLATE {
+            found_translate = true;
+        }
+        if module == IMPORT_MODULE && name == IMPORT_MEM_READ_U32 {
+            found_mem_read_u32 = true;
+        }
+        assert_ne!(
+            name, IMPORT_JIT_EXIT_MMIO,
+            "expected Tier-1 block with inline_tlb_mmio_exit=false to not import env.jit_exit_mmio, got {imports:?}"
+        );
+    }
+
+    assert!(found_translate, "expected env.mmu_translate import when inline_tlb=true");
+    assert!(
+        found_mem_read_u32,
+        "expected env.mem_read_u32 import for MMIO fallback slow path"
     );
 }
