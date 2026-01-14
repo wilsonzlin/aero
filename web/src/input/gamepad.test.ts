@@ -98,6 +98,25 @@ describe("packGamepadReport", () => {
     expect(bytes[5]).toBe(0x7f);
     expect(bytes[6]).toBe(0x81);
   });
+
+  it("normalizes non-finite hat/axis values", () => {
+    const { packedLo, packedHi } = packGamepadReport({
+      buttons: 0,
+      hat: Number.NaN,
+      x: Number.POSITIVE_INFINITY,
+      y: Number.NEGATIVE_INFINITY,
+      rx: Number.NaN,
+      ry: 1.9,
+    });
+
+    const bytes = Array.from(unpackGamepadReport(packedLo, packedHi));
+    expect(bytes[2]).toBe(GAMEPAD_HAT_NEUTRAL);
+    // `| 0` coerces non-finite values to 0.
+    expect(bytes[3]).toBe(0x00);
+    expect(bytes[4]).toBe(0x00);
+    expect(bytes[5]).toBe(0x00);
+    expect(bytes[6]).toBe(0x01);
+  });
 });
 
 describe("hid_gamepad_report_vectors fixture", () => {
