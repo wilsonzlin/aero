@@ -209,6 +209,9 @@ async function startUdpEchoServerDifferentSourcePort(socketType, host) {
 
 async function startUdpServerWithDelayedRepeat(socketType, host, { delayMs, latePayload }) {
   const socket = dgram.createSocket(socketType);
+  socket.on("error", () => {
+    // ignore errors caused by races between timers and socket teardown
+  });
   const bound = await new Promise((resolve) => {
     socket.once("error", () => resolve(false));
     socket.bind(0, host, () => resolve(true));
@@ -218,20 +221,33 @@ async function startUdpServerWithDelayedRepeat(socketType, host, { delayMs, late
     return null;
   }
 
+  let closed = false;
   let scheduled = false;
+  let timer;
   socket.on("message", (msg, rinfo) => {
     socket.send(msg, rinfo.port, rinfo.address);
     if (scheduled) return;
     scheduled = true;
-    setTimeout(() => {
-      socket.send(latePayload ?? msg, rinfo.port, rinfo.address);
+    timer = setTimeout(() => {
+      if (closed) return;
+      try {
+        socket.send(latePayload ?? msg, rinfo.port, rinfo.address);
+      } catch {
+        // ignore
+      }
     }, delayMs);
+    timer.unref?.();
   });
 
   const { port } = socket.address();
   return {
     port,
-    close: () => new Promise((resolve) => socket.close(resolve)),
+    close: () =>
+      new Promise((resolve) => {
+        closed = true;
+        if (timer) clearTimeout(timer);
+        socket.close(resolve);
+      }),
   };
 }
 
@@ -2574,6 +2590,143 @@ test("expires UDP remote allowlist entries after UDP_REMOTE_ALLOWLIST_IDLE_TIMEO
     expect(getCounter(after, allowlistDropMetric)).toBeGreaterThanOrEqual(expectedMinDrops);
   } finally {
     await Promise.all([web.close(), relay.kill(), echo?.close()]);
+  }
+});
+
+test("evicts UDP remote allowlist entries when MAX_ALLOWED_REMOTES_PER_BINDING is exceeded", async ({ page }) => {
+  const echoA = await startUdpServerWithDelayedRepeat("udp4", "127.0.0.1", {
+    delayMs: 1_000,
+    latePayload: Buffer.from("late from A"),
+  });
+  const echoB = await startUdpEchoServer("udp4", "127.0.0.1");
+  test.skip(!echoA || !echoB, "udp4 not supported in test environment");
+  const relay = await spawnRelayServer({
+    MAX_ALLOWED_REMOTES_PER_BINDING: "1",
+    UDP_REMOTE_ALLOWLIST_IDLE_TIMEOUT: "10s",
+  });
+  const web = await startWebServer();
+  const allowlistDropMetric = "udp_remote_allowlist_overflow_drops_total";
+  const allowlistEvictMetric = "udp_remote_allowlist_evictions_total";
+
+  try {
+    await page.goto(web.url);
+
+    const before = await getRelayEventCounters(relay.port);
+
+    const res = await page.evaluate(
+      async ({ relayPort, echoPortA, echoPortB }) => {
+        const ws = new WebSocket(`ws://127.0.0.1:${relayPort}/udp`);
+        ws.binaryType = "arraybuffer";
+        await new Promise((resolve, reject) => {
+          ws.addEventListener("open", () => resolve(), { once: true });
+          ws.addEventListener("error", () => reject(new Error("ws error")), { once: true });
+        });
+
+        const waitForDatagram = async ({ timeoutMs }) =>
+          await new Promise((resolve, reject) => {
+            let timeout;
+            let done = false;
+            const onMessage = (event) => {
+              (async () => {
+                let data = event.data;
+                if (typeof data === "string") {
+                  let msg;
+                  try {
+                    msg = JSON.parse(data);
+                  } catch {
+                    return;
+                  }
+                  if (msg?.type === "ready") {
+                    return;
+                  }
+                  if (msg?.type === "error") {
+                    throw new Error(`udp websocket error: ${msg.code ?? "unknown"}: ${msg.message ?? ""}`);
+                  }
+                  return;
+                }
+                if (data instanceof Blob) {
+                  data = await data.arrayBuffer();
+                }
+                if (!(data instanceof ArrayBuffer)) {
+                  throw new Error(`unexpected websocket message type: ${typeof data}`);
+                }
+                if (done) return;
+                done = true;
+                cleanup();
+                resolve(new Uint8Array(data));
+              })().catch((err) => {
+                if (done) return;
+                done = true;
+                cleanup();
+                reject(err);
+              });
+            };
+            const cleanup = () => {
+              ws.removeEventListener("message", onMessage);
+              clearTimeout(timeout);
+            };
+            timeout = setTimeout(() => {
+              if (done) return;
+              done = true;
+              cleanup();
+              resolve(null);
+            }, timeoutMs);
+            ws.addEventListener("message", onMessage);
+          });
+
+        const guestPort = 10_000;
+        const buildFrame = (remotePort, text) => {
+          const payload = new TextEncoder().encode(text);
+          const frame = new Uint8Array(8 + payload.length);
+          frame[0] = (guestPort >> 8) & 0xff;
+          frame[1] = guestPort & 0xff;
+          frame.set([127, 0, 0, 1], 2);
+          frame[6] = (remotePort >> 8) & 0xff;
+          frame[7] = remotePort & 0xff;
+          frame.set(payload, 8);
+          return frame;
+        };
+
+        const sendAndRecvText = async (remotePort, text) => {
+          const frame = buildFrame(remotePort, text);
+          const respPromise = waitForDatagram({ timeoutMs: 10_000 });
+          ws.send(frame);
+          const resp = await respPromise;
+          if (!resp) throw new Error(`timed out waiting for datagram response for ${text}`);
+          if (resp.length < 8) throw new Error("echoed frame too short");
+          return new TextDecoder().decode(resp.slice(8));
+        };
+
+        const textA = await sendAndRecvText(echoPortA, "hello A");
+        // MAX_ALLOWED_REMOTES_PER_BINDING=1 should evict the first remote once we
+        // talk to a second destination on the same guest port binding.
+        const textB = await sendAndRecvText(echoPortB, "hello B");
+
+        // A now sends a delayed datagram. If eviction worked, we should not see it.
+        const late = await waitForDatagram({ timeoutMs: 2_500 });
+        const lateText = late ? new TextDecoder().decode(late.slice(8)) : null;
+
+        ws.close();
+        return { textA, textB, gotLate: late !== null, lateText };
+      },
+      { relayPort: relay.port, echoPortA: echoA.port, echoPortB: echoB.port },
+    );
+
+    expect(res.textA).toBe("hello A");
+    expect(res.textB).toBe("hello B");
+    if (res.gotLate) {
+      throw new Error(`expected allowlist entry A to be evicted; received datagram: ${res.lateText ?? "<unknown>"}`);
+    }
+
+    const beforeEvictions = getCounter(before, allowlistEvictMetric);
+    const afterEvictions = await waitForRelayEventCounterAtLeast(relay.port, allowlistEvictMetric, beforeEvictions + 1);
+    expect(getCounter(afterEvictions, allowlistEvictMetric)).toBeGreaterThanOrEqual(beforeEvictions + 1);
+
+    const beforeDrops = getCounter(before, allowlistDropMetric);
+    const afterDrops = await waitForRelayEventCounterAtLeast(relay.port, allowlistDropMetric, beforeDrops + 1, { timeoutMs: 8_000 });
+    expect(getCounter(afterDrops, allowlistDropMetric)).toBeGreaterThanOrEqual(beforeDrops + 1);
+  } finally {
+    await Promise.all([web.close(), relay.kill(), echoA?.close(), echoB?.close()]);
   }
 });
 
