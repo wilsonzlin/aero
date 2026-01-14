@@ -1,4 +1,4 @@
-use crate::{PcPlatform, SharedPciIoBarRouter};
+use crate::{PcPlatform, ResetEvent, SharedPciIoBarRouter};
 use aero_cpu_core::interrupts::InterruptController as CpuInterruptController;
 use aero_cpu_core::mem::CpuBus;
 use aero_cpu_core::Exception;
@@ -352,7 +352,16 @@ impl CpuBus for PcCpuBus {
         //
         // Stop at the next instruction boundary once a reset is pending by failing instruction
         // fetch; the outer machine loop converts the latched reset into a `RunExit::ResetRequested`.
-        if !self.platform.reset_events.borrow().is_empty() {
+        //
+        // Note: ACPI S5 power-off requests are also surfaced through `ResetEvent`, but do not
+        // require this immediate stop-at-boundary behavior (they are not resets).
+        if self
+            .platform
+            .reset_events
+            .borrow()
+            .iter()
+            .any(|ev| matches!(ev, ResetEvent::Cpu | ResetEvent::System))
+        {
             return Err(Exception::Unimplemented("reset requested"));
         }
         let mut buf = [0u8; 15];
