@@ -128,11 +128,11 @@ impl Port {
             // Guest EHCI drivers consult PORTSC.HSP + PORTSC.LS (line status) to determine the
             // attached device speed and decide whether to hand off a port to a companion controller.
             //
-            // Contract (matches `Usb2PortMux`):
+            // Contract (matches `Usb2PortMux` / EHCI 1.0 spec line-status encoding):
             // - High-speed devices set HSP (when EHCI-owned) and clear the LS bits.
-            // - Full-speed devices clear HSP and report idle J-state via LS=0b01.
-            // - Low-speed devices clear HSP and report idle K-state via LS=0b10.
-            // - While resuming at full/low speed, report a K-state.
+            // - Full-speed devices clear HSP and report idle J-state via LS=0b10.
+            // - Low-speed devices clear HSP and report idle K-state via LS=0b01.
+            // - While resuming at full/low speed, report a K-state (LS=0b01).
             if let Some(dev) = self.device.as_ref() {
                 let speed = dev.speed();
 
@@ -145,19 +145,19 @@ impl Port {
                     let ls: u32 = if speed == UsbSpeed::High {
                         0
                     } else if self.resuming {
-                        0b10
+                        0b01
                     } else {
                         match speed {
-                            UsbSpeed::Full => 0b01, // J-state (D+ high)
-                            UsbSpeed::Low => 0b10,  // K-state (D- high)
                             UsbSpeed::High => 0,
+                            UsbSpeed::Full => 0b10, // J-state (D+ high)
+                            UsbSpeed::Low => 0b01,  // K-state (D- high)
                         }
                     };
                     v |= ls << 10;
                 }
             } else if !self.reset {
                 // No device object (should be rare); preserve previous MVP behaviour.
-                let ls = if self.resuming { 0b10 } else { 0b01 };
+                let ls = if self.resuming { 0b01 } else { 0b10 };
                 v |= (ls as u32) << 10;
             }
         }
