@@ -962,8 +962,19 @@ static BOOLEAN AerovblkQueueRequest(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, _
       return FALSE;
     }
 
-    AerovblkCompleteSrb(devExt, srb, SRB_STATUS_ERROR);
-    return TRUE;
+    /*
+     * Any other virtqueue error indicates internal corruption or invalid device
+     * behaviour. Ask StorPort to reset so we can rebuild the queue and abort
+     * outstanding requests safely. Leave the SRB pending so StorPort can retry
+     * after recovery.
+     */
+#if DBG
+    AEROVBLK_LOG("virtqueue_split_add_sg failed vqRes=%d; requesting ResetDetected", vqRes);
+#endif
+    if (InterlockedCompareExchange(&devExt->ResetPending, 1, 0) == 0) {
+      StorPortNotification(ResetDetected, devExt, 0);
+    }
+    return FALSE;
   }
 
   needKick = AerovblkVirtqueueKickPrepareContractV1(&devExt->Vq);
