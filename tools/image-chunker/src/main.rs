@@ -5057,6 +5057,153 @@ mod tests {
         Ok(())
     }
 
+    fn dummy_s3_verify_args() -> VerifyArgs {
+        VerifyArgs {
+            manifest_url: None,
+            manifest_file: None,
+            header: Vec::new(),
+            bucket: Some("bucket".to_string()),
+            prefix: Some("images/demo/sha256-abc/".to_string()),
+            manifest_key: None,
+            image_id: None,
+            image_version: None,
+            endpoint: None,
+            force_path_style: false,
+            region: "us-east-1".to_string(),
+            concurrency: 1,
+            retries: 1,
+            max_chunks: MAX_CHUNKS,
+            chunk_sample: None,
+            chunk_sample_seed: None,
+        }
+    }
+
+    #[test]
+    fn validate_verify_args_rejects_header_without_manifest_url() {
+        let args = VerifyArgs {
+            manifest_url: None,
+            manifest_file: Some(PathBuf::from("manifest.json")),
+            header: vec!["authorization: bearer test".to_string()],
+            bucket: None,
+            prefix: None,
+            manifest_key: None,
+            image_id: None,
+            image_version: None,
+            endpoint: None,
+            force_path_style: false,
+            region: "us-east-1".to_string(),
+            concurrency: 1,
+            retries: 1,
+            max_chunks: MAX_CHUNKS,
+            chunk_sample: None,
+            chunk_sample_seed: None,
+        };
+        let err = validate_verify_args(&args).expect_err("expected validation failure");
+        assert!(
+            err.to_string().contains("--header can only be used with --manifest-url"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_verify_args_rejects_manifest_url_with_s3_options() {
+        let args = VerifyArgs {
+            manifest_url: Some("http://example.com/manifest.json".to_string()),
+            manifest_file: None,
+            header: Vec::new(),
+            bucket: Some("bucket".to_string()),
+            prefix: Some("images/demo/".to_string()),
+            manifest_key: None,
+            image_id: None,
+            image_version: None,
+            endpoint: None,
+            force_path_style: false,
+            region: "us-east-1".to_string(),
+            concurrency: 1,
+            retries: 1,
+            max_chunks: MAX_CHUNKS,
+            chunk_sample: None,
+            chunk_sample_seed: None,
+        };
+        let err = validate_verify_args(&args).expect_err("expected validation failure");
+        assert!(
+            err.to_string()
+                .contains("--manifest-url/--manifest-file cannot be combined with S3 options"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_verify_args_rejects_missing_bucket_when_no_manifest() {
+        let args = VerifyArgs {
+            bucket: None,
+            prefix: None,
+            manifest_key: None,
+            ..dummy_s3_verify_args()
+        };
+        let err = validate_verify_args(&args).expect_err("expected validation failure");
+        assert!(
+            err.to_string()
+                .contains("either --manifest-url/--manifest-file or --bucket is required"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_verify_args_rejects_missing_prefix_and_manifest_key() {
+        let args = VerifyArgs {
+            bucket: Some("bucket".to_string()),
+            prefix: None,
+            manifest_key: None,
+            ..dummy_s3_verify_args()
+        };
+        let err = validate_verify_args(&args).expect_err("expected validation failure");
+        assert!(
+            err.to_string()
+                .contains("--prefix or --manifest-key is required with --bucket"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_verify_args_rejects_max_chunks_exceeding_limit() {
+        let args = VerifyArgs {
+            max_chunks: MAX_CHUNKS + 1,
+            ..dummy_s3_verify_args()
+        };
+        let err = validate_verify_args(&args).expect_err("expected validation failure");
+        assert!(
+            err.to_string().contains("--max-chunks cannot exceed"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_verify_args_rejects_zero_concurrency() {
+        let args = VerifyArgs {
+            concurrency: 0,
+            ..dummy_s3_verify_args()
+        };
+        let err = validate_verify_args(&args).expect_err("expected validation failure");
+        assert!(
+            err.to_string().contains("--concurrency must be > 0"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_verify_args_rejects_zero_retries() {
+        let args = VerifyArgs {
+            retries: 0,
+            ..dummy_s3_verify_args()
+        };
+        let err = validate_verify_args(&args).expect_err("expected validation failure");
+        assert!(
+            err.to_string().contains("--retries must be > 0"),
+            "unexpected error: {err}"
+        );
+    }
+
     #[test]
     fn chunk_sample_seed_requires_chunk_sample_flag() {
         let err = Cli::try_parse_from([
@@ -5074,6 +5221,201 @@ mod tests {
             err.to_string().contains("--chunk-sample"),
             "unexpected error: {err}"
         );
+    }
+
+    #[tokio::test]
+    async fn verify_http_manifest_url_rejects_image_id_mismatch() -> Result<()> {
+        let chunk_size: u64 = 1024;
+        let chunk0 = vec![b'a'; chunk_size as usize];
+        let chunk1 = vec![b'b'; 512];
+        let total_size = (chunk0.len() + chunk1.len()) as u64;
+
+        let sha256_by_index = vec![Some(sha256_hex(&chunk0)), Some(sha256_hex(&chunk1))];
+        let manifest = build_manifest_v1(
+            total_size,
+            chunk_size,
+            "demo",
+            "v1",
+            ChecksumAlgorithm::Sha256,
+            &sha256_by_index,
+        )?;
+        let manifest_bytes = serde_json::to_vec_pretty(&manifest).context("serialize manifest")?;
+
+        let responder: Arc<
+            dyn Fn(TestHttpRequest) -> (u16, Vec<(String, String)>, Vec<u8>)
+                + Send
+                + Sync
+                + 'static,
+        > = Arc::new(move |req: TestHttpRequest| match req.path.as_str() {
+            "/manifest.json" => (200, Vec::new(), manifest_bytes.clone()),
+            _ => (404, Vec::new(), b"not found".to_vec()),
+        });
+        let (base_url, shutdown_tx, server_handle) = start_test_http_server(responder).await?;
+
+        let result = verify(VerifyArgs {
+            manifest_url: Some(format!("{base_url}/manifest.json")),
+            manifest_file: None,
+            header: Vec::new(),
+            bucket: None,
+            prefix: None,
+            manifest_key: None,
+            image_id: Some("wrong".to_string()),
+            image_version: None,
+            endpoint: None,
+            force_path_style: false,
+            region: "us-east-1".to_string(),
+            concurrency: 2,
+            retries: 1,
+            max_chunks: MAX_CHUNKS,
+            chunk_sample: None,
+            chunk_sample_seed: None,
+        })
+        .await;
+
+        let _ = shutdown_tx.send(());
+        let _ = server_handle.await;
+
+        let err = result.expect_err("expected verify failure");
+        assert!(
+            err.to_string().contains("manifest imageId mismatch"),
+            "unexpected error: {err:?}"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn verify_http_manifest_url_rejects_image_version_mismatch() -> Result<()> {
+        let chunk_size: u64 = 1024;
+        let chunk0 = vec![b'a'; chunk_size as usize];
+        let chunk1 = vec![b'b'; 512];
+        let total_size = (chunk0.len() + chunk1.len()) as u64;
+
+        let sha256_by_index = vec![Some(sha256_hex(&chunk0)), Some(sha256_hex(&chunk1))];
+        let manifest = build_manifest_v1(
+            total_size,
+            chunk_size,
+            "demo",
+            "v1",
+            ChecksumAlgorithm::Sha256,
+            &sha256_by_index,
+        )?;
+        let manifest_bytes = serde_json::to_vec_pretty(&manifest).context("serialize manifest")?;
+
+        let responder: Arc<
+            dyn Fn(TestHttpRequest) -> (u16, Vec<(String, String)>, Vec<u8>)
+                + Send
+                + Sync
+                + 'static,
+        > = Arc::new(move |req: TestHttpRequest| match req.path.as_str() {
+            "/manifest.json" => (200, Vec::new(), manifest_bytes.clone()),
+            _ => (404, Vec::new(), b"not found".to_vec()),
+        });
+        let (base_url, shutdown_tx, server_handle) = start_test_http_server(responder).await?;
+
+        let result = verify(VerifyArgs {
+            manifest_url: Some(format!("{base_url}/manifest.json")),
+            manifest_file: None,
+            header: Vec::new(),
+            bucket: None,
+            prefix: None,
+            manifest_key: None,
+            image_id: None,
+            image_version: Some("wrong".to_string()),
+            endpoint: None,
+            force_path_style: false,
+            region: "us-east-1".to_string(),
+            concurrency: 2,
+            retries: 1,
+            max_chunks: MAX_CHUNKS,
+            chunk_sample: None,
+            chunk_sample_seed: None,
+        })
+        .await;
+
+        let _ = shutdown_tx.send(());
+        let _ = server_handle.await;
+
+        let err = result.expect_err("expected verify failure");
+        assert!(
+            err.to_string().contains("manifest version mismatch"),
+            "unexpected error: {err:?}"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn verify_http_manifest_url_rejects_meta_mismatch() -> Result<()> {
+        let chunk_size: u64 = 1024;
+        let chunk0 = vec![b'a'; chunk_size as usize];
+        let chunk1 = vec![b'b'; 512];
+        let total_size = (chunk0.len() + chunk1.len()) as u64;
+
+        let sha256_by_index = vec![Some(sha256_hex(&chunk0)), Some(sha256_hex(&chunk1))];
+        let manifest = build_manifest_v1(
+            total_size,
+            chunk_size,
+            "demo",
+            "v1",
+            ChecksumAlgorithm::Sha256,
+            &sha256_by_index,
+        )?;
+        let manifest_bytes = serde_json::to_vec_pretty(&manifest).context("serialize manifest")?;
+
+        let meta = Meta {
+            created_at: Utc::now(),
+            original_filename: "disk.img".to_string(),
+            total_size,
+            chunk_size,
+            chunk_count: manifest.chunk_count + 1,
+            checksum_algorithm: "sha256".to_string(),
+        };
+        let meta_bytes = serde_json::to_vec_pretty(&meta).context("serialize meta")?;
+
+        let responder: Arc<
+            dyn Fn(TestHttpRequest) -> (u16, Vec<(String, String)>, Vec<u8>)
+                + Send
+                + Sync
+                + 'static,
+        > = Arc::new(move |req: TestHttpRequest| match req.path.as_str() {
+            "/manifest.json" => (200, Vec::new(), manifest_bytes.clone()),
+            "/meta.json" => (200, Vec::new(), meta_bytes.clone()),
+            // Chunks should not be needed if meta.json validation fails, but include them anyway.
+            "/chunks/00000000.bin" => (200, Vec::new(), chunk0.clone()),
+            "/chunks/00000001.bin" => (200, Vec::new(), chunk1.clone()),
+            _ => (404, Vec::new(), b"not found".to_vec()),
+        });
+        let (base_url, shutdown_tx, server_handle) = start_test_http_server(responder).await?;
+
+        let result = verify(VerifyArgs {
+            manifest_url: Some(format!("{base_url}/manifest.json")),
+            manifest_file: None,
+            header: Vec::new(),
+            bucket: None,
+            prefix: None,
+            manifest_key: None,
+            image_id: None,
+            image_version: None,
+            endpoint: None,
+            force_path_style: false,
+            region: "us-east-1".to_string(),
+            concurrency: 2,
+            retries: 1,
+            max_chunks: MAX_CHUNKS,
+            chunk_sample: None,
+            chunk_sample_seed: None,
+        })
+        .await;
+
+        let _ = shutdown_tx.send(());
+        let _ = server_handle.await;
+
+        let err = result.expect_err("expected verify failure");
+        let summary = error_chain_summary(&err);
+        assert!(
+            summary.contains("meta.json chunkCount mismatch"),
+            "unexpected error chain: {summary}"
+        );
+        Ok(())
     }
 
     #[tokio::test]
@@ -5130,6 +5472,83 @@ mod tests {
             chunk_sample_seed: None,
         })
         .await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn verify_local_manifest_rejects_meta_mismatch() -> Result<()> {
+        let dir = tempfile::tempdir().context("create tempdir")?;
+        tokio::fs::create_dir_all(dir.path().join("chunks"))
+            .await
+            .context("create chunks dir")?;
+
+        let chunk_size: u64 = 1024;
+        let chunk0 = vec![b'a'; chunk_size as usize];
+        let chunk1 = vec![b'b'; SECTOR_SIZE];
+        let total_size = (chunk0.len() + chunk1.len()) as u64;
+
+        let chunk0_path = dir.path().join(chunk_object_key(0)?);
+        let chunk1_path = dir.path().join(chunk_object_key(1)?);
+        tokio::fs::write(&chunk0_path, &chunk0)
+            .await
+            .with_context(|| format!("write {}", chunk0_path.display()))?;
+        tokio::fs::write(&chunk1_path, &chunk1)
+            .await
+            .with_context(|| format!("write {}", chunk1_path.display()))?;
+
+        let sha256_by_index = vec![Some(sha256_hex(&chunk0)), Some(sha256_hex(&chunk1))];
+        let manifest = build_manifest_v1(
+            total_size,
+            chunk_size,
+            "demo",
+            "v1",
+            ChecksumAlgorithm::Sha256,
+            &sha256_by_index,
+        )?;
+        let manifest_path = dir.path().join("manifest.json");
+        tokio::fs::write(&manifest_path, serde_json::to_vec_pretty(&manifest)?)
+            .await
+            .with_context(|| format!("write {}", manifest_path.display()))?;
+
+        let meta = Meta {
+            created_at: Utc::now(),
+            original_filename: "disk.img".to_string(),
+            total_size,
+            chunk_size,
+            chunk_count: manifest.chunk_count + 1,
+            checksum_algorithm: "sha256".to_string(),
+        };
+        let meta_path = dir.path().join("meta.json");
+        tokio::fs::write(&meta_path, serde_json::to_vec_pretty(&meta)?)
+            .await
+            .with_context(|| format!("write {}", meta_path.display()))?;
+
+        let err = verify(VerifyArgs {
+            manifest_url: None,
+            manifest_file: Some(manifest_path),
+            header: Vec::new(),
+            bucket: None,
+            prefix: None,
+            manifest_key: None,
+            image_id: None,
+            image_version: None,
+            endpoint: None,
+            force_path_style: false,
+            region: "us-east-1".to_string(),
+            concurrency: 2,
+            retries: 1,
+            max_chunks: MAX_CHUNKS,
+            chunk_sample: None,
+            chunk_sample_seed: None,
+        })
+        .await
+        .expect_err("expected verify failure");
+
+        let summary = error_chain_summary(&err);
+        assert!(
+            summary.contains("meta.json chunkCount mismatch"),
+            "unexpected error chain: {summary}"
+        );
         Ok(())
     }
 
