@@ -95,7 +95,8 @@ Contract:
   `guest_size`, but **guest physical addresses are not necessarily contiguous** once the PC/Q35
   ECAM + PCI/MMIO holes + >4 GiB remap are applied.
   - JS/TS code must translate guest physical addresses via
-    `web/src/runtime/shared_layout.ts::{guestPaddrToRamOffset,guestToLinear}` (or equivalent),
+    `web/src/runtime/shared_layout.ts::{guestPaddrToRamOffset,guestToLinear}` (implemented via
+    `web/src/arch/guest_ram_translate.ts`),
     not by assuming `linear = guest_base + paddr`.
 - The coordinator stores `{ guest_base, guest_size }` into the control/status `SharedArrayBuffer` so all workers (TS + WASM) agree on the mapping.
 - The WASM build uses a **bounded global allocator** so Rust heap allocations cannot grow past `runtime_reserved` and silently corrupt guest RAM.
