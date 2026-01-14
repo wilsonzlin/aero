@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { Worker, type WorkerOptions } from "node:worker_threads";
 
+import { VRAM_BASE_PADDR } from "../arch/guest_phys";
 import { allocateSharedMemorySegments, createSharedMemoryViews } from "../runtime/shared_layout";
 import { MessageType, type ProtocolMessage, type WorkerInitMessage } from "../runtime/protocol";
 import { FRAME_PRESENTED, FRAME_SEQ_INDEX, FRAME_STATUS_INDEX, GPU_PROTOCOL_NAME, GPU_PROTOCOL_VERSION } from "../ipc/gpu-protocol";
@@ -254,5 +255,83 @@ describe("workers/gpu-worker cursor screenshot overlay", () => {
       await worker.terminate();
     }
   }, 25_000);
-});
 
+  it("reads VRAM-backed cursor surfaces when compositing screenshots", async () => {
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: 1 });
+    const views = createSharedMemoryViews(segments);
+    if (!segments.vram || views.vramSizeBytes === 0) {
+      throw new Error("test requires a non-empty shared VRAM segment");
+    }
+
+    const scanoutPaddr = 0x1000;
+    // Scanout pixel: BGRX -> RGBA = [0x30, 0x20, 0x10, 0xff].
+    views.guestU8.set([0x10, 0x20, 0x30, 0x00], scanoutPaddr);
+    publishScanoutState(views.scanoutStateI32!, {
+      source: SCANOUT_SOURCE_WDDM,
+      basePaddrLo: scanoutPaddr,
+      basePaddrHi: 0,
+      width: 1,
+      height: 1,
+      pitchBytes: 4,
+      format: SCANOUT_FORMAT_B8G8R8X8,
+    });
+
+    const cursorVramOffset = 0x2000;
+    if (cursorVramOffset + 4 > views.vramU8.byteLength) {
+      throw new Error("vram buffer too small for cursor pixel");
+    }
+    views.vramU8.set([0x01, 0x02, 0x03, 0x00], cursorVramOffset);
+    const cursorBasePaddr = (VRAM_BASE_PADDR + cursorVramOffset) >>> 0;
+    publishCursorState(views.cursorStateI32!, {
+      enable: 1,
+      x: 0,
+      y: 0,
+      hotX: 0,
+      hotY: 0,
+      width: 1,
+      height: 1,
+      pitchBytes: 4,
+      format: CURSOR_FORMAT_B8G8R8X8,
+      basePaddrLo: cursorBasePaddr,
+      basePaddrHi: 0,
+    });
+
+    const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
+    const shimUrl = new URL("./test_workers/worker_threads_webworker_shim.ts", import.meta.url);
+    const worker = new Worker(new URL("./gpu-worker.ts", import.meta.url), {
+      type: "module",
+      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
+    } as unknown as WorkerOptions);
+
+    try {
+      await initHeadlessGpuWorker(worker, {
+        kind: "init",
+        role: "gpu",
+        controlSab: segments.control,
+        guestMemory: segments.guestMemory,
+        vram: segments.vram,
+        vramBasePaddr: VRAM_BASE_PADDR,
+        vramSizeBytes: segments.vram.byteLength,
+        ioIpcSab: segments.ioIpc,
+        sharedFramebuffer: segments.sharedFramebuffer,
+        sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,
+        scanoutState: segments.scanoutState,
+        scanoutStateOffsetBytes: segments.scanoutStateOffsetBytes,
+        cursorState: segments.cursorState,
+        cursorStateOffsetBytes: segments.cursorStateOffsetBytes,
+      });
+
+      const shotNoCursor = await requestScreenshot(worker, 1, false);
+      expect(shotNoCursor.width).toBe(1);
+      expect(shotNoCursor.height).toBe(1);
+      expect(firstPixelU32(shotNoCursor.rgba8)).toBe(0xff102030);
+
+      const shotWithCursor = await requestScreenshot(worker, 2, true);
+      expect(shotWithCursor.width).toBe(1);
+      expect(shotWithCursor.height).toBe(1);
+      expect(firstPixelU32(shotWithCursor.rgba8)).toBe(0xff010203);
+    } finally {
+      await worker.terminate();
+    }
+  }, 25_000);
+});
