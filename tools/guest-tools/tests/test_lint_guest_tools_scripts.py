@@ -94,6 +94,7 @@ def _synthetic_uninstall_text() -> str:
         [
             "testsigning.enabled-by-aero.txt",
             "nointegritychecks.enabled-by-aero.txt",
+            "storage-preseed.skipped.txt",
         ]
     )
 
@@ -103,6 +104,8 @@ def _synthetic_verify_text() -> str:
         [
             "# CriticalDeviceDatabase section exists",
             "CriticalDeviceDatabase",
+            "storage-preseed.skipped.txt",
+            "/skipstorage",
             "virtio_blk_boot_critical",
             "manifest.json",
             "signing_policy",

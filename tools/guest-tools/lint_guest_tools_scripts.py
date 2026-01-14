@@ -225,6 +225,11 @@ def lint_files(*, setup_cmd: Path, uninstall_cmd: Path, verify_ps1: Path) -> Lis
             predicate=_contains("CriticalDeviceDatabase"),
         ),
         Invariant(
+            description="verify detects when storage pre-seeding was skipped (/skipstorage marker file)",
+            expected_hint="storage-preseed.skipped.txt + /skipstorage",
+            predicate=_all_regex([r"storage-preseed\.skipped\.txt", r"skipstorage"]),
+        ),
+        Invariant(
             description="virtio-blk boot-critical registry check key is present (virtio_blk_boot_critical)",
             expected_hint="virtio_blk_boot_critical",
             predicate=_contains("virtio_blk_boot_critical"),
@@ -246,6 +251,11 @@ def lint_files(*, setup_cmd: Path, uninstall_cmd: Path, verify_ps1: Path) -> Lis
             description="Uninstaller references marker file for nointegritychecks enabled by Guest Tools",
             expected_hint="nointegritychecks.enabled-by-aero.txt",
             predicate=_contains("nointegritychecks.enabled-by-aero.txt"),
+        ),
+        Invariant(
+            description="Uninstaller references marker file for storage preseed skipped by Guest Tools",
+            expected_hint="storage-preseed.skipped.txt",
+            predicate=_regex(r"storage-preseed\.skipped\.txt"),
         ),
     ]
 
