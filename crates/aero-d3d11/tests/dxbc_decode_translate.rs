@@ -1851,6 +1851,93 @@ fn decodes_and_translates_ifc_with_else() {
 }
 
 #[test]
+fn decodes_and_translates_ifc_with_else_encoded_via_if_opcode_token() {
+    // Some toolchains encode `ifc_*` using `OPCODE_IF` with the comparison operator in the opcode
+    // token's `OPCODE_TEST` field (rather than using the distinct `OPCODE_IFC` opcode ID). Ensure
+    // we handle that form even when the `ifc` has an `else` block.
+    const DCL_OUTPUT: u32 = 0x101;
+
+    let mut body = Vec::<u32>::new();
+
+    // dcl_output o0.xyzw
+    body.push(opcode_token(DCL_OUTPUT, 3));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+
+    // ifc lt, l(0.0), l(1.0) -- encoded using OPCODE_IF + TEST=lt.
+    let a = imm32_scalar(0.0f32.to_bits());
+    let b = imm32_scalar(1.0f32.to_bits());
+    body.push(opcode_token_with_test(
+        OPCODE_IF,
+        (1 + a.len() as u32 + b.len() as u32) as u32,
+        6, // `lt` in D3D10_SB_INSTRUCTION_TEST encoding.
+    ));
+    body.extend_from_slice(&a);
+    body.extend_from_slice(&b);
+
+    // mov o0, l(1.0, 0.0, 0.0, 1.0)
+    let red = imm32_vec4([
+        1.0f32.to_bits(),
+        0.0f32.to_bits(),
+        0.0f32.to_bits(),
+        1.0f32.to_bits(),
+    ]);
+    body.push(opcode_token(OPCODE_MOV, (1 + 2 + red.len()) as u32));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+    body.extend_from_slice(&red);
+
+    // else
+    body.push(opcode_token(OPCODE_ELSE, 1));
+
+    // mov o0, l(0.0, 1.0, 0.0, 1.0)
+    let green = imm32_vec4([
+        0.0f32.to_bits(),
+        1.0f32.to_bits(),
+        0.0f32.to_bits(),
+        1.0f32.to_bits(),
+    ]);
+    body.push(opcode_token(OPCODE_MOV, (1 + 2 + green.len()) as u32));
+    body.extend_from_slice(&reg_dst(OPERAND_TYPE_OUTPUT, 0, WriteMask::XYZW));
+    body.extend_from_slice(&green);
+
+    // endif
+    body.push(opcode_token(OPCODE_ENDIF, 1));
+
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    // Stage type 0 = pixel shader.
+    let tokens = make_sm5_program_tokens(0, &body);
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, tokens_to_bytes(&tokens)),
+        (FOURCC_ISGN, build_signature_chunk(&[])),
+        (
+            FOURCC_OSGN,
+            build_signature_chunk(&[sig_param("SV_Target", 0, 0, 0b1111)]),
+        ),
+    ]);
+
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM4 parse");
+    let module = decode_program(&program).expect("SM4 decode");
+
+    assert!(matches!(
+        module.instructions.first(),
+        Some(Sm4Inst::IfC {
+            op: Sm4CmpOp::Lt,
+            ..
+        })
+    ));
+
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+    assert!(
+        translated.wgsl.contains("if (") && translated.wgsl.contains("} else {"),
+        "expected if/else in WGSL:\n{}",
+        translated.wgsl
+    );
+}
+
+#[test]
 fn decodes_and_translates_breakc_in_loop() {
     const DCL_OUTPUT: u32 = 0x101;
 
