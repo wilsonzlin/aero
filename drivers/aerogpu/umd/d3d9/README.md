@@ -352,22 +352,27 @@ The AeroGPU D3D9 UMD includes a small **fixed-function fallback path** used by D
 
 Supported FVF combinations (bring-up subset):
 
-- **Pre-transformed** (`POSITIONT`): `D3DFVF_XYZRHW | D3DFVF_DIFFUSE` (+ optional `D3DFVF_TEX1`)
-- **Untransformed** (`POSITION`): `D3DFVF_XYZ | D3DFVF_DIFFUSE` (+ optional `D3DFVF_TEX1`)
+- **Pre-transformed** (`POSITIONT`):
+  - `D3DFVF_XYZRHW | D3DFVF_DIFFUSE` (+ optional `D3DFVF_TEX1`)
+  - `D3DFVF_XYZRHW | D3DFVF_TEX1` (no per-vertex diffuse; driver supplies default white)
+- **Untransformed** (`POSITION`):
+  - `D3DFVF_XYZ | D3DFVF_DIFFUSE` (+ optional `D3DFVF_TEX1`)
+  - `D3DFVF_XYZ | D3DFVF_TEX1` (no per-vertex diffuse; driver supplies default white)
   - Note: in the current bring-up implementation, `D3DFVF_XYZ | D3DFVF_DIFFUSE` is treated as **clip-space passthrough** (no WVP transform); see limitations below.
-  - `D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1` uses a fixed-function VS that applies the combined world/view/projection (WVP) matrix; see limitations below.
+  - `D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1` and `D3DFVF_XYZ | D3DFVF_TEX1` use a fixed-function VS that applies the combined world/view/projection (WVP) matrix; see limitations below.
 
 Code anchors (all in `src/aerogpu_d3d9_driver.cpp`):
 
 - `fixedfunc_supported_fvf()` + `kSupportedFvfXyzrhwDiffuse` / `kSupportedFvfXyzrhwDiffuseTex1` /
-  `kSupportedFvfXyzDiffuse` / `kSupportedFvfXyzDiffuseTex1`
+  `kSupportedFvfXyzrhwTex1` / `kSupportedFvfXyzDiffuse` / `kSupportedFvfXyzDiffuseTex1` /
+  `kSupportedFvfXyzTex1`
 - `fixedfunc_fvf_supported()` (internal FVF-driven decl subset required by patch emulation; **XYZRHW variants only**)
 - `ensure_fixedfunc_pipeline_locked()` / `ensure_draw_pipeline_locked()`
 - Stage0 fixed-function PS variants: `fixedfunc_stage0_key_locked()` + `fixedfunc_ps_variant_bytes()`
 - XYZRHW conversion path: `fixedfunc_fvf_is_xyzrhw()` + `convert_xyzrhw_to_clipspace_locked()`
 - FVF selection paths: `device_set_fvf()` and the `SetVertexDecl` pattern detection in `device_set_vertex_decl()`
   - `device_set_fvf()` synthesizes/binds an internal vertex declaration for each supported fixed-function FVF
-    (XYZRHW/XYZ with `DIFFUSE` and optional `TEX1`), so the draw path can bind a known input layout.
+    (XYZRHW/XYZ with optional `DIFFUSE` and optional `TEX1`), so the draw path can bind a known input layout.
   - `device_set_vertex_decl()` pattern-matches common decl layouts and sets an implied `dev->fvf` so the fixed-function
     fallback path can activate even when `SetFVF` is never invoked.
 

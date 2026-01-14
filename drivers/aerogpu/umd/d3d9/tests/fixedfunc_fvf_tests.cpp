@@ -233,6 +233,12 @@ bool CreateDevice(CleanupDevice* cleanup) {
   if (!Check(cleanup->device_funcs.pfnSetFVF != nullptr, "pfnSetFVF is available")) {
     return false;
   }
+  if (!Check(cleanup->device_funcs.pfnCreateVertexDecl != nullptr, "pfnCreateVertexDecl is available")) {
+    return false;
+  }
+  if (!Check(cleanup->device_funcs.pfnSetVertexDecl != nullptr, "pfnSetVertexDecl is available")) {
+    return false;
+  }
   if (!Check(cleanup->device_funcs.pfnDrawPrimitiveUP != nullptr, "pfnDrawPrimitiveUP is available")) {
     return false;
   }
@@ -1141,6 +1147,228 @@ bool TestFvfXyzTex1EmitsTransformConstantsAndDecl() {
   return true;
 }
 
+bool TestVertexDeclXyzrhwTex1InfersFvfAndBindsShaders() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  dev->cmd.reset();
+
+  // Create and bind a vertex decl matching XYZRHW|TEX1.
+  const D3DVERTEXELEMENT9_COMPAT decl_blob[] = {
+      {0, 0, kD3dDeclTypeFloat4, kD3dDeclMethodDefault, kD3dDeclUsagePositionT, 0},
+      {0, 16, kD3dDeclTypeFloat2, kD3dDeclMethodDefault, kD3dDeclUsageTexcoord, 0},
+      {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0},
+  };
+
+  D3D9DDI_HVERTEXDECL hDecl{};
+  HRESULT hr = cleanup.device_funcs.pfnCreateVertexDecl(
+      cleanup.hDevice, decl_blob, static_cast<uint32_t>(sizeof(decl_blob)), &hDecl);
+  if (!Check(hr == S_OK, "CreateVertexDecl(XYZRHW|TEX1)")) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnSetVertexDecl(cleanup.hDevice, hDecl);
+  if (!Check(hr == S_OK, "SetVertexDecl(XYZRHW|TEX1)")) {
+    return false;
+  }
+
+  // Verify implied FVF inference.
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->fvf == kFvfXyzrhwTex1, "SetVertexDecl inferred FVF == XYZRHW|TEX1")) {
+      return false;
+    }
+  }
+
+  D3DDDI_HRESOURCE hTex{};
+  if (!CreateDummyTexture(&cleanup, &hTex)) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnSetTexture(cleanup.hDevice, /*stage=*/0, hTex);
+  if (!Check(hr == S_OK, "SetTexture(stage0)")) {
+    return false;
+  }
+
+  const VertexXyzrhwTex1 tri[3] = {
+      {0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f},
+      {1.0f, 0.0f, 0.0f, 1.0f, 1.0f, 0.0f},
+      {0.0f, 1.0f, 0.0f, 1.0f, 0.0f, 1.0f},
+  };
+
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzrhwTex1));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(XYZRHW|TEX1 via decl)")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(XYZRHW|TEX1 via decl)")) {
+    return false;
+  }
+
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_CREATE_INPUT_LAYOUT) >= 1, "CREATE_INPUT_LAYOUT emitted")) {
+    return false;
+  }
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_BIND_SHADERS) >= 1, "BIND_SHADERS emitted")) {
+    return false;
+  }
+
+  // Ensure the decl's input layout handle is bound (not an internal FVF decl).
+  aerogpu_handle_t decl_handle = 0;
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    auto* decl = reinterpret_cast<VertexDecl*>(hDecl.pDrvPrivate);
+    decl_handle = decl ? decl->handle : 0;
+  }
+  if (!Check(decl_handle != 0, "vertex decl handle non-zero")) {
+    return false;
+  }
+  bool saw_decl_layout = false;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_INPUT_LAYOUT)) {
+    const auto* il = reinterpret_cast<const aerogpu_cmd_set_input_layout*>(hdr);
+    if (il->input_layout_handle == decl_handle) {
+      saw_decl_layout = true;
+      break;
+    }
+  }
+  if (!Check(saw_decl_layout, "SET_INPUT_LAYOUT binds the explicit decl layout")) {
+    return false;
+  }
+
+  return true;
+}
+
+bool TestVertexDeclXyzTex1InfersFvfAndUploadsWvp() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  dev->cmd.reset();
+
+  // Create and bind a vertex decl matching XYZ|TEX1.
+  const D3DVERTEXELEMENT9_COMPAT decl_blob[] = {
+      {0, 0, kD3dDeclTypeFloat3, kD3dDeclMethodDefault, kD3dDeclUsagePosition, 0},
+      {0, 12, kD3dDeclTypeFloat2, kD3dDeclMethodDefault, kD3dDeclUsageTexcoord, 0},
+      {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0},
+  };
+
+  D3D9DDI_HVERTEXDECL hDecl{};
+  HRESULT hr = cleanup.device_funcs.pfnCreateVertexDecl(
+      cleanup.hDevice, decl_blob, static_cast<uint32_t>(sizeof(decl_blob)), &hDecl);
+  if (!Check(hr == S_OK, "CreateVertexDecl(XYZ|TEX1)")) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnSetVertexDecl(cleanup.hDevice, hDecl);
+  if (!Check(hr == S_OK, "SetVertexDecl(XYZ|TEX1)")) {
+    return false;
+  }
+
+  // Verify implied FVF inference.
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->fvf == kFvfXyzTex1, "SetVertexDecl inferred FVF == XYZ|TEX1")) {
+      return false;
+    }
+  }
+
+  // Provide a simple transform to ensure the WVP constant upload is observable.
+  constexpr float tx = 2.0f;
+  constexpr float ty = 3.0f;
+  constexpr float tz = 0.0f;
+  const float expected_wvp_cols[16] = {
+      1.0f, 0.0f, 0.0f, tx,
+      0.0f, 1.0f, 0.0f, ty,
+      0.0f, 0.0f, 1.0f, tz,
+      0.0f, 0.0f, 0.0f, 1.0f,
+  };
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    constexpr uint32_t kD3dTransformWorld0 = 256u;
+    float* m = dev->transform_matrices[kD3dTransformWorld0];
+    std::memset(m, 0, 16 * sizeof(float));
+    m[0] = 1.0f;
+    m[5] = 1.0f;
+    m[10] = 1.0f;
+    m[15] = 1.0f;
+    m[12] = tx;
+    m[13] = ty;
+    m[14] = tz;
+    dev->fixedfunc_matrix_dirty = true;
+  }
+
+  D3DDDI_HRESOURCE hTex{};
+  if (!CreateDummyTexture(&cleanup, &hTex)) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnSetTexture(cleanup.hDevice, /*stage=*/0, hTex);
+  if (!Check(hr == S_OK, "SetTexture(stage0)")) {
+    return false;
+  }
+
+  const VertexXyzTex1 tri[3] = {
+      {-1.0f, -1.0f, 0.0f, 0.0f, 0.0f},
+      {1.0f, -1.0f, 0.0f, 1.0f, 0.0f},
+      {-1.0f, 1.0f, 0.0f, 0.0f, 1.0f},
+  };
+
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*primitive_count=*/1, tri, sizeof(VertexXyzTex1));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP(XYZ|TEX1 via decl)")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+  if (!Check(ValidateStream(buf, len), "ValidateStream(XYZ|TEX1 via decl)")) {
+    return false;
+  }
+
+  bool saw_wvp_constants = false;
+  for (const auto* hdr : CollectOpcodes(buf, len, AEROGPU_CMD_SET_SHADER_CONSTANTS_F)) {
+    const auto* sc = reinterpret_cast<const aerogpu_cmd_set_shader_constants_f*>(hdr);
+    if (sc->stage != AEROGPU_SHADER_STAGE_VERTEX) {
+      continue;
+    }
+    if (sc->start_register != 0 || sc->vec4_count != 4) {
+      continue;
+    }
+    const size_t need = sizeof(aerogpu_cmd_set_shader_constants_f) + sizeof(expected_wvp_cols);
+    if (hdr->size_bytes < need) {
+      continue;
+    }
+    const float* payload = reinterpret_cast<const float*>(
+        reinterpret_cast<const uint8_t*>(sc) + sizeof(aerogpu_cmd_set_shader_constants_f));
+    if (std::memcmp(payload, expected_wvp_cols, sizeof(expected_wvp_cols)) == 0) {
+      saw_wvp_constants = true;
+      break;
+    }
+  }
+  if (!Check(saw_wvp_constants, "SET_SHADER_CONSTANTS_F uploads expected WVP columns (decl path)")) {
+    return false;
+  }
+
+  return true;
+}
+
 bool TestStageStateChangeRebindsShadersIfImplemented() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -1381,6 +1609,12 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestFvfXyzTex1EmitsTransformConstantsAndDecl()) {
+    return 1;
+  }
+  if (!aerogpu::TestVertexDeclXyzrhwTex1InfersFvfAndBindsShaders()) {
+    return 1;
+  }
+  if (!aerogpu::TestVertexDeclXyzTex1InfersFvfAndUploadsWvp()) {
     return 1;
   }
   if (!aerogpu::TestStageStateChangeRebindsShadersIfImplemented()) {
