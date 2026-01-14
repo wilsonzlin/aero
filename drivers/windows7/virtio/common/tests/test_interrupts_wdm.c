@@ -695,6 +695,46 @@ static void test_message_default_mapping_multivector_message0_is_config_only(voi
     VirtioPciWdmInterruptDisconnect(&intr);
 }
 
+static void test_message_isr_returns_false_for_out_of_range_message_id(void)
+{
+    VIRTIO_PCI_WDM_INTERRUPTS intr;
+    DEVICE_OBJECT dev;
+    DEVICE_OBJECT pdo;
+    CM_PARTIAL_RESOURCE_DESCRIPTOR desc;
+    NTSTATUS status;
+    PKINTERRUPT intr0;
+    PKMESSAGE_SERVICE_ROUTINE sr;
+    PVOID ctx;
+    BOOLEAN claimed;
+
+    desc = make_msg_desc(2);
+
+    WdkTestResetKeInsertQueueDpcCounts();
+
+    status = VirtioPciWdmInterruptConnect(&dev, &pdo, &desc, NULL, NULL, NULL, NULL, NULL, &intr);
+    assert(status == STATUS_SUCCESS);
+    assert(intr.Mode == VirtioPciWdmInterruptModeMessage);
+    assert(intr.u.Message.MessageInfo != NULL);
+    assert(intr.u.Message.MessageInfo->MessageCount == 2);
+
+    intr0 = intr.u.Message.MessageInfo->MessageInfo[0].InterruptObject;
+    assert(intr0 != NULL);
+    sr = intr0->MessageServiceRoutine;
+    ctx = intr0->ServiceContext;
+    assert(sr != NULL);
+
+    /* Out-of-range MessageId should be rejected and must not queue a DPC. */
+    claimed = sr(intr0, ctx, 99);
+    assert(claimed == FALSE);
+    assert(intr.u.Message.IsrCount == 0);
+    assert(intr.u.Message.DpcInFlight == 0);
+    assert(intr.u.Message.MessageDpcs[0].Inserted == FALSE);
+    assert(intr.u.Message.MessageDpcs[1].Inserted == FALSE);
+    assert(WdkTestGetKeInsertQueueDpcCount() == 0);
+
+    VirtioPciWdmInterruptDisconnect(&intr);
+}
+
 static void test_message_isr_increments_dpc_inflight_before_queueing_dpc(void)
 {
     VIRTIO_PCI_WDM_INTERRUPTS intr;
@@ -764,6 +804,7 @@ int main(void)
     test_set_message_route_validation();
     test_message_route_can_enable_all_on_vector0_fallback();
     test_message_default_mapping_multivector_message0_is_config_only();
+    test_message_isr_returns_false_for_out_of_range_message_id();
     test_message_isr_increments_dpc_inflight_before_queueing_dpc();
 
     printf("virtio_interrupts_wdm_tests: PASS\n");
