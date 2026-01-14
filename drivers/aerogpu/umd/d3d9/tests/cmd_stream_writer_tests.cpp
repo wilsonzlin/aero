@@ -4175,7 +4175,7 @@ bool TestGenerateMipSubLevelsBoxFilter2dX1R5G5B5() {
   }
 
   // Fill mip0 with a known pattern in the R channel:
-  // R5 = x + y*4, G5 = 0, B5 = 0, X bit = 1.
+  // R5 = x + y*4, G5 = 0, B5 = 0. (Input X bit left clear; mipgen should force it to 1 in generated mips.)
   const uint32_t row_pitch = res->row_pitch;
   if (!Check(row_pitch == 8u, "mip0 row_pitch==8")) {
     return false;
@@ -4184,7 +4184,7 @@ bool TestGenerateMipSubLevelsBoxFilter2dX1R5G5B5() {
   for (uint32_t y = 0; y < 4; ++y) {
     for (uint32_t x = 0; x < 4; ++x) {
       const uint16_t r5 = static_cast<uint16_t>(x + y * 4u);
-      const uint16_t v = static_cast<uint16_t>((1u << 15) | (r5 << 10));
+      const uint16_t v = static_cast<uint16_t>((r5 << 10));
       const size_t off = static_cast<size_t>(y) * row_pitch + static_cast<size_t>(x) * 2u;
       base[off + 0] = static_cast<uint8_t>(v & 0xFFu);
       base[off + 1] = static_cast<uint8_t>((v >> 8) & 0xFFu);
@@ -4221,6 +4221,399 @@ bool TestGenerateMipSubLevelsBoxFilter2dX1R5G5B5() {
   const uint8_t expected_mip1[8] = {
       0x00, 0x8C, 0x00, 0x90,
       0x00, 0xAC, 0x00, 0xB4,
+  };
+  const uint8_t expected_mip2[2] = {0x00, 0xA0};
+
+  if (!Check(mip1.slice_pitch_bytes == sizeof(expected_mip1), "mip1 slice_pitch==8")) {
+    return false;
+  }
+  if (!Check(mip2.slice_pitch_bytes == sizeof(expected_mip2), "mip2 slice_pitch==2")) {
+    return false;
+  }
+
+  if (!Check(std::memcmp(res->storage.data() + static_cast<size_t>(mip1.offset_bytes), expected_mip1, sizeof(expected_mip1)) == 0,
+             "mip1 bytes match")) {
+    return false;
+  }
+  if (!Check(std::memcmp(res->storage.data() + static_cast<size_t>(mip2.offset_bytes), expected_mip2, sizeof(expected_mip2)) == 0,
+             "mip2 bytes match")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+
+  if (!Check(ValidateStream(buf, len), "stream validates")) {
+    return false;
+  }
+
+  // Host-allocated textures should embed updates via UPLOAD_RESOURCE.
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_UPLOAD_RESOURCE) >= 1, "GenerateMipSubLevels emits UPLOAD_RESOURCE")) {
+    return false;
+  }
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_RESOURCE_DIRTY_RANGE) == 0, "GenerateMipSubLevels does not emit DIRTY_RANGE for host alloc")) {
+    return false;
+  }
+
+  const CmdLoc upload = FindLastOpcode(buf, len, AEROGPU_CMD_UPLOAD_RESOURCE);
+  if (!Check(upload.hdr != nullptr, "UPLOAD_RESOURCE packet present")) {
+    return false;
+  }
+  const auto* upload_cmd = reinterpret_cast<const aerogpu_cmd_upload_resource*>(upload.hdr);
+  if (!Check(upload_cmd->resource_handle == res->handle, "UPLOAD_RESOURCE resource_handle matches")) {
+    return false;
+  }
+  if (!Check(upload_cmd->offset_bytes == mip1.offset_bytes, "UPLOAD_RESOURCE offset starts at mip1")) {
+    return false;
+  }
+  return Check(upload_cmd->size_bytes == static_cast<uint64_t>(res->size_bytes) - mip1.offset_bytes, "UPLOAD_RESOURCE size covers mips");
+}
+
+bool TestGenerateMipSubLevelsBoxFilter2dR5G6B5() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    D3DDDI_HRESOURCE hResource{};
+    bool has_adapter = false;
+    bool has_device = false;
+    bool has_resource = false;
+
+    ~Cleanup() {
+      if (has_resource && device_funcs.pfnDestroyResource) {
+        device_funcs.pfnDestroyResource(hDevice, hResource);
+      }
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  if (!Check(open.hAdapter.pDrvPrivate != nullptr, "OpenAdapter2 returned adapter handle")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  if (!Check(cleanup.device_funcs.pfnCreateResource != nullptr, "CreateResource must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnGenerateMipSubLevels != nullptr, "GenerateMipSubLevels must be available")) {
+    return false;
+  }
+
+  // Create a 4x4 texture with 3 mip levels (4x4, 2x2, 1x1).
+  D3D9DDIARG_CREATERESOURCE create_res{};
+  create_res.type = 0;
+  create_res.format = 23u; // D3DFMT_R5G6B5
+  create_res.width = 4;
+  create_res.height = 4;
+  create_res.depth = 1;
+  create_res.mip_levels = 3;
+  create_res.usage = 0;
+  create_res.pool = 0;
+  create_res.size = 0;
+  create_res.hResource.pDrvPrivate = nullptr;
+  create_res.pSharedHandle = nullptr;
+  create_res.pPrivateDriverData = nullptr;
+  create_res.PrivateDriverDataSize = 0;
+  create_res.wddm_hAllocation = 0;
+
+  hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_res);
+  if (!Check(hr == S_OK, "CreateResource(4x4 R5G6B5 texture mips)")) {
+    return false;
+  }
+  cleanup.hResource = create_res.hResource;
+  cleanup.has_resource = true;
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  auto* res = reinterpret_cast<Resource*>(create_res.hResource.pDrvPrivate);
+  if (!Check(dev != nullptr && res != nullptr, "device/resource pointers")) {
+    return false;
+  }
+  if (!Check(res->mip_levels == 3, "resource mip_levels==3")) {
+    return false;
+  }
+  if (!Check(res->backing_alloc_id == 0, "resource is host-allocated (alloc_id==0)")) {
+    return false;
+  }
+  if (!Check(res->storage.size() >= res->size_bytes, "resource storage sized")) {
+    return false;
+  }
+
+  // Fill mip0 with a known pattern in the R channel:
+  // R5 = x + y*4, G6 = 0, B5 = 0.
+  const uint32_t row_pitch = res->row_pitch;
+  if (!Check(row_pitch == 8u, "mip0 row_pitch==8")) {
+    return false;
+  }
+  uint8_t* base = res->storage.data();
+  for (uint32_t y = 0; y < 4; ++y) {
+    for (uint32_t x = 0; x < 4; ++x) {
+      const uint16_t r5 = static_cast<uint16_t>(x + y * 4u);
+      const uint16_t v = static_cast<uint16_t>((r5 << 11));
+      const size_t off = static_cast<size_t>(y) * row_pitch + static_cast<size_t>(x) * 2u;
+      base[off + 0] = static_cast<uint8_t>(v & 0xFFu);
+      base[off + 1] = static_cast<uint8_t>((v >> 8) & 0xFFu);
+    }
+  }
+
+  // Clear command buffer so we only observe visibility packets from mip generation.
+  dev->cmd.reset();
+
+  hr = cleanup.device_funcs.pfnGenerateMipSubLevels(create_dev.hDevice, create_res.hResource);
+  if (!Check(hr == S_OK, "GenerateMipSubLevels")) {
+    return false;
+  }
+
+  Texture2dMipLevelLayout mip1{};
+  Texture2dMipLevelLayout mip2{};
+  if (!Check(calc_texture2d_mip_level_layout(res->format, res->width, res->height, res->mip_levels, res->depth, 1, &mip1),
+             "mip1 layout")) {
+    return false;
+  }
+  if (!Check(calc_texture2d_mip_level_layout(res->format, res->width, res->height, res->mip_levels, res->depth, 2, &mip2),
+             "mip2 layout")) {
+    return false;
+  }
+  if (!Check(mip1.width == 2 && mip1.height == 2, "mip1 dims 2x2")) {
+    return false;
+  }
+  if (!Check(mip2.width == 1 && mip2.height == 1, "mip2 dims 1x1")) {
+    return false;
+  }
+
+  // Expected results (box filter in decoded 8-bit space, then quantized back to 5-bit):
+  // mip1 R5 values: {3, 4, 11, 13}; mip2 R5 value: {8}.
+  const uint8_t expected_mip1[8] = {
+      0x00, 0x18, 0x00, 0x20,
+      0x00, 0x58, 0x00, 0x68,
+  };
+  const uint8_t expected_mip2[2] = {0x00, 0x40};
+
+  if (!Check(mip1.slice_pitch_bytes == sizeof(expected_mip1), "mip1 slice_pitch==8")) {
+    return false;
+  }
+  if (!Check(mip2.slice_pitch_bytes == sizeof(expected_mip2), "mip2 slice_pitch==2")) {
+    return false;
+  }
+
+  if (!Check(std::memcmp(res->storage.data() + static_cast<size_t>(mip1.offset_bytes), expected_mip1, sizeof(expected_mip1)) == 0,
+             "mip1 bytes match")) {
+    return false;
+  }
+  if (!Check(std::memcmp(res->storage.data() + static_cast<size_t>(mip2.offset_bytes), expected_mip2, sizeof(expected_mip2)) == 0,
+             "mip2 bytes match")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+
+  if (!Check(ValidateStream(buf, len), "stream validates")) {
+    return false;
+  }
+
+  // Host-allocated textures should embed updates via UPLOAD_RESOURCE.
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_UPLOAD_RESOURCE) >= 1, "GenerateMipSubLevels emits UPLOAD_RESOURCE")) {
+    return false;
+  }
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_RESOURCE_DIRTY_RANGE) == 0, "GenerateMipSubLevels does not emit DIRTY_RANGE for host alloc")) {
+    return false;
+  }
+
+  const CmdLoc upload = FindLastOpcode(buf, len, AEROGPU_CMD_UPLOAD_RESOURCE);
+  if (!Check(upload.hdr != nullptr, "UPLOAD_RESOURCE packet present")) {
+    return false;
+  }
+  const auto* upload_cmd = reinterpret_cast<const aerogpu_cmd_upload_resource*>(upload.hdr);
+  if (!Check(upload_cmd->resource_handle == res->handle, "UPLOAD_RESOURCE resource_handle matches")) {
+    return false;
+  }
+  if (!Check(upload_cmd->offset_bytes == mip1.offset_bytes, "UPLOAD_RESOURCE offset starts at mip1")) {
+    return false;
+  }
+  return Check(upload_cmd->size_bytes == static_cast<uint64_t>(res->size_bytes) - mip1.offset_bytes, "UPLOAD_RESOURCE size covers mips");
+}
+
+bool TestGenerateMipSubLevelsBoxFilter2dA1R5G5B5() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    D3DDDI_HRESOURCE hResource{};
+    bool has_adapter = false;
+    bool has_device = false;
+    bool has_resource = false;
+
+    ~Cleanup() {
+      if (has_resource && device_funcs.pfnDestroyResource) {
+        device_funcs.pfnDestroyResource(hDevice, hResource);
+      }
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  if (!Check(open.hAdapter.pDrvPrivate != nullptr, "OpenAdapter2 returned adapter handle")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  if (!Check(cleanup.device_funcs.pfnCreateResource != nullptr, "CreateResource must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnGenerateMipSubLevels != nullptr, "GenerateMipSubLevels must be available")) {
+    return false;
+  }
+
+  // Create a 4x4 texture with 3 mip levels (4x4, 2x2, 1x1).
+  D3D9DDIARG_CREATERESOURCE create_res{};
+  create_res.type = 0;
+  create_res.format = 25u; // D3DFMT_A1R5G5B5
+  create_res.width = 4;
+  create_res.height = 4;
+  create_res.depth = 1;
+  create_res.mip_levels = 3;
+  create_res.usage = 0;
+  create_res.pool = 0;
+  create_res.size = 0;
+  create_res.hResource.pDrvPrivate = nullptr;
+  create_res.pSharedHandle = nullptr;
+  create_res.pPrivateDriverData = nullptr;
+  create_res.PrivateDriverDataSize = 0;
+  create_res.wddm_hAllocation = 0;
+
+  hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_res);
+  if (!Check(hr == S_OK, "CreateResource(4x4 A1R5G5B5 texture mips)")) {
+    return false;
+  }
+  cleanup.hResource = create_res.hResource;
+  cleanup.has_resource = true;
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  auto* res = reinterpret_cast<Resource*>(create_res.hResource.pDrvPrivate);
+  if (!Check(dev != nullptr && res != nullptr, "device/resource pointers")) {
+    return false;
+  }
+  if (!Check(res->mip_levels == 3, "resource mip_levels==3")) {
+    return false;
+  }
+  if (!Check(res->backing_alloc_id == 0, "resource is host-allocated (alloc_id==0)")) {
+    return false;
+  }
+  if (!Check(res->storage.size() >= res->size_bytes, "resource storage sized")) {
+    return false;
+  }
+
+  // Fill mip0 with a known pattern in the R channel:
+  // - R5 = x + y*4, G5 = 0, B5 = 0
+  // - A1 = 1 for y<2, else 0 (ensures mip1 has mixed alpha bits; mip2 tests threshold behavior).
+  const uint32_t row_pitch = res->row_pitch;
+  if (!Check(row_pitch == 8u, "mip0 row_pitch==8")) {
+    return false;
+  }
+  uint8_t* base = res->storage.data();
+  for (uint32_t y = 0; y < 4; ++y) {
+    for (uint32_t x = 0; x < 4; ++x) {
+      const uint16_t a1 = static_cast<uint16_t>(y < 2 ? 1u : 0u);
+      const uint16_t r5 = static_cast<uint16_t>(x + y * 4u);
+      const uint16_t v = static_cast<uint16_t>((a1 << 15) | (r5 << 10));
+      const size_t off = static_cast<size_t>(y) * row_pitch + static_cast<size_t>(x) * 2u;
+      base[off + 0] = static_cast<uint8_t>(v & 0xFFu);
+      base[off + 1] = static_cast<uint8_t>((v >> 8) & 0xFFu);
+    }
+  }
+
+  // Clear command buffer so we only observe visibility packets from mip generation.
+  dev->cmd.reset();
+
+  hr = cleanup.device_funcs.pfnGenerateMipSubLevels(create_dev.hDevice, create_res.hResource);
+  if (!Check(hr == S_OK, "GenerateMipSubLevels")) {
+    return false;
+  }
+
+  Texture2dMipLevelLayout mip1{};
+  Texture2dMipLevelLayout mip2{};
+  if (!Check(calc_texture2d_mip_level_layout(res->format, res->width, res->height, res->mip_levels, res->depth, 1, &mip1),
+             "mip1 layout")) {
+    return false;
+  }
+  if (!Check(calc_texture2d_mip_level_layout(res->format, res->width, res->height, res->mip_levels, res->depth, 2, &mip2),
+             "mip2 layout")) {
+    return false;
+  }
+  if (!Check(mip1.width == 2 && mip1.height == 2, "mip1 dims 2x2")) {
+    return false;
+  }
+  if (!Check(mip2.width == 1 && mip2.height == 1, "mip2 dims 1x1")) {
+    return false;
+  }
+
+  // Expected results:
+  // - mip1 R5 values: {3, 4, 11, 13}; alpha bits: top row = 1, bottom row = 0.
+  // - mip2 R5 value: {8}; alpha bit = 1 (2/4 mip1 pixels had alpha=1 => avg==128 => threshold sets bit).
+  const uint8_t expected_mip1[8] = {
+      0x00, 0x8C, 0x00, 0x90,
+      0x00, 0x2C, 0x00, 0x34,
   };
   const uint8_t expected_mip2[2] = {0x00, 0xA0};
 
@@ -19347,6 +19740,8 @@ int main() {
   failures += !aerogpu::TestX1R5G5B5UnlockForcesOpaqueAlphaForMisalignedWrites();
   failures += !aerogpu::TestGenerateMipSubLevelsBoxFilter2d();
   failures += !aerogpu::TestGenerateMipSubLevelsBoxFilter2dX1R5G5B5();
+  failures += !aerogpu::TestGenerateMipSubLevelsBoxFilter2dR5G6B5();
+  failures += !aerogpu::TestGenerateMipSubLevelsBoxFilter2dA1R5G5B5();
   failures += !aerogpu::TestGenerateMipSubLevelsAllocBackedEmitsDirtyRange();
   failures += !aerogpu::TestCreateResourceIgnoresStaleAllocPrivDataForNonShared();
   failures += !aerogpu::TestCreateResourceAllowsNullPrivateDataWhenNotAllocBacked();
