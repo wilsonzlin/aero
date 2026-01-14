@@ -550,7 +550,7 @@ Known gaps / limitations (enforced by code/tests):
   - Known GS emulation gaps / next steps:
     - Broaden VS-as-compute feeding (opcode coverage + correct draw instancing semantics).
     - Strip and adjacency-strip IA topologies (`LINESTRIP`, `TRIANGLESTRIP`, `LINESTRIP_ADJ`, `TRIANGLESTRIP_ADJ`) are not supported end-to-end yet (until Tasks 705/708/711 equivalents land).
-    - Instanced draws (`instance_count > 1`) with GS bound are not validated; treat as unsupported until dedicated tests exist (some translated prepass paths fail-fast on `instance_count != 1`).
+    - Instanced draws (`instance_count > 1`) with GS bound are not supported yet (the translated-GS prepass currently assumes `instance_count == 1`; some translated prepass paths fail-fast when `instance_count != 1`).
     - Some downlevel backends have very low per-stage storage-buffer limits (commonly `max_storage_buffers_per_shader_stage = 4`), which can block compute-prepass execution.
   - Owning doc: [`docs/graphics/geometry-shader-emulation.md`](./geometry-shader-emulation.md)
     - GS DXBC + ILAY fixtures: [`crates/aero-d3d11/tests/fixtures/README.md`](../../crates/aero-d3d11/tests/fixtures/README.md)

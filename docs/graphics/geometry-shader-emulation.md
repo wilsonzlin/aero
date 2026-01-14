@@ -421,12 +421,11 @@ Known limitations include:
   - If VS-as-compute translation fails, the executor only falls back to IA-fill when the VS is a strict
     passthrough (or `AERO_D3D11_ALLOW_INCORRECT_GS_INPUTS=1` is set to force IA-fill for debugging; may
     misrender because the GS observes pre-VS IA values). Otherwise the draw fails with a clear error.
-- **Draw instancing (`instance_count > 1`) is not validated**
-  - The emulation path preserves `instance_count` in the indirect draw args, but the translated GS
-    prepass does not expand geometry per draw instance and does not currently fan out over
-    `SV_InstanceID`.
-  - Some translated GS prepass variants currently fail-fast on `instance_count != 1`; treat instanced
-    draws with GS bound as unsupported until dedicated tests exist.
+    misrender because the GS observes pre-VS IA values). Otherwise the draw fails with a clear error.
+- **Draw instancing (`instance_count > 1`) is not supported yet**
+  - The in-tree translated-GS prepass currently assumes `instance_count == 1` when executing guest GS
+    DXBC (it does not expand geometry per draw instance / fan out over `SV_InstanceID`). Some prepass
+    variants fail-fast when `instance_count != 1`.
 - **Limited output topology / payload**
   - Output topology is limited to `pointlist`, `linestrip`, and `trianglestrip` (stream 0 only).
     Strip topologies are lowered to list topologies for rendering (`linestrip` → line list,
