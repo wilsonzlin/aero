@@ -1204,6 +1204,21 @@ static ULONGLONG AeroGpuReadVolatileU64HiLoHi(_In_ const volatile ULONG* LoAddr)
     return ((ULONGLONG)hi << 32) | (ULONGLONG)LoAddr[0];
 }
 
+static __forceinline BOOLEAN AeroGpuMmioSafeNow(_In_ const AEROGPU_ADAPTER* Adapter)
+{
+    if (!Adapter || !Adapter->Bar0) {
+        return FALSE;
+    }
+    if ((DXGK_DEVICE_POWER_STATE)InterlockedCompareExchange((volatile LONG*)&Adapter->DevicePowerState, 0, 0) !=
+        DxgkDevicePowerStateD0) {
+        return FALSE;
+    }
+    if (InterlockedCompareExchange((volatile LONG*)&Adapter->AcceptingSubmissions, 0, 0) == 0) {
+        return FALSE;
+    }
+    return TRUE;
+}
+
 static ULONGLONG AeroGpuReadCompletedFence(_In_ const AEROGPU_ADAPTER* Adapter)
 {
     if (!Adapter) {
@@ -12848,6 +12863,11 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
          * Only attempt to validate vblank tick forward progress when scanout is enabled.
          */
         if ((adapter->DeviceFeatures & (ULONGLONG)AEROGPU_FEATURE_VBLANK) != 0) {
+            if (!AeroGpuMmioSafeNow(adapter) || AeroGpuIsDeviceErrorLatched(adapter)) {
+                io->error_code = AEROGPU_DBGCTL_SELFTEST_ERR_INVALID_STATE;
+                InterlockedExchange(&adapter->PerfSelftestLastErrorCode, (LONG)io->error_code);
+                return STATUS_SUCCESS;
+            }
             const BOOLEAN haveVblankRegs = adapter->Bar0Length >= (AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS + sizeof(ULONG));
             if (!haveVblankRegs) {
                 io->error_code = AEROGPU_DBGCTL_SELFTEST_ERR_VBLANK_REGS_OUT_OF_RANGE;
@@ -12867,6 +12887,11 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
             }
 
             if (scanoutEnabled) {
+                if (!AeroGpuMmioSafeNow(adapter) || AeroGpuIsDeviceErrorLatched(adapter)) {
+                    io->error_code = AEROGPU_DBGCTL_SELFTEST_ERR_INVALID_STATE;
+                    InterlockedExchange(&adapter->PerfSelftestLastErrorCode, (LONG)io->error_code);
+                    return STATUS_SUCCESS;
+                }
                 ULONG periodNs = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS);
                 if (periodNs == 0) {
                     periodNs = AEROGPU_VBLANK_PERIOD_NS_DEFAULT;
@@ -12901,6 +12926,11 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
                     interval.QuadPart = -10000; /* 1ms */
                     KeDelayExecutionThread(KernelMode, FALSE, &interval);
 
+                    if (!AeroGpuMmioSafeNow(adapter) || AeroGpuIsDeviceErrorLatched(adapter)) {
+                        io->error_code = AEROGPU_DBGCTL_SELFTEST_ERR_INVALID_STATE;
+                        InterlockedExchange(&adapter->PerfSelftestLastErrorCode, (LONG)io->error_code);
+                        return STATUS_SUCCESS;
+                    }
                     seqNow = AeroGpuReadRegU64HiLoHi(adapter,
                                                      AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_LO,
                                                      AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_HI);
@@ -12972,8 +13002,11 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
                         goto skip_vblank_irq_test;
                     }
 
+                    BOOLEAN osInterruptsDisabled = FALSE;
                     adapter->DxgkInterface.DxgkCbDisableInterrupt(adapter->StartInfo.hDxgkHandle);
+                    osInterruptsDisabled = TRUE;
                     BOOLEAN ok = FALSE;
+                    BOOLEAN aborted = FALSE;
 
                     /*
                      * Ensure vblank is disabled and ACKed before we start, so we don't
@@ -13001,6 +13034,10 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
 
                     ULONG status = 0;
                     while (KeQueryInterruptTime() < irqDeadline) {
+                        if (!AeroGpuMmioSafeNow(adapter) || AeroGpuIsDeviceErrorLatched(adapter)) {
+                            aborted = TRUE;
+                            break;
+                        }
                         status = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_IRQ_STATUS);
                         if ((status & AEROGPU_IRQ_SCANOUT_VBLANK) != 0) {
                             break;
@@ -13011,7 +13048,8 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
                     }
 
                     if ((status & AEROGPU_IRQ_SCANOUT_VBLANK) == 0) {
-                        io->error_code = AEROGPU_DBGCTL_SELFTEST_ERR_VBLANK_IRQ_NOT_LATCHED;
+                        io->error_code = aborted ? AEROGPU_DBGCTL_SELFTEST_ERR_INVALID_STATE
+                                                 : AEROGPU_DBGCTL_SELFTEST_ERR_VBLANK_IRQ_NOT_LATCHED;
                     } else {
                         /*
                          * Disable the bit to avoid a new tick re-latching while we
@@ -13029,13 +13067,18 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
                         AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ACK, AEROGPU_IRQ_SCANOUT_VBLANK);
                         status = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_IRQ_STATUS);
                         while ((status & AEROGPU_IRQ_SCANOUT_VBLANK) != 0 && KeQueryInterruptTime() < irqDeadline) {
+                            if (!AeroGpuMmioSafeNow(adapter) || AeroGpuIsDeviceErrorLatched(adapter)) {
+                                aborted = TRUE;
+                                break;
+                            }
                             LARGE_INTEGER interval;
                             interval.QuadPart = -10000; /* 1ms */
                             KeDelayExecutionThread(KernelMode, FALSE, &interval);
                             status = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_IRQ_STATUS);
                         }
                         if ((status & AEROGPU_IRQ_SCANOUT_VBLANK) != 0) {
-                            io->error_code = AEROGPU_DBGCTL_SELFTEST_ERR_VBLANK_IRQ_NOT_CLEARED;
+                            io->error_code = aborted ? AEROGPU_DBGCTL_SELFTEST_ERR_INVALID_STATE
+                                                     : AEROGPU_DBGCTL_SELFTEST_ERR_VBLANK_IRQ_NOT_CLEARED;
                         } else {
                             ok = TRUE;
                         }
@@ -13046,12 +13089,18 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
                         KIRQL oldIrql;
                         KeAcquireSpinLock(&adapter->IrqEnableLock, &oldIrql);
                         adapter->IrqEnableMask = savedEnableMask;
-                        AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE, savedEnableMask);
+                        if (AeroGpuMmioSafeNow(adapter)) {
+                            AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE, savedEnableMask);
+                        }
                         KeReleaseSpinLock(&adapter->IrqEnableLock, oldIrql);
                     }
-                    AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ACK, AEROGPU_IRQ_SCANOUT_VBLANK);
+                    if (AeroGpuMmioSafeNow(adapter)) {
+                        AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ACK, AEROGPU_IRQ_SCANOUT_VBLANK);
+                    }
 
-                    adapter->DxgkInterface.DxgkCbEnableInterrupt(adapter->StartInfo.hDxgkHandle);
+                    if (osInterruptsDisabled && AeroGpuMmioSafeNow(adapter) && adapter->InterruptRegistered) {
+                        adapter->DxgkInterface.DxgkCbEnableInterrupt(adapter->StartInfo.hDxgkHandle);
+                    }
 
                     if (!ok) {
                         InterlockedExchange(&adapter->PerfSelftestLastErrorCode, (LONG)io->error_code);
@@ -13072,6 +13121,11 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
                     return STATUS_SUCCESS;
                 }
 
+                if (!AeroGpuMmioSafeNow(adapter) || AeroGpuIsDeviceErrorLatched(adapter)) {
+                    io->error_code = AEROGPU_DBGCTL_SELFTEST_ERR_INVALID_STATE;
+                    InterlockedExchange(&adapter->PerfSelftestLastErrorCode, (LONG)io->error_code);
+                    return STATUS_SUCCESS;
+                }
                 const LONGLONG delivered0 = InterlockedCompareExchange64(&adapter->PerfIrqVblankDelivered, 0, 0);
                 const LONG dpc0 = InterlockedCompareExchange(&adapter->IrqDpcCount, 0, 0);
                 BOOLEAN origVblankEnabled = FALSE;
@@ -13104,7 +13158,12 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
                 const ULONGLONG deliveryDeadline = deliveryNow100ns + deliveryWait100ns;
 
                 BOOLEAN delivered = FALSE;
+                BOOLEAN deliveryInvalidState = FALSE;
                 while (KeQueryInterruptTime() < deliveryDeadline) {
+                    if (!AeroGpuMmioSafeNow(adapter) || AeroGpuIsDeviceErrorLatched(adapter)) {
+                        deliveryInvalidState = TRUE;
+                        break;
+                    }
                     const LONGLONG deliveredNow = InterlockedCompareExchange64(&adapter->PerfIrqVblankDelivered, 0, 0);
                     const LONG dpcNow = InterlockedCompareExchange(&adapter->IrqDpcCount, 0, 0);
                     if (deliveredNow != delivered0 && dpcNow != dpc0) {
@@ -13126,13 +13185,18 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
                         enable &= ~AEROGPU_IRQ_SCANOUT_VBLANK;
                     }
                     adapter->IrqEnableMask = enable;
-                    AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE, enable);
+                    if (AeroGpuMmioSafeNow(adapter)) {
+                        AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE, enable);
+                    }
                     KeReleaseSpinLock(&adapter->IrqEnableLock, oldIrql);
                 }
-                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ACK, AEROGPU_IRQ_SCANOUT_VBLANK);
+                if (AeroGpuMmioSafeNow(adapter)) {
+                    AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ACK, AEROGPU_IRQ_SCANOUT_VBLANK);
+                }
 
                 if (!delivered) {
-                    io->error_code = AEROGPU_DBGCTL_SELFTEST_ERR_VBLANK_IRQ_NOT_DELIVERED;
+                    io->error_code = deliveryInvalidState ? AEROGPU_DBGCTL_SELFTEST_ERR_INVALID_STATE
+                                                          : AEROGPU_DBGCTL_SELFTEST_ERR_VBLANK_IRQ_NOT_DELIVERED;
                     InterlockedExchange(&adapter->PerfSelftestLastErrorCode, (LONG)io->error_code);
                     return STATUS_SUCCESS;
                 }
@@ -13141,6 +13205,11 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
 
         /* Cursor sanity (optional, gated by device feature bits). */
         if ((adapter->DeviceFeatures & (ULONGLONG)AEROGPU_FEATURE_CURSOR) != 0) {
+            if (!AeroGpuMmioSafeNow(adapter) || AeroGpuIsDeviceErrorLatched(adapter)) {
+                io->error_code = AEROGPU_DBGCTL_SELFTEST_ERR_INVALID_STATE;
+                InterlockedExchange(&adapter->PerfSelftestLastErrorCode, (LONG)io->error_code);
+                return STATUS_SUCCESS;
+            }
             const BOOLEAN haveCursorRegs = adapter->Bar0Length >= (AEROGPU_MMIO_REG_CURSOR_PITCH_BYTES + sizeof(ULONG));
             if (!haveCursorRegs) {
                 io->error_code = AEROGPU_DBGCTL_SELFTEST_ERR_CURSOR_REGS_OUT_OF_RANGE;
