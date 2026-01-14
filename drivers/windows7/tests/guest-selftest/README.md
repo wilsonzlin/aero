@@ -60,6 +60,16 @@ For the consolidated virtio-input end-to-end validation plan (device model + dri
     - Sends a minimal UDP DNS query to the adapter's configured DNS server(s) (as reported by `GetAdaptersInfo`).
     - Emits the marker `virtio-net-udp-dns` (PASS/FAIL/SKIP) but the overall virtio-net test does not depend on it.
   - HTTP GET to a configurable URL (WinHTTP) to validate basic connectivity.
+  - Optional link flap regression test (`virtio-net-link-flap`):
+    - Disabled by default; enable with `--test-net-link-flap` (or env var `AERO_VIRTIO_SELFTEST_TEST_NET_LINK_FLAP=1`).
+    - Coordinates with the host harness to deterministically toggle link state via QMP `set_link`:
+      - Guest emits `AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|READY`
+      - Host flaps link down/up (default: 2s down)
+      - Guest waits for link down, then link up + valid IPv4, then performs a small HTTP GET to confirm datapath
+      - Guest emits `AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|PASS/FAIL|...`
+    - Intended to be paired with host-harness gating:
+      - PowerShell: `Invoke-AeroVirtioWin7Tests.ps1 -WithNetLinkFlap`
+      - Python: `invoke_aero_virtio_win7_tests.py --with-net-link-flap`
   - Deterministic large HTTP download (`<http_url>-large`) to stress sustained RX throughput and verify data integrity:
     - downloads **1 MiB** of bytes `0..255` repeating
     - requires a correct `Content-Length: 1048576`
