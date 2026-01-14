@@ -234,12 +234,52 @@ static __forceinline VOID VirtioStatusQCountDrop(_In_ PVIRTIO_STATUSQ Q)
 static __forceinline UINT16 VirtioStatusQPopFreeTxBuffer(_Inout_ PVIRTIO_STATUSQ Q)
 {
     UINT16 idx;
-    if (Q->FreeCount == 0 || Q->FreeHead == VIRTQ_SPLIT_NO_DESC) {
+
+    if (Q->FreeCount == 0) {
+        if (Q->FreeHead != VIRTQ_SPLIT_NO_DESC) {
+            VIOINPUT_LOG(
+                VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ,
+                "statusq free list inconsistent: freeCount=0 freeHead=%u\n",
+                (ULONG)Q->FreeHead);
+            Q->FreeHead = VIRTQ_SPLIT_NO_DESC;
+        }
+        return VIRTQ_SPLIT_NO_DESC;
+    }
+
+    if (Q->FreeHead == VIRTQ_SPLIT_NO_DESC) {
+        VIOINPUT_LOG(
+            VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ,
+            "statusq free list inconsistent: freeCount=%u freeHead=NO_DESC\n",
+            (ULONG)Q->FreeCount);
+        Q->FreeCount = 0;
         return VIRTQ_SPLIT_NO_DESC;
     }
 
     idx = Q->FreeHead;
+    if (idx >= Q->TxBufferCount) {
+        VIOINPUT_LOG(
+            VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ,
+            "statusq free list head out of range: head=%u txCount=%u\n",
+            (ULONG)idx,
+            (ULONG)Q->TxBufferCount);
+        Q->FreeHead = VIRTQ_SPLIT_NO_DESC;
+        Q->FreeCount = 0;
+        return VIRTQ_SPLIT_NO_DESC;
+    }
+
     Q->FreeHead = Q->NextFree[idx];
+    if (Q->FreeHead != VIRTQ_SPLIT_NO_DESC && Q->FreeHead >= Q->TxBufferCount) {
+        VIOINPUT_LOG(
+            VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ,
+            "statusq free list next out of range: next=%u txCount=%u\n",
+            (ULONG)Q->FreeHead,
+            (ULONG)Q->TxBufferCount);
+        Q->FreeHead = VIRTQ_SPLIT_NO_DESC;
+        Q->FreeCount = 0;
+        Q->NextFree[idx] = VIRTQ_SPLIT_NO_DESC;
+        return VIRTQ_SPLIT_NO_DESC;
+    }
+
     Q->NextFree[idx] = VIRTQ_SPLIT_NO_DESC;
     Q->FreeCount--;
     return idx;
