@@ -440,7 +440,12 @@ Remaining gaps (planned follow-ups) include:
   `Interlocked*` family and more complex UAV/structured patterns are still missing.
 
 - **Explicit ordering/barriers**: partially supported via SM5 `sync` (`GroupMemoryBarrier*` /
-  `DeviceMemoryBarrier*`), but fence-only variants do not have a perfect WGSL mapping today.
+  `DeviceMemoryBarrier*`).
+  - Full barriers (`*WithGroupSync`) map naturally onto WGSL `workgroupBarrier()` + `storageBarrier()`.
+  - Fence-only variants (no thread-group sync) do **not** have a perfect WGSL/WebGPU mapping today:
+    WGSL `storageBarrier()` is validated/implemented as a workgroup-level barrier in WebGPU/Naga and
+    therefore comes with uniform-control-flow requirements that are not necessarily present in the
+    original DXBC semantics.
 
 ---
 
