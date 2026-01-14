@@ -43,6 +43,15 @@ export async function reattachMachineSnapshotDisks(opts: {
   const prefix = formatPrefix(opts.logPrefix);
   const machine = opts.machine;
 
+  // Prefer the Rust-side helper when available: it understands the canonical Win7 `disk_id` mapping,
+  // can reopen both raw disk images and COW overlays, and does not require JS to know the
+  // `overlayBlockSizeBytes` used when creating an aerosparse overlay.
+  const reattachFromOpfs = (machine as unknown as { reattach_restored_disks_from_opfs?: unknown }).reattach_restored_disks_from_opfs;
+  if (typeof reattachFromOpfs === "function") {
+    await callMaybeAsync(reattachFromOpfs as (...args: unknown[]) => unknown, machine, []);
+    return;
+  }
+
   const take = (machine as unknown as { take_restored_disk_overlays?: unknown }).take_restored_disk_overlays;
   if (typeof take !== "function") return;
 
@@ -64,6 +73,7 @@ export async function reattachMachineSnapshotDisks(opts: {
     // update alongside the wasm-bindgen surface.
     (machine as unknown as { setPrimaryHddOpfsCow?: unknown }).setPrimaryHddOpfsCow;
   const attachIso =
+    (machine as unknown as { attach_install_media_iso_opfs?: unknown }).attach_install_media_iso_opfs ??
     (machine as unknown as { attach_install_media_opfs_iso?: unknown }).attach_install_media_opfs_iso ??
     (machine as unknown as { attachInstallMediaOpfsIso?: unknown }).attachInstallMediaOpfsIso;
 
@@ -88,7 +98,7 @@ export async function reattachMachineSnapshotDisks(opts: {
     if (diskId === (diskIdInstall >>> 0)) {
       if (typeof attachIso !== "function") {
         throw new Error(
-          "Snapshot restore requires Machine.attach_install_media_opfs_iso(path) but it is unavailable in this WASM build.",
+          "Snapshot restore requires Machine.attach_install_media_iso_opfs(path) / Machine.attach_install_media_opfs_iso(path) but it is unavailable in this WASM build.",
         );
       }
       if (entry.overlay_image && entry.overlay_image !== entry.base_image) {
