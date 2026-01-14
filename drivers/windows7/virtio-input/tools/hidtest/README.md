@@ -118,7 +118,10 @@ hidtest.exe --list --json
 
 The JSON output is a single array on stdout. Each entry has:
 
-- `index`, `path`, `vid`, `pid`, `ver`, `isVirtio`, `usagePage`, `usage`, `kind`, `manufacturer`, `product`, `serial`, `inputLen`, `outputLen`, `featureLen`, `reportDescLen`, `hidReportDescLen`, `desiredAccess`, `writeAccess`
+- `index`, `path`, `vid`, `pid`, `ver`, `isVirtio`, `usagePage`, `usage`, `kind`, `manufacturer`, `product`, `serial`, `inputLen`, `outputLen`, `featureLen`, `reportDescLen`, `hidReportDescLen`, `desiredAccess`, `writeAccess`, `openErr`
+
+If the interface could not be opened, most fields will be `null` and `openErr` will contain the Win32 error code from
+`CreateFile`.
 
 Run the virtio-input descriptor selftest (prints `PASS`/`FAIL` lines and exits non-zero on mismatch):
 

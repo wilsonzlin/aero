@@ -3219,6 +3219,8 @@ static int list_hid_devices_json(void)
         DWORD hid_report_desc_len = 0;
         int hid_report_desc_valid = 0;
         int handle_valid = 0;
+        DWORD open_err = 0;
+        int open_err_valid = 0;
         int is_virtio = 0;
         int is_keyboard = 0;
         int is_mouse = 0;
@@ -3300,7 +3302,9 @@ static int list_hid_devices_json(void)
         } else {
             handle_valid = 0;
             // Still emit the device entry but without VID/PID/caps info.
-            fprint_last_error_w(stderr, L"CreateFile");
+            open_err = GetLastError();
+            open_err_valid = 1;
+            fprint_win32_error_w(stderr, L"CreateFile", open_err);
         }
 
         if (caps_valid) {
@@ -3442,6 +3446,12 @@ static int list_hid_devices_json(void)
         wprintf(L",\"writeAccess\":");
         if (handle_valid) {
             wprintf(((desired_access & GENERIC_WRITE) != 0) ? L"true" : L"false");
+        } else {
+            wprintf(L"null");
+        }
+        wprintf(L",\"openErr\":");
+        if (!handle_valid && open_err_valid) {
+            wprintf(L"%lu", (unsigned long)open_err);
         } else {
             wprintf(L"null");
         }
