@@ -24,8 +24,8 @@ Feature matrix for the Win7 WDK-backed UMDs:
 | MRT (multiple render targets) | Up to `AEROGPU_MAX_RENDER_TARGETS` (8)\* | Up to `AEROGPU_MAX_RENDER_TARGETS` (8)\* | Up to `AEROGPU_MAX_RENDER_TARGETS` (8)\* |
 | Pipeline state encoding (blend / raster / depth) | **Supported** | **Supported** | **Supported** |
 | Vertex buffer binding | **Multiple slots** supported (`StartSlot/NumBuffers` forwarded) | **Multiple slots** supported (`StartSlot/NumBuffers` forwarded) | **Multiple slots** supported (`StartSlot/NumBuffers` forwarded) |
-| Constant buffers | VS/PS supported (14 slots, whole-buffer binding) | VS/PS supported (14 slots, whole-buffer binding) | VS/PS/CS supported (14 slots, `{FirstConstant, NumConstants}` ranges supported) |
-| Samplers | VS/PS supported (16 slots; `CREATE_SAMPLER` + `SET_SAMPLERS`) | VS/PS supported (16 slots; `CREATE_SAMPLER` + `SET_SAMPLERS`) | VS/PS/CS supported (16 slots; basic filter/address modes) |
+| Constant buffers | VS/PS supported (14 slots, whole-buffer binding) | VS/PS supported (14 slots, whole-buffer binding) | VS/PS/GS/CS supported (14 slots, `{FirstConstant, NumConstants}` ranges supported) |
+| Samplers | VS/PS supported (16 slots; `CREATE_SAMPLER` + `SET_SAMPLERS`) | VS/PS supported (16 slots; `CREATE_SAMPLER` + `SET_SAMPLERS`) | VS/PS/GS/CS supported (16 slots; basic filter/address modes) |
 | Geometry shaders (GS) | **Supported (partial)**: GS create + bind (GS handle carried via `aerogpu_cmd_bind_shaders.reserved0`; GS resource bindings stubbed) | **Supported (partial)**: GS create + bind (GS handle carried via `aerogpu_cmd_bind_shaders.reserved0`; GS resource bindings stubbed) | **Supported (partial)**: GS create + bind (GS handle carried via `aerogpu_cmd_bind_shaders.reserved0`) |
 | Compute (CS) + UAV buffers | — | — | **Supported (partial)**: CS shaders + `AEROGPU_CMD_DISPATCH`; UAV **buffers** only (8 slots; no UAV textures / OM UAV binding) |
 
@@ -40,11 +40,11 @@ Feature matrix for the Win7 WDK-backed UMDs:
   - Block-compressed formats (BC1/BC2/BC3/BC7) and explicit sRGB variants are ABI-gated (ABI 1.2+; see `aerogpu_umd_private_v1.device_abi_version_u32`). On older ABIs, sRGB DXGI formats are mapped to UNORM for command-stream compatibility; BC formats are rejected.
 - Shaders (DXBC payload passthrough):
   - D3D10/D3D10.1: VS/PS/GS (GS resource bindings are stubbed)
-  - D3D11: VS/PS/GS/CS (GS stage bindings are limited; see below)
+  - D3D11: VS/PS/GS/CS (GS execution on the host is still bring-up scaffolding; see below)
 - Input layout + vertex/index buffers, primitive topology
 - VS/PS binding tables:
   - D3D10 + D3D10.1: constant buffers, shader-resource views, samplers (whole-buffer constant-buffer binding)
-  - D3D11: VS/PS/CS constant buffers (supports `{FirstConstant, NumConstants}` ranges), shader-resource views, samplers; CS UAV buffers
+  - D3D11: VS/PS/GS/CS constant buffers (supports `{FirstConstant, NumConstants}` ranges), shader-resource views, samplers; CS UAV buffers
 - Render target + depth-stencil binding (MRT up to `AEROGPU_MAX_RENDER_TARGETS`), Clear, Draw/DrawIndexed
 - Viewport + scissor (protocol supports a **single** viewport/scissor; non-trivial arrays are surfaced via `E_NOTIMPL` and applied best-effort as slot 0)
 - D3D11 compute: `CreateComputeShader` + `CsSet*` bindings + `Dispatch`
