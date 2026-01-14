@@ -340,6 +340,14 @@ pub struct AeroGpuLegacyPciDevice {
     pub regs: AeroGpuLegacyRegs,
     irq_level: bool,
 
+    /// Pending LO dword for `SCANOUT_FB_*` while waiting for the HI write commit.
+    scanout_fb_gpa_pending_lo: u32,
+    /// Whether the guest has written `SCANOUT_FB_LO` without a subsequent HI write.
+    ///
+    /// Drivers typically update framebuffer addresses with LO then HI; treat HI as the commit
+    /// point to avoid exposing torn 64-bit addresses to scanout readers.
+    scanout_fb_gpa_lo_pending: bool,
+
     boot_time: Instant,
     vblank_interval: Option<Duration>,
     next_vblank: Option<Instant>,
@@ -394,6 +402,8 @@ impl AeroGpuLegacyPciDevice {
             bar0_probe: false,
             regs,
             irq_level: false,
+            scanout_fb_gpa_pending_lo: 0,
+            scanout_fb_gpa_lo_pending: false,
             boot_time: Instant::now(),
             vblank_interval,
             next_vblank: None,
@@ -634,7 +644,15 @@ impl AeroGpuLegacyPciDevice {
             mmio::INT_STATUS => self.regs.int_status,
             mmio::FENCE_COMPLETED => self.regs.fence_completed,
 
-            mmio::SCANOUT_FB_LO => self.regs.scanout.fb_gpa as u32,
+            mmio::SCANOUT_FB_LO => {
+                // Expose the pending LO value while keeping `fb_gpa` stable to avoid consumers
+                // observing a torn 64-bit address mid-update.
+                if self.scanout_fb_gpa_lo_pending {
+                    self.scanout_fb_gpa_pending_lo
+                } else {
+                    self.regs.scanout.fb_gpa as u32
+                }
+            }
             mmio::SCANOUT_FB_HI => (self.regs.scanout.fb_gpa >> 32) as u32,
             mmio::SCANOUT_PITCH => self.regs.scanout.pitch_bytes,
             mmio::SCANOUT_WIDTH => self.regs.scanout.width,
@@ -696,12 +714,20 @@ impl AeroGpuLegacyPciDevice {
             }
 
             mmio::SCANOUT_FB_LO => {
-                self.regs.scanout.fb_gpa =
-                    (self.regs.scanout.fb_gpa & 0xffff_ffff_0000_0000) | u64::from(value);
+                // Avoid exposing a torn 64-bit `fb_gpa` update. Treat the LO write as starting a
+                // new update and commit the combined value on the subsequent HI write.
+                self.scanout_fb_gpa_pending_lo = value;
+                self.scanout_fb_gpa_lo_pending = true;
             }
             mmio::SCANOUT_FB_HI => {
-                self.regs.scanout.fb_gpa =
-                    (self.regs.scanout.fb_gpa & 0x0000_0000_ffff_ffff) | (u64::from(value) << 32);
+                // Drivers typically write LO then HI; treat HI as the commit point.
+                let lo = if self.scanout_fb_gpa_lo_pending {
+                    u64::from(self.scanout_fb_gpa_pending_lo)
+                } else {
+                    self.regs.scanout.fb_gpa & 0xffff_ffff
+                };
+                self.regs.scanout.fb_gpa = (u64::from(value) << 32) | lo;
+                self.scanout_fb_gpa_lo_pending = false;
             }
             mmio::SCANOUT_PITCH => self.regs.scanout.pitch_bytes = value,
             mmio::SCANOUT_WIDTH => self.regs.scanout.width = value,
@@ -713,6 +739,9 @@ impl AeroGpuLegacyPciDevice {
                     self.next_vblank = None;
                     self.regs.irq_status &= !irq_bits::SCANOUT_VBLANK;
                     self.update_irq_level();
+                    // Reset torn-update tracking so a stale LO write can't affect future updates.
+                    self.scanout_fb_gpa_pending_lo = 0;
+                    self.scanout_fb_gpa_lo_pending = false;
                 }
                 self.regs.scanout.enable = new_enable;
             }

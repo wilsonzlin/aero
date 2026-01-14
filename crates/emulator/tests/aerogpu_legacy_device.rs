@@ -161,6 +161,40 @@ fn scanout_x8r8g8b8_converts_to_rgba() {
 }
 
 #[test]
+fn scanout_fb_gpa_updates_are_atomic_for_readback() {
+    let mut mem = VecMemory::new(0x20_000);
+    let mut dev = new_test_device(AeroGpuLegacyDeviceConfig::default());
+
+    let fb0 = 0x3000u64;
+    let fb1 = 0x4000u64;
+
+    // 1x1 pixels, X8R8G8B8 (little-endian bytes = B,G,R,X).
+    mem.write_physical(fb0, &[1, 2, 3, 0]);
+    mem.write_physical(fb1, &[10, 20, 30, 0]);
+
+    dev.mmio_write(&mut mem, mmio::SCANOUT_FB_LO, 4, fb0 as u32);
+    dev.mmio_write(&mut mem, mmio::SCANOUT_FB_HI, 4, (fb0 >> 32) as u32);
+    dev.mmio_write(&mut mem, mmio::SCANOUT_PITCH, 4, 4);
+    dev.mmio_write(&mut mem, mmio::SCANOUT_WIDTH, 4, 1);
+    dev.mmio_write(&mut mem, mmio::SCANOUT_HEIGHT, 4, 1);
+    dev.mmio_write(&mut mem, mmio::SCANOUT_FORMAT, 4, 1);
+    dev.mmio_write(&mut mem, mmio::SCANOUT_ENABLE, 4, 1);
+
+    let rgba0 = dev.read_scanout_rgba(&mut mem).unwrap();
+    assert_eq!(rgba0, vec![3, 2, 1, 0xff]);
+
+    // LO-only write must not expose a torn address to readback; keep using fb0 until HI commit.
+    dev.mmio_write(&mut mem, mmio::SCANOUT_FB_LO, 4, fb1 as u32);
+    let rgba_after_lo = dev.read_scanout_rgba(&mut mem).unwrap();
+    assert_eq!(rgba_after_lo, vec![3, 2, 1, 0xff]);
+
+    // Commit the new address by writing HI.
+    dev.mmio_write(&mut mem, mmio::SCANOUT_FB_HI, 4, (fb1 >> 32) as u32);
+    let rgba1 = dev.read_scanout_rgba(&mut mem).unwrap();
+    assert_eq!(rgba1, vec![30, 20, 10, 0xff]);
+}
+
+#[test]
 fn vblank_tick_updates_counters_and_latches_irq_status() {
     let cfg = AeroGpuLegacyDeviceConfig {
         vblank_hz: Some(10),
