@@ -879,6 +879,7 @@ jobs:
           blk_reset_marker_line=""
           blk_reset_recovery_marker=""
           net_link_flap_marker=""
+          net_link_flap_marker_line=""
           net_link_flap_host_marker=""
           net_offload_csum_marker=""
           snd_marker=""
@@ -952,6 +953,9 @@ jobs:
               grep -F 'AERO_VIRTIO_SELFTEST|TEST|virtio-blk-reset-recovery|' "${serial_log}" | tail -n 1 | tr -d '\r' || true
             )"
             net_link_flap_marker="$(grep -Eo 'AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-net-link-flap\\|[A-Z]+' "${serial_log}" | tail -n 1 || true)"
+            net_link_flap_marker_line="$(
+              grep -F 'AERO_VIRTIO_SELFTEST|TEST|virtio-net-link-flap|' "${serial_log}" | tail -n 1 | tr -d '\r' || true
+            )"
             net_offload_csum_marker="$(
               grep -F 'AERO_VIRTIO_SELFTEST|TEST|virtio-net-offload-csum|' "${serial_log}" | tail -n 1 | tr -d '\r' || true
             )"
@@ -1132,6 +1136,9 @@ jobs:
               fi
               if [[ -n "${net_link_flap_marker}" ]]; then
                 echo "- Guest virtio-net-link-flap marker: \`${net_link_flap_marker}\`"
+              fi
+              if [[ -n "${net_link_flap_marker_line}" ]]; then
+                echo "- Guest virtio-net-link-flap marker line: \`${net_link_flap_marker_line}\`"
               fi
             if [[ -n "${net_offload_csum_marker}" ]]; then
               echo "- Guest virtio-net-offload-csum marker: \`${net_offload_csum_marker}\`"
