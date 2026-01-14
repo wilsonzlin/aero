@@ -1307,6 +1307,34 @@ mod tests {
     }
 
     #[test]
+    fn comreset_assert_clears_inflight_state() {
+        let (mut ctl, _irq, _mem, drive) = setup_controller();
+        ctl.attach_drive(0, drive);
+
+        // Seed various in-flight / sticky registers.
+        ctl.write_u32(PORT_BASE + PORT_REG_CI, 0x1);
+        ctl.write_u32(PORT_BASE + PORT_REG_SACT, 0x1234);
+        // PxIS/PxSERR are W1C from the guest POV; seed them directly to validate COMRESET clears.
+        ctl.ports[0].regs.is = PORT_IS_DHRS | PORT_IS_TFES;
+        ctl.ports[0].regs.serr = 0xFFFF_FFFF;
+
+        // Assert COMRESET.
+        ctl.write_u32(PORT_BASE + PORT_REG_SCTL, 1);
+
+        assert_eq!(ctl.read_u32(PORT_BASE + PORT_REG_CI), 0);
+        assert_eq!(ctl.read_u32(PORT_BASE + PORT_REG_SACT), 0);
+        assert_eq!(ctl.read_u32(PORT_BASE + PORT_REG_IS), 0);
+        assert_eq!(ctl.read_u32(PORT_BASE + PORT_REG_SERR), 0);
+
+        // Link should be in the transient "present, no communication" state with the device busy.
+        assert_eq!(ctl.read_u32(PORT_BASE + PORT_REG_SSTS) & 0xF, 1);
+        assert_ne!(
+            ctl.read_u32(PORT_BASE + PORT_REG_TFD) & (ATA_STATUS_BSY as u32),
+            0
+        );
+    }
+
+    #[test]
     fn ports_implemented_reflects_hba_port_count_not_drive_presence() {
         let irq = TestIrqLine::default();
         let mut ctl = AhciController::new(Box::new(irq), 1);
