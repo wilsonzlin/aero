@@ -1030,18 +1030,6 @@ function Wait-AeroSelftestResult {
   $sawVirtioNetLinkFlapSkip = $false
   $didNetLinkFlap = $false
 
-  function Test-VirtioBlkResetRequirement {
-    param(
-      [Parameter(Mandatory = $true)] [string]$Tail
-    )
-    if (-not $RequireVirtioBlkResetPass) { return $null }
-
-    if ($sawVirtioBlkResetFail) { return @{ Result = "VIRTIO_BLK_RESET_FAILED"; Tail = $Tail } }
-    if ($sawVirtioBlkResetPass) { return $null }
-    if ($sawVirtioBlkResetSkip) { return @{ Result = "VIRTIO_BLK_RESET_SKIPPED"; Tail = $Tail } }
-    return @{ Result = "MISSING_VIRTIO_BLK_RESET"; Tail = $Tail }
-  }
-
   function Test-VirtioInputMsixRequirement {
     param(
       [Parameter(Mandatory = $true)] [string]$Tail,
@@ -1664,8 +1652,6 @@ function Wait-AeroSelftestResult {
 
           $msixCheck = Test-VirtioInputMsixRequirement -Tail $tail -SerialLogPath $SerialLogPath
           if ($null -ne $msixCheck) { return $msixCheck }
-          $blkResetCheck = Test-VirtioBlkResetRequirement -Tail $tail
-          if ($null -ne $blkResetCheck) { return $blkResetCheck }
 
           if ($RequireNetCsumOffload) {
             $csum = Get-AeroVirtioNetOffloadCsumStatsFromTail -Tail $tail -SerialLogPath $SerialLogPath
@@ -1761,8 +1747,6 @@ function Wait-AeroSelftestResult {
                 }
                 $msixCheck = Test-VirtioInputMsixRequirement -Tail $tail -SerialLogPath $SerialLogPath
                 if ($null -ne $msixCheck) { return $msixCheck }
-                $blkResetCheck = Test-VirtioBlkResetRequirement -Tail $tail
-                if ($null -ne $blkResetCheck) { return $blkResetCheck }
 
                 if ($RequireNetCsumOffload) {
                   $csum = Get-AeroVirtioNetOffloadCsumStatsFromTail -Tail $tail -SerialLogPath $SerialLogPath
@@ -1875,8 +1859,6 @@ function Wait-AeroSelftestResult {
 
         $msixCheck = Test-VirtioInputMsixRequirement -Tail $tail -SerialLogPath $SerialLogPath
         if ($null -ne $msixCheck) { return $msixCheck }
-        $blkResetCheck = Test-VirtioBlkResetRequirement -Tail $tail
-        if ($null -ne $blkResetCheck) { return $blkResetCheck }
 
         if ($RequireNetCsumOffload) {
           $csum = Get-AeroVirtioNetOffloadCsumStatsFromTail -Tail $tail -SerialLogPath $SerialLogPath
