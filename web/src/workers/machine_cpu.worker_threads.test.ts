@@ -217,7 +217,7 @@ describe("workers/machine_cpu.worker (worker_threads)", () => {
   }, 20_000);
 
   it("updates input latency telemetry when processing batches (dummy machine, no WASM)", async () => {
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: 0 });
+    const segments = allocateTestSegments();
     const status = new Int32Array(segments.control, STATUS_OFFSET_BYTES, STATUS_INTS);
 
     const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
@@ -295,7 +295,7 @@ describe("workers/machine_cpu.worker (worker_threads)", () => {
   }, 20_000);
 
   it("counts clamped input batch claims as drops (dummy machine)", async () => {
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 1, vramMiB: 0 });
+    const segments = allocateTestSegments();
     const status = new Int32Array(segments.control, STATUS_OFFSET_BYTES, STATUS_INTS);
 
     const registerUrl = new URL("../../../scripts/register-ts-strip-loader.mjs", import.meta.url);
