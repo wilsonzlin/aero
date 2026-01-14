@@ -25,7 +25,7 @@ tags:
   - name: udpRelay
     description: UDP relay token minting (WebRTC UDP proxy)
   - name: dns
-    description: DNS-over-HTTPS (RFC 8484)
+    description: DNS endpoints (RFC 8484 DoH + JSON convenience endpoint)
 paths:
   /session:
     post:
@@ -175,13 +175,30 @@ paths:
                 type: string
                 format: binary
         '400':
-          $ref: '#/components/responses/ErrorResponse'
+          description: Malformed DNS query (FORMERR). Response is still a DNS message payload.
+          content:
+            application/dns-message:
+              schema:
+                type: string
+                format: binary
         '401':
           $ref: '#/components/responses/ErrorResponse'
         '403':
           $ref: '#/components/responses/ErrorResponse'
+        '413':
+          description: Payload too large (`limits.dns.maxQueryBytes`). Response is still a DNS message payload.
+          content:
+            application/dns-message:
+              schema:
+                type: string
+                format: binary
         '429':
-          $ref: '#/components/responses/ErrorResponse'
+          description: Too many requests (rate limited). Response is still a DNS message payload.
+          content:
+            application/dns-message:
+              schema:
+                type: string
+                format: binary
         '500':
           $ref: '#/components/responses/ErrorResponse'
 
@@ -211,12 +228,85 @@ paths:
                 type: string
                 format: binary
         '400':
+          description: Malformed DNS query (FORMERR). Response is still a DNS message payload.
+          content:
+            application/dns-message:
+              schema:
+                type: string
+                format: binary
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
+        '403':
+          $ref: '#/components/responses/ErrorResponse'
+        '413':
+          description: Payload too large (`limits.dns.maxQueryBytes`). Response is still a DNS message payload.
+          content:
+            application/dns-message:
+              schema:
+                type: string
+                format: binary
+        '415':
+          description: Unsupported media type (must be `application/dns-message`). Response is still a DNS message payload.
+          content:
+            application/dns-message:
+              schema:
+                type: string
+                format: binary
+        '429':
+          description: Too many requests (rate limited). Response is still a DNS message payload.
+          content:
+            application/dns-message:
+              schema:
+                type: string
+                format: binary
+        '500':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /dns-json:
+    get:
+      tags: [dns]
+      summary: DNS JSON convenience endpoint (GET)
+      description: |
+        Cloudflare-DNS-JSON compatible endpoint intended for debugging and simple
+        `A` / `AAAA` / `CNAME` lookups.
+
+        `/dns-query` remains the canonical DoH interface for production clients.
+      security:
+        - aeroSession: []
+      parameters:
+        - name: name
+          in: query
+          required: true
+          description: DNS name to resolve.
+          schema:
+            type: string
+            minLength: 1
+        - name: type
+          in: query
+          required: true
+          description: DNS record type (`A`, `AAAA`, `CNAME`, or their numeric equivalents).
+          schema:
+            type: string
+            minLength: 1
+            example: A
+      responses:
+        '200':
+          description: DNS JSON response.
+          content:
+            application/dns-json:
+              schema:
+                $ref: '#/components/schemas/DnsJsonResponse'
+        '400':
           $ref: '#/components/responses/ErrorResponse'
         '401':
           $ref: '#/components/responses/ErrorResponse'
         '403':
           $ref: '#/components/responses/ErrorResponse'
+        '413':
+          $ref: '#/components/responses/ErrorResponse'
         '429':
+          $ref: '#/components/responses/ErrorResponse'
+        '502':
           $ref: '#/components/responses/ErrorResponse'
         '500':
           $ref: '#/components/responses/ErrorResponse'
@@ -455,6 +545,64 @@ components:
         expiresAt:
           type: string
           format: date-time
+
+    DnsJsonQuestion:
+      type: object
+      additionalProperties: false
+      required: [name, type]
+      properties:
+        name:
+          type: string
+        type:
+          type: integer
+          minimum: 1
+          maximum: 65535
+
+    DnsJsonAnswer:
+      type: object
+      additionalProperties: false
+      required: [name, type, TTL, data]
+      properties:
+        name:
+          type: string
+        type:
+          type: integer
+          minimum: 1
+          maximum: 65535
+        TTL:
+          type: integer
+          minimum: 0
+        data:
+          type: string
+
+    DnsJsonResponse:
+      type: object
+      additionalProperties: false
+      required: [Status, TC, RD, RA, AD, CD, Question]
+      properties:
+        Status:
+          type: integer
+          minimum: 0
+          maximum: 65535
+          description: DNS response code (RCODE).
+        TC:
+          type: boolean
+        RD:
+          type: boolean
+        RA:
+          type: boolean
+        AD:
+          type: boolean
+        CD:
+          type: boolean
+        Question:
+          type: array
+          items:
+            $ref: '#/components/schemas/DnsJsonQuestion'
+        Answer:
+          type: array
+          items:
+            $ref: '#/components/schemas/DnsJsonAnswer'
 
     ErrorResponse:
       type: object
