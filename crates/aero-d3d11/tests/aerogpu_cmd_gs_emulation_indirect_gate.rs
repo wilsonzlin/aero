@@ -39,17 +39,32 @@ fn patch_first_bind_shaders_gs(bytes: &mut [u8]) {
 #[test]
 fn aerogpu_cmd_gs_emulation_requires_indirect_execution() {
     pollster::block_on(async {
+        let test_name = concat!(
+            module_path!(),
+            "::aerogpu_cmd_gs_emulation_requires_indirect_execution"
+        );
         let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
             Ok(exec) => exec,
             Err(e) => {
-                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                common::skip_or_panic(test_name, &format!("wgpu unavailable ({e:#})"));
                 return;
             }
         };
 
-        if exec.capabilities().supports_indirect_execution {
+        // The downlevel "indirect unsupported" error path is only meaningful when compute is
+        // available (otherwise the executor will fail earlier with a compute/COMPUTE_SHADERS
+        // requirement). Skip cleanly on backends like WebGL2 where compute is unavailable.
+        if !exec.caps().supports_compute {
             common::skip_or_panic(
-                module_path!(),
+                test_name,
+                "backend does not support compute shaders; cannot exercise INDIRECT_EXECUTION-only error path",
+            );
+            return;
+        }
+
+        if exec.supports_indirect() {
+            common::skip_or_panic(
+                test_name,
                 "backend supports INDIRECT_EXECUTION; this test only exercises the downlevel error path",
             );
             return;
