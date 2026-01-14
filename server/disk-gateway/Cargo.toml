@@ -16,7 +16,7 @@ jsonwebtoken = "9"
 rand = "0.8"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "fs", "io-util", "net", "time"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "fs", "io-util", "net", "signal", "time"] }
 tokio-util = { version = "0.7", features = ["io"] }
 time = { version = "0.3", features = ["formatting", "serde"] }
 tower = "0.5"
