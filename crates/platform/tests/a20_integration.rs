@@ -76,7 +76,7 @@ fn bios_int15(bios: &mut Bios, bus: &mut dyn BiosBus, cpu: &mut CpuState, ax: u1
 
     cpu.gpr[gpr::RAX] = ax as u64;
     let mut disk = InMemoryDisk::new(vec![0; 512]);
-    bios.dispatch_interrupt(0x15, cpu, bus, &mut disk);
+    bios.dispatch_interrupt(0x15, cpu, bus, &mut disk, None);
 
     bus.read_u16(0x0104)
 }

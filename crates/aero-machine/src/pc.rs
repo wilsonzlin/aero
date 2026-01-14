@@ -665,7 +665,7 @@ impl PcMachine {
         };
         let bios_bus: &mut dyn BiosBus = &mut bus;
         self.bios
-            .dispatch_interrupt(vector, &mut self.cpu.state, bios_bus, &mut self.disk);
+            .dispatch_interrupt(vector, &mut self.cpu.state, bios_bus, &mut self.disk, None);
 
         self.cpu.state.a20_enabled = self.bus.platform.chipset.a20().enabled();
     }

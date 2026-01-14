@@ -169,6 +169,24 @@ pub trait BlockDevice {
     fn size_in_sectors(&self) -> u64;
 }
 
+/// Minimal 2048-byte-sector read interface used by the legacy BIOS INT 13h CD-ROM path.
+///
+/// This models an El Torito / ATAPI CD-ROM device exposed via BIOS drive numbers `0xE0..`.
+///
+/// The BIOS INT 13h EDD semantics for CD-ROMs are *not* the same as for hard disks:
+/// - AH=48 must report `bytes/sector = 2048`.
+/// - AH=42 must interpret the DAP's `LBA` and `count` in **2048-byte sectors** (not 512-byte
+///   "virtual sectors").
+///
+/// Keeping this as a separate trait makes the sector size contract explicit and prevents
+/// accidental mixing of 512-byte disk semantics with 2048-byte CD-ROM semantics.
+pub trait CdromDevice {
+    fn read_sector(&mut self, lba: u64, buf: &mut [u8; 2048]) -> Result<(), DiskError>;
+
+    /// Total number of 2048-byte sectors addressable via `LBA` in [`CdromDevice::read_sector`].
+    fn size_in_sectors(&self) -> u64;
+}
+
 /// In-memory block device backed by a `Vec<u8>` of 512-byte sectors.
 #[derive(Debug, Clone)]
 pub struct InMemoryDisk {
@@ -560,8 +578,9 @@ impl Bios {
         cpu: &mut CpuState,
         bus: &mut dyn BiosBus,
         disk: &mut dyn BlockDevice,
+        cdrom: Option<&mut dyn CdromDevice>,
     ) {
-        interrupts::dispatch_interrupt(self, vector, cpu, bus, disk);
+        interrupts::dispatch_interrupt(self, vector, cpu, bus, disk, cdrom);
     }
 
     pub fn set_acpi_builder(&mut self, builder: Box<dyn AcpiBuilder>) {

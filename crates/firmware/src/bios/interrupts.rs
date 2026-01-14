@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use super::{
     disk_err_to_int13_status, set_real_mode_seg, Bios, BiosBus, BiosMemoryBus, BlockDevice,
-    ElToritoBootMediaType, BDA_BASE, BDA_KEYBOARD_BUF_START, BIOS_SEGMENT,
+    CdromDevice, ElToritoBootMediaType, BDA_BASE, BDA_KEYBOARD_BUF_START, BIOS_SEGMENT,
     DISKETTE_PARAM_TABLE_OFFSET, EBDA_BASE, EBDA_SIZE, FIXED_DISK_PARAM_TABLE_OFFSET,
     KEYBOARD_QUEUE_CAPACITY,
 };
@@ -33,6 +33,7 @@ pub fn dispatch_interrupt(
     cpu: &mut CpuState,
     bus: &mut dyn BiosBus,
     disk: &mut dyn BlockDevice,
+    cdrom: Option<&mut dyn CdromDevice>,
 ) {
     sync_keyboard_bda(bios, bus);
 
@@ -51,7 +52,7 @@ pub fn dispatch_interrupt(
         0x10 => handle_int10(bios, cpu, bus),
         0x11 => handle_int11(cpu, bus),
         0x12 => handle_int12(cpu, bus),
-        0x13 => handle_int13(bios, cpu, bus, disk),
+        0x13 => handle_int13(bios, cpu, bus, disk, cdrom),
         0x14 => handle_int14(cpu, bus),
         0x15 => handle_int15(bios, cpu, bus),
         0x16 => handle_int16(bios, cpu),
@@ -355,6 +356,7 @@ fn handle_int13(
     cpu: &mut CpuState,
     bus: &mut dyn BiosBus,
     disk: &mut dyn BlockDevice,
+    mut cdrom: Option<&mut dyn CdromDevice>,
 ) {
     let ah = ((cpu.gpr[gpr::RAX] >> 8) & 0xFF) as u8;
     let drive = (cpu.gpr[gpr::RDX] & 0xFF) as u8;
@@ -506,6 +508,22 @@ fn handle_int13(
 
     let drive_kind = classify_drive(drive);
     if drive_kind == Some(DriveKind::Cd) {
+        // CD-ROM INT 13h semantics
+        // -----------------------
+        //
+        // For `DL` in 0xE0..=0xEF (the conventional BIOS range for El Torito / ATAPI CD-ROM drives),
+        // we follow the EDD/El Torito convention used by SeaBIOS:
+        //
+        // - AH=48h ("EDD get drive parameters") reports **bytes/sector = 2048**.
+        // - AH=42h ("EDD extended read") interprets the DAP's `LBA` and `count` in **2048-byte
+        //   sectors** and transfers `count * 2048` bytes.
+        //
+        // This behavior is required by Windows bootloaders like Win7's `etfsboot.com`, which read
+        // ISO 9660 logical blocks (2048 bytes) from the CD boot drive via EDD.
+        //
+        // Backend note: when a [`CdromDevice`] backend is provided, reads operate on 2048-byte
+        // sectors directly. If no CD backend is provided, we fall back to treating `disk` as a raw
+        // ISO image exposed as 512-byte sectors (4 x 512-byte sectors per CD-ROM logical block).
         match ah {
             0x00 => {
                 // Reset disk system.
@@ -533,14 +551,15 @@ fn handle_int13(
             }
             0x15 => {
                 // Get disk type.
-                //
-                // CD-ROM drives use 2048-byte logical sectors. `BlockDevice` is defined in terms of
-                // 512-byte sectors, so report the sector count in 2048-byte units.
                 if !drive_present(bios, bus, drive) {
                     set_error(bios, cpu, 0x01);
                     return;
                 }
-                let sectors_u32 = u32::try_from(disk.size_in_sectors() / 4).unwrap_or(u32::MAX);
+                let total_2048 = cdrom
+                    .as_deref()
+                    .map(|cdrom| cdrom.size_in_sectors())
+                    .unwrap_or_else(|| disk.size_in_sectors() / 4);
+                let sectors_u32 = u32::try_from(total_2048).unwrap_or(u32::MAX);
                 let cx = (sectors_u32 >> 16) as u16;
                 let dx = (sectors_u32 & 0xFFFF) as u16;
                 cpu.gpr[gpr::RCX] = (cpu.gpr[gpr::RCX] & !0xFFFF) | (cx as u64);
@@ -616,33 +635,58 @@ fn handle_int13(
                     }
                 }
 
-                let iso_total_2048 = disk.size_in_sectors() / 4;
-                let Some(end_2048) = lba_2048.checked_add(count_2048) else {
-                    set_error(bios, cpu, 0x04);
-                    return;
-                };
-                if end_2048 > iso_total_2048 {
-                    set_error(bios, cpu, 0x04);
-                    return;
-                }
+                if let Some(cdrom) = cdrom.as_deref_mut() {
+                    let Some(end_2048) = lba_2048.checked_add(count_2048) else {
+                        set_error(bios, cpu, 0x04);
+                        return;
+                    };
+                    if end_2048 > cdrom.size_in_sectors() {
+                        set_error(bios, cpu, 0x04);
+                        return;
+                    }
 
-                let Some(lba_512) = lba_2048.checked_mul(4) else {
-                    set_error(bios, cpu, 0x04);
-                    return;
-                };
-                let Some(count_512) = count_2048.checked_mul(4) else {
-                    set_error(bios, cpu, 0x04);
-                    return;
-                };
+                    for i in 0..count_2048 {
+                        let mut buf = [0u8; 2048];
+                        match cdrom.read_sector(lba_2048 + i, &mut buf) {
+                            Ok(()) => bus.write_physical(dst + i * 2048, &buf),
+                            Err(e) => {
+                                let status = disk_err_to_int13_status(e);
+                                set_error(bios, cpu, status);
+                                return;
+                            }
+                        }
+                    }
+                } else {
+                    // Compatibility fallback: treat `disk` as an ISO image stored as 512-byte
+                    // sectors, and map CD-ROM LBAs to 4x512 sectors.
+                    let iso_total_2048 = disk.size_in_sectors() / 4;
+                    let Some(end_2048) = lba_2048.checked_add(count_2048) else {
+                        set_error(bios, cpu, 0x04);
+                        return;
+                    };
+                    if end_2048 > iso_total_2048 {
+                        set_error(bios, cpu, 0x04);
+                        return;
+                    }
 
-                for i in 0..count_512 {
-                    let mut buf = [0u8; 512];
-                    match disk.read_sector(lba_512 + i, &mut buf) {
-                        Ok(()) => bus.write_physical(dst + i * 512, &buf),
-                        Err(e) => {
-                            let status = disk_err_to_int13_status(e);
-                            set_error(bios, cpu, status);
-                            return;
+                    let Some(lba_512) = lba_2048.checked_mul(4) else {
+                        set_error(bios, cpu, 0x04);
+                        return;
+                    };
+                    let Some(count_512) = count_2048.checked_mul(4) else {
+                        set_error(bios, cpu, 0x04);
+                        return;
+                    };
+
+                    for i in 0..count_512 {
+                        let mut buf = [0u8; 512];
+                        match disk.read_sector(lba_512 + i, &mut buf) {
+                            Ok(()) => bus.write_physical(dst + i * 512, &buf),
+                            Err(e) => {
+                                let status = disk_err_to_int13_status(e);
+                                set_error(bios, cpu, status);
+                                return;
+                            }
                         }
                     }
                 }
@@ -668,6 +712,10 @@ fn handle_int13(
                     set_error(bios, cpu, 0x01);
                     return;
                 }
+                let total_2048 = cdrom
+                    .as_deref()
+                    .map(|cdrom| cdrom.size_in_sectors())
+                    .unwrap_or_else(|| disk.size_in_sectors() / 4);
 
                 let si = cpu.gpr[gpr::RSI] & 0xFFFF;
                 let table_addr = cpu.apply_a20(cpu.segments.ds.base.wrapping_add(si));
@@ -692,7 +740,7 @@ fn handle_int13(
                     bus.write_u32(table_addr + 12, 63); // sectors/track (placeholder)
                 }
                 if buf_size >= 24 {
-                    bus.write_u64(table_addr + 16, disk.size_in_sectors() / 4);
+                    bus.write_u64(table_addr + 16, total_2048);
                 }
                 if buf_size >= 26 {
                     bus.write_u16(table_addr + 24, 2048); // bytes/sector
@@ -1794,8 +1842,9 @@ fn build_e820_map(
 #[cfg(test)]
 mod tests {
     use super::super::{
-        ivt, A20Gate, BiosConfig, ElToritoBootInfo, ElToritoBootMediaType, InMemoryDisk, TestMemory,
-        BlockDevice, BDA_BASE, EBDA_BASE, MAX_TTY_OUTPUT_BYTES, PCIE_ECAM_BASE, PCIE_ECAM_SIZE,
+        ivt, A20Gate, BiosConfig, BlockDevice, CdromDevice, DiskError, ElToritoBootInfo,
+        ElToritoBootMediaType, InMemoryDisk, TestMemory, BDA_BASE, EBDA_BASE, MAX_TTY_OUTPUT_BYTES,
+        PCIE_ECAM_BASE, PCIE_ECAM_SIZE,
     };
     use super::*;
     use aero_cpu_core::state::{gpr, CpuMode, CpuState, FLAG_CF, FLAG_ZF};
@@ -1853,7 +1902,7 @@ mod tests {
         mem.write_u16(dap_addr + 6, 0x0000); // segment
         mem.write_u64(dap_addr + 8, 1); // LBA
 
-        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
+        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk, None);
 
         assert_eq!(cpu.rflags & FLAG_CF, 0);
         assert_eq!((cpu.gpr[gpr::RAX] >> 8) & 0xFF, 0);
@@ -1881,7 +1930,7 @@ mod tests {
         let table_addr = cpu.apply_a20(cpu.segments.ds.base + 0x0600);
         mem.write_u16(table_addr, 0x1E); // buffer size
 
-        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
+        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk, None);
 
         assert_eq!(cpu.rflags & FLAG_CF, 0);
         assert_eq!((cpu.gpr[gpr::RAX] >> 8) & 0xFF, 0);
@@ -1890,15 +1939,125 @@ mod tests {
         assert_eq!(mem.read_u16(table_addr + 24), 512);
     }
 
+    #[derive(Debug)]
+    struct PatternCdrom {
+        sectors: u64,
+    }
+
+    impl PatternCdrom {
+        fn new(sectors: u64) -> Self {
+            Self { sectors }
+        }
+    }
+
+    impl CdromDevice for PatternCdrom {
+        fn read_sector(&mut self, lba: u64, buf: &mut [u8; 2048]) -> Result<(), DiskError> {
+            if lba >= self.sectors {
+                return Err(DiskError::OutOfRange);
+            }
+            for (i, slot) in buf.iter_mut().enumerate() {
+                *slot = (lba as u8).wrapping_add(i as u8);
+            }
+            Ok(())
+        }
+
+        fn size_in_sectors(&self) -> u64 {
+            self.sectors
+        }
+    }
+
+    #[test]
+    fn int13_ext_check_succeeds_for_cdrom_drive() {
+        let mut bios = Bios::new(BiosConfig {
+            boot_drive: 0xE0,
+            ..BiosConfig::default()
+        });
+        let mut disk = InMemoryDisk::new(vec![0u8; 512]);
+        let mut cdrom = PatternCdrom::new(16);
+
+        let mut cpu = CpuState::new(CpuMode::Real);
+        cpu.gpr[gpr::RAX] = 0x4100; // AH=41h
+        cpu.gpr[gpr::RBX] = 0x55AA;
+        cpu.gpr[gpr::RDX] = 0xE0; // DL = CD0
+
+        let mut mem = TestMemory::new(2 * 1024 * 1024);
+        ivt::init_bda(&mut mem, 0xE0);
+
+        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk, Some(&mut cdrom));
+
+        assert_eq!(cpu.rflags & FLAG_CF, 0);
+        assert_eq!(cpu.gpr[gpr::RAX] as u16, 0x3000); // EDD version in AH
+        assert_eq!(cpu.gpr[gpr::RBX] as u16, 0xAA55);
+        assert_eq!(cpu.gpr[gpr::RCX] as u16, 0x0005); // AH=42h + AH=48h supported
+    }
+
+    #[test]
+    fn int13_ext_read_cd_out_of_range_fails_with_stable_error_code() {
+        let mut bios = Bios::new(BiosConfig {
+            boot_drive: 0xE0,
+            ..BiosConfig::default()
+        });
+        let mut disk = InMemoryDisk::new(vec![0u8; 512]);
+        let mut cdrom = PatternCdrom::new(4);
+
+        let mut cpu = CpuState::new(CpuMode::Real);
+        set_real_mode_seg(&mut cpu.segments.ds, 0);
+        cpu.gpr[gpr::RSI] = 0x0500;
+        cpu.gpr[gpr::RDX] = 0xE0;
+        cpu.gpr[gpr::RAX] = 0x4200; // AH=42h
+
+        let mut mem = TestMemory::new(2 * 1024 * 1024);
+        ivt::init_bda(&mut mem, 0xE0);
+        cpu.a20_enabled = mem.a20_enabled();
+
+        let dap_addr = cpu.apply_a20(cpu.segments.ds.base + 0x0500);
+        mem.write_u8(dap_addr, 0x10);
+        mem.write_u8(dap_addr + 1, 0x00);
+        mem.write_u16(dap_addr + 2, 1); // count
+        mem.write_u16(dap_addr + 4, 0x2000); // offset
+        mem.write_u16(dap_addr + 6, 0x0000); // segment
+        mem.write_u64(dap_addr + 8, 4); // LBA == size => out of range
+
+        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk, Some(&mut cdrom));
+
+        assert_ne!(cpu.rflags & FLAG_CF, 0);
+        assert_eq!((cpu.gpr[gpr::RAX] >> 8) & 0xFF, 0x04);
+    }
+
+    #[test]
+    fn int13_chs_read_is_rejected_for_cdrom_drive() {
+        let mut bios = Bios::new(BiosConfig {
+            boot_drive: 0xE0,
+            ..BiosConfig::default()
+        });
+        let mut disk = InMemoryDisk::new(vec![0u8; 512]);
+        let mut cdrom = PatternCdrom::new(8);
+
+        let mut cpu = CpuState::new(CpuMode::Real);
+        set_real_mode_seg(&mut cpu.segments.es, 0);
+        cpu.gpr[gpr::RBX] = 0x1000;
+        cpu.gpr[gpr::RAX] = 0x0201; // AH=02h read, AL=1
+        cpu.gpr[gpr::RCX] = 0x0001; // CH=0, CL=1
+        cpu.gpr[gpr::RDX] = 0xE0;
+
+        let mut mem = TestMemory::new(2 * 1024 * 1024);
+        ivt::init_bda(&mut mem, 0xE0);
+
+        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk, Some(&mut cdrom));
+
+        assert_ne!(cpu.rflags & FLAG_CF, 0);
+        assert_eq!((cpu.gpr[gpr::RAX] >> 8) & 0xFF, 0x01);
+    }
+
     #[test]
     fn int13_ext_get_drive_params_cd_reports_2048_bytes_per_sector() {
         let mut bios = Bios::new(BiosConfig {
             boot_drive: 0xE0,
             ..BiosConfig::default()
         });
-        let disk_bytes = vec![0u8; 2048 * 4];
-        let iso_sectors = (disk_bytes.len() / 2048) as u64;
-        let mut disk = InMemoryDisk::new(disk_bytes);
+        let iso_sectors = 4;
+        let mut disk = InMemoryDisk::new(vec![0u8; 512]);
+        let mut cdrom = PatternCdrom::new(iso_sectors);
 
         let mut cpu = CpuState::new(CpuMode::Real);
         set_real_mode_seg(&mut cpu.segments.ds, 0);
@@ -1912,7 +2071,7 @@ mod tests {
         let table_addr = cpu.apply_a20(cpu.segments.ds.base + 0x0600);
         mem.write_u16(table_addr, 0x1E); // buffer size
 
-        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
+        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk, Some(&mut cdrom));
 
         assert_eq!(cpu.rflags & FLAG_CF, 0);
         assert_eq!((cpu.gpr[gpr::RAX] >> 8) & 0xFF, 0);
@@ -1926,15 +2085,9 @@ mod tests {
             boot_drive: 0xE0,
             ..BiosConfig::default()
         });
-
-        let mut disk_bytes = vec![0u8; 2048 * 4];
-        let mut expected = vec![0u8; 2048];
-        expected[0..512].fill(0x11);
-        expected[512..1024].fill(0x22);
-        expected[1024..1536].fill(0x33);
-        expected[1536..2048].fill(0x44);
-        disk_bytes[2048..4096].copy_from_slice(&expected); // ISO LBA 1
-        let mut disk = InMemoryDisk::new(disk_bytes);
+        let mut disk = InMemoryDisk::new(vec![0u8; 512]);
+        let mut cdrom = PatternCdrom::new(32);
+        let lba = 1u64;
 
         let mut cpu = CpuState::new(CpuMode::Real);
         set_real_mode_seg(&mut cpu.segments.ds, 0);
@@ -1945,20 +2098,31 @@ mod tests {
         let mut mem = TestMemory::new(2 * 1024 * 1024);
         ivt::init_bda(&mut mem, 0xE0);
         cpu.a20_enabled = mem.a20_enabled();
+
+        // Sentinel-fill so we can assert the BIOS writes exactly 2048 bytes.
+        for off in 0..4096u64 {
+            mem.write_u8(0x2000 + off, 0xAA);
+        }
+
         let dap_addr = cpu.apply_a20(cpu.segments.ds.base + 0x0500);
         mem.write_u8(dap_addr, 0x10);
         mem.write_u8(dap_addr + 1, 0x00);
         mem.write_u16(dap_addr + 2, 1); // count (2048-byte sectors)
         mem.write_u16(dap_addr + 4, 0x2000); // offset
         mem.write_u16(dap_addr + 6, 0x0000); // segment
-        mem.write_u64(dap_addr + 8, 1); // ISO LBA
+        mem.write_u64(dap_addr + 8, lba); // ISO LBA
 
-        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
+        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk, Some(&mut cdrom));
 
         assert_eq!(cpu.rflags & FLAG_CF, 0);
         assert_eq!((cpu.gpr[gpr::RAX] >> 8) & 0xFF, 0);
         let buf = mem.read_bytes(0x2000, 2048);
+        let mut expected = vec![0u8; 2048];
+        for (i, slot) in expected.iter_mut().enumerate() {
+            *slot = (lba as u8).wrapping_add(i as u8);
+        }
         assert_eq!(buf, expected);
+        assert_eq!(mem.read_u8(0x2000 + 2048), 0xAA);
     }
 
     #[test]
@@ -1976,7 +2140,7 @@ mod tests {
         cpu.a20_enabled = mem.a20_enabled();
         mem.write_u8(0x0500, 0x13);
 
-        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
+        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk, None);
 
         assert_ne!(cpu.rflags & FLAG_CF, 0);
         assert_eq!((cpu.gpr[gpr::RAX] >> 8) & 0xFF, 0x01);
@@ -2003,7 +2167,7 @@ mod tests {
         // Terminate disk emulation should succeed as a no-op in no-emulation mode.
         cpu.gpr[gpr::RAX] = 0x4B00; // AH=4Bh AL=00h terminate emulation
         cpu.gpr[gpr::RDX] = 0xE0;
-        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
+        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk, None);
         assert_eq!(cpu.rflags & FLAG_CF, 0);
         assert_eq!((cpu.gpr[gpr::RAX] >> 8) & 0xFF, 0);
 
@@ -2013,7 +2177,7 @@ mod tests {
         mem.write_u8(0x0500, 0x13);
         cpu.gpr[gpr::RAX] = 0x4B01; // get status
         cpu.gpr[gpr::RDX] = 0xE0;
-        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
+        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk, None);
 
         assert_eq!(cpu.rflags & FLAG_CF, 0);
         assert_eq!((cpu.gpr[gpr::RAX] >> 8) & 0xFF, 0);
@@ -2191,7 +2355,7 @@ mod tests {
 
         let mut mem = TestMemory::new(2 * 1024 * 1024);
         ivt::init_bda(&mut mem, 0x00);
-        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
+        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk, None);
 
         assert_eq!(cpu.rflags & FLAG_CF, 0);
         assert_eq!((cpu.gpr[gpr::RAX] >> 8) & 0xFF, 0);
@@ -2210,7 +2374,7 @@ mod tests {
 
         let mut mem = TestMemory::new(2 * 1024 * 1024);
         ivt::init_bda(&mut mem, 0x00);
-        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
+        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk, None);
 
         assert_eq!(cpu.rflags & FLAG_CF, 0);
         // CH=79 (cylinders-1), CL=18 (sectors per track).
@@ -2237,7 +2401,7 @@ mod tests {
 
         let mut mem = TestMemory::new(2 * 1024 * 1024);
         ivt::init_bda(&mut mem, 0x80);
-        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
+        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk, None);
 
         assert_eq!(cpu.rflags & FLAG_CF, 0);
         assert_eq!(cpu.gpr[gpr::RCX] as u16, 0xFFFF);
@@ -2262,7 +2426,7 @@ mod tests {
 
         let mut mem = TestMemory::new(2 * 1024 * 1024);
         ivt::init_bda(&mut mem, 0x00);
-        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
+        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk, None);
 
         assert_eq!(cpu.rflags & FLAG_CF, 0);
         assert_eq!((cpu.gpr[gpr::RAX] >> 8) & 0xFF, 0x02);
@@ -2285,7 +2449,7 @@ mod tests {
 
         let mut mem = TestMemory::new(2 * 1024 * 1024);
         ivt::init_bda(&mut mem, 0xE0);
-        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
+        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk, None);
 
         assert_eq!(cpu.rflags & FLAG_CF, 0);
         assert_eq!((cpu.gpr[gpr::RAX] >> 8) & 0xFF, 0x03);
@@ -2308,7 +2472,7 @@ mod tests {
 
         let mut mem = TestMemory::new(2 * 1024 * 1024);
         ivt::init_bda(&mut mem, 0xE0);
-        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
+        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk, None);
 
         assert_ne!(cpu.rflags & FLAG_CF, 0);
         assert_eq!(cpu.gpr[gpr::RAX] as u16, 0x0100);
@@ -2333,7 +2497,7 @@ mod tests {
         // Pre-fill memory so we can detect unexpected writes.
         mem.write_u8(0x1000, 0xAA);
 
-        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
+        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk, None);
 
         assert_eq!(cpu.rflags & FLAG_CF, 0);
         assert_eq!((cpu.gpr[gpr::RAX] >> 8) & 0xFF, 0);
@@ -2357,7 +2521,7 @@ mod tests {
         ivt::init_bda(&mut mem, 0x80);
         mem.write_u8(0x1000, 0xCC);
 
-        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
+        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk, None);
 
         assert_ne!(cpu.rflags & FLAG_CF, 0);
         assert_eq!(cpu.gpr[gpr::RAX] as u16, 0x0300);
@@ -2386,7 +2550,7 @@ mod tests {
         mem.write_u16(dap_addr + 6, 0x0000); // segment
         mem.write_u64(dap_addr + 8, 0); // LBA
 
-        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
+        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk, None);
 
         assert_ne!(cpu.rflags & FLAG_CF, 0);
         assert_eq!(cpu.gpr[gpr::RAX] as u16, 0x0300);
@@ -2405,7 +2569,7 @@ mod tests {
 
         let mut mem = TestMemory::new(2 * 1024 * 1024);
         ivt::init_bda(&mut mem, 0x00);
-        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
+        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk, None);
 
         assert_ne!(cpu.rflags & FLAG_CF, 0);
         assert_eq!(cpu.gpr[gpr::RAX] as u16, 0x0300);
@@ -2424,7 +2588,7 @@ mod tests {
 
         let mut mem = TestMemory::new(2 * 1024 * 1024);
         ivt::init_bda(&mut mem, 0x00);
-        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
+        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk, None);
 
         assert_eq!(cpu.rflags & FLAG_CF, 0);
         assert_eq!((cpu.gpr[gpr::RAX] >> 8) & 0xFF, 0);
@@ -2444,7 +2608,7 @@ mod tests {
 
         let mut mem = TestMemory::new(2 * 1024 * 1024);
         ivt::init_bda(&mut mem, 0x00);
-        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
+        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk, None);
 
         assert_ne!(cpu.rflags & FLAG_CF, 0);
         assert_eq!((cpu.gpr[gpr::RAX] >> 8) & 0xFF, 0x01);
@@ -2462,7 +2626,7 @@ mod tests {
 
         let mut mem = TestMemory::new(2 * 1024 * 1024);
         ivt::init_bda(&mut mem, 0x00);
-        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
+        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk, None);
 
         assert_eq!(cpu.rflags & FLAG_CF, 0);
         assert_eq!((cpu.gpr[gpr::RAX] >> 8) & 0xFF, 0);
@@ -2480,7 +2644,7 @@ mod tests {
 
         let mut mem = TestMemory::new(2 * 1024 * 1024);
         ivt::init_bda(&mut mem, 0x00);
-        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
+        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk, None);
 
         assert_eq!(cpu.rflags & FLAG_CF, 0);
         assert_eq!((cpu.gpr[gpr::RAX] >> 8) & 0xFF, 0);
@@ -2498,7 +2662,7 @@ mod tests {
 
         let mut mem = TestMemory::new(2 * 1024 * 1024);
         ivt::init_bda(&mut mem, 0x00);
-        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
+        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk, None);
 
         assert_eq!(cpu.rflags & FLAG_CF, 0);
         assert_eq!((cpu.gpr[gpr::RAX] >> 8) & 0xFF, 0);
@@ -2516,7 +2680,7 @@ mod tests {
 
         let mut mem = TestMemory::new(2 * 1024 * 1024);
         ivt::init_bda(&mut mem, 0x00);
-        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
+        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk, None);
 
         assert_eq!(cpu.rflags & FLAG_CF, 0);
         assert_eq!((cpu.gpr[gpr::RAX] >> 8) & 0xFF, 0);
@@ -2534,7 +2698,7 @@ mod tests {
 
         let mut mem = TestMemory::new(2 * 1024 * 1024);
         ivt::init_bda(&mut mem, 0x80);
-        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
+        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk, None);
 
         assert_eq!(cpu.rflags & FLAG_CF, 0);
         assert_eq!((cpu.gpr[gpr::RAX] >> 8) & 0xFF, 0);
@@ -2552,7 +2716,7 @@ mod tests {
 
         let mut mem = TestMemory::new(2 * 1024 * 1024);
         ivt::init_bda(&mut mem, 0x00);
-        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
+        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk, None);
 
         assert_eq!(cpu.rflags & FLAG_CF, 0);
         assert_eq!((cpu.gpr[gpr::RAX] >> 8) & 0xFF, 0);
@@ -2572,12 +2736,12 @@ mod tests {
         ivt::init_bda(&mut mem, 0x80);
 
         cpu.gpr[gpr::RAX] = 0x0000; // AH=00h reset
-        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
+        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk, None);
         assert_ne!(cpu.rflags & FLAG_CF, 0);
         assert_eq!((cpu.gpr[gpr::RAX] >> 8) & 0xFF, 0x01);
 
         cpu.gpr[gpr::RAX] = 0x0100; // AH=01h get status
-        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
+        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk, None);
         assert_ne!(cpu.rflags & FLAG_CF, 0);
         assert_eq!((cpu.gpr[gpr::RAX] >> 8) & 0xFF, 0x01);
     }
@@ -2597,7 +2761,7 @@ mod tests {
 
         let mut mem = TestMemory::new(2 * 1024 * 1024);
         ivt::init_bda(&mut mem, 0x80);
-        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
+        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk, None);
 
         assert_ne!(cpu.rflags & FLAG_CF, 0);
         assert_eq!(cpu.gpr[gpr::RAX] as u16, 0x0100);
@@ -2752,12 +2916,12 @@ mod tests {
         mem.write_u16(dap_addr + 6, 0x0000); // segment
         mem.write_u64(dap_addr + 8, 1); // LBA (out of range)
 
-        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
+        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk, None);
         assert_ne!(cpu.rflags & FLAG_CF, 0);
         assert_eq!((cpu.gpr[gpr::RAX] >> 8) & 0xFF, 0x04);
 
         cpu.gpr[gpr::RAX] = 0x0100; // AH=01h
-        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
+        handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk, None);
         assert_ne!(cpu.rflags & FLAG_CF, 0);
         assert_eq!((cpu.gpr[gpr::RAX] >> 8) & 0xFF, 0x04);
     }

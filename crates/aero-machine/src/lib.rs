@@ -7272,7 +7272,7 @@ impl Machine {
         {
             let bus: &mut dyn BiosBus = &mut self.mem;
             self.bios
-                .dispatch_interrupt(vector, &mut self.cpu.state, bus, &mut self.disk);
+                .dispatch_interrupt(vector, &mut self.cpu.state, bus, &mut self.disk, None);
         }
         if force_vbe_no_clear {
             // Restore the guest-visible BX value (don't leak our forced no-clear flag).

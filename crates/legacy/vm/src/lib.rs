@@ -505,7 +505,7 @@ impl<D: BlockDevice> Vm<D> {
             BatchExit::BiosInterrupt(vector) => {
                 let bus: &mut dyn BiosBus = &mut self.mem;
                 self.bios
-                    .dispatch_interrupt(vector, &mut self.cpu, bus, &mut self.disk);
+                    .dispatch_interrupt(vector, &mut self.cpu, bus, &mut self.disk, None);
                 self.cpu.a20_enabled = self.mem.a20_enabled();
                 CpuExit::BiosInterrupt(vector)
             }
