@@ -88,7 +88,9 @@ fn doorbell_advances_completed_fence_with_immediate_backend_in_deferred_mode() {
     dev.write(mmio::IRQ_ENABLE, 4, irq_bits::FENCE as u64);
 
     // Trigger processing and tick the device to execute deferred DMA.
-    dev.write(mmio::DOORBELL, 4, 1);
+    // Use a sub-dword, unaligned write to ensure `MmioHandler::write` correctly merges into the
+    // aligned 32-bit doorbell register.
+    dev.write(mmio::DOORBELL + 1, 1, 0xFF);
     dev.tick(&mut mem, 0);
 
     assert_eq!(dev.read(mmio::COMPLETED_FENCE_LO, 4) as u32, 42);
@@ -743,6 +745,31 @@ fn irq_ack_clears_only_requested_bits_and_recomputes_irq_level() {
     assert!(dev.irq_level());
 
     dev.write(mmio::IRQ_ACK, 4, irq_bits::ERROR as u64);
+    assert_eq!(dev.regs.irq_status, 0);
+    assert!(!dev.irq_level());
+}
+
+#[test]
+fn irq_ack_sub_dword_writes_clear_the_correct_bit_lanes() {
+    let mut dev = AeroGpuPciDevice::new(AeroGpuDeviceConfig::default());
+    dev.config_mut().set_command(1 << 1);
+
+    dev.regs.irq_status = irq_bits::FENCE | irq_bits::ERROR;
+    dev.write(
+        mmio::IRQ_ENABLE,
+        4,
+        (irq_bits::FENCE | irq_bits::ERROR) as u64,
+    );
+    assert!(dev.irq_level());
+
+    // Clear ERROR via the high byte lane (bit 31 is byte 3, bit 7).
+    dev.write(mmio::IRQ_ACK + 3, 1, 0x80);
+    assert_eq!(dev.regs.irq_status & irq_bits::ERROR, 0);
+    assert_ne!(dev.regs.irq_status & irq_bits::FENCE, 0);
+    assert!(dev.irq_level());
+
+    // Clear FENCE via the low byte lane.
+    dev.write(mmio::IRQ_ACK + 0, 1, 0x01);
     assert_eq!(dev.regs.irq_status, 0);
     assert!(!dev.irq_level());
 }
