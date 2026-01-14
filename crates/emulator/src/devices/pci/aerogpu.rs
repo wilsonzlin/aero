@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use aero_devices_gpu::vblank::{period_ns_from_hz, period_ns_to_reg};
 use aero_gpu_vga::{PortIO as _, VgaDevice};
-#[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+#[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
 use aero_shared::scanout_state::ScanoutStateUpdate;
 use aero_shared::scanout_state::{ScanoutState, SCANOUT_SOURCE_WDDM};
 use memory::MemoryBus;
@@ -248,7 +248,7 @@ impl AeroGpuPciDevice {
         u64::from(self.bar1).wrapping_add(u64::from(AEROGPU_PCI_BAR1_LFB_OFFSET))
     }
 
-    #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+    #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
     fn maybe_publish_scanout_state(&self, update: ScanoutStateUpdate) {
         let Some(state) = &self.scanout_state else {
             return;
@@ -269,21 +269,20 @@ impl AeroGpuPciDevice {
         let _ = state.try_publish(update);
     }
 
-    #[cfg(all(target_arch = "wasm32", not(target_feature = "atomics")))]
+    #[cfg(all(target_arch = "wasm32", not(feature = "wasm-threaded")))]
     fn update_scanout_state_from_vga(&self) {
         // `aero-gpu-vga::VgaDevice::active_scanout_update()` is not available for `wasm32`
-        // builds without atomics. In that configuration the emulator does not have a
+        // builds without `wasm-threaded`. In that configuration the emulator does not have a
         // shared-memory scanout channel, so skip legacy VGA scanout publishing entirely.
     }
 
-    #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
+    #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threaded"))]
     fn update_scanout_state_from_vga(&self) {
         // While WDDM scanout0 is enabled, legacy VGA/VBE must not steal scanout ownership.
         if self.regs.scanout0.enable {
             return;
         }
 
-        #[cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))]
         self.maybe_publish_scanout_state(self.vga.active_scanout_update());
     }
 

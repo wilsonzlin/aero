@@ -5,6 +5,10 @@ edition = "2021"
 license = "MIT OR Apache-2.0"
 [features]
 default = []
+# Enables shared-memory/threads-related helpers on wasm32 (e.g. publishing legacy VGA/VBE scanout
+# state updates via `ScanoutStateUpdate`). This is intended to be driven by build-system features
+# for threaded WASM builds.
+wasm-threaded = ["memory/wasm-threaded", "aero-gpu-vga/wasm-threaded"]
 aerogpu-native = ["dep:aero-gpu", "dep:pollster", "aero-devices-gpu/aerogpu-native"]
 aerogpu-exec = ["dep:anyhow", "dep:aero-d3d11", "dep:aero-gpu", "dep:pollster"]
 # Alias for the WebGPU-backed AeroGPU command executor.
