@@ -98,6 +98,7 @@ fn enable_slot_then_address_device_binds_port_and_writes_context() {
     assert_eq!(out_slot.root_hub_port_number(), 1);
     assert_eq!(out_slot.speed(), regs::PSIV_FULL_SPEED);
     assert_eq!(out_slot.route_string(), 0);
+    assert_eq!(out_slot.usb_device_address(), slot_id);
 
     let out_ep0 = EndpointContext::read_from(&mut mem, dev_ctx + CONTEXT_SIZE as u64);
     assert_eq!(out_ep0.max_packet_size(), 64);

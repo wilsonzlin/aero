@@ -267,6 +267,15 @@ impl SlotContext {
     pub fn set_root_hub_port_number(&mut self, port: u8) {
         self.dwords[1] = (self.dwords[1] & !(0xff << 16)) | ((port as u32) << 16);
     }
+
+    /// USB Device Address field (DW3 bits 0..=7).
+    pub fn usb_device_address(&self) -> u8 {
+        (self.dwords[3] & 0xff) as u8
+    }
+
+    pub fn set_usb_device_address(&mut self, addr: u8) {
+        self.dwords[3] = (self.dwords[3] & !0xff) | (addr as u32);
+    }
 }
 
 /// Endpoint type (xHCI Endpoint Context EP Type field).
