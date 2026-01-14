@@ -84,9 +84,19 @@ const TRACE_CLEAR_B8G8R8X8: &[u8] = include_bytes!(concat!(
     "/../../tests/fixtures/aerogpu_cmd_clear_b8g8r8x8.aerogputrace"
 ));
 #[cfg(not(target_arch = "wasm32"))]
+const TRACE_CLEAR_B8G8R8A8: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../tests/fixtures/aerogpu_cmd_clear_b8g8r8a8.aerogputrace"
+));
+#[cfg(not(target_arch = "wasm32"))]
 const TRACE_COPY_TEXTURE2D_SUBRECT: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../tests/fixtures/aerogpu_cmd_copy_texture2d_subrect.aerogputrace"
+));
+#[cfg(not(target_arch = "wasm32"))]
+const TRACE_CULL_FRONT: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../tests/fixtures/aerogpu_cmd_cull_front.aerogputrace"
 ));
 #[cfg(not(target_arch = "wasm32"))]
 const TRACE_TEXTURE_LD_B5G5R5A1: &[u8] = include_bytes!(concat!(
@@ -97,6 +107,16 @@ const TRACE_TEXTURE_LD_B5G5R5A1: &[u8] = include_bytes!(concat!(
 const TRACE_TEXTURE_LD_B5G6R5: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../tests/fixtures/aerogpu_cmd_texture_ld_b5g6r5.aerogputrace"
+));
+#[cfg(not(target_arch = "wasm32"))]
+const TRACE_INDEXED_TRIANGLE_BASE_VERTEX: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../tests/fixtures/aerogpu_cmd_indexed_triangle_base_vertex.aerogputrace"
+));
+#[cfg(not(target_arch = "wasm32"))]
+const TRACE_PRESENT_EX: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../tests/fixtures/aerogpu_cmd_present_ex.aerogputrace"
 ));
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -398,9 +418,14 @@ fn bench_cmd_stream_parse(c: &mut Criterion) {
     let scissor_test = extract_cmd_stream_from_trace(TRACE_SCISSOR_TEST);
     let textured_bc1_triangle = extract_cmd_stream_from_trace(TRACE_TEXTURED_BC1_TRIANGLE);
     let clear_b8g8r8x8 = extract_cmd_stream_from_trace(TRACE_CLEAR_B8G8R8X8);
+    let clear_b8g8r8a8 = extract_cmd_stream_from_trace(TRACE_CLEAR_B8G8R8A8);
     let copy_texture2d_subrect = extract_cmd_stream_from_trace(TRACE_COPY_TEXTURE2D_SUBRECT);
+    let cull_front = extract_cmd_stream_from_trace(TRACE_CULL_FRONT);
     let texture_ld_b5g5r5a1 = extract_cmd_stream_from_trace(TRACE_TEXTURE_LD_B5G5R5A1);
     let texture_ld_b5g6r5 = extract_cmd_stream_from_trace(TRACE_TEXTURE_LD_B5G6R5);
+    let indexed_triangle_base_vertex =
+        extract_cmd_stream_from_trace(TRACE_INDEXED_TRIANGLE_BASE_VERTEX);
+    let present_ex = extract_cmd_stream_from_trace(TRACE_PRESENT_EX);
     let synthetic = build_synthetic_triangle_stream(1024);
     let synthetic_payloads = build_synthetic_payload_stream();
 
@@ -420,9 +445,16 @@ fn bench_cmd_stream_parse(c: &mut Criterion) {
         ("fixture_scissor_test", scissor_test),
         ("fixture_textured_bc1_triangle", textured_bc1_triangle),
         ("fixture_clear_b8g8r8x8", clear_b8g8r8x8),
+        ("fixture_clear_b8g8r8a8", clear_b8g8r8a8),
         ("fixture_copy_texture2d_subrect", copy_texture2d_subrect),
+        ("fixture_cull_front", cull_front),
         ("fixture_texture_ld_b5g5r5a1", texture_ld_b5g5r5a1),
         ("fixture_texture_ld_b5g6r5", texture_ld_b5g6r5),
+        (
+            "fixture_indexed_triangle_base_vertex",
+            indexed_triangle_base_vertex,
+        ),
+        ("fixture_present_ex", present_ex),
         ("synthetic_triangle_1024", synthetic),
         ("synthetic_payloads", synthetic_payloads),
     ] {
