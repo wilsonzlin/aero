@@ -1297,102 +1297,83 @@ fn decode_operands_and_extras(
             )?;
         }
         Opcode::Dcl => {
-            // `dcl` encoding differs slightly between toolchains.
+            // D3D9 `dcl` encoding differs between toolchains:
             //
-            // Modern form:
-            //   dcl <dst>
-            //     - usage/usage_index (or sampler texture type) are packed into opcode_token[16..24].
+            // - Modern SM2/SM3 compilers encode `dcl <dst>` with the declaration metadata packed
+            //   into opcode_token[16..24] (usage / usage_index, or texture type for samplers).
             //
-            // For translation/telemetry, it is more important that decoding does not fail than it
-            // is to recover every semantic detail. We accept both forms.
-            if operand_tokens.is_empty() {
-                return Err(DecodeError {
-                    token_index: 0,
-                    message: format!("opcode {} expected at least 1 operand token", opcode.name()),
-                });
-            }
-
-            match operand_tokens.len() {
-                1 => {
-                    parse_fixed_operands(
-                        opcode,
-                        stage,
-                        major,
-                        operand_tokens,
-                        &[OperandKind::Dst],
-                        &mut operands,
-                    )?;
-
-                    // Some compilers encode DCL usage/index directly in the opcode token (bits
-                    // 16..24) instead of emitting a separate declaration token.
-                    //
-                    // Note: Pixel shader SM2 `dcl t#` is commonly emitted with these bits all
-                    // zeroed, so do not trust the opcode token's usage fields for texture register
-                    // declarations. However, SM3 pixel shaders use `dcl_* v#` for varyings and do
-                    // encode semantics in the opcode token, so we accept it for `v#` input decls.
-                    let first_operand = operands.first();
-                    let is_sampler_decl = matches!(
-                        first_operand,
-                        Some(Operand::Dst(dst)) if dst.reg.file == RegisterFile::Sampler
-                    );
-                    let is_input_decl = matches!(
-                        first_operand,
-                        Some(Operand::Dst(dst)) if dst.reg.file == RegisterFile::Input
-                    );
-
-                    if stage == ShaderStage::Vertex || is_sampler_decl || is_input_decl {
-                        let usage_index = ((opcode_token >> 20) & 0xF) as u8;
-                        // Modern D3D9 DCL encoding packs usage and usage index into the opcode token:
-                        //   - usage_raw   = opcode_token[16..20] (4 bits)
-                        //   - usage_index = opcode_token[20..24] (4 bits)
-                        //
-                        // Note: Sampler texture type declarations reuse `usage_raw` with values from
-                        // `D3DSAMPLER_TEXTURE_TYPE`.
-                        let usage_raw = ((opcode_token >> 16) & 0xF) as u8;
-                        let usage = decode_dcl_usage(usage_raw, first_operand)?;
-                        dcl = Some(DclInfo { usage, usage_index });
-                    } else {
-                        dcl = Some(DclInfo {
-                            usage: DclUsage::Unknown(0xFF),
-                            usage_index: 0,
-                        });
-                    }
+            // - Older assemblers encode `dcl <decl_token>, <dst>` where the decl token contains
+            //   usage/usage_index (or sampler texture type in decl_token[27..31]).
+            //
+            // Accept both forms so we can decode real `fxc`-produced shaders and synthetic tests.
+            let mut decl_token: Option<u32> = None;
+            match decode_dst_operand(operand_tokens, 0, stage, major) {
+                Ok((dst, consumed)) if consumed == operand_tokens.len() => {
+                    operands.push(Operand::Dst(dst));
                 }
                 _ => {
-                    // Legacy form: first operand token is a decl token, followed by a dst operand
-                    // (plus optional relative addressing token).
-                    let decl_token = operand_tokens[0];
-                    let (dst, dst_consumed) = decode_dst_operand(operand_tokens, 1, stage, major)?;
-                    operands.push(Operand::Dst(dst));
-                    if 1 + dst_consumed != operand_tokens.len() {
+                    if operand_tokens.len() < 2 {
                         return Err(DecodeError {
-                            token_index: 1 + dst_consumed,
+                            token_index: 0,
+                            message: "dcl missing destination operand".to_owned(),
+                        });
+                    }
+                    decl_token = Some(operand_tokens[0]);
+                    let (dst, consumed) = decode_dst_operand(operand_tokens, 1, stage, major)?;
+                    if 1 + consumed != operand_tokens.len() {
+                        return Err(DecodeError {
+                            token_index: 0,
                             message: format!(
-                                "opcode {} decoded {} operand tokens but instruction has {}",
-                                opcode.name(),
-                                1 + dst_consumed,
-                                operand_tokens.len()
+                                "opcode {} has extra trailing tokens after dcl destination operand",
+                                opcode.name()
                             ),
                         });
                     }
+                    operands.push(Operand::Dst(dst));
+                }
+            }
 
-                    let dst_operand = operands.first();
-                    let is_sampler_decl = matches!(
-                        dst_operand,
-                        Some(Operand::Dst(dst)) if dst.reg.file == RegisterFile::Sampler
-                    );
+            let first_operand = operands.first();
+            if let Some(decl_token) = decl_token {
+                // Legacy form: first operand token is a decl token, followed by a dst operand.
+                let dst_is_sampler = matches!(
+                    first_operand,
+                    Some(Operand::Dst(dst)) if dst.reg.file == RegisterFile::Sampler
+                );
+                let usage_raw = if dst_is_sampler {
+                    ((decl_token >> 27) & 0xF) as u8
+                } else {
+                    (decl_token & 0x1F) as u8
+                };
+                let usage_index = ((decl_token >> 16) & 0xF) as u8;
 
-                    // For non-sampler decls, usage is encoded in decl_token[0..5].
-                    // For sampler decls, texture type is encoded in decl_token[27..31].
-                    let usage_index = ((decl_token >> 16) & 0xF) as u8;
-                    let usage_raw = if is_sampler_decl {
-                        ((decl_token >> 27) & 0xF) as u8
-                    } else {
-                        (decl_token & 0x1F) as u8
-                    };
-
-                    let usage = decode_dcl_usage(usage_raw, dst_operand)?;
+                let usage = decode_dcl_usage(usage_raw, first_operand)?;
+                dcl = Some(DclInfo { usage, usage_index });
+            } else {
+                // Modern form: declaration metadata is packed into opcode_token[16..24].
+                //
+                // Note: Pixel shader SM2 `dcl t#` is commonly emitted with these bits all zeroed,
+                // so do not trust the opcode token's usage fields for texture register declarations.
+                // However, SM3 pixel shaders use `dcl_* v#` for varyings and do encode semantics in
+                // the opcode token, so accept it for `v#` input decls (and for samplers).
+                let is_sampler_decl = matches!(
+                    first_operand,
+                    Some(Operand::Dst(dst)) if dst.reg.file == RegisterFile::Sampler
+                );
+                let is_input_decl = matches!(
+                    first_operand,
+                    Some(Operand::Dst(dst)) if dst.reg.file == RegisterFile::Input
+                );
+                if stage == ShaderStage::Vertex || is_sampler_decl || is_input_decl {
+                    let usage_raw = ((opcode_token >> 16) & 0xF) as u8;
+                    let usage_index = ((opcode_token >> 20) & 0xF) as u8;
+                    let usage = decode_dcl_usage(usage_raw, first_operand)?;
                     dcl = Some(DclInfo { usage, usage_index });
+                } else {
+                    dcl = Some(DclInfo {
+                        usage: DclUsage::Unknown(0xFF),
+                        usage_index: 0,
+                    });
                 }
             }
         }

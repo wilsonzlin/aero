@@ -29,22 +29,19 @@ fn enc_dst(reg_type: u8, reg_num: u16, mask: u8) -> u32 {
 }
 
 fn enc_inst(opcode: u16, params: &[u32]) -> Vec<u32> {
+    // D3D9 SM2/SM3 encodes the *total* instruction length in DWORD tokens (including the opcode
+    // token) in bits 24..27.
     let token = (opcode as u32) | (((params.len() as u32) + 1) << 24);
     let mut v = vec![token];
     v.extend_from_slice(params);
     v
 }
 
-fn enc_dcl(usage_raw: u8, usage_index: u8, dst: u32) -> Vec<u32> {
-    // SM2/SM3 `dcl` encodes its declaration metadata (usage / sampler texture type) in the opcode
-    // token's [16..24] bits. The instruction itself has a single operand token: the declared
-    // register.
-    let opcode: u32 = 0x001F;
-    let len_dwords: u32 = 2; // opcode token + 1 operand token
-    vec![
-        opcode | (u32::from(usage_raw) << 16) | (u32::from(usage_index) << 20) | (len_dwords << 24),
-        dst,
-    ]
+fn enc_inst_with_extra(opcode: u16, extra: u32, params: &[u32]) -> Vec<u32> {
+    let token = (opcode as u32) | (((params.len() as u32) + 1) << 24) | extra;
+    let mut v = vec![token];
+    v.extend_from_slice(params);
+    v
 }
 
 fn to_bytes(words: &[u32]) -> Vec<u8> {
@@ -70,8 +67,8 @@ fn assemble_ps3_texld_cube_from_c0() -> Vec<u8> {
     //   mov oC0, r0
     //   end
     let mut words = vec![0xFFFF_0300];
-    // dcl_cube s0 (DCL opcode=0x001F, sampler texture type = 3 = cube)
-    words.extend(enc_dcl(3, 0, enc_dst(10, 0, 0xF)));
+    // dcl_cube s0 (DCL opcode=0x001F, texture type in opcode_token[16..20]; 3=cube)
+    words.extend(enc_inst_with_extra(0x001F, 3u32 << 16, &[enc_dst(10, 0, 0xF)]));
     // texld r0, c0, s0
     words.extend(enc_inst(
         0x0042,

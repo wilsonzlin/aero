@@ -36,15 +36,11 @@ fn enc_inst(opcode: u16, params: &[u32]) -> Vec<u32> {
     v
 }
 
-fn enc_dcl(usage_raw: u8, usage_index: u8, dst: u32) -> Vec<u32> {
-    // `dcl` encodes declaration metadata in opcode_token[16..24] and has a single operand: the
-    // declared register.
-    let opcode: u32 = 0x001F;
-    let len_dwords: u32 = 2; // opcode token + 1 operand token
-    vec![
-        opcode | (u32::from(usage_raw) << 16) | (u32::from(usage_index) << 20) | (len_dwords << 24),
-        dst,
-    ]
+fn enc_inst_with_extra(opcode: u16, extra: u32, params: &[u32]) -> Vec<u32> {
+    let token = (opcode as u32) | (((params.len() as u32) + 1) << 24) | extra;
+    let mut v = vec![token];
+    v.extend_from_slice(params);
+    v
 }
 
 fn to_bytes(words: &[u32]) -> Vec<u8> {
@@ -64,8 +60,8 @@ fn assemble_vs_sample_s0_to_od0_with_t0() -> Vec<u8> {
     //   mov oD0, r0
     //   end
     let mut words = vec![0xFFFE_0300];
-    // dcl_texcoord0 o0 (TEXCOORD0 = usage 5)
-    words.extend(enc_dcl(5, 0, enc_dst(6, 0, 0xF)));
+    // dcl_texcoord0 o0 (DCL opcode=0x001F, usage in opcode_token[16..20]; 5=texcoord)
+    words.extend(enc_inst_with_extra(0x001F, 5u32 << 16, &[enc_dst(6, 0, 0xF)]));
     // mov oPos, v0
     words.extend(enc_inst(0x0001, &[enc_dst(4, 0, 0xF), enc_src(1, 0, 0xE4)]));
     // mov o0, c0

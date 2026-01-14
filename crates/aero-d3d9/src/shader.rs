@@ -575,6 +575,15 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
         for _ in 0..operand_count {
             params.push(read_u32(&words, &mut idx)?);
         }
+        // Predicated SM2/SM3 instructions append a predicate register token at the end of the
+        // operand stream. The legacy translator does not model predication; strip the predicate
+        // token so fixed-arity opcode decoding sees the expected operand count.
+        if (token & 0x1000_0000) != 0 {
+            if params.is_empty() {
+                return Err(ShaderError::UnexpectedEof);
+            }
+            params.pop();
+        }
 
         // Declarations (DCL).
         //

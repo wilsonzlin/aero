@@ -90,21 +90,19 @@ fn enc_dst(reg_type: u8, reg_num: u16, mask: u8) -> u32 {
 }
 
 fn enc_inst(opcode: u16, params: &[u32]) -> Vec<u32> {
+    // D3D9 SM2/SM3 encodes the *total* instruction length in DWORD tokens (including the opcode
+    // token) in bits 24..27.
     let token = (opcode as u32) | (((params.len() as u32) + 1) << 24);
     let mut v = vec![token];
     v.extend_from_slice(params);
     v
 }
 
-fn enc_dcl(usage_raw: u8, usage_index: u8, dst: u32) -> Vec<u32> {
-    // `dcl` encodes declaration metadata in opcode_token[16..24] and has a single operand: the
-    // declared register.
-    let opcode: u32 = 0x001F;
-    let len_dwords: u32 = 2; // opcode token + 1 operand token
-    vec![
-        opcode | (u32::from(usage_raw) << 16) | (u32::from(usage_index) << 20) | (len_dwords << 24),
-        dst,
-    ]
+fn enc_inst_with_extra(opcode: u16, extra: u32, params: &[u32]) -> Vec<u32> {
+    let token = (opcode as u32) | (((params.len() as u32) + 1) << 24) | extra;
+    let mut v = vec![token];
+    v.extend_from_slice(params);
+    v
 }
 
 fn to_bytes(words: &[u32]) -> Vec<u8> {
@@ -124,8 +122,17 @@ fn assemble_vs_dcl_positiont_v0_color_v7() -> Vec<u8> {
     //   end
     let mut words = vec![0xFFFE_0200];
     // DCL opcode is 0x001F.
-    words.extend(enc_dcl(9, 0, enc_dst(1, 0, 0xF)));
-    words.extend(enc_dcl(10, 0, enc_dst(1, 7, 0xF)));
+    // Usage + usage_index are encoded in opcode_token[16..24] for SM2/3.
+    words.extend(enc_inst_with_extra(
+        0x001F,
+        (9u32 << 16) | (0u32 << 20),
+        &[enc_dst(1, 0, 0xF)],
+    ));
+    words.extend(enc_inst_with_extra(
+        0x001F,
+        (10u32 << 16) | (0u32 << 20),
+        &[enc_dst(1, 7, 0xF)],
+    ));
     words.extend(enc_inst(0x0001, &[enc_dst(4, 0, 0xF), enc_src(1, 0, 0xE4)]));
     words.extend(enc_inst(0x0001, &[enc_dst(5, 0, 0xF), enc_src(1, 7, 0xE4)]));
     words.push(0x0000_FFFF);
