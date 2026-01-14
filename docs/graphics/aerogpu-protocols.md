@@ -7,6 +7,10 @@ that new work should target.
 If you are doing new work and you are not explicitly working on a prototype, **target the
 Win7/WDDM ABI** described below.
 
+For the repo-wide “what’s implemented vs what’s missing” status checklist, see:
+
+- [`docs/graphics/status.md`](./status.md)
+
 Note on the canonical machine (`aero_machine::Machine`):
 
 - The canonical full-system machine reserves `00:07.0` for the AeroGPU Windows driver contract
