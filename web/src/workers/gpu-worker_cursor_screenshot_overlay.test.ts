@@ -88,8 +88,11 @@ function pixelU32At(rgba8: ArrayBuffer, width: number, x: number, y: number): nu
   return (((px[off + 0] ?? 0) | ((px[off + 1] ?? 0) << 8) | ((px[off + 2] ?? 0) << 16) | ((px[off + 3] ?? 0) << 24)) >>> 0);
 }
 
-async function initHeadlessGpuWorker(worker: Worker, initMsg: WorkerInitMessage): Promise<void> {
-  worker.postMessage(initMsg);
+type TestWorkerInitMessage = Omit<WorkerInitMessage, "vgaFramebuffer"> & { vgaFramebuffer?: SharedArrayBuffer };
+
+async function initHeadlessGpuWorker(worker: Worker, initMsg: TestWorkerInitMessage): Promise<void> {
+  const fullInit: WorkerInitMessage = { ...initMsg, vgaFramebuffer: initMsg.vgaFramebuffer ?? initMsg.sharedFramebuffer };
+  worker.postMessage(fullInit);
   await waitForWorkerMessage(
     worker,
     (msg) => (msg as Partial<ProtocolMessage>)?.type === MessageType.READY && (msg as { role?: unknown }).role === "gpu",
@@ -106,8 +109,8 @@ async function initHeadlessGpuWorker(worker: Worker, initMsg: WorkerInitMessage)
     protocolVersion: GPU_PROTOCOL_VERSION,
     type: "init",
     sharedFrameState,
-    sharedFramebuffer: initMsg.sharedFramebuffer,
-    sharedFramebufferOffsetBytes: initMsg.sharedFramebufferOffsetBytes,
+    sharedFramebuffer: fullInit.sharedFramebuffer,
+    sharedFramebufferOffsetBytes: fullInit.sharedFramebufferOffsetBytes,
   });
 
   await waitForWorkerMessage(

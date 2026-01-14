@@ -147,7 +147,7 @@ import {
   AerogpuCmdOpcode,
   AerogpuCmdStreamIter,
 } from "../../../emulator/protocol/aerogpu/aerogpu_cmd.ts";
-import { AerogpuFormat } from "../../../emulator/protocol/aerogpu/aerogpu_pci.ts";
+import { AerogpuFormat, aerogpuFormatToString } from "../../../emulator/protocol/aerogpu/aerogpu_pci.ts";
 
 import { convertScanoutToRgba8, type ScanoutSwizzleKind } from "./scanout_swizzle.ts";
 
@@ -1050,6 +1050,7 @@ const syncHardwareCursorFromState = (): void => {
                   height: snap.height >>> 0,
                   pitchBytes: snap.pitchBytes >>> 0,
                   format: snap.format >>> 0,
+                  format_str: aerogpuFormatToString(snap.format >>> 0),
                   base_paddr: formatU64Hex(snap.basePaddrHi, snap.basePaddrLo),
                 },
                 vram_base_paddr: `0x${(vramBasePaddr >>> 0).toString(16)}`,
@@ -1342,6 +1343,7 @@ const emitScanoutReadbackInvalid = (snap: ScanoutStateSnapshot, reason: string, 
         generation: snap.generation >>> 0,
         source: snap.source >>> 0,
         format: snap.format >>> 0,
+        format_str: aerogpuFormatToString(snap.format >>> 0),
         width: snap.width >>> 0,
         height: snap.height >>> 0,
         pitchBytes: snap.pitchBytes >>> 0,
