@@ -155,10 +155,12 @@ See also the examples under `drivers/_template/`:
 >
 >
 > The virtio-input driver under `drivers/windows7/virtio-input/` is revision-gated to Aero contract v1 (`...&REV_01`). The
-> canonical keyboard/mouse INF (`inf/aero_virtio_input.inf`) is **SUBSYS-gated only** (`SUBSYS_0010`/`SUBSYS_0011`) for
-> deterministic binding and distinct Device Manager names. If you need a revision-gated generic fallback HWID
-> (`PCI\VEN_1AF4&DEV_1052&REV_01`) for environments that don’t expose subsystem IDs, enable the legacy alias INF
-> (`inf/virtio-input.inf.disabled` → `inf/virtio-input.inf`). Avoid shipping both INFs at once (overlapping matches can cause
+> canonical keyboard/mouse INF (`inf/aero_virtio_input.inf`) matches subsystem-qualified keyboard/mouse IDs
+> (`SUBSYS_0010`/`SUBSYS_0011`) for distinct Device Manager names, plus a strict revision-gated generic fallback HWID
+> (`PCI\VEN_1AF4&DEV_1052&REV_01`) for environments where subsystem IDs are not exposed/recognized.
+> If your tooling expects the legacy INF filename, the repo also carries a legacy filename alias INF
+> (`inf/virtio-input.inf.disabled` → rename to `inf/virtio-input.inf`) which is kept byte-for-byte identical to
+> `inf/aero_virtio_input.inf` from `[Version]` onward. Avoid shipping both INFs at once (overlapping matches can cause
 > confusing driver selection). Prefer explicit `ci-package.json` `infFiles` allowlists.
 
 ```powershell

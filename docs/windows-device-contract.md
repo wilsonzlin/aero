@@ -241,12 +241,15 @@ Examples (illustrative) INF model entries:
 
  ; aero_virtio_snd.inf
    %AeroVirtioSnd.DeviceDesc% = AeroVirtioSnd_Install, PCI\VEN_1AF4&DEV_1059&REV_01
-
-  ; aero_virtio_input.inf (virtio-input is a multi-function device: keyboard + mouse)
-    %AeroVirtioKeyboard.DeviceDesc% = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01
-    %AeroVirtioMouse.DeviceDesc%    = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01
-  ; Optional legacy alias INF (virtio-input.inf.disabled) may also add a generic fallback HWID:
-  ;   %AeroVirtioInput.DeviceDesc%  = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&REV_01
+ 
+   ; aero_virtio_input.inf (virtio-input is a multi-function device: keyboard + mouse)
+     %AeroVirtioKeyboard.DeviceDesc% = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01
+     %AeroVirtioMouse.DeviceDesc%    = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01
+     %AeroVirtioInput.DeviceDesc%    = AeroVirtioInput_Install.NTamd64, PCI\VEN_1AF4&DEV_1052&REV_01
+ 
+   ; Note: the repo also carries a legacy filename alias INF (`virtio-input.inf.disabled`), which is kept
+   ; byte-for-byte identical to `aero_virtio_input.inf` from `[Version]` onward for compatibility with
+   ; older tooling/workflows that still reference `virtio-input.inf`.
 ```
 
 ### Boot-critical storage (`CriticalDeviceDatabase`)
