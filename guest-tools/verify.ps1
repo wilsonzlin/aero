@@ -1261,7 +1261,7 @@ $report = @{
     schema_version = 1
     tool = @{
           name = "Aero Guest Tools Verify"
-         version = "2.5.22"
+         version = "2.5.23"
          started_utc = $started.ToUniversalTime().ToString("o")
          ended_utc = $null
          duration_ms = $null
@@ -1618,7 +1618,8 @@ try {
 
                     $relFs = $rel.Replace("/", "\")
                     $full = Join-Path $mediaRoot $relFs
-                    $exists = Test-Path $full
+                    # Treat directories as missing files (manifest entries should refer to files).
+                    $exists = Test-Path -LiteralPath $full -PathType Leaf -ErrorAction SilentlyContinue
 
                     $actualSha = $null
                     $actualSize = $null
