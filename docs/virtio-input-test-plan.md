@@ -501,7 +501,7 @@ python3 drivers/windows7/tests/host-harness/invoke_aero_virtio_win7_tests.py \
 When enabled, the harness:
 
 1. Waits for the guest readiness marker: `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|READY`
-2. Injects a deterministic input sequence via QMP `input-send-event`:
+2. Injects a deterministic input sequence via QMP (prefers `input-send-event`, with backcompat fallbacks when unavailable):
    - keyboard: `'a'` press + release
    - mouse: relative move + left click
 3. Requires the guest marker `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|PASS|...`
@@ -510,9 +510,9 @@ Expected signal:
 
 - Guest serial contains `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|PASS|...`
 - Host harness logs include a marker like:
-  `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|PASS|attempt=<n>|kbd_mode=device/broadcast|mouse_mode=device/broadcast`
+  `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|PASS|attempt=<n>|backend=<qmp_input_send_event|hmp_fallback>|kbd_mode=device/broadcast|mouse_mode=device/broadcast`
   - Note: The harness may retry injection a few times after `virtio-input-events|READY` to reduce timing flakiness.
-    In that case you may see multiple `VIRTIO_INPUT_EVENTS_INJECT|PASS` lines (the marker includes `attempt=<n>`).
+    In that case you may see multiple `VIRTIO_INPUT_EVENTS_INJECT|PASS` lines (the marker includes `attempt=<n>` and `backend=...`).
 
 If the guest was not provisioned with `--test-input-events`, the guest will emit:
 `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|SKIP|flag_not_set` and the harness will fail when `-WithInputEvents` / `--with-input-events` is enabled
@@ -525,7 +525,7 @@ If the guest selftest is too old (or otherwise misconfigured) and does not emit 
 (READY/SKIP/PASS/FAIL) after completing `virtio-input`, the harness fails early
 (PowerShell: `MISSING_VIRTIO_INPUT_EVENTS`; Python: `FAIL: MISSING_VIRTIO_INPUT_EVENTS: ...`). Update/re-provision the guest selftest binary.
 
-If QMP input injection fails (for example QMP is unreachable or the QEMU build does not support `input-send-event`),
+If QMP input injection fails (for example QMP is unreachable or the QEMU build does not support any supported input injection mechanism),
 the harness fails (PowerShell: `QMP_INPUT_INJECT_FAILED`; Python: `FAIL: QMP_INPUT_INJECT_FAILED: ...`).
 
 ### 4.5.1 Optional: end-to-end mouse wheel + horizontal wheel (QMP injection + guest HID report read)
@@ -672,7 +672,7 @@ enumeration only), run the harness with:
 When enabled, the harness:
 
 1. Waits for the guest readiness marker: `AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|READY`
-2. Injects a deterministic input sequence via QMP `input-send-event`:
+2. Injects a deterministic input sequence via QMP `input-send-event` (required; there is no widely-supported absolute-pointer fallback):
    - move to (0,0) (reset)
    - move to (10000,20000) (target)
    - left click down + up
@@ -682,7 +682,7 @@ Expected signal:
 
 - Guest serial contains `AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|PASS|...`
 - Host harness logs include a marker like:
-  `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_TABLET_EVENTS_INJECT|PASS|attempt=<n>|tablet_mode=device/broadcast`
+  `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_TABLET_EVENTS_INJECT|PASS|attempt=<n>|backend=<qmp_input_send_event>|tablet_mode=device/broadcast`
 
 If the guest was not provisioned with `--test-input-tablet-events` / `--test-tablet-events`, the guest will emit:
 `AERO_VIRTIO_SELFTEST|TEST|virtio-input-tablet-events|SKIP|flag_not_set` and the harness will fail when `-WithInputTabletEvents` / `-WithTabletEvents` / `--with-input-tablet-events` / `--with-tablet-events` is enabled

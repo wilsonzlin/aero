@@ -322,7 +322,7 @@ The provisioning media generator (`host-harness/New-AeroWin7TestImage.ps1`) can 
   - When `-WithSndBufferLimits` / `--with-snd-buffer-limits` is enabled, the harness also requires the guest marker
     `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-buffer-limits|PASS` (provision the guest with `--test-snd-buffer-limits`).
   - When `-WithInputEvents` (alias: `-WithVirtioInputEvents`) / `--with-input-events` (alias: `--with-virtio-input-events`)
-    is enabled, the harness also injects a small keyboard + mouse sequence via QMP (`input-send-event`) and requires
+    is enabled, the harness also injects a small keyboard + mouse sequence via QMP (prefers `input-send-event`, with backcompat fallbacks when unavailable) and requires
     `AERO_VIRTIO_SELFTEST|TEST|virtio-input-events|PASS`.
     - Note: this requires a guest image provisioned with `--test-input-events` so the guest selftest enables the
       `virtio-input-events` read loop (otherwise the guest reports `...|SKIP|flag_not_set`).
@@ -336,10 +336,10 @@ The provisioning media generator (`host-harness/New-AeroWin7TestImage.ps1`) can 
       If QMP input injection fails, the harness fails (PowerShell: `QMP_INPUT_INJECT_FAILED`; Python:
       `FAIL: QMP_INPUT_INJECT_FAILED: ...`).
     - The harness also emits a host marker for the injection step itself:
-      - `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|PASS|attempt=<n>|kbd_mode=device/broadcast|mouse_mode=device/broadcast`
-      - `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|FAIL|attempt=<n>|reason=...`
+      - `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|PASS|attempt=<n>|backend=<qmp_input_send_event|hmp_fallback>|kbd_mode=device/broadcast|mouse_mode=device/broadcast`
+      - `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_EVENTS_INJECT|FAIL|attempt=<n>|backend=<qmp_input_send_event|hmp_fallback|unknown>|reason=...`
       - Note: The harness may retry injection a few times after `virtio-input-events|READY` to reduce timing flakiness.
-        In that case you may see multiple `VIRTIO_INPUT_EVENTS_INJECT|PASS` lines (the marker includes `attempt=<n>`).
+        In that case you may see multiple `VIRTIO_INPUT_EVENTS_INJECT|PASS` lines (the marker includes `attempt=<n>` and `backend=...`).
     - When `-WithInputWheel` (alias: `-WithVirtioInputWheel`) / `--with-input-wheel`
       (aliases: `--with-virtio-input-wheel`, `--require-virtio-input-wheel`, `--enable-virtio-input-wheel`) is enabled,
       the harness also injects vertical + horizontal scroll wheel events
@@ -365,8 +365,8 @@ The provisioning media generator (`host-harness/New-AeroWin7TestImage.ps1`) can 
         guest selftest enables the `virtio-input-tablet-events` read loop (otherwise the guest reports
         `...|SKIP|flag_not_set` and the harness fails).
       - The harness also emits a host marker for the injection step itself:
-        - `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_TABLET_EVENTS_INJECT|PASS|attempt=<n>|tablet_mode=device/broadcast`
-        - `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_TABLET_EVENTS_INJECT|FAIL|attempt=<n>|reason=...`
+        - `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_TABLET_EVENTS_INJECT|PASS|attempt=<n>|backend=<qmp_input_send_event>|tablet_mode=device/broadcast`
+        - `AERO_VIRTIO_WIN7_HOST|VIRTIO_INPUT_TABLET_EVENTS_INJECT|FAIL|attempt=<n>|backend=<qmp_input_send_event|unknown>|reason=...`
   - Exits with `0` on PASS, non-zero on FAIL/timeout.
 
 The harness also sets the PCI **Revision ID** (`x-pci-revision=0x01`) to match the
