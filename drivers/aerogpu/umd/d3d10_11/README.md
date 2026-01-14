@@ -174,6 +174,7 @@ On Win7/WDDM 1.1, the KMD builds the per-submit `aerogpu_alloc_table` from the s
   - `AEROGPU_CMD_RESOURCE_DIRTY_RANGE` for guest-backed resources (Map/Unmap upload paths)
   - `COPY_*` packets with `WRITEBACK_DST` (staging readback)
 - Do not rely solely on “currently bound” state when building the list: these packets may be emitted while a resource is **not currently bound**, and still require the allocation to be listed for that submit.
+- The allocation list also carries per-allocation **write intent** (`WriteOperation` bit; `DXGK_ALLOCATIONLIST::Flags.Value & 0x1`). The Win7 KMD propagates this into `aerogpu_alloc_entry.flags` as `AEROGPU_ALLOC_FLAG_READONLY` when an allocation is not written by the submission; the host rejects any guest-memory writeback (e.g. `COPY_* WRITEBACK_DST`) into READONLY allocations. UMDs must therefore ensure writeback destinations are marked writable for the submission.
 
 The WDK-backed UMDs enforce this via `TrackWddmAllocForSubmitLocked()` in:
 
