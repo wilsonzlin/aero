@@ -234,6 +234,20 @@ fn malformed_chunk_offset_out_of_bounds_is_error() {
 }
 
 #[test]
+fn malformed_chunk_offset_equal_to_total_size_is_error() {
+    let mut bytes = build_dxbc(&[(FourCC(*b"SHDR"), &[1, 2, 3])]);
+    // Point the chunk offset exactly at the end of the container, which leaves
+    // no room for the 8-byte chunk header.
+    let bad_off = bytes.len() as u32;
+    let offset_table_pos = 4 + 16 + 4 + 4 + 4; // start of chunk offsets
+    bytes[offset_table_pos..offset_table_pos + 4].copy_from_slice(&bad_off.to_le_bytes());
+
+    let err = DxbcFile::parse(&bytes).unwrap_err();
+    assert!(matches!(err, DxbcError::OutOfBounds { .. }));
+    assert!(err.context().contains("header"));
+}
+
+#[test]
 fn malformed_chunk_offset_truncates_chunk_header_is_error() {
     let mut bytes = build_dxbc(&[(FourCC(*b"SHDR"), &[1, 2, 3, 4])]);
     // Point the chunk offset into the final 4 bytes of the file so that reading
