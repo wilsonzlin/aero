@@ -5183,10 +5183,10 @@ function renderAudioPanel(): HTMLElement {
               `- microphone-buffered.wav / microphone-buffered.json: buffered mic ring snapshot + metadata (backend + track state/settings/constraints/capabilities; device/group IDs hashed)`,
               `- audio-samples.txt: one-line summary of captured WAVs (includes RMS/peak dBFS estimates)`,
               `- hda-codec-state.json: HDA codec gating debug state (requires IO worker + codec_debug_state export)`,
-              `- hda-controller-state.bin: HDA controller snapshot bytes (deterministic, no guest RAM)`,
+              `- hda-controller-state.bin / hda-controller-state.json: HDA controller snapshot bytes (deterministic, no guest RAM) + metadata`,
               `- hda-tick-stats.json: IO worker HDA tick clamp counters (stall observability)`,
-              `- virtio-snd-state.bin: virtio-snd PCI function snapshot bytes (when present)`,
-              `- screenshot-*.png: guest framebuffer screenshot (requires GPU worker)`,
+              `- virtio-snd-state.bin / virtio-snd-state.json: virtio-snd PCI function snapshot bytes (when present) + metadata`,
+              `- screenshot-*.png / screenshot.json: guest framebuffer screenshot (requires GPU worker) + metadata`,
               `- serial.txt: guest serial output tail (best-effort)`,
               `- trace.json: Chrome trace export (best-effort)`,
               `- perf-hud.json: on-page perf HUD export (best-effort)`,
@@ -5441,9 +5441,31 @@ function renderAudioPanel(): HTMLElement {
             throw new Error("Invalid HDA snapshot state response.");
           }
           entries.push({ path: `${dir}/hda-controller-state.bin`, data: response.bytes });
+          entries.push({
+            path: `${dir}/hda-controller-state.json`,
+            data: encoder.encode(
+              JSON.stringify(
+                {
+                  timeIso,
+                  build: getBuildInfoForExport(),
+                  ok: true,
+                  file: "hda-controller-state.bin",
+                  bytes: response.bytes.byteLength,
+                },
+                null,
+                2,
+              ),
+            ),
+          });
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           entries.push({ path: `${dir}/hda-controller-state-error.txt`, data: encoder.encode(message) });
+          entries.push({
+            path: `${dir}/hda-controller-state.json`,
+            data: encoder.encode(
+              JSON.stringify({ timeIso, build: getBuildInfoForExport(), ok: false, file: "hda-controller-state.bin", error: message }, null, 2),
+            ),
+          });
         }
 
         // HDA tick clamp stats (best-effort). These are useful even when tracing is disabled,
@@ -5544,9 +5566,23 @@ function renderAudioPanel(): HTMLElement {
             throw new Error("Invalid virtio-snd snapshot state response.");
           }
           entries.push({ path: `${dir}/virtio-snd-state.bin`, data: response.bytes });
+          entries.push({
+            path: `${dir}/virtio-snd-state.json`,
+            data: encoder.encode(
+              JSON.stringify(
+                { timeIso, build: getBuildInfoForExport(), ok: true, file: "virtio-snd-state.bin", bytes: response.bytes.byteLength },
+                null,
+                2,
+              ),
+            ),
+          });
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           entries.push({ path: `${dir}/virtio-snd-state-error.txt`, data: encoder.encode(message) });
+          entries.push({
+            path: `${dir}/virtio-snd-state.json`,
+            data: encoder.encode(JSON.stringify({ timeIso, build: getBuildInfoForExport(), ok: false, file: "virtio-snd-state.bin", error: message }, null, 2)),
+          });
         }
 
         // Guest screenshot (best-effort).
@@ -5591,10 +5627,34 @@ function renderAudioPanel(): HTMLElement {
           const rgba8 = new Uint8Array(response.rgba8);
           const pngBlob = await rgba8ToPngBlob(response.width, response.height, rgba8);
           const pngBytes = new Uint8Array(await pngBlob.arrayBuffer());
-          entries.push({ path: `${dir}/screenshot-${response.width}x${response.height}.png`, data: pngBytes });
+          const screenshotFile = `screenshot-${response.width}x${response.height}.png`;
+          entries.push({ path: `${dir}/${screenshotFile}`, data: pngBytes });
+          entries.push({
+            path: `${dir}/screenshot.json`,
+            data: encoder.encode(
+              JSON.stringify(
+                {
+                  timeIso,
+                  build: getBuildInfoForExport(),
+                  ok: true,
+                  file: screenshotFile,
+                  width: response.width,
+                  height: response.height,
+                  includeCursor: false,
+                  bytes: pngBytes.byteLength,
+                },
+                null,
+                2,
+              ),
+            ),
+          });
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           entries.push({ path: `${dir}/screenshot-error.txt`, data: encoder.encode(message) });
+          entries.push({
+            path: `${dir}/screenshot.json`,
+            data: encoder.encode(JSON.stringify({ timeIso, build: getBuildInfoForExport(), ok: false, error: message }, null, 2)),
+          });
         }
 
         // Chrome trace export (best-effort). This is only meaningful if trace was enabled at some
