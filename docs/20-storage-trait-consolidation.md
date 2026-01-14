@@ -194,7 +194,8 @@ This pattern is already used today:
    `aero_devices_nvme::AeroStorageDiskAdapter`): in `crates/aero-devices-nvme`
  - `impl aero_devices::storage::DiskBackend for AeroVirtualDiskAsDeviceBackend` (re-exported as
    `aero_devices::storage::AeroStorageDiskAdapter`): in `crates/devices`
- - `impl aero_virtio::devices::blk::BlockBackend for Box<T: aero_storage::VirtualDisk>`: in `crates/aero-virtio`
+ - `impl<T: aero_storage::VirtualDisk> aero_virtio::devices::blk::BlockBackend for Box<T>` (plus impls
+   for `Box<dyn VirtualDisk>` / `Box<dyn VirtualDisk + Send>`): in `crates/aero-virtio`
  - Canonical disk-backed virtio-blk device type: `aero_virtio::devices::blk::VirtioBlkDisk` (type
    alias for `VirtioBlk<Box<dyn VirtualDisk>>` on wasm32, and `VirtioBlk<Box<dyn VirtualDisk + Send>>`
    on native): in `crates/aero-virtio`
