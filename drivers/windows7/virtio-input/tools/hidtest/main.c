@@ -3183,7 +3183,7 @@ static HANDLE open_hid_path(const WCHAR *path, DWORD *desired_access_out)
     return h;
 }
 
-static int list_hid_devices_json(void)
+static int list_hid_devices_json(int quiet)
 {
     GUID hid_guid;
     HDEVINFO devinfo;
@@ -3304,7 +3304,9 @@ static int list_hid_devices_json(void)
             // Still emit the device entry but without VID/PID/caps info.
             open_err = GetLastError();
             open_err_valid = 1;
-            fprint_win32_error_w(stderr, L"CreateFile", open_err);
+            if (!quiet) {
+                fprint_win32_error_w(stderr, L"CreateFile", open_err);
+            }
         }
 
         if (caps_valid) {
@@ -7256,7 +7258,7 @@ int wmain(int argc, wchar_t **argv)
     }
 
     if (opt.list_only && opt.json) {
-        return list_hid_devices_json() ? 0 : 1;
+        return list_hid_devices_json(opt.quiet) ? 0 : 1;
     }
 
     if (opt.selftest) {

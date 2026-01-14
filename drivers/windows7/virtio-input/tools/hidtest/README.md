@@ -116,6 +116,8 @@ List all HID interfaces as JSON (for harnesses/parsing):
 hidtest.exe --list --json
 ```
 
+Tip: add `--quiet` to suppress per-device `CreateFile` errors on stderr (open failures are still captured in `openErr`).
+
 The JSON output is a single array on stdout. Each entry has:
 
 - `index`, `path`, `vid`, `pid`, `ver`, `isVirtio`, `usagePage`, `usage`, `kind`, `manufacturer`, `product`, `serial`, `inputLen`, `outputLen`, `featureLen`, `reportDescLen`, `hidReportDescLen`, `desiredAccess`, `writeAccess`, `openErr`
