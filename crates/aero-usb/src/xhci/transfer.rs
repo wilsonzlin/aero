@@ -28,13 +28,27 @@ pub fn write_trb<M: MemoryBus + ?Sized>(mem: &mut M, paddr: u64, trb: Trb) {
     trb.write_to(mem, paddr);
 }
 
-fn read_trb_checked<M: MemoryBus + ?Sized>(mem: &mut M, paddr: u64) -> Result<Trb, ()> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReadTrbCheckedError {
+    BudgetExhausted,
+    InvalidDmaRead,
+}
+
+fn read_trb_checked_budgeted<M: MemoryBus + ?Sized>(
+    mem: &mut M,
+    paddr: u64,
+    step_budget: &mut usize,
+) -> Result<Trb, ReadTrbCheckedError> {
+    if *step_budget == 0 {
+        return Err(ReadTrbCheckedError::BudgetExhausted);
+    }
+    *step_budget -= 1;
     let mut bytes = [0u8; TRB_LEN];
     mem.read_physical(paddr, &mut bytes);
     // Treat an all-ones fetch as an invalid DMA read (commonly produced by open-bus/unmapped reads).
     // This avoids "successfully" processing garbage TRBs when the guest misprograms ring pointers.
     if bytes.iter().all(|&b| b == 0xFF) {
-        return Err(());
+        return Err(ReadTrbCheckedError::InvalidDmaRead);
     }
     Ok(Trb::from_bytes(bytes))
 }
@@ -77,6 +91,14 @@ enum GatherTdResult {
     Incomplete,
     Ready,
     Fault { trb_ptr: u64 },
+    BudgetExhausted,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SkipLinkTrbsResult {
+    Ok,
+    Fault,
+    BudgetExhausted,
 }
 
 #[derive(Debug, Clone)]
@@ -183,23 +205,42 @@ impl XhciTransferExecutor {
         core::mem::take(&mut self.pending_events)
     }
 
-    /// Attempt to process at most one TD for a specific endpoint.
+    /// Attempt to process at most one TD for a specific endpoint, with a bounded ring-walk budget.
     ///
-    /// This is useful for wiring into xHCI doorbell behavior where the guest explicitly notifies
-    /// the controller that a particular endpoint has new work available.
-    pub fn poll_endpoint<M: MemoryBus + ?Sized>(&mut self, mem: &mut M, ep_addr: u8) {
+    /// Returns the number of ring-walk steps performed (TRB fetches from guest memory).
+    pub fn poll_endpoint_counted<M: MemoryBus + ?Sized>(
+        &mut self,
+        mem: &mut M,
+        ep_addr: u8,
+        step_budget: usize,
+    ) -> usize {
         if !mem.dma_enabled() {
-            return;
+            return 0;
         }
+        if step_budget == 0 {
+            return 0;
+        }
+
+        let mut remaining_budget = step_budget;
         // See `tick_1ms`: move the endpoint map out to avoid holding a mutable borrow of
         // `self.endpoints` while calling helpers that need `&mut self`.
         let mut endpoints = core::mem::take(&mut self.endpoints);
         if let Some(ep) = endpoints.get_mut(&ep_addr) {
             if !ep.halted {
-                self.process_one_td(mem, ep);
+                self.process_one_td(mem, ep, &mut remaining_budget);
             }
         }
         self.endpoints = endpoints;
+
+        step_budget.saturating_sub(remaining_budget)
+    }
+
+    /// Attempt to process at most one TD for a specific endpoint.
+    ///
+    /// This is useful for wiring into xHCI doorbell behavior where the guest explicitly notifies
+    /// the controller that a particular endpoint has new work available.
+    pub fn poll_endpoint<M: MemoryBus + ?Sized>(&mut self, mem: &mut M, ep_addr: u8) {
+        let _ = self.poll_endpoint_counted(mem, ep_addr, usize::MAX);
     }
 
     /// Clears the halted (stalled) state of an endpoint.
@@ -225,21 +266,29 @@ impl XhciTransferExecutor {
             if ep.halted {
                 continue;
             }
-            self.process_one_td(mem, ep);
+            let mut budget = usize::MAX;
+            self.process_one_td(mem, ep, &mut budget);
         }
         self.endpoints = endpoints;
     }
 
-    fn process_one_td<M: MemoryBus + ?Sized>(&mut self, mem: &mut M, ep: &mut EndpointState) {
+    fn process_one_td<M: MemoryBus + ?Sized>(
+        &mut self,
+        mem: &mut M,
+        ep: &mut EndpointState,
+        step_budget: &mut usize,
+    ) {
         // Advance past any link TRBs so the dequeue pointer naturally points at a transfer TRB (or
         // a not-yet-ready TRB).
-        if !self.skip_link_trbs(mem, ep) {
-            return;
+        match self.skip_link_trbs(mem, ep, step_budget) {
+            SkipLinkTrbsResult::Ok => {}
+            SkipLinkTrbsResult::Fault | SkipLinkTrbsResult::BudgetExhausted => return,
         }
 
-        let trb = match read_trb_checked(mem, ep.ring.dequeue_ptr) {
+        let trb = match read_trb_checked_budgeted(mem, ep.ring.dequeue_ptr, step_budget) {
             Ok(trb) => trb,
-            Err(()) => {
+            Err(ReadTrbCheckedError::BudgetExhausted) => return,
+            Err(ReadTrbCheckedError::InvalidDmaRead) => {
                 ep.halted = true;
                 self.pending_events.push(TransferEvent {
                     ep_addr: ep.ep_addr,
@@ -267,7 +316,7 @@ impl XhciTransferExecutor {
                     next_cycle: ep.ring.cycle,
                 };
 
-                match self.gather_td(mem, ep, &mut td) {
+                match self.gather_td(mem, ep, &mut td, step_budget) {
                     GatherTdResult::Incomplete => (),
                     GatherTdResult::Ready => self.execute_td(mem, ep, td),
                     GatherTdResult::Fault { trb_ptr } => {
@@ -280,6 +329,7 @@ impl XhciTransferExecutor {
                             completion_code: CompletionCode::TrbError,
                         });
                     }
+                    GatherTdResult::BudgetExhausted => return,
                 }
             }
             TrbType::NoOp => {
@@ -316,7 +366,10 @@ impl XhciTransferExecutor {
             }
             TrbType::Link => {
                 // If we land on a link TRB after a TD commit, skip it now.
-                let _ = self.skip_link_trbs(mem, ep);
+                match self.skip_link_trbs(mem, ep, step_budget) {
+                    SkipLinkTrbsResult::Ok | SkipLinkTrbsResult::Fault => {}
+                    SkipLinkTrbsResult::BudgetExhausted => return,
+                }
             }
             _ => {
                 // Unsupported TRB type; treat as TRB error and advance one TRB so we don't wedge.
@@ -340,11 +393,15 @@ impl XhciTransferExecutor {
         &mut self,
         mem: &mut M,
         ep: &mut EndpointState,
-    ) -> bool {
+        step_budget: &mut usize,
+    ) -> SkipLinkTrbsResult {
         for _ in 0..MAX_LINK_SKIP {
-            let trb = match read_trb_checked(mem, ep.ring.dequeue_ptr) {
+            let trb = match read_trb_checked_budgeted(mem, ep.ring.dequeue_ptr, step_budget) {
                 Ok(trb) => trb,
-                Err(()) => {
+                Err(ReadTrbCheckedError::BudgetExhausted) => {
+                    return SkipLinkTrbsResult::BudgetExhausted
+                }
+                Err(ReadTrbCheckedError::InvalidDmaRead) => {
                     ep.halted = true;
                     self.pending_events.push(TransferEvent {
                         ep_addr: ep.ep_addr,
@@ -353,14 +410,14 @@ impl XhciTransferExecutor {
                         residual: 0,
                         completion_code: CompletionCode::TrbError,
                     });
-                    return false;
+                    return SkipLinkTrbsResult::Fault;
                 }
             };
             if trb.cycle() != ep.ring.cycle {
-                return true;
+                return SkipLinkTrbsResult::Ok;
             }
             if !matches!(trb.trb_type(), TrbType::Link) {
-                return true;
+                return SkipLinkTrbsResult::Ok;
             }
 
             let target = trb.link_segment_ptr();
@@ -373,7 +430,7 @@ impl XhciTransferExecutor {
                     residual: 0,
                     completion_code: CompletionCode::TrbError,
                 });
-                return false;
+                return SkipLinkTrbsResult::Fault;
             }
             let toggle = trb.link_toggle_cycle();
             ep.ring.dequeue_ptr = target;
@@ -392,7 +449,7 @@ impl XhciTransferExecutor {
             residual: 0,
             completion_code: CompletionCode::TrbError,
         });
-        false
+        SkipLinkTrbsResult::Fault
     }
 
     fn gather_td<M: MemoryBus + ?Sized>(
@@ -400,6 +457,7 @@ impl XhciTransferExecutor {
         mem: &mut M,
         ep: &EndpointState,
         td: &mut TdDescriptor,
+        step_budget: &mut usize,
     ) -> GatherTdResult {
         let mut ptr = ep.ring.dequeue_ptr;
         let mut cycle = ep.ring.cycle;
@@ -413,9 +471,14 @@ impl XhciTransferExecutor {
         td.next_cycle = cycle;
 
         for _ in 0..MAX_TD_TRBS {
-            let trb = match read_trb_checked(mem, ptr) {
+            let trb = match read_trb_checked_budgeted(mem, ptr, step_budget) {
                 Ok(trb) => trb,
-                Err(()) => return GatherTdResult::Fault { trb_ptr: ptr },
+                Err(ReadTrbCheckedError::InvalidDmaRead) => {
+                    return GatherTdResult::Fault { trb_ptr: ptr }
+                }
+                Err(ReadTrbCheckedError::BudgetExhausted) => {
+                    return GatherTdResult::BudgetExhausted
+                }
             };
             if trb.cycle() != cycle {
                 // TD is not fully written yet (or ring empty).

@@ -3197,7 +3197,10 @@ impl XhciController {
                 .endpoint_state(ep_addr)
                 .map(|st| (st.ring.dequeue_ptr, st.ring.cycle));
 
-            exec.poll_endpoint(mem, ep_addr);
+            let step_budget = *ring_poll_budget;
+            let steps_used = exec.poll_endpoint_counted(mem, ep_addr, step_budget);
+            *ring_poll_budget = ring_poll_budget.saturating_sub(steps_used);
+            work.ring_poll_steps = work.ring_poll_steps.saturating_add(steps_used);
 
             let after = exec
                 .endpoint_state(ep_addr)
@@ -3262,7 +3265,18 @@ impl XhciController {
             // Keep the endpoint active if the next TRB is ready (or we're waiting on an inflight
             // device completion).
             let keep_active = exec.endpoint_state(ep_addr).is_some_and(|st| {
-                !st.halted && Trb::read_from(mem, st.ring.dequeue_ptr).cycle() == st.ring.cycle
+                if st.halted {
+                    return false;
+                }
+                if *ring_poll_budget == 0 {
+                    // Global ring-walk budget exhausted; conservatively keep the endpoint active so
+                    // we can retry on a future tick.
+                    return true;
+                }
+                // Count the readiness probe as a ring-walk step.
+                *ring_poll_budget = ring_poll_budget.saturating_sub(1);
+                work.ring_poll_steps = work.ring_poll_steps.saturating_add(1);
+                Trb::read_from(mem, st.ring.dequeue_ptr).cycle() == st.ring.cycle
             });
 
             self.transfer_executors[slot_idx] = Some(exec);
