@@ -358,12 +358,18 @@ pub const AHCI_CAPS: [PciCapabilityProfile; 1] = [PciCapabilityProfile::Msi {
     per_vector_masking: true,
 }];
 
-pub const NVME_BARS: [PciBarProfile; 1] = [PciBarProfile::mem64(0, 0x4000, false)];
+/// PCI BAR index used for the NVMe controller MMIO register window (BAR0).
+pub const NVME_BAR0_INDEX: u8 = 0;
+/// Size in bytes of the NVMe controller MMIO register window (BAR0).
+pub const NVME_BAR0_SIZE: u64 = 0x4000;
+
+pub const NVME_BARS: [PciBarProfile; 1] =
+    [PciBarProfile::mem64(NVME_BAR0_INDEX, NVME_BAR0_SIZE, false)];
 
 /// NVMe MSI-X table size (number of vectors) exposed by the canonical NVMe profile.
 pub const NVME_MSIX_TABLE_SIZE: u16 = 1;
 /// PCI BAR index containing the NVMe MSI-X table.
-pub const NVME_MSIX_TABLE_BAR: u8 = 0;
+pub const NVME_MSIX_TABLE_BAR: u8 = NVME_BAR0_INDEX;
 /// Byte offset of the NVMe MSI-X table within BAR0.
 pub const NVME_MSIX_TABLE_OFFSET: u32 = 0x3000;
 
@@ -380,7 +386,7 @@ const fn nvme_msix_pba_offset(table_size: u16) -> u32 {
 }
 
 /// PCI BAR index containing the NVMe MSI-X PBA.
-pub const NVME_MSIX_PBA_BAR: u8 = 0;
+pub const NVME_MSIX_PBA_BAR: u8 = NVME_BAR0_INDEX;
 /// Byte offset of the NVMe MSI-X PBA within BAR0.
 pub const NVME_MSIX_PBA_OFFSET: u32 = nvme_msix_pba_offset(NVME_MSIX_TABLE_SIZE);
 

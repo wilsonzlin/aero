@@ -652,7 +652,7 @@ impl NvmeController {
     pub const fn bar0_len() -> u64 {
         // Registers (0x0..0x1000) + doorbells + a small region reserved for PCI-level structures
         // (e.g. MSI-X table/PBA).
-        0x4000
+        profile::NVME_BAR0_SIZE
     }
 
     pub fn mmio_read(&self, offset: u64, size: usize) -> u64 {

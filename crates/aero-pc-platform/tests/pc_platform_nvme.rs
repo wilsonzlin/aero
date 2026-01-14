@@ -179,7 +179,7 @@ fn pc_platform_enumerates_nvme_and_assigns_bar0() {
 
     let bar0_base = read_nvme_bar0_base(&mut pc);
     assert_ne!(bar0_base, 0, "BAR0 should be assigned during BIOS POST");
-    assert_eq!(bar0_base % 0x4000, 0);
+    assert_eq!(bar0_base % NvmeController::bar0_len(), 0);
 }
 
 #[test]
