@@ -164,6 +164,7 @@ fn compute_shader_ld_raw_reads_from_storage_buffer() {
             isgn: None,
             osgn: None,
             psgn: None,
+            pcsg: None,
         };
         let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures)
             .expect("compute translation should succeed");

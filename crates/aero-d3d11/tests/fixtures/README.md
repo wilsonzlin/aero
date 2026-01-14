@@ -46,10 +46,10 @@ The files are intentionally tiny and deterministic, so CI does **not** require
   * Shader model: `cs_5_0`
   * Chunks: `SHEX`
   * Behavior: `[numthreads(1,1,1)]`, `dcl_uav_raw u0`, `store_raw u0.x, 0, 0x12345678`, `ret`
-* `vs_emit_stream1.dxbc`
-  * Shader model: `vs_5_0`
+* `gs_emit_stream1.dxbc`
+  * Shader model: `gs_5_0`
   * Chunks: `SHEX`
-  * Behavior: `emit_stream(1)`, `ret` (invalid as a real VS; used to exercise SM5 stream-index policy)
+  * Behavior: `emit_stream(1)`, `ret` (minimal stream-index fixture; used to exercise SM5 stream policy)
 * `gs_emit_cut.dxbc`
   * Shader model: `gs_4_0`
   * Chunks: `SHDR`

@@ -1627,14 +1627,9 @@ impl AerogpuCmdRuntime {
         pass.set_vertex_buffer(0, expanded_vb.buffer.slice(..));
 
         match kind {
-            DrawKind::NonIndexed(DrawIndirectArgs {
-                vertex_count,
-                instance_count,
-                first_vertex,
-                first_instance,
-            }) => pass.draw(
-                first_vertex..first_vertex + vertex_count,
-                first_instance..first_instance + instance_count,
+            DrawKind::NonIndexed(args) => pass.draw(
+                args.first_vertex..args.first_vertex + args.vertex_count,
+                args.first_instance..args.first_instance + args.instance_count,
             ),
             DrawKind::Indexed(_) => {
                 bail!("draw_expanded_passthrough does not support indexed draws yet");

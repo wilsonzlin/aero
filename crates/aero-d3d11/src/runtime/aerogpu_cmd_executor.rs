@@ -7890,6 +7890,14 @@ impl AerogpuD3d11Executor {
         let dxbc_hash_fnv1a64 = fnv1a64(dxbc_bytes);
         let dxbc = DxbcFile::parse(dxbc_bytes).context("DXBC parse failed")?;
         let program = Sm4Program::parse_from_dxbc(&dxbc).context("DXBC decode failed")?;
+
+        // SM5 geometry shaders can emit to multiple output streams via `emit_stream` / `cut_stream`.
+        // Aero's initial GS bring-up only targets stream 0, so reject any shaders that use a
+        // non-zero stream index with a clear diagnostic.
+        //
+        // Validate before stage dispatch so the policy is enforced even for GS/HS/DS shaders that
+        // are currently accepted-but-ignored by the WebGPU backend.
+        validate_sm5_gs_streams(&program)?;
         let parsed_stage = match program.stage {
             crate::ShaderStage::Vertex => Some(ShaderStage::Vertex),
             crate::ShaderStage::Pixel => Some(ShaderStage::Pixel),
@@ -7918,11 +7926,6 @@ impl AerogpuD3d11Executor {
                 parsed_stage.expect("non-geometry DXBC stage mapped above")
             );
         }
-
-        // SM5 geometry shaders can emit to multiple output streams via `emit_stream` / `cut_stream`.
-        // Aero's initial GS bring-up only targets stream 0, so reject any shaders that use a
-        // non-zero stream index with a clear diagnostic.
-        validate_sm5_gs_streams(&program)?;
 
         let signatures = parse_signatures(&dxbc).context("parse DXBC signatures")?;
 
@@ -13251,7 +13254,6 @@ mod tests {
                     buffer: vb,
                     size: 16,
                     gpu_size: 16,
-                    #[cfg(test)]
                     usage: wgpu::BufferUsages::VERTEX,
                     backing: None,
                     dirty: None,

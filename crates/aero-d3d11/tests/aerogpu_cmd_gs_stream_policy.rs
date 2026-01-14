@@ -23,11 +23,11 @@ fn rejects_nonzero_emit_stream_index() {
             }
         };
 
-        // This fixture is a minimal SM5 token stream containing `emit_stream(1)`.
-        let dxbc = load_fixture("vs_emit_stream1.dxbc");
+        // This fixture is a minimal SM5 geometry-shader token stream containing `emit_stream(1)`.
+        let dxbc = load_fixture("gs_emit_stream1.dxbc");
 
         let mut writer = AerogpuCmdWriter::new();
-        writer.create_shader_dxbc(1, AerogpuShaderStage::Vertex, &dxbc);
+        writer.create_shader_dxbc(1, AerogpuShaderStage::Geometry, &dxbc);
         let stream = writer.finish();
 
         let mut guest_mem = VecGuestMemory::new(0);
@@ -41,4 +41,3 @@ fn rejects_nonzero_emit_stream_index() {
         );
     });
 }
-
