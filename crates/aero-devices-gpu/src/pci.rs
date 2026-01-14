@@ -99,9 +99,10 @@ pub struct AeroGpuPciDevice {
     /// pending.
     ///
     /// Normal runtime behavior is to return the last written LO dword when a guest reads
-    /// `SCANOUT0_FB_GPA_LO` mid-update. After snapshot restore, however, we want reads to reflect
-    /// the committed snapshot state while still allowing a subsequent HI write to commit using the
-    /// preserved pending LO dword.
+    /// `SCANOUT0_FB_GPA_LO` mid-update. Snapshot restore must preserve this guest-visible register
+    /// state as well: if a snapshot is taken between the LO and HI writes, the restored device
+    /// should continue to return the pending LO dword while the committed 64-bit `fb_gpa` remains
+    /// stable until the HI write commits.
     scanout0_fb_gpa_lo_pending_visible: bool,
 
     /// Pending LO dword for `CURSOR_FB_GPA` while waiting for the HI write commit.
@@ -1164,8 +1165,10 @@ impl IoSnapshot for AeroGpuPciDevice {
         self.ring_reset_pending_dma = ring_reset_pending_dma;
         self.scanout0_fb_gpa_pending_lo = scanout0_fb_gpa_pending_lo;
         self.scanout0_fb_gpa_lo_pending = scanout0_fb_gpa_lo_pending;
+        self.scanout0_fb_gpa_lo_pending_visible = scanout0_fb_gpa_lo_pending;
         self.cursor_fb_gpa_pending_lo = cursor_fb_gpa_pending_lo;
         self.cursor_fb_gpa_lo_pending = cursor_fb_gpa_lo_pending;
+        self.cursor_fb_gpa_lo_pending_visible = cursor_fb_gpa_lo_pending;
         self.pending_fence_completions = pending_fence_completions;
 
         // If vblank is disabled or scanout is off, ensure no vblank deadline remains scheduled.

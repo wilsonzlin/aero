@@ -1324,6 +1324,16 @@ fn snapshot_roundtrip_preserves_pending_scanout_and_cursor_fb_gpa_updates() {
 
     assert_eq!(restored.regs.scanout0.fb_gpa, scanout_fb0);
     assert_eq!(restored.regs.cursor.fb_gpa, cursor_fb0);
+    assert_eq!(
+        restored.read(mmio::SCANOUT0_FB_GPA_LO, 4) as u32,
+        scanout_fb1 as u32,
+        "pending scanout LO write should remain visible after snapshot restore"
+    );
+    assert_eq!(
+        restored.read(mmio::CURSOR_FB_GPA_LO, 4) as u32,
+        cursor_fb1 as u32,
+        "pending cursor LO write should remain visible after snapshot restore"
+    );
 
     restored.write(mmio::SCANOUT0_FB_GPA_HI, 4, scanout_fb1 >> 32);
     assert_eq!(
