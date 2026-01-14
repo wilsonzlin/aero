@@ -447,7 +447,9 @@ Known gaps / limitations (enforced by code/tests):
   - Guest HS/DS DXBC is not executed yet; HS/DS handles are accepted for state/binding only.
   - Patchlist topology without HS/DS still routes through the synthetic expansion prepass.
   - Code: [`crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs`](../../crates/aero-d3d11/src/runtime/aerogpu_cmd_executor.rs) (`CmdPrimitiveTopology::PatchList`, `gs_hs_ds_emulation_required`, `exec_draw_with_compute_prepass`)
-  - Test: [`crates/aero-d3d11/tests/aerogpu_cmd_tessellation_hs_ds_compute_prepass_error.rs`](../../crates/aero-d3d11/tests/aerogpu_cmd_tessellation_hs_ds_compute_prepass_error.rs)
+  - Tests:
+    - [`crates/aero-d3d11/tests/aerogpu_cmd_tessellation_smoke.rs`](../../crates/aero-d3d11/tests/aerogpu_cmd_tessellation_smoke.rs)
+    - [`crates/aero-d3d11/tests/aerogpu_cmd_tessellation_hs_ds_compute_prepass_error.rs`](../../crates/aero-d3d11/tests/aerogpu_cmd_tessellation_hs_ds_compute_prepass_error.rs)
 - SM5 compute/UAV bring-up is partially supported, but still has important limitations:
   - `sync` barriers are translated for compute shaders.
     - Fence-only variants (no thread-group sync) do not have a perfect WGSL/WebGPU mapping; the current translation uses `storageBarrier()` as an approximation and therefore rejects fence-only `sync` in potentially divergent control flow (see `crates/aero-d3d11/src/shader_translate.rs`).
