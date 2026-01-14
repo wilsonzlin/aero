@@ -4,6 +4,9 @@ use anyhow::{anyhow, Context, Result};
 
 /// Creates a wgpu device/queue pair suitable for headless CI and returns the adapter's downlevel
 /// capabilities.
+///
+/// This helper returns owned `wgpu::Device`/`wgpu::Queue` values and therefore creates a fresh pair
+/// per call (the wgpu types are not `Clone`).
 #[cfg(not(target_arch = "wasm32"))]
 pub async fn create_device_queue_with_downlevel(
     device_label: &str,
