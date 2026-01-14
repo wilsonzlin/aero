@@ -246,6 +246,19 @@ function isAbortError(err: unknown): boolean {
   return err instanceof Error && err.name === "AbortError";
 }
 
+function isQuotaExceededError(err: unknown): boolean {
+  // Browser/file system quota failures typically surface as a DOMException named
+  // "QuotaExceededError". Firefox uses a different name for the same condition.
+  if (!err) return false;
+  const name =
+    err instanceof DOMException || err instanceof Error
+      ? err.name
+      : typeof err === "object" && "name" in err
+        ? ((err as { name?: unknown }).name as unknown)
+        : undefined;
+  return name === "QuotaExceededError" || name === "NS_ERROR_DOM_QUOTA_REACHED";
+}
+
 function makeAbortError(): Error {
   // Ensure a stable `.name === "AbortError"` across runtimes.
   try {
@@ -669,6 +682,15 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
   private fetchAbort = new AbortController();
   private fetchSignal = abortAny([this.abort.signal, this.fetchAbort.signal]);
 
+  /**
+   * When true, the disk will not attempt any further persistent cache writes (e.g. OPFS sparse file
+   * growth). This is set when we observe a quota failure while persisting a downloaded chunk.
+   *
+   * Reads should continue to succeed via network + in-memory blocks.
+   */
+  private persistentCacheWritesDisabled = false;
+  private readonly inMemoryChunks = new Map<number, Uint8Array>();
+
   private constructor(
     private readonly sourceId: string,
     private readonly lease: DiskAccessLease,
@@ -714,7 +736,7 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
       url: this.sourceId,
       totalSize,
       blockSize,
-      cacheLimitBytes: null,
+      cacheLimitBytes: this.persistentCacheWritesDisabled ? 0 : null,
       cachedBytes,
 
       blockRequests: this.blockRequests,
@@ -1054,6 +1076,25 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
     }
 
     await this.ensureOpen().readSectors(lba, buffer);
+    // Overlay any chunks that were downloaded but not persisted due to quota pressure. The sparse
+    // cache returns zero-filled blocks for unallocated ranges; patching ensures correctness.
+    if (this.inMemoryChunks.size > 0) {
+      const readStart = offset;
+      const readEnd = offset + buffer.byteLength;
+      for (let chunkIndex = startChunk; chunkIndex <= endChunk; chunkIndex += 1) {
+        const bytes = this.inMemoryChunks.get(chunkIndex);
+        if (!bytes) continue;
+        const chunkStart = chunkIndex * this.opts.chunkSize;
+        const chunkEnd = chunkStart + bytes.byteLength;
+        const copyStart = Math.max(readStart, chunkStart);
+        const copyEnd = Math.min(readEnd, chunkEnd);
+        if (copyEnd <= copyStart) continue;
+        const srcStart = copyStart - chunkStart;
+        const dstStart = copyStart - readStart;
+        const len = copyEnd - copyStart;
+        buffer.set(bytes.subarray(srcStart, srcStart + len), dstStart);
+      }
+    }
     this.scheduleReadAhead(offset, buffer.byteLength, endChunk);
   }
 
@@ -1087,6 +1128,7 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
     const inflight = [...this.inflightChunks.values()].map((e) => e.promise);
     this.cacheGeneration += 1;
     this.lastReadEnd = null;
+    this.inMemoryChunks.clear();
     this.resetTelemetry();
 
     if (this.flushTimer !== null) {
@@ -1228,7 +1270,7 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
     }
 
     this.blockRequests += 1;
-    if (cache.isBlockAllocated(chunkIndex)) {
+    if (cache.isBlockAllocated(chunkIndex) || this.inMemoryChunks.has(chunkIndex)) {
       this.telemetry.cacheHitChunks += 1;
       return;
     }
@@ -1286,10 +1328,33 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
         if (this.closed) throw new Error("RemoteRangeDisk is closed");
         if (generation !== this.cacheGeneration) continue;
 
+        if (this.persistentCacheWritesDisabled) {
+          this.inMemoryChunks.set(chunkIndex, bytes);
+          if (generation === this.cacheGeneration) {
+            this.lastFetchMs = performance.now() - start;
+            this.lastFetchAtMs = Date.now();
+          }
+          return;
+        }
+
         const write = cache.writeBlock(chunkIndex, bytes);
         this.inflightWrites.add(write);
         try {
           await write;
+        } catch (err) {
+          if (isQuotaExceededError(err)) {
+            // Cache is best-effort: if persistence fails due to quota pressure, continue serving
+            // reads by keeping the downloaded bytes in memory and disabling further persistent
+            // cache writes for the disk lifetime.
+            this.persistentCacheWritesDisabled = true;
+            this.inMemoryChunks.set(chunkIndex, bytes);
+            if (generation === this.cacheGeneration) {
+              this.lastFetchMs = performance.now() - start;
+              this.lastFetchAtMs = Date.now();
+            }
+            return;
+          }
+          throw err;
         } finally {
           this.inflightWrites.delete(write);
         }
@@ -1505,6 +1570,7 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
   }
 
   private scheduleBackgroundFlush(): void {
+    if (this.persistentCacheWritesDisabled) return;
     if (this.flushPending) return;
     this.flushPending = true;
 
@@ -1608,6 +1674,7 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
 
     this.invalidationPromise = (async () => {
       this.cacheGeneration += 1;
+      this.inMemoryChunks.clear();
 
       // Cancel inflight downloads for the previous cache generation and prepare a fresh controller
       // for subsequent reads.
