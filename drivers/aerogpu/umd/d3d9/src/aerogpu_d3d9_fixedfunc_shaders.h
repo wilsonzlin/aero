@@ -93,8 +93,8 @@ static constexpr uint32_t kVsPassthroughPosWhiteTex1[] = {
 //
 // The current fixed-function implementation CPU-transforms XYZ|DIFFUSE{,TEX1}
 // vertices to clip-space at draw time (see convert_xyz_to_clipspace_locked())
-// and draws them with a passthrough VS, so this WVP+DIFFUSE+TEX1 VS is retained
-// for reference/potential future use.
+// and draws them with a passthrough VS (kVsPassthroughPosColorTex1), so this
+// WVP+DIFFUSE+TEX1 VS is retained for reference/potential future use.
 //
 // This shader expects the UMD to upload the *columns* of the row-major
 // `world_view_proj` matrix into a reserved high VS constant range (c240..c243;
@@ -147,8 +147,8 @@ static constexpr uint32_t kVsWvpPosColorTex0[] = {
 //
 // The current fixed-function implementation CPU-transforms XYZ|DIFFUSE{,TEX1}
 // vertices to clip-space at draw time (see convert_xyz_to_clipspace_locked())
-// and draws them with a passthrough VS, so this WVP+DIFFUSE VS is retained for
-// reference/potential future use.
+// and draws them with a passthrough VS (kVsPassthroughPosColor), so this
+// WVP+DIFFUSE VS is retained for reference/potential future use.
 //
 // Notes:
 // - The input declaration supplies POSITION as float3; D3D9 expands it to float4
