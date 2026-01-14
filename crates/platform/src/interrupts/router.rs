@@ -511,6 +511,9 @@ impl PlatformInterrupts {
     /// The platform stores LAPICs as `Arc<LocalApic>` to allow machine integrations to hold stable
     /// references across reset/snapshot restore. Most LAPIC APIs use interior mutability, so a
     /// shared reference is sufficient for reset/poll/injection.
+    ///
+    /// This helper avoids exposing the internal `lapics: Vec<Arc<LocalApic>>` field directly and
+    /// is used by interrupt delivery helpers (e.g. broadcast and logical destination modes).
     pub fn lapics_iter(&self) -> impl Iterator<Item = &LocalApic> {
         self.lapics.iter().map(|lapic| lapic.as_ref())
     }
