@@ -777,6 +777,160 @@ fn assemble_ps3_exp_log_pow() -> Vec<u32> {
     out
 }
 
+fn assemble_ps3_predicated_exp_log_pow_modifiers() -> Vec<u32> {
+    // ps_3_0
+    let mut out = vec![0xFFFF0300];
+    // def c0, 0.5, 0.0, 0.0, 0.0 (predicate threshold)
+    out.extend(enc_inst(
+        0x0051,
+        &[
+            enc_dst(2, 0, 0xF),
+            0x3F00_0000,
+            0x0000_0000,
+            0x0000_0000,
+            0x0000_0000,
+        ],
+    ));
+    // def c1, -2.0, -2.0, -2.0, -2.0
+    out.extend(enc_inst(
+        0x0051,
+        &[
+            enc_dst(2, 1, 0xF),
+            0xC000_0000,
+            0xC000_0000,
+            0xC000_0000,
+            0xC000_0000,
+        ],
+    ));
+    // def c2, 1.25, 1.25, 1.25, 1.25
+    out.extend(enc_inst(
+        0x0051,
+        &[
+            enc_dst(2, 2, 0xF),
+            0x3FA0_0000,
+            0x3FA0_0000,
+            0x3FA0_0000,
+            0x3FA0_0000,
+        ],
+    ));
+    // def c3, 0.25, 0.25, 0.25, 0.25
+    out.extend(enc_inst(
+        0x0051,
+        &[
+            enc_dst(2, 3, 0xF),
+            0x3E80_0000,
+            0x3E80_0000,
+            0x3E80_0000,
+            0x3E80_0000,
+        ],
+    ));
+    // def c4, 2.0, 2.0, 2.0, 2.0
+    out.extend(enc_inst(
+        0x0051,
+        &[
+            enc_dst(2, 4, 0xF),
+            0x4000_0000,
+            0x4000_0000,
+            0x4000_0000,
+            0x4000_0000,
+        ],
+    ));
+    // def c5, 0.0, 0.0, 1.0, 1.0 (default blue output)
+    out.extend(enc_inst(
+        0x0051,
+        &[
+            enc_dst(2, 5, 0xF),
+            0x0000_0000,
+            0x0000_0000,
+            0x3F80_0000,
+            0x3F80_0000,
+        ],
+    ));
+
+    // setp_gt p0.x, v0.x, c0.x (compare op 0 = gt)
+    out.extend(enc_inst(
+        0x004E,
+        &[
+            enc_dst(19, 0, 0x1), // p0.x
+            enc_src(1, 0, 0x00), // v0.x
+            enc_src(2, 0, 0x00), // c0.x
+        ],
+    ));
+
+    // mov oC0, c5 (default blue)
+    out.extend(enc_inst(
+        0x0001,
+        &[enc_dst(8, 0, 0xF), enc_src(2, 5, 0xE4)],
+    ));
+
+    // (p0.x) exp_sat_x2 r0, c1
+    out.extend(enc_inst_with_extra(
+        0x000E,
+        0x1000_0000 | (3u32 << 20), // predicated + saturate + mul2
+        &[
+            enc_dst(0, 0, 0xF),
+            enc_src(2, 1, 0xE4),
+            enc_src(19, 0, 0x00), // p0.x
+        ],
+    ));
+    // (p0.x) log_sat_x2 r1, c2
+    out.extend(enc_inst_with_extra(
+        0x000F,
+        0x1000_0000 | (3u32 << 20), // predicated + saturate + mul2
+        &[
+            enc_dst(0, 1, 0xF),
+            enc_src(2, 2, 0xE4),
+            enc_src(19, 0, 0x00), // p0.x
+        ],
+    ));
+    // (p0.x) pow_sat_x2 r2, c3, c4
+    out.extend(enc_inst_with_extra(
+        0x0020,
+        0x1000_0000 | (3u32 << 20), // predicated + saturate + mul2
+        &[
+            enc_dst(0, 2, 0xF),
+            enc_src(2, 3, 0xE4),
+            enc_src(2, 4, 0xE4),
+            enc_src(19, 0, 0x00), // p0.x
+        ],
+    ));
+
+    // mov r3, r0
+    out.extend(enc_inst(
+        0x0001,
+        &[enc_dst(0, 3, 0xF), enc_src(0, 0, 0xE4)],
+    ));
+    // mov r3.y, r1.x
+    out.extend(enc_inst(
+        0x0001,
+        &[enc_dst(0, 3, 0x2), enc_src(0, 1, 0x00)],
+    ));
+    // mov r3.z, r2.x
+    out.extend(enc_inst(
+        0x0001,
+        &[enc_dst(0, 3, 0x4), enc_src(0, 2, 0x00)],
+    ));
+    // mov r3.w, c5.w
+    out.extend(enc_inst(
+        0x0001,
+        &[enc_dst(0, 3, 0x8), enc_src(2, 5, 0xFF)],
+    ));
+
+    // (p0.x) mov oC0, r3
+    out.extend(enc_inst_with_extra(
+        0x0001,
+        0x1000_0000, // predicated flag
+        &[
+            enc_dst(8, 0, 0xF),
+            enc_src(0, 3, 0xE4),
+            enc_src(19, 0, 0x00), // p0.x
+        ],
+    ));
+
+    out.push(0x0000FFFF);
+    out
+}
+
 fn build_sm3_ir(words: &[u32]) -> sm3::ShaderIr {
     let decoded = sm3::decode_u32_tokens(words).unwrap();
     let ir = sm3::build_ir(&decoded).unwrap();
@@ -1451,6 +1605,78 @@ fn sm3_dp2_constant_pixel_compare() {
     assert_eq!(
         hash.to_hex().as_str(),
         "23ac9a3eadbe0b53bf8c503a2ea1d36b41d487bfaf72abc450387b3b6ae9bfa5"
+    );
+}
+
+#[test]
+fn sm3_predicated_exp_log_pow_with_modifiers_pixel_compare() {
+    let vs = build_sm3_ir(&assemble_vs_passthrough());
+    let ps = build_sm3_ir(&assemble_ps3_predicated_exp_log_pow_modifiers());
+
+    let decl = build_vertex_decl_pos_tex_color();
+
+    let quad = [
+        // Left side is red (v0.x=1.0) so predicate is true.
+        (
+            software::Vec4::new(-1.0, -1.0, 0.0, 1.0),
+            (0.0, 1.0),
+            software::Vec4::new(1.0, 0.0, 0.0, 1.0),
+        ),
+        // Right side is black (v0.x=0.0) so predicate is false.
+        (
+            software::Vec4::new(1.0, -1.0, 0.0, 1.0),
+            (1.0, 1.0),
+            software::Vec4::new(0.0, 0.0, 0.0, 1.0),
+        ),
+        (
+            software::Vec4::new(1.0, 1.0, 0.0, 1.0),
+            (1.0, 0.0),
+            software::Vec4::new(0.0, 0.0, 0.0, 1.0),
+        ),
+        (
+            software::Vec4::new(-1.0, 1.0, 0.0, 1.0),
+            (0.0, 0.0),
+            software::Vec4::new(1.0, 0.0, 0.0, 1.0),
+        ),
+    ];
+    let indices: [u16; 6] = [0, 1, 2, 0, 2, 3];
+
+    let mut vb = Vec::new();
+    for (pos, (u, v), color) in quad {
+        push_vec4(&mut vb, pos);
+        push_vec2(&mut vb, u, v);
+        push_vec4(&mut vb, color);
+    }
+
+    let mut rt = software::RenderTarget::new(8, 8, software::Vec4::ZERO);
+    let constants = zero_constants();
+    sm3::software::draw(
+        &mut rt,
+        sm3::software::DrawParams {
+            vs: &vs,
+            ps: &ps,
+            vertex_decl: &decl,
+            vertex_buffer: &vb,
+            indices: Some(&indices),
+            constants: &constants,
+            textures: &HashMap::new(),
+            sampler_states: &HashMap::new(),
+            blend_state: state::BlendState::default(),
+        },
+    );
+
+    // Left side: predicate true. `sat_x2` result modifiers are applied to each op:
+    // - exp2(-2)*2 = 0.5
+    // - log2(1.25)*2 ~= 0.643856
+    // - pow(0.25, 2)*2 = 0.125
+    assert_eq!(rt.get(1, 4).to_rgba8(), [128, 164, 32, 255]);
+    // Right side: predicate false, output stays at the default blue constant.
+    assert_eq!(rt.get(6, 4).to_rgba8(), [0, 0, 255, 255]);
+
+    let hash = blake3::hash(&rt.to_rgba8());
+    assert_eq!(
+        hash.to_hex().as_str(),
+        "ce434184a3c5460d276eb05eb0e4561574b5687d80b85b587158f774dd65091e"
     );
 }
 
