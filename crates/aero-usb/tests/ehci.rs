@@ -1339,6 +1339,36 @@ fn ehci_async_qh_budget_exceeded_sets_hse_and_halts() {
 }
 
 #[test]
+fn ehci_async_qh_exact_budget_limit_head_wrap_does_not_fault() {
+    // This matches the internal `MAX_ASYNC_QH_VISITS` constant in `src/ehci/schedule.rs`.
+    const QH_COUNT: usize = 1024;
+
+    let mut mem = TestMemory::new(0x20000);
+    let mut c = EhciController::new();
+    c.hub_mut().attach(0, Box::new(TestDevice));
+    reset_port(&mut c, &mut mem, 0);
+
+    let head: u32 = 0x1000;
+    let ep_char = qh_epchar(0, 0, 64);
+
+    for i in 0..QH_COUNT {
+        let qh = head + (i as u32) * 0x20;
+        let next = if i + 1 == QH_COUNT { head } else { qh + 0x20 };
+        write_qh(&mut mem, qh, qh_link_ptr_qh(next), ep_char, LINK_TERMINATE);
+    }
+
+    c.mmio_write(regs::REG_ASYNCLISTADDR, 4, head);
+    c.mmio_write(regs::REG_USBCMD, 4, regs::USBCMD_RS | regs::USBCMD_ASE);
+
+    c.tick_1ms(&mut mem);
+
+    let sts = c.mmio_read(regs::REG_USBSTS, 4);
+    assert_eq!(sts & regs::USBSTS_HSE, 0);
+    assert_eq!(sts & regs::USBSTS_HCHALTED, 0);
+    assert_ne!(c.mmio_read(regs::REG_USBCMD, 4) & regs::USBCMD_RS, 0);
+}
+
+#[test]
 fn ehci_async_qtd_budget_exceeded_sets_hse_and_halts() {
     const QTD_COUNT: usize = 16 * 1024;
     let mut mem = TestMemory::new(0x100000);
