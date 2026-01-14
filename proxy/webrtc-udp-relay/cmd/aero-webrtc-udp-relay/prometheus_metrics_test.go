@@ -1,14 +1,16 @@
-package metrics
+package main
 
 import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/metrics"
 )
 
 func TestPrometheusHandler_ExposesSnapshot(t *testing.T) {
-	m := New()
+	m := metrics.New()
 	m.Inc("foo")
 	m.Add("bar", 2)
 	m.Inc(`quote"back\slash`)
@@ -16,7 +18,7 @@ func TestPrometheusHandler_ExposesSnapshot(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
 	rr := httptest.NewRecorder()
 
-	PrometheusHandler(m).ServeHTTP(rr, req)
+	prometheusHandler(m).ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status=%d, want %d", rr.Code, http.StatusOK)

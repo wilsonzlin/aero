@@ -1,18 +1,20 @@
-package metrics
+package main
 
 import (
 	"fmt"
 	"net/http"
 	"sort"
 	"strings"
+
+	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/metrics"
 )
 
-// PrometheusHandler exposes Metrics in Prometheus' text exposition format.
+// prometheusHandler exposes Metrics in Prometheus' text exposition format.
 //
 // It intentionally exposes all internal counters as a single metric with an
 // `event` label. This keeps the in-process metrics registry simple while still
 // allowing scraping by Prometheus.
-func PrometheusHandler(m *Metrics) http.Handler {
+func prometheusHandler(m *metrics.Metrics) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if m == nil {
 			http.Error(w, "metrics not configured", http.StatusInternalServerError)

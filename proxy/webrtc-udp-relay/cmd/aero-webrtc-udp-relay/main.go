@@ -15,7 +15,6 @@ import (
 
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/config"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/httpserver"
-	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/metrics"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/policy"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/relay"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/signaling"
@@ -141,7 +140,7 @@ func main() {
 	srv.Mux().Handle("GET /udp", udpWS)
 
 	// Expose internal counters in Prometheus' text format.
-	srv.Mux().Handle("GET /metrics", metrics.PrometheusHandler(sessionMgr.Metrics()))
+	srv.Mux().Handle("GET /metrics", prometheusHandler(sessionMgr.Metrics()))
 
 	errCh := make(chan error, 1)
 	go func() {
