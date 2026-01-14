@@ -5497,8 +5497,7 @@ function handleInputBatch(buffer: ArrayBuffer): void {
         const dx = words[off + 3] | 0;
         if (mouseInputBackend === "virtio") {
           if (virtioMouseOk && virtioMouse) {
-            if (dz !== 0) virtioMouse.injectWheel(dz);
-            if (dx !== 0) virtioMouse.injectHWheel(dx);
+            if (dz !== 0 || dx !== 0) virtioMouse.injectWheel2(dz, dx);
           }
         } else if (mouseInputBackend === "ps2") {
           if (i8042Wasm) {

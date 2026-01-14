@@ -364,6 +364,7 @@ describe("runtime/wasm_loader (optional exports)", () => {
       inject_button(_btn: number, _pressed: boolean): void {}
       inject_wheel(_delta: number): void {}
       inject_hwheel(_delta: number): void {}
+      inject_wheel2(_wheel: number, _hwheel: number): void {}
       free(): void {}
     }
 

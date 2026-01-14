@@ -29,6 +29,7 @@ export type VirtioInputPciDeviceLike = {
   inject_button(btn: number, pressed: boolean): void;
   inject_wheel(delta: number): void;
   inject_hwheel?(delta: number): void;
+  inject_wheel2?(wheel: number, hwheel: number): void;
   free(): void;
 };
 
@@ -721,6 +722,26 @@ export class VirtioInputPciFunction implements PciDevice, TickableDevice {
       // ignore
     }
     this.#syncIrq();
+  }
+
+  injectWheel2(wheel: number, hwheel: number): void {
+    if (this.#destroyed) return;
+
+    const fn = this.#dev.inject_wheel2;
+    if (fn) {
+      try {
+        fn.call(this.#dev, wheel | 0, hwheel | 0);
+      } catch {
+        // ignore
+      }
+      this.#syncIrq();
+      return;
+    }
+
+    // Backwards compatibility: older WASM builds can only inject each axis separately (which
+    // produces two SYN frames if both axes are non-zero).
+    if (wheel !== 0) this.injectWheel(wheel);
+    if (hwheel !== 0) this.injectHWheel(hwheel);
   }
 
   /**

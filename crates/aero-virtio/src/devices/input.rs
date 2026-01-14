@@ -477,30 +477,35 @@ impl VirtioInput {
     }
 
     pub fn inject_wheel(&mut self, delta: i32) {
-        if delta == 0 {
-            return;
-        }
-        self.push_event(VirtioInputEvent {
-            type_: EV_REL,
-            code: REL_WHEEL,
-            value: delta,
-        });
-        self.push_event(VirtioInputEvent {
-            type_: EV_SYN,
-            code: SYN_REPORT,
-            value: 0,
-        });
+        self.inject_wheel2(delta, 0);
     }
 
     pub fn inject_hwheel(&mut self, delta: i32) {
-        if delta == 0 {
+        self.inject_wheel2(0, delta);
+    }
+
+    /// Inject a vertical + horizontal scroll (wheel) update and terminate it with a single
+    /// `SYN_REPORT`.
+    ///
+    /// This matches how a physical pointing device may report both axes within one frame.
+    pub fn inject_wheel2(&mut self, wheel: i32, hwheel: i32) {
+        if wheel == 0 && hwheel == 0 {
             return;
         }
-        self.push_event(VirtioInputEvent {
-            type_: EV_REL,
-            code: REL_HWHEEL,
-            value: delta,
-        });
+        if wheel != 0 {
+            self.push_event(VirtioInputEvent {
+                type_: EV_REL,
+                code: REL_WHEEL,
+                value: wheel,
+            });
+        }
+        if hwheel != 0 {
+            self.push_event(VirtioInputEvent {
+                type_: EV_REL,
+                code: REL_HWHEEL,
+                value: hwheel,
+            });
+        }
         self.push_event(VirtioInputEvent {
             type_: EV_SYN,
             code: SYN_REPORT,
