@@ -30,6 +30,10 @@ locals {
     "Access-Control-Request-Headers",
     "Range",
     "If-Range",
+    # Conditional request headers. CloudFront can handle conditional requests at the edge, but
+    # forwarding these to the origin improves portability when you rely on origin validators.
+    "If-None-Match",
+    "If-Modified-Since",
   ]
 }
 
@@ -253,6 +257,7 @@ resource "aws_cloudfront_function" "cors_preflight" {
     allow_credentials     = var.cors_allow_credentials
     max_age_seconds       = var.cors_max_age_seconds
     image_uri_prefix_json = jsonencode(local.image_uri_prefix)
+    corp_json             = jsonencode(var.cross_origin_resource_policy)
   })
 }
 

@@ -11,6 +11,7 @@ var ALLOWED_HEADERS = ${allowed_headers_json};
 var ALLOW_CREDENTIALS = ${allow_credentials};
 var MAX_AGE_SECONDS = ${max_age_seconds};
 var IMAGE_URI_PREFIX = ${image_uri_prefix_json};
+var CORP = ${corp_json};
 
 function headerValue(headers, name) {
   var key = String(name).toLowerCase();
@@ -85,13 +86,23 @@ function handler(event) {
   return {
     statusCode: 204,
     statusDescription: "No Content",
-    headers: {
-      "access-control-allow-origin": { "value": origin },
-      "access-control-allow-methods": { "value": "GET,HEAD,OPTIONS" },
-      "access-control-allow-headers": { "value": ALLOWED_HEADERS.join(",") },
-      "access-control-allow-credentials": { "value": ALLOW_CREDENTIALS ? "true" : "false" },
-      "access-control-max-age": { "value": String(MAX_AGE_SECONDS) },
-      "vary": { "value": "Origin, Access-Control-Request-Method, Access-Control-Request-Headers" }
-    }
+    headers: (function() {
+      var headers = {
+        "access-control-allow-origin": { "value": origin },
+        "access-control-allow-methods": { "value": "GET,HEAD,OPTIONS" },
+        "access-control-allow-headers": { "value": ALLOWED_HEADERS.join(",") },
+        "access-control-max-age": { "value": String(MAX_AGE_SECONDS) },
+        "vary": { "value": "Origin, Access-Control-Request-Method, Access-Control-Request-Headers" }
+      };
+      // Only emit Allow-Credentials when enabled; browsers only accept "true".
+      if (ALLOW_CREDENTIALS) {
+        headers["access-control-allow-credentials"] = { "value": "true" };
+      }
+      // Defence-in-depth for COEP: require-corp: include CORP when configured.
+      if (CORP) {
+        headers["cross-origin-resource-policy"] = { "value": CORP };
+      }
+      return headers;
+    })()
   };
 }

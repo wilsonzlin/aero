@@ -217,7 +217,8 @@ Behavior summary:
   - `Access-Control-Allow-Origin: <origin>`
   - `Access-Control-Allow-Methods: GET,HEAD,OPTIONS`
   - `Access-Control-Allow-Headers: ...` (from `cors_allowed_headers`, must include `Range`)
-  - `Access-Control-Allow-Credentials: true|false` (from `cors_allow_credentials`)
+  - `Access-Control-Allow-Credentials: true` (only when `cors_allow_credentials = true`)
+  - `Cross-Origin-Resource-Policy: <value>` (only when `cross_origin_resource_policy` is set)
   - `Access-Control-Max-Age: <seconds>` (from `cors_max_age_seconds`)
   - `Vary: Origin, Access-Control-Request-Method, Access-Control-Request-Headers`
 - Non-CORS `OPTIONS` requests to `/images/*` return `404` (to avoid forwarding `OPTIONS` to S3).
@@ -238,7 +239,6 @@ HTTP/2 204
 access-control-allow-origin: https://app.example.com
 access-control-allow-methods: GET,HEAD,OPTIONS
 access-control-allow-headers: Range,If-Range,Content-Type,If-None-Match,If-Modified-Since
-access-control-allow-credentials: false
 access-control-max-age: 86400
 vary: Origin, Access-Control-Request-Method, Access-Control-Request-Headers
 ```
