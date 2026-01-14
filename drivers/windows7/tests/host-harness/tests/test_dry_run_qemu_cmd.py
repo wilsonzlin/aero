@@ -67,7 +67,7 @@ class DryRunQemuCmdTests(unittest.TestCase):
             self.assertIn("qemu-system", stdout)
             # Expect the modern-only virtio-net device arg in default (contract-v1) mode.
             self.assertIn(
-                "-device virtio-net-pci,netdev=net0,disable-legacy=on,x-pci-revision=0x01",
+                "-device virtio-net-pci,id=aero_virtio_net0,netdev=net0,disable-legacy=on,x-pci-revision=0x01",
                 stdout,
             )
 
@@ -76,7 +76,7 @@ class DryRunQemuCmdTests(unittest.TestCase):
             parsed = json.loads(first_line)
             self.assertIsInstance(parsed, list)
             self.assertIn(
-                "virtio-net-pci,netdev=net0,disable-legacy=on,x-pci-revision=0x01",
+                "virtio-net-pci,id=aero_virtio_net0,netdev=net0,disable-legacy=on,x-pci-revision=0x01",
                 parsed,
             )
 

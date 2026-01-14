@@ -2584,7 +2584,13 @@ def _build_qemu_args_dry_run(
             virtio_blk = _qemu_device_arg_disable_msix(virtio_blk, virtio_disable_msix)
             virtio_blk_args = ["-drive", drive, "-device", virtio_blk]
 
-        virtio_net = _qemu_device_arg_add_vectors("virtio-net-pci,netdev=net0", virtio_net_vectors)
+        # Mirror the stable QOM `id=` used by the real harness run so QMP features like `set_link`
+        # (net link flap) can target the device consistently even when users copy/paste the dry-run
+        # commandline for debugging.
+        virtio_net = _qemu_device_arg_add_vectors(
+            f"virtio-net-pci,id={_VIRTIO_NET_QMP_ID},netdev=net0",
+            virtio_net_vectors,
+        )
         virtio_net = _qemu_device_arg_disable_msix(virtio_net, virtio_disable_msix)
 
         kbd = _qemu_device_arg_add_vectors(
@@ -2625,7 +2631,7 @@ def _build_qemu_args_dry_run(
         drive += ",snapshot=on"
 
     virtio_net = _qemu_device_arg_add_vectors(
-        f"virtio-net-pci,netdev=net0,disable-legacy=on,x-pci-revision={aero_pci_rev}",
+        f"virtio-net-pci,id={_VIRTIO_NET_QMP_ID},netdev=net0,disable-legacy=on,x-pci-revision={aero_pci_rev}",
         virtio_net_vectors,
     )
     virtio_net = _qemu_device_arg_disable_msix(virtio_net, virtio_disable_msix)
