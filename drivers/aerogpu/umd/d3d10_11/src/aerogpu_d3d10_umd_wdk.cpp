@@ -5850,14 +5850,14 @@ HRESULT APIENTRY CreateRenderTargetView(D3D10DDI_HDEVICE hDevice,
   if (non_trivial && supports_views) {
     const uint32_t aer_fmt = aerogpu::d3d10_11::dxgi_format_to_aerogpu_compat(dev, view_dxgi_format);
     if (aer_fmt == AEROGPU_FORMAT_INVALID) {
-      rtv->~AeroGpuRenderTargetView();
+      ResetObject(rtv);
       return E_NOTIMPL;
     }
 
     const aerogpu_handle_t view_handle = aerogpu::d3d10_11::AllocateGlobalHandle(dev->adapter);
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_create_texture_view>(AEROGPU_CMD_CREATE_TEXTURE_VIEW);
     if (!cmd) {
-      rtv->~AeroGpuRenderTargetView();
+      ResetObject(rtv);
       return E_OUTOFMEMORY;
     }
     cmd->view_handle = view_handle;
@@ -6150,14 +6150,14 @@ HRESULT APIENTRY CreateDepthStencilView(D3D10DDI_HDEVICE hDevice,
   if (non_trivial && supports_views) {
     const uint32_t aer_fmt = aerogpu::d3d10_11::dxgi_format_to_aerogpu_compat(dev, view_dxgi_format);
     if (aer_fmt == AEROGPU_FORMAT_INVALID) {
-      dsv->~AeroGpuDepthStencilView();
+      ResetObject(dsv);
       return E_NOTIMPL;
     }
 
     const aerogpu_handle_t view_handle = aerogpu::d3d10_11::AllocateGlobalHandle(dev->adapter);
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_create_texture_view>(AEROGPU_CMD_CREATE_TEXTURE_VIEW);
     if (!cmd) {
-      dsv->~AeroGpuDepthStencilView();
+      ResetObject(dsv);
       return E_OUTOFMEMORY;
     }
     cmd->view_handle = view_handle;
@@ -6459,14 +6459,14 @@ HRESULT APIENTRY CreateShaderResourceView(D3D10DDI_HDEVICE hDevice,
   if (non_trivial && supports_views) {
     const uint32_t aer_fmt = aerogpu::d3d10_11::dxgi_format_to_aerogpu_compat(dev, view_dxgi_format);
     if (aer_fmt == AEROGPU_FORMAT_INVALID) {
-      srv->~AeroGpuShaderResourceView();
+      ResetObject(srv);
       return E_NOTIMPL;
     }
 
     const aerogpu_handle_t view_handle = aerogpu::d3d10_11::AllocateGlobalHandle(dev->adapter);
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_create_texture_view>(AEROGPU_CMD_CREATE_TEXTURE_VIEW);
     if (!cmd) {
-      srv->~AeroGpuShaderResourceView();
+      ResetObject(srv);
       return E_OUTOFMEMORY;
     }
     cmd->view_handle = view_handle;

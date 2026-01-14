@@ -4099,14 +4099,14 @@ HRESULT AEROGPU_APIENTRY CreateRenderTargetView11(D3D11DDI_HDEVICE hDevice,
   if (non_trivial && supports_views) {
     const uint32_t aer_fmt = dxgi_format_to_aerogpu_compat(dev, view_dxgi_format);
     if (aer_fmt == AEROGPU_FORMAT_INVALID) {
-      rtv->~RenderTargetView();
+      ResetObject(rtv);
       return E_NOTIMPL;
     }
 
     const aerogpu_handle_t view_handle = AllocateGlobalHandle(dev->adapter);
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_create_texture_view>(AEROGPU_CMD_CREATE_TEXTURE_VIEW);
     if (!cmd) {
-      rtv->~RenderTargetView();
+      ResetObject(rtv);
       return E_OUTOFMEMORY;
     }
     cmd->view_handle = view_handle;
@@ -4340,14 +4340,14 @@ HRESULT AEROGPU_APIENTRY CreateDepthStencilView11(D3D11DDI_HDEVICE hDevice,
   if (non_trivial && supports_views) {
     const uint32_t aer_fmt = dxgi_format_to_aerogpu_compat(dev, view_dxgi_format);
     if (aer_fmt == AEROGPU_FORMAT_INVALID) {
-      dsv->~DepthStencilView();
+      ResetObject(dsv);
       return E_NOTIMPL;
     }
 
     const aerogpu_handle_t view_handle = AllocateGlobalHandle(dev->adapter);
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_create_texture_view>(AEROGPU_CMD_CREATE_TEXTURE_VIEW);
     if (!cmd) {
-      dsv->~DepthStencilView();
+      ResetObject(dsv);
       return E_OUTOFMEMORY;
     }
     cmd->view_handle = view_handle;
@@ -4819,14 +4819,14 @@ HRESULT AEROGPU_APIENTRY CreateShaderResourceView11(D3D11DDI_HDEVICE hDevice,
     if (non_trivial && supports_views) {
       const uint32_t aer_fmt = dxgi_format_to_aerogpu_compat(dev, view_dxgi_format);
       if (aer_fmt == AEROGPU_FORMAT_INVALID) {
-        srv->~ShaderResourceView();
+        ResetObject(srv);
         return E_NOTIMPL;
       }
 
       const aerogpu_handle_t view_handle = AllocateGlobalHandle(dev->adapter);
       auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_create_texture_view>(AEROGPU_CMD_CREATE_TEXTURE_VIEW);
       if (!cmd) {
-        srv->~ShaderResourceView();
+        ResetObject(srv);
         return E_OUTOFMEMORY;
       }
       cmd->view_handle = view_handle;
