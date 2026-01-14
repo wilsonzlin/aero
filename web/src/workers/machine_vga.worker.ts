@@ -54,6 +54,16 @@ type MachineVgaWorkerStartMessage = {
    * `enableAerogpu=true` and `enableVga=true` will fail machine construction.
    */
   enableVga?: boolean;
+  /**
+   * Optional vCPU count passed to `api.Machine.new_with_cpu_count(ramSizeBytes, cpuCount)`.
+   *
+   * When omitted (or when the active WASM build does not support `new_with_cpu_count`), the machine
+   * defaults to 1 vCPU.
+   *
+   * Note: AeroGPU configuration currently uses `Machine.new_with_config`, which does not accept a
+   * CPU count parameter; requesting `enableAerogpu=true` with `cpuCount != 1` will throw.
+   */
+  cpuCount?: number;
 };
 
 type MachineVgaWorkerStopMessage = {
@@ -648,10 +658,23 @@ async function start(msg: MachineVgaWorkerStartMessage): Promise<void> {
   const enableAerogpu = !!msg.enableAerogpu;
   const enableVga = typeof msg.enableVga === "boolean" ? msg.enableVga : undefined;
   const newWithConfig = api.Machine.new_with_config;
+  const newWithCpuCount = api.Machine.new_with_cpu_count;
   const canEnableAerogpu = enableAerogpu && typeof newWithConfig === "function";
+  const cpuCount = (() => {
+    const raw = msg.cpuCount;
+    if (typeof raw !== "number") return 1;
+    const n = Math.trunc(raw);
+    if (!Number.isFinite(n) || n < 1 || n > 255) return 1;
+    return n;
+  })();
+  if (canEnableAerogpu && cpuCount !== 1) {
+    throw new Error("cpuCount != 1 is currently unsupported when enableAerogpu=true.");
+  }
   machine =
-    enableAerogpu && typeof newWithConfig === "function"
+    canEnableAerogpu
       ? newWithConfig(ramSizeBytes >>> 0, true, enableVga)
+      : cpuCount !== 1 && typeof newWithCpuCount === "function"
+        ? newWithCpuCount(ramSizeBytes >>> 0, cpuCount)
       : new api.Machine(ramSizeBytes >>> 0);
   const bootMessage = msg.message ?? "Hello from machine_vga.worker\\n";
   // Bochs VBE programming requires the legacy VGA/VBE device model. When running with AeroGPU

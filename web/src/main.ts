@@ -818,6 +818,13 @@ function renderMachinePanel(): HTMLElement {
       const ramSizeBytes = 2 * 1024 * 1024;
       const bootMessage = "Hello from aero-machine\\n";
       const search = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : new URLSearchParams();
+      const cpuCount = (() => {
+        const raw = search.get("machineCpuCount");
+        if (raw === null) return 1;
+        const n = Number.parseInt(raw.trim(), 10);
+        if (!Number.isFinite(n) || n < 1 || n > 255) return 1;
+        return n;
+      })();
       const enableAerogpu = (() => {
         const raw = search.get("machineAerogpu");
         if (raw === null) return false;
@@ -835,11 +842,14 @@ function renderMachinePanel(): HTMLElement {
         return true;
       })();
       const newWithConfig = api.Machine.new_with_config;
+      const newWithCpuCount = api.Machine.new_with_cpu_count;
       const canEnableAerogpu = enableAerogpu && typeof newWithConfig === "function";
       const machine =
-        enableAerogpu && typeof newWithConfig === "function"
+        canEnableAerogpu
           ? newWithConfig(ramSizeBytes, true, enableVgaOverride)
-          : new api.Machine(ramSizeBytes);
+          : cpuCount !== 1 && typeof newWithCpuCount === "function"
+            ? newWithCpuCount(ramSizeBytes, cpuCount)
+            : new api.Machine(ramSizeBytes);
       const vbeRaw = search.get("machineVbe");
       let diskImage = buildSerialBootSector(bootMessage);
       // Bochs VBE programming requires the legacy VGA/VBE device model. If the user requested the
@@ -1778,6 +1788,14 @@ function renderMachineWorkerPanel(): HTMLElement {
                 out.enableVga = true;
               } else if (normalized === "0" || normalized === "false") {
                 out.enableVga = false;
+              }
+            }
+
+            const cpuRaw = search.get("machineWorkerCpuCount");
+            if (cpuRaw !== null) {
+              const n = Number.parseInt(cpuRaw.trim(), 10);
+              if (Number.isFinite(n) && n >= 1 && n <= 255) {
+                out.cpuCount = n;
               }
             }
 

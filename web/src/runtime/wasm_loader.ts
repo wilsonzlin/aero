@@ -28,6 +28,12 @@ export type SharedRingBufferHandle = {
  * This is the browser-facing, wasm-bindgen-exported machine wrapper from `crates/aero-wasm`.
  */
 export type MachineHandle = {
+    /**
+     * Number of vCPUs configured for this machine.
+     *
+     * Optional for older WASM builds.
+     */
+    cpu_count?(): number;
     reset(): void;
     set_disk_image(bytes: Uint8Array): void;
     /**
@@ -1240,6 +1246,12 @@ export interface WasmApi {
          * Optional for older WASM builds.
          */
         new_with_config?: (ramSizeBytes: number, enableAerogpu: boolean, enableVga?: boolean) => MachineHandle;
+        /**
+         * Construct a canonical machine with an explicit vCPU count (SMP).
+         *
+         * Optional for older WASM builds.
+         */
+        new_with_cpu_count?: (ramSizeBytes: number, cpuCount: number) => MachineHandle;
         /**
          * Stable snapshot `disk_id` helpers for the canonical Win7 storage topology.
          *
