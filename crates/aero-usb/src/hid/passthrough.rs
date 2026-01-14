@@ -2039,7 +2039,8 @@ impl IoSnapshot for UsbHidPassthrough {
         self.feature_report_requests_failed.clear();
 
         self.address = r.u8(TAG_ADDRESS)?.unwrap_or(0);
-        self.configuration = r.u8(TAG_CONFIGURATION)?.unwrap_or(0);
+        let configuration = r.u8(TAG_CONFIGURATION)?.unwrap_or(0);
+        self.configuration = if configuration == 0 { 0 } else { 1 };
         self.remote_wakeup_enabled = r.bool(TAG_REMOTE_WAKEUP)?.unwrap_or(false);
         self.interrupt_in_halted = r.bool(TAG_INTERRUPT_IN_HALTED)?.unwrap_or(false);
         self.interrupt_out_halted = r.bool(TAG_INTERRUPT_OUT_HALTED)?.unwrap_or(false);
