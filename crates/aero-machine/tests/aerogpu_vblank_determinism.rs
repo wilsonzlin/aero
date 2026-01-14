@@ -215,7 +215,9 @@ fn aerogpu_vblank_is_deterministic_and_survives_snapshot_restore() {
     let snap = m.take_snapshot_full().unwrap();
     let mut restored = Machine::new(cfg).unwrap();
     restored.restore_snapshot_bytes(&snap).unwrap();
-    let restored_bar0 = aerogpu_bar0_base(&restored);
+    let restored_bar0 = restored
+        .aerogpu_bar0_base()
+        .expect("AeroGPU BAR0 should still be assigned after snapshot restore");
     assert_eq!(restored_bar0, bar0);
 
     assert_eq!(
