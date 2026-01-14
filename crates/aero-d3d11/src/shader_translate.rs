@@ -5721,12 +5721,17 @@ fn emit_instructions(
                     w.line("workgroupBarrier();");
                 } else {
                     // Fence-only variants (no `THREAD_GROUP_SYNC`) do not require all threads to
-                    // participate; emitting a WGSL `workgroupBarrier()` would impose a control barrier
-                    // and can deadlock if used in divergent control flow.
+                    // participate in D3D; emitting a WGSL `workgroupBarrier()` would introduce a
+                    // workgroup execution barrier that can deadlock if used in divergent control
+                    // flow.
                     //
-                    // For UAV/storage memory ordering we can use `storageBarrier()` as a per-invocation
-                    // fence. If the shader only requests TGSM/workgroup-memory ordering semantics,
-                    // WGSL has no fence-only equivalent today, so we currently emit nothing as an
+                    // For UAV/storage memory ordering we currently use `storageBarrier()` as the
+                    // closest available WGSL mapping. Note that WGSL barrier built-ins (including
+                    // `storageBarrier()`) still come with uniformity requirements in WebGPU/Naga, so
+                    // this is not a perfect representation of DXBC's fence-only `sync` semantics.
+                    //
+                    // If the shader only requests TGSM/workgroup-memory ordering semantics, WGSL has
+                    // no fence-only equivalent today, so we currently emit nothing as an
                     // approximation.
                     let uav_fence = (flags & crate::sm4::opcode::SYNC_FLAG_UAV_MEMORY) != 0;
                     if uav_fence {

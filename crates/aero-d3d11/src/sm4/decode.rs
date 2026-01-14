@@ -1407,8 +1407,8 @@ pub fn decode_instruction(
             // Note: the SM5 instruction set includes both:
             // - Group-sync barriers (`*_t` variants), which require all threads to participate.
             // - Fence-only variants (no `THREAD_GROUP_SYNC`), which do not synchronize threads and
-            //   must *not* be translated to WGSL `workgroupBarrier()` (which can deadlock in
-            //   divergent control flow).
+            //   therefore should not be treated as a workgroup execution barrier during
+            //   translation.
             //
             // We preserve the raw flags here and let the WGSL backend pick the safest mapping.
             let sync_flags = (opcode_token >> OPCODE_CONTROL_SHIFT) & OPCODE_CONTROL_MASK;

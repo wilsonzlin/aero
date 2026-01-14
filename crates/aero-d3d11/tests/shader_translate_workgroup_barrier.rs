@@ -56,8 +56,8 @@ fn translates_sync_with_group_sync_to_wgsl() {
 fn translates_sync_uav_fence_only_to_wgsl() {
     // Translator-only test: build the decoded IR directly.
     //
-    // Fence-only `sync` variants must NOT be translated to WGSL `workgroupBarrier()` since that
-    // introduces a control barrier and can deadlock when used in divergent control flow.
+    // Fence-only `sync` variants must not be translated to WGSL `workgroupBarrier()`, since that
+    // introduces a workgroup execution barrier that is not present in D3D's fence-only forms.
     let module = Sm4Module {
         stage: ShaderStage::Compute,
         model: ShaderModel { major: 5, minor: 0 },
