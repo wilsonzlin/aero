@@ -131,7 +131,9 @@ static int RunD3D9ProcessVerticesSmoke(int argc, char** argv) {
         "destination vertex buffer (with non-zero SrcStartIndex/DestIndex), then draws from the processed buffer "
         "and validates pixels via GetRenderTargetData.");
     aerogpu_test::PrintfStdout("Default: window is shown (pass --hidden to hide it; --show overrides --hidden).");
-    aerogpu_test::PrintfStdout("With --dump: writes d3d9_process_vertices_smoke.bmp and d3d9_process_vertices_smoke.bin.");
+    aerogpu_test::PrintfStdout(
+        "With --dump: writes d3d9_process_vertices_smoke.bmp, d3d9_process_vertices_smoke.bin (tight BGRA32), and "
+        "d3d9_process_vertices_smoke_vb.bin (raw processed vertex-buffer bytes).");
     return 0;
   }
 
@@ -462,6 +464,57 @@ static int RunD3D9ProcessVerticesSmoke(int argc, char** argv) {
   if (FAILED(hr)) {
     dev->EndScene();
     return reporter.FailHresult("IDirect3DDevice9Ex::ProcessVertices", hr);
+  }
+
+  // Optional dump: run ProcessVertices into a systemmem VB so we can dump the raw processed bytes
+  // deterministically (D3DUSAGE_WRITEONLY default-pool VBs are not guaranteed to be CPU-readable).
+  if (dump) {
+    ComPtr<IDirect3DVertexBuffer9> vb_dump;
+    HRESULT dump_hr = dev->CreateVertexBuffer(sizeof(Vertex) * kDestVertexCount,
+                                              /*Usage=*/0,
+                                              /*FVF=*/0,
+                                              D3DPOOL_SYSTEMMEM,
+                                              vb_dump.put(),
+                                              NULL);
+    if (SUCCEEDED(dump_hr) && vb_dump) {
+      void* dump_ptr = NULL;
+      dump_hr = vb_dump->Lock(0, sizeof(Vertex) * kDestVertexCount, &dump_ptr, 0);
+      if (SUCCEEDED(dump_hr) && dump_ptr) {
+        memset(dump_ptr, 0xCD, sizeof(Vertex) * kDestVertexCount);
+        vb_dump->Unlock();
+      }
+
+      dump_hr = dev->ProcessVertices(/*SrcStartIndex=*/kSrcStartIndex,
+                                     /*DestIndex=*/kDestIndex,
+                                     /*VertexCount=*/kProcessVertexCount,
+                                     vb_dump.get(),
+                                     out_decl.get(),
+                                     /*Flags=*/0);
+      if (SUCCEEDED(dump_hr)) {
+        dump_ptr = NULL;
+        dump_hr = vb_dump->Lock(0, sizeof(Vertex) * kDestVertexCount, &dump_ptr, D3DLOCK_READONLY);
+        if (SUCCEEDED(dump_hr) && dump_ptr) {
+          DumpBytesToFile(kTestName,
+                          &reporter,
+                          L"d3d9_process_vertices_smoke_vb.bin",
+                          dump_ptr,
+                          (UINT)(sizeof(Vertex) * kDestVertexCount));
+          vb_dump->Unlock();
+        } else {
+          aerogpu_test::PrintfStdout("INFO: %s: dump vb Lock(READONLY) failed: %s",
+                                     kTestName,
+                                     aerogpu_test::HresultToString(dump_hr).c_str());
+        }
+      } else {
+        aerogpu_test::PrintfStdout("INFO: %s: dump ProcessVertices(sysmem) failed: %s",
+                                   kTestName,
+                                   aerogpu_test::HresultToString(dump_hr).c_str());
+      }
+    } else {
+      aerogpu_test::PrintfStdout("INFO: %s: dump CreateVertexBuffer(sysmem) failed: %s",
+                                 kTestName,
+                                 aerogpu_test::HresultToString(dump_hr).c_str());
+    }
   }
 
   hr = dev->SetStreamSource(0, vb_dst.get(), 0, sizeof(Vertex));
