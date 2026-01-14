@@ -6,7 +6,7 @@ use std::time::Duration;
 
 // Required by the included `tile_diff` module (`use crate::Rect;`).
 #[cfg(not(target_arch = "wasm32"))]
-use aero_gpu::Rect;
+use aero_gpu::{merge_and_cap_rects, Rect};
 #[cfg(not(target_arch = "wasm32"))]
 use aero_shared::shared_framebuffer::{dirty_tiles_to_rects, SharedFramebufferLayout};
 
@@ -209,10 +209,80 @@ fn bench_dirty_tiles_to_rects(c: &mut Criterion) {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+fn bench_merge_and_cap_rects(c: &mut Criterion) {
+    let sizes = [
+        FrameSize {
+            width: 800,
+            height: 600,
+        },
+        FrameSize {
+            width: 1024,
+            height: 768,
+        },
+        FrameSize {
+            width: 1280,
+            height: 720,
+        },
+    ];
+    let tile_sizes = [16u32, 32u32, 64u32];
+
+    let mut group = c.benchmark_group("merge_and_cap_rects");
+
+    // Mirrors `present.rs` default.
+    const CAP: usize = 128;
+
+    for &tile_size in &tile_sizes {
+        for size in sizes {
+            let layout = SharedFramebufferLayout::new_rgba8(size.width, size.height, tile_size)
+                .expect("valid layout");
+            let tile_count = layout.tile_count();
+            let word_len = layout.dirty_words_per_buffer as usize;
+
+            // Use the same "checkerboard" dirty pattern as the `dirty_tiles_to_rects` bench so
+            // `merge_and_cap_rects` sees a large, fragmented rect list.
+            let mut checkerboard_words = vec![0u32; word_len];
+            for tile_index in 0..tile_count {
+                if (tile_index & 1) == 0 {
+                    let word = tile_index / 32;
+                    let bit = tile_index % 32;
+                    checkerboard_words[word] |= 1u32 << bit;
+                }
+            }
+
+            let shared_rects = dirty_tiles_to_rects(layout, &checkerboard_words);
+            let rects: Vec<Rect> = shared_rects
+                .iter()
+                .map(|r| Rect::new(r.x, r.y, r.width, r.height))
+                .collect();
+
+            group.throughput(Throughput::Elements(rects.len() as u64));
+            group.bench_function(
+                BenchmarkId::new(
+                    "checkerboard_cap128",
+                    format!("{}x{}_tile{}", size.width, size.height, tile_size),
+                ),
+                move |b| {
+                    b.iter(|| {
+                        let out = merge_and_cap_rects(
+                            black_box(&rects),
+                            (size.width, size.height),
+                            CAP,
+                        );
+                        black_box(out.rects.len());
+                    })
+                },
+            );
+        }
+    }
+
+    group.finish();
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 criterion_group! {
     name = benches;
     config = criterion_config();
-    targets = bench_tile_diff, bench_dirty_tiles_to_rects
+    targets = bench_tile_diff, bench_dirty_tiles_to_rects, bench_merge_and_cap_rects
 }
 #[cfg(not(target_arch = "wasm32"))]
 criterion_main!(benches);
