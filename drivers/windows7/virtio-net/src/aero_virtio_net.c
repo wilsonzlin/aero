@@ -2243,17 +2243,19 @@ static VOID AerovNetCtrlUpdateRxMode(_Inout_ AEROVNET_ADAPTER* Adapter) {
   On = WantPromisc ? 1u : 0u;
   (VOID)AerovNetCtrlSendCommand(Adapter, VIRTIO_NET_CTRL_RX, VIRTIO_NET_CTRL_RX_PROMISC, &On, sizeof(On), NULL);
 
-  // Explicitly program drop toggles for unicast/multicast/broadcast so device
-  // models that implement virtio-net RX filtering behave consistently with the
-  // NDIS packet filter.
-  On = WantUnicast ? 0u : 1u;
-  (VOID)AerovNetCtrlSendCommand(Adapter, VIRTIO_NET_CTRL_RX, VIRTIO_NET_CTRL_RX_NOUNI, &On, sizeof(On), NULL);
+  if ((Adapter->GuestFeatures & VIRTIO_NET_F_CTRL_RX_EXTRA) != 0) {
+    // Explicitly program drop toggles for unicast/multicast/broadcast so device
+    // models that implement virtio-net RX filtering behave consistently with the
+    // NDIS packet filter.
+    On = WantUnicast ? 0u : 1u;
+    (VOID)AerovNetCtrlSendCommand(Adapter, VIRTIO_NET_CTRL_RX, VIRTIO_NET_CTRL_RX_NOUNI, &On, sizeof(On), NULL);
 
-  On = WantMulticast ? 0u : 1u;
-  (VOID)AerovNetCtrlSendCommand(Adapter, VIRTIO_NET_CTRL_RX, VIRTIO_NET_CTRL_RX_NOMULTI, &On, sizeof(On), NULL);
+    On = WantMulticast ? 0u : 1u;
+    (VOID)AerovNetCtrlSendCommand(Adapter, VIRTIO_NET_CTRL_RX, VIRTIO_NET_CTRL_RX_NOMULTI, &On, sizeof(On), NULL);
 
-  On = WantBroadcast ? 0u : 1u;
-  (VOID)AerovNetCtrlSendCommand(Adapter, VIRTIO_NET_CTRL_RX, VIRTIO_NET_CTRL_RX_NOBCAST, &On, sizeof(On), NULL);
+    On = WantBroadcast ? 0u : 1u;
+    (VOID)AerovNetCtrlSendCommand(Adapter, VIRTIO_NET_CTRL_RX, VIRTIO_NET_CTRL_RX_NOBCAST, &On, sizeof(On), NULL);
+  }
 
   TableStatus = NDIS_STATUS_SUCCESS;
   WantTableMulticast = (!WantPromisc && (Filter & NDIS_PACKET_TYPE_MULTICAST) != 0 && (Filter & NDIS_PACKET_TYPE_ALL_MULTICAST) == 0 &&
@@ -2339,7 +2341,7 @@ static NDIS_STATUS AerovNetVirtioStart(_Inout_ AEROVNET_ADAPTER* Adapter) {
   // - MRG_RXBUF: allow a single received packet to span multiple buffers.
   WantedFeatures = AEROVNET_FEATURE_RING_EVENT_IDX | VIRTIO_NET_F_CSUM | VIRTIO_NET_F_GUEST_CSUM | VIRTIO_NET_F_HOST_TSO4 | VIRTIO_NET_F_HOST_TSO6 |
                    VIRTIO_NET_F_HOST_ECN | VIRTIO_NET_F_CTRL_VQ | VIRTIO_NET_F_CTRL_MAC_ADDR | VIRTIO_NET_F_CTRL_VLAN | VIRTIO_NET_F_CTRL_RX |
-                   VIRTIO_NET_F_MRG_RXBUF;
+                   VIRTIO_NET_F_CTRL_RX_EXTRA | VIRTIO_NET_F_MRG_RXBUF;
   NegotiatedFeatures = 0;
 
   NtStatus = VirtioPciNegotiateFeatures(&Adapter->Vdev, RequiredFeatures, WantedFeatures, &NegotiatedFeatures);
