@@ -5131,6 +5131,16 @@ function renderInputPanel(): HTMLElement {
     log.scrollTop = log.scrollHeight;
   };
 
+  const resolveInputWorker = (): Worker | null => {
+    // In machine runtime, the I/O worker may be host-only and cannot inject input
+    // into guest devices. Route input batches to the CPU worker instead.
+    const runtime = configManager.getState().effective.vmRuntime;
+    if (runtime === "machine") {
+      return workerCoordinator.getWorker("cpu") ?? null;
+    }
+    return workerCoordinator.getIoWorker();
+  };
+
   const inputTarget: InputBatchTarget = {
     postMessage: (msg, transfer) => {
       const words = new Int32Array(msg.buffer);
@@ -5163,9 +5173,9 @@ function renderInputPanel(): HTMLElement {
         }
       }
 
-      const ioWorker = workerCoordinator.getIoWorker();
-      if (ioWorker) {
-        ioWorker.postMessage(msg, transfer);
+      const worker = resolveInputWorker();
+      if (worker) {
+        worker.postMessage(msg, transfer);
       }
     },
   };
@@ -5175,7 +5185,9 @@ function renderInputPanel(): HTMLElement {
 
   const hint = el("div", {
     class: "mono",
-    text: "Click the canvas to focus + request pointer lock. Keyboard/mouse/gamepad events are batched and forwarded to the I/O worker.",
+    text:
+      "Click the canvas to focus + request pointer lock. Keyboard/mouse/gamepad events are batched and forwarded to the VM input worker " +
+      "(legacy runtime: I/O worker; machine runtime: CPU worker).",
   });
 
   const clear = el("button", {
@@ -5186,9 +5198,15 @@ function renderInputPanel(): HTMLElement {
   });
 
   const updateStatus = (): void => {
+    const runtime = configManager.getState().effective.vmRuntime;
+    const targetRole = runtime === "machine" ? "cpu" : "io";
+    const targetWorker = resolveInputWorker();
     status.textContent =
+      `vmRuntime=${runtime}  ` +
       `pointerLock=${capture.pointerLocked ? "yes" : "no"}  ` +
+      `targetWorker=${targetRole}:${targetWorker ? "ready" : "stopped"}  ` +
       `ioWorker=${workerCoordinator.getIoWorker() ? "ready" : "stopped"}  ` +
+      `cpuWorker=${workerCoordinator.getWorker("cpu") ? "ready" : "stopped"}  ` +
       `ioBatches=${workerCoordinator.getIoInputBatchCounter()}  ` +
       `ioEvents=${workerCoordinator.getIoInputEventCounter()}`;
   };
