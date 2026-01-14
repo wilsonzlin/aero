@@ -383,12 +383,8 @@ impl PcMachine {
             mapped_roms,
         };
         let bios_bus: &mut dyn BiosBus = &mut bus;
-        self.bios.post_with_pci(
-            &mut self.cpu.state,
-            bios_bus,
-            &mut self.disk,
-            Some(&mut pci_adapter),
-        );
+        self.bios
+            .post_with_pci(&mut self.cpu.state, bios_bus, &mut self.disk, Some(&mut pci_adapter));
 
         // Keep the core's A20 view coherent with the chipset latch.
         self.cpu.state.a20_enabled = self.bus.platform.chipset.a20().enabled();

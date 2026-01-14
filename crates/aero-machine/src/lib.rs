@@ -7502,33 +7502,28 @@ impl Machine {
             self.bios.video.vbe.total_memory_64kb_blocks = blocks.min(u64::from(u16::MAX)) as u16;
         }
 
-        // Firmware INT 13h (and boot device reads) are backed by exactly one BlockDevice.
+        // Firmware INT 13h fixed-disk services are backed by exactly one `BlockDevice` (`self.disk`).
         //
-        // When the selected boot drive is a CD-ROM (0xE0..=0xEF) and an install ISO is attached,
-        // route BIOS reads to the ISO image bytes so El Torito boot + subsequent INT 13h reads work.
-        let use_install_media = (0xE0..=0xEF).contains(&boot_drive) && self.install_media.is_some();
+        // When install media is attached, also provide it as a 2048-byte-sector CD-ROM device so
+        // BIOS El Torito boot + INT 13h CD services can share the same underlying ISO handle as the
+        // IDE/ATAPI CD-ROM device model (important for OPFS `SyncAccessHandle` exclusivity).
+        let mut cdrom = self.install_media.as_ref().map(Clone::clone);
+        let cdrom = cdrom
+            .as_mut()
+            .map(|iso| iso as &mut dyn firmware::bios::CdromDevice);
         let bus: &mut dyn BiosBus = &mut self.mem;
-        if use_install_media {
-            // Clone the shared ISO handle so we can pass a mutable `BlockDevice` reference into the
-            // BIOS without holding a borrow on `self.install_media` across the call.
-            let mut iso = self
-                .install_media
-                .as_ref()
-                .expect("use_install_media implies install_media is Some")
-                .clone();
-            if let Some(pci_cfg) = &self.pci_cfg {
-                let mut pci = SharedPciConfigPortsBiosAdapter::new(pci_cfg.clone());
-                self.bios
-                    .post_with_pci(&mut self.cpu.state, bus, &mut iso, Some(&mut pci));
-            } else {
-                self.bios.post(&mut self.cpu.state, bus, &mut iso);
-            }
-        } else if let Some(pci_cfg) = &self.pci_cfg {
+        if let Some(pci_cfg) = &self.pci_cfg {
             let mut pci = SharedPciConfigPortsBiosAdapter::new(pci_cfg.clone());
-            self.bios
-                .post_with_pci(&mut self.cpu.state, bus, &mut self.disk, Some(&mut pci));
+            self.bios.post_with_pci_and_cdrom(
+                &mut self.cpu.state,
+                bus,
+                &mut self.disk,
+                cdrom,
+                Some(&mut pci),
+            );
         } else {
-            self.bios.post(&mut self.cpu.state, bus, &mut self.disk);
+            self.bios
+                .post_with_pci_and_cdrom(&mut self.cpu.state, bus, &mut self.disk, cdrom, None);
         }
 
         // The firmware's BDA initialization derives the "fixed disk count" (0x40:0x75) from the
@@ -8317,38 +8312,18 @@ impl Machine {
         // Keep the core's A20 view coherent with the chipset latch while executing BIOS services.
         self.cpu.state.a20_enabled = self.chipset.a20().enabled();
         {
-            let boot_drive = self.bios.config().boot_drive;
-            let use_install_media =
-                (0xE0..=0xEF).contains(&boot_drive) && self.install_media.is_some();
+            let mut cdrom = self.install_media.as_ref().map(Clone::clone);
+            let cdrom = cdrom
+                .as_mut()
+                .map(|iso| iso as &mut dyn firmware::bios::CdromDevice);
             let bus: &mut dyn BiosBus = &mut self.mem;
-            if use_install_media {
-                let mut iso = self
-                    .install_media
-                    .as_ref()
-                    .expect("use_install_media implies install_media is Some")
-                    .clone();
-                // Provide both:
-                // - `disk`: a 512-byte-sector `BlockDevice` view (required by the BIOS API), and
-                // - `cdrom`: a 2048-byte-sector view for the INT 13h CD-ROM EDD path.
-                //
-                // Both handles share the same underlying ISO image.
-                let mut cdrom = iso.clone();
-                self.bios.dispatch_interrupt(
-                    vector,
-                    &mut self.cpu.state,
-                    bus,
-                    &mut iso,
-                    /* cdrom */ Some(&mut cdrom),
-                );
-            } else {
-                self.bios.dispatch_interrupt(
-                    vector,
-                    &mut self.cpu.state,
-                    bus,
-                    &mut self.disk,
-                    /* cdrom */ None,
-                );
-            }
+            self.bios.dispatch_interrupt(
+                vector,
+                &mut self.cpu.state,
+                bus,
+                &mut self.disk,
+                cdrom,
+            );
         }
         if force_vbe_no_clear {
             // Restore the guest-visible BX value (don't leak our forced no-clear flag).
