@@ -37,6 +37,44 @@ fn configure_keyboard_for_reports(kbd: &mut aero_usb::hid::UsbHidKeyboardHandle)
     assert!(kbd.configured(), "keyboard should now be configured");
 }
 
+fn configure_mouse_for_reports(mouse: &mut aero_usb::hid::UsbHidMouseHandle) {
+    if mouse.configured() {
+        return;
+    }
+    let setup = SetupPacket {
+        bm_request_type: 0x00, // HostToDevice | Standard | Device
+        b_request: 0x09,       // SET_CONFIGURATION
+        w_value: 1,
+        w_index: 0,
+        w_length: 0,
+    };
+    let resp = mouse.handle_control_request(setup, None);
+    assert!(
+        matches!(resp, ControlResponse::Ack),
+        "expected SET_CONFIGURATION to ACK; got {resp:?}"
+    );
+    assert!(mouse.configured(), "mouse should now be configured");
+}
+
+fn configure_gamepad_for_reports(gamepad: &mut aero_usb::hid::UsbHidGamepadHandle) {
+    if gamepad.configured() {
+        return;
+    }
+    let setup = SetupPacket {
+        bm_request_type: 0x00, // HostToDevice | Standard | Device
+        b_request: 0x09,       // SET_CONFIGURATION
+        w_value: 1,
+        w_index: 0,
+        w_length: 0,
+    };
+    let resp = gamepad.handle_control_request(setup, None);
+    assert!(
+        matches!(resp, ControlResponse::Ack),
+        "expected SET_CONFIGURATION to ACK; got {resp:?}"
+    );
+    assert!(gamepad.configured(), "gamepad should now be configured");
+}
+
 fn configure_consumer_for_reports(consumer: &mut aero_usb::hid::UsbHidConsumerControlHandle) {
     if consumer.configured() {
         return;
@@ -75,6 +113,38 @@ fn poll_keyboard_interrupt_in(m: &mut Machine) -> UsbInResult {
     keyboard.model_mut().handle_interrupt_in(0x81)
 }
 
+fn poll_mouse_interrupt_in(m: &mut Machine) -> UsbInResult {
+    let uhci = m.uhci().expect("UHCI device should exist");
+    let mut uhci = uhci.borrow_mut();
+    let root = uhci.controller_mut().hub_mut();
+    let mut dev0 = root
+        .port_device_mut(0)
+        .expect("UHCI root port 0 should have an external hub attached");
+    let hub = dev0
+        .as_hub_mut()
+        .expect("root port 0 device should be a hub");
+    let mouse = hub
+        .downstream_device_mut(1)
+        .expect("hub port 2 should contain a mouse device");
+    mouse.model_mut().handle_interrupt_in(0x81)
+}
+
+fn poll_gamepad_interrupt_in(m: &mut Machine) -> UsbInResult {
+    let uhci = m.uhci().expect("UHCI device should exist");
+    let mut uhci = uhci.borrow_mut();
+    let root = uhci.controller_mut().hub_mut();
+    let mut dev0 = root
+        .port_device_mut(0)
+        .expect("UHCI root port 0 should have an external hub attached");
+    let hub = dev0
+        .as_hub_mut()
+        .expect("root port 0 device should be a hub");
+    let gamepad = hub
+        .downstream_device_mut(2)
+        .expect("hub port 3 should contain a gamepad device");
+    gamepad.model_mut().handle_interrupt_in(0x81)
+}
+
 fn poll_consumer_interrupt_in(m: &mut Machine) -> UsbInResult {
     let uhci = m.uhci().expect("UHCI device should exist");
     let mut uhci = uhci.borrow_mut();
@@ -107,6 +177,32 @@ fn expect_keyboard_report_contains(result: UsbInResult, usage: u8, context: &str
         }
         other => panic!("{context}: expected keyboard report data, got {other:?}"),
     }
+}
+
+fn expect_mouse_report(result: UsbInResult, expected: &[u8], context: &str) {
+    match result {
+        UsbInResult::Data(data) => assert_eq!(
+            data, expected,
+            "{context}: expected mouse report {expected:?}, got {data:?}"
+        ),
+        other => panic!("{context}: expected mouse report data, got {other:?}"),
+    }
+}
+
+fn expect_gamepad_report(result: UsbInResult, expected: &[u8; 8], context: &str) {
+    match result {
+        UsbInResult::Data(data) => assert_eq!(
+            data, expected,
+            "{context}: expected gamepad report {expected:?}, got {data:?}"
+        ),
+        other => panic!("{context}: expected gamepad report data, got {other:?}"),
+    }
+}
+
+fn inject_gamepad_report_bytes(m: &mut Machine, report: &[u8; 8]) {
+    let a = u32::from_le_bytes(report[0..4].try_into().expect("len checked"));
+    let b = u32::from_le_bytes(report[4..8].try_into().expect("len checked"));
+    m.inject_usb_hid_gamepad_report(a, b);
 }
 
 fn expect_consumer_control_report(result: UsbInResult, usage: u16, context: &str) {
@@ -205,8 +301,33 @@ fn uhci_synthetic_usb_hid_handles_survive_reset_and_snapshot_restore() {
         .expect("synthetic keyboard handle should be present");
     configure_keyboard_for_reports(&mut kbd);
 
+    let mut mouse = m
+        .usb_hid_mouse_handle()
+        .expect("synthetic mouse handle should be present");
+    configure_mouse_for_reports(&mut mouse);
+
+    let mut gamepad = m
+        .usb_hid_gamepad_handle()
+        .expect("synthetic gamepad handle should be present");
+    configure_gamepad_for_reports(&mut gamepad);
+
     m.inject_usb_hid_keyboard_usage(0x04, true);
     expect_keyboard_report_contains(poll_keyboard_interrupt_in(&mut m), 0x04, "after injection");
+
+    m.inject_usb_hid_mouse_move(10, 5);
+    expect_mouse_report(
+        poll_mouse_interrupt_in(&mut m),
+        &[0, 10, 5, 0, 0],
+        "after injection",
+    );
+
+    let gamepad_report = [0x03, 0x00, 0x02, 0x01, 0x02, 0x03, 0x04, 0x00];
+    inject_gamepad_report_bytes(&mut m, &gamepad_report);
+    expect_gamepad_report(
+        poll_gamepad_interrupt_in(&mut m),
+        &gamepad_report,
+        "after injection",
+    );
 
     let mut consumer = m
         .usb_hid_consumer_control_handle()
@@ -225,10 +346,31 @@ fn uhci_synthetic_usb_hid_handles_survive_reset_and_snapshot_restore() {
         .expect("synthetic keyboard handle should persist across reset");
     configure_keyboard_for_reports(&mut kbd);
 
+    let mut mouse = m
+        .usb_hid_mouse_handle()
+        .expect("synthetic mouse handle should persist across reset");
+    configure_mouse_for_reports(&mut mouse);
+
+    let mut gamepad = m
+        .usb_hid_gamepad_handle()
+        .expect("synthetic gamepad handle should persist across reset");
+    configure_gamepad_for_reports(&mut gamepad);
+
     // UHCI host controller reset preserves attached devices; use a different key so we always
     // trigger a report even if the previous key remains latched as pressed.
     m.inject_usb_hid_keyboard_usage(0x05, true);
     expect_keyboard_report_contains(poll_keyboard_interrupt_in(&mut m), 0x05, "after reset");
+
+    m.inject_usb_hid_mouse_move(11, 6);
+    expect_mouse_report(poll_mouse_interrupt_in(&mut m), &[0, 11, 6, 0, 0], "after reset");
+
+    let gamepad_report = [0x04, 0x00, 0x04, 0x05, 0x06, 0x07, 0x08, 0x00];
+    inject_gamepad_report_bytes(&mut m, &gamepad_report);
+    expect_gamepad_report(
+        poll_gamepad_interrupt_in(&mut m),
+        &gamepad_report,
+        "after reset",
+    );
 
     let mut consumer = m
         .usb_hid_consumer_control_handle()
@@ -246,10 +388,35 @@ fn uhci_synthetic_usb_hid_handles_survive_reset_and_snapshot_restore() {
         .expect("synthetic keyboard handle should persist across snapshot restore");
     configure_keyboard_for_reports(&mut kbd);
 
+    let mut mouse = restored
+        .usb_hid_mouse_handle()
+        .expect("synthetic mouse handle should persist across snapshot restore");
+    configure_mouse_for_reports(&mut mouse);
+
+    let mut gamepad = restored
+        .usb_hid_gamepad_handle()
+        .expect("synthetic gamepad handle should persist across snapshot restore");
+    configure_gamepad_for_reports(&mut gamepad);
+
     restored.inject_usb_hid_keyboard_usage(0x06, true);
     expect_keyboard_report_contains(
         poll_keyboard_interrupt_in(&mut restored),
         0x06,
+        "after snapshot restore",
+    );
+
+    restored.inject_usb_hid_mouse_move(12, 7);
+    expect_mouse_report(
+        poll_mouse_interrupt_in(&mut restored),
+        &[0, 12, 7, 0, 0],
+        "after snapshot restore",
+    );
+
+    let gamepad_report = [0x08, 0x00, 0x00, 0x09, 0x0a, 0x0b, 0x0c, 0x00];
+    inject_gamepad_report_bytes(&mut restored, &gamepad_report);
+    expect_gamepad_report(
+        poll_gamepad_interrupt_in(&mut restored),
+        &gamepad_report,
         "after snapshot restore",
     );
 
