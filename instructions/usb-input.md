@@ -283,8 +283,12 @@ wasm-pack test --node crates/aero-wasm --test xhci_controller_bridge --locked
 wasm-pack test --node crates/aero-wasm --test xhci_controller_bridge_topology --locked
 wasm-pack test --node crates/aero-wasm --test xhci_controller_bridge_webusb --locked
 wasm-pack test --node crates/aero-wasm --test xhci_controller_topology --locked
+wasm-pack test --node crates/aero-wasm --test xhci_topology --locked
+wasm-pack test --node crates/aero-wasm --test xhci_step_frames_clamp --locked
+wasm-pack test --node crates/aero-wasm --test xhci_step_frames_clamping --locked
 wasm-pack test --node crates/aero-wasm --test xhci_bme_event_ring --locked
 wasm-pack test --node crates/aero-wasm --test xhci_webusb_snapshot --locked
+wasm-pack test --node crates/aero-wasm --test xhci_snapshot --locked
 wasm-pack test --node crates/aero-wasm --test usb_bridge_snapshot_roundtrip --locked
 wasm-pack test --node crates/aero-wasm --test usb_snapshot --locked
 wasm-pack test --node crates/aero-wasm --test machine_input_injection_wasm --locked
@@ -340,8 +344,12 @@ bash ./scripts/safe-run.sh wasm-pack test --node crates/aero-wasm \
   --test xhci_controller_bridge_topology \
   --test xhci_controller_bridge_webusb \
   --test xhci_controller_topology \
+  --test xhci_topology \
+  --test xhci_step_frames_clamp \
+  --test xhci_step_frames_clamping \
   --test xhci_bme_event_ring \
   --test xhci_webusb_snapshot \
+  --test xhci_snapshot \
   --test usb_bridge_snapshot_roundtrip \
   --test usb_snapshot \
   --test machine_input_injection_wasm \
@@ -374,8 +382,12 @@ AERO_TIMEOUT=2400 bash ./scripts/safe-run.sh wasm-pack test --node crates/aero-w
   --test xhci_controller_bridge_topology \
   --test xhci_controller_bridge_webusb \
   --test xhci_controller_topology \
+  --test xhci_topology \
+  --test xhci_step_frames_clamp \
+  --test xhci_step_frames_clamping \
   --test xhci_bme_event_ring \
   --test xhci_webusb_snapshot \
+  --test xhci_snapshot \
   --test usb_bridge_snapshot_roundtrip \
   --test usb_snapshot \
   --test machine_input_injection_wasm \
