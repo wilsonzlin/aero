@@ -5,7 +5,10 @@ use aero_d3d11::sm4::opcode::{
     OPCODE_CUT, OPCODE_EMIT, OPCODE_LEN_MASK, OPCODE_LEN_SHIFT, OPCODE_MASK, OPCODE_MOV,
     OPCODE_RET,
 };
-use aero_d3d11::{DxbcFile, ShaderStage as Sm4ShaderStage, Sm4Decl, Sm4Inst, Sm4Program};
+use aero_d3d11::{
+    DxbcFile, GsInputPrimitive, GsOutputTopology, ShaderStage as Sm4ShaderStage, Sm4Decl, Sm4Inst,
+    Sm4Program,
+};
 use aero_dxbc::{test_utils as dxbc_test_utils, FourCC};
 use aero_gpu::guest_memory::VecGuestMemory;
 use aero_protocol::aerogpu::aerogpu_cmd::{
@@ -114,16 +117,21 @@ fn assert_gs_dxbc_decodes_as_geometry_and_has_emit(dxbc_bytes: &[u8]) {
         module
             .decls
             .iter()
-            .any(|d| matches!(d, Sm4Decl::GsInputPrimitive { primitive: 1 })),
-        "GS DXBC should declare point input primitive via dcl_inputprimitive (primitive=1), got decls={:?}",
+            .any(|d| matches!(d, Sm4Decl::GsInputPrimitive { primitive: GsInputPrimitive::Point })),
+        "GS DXBC should declare point input primitive via dcl_inputprimitive, got decls={:?}",
         module.decls
     );
     assert!(
         module
             .decls
             .iter()
-            .any(|d| matches!(d, Sm4Decl::GsOutputTopology { topology: 3 })),
-        "GS DXBC should declare triangle strip output topology via dcl_outputtopology (topology=3), got decls={:?}",
+            .any(|d| matches!(
+                d,
+                Sm4Decl::GsOutputTopology {
+                    topology: GsOutputTopology::TriangleStrip
+                }
+            )),
+        "GS DXBC should declare triangle strip output topology via dcl_outputtopology, got decls={:?}",
         module.decls
     );
     assert!(
