@@ -162,8 +162,11 @@ Already implemented:
     backed by `UhciControllerBridge` / `XhciControllerBridge` WASM exports.
   - `web/src/hid/uhci_hid_topology.ts` and `web/src/hid/xhci_hid_topology.ts` wire WebHID passthrough bridges
     into the guest USB topology (including attaching an external hub when a `guestPath` requires it).
-  - The I/O worker feature-detects the xHCI topology exports and routes WebHID passthrough attachments to xHCI
-    when available, falling back to UHCI otherwise (`web/src/workers/io_hid_topology_mux.ts`).
+  - The I/O worker prefers routing WebHID passthrough attachments to xHCI when the xHCI topology exports are
+    available. Otherwise it falls back to the UHCI topology manager. In WASM builds that omit UHCI, the worker
+    can reuse the UHCI topology manager with `EhciControllerBridge` since EHCI exposes a compatible attachment
+    API (see `web/src/workers/io.worker.ts`, `web/src/hid/ehci_hid_topology_shim.ts`, and
+    `web/src/workers/io_hid_topology_mux.ts`).
 
 Dev-only scaffolding (useful for tests / manual bring-up, but **not** the target architecture):
 
@@ -352,10 +355,12 @@ the runtime should treat this as a performance downgrade only and continue opera
 The guest-visible device is modeled as:
 
 - A guest-visible USB host controller:
-  - **UHCI** (USB 1.1, default path), or
-  - **xHCI** when the deployed WASM build exports the xHCI topology APIs and the I/O worker enables
-    the xHCI-backed topology manager (it prefers xHCI when available and falls back to UHCI
-    otherwise; see `web/src/workers/io_hid_topology_mux.ts`).
+  - The I/O worker prefers routing WebHID passthrough attachments to **xHCI** when the deployed WASM build
+    exports the xHCI topology APIs.
+  - Otherwise it falls back to the **UHCI topology manager** (typically backed by UHCI). In WASM builds that
+    omit UHCI, the worker can instead back this topology manager with **EHCI** since `EhciControllerBridge`
+    exposes a compatible attachment API (see `web/src/workers/io.worker.ts`,
+    `web/src/hid/ehci_hid_topology_shim.ts`, and `web/src/workers/io_hid_topology_mux.ts`).
 - A **root hub** with one or more root ports (controller-dependent).
 - (optional) **external USB hub device** (USB class `0x09`) attached behind a root port to
   provide additional downstream ports
