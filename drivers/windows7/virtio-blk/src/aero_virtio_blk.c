@@ -1744,6 +1744,13 @@ BOOLEAN AerovblkHwInterrupt(_In_ PVOID deviceExtension) {
   UCHAR isr;
 
   devExt = (PAEROVBLK_DEVICE_EXTENSION)deviceExtension;
+  if (devExt == NULL || devExt->Removed) {
+    /*
+     * Avoid MMIO access after stop/remove (including surprise removal). If the
+     * device is gone, reading the ISR byte may fault.
+     */
+    return FALSE;
+  }
 
   /*
    * INTx path: modern virtio-pci ISR byte (BAR0 + 0x2000). Read-to-ack.
@@ -1765,6 +1772,10 @@ BOOLEAN AerovblkHwMSInterrupt(_In_ PVOID deviceExtension, _In_ ULONG messageId) 
   PAEROVBLK_DEVICE_EXTENSION devExt;
 
   devExt = (PAEROVBLK_DEVICE_EXTENSION)deviceExtension;
+  if (devExt == NULL || devExt->Removed) {
+    /* Best-effort: ignore interrupts after stop/remove. */
+    return TRUE;
+  }
 
   /*
    * MSI/MSI-X interrupt semantics:
