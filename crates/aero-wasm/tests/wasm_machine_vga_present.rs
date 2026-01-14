@@ -521,13 +521,117 @@ fn boot_sector_int10_vbe_set_mode_118_hlt() -> [u8; 512] {
     // mov bx, 0x4118 (mode 0x118 + LFB requested)
     sector[i..i + 3].copy_from_slice(&[0xBB, 0x18, 0x41]);
     i += 3;
-
     // int 0x10
     sector[i..i + 2].copy_from_slice(&[0xCD, 0x10]);
     i += 2;
 
     // hlt
     sector[i] = 0xF4;
+
+    sector[510] = 0x55;
+    sector[511] = 0xAA;
+    sector
+}
+
+fn boot_sector_vbe_bios_640x480x32_scanline_override_red_pixel() -> [u8; 512] {
+    let mut sector = [0u8; 512];
+    let mut i = 0usize;
+
+    // Use BIOS VBE calls (INT 10h AX=4Fxx) to:
+    // - set a standard VBE mode (0x112 = 640x480x32bpp)
+    // - override the logical scanline length in *bytes* via AX=4F06 BL=0x02
+    //
+    // This exercises the BIOS "scanline override" path, which can set a pitch that is not
+    // representable as `virt_width * bytes_per_pixel` (e.g. 4101 bytes for 32bpp).
+
+    // xor ax, ax
+    sector[i..i + 2].copy_from_slice(&[0x31, 0xC0]);
+    i += 2;
+    // mov ds, ax
+    sector[i..i + 2].copy_from_slice(&[0x8E, 0xD8]);
+    i += 2;
+    // mov es, ax
+    sector[i..i + 2].copy_from_slice(&[0x8E, 0xC0]);
+    i += 2;
+    // mov ss, ax
+    sector[i..i + 2].copy_from_slice(&[0x8E, 0xD0]);
+    i += 2;
+    // mov sp, 0x7C00
+    sector[i..i + 3].copy_from_slice(&[0xBC, 0x00, 0x7C]);
+    i += 3;
+
+    // VBE Set Mode (AX=4F02), requesting LFB (bit14) and no-clear (bit15).
+    // mov ax, 0x4F02
+    sector[i..i + 3].copy_from_slice(&[0xB8, 0x02, 0x4F]);
+    i += 3;
+    // mov bx, 0xC112 (0x112 | 0x4000 | 0x8000)
+    sector[i..i + 3].copy_from_slice(&[0xBB, 0x12, 0xC1]);
+    i += 3;
+    // int 0x10
+    sector[i..i + 2].copy_from_slice(&[0xCD, 0x10]);
+    i += 2;
+
+    // VBE Set/Get Logical Scan Line Length (AX=4F06), subfunction "set in bytes" (BL=0x02).
+    // Choose an odd pitch (4101) to ensure it cannot be derived as `virt_width * 4`.
+    // mov ax, 0x4F06
+    sector[i..i + 3].copy_from_slice(&[0xB8, 0x06, 0x4F]);
+    i += 3;
+    // mov bx, 0x0002  (BL = 0x02)
+    sector[i..i + 3].copy_from_slice(&[0xBB, 0x02, 0x00]);
+    i += 3;
+    // mov cx, 0x1005 (4101)
+    sector[i..i + 3].copy_from_slice(&[0xB9, 0x05, 0x10]);
+    i += 3;
+    // int 0x10
+    sector[i..i + 2].copy_from_slice(&[0xCD, 0x10]);
+    i += 2;
+
+    // Write a red pixel at the start of the packed-pixel framebuffer via the legacy 0xA0000
+    // banked window (real-mode accessible).
+
+    // cld (ensure stosb increments DI)
+    sector[i] = 0xFC;
+    i += 1;
+
+    // mov ax, 0xA000
+    sector[i..i + 3].copy_from_slice(&[0xB8, 0x00, 0xA0]);
+    i += 3;
+    // mov es, ax
+    sector[i..i + 2].copy_from_slice(&[0x8E, 0xC0]);
+    i += 2;
+    // xor di, di
+    sector[i..i + 2].copy_from_slice(&[0x31, 0xFF]);
+    i += 2;
+
+    // Write a red pixel in BGRX format expected by the SVGA renderer.
+    // mov al, 0x00 ; B
+    sector[i..i + 2].copy_from_slice(&[0xB0, 0x00]);
+    i += 2;
+    // stosb ; B
+    sector[i] = 0xAA;
+    i += 1;
+    // stosb ; G (still 0)
+    sector[i] = 0xAA;
+    i += 1;
+    // mov al, 0xFF ; R
+    sector[i..i + 2].copy_from_slice(&[0xB0, 0xFF]);
+    i += 2;
+    // stosb ; R
+    sector[i] = 0xAA;
+    i += 1;
+    // mov al, 0x00 ; X
+    sector[i..i + 2].copy_from_slice(&[0xB0, 0x00]);
+    i += 2;
+    // stosb ; X
+    sector[i] = 0xAA;
+    i += 1;
+
+    // cli; hlt; jmp $
+    sector[i] = 0xFA;
+    i += 1;
+    sector[i] = 0xF4;
+    i += 1;
+    sector[i..i + 2].copy_from_slice(&[0xEB, 0xFE]);
 
     sector[510] = 0x55;
     sector[511] = 0xAA;
@@ -823,6 +927,59 @@ fn wasm_machine_vbe_8bpp_mode_falls_back_to_legacy_text_scanout_state() {
     let len = machine.vga_framebuffer_len_bytes();
     assert!(ptr != 0, "expected non-zero vga_framebuffer_ptr");
     assert_eq!(len, 64 * 64 * 4);
+
+    let pixel = read_linear_prefix::<4>(ptr);
+    assert_eq!(&pixel, &[0xFF, 0x00, 0x00, 0xFF]);
+}
+
+#[wasm_bindgen_test]
+fn wasm_machine_vbe_scanline_override_is_reflected_in_scanout_state_pitch() {
+    #[cfg(feature = "wasm-threaded")]
+    ensure_runtime_reserved_floor();
+
+    let boot = boot_sector_vbe_bios_640x480x32_scanline_override_red_pixel();
+    // `Machine::new` defaults to AeroGPU; this test specifically targets the legacy VGA/VBE path.
+    let mut machine = Machine::new_with_config(16 * 1024 * 1024, false, Some(true), None)
+        .expect("Machine::new_with_config");
+    machine
+        .set_disk_image(&boot)
+        .expect("set_disk_image should accept a 512-byte boot sector");
+
+    let scanout_ptr = machine.scanout_state_ptr();
+    machine.reset();
+
+    let mut halted = false;
+    for _ in 0..10_000 {
+        let exit = machine.run_slice(50_000);
+        match exit.kind() {
+            RunExitKind::Completed => {}
+            RunExitKind::Halted => {
+                halted = true;
+                break;
+            }
+            other => panic!("unexpected RunExitKind: {other:?}"),
+        }
+    }
+    assert!(halted, "guest never reached HLT");
+
+    if scanout_ptr != 0 {
+        let snap = unsafe { snapshot_scanout_state(scanout_ptr) };
+        assert_eq!(snap.source, SCANOUT_SOURCE_LEGACY_VBE_LFB);
+        assert_eq!(snap.base_paddr, u64::from(machine.vbe_lfb_base()));
+        assert_eq!(snap.width, 640);
+        assert_eq!(snap.height, 480);
+        assert_eq!(snap.pitch_bytes, 4101);
+        assert_eq!(snap.format, SCANOUT_FORMAT_B8G8R8X8);
+    }
+
+    machine.vga_present();
+    assert_eq!(machine.vga_width(), 640);
+    assert_eq!(machine.vga_height(), 480);
+
+    let ptr = machine.vga_framebuffer_ptr();
+    let len = machine.vga_framebuffer_len_bytes();
+    assert!(ptr != 0, "expected non-zero vga_framebuffer_ptr");
+    assert_eq!(len, 640 * 480 * 4);
 
     let pixel = read_linear_prefix::<4>(ptr);
     assert_eq!(&pixel, &[0xFF, 0x00, 0x00, 0xFF]);
