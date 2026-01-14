@@ -100,12 +100,9 @@ rem Non-destructive validation mode for automation/cautious users.
 rem Must run before any Administrator checks or system modifications.
 if "%ARG_CHECK%"=="1" goto :check_mode
 
-call :require_admin_stdout
-if errorlevel 1 (
-  set "RC=%ERRORLEVEL%"
-  popd >nul 2>&1
-  exit /b %RC%
-)
+rem Media integrity verification should run before any system modifications. While installation
+rem still requires Administrator, allow /verify-media to run even when not elevated so that
+rem users/automation can detect corrupted/mixed media early.
 if "%ARG_VERIFY_MEDIA%"=="1" (
   call :verify_media_preflight
   if errorlevel 1 (
@@ -113,6 +110,13 @@ if "%ARG_VERIFY_MEDIA%"=="1" (
     popd >nul 2>&1
     exit /b %RC%
   )
+)
+
+call :require_admin_stdout
+if errorlevel 1 (
+  set "RC=%ERRORLEVEL%"
+  popd >nul 2>&1
+  exit /b %RC%
 )
 call :init_logging
 if errorlevel 1 (
