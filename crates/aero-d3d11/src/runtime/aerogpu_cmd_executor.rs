@@ -3627,7 +3627,8 @@ impl AerogpuD3d11Executor {
 
         // Tessellation emulation will eventually use a VS-as-compute prepass to populate HS control
         // point inputs (see `runtime::tessellation::vs_as_compute`). The full HS/DS pipeline is not
-        // wired up yet, so keep this as an explicit marker.
+        // wired up yet, so fail fast with a clear error instead of panicking (the command stream is
+        // guest-controlled).
         if self.state.hs.is_some() || self.state.ds.is_some() {
             bail!(
                 "aerogpu_cmd: tessellation (HS/DS) compute expansion is not wired up yet (hs={:?} ds={:?} topology={:?})",
@@ -17396,6 +17397,43 @@ fn main() {{
                     "unexpected error: {err:#}"
                 );
             }
+        });
+    }
+
+    #[test]
+    fn tessellation_hs_ds_emulation_is_reported_as_unimplemented() {
+        pollster::block_on(async {
+            let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+                Ok(exec) => exec,
+                Err(e) => {
+                    skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                    return;
+                }
+            };
+            // Force capability flags on so the draw reaches the HS/DS implementation check.
+            // This is a unit test for error reporting; the stream should fail before recording any
+            // GPU work.
+            exec.caps.supports_compute = true;
+            exec.caps.supports_indirect_execution = true;
+
+            // Make the state look like it needs tessellation. The stream itself does not contain a
+            // tessellation bind command yet; this is a direct state injection for unit testing.
+            exec.state.render_targets.push(Some(1));
+            exec.state.hs = Some(123);
+
+            let mut writer = AerogpuCmdWriter::new();
+            writer.draw(3, 1, 0, 0);
+            let stream = writer.finish();
+
+            let mut guest_mem = VecGuestMemory::new(0);
+            let err = exec
+                .execute_cmd_stream(&stream, None, &mut guest_mem)
+                .expect_err("draw should fail when HS/DS tessellation emulation is not wired up");
+            let msg = err.to_string();
+            assert!(
+                msg.contains("tessellation (HS/DS) compute expansion is not wired up yet"),
+                "unexpected error: {err:#}"
+            );
         });
     }
 
