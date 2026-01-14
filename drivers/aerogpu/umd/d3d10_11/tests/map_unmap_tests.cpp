@@ -17,26 +17,26 @@
 
 namespace {
 
-constexpr uint32_t kDxgiFormatR8G8B8A8UnormSrgb = 29; // DXGI_FORMAT_R8G8B8A8_UNORM_SRGB
-constexpr uint32_t kDxgiFormatB5G6R5Unorm = 85; // DXGI_FORMAT_B5G6R5_UNORM
-constexpr uint32_t kDxgiFormatB5G5R5A1Unorm = 86; // DXGI_FORMAT_B5G5R5A1_UNORM
-constexpr uint32_t kDxgiFormatB8G8R8A8Unorm = 87; // DXGI_FORMAT_B8G8R8A8_UNORM
-constexpr uint32_t kDxgiFormatB8G8R8A8UnormSrgb = 91; // DXGI_FORMAT_B8G8R8A8_UNORM_SRGB
-constexpr uint32_t kDxgiFormatB8G8R8X8UnormSrgb = 93; // DXGI_FORMAT_B8G8R8X8_UNORM_SRGB
-constexpr uint32_t kDxgiFormatBc1Unorm = 71; // DXGI_FORMAT_BC1_UNORM
-constexpr uint32_t kDxgiFormatBc1UnormSrgb = 72; // DXGI_FORMAT_BC1_UNORM_SRGB
-constexpr uint32_t kDxgiFormatBc2Unorm = 74; // DXGI_FORMAT_BC2_UNORM
-constexpr uint32_t kDxgiFormatBc2UnormSrgb = 75; // DXGI_FORMAT_BC2_UNORM_SRGB
-constexpr uint32_t kDxgiFormatBc3Unorm = 77; // DXGI_FORMAT_BC3_UNORM
-constexpr uint32_t kDxgiFormatBc3UnormSrgb = 78; // DXGI_FORMAT_BC3_UNORM_SRGB
-constexpr uint32_t kDxgiFormatBc7Unorm = 98; // DXGI_FORMAT_BC7_UNORM
-constexpr uint32_t kDxgiFormatBc7UnormSrgb = 99; // DXGI_FORMAT_BC7_UNORM_SRGB
+using aerogpu::d3d10_11::kDxgiFormatR8G8B8A8UnormSrgb;
+using aerogpu::d3d10_11::kDxgiFormatB5G6R5Unorm;
+using aerogpu::d3d10_11::kDxgiFormatB5G5R5A1Unorm;
+using aerogpu::d3d10_11::kDxgiFormatB8G8R8A8Unorm;
+using aerogpu::d3d10_11::kDxgiFormatB8G8R8A8UnormSrgb;
+using aerogpu::d3d10_11::kDxgiFormatB8G8R8X8UnormSrgb;
+using aerogpu::d3d10_11::kDxgiFormatBc1Unorm;
+using aerogpu::d3d10_11::kDxgiFormatBc1UnormSrgb;
+using aerogpu::d3d10_11::kDxgiFormatBc2Unorm;
+using aerogpu::d3d10_11::kDxgiFormatBc2UnormSrgb;
+using aerogpu::d3d10_11::kDxgiFormatBc3Unorm;
+using aerogpu::d3d10_11::kDxgiFormatBc3UnormSrgb;
+using aerogpu::d3d10_11::kDxgiFormatBc7Unorm;
+using aerogpu::d3d10_11::kDxgiFormatBc7UnormSrgb;
 
-constexpr uint32_t kD3D11BindVertexBuffer = 0x1;
-constexpr uint32_t kD3D11BindIndexBuffer = 0x2;
-constexpr uint32_t kD3D11BindConstantBuffer = 0x4;
-constexpr uint32_t kD3D11BindShaderResource = 0x8;
-constexpr uint32_t kD3D11BindRenderTarget = 0x20;
+using aerogpu::d3d10_11::kD3D11BindVertexBuffer;
+using aerogpu::d3d10_11::kD3D11BindIndexBuffer;
+using aerogpu::d3d10_11::kD3D11BindConstantBuffer;
+using aerogpu::d3d10_11::kD3D11BindShaderResource;
+using aerogpu::d3d10_11::kD3D11BindRenderTarget;
 
 bool Check(bool cond, const char* msg) {
   if (!cond) {
