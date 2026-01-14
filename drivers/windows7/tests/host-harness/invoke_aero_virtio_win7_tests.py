@@ -3654,6 +3654,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         default="/aero-virtio-selftest",
         help=(
             "HTTP path served by the host harness (e.g. /aero-virtio-selftest). "
+            "Must start with '/' and must not contain whitespace. "
             "The guest virtio-net selftest also requests the deterministic large payload at "
             "<http_path>-large (1MiB, bytes 0..255 repeating)."
         ),
