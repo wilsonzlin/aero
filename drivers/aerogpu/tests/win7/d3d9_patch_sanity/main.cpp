@@ -671,5 +671,6 @@ static int RunD3D9PatchSanity(int argc, char** argv) {
 }
 
 int main(int argc, char** argv) {
+  aerogpu_test::ConfigureProcessForAutomation();
   return RunD3D9PatchSanity(argc, argv);
 }
