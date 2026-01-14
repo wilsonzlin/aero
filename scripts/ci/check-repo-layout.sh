@@ -33,6 +33,16 @@ else
   echo "warning: python3 not found; skipping emulator dependency guardrail" >&2
 fi
 
+# VirtIO guardrail:
+# VirtIO device models (including `virtio-input`) live in `crates/aero-virtio` and are wired up by
+# the canonical machine stack (`crates/aero-machine`). The legacy emulator-local VirtIO stack has
+# been removed to avoid contract drift (the Windows 7 driver depends on exact device semantics).
+#
+# Fail CI if `emulator::io::virtio` is reintroduced.
+if [[ -e "crates/emulator/src/io/virtio" || -e "crates/emulator/src/io/virtio.rs" ]]; then
+  die "legacy emulator-local VirtIO module found (crates/emulator/src/io/virtio*); VirtIO devices must be implemented in crates/aero-virtio"
+fi
+
 # Local-only agent notes should never be checked in. They're ignored by default, but
 # `git add -f` would still stage them. Keep the repo clean by failing CI if they
 # become tracked.
