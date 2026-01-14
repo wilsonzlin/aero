@@ -26,7 +26,7 @@ The canonical machine provides a legacy boot display using a **VGA + Bochs VBE (
 Canonical machine GPU device modes (today):
 
 - Boot graphics path (`enable_vga=true`, `enable_aerogpu=false`): `aero_gpu_vga::VgaDevice`. When the PC platform is enabled (`enable_pc_platform=true`), the machine also exposes a transitional Bochs/QEMU “Standard VGA”-like PCI function at **`00:0c.0`** (`VID:DID = 1234:1111`) used for VBE linear framebuffer (LFB) routing.
-- AeroGPU device (MVP; `enable_aerogpu=true`, `enable_vga=false`): requires `enable_pc_platform=true`. Exposes the canonical AeroGPU PCI identity at **`00:07.0`** (`VID:DID = A3A0:0001`), wires BAR1-backed VRAM (legacy VGA window aliasing / VBE compatibility mapping), and exposes a minimal BAR0 MMIO surface used for bring-up (ABI/features, ring+fence transport with a no-op executor + IRQs, scanout0/cursor registers, vblank counters). On the Rust side, the host can call `Machine::display_present()` to read the active scanout (and optionally composite the cursor) into a host-visible RGBA framebuffer cache (`Machine::display_framebuffer()` / `Machine::display_resolution()`). The full AeroGPU command execution model is not implemented in `aero-machine` yet. The full emulator-side device model lives at `crates/emulator/src/devices/pci/aerogpu.rs` and is not the canonical browser machine today.
+- AeroGPU device (MVP; `enable_aerogpu=true`, `enable_vga=false`): requires `enable_pc_platform=true`. Exposes the canonical AeroGPU PCI identity at **`00:07.0`** (`VID:DID = A3A0:0001`), wires BAR1-backed VRAM (legacy VGA window aliasing / VBE compatibility mapping), and exposes a minimal BAR0 MMIO surface used for bring-up (ABI/features, ring+fence transport with a no-op executor + IRQs, scanout0/cursor registers, vblank counters; implementation: `crates/aero-machine/src/aerogpu.rs`). On the Rust side, the host can call `Machine::display_present()` to read the active scanout (and optionally composite the cursor) into a host-visible RGBA framebuffer cache (`Machine::display_framebuffer()` / `Machine::display_resolution()`). The full AeroGPU command execution model is not implemented in `aero-machine` yet. The full emulator-side device model lives at `crates/emulator/src/devices/pci/aerogpu.rs` and is not the canonical browser machine today.
 
 ### 2) Browser presentation: shared-memory framebuffer → GPU worker → canvas
 
@@ -299,6 +299,7 @@ Canonical machine note:
 
 - `MachineConfig::enable_aerogpu` wires BAR1 VRAM (plus legacy VGA window aliasing / VBE compatibility mapping) and an MVP BAR0 register block (ABI/features, ring/fence + IRQ transport, scanout0/cursor + vblank registers) that is sufficient for detection/bring-up and basic pacing.
   Full AeroGPU command execution is not implemented in `aero-machine` yet (see the `MachineConfig::enable_aerogpu` docs in `crates/aero-machine/src/lib.rs`).
+- The MVP BAR0 MMIO surface + ring/fence/vblank/scanout implementation in the canonical machine lives in: `crates/aero-machine/src/aerogpu.rs`.
 - A more complete AeroGPU PCI device model exists in the emulator crate (`crates/emulator/src/devices/pci/aerogpu.rs`) and is not the canonical browser machine today.
 
 ## How to validate (tests)
