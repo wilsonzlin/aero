@@ -43,8 +43,10 @@ fn scanout_state_hands_off_from_legacy_vbe_to_wddm_and_locks_out_legacy() {
     let scanout = Arc::new(ScanoutState::new());
     dev.borrow_mut().set_scanout_state(Some(scanout.clone()));
 
-    // Enable PCI memory decoding (required for BAR1 accesses and BAR0 scanout programming).
-    dev.borrow_mut().config_write(0x04, 2, 1 << 1);
+    // Enable PCI I/O + memory decoding:
+    // - I/O decoding is required for VGA/VBE port access (0x3B0..0x3DF, 0x01CE/0x01CF).
+    // - memory decoding is required for BAR1 accesses and BAR0 scanout programming.
+    dev.borrow_mut().config_write(0x04, 2, (1 << 0) | (1 << 1));
 
     // Map BAR1 into a simple physical bus so we can "write pixels to the LFB" via guest physical
     // addresses.

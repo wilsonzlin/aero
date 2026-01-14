@@ -52,7 +52,7 @@ impl MmioHandler for VgaLegacyMmioHandler {
 ///
 /// This is intended to be mapped at the physical base of the VBE linear framebuffer (LFB), such as
 /// [`crate::SVGA_LFB_BASE`], with `offset` interpreted as a byte offset into the VBE framebuffer
-/// region (starting at [`crate::VBE_FRAMEBUFFER_OFFSET`] within [`VgaDevice::vram`]).
+/// region (starting at [`crate::VgaConfig::lfb_offset`] within [`VgaDevice::vram`]).
 pub struct VgaLfbMmioHandler {
     pub dev: Rc<RefCell<VgaDevice>>,
 }
@@ -68,8 +68,9 @@ impl MmioHandler for VgaLfbMmioHandler {
         };
 
         let dev = self.dev.borrow();
+        let lfb_off = usize::try_from(dev.config().lfb_offset).unwrap_or(0);
         let vram = dev.vram();
-        let fb_len = vram.len().saturating_sub(crate::VBE_FRAMEBUFFER_OFFSET);
+        let fb_len = vram.len().saturating_sub(lfb_off);
         let base = offset as usize;
         if base >= fb_len {
             return 0;
@@ -77,8 +78,8 @@ impl MmioHandler for VgaLfbMmioHandler {
 
         let end_in_fb = base.saturating_add(size).min(fb_len);
         let len = end_in_fb - base;
-        let start = crate::VBE_FRAMEBUFFER_OFFSET + base;
-        let end = crate::VBE_FRAMEBUFFER_OFFSET + end_in_fb;
+        let start = lfb_off + base;
+        let end = lfb_off + end_in_fb;
 
         let mut buf = [0u8; 8];
         buf[..len].copy_from_slice(&vram[start..end]);
@@ -96,16 +97,17 @@ impl MmioHandler for VgaLfbMmioHandler {
 
         let base = offset as usize;
         let mut dev = self.dev.borrow_mut();
+        let lfb_off = usize::try_from(dev.config().lfb_offset).unwrap_or(0);
         let vram = dev.vram_mut();
-        let fb_len = vram.len().saturating_sub(crate::VBE_FRAMEBUFFER_OFFSET);
+        let fb_len = vram.len().saturating_sub(lfb_off);
         if base >= fb_len {
             return;
         }
 
         let end_in_fb = base.saturating_add(size).min(fb_len);
         let len = end_in_fb - base;
-        let start = crate::VBE_FRAMEBUFFER_OFFSET + base;
-        let end = crate::VBE_FRAMEBUFFER_OFFSET + end_in_fb;
+        let start = lfb_off + base;
+        let end = lfb_off + end_in_fb;
         let bytes = value.to_le_bytes();
         vram[start..end].copy_from_slice(&bytes[..len]);
     }

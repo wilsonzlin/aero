@@ -175,6 +175,10 @@ impl AeroGpuPciDevice {
         self.config.read(0x04, 2) as u16
     }
 
+    fn io_space_enabled(&self) -> bool {
+        (self.command() & (1 << 0)) != 0
+    }
+
     fn mem_space_enabled(&self) -> bool {
         (self.command() & (1 << 1)) != 0
     }
@@ -235,6 +239,18 @@ impl AeroGpuPciDevice {
     }
 
     pub fn vga_port_read(&mut self, port: u16, size: usize) -> u32 {
+        // Gate legacy port I/O on PCI command I/O Space Enable (bit 0), like other PCI devices.
+        // Firmware/OS is expected to set this bit when enumerating the device.
+        if !self.io_space_enabled() {
+            return match size {
+                0 => 0,
+                1 => 0xFF,
+                2 => 0xFFFF,
+                4 => 0xFFFF_FFFF,
+                _ => 0xFFFF_FFFF,
+            };
+        }
+
         // VGA legacy ports + Bochs VBE ports.
         if (0x3B0..=0x3DF).contains(&port) || port == 0x01CE || port == 0x01CF {
             return self.vga.port_read(port, size);
@@ -249,6 +265,9 @@ impl AeroGpuPciDevice {
     }
 
     pub fn vga_port_write(&mut self, port: u16, size: usize, value: u32) {
+        if !self.io_space_enabled() {
+            return;
+        }
         if (0x3B0..=0x3DF).contains(&port) || port == 0x01CE || port == 0x01CF {
             self.vga.port_write(port, size, value);
             self.update_scanout_state_from_vga();
