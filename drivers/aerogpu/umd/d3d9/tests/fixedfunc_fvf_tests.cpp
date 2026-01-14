@@ -17338,6 +17338,202 @@ bool TestXyzrhwConversionIgnoresViewportMinMaxZ() {
   return true;
 }
 
+bool TestXyzrhwIndexedConversionIgnoresViewportMinMaxZ() {
+  CleanupDevice cleanup;
+  if (!CreateDevice(&cleanup)) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetViewport != nullptr, "pfnSetViewport is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnLock != nullptr, "pfnLock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnUnlock != nullptr, "pfnUnlock is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetStreamSource != nullptr, "pfnSetStreamSource is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetIndices != nullptr, "pfnSetIndices is available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDrawIndexedPrimitive != nullptr, "pfnDrawIndexedPrimitive is available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(cleanup.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // Use non-default viewport MinZ/MaxZ to ensure the VB/IB indexed draw path's
+  // CPU XYZRHW expansion also treats POSITIONT.z as D3D9 NDC depth (0..1).
+  D3DDDIVIEWPORTINFO vp{};
+  vp.X = 0.0f;
+  vp.Y = 0.0f;
+  vp.Width = 256.0f;
+  vp.Height = 256.0f;
+  vp.MinZ = 0.25f;
+  vp.MaxZ = 0.75f;
+  HRESULT hr = cleanup.device_funcs.pfnSetViewport(cleanup.hDevice, &vp);
+  if (!Check(hr == S_OK, "SetViewport(MinZ/MaxZ)")) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnSetFVF(cleanup.hDevice, kFvfXyzrhwDiffuse);
+  if (!Check(hr == S_OK, "SetFVF(XYZRHW|DIFFUSE)")) {
+    return false;
+  }
+
+  // Create + fill a VB with three XYZRHW vertices (z == MinZ).
+  const VertexXyzrhwDiffuse verts[3] = {
+      {0.0f, 0.0f, 0.25f, 0.5f, 0xFFFFFFFFu},
+      {1.0f, 0.0f, 0.25f, 0.5f, 0xFFFFFFFFu},
+      {0.0f, 1.0f, 0.25f, 0.5f, 0xFFFFFFFFu},
+  };
+  D3D9DDIARG_CREATERESOURCE create_vb{};
+  create_vb.type = 0u;
+  create_vb.format = 0u;
+  create_vb.width = 0;
+  create_vb.height = 0;
+  create_vb.depth = 0;
+  create_vb.mip_levels = 1;
+  create_vb.usage = 0;
+  create_vb.pool = 0;
+  create_vb.size = sizeof(verts);
+  create_vb.hResource.pDrvPrivate = nullptr;
+  create_vb.pSharedHandle = nullptr;
+  create_vb.pPrivateDriverData = nullptr;
+  create_vb.PrivateDriverDataSize = 0;
+  create_vb.wddm_hAllocation = 0;
+  hr = cleanup.device_funcs.pfnCreateResource(cleanup.hDevice, &create_vb);
+  if (!Check(hr == S_OK, "CreateResource(vertex buffer xyzrhw|diffuse)")) {
+    return false;
+  }
+  if (!Check(create_vb.hResource.pDrvPrivate != nullptr, "CreateResource returned vb handle")) {
+    return false;
+  }
+  cleanup.resources.push_back(create_vb.hResource);
+
+  D3D9DDIARG_LOCK lock_vb{};
+  lock_vb.hResource = create_vb.hResource;
+  lock_vb.offset_bytes = 0;
+  lock_vb.size_bytes = 0;
+  lock_vb.flags = 0;
+  D3DDDI_LOCKEDBOX vb_box{};
+  hr = cleanup.device_funcs.pfnLock(cleanup.hDevice, &lock_vb, &vb_box);
+  if (!Check(hr == S_OK, "Lock(vb xyzrhw|diffuse)")) {
+    return false;
+  }
+  if (!Check(vb_box.pData != nullptr, "Lock(vb) returns pData")) {
+    return false;
+  }
+  std::memcpy(vb_box.pData, verts, sizeof(verts));
+
+  D3D9DDIARG_UNLOCK unlock_vb{};
+  unlock_vb.hResource = create_vb.hResource;
+  unlock_vb.offset_bytes = 0;
+  unlock_vb.size_bytes = 0;
+  hr = cleanup.device_funcs.pfnUnlock(cleanup.hDevice, &unlock_vb);
+  if (!Check(hr == S_OK, "Unlock(vb xyzrhw|diffuse)")) {
+    return false;
+  }
+
+  // Create + fill an index buffer (0,1,2).
+  const uint16_t indices[3] = {0u, 1u, 2u};
+  D3D9DDIARG_CREATERESOURCE create_ib{};
+  create_ib.type = 0u;
+  create_ib.format = 0u;
+  create_ib.width = 0;
+  create_ib.height = 0;
+  create_ib.depth = 0;
+  create_ib.mip_levels = 1;
+  create_ib.usage = 0;
+  create_ib.pool = 0;
+  create_ib.size = sizeof(indices);
+  create_ib.hResource.pDrvPrivate = nullptr;
+  create_ib.pSharedHandle = nullptr;
+  create_ib.pPrivateDriverData = nullptr;
+  create_ib.PrivateDriverDataSize = 0;
+  create_ib.wddm_hAllocation = 0;
+  hr = cleanup.device_funcs.pfnCreateResource(cleanup.hDevice, &create_ib);
+  if (!Check(hr == S_OK, "CreateResource(index buffer u16)")) {
+    return false;
+  }
+  if (!Check(create_ib.hResource.pDrvPrivate != nullptr, "CreateResource returned ib handle")) {
+    return false;
+  }
+  cleanup.resources.push_back(create_ib.hResource);
+
+  D3D9DDIARG_LOCK lock_ib{};
+  lock_ib.hResource = create_ib.hResource;
+  lock_ib.offset_bytes = 0;
+  lock_ib.size_bytes = 0;
+  lock_ib.flags = 0;
+  D3DDDI_LOCKEDBOX ib_box{};
+  hr = cleanup.device_funcs.pfnLock(cleanup.hDevice, &lock_ib, &ib_box);
+  if (!Check(hr == S_OK, "Lock(ib u16)")) {
+    return false;
+  }
+  if (!Check(ib_box.pData != nullptr, "Lock(ib) returns pData")) {
+    return false;
+  }
+  std::memcpy(ib_box.pData, indices, sizeof(indices));
+
+  D3D9DDIARG_UNLOCK unlock_ib{};
+  unlock_ib.hResource = create_ib.hResource;
+  unlock_ib.offset_bytes = 0;
+  unlock_ib.size_bytes = 0;
+  hr = cleanup.device_funcs.pfnUnlock(cleanup.hDevice, &unlock_ib);
+  if (!Check(hr == S_OK, "Unlock(ib u16)")) {
+    return false;
+  }
+
+  // Bind VB/IB and draw.
+  hr = cleanup.device_funcs.pfnSetStreamSource(
+      cleanup.hDevice, /*stream=*/0, create_vb.hResource, /*offset=*/0, sizeof(VertexXyzrhwDiffuse));
+  if (!Check(hr == S_OK, "SetStreamSource(stream0=vb xyzrhw|diffuse)")) {
+    return false;
+  }
+  hr = cleanup.device_funcs.pfnSetIndices(cleanup.hDevice, create_ib.hResource, static_cast<D3DDDIFORMAT>(101), 0);
+  if (!Check(hr == S_OK, "SetIndices(ib index16)")) {
+    return false;
+  }
+
+  dev->cmd.reset();
+  hr = cleanup.device_funcs.pfnDrawIndexedPrimitive(
+      cleanup.hDevice, D3DDDIPT_TRIANGLELIST, /*base_vertex=*/0, /*min_index=*/0, /*num_vertices=*/3, /*start_index=*/0,
+      /*primitive_count=*/1);
+  if (!Check(hr == S_OK, "DrawIndexedPrimitive(XYZRHW indexed conversion ignores MinZ/MaxZ)")) {
+    return false;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->up_vertex_buffer != nullptr, "indexed XYZRHW conversion: scratch VB created")) {
+      return false;
+    }
+    if (!Check(dev->up_vertex_buffer->storage.size() >= sizeof(verts),
+               "indexed XYZRHW conversion: scratch VB storage contains uploaded vertices")) {
+      return false;
+    }
+
+    float clip_z = 0.0f;
+    float clip_w = 0.0f;
+    std::memcpy(&clip_z, dev->up_vertex_buffer->storage.data() + 8, sizeof(float));
+    std::memcpy(&clip_w, dev->up_vertex_buffer->storage.data() + 12, sizeof(float));
+    if (!Check(clip_w == 2.0f, "indexed XYZRHW conversion: produced clip_w == 1/rhw")) {
+      return false;
+    }
+    if (!Check(clip_z == 0.5f, "indexed XYZRHW conversion: ignores MinZ/MaxZ (clip_z == z*w)")) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 bool TestFixedfuncFogVertexModeEmitsConstants() {
   CleanupDevice cleanup;
   if (!CreateDevice(&cleanup)) {
@@ -18468,6 +18664,9 @@ int main() {
     return 1;
   }
   if (!aerogpu::TestXyzrhwConversionIgnoresViewportMinMaxZ()) {
+    return 1;
+  }
+  if (!aerogpu::TestXyzrhwIndexedConversionIgnoresViewportMinMaxZ()) {
     return 1;
   }
   if (!aerogpu::TestFixedfuncFogVertexModeEmitsConstants()) {
