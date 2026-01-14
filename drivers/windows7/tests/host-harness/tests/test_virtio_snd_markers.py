@@ -61,6 +61,11 @@ class VirtioSndMarkerTests(unittest.TestCase):
             "non_silence=0|silence_only=1|reason=all_silence",
         )
 
+    def test_emits_capture_marker_skip_reason_token(self) -> None:
+        tail = b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|endpoint_missing\n"
+        out = self._emit("_emit_virtio_snd_capture_host_marker", tail)
+        self.assertEqual(out, "AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_CAPTURE|SKIP|reason=endpoint_missing")
+
     def test_emits_duplex_marker(self) -> None:
         tail = (
             b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|SKIP|frames=0|non_silence=0|"
@@ -73,6 +78,11 @@ class VirtioSndMarkerTests(unittest.TestCase):
             "reason=endpoint_missing|hr=0x80070057",
         )
 
+    def test_emits_duplex_marker_skip_reason_token(self) -> None:
+        tail = b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-duplex|SKIP|flag_not_set\n"
+        out = self._emit("_emit_virtio_snd_duplex_host_marker", tail)
+        self.assertEqual(out, "AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_DUPLEX|SKIP|reason=flag_not_set")
+
     def test_emits_buffer_limits_marker(self) -> None:
         tail = (
             b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-buffer-limits|PASS|mode=dequeue|"
@@ -83,6 +93,14 @@ class VirtioSndMarkerTests(unittest.TestCase):
             out,
             "AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_BUFFER_LIMITS|PASS|mode=dequeue|expected_failure=0|"
             "buffer_bytes=262144|init_hr=0x0|hr=0x0|reason=ok",
+        )
+
+    def test_emits_buffer_limits_marker_skip_reason_token(self) -> None:
+        tail = b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-buffer-limits|SKIP|flag_not_set\n"
+        out = self._emit("_emit_virtio_snd_buffer_limits_host_marker", tail)
+        self.assertEqual(
+            out,
+            "AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_BUFFER_LIMITS|SKIP|reason=flag_not_set",
         )
 
     def test_emits_format_marker(self) -> None:

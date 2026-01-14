@@ -4357,6 +4357,22 @@ function Try-EmitAeroVirtioSndBufferLimitsMarker {
     }
   }
 
+  # The guest SKIP/FAIL marker may use a plain token (e.g. `...|SKIP|flag_not_set`) rather than
+  # a `reason=...` field. Mirror it as `reason=` so log scraping can treat it uniformly.
+  if (($status -eq "SKIP" -or $status -eq "FAIL") -and (-not $fields.ContainsKey("reason"))) {
+    for ($i = 0; $i -lt $toks.Count; $i++) {
+      if ($toks[$i].Trim() -eq $status) {
+        if ($i + 1 -lt $toks.Count) {
+          $reasonTok = $toks[$i + 1].Trim()
+          if (-not [string]::IsNullOrEmpty($reasonTok) -and ($reasonTok.IndexOf("=") -lt 0)) {
+            $fields["reason"] = $reasonTok
+          }
+        }
+        break
+      }
+    }
+  }
+
   $out = "AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_BUFFER_LIMITS|$status"
   foreach ($k in @("mode", "expected_failure", "buffer_bytes", "init_hr", "hr", "reason")) {
     if ($fields.ContainsKey($k)) {

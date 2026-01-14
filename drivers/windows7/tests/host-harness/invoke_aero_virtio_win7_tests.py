@@ -12127,6 +12127,20 @@ def _emit_virtio_snd_capture_host_marker(tail: bytes) -> None:
         return
 
     fields = _parse_marker_kv_fields(marker_line)
+
+    # For FAIL/SKIP markers that use a plain token (e.g. `...|SKIP|endpoint_missing`), mirror
+    # it into reason=... so log scraping can treat it uniformly.
+    if status in ("FAIL", "SKIP") and "reason" not in fields:
+        toks = marker_line.split("|")
+        try:
+            idx = toks.index(status)
+            if idx + 1 < len(toks):
+                reason_tok = toks[idx + 1].strip()
+                if reason_tok and "=" not in reason_tok:
+                    fields["reason"] = reason_tok
+        except ValueError:
+            pass
+
     parts = [f"AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_CAPTURE|{status}"]
     for k in ("method", "frames", "non_silence", "silence_only", "reason"):
         if k in fields:
@@ -12149,6 +12163,20 @@ def _emit_virtio_snd_duplex_host_marker(tail: bytes) -> None:
         return
 
     fields = _parse_marker_kv_fields(marker_line)
+
+    # For FAIL/SKIP markers that use a plain token (e.g. `...|SKIP|flag_not_set`), mirror
+    # it into reason=... so log scraping can treat it uniformly.
+    if status in ("FAIL", "SKIP") and "reason" not in fields:
+        toks = marker_line.split("|")
+        try:
+            idx = toks.index(status)
+            if idx + 1 < len(toks):
+                reason_tok = toks[idx + 1].strip()
+                if reason_tok and "=" not in reason_tok:
+                    fields["reason"] = reason_tok
+        except ValueError:
+            pass
+
     parts = [f"AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_DUPLEX|{status}"]
     for k in ("frames", "non_silence", "reason", "hr"):
         if k in fields:
@@ -12171,6 +12199,20 @@ def _emit_virtio_snd_buffer_limits_host_marker(tail: bytes) -> None:
         return
 
     fields = _parse_marker_kv_fields(marker_line)
+
+    # For FAIL/SKIP markers that use a plain token (e.g. `...|SKIP|flag_not_set`), mirror
+    # it into reason=... so log scraping can treat it uniformly.
+    if status in ("FAIL", "SKIP") and "reason" not in fields:
+        toks = marker_line.split("|")
+        try:
+            idx = toks.index(status)
+            if idx + 1 < len(toks):
+                reason_tok = toks[idx + 1].strip()
+                if reason_tok and "=" not in reason_tok:
+                    fields["reason"] = reason_tok
+        except ValueError:
+            pass
+
     parts = [f"AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_BUFFER_LIMITS|{status}"]
     for k in ("mode", "expected_failure", "buffer_bytes", "init_hr", "hr", "reason"):
         if k in fields:
