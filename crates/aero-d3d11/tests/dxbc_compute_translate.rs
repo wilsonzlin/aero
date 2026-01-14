@@ -332,3 +332,168 @@ fn decodes_and_translates_compute_copy_structured_srv_to_uav_fixture() {
     assert_eq!(uav_binding.binding, BINDING_BASE_UAV);
     assert_eq!(uav_binding.visibility, wgpu::ShaderStages::COMPUTE);
 }
+
+#[test]
+fn decodes_and_translates_compute_ld_uav_raw_raw_bit_addr_fixture() {
+    let bytes = load_fixture("cs_ld_uav_raw_float_addr.dxbc");
+    let dxbc = DxbcFile::parse(&bytes).expect("fixture should parse as DXBC");
+
+    let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM5 parse failed");
+    assert_eq!(program.stage, ShaderStage::Compute);
+    assert_eq!(program.model.major, 5);
+    assert_eq!(program.model.minor, 0);
+
+    let module = decode_program(&program).expect("SM5 decode failed");
+    assert_eq!(
+        module.decls,
+        vec![
+            Sm4Decl::ThreadGroupSize { x: 1, y: 1, z: 1 },
+            Sm4Decl::UavBuffer {
+                slot: 0,
+                stride: 0,
+                kind: BufferKind::Raw,
+            },
+            Sm4Decl::UavBuffer {
+                slot: 1,
+                stride: 0,
+                kind: BufferKind::Raw,
+            },
+        ],
+        "expected fixture to decode into the exact decl list we hand-authored"
+    );
+
+    let [ld_int, store0, ld_float, store16, Sm4Inst::Ret] = module.instructions.as_slice() else {
+        panic!(
+            "expected fixture to decode into [ld_uav_raw, store_raw, ld_uav_raw, store_raw, ret] instructions; got: {:?}",
+            module.instructions
+        );
+    };
+
+    assert_eq!(
+        *ld_int,
+        Sm4Inst::LdUavRaw {
+            dst: DstOperand {
+                reg: RegisterRef {
+                    file: RegFile::Temp,
+                    index: 0
+                },
+                mask: WriteMask::XYZW,
+                saturate: false,
+            },
+            addr: SrcOperand {
+                kind: SrcKind::ImmediateF32([16u32; 4]),
+                swizzle: Swizzle::XYZW,
+                modifier: OperandModifier::None,
+            },
+            uav: UavRef { slot: 0 },
+        },
+        "expected ld_uav_raw r0.xyzw, 16, u0"
+    );
+
+    assert_eq!(
+        *store0,
+        Sm4Inst::StoreRaw {
+            uav: UavRef { slot: 1 },
+            addr: SrcOperand {
+                kind: SrcKind::ImmediateF32([0u32; 4]),
+                swizzle: Swizzle::XYZW,
+                modifier: OperandModifier::None,
+            },
+            value: SrcOperand {
+                kind: SrcKind::Register(RegisterRef {
+                    file: RegFile::Temp,
+                    index: 0
+                }),
+                swizzle: Swizzle::XYZW,
+                modifier: OperandModifier::None,
+            },
+            mask: WriteMask::XYZW,
+        },
+        "expected store_raw u1.xyzw, 0, r0"
+    );
+
+    assert_eq!(
+        *ld_float,
+        Sm4Inst::LdUavRaw {
+            dst: DstOperand {
+                reg: RegisterRef {
+                    file: RegFile::Temp,
+                    index: 1
+                },
+                mask: WriteMask::XYZW,
+                saturate: false,
+            },
+            addr: SrcOperand {
+                kind: SrcKind::ImmediateF32([16.0f32.to_bits(); 4]),
+                swizzle: Swizzle::XYZW,
+                modifier: OperandModifier::None,
+            },
+            uav: UavRef { slot: 0 },
+        },
+        "expected ld_uav_raw r1.xyzw, 16.0, u0"
+    );
+
+    assert_eq!(
+        *store16,
+        Sm4Inst::StoreRaw {
+            uav: UavRef { slot: 1 },
+            addr: SrcOperand {
+                kind: SrcKind::ImmediateF32([16u32; 4]),
+                swizzle: Swizzle::XYZW,
+                modifier: OperandModifier::None,
+            },
+            value: SrcOperand {
+                kind: SrcKind::Register(RegisterRef {
+                    file: RegFile::Temp,
+                    index: 1
+                }),
+                swizzle: Swizzle::XYZW,
+                modifier: OperandModifier::None,
+            },
+            mask: WriteMask::XYZW,
+        },
+        "expected store_raw u1.xyzw, 16, r1"
+    );
+
+    let signatures = parse_signatures(&dxbc).expect("signature parsing failed");
+    let translated =
+        translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translation failed");
+
+    assert_wgsl_validates(&translated.wgsl);
+    assert!(translated.wgsl.contains("@compute"));
+    assert!(translated.wgsl.contains("@workgroup_size(1, 1, 1)"));
+    assert_eq!(translated.stage, ShaderStage::Compute);
+
+    // The float address immediate (16.0f) should be treated as raw bits (0x41800000), not as a
+    // numeric byte offset 16.
+    assert!(
+        translated.wgsl.contains("0x41800000u"),
+        "expected raw float bit-pattern 0x41800000 to be used as a byte address:\n{}",
+        translated.wgsl
+    );
+    assert!(
+        !translated.wgsl.contains("floor("),
+        "expected strict raw-bit address handling (no float->u32 heuristics) in WGSL:\n{}",
+        translated.wgsl
+    );
+
+    let u0_binding = translated
+        .reflection
+        .bindings
+        .iter()
+        .find(|b| matches!(b.kind, BindingKind::UavBuffer { slot: 0 }))
+        .expect("expected u0 binding in reflection");
+    assert_eq!(u0_binding.group, 2);
+    assert_eq!(u0_binding.binding, BINDING_BASE_UAV);
+    assert_eq!(u0_binding.visibility, wgpu::ShaderStages::COMPUTE);
+
+    let u1_binding = translated
+        .reflection
+        .bindings
+        .iter()
+        .find(|b| matches!(b.kind, BindingKind::UavBuffer { slot: 1 }))
+        .expect("expected u1 binding in reflection");
+    assert_eq!(u1_binding.group, 2);
+    assert_eq!(u1_binding.binding, BINDING_BASE_UAV + 1);
+    assert_eq!(u1_binding.visibility, wgpu::ShaderStages::COMPUTE);
+}

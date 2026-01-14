@@ -1,18 +1,11 @@
 mod common;
 
 use aero_d3d11::binding_model::BINDING_BASE_UAV;
-use aero_d3d11::{
-    translate_sm4_module_to_wgsl, DstOperand, DxbcFile, OperandModifier, RegFile, RegisterRef,
-    ShaderModel, ShaderSignatures, ShaderStage, Sm4Decl, Sm4Inst, Sm4Module, SrcKind, SrcOperand,
-    Swizzle, UavRef, WriteMask,
-};
-use aero_dxbc::test_utils as dxbc_test_utils;
+use aero_d3d11::sm4::decode_program;
+use aero_d3d11::{translate_sm4_module_to_wgsl, DxbcFile, ShaderSignatures, Sm4Program};
 
-fn build_minimal_dxbc() -> Vec<u8> {
-    // Minimal DXBC container with zero chunks. The signature-driven translator uses DXBC only for
-    // diagnostics today, but it requires a valid container reference.
-    dxbc_test_utils::build_container(&[])
-}
+const CS_LD_UAV_RAW_FLOAT_ADDR_DXBC: &[u8] =
+    include_bytes!("fixtures/cs_ld_uav_raw_float_addr.dxbc");
 
 #[test]
 fn compute_shader_ld_uav_raw_uses_raw_bit_addresses() {
@@ -22,7 +15,7 @@ fn compute_shader_ld_uav_raw_uses_raw_bit_addresses() {
             "::compute_shader_ld_uav_raw_uses_raw_bit_addresses"
         );
 
-        // Build a compute shader:
+        // Compute shader under test (see `fixtures/cs_ld_uav_raw_float_addr.dxbc`):
         // - ld_uav_raw r0, l(16), u0
         // - store_raw u1, l(0), r0
         // - ld_uav_raw r1, l(16.0), u0
@@ -32,108 +25,21 @@ fn compute_shader_ld_uav_raw_uses_raw_bit_addresses() {
         // addresses) must consume raw lane bits, not attempt to reinterpret float-typed sources as
         // numeric integers.
         //
-        // This test uses both:
+        // This fixture uses both:
         // - an integer immediate `16` (raw bits 0x00000010) which should load u0.words[4..8], and
         // - a float immediate `16.0` (raw bits 0x41800000) which is a *huge* integer address and
         //   should therefore read out-of-bounds and produce zeros (robust buffer access).
-        let addr_bits_16 = SrcOperand {
-            kind: SrcKind::ImmediateF32([16; 4]),
-            swizzle: Swizzle::XXXX,
-            modifier: OperandModifier::None,
-        };
-        let addr_f32_16 = SrcOperand {
-            kind: SrcKind::ImmediateF32([16.0f32.to_bits(); 4]),
-            swizzle: Swizzle::XXXX,
-            modifier: OperandModifier::None,
-        };
-        let addr_bits_0 = SrcOperand {
-            kind: SrcKind::ImmediateF32([0; 4]),
-            swizzle: Swizzle::XXXX,
-            modifier: OperandModifier::None,
-        };
+        let dxbc = DxbcFile::parse(CS_LD_UAV_RAW_FLOAT_ADDR_DXBC).expect("DXBC parse");
+        let program = Sm4Program::parse_from_dxbc(&dxbc).expect("SM5 parse");
+        let module = decode_program(&program).expect("SM5 decode");
 
-        let module = Sm4Module {
-            stage: ShaderStage::Compute,
-            model: ShaderModel { major: 5, minor: 0 },
-            decls: vec![
-                Sm4Decl::ThreadGroupSize { x: 1, y: 1, z: 1 },
-                Sm4Decl::UavBuffer {
-                    slot: 0,
-                    stride: 0,
-                    kind: aero_d3d11::BufferKind::Raw,
-                },
-                Sm4Decl::UavBuffer {
-                    slot: 1,
-                    stride: 0,
-                    kind: aero_d3d11::BufferKind::Raw,
-                },
-            ],
-            instructions: vec![
-                Sm4Inst::LdUavRaw {
-                    dst: DstOperand {
-                        reg: RegisterRef {
-                            file: RegFile::Temp,
-                            index: 0,
-                        },
-                        mask: WriteMask::XYZW,
-                        saturate: false,
-                    },
-                    addr: addr_bits_16.clone(),
-                    uav: UavRef { slot: 0 },
-                },
-                Sm4Inst::StoreRaw {
-                    uav: UavRef { slot: 1 },
-                    addr: addr_bits_0,
-                    value: SrcOperand {
-                        kind: SrcKind::Register(RegisterRef {
-                            file: RegFile::Temp,
-                            index: 0,
-                        }),
-                        swizzle: Swizzle::XYZW,
-                        modifier: OperandModifier::None,
-                    },
-                    mask: WriteMask::XYZW,
-                },
-                Sm4Inst::LdUavRaw {
-                    dst: DstOperand {
-                        reg: RegisterRef {
-                            file: RegFile::Temp,
-                            index: 1,
-                        },
-                        mask: WriteMask::XYZW,
-                        saturate: false,
-                    },
-                    addr: addr_f32_16,
-                    uav: UavRef { slot: 0 },
-                },
-                Sm4Inst::StoreRaw {
-                    uav: UavRef { slot: 1 },
-                    addr: addr_bits_16,
-                    value: SrcOperand {
-                        kind: SrcKind::Register(RegisterRef {
-                            file: RegFile::Temp,
-                            index: 1,
-                        }),
-                        swizzle: Swizzle::XYZW,
-                        modifier: OperandModifier::None,
-                    },
-                    mask: WriteMask::XYZW,
-                },
-                Sm4Inst::Ret,
-            ],
-        };
-
-        let dxbc_bytes = build_minimal_dxbc();
-        let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
-        let signatures = ShaderSignatures {
-            isgn: None,
-            osgn: None,
-            psgn: None,
-            pcsg: None,
-        };
-        let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures)
+        let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &ShaderSignatures::default())
             .expect("compute translation should succeed");
         let wgsl = &translated.wgsl;
+        assert!(
+            wgsl.contains("0x41800000u"),
+            "expected raw float bit-pattern 0x41800000 to be used as a byte address:\n{wgsl}"
+        );
         assert!(
             !wgsl.contains("floor("),
             "expected strict raw-bit address handling (no float->u32 heuristics) in WGSL:\n{wgsl}"
@@ -209,16 +115,6 @@ fn compute_shader_ld_uav_raw_uses_raw_bit_addresses() {
             label: Some("empty bind group layout 1"),
             entries: &[],
         });
-        let empty_bg0 = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("empty bind group 0"),
-            layout: &empty_group0,
-            entries: &[],
-        });
-        let empty_bg1 = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("empty bind group 1"),
-            layout: &empty_group1,
-            entries: &[],
-        });
 
         let group2 = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("ld_uav_raw bind group layout"),
@@ -283,23 +179,23 @@ fn compute_shader_ld_uav_raw_uses_raw_bit_addresses() {
                 timestamp_writes: None,
             });
             pass.set_pipeline(&pipeline);
-            // wgpu 0.20 requires intermediate bind groups to be bound even when they are empty.
-            pass.set_bind_group(0, &empty_bg0, &[]);
-            pass.set_bind_group(1, &empty_bg1, &[]);
             pass.set_bind_group(2, &bind_group, &[]);
             pass.dispatch_workgroups(1, 1, 1);
         }
-        encoder.copy_buffer_to_buffer(&output, 0, &staging, 0, (output_words_len * 4) as u64);
+        encoder.copy_buffer_to_buffer(
+            &output,
+            0,
+            &staging,
+            0,
+            (output_words_len * 4) as u64,
+        );
         queue.submit([encoder.finish()]);
 
         let slice = staging.slice(..);
         let (sender, receiver) = futures_intrusive::channel::shared::oneshot_channel();
-        slice.map_async(
-            wgpu::MapMode::Read,
-            move |v: Result<(), wgpu::BufferAsyncError>| {
-                sender.send(v).ok();
-            },
-        );
+        slice.map_async(wgpu::MapMode::Read, move |v: Result<(), wgpu::BufferAsyncError>| {
+            sender.send(v).ok();
+        });
         #[cfg(not(target_arch = "wasm32"))]
         device.poll(wgpu::Maintain::Wait);
         #[cfg(target_arch = "wasm32")]
@@ -314,12 +210,16 @@ fn compute_shader_ld_uav_raw_uses_raw_bit_addresses() {
         let words: &[u32] = bytemuck::cast_slice(&bytes);
         assert_eq!(words.len(), output_words_len);
 
-        // The shader loads u0.words[4..8] (byte offset 16) and stores them into u1.words[0..4].
-        assert_eq!(&words[0..4], &input_words[4..8]);
-        // The float immediate `16.0` should be treated as raw bits (0x41800000), i.e. an
-        // out-of-bounds address. Robust buffer access should return zeros for the load, and the
-        // store should therefore write zeros into u1.words[4..8].
-        assert_eq!(&words[4..8], &[0u32; 4]);
+        assert_eq!(
+            &words[0..4],
+            &input_words[4..8],
+            "expected ld_uav_raw with integer immediate 16 (0x10 bits) to load byte offset 16"
+        );
+        assert_eq!(
+            &words[4..8],
+            &[0u32; 4],
+            "expected ld_uav_raw with float immediate 16.0 (0x41800000 bits) to read out-of-bounds and produce zeros"
+        );
 
         drop(bytes);
         staging.unmap();
