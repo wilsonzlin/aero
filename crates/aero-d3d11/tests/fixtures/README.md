@@ -178,6 +178,16 @@ fxc /nologo /T gs_4_0 /E gs_main /Fo gs_emit_cut.dxbc gs_emit_cut.hlsl
 fxc /nologo /T cs_5_0 /E cs_main /Fo cs_store_uav_raw.dxbc cs_store_uav_raw.hlsl
 ```
 
+## DXBC token dump (opcode discovery)
+
+For GS opcode discovery and fixture authoring, the repo contains a developer tool that dumps the
+DXBC chunk list plus the raw SM4/SM5 token stream with opcode IDs/lengths and best-effort decoded
+instructions:
+
+```bash
+cargo run -p aero-d3d11 --bin dxbc_dump -- gs_emit_cut.dxbc
+```
+
 ## ILAY input-layout blobs
 
 The AeroGPU guest↔host ABI defines an opaque input-layout blob with magic
