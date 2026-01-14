@@ -452,7 +452,7 @@ device-side building blocks (ring executor + backend boundary) live in `crates/a
 with a legacy/sandbox integration surface still in `crates/emulator`.
 
 When AeroGPU owns the boot display path, firmware derives the VBE mode-info linear framebuffer base
-from AeroGPU BAR1 (`PhysBasePtr = BAR1_BASE + 0x40000`, aka `VBE_LFB_OFFSET` in `aero_machine`).
+from AeroGPU BAR1 (`PhysBasePtr = BAR1_BASE + 0x20000`, aka `VBE_LFB_OFFSET` in `aero_machine`).
 
 In this mode the transitional VGA PCI stub (`00:0c.0`) is not installed.
 

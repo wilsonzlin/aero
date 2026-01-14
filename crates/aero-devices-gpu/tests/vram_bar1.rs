@@ -59,8 +59,7 @@ fn vbe_lfb_alias_rejects_paddrs_past_bar1_end() {
 fn bar1_layout_constants_match_canonical_vga_vbe_layout() {
     // Canonical layout (see `docs/16-aerogpu-vga-vesa-compat.md`):
     // - guest-visible legacy VGA alias aperture is 128KiB (0xA0000..0xBFFFF).
-    // - the VRAM backing reserve at the start of BAR1 is 256KiB (4×64KiB planes), so the VBE LFB
-    //   begins at 0x40000.
+    // - the VBE LFB begins immediately after the legacy window backing at 0x20000.
     assert_eq!(LEGACY_VGA_VRAM_BYTES, 0x20_000);
-    assert_eq!(VBE_LFB_OFFSET, 0x40_000);
+    assert_eq!(VBE_LFB_OFFSET, 0x20_000);
 }
