@@ -96,11 +96,13 @@ Web runtime integration:
 - WebHID guest-topology manager (xHCI attachment path): `web/src/hid/xhci_hid_topology.ts`
   (`XhciHidTopologyManager`)
 
-Native integration (wired into the PC platform behind a config flag, but not exposed by
-`aero_machine::Machine` by default):
+Native integration (opt-in; disabled by default in both the canonical `aero_machine::Machine` and
+the lower-level `aero_pc_platform::PcPlatform`):
 
 - Canonical PCI profile (QEMU xHCI identity): `crates/devices/src/pci/profile.rs` (`USB_XHCI_QEMU`)
 - Native PCI wrapper (canonical PCI glue): `crates/devices/src/usb/xhci.rs` (`XhciPciDevice`)
+- Canonical machine wiring (optional): `crates/aero-machine/src/lib.rs`
+  (`MachineConfig.enable_xhci`, default `false`)
 - Emulator crate glue (legacy/compat; feature-gated by `emulator/legacy-usb-xhci`): `emulator::io::usb::xhci` (thin wrapper around `aero_usb::xhci`; tracked for deletion in [`docs/21-emulator-crate-migration.md`](./21-emulator-crate-migration.md))
 - PC platform wiring (optional): `crates/aero-pc-platform/src/lib.rs`
   (`PcPlatformConfig.enable_xhci`, default `false`)
@@ -110,10 +112,10 @@ Notes:
 - `crates/devices/src/usb/xhci.rs` is the canonical native PCI/MMIO wrapper around
   `aero_usb::xhci::XhciController` (BAR sizing, PCI `COMMAND` gating for MMIO/DMA/INTx via
   `COMMAND.MEM`/`COMMAND.BME`/`COMMAND.INTX_DISABLE`, optional MSI/MSI-X, and snapshot/restore).
-- `aero_machine::Machine` does not yet expose xHCI by default, but the shared controller model
-  (`aero_usb::xhci::XhciController`) is exercised via Rust tests, the web/WASM bridge
-  (`aero_wasm::XhciControllerBridge`), and native wrappers/integrations. The PC platform
-  (`crates/aero-pc-platform`) can also expose xHCI when `PcPlatformConfig.enable_xhci` is set.
+- `aero_machine::Machine` can expose xHCI behind `MachineConfig.enable_xhci` (default `false`).
+  The shared controller model (`aero_usb::xhci::XhciController`) is also exercised via Rust tests,
+  the web/WASM bridge (`aero_wasm::XhciControllerBridge`), and the lower-level PC platform
+  (`crates/aero-pc-platform`) when `PcPlatformConfig.enable_xhci` is set.
 
 ### PCI identity (canonical)
 
@@ -167,10 +169,10 @@ Notes:
     - optional WebUSB passthrough APIs (`set_connected`, `drain_actions`, `push_completion`, `reset`,
       `pending_summary`).
 - The IRQ line observed by the guest depends on platform routing (PIRQ swizzle); see [`docs/pci-device-compatibility.md`](./pci-device-compatibility.md) and [`docs/irq-semantics.md`](./irq-semantics.md).
-- `aero_machine::Machine` does not yet expose an xHCI controller by default (today it wires UHCI for
-  USB). The PC platform (`crates/aero-pc-platform`) can expose xHCI behind the
-  `PcPlatformConfig.enable_xhci` flag; treat xHCI as opt-in/experimental and the native PCI profile
-  as the shared contract.
+- `aero_machine::Machine` does not expose an xHCI controller by default (today it wires UHCI for
+  USB), but it can be enabled via `MachineConfig.enable_xhci`. The PC platform
+  (`crates/aero-pc-platform`) can also expose xHCI behind the `PcPlatformConfig.enable_xhci` flag;
+  treat xHCI as opt-in/experimental and the native PCI profile as the shared contract.
 - WebHID passthrough attachment behind xHCI is managed via `XhciHidTopologyManager`
   (`web/src/hid/xhci_hid_topology.ts`) and the optional topology APIs exported by
   `XhciControllerBridge` (`attach_hub`, `detach_at_path`, `attach_webhid_device`,
