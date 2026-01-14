@@ -76,6 +76,21 @@ import {
   type WorkerInitMessage,
 } from "../runtime/protocol";
 import {
+  AEROGPU_MMIO_REG_CURSOR_ENABLE,
+  AEROGPU_MMIO_REG_CURSOR_FB_GPA_HI,
+  AEROGPU_MMIO_REG_CURSOR_FB_GPA_LO,
+  AEROGPU_MMIO_REG_CURSOR_FORMAT,
+  AEROGPU_MMIO_REG_CURSOR_HEIGHT,
+  AEROGPU_MMIO_REG_CURSOR_HOT_X,
+  AEROGPU_MMIO_REG_CURSOR_HOT_Y,
+  AEROGPU_MMIO_REG_CURSOR_PITCH_BYTES,
+  AEROGPU_MMIO_REG_CURSOR_WIDTH,
+  AEROGPU_MMIO_REG_CURSOR_X,
+  AEROGPU_MMIO_REG_CURSOR_Y,
+  AEROGPU_PCI_DEVICE_ID,
+  AEROGPU_PCI_VENDOR_ID,
+} from "../../../emulator/protocol/aerogpu/aerogpu_pci.ts";
+import {
   serializeVmSnapshotError,
   type CoordinatorToWorkerSnapshotMessage,
   type VmSnapshotCpuStateMessage,
@@ -198,6 +213,20 @@ type CursorDemoStartMessage = {
 
 type CursorDemoStopMessage = {
   type: "cursorDemo.stop";
+};
+
+type AerogpuCursorTestProgramMessage = {
+  type: "aerogpu.cursorTest.program";
+  enabled: boolean;
+  x: number;
+  y: number;
+  hotX: number;
+  hotY: number;
+  width: number;
+  height: number;
+  format: number;
+  fbGpa: number;
+  pitchBytes: number;
 };
 
 type AudioOutputHdaPciDeviceStartMessage = {
@@ -2071,6 +2100,100 @@ function stopCursorDemo(): void {
   );
 }
 
+async function programAerogpuCursorTest(msg: AerogpuCursorTestProgramMessage): Promise<void> {
+  const client = io;
+  if (!client) {
+    throw new Error("I/O client is not initialized yet");
+  }
+
+  // Wait for the IO worker to report ready (PCI config + MMIO routes depend on it). This avoids
+  // deadlocking on the synchronous AIPC ring protocol if the server isn't running yet.
+  const ioReadyIndex = StatusIndex.IoReady;
+  const ioReadyDeadline = (typeof performance?.now === "function" ? performance.now() : Date.now()) + 30_000;
+  while (Atomics.load(status, ioReadyIndex) !== 1) {
+    const now = typeof performance?.now === "function" ? performance.now() : Date.now();
+    if (now >= ioReadyDeadline) {
+      throw new Error("Timed out waiting for IO worker ready while programming AeroGPU cursor state.");
+    }
+    await sleepMs(50);
+  }
+
+  const pciEnable = 0x8000_0000;
+  const cfgAddr = (bus: number, dev: number, fn: number, reg: number) =>
+    (pciEnable | ((bus & 0xff) << 16) | ((dev & 0x1f) << 11) | ((fn & 0x7) << 8) | (reg & 0xfc)) >>> 0;
+  const readDword = (bus: number, dev: number, fn: number, reg: number) => {
+    client.portWrite(0x0cf8, 4, cfgAddr(bus, dev, fn, reg));
+    return client.portRead(0x0cfc, 4) >>> 0;
+  };
+  const writeDword = (bus: number, dev: number, fn: number, reg: number, value: number) => {
+    client.portWrite(0x0cf8, 4, cfgAddr(bus, dev, fn, reg));
+    client.portWrite(0x0cfc, 4, value >>> 0);
+  };
+
+  // Scan bus0 for the AeroGPU PCI identity (A3A0:0001).
+  let found: { bus: number; device: number; function: number } | null = null;
+  for (let dev = 0; dev < 32; dev++) {
+    const id0 = readDword(0, dev, 0, 0x00);
+    const vendor0 = id0 & 0xffff;
+    const device0 = (id0 >>> 16) & 0xffff;
+    if (vendor0 === 0xffff) continue;
+    if (vendor0 === AEROGPU_PCI_VENDOR_ID && device0 === AEROGPU_PCI_DEVICE_ID) {
+      found = { bus: 0, device: dev, function: 0 };
+      break;
+    }
+
+    // Header type at 0x0e: bit7 indicates multifunction.
+    const hdr0 = readDword(0, dev, 0, 0x0c);
+    const headerType = (hdr0 >>> 16) & 0xff;
+    const multiFunction = (headerType & 0x80) !== 0;
+    if (!multiFunction) continue;
+
+    for (let fn = 1; fn < 8; fn++) {
+      const id = readDword(0, dev, fn, 0x00);
+      const vendorId = id & 0xffff;
+      const deviceId = (id >>> 16) & 0xffff;
+      if (vendorId === 0xffff) continue;
+      if (vendorId === AEROGPU_PCI_VENDOR_ID && deviceId === AEROGPU_PCI_DEVICE_ID) {
+        found = { bus: 0, device: dev, function: fn };
+        break;
+      }
+    }
+    if (found) break;
+  }
+  if (!found) {
+    throw new Error("Failed to locate AeroGPU PCI function (A3A0:0001) on bus0.");
+  }
+
+  const { bus, device, function: fn } = found;
+
+  // Enable memory-space decoding + bus mastering in PCI command register so BAR0 MMIO is routed.
+  const cmdStatus = readDword(bus, device, fn, 0x04);
+  const command = cmdStatus & 0xffff;
+  const newCommand = (command | 0x2 | 0x4) & 0xffff;
+  writeDword(bus, device, fn, 0x04, (cmdStatus & 0xffff_0000) | newCommand);
+
+  const bar0 = readDword(bus, device, fn, 0x10) >>> 0;
+  // Avoid JS bitwise ops here: BAR bases commonly live above 2^31 (e.g. 0xE000_0000), and
+  // `bar0 & 0xffff_fff0` would sign-extend to a negative number before converting to BigInt.
+  const bar0Base = BigInt(bar0) & 0xffff_fff0n;
+  if (bar0Base === 0n) {
+    throw new Error("AeroGPU BAR0 is zero after enabling MEM decoding.");
+  }
+
+  // Drive the same MMIO writes the guest KMD would perform via DxgkDdiSetPointer*.
+  client.mmioWrite(bar0Base + BigInt(AEROGPU_MMIO_REG_CURSOR_FB_GPA_LO), 4, msg.fbGpa >>> 0);
+  client.mmioWrite(bar0Base + BigInt(AEROGPU_MMIO_REG_CURSOR_FB_GPA_HI), 4, 0);
+  client.mmioWrite(bar0Base + BigInt(AEROGPU_MMIO_REG_CURSOR_PITCH_BYTES), 4, msg.pitchBytes >>> 0);
+  client.mmioWrite(bar0Base + BigInt(AEROGPU_MMIO_REG_CURSOR_WIDTH), 4, msg.width >>> 0);
+  client.mmioWrite(bar0Base + BigInt(AEROGPU_MMIO_REG_CURSOR_HEIGHT), 4, msg.height >>> 0);
+  client.mmioWrite(bar0Base + BigInt(AEROGPU_MMIO_REG_CURSOR_FORMAT), 4, msg.format >>> 0);
+  client.mmioWrite(bar0Base + BigInt(AEROGPU_MMIO_REG_CURSOR_HOT_X), 4, msg.hotX >>> 0);
+  client.mmioWrite(bar0Base + BigInt(AEROGPU_MMIO_REG_CURSOR_HOT_Y), 4, msg.hotY >>> 0);
+  client.mmioWrite(bar0Base + BigInt(AEROGPU_MMIO_REG_CURSOR_X), 4, msg.x | 0);
+  client.mmioWrite(bar0Base + BigInt(AEROGPU_MMIO_REG_CURSOR_Y), 4, msg.y | 0);
+  client.mmioWrite(bar0Base + BigInt(AEROGPU_MMIO_REG_CURSOR_ENABLE), 4, msg.enabled ? 1 : 0);
+}
+
 ctx.onmessage = (ev: MessageEvent<unknown>) => {
   const msg = ev.data as
     | Partial<WorkerInitMessage>
@@ -2085,6 +2208,7 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
     | Partial<AudioHdaCaptureSyntheticStartMessage>
     | Partial<CursorDemoStartMessage>
     | Partial<CursorDemoStopMessage>
+    | Partial<AerogpuCursorTestProgramMessage>
     | undefined;
   if (!msg) return;
 
@@ -2313,6 +2437,37 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
 
   if ((msg as Partial<CursorDemoStartMessage>).type === "cursorDemo.start") {
     startCursorDemo();
+    return;
+  }
+
+  // Test-only helper used by Playwright smoke tests to program AeroGPU cursor MMIO state without
+  // requiring an in-guest driver. Gated behind DEV so production bundles don't expose this hook.
+  if (import.meta.env.DEV && (msg as Partial<AerogpuCursorTestProgramMessage>).type === "aerogpu.cursorTest.program") {
+    const m = msg as Partial<AerogpuCursorTestProgramMessage>;
+    if (typeof m.enabled !== "boolean") return;
+    if (typeof m.x !== "number" || typeof m.y !== "number") return;
+    if (typeof m.hotX !== "number" || typeof m.hotY !== "number") return;
+    if (typeof m.width !== "number" || typeof m.height !== "number") return;
+    if (typeof m.format !== "number") return;
+    if (typeof m.fbGpa !== "number") return;
+    if (typeof m.pitchBytes !== "number") return;
+    void programAerogpuCursorTest({
+      type: "aerogpu.cursorTest.program",
+      enabled: m.enabled,
+      x: m.x | 0,
+      y: m.y | 0,
+      hotX: m.hotX >>> 0,
+      hotY: m.hotY >>> 0,
+      width: m.width >>> 0,
+      height: m.height >>> 0,
+      format: m.format >>> 0,
+      fbGpa: m.fbGpa >>> 0,
+      pitchBytes: m.pitchBytes >>> 0,
+    }).catch((err) => {
+      // Treat failures as non-fatal: this is a test-only convenience hook, and we do not want it
+      // to crash the long-lived CPU worker runtime.
+      console.warn("[cpu.worker] Failed to program AeroGPU cursor state for test", err);
+    });
     return;
   }
 

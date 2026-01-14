@@ -192,9 +192,9 @@ async function main() {
     // guest KMD would perform via DxgkDdiSetPointer*.
     const mem = coordinator.getGuestMemory();
     const statusView = coordinator.getStatusView();
-    const ioWorker = coordinator.getIoWorker();
-    if (!mem || !statusView || !ioWorker) {
-      throw new Error("Missing guest memory or I/O worker handle.");
+    const cpuWorker = coordinator.getCpuWorker();
+    if (!mem || !statusView || !cpuWorker) {
+      throw new Error("Missing guest memory or CPU worker handle.");
     }
     const layout = readGuestRamLayoutFromStatus(statusView);
     const guestU8 = new Uint8Array(mem.buffer, layout.guest_base, layout.guest_size);
@@ -210,7 +210,7 @@ async function main() {
     // 1x1 cursor pixel in BGRA (AeroGPU B8G8R8A8) representing an opaque blue pixel in RGBA.
     guestU8.set([255, 0, 0, 255], cursorRamOff);
 
-    ioWorker.postMessage({
+    cpuWorker.postMessage({
       type: "aerogpu.cursorTest.program",
       enabled: true,
       x: 0,
@@ -252,4 +252,3 @@ async function main() {
 }
 
 void main();
-

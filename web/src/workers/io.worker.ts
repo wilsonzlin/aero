@@ -2945,20 +2945,6 @@ type HdaCodecDebugStateResultMessage =
       ok: false;
       error: string;
     };
-
-type AerogpuCursorTestProgramMessage = {
-  type: "aerogpu.cursorTest.program";
-  enabled: boolean;
-  x: number;
-  y: number;
-  hotX: number;
-  hotY: number;
-  width: number;
-  height: number;
-  format: number;
-  fbGpa: number;
-  pitchBytes: number;
-};
 type ActiveDisk = { handle: number; sectorSize: number; capacityBytes: number; readOnly: boolean };
 let diskClient: RuntimeDiskClient | null = null;
 let activeDisk: ActiveDisk | null = null;
@@ -4235,7 +4221,6 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
       | Partial<SetAudioRingBufferMessage>
       | Partial<HdaMicCaptureTestMessage>
       | Partial<HdaCodecDebugStateRequestMessage>
-      | Partial<AerogpuCursorTestProgramMessage>
       | Partial<HidProxyMessage>
       | Partial<UsbRingDetachMessage>
       | Partial<UsbSelectedMessage>
@@ -4458,34 +4443,6 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
         const res: HdaCodecDebugStateResultMessage = { type: "hda.codecDebugStateResult", requestId, ok: false, error: message };
         ctx.postMessage(res);
       }
-      return;
-    }
-
-    // Test-only helper used by Playwright smoke tests to program AeroGPU cursor MMIO state without
-    // requiring an in-guest driver. Gated behind DEV so production bundles don't expose this hook.
-    if (import.meta.env.DEV && (data as Partial<AerogpuCursorTestProgramMessage>).type === "aerogpu.cursorTest.program") {
-      const msg = data as Partial<AerogpuCursorTestProgramMessage>;
-      const dev = aerogpuDevice;
-      if (!dev) return;
-      if (typeof msg.enabled !== "boolean") return;
-      if (typeof msg.x !== "number" || typeof msg.y !== "number") return;
-      if (typeof msg.hotX !== "number" || typeof msg.hotY !== "number") return;
-      if (typeof msg.width !== "number" || typeof msg.height !== "number") return;
-      if (typeof msg.format !== "number") return;
-      if (typeof msg.fbGpa !== "number") return;
-      if (typeof msg.pitchBytes !== "number") return;
-      dev.debugProgramCursor({
-        enabled: msg.enabled,
-        x: msg.x | 0,
-        y: msg.y | 0,
-        hotX: msg.hotX >>> 0,
-        hotY: msg.hotY >>> 0,
-        width: msg.width >>> 0,
-        height: msg.height >>> 0,
-        format: msg.format >>> 0,
-        fbGpa: msg.fbGpa >>> 0,
-        pitchBytes: msg.pitchBytes >>> 0,
-      });
       return;
     }
 
