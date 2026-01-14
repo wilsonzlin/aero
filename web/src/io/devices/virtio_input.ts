@@ -494,6 +494,11 @@ export function hidUsageToLinuxKeyCode(usage: number): number | null {
  * This is used when routing browser media keys through virtio-input (instead of the dedicated
  * synthetic USB HID consumer-control device).
  *
+ * Note: this intentionally only maps the subset of media keys that the Windows 7 virtio-input
+ * driver is known to expose. Browser/application control usages (AC Back/Forward/etc.) should
+ * continue to route via the synthetic USB consumer-control device so they work even when the
+ * virtio-input path does not model them.
+ *
  * Returns `null` for unsupported usages.
  */
 export function hidConsumerUsageToLinuxKeyCode(usageId: number): number | null {

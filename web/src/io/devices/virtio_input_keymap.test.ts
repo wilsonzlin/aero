@@ -168,4 +168,22 @@ describe("io/devices/virtio_input hidUsageToLinuxKeyCode", () => {
       expect(hidConsumerUsageToLinuxKeyCode(usage)).toBe(tc.linuxKey);
     }
   });
+
+  it("does not map browser/application Consumer Control usages (they should route via the synthetic USB consumer-control device)", () => {
+    const cases: Array<{ code: string; usageId: number }> = [
+      { code: "BrowserBack", usageId: 0x0224 },
+      { code: "BrowserForward", usageId: 0x0225 },
+      { code: "BrowserStop", usageId: 0x0226 },
+      { code: "BrowserRefresh", usageId: 0x0227 },
+      { code: "BrowserSearch", usageId: 0x0221 },
+      { code: "BrowserFavorites", usageId: 0x022a },
+      { code: "BrowserHome", usageId: 0x0223 },
+    ];
+    for (const tc of cases) {
+      const usage = keyboardCodeToConsumerUsage(tc.code);
+      if (usage === null) throw new Error(`expected keyboardCodeToConsumerUsage(${JSON.stringify(tc.code)}) to be non-null`);
+      expect(usage).toBe(tc.usageId);
+      expect(hidConsumerUsageToLinuxKeyCode(usage)).toBeNull();
+    }
+  });
 });
