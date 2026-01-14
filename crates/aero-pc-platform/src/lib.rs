@@ -945,8 +945,11 @@ fn sync_virtio_msix_from_platform(dev: &mut VirtioPciDevice, enabled: bool, func
         new_ctrl |= 1 << 14;
     }
     if new_ctrl != ctrl {
-        dev.config_mut()
-            .write(u16::from(off) + 0x02, 2, u32::from(new_ctrl));
+        // Route this through `VirtioPciDevice::config_write` instead of writing directly to the
+        // underlying `PciConfigSpace` so we preserve virtio-transport side effects:
+        // - INTx gating when MSI-X is toggled
+        // - pending MSI-X vector redelivery when Function Mask is cleared
+        dev.config_write(u16::from(off) + 0x02, &new_ctrl.to_le_bytes());
     }
 }
 
