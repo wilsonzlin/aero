@@ -13872,7 +13872,7 @@ HRESULT AEROGPU_D3D9_CALL device_set_texture(
       }
     }
     if (ps_slot) {
-      // Stage0 stage-state selection is guarded: if the app configured an
+      // Fixed-function stage-state selection is guarded: if the app configured an
       // unsupported stage-state combination, tolerate state changes (including
       // texture binds) and fail draws with INVALIDCALL instead.
       const FixedfuncPixelShaderKey ps_key = fixedfunc_ps_key_locked(dev);
