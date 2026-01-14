@@ -99,5 +99,8 @@ Audio: PCI device 1af4:1059
   contract-v1 INF is strict and requires `PCI\VEN_1AF4&DEV_1059&REV_01`.
 - Transport: virtio-pci modern-only (vendor-specific caps + BAR0 MMIO)
 - Required features: `VIRTIO_F_VERSION_1` + `VIRTIO_F_RING_INDIRECT_DESC` only
+- Interrupts: **INTx** baseline (required by contract v1), with optional **MSI/MSI-X** when Windows grants message interrupts
+  (INF `MSISupported=1`). The driver prefers message interrupts when present and falls back to INTx otherwise.
+  - Optional bring-up: `AllowPollingOnly=1` allows starting in polling-only mode when no usable interrupts can be connected.
 - Queues: control/event/rx=64, tx=256
 - Streams: stream0 render (stereo) and stream1 capture (mono); baseline S16 48k (device may advertise additional formats/rates via `PCM_INFO`)
