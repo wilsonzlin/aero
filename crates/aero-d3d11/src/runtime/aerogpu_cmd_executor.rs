@@ -3910,8 +3910,6 @@ impl AerogpuD3d11Executor {
         }
 
         // Prepare compute prepass output buffers.
-        let uniform_align =
-            (self.device.limits().min_uniform_buffer_offset_alignment as u64).max(1);
         let patchlist_only_emulation = matches!(
             self.state.primitive_topology,
             CmdPrimitiveTopology::PatchList { .. }
@@ -4001,17 +3999,31 @@ impl AerogpuD3d11Executor {
         params_bytes[20..24].copy_from_slice(&instance_count.to_le_bytes());
         params_bytes[24..28]
             .copy_from_slice(&u32::from(centered_placeholder_triangle).to_le_bytes());
-        let params_alloc = self
-            .expansion_scratch
-            .alloc_metadata(
-                &self.device,
-                GEOMETRY_PREPASS_PARAMS_SIZE_BYTES,
-                uniform_align,
-            )
-            .map_err(|e| anyhow!("geometry prepass: alloc params buffer: {e}"))?;
-        self.queue.write_buffer(
-            params_alloc.buffer.as_ref(),
-            params_alloc.offset,
+
+        // NOTE: Keep uniform buffers separate from the expansion scratch storage buffer.
+        // wgpu treats `storage, read_write` buffer usage as exclusive within a compute dispatch, so
+        // binding different slices of the same underlying buffer as both storage and uniform
+        // triggers validation errors.
+        let create_uniform_buffer = |label: &'static str, bytes: &[u8]| -> (wgpu::Buffer, u64) {
+            assert!(!bytes.is_empty(), "uniform buffer payload must be non-empty");
+            let size = bytes.len() as u64;
+            // Ensure the backing buffer is large enough for the declared binding size and keeps a
+            // 16-byte granularity (uniform struct alignment).
+            let size = size.saturating_add(15) & !15;
+            let mut padded = vec![0u8; size as usize];
+            padded[..bytes.len()].copy_from_slice(bytes);
+            let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some(label),
+                size,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            self.queue.write_buffer(&buffer, 0, &padded);
+            (buffer, size)
+        };
+
+        let (params_buffer, _params_buffer_size) = create_uniform_buffer(
+            "aerogpu_cmd geometry prepass params uniform",
             &params_bytes,
         );
 
@@ -4186,24 +4198,20 @@ impl AerogpuD3d11Executor {
                 }
 
                 let uniform_bytes = pulling.pack_uniform_bytes(&slots, vertex_pulling_draw);
-                let uniform_alloc = self
-                    .expansion_scratch
-                    .alloc_metadata(&self.device, uniform_bytes.len() as u64, uniform_align)
-                    .map_err(|e| anyhow!("geometry prepass: alloc vertex pulling uniform: {e}"))?;
-                self.queue.write_buffer(
-                    uniform_alloc.buffer.as_ref(),
-                    uniform_alloc.offset,
+                let (vp_uniform_buffer, vp_uniform_size) = create_uniform_buffer(
+                    "aerogpu_cmd geometry prepass vertex pulling uniform",
                     &uniform_bytes,
                 );
 
                 vp_bg_entries.push(wgpu::BindGroupEntry {
                     binding: VERTEX_PULLING_UNIFORM_BINDING,
                     resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: uniform_alloc.buffer.as_ref(),
-                        offset: uniform_alloc.offset,
-                        size: wgpu::BufferSize::new(uniform_alloc.size),
+                        buffer: &vp_uniform_buffer,
+                        offset: 0,
+                        size: wgpu::BufferSize::new(vp_uniform_size),
                     }),
                 });
+
 
                 let bgl_entries = if opcode == OPCODE_DRAW_INDEXED {
                     &cached.bgl_entries_with_index_pulling
@@ -4212,7 +4220,7 @@ impl AerogpuD3d11Executor {
                 };
 
                 // Keep index pulling resources alive until after bind group creation.
-                let mut index_pulling_params_alloc = None;
+                let mut index_pulling_params = None;
                 let mut index_pulling_buffer: Option<&wgpu::Buffer> = None;
 
                 if opcode == OPCODE_DRAW_INDEXED {
@@ -4236,28 +4244,22 @@ impl AerogpuD3d11Executor {
                     };
 
                     let params_bytes = params.to_le_bytes();
-                    let params_alloc = self
-                        .expansion_scratch
-                        .alloc_metadata(&self.device, params_bytes.len() as u64, uniform_align)
-                        .map_err(|e| anyhow!("geometry prepass: alloc index pulling params: {e}"))?;
-                    self.queue.write_buffer(
-                        params_alloc.buffer.as_ref(),
-                        params_alloc.offset,
+                    let (params_buffer, params_buffer_size) = create_uniform_buffer(
+                        "aerogpu_cmd geometry prepass index pulling params",
                         &params_bytes,
                     );
-                    index_pulling_params_alloc = Some(params_alloc);
+                    index_pulling_params = Some((params_buffer, params_buffer_size));
                 }
 
-                if let (Some(params_alloc), Some(ib_buffer)) = (
-                    index_pulling_params_alloc.as_ref(),
-                    index_pulling_buffer,
-                ) {
+                if let (Some((params_buffer, params_buffer_size)), Some(ib_buffer)) =
+                    (index_pulling_params.as_ref(), index_pulling_buffer)
+                {
                     vp_bg_entries.push(wgpu::BindGroupEntry {
                         binding: INDEX_PULLING_PARAMS_BINDING,
                         resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                            buffer: params_alloc.buffer.as_ref(),
-                            offset: params_alloc.offset,
-                            size: wgpu::BufferSize::new(params_alloc.size),
+                            buffer: params_buffer,
+                            offset: 0,
+                            size: wgpu::BufferSize::new(*params_buffer_size),
                         }),
                     });
                     vp_bg_entries.push(wgpu::BindGroupEntry {
@@ -4307,13 +4309,8 @@ impl AerogpuD3d11Executor {
                     _pad0: 0,
                 };
                 let params_bytes = params.to_le_bytes();
-                let params_alloc = self
-                    .expansion_scratch
-                    .alloc_metadata(&self.device, params_bytes.len() as u64, uniform_align)
-                    .map_err(|e| anyhow!("geometry prepass: alloc index pulling params: {e}"))?;
-                self.queue.write_buffer(
-                    params_alloc.buffer.as_ref(),
-                    params_alloc.offset,
+                let (params_buffer, params_buffer_size) = create_uniform_buffer(
+                    "aerogpu_cmd geometry prepass index pulling params",
                     &params_bytes,
                 );
 
@@ -4349,9 +4346,9 @@ impl AerogpuD3d11Executor {
                         wgpu::BindGroupEntry {
                             binding: INDEX_PULLING_PARAMS_BINDING,
                             resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                                buffer: params_alloc.buffer.as_ref(),
-                                offset: params_alloc.offset,
-                                size: wgpu::BufferSize::new(params_alloc.size),
+                                buffer: &params_buffer,
+                                offset: 0,
+                                size: wgpu::BufferSize::new(params_buffer_size),
                             }),
                         },
                         wgpu::BindGroupEntry {
@@ -4538,8 +4535,8 @@ impl AerogpuD3d11Executor {
                 wgpu::BindGroupEntry {
                     binding: 4,
                     resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: params_alloc.buffer.as_ref(),
-                        offset: params_alloc.offset,
+                        buffer: &params_buffer,
+                        offset: 0,
                         size: wgpu::BufferSize::new(GEOMETRY_PREPASS_PARAMS_SIZE_BYTES),
                     }),
                 },
@@ -4584,6 +4581,13 @@ impl AerogpuD3d11Executor {
         let compute_pipeline = unsafe { &*compute_pipeline_ptr };
 
         self.encoder_has_commands = true;
+        let empty_bind_group = vertex_pulling_bg.as_ref().map(|_| {
+            self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("aerogpu_cmd empty bind group"),
+                layout: empty_bgl.layout.as_ref(),
+                entries: &[],
+            })
+        });
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("aerogpu_cmd geometry prepass compute pass"),
@@ -4592,6 +4596,16 @@ impl AerogpuD3d11Executor {
             pass.set_pipeline(compute_pipeline);
             pass.set_bind_group(0, &compute_bind_group, &[]);
             if let Some(bg) = vertex_pulling_bg.as_ref() {
+                // The vertex pulling bind group lives in `@group(VERTEX_PULLING_GROUP)` (currently
+                // group 3), but WebGPU pipeline layouts are dense (group 0..N). When we include
+                // `VERTEX_PULLING_GROUP` in the pipeline layout we must also include placeholder
+                // (empty) layouts for any intermediate groups, and wgpu requires compatible bind
+                // groups to be set for them as well.
+                if let Some(empty_bg) = empty_bind_group.as_ref() {
+                    for group in 1..VERTEX_PULLING_GROUP {
+                        pass.set_bind_group(group, empty_bg, &[]);
+                    }
+                }
                 pass.set_bind_group(VERTEX_PULLING_GROUP, bg, &[]);
             }
             pass.dispatch_workgroups(primitive_count, 1, 1);
@@ -4607,7 +4621,9 @@ impl AerogpuD3d11Executor {
         // pointer so we can keep using executor state while the render pass is alive.
         let render_pipeline_ptr = {
             // The placeholder compute prepass always emits triangles (3 verts per input primitive),
-            // so the expanded draw must use TriangleList regardless of the original IA topology.
+            // so the expanded draw must use TriangleList regardless of the original IA topology:
+            // e.g. point-list inputs expanded by the emulation path should rasterize triangles, not
+            // points.
             //
             // Future GS/HS/DS emulation will supply the correct post-expansion topology here.
             let expanded_topology = wgpu::PrimitiveTopology::TriangleList;
