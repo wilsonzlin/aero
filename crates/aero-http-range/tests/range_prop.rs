@@ -167,7 +167,7 @@ proptest! {
                     prop_assert!(r.end < len);
                     let expected_len = r.end - r.start + 1;
                     prop_assert_eq!(r.len(), expected_len);
-                    prop_assert!(r.len() > 0);
+                    prop_assert!(!r.is_empty());
                 }
 
                 // Sorted & non-overlapping when coalescing enabled.
@@ -215,7 +215,7 @@ proptest! {
                     prop_assert!(r.end < len);
                     let expected_len = r.end - r.start + 1;
                     prop_assert_eq!(r.len(), expected_len);
-                    prop_assert!(r.len() > 0);
+                    prop_assert!(!r.is_empty());
                 }
 
                 if coalesce {
@@ -282,9 +282,9 @@ proptest! {
             let mut covered = vec![false; len as usize];
             for &spec in &specs {
                 if let Some((start, end)) = spec_to_model_range(spec, len) {
-                    for i in (start as usize)..=(end as usize) {
-                        covered[i] = true;
-                    }
+                    let start = start as usize;
+                    let end = end as usize;
+                    covered[start..=end].fill(true);
                 }
             }
             covered
@@ -306,9 +306,9 @@ proptest! {
                 for r in &ranges {
                     prop_assert!(r.start <= r.end);
                     prop_assert!(r.end < len);
-                    for i in (r.start as usize)..=(r.end as usize) {
-                        actual[i] = true;
-                    }
+                    let start = r.start as usize;
+                    let end = r.end as usize;
+                    actual[start..=end].fill(true);
                 }
 
                 prop_assert_eq!(actual, expected);
@@ -343,14 +343,14 @@ proptest! {
                 let mut cover_b = vec![false; len_usize];
 
                 for r in &a {
-                    for i in (r.start as usize)..=(r.end as usize) {
-                        cover_a[i] = true;
-                    }
+                    let start = r.start as usize;
+                    let end = r.end as usize;
+                    cover_a[start..=end].fill(true);
                 }
                 for r in &b {
-                    for i in (r.start as usize)..=(r.end as usize) {
-                        cover_b[i] = true;
-                    }
+                    let start = r.start as usize;
+                    let end = r.end as usize;
+                    cover_b[start..=end].fill(true);
                 }
 
                 prop_assert_eq!(cover_a, cover_b);
