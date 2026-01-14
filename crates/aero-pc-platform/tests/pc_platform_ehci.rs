@@ -69,6 +69,8 @@ fn new_pc() -> PcPlatform {
 fn pc_platform_enumerates_ehci_and_assigns_bar0_and_probe_mask() {
     let mut pc = new_pc();
     let bdf = USB_EHCI_ICH9.bdf;
+    let bar0_size = USB_EHCI_ICH9.bars[0].size;
+    let bar0_size_u32 = u32::try_from(bar0_size).expect("EHCI BAR0 size should fit in u32");
 
     let id = read_cfg_u32(&mut pc, bdf, 0x00);
     assert_eq!(id & 0xffff, u32::from(USB_EHCI_ICH9.vendor_id));
@@ -91,13 +93,18 @@ fn pc_platform_enumerates_ehci_and_assigns_bar0_and_probe_mask() {
         bar0_base, 0,
         "EHCI BAR0 should be assigned during BIOS POST"
     );
-    assert_eq!(bar0_base % 0x1000, 0, "EHCI BAR0 should be 4KiB-aligned");
+    assert_eq!(
+        bar0_base % bar0_size,
+        0,
+        "EHCI BAR0 should be aligned to its configured size"
+    );
 
     write_cfg_u32(&mut pc, bdf, 0x10, 0xffff_ffff);
     let bar0_probe = read_cfg_u32(&mut pc, bdf, 0x10);
+    let expected_probe = !(bar0_size_u32 - 1) | (bar0_orig & 0xF);
     assert_eq!(
-        bar0_probe, 0xffff_f000,
-        "BAR0 probe should return 0x1000 size mask"
+        bar0_probe, expected_probe,
+        "BAR0 probe should return {bar0_size:#x} size mask"
     );
     write_cfg_u32(&mut pc, bdf, 0x10, bar0_orig);
 }
@@ -124,13 +131,16 @@ fn pc_platform_routes_ehci_mmio_capability_registers() {
 fn pc_platform_ehci_bar0_size_probe_reports_expected_mask() {
     let mut pc = new_pc();
     let bdf = USB_EHCI_ICH9.bdf;
+    let bar0_size = USB_EHCI_ICH9.bars[0].size;
+    let bar0_size_u32 = u32::try_from(bar0_size).expect("EHCI BAR0 size should fit in u32");
+    let bar0_orig = read_cfg_u32(&mut pc, bdf, 0x10);
 
     // Standard PCI BAR size probing: write all 1s, then read back the size mask.
     write_cfg_u32(&mut pc, bdf, 0x10, 0xffff_ffff);
     let got = read_cfg_u32(&mut pc, bdf, 0x10);
 
-    // EHCI BAR0 is a 4KiB non-prefetchable MMIO window; the expected mask is 0xFFFF_F000.
-    assert_eq!(got, 0xffff_f000);
+    let expected = !(bar0_size_u32 - 1) | (bar0_orig & 0xF);
+    assert_eq!(got, expected);
 }
 
 #[test]
@@ -168,6 +178,7 @@ fn pc_platform_gates_ehci_mmio_on_pci_command_mem_bit() {
 fn pc_platform_routes_ehci_mmio_after_bar0_reprogramming() {
     let mut pc = new_pc();
     let bdf = USB_EHCI_ICH9.bdf;
+    let bar0_size = USB_EHCI_ICH9.bars[0].size;
 
     // Enable MEM decoding so BAR0 MMIO is routed.
     let cmd = read_cfg_u16(&mut pc, bdf, 0x04) | 0x0002;
@@ -185,7 +196,7 @@ fn pc_platform_routes_ehci_mmio_after_bar0_reprogramming() {
 
     // Move BAR0 within the PCI MMIO window.
     let new_base = if bar0_base == EHCI_BAR0_RELOC_BASE {
-        EHCI_BAR0_RELOC_BASE + 0x1000
+        EHCI_BAR0_RELOC_BASE + bar0_size
     } else {
         EHCI_BAR0_RELOC_BASE
     };
