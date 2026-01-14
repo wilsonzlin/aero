@@ -3563,7 +3563,17 @@ static NTSTATUS APIENTRY AeroGpuDdiStartDevice(_In_ const PVOID MiniportDeviceCo
             adapter->CurrentHeight = mmio.Height;
             adapter->CurrentPitch = mmio.PitchBytes;
             adapter->CurrentFormat = mmio.Format;
-            adapter->CurrentScanoutFbPa = mmio.FbPa;
+            /*
+             * Do not clobber the cached scanout FB GPA during a post-display ownership
+             * transition if the device reports FbPa == 0.
+             *
+             * StopDevice/SetPowerState intentionally clear the MMIO FB address to
+             * stop DMA, but we still need the cached value to restore scanout when
+             * ownership is reacquired.
+             */
+            if (!adapter->PostDisplayOwnershipReleased || mmio.FbPa.QuadPart != 0) {
+                adapter->CurrentScanoutFbPa = mmio.FbPa;
+            }
             if (!adapter->PostDisplayOwnershipReleased) {
                 adapter->SourceVisible = mmio.Enable ? TRUE : FALSE;
             }
@@ -4423,7 +4433,15 @@ static NTSTATUS APIENTRY AeroGpuDdiAcquirePostDisplayOwnership(
             adapter->CurrentHeight = mmio.Height;
             adapter->CurrentPitch = mmio.PitchBytes;
             adapter->CurrentFormat = mmio.Format;
-            adapter->CurrentScanoutFbPa = mmio.FbPa;
+            /*
+             * During reacquire after a post-display ownership release, StopDevice may have
+             * cleared the scanout FB GPA in MMIO even though the next owner is still using
+             * the same framebuffer. Preserve the cached FB GPA in that case so we can
+             * restore scanout without requiring an immediate SetVidPnSourceAddress.
+             */
+            if (!adapter->PostDisplayOwnershipReleased || mmio.FbPa.QuadPart != 0) {
+                adapter->CurrentScanoutFbPa = mmio.FbPa;
+            }
 
             /*
              * Treat the hardware enable bit as authoritative during acquisition:
