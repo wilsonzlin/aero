@@ -99,10 +99,10 @@ fn translates_exp_to_wgsl_exp2_with_predication_and_saturate() {
 }
 
 #[test]
-fn translates_log_to_wgsl_log2() {
+fn translates_log_to_wgsl_log2_with_saturate_and_shift() {
     // ps_3_0:
     //   def c0, 1.0, 2.0, 4.0, 8.0
-    //   log r0, c0
+    //   log_sat_x2 r0, c0
     //   mov oC0, r0
     //   end
     let tokens = vec![
@@ -113,7 +113,8 @@ fn translates_log_to_wgsl_log2() {
         0x4000_0000,
         0x4080_0000,
         0x4100_0000,
-        opcode_token(15, 2),
+        // log_sat_x2 r0, c0 (modbits: saturate + mul2)
+        opcode_token(15, 2) | (3u32 << 20),
         dst_token(0, 0, 0xF),
         src_token(2, 0, 0xE4, 0),
         opcode_token(1, 2),
@@ -130,14 +131,17 @@ fn translates_log_to_wgsl_log2() {
     validate_wgsl(&wgsl.wgsl);
 
     assert!(wgsl.wgsl.contains("log2("), "wgsl:\n{}", wgsl.wgsl);
+    assert!(wgsl.wgsl.contains("clamp("), "wgsl:\n{}", wgsl.wgsl);
+    assert!(wgsl.wgsl.contains("* 2.0"), "wgsl:\n{}", wgsl.wgsl);
 }
 
 #[test]
-fn translates_pow_to_wgsl_pow() {
+fn translates_pow_to_wgsl_pow_with_predication_and_modifiers() {
     // ps_3_0:
     //   def c0, 2.0, 4.0, 8.0, 16.0
     //   def c1, 2.0, 0.5, 1.0, 0.0
-    //   pow r0, c0, c1
+    //   setp_gt p0, c0, c1
+    //   (p0) pow_sat_x2 r0, c0, c1
     //   mov oC0, r0
     //   end
     let tokens = vec![
@@ -154,10 +158,17 @@ fn translates_pow_to_wgsl_pow() {
         0x3F00_0000,
         0x3F80_0000,
         0x0000_0000,
-        opcode_token(32, 3),
+        // setp_gt p0, c0, c1 (compare op 0 = gt)
+        opcode_token(78, 3) | (0u32 << 16),
+        dst_token(19, 0, 0xF),
+        src_token(2, 0, 0xE4, 0),
+        src_token(2, 1, 0xE4, 0),
+        // (p0.x) pow_sat_x2 r0, c0, c1
+        opcode_token(32, 4) | 0x1000_0000 | (3u32 << 20),
         dst_token(0, 0, 0xF),
         src_token(2, 0, 0xE4, 0),
         src_token(2, 1, 0xE4, 0),
+        src_token(19, 0, 0x00, 0), // p0.x
         opcode_token(1, 2),
         dst_token(8, 0, 0xF),
         src_token(0, 0, 0xE4, 0),
@@ -172,6 +183,9 @@ fn translates_pow_to_wgsl_pow() {
     validate_wgsl(&wgsl.wgsl);
 
     assert!(wgsl.wgsl.contains("pow("), "wgsl:\n{}", wgsl.wgsl);
+    assert!(wgsl.wgsl.contains("clamp("), "wgsl:\n{}", wgsl.wgsl);
+    assert!(wgsl.wgsl.contains("* 2.0"), "wgsl:\n{}", wgsl.wgsl);
+    assert!(wgsl.wgsl.contains("if (p0.x)"), "wgsl:\n{}", wgsl.wgsl);
 }
 #[test]
 fn translates_nrm_to_wgsl_normalize() {
