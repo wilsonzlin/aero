@@ -1272,7 +1272,8 @@ typedef struct _D3D9DDIARG_CREATERESOURCE {
   // Do NOT derive `share_token` from the numeric value of the user-mode shared `HANDLE`:
   // for real NT handles it is process-local (commonly different after
   // `DuplicateHandle`), and some D3D9Ex stacks use token-style shared handles that
-  // still must not be treated as a stable protocol key.
+  // still must not be treated as a stable protocol key (and should not be passed
+  // to `CloseHandle`).
   //
   // See also: drivers/aerogpu/protocol/aerogpu_wddm_alloc.h
   //
