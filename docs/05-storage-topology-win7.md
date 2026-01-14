@@ -148,6 +148,13 @@ introspection helpers for debugging/automation:
 - `machine.cd_boot_drive()` – CD-ROM boot drive number used when the CD-first policy is enabled.
 - `machine.active_boot_device()` – what firmware actually booted from in the current boot session (CD vs HDD).
 
+In the browser runtime, the canonical `vmRuntime="machine"` mode runs the `Machine` inside a worker,
+so hosts typically do not have direct access to a `machine` handle on the main thread. For stable
+automation-friendly introspection, the runtime also exposes:
+
+- `window.aero.debug.getMachineCpuActiveBootDevice()` – active boot source (CD vs HDD), or `null` if unknown.
+- `window.aero.debug.getMachineCpuBootConfig()` – `{ bootDrive, cdBootDrive, bootFromCdIfPresent }`, or `null` if unknown.
+
 ### 2) Normal boot (after installation)
 
 1. Select HDD0 as the BIOS boot drive (**`DL=0x80`**) before reset. BIOS enters the boot sector with

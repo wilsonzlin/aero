@@ -242,6 +242,55 @@ describe("runtime/coordinator (boot disks forwarding)", () => {
     expect(coordinator.getMachineCpuActiveBootDevice()).toBe(null);
   });
 
+  it("ignores inherited machine CPU boot device selection reports", () => {
+    const coordinator = new WorkerCoordinator();
+
+    const segments = allocateTestSegments();
+    const shared = createSharedMemoryViews(segments);
+    (coordinator as unknown as CoordinatorTestHarness).shared = shared;
+    (coordinator as unknown as CoordinatorTestHarness).activeConfig = { vmRuntime: "machine" };
+
+    const hdd = makeLocalDisk({
+      id: "hdd1",
+      name: "disk.img",
+      backend: "opfs",
+      kind: "hdd",
+      format: "raw",
+      fileName: "disk.img",
+      sizeBytes: 1024,
+      createdAtMs: 0,
+    });
+    const cd = makeLocalDisk({
+      id: "cd1",
+      name: "install.iso",
+      backend: "opfs",
+      kind: "cd",
+      format: "iso",
+      fileName: "install.iso",
+      sizeBytes: 2048,
+      createdAtMs: 0,
+    });
+
+    coordinator.setBootDisks({ hddId: hdd.id, cdId: cd.id }, hdd, cd);
+
+    (coordinator as unknown as CoordinatorTestHarness).spawnWorker("cpu", segments);
+    const cpuInfo = (coordinator as unknown as CoordinatorTestHarness).workers.cpu;
+
+    expect(coordinator.getBootDisks()?.bootDevice).toBe("cdrom");
+
+    // Inherited bootDevice should be ignored.
+    const msg = Object.create({ bootDevice: "hdd" });
+    msg.type = "machineCpu.bootDeviceSelected";
+    (coordinator as unknown as CoordinatorTestHarness).onWorkerMessage("cpu", cpuInfo.instanceId, msg);
+    expect(coordinator.getBootDisks()?.bootDevice).toBe("cdrom");
+
+    // Inherited type tag should be ignored.
+    const msg2 = Object.create({ type: "machineCpu.bootDeviceSelected" });
+    msg2.bootDevice = "hdd";
+    (coordinator as unknown as CoordinatorTestHarness).onWorkerMessage("cpu", cpuInfo.instanceId, msg2);
+    expect(coordinator.getBootDisks()?.bootDevice).toBe("cdrom");
+  });
+
   it("tracks the machine CPU worker's boot config reports", () => {
     const coordinator = new WorkerCoordinator();
 
