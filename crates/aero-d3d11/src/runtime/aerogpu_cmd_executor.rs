@@ -15613,6 +15613,31 @@ mod tests {
     }
 
     #[test]
+    fn geometry_prepass_wgsl_exposes_synthetic_gs_system_values() {
+        // The placeholder compute prepass (used when a GS/HS/DS is bound) treats
+        // `global_invocation_id` as synthetic GS system values:
+        // - x => SV_PrimitiveID
+        // - y => SV_GSInstanceID
+        //
+        // Keep this as a unit test so future edits to the placeholder WGSL don't accidentally drop
+        // the mapping.
+        for wgsl in [GEOMETRY_PREPASS_CS_WGSL, GEOMETRY_PREPASS_CS_VERTEX_PULLING_WGSL] {
+            assert!(
+                wgsl.contains("let primitive_id: u32 = id.x;"),
+                "expected primitive_id mapping in prepass WGSL:\n{wgsl}"
+            );
+            assert!(
+                wgsl.contains("let gs_instance_id: u32 = id.y;"),
+                "expected gs_instance_id mapping in prepass WGSL:\n{wgsl}"
+            );
+            assert!(
+                wgsl.contains("if (primitive_id == 0u && gs_instance_id == 0u)"),
+                "expected indirect-args write to be gated on the first GS instance:\n{wgsl}"
+            );
+        }
+    }
+
+    #[test]
     fn compute_prepass_vertex_pulling_binding_numbers_match_vertex_pulling_layout() {
         // Construct a minimal `VertexPullingLayout` with 3 pulling slots.
         let mut d3d_slot_to_pulling_slot = BTreeMap::new();
