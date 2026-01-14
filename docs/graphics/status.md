@@ -412,7 +412,7 @@ Impact:
   - E2E test (VRAM aperture base_paddr): [`tests/e2e/wddm_scanout_vram_smoke.spec.ts`](../../tests/e2e/wddm_scanout_vram_smoke.spec.ts) (harness: [`web/wddm-scanout-vram-smoke.ts`](../../web/wddm-scanout-vram-smoke.ts))
   - VRAM/base-paddr contract notes: [`docs/16-aerogpu-vga-vesa-compat.md`](../16-aerogpu-vga-vesa-compat.md#vram-bar1-backing-as-a-sharedarraybuffer)
 - Manual harness: [`web/wddm-scanout-debug.html`](../../web/wddm-scanout-debug.html) (interactive toggles for scanoutState source/base_paddr/pitch and BGRX X-byte alpha forcing)
-- Current limitation: scanout presentation is currently limited to `B8G8R8X8`-compatible 32bpp layouts (`B8G8R8X8` / `B8G8R8A8` + sRGB variants); unsupported formats publish a deterministic disabled descriptor.
+- Current limitation: scanout presentation is currently limited to `B8G8R8X8`-compatible 32bpp layouts (`B8G8R8X8` / `B8G8R8A8` + sRGB variants; X8 treated as fully opaque); unsupported formats publish a deterministic disabled descriptor.
 
 Impact:
 
