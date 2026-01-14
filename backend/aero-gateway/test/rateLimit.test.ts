@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { buildServer } from '../src/server.js';
+import { decodeDnsHeader } from '../src/dns/codec.js';
 
 const baseConfig = {
   HOST: '127.0.0.1',
@@ -64,6 +65,27 @@ test('rate limiter rejects when the per-minute budget is exceeded', async () => 
   assert.equal(second.statusCode, 429);
   assert.equal(second.headers['access-control-allow-origin'], 'http://localhost');
   assert.equal(second.headers['access-control-allow-credentials'], 'true');
+
+  await app.close();
+});
+
+test('rate limiter returns application/dns-message for /dns-query', async () => {
+  const { app } = buildServer(baseConfig);
+  await app.ready();
+
+  // Consume the 1 req/min budget.
+  const first = await app.inject({ method: 'GET', url: '/version', headers: { origin: 'http://localhost' } });
+  assert.equal(first.statusCode, 200);
+
+  const dns = 'AAABAAABAAAAAAAAB2V4YW1wbGUDY29tAAABAAE'; // example.com A, RFC8484 base64url
+  const limited = await app.inject({ method: 'GET', url: `/dns-query?dns=${dns}`, headers: { origin: 'http://localhost' } });
+  assert.equal(limited.statusCode, 429);
+  assert.ok(String(limited.headers['content-type'] ?? '').startsWith('application/dns-message'));
+  assert.equal(String(limited.headers['cache-control'] ?? ''), 'no-store');
+  const header = decodeDnsHeader(limited.rawPayload);
+  assert.equal(header.id, 0);
+  // RCODE=2 (SERVFAIL)
+  assert.equal(header.flags & 0x000f, 2);
 
   await app.close();
 });

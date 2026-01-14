@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import { encodeDnsErrorResponse } from '../dns/codec.js';
 import { TokenBucketRateLimiter } from '../dns/rateLimit.js';
 
 function getClientKey(ip: string | undefined): string {
@@ -27,6 +28,16 @@ export function setupRateLimit(app: FastifyInstance, opts: { requestsPerMinute: 
 
     const key = getClientKey(request.ip);
     if (!limiter.allow(key)) {
+      // `/dns-query` is a DoH endpoint and clients may expect a valid DNS message response even on HTTP errors.
+      // Return a minimal DNS error message (SERVFAIL) instead of JSON for better client compatibility.
+      if (route && (route === '/dns-query' || route.endsWith('/dns-query'))) {
+        const message = encodeDnsErrorResponse({ id: 0, rcode: 2 });
+        reply.code(429);
+        reply.header('content-type', 'application/dns-message');
+        reply.header('cache-control', 'no-store');
+        reply.send(message);
+        return;
+      }
       reply.code(429).send({ error: 'too_many_requests', message: 'Rate limit exceeded' });
       return;
     }
