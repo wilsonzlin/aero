@@ -316,14 +316,14 @@ impl Tier1WasmCodegen {
             options.inline_tlb = false;
         }
 
-        let mut needs_mem_read_u8 = false;
-        let mut needs_mem_read_u16 = false;
-        let mut needs_mem_read_u32 = false;
-        let mut needs_mem_read_u64 = false;
-        let mut needs_mem_write_u8 = false;
-        let mut needs_mem_write_u16 = false;
-        let mut needs_mem_write_u32 = false;
-        let mut needs_mem_write_u64 = false;
+        let mut uses_load_u8 = false;
+        let mut uses_load_u16 = false;
+        let mut uses_load_u32 = false;
+        let mut uses_load_u64 = false;
+        let mut uses_store_u8 = false;
+        let mut uses_store_u16 = false;
+        let mut uses_store_u32 = false;
+        let mut uses_store_u64 = false;
         let mut needs_jit_exit = false;
         let mut uses_inline_tlb = false;
         for inst in &block.insts {
@@ -331,10 +331,10 @@ impl Tier1WasmCodegen {
                 IrInst::Load { width, .. } => {
                     uses_inline_tlb = true;
                     match *width {
-                        Width::W8 => needs_mem_read_u8 = true,
-                        Width::W16 => needs_mem_read_u16 = true,
-                        Width::W32 => needs_mem_read_u32 = true,
-                        Width::W64 => needs_mem_read_u64 = true,
+                        Width::W8 => uses_load_u8 = true,
+                        Width::W16 => uses_load_u16 = true,
+                        Width::W32 => uses_load_u32 = true,
+                        Width::W64 => uses_load_u64 = true,
                     }
                 }
                 IrInst::Store { width, .. } => {
@@ -342,10 +342,10 @@ impl Tier1WasmCodegen {
                         uses_inline_tlb = true;
                     }
                     match *width {
-                        Width::W8 => needs_mem_write_u8 = true,
-                        Width::W16 => needs_mem_write_u16 = true,
-                        Width::W32 => needs_mem_write_u32 = true,
-                        Width::W64 => needs_mem_write_u64 = true,
+                        Width::W8 => uses_store_u8 = true,
+                        Width::W16 => uses_store_u16 = true,
+                        Width::W32 => uses_store_u32 = true,
+                        Width::W64 => uses_store_u64 = true,
                     }
                 }
                 IrInst::CallHelper { .. } => needs_jit_exit = true,
@@ -358,6 +358,49 @@ impl Tier1WasmCodegen {
         if options.inline_tlb && !uses_inline_tlb {
             options.inline_tlb = false;
         }
+
+        // Decide which slow-path helper imports are actually required by this block under the
+        // selected options.
+        //
+        // When the inline-TLB fast-path is enabled, some slow helpers become unused:
+        // - if `inline_tlb_mmio_exit` is enabled, non-RAM translations trigger an MMIO exit rather
+        //   than falling back to the slow helpers.
+        // - if `inline_tlb_cross_page_fastpath` is enabled, boundary-crossing loads/stores are
+        //   handled inline for widths that can cross pages (>= 16-bit).
+        let needs_mem_read_u8 =
+            uses_load_u8 && (!options.inline_tlb || !options.inline_tlb_mmio_exit);
+        let needs_mem_read_u16 = uses_load_u16
+            && (!options.inline_tlb
+                || !options.inline_tlb_mmio_exit
+                || !options.inline_tlb_cross_page_fastpath);
+        let needs_mem_read_u32 = uses_load_u32
+            && (!options.inline_tlb
+                || !options.inline_tlb_mmio_exit
+                || !options.inline_tlb_cross_page_fastpath);
+        let needs_mem_read_u64 = uses_load_u64
+            && (!options.inline_tlb
+                || !options.inline_tlb_mmio_exit
+                || !options.inline_tlb_cross_page_fastpath);
+
+        let needs_mem_write_u8 = uses_store_u8
+            && (!options.inline_tlb
+                || !options.inline_tlb_stores
+                || !options.inline_tlb_mmio_exit);
+        let needs_mem_write_u16 = uses_store_u16
+            && (!options.inline_tlb
+                || !options.inline_tlb_stores
+                || !options.inline_tlb_mmio_exit
+                || !options.inline_tlb_cross_page_fastpath);
+        let needs_mem_write_u32 = uses_store_u32
+            && (!options.inline_tlb
+                || !options.inline_tlb_stores
+                || !options.inline_tlb_mmio_exit
+                || !options.inline_tlb_cross_page_fastpath);
+        let needs_mem_write_u64 = uses_store_u64
+            && (!options.inline_tlb
+                || !options.inline_tlb_stores
+                || !options.inline_tlb_mmio_exit
+                || !options.inline_tlb_cross_page_fastpath);
 
         let mut module = Module::new();
 
@@ -924,19 +967,99 @@ impl Emitter<'_> {
                     return;
                 }
 
+                let dst = *dst;
+                let addr = *addr;
+                let width = *width;
+
                 // Save vaddr into a scratch local (used by both slow/fast paths).
                 self.func
-                    .instruction(&Instruction::LocalGet(self.layout.value_local(*addr)));
+                    .instruction(&Instruction::LocalGet(self.layout.value_local(addr)));
                 self.func
                     .instruction(&Instruction::LocalSet(self.layout.scratch_vaddr_local()));
 
-                let (size_bytes, slow_read) = match *width {
+                let (size_bytes, slow_read) = match width {
                     Width::W8 => (1u32, self.imported.mem_read_u8),
                     Width::W16 => (2u32, self.imported.mem_read_u16),
                     Width::W32 => (4u32, self.imported.mem_read_u32),
                     Width::W64 => (8u32, self.imported.mem_read_u64),
                 };
-                let slow_read = slow_read.expect("memory read helper import missing");
+
+                let emit_same_page_load = |this: &mut Self| {
+                    // Fast path: inline TLB probe + direct RAM load.
+                    this.emit_translate_and_cache(MMU_ACCESS_READ, crate::TLB_FLAG_READ);
+
+                    if this.options.inline_tlb_mmio_exit {
+                        this.emit_mmio_exit(size_bytes, 0, None);
+
+                        this.emit_compute_ram_addr();
+                        match width {
+                            Width::W8 => {
+                                this.func.instruction(&Instruction::I64Load8U(memarg(0, 0)))
+                            }
+                            Width::W16 => this
+                                .func
+                                .instruction(&Instruction::I64Load16U(memarg(0, 1))),
+                            Width::W32 => this
+                                .func
+                                .instruction(&Instruction::I64Load32U(memarg(0, 2))),
+                            Width::W64 => {
+                                this.func.instruction(&Instruction::I64Load(memarg(0, 3)))
+                            }
+                        };
+                        this.emit_trunc(width);
+                        this.func
+                            .instruction(&Instruction::LocalSet(this.layout.value_local(dst)));
+                    } else {
+                        // If the translation isn't backed by RAM (MMIO/ROM/unmapped), fall back to
+                        // the slow helper and keep executing this block.
+                        this.func.instruction(&Instruction::LocalGet(
+                            this.layout.scratch_tlb_data_local(),
+                        ));
+                        this.func
+                            .instruction(&Instruction::I64Const(crate::TLB_FLAG_IS_RAM as i64));
+                        this.func.instruction(&Instruction::I64And);
+                        this.func.instruction(&Instruction::I64Eqz);
+
+                        this.func.instruction(&Instruction::If(BlockType::Empty));
+                        this.depth += 1;
+                        {
+                            // Slow path.
+                            let slow_read = slow_read.expect("memory read helper import missing");
+                            this.emit_slow_mem_read(dst, width, slow_read);
+                        }
+                        this.func.instruction(&Instruction::Else);
+                        {
+                            // RAM fast-path.
+                            this.emit_compute_ram_addr();
+                            match width {
+                                Width::W8 => {
+                                    this.func.instruction(&Instruction::I64Load8U(memarg(0, 0)))
+                                }
+                                Width::W16 => this
+                                    .func
+                                    .instruction(&Instruction::I64Load16U(memarg(0, 1))),
+                                Width::W32 => this
+                                    .func
+                                    .instruction(&Instruction::I64Load32U(memarg(0, 2))),
+                                Width::W64 => {
+                                    this.func.instruction(&Instruction::I64Load(memarg(0, 3)))
+                                }
+                            };
+                            this.emit_trunc(width);
+                            this.func
+                                .instruction(&Instruction::LocalSet(this.layout.value_local(dst)));
+                        }
+                        this.func.instruction(&Instruction::End);
+                        this.depth -= 1;
+                    }
+                };
+
+                if size_bytes == 1 {
+                    // An 8-bit load can never cross a page boundary, so we can skip the cross-page
+                    // check and its associated slow-path fallback entirely.
+                    emit_same_page_load(self);
+                    return;
+                }
 
                 // Cross-page accesses default to the slow helper for correctness unless the
                 // optional split-access fast-path is enabled.
@@ -955,7 +1078,7 @@ impl Emitter<'_> {
                 self.depth += 1;
                 {
                     if self.options.inline_tlb_cross_page_fastpath
-                        && matches!(*width, Width::W16 | Width::W32 | Width::W64)
+                        && matches!(width, Width::W16 | Width::W32 | Width::W64)
                     {
                         // Cross-page fast-path: translate both pages, ensure both are RAM, then do
                         // two direct same-page loads and combine the result (little-endian).
@@ -975,9 +1098,8 @@ impl Emitter<'_> {
 
                         let emit_split_load = |this: &mut Self| {
                             // part0 = loadN(vaddr - shift_bytes) >> (shift_bytes * 8)
-                            this.func.instruction(&Instruction::LocalGet(
-                                this.layout.value_local(*addr),
-                            ));
+                            this.func
+                                .instruction(&Instruction::LocalGet(this.layout.value_local(addr)));
                             this.func
                                 .instruction(&Instruction::LocalGet(this.layout.scratch_local()));
                             this.func.instruction(&Instruction::I64Sub);
@@ -987,7 +1109,7 @@ impl Emitter<'_> {
 
                             this.emit_translate_and_cache(MMU_ACCESS_READ, crate::TLB_FLAG_READ);
                             this.emit_compute_ram_addr();
-                            match *width {
+                            match width {
                                 Width::W16 => this
                                     .func
                                     .instruction(&Instruction::I64Load16U(memarg(0, 1))),
@@ -1006,13 +1128,12 @@ impl Emitter<'_> {
                             this.func.instruction(&Instruction::I64ShrU);
                             // Stash part0 in `dst`'s local as a temporary.
                             this.func
-                                .instruction(&Instruction::LocalSet(this.layout.value_local(*dst)));
+                                .instruction(&Instruction::LocalSet(this.layout.value_local(dst)));
 
                             // part1 = (loadN(vaddr1) & ((1 << (shift_bytes * 8)) - 1))
                             //           << ((size_bytes * 8) - (shift_bytes * 8))
-                            this.func.instruction(&Instruction::LocalGet(
-                                this.layout.value_local(*addr),
-                            ));
+                            this.func
+                                .instruction(&Instruction::LocalGet(this.layout.value_local(addr)));
                             this.func
                                 .instruction(&Instruction::I64Const(size_bytes as i64));
                             this.func.instruction(&Instruction::I64Add);
@@ -1025,7 +1146,7 @@ impl Emitter<'_> {
 
                             this.emit_translate_and_cache(MMU_ACCESS_READ, crate::TLB_FLAG_READ);
                             this.emit_compute_ram_addr();
-                            match *width {
+                            match width {
                                 Width::W16 => this
                                     .func
                                     .instruction(&Instruction::I64Load16U(memarg(0, 1))),
@@ -1061,11 +1182,11 @@ impl Emitter<'_> {
 
                             // part0 | part1
                             this.func
-                                .instruction(&Instruction::LocalGet(this.layout.value_local(*dst)));
+                                .instruction(&Instruction::LocalGet(this.layout.value_local(dst)));
                             this.func.instruction(&Instruction::I64Or);
-                            this.emit_trunc(*width);
+                            this.emit_trunc(width);
                             this.func
-                                .instruction(&Instruction::LocalSet(this.layout.value_local(*dst)));
+                                .instruction(&Instruction::LocalSet(this.layout.value_local(dst)));
                         };
 
                         // Page 0: translate.
@@ -1079,7 +1200,7 @@ impl Emitter<'_> {
                             //
                             // vaddr1 = vaddr + size_bytes - shift_bytes
                             self.func.instruction(&Instruction::LocalGet(
-                                self.layout.value_local(*addr),
+                                self.layout.value_local(addr),
                             ));
                             self.func
                                 .instruction(&Instruction::I64Const(size_bytes as i64));
@@ -1094,7 +1215,7 @@ impl Emitter<'_> {
                             self.emit_translate_and_cache(MMU_ACCESS_READ, crate::TLB_FLAG_READ);
 
                             self.func.instruction(&Instruction::LocalGet(
-                                self.layout.value_local(*addr),
+                                self.layout.value_local(addr),
                             ));
                             self.func.instruction(&Instruction::LocalSet(
                                 self.layout.scratch_vaddr_local(),
@@ -1117,26 +1238,14 @@ impl Emitter<'_> {
                             self.depth += 1;
                             {
                                 // Slow path.
-                                self.func.instruction(&Instruction::LocalGet(
-                                    self.layout.cpu_ptr_local(),
-                                ));
-                                self.func.instruction(&Instruction::LocalGet(
-                                    self.layout.scratch_vaddr_local(),
-                                ));
-                                self.func.instruction(&Instruction::Call(slow_read));
-                                if !matches!(*width, Width::W64) {
-                                    self.func.instruction(&Instruction::I64ExtendI32U);
-                                }
-                                self.emit_trunc(*width);
-                                self.func.instruction(&Instruction::LocalSet(
-                                    self.layout.value_local(*dst),
-                                ));
+                                let slow_read = slow_read.expect("memory read helper import missing");
+                                self.emit_slow_mem_read(dst, width, slow_read);
                             }
                             self.func.instruction(&Instruction::Else);
                             {
                                 // Translate page 1.
                                 self.func.instruction(&Instruction::LocalGet(
-                                    self.layout.value_local(*addr),
+                                    self.layout.value_local(addr),
                                 ));
                                 self.func
                                     .instruction(&Instruction::I64Const(size_bytes as i64));
@@ -1168,26 +1277,15 @@ impl Emitter<'_> {
                                 {
                                     // Slow path (restore original vaddr first).
                                     self.func.instruction(&Instruction::LocalGet(
-                                        self.layout.value_local(*addr),
+                                        self.layout.value_local(addr),
                                     ));
                                     self.func.instruction(&Instruction::LocalSet(
                                         self.layout.scratch_vaddr_local(),
                                     ));
 
-                                    self.func.instruction(&Instruction::LocalGet(
-                                        self.layout.cpu_ptr_local(),
-                                    ));
-                                    self.func.instruction(&Instruction::LocalGet(
-                                        self.layout.scratch_vaddr_local(),
-                                    ));
-                                    self.func.instruction(&Instruction::Call(slow_read));
-                                    if !matches!(*width, Width::W64) {
-                                        self.func.instruction(&Instruction::I64ExtendI32U);
-                                    }
-                                    self.emit_trunc(*width);
-                                    self.func.instruction(&Instruction::LocalSet(
-                                        self.layout.value_local(*dst),
-                                    ));
+                                    let slow_read =
+                                        slow_read.expect("memory read helper import missing");
+                                    self.emit_slow_mem_read(dst, width, slow_read);
                                 }
                                 self.func.instruction(&Instruction::Else);
                                 {
@@ -1201,98 +1299,13 @@ impl Emitter<'_> {
                         }
                     } else {
                         // Slow path.
-                        self.func
-                            .instruction(&Instruction::LocalGet(self.layout.cpu_ptr_local()));
-                        self.func
-                            .instruction(&Instruction::LocalGet(self.layout.scratch_vaddr_local()));
-                        self.func.instruction(&Instruction::Call(slow_read));
-                        if !matches!(*width, Width::W64) {
-                            self.func.instruction(&Instruction::I64ExtendI32U);
-                        }
-                        self.emit_trunc(*width);
-                        self.func
-                            .instruction(&Instruction::LocalSet(self.layout.value_local(*dst)));
+                        let slow_read = slow_read.expect("memory read helper import missing");
+                        self.emit_slow_mem_read(dst, width, slow_read);
                     }
                 }
                 self.func.instruction(&Instruction::Else);
                 {
-                    // Fast path: inline TLB probe + direct RAM load.
-                    self.emit_translate_and_cache(MMU_ACCESS_READ, crate::TLB_FLAG_READ);
-
-                    if self.options.inline_tlb_mmio_exit {
-                        self.emit_mmio_exit(size_bytes, 0, None);
-
-                        self.emit_compute_ram_addr();
-                        match *width {
-                            Width::W8 => {
-                                self.func.instruction(&Instruction::I64Load8U(memarg(0, 0)))
-                            }
-                            Width::W16 => self
-                                .func
-                                .instruction(&Instruction::I64Load16U(memarg(0, 1))),
-                            Width::W32 => self
-                                .func
-                                .instruction(&Instruction::I64Load32U(memarg(0, 2))),
-                            Width::W64 => {
-                                self.func.instruction(&Instruction::I64Load(memarg(0, 3)))
-                            }
-                        };
-                        self.emit_trunc(*width);
-                        self.func
-                            .instruction(&Instruction::LocalSet(self.layout.value_local(*dst)));
-                    } else {
-                        // If the translation isn't backed by RAM (MMIO/ROM/unmapped), fall back to
-                        // the slow helper and keep executing this block.
-                        self.func.instruction(&Instruction::LocalGet(
-                            self.layout.scratch_tlb_data_local(),
-                        ));
-                        self.func
-                            .instruction(&Instruction::I64Const(crate::TLB_FLAG_IS_RAM as i64));
-                        self.func.instruction(&Instruction::I64And);
-                        self.func.instruction(&Instruction::I64Eqz);
-
-                        self.func.instruction(&Instruction::If(BlockType::Empty));
-                        self.depth += 1;
-                        {
-                            // Slow path.
-                            self.func
-                                .instruction(&Instruction::LocalGet(self.layout.cpu_ptr_local()));
-                            self.func.instruction(&Instruction::LocalGet(
-                                self.layout.scratch_vaddr_local(),
-                            ));
-                            self.func.instruction(&Instruction::Call(slow_read));
-                            if !matches!(*width, Width::W64) {
-                                self.func.instruction(&Instruction::I64ExtendI32U);
-                            }
-                            self.emit_trunc(*width);
-                            self.func
-                                .instruction(&Instruction::LocalSet(self.layout.value_local(*dst)));
-                        }
-                        self.func.instruction(&Instruction::Else);
-                        {
-                            // RAM fast-path.
-                            self.emit_compute_ram_addr();
-                            match *width {
-                                Width::W8 => {
-                                    self.func.instruction(&Instruction::I64Load8U(memarg(0, 0)))
-                                }
-                                Width::W16 => self
-                                    .func
-                                    .instruction(&Instruction::I64Load16U(memarg(0, 1))),
-                                Width::W32 => self
-                                    .func
-                                    .instruction(&Instruction::I64Load32U(memarg(0, 2))),
-                                Width::W64 => {
-                                    self.func.instruction(&Instruction::I64Load(memarg(0, 3)))
-                                }
-                            };
-                            self.emit_trunc(*width);
-                            self.func
-                                .instruction(&Instruction::LocalSet(self.layout.value_local(*dst)));
-                        }
-                        self.func.instruction(&Instruction::End);
-                        self.depth -= 1;
-                    }
+                    emit_same_page_load(self);
                 }
                 self.func.instruction(&Instruction::End);
                 self.depth -= 1;
@@ -1356,7 +1369,87 @@ impl Emitter<'_> {
                     Width::W32 => (4u32, self.imported.mem_write_u32),
                     Width::W64 => (8u32, self.imported.mem_write_u64),
                 };
-                let slow_write = slow_write.expect("memory write helper import missing");
+
+                let emit_same_page_store = |this: &mut Self| {
+                    // Fast path: inline TLB probe + direct RAM store.
+                    this.emit_translate_and_cache(MMU_ACCESS_WRITE, crate::TLB_FLAG_WRITE);
+
+                    if this.options.inline_tlb_mmio_exit {
+                        this.emit_mmio_exit(size_bytes, 1, Some(*src));
+
+                        this.emit_compute_ram_addr();
+                        this.func
+                            .instruction(&Instruction::LocalGet(this.layout.value_local(*src)));
+                        match *width {
+                            Width::W8 => this.func.instruction(&Instruction::I64Store8(memarg(0, 0))),
+                            Width::W16 => this
+                                .func
+                                .instruction(&Instruction::I64Store16(memarg(0, 1))),
+                            Width::W32 => this
+                                .func
+                                .instruction(&Instruction::I64Store32(memarg(0, 2))),
+                            Width::W64 => this.func.instruction(&Instruction::I64Store(memarg(0, 3))),
+                        };
+
+                        // Self-modifying code invalidation: bump the version entry for the written
+                        // physical page. We conservatively bump for all RAM writes.
+                        this.emit_bump_code_version_fastpath();
+                    } else {
+                        // If the translation isn't backed by RAM (MMIO/ROM/unmapped), fall back to
+                        // the slow helper and keep executing this block.
+                        this.func.instruction(&Instruction::LocalGet(
+                            this.layout.scratch_tlb_data_local(),
+                        ));
+                        this.func
+                            .instruction(&Instruction::I64Const(crate::TLB_FLAG_IS_RAM as i64));
+                        this.func.instruction(&Instruction::I64And);
+                        this.func.instruction(&Instruction::I64Eqz);
+
+                        this.func.instruction(&Instruction::If(BlockType::Empty));
+                        this.depth += 1;
+                        {
+                            // Slow path.
+                            let slow_write =
+                                slow_write.expect("memory write helper import missing");
+                            this.emit_slow_mem_write(*src, *width, slow_write);
+                        }
+                        this.func.instruction(&Instruction::Else);
+                        {
+                            // RAM fast-path.
+                            this.emit_compute_ram_addr();
+                            this.func.instruction(&Instruction::LocalGet(
+                                this.layout.value_local(*src),
+                            ));
+                            match *width {
+                                Width::W8 => this
+                                    .func
+                                    .instruction(&Instruction::I64Store8(memarg(0, 0))),
+                                Width::W16 => this
+                                    .func
+                                    .instruction(&Instruction::I64Store16(memarg(0, 1))),
+                                Width::W32 => this
+                                    .func
+                                    .instruction(&Instruction::I64Store32(memarg(0, 2))),
+                                Width::W64 => this
+                                    .func
+                                    .instruction(&Instruction::I64Store(memarg(0, 3))),
+                            };
+
+                            // Self-modifying code invalidation: bump the version entry for the
+                            // written physical page. We conservatively bump for all RAM writes.
+                            this.emit_bump_code_version_fastpath();
+                        }
+                        this.func.instruction(&Instruction::End);
+                        this.depth -= 1;
+                    }
+                };
+
+                if size_bytes == 1 {
+                    // An 8-bit store can never cross a page boundary, so we can skip the cross-page
+                    // check and its associated slow-path fallback entirely.
+                    emit_same_page_store(self);
+                    return;
+                }
 
                 let cross_limit =
                     crate::PAGE_OFFSET_MASK.saturating_sub(size_bytes.saturating_sub(1) as u64);
@@ -1707,20 +1800,9 @@ impl Emitter<'_> {
                             self.depth += 1;
                             {
                                 // Slow path.
-                                self.func.instruction(&Instruction::LocalGet(
-                                    self.layout.cpu_ptr_local(),
-                                ));
-                                self.func.instruction(&Instruction::LocalGet(
-                                    self.layout.scratch_vaddr_local(),
-                                ));
-                                self.func.instruction(&Instruction::LocalGet(
-                                    self.layout.value_local(*src),
-                                ));
-                                if !matches!(*width, Width::W64) {
-                                    self.emit_trunc(*width);
-                                    self.func.instruction(&Instruction::I32WrapI64);
-                                }
-                                self.func.instruction(&Instruction::Call(slow_write));
+                                let slow_write =
+                                    slow_write.expect("memory write helper import missing");
+                                self.emit_slow_mem_write(*src, *width, slow_write);
                             }
                             self.func.instruction(&Instruction::Else);
                             {
@@ -1764,20 +1846,9 @@ impl Emitter<'_> {
                                         self.layout.scratch_vaddr_local(),
                                     ));
 
-                                    self.func.instruction(&Instruction::LocalGet(
-                                        self.layout.cpu_ptr_local(),
-                                    ));
-                                    self.func.instruction(&Instruction::LocalGet(
-                                        self.layout.scratch_vaddr_local(),
-                                    ));
-                                    self.func.instruction(&Instruction::LocalGet(
-                                        self.layout.value_local(*src),
-                                    ));
-                                    if !matches!(*width, Width::W64) {
-                                        self.emit_trunc(*width);
-                                        self.func.instruction(&Instruction::I32WrapI64);
-                                    }
-                                    self.func.instruction(&Instruction::Call(slow_write));
+                                    let slow_write =
+                                        slow_write.expect("memory write helper import missing");
+                                    self.emit_slow_mem_write(*src, *width, slow_write);
                                 }
                                 self.func.instruction(&Instruction::Else);
                                 {
@@ -1791,104 +1862,13 @@ impl Emitter<'_> {
                         }
                     } else {
                         // Slow path.
-                        self.func
-                            .instruction(&Instruction::LocalGet(self.layout.cpu_ptr_local()));
-                        self.func
-                            .instruction(&Instruction::LocalGet(self.layout.scratch_vaddr_local()));
-                        self.func
-                            .instruction(&Instruction::LocalGet(self.layout.value_local(*src)));
-                        if !matches!(*width, Width::W64) {
-                            self.emit_trunc(*width);
-                            self.func.instruction(&Instruction::I32WrapI64);
-                        }
-                        self.func.instruction(&Instruction::Call(slow_write));
+                        let slow_write = slow_write.expect("memory write helper import missing");
+                        self.emit_slow_mem_write(*src, *width, slow_write);
                     }
                 }
                 self.func.instruction(&Instruction::Else);
                 {
-                    // Fast path: inline TLB probe + direct RAM store.
-                    self.emit_translate_and_cache(MMU_ACCESS_WRITE, crate::TLB_FLAG_WRITE);
-
-                    if self.options.inline_tlb_mmio_exit {
-                        self.emit_mmio_exit(size_bytes, 1, Some(*src));
-
-                        self.emit_compute_ram_addr();
-                        self.func
-                            .instruction(&Instruction::LocalGet(self.layout.value_local(*src)));
-                        match *width {
-                            Width::W8 => {
-                                self.func.instruction(&Instruction::I64Store8(memarg(0, 0)))
-                            }
-                            Width::W16 => self
-                                .func
-                                .instruction(&Instruction::I64Store16(memarg(0, 1))),
-                            Width::W32 => self
-                                .func
-                                .instruction(&Instruction::I64Store32(memarg(0, 2))),
-                            Width::W64 => {
-                                self.func.instruction(&Instruction::I64Store(memarg(0, 3)))
-                            }
-                        };
-
-                        // Self-modifying code invalidation: bump the version entry for the written
-                        // physical page. We conservatively bump for all RAM writes.
-                        self.emit_bump_code_version_fastpath();
-                    } else {
-                        // If the translation isn't backed by RAM (MMIO/ROM/unmapped), fall back to
-                        // the slow helper and keep executing this block.
-                        self.func.instruction(&Instruction::LocalGet(
-                            self.layout.scratch_tlb_data_local(),
-                        ));
-                        self.func
-                            .instruction(&Instruction::I64Const(crate::TLB_FLAG_IS_RAM as i64));
-                        self.func.instruction(&Instruction::I64And);
-                        self.func.instruction(&Instruction::I64Eqz);
-
-                        self.func.instruction(&Instruction::If(BlockType::Empty));
-                        self.depth += 1;
-                        {
-                            // Slow path.
-                            self.func
-                                .instruction(&Instruction::LocalGet(self.layout.cpu_ptr_local()));
-                            self.func.instruction(&Instruction::LocalGet(
-                                self.layout.scratch_vaddr_local(),
-                            ));
-                            self.func
-                                .instruction(&Instruction::LocalGet(self.layout.value_local(*src)));
-                            if !matches!(*width, Width::W64) {
-                                self.emit_trunc(*width);
-                                self.func.instruction(&Instruction::I32WrapI64);
-                            }
-                            self.func.instruction(&Instruction::Call(slow_write));
-                        }
-                        self.func.instruction(&Instruction::Else);
-                        {
-                            // RAM fast-path.
-                            self.emit_compute_ram_addr();
-                            self.func
-                                .instruction(&Instruction::LocalGet(self.layout.value_local(*src)));
-                            match *width {
-                                Width::W8 => {
-                                    self.func.instruction(&Instruction::I64Store8(memarg(0, 0)))
-                                }
-                                Width::W16 => self
-                                    .func
-                                    .instruction(&Instruction::I64Store16(memarg(0, 1))),
-                                Width::W32 => self
-                                    .func
-                                    .instruction(&Instruction::I64Store32(memarg(0, 2))),
-                                Width::W64 => {
-                                    self.func.instruction(&Instruction::I64Store(memarg(0, 3)))
-                                }
-                            };
-
-                            // Self-modifying code invalidation: bump the version entry for the
-                            // written physical page. We conservatively bump for all RAM writes.
-                            self.emit_bump_code_version_fastpath();
-                        }
-                        self.func.instruction(&Instruction::End);
-                        self.depth -= 1;
-                    }
+                    emit_same_page_store(self);
                 }
                 self.func.instruction(&Instruction::End);
                 self.depth -= 1;
@@ -2159,6 +2139,34 @@ impl Emitter<'_> {
         }
         self.func.instruction(&Instruction::End);
         self.depth -= 1;
+    }
+
+    fn emit_slow_mem_read(&mut self, dst: ValueId, width: Width, slow_read: u32) {
+        self.func
+            .instruction(&Instruction::LocalGet(self.layout.cpu_ptr_local()));
+        self.func
+            .instruction(&Instruction::LocalGet(self.layout.scratch_vaddr_local()));
+        self.func.instruction(&Instruction::Call(slow_read));
+        if width != Width::W64 {
+            self.func.instruction(&Instruction::I64ExtendI32U);
+        }
+        self.emit_trunc(width);
+        self.func
+            .instruction(&Instruction::LocalSet(self.layout.value_local(dst)));
+    }
+
+    fn emit_slow_mem_write(&mut self, src: ValueId, width: Width, slow_write: u32) {
+        self.func
+            .instruction(&Instruction::LocalGet(self.layout.cpu_ptr_local()));
+        self.func
+            .instruction(&Instruction::LocalGet(self.layout.scratch_vaddr_local()));
+        self.func
+            .instruction(&Instruction::LocalGet(self.layout.value_local(src)));
+        if width != Width::W64 {
+            self.emit_trunc(width);
+            self.func.instruction(&Instruction::I32WrapI64);
+        }
+        self.func.instruction(&Instruction::Call(slow_write));
     }
 
     /// Computes the linear-memory address for the current `{vaddr, tlb_data}` pair and leaves it

@@ -399,3 +399,122 @@ fn tier1_inline_tlb_mmio_fallback_does_not_import_jit_exit_mmio() {
         "expected env.mem_read_u32 import for MMIO fallback slow path"
     );
 }
+
+#[cfg(feature = "tier1-inline-tlb")]
+#[test]
+fn tier1_inline_tlb_mmio_exit_can_elide_slow_mem_helpers() {
+    let mut b = IrBuilder::new(0x1000);
+    let addr = b.const_int(Width::W64, 0);
+    let _value = b.load(Width::W64, addr);
+    let src = b.const_int(Width::W64, 0x1122_3344_5566_7788);
+    b.store(Width::W64, addr, src);
+    let ir = b.finish(IrTerminator::Jump { target: 0x2000 });
+    ir.validate().unwrap();
+
+    let wasm = Tier1WasmCodegen::new().compile_block_with_options(
+        &ir,
+        Tier1WasmOptions {
+            inline_tlb: true,
+            inline_tlb_mmio_exit: true,
+            inline_tlb_cross_page_fastpath: true,
+            ..Default::default()
+        },
+    );
+    let imports = import_entries(&wasm);
+
+    assert_eq!(
+        imports.len(),
+        3,
+        "expected inline-TLB MMIO-exit block to only import env.memory + env.mmu_translate + env.jit_exit_mmio, got {imports:?}"
+    );
+
+    let mut found_memory = false;
+    let mut found_translate = false;
+    let mut found_jit_exit_mmio = false;
+    for (module, name, _ty) in &imports {
+        if module == IMPORT_MODULE && name == IMPORT_MEMORY {
+            found_memory = true;
+        }
+        if module == IMPORT_MODULE && name == IMPORT_MMU_TRANSLATE {
+            found_translate = true;
+        }
+        if module == IMPORT_MODULE && name == IMPORT_JIT_EXIT_MMIO {
+            found_jit_exit_mmio = true;
+        }
+
+        // This configuration should never need the slow helper imports.
+        assert_ne!(name, IMPORT_MEM_READ_U8);
+        assert_ne!(name, IMPORT_MEM_READ_U16);
+        assert_ne!(name, IMPORT_MEM_READ_U64);
+        assert_ne!(name, IMPORT_MEM_WRITE_U8);
+        assert_ne!(name, IMPORT_MEM_WRITE_U16);
+        assert_ne!(name, IMPORT_MEM_WRITE_U32);
+        assert_ne!(name, IMPORT_MEM_WRITE_U64);
+        assert_ne!(name, IMPORT_JIT_EXIT);
+    }
+
+    assert!(found_memory, "expected env.memory import");
+    assert!(
+        found_translate,
+        "expected env.mmu_translate import when inline_tlb=true"
+    );
+    assert!(
+        found_jit_exit_mmio,
+        "expected env.jit_exit_mmio import when inline_tlb_mmio_exit=true"
+    );
+}
+
+#[cfg(feature = "tier1-inline-tlb")]
+#[test]
+fn tier1_inline_tlb_mmio_fallback_imports_slow_helpers_for_load_and_store() {
+    let mut b = IrBuilder::new(0x1000);
+    let addr = b.const_int(Width::W64, 0);
+    let _value = b.load(Width::W64, addr);
+    let src = b.const_int(Width::W64, 0x1234_5678_9abc_def0);
+    b.store(Width::W64, addr, src);
+    let ir = b.finish(IrTerminator::Jump { target: 0x2000 });
+    ir.validate().unwrap();
+
+    let wasm = Tier1WasmCodegen::new().compile_block_with_options(
+        &ir,
+        Tier1WasmOptions {
+            inline_tlb: true,
+            inline_tlb_mmio_exit: false,
+            inline_tlb_cross_page_fastpath: true,
+            ..Default::default()
+        },
+    );
+    let imports = import_entries(&wasm);
+
+    let mut found_translate = false;
+    let mut found_mem_read_u64 = false;
+    let mut found_mem_write_u64 = false;
+    for (module, name, _ty) in &imports {
+        if module == IMPORT_MODULE && name == IMPORT_MMU_TRANSLATE {
+            found_translate = true;
+        }
+        if module == IMPORT_MODULE && name == IMPORT_MEM_READ_U64 {
+            found_mem_read_u64 = true;
+        }
+        if module == IMPORT_MODULE && name == IMPORT_MEM_WRITE_U64 {
+            found_mem_write_u64 = true;
+        }
+        assert_ne!(
+            name, IMPORT_JIT_EXIT_MMIO,
+            "expected inline_tlb_mmio_exit=false block to not import env.jit_exit_mmio, got {imports:?}"
+        );
+    }
+
+    assert!(
+        found_translate,
+        "expected env.mmu_translate import when inline_tlb=true"
+    );
+    assert!(
+        found_mem_read_u64,
+        "expected env.mem_read_u64 import for MMIO fallback slow path"
+    );
+    assert!(
+        found_mem_write_u64,
+        "expected env.mem_write_u64 import for MMIO fallback slow path"
+    );
+}
