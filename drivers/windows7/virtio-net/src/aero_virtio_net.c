@@ -4580,17 +4580,20 @@ static VOID AerovNetMiniportDevicePnPEventNotify(_In_ NDIS_HANDLE MiniportAdapte
     // concurrent notify/config path becomes a no-op even if it already passed a
     // SurpriseRemoved check before this flag was set.
     //
+    // Invalidate NotifyBase/CommonCfg first so VirtioPciNotifyQueue() cannot fall
+    // back to computing notify addresses via MMIO once the cache pointer is cleared.
+    //
     // These are one-way transitions (non-NULL -> NULL) and are safe to perform
     // without holding Adapter->Lock.
+    (VOID)InterlockedExchangePointer((PVOID*)&Adapter->Vdev.NotifyBase, NULL);
+    (VOID)InterlockedExchangePointer((PVOID*)&Adapter->Vdev.CommonCfg, NULL);
+    (VOID)InterlockedExchangePointer((PVOID*)&Adapter->Vdev.IsrStatus, NULL);
+    (VOID)InterlockedExchangePointer((PVOID*)&Adapter->Vdev.DeviceCfg, NULL);
     (VOID)InterlockedExchangePointer((PVOID*)&Adapter->Vdev.QueueNotifyAddrCache, NULL);
     Adapter->Vdev.QueueNotifyAddrCacheCount = 0;
     for (I = 0; I < RTL_NUMBER_OF(Adapter->QueueNotifyAddrCache); I++) {
       (VOID)InterlockedExchangePointer((PVOID*)&Adapter->QueueNotifyAddrCache[I], NULL);
     }
-    (VOID)InterlockedExchangePointer((PVOID*)&Adapter->Vdev.NotifyBase, NULL);
-    (VOID)InterlockedExchangePointer((PVOID*)&Adapter->Vdev.CommonCfg, NULL);
-    (VOID)InterlockedExchangePointer((PVOID*)&Adapter->Vdev.IsrStatus, NULL);
-    (VOID)InterlockedExchangePointer((PVOID*)&Adapter->Vdev.DeviceCfg, NULL);
 
     NdisAcquireSpinLock(&Adapter->Lock);
     Adapter->State = AerovNetAdapterStopped;
