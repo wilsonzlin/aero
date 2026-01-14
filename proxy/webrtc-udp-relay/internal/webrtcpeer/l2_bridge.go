@@ -130,6 +130,14 @@ func (b *l2Bridge) run() {
 		return
 	}
 	b.wsMu.Lock()
+	// If the bridge was already closed while dialing (e.g. DataChannel closed or an
+	// oversized message triggered teardown), close the backend connection
+	// immediately to avoid leaking it.
+	if b.ctx.Err() != nil {
+		b.wsMu.Unlock()
+		_ = ws.Close()
+		return
+	}
 	b.ws = ws
 	b.wsMu.Unlock()
 
