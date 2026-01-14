@@ -968,6 +968,11 @@ fn scan_used_input_registers(module: &Sm4Module) -> BTreeSet<u32> {
                 scan_src_regs(a, &mut scan_reg);
                 scan_src_regs(b, &mut scan_reg);
             }
+            Sm4Inst::Mad { dst: _, a, b, c } => {
+                scan_src_regs(a, &mut scan_reg);
+                scan_src_regs(b, &mut scan_reg);
+                scan_src_regs(c, &mut scan_reg);
+            }
             Sm4Inst::Bfi {
                 width,
                 offset,
@@ -995,11 +1000,6 @@ fn scan_used_input_registers(module: &Sm4Module) -> BTreeSet<u32> {
                 scan_src_regs(width, &mut scan_reg);
                 scan_src_regs(offset, &mut scan_reg);
                 scan_src_regs(src, &mut scan_reg);
-            }
-            Sm4Inst::Mad { dst: _, a, b, c } => {
-                scan_src_regs(a, &mut scan_reg);
-                scan_src_regs(b, &mut scan_reg);
-                scan_src_regs(c, &mut scan_reg);
             }
             Sm4Inst::Rcp { dst: _, src }
             | Sm4Inst::Rsq { dst: _, src }
