@@ -523,6 +523,12 @@ export type MachineHandle = {
     /** Set horizontal mouse wheel delta (`delta > 0` = wheel right). */
     inject_usb_hid_mouse_hwheel?(delta: number): void;
     /**
+     * Inject both vertical and horizontal wheel deltas in a single USB HID report.
+     *
+     * Optional for older WASM builds.
+     */
+    inject_usb_hid_mouse_wheel2?(wheel: number, hwheel: number): void;
+    /**
      * Inject a packed gamepad report.
      *
      * Packing matches `web/src/input/gamepad.ts`.
