@@ -1109,6 +1109,37 @@ impl UsbHubDevice {
             _ => None,
         }
     }
+
+    fn poll_remote_wakeup_internal(&mut self) -> bool {
+        if self.configuration == 0 {
+            return false;
+        }
+
+        // If the upstream link is suspended and a downstream device requests remote wakeup,
+        // propagate the resume event upstream.
+        if !self.upstream_suspended {
+            return false;
+        }
+        for port in &mut self.ports {
+            if !(port.enabled && port.powered) {
+                continue;
+            }
+            let wake = match port.device.as_mut() {
+                Some(dev) => dev.model_mut().poll_remote_wakeup(),
+                None => false,
+            };
+            if wake {
+                // If the downstream port was selectively suspended, remote wake should resume it
+                // so that the device is active once the upstream link resumes.
+                if port.suspended {
+                    port.set_suspended(false);
+                }
+                return true;
+            }
+        }
+
+        false
+    }
 }
 
 impl Default for UsbHubDevice {
@@ -1637,37 +1668,12 @@ impl UsbDeviceModel for UsbHubDevice {
     }
 
     fn poll_remote_wakeup(&mut self) -> bool {
-        if self.configuration == 0 {
-            return false;
-        }
-
         // If the upstream link is suspended and a downstream device requests remote wakeup,
         // propagate the resume event upstream.
         //
         // Note: this is driven by the downstream device's DEVICE_REMOTE_WAKEUP feature; the hub's
         // own DEVICE_REMOTE_WAKEUP feature does not gate propagation.
-        if !self.upstream_suspended {
-            return false;
-        }
-        for port in &mut self.ports {
-            if !(port.enabled && port.powered) {
-                continue;
-            }
-            let wake = match port.device.as_mut() {
-                Some(dev) => dev.model_mut().poll_remote_wakeup(),
-                None => false,
-            };
-            if wake {
-                // If the downstream port was selectively suspended, remote wake should resume it
-                // so that the device is active once the upstream link resumes.
-                if port.suspended {
-                    port.set_suspended(false);
-                }
-                return true;
-            }
-        }
-
-        false
+        self.poll_remote_wakeup_internal()
     }
 }
 
