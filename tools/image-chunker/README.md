@@ -204,6 +204,7 @@ After publishing, you can re-download and validate the published artifacts end-t
 - **HTTP/CDN**: `--manifest-url https://.../manifest.json` (fetches `chunks/*.bin` relative to the manifest URL)
   - Optional repeatable `--header "Name: value"` can be used for auth (cookies, bearer tokens, etc)
   - Chunk and `meta.json` URLs are resolved relative to the manifest URL and preserve the manifest query string (useful for signed URLs)
+  - The verifier sends a browser-like `Accept-Encoding` (e.g. `gzip, deflate, br, zstd`) and requires `Content-Encoding` to be absent/`identity` for compatibility with Aero’s reference clients (i.e. no CDN/object-store compression transforms).
 
 ### Example: verify a versioned prefix
 

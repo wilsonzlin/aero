@@ -32,6 +32,10 @@ const DEFAULT_CACHE_CONTROL_LATEST: &str = "public, max-age=60";
 // For compatibility with Aero's clients and tooling (and to prevent CDNs from applying transparent
 // compression), publish all chunked artifacts with `Content-Encoding: identity`.
 const IDENTITY_CONTENT_ENCODING: &str = "identity";
+// Browsers automatically send a non-identity Accept-Encoding (and scripts cannot override it).
+// Use a browser-like value so HTTP verification catches any CDN/object-store compression that
+// would break byte-addressed disk reads.
+const BROWSER_ACCEPT_ENCODING: &str = "gzip, deflate, br, zstd";
 const DEFAULT_CHUNK_SIZE_BYTES: u64 = 4 * 1024 * 1024;
 // Defensive bounds to avoid producing or verifying manifests that the reference clients will
 // reject. Keep aligned with:
@@ -1022,8 +1026,12 @@ fn build_reqwest_client(headers: &[String]) -> Result<reqwest::Client> {
         let (name, value) = parse_header(raw)?;
         header_map.insert(name, value);
     }
-    // Defensive request: disk bytes should not be compressed/transformed.
-    header_map.insert(ACCEPT_ENCODING, HeaderValue::from_static("identity"));
+    // Match browser semantics: scripts cannot force `Accept-Encoding: identity`, so use a
+    // browser-like value and fail fast if the server tries to apply compression transforms.
+    header_map.insert(
+        ACCEPT_ENCODING,
+        HeaderValue::from_static(BROWSER_ACCEPT_ENCODING),
+    );
     reqwest::Client::builder()
         .default_headers(header_map)
         .build()
@@ -8171,7 +8179,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn verify_http_sends_accept_encoding_identity() -> Result<()> {
+    async fn verify_http_sends_browser_like_accept_encoding() -> Result<()> {
         let chunk_size: u64 = 1024;
         let chunk0 = vec![b'a'; chunk_size as usize];
         let chunk1 = vec![b'b'; 512];
@@ -8203,7 +8211,7 @@ mod tests {
                     .find(|(k, _)| k.eq_ignore_ascii_case("accept-encoding"))
                     .map(|(_, v)| v.as_str())
                     .unwrap_or("");
-                if encoding != "identity" {
+                if encoding != BROWSER_ACCEPT_ENCODING {
                     return (
                         400,
                         Vec::new(),
@@ -8284,7 +8292,7 @@ mod tests {
                     .find(|(k, _)| k.eq_ignore_ascii_case("accept-encoding"))
                     .map(|(_, v)| v.as_str())
                     .unwrap_or("");
-                if encoding != "identity" {
+                if encoding != BROWSER_ACCEPT_ENCODING {
                     return (
                         400,
                         Vec::new(),
@@ -8307,7 +8315,7 @@ mod tests {
         verify(VerifyArgs {
             manifest_url: Some(format!("{base_url}/manifest.json")),
             manifest_file: None,
-            // User tries to override accept-encoding; tool should force identity.
+            // User tries to override accept-encoding; tool should force a browser-like value.
             header: vec!["Accept-Encoding: gzip".to_string()],
             bucket: None,
             prefix: None,
