@@ -152,6 +152,10 @@ VOID VioInputCountersReset(_Inout_ PVIOINPUT_COUNTERS Counters)
     volatile LONG* fields;
     ULONG count;
     ULONG i;
+    LONG readReportDepth;
+    LONG reportRingDepth;
+    LONG virtioQueueDepth;
+    LONG pendingRingDepth;
 
     C_ASSERT(((sizeof(VIOINPUT_COUNTERS) - FIELD_OFFSET(VIOINPUT_COUNTERS, IoctlTotal)) % sizeof(LONG)) == 0);
     if (Counters == NULL) {
@@ -167,12 +171,35 @@ VOID VioInputCountersReset(_Inout_ PVIOINPUT_COUNTERS Counters)
      * Reset each 32-bit field with InterlockedExchange to avoid torn writes.
      * This is "best effort" with respect to races: counters may tick immediately
      * after reset due to concurrent activity, but each transition to 0 is atomic.
+     *
+     * Depth gauges (e.g. ReadReportQueueDepth) are not reset because they track
+     * current state and are maintained incrementally. Zeroing them would allow
+     * subsequent decrements to drive the gauge negative until the next sync
+     * point (and would permanently corrupt MaxDepth if the depth only decreases).
      */
     fields = &Counters->IoctlTotal;
     count = (ULONG)((sizeof(VIOINPUT_COUNTERS) - FIELD_OFFSET(VIOINPUT_COUNTERS, IoctlTotal)) / sizeof(LONG));
     for (i = 0; i < count; i++) {
-        (VOID)InterlockedExchange(&fields[i], 0);
+        volatile LONG* field = &fields[i];
+        if (field == &Counters->ReadReportQueueDepth ||
+            field == &Counters->ReportRingDepth ||
+            field == &Counters->VirtioQueueDepth ||
+            field == &Counters->PendingRingDepth) {
+            continue;
+        }
+        (VOID)InterlockedExchange(field, 0);
     }
+
+    // Max depth fields track the maximum observed since reset, so reset them to
+    // the current depth baseline.
+    readReportDepth = InterlockedCompareExchange(&Counters->ReadReportQueueDepth, 0, 0);
+    reportRingDepth = InterlockedCompareExchange(&Counters->ReportRingDepth, 0, 0);
+    virtioQueueDepth = InterlockedCompareExchange(&Counters->VirtioQueueDepth, 0, 0);
+    pendingRingDepth = InterlockedCompareExchange(&Counters->PendingRingDepth, 0, 0);
+    (VOID)InterlockedExchange(&Counters->ReadReportQueueMaxDepth, readReportDepth);
+    (VOID)InterlockedExchange(&Counters->ReportRingMaxDepth, reportRingDepth);
+    (VOID)InterlockedExchange(&Counters->VirtioQueueMaxDepth, virtioQueueDepth);
+    (VOID)InterlockedExchange(&Counters->PendingRingMaxDepth, pendingRingDepth);
 }
 
 PCSTR VioInputHidIoctlToString(_In_ ULONG IoControlCode)
