@@ -43,10 +43,34 @@ test("IO worker does not switch mouse backend while a button is held (prevents s
     const status = views.status;
 
     const ioWorker = new Worker(new URL("/web/src/workers/io.worker.ts", location.href), { type: "module" });
+    let ioWorkerError: string | null = null;
+    ioWorker.addEventListener("error", (ev) => {
+      if (ioWorkerError) return;
+      const e = ev as ErrorEvent | undefined;
+      const parts: string[] = [];
+      if (typeof e?.message === "string" && e.message) parts.push(e.message);
+      const filename = typeof e?.filename === "string" ? e.filename : "";
+      const lineno = typeof e?.lineno === "number" ? e.lineno : 0;
+      const colno = typeof e?.colno === "number" ? e.colno : 0;
+      if (filename) {
+        parts.push(`${filename}:${lineno}:${colno}`);
+      }
+      const errObj = (e as any)?.error;
+      if (errObj) {
+        const stack = typeof errObj?.stack === "string" ? errObj.stack : "";
+        if (stack) parts.push(stack);
+        else parts.push(String(errObj));
+      }
+      ioWorkerError = parts.length ? parts.join(" ") : String(ev);
+    });
+    ioWorker.addEventListener("messageerror", () => {
+      ioWorkerError = "io.worker messageerror";
+    });
 
     const waitForAtomic = async (idx: number, expected: number, timeoutMs: number): Promise<void> => {
       const start = typeof performance?.now === "function" ? performance.now() : Date.now();
       while ((typeof performance?.now === "function" ? performance.now() : Date.now()) - start < timeoutMs) {
+        if (ioWorkerError) throw new Error(`io.worker failed: ${ioWorkerError}`);
         if (Atomics.load(status, idx) === expected) return;
         await new Promise((resolve) => setTimeout(resolve, 10));
       }
@@ -56,6 +80,7 @@ test("IO worker does not switch mouse backend while a button is held (prevents s
     const waitForIoInputBatchCounter = async (prev: number, timeoutMs: number): Promise<number> => {
       const start = typeof performance?.now === "function" ? performance.now() : Date.now();
       while ((typeof performance?.now === "function" ? performance.now() : Date.now()) - start < timeoutMs) {
+        if (ioWorkerError) throw new Error(`io.worker failed: ${ioWorkerError}`);
         const cur = Atomics.load(status, StatusIndex.IoInputBatchCounter) >>> 0;
         if (cur > prev) return cur;
         await new Promise((resolve) => setTimeout(resolve, 10));
