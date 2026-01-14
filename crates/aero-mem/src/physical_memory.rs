@@ -268,17 +268,21 @@ impl PhysicalMemory {
     }
 
     /// Infallible wrapper for [`PhysicalMemory::try_read_bytes`].
+    #[track_caller]
     #[inline]
     pub fn read_bytes(&self, addr: u64, dst: &mut [u8]) {
-        self.try_read_bytes(addr, dst)
-            .expect("physical memory read out of bounds");
+        if let Err(err) = self.try_read_bytes(addr, dst) {
+            panic!("physical memory read_bytes failed: {err}");
+        }
     }
 
     /// Infallible wrapper for [`PhysicalMemory::try_write_bytes`].
+    #[track_caller]
     #[inline]
     pub fn write_bytes(&self, addr: u64, src: &[u8]) {
-        self.try_write_bytes(addr, src)
-            .expect("physical memory write out of bounds");
+        if let Err(err) = self.try_write_bytes(addr, src) {
+            panic!("physical memory write_bytes failed: {err}");
+        }
     }
 
     pub fn try_read_u8(&self, addr: u64) -> Result<u8, PhysicalMemoryError> {
@@ -493,63 +497,107 @@ impl PhysicalMemory {
         self.try_write_bytes(addr, &value.to_le_bytes())
     }
 
+    #[track_caller]
     #[inline]
     pub fn read_u8(&self, addr: u64) -> u8 {
-        self.try_read_u8(addr)
-            .expect("physical memory read out of bounds")
+        match self.try_read_u8(addr) {
+            Ok(value) => value,
+            Err(err) => panic!("physical memory read_u8 failed: {err}"),
+        }
     }
 
+    #[track_caller]
     #[inline]
     pub fn read_u16(&self, addr: u64) -> u16 {
-        self.try_read_u16(addr)
-            .expect("physical memory read out of bounds")
+        match self.try_read_u16(addr) {
+            Ok(value) => value,
+            Err(err) => panic!("physical memory read_u16 failed: {err}"),
+        }
     }
 
+    #[track_caller]
     #[inline]
     pub fn read_u32(&self, addr: u64) -> u32 {
-        self.try_read_u32(addr)
-            .expect("physical memory read out of bounds")
+        match self.try_read_u32(addr) {
+            Ok(value) => value,
+            Err(err) => panic!("physical memory read_u32 failed: {err}"),
+        }
     }
 
+    #[track_caller]
     #[inline]
     pub fn read_u64(&self, addr: u64) -> u64 {
-        self.try_read_u64(addr)
-            .expect("physical memory read out of bounds")
+        match self.try_read_u64(addr) {
+            Ok(value) => value,
+            Err(err) => panic!("physical memory read_u64 failed: {err}"),
+        }
     }
 
+    #[track_caller]
     #[inline]
     pub fn read_u128(&self, addr: u64) -> u128 {
-        self.try_read_u128(addr)
-            .expect("physical memory read out of bounds")
+        match self.try_read_u128(addr) {
+            Ok(value) => value,
+            Err(err) => panic!("physical memory read_u128 failed: {err}"),
+        }
     }
 
+    #[track_caller]
     #[inline]
     pub fn write_u8(&self, addr: u64, value: u8) {
-        self.try_write_u8(addr, value)
-            .expect("physical memory write out of bounds");
+        if let Err(err) = self.try_write_u8(addr, value) {
+            panic!("physical memory write_u8 failed: {err}");
+        }
     }
 
+    #[track_caller]
     #[inline]
     pub fn write_u16(&self, addr: u64, value: u16) {
-        self.try_write_u16(addr, value)
-            .expect("physical memory write out of bounds");
+        if let Err(err) = self.try_write_u16(addr, value) {
+            panic!("physical memory write_u16 failed: {err}");
+        }
     }
 
+    #[track_caller]
     #[inline]
     pub fn write_u32(&self, addr: u64, value: u32) {
-        self.try_write_u32(addr, value)
-            .expect("physical memory write out of bounds");
+        if let Err(err) = self.try_write_u32(addr, value) {
+            panic!("physical memory write_u32 failed: {err}");
+        }
     }
 
+    #[track_caller]
     #[inline]
     pub fn write_u64(&self, addr: u64, value: u64) {
-        self.try_write_u64(addr, value)
-            .expect("physical memory write out of bounds");
+        if let Err(err) = self.try_write_u64(addr, value) {
+            panic!("physical memory write_u64 failed: {err}");
+        }
     }
 
+    #[track_caller]
     #[inline]
     pub fn write_u128(&self, addr: u64, value: u128) {
-        self.try_write_u128(addr, value)
-            .expect("physical memory write out of bounds");
+        if let Err(err) = self.try_write_u128(addr, value) {
+            panic!("physical memory write_u128 failed: {err}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PhysicalMemory;
+    use crate::test_util::capture_panic_location;
+
+    #[test]
+    fn physical_memory_read_u8_panics_at_call_site_on_oob() {
+        let mem = PhysicalMemory::new(0).unwrap();
+
+        let expected_file = file!();
+        let expected_line = line!() + 2;
+        let (file, line) = capture_panic_location(|| {
+            let _ = mem.read_u8(0);
+        });
+        assert_eq!(file, expected_file);
+        assert_eq!(line, expected_line);
     }
 }

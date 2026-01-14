@@ -15,5 +15,8 @@ mod memory_bus;
 mod memory_compat;
 mod physical_memory;
 
+#[cfg(test)]
+mod test_util;
+
 pub use memory_bus::{MemoryBus, MemoryBusError, MmioHandler};
 pub use physical_memory::{PhysicalMemory, PhysicalMemoryError, PhysicalMemoryOptions};

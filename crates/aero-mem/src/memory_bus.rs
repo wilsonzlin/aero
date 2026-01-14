@@ -562,16 +562,20 @@ impl MemoryBus {
         Ok(())
     }
 
+    #[track_caller]
     #[inline]
     pub fn read_bytes(&self, addr: u64, dst: &mut [u8]) {
-        self.try_read_bytes(addr, dst)
-            .expect("memory bus read failed");
+        if let Err(err) = self.try_read_bytes(addr, dst) {
+            panic!("memory bus read_bytes failed: {err}");
+        }
     }
 
+    #[track_caller]
     #[inline]
     pub fn write_bytes(&self, addr: u64, src: &[u8]) {
-        self.try_write_bytes(addr, src)
-            .expect("memory bus write failed");
+        if let Err(err) = self.try_write_bytes(addr, src) {
+            panic!("memory bus write_bytes failed: {err}");
+        }
     }
 
     /// DMA-friendly bulk RAM read.
@@ -727,58 +731,109 @@ impl MemoryBus {
         self.try_write_bytes(addr, &value.to_le_bytes())
     }
 
+    #[track_caller]
     #[inline]
     pub fn read_u8(&self, addr: u64) -> u8 {
-        self.try_read_u8(addr).expect("memory bus read failed")
+        match self.try_read_u8(addr) {
+            Ok(value) => value,
+            Err(err) => panic!("memory bus read_u8 failed: {err}"),
+        }
     }
 
+    #[track_caller]
     #[inline]
     pub fn read_u16(&self, addr: u64) -> u16 {
-        self.try_read_u16(addr).expect("memory bus read failed")
+        match self.try_read_u16(addr) {
+            Ok(value) => value,
+            Err(err) => panic!("memory bus read_u16 failed: {err}"),
+        }
     }
 
+    #[track_caller]
     #[inline]
     pub fn read_u32(&self, addr: u64) -> u32 {
-        self.try_read_u32(addr).expect("memory bus read failed")
+        match self.try_read_u32(addr) {
+            Ok(value) => value,
+            Err(err) => panic!("memory bus read_u32 failed: {err}"),
+        }
     }
 
+    #[track_caller]
     #[inline]
     pub fn read_u64(&self, addr: u64) -> u64 {
-        self.try_read_u64(addr).expect("memory bus read failed")
+        match self.try_read_u64(addr) {
+            Ok(value) => value,
+            Err(err) => panic!("memory bus read_u64 failed: {err}"),
+        }
     }
 
+    #[track_caller]
     #[inline]
     pub fn read_u128(&self, addr: u64) -> u128 {
-        self.try_read_u128(addr).expect("memory bus read failed")
+        match self.try_read_u128(addr) {
+            Ok(value) => value,
+            Err(err) => panic!("memory bus read_u128 failed: {err}"),
+        }
     }
 
+    #[track_caller]
     #[inline]
     pub fn write_u8(&self, addr: u64, value: u8) {
-        self.try_write_u8(addr, value)
-            .expect("memory bus write failed");
+        if let Err(err) = self.try_write_u8(addr, value) {
+            panic!("memory bus write_u8 failed: {err}");
+        }
     }
 
+    #[track_caller]
     #[inline]
     pub fn write_u16(&self, addr: u64, value: u16) {
-        self.try_write_u16(addr, value)
-            .expect("memory bus write failed");
+        if let Err(err) = self.try_write_u16(addr, value) {
+            panic!("memory bus write_u16 failed: {err}");
+        }
     }
 
+    #[track_caller]
     #[inline]
     pub fn write_u32(&self, addr: u64, value: u32) {
-        self.try_write_u32(addr, value)
-            .expect("memory bus write failed");
+        if let Err(err) = self.try_write_u32(addr, value) {
+            panic!("memory bus write_u32 failed: {err}");
+        }
     }
 
+    #[track_caller]
     #[inline]
     pub fn write_u64(&self, addr: u64, value: u64) {
-        self.try_write_u64(addr, value)
-            .expect("memory bus write failed");
+        if let Err(err) = self.try_write_u64(addr, value) {
+            panic!("memory bus write_u64 failed: {err}");
+        }
     }
 
+    #[track_caller]
     #[inline]
     pub fn write_u128(&self, addr: u64, value: u128) {
-        self.try_write_u128(addr, value)
-            .expect("memory bus write failed");
+        if let Err(err) = self.try_write_u128(addr, value) {
+            panic!("memory bus write_u128 failed: {err}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::MemoryBus;
+    use crate::{test_util::capture_panic_location, PhysicalMemory};
+    use std::sync::Arc;
+
+    #[test]
+    fn memory_bus_read_u8_panics_at_call_site_on_unmapped() {
+        let ram = Arc::new(PhysicalMemory::new(0).unwrap());
+        let bus = MemoryBus::new(ram);
+
+        let expected_file = file!();
+        let expected_line = line!() + 2;
+        let (file, line) = capture_panic_location(|| {
+            let _ = bus.read_u8(0);
+        });
+        assert_eq!(file, expected_file);
+        assert_eq!(line, expected_line);
     }
 }
