@@ -1114,17 +1114,26 @@ function runEmulationLoop() {
 > `./audio_worklet_ring_layout.js` at runtime; see `web/vite.config.ts` and `vite.harness.config.ts` for the explicit
 > asset emission workaround (Vite does not automatically follow ESM imports from AudioWorklet modules).
 >
-> The canonical Aero worklet also supports a small **control channel**: the main thread may post
+> The canonical Aero worklet supports a small **control channel**: the main thread may post
 > `{ type: "ring.reset" }` to the `AudioWorkletNode.port` to discard any buffered playback backlog
-> (`readFrameIndex := writeFrameIndex`). This is used by `createAudioOutput({ discardOnResume: true })`
-> to avoid stale latency after `AudioContext` suspend/resume cycles.
+> (`readFrameIndex := writeFrameIndex`).
 >
-> In addition to explicit `ring.reset`, the worklet supports an optional **auto-discard** heuristic:
-> if `processorOptions.discardOnResume === true` is set on `AudioWorkletNode` construction, the worklet
-> will discard buffered backlog after detecting a large wall-clock gap between `process()` callbacks
-> (a proxy for suspend/resume or extreme scheduling stalls). This is separate from the main-thread
-> `discardOnResume` logic and is mainly useful for integrations that want the worklet to be
-> self-healing even when main-thread events are delayed.
+> Aero’s canonical integration uses the **main-thread** `CreateAudioOutputOptions.discardOnResume`
+> option in `createAudioOutput` (default: `true`) to post `{ type: "ring.reset" }` on
+> `AudioContext` **suspend → running** transitions (except the first-ever start) to avoid stale
+> latency after interruptions/tab backgrounding. `createAudioOutput` does **not** currently set
+> `processorOptions.discardOnResume`.
+>
+> Separately, the worklet supports an optional worklet-side **auto-discard heuristic** for
+> integrations that want self-healing purely from the audio thread: if
+> `processorOptions.discardOnResume === true` is set on `AudioWorkletNode` construction
+> (default: `false`), the worklet will discard buffered backlog after detecting a large wall-clock
+> gap between `process()` callbacks (a proxy for suspend/resume or extreme scheduling stalls).
+>
+> If you manually construct an `AudioWorkletNode`, you may either enable
+> `processorOptions.discardOnResume` **or** implement the main-thread `ring.reset` posting
+> (`discardOnResume`-style behavior). The main-thread reset is recommended when you can wire it,
+> because it is deterministic; the worklet heuristic is best-effort.
 >
 > The canonical Aero worklet can also post `type: "underrun"` messages for debugging/telemetry, but
 > these are disabled by default (and rate-limited when enabled) to avoid overhead under persistent
