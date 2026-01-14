@@ -29,7 +29,7 @@ type tokenBucket struct {
 
 func NewTokenBucket(clock Clock, capacityTokens, fillRate int64) *tokenBucket {
 	if clock == nil {
-		clock = RealClock{}
+		clock = realClock{}
 	}
 	if capacityTokens < 0 {
 		capacityTokens = 0

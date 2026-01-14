@@ -39,9 +39,6 @@ func NewSessionManager(cfg config.Config, m *metrics.Metrics, clock ratelimit.Cl
 	if m == nil {
 		m = metrics.New()
 	}
-	if clock == nil {
-		clock = ratelimit.RealClock{}
-	}
 	return &SessionManager{
 		cfg:      cfg,
 		metrics:  m,

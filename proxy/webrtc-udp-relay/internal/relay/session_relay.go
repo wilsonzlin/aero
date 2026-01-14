@@ -24,12 +24,12 @@ type destinationPolicy interface {
 	AllowUDP(remoteIP net.IP, remotePort uint16) error
 }
 
-// SessionRelay relays UDP datagrams between a WebRTC DataChannel and the public
+// sessionRelay relays UDP datagrams between a WebRTC DataChannel and the public
 // network.
 //
-// A SessionRelay is bound to exactly one DataChannel ("udp") and multiplexes
+// A sessionRelay is bound to exactly one DataChannel ("udp") and multiplexes
 // guest-port semantics by maintaining a UDP socket per guest port.
-type SessionRelay struct {
+type sessionRelay struct {
 	dc      dataChannelSender
 	cfg     Config
 	policy  destinationPolicy
@@ -53,7 +53,7 @@ type SessionRelay struct {
 	clientSupportsV2 atomic.Bool
 }
 
-func NewSessionRelay(dc dataChannelSender, cfg Config, policy destinationPolicy, session *Session, m *metrics.Metrics) *SessionRelay {
+func NewSessionRelay(dc dataChannelSender, cfg Config, policy destinationPolicy, session *Session, m *metrics.Metrics) *sessionRelay {
 	cfg = cfg.withDefaults()
 	codec, err := udpproto.NewCodec(cfg.MaxDatagramPayloadBytes)
 	if err != nil {
@@ -65,7 +65,7 @@ func NewSessionRelay(dc dataChannelSender, cfg Config, policy destinationPolicy,
 	if m == nil && session != nil {
 		m = session.metrics
 	}
-	s := &SessionRelay{
+	s := &sessionRelay{
 		dc:       dc,
 		cfg:      cfg,
 		policy:   policy,
@@ -98,7 +98,7 @@ func NewSessionRelay(dc dataChannelSender, cfg Config, policy destinationPolicy,
 //
 // When the relay is running without a quota/session manager (s.session == nil),
 // this method is a no-op.
-func (s *SessionRelay) EnableWebRTCUDPMetrics() {
+func (s *sessionRelay) EnableWebRTCUDPMetrics() {
 	if s == nil || s.queue == nil || s.session == nil || s.session.metrics == nil {
 		return
 	}
@@ -109,7 +109,7 @@ func (s *SessionRelay) EnableWebRTCUDPMetrics() {
 	})
 }
 
-func (s *SessionRelay) Close() {
+func (s *sessionRelay) Close() {
 	s.closeOnce.Do(func() {
 		s.closed.Store(true)
 		s.cancel()
@@ -130,7 +130,7 @@ func (s *SessionRelay) Close() {
 	})
 }
 
-func (s *SessionRelay) senderLoop() {
+func (s *sessionRelay) senderLoop() {
 	for {
 		frame, ok := s.queue.Dequeue()
 		if !ok {
@@ -140,7 +140,7 @@ func (s *SessionRelay) senderLoop() {
 	}
 }
 
-func (s *SessionRelay) cleanupLoop() {
+func (s *sessionRelay) cleanupLoop() {
 	interval := s.cfg.UDPBindingIdleTimeout / 2
 	if interval < 100*time.Millisecond {
 		interval = 100 * time.Millisecond
@@ -157,7 +157,7 @@ func (s *SessionRelay) cleanupLoop() {
 	}
 }
 
-func (s *SessionRelay) cleanupIdle() {
+func (s *sessionRelay) cleanupIdle() {
 	now := time.Now()
 	var toClose []*udpPortBinding
 
@@ -175,7 +175,7 @@ func (s *SessionRelay) cleanupIdle() {
 	}
 }
 
-func (s *SessionRelay) getOrCreateBinding(guestPort uint16) (*udpPortBinding, error) {
+func (s *sessionRelay) getOrCreateBinding(guestPort uint16) (*udpPortBinding, error) {
 	s.mu.Lock()
 	if s.closed.Load() {
 		s.mu.Unlock()
@@ -221,7 +221,7 @@ func (s *SessionRelay) getOrCreateBinding(guestPort uint16) (*udpPortBinding, er
 	return b, nil
 }
 
-func (s *SessionRelay) evictOneLocked() *udpPortBinding {
+func (s *sessionRelay) evictOneLocked() *udpPortBinding {
 	var oldestPort uint16
 	var oldest *udpPortBinding
 	var oldestTime time.Time
@@ -240,7 +240,7 @@ func (s *SessionRelay) evictOneLocked() *udpPortBinding {
 	return oldest
 }
 
-func (s *SessionRelay) HandleDataChannelMessage(msg []byte) {
+func (s *sessionRelay) HandleDataChannelMessage(msg []byte) {
 	if s.closed.Load() || s.ctx.Err() != nil {
 		return
 	}

@@ -32,9 +32,6 @@ type Session struct {
 }
 
 func newSession(id string, cfg config.Config, m *metrics.Metrics, clock ratelimit.Clock, onClose func()) *Session {
-	if clock == nil {
-		clock = ratelimit.RealClock{}
-	}
 	var onEvict func()
 	if m != nil {
 		onEvict = func() {
@@ -201,7 +198,7 @@ func (s *Session) HandleInboundToClient(payload []byte) bool {
 
 func (s *Session) recordViolation() {
 	s.mu.Lock()
-	onHardClose, onClose := s.recordViolationLocked(s.clock.Now())
+	onHardClose, onClose := s.recordViolationLocked(s.now())
 	s.mu.Unlock()
 	if onHardClose != nil {
 		onHardClose()
@@ -209,6 +206,13 @@ func (s *Session) recordViolation() {
 	if onClose != nil {
 		onClose()
 	}
+}
+
+func (s *Session) now() time.Time {
+	if s.clock != nil {
+		return s.clock.Now()
+	}
+	return time.Now()
 }
 
 func (s *Session) recordViolationLocked(now time.Time) (func(), func()) {

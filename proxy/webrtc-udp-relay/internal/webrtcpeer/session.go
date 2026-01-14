@@ -51,12 +51,18 @@ type Session struct {
 	hasAeroSessionCookie bool
 
 	mu    sync.Mutex
-	r     *relay.SessionRelay
+	r     udpRelay
 	l2    *l2Bridge
 	close sync.Once
 
 	connectTimerMu sync.Mutex
 	connectTimer   *time.Timer
+}
+
+type udpRelay interface {
+	EnableWebRTCUDPMetrics()
+	HandleDataChannelMessage(msg []byte)
+	Close()
 }
 
 func (s *Session) incMetric(name string) {
